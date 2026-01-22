@@ -1,0 +1,85 @@
+package main
+
+import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"git.imaxinacion.net/aibox/agbero"
+	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"github.com/kardianos/service"
+	"github.com/olekukonko/ll/lx"
+)
+
+type program struct {
+	configPath string
+	devMode    bool
+	ctx        context.Context
+	cancel     context.CancelFunc
+	exit       chan struct{}
+}
+
+func (p *program) Start(s service.Service) error {
+	p.ctx, p.cancel = context.WithCancel(context.Background())
+	p.exit = make(chan struct{})
+	go p.run()
+	return nil
+}
+
+func (p *program) Stop(s service.Service) error {
+	if p.cancel != nil {
+		p.cancel()
+	}
+	<-p.exit
+	return nil
+}
+
+func (p *program) run() {
+	defer close(p.exit)
+	logger.Info("starting agbero proxy service")
+
+	// Use loadConfig from helpers.go to resolve paths correctly
+	global, err := loadConfig(p.configPath)
+	if err != nil {
+		logger.Fields("file", p.configPath, "err", err).Fatal("failed to load config")
+		return
+	}
+
+	if p.devMode {
+		logger.Level(lx.LevelDebug)
+		logger.Warn("running in development mode")
+		global.Development = true
+	}
+
+	hm := discovery.NewHost(global.HostsDir)
+	if err := hm.Watch(); err != nil {
+		logger.Fields("dir", global.HostsDir, "err", err).Fatal("failed to watch hosts")
+		return
+	}
+	defer hm.Close()
+
+	server := agbero.NewServer(
+		agbero.WithHostManager(hm),
+		agbero.WithGlobalConfig(global),
+		agbero.WithLogger(logger),
+	)
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	runCtx, runCancel := context.WithCancel(p.ctx)
+
+	go func() {
+		select {
+		case <-p.ctx.Done():
+		case <-sigChan:
+			logger.Info("shutting down via signal")
+			runCancel()
+		}
+	}()
+
+	if err := server.Start(runCtx); err != nil {
+		logger.Error(err)
+	}
+}

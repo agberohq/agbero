@@ -1,153 +1,177 @@
 package main
 
 import (
-	"context"
+	"log"
 	"os"
-	"os/signal"
-	"syscall"
+	"runtime"
 
-	"git.imaxinacion.net/aibox/agbero"
-	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"github.com/integrii/flaggy"
+	"github.com/kardianos/service"
 	"github.com/olekukonko/ll"
-	"github.com/olekukonko/ll/lx"
-	"github.com/urfave/cli/v2"
 )
 
 var (
-	logger = ll.New(woos.Name).Enable()
+	logger  = ll.New(woos.Name).Enable()
+	version = woos.Version
+)
+
+// CLI flags
+var (
+	configPath string
+	devMode    bool
 )
 
 func main() {
-	app := &cli.App{
-		Name:    woos.Name,
-		Version: woos.Version,
-		Usage:   woos.Description,
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:    "config",
-				Aliases: []string{"c"},
-				Value:   "/etc/agbero/config.hcl",
-				Usage:   "Path to global config",
-			},
-			&cli.BoolFlag{
-				Name:  "dev",
-				Usage: "Development mode",
-				Value: false,
-			},
-		},
-		Commands: []*cli.Command{
-			{
-				Name:   "start",
-				Usage:  "Start the proxy server",
-				Action: startProxy,
-			},
-			{
-				Name:   "validate",
-				Usage:  "Validate configuration",
-				Action: validateConfig,
-			},
-			{
-				Name:   "hosts",
-				Usage:  "List configured hosts",
-				Action: listHosts,
-			},
-		},
+	// 1. Default Configuration
+	defaultConfig := "/etc/agbero/config.hcl"
+	if runtime.GOOS == "windows" {
+		defaultConfig = `C:\ProgramData\agbero\config.hcl`
 	}
 
-	if err := app.Run(os.Args); err != nil {
+	// 2. Setup Flaggy
+	flaggy.SetName(woos.Name)
+	flaggy.SetDescription(woos.Description)
+	flaggy.SetVersion(version)
+
+	// Global flags
+	flaggy.String(&configPath, "c", "config", "Path to configuration file (default: "+defaultConfig+")")
+	flaggy.Bool(&devMode, "d", "dev", "Enable development mode")
+
+	// Subcommands
+	cmdInstall := flaggy.NewSubcommand("install")
+	cmdInstall.Description = "Install configuration files and system service"
+
+	cmdUninstall := flaggy.NewSubcommand("uninstall")
+	cmdUninstall.Description = "Uninstall system service"
+
+	cmdStart := flaggy.NewSubcommand("start")
+	cmdStart.Description = "Start the system service"
+
+	cmdStop := flaggy.NewSubcommand("stop")
+	cmdStop.Description = "Stop the system service"
+
+	cmdRun := flaggy.NewSubcommand("run")
+	cmdRun.Description = "Run the proxy directly (interactive mode)"
+
+	cmdValidate := flaggy.NewSubcommand("validate")
+	cmdValidate.Description = "Validate configuration file"
+
+	cmdHosts := flaggy.NewSubcommand("hosts")
+	cmdHosts.Description = "List configured hosts"
+
+	flaggy.AttachSubcommand(cmdInstall, 1)
+	flaggy.AttachSubcommand(cmdUninstall, 1)
+	flaggy.AttachSubcommand(cmdStart, 1)
+	flaggy.AttachSubcommand(cmdStop, 1)
+	flaggy.AttachSubcommand(cmdRun, 1)
+	flaggy.AttachSubcommand(cmdValidate, 1)
+	flaggy.AttachSubcommand(cmdHosts, 1)
+
+	flaggy.Parse()
+
+	// Apply defaults if flag not set
+	if configPath == "" {
+		configPath = defaultConfig
+	}
+
+	// 3. Setup Service Config
+	svcConfig := &service.Config{
+		Name:        "agbero",
+		DisplayName: "Agbero Proxy",
+		Description: "High-performance reverse proxy with Let's Encrypt support",
+		// Arguments passed to the binary when run by the service manager
+		Arguments: []string{"run", "-c", configPath},
+	}
+
+	// If dev mode is on, pass that to the service arguments too
+	if devMode {
+		svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
+	}
+
+	prg := &program{
+		configPath: configPath,
+		devMode:    devMode,
+	}
+
+	s, err := service.New(prg, svcConfig)
+	if err != nil {
 		logger.Fatal(err)
-		os.Exit(1)
-	}
-}
-
-func startProxy(c *cli.Context) error {
-	logger.Info("starting agbero proxy")
-
-	// FIX 1: Use a struct instance, not a nil pointer
-	var global woos.GlobalConfig
-	p := woos.NewParser(c.String("config"))
-
-	// FIX 2: Check error immediately
-	if err := p.Unmarshal(&global); err != nil {
-		return err
 	}
 
-	if c.Bool("dev") {
-		logger.Level(lx.LevelDebug)
-		logger.Warn("running in development mode")
-		global.Development = true
+	// 4. Handle Subcommands
+	if cmdInstall.Used {
+		// Create default files before installing service
+		if err := installDefaults(); err != nil {
+			logger.Fatal("Failed to setup defaults: ", err)
+		}
+		if err := s.Install(); err != nil {
+			logger.Fatal("Failed to install service: ", err)
+		}
+		logger.Info("Service installed successfully")
+		return
 	}
 
-	hm := discovery.NewHost(global.HostsDir)
-	if err := hm.Watch(); err != nil {
-		return err
+	if cmdUninstall.Used {
+		if err := s.Uninstall(); err != nil {
+			logger.Fatal("Failed to uninstall service: ", err)
+		}
+		logger.Info("Service uninstalled")
+		return
 	}
-	defer hm.Close() // Good practice to close watcher
 
-	server := agbero.NewServer(agbero.WithHostManager(hm), agbero.WithGlobalConfig(&global))
+	if cmdStart.Used {
+		if err := s.Start(); err != nil {
+			logger.Fatal("Failed to start service: ", err)
+		}
+		logger.Info("Service started")
+		return
+	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if cmdStop.Used {
+		if err := s.Stop(); err != nil {
+			logger.Fatal("Failed to stop service: ", err)
+		}
+		logger.Info("Service stopped")
+		return
+	}
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	if cmdValidate.Used {
+		if err := validateConfig(configPath); err != nil {
+			logger.Fatal(err)
+		}
+		return
+	}
 
+	if cmdHosts.Used {
+		if err := listHosts(configPath); err != nil {
+			logger.Fatal(err)
+		}
+		return
+	}
+
+	// Default Action: Run (either via "run" subcommand or if invoked by service manager)
+	// If no subcommand is used, and it's not a service control command, we assume "run".
+
+	// Setup system logger for the service wrapper
+	errs := make(chan error, 5)
+	logger, err := s.Logger(errs)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Forward service errors to log
 	go func() {
-		<-sigChan
-		ll.Info("shutting down gracefully")
-		cancel()
+		for {
+			err := <-errs
+			if err != nil {
+				log.Printf("Service error: %v", err)
+			}
+		}
 	}()
 
-	return server.Start(ctx)
-}
-
-func validateConfig(c *cli.Context) error {
-	// FIX 1: Use struct instance
-	var global woos.GlobalConfig
-	p := woos.NewParser(c.String("config"))
-
-	// FIX 2: Check error
-	if err := p.Unmarshal(&global); err != nil {
-		return err
+	if err := s.Run(); err != nil {
+		logger.Error(err)
+		os.Exit(1)
 	}
-
-	hm := discovery.NewHost(global.HostsDir)
-	hosts, err := hm.LoadAll()
-	if err != nil {
-		return err
-	}
-
-	ll.Fields("hosts", len(hosts)).Info("configuration valid")
-	return nil
-}
-
-func listHosts(c *cli.Context) error {
-	// FIX: Do not use a pointer here directly.
-	// var host *config.GlobalConfig <-- WRONG (nil pointer)
-
-	var host woos.GlobalConfig // CORRECT (struct instance)
-
-	p := woos.NewParser(c.String("config"))
-	err := p.Unmarshal(&host) // Pass address of struct
-	if err != nil {
-		return err
-	}
-
-	hm := discovery.NewHost(host.HostsDir)
-	// ... rest of function
-	hosts, err := hm.LoadAll()
-	if err != nil {
-		return err
-	}
-
-	for name, c := range hosts {
-		logger.Fields(
-			"host", name,
-			"domains", c.Domains,
-			"routes", len(c.Routes),
-			"configured host").Info("host found") // Fixed logger call structure
-	}
-
-	return nil
 }
