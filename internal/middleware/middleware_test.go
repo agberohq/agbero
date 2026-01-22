@@ -1,4 +1,3 @@
-// internal/proxy/middleware_test.go
 package middleware
 
 import (

@@ -1,4 +1,3 @@
-// internal/config/constants.go
 package woos
 
 import "time"

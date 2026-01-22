@@ -1,4 +1,3 @@
-// internal/discovery/hosts_test.go
 package discovery
 
 import (

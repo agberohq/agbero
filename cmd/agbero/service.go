@@ -39,7 +39,6 @@ func (p *program) run() {
 	defer close(p.exit)
 	logger.Info("starting agbero proxy service")
 
-	// Use loadConfig from helpers.go to resolve paths correctly
 	global, err := loadConfig(p.configPath)
 	if err != nil {
 		logger.Fields("file", p.configPath, "err", err).Fatal("failed to load config")

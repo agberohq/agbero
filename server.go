@@ -1,4 +1,3 @@
-// internal/proxy/server.go
 package agbero
 
 import (

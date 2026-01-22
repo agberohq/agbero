@@ -167,7 +167,6 @@ func (hm *Host) Close() error {
 }
 
 // Changed returns a channel that receives a signal (non-blocking) on any update/removal.
-// You can use this in proxy/server.go to rebuild compiled routing tables.
 func (hm *Host) Changed() <-chan struct{} {
 	return hm.changed
 }
