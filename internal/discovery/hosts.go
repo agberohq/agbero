@@ -133,6 +133,7 @@ func (hm *Host) Get(hostname string) *config.HostConfig {
 	defer hm.mu.RUnlock()
 
 	for _, hc := range hm.hosts {
+		// CHANGED: server_names -> Domains
 		for _, domain := range hc.Domains {
 			if strings.EqualFold(domain, hostname) {
 				return hc

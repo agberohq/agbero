@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/config"
 )
@@ -132,4 +133,16 @@ func randUint64() uint64 {
 	}
 	// Fallback (not crypto strong, but fine for simple backend selection)
 	return uint64(atomic.AddUint64(&fallbackRand, 1))
+}
+
+// parseDuration parses a string duration or returns the default.
+func parseDuration(s string, def time.Duration) time.Duration {
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return def
+	}
+	return d
 }

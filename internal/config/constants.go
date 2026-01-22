@@ -1,9 +1,12 @@
+// internal/config/constants.go
 package config
+
+import "time"
 
 const (
 	Name        = "agbero"
-	Version     = "0.0.1"
-	Description = "Production reverse proxy with Let's Encrypt 2026 support"
+	Version     = "0.0.2"
+	Description = "Production reverse proxy with Let's Encrypt support"
 )
 
 const (
@@ -11,8 +14,18 @@ const (
 	StrategyLeastConn = "leastconn"
 )
 
+// Default Timeouts
 const (
-	DefaultScanInterval = 5
+	DefaultReadTimeout       = 10 * time.Second
+	DefaultWriteTimeout      = 30 * time.Second
+	DefaultIdleTimeout       = 120 * time.Second
+	DefaultReadHeaderTimeout = 5 * time.Second
+)
+
+// Default Limits
+const (
+	DefaultMaxHeaderBytes = 1 << 20 // 1MB
+	DefaultMaxBodySize    = 2 << 20 // 2MB
 )
 
 type TlsMode string

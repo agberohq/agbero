@@ -9,9 +9,9 @@ import (
 func TestHostManager_LoadAndGet(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create two host files
-	h1 := `server_names = ["a.com"]`
-	h2 := `server_names = ["b.com"]`
+	// FIX: server_names -> domains
+	h1 := `domains = ["a.com"]`
+	h2 := `domains = ["b.com"]`
 
 	os.WriteFile(filepath.Join(tmpDir, "h1.hcl"), []byte(h1), 0644)
 	os.WriteFile(filepath.Join(tmpDir, "h2.hcl"), []byte(h2), 0644)

@@ -34,12 +34,10 @@ func newRouteHandler(route *config.Route) *routeHandler {
 		strategy:      strings.ToLower(strings.TrimSpace(route.LBStrategy)),
 	}
 
-	// Default strategy
 	if h.strategy == "" {
 		h.strategy = "roundrobin"
 	}
 
-	// Parse and build backend reverse proxies once.
 	for _, raw := range route.Backends {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
@@ -50,22 +48,30 @@ func newRouteHandler(route *config.Route) *routeHandler {
 			continue
 		}
 
-		u2 := *u // copy to avoid accidental external mutation
-		target := &u2
+		target := u // Pointer copy
 
-		// Start from stdlib reverse proxy; it's a solid baseline and easy to tune later.
 		rp := httputil.NewSingleHostReverseProxy(target)
 
-		// Make sure the outbound Host header matches the upstream unless you want to preserve client Host.
-		// (If you later want host-preserve per route, make it a config flag.)
+		// PERFORMANCE: Use shared transport
+		rp.Transport = SharedTransport
+
+		// Hardening: Explicit FlushInterval (prevents buffering issues)
+		rp.FlushInterval = -1
+
 		origDirector := rp.Director
 		rp.Director = func(req *http.Request) {
 			origDirector(req)
 			req.Host = target.Host
+			// Remove hop-by-hop headers
+			req.Header.Del("Connection")
+			req.Header.Del("Keep-Alive")
+			req.Header.Del("Proxy-Authenticate")
+			req.Header.Del("Proxy-Authorization")
+			req.Header.Del("Te")
+			req.Header.Del("Trailers")
+			req.Header.Del("Transfer-Encoding")
+			req.Header.Del("Upgrade")
 		}
-
-		// Optional: You can set rp.Transport to a shared tuned *http.Transport later.
-		// rp.Transport = yourSharedTransport
 
 		h.backends = append(h.backends, &backendTarget{
 			u:     target,

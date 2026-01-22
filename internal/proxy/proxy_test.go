@@ -1,4 +1,3 @@
-// internal/proxy/proxy_test.go
 package proxy
 
 import (
@@ -43,10 +42,9 @@ func TestProxy_EndToEnd(t *testing.T) {
 	// 2. Setup Host Configuration Directory
 	hostsDir := t.TempDir()
 
-	// Create a host config that routes to our mock backends
-	// FIX: Added '*' to /api* to allow matching /api/data
+	// FIX: server_names -> domains
 	hostHCL := fmt.Sprintf(`
-		server_names = ["example.com", "api.example.com"]
+		domains = ["example.com", "api.example.com"]
 
 		route "/api*" {
 			backends = ["%s"]
@@ -63,13 +61,12 @@ func TestProxy_EndToEnd(t *testing.T) {
 
 	// Create a static web host
 	webDir := t.TempDir()
-	// FIX: Use hello.html instead of index.html for direct access test
-	// http.ServeFile forces a 301 redirect for "index.html" -> "./"
 	createTempFile(t, webDir, "hello.html", "<h1>Hello World</h1>")
 	createTempFile(t, webDir, "index.html", "<h1>Index Page</h1>")
 
+	// FIX: server_names -> domains
 	webHostHCL := fmt.Sprintf(`
-		server_names = ["static.com"]
+		domains = ["static.com"]
 		web {
 			root = "%s"
 		}
@@ -114,7 +111,7 @@ func TestProxy_EndToEnd(t *testing.T) {
 		{
 			name:           "Static Web File Success",
 			hostHeader:     "static.com",
-			path:           "/hello.html", // Accessing non-index file directly
+			path:           "/hello.html",
 			expectedStatus: 200,
 			expectedBody:   "<h1>Hello World</h1>",
 		},
@@ -177,8 +174,9 @@ func TestProxy_LoadBalancing(t *testing.T) {
 	defer b2.Close()
 
 	hostsDir := t.TempDir()
+	// FIX: server_names -> domains
 	hcl := fmt.Sprintf(`
-		server_names = ["lb.com"]
+		domains = ["lb.com"]
 		route "/" {
 			backends = ["%s", "%s"]
 			lb_strategy = "roundrobin"

@@ -1,4 +1,3 @@
-// internal/config/parser_test.go
 package config
 
 import (
@@ -35,8 +34,9 @@ func TestParser_GlobalConfig(t *testing.T) {
 }
 
 func TestParser_HostConfig(t *testing.T) {
+	// FIX: server_names -> domains
 	content := `
-		server_names = ["app.com"]
+		domains = ["app.com"]
 		
 		route "/api" {
 			backends = ["http://localhost:3000"]
