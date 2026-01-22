@@ -1,6 +1,6 @@
 # agbero - Production Reverse Proxy
 
-A minimal, production-grade reverse proxy with Let's Encrypt 2026 support.
+A minimal, production-grade fast L7 reverse-proxy + static server + dynamic LE with Let's Encrypt 2026 support.
 
 ## Features
 - Simple HCL configuration

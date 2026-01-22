@@ -19,8 +19,6 @@ var (
 )
 
 func main() {
-	// Setup logging
-
 	app := &cli.App{
 		Name:    config.Name,
 		Version: config.Version,
@@ -58,7 +56,7 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
-		logger.Fatal("failed to run")
+		logger.Fatal(err)
 		os.Exit(1)
 	}
 }
@@ -66,30 +64,32 @@ func main() {
 func startProxy(c *cli.Context) error {
 	logger.Info("starting agbero proxy")
 
-	var global *config.GlobalConfig
+	// FIX 1: Use a struct instance, not a nil pointer
+	var global config.GlobalConfig
 	p := config.NewParser(c.String("config"))
-	err := p.Unmarshal(&global)
-	if err != nil {
+
+	// FIX 2: Check error immediately
+	if err := p.Unmarshal(&global); err != nil {
 		return err
 	}
+
 	if c.Bool("dev") {
 		logger.Level(lx.LevelDebug)
 		logger.Warn("running in development mode")
+		global.Development = true
 	}
 
-	// Initialize host discovery
 	hm := discovery.NewHost(global.HostsDir)
 	if err := hm.Watch(); err != nil {
 		return err
 	}
+	defer hm.Close() // Good practice to close watcher
 
-	// Create and start proxy server
-	server := proxy.NewServer(proxy.WithHostManager(hm), proxy.WithGlobalConfig(global))
+	server := proxy.NewServer(proxy.WithHostManager(hm), proxy.WithGlobalConfig(&global))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -103,15 +103,15 @@ func startProxy(c *cli.Context) error {
 }
 
 func validateConfig(c *cli.Context) error {
-
-	var global *config.GlobalConfig
+	// FIX 1: Use struct instance
+	var global config.GlobalConfig
 	p := config.NewParser(c.String("config"))
-	err := p.Unmarshal(&global)
-	if err != nil {
+
+	// FIX 2: Check error
+	if err := p.Unmarshal(&global); err != nil {
 		return err
 	}
 
-	// Validate all host configs
 	hm := discovery.NewHost(global.HostsDir)
 	hosts, err := hm.LoadAll()
 	if err != nil {
@@ -123,12 +123,19 @@ func validateConfig(c *cli.Context) error {
 }
 
 func listHosts(c *cli.Context) error {
+	// FIX: Do not use a pointer here directly.
+	// var host *config.GlobalConfig <-- WRONG (nil pointer)
 
-	var host *config.GlobalConfig
+	var host config.GlobalConfig // CORRECT (struct instance)
+
 	p := config.NewParser(c.String("config"))
-	err := p.Unmarshal(&host)
+	err := p.Unmarshal(&host) // Pass address of struct
+	if err != nil {
+		return err
+	}
 
 	hm := discovery.NewHost(host.HostsDir)
+	// ... rest of function
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err
@@ -139,7 +146,7 @@ func listHosts(c *cli.Context) error {
 			"host", name,
 			"domains", c.Domains,
 			"routes", len(c.Routes),
-			"configured host")
+			"configured host").Info("host found") // Fixed logger call structure
 	}
 
 	return nil
