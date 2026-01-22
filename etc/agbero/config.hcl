@@ -1,4 +1,4 @@
-bind = ":80 :443"
+bind = ":443"
 hosts_dir = "./hosts.d"
 le_email = "admin@example.com"
 trusted_proxies = ["127.0.0.1/32"]

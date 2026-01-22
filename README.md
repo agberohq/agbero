@@ -218,6 +218,9 @@ Agbero uses the native service manager of the operating system.
 
 **Linux (Systemd)**:
 ```bash
+# Quick Run
+sudo ./agbero run
+
 # Install and Start
 sudo ./agbero install
 sudo ./agbero start

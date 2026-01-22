@@ -52,7 +52,7 @@ func (p *program) run() {
 		global.Development = true
 	}
 
-	hm := discovery.NewHost(global.HostsDir)
+	hm := discovery.NewHost(global.HostsDir, discovery.WithLogger(logger))
 	if err := hm.Watch(); err != nil {
 		logger.Fields("dir", global.HostsDir, "err", err).Fatal("failed to watch hosts")
 		return

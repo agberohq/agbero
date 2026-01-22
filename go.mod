@@ -7,7 +7,7 @@ require (
 	github.com/caddyserver/certmagic v0.25.1
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/olekukonko/errors v1.2.0
-	github.com/olekukonko/ll v0.1.3
+	github.com/olekukonko/ll v0.1.4-0.20260122041744-2017be7a914c
 	github.com/urfave/cli/v2 v2.27.7
 	go.uber.org/zap v1.27.1
 )
@@ -23,7 +23,7 @@ require (
 	github.com/libdns/libdns v1.1.1 // indirect
 	github.com/mholt/acmez/v3 v3.1.4 // indirect
 	github.com/miekg/dns v1.1.70 // indirect
-	github.com/olekukonko/cat v0.0.0-20250908003013-b0de306c343b // indirect
+	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/urfave/cli/v3 v3.6.2 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
