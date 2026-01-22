@@ -1,8 +1,8 @@
-package proxy
+package agbero
 
 import (
-	"git.imaxinacion.net/aibox/agbero/internal/config"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/olekukonko/ll"
 )
 
@@ -14,7 +14,7 @@ func WithHostManager(hm *discovery.Host) Option {
 	}
 }
 
-func WithGlobalConfig(global *config.GlobalConfig) Option {
+func WithGlobalConfig(global *woos.GlobalConfig) Option {
 	return func(server *Server) {
 		server.global = global
 	}

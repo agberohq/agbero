@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"git.imaxinacion.net/aibox/agbero/internal/config"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
@@ -16,7 +16,7 @@ type Host struct {
 	hostsDir string
 
 	mu    sync.RWMutex
-	hosts map[string]*config.HostConfig
+	hosts map[string]*woos.HostConfig
 
 	watcher *fsnotify.Watcher
 	logger  *ll.Logger
@@ -28,7 +28,7 @@ type Host struct {
 func NewHost(hostsDir string, opts ...Option) *Host {
 	h := &Host{
 		hostsDir: hostsDir,
-		hosts:    make(map[string]*config.HostConfig),
+		hosts:    make(map[string]*woos.HostConfig),
 		changed:  make(chan struct{}, 1),
 	}
 
@@ -37,7 +37,7 @@ func NewHost(hostsDir string, opts ...Option) *Host {
 	}
 
 	if h.logger == nil {
-		h.logger = ll.New(config.Name).Enable()
+		h.logger = ll.New(woos.Name).Enable()
 	}
 
 	return h
@@ -123,7 +123,7 @@ func (hm *Host) handleEvent(event fsnotify.Event) {
 
 // Get finds a host config by matching a configured domain.
 // NOTE: Server should normalize host (strip port) before calling Get.
-func (hm *Host) Get(hostname string) *config.HostConfig {
+func (hm *Host) Get(hostname string) *woos.HostConfig {
 	hostname = strings.ToLower(strings.TrimSpace(hostname))
 	if hostname == "" {
 		return nil
@@ -145,7 +145,7 @@ func (hm *Host) Get(hostname string) *config.HostConfig {
 
 // LoadAll loads all host configs from disk and returns a snapshot map.
 // Safe for callers; does not return the internal map.
-func (hm *Host) LoadAll() (map[string]*config.HostConfig, error) {
+func (hm *Host) LoadAll() (map[string]*woos.HostConfig, error) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
@@ -192,7 +192,7 @@ func (hm *Host) loadAllLocked() error {
 	}
 
 	// Build new map to avoid partially-updated state on error
-	next := make(map[string]*config.HostConfig, len(files))
+	next := make(map[string]*woos.HostConfig, len(files))
 
 	for _, file := range files {
 		if file.IsDir() {
@@ -218,11 +218,11 @@ func (hm *Host) loadAllLocked() error {
 	return nil
 }
 
-func (hm *Host) loadOne(path string) (*config.HostConfig, error) {
-	var hostConfig config.HostConfig
+func (hm *Host) loadOne(path string) (*woos.HostConfig, error) {
+	var hostConfig woos.HostConfig
 
 	// NOTE: your Parser is not generic; use NewParser(path).Unmarshal(&hostConfig)
-	parser := config.NewParser(path)
+	parser := woos.NewParser(path)
 	if err := parser.Unmarshal(&hostConfig); err != nil {
 		return nil, err
 	}
@@ -235,8 +235,8 @@ func (hm *Host) loadOne(path string) (*config.HostConfig, error) {
 	return &hostConfig, nil
 }
 
-func (hm *Host) snapshotLocked() map[string]*config.HostConfig {
-	out := make(map[string]*config.HostConfig, len(hm.hosts))
+func (hm *Host) snapshotLocked() map[string]*woos.HostConfig {
+	out := make(map[string]*woos.HostConfig, len(hm.hosts))
 	for k, v := range hm.hosts {
 		out[k] = v
 	}

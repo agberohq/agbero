@@ -1,5 +1,4 @@
-// internal/proxy/tls.go
-package proxy
+package core
 
 import (
 	"context"
@@ -9,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"git.imaxinacion.net/aibox/agbero/internal/config"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/caddyserver/certmagic"
 	"github.com/olekukonko/errors"
 )
@@ -23,10 +22,10 @@ const (
 	acmeProfileShortLived = "shortlived"
 )
 
-type tlsManager struct {
-	logger      anyLogger
-	hostManager *discovery.Host
-	global      *config.GlobalConfig
+type TlsManager struct {
+	Logger      anyLogger
+	HostManager *discovery.Host
+	Global      *woos.GlobalConfig
 
 	// CertMagic configs (prod + staging)
 	cmMu       sync.Mutex
@@ -37,28 +36,41 @@ type tlsManager struct {
 
 	// cache local certs by "certPath|keyPath"
 	localMu    sync.RWMutex
-	localCache map[string]*tls.Certificate
+	LocalCache map[string]*tls.Certificate
 }
 
-// ensureCertMagic prepares CertMagic configs. It returns an HTTP handler that serves
+// EnsureCertMagic prepares CertMagic configs. It returns an HTTP handler that serves
 // HTTP-01 challenges for both prod and staging issuers.
-func (m *tlsManager) ensureCertMagic(next http.Handler) (http.Handler, error) {
+//
+// IMPORTANT (production): CertMagic storage must be persistent (especially in containers).
+// We honor Global config TLSStorageDir and wire it into certmagic.
+func (m *TlsManager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 	m.cmMu.Lock()
 	defer m.cmMu.Unlock()
 
-	if m.global == nil {
+	if m.Global == nil {
 		return next, errors.New("global config is required")
 	}
 
-	email := strings.TrimSpace(m.global.LEEmail)
+	email := strings.TrimSpace(m.Global.LEEmail)
 	if email == "" {
 		return next, errors.New("le_email is empty")
 	}
 
+	// Persistent storage directory (config-driven; defaults applied by config.ApplyDefaults)
+	storageDir := strings.TrimSpace(m.Global.TLSStorageDir)
+	if storageDir == "" {
+		return next, errors.New("tls_storage_dir is empty")
+	}
+	storageDir = filepath.Clean(storageDir)
+
 	decision := func(ctx context.Context, name string) error {
 		_ = ctx
-		name = normalizeSubject(name)
-		if m.hostManager != nil && m.hostManager.Get(name) != nil {
+		name = NormalizeSubject(name)
+
+		// Gate on-demand issuance strictly to configured domains.
+		// hostManager.Get already matches configured domains.
+		if m.HostManager != nil && m.HostManager.Get(name) != nil {
 			return nil
 		}
 		return errors.Newf("on-demand denied for %q", name)
@@ -68,6 +80,7 @@ func (m *tlsManager) ensureCertMagic(next http.Handler) (http.Handler, error) {
 	if m.cmProd == nil {
 		cmProd := certmagic.NewDefault()
 		cmProd.OnDemand = &certmagic.OnDemandConfig{DecisionFunc: decision}
+		cmProd.Storage = &certmagic.FileStorage{Path: storageDir}
 
 		acme := certmagic.ACMEIssuer{
 			Email:  email,
@@ -88,6 +101,7 @@ func (m *tlsManager) ensureCertMagic(next http.Handler) (http.Handler, error) {
 	if m.cmStaging == nil {
 		cmStaging := certmagic.NewDefault()
 		cmStaging.OnDemand = &certmagic.OnDemandConfig{DecisionFunc: decision}
+		cmStaging.Storage = &certmagic.FileStorage{Path: storageDir}
 
 		acme := certmagic.ACMEIssuer{
 			Email:  email,
@@ -116,9 +130,9 @@ func (m *tlsManager) ensureCertMagic(next http.Handler) (http.Handler, error) {
 	return h, nil
 }
 
-func (m *tlsManager) cmForHost(hcfg *config.HostConfig) *certmagic.Config {
+func (m *TlsManager) CmForHost(hcfg *woos.HostConfig) *certmagic.Config {
 	// Global dev mode forces staging
-	if m.global != nil && m.global.Development {
+	if m.Global != nil && m.Global.Development {
 		return m.cmStaging
 	}
 
@@ -131,7 +145,7 @@ func (m *tlsManager) cmForHost(hcfg *config.HostConfig) *certmagic.Config {
 	return m.cmProd
 }
 
-func (m *tlsManager) getLocalCertificate(local config.LocalCert, host string) (*tls.Certificate, error) {
+func (m *TlsManager) GetLocalCertificate(local woos.LocalCert, host string) (*tls.Certificate, error) {
 	certFile := strings.TrimSpace(local.CertFile)
 	keyFile := strings.TrimSpace(local.KeyFile)
 
@@ -144,7 +158,7 @@ func (m *tlsManager) getLocalCertificate(local config.LocalCert, host string) (*
 	cacheKey := certFile + "|" + keyFile
 
 	m.localMu.RLock()
-	if c := m.localCache[cacheKey]; c != nil {
+	if c := m.LocalCache[cacheKey]; c != nil {
 		m.localMu.RUnlock()
 		return c, nil
 	}
@@ -156,7 +170,7 @@ func (m *tlsManager) getLocalCertificate(local config.LocalCert, host string) (*
 	}
 
 	m.localMu.Lock()
-	m.localCache[cacheKey] = &cert
+	m.LocalCache[cacheKey] = &cert
 	m.localMu.Unlock()
 
 	return &cert, nil

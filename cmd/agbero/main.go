@@ -6,23 +6,23 @@ import (
 	"os/signal"
 	"syscall"
 
-	"git.imaxinacion.net/aibox/agbero/internal/config"
+	"git.imaxinacion.net/aibox/agbero"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
-	"git.imaxinacion.net/aibox/agbero/internal/proxy"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/ll/lx"
 	"github.com/urfave/cli/v2"
 )
 
 var (
-	logger = ll.New(config.Name).Enable()
+	logger = ll.New(woos.Name).Enable()
 )
 
 func main() {
 	app := &cli.App{
-		Name:    config.Name,
-		Version: config.Version,
-		Usage:   config.Description,
+		Name:    woos.Name,
+		Version: woos.Version,
+		Usage:   woos.Description,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "config",
@@ -65,8 +65,8 @@ func startProxy(c *cli.Context) error {
 	logger.Info("starting agbero proxy")
 
 	// FIX 1: Use a struct instance, not a nil pointer
-	var global config.GlobalConfig
-	p := config.NewParser(c.String("config"))
+	var global woos.GlobalConfig
+	p := woos.NewParser(c.String("config"))
 
 	// FIX 2: Check error immediately
 	if err := p.Unmarshal(&global); err != nil {
@@ -85,7 +85,7 @@ func startProxy(c *cli.Context) error {
 	}
 	defer hm.Close() // Good practice to close watcher
 
-	server := proxy.NewServer(proxy.WithHostManager(hm), proxy.WithGlobalConfig(&global))
+	server := agbero.NewServer(agbero.WithHostManager(hm), agbero.WithGlobalConfig(&global))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -104,8 +104,8 @@ func startProxy(c *cli.Context) error {
 
 func validateConfig(c *cli.Context) error {
 	// FIX 1: Use struct instance
-	var global config.GlobalConfig
-	p := config.NewParser(c.String("config"))
+	var global woos.GlobalConfig
+	p := woos.NewParser(c.String("config"))
 
 	// FIX 2: Check error
 	if err := p.Unmarshal(&global); err != nil {
@@ -126,9 +126,9 @@ func listHosts(c *cli.Context) error {
 	// FIX: Do not use a pointer here directly.
 	// var host *config.GlobalConfig <-- WRONG (nil pointer)
 
-	var host config.GlobalConfig // CORRECT (struct instance)
+	var host woos.GlobalConfig // CORRECT (struct instance)
 
-	p := config.NewParser(c.String("config"))
+	p := woos.NewParser(c.String("config"))
 	err := p.Unmarshal(&host) // Pass address of struct
 	if err != nil {
 		return err

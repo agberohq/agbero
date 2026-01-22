@@ -1,4 +1,4 @@
-package proxy
+package core
 
 import (
 	"crypto/rand"
@@ -8,13 +8,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/config"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
 
 var fallbackRand uint64
 
-func routeKey(route *config.Route) string {
-	// Stable key: strategy + path + backends + strip prefixes
+func RouteKey(route *woos.Route) string {
+	// Stable key: strategy + path + Backends + strip prefixes
 	// Note: if you later add weights/health checks/etc, include them here.
 	var sb strings.Builder
 	sb.Grow(128)
@@ -43,7 +43,7 @@ func routeKey(route *config.Route) string {
 	return sb.String()
 }
 
-func pathMatch(requestPath, pattern string) bool {
+func PathMatch(requestPath, pattern string) bool {
 	if pattern == "*" {
 		return true
 	}
@@ -56,12 +56,12 @@ func pathMatch(requestPath, pattern string) bool {
 	return requestPath == pattern
 }
 
-// parseBind supports formats like:
+// ParseBind supports formats like:
 //
 //	":80 :443"
 //	"0.0.0.0:80 0.0.0.0:443"
 //	"[::]:80 [::]:443"
-func parseBind(bind string) []string {
+func ParseBind(bind string) []string {
 	bind = strings.TrimSpace(bind)
 	if bind == "" {
 		return nil
@@ -79,14 +79,14 @@ func parseBind(bind string) []string {
 	return out
 }
 
-func normalizeHost(hostport string) string {
+func NormalizeHost(hostport string) string {
 	if h, _, err := net.SplitHostPort(hostport); err == nil {
 		return strings.ToLower(h)
 	}
 	return strings.ToLower(hostport)
 }
 
-func isHTTPSBind(addr string) bool {
+func IsHTTPSBind(addr string) bool {
 	_, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return false
@@ -94,18 +94,18 @@ func isHTTPSBind(addr string) bool {
 	return port == "443"
 }
 
-func serverKey(addr string, tls bool) string {
+func ServerKey(addr string, tls bool) string {
 	if tls {
 		return "https@" + addr
 	}
 	return "http@" + addr
 }
 
-func isServerKeyTLS(key string) bool {
+func IsServerKeyTLS(key string) bool {
 	return strings.HasPrefix(key, "https@")
 }
 
-func normalizeSubject(s string) string {
+func NormalizeSubject(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.TrimSuffix(s, ".")
 	s = strings.ToLower(s)
@@ -122,7 +122,7 @@ func normalizeSubject(s string) string {
 
 // Optional helper for later (IP cert support):
 func subjectIsIP(subject string) bool {
-	ip := net.ParseIP(normalizeSubject(subject))
+	ip := net.ParseIP(NormalizeSubject(subject))
 	return ip != nil
 }
 

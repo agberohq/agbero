@@ -1,5 +1,4 @@
-// internal/config/config.go
-package config
+package woos
 
 import (
 	"net"
@@ -18,6 +17,10 @@ type GlobalConfig struct {
 	TrustedProxies []string        `hcl:"trusted_proxies,optional"`
 	Timeouts       TimeoutConfig   `hcl:"timeouts,block"`
 	RateLimits     RateLimitConfig `hcl:"rate_limits,block"`
+
+	// Hardening / Operability
+	MaxHeaderBytes int    `hcl:"max_header_bytes,optional"` // default: 1 MiB
+	TLSStorageDir  string `hcl:"tls_storage_dir,optional"`  // default: "/var/lib/agbero/certmagic"
 }
 
 type TimeoutConfig struct {

@@ -1,5 +1,5 @@
 // internal/proxy/server.go
-package proxy
+package agbero
 
 import (
 	"context"
@@ -9,22 +9,24 @@ import (
 	"sync"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/config"
+	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 )
 
 type Server struct {
 	hostManager *discovery.Host
-	global      *config.GlobalConfig
+	global      *woos.GlobalConfig
 
 	mu      sync.RWMutex
 	servers map[string]*http.Server
 
 	logger       *ll.Logger
-	ipMiddleware *IPMiddleware
-	rateLimiter  *RateLimiter
+	ipMiddleware *middleware.IPMiddleware
+	rateLimiter  *middleware.RateLimiter
 }
 
 func NewServer(opts ...Option) *Server {
@@ -45,30 +47,29 @@ func (s *Server) Start(ctx context.Context) error {
 		return errors.New("global config is required")
 	}
 	if s.logger == nil {
-		s.logger = ll.New(config.Name).Enable()
+		s.logger = ll.New(woos.Name).Enable()
 	}
 
-	// Apply defaults (timeouts, rate limits, etc.) if not set in config.
-	// This is where you guarantee "all values come from config"
-	// while still having safe defaults when missing.
-	config.ApplyDefaults(s.global)
+	// Apply defaults (timeouts, rate limits, storage dir, etc.) if missing.
+	// This guarantees "all values come from config" while still being safe.
+	woos.ApplyDefaults(s.global)
 
 	// Middleware: Real client IP (trusted proxies)
-	s.ipMiddleware = NewIPMiddleware(s.global.TrustedProxies)
+	s.ipMiddleware = middleware.NewIPMiddleware(s.global.TrustedProxies)
 
-	// Middleware: Rate limiting (config driven, bounded, TTL)
+	// Middleware: Rate limiting (config-driven, bounded, TTL eviction)
 	s.rateLimiter = s.buildRateLimiterFromConfig()
 
-	addrs := parseBind(s.global.Bind)
+	addrs := core.ParseBind(s.global.Bind)
 	if len(addrs) == 0 {
 		return errors.Newf("no bind addresses configured (bind=%q)", s.global.Bind)
 	}
 
-	// Timeouts (strings) -> time.Duration (with defaults already applied)
-	readTimeout := parseDuration(s.global.Timeouts.Read, config.DefaultReadTimeout)
-	writeTimeout := parseDuration(s.global.Timeouts.Write, config.DefaultWriteTimeout)
-	idleTimeout := parseDuration(s.global.Timeouts.Idle, config.DefaultIdleTimeout)
-	readHeaderTimeout := parseDuration(s.global.Timeouts.ReadHeader, config.DefaultReadHeaderTimeout)
+	// Timeouts (strings) -> time.Duration (warn on typos, then fall back)
+	readTimeout := s.parseDurationWarn("timeouts.read", s.global.Timeouts.Read, woos.DefaultReadTimeout)
+	writeTimeout := s.parseDurationWarn("timeouts.write", s.global.Timeouts.Write, woos.DefaultWriteTimeout)
+	idleTimeout := s.parseDurationWarn("timeouts.idle", s.global.Timeouts.Idle, woos.DefaultIdleTimeout)
+	readHeaderTimeout := s.parseDurationWarn("timeouts.read_header", s.global.Timeouts.ReadHeader, woos.DefaultReadHeaderTimeout)
 
 	baseHandler := http.HandlerFunc(s.handleRequest)
 
@@ -80,9 +81,15 @@ func (s *Server) Start(ctx context.Context) error {
 		tlsCfg = nil
 	}
 
+	// MaxHeaderBytes (configurable)
+	maxHeaderBytes := woos.DefaultMaxHeaderBytes
+	if s.global.MaxHeaderBytes > 0 {
+		maxHeaderBytes = s.global.MaxHeaderBytes
+	}
+
 	// Create servers from bind config.
 	for _, addr := range addrs {
-		isTLS := isHTTPSBind(addr)
+		isTLS := core.IsHTTPSBind(addr)
 
 		// Chain: IP -> RateLimit -> (HTTP-01 wrapper if HTTP) -> Router
 		var handler http.Handler
@@ -99,15 +106,14 @@ func (s *Server) Start(ctx context.Context) error {
 			WriteTimeout:      writeTimeout,
 			IdleTimeout:       idleTimeout,
 			ReadHeaderTimeout: readHeaderTimeout,
-			MaxHeaderBytes:    config.DefaultMaxHeaderBytes,
+			MaxHeaderBytes:    maxHeaderBytes,
 		}
 
 		if isTLS && tlsCfg != nil {
 			srv.TLSConfig = tlsCfg
 		}
 
-		key := serverKey(addr, isTLS)
-
+		key := core.ServerKey(addr, isTLS)
 		s.mu.Lock()
 		s.servers[key] = srv
 		s.mu.Unlock()
@@ -125,7 +131,7 @@ func (s *Server) Start(ctx context.Context) error {
 			s.logger.Fields("bind", srv.Addr, "key", key).Info("listener starting")
 
 			var err error
-			if isServerKeyTLS(key) {
+			if core.IsServerKeyTLS(key) {
 				err = srv.ListenAndServeTLS("", "")
 			} else {
 				err = srv.ListenAndServe()
@@ -180,31 +186,32 @@ func (s *Server) shutdown() error {
 	return firstErr
 }
 
-func (s *Server) buildRateLimiterFromConfig() *RateLimiter {
+func (s *Server) buildRateLimiterFromConfig() *middleware.RateLimiter {
 	rlc := s.global.RateLimits
 
-	ttl := parseDuration(rlc.TTL, 30*time.Minute)
+	ttl := s.parseDurationWarn("rate_limits.ttl", rlc.TTL, 30*time.Minute)
 	maxEntries := rlc.MaxEntries
 	if maxEntries <= 0 {
 		maxEntries = 100_000
 	}
 
-	gr, gw, gb, gok := config.ParseRatePolicy(rlc.Global)
-	ar, aw, ab, aok := config.ParseRatePolicy(rlc.Auth)
+	gr, gw, gb, gok := woos.ParseRatePolicy(rlc.Global)
+	ar, aw, ab, aok := woos.ParseRatePolicy(rlc.Auth)
 
-	globalPolicy := RatePolicy{Requests: gr, Window: gw, Burst: gb}
-	authPolicy := RatePolicy{Requests: ar, Window: aw, Burst: ab}
+	globalPolicy := middleware.RatePolicy{Requests: gr, Window: gw, Burst: gb}
+	authPolicy := middleware.RatePolicy{Requests: ar, Window: aw, Burst: ab}
 
 	authPrefixes := rlc.AuthPrefixes
 	if len(authPrefixes) == 0 {
 		authPrefixes = []string{"/login", "/otp", "/auth"}
 	}
 
-	policy := func(r *http.Request) (bucket string, pol RatePolicy, ok bool) {
+	policy := func(r *http.Request) (bucket string, pol middleware.RatePolicy, ok bool) {
 		p := r.URL.Path
 
+		// Always allow ACME challenges
 		if strings.HasPrefix(p, "/.well-known/acme-challenge/") {
-			return "acme", RatePolicy{}, false
+			return "acme", middleware.RatePolicy{}, false
 		}
 
 		for _, pref := range authPrefixes {
@@ -212,23 +219,22 @@ func (s *Server) buildRateLimiterFromConfig() *RateLimiter {
 				if aok {
 					return "auth", authPolicy, true
 				}
-				return "auth_disabled", RatePolicy{}, false
+				return "auth_disabled", middleware.RatePolicy{}, false
 			}
 		}
 
 		if gok {
 			return "global", globalPolicy, true
 		}
-		return "global_disabled", RatePolicy{}, false
+		return "global_disabled", middleware.RatePolicy{}, false
 	}
 
-	return NewRateLimiter(ttl, maxEntries, policy)
+	return middleware.NewRateLimiter(ttl, maxEntries, policy)
 }
 
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-
-	host := normalizeHost(r.Host)
+	host := core.NormalizeHost(r.Host)
 
 	hcfg := s.hostManager.Get(host)
 	if hcfg == nil {
@@ -237,7 +243,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Body limit per host
-	maxBody := int64(config.DefaultMaxBodySize)
+	maxBody := int64(woos.DefaultMaxBodySize)
 	if hcfg.Limits != nil && hcfg.Limits.MaxBodySize > 0 {
 		maxBody = hcfg.Limits.MaxBodySize
 	}
@@ -250,8 +256,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Routes first
 	for i := range hcfg.Routes {
-		route := hcfg.Routes[i]
-		if pathMatch(r.URL.Path, route.Path) {
+		route := hcfg.Routes[i] // copy per request
+		if core.PathMatch(r.URL.Path, route.Path) {
 			s.handleRoute(w, r, &route)
 			s.logRequest(host, r, start)
 			return
@@ -273,13 +279,13 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time) {
 		"host", host,
 		"method", r.Method,
 		"path", r.URL.Path,
-		"remote", ClientIP(r),
+		"remote", middleware.ClientIP(r),
 		"ua", r.UserAgent(),
 		"duration", time.Since(start),
 	).Info("request")
 }
 
-func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *config.Route) {
+func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *woos.Route) {
 	originalPath := r.URL.Path
 	originalRawPath := r.URL.RawPath
 
@@ -308,18 +314,18 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *conf
 	r.URL.RawPath = originalRawPath
 }
 
-func (s *Server) getOrBuildRouteHandler(route *config.Route) *routeHandler {
-	key := routeKey(route)
+func (s *Server) getOrBuildRouteHandler(route *woos.Route) *core.RouteHandler {
+	key := core.RouteKey(route)
 
-	if v, ok := routeCache.Load(key); ok {
-		return v.(*routeHandler)
+	if v, ok := woos.RouteCache.Load(key); ok {
+		return v.(*core.RouteHandler)
 	}
 
-	h := newRouteHandler(route)
+	h := core.NewRouteHandler(route)
 
 	// Avoid double-build races
-	if v, loaded := routeCache.LoadOrStore(key, h); loaded {
-		return v.(*routeHandler)
+	if v, loaded := woos.RouteCache.LoadOrStore(key, h); loaded {
+		return v.(*core.RouteHandler)
 	}
 	return h
 }
@@ -335,15 +341,15 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 		return nil, nil, errors.New("host manager is required")
 	}
 
-	m := &tlsManager{
-		logger:      NewTLSLogger(s.logger),
-		hostManager: s.hostManager,
-		global:      s.global,
-		localCache:  make(map[string]*tls.Certificate),
+	m := &core.TlsManager{
+		Logger:      core.NewTLSLogger(s.logger),
+		HostManager: s.hostManager,
+		Global:      s.global,
+		LocalCache:  make(map[string]*tls.Certificate),
 	}
 
 	// Configure certmagic (prod+staging) and get HTTP-01 handler wrapper
-	httpHandler, err := m.ensureCertMagic(next)
+	httpHandler, err := m.EnsureCertMagic(next)
 	if err != nil {
 		// LE not enabled globally; still allow local cert mode to work.
 		s.logger.Fields("err", err.Error()).Warn("certmagic not enabled; using HTTP handler without ACME")
@@ -358,7 +364,7 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 				return nil, errors.New("missing SNI")
 			}
 
-			sni := normalizeSubject(chi.ServerName)
+			sni := core.NormalizeSubject(chi.ServerName)
 
 			hcfg := s.hostManager.Get(sni)
 			if hcfg == nil {
@@ -366,23 +372,23 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 			}
 
 			// Default TLS behavior if tls block missing.
-			mode := config.ModeLetsEncrypt
+			mode := woos.ModeLetsEncrypt
 			if hcfg.TLS != nil && hcfg.TLS.Mode != "" {
 				mode = hcfg.TLS.Mode
 			}
 
 			switch mode {
-			case config.ModeLocalNone:
+			case woos.ModeLocalNone:
 				return nil, errors.Newf("tls disabled for host %q", sni)
 
-			case config.ModeLocalCert:
+			case woos.ModeLocalCert:
 				if hcfg.TLS == nil {
 					return nil, errors.Newf("tls=local requires tls block for host %q", sni)
 				}
-				return m.getLocalCertificate(hcfg.TLS.Local, sni)
+				return m.GetLocalCertificate(hcfg.TLS.Local, sni)
 
-			case config.ModeLetsEncrypt:
-				cm := m.cmForHost(hcfg)
+			case woos.ModeLetsEncrypt:
+				cm := m.CmForHost(hcfg)
 				if cm == nil {
 					return nil, errors.Newf("letsencrypt not enabled globally (host %q)", sni)
 				}
@@ -399,4 +405,19 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 	}
 
 	return tlsCfg, httpHandler, nil
+}
+
+func (s *Server) parseDurationWarn(field, value string, def time.Duration) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return def
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil || d <= 0 {
+		if s.logger != nil {
+			s.logger.Fields("field", field, "value", value, "default", def.String()).Warn("invalid duration; falling back to default")
+		}
+		return def
+	}
+	return d
 }

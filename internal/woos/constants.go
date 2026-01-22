@@ -1,5 +1,5 @@
 // internal/config/constants.go
-package config
+package woos
 
 import "time"
 

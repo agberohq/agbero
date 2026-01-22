@@ -1,35 +1,30 @@
-package proxy
+package core
 
 import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
-	"sync"
 	"sync/atomic"
 
-	"git.imaxinacion.net/aibox/agbero/internal/config"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
 
-// routeCache stores compiled handlers per unique route definition.
-// Keyed by a stable string derived from route settings (path/strategy/backends/etc).
-var routeCache sync.Map // map[string]*routeHandler
-
-type routeHandler struct {
+type RouteHandler struct {
 	stripPrefixes []string
 	strategy      string
-	backends      []*backendTarget
+	Backends      []*backendTarget
 	rrCounter     uint64
 }
 
 type backendTarget struct {
-	u        *url.URL
+	U        *url.URL
 	proxy    *httputil.ReverseProxy
-	inflight atomic.Int64
+	Inflight atomic.Int64
 }
 
-func newRouteHandler(route *config.Route) *routeHandler {
-	h := &routeHandler{
+func NewRouteHandler(route *woos.Route) *RouteHandler {
+	h := &RouteHandler{
 		stripPrefixes: append([]string(nil), route.StripPrefixes...),
 		strategy:      strings.ToLower(strings.TrimSpace(route.LBStrategy)),
 	}
@@ -53,7 +48,7 @@ func newRouteHandler(route *config.Route) *routeHandler {
 		rp := httputil.NewSingleHostReverseProxy(target)
 
 		// PERFORMANCE: Use shared transport
-		rp.Transport = config.SharedTransport
+		rp.Transport = woos.SharedTransport
 
 		// Hardening: Explicit FlushInterval (prevents buffering issues)
 		rp.FlushInterval = -1
@@ -73,8 +68,8 @@ func newRouteHandler(route *config.Route) *routeHandler {
 			req.Header.Del("Upgrade")
 		}
 
-		h.backends = append(h.backends, &backendTarget{
-			u:     target,
+		h.Backends = append(h.Backends, &backendTarget{
+			U:     target,
 			proxy: rp,
 		})
 	}
@@ -82,58 +77,58 @@ func newRouteHandler(route *config.Route) *routeHandler {
 	return h
 }
 
-func (h *routeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if len(h.backends) == 0 {
-		http.Error(w, "No backends configured", http.StatusBadGateway)
+func (h *RouteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if len(h.Backends) == 0 {
+		http.Error(w, "No Backends configured", http.StatusBadGateway)
 		return
 	}
 
-	b := h.pickBackend()
+	b := h.PickBackend()
 	if b == nil {
-		http.Error(w, "No healthy backends", http.StatusBadGateway)
+		http.Error(w, "No healthy Backends", http.StatusBadGateway)
 		return
 	}
 
-	b.inflight.Add(1)
-	defer b.inflight.Add(-1)
+	b.Inflight.Add(1)
+	defer b.Inflight.Add(-1)
 
 	b.proxy.ServeHTTP(w, r)
 }
 
-func (h *routeHandler) pickBackend() *backendTarget {
+func (h *RouteHandler) PickBackend() *backendTarget {
 	switch h.strategy {
-	case config.StrategyLeastConn, "least_conn":
+	case woos.StrategyLeastConn, "least_conn":
 		return h.pickLeastConn()
-	case config.StrategyRandom:
+	case woos.StrategyRandom:
 		return h.pickRandom()
 	default: // "roundrobin"
 		return h.pickRoundRobin()
 	}
 }
 
-func (h *routeHandler) pickRoundRobin() *backendTarget {
-	n := uint64(len(h.backends))
+func (h *RouteHandler) pickRoundRobin() *backendTarget {
+	n := uint64(len(h.Backends))
 	i := atomic.AddUint64(&h.rrCounter, 1)
-	return h.backends[i%n]
+	return h.Backends[i%n]
 }
 
-func (h *routeHandler) pickRandom() *backendTarget {
-	n := len(h.backends)
+func (h *RouteHandler) pickRandom() *backendTarget {
+	n := len(h.Backends)
 	if n == 1 {
-		return h.backends[0]
+		return h.Backends[0]
 	}
 	i := int(randUint64() % uint64(n))
-	return h.backends[i]
+	return h.Backends[i]
 }
 
-func (h *routeHandler) pickLeastConn() *backendTarget {
+func (h *RouteHandler) pickLeastConn() *backendTarget {
 	var (
 		best *backendTarget
 		min  int64
 	)
 
-	for i, b := range h.backends {
-		c := b.inflight.Load()
+	for i, b := range h.Backends {
+		c := b.Inflight.Load()
 		if i == 0 || c < min {
 			min = c
 			best = b

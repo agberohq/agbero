@@ -1,4 +1,4 @@
-package proxy
+package core
 
 import "github.com/olekukonko/ll"
 

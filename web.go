@@ -1,5 +1,4 @@
-// internal/proxy/web.go
-package proxy
+package agbero
 
 import (
 	"mime"
@@ -8,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"git.imaxinacion.net/aibox/agbero/internal/config"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
 
-func (s *Server) handleWeb(w http.ResponseWriter, r *http.Request, web *config.Web) {
+func (s *Server) handleWeb(w http.ResponseWriter, r *http.Request, web *woos.Web) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return

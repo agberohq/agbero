@@ -1,4 +1,4 @@
-package proxy
+package agbero
 
 import (
 	"fmt"
@@ -10,12 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	"git.imaxinacion.net/aibox/agbero/internal/config"
+	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/olekukonko/ll"
 )
 
-// Helper to create a temp file
 func createTempFile(t *testing.T, dir, name, content string) string {
 	path := filepath.Join(dir, name)
 	err := os.WriteFile(path, []byte(content), 0644)
@@ -26,7 +26,6 @@ func createTempFile(t *testing.T, dir, name, content string) string {
 }
 
 func TestProxy_EndToEnd(t *testing.T) {
-	// 1. Setup Mock Backends
 	backend1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("response from backend 1"))
@@ -39,10 +38,8 @@ func TestProxy_EndToEnd(t *testing.T) {
 	}))
 	defer backend2.Close()
 
-	// 2. Setup Host Configuration Directory
 	hostsDir := t.TempDir()
 
-	// FIX: server_names -> domains
 	hostHCL := fmt.Sprintf(`
 		domains = ["example.com", "api.example.com"]
 
@@ -59,31 +56,22 @@ func TestProxy_EndToEnd(t *testing.T) {
 
 	createTempFile(t, hostsDir, "example.hcl", hostHCL)
 
-	// Create a static web host
 	webDir := t.TempDir()
 	createTempFile(t, webDir, "hello.html", "<h1>Hello World</h1>")
 	createTempFile(t, webDir, "index.html", "<h1>Index Page</h1>")
 
-	// FIX: server_names -> domains
 	webHostHCL := fmt.Sprintf(`
 		domains = ["static.com"]
-		web {
-			root = "%s"
-		}
+		web { root = "%s" }
 	`, webDir)
 	createTempFile(t, hostsDir, "static.hcl", webHostHCL)
 
-	// 3. Initialize Server Dependencies
 	hm := discovery.NewHost(hostsDir)
-	_, err := hm.LoadAll()
-	if err != nil {
+	if _, err := hm.LoadAll(); err != nil {
 		t.Fatalf("failed to load hosts: %v", err)
 	}
 
-	globalCfg := &config.GlobalConfig{
-		Bind: ":0",
-	}
-
+	globalCfg := &woos.GlobalConfig{Bind: ":0"}
 	logger := ll.New("test")
 
 	srv := NewServer(
@@ -92,8 +80,6 @@ func TestProxy_EndToEnd(t *testing.T) {
 		WithLogger(logger),
 	)
 
-	// 4. Test Cases
-
 	tests := []struct {
 		name           string
 		hostHeader     string
@@ -101,41 +87,11 @@ func TestProxy_EndToEnd(t *testing.T) {
 		expectedStatus int
 		expectedBody   string
 	}{
-		{
-			name:           "Route Proxy Success",
-			hostHeader:     "example.com",
-			path:           "/api/data",
-			expectedStatus: 200,
-			expectedBody:   "response from backend 1",
-		},
-		{
-			name:           "Static Web File Success",
-			hostHeader:     "static.com",
-			path:           "/hello.html",
-			expectedStatus: 200,
-			expectedBody:   "<h1>Hello World</h1>",
-		},
-		{
-			name:           "Static Web Index Default",
-			hostHeader:     "static.com",
-			path:           "/",
-			expectedStatus: 200,
-			expectedBody:   "<h1>Index Page</h1>",
-		},
-		{
-			name:           "Host Not Found",
-			hostHeader:     "unknown.com",
-			path:           "/",
-			expectedStatus: 404,
-			expectedBody:   "Host not found",
-		},
-		{
-			name:           "Path Not Found on Known Host",
-			hostHeader:     "example.com",
-			path:           "/missing",
-			expectedStatus: 404,
-			expectedBody:   "Not found",
-		},
+		{"Route Proxy Success", "example.com", "/api/data", 200, "response from backend 1"},
+		{"Static Web File Success", "static.com", "/hello.html", 200, "<h1>Hello World</h1>"},
+		{"Static Web Index Default", "static.com", "/", 200, "<h1>Index Page</h1>"},
+		{"Host Not Found", "unknown.com", "/", 404, "Host not found"},
+		{"Path Not Found on Known Host", "example.com", "/missing", 404, "Not found"},
 	}
 
 	for _, tc := range tests {
@@ -160,7 +116,7 @@ func TestProxy_EndToEnd(t *testing.T) {
 	}
 }
 
-func TestProxy_LoadBalancing(t *testing.T) {
+func TestProxy_LoadBalancing_RoundRobin(t *testing.T) {
 	counts := make(map[string]int)
 
 	b1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -174,7 +130,6 @@ func TestProxy_LoadBalancing(t *testing.T) {
 	defer b2.Close()
 
 	hostsDir := t.TempDir()
-	// FIX: server_names -> domains
 	hcl := fmt.Sprintf(`
 		domains = ["lb.com"]
 		route "/" {
@@ -185,17 +140,19 @@ func TestProxy_LoadBalancing(t *testing.T) {
 	createTempFile(t, hostsDir, "lb.hcl", hcl)
 
 	hm := discovery.NewHost(hostsDir)
-	hm.LoadAll()
+	if _, err := hm.LoadAll(); err != nil {
+		t.Fatalf("LoadAll failed: %v", err)
+	}
 
 	srv := NewServer(
 		WithHostManager(hm),
-		WithGlobalConfig(&config.GlobalConfig{Bind: ":80"}),
+		WithGlobalConfig(&woos.GlobalConfig{Bind: ":80"}),
 		WithLogger(ll.New("test")),
 	)
 
-	// Make 10 requests, expect distribution
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 20; i++ {
 		req := httptest.NewRequest("GET", "http://lb.com/", nil)
+		req.Host = "lb.com"
 		w := httptest.NewRecorder()
 		srv.handleRequest(w, req)
 
@@ -204,6 +161,67 @@ func TestProxy_LoadBalancing(t *testing.T) {
 	}
 
 	if counts["B1"] == 0 || counts["B2"] == 0 {
-		t.Errorf("Load balancing failed, distribution: %v", counts)
+		t.Fatalf("round robin failed: %v", counts)
+	}
+}
+
+func TestRouteHandler_LeastConnPrefersLowerInflight(t *testing.T) {
+	// Build a handler with 2 backends; then simulate inflight on backend 0.
+	r := &woos.Route{
+		Path:       "/",
+		LBStrategy: "leastconn",
+		Backends:   []string{"http://a:1", "http://b:2"},
+	}
+
+	h := core.NewRouteHandler(r)
+	if len(h.Backends) != 2 {
+		t.Fatalf("expected 2 backends, got %d", len(h.Backends))
+	}
+
+	// Make backend[0] "busy"
+	h.Backends[0].Inflight.Add(10)
+	h.Backends[1].Inflight.Add(1)
+
+	b := h.PickBackend()
+	if b != h.Backends[1] {
+		t.Fatalf("expected backend[1] (lower inflight) selected")
+	}
+}
+
+func TestServer_RouteCache_ReusesHandler(t *testing.T) {
+	r := &woos.Route{
+		Path:          "/api*",
+		LBStrategy:    "roundrobin",
+		Backends:      []string{"http://a:1"},
+		StripPrefixes: []string{"/api"},
+	}
+
+	s := &Server{}
+	h1 := s.getOrBuildRouteHandler(r)
+	h2 := s.getOrBuildRouteHandler(r)
+
+	if h1 != h2 {
+		t.Fatalf("expected cached handler reuse")
+	}
+}
+
+func TestServer_StripPrefix_RestoresPath(t *testing.T) {
+	// Make a minimal server that calls handleRoute and ensures path is restored.
+	r := &woos.Route{
+		Path:          "/api*",
+		LBStrategy:    "roundrobin",
+		Backends:      []string{"http://a:1"}, // invalid URL host will be skipped; handler will have 0 backends
+		StripPrefixes: []string{"/api"},
+	}
+
+	s := &Server{}
+	req := httptest.NewRequest("GET", "http://x/api/hello", nil)
+	rr := httptest.NewRecorder()
+
+	origPath := req.URL.Path
+	s.handleRoute(rr, req, r)
+
+	if req.URL.Path != origPath {
+		t.Fatalf("expected path restored to %q, got %q", origPath, req.URL.Path)
 	}
 }
