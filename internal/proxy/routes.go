@@ -53,7 +53,7 @@ func newRouteHandler(route *config.Route) *routeHandler {
 		rp := httputil.NewSingleHostReverseProxy(target)
 
 		// PERFORMANCE: Use shared transport
-		rp.Transport = SharedTransport
+		rp.Transport = config.SharedTransport
 
 		// Hardening: Explicit FlushInterval (prevents buffering issues)
 		rp.FlushInterval = -1

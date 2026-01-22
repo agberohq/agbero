@@ -1,3 +1,4 @@
+// internal/proxy/tls.go
 package proxy
 
 import (
@@ -26,74 +27,108 @@ type tlsManager struct {
 	logger      anyLogger
 	hostManager *discovery.Host
 	global      *config.GlobalConfig
-	cmMu        sync.Mutex
-	cmCfg       *certmagic.Config
+
+	// CertMagic configs (prod + staging)
+	cmMu       sync.Mutex
+	cmProd     *certmagic.Config
+	cmStaging  *certmagic.Config
+	issProd    *certmagic.ACMEIssuer
+	issStaging *certmagic.ACMEIssuer
 
 	// cache local certs by "certPath|keyPath"
 	localMu    sync.RWMutex
 	localCache map[string]*tls.Certificate
 }
 
-func (m *tlsManager) ensureCertMagic(next http.Handler) (*certmagic.ACMEIssuer, http.Handler, error) {
+// ensureCertMagic prepares CertMagic configs. It returns an HTTP handler that serves
+// HTTP-01 challenges for both prod and staging issuers.
+func (m *tlsManager) ensureCertMagic(next http.Handler) (http.Handler, error) {
 	m.cmMu.Lock()
 	defer m.cmMu.Unlock()
 
-	if m.cmCfg != nil {
-		iss := m.firstACMEIssuer(m.cmCfg)
-		if iss == nil {
-			return nil, next, errors.New("certmagic configured without ACME issuer")
-		}
-		return iss, iss.HTTPChallengeHandler(next), nil
+	if m.global == nil {
+		return next, errors.New("global config is required")
 	}
 
 	email := strings.TrimSpace(m.global.LEEmail)
 	if email == "" {
-		return nil, next, errors.New("le_email is empty")
+		return next, errors.New("le_email is empty")
 	}
 
-	cmCfg := certmagic.NewDefault()
-
-	// Gate on-demand issuance to only configured hosts.
-	cmCfg.OnDemand = &certmagic.OnDemandConfig{
-		DecisionFunc: func(ctx context.Context, name string) error {
-			_ = ctx // currently unused, but kept for API compatibility
-
-			name = normalizeSubject(name)
-			if m.hostManager.Get(name) != nil {
-				return nil
-			}
-			return errors.Newf("on-demand denied for %q", name)
-		},
+	decision := func(ctx context.Context, name string) error {
+		_ = ctx
+		name = normalizeSubject(name)
+		if m.hostManager != nil && m.hostManager.Get(name) != nil {
+			return nil
+		}
+		return errors.Newf("on-demand denied for %q", name)
 	}
 
-	acme := certmagic.ACMEIssuer{
-		Email:  email,
-		Agreed: true,
+	// Create (or reuse) prod config
+	if m.cmProd == nil {
+		cmProd := certmagic.NewDefault()
+		cmProd.OnDemand = &certmagic.OnDemandConfig{DecisionFunc: decision}
+
+		acme := certmagic.ACMEIssuer{
+			Email:  email,
+			Agreed: true,
+			CA:     letsEncryptProdDir,
+		}
+		// Optional: enable short-lived later
+		// acme.Profile = acmeProfileShortLived
+
+		issuer := certmagic.NewACMEIssuer(cmProd, acme)
+		cmProd.Issuers = []certmagic.Issuer{issuer}
+
+		m.cmProd = cmProd
+		m.issProd = issuer
 	}
 
-	if m.global.Development {
-		acme.CA = letsEncryptStagingDir
-	} else {
-		acme.CA = letsEncryptProdDir
+	// Create (or reuse) staging config
+	if m.cmStaging == nil {
+		cmStaging := certmagic.NewDefault()
+		cmStaging.OnDemand = &certmagic.OnDemandConfig{DecisionFunc: decision}
+
+		acme := certmagic.ACMEIssuer{
+			Email:  email,
+			Agreed: true,
+			CA:     letsEncryptStagingDir,
+		}
+		// Optional: enable short-lived later
+		// acme.Profile = acmeProfileShortLived
+
+		issuer := certmagic.NewACMEIssuer(cmStaging, acme)
+		cmStaging.Issuers = []certmagic.Issuer{issuer}
+
+		m.cmStaging = cmStaging
+		m.issStaging = issuer
 	}
 
-	// Optional: enable short-lived later
-	// acme.Profile = acmeProfileShortLived
+	// Build HTTP-01 handler stack to serve challenges for both issuers.
+	h := next
+	if m.issProd != nil {
+		h = m.issProd.HTTPChallengeHandler(h)
+	}
+	if m.issStaging != nil {
+		h = m.issStaging.HTTPChallengeHandler(h)
+	}
 
-	issuer := certmagic.NewACMEIssuer(cmCfg, acme)
-	cmCfg.Issuers = []certmagic.Issuer{issuer}
-
-	m.cmCfg = cmCfg
-	return issuer, issuer.HTTPChallengeHandler(next), nil
+	return h, nil
 }
 
-func (m *tlsManager) firstACMEIssuer(cm *certmagic.Config) *certmagic.ACMEIssuer {
-	for _, iss := range cm.Issuers {
-		if a, ok := iss.(*certmagic.ACMEIssuer); ok {
-			return a
+func (m *tlsManager) cmForHost(hcfg *config.HostConfig) *certmagic.Config {
+	// Global dev mode forces staging
+	if m.global != nil && m.global.Development {
+		return m.cmStaging
+	}
+
+	// Per-host override
+	if hcfg != nil && hcfg.TLS != nil {
+		if hcfg.TLS.LetsEncrypt.Staging {
+			return m.cmStaging
 		}
 	}
-	return nil
+	return m.cmProd
 }
 
 func (m *tlsManager) getLocalCertificate(local config.LocalCert, host string) (*tls.Certificate, error) {

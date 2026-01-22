@@ -24,6 +24,7 @@ type Server struct {
 
 	logger       *ll.Logger
 	ipMiddleware *IPMiddleware
+	rateLimiter  *RateLimiter
 }
 
 func NewServer(opts ...Option) *Server {
@@ -47,28 +48,31 @@ func (s *Server) Start(ctx context.Context) error {
 		s.logger = ll.New(config.Name).Enable()
 	}
 
-	// 1. Initialize IP Middleware
+	// Apply defaults (timeouts, rate limits, etc.) if not set in config.
+	// This is where you guarantee "all values come from config"
+	// while still having safe defaults when missing.
+	config.ApplyDefaults(s.global)
+
+	// Middleware: Real client IP (trusted proxies)
 	s.ipMiddleware = NewIPMiddleware(s.global.TrustedProxies)
 
-	// 2. Parse Bind Addresses
+	// Middleware: Rate limiting (config driven, bounded, TTL)
+	s.rateLimiter = s.buildRateLimiterFromConfig()
+
 	addrs := parseBind(s.global.Bind)
 	if len(addrs) == 0 {
 		return errors.Newf("no bind addresses configured (bind=%q)", s.global.Bind)
 	}
 
-	// 3. Configure Timeouts
-	// Ensure struct exists (parser might leave it nil)
-	if s.global.Timeouts == nil {
-		s.global.Timeouts = &config.TimeoutConfig{}
-	}
+	// Timeouts (strings) -> time.Duration (with defaults already applied)
 	readTimeout := parseDuration(s.global.Timeouts.Read, config.DefaultReadTimeout)
 	writeTimeout := parseDuration(s.global.Timeouts.Write, config.DefaultWriteTimeout)
 	idleTimeout := parseDuration(s.global.Timeouts.Idle, config.DefaultIdleTimeout)
 	readHeaderTimeout := parseDuration(s.global.Timeouts.ReadHeader, config.DefaultReadHeaderTimeout)
 
-	// 4. Setup Handlers & TLS
 	baseHandler := http.HandlerFunc(s.handleRequest)
 
+	// TLS config and HTTP handler wrapper (HTTP-01 challenge support)
 	tlsCfg, httpHandler, err := s.buildTLS(baseHandler)
 	if err != nil {
 		s.logger.Fields("err", err.Error()).Warn("TLS setup failed; HTTPS listeners may not start")
@@ -76,19 +80,16 @@ func (s *Server) Start(ctx context.Context) error {
 		tlsCfg = nil
 	}
 
-	// 5. Create Servers
+	// Create servers from bind config.
 	for _, addr := range addrs {
 		isTLS := isHTTPSBind(addr)
 
+		// Chain: IP -> RateLimit -> (HTTP-01 wrapper if HTTP) -> Router
 		var handler http.Handler
 		if isTLS {
-			// HTTPS: IP Middleware -> Router
-			handler = s.ipMiddleware.Handler(baseHandler)
+			handler = s.ipMiddleware.Handler(s.rateLimiter.Handler(baseHandler))
 		} else {
-			// HTTP: IP Middleware -> ACME HTTP-01 (if enabled) -> Router
-			// We wrap the httpHandler (which contains the ACME check) with IP middleware
-			// so the logger inside ACME/Router sees the real IP.
-			handler = s.ipMiddleware.Handler(httpHandler)
+			handler = s.ipMiddleware.Handler(s.rateLimiter.Handler(httpHandler))
 		}
 
 		srv := &http.Server{
@@ -106,25 +107,30 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 
 		key := serverKey(addr, isTLS)
+
 		s.mu.Lock()
 		s.servers[key] = srv
 		s.mu.Unlock()
 	}
 
-	// 6. Start Listeners
+	// Start each server.
 	errCh := make(chan error, len(s.servers))
+
 	s.mu.RLock()
 	for key, srv := range s.servers {
 		key := key
 		srv := srv
+
 		go func() {
 			s.logger.Fields("bind", srv.Addr, "key", key).Info("listener starting")
+
 			var err error
 			if isServerKeyTLS(key) {
 				err = srv.ListenAndServeTLS("", "")
 			} else {
 				err = srv.ListenAndServe()
 			}
+
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errCh <- err
 				return
@@ -152,6 +158,11 @@ func (s *Server) waitOrShutdown(ctx context.Context, errCh <-chan error) error {
 }
 
 func (s *Server) shutdown() error {
+	// stop limiter sweeper (optional but clean)
+	if s.rateLimiter != nil {
+		s.rateLimiter.Close()
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -160,6 +171,7 @@ func (s *Server) shutdown() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		err := srv.Shutdown(ctx)
 		cancel()
+
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
@@ -168,8 +180,54 @@ func (s *Server) shutdown() error {
 	return firstErr
 }
 
+func (s *Server) buildRateLimiterFromConfig() *RateLimiter {
+	rlc := s.global.RateLimits
+
+	ttl := parseDuration(rlc.TTL, 30*time.Minute)
+	maxEntries := rlc.MaxEntries
+	if maxEntries <= 0 {
+		maxEntries = 100_000
+	}
+
+	gr, gw, gb, gok := config.ParseRatePolicy(rlc.Global)
+	ar, aw, ab, aok := config.ParseRatePolicy(rlc.Auth)
+
+	globalPolicy := RatePolicy{Requests: gr, Window: gw, Burst: gb}
+	authPolicy := RatePolicy{Requests: ar, Window: aw, Burst: ab}
+
+	authPrefixes := rlc.AuthPrefixes
+	if len(authPrefixes) == 0 {
+		authPrefixes = []string{"/login", "/otp", "/auth"}
+	}
+
+	policy := func(r *http.Request) (bucket string, pol RatePolicy, ok bool) {
+		p := r.URL.Path
+
+		if strings.HasPrefix(p, "/.well-known/acme-challenge/") {
+			return "acme", RatePolicy{}, false
+		}
+
+		for _, pref := range authPrefixes {
+			if pref != "" && strings.HasPrefix(p, pref) {
+				if aok {
+					return "auth", authPolicy, true
+				}
+				return "auth_disabled", RatePolicy{}, false
+			}
+		}
+
+		if gok {
+			return "global", globalPolicy, true
+		}
+		return "global_disabled", RatePolicy{}, false
+	}
+
+	return NewRateLimiter(ttl, maxEntries, policy)
+}
+
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+
 	host := normalizeHost(r.Host)
 
 	hcfg := s.hostManager.Get(host)
@@ -178,7 +236,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SECURITY: Body Limits
+	// Body limit per host
 	maxBody := int64(config.DefaultMaxBodySize)
 	if hcfg.Limits != nil && hcfg.Limits.MaxBodySize > 0 {
 		maxBody = hcfg.Limits.MaxBodySize
@@ -190,7 +248,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 
-	// Routing
+	// Routes first
 	for i := range hcfg.Routes {
 		route := hcfg.Routes[i]
 		if pathMatch(r.URL.Path, route.Path) {
@@ -200,7 +258,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Static Web
+	// Static web
 	if hcfg.Web != nil {
 		s.handleWeb(w, r, hcfg.Web)
 		s.logRequest(host, r, start)
@@ -208,6 +266,17 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Error(w, "Not found", http.StatusNotFound)
+}
+
+func (s *Server) logRequest(host string, r *http.Request, start time.Time) {
+	s.logger.Fields(
+		"host", host,
+		"method", r.Method,
+		"path", r.URL.Path,
+		"remote", ClientIP(r),
+		"ua", r.UserAgent(),
+		"duration", time.Since(start),
+	).Info("request")
 }
 
 func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *config.Route) {
@@ -241,10 +310,14 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *conf
 
 func (s *Server) getOrBuildRouteHandler(route *config.Route) *routeHandler {
 	key := routeKey(route)
+
 	if v, ok := routeCache.Load(key); ok {
 		return v.(*routeHandler)
 	}
+
 	h := newRouteHandler(route)
+
+	// Avoid double-build races
 	if v, loaded := routeCache.LoadOrStore(key, h); loaded {
 		return v.(*routeHandler)
 	}
@@ -252,6 +325,16 @@ func (s *Server) getOrBuildRouteHandler(route *config.Route) *routeHandler {
 }
 
 func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) {
+	if s.global == nil {
+		return nil, nil, errors.New("global config is required")
+	}
+	if s.logger == nil {
+		return nil, nil, errors.New("logger is required")
+	}
+	if s.hostManager == nil {
+		return nil, nil, errors.New("host manager is required")
+	}
+
 	m := &tlsManager{
 		logger:      NewTLSLogger(s.logger),
 		hostManager: s.hostManager,
@@ -259,11 +342,13 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 		localCache:  make(map[string]*tls.Certificate),
 	}
 
-	issuer, httpHandler, err := m.ensureCertMagic(next)
+	// Configure certmagic (prod+staging) and get HTTP-01 handler wrapper
+	httpHandler, err := m.ensureCertMagic(next)
 	if err != nil {
+		// LE not enabled globally; still allow local cert mode to work.
 		s.logger.Fields("err", err.Error()).Warn("certmagic not enabled; using HTTP handler without ACME")
 		httpHandler = next
-		issuer = nil
+		// NOTE: We'll still build tlsCfg, but LetsEncrypt mode will fail at handshake.
 	}
 
 	tlsCfg := &tls.Config{
@@ -274,11 +359,13 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 			}
 
 			sni := normalizeSubject(chi.ServerName)
+
 			hcfg := s.hostManager.Get(sni)
 			if hcfg == nil {
 				return nil, errors.Newf("unknown host %q", sni)
 			}
 
+			// Default TLS behavior if tls block missing.
 			mode := config.ModeLetsEncrypt
 			if hcfg.TLS != nil && hcfg.TLS.Mode != "" {
 				mode = hcfg.TLS.Mode
@@ -287,19 +374,24 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 			switch mode {
 			case config.ModeLocalNone:
 				return nil, errors.Newf("tls disabled for host %q", sni)
+
 			case config.ModeLocalCert:
 				if hcfg.TLS == nil {
 					return nil, errors.Newf("tls=local requires tls block for host %q", sni)
 				}
 				return m.getLocalCertificate(hcfg.TLS.Local, sni)
+
 			case config.ModeLetsEncrypt:
-				if issuer == nil {
+				cm := m.cmForHost(hcfg)
+				if cm == nil {
 					return nil, errors.Newf("letsencrypt not enabled globally (host %q)", sni)
 				}
-				cmTLS := m.cmCfg.TLSConfig()
+
+				cmTLS := cm.TLSConfig()
 				chi2 := *chi
 				chi2.ServerName = sni
 				return cmTLS.GetCertificate(&chi2)
+
 			default:
 				return nil, errors.Newf("unknown tls mode %q for host %q", mode, sni)
 			}
@@ -307,15 +399,4 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 	}
 
 	return tlsCfg, httpHandler, nil
-}
-
-func (s *Server) logRequest(host string, r *http.Request, start time.Time) {
-	s.logger.Fields(
-		"host", host,
-		"method", r.Method,
-		"path", r.URL.Path,
-		"remote", r.RemoteAddr, // Will be real IP via Middleware
-		"ua", r.UserAgent(),
-		"duration", time.Since(start),
-	).Info("request")
 }

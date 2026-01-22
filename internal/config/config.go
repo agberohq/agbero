@@ -1,15 +1,23 @@
+// internal/config/config.go
 package config
+
+import (
+	"net"
+	"net/http"
+	"time"
+)
 
 // ---- GLOBAL CONFIG -------------------------------------------
 
 type GlobalConfig struct {
-	Bind           string         `hcl:"bind"`
-	HostsDir       string         `hcl:"hosts_dir"`
-	LEEmail        string         `hcl:"le_email,optional"`
-	LogLevel       string         `hcl:"log_level,optional"`
-	Development    bool           `hcl:"development,optional"`
-	TrustedProxies []string       `hcl:"trusted_proxies,optional"`
-	Timeouts       *TimeoutConfig `hcl:"timeouts,block"`
+	Bind           string          `hcl:"bind"`
+	HostsDir       string          `hcl:"hosts_dir"`
+	LEEmail        string          `hcl:"le_email,optional"`
+	LogLevel       string          `hcl:"log_level,optional"`
+	Development    bool            `hcl:"development,optional"`
+	TrustedProxies []string        `hcl:"trusted_proxies,optional"`
+	Timeouts       TimeoutConfig   `hcl:"timeouts,block"`
+	RateLimits     RateLimitConfig `hcl:"rate_limits,block"`
 }
 
 type TimeoutConfig struct {
@@ -19,10 +27,28 @@ type TimeoutConfig struct {
 	ReadHeader string `hcl:"read_header,optional"`
 }
 
+// ---- RATE LIMITING --------------------------------------------
+
+// Container config for rate limiting.
+type RateLimitConfig struct {
+	TTL          string           `hcl:"ttl,optional"`         // e.g. "30m"
+	MaxEntries   int64            `hcl:"max_entries,optional"` // e.g. 100000
+	AuthPrefixes []string         `hcl:"auth_prefixes,optional"`
+	Global       RatePolicyConfig `hcl:"global,block"`
+	Auth         RatePolicyConfig `hcl:"auth,block"`
+}
+
+// Policy config (requests per window).
+type RatePolicyConfig struct {
+	Requests int    `hcl:"requests"`       // required (but defaults can fill)
+	Window   string `hcl:"window"`         // required (but defaults can fill)
+	Burst    int    `hcl:"burst,optional"` // optional
+}
+
 // ---- HOST CONFIG ---------------------------------------------
 
 type HostConfig struct {
-	Domains []string     `hcl:"domains"` // Replaces server_names
+	Domains []string     `hcl:"domains"`
 	Routes  []Route      `hcl:"route,block"`
 	Web     *Web         `hcl:"web,block"`
 	TLS     *TSL         `hcl:"tls,block"`
@@ -46,11 +72,10 @@ type Route struct {
 // ---- STATIC WEB ----------------------------------------------
 
 type Web struct {
-	Root  WebRoot `hcl:"root"` // Typed for behavior
+	Root  WebRoot `hcl:"root"`
 	Index string  `hcl:"index,optional"`
 }
 
-// WebRoot is a custom type to handle default root logic
 type WebRoot string
 
 func (w WebRoot) String() string {
@@ -79,3 +104,20 @@ type LetsEncrypt struct {
 }
 
 // ---- DEFAULTS ------------------------------------------------
+
+// SharedTransport is a globally tuned transport for upstream connections.
+// In a real app, you might want distinct transports per backend if requirements differ drastically,
+// but a shared tuned transport is better than the default.
+var SharedTransport = &http.Transport{
+	Proxy: http.ProxyFromEnvironment,
+	DialContext: (&net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
+	ForceAttemptHTTP2:     true,
+	MaxIdleConns:          1000,
+	MaxIdleConnsPerHost:   100,
+	IdleConnTimeout:       90 * time.Second,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
+}
