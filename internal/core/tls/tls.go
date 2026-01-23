@@ -1,4 +1,4 @@
-package core
+package tls
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/caddyserver/certmagic"
@@ -23,7 +24,7 @@ const (
 )
 
 type TlsManager struct {
-	Logger      anyLogger
+	Logger      woos.Logging
 	HostManager *discovery.Host
 	Global      *woos.GlobalConfig
 
@@ -66,7 +67,7 @@ func (m *TlsManager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 
 	decision := func(ctx context.Context, name string) error {
 		_ = ctx
-		name = NormalizeSubject(name)
+		name = core.NormalizeSubject(name)
 
 		// Gate on-demand issuance strictly to configured domains.
 		// hostManager.Get already matches configured domains.

@@ -1,4 +1,4 @@
-package core
+package backend
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core"
+	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
 
@@ -24,15 +26,15 @@ type Backend struct {
 	TotalReqs atomic.Uint64
 
 	// NEW: High-Fidelity Latency Tracking
-	Metrics *LatencyTracker
+	Metrics *metrics.LatencyTracker
 
 	// Internals
 	hcConfig *woos.HealthCheckConfig
-	logger   anyLogger
+	logger   core.anyLogger
 	stop     chan struct{}
 }
 
-func NewBackend(targetStr string, route *woos.Route, logger anyLogger) (*Backend, error) {
+func NewBackend(targetStr string, route *woos.Route, logger core.anyLogger) (*Backend, error) {
 	u, err := url.Parse(targetStr)
 	if err != nil {
 		return nil, err
@@ -43,7 +45,7 @@ func NewBackend(targetStr string, route *woos.Route, logger anyLogger) (*Backend
 		hcConfig: route.HealthCheck,
 		logger:   logger,
 		stop:     make(chan struct{}),
-		Metrics:  NewLatencyTracker(), // Initialize Metrics
+		Metrics:  metrics.NewLatencyTracker(), // Initialize Metrics
 	}
 
 	b.Alive.Store(true)

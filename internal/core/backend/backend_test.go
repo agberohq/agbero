@@ -1,5 +1,5 @@
 // internal/core/backend_test.go
-package core
+package backend
 
 import (
 	"net/http"
@@ -13,10 +13,10 @@ import (
 // Mock Logger to avoid cluttering test output
 type noopLogger struct{}
 
-func (n noopLogger) Info(msg string, args ...any)  {}
-func (n noopLogger) Warn(msg string, args ...any)  {}
-func (n noopLogger) Error(msg string, args ...any) {}
-func (n noopLogger) Fields(args ...any) anyLogger  { return n }
+func (n noopLogger) Info(msg string, args ...any)    {}
+func (n noopLogger) Warn(msg string, args ...any)    {}
+func (n noopLogger) Error(msg string, args ...any)   {}
+func (n noopLogger) Fields(args ...any) woos.Logging { return n }
 
 // Helper to create a backend
 func setupBackend(t *testing.T, targetURL string, threshold int, interval string) *Backend {

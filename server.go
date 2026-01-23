@@ -10,8 +10,12 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
+	tls2 "git.imaxinacion.net/aibox/agbero/internal/core/tls"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware"
+	handlers2 "git.imaxinacion.net/aibox/agbero/internal/handlers"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/h3"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
@@ -29,8 +33,8 @@ type Server struct {
 	h3Servers map[string]*http3.Server
 
 	logger       *ll.Logger
-	ipMiddleware *middleware.IPMiddleware
-	rateLimiter  *middleware.RateLimiter
+	ipMiddleware *clientip.IPMiddleware
+	rateLimiter  *ratelimit.RateLimiter
 }
 
 // contextKey is used to store listener port in request context
@@ -67,7 +71,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.startMetricsServer()
 	s.startCacheReaper(ctx)
 
-	s.ipMiddleware = middleware.NewIPMiddleware(s.global.TrustedProxies)
+	s.ipMiddleware = clientip.NewIPMiddleware(s.global.TrustedProxies)
 	s.rateLimiter = s.buildRateLimiterFromConfig()
 
 	baseHandler := http.HandlerFunc(s.handleRequest)
@@ -85,8 +89,8 @@ func (s *Server) Start(ctx context.Context) error {
 
 		if isTLS {
 			// For TLS, we add the H3Middleware to advertise QUIC support via Alt-Svc header
-			port := middleware.ExtractPort(addr)
-			advertiseH3 := middleware.H3Middleware(port)
+			port := h3.ExtractPort(addr)
+			advertiseH3 := h3.H3Middleware(port)
 
 			// Chain: IP -> RateLimit -> Alt-Svc -> (HTTP-01) -> Router
 			handler = s.ipMiddleware.Handler(s.rateLimiter.Handler(advertiseH3(baseHandler)))
@@ -104,10 +108,10 @@ func (s *Server) Start(ctx context.Context) error {
 		srv := &http.Server{
 			Addr:              addr,
 			Handler:           wrappedHandler,
-			ReadTimeout:       s.parseDurationWarn("read", s.global.Timeouts.Read, woos.DefaultReadTimeout),
-			WriteTimeout:      s.parseDurationWarn("write", s.global.Timeouts.Write, woos.DefaultWriteTimeout),
-			IdleTimeout:       s.parseDurationWarn("idle", s.global.Timeouts.Idle, woos.DefaultIdleTimeout),
-			ReadHeaderTimeout: s.parseDurationWarn("read_header", s.global.Timeouts.ReadHeader, woos.DefaultReadHeaderTimeout),
+			ReadTimeout:       core.Or(s.global.Timeouts.Read, woos.DefaultReadTimeout),
+			WriteTimeout:      core.Or(s.global.Timeouts.Write, woos.DefaultWriteTimeout),
+			IdleTimeout:       core.Or(s.global.Timeouts.Idle, woos.DefaultIdleTimeout),
+			ReadHeaderTimeout: core.Or(s.global.Timeouts.ReadHeader, woos.DefaultReadHeaderTimeout),
 			MaxHeaderBytes:    s.global.MaxHeaderBytes,
 		}
 
@@ -156,7 +160,7 @@ func (s *Server) Start(ctx context.Context) error {
 		go func() {
 			s.logger.Fields("bind", addr, "proto", "h3").Info("listener starting")
 			if err := h3Server.ListenAndServe(); err != nil {
-				// quic-go doesn't have a specific "ErrServerClosed" for graceful shutdown yet in all versions,
+				// quic-go doesn't have a specific "ErrServerClosed" for graceful Shutdown yet in all versions,
 				// but usually returns nil or a specific error on Close.
 				s.logger.Fields("err", err, "proto", "h3").Error("h3 listener stopped")
 			}
@@ -208,50 +212,6 @@ func (s *Server) Start(ctx context.Context) error {
 	return s.waitOrShutdown(ctx, errCh)
 }
 
-func (s *Server) waitOrShutdown(ctx context.Context, errCh <-chan error) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return s.shutdown()
-		case err := <-errCh:
-			if err != nil {
-				_ = s.shutdown()
-				return err
-			}
-		}
-	}
-}
-
-func (s *Server) shutdown() error {
-	if s.rateLimiter != nil {
-		s.rateLimiter.Close()
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// 1. Stop HTTP/3 Servers
-	for key, srv := range s.h3Servers {
-		if err := srv.Close(); err != nil {
-			s.logger.Fields("key", key, "err", err).Warn("h3 shutdown error")
-		}
-	}
-
-	// 2. Stop TCP Servers
-	var firstErr error
-	for key, srv := range s.servers {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err := srv.Shutdown(ctx)
-		cancel()
-
-		if err != nil && firstErr == nil {
-			firstErr = err
-		}
-		s.logger.Fields("key", key).Info("listener stopped")
-	}
-	return firstErr
-}
-
 func (s *Server) startMetricsServer() {
 	if s.global.Bind.Metrics == "" {
 		return
@@ -260,7 +220,7 @@ func (s *Server) startMetricsServer() {
 	mux := http.NewServeMux()
 
 	// The core metrics endpoint (JSON structure with HdrHistogram stats)
-	mux.HandleFunc("/metrics", core.MetricsHandler(s.hostManager))
+	mux.HandleFunc("/metrics", handlers2.MetricsHandler(s.hostManager))
 
 	// Simple liveness probe for load balancers (AWS ALB, K8s, etc.)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -279,7 +239,7 @@ func (s *Server) startMetricsServer() {
 	go func() {
 		s.logger.Fields("bind", s.global.Bind.Metrics).Info("metrics listener starting")
 
-		// We ignore ErrServerClosed because it occurs during normal shutdown
+		// We ignore ErrServerClosed because it occurs during normal Shutdown
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.logger.Fields("err", err).Error("metrics server failed")
 		}
@@ -300,6 +260,20 @@ func (s *Server) startCacheReaper(ctx context.Context) {
 	}()
 }
 
+func (s *Server) waitOrShutdown(ctx context.Context, errCh <-chan error) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return s.Shutdown()
+		case err := <-errCh:
+			if err != nil {
+				_ = s.Shutdown()
+				return err
+			}
+		}
+	}
+}
+
 func (s *Server) reapOldRoutes() {
 	now := time.Now().UnixNano()
 	expiration := int64(10 * time.Minute)
@@ -315,17 +289,16 @@ func (s *Server) reapOldRoutes() {
 			if h, ok := item.Handler.(interface{ Close() }); ok {
 				h.Close()
 			}
-
 			woos.RouteCache.Delete(key)
 		}
 		return true
 	})
 }
 
-func (s *Server) buildRateLimiterFromConfig() *middleware.RateLimiter {
+func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
 	rlc := s.global.RateLimits
 
-	ttl := s.parseDurationWarn("rate_limits.ttl", rlc.TTL, 30*time.Minute)
+	ttl := core.Or(rlc.TTL, 30*time.Minute)
 	maxEntries := rlc.MaxEntries
 	if maxEntries <= 0 {
 		maxEntries = 100_000
@@ -334,19 +307,19 @@ func (s *Server) buildRateLimiterFromConfig() *middleware.RateLimiter {
 	gr, gw, gb, gok := woos.ParseRatePolicy(rlc.Global)
 	ar, aw, ab, aok := woos.ParseRatePolicy(rlc.Auth)
 
-	globalPolicy := middleware.RatePolicy{Requests: gr, Window: gw, Burst: gb}
-	authPolicy := middleware.RatePolicy{Requests: ar, Window: aw, Burst: ab}
+	globalPolicy := ratelimit.RatePolicy{Requests: gr, Window: gw, Burst: gb}
+	authPolicy := ratelimit.RatePolicy{Requests: ar, Window: aw, Burst: ab}
 
 	authPrefixes := rlc.AuthPrefixes
 	if len(authPrefixes) == 0 {
 		authPrefixes = []string{"/login", "/otp", "/auth"}
 	}
 
-	policy := func(r *http.Request) (bucket string, pol middleware.RatePolicy, ok bool) {
+	policy := func(r *http.Request) (bucket string, pol ratelimit.RatePolicy, ok bool) {
 		p := r.URL.Path
 
 		if strings.HasPrefix(p, "/.well-known/acme-challenge/") {
-			return "acme", middleware.RatePolicy{}, false
+			return "acme", ratelimit.RatePolicy{}, false
 		}
 
 		for _, pref := range authPrefixes {
@@ -354,76 +327,17 @@ func (s *Server) buildRateLimiterFromConfig() *middleware.RateLimiter {
 				if aok {
 					return "auth", authPolicy, true
 				}
-				return "auth_disabled", middleware.RatePolicy{}, false
+				return "auth_disabled", ratelimit.RatePolicy{}, false
 			}
 		}
 
 		if gok {
 			return "global", globalPolicy, true
 		}
-		return "global_disabled", middleware.RatePolicy{}, false
+		return "global_disabled", ratelimit.RatePolicy{}, false
 	}
 
-	return middleware.NewRateLimiter(ttl, maxEntries, policy)
-}
-
-func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-	host := core.NormalizeHost(r.Host)
-
-	hcfg := s.hostManager.Get(host)
-	if hcfg == nil {
-		http.Error(w, "Host not found", http.StatusNotFound)
-		return
-	}
-
-	// Enforce Port Binding
-	if len(hcfg.BindPorts) > 0 {
-		portCtx := r.Context().Value(portContextKey)
-		listenerPort, ok := portCtx.(string)
-
-		if ok && listenerPort != "" {
-			allowed := false
-			for _, p := range hcfg.BindPorts {
-				if p == listenerPort {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
-				http.Error(w, "Misdirected Request", http.StatusMisdirectedRequest)
-				return
-			}
-		}
-	}
-
-	maxBody := int64(woos.DefaultMaxBodySize)
-	if hcfg.Limits != nil && hcfg.Limits.MaxBodySize > 0 {
-		maxBody = hcfg.Limits.MaxBodySize
-	}
-
-	if r.ContentLength > maxBody {
-		http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
-
-	for i := range hcfg.Routes {
-		route := hcfg.Routes[i]
-		if core.PathMatch(r.URL.Path, route.Path) {
-			s.handleRoute(w, r, &route)
-			s.logRequest(host, r, start)
-			return
-		}
-	}
-
-	if hcfg.Web != nil {
-		s.handleWeb(w, r, hcfg.Web)
-		s.logRequest(host, r, start)
-		return
-	}
-
-	http.Error(w, "Not found", http.StatusNotFound)
+	return ratelimit.NewRateLimiter(ttl, maxEntries, policy)
 }
 
 func (s *Server) logRequest(host string, r *http.Request, start time.Time) {
@@ -431,53 +345,24 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time) {
 		"host", host,
 		"method", r.Method,
 		"path", r.URL.Path,
-		"remote", middleware.ClientIP(r),
+		"remote", clientip.ClientIP(r),
 		"ua", r.UserAgent(),
 		"duration", time.Since(start),
 		"proto", r.Proto, // Useful to see "HTTP/3.0"
 	).Info("request")
 }
 
-func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *woos.Route) {
-	originalPath := r.URL.Path
-	originalRawPath := r.URL.RawPath
-
-	if len(route.StripPrefixes) > 0 {
-		for _, prefix := range route.StripPrefixes {
-			if prefix == "" {
-				continue
-			}
-			if strings.HasPrefix(r.URL.Path, prefix) {
-				r.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
-				if r.URL.RawPath != "" {
-					r.URL.RawPath = strings.TrimPrefix(r.URL.RawPath, prefix)
-				}
-				if r.URL.Path == "" {
-					r.URL.Path = "/"
-				}
-				break
-			}
-		}
-	}
-
-	h := s.getOrBuildRouteHandler(route)
-	h.ServeHTTP(w, r)
-
-	r.URL.Path = originalPath
-	r.URL.RawPath = originalRawPath
-}
-
-func (s *Server) getOrBuildRouteHandler(route *woos.Route) *core.RouteHandler {
-	key := core.RouteKey(route)
+func (s *Server) getOrBuildRouteHandler(route *woos.Route) *handlers2.RouteHandler {
+	key := route.Key()
 	now := time.Now().UnixNano()
 
 	if v, ok := woos.RouteCache.Load(key); ok {
 		item := v.(*woos.RouteCacheItem)
 		item.LastAccessed.Store(now) // Touch
-		return item.Handler.(*core.RouteHandler)
+		return item.Handler.(*handlers2.RouteHandler)
 	}
 
-	h := core.NewRouteHandler(route, s.logger)
+	h := handlers2.NewRouteHandler(route, s.logger)
 	newItem := &woos.RouteCacheItem{
 		Handler: h,
 	}
@@ -487,7 +372,7 @@ func (s *Server) getOrBuildRouteHandler(route *woos.Route) *core.RouteHandler {
 		h.Close()
 		item := v.(*woos.RouteCacheItem)
 		item.LastAccessed.Store(now)
-		return item.Handler.(*core.RouteHandler)
+		return item.Handler.(*handlers2.RouteHandler)
 	}
 
 	return h
@@ -504,8 +389,8 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 		return nil, nil, errors.New("host manager is required")
 	}
 
-	m := &core.TlsManager{
-		Logger:      core.NewTLSLogger(s.logger),
+	m := &tls2.TlsManager{
+		Logger:      tls2.NewTLSLogger(s.logger),
 		HostManager: s.hostManager,
 		Global:      s.global,
 		LocalCache:  make(map[string]*tls.Certificate),
@@ -568,17 +453,47 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 	return tlsCfg, httpHandler, nil
 }
 
-func (s *Server) parseDurationWarn(field, value string, def time.Duration) time.Duration {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return def
+//func (s *Server) parseDurationWarn(field, value string, def time.Duration) time.Duration {
+//	value = strings.TrimSpace(value)
+//	if value == "" {
+//		return def
+//	}
+//	d, err := time.ParseDuration(value)
+//	if err != nil || d <= 0 {
+//		if s.logger != nil {
+//			s.logger.Fields("field", field, "value", value, "default", def.String()).Warn("invalid duration; falling back to default")
+//		}
+//		return def
+//	}
+//	return d
+//}
+
+func (s *Server) Shutdown() error {
+	if s.rateLimiter != nil {
+		s.rateLimiter.Close()
 	}
-	d, err := time.ParseDuration(value)
-	if err != nil || d <= 0 {
-		if s.logger != nil {
-			s.logger.Fields("field", field, "value", value, "default", def.String()).Warn("invalid duration; falling back to default")
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// 1. Stop HTTP/3 Servers
+	for key, srv := range s.h3Servers {
+		if err := srv.Close(); err != nil {
+			s.logger.Fields("key", key, "err", err).Warn("h3 Shutdown error")
 		}
-		return def
 	}
-	return d
+
+	// 2. Stop TCP Servers
+	var firstErr error
+	for key, srv := range s.servers {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := srv.Shutdown(ctx)
+		cancel()
+
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		s.logger.Fields("key", key).Info("listener stopped")
+	}
+	return firstErr
 }

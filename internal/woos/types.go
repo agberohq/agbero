@@ -30,16 +30,16 @@ type BindConfig struct {
 }
 
 type TimeoutConfig struct {
-	Read       string `hcl:"read,optional"`
-	Write      string `hcl:"write,optional"`
-	Idle       string `hcl:"idle,optional"`
-	ReadHeader string `hcl:"read_header,optional"`
+	Read       time.Duration `hcl:"read,optional"`
+	Write      time.Duration `hcl:"write,optional"`
+	Idle       time.Duration `hcl:"idle,optional"`
+	ReadHeader time.Duration `hcl:"read_header,optional"`
 }
 
 // ---- RATE LIMITING --------------------------------------------
 
 type RateLimitConfig struct {
-	TTL          string           `hcl:"ttl,optional"`
+	TTL          time.Duration    `hcl:"ttl,optional"`
 	MaxEntries   int64            `hcl:"max_entries,optional"`
 	AuthPrefixes []string         `hcl:"auth_prefixes,optional"`
 	Global       RatePolicyConfig `hcl:"global,block"`
@@ -47,9 +47,9 @@ type RateLimitConfig struct {
 }
 
 type RatePolicyConfig struct {
-	Requests int    `hcl:"requests"`
-	Window   string `hcl:"window"`
-	Burst    int    `hcl:"burst,optional"`
+	Requests int           `hcl:"requests"`
+	Burst    int           `hcl:"burst,optional"`
+	Window   time.Duration `hcl:"window"`
 }
 
 // ---- HOST CONFIG ---------------------------------------------
@@ -81,25 +81,6 @@ type LimitConfig struct {
 }
 
 // ---- ROUTING -------------------------------------------------
-
-type Route struct {
-	// Routing Core
-	Path          string   `hcl:"path,label"`
-	Backends      []string `hcl:"backends"`
-	StripPrefixes []string `hcl:"strip_prefixes,optional"`
-	LBStrategy    string   `hcl:"lb_strategy,optional"`
-
-	// High-Availability Configs
-	HealthCheck    *HealthCheckConfig    `hcl:"health_check,block"`
-	CircuitBreaker *CircuitBreakerConfig `hcl:"circuit_breaker,block"`
-	Timeouts       *RouteTimeouts        `hcl:"timeouts,block"`
-
-	// Middleware Configs
-	BasicAuth   *BasicAuthConfig   `hcl:"basic_auth,block"`
-	ForwardAuth *ForwardAuthConfig `hcl:"forward_auth,block"`
-	Headers     *HeadersConfig     `hcl:"headers,block"`
-	Compression bool               `hcl:"compression,optional"`
-}
 
 type BasicAuthConfig struct {
 	// List of "username:password" (Plaintext for now, or bcrypt in future)

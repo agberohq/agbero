@@ -1,13 +1,19 @@
-package core
+package handlers
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"net/http"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/middleware"
+	"git.imaxinacion.net/aibox/agbero/internal/core/backend"
+	"git.imaxinacion.net/aibox/agbero/internal/core/tls"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/compress"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/headers"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/olekukonko/ll"
 )
@@ -22,7 +28,7 @@ type RouteHandler struct {
 	// that encapsulates the middleware chain AND the LB logic.
 
 	// Internal access needed for "Close"
-	Backends []*Backend
+	Backends []*backend.Backend
 }
 
 func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
@@ -44,14 +50,14 @@ func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
 
 	// 2. Initialize Backends
 	// We need to wrap the logger to match the backend constructor interface
-	wrappedLogger := NewTLSLogger(logger)
+	wrappedLogger := tls.NewTLSLogger(logger)
 
 	for _, raw := range route.Backends {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue
 		}
-		b, err := NewBackend(raw, route, wrappedLogger)
+		b, err := backend.NewBackend(raw, route, wrappedLogger)
 		if err != nil {
 			logger.Fields("backend", raw, "err", err).Error("failed to create backend")
 			continue
@@ -68,22 +74,22 @@ func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
 	// Layer 3: Authentication (Inner)
 	// Protect the resource access
 	if route.BasicAuth != nil && len(route.BasicAuth.Users) > 0 {
-		chain = middleware.BasicAuth(route.BasicAuth)(chain)
+		chain = auth.BasicAuth(route.BasicAuth)(chain)
 	}
 	if route.ForwardAuth != nil && route.ForwardAuth.URL != "" {
-		chain = middleware.ForwardAuth(route.ForwardAuth)(chain)
+		chain = auth.ForwardAuth(route.ForwardAuth)(chain)
 	}
 
 	// Layer 2: Headers (Middle)
 	// Modify headers before Auth sees them (Request) or before Compress sees them (Response)
 	if route.Headers != nil {
-		chain = middleware.Headers(route.Headers)(chain)
+		chain = headers.Headers(route.Headers)(chain)
 	}
 
 	// Layer 1: Compression (Outer)
 	// Compresses the final byte stream.
 	if route.Compression {
-		chain = middleware.Compress()(chain)
+		chain = compress.Compress()(chain)
 	}
 
 	return &RouteHandler{
@@ -107,7 +113,7 @@ func (h *RouteHandler) Close() {
 type LoadBalancerHandler struct {
 	stripPrefixes []string
 	strategy      string
-	Backends      []*Backend
+	Backends      []*backend.Backend
 	rrCounter     uint64
 	timeout       time.Duration
 }
@@ -135,7 +141,7 @@ func (lb *LoadBalancerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func (lb *LoadBalancerHandler) PickBackend() *Backend {
+func (lb *LoadBalancerHandler) PickBackend() *backend.Backend {
 	if len(lb.Backends) == 1 {
 		b := lb.Backends[0]
 		if b.Alive.Load() {
@@ -154,7 +160,7 @@ func (lb *LoadBalancerHandler) PickBackend() *Backend {
 	}
 }
 
-func (lb *LoadBalancerHandler) pickRoundRobin() *Backend {
+func (lb *LoadBalancerHandler) pickRoundRobin() *backend.Backend {
 	n := uint64(len(lb.Backends))
 	for i := uint64(0); i < n; i++ {
 		idx := atomic.AddUint64(&lb.rrCounter, 1)
@@ -166,7 +172,7 @@ func (lb *LoadBalancerHandler) pickRoundRobin() *Backend {
 	return nil
 }
 
-func (lb *LoadBalancerHandler) pickRandom() *Backend {
+func (lb *LoadBalancerHandler) pickRandom() *backend.Backend {
 	n := len(lb.Backends)
 	start := randUint64()
 	for i := 0; i < n; i++ {
@@ -179,9 +185,9 @@ func (lb *LoadBalancerHandler) pickRandom() *Backend {
 	return nil
 }
 
-func (lb *LoadBalancerHandler) pickLeastConn() *Backend {
+func (lb *LoadBalancerHandler) pickLeastConn() *backend.Backend {
 	var (
-		best *Backend
+		best *backend.Backend
 		min  int64 = -1
 	)
 
@@ -196,4 +202,14 @@ func (lb *LoadBalancerHandler) pickLeastConn() *Backend {
 		}
 	}
 	return best
+}
+
+var fallbackRand uint64
+
+func randUint64() uint64 {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err == nil {
+		return binary.LittleEndian.Uint64(b[:])
+	}
+	return atomic.AddUint64(&fallbackRand, 1)
 }

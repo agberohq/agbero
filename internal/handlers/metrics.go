@@ -1,10 +1,11 @@
-package core
+package handlers
 
 import (
 	"encoding/json"
 	"net/http"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
@@ -45,7 +46,7 @@ type BackendSnapshot struct {
 	Failures  int64  `json:"failures"`
 	TotalReqs uint64 `json:"total_reqs"`
 	// Latency in Microseconds
-	Latency LatencySnapshot `json:"latency_us"`
+	Latency metrics.LatencySnapshot `json:"latency_us"`
 }
 
 // --- Collection Logic ---
@@ -74,10 +75,7 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 				Backends: make([]*BackendSnapshot, 0),
 			}
 
-			// 3. Lookup Live Runtime in Cache
-			key := RouteKey(&route)
-
-			if v, ok := woos.RouteCache.Load(key); ok {
+			if v, ok := woos.RouteCache.Load(route.Key()); ok {
 				// Found active handler
 				item := v.(*woos.RouteCacheItem)
 				handler := item.Handler.(*RouteHandler)
@@ -86,7 +84,7 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 				for _, b := range handler.Backends {
 
 					// Get P-Values
-					lat := LatencySnapshot{}
+					lat := metrics.LatencySnapshot{}
 					if b.Metrics != nil {
 						lat = b.Metrics.Snapshot()
 					}
