@@ -1,4 +1,3 @@
-// cmd/agbero/main.go
 package main
 
 import (
@@ -41,7 +40,7 @@ func main() {
 	// 2. Setup Flaggy
 	flaggy.SetName(woos.Name)
 	flaggy.SetDescription(woos.Description)
-	flaggy.SetVersion(version)
+	flaggy.SetVersion(version) // Handles --version automatically
 
 	// Global flags
 	flaggy.String(&configPath, "c", "config", "Path to configuration file (default: "+defaultConfig+")")

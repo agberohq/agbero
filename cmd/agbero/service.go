@@ -81,4 +81,8 @@ func (p *program) run() {
 	if err := server.Start(runCtx); err != nil {
 		logger.Error(err)
 	}
+
+	// Log metrics on start (hosts count)
+	hosts, _ := hm.LoadAll()
+	logger.Fields("hosts_count", len(hosts)).Info("service running")
 }

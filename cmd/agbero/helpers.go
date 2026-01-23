@@ -42,7 +42,7 @@ func installDefaults() error {
 
 	switch runtime.GOOS {
 	case "windows":
-		baseDir = `C:\ProgramData\agbero`
+		baseDir = filepath.Join("C:", "ProgramData", "agbero")
 		hostsDir = filepath.Join(baseDir, "hosts.d")
 		configFile = filepath.Join(baseDir, "config.hcl")
 	case "darwin", "linux":
@@ -61,31 +61,43 @@ func installDefaults() error {
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		logger.Fields("file", configFile).Info("writing default config")
 
-		// For Windows, use relative path to avoid escape char issues in HCL strings
-		safeHostsDir := hostsDir
-		if runtime.GOOS == "windows" {
-			safeHostsDir = "./hosts.d"
-		}
+		defaultHCL := `bind {
+  http    = [":80"]
+  https   = [":443"]
+  metrics = ":9090"
+}
 
-		defaultHCL := fmt.Sprintf(`bind = ":80 :443"
-hosts_dir = "%s"
+hosts_dir = "./hosts.d"
 le_email = "admin@example.com"
 trusted_proxies = ["127.0.0.1/32"]
-# tls_storage_dir = "/var/lib/agbero/certmagic"
+max_header_bytes = 1048576
+tls_storage_dir  = "/var/lib/agbero/certmagic"
 
 timeouts {
-  read  = "10s"
-  write = "30s"
+  read        = "10s"
+  write       = "30s"
+  idle        = "120s"
+  read_header = "5s"
 }
 
 rate_limits {
-  ttl = "30m"
+  ttl         = "30m"
+  max_entries = 100000
+  auth_prefixes = ["/login", "/otp", "/auth"]
+
   global {
     requests = 120
     window   = "1s"
+    burst    = 240
+  }
+
+  auth {
+    requests = 10
+    window   = "1m"
+    burst    = 10
   }
 }
-`, safeHostsDir)
+`
 
 		if err := os.WriteFile(configFile, []byte(defaultHCL), 0644); err != nil {
 			return fmt.Errorf("write config: %w", err)
