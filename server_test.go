@@ -15,6 +15,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/ll"
 	"github.com/quic-go/quic-go/http3"
@@ -52,8 +53,8 @@ func TestServer_Start_Minimal(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	global := &woos.GlobalConfig{
-		Bind:     woos.BindConfig{HTTP: []string{":0"}},
+	global := &alaye.Global{
+		Bind:     alaye.Bind{HTTP: []string{":0"}},
 		HostsDir: "./hosts",
 	}
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
@@ -112,7 +113,7 @@ func TestServer_ShutdownImpl(t *testing.T) {
 func TestServer_buildTLS(t *testing.T) {
 	tmpDir := t.TempDir()
 	s := &Server{
-		global: &woos.GlobalConfig{
+		global: &alaye.Global{
 			LEEmail:       "test@example.com",
 			TLSStorageDir: tmpDir,
 		},
@@ -136,7 +137,7 @@ func TestServer_buildTLS(t *testing.T) {
 func TestServer_buildTLS_NoEmail(t *testing.T) {
 	tmpDir := t.TempDir()
 	s := &Server{
-		global: &woos.GlobalConfig{
+		global: &alaye.Global{
 			TLSStorageDir: tmpDir,
 		},
 		logger:      testLogger,
@@ -157,11 +158,11 @@ func TestServer_buildTLS_NoEmail(t *testing.T) {
 }
 
 func TestServer_buildRateLimiterFromConfig(t *testing.T) {
-	s := &Server{global: &woos.GlobalConfig{
-		RateLimits: woos.RateLimitConfig{
+	s := &Server{global: &alaye.Global{
+		RateLimits: alaye.Rate{
 			TTL:        time.Minute,
 			MaxEntries: 100,
-			Global:     woos.RatePolicyConfig{Requests: 10, Window: time.Second},
+			Global:     alaye.RatePolicy{Requests: 10, Window: time.Second},
 		},
 	}}
 
@@ -173,7 +174,7 @@ func TestServer_buildRateLimiterFromConfig(t *testing.T) {
 
 func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	s := &Server{logger: testLogger}
-	route := &woos.Route{Path: "/test", Backends: []string{"http://localhost:8080"}}
+	route := &alaye.Route{Path: "/test", Backends: []string{"http://localhost:8080"}}
 	key := route.Key()
 
 	// Create a real handler to store in cache
@@ -196,7 +197,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 
 func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 	s := &Server{logger: testLogger}
-	route := &woos.Route{
+	route := &alaye.Route{
 		Path:     "/test",
 		Backends: []string{"http://localhost:8080"},
 	}
@@ -219,7 +220,7 @@ func TestServer_reapOldRoutes(t *testing.T) {
 	key := "test-route-key"
 
 	// Create a handler with Close method
-	route := &woos.Route{
+	route := &alaye.Route{
 		Path:     "/test",
 		Backends: []string{"http://localhost:8080"},
 	}
@@ -243,7 +244,7 @@ func TestServer_reapOldRoutes_Recent(t *testing.T) {
 	key := "test-route-key-recent"
 
 	// Create a handler with Close method
-	route := &woos.Route{
+	route := &alaye.Route{
 		Path:     "/test",
 		Backends: []string{"http://localhost:8080"},
 	}
@@ -268,8 +269,8 @@ func TestServer_reapOldRoutes_Recent(t *testing.T) {
 
 func TestServer_StartMetricsServer(t *testing.T) {
 	// Use a random port
-	global := &woos.GlobalConfig{
-		Bind: woos.BindConfig{Metrics: ":0"},
+	global := &alaye.Global{
+		Bind: alaye.Bind{Metrics: ":0"},
 	}
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 	s := &Server{
@@ -286,7 +287,7 @@ func TestServer_StartMetricsServer(t *testing.T) {
 }
 
 func TestServer_StartMetricsServer_NoPort(t *testing.T) {
-	global := &woos.GlobalConfig{}
+	global := &alaye.Global{}
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 	s := &Server{
 		global:      global,
@@ -341,7 +342,7 @@ func TestServer_HandleRequest_WithHost(t *testing.T) {
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 
 	// Add a test host with a route to our test backend
-	hm.UpdateGossipNode("test", "example.com", woos.Route{
+	hm.UpdateGossipNode("test", "example.com", alaye.Route{
 		Path:     "/",
 		Backends: []string{backend.URL},
 	})

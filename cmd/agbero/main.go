@@ -116,7 +116,7 @@ func main() {
 		if cmdKeyInit.Used {
 			target := "server.key"
 			// Try to find path from config, ignore errors if config is missing
-			if global, err := loadConfig(configPath); err == nil && global.Gossip != nil && global.Gossip.PrivateKeyFile != "" {
+			if global, err := loadConfig(configPath); err == nil && &global.Gossip != nil && global.Gossip.PrivateKeyFile != "" {
 				target = global.Gossip.PrivateKeyFile
 			}
 
@@ -144,7 +144,7 @@ func main() {
 				os.Exit(1)
 			}
 
-			if global.Gossip == nil || global.Gossip.PrivateKeyFile == "" {
+			if &global.Gossip == nil || global.Gossip.PrivateKeyFile == "" {
 				fmt.Println("Error: 'gossip.private_key_file' is not set in config.hcl")
 				os.Exit(1)
 			}
@@ -180,7 +180,10 @@ func main() {
 	loggerFile := lh.NewJSONHandler(fp)
 	loggerMultiple := lh.NewMultiHandler(loggerTerminal, loggerFile)
 
-	logger = ll.New(woos.Name, ll.WithHandler(loggerMultiple)).Enable()
+	logger = ll.New(woos.Name,
+		ll.WithHandler(loggerMultiple),
+		ll.WithFatalExits(true),
+	).Enable()
 
 	// --- Setup Service ---
 	svcConfig := &service.Config{

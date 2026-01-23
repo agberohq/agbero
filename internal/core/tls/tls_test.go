@@ -19,6 +19,7 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/caddyserver/certmagic"
 	"github.com/fsnotify/fsnotify"
 )
@@ -94,7 +95,7 @@ func generateTestCert(t *testing.T, certFile, keyFile string) {
 
 func TestTlsManager_EnsureCertMagic_Success(t *testing.T) {
 	tmpDir := t.TempDir()
-	global := &woos.GlobalConfig{
+	global := &alaye.Global{
 		LEEmail:       "test@example.com",
 		TLSStorageDir: tmpDir,
 	}
@@ -132,7 +133,7 @@ func TestTlsManager_EnsureCertMagic_NoEmail(t *testing.T) {
 	m := &TlsManager{
 		Logger:      &mockLogger{},
 		HostManager: &discovery.Host{},
-		Global:      &woos.GlobalConfig{TLSStorageDir: "/tmp"},
+		Global:      &alaye.Global{TLSStorageDir: "/tmp"},
 	}
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
 	_, err := m.EnsureCertMagic(next)
@@ -142,7 +143,7 @@ func TestTlsManager_EnsureCertMagic_NoEmail(t *testing.T) {
 }
 
 func TestTlsManager_CmForHost_DevMode(t *testing.T) {
-	m := &TlsManager{Global: &woos.GlobalConfig{Development: true}}
+	m := &TlsManager{Global: &alaye.Global{Development: true}}
 	m.cmProd = &certmagic.Config{}
 	m.cmStaging = &certmagic.Config{}
 
@@ -157,7 +158,7 @@ func TestTlsManager_CmForHost_StagingOverride(t *testing.T) {
 	m.cmProd = &certmagic.Config{}
 	m.cmStaging = &certmagic.Config{}
 
-	hcfg := &woos.HostConfig{TLS: &woos.TLS{LetsEncrypt: woos.LetsEncrypt{Staging: true}}}
+	hcfg := &alaye.Host{TLS: alaye.TLS{LetsEncrypt: alaye.LetsEncrypt{Staging: true}}}
 	cm := m.CmForHost(hcfg)
 	if cm != m.cmStaging {
 		t.Error("Expected staging on host override")
@@ -173,7 +174,7 @@ func TestTlsManager_GetLocalCertificate_Success(t *testing.T) {
 	generateTestCert(t, certFile, keyFile)
 
 	m := &TlsManager{Logger: &mockLogger{}, LocalCache: make(map[string]*tls.Certificate)}
-	local := woos.LocalCert{CertFile: certFile, KeyFile: keyFile}
+	local := alaye.LocalCert{CertFile: certFile, KeyFile: keyFile}
 	cert, err := m.GetLocalCertificate(local, "test.com")
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
@@ -186,7 +187,7 @@ func TestTlsManager_GetLocalCertificate_Success(t *testing.T) {
 func TestTlsManager_GetLocalCertificate_MissingFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	m := &TlsManager{Logger: &mockLogger{}, LocalCache: make(map[string]*tls.Certificate)}
-	local := woos.LocalCert{
+	local := alaye.LocalCert{
 		CertFile: filepath.Join(tmpDir, "nonexistent.pem"),
 		KeyFile:  filepath.Join(tmpDir, "nonexistent.key"),
 	}
@@ -198,7 +199,7 @@ func TestTlsManager_GetLocalCertificate_MissingFile(t *testing.T) {
 
 func TestTlsManager_GetLocalCertificate_EmptyPaths(t *testing.T) {
 	m := &TlsManager{Logger: &mockLogger{}, LocalCache: make(map[string]*tls.Certificate)}
-	local := woos.LocalCert{CertFile: "", KeyFile: ""}
+	local := alaye.LocalCert{CertFile: "", KeyFile: ""}
 	_, err := m.GetLocalCertificate(local, "test.com")
 	if err == nil || !strings.Contains(err.Error(), "local tls requires") {
 		t.Errorf("Expected missing cert/key error, got %v", err)
@@ -255,7 +256,7 @@ func TestTlsManager_GetLocalCertificate_Caching(t *testing.T) {
 		Logger:     &mockLogger{},
 		LocalCache: make(map[string]*tls.Certificate),
 	}
-	local := woos.LocalCert{CertFile: certFile, KeyFile: keyFile}
+	local := alaye.LocalCert{CertFile: certFile, KeyFile: keyFile}
 
 	// First call should load and cache
 	cert1, err := m.GetLocalCertificate(local, "test.com")
@@ -292,7 +293,7 @@ func TestTlsManager_InvalidateLocal(t *testing.T) {
 		Logger:     &mockLogger{},
 		LocalCache: make(map[string]*tls.Certificate),
 	}
-	local := woos.LocalCert{CertFile: certFile, KeyFile: keyFile}
+	local := alaye.LocalCert{CertFile: certFile, KeyFile: keyFile}
 	cacheKey := certFile + "|" + keyFile
 
 	// Load certificate into cache

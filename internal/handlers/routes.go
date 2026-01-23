@@ -14,7 +14,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/compress"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/headers"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
 )
 
@@ -27,7 +27,48 @@ type RouteHandler struct {
 	Backends []*backend.Backend
 }
 
-func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
+func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
+	// Web route doesn't need backends or load balancing
+	chain := &webHandler{
+		route:  route,
+		logger: logger,
+	}
+
+	// Build middleware chain (same as proxy routes)
+	var handler http.Handler = chain
+
+	// Authentication
+	if route.BasicAuth != nil && len(route.BasicAuth.Users) > 0 {
+		handler = auth.Basic(route.BasicAuth)(handler)
+	}
+	if route.ForwardAuth != nil && route.ForwardAuth.URL != "" {
+		handler = auth.Forward(route.ForwardAuth)(handler)
+	}
+
+	// Headers
+	if route.Headers != nil {
+		handler = headers.Headers(route.Headers)(handler)
+	}
+
+	// Compression
+	if route.CompressionConfig.Compression {
+		handler = compress.Compress(route)(handler)
+	}
+
+	return &RouteHandler{
+		handler:  handler,
+		Backends: nil, // No backends for web routes
+	}
+}
+
+func NewRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
+	if &route.Web != nil {
+		return newWebRouteHandler(route, logger)
+	} else {
+		return newProxyRouteHandler(route, logger)
+	}
+}
+func newProxyRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 	// 1. Initialize Load Balancer Logic
 	lb := &LoadBalancerHandler{
 		stripPrefixes: append([]string(nil), route.StripPrefixes...),
@@ -35,7 +76,7 @@ func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
 	}
 
 	if lb.strategy == "" {
-		lb.strategy = woos.StrategyRoundRobin // Ensure this constant exists in woos, or use "roundrobin"
+		lb.strategy = alaye.StrategyRoundRobin // Ensure this constant exists in woos, or use "roundrobin"
 	}
 
 	if route.Timeouts != nil && route.Timeouts.Request != 0 {
@@ -145,9 +186,9 @@ func (lb *LoadBalancerHandler) PickBackend() *backend.Backend {
 	}
 
 	switch lb.strategy {
-	case woos.StrategyLeastConn:
+	case alaye.StrategyLeastConn:
 		return lb.pickLeastConn()
-	case woos.StrategyRandom:
+	case alaye.StrategyRandom:
 		return lb.pickRandom()
 	default:
 		return lb.pickRoundRobin()

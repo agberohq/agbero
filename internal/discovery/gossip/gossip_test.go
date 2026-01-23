@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/security"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/hashicorp/memberlist"
 	"github.com/olekukonko/ll"
 )
@@ -22,7 +22,7 @@ type mockHost struct {
 	failures    map[string]int
 }
 
-func (m *mockHost) UpdateGossipNode(nodeID, host string, route woos.Route) {
+func (m *mockHost) UpdateGossipNode(nodeID, host string, route alaye.Route) {
 	m.updated = true
 }
 
@@ -49,7 +49,7 @@ func TestNewService_Disabled(t *testing.T) {
 }
 
 func TestNewService_InvalidKey(t *testing.T) {
-	cfg := &woos.GossipConfig{Enabled: true, SecretKey: "short"}
+	cfg := &alaye.Gossip{Enabled: true, SecretKey: "short"}
 	// Must pass a valid logger
 	_, err := NewService(nil, cfg, testLogger)
 	if err == nil {
@@ -61,11 +61,11 @@ func TestNewService_WithAuth(t *testing.T) {
 	tmpFile := t.TempDir() + "/key.pem"
 	security.GenerateNewKeyFile(tmpFile)
 	// Use port 0 to let OS assign a free port
-	cfg := &woos.GossipConfig{Enabled: true, PrivateKeyFile: tmpFile, Port: 0}
+	cfg := alaye.Gossip{Enabled: true, PrivateKeyFile: tmpFile, Port: 0}
 	logger := testLogger
 
 	hm := &mockHost{}
-	s, err := NewService(hm, cfg, logger)
+	s, err := NewService(hm, &cfg, logger)
 	if err != nil {
 		t.Logf("Service start failed: %v", err)
 		return
@@ -80,7 +80,7 @@ func TestNewService_WithAuth(t *testing.T) {
 func TestJoin_Success(t *testing.T) {
 	hm := &mockHost{}
 	// Use Port 0 to bind to a random available port
-	cfg := &woos.GossipConfig{Enabled: true, Port: 0}
+	cfg := &alaye.Gossip{Enabled: true, Port: 0}
 	logger := testLogger
 	s, err := NewService(hm, cfg, logger)
 	if err != nil {
@@ -184,9 +184,9 @@ func TestNotifyLeave_Remove(t *testing.T) {
 }
 
 func TestShutdown(t *testing.T) {
-	cfg := &woos.GossipConfig{Enabled: true, Port: 0}
+	cfg := alaye.Gossip{Enabled: true, Port: 0}
 	logger := testLogger
-	s, err := NewService(nil, cfg, logger)
+	s, err := NewService(nil, &cfg, logger)
 	if err != nil {
 		t.Skipf("Skipping shutdown test due to bind error: %v", err)
 		return

@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"strings"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/errors"
 	"golang.org/x/crypto/bcrypt"
 )
 
-func Basic(cfg *woos.BasicAuthConfig) func(http.Handler) http.Handler {
+func Basic(cfg *alaye.BasicAuth) func(http.Handler) http.Handler {
 	secrets := make(map[string][]byte)
 	for _, u := range cfg.Users {
 		parts := strings.SplitN(u, ":", 2)

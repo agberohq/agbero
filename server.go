@@ -4,6 +4,7 @@ package agbero
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/h3"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 	"github.com/quic-go/quic-go/http3"
@@ -29,7 +31,7 @@ import (
 
 type Server struct {
 	hostManager *discovery.Host
-	global      *woos.GlobalConfig
+	global      *alaye.Global
 	tlsManager  *tls2.TlsManager // Added for watcher shutdown
 	configPath  string           // Added for reload
 
@@ -77,11 +79,49 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 
 	woos.ApplyDefaults(s.global)
 
+	// Log global config summary
+	s.logger.Fields(
+		"config_path", configPath,
+		"hosts_dir", s.global.HostsDir,
+		"dev_mode", s.global.Development,
+		"http_bind", len(s.global.Bind.HTTP),
+		"https_bind", len(s.global.Bind.HTTPS),
+		"metrics_bind", s.global.Bind.Metrics,
+	).Info("starting with configuration")
+
 	s.startMetricsServer()
 	s.startCacheReaper(parentCtx)
 
-	if s.global.Gossip != nil && s.global.Gossip.Enabled {
-		gs, err := gossip.NewService(s.hostManager, s.global.Gossip, s.logger)
+	// Log initial host discovery
+	hosts, err := s.hostManager.LoadAll()
+	if err != nil {
+		s.logger.Fields("err", err).Error("failed to load initial hosts")
+		return err
+	}
+
+	// Log host summary
+	hostCount := len(hosts)
+	routeCount := 0
+	domainCount := 0
+	for domain, host := range hosts {
+		domainCount++
+		routeCount += len(host.Routes)
+
+		s.logger.Fields(
+			"domain", domain,
+			"routes", len(host.Routes),
+			"tls_mode", host.TLS,
+		).Debug("host configuration loaded")
+	}
+
+	s.logger.Fields(
+		"hosts", hostCount,
+		"domains", domainCount,
+		"routes", routeCount,
+	).Info("host configuration loaded successfully")
+
+	if &s.global.Gossip != nil && s.global.Gossip.Enabled {
+		gs, err := gossip.NewService(s.hostManager, &s.global.Gossip, s.logger)
 		if err != nil {
 			return errors.Newf("failed to start gossip: %w", err)
 		}
@@ -117,7 +157,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 			port := h3.ExtractPort(addr)
 			advertiseH3 := h3.H3Middleware(port)
 
-			// Chain: IP -> RateLimit -> Alt-Svc -> (HTTP-01) -> Router
+			// Chain: IP -> Rate -> Alt-Svc -> (HTTP-01) -> Router
 			handler = s.ipMiddleware.Handler(s.rateLimiter.Handler(advertiseH3(baseHandler)))
 		} else {
 			handler = s.ipMiddleware.Handler(s.rateLimiter.Handler(httpHandler))
@@ -133,15 +173,15 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		srv := &http.Server{
 			Addr:              addr,
 			Handler:           wrappedHandler,
-			ReadTimeout:       core.Or(s.global.Timeouts.Read, woos.DefaultReadTimeout),
-			WriteTimeout:      core.Or(s.global.Timeouts.Write, woos.DefaultWriteTimeout),
-			IdleTimeout:       core.Or(s.global.Timeouts.Idle, woos.DefaultIdleTimeout),
-			ReadHeaderTimeout: core.Or(s.global.Timeouts.ReadHeader, woos.DefaultReadHeaderTimeout),
+			ReadTimeout:       core.Or(s.global.Timeouts.Read, alaye.DefaultReadTimeout),
+			WriteTimeout:      core.Or(s.global.Timeouts.Write, alaye.DefaultWriteTimeout),
+			IdleTimeout:       core.Or(s.global.Timeouts.Idle, alaye.DefaultIdleTimeout),
+			ReadHeaderTimeout: core.Or(s.global.Timeouts.ReadHeader, alaye.DefaultReadHeaderTimeout),
 			MaxHeaderBytes:    s.global.MaxHeaderBytes,
 		}
 
 		if srv.MaxHeaderBytes == 0 {
-			srv.MaxHeaderBytes = woos.DefaultMaxHeaderBytes
+			srv.MaxHeaderBytes = alaye.DefaultMaxHeaderBytes
 		}
 
 		if isTLS && tlsCfg != nil {
@@ -160,7 +200,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 			return
 		}
 
-		// Reuse logic: IP -> RateLimit -> Router
+		// Reuse logic: IP -> Rate -> Router
 		// Note: HTTP/3 doesn't need Alt-Svc middleware because we are already ON HTTP/3
 		handler := s.ipMiddleware.Handler(s.rateLimiter.Handler(baseHandler))
 
@@ -255,18 +295,46 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 }
 
 // reload reloads config and hosts
+// server.go - Update reload method
 func (s *Server) reload() {
-	// Reload global (partial; binds require restart)
+	s.logger.Info("received SIGHUP, reloading configuration")
+
+	// Reload global config
 	global, err := core.LoadGlobal(s.configPath)
 	if err != nil {
-		s.logger.Fields("err", err).Error("reload config failed")
+		s.logger.Fields("err", err, "config_path", s.configPath).Error("reload config failed")
 		return
 	}
-	s.global = global // Apply (rate limits etc. may need re-init if changed)
+
+	// Log changes in global config
+	var changes []string
+	if s.global.LEEmail != global.LEEmail {
+		changes = append(changes, fmt.Sprintf("le_email: %s → %s", s.global.LEEmail, global.LEEmail))
+	}
+	if s.global.LogLevel != global.LogLevel {
+		changes = append(changes, fmt.Sprintf("log_level: %s → %s", s.global.LogLevel, global.LogLevel))
+	}
+
+	s.global = global
+
+	if len(changes) > 0 {
+		s.logger.Fields("changes", changes).Info("global config updated")
+	}
 
 	// Reload hosts
+	previousHosts, _ := s.hostManager.LoadAll()
+	previousCount := len(previousHosts)
+
 	s.hostManager.ReloadFull()
-	s.logger.Info("config/hosts reloaded on SIGHUP")
+
+	currentHosts, _ := s.hostManager.LoadAll()
+	currentCount := len(currentHosts)
+
+	s.logger.Fields(
+		"previous_hosts", previousCount,
+		"current_hosts", currentCount,
+		"change", currentCount-previousCount,
+	).Info("configuration reloaded successfully")
 }
 
 func (s *Server) startMetricsServer() {
@@ -445,7 +513,7 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time) {
 	).Info("request")
 }
 
-func (s *Server) getOrBuildRouteHandler(route *woos.Route) *handlers2.RouteHandler {
+func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.RouteHandler {
 	key := route.Key()
 	now := time.Now().UnixNano()
 

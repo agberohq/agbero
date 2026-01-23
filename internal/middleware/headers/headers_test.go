@@ -5,12 +5,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
 func TestHeaders_RequestMods(t *testing.T) {
-	cfg := &woos.HeadersConfig{
-		Request: &woos.HeaderOperations{
+	cfg := &alaye.Headers{
+		Request: &alaye.Header{
 			Set:    map[string]string{"X-Test": "set-value"},
 			Add:    map[string]string{"X-Multi": "add1"},
 			Remove: []string{"User-Agent"},
@@ -52,8 +52,8 @@ func TestHeaders_RequestMods(t *testing.T) {
 }
 
 func TestHeaders_ResponseMods(t *testing.T) {
-	cfg := &woos.HeadersConfig{
-		Response: &woos.HeaderOperations{
+	cfg := &alaye.Headers{
+		Response: &alaye.Header{
 			Set:    map[string]string{"X-Resp": "resp-value"},
 			Add:    map[string]string{"X-Resp-Multi": "add2"},
 			Remove: []string{"Content-Type"},
@@ -97,7 +97,7 @@ func TestHeaders_ResponseMods(t *testing.T) {
 }
 
 func TestHeaders_NoOps(t *testing.T) {
-	cfg := &woos.HeadersConfig{} // Empty
+	cfg := &alaye.Headers{} // Empty
 
 	handler := Headers(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

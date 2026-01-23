@@ -10,11 +10,12 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
 // loadConfig parses the config and ensures hosts_dir is absolute.
 // If hosts_dir is relative (e.g. "./hosts.d"), it resolves it relative to the config file.
-func loadConfig(path string) (*woos.GlobalConfig, error) {
+func loadConfig(path string) (*alaye.Global, error) {
 	// 1. Get Absolute Path of Config File
 	absConfigPath, err := filepath.Abs(path)
 	if err != nil {
@@ -22,7 +23,7 @@ func loadConfig(path string) (*woos.GlobalConfig, error) {
 	}
 
 	// 2. Parse Config
-	var global woos.GlobalConfig
+	var global alaye.Global
 	parser := core.NewParser(absConfigPath)
 	if err := parser.Unmarshal(&global); err != nil {
 		return nil, err

@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
 func TestForward_Success(t *testing.T) {
@@ -14,7 +14,7 @@ func TestForward_Success(t *testing.T) {
 	}))
 	defer authServer.Close()
 
-	cfg := &woos.ForwardAuthConfig{URL: authServer.URL}
+	cfg := &alaye.ForwardAuth{URL: authServer.URL}
 	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -34,7 +34,7 @@ func TestForward_Forbidden(t *testing.T) {
 	}))
 	defer authServer.Close()
 
-	cfg := &woos.ForwardAuthConfig{URL: authServer.URL}
+	cfg := &alaye.ForwardAuth{URL: authServer.URL}
 	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
 	// Unique path to avoid cache hit from previous test
@@ -53,7 +53,7 @@ func TestForward_CacheHit(t *testing.T) {
 	}))
 	defer authServer.Close()
 
-	cfg := &woos.ForwardAuthConfig{URL: authServer.URL}
+	cfg := &alaye.ForwardAuth{URL: authServer.URL}
 	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -72,7 +72,7 @@ func TestForward_CacheHit(t *testing.T) {
 }
 
 func TestForward_FailureAllow(t *testing.T) {
-	cfg := &woos.ForwardAuthConfig{URL: "http://nonexistent", OnFailure: "allow"}
+	cfg := &alaye.ForwardAuth{URL: "http://nonexistent", OnFailure: "allow"}
 	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -87,7 +87,7 @@ func TestForward_FailureAllow(t *testing.T) {
 }
 
 func TestForward_FailureDeny(t *testing.T) {
-	cfg := &woos.ForwardAuthConfig{URL: "http://nonexistent", OnFailure: "deny"}
+	cfg := &alaye.ForwardAuth{URL: "http://nonexistent", OnFailure: "deny"}
 	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
 	req := httptest.NewRequest("GET", "/fail-deny", nil)
@@ -106,7 +106,7 @@ func TestForward_MaxAgeParse(t *testing.T) {
 	}))
 	defer authServer.Close()
 
-	cfg := &woos.ForwardAuthConfig{URL: authServer.URL}
+	cfg := &alaye.ForwardAuth{URL: authServer.URL}
 	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
 	req := httptest.NewRequest("GET", "/maxage", nil)

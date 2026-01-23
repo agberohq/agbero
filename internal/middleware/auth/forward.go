@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/maypok86/otter/v2"
 	"github.com/maypok86/otter/v2/stats"
 )
@@ -19,7 +19,7 @@ var authCache = otter.Must(&otter.Options[string, bool]{
 	StatsRecorder: counter,
 })
 
-func Forward(cfg *woos.ForwardAuthConfig) func(http.Handler) http.Handler {
+func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 	if cfg.URL == "" {
 		return func(next http.Handler) http.Handler { return next }
 	}

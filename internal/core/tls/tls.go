@@ -15,6 +15,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/caddyserver/certmagic"
 	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/errors"
@@ -31,7 +32,7 @@ const (
 type TlsManager struct {
 	Logger      woos.TlsLogger
 	HostManager *discovery.Host
-	Global      *woos.GlobalConfig
+	Global      *alaye.Global
 
 	// CertMagic configs (prod + staging)
 	cmMu       sync.Mutex
@@ -140,14 +141,14 @@ func (m *TlsManager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 	return h, nil
 }
 
-func (m *TlsManager) CmForHost(hcfg *woos.HostConfig) *certmagic.Config {
+func (m *TlsManager) CmForHost(hcfg *alaye.Host) *certmagic.Config {
 	// Global dev mode forces staging
 	if m.Global != nil && m.Global.Development {
 		return m.cmStaging
 	}
 
 	// Per-host override
-	if hcfg != nil && hcfg.TLS != nil {
+	if hcfg != nil && &hcfg.TLS != nil {
 		if hcfg.TLS.LetsEncrypt.Staging {
 			return m.cmStaging
 		}
@@ -155,7 +156,7 @@ func (m *TlsManager) CmForHost(hcfg *woos.HostConfig) *certmagic.Config {
 	return m.cmProd
 }
 
-func (m *TlsManager) GetLocalCertificate(local woos.LocalCert, host string) (*tls.Certificate, error) {
+func (m *TlsManager) GetLocalCertificate(local alaye.LocalCert, host string) (*tls.Certificate, error) {
 	certFile := strings.TrimSpace(local.CertFile)
 	keyFile := strings.TrimSpace(local.KeyFile)
 
@@ -263,29 +264,29 @@ func (m *TlsManager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate,
 		return nil, errors.Newf("unknown host %q", sni)
 	}
 
-	mode := woos.ModeLetsEncrypt
-	if hcfg.TLS != nil && hcfg.TLS.Mode != "" {
+	mode := alaye.ModeLetsEncrypt
+	if &hcfg.TLS != nil && hcfg.TLS.Mode != "" {
 		mode = hcfg.TLS.Mode
 	}
 
 	switch mode {
-	case woos.ModeLocalNone:
+	case alaye.ModeLocalNone:
 		return nil, errors.Newf("tls disabled for host %q", sni)
 
-	case woos.ModeLocalCert:
-		if hcfg.TLS == nil {
+	case alaye.ModeLocalCert:
+		if &hcfg.TLS == nil {
 			return nil, errors.Newf("tls=local requires tls block for host %q", sni)
 		}
 		return m.GetLocalCertificate(hcfg.TLS.Local, sni)
 
-	case woos.ModeLetsEncrypt:
+	case alaye.ModeLetsEncrypt:
 		cm := m.CmForHost(hcfg)
 		if cm == nil {
 			return nil, errors.Newf("letsencrypt not enabled globally (host %q)", sni)
 		}
 
 		// Apply short-lived if configured
-		if hcfg.TLS != nil && hcfg.TLS.LetsEncrypt.ShortLived {
+		if &hcfg.TLS != nil && hcfg.TLS.LetsEncrypt.ShortLived {
 			for _, iss := range cm.Issuers {
 				if acmeIss, ok := iss.(*certmagic.ACMEIssuer); ok {
 					acmeIss.Profile = acmeProfileShortLived
@@ -299,7 +300,7 @@ func (m *TlsManager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate,
 		return cmTLS.GetCertificate(&chi2)
 
 	case "custom_ca":
-		if hcfg.TLS == nil || hcfg.TLS.CustomCA.Root == "" {
+		if &hcfg.TLS == nil || hcfg.TLS.CustomCA.Root == "" {
 			return nil, errors.Newf("tls=custom_ca requires root cert for host %q", sni)
 		}
 		return m.getCustomCACert(hcfg.TLS.CustomCA.Root, sni)
@@ -324,7 +325,7 @@ func (m *TlsManager) getCustomCACert(root string, host string) (*tls.Certificate
 
 	// Here, for full custom CA, you'd generate/issue certs, but assuming pre-issued like mkcert,
 	// fallback to local load (reuse GetLocalCertificate if cert/key provided, else error)
-	if hcfg := m.HostManager.Get(host); hcfg != nil && hcfg.TLS != nil {
+	if hcfg := m.HostManager.Get(host); hcfg != nil && &hcfg.TLS != nil {
 		return m.GetLocalCertificate(hcfg.TLS.Local, host)
 	}
 	return nil, errors.Newf("custom_ca requires local cert/key for host %q", host)

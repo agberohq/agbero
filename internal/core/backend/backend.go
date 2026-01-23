@@ -14,6 +14,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
 var sharedBufferPool = core.NewBufferPool()
@@ -26,14 +27,14 @@ type Backend struct {
 	Failures     atomic.Int64
 	TotalReqs    atomic.Uint64
 	Metrics      *metrics.LatencyTracker
-	hcConfig     *woos.HealthCheckConfig
+	hcConfig     *alaye.HealthCheck
 	logger       woos.TlsLogger
 	stop         chan struct{}
 	startTime    time.Time
 	lastRecovery atomic.Int64 // Unix nano of last time marked alive
 }
 
-func NewBackend(targetStr string, route *woos.Route, logger woos.TlsLogger) (*Backend, error) {
+func NewBackend(targetStr string, route *alaye.Route, logger woos.TlsLogger) (*Backend, error) {
 	u, err := url.Parse(targetStr)
 	if err != nil {
 		return nil, err
@@ -57,7 +58,7 @@ func NewBackend(targetStr string, route *woos.Route, logger woos.TlsLogger) (*Ba
 	}
 
 	rp := httputil.NewSingleHostReverseProxy(u)
-	rp.Transport = woos.SharedTransport
+	rp.Transport = woos.Transport
 	rp.FlushInterval = -1
 	rp.BufferPool = sharedBufferPool
 

@@ -102,10 +102,12 @@ rate_limits {
 ```hcl
 domains = ["app.example.com", "*.example.com"]
 
-# Static file serving
-web {
-  root = "/var/www/html"
-  index = "index.html"
+route "/api/*" {
+  # Static file serving
+  web {
+    root  = "/var/www/html"
+    index = "index.html"
+  }
 }
 
 # API routing with load balancing

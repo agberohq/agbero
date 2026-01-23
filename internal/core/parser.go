@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/alecthomas/hcl"
 	"github.com/olekukonko/errors"
 )
@@ -40,8 +40,8 @@ func (p *Parser) Unmarshal(output any) error {
 }
 
 // LoadGlobal is a convenience wrapper
-func LoadGlobal(path string) (*woos.GlobalConfig, error) {
-	var global woos.GlobalConfig
+func LoadGlobal(path string) (*alaye.Global, error) {
+	var global alaye.Global
 	parser := NewParser(path)
 	if err := parser.Unmarshal(&global); err != nil {
 		return nil, err
@@ -50,8 +50,8 @@ func LoadGlobal(path string) (*woos.GlobalConfig, error) {
 }
 
 // ParseHostConfig parses a single host config file
-func ParseHostConfig(path string) (*woos.HostConfig, error) {
-	var host woos.HostConfig
+func ParseHostConfig(path string) (*alaye.Host, error) {
+	var host alaye.Host
 	parser := NewParser(path)
 	if err := parser.Unmarshal(&host); err != nil {
 		return nil, err

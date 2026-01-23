@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
 )
 
@@ -26,7 +26,7 @@ func TestNewHost_Basic(t *testing.T) {
 
 func TestUpdateGossipNode(t *testing.T) {
 	h := NewHost("/tmp", WithLogger(testLogger))
-	route := woos.Route{Path: "/api"}
+	route := alaye.Route{Path: "/api"}
 	h.UpdateGossipNode("node1", "example.com", route)
 
 	hosts, _ := h.LoadAll()
@@ -40,7 +40,7 @@ func TestUpdateGossipNode(t *testing.T) {
 
 func TestRemoveGossipNode(t *testing.T) {
 	h := NewHost("/tmp")
-	route := woos.Route{Path: "/api"}
+	route := alaye.Route{Path: "/api"}
 	h.UpdateGossipNode("node1", "example.com", route)
 	h.RemoveGossipNode("node1")
 
@@ -52,7 +52,7 @@ func TestRemoveGossipNode(t *testing.T) {
 
 func TestRouteExists(t *testing.T) {
 	h := NewHost("/tmp")
-	route := woos.Route{Path: "/api"}
+	route := alaye.Route{Path: "/api"}
 	h.UpdateGossipNode("node1", "example.com", route)
 
 	if !h.RouteExists("example.com", "/api") {
@@ -126,15 +126,15 @@ func TestRebuildLookupLocked_DedupFileGossip(t *testing.T) {
 	h.mu.Lock()
 
 	// File host
-	h.hosts["file"] = &woos.HostConfig{
+	h.hosts["file"] = &alaye.Host{
 		Domains: []string{"example.com"},
-		Routes:  []woos.Route{{Path: "/api"}},
+		Routes:  []alaye.Route{{Path: "/api"}},
 	}
 
 	// Gossip same
 	h.gossipRoutes["node1"] = DynamicRouteItem{
 		Host:  "example.com",
-		Route: woos.Route{Path: "/api"},
+		Route: alaye.Route{Path: "/api"},
 	}
 
 	h.rebuildLookupLocked()
@@ -147,7 +147,7 @@ func TestRebuildLookupLocked_DedupFileGossip(t *testing.T) {
 }
 
 func TestSortRoutes(t *testing.T) {
-	routes := []woos.Route{
+	routes := []alaye.Route{
 		{Path: "/api"},
 		{Path: "/api/v1/users"},
 		{Path: "/"},

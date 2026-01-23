@@ -3,10 +3,10 @@ package headers
 import (
 	"net/http"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
-func Headers(cfg *woos.HeadersConfig) func(http.Handler) http.Handler {
+func Headers(cfg *alaye.Headers) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// 1. Modify Request Headers (Going Upstream)
@@ -26,7 +26,7 @@ func Headers(cfg *woos.HeadersConfig) func(http.Handler) http.Handler {
 	}
 }
 
-func applyHeaders(h http.Header, ops *woos.HeaderOperations) {
+func applyHeaders(h http.Header, ops *alaye.Header) {
 	for _, k := range ops.Remove {
 		h.Del(k)
 	}
@@ -41,7 +41,7 @@ func applyHeaders(h http.Header, ops *woos.HeaderOperations) {
 // headerWriter intercepts the response to modify headers
 type headerWriter struct {
 	http.ResponseWriter
-	ops *woos.HeaderOperations
+	ops *alaye.Header
 }
 
 func (w *headerWriter) WriteHeader(statusCode int) {

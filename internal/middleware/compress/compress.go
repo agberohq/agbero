@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/gzip"
 )
@@ -28,7 +28,7 @@ var brotliWriterPool = sync.Pool{
 	},
 }
 
-func Compress(route *woos.Route) func(http.Handler) http.Handler {
+func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Check if WebSocket (cannot compress upgrade requests)
