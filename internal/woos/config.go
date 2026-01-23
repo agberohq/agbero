@@ -9,18 +9,26 @@ import (
 // ---- GLOBAL CONFIG -------------------------------------------
 
 type GlobalConfig struct {
-	Bind           string          `hcl:"bind"`
-	HostsDir       string          `hcl:"hosts_dir"`
-	LEEmail        string          `hcl:"le_email,optional"`
-	LogLevel       string          `hcl:"log_level,optional"`
-	Development    bool            `hcl:"development,optional"`
-	TrustedProxies []string        `hcl:"trusted_proxies,optional"`
-	Timeouts       TimeoutConfig   `hcl:"timeouts,block"`
-	RateLimits     RateLimitConfig `hcl:"rate_limits,block"`
+	Bind           BindConfig `hcl:"bind"`
+	HostsDir       string     `hcl:"hosts_dir"`
+	LEEmail        string     `hcl:"le_email,optional"`
+	LogLevel       string     `hcl:"log_level,optional"`
+	Development    bool       `hcl:"development,optional"`
+	TrustedProxies []string   `hcl:"trusted_proxies,optional"`
+
+	Timeouts   TimeoutConfig   `hcl:"timeouts,block"`
+	RateLimits RateLimitConfig `hcl:"rate_limits,block"`
 
 	// Hardening / Operability
 	MaxHeaderBytes int    `hcl:"max_header_bytes,optional"` // default: 1 MiB
 	TLSStorageDir  string `hcl:"tls_storage_dir,optional"`  // default: "/var/lib/agbero/certmagic"
+}
+
+type BindConfig struct {
+	// Arrays allow multiple ports: http = [":80", ":8080"]
+	HTTP    []string `hcl:"http,optional"`
+	HTTPS   []string `hcl:"https,optional"`
+	Metrics string   `hcl:"metrics,optional"`
 }
 
 type TimeoutConfig struct {
@@ -49,11 +57,12 @@ type RatePolicyConfig struct {
 // ---- HOST CONFIG ---------------------------------------------
 
 type HostConfig struct {
-	Domains []string     `hcl:"domains"`
-	Routes  []Route      `hcl:"route,block"`
-	Web     *Web         `hcl:"web,block"`
-	TLS     *TSL         `hcl:"tls,block"`
-	Limits  *LimitConfig `hcl:"limits,block"`
+	Domains   []string     `hcl:"domains"`
+	BindPorts []string     `hcl:"bind_ports,optional"`
+	Routes    []Route      `hcl:"route,block"`
+	Web       *Web         `hcl:"web,block"`
+	TLS       *TSL         `hcl:"tls,block"`
+	Limits    *LimitConfig `hcl:"limits,block"`
 }
 
 type LimitConfig struct {

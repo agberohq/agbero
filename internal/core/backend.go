@@ -17,17 +17,19 @@ type Backend struct {
 	URL   *url.URL
 	Proxy *httputil.ReverseProxy
 
-	// Atomic State (High performance, no mutex on hot path)
-	Alive     atomic.Bool   // Is backend healthy?
-	InFlight  atomic.Int64  // Current active requests
-	Failures  atomic.Int64  // Consecutive failure count (for circuit breaker)
-	TotalReqs atomic.Uint64 // Total requests served
-	Latency   atomic.Int64  // Moving average latency in microseconds
+	// Atomic State
+	Alive     atomic.Bool
+	InFlight  atomic.Int64
+	Failures  atomic.Int64
+	TotalReqs atomic.Uint64
+
+	// NEW: High-Fidelity Latency Tracking
+	Metrics *LatencyTracker
 
 	// Internals
 	hcConfig *woos.HealthCheckConfig
 	logger   anyLogger
-	stop     chan struct{} // To stop health check loop
+	stop     chan struct{}
 }
 
 func NewBackend(targetStr string, route *woos.Route, logger anyLogger) (*Backend, error) {
@@ -41,51 +43,39 @@ func NewBackend(targetStr string, route *woos.Route, logger anyLogger) (*Backend
 		hcConfig: route.HealthCheck,
 		logger:   logger,
 		stop:     make(chan struct{}),
+		Metrics:  NewLatencyTracker(), // Initialize Metrics
 	}
 
-	// Default to alive.
 	b.Alive.Store(true)
 
-	// Circuit Breaker Threshold
 	cbThreshold := 5
 	if route.CircuitBreaker != nil && route.CircuitBreaker.Threshold > 0 {
 		cbThreshold = route.CircuitBreaker.Threshold
 	}
 
-	// Setup Proxy
 	rp := httputil.NewSingleHostReverseProxy(u)
 	rp.Transport = woos.SharedTransport
-	rp.FlushInterval = -1 // Essential for streaming (SSE)
+	rp.FlushInterval = -1
 
-	// Custom Error Handler for Circuit Breaker
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		// Context canceled is common (client disconnect), don't count as backend failure
-		// unless we want to be very strict.
 		if err != context.Canceled {
 			newFailures := b.Failures.Add(1)
-
-			// TRIP THE CIRCUIT
 			if newFailures >= int64(cbThreshold) {
 				if b.Alive.Swap(false) {
 					b.logger.Fields("backend", u.Host, "failures", newFailures).Warn("circuit breaker tripped")
 				}
 			}
 		}
-
 		b.logger.Fields("upstream", u.Host, "err", err).Error("upstream proxy error")
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 	}
 
-	// Director: Support WebSockets natively by NOT stripping Connection/Upgrade
 	origDirector := rp.Director
 	rp.Director = func(req *http.Request) {
 		origDirector(req)
 		req.Host = u.Host
-
 		req.Header.Set("X-Forwarded-Host", req.Host)
 		req.Header.Set("X-Forwarded-Proto", req.URL.Scheme)
-
-		// Remove standard hop-by-hop headers
 		req.Header.Del("Keep-Alive")
 		req.Header.Del("Proxy-Authenticate")
 		req.Header.Del("Proxy-Authorization")
@@ -96,7 +86,6 @@ func NewBackend(targetStr string, route *woos.Route, logger anyLogger) (*Backend
 
 	b.Proxy = rp
 
-	// Start Health Check Loop if configured
 	if b.hcConfig != nil && b.hcConfig.Path != "" {
 		go b.healthCheckLoop()
 	}
@@ -111,17 +100,10 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	b.Proxy.ServeHTTP(w, r)
 
-	// Simple Moving Average for Latency (approximate)
-	// We use integer microseconds to avoid float overhead on atomic
+	// Record Latency to HdrHistogram
 	dur := time.Since(start).Microseconds()
-	old := b.Latency.Load()
-	if old == 0 {
-		b.Latency.Store(dur)
-	} else {
-		// Weight new sample 20%
-		newLat := int64((float64(old) * 0.8) + (float64(dur) * 0.2))
-		b.Latency.Store(newLat)
-	}
+	b.Metrics.Record(dur)
+
 	b.TotalReqs.Add(1)
 }
 

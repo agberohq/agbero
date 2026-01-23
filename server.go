@@ -3,6 +3,7 @@ package agbero
 import (
 	"context"
 	"crypto/tls"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -28,6 +29,13 @@ type Server struct {
 	rateLimiter  *middleware.RateLimiter
 }
 
+// contextKey is used to store listener port in request context
+type contextKey struct {
+	name string
+}
+
+var portContextKey = &contextKey{"local-port"}
+
 func NewServer(opts ...Option) *Server {
 	s := &Server{
 		servers: make(map[string]*http.Server),
@@ -51,24 +59,11 @@ func (s *Server) Start(ctx context.Context) error {
 
 	woos.ApplyDefaults(s.global)
 
-	// Start Background Cleanup (Reaper) for Hot Reloads
+	s.startMetricsServer()
 	s.startCacheReaper(ctx)
 
-	// Middleware: Real client IP
 	s.ipMiddleware = middleware.NewIPMiddleware(s.global.TrustedProxies)
-
-	// Middleware: Rate limiting
 	s.rateLimiter = s.buildRateLimiterFromConfig()
-
-	addrs := core.ParseBind(s.global.Bind)
-	if len(addrs) == 0 {
-		return errors.Newf("no bind addresses configured (bind=%q)", s.global.Bind)
-	}
-
-	readTimeout := s.parseDurationWarn("timeouts.read", s.global.Timeouts.Read, woos.DefaultReadTimeout)
-	writeTimeout := s.parseDurationWarn("timeouts.write", s.global.Timeouts.Write, woos.DefaultWriteTimeout)
-	idleTimeout := s.parseDurationWarn("timeouts.idle", s.global.Timeouts.Idle, woos.DefaultIdleTimeout)
-	readHeaderTimeout := s.parseDurationWarn("timeouts.read_header", s.global.Timeouts.ReadHeader, woos.DefaultReadHeaderTimeout)
 
 	baseHandler := http.HandlerFunc(s.handleRequest)
 
@@ -79,29 +74,34 @@ func (s *Server) Start(ctx context.Context) error {
 		tlsCfg = nil
 	}
 
-	maxHeaderBytes := woos.DefaultMaxHeaderBytes
-	if s.global.MaxHeaderBytes > 0 {
-		maxHeaderBytes = s.global.MaxHeaderBytes
-	}
-
-	for _, addr := range addrs {
-		isTLS := core.IsHTTPSBind(addr)
-
+	startServer := func(addr string, isTLS bool) {
 		var handler http.Handler
+
 		if isTLS {
 			handler = s.ipMiddleware.Handler(s.rateLimiter.Handler(baseHandler))
 		} else {
 			handler = s.ipMiddleware.Handler(s.rateLimiter.Handler(httpHandler))
 		}
 
+		// Wrap handler to inject the listener port into the context
+		_, port, _ := net.SplitHostPort(addr)
+		wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), portContextKey, port)
+			handler.ServeHTTP(w, r.WithContext(ctx))
+		})
+
 		srv := &http.Server{
 			Addr:              addr,
-			Handler:           handler,
-			ReadTimeout:       readTimeout,
-			WriteTimeout:      writeTimeout,
-			IdleTimeout:       idleTimeout,
-			ReadHeaderTimeout: readHeaderTimeout,
-			MaxHeaderBytes:    maxHeaderBytes,
+			Handler:           wrappedHandler,
+			ReadTimeout:       s.parseDurationWarn("read", s.global.Timeouts.Read, woos.DefaultReadTimeout),
+			WriteTimeout:      s.parseDurationWarn("write", s.global.Timeouts.Write, woos.DefaultWriteTimeout),
+			IdleTimeout:       s.parseDurationWarn("idle", s.global.Timeouts.Idle, woos.DefaultIdleTimeout),
+			ReadHeaderTimeout: s.parseDurationWarn("read_header", s.global.Timeouts.ReadHeader, woos.DefaultReadHeaderTimeout),
+			MaxHeaderBytes:    s.global.MaxHeaderBytes,
+		}
+
+		if srv.MaxHeaderBytes == 0 {
+			srv.MaxHeaderBytes = woos.DefaultMaxHeaderBytes
 		}
 
 		if isTLS && tlsCfg != nil {
@@ -112,6 +112,18 @@ func (s *Server) Start(ctx context.Context) error {
 		s.mu.Lock()
 		s.servers[key] = srv
 		s.mu.Unlock()
+	}
+
+	for _, addr := range s.global.Bind.HTTP {
+		startServer(addr, false)
+	}
+
+	for _, addr := range s.global.Bind.HTTPS {
+		startServer(addr, true)
+	}
+
+	if len(s.servers) == 0 {
+		return errors.New("no http or https bind addresses configured")
 	}
 
 	errCh := make(chan error, len(s.servers))
@@ -275,6 +287,28 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	if hcfg == nil {
 		http.Error(w, "Host not found", http.StatusNotFound)
 		return
+	}
+
+	// Enforce Port Binding
+	if len(hcfg.BindPorts) > 0 {
+		// Retrieve port from context (injected in Start)
+		portCtx := r.Context().Value(portContextKey)
+		listenerPort, ok := portCtx.(string)
+
+		if ok && listenerPort != "" {
+			allowed := false
+			for _, p := range hcfg.BindPorts {
+				if p == listenerPort {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				// Host exists, but not on this port
+				http.Error(w, "Misdirected Request", http.StatusMisdirectedRequest)
+				return
+			}
+		}
 	}
 
 	maxBody := int64(woos.DefaultMaxBodySize)
@@ -463,4 +497,38 @@ func (s *Server) parseDurationWarn(field, value string, def time.Duration) time.
 		return def
 	}
 	return d
+}
+
+func (s *Server) startMetricsServer() {
+	if s.global.Bind.Metrics == "" {
+		return
+	}
+
+	mux := http.NewServeMux()
+
+	// The core metrics endpoint (JSON structure with HdrHistogram stats)
+	mux.HandleFunc("/metrics", core.MetricsHandler(s.hostManager))
+
+	// Simple liveness probe for load balancers (AWS ALB, K8s, etc.)
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	srv := &http.Server{
+		Addr:         s.global.Bind.Metrics,
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		IdleTimeout:  30 * time.Second,
+	}
+
+	go func() {
+		s.logger.Fields("bind", s.global.Bind.Metrics).Info("metrics listener starting")
+
+		// We ignore ErrServerClosed because it occurs during normal shutdown
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.logger.Fields("err", err).Error("metrics server failed")
+		}
+	}()
 }
