@@ -2,6 +2,10 @@ package security
 
 import (
 	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,14 +63,37 @@ func TestLoadKeys_InvalidPEM(t *testing.T) {
 
 func TestLoadKeys_NotEd25519(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "rsa.key")
-	// Mock RSA PEM (minimal)
-	os.WriteFile(tmpFile, []byte(`-----BEGIN PRIVATE KEY-----
-MIIBVAgBAQ==
------END PRIVATE KEY-----`), 0644)
 
-	_, err := LoadKeys(tmpFile)
-	if err == nil || !strings.Contains(err.Error(), "not ed25519") {
-		t.Error("Expected key type error")
+	// FIX: Generate a valid RSA key so ParsePKCS8PrivateKey succeeds
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Marshal to PKCS8
+	b, err := x509.MarshalPKCS8PrivateKey(rsaKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write to PEM
+	f, err := os.Create(tmpFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pem.Encode(f, &pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: b,
+	})
+	f.Close()
+
+	// Now LoadKeys should succeed parsing but fail type assertion
+	_, err = LoadKeys(tmpFile)
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "key is not ed25519") {
+		t.Errorf("Expected 'key is not ed25519' error, got: %v", err)
 	}
 }
 
@@ -84,8 +111,11 @@ func TestMint_Success(t *testing.T) {
 		t.Error("Empty token")
 	}
 
-	// Parse to verify claims
-	parsed, _ := jwt.Parse(token, nil)
+	// Parse to verify claims (skipping sig check just to read claims)
+	parsed, _, _ := new(jwt.Parser).ParseUnverified(token, jwt.MapClaims{})
+	if parsed == nil {
+		t.Fatal("Failed to parse token")
+	}
 	claims := parsed.Claims.(jwt.MapClaims)
 	if claims["sub"] != "service" || claims["iss"] != "agbero" {
 		t.Error("Invalid claims")
