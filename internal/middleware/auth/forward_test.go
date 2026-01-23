@@ -19,7 +19,7 @@ func TestForward_Success(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest("GET", "/success", nil)
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
@@ -37,7 +37,8 @@ func TestForward_Forbidden(t *testing.T) {
 	cfg := &woos.ForwardAuthConfig{URL: authServer.URL}
 	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
-	req := httptest.NewRequest("GET", "/", nil)
+	// Unique path to avoid cache hit from previous test
+	req := httptest.NewRequest("GET", "/forbidden", nil)
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
@@ -57,7 +58,9 @@ func TestForward_CacheHit(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("GET", "/", nil)
+	// Same path used twice to test cache
+	req := httptest.NewRequest("GET", "/cache-test", nil)
+
 	w1 := httptest.NewRecorder()
 	handler.ServeHTTP(w1, req) // Miss, sets cache
 
@@ -74,7 +77,7 @@ func TestForward_FailureAllow(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest("GET", "/fail-allow", nil)
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
@@ -87,7 +90,7 @@ func TestForward_FailureDeny(t *testing.T) {
 	cfg := &woos.ForwardAuthConfig{URL: "http://nonexistent", OnFailure: "deny"}
 	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest("GET", "/fail-deny", nil)
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
@@ -106,9 +109,7 @@ func TestForward_MaxAgeParse(t *testing.T) {
 	cfg := &woos.ForwardAuthConfig{URL: authServer.URL}
 	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest("GET", "/maxage", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
-
-	// Check cache TTL (indirect: wait and check miss would require time mock; assume parse works if no panic)
 }

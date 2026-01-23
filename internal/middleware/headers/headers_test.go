@@ -1,4 +1,3 @@
-// internal/middleware/headers/headers_test.go
 package headers
 
 import (
@@ -22,9 +21,19 @@ func TestHeaders_RequestMods(t *testing.T) {
 		if r.Header.Get("X-Test") != "set-value" {
 			t.Error("Set header not applied")
 		}
-		if r.Header.Get("X-Multi") != "add1" {
-			t.Error("Add header not applied")
+
+		// Fix: Check if "add1" exists in the slice of values
+		found := false
+		for _, v := range r.Header.Values("X-Multi") {
+			if v == "add1" {
+				found = true
+				break
+			}
 		}
+		if !found {
+			t.Errorf("Add header not applied. Got: %v", r.Header["X-Multi"])
+		}
+
 		if r.Header.Get("User-Agent") != "" {
 			t.Error("Remove header not applied")
 		}
@@ -33,7 +42,7 @@ func TestHeaders_RequestMods(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("User-Agent", "test-agent")
-	req.Header.Add("X-Multi", "pre-existing") // Add should append, but since Add in ops is map, it's Set-like; test as is
+	req.Header.Add("X-Multi", "pre-existing")
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
@@ -64,9 +73,24 @@ func TestHeaders_ResponseMods(t *testing.T) {
 	if w.Header().Get("X-Resp") != "resp-value" {
 		t.Error("Response set not applied")
 	}
-	if w.Header().Get("X-Resp-Multi") != "pre, add2" { // Assumes Add appends
-		t.Error("Response add not applied")
+
+	// Fix: httptest.ResponseRecorder stores headers as a map.
+	// We check if values contain both.
+	vals := w.Header().Values("X-Resp-Multi")
+	foundPre, foundAdd := false, false
+	for _, v := range vals {
+		if v == "pre" {
+			foundPre = true
+		}
+		if v == "add2" {
+			foundAdd = true
+		}
 	}
+
+	if !foundPre || !foundAdd {
+		t.Errorf("Response add not applied correctly. Got: %v", vals)
+	}
+
 	if w.Header().Get("Content-Type") != "" {
 		t.Error("Response remove not applied")
 	}

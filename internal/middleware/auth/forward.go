@@ -12,11 +12,11 @@ import (
 	"github.com/maypok86/otter/v2/stats"
 )
 
-// Global Auth Cache (10k items, with stats enabled and per-entry TTL support)
+// Global Auth Cache (10k items, with stats enabled)
 var counter = stats.NewCounter()
 var authCache = otter.Must(&otter.Options[string, bool]{
 	MaximumSize:   10_000,
-	StatsRecorder: counter, // Enables stats collection
+	StatsRecorder: counter,
 })
 
 func Forward(cfg *woos.ForwardAuthConfig) func(http.Handler) http.Handler {
@@ -40,7 +40,8 @@ func Forward(cfg *woos.ForwardAuthConfig) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			cacheKey := r.Header.Get("Authorization") + "|" + r.Header.Get("Cookie") + "|" + r.Method + "|" + r.URL.Path
+			// FIX: Include cfg.URL in cache key to prevent cross-service cache pollution
+			cacheKey := cfg.URL + "|" + r.Header.Get("Authorization") + "|" + r.Header.Get("Cookie") + "|" + r.Method + "|" + r.URL.Path
 
 			if allowed, ok := authCache.GetIfPresent(cacheKey); ok {
 				if allowed {
@@ -79,7 +80,6 @@ func Forward(cfg *woos.ForwardAuthConfig) func(http.Handler) http.Handler {
 				ttl := time.Minute // Default TTL
 				cc := resp.Header.Get("Cache-Control")
 				if cc != "" && strings.Contains(cc, "max-age=") {
-					// Parse max-age value
 					parts := strings.SplitAfter(cc, "max-age=")
 					if len(parts) > 1 {
 						maStr := strings.Split(parts[1], ",")[0]

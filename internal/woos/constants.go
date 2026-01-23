@@ -13,8 +13,9 @@ const (
 )
 
 const (
-	StrategyRandom    = "random"
-	StrategyLeastConn = "leastconn"
+	StrategyRandom     = "random"
+	StrategyLeastConn  = "leastconn"
+	StrategyRoundRobin = "round_robin"
 )
 
 // Default Timeouts
