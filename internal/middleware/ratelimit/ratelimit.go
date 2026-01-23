@@ -174,6 +174,8 @@ func (rl *RateLimiter) pruneShardLocked(sh *rateShard, now int64) {
 	}
 }
 
+func (rl *RateLimiter) Ttl() time.Duration { return rl.ttl }
+
 func fnv1a(s string) uint64 {
 	var h uint64 = 1469598103934665603
 	for i := 0; i < len(s); i++ {

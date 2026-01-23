@@ -37,6 +37,7 @@ const (
 	ModeLocalNone   TlsMode = "none"
 	ModeLocalCert   TlsMode = "local"
 	ModeLetsEncrypt TlsMode = "letsencrypt"
+	ModeCustomCA    TlsMode = "custom_ca"
 )
 
 // RouteCacheItem wraps the handler with usage tracking for the Reaper

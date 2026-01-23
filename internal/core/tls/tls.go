@@ -1,9 +1,13 @@
+// internal/core/tls/tls.go
 package tls
 
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -12,6 +16,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/caddyserver/certmagic"
+	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/errors"
 )
 
@@ -38,6 +43,10 @@ type TlsManager struct {
 	// cache local certs by "certPath|keyPath"
 	localMu    sync.RWMutex
 	LocalCache map[string]*tls.Certificate
+
+	// Watchers for local cert files (key: cacheKey, value: *fsnotify.Watcher)
+	Watchers  map[string]*fsnotify.Watcher
+	watcherMu sync.Mutex
 }
 
 // EnsureCertMagic prepares CertMagic configs. It returns an HTTP handler that serves
@@ -174,5 +183,160 @@ func (m *TlsManager) GetLocalCertificate(local woos.LocalCert, host string) (*tl
 	m.LocalCache[cacheKey] = &cert
 	m.localMu.Unlock()
 
+	// Start watcher if not already
+	m.startLocalWatcher(cacheKey, certFile, keyFile, host)
+
 	return &cert, nil
+}
+
+// startLocalWatcher sets up fsnotify for cert/key files
+func (m *TlsManager) startLocalWatcher(cacheKey, certFile, keyFile, host string) {
+	m.watcherMu.Lock()
+	defer m.watcherMu.Unlock()
+
+	if m.Watchers == nil {
+		m.Watchers = make(map[string]*fsnotify.Watcher)
+	}
+
+	if _, exists := m.Watchers[cacheKey]; exists {
+		return
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		m.Logger.Fields("err", err, "host", host).Warn("failed to create local cert watcher")
+		return
+	}
+
+	// Watch cert and key files
+	for _, file := range []string{certFile, keyFile} {
+		if err := watcher.Add(file); err != nil {
+			m.Logger.Fields("err", err, "file", file, "host", host).Warn("failed to watch local cert file")
+			watcher.Close()
+			return
+		}
+	}
+
+	m.Watchers[cacheKey] = watcher
+
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) {
+					m.invalidateLocal(cacheKey, host)
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				m.Logger.Fields("err", err, "host", host).Error("local cert watcher error")
+			}
+		}
+	}()
+}
+
+// invalidateLocal removes cache entry on file change
+func (m *TlsManager) invalidateLocal(cacheKey, host string) {
+	m.localMu.Lock()
+	delete(m.LocalCache, cacheKey)
+	m.localMu.Unlock()
+
+	m.Logger.Fields("host", host, "key", cacheKey).Info("local cert invalidated; will reload on next request")
+}
+
+func (m *TlsManager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	if chi == nil || chi.ServerName == "" {
+		return nil, errors.New("missing SNI")
+	}
+
+	sni := core.NormalizeSubject(chi.ServerName)
+	if net.ParseIP(sni) != nil {
+		m.Logger.Fields("sni", sni).Debug("handling IP SNI for cert")
+	}
+
+	hcfg := m.HostManager.Get(sni)
+	if hcfg == nil {
+		return nil, errors.Newf("unknown host %q", sni)
+	}
+
+	mode := woos.ModeLetsEncrypt
+	if hcfg.TLS != nil && hcfg.TLS.Mode != "" {
+		mode = hcfg.TLS.Mode
+	}
+
+	switch mode {
+	case woos.ModeLocalNone:
+		return nil, errors.Newf("tls disabled for host %q", sni)
+
+	case woos.ModeLocalCert:
+		if hcfg.TLS == nil {
+			return nil, errors.Newf("tls=local requires tls block for host %q", sni)
+		}
+		return m.GetLocalCertificate(hcfg.TLS.Local, sni)
+
+	case woos.ModeLetsEncrypt:
+		cm := m.CmForHost(hcfg)
+		if cm == nil {
+			return nil, errors.Newf("letsencrypt not enabled globally (host %q)", sni)
+		}
+
+		// Apply short-lived if configured
+		if hcfg.TLS != nil && hcfg.TLS.LetsEncrypt.ShortLived {
+			for _, iss := range cm.Issuers {
+				if acmeIss, ok := iss.(*certmagic.ACMEIssuer); ok {
+					acmeIss.Profile = acmeProfileShortLived
+				}
+			}
+		}
+
+		cmTLS := cm.TLSConfig()
+		chi2 := *chi
+		chi2.ServerName = sni
+		return cmTLS.GetCertificate(&chi2)
+
+	case "custom_ca":
+		if hcfg.TLS == nil || hcfg.TLS.CustomCA.Root == "" {
+			return nil, errors.Newf("tls=custom_ca requires root cert for host %q", sni)
+		}
+		return m.getCustomCACert(hcfg.TLS.CustomCA.Root, sni)
+
+	default:
+		return nil, errors.Newf("unknown tls mode %q for host %q", mode, sni)
+	}
+}
+
+// getCustomCACert loads cert from custom CA (e.g., mkcert)
+func (m *TlsManager) getCustomCACert(root string, host string) (*tls.Certificate, error) {
+	// For simplicity, assume root is CA cert file; use certmagic.CustomCAIssuer
+	caCert, err := os.ReadFile(root)
+	if err != nil {
+		return nil, errors.Newf("load custom CA root (host=%q): %w", host, err)
+	}
+
+	caPool := x509.NewCertPool()
+	if !caPool.AppendCertsFromPEM(caCert) {
+		return nil, errors.Newf("invalid custom CA PEM (host=%q)", host)
+	}
+
+	// Here, for full custom CA, you'd generate/issue certs, but assuming pre-issued like mkcert,
+	// fallback to local load (reuse GetLocalCertificate if cert/key provided, else error)
+	if hcfg := m.HostManager.Get(host); hcfg != nil && hcfg.TLS != nil {
+		return m.GetLocalCertificate(hcfg.TLS.Local, host)
+	}
+	return nil, errors.Newf("custom_ca requires local cert/key for host %q", host)
+}
+
+// Close stops all Watchers (call on shutdown)
+func (m *TlsManager) Close() {
+	m.watcherMu.Lock()
+	defer m.watcherMu.Unlock()
+
+	for key, w := range m.Watchers {
+		w.Close()
+		delete(m.Watchers, key)
+	}
 }

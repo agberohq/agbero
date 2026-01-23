@@ -145,6 +145,7 @@ type TSL struct {
 	Mode        TlsMode     `hcl:"mode,optional"`
 	Local       LocalCert   `hcl:"local,block"`
 	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block"`
+	CustomCA    CustomCA    `hcl:"custom_ca,block"`
 }
 
 type LocalCert struct {
@@ -153,8 +154,13 @@ type LocalCert struct {
 }
 
 type LetsEncrypt struct {
-	Email   string `hcl:"email,optional"`
-	Staging bool   `hcl:"staging,optional"`
+	Email      string `hcl:"email,optional"`
+	Staging    bool   `hcl:"staging,optional"`
+	ShortLived bool   `hcl:"short_lived,optional"` // Enable 6-day certs
+}
+
+type CustomCA struct {
+	Root string `hcl:"root"` // CA cert file path
 }
 
 // ---- DEFAULTS ------------------------------------------------

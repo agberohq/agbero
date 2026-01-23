@@ -26,6 +26,7 @@ import (
 type Server struct {
 	hostManager *discovery.Host
 	global      *woos.GlobalConfig
+	tlsManager  *tls2.TlsManager // Added for watcher shutdown
 
 	mu sync.RWMutex
 	// TCP Servers (HTTP/1.1 & HTTP/2)
@@ -412,6 +413,7 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 		Global:      s.global,
 		LocalCache:  make(map[string]*tls.Certificate),
 	}
+	s.tlsManager = m // Set on Server
 
 	httpHandler, err := m.EnsureCertMagic(next)
 	if err != nil {
@@ -422,68 +424,12 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 	tlsCfg := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		// http3 requires "h3" in ALPN
-		NextProtos: []string{"h3", "h2", "http/1.1"},
-		GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			if chi == nil || chi.ServerName == "" {
-				return nil, errors.New("missing SNI")
-			}
-
-			sni := core.NormalizeSubject(chi.ServerName)
-
-			hcfg := s.hostManager.Get(sni)
-			if hcfg == nil {
-				return nil, errors.Newf("unknown host %q", sni)
-			}
-
-			mode := woos.ModeLetsEncrypt
-			if hcfg.TLS != nil && hcfg.TLS.Mode != "" {
-				mode = hcfg.TLS.Mode
-			}
-
-			switch mode {
-			case woos.ModeLocalNone:
-				return nil, errors.Newf("tls disabled for host %q", sni)
-
-			case woos.ModeLocalCert:
-				if hcfg.TLS == nil {
-					return nil, errors.Newf("tls=local requires tls block for host %q", sni)
-				}
-				return m.GetLocalCertificate(hcfg.TLS.Local, sni)
-
-			case woos.ModeLetsEncrypt:
-				cm := m.CmForHost(hcfg)
-				if cm == nil {
-					return nil, errors.Newf("letsencrypt not enabled globally (host %q)", sni)
-				}
-
-				cmTLS := cm.TLSConfig()
-				chi2 := *chi
-				chi2.ServerName = sni
-				return cmTLS.GetCertificate(&chi2)
-
-			default:
-				return nil, errors.Newf("unknown tls mode %q for host %q", mode, sni)
-			}
-		},
+		NextProtos:     []string{"h3", "h2", "http/1.1"},
+		GetCertificate: m.GetCertificate,
 	}
 
 	return tlsCfg, httpHandler, nil
 }
-
-//func (s *Server) parseDurationWarn(field, value string, def time.Duration) time.Duration {
-//	value = strings.TrimSpace(value)
-//	if value == "" {
-//		return def
-//	}
-//	d, err := time.ParseDuration(value)
-//	if err != nil || d <= 0 {
-//		if s.logger != nil {
-//			s.logger.Fields("field", field, "value", value, "default", def.String()).Warn("invalid duration; falling back to default")
-//		}
-//		return def
-//	}
-//	return d
-//}
 
 func (s *Server) Shutdown() error {
 	if s.rateLimiter != nil {
@@ -512,5 +458,11 @@ func (s *Server) Shutdown() error {
 		}
 		s.logger.Fields("key", key).Info("listener stopped")
 	}
+
+	// Close TLS manager watchers
+	if s.tlsManager != nil {
+		s.tlsManager.Close()
+	}
+
 	return firstErr
 }
