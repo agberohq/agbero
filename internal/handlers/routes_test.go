@@ -11,7 +11,7 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-var testLogger = ll.New("test").Enable()
+var testLogger = ll.New("test")
 
 func TestRouteHandler_RoundRobin(t *testing.T) {
 	// 1. Create 2 dummy backends

@@ -152,7 +152,7 @@ func listHosts(path string) error {
 }
 
 func welcome() {
-	fmt.Println(`
+	fmt.Print(`
    _____         ___.                        
   /  _  \    ____\_ |__   ___________  ____  
  /  /_\  \  / ___\| __ \_/ __ \_  __ \/  _ \ 

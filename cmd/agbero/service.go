@@ -1,3 +1,4 @@
+// cmd/agbero/service.go
 package main
 
 import (
@@ -78,7 +79,8 @@ func (p *program) run() {
 		}
 	}()
 
-	if err := server.Start(runCtx); err != nil {
+	// FIXED: Pass configPath as second argument
+	if err := server.Start(runCtx, p.configPath); err != nil {
 		logger.Error(err)
 	}
 
