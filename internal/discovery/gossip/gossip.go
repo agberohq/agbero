@@ -1,16 +1,24 @@
-// internal/discovery/gossip/gossip.go
 package gossip
 
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 
-	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/security"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/hashicorp/memberlist"
 	"github.com/olekukonko/ll"
 )
+
+// HostManager interface abstracts the Host discovery logic for testing
+type HostManager interface {
+	UpdateGossipNode(nodeID, host string, route woos.Route)
+	RemoveGossipNode(nodeID string)
+	RouteExists(host, path string) bool
+	ResetNodeFailures(nodeName string)
+}
 
 // AppMeta defines the routing contract sent by the application
 type AppMeta struct {
@@ -25,12 +33,13 @@ type AppMeta struct {
 
 type Service struct {
 	list         *memberlist.Memberlist
-	hm           *discovery.Host
+	hm           HostManager // Interface type
 	logger       *ll.Logger
 	tokenManager *security.TokenManager
+	localName    string // Stored to avoid nil pointer during startup events
 }
 
-func NewService(hm *discovery.Host, cfg *woos.GossipConfig, logger *ll.Logger) (*Service, error) {
+func NewService(hm HostManager, cfg *woos.GossipConfig, logger *ll.Logger) (*Service, error) {
 	if cfg == nil || !cfg.Enabled {
 		return nil, nil
 	}
@@ -66,7 +75,12 @@ func NewService(hm *discovery.Host, cfg *woos.GossipConfig, logger *ll.Logger) (
 		c.SecretKey = key
 	}
 
+	// Capture local name before starting, so events can check "self" without s.list being ready
+	s.localName = c.Name
 	c.Events = &eventDelegate{s: s}
+
+	// Silence memberlist's default logger to avoid noise in tests/logs
+	c.Logger = log.New(io.Discard, "", 0)
 
 	list, err := memberlist.Create(c)
 	if err != nil {
@@ -97,7 +111,8 @@ type eventDelegate struct {
 }
 
 func (e *eventDelegate) NotifyJoin(node *memberlist.Node) {
-	if node.Name == e.s.list.LocalNode().Name {
+	// Use stored localName to avoid nil pointer on e.s.list during startup
+	if node.Name == e.s.localName {
 		return
 	}
 	e.processNode(node)
@@ -106,19 +121,25 @@ func (e *eventDelegate) NotifyJoin(node *memberlist.Node) {
 }
 
 func (e *eventDelegate) NotifyLeave(node *memberlist.Node) {
-	if node.Name == e.s.list.LocalNode().Name {
+	if node.Name == e.s.localName {
 		return
 	}
 	e.s.hm.RemoveGossipNode(node.Name)
 }
 
 func (e *eventDelegate) NotifyUpdate(node *memberlist.Node) {
+	if node.Name == e.s.localName {
+		return
+	}
 	e.processNode(node)
 }
 
 func (e *eventDelegate) NotifyAlive(node *memberlist.Node) {
+	if node.Name == e.s.localName {
+		return
+	}
 	// Reset failures on alive ping
-	e.s.hm.ResetNodeFailures(node.Name) // Assume hm has this method; add if needed
+	e.s.hm.ResetNodeFailures(node.Name)
 	e.s.logger.Fields("node", node.Name).Debug("node alive ping received")
 }
 
@@ -144,8 +165,7 @@ func (e *eventDelegate) processNode(node *memberlist.Node) {
 			e.s.logger.Fields("node", node.Name).Warn("gossip rejected: missing token")
 			return
 		}
-		// Verify signature. We don't check domain inside token anymore,
-		// we trust the app (identified by 'svc') to declare its own routes.
+
 		svcName, err := e.s.tokenManager.Verify(meta.Token)
 		if err != nil {
 			e.s.logger.Fields("node", node.Name, "err", err).Warn("gossip rejected: invalid token")

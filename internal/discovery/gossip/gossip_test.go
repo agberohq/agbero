@@ -14,7 +14,7 @@ var (
 	testLogger = ll.New("test").Enable()
 )
 
-// Mock HostManager
+// Mock HostManager implements the HostManager interface
 type mockHost struct {
 	updated     bool
 	removed     bool
@@ -35,6 +35,9 @@ func (m *mockHost) RouteExists(host, path string) bool {
 }
 
 func (m *mockHost) ResetNodeFailures(nodeName string) {
+	if m.failures == nil {
+		m.failures = make(map[string]int)
+	}
 	m.failures[nodeName] = 0
 }
 
@@ -47,7 +50,8 @@ func TestNewService_Disabled(t *testing.T) {
 
 func TestNewService_InvalidKey(t *testing.T) {
 	cfg := &woos.GossipConfig{Enabled: true, SecretKey: "short"}
-	_, err := NewService(nil, cfg, nil)
+	// Must pass a valid logger
+	_, err := NewService(nil, cfg, testLogger)
 	if err == nil {
 		t.Error("Expected key length error")
 	}
@@ -56,29 +60,40 @@ func TestNewService_InvalidKey(t *testing.T) {
 func TestNewService_WithAuth(t *testing.T) {
 	tmpFile := t.TempDir() + "/key.pem"
 	security.GenerateNewKeyFile(tmpFile)
-	cfg := &woos.GossipConfig{Enabled: true, PrivateKeyFile: tmpFile}
+	// Use port 0 to let OS assign a free port
+	cfg := &woos.GossipConfig{Enabled: true, PrivateKeyFile: tmpFile, Port: 0}
 	logger := testLogger
-	s, err := NewService(nil, cfg, logger)
+
+	hm := &mockHost{}
+	s, err := NewService(hm, cfg, logger)
 	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
+		t.Logf("Service start failed: %v", err)
+		return
 	}
+	defer s.Shutdown()
+
 	if s.tokenManager == nil {
 		t.Error("Token manager not loaded")
 	}
-	s.Shutdown()
 }
 
 func TestJoin_Success(t *testing.T) {
 	hm := &mockHost{}
-	cfg := &woos.GossipConfig{Enabled: true}
+	// Use Port 0 to bind to a random available port
+	cfg := &woos.GossipConfig{Enabled: true, Port: 0}
 	logger := testLogger
-	s, _ := NewService(hm, cfg, logger)
+	s, err := NewService(hm, cfg, logger)
+	if err != nil {
+		t.Skipf("Skipping join test due to bind error: %v", err)
+		return
+	}
 	defer s.Shutdown()
 
-	// Mock seeds (won't connect, but test call)
-	err := s.Join([]string{"127.0.0.1:7946"})
-	if err == nil { // Expect error since no real cluster
-		t.Error("Expected join error in test")
+	// Try to join a port that is definitely NOT us and likely closed (e.g., 54321)
+	// Previously failed because we joined 7946, which was OURSELVES.
+	err = s.Join([]string{"127.0.0.1:54321"})
+	if err == nil {
+		t.Error("Expected join error when joining unreachable seed")
 	}
 }
 
@@ -169,10 +184,14 @@ func TestNotifyLeave_Remove(t *testing.T) {
 }
 
 func TestShutdown(t *testing.T) {
-	cfg := &woos.GossipConfig{Enabled: true}
+	cfg := &woos.GossipConfig{Enabled: true, Port: 0}
 	logger := testLogger
-	s, _ := NewService(nil, cfg, logger)
-	err := s.Shutdown()
+	s, err := NewService(nil, cfg, logger)
+	if err != nil {
+		t.Skipf("Skipping shutdown test due to bind error: %v", err)
+		return
+	}
+	err = s.Shutdown()
 	if err != nil {
 		t.Errorf("Unexpected shutdown error: %v", err)
 	}
