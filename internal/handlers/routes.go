@@ -62,12 +62,26 @@ func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 }
 
 func NewRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
-	if &route.Web != nil {
+	logger.Fields("path", route.Path, "web_root", route.Web.Root, "backends", route.Backends).Debug("creating route handler")
+
+	// Check if this is actually a web route (has non-empty Web.Root)
+	if route.Web.Root != "" {
+		logger.Debug("treating as WEB route")
 		return newWebRouteHandler(route, logger)
-	} else {
+	} else if len(route.Backends) > 0 {
+		logger.Debug("treating as PROXY route")
 		return newProxyRouteHandler(route, logger)
+	} else {
+		logger.Error("route has neither web root nor backends")
+		// Return a handler that returns 500 error
+		return &RouteHandler{
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "Misconfigured route", http.StatusInternalServerError)
+			}),
+		}
 	}
 }
+
 func newProxyRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 	// 1. Initialize Load Balancer Logic
 	lb := &LoadBalancerHandler{

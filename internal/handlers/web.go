@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"io/fs"
 	"net/http"
 	"os"
@@ -33,7 +34,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// SECURITY: Use os.OpenRoot to prevent path traversal
 	dir, err := os.OpenRoot(root)
 	if err != nil {
-		h.logger.Fields("err", err, "root", root).Error("failed to open web root")
+		h.logger.Fields("err", err, "root", root).Error("failed to open web root directory")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -76,8 +77,11 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Serve regular file
 	f, err := dir.Open(reqPath)
 	if err != nil {
-		if err == fs.ErrNotExist || err == fs.ErrPermission {
+		h.logger.Fields("err", err, "path", reqPath, "root", root).Debug("file open failed")
+		if errors.Is(err, fs.ErrNotExist) {
 			http.Error(w, "Not Found", http.StatusNotFound)
+		} else if errors.Is(err, fs.ErrPermission) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
 		} else {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 		}

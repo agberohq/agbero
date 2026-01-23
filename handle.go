@@ -54,6 +54,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	for i := range hcfg.Routes {
 		route := hcfg.Routes[i]
+		s.logger.Fields("checking_path", r.URL.Path, "route_path", route.Path).Debug("route matching")
 		if core.PathMatch(r.URL.Path, route.Path) {
 			s.handleRoute(w, r, &route)
 			s.logRequest(host, r, start)

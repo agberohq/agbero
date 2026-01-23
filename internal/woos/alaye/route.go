@@ -236,7 +236,7 @@ func (r *Route) validateProxyRoute() error {
 
 func (r *Route) validateWebRoute() error {
 	// Web block validation
-	if &r.Web == nil {
+	if r.Web.Root != "" {
 		return errors.New("web block is required for web route")
 	}
 	if err := r.Web.Validate(); err != nil {

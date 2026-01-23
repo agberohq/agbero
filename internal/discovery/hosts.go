@@ -310,12 +310,34 @@ func (hm *Host) loadAllLocked() error {
 
 func (hm *Host) rebuildLookupLocked() {
 	newLookup := make(map[string]*alaye.Host)
+	domainToRoutes := make(map[string][]alaye.Route)
+	domainToConfig := make(map[string]*alaye.Host) // Store first config as template
 
 	// 1. Add File Hosts (Base Layer)
 	for _, cfg := range hm.hosts {
 		for _, domain := range cfg.Domains {
-			newLookup[domain] = cfg
+			// Store routes
+			domainToRoutes[domain] = append(domainToRoutes[domain], cfg.Routes...)
+			// Store first config as template (for TLS, Limits, etc.)
+			if _, exists := domainToConfig[domain]; !exists {
+				domainToConfig[domain] = cfg
+			}
 		}
+	}
+
+	// Create merged host configs
+	for domain, routes := range domainToRoutes {
+		baseCfg := domainToConfig[domain]
+
+		// Create a deep copy of the base config
+		merged := *baseCfg
+		merged.Routes = make([]alaye.Route, len(routes))
+		copy(merged.Routes, routes)
+
+		// Sort routes by length (longest first)
+		sortRoutes(merged.Routes)
+
+		newLookup[domain] = &merged
 	}
 
 	// 2. Merge Gossip Routes
