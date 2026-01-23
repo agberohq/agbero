@@ -103,7 +103,7 @@ func (r *Route) Key() string {
 	}
 
 	// For web routes
-	if &r.Web != nil {
+	if r.Web.Root != "" {
 		sb.WriteString("|w=")
 		sb.WriteString(r.Web.Root.String())
 		if r.Web.Index != "" {
