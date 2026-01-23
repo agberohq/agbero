@@ -1,6 +1,9 @@
 package woos
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 const (
 	Name        = "agbero"
@@ -34,3 +37,7 @@ const (
 	ModeLocalCert   TlsMode = "local"
 	ModeLetsEncrypt TlsMode = "letsencrypt"
 )
+
+// RouteCache stores compiled handlers per unique route definition.
+// Keyed by a stable string derived from route settings (path/strategy/Backends/etc).
+var RouteCache sync.Map // map[string]*RouteHandler
