@@ -116,17 +116,14 @@ func (b *Backend) Stop() {
 
 func (b *Backend) healthCheckLoop() {
 	interval := 10 * time.Second
-	if b.hcConfig.Interval != "" {
-		if d, err := time.ParseDuration(b.hcConfig.Interval); err == nil {
-			interval = d
-		}
+	if b.hcConfig.Interval != 0 {
+		interval = b.hcConfig.Interval
+
 	}
 
 	timeout := 5 * time.Second
-	if b.hcConfig.Timeout != "" {
-		if d, err := time.ParseDuration(b.hcConfig.Timeout); err == nil {
-			timeout = d
-		}
+	if b.hcConfig.Timeout != 0 {
+		timeout = b.hcConfig.Timeout
 	}
 
 	threshold := 3

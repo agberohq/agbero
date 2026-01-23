@@ -255,7 +255,7 @@ func (m *TlsManager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate,
 
 	sni := core.NormalizeSubject(chi.ServerName)
 	if net.ParseIP(sni) != nil {
-		m.Logger.Fields("sni", sni).Debug("handling IP SNI for cert")
+		m.Logger.Fields("sni", sni).Error("handling IP SNI for cert")
 	}
 
 	hcfg := m.HostManager.Get(sni)

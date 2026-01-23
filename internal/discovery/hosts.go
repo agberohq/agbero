@@ -144,7 +144,7 @@ func (hm *Host) Watch() error {
 }
 
 func (hm *Host) watchLoop() {
-	debouncedReload := core.Debounce(500*time.Millisecond, hm.reloadFull)
+	debouncedReload := core.Debounce(500*time.Millisecond, hm.ReloadFull)
 
 	for {
 		select {
@@ -170,7 +170,8 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 	debouncedReload()
 }
 
-func (hm *Host) reloadFull() {
+// ReloadFull reloads all hosts (exported for server access)
+func (hm *Host) ReloadFull() {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 

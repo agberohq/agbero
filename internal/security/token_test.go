@@ -1,7 +1,7 @@
-// internal/security/token_test.go
 package security
 
 import (
+	"crypto/ed25519"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/olekukonko/errors"
 )
 
 func TestGenerateNewKeyFile_Success(t *testing.T) {

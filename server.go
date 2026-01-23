@@ -1,3 +1,4 @@
+// server.go
 package agbero
 
 import (
@@ -5,8 +6,11 @@ import (
 	"crypto/tls"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
@@ -27,6 +31,7 @@ type Server struct {
 	hostManager *discovery.Host
 	global      *woos.GlobalConfig
 	tlsManager  *tls2.TlsManager // Added for watcher shutdown
+	configPath  string           // Added for reload
 
 	mu sync.RWMutex
 	// TCP Servers (HTTP/1.1 & HTTP/2)
@@ -57,7 +62,9 @@ func NewServer(opts ...Option) *Server {
 	return s
 }
 
-func (s *Server) Start(ctx context.Context) error {
+func (s *Server) Start(parentCtx context.Context, configPath string) error {
+	s.configPath = configPath // Set for reload
+
 	if s.hostManager == nil {
 		return errors.New("host manager is required")
 	}
@@ -71,7 +78,7 @@ func (s *Server) Start(ctx context.Context) error {
 	woos.ApplyDefaults(s.global)
 
 	s.startMetricsServer()
-	s.startCacheReaper(ctx)
+	s.startCacheReaper(parentCtx)
 
 	if s.global.Gossip != nil && s.global.Gossip.Enabled {
 		gs, err := gossip.NewService(s.hostManager, s.global.Gossip, s.logger)
@@ -227,7 +234,39 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.mu.RUnlock()
 
+	ctx, cancel := context.WithCancel(parentCtx)
+	defer cancel()
+
+	// Handle signals for reload/shutdown
+	signalCh := make(chan os.Signal, 1)
+	signal.Notify(signalCh, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		for sig := range signalCh {
+			switch sig {
+			case syscall.SIGHUP:
+				s.reload()
+			case syscall.SIGINT, syscall.SIGTERM:
+				cancel() // Now valid due to Fix B
+			}
+		}
+	}()
+
 	return s.waitOrShutdown(ctx, errCh)
+}
+
+// reload reloads config and hosts
+func (s *Server) reload() {
+	// Reload global (partial; binds require restart)
+	global, err := core.LoadGlobal(s.configPath)
+	if err != nil {
+		s.logger.Fields("err", err).Error("reload config failed")
+		return
+	}
+	s.global = global // Apply (rate limits etc. may need re-init if changed)
+
+	// Reload hosts
+	s.hostManager.ReloadFull()
+	s.logger.Info("config/hosts reloaded on SIGHUP")
 }
 
 func (s *Server) startMetricsServer() {
@@ -282,14 +321,50 @@ func (s *Server) waitOrShutdown(ctx context.Context, errCh <-chan error) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return s.Shutdown()
+			return s.shutdownImpl() // Separated for clarity
 		case err := <-errCh:
 			if err != nil {
-				_ = s.Shutdown()
+				_ = s.shutdownImpl()
 				return err
 			}
 		}
 	}
+}
+
+func (s *Server) shutdownImpl() error {
+	if s.rateLimiter != nil {
+		s.rateLimiter.Close()
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// 1. Stop HTTP/3 Servers gracefully
+	for key, srv := range s.h3Servers {
+		if err := srv.Close(); err != nil {
+			s.logger.Fields("key", key, "err", err).Warn("h3 graceful shutdown error")
+		}
+	}
+
+	// 2. Stop TCP Servers
+	var firstErr error
+	for key, srv := range s.servers {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := srv.Shutdown(ctx)
+		cancel()
+
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		s.logger.Fields("key", key).Info("listener stopped")
+	}
+
+	// Close TLS manager watchers
+	if s.tlsManager != nil {
+		s.tlsManager.Close()
+	}
+
+	return firstErr
 }
 
 func (s *Server) reapOldRoutes() {
@@ -429,40 +504,4 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 	}
 
 	return tlsCfg, httpHandler, nil
-}
-
-func (s *Server) Shutdown() error {
-	if s.rateLimiter != nil {
-		s.rateLimiter.Close()
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// 1. Stop HTTP/3 Servers
-	for key, srv := range s.h3Servers {
-		if err := srv.Close(); err != nil {
-			s.logger.Fields("key", key, "err", err).Warn("h3 Shutdown error")
-		}
-	}
-
-	// 2. Stop TCP Servers
-	var firstErr error
-	for key, srv := range s.servers {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err := srv.Shutdown(ctx)
-		cancel()
-
-		if err != nil && firstErr == nil {
-			firstErr = err
-		}
-		s.logger.Fields("key", key).Info("listener stopped")
-	}
-
-	// Close TLS manager watchers
-	if s.tlsManager != nil {
-		s.tlsManager.Close()
-	}
-
-	return firstErr
 }

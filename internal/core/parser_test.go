@@ -4,13 +4,16 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
 
 func TestParser_GlobalConfig(t *testing.T) {
 	content := `
-		bind = ":8080"
+		bind = {
+			http = [":8080"]
+		}
 		hosts_dir = "./custom_hosts"
 		le_email = "test@example.com"
 		development = true
@@ -39,7 +42,7 @@ func TestParser_GlobalConfig(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	if global.Bind != ":8080" {
+	if global.Bind.HTTP[0] != ":8080" {
 		t.Errorf("expected bind :8080, got %s", global.Bind)
 	}
 	if global.HostsDir != "./custom_hosts" {
@@ -52,20 +55,20 @@ func TestParser_GlobalConfig(t *testing.T) {
 		t.Error("expected development true")
 	}
 
-	if global.Timeouts.Read != "1s" {
+	if global.Timeouts.Read != 1*time.Second {
 		t.Errorf("expected timeouts.read 1s, got %q", global.Timeouts.Read)
 	}
 
-	if global.RateLimits.TTL != "10m" {
+	if global.RateLimits.TTL != 10*time.Minute {
 		t.Errorf("expected rate_limits.ttl 10m, got %q", global.RateLimits.TTL)
 	}
 	if global.RateLimits.MaxEntries != 123 {
 		t.Errorf("expected max_entries 123, got %d", global.RateLimits.MaxEntries)
 	}
-	if global.RateLimits.Global.Requests != 5 || global.RateLimits.Global.Window != "1s" || global.RateLimits.Global.Burst != 9 {
+	if global.RateLimits.Global.Requests != 5 || global.RateLimits.Global.Window != 1*time.Second || global.RateLimits.Global.Burst != 9 {
 		t.Errorf("unexpected global policy: %+v", global.RateLimits.Global)
 	}
-	if global.RateLimits.Auth.Requests != 1 || global.RateLimits.Auth.Window != "1m" || global.RateLimits.Auth.Burst != 1 {
+	if global.RateLimits.Auth.Requests != 1 || global.RateLimits.Auth.Window != 1*time.Minute || global.RateLimits.Auth.Burst != 1 {
 		t.Errorf("unexpected auth policy: %+v", global.RateLimits.Auth)
 	}
 }

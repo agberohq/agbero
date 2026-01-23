@@ -1,4 +1,3 @@
-// internal/middleware/compress/compress.go
 package compress
 
 import (
@@ -8,7 +7,7 @@ import (
 	"sync"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
-	"github.com/google/brotli/go/cbrotli"
+	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/gzip"
 )
 
@@ -25,7 +24,7 @@ var gzipWriterPool = sync.Pool{
 
 var brotliWriterPool = sync.Pool{
 	New: func() any {
-		return cbrotli.NewWriter(io.Discard, cbrotli.WriterOptions{Quality: 5}) // Balanced level
+		return brotli.NewWriterLevel(io.Discard, brotli.DefaultCompression)
 	},
 }
 
@@ -78,7 +77,7 @@ func Compress(route *woos.Route) func(http.Handler) http.Handler {
 			var writer io.WriteCloser
 			if compType == "brotli" {
 				w.Header().Set("Content-Encoding", encoding)
-				brw := brotliWriterPool.Get().(*cbrotli.Writer)
+				brw := brotliWriterPool.Get().(*brotli.Writer) // Update type cast
 				brw.Reset(w)
 				writer = brw
 				defer func() {

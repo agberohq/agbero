@@ -69,7 +69,7 @@ type HostConfig struct {
 	BindPorts   []string       `hcl:"bind_ports,optional"`
 	Routes      []Route        `hcl:"route,block"`
 	Web         *Web           `hcl:"web,block"`
-	TLS         *TSL           `hcl:"tls,block"`
+	TLS         *TLS           `hcl:"tls,block"`
 	Limits      *LimitConfig   `hcl:"limits,block"`
 	Compression bool           `hcl:"compression,optional"`
 	Headers     *HeadersConfig `hcl:"headers,block"`
@@ -145,7 +145,7 @@ func (w WebRoot) String() string {
 
 // ---- TLS -----------------------------------------------------
 
-type TSL struct {
+type TLS struct {
 	Mode        TlsMode     `hcl:"mode,optional"`
 	Local       LocalCert   `hcl:"local,block"`
 	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block"`

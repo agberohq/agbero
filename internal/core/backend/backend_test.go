@@ -218,9 +218,9 @@ func TestHealthCheck_Failure(t *testing.T) {
 
 	hc := &woos.HealthCheckConfig{
 		Path:      "/health",
-		Interval:  "100ms",
+		Interval:  100 * time.Millisecond,
 		Threshold: 2,
-		Timeout:   "50ms",
+		Timeout:   50 * time.Millisecond,
 	}
 	b := setupBackend(t, server.URL, hc, nil)
 	defer b.Stop()
@@ -266,9 +266,9 @@ func TestHealthCheck_Recovery(t *testing.T) {
 
 	hc := &woos.HealthCheckConfig{
 		Path:      "/health",
-		Interval:  "100ms",
+		Interval:  100 * time.Millisecond,
 		Threshold: 2,
-		Timeout:   "50ms",
+		Timeout:   100 * time.Millisecond,
 	}
 	b := setupBackend(t, server.URL, hc, nil)
 	defer b.Stop()
@@ -317,9 +317,9 @@ func TestHealthCheck_Jitter(t *testing.T) {
 
 	hc := &woos.HealthCheckConfig{
 		Path:      "/health",
-		Interval:  "1s",
+		Interval:  1 * time.Second,
 		Threshold: 1,
-		Timeout:   "100ms",
+		Timeout:   100 * time.Millisecond,
 	}
 	b := setupBackend(t, server.URL, hc, nil)
 	defer b.Stop()
@@ -339,9 +339,9 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 
 	hc := &woos.HealthCheckConfig{
 		Path:      "/health",
-		Interval:  "100ms",
+		Interval:  100 * time.Millisecond,
 		Threshold: 1,
-		Timeout:   "50ms",
+		Timeout:   50 * time.Millisecond,
 	}
 	b := setupBackend(t, server.URL, hc, nil)
 

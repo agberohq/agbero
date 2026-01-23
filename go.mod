@@ -5,7 +5,9 @@ go 1.25.5
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
 	github.com/alecthomas/hcl v0.5.5
+	github.com/andybalholm/brotli v1.2.0
 	github.com/caddyserver/certmagic v0.25.1
+	github.com/cespare/xxhash/v2 v2.1.1
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/hashicorp/memberlist v0.5.4
@@ -16,6 +18,7 @@ require (
 	github.com/olekukonko/errors v1.2.0
 	github.com/olekukonko/ll v0.1.4-0.20260122041744-2017be7a914c
 	github.com/quic-go/quic-go v0.59.0
+	golang.org/x/crypto v0.47.0
 	golang.org/x/time v0.14.0
 )
 
@@ -25,8 +28,6 @@ require (
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/caddyserver/zerossl v0.1.4 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/google/brotli v1.2.0 // indirect
-	github.com/google/brotli/go/cbrotli v1.1.0 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-immutable-radix v1.0.0 // indirect
@@ -48,7 +49,6 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.1 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
-	golang.org/x/crypto v0.47.0 // indirect
 	golang.org/x/mod v0.32.0 // indirect
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect

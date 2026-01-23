@@ -83,7 +83,7 @@ func TestTlsManager_CmForHost_StagingOverride(t *testing.T) {
 	m.cmProd = &certmagic.Config{}
 	m.cmStaging = &certmagic.Config{}
 
-	hcfg := &woos.HostConfig{TLS: &woos.TSL{LetsEncrypt: woos.LetsEncrypt{Staging: true}}}
+	hcfg := &woos.HostConfig{TLS: &woos.TLS{LetsEncrypt: woos.LetsEncrypt{Staging: true}}}
 	cm := m.CmForHost(hcfg)
 	if cm != m.cmStaging {
 		t.Error("Expected staging on host override")
@@ -157,7 +157,7 @@ func TestTlsManager_GetCertificate_ShortLived(t *testing.T) {
 	m.cmProd = certmagic.NewDefault()
 	m.issProd = &certmagic.ACMEIssuer{CA: "test-ca"}
 
-	// hcfg := &woos.HostConfig{TLS: &woos.TSL{Mode: woos.ModeLetsEncrypt, LetsEncrypt: woos.LetsEncrypt{ShortLived: true}}}
+	// hcfg := &woos.HostConfig{TLS: &woos.TLS{Mode: woos.ModeLetsEncrypt, LetsEncrypt: woos.LetsEncrypt{ShortLived: true}}}
 	chi := &tls.ClientHelloInfo{ServerName: "example.com"}
 	m.HostManager.UpdateGossipNode("test", "example.com", woos.Route{}) // Mock host
 
@@ -175,7 +175,7 @@ CA CERT
 -----END CERTIFICATE-----`), 0644)
 
 	m := &TlsManager{Logger: &mockLogger{}}
-	// hcfg := &woos.HostConfig{TLS: &woos.TSL{Mode: woos.ModeCustomCA, CustomCA: woos.CustomCA{Root: caFile}}}
+	// hcfg := &woos.HostConfig{TLS: &woos.TLS{Mode: woos.ModeCustomCA, CustomCA: woos.CustomCA{Root: caFile}}}
 	m.HostManager = discovery.NewHost("", discovery.WithLogger(nil))
 	m.HostManager.UpdateGossipNode("test", "example.com", woos.Route{})
 
