@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	"github.com/cespare/xxhash/v2"
 	"golang.org/x/time/rate"
 )
 
@@ -110,7 +111,7 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 		now := time.Now().UnixNano()
 		key := ip // per-IP. (If you want per-host too: key = host + "|" + ip)
 
-		sh := &rl.shards[fnv1a(key)%uint64(len(rl.shards))]
+		sh := &rl.shards[xxhash.Sum64String(key)%uint64(len(rl.shards))]
 		sh.mu.Lock()
 		e := sh.m[key]
 		if e == nil {
@@ -172,15 +173,4 @@ func (rl *RateLimiter) pruneShardLocked(sh *rateShard, now int64) {
 			rl.size.Add(-1)
 		}
 	}
-}
-
-func (rl *RateLimiter) Ttl() time.Duration { return rl.ttl }
-
-func fnv1a(s string) uint64 {
-	var h uint64 = 1469598103934665603
-	for i := 0; i < len(s); i++ {
-		h ^= uint64(s[i])
-		h *= 1099511628211
-	}
-	return h
 }

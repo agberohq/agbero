@@ -1,3 +1,4 @@
+// internal/middleware/compress/compress.go
 package compress
 
 import (
@@ -6,6 +7,8 @@ import (
 	"strings"
 	"sync"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"github.com/google/brotli/go/cbrotli"
 	"github.com/klauspost/compress/gzip"
 )
 
@@ -20,37 +23,83 @@ var gzipWriterPool = sync.Pool{
 	},
 }
 
-func Compress() func(http.Handler) http.Handler {
+var brotliWriterPool = sync.Pool{
+	New: func() any {
+		return cbrotli.NewWriter(io.Discard, cbrotli.WriterOptions{Quality: 5}) // Balanced level
+	},
+}
+
+func Compress(route *woos.Route) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Check if client supports gzip
-			if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-				next.ServeHTTP(w, r)
-				return
-			}
-
 			// Check if WebSocket (cannot compress upgrade requests)
 			if r.Header.Get("Connection") == "Upgrade" {
 				next.ServeHTTP(w, r)
 				return
 			}
 
+			cc := route.CompressionConfig
+			if !cc.Compression {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			ae := r.Header.Get("Accept-Encoding")
+			compType := strings.ToLower(cc.Type)
+			if compType == "" {
+				compType = "gzip" // Default
+			}
+
+			var useComp bool
+			var encoding string
+			switch compType {
+			case "brotli":
+				useComp = strings.Contains(ae, "br")
+				encoding = "br"
+			case "gzip":
+				useComp = strings.Contains(ae, "gzip")
+				encoding = "gzip"
+			default:
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if !useComp {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// Set headers
-			w.Header().Set("Content-Encoding", "gzip")
+			level := cc.Level
+			if level < 1 || level > 11 {
+				level = 5 // Default balanced
+			}
+
+			var writer io.WriteCloser
+			if compType == "brotli" {
+				w.Header().Set("Content-Encoding", encoding)
+				brw := brotliWriterPool.Get().(*cbrotli.Writer)
+				brw.Reset(w)
+				writer = brw
+				defer func() {
+					brw.Close()
+					brotliWriterPool.Put(brw)
+				}()
+			} else {
+				w.Header().Set("Content-Encoding", encoding)
+				gzw := gzipWriterPool.Get().(*gzip.Writer)
+				gzw.Reset(w)
+				writer = gzw
+				defer func() {
+					gzw.Close()
+					gzipWriterPool.Put(gzw)
+				}()
+			}
 			w.Header().Add("Vary", "Accept-Encoding")
-
-			// Grab a writer from the pool
-			gz := gzipWriterPool.Get().(*gzip.Writer)
-			gz.Reset(w)
-
-			defer func() {
-				gz.Close()
-				gzipWriterPool.Put(gz)
-			}()
 
 			cw := &compressWriter{
 				ResponseWriter: w,
-				w:              gz,
+				w:              writer,
 			}
 
 			next.ServeHTTP(cw, r)
@@ -60,7 +109,7 @@ func Compress() func(http.Handler) http.Handler {
 
 type compressWriter struct {
 	http.ResponseWriter
-	w *gzip.Writer
+	w io.WriteCloser
 }
 
 func (cw *compressWriter) Write(b []byte) (int, error) {
@@ -69,19 +118,10 @@ func (cw *compressWriter) Write(b []byte) (int, error) {
 
 // Flush is required for streaming responses (e.g. server-sent events)
 func (cw *compressWriter) Flush() {
-	cw.w.Flush()
+	if f, ok := cw.w.(interface{ Flush() }); ok {
+		f.Flush()
+	}
 	if f, ok := cw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
 }
-
-// Hijack is required for websockets (though we skip compression for them above,
-// the interface check might still happen in some chains)
-/*
-func (cw *compressWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if hj, ok := cw.ResponseWriter.(http.Hijacker); ok {
-		return hj.Hijack()
-	}
-	return nil, nil, errors.New("hijack not supported")
-}
-*/

@@ -11,6 +11,7 @@ import (
 
 type GlobalConfig struct {
 	Bind           BindConfig      `hcl:"bind,block"`
+	HostsDir       string          `hcl:"hosts_dir"`
 	Gossip         *GossipConfig   `hcl:"gossip,block"`
 	LEEmail        string          `hcl:"le_email,optional"`
 	LogLevel       string          `hcl:"log_level,optional"`

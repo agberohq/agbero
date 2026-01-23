@@ -1,6 +1,10 @@
+// internal/woos/route.go
 package woos
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 type Route struct {
 	// Routing Core
@@ -18,7 +22,14 @@ type Route struct {
 	BasicAuth   *BasicAuthConfig   `hcl:"basic_auth,block"`
 	ForwardAuth *ForwardAuthConfig `hcl:"forward_auth,block"`
 	Headers     *HeadersConfig     `hcl:"headers,block"`
-	Compression bool               `hcl:"compression,optional"`
+
+	CompressionConfig CompressionConfig `hcl:"compression,block"`
+}
+
+type CompressionConfig struct {
+	Compression bool   `hcl:"compression,optional"`
+	Level       int    `hcl:"compression_level,optional"` // 1-11, default 5
+	Type        string `hcl:"type,optional"`              // "gzip" (default) or "brotli"
 }
 
 func (route *Route) Key() string {
@@ -50,23 +61,27 @@ func (route *Route) Key() string {
 	if route.HealthCheck != nil {
 		sb.WriteString("|hc=")
 		sb.WriteString(route.HealthCheck.Path)
-		sb.WriteString(route.HealthCheck.Interval.String())
-		sb.WriteString(route.HealthCheck.Timeout.String())
+		sb.WriteString(fmt.Sprint(route.HealthCheck.Interval))
+		sb.WriteString(fmt.Sprint(route.HealthCheck.Timeout))
+		sb.WriteString(fmt.Sprint(route.HealthCheck.Threshold))
 	}
 
 	if route.CircuitBreaker != nil {
 		sb.WriteString("|cb=")
-		sb.WriteByte(byte(route.CircuitBreaker.Threshold))
+		sb.WriteString(fmt.Sprint(route.CircuitBreaker.Threshold))
+		sb.WriteString(fmt.Sprint(route.CircuitBreaker.Duration))
 	}
 
 	if route.Timeouts != nil {
 		sb.WriteString("|to=")
-		sb.WriteString(route.Timeouts.Request.String())
+		sb.WriteString(fmt.Sprint(route.Timeouts.Request))
 	}
 
 	// Middlewares
-	if route.Compression {
-		sb.WriteString("|gz=1")
+	if route.CompressionConfig.Compression {
+		sb.WriteString("|comp=")
+		sb.WriteString(route.CompressionConfig.Type)
+		sb.WriteString(fmt.Sprint(route.CompressionConfig.Level))
 	}
 
 	if route.Headers != nil {
