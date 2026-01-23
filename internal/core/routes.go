@@ -7,37 +7,43 @@ import (
 	"sync/atomic"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/middleware"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/olekukonko/ll"
 )
 
 type RouteHandler struct {
-	stripPrefixes []string
-	strategy      string
-	Backends      []*Backend
-	rrCounter     uint64
-	timeout       time.Duration
+	// The final handler in the chain (Load Balancer)
+	// wrapped by middlewares.
+	handler http.Handler
+
+	// Data required for Load Balancing logic (which is now inside 'handler' or separate?)
+	// To keep it clean: We make RouteHandler behave as a standard http.Handler
+	// that encapsulates the middleware chain AND the LB logic.
+
+	// Internal access needed for "Close"
+	Backends []*Backend
 }
 
-// NewRouteHandler creates a handler and initializes backends + health checks
 func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
-	h := &RouteHandler{
+	// 1. Initialize Load Balancer Logic
+	lb := &LoadBalancerHandler{
 		stripPrefixes: append([]string(nil), route.StripPrefixes...),
 		strategy:      strings.ToLower(strings.TrimSpace(route.LBStrategy)),
 	}
 
-	if h.strategy == "" {
-		h.strategy = "roundrobin"
+	if lb.strategy == "" {
+		lb.strategy = "roundrobin"
 	}
 
-	// Parse Timeout
 	if route.Timeouts != nil && route.Timeouts.Request != "" {
 		if d, err := time.ParseDuration(route.Timeouts.Request); err == nil {
-			h.timeout = d
+			lb.timeout = d
 		}
 	}
 
-	// Use the interface wrapper for the logger
+	// 2. Initialize Backends
+	// We need to wrap the logger to match the backend constructor interface
 	wrappedLogger := NewTLSLogger(logger)
 
 	for _, raw := range route.Backends {
@@ -45,33 +51,82 @@ func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
 		if raw == "" {
 			continue
 		}
-
 		b, err := NewBackend(raw, route, wrappedLogger)
 		if err != nil {
 			logger.Fields("backend", raw, "err", err).Error("failed to create backend")
 			continue
 		}
-		h.Backends = append(h.Backends, b)
+		lb.Backends = append(lb.Backends, b)
 	}
 
-	return h
+	// 3. Build Middleware Chain
+	// The chain is built "outside-in". The last one applied wraps everything else.
+	// Execution Order: Compress -> Headers -> Auth -> LoadBalancer
+
+	var chain http.Handler = lb
+
+	// Layer 3: Authentication (Inner)
+	// Protect the resource access
+	if route.BasicAuth != nil && len(route.BasicAuth.Users) > 0 {
+		chain = middleware.BasicAuth(route.BasicAuth)(chain)
+	}
+	if route.ForwardAuth != nil && route.ForwardAuth.URL != "" {
+		chain = middleware.ForwardAuth(route.ForwardAuth)(chain)
+	}
+
+	// Layer 2: Headers (Middle)
+	// Modify headers before Auth sees them (Request) or before Compress sees them (Response)
+	if route.Headers != nil {
+		chain = middleware.Headers(route.Headers)(chain)
+	}
+
+	// Layer 1: Compression (Outer)
+	// Compresses the final byte stream.
+	if route.Compression {
+		chain = middleware.Compress()(chain)
+	}
+
+	return &RouteHandler{
+		handler:  chain,
+		Backends: lb.Backends,
+	}
 }
 
 func (h *RouteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if len(h.Backends) == 0 {
+	h.handler.ServeHTTP(w, r)
+}
+
+func (h *RouteHandler) Close() {
+	for _, b := range h.Backends {
+		b.Stop()
+	}
+}
+
+// --- Internal Load Balancer Logic (Moved from RouteHandler) ---
+
+type LoadBalancerHandler struct {
+	stripPrefixes []string
+	strategy      string
+	Backends      []*Backend
+	rrCounter     uint64
+	timeout       time.Duration
+}
+
+func (lb *LoadBalancerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if len(lb.Backends) == 0 {
 		http.Error(w, "No backends configured", http.StatusBadGateway)
 		return
 	}
 
-	b := h.PickBackend()
+	b := lb.PickBackend()
 	if b == nil {
 		http.Error(w, "No healthy backends", http.StatusBadGateway)
 		return
 	}
 
-	// Apply Route Timeout if configured
-	if h.timeout > 0 {
-		ctx, cancel := context.WithTimeout(r.Context(), h.timeout)
+	// Apply Route Timeout
+	if lb.timeout > 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), lb.timeout)
 		defer cancel()
 		r = r.WithContext(ctx)
 		b.ServeHTTP(w, r)
@@ -80,32 +135,30 @@ func (h *RouteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *RouteHandler) PickBackend() *Backend {
-	// Optimization: If only 1 backend, skip LB logic (but check health)
-	if len(h.Backends) == 1 {
-		b := h.Backends[0]
+func (lb *LoadBalancerHandler) PickBackend() *Backend {
+	if len(lb.Backends) == 1 {
+		b := lb.Backends[0]
 		if b.Alive.Load() {
 			return b
 		}
 		return nil
 	}
 
-	switch h.strategy {
+	switch lb.strategy {
 	case woos.StrategyLeastConn, "least_conn":
-		return h.pickLeastConn()
+		return lb.pickLeastConn()
 	case woos.StrategyRandom:
-		return h.pickRandom()
-	default: // "roundrobin"
-		return h.pickRoundRobin()
+		return lb.pickRandom()
+	default:
+		return lb.pickRoundRobin()
 	}
 }
 
-func (h *RouteHandler) pickRoundRobin() *Backend {
-	n := uint64(len(h.Backends))
-	// Try N times to find an alive backend
+func (lb *LoadBalancerHandler) pickRoundRobin() *Backend {
+	n := uint64(len(lb.Backends))
 	for i := uint64(0); i < n; i++ {
-		idx := atomic.AddUint64(&h.rrCounter, 1)
-		b := h.Backends[idx%n]
+		idx := atomic.AddUint64(&lb.rrCounter, 1)
+		b := lb.Backends[idx%n]
 		if b.Alive.Load() {
 			return b
 		}
@@ -113,13 +166,12 @@ func (h *RouteHandler) pickRoundRobin() *Backend {
 	return nil
 }
 
-func (h *RouteHandler) pickRandom() *Backend {
-	n := len(h.Backends)
-	// Try N times (statistical attempt)
+func (lb *LoadBalancerHandler) pickRandom() *Backend {
+	n := len(lb.Backends)
 	start := randUint64()
 	for i := 0; i < n; i++ {
 		idx := (start + uint64(i)) % uint64(n)
-		b := h.Backends[idx]
+		b := lb.Backends[idx]
 		if b.Alive.Load() {
 			return b
 		}
@@ -127,13 +179,13 @@ func (h *RouteHandler) pickRandom() *Backend {
 	return nil
 }
 
-func (h *RouteHandler) pickLeastConn() *Backend {
+func (lb *LoadBalancerHandler) pickLeastConn() *Backend {
 	var (
 		best *Backend
 		min  int64 = -1
 	)
 
-	for _, b := range h.Backends {
+	for _, b := range lb.Backends {
 		if !b.Alive.Load() {
 			continue
 		}
@@ -144,11 +196,4 @@ func (h *RouteHandler) pickLeastConn() *Backend {
 		}
 	}
 	return best
-}
-
-// Close gracefully stops background tasks (health checks)
-func (h *RouteHandler) Close() {
-	for _, b := range h.Backends {
-		b.Stop()
-	}
 }

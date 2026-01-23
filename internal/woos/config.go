@@ -9,23 +9,21 @@ import (
 // ---- GLOBAL CONFIG -------------------------------------------
 
 type GlobalConfig struct {
-	Bind           BindConfig `hcl:"bind"`
-	HostsDir       string     `hcl:"hosts_dir"`
-	LEEmail        string     `hcl:"le_email,optional"`
-	LogLevel       string     `hcl:"log_level,optional"`
-	Development    bool       `hcl:"development,optional"`
-	TrustedProxies []string   `hcl:"trusted_proxies,optional"`
-
-	Timeouts   TimeoutConfig   `hcl:"timeouts,block"`
-	RateLimits RateLimitConfig `hcl:"rate_limits,block"`
+	Bind           BindConfig      `hcl:"bind,block"`
+	HostsDir       string          `hcl:"hosts_dir"`
+	LEEmail        string          `hcl:"le_email,optional"`
+	LogLevel       string          `hcl:"log_level,optional"`
+	Development    bool            `hcl:"development,optional"`
+	TrustedProxies []string        `hcl:"trusted_proxies,optional"`
+	Timeouts       TimeoutConfig   `hcl:"timeouts,block"`
+	RateLimits     RateLimitConfig `hcl:"rate_limits,block"`
 
 	// Hardening / Operability
-	MaxHeaderBytes int    `hcl:"max_header_bytes,optional"` // default: 1 MiB
-	TLSStorageDir  string `hcl:"tls_storage_dir,optional"`  // default: "/var/lib/agbero/certmagic"
+	MaxHeaderBytes int    `hcl:"max_header_bytes,optional"`
+	TLSStorageDir  string `hcl:"tls_storage_dir,optional"`
 }
 
 type BindConfig struct {
-	// Arrays allow multiple ports: http = [":80", ":8080"]
 	HTTP    []string `hcl:"http,optional"`
 	HTTPS   []string `hcl:"https,optional"`
 	Metrics string   `hcl:"metrics,optional"`
@@ -41,8 +39,8 @@ type TimeoutConfig struct {
 // ---- RATE LIMITING --------------------------------------------
 
 type RateLimitConfig struct {
-	TTL          string           `hcl:"ttl,optional"`         // e.g. "30m"
-	MaxEntries   int64            `hcl:"max_entries,optional"` // e.g. 100000
+	TTL          string           `hcl:"ttl,optional"`
+	MaxEntries   int64            `hcl:"max_entries,optional"`
 	AuthPrefixes []string         `hcl:"auth_prefixes,optional"`
 	Global       RatePolicyConfig `hcl:"global,block"`
 	Auth         RatePolicyConfig `hcl:"auth,block"`
@@ -57,12 +55,25 @@ type RatePolicyConfig struct {
 // ---- HOST CONFIG ---------------------------------------------
 
 type HostConfig struct {
-	Domains   []string     `hcl:"domains"`
-	BindPorts []string     `hcl:"bind_ports,optional"`
-	Routes    []Route      `hcl:"route,block"`
-	Web       *Web         `hcl:"web,block"`
-	TLS       *TSL         `hcl:"tls,block"`
-	Limits    *LimitConfig `hcl:"limits,block"`
+	Domains     []string       `hcl:"domains"`
+	BindPorts   []string       `hcl:"bind_ports,optional"`
+	Routes      []Route        `hcl:"route,block"`
+	Web         *Web           `hcl:"web,block"`
+	TLS         *TSL           `hcl:"tls,block"`
+	Limits      *LimitConfig   `hcl:"limits,block"`
+	Compression bool           `hcl:"compression,optional"`
+	Headers     *HeadersConfig `hcl:"headers,block"`
+}
+
+type HeadersConfig struct {
+	Request  *HeaderOperations `hcl:"request,block"`
+	Response *HeaderOperations `hcl:"response,block"`
+}
+
+type HeaderOperations struct {
+	Set    map[string]string `hcl:"set,optional"`
+	Add    map[string]string `hcl:"add,optional"`
+	Remove []string          `hcl:"remove,optional"`
 }
 
 type LimitConfig struct {
@@ -72,6 +83,7 @@ type LimitConfig struct {
 // ---- ROUTING -------------------------------------------------
 
 type Route struct {
+	// Routing Core
 	Path          string   `hcl:"path,label"`
 	Backends      []string `hcl:"backends"`
 	StripPrefixes []string `hcl:"strip_prefixes,optional"`
@@ -81,23 +93,44 @@ type Route struct {
 	HealthCheck    *HealthCheckConfig    `hcl:"health_check,block"`
 	CircuitBreaker *CircuitBreakerConfig `hcl:"circuit_breaker,block"`
 	Timeouts       *RouteTimeouts        `hcl:"timeouts,block"`
+
+	// Middleware Configs
+	BasicAuth   *BasicAuthConfig   `hcl:"basic_auth,block"`
+	ForwardAuth *ForwardAuthConfig `hcl:"forward_auth,block"`
+	Headers     *HeadersConfig     `hcl:"headers,block"`
+	Compression bool               `hcl:"compression,optional"`
+}
+
+type BasicAuthConfig struct {
+	// List of "username:password" (Plaintext for now, or bcrypt in future)
+	Users []string `hcl:"users"`
+	Realm string   `hcl:"realm,optional"`
+}
+
+type ForwardAuthConfig struct {
+	URL string `hcl:"url"` // e.g. "http://auth-service:8080/verify"
+
+	// Headers to copy FROM client request TO auth service (e.g. "Authorization", "Cookie")
+	RequestHeaders []string `hcl:"request_headers,optional"`
+
+	// Headers to copy FROM auth response TO backend request (e.g. "X-User-ID")
+	AuthResponseHeaders []string `hcl:"auth_response_headers,optional"`
 }
 
 type HealthCheckConfig struct {
-	Path      string `hcl:"path"`               // Required, e.g. "/health"
-	Interval  string `hcl:"interval,optional"`  // Default "10s"
-	Timeout   string `hcl:"timeout,optional"`   // Default "5s"
-	Threshold int    `hcl:"threshold,optional"` // Default 3
+	Path      string `hcl:"path"`
+	Interval  string `hcl:"interval,optional"`
+	Timeout   string `hcl:"timeout,optional"`
+	Threshold int    `hcl:"threshold,optional"`
 }
 
 type CircuitBreakerConfig struct {
-	Expression string `hcl:"expression,optional"` // "NetworkErrorRatio() > 0.10" (Future)
-	Threshold  int    `hcl:"threshold,optional"`  // Simple fail count
-	Duration   string `hcl:"duration,optional"`   // Reset interval
+	Threshold int    `hcl:"threshold,optional"`
+	Duration  string `hcl:"duration,optional"`
 }
 
 type RouteTimeouts struct {
-	Request string `hcl:"request,optional"` // Total request timeout
+	Request string `hcl:"request,optional"`
 }
 
 // ---- STATIC WEB ----------------------------------------------
@@ -136,9 +169,6 @@ type LetsEncrypt struct {
 
 // ---- DEFAULTS ------------------------------------------------
 
-// SharedTransport is a globally tuned transport for upstream connections.
-// In a real app, you might want distinct transports per backend if requirements differ drastically,
-// but a shared tuned transport is better than the default.
 var SharedTransport = &http.Transport{
 	Proxy: http.ProxyFromEnvironment,
 	DialContext: (&net.Dialer{

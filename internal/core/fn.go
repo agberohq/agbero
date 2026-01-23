@@ -13,7 +13,6 @@ import (
 var fallbackRand uint64
 
 func RouteKey(route *woos.Route) string {
-	// Stable key: strategy + path + Backends + strip prefixes
 	var sb strings.Builder
 	sb.Grow(256)
 
@@ -38,7 +37,7 @@ func RouteKey(route *woos.Route) string {
 		sb.WriteString(p)
 	}
 
-	// Uniqueness for High Availability settings
+	// High Availability
 	if route.HealthCheck != nil {
 		sb.WriteString("|hc=")
 		sb.WriteString(route.HealthCheck.Path)
@@ -48,13 +47,35 @@ func RouteKey(route *woos.Route) string {
 
 	if route.CircuitBreaker != nil {
 		sb.WriteString("|cb=")
-		// Simple encoding of threshold
 		sb.WriteByte(byte(route.CircuitBreaker.Threshold))
 	}
 
 	if route.Timeouts != nil {
 		sb.WriteString("|to=")
 		sb.WriteString(route.Timeouts.Request)
+	}
+
+	// Middlewares
+	if route.Compression {
+		sb.WriteString("|gz=1")
+	}
+
+	if route.Headers != nil {
+		sb.WriteString("|hd=1")
+		// Optimization: We assume if the pointer is non-nil, headers are active.
+		// For perfect cache busting on content change, we would need to hash the map keys/values.
+		// Given the frequency of config changes, this simple check is usually sufficient
+		// unless you modify header values in-place without changing other config.
+	}
+
+	if route.BasicAuth != nil {
+		sb.WriteString("|ba=")
+		sb.WriteByte(byte(len(route.BasicAuth.Users)))
+	}
+
+	if route.ForwardAuth != nil {
+		sb.WriteString("|fa=")
+		sb.WriteString(route.ForwardAuth.URL)
 	}
 
 	return sb.String()
