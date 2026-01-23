@@ -1,0 +1,113 @@
+package headers
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
+)
+
+func TestHeaders_RequestMods(t *testing.T) {
+	cfg := &woos.HeadersConfig{
+		Request: &woos.HeaderOperations{
+			Set:    map[string]string{"X-Test": "set-value"},
+			Add:    map[string]string{"X-Multi": "add1"},
+			Remove: []string{"User-Agent"},
+		},
+	}
+
+	handler := Headers(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Test") != "set-value" {
+			t.Error("Set header not applied")
+		}
+
+		// Fix: Check if "add1" exists in the slice of values
+		found := false
+		for _, v := range r.Header.Values("X-Multi") {
+			if v == "add1" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Add header not applied. Got: %v", r.Header["X-Multi"])
+		}
+
+		if r.Header.Get("User-Agent") != "" {
+			t.Error("Remove header not applied")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("User-Agent", "test-agent")
+	req.Header.Add("X-Multi", "pre-existing")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d", w.Code)
+	}
+}
+
+func TestHeaders_ResponseMods(t *testing.T) {
+	cfg := &woos.HeadersConfig{
+		Response: &woos.HeaderOperations{
+			Set:    map[string]string{"X-Resp": "resp-value"},
+			Add:    map[string]string{"X-Resp-Multi": "add2"},
+			Remove: []string{"Content-Type"},
+		},
+	}
+
+	handler := Headers(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Add("X-Resp-Multi", "pre")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+	if w.Header().Get("X-Resp") != "resp-value" {
+		t.Error("Response set not applied")
+	}
+
+	// Fix: httptest.ResponseRecorder stores headers as a map.
+	// We check if values contain both.
+	vals := w.Header().Values("X-Resp-Multi")
+	foundPre, foundAdd := false, false
+	for _, v := range vals {
+		if v == "pre" {
+			foundPre = true
+		}
+		if v == "add2" {
+			foundAdd = true
+		}
+	}
+
+	if !foundPre || !foundAdd {
+		t.Errorf("Response add not applied correctly. Got: %v", vals)
+	}
+
+	if w.Header().Get("Content-Type") != "" {
+		t.Error("Response remove not applied")
+	}
+}
+
+func TestHeaders_NoOps(t *testing.T) {
+	cfg := &woos.HeadersConfig{} // Empty
+
+	handler := Headers(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Error("Handler affected by empty config")
+	}
+}

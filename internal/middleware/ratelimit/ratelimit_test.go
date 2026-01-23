@@ -1,4 +1,4 @@
-package middleware
+package ratelimit
 
 import (
 	"context"
@@ -8,52 +8,10 @@ import (
 	"time"
 )
 
+type clientIPCtxKey struct{}
+
 func contextWithClientIP(ctx context.Context, ip string) context.Context {
 	return context.WithValue(ctx, clientIPCtxKey{}, ip)
-}
-
-func TestIPMiddleware_ClientIP_FromTrustedXFFChain(t *testing.T) {
-	m := NewIPMiddleware([]string{"127.0.0.1/32", "10.0.0.0/8"})
-
-	req := httptest.NewRequest("GET", "http://x/", nil)
-	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set("X-Forwarded-For", "1.1.1.1, 10.0.0.2, 127.0.0.1")
-
-	rr := httptest.NewRecorder()
-
-	var got string
-	h := m.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = ClientIP(r)
-		w.WriteHeader(200)
-	}))
-
-	h.ServeHTTP(rr, req)
-
-	if got != "1.1.1.1" {
-		t.Fatalf("expected client 1.1.1.1, got %q", got)
-	}
-}
-
-func TestIPMiddleware_UntrustedPeer_IgnoresXFF(t *testing.T) {
-	m := NewIPMiddleware([]string{"127.0.0.1/32"})
-
-	req := httptest.NewRequest("GET", "http://x/", nil)
-	req.RemoteAddr = "203.0.113.9:4444"
-	req.Header.Set("X-Forwarded-For", "1.1.1.1")
-
-	rr := httptest.NewRecorder()
-
-	var got string
-	h := m.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = ClientIP(r)
-		w.WriteHeader(200)
-	}))
-
-	h.ServeHTTP(rr, req)
-
-	if got != "203.0.113.9" {
-		t.Fatalf("expected 203.0.113.9, got %q", got)
-	}
 }
 
 func TestRateLimiter_BlocksAfterLimit(t *testing.T) {
@@ -119,5 +77,58 @@ func TestRateLimiter_TTL_EvictsEventually(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("expected 200 after TTL eviction, still %d", rr2.Code)
 		}
+	}
+}
+
+func TestRateLimiter_Blocks(t *testing.T) {
+	// 1. Setup Policy: 5 reqs / 1 sec
+	policy := func(r *http.Request) (string, RatePolicy, bool) {
+		return "test_bucket", RatePolicy{
+			Requests: 5,
+			Window:   1 * time.Second,
+			Burst:    5,
+		}, true
+	}
+
+	rl := NewRateLimiter(1*time.Minute, 1000, policy)
+	defer rl.Close()
+
+	// 2. Create Handler chain
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := rl.Handler(nextHandler)
+
+	// 3. Send 5 allowed requests
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "1.2.3.4:1234" // Client IP
+		w := httptest.NewRecorder()
+
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("Request %d should be allowed, got %d", i, w.Code)
+		}
+	}
+
+	// 4. Send 6th request (Should block)
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "1.2.3.4:1234"
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("Request 6 should be blocked (429), got %d", w.Code)
+	}
+
+	// 5. Different IP should be allowed
+	req2 := httptest.NewRequest("GET", "/", nil)
+	req2.RemoteAddr = "5.6.7.8:1234"
+	w2 := httptest.NewRecorder()
+
+	handler.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Errorf("Different IP should be allowed, got %d", w2.Code)
 	}
 }

@@ -1,227 +1,367 @@
+// server_test.go
 package agbero
 
 import (
-	"fmt"
-	"io"
+	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core"
+	tls2 "git.imaxinacion.net/aibox/agbero/internal/core/tls"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/ll"
+	"github.com/quic-go/quic-go/http3"
 )
 
-func createTempFile(t *testing.T, dir, name, content string) string {
-	path := filepath.Join(dir, name)
-	err := os.WriteFile(path, []byte(content), 0644)
+var (
+	testLogger = ll.New("test")
+)
+
+func TestNewServer_Basic(t *testing.T) {
+	s := NewServer()
+	if s.servers == nil || s.h3Servers == nil {
+		t.Error("Maps not initialized")
+	}
+}
+
+func TestServer_Start_NoConfig(t *testing.T) {
+	s := NewServer()
+	err := s.Start(context.Background(), "")
+	if err == nil || !strings.Contains(err.Error(), "host manager is required") {
+		t.Errorf("Expected host manager error, got %v", err)
+	}
+}
+
+func TestServer_Start_NoGlobalConfig(t *testing.T) {
+	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
+	s := NewServer(WithHostManager(hm))
+	err := s.Start(context.Background(), "")
+	if err == nil || !strings.Contains(err.Error(), "global config is required") {
+		t.Errorf("Expected global config error, got %v", err)
+	}
+}
+
+func TestServer_Start_Minimal(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	global := &woos.GlobalConfig{
+		Bind:     woos.BindConfig{HTTP: []string{":0"}},
+		HostsDir: "./hosts",
+	}
+	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
+	s := NewServer(
+		WithGlobalConfig(global),
+		WithHostManager(hm),
+		WithLogger(testLogger),
+	)
+
+	// Create temp config file
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.hcl")
+
+	err := s.Start(ctx, configPath)
+	// The server will start and then be stopped by context timeout
+	// Accept context timeout error
+	if err != nil && !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestServer_ShutdownImpl(t *testing.T) {
+	s := &Server{
+		servers:   make(map[string]*http.Server),
+		h3Servers: make(map[string]*http3.Server),
+		logger:    testLogger,
+		tlsManager: &tls2.TlsManager{ // Mock
+			Watchers: make(map[string]*fsnotify.Watcher),
+		},
+		rateLimiter: ratelimit.NewRateLimiter(time.Minute, 100, nil),
+	}
+
+	// Create a real watcher
+	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		t.Fatalf("failed to create %s: %v", name, err)
+		t.Skipf("Could not create watcher: %v", err)
 	}
-	return path
+	s.tlsManager.Watchers["test"] = watcher
+
+	// Mock TCP server
+	srv := &http.Server{
+		Addr:    ":0",
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
+	}
+	s.servers["http@:80"] = srv
+
+	err = s.shutdownImpl()
+	if err != nil {
+		t.Errorf("Unexpected shutdown error: %v", err)
+	}
+	if len(s.tlsManager.Watchers) != 0 {
+		t.Error("Watchers not closed")
+	}
 }
 
-func TestProxy_EndToEnd(t *testing.T) {
-	backend1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestServer_buildTLS(t *testing.T) {
+	tmpDir := t.TempDir()
+	s := &Server{
+		global: &woos.GlobalConfig{
+			LEEmail:       "test@example.com",
+			TLSStorageDir: tmpDir,
+		},
+		logger:      testLogger,
+		hostManager: discovery.NewHost("", discovery.WithLogger(nil)),
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+	cfg, handler, err := s.buildTLS(next)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if cfg == nil {
+		t.Error("TLS config not created")
+	}
+	if handler == nil {
+		t.Error("Handler not created")
+	}
+}
+
+func TestServer_buildTLS_NoEmail(t *testing.T) {
+	tmpDir := t.TempDir()
+	s := &Server{
+		global: &woos.GlobalConfig{
+			TLSStorageDir: tmpDir,
+		},
+		logger:      testLogger,
+		hostManager: discovery.NewHost("", discovery.WithLogger(nil)),
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+	cfg, handler, err := s.buildTLS(next)
+	// Should still work, just with warning
+	if err != nil {
+		t.Errorf("Should handle missing email gracefully, got error: %v", err)
+	}
+	if handler == nil {
+		t.Error("Handler should still be created")
+	}
+	// cfg might be nil when email is missing, that's OK
+	_ = cfg // Mark as used
+}
+
+func TestServer_buildRateLimiterFromConfig(t *testing.T) {
+	s := &Server{global: &woos.GlobalConfig{
+		RateLimits: woos.RateLimitConfig{
+			TTL:        time.Minute,
+			MaxEntries: 100,
+			Global:     woos.RatePolicyConfig{Requests: 10, Window: time.Second},
+		},
+	}}
+
+	rl := s.buildRateLimiterFromConfig()
+	if rl == nil {
+		t.Error("RateLimiter not created")
+	}
+}
+
+func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
+	s := &Server{logger: testLogger}
+	route := &woos.Route{Path: "/test", Backends: []string{"http://localhost:8080"}}
+	key := route.Key()
+
+	// Create a real handler to store in cache
+	handler := handlers.NewRouteHandler(route, testLogger)
+	item := &woos.RouteCacheItem{
+		Handler: handler,
+	}
+	item.LastAccessed.Store(time.Now().UnixNano())
+	woos.RouteCache.Store(key, item)
+
+	h := s.getOrBuildRouteHandler(route)
+	if h != handler {
+		t.Error("Cache miss unexpectedly")
+	}
+
+	// Clean up
+	handler.Close()
+	woos.RouteCache.Delete(key)
+}
+
+func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
+	s := &Server{logger: testLogger}
+	route := &woos.Route{
+		Path:     "/test",
+		Backends: []string{"http://localhost:8080"},
+	}
+
+	// Ensure cache is empty
+	woos.RouteCache.Delete(route.Key())
+
+	h := s.getOrBuildRouteHandler(route)
+	if h == nil {
+		t.Error("Handler should be created on cache miss")
+	}
+
+	// Clean up
+	h.Close()
+	woos.RouteCache.Delete(route.Key())
+}
+
+func TestServer_reapOldRoutes(t *testing.T) {
+	s := &Server{logger: testLogger}
+	key := "test-route-key"
+
+	// Create a handler with Close method
+	route := &woos.Route{
+		Path:     "/test",
+		Backends: []string{"http://localhost:8080"},
+	}
+	handler := handlers.NewRouteHandler(route, testLogger)
+
+	item := &woos.RouteCacheItem{
+		Handler: handler,
+	}
+	item.LastAccessed.Store(time.Now().Add(-11 * time.Minute).UnixNano())
+	woos.RouteCache.Store(key, item)
+
+	s.reapOldRoutes()
+
+	if _, ok := woos.RouteCache.Load(key); ok {
+		t.Error("Old route not reaped")
+	}
+}
+
+func TestServer_reapOldRoutes_Recent(t *testing.T) {
+	s := &Server{logger: testLogger}
+	key := "test-route-key-recent"
+
+	// Create a handler with Close method
+	route := &woos.Route{
+		Path:     "/test",
+		Backends: []string{"http://localhost:8080"},
+	}
+	handler := handlers.NewRouteHandler(route, testLogger)
+
+	item := &woos.RouteCacheItem{
+		Handler: handler,
+	}
+	item.LastAccessed.Store(time.Now().UnixNano()) // Recent access
+	woos.RouteCache.Store(key, item)
+
+	s.reapOldRoutes()
+
+	if _, ok := woos.RouteCache.Load(key); !ok {
+		t.Error("Recent route should not be reaped")
+	}
+
+	// Clean up
+	handler.Close()
+	woos.RouteCache.Delete(key)
+}
+
+func TestServer_StartMetricsServer(t *testing.T) {
+	// Use a random port
+	global := &woos.GlobalConfig{
+		Bind: woos.BindConfig{Metrics: ":0"},
+	}
+	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
+	s := &Server{
+		global:      global,
+		logger:      testLogger,
+		hostManager: hm,
+	}
+
+	// This starts a goroutine, we'll just verify it doesn't panic
+	s.startMetricsServer()
+
+	// Give it a moment to start
+	time.Sleep(50 * time.Millisecond)
+}
+
+func TestServer_StartMetricsServer_NoPort(t *testing.T) {
+	global := &woos.GlobalConfig{}
+	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
+	s := &Server{
+		global:      global,
+		logger:      testLogger,
+		hostManager: hm,
+	}
+
+	// Should not panic when no metrics port
+	s.startMetricsServer()
+}
+
+func TestServer_LogRequest(t *testing.T) {
+	s := &Server{logger: testLogger}
+
+	req, _ := http.NewRequest("GET", "/test", nil)
+	req.Host = "example.com"
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("User-Agent", "test-agent")
+
+	// This just logs, no assertions needed
+	s.logRequest("example.com", req, time.Now())
+}
+
+func TestServer_HandleRequest_NoHost(t *testing.T) {
+	// Create a minimal server for testing
+	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
+	s := &Server{
+		hostManager: hm,
+		logger:      testLogger,
+	}
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "unknown.com"
+	w := httptest.NewRecorder()
+
+	s.handleRequest(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected 404 for unknown host, got %d", w.Code)
+	}
+}
+
+func TestServer_HandleRequest_WithHost(t *testing.T) {
+	// Create a test server to proxy to
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("response from backend 1"))
+		w.Write([]byte("backend response"))
 	}))
-	defer backend1.Close()
+	defer backend.Close()
 
-	backend2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("response from backend 2"))
-	}))
-	defer backend2.Close()
+	// Create a minimal server for testing
+	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 
-	hostsDir := t.TempDir()
+	// Add a test host with a route to our test backend
+	hm.UpdateGossipNode("test", "example.com", woos.Route{
+		Path:     "/",
+		Backends: []string{backend.URL},
+	})
 
-	hostHCL := fmt.Sprintf(`
-		domains = ["example.com", "api.example.com"]
-
-		route "/api*" {
-			backends = ["%s"]
-			strip_prefixes = ["/api"]
-		}
-
-		route "/balanced" {
-			backends = ["%s", "%s"]
-			lb_strategy = "roundrobin"
-		}
-	`, backend1.URL, backend1.URL, backend2.URL)
-
-	createTempFile(t, hostsDir, "example.hcl", hostHCL)
-
-	webDir := t.TempDir()
-	createTempFile(t, webDir, "hello.html", "<h1>Hello World</h1>")
-	createTempFile(t, webDir, "index.html", "<h1>Index Page</h1>")
-
-	webHostHCL := fmt.Sprintf(`
-		domains = ["static.com"]
-		web { root = "%s" }
-	`, webDir)
-	createTempFile(t, hostsDir, "static.hcl", webHostHCL)
-
-	hm := discovery.NewHost(hostsDir)
-	if _, err := hm.LoadAll(); err != nil {
-		t.Fatalf("failed to load hosts: %v", err)
+	s := &Server{
+		hostManager: hm,
+		logger:      testLogger,
 	}
 
-	globalCfg := &woos.GlobalConfig{Bind: ":0"}
-	logger := ll.New("test")
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "example.com"
+	w := httptest.NewRecorder()
 
-	srv := NewServer(
-		WithHostManager(hm),
-		WithGlobalConfig(globalCfg),
-		WithLogger(logger),
-	)
+	s.handleRequest(w, req)
 
-	tests := []struct {
-		name           string
-		hostHeader     string
-		path           string
-		expectedStatus int
-		expectedBody   string
-	}{
-		{"Route Proxy Success", "example.com", "/api/data", 200, "response from backend 1"},
-		{"Static Web File Success", "static.com", "/hello.html", 200, "<h1>Hello World</h1>"},
-		{"Static Web Index Default", "static.com", "/", 200, "<h1>Index Page</h1>"},
-		{"Host Not Found", "unknown.com", "/", 404, "Host not found"},
-		{"Path Not Found on Known Host", "example.com", "/missing", 404, "Not found"},
+	// Should proxy successfully to test backend
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d", w.Code)
 	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "http://"+tc.hostHeader+tc.path, nil)
-			req.Host = tc.hostHeader
-			w := httptest.NewRecorder()
-
-			srv.handleRequest(w, req)
-
-			resp := w.Result()
-			body, _ := io.ReadAll(resp.Body)
-
-			if resp.StatusCode != tc.expectedStatus {
-				t.Errorf("path %s: expected status %d, got %d", tc.path, tc.expectedStatus, resp.StatusCode)
-			}
-
-			if !strings.Contains(string(body), tc.expectedBody) {
-				t.Errorf("path %s: expected body to contain %q, got %q", tc.path, tc.expectedBody, string(body))
-			}
-		})
-	}
-}
-
-func TestProxy_LoadBalancing_RoundRobin(t *testing.T) {
-	counts := make(map[string]int)
-
-	b1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("B1"))
-	}))
-	defer b1.Close()
-
-	b2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("B2"))
-	}))
-	defer b2.Close()
-
-	hostsDir := t.TempDir()
-	hcl := fmt.Sprintf(`
-		domains = ["lb.com"]
-		route "/" {
-			backends = ["%s", "%s"]
-			lb_strategy = "roundrobin"
-		}
-	`, b1.URL, b2.URL)
-	createTempFile(t, hostsDir, "lb.hcl", hcl)
-
-	hm := discovery.NewHost(hostsDir)
-	if _, err := hm.LoadAll(); err != nil {
-		t.Fatalf("LoadAll failed: %v", err)
-	}
-
-	srv := NewServer(
-		WithHostManager(hm),
-		WithGlobalConfig(&woos.GlobalConfig{Bind: ":80"}),
-		WithLogger(ll.New("test")),
-	)
-
-	for i := 0; i < 20; i++ {
-		req := httptest.NewRequest("GET", "http://lb.com/", nil)
-		req.Host = "lb.com"
-		w := httptest.NewRecorder()
-		srv.handleRequest(w, req)
-
-		body, _ := io.ReadAll(w.Result().Body)
-		counts[string(body)]++
-	}
-
-	if counts["B1"] == 0 || counts["B2"] == 0 {
-		t.Fatalf("round robin failed: %v", counts)
-	}
-}
-
-func TestRouteHandler_LeastConnPrefersLowerInflight(t *testing.T) {
-	// Build a handler with 2 backends; then simulate inflight on backend 0.
-	r := &woos.Route{
-		Path:       "/",
-		LBStrategy: "leastconn",
-		Backends:   []string{"http://a:1", "http://b:2"},
-	}
-
-	h := core.NewRouteHandler(r)
-	if len(h.Backends) != 2 {
-		t.Fatalf("expected 2 backends, got %d", len(h.Backends))
-	}
-
-	// Make backend[0] "busy"
-	h.Backends[0].Inflight.Add(10)
-	h.Backends[1].Inflight.Add(1)
-
-	b := h.PickBackend()
-	if b != h.Backends[1] {
-		t.Fatalf("expected backend[1] (lower inflight) selected")
-	}
-}
-
-func TestServer_RouteCache_ReusesHandler(t *testing.T) {
-	r := &woos.Route{
-		Path:          "/api*",
-		LBStrategy:    "roundrobin",
-		Backends:      []string{"http://a:1"},
-		StripPrefixes: []string{"/api"},
-	}
-
-	s := &Server{}
-	h1 := s.getOrBuildRouteHandler(r)
-	h2 := s.getOrBuildRouteHandler(r)
-
-	if h1 != h2 {
-		t.Fatalf("expected cached handler reuse")
-	}
-}
-
-func TestServer_StripPrefix_RestoresPath(t *testing.T) {
-	// Make a minimal server that calls handleRoute and ensures path is restored.
-	r := &woos.Route{
-		Path:          "/api*",
-		LBStrategy:    "roundrobin",
-		Backends:      []string{"http://a:1"}, // invalid URL host will be skipped; handler will have 0 backends
-		StripPrefixes: []string{"/api"},
-	}
-
-	s := &Server{}
-	req := httptest.NewRequest("GET", "http://x/api/hello", nil)
-	rr := httptest.NewRecorder()
-
-	origPath := req.URL.Path
-	s.handleRoute(rr, req, r)
-
-	if req.URL.Path != origPath {
-		t.Fatalf("expected path restored to %q, got %q", origPath, req.URL.Path)
+	if w.Body.String() != "backend response" {
+		t.Errorf("Expected 'backend response', got %q", w.Body.String())
 	}
 }

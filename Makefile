@@ -1,6 +1,6 @@
 APP_NAME := agbero
 BUILD_DIR := bin
-SRC_DIR := cmd/agbero/*.go
+SRC_DIR := ./cmd/agbero
 
 .PHONY: all build clean run install-deps build-all
 

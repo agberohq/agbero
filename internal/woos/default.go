@@ -5,22 +5,22 @@ import "time"
 // ApplyDefaults sets defaults ONLY when config did not provide values.
 func ApplyDefaults(g *GlobalConfig) {
 	// Timeouts defaults
-	if g.Timeouts.Read == "" {
-		g.Timeouts.Read = DefaultReadTimeout.String()
+	if g.Timeouts.Read == 0 {
+		g.Timeouts.Read = DefaultReadTimeout
 	}
-	if g.Timeouts.Write == "" {
-		g.Timeouts.Write = DefaultWriteTimeout.String()
+	if g.Timeouts.Write == 0 {
+		g.Timeouts.Write = DefaultWriteTimeout
 	}
-	if g.Timeouts.Idle == "" {
-		g.Timeouts.Idle = DefaultIdleTimeout.String()
+	if g.Timeouts.Idle == 0 {
+		g.Timeouts.Idle = DefaultIdleTimeout
 	}
-	if g.Timeouts.ReadHeader == "" {
-		g.Timeouts.ReadHeader = DefaultReadHeaderTimeout.String()
+	if g.Timeouts.ReadHeader == 0 {
+		g.Timeouts.ReadHeader = DefaultReadHeaderTimeout
 	}
 
 	// Rate limit container defaults
-	if g.RateLimits.TTL == "" {
-		g.RateLimits.TTL = "30m"
+	if g.RateLimits.TTL == 0 {
+		g.RateLimits.TTL = 30 * time.Minute
 	}
 	if g.RateLimits.MaxEntries <= 0 {
 		g.RateLimits.MaxEntries = 100000
@@ -33,8 +33,8 @@ func ApplyDefaults(g *GlobalConfig) {
 	if g.RateLimits.Global.Requests <= 0 {
 		g.RateLimits.Global.Requests = 120
 	}
-	if g.RateLimits.Global.Window == "" {
-		g.RateLimits.Global.Window = "1s"
+	if g.RateLimits.Global.Window == 0 {
+		g.RateLimits.Global.Window = 1 * time.Second
 	}
 	if g.RateLimits.Global.Burst <= 0 {
 		g.RateLimits.Global.Burst = 240
@@ -44,8 +44,8 @@ func ApplyDefaults(g *GlobalConfig) {
 	if g.RateLimits.Auth.Requests <= 0 {
 		g.RateLimits.Auth.Requests = 10
 	}
-	if g.RateLimits.Auth.Window == "" {
-		g.RateLimits.Auth.Window = "1m"
+	if g.RateLimits.Auth.Window == 0 {
+		g.RateLimits.Auth.Window = 1 * time.Minute
 	}
 	if g.RateLimits.Auth.Burst <= 0 {
 		g.RateLimits.Auth.Burst = 10
@@ -57,13 +57,9 @@ func ParseRatePolicy(rc RatePolicyConfig) (requests int, window time.Duration, b
 	if rc.Requests <= 0 {
 		return 0, 0, 0, false
 	}
-	w, err := time.ParseDuration(rc.Window)
-	if err != nil || w <= 0 {
-		return 0, 0, 0, false
-	}
 	b := rc.Burst
 	if b <= 0 {
 		b = rc.Requests
 	}
-	return rc.Requests, w, b, true
+	return rc.Requests, rc.Window, b, true
 }

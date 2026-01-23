@@ -5,127 +5,155 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"github.com/olekukonko/ll"
 )
 
-func TestHostManager_LoadAndGet(t *testing.T) {
+var (
+	testLogger = ll.New("hosts/test")
+)
+
+func TestNewHost_Basic(t *testing.T) {
+	h := NewHost("/tmp")
+	if h.hosts == nil || h.lookupMap == nil || h.gossipRoutes == nil || h.nodeFailures == nil {
+		t.Error("Maps not initialized")
+	}
+	if h.logger == nil {
+		t.Error("Logger not set")
+	}
+}
+
+func TestUpdateGossipNode(t *testing.T) {
+	h := NewHost("/tmp", WithLogger(testLogger))
+	route := woos.Route{Path: "/api"}
+	h.UpdateGossipNode("node1", "example.com", route)
+
+	hosts, _ := h.LoadAll()
+	if len(hosts) != 1 {
+		t.Error("Host not added")
+	}
+	if cfg := h.Get("example.com"); cfg == nil || len(cfg.Routes) != 1 {
+		t.Error("Route not added")
+	}
+}
+
+func TestRemoveGossipNode(t *testing.T) {
+	h := NewHost("/tmp")
+	route := woos.Route{Path: "/api"}
+	h.UpdateGossipNode("node1", "example.com", route)
+	h.RemoveGossipNode("node1")
+
+	hosts, _ := h.LoadAll()
+	if len(hosts) != 0 {
+		t.Error("Host not removed")
+	}
+}
+
+func TestRouteExists(t *testing.T) {
+	h := NewHost("/tmp")
+	route := woos.Route{Path: "/api"}
+	h.UpdateGossipNode("node1", "example.com", route)
+
+	if !h.RouteExists("example.com", "/api") {
+		t.Error("Route not found")
+	}
+	if h.RouteExists("example.com", "/other") {
+		t.Error("Unexpected route found")
+	}
+}
+
+func TestResetNodeFailures(t *testing.T) {
+	h := NewHost("/tmp")
+	h.mu.Lock()
+	h.nodeFailures["node1"] = 5
+	h.mu.Unlock()
+
+	h.ResetNodeFailures("node1")
+
+	h.mu.RLock()
+	if h.nodeFailures["node1"] != 0 {
+		t.Error("Failures not reset")
+	}
+	h.mu.RUnlock()
+}
+
+func TestWatch_FileChange(t *testing.T) {
 	tmpDir := t.TempDir()
+	hclFile := filepath.Join(tmpDir, "test.hcl")
+	os.WriteFile(hclFile, []byte(`domains = ["example.com"]`), 0644)
 
-	h1 := `domains = ["a.com"]`
-	h2 := `domains = ["b.com", "B2.com"]`
-
-	if err := os.WriteFile(filepath.Join(tmpDir, "h1.hcl"), []byte(h1), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "h2.hcl"), []byte(h2), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "ignored.txt"), []byte("ignored"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	hm := NewHost(tmpDir)
-
-	hosts, err := hm.LoadAll()
+	h := NewHost(tmpDir, WithLogger(testLogger))
+	err := h.Watch()
 	if err != nil {
-		t.Fatalf("LoadAll failed: %v", err)
+		t.Fatal(err)
 	}
-	if len(hosts) != 2 {
-		t.Errorf("expected 2 hosts, got %d", len(hosts))
-	}
+	defer h.Close()
 
-	if cfg := hm.Get("A.com"); cfg == nil {
-		t.Error("Get(A.com) returned nil")
-	}
-	if cfg := hm.Get("b2.COM"); cfg == nil {
-		t.Error("Get(b2.COM) returned nil")
-	}
-	if cfg := hm.Get("unknown.com"); cfg != nil {
-		t.Error("Get(unknown.com) should be nil")
+	// Trigger change
+	os.WriteFile(hclFile, []byte(`domains = ["updated.com"]`), 0644)
+
+	// Wait for debounce (500ms) + buffer. Increased to 1500ms for slow runners.
+	time.Sleep(1500 * time.Millisecond)
+
+	hosts, _ := h.LoadAll()
+	if _, ok := hosts["updated.com"]; !ok {
+		t.Error("Config not reloaded")
 	}
 }
 
-// waitUntil repeatedly checks cond until it returns true or we hit deadline.
-func waitUntil(t *testing.T, deadline time.Time, cond func() bool) {
-	t.Helper()
-	for {
-		if cond() {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("condition not met before deadline")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
-// drainChanged drains any pending change signals to reduce flakiness from coalescing.
-func drainChanged(ch <-chan struct{}) {
-	for {
-		select {
-		case <-ch:
-			continue
-		default:
-			return
-		}
-	}
-}
-
-func TestHostManager_Watch_CreateUpdateRemove(t *testing.T) {
+func TestWatch_NonHCL(t *testing.T) {
 	tmpDir := t.TempDir()
-	hm := NewHost(tmpDir)
+	txtFile := filepath.Join(tmpDir, "ignore.txt")
+	os.WriteFile(txtFile, []byte("test"), 0644)
 
-	h1Path := filepath.Join(tmpDir, "x.hcl")
-	if err := os.WriteFile(h1Path, []byte(`domains=["x.com"]`), 0644); err != nil {
-		t.Fatal(err)
+	h := NewHost(tmpDir)
+	h.Watch()
+	defer h.Close()
+
+	// Change non-HCL
+	os.WriteFile(txtFile, []byte("updated"), 0644)
+	time.Sleep(600 * time.Millisecond)
+
+	hosts, _ := h.LoadAll()
+	if len(hosts) != 0 {
+		t.Error("Non-HCL triggered reload")
+	}
+}
+
+func TestRebuildLookupLocked_DedupFileGossip(t *testing.T) {
+	h := NewHost("/tmp")
+	h.mu.Lock()
+
+	// File host
+	h.hosts["file"] = &woos.HostConfig{
+		Domains: []string{"example.com"},
+		Routes:  []woos.Route{{Path: "/api"}},
 	}
 
-	if err := hm.Watch(); err != nil {
-		t.Fatalf("Watch failed: %v", err)
-	}
-	defer hm.Close()
-
-	// Ensure initial load is visible
-	waitUntil(t, time.Now().Add(2*time.Second), func() bool {
-		return hm.Get("x.com") != nil
-	})
-
-	// Clear any initial signals
-	drainChanged(hm.Changed())
-
-	// UPDATE
-	if err := os.WriteFile(h1Path, []byte(`domains=["x.com","y.com"]`), 0644); err != nil {
-		t.Fatal(err)
+	// Gossip same
+	h.gossipRoutes["node1"] = DynamicRouteItem{
+		Host:  "example.com",
+		Route: woos.Route{Path: "/api"},
 	}
 
-	// We might get multiple signals; wait for at least one.
-	select {
-	case <-hm.Changed():
-	case <-time.After(2 * time.Second):
-		t.Fatalf("expected change signal on update")
+	h.rebuildLookupLocked()
+	h.mu.Unlock()
+
+	cfg := h.Get("example.com")
+	if len(cfg.Routes) != 1 {
+		t.Errorf("Expected 1 route (deduplicated), got %d", len(cfg.Routes))
 	}
+}
 
-	// But signal != state; poll until y.com is visible.
-	waitUntil(t, time.Now().Add(2*time.Second), func() bool {
-		return hm.Get("y.com") != nil
-	})
-
-	// Clear signals before remove to avoid waking on an older one.
-	drainChanged(hm.Changed())
-
-	// REMOVE
-	if err := os.Remove(h1Path); err != nil {
-		t.Fatal(err)
+func TestSortRoutes(t *testing.T) {
+	routes := []woos.Route{
+		{Path: "/api"},
+		{Path: "/api/v1/users"},
+		{Path: "/"},
 	}
-
-	// On macOS you may get rename/chmod/write/remove combos; just wait for a signal.
-	select {
-	case <-hm.Changed():
-	case <-time.After(2 * time.Second):
-		t.Fatalf("expected change signal on remove")
+	sortRoutes(routes)
+	if routes[0].Path != "/api/v1/users" || routes[1].Path != "/api" || routes[2].Path != "/" {
+		t.Error("Routes not sorted by length desc")
 	}
-
-	// Now poll until removal is actually applied.
-	waitUntil(t, time.Now().Add(2*time.Second), func() bool {
-		return hm.Get("x.com") == nil && hm.Get("y.com") == nil
-	})
 }

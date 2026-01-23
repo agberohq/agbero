@@ -2,18 +2,20 @@ package woos
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const (
 	Name        = "agbero"
-	Version     = "0.0.2"
+	Version     = "0.0.3"
 	Description = "Production reverse proxy with Let's Encrypt support"
 )
 
 const (
-	StrategyRandom    = "random"
-	StrategyLeastConn = "leastconn"
+	StrategyRandom     = "random"
+	StrategyLeastConn  = "leastconn"
+	StrategyRoundRobin = "round_robin"
 )
 
 // Default Timeouts
@@ -36,8 +38,16 @@ const (
 	ModeLocalNone   TlsMode = "none"
 	ModeLocalCert   TlsMode = "local"
 	ModeLetsEncrypt TlsMode = "letsencrypt"
+	ModeCustomCA    TlsMode = "custom_ca"
 )
+
+// RouteCacheItem wraps the handler with usage tracking for the Reaper
+type RouteCacheItem struct {
+	Handler      any          // *core.RouteHandler
+	LastAccessed atomic.Int64 // UnixNano
+}
 
 // RouteCache stores compiled handlers per unique route definition.
 // Keyed by a stable string derived from route settings (path/strategy/Backends/etc).
-var RouteCache sync.Map // map[string]*RouteHandler
+// Value is *RouteCacheItem
+var RouteCache sync.Map

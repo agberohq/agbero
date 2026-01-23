@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"runtime"
+	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/security"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
@@ -21,6 +24,10 @@ var (
 var (
 	configPath string
 	devMode    bool
+
+	// Key Management Flags
+	keyService string
+	keyTTL     time.Duration
 )
 
 func main() {
@@ -33,13 +40,13 @@ func main() {
 	// 2. Setup Flaggy
 	flaggy.SetName(woos.Name)
 	flaggy.SetDescription(woos.Description)
-	flaggy.SetVersion(version)
+	flaggy.SetVersion(version) // Handles --version automatically
 
 	// Global flags
 	flaggy.String(&configPath, "c", "config", "Path to configuration file (default: "+defaultConfig+")")
 	flaggy.Bool(&devMode, "d", "dev", "Enable development mode")
 
-	// Subcommands
+	// --- Service Subcommands ---
 	cmdInstall := flaggy.NewSubcommand("install")
 	cmdInstall.Description = "Install configuration files and system service"
 
@@ -64,6 +71,19 @@ func main() {
 	cmdHelp := flaggy.NewSubcommand("help")
 	cmdHelp.Description = "Show help and usage examples"
 
+	// --- Key Management Subcommands ---
+	cmdKey := flaggy.NewSubcommand("key")
+	cmdKey.Description = "Manage identity keys for gossip authentication"
+
+	cmdKeyGen := flaggy.NewSubcommand("gen")
+	cmdKeyGen.Description = "Generate a signed identity token for a service"
+	cmdKeyGen.String(&keyService, "s", "service", "Service name (e.g. 'dance-app') (required)")
+	cmdKeyGen.Duration(&keyTTL, "t", "ttl", "Token validity duration (default: 8760h / 1 year)")
+
+	cmdKeyInit := flaggy.NewSubcommand("init")
+	cmdKeyInit.Description = "Generate the server Ed25519 Private Key file"
+
+	// Attach Subcommands
 	flaggy.AttachSubcommand(cmdInstall, 1)
 	flaggy.AttachSubcommand(cmdUninstall, 1)
 	flaggy.AttachSubcommand(cmdStart, 1)
@@ -73,34 +93,96 @@ func main() {
 	flaggy.AttachSubcommand(cmdHosts, 1)
 	flaggy.AttachSubcommand(cmdHelp, 1)
 
+	cmdKey.AttachSubcommand(cmdKeyGen, 1)
+	cmdKey.AttachSubcommand(cmdKeyInit, 1)
+	flaggy.AttachSubcommand(cmdKey, 1)
+
 	flaggy.Parse()
 	welcome()
-
-	// Handle help command early
-	if cmdHelp.Used {
-		showHelpExamples(configPath)
-		return
-	}
-
-	fp, err := os.OpenFile("server.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer fp.Close()
-
-	// Setup logging
-	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(true))
-	loggerFile := lh.NewJSONHandler(fp)
-	loggerMultiple := lh.NewMultiHandler(loggerTerminal, loggerFile)
-
-	logger = ll.New(woos.Name, ll.WithHandler(loggerMultiple)).Enable()
 
 	// Apply defaults if flag not set
 	if configPath == "" {
 		configPath = defaultConfig
 	}
 
-	// 3. Setup Service Config
+	// Handle Help
+	if cmdHelp.Used {
+		showHelpExamples(configPath)
+		return
+	}
+
+	// --- Handle Key Commands (Exit early) ---
+	if cmdKey.Used {
+		if cmdKeyInit.Used {
+			target := "server.key"
+			// Try to find path from config, ignore errors if config is missing
+			if global, err := loadConfig(configPath); err == nil && global.Gossip != nil && global.Gossip.PrivateKeyFile != "" {
+				target = global.Gossip.PrivateKeyFile
+			}
+
+			if err := security.GenerateNewKeyFile(target); err != nil {
+				fmt.Printf("Error generating key: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Generated private key: %s\n", target)
+			fmt.Println("Ensure your config.hcl has: gossip { private_key_file = \"" + target + "\" }")
+			return
+		}
+
+		if cmdKeyGen.Used {
+			if keyService == "" {
+				fmt.Println("Error: --service name is required")
+				os.Exit(1)
+			}
+			if keyTTL == 0 {
+				keyTTL = 24 * 365 * time.Hour
+			}
+
+			global, err := loadConfig(configPath)
+			if err != nil {
+				fmt.Printf("Error loading config: %v\n", err)
+				os.Exit(1)
+			}
+
+			if global.Gossip == nil || global.Gossip.PrivateKeyFile == "" {
+				fmt.Println("Error: 'gossip.private_key_file' is not set in config.hcl")
+				os.Exit(1)
+			}
+
+			tm, err := security.LoadKeys(global.Gossip.PrivateKeyFile)
+			if err != nil {
+				fmt.Printf("Error loading private key: %v\n", err)
+				os.Exit(1)
+			}
+
+			token, err := tm.Mint(keyService, keyTTL)
+			if err != nil {
+				fmt.Printf("Error minting token: %v\n", err)
+				os.Exit(1)
+			}
+
+			fmt.Println(token)
+			return
+		}
+
+		flaggy.ShowHelpAndExit("key")
+		return
+	}
+
+	// --- Setup TlsLogger ---
+	fp, err := os.OpenFile("server.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer fp.Close()
+
+	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(true))
+	loggerFile := lh.NewJSONHandler(fp)
+	loggerMultiple := lh.NewMultiHandler(loggerTerminal, loggerFile)
+
+	logger = ll.New(woos.Name, ll.WithHandler(loggerMultiple)).Enable()
+
+	// --- Setup Service ---
 	svcConfig := &service.Config{
 		Name:        "agbero",
 		DisplayName: "Agbero Proxy",
@@ -112,17 +194,14 @@ func main() {
 		svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
 	}
 
-	// Add platform-specific configuration for macOS
 	if runtime.GOOS == "darwin" {
 		if os.Geteuid() == 0 {
-			// Running as root - configure as system LaunchDaemon
 			svcConfig.Option = service.KeyValue{
 				"RunAtLoad":   true,
 				"KeepAlive":   true,
 				"SessionType": "System",
 			}
 		} else {
-			// Running as user - configure as LaunchAgent
 			svcConfig.Name = "net.imaxinacion.agbero"
 			svcConfig.Option = service.KeyValue{
 				"RunAtLoad":     true,
@@ -142,7 +221,7 @@ func main() {
 		logger.Fatal("Failed to create service: ", err)
 	}
 
-	// 4. Handle Service Management Commands
+	// --- Handle Service Commands ---
 	if cmdInstall.Used {
 		logger.Info("Installing service...")
 		if err := installDefaults(); err != nil {
@@ -155,28 +234,20 @@ func main() {
 
 		logger.Info("Service installed successfully")
 
-		// Give helpful post-install instructions
 		if runtime.GOOS == "darwin" {
 			if os.Geteuid() == 0 {
 				logger.Info("System LaunchDaemon installed at: /Library/LaunchDaemons/agbero.plist")
 				logger.Info("To start: sudo launchctl load /Library/LaunchDaemons/agbero.plist")
-				logger.Info("To check: sudo launchctl list | grep agbero")
-				logger.Info("To stop:  sudo launchctl unload /Library/LaunchDaemons/agbero.plist")
 			} else {
 				logger.Info("User LaunchAgent installed at: ~/Library/LaunchAgents/net.imaxinacion.agbero.plist")
 				logger.Info("To start: launchctl load ~/Library/LaunchAgents/net.imaxinacion.agbero.plist")
-				logger.Info("To check: launchctl list | grep agbero")
-				logger.Info("To stop:  launchctl unload ~/Library/LaunchAgents/net.imaxinacion.agbero.plist")
 			}
 		} else if runtime.GOOS == "linux" {
 			logger.Info("Systemd service installed")
 			logger.Info("To start: sudo systemctl start agbero")
-			logger.Info("To enable at boot: sudo systemctl enable agbero")
-			logger.Info("To check: sudo systemctl status agbero")
 		} else if runtime.GOOS == "windows" {
 			logger.Info("Windows Service installed")
-			logger.Info("To manage: Open Services (services.msc)")
-			logger.Info("Or use: sc query agbero")
+			logger.Info("To start: net start agbero")
 		}
 		return
 	}
@@ -211,7 +282,7 @@ func main() {
 		return
 	}
 
-	// 5. Handle Utility Commands
+	// --- Handle Utility Commands ---
 	if cmdValidate.Used {
 		logger.Info("Validating configuration...")
 		if err := validateConfig(configPath); err != nil {
@@ -228,18 +299,15 @@ func main() {
 		return
 	}
 
-	// 6. Default Action: Run (Interactive or Service)
+	// --- Run Command ---
 	if cmdRun.Used {
-		// We are running in the terminal
 		logger.Info("Running in interactive mode. Press Ctrl+C to stop.")
 		if devMode {
 			logger.Warn("Development mode enabled")
 		}
 
-		// Setup system logger for the service wrapper
 		errs := make(chan error, 5)
 
-		// Only attach system logger if NOT running interactively
 		if !service.Interactive() {
 			sysLogger, err := s.Logger(errs)
 			if err != nil {
@@ -253,12 +321,9 @@ func main() {
 					}
 				}
 			}()
-			_ = sysLogger // Keep reference
+			_ = sysLogger
 		}
 
-		// s.Run() is smart:
-		// - If called from terminal, it runs foreground.
-		// - If called by launchd/systemd, it hooks into the service system.
 		if err := s.Run(); err != nil {
 			logger.Error("Service exited with error: ", err)
 			os.Exit(1)
@@ -266,6 +331,6 @@ func main() {
 		return
 	}
 
-	// 7. No command specified, show help
+	// Default: Show usage
 	showHelpExamples(configPath)
 }

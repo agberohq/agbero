@@ -1,4 +1,9 @@
-bind = ":443"
+bind {
+  http    = [":80", ":8080"]
+  https   = [":443"]
+  metrics = ":9090"
+}
+
 hosts_dir = "./hosts.d"
 le_email = "admin@example.com"
 trusted_proxies = ["127.0.0.1/32"]
