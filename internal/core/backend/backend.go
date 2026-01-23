@@ -3,6 +3,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httputil"
@@ -26,11 +27,11 @@ type Backend struct {
 	TotalReqs atomic.Uint64
 	Metrics   *metrics.LatencyTracker
 	hcConfig  *woos.HealthCheckConfig
-	logger    woos.Logging
+	logger    woos.TlsLogger
 	stop      chan struct{}
 }
 
-func NewBackend(targetStr string, route *woos.Route, logger core.anyLogger) (*Backend, error) {
+func NewBackend(targetStr string, route *woos.Route, logger woos.TlsLogger) (*Backend, error) {
 	u, err := url.Parse(targetStr)
 	if err != nil {
 		return nil, err
@@ -57,7 +58,7 @@ func NewBackend(targetStr string, route *woos.Route, logger core.anyLogger) (*Ba
 	rp.BufferPool = sharedBufferPool
 
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		if err != context.Canceled {
+		if !errors.Is(err, context.Canceled) {
 			newFailures := b.Failures.Add(1)
 			if newFailures >= int64(cbThreshold) {
 				if b.Alive.Swap(false) {

@@ -3,24 +3,28 @@ module git.imaxinacion.net/aibox/agbero
 go 1.25.5
 
 require (
+	github.com/HdrHistogram/hdrhistogram-go v1.2.0
 	github.com/alecthomas/hcl v0.5.5
 	github.com/caddyserver/certmagic v0.25.1
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/golang-jwt/jwt/v5 v5.3.0
+	github.com/hashicorp/memberlist v0.5.4
 	github.com/integrii/flaggy v1.8.0
 	github.com/kardianos/service v1.2.4
+	github.com/klauspost/compress v1.18.3
+	github.com/maypok86/otter/v2 v2.3.0
 	github.com/olekukonko/errors v1.2.0
 	github.com/olekukonko/ll v0.1.4-0.20260122041744-2017be7a914c
+	github.com/quic-go/quic-go v0.59.0
 	golang.org/x/time v0.14.0
 )
 
 require (
-	github.com/HdrHistogram/hdrhistogram-go v1.2.0 // indirect
 	github.com/alecthomas/participle/v2 v2.1.4 // indirect
 	github.com/alecthomas/repr v0.5.2 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/caddyserver/zerossl v0.1.4 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-immutable-radix v1.0.0 // indirect
@@ -29,16 +33,13 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-sockaddr v1.0.7 // indirect
 	github.com/hashicorp/golang-lru v0.5.0 // indirect
-	github.com/hashicorp/memberlist v0.5.4 // indirect
-	github.com/klauspost/compress v1.18.3 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/libdns/libdns v1.1.1 // indirect
-	github.com/maypok86/otter/v2 v2.3.0 // indirect
 	github.com/mholt/acmez/v3 v3.1.4 // indirect
 	github.com/miekg/dns v1.1.70 // indirect
 	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/quic-go/quic-go v0.59.0 // indirect
+	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/sean-/seed v0.0.0-20170313163322-e2103e2c3529 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect

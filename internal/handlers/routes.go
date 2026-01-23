@@ -74,10 +74,10 @@ func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
 	// Layer 3: Authentication (Inner)
 	// Protect the resource access
 	if route.BasicAuth != nil && len(route.BasicAuth.Users) > 0 {
-		chain = auth.BasicAuth(route.BasicAuth)(chain)
+		chain = auth.Basic(route.BasicAuth)(chain)
 	}
 	if route.ForwardAuth != nil && route.ForwardAuth.URL != "" {
-		chain = auth.ForwardAuth(route.ForwardAuth)(chain)
+		chain = auth.Forward(route.ForwardAuth)(chain)
 	}
 
 	// Layer 2: Headers (Middle)

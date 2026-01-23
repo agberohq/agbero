@@ -1,9 +1,10 @@
-package woos
+package core
 
 import (
 	"os"
 	"path/filepath"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/alecthomas/hcl"
 	"github.com/olekukonko/errors"
 )
@@ -39,8 +40,8 @@ func (p *Parser) Unmarshal(output any) error {
 }
 
 // LoadGlobal is a convenience wrapper
-func LoadGlobal(path string) (*GlobalConfig, error) {
-	var global GlobalConfig
+func LoadGlobal(path string) (*woos.GlobalConfig, error) {
+	var global woos.GlobalConfig
 	parser := NewParser(path)
 	if err := parser.Unmarshal(&global); err != nil {
 		return nil, err
@@ -49,8 +50,8 @@ func LoadGlobal(path string) (*GlobalConfig, error) {
 }
 
 // ParseHostConfig parses a single host config file
-func ParseHostConfig(path string) (*HostConfig, error) {
-	var host HostConfig
+func ParseHostConfig(path string) (*woos.HostConfig, error) {
+	var host woos.HostConfig
 	parser := NewParser(path)
 	if err := parser.Unmarshal(&host); err != nil {
 		return nil, err

@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
@@ -22,7 +23,7 @@ func loadConfig(path string) (*woos.GlobalConfig, error) {
 
 	// 2. Parse Config
 	var global woos.GlobalConfig
-	parser := woos.NewParser(absConfigPath)
+	parser := core.NewParser(absConfigPath)
 	if err := parser.Unmarshal(&global); err != nil {
 		return nil, err
 	}

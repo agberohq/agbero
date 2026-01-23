@@ -170,7 +170,7 @@ func main() {
 		return
 	}
 
-	// --- Setup Logging ---
+	// --- Setup TlsLogger ---
 	fp, err := os.OpenFile("server.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
 		log.Fatal(err)

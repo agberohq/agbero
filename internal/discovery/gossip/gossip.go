@@ -97,14 +97,14 @@ type eventDelegate struct {
 }
 
 func (e *eventDelegate) NotifyJoin(node *memberlist.Node) {
-	if node.Name == e.s.s.list.LocalNode().Name {
+	if node.Name == e.s.list.LocalNode().Name {
 		return
 	}
 	e.processNode(node)
 }
 
 func (e *eventDelegate) NotifyLeave(node *memberlist.Node) {
-	if node.Name == e.s.s.list.LocalNode().Name {
+	if node.Name == e.s.list.LocalNode().Name {
 		return
 	}
 	e.s.hm.RemoveGossipNode(node.Name)

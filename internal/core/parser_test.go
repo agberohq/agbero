@@ -1,9 +1,11 @@
-package woos
+package core
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
 
 func TestParser_GlobalConfig(t *testing.T) {
@@ -31,7 +33,7 @@ func TestParser_GlobalConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var global GlobalConfig
+	var global woos.GlobalConfig
 	p := NewParser(path)
 	if err := p.Unmarshal(&global); err != nil {
 		t.Fatalf("Unmarshal failed: %v", err)

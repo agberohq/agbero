@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/errors"
@@ -280,7 +281,7 @@ func (hm *Host) rebuildLookupLocked() {
 
 func (hm *Host) loadOne(path string) (*woos.HostConfig, error) {
 	var hostConfig woos.HostConfig
-	parser := woos.NewParser(path)
+	parser := core.NewParser(path)
 	if err := parser.Unmarshal(&hostConfig); err != nil {
 		return nil, err
 	}

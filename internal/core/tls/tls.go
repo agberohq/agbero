@@ -24,7 +24,7 @@ const (
 )
 
 type TlsManager struct {
-	Logger      woos.Logging
+	Logger      woos.TlsLogger
 	HostManager *discovery.Host
 	Global      *woos.GlobalConfig
 

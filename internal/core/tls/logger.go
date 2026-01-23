@@ -25,6 +25,6 @@ func (l tlsLogger) Error(msg string, args ...any) {
 	l.logger.Errorf(msg, args...)
 }
 
-func (l tlsLogger) Fields(args ...any) woos.Logging {
+func (l tlsLogger) Fields(args ...any) woos.TlsLogger {
 	return NewTLSLogger(l.logger.Fields(args...).Logger())
 }
