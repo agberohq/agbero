@@ -6,7 +6,6 @@ import (
 	"net"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
@@ -15,9 +14,8 @@ var fallbackRand uint64
 
 func RouteKey(route *woos.Route) string {
 	// Stable key: strategy + path + Backends + strip prefixes
-	// Note: if you later add weights/health checks/etc, include them here.
 	var sb strings.Builder
-	sb.Grow(128)
+	sb.Grow(256)
 
 	sb.WriteString("p=")
 	sb.WriteString(route.Path)
@@ -38,6 +36,25 @@ func RouteKey(route *woos.Route) string {
 			sb.WriteByte(',')
 		}
 		sb.WriteString(p)
+	}
+
+	// Uniqueness for High Availability settings
+	if route.HealthCheck != nil {
+		sb.WriteString("|hc=")
+		sb.WriteString(route.HealthCheck.Path)
+		sb.WriteString(route.HealthCheck.Interval)
+		sb.WriteString(route.HealthCheck.Timeout)
+	}
+
+	if route.CircuitBreaker != nil {
+		sb.WriteString("|cb=")
+		// Simple encoding of threshold
+		sb.WriteByte(byte(route.CircuitBreaker.Threshold))
+	}
+
+	if route.Timeouts != nil {
+		sb.WriteString("|to=")
+		sb.WriteString(route.Timeouts.Request)
 	}
 
 	return sb.String()
@@ -120,29 +137,10 @@ func NormalizeSubject(s string) string {
 	return s
 }
 
-// Optional helper for later (IP cert support):
-func subjectIsIP(subject string) bool {
-	ip := net.ParseIP(NormalizeSubject(subject))
-	return ip != nil
-}
-
 func randUint64() uint64 {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err == nil {
 		return binary.LittleEndian.Uint64(b[:])
 	}
-	// Fallback (not crypto strong, but fine for simple backend selection)
 	return uint64(atomic.AddUint64(&fallbackRand, 1))
-}
-
-// parseDuration parses a string duration or returns the default.
-func parseDuration(s string, def time.Duration) time.Duration {
-	if s == "" {
-		return def
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return def
-	}
-	return d
 }

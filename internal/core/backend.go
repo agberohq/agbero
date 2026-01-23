@@ -1,4 +1,3 @@
-// internal/core/backend.go
 package core
 
 import (
@@ -14,7 +13,6 @@ import (
 )
 
 // Backend represents a single upstream server with state.
-// It replaces the old simple 'backendTarget'.
 type Backend struct {
 	URL   *url.URL
 	Proxy *httputil.ReverseProxy
@@ -45,38 +43,49 @@ func NewBackend(targetStr string, route *woos.Route, logger anyLogger) (*Backend
 		stop:     make(chan struct{}),
 	}
 
-	// Default to alive. If health checks are enabled, they will correct this shortly.
+	// Default to alive.
 	b.Alive.Store(true)
+
+	// Circuit Breaker Threshold
+	cbThreshold := 5
+	if route.CircuitBreaker != nil && route.CircuitBreaker.Threshold > 0 {
+		cbThreshold = route.CircuitBreaker.Threshold
+	}
 
 	// Setup Proxy
 	rp := httputil.NewSingleHostReverseProxy(u)
 	rp.Transport = woos.SharedTransport
 	rp.FlushInterval = -1 // Essential for streaming (SSE)
 
-	// Custom Error Handler
+	// Custom Error Handler for Circuit Breaker
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		// Context canceled is common (client disconnect), don't count as backend failure
+		// unless we want to be very strict.
 		if err != context.Canceled {
-			b.Failures.Add(1)
+			newFailures := b.Failures.Add(1)
+
+			// TRIP THE CIRCUIT
+			if newFailures >= int64(cbThreshold) {
+				if b.Alive.Swap(false) {
+					b.logger.Fields("backend", u.Host, "failures", newFailures).Warn("circuit breaker tripped")
+				}
+			}
 		}
+
 		b.logger.Fields("upstream", u.Host, "err", err).Error("upstream proxy error")
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 	}
 
-	// Director: We DO NOT strip Connection/Upgrade headers anymore to support WebSockets natively
+	// Director: Support WebSockets natively by NOT stripping Connection/Upgrade
 	origDirector := rp.Director
 	rp.Director = func(req *http.Request) {
 		origDirector(req)
 		req.Host = u.Host
 
-		// Set standard proxy headers
-		// Note: X-Forwarded-For is handled by the upstream Director implementation usually,
-		// but we ensure IP middleware has set RemoteAddr correctly.
 		req.Header.Set("X-Forwarded-Host", req.Host)
 		req.Header.Set("X-Forwarded-Proto", req.URL.Scheme)
 
-		// CLEANUP: We remove standard hop-by-hop, BUT we must keep Upgrade/Connection
-		// for Websockets to work via httputil default behavior.
+		// Remove standard hop-by-hop headers
 		req.Header.Del("Keep-Alive")
 		req.Header.Del("Proxy-Authenticate")
 		req.Header.Del("Proxy-Authorization")
@@ -150,7 +159,6 @@ func (b *Backend) healthCheckLoop() {
 		Transport: &http.Transport{DisableKeepAlives: true},
 	}
 
-	// Pre-calculate URL
 	targetURL := b.URL.ResolveReference(&url.URL{Path: b.hcConfig.Path}).String()
 	consecutiveFailures := 0
 
@@ -161,26 +169,28 @@ func (b *Backend) healthCheckLoop() {
 		case <-ticker.C:
 			// Perform Check
 			resp, err := client.Get(targetURL)
+			// Status < 500 is usually considered "reachable"
 			healthy := err == nil && resp.StatusCode >= 200 && resp.StatusCode < 500
 
 			if resp != nil {
-				// Drain and close to reuse connection if we enabled keepalives,
-				// but here just for cleanup.
 				_, _ = io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
 			}
 
 			if healthy {
+				// RECOVERY logic
+				b.Failures.Store(0) // Reset circuit breaker count
+
 				consecutiveFailures = 0
 				if !b.Alive.Load() {
 					b.Alive.Store(true)
-					b.logger.Fields("backend", b.URL.Host).Info("backend marked UP")
+					b.logger.Fields("backend", b.URL.Host).Info("backend recovered/UP")
 				}
 			} else {
 				consecutiveFailures++
 				if consecutiveFailures >= threshold && b.Alive.Load() {
 					b.Alive.Store(false)
-					b.logger.Fields("backend", b.URL.Host).Warn("backend marked DOWN")
+					b.logger.Fields("backend", b.URL.Host).Warn("backend health check failed")
 				}
 			}
 		}

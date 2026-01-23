@@ -1,4 +1,3 @@
-// internal/core/routes.go
 package core
 
 import (
@@ -20,7 +19,7 @@ type RouteHandler struct {
 	timeout       time.Duration
 }
 
-// We need the logger here to pass to NewBackend
+// NewRouteHandler creates a handler and initializes backends + health checks
 func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
 	h := &RouteHandler{
 		stripPrefixes: append([]string(nil), route.StripPrefixes...),
@@ -130,8 +129,8 @@ func (h *RouteHandler) pickRandom() *Backend {
 
 func (h *RouteHandler) pickLeastConn() *Backend {
 	var (
-		best    *Backend
-		minimal int64 = -1
+		best *Backend
+		min  int64 = -1
 	)
 
 	for _, b := range h.Backends {
@@ -139,8 +138,8 @@ func (h *RouteHandler) pickLeastConn() *Backend {
 			continue
 		}
 		c := b.InFlight.Load()
-		if minimal == -1 || c < minimal {
-			minimal = c
+		if min == -1 || c < min {
+			min = c
 			best = b
 		}
 	}

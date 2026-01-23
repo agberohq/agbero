@@ -49,14 +49,15 @@ func (s *Server) Start(ctx context.Context) error {
 		s.logger = ll.New(woos.Name).Enable()
 	}
 
-	// Apply defaults (timeouts, rate limits, storage dir, etc.) if missing.
-	// This guarantees "all values come from config" while still being safe.
 	woos.ApplyDefaults(s.global)
 
-	// Middleware: Real client IP (trusted proxies)
+	// Start Background Cleanup (Reaper) for Hot Reloads
+	s.startCacheReaper(ctx)
+
+	// Middleware: Real client IP
 	s.ipMiddleware = middleware.NewIPMiddleware(s.global.TrustedProxies)
 
-	// Middleware: Rate limiting (config-driven, bounded, TTL eviction)
+	// Middleware: Rate limiting
 	s.rateLimiter = s.buildRateLimiterFromConfig()
 
 	addrs := core.ParseBind(s.global.Bind)
@@ -64,7 +65,6 @@ func (s *Server) Start(ctx context.Context) error {
 		return errors.Newf("no bind addresses configured (bind=%q)", s.global.Bind)
 	}
 
-	// Timeouts (strings) -> time.Duration (warn on typos, then fall back)
 	readTimeout := s.parseDurationWarn("timeouts.read", s.global.Timeouts.Read, woos.DefaultReadTimeout)
 	writeTimeout := s.parseDurationWarn("timeouts.write", s.global.Timeouts.Write, woos.DefaultWriteTimeout)
 	idleTimeout := s.parseDurationWarn("timeouts.idle", s.global.Timeouts.Idle, woos.DefaultIdleTimeout)
@@ -72,7 +72,6 @@ func (s *Server) Start(ctx context.Context) error {
 
 	baseHandler := http.HandlerFunc(s.handleRequest)
 
-	// TLS config and HTTP handler wrapper (HTTP-01 challenge support)
 	tlsCfg, httpHandler, err := s.buildTLS(baseHandler)
 	if err != nil {
 		s.logger.Fields("err", err.Error()).Warn("TLS setup failed; HTTPS listeners may not start")
@@ -80,17 +79,14 @@ func (s *Server) Start(ctx context.Context) error {
 		tlsCfg = nil
 	}
 
-	// MaxHeaderBytes (configurable)
 	maxHeaderBytes := woos.DefaultMaxHeaderBytes
 	if s.global.MaxHeaderBytes > 0 {
 		maxHeaderBytes = s.global.MaxHeaderBytes
 	}
 
-	// Create servers from bind config.
 	for _, addr := range addrs {
 		isTLS := core.IsHTTPSBind(addr)
 
-		// Chain: IP -> RateLimit -> (HTTP-01 wrapper if HTTP) -> Router
 		var handler http.Handler
 		if isTLS {
 			handler = s.ipMiddleware.Handler(s.rateLimiter.Handler(baseHandler))
@@ -118,7 +114,6 @@ func (s *Server) Start(ctx context.Context) error {
 		s.mu.Unlock()
 	}
 
-	// Start each server.
 	errCh := make(chan error, len(s.servers))
 
 	s.mu.RLock()
@@ -163,7 +158,6 @@ func (s *Server) waitOrShutdown(ctx context.Context, errCh <-chan error) error {
 }
 
 func (s *Server) shutdown() error {
-	// stop limiter sweeper (optional but clean)
 	if s.rateLimiter != nil {
 		s.rateLimiter.Close()
 	}
@@ -183,6 +177,49 @@ func (s *Server) shutdown() error {
 		s.logger.Fields("key", key).Info("listener stopped")
 	}
 	return firstErr
+}
+
+// startCacheReaper periodically cleans up unused RouteHandlers (and their health check goroutines)
+func (s *Server) startCacheReaper(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Minute)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.reapOldRoutes()
+			}
+		}
+	}()
+}
+
+func (s *Server) reapOldRoutes() {
+	// If a handler hasn't been used in 10 minutes, clean it up.
+	now := time.Now().UnixNano()
+	expiration := int64(10 * time.Minute)
+
+	woos.RouteCache.Range(func(key, value any) bool {
+		item, ok := value.(*woos.RouteCacheItem)
+		if !ok {
+			return true
+		}
+
+		last := item.LastAccessed.Load()
+		if now-last > expiration {
+			// 1. Close the handler (stops health check goroutines)
+			if h, ok := item.Handler.(interface{ Close() }); ok {
+				h.Close()
+			}
+
+			// 2. Remove from map
+			woos.RouteCache.Delete(key)
+
+			// Debug
+			// s.logger.Fields("key", key).Info("reaped idle route handler")
+		}
+		return true
+	})
 }
 
 func (s *Server) buildRateLimiterFromConfig() *middleware.RateLimiter {
@@ -208,7 +245,6 @@ func (s *Server) buildRateLimiterFromConfig() *middleware.RateLimiter {
 	policy := func(r *http.Request) (bucket string, pol middleware.RatePolicy, ok bool) {
 		p := r.URL.Path
 
-		// Always allow ACME challenges
 		if strings.HasPrefix(p, "/.well-known/acme-challenge/") {
 			return "acme", middleware.RatePolicy{}, false
 		}
@@ -241,7 +277,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Body limit per host
 	maxBody := int64(woos.DefaultMaxBodySize)
 	if hcfg.Limits != nil && hcfg.Limits.MaxBodySize > 0 {
 		maxBody = hcfg.Limits.MaxBodySize
@@ -253,9 +288,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 
-	// Routes first
 	for i := range hcfg.Routes {
-		route := hcfg.Routes[i] // copy per request
+		route := hcfg.Routes[i]
 		if core.PathMatch(r.URL.Path, route.Path) {
 			s.handleRoute(w, r, &route)
 			s.logRequest(host, r, start)
@@ -263,7 +297,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Static web
 	if hcfg.Web != nil {
 		s.handleWeb(w, r, hcfg.Web)
 		s.logRequest(host, r, start)
@@ -315,20 +348,32 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *woos
 
 func (s *Server) getOrBuildRouteHandler(route *woos.Route) *core.RouteHandler {
 	key := core.RouteKey(route)
+	now := time.Now().UnixNano()
 
+	// 1. Fast Path
 	if v, ok := woos.RouteCache.Load(key); ok {
-		return v.(*core.RouteHandler)
+		item := v.(*woos.RouteCacheItem)
+		item.LastAccessed.Store(now) // Touch
+		return item.Handler.(*core.RouteHandler)
 	}
 
-	// CHANGED: Pass s.logger here
+	// 2. Build
 	h := core.NewRouteHandler(route, s.logger)
-
-	// Avoid double-build races
-	if v, loaded := woos.RouteCache.LoadOrStore(key, h); loaded {
-		// If we lost the race, close the one we just made to stop its health checks
-		h.Close()
-		return v.(*core.RouteHandler)
+	newItem := &woos.RouteCacheItem{
+		Handler: h,
 	}
+	newItem.LastAccessed.Store(now)
+
+	// 3. Store (LoadOrStore handles race)
+	if v, loaded := woos.RouteCache.LoadOrStore(key, newItem); loaded {
+		// We lost the race, use existing
+		h.Close() // Stop the health checks we just started!
+
+		item := v.(*woos.RouteCacheItem)
+		item.LastAccessed.Store(now)
+		return item.Handler.(*core.RouteHandler)
+	}
+
 	return h
 }
 
@@ -350,13 +395,10 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 		LocalCache:  make(map[string]*tls.Certificate),
 	}
 
-	// Configure certmagic (prod+staging) and get HTTP-01 handler wrapper
 	httpHandler, err := m.EnsureCertMagic(next)
 	if err != nil {
-		// LE not enabled globally; still allow local cert mode to work.
 		s.logger.Fields("err", err.Error()).Warn("certmagic not enabled; using HTTP handler without ACME")
 		httpHandler = next
-		// NOTE: We'll still build tlsCfg, but LetsEncrypt mode will fail at handshake.
 	}
 
 	tlsCfg := &tls.Config{
@@ -373,7 +415,6 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 				return nil, errors.Newf("unknown host %q", sni)
 			}
 
-			// Default TLS behavior if tls block missing.
 			mode := woos.ModeLetsEncrypt
 			if hcfg.TLS != nil && hcfg.TLS.Mode != "" {
 				mode = hcfg.TLS.Mode

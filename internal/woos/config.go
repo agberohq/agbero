@@ -32,7 +32,6 @@ type TimeoutConfig struct {
 
 // ---- RATE LIMITING --------------------------------------------
 
-// Container config for rate limiting.
 type RateLimitConfig struct {
 	TTL          string           `hcl:"ttl,optional"`         // e.g. "30m"
 	MaxEntries   int64            `hcl:"max_entries,optional"` // e.g. 100000
@@ -41,11 +40,10 @@ type RateLimitConfig struct {
 	Auth         RatePolicyConfig `hcl:"auth,block"`
 }
 
-// Policy config (requests per window).
 type RatePolicyConfig struct {
-	Requests int    `hcl:"requests"`       // required (but defaults can fill)
-	Window   string `hcl:"window"`         // required (but defaults can fill)
-	Burst    int    `hcl:"burst,optional"` // optional
+	Requests int    `hcl:"requests"`
+	Window   string `hcl:"window"`
+	Burst    int    `hcl:"burst,optional"`
 }
 
 // ---- HOST CONFIG ---------------------------------------------
@@ -70,6 +68,7 @@ type Route struct {
 	StripPrefixes []string `hcl:"strip_prefixes,optional"`
 	LBStrategy    string   `hcl:"lb_strategy,optional"`
 
+	// High-Availability Configs
 	HealthCheck    *HealthCheckConfig    `hcl:"health_check,block"`
 	CircuitBreaker *CircuitBreakerConfig `hcl:"circuit_breaker,block"`
 	Timeouts       *RouteTimeouts        `hcl:"timeouts,block"`
