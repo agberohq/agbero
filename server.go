@@ -320,10 +320,13 @@ func (s *Server) getOrBuildRouteHandler(route *woos.Route) *core.RouteHandler {
 		return v.(*core.RouteHandler)
 	}
 
-	h := core.NewRouteHandler(route)
+	// CHANGED: Pass s.logger here
+	h := core.NewRouteHandler(route, s.logger)
 
 	// Avoid double-build races
 	if v, loaded := woos.RouteCache.LoadOrStore(key, h); loaded {
+		// If we lost the race, close the one we just made to stop its health checks
+		h.Close()
 		return v.(*core.RouteHandler)
 	}
 	return h

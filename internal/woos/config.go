@@ -69,7 +69,27 @@ type Route struct {
 	Backends      []string `hcl:"backends"`
 	StripPrefixes []string `hcl:"strip_prefixes,optional"`
 	LBStrategy    string   `hcl:"lb_strategy,optional"`
-	HealthCheck   string   `hcl:"health_check,optional"`
+
+	HealthCheck    *HealthCheckConfig    `hcl:"health_check,block"`
+	CircuitBreaker *CircuitBreakerConfig `hcl:"circuit_breaker,block"`
+	Timeouts       *RouteTimeouts        `hcl:"timeouts,block"`
+}
+
+type HealthCheckConfig struct {
+	Path      string `hcl:"path"`               // Required, e.g. "/health"
+	Interval  string `hcl:"interval,optional"`  // Default "10s"
+	Timeout   string `hcl:"timeout,optional"`   // Default "5s"
+	Threshold int    `hcl:"threshold,optional"` // Default 3
+}
+
+type CircuitBreakerConfig struct {
+	Expression string `hcl:"expression,optional"` // "NetworkErrorRatio() > 0.10" (Future)
+	Threshold  int    `hcl:"threshold,optional"`  // Simple fail count
+	Duration   string `hcl:"duration,optional"`   // Reset interval
+}
+
+type RouteTimeouts struct {
+	Request string `hcl:"request,optional"` // Total request timeout
 }
 
 // ---- STATIC WEB ----------------------------------------------

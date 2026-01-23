@@ -1,29 +1,27 @@
+// internal/core/routes.go
 package core
 
 import (
+	"context"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"github.com/olekukonko/ll"
 )
 
 type RouteHandler struct {
 	stripPrefixes []string
 	strategy      string
-	Backends      []*backendTarget
+	Backends      []*Backend
 	rrCounter     uint64
+	timeout       time.Duration
 }
 
-type backendTarget struct {
-	U        *url.URL
-	proxy    *httputil.ReverseProxy
-	Inflight atomic.Int64
-}
-
-func NewRouteHandler(route *woos.Route) *RouteHandler {
+// We need the logger here to pass to NewBackend
+func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
 	h := &RouteHandler{
 		stripPrefixes: append([]string(nil), route.StripPrefixes...),
 		strategy:      strings.ToLower(strings.TrimSpace(route.LBStrategy)),
@@ -33,45 +31,28 @@ func NewRouteHandler(route *woos.Route) *RouteHandler {
 		h.strategy = "roundrobin"
 	}
 
+	// Parse Timeout
+	if route.Timeouts != nil && route.Timeouts.Request != "" {
+		if d, err := time.ParseDuration(route.Timeouts.Request); err == nil {
+			h.timeout = d
+		}
+	}
+
+	// Use the interface wrapper for the logger
+	wrappedLogger := NewTLSLogger(logger)
+
 	for _, raw := range route.Backends {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue
 		}
-		u, err := url.Parse(raw)
-		if err != nil || u.Scheme == "" || u.Host == "" {
+
+		b, err := NewBackend(raw, route, wrappedLogger)
+		if err != nil {
+			logger.Fields("backend", raw, "err", err).Error("failed to create backend")
 			continue
 		}
-
-		target := u // Pointer copy
-
-		rp := httputil.NewSingleHostReverseProxy(target)
-
-		// PERFORMANCE: Use shared transport
-		rp.Transport = woos.SharedTransport
-
-		// Hardening: Explicit FlushInterval (prevents buffering issues)
-		rp.FlushInterval = -1
-
-		origDirector := rp.Director
-		rp.Director = func(req *http.Request) {
-			origDirector(req)
-			req.Host = target.Host
-			// Remove hop-by-hop headers
-			req.Header.Del("Connection")
-			req.Header.Del("Keep-Alive")
-			req.Header.Del("Proxy-Authenticate")
-			req.Header.Del("Proxy-Authorization")
-			req.Header.Del("Te")
-			req.Header.Del("Trailers")
-			req.Header.Del("Transfer-Encoding")
-			req.Header.Del("Upgrade")
-		}
-
-		h.Backends = append(h.Backends, &backendTarget{
-			U:     target,
-			proxy: rp,
-		})
+		h.Backends = append(h.Backends, b)
 	}
 
 	return h
@@ -79,23 +60,37 @@ func NewRouteHandler(route *woos.Route) *RouteHandler {
 
 func (h *RouteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(h.Backends) == 0 {
-		http.Error(w, "No Backends configured", http.StatusBadGateway)
+		http.Error(w, "No backends configured", http.StatusBadGateway)
 		return
 	}
 
 	b := h.PickBackend()
 	if b == nil {
-		http.Error(w, "No healthy Backends", http.StatusBadGateway)
+		http.Error(w, "No healthy backends", http.StatusBadGateway)
 		return
 	}
 
-	b.Inflight.Add(1)
-	defer b.Inflight.Add(-1)
-
-	b.proxy.ServeHTTP(w, r)
+	// Apply Route Timeout if configured
+	if h.timeout > 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), h.timeout)
+		defer cancel()
+		r = r.WithContext(ctx)
+		b.ServeHTTP(w, r)
+	} else {
+		b.ServeHTTP(w, r)
+	}
 }
 
-func (h *RouteHandler) PickBackend() *backendTarget {
+func (h *RouteHandler) PickBackend() *Backend {
+	// Optimization: If only 1 backend, skip LB logic (but check health)
+	if len(h.Backends) == 1 {
+		b := h.Backends[0]
+		if b.Alive.Load() {
+			return b
+		}
+		return nil
+	}
+
 	switch h.strategy {
 	case woos.StrategyLeastConn, "least_conn":
 		return h.pickLeastConn()
@@ -106,33 +101,55 @@ func (h *RouteHandler) PickBackend() *backendTarget {
 	}
 }
 
-func (h *RouteHandler) pickRoundRobin() *backendTarget {
+func (h *RouteHandler) pickRoundRobin() *Backend {
 	n := uint64(len(h.Backends))
-	i := atomic.AddUint64(&h.rrCounter, 1)
-	return h.Backends[i%n]
-}
-
-func (h *RouteHandler) pickRandom() *backendTarget {
-	n := len(h.Backends)
-	if n == 1 {
-		return h.Backends[0]
+	// Try N times to find an alive backend
+	for i := uint64(0); i < n; i++ {
+		idx := atomic.AddUint64(&h.rrCounter, 1)
+		b := h.Backends[idx%n]
+		if b.Alive.Load() {
+			return b
+		}
 	}
-	i := int(randUint64() % uint64(n))
-	return h.Backends[i]
+	return nil
 }
 
-func (h *RouteHandler) pickLeastConn() *backendTarget {
+func (h *RouteHandler) pickRandom() *Backend {
+	n := len(h.Backends)
+	// Try N times (statistical attempt)
+	start := randUint64()
+	for i := 0; i < n; i++ {
+		idx := (start + uint64(i)) % uint64(n)
+		b := h.Backends[idx]
+		if b.Alive.Load() {
+			return b
+		}
+	}
+	return nil
+}
+
+func (h *RouteHandler) pickLeastConn() *Backend {
 	var (
-		best *backendTarget
-		min  int64
+		best    *Backend
+		minimal int64 = -1
 	)
 
-	for i, b := range h.Backends {
-		c := b.Inflight.Load()
-		if i == 0 || c < min {
-			min = c
+	for _, b := range h.Backends {
+		if !b.Alive.Load() {
+			continue
+		}
+		c := b.InFlight.Load()
+		if minimal == -1 || c < minimal {
+			minimal = c
 			best = b
 		}
 	}
 	return best
+}
+
+// Close gracefully stops background tasks (health checks)
+func (h *RouteHandler) Close() {
+	for _, b := range h.Backends {
+		b.Stop()
+	}
 }
