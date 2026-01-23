@@ -1,10 +1,10 @@
-// internal/core/backend/backend.go
 package backend
 
 import (
 	"context"
 	"errors"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -19,16 +19,18 @@ import (
 var sharedBufferPool = core.NewBufferPool()
 
 type Backend struct {
-	URL       *url.URL
-	Proxy     *httputil.ReverseProxy
-	Alive     atomic.Bool
-	InFlight  atomic.Int64
-	Failures  atomic.Int64
-	TotalReqs atomic.Uint64
-	Metrics   *metrics.LatencyTracker
-	hcConfig  *woos.HealthCheckConfig
-	logger    woos.TlsLogger
-	stop      chan struct{}
+	URL          *url.URL
+	Proxy        *httputil.ReverseProxy
+	Alive        atomic.Bool
+	InFlight     atomic.Int64
+	Failures     atomic.Int64
+	TotalReqs    atomic.Uint64
+	Metrics      *metrics.LatencyTracker
+	hcConfig     *woos.HealthCheckConfig
+	logger       woos.TlsLogger
+	stop         chan struct{}
+	startTime    time.Time
+	lastRecovery atomic.Int64 // Unix nano of last time marked alive
 }
 
 func NewBackend(targetStr string, route *woos.Route, logger woos.TlsLogger) (*Backend, error) {
@@ -37,15 +39,17 @@ func NewBackend(targetStr string, route *woos.Route, logger woos.TlsLogger) (*Ba
 		return nil, err
 	}
 
+	now := time.Now()
 	b := &Backend{
-		URL:      u,
-		hcConfig: route.HealthCheck,
-		logger:   logger,
-		stop:     make(chan struct{}),
-		Metrics:  metrics.NewLatencyTracker(),
+		URL:       u,
+		hcConfig:  route.HealthCheck,
+		logger:    logger,
+		stop:      make(chan struct{}),
+		Metrics:   metrics.NewLatencyTracker(),
+		startTime: now,
 	}
-
 	b.Alive.Store(true)
+	b.lastRecovery.Store(now.UnixNano())
 
 	cbThreshold := 5
 	if route.CircuitBreaker != nil && route.CircuitBreaker.Threshold > 0 {
@@ -130,6 +134,10 @@ func (b *Backend) healthCheckLoop() {
 		threshold = b.hcConfig.Threshold
 	}
 
+	// Add initial jitter to desync checks
+	jitter := time.Duration(rand.Int63n(int64(interval) / 2)) // 0-50% jitter
+	time.Sleep(jitter)
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -147,11 +155,11 @@ func (b *Backend) healthCheckLoop() {
 			return
 		case <-ticker.C:
 			resp, err := client.Get(targetURL)
-			healthy := err == nil && resp.StatusCode >= 200 && resp.StatusCode < 500
+			healthy := err == nil && resp != nil && resp.StatusCode >= 200 && resp.StatusCode < 500
 
-			if resp != nil {
+			if resp != nil && resp.Body != nil {
 				_, _ = io.Copy(io.Discard, resp.Body)
-				resp.Body.Close()
+				_ = resp.Body.Close()
 			}
 
 			if healthy {
@@ -159,16 +167,32 @@ func (b *Backend) healthCheckLoop() {
 
 				consecutiveFailures = 0
 				if !b.Alive.Load() {
+					now := time.Now().UnixNano()
 					b.Alive.Store(true)
+					b.lastRecovery.Store(now)
 					b.logger.Fields("backend", b.URL.Host).Info("backend recovered/UP")
 				}
 			} else {
 				consecutiveFailures++
 				if consecutiveFailures >= threshold && b.Alive.Load() {
 					b.Alive.Store(false)
-					b.logger.Fields("backend", b.URL.Host).Warn("backend health check failed")
+					b.logger.Fields("backend", b.URL.Host, "err", err).Warn("backend health check failed")
 				}
 			}
+
+			// Add jitter to next tick (reset ticker for variance)
+			jitter = time.Duration(rand.Int63n(int64(interval) / 2))
+			ticker.Reset(interval + jitter)
 		}
 	}
+}
+
+// Uptime returns time since backend creation
+func (b *Backend) Uptime() time.Duration {
+	return time.Since(b.startTime)
+}
+
+// LastRecovery returns time of last recovery to alive state
+func (b *Backend) LastRecovery() time.Time {
+	return time.Unix(0, b.lastRecovery.Load())
 }
