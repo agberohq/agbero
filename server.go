@@ -15,14 +15,18 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
+	"github.com/quic-go/quic-go/http3"
 )
 
 type Server struct {
 	hostManager *discovery.Host
 	global      *woos.GlobalConfig
 
-	mu      sync.RWMutex
+	mu sync.RWMutex
+	// TCP Servers (HTTP/1.1 & HTTP/2)
 	servers map[string]*http.Server
+	// UDP Servers (HTTP/3 QUIC)
+	h3Servers map[string]*http3.Server
 
 	logger       *ll.Logger
 	ipMiddleware *middleware.IPMiddleware
@@ -38,7 +42,8 @@ var portContextKey = &contextKey{"local-port"}
 
 func NewServer(opts ...Option) *Server {
 	s := &Server{
-		servers: make(map[string]*http.Server),
+		servers:   make(map[string]*http.Server),
+		h3Servers: make(map[string]*http3.Server),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -74,16 +79,22 @@ func (s *Server) Start(ctx context.Context) error {
 		tlsCfg = nil
 	}
 
-	startServer := func(addr string, isTLS bool) {
+	// Helper to spawn standard TCP servers (HTTP/HTTPS)
+	startTCPServer := func(addr string, isTLS bool) {
 		var handler http.Handler
 
 		if isTLS {
-			handler = s.ipMiddleware.Handler(s.rateLimiter.Handler(baseHandler))
+			// For TLS, we add the H3Middleware to advertise QUIC support via Alt-Svc header
+			port := middleware.ExtractPort(addr)
+			advertiseH3 := middleware.H3Middleware(port)
+
+			// Chain: IP -> RateLimit -> Alt-Svc -> (HTTP-01) -> Router
+			handler = s.ipMiddleware.Handler(s.rateLimiter.Handler(advertiseH3(baseHandler)))
 		} else {
 			handler = s.ipMiddleware.Handler(s.rateLimiter.Handler(httpHandler))
 		}
 
-		// Wrap handler to inject the listener port into the context
+		// Inject Port into Context
 		_, port, _ := net.SplitHostPort(addr)
 		wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), portContextKey, port)
@@ -114,12 +125,53 @@ func (s *Server) Start(ctx context.Context) error {
 		s.mu.Unlock()
 	}
 
-	for _, addr := range s.global.Bind.HTTP {
-		startServer(addr, false)
+	// Helper to spawn UDP servers (HTTP/3)
+	startQUICServer := func(addr string) {
+		if tlsCfg == nil {
+			return
+		}
+
+		// Reuse logic: IP -> RateLimit -> Router
+		// Note: HTTP/3 doesn't need Alt-Svc middleware because we are already ON HTTP/3
+		handler := s.ipMiddleware.Handler(s.rateLimiter.Handler(baseHandler))
+
+		// Inject Port Context
+		_, port, _ := net.SplitHostPort(addr)
+		wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), portContextKey, port)
+			handler.ServeHTTP(w, r.WithContext(ctx))
+		})
+
+		h3Server := &http3.Server{
+			Addr:      addr,
+			Handler:   wrappedHandler,
+			TLSConfig: tlsCfg,
+		}
+
+		key := "h3@" + addr
+		s.mu.Lock()
+		s.h3Servers[key] = h3Server
+		s.mu.Unlock()
+
+		go func() {
+			s.logger.Fields("bind", addr, "proto", "h3").Info("listener starting")
+			if err := h3Server.ListenAndServe(); err != nil {
+				// quic-go doesn't have a specific "ErrServerClosed" for graceful shutdown yet in all versions,
+				// but usually returns nil or a specific error on Close.
+				s.logger.Fields("err", err, "proto", "h3").Error("h3 listener stopped")
+			}
+		}()
 	}
 
+	// 1. Initialize HTTP (TCP)
+	for _, addr := range s.global.Bind.HTTP {
+		startTCPServer(addr, false)
+	}
+
+	// 2. Initialize HTTPS (TCP) + HTTP/3 (UDP)
 	for _, addr := range s.global.Bind.HTTPS {
-		startServer(addr, true)
+		startTCPServer(addr, true)
+		startQUICServer(addr)
 	}
 
 	if len(s.servers) == 0 {
@@ -128,6 +180,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	errCh := make(chan error, len(s.servers))
 
+	// 3. Start TCP Listeners
 	s.mu.RLock()
 	for key, srv := range s.servers {
 		key := key
@@ -177,6 +230,14 @@ func (s *Server) shutdown() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// 1. Stop HTTP/3 Servers
+	for key, srv := range s.h3Servers {
+		if err := srv.Close(); err != nil {
+			s.logger.Fields("key", key, "err", err).Warn("h3 shutdown error")
+		}
+	}
+
+	// 2. Stop TCP Servers
 	var firstErr error
 	for key, srv := range s.servers {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -191,7 +252,40 @@ func (s *Server) shutdown() error {
 	return firstErr
 }
 
-// startCacheReaper periodically cleans up unused RouteHandlers (and their health check goroutines)
+func (s *Server) startMetricsServer() {
+	if s.global.Bind.Metrics == "" {
+		return
+	}
+
+	mux := http.NewServeMux()
+
+	// The core metrics endpoint (JSON structure with HdrHistogram stats)
+	mux.HandleFunc("/metrics", core.MetricsHandler(s.hostManager))
+
+	// Simple liveness probe for load balancers (AWS ALB, K8s, etc.)
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	srv := &http.Server{
+		Addr:         s.global.Bind.Metrics,
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		IdleTimeout:  30 * time.Second,
+	}
+
+	go func() {
+		s.logger.Fields("bind", s.global.Bind.Metrics).Info("metrics listener starting")
+
+		// We ignore ErrServerClosed because it occurs during normal shutdown
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.logger.Fields("err", err).Error("metrics server failed")
+		}
+	}()
+}
+
 func (s *Server) startCacheReaper(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	go func() {
@@ -207,7 +301,6 @@ func (s *Server) startCacheReaper(ctx context.Context) {
 }
 
 func (s *Server) reapOldRoutes() {
-	// If a handler hasn't been used in 10 minutes, clean it up.
 	now := time.Now().UnixNano()
 	expiration := int64(10 * time.Minute)
 
@@ -219,16 +312,11 @@ func (s *Server) reapOldRoutes() {
 
 		last := item.LastAccessed.Load()
 		if now-last > expiration {
-			// 1. Close the handler (stops health check goroutines)
 			if h, ok := item.Handler.(interface{ Close() }); ok {
 				h.Close()
 			}
 
-			// 2. Remove from map
 			woos.RouteCache.Delete(key)
-
-			// Debug
-			// s.logger.Fields("key", key).Info("reaped idle route handler")
 		}
 		return true
 	})
@@ -291,7 +379,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Enforce Port Binding
 	if len(hcfg.BindPorts) > 0 {
-		// Retrieve port from context (injected in Start)
 		portCtx := r.Context().Value(portContextKey)
 		listenerPort, ok := portCtx.(string)
 
@@ -304,7 +391,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if !allowed {
-				// Host exists, but not on this port
 				http.Error(w, "Misdirected Request", http.StatusMisdirectedRequest)
 				return
 			}
@@ -348,6 +434,7 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time) {
 		"remote", middleware.ClientIP(r),
 		"ua", r.UserAgent(),
 		"duration", time.Since(start),
+		"proto", r.Proto, // Useful to see "HTTP/3.0"
 	).Info("request")
 }
 
@@ -384,25 +471,20 @@ func (s *Server) getOrBuildRouteHandler(route *woos.Route) *core.RouteHandler {
 	key := core.RouteKey(route)
 	now := time.Now().UnixNano()
 
-	// 1. Fast Path
 	if v, ok := woos.RouteCache.Load(key); ok {
 		item := v.(*woos.RouteCacheItem)
 		item.LastAccessed.Store(now) // Touch
 		return item.Handler.(*core.RouteHandler)
 	}
 
-	// 2. Build
 	h := core.NewRouteHandler(route, s.logger)
 	newItem := &woos.RouteCacheItem{
 		Handler: h,
 	}
 	newItem.LastAccessed.Store(now)
 
-	// 3. Store (LoadOrStore handles race)
 	if v, loaded := woos.RouteCache.LoadOrStore(key, newItem); loaded {
-		// We lost the race, use existing
-		h.Close() // Stop the health checks we just started!
-
+		h.Close()
 		item := v.(*woos.RouteCacheItem)
 		item.LastAccessed.Store(now)
 		return item.Handler.(*core.RouteHandler)
@@ -437,6 +519,8 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 
 	tlsCfg := &tls.Config{
 		MinVersion: tls.VersionTLS12,
+		// http3 requires "h3" in ALPN
+		NextProtos: []string{"h3", "h2", "http/1.1"},
 		GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			if chi == nil || chi.ServerName == "" {
 				return nil, errors.New("missing SNI")
@@ -497,38 +581,4 @@ func (s *Server) parseDurationWarn(field, value string, def time.Duration) time.
 		return def
 	}
 	return d
-}
-
-func (s *Server) startMetricsServer() {
-	if s.global.Bind.Metrics == "" {
-		return
-	}
-
-	mux := http.NewServeMux()
-
-	// The core metrics endpoint (JSON structure with HdrHistogram stats)
-	mux.HandleFunc("/metrics", core.MetricsHandler(s.hostManager))
-
-	// Simple liveness probe for load balancers (AWS ALB, K8s, etc.)
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
-
-	srv := &http.Server{
-		Addr:         s.global.Bind.Metrics,
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
-		IdleTimeout:  30 * time.Second,
-	}
-
-	go func() {
-		s.logger.Fields("bind", s.global.Bind.Metrics).Info("metrics listener starting")
-
-		// We ignore ErrServerClosed because it occurs during normal shutdown
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			s.logger.Fields("err", err).Error("metrics server failed")
-		}
-	}()
 }

@@ -23,6 +23,7 @@ require (
 	github.com/mholt/acmez/v3 v3.1.4 // indirect
 	github.com/miekg/dns v1.1.70 // indirect
 	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
+	github.com/quic-go/quic-go v0.59.0 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
