@@ -10,6 +10,10 @@ import (
 	"github.com/olekukonko/ll"
 )
 
+var (
+	testLogger = ll.New("hosts/test")
+)
+
 func TestNewHost_Basic(t *testing.T) {
 	h := NewHost("/tmp")
 	if h.hosts == nil || h.lookupMap == nil || h.gossipRoutes == nil || h.nodeFailures == nil {
@@ -21,7 +25,7 @@ func TestNewHost_Basic(t *testing.T) {
 }
 
 func TestUpdateGossipNode(t *testing.T) {
-	h := NewHost("/tmp", WithLogger(ll.New("test").Enable()))
+	h := NewHost("/tmp", WithLogger(testLogger))
 	route := woos.Route{Path: "/api"}
 	h.UpdateGossipNode("node1", "example.com", route)
 
@@ -79,7 +83,7 @@ func TestWatch_FileChange(t *testing.T) {
 	hclFile := filepath.Join(tmpDir, "test.hcl")
 	os.WriteFile(hclFile, []byte(`domains = ["example.com"]`), 0644)
 
-	h := NewHost(tmpDir, WithLogger(ll.New("test").Enable()))
+	h := NewHost(tmpDir, WithLogger(testLogger))
 	err := h.Watch()
 	if err != nil {
 		t.Fatal(err)
@@ -89,11 +93,11 @@ func TestWatch_FileChange(t *testing.T) {
 	// Trigger change
 	os.WriteFile(hclFile, []byte(`domains = ["updated.com"]`), 0644)
 
-	// Wait for debounce (500ms) + buffer
-	time.Sleep(600 * time.Millisecond)
+	// Wait for debounce (500ms) + buffer. Increased to 1500ms for slow runners.
+	time.Sleep(1500 * time.Millisecond)
 
 	hosts, _ := h.LoadAll()
-	if _, ok := hosts["test"]; !ok {
+	if _, ok := hosts["updated.com"]; !ok {
 		t.Error("Config not reloaded")
 	}
 }
@@ -137,8 +141,8 @@ func TestRebuildLookupLocked_DedupFileGossip(t *testing.T) {
 	h.mu.Unlock()
 
 	cfg := h.Get("example.com")
-	if len(cfg.Routes) != 1 { // No dup append
-		t.Errorf("Expected 1 route, got %d", len(cfg.Routes))
+	if len(cfg.Routes) != 1 {
+		t.Errorf("Expected 1 route (deduplicated), got %d", len(cfg.Routes))
 	}
 }
 

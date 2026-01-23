@@ -29,10 +29,9 @@ type Host struct {
 	lookupMap map[string]*woos.HostConfig // Final O(1) Map (Domain -> Config)
 
 	// Map of NodeName -> Route Definition
-	// We store raw inputs so we can rebuild/merge efficiently on changes
 	gossipRoutes map[string]DynamicRouteItem
 
-	// Per-node failure tracking (e.g., for health from gossip pings)
+	// Per-node failure tracking
 	nodeFailures map[string]int
 
 	watcher *fsnotify.Watcher
@@ -61,7 +60,6 @@ func NewHost(hostsDir string, opts ...Option) *Host {
 	return h
 }
 
-// UpdateGossipNode adds or updates a route from a specific node
 func (hm *Host) UpdateGossipNode(nodeID, host string, route woos.Route) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
@@ -77,7 +75,6 @@ func (hm *Host) UpdateGossipNode(nodeID, host string, route woos.Route) {
 	hm.notifyChanged()
 }
 
-// RemoveGossipNode removes all routes associated with a node
 func (hm *Host) RemoveGossipNode(nodeID string) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
@@ -93,7 +90,6 @@ func (hm *Host) RemoveGossipNode(nodeID string) {
 	hm.notifyChanged()
 }
 
-// RouteExists checks if a route with given host and path already exists
 func (hm *Host) RouteExists(host, path string) bool {
 	hm.mu.RLock()
 	defer hm.mu.RUnlock()
@@ -110,7 +106,6 @@ func (hm *Host) RouteExists(host, path string) bool {
 	return false
 }
 
-// ResetNodeFailures resets failure count for a node (e.g., on alive ping)
 func (hm *Host) ResetNodeFailures(nodeName string) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
@@ -144,6 +139,7 @@ func (hm *Host) Watch() error {
 }
 
 func (hm *Host) watchLoop() {
+	// Debounce set to 500ms
 	debouncedReload := core.Debounce(500*time.Millisecond, hm.ReloadFull)
 
 	for {
@@ -164,13 +160,17 @@ func (hm *Host) watchLoop() {
 }
 
 func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
-	if !strings.HasSuffix(strings.ToLower(event.Name), ".hcl") {
+	if event.Has(fsnotify.Chmod) {
 		return
 	}
+	name := strings.ToLower(event.Name)
+	if !strings.HasSuffix(name, ".hcl") {
+		return
+	}
+	hm.logger.Fields("event", event.Op.String(), "file", event.Name).Info("config change detected")
 	debouncedReload()
 }
 
-// ReloadFull reloads all hosts (exported for server access)
 func (hm *Host) ReloadFull() {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
@@ -259,23 +259,18 @@ func (hm *Host) loadAllLocked() error {
 	return nil
 }
 
-// rebuildLookupLocked merges File hosts and Dynamic Routes
 func (hm *Host) rebuildLookupLocked() {
 	newLookup := make(map[string]*woos.HostConfig)
 
 	// 1. Add File Hosts (Base Layer)
 	for _, cfg := range hm.hosts {
-		// Clone config to avoid mutation issues if we were to modify it
-		// (Optional optimization: simple pointer copy since files are immutable until reload)
 		for _, domain := range cfg.Domains {
 			newLookup[domain] = cfg
 		}
 	}
 
 	// 2. Merge Gossip Routes
-	// We need to group gossip routes by Host
 	dynamicMap := make(map[string][]*woos.Route)
-
 	for _, item := range hm.gossipRoutes {
 		dynamicMap[item.Host] = append(dynamicMap[item.Host], &item.Route)
 	}
@@ -284,16 +279,27 @@ func (hm *Host) rebuildLookupLocked() {
 		existing, ok := newLookup[domain]
 
 		if ok {
-			// Host exists in File: Append routes dynamically
-			// We must create a shallow copy of the struct to not affect the base map
-			// which might be shared (though here we just rebuilt hosts map, so safer).
-			// To be 100% safe against race conditions on the pointer from `hm.hosts`,
-			// we create a new HostConfig combining them.
-			combined := *existing // Shallow copy
+			// Host exists in File: Append routes dynamically.
+			// Perform Deep Copy of existing config to avoid mutating the base 'hosts' map
+			combined := *existing
 
-			// Append gossip routes.
-			// Note: We might want to sort routes by path length (longest first) for correct matching logic
-			combined.Routes = append(combined.Routes, derefRoutes(routes)...)
+			// Deep copy Routes slice
+			combined.Routes = make([]woos.Route, len(existing.Routes))
+			copy(combined.Routes, existing.Routes)
+
+			// Track existing paths to prevent duplicates
+			seen := make(map[string]bool)
+			for _, r := range combined.Routes {
+				seen[r.Path] = true
+			}
+
+			// Append gossip routes ONLY if path doesn't exist in file config
+			for _, r := range routes {
+				if !seen[r.Path] {
+					combined.Routes = append(combined.Routes, *r)
+					seen[r.Path] = true
+				}
+			}
 			sortRoutes(combined.Routes)
 
 			newLookup[domain] = &combined
@@ -321,7 +327,6 @@ func (hm *Host) loadOne(path string) (*woos.HostConfig, error) {
 	for i := range hostConfig.Domains {
 		hostConfig.Domains[i] = strings.ToLower(strings.TrimSpace(hostConfig.Domains[i]))
 	}
-	// Sort file routes too
 	sortRoutes(hostConfig.Routes)
 	return &hostConfig, nil
 }
@@ -342,8 +347,6 @@ func derefRoutes(in []*woos.Route) []woos.Route {
 	return out
 }
 
-// sortRoutes sorts routes by Path length descending.
-// This ensures "/api/v1" is matched before "/api" or "/".
 func sortRoutes(routes []woos.Route) {
 	sort.SliceStable(routes, func(i, j int) bool {
 		return len(routes[i].Path) > len(routes[j].Path)

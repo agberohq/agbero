@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	testLogger = ll.New("test").Enable()
+	testLogger = ll.New("test")
 )
 
 // Mock HostManager implements the HostManager interface
