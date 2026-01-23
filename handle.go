@@ -1,4 +1,3 @@
-// handle.go
 package agbero
 
 import (
@@ -7,11 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
+
+var mimeCache sync.Map // ext -> type (e.g., ".html" -> "text/html")
 
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
@@ -135,7 +137,7 @@ func (s *Server) handleWeb(w http.ResponseWriter, r *http.Request, web *woos.Web
 			defer fGz.Close()
 			infoGz, err := fGz.Stat()
 			if err == nil && !infoGz.IsDir() {
-				origType := mime.TypeByExtension(filepath.Ext(strings.TrimSuffix(gzPath, ".gz")))
+				origType := getMimeType(strings.TrimSuffix(gzPath, ".gz"))
 				if origType != "" {
 					w.Header().Set("Content-Type", origType)
 				}
@@ -188,10 +190,23 @@ func (s *Server) handleWeb(w http.ResponseWriter, r *http.Request, web *woos.Web
 		reqPath = indexPath
 	}
 
-	ctype := mime.TypeByExtension(filepath.Ext(reqPath))
+	ctype := getMimeType(reqPath)
 	if ctype != "" {
 		w.Header().Set("Content-Type", ctype)
 	}
 
 	http.ServeContent(w, r, reqPath, info.ModTime(), f)
+}
+
+// getMimeType caches mime.TypeByExtension for perf
+func getMimeType(path string) string {
+	ext := filepath.Ext(path)
+	if v, ok := mimeCache.Load(ext); ok {
+		return v.(string)
+	}
+	ctype := mime.TypeByExtension(ext)
+	if ctype != "" {
+		mimeCache.Store(ext, ctype)
+	}
+	return ctype
 }
