@@ -1,0 +1,171 @@
+// internal/discovery/gossip/gossip.go
+package gossip
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"git.imaxinacion.net/aibox/agbero/internal/security"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"github.com/hashicorp/memberlist"
+	"github.com/olekukonko/ll"
+)
+
+// AppMeta defines the routing contract sent by the application
+type AppMeta struct {
+	Token string `json:"token"`
+	Port  int    `json:"port"`
+
+	// Routing Logic
+	Host        string `json:"host"`            // e.g. "myapp.com"
+	Path        string `json:"path"`            // e.g. "/danceapp"
+	StripPrefix bool   `json:"strip,omitempty"` // If true, strip 'path' before forwarding
+}
+
+type Service struct {
+	list         *memberlist.Memberlist
+	hm           *discovery.Host
+	logger       *ll.Logger
+	tokenManager *security.TokenManager
+}
+
+func NewService(hm *discovery.Host, cfg *woos.GossipConfig, logger *ll.Logger) (*Service, error) {
+	if cfg == nil || !cfg.Enabled {
+		return nil, nil
+	}
+
+	s := &Service{
+		hm:     hm,
+		logger: logger,
+	}
+
+	if cfg.PrivateKeyFile != "" {
+		tm, err := security.LoadKeys(cfg.PrivateKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("gossip auth enabled but key failed: %w", err)
+		}
+		s.tokenManager = tm
+		logger.Info("gossip authorization enabled (Ed25519)")
+	} else {
+		logger.Warn("gossip running WITHOUT application authorization (insecure)")
+	}
+
+	c := memberlist.DefaultLANConfig()
+	c.Name = "agbero-" + c.Name
+	c.BindPort = cfg.Port
+	if c.BindPort == 0 {
+		c.BindPort = 7946
+	}
+
+	if cfg.SecretKey != "" {
+		key := []byte(cfg.SecretKey)
+		if len(key) != 16 && len(key) != 24 && len(key) != 32 {
+			return nil, fmt.Errorf("gossip secret key must be 16, 24, or 32 bytes")
+		}
+		c.SecretKey = key
+	}
+
+	c.Events = &eventDelegate{s: s}
+
+	list, err := memberlist.Create(c)
+	if err != nil {
+		return nil, err
+	}
+	s.list = list
+
+	return s, nil
+}
+
+func (s *Service) Join(seeds []string) error {
+	if len(seeds) > 0 {
+		_, err := s.list.Join(seeds)
+		return err
+	}
+	return nil
+}
+
+func (s *Service) Shutdown() error {
+	if s.list != nil {
+		return s.list.Shutdown()
+	}
+	return nil
+}
+
+type eventDelegate struct {
+	s *Service
+}
+
+func (e *eventDelegate) NotifyJoin(node *memberlist.Node) {
+	if node.Name == e.s.s.list.LocalNode().Name {
+		return
+	}
+	e.processNode(node)
+}
+
+func (e *eventDelegate) NotifyLeave(node *memberlist.Node) {
+	if node.Name == e.s.s.list.LocalNode().Name {
+		return
+	}
+	e.s.hm.RemoveGossipNode(node.Name)
+}
+
+func (e *eventDelegate) NotifyUpdate(node *memberlist.Node) {
+	e.processNode(node)
+}
+
+func (e *eventDelegate) processNode(node *memberlist.Node) {
+	var meta AppMeta
+	if len(node.Meta) == 0 {
+		return
+	}
+
+	if err := json.Unmarshal(node.Meta, &meta); err != nil {
+		e.s.logger.Fields("node", node.Name).Warn("gossip invalid metadata")
+		return
+	}
+
+	// Basic Validation
+	if meta.Host == "" || meta.Port == 0 {
+		return
+	}
+
+	// Security Check
+	if e.s.tokenManager != nil {
+		if meta.Token == "" {
+			e.s.logger.Fields("node", node.Name).Warn("gossip rejected: missing token")
+			return
+		}
+		// Verify signature. We don't check domain inside token anymore,
+		// we trust the app (identified by 'svc') to declare its own routes.
+		svcName, err := e.s.tokenManager.Verify(meta.Token)
+		if err != nil {
+			e.s.logger.Fields("node", node.Name, "err", err).Warn("gossip rejected: invalid token")
+			return
+		}
+		e.s.logger.Fields("node", node.Name, "svc", svcName).Debug("gossip authorized")
+	}
+
+	target := fmt.Sprintf("http://%s:%d", node.Addr.String(), meta.Port)
+
+	// Construct route definition
+	route := woos.Route{
+		Path:       meta.Path,
+		Backends:   []string{target},
+		LBStrategy: woos.StrategyRandom,
+		HealthCheck: &woos.HealthCheckConfig{
+			Path: "/", // Default health check
+		},
+	}
+
+	if route.Path == "" {
+		route.Path = "/"
+	}
+
+	if meta.StripPrefix {
+		route.StripPrefixes = []string{route.Path}
+	}
+
+	// Inject into HostManager
+	e.s.hm.UpdateGossipNode(node.Name, meta.Host, route)
+}

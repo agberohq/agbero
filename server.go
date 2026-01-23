@@ -12,6 +12,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	tls2 "git.imaxinacion.net/aibox/agbero/internal/core/tls"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"git.imaxinacion.net/aibox/agbero/internal/discovery/gossip"
 	handlers2 "git.imaxinacion.net/aibox/agbero/internal/handlers"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/h3"
@@ -70,6 +71,22 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.startMetricsServer()
 	s.startCacheReaper(ctx)
+
+	if s.global.Gossip != nil && s.global.Gossip.Enabled {
+		gs, err := gossip.NewService(s.hostManager, s.global.Gossip, s.logger)
+		if err != nil {
+			return errors.Newf("failed to start gossip: %w", err)
+		}
+		// Join known seeds if any (e.g., other Agbero nodes for HA)
+		if len(s.global.Gossip.Seeds) > 0 {
+			if err := gs.Join(s.global.Gossip.Seeds); err != nil {
+				s.logger.Warn("failed to join gossip seeds")
+			}
+		}
+
+		// Ensure shutdown
+		defer gs.Shutdown()
+	}
 
 	s.ipMiddleware = clientip.NewIPMiddleware(s.global.TrustedProxies)
 	s.rateLimiter = s.buildRateLimiterFromConfig()

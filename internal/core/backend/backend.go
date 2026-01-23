@@ -1,3 +1,4 @@
+// internal/core/backend/backend.go
 package backend
 
 import (
@@ -14,24 +15,19 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
 
-// Backend represents a single upstream server with state.
-type Backend struct {
-	URL   *url.URL
-	Proxy *httputil.ReverseProxy
+var sharedBufferPool = core.NewBufferPool()
 
-	// Atomic State
+type Backend struct {
+	URL       *url.URL
+	Proxy     *httputil.ReverseProxy
 	Alive     atomic.Bool
 	InFlight  atomic.Int64
 	Failures  atomic.Int64
 	TotalReqs atomic.Uint64
-
-	// NEW: High-Fidelity Latency Tracking
-	Metrics *metrics.LatencyTracker
-
-	// Internals
-	hcConfig *woos.HealthCheckConfig
-	logger   core.anyLogger
-	stop     chan struct{}
+	Metrics   *metrics.LatencyTracker
+	hcConfig  *woos.HealthCheckConfig
+	logger    woos.Logging
+	stop      chan struct{}
 }
 
 func NewBackend(targetStr string, route *woos.Route, logger core.anyLogger) (*Backend, error) {
@@ -45,7 +41,7 @@ func NewBackend(targetStr string, route *woos.Route, logger core.anyLogger) (*Ba
 		hcConfig: route.HealthCheck,
 		logger:   logger,
 		stop:     make(chan struct{}),
-		Metrics:  metrics.NewLatencyTracker(), // Initialize Metrics
+		Metrics:  metrics.NewLatencyTracker(),
 	}
 
 	b.Alive.Store(true)
@@ -58,6 +54,7 @@ func NewBackend(targetStr string, route *woos.Route, logger core.anyLogger) (*Ba
 	rp := httputil.NewSingleHostReverseProxy(u)
 	rp.Transport = woos.SharedTransport
 	rp.FlushInterval = -1
+	rp.BufferPool = sharedBufferPool
 
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		if err != context.Canceled {
@@ -102,7 +99,6 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	b.Proxy.ServeHTTP(w, r)
 
-	// Record Latency to HdrHistogram
 	dur := time.Since(start).Microseconds()
 	b.Metrics.Record(dur)
 
@@ -114,7 +110,6 @@ func (b *Backend) Stop() {
 }
 
 func (b *Backend) healthCheckLoop() {
-	// Parse settings with defaults
 	interval := 10 * time.Second
 	if b.hcConfig.Interval != "" {
 		if d, err := time.ParseDuration(b.hcConfig.Interval); err == nil {
@@ -137,7 +132,6 @@ func (b *Backend) healthCheckLoop() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// Dedicated client for health checks (disable keepalives to test full connection)
 	client := &http.Client{
 		Timeout:   timeout,
 		Transport: &http.Transport{DisableKeepAlives: true},
@@ -151,9 +145,7 @@ func (b *Backend) healthCheckLoop() {
 		case <-b.stop:
 			return
 		case <-ticker.C:
-			// Perform Check
 			resp, err := client.Get(targetURL)
-			// Status < 500 is usually considered "reachable"
 			healthy := err == nil && resp.StatusCode >= 200 && resp.StatusCode < 500
 
 			if resp != nil {
@@ -162,8 +154,7 @@ func (b *Backend) healthCheckLoop() {
 			}
 
 			if healthy {
-				// RECOVERY logic
-				b.Failures.Store(0) // Reset circuit breaker count
+				b.Failures.Store(0)
 
 				consecutiveFailures = 0
 				if !b.Alive.Load() {

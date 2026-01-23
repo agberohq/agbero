@@ -1,3 +1,4 @@
+// handle.go
 package agbero
 
 import (
@@ -22,7 +23,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enforce Port Binding
 	if len(hcfg.BindPorts) > 0 {
 		portCtx := r.Context().Value(portContextKey)
 		listenerPort, ok := portCtx.(string)
@@ -70,6 +70,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	http.Error(w, "Not found", http.StatusNotFound)
 }
+
 func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *woos.Route) {
 	originalPath := r.URL.Path
 	originalRawPath := r.URL.RawPath
@@ -98,21 +99,19 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *woos
 	r.URL.Path = originalPath
 	r.URL.RawPath = originalRawPath
 }
+
 func (s *Server) handleWeb(w http.ResponseWriter, r *http.Request, web *woos.Web) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// 1. Clean Path
 	reqPath := filepath.Clean(r.URL.Path)
 	reqPath = strings.TrimPrefix(reqPath, string(os.PathSeparator))
 	if reqPath == "" || reqPath == "." {
 		reqPath = "."
 	}
 
-	// 2. Open Root (Safe confinement)
-	// web.Root.String() handles the default "." if empty
 	dir, err := os.OpenRoot(web.Root.String())
 	if err != nil {
 		s.logger.Fields("err", err, "root", web.Root.String()).Error("failed to open web root")
@@ -121,7 +120,32 @@ func (s *Server) handleWeb(w http.ResponseWriter, r *http.Request, web *woos.Web
 	}
 	defer dir.Close()
 
-	// 3. Open Requested File
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		gzPath := reqPath + ".gz"
+		if reqPath == "." || reqPath == "" {
+			indexName := "index.html"
+			if web.Index != "" {
+				indexName = web.Index
+			}
+			gzPath = indexName + ".gz"
+		}
+
+		fGz, err := dir.Open(gzPath)
+		if err == nil {
+			defer fGz.Close()
+			infoGz, err := fGz.Stat()
+			if err == nil && !infoGz.IsDir() {
+				origType := mime.TypeByExtension(filepath.Ext(strings.TrimSuffix(gzPath, ".gz")))
+				if origType != "" {
+					w.Header().Set("Content-Type", origType)
+				}
+				w.Header().Set("Content-Encoding", "gzip")
+				http.ServeContent(w, r, gzPath, infoGz.ModTime(), fGz)
+				return
+			}
+		}
+	}
+
 	f, err := dir.Open(reqPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -139,18 +163,15 @@ func (s *Server) handleWeb(w http.ResponseWriter, r *http.Request, web *woos.Web
 		return
 	}
 
-	// 4. Directory Handling (Index only, no listing)
 	if info.IsDir() {
 		indexName := "index.html"
 		if web.Index != "" {
 			indexName = web.Index
 		}
 
-		// Re-open index relative to the dir
 		indexPath := filepath.Join(reqPath, indexName)
 		fIndex, err := dir.Open(indexPath)
 		if err != nil {
-			// Dir exists but no index -> Forbidden
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -167,7 +188,6 @@ func (s *Server) handleWeb(w http.ResponseWriter, r *http.Request, web *woos.Web
 		reqPath = indexPath
 	}
 
-	// 5. Serve Content
 	ctype := mime.TypeByExtension(filepath.Ext(reqPath))
 	if ctype != "" {
 		w.Header().Set("Content-Type", ctype)

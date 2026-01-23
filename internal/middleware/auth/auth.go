@@ -1,3 +1,4 @@
+// internal/middleware/auth/auth.go
 package auth
 
 import (
@@ -8,13 +9,10 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"github.com/maypok86/otter/v2"
 )
 
-// --- BASIC AUTH ---
-
 func BasicAuth(cfg *woos.BasicAuthConfig) func(http.Handler) http.Handler {
-	// Parse users into a map for O(1) lookup
-	// Format: "username:password"
 	secrets := make(map[string]string)
 	for _, u := range cfg.Users {
 		parts := strings.SplitN(u, ":", 2)
@@ -43,7 +41,6 @@ func BasicAuth(cfg *woos.BasicAuthConfig) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Constant time comparison to prevent timing attacks
 			if subtle.ConstantTimeCompare([]byte(pass), []byte(validPass)) != 1 {
 				unauthorized(w, realm)
 				return
@@ -59,7 +56,11 @@ func unauthorized(w http.ResponseWriter, realm string) {
 	http.Error(w, "Unauthorized", http.StatusUnauthorized)
 }
 
-// --- FORWARD AUTH (The "Killer" Feature) ---
+// Global Auth Cache (10k items, with variable TTL support)
+var authCache = otter.Must[string, bool](&otter.Options[string, bool]{
+	MaximumSize: 10_000,
+	Recorder:    stats.NewRecorder(), // <-- turns stats on
+})
 
 func ForwardAuth(cfg *woos.ForwardAuthConfig) func(http.Handler) http.Handler {
 	if cfg.URL == "" {
@@ -68,60 +69,64 @@ func ForwardAuth(cfg *woos.ForwardAuthConfig) func(http.Handler) http.Handler {
 
 	client := &http.Client{
 		Timeout: 5 * time.Second,
-		// We DO NOT use shared transport here to avoid coupling auth failures
-		// with backend traffic pool exhaustion.
 		Transport: &http.Transport{
 			MaxIdleConns:       100,
 			IdleConnTimeout:    90 * time.Second,
-			DisableCompression: true, // We only care about headers/status
+			DisableCompression: true,
 		},
 	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// 1. Prepare Request to Auth Service
-			// We use GET usually, checking the same URI
+			cacheKey := r.Header.Get("Authorization") + "|" + r.Header.Get("Cookie") + "|" + r.Method + "|" + r.URL.Path
+
+			if allowed, ok := authCache.Get[string](cacheKey); ok {
+				if allowed {
+					next.ServeHTTP(w, r)
+					return
+				}
+				http.Error(w, "Forbidden (Cached)", http.StatusForbidden)
+				return
+			}
+
 			authReq, err := http.NewRequest(r.Method, cfg.URL, nil)
 			if err != nil {
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
 			}
 
-			// 2. Copy Headers (Client -> Auth)
-			// e.g. Authorization, Cookie, X-Forwarded-For
 			copyHeaders(r.Header, authReq.Header, cfg.RequestHeaders)
 
-			// Always pass original info
 			authReq.Header.Set("X-Original-URI", r.URL.RequestURI())
 			authReq.Header.Set("X-Original-Method", r.Method)
 			authReq.Header.Set("X-Forwarded-For", r.Header.Get("X-Forwarded-For"))
 
-			// 3. Execute Check
 			resp, err := client.Do(authReq)
 			if err != nil {
-				// Auth service down? Fail closed.
 				http.Error(w, "Forbidden", http.StatusForbidden)
 				return
 			}
 			defer resp.Body.Close()
 
-			// 4. Check Decision
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				// ALLOWED
+				ttl := time.Minute * 1
+				cc := resp.Header.Get("Cache-Control")
+				if cc != "" {
+					if strings.Contains(cc, "max-age=") {
+						// Logic to parse max-age could go here
+						// defaulting to 5 minutes for now if present
+						ttl = time.Minute * 5
+					}
+				}
+				authCache.SetWithTTL(cacheKey, true, ttl)
 
-				// 5. Copy Headers (Auth -> Backend)
-				// e.g. X-User-ID, X-Role, X-JWT-Payload
 				copyHeaders(resp.Header, r.Header, cfg.AuthResponseHeaders)
-
-				// Cleanup auth-specific headers we might not want to pass?
-				// Usually fine to leave them.
-
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			// DENIED
-			// Copy headers (Auth -> Client) e.g. WWW-Authenticate, Location (redirect)
+			authCache.SetWithTTL(cacheKey, false, time.Second*30)
+
 			for k, vv := range resp.Header {
 				for _, v := range vv {
 					w.Header().Add(k, v)
@@ -135,10 +140,6 @@ func ForwardAuth(cfg *woos.ForwardAuthConfig) func(http.Handler) http.Handler {
 
 func copyHeaders(src http.Header, dst http.Header, keys []string) {
 	if len(keys) == 0 {
-		// If explicit list is empty, maybe default to "Authorization" and "Cookie"?
-		// Or copy all?
-		// "Traefik" default is copy all if list is empty, but that's risky.
-		// Let's copy common auth headers if empty list provided.
 		if len(keys) == 0 {
 			val := src.Get("Authorization")
 			if val != "" {

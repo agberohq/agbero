@@ -1,8 +1,10 @@
+// internal/discovery/hosts.go
 package discovery
 
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -12,24 +14,35 @@ import (
 	"github.com/olekukonko/ll"
 )
 
+// DynamicRouteItem represents a single route from a single gossip node
+type DynamicRouteItem struct {
+	Host  string
+	Route woos.Route
+}
+
 type Host struct {
 	hostsDir string
 
-	mu    sync.RWMutex
-	hosts map[string]*woos.HostConfig
+	mu        sync.RWMutex
+	hosts     map[string]*woos.HostConfig // Loaded from disk (ID -> Config)
+	lookupMap map[string]*woos.HostConfig // Final O(1) Map (Domain -> Config)
+
+	// Map of NodeName -> Route Definition
+	// We store raw inputs so we can rebuild/merge efficiently on changes
+	gossipRoutes map[string]DynamicRouteItem
 
 	watcher *fsnotify.Watcher
 	logger  *ll.Logger
-
-	// Optional: notify subscribers on change
 	changed chan struct{}
 }
 
 func NewHost(hostsDir string, opts ...Option) *Host {
 	h := &Host{
-		hostsDir: hostsDir,
-		hosts:    make(map[string]*woos.HostConfig),
-		changed:  make(chan struct{}, 1),
+		hostsDir:     hostsDir,
+		hosts:        make(map[string]*woos.HostConfig),
+		lookupMap:    make(map[string]*woos.HostConfig),
+		gossipRoutes: make(map[string]DynamicRouteItem),
+		changed:      make(chan struct{}, 1),
 	}
 
 	for _, opt := range opts {
@@ -43,7 +56,38 @@ func NewHost(hostsDir string, opts ...Option) *Host {
 	return h
 }
 
-// Watch starts fsnotify watching and performs an initial load.
+// UpdateGossipNode adds or updates a route from a specific node
+func (hm *Host) UpdateGossipNode(nodeID, host string, route woos.Route) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+
+	host = strings.ToLower(strings.TrimSpace(host))
+	hm.gossipRoutes[nodeID] = DynamicRouteItem{
+		Host:  host,
+		Route: route,
+	}
+
+	hm.rebuildLookupLocked()
+	hm.logger.Fields("node", nodeID, "host", host, "path", route.Path).Info("gossip route updated")
+	hm.notifyChanged()
+}
+
+// RemoveGossipNode removes all routes associated with a node
+func (hm *Host) RemoveGossipNode(nodeID string) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+
+	if _, exists := hm.gossipRoutes[nodeID]; !exists {
+		return
+	}
+
+	delete(hm.gossipRoutes, nodeID)
+	hm.rebuildLookupLocked()
+
+	hm.logger.Fields("node", nodeID).Info("gossip node removed")
+	hm.notifyChanged()
+}
+
 func (hm *Host) Watch() error {
 	var err error
 	hm.watcher, err = fsnotify.NewWatcher()
@@ -51,20 +95,20 @@ func (hm *Host) Watch() error {
 		return err
 	}
 
-	// Initial load (fail fast if directory missing or unreadable)
 	if err := hm.loadAllLocked(); err != nil {
 		_ = hm.watcher.Close()
 		return err
 	}
 
-	// Watch directory
-	if err := hm.watcher.Add(hm.hostsDir); err != nil {
-		_ = hm.watcher.Close()
-		return err
+	if _, err := os.Stat(hm.hostsDir); err == nil {
+		if err := hm.watcher.Add(hm.hostsDir); err != nil {
+			_ = hm.watcher.Close()
+			return err
+		}
+		go hm.watchLoop()
+		hm.logger.Fields("dir", hm.hostsDir).Info("host discovery watching")
 	}
 
-	go hm.watchLoop()
-	hm.logger.Fields("dir", hm.hostsDir).Info("host discovery watching")
 	return nil
 }
 
@@ -87,42 +131,23 @@ func (hm *Host) watchLoop() {
 }
 
 func (hm *Host) handleEvent(event fsnotify.Event) {
-	// Ignore non-hcl files
 	if !strings.HasSuffix(strings.ToLower(event.Name), ".hcl") {
 		return
 	}
+	hm.reloadFull()
+}
 
-	filename := filepath.Base(event.Name)
-	hostID := strings.TrimSuffix(filename, ".hcl")
-
-	// Remove
-	if event.Op&fsnotify.Remove == fsnotify.Remove {
-		hm.mu.Lock()
-		delete(hm.hosts, hostID)
-		hm.mu.Unlock()
-
-		hm.logger.Fields("host_id", hostID).Info("host removed")
-		hm.notifyChanged()
-		return
-	}
-
-	// Create / Write / Rename -> reload file
-	cfg, err := hm.loadOne(event.Name)
-	if err != nil {
-		hm.logger.Fields("file", event.Name, "err", err.Error()).Warn("failed to load host config")
-		return
-	}
-
+func (hm *Host) reloadFull() {
 	hm.mu.Lock()
-	hm.hosts[hostID] = cfg
-	hm.mu.Unlock()
+	defer hm.mu.Unlock()
 
-	hm.logger.Fields("host_id", hostID).Info("host updated")
+	if err := hm.loadAllLocked(); err != nil {
+		hm.logger.Fields("err", err).Error("failed to reload file hosts")
+		return
+	}
 	hm.notifyChanged()
 }
 
-// Get finds a host config by matching a configured domain.
-// NOTE: Server should normalize host (strip port) before calling Get.
 func (hm *Host) Get(hostname string) *woos.HostConfig {
 	hostname = strings.ToLower(strings.TrimSpace(hostname))
 	if hostname == "" {
@@ -132,27 +157,12 @@ func (hm *Host) Get(hostname string) *woos.HostConfig {
 	hm.mu.RLock()
 	defer hm.mu.RUnlock()
 
-	for _, hc := range hm.hosts {
-		// CHANGED: server_names -> Domains
-		for _, domain := range hc.Domains {
-			if strings.EqualFold(domain, hostname) {
-				return hc
-			}
-		}
-	}
-	return nil
+	return hm.lookupMap[hostname]
 }
 
-// LoadAll loads all host configs from disk and returns a snapshot map.
-// Safe for callers; does not return the internal map.
 func (hm *Host) LoadAll() (map[string]*woos.HostConfig, error) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
-
-	if err := hm.loadAllLocked(); err != nil {
-		return nil, err
-	}
-
 	return hm.snapshotLocked(), nil
 }
 
@@ -166,7 +176,6 @@ func (hm *Host) Close() error {
 	return nil
 }
 
-// Changed returns a channel that receives a signal (non-blocking) on any update/removal.
 func (hm *Host) Changed() <-chan struct{} {
 	return hm.changed
 }
@@ -175,14 +184,14 @@ func (hm *Host) notifyChanged() {
 	select {
 	case hm.changed <- struct{}{}:
 	default:
-		// coalesce bursts
 	}
 }
 
 func (hm *Host) loadAllLocked() error {
-	// Ensure directory exists
 	if _, err := os.Stat(hm.hostsDir); err != nil {
-		return errors.Newf("hosts dir: %w", err)
+		hm.hosts = make(map[string]*woos.HostConfig)
+		hm.rebuildLookupLocked()
+		return nil
 	}
 
 	files, err := os.ReadDir(hm.hostsDir)
@@ -190,8 +199,7 @@ func (hm *Host) loadAllLocked() error {
 		return errors.Newf("read hosts dir: %w", err)
 	}
 
-	// Build new map to avoid partially-updated state on error
-	next := make(map[string]*woos.HostConfig, len(files))
+	nextHosts := make(map[string]*woos.HostConfig, len(files))
 
 	for _, file := range files {
 		if file.IsDir() {
@@ -209,35 +217,101 @@ func (hm *Host) loadAllLocked() error {
 		}
 
 		hostID := strings.TrimSuffix(name, ".hcl")
-		next[hostID] = cfg
+		nextHosts[hostID] = cfg
 	}
 
-	hm.hosts = next
-	hm.logger.Fields("hosts", len(hm.hosts)).Info("hosts loaded")
+	hm.hosts = nextHosts
+	hm.rebuildLookupLocked()
 	return nil
+}
+
+// rebuildLookupLocked merges File hosts and Dynamic Routes
+func (hm *Host) rebuildLookupLocked() {
+	newLookup := make(map[string]*woos.HostConfig)
+
+	// 1. Add File Hosts (Base Layer)
+	for _, cfg := range hm.hosts {
+		// Clone config to avoid mutation issues if we were to modify it
+		// (Optional optimization: simple pointer copy since files are immutable until reload)
+		for _, domain := range cfg.Domains {
+			newLookup[domain] = cfg
+		}
+	}
+
+	// 2. Merge Gossip Routes
+	// We need to group gossip routes by Host
+	dynamicMap := make(map[string][]*woos.Route)
+
+	for _, item := range hm.gossipRoutes {
+		dynamicMap[item.Host] = append(dynamicMap[item.Host], &item.Route)
+	}
+
+	for domain, routes := range dynamicMap {
+		existing, ok := newLookup[domain]
+
+		if ok {
+			// Host exists in File: Append routes dynamically
+			// We must create a shallow copy of the struct to not affect the base map
+			// which might be shared (though here we just rebuilt hosts map, so safer).
+			// To be 100% safe against race conditions on the pointer from `hm.hosts`,
+			// we create a new HostConfig combining them.
+			combined := *existing // Shallow copy
+
+			// Append gossip routes.
+			// Note: We might want to sort routes by path length (longest first) for correct matching logic
+			combined.Routes = append(combined.Routes, derefRoutes(routes)...)
+			sortRoutes(combined.Routes)
+
+			newLookup[domain] = &combined
+		} else {
+			// Host is purely dynamic
+			sorted := derefRoutes(routes)
+			sortRoutes(sorted)
+
+			newLookup[domain] = &woos.HostConfig{
+				Domains: []string{domain},
+				Routes:  sorted,
+			}
+		}
+	}
+
+	hm.lookupMap = newLookup
 }
 
 func (hm *Host) loadOne(path string) (*woos.HostConfig, error) {
 	var hostConfig woos.HostConfig
-
-	// NOTE: your Parser is not generic; use NewParser(path).Unmarshal(&hostConfig)
 	parser := woos.NewParser(path)
 	if err := parser.Unmarshal(&hostConfig); err != nil {
 		return nil, err
 	}
-
-	// Normalize domains to lowercase for matching
 	for i := range hostConfig.Domains {
 		hostConfig.Domains[i] = strings.ToLower(strings.TrimSpace(hostConfig.Domains[i]))
 	}
-
+	// Sort file routes too
+	sortRoutes(hostConfig.Routes)
 	return &hostConfig, nil
 }
 
 func (hm *Host) snapshotLocked() map[string]*woos.HostConfig {
-	out := make(map[string]*woos.HostConfig, len(hm.hosts))
-	for k, v := range hm.hosts {
+	out := make(map[string]*woos.HostConfig, len(hm.lookupMap))
+	for k, v := range hm.lookupMap {
 		out[k] = v
 	}
 	return out
+}
+
+func derefRoutes(in []*woos.Route) []woos.Route {
+	out := make([]woos.Route, len(in))
+	for i, r := range in {
+		out[i] = *r
+	}
+	return out
+}
+
+// sortRoutes sorts routes by Path length descending.
+// This ensures "/api/v1" is matched before "/api" or "/".
+func sortRoutes(routes []woos.Route) {
+	sort.SliceStable(routes, func(i, j int) bool {
+		return len(routes[i].Path) > len(routes[j].Path)
+	})
 }

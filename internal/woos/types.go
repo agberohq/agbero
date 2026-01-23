@@ -1,3 +1,4 @@
+// internal/woos/types.go
 package woos
 
 import (
@@ -11,6 +12,7 @@ import (
 type GlobalConfig struct {
 	Bind           BindConfig      `hcl:"bind,block"`
 	HostsDir       string          `hcl:"hosts_dir"`
+	Gossip         *GossipConfig   `hcl:"gossip,block"`
 	LEEmail        string          `hcl:"le_email,optional"`
 	LogLevel       string          `hcl:"log_level,optional"`
 	Development    bool            `hcl:"development,optional"`
@@ -27,6 +29,14 @@ type BindConfig struct {
 	HTTP    []string `hcl:"http,optional"`
 	HTTPS   []string `hcl:"https,optional"`
 	Metrics string   `hcl:"metrics,optional"`
+}
+
+type GossipConfig struct {
+	Enabled        bool     `hcl:"enabled"`
+	Port           int      `hcl:"port,optional"`
+	SecretKey      string   `hcl:"secret_key,optional"`       // Memberlist encryption key (16, 24, or 32 bytes)
+	Seeds          []string `hcl:"seeds,optional"`            // Initial cluster peers
+	PrivateKeyFile string   `hcl:"private_key_file,optional"` // Path to Ed25519 private key for app auth
 }
 
 type TimeoutConfig struct {
