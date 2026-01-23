@@ -23,11 +23,7 @@ type RouteHandler struct {
 	// wrapped by middlewares.
 	handler http.Handler
 
-	// Data required for Load Balancing logic (which is now inside 'handler' or separate?)
-	// To keep it clean: We make RouteHandler behave as a standard http.Handler
-	// that encapsulates the middleware chain AND the LB logic.
-
-	// Internal access needed for "Close"
+	// Internal access needed for "Close" and Metrics
 	Backends []*backend.Backend
 }
 
@@ -39,13 +35,11 @@ func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
 	}
 
 	if lb.strategy == "" {
-		lb.strategy = "roundrobin"
+		lb.strategy = woos.StrategyRoundRobin // Ensure this constant exists in woos, or use "roundrobin"
 	}
 
-	if route.Timeouts != nil && route.Timeouts.Request != "" {
-		if d, err := time.ParseDuration(route.Timeouts.Request); err == nil {
-			lb.timeout = d
-		}
+	if route.Timeouts != nil && route.Timeouts.Request != 0 {
+		lb.timeout = route.Timeouts.Request
 	}
 
 	// 2. Initialize Backends
@@ -88,8 +82,8 @@ func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
 
 	// Layer 1: Compression (Outer)
 	// Compresses the final byte stream.
-	if route.Compression {
-		chain = compress.Compress()(chain)
+	if route.CompressionConfig.Compression {
+		chain = compress.Compress(route)(chain)
 	}
 
 	return &RouteHandler{
@@ -108,7 +102,7 @@ func (h *RouteHandler) Close() {
 	}
 }
 
-// --- Internal Load Balancer Logic (Moved from RouteHandler) ---
+// --- Internal Load Balancer Logic ---
 
 type LoadBalancerHandler struct {
 	stripPrefixes []string
@@ -151,7 +145,7 @@ func (lb *LoadBalancerHandler) PickBackend() *backend.Backend {
 	}
 
 	switch lb.strategy {
-	case woos.StrategyLeastConn, "least_conn":
+	case woos.StrategyLeastConn:
 		return lb.pickLeastConn()
 	case woos.StrategyRandom:
 		return lb.pickRandom()
@@ -191,7 +185,15 @@ func (lb *LoadBalancerHandler) pickLeastConn() *backend.Backend {
 		min  int64 = -1
 	)
 
-	for _, b := range lb.Backends {
+	// To avoid stampeding the first backend when all have 0 conns,
+	// start iteration at a random offset
+	n := len(lb.Backends)
+	start := int(randUint64() % uint64(n))
+
+	for i := 0; i < n; i++ {
+		idx := (start + i) % n
+		b := lb.Backends[idx]
+
 		if !b.Alive.Load() {
 			continue
 		}
