@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/security"
+	"git.imaxinacion.net/aibox/agbero/internal/core/security"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"

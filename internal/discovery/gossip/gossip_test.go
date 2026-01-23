@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"git.imaxinacion.net/aibox/agbero/internal/security"
+	"git.imaxinacion.net/aibox/agbero/internal/core/security"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/hashicorp/memberlist"
 	"github.com/olekukonko/ll"
