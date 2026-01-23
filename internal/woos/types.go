@@ -1,3 +1,4 @@
+// internal/woos/types.go
 package woos
 
 import (
@@ -10,7 +11,6 @@ import (
 
 type GlobalConfig struct {
 	Bind           BindConfig      `hcl:"bind,block"`
-	HostsDir       string          `hcl:"hosts_dir"`
 	Gossip         *GossipConfig   `hcl:"gossip,block"`
 	LEEmail        string          `hcl:"le_email,optional"`
 	LogLevel       string          `hcl:"log_level,optional"`
@@ -105,6 +105,9 @@ type ForwardAuthConfig struct {
 
 	// Headers to copy FROM auth response TO backend request (e.g. "X-User-ID")
 	AuthResponseHeaders []string `hcl:"auth_response_headers,optional"`
+
+	// On auth server failure (e.g., timeout): "deny" (default) or "allow"
+	OnFailure string `hcl:"on_failure,optional"`
 }
 
 type HealthCheckConfig struct {

@@ -24,6 +24,11 @@ func Forward(cfg *woos.ForwardAuthConfig) func(http.Handler) http.Handler {
 		return func(next http.Handler) http.Handler { return next }
 	}
 
+	onFailure := strings.ToLower(cfg.OnFailure)
+	if onFailure != "allow" {
+		onFailure = "deny" // Default
+	}
+
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 		Transport: &http.Transport{
@@ -60,6 +65,11 @@ func Forward(cfg *woos.ForwardAuthConfig) func(http.Handler) http.Handler {
 
 			resp, err := client.Do(authReq)
 			if err != nil {
+				// Failure fallback
+				if onFailure == "allow" {
+					next.ServeHTTP(w, r)
+					return
+				}
 				http.Error(w, "Forbidden", http.StatusForbidden)
 				return
 			}
