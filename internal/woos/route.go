@@ -50,8 +50,8 @@ func (route *Route) Key() string {
 	if route.HealthCheck != nil {
 		sb.WriteString("|hc=")
 		sb.WriteString(route.HealthCheck.Path)
-		sb.WriteString(route.HealthCheck.Interval)
-		sb.WriteString(route.HealthCheck.Timeout)
+		sb.WriteString(route.HealthCheck.Interval.String())
+		sb.WriteString(route.HealthCheck.Timeout.String())
 	}
 
 	if route.CircuitBreaker != nil {
@@ -61,7 +61,7 @@ func (route *Route) Key() string {
 
 	if route.Timeouts != nil {
 		sb.WriteString("|to=")
-		sb.WriteString(route.Timeouts.Request)
+		sb.WriteString(route.Timeouts.Request.String())
 	}
 
 	// Middlewares

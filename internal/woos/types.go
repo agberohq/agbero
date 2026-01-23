@@ -1,4 +1,3 @@
-// internal/woos/types.go
 package woos
 
 import (
@@ -109,19 +108,19 @@ type ForwardAuthConfig struct {
 }
 
 type HealthCheckConfig struct {
-	Path      string `hcl:"path"`
-	Interval  string `hcl:"interval,optional"`
-	Timeout   string `hcl:"timeout,optional"`
-	Threshold int    `hcl:"threshold,optional"`
+	Path      string        `hcl:"path"`
+	Interval  time.Duration `hcl:"interval,optional"`
+	Timeout   time.Duration `hcl:"timeout,optional"`
+	Threshold int           `hcl:"threshold,optional"`
 }
 
 type CircuitBreakerConfig struct {
-	Threshold int    `hcl:"threshold,optional"`
-	Duration  string `hcl:"duration,optional"`
+	Threshold int           `hcl:"threshold,optional"`
+	Duration  time.Duration `hcl:"duration,optional"`
 }
 
 type RouteTimeouts struct {
-	Request string `hcl:"request,optional"`
+	Request time.Duration `hcl:"request,optional"`
 }
 
 // ---- STATIC WEB ----------------------------------------------
