@@ -1,4 +1,3 @@
-// internal/discovery/hosts.go
 package discovery
 
 import (
@@ -7,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
@@ -32,6 +32,9 @@ type Host struct {
 	// We store raw inputs so we can rebuild/merge efficiently on changes
 	gossipRoutes map[string]DynamicRouteItem
 
+	// Per-node failure tracking (e.g., for health from gossip pings)
+	nodeFailures map[string]int
+
 	watcher *fsnotify.Watcher
 	logger  *ll.Logger
 	changed chan struct{}
@@ -43,6 +46,7 @@ func NewHost(hostsDir string, opts ...Option) *Host {
 		hosts:        make(map[string]*woos.HostConfig),
 		lookupMap:    make(map[string]*woos.HostConfig),
 		gossipRoutes: make(map[string]DynamicRouteItem),
+		nodeFailures: make(map[string]int),
 		changed:      make(chan struct{}, 1),
 	}
 
@@ -89,6 +93,32 @@ func (hm *Host) RemoveGossipNode(nodeID string) {
 	hm.notifyChanged()
 }
 
+// RouteExists checks if a route with given host and path already exists
+func (hm *Host) RouteExists(host, path string) bool {
+	hm.mu.RLock()
+	defer hm.mu.RUnlock()
+
+	cfg, ok := hm.lookupMap[host]
+	if !ok {
+		return false
+	}
+	for _, r := range cfg.Routes {
+		if r.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+// ResetNodeFailures resets failure count for a node (e.g., on alive ping)
+func (hm *Host) ResetNodeFailures(nodeName string) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+
+	hm.nodeFailures[nodeName] = 0
+	hm.logger.Fields("node", nodeName).Debug("node failures reset")
+}
+
 func (hm *Host) Watch() error {
 	var err error
 	hm.watcher, err = fsnotify.NewWatcher()
@@ -114,13 +144,15 @@ func (hm *Host) Watch() error {
 }
 
 func (hm *Host) watchLoop() {
+	debouncedReload := core.Debounce(500*time.Millisecond, hm.reloadFull)
+
 	for {
 		select {
 		case event, ok := <-hm.watcher.Events:
 			if !ok {
 				return
 			}
-			hm.handleEvent(event)
+			hm.handleEvent(event, debouncedReload)
 
 		case err, ok := <-hm.watcher.Errors:
 			if !ok {
@@ -131,11 +163,11 @@ func (hm *Host) watchLoop() {
 	}
 }
 
-func (hm *Host) handleEvent(event fsnotify.Event) {
+func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 	if !strings.HasSuffix(strings.ToLower(event.Name), ".hcl") {
 		return
 	}
-	hm.reloadFull()
+	debouncedReload()
 }
 
 func (hm *Host) reloadFull() {

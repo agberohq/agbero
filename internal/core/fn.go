@@ -3,6 +3,7 @@ package core
 import (
 	"net"
 	"strings"
+	"time"
 )
 
 func PathMatch(requestPath, pattern string) bool {
@@ -59,4 +60,15 @@ func Or[T comparable](a ...T) T {
 		}
 	}
 	return zero
+}
+
+// Debounce returns a function that calls f only after delay since last call
+func Debounce(delay time.Duration, f func()) func() {
+	var timer *time.Timer
+	return func() {
+		if timer != nil {
+			timer.Stop()
+		}
+		timer = time.AfterFunc(delay, f)
+	}
 }

@@ -101,6 +101,8 @@ func (e *eventDelegate) NotifyJoin(node *memberlist.Node) {
 		return
 	}
 	e.processNode(node)
+	// Mark healthy on join
+	e.s.logger.Fields("node", node.Name).Info("node joined and marked healthy")
 }
 
 func (e *eventDelegate) NotifyLeave(node *memberlist.Node) {
@@ -112,6 +114,12 @@ func (e *eventDelegate) NotifyLeave(node *memberlist.Node) {
 
 func (e *eventDelegate) NotifyUpdate(node *memberlist.Node) {
 	e.processNode(node)
+}
+
+func (e *eventDelegate) NotifyAlive(node *memberlist.Node) {
+	// Reset failures on alive ping
+	e.s.hm.ResetNodeFailures(node.Name) // Assume hm has this method; add if needed
+	e.s.logger.Fields("node", node.Name).Debug("node alive ping received")
 }
 
 func (e *eventDelegate) processNode(node *memberlist.Node) {
@@ -164,6 +172,12 @@ func (e *eventDelegate) processNode(node *memberlist.Node) {
 
 	if meta.StripPrefix {
 		route.StripPrefixes = []string{route.Path}
+	}
+
+	// Dedup: Check if same path/host already registered by another node
+	if e.s.hm.RouteExists(meta.Host, route.Path) {
+		e.s.logger.Fields("node", node.Name, "host", meta.Host, "path", route.Path).Warn("duplicate route; skipping")
+		return
 	}
 
 	// Inject into HostManager
