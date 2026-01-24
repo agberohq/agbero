@@ -3,6 +3,6 @@ domains = ["localhost"]
 route "/" {
   web {
     root = "."
-    directory = true
+    listing = true
   }
 }

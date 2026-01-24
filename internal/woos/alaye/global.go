@@ -8,8 +8,12 @@ import (
 )
 
 type Global struct {
-	Bind           Bind     `hcl:"bind,block"`
-	HostsDir       string   `hcl:"hosts_dir"`
+	Bind Bind `hcl:"bind,block"`
+
+	// directories
+	HostsDir string `hcl:"hosts_dir"`
+	CertsDir string `hcl:"certs_dir,optional"`
+
 	LEEmail        string   `hcl:"le_email,optional"`
 	Development    bool     `hcl:"development,optional"`
 	TrustedProxies []string `hcl:"trusted_proxies,optional"`

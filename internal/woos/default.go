@@ -57,6 +57,14 @@ func ApplyDefaults(g *alaye.Global) {
 		g.RateLimits.Auth.Burst = 10
 	}
 
+	if g.CertsDir == "" {
+		g.CertsDir = CertDir
+	}
+
+	if g.HostsDir == "" {
+		g.HostsDir = HostDir
+	}
+
 	if g.TLSStorageDir == "" {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {

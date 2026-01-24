@@ -86,22 +86,24 @@ func ensureConfig(path string) error {
 		return fmt.Errorf("mkdir: %w", err)
 	}
 
-	// Calculate hosts_dir relative to config file for portability
-	hostsDirVal := "./hosts.d"
-
 	// Inject hosts_dir into the template
-	content := fmt.Sprintf(configDevTmpl, hostsDirVal)
+	content := fmt.Sprintf(configDevTmpl, woos.HostDir)
 
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return fmt.Errorf("write default config: %w", err)
 	}
 
 	// Create the hosts directory and sample
-	hostsDir := filepath.Join(dir, hostsDirVal)
+	hostsDir := filepath.Join(dir, woos.HostDir)
 	if err := os.MkdirAll(hostsDir, 0755); err != nil {
 		logger.Warn("failed to create hosts directory: %v", err)
 	} else {
 		_ = os.WriteFile(filepath.Join(hostsDir, "localhost.hcl"), []byte(hostSampleTmpl), 0644)
+	}
+
+	certsDir := filepath.Join(dir, woos.CertDir)
+	if err := os.MkdirAll(certsDir, 0700); err != nil { // 0700 for security
+		logger.Warn("failed to create certs directory: %v", err)
 	}
 
 	logger.Fields("file", path).Info("default configuration created")

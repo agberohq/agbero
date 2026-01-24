@@ -110,7 +110,7 @@ route "/" {
   web {
     root      = "./public"
     index     = "index.html"
-    directory = true # Enable directory listing
+    listing   = true # Enable directory listing
   }
   
   compression {

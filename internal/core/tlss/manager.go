@@ -13,6 +13,7 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/caddyserver/certmagic"
 	"github.com/fsnotify/fsnotify"
@@ -180,26 +181,38 @@ func (m *Manager) GetAutoLocalCertificate(host string) (*tls.Certificate, error)
 	}
 	m.localMu.RUnlock()
 
-	// Instantiate Installer
-	installer := NewInstaller(m.logger)
-	installer.SetHosts([]string{host}, 443) // Default to 443 for naming
+	// 1. Resolve directory (Config > Constant)
+	targetDir := m.Global.CertsDir
+	if targetDir == "" {
+		targetDir = woos.CertDir
+	}
 
-	// Generate or Load
+	// 2. Ensure absolute path for env var stability
+	if abs, err := filepath.Abs(targetDir); err == nil {
+		targetDir = abs
+	}
+
+	// 3. Force mkcert/truststore to use this dir for Root CA
+	os.Setenv("CAROOT", targetDir)
+
+	// 4. Initialize installer with explicit directory
+	installer := NewInstaller(m.logger, targetDir)
+	installer.SetHosts([]string{host}, 443)
+
 	certFile, keyFile, err := installer.EnsureLocalhostCert()
 	if err != nil {
-		return nil, errors.Newf("auto-tls generation failed for %q: %w", host, err)
+		return nil, errors.Newf("auto-tls failed for %q: %w", host, err)
 	}
 
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
-		return nil, errors.Newf("failed to load auto-generated cert for %q: %w", host, err)
+		return nil, errors.Newf("load cert failed for %q: %w", host, err)
 	}
 
 	m.localMu.Lock()
 	m.LocalCache[cacheKey] = &cert
 	m.localMu.Unlock()
 
-	// Watch these files too in case user regenerates them
 	m.startLocalWatcher(cacheKey, certFile, keyFile, host)
 
 	return &cert, nil

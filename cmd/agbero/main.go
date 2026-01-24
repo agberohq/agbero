@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-	"log"
 	"os"
 	"runtime"
 	"time"
@@ -249,7 +247,7 @@ func main() {
 			_, _ = s.Logger(errs)
 			go func() {
 				for err := <-errs; err != nil; {
-					log.Printf("Service internal error: %v", err)
+					logger.Errorf("Service internal error: %v", err)
 				}
 			}()
 		}
@@ -274,7 +272,7 @@ func checkAndInstallCA(global *alaye.Global) {
 	if !installer.IsCARootInstalled() {
 		logger.Info("HTTPS enabled but CA root not found. Auto-installing...")
 		if err := installer.InstallCARootIfNeeded(); err != nil {
-			logger.Warn("Failed to auto-install CA root: %v", err)
+			logger.Warnf("Failed to auto-install CA root: %v", err)
 		} else {
 			logger.Info("CA root installed successfully.")
 		}
@@ -309,7 +307,7 @@ func handleCertCommands(install, list, info bool) {
 			logger.Fatal("Failed to list certs: ", err)
 		}
 		for i, cert := range certs {
-			fmt.Printf("%d. %s\n", i+1, cert)
+			logger.Printf("%d. %s\n", i+1, cert)
 		}
 		return
 	}
@@ -353,7 +351,7 @@ func handleKeyCommands(init, gen bool) {
 		if err != nil {
 			logger.Fatal("Error minting token: ", err)
 		}
-		fmt.Println(token)
+		logger.Println(token)
 		return
 	}
 	flaggy.ShowHelpAndExit("key")

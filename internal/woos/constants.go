@@ -27,3 +27,8 @@ const (
 	CtxPort = "local-port"
 	CtxIP   = "client-ip"
 )
+
+const (
+	HostDir = "host.d"
+	CertDir = "certs.d"
+)

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/jittering/truststore"
 	"github.com/olekukonko/ll"
 )
@@ -33,35 +34,18 @@ type Installer struct {
 	useMkcert bool
 }
 
-func NewInstaller(logger *ll.Logger) *Installer {
-	// Try multiple locations in order of preference
-	certDirs := []string{
-		// 1. User's existing .cert directory
-		filepath.Join(os.Getenv("HOME"), ".cert"),
-		// 2. Agbero-specific cert directory
-		filepath.Join(os.Getenv("HOME"), ".config", "agbero", "certs"),
-		// 3. System-wide location
-		"/etc/agbero/certs",
-	}
+func NewInstaller(logger *ll.Logger, dir ...string) *Installer {
+	// Default to constant
+	target := woos.CertDir
 
-	var certDir string
-	for _, dir := range certDirs {
-		if _, err := os.Stat(dir); err == nil {
-			certDir = dir
-			logger.Fields("dir", dir).Info("Using existing cert directory")
-			break
-		}
-	}
-
-	// If no existing directory found, use the first one
-	if certDir == "" {
-		certDir = certDirs[0]
-		// We don't log creation here, just selection
+	// Override if provided
+	if len(dir) > 0 && dir[0] != "" {
+		target = dir[0]
 	}
 
 	return &Installer{
 		logger:  logger,
-		CertDir: certDir,
+		CertDir: target,
 	}
 }
 
