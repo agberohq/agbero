@@ -28,24 +28,30 @@ type RouteHandler struct {
 }
 
 func NewRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
-	logger.Fields("path", route.Path, "web_root", route.Web.Root, "backends", route.Backends).Debug("creating route handler")
+	if route == nil {
+		logger.Error("nil route")
+		return nil
+	}
 
-	// Check if this is actually a web route (has non-empty Web.Root)
+	// Validate route semantics first (web XOR backends, required fields, etc.)
+	if err := route.Validate(); err != nil {
+		logger.Fields("path", route.Path, "err", err).Error("invalid route config")
+		return nil
+	}
+
+	logger.Fields("path", route.Path, "web_root_raw", string(route.Web.Root), "backends", route.Backends).
+		Debug("creating route handler")
+
+	// At this point route.Validate() guaranteed exactly one of these:
+	// - web route with root set
+	// - proxy route with backends set
 	if route.Web.Root.IsSet() {
 		logger.Debug("treating as WEB route")
 		return newWebRouteHandler(route, logger)
-	} else if len(route.Backends) > 0 {
-		logger.Debug("treating as PROXY route")
-		return newProxyRouteHandler(route, logger)
-	} else {
-		logger.Error("route has neither web root nor backends")
-		// Return a handler that returns 500 error
-		return &RouteHandler{
-			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				http.Error(w, "Misconfigured route", http.StatusInternalServerError)
-			}),
-		}
 	}
+
+	logger.Debug("treating as PROXY route")
+	return newProxyRouteHandler(route, logger)
 }
 
 func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
