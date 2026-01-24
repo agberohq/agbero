@@ -4,7 +4,9 @@ bind {
   metrics = ":9090"
 }
 
-hosts_dir = "%s"
+hosts_dir = "./host.d"
+cert_dir = "./cert.d"
+
 le_email = "admin@example.com"
 development = true
 
