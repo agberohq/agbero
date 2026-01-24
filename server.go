@@ -347,7 +347,7 @@ func (s *Server) startMetricsServer() {
 	mux := http.NewServeMux()
 
 	// The core metrics endpoint (JSON structure with HdrHistogram stats)
-	mux.HandleFunc("/metrics", handlers2.MetricsHandler(s.hostManager))
+	mux.HandleFunc("/metrics", handlers2.Metrics(s.hostManager))
 
 	// Simple liveness probe for load balancers (AWS ALB, K8s, etc.)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

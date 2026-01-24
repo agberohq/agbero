@@ -12,7 +12,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
-type LoadBalancerHandler struct {
+type LoadBalancer struct {
 	stripPrefixes []string
 	strategy      string
 	Backends      []*backend.Backend
@@ -22,7 +22,7 @@ type LoadBalancerHandler struct {
 }
 
 // RecalculateTotalWeight should be called during init
-func (lb *LoadBalancerHandler) recalculateTotalWeight() {
+func (lb *LoadBalancer) recalculateTotalWeight() {
 	var sum uint64
 	for _, b := range lb.Backends {
 		w := b.Weight
@@ -34,7 +34,7 @@ func (lb *LoadBalancerHandler) recalculateTotalWeight() {
 	lb.totalWeight = sum
 }
 
-func (lb *LoadBalancerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(lb.Backends) == 0 {
 		http.Error(w, "No backends configured", http.StatusBadGateway)
 		return
@@ -57,7 +57,7 @@ func (lb *LoadBalancerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func (lb *LoadBalancerHandler) PickBackend() *backend.Backend {
+func (lb *LoadBalancer) PickBackend() *backend.Backend {
 	if len(lb.Backends) == 1 {
 		b := lb.Backends[0]
 		if b.Alive.Load() {
@@ -85,7 +85,7 @@ func (lb *LoadBalancerHandler) PickBackend() *backend.Backend {
 }
 
 // Simple Round Robin (Uniform Weights)
-func (lb *LoadBalancerHandler) pickRoundRobin() *backend.Backend {
+func (lb *LoadBalancer) pickRoundRobin() *backend.Backend {
 	n := uint64(len(lb.Backends))
 	for i := uint64(0); i < n; i++ {
 		idx := atomic.AddUint64(&lb.rrCounter, 1)
@@ -101,7 +101,7 @@ func (lb *LoadBalancerHandler) pickRoundRobin() *backend.Backend {
 // Iterates based on cumulative weight.
 // A(3), B(1). Total 4.
 // Counter 0 -> A, 1 -> A, 2 -> A, 3 -> B
-func (lb *LoadBalancerHandler) pickWeightedRoundRobin() *backend.Backend {
+func (lb *LoadBalancer) pickWeightedRoundRobin() *backend.Backend {
 	total := lb.totalWeight
 	if total == 0 {
 		return lb.pickRoundRobin()
@@ -139,7 +139,7 @@ func (lb *LoadBalancerHandler) pickWeightedRoundRobin() *backend.Backend {
 	return nil
 }
 
-func (lb *LoadBalancerHandler) pickRandom() *backend.Backend {
+func (lb *LoadBalancer) pickRandom() *backend.Backend {
 	n := len(lb.Backends)
 	start := randUint64()
 	for i := 0; i < n; i++ {
@@ -153,7 +153,7 @@ func (lb *LoadBalancerHandler) pickRandom() *backend.Backend {
 }
 
 // Weighted Random
-func (lb *LoadBalancerHandler) pickWeightedRandom() *backend.Backend {
+func (lb *LoadBalancer) pickWeightedRandom() *backend.Backend {
 	total := lb.totalWeight
 	if total == 0 {
 		return lb.pickRandom()
@@ -186,7 +186,7 @@ func (lb *LoadBalancerHandler) pickWeightedRandom() *backend.Backend {
 	return nil
 }
 
-func (lb *LoadBalancerHandler) pickLeastConn() *backend.Backend {
+func (lb *LoadBalancer) pickLeastConn() *backend.Backend {
 	var (
 		best *backend.Backend
 		min  int64 = -1

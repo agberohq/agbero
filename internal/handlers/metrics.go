@@ -10,8 +10,8 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
 
-// MetricsHandler returns a JSON snapshot of the proxy state
-func MetricsHandler(hm *discovery.Host) http.HandlerFunc {
+// Metrics returns a JSON snapshot of the proxy state
+func Metrics(hm *discovery.Host) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		snapshot := collectMetrics(hm)
 

@@ -86,7 +86,7 @@ func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 }
 
 func newProxyRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
-	lb := &LoadBalancerHandler{
+	lb := &LoadBalancer{
 		stripPrefixes: append([]string(nil), route.StripPrefixes...),
 		strategy:      strings.ToLower(strings.TrimSpace(route.Backends.LBStrategy)),
 	}
