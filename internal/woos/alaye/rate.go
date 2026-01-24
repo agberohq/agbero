@@ -83,3 +83,14 @@ func (r *RatePolicy) Validate() error {
 
 	return nil
 }
+
+func (r *RatePolicy) Policy() (requests int, window time.Duration, burst int, ok bool) {
+	if r.Requests <= 0 {
+		return 0, 0, 0, false
+	}
+	b := r.Burst
+	if b <= 0 {
+		b = r.Requests
+	}
+	return r.Requests, r.Window, b, true
+}

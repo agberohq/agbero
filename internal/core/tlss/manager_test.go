@@ -20,7 +20,6 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/caddyserver/certmagic"
-	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/ll"
 )
 
@@ -219,22 +218,6 @@ func TestTlsManager_GetCertificate_NoSNI(t *testing.T) {
 	_, err := m.GetCertificate(chi)
 	if err == nil || !strings.Contains(err.Error(), "missing SNI") {
 		t.Errorf("Expected missing SNI error, got %v", err)
-	}
-}
-
-func TestTlsManager_Close(t *testing.T) {
-	m := &Manager{}
-	m.Watchers = make(map[string]*fsnotify.Watcher)
-
-	w, err := fsnotify.NewWatcher()
-	if err != nil {
-		t.Fatalf("Failed to create watcher: %v", err)
-	}
-	m.Watchers["test"] = w
-
-	m.Close()
-	if len(m.Watchers) != 0 {
-		t.Error("Watchers not closed")
 	}
 }
 

@@ -28,15 +28,15 @@ const (
 
 type Installer struct {
 	logger    *ll.Logger // Changed to interface
-	CertDir   string
+	CertDir   woos.Folder
 	certHosts []string
 	port      int
 	useMkcert bool
 }
 
-func NewInstaller(logger *ll.Logger, absoluteCertDir ...string) *Installer {
-	// We trust the caller (Server) has already resolved this path via woos.ApplyDefaults
-	cetDir := woos.DefaultCertDirName
+func NewInstaller(logger *ll.Logger, absoluteCertDir ...woos.Folder) *Installer {
+	// We trust the caller (Server) has already resolved this path via woos.DefaultApply
+	cetDir := woos.CertDir
 	if len(absoluteCertDir) > 0 {
 		cetDir = absoluteCertDir[0]
 	}
@@ -46,7 +46,7 @@ func NewInstaller(logger *ll.Logger, absoluteCertDir ...string) *Installer {
 	}
 }
 
-func (ci *Installer) SetStorageDir(dir string) error {
+func (ci *Installer) SetStorageDir(dir woos.Folder) error {
 	if dir == "" {
 		return nil // Use default
 	}
@@ -78,7 +78,7 @@ func (ci *Installer) SetHosts(hosts []string, port int) {
 func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error) {
 	// 1. Centralized Directory Creation
 	// We use the woos package to ensure permissions and existence are correct
-	// strictly based on the path provided by the Config/ApplyDefaults.
+	// strictly based on the path provided by the Config/DefaultApply.
 	if err := woos.EnsureDir(ci.CertDir, false); err != nil {
 		return "", "", fmt.Errorf("failed to ensure cert directory: %w", err)
 	}
@@ -132,31 +132,7 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 }
 
 func (ci *Installer) IsMkcertInstalled() bool {
-	// Check if mkcert is in PATH
-	if path, err := exec.LookPath("mkcert"); err == nil {
-		// Verify it's actually mkcert and works
-		cmd := exec.Command(path, "-version")
-		if err := cmd.Run(); err == nil {
-			return true
-		}
-	}
-
-	// Check common installation locations
-	commonPaths := []string{
-		"/usr/local/bin/mkcert",
-		"/usr/bin/mkcert",
-		"/opt/homebrew/bin/mkcert",
-		filepath.Join(os.Getenv("HOME"), "go", "bin", "mkcert"),
-		filepath.Join(os.Getenv("HOME"), ".local", "bin", "mkcert"),
-	}
-
-	for _, path := range commonPaths {
-		if _, err := os.Stat(path); err == nil {
-			return true
-		}
-	}
-
-	return false
+	return IsMkcertInstalled()
 }
 
 func (ci *Installer) IsCARootInstalled() bool {

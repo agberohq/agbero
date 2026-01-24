@@ -4,11 +4,13 @@ bind {
   metrics = ":9090"
 }
 
-hosts_dir = "%s"
+hosts_dir = "./host.d"
+cert_dir = "./cert.d"
+
+
 le_email = "admin@example.com"
 trusted_proxies = ["127.0.0.1/32"]
 max_header_bytes = 1048576
-tls_storage_dir  = "/var/lib/agbero/certmagic"
 
 timeouts {
   read        = "10s"

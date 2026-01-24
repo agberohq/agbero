@@ -3,13 +3,14 @@ package woos
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
-// ApplyDefaults sets defaults ONLY when config did not provide values.
-func ApplyDefaults(g *alaye.Global, configAbsPath string) {
+// DefaultApply sets defaults ONLY when config did not provide values.
+func DefaultApply(g *alaye.Global, configAbsPath string) {
 	// --- 1. Timeout Defaults (unchanged) ---
 	if g.Timeouts.Read == 0 {
 		g.Timeouts.Read = alaye.DefaultReadTimeout
@@ -63,46 +64,34 @@ func ApplyDefaults(g *alaye.Global, configAbsPath string) {
 	}
 
 	// Resolve HostsDir
-	if g.HostsDir == "" {
-		g.HostsDir = filepath.Join(baseDir, DefaultHostDirName)
-	} else if !filepath.IsAbs(g.HostsDir) {
-		g.HostsDir = filepath.Join(baseDir, g.HostsDir)
+	if g.Storage.HostsDir == "" {
+		g.Storage.HostsDir = filepath.Join(baseDir, HostDir.Name())
+	} else if !filepath.IsAbs(g.Storage.HostsDir) {
+		g.Storage.HostsDir = filepath.Join(baseDir, g.Storage.HostsDir)
 	}
 
 	// Resolve CertsDir
-	if g.CertsDir == "" {
-		g.CertsDir = filepath.Join(baseDir, DefaultCertDirName)
-	} else if !filepath.IsAbs(g.CertsDir) {
-		g.CertsDir = filepath.Join(baseDir, g.CertsDir)
-	}
-
-	// Resolve TLSStorageDir
-	if g.TLSStorageDir == "" {
-		// Try standard location or fallback to user home
-		if home, err := os.UserHomeDir(); err == nil {
-			// Check ~/.cert (legacy/common)
-			legacy := filepath.Join(home, ".cert")
-			if _, err := os.Stat(legacy); err == nil {
-				g.TLSStorageDir = legacy
-			} else {
-				// Default: ~/.config/agbero/data
-				g.TLSStorageDir = filepath.Join(home, ".config", Name, DefaultDataDirName)
-			}
-		} else {
-			// Fallback if no home dir: ./data
-			g.TLSStorageDir = filepath.Join(baseDir, DefaultDataDirName)
-		}
+	if g.Storage.CertsDir == "" {
+		g.Storage.CertsDir = filepath.Join(baseDir, CertDir.Name())
+	} else if !filepath.IsAbs(g.Storage.CertsDir) {
+		g.Storage.CertsDir = filepath.Join(baseDir, g.Storage.CertsDir)
 	}
 }
 
-// ParseRatePolicy parses a RatePolicy into primitives (config must not depend on proxy types).
-func ParseRatePolicy(rc alaye.RatePolicy) (requests int, window time.Duration, burst int, ok bool) {
-	if rc.Requests <= 0 {
-		return 0, 0, 0, false
+// DefaultPaths returns the OS-specific default paths.
+// This replaces the logic currently in helpers.go
+func DefaultPaths() RuntimePaths {
+	var base string
+	if runtime.GOOS == "windows" {
+		base = filepath.Join(os.Getenv("ProgramData"), Name)
+	} else {
+		base = filepath.Join("/etc", Name)
 	}
-	b := rc.Burst
-	if b <= 0 {
-		b = rc.Requests
+
+	return RuntimePaths{
+		BaseDir:    base,
+		ConfigFile: filepath.Join(base, DefaultConfigName),
+		HostsDir:   filepath.Join(base, HostDir.Name()),
+		CertsDir:   filepath.Join(base, CertDir.Name()),
 	}
-	return rc.Requests, rc.Window, b, true
 }

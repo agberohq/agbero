@@ -41,19 +41,65 @@ type Manager struct {
 	localMu    sync.RWMutex
 	LocalCache map[string]*tls.Certificate
 
-	Watchers  map[string]*fsnotify.Watcher
+	watcher   *fsnotify.Watcher
+	watchList map[string]func()
 	watcherMu sync.Mutex
 }
 
 func NewManager(logger *ll.Logger, hostManager *discovery.Host, global *alaye.Global) *Manager {
-	return &Manager{
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		logger.Fatal(err)
+	}
+	m := &Manager{
 		logger:      logger,
 		hostManager: hostManager,
 		Global:      global,
 		LocalCache:  make(map[string]*tls.Certificate),
+		watchList:   make(map[string]func()),
+		watcher:     watcher,
 	}
 
+	go m.globalWatchLoop()
+	return m
+
 }
+
+func (m *Manager) startLocalWatcher(cacheKey, certFile, keyFile, host string) {
+	m.watcherMu.Lock()
+	defer m.watcherMu.Unlock()
+
+	// Add files to the single watcher
+	m.watcher.Add(certFile)
+	m.watcher.Add(keyFile)
+
+	// Register callback for these paths
+	callback := func() { m.invalidateLocal(cacheKey, host) }
+	m.watchList[certFile] = callback
+	m.watchList[keyFile] = callback
+}
+
+func (m *Manager) globalWatchLoop() {
+	for {
+		select {
+		case event, ok := <-m.watcher.Events:
+			if !ok {
+				return
+			}
+			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+				m.watcherMu.Lock()
+				if callback, exists := m.watchList[event.Name]; exists {
+					// Run in goroutine to not block watcher
+					go callback()
+				}
+				m.watcherMu.Unlock()
+			}
+		case <-m.watcher.Errors:
+			return
+		}
+	}
+}
+
 func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 	m.cmMu.Lock()
 	defer m.cmMu.Unlock()
@@ -62,14 +108,14 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 		return next, errors.New("global config is required")
 	}
 
-	email := strings.TrimSpace(m.Global.LEEmail)
+	email := strings.TrimSpace(m.Global.LetsEncrypt.Email)
 	if email == "" {
 		return next, errors.New("le_email is empty")
 	}
 
-	storageDir := strings.TrimSpace(m.Global.TLSStorageDir)
+	storageDir := strings.TrimSpace(m.Global.Storage.CertsDir)
 	if storageDir == "" {
-		return next, errors.New("tls_storage_dir is empty")
+		return next, errors.New("cert_dir is empty")
 	}
 	storageDir = filepath.Clean(storageDir)
 
@@ -167,7 +213,7 @@ func (m *Manager) GetLocalCertificate(local alaye.LocalCert, host string) (*tls.
 	m.LocalCache[cacheKey] = &cert
 	m.localMu.Unlock()
 
-	m.startLocalWatcher(cacheKey, certFile, keyFile, host)
+	//m.startLocalWatcher(cacheKey, certFile, keyFile, host)
 	return &cert, nil
 }
 
@@ -216,54 +262,6 @@ func (m *Manager) GetAutoLocalCertificate(host string) (*tls.Certificate, error)
 	m.startLocalWatcher(cacheKey, certFile, keyFile, host)
 
 	return &cert, nil
-}
-
-func (m *Manager) startLocalWatcher(cacheKey, certFile, keyFile, host string) {
-	m.watcherMu.Lock()
-	defer m.watcherMu.Unlock()
-
-	if m.Watchers == nil {
-		m.Watchers = make(map[string]*fsnotify.Watcher)
-	}
-
-	if _, exists := m.Watchers[cacheKey]; exists {
-		return
-	}
-
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		m.logger.Fields("err", err, "host", host).Warn("failed to create local cert watcher")
-		return
-	}
-
-	for _, file := range []string{certFile, keyFile} {
-		if err := watcher.Add(file); err != nil {
-			m.logger.Fields("err", err, "file", file, "host", host).Warn("failed to watch local cert file")
-			watcher.Close()
-			return
-		}
-	}
-
-	m.Watchers[cacheKey] = watcher
-
-	go func() {
-		for {
-			select {
-			case event, ok := <-watcher.Events:
-				if !ok {
-					return
-				}
-				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) {
-					m.invalidateLocal(cacheKey, host)
-				}
-			case err, ok := <-watcher.Errors:
-				if !ok {
-					return
-				}
-				m.logger.Fields("err", err, "host", host).Error("local cert watcher error")
-			}
-		}
-	}()
 }
 
 func (m *Manager) invalidateLocal(cacheKey, host string) {
@@ -359,8 +357,16 @@ func (m *Manager) getCustomCACert(root string, host string) (*tls.Certificate, e
 func (m *Manager) Close() {
 	m.watcherMu.Lock()
 	defer m.watcherMu.Unlock()
-	for key, w := range m.Watchers {
-		w.Close()
-		delete(m.Watchers, key)
-	}
+	m.watcher.Close()
+}
+
+func (m *Manager) ClearCache() {
+	m.localMu.Lock()
+	defer m.localMu.Unlock()
+
+	// Wipe the map. Next request will re-read files from disk.
+	m.LocalCache = make(map[string]*tls.Certificate)
+
+	// Also clear CertMagic cache if needed, though that is usually handled internally by CertMagic's own storage mechanisms.
+	m.logger.Info("TLS certificate cache cleared")
 }

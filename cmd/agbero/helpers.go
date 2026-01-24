@@ -54,7 +54,7 @@ func resolveConfigPath(flagPath string) (string, bool) {
 	}
 
 	// 4. System Config
-	sysPaths := woos.GetSystemDefaults()
+	sysPaths := woos.DefaultPaths()
 	if _, err := os.Stat(sysPaths.ConfigFile); err == nil {
 		return sysPaths.ConfigFile, true
 	}
@@ -85,14 +85,14 @@ func ensureConfig(path string) error {
 	// Create the hosts directory and sample
 	hostsDir := filepath.Join(dir, woos.HostDir)
 	if err := os.MkdirAll(hostsDir, 0755); err != nil {
-		logger.Warn("failed to create hosts directory: %v", err)
+		logger.Warnf("failed to create hosts directory: %v", err)
 	} else {
 		_ = os.WriteFile(filepath.Join(hostsDir, "localhost.hcl"), []byte(hostSampleTmpl), 0644)
 	}
 
-	certsDir := filepath.Join(dir, woos.CertDir)
+	certsDir := filepath.Join(dir, woos.HostDir)
 	if err := os.MkdirAll(certsDir, 0700); err != nil { // 0700 for security
-		logger.Warn("failed to create certs directory: %v", err)
+		logger.Warnf("failed to create certs directory: %v", err)
 	}
 
 	logger.Fields("file", path).Info("default configuration created")
@@ -121,7 +121,7 @@ func loadConfig(path string) (*alaye.Global, error) {
 }
 
 func installDefaults() error {
-	defaults := woos.GetSystemDefaults()
+	defaults := woos.DefaultPaths()
 
 	// Centralized directory creation
 	logger.Fields("dir", defaults.HostsDir).Info("creating directory")
@@ -133,7 +133,7 @@ func installDefaults() error {
 	if _, err := os.Stat(defaults.ConfigFile); os.IsNotExist(err) {
 		logger.Fields("file", defaults.ConfigFile).Info("writing default config")
 		// Use the constant name, not hardcoded "./hosts.d"
-		content := fmt.Sprintf(configSystemTmpl, "./"+woos.DefaultHostDirName)
+		content := fmt.Sprintf(configSystemTmpl, "./"+woos.HostDir)
 		if err := os.WriteFile(defaults.ConfigFile, []byte(content), woos.FilePerm); err != nil {
 			return fmt.Errorf("write config: %w", err)
 		}
@@ -304,7 +304,7 @@ func showHelpExamples(configPath string) {
 func showCertInfo(configPath string) {
 	global, err := loadConfig(configPath)
 	if err != nil {
-		logger.Warn("Could not load config: %v", err)
+		logger.Warnf("Could not load config: %v", err)
 		return
 	}
 

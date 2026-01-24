@@ -19,28 +19,38 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-// Ensure critical web types are registered regardless of OS environment
-func init() {
-	mustReg := func(ext, typ string) {
-		if mime.TypeByExtension(ext) == "" {
-			_ = mime.AddExtensionType(ext, typ)
-		}
-	}
-	mustReg(".html", "text/html; charset=utf-8")
-	mustReg(".css", "text/css; charset=utf-8")
-	mustReg(".js", "application/javascript; charset=utf-8")
-	mustReg(".json", "application/json; charset=utf-8")
-	mustReg(".svg", "image/svg+xml")
-	mustReg(".xml", "text/xml; charset=utf-8")
-	mustReg(".txt", "text/plain; charset=utf-8")
-}
-
-// Listing Listing Logic
-//
 //go:embed dir.html
 var dirListingHTML string
 
 var tmpl = template.Must(template.New("dir").Parse(dirListingHTML))
+
+// Ensure critical web types are registered regardless of OS environment
+func init() {
+	// Add ALL common web types explicitly to avoid OS dependency
+	types := map[string]string{
+		".html":  "text/html; charset=utf-8",
+		".css":   "text/css; charset=utf-8",
+		".js":    "application/javascript; charset=utf-8",
+		".json":  "application/json; charset=utf-8",
+		".xml":   "text/xml; charset=utf-8",
+		".svg":   "image/svg+xml",
+		".txt":   "text/plain; charset=utf-8",
+		".png":   "image/png",
+		".jpg":   "image/jpeg",
+		".jpeg":  "image/jpeg",
+		".gif":   "image/gif",
+		".webp":  "image/webp",
+		".ico":   "image/x-icon",
+		".woff2": "font/woff2",
+		".wasm":  "application/wasm",
+	}
+
+	for ext, mimeType := range types {
+		if err := mime.AddExtensionType(ext, mimeType); err != nil {
+			// Log error or ignore
+		}
+	}
+}
 
 type dirItem struct {
 	Name    string

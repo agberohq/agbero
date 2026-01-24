@@ -29,6 +29,17 @@ const (
 )
 
 const (
-	HostDir = "host.d"
-	CertDir = "certs.d"
+	HostDir Folder = "./hosts.d"
+	CertDir Folder = "./certs.d"
+)
+
+// Standardize permissions here
+const (
+	DirPerm    = 0755
+	FilePerm   = 0644
+	SecurePerm = 0700 // For keys/certs
+)
+
+const (
+	DefaultConfigName = "./agbero.hcl"
 )

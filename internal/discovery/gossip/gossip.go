@@ -3,8 +3,8 @@ package gossip
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
+	"strings"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/security"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
@@ -18,6 +18,15 @@ type HostManager interface {
 	RemoveGossipNode(nodeID string)
 	RouteExists(host, path string) bool
 	ResetNodeFailures(nodeName string)
+}
+
+type logAdapter struct {
+	logger *ll.Logger
+}
+
+func (l *logAdapter) Write(p []byte) (n int, err error) {
+	l.logger.Info(strings.TrimSpace(string(p)))
+	return len(p), nil
 }
 
 // AppMeta defines the routing contract sent by the application
@@ -78,9 +87,7 @@ func NewService(hm HostManager, cfg *alaye.Gossip, logger *ll.Logger) (*Service,
 	// Capture local name before starting, so events can check "self" without s.list being ready
 	s.localName = c.Name
 	c.Events = &eventDelegate{s: s}
-
-	// Silence memberlist's default logger to avoid noise in tests/logs
-	c.Logger = log.New(io.Discard, "", 0)
+	c.Logger = log.New(&logAdapter{logger: logger}, "[gossip] ", 0)
 
 	list, err := memberlist.Create(c)
 	if err != nil {

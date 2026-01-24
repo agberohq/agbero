@@ -8,43 +8,43 @@ import (
 )
 
 type Global struct {
-	Bind Bind `hcl:"bind,block"`
+	Development bool `hcl:"development,optional"`
 
-	// directories
-	HostsDir string `hcl:"hosts_dir"`
-	CertsDir string `hcl:"certs_dir,optional"`
+	Bind        Bind        `hcl:"bind,block"`
+	Logging     Logging     `hcl:"logging,block"`
+	Gossip      Gossip      `hcl:"gossip,block"`
+	Timeouts    Timeout     `hcl:"timeouts,block"`
+	RateLimits  Rate        `hcl:"rate_limits,block"`
+	Storage     Storage     `hcl:"storage,block"`
+	Security    Security    `hcl:"security,block"`
+	General     General     `hcl:"general,block"`
+	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block"`
+}
 
-	LEEmail        string   `hcl:"le_email,optional"`
-	Development    bool     `hcl:"development,optional"`
+type Security struct {
 	TrustedProxies []string `hcl:"trusted_proxies,optional"`
+}
 
-	// NEW: Logging Configuration
-	Logging Logging `hcl:"logging,block"`
-
-	Gossip     Gossip  `hcl:"gossip,block"`
-	Timeouts   Timeout `hcl:"timeouts,block"`
-	RateLimits Rate    `hcl:"rate_limits,block"`
-
-	MaxHeaderBytes int    `hcl:"max_header_bytes,optional"`
-	TLSStorageDir  string `hcl:"tls_storage_dir,optional"`
+func (s Security) Validate() error {
+	for i, proxy := range s.TrustedProxies {
+		proxy = strings.TrimSpace(proxy)
+		if proxy == "" {
+			continue
+		}
+		// Check if it's a valid CIDR or IP
+		if _, _, err := net.ParseCIDR(proxy); err != nil {
+			if ip := net.ParseIP(proxy); ip == nil {
+				return errors.Newf("trusted_proxies[%d]: %q is not a valid CIDR or IP address", i, proxy)
+			}
+		}
+	}
+	return nil
 }
 
 func (g *Global) Validate() error {
 	// Bind config validation
 	if err := g.Bind.Validate(); err != nil {
 		return errors.Newf("bind: %w", err)
-	}
-
-	// Hosts directory
-	if g.HostsDir == "" {
-		return errors.New("hosts_dir is required")
-	}
-
-	// Email validation for Let's Encrypt (if provided)
-	if g.LEEmail != "" {
-		if !strings.Contains(g.LEEmail, "@") {
-			return errors.New("le_email must be a valid email address")
-		}
 	}
 
 	// Timeouts validation
@@ -57,16 +57,6 @@ func (g *Global) Validate() error {
 		return errors.Newf("rate_limits: %w", err)
 	}
 
-	// TLS storage directory (if provided)
-	if g.TLSStorageDir != "" && !strings.HasPrefix(g.TLSStorageDir, "/") {
-		return errors.New("tls_storage_dir must be an absolute path")
-	}
-
-	// Max header bytes validation
-	if g.MaxHeaderBytes <= 0 {
-		return errors.New("max_header_bytes must be positive")
-	}
-
 	// Gossip config validation (if enabled)
 	if &g.Gossip != nil {
 		if err := g.Gossip.Validate(); err != nil {
@@ -74,20 +64,21 @@ func (g *Global) Validate() error {
 		}
 	}
 
-	// Trusted proxies validation
-	for i, proxy := range g.TrustedProxies {
-		proxy = strings.TrimSpace(proxy)
-		if proxy == "" {
-			continue
-		}
-		// Check if it's a valid CIDR or IP
-		if _, _, err := net.ParseCIDR(proxy); err != nil {
-			if ip := net.ParseIP(proxy); ip == nil {
-				return errors.Newf("trusted_proxies[%d]: %q is not a valid CIDR or IP address", i, proxy)
-			}
-		}
+	if err := g.Security.Validate(); err != nil {
+		return errors.Newf("security: %w", err)
 	}
 
+	if err := g.General.Validate(); err != nil {
+		return errors.Newf("general: %w", err)
+	}
+
+	if err := g.LetsEncrypt.Validate(); err != nil {
+		return errors.Newf("letsencrypt: %w", err)
+	}
+
+	if err := g.Storage.Validate(); err != nil {
+		return errors.Newf("storage: %w", err)
+	}
 	return nil
 }
 
@@ -101,4 +92,24 @@ type Victoria struct {
 	Enabled   bool   `hcl:"enabled,optional"`
 	URL       string `hcl:"url,optional"` // http://victoria-logs:9428/insert/jsonline
 	BatchSize int    `hcl:"batch_size,optional"`
+}
+
+type General struct {
+	MaxHeaderBytes int `hcl:"max_header_bytes,optional"`
+}
+
+func (g *General) Validate() error {
+	if g.MaxHeaderBytes < 0 {
+		return errors.New("max_header_bytes cannot be negative")
+	}
+	return nil
+}
+
+type Storage struct {
+	HostsDir string `hcl:"hosts_dir,optional"`
+	CertsDir string `hcl:"certs_dir,optional"`
+}
+
+func (s Storage) Validate() error {
+	return nil
 }

@@ -10,15 +10,11 @@ import (
 	"testing"
 	"time"
 
-	tls2 "git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
-	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/ll"
-	"github.com/quic-go/quic-go/http3"
 )
 
 var (
@@ -73,40 +69,6 @@ func TestServer_Start_Minimal(t *testing.T) {
 	// Accept context timeout error
 	if err != nil && !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Errorf("Unexpected error: %v", err)
-	}
-}
-
-func TestServer_ShutdownImpl(t *testing.T) {
-	s := &Server{
-		servers:   make(map[string]*http.Server),
-		h3Servers: make(map[string]*http3.Server),
-		logger:    testLogger,
-		tlsManager: &tls2.Manager{ // Mock
-			Watchers: make(map[string]*fsnotify.Watcher),
-		},
-		rateLimiter: ratelimit.NewRateLimiter(time.Minute, 100, nil),
-	}
-
-	// Create a real watcher
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		t.Skipf("Could not create watcher: %v", err)
-	}
-	s.tlsManager.Watchers["test"] = watcher
-
-	// Mock TCP server
-	srv := &http.Server{
-		Addr:    ":0",
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
-	}
-	s.servers["http@:80"] = srv
-
-	err = s.shutdownImpl()
-	if err != nil {
-		t.Errorf("Unexpected shutdown error: %v", err)
-	}
-	if len(s.tlsManager.Watchers) != 0 {
-		t.Error("Watchers not closed")
 	}
 }
 

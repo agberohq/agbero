@@ -77,7 +77,15 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		s.logger = ll.New(woos.Name).Enable()
 	}
 
-	woos.ApplyDefaults(s.global, s.configPath)
+	woos.DefaultApply(s.global, s.configPath)
+
+	if !tlss.IsMkcertInstalled() {
+		if s.global.CertsDir != "" {
+			// mkcert is missing, so we will use the internal 'truststore' lib.
+			// We tell truststore to save the root CA in our configured directory.
+			os.Setenv("CAROOT", s.global.CertsDir)
+		}
+	}
 
 	// Log global config summary
 	s.logger.Fields(
@@ -331,6 +339,10 @@ func (s *Server) reload() {
 
 	currentHosts, _ := s.hostManager.LoadAll()
 	currentCount := len(currentHosts)
+
+	if s.tlsManager != nil {
+		s.tlsManager.ClearCache()
+	}
 
 	s.logger.Fields(
 		"previous_hosts", previousCount,
