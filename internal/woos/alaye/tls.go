@@ -32,6 +32,8 @@ func (t *TLS) Validate() error {
 	// Mode validation (if provided)
 	if t.Mode != "" {
 		switch t.Mode {
+		case ModeLocalAuto:
+			return nil // No validation needed, will auto-generate
 		case ModeLocalNone, ModeLocalCert, ModeLetsEncrypt, ModeCustomCA:
 			// Valid modes
 		default:

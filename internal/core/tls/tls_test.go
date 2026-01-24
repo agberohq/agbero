@@ -24,7 +24,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// Mock Logger
+// Mock logger
 type mockLogger struct {
 	logs []string
 }

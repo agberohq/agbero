@@ -20,7 +20,7 @@ func TestNewHost_Basic(t *testing.T) {
 		t.Error("Maps not initialized")
 	}
 	if h.logger == nil {
-		t.Error("Logger not set")
+		t.Error("logger not set")
 	}
 }
 

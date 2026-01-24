@@ -1,6 +1,8 @@
 package woos
 
 import (
+	"os"
+	"path/filepath"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
@@ -53,6 +55,19 @@ func ApplyDefaults(g *alaye.Global) {
 	}
 	if g.RateLimits.Auth.Burst <= 0 {
 		g.RateLimits.Auth.Burst = 10
+	}
+
+	if g.TLSStorageDir == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			homeDir = "."
+		}
+		// Use ~/.cert as default if it exists, otherwise ~/.config/agbero/certmagic
+		defaultCertDir := filepath.Join(homeDir, ".config", "agbero", "certmagic")
+		if _, err := os.Stat(filepath.Join(homeDir, ".cert")); err == nil {
+			defaultCertDir = filepath.Join(homeDir, ".cert")
+		}
+		g.TLSStorageDir = defaultCertDir
 	}
 }
 

@@ -14,7 +14,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
-// Mock Logger to avoid cluttering test output
+// Mock logger to avoid cluttering test output
 type noopLogger struct{}
 
 func (n noopLogger) Info(msg string, args ...any)      {}

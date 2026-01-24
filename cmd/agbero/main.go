@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/security"
+	"git.imaxinacion.net/aibox/agbero/internal/core/tls"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
@@ -28,6 +31,11 @@ var (
 	// Key Management Flags
 	keyService string
 	keyTTL     time.Duration
+
+	// Certificate Management Flags
+	forceCAInstall bool
+	caMethod       string
+	certDir        string
 )
 
 func main() {
@@ -71,6 +79,22 @@ func main() {
 	cmdHelp := flaggy.NewSubcommand("help")
 	cmdHelp.Description = "Show help and usage examples"
 
+	// --- Certificate Management Subcommands ---
+	cmdCert := flaggy.NewSubcommand("cert")
+	cmdCert.Description = "Manage local certificates for development"
+
+	cmdInstallCA := flaggy.NewSubcommand("install-ca")
+	cmdInstallCA.Description = "Install local CA certificate for development (if not already installed)"
+	cmdInstallCA.Bool(&forceCAInstall, "f", "force", "Force reinstall even if CA already installed")
+	cmdInstallCA.String(&caMethod, "m", "method", "Method to use: auto|mkcert|truststore (default: auto)")
+
+	cmdListCerts := flaggy.NewSubcommand("list")
+	cmdListCerts.Description = "List available certificates"
+
+	cmdCertInfo := flaggy.NewSubcommand("info")
+	cmdCertInfo.Description = "Show certificate information and storage location"
+	cmdCertInfo.String(&certDir, "d", "dir", "Certificate directory to inspect (default: from config)")
+
 	// --- Key Management Subcommands ---
 	cmdKey := flaggy.NewSubcommand("key")
 	cmdKey.Description = "Manage identity keys for gossip authentication"
@@ -93,6 +117,13 @@ func main() {
 	flaggy.AttachSubcommand(cmdHosts, 1)
 	flaggy.AttachSubcommand(cmdHelp, 1)
 
+	// Certificate commands
+	cmdCert.AttachSubcommand(cmdInstallCA, 1)
+	cmdCert.AttachSubcommand(cmdListCerts, 1)
+	cmdCert.AttachSubcommand(cmdCertInfo, 1)
+	flaggy.AttachSubcommand(cmdCert, 1)
+
+	// Key commands
 	cmdKey.AttachSubcommand(cmdKeyGen, 1)
 	cmdKey.AttachSubcommand(cmdKeyInit, 1)
 	flaggy.AttachSubcommand(cmdKey, 1)
@@ -108,6 +139,27 @@ func main() {
 	// Handle Help
 	if cmdHelp.Used {
 		showHelpExamples(configPath)
+		return
+	}
+
+	// --- Handle Certificate Commands (Exit early) ---
+	if cmdCert.Used {
+		if cmdInstallCA.Used {
+			handleInstallCA()
+			return
+		}
+
+		if cmdListCerts.Used {
+			handleListCerts()
+			return
+		}
+
+		if cmdCertInfo.Used {
+			handleCertInfo()
+			return
+		}
+
+		flaggy.ShowHelpAndExit("cert")
 		return
 	}
 
@@ -336,4 +388,208 @@ func main() {
 
 	// Default: Show usage
 	showHelpExamples(configPath)
+}
+
+func handleInstallCA() {
+	// Setup minimal logger for certificate operations
+	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
+	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
+
+	installer := tls.NewCertInstaller(minimalLogger)
+
+	if installer.IsCARootInstalled() && !forceCAInstall {
+		fmt.Println("CA root certificate is already installed in system trust store")
+		fmt.Println("Use --force to reinstall if needed")
+		return
+	}
+
+	fmt.Println("Installing CA root certificate...")
+
+	// Determine installation method
+	switch caMethod {
+	case "mkcert":
+		fmt.Println("Using mkcert method...")
+		if err := installer.InstallWithMkcert(); err != nil {
+			fmt.Printf("Failed to install CA with mkcert: %v\n", err)
+			os.Exit(1)
+		}
+	case "truststore":
+		fmt.Println("Using truststore method...")
+		if err := installer.InstallWithTruststore(); err != nil {
+			fmt.Printf("Failed to install CA with truststore: %v\n", err)
+			os.Exit(1)
+		}
+	default: // "auto"
+		fmt.Println("Auto-detecting best method...")
+		if err := installer.InstallCARootIfNeeded(); err != nil {
+			fmt.Printf("Failed to install CA: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	fmt.Println("CA certificate installed successfully")
+
+	// Test the installation
+	if installer.TestCAInstallation() {
+		fmt.Println("CA installation verified")
+	} else {
+		fmt.Println("WARNING: CA installed but verification failed. You may need to restart your browser.")
+	}
+
+	// Show next steps
+	fmt.Println("\nNext steps:")
+	fmt.Println("  1. Restart your browser if it was open during installation")
+	fmt.Println("  2. Use 'agbero cert info' to see certificate storage location")
+	fmt.Println("  3. Configure hosts with 'tls { mode = \"auto\" }' for automatic local certificates")
+}
+
+func handleListCerts() {
+	// Setup minimal logger for certificate operations
+	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
+	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
+
+	installer := tls.NewCertInstaller(minimalLogger)
+
+	// Try to load config to get tls_storage_dir
+	global, err := loadConfig(configPath)
+	if err == nil && global.TLSStorageDir != "" {
+		if err := installer.SetStorageDir(global.TLSStorageDir); err != nil {
+			fmt.Printf("WARNING: Failed to set storage dir from config: %v\n", err)
+		}
+	}
+
+	certs, err := installer.ListCertificates()
+	if err != nil {
+		fmt.Printf("Failed to list certificates: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Certificate directory: %s\n", installer.CertDir)
+
+	if len(certs) == 0 {
+		fmt.Println("No certificates found")
+		return
+	}
+
+	fmt.Printf("Found %d certificate(s):\n", len(certs))
+	for i, cert := range certs {
+		fmt.Printf("  %d. %s\n", i+1, cert)
+	}
+
+	fmt.Println("\nTo use these certificates in your config:")
+	fmt.Println(`  tls {
+    mode = "local"
+    local {
+      cert_file = "` + filepath.Join(installer.CertDir, "localhost.pem") + `"
+      key_file  = "` + filepath.Join(installer.CertDir, "localhost.key.pem") + `"
+    }
+  }`)
+}
+
+func handleCertInfo() {
+	// Setup minimal logger
+	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
+	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
+
+	installer := tls.NewCertInstaller(minimalLogger)
+
+	// Override directory if specified
+	if certDir != "" {
+		if err := installer.SetStorageDir(certDir); err != nil {
+			fmt.Printf("Failed to set certificate directory: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	fmt.Println("\nCERTIFICATE INFORMATION")
+	fmt.Println("==========================================")
+
+	// Check CA installation
+	if installer.IsCARootInstalled() {
+		fmt.Println("✓ CA root certificate is installed in system trust store")
+	} else {
+		fmt.Println("✗ CA root certificate is NOT installed")
+		fmt.Println("  Run: agbero cert install-ca")
+	}
+
+	// Show storage directory
+	fmt.Printf("\nStorage Directory: %s\n", installer.CertDir)
+
+	// Check if directory exists
+	if _, err := os.Stat(installer.CertDir); os.IsNotExist(err) {
+		fmt.Println("WARNING: Directory does not exist")
+	} else {
+		// List certificates
+		files, err := os.ReadDir(installer.CertDir)
+		if err != nil {
+			fmt.Printf("WARNING: Cannot read directory: %v\n", err)
+		} else {
+			certCount := 0
+			var totalSize int64
+			for _, file := range files {
+				if !file.IsDir() && (strings.HasSuffix(file.Name(), ".pem") ||
+					strings.HasSuffix(file.Name(), ".crt") ||
+					strings.HasSuffix(file.Name(), ".key")) {
+					certCount++
+					if info, err := file.Info(); err == nil {
+						totalSize += info.Size()
+					}
+				}
+			}
+
+			fmt.Printf("Found %d certificate file(s) (%.2f MB total)\n", certCount,
+				float64(totalSize)/(1024*1024))
+
+			if certCount > 0 {
+				fmt.Println("\nAvailable certificates:")
+				for _, file := range files {
+					if !file.IsDir() && (strings.HasSuffix(file.Name(), ".pem") ||
+						strings.HasSuffix(file.Name(), ".crt")) {
+						fullPath := filepath.Join(installer.CertDir, file.Name())
+						info, err := os.Stat(fullPath)
+						if err == nil {
+							// Format size
+							size := info.Size()
+							var sizeStr string
+							if size < 1024 {
+								sizeStr = fmt.Sprintf("%d B", size)
+							} else if size < 1024*1024 {
+								sizeStr = fmt.Sprintf("%.1f KB", float64(size)/1024)
+							} else {
+								sizeStr = fmt.Sprintf("%.1f MB", float64(size)/(1024*1024))
+							}
+
+							fmt.Printf("  • %s (%s, modified %s)\n",
+								file.Name(),
+								sizeStr,
+								info.ModTime().Format("2006-01-02"))
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Show mkcert availability
+	if installer.IsMkcertInstalled() {
+		fmt.Println("\n✓ mkcert is available on system")
+	} else {
+		fmt.Println("\n✗ mkcert is not installed")
+		fmt.Println("  Will download temporarily when needed")
+	}
+
+	fmt.Println("\nUsage examples:")
+	fmt.Println(`  1. For automatic local certificates:`)
+	fmt.Println(`     tls {
+       mode = "auto"
+     }`)
+	fmt.Println()
+	fmt.Println(`  2. For existing certificates:`)
+	fmt.Println(`     tls {
+       mode = "local"
+       local {
+         cert_file = "` + filepath.Join(installer.CertDir, "localhost.pem") + `"` + "\n")
+	fmt.Println(`         key_file  = "` + filepath.Join(installer.CertDir, "localhost.key.pem") + `"`)
+	fmt.Println(`       }
+     }`)
 }

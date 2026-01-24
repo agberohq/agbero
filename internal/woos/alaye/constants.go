@@ -5,6 +5,10 @@ import (
 )
 
 const (
+	ModeLocalAuto = "auto" // Auto-generate local certificates
+)
+
+const (
 	StrategyRandom     = "random"
 	StrategyLeastConn  = "leastconn"
 	StrategyRoundRobin = "round_robin"
