@@ -32,8 +32,8 @@ import (
 type Server struct {
 	hostManager *discovery.Host
 	global      *alaye.Global
-	tlsManager  *tlss.TlsManager // Added for watcher shutdown
-	configPath  string           // Added for reload
+	tlsManager  *tlss.Manager // Added for watcher shutdown
+	configPath  string        // Added for reload
 
 	mu sync.RWMutex
 	// TCP Servers (HTTP/1.1 & HTTP/2)
@@ -311,8 +311,10 @@ func (s *Server) reload() {
 	if s.global.LEEmail != global.LEEmail {
 		changes = append(changes, fmt.Sprintf("le_email: %s → %s", s.global.LEEmail, global.LEEmail))
 	}
-	if s.global.LogLevel != global.LogLevel {
-		changes = append(changes, fmt.Sprintf("log_level: %s → %s", s.global.LogLevel, global.LogLevel))
+
+	if s.global.Logging.Level != global.Logging.Level {
+		changes = append(changes, fmt.Sprintf("log_level: %s → %s", s.global.Logging.Level, global.Logging.Level))
+		// s.logger.Level(global.Logging.Level)
 	}
 
 	s.global = global
@@ -550,15 +552,9 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 		return nil, nil, errors.New("host manager is required")
 	}
 
-	m := &tlss.TlsManager{
-		Logger:      tlss.NewTLSLogger(s.logger),
-		HostManager: s.hostManager,
-		Global:      s.global,
-		LocalCache:  make(map[string]*tls.Certificate),
-	}
-	s.tlsManager = m // Set on Server
+	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global) // Set on Server
 
-	httpHandler, err := m.EnsureCertMagic(next)
+	httpHandler, err := s.tlsManager.EnsureCertMagic(next)
 	if err != nil {
 		s.logger.Fields("err", err.Error()).Warn("certmagic not enabled; using HTTP handler without ACME")
 		httpHandler = next
@@ -568,7 +564,7 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 		MinVersion: tls.VersionTLS12,
 		// http3 requires "h3" in ALPN
 		NextProtos:     []string{"h3", "h2", "http/1.1"},
-		GetCertificate: m.GetCertificate,
+		GetCertificate: s.tlsManager.GetCertificate,
 	}
 
 	return tlsCfg, httpHandler, nil

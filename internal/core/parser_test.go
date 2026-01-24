@@ -16,9 +16,12 @@ bind {
   https = [":443"]
 }
 
+logging {
+  level = "debug"
+}
+
 hosts_dir = "./hosts"
 le_email = "admin@example.com"
-log_level = "debug"
 development = true
 
 trusted_proxies = ["127.0.0.1/32", "10.0.0.0/8"]
@@ -71,8 +74,8 @@ rate_limits {
 	if global.LEEmail != "admin@example.com" {
 		t.Errorf("expected le_email admin@example.com, got %s", global.LEEmail)
 	}
-	if global.LogLevel != "debug" {
-		t.Errorf("expected log_level debug, got %s", global.LogLevel)
+	if global.Logging.Level != "debug" {
+		t.Errorf("expected log_level debug, got %s", global.Logging.Level)
 	}
 	if !global.Development {
 		t.Error("expected development = true")

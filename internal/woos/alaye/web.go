@@ -7,9 +7,9 @@ import (
 )
 
 type Web struct {
-	Root      WebRoot `hcl:"root,optional"`
-	Index     string  `hcl:"index,optional"`
-	Directory bool    `hcl:"directory,optional"`
+	Root    WebRoot `hcl:"root,optional"`
+	Index   string  `hcl:"index,optional"`
+	Listing bool    `hcl:"listing,optional"` // list files
 }
 
 func (w *Web) Validate() error {

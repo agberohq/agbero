@@ -320,22 +320,22 @@ func TestRouteHandler_Web_MethodNotAllowed(t *testing.T) {
 func TestRouteHandler_Web_DirectoryWithoutIndex(t *testing.T) {
 	root := t.TempDir()
 	// Create empty directory, no index file
-	os.MkdirAll(filepath.Join(root, "subdir"), 0755)
+	os.MkdirAll(filepath.Join(root, "subdir/"), 0755)
 
 	route := &alaye.Route{
 		Path: "/",
 		Web: alaye.Web{
-			Root: alaye.WebRoot(root),
+			Root:    alaye.WebRoot(root),
+			Listing: false,
 		},
 	}
 
 	h := NewRouteHandler(route, testLogger)
 
-	req := httptest.NewRequest("GET", "/subdir", nil)
+	req := httptest.NewRequest(http.MethodGet, "/subdir/", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
-	// Should return 403 Forbidden (no index file)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for directory without index, got %d", w.Code)
 	}

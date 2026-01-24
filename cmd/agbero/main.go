@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/logging"
 	"git.imaxinacion.net/aibox/agbero/internal/core/security"
 	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
@@ -17,9 +16,11 @@ import (
 	"github.com/kardianos/service"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/ll/lh"
+	"github.com/olekukonko/ll/lx"
 )
 
 var (
+	// The single global logger instance
 	logger  *ll.Logger
 	version = woos.Version
 )
@@ -40,69 +41,54 @@ var (
 )
 
 func main() {
+	// 1. BOOTSTRAP LOGGER: Simple terminal logger for CLI ops until config is loaded
+	logger = ll.New(woos.Name,
+		ll.WithHandler(lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(true))),
+		ll.WithFatalExits(true),
+	).Enable()
+
 	// Setup Flaggy
 	flaggy.SetName(woos.Name)
 	flaggy.SetDescription(woos.Description)
-	flaggy.SetVersion(version) // Handles --version automatically
+	flaggy.SetVersion(version)
 
-	// Global flags - No default value set here to detect if user provided it
+	// Global flags
 	flaggy.String(&configPath, "c", "config", "Path to configuration file")
 	flaggy.Bool(&devMode, "d", "dev", "Enable development mode")
 
-	// --- Service Subcommands ---
+	// --- Subcommands Setup (Omitted for brevity, remains unchanged) ---
 	cmdInstall := flaggy.NewSubcommand("install")
-	cmdInstall.Description = "Install configuration files and system service"
-
 	cmdUninstall := flaggy.NewSubcommand("uninstall")
-	cmdUninstall.Description = "Uninstall system service"
-
 	cmdStart := flaggy.NewSubcommand("start")
-	cmdStart.Description = "Start the system service"
-
 	cmdStop := flaggy.NewSubcommand("stop")
-	cmdStop.Description = "Stop the system service"
-
 	cmdRun := flaggy.NewSubcommand("run")
-	cmdRun.Description = "Run the proxy directly (interactive mode)"
-
 	cmdValidate := flaggy.NewSubcommand("validate")
-	cmdValidate.Description = "Validate configuration file"
-
 	cmdHosts := flaggy.NewSubcommand("hosts")
-	cmdHosts.Description = "List configured hosts"
-
 	cmdHelp := flaggy.NewSubcommand("help")
-	cmdHelp.Description = "Show help and usage examples"
 
-	// --- Certificate Management Subcommands ---
+	// Certificate commands
 	cmdCert := flaggy.NewSubcommand("cert")
-	cmdCert.Description = "Manage local certificates for development"
-
 	cmdInstallCA := flaggy.NewSubcommand("install-ca")
-	cmdInstallCA.Description = "Install local CA certificate for development (if not already installed)"
-	cmdInstallCA.Bool(&forceCAInstall, "f", "force", "Force reinstall even if CA already installed")
-	cmdInstallCA.String(&caMethod, "m", "method", "Method to use: auto|mkcert|truststore (default: auto)")
-
+	cmdInstallCA.Bool(&forceCAInstall, "f", "force", "Force reinstall")
+	cmdInstallCA.String(&caMethod, "m", "method", "Method: auto|mkcert|truststore")
 	cmdListCerts := flaggy.NewSubcommand("list")
-	cmdListCerts.Description = "List available certificates"
-
 	cmdCertInfo := flaggy.NewSubcommand("info")
-	cmdCertInfo.Description = "Show certificate information and storage location"
-	cmdCertInfo.String(&certDir, "d", "dir", "Certificate directory to inspect (default: from config)")
+	cmdCertInfo.String(&certDir, "d", "dir", "Cert directory")
 
-	// --- Key Management Subcommands ---
+	cmdCert.AttachSubcommand(cmdInstallCA, 1)
+	cmdCert.AttachSubcommand(cmdListCerts, 1)
+	cmdCert.AttachSubcommand(cmdCertInfo, 1)
+
+	// Key commands
 	cmdKey := flaggy.NewSubcommand("key")
-	cmdKey.Description = "Manage identity keys for gossip authentication"
-
 	cmdKeyGen := flaggy.NewSubcommand("gen")
-	cmdKeyGen.Description = "Generate a signed identity token for a service"
-	cmdKeyGen.String(&keyService, "s", "service", "Service name (e.g. 'dance-app') (required)")
-	cmdKeyGen.Duration(&keyTTL, "t", "ttl", "Token validity duration (default: 8760h / 1 year)")
-
+	cmdKeyGen.String(&keyService, "s", "service", "Service name (required)")
+	cmdKeyGen.Duration(&keyTTL, "t", "ttl", "Token TTL")
 	cmdKeyInit := flaggy.NewSubcommand("init")
-	cmdKeyInit.Description = "Generate the server Ed25519 Private Key file"
+	cmdKey.AttachSubcommand(cmdKeyGen, 1)
+	cmdKey.AttachSubcommand(cmdKeyInit, 1)
 
-	// Attach Subcommands
+	// Attach
 	flaggy.AttachSubcommand(cmdInstall, 1)
 	flaggy.AttachSubcommand(cmdUninstall, 1)
 	flaggy.AttachSubcommand(cmdStart, 1)
@@ -111,233 +97,30 @@ func main() {
 	flaggy.AttachSubcommand(cmdValidate, 1)
 	flaggy.AttachSubcommand(cmdHosts, 1)
 	flaggy.AttachSubcommand(cmdHelp, 1)
-
-	// Certificate commands
-	cmdCert.AttachSubcommand(cmdInstallCA, 1)
-	cmdCert.AttachSubcommand(cmdListCerts, 1)
-	cmdCert.AttachSubcommand(cmdCertInfo, 1)
 	flaggy.AttachSubcommand(cmdCert, 1)
-
-	// Key commands
-	cmdKey.AttachSubcommand(cmdKeyGen, 1)
-	cmdKey.AttachSubcommand(cmdKeyInit, 1)
 	flaggy.AttachSubcommand(cmdKey, 1)
 
 	flaggy.Parse()
 	welcome()
 
-	// --- Smart Config Resolution ---
-	// 1. Resolve the path
+	// --- Config Resolution ---
 	resolvedPath, exists := resolveConfigPath(configPath)
-
-	// 2. Fail if user explicitly asked for a specific path that doesn't exist
 	if configPath != "" && !exists {
-		// Log error via minimal logger since global logger isn't set up yet
-		fmt.Printf("Error: Config file not found: %s\n", configPath)
-		os.Exit(1)
+		logger.Fatal("Config file not found: ", configPath)
 	}
-
-	// 3. Update the global variable to the resolved path
 	configPath = resolvedPath
 
-	// Handle Help
+	// --- Handle Simple Commands (No full config load needed) ---
 	if cmdHelp.Used {
 		showHelpExamples(configPath)
 		return
 	}
-
-	// --- Handle Certificate Commands (Exit early) ---
 	if cmdCert.Used {
-		if cmdInstallCA.Used {
-			handleInstallCA()
-			return
-		}
-
-		if cmdListCerts.Used {
-			handleListCerts()
-			return
-		}
-
-		if cmdCertInfo.Used {
-			handleCertInfo()
-			return
-		}
-
-		flaggy.ShowHelpAndExit("cert")
+		handleCertCommands(cmdInstallCA.Used, cmdListCerts.Used, cmdCertInfo.Used)
 		return
 	}
-
-	// --- Handle Key Commands (Exit early) ---
 	if cmdKey.Used {
-		if cmdKeyInit.Used {
-			target := "server.key"
-			// Try to find path from config, ignore errors if config is missing
-			if global, err := loadConfig(configPath); err == nil && &global.Gossip != nil && global.Gossip.PrivateKeyFile != "" {
-				target = global.Gossip.PrivateKeyFile
-			}
-
-			if err := security.GenerateNewKeyFile(target); err != nil {
-				fmt.Printf("Error generating key: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Printf("Generated private key: %s\n", target)
-			fmt.Println("Ensure your config.hcl has: gossip { private_key_file = \"" + target + "\" }")
-			return
-		}
-
-		if cmdKeyGen.Used {
-			if keyService == "" {
-				fmt.Println("Error: --service name is required")
-				os.Exit(1)
-			}
-			if keyTTL == 0 {
-				keyTTL = 24 * 365 * time.Hour
-			}
-
-			global, err := loadConfig(configPath)
-			if err != nil {
-				fmt.Printf("Error loading config: %v\n", err)
-				os.Exit(1)
-			}
-
-			if &global.Gossip == nil || global.Gossip.PrivateKeyFile == "" {
-				fmt.Println("Error: 'gossip.private_key_file' is not set in config.hcl")
-				os.Exit(1)
-			}
-
-			tm, err := security.LoadKeys(global.Gossip.PrivateKeyFile)
-			if err != nil {
-				fmt.Printf("Error loading private key: %v\n", err)
-				os.Exit(1)
-			}
-
-			token, err := tm.Mint(keyService, keyTTL)
-			if err != nil {
-				fmt.Printf("Error minting token: %v\n", err)
-				os.Exit(1)
-			}
-
-			fmt.Println(token)
-			return
-		}
-
-		flaggy.ShowHelpAndExit("key")
-		return
-	}
-
-	// --- Setup TlsLogger ---
-	fp, err := os.OpenFile("server.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer fp.Close()
-
-	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(true))
-	loggerFile := lh.NewJSONHandler(fp)
-	loggerMultiple := lh.NewMultiHandler(loggerTerminal, loggerFile)
-
-	logger = ll.New(woos.Name,
-		ll.WithHandler(loggerMultiple),
-		ll.WithFatalExits(true),
-	).Enable()
-
-	// --- Setup Service ---
-	svcConfig := &service.Config{
-		Name:        "agbero",
-		DisplayName: "Agbero Proxy",
-		Description: "High-performance reverse proxy with Let's Encrypt support",
-		Arguments:   []string{"run", "-c", configPath},
-	}
-
-	if devMode {
-		svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
-	}
-
-	if runtime.GOOS == "darwin" {
-		if os.Geteuid() == 0 {
-			svcConfig.Option = service.KeyValue{
-				"RunAtLoad":   true,
-				"KeepAlive":   true,
-				"SessionType": "System",
-			}
-		} else {
-			svcConfig.Name = "net.imaxinacion.agbero"
-			svcConfig.Option = service.KeyValue{
-				"RunAtLoad":     true,
-				"KeepAlive":     true,
-				"SessionCreate": true,
-			}
-		}
-	}
-
-	prg := &program{
-		configPath: configPath,
-		devMode:    devMode,
-	}
-
-	s, err := service.New(prg, svcConfig)
-	if err != nil {
-		logger.Fatal("Failed to create service: ", err)
-	}
-
-	// --- Handle Service Commands ---
-	if cmdInstall.Used {
-		logger.Info("Installing service...")
-		if err := installDefaults(); err != nil {
-			logger.Fatal("Failed to setup defaults: ", err)
-		}
-		if err := s.Install(); err != nil {
-			enhancedErr := handleServiceError(err, "install", configPath)
-			logger.Fatal("Failed to install service: ", enhancedErr)
-		}
-
-		logger.Info("Service installed successfully")
-
-		if runtime.GOOS == "darwin" {
-			if os.Geteuid() == 0 {
-				logger.Info("System LaunchDaemon installed at: /Library/LaunchDaemons/agbero.plist")
-				logger.Info("To start: sudo launchctl load /Library/LaunchDaemons/agbero.plist")
-			} else {
-				logger.Info("User LaunchAgent installed at: ~/Library/LaunchAgents/net.imaxinacion.agbero.plist")
-				logger.Info("To start: launchctl load ~/Library/LaunchAgents/net.imaxinacion.agbero.plist")
-			}
-		} else if runtime.GOOS == "linux" {
-			logger.Info("Systemd service installed")
-			logger.Info("To start: sudo systemctl start agbero")
-		} else if runtime.GOOS == "windows" {
-			logger.Info("Windows Service installed")
-			logger.Info("To start: net start agbero")
-		}
-		return
-	}
-
-	if cmdStart.Used {
-		logger.Info("Starting service...")
-		if err := s.Start(); err != nil {
-			enhancedErr := handleServiceError(err, "start", configPath)
-			logger.Fatal("Failed to start service: ", enhancedErr)
-		}
-		logger.Info("Service started")
-		return
-	}
-
-	if cmdStop.Used {
-		logger.Info("Stopping service...")
-		if err := s.Stop(); err != nil {
-			enhancedErr := handleServiceError(err, "stop", configPath)
-			logger.Fatal("Failed to stop service: ", enhancedErr)
-		}
-		logger.Info("Service stopped")
-		return
-	}
-
-	if cmdUninstall.Used {
-		logger.Info("Uninstalling service...")
-		if err := s.Uninstall(); err != nil {
-			enhancedErr := handleServiceError(err, "uninstall", configPath)
-			logger.Fatal("Failed to uninstall service: ", enhancedErr)
-		}
-		logger.Info("Service uninstalled")
+		handleKeyCommands(cmdKeyInit.Used, cmdKeyGen.Used)
 		return
 	}
 
@@ -358,43 +141,117 @@ func main() {
 		return
 	}
 
-	// --- Run Command ---
+	// --- Setup Service Context ---
+	svcConfig := &service.Config{
+		Name:        "agbero",
+		DisplayName: "Agbero Proxy",
+		Description: "High-performance reverse proxy",
+		Arguments:   []string{"run", "-c", configPath},
+	}
+
+	if devMode {
+		svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
+	}
+
+	if runtime.GOOS == "darwin" {
+		if os.Geteuid() == 0 {
+			svcConfig.Option = service.KeyValue{"RunAtLoad": true, "SessionType": "System"}
+		} else {
+			svcConfig.Name = "net.imaxinacion.agbero"
+			svcConfig.Option = service.KeyValue{"RunAtLoad": true, "SessionCreate": true}
+		}
+	}
+
+	prg := &program{
+		configPath: configPath,
+		devMode:    devMode,
+	}
+
+	s, err := service.New(prg, svcConfig)
+	if err != nil {
+		logger.Fatal("Failed to create service: ", err)
+	}
+
+	// --- Handle Service Commands ---
+	if cmdInstall.Used {
+		logger.Info("Installing service...")
+		if err := installDefaults(); err != nil {
+			logger.Fatal("Failed to setup defaults: ", err)
+		}
+		if err := s.Install(); err != nil {
+			logger.Fatal(handleServiceError(err, "install", configPath))
+		}
+		logger.Info("Service installed successfully")
+		return
+	}
+
+	if cmdStart.Used {
+		logger.Info("Starting service...")
+		if err := s.Start(); err != nil {
+			logger.Fatal(handleServiceError(err, "start", configPath))
+		}
+		logger.Info("Service started")
+		return
+	}
+
+	if cmdStop.Used {
+		logger.Info("Stopping service...")
+		if err := s.Stop(); err != nil {
+			logger.Fatal(handleServiceError(err, "stop", configPath))
+		}
+		logger.Info("Service stopped")
+		return
+	}
+
+	if cmdUninstall.Used {
+		logger.Info("Uninstalling service...")
+		if err := s.Uninstall(); err != nil {
+			logger.Fatal(handleServiceError(err, "uninstall", configPath))
+		}
+		logger.Info("Service uninstalled")
+		return
+	}
+
+	// --- RUN SERVER ---
 	if cmdRun.Used {
-		// 1. Auto-Generate Config if missing
+		// 1. Ensure Config Exists
 		if err := ensureConfig(configPath); err != nil {
 			logger.Fatal("Failed to generate configuration: ", err)
 		}
 
-		// 2. Load Config to check for HTTPS
+		// 2. Load Config
 		global, err := loadConfig(configPath)
 		if err != nil {
 			logger.Fatal("Failed to load config: ", err)
 		}
 
-		// 3. Auto-Install CA if needed
+		// 3. UPGRADE LOGGER (Apply File/VictoriaLogs config)
+		newLogger, cleanup, err := logging.Setup(global.Logging, devMode)
+		if err != nil {
+			logger.Warn("Failed to setup advanced logging, using terminal only: ", err)
+		} else {
+			logger = newLogger
+			defer cleanup() // FLUSH BUFFERS ON EXIT
+		}
+
+		// 4. Auto-Install CA (using upgraded global logger)
 		checkAndInstallCA(global)
 
 		logger.Info("Running in interactive mode. Press Ctrl+C to stop.")
 		if devMode {
+			logger.Level(lx.LevelDebug)
 			logger.Warn("Development mode enabled")
 		}
 
-		errs := make(chan error, 5)
-
+		// Silence kardianos/service internal logging if not needed
 		if !service.Interactive() {
-			sysLogger, err := s.Logger(errs)
-			if err != nil {
-				log.Fatal(err)
-			}
+			errs := make(chan error, 5)
+			_, _ = s.Logger(errs)
 			go func() {
-				for {
-					err := <-errs
-					if err != nil {
-						log.Printf("Service error: %v", err)
-					}
+				for err := <-errs; err != nil; {
+					log.Printf("Service internal error: %v", err)
 				}
 			}()
-			_ = sysLogger
 		}
 
 		if err := s.Run(); err != nil {
@@ -404,246 +261,100 @@ func main() {
 		return
 	}
 
-	// Default: Show usage
 	showHelpExamples(configPath)
 }
 
 // checkAndInstallCA checks if HTTPS is enabled and installs CA root if missing
 func checkAndInstallCA(global *alaye.Global) {
-	hasHTTPS := len(global.Bind.HTTPS) > 0
-
-	// If no HTTPS configured, skip
-	if !hasHTTPS {
+	if len(global.Bind.HTTPS) == 0 {
 		return
 	}
 
-	// Setup minimal logger for this check
-	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
-	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
-
-	// FIX: Wrap ll.Logger in tlss.NewTLSLogger to satisfy woos.TlsLogger interface
-	tlsLogger := tlss.NewTLSLogger(minimalLogger)
-	installer := tlss.NewCertInstaller(tlsLogger)
-
+	installer := tlss.NewInstaller(logger)
 	if !installer.IsCARootInstalled() {
 		logger.Info("HTTPS enabled but CA root not found. Auto-installing...")
-
-		// Attempt auto-install
 		if err := installer.InstallCARootIfNeeded(); err != nil {
 			logger.Warn("Failed to auto-install CA root: %v", err)
-			logger.Warn("You may need to run 'agbero cert install-ca' manually or trust the certificate in your browser.")
 		} else {
 			logger.Info("CA root installed successfully.")
 		}
 	}
 }
 
-func handleInstallCA() {
-	// Setup minimal logger for certificate operations
-	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
-	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
+// Helper switchers for subcommands
+func handleCertCommands(install, list, info bool) {
+	// Use global logger
+	installer := tlss.NewInstaller(logger)
 
-	// FIX: Wrap logger
-	tlsLogger := tlss.NewTLSLogger(minimalLogger)
-	installer := tlss.NewCertInstaller(tlsLogger)
-
-	if installer.IsCARootInstalled() && !forceCAInstall {
-		fmt.Println("CA root certificate is already installed in system trust store")
-		fmt.Println("Use --force to reinstall if needed")
-		return
-	}
-
-	fmt.Println("Installing CA root certificate...")
-
-	// Determine installation method
-	switch caMethod {
-	case "mkcert":
-		fmt.Println("Using mkcert method...")
-		if err := installer.InstallWithMkcert(); err != nil {
-			fmt.Printf("Failed to install CA with mkcert: %v\n", err)
-			os.Exit(1)
+	if install {
+		if installer.IsCARootInstalled() && !forceCAInstall {
+			logger.Info("CA root certificate is already installed. Use --force to reinstall.")
+			return
 		}
-	case "truststore":
-		fmt.Println("Using truststore method...")
-		if err := installer.InstallWithTruststore(); err != nil {
-			fmt.Printf("Failed to install CA with truststore: %v\n", err)
-			os.Exit(1)
-		}
-	default: // "auto"
-		fmt.Println("Auto-detecting best method...")
+		logger.Info("Installing CA root certificate...")
 		if err := installer.InstallCARootIfNeeded(); err != nil {
-			fmt.Printf("Failed to install CA: %v\n", err)
-			os.Exit(1)
+			logger.Fatal("Failed to install CA: ", err)
 		}
-	}
-
-	fmt.Println("CA certificate installed successfully")
-
-	// Test the installation
-	if installer.TestCAInstallation() {
-		fmt.Println("CA installation verified")
-	} else {
-		fmt.Println("WARNING: CA installed but verification failed. You may need to restart your browser.")
-	}
-
-	// Show next steps
-	fmt.Println("\nNext steps:")
-	fmt.Println("  1. Restart your browser if it was open during installation")
-	fmt.Println("  2. Use 'agbero cert info' to see certificate storage location")
-	fmt.Println("  3. Configure hosts with 'tls { mode = \"auto\" }' for automatic local certificates")
-}
-
-func handleListCerts() {
-	// Setup minimal logger for certificate operations
-	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
-	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
-
-	// FIX: Wrap logger
-	tlsLogger := tlss.NewTLSLogger(minimalLogger)
-	installer := tlss.NewCertInstaller(tlsLogger)
-
-	// Try to load config to get tls_storage_dir
-	global, err := loadConfig(configPath)
-	if err == nil && global.TLSStorageDir != "" {
-		if err := installer.SetStorageDir(global.TLSStorageDir); err != nil {
-			fmt.Printf("WARNING: Failed to set storage dir from config: %v\n", err)
-		}
-	}
-
-	certs, err := installer.ListCertificates()
-	if err != nil {
-		fmt.Printf("Failed to list certificates: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("Certificate directory: %s\n", installer.CertDir)
-
-	if len(certs) == 0 {
-		fmt.Println("No certificates found")
 		return
 	}
 
-	fmt.Printf("Found %d certificate(s):\n", len(certs))
-	for i, cert := range certs {
-		fmt.Printf("  %d. %s\n", i+1, cert)
+	if list {
+		// Attempt to load dir from config
+		global, err := loadConfig(configPath)
+		if err == nil && global.TLSStorageDir != "" {
+			_ = installer.SetStorageDir(global.TLSStorageDir)
+		}
+		certs, err := installer.ListCertificates()
+		if err != nil {
+			logger.Fatal("Failed to list certs: ", err)
+		}
+		for i, cert := range certs {
+			fmt.Printf("%d. %s\n", i+1, cert)
+		}
+		return
 	}
 
-	fmt.Println("\nTo use these certificates in your config:")
-	fmt.Println(`  tls {
-    mode = "local"
-    local {
-      cert_file = "` + filepath.Join(installer.CertDir, "localhost.pem") + `"
-      key_file  = "` + filepath.Join(installer.CertDir, "localhost.key.pem") + `"
-    }
-  }`)
+	if info {
+		showCertInfo(configPath)
+		return
+	}
+	flaggy.ShowHelpAndExit("cert")
 }
 
-func handleCertInfo() {
-	// Setup minimal logger
-	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
-	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
-
-	// FIX: Wrap logger
-	tlsLogger := tlss.NewTLSLogger(minimalLogger)
-	installer := tlss.NewCertInstaller(tlsLogger)
-
-	// Override directory if specified
-	if certDir != "" {
-		if err := installer.SetStorageDir(certDir); err != nil {
-			fmt.Printf("Failed to set certificate directory: %v\n", err)
-			os.Exit(1)
+func handleKeyCommands(init, gen bool) {
+	if init {
+		target := "server.key"
+		if global, err := loadConfig(configPath); err == nil && &global.Gossip != nil && global.Gossip.PrivateKeyFile != "" {
+			target = global.Gossip.PrivateKeyFile
 		}
+		if err := security.GenerateNewKeyFile(target); err != nil {
+			logger.Fatal("Error generating key: ", err)
+		}
+		logger.Info("Generated private key: ", target)
+		return
 	}
 
-	fmt.Println("\nCERTIFICATE INFORMATION")
-	fmt.Println("==========================================")
-
-	// Check CA installation
-	if installer.IsCARootInstalled() {
-		fmt.Println("✓ CA root certificate is installed in system trust store")
-	} else {
-		fmt.Println("✗ CA root certificate is NOT installed")
-		fmt.Println("  Run: agbero cert install-ca")
-	}
-
-	// Show storage directory
-	fmt.Printf("\nStorage Directory: %s\n", installer.CertDir)
-
-	// Check if directory exists
-	if _, err := os.Stat(installer.CertDir); os.IsNotExist(err) {
-		fmt.Println("WARNING: Directory does not exist")
-	} else {
-		// List certificates
-		files, err := os.ReadDir(installer.CertDir)
+	if gen {
+		if keyService == "" {
+			logger.Fatal("Error: --service name is required")
+		}
+		global, err := loadConfig(configPath)
 		if err != nil {
-			fmt.Printf("WARNING: Cannot read directory: %v\n", err)
-		} else {
-			certCount := 0
-			var totalSize int64
-			for _, file := range files {
-				if !file.IsDir() && (strings.HasSuffix(file.Name(), ".pem") ||
-					strings.HasSuffix(file.Name(), ".crt") ||
-					strings.HasSuffix(file.Name(), ".key")) {
-					certCount++
-					if info, err := file.Info(); err == nil {
-						totalSize += info.Size()
-					}
-				}
-			}
-
-			fmt.Printf("Found %d certificate file(s) (%.2f MB total)\n", certCount,
-				float64(totalSize)/(1024*1024))
-
-			if certCount > 0 {
-				fmt.Println("\nAvailable certificates:")
-				for _, file := range files {
-					if !file.IsDir() && (strings.HasSuffix(file.Name(), ".pem") ||
-						strings.HasSuffix(file.Name(), ".crt")) {
-						fullPath := filepath.Join(installer.CertDir, file.Name())
-						info, err := os.Stat(fullPath)
-						if err == nil {
-							// Format size
-							size := info.Size()
-							var sizeStr string
-							if size < 1024 {
-								sizeStr = fmt.Sprintf("%d B", size)
-							} else if size < 1024*1024 {
-								sizeStr = fmt.Sprintf("%.1f KB", float64(size)/1024)
-							} else {
-								sizeStr = fmt.Sprintf("%.1f MB", float64(size)/(1024*1024))
-							}
-
-							fmt.Printf("  • %s (%s, modified %s)\n",
-								file.Name(),
-								sizeStr,
-								info.ModTime().Format("2006-01-02"))
-						}
-					}
-				}
-			}
+			logger.Fatal("Error loading config: ", err)
 		}
+		if &global.Gossip == nil || global.Gossip.PrivateKeyFile == "" {
+			logger.Fatal("Error: 'gossip.private_key_file' is not set")
+		}
+		tm, err := security.LoadKeys(global.Gossip.PrivateKeyFile)
+		if err != nil {
+			logger.Fatal("Error loading private key: ", err)
+		}
+		token, err := tm.Mint(keyService, keyTTL)
+		if err != nil {
+			logger.Fatal("Error minting token: ", err)
+		}
+		fmt.Println(token)
+		return
 	}
-
-	// Show mkcert availability
-	if installer.IsMkcertInstalled() {
-		fmt.Println("\n✓ mkcert is available on system")
-	} else {
-		fmt.Println("\n✗ mkcert is not installed")
-		fmt.Println("  Will download temporarily when needed")
-	}
-
-	fmt.Println("\nUsage examples:")
-	fmt.Println(`  1. For automatic local certificates:`)
-	fmt.Println(`     tls {
-       mode = "auto"
-     }`)
-	fmt.Println()
-	fmt.Println(`  2. For existing certificates:`)
-	fmt.Println(`     tls {
-       mode = "local"
-       local {
-         cert_file = "` + filepath.Join(installer.CertDir, "localhost.pem") + `"` + "\n")
-	fmt.Println(`         key_file  = "` + filepath.Join(installer.CertDir, "localhost.key.pem") + `"`)
-	fmt.Println(`       }
-     }`)
+	flaggy.ShowHelpAndExit("key")
 }

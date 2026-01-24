@@ -11,23 +11,25 @@ import (
 	"github.com/olekukonko/ll/lx"
 )
 
-func Setup(cfg alaye.Logging, devMode bool) (*ll.Logger, error) {
+// Setup creates the final logger based on config and returns a cleanup function to flush buffers.
+func Setup(cfg alaye.Logging, devMode bool) (*ll.Logger, func(), error) {
 	var handlers []lx.Handler
+	var closers []func()
 
 	// 1. Terminal Handler (Always on)
 	handlers = append(handlers, lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(true)))
 
 	// 2. File Handler
 	if cfg.File != "" {
-		// Use O_APPEND so we don't wipe logs on restart
 		fp, err := os.OpenFile(cfg.File, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		handlers = append(handlers, lh.NewJSONHandler(fp))
+		closers = append(closers, func() { fp.Close() })
 	}
 
-	// 3. VictoriaLogs Handler
+	// 3. VictoriaLogs Handler (Buffered)
 	if cfg.Victoria.Enabled {
 		vl := NewVictoriaHandler(cfg.Victoria.URL, devMode)
 
@@ -42,6 +44,9 @@ func Setup(cfg alaye.Logging, devMode bool) (*ll.Logger, error) {
 			lh.WithMaxBuffer(12000),
 		)
 		handlers = append(handlers, buffered)
+
+		// Ensure buffer flushes on shutdown
+		closers = append(closers, func() { buffered.Close() })
 	}
 
 	multi := lh.NewMultiHandler(handlers...)
@@ -63,5 +68,11 @@ func Setup(cfg alaye.Logging, devMode bool) (*ll.Logger, error) {
 		l.Level(lx.LevelDebug)
 	}
 
-	return l.Enable(), nil
+	cleanup := func() {
+		for _, c := range closers {
+			c()
+		}
+	}
+
+	return l.Enable(), cleanup, nil
 }

@@ -15,6 +15,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"github.com/olekukonko/ll"
 )
 
 var sharedBufferPool = core.NewBufferPool()
@@ -28,14 +29,14 @@ type Backend struct {
 	TotalReqs    atomic.Uint64
 	Metrics      *metrics.LatencyTracker
 	hcConfig     *alaye.HealthCheck
-	logger       woos.TlsLogger
+	logger       *ll.Logger
 	stop         chan struct{}
 	startTime    time.Time
 	lastRecovery atomic.Int64 // Unix nano of last time marked alive
 	Weight       int          // Added
 }
 
-func NewBackend(cfg alaye.Server, route *alaye.Route, logger woos.TlsLogger) (*Backend, error) {
+func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backend, error) {
 	u, err := url.Parse(cfg.Address)
 	if err != nil {
 		return nil, err

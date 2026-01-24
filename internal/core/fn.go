@@ -59,3 +59,27 @@ func Debounce(delay time.Duration, f func()) func() {
 		timer = time.AfterFunc(delay, f)
 	}
 }
+
+// IsLocalhost determines if a hostname implies local development
+func IsLocalhost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "localhost" {
+		return true
+	}
+	if strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	if strings.HasSuffix(host, ".local") {
+		return true
+	}
+	if strings.HasSuffix(host, ".test") {
+		return true
+	}
+	// Check loopback IPs
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() {
+			return true
+		}
+	}
+	return false
+}

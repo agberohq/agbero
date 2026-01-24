@@ -35,7 +35,7 @@ func init() {
 	mustReg(".txt", "text/plain; charset=utf-8")
 }
 
-// Directory Listing Logic
+// Listing Listing Logic
 //
 //go:embed dir.html
 var dirListingHTML string
@@ -63,7 +63,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Resolve Root Directory (Securely)
+	// 1. Resolve Root Listing (Securely)
 	rootPath := h.route.Web.Root.String()
 	if rootPath == "" {
 		rootPath = "."
@@ -132,7 +132,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. Handle Directory
+	// 5. Handle Listing
 	if info.IsDir() {
 		// FIX: Enforce trailing slash for directories so relative links work correctly
 		if !strings.HasSuffix(r.URL.Path, "/") {
@@ -165,8 +165,8 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// No Index Found. Check if Directory Listing is enabled.
-		if h.route.Web.Directory {
+		// No Index Found. Check if Listing Listing is enabled.
+		if h.route.Web.Listing {
 			h.serveDirectoryListing(w, r, f, r.URL.Path)
 			return
 		}
@@ -175,15 +175,16 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 6. Serve File
 	ctype := getMimeType(reqPath)
 	if ctype != "" {
 		w.Header().Set("Content-Type", ctype)
 	}
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+	return
 }
 
 func (h *webHandler) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *os.File, displayPath string) {
+
 	entries, err := f.ReadDir(-1)
 	if err != nil {
 		http.Error(w, "Error reading directory", http.StatusInternalServerError)

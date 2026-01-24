@@ -1,7 +1,5 @@
 package woos
 
-import "time"
-
 const (
 	Name        = "agbero"
 	Version     = "0.0.3"

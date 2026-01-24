@@ -82,7 +82,7 @@ func TestCertInstaller_validateCertificate_HostMatch(t *testing.T) {
 	tmp := t.TempDir()
 	logger := ll.New("test")
 
-	ci := NewCertInstaller(logger)
+	ci := NewInstaller(logger)
 	ci.CertDir = tmp
 
 	certPath := filepath.Join(tmp, "localhost-443-cert.pem")
@@ -105,7 +105,7 @@ func TestCertInstaller_findExistingCerts_UsesOnlyMatchingCert(t *testing.T) {
 	tmp := t.TempDir()
 	logger := ll.New("test")
 
-	ci := NewCertInstaller(logger)
+	ci := NewInstaller(logger)
 	ci.CertDir = tmp
 	ci.SetHosts([]string{"app.localhost"}, 443)
 
@@ -132,7 +132,7 @@ func TestCertInstaller_findExistingCerts_UsesOnlyMatchingCert(t *testing.T) {
 
 func TestCertInstaller_certPrefix_StripsPort(t *testing.T) {
 	logger := ll.New("test")
-	ci := NewCertInstaller(logger)
+	ci := NewInstaller(logger)
 
 	ci.SetHosts([]string{"app.localhost:443"}, 443)
 	if got := ci.certPrefix(); got != "app" {

@@ -31,7 +31,7 @@ var bannerTmpl string
 
 // resolveConfigPath implements the search order:
 // 1. Explicit Flag
-// 2. Current Working Directory (agbero.hcl)
+// 2. Current Working Listing (agbero.hcl)
 // 3. User Config Dir (~/.config/agbero/config.hcl)
 // 4. System Config Dir (/etc/agbero/config.hcl)
 // Returns the path to use and whether it currently exists.
@@ -339,10 +339,10 @@ func showCertInfo(configPath string) {
 
 	fmt.Println("\nCERTIFICATE INFORMATION")
 	fmt.Println("===============================================================")
-	fmt.Printf("Storage Directory: %s\n", storageDir)
+	fmt.Printf("Storage Listing: %s\n", storageDir)
 
 	if _, err := os.Stat(storageDir); os.IsNotExist(err) {
-		fmt.Println("⚠  Directory does not exist")
+		fmt.Println("⚠  Listing does not exist")
 	} else {
 		files, err := os.ReadDir(storageDir)
 		if err != nil {

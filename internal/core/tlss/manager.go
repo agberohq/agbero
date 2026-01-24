@@ -13,11 +13,11 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/caddyserver/certmagic"
 	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/errors"
+	"github.com/olekukonko/ll"
 )
 
 const (
@@ -26,11 +26,11 @@ const (
 	acmeProfileShortLived = "shortlived"
 )
 
-type TlsManager struct {
-	Logger      woos.TlsLogger
-	HostManager *discovery.Host
+type Manager struct {
+	hostManager *discovery.Host
 	Global      *alaye.Global
 
+	logger     *ll.Logger
 	cmMu       sync.Mutex
 	cmProd     *certmagic.Config
 	cmStaging  *certmagic.Config
@@ -44,7 +44,16 @@ type TlsManager struct {
 	watcherMu sync.Mutex
 }
 
-func (m *TlsManager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
+func NewManager(logger *ll.Logger, hostManager *discovery.Host, global *alaye.Global) *Manager {
+	return &Manager{
+		logger:      logger,
+		hostManager: hostManager,
+		Global:      global,
+		LocalCache:  make(map[string]*tls.Certificate),
+	}
+
+}
+func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 	m.cmMu.Lock()
 	defer m.cmMu.Unlock()
 
@@ -66,7 +75,7 @@ func (m *TlsManager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 	decision := func(ctx context.Context, name string) error {
 		_ = ctx
 		name = core.NormalizeSubject(name)
-		if m.HostManager != nil && m.HostManager.Get(name) != nil {
+		if m.hostManager != nil && m.hostManager.Get(name) != nil {
 			return nil
 		}
 		return errors.Newf("on-demand denied for %q", name)
@@ -83,6 +92,8 @@ func (m *TlsManager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 		}
 		issuer := certmagic.NewACMEIssuer(cmProd, acme)
 		cmProd.Issuers = []certmagic.Issuer{issuer}
+		cmProd.Logger = newTLSLogger(m.logger)
+
 		m.cmProd = cmProd
 		m.issProd = issuer
 	}
@@ -98,8 +109,10 @@ func (m *TlsManager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 		}
 		issuer := certmagic.NewACMEIssuer(cmStaging, acme)
 		cmStaging.Issuers = []certmagic.Issuer{issuer}
+
 		m.cmStaging = cmStaging
 		m.issStaging = issuer
+
 	}
 
 	h := next
@@ -113,7 +126,7 @@ func (m *TlsManager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 	return h, nil
 }
 
-func (m *TlsManager) CmForHost(hcfg *alaye.Host) *certmagic.Config {
+func (m *Manager) CmForHost(hcfg *alaye.Host) *certmagic.Config {
 	if m.Global != nil && m.Global.Development {
 		return m.cmStaging
 	}
@@ -125,7 +138,7 @@ func (m *TlsManager) CmForHost(hcfg *alaye.Host) *certmagic.Config {
 	return m.cmProd
 }
 
-func (m *TlsManager) GetLocalCertificate(local alaye.LocalCert, host string) (*tls.Certificate, error) {
+func (m *Manager) GetLocalCertificate(local alaye.LocalCert, host string) (*tls.Certificate, error) {
 	certFile := strings.TrimSpace(local.CertFile)
 	keyFile := strings.TrimSpace(local.KeyFile)
 
@@ -157,7 +170,7 @@ func (m *TlsManager) GetLocalCertificate(local alaye.LocalCert, host string) (*t
 	return &cert, nil
 }
 
-func (m *TlsManager) GetAutoLocalCertificate(host string) (*tls.Certificate, error) {
+func (m *Manager) GetAutoLocalCertificate(host string) (*tls.Certificate, error) {
 	cacheKey := "auto|" + host
 
 	m.localMu.RLock()
@@ -168,7 +181,7 @@ func (m *TlsManager) GetAutoLocalCertificate(host string) (*tls.Certificate, err
 	m.localMu.RUnlock()
 
 	// Instantiate Installer
-	installer := NewCertInstaller(m.Logger)
+	installer := NewInstaller(m.logger)
 	installer.SetHosts([]string{host}, 443) // Default to 443 for naming
 
 	// Generate or Load
@@ -192,7 +205,7 @@ func (m *TlsManager) GetAutoLocalCertificate(host string) (*tls.Certificate, err
 	return &cert, nil
 }
 
-func (m *TlsManager) startLocalWatcher(cacheKey, certFile, keyFile, host string) {
+func (m *Manager) startLocalWatcher(cacheKey, certFile, keyFile, host string) {
 	m.watcherMu.Lock()
 	defer m.watcherMu.Unlock()
 
@@ -206,13 +219,13 @@ func (m *TlsManager) startLocalWatcher(cacheKey, certFile, keyFile, host string)
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		m.Logger.Fields("err", err, "host", host).Warn("failed to create local cert watcher")
+		m.logger.Fields("err", err, "host", host).Warn("failed to create local cert watcher")
 		return
 	}
 
 	for _, file := range []string{certFile, keyFile} {
 		if err := watcher.Add(file); err != nil {
-			m.Logger.Fields("err", err, "file", file, "host", host).Warn("failed to watch local cert file")
+			m.logger.Fields("err", err, "file", file, "host", host).Warn("failed to watch local cert file")
 			watcher.Close()
 			return
 		}
@@ -234,20 +247,20 @@ func (m *TlsManager) startLocalWatcher(cacheKey, certFile, keyFile, host string)
 				if !ok {
 					return
 				}
-				m.Logger.Fields("err", err, "host", host).Error("local cert watcher error")
+				m.logger.Fields("err", err, "host", host).Error("local cert watcher error")
 			}
 		}
 	}()
 }
 
-func (m *TlsManager) invalidateLocal(cacheKey, host string) {
+func (m *Manager) invalidateLocal(cacheKey, host string) {
 	m.localMu.Lock()
 	delete(m.LocalCache, cacheKey)
 	m.localMu.Unlock()
-	m.Logger.Fields("host", host, "key", cacheKey).Info("local cert invalidated; will reload on next request")
+	m.logger.Fields("host", host, "key", cacheKey).Info("local cert invalidated; will reload on next request")
 }
 
-func (m *TlsManager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	if chi == nil || chi.ServerName == "" {
 		return nil, errors.New("missing SNI")
 	}
@@ -257,7 +270,7 @@ func (m *TlsManager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate,
 		// Just log, continue logic
 	}
 
-	hcfg := m.HostManager.Get(sni)
+	hcfg := m.hostManager.Get(sni)
 	if hcfg == nil {
 		return nil, errors.Newf("unknown host %q", sni)
 	}
@@ -267,7 +280,7 @@ func (m *TlsManager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate,
 		mode = hcfg.TLS.Mode
 	} else {
 		// Smart Default
-		if shouldBeLocal(sni) {
+		if core.IsLocalhost(sni) {
 			mode = alaye.ModeLocalAuto
 		} else {
 			mode = alaye.ModeLetsEncrypt
@@ -315,7 +328,7 @@ func (m *TlsManager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate,
 	}
 }
 
-func (m *TlsManager) getCustomCACert(root string, host string) (*tls.Certificate, error) {
+func (m *Manager) getCustomCACert(root string, host string) (*tls.Certificate, error) {
 	caCert, err := os.ReadFile(root)
 	if err != nil {
 		return nil, errors.Newf("load custom CA root (host=%q): %w", host, err)
@@ -324,41 +337,17 @@ func (m *TlsManager) getCustomCACert(root string, host string) (*tls.Certificate
 	if !caPool.AppendCertsFromPEM(caCert) {
 		return nil, errors.Newf("invalid custom CA PEM (host=%q)", host)
 	}
-	if hcfg := m.HostManager.Get(host); hcfg != nil && &hcfg.TLS != nil {
+	if hcfg := m.hostManager.Get(host); hcfg != nil && &hcfg.TLS != nil {
 		return m.GetLocalCertificate(hcfg.TLS.Local, host)
 	}
 	return nil, errors.Newf("custom_ca requires local cert/key for host %q", host)
 }
 
-func (m *TlsManager) Close() {
+func (m *Manager) Close() {
 	m.watcherMu.Lock()
 	defer m.watcherMu.Unlock()
 	for key, w := range m.Watchers {
 		w.Close()
 		delete(m.Watchers, key)
 	}
-}
-
-// shouldBeLocal determines if a hostname implies local development
-func shouldBeLocal(host string) bool {
-	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "localhost" {
-		return true
-	}
-	if strings.HasSuffix(host, ".localhost") {
-		return true
-	}
-	if strings.HasSuffix(host, ".local") {
-		return true
-	}
-	if strings.HasSuffix(host, ".test") {
-		return true
-	}
-	// Check loopback IPs
-	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() {
-			return true
-		}
-	}
-	return false
 }

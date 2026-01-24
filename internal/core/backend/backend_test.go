@@ -10,17 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"github.com/olekukonko/ll"
 )
 
-// Mock logger to avoid cluttering test output
-type noopLogger struct{}
-
-func (n noopLogger) Info(msg string, args ...any)      {}
-func (n noopLogger) Warn(msg string, args ...any)      {}
-func (n noopLogger) Error(msg string, args ...any)     {}
-func (n noopLogger) Fields(args ...any) woos.TlsLogger { return n }
+var (
+	testLogger = ll.New("backend")
+)
 
 // Helper to create a backend with customizable params
 func setupBackend(t *testing.T, server alaye.Server, hc *alaye.HealthCheck, cb *alaye.CircuitBreaker) *Backend {
@@ -29,7 +25,7 @@ func setupBackend(t *testing.T, server alaye.Server, hc *alaye.HealthCheck, cb *
 		CircuitBreaker: cb,
 	}
 
-	b, err := NewBackend(server, route, noopLogger{})
+	b, err := NewBackend(server, route, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -37,7 +33,7 @@ func setupBackend(t *testing.T, server alaye.Server, hc *alaye.HealthCheck, cb *
 }
 
 func TestNewBackend_InvalidURL(t *testing.T) {
-	_, err := NewBackend(alaye.NewServer("://invalid-url"), &alaye.Route{}, noopLogger{})
+	_, err := NewBackend(alaye.NewServer("://invalid-url"), &alaye.Route{}, testLogger)
 	if err == nil {
 		t.Error("Expected error for invalid URL, got nil")
 	}
@@ -201,7 +197,7 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 		CircuitBreaker: &alaye.CircuitBreaker{Threshold: 2},
 	}
 
-	b, err := NewBackend(alaye.NewServer(server.URL), route, noopLogger{})
+	b, err := NewBackend(alaye.NewServer(server.URL), route, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -236,7 +232,7 @@ func TestCircuitBreaker_NoTripOnCancel(t *testing.T) {
 		CircuitBreaker: &alaye.CircuitBreaker{Threshold: 1},
 	}
 
-	b, err := NewBackend(alaye.NewServer(server.URL), route, noopLogger{})
+	b, err := NewBackend(alaye.NewServer(server.URL), route, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}

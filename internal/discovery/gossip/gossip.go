@@ -207,6 +207,6 @@ func (e *eventDelegate) processNode(node *memberlist.Node) {
 		return
 	}
 
-	// Inject into HostManager
+	// Inject into hostManager
 	e.s.hm.UpdateGossipNode(node.Name, meta.Host, route)
 }

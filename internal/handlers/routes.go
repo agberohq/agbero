@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/backend"
-	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/compress"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/headers"
@@ -100,10 +99,8 @@ func newProxyRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 		lb.timeout = route.Timeouts.Request
 	}
 
-	wrappedLogger := tlss.NewTLSLogger(logger)
-
 	for _, backendCfg := range route.Backends.Servers {
-		b, err := backend.NewBackend(backendCfg, route, wrappedLogger)
+		b, err := backend.NewBackend(backendCfg, route, logger)
 		if err != nil {
 			logger.Fields("backend", backendCfg.Address, "err", err).Error("failed to create backend")
 			continue

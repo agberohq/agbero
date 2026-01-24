@@ -18,21 +18,15 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/caddyserver/certmagic"
 	"github.com/fsnotify/fsnotify"
+	"github.com/olekukonko/ll"
 )
 
-// Mock logger
-type mockLogger struct {
-	logs []string
-}
-
-func (m *mockLogger) Info(msg string, args ...any)      { m.logs = append(m.logs, msg) }
-func (m *mockLogger) Warn(msg string, args ...any)      { m.logs = append(m.logs, msg) }
-func (m *mockLogger) Error(msg string, args ...any)     { m.logs = append(m.logs, msg) }
-func (m *mockLogger) Fields(args ...any) woos.TlsLogger { return m }
+var (
+	testLogger = ll.New("tlss")
+)
 
 // generateTestCert creates a minimal self-signed certificate for testing
 func generateTestCert(t *testing.T, certFile, keyFile string) {
@@ -99,9 +93,9 @@ func TestTlsManager_EnsureCertMagic_Success(t *testing.T) {
 		LEEmail:       "test@example.com",
 		TLSStorageDir: tmpDir,
 	}
-	m := &TlsManager{
-		Logger:      &mockLogger{},
-		HostManager: &discovery.Host{},
+	m := &Manager{
+		logger:      testLogger,
+		hostManager: &discovery.Host{},
 		Global:      global,
 	}
 
@@ -130,9 +124,9 @@ func TestTlsManager_EnsureCertMagic_Success(t *testing.T) {
 }
 
 func TestTlsManager_EnsureCertMagic_NoEmail(t *testing.T) {
-	m := &TlsManager{
-		Logger:      &mockLogger{},
-		HostManager: &discovery.Host{},
+	m := &Manager{
+		logger:      testLogger,
+		hostManager: &discovery.Host{},
 		Global:      &alaye.Global{TLSStorageDir: "/tmp"},
 	}
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
@@ -143,7 +137,7 @@ func TestTlsManager_EnsureCertMagic_NoEmail(t *testing.T) {
 }
 
 func TestTlsManager_CmForHost_DevMode(t *testing.T) {
-	m := &TlsManager{Global: &alaye.Global{Development: true}}
+	m := &Manager{Global: &alaye.Global{Development: true}}
 	m.cmProd = &certmagic.Config{}
 	m.cmStaging = &certmagic.Config{}
 
@@ -154,7 +148,7 @@ func TestTlsManager_CmForHost_DevMode(t *testing.T) {
 }
 
 func TestTlsManager_CmForHost_StagingOverride(t *testing.T) {
-	m := &TlsManager{}
+	m := &Manager{}
 	m.cmProd = &certmagic.Config{}
 	m.cmStaging = &certmagic.Config{}
 
@@ -173,7 +167,7 @@ func TestTlsManager_GetLocalCertificate_Success(t *testing.T) {
 	// Generate valid test certificate
 	generateTestCert(t, certFile, keyFile)
 
-	m := &TlsManager{Logger: &mockLogger{}, LocalCache: make(map[string]*tls.Certificate)}
+	m := &Manager{logger: testLogger, LocalCache: make(map[string]*tls.Certificate)}
 	local := alaye.LocalCert{CertFile: certFile, KeyFile: keyFile}
 	cert, err := m.GetLocalCertificate(local, "test.com")
 	if err != nil {
@@ -186,7 +180,7 @@ func TestTlsManager_GetLocalCertificate_Success(t *testing.T) {
 
 func TestTlsManager_GetLocalCertificate_MissingFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	m := &TlsManager{Logger: &mockLogger{}, LocalCache: make(map[string]*tls.Certificate)}
+	m := &Manager{logger: testLogger, LocalCache: make(map[string]*tls.Certificate)}
 	local := alaye.LocalCert{
 		CertFile: filepath.Join(tmpDir, "nonexistent.pem"),
 		KeyFile:  filepath.Join(tmpDir, "nonexistent.key"),
@@ -198,7 +192,7 @@ func TestTlsManager_GetLocalCertificate_MissingFile(t *testing.T) {
 }
 
 func TestTlsManager_GetLocalCertificate_EmptyPaths(t *testing.T) {
-	m := &TlsManager{Logger: &mockLogger{}, LocalCache: make(map[string]*tls.Certificate)}
+	m := &Manager{logger: testLogger, LocalCache: make(map[string]*tls.Certificate)}
 	local := alaye.LocalCert{CertFile: "", KeyFile: ""}
 	_, err := m.GetLocalCertificate(local, "test.com")
 	if err == nil || !strings.Contains(err.Error(), "local tls requires") {
@@ -207,9 +201,9 @@ func TestTlsManager_GetLocalCertificate_EmptyPaths(t *testing.T) {
 }
 
 func TestTlsManager_GetCertificate_UnknownHost(t *testing.T) {
-	m := &TlsManager{
-		Logger:      &mockLogger{},
-		HostManager: discovery.NewHost("", discovery.WithLogger(nil)),
+	m := &Manager{
+		logger:      testLogger,
+		hostManager: discovery.NewHost("", discovery.WithLogger(nil)),
 	}
 
 	chi := &tls.ClientHelloInfo{ServerName: "unknown.com"}
@@ -220,7 +214,7 @@ func TestTlsManager_GetCertificate_UnknownHost(t *testing.T) {
 }
 
 func TestTlsManager_GetCertificate_NoSNI(t *testing.T) {
-	m := &TlsManager{Logger: &mockLogger{}}
+	m := &Manager{logger: testLogger}
 	chi := &tls.ClientHelloInfo{ServerName: ""}
 	_, err := m.GetCertificate(chi)
 	if err == nil || !strings.Contains(err.Error(), "missing SNI") {
@@ -229,7 +223,7 @@ func TestTlsManager_GetCertificate_NoSNI(t *testing.T) {
 }
 
 func TestTlsManager_Close(t *testing.T) {
-	m := &TlsManager{}
+	m := &Manager{}
 	m.Watchers = make(map[string]*fsnotify.Watcher)
 
 	w, err := fsnotify.NewWatcher()
@@ -252,8 +246,8 @@ func TestTlsManager_GetLocalCertificate_Caching(t *testing.T) {
 	// Generate valid test certificate
 	generateTestCert(t, certFile, keyFile)
 
-	m := &TlsManager{
-		Logger:     &mockLogger{},
+	m := &Manager{
+		logger:     testLogger,
 		LocalCache: make(map[string]*tls.Certificate),
 	}
 	local := alaye.LocalCert{CertFile: certFile, KeyFile: keyFile}
@@ -289,8 +283,8 @@ func TestTlsManager_InvalidateLocal(t *testing.T) {
 	// Generate valid test certificate
 	generateTestCert(t, certFile, keyFile)
 
-	m := &TlsManager{
-		Logger:     &mockLogger{},
+	m := &Manager{
+		logger:     testLogger,
 		LocalCache: make(map[string]*tls.Certificate),
 	}
 	local := alaye.LocalCert{CertFile: certFile, KeyFile: keyFile}

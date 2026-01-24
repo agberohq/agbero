@@ -81,7 +81,7 @@ func TestServer_ShutdownImpl(t *testing.T) {
 		servers:   make(map[string]*http.Server),
 		h3Servers: make(map[string]*http3.Server),
 		logger:    testLogger,
-		tlsManager: &tls2.TlsManager{ // Mock
+		tlsManager: &tls2.Manager{ // Mock
 			Watchers: make(map[string]*fsnotify.Watcher),
 		},
 		rateLimiter: ratelimit.NewRateLimiter(time.Minute, 100, nil),
