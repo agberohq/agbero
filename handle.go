@@ -3,14 +3,11 @@ package agbero
 import (
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
-
-var mimeCache sync.Map // ext -> type (e.g., ".html" -> "text/html")
 
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
@@ -50,23 +47,20 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 
-	for i := range hcfg.Routes {
-		route := hcfg.Routes[i]
-		if core.PathMatch(r.URL.Path, route.Path) {
-			s.handleRoute(w, r, &route)
-			s.logRequest(host, r, start)
-			return
-		}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+	router := s.hostManager.GetRouter(host)
+	if router == nil {
+		http.Error(w, "Host not found", http.StatusNotFound)
+		return
 	}
 
-	//if &hcfg.Web != nil {
-	//	s.handleWeb(w, r, &hcfg.Web)
-	//	s.logRequest(host, r, start)
-	//	return
-	//}
-
+	res := router.Find(r.URL.Path)
+	if res.Route != nil {
+		s.handleRoute(w, r, res.Route)
+		s.logRequest(host, r, start)
+		return
+	}
 	http.Error(w, "Not found", http.StatusNotFound)
 }
 

@@ -6,19 +6,6 @@ import (
 	"time"
 )
 
-func PathMatch(requestPath, pattern string) bool {
-	if pattern == "*" {
-		return true
-	}
-
-	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSuffix(pattern, "*")
-		return strings.HasPrefix(requestPath, prefix)
-	}
-
-	return requestPath == pattern
-}
-
 func NormalizeHost(hostport string) string {
 	if h, _, err := net.SplitHostPort(hostport); err == nil {
 		return strings.ToLower(h)

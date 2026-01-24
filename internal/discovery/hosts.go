@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
+	"git.imaxinacion.net/aibox/agbero/internal/core/matcher"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/fsnotify/fsnotify"
@@ -38,6 +39,8 @@ type Host struct {
 	watcher *fsnotify.Watcher
 	logger  *ll.Logger
 	changed chan struct{}
+
+	routers map[string]*matcher.Tree
 }
 
 func NewHost(hostsDir string, opts ...Option) *Host {
@@ -48,6 +51,7 @@ func NewHost(hostsDir string, opts ...Option) *Host {
 		gossipRoutes: make(map[string]DynamicRouteItem),
 		nodeFailures: make(map[string]int),
 		changed:      make(chan struct{}, 1),
+		routers:      make(map[string]*matcher.Tree),
 	}
 
 	for _, opt := range opts {
@@ -230,6 +234,18 @@ func (hm *Host) Changed() <-chan struct{} {
 	return hm.changed
 }
 
+func (hm *Host) GetRouter(hostname string) *matcher.Tree {
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	if hostname == "" {
+		return nil
+	}
+
+	hm.mu.RLock()
+	defer hm.mu.RUnlock()
+
+	return hm.routers[hostname]
+}
+
 func (hm *Host) notifyChanged() {
 	select {
 	case hm.changed <- struct{}{}:
@@ -309,73 +325,94 @@ func (hm *Host) loadAllLocked() error {
 }
 
 func (hm *Host) rebuildLookupLocked() {
+	// Caller MUST hold hm.mu.Lock()
+
 	newLookup := make(map[string]*alaye.Host)
 	domainToRoutes := make(map[string][]alaye.Route)
-	domainToConfig := make(map[string]*alaye.Host) // Store first config as template
+	domainToConfig := make(map[string]*alaye.Host)
 
-	// 1. Add File Hosts (Base Layer)
+	// 1) Base Layer: File Hosts
 	for _, cfg := range hm.hosts {
 		for _, domain := range cfg.Domains {
-			// Store routes
+			domain = strings.ToLower(strings.TrimSpace(domain))
+			if domain == "" {
+				continue
+			}
+
+			// IMPORTANT: always create the domain key, even if cfg.Routes is empty.
 			domainToRoutes[domain] = append(domainToRoutes[domain], cfg.Routes...)
-			// Store first config as template (for TLS, Limits, etc.)
+
+			// first config becomes template (TLS, Limits, etc.)
 			if _, exists := domainToConfig[domain]; !exists {
 				domainToConfig[domain] = cfg
 			}
 		}
 	}
 
-	// Create merged host configs
+	// Create merged host configs from file layer
 	for domain, routes := range domainToRoutes {
 		baseCfg := domainToConfig[domain]
+		if baseCfg == nil {
+			continue
+		}
 
-		// Create a deep copy of the base config
 		merged := *baseCfg
+		merged.Domains = []string{domain}
+
 		merged.Routes = make([]alaye.Route, len(routes))
 		copy(merged.Routes, routes)
 
-		// Sort routes by length (longest first)
 		sortRoutes(merged.Routes)
-
 		newLookup[domain] = &merged
 	}
 
-	// 2. Merge Gossip Routes
+	// 2) Merge Gossip Routes (overlay)
 	dynamicMap := make(map[string][]*alaye.Route)
 	for _, item := range hm.gossipRoutes {
-		dynamicMap[item.Host] = append(dynamicMap[item.Host], &item.Route)
+		domain := strings.ToLower(strings.TrimSpace(item.Host))
+		if domain == "" {
+			continue
+		}
+		dynamicMap[domain] = append(dynamicMap[domain], &item.Route)
 	}
 
 	for domain, routes := range dynamicMap {
 		existing, ok := newLookup[domain]
 
 		if ok {
-			// Host exists in File: Append routes dynamically.
-			// Perform Deep Copy of existing config to avoid mutating the base 'hosts' map
 			combined := *existing
+			combined.Domains = []string{domain}
 
-			// Deep copy Routes slice
 			combined.Routes = make([]alaye.Route, len(existing.Routes))
 			copy(combined.Routes, existing.Routes)
 
-			// Track existing paths to prevent duplicates
-			seen := make(map[string]bool)
-			for _, r := range combined.Routes {
-				seen[r.Path] = true
-			}
-
-			// Append gossip routes ONLY if path doesn't exist in file config
-			for _, r := range routes {
-				if !seen[r.Path] {
-					combined.Routes = append(combined.Routes, *r)
-					seen[r.Path] = true
+			seen := make(map[string]bool, len(combined.Routes))
+			for i := range combined.Routes {
+				p := combined.Routes[i].Path
+				if p == "" {
+					p = "/"
 				}
+				seen[p] = true
 			}
-			sortRoutes(combined.Routes)
 
+			for _, r := range routes {
+				if r == nil {
+					continue
+				}
+				p := r.Path
+				if p == "" {
+					p = "/"
+				}
+				if seen[p] {
+					continue
+				}
+				combined.Routes = append(combined.Routes, *r)
+				seen[p] = true
+			}
+
+			sortRoutes(combined.Routes)
 			newLookup[domain] = &combined
 		} else {
-			// Host is purely dynamic
 			sorted := derefRoutes(routes)
 			sortRoutes(sorted)
 
@@ -386,7 +423,26 @@ func (hm *Host) rebuildLookupLocked() {
 		}
 	}
 
+	// 3) Build Routers from final merged configs
+	newRouters := make(map[string]*matcher.Tree, len(newLookup))
+
+	for domain, cfg := range newLookup {
+		tr := matcher.NewTree()
+
+		// Insert using stable pointers to slice elements.
+		for i := range cfg.Routes {
+			rt := &cfg.Routes[i]
+			if rt.Path == "" {
+				rt.Path = "/"
+			}
+			_ = tr.Insert(rt.Path, rt)
+		}
+
+		newRouters[domain] = tr
+	}
+
 	hm.lookupMap = newLookup
+	hm.routers = newRouters
 }
 
 func (hm *Host) loadOne(path string) (*alaye.Host, error) {

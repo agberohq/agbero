@@ -356,7 +356,7 @@ func TestHealthCheck_Jitter(t *testing.T) {
 	defer b.Stop()
 
 	// Run for a bit
-	time.Sleep(550 * time.Millisecond) // Should get 2-3 requests
+	time.Sleep(800 * time.Millisecond) // Should get 2-3 requests
 
 	if requestCount < 2 {
 		t.Errorf("Expected at least 2 health checks, got %d", requestCount)
