@@ -2,8 +2,7 @@ package woos
 
 const (
 	Name        = "agbero"
-	Version     = "0.0.3"
-	Description = "Production reverse proxy with Let's Encrypt support"
+	Description = "Production reverse proxy automatic Tls. "
 )
 
 // Standard Headers

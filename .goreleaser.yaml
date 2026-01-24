@@ -15,6 +15,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
+      - -X git.imaxinacion.net/aibox/agbero/internal/woos.Version={{.Version}}
+      - -X git.imaxinacion.net/aibox/agbero/internal/woos.Commit={{.Commit}}
+      - -X git.imaxinacion.net/aibox/agbero/internal/woos.Date={{.Date}}
 
 archives:
   - format: tar.gz
