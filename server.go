@@ -77,7 +77,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		s.logger = ll.New(woos.Name).Enable()
 	}
 
-	woos.ApplyDefaults(s.global)
+	woos.ApplyDefaults(s.global, s.configPath)
 
 	// Log global config summary
 	s.logger.Fields(

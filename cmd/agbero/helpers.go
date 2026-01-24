@@ -30,46 +30,35 @@ var hostSampleTmpl string
 var bannerTmpl string
 
 // resolveConfigPath implements the search order:
-// 1. Explicit Flag
-// 2. Current Working Listing (agbero.hcl)
-// 3. User Config Dir (~/.config/agbero/config.hcl)
-// 4. System Config Dir (/etc/agbero/config.hcl)
-// Returns the path to use and whether it currently exists.
 func resolveConfigPath(flagPath string) (string, bool) {
 	// 1. Explicit Flag
 	if flagPath != "" {
 		if _, err := os.Stat(flagPath); err == nil {
 			return flagPath, true
 		}
-		return flagPath, false // User provided path, return it even if missing
+		return flagPath, false
 	}
 
 	// 2. CWD
 	cwd, _ := os.Getwd()
-	cwdPath := filepath.Join(cwd, "agbero.hcl")
+	cwdPath := filepath.Join(cwd, woos.DefaultConfigName)
 	if _, err := os.Stat(cwdPath); err == nil {
 		return cwdPath, true
 	}
 
-	// 3. User Config Dir
-	userDir, _ := os.UserConfigDir()
-	userPath := filepath.Join(userDir, "agbero", "config.hcl")
-	if _, err := os.Stat(userPath); err == nil {
-		return userPath, true
+	// 3. User Config
+	if userPaths, err := woos.GetUserDefaults(); err == nil {
+		if _, err := os.Stat(userPaths.ConfigFile); err == nil {
+			return userPaths.ConfigFile, true
+		}
 	}
 
-	// 4. System Config Dir
-	var sysPath string
-	if runtime.GOOS == "windows" {
-		sysPath = filepath.Join(os.Getenv("ProgramData"), "agbero", "config.hcl")
-	} else {
-		sysPath = "/etc/agbero/config.hcl"
-	}
-	if _, err := os.Stat(sysPath); err == nil {
-		return sysPath, true
+	// 4. System Config
+	sysPaths := woos.GetSystemDefaults()
+	if _, err := os.Stat(sysPaths.ConfigFile); err == nil {
+		return sysPaths.ConfigFile, true
 	}
 
-	// Default fallback for generation: CWD
 	return cwdPath, false
 }
 
@@ -132,37 +121,23 @@ func loadConfig(path string) (*alaye.Global, error) {
 }
 
 func installDefaults() error {
-	var baseDir, hostsDir, configFile string
+	defaults := woos.GetSystemDefaults()
 
-	switch runtime.GOOS {
-	case "windows":
-		baseDir = filepath.Join("C:", "ProgramData", "agbero")
-		hostsDir = filepath.Join(baseDir, "hosts.d")
-		configFile = filepath.Join(baseDir, "config.hcl")
-	case "darwin", "linux":
-		baseDir = "/etc/agbero"
-		hostsDir = filepath.Join(baseDir, "hosts.d")
-		configFile = filepath.Join(baseDir, "config.hcl")
-	default:
-		return fmt.Errorf("unsupported OS: %s", runtime.GOOS)
+	// Centralized directory creation
+	logger.Fields("dir", defaults.HostsDir).Info("creating directory")
+	if err := woos.EnsureDir(defaults.HostsDir, false); err != nil {
+		return fmt.Errorf("mkdir hosts: %w", err)
 	}
+	// Note: Certs dir is usually created on demand, but can be done here too
 
-	logger.Fields("dir", baseDir).Info("creating directory")
-	if err := os.MkdirAll(hostsDir, 0755); err != nil {
-		return fmt.Errorf("mkdir: %w", err)
-	}
-
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		logger.Fields("file", configFile).Info("writing default config")
-
-		// Use the system template, inject relative hosts_dir
-		content := fmt.Sprintf(configSystemTmpl, "./hosts.d")
-
-		if err := os.WriteFile(configFile, []byte(content), 0644); err != nil {
+	if _, err := os.Stat(defaults.ConfigFile); os.IsNotExist(err) {
+		logger.Fields("file", defaults.ConfigFile).Info("writing default config")
+		// Use the constant name, not hardcoded "./hosts.d"
+		content := fmt.Sprintf(configSystemTmpl, "./"+woos.DefaultHostDirName)
+		if err := os.WriteFile(defaults.ConfigFile, []byte(content), woos.FilePerm); err != nil {
 			return fmt.Errorf("write config: %w", err)
 		}
 	}
-
 	return nil
 }
 

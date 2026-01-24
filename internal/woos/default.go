@@ -9,8 +9,8 @@ import (
 )
 
 // ApplyDefaults sets defaults ONLY when config did not provide values.
-func ApplyDefaults(g *alaye.Global) {
-	// Timeouts defaults
+func ApplyDefaults(g *alaye.Global, configAbsPath string) {
+	// --- 1. Timeout Defaults (unchanged) ---
 	if g.Timeouts.Read == 0 {
 		g.Timeouts.Read = alaye.DefaultReadTimeout
 	}
@@ -24,7 +24,7 @@ func ApplyDefaults(g *alaye.Global) {
 		g.Timeouts.ReadHeader = alaye.DefaultReadHeaderTimeout
 	}
 
-	// Rate limit container defaults
+	// --- 2. Rate Limit Defaults (unchanged) ---
 	if g.RateLimits.TTL == 0 {
 		g.RateLimits.TTL = 30 * time.Minute
 	}
@@ -34,8 +34,6 @@ func ApplyDefaults(g *alaye.Global) {
 	if len(g.RateLimits.AuthPrefixes) == 0 {
 		g.RateLimits.AuthPrefixes = []string{"/login", "/otp", "/auth"}
 	}
-
-	// Global policy defaults
 	if g.RateLimits.Global.Requests <= 0 {
 		g.RateLimits.Global.Requests = 120
 	}
@@ -45,8 +43,6 @@ func ApplyDefaults(g *alaye.Global) {
 	if g.RateLimits.Global.Burst <= 0 {
 		g.RateLimits.Global.Burst = 240
 	}
-
-	// Auth policy defaults
 	if g.RateLimits.Auth.Requests <= 0 {
 		g.RateLimits.Auth.Requests = 10
 	}
@@ -57,25 +53,45 @@ func ApplyDefaults(g *alaye.Global) {
 		g.RateLimits.Auth.Burst = 10
 	}
 
-	if g.CertsDir == "" {
-		g.CertsDir = CertDir
+	// --- 3. Path Resolution (The Fix) ---
+	// This replaces the duplicated logic in helpers.go and avoids OS nonsense here.
+
+	// If we don't have a config path (e.g. testing), default to CWD
+	baseDir := "."
+	if configAbsPath != "" {
+		baseDir = filepath.Dir(configAbsPath)
 	}
 
+	// Resolve HostsDir
 	if g.HostsDir == "" {
-		g.HostsDir = HostDir
+		g.HostsDir = filepath.Join(baseDir, DefaultHostDirName)
+	} else if !filepath.IsAbs(g.HostsDir) {
+		g.HostsDir = filepath.Join(baseDir, g.HostsDir)
 	}
 
+	// Resolve CertsDir
+	if g.CertsDir == "" {
+		g.CertsDir = filepath.Join(baseDir, DefaultCertDirName)
+	} else if !filepath.IsAbs(g.CertsDir) {
+		g.CertsDir = filepath.Join(baseDir, g.CertsDir)
+	}
+
+	// Resolve TLSStorageDir
 	if g.TLSStorageDir == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			homeDir = "."
+		// Try standard location or fallback to user home
+		if home, err := os.UserHomeDir(); err == nil {
+			// Check ~/.cert (legacy/common)
+			legacy := filepath.Join(home, ".cert")
+			if _, err := os.Stat(legacy); err == nil {
+				g.TLSStorageDir = legacy
+			} else {
+				// Default: ~/.config/agbero/data
+				g.TLSStorageDir = filepath.Join(home, ".config", Name, DefaultDataDirName)
+			}
+		} else {
+			// Fallback if no home dir: ./data
+			g.TLSStorageDir = filepath.Join(baseDir, DefaultDataDirName)
 		}
-		// Use ~/.cert as default if it exists, otherwise ~/.config/agbero/certmagic
-		defaultCertDir := filepath.Join(homeDir, ".config", "agbero", "certmagic")
-		if _, err := os.Stat(filepath.Join(homeDir, ".cert")); err == nil {
-			defaultCertDir = filepath.Join(homeDir, ".cert")
-		}
-		g.TLSStorageDir = defaultCertDir
 	}
 }
 

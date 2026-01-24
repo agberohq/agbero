@@ -34,18 +34,15 @@ type Installer struct {
 	useMkcert bool
 }
 
-func NewInstaller(logger *ll.Logger, dir ...string) *Installer {
-	// Default to constant
-	target := woos.CertDir
-
-	// Override if provided
-	if len(dir) > 0 && dir[0] != "" {
-		target = dir[0]
+func NewInstaller(logger *ll.Logger, absoluteCertDir ...string) *Installer {
+	// We trust the caller (Server) has already resolved this path via woos.ApplyDefaults
+	cetDir := woos.DefaultCertDirName
+	if len(absoluteCertDir) > 0 {
+		cetDir = absoluteCertDir[0]
 	}
-
 	return &Installer{
 		logger:  logger,
-		CertDir: target,
+		CertDir: cetDir,
 	}
 }
 
@@ -79,43 +76,43 @@ func (ci *Installer) SetHosts(hosts []string, port int) {
 }
 
 func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error) {
-	// Ensure cert directory exists
-	if err := os.MkdirAll(ci.CertDir, 0755); err != nil {
-		return "", "", fmt.Errorf("failed to create cert directory %s: %w", ci.CertDir, err)
+	// 1. Centralized Directory Creation
+	// We use the woos package to ensure permissions and existence are correct
+	// strictly based on the path provided by the Config/ApplyDefaults.
+	if err := woos.EnsureDir(ci.CertDir, false); err != nil {
+		return "", "", fmt.Errorf("failed to ensure cert directory: %w", err)
 	}
 
-	// Use first host as filename prefix
+	// 2. Determine Filename Prefix
 	prefix := "localhost"
 	if len(ci.certHosts) > 0 {
 		host := ci.certHosts[0]
-		// Remove port if present
 		if strings.Contains(host, ":") {
 			host = strings.Split(host, ":")[0]
 		}
 		if net.ParseIP(host) != nil {
 			prefix = host
 		} else {
-			// Use first part of domain (e.g., "app" from "app.localhost")
-			domainParts := strings.Split(host, ".")
-			if len(domainParts) > 0 {
-				prefix = domainParts[0]
+			parts := strings.Split(host, ".")
+			if len(parts) > 0 {
+				prefix = parts[0]
 			}
 		}
 	}
 
-	// First, look for existing certificates in the directory
+	// 3. Check for existing certs
 	if cert, key, found := ci.findExistingCerts(prefix, ci.port); found {
 		ci.logger.Fields("cert", cert, "key", key).Info("Using existing certificates")
 		return cert, key, nil
 	}
 
-	// If not found, use default naming pattern
+	// 4. Define Target Paths
 	certFile = filepath.Join(ci.CertDir, fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
 	keyFile = filepath.Join(ci.CertDir, fmt.Sprintf("%s-%d-key.pem", prefix, ci.port))
 
-	ci.logger.Fields("hosts", ci.certHosts, "cert", certFile, "key", keyFile).Info("Generating localhost certificates")
+	ci.logger.Fields("hosts", ci.certHosts, "cert", certFile).Info("Generating localhost certificates")
 
-	// Try different generation methods
+	// 5. Attempt Generation Strategies
 	methods := []func() (string, string, error){
 		ci.tryMkcertInPath,
 		ci.tryTruststore,
@@ -123,13 +120,12 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 	}
 
 	for _, method := range methods {
-		cert, key, err := method()
+		c, k, err := method()
 		if err == nil {
-			ci.logger.Fields("cert", cert, "key", key).Info("Successfully generated certificates")
-			return cert, key, nil
+			ci.logger.Fields("cert", c).Info("Successfully generated certificates")
+			return c, k, nil
 		}
-		// Log warning but continue to next method
-		// ci.logger.Fields("err", err).Warn("Certificate generation method failed")
+		// Optional: Log debug here if specific methods fail
 	}
 
 	return "", "", fmt.Errorf("all certificate generation methods failed")
