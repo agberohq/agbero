@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/backend"
-	"git.imaxinacion.net/aibox/agbero/internal/core/tls"
+	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/compress"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/headers"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
 )
 
@@ -27,7 +27,68 @@ type RouteHandler struct {
 	Backends []*backend.Backend
 }
 
-func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
+func NewRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
+	if route == nil {
+		logger.Error("nil route")
+		return nil
+	}
+
+	// Validate route semantics first (web XOR backends, required fields, etc.)
+	if err := route.Validate(); err != nil {
+		logger.Fields("path", route.Path, "err", err).Error("invalid route config")
+		return nil
+	}
+
+	logger.Fields("path", route.Path, "web_root_raw", string(route.Web.Root), "backends", route.Backends).
+		Debug("creating route handler")
+
+	// At this point route.Validate() guaranteed exactly one of these:
+	// - web route with root set
+	// - proxy route with backends set
+	if route.Web.Root.IsSet() {
+		logger.Debug("treating as WEB route")
+		return newWebRouteHandler(route, logger)
+	}
+
+	logger.Debug("treating as PROXY route")
+	return newProxyRouteHandler(route, logger)
+}
+
+func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
+	// Web route doesn't need backends or load balancing
+	chain := &webHandler{
+		route:  route,
+		logger: logger,
+	}
+
+	// Build middleware chain (same as proxy routes)
+	var handler http.Handler = chain
+
+	// Authentication
+	if route.BasicAuth != nil && len(route.BasicAuth.Users) > 0 {
+		handler = auth.Basic(route.BasicAuth)(handler)
+	}
+	if route.ForwardAuth != nil && route.ForwardAuth.URL != "" {
+		handler = auth.Forward(route.ForwardAuth)(handler)
+	}
+
+	// Headers
+	if route.Headers != nil {
+		handler = headers.Headers(route.Headers)(handler)
+	}
+
+	// Compression
+	if route.CompressionConfig.Compression {
+		handler = compress.Compress(route)(handler)
+	}
+
+	return &RouteHandler{
+		handler:  handler,
+		Backends: nil, // No backends for web routes
+	}
+}
+
+func newProxyRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 	// 1. Initialize Load Balancer Logic
 	lb := &LoadBalancerHandler{
 		stripPrefixes: append([]string(nil), route.StripPrefixes...),
@@ -35,7 +96,7 @@ func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
 	}
 
 	if lb.strategy == "" {
-		lb.strategy = woos.StrategyRoundRobin // Ensure this constant exists in woos, or use "roundrobin"
+		lb.strategy = alaye.StrategyRoundRobin // Ensure this constant exists in woos, or use "roundrobin"
 	}
 
 	if route.Timeouts != nil && route.Timeouts.Request != 0 {
@@ -44,7 +105,7 @@ func NewRouteHandler(route *woos.Route, logger *ll.Logger) *RouteHandler {
 
 	// 2. Initialize Backends
 	// We need to wrap the logger to match the backend constructor interface
-	wrappedLogger := tls.NewTLSLogger(logger)
+	wrappedLogger := tlss.NewTLSLogger(logger)
 
 	for _, raw := range route.Backends {
 		raw = strings.TrimSpace(raw)
@@ -145,9 +206,9 @@ func (lb *LoadBalancerHandler) PickBackend() *backend.Backend {
 	}
 
 	switch lb.strategy {
-	case woos.StrategyLeastConn:
+	case alaye.StrategyLeastConn:
 		return lb.pickLeastConn()
-	case woos.StrategyRandom:
+	case alaye.StrategyRandom:
 		return lb.pickRandom()
 	default:
 		return lb.pickRoundRobin()

@@ -6,101 +6,112 @@ import (
 	"testing"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
 func TestParser_GlobalConfig(t *testing.T) {
 	content := `
 bind {
-  http = [":8080"]
+  http = [":80", ":8080"]
   https = [":443"]
-  metrics = ":9090"
 }
 
-hosts_dir = "./custom_hosts"
-le_email = "test@example.com"
+hosts_dir = "./hosts"
+le_email = "admin@example.com"
+log_level = "debug"
 development = true
 
+trusted_proxies = ["127.0.0.1/32", "10.0.0.0/8"]
+
 timeouts {
-  read = "1s"
-  write = "30s"
-  idle = "120s"
-  read_header = "5s"
+  read = "15s"
+  write = "45s"
+  idle = "300s"
 }
 
 rate_limits {
-  ttl = "10m"
-  max_entries = 123
-
+  ttl = "1h"
+  max_entries = 50000
+  
   global {
-    requests = 5
-    window   = "1s"
-    burst    = 9
+    requests = 100
+    window = "1s"
+    burst = 200
   }
-
+  
   auth {
-    requests = 1
-    window   = "1m"
-    burst    = 1
+    requests = 5
+    window = "30s"
+    burst = 10
   }
 }
 `
 	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, "config.hcl")
+	path := filepath.Join(tmpDir, "global.hcl")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	var global woos.GlobalConfig
+	var global alaye.Global
 	p := NewParser(path)
 	if err := p.Unmarshal(&global); err != nil {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	if len(global.Bind.HTTP) != 1 || global.Bind.HTTP[0] != ":8080" {
-		t.Errorf("expected bind.http [:8080], got %v", global.Bind.HTTP)
+	// Validate parsed values
+	if len(global.Bind.HTTP) != 2 || global.Bind.HTTP[0] != ":80" || global.Bind.HTTP[1] != ":8080" {
+		t.Errorf("unexpected bind.http: %v", global.Bind.HTTP)
 	}
 	if len(global.Bind.HTTPS) != 1 || global.Bind.HTTPS[0] != ":443" {
-		t.Errorf("expected bind.https [:443], got %v", global.Bind.HTTPS)
+		t.Errorf("unexpected bind.https: %v", global.Bind.HTTPS)
 	}
-	if global.Bind.Metrics != ":9090" {
-		t.Errorf("expected bind.metrics :9090, got %s", global.Bind.Metrics)
+	if global.HostsDir != "./hosts" {
+		t.Errorf("expected hosts_dir ./hosts, got %s", global.HostsDir)
 	}
-
-	if global.HostsDir != "./custom_hosts" {
-		t.Errorf("expected hosts_dir ./custom_hosts, got %s", global.HostsDir)
+	if global.LEEmail != "admin@example.com" {
+		t.Errorf("expected le_email admin@example.com, got %s", global.LEEmail)
 	}
-	if global.LEEmail != "test@example.com" {
-		t.Errorf("expected le_email test@example.com, got %s", global.LEEmail)
+	if global.LogLevel != "debug" {
+		t.Errorf("expected log_level debug, got %s", global.LogLevel)
 	}
-	if global.Development != true {
-		t.Error("expected development true")
+	if !global.Development {
+		t.Error("expected development = true")
 	}
-
-	if global.Timeouts.Read != 1*time.Second {
-		t.Errorf("expected timeouts.read 1s, got %v", global.Timeouts.Read)
+	if len(global.TrustedProxies) != 2 || global.TrustedProxies[0] != "127.0.0.1/32" || global.TrustedProxies[1] != "10.0.0.0/8" {
+		t.Errorf("unexpected trusted_proxies: %v", global.TrustedProxies)
 	}
-	if global.Timeouts.Write != 30*time.Second {
-		t.Errorf("expected timeouts.write 30s, got %v", global.Timeouts.Write)
+	if global.Timeouts.Read != 15*time.Second {
+		t.Errorf("expected timeouts.read 15s, got %v", global.Timeouts.Read)
 	}
-	if global.Timeouts.Idle != 120*time.Second {
-		t.Errorf("expected timeouts.idle 120s, got %v", global.Timeouts.Idle)
+	if global.Timeouts.Write != 45*time.Second {
+		t.Errorf("expected timeouts.write 45s, got %v", global.Timeouts.Write)
 	}
-	if global.Timeouts.ReadHeader != 5*time.Second {
-		t.Errorf("expected timeouts.read_header 5s, got %v", global.Timeouts.ReadHeader)
+	if global.Timeouts.Idle != 300*time.Second {
+		t.Errorf("expected timeouts.idle 300s, got %v", global.Timeouts.Idle)
 	}
-
-	if global.RateLimits.TTL != 10*time.Minute {
-		t.Errorf("expected rate_limits.ttl 10m, got %v", global.RateLimits.TTL)
+	if global.RateLimits.TTL != time.Hour {
+		t.Errorf("expected rate_limits.ttl 1h, got %v", global.RateLimits.TTL)
 	}
-	if global.RateLimits.MaxEntries != 123 {
-		t.Errorf("expected max_entries 123, got %d", global.RateLimits.MaxEntries)
+	if global.RateLimits.MaxEntries != 50000 {
+		t.Errorf("expected rate_limits.max_entries 50000, got %d", global.RateLimits.MaxEntries)
 	}
-	if global.RateLimits.Global.Requests != 5 || global.RateLimits.Global.Window != 1*time.Second || global.RateLimits.Global.Burst != 9 {
-		t.Errorf("unexpected global policy: %+v", global.RateLimits.Global)
+	if global.RateLimits.Global.Requests != 100 {
+		t.Errorf("expected rate_limits.global.requests 100, got %d", global.RateLimits.Global.Requests)
 	}
-	if global.RateLimits.Auth.Requests != 1 || global.RateLimits.Auth.Window != 1*time.Minute || global.RateLimits.Auth.Burst != 1 {
-		t.Errorf("unexpected auth policy: %+v", global.RateLimits.Auth)
+	if global.RateLimits.Global.Window != time.Second {
+		t.Errorf("expected rate_limits.global.window 1s, got %v", global.RateLimits.Global.Window)
+	}
+	if global.RateLimits.Global.Burst != 200 {
+		t.Errorf("expected rate_limits.global.burst 200, got %d", global.RateLimits.Global.Burst)
+	}
+	if global.RateLimits.Auth.Requests != 5 {
+		t.Errorf("expected rate_limits.auth.requests 5, got %d", global.RateLimits.Auth.Requests)
+	}
+	if global.RateLimits.Auth.Window != 30*time.Second {
+		t.Errorf("expected rate_limits.auth.window 30s, got %v", global.RateLimits.Auth.Window)
+	}
+	if global.RateLimits.Auth.Burst != 10 {
+		t.Errorf("expected rate_limits.auth.burst 10, got %d", global.RateLimits.Auth.Burst)
 	}
 }
 
@@ -108,9 +119,11 @@ func TestParser_HostConfig(t *testing.T) {
 	content := `
 domains = ["app.com"]
 
-web {
-  root = "."
-  index = "index.html"
+route "/" {
+  web {
+    root = "."
+    index = "index.html"
+  }
 }
 
 route "/api" {
@@ -133,24 +146,243 @@ route "/api" {
 	if len(host.Domains) != 1 || host.Domains[0] != "app.com" {
 		t.Errorf("unexpected domains: %v", host.Domains)
 	}
-	if host.Web == nil {
-		t.Fatalf("expected web block")
-	}
-	if host.Web.Root.String() != "." {
-		t.Errorf("expected web.root '.', got %q", host.Web.Root.String())
-	}
-	if host.Web.Index != "index.html" {
-		t.Errorf("expected web.index index.html, got %q", host.Web.Index)
+
+	if len(host.Routes) != 2 {
+		t.Fatalf("expected 2 routes, got %d", len(host.Routes))
 	}
 
-	if len(host.Routes) != 1 {
-		t.Fatalf("expected 1 route, got %d", len(host.Routes))
+	// Check web route
+	if host.Routes[0].Path != "/" {
+		t.Errorf("expected first route path /, got %s", host.Routes[0].Path)
 	}
-	if host.Routes[0].Path != "/api" {
-		t.Errorf("expected path /api, got %s", host.Routes[0].Path)
+	if !host.Routes[0].Web.Root.IsSet() {
+		t.Error("expected web block in first route")
 	}
-	if host.Routes[0].LBStrategy != "leastconn" {
-		t.Errorf("expected lb_strategy leastconn, got %q", host.Routes[0].LBStrategy)
+	if host.Routes[0].Web.Root.String() != "." {
+		t.Errorf("expected web root ., got %s", host.Routes[0].Web.Root.String())
+	}
+	if host.Routes[0].Web.Index != "index.html" {
+		t.Errorf("expected web index index.html, got %s", host.Routes[0].Web.Index)
+	}
+
+	// Check proxy route
+	if host.Routes[1].Path != "/api" {
+		t.Errorf("expected second route path /api, got %s", host.Routes[1].Path)
+	}
+	if host.Routes[1].LBStrategy != "leastconn" {
+		t.Errorf("expected lb_strategy leastconn, got %q", host.Routes[1].LBStrategy)
+	}
+	if len(host.Routes[1].Backends) != 1 || host.Routes[1].Backends[0] != "http://localhost:3000" {
+		t.Errorf("unexpected backends: %v", host.Routes[1].Backends)
+	}
+}
+
+func TestParser_HostConfigValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		wantErr bool
+	}{
+		{
+			name: "valid web and proxy routes",
+			content: `
+domains = ["test.com"]
+
+route "/" {
+  web {
+    root = "."
+  }
+}
+
+route "/api" {
+  backends = ["http://localhost:3000"]
+}
+`,
+			wantErr: false,
+		},
+		{
+			name: "invalid: route with both web and backends",
+			content: `
+domains = ["test.com"]
+route "/" {
+  web {
+    root = "."
+  }
+  backends = ["http://localhost:3000"]
+}
+`,
+			wantErr: true,
+		},
+		{
+			name: "invalid: route with neither web nor backends",
+			content: `
+domains = ["test.com"]
+route "/" {
+  # no web or backends
+  strip_prefixes = ["/api"]
+}
+`,
+			wantErr: true,
+		},
+		{
+			name: "invalid: web route with strip_prefixes",
+			content: `
+domains = ["test.com"]
+route "/static" {
+  web {
+    root = "."
+  }
+  strip_prefixes = ["/static"]
+}
+`,
+			wantErr: true,
+		},
+		{
+			name: "invalid: web route with health check",
+			content: `
+domains = ["test.com"]
+route "/" {
+  web {
+    root = "."
+  }
+  health_check {
+    path = "/health"
+  }
+}
+`,
+			wantErr: true,
+		},
+		{
+			name: "valid: web route with compression only",
+			content: `
+domains = ["test.com"]
+route "/" {
+  web {
+    root = "."
+  }
+  compression {
+    compression = true
+    type = "gzip"
+  }
+}
+`,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			path := filepath.Join(tmpDir, "test.hcl")
+			if err := os.WriteFile(path, []byte(tt.content), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			host, err := ParseHostConfig(path)
+
+			if err != nil {
+				// Parsing failed - this is our error for malformed configs
+				if !tt.wantErr {
+					t.Fatalf("unexpected parsing error: %v", err)
+				}
+				return
+			}
+
+			// Debug: print parsed structure
+			t.Logf("Test %q: Parsed %d routes", tt.name, len(host.Routes))
+			for i, route := range host.Routes {
+				t.Logf("  Route %d: path=%s, hasWeb=%v, hasBackends=%d",
+					i, route.Path, route.Web.Root.IsSet(), len(route.Backends))
+			}
+
+			// Parsing succeeded - now check validation
+			validateErr := host.Validate()
+
+			if tt.wantErr {
+				if validateErr == nil {
+					t.Error("expected validation error, got none")
+				} else {
+					t.Logf("Got expected validation error: %v", validateErr)
+				}
+				return
+			}
+
+			// Should not have validation error
+			if validateErr != nil {
+				t.Fatalf("unexpected validation error: %v", validateErr)
+			}
+		})
+	}
+}
+
+// Add a test to figure out the correct headers syntax
+func TestParser_HeadersSyntax(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		wantErr bool
+	}{
+		{
+			name: "headers with set as block",
+			content: `
+domains = ["test.com"]
+route "/" {
+  web {
+    root = "."
+  }
+  headers {
+    response {
+      set {
+        "X-Test" = "Value"
+      }
+    }
+  }
+}
+`,
+			wantErr: false,
+		},
+		{
+			name: "headers with set as attribute",
+			content: `
+domains = ["test.com"]
+route "/" {
+  web {
+    root = "."
+  }
+  headers {
+    response {
+      set = {
+        "X-Test" = "Value"
+      }
+    }
+  }
+}
+`,
+			wantErr: false, // Try both to see which works
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			path := filepath.Join(tmpDir, "test.hcl")
+			if err := os.WriteFile(path, []byte(tt.content), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := ParseHostConfig(path)
+			if err != nil {
+				if !tt.wantErr {
+					t.Logf("Syntax %q failed with: %v", tt.name, err)
+				}
+				return
+			}
+
+			t.Logf("Syntax %q parsed successfully", tt.name)
+			if tt.wantErr {
+				t.Error("expected parsing error but got none")
+			}
+		})
 	}
 }
 
@@ -164,7 +396,7 @@ func TestParser_EdgeCases(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		var global woos.GlobalConfig
+		var global alaye.Global
 		p := NewParser(path)
 		err := p.Unmarshal(&global)
 		if err != nil {
@@ -177,7 +409,7 @@ func TestParser_EdgeCases(t *testing.T) {
 
 	t.Run("InvalidPath", func(t *testing.T) {
 		p := NewParser("/nonexistent/file.hcl")
-		var global woos.GlobalConfig
+		var global alaye.Global
 		err := p.Unmarshal(&global)
 		if err == nil {
 			t.Error("expected error for nonexistent file")
@@ -192,7 +424,7 @@ func TestParser_EdgeCases(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		var global woos.GlobalConfig
+		var global alaye.Global
 		p := NewParser(path)
 		err := p.Unmarshal(&global)
 		if err == nil {
@@ -288,5 +520,51 @@ func TestConfigPath(t *testing.T) {
 				t.Errorf("ConfigPath(%q, %q) = %q, want %q", tt.baseDir, tt.filename, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestParser_WebBlockBug(t *testing.T) {
+	content := `
+domains = ["test.com"]
+
+route "/" {
+  web {
+    root = "."
+  }
+}
+
+route "/api" {
+  backends = ["http://localhost:3000"]
+}
+`
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.hcl")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	host, err := ParseHostConfig(path)
+	if err != nil {
+		t.Fatalf("ParseHostConfig failed: %v", err)
+	}
+
+	// Check what we actually parsed
+	if len(host.Routes) != 2 {
+		t.Fatalf("expected 2 routes, got %d", len(host.Routes))
+	}
+
+	// Route 0 should have web
+	if !host.Routes[0].Web.Root.IsSet() {
+		t.Error("route 0 should have web block")
+	}
+
+	// Route 1 should NOT have web
+	if host.Routes[1].Web.Root.IsSet() {
+		t.Errorf("route 1 should not have web block, but has: %v", host.Routes[1].Web.Root.String())
+	}
+
+	// Route 1 should have backends
+	if len(host.Routes[1].Backends) == 0 {
+		t.Error("route 1 should have backends")
 	}
 }

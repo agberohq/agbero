@@ -10,11 +10,13 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"github.com/dustin/go-humanize"
 )
 
 // loadConfig parses the config and ensures hosts_dir is absolute.
 // If hosts_dir is relative (e.g. "./hosts.d"), it resolves it relative to the config file.
-func loadConfig(path string) (*woos.GlobalConfig, error) {
+func loadConfig(path string) (*alaye.Global, error) {
 	// 1. Get Absolute Path of Config File
 	absConfigPath, err := filepath.Abs(path)
 	if err != nil {
@@ -22,7 +24,7 @@ func loadConfig(path string) (*woos.GlobalConfig, error) {
 	}
 
 	// 2. Parse Config
-	var global woos.GlobalConfig
+	var global alaye.Global
 	parser := core.NewParser(absConfigPath)
 	if err := parser.Unmarshal(&global); err != nil {
 		return nil, err
@@ -417,4 +419,69 @@ func showHelpExamples(configPath string) {
 	fmt.Println("\n===============================================================")
 	fmt.Println("For more options, use: " + exeName + " --help")
 	fmt.Println("===============================================================")
+}
+
+// Add to cmd/agbero/helpers.go
+func showCertInfo(configPath string) {
+	global, err := loadConfig(configPath)
+	if err != nil {
+		logger.Warn("Could not load config to show cert info: %v", err)
+		return
+	}
+
+	// Determine storage directory
+	storageDir := global.TLSStorageDir
+	if storageDir == "" {
+		homeDir, _ := os.UserHomeDir()
+		storageDir = filepath.Join(homeDir, ".cert")
+	}
+
+	fmt.Println("\nCERTIFICATE INFORMATION")
+	fmt.Println("===============================================================")
+	fmt.Printf("Storage Directory: %s\n", storageDir)
+
+	// Check if directory exists
+	if _, err := os.Stat(storageDir); os.IsNotExist(err) {
+		fmt.Println("⚠  Directory does not exist")
+	} else {
+		// List certificates
+		files, err := os.ReadDir(storageDir)
+		if err != nil {
+			fmt.Printf("⚠  Cannot read directory: %v\n", err)
+		} else {
+			certCount := 0
+			for _, file := range files {
+				if !file.IsDir() && strings.HasSuffix(file.Name(), ".pem") {
+					certCount++
+				}
+			}
+			fmt.Printf("Found %d certificate(s)\n", certCount)
+
+			if certCount > 0 {
+				fmt.Println("\nAvailable certificates:")
+				for _, file := range files {
+					if !file.IsDir() && strings.HasSuffix(file.Name(), ".pem") {
+						fullPath := filepath.Join(storageDir, file.Name())
+						info, err := os.Stat(fullPath)
+						if err == nil {
+							fmt.Printf("  • %s (%s, %s)\n",
+								file.Name(),
+								humanize.Bytes(uint64(info.Size())),
+								info.ModTime().Format("2006-01-02"))
+						}
+					}
+				}
+			}
+		}
+	}
+
+	fmt.Println("\nTo use existing certificates from this directory:")
+	fmt.Println("  In your host config, use:")
+	fmt.Println(`  tls {
+    mode = "local"
+    local {
+      cert_file = "` + filepath.Join(storageDir, "localhost.pem") + `"
+      key_file  = "` + filepath.Join(storageDir, "localhost.key.pem") + `"
+    }
+  }`)
 }

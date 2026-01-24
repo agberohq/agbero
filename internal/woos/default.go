@@ -1,21 +1,27 @@
 package woos
 
-import "time"
+import (
+	"os"
+	"path/filepath"
+	"time"
+
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+)
 
 // ApplyDefaults sets defaults ONLY when config did not provide values.
-func ApplyDefaults(g *GlobalConfig) {
+func ApplyDefaults(g *alaye.Global) {
 	// Timeouts defaults
 	if g.Timeouts.Read == 0 {
-		g.Timeouts.Read = DefaultReadTimeout
+		g.Timeouts.Read = alaye.DefaultReadTimeout
 	}
 	if g.Timeouts.Write == 0 {
-		g.Timeouts.Write = DefaultWriteTimeout
+		g.Timeouts.Write = alaye.DefaultWriteTimeout
 	}
 	if g.Timeouts.Idle == 0 {
-		g.Timeouts.Idle = DefaultIdleTimeout
+		g.Timeouts.Idle = alaye.DefaultIdleTimeout
 	}
 	if g.Timeouts.ReadHeader == 0 {
-		g.Timeouts.ReadHeader = DefaultReadHeaderTimeout
+		g.Timeouts.ReadHeader = alaye.DefaultReadHeaderTimeout
 	}
 
 	// Rate limit container defaults
@@ -50,10 +56,23 @@ func ApplyDefaults(g *GlobalConfig) {
 	if g.RateLimits.Auth.Burst <= 0 {
 		g.RateLimits.Auth.Burst = 10
 	}
+
+	if g.TLSStorageDir == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			homeDir = "."
+		}
+		// Use ~/.cert as default if it exists, otherwise ~/.config/agbero/certmagic
+		defaultCertDir := filepath.Join(homeDir, ".config", "agbero", "certmagic")
+		if _, err := os.Stat(filepath.Join(homeDir, ".cert")); err == nil {
+			defaultCertDir = filepath.Join(homeDir, ".cert")
+		}
+		g.TLSStorageDir = defaultCertDir
+	}
 }
 
-// ParseRatePolicy parses a RatePolicyConfig into primitives (config must not depend on proxy types).
-func ParseRatePolicy(rc RatePolicyConfig) (requests int, window time.Duration, burst int, ok bool) {
+// ParseRatePolicy parses a RatePolicy into primitives (config must not depend on proxy types).
+func ParseRatePolicy(rc alaye.RatePolicy) (requests int, window time.Duration, burst int, ok bool) {
 	if rc.Requests <= 0 {
 		return 0, 0, 0, false
 	}

@@ -10,6 +10,7 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
@@ -18,15 +19,15 @@ import (
 // DynamicRouteItem represents a single route from a single gossip node
 type DynamicRouteItem struct {
 	Host  string
-	Route woos.Route
+	Route alaye.Route
 }
 
 type Host struct {
 	hostsDir string
 
 	mu        sync.RWMutex
-	hosts     map[string]*woos.HostConfig // Loaded from disk (ID -> Config)
-	lookupMap map[string]*woos.HostConfig // Final O(1) Map (Domain -> Config)
+	hosts     map[string]*alaye.Host // Loaded from disk (ID -> Config)
+	lookupMap map[string]*alaye.Host // Final O(1) Map (Domain -> Config)
 
 	// Map of NodeName -> Route Definition
 	gossipRoutes map[string]DynamicRouteItem
@@ -42,8 +43,8 @@ type Host struct {
 func NewHost(hostsDir string, opts ...Option) *Host {
 	h := &Host{
 		hostsDir:     hostsDir,
-		hosts:        make(map[string]*woos.HostConfig),
-		lookupMap:    make(map[string]*woos.HostConfig),
+		hosts:        make(map[string]*alaye.Host),
+		lookupMap:    make(map[string]*alaye.Host),
 		gossipRoutes: make(map[string]DynamicRouteItem),
 		nodeFailures: make(map[string]int),
 		changed:      make(chan struct{}, 1),
@@ -60,7 +61,7 @@ func NewHost(hostsDir string, opts ...Option) *Host {
 	return h
 }
 
-func (hm *Host) UpdateGossipNode(nodeID, host string, route woos.Route) {
+func (hm *Host) UpdateGossipNode(nodeID, host string, route alaye.Route) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
@@ -167,7 +168,13 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 	if !strings.HasSuffix(name, ".hcl") {
 		return
 	}
-	hm.logger.Fields("event", event.Op.String(), "file", event.Name).Info("config change detected")
+
+	hm.logger.Fields(
+		"event", event.Op.String(),
+		"file", filepath.Base(event.Name),
+		"full_path", event.Name,
+	).Info("config change detected, scheduling reload")
+
 	debouncedReload()
 }
 
@@ -175,14 +182,23 @@ func (hm *Host) ReloadFull() {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
+	previousCount := len(hm.lookupMap)
+
 	if err := hm.loadAllLocked(); err != nil {
 		hm.logger.Fields("err", err).Error("failed to reload file hosts")
 		return
 	}
+
+	currentCount := len(hm.lookupMap)
+	hm.logger.Fields(
+		"previous_hosts", previousCount,
+		"current_hosts", currentCount,
+		"change", currentCount-previousCount,
+	).Info("host configuration reloaded")
 	hm.notifyChanged()
 }
 
-func (hm *Host) Get(hostname string) *woos.HostConfig {
+func (hm *Host) Get(hostname string) *alaye.Host {
 	hostname = strings.ToLower(strings.TrimSpace(hostname))
 	if hostname == "" {
 		return nil
@@ -194,7 +210,7 @@ func (hm *Host) Get(hostname string) *woos.HostConfig {
 	return hm.lookupMap[hostname]
 }
 
-func (hm *Host) LoadAll() (map[string]*woos.HostConfig, error) {
+func (hm *Host) LoadAll() (map[string]*alaye.Host, error) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 	return hm.snapshotLocked(), nil
@@ -223,7 +239,12 @@ func (hm *Host) notifyChanged() {
 
 func (hm *Host) loadAllLocked() error {
 	if _, err := os.Stat(hm.hostsDir); err != nil {
-		hm.hosts = make(map[string]*woos.HostConfig)
+		hm.logger.Fields(
+			"hosts_dir", hm.hostsDir,
+			"err", err,
+		).Warn("hosts directory not found, clearing configuration")
+
+		hm.hosts = make(map[string]*alaye.Host)
 		hm.rebuildLookupLocked()
 		return nil
 	}
@@ -233,7 +254,9 @@ func (hm *Host) loadAllLocked() error {
 		return errors.Newf("read hosts dir: %w", err)
 	}
 
-	nextHosts := make(map[string]*woos.HostConfig, len(files))
+	nextHosts := make(map[string]*alaye.Host, len(files))
+	loadedFiles := []string{}
+	failedFiles := []string{}
 
 	for _, file := range files {
 		if file.IsDir() {
@@ -247,30 +270,78 @@ func (hm *Host) loadAllLocked() error {
 		path := filepath.Join(hm.hostsDir, name)
 		cfg, err := hm.loadOne(path)
 		if err != nil {
-			return errors.Newf("load host %q: %w", name, err)
+			hm.logger.Fields(
+				"file", name,
+				"err", err,
+			).Error("failed to load host config")
+			failedFiles = append(failedFiles, name)
+			continue
 		}
 
 		hostID := strings.TrimSuffix(name, ".hcl")
 		nextHosts[hostID] = cfg
+		loadedFiles = append(loadedFiles, name)
+
+		hm.logger.Fields(
+			"file", name,
+			"host_id", hostID,
+			"domains", len(cfg.Domains),
+			"routes", len(cfg.Routes),
+		).Debug("loaded host config")
 	}
 
 	hm.hosts = nextHosts
 	hm.rebuildLookupLocked()
+
+	hm.logger.Fields(
+		"hosts_dir", hm.hostsDir,
+		"total_files", len(files),
+		"loaded_files", len(loadedFiles),
+		"failed_files", len(failedFiles),
+		"host_configs", len(nextHosts),
+	).Info("host discovery completed")
+
+	if len(failedFiles) > 0 {
+		hm.logger.Fields("failed_files", failedFiles).Warn("some host configs failed to load")
+	}
+
 	return nil
 }
 
 func (hm *Host) rebuildLookupLocked() {
-	newLookup := make(map[string]*woos.HostConfig)
+	newLookup := make(map[string]*alaye.Host)
+	domainToRoutes := make(map[string][]alaye.Route)
+	domainToConfig := make(map[string]*alaye.Host) // Store first config as template
 
 	// 1. Add File Hosts (Base Layer)
 	for _, cfg := range hm.hosts {
 		for _, domain := range cfg.Domains {
-			newLookup[domain] = cfg
+			// Store routes
+			domainToRoutes[domain] = append(domainToRoutes[domain], cfg.Routes...)
+			// Store first config as template (for TLS, Limits, etc.)
+			if _, exists := domainToConfig[domain]; !exists {
+				domainToConfig[domain] = cfg
+			}
 		}
 	}
 
+	// Create merged host configs
+	for domain, routes := range domainToRoutes {
+		baseCfg := domainToConfig[domain]
+
+		// Create a deep copy of the base config
+		merged := *baseCfg
+		merged.Routes = make([]alaye.Route, len(routes))
+		copy(merged.Routes, routes)
+
+		// Sort routes by length (longest first)
+		sortRoutes(merged.Routes)
+
+		newLookup[domain] = &merged
+	}
+
 	// 2. Merge Gossip Routes
-	dynamicMap := make(map[string][]*woos.Route)
+	dynamicMap := make(map[string][]*alaye.Route)
 	for _, item := range hm.gossipRoutes {
 		dynamicMap[item.Host] = append(dynamicMap[item.Host], &item.Route)
 	}
@@ -284,7 +355,7 @@ func (hm *Host) rebuildLookupLocked() {
 			combined := *existing
 
 			// Deep copy Routes slice
-			combined.Routes = make([]woos.Route, len(existing.Routes))
+			combined.Routes = make([]alaye.Route, len(existing.Routes))
 			copy(combined.Routes, existing.Routes)
 
 			// Track existing paths to prevent duplicates
@@ -308,7 +379,7 @@ func (hm *Host) rebuildLookupLocked() {
 			sorted := derefRoutes(routes)
 			sortRoutes(sorted)
 
-			newLookup[domain] = &woos.HostConfig{
+			newLookup[domain] = &alaye.Host{
 				Domains: []string{domain},
 				Routes:  sorted,
 			}
@@ -318,8 +389,8 @@ func (hm *Host) rebuildLookupLocked() {
 	hm.lookupMap = newLookup
 }
 
-func (hm *Host) loadOne(path string) (*woos.HostConfig, error) {
-	var hostConfig woos.HostConfig
+func (hm *Host) loadOne(path string) (*alaye.Host, error) {
+	var hostConfig alaye.Host
 	parser := core.NewParser(path)
 	if err := parser.Unmarshal(&hostConfig); err != nil {
 		return nil, err
@@ -331,23 +402,23 @@ func (hm *Host) loadOne(path string) (*woos.HostConfig, error) {
 	return &hostConfig, nil
 }
 
-func (hm *Host) snapshotLocked() map[string]*woos.HostConfig {
-	out := make(map[string]*woos.HostConfig, len(hm.lookupMap))
+func (hm *Host) snapshotLocked() map[string]*alaye.Host {
+	out := make(map[string]*alaye.Host, len(hm.lookupMap))
 	for k, v := range hm.lookupMap {
 		out[k] = v
 	}
 	return out
 }
 
-func derefRoutes(in []*woos.Route) []woos.Route {
-	out := make([]woos.Route, len(in))
+func derefRoutes(in []*alaye.Route) []alaye.Route {
+	out := make([]alaye.Route, len(in))
 	for i, r := range in {
 		out[i] = *r
 	}
 	return out
 }
 
-func sortRoutes(routes []woos.Route) {
+func sortRoutes(routes []alaye.Route) {
 	sort.SliceStable(routes, func(i, j int) bool {
 		return len(routes[i].Path) > len(routes[j].Path)
 	})

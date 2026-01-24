@@ -61,7 +61,7 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 	}
 
 	// Get all configured hosts (active + inactive)
-	hosts, _ := hm.LoadAll() // Returns map[string]*HostConfig
+	hosts, _ := hm.LoadAll() // Returns map[string]*Host
 
 	for domain, hcfg := range hosts {
 		hSnap := &HostSnapshot{

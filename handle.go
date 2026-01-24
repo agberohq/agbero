@@ -1,16 +1,13 @@
 package agbero
 
 import (
-	"mime"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
 var mimeCache sync.Map // ext -> type (e.g., ".html" -> "text/html")
@@ -44,8 +41,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	maxBody := int64(woos.DefaultMaxBodySize)
-	if hcfg.Limits != nil && hcfg.Limits.MaxBodySize > 0 {
+	maxBody := int64(alaye.DefaultMaxBodySize)
+	if &hcfg.Limits != nil && hcfg.Limits.MaxBodySize > 0 {
 		maxBody = hcfg.Limits.MaxBodySize
 	}
 
@@ -64,16 +61,16 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if hcfg.Web != nil {
-		s.handleWeb(w, r, hcfg.Web)
-		s.logRequest(host, r, start)
-		return
-	}
+	//if &hcfg.Web != nil {
+	//	s.handleWeb(w, r, &hcfg.Web)
+	//	s.logRequest(host, r, start)
+	//	return
+	//}
 
 	http.Error(w, "Not found", http.StatusNotFound)
 }
 
-func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *woos.Route) {
+func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alaye.Route) {
 	originalPath := r.URL.Path
 	originalRawPath := r.URL.RawPath
 
@@ -87,9 +84,14 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *woos
 				if r.URL.RawPath != "" {
 					r.URL.RawPath = strings.TrimPrefix(r.URL.RawPath, prefix)
 				}
+
+				// --- FIX START ---
+				// If we stripped everything (e.g. /consul -> ""), ensure path is "/"
 				if r.URL.Path == "" {
 					r.URL.Path = "/"
 				}
+				// --- FIX END ---
+
 				break
 			}
 		}
@@ -100,113 +102,4 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *woos
 
 	r.URL.Path = originalPath
 	r.URL.RawPath = originalRawPath
-}
-
-func (s *Server) handleWeb(w http.ResponseWriter, r *http.Request, web *woos.Web) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	reqPath := filepath.Clean(r.URL.Path)
-	reqPath = strings.TrimPrefix(reqPath, string(os.PathSeparator))
-	if reqPath == "" || reqPath == "." {
-		reqPath = "."
-	}
-
-	dir, err := os.OpenRoot(web.Root.String())
-	if err != nil {
-		s.logger.Fields("err", err, "root", web.Root.String()).Error("failed to open web root")
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	defer dir.Close()
-
-	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-		gzPath := reqPath + ".gz"
-		if reqPath == "." || reqPath == "" {
-			indexName := "index.html"
-			if web.Index != "" {
-				indexName = web.Index
-			}
-			gzPath = indexName + ".gz"
-		}
-
-		fGz, err := dir.Open(gzPath)
-		if err == nil {
-			defer fGz.Close()
-			infoGz, err := fGz.Stat()
-			if err == nil && !infoGz.IsDir() {
-				origType := getMimeType(strings.TrimSuffix(gzPath, ".gz"))
-				if origType != "" {
-					w.Header().Set("Content-Type", origType)
-				}
-				w.Header().Set("Content-Encoding", "gzip")
-				http.ServeContent(w, r, gzPath, infoGz.ModTime(), fGz)
-				return
-			}
-		}
-	}
-
-	f, err := dir.Open(reqPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			http.Error(w, "Not found", http.StatusNotFound)
-		} else {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-		}
-		return
-	}
-	defer f.Close()
-
-	info, err := f.Stat()
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	if info.IsDir() {
-		indexName := "index.html"
-		if web.Index != "" {
-			indexName = web.Index
-		}
-
-		indexPath := filepath.Join(reqPath, indexName)
-		fIndex, err := dir.Open(indexPath)
-		if err != nil {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
-		defer fIndex.Close()
-
-		infoIndex, err := fIndex.Stat()
-		if err != nil {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-
-		f = fIndex
-		info = infoIndex
-		reqPath = indexPath
-	}
-
-	ctype := getMimeType(reqPath)
-	if ctype != "" {
-		w.Header().Set("Content-Type", ctype)
-	}
-
-	http.ServeContent(w, r, reqPath, info.ModTime(), f)
-}
-
-// getMimeType caches mime.TypeByExtension for perf
-func getMimeType(path string) string {
-	ext := filepath.Ext(path)
-	if v, ok := mimeCache.Load(ext); ok {
-		return v.(string)
-	}
-	ctype := mime.TypeByExtension(ext)
-	if ctype != "" {
-		mimeCache.Store(ext, ctype)
-	}
-	return ctype
 }

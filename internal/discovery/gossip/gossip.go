@@ -6,15 +6,15 @@ import (
 	"io"
 	"log"
 
-	"git.imaxinacion.net/aibox/agbero/internal/security"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/security"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/hashicorp/memberlist"
 	"github.com/olekukonko/ll"
 )
 
 // HostManager interface abstracts the Host discovery logic for testing
 type HostManager interface {
-	UpdateGossipNode(nodeID, host string, route woos.Route)
+	UpdateGossipNode(nodeID, host string, route alaye.Route)
 	RemoveGossipNode(nodeID string)
 	RouteExists(host, path string) bool
 	ResetNodeFailures(nodeName string)
@@ -39,7 +39,7 @@ type Service struct {
 	localName    string // Stored to avoid nil pointer during startup events
 }
 
-func NewService(hm HostManager, cfg *woos.GossipConfig, logger *ll.Logger) (*Service, error) {
+func NewService(hm HostManager, cfg *alaye.Gossip, logger *ll.Logger) (*Service, error) {
 	if cfg == nil || !cfg.Enabled {
 		return nil, nil
 	}
@@ -177,11 +177,11 @@ func (e *eventDelegate) processNode(node *memberlist.Node) {
 	target := fmt.Sprintf("http://%s:%d", node.Addr.String(), meta.Port)
 
 	// Construct route definition
-	route := woos.Route{
+	route := alaye.Route{
 		Path:       meta.Path,
 		Backends:   []string{target},
-		LBStrategy: woos.StrategyRandom,
-		HealthCheck: &woos.HealthCheckConfig{
+		LBStrategy: alaye.StrategyRandom,
+		HealthCheck: &alaye.HealthCheck{
 			Path: "/", // Default health check
 		},
 	}

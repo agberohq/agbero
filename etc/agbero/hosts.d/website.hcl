@@ -1,10 +1,17 @@
-domains = ["example.com"]
+domains = ["localhost"]
 
-web {
-  root = "/var/www/html"
+
+// Root Web
+route "/" {
+  web {
+    root = "/Users/oleku/www/tmp"
+  }
 }
 
-route "/api/*" {
-  backends = ["http://backend:8080"]
-  strip_prefixes = ["/api"]
+// Some other web
+route "/id" {
+  web {
+    root = "/Users/oleku/www/id"
+  }
 }
+

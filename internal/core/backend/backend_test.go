@@ -11,9 +11,10 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
-// Mock Logger to avoid cluttering test output
+// Mock logger to avoid cluttering test output
 type noopLogger struct{}
 
 func (n noopLogger) Info(msg string, args ...any)      {}
@@ -22,8 +23,8 @@ func (n noopLogger) Error(msg string, args ...any)     {}
 func (n noopLogger) Fields(args ...any) woos.TlsLogger { return n }
 
 // Helper to create a backend with customizable params
-func setupBackend(t *testing.T, targetURL string, hc *woos.HealthCheckConfig, cb *woos.CircuitBreakerConfig) *Backend {
-	route := &woos.Route{
+func setupBackend(t *testing.T, targetURL string, hc *alaye.HealthCheck, cb *alaye.CircuitBreaker) *Backend {
+	route := &alaye.Route{
 		HealthCheck:    hc,
 		CircuitBreaker: cb,
 	}
@@ -36,7 +37,7 @@ func setupBackend(t *testing.T, targetURL string, hc *woos.HealthCheckConfig, cb
 }
 
 func TestNewBackend_InvalidURL(t *testing.T) {
-	_, err := NewBackend("://invalid-url", &woos.Route{}, noopLogger{})
+	_, err := NewBackend("://invalid-url", &alaye.Route{}, noopLogger{})
 	if err == nil {
 		t.Error("Expected error for invalid URL, got nil")
 	}
@@ -196,8 +197,8 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 	}))
 	defer server.Close()
 
-	route := &woos.Route{
-		CircuitBreaker: &woos.CircuitBreakerConfig{Threshold: 2},
+	route := &alaye.Route{
+		CircuitBreaker: &alaye.CircuitBreaker{Threshold: 2},
 	}
 
 	b, err := NewBackend(server.URL, route, noopLogger{})
@@ -231,8 +232,8 @@ func TestCircuitBreaker_NoTripOnCancel(t *testing.T) {
 	}))
 	defer server.Close()
 
-	route := &woos.Route{
-		CircuitBreaker: &woos.CircuitBreakerConfig{Threshold: 1},
+	route := &alaye.Route{
+		CircuitBreaker: &alaye.CircuitBreaker{Threshold: 1},
 	}
 
 	b, err := NewBackend(server.URL, route, noopLogger{})
@@ -260,7 +261,7 @@ func TestHealthCheck_Failure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	hc := &woos.HealthCheckConfig{
+	hc := &alaye.HealthCheck{
 		Path:      "/health",
 		Interval:  100 * time.Millisecond,
 		Threshold: 2,
@@ -290,7 +291,7 @@ func TestHealthCheck_Recovery(t *testing.T) {
 	}))
 	defer server.Close()
 
-	hc := &woos.HealthCheckConfig{
+	hc := &alaye.HealthCheck{
 		Path:      "/health",
 		Interval:  100 * time.Millisecond,
 		Threshold: 2,
@@ -345,7 +346,7 @@ func TestHealthCheck_Jitter(t *testing.T) {
 	}))
 	defer server.Close()
 
-	hc := &woos.HealthCheckConfig{
+	hc := &alaye.HealthCheck{
 		Path:      "/health",
 		Interval:  200 * time.Millisecond,
 		Threshold: 1,
@@ -373,7 +374,7 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 	}))
 	defer server.Close()
 
-	hc := &woos.HealthCheckConfig{
+	hc := &alaye.HealthCheck{
 		Path:      "/health",
 		Interval:  50 * time.Millisecond,
 		Threshold: 1,

@@ -1,4 +1,4 @@
-package tls
+package tlss
 
 import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
