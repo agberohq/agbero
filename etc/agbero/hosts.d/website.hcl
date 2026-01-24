@@ -3,7 +3,7 @@ domains = ["localhost"]
 route "/" {
   web {
     root = "/Users/oleku/www/tmp"
-    directory = true
+    listing = true
   }
 }
 

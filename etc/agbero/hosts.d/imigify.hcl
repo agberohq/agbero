@@ -30,6 +30,6 @@ route "/support" {
 route "/" {
   web {
     root = "/Users/oleku/www/tmp/ludo"
-    directory = true
+    listing = true
   }
 }
