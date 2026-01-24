@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // IsMkcertInstalled checks if mkcert is available on the system.
@@ -48,5 +49,31 @@ func IsMkcertInstalled() bool {
 		}
 	}
 
+	return false
+}
+
+func IsCARootInstalled() bool {
+	// Platform-specific checks for CA installation
+	switch runtime.GOOS {
+	case "darwin":
+		cmd := exec.Command("security", "find-certificate", "-c", "mkcert")
+		return cmd.Run() == nil
+	case "linux":
+		paths := []string{
+			"/etc/ssl/certs/mkcert-root.pem",
+			"/usr/local/share/ca-certificates/mkcert-root.crt",
+			filepath.Join(os.Getenv("HOME"), ".local/share/mkcert/rootCA.pem"),
+		}
+		for _, path := range paths {
+			if _, err := os.Stat(path); err == nil {
+				return true
+			}
+		}
+	case "windows":
+		psCmd := `Get-ChildItem -Path Cert:\LocalMachine\Root | Where-Object {$_.Subject -match "mkcert"} | Select-Object -First 1`
+		cmd := exec.Command("powershell", "-Command", psCmd)
+		output, err := cmd.Output()
+		return err == nil && len(strings.TrimSpace(string(output))) > 0
+	}
 	return false
 }

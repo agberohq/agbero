@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/olekukonko/ll"
 )
 
@@ -83,7 +84,7 @@ func TestCertInstaller_validateCertificate_HostMatch(t *testing.T) {
 	logger := ll.New("test")
 
 	ci := NewInstaller(logger)
-	ci.CertDir = tmp
+	ci.CertDir = woos.NewFolder(tmp)
 
 	certPath := filepath.Join(tmp, "localhost-443-cert.pem")
 	keyPath := filepath.Join(tmp, "localhost-443-key.pem")
@@ -106,7 +107,7 @@ func TestCertInstaller_findExistingCerts_UsesOnlyMatchingCert(t *testing.T) {
 	logger := ll.New("test")
 
 	ci := NewInstaller(logger)
-	ci.CertDir = tmp
+	ci.CertDir = woos.NewFolder(tmp)
 	ci.SetHosts([]string{"app.localhost"}, 443)
 
 	// Create cert for DIFFERENT host but with a matching filename pattern

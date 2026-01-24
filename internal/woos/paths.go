@@ -27,20 +27,3 @@ func GetUserDefaults() (RuntimePaths, error) {
 		CertsDir:   filepath.Join(base, CertDir.Name()),
 	}, nil
 }
-
-// ResolveRelative  ensures a directory is absolute relative to the config file location
-func ResolveRelative(configPath, targetDir string) string {
-	if filepath.IsAbs(targetDir) {
-		return targetDir
-	}
-	return filepath.Join(filepath.Dir(configPath), targetDir)
-}
-
-// EnsureDir is a helper to centralize Mkdir logic
-func EnsureDir(path string, secure bool) error {
-	perm := os.FileMode(DirPerm)
-	if secure {
-		perm = SecurePerm
-	}
-	return os.MkdirAll(path, perm)
-}

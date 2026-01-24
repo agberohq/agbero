@@ -227,22 +227,8 @@ func (m *Manager) GetAutoLocalCertificate(host string) (*tls.Certificate, error)
 	}
 	m.localMu.RUnlock()
 
-	// 1. Resolve directory (Config > Constant)
-	targetDir := m.Global.CertsDir
-	if targetDir == "" {
-		targetDir = woos.CertDir
-	}
-
-	// 2. Ensure absolute path for env var stability
-	if abs, err := filepath.Abs(targetDir); err == nil {
-		targetDir = abs
-	}
-
-	// 3. Force mkcert/truststore to use this dir for Root CA
-	os.Setenv("CAROOT", targetDir)
-
 	// 4. Initialize installer with explicit directory
-	installer := NewInstaller(m.logger, targetDir)
+	installer := NewInstaller(m.logger, woos.MakeFolder(m.Global.Storage.CertsDir, woos.CertDir))
 	installer.SetHosts([]string{host}, 443)
 
 	certFile, keyFile, err := installer.EnsureLocalhostCert()

@@ -5,6 +5,11 @@ const (
 	Description = "Production reverse proxy automatic Tls. "
 )
 
+const (
+	Localhost     = "localhost"
+	LocalhostIPv4 = "127.0.0.1"
+)
+
 // Standard Headers
 const (
 	HeaderContentType     = "Content-Type"
@@ -31,13 +36,6 @@ const (
 const (
 	HostDir Folder = "./hosts.d"
 	CertDir Folder = "./certs.d"
-)
-
-// Standardize permissions here
-const (
-	DirPerm    = 0755
-	FilePerm   = 0644
-	SecurePerm = 0700 // For keys/certs
 )
 
 const (

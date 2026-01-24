@@ -27,7 +27,7 @@ const (
 )
 
 type Installer struct {
-	logger    *ll.Logger // Changed to interface
+	logger    *ll.Logger
 	CertDir   woos.Folder
 	certHosts []string
 	port      int
@@ -35,33 +35,32 @@ type Installer struct {
 }
 
 func NewInstaller(logger *ll.Logger, absoluteCertDir ...woos.Folder) *Installer {
-	// We trust the caller (Server) has already resolved this path via woos.DefaultApply
-	cetDir := woos.CertDir
+	certDir := woos.CertDir
 	if len(absoluteCertDir) > 0 {
-		cetDir = absoluteCertDir[0]
+		certDir = absoluteCertDir[0]
 	}
 	return &Installer{
 		logger:  logger,
-		CertDir: cetDir,
+		CertDir: certDir,
 	}
 }
 
 func (ci *Installer) SetStorageDir(dir woos.Folder) error {
-	if dir == "" {
+	if !dir.IsSet() {
 		return nil // Use default
 	}
 
 	// Expand ~ to home directory
-	if strings.HasPrefix(dir, "~/") {
+	if strings.HasPrefix(dir.String(), "~/") {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return fmt.Errorf("failed to get home directory: %w", err)
 		}
-		dir = filepath.Join(home, dir[2:])
+		dir = woos.NewFolder(filepath.Join(home, dir.String()[2:]))
 	}
 
 	// Make directory if it doesn't exist
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := dir.Ensure("", false); err != nil {
 		return fmt.Errorf("failed to create storage directory: %w", err)
 	}
 
@@ -76,43 +75,21 @@ func (ci *Installer) SetHosts(hosts []string, port int) {
 }
 
 func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error) {
-	// 1. Centralized Directory Creation
-	// We use the woos package to ensure permissions and existence are correct
-	// strictly based on the path provided by the Config/DefaultApply.
-	if err := woos.EnsureDir(ci.CertDir, false); err != nil {
-		return "", "", fmt.Errorf("failed to ensure cert directory: %w", err)
-	}
+	prefix := ci.certPrefix()
 
-	// 2. Determine Filename Prefix
-	prefix := "localhost"
-	if len(ci.certHosts) > 0 {
-		host := ci.certHosts[0]
-		if strings.Contains(host, ":") {
-			host = strings.Split(host, ":")[0]
-		}
-		if net.ParseIP(host) != nil {
-			prefix = host
-		} else {
-			parts := strings.Split(host, ".")
-			if len(parts) > 0 {
-				prefix = parts[0]
-			}
-		}
-	}
-
-	// 3. Check for existing certs
+	// Check for existing certs
 	if cert, key, found := ci.findExistingCerts(prefix, ci.port); found {
 		ci.logger.Fields("cert", cert, "key", key).Info("Using existing certificates")
 		return cert, key, nil
 	}
 
-	// 4. Define Target Paths
-	certFile = filepath.Join(ci.CertDir, fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
-	keyFile = filepath.Join(ci.CertDir, fmt.Sprintf("%s-%d-key.pem", prefix, ci.port))
+	// Define target paths
+	certFile = ci.CertDir.Resolve(ci.CertDir, fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
+	keyFile = ci.CertDir.Resolve(ci.CertDir, fmt.Sprintf("%s-%d-key.pem", prefix, ci.port))
 
 	ci.logger.Fields("hosts", ci.certHosts, "cert", certFile).Info("Generating localhost certificates")
 
-	// 5. Attempt Generation Strategies
+	// Attempt generation strategies
 	methods := []func() (string, string, error){
 		ci.tryMkcertInPath,
 		ci.tryTruststore,
@@ -125,7 +102,6 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 			ci.logger.Fields("cert", c).Info("Successfully generated certificates")
 			return c, k, nil
 		}
-		// Optional: Log debug here if specific methods fail
 	}
 
 	return "", "", fmt.Errorf("all certificate generation methods failed")
@@ -135,34 +111,8 @@ func (ci *Installer) IsMkcertInstalled() bool {
 	return IsMkcertInstalled()
 }
 
-func (ci *Installer) IsCARootInstalled() bool {
-	// Platform-specific checks for CA installation
-	switch runtime.GOOS {
-	case "darwin":
-		cmd := exec.Command("security", "find-certificate", "-c", "mkcert")
-		return cmd.Run() == nil
-	case "linux":
-		paths := []string{
-			"/etc/ssl/certs/mkcert-root.pem",
-			"/usr/local/share/ca-certificates/mkcert-root.crt",
-			filepath.Join(os.Getenv("HOME"), ".local/share/mkcert/rootCA.pem"),
-		}
-		for _, path := range paths {
-			if _, err := os.Stat(path); err == nil {
-				return true
-			}
-		}
-	case "windows":
-		psCmd := `Get-ChildItem -Path Cert:\LocalMachine\Root | Where-Object {$_.Subject -match "mkcert"} | Select-Object -First 1`
-		cmd := exec.Command("powershell", "-Command", psCmd)
-		output, err := cmd.Output()
-		return err == nil && len(strings.TrimSpace(string(output))) > 0
-	}
-	return false
-}
-
 func (ci *Installer) InstallCARootIfNeeded() error {
-	if ci.IsCARootInstalled() {
+	if IsCARootInstalled() {
 		return nil
 	}
 
@@ -220,22 +170,18 @@ func (ci *Installer) InstallWithTruststore() error {
 	return nil
 }
 
-func (ci *Installer) TestCAInstallation() bool {
-	return ci.IsCARootInstalled()
-}
-
 func (ci *Installer) ListCertificates() ([]string, error) {
-	files, err := os.ReadDir(ci.CertDir)
+	names, err := ci.CertDir.ReadNames()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read cert directory: %w", err)
 	}
 
 	var certs []string
-	for _, file := range files {
-		if !file.IsDir() && (strings.HasSuffix(file.Name(), ".pem") ||
-			strings.HasSuffix(file.Name(), ".crt") ||
-			strings.HasSuffix(file.Name(), ".key")) {
-			certs = append(certs, file.Name())
+	for _, name := range names {
+		if strings.HasSuffix(name, ".pem") ||
+			strings.HasSuffix(name, ".crt") ||
+			strings.HasSuffix(name, ".key") {
+			certs = append(certs, name)
 		}
 	}
 	return certs, nil
@@ -248,8 +194,8 @@ func (ci *Installer) tryMkcertInPath() (string, string, error) {
 	}
 
 	prefix := ci.certPrefix()
-	certFile := filepath.Join(ci.CertDir, fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
-	keyFile := filepath.Join(ci.CertDir, fmt.Sprintf("%s-%d-key.pem", prefix, ci.port))
+	certFile := ci.CertDir.Resolve(ci.CertDir, fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
+	keyFile := ci.CertDir.Resolve(ci.CertDir, fmt.Sprintf("%s-%d-key.pem", prefix, ci.port))
 
 	return ci.generateWithMkcert(path, certFile, keyFile)
 }
@@ -266,7 +212,7 @@ func (ci *Installer) generateWithMkcert(mkcertPath, certFile, keyFile string) (s
 		return "", "", fmt.Errorf("mkcert failed: %s", string(output))
 	}
 
-	if !ci.IsCARootInstalled() {
+	if !IsCARootInstalled() {
 		ci.logger.Info("Attempting to install mkcert CA root")
 		installCmd := exec.Command(mkcertPath, "-install")
 		_ = installCmd.Run()
@@ -277,8 +223,8 @@ func (ci *Installer) generateWithMkcert(mkcertPath, certFile, keyFile string) (s
 
 func (ci *Installer) tryTruststore() (string, string, error) {
 	prefix := ci.certPrefix()
-	certFile := filepath.Join(ci.CertDir, fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
-	keyFile := filepath.Join(ci.CertDir, fmt.Sprintf("%s-%d-key.pem", prefix, ci.port))
+	certFile := ci.CertDir.Resolve(ci.CertDir, fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
+	keyFile := ci.CertDir.Resolve(ci.CertDir, fmt.Sprintf("%s-%d-key.pem", prefix, ci.port))
 	return ci.tryTruststoreWithPaths(certFile, keyFile)
 }
 
@@ -288,11 +234,11 @@ func (ci *Installer) tryTruststoreWithPaths(certFile, keyFile string) (string, s
 		return "", "", fmt.Errorf("truststore init failed: %w", err)
 	}
 
-	if !ci.IsCARootInstalled() {
+	if !IsCARootInstalled() {
 		_ = ml.Install()
 	}
 
-	cert, err := ml.MakeCert(ci.certHosts, ci.CertDir)
+	cert, err := ml.MakeCert(ci.certHosts, ci.CertDir.Path())
 	if err != nil {
 		return "", "", fmt.Errorf("truststore makecert failed: %w", err)
 	}
@@ -320,8 +266,8 @@ func (ci *Installer) downloadAndUseMkcert() (string, string, error) {
 	}()
 
 	prefix := ci.certPrefix()
-	certFile := filepath.Join(ci.CertDir, fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
-	keyFile := filepath.Join(ci.CertDir, fmt.Sprintf("%s-%d-key.pem", prefix, ci.port))
+	certFile := ci.CertDir.Resolve(ci.CertDir, fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
+	keyFile := ci.CertDir.Resolve(ci.CertDir, fmt.Sprintf("%s-%d-key.pem", prefix, ci.port))
 
 	return ci.generateWithMkcert(mkcertPath, certFile, keyFile)
 }
@@ -448,8 +394,8 @@ func (ci *Installer) findExistingCerts(prefix string, port int) (certFile, keyFi
 	}
 
 	for _, pattern := range patterns {
-		certPath := filepath.Join(ci.CertDir, pattern.certPattern)
-		keyPath := filepath.Join(ci.CertDir, pattern.keyPattern)
+		certPath := ci.CertDir.Resolve(ci.CertDir, pattern.certPattern)
+		keyPath := ci.CertDir.Resolve(ci.CertDir, pattern.keyPattern)
 
 		if _, err := os.Stat(certPath); err == nil {
 			if _, err := os.Stat(keyPath); err == nil {
@@ -482,21 +428,51 @@ func (ci *Installer) validateCertificate(certFile, keyFile string, hosts []strin
 		return false
 	}
 
+	// Check if certificate is expired
 	if time.Now().After(leaf.NotAfter) {
 		ci.logger.Fields("file", certFile).Warn("Certificate expired")
 		return false
 	}
 
-	for _, h := range hosts {
-		host := h
+	// For local development, we might want to be more lenient
+	// Check if certificate covers all requested hosts
+	for _, requestedHost := range hosts {
+		// Strip port if present
+		host := requestedHost
 		if strings.Contains(host, ":") {
 			host = strings.Split(host, ":")[0]
 		}
+
+		// Try to verify hostname
 		if err := leaf.VerifyHostname(host); err != nil {
-			// Try wildcards loosely if VerifyHostname fails for localhost
-			return false
+			// Special handling for localhost variations
+			if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+				// Check if certificate has localhost or IP SANs
+				hasLocalhost := false
+				for _, dnsName := range leaf.DNSNames {
+					if dnsName == "localhost" || dnsName == "127.0.0.1" {
+						hasLocalhost = true
+						break
+					}
+				}
+				if !hasLocalhost {
+					// Check IP addresses
+					for _, ip := range leaf.IPAddresses {
+						if ip.String() == "127.0.0.1" || ip.String() == "::1" {
+							hasLocalhost = true
+							break
+						}
+					}
+				}
+				if !hasLocalhost {
+					return false
+				}
+			} else {
+				return false
+			}
 		}
 	}
+
 	return true
 }
 

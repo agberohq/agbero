@@ -89,9 +89,10 @@ func generateTestCert(t *testing.T, certFile, keyFile string) {
 func TestTlsManager_EnsureCertMagic_Success(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		LEEmail:       "test@example.com",
-		TLSStorageDir: tmpDir,
+		LetsEncrypt: alaye.LetsEncrypt{Email: "test@example.com"},
+		Storage:     alaye.Storage{CertsDir: tmpDir},
 	}
+
 	m := &Manager{
 		logger:      testLogger,
 		hostManager: &discovery.Host{},
@@ -126,7 +127,9 @@ func TestTlsManager_EnsureCertMagic_NoEmail(t *testing.T) {
 	m := &Manager{
 		logger:      testLogger,
 		hostManager: &discovery.Host{},
-		Global:      &alaye.Global{TLSStorageDir: "/tmp"},
+		Global: &alaye.Global{
+			Storage: alaye.Storage{CertsDir: "/tmp"},
+		},
 	}
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
 	_, err := m.EnsureCertMagic(next)
