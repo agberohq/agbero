@@ -27,6 +27,27 @@ type RouteHandler struct {
 	Backends []*backend.Backend
 }
 
+func NewRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
+	logger.Fields("path", route.Path, "web_root", route.Web.Root, "backends", route.Backends).Debug("creating route handler")
+
+	// Check if this is actually a web route (has non-empty Web.Root)
+	if route.Web.Root.IsSet() {
+		logger.Debug("treating as WEB route")
+		return newWebRouteHandler(route, logger)
+	} else if len(route.Backends) > 0 {
+		logger.Debug("treating as PROXY route")
+		return newProxyRouteHandler(route, logger)
+	} else {
+		logger.Error("route has neither web root nor backends")
+		// Return a handler that returns 500 error
+		return &RouteHandler{
+			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "Misconfigured route", http.StatusInternalServerError)
+			}),
+		}
+	}
+}
+
 func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 	// Web route doesn't need backends or load balancing
 	chain := &webHandler{
@@ -58,27 +79,6 @@ func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 	return &RouteHandler{
 		handler:  handler,
 		Backends: nil, // No backends for web routes
-	}
-}
-
-func NewRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
-	logger.Fields("path", route.Path, "web_root", route.Web.Root, "backends", route.Backends).Debug("creating route handler")
-
-	// Check if this is actually a web route (has non-empty Web.Root)
-	if route.Web.Root != "" {
-		logger.Debug("treating as WEB route")
-		return newWebRouteHandler(route, logger)
-	} else if len(route.Backends) > 0 {
-		logger.Debug("treating as PROXY route")
-		return newProxyRouteHandler(route, logger)
-	} else {
-		logger.Error("route has neither web root nor backends")
-		// Return a handler that returns 500 error
-		return &RouteHandler{
-			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				http.Error(w, "Misconfigured route", http.StatusInternalServerError)
-			}),
-		}
 	}
 }
 

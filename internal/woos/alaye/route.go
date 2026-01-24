@@ -86,10 +86,6 @@ func (r *Route) Key() string {
 
 	if r.Headers != nil {
 		sb.WriteString("|hd=1")
-		// Optimization: We assume if the pointer is non-nil, headers are active.
-		// For perfect cache busting on content change, we would need to hash the map keys/values.
-		// Given the frequency of config changes, this simple check is usually sufficient
-		// unless you modify header values in-place without changing other config.
 	}
 
 	if r.BasicAuth != nil {
@@ -102,8 +98,8 @@ func (r *Route) Key() string {
 		sb.WriteString(r.ForwardAuth.URL)
 	}
 
-	// For web routes
-	if r.Web.Root != "" {
+	// Web route (presence must be semantic, not String())
+	if r.Web.Root.IsSet() || r.Web.Index != "" {
 		sb.WriteString("|w=")
 		sb.WriteString(r.Web.Root.String())
 		if r.Web.Index != "" {
@@ -116,7 +112,6 @@ func (r *Route) Key() string {
 }
 
 func (r *Route) Validate() error {
-	// Path validation
 	if r.Path == "" {
 		return errors.New("path is required")
 	}
@@ -124,9 +119,11 @@ func (r *Route) Validate() error {
 		return errors.Newf("path %q must start with '/'", r.Path)
 	}
 
-	// Route must have either backends or web, not both
 	hasBackends := len(r.Backends) > 0
-	hasWeb := &r.Web != nil
+
+	// Presence must use semantic fields (never String()).
+	// Root.IsSet() is the main signal; Index is a secondary signal.
+	hasWeb := r.Web.Root.IsSet() || r.Web.Index != ""
 
 	if !hasBackends && !hasWeb {
 		return errors.New("route must have either 'backends' or 'web' block")
@@ -135,12 +132,68 @@ func (r *Route) Validate() error {
 		return errors.New("route cannot have both 'backends' and 'web' block")
 	}
 
-	// Validate based on route type
 	if hasBackends {
 		return r.validateProxyRoute()
-	} else {
-		return r.validateWebRoute()
 	}
+	return r.validateWebRoute()
+}
+
+func (r *Route) validateWebRoute() error {
+	// Web root must be explicitly set
+	if !r.Web.Root.IsSet() {
+		return errors.New("web root cannot be empty")
+	}
+
+	if err := r.Web.Validate(); err != nil {
+		return errors.Newf("web: %w", err)
+	}
+
+	if len(r.StripPrefixes) > 0 {
+		return errors.New("web routes cannot have strip_prefixes")
+	}
+
+	if r.LBStrategy != "" && r.LBStrategy != StrategyRoundRobin {
+		return errors.New("web routes only support default load balancing")
+	}
+
+	if r.HealthCheck != nil {
+		return errors.New("web routes cannot have health_check")
+	}
+	if r.CircuitBreaker != nil {
+		return errors.New("web routes cannot have circuit_breaker")
+	}
+
+	if r.Timeouts != nil {
+		if err := r.Timeouts.Validate(); err != nil {
+			return errors.Newf("timeouts: %w", err)
+		}
+	}
+
+	if r.BasicAuth != nil {
+		if err := r.BasicAuth.Validate(); err != nil {
+			return errors.Newf("basic_auth: %w", err)
+		}
+	}
+
+	if r.ForwardAuth != nil {
+		if err := r.ForwardAuth.Validate(); err != nil {
+			return errors.Newf("forward_auth: %w", err)
+		}
+	}
+
+	if r.Headers != nil {
+		if err := r.Headers.Validate(); err != nil {
+			return errors.Newf("headers: %w", err)
+		}
+	}
+
+	if r.CompressionConfig.Compression {
+		if err := r.CompressionConfig.Validate(); err != nil {
+			return errors.Newf("compression: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (r *Route) validateProxyRoute() error {
@@ -225,71 +278,6 @@ func (r *Route) validateProxyRoute() error {
 	}
 
 	// Compression validation (if provided)
-	if r.CompressionConfig.Compression {
-		if err := r.CompressionConfig.Validate(); err != nil {
-			return errors.Newf("compression: %w", err)
-		}
-	}
-
-	return nil
-}
-
-func (r *Route) validateWebRoute() error {
-	// Web block validation
-	if r.Web.Root != "" {
-		return errors.New("web block is required for web route")
-	}
-	if err := r.Web.Validate(); err != nil {
-		return errors.Newf("web: %w", err)
-	}
-
-	// Web routes cannot have strip prefixes
-	if len(r.StripPrefixes) > 0 {
-		return errors.New("web routes cannot have strip_prefixes")
-	}
-
-	// Web routes cannot have load balancing strategies (except default)
-	if r.LBStrategy != "" && r.LBStrategy != StrategyRoundRobin {
-		return errors.New("web routes only support default load balancing")
-	}
-
-	// Web routes cannot have health checks or circuit breakers
-	if r.HealthCheck != nil {
-		return errors.New("web routes cannot have health_check")
-	}
-	if r.CircuitBreaker != nil {
-		return errors.New("web routes cannot have circuit_breaker")
-	}
-
-	// Timeouts validation (if provided) - same as proxy
-	if r.Timeouts != nil {
-		if err := r.Timeouts.Validate(); err != nil {
-			return errors.Newf("timeouts: %w", err)
-		}
-	}
-
-	// Basic auth validation (if provided) - same as proxy
-	if r.BasicAuth != nil {
-		if err := r.BasicAuth.Validate(); err != nil {
-			return errors.Newf("basic_auth: %w", err)
-		}
-	}
-
-	// Forward auth validation (if provided) - same as proxy
-	if r.ForwardAuth != nil {
-		if err := r.ForwardAuth.Validate(); err != nil {
-			return errors.Newf("forward_auth: %w", err)
-		}
-	}
-
-	// Headers validation (if provided) - same as proxy
-	if r.Headers != nil {
-		if err := r.Headers.Validate(); err != nil {
-			return errors.Newf("headers: %w", err)
-		}
-	}
-
-	// Compression validation (if provided) - same as proxy
 	if r.CompressionConfig.Compression {
 		if err := r.CompressionConfig.Validate(); err != nil {
 			return errors.Newf("compression: %w", err)
