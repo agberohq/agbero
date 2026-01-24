@@ -11,14 +11,16 @@ type Global struct {
 	Bind           Bind     `hcl:"bind,block"`
 	HostsDir       string   `hcl:"hosts_dir"`
 	LEEmail        string   `hcl:"le_email,optional"`
-	LogLevel       string   `hcl:"log_level,optional"`
 	Development    bool     `hcl:"development,optional"`
 	TrustedProxies []string `hcl:"trusted_proxies,optional"`
-	Gossip         Gossip   `hcl:"gossip,block"`
-	Timeouts       Timeout  `hcl:"timeouts,block"`
-	RateLimits     Rate     `hcl:"rate_limits,block"`
 
-	// Hardening / Operability
+	// NEW: Logging Configuration
+	Logging Logging `hcl:"logging,block"`
+
+	Gossip     Gossip  `hcl:"gossip,block"`
+	Timeouts   Timeout `hcl:"timeouts,block"`
+	RateLimits Rate    `hcl:"rate_limits,block"`
+
 	MaxHeaderBytes int    `hcl:"max_header_bytes,optional"`
 	TLSStorageDir  string `hcl:"tls_storage_dir,optional"`
 }
@@ -83,4 +85,16 @@ func (g *Global) Validate() error {
 	}
 
 	return nil
+}
+
+type Logging struct {
+	Level    string   `hcl:"level,optional"` // debug, info, warn, error
+	File     string   `hcl:"file,optional"`  // /var/log/agbero.log
+	Victoria Victoria `hcl:"victoria,block"`
+}
+
+type Victoria struct {
+	Enabled   bool   `hcl:"enabled,optional"`
+	URL       string `hcl:"url,optional"` // http://victoria-logs:9428/insert/jsonline
+	BatchSize int    `hcl:"batch_size,optional"`
 }

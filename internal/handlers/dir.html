@@ -1,23 +1,128 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Index of {{.Path}}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{.Path}}/</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 20px; line-height: 1.5; }
-        h1 { font-size: 1.5rem; margin-bottom: 1rem; }
-        table { width: 100%; border-collapse: collapse; }
-        th { text-align: left; border-bottom: 2px solid #eee; padding: 8px; }
-        td { border-bottom: 1px solid #eee; padding: 8px; }
-        a { text-decoration: none; color: #0366d6; }
-        a:hover { text-decoration: underline; }
-        .dir { font-weight: bold; color: #24292e; }
-        .size { font-family: monospace; color: #586069; }
-        .date { color: #586069; font-size: 0.9rem; }
+        :root {
+            --primary: #0366d6;
+            --primary-light: #2188ff;
+            --text: #24292e;
+            --text-light: #586069;
+            --border: #e1e4e8;
+            --bg: #f6f8fa;
+            --hover: #f0f2f5;
+        }
+        .dark-mode {
+            --primary: #58a6ff;
+            --primary-light: #79c0ff;
+            --text: #c9d1d9;
+            --text-light: #8b949e;
+            --border: #30363d;
+            --bg: #0d1117;
+            --hover: #161b22;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            line-height: 1.5;
+            color: var(--text);
+            background-color: var(--bg);
+            max-width: 900px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        h1 {
+            font-size: 1.25rem;
+            font-weight: 500;
+            color: var(--text);
+        }
+        .theme-toggle {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-light);
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.875rem;
+        }
+        .theme-toggle:hover {
+            background: var(--hover);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--bg);
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        th {
+            text-align: left;
+            font-weight: 500;
+            color: var(--text-light);
+            padding: 0.75rem 0.5rem;
+            border-bottom: 2px solid var(--border);
+        }
+        td {
+            padding: 0.75rem 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+        tr:hover {
+            background: var(--hover);
+        }
+        a {
+            color: var(--text);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        a:hover {
+            color: var(--primary);
+        }
+        .dir::before {
+            content: "📁";
+            font-size: 0.9em;
+        }
+        .file::before {
+            content: "📄";
+            font-size: 0.9em;
+        }
+        .parent::before {
+            content: "←";
+            font-size: 1em;
+        }
+        .size {
+            font-family: "SF Mono", monospace;
+            color: var(--text-light);
+            font-size: 0.875rem;
+        }
+        .date {
+            color: var(--text-light);
+            font-size: 0.875rem;
+            white-space: nowrap;
+        }
+        @media (max-width: 640px) {
+            .date { display: none; }
+            .size { display: none; }
+            header { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+        }
     </style>
 </head>
 <body>
-<h1>Index of {{.Path}}</h1>
+<header>
+    <h1>📂 {{.Path}}</h1>
+    <button class="theme-toggle" onclick="toggleTheme()">🌙 Dark Mode</button>
+</header>
+
 <table>
     <thead>
     <tr>
@@ -29,19 +134,36 @@
     <tbody>
     {{if .ShowParent}}
     <tr>
-        <td><a href="../">../</a></td>
-        <td>-</td>
-        <td>-</td>
+        <td><a href="../" class="parent">Parent Directory</a></td>
+        <td class="size">-</td>
+        <td class="date">-</td>
     </tr>
     {{end}}
     {{range .Items}}
     <tr>
-        <td><a href="{{.URL}}" class="{{if .IsDir}}dir{{end}}">{{.Name}}{{if .IsDir}}/{{end}}</a></td>
-        <td><span class="size">{{.Size}}</span></td>
-        <td><span class="date">{{.ModTime}}</span></td>
+        <td>
+            <a href="{{.URL}}" class="{{if .IsDir}}dir{{else}}file{{end}}">
+                {{.Name}}
+            </a>
+        </td>
+        <td class="size">{{.Size}}</td>
+        <td class="date">{{.ModTime}}</td>
     </tr>
     {{end}}
     </tbody>
 </table>
+
+<script>
+    function toggleTheme() {
+        document.body.classList.toggle('dark-mode');
+        const btn = document.querySelector('.theme-toggle');
+        btn.textContent = document.body.classList.contains('dark-mode') ? '☀️ Light Mode' : '🌙 Dark Mode';
+    }
+
+    // Set initial theme based on preference
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        toggleTheme();
+    }
+</script>
 </body>
 </html>

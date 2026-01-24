@@ -8,12 +8,6 @@ import (
 	"time"
 )
 
-const (
-	Name        = "agbero"
-	Version     = "0.0.3"
-	Description = "Production reverse proxy with Let's Encrypt support"
-)
-
 // RouteCacheItem wraps the handler with usage tracking for the Reaper
 type RouteCacheItem struct {
 	Handler      any          // *core.RouteHandler

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"html/template"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,6 +18,22 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/olekukonko/ll"
 )
+
+// Ensure critical web types are registered regardless of OS environment
+func init() {
+	mustReg := func(ext, typ string) {
+		if mime.TypeByExtension(ext) == "" {
+			_ = mime.AddExtensionType(ext, typ)
+		}
+	}
+	mustReg(".html", "text/html; charset=utf-8")
+	mustReg(".css", "text/css; charset=utf-8")
+	mustReg(".js", "application/javascript; charset=utf-8")
+	mustReg(".json", "application/json; charset=utf-8")
+	mustReg(".svg", "image/svg+xml")
+	mustReg(".xml", "text/xml; charset=utf-8")
+	mustReg(".txt", "text/plain; charset=utf-8")
+}
 
 // Directory Listing Logic
 //
@@ -53,7 +70,6 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// os.OpenRoot (Go 1.24+) ensures we cannot escape this directory
-	// regardless of what path is passed to it later.
 	root, err := os.OpenRoot(rootPath)
 	if err != nil {
 		h.logger.Fields("err", err, "root", rootPath).Error("failed to open web root")
@@ -190,15 +206,12 @@ func (h *webHandler) serveDirectoryListing(w http.ResponseWriter, r *http.Reques
 			size = humanize.Bytes(uint64(info.Size()))
 		}
 
-		// URL path escaping ensures special characters don't break links
-		urlName := url.PathEscape(entry.Name())
-
 		items = append(items, dirItem{
 			Name:    entry.Name(),
 			IsDir:   entry.IsDir(),
 			Size:    size,
 			ModTime: info.ModTime().Format("2006-01-02 15:04:05"),
-			URL:     urlName,
+			URL:     url.PathEscape(entry.Name()),
 		})
 	}
 
@@ -232,45 +245,16 @@ func getMimeType(path string) string {
 		return v.(string)
 	}
 
-	// Expanded mime type mapping
-	var ctype string
-	switch strings.ToLower(ext) {
-	case ".html", ".htm":
-		ctype = "text/html; charset=utf-8"
-	case ".css":
-		ctype = "text/css; charset=utf-8"
-	case ".js", ".mjs":
-		ctype = "application/javascript; charset=utf-8"
-	case ".json":
-		ctype = "application/json; charset=utf-8"
-	case ".png":
-		ctype = "image/png"
-	case ".jpg", ".jpeg":
-		ctype = "image/jpeg"
-	case ".gif":
-		ctype = "image/gif"
-	case ".svg":
-		ctype = "image/svg+xml"
-	case ".webp":
-		ctype = "image/webp"
-	case ".pdf":
-		ctype = "application/pdf"
-	case ".txt", ".md":
-		ctype = "text/plain; charset=utf-8"
-	case ".xml":
-		ctype = "application/xml"
-	case ".wasm":
-		ctype = "application/wasm"
-	case ".mp4":
-		ctype = "video/mp4"
-	case ".webm":
-		ctype = "video/webm"
-	default:
+	// Use standard library (OS-aware)
+	ctype := mime.TypeByExtension(ext)
+
+	// Fallback/Enhancements
+	if ctype == "" {
 		ctype = "application/octet-stream"
+	} else if (strings.HasPrefix(ctype, "text/") || strings.Contains(ctype, "javascript") || strings.Contains(ctype, "json")) && !strings.Contains(ctype, "charset") {
+		ctype += "; charset=utf-8"
 	}
 
-	if ctype != "" {
-		mimeCache.Store(ext, ctype)
-	}
+	mimeCache.Store(ext, ctype)
 	return ctype
 }
