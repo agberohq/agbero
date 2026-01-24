@@ -1,4 +1,3 @@
-// cmd/agbero/service.go
 package main
 
 import (

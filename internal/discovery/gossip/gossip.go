@@ -178,11 +178,18 @@ func (e *eventDelegate) processNode(node *memberlist.Node) {
 
 	// Construct route definition
 	route := alaye.Route{
-		Path:       meta.Path,
-		Backends:   []string{target},
-		LBStrategy: alaye.StrategyRandom,
+		Path: meta.Path,
+		Backends: alaye.Backend{
+			LBStrategy: alaye.StrategyRandom,
+			Servers: []alaye.Server{
+				{
+					Address: target,
+					Weight:  1, // Default weight for gossip nodes
+				},
+			},
+		},
 		HealthCheck: &alaye.HealthCheck{
-			Path: "/", // Default health check
+			Path: "/",
 		},
 	}
 

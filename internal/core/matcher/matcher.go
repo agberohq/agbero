@@ -79,6 +79,11 @@ func (t *Tree) Insert(pattern string, route *alaye.Route) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	// FIX: Normalize "/*" to "/" at the root level using constants.
+	if pattern == SlashStar {
+		pattern = Slash
+	}
+
 	if err := t.validatePattern(pattern); err != nil {
 		return fmt.Errorf("invalid route pattern %q: %w", pattern, err)
 	}
@@ -86,7 +91,6 @@ func (t *Tree) Insert(pattern string, route *alaye.Route) error {
 	pattern = cleanPattern(pattern)
 	t.clearCacheForPattern(pattern)
 
-	// Fast-path bookkeeping, but DO NOT skip tree insertion.
 	if t.isFastPath(pattern) {
 		_ = t.insertFastPath(pattern, route)
 	}
@@ -98,17 +102,15 @@ func (t *Tree) Insert(pattern string, route *alaye.Route) error {
 func (t *Tree) Find(path string) MatchResult {
 	path = cleanPattern(path)
 
+	// 1. Root Exact Match optimization
 	if path == Slash {
 		t.mu.RLock()
 		r := t.root.route
 		t.mu.RUnlock()
-		if r != nil {
-			return MatchResult{Route: r, Params: nil}
-		}
-		return MatchResult{Route: nil, Params: nil}
+		return MatchResult{Route: r, Params: nil}
 	}
 
-	// Fast path 1: exact/prefix match nodes registered as fast paths.
+	// 2. Fast path (Exact/Prefix nodes)
 	t.mu.RLock()
 	if node, ok := t.fastPaths[path]; ok && node != nil && node.route != nil {
 		t.mu.RUnlock()
@@ -116,17 +118,17 @@ func (t *Tree) Find(path string) MatchResult {
 	}
 	t.mu.RUnlock()
 
-	// Fast path 2: result cache.
+	// 3. Cache lookup
 	if cached, ok := t.cache.Load(path); ok {
 		return cached.(MatchResult)
 	}
 
-	// Tree traversal with backtracking.
+	// 4. Tree Traversal
 	t.mu.RLock()
 	result := t.findWithBacktrack(t.root, path, nil)
 	t.mu.RUnlock()
 
-	// Cache successful results with a hard cap.
+	// Cache
 	if result.Route != nil {
 		for {
 			cur := t.cacheSize.Load()
@@ -384,15 +386,16 @@ func (t *Tree) insertRecursive(parent *Node, path string, route *alaye.Route) er
 }
 
 func (t *Tree) findWithBacktrack(node *Node, remaining string, params map[string]string) MatchResult {
-	// Best-so-far: prefix routing means a node route is a valid fallback even if remaining continues.
+	// The current node's route is our "Best Match So Far" (Fallback).
+	// If we are at root ("/"), node.route is the route for "/".
+	// If children don't match, we return this. This effectively makes "/" a catch-all.
 	best := MatchResult{Route: node.route, Params: params}
 
-	// If nothing remains, this is the most specific we can get here.
 	if remaining == Empty {
 		return best
 	}
 
-	// Exact order already by child priority.
+	// Iterate children sorted by priority (Literal > Template > Regex > CatchAll)
 	for _, child := range node.children {
 		ok, consumed, captured := child.match(remaining)
 		if !ok {
@@ -401,7 +404,6 @@ func (t *Tree) findWithBacktrack(node *Node, remaining string, params map[string
 
 		nextParams := params
 		if len(captured) > 0 {
-			// Copy-on-write only when we actually capture something.
 			nextParams = make(map[string]string, len(params)+len(captured))
 			for k, v := range params {
 				nextParams[k] = v
@@ -411,13 +413,15 @@ func (t *Tree) findWithBacktrack(node *Node, remaining string, params map[string
 			}
 		}
 
+		// Recurse
 		result := t.findWithBacktrack(child, remaining[consumed:], nextParams)
 		if result.Route != nil {
 			return result
 		}
 	}
 
-	// Catch-all (if present) as last resort.
+	// Standard Catch-All Node Check (e.g. /api/*)
+	// Note: Root fallback is handled by 'best' above, this handles explicit catch-alls deep in the tree.
 	if node.hasCatchAll {
 		for _, child := range node.children {
 			if child.kind != kindCatchAll {
@@ -431,7 +435,6 @@ func (t *Tree) findWithBacktrack(node *Node, remaining string, params map[string
 			if out == nil {
 				out = make(map[string]string, 1)
 			} else {
-				// Copy to avoid mutating shared map on backtrack paths.
 				cp := make(map[string]string, len(out)+1)
 				for k, v := range out {
 					cp[k] = v

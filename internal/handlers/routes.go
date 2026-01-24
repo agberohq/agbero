@@ -87,45 +87,34 @@ func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 }
 
 func newProxyRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
-	// 1. Initialize Load Balancer Logic
 	lb := &LoadBalancerHandler{
 		stripPrefixes: append([]string(nil), route.StripPrefixes...),
-		strategy:      strings.ToLower(strings.TrimSpace(route.LBStrategy)),
+		strategy:      strings.ToLower(strings.TrimSpace(route.Backends.LBStrategy)),
 	}
 
 	if lb.strategy == "" {
-		lb.strategy = alaye.StrategyRoundRobin // Ensure this constant exists in woos, or use "roundrobin"
+		lb.strategy = alaye.StrategyRoundRobin
 	}
 
 	if route.Timeouts != nil && route.Timeouts.Request != 0 {
 		lb.timeout = route.Timeouts.Request
 	}
 
-	// 2. Initialize Backends
-	// We need to wrap the logger to match the backend constructor interface
 	wrappedLogger := tlss.NewTLSLogger(logger)
 
-	for _, raw := range route.Backends {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			continue
-		}
-		b, err := backend.NewBackend(raw, route, wrappedLogger)
+	for _, backendCfg := range route.Backends.Servers {
+		b, err := backend.NewBackend(backendCfg, route, wrappedLogger)
 		if err != nil {
-			logger.Fields("backend", raw, "err", err).Error("failed to create backend")
+			logger.Fields("backend", backendCfg.Address, "err", err).Error("failed to create backend")
 			continue
 		}
 		lb.Backends = append(lb.Backends, b)
 	}
 
-	// 3. Build Middleware Chain
-	// The chain is built "outside-in". The last one applied wraps everything else.
-	// Execution Order: Compress -> Headers -> Auth -> LoadBalancer
+	lb.recalculateTotalWeight()
 
 	var chain http.Handler = lb
 
-	// Layer 3: Authentication (Inner)
-	// Protect the resource access
 	if route.BasicAuth != nil && len(route.BasicAuth.Users) > 0 {
 		chain = auth.Basic(route.BasicAuth)(chain)
 	}
@@ -133,14 +122,10 @@ func newProxyRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 		chain = auth.Forward(route.ForwardAuth)(chain)
 	}
 
-	// Layer 2: Headers (Middle)
-	// Modify headers before Auth sees them (Request) or before Compress sees them (Response)
 	if route.Headers != nil {
 		chain = headers.Headers(route.Headers)(chain)
 	}
 
-	// Layer 1: Compression (Outer)
-	// Compresses the final byte stream.
 	if route.CompressionConfig.Compression {
 		chain = compress.Compress(route)(chain)
 	}

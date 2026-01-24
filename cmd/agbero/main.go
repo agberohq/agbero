@@ -12,6 +12,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/security"
 	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/ll"
@@ -39,19 +40,13 @@ var (
 )
 
 func main() {
-	// 1. Default Configuration
-	defaultConfig := "/etc/agbero/config.hcl"
-	if runtime.GOOS == "windows" {
-		defaultConfig = `C:\ProgramData\agbero\config.hcl`
-	}
-
-	// 2. Setup Flaggy
+	// Setup Flaggy
 	flaggy.SetName(woos.Name)
 	flaggy.SetDescription(woos.Description)
 	flaggy.SetVersion(version) // Handles --version automatically
 
-	// Global flags
-	flaggy.String(&configPath, "c", "config", "Path to configuration file (default: "+defaultConfig+")")
+	// Global flags - No default value set here to detect if user provided it
+	flaggy.String(&configPath, "c", "config", "Path to configuration file")
 	flaggy.Bool(&devMode, "d", "dev", "Enable development mode")
 
 	// --- Service Subcommands ---
@@ -131,10 +126,19 @@ func main() {
 	flaggy.Parse()
 	welcome()
 
-	// Apply defaults if flag not set
-	if configPath == "" {
-		configPath = defaultConfig
+	// --- Smart Config Resolution ---
+	// 1. Resolve the path
+	resolvedPath, exists := resolveConfigPath(configPath)
+
+	// 2. Fail if user explicitly asked for a specific path that doesn't exist
+	if configPath != "" && !exists {
+		// Log error via minimal logger since global logger isn't set up yet
+		fmt.Printf("Error: Config file not found: %s\n", configPath)
+		os.Exit(1)
 	}
+
+	// 3. Update the global variable to the resolved path
+	configPath = resolvedPath
 
 	// Handle Help
 	if cmdHelp.Used {
@@ -356,6 +360,20 @@ func main() {
 
 	// --- Run Command ---
 	if cmdRun.Used {
+		// 1. Auto-Generate Config if missing
+		if err := ensureConfig(configPath); err != nil {
+			logger.Fatal("Failed to generate configuration: ", err)
+		}
+
+		// 2. Load Config to check for HTTPS
+		global, err := loadConfig(configPath)
+		if err != nil {
+			logger.Fatal("Failed to load config: ", err)
+		}
+
+		// 3. Auto-Install CA if needed
+		checkAndInstallCA(global)
+
 		logger.Info("Running in interactive mode. Press Ctrl+C to stop.")
 		if devMode {
 			logger.Warn("Development mode enabled")
@@ -388,6 +406,34 @@ func main() {
 
 	// Default: Show usage
 	showHelpExamples(configPath)
+}
+
+// checkAndInstallCA checks if HTTPS is enabled and installs CA root if missing
+func checkAndInstallCA(global *alaye.Global) {
+	hasHTTPS := len(global.Bind.HTTPS) > 0
+
+	// If no HTTPS configured, skip
+	if !hasHTTPS {
+		return
+	}
+
+	// Setup minimal logger for this check
+	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
+	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
+
+	installer := tlss.NewCertInstaller(minimalLogger)
+
+	if !installer.IsCARootInstalled() {
+		logger.Info("HTTPS enabled but CA root not found. Auto-installing...")
+
+		// Attempt auto-install
+		if err := installer.InstallCARootIfNeeded(); err != nil {
+			logger.Warn("Failed to auto-install CA root: %v", err)
+			logger.Warn("You may need to run 'agbero cert install-ca' manually or trust the certificate in your browser.")
+		} else {
+			logger.Info("CA root installed successfully.")
+		}
+	}
 }
 
 func handleInstallCA() {

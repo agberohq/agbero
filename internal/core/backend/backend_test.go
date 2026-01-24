@@ -23,13 +23,13 @@ func (n noopLogger) Error(msg string, args ...any)     {}
 func (n noopLogger) Fields(args ...any) woos.TlsLogger { return n }
 
 // Helper to create a backend with customizable params
-func setupBackend(t *testing.T, targetURL string, hc *alaye.HealthCheck, cb *alaye.CircuitBreaker) *Backend {
+func setupBackend(t *testing.T, server alaye.Server, hc *alaye.HealthCheck, cb *alaye.CircuitBreaker) *Backend {
 	route := &alaye.Route{
 		HealthCheck:    hc,
 		CircuitBreaker: cb,
 	}
 
-	b, err := NewBackend(targetURL, route, noopLogger{})
+	b, err := NewBackend(server, route, noopLogger{})
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -37,7 +37,7 @@ func setupBackend(t *testing.T, targetURL string, hc *alaye.HealthCheck, cb *ala
 }
 
 func TestNewBackend_InvalidURL(t *testing.T) {
-	_, err := NewBackend("://invalid-url", &alaye.Route{}, noopLogger{})
+	_, err := NewBackend(alaye.NewServer("://invalid-url"), &alaye.Route{}, noopLogger{})
 	if err == nil {
 		t.Error("Expected error for invalid URL, got nil")
 	}
@@ -49,7 +49,7 @@ func TestNewBackend_NoHealthCheck(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b := setupBackend(t, server.URL, nil, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), nil, nil)
 	defer b.Stop()
 
 	// No health check goroutine, just basic setup
@@ -57,7 +57,7 @@ func TestNewBackend_NoHealthCheck(t *testing.T) {
 		t.Error("Proxy should be initialized")
 	}
 	if !b.Alive.Load() {
-		t.Error("Backend should start alive")
+		t.Error("Server should start alive")
 	}
 }
 
@@ -68,7 +68,7 @@ func TestServeHTTP_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b := setupBackend(t, server.URL, nil, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), nil, nil)
 	defer b.Stop()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -105,7 +105,7 @@ func TestServeHTTP_ContextCancel(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b := setupBackend(t, server.URL, nil, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), nil, nil)
 	defer b.Stop()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -150,7 +150,7 @@ func TestProxy_DirectorModifications(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b := setupBackend(t, server.URL, nil, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), nil, nil)
 	defer b.Stop()
 
 	req := httptest.NewRequest("GET", "/test", nil)
@@ -201,7 +201,7 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 		CircuitBreaker: &alaye.CircuitBreaker{Threshold: 2},
 	}
 
-	b, err := NewBackend(server.URL, route, noopLogger{})
+	b, err := NewBackend(alaye.NewServer(server.URL), route, noopLogger{})
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestCircuitBreaker_NoTripOnCancel(t *testing.T) {
 		CircuitBreaker: &alaye.CircuitBreaker{Threshold: 1},
 	}
 
-	b, err := NewBackend(server.URL, route, noopLogger{})
+	b, err := NewBackend(alaye.NewServer(server.URL), route, noopLogger{})
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestHealthCheck_Failure(t *testing.T) {
 		Threshold: 2,
 		Timeout:   50 * time.Millisecond,
 	}
-	b := setupBackend(t, server.URL, hc, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), hc, nil)
 	defer b.Stop()
 
 	// Wait for health check to run a few times
@@ -297,7 +297,7 @@ func TestHealthCheck_Recovery(t *testing.T) {
 		Threshold: 2,
 		Timeout:   50 * time.Millisecond,
 	}
-	b := setupBackend(t, server.URL, hc, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), hc, nil)
 	defer b.Stop()
 
 	// Start unhealthy
@@ -352,7 +352,7 @@ func TestHealthCheck_Jitter(t *testing.T) {
 		Threshold: 1,
 		Timeout:   100 * time.Millisecond,
 	}
-	b := setupBackend(t, server.URL, hc, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), hc, nil)
 	defer b.Stop()
 
 	// Run for a bit
@@ -380,7 +380,7 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 		Threshold: 1,
 		Timeout:   25 * time.Millisecond,
 	}
-	b := setupBackend(t, server.URL, hc, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), hc, nil)
 
 	// Let it run a few times
 	time.Sleep(150 * time.Millisecond)
@@ -399,7 +399,7 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 }
 
 func TestUptime(t *testing.T) {
-	b := setupBackend(t, "http://example.com", nil, nil)
+	b := setupBackend(t, alaye.NewServer("http://example.com"), nil, nil)
 	defer b.Stop()
 
 	time.Sleep(100 * time.Millisecond)
@@ -410,7 +410,7 @@ func TestUptime(t *testing.T) {
 }
 
 func TestMetricsSnapshot(t *testing.T) {
-	b := setupBackend(t, "http://example.com", nil, nil)
+	b := setupBackend(t, alaye.NewServer("http://example.com"), nil, nil)
 	defer b.Stop()
 
 	// Record some values directly on metrics

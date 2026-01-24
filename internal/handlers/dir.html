@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Index of {{.Path}}</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 20px; line-height: 1.5; }
+        h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; border-bottom: 2px solid #eee; padding: 8px; }
+        td { border-bottom: 1px solid #eee; padding: 8px; }
+        a { text-decoration: none; color: #0366d6; }
+        a:hover { text-decoration: underline; }
+        .dir { font-weight: bold; color: #24292e; }
+        .size { font-family: monospace; color: #586069; }
+        .date { color: #586069; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+<h1>Index of {{.Path}}</h1>
+<table>
+    <thead>
+    <tr>
+        <th>Name</th>
+        <th>Size</th>
+        <th>Last Modified</th>
+    </tr>
+    </thead>
+    <tbody>
+    {{if .ShowParent}}
+    <tr>
+        <td><a href="../">../</a></td>
+        <td>-</td>
+        <td>-</td>
+    </tr>
+    {{end}}
+    {{range .Items}}
+    <tr>
+        <td><a href="{{.URL}}" class="{{if .IsDir}}dir{{end}}">{{.Name}}{{if .IsDir}}/{{end}}</a></td>
+        <td><span class="size">{{.Size}}</span></td>
+        <td><span class="date">{{.ModTime}}</span></td>
+    </tr>
+    {{end}}
+    </tbody>
+</table>
+</body>
+</html>

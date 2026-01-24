@@ -127,9 +127,13 @@ route "/" {
 }
 
 route "/api" {
-  backends = ["http://localhost:3000"]
   strip_prefixes = ["/api"]
-  lb_strategy = "leastconn"
+  backend {
+    lb_strategy = "leastconn"
+    server {
+      address = "http://localhost:3000"
+    }
+  }
 }
 `
 	tmpDir := t.TempDir()
@@ -169,10 +173,12 @@ route "/api" {
 	if host.Routes[1].Path != "/api" {
 		t.Errorf("expected second route path /api, got %s", host.Routes[1].Path)
 	}
-	if host.Routes[1].LBStrategy != "leastconn" {
-		t.Errorf("expected lb_strategy leastconn, got %q", host.Routes[1].LBStrategy)
+
+	// Check Backend struct
+	if host.Routes[1].Backends.LBStrategy != "leastconn" {
+		t.Errorf("expected lb_strategy leastconn, got %q", host.Routes[1].Backends.LBStrategy)
 	}
-	if len(host.Routes[1].Backends) != 1 || host.Routes[1].Backends[0] != "http://localhost:3000" {
+	if len(host.Routes[1].Backends.Servers) != 1 || host.Routes[1].Backends.Servers[0].Address != "http://localhost:3000" {
 		t.Errorf("unexpected backends: %v", host.Routes[1].Backends)
 	}
 }
@@ -195,7 +201,11 @@ route "/" {
 }
 
 route "/api" {
-  backends = ["http://localhost:3000"]
+  backend {
+    server {
+      address = "http://localhost:3000"
+    }
+  }
 }
 `,
 			wantErr: false,
@@ -208,7 +218,11 @@ route "/" {
   web {
     root = "."
   }
-  backends = ["http://localhost:3000"]
+  backend {
+    server {
+      address = "http://localhost:3000"
+    }
+  }
 }
 `,
 			wantErr: true,
@@ -281,33 +295,22 @@ route "/" {
 			host, err := ParseHostConfig(path)
 
 			if err != nil {
-				// Parsing failed - this is our error for malformed configs
+				// Parsing failed
 				if !tt.wantErr {
 					t.Fatalf("unexpected parsing error: %v", err)
 				}
 				return
 			}
 
-			// Debug: print parsed structure
-			t.Logf("Test %q: Parsed %d routes", tt.name, len(host.Routes))
-			for i, route := range host.Routes {
-				t.Logf("  Route %d: path=%s, hasWeb=%v, hasBackends=%d",
-					i, route.Path, route.Web.Root.IsSet(), len(route.Backends))
-			}
-
-			// Parsing succeeded - now check validation
 			validateErr := host.Validate()
 
 			if tt.wantErr {
 				if validateErr == nil {
 					t.Error("expected validation error, got none")
-				} else {
-					t.Logf("Got expected validation error: %v", validateErr)
 				}
 				return
 			}
 
-			// Should not have validation error
 			if validateErr != nil {
 				t.Fatalf("unexpected validation error: %v", validateErr)
 			}
@@ -315,7 +318,6 @@ route "/" {
 	}
 }
 
-// Add a test to figure out the correct headers syntax
 func TestParser_HeadersSyntax(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -332,25 +334,6 @@ route "/" {
   }
   headers {
     response {
-      set {
-        "X-Test" = "Value"
-      }
-    }
-  }
-}
-`,
-			wantErr: false,
-		},
-		{
-			name: "headers with set as attribute",
-			content: `
-domains = ["test.com"]
-route "/" {
-  web {
-    root = "."
-  }
-  headers {
-    response {
       set = {
         "X-Test" = "Value"
       }
@@ -358,7 +341,7 @@ route "/" {
   }
 }
 `,
-			wantErr: false, // Try both to see which works
+			wantErr: false,
 		},
 	}
 
@@ -378,7 +361,6 @@ route "/" {
 				return
 			}
 
-			t.Logf("Syntax %q parsed successfully", tt.name)
 			if tt.wantErr {
 				t.Error("expected parsing error but got none")
 			}
@@ -534,7 +516,11 @@ route "/" {
 }
 
 route "/api" {
-  backends = ["http://localhost:3000"]
+  backend {
+    server {
+      address = "http://localhost:3000"
+    }
+  }
 }
 `
 	tmpDir := t.TempDir()
@@ -564,7 +550,7 @@ route "/api" {
 	}
 
 	// Route 1 should have backends
-	if len(host.Routes[1].Backends) == 0 {
+	if len(host.Routes[1].Backends.Servers) == 0 {
 		t.Error("route 1 should have backends")
 	}
 }

@@ -14,6 +14,122 @@ import (
 	"github.com/dustin/go-humanize"
 )
 
+// resolveConfigPath implements the search order:
+// 1. Explicit Flag
+// 2. Current Working Directory (agbero.hcl)
+// 3. User Config Dir (~/.config/agbero/config.hcl)
+// 4. System Config Dir (/etc/agbero/config.hcl)
+// Returns the path to use and whether it currently exists.
+func resolveConfigPath(flagPath string) (string, bool) {
+	// 1. Explicit Flag
+	if flagPath != "" {
+		if _, err := os.Stat(flagPath); err == nil {
+			return flagPath, true
+		}
+		return flagPath, false // User provided path, return it even if missing (caller handles error)
+	}
+
+	// 2. CWD
+	cwd, _ := os.Getwd()
+	cwdPath := filepath.Join(cwd, "agbero.hcl")
+	if _, err := os.Stat(cwdPath); err == nil {
+		return cwdPath, true
+	}
+
+	// 3. User Config Dir
+	userDir, _ := os.UserConfigDir()
+	userPath := filepath.Join(userDir, "agbero", "config.hcl")
+	if _, err := os.Stat(userPath); err == nil {
+		return userPath, true
+	}
+
+	// 4. System Config Dir
+	var sysPath string
+	if runtime.GOOS == "windows" {
+		sysPath = filepath.Join(os.Getenv("ProgramData"), "agbero", "config.hcl")
+	} else {
+		sysPath = "/etc/agbero/config.hcl"
+	}
+	if _, err := os.Stat(sysPath); err == nil {
+		return sysPath, true
+	}
+
+	// Default fallback for generation: CWD
+	return cwdPath, false
+}
+
+// ensureConfig checks if config exists, if not, generates a default one.
+func ensureConfig(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+
+	logger.Fields("path", path).Info("config not found, generating default")
+
+	// Create directory if needed (e.g. if path is ~/.config/agbero/config.hcl)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+
+	// Calculate hosts_dir relative to config file for portability
+	hostsDirVal := "./hosts.d"
+
+	defaultHCL := fmt.Sprintf(`bind {
+  http    = [":8080"]
+  # https   = [":8443"] # Uncomment to enable HTTPS
+  metrics = ":9090"
+}
+
+hosts_dir = "%s"
+le_email = "admin@example.com"
+development = true
+
+# trusted_proxies = ["127.0.0.1/32"]
+
+timeouts {
+  read  = "10s"
+  write = "30s"
+}
+
+rate_limits {
+  global {
+    requests = 120
+    window   = "1s"
+  }
+  auth {
+    requests = 10
+    window   = "1m"
+  }
+}
+`, hostsDirVal)
+
+	if err := os.WriteFile(path, []byte(defaultHCL), 0644); err != nil {
+		return fmt.Errorf("write default config: %w", err)
+	}
+
+	// Also create the hosts directory
+	hostsDir := filepath.Join(dir, hostsDirVal)
+	if err := os.MkdirAll(hostsDir, 0755); err != nil {
+		logger.Warn("failed to create hosts directory: %v", err)
+	} else {
+		// Create a sample host file
+		sampleHost := `domains = ["localhost"]
+
+route "/" {
+  web {
+    root = "."
+    directory = true
+  }
+}
+`
+		_ = os.WriteFile(filepath.Join(hostsDir, "localhost.hcl"), []byte(sampleHost), 0644)
+	}
+
+	logger.Fields("file", path).Info("default configuration created")
+	return nil
+}
+
 // loadConfig parses the config and ensures hosts_dir is absolute.
 // If hosts_dir is relative (e.g. "./hosts.d"), it resolves it relative to the config file.
 func loadConfig(path string) (*alaye.Global, error) {
@@ -421,7 +537,6 @@ func showHelpExamples(configPath string) {
 	fmt.Println("===============================================================")
 }
 
-// Add to cmd/agbero/helpers.go
 func showCertInfo(configPath string) {
 	global, err := loadConfig(configPath)
 	if err != nil {

@@ -32,10 +32,11 @@ type Backend struct {
 	stop         chan struct{}
 	startTime    time.Time
 	lastRecovery atomic.Int64 // Unix nano of last time marked alive
+	Weight       int          // Added
 }
 
-func NewBackend(targetStr string, route *alaye.Route, logger woos.TlsLogger) (*Backend, error) {
-	u, err := url.Parse(targetStr)
+func NewBackend(cfg alaye.Server, route *alaye.Route, logger woos.TlsLogger) (*Backend, error) {
+	u, err := url.Parse(cfg.Address)
 	if err != nil {
 		return nil, err
 	}
@@ -43,6 +44,7 @@ func NewBackend(targetStr string, route *alaye.Route, logger woos.TlsLogger) (*B
 	now := time.Now()
 	b := &Backend{
 		URL:       u,
+		Weight:    cfg.Weight, // Store weight
 		hcConfig:  route.HealthCheck,
 		logger:    logger,
 		stop:      make(chan struct{}),

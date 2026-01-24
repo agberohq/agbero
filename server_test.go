@@ -174,7 +174,7 @@ func TestServer_buildRateLimiterFromConfig(t *testing.T) {
 
 func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	s := &Server{logger: testLogger}
-	route := &alaye.Route{Path: "/test", Backends: []string{"http://localhost:8080"}}
+	route := &alaye.Route{Path: "/test", Backends: alaye.MakeBackend("http://localhost:8080")}
 	key := route.Key()
 
 	// Create a real handler to store in cache
@@ -199,7 +199,7 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 	s := &Server{logger: testLogger}
 	route := &alaye.Route{
 		Path:     "/test",
-		Backends: []string{"http://localhost:8080"},
+		Backends: alaye.MakeBackend("http://localhost:8080"),
 	}
 
 	// Ensure cache is empty
@@ -222,7 +222,7 @@ func TestServer_reapOldRoutes(t *testing.T) {
 	// Create a handler with Close method
 	route := &alaye.Route{
 		Path:     "/test",
-		Backends: []string{"http://localhost:8080"},
+		Backends: alaye.MakeBackend("http://localhost:8080"),
 	}
 	handler := handlers.NewRouteHandler(route, testLogger)
 
@@ -246,7 +246,7 @@ func TestServer_reapOldRoutes_Recent(t *testing.T) {
 	// Create a handler with Close method
 	route := &alaye.Route{
 		Path:     "/test",
-		Backends: []string{"http://localhost:8080"},
+		Backends: alaye.MakeBackend("http://localhost:8080"),
 	}
 	handler := handlers.NewRouteHandler(route, testLogger)
 
@@ -344,7 +344,7 @@ func TestServer_HandleRequest_WithHost(t *testing.T) {
 	// Add a test host with a route to our test backend
 	hm.UpdateGossipNode("test", "example.com", alaye.Route{
 		Path:     "/",
-		Backends: []string{backend.URL},
+		Backends: alaye.MakeBackend(backend.URL),
 	})
 
 	s := &Server{

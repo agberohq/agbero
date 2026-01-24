@@ -1,0 +1,81 @@
+package alaye
+
+import (
+	"net"
+	"strings"
+
+	"github.com/olekukonko/errors"
+)
+
+type Conditions struct {
+	SourceIPs []string          `hcl:"source_ips,optional"`
+	Headers   map[string]string `hcl:"headers,optional"`
+}
+
+// Server represents an upstream server configuration
+type Server struct {
+	Address string `hcl:"address"`
+	Weight  int    `hcl:"weight,optional"`
+	// Future-proofing for advanced routing
+	Conditions *Conditions `hcl:"conditions,block"`
+}
+
+func NewServer(address string) Server {
+	return Server{Address: address}
+}
+
+func NewServers(address ...string) []Server {
+	servers := make([]Server, len(address))
+	for i, addr := range address {
+		servers[i] = Server{Address: addr}
+	}
+	return servers
+}
+
+func (b Server) IsHTTP() bool {
+	return strings.HasPrefix(b.Address, "http://")
+}
+
+func (b Server) IsHTTPS() bool {
+	return strings.HasPrefix(b.Address, "https://")
+}
+
+func (b Server) IsTCP() bool {
+	return strings.HasPrefix(b.Address, "tcp://")
+}
+
+func (b Server) String() string {
+	return b.Address
+}
+
+func (b *Server) Validate() error {
+	if b.Address == "" {
+		return errors.New("backend address is required")
+	}
+
+	if !b.IsHTTP() && !b.IsHTTPS() {
+		// We can allow TCP later, but strictly speaking httputil needs http/s
+		return errors.Newf("backend %q must start with http:// or https://", b.Address)
+	}
+
+	if b.Weight < 0 {
+		return errors.New("backend weight cannot be negative")
+	}
+
+	// Default weight
+	if b.Weight == 0 {
+		b.Weight = 1
+	}
+
+	if b.Conditions != nil {
+		for _, ip := range b.Conditions.SourceIPs {
+			if _, _, err := net.ParseCIDR(ip); err != nil {
+				if net.ParseIP(ip) == nil {
+					return errors.Newf("invalid source ip/cidr condition: %s", ip)
+				}
+			}
+		}
+	}
+
+	return nil
+}

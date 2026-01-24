@@ -1,4 +1,3 @@
-// internal/woos/route.go
 package alaye
 
 import (
@@ -13,11 +12,12 @@ type Route struct {
 	Path string `hcl:"path,label"`
 
 	StripPrefixes []string `hcl:"strip_prefixes,optional"`
-	LBStrategy    string   `hcl:"lb_strategy,optional"`
 
-	// web hosting
-	Web      Web      `hcl:"web,block,optional"`
-	Backends []string `hcl:"backends,optional"`
+	// web hosting (Value type)
+	Web Web `hcl:"web,block"`
+
+	// CHANGED: Structured Backends
+	Backends Backend `hcl:"backend,block"`
 
 	// High-Availability Configs
 	HealthCheck    *HealthCheck    `hcl:"health_check,block"`
@@ -39,14 +39,15 @@ func (r *Route) Key() string {
 	sb.WriteString("p=")
 	sb.WriteString(r.Path)
 	sb.WriteString("|s=")
-	sb.WriteString(strings.ToLower(strings.TrimSpace(r.LBStrategy)))
+	sb.WriteString(strings.ToLower(strings.TrimSpace(r.Backends.LBStrategy)))
 
 	sb.WriteString("|b=")
-	for i, b := range r.Backends {
+	for i, b := range r.Backends.Servers {
 		if i > 0 {
 			sb.WriteByte(',')
 		}
-		sb.WriteString(strings.TrimSpace(b))
+		sb.WriteString(b.String())
+		sb.WriteString(fmt.Sprintf("(w:%d)", b.Weight))
 	}
 
 	sb.WriteString("|sp=")
@@ -57,7 +58,6 @@ func (r *Route) Key() string {
 		sb.WriteString(p)
 	}
 
-	// High Availability
 	if r.HealthCheck != nil {
 		sb.WriteString("|hc=")
 		sb.WriteString(r.HealthCheck.Path)
@@ -77,7 +77,6 @@ func (r *Route) Key() string {
 		sb.WriteString(fmt.Sprint(r.Timeouts.Request))
 	}
 
-	// Middlewares
 	if r.CompressionConfig.Compression {
 		sb.WriteString("|comp=")
 		sb.WriteString(r.CompressionConfig.Type)
@@ -98,7 +97,7 @@ func (r *Route) Key() string {
 		sb.WriteString(r.ForwardAuth.URL)
 	}
 
-	// Web route (presence must be semantic, not String())
+	// Web route check (Root.IsSet is the signal)
 	if r.Web.Root.IsSet() || r.Web.Index != "" {
 		sb.WriteString("|w=")
 		sb.WriteString(r.Web.Root.String())
@@ -119,17 +118,14 @@ func (r *Route) Validate() error {
 		return errors.Newf("path %q must start with '/'", r.Path)
 	}
 
-	hasBackends := len(r.Backends) > 0
-
-	// Presence must use semantic fields (never String()).
-	// Root.IsSet() is the main signal; Index is a secondary signal.
-	hasWeb := r.Web.Root.IsSet() || r.Web.Index != ""
+	hasBackends := len(r.Backends.Servers) > 0
+	hasWeb := r.Web.Root.IsSet()
 
 	if !hasBackends && !hasWeb {
-		return errors.New("route must have either 'backends' or 'web' block")
+		return errors.New("route must have either 'backend' blocks or a 'web' block")
 	}
 	if hasBackends && hasWeb {
-		return errors.New("route cannot have both 'backends' and 'web' block")
+		return errors.New("route cannot have both 'backend' blocks and a 'web' block")
 	}
 
 	if hasBackends {
@@ -139,7 +135,6 @@ func (r *Route) Validate() error {
 }
 
 func (r *Route) validateWebRoute() error {
-	// Web root must be explicitly set
 	if !r.Web.Root.IsSet() {
 		return errors.New("web root cannot be empty")
 	}
@@ -152,7 +147,7 @@ func (r *Route) validateWebRoute() error {
 		return errors.New("web routes cannot have strip_prefixes")
 	}
 
-	if r.LBStrategy != "" && r.LBStrategy != StrategyRoundRobin {
+	if r.Backends.LBStrategy != "" && r.Backends.LBStrategy != StrategyRoundRobin {
 		return errors.New("web routes only support default load balancing")
 	}
 
@@ -197,20 +192,15 @@ func (r *Route) validateWebRoute() error {
 }
 
 func (r *Route) validateProxyRoute() error {
-	// Backends validation
-	if len(r.Backends) == 0 {
+	// Backend validation
+	if len(r.Backends.Servers) == 0 {
 		return errors.New("backends cannot be empty for proxy route")
 	}
-	for i, backend := range r.Backends {
-		backend = strings.TrimSpace(backend)
-		if backend == "" {
-			return errors.Newf("backends[%d]: cannot be empty", i)
+
+	for i, b := range r.Backends.Servers {
+		if err := b.Validate(); err != nil {
+			return errors.Newf("backend[%d]: %w", i, err)
 		}
-		// Basic URL validation
-		if !strings.HasPrefix(backend, "http://") && !strings.HasPrefix(backend, "https://") {
-			return errors.Newf("backends[%d]: %q must start with http:// or https://", i, backend)
-		}
-		r.Backends[i] = backend // Normalize
 	}
 
 	// Strip prefixes validation (if provided)
@@ -224,14 +214,14 @@ func (r *Route) validateProxyRoute() error {
 	}
 
 	// Load balancing strategy validation (if provided)
-	if r.LBStrategy != "" {
-		r.LBStrategy = strings.ToLower(r.LBStrategy)
-		switch r.LBStrategy {
+	if r.Backends.LBStrategy != "" {
+		r.Backends.LBStrategy = strings.ToLower(r.Backends.LBStrategy)
+		switch r.Backends.LBStrategy {
 		case StrategyRoundRobin, StrategyLeastConn, StrategyRandom:
 			// Valid
 		default:
 			return errors.Newf("lb_strategy %q must be one of: %s, %s, %s",
-				r.LBStrategy, StrategyRoundRobin, StrategyLeastConn, StrategyRandom)
+				r.Backends.LBStrategy, StrategyRoundRobin, StrategyLeastConn, StrategyRandom)
 		}
 	}
 

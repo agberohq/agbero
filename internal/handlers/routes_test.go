@@ -29,9 +29,13 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 
 	// 2. Config
 	route := &alaye.Route{
-		Path:       "/",
-		Backends:   []string{srv1.URL, srv2.URL},
-		LBStrategy: alaye.StrategyRoundRobin,
+		Path: "/",
+		Backends: alaye.Backend{
+			LBStrategy: alaye.StrategyRoundRobin,
+			Servers:    alaye.NewServers(srv1.URL, srv2.URL),
+		},
+		//Backend:   alaye.MakeBackend(srv1.URL, srv2.URL),
+		//LBStrategy: alaye.StrategyRoundRobin,
 	}
 
 	// 3. Init Handler
@@ -58,7 +62,7 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 }
 
 func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
-	// Backend checks for header
+	// Server checks for header
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Test") != "Added" {
 			w.WriteHeader(http.StatusBadRequest)
@@ -70,7 +74,7 @@ func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
 
 	route := &alaye.Route{
 		Path:     "/",
-		Backends: []string{srv.URL},
+		Backends: alaye.MakeBackend(srv.URL),
 		Headers: &alaye.Headers{
 			Request: &alaye.Header{
 				Set: map[string]string{"X-Test": "Added"},
@@ -94,7 +98,7 @@ func TestRouteHandler_Proxy_NoHealthyBackends(t *testing.T) {
 	// Point to closed port
 	route := &alaye.Route{
 		Path:     "/",
-		Backends: []string{"http://127.0.0.1:54321"},
+		Backends: alaye.MakeBackend("http://127.0.0.1:54321"),
 	}
 
 	h := NewRouteHandler(route, testLogger)
@@ -124,7 +128,7 @@ func TestRouteHandler_Proxy_Timeout(t *testing.T) {
 
 	route := &alaye.Route{
 		Path:     "/",
-		Backends: []string{srv.URL},
+		Backends: alaye.MakeBackend(srv.URL),
 		Timeouts: &alaye.TimeoutRoute{
 			Request: 10 * time.Millisecond, // Very short
 		},
@@ -154,7 +158,7 @@ func TestRouteHandler_Proxy_StripPrefix(t *testing.T) {
 
 	route := &alaye.Route{
 		Path:          "/api",
-		Backends:      []string{srv.URL},
+		Backends:      alaye.MakeBackend(srv.URL),
 		StripPrefixes: []string{"/api"},
 	}
 
@@ -423,7 +427,7 @@ func TestRouteHandler_Validation(t *testing.T) {
 			name: "valid proxy route",
 			route: &alaye.Route{
 				Path:     "/api",
-				Backends: []string{"http://localhost:3000"},
+				Backends: alaye.MakeBackend("http://localhost:3000"),
 			},
 			wantErr: false,
 		},
@@ -441,7 +445,7 @@ func TestRouteHandler_Validation(t *testing.T) {
 			name: "invalid: both web and backends",
 			route: &alaye.Route{
 				Path:     "/",
-				Backends: []string{"http://localhost:3000"},
+				Backends: alaye.MakeBackend("http://localhost:3000"),
 				Web: alaye.Web{
 					Root: alaye.WebRoot("/tmp"),
 				},

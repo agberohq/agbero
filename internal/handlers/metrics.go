@@ -77,7 +77,7 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 		for _, route := range hcfg.Routes {
 			rSnap := &RouteSnapshot{
 				Path:     route.Path,
-				Strategy: route.LBStrategy,
+				Strategy: route.Backends.LBStrategy,
 				Backends: make([]*BackendSnapshot, 0),
 			}
 
@@ -106,9 +106,9 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 				}
 			} else {
 				// Inactive: Zero stats, list configured backends
-				for _, url := range route.Backends {
+				for _, url := range route.Backends.Servers {
 					bSnap := &BackendSnapshot{
-						URL:       url,
+						URL:       url.Address,
 						Alive:     false, // Inactive
 						InFlight:  0,
 						Failures:  0,
