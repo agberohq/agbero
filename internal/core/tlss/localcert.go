@@ -1,4 +1,4 @@
-package tls
+package tlss
 
 import (
 	"crypto/sha256"

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/security"
-	"git.imaxinacion.net/aibox/agbero/internal/core/tls"
+	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
@@ -395,7 +395,7 @@ func handleInstallCA() {
 	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
 	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
 
-	installer := tls.NewCertInstaller(minimalLogger)
+	installer := tlss.NewCertInstaller(minimalLogger)
 
 	if installer.IsCARootInstalled() && !forceCAInstall {
 		fmt.Println("CA root certificate is already installed in system trust store")
@@ -448,7 +448,7 @@ func handleListCerts() {
 	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
 	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
 
-	installer := tls.NewCertInstaller(minimalLogger)
+	installer := tlss.NewCertInstaller(minimalLogger)
 
 	// Try to load config to get tls_storage_dir
 	global, err := loadConfig(configPath)
@@ -491,7 +491,7 @@ func handleCertInfo() {
 	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
 	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
 
-	installer := tls.NewCertInstaller(minimalLogger)
+	installer := tlss.NewCertInstaller(minimalLogger)
 
 	// Override directory if specified
 	if certDir != "" {

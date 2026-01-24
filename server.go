@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
-	tls2 "git.imaxinacion.net/aibox/agbero/internal/core/tls"
+	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery/gossip"
 	handlers2 "git.imaxinacion.net/aibox/agbero/internal/handlers"
@@ -32,7 +32,7 @@ import (
 type Server struct {
 	hostManager *discovery.Host
 	global      *alaye.Global
-	tlsManager  *tls2.TlsManager // Added for watcher shutdown
+	tlsManager  *tlss.TlsManager // Added for watcher shutdown
 	configPath  string           // Added for reload
 
 	mu sync.RWMutex
@@ -550,8 +550,8 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 		return nil, nil, errors.New("host manager is required")
 	}
 
-	m := &tls2.TlsManager{
-		Logger:      tls2.NewTLSLogger(s.logger),
+	m := &tlss.TlsManager{
+		Logger:      tlss.NewTLSLogger(s.logger),
 		HostManager: s.hostManager,
 		Global:      s.global,
 		LocalCache:  make(map[string]*tls.Certificate),

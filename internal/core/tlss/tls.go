@@ -1,5 +1,5 @@
 // internal/core/tls/tls.go
-package tls
+package tlss
 
 import (
 	"context"

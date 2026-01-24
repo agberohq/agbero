@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	tls2 "git.imaxinacion.net/aibox/agbero/internal/core/tls"
+	tls2 "git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"

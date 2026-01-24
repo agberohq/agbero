@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/backend"
-	"git.imaxinacion.net/aibox/agbero/internal/core/tls"
+	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/compress"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/headers"
@@ -105,7 +105,7 @@ func newProxyRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 
 	// 2. Initialize Backends
 	// We need to wrap the logger to match the backend constructor interface
-	wrappedLogger := tls.NewTLSLogger(logger)
+	wrappedLogger := tlss.NewTLSLogger(logger)
 
 	for _, raw := range route.Backends {
 		raw = strings.TrimSpace(raw)

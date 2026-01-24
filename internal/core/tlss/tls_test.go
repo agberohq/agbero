@@ -1,5 +1,5 @@
 // internal/core/tls/tls_test.go
-package tls
+package tlss
 
 import (
 	"crypto/rand"
