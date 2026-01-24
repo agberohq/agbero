@@ -421,7 +421,9 @@ func checkAndInstallCA(global *alaye.Global) {
 	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
 	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
 
-	installer := tlss.NewCertInstaller(minimalLogger)
+	// FIX: Wrap ll.Logger in tlss.NewTLSLogger to satisfy woos.TlsLogger interface
+	tlsLogger := tlss.NewTLSLogger(minimalLogger)
+	installer := tlss.NewCertInstaller(tlsLogger)
 
 	if !installer.IsCARootInstalled() {
 		logger.Info("HTTPS enabled but CA root not found. Auto-installing...")
@@ -441,7 +443,9 @@ func handleInstallCA() {
 	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
 	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
 
-	installer := tlss.NewCertInstaller(minimalLogger)
+	// FIX: Wrap logger
+	tlsLogger := tlss.NewTLSLogger(minimalLogger)
+	installer := tlss.NewCertInstaller(tlsLogger)
 
 	if installer.IsCARootInstalled() && !forceCAInstall {
 		fmt.Println("CA root certificate is already installed in system trust store")
@@ -494,7 +498,9 @@ func handleListCerts() {
 	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
 	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
 
-	installer := tlss.NewCertInstaller(minimalLogger)
+	// FIX: Wrap logger
+	tlsLogger := tlss.NewTLSLogger(minimalLogger)
+	installer := tlss.NewCertInstaller(tlsLogger)
 
 	// Try to load config to get tls_storage_dir
 	global, err := loadConfig(configPath)
@@ -537,7 +543,9 @@ func handleCertInfo() {
 	loggerTerminal := lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(false))
 	minimalLogger := ll.New("agbero-cert", ll.WithHandler(loggerTerminal)).Enable()
 
-	installer := tlss.NewCertInstaller(minimalLogger)
+	// FIX: Wrap logger
+	tlsLogger := tlss.NewTLSLogger(minimalLogger)
+	installer := tlss.NewCertInstaller(tlsLogger)
 
 	// Override directory if specified
 	if certDir != "" {

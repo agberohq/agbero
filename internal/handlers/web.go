@@ -118,6 +118,16 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Handle Directory
 	if info.IsDir() {
+		// FIX: Enforce trailing slash for directories so relative links work correctly
+		if !strings.HasSuffix(r.URL.Path, "/") {
+			target := r.URL.Path + "/"
+			if len(r.URL.RawQuery) > 0 {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, http.StatusMovedPermanently)
+			return
+		}
+
 		// Try Index File
 		indexName := "index.html"
 		if h.route.Web.Index != "" {
@@ -141,7 +151,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// No Index Found. Check if Directory Listing is enabled.
 		if h.route.Web.Directory {
-			h.serveDirectoryListing(w, r, f, "/"+strings.TrimPrefix(reqPath, "."))
+			h.serveDirectoryListing(w, r, f, r.URL.Path)
 			return
 		}
 
@@ -180,12 +190,15 @@ func (h *webHandler) serveDirectoryListing(w http.ResponseWriter, r *http.Reques
 			size = humanize.Bytes(uint64(info.Size()))
 		}
 
+		// URL path escaping ensures special characters don't break links
+		urlName := url.PathEscape(entry.Name())
+
 		items = append(items, dirItem{
 			Name:    entry.Name(),
 			IsDir:   entry.IsDir(),
 			Size:    size,
 			ModTime: info.ModTime().Format("2006-01-02 15:04:05"),
-			URL:     url.PathEscape(entry.Name()),
+			URL:     urlName,
 		})
 	}
 
