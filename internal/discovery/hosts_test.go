@@ -36,7 +36,7 @@ func assertNoChanged(t *testing.T, ch <-chan struct{}, timeout time.Duration) {
 
 func TestNewHost_Basic(t *testing.T) {
 	h := NewHost("/tmp")
-	if h.hosts == nil || h.lookupMap == nil || h.gossipRoutes == nil || h.nodeFailures == nil {
+	if h.hosts == nil || h.lookupMap == nil || h.dynamicRoutes == nil || h.nodeIndex == nil || h.nodeFailures == nil {
 		t.Fatal("maps not initialized")
 	}
 	if h.logger == nil {
@@ -46,7 +46,17 @@ func TestNewHost_Basic(t *testing.T) {
 
 func TestUpdateGossipNode(t *testing.T) {
 	h := NewHost("/tmp", WithLogger(testLogger))
-	route := alaye.Route{Path: "/api"}
+
+	route := alaye.Route{
+		Path: "/api",
+		Backends: alaye.Backend{
+			LBStrategy: alaye.StrategyRandom,
+			Servers: []alaye.Server{
+				{Address: "http://127.0.0.1:8080", Weight: 1},
+			},
+		},
+	}
+
 	h.UpdateGossipNode("node1", "example.com", route)
 
 	hosts, _ := h.LoadAll()
@@ -56,11 +66,26 @@ func TestUpdateGossipNode(t *testing.T) {
 	if cfg := h.Get("example.com"); cfg == nil || len(cfg.Routes) != 1 {
 		t.Fatal("route not added")
 	}
+	if cfg := h.Get("example.com"); cfg != nil {
+		if got := len(cfg.Routes[0].Backends.Servers); got != 1 {
+			t.Fatalf("expected 1 backend server, got %d", got)
+		}
+	}
 }
 
 func TestRemoveGossipNode(t *testing.T) {
 	h := NewHost("/tmp")
-	route := alaye.Route{Path: "/api"}
+
+	route := alaye.Route{
+		Path: "/api",
+		Backends: alaye.Backend{
+			LBStrategy: alaye.StrategyRandom,
+			Servers: []alaye.Server{
+				{Address: "http://127.0.0.1:8080", Weight: 1},
+			},
+		},
+	}
+
 	h.UpdateGossipNode("node1", "example.com", route)
 	h.RemoveGossipNode("node1")
 
@@ -72,7 +97,17 @@ func TestRemoveGossipNode(t *testing.T) {
 
 func TestRouteExists(t *testing.T) {
 	h := NewHost("/tmp")
-	route := alaye.Route{Path: "/api"}
+
+	route := alaye.Route{
+		Path: "/api",
+		Backends: alaye.Backend{
+			LBStrategy: alaye.StrategyRandom,
+			Servers: []alaye.Server{
+				{Address: "http://127.0.0.1:8080", Weight: 1},
+			},
+		},
+	}
+
 	h.UpdateGossipNode("node1", "example.com", route)
 
 	if !h.RouteExists("example.com", "/api") {
@@ -212,20 +247,42 @@ func TestWatch_NonHCL_DoesNotTriggerChanged(t *testing.T) {
 	assertNoChanged(t, h.Changed(), 1200*time.Millisecond)
 }
 
-func TestRebuildLookupLocked_DedupFileGossip(t *testing.T) {
+func TestRebuildLookupLocked_MergeFileAndDynamicSamePath(t *testing.T) {
 	h := NewHost("/tmp")
 	h.mu.Lock()
 
-	// File host
+	// File host with one proxy backend
 	h.hosts["file"] = &alaye.Host{
 		Domains: []string{"example.com"},
-		Routes:  []alaye.Route{{Path: "/api"}},
+		Routes: []alaye.Route{
+			{
+				Path: "/api",
+				Backends: alaye.Backend{
+					LBStrategy: alaye.StrategyRoundRobin,
+					Servers: []alaye.Server{
+						{Address: "http://127.0.0.1:7000", Weight: 1},
+					},
+				},
+			},
+		},
 	}
 
-	// Gossip same
-	h.gossipRoutes["node1"] = DynamicRouteItem{
-		Host:  "example.com",
-		Route: alaye.Route{Path: "/api"},
+	// Dynamic route (same host+path) with another backend from node1
+	rk := routeKey{host: "example.com", path: "/api"}
+	h.dynamicRoutes[rk] = &routeEntry{
+		base: alaye.Route{
+			Path: "/api",
+			Backends: alaye.Backend{
+				LBStrategy: alaye.StrategyRandom,
+			},
+			HealthCheck: &alaye.HealthCheck{Path: "/"},
+		},
+		backends: map[string][]alaye.Server{
+			"node1": {
+				{Address: "http://127.0.0.1:8000", Weight: 1},
+			},
+		},
+		lastWrite: time.Now(),
 	}
 
 	h.rebuildLookupLocked()
@@ -236,7 +293,10 @@ func TestRebuildLookupLocked_DedupFileGossip(t *testing.T) {
 		t.Fatal("expected example.com to exist")
 	}
 	if len(cfg.Routes) != 1 {
-		t.Fatalf("expected 1 route (deduplicated), got %d", len(cfg.Routes))
+		t.Fatalf("expected 1 route, got %d", len(cfg.Routes))
+	}
+	if got := len(cfg.Routes[0].Backends.Servers); got != 2 {
+		t.Fatalf("expected merged 2 backend servers, got %d", got)
 	}
 }
 

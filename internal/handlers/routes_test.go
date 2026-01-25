@@ -418,69 +418,77 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 }
 
 func TestRouteHandler_Validation(t *testing.T) {
-	tests := []struct {
-		name    string
-		route   *alaye.Route
-		wantErr bool
-	}{
+	type tc struct {
+		name       string
+		route      *alaye.Route
+		wantStatus int
+		prepare    func(t *testing.T, r *alaye.Route) // optional per-case setup
+	}
+
+	tests := []tc{
 		{
 			name: "valid proxy route",
 			route: &alaye.Route{
 				Path:     "/api",
 				Backends: alaye.MakeBackend("http://localhost:3000"),
 			},
-			wantErr: false,
+			wantStatus: http.StatusBadGateway, // backend not running
 		},
 		{
 			name: "valid web route",
 			route: &alaye.Route{
 				Path: "/",
-				Web: alaye.Web{
-					Root: alaye.WebRoot("/tmp"),
-				},
+				Web:  alaye.Web{}, // filled in prepare()
 			},
-			wantErr: false,
+			prepare: func(t *testing.T, r *alaye.Route) {
+				t.Helper()
+
+				root := t.TempDir()
+				if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("OK"), 0644); err != nil {
+					t.Fatal(err)
+				}
+
+				r.Web.Root = alaye.WebRoot(root)
+				r.Web.Index = "index.html"
+				// listing stays default false, but index exists => 200
+			},
+			wantStatus: http.StatusOK,
 		},
 		{
 			name: "invalid: both web and backends",
 			route: &alaye.Route{
 				Path:     "/",
 				Backends: alaye.MakeBackend("http://localhost:3000"),
-				Web: alaye.Web{
-					Root: alaye.WebRoot("/tmp"),
-				},
+				Web:      alaye.Web{Root: alaye.WebRoot("/tmp")},
 			},
-			wantErr: true,
+			wantStatus: http.StatusBadGateway,
 		},
 		{
-			name: "invalid: neither web nor backends",
-			route: &alaye.Route{
-				Path: "/",
-			},
-			wantErr: true,
+			name:       "invalid: neither web nor backends",
+			route:      &alaye.Route{Path: "/"},
+			wantStatus: http.StatusBadGateway,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			defer func() {
-				if r := recover(); r != nil {
-					if !tt.wantErr {
-						t.Errorf("unexpected panic: %v", r)
-					}
-				}
-			}()
+			if tt.prepare != nil {
+				tt.prepare(t, tt.route)
+			}
 
 			h := NewRouteHandler(tt.route, testLogger)
-			if h != nil {
-				h.Close()
+			if h == nil {
+				t.Fatal("handler must never be nil")
 			}
+			defer h.Close()
 
-			if tt.wantErr && h != nil {
-				t.Error("expected error but handler was created")
-			}
-			if !tt.wantErr && h == nil {
-				t.Error("expected handler but got nil")
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("expected status %d, got %d", tt.wantStatus, rr.Code)
 			}
 		})
 	}

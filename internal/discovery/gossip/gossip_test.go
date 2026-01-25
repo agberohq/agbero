@@ -125,7 +125,7 @@ func TestProcessNode_InvalidMeta(t *testing.T) {
 }
 
 func TestProcessNode_Dedup(t *testing.T) {
-	hm := &mockHost{routeExists: true}
+	hm := &mockHost{}
 	s := &Service{hm: hm, logger: testLogger}
 	e := &eventDelegate{s: s}
 
@@ -134,8 +134,9 @@ func TestProcessNode_Dedup(t *testing.T) {
 	node := &memberlist.Node{Name: "node1", Meta: b}
 
 	e.processNode(node)
-	if hm.updated {
-		t.Error("Processed duplicate route")
+
+	if !hm.updated {
+		t.Fatal("expected route upsert (merge), but it was not updated")
 	}
 }
 

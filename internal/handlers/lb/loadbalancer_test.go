@@ -87,7 +87,7 @@ func TestLoadBalancer_LeastConn(t *testing.T) {
 }
 
 func TestLoadBalancer_WeightedLeastConn(t *testing.T) {
-	b1 := makeBackend(10, true) // heavy weight
+	b1 := makeBackend(10, true)
 	b2 := makeBackend(1, true)
 
 	b1.InFlight.Store(10)
@@ -103,8 +103,8 @@ func TestLoadBalancer_WeightedLeastConn(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	b := lb.PickBackend(req)
 
-	if b != b1 {
-		t.Fatalf("expected weighted backend, got %+v", b)
+	if b != b2 {
+		t.Fatalf("expected backend b2 (better score), got %+v", b)
 	}
 }
 

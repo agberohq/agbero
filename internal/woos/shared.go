@@ -22,13 +22,17 @@ var RouteCache sync.Map
 var Transport = &http.Transport{
 	Proxy: http.ProxyFromEnvironment,
 	DialContext: (&net.Dialer{
-		Timeout:   30 * time.Second,
+		Timeout:   3 * time.Second, // was 30s
 		KeepAlive: 30 * time.Second,
 	}).DialContext,
-	ForceAttemptHTTP2:     true,
-	MaxIdleConns:          1000,
-	MaxIdleConnsPerHost:   100,
-	IdleConnTimeout:       90 * time.Second,
-	TLSHandshakeTimeout:   10 * time.Second,
+
+	ForceAttemptHTTP2: true,
+
+	MaxIdleConns:        1000,
+	MaxIdleConnsPerHost: 100,
+	IdleConnTimeout:     90 * time.Second,
+
+	TLSHandshakeTimeout:   5 * time.Second, //
+	ResponseHeaderTimeout: 5 * time.Second, //
 	ExpectContinueTimeout: 1 * time.Second,
 }
