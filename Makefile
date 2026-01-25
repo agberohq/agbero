@@ -3,6 +3,14 @@ APP_NAME := agbero
 BUILD_DIR := bin
 SRC_DIR := ./cmd/agbero
 
+# Git remote for pushing tags
+REMOTE ?= origin
+
+# Release version for tagging and GoReleaser (set explicitly)
+# Example:
+#   make release RELEASE_VERSION=0.0.2
+RELEASE_VERSION ?=
+
 # Version variables (will be injected via ldflags)
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -13,24 +21,41 @@ LDFLAGS := -s -w -X "git.imaxinacion.net/aibox/agbero/internal/woos.Version=$(VE
            -X "git.imaxinacion.net/aibox/agbero/internal/woos.Commit=$(COMMIT)" \
            -X "git.imaxinacion.net/aibox/agbero/internal/woos.Date=$(DATE)"
 
-.PHONY: all build clean run install-deps build-all version help
+.PHONY: all build clean run install-deps build-all version help \
+        deps test test-verbose fmt lint tidy snapshot goreleaser-check changelog dev update-deps \
+        ensure-clean ensure-release-version tag release release-dry
 
 all: build
 
 help:
 	@echo "Available targets:"
-	@echo "  all          - Alias for 'build'"
-	@echo "  build        - Build for current OS with version injection"
-	@echo "  run          - Run interactively (Development helper)"
-	@echo "  clean        - Clean build artifacts"
-	@echo "  build-all    - Cross-compile for all platforms"
-	@echo "  version      - Show current version info"
-	@echo "  deps         - Install/update dependencies"
-	@echo "  test         - Run tests"
-	@echo "  test-verbose - Run tests with verbose output"
-	@echo "  fmt          - Format Go code"
-	@echo "  lint         - Lint Go code"
-	@echo "  tidy         - Tidy go.mod"
+	@echo "  all            - Alias for 'build'"
+	@echo "  build          - Build for current OS with version injection"
+	@echo "  run            - Run interactively (Development helper)"
+	@echo "  clean          - Clean build artifacts"
+	@echo "  build-all      - Cross-compile for all platforms"
+	@echo "  version        - Show current version info"
+	@echo "  deps           - Install/update dependencies"
+	@echo "  test           - Run tests"
+	@echo "  test-verbose   - Run tests with verbose output"
+	@echo "  fmt            - Format Go code"
+	@echo "  lint           - Lint Go code"
+	@echo "  tidy           - Tidy go.mod"
+	@echo "  snapshot       - Snapshot build (local testing)"
+	@echo "  goreleaser-check - GoReleaser check + snapshot dry-run build"
+	@echo "  changelog      - Generate changelog (requires git-chglog)"
+	@echo "  dev            - deps + build then run dev"
+	@echo "  update-deps    - Update Go deps"
+	@echo ""
+	@echo "Release targets:"
+	@echo "  ensure-clean   - Fail if repo is dirty"
+	@echo "  tag            - Force (re)create RELEASE_VERSION tag at HEAD and push"
+	@echo "  release        - tag + goreleaser release --clean"
+	@echo "  release-dry    - tag + goreleaser release --clean --skip=publish"
+	@echo ""
+	@echo "Release usage:"
+	@echo "  make release RELEASE_VERSION=0.0.2"
+	@echo "  make release-dry RELEASE_VERSION=0.0.2"
 
 # Install dependencies
 deps:
@@ -61,22 +86,22 @@ clean:
 # Cross-compile for release (matching GoReleaser targets)
 build-all: clean
 	@echo "Cross-compiling $(APP_NAME) v$(VERSION) for all platforms..."
-	
+
 	@echo "Building for Linux (amd64)..."
 	GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-linux-amd64 $(SRC_DIR)
-	
+
 	@echo "Building for Linux (arm64)..."
 	GOOS=linux GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-linux-arm64 $(SRC_DIR)
-	
+
 	@echo "Building for Windows (amd64)..."
 	GOOS=windows GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe $(SRC_DIR)
-	
+
 	@echo "Building for macOS (Intel)..."
 	GOOS=darwin GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-darwin-amd64 $(SRC_DIR)
-	
+
 	@echo "Building for macOS (Apple Silicon)..."
 	GOOS=darwin GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-darwin-arm64 $(SRC_DIR)
-	
+
 	@echo ""
 	@echo "Build complete! Binaries in $(BUILD_DIR)/:"
 	@ls -lh $(BUILD_DIR)/*
@@ -140,3 +165,32 @@ update-deps:
 	go get -u ./...
 	go mod tidy
 	@echo "Dependencies updated"
+
+# --------------------------
+# Release helpers (GoReleaser)
+# --------------------------
+
+ensure-clean:
+	@echo "Checking git working tree..."
+	@git diff --quiet || (echo "Error: working tree has tracked changes. Commit or stash them."; exit 1)
+	@test -z "$$(git status --porcelain)" || (echo "Error: working tree has uncommitted/untracked files:"; git status --porcelain; exit 1)
+	@echo "Git working tree is clean"
+
+ensure-release-version:
+	@test -n "$(RELEASE_VERSION)" || (echo "Error: set RELEASE_VERSION, e.g. make release RELEASE_VERSION=0.0.2"; exit 1)
+
+tag: ensure-clean ensure-release-version
+	@echo "Tagging $(RELEASE_VERSION) at HEAD $$(git rev-parse --short HEAD)"
+	@git tag -d $(RELEASE_VERSION) 2>/dev/null || true
+	@git push $(REMOTE) :refs/tags/$(RELEASE_VERSION) 2>/dev/null || true
+	@git tag -a $(RELEASE_VERSION) -m "v$(RELEASE_VERSION)"
+	@git push $(REMOTE) $(RELEASE_VERSION)
+	@echo "Tag pushed: $(RELEASE_VERSION)"
+
+release: tag
+	@echo "Running GoReleaser for $(RELEASE_VERSION)..."
+	goreleaser release --clean
+
+release-dry: tag
+	@echo "Running GoReleaser dry-run for $(RELEASE_VERSION)..."
+	goreleaser release --clean --skip=publish
