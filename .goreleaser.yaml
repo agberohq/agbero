@@ -45,7 +45,7 @@ archives:
       - README.md
       - LICENSE
       - cmd/agbero/data/agbero.hcl
-      - cmd/agbero/data/hosts.d/agbero.hcl
+      - cmd/agbero/data/hosts.d/website.hcl
       - cmd/agbero/data/hosts.d/example.hcl
 #      - src: cmd/data/agbero.hcl
 #        dst: agbero.hcl
