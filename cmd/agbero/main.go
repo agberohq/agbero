@@ -269,7 +269,7 @@ func checkAndInstallCA(global *alaye.Global) {
 	}
 
 	installer := tlss.NewInstaller(logger)
-	if !installer.IsCARootInstalled() {
+	if !tlss.IsCARootInstalled() {
 		logger.Info("HTTPS enabled but CA root not found. Auto-installing...")
 		if err := installer.InstallCARootIfNeeded(); err != nil {
 			logger.Warnf("Failed to auto-install CA root: %v", err)
@@ -285,7 +285,7 @@ func handleCertCommands(install, list, info bool) {
 	installer := tlss.NewInstaller(logger)
 
 	if install {
-		if installer.IsCARootInstalled() && !forceCAInstall {
+		if tlss.IsCARootInstalled() && !forceCAInstall {
 			logger.Info("CA root certificate is already installed. Use --force to reinstall.")
 			return
 		}
@@ -299,8 +299,8 @@ func handleCertCommands(install, list, info bool) {
 	if list {
 		// Attempt to load dir from config
 		global, err := loadConfig(configPath)
-		if err == nil && global.TLSStorageDir != "" {
-			_ = installer.SetStorageDir(global.TLSStorageDir)
+		if err == nil && global.Storage.CertsDir != "" {
+			_ = installer.SetStorageDir(woos.NewFolder(global.Storage.CertsDir))
 		}
 		certs, err := installer.ListCertificates()
 		if err != nil {

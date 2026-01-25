@@ -30,6 +30,7 @@ var hostSampleTmpl string
 var bannerTmpl string
 
 // resolveConfigPath implements the search order:
+// resolveConfigPath implements the search order:
 func resolveConfigPath(flagPath string) (string, bool) {
 	// 1. Explicit Flag
 	if flagPath != "" {
@@ -70,28 +71,34 @@ func ensureConfig(path string) error {
 
 	logger.Fields("path", path).Info("config not found, generating default")
 
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("mkdir: %w", err)
+	// Create Base Directory
+	baseDir := woos.NewFolder(filepath.Dir(path))
+	if err := baseDir.Ensure(woos.Folder(""), false); err != nil {
+		return fmt.Errorf("ensure base dir: %w", err)
 	}
 
-	// Inject hosts_dir into the template
-	content := fmt.Sprintf(configDevTmpl, woos.HostDir)
-
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	// 1. Write Main Config
+	// Inject hosts_dir into the template (using string representation of Folder constant)
+	content := fmt.Sprintf(configDevTmpl, woos.HostDir.String())
+	if err := os.WriteFile(path, []byte(content), woos.FilePerm); err != nil {
 		return fmt.Errorf("write default config: %w", err)
 	}
 
-	// Create the hosts directory and sample
-	hostsDir := filepath.Join(dir, woos.HostDir)
-	if err := os.MkdirAll(hostsDir, 0755); err != nil {
+	// 2. Create Hosts Directory
+	// We assume relative to config file for dev mode usually
+	hostsDir := baseDir.Join(woos.HostDir.Name())
+
+	if err := hostsDir.Ensure(woos.Folder(""), false); err != nil {
 		logger.Warnf("failed to create hosts directory: %v", err)
 	} else {
-		_ = os.WriteFile(filepath.Join(hostsDir, "localhost.hcl"), []byte(hostSampleTmpl), 0644)
+		// Write Sample Host
+		samplePath := filepath.Join(hostsDir.Path(), "localhost.hcl")
+		_ = os.WriteFile(samplePath, []byte(hostSampleTmpl), woos.FilePerm)
 	}
 
-	certsDir := filepath.Join(dir, woos.HostDir)
-	if err := os.MkdirAll(certsDir, 0700); err != nil { // 0700 for security
+	// 3. Create Certs Directory (Secure)
+	certsDir := baseDir.Join(woos.CertDir.Name())
+	if err := certsDir.Ensure(woos.Folder(""), true); err != nil { // true = SecurePerm (0700)
 		logger.Warnf("failed to create certs directory: %v", err)
 	}
 
@@ -101,39 +108,38 @@ func ensureConfig(path string) error {
 
 // loadConfig parses the config and ensures hosts_dir is absolute.
 func loadConfig(path string) (*alaye.Global, error) {
-	absConfigPath, err := filepath.Abs(path)
+	// Parse using Core
+	global, err := core.LoadGlobal(path)
 	if err != nil {
-		return nil, fmt.Errorf("resolve config path: %w", err)
-	}
-
-	var global alaye.Global
-	parser := core.NewParser(absConfigPath)
-	if err := parser.Unmarshal(&global); err != nil {
 		return nil, err
 	}
 
-	if global.HostsDir != "" && !filepath.IsAbs(global.HostsDir) {
-		configDir := filepath.Dir(absConfigPath)
-		global.HostsDir = filepath.Join(configDir, global.HostsDir)
-	}
+	// Apply Defaults (Includes Path resolution logic)
+	// We rely on woos.DefaultApply to handle the Folder/Path logic
+	// passing the absolute path of the config file to resolve relative paths against it.
+	absConfigPath, _ := filepath.Abs(path)
+	woos.DefaultApply(global, absConfigPath)
 
-	return &global, nil
+	return global, nil
 }
 
 func installDefaults() error {
 	defaults := woos.DefaultPaths()
 
-	// Centralized directory creation
-	logger.Fields("dir", defaults.HostsDir).Info("creating directory")
-	if err := woos.EnsureDir(defaults.HostsDir, false); err != nil {
+	logger.Fields("dir", defaults.HostsDir).Info("creating system directory")
+
+	// Create Hosts Dir
+	if err := defaults.HostsDir.Ensure(woos.Folder(""), false); err != nil {
 		return fmt.Errorf("mkdir hosts: %w", err)
 	}
-	// Note: Certs dir is usually created on demand, but can be done here too
 
+	// Check/Create Config File
 	if _, err := os.Stat(defaults.ConfigFile); os.IsNotExist(err) {
-		logger.Fields("file", defaults.ConfigFile).Info("writing default config")
-		// Use the constant name, not hardcoded "./hosts.d"
-		content := fmt.Sprintf(configSystemTmpl, "./"+woos.HostDir)
+		logger.Fields("file", defaults.ConfigFile).Info("writing default system config")
+
+		// Use relative notation for system config template usually
+		content := fmt.Sprintf(configSystemTmpl, "./"+woos.HostDir.Name())
+
 		if err := os.WriteFile(defaults.ConfigFile, []byte(content), woos.FilePerm); err != nil {
 			return fmt.Errorf("write config: %w", err)
 		}
@@ -147,13 +153,16 @@ func validateConfig(path string) error {
 		return err
 	}
 
-	hm := discovery.NewHost(global.HostsDir, discovery.WithLogger(logger))
+	// Use Folder type from Config
+	hostsFolder := woos.MakeFolder(global.Storage.HostsDir, woos.HostDir)
+
+	hm := discovery.NewHostFolder(hostsFolder, discovery.WithLogger(logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err
 	}
 
-	logger.Fields("hosts_count", len(hosts), "hosts_dir", global.HostsDir).Info("configuration is valid")
+	logger.Fields("hosts_count", len(hosts), "hosts_dir", global.Storage.HostsDir).Info("configuration is valid")
 	return nil
 }
 
@@ -163,7 +172,9 @@ func listHosts(path string) error {
 		return err
 	}
 
-	hm := discovery.NewHost(global.HostsDir, discovery.WithLogger(logger))
+	hostsFolder := woos.MakeFolder(global.Storage.HostsDir, woos.HostDir)
+	hm := discovery.NewHostFolder(hostsFolder, discovery.WithLogger(logger))
+
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err
@@ -308,26 +319,30 @@ func showCertInfo(configPath string) {
 		return
 	}
 
-	storageDir := global.TLSStorageDir
-	if storageDir == "" {
+	// Resolve cert folder using woos logic
+	storageDir := woos.MakeFolder(global.Storage.CertsDir, woos.CertDir)
+
+	// Fallback if not set in config (though DefaultApply should have handled it)
+	if !storageDir.IsSet() {
 		homeDir, _ := os.UserHomeDir()
-		storageDir = filepath.Join(homeDir, ".cert")
+		storageDir = woos.NewFolder(filepath.Join(homeDir, ".cert"))
 	}
 
 	fmt.Println("\nCERTIFICATE INFORMATION")
 	fmt.Println("===============================================================")
-	fmt.Printf("Storage Listing: %s\n", storageDir)
+	fmt.Printf("Storage Listing: %s\n", storageDir.Path())
 
-	if _, err := os.Stat(storageDir); os.IsNotExist(err) {
+	if !storageDir.Exists(woos.Folder("")) {
 		fmt.Println("⚠  Listing does not exist")
 	} else {
-		files, err := os.ReadDir(storageDir)
+		// Use Folder.ReadFiles to simplify filtering
+		files, err := storageDir.ReadFiles()
 		if err != nil {
 			fmt.Printf("⚠  Cannot read directory: %v\n", err)
 		} else {
 			count := 0
 			for _, file := range files {
-				if !file.IsDir() && strings.HasSuffix(file.Name(), ".pem") {
+				if strings.HasSuffix(file.Name(), ".pem") {
 					count++
 					info, _ := file.Info()
 					fmt.Printf("  • %s (%s, %s)\n",

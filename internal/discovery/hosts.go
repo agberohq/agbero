@@ -1,7 +1,6 @@
 package discovery
 
 import (
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -24,7 +23,7 @@ type DynamicRouteItem struct {
 }
 
 type Host struct {
-	hostsDir string
+	hostsDir woos.Folder
 
 	mu        sync.RWMutex
 	hosts     map[string]*alaye.Host // Loaded from disk (ID -> Config)
@@ -43,7 +42,31 @@ type Host struct {
 	routers map[string]*matcher.Tree
 }
 
+// NewHost creates a new host discovery manager (compatible with string)
 func NewHost(hostsDir string, opts ...Option) *Host {
+	h := &Host{
+		hostsDir:     woos.NewFolder(hostsDir),
+		hosts:        make(map[string]*alaye.Host),
+		lookupMap:    make(map[string]*alaye.Host),
+		gossipRoutes: make(map[string]DynamicRouteItem),
+		nodeFailures: make(map[string]int),
+		changed:      make(chan struct{}, 1),
+		routers:      make(map[string]*matcher.Tree),
+	}
+
+	for _, opt := range opts {
+		opt(h)
+	}
+
+	if h.logger == nil {
+		h.logger = ll.New(woos.Name).Enable()
+	}
+
+	return h
+}
+
+// NewHostFolder creates a new host discovery manager with Folder type
+func NewHostFolder(hostsDir woos.Folder, opts ...Option) *Host {
 	h := &Host{
 		hostsDir:     hostsDir,
 		hosts:        make(map[string]*alaye.Host),
@@ -131,13 +154,16 @@ func (hm *Host) Watch() error {
 		return err
 	}
 
-	if _, err := os.Stat(hm.hostsDir); err == nil {
-		if err := hm.watcher.Add(hm.hostsDir); err != nil {
+	// Check if hosts directory exists
+	if exists := hm.hostsDir.Exists(""); exists {
+		if err := hm.watcher.Add(hm.hostsDir.Path()); err != nil {
 			_ = hm.watcher.Close()
 			return err
 		}
 		go hm.watchLoop()
 		hm.logger.Fields("dir", hm.hostsDir).Info("host discovery watching")
+	} else {
+		hm.logger.Fields("dir", hm.hostsDir).Warn("hosts directory does not exist, skipping watch")
 	}
 
 	return nil
@@ -254,10 +280,10 @@ func (hm *Host) notifyChanged() {
 }
 
 func (hm *Host) loadAllLocked() error {
-	if _, err := os.Stat(hm.hostsDir); err != nil {
+	// Check if hosts directory exists using Folder method
+	if exists := hm.hostsDir.Exists(""); !exists {
 		hm.logger.Fields(
 			"hosts_dir", hm.hostsDir,
-			"err", err,
 		).Warn("hosts directory not found, clearing configuration")
 
 		hm.hosts = make(map[string]*alaye.Host)
@@ -265,25 +291,26 @@ func (hm *Host) loadAllLocked() error {
 		return nil
 	}
 
-	files, err := os.ReadDir(hm.hostsDir)
+	// Read directory using Folder.Read()
+	entries, err := hm.hostsDir.Read()
 	if err != nil {
 		return errors.Newf("read hosts dir: %w", err)
 	}
 
-	nextHosts := make(map[string]*alaye.Host, len(files))
+	nextHosts := make(map[string]*alaye.Host, len(entries))
 	loadedFiles := []string{}
 	failedFiles := []string{}
 
-	for _, file := range files {
-		if file.IsDir() {
+	for _, entry := range entries {
+		if entry.IsDir() {
 			continue
 		}
-		name := file.Name()
+		name := entry.Name()
 		if !strings.HasSuffix(strings.ToLower(name), ".hcl") {
 			continue
 		}
 
-		path := filepath.Join(hm.hostsDir, name)
+		path := filepath.Join(hm.hostsDir.Path(), name)
 		cfg, err := hm.loadOne(path)
 		if err != nil {
 			hm.logger.Fields(
@@ -311,7 +338,7 @@ func (hm *Host) loadAllLocked() error {
 
 	hm.logger.Fields(
 		"hosts_dir", hm.hostsDir,
-		"total_files", len(files),
+		"total_files", len(entries),
 		"loaded_files", len(loadedFiles),
 		"failed_files", len(failedFiles),
 		"host_configs", len(nextHosts),

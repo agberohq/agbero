@@ -95,14 +95,21 @@ func (f Folder) ReadDirs() ([]fs.DirEntry, error) {
 }
 
 func (f Folder) Resolve(base Folder, paths ...string) string {
-	basePath := base.Path() // Use Path() to get absolute base
-	if len(paths) == 0 {
-		return filepath.Join(basePath, f.String())
+	var startPath string
+
+	if filepath.IsAbs(f.String()) {
+		startPath = filepath.Clean(f.String())
+	} else {
+		// Use base path (which defaults to CWD if empty)
+		startPath = filepath.Join(base.Path(), f.String())
 	}
 
-	// Resolve f relative to base, then append additional paths
-	fullPath := filepath.Join(basePath, f.String())
-	allPaths := append([]string{fullPath}, paths...)
+	if len(paths) == 0 {
+		return startPath
+	}
+
+	// Append additional paths
+	allPaths := append([]string{startPath}, paths...)
 	return filepath.Join(allPaths...)
 }
 

@@ -1,17 +1,37 @@
+# Agbero Configuration (System/Production)
+development = false
+
 bind {
-  http    = [":80"]
-  https   = [":443"]
-  metrics = ":9090"
+  http = [":80"]
+  https = [":443"]
+  metrics = "127.0.0.1:9090" # Secure metrics by default
 }
 
-hosts_dir = "./host.d"
-cert_dir = "./cert.d"
+storage {
+  # Hosts directory injected by Agbero install
+  hosts_dir = "%s"
+  certs_dir = "./certs.d"
+}
 
+logging {
+  level = "info"
+  # file = "/var/log/agbero/agbero.log" # Uncomment to enable file logging
+}
 
-le_email = "admin@example.com"
-trusted_proxies = ["127.0.0.1/32"]
-max_header_bytes = 1048576
+general {
+  max_header_bytes = 1048576 # 1MB
+}
 
+security {
+  # Configure your load balancer IPs here if behind one (e.g., AWS ALB, Cloudflare)
+  # trusted_proxies = ["10.0.0.0/8"]
+}
+
+letsencrypt {
+  # Email is required for production certificates
+  # email = "admin@example.com"
+  staging = false
+}
 timeouts {
   read        = "10s"
   write       = "30s"

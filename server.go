@@ -80,17 +80,18 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	woos.DefaultApply(s.global, s.configPath)
 
 	if !tlss.IsMkcertInstalled() {
-		if s.global.CertsDir != "" {
+		if s.global.Storage.CertsDir != "" {
 			// mkcert is missing, so we will use the internal 'truststore' lib.
 			// We tell truststore to save the root CA in our configured directory.
-			os.Setenv("CAROOT", s.global.CertsDir)
+			os.Setenv("CAROOT", woos.NewFolder(s.global.Storage.CertsDir).String())
 		}
 	}
 
 	// Log global config summary
 	s.logger.Fields(
 		"config_path", configPath,
-		"hosts_dir", s.global.HostsDir,
+		"hosts_dir", s.global.Storage.HostsDir,
+		"cert_dir", s.global.Storage.HostsDir,
 		"dev_mode", s.global.Development,
 		"http_bind", len(s.global.Bind.HTTP),
 		"https_bind", len(s.global.Bind.HTTPS),
@@ -144,7 +145,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		defer gs.Shutdown()
 	}
 
-	s.ipMiddleware = clientip.NewIPMiddleware(s.global.TrustedProxies)
+	s.ipMiddleware = clientip.NewIPMiddleware(s.global.Security.TrustedProxies)
 	s.rateLimiter = s.buildRateLimiterFromConfig()
 
 	baseHandler := http.HandlerFunc(s.handleRequest)
@@ -185,7 +186,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 			WriteTimeout:      core.Or(s.global.Timeouts.Write, alaye.DefaultWriteTimeout),
 			IdleTimeout:       core.Or(s.global.Timeouts.Idle, alaye.DefaultIdleTimeout),
 			ReadHeaderTimeout: core.Or(s.global.Timeouts.ReadHeader, alaye.DefaultReadHeaderTimeout),
-			MaxHeaderBytes:    s.global.MaxHeaderBytes,
+			MaxHeaderBytes:    s.global.General.MaxHeaderBytes,
 		}
 
 		if srv.MaxHeaderBytes == 0 {
@@ -316,9 +317,6 @@ func (s *Server) reload() {
 
 	// Log changes in global config
 	var changes []string
-	if s.global.LEEmail != global.LEEmail {
-		changes = append(changes, fmt.Sprintf("le_email: %s → %s", s.global.LEEmail, global.LEEmail))
-	}
 
 	if s.global.Logging.Level != global.Logging.Level {
 		changes = append(changes, fmt.Sprintf("log_level: %s → %s", s.global.Logging.Level, global.Logging.Level))
@@ -479,8 +477,8 @@ func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
 		maxEntries = 100_000
 	}
 
-	gr, gw, gb, gok := woos.ParseRatePolicy(rlc.Global)
-	ar, aw, ab, aok := woos.ParseRatePolicy(rlc.Auth)
+	gr, gw, gb, gok := rlc.Global.Policy()
+	ar, aw, ab, aok := rlc.Auth.Policy()
 
 	globalPolicy := ratelimit.RatePolicy{Requests: gr, Window: gw, Burst: gb}
 	authPolicy := ratelimit.RatePolicy{Requests: ar, Window: aw, Burst: ab}

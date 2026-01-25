@@ -1,9 +1,7 @@
 package woos
 
 import (
-	"os"
 	"path/filepath"
-	"runtime"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
@@ -75,23 +73,5 @@ func DefaultApply(g *alaye.Global, configAbsPath string) {
 		g.Storage.CertsDir = filepath.Join(baseDir, CertDir.Name())
 	} else if !filepath.IsAbs(g.Storage.CertsDir) {
 		g.Storage.CertsDir = filepath.Join(baseDir, g.Storage.CertsDir)
-	}
-}
-
-// DefaultPaths returns the OS-specific default paths.
-// This replaces the logic currently in helpers.go
-func DefaultPaths() RuntimePaths {
-	var base string
-	if runtime.GOOS == "windows" {
-		base = filepath.Join(os.Getenv("ProgramData"), Name)
-	} else {
-		base = filepath.Join("/etc", Name)
-	}
-
-	return RuntimePaths{
-		BaseDir:    base,
-		ConfigFile: filepath.Join(base, DefaultConfigName),
-		HostsDir:   filepath.Join(base, HostDir.Name()),
-		CertsDir:   filepath.Join(base, CertDir.Name()),
 	}
 }

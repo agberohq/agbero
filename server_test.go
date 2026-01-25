@@ -50,8 +50,10 @@ func TestServer_Start_Minimal(t *testing.T) {
 	defer cancel()
 
 	global := &alaye.Global{
-		Bind:     alaye.Bind{HTTP: []string{":0"}},
-		HostsDir: "./hosts",
+		Bind: alaye.Bind{HTTP: []string{":0"}},
+		Storage: alaye.Storage{
+			HostsDir: "./hosts",
+		},
 	}
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 	s := NewServer(
@@ -76,9 +78,14 @@ func TestServer_buildTLS(t *testing.T) {
 	tmpDir := t.TempDir()
 	s := &Server{
 		global: &alaye.Global{
-			LEEmail:       "test@example.com",
-			TLSStorageDir: tmpDir,
+			LetsEncrypt: alaye.LetsEncrypt{
+				Email: "test@example.com",
+			},
+			Storage: alaye.Storage{
+				CertsDir: tmpDir,
+			},
 		},
+
 		logger:      testLogger,
 		hostManager: discovery.NewHost("", discovery.WithLogger(nil)),
 	}
@@ -100,7 +107,9 @@ func TestServer_buildTLS_NoEmail(t *testing.T) {
 	tmpDir := t.TempDir()
 	s := &Server{
 		global: &alaye.Global{
-			TLSStorageDir: tmpDir,
+			Storage: alaye.Storage{
+				HostsDir: tmpDir,
+			},
 		},
 		logger:      testLogger,
 		hostManager: discovery.NewHost("", discovery.WithLogger(nil)),

@@ -8,6 +8,7 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/ll/lx"
 )
@@ -51,9 +52,12 @@ func (p *program) run() {
 		global.Development = true
 	}
 
-	hm := discovery.NewHost(global.HostsDir, discovery.WithLogger(logger))
+	// Use woos.MakeFolder and NewHostFolder
+	hostFolder := woos.MakeFolder(global.Storage.HostsDir, woos.HostDir)
+
+	hm := discovery.NewHostFolder(hostFolder, discovery.WithLogger(logger))
 	if err := hm.Watch(); err != nil {
-		logger.Fields("dir", global.HostsDir, "err", err).Fatal("failed to watch hosts")
+		logger.Fields("dir", hostFolder, "err", err).Fatal("failed to watch hosts")
 		return
 	}
 	defer hm.Close()
@@ -78,12 +82,11 @@ func (p *program) run() {
 		}
 	}()
 
-	// FIXED: Pass configPath as second argument
+	// Pass configPath for reload capability
 	if err := server.Start(runCtx, p.configPath); err != nil {
 		logger.Error(err)
 	}
 
-	// Log metrics on start (hosts count)
 	hosts, _ := hm.LoadAll()
 	logger.Fields("hosts_count", len(hosts)).Info("service running")
 }

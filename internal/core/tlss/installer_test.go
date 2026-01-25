@@ -91,13 +91,13 @@ func TestCertInstaller_validateCertificate_HostMatch(t *testing.T) {
 
 	writeSelfSignedCert(t, certPath, keyPath, []string{"localhost", "127.0.0.1"})
 
-	if !ci.validateCertificate(certPath, keyPath, []string{"localhost"}) {
+	if !ci.ValidateCertificateForHosts(certPath, keyPath, []string{"localhost"}) {
 		t.Fatal("expected cert to validate for localhost")
 	}
-	if !ci.validateCertificate(certPath, keyPath, []string{"127.0.0.1"}) {
+	if !ci.ValidateCertificateForHosts(certPath, keyPath, []string{"127.0.0.1"}) {
 		t.Fatal("expected cert to validate for 127.0.0.1")
 	}
-	if ci.validateCertificate(certPath, keyPath, []string{"example.com"}) {
+	if ci.ValidateCertificateForHosts(certPath, keyPath, []string{"example.com"}) {
 		t.Fatal("expected cert NOT to validate for example.com")
 	}
 }
@@ -115,7 +115,7 @@ func TestCertInstaller_findExistingCerts_UsesOnlyMatchingCert(t *testing.T) {
 	keyPath := filepath.Join(tmp, "app-443-key.pem")
 	writeSelfSignedCert(t, certPath, keyPath, []string{"other.localhost"})
 
-	_, _, found := ci.findExistingCerts("app", 443)
+	_, _, found := ci.FindExistingCerts("app", 443)
 	if found {
 		t.Fatal("expected NOT to find cert because SAN doesn't match app.localhost")
 	}
@@ -125,7 +125,7 @@ func TestCertInstaller_findExistingCerts_UsesOnlyMatchingCert(t *testing.T) {
 	os.Remove(keyPath)
 	writeSelfSignedCert(t, certPath, keyPath, []string{"app.localhost"})
 
-	_, _, found = ci.findExistingCerts("app", 443)
+	_, _, found = ci.FindExistingCerts("app", 443)
 	if !found {
 		t.Fatal("expected to find cert for app.localhost")
 	}

@@ -1,4 +1,8 @@
-# Agbero
+
+<div style="text-align: center;">
+  <img src="assets/agbero.1.png"  width="300"  alt="Centered image">
+</div>
+
 
 > **Agbero**: *noun* (Yoruba) - A tout or traffic controller at a bus stop.
 > **In Context**: A high-performance, production-ready Reverse Proxy and Load Balancer written in Go.
