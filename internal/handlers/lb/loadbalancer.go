@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/backend"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/backend"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )

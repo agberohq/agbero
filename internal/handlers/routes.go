@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/backend"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/backend"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/lb"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/web"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"

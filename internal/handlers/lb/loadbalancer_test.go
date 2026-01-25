@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/backend"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/backend"
 )
 
 func makeBackend(weight int, alive bool) *backend.Backend {
