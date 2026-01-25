@@ -107,29 +107,43 @@ func (ci *Installer) IsMkcertInstalled() bool {
 }
 
 func (ci *Installer) InstallCARootIfNeeded() error {
+	// 1. Check if already installed
 	if IsCARootInstalled() {
 		return nil
 	}
 
 	ci.logger.Info("CA root not found, attempting to install...")
 
+	// 2. Ensure Storage Directory Exists
+	// We need this because truststore will try to write files here
+	if err := ci.CertDir.Ensure(woos.Folder(""), true); err != nil {
+		return fmt.Errorf("failed to create cert dir: %w", err)
+	}
+
+	// 3. Attempt Install via Internal Library (Priority)
+	ml, err := truststore.NewLib()
+	if err == nil {
+		// Try to install
+		if err := ml.Install(); err == nil {
+			ci.logger.Info("CA installed successfully via truststore")
+			return nil
+		} else {
+			// Log warning but continue to fallback
+			ci.logger.Warnf("truststore library install failed (permissions?): %v", err)
+		}
+	} else {
+		ci.logger.Warnf("failed to init truststore lib: %v", err)
+	}
+
+	// 4. Fallback: External mkcert binary
 	if ci.IsMkcertInstalled() {
 		if path, err := exec.LookPath("mkcert"); err == nil {
+			ci.logger.Info("Falling back to external mkcert binary")
 			return ci.installCAWithMkcert(path)
 		}
 	}
 
-	ml, err := truststore.NewLib()
-	if err != nil {
-		return fmt.Errorf("failed to initialize truststore: %w", err)
-	}
-
-	if err := ml.Install(); err != nil {
-		return fmt.Errorf("truststore install failed: %w", err)
-	}
-
-	ci.logger.Info("CA installed successfully via truststore")
-	return nil
+	return fmt.Errorf("failed to install CA root: %w", err)
 }
 
 func (ci *Installer) installCAWithMkcert(mkcertPath string) error {
