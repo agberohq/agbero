@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -156,7 +157,7 @@ func (hm *Host) Watch() error {
 
 	// Check if hosts directory exists
 	if exists := hm.hostsDir.Exists(""); exists {
-		if err := hm.watcher.Add(hm.hostsDir.Path()); err != nil {
+		if err := hm.addWatchRecursive(hm.hostsDir.Path()); err != nil {
 			_ = hm.watcher.Close()
 			return err
 		}
@@ -167,6 +168,18 @@ func (hm *Host) Watch() error {
 	}
 
 	return nil
+}
+
+func (hm *Host) addWatchRecursive(root string) error {
+	return filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		return hm.watcher.Add(p)
+	})
 }
 
 func (hm *Host) watchLoop() {
@@ -194,6 +207,15 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 	if event.Has(fsnotify.Chmod) {
 		return
 	}
+
+	// If a new directory is created, start watching it too.
+	if event.Has(fsnotify.Create) {
+		if fi, err := os.Stat(event.Name); err == nil && fi.IsDir() {
+			_ = hm.addWatchRecursive(event.Name)
+			return
+		}
+	}
+
 	name := strings.ToLower(event.Name)
 	if !strings.HasSuffix(name, ".hcl") {
 		return
@@ -282,55 +304,69 @@ func (hm *Host) notifyChanged() {
 func (hm *Host) loadAllLocked() error {
 	// Check if hosts directory exists using Folder method
 	if exists := hm.hostsDir.Exists(""); !exists {
-		hm.logger.Fields(
-			"hosts_dir", hm.hostsDir,
-		).Warn("hosts directory not found, clearing configuration")
+		hm.logger.Fields("hosts_dir", hm.hostsDir).
+			Warn("hosts directory not found, clearing configuration")
 
 		hm.hosts = make(map[string]*alaye.Host)
 		hm.rebuildLookupLocked()
 		return nil
 	}
 
-	// Read directory using Folder.Read()
-	entries, err := hm.hostsDir.Read()
-	if err != nil {
-		return errors.Newf("read hosts dir: %w", err)
-	}
+	root := hm.hostsDir.Path()
 
-	nextHosts := make(map[string]*alaye.Host, len(entries))
+	nextHosts := make(map[string]*alaye.Host)
 	loadedFiles := []string{}
 	failedFiles := []string{}
+	totalFiles := 0
 
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		name := entry.Name()
+		if d.IsDir() {
+			return nil
+		}
+
+		name := d.Name()
 		if !strings.HasSuffix(strings.ToLower(name), ".hcl") {
-			continue
+			return nil
 		}
 
-		path := filepath.Join(hm.hostsDir.Path(), name)
-		cfg, err := hm.loadOne(path)
+		totalFiles++
+
+		cfg, err := hm.loadOne(p)
 		if err != nil {
 			hm.logger.Fields(
 				"file", name,
+				"full_path", p,
 				"err", err,
 			).Error("failed to load host config")
-			failedFiles = append(failedFiles, name)
-			continue
+			failedFiles = append(failedFiles, p)
+			return nil // continue walking
 		}
 
-		hostID := strings.TrimSuffix(name, ".hcl")
+		// hostID is only an internal key; make it stable + unique across subdirs.
+		rel, relErr := filepath.Rel(root, p)
+		if relErr != nil {
+			rel = p
+		}
+		hostID := strings.TrimSuffix(rel, ".hcl")
+		hostID = strings.ReplaceAll(hostID, string(filepath.Separator), "/")
+
 		nextHosts[hostID] = cfg
-		loadedFiles = append(loadedFiles, name)
+		loadedFiles = append(loadedFiles, rel)
 
 		hm.logger.Fields(
-			"file", name,
+			"file", rel,
 			"host_id", hostID,
 			"domains", len(cfg.Domains),
 			"routes", len(cfg.Routes),
 		).Debug("loaded host config")
+
+		return nil
+	})
+	if err != nil {
+		return errors.Newf("walk hosts dir: %w", err)
 	}
 
 	hm.hosts = nextHosts
@@ -338,14 +374,15 @@ func (hm *Host) loadAllLocked() error {
 
 	hm.logger.Fields(
 		"hosts_dir", hm.hostsDir,
-		"total_files", len(entries),
+		"total_hcl_files", totalFiles,
 		"loaded_files", len(loadedFiles),
 		"failed_files", len(failedFiles),
 		"host_configs", len(nextHosts),
 	).Info("host discovery completed")
 
 	if len(failedFiles) > 0 {
-		hm.logger.Fields("failed_files", failedFiles).Warn("some host configs failed to load")
+		hm.logger.Fields("failed_files", failedFiles).
+			Warn("some host configs failed to load")
 	}
 
 	return nil
