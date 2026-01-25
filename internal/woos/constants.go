@@ -36,6 +36,7 @@ const (
 const (
 	HostDir Folder = "./hosts.d"
 	CertDir Folder = "./certs.d"
+	DataDir Folder = "./data.d"
 )
 
 const (

@@ -22,7 +22,15 @@ type Global struct {
 }
 
 type Security struct {
-	TrustedProxies []string `hcl:"trusted_proxies,optional"`
+	TrustedProxies []string  `hcl:"trusted_proxies,optional"`
+	Firewall       *Firewall `hcl:"firewall,block"`
+}
+
+type Firewall struct {
+	Enabled       bool   `hcl:"enabled"`
+	BlockList     string `hcl:"block_list_file,optional"`
+	RemoteCheck   string `hcl:"remote_check_url,optional"`
+	RemoteTimeout int    `hcl:"remote_timeout,optional"` // Seconds
 }
 
 func (s Security) Validate() error {
@@ -31,7 +39,6 @@ func (s Security) Validate() error {
 		if proxy == "" {
 			continue
 		}
-		// Check if it's a valid CIDR or IP
 		if _, _, err := net.ParseCIDR(proxy); err != nil {
 			if ip := net.ParseIP(proxy); ip == nil {
 				return errors.Newf("trusted_proxies[%d]: %q is not a valid CIDR or IP address", i, proxy)
@@ -108,6 +115,7 @@ func (g *General) Validate() error {
 type Storage struct {
 	HostsDir string `hcl:"hosts_dir,optional"`
 	CertsDir string `hcl:"certs_dir,optional"`
+	DataDir  string `hcl:"data_dir,optional"`
 }
 
 func (s Storage) Validate() error {

@@ -12,6 +12,7 @@ type RuntimePaths struct {
 	ConfigFile string // File paths remain strings usually, or specific File type
 	HostsDir   Folder
 	CertsDir   Folder
+	DataDir    Folder
 }
 
 // GetUserDefaults returns defaults for the current user (~/.config/agbero)
@@ -28,6 +29,7 @@ func GetUserDefaults() (RuntimePaths, error) {
 		ConfigFile: filepath.Join(base.Path(), DefaultConfigName),
 		HostsDir:   base.Join(HostDir.Name()),
 		CertsDir:   base.Join(CertDir.Name()),
+		DataDir:    base.Join(DataDir.Name()),
 	}, nil
 }
 
@@ -49,5 +51,6 @@ func DefaultPaths() RuntimePaths {
 		ConfigFile: filepath.Join(base, DefaultConfigName),
 		HostsDir:   baseFolder.Join(HostDir.Name()),
 		CertsDir:   baseFolder.Join(CertDir.Name()),
+		DataDir:    baseFolder.Join(DataDir.Name()),
 	}
 }

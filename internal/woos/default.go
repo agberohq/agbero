@@ -74,4 +74,11 @@ func DefaultApply(g *alaye.Global, configAbsPath string) {
 	} else if !filepath.IsAbs(g.Storage.CertsDir) {
 		g.Storage.CertsDir = filepath.Join(baseDir, g.Storage.CertsDir)
 	}
+
+	// Resolve DataDir
+	if g.Storage.DataDir == "" {
+		g.Storage.DataDir = filepath.Join(baseDir, DataDir.Name())
+	} else if !filepath.IsAbs(g.Storage.DataDir) {
+		g.Storage.DataDir = filepath.Join(baseDir, g.Storage.DataDir)
+	}
 }

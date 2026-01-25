@@ -8,13 +8,14 @@ import (
 )
 
 type Host struct {
-	Domains     []string `hcl:"domains"`
-	BindPorts   []string `hcl:"bind_ports,optional"`
-	Routes      []Route  `hcl:"route,block"`
-	TLS         TLS      `hcl:"tls,block"`
-	Limits      Limit    `hcl:"limits,block"`
-	Headers     Headers  `hcl:"headers,block"`
-	Compression bool     `hcl:"compression,optional"`
+	Domains     []string   `hcl:"domains"`
+	BindPorts   []string   `hcl:"bind_ports,optional"`
+	Routes      []Route    `hcl:"route,block"`
+	TLS         TLS        `hcl:"tls,block"`
+	Limits      Limit      `hcl:"limits,block"`
+	Headers     Headers    `hcl:"headers,block"`
+	Compression bool       `hcl:"compression,optional"`
+	TCPProxy    []TCPRoute `hcl:"tcp_proxy,block"`
 }
 
 func (h *Host) Validate() error {
@@ -76,4 +77,10 @@ func (h *Host) Validate() error {
 	}
 
 	return nil
+}
+
+type TCPRoute struct {
+	Listen   string   `hcl:"listen"`
+	Backends []Server `hcl:"backend,block"`
+	Strategy string   `hcl:"strategy,optional"` // round_robin, least_conn, random
 }

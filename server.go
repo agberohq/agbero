@@ -19,7 +19,9 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/discovery/gossip"
 	handlers2 "git.imaxinacion.net/aibox/agbero/internal/handlers"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/metrics"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/tcp"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/firewall"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/h3"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
@@ -29,29 +31,32 @@ import (
 	"github.com/quic-go/quic-go/http3"
 )
 
-type Server struct {
-	hostManager *discovery.Host
-	global      *alaye.Global
-	tlsManager  *tlss.Manager // Added for watcher shutdown
-	configPath  string        // Added for reload
-
-	mu sync.RWMutex
-	// TCP Servers (HTTP/1.1 & HTTP/2)
-	servers map[string]*http.Server
-	// UDP Servers (HTTP/3 QUIC)
-	h3Servers map[string]*http3.Server
-
-	logger       *ll.Logger
-	ipMiddleware *clientip.IPMiddleware
-	rateLimiter  *ratelimit.RateLimiter
-}
-
 // contextKey is used to store listener port in request context
 type contextKey struct {
 	name string
 }
 
 var portContextKey = &contextKey{"local-port"}
+
+type Server struct {
+	hostManager *discovery.Host
+	global      *alaye.Global
+	tlsManager  *tlss.Manager // Added for watcher shutdown
+	configPath  string        // Added for reload
+	firewall    *firewall.IPSet
+
+	mu sync.RWMutex
+	// TCP Servers (HTTP/1.1 & HTTP/2)
+	servers map[string]*http.Server
+	// UDP Servers (HTTP/3 QUIC)
+	h3Servers map[string]*http3.Server
+	// TCP Proxies (Layer 4)
+	tcpProxies []*tcp.Proxy
+
+	logger       *ll.Logger
+	ipMiddleware *clientip.IPMiddleware
+	rateLimiter  *ratelimit.RateLimiter
+}
 
 func NewServer(opts ...Option) *Server {
 	s := &Server{
@@ -77,6 +82,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		s.logger = ll.New(woos.Name).Enable()
 	}
 
+	// Apply defaults (resolves Paths including DataDir)
 	woos.DefaultApply(s.global, s.configPath)
 
 	// Log global config summary
@@ -84,16 +90,16 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		"config_path", configPath,
 		"hosts_dir", s.global.Storage.HostsDir,
 		"cert_dir", s.global.Storage.CertsDir,
+		"data_dir", s.global.Storage.DataDir,
 		"dev_mode", s.global.Development,
 		"http_bind", len(s.global.Bind.HTTP),
 		"https_bind", len(s.global.Bind.HTTPS),
-		"metrics_bind", s.global.Bind.Metrics,
-	).Info("starting with configuration")
+	).Info("starting agbero")
 
 	s.startMetricsServer()
 	s.startCacheReaper(parentCtx)
 
-	// Log initial host discovery
+	// Initial Host Discovery
 	hosts, err := s.hostManager.LoadAll()
 	if err != nil {
 		s.logger.Fields("err", err).Error("failed to load initial hosts")
@@ -103,45 +109,51 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	// Log host summary
 	hostCount := len(hosts)
 	routeCount := 0
-	domainCount := 0
-	for domain, host := range hosts {
-		domainCount++
+	tcpCount := 0
+	for _, host := range hosts {
 		routeCount += len(host.Routes)
-
-		s.logger.Fields(
-			"domain", domain,
-			"routes", len(host.Routes),
-			"tls_mode", host.TLS,
-		).Debug("host configuration loaded")
+		tcpCount += len(host.TCPProxy)
 	}
 
 	s.logger.Fields(
 		"hosts", hostCount,
-		"domains", domainCount,
-		"routes", routeCount,
-	).Info("host configuration loaded successfully")
+		"http_routes", routeCount,
+		"tcp_routes", tcpCount,
+	).Info("host configuration loaded")
 
+	// Gossip Cluster Initialization
 	if &s.global.Gossip != nil && s.global.Gossip.Enabled {
 		gs, err := gossip.NewService(s.hostManager, &s.global.Gossip, s.logger)
 		if err != nil {
 			return errors.Newf("failed to start gossip: %w", err)
 		}
-		// Join known seeds if any (e.g., other Agbero nodes for HA)
 		if len(s.global.Gossip.Seeds) > 0 {
 			if err := gs.Join(s.global.Gossip.Seeds); err != nil {
 				s.logger.Warn("failed to join gossip seeds")
 			}
 		}
-
-		// Ensure shutdown
 		defer gs.Shutdown()
 	}
 
+	// Middleware & Subsystems Initialization
 	s.ipMiddleware = clientip.NewIPMiddleware(s.global.Security.TrustedProxies)
 	s.rateLimiter = s.buildRateLimiterFromConfig()
 
+	// Firewall Initialization
+	dataDir := woos.NewFolder(s.global.Storage.DataDir)
+	s.firewall, err = firewall.New(s.global.Security.Firewall, dataDir, s.logger)
+	if err != nil {
+		return errors.Newf("firewall init: %w", err)
+	}
+	// FIX: Only defer close if firewall was successfully created and is not nil
+	if s.firewall != nil {
+		defer s.firewall.Close()
+	}
+
+	// Base HTTP Handler
 	baseHandler := http.HandlerFunc(s.handleRequest)
 
+	// TLS Manager Initialization
 	tlsCfg, httpHandler, err := s.buildTLS(baseHandler)
 	if err != nil {
 		s.logger.Fields("err", err.Error()).Warn("TLS setup failed; HTTPS listeners may not start")
@@ -149,23 +161,42 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		tlsCfg = nil
 	}
 
-	// Helper to spawn standard TCP servers (HTTP/HTTPS)
+	// Helper to build the final HTTP chain:
+	// IP -> Firewall -> RateLimit -> [AltSvc] -> Router
+	buildChain := func(next http.Handler, advertiseH3 bool, port string) http.Handler {
+		h := next
+		if advertiseH3 {
+			h = h3.H3Middleware(port)(h)
+		}
+		h = s.rateLimiter.Handler(h)
+		h = s.firewall.Handler(h)
+		h = s.ipMiddleware.Handler(h)
+		return h
+	}
+
+	// --- 1. Start TCP (Layer 4) Proxies ---
+	for _, host := range hosts {
+		for _, route := range host.TCPProxy {
+			tp := tcp.NewProxy(route, s.logger)
+			if err := tp.Start(); err != nil {
+				s.logger.Fields("listen", route.Listen, "err", err).Error("failed to start tcp proxy")
+				continue
+			}
+			s.tcpProxies = append(s.tcpProxies, tp)
+		}
+	}
+
+	// --- 2. Helper for HTTP (Layer 7) Listeners ---
 	startTCPServer := func(addr string, isTLS bool) {
+		_, port, _ := net.SplitHostPort(addr)
+
 		var handler http.Handler
-
 		if isTLS {
-			// For TLS, we add the H3Middleware to advertise QUIC support via Alt-Svc header
-			port := h3.ExtractPort(addr)
-			advertiseH3 := h3.H3Middleware(port)
-
-			// Chain: IP -> Rate -> Alt-Svc -> (HTTP-01) -> Router
-			handler = s.ipMiddleware.Handler(s.rateLimiter.Handler(advertiseH3(baseHandler)))
+			handler = buildChain(baseHandler, true, port)
 		} else {
-			handler = s.ipMiddleware.Handler(s.rateLimiter.Handler(httpHandler))
+			handler = buildChain(httpHandler, false, "")
 		}
 
-		// Inject Port into Context
-		_, port, _ := net.SplitHostPort(addr)
 		wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), portContextKey, port)
 			handler.ServeHTTP(w, r.WithContext(ctx))
@@ -195,18 +226,15 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		s.mu.Unlock()
 	}
 
-	// Helper to spawn UDP servers (HTTP/3)
+	// --- 3. Helper for HTTP/3 (UDP) Listeners ---
 	startQUICServer := func(addr string) {
 		if tlsCfg == nil {
 			return
 		}
-
-		// Reuse logic: IP -> Rate -> Router
-		// Note: HTTP/3 doesn't need Alt-Svc middleware because we are already ON HTTP/3
-		handler := s.ipMiddleware.Handler(s.rateLimiter.Handler(baseHandler))
-
-		// Inject Port Context
 		_, port, _ := net.SplitHostPort(addr)
+
+		handler := buildChain(baseHandler, false, "")
+
 		wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), portContextKey, port)
 			handler.ServeHTTP(w, r.WithContext(ctx))
@@ -226,31 +254,28 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		go func() {
 			s.logger.Fields("bind", addr, "proto", "h3").Info("listener starting")
 			if err := h3Server.ListenAndServe(); err != nil {
-				// quic-go doesn't have a specific "ErrServerClosed" for graceful Shutdown yet in all versions,
-				// but usually returns nil or a specific error on Close.
 				s.logger.Fields("err", err, "proto", "h3").Error("h3 listener stopped")
 			}
 		}()
 	}
 
-	// 1. Initialize HTTP (TCP)
+	// --- 4. Initialize Listeners ---
 	for _, addr := range s.global.Bind.HTTP {
 		startTCPServer(addr, false)
 	}
 
-	// 2. Initialize HTTPS (TCP) + HTTP/3 (UDP)
 	for _, addr := range s.global.Bind.HTTPS {
 		startTCPServer(addr, true)
 		startQUICServer(addr)
 	}
 
-	if len(s.servers) == 0 {
-		return errors.New("no http or https bind addresses configured")
+	if len(s.servers) == 0 && len(s.tcpProxies) == 0 {
+		return errors.New("no http/https/tcp bind addresses configured")
 	}
 
 	errCh := make(chan error, len(s.servers))
 
-	// 3. Start TCP Listeners
+	// --- 5. Start TCP Listeners ---
 	s.mu.RLock()
 	for key, srv := range s.servers {
 		key := key
@@ -275,10 +300,10 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	}
 	s.mu.RUnlock()
 
+	// --- 6. Lifecycle Management ---
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
-	// Handle signals for reload/shutdown
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -287,7 +312,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 			case syscall.SIGHUP:
 				s.reload()
 			case syscall.SIGINT, syscall.SIGTERM:
-				cancel() // Now valid due to Fix B
+				cancel()
 			}
 		}
 	}()
@@ -295,8 +320,6 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	return s.waitOrShutdown(ctx, errCh)
 }
 
-// reload reloads config and hosts
-// server.go - Update reload method
 func (s *Server) reload() {
 	s.logger.Info("received SIGHUP, reloading configuration")
 
@@ -307,12 +330,9 @@ func (s *Server) reload() {
 		return
 	}
 
-	// Log changes in global config
 	var changes []string
-
 	if s.global.Logging.Level != global.Logging.Level {
 		changes = append(changes, fmt.Sprintf("log_level: %s → %s", s.global.Logging.Level, global.Logging.Level))
-		// s.logger.Level(global.Logging.Level)
 	}
 
 	s.global = global
@@ -347,11 +367,7 @@ func (s *Server) startMetricsServer() {
 	}
 
 	mux := http.NewServeMux()
-
-	// The core metrics endpoint (JSON structure with HdrHistogram stats)
 	mux.HandleFunc("/metrics", metrics.Metrics(s.hostManager))
-
-	// Simple liveness probe for load balancers (AWS ALB, K8s, etc.)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
@@ -367,8 +383,6 @@ func (s *Server) startMetricsServer() {
 
 	go func() {
 		s.logger.Fields("bind", s.global.Bind.Metrics).Info("metrics listener starting")
-
-		// We ignore ErrServerClosed because it occurs during normal Shutdown
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.logger.Fields("err", err).Error("metrics server failed")
 		}
@@ -393,7 +407,7 @@ func (s *Server) waitOrShutdown(ctx context.Context, errCh <-chan error) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return s.shutdownImpl() // Separated for clarity
+			return s.shutdownImpl()
 		case err := <-errCh:
 			if err != nil {
 				_ = s.shutdownImpl()
@@ -408,17 +422,22 @@ func (s *Server) shutdownImpl() error {
 		s.rateLimiter.Close()
 	}
 
+	// Stop TCP proxies first
+	for _, tp := range s.tcpProxies {
+		tp.Stop()
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// 1. Stop HTTP/3 Servers gracefully
+	// Stop HTTP/3 Servers
 	for key, srv := range s.h3Servers {
 		if err := srv.Close(); err != nil {
 			s.logger.Fields("key", key, "err", err).Warn("h3 graceful shutdown error")
 		}
 	}
 
-	// 2. Stop TCP Servers
+	// Stop TCP Servers
 	var firstErr error
 	for key, srv := range s.servers {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -431,7 +450,6 @@ func (s *Server) shutdownImpl() error {
 		s.logger.Fields("key", key).Info("listener stopped")
 	}
 
-	// Close TLS manager watchers
 	if s.tlsManager != nil {
 		s.tlsManager.Close()
 	}
@@ -542,7 +560,7 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 		return nil, nil, errors.New("host manager is required")
 	}
 
-	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global) // Set on Server
+	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global)
 
 	httpHandler, err := s.tlsManager.EnsureCertMagic(next)
 	if err != nil {
@@ -551,8 +569,7 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 	}
 
 	tlsCfg := &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		// http3 requires "h3" in ALPN
+		MinVersion:     tls.VersionTLS12,
 		NextProtos:     []string{"h3", "h2", "http/1.1"},
 		GetCertificate: s.tlsManager.GetCertificate,
 	}
@@ -560,11 +577,8 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 	return tlsCfg, httpHandler, nil
 }
 
-// Original signature - need to update it
 func (s *Server) logRequest(host string, r *http.Request, start time.Time, status int, bytes int64) {
-	// Check if logger exists (from the panic trace)
 	if s.logger == nil {
-		// Can't log without logger, just return
 		return
 	}
 
@@ -579,12 +593,10 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 		"bytes", bytes,
 	}
 
-	// Add port information if available from context
 	if port, ok := r.Context().Value(portContextKey).(string); ok && port != "" {
 		fields = append(fields, "port", port)
 	}
 
-	// Only log UA if we have a logger and global config
 	if s.global != nil && s.shouldLogUserAgent(r) {
 		fields = append(fields, "ua", truncateUA(r.UserAgent(), 50))
 	}
@@ -594,14 +606,12 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 
 func (s *Server) shouldLogUserAgent(r *http.Request) bool {
 	ua := r.UserAgent()
-	// Only log full UA for bots or suspicious agents
 	return strings.Contains(ua, "bot") ||
 		strings.Contains(ua, "crawl") ||
 		strings.Contains(ua, "spider") ||
-		len(ua) > 100 // Very long UA might be malicious
+		len(ua) > 100
 }
 
-// Handlers
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	host := core.NormalizeHost(r.Host)
@@ -652,10 +662,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// s.logger.Debug(r.URL.Path)
 	res := router.Find(r.URL.Path)
 	if res.Route != nil {
-		// Wrap response writer to capture status and bytes
 		rw := &responseWrapper{ResponseWriter: w, statusCode: 200}
 		s.handleRoute(rw, r, res.Route)
 		s.logRequest(host, r, start, rw.statusCode, rw.bytesWritten)
@@ -680,21 +688,16 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 				if r.URL.RawPath != "" {
 					r.URL.RawPath = strings.TrimPrefix(r.URL.RawPath, prefix)
 				}
-
-				// --- FIX START ---
-				// If we stripped everything (e.g. /consul -> ""), ensure path is "/"
 				if r.URL.Path == "" {
 					r.URL.Path = "/"
 				}
-				// --- FIX END ---
-
 				break
 			}
 		}
 	}
 
 	h := s.getOrBuildRouteHandler(route)
-	h.ServeHTTP(w, r) // This will write to the wrapped response writer
+	h.ServeHTTP(w, r)
 
 	r.URL.Path = originalPath
 	r.URL.RawPath = originalRawPath
