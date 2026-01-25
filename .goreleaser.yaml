@@ -6,7 +6,6 @@ project_name: agbero
 gitea_urls:
   api: https://git.imaxinacion.net/api/v1/
   download: https://git.imaxinacion.net/
-  origin: https://git.imaxinacion.net/aibox/agbero
 
 builds:
   - id: agbero
