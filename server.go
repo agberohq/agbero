@@ -1,4 +1,3 @@
-// server.go
 package agbero
 
 import (
@@ -506,18 +505,6 @@ func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
 	return ratelimit.NewRateLimiter(ttl, maxEntries, policy)
 }
 
-func (s *Server) logRequest(host string, r *http.Request, start time.Time) {
-	s.logger.Fields(
-		"host", host,
-		"method", r.Method,
-		"path", r.URL.Path,
-		"remote", clientip.ClientIP(r),
-		"ua", r.UserAgent(),
-		"duration", time.Since(start),
-		"proto", r.Proto, // Useful to see "HTTP/3.0"
-	).Info("request")
-}
-
 func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.RouteHandler {
 	key := route.Key()
 	now := time.Now().UnixNano()
@@ -571,4 +558,181 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 	}
 
 	return tlsCfg, httpHandler, nil
+}
+
+// Original signature - need to update it
+func (s *Server) logRequest(host string, r *http.Request, start time.Time, status int, bytes int64) {
+	// Check if logger exists (from the panic trace)
+	if s.logger == nil {
+		// Can't log without logger, just return
+		return
+	}
+
+	fields := []interface{}{
+		"host", host,
+		"method", r.Method,
+		"path", r.URL.Path,
+		"remote", clientip.ClientIP(r),
+		"duration", time.Since(start),
+		"proto", r.Proto,
+		"status", status,
+		"bytes", bytes,
+	}
+
+	// Add port information if available from context
+	if port, ok := r.Context().Value(portContextKey).(string); ok && port != "" {
+		fields = append(fields, "port", port)
+	}
+
+	// Only log UA if we have a logger and global config
+	if s.global != nil && s.shouldLogUserAgent(r) {
+		fields = append(fields, "ua", truncateUA(r.UserAgent(), 50))
+	}
+
+	s.logger.Fields(fields...).Info("request")
+}
+
+func (s *Server) shouldLogUserAgent(r *http.Request) bool {
+	ua := r.UserAgent()
+	// Only log full UA for bots or suspicious agents
+	return strings.Contains(ua, "bot") ||
+		strings.Contains(ua, "crawl") ||
+		strings.Contains(ua, "spider") ||
+		len(ua) > 100 // Very long UA might be malicious
+}
+
+// Handlers
+func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	host := core.NormalizeHost(r.Host)
+
+	hcfg := s.hostManager.Get(host)
+	if hcfg == nil {
+		http.Error(w, "Host not found", http.StatusNotFound)
+		s.logRequest(host, r, start, http.StatusNotFound, 0)
+		return
+	}
+
+	if len(hcfg.BindPorts) > 0 {
+		portCtx := r.Context().Value(portContextKey)
+		listenerPort, ok := portCtx.(string)
+
+		if ok && listenerPort != "" {
+			allowed := false
+			for _, p := range hcfg.BindPorts {
+				if p == listenerPort {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				http.Error(w, "Misdirected Request", http.StatusMisdirectedRequest)
+				s.logRequest(host, r, start, http.StatusMisdirectedRequest, 0)
+				return
+			}
+		}
+	}
+
+	maxBody := int64(alaye.DefaultMaxBodySize)
+	if &hcfg.Limits != nil && hcfg.Limits.MaxBodySize > 0 {
+		maxBody = hcfg.Limits.MaxBodySize
+	}
+
+	if r.ContentLength > maxBody {
+		http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
+		s.logRequest(host, r, start, http.StatusRequestEntityTooLarge, 0)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+	router := s.hostManager.GetRouter(host)
+	if router == nil {
+		http.Error(w, "Host not found", http.StatusNotFound)
+		s.logRequest(host, r, start, http.StatusNotFound, 0)
+		return
+	}
+
+	// s.logger.Debug(r.URL.Path)
+	res := router.Find(r.URL.Path)
+	if res.Route != nil {
+		// Wrap response writer to capture status and bytes
+		rw := &responseWrapper{ResponseWriter: w, statusCode: 200}
+		s.handleRoute(rw, r, res.Route)
+		s.logRequest(host, r, start, rw.statusCode, rw.bytesWritten)
+		return
+	}
+
+	http.Error(w, "Not found", http.StatusNotFound)
+	s.logRequest(host, r, start, http.StatusNotFound, 0)
+}
+
+func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alaye.Route) {
+	originalPath := r.URL.Path
+	originalRawPath := r.URL.RawPath
+
+	if len(route.StripPrefixes) > 0 {
+		for _, prefix := range route.StripPrefixes {
+			if prefix == "" {
+				continue
+			}
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				r.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
+				if r.URL.RawPath != "" {
+					r.URL.RawPath = strings.TrimPrefix(r.URL.RawPath, prefix)
+				}
+
+				// --- FIX START ---
+				// If we stripped everything (e.g. /consul -> ""), ensure path is "/"
+				if r.URL.Path == "" {
+					r.URL.Path = "/"
+				}
+				// --- FIX END ---
+
+				break
+			}
+		}
+	}
+
+	h := s.getOrBuildRouteHandler(route)
+	h.ServeHTTP(w, r) // This will write to the wrapped response writer
+
+	r.URL.Path = originalPath
+	r.URL.RawPath = originalRawPath
+}
+
+func truncateUA(ua string, maxLen int) string {
+	if len(ua) <= maxLen {
+		return ua
+	}
+	return ua[:maxLen] + "..."
+}
+
+type responseWrapper struct {
+	http.ResponseWriter
+	statusCode   int
+	bytesWritten int64
+	wroteHeader  bool
+}
+
+func (rw *responseWrapper) WriteHeader(statusCode int) {
+	if !rw.wroteHeader {
+		rw.statusCode = statusCode
+		rw.wroteHeader = true
+	}
+	rw.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (rw *responseWrapper) Write(b []byte) (int, error) {
+	if !rw.wroteHeader {
+		rw.WriteHeader(http.StatusOK)
+	}
+	n, err := rw.ResponseWriter.Write(b)
+	rw.bytesWritten += int64(n)
+	return n, err
+}
+
+func (rw *responseWrapper) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }

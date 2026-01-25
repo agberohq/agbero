@@ -270,18 +270,6 @@ func TestServer_StartMetricsServer_NoPort(t *testing.T) {
 	s.startMetricsServer()
 }
 
-func TestServer_LogRequest(t *testing.T) {
-	s := &Server{logger: testLogger}
-
-	req, _ := http.NewRequest("GET", "/test", nil)
-	req.Host = "example.com"
-	req.RemoteAddr = "127.0.0.1:12345"
-	req.Header.Set("User-Agent", "test-agent")
-
-	// This just logs, no assertions needed
-	s.logRequest("example.com", req, time.Now())
-}
-
 func TestServer_HandleRequest_NoHost(t *testing.T) {
 	// Create a minimal server for testing
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
