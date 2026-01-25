@@ -19,11 +19,8 @@ import (
 
 // Embedded Assets
 //
-//go:embed data/config.hcl
-var configDevTmpl string
-
-//go:embed data/config_system.hcl
-var configSystemTmpl string
+//go:embed data/agbero.hcl
+var configTmpl string
 
 //go:embed data/sample.hcl
 var hostSampleTmpl string
@@ -81,7 +78,7 @@ func ensureConfig(path string) error {
 
 	// 1. Write Main Config
 	// Inject hosts_dir into the template (using string representation of Folder constant)
-	content := strings.ReplaceAll(configDevTmpl, "{HOST_DIR}", woos.HostDir.String())
+	content := strings.ReplaceAll(configTmpl, "{HOST_DIR}", woos.HostDir.String())
 
 	//ll.Dump(content)
 	if err := os.WriteFile(path, []byte(content), woos.FilePerm); err != nil {
@@ -142,7 +139,7 @@ func installDefaults() error {
 		logger.Fields("file", defaults.ConfigFile).Info("writing default system config")
 
 		// Use relative notation for system config template usually
-		content := fmt.Sprintf(configSystemTmpl, "./"+woos.HostDir.Name())
+		content := strings.ReplaceAll(configTmpl, "{HOST_DIR}", woos.HostDir.String())
 
 		if err := os.WriteFile(defaults.ConfigFile, []byte(content), woos.FilePerm); err != nil {
 			return fmt.Errorf("write config: %w", err)
@@ -291,10 +288,16 @@ func showHelpExamples(configPath string) {
 	fmt.Println("DEVELOPMENT / TESTING:")
 	fmt.Printf("  %s run --config \"%s\"\n", exeName, configPath)
 	fmt.Printf("  %s run --dev --config \"%s\"\n", exeName, configPath)
+	fmt.Printf("  %s run --dev --gossip --config \"%s\"\n", exeName, configPath)
 	fmt.Println("")
 	fmt.Println("CONFIGURATION:")
 	fmt.Printf("  %s validate --config \"%s\"\n", exeName, configPath)
 	fmt.Printf("  %s hosts --config \"%s\"\n", exeName, configPath)
+	fmt.Println("")
+	fmt.Println("GOSSIP CLUSTER:")
+	fmt.Printf("  %s gossip init --config \"%s\"\n", exeName, configPath)
+	fmt.Printf("  %s gossip token --service myservice --config \"%s\"\n", exeName, configPath)
+	fmt.Printf("  %s gossip status --config \"%s\"\n", exeName, configPath)
 	fmt.Println("")
 
 	if runtime.GOOS == "darwin" {

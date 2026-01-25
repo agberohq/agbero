@@ -131,7 +131,6 @@ func main() {
 	// We need to set CAROOT env var before any TLS/Truststore logic runs.
 	// Truststore/mkcert libraries read os.Getenv("CAROOT") at init time.
 	if configPath != "" {
-		ll.Debug("-------> OVEERKILL ")
 		if global, err := loadConfig(configPath); err == nil {
 			// Use woos logic to resolve absolute path
 			certPath := woos.MakeFolder(global.Storage.CertsDir, woos.CertDir).Path()
@@ -149,6 +148,12 @@ func main() {
 		showHelpExamples(configPath)
 		return
 	}
+
+	if cmdGossip.Used {
+		handleGossipCommands(cmdGossipInit.Used, cmdGossipToken.Used, cmdGossipStatus.Used)
+		return
+	}
+
 	if cmdCert.Used {
 		handleCertCommands(cmdInstallCA.Used, cmdListCerts.Used, cmdCertInfo.Used)
 		return

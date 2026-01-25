@@ -55,6 +55,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.logger.Debug(r.URL.Path)
 	res := router.Find(r.URL.Path)
 	if res.Route != nil {
 		s.handleRoute(w, r, res.Route)
