@@ -44,13 +44,13 @@ var (
 )
 
 func main() {
-	// 1. BOOTSTRAP LOGGER: Simple terminal logger for CLI ops until config is loaded
+	// 1) BOOTSTRAP LOGGER: simple terminal logger for CLI ops until config is loaded
 	logger = ll.New(woos.Name,
 		ll.WithHandler(lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(true))),
 		ll.WithFatalExits(true),
 	).Enable()
 
-	// Setup Flaggy
+	// 2) Setup Flaggy
 	flaggy.SetName(woos.Name)
 	flaggy.SetDescription(woos.Description)
 	flaggy.SetVersion(version)
@@ -60,7 +60,7 @@ func main() {
 	flaggy.Bool(&devMode, "d", "dev", "Enable development mode")
 	flaggy.Bool(&enableGossip, "", "gossip", "Enable/disable gossip in run mode")
 
-	// --- Subcommands Setup (Omitted for brevity, remains unchanged) ---
+	// --- Subcommands Setup ---
 	cmdInstall := flaggy.NewSubcommand("install")
 	cmdUninstall := flaggy.NewSubcommand("uninstall")
 	cmdStart := flaggy.NewSubcommand("start")
@@ -75,6 +75,7 @@ func main() {
 	cmdInstallCA := flaggy.NewSubcommand("install-ca")
 	cmdInstallCA.Bool(&forceCAInstall, "f", "force", "Force reinstall")
 	cmdInstallCA.String(&caMethod, "m", "method", "Method: auto|mkcert|truststore")
+
 	cmdListCerts := flaggy.NewSubcommand("list")
 	cmdCertInfo := flaggy.NewSubcommand("info")
 	cmdCertInfo.String(&certDir, "d", "dir", "Cert directory")
@@ -93,7 +94,6 @@ func main() {
 	cmdKey.AttachSubcommand(cmdKeyInit, 1)
 
 	// Gossip Commands
-	// Add to CLI flags section
 	cmdGossip := flaggy.NewSubcommand("gossip")
 	cmdGossipInit := flaggy.NewSubcommand("init")
 	cmdGossipToken := flaggy.NewSubcommand("token")
@@ -128,9 +128,9 @@ func main() {
 	}
 	configPath = resolvedPath
 
-	// TLS bootstrap (single source of truth lives in tlss/*)
-	// This sets HOME/USER/LOGNAME for service environments so mkcert can find its OS default CAROOT.
-	// It MUST NOT force CAROOT into agbero certs dir.
+	// IMPORTANT:
+	// main should not do manual CAROOT manipulation.
+	// tlss is the single source of truth for service env bootstrapping.
 	if err := tlss.BootstrapEnv(logger); err != nil {
 		logger.Warnf("TLS env bootstrap: %v", err)
 	}
@@ -150,6 +150,7 @@ func main() {
 		handleCertCommands(cmdInstallCA.Used, cmdListCerts.Used, cmdCertInfo.Used)
 		return
 	}
+
 	if cmdKey.Used {
 		handleKeyCommands(cmdKeyInit.Used, cmdKeyGen.Used)
 		return
@@ -245,27 +246,27 @@ func main() {
 
 	// --- RUN SERVER ---
 	if cmdRun.Used {
-		// 1. Ensure Config Exists
+		// 1) Ensure Config Exists
 		if err := ensureConfig(configPath); err != nil {
 			logger.Fatal("Failed to generate configuration: ", err)
 		}
 
-		// 2. Load Config
+		// 2) Load Config
 		global, err := loadConfig(configPath)
 		if err != nil {
 			logger.Fatal("Failed to load config: ", err)
 		}
 
-		// 3. UPGRADE LOGGER (Apply File/VictoriaLogs config)
+		// 3) UPGRADE LOGGER (Apply File/VictoriaLogs config)
 		newLogger, cleanup, err := logging.Setup(global.Logging, devMode)
 		if err != nil {
 			logger.Warn("Failed to setup advanced logging, using terminal only: ", err)
 		} else {
 			logger = newLogger
-			defer cleanup() // FLUSH BUFFERS ON EXIT
+			defer cleanup() // flush buffers on exit
 		}
 
-		// 4. Auto-Install CA (using upgraded global logger)
+		// 4) Auto-Install CA (using upgraded global logger)
 		checkAndInstallCA(global)
 
 		logger.Info("Running in interactive mode. Press Ctrl+C to stop.")
@@ -295,15 +296,10 @@ func main() {
 	showHelpExamples(configPath)
 }
 
-// checkAndInstallCA checks if HTTPS is enabled and installs CA root if missing
+// checkAndInstallCA checks if HTTPS is enabled and installs CA root if missing.
 func checkAndInstallCA(global *alaye.Global) {
 	if len(global.Bind.HTTPS) == 0 {
 		return
-	}
-
-	// Ensure service env has HOME/USER etc (mkcert default CAROOT resolution)
-	if err := tlss.BootstrapEnv(logger); err != nil {
-		logger.Warnf("TLS env bootstrap: %v", err)
 	}
 
 	installer := tlss.NewInstaller(logger)
@@ -320,7 +316,6 @@ func checkAndInstallCA(global *alaye.Global) {
 
 // Helper switchers for subcommands
 func handleCertCommands(install, list, info bool) {
-	// Use global logger
 	installer := tlss.NewInstaller(logger)
 
 	if install {
@@ -328,6 +323,7 @@ func handleCertCommands(install, list, info bool) {
 			logger.Info("CA root certificate is already installed. Use --force to reinstall.")
 			return
 		}
+
 		logger.Info("Installing CA root certificate...")
 		if err := installer.InstallCARootIfNeeded(); err != nil {
 			logger.Fatal("Failed to install CA: ", err)
@@ -341,6 +337,7 @@ func handleCertCommands(install, list, info bool) {
 		if err == nil && global.Storage.CertsDir != "" {
 			_ = installer.SetStorageDir(woos.NewFolder(global.Storage.CertsDir))
 		}
+
 		certs, err := installer.ListCertificates()
 		if err != nil {
 			logger.Fatal("Failed to list certs: ", err)
@@ -355,15 +352,18 @@ func handleCertCommands(install, list, info bool) {
 		showCertInfo(configPath)
 		return
 	}
+
 	flaggy.ShowHelpAndExit("cert")
 }
 
 func handleKeyCommands(init, gen bool) {
 	if init {
 		target := "server.key"
+
 		if global, err := loadConfig(configPath); err == nil && &global.Gossip != nil && global.Gossip.PrivateKeyFile != "" {
 			target = global.Gossip.PrivateKeyFile
 		}
+
 		if err := security.GenerateNewKeyFile(target); err != nil {
 			logger.Fatal("Error generating key: ", err)
 		}
@@ -375,24 +375,30 @@ func handleKeyCommands(init, gen bool) {
 		if keyService == "" {
 			logger.Fatal("Error: --service name is required")
 		}
+
 		global, err := loadConfig(configPath)
 		if err != nil {
 			logger.Fatal("Error loading config: ", err)
 		}
+
 		if &global.Gossip == nil || global.Gossip.PrivateKeyFile == "" {
 			logger.Fatal("Error: 'gossip.private_key_file' is not set")
 		}
+
 		tm, err := security.LoadKeys(global.Gossip.PrivateKeyFile)
 		if err != nil {
 			logger.Fatal("Error loading private key: ", err)
 		}
+
 		token, err := tm.Mint(keyService, keyTTL)
 		if err != nil {
 			logger.Fatal("Error minting token: ", err)
 		}
+
 		logger.Println(token)
 		return
 	}
+
 	flaggy.ShowHelpAndExit("key")
 }
 
@@ -409,6 +415,5 @@ func handleGossipCommands(init, token, status bool) {
 		handleGossipStatus(configPath)
 		return
 	}
-	// Show help if no subcommand specified
 	showGossipHelp()
 }
