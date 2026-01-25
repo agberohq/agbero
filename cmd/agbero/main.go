@@ -36,6 +36,11 @@ var (
 	forceCAInstall bool
 	caMethod       string
 	certDir        string
+
+	// Gossip flags
+	gossipService string
+	gossipTTL     time.Duration
+	enableGossip  bool
 )
 
 func main() {
@@ -53,6 +58,7 @@ func main() {
 	// Global flags
 	flaggy.String(&configPath, "c", "config", "Path to configuration file")
 	flaggy.Bool(&devMode, "d", "dev", "Enable development mode")
+	flaggy.Bool(&enableGossip, "", "gossip", "Enable/disable gossip in run mode")
 
 	// --- Subcommands Setup (Omitted for brevity, remains unchanged) ---
 	cmdInstall := flaggy.NewSubcommand("install")
@@ -86,6 +92,19 @@ func main() {
 	cmdKey.AttachSubcommand(cmdKeyGen, 1)
 	cmdKey.AttachSubcommand(cmdKeyInit, 1)
 
+	// Gossip Commands
+	// Add to CLI flags section
+	cmdGossip := flaggy.NewSubcommand("gossip")
+	cmdGossipInit := flaggy.NewSubcommand("init")
+	cmdGossipToken := flaggy.NewSubcommand("token")
+	cmdGossipToken.String(&gossipService, "s", "service", "Service name (required)")
+	cmdGossipToken.Duration(&gossipTTL, "t", "ttl", "Token TTL (default: 720h = 30 days)")
+	cmdGossipStatus := flaggy.NewSubcommand("status")
+
+	cmdGossip.AttachSubcommand(cmdGossipInit, 1)
+	cmdGossip.AttachSubcommand(cmdGossipToken, 1)
+	cmdGossip.AttachSubcommand(cmdGossipStatus, 1)
+
 	// Attach
 	flaggy.AttachSubcommand(cmdInstall, 1)
 	flaggy.AttachSubcommand(cmdUninstall, 1)
@@ -97,6 +116,7 @@ func main() {
 	flaggy.AttachSubcommand(cmdHelp, 1)
 	flaggy.AttachSubcommand(cmdCert, 1)
 	flaggy.AttachSubcommand(cmdKey, 1)
+	flaggy.AttachSubcommand(cmdGossip, 1)
 
 	flaggy.Parse()
 	welcome()
@@ -371,4 +391,21 @@ func handleKeyCommands(init, gen bool) {
 		return
 	}
 	flaggy.ShowHelpAndExit("key")
+}
+
+func handleGossipCommands(init, token, status bool) {
+	if init {
+		handleGossipInit(configPath)
+		return
+	}
+	if token {
+		handleGossipToken(configPath)
+		return
+	}
+	if status {
+		handleGossipStatus(configPath)
+		return
+	}
+	// Show help if no subcommand specified
+	showGossipHelp()
 }

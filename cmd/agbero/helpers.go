@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
+	"git.imaxinacion.net/aibox/agbero/internal/core/security"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
@@ -358,4 +360,159 @@ func showCertInfo(configPath string) {
 			}
 		}
 	}
+}
+
+func handleGossipInit(configPath string) {
+	global, err := loadConfig(configPath)
+	if err != nil {
+		logger.Fatal("Error loading config: ", err)
+	}
+
+	// Determine key path (use certs directory)
+	certsDir := woos.MakeFolder(global.Storage.CertsDir, woos.CertDir)
+	keyPath := filepath.Join(certsDir.Path(), "gossip.key")
+
+	// Generate key if it doesn't exist
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		logger.Info("Generating gossip private key...")
+		if err := security.GenerateNewKeyFile(keyPath); err != nil {
+			logger.Fatal("Failed to generate key: ", err)
+		}
+		logger.Info("Generated gossip key: ", keyPath)
+
+		// Set secure permissions
+		os.Chmod(keyPath, 0600)
+	} else {
+		logger.Info("Gossip key already exists: ", keyPath)
+	}
+
+	// Display configuration guidance
+	fmt.Println("\nGossip configuration guide:")
+	fmt.Println("==========================")
+	fmt.Printf("Private key: %s\n", keyPath)
+	fmt.Println("\nAdd to your agbero.hcl config:")
+	fmt.Printf(`
+gossip {
+  enabled = true
+  port    = 7946
+  private_key_file = "%s"
+  # Optional: seeds = ["node2:7946", "node3:7946"]
+}`, keyPath)
+	fmt.Println()
+}
+
+func handleGossipToken(configPath string) {
+	if gossipService == "" {
+		logger.Fatal("Error: --service flag is required for gossip token")
+	}
+
+	global, err := loadConfig(configPath)
+	if err != nil {
+		logger.Fatal("Error loading config: ", err)
+	}
+
+	// Check if gossip is configured
+	if &global.Gossip == nil || global.Gossip.PrivateKeyFile == "" {
+		logger.Fatal("Gossip not configured. Run 'agbero gossip init' first.")
+	}
+
+	// Verify key exists
+	keyPath := global.Gossip.PrivateKeyFile
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		logger.Fatalf("Gossip key not found: %s\nRun 'agbero gossip init' to generate it.", keyPath)
+	}
+
+	// Load key and generate token
+	tm, err := security.LoadKeys(keyPath)
+	if err != nil {
+		logger.Fatal("Error loading gossip key: ", err)
+	}
+
+	// Set default TTL (30 days)
+	if gossipTTL == 0 {
+		gossipTTL = 720 * time.Hour // 30 days
+	}
+
+	token, err := tm.Mint(gossipService, gossipTTL)
+	if err != nil {
+		logger.Fatal("Error generating token: ", err)
+	}
+
+	// Output token
+	fmt.Printf("\nGossip token for service: %s\n", gossipService)
+	fmt.Printf("TTL: %s\n", gossipTTL)
+	fmt.Println("--------------------------")
+	fmt.Println(token)
+	fmt.Println("--------------------------")
+
+	// Usage example
+	fmt.Printf("\nUse in your service metadata:\n")
+	fmt.Printf(`{"token":"%s","port":8080,"host":"%s.example.com","path":"/"}`, token, gossipService)
+	fmt.Println()
+}
+
+func handleGossipStatus(configPath string) {
+	global, err := loadConfig(configPath)
+	if err != nil {
+		logger.Fatal("Error loading config: ", err)
+	}
+
+	fmt.Println("\nGossip Configuration Status")
+	fmt.Println("===========================")
+
+	if &global.Gossip == nil || !global.Gossip.Enabled {
+		fmt.Println("Status: DISABLED")
+		fmt.Println("\nTo enable: agbero gossip init")
+		return
+	}
+
+	fmt.Println("Status: ENABLED")
+	fmt.Printf("Port: %d\n", global.Gossip.Port)
+
+	// Check key
+	if global.Gossip.PrivateKeyFile != "" {
+		if _, err := os.Stat(global.Gossip.PrivateKeyFile); err == nil {
+			fmt.Printf("Private key: %s (exists)\n", global.Gossip.PrivateKeyFile)
+
+			// Test key validity
+			if _, err := security.LoadKeys(global.Gossip.PrivateKeyFile); err == nil {
+				fmt.Println("Key status: VALID")
+			} else {
+				fmt.Printf("Key status: INVALID (%v)\n", err)
+			}
+		} else {
+			fmt.Printf("Private key: %s (NOT FOUND)\n", global.Gossip.PrivateKeyFile)
+		}
+	} else {
+		fmt.Println("Private key: NOT CONFIGURED")
+	}
+
+	// Seeds
+	if len(global.Gossip.Seeds) > 0 {
+		fmt.Printf("Cluster seeds: %v\n", global.Gossip.Seeds)
+	} else {
+		fmt.Println("Cluster seeds: none (standalone mode)")
+	}
+
+	// Encryption
+	if global.Gossip.SecretKey != "" {
+		fmt.Println("Encryption: ENABLED")
+	}
+}
+
+func showGossipHelp() {
+	exeName := getExecutableName()
+	fmt.Printf("\n%s gossip - Manage gossip cluster configuration\n", exeName)
+	fmt.Println("================================================")
+	fmt.Println()
+	fmt.Println("Commands:")
+	fmt.Printf("  %s gossip init              Generate gossip key and show configuration\n", exeName)
+	fmt.Printf("  %s gossip token --service NAME  Generate token for a service\n", exeName)
+	fmt.Printf("  %s gossip status            Show current gossip configuration\n", exeName)
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Printf("  %s gossip init\n", exeName)
+	fmt.Printf("  %s gossip token --service api --ttl 168h\n", exeName)
+	fmt.Printf("  %s gossip status\n", exeName)
+	fmt.Println()
 }
