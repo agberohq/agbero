@@ -79,19 +79,17 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 
 	woos.DefaultApply(s.global, s.configPath)
 
-	if !tlss.IsMkcertInstalled() {
-		if s.global.Storage.CertsDir != "" {
-			// mkcert is missing, so we will use the internal 'truststore' lib.
-			// We tell truststore to save the root CA in our configured directory.
-			os.Setenv("CAROOT", woos.NewFolder(s.global.Storage.CertsDir).String())
-		}
+	certFolder := woos.MakeFolder(s.global.Storage.CertsDir, woos.CertDir)
+	if err := certFolder.Ensure(woos.Folder(""), true); err != nil {
+		s.logger.Warnf("Failed to create certs directory: %v", err)
 	}
+	os.Setenv("CAROOT", certFolder.Path())
 
 	// Log global config summary
 	s.logger.Fields(
 		"config_path", configPath,
 		"hosts_dir", s.global.Storage.HostsDir,
-		"cert_dir", s.global.Storage.HostsDir,
+		"cert_dir", s.global.Storage.CertsDir,
 		"dev_mode", s.global.Development,
 		"http_bind", len(s.global.Bind.HTTP),
 		"https_bind", len(s.global.Bind.HTTPS),
