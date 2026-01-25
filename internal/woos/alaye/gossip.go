@@ -13,6 +13,7 @@ type Gossip struct {
 	SecretKey      string   `hcl:"secret_key,optional"`       // Memberlist encryption key (16, 24, or 32 bytes)
 	Seeds          []string `hcl:"seeds,optional"`            // Initial cluster peers
 	PrivateKeyFile string   `hcl:"private_key_file,optional"` // Path to Ed25519 private key for app auth
+	TTL            int      `hcl:"ttl,optional"`              // how long since I last heard from you before I assume you’re dead
 }
 
 func (g *Gossip) Validate() error {
