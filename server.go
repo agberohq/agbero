@@ -79,12 +79,6 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 
 	woos.DefaultApply(s.global, s.configPath)
 
-	certFolder := woos.MakeFolder(s.global.Storage.CertsDir, woos.CertDir)
-	if err := certFolder.Ensure(woos.Folder(""), true); err != nil {
-		s.logger.Warnf("Failed to create certs directory: %v", err)
-	}
-	os.Setenv("CAROOT", certFolder.Path())
-
 	// Log global config summary
 	s.logger.Fields(
 		"config_path", configPath,
