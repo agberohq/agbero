@@ -44,8 +44,11 @@ archives:
     files:
       - README.md
       - LICENSE
-      - src: etc/agbero.hcl
-        dst: agbero.hcl
+      - cmd/data/agbero.hcl
+      - cmd/data/hosts.d/agbero.hcl
+      - cmd/data/hosts.d/example.hcl
+#      - src: cmd/data/agbero.hcl
+#        dst: agbero.hcl
 
 snapshot:
   version_template: "{{ .Tag }}-next"
