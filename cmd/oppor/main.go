@@ -1,8 +1,6 @@
-// cmd/lab/main.go
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -176,6 +174,7 @@ type MetricsSnapshot struct {
 	StatusCode3xx     uint64  `json:"status_3xx"`
 	StatusCode4xx     uint64  `json:"status_4xx"`
 	StatusCode5xx     uint64  `json:"status_5xx"`
+	TotalBytes        uint64  `json:"total_bytes"`
 }
 
 // =================== WORKER ===================
