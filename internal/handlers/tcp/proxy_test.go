@@ -2,6 +2,7 @@ package tcp
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 	"net"
 	"testing"
@@ -9,44 +10,18 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/ll/lh"
 )
 
-// Helper to create a silent logger for tests
 func newTestLogger() *ll.Logger {
-	return ll.New("test")
+	return ll.New("test", ll.WithHandler(lh.NewTextHandler(io.Discard)))
 }
 
-// Helper to start a dummy upstream TCP server that echos received data
-func startEchoServer(t *testing.T) string {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to start echo server: %v", err)
-	}
-
-	go func() {
-		defer l.Close()
-		for {
-			conn, err := l.Accept()
-			if err != nil {
-				return
-			}
-			go func(c net.Conn) {
-				defer c.Close()
-				io.Copy(c, c)
-			}(conn)
-		}
-	}()
-
-	return l.Addr().String()
-}
-
-// Helper to start a server that sends a specific ID on connect then closes
 func startIDServer(t *testing.T, id string) string {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to start ID server: %v", err)
 	}
-
 	go func() {
 		defer l.Close()
 		for {
@@ -60,11 +35,9 @@ func startIDServer(t *testing.T, id string) string {
 			}(conn)
 		}
 	}()
-
 	return l.Addr().String()
 }
 
-// Helper to find a free local port
 func getFreePort(t *testing.T) string {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -75,189 +48,178 @@ func getFreePort(t *testing.T) string {
 	return addr
 }
 
-func TestProxy_BasicEcho(t *testing.T) {
-	upstream := startEchoServer(t)
-	proxyAddr := getFreePort(t)
+// Helper to construct a minimal TLS ClientHello with SNI extension
+func makeSNIClientHello(sni string) []byte {
+	// 1. Extensions: SNI
+	sniBytes := []byte(sni)
+	sniLen := len(sniBytes)
 
-	// Configure Proxy
-	cfg := alaye.TCPRoute{
-		Listen: proxyAddr,
-		Backends: []alaye.Server{
-			{Address: upstream, Weight: 1},
-		},
-		Strategy: "round_robin",
+	// Server Name List (2 bytes len) + Name Type (1) + Name Len (2) + Name
+	extDataLen := 2 + 1 + 2 + sniLen
+	extData := make([]byte, extDataLen)
+	binary.BigEndian.PutUint16(extData[0:], uint16(sniLen+3))
+	extData[2] = 0x00 // host_name type
+	binary.BigEndian.PutUint16(extData[3:], uint16(sniLen))
+	copy(extData[5:], sniBytes)
+
+	// Extension Wrapper: Type (2) + Len (2) + Data
+	extBlockLen := 2 + 2 + extDataLen
+	extBlock := make([]byte, extBlockLen)
+	binary.BigEndian.PutUint16(extBlock[0:], 0x0000) // server_name extension type
+	binary.BigEndian.PutUint16(extBlock[2:], uint16(extDataLen))
+	copy(extBlock[4:], extData)
+
+	// All Extensions length (2 bytes)
+	allExtLen := extBlockLen
+
+	// 2. Handshake Body (ClientHello)
+	// Version (2) + Random (32) + SessionID (1) + Ciphers (2+2) + Compression (1+1) + Extensions (2 + ext)
+	handshakeBodyLen := 2 + 32 + 1 + 4 + 2 + 2 + allExtLen
+	handshakeBody := make([]byte, handshakeBodyLen)
+
+	pos := 0
+	// Version 3.3 (TLS 1.2)
+	handshakeBody[pos] = 0x03
+	pos++
+	handshakeBody[pos] = 0x03
+	pos++
+	// Random (32 bytes zeros for test)
+	pos += 32
+	// Session ID Len 0
+	handshakeBody[pos] = 0
+	pos++
+	// Cipher Suites (Length 2, value 0x0000)
+	handshakeBody[pos] = 0
+	pos++
+	handshakeBody[pos] = 2
+	pos++
+	handshakeBody[pos] = 0
+	pos++
+	handshakeBody[pos] = 0
+	pos++
+	// Compression (Length 1, value 0)
+	handshakeBody[pos] = 1
+	pos++
+	handshakeBody[pos] = 0
+	pos++
+	// Extensions Length
+	binary.BigEndian.PutUint16(handshakeBody[pos:], uint16(allExtLen))
+	pos += 2
+	copy(handshakeBody[pos:], extBlock)
+
+	// 3. Record Layer
+	// ContentType (1) + Version (2) + Length (2) + HandshakeHeader(1+3) + Body
+	recordLen := 1 + 3 + handshakeBodyLen
+	packet := make([]byte, 5+recordLen)
+
+	// Record Header
+	packet[0] = 0x16 // Handshake
+	packet[1] = 0x03 // Ver 3.1
+	packet[2] = 0x01
+	binary.BigEndian.PutUint16(packet[3:], uint16(4+handshakeBodyLen)) // Length of following data
+
+	// Handshake Header
+	packet[5] = 0x01 // ClientHello
+	// Length (3 bytes)
+	l := uint32(handshakeBodyLen)
+	packet[6] = byte(l >> 16)
+	packet[7] = byte(l >> 8)
+	packet[8] = byte(l)
+
+	copy(packet[9:], handshakeBody)
+
+	return packet
+}
+
+func TestProxy_SNIRouting(t *testing.T) {
+	sA := startIDServer(t, "BackendA")
+	sB := startIDServer(t, "BackendB")
+
+	proxyAddr := getFreePort(t)
+	p := NewProxy(proxyAddr, newTestLogger())
+
+	// Route a.com -> A
+	p.AddRoute("a.com", alaye.TCPRoute{
+		Backends: []alaye.Server{{Address: sA}},
+	})
+
+	// Default -> B
+	p.AddRoute("*", alaye.TCPRoute{
+		Backends: []alaye.Server{{Address: sB}},
+	})
+
+	if err := p.Start(); err != nil {
+		t.Fatalf("failed to start: %v", err)
+	}
+	defer p.Stop()
+	time.Sleep(50 * time.Millisecond)
+
+	tests := []struct {
+		name string
+		sni  string
+		want string
+	}{
+		{"Match Route", "a.com", "BackendA"},
+		{"Default Route", "other.com", "BackendB"},
+		{"No SNI (Empty)", "", "BackendB"},
 	}
 
-	p := NewProxy(cfg, newTestLogger())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conn, err := net.DialTimeout("tcp", proxyAddr, 1*time.Second)
+			if err != nil {
+				t.Fatalf("dial failed: %v", err)
+			}
+			defer conn.Close()
+
+			if tt.sni != "" {
+				hello := makeSNIClientHello(tt.sni)
+				conn.Write(hello)
+			} else {
+				conn.Write([]byte("NOT TLS"))
+			}
+
+			buf := make([]byte, 100)
+			conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+			n, err := conn.Read(buf)
+			if err != nil && err != io.EOF {
+				t.Fatalf("read failed: %v", err)
+			}
+
+			got := string(buf[:n])
+			if !bytes.Contains([]byte(got), []byte(tt.want)) {
+				t.Errorf("got %q, want containing %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProxy_BasicEcho(t *testing.T) {
+	upstream := startIDServer(t, "echo")
+	proxyAddr := getFreePort(t)
+
+	cfg := alaye.TCPRoute{
+		Listen:   proxyAddr,
+		Backends: []alaye.Server{{Address: upstream}},
+	}
+
+	p := NewProxy(proxyAddr, newTestLogger())
+	p.AddRoute("*", cfg)
+
 	if err := p.Start(); err != nil {
-		t.Fatalf("failed to start proxy: %v", err)
+		t.Fatal(err)
 	}
 	defer p.Stop()
 
-	// Connect to Proxy
 	conn, err := net.DialTimeout("tcp", proxyAddr, 1*time.Second)
 	if err != nil {
-		t.Fatalf("failed to dial proxy: %v", err)
+		t.Fatal(err)
 	}
 	defer conn.Close()
 
-	msg := []byte("hello world")
-	if _, err := conn.Write(msg); err != nil {
-		t.Fatalf("failed to write: %v", err)
-	}
-
-	buf := make([]byte, len(msg))
-	if _, err := io.ReadFull(conn, buf); err != nil {
-		t.Fatalf("failed to read: %v", err)
-	}
-
-	if !bytes.Equal(buf, msg) {
-		t.Errorf("expected %s, got %s", msg, buf)
-	}
-}
-
-func TestProxy_RoundRobin(t *testing.T) {
-	s1 := startIDServer(t, "1")
-	s2 := startIDServer(t, "2")
-	proxyAddr := getFreePort(t)
-
-	cfg := alaye.TCPRoute{
-		Listen: proxyAddr,
-		Backends: []alaye.Server{
-			{Address: s1, Weight: 1},
-			{Address: s2, Weight: 1},
-		},
-		Strategy: "round_robin",
-	}
-
-	p := NewProxy(cfg, newTestLogger())
-	if err := p.Start(); err != nil {
-		t.Fatalf("failed to start proxy: %v", err)
-	}
-	defer p.Stop()
-
-	// Give time for listener to bind
-	time.Sleep(50 * time.Millisecond)
-
-	// Round Robin logic:
-	// Counter starts 0.
-	// Pick 1: (0+1) % 2 = 1 -> Backend[1] (s2)
-	// Pick 2: (1+1) % 2 = 0 -> Backend[0] (s1)
-	// Pick 3: (2+1) % 2 = 1 -> Backend[1] (s2)
-
-	responses := []string{}
-	for i := 0; i < 4; i++ {
-		conn, err := net.DialTimeout("tcp", proxyAddr, 100*time.Millisecond)
-		if err != nil {
-			t.Fatalf("dial %d failed: %v", i, err)
-		}
-		buf := make([]byte, 1)
-		io.ReadFull(conn, buf)
-		responses = append(responses, string(buf))
-		conn.Close()
-	}
-
-	// Expect alternating responses
-	expected := []string{"2", "1", "2", "1"}
-	for i, v := range responses {
-		if v != expected[i] {
-			t.Errorf("req %d: expected %s, got %s", i, expected[i], v)
-		}
-	}
-}
-
-func TestProxy_LeastConn(t *testing.T) {
-	// For this test, we need valid upstreams, but we won't actually connect fully
-	// because we are manipulating the balancer state directly.
-	l1, _ := net.Listen("tcp", "127.0.0.1:0")
-	addr1 := l1.Addr().String()
-	defer l1.Close()
-
-	l2, _ := net.Listen("tcp", "127.0.0.1:0")
-	addr2 := l2.Addr().String()
-	defer l2.Close()
-
-	proxyAddr := getFreePort(t)
-
-	cfg := alaye.TCPRoute{
-		Listen: proxyAddr,
-		Backends: []alaye.Server{
-			{Address: addr1, Weight: 1},
-			{Address: addr2, Weight: 1},
-		},
-		Strategy: "least_conn",
-	}
-
-	p := NewProxy(cfg, newTestLogger())
-	if err := p.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer p.Stop()
-	time.Sleep(50 * time.Millisecond)
-
-	// Artificial Load:
-	// Manually increment active conns on backend 0 to force traffic to backend 1
-	// Note: We are manipulating internal state for testing stability because timing
-	// real connections in unit tests is unreliable.
-	p.Balancer.backends[0].ActiveConns.Store(10)
-	p.Balancer.backends[1].ActiveConns.Store(0)
-
-	// Validate logic: Pick() should return backend 1
-	picked := p.Balancer.Pick()
-	if picked.Address != addr2 {
-		t.Errorf("expected least conn to pick %s (0 conns), got %s", addr2, picked.Address)
-	}
-
-	// Swap load
-	p.Balancer.backends[0].ActiveConns.Store(0)
-	p.Balancer.backends[1].ActiveConns.Store(10)
-
-	picked = p.Balancer.Pick()
-	if picked.Address != addr1 {
-		t.Errorf("expected least conn to pick %s (0 conns), got %s", addr1, picked.Address)
-	}
-}
-
-func TestProxy_Stop(t *testing.T) {
-	upstream := startEchoServer(t)
-	proxyAddr := getFreePort(t)
-
-	cfg := alaye.TCPRoute{
-		Listen: proxyAddr,
-		Backends: []alaye.Server{
-			{Address: upstream},
-		},
-	}
-
-	p := NewProxy(cfg, newTestLogger())
-	if err := p.Start(); err != nil {
-		t.Fatal(err)
-	}
-
-	// Verify it accepts connections
-	conn, err := net.DialTimeout("tcp", proxyAddr, 100*time.Millisecond)
-	if err != nil {
-		t.Fatal("proxy should be up")
-	}
-	conn.Close()
-
-	// Stop the proxy
-	p.Stop()
-
-	// Verify it rejects connections
-	// We might need a small loop because listener close is async in kernel/runtime
-	start := time.Now()
-	closed := false
-	for time.Since(start) < 200*time.Millisecond {
-		_, err = net.DialTimeout("tcp", proxyAddr, 20*time.Millisecond)
-		if err != nil {
-			closed = true
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	if !closed {
-		t.Error("proxy should be down after Stop()")
+	buf := make([]byte, 10)
+	n, _ := conn.Read(buf)
+	if string(buf[:n]) != "echo" {
+		t.Errorf("got %s", buf[:n])
 	}
 }

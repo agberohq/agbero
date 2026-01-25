@@ -165,11 +165,58 @@ func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*IPSet, e
 }
 
 func (f *IPSet) Close() error {
-	// FIX: Nil check to prevent panic if firewall is disabled but Close is called
 	if f == nil || f.store == nil {
 		return nil
 	}
 	return f.store.Close()
+}
+
+// List returns all currently active persistent rules
+func (f *IPSet) List() ([]Rule, error) {
+	if f.store == nil {
+		return nil, nil
+	}
+	return f.store.LoadAll()
+}
+
+// Unblock removes an IP from storage and reloads the memory state
+func (f *IPSet) Unblock(ip string) error {
+	if f.store == nil {
+		return nil
+	}
+
+	// 1. Remove from Disk
+	if err := f.store.Remove(ip); err != nil {
+		return err
+	}
+
+	// 2. Reload Memory (Simplest way to ensure consistency for mixed IP/CIDR)
+	// For massive lists, we might want targeted removal, but rebuild is safer for now.
+	rules, err := f.store.LoadAll()
+	if err != nil {
+		return err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Reset Memory Maps
+	f.v4 = make(map[netip.Addr]struct{})
+	f.v6 = make(map[netip.Addr]struct{})
+	f.ranger = cidranger.NewPCTrieRanger()
+
+	// Re-populate
+	for _, r := range rules {
+		f.addRuleInMemory(r)
+	}
+
+	// Also clear remote cache for this IP
+	f.cache.mu.Lock()
+	delete(f.cache.entries, ip)
+	f.cache.mu.Unlock()
+
+	f.logger.Fields("ip", ip).Info("unblocked ip")
+	return nil
 }
 
 // Block adds a rule to storage and memory immediately.
@@ -243,7 +290,6 @@ func (f *IPSet) importTextFile(path string) error {
 			continue
 		}
 
-		// CIDR
 		if strings.Contains(line, "/") {
 			_, network, err := net.ParseCIDR(line)
 			if err == nil {
@@ -253,7 +299,6 @@ func (f *IPSet) importTextFile(path string) error {
 			continue
 		}
 
-		// Single IP
 		addr, err := netip.ParseAddr(line)
 		if err == nil {
 			addr = addr.Unmap()
@@ -293,31 +338,26 @@ func (f *IPSet) Handler(next http.Handler) http.Handler {
 
 			if blocked {
 				atomic.AddUint64(&metricsLocalBlocks, 1)
-				// f.logger.Debugf("firewall blocked ip=%s reason=local_ip", ipStr)
 				http.Error(w, "Access Denied", http.StatusForbidden)
 				return
 			}
 		}
 
 		// 2. Ranger Lookup (CIDRs)
-		// cidranger requires net.IP
 		netIP := net.ParseIP(ipStr)
 		if netIP != nil {
-			// Contains is thread-safe in cidranger
 			contains, err := f.ranger.Contains(netIP)
 			if err == nil && contains {
 				atomic.AddUint64(&metricsLocalBlocks, 1)
-				// f.logger.Debugf("firewall blocked ip=%s reason=local_cidr", ipStr)
 				http.Error(w, "Access Denied", http.StatusForbidden)
 				return
 			}
 		}
 
-		// 3. Remote Check (with cache & singleflight)
+		// 3. Remote Check
 		if f.remote != "" {
 			if f.cachedRemoteCheck(r.Context(), ipStr) {
 				atomic.AddUint64(&metricsRemoteBlocks, 1)
-				// f.logger.Debugf("firewall blocked ip=%s reason=remote", ipStr)
 				http.Error(w, "Access Denied (R)", http.StatusForbidden)
 				return
 			}
@@ -328,12 +368,10 @@ func (f *IPSet) Handler(next http.Handler) http.Handler {
 }
 
 func (f *IPSet) cachedRemoteCheck(ctx context.Context, ip string) bool {
-	// 1. Check Cache
 	if hit, ok := f.cache.get(ip); ok {
 		return hit
 	}
 
-	// 2. Singleflight
 	val, err, _ := f.flight.Do(ip, func() (interface{}, error) {
 		blocked := f.checkRemote(ip)
 		f.cache.set(ip, blocked)
@@ -355,7 +393,7 @@ func (f *IPSet) checkRemote(ip string) bool {
 	resp, err := f.client.Do(req)
 	if err != nil {
 		atomic.AddUint64(&metricsRemoteErrors, 1)
-		return false // Fail Open
+		return false
 	}
 	defer func() {
 		io.Copy(io.Discard, resp.Body)

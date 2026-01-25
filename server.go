@@ -18,7 +18,6 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery/gossip"
 	handlers2 "git.imaxinacion.net/aibox/agbero/internal/handlers"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/tcp"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/firewall"
@@ -41,16 +40,13 @@ var portContextKey = &contextKey{"local-port"}
 type Server struct {
 	hostManager *discovery.Host
 	global      *alaye.Global
-	tlsManager  *tlss.Manager // Added for watcher shutdown
-	configPath  string        // Added for reload
+	tlsManager  *tlss.Manager
+	configPath  string
 	firewall    *firewall.IPSet
 
-	mu sync.RWMutex
-	// TCP Servers (HTTP/1.1 & HTTP/2)
-	servers map[string]*http.Server
-	// UDP Servers (HTTP/3 QUIC)
-	h3Servers map[string]*http3.Server
-	// TCP Proxies (Layer 4)
+	mu         sync.RWMutex
+	servers    map[string]*http.Server
+	h3Servers  map[string]*http3.Server
 	tcpProxies []*tcp.Proxy
 
 	logger       *ll.Logger
@@ -70,7 +66,7 @@ func NewServer(opts ...Option) *Server {
 }
 
 func (s *Server) Start(parentCtx context.Context, configPath string) error {
-	s.configPath = configPath // Set for reload
+	s.configPath = configPath
 
 	if s.hostManager == nil {
 		return errors.New("host manager is required")
@@ -86,17 +82,22 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	woos.DefaultApply(s.global, s.configPath)
 
 	// Log global config summary
+	adminAddr := "disabled"
+	if s.global.Bind.Admin != nil {
+		adminAddr = s.global.Bind.Admin.Address
+	}
+
 	s.logger.Fields(
 		"config_path", configPath,
 		"hosts_dir", s.global.Storage.HostsDir,
 		"cert_dir", s.global.Storage.CertsDir,
 		"data_dir", s.global.Storage.DataDir,
 		"dev_mode", s.global.Development,
-		"http_bind", len(s.global.Bind.HTTP),
-		"https_bind", len(s.global.Bind.HTTPS),
+		"admin_addr", adminAddr,
 	).Info("starting agbero")
 
-	s.startMetricsServer()
+	// Start Admin Server (Metrics/Health/Firewall API)
+	s.startAdminServer()
 	s.startCacheReaper(parentCtx)
 
 	// Initial Host Discovery
@@ -145,7 +146,6 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	if err != nil {
 		return errors.Newf("firewall init: %w", err)
 	}
-	// FIX: Only defer close if firewall was successfully created and is not nil
 	if s.firewall != nil {
 		defer s.firewall.Close()
 	}
@@ -177,7 +177,10 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	// --- 1. Start TCP (Layer 4) Proxies ---
 	for _, host := range hosts {
 		for _, route := range host.TCPProxy {
-			tp := tcp.NewProxy(route, s.logger)
+			tp := tcp.NewProxy(route.Listen, s.logger)
+			// Default Route
+			tp.AddRoute("*", route)
+
 			if err := tp.Start(); err != nil {
 				s.logger.Fields("listen", route.Listen, "err", err).Error("failed to start tcp proxy")
 				continue
@@ -192,11 +195,13 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 
 		var handler http.Handler
 		if isTLS {
+			// For TLS, advertise HTTP/3 via Alt-Svc
 			handler = buildChain(baseHandler, true, port)
 		} else {
 			handler = buildChain(httpHandler, false, "")
 		}
 
+		// Inject Port into Context
 		wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), portContextKey, port)
 			handler.ServeHTTP(w, r.WithContext(ctx))
@@ -233,6 +238,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		}
 		_, port, _ := net.SplitHostPort(addr)
 
+		// HTTP/3 doesn't need Alt-Svc middleware
 		handler := buildChain(baseHandler, false, "")
 
 		wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -304,6 +310,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
+	// Handle signals for reload/shutdown
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -359,34 +366,6 @@ func (s *Server) reload() {
 		"current_hosts", currentCount,
 		"change", currentCount-previousCount,
 	).Info("configuration reloaded successfully")
-}
-
-func (s *Server) startMetricsServer() {
-	if s.global.Bind.Metrics == "" {
-		return
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/metrics", metrics.Metrics(s.hostManager))
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
-
-	srv := &http.Server{
-		Addr:         s.global.Bind.Metrics,
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
-		IdleTimeout:  30 * time.Second,
-	}
-
-	go func() {
-		s.logger.Fields("bind", s.global.Bind.Metrics).Info("metrics listener starting")
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			s.logger.Fields("err", err).Error("metrics server failed")
-		}
-	}()
 }
 
 func (s *Server) startCacheReaper(ctx context.Context) {
@@ -523,32 +502,6 @@ func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
 	return ratelimit.NewRateLimiter(ttl, maxEntries, policy)
 }
 
-func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.RouteHandler {
-	key := route.Key()
-	now := time.Now().UnixNano()
-
-	if v, ok := woos.RouteCache.Load(key); ok {
-		item := v.(*woos.RouteCacheItem)
-		item.LastAccessed.Store(now) // Touch
-		return item.Handler.(*handlers2.RouteHandler)
-	}
-
-	h := handlers2.NewRouteHandler(route, s.logger)
-	newItem := &woos.RouteCacheItem{
-		Handler: h,
-	}
-	newItem.LastAccessed.Store(now)
-
-	if v, loaded := woos.RouteCache.LoadOrStore(key, newItem); loaded {
-		h.Close()
-		item := v.(*woos.RouteCacheItem)
-		item.LastAccessed.Store(now)
-		return item.Handler.(*handlers2.RouteHandler)
-	}
-
-	return h
-}
-
 func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) {
 	if s.global == nil {
 		return nil, nil, errors.New("global config is required")
@@ -675,21 +628,25 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alaye.Route) {
-	originalPath := r.URL.Path
-	originalRawPath := r.URL.RawPath
+	// Safe Request Copy logic
+	reqOut := *r
+	if r.URL != nil {
+		u := *r.URL
+		reqOut.URL = &u
+	}
 
 	if len(route.StripPrefixes) > 0 {
 		for _, prefix := range route.StripPrefixes {
 			if prefix == "" {
 				continue
 			}
-			if strings.HasPrefix(r.URL.Path, prefix) {
-				r.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
-				if r.URL.RawPath != "" {
-					r.URL.RawPath = strings.TrimPrefix(r.URL.RawPath, prefix)
+			if strings.HasPrefix(reqOut.URL.Path, prefix) {
+				reqOut.URL.Path = strings.TrimPrefix(reqOut.URL.Path, prefix)
+				if reqOut.URL.RawPath != "" {
+					reqOut.URL.RawPath = strings.TrimPrefix(reqOut.URL.RawPath, prefix)
 				}
-				if r.URL.Path == "" {
-					r.URL.Path = "/"
+				if reqOut.URL.Path == "" {
+					reqOut.URL.Path = "/"
 				}
 				break
 			}
@@ -697,10 +654,33 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	}
 
 	h := s.getOrBuildRouteHandler(route)
-	h.ServeHTTP(w, r)
+	h.ServeHTTP(w, &reqOut)
+}
 
-	r.URL.Path = originalPath
-	r.URL.RawPath = originalRawPath
+func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.RouteHandler {
+	key := route.Key()
+	now := time.Now().UnixNano()
+
+	if v, ok := woos.RouteCache.Load(key); ok {
+		item := v.(*woos.RouteCacheItem)
+		item.LastAccessed.Store(now) // Touch
+		return item.Handler.(*handlers2.RouteHandler)
+	}
+
+	h := handlers2.NewRouteHandler(route, s.logger)
+	newItem := &woos.RouteCacheItem{
+		Handler: h,
+	}
+	newItem.LastAccessed.Store(now)
+
+	if v, loaded := woos.RouteCache.LoadOrStore(key, newItem); loaded {
+		h.Close()
+		item := v.(*woos.RouteCacheItem)
+		item.LastAccessed.Store(now)
+		return item.Handler.(*handlers2.RouteHandler)
+	}
+
+	return h
 }
 
 func truncateUA(ua string, maxLen int) string {

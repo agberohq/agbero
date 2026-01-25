@@ -8,41 +8,31 @@ import (
 )
 
 type Bind struct {
-	HTTP    []string `hcl:"http,optional"`
-	HTTPS   []string `hcl:"https,optional"`
-	Metrics string   `hcl:"metrics,optional"`
+	HTTP  []string `hcl:"http,optional"`
+	HTTPS []string `hcl:"https,optional"`
+	Admin *Admin   `hcl:"admin,block"`
 }
 
 func (b *Bind) Validate() error {
-	// At least one listener must be configured
 	if len(b.HTTP) == 0 && len(b.HTTPS) == 0 {
 		return errors.New("at least one of 'http' or 'https' bind addresses must be configured")
 	}
 
-	// Validate HTTP addresses
 	for i, addr := range b.HTTP {
-		if addr == "" {
-			return errors.Newf("http[%d]: address cannot be empty", i)
-		}
 		if err := b.validateAddress(addr); err != nil {
 			return errors.Newf("http[%d]: %w", i, err)
 		}
 	}
 
-	// Validate HTTPS addresses
 	for i, addr := range b.HTTPS {
-		if addr == "" {
-			return errors.Newf("https[%d]: address cannot be empty", i)
-		}
 		if err := b.validateAddress(addr); err != nil {
 			return errors.Newf("https[%d]: %w", i, err)
 		}
 	}
 
-	// Validate metrics address (if provided)
-	if b.Metrics != "" {
-		if err := b.validateAddress(b.Metrics); err != nil {
-			return errors.Newf("metrics: %w", err)
+	if b.Admin != nil {
+		if err := b.Admin.Validate(); err != nil {
+			return errors.Newf("admin: %w", err)
 		}
 	}
 
@@ -53,36 +43,46 @@ func (b *Bind) validateAddress(addr string) error {
 	if addr == "" {
 		return errors.New("address cannot be empty")
 	}
-
-	// Check if it's just a port
 	if strings.HasPrefix(addr, ":") {
-		port := addr[1:]
-		if _, err := net.LookupPort("tcp", port); err != nil {
-			return errors.Newf("invalid port %q: %w", port, err)
+		if _, err := net.LookupPort("tcp", addr[1:]); err != nil {
+			return err
 		}
 		return nil
 	}
+	_, _, err := net.SplitHostPort(addr)
+	return err
+}
 
-	// Check if it's host:port
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return errors.Newf("invalid address %q: %w", addr, err)
+type Admin struct {
+	Address     string       `hcl:"address"` // e.g. ":9090"
+	BasicAuth   *BasicAuth   `hcl:"basic_auth,block"`
+	ForwardAuth *ForwardAuth `hcl:"forward_auth,block"`
+}
+
+func (a *Admin) Validate() error {
+	if a.Address == "" {
+		return errors.New("admin address is required")
 	}
-
-	// Validate host
-	if host != "" {
-		if ip := net.ParseIP(host); ip == nil {
-			// Not an IP, check if it's a valid hostname
-			if strings.Contains(host, "://") {
-				return errors.New("address should not include protocol")
+	if _, _, err := net.SplitHostPort(a.Address); err != nil {
+		// Try parsing as port only
+		if strings.HasPrefix(a.Address, ":") {
+			if _, err := net.LookupPort("tcp", a.Address[1:]); err != nil {
+				return err
 			}
+		} else {
+			return err
 		}
 	}
 
-	// Validate port
-	if _, err := net.LookupPort("tcp", port); err != nil {
-		return errors.Newf("invalid port %q: %w", port, err)
+	if a.BasicAuth != nil {
+		if err := a.BasicAuth.Validate(); err != nil {
+			return errors.Newf("basic_auth: %w", err)
+		}
 	}
-
+	if a.ForwardAuth != nil {
+		if err := a.ForwardAuth.Validate(); err != nil {
+			return errors.Newf("forward_auth: %w", err)
+		}
+	}
 	return nil
 }

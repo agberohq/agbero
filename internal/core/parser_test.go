@@ -1,4 +1,3 @@
-// internal/core/parser_test.go
 package core
 
 import (
@@ -11,22 +10,23 @@ import (
 )
 
 func TestParser_UnmarshalGlobal(t *testing.T) {
-	// ... (Global test content remains valid as it uses standard assignments) ...
-	// Just re-pasting for context, no changes needed to the Global struct HCL here
-	// unless previously incorrect. The Global struct test passed in your thought process logic,
-	// only the Host one failed.
 	content := `
 development = true
 
 bind {
   http    = [":8080", ":8081"]
   https   = [":8443"]
-  metrics = ":9090"
+  
+  # Corrected: Admin block instead of metrics attribute
+  admin {
+    address = ":9090"
+  }
 }
 
 storage {
   hosts_dir = "./my_hosts"
   certs_dir = "./my_certs"
+  data_dir  = "./my_data"
 }
 
 security {
@@ -70,15 +70,34 @@ letsencrypt {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	// ... assertions ...
 	if !global.Development {
 		t.Error("expected development = true")
 	}
-	// (Other assertions remain the same as previous valid iteration)
+	if len(global.Bind.HTTP) != 2 {
+		t.Error("expected 2 http bind addresses")
+	}
+	// Verify Admin block parsing
+	if global.Bind.Admin == nil {
+		t.Fatal("expected admin block to be parsed")
+	}
+	if global.Bind.Admin.Address != ":9090" {
+		t.Errorf("expected admin address :9090, got %v", global.Bind.Admin.Address)
+	}
+	if global.Storage.DataDir != "./my_data" {
+		t.Errorf("expected data_dir ./my_data, got %s", global.Storage.DataDir)
+	}
+	if global.General.MaxHeaderBytes != 2048 {
+		t.Error("expected max_header_bytes = 2048")
+	}
+	if global.Logging.Level != "debug" {
+		t.Error("expected logging level = debug")
+	}
+	if !global.LetsEncrypt.Staging {
+		t.Error("expected staging = true")
+	}
 }
 
 func TestParser_UnmarshalHost(t *testing.T) {
-	// CORRECTED HCL SYNTAX
 	content := `
 domains = ["example.com", "www.example.com"]
 compression = true
@@ -103,7 +122,6 @@ route "/api" {
   backend {
     lb_strategy = "round_robin"
     
-    # Correct syntax: server block with address attribute
     server {
         address = "http://localhost:3000"
     }

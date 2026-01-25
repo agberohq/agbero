@@ -1,4 +1,3 @@
-// server_test.go
 package agbero
 
 import (
@@ -68,7 +67,6 @@ func TestServer_Start_Minimal(t *testing.T) {
 
 	err := s.Start(ctx, configPath)
 	// The server will start and then be stopped by context timeout
-	// Accept context timeout error
 	if err != nil && !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -117,15 +115,13 @@ func TestServer_buildTLS_NoEmail(t *testing.T) {
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
 	cfg, handler, err := s.buildTLS(next)
-	// Should still work, just with warning
 	if err != nil {
 		t.Errorf("Should handle missing email gracefully, got error: %v", err)
 	}
 	if handler == nil {
 		t.Error("Handler should still be created")
 	}
-	// cfg might be nil when email is missing, that's OK
-	_ = cfg // Mark as used
+	_ = cfg
 }
 
 func TestServer_buildRateLimiterFromConfig(t *testing.T) {
@@ -148,7 +144,6 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	route := &alaye.Route{Path: "/test", Backends: alaye.MakeBackend("http://localhost:8080")}
 	key := route.Key()
 
-	// Create a real handler to store in cache
 	handler := handlers.NewRouteHandler(route, testLogger)
 	item := &woos.RouteCacheItem{
 		Handler: handler,
@@ -161,7 +156,6 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 		t.Error("Cache miss unexpectedly")
 	}
 
-	// Clean up
 	handler.Close()
 	woos.RouteCache.Delete(key)
 }
@@ -173,7 +167,6 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 		Backends: alaye.MakeBackend("http://localhost:8080"),
 	}
 
-	// Ensure cache is empty
 	woos.RouteCache.Delete(route.Key())
 
 	h := s.getOrBuildRouteHandler(route)
@@ -181,7 +174,6 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 		t.Error("Handler should be created on cache miss")
 	}
 
-	// Clean up
 	h.Close()
 	woos.RouteCache.Delete(route.Key())
 }
@@ -190,7 +182,6 @@ func TestServer_reapOldRoutes(t *testing.T) {
 	s := &Server{logger: testLogger}
 	key := "test-route-key"
 
-	// Create a handler with Close method
 	route := &alaye.Route{
 		Path:     "/test",
 		Backends: alaye.MakeBackend("http://localhost:8080"),
@@ -214,7 +205,6 @@ func TestServer_reapOldRoutes_Recent(t *testing.T) {
 	s := &Server{logger: testLogger}
 	key := "test-route-key-recent"
 
-	// Create a handler with Close method
 	route := &alaye.Route{
 		Path:     "/test",
 		Backends: alaye.MakeBackend("http://localhost:8080"),
@@ -224,7 +214,7 @@ func TestServer_reapOldRoutes_Recent(t *testing.T) {
 	item := &woos.RouteCacheItem{
 		Handler: handler,
 	}
-	item.LastAccessed.Store(time.Now().UnixNano()) // Recent access
+	item.LastAccessed.Store(time.Now().UnixNano())
 	woos.RouteCache.Store(key, item)
 
 	s.reapOldRoutes()
@@ -233,15 +223,18 @@ func TestServer_reapOldRoutes_Recent(t *testing.T) {
 		t.Error("Recent route should not be reaped")
 	}
 
-	// Clean up
 	handler.Close()
 	woos.RouteCache.Delete(key)
 }
 
-func TestServer_StartMetricsServer(t *testing.T) {
-	// Use a random port
+func TestServer_StartAdminServer(t *testing.T) {
+	// Corrected: Use Admin struct, not Metrics string
 	global := &alaye.Global{
-		Bind: alaye.Bind{Metrics: ":0"},
+		Bind: alaye.Bind{
+			Admin: &alaye.Admin{
+				Address: ":0",
+			},
+		},
 	}
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 	s := &Server{
@@ -251,14 +244,19 @@ func TestServer_StartMetricsServer(t *testing.T) {
 	}
 
 	// This starts a goroutine, we'll just verify it doesn't panic
-	s.startMetricsServer()
+	// Corrected: calling startAdminServer, not startMetricsServer
+	s.startAdminServer()
 
 	// Give it a moment to start
 	time.Sleep(50 * time.Millisecond)
 }
 
-func TestServer_StartMetricsServer_NoPort(t *testing.T) {
-	global := &alaye.Global{}
+func TestServer_StartAdminServer_NoConfig(t *testing.T) {
+	global := &alaye.Global{
+		Bind: alaye.Bind{
+			Admin: nil, // Explicitly nil
+		},
+	}
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 	s := &Server{
 		global:      global,
@@ -266,12 +264,11 @@ func TestServer_StartMetricsServer_NoPort(t *testing.T) {
 		hostManager: hm,
 	}
 
-	// Should not panic when no metrics port
-	s.startMetricsServer()
+	// Should not panic when no admin config
+	s.startAdminServer()
 }
 
 func TestServer_HandleRequest_NoHost(t *testing.T) {
-	// Create a minimal server for testing
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 	s := &Server{
 		hostManager: hm,
@@ -290,17 +287,14 @@ func TestServer_HandleRequest_NoHost(t *testing.T) {
 }
 
 func TestServer_HandleRequest_WithHost(t *testing.T) {
-	// Create a test server to proxy to
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("backend response"))
 	}))
 	defer backend.Close()
 
-	// Create a minimal server for testing
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 
-	// Add a test host with a route to our test backend
 	hm.UpdateGossipNode("test", "example.com", alaye.Route{
 		Path:     "/",
 		Backends: alaye.MakeBackend(backend.URL),
@@ -317,7 +311,6 @@ func TestServer_HandleRequest_WithHost(t *testing.T) {
 
 	s.handleRequest(w, req)
 
-	// Should proxy successfully to test backend
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected 200, got %d", w.Code)
 	}
