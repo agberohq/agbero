@@ -180,12 +180,14 @@ ensure-release-version:
 	@test -n "$(RELEASE_VERSION)" || (echo "Error: set RELEASE_VERSION, e.g. make release RELEASE_VERSION=0.0.2"; exit 1)
 
 tag: ensure-clean ensure-release-version
-	@echo "Tagging $(RELEASE_VERSION) at HEAD $$(git rev-parse --short HEAD)"
-	@git tag -d $(RELEASE_VERSION) 2>/dev/null || true
-	@git push $(REMOTE) :refs/tags/$(RELEASE_VERSION) 2>/dev/null || true
+	@if git rev-parse "$(RELEASE_VERSION)" >/dev/null 2>&1; then \
+		echo "Error: tag $(RELEASE_VERSION) already exists. Bump the version."; \
+		exit 1; \
+	fi
+	@echo "Creating tag $(RELEASE_VERSION) at HEAD $$(git rev-parse --short HEAD)"
 	@git tag -a $(RELEASE_VERSION) -m "v$(RELEASE_VERSION)"
 	@git push $(REMOTE) $(RELEASE_VERSION)
-	@echo "Tag pushed: $(RELEASE_VERSION)"
+
 
 release: tag
 	@echo "Running GoReleaser for $(RELEASE_VERSION)..."
