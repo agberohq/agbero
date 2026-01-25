@@ -1,18 +1,24 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
 project_name: agbero
 
 builds:
   - id: agbero
-    binary: agbero
     main: ./cmd/agbero
+    binary: agbero
     env:
       - CGO_ENABLED=0
     goos:
       - linux
-      - darwin
       - windows
+      - darwin
     goarch:
       - amd64
       - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
     ldflags:
       - -s -w
       - -X git.imaxinacion.net/aibox/agbero/internal/woos.Version={{.Version}}
@@ -20,21 +26,32 @@ builds:
       - -X git.imaxinacion.net/aibox/agbero/internal/woos.Date={{.Date}}
 
 archives:
-  - format: tar.gz
-    name_template: >-
-      {{ .ProjectName }}_
-      {{- .Version }}_
-      {{- .Os }}_
-      {{- .Arch }}
+  - id: default
+    # Use 'formats' (plural) - Default to tar.gz for Linux/Mac
+    formats:
+      - tar.gz
+
+    # Use 'format_overrides' to switch Windows to zip
     format_overrides:
       - goos: windows
-        format: zip
+        # Use 'formats' (plural) here too
+        formats:
+          - zip
+
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+    files:
+      - README.md
+      - LICENSE
+      - src: etc/agbero.hcl
+        dst: agbero.hcl
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
 
 checksum:
   name_template: 'checksums.txt'
-
-snapshot:
-  name_template: "{{ .Tag }}-next"
 
 changelog:
   sort: asc
