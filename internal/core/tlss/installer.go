@@ -108,17 +108,6 @@ func (ci *Installer) IsMkcertInstalled() bool {
 
 func (ci *Installer) InstallCARootIfNeeded() error {
 
-	if ci.CertDir.IsSet() {
-		ll.Debug("-------> REMOVE ME ")
-		absPath := ci.CertDir.Path()
-		os.Setenv("CAROOT", absPath)
-
-		// Ensure it exists
-		if err := os.MkdirAll(absPath, 0700); err != nil {
-			return fmt.Errorf("failed to create CAROOT dir: %w", err)
-		}
-	}
-
 	// 1. Check if already installed
 	if IsCARootInstalled() {
 		return nil
