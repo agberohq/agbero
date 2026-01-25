@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/dustin/go-humanize"
 	"github.com/olekukonko/ll"
@@ -102,6 +103,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if part == "." || part == ".." {
 			continue
 		}
+
 		// Block hidden files/dirs (.git, .env)
 		if strings.HasPrefix(part, ".") {
 			http.Error(w, "Forbidden", http.StatusForbidden)
@@ -231,6 +233,11 @@ func (h *webHandler) serveDirectoryListing(w http.ResponseWriter, r *http.Reques
 
 		// 2. Hide Security/Config Directories (hosts.d, certs.d, etc.)
 		if entry.IsDir() && strings.HasSuffix(name, ".d") {
+			continue
+		}
+
+		// 3. Hide Config File
+		if name == woos.DefaultConfigName {
 			continue
 		}
 

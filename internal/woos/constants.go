@@ -39,5 +39,5 @@ const (
 )
 
 const (
-	DefaultConfigName = "./agbero.hcl"
+	DefaultConfigName = "agbero.hcl"
 )
