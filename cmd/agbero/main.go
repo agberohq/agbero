@@ -128,19 +128,11 @@ func main() {
 	}
 	configPath = resolvedPath
 
-	// We need to set CAROOT env var before any TLS/Truststore logic runs.
-	// Truststore/mkcert libraries read os.Getenv("CAROOT") at init time.
-	if configPath != "" {
-		if global, err := loadConfig(configPath); err == nil {
-			// Use woos logic to resolve absolute path
-			certPath := woos.MakeFolder(global.Storage.CertsDir, woos.CertDir).Path()
-
-			// Create directory if missing (critical for truststore)
-			if err := os.MkdirAll(certPath, 0700); err == nil {
-				os.Setenv("CAROOT", certPath)
-				logger.Debugf("Set CAROOT to %s", certPath)
-			}
-		}
+	// TLS bootstrap (single source of truth lives in tlss/*)
+	// This sets HOME/USER/LOGNAME for service environments so mkcert can find its OS default CAROOT.
+	// It MUST NOT force CAROOT into agbero certs dir.
+	if err := tlss.BootstrapEnv(logger); err != nil {
+		logger.Warnf("TLS env bootstrap: %v", err)
 	}
 
 	// --- Handle Simple Commands (No full config load needed) ---
@@ -309,7 +301,13 @@ func checkAndInstallCA(global *alaye.Global) {
 		return
 	}
 
+	// Ensure service env has HOME/USER etc (mkcert default CAROOT resolution)
+	if err := tlss.BootstrapEnv(logger); err != nil {
+		logger.Warnf("TLS env bootstrap: %v", err)
+	}
+
 	installer := tlss.NewInstaller(logger)
+
 	if !tlss.IsCARootInstalled() {
 		logger.Info("HTTPS enabled but CA root not found. Auto-installing...")
 		if err := installer.InstallCARootIfNeeded(); err != nil {

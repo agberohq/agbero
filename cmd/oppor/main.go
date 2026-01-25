@@ -25,11 +25,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/integrii/flaggy"
+	"github.com/olekukonko/ll"
 	"golang.org/x/time/rate"
+)
+
+var (
+	logger = ll.New("opopo", ll.WithFatalExits(true))
 )
 
 // =================== CONFIGURATION ===================
 type Config struct {
+	// Load test config
 	Targets     []string      `json:"targets"`
 	Concurrency int           `json:"concurrency"`
 	Requests    int           `json:"requests"` // 0 = infinite
@@ -47,9 +53,269 @@ type Config struct {
 	Follow      bool          `json:"follow"`
 	MetricsURL  string        `json:"metrics_url"`
 	ShowLatency bool          `json:"show_latency"`
+
+	// Server config
+	ServeMode  bool     `json:"serve_mode"`
+	Ports      []string `json:"ports"`
+	StartPort  int      `json:"start_port"`
+	EndPort    int      `json:"end_port"`
+	TotalPorts int      `json:"total_ports"`
+	PortString string   `json:"port_string"`
 }
 
-// =================== METRICS ===================
+// =================== SERVER MODE ===================
+type TestServer struct {
+	Port         string
+	Server       *http.Server
+	Started      bool
+	StartTime    time.Time
+	RequestCount atomic.Uint64
+}
+
+func NewTestServer(port string) *TestServer {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "Test Server running on port %s\n", port)
+		fmt.Fprintf(w, "Request Path: %s\n", r.URL.Path)
+		fmt.Fprintf(w, "Query Parameters: %v\n", r.URL.Query())
+		fmt.Fprintf(w, "Remote Address: %s\n", r.RemoteAddr)
+		fmt.Fprintf(w, "Headers:\n")
+		for k, v := range r.Header {
+			fmt.Fprintf(w, "  %s: %v\n", k, v)
+		}
+		fmt.Fprintf(w, "\nServer Uptime: %v\n", time.Since(startTime))
+	})
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":   "healthy",
+			"port":     port,
+			"uptime":   time.Since(startTime).String(),
+			"requests": atomic.LoadUint64(&requestCount),
+		})
+	})
+
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"server": map[string]interface{}{
+				"port":     port,
+				"uptime":   time.Since(startTime).Seconds(),
+				"requests": atomic.LoadUint64(&requestCount),
+				"status":   "running",
+			},
+		})
+	})
+
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Simulate some processing time
+		delay := rand.Intn(100)
+		time.Sleep(time.Duration(delay) * time.Millisecond)
+
+		response := map[string]interface{}{
+			"status":    "success",
+			"port":      port,
+			"endpoint":  r.URL.Path,
+			"method":    r.Method,
+			"delay_ms":  delay,
+			"timestamp": time.Now().Unix(),
+		}
+
+		if r.Method == "POST" {
+			body, _ := io.ReadAll(r.Body)
+			response["body_size"] = len(body)
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})
+
+	return &TestServer{
+		Port: port,
+		Server: &http.Server{
+			Addr:    ":" + port,
+			Handler: mux,
+		},
+		StartTime: time.Now(),
+	}
+}
+
+func (s *TestServer) Start() error {
+	go func() {
+		fmt.Printf("Starting test server on port %s...\n", s.Port)
+		if err := s.Server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Printf("Server on port %s failed: %v\n", s.Port, err)
+		}
+	}()
+
+	// Verify server started
+	for i := 0; i < 5; i++ {
+		time.Sleep(time.Duration(i*100) * time.Millisecond)
+		resp, err := http.Get("http://localhost:" + s.Port + "/health")
+		if err == nil {
+			resp.Body.Close()
+			s.Started = true
+			return nil
+		}
+	}
+	return fmt.Errorf("server on port %s failed to start", s.Port)
+}
+
+func (s *TestServer) Stop() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.Server.Shutdown(ctx)
+}
+
+func parsePortsForServer(cfg *Config) []string {
+	var ports []string
+
+	// Method 1: Comma-separated list (has priority if specified)
+	if cfg.PortString != "" {
+		for _, p := range strings.Split(cfg.PortString, ",") {
+			trimmed := strings.TrimSpace(p)
+			if trimmed != "" {
+				if portNum, err := strconv.Atoi(trimmed); err == nil {
+					if portNum >= 1 && portNum <= 65535 {
+						ports = append(ports, trimmed)
+					} else {
+						logger.Printf("Warning: Port %d out of range (1-65535), skipping", portNum)
+					}
+				} else {
+					logger.Printf("Warning: Invalid port '%s', skipping", trimmed)
+				}
+			}
+		}
+		return ports
+	}
+
+	// Method 2: Start and end port range
+	if cfg.StartPort > 0 && cfg.EndPort > 0 {
+		if cfg.StartPort > cfg.EndPort {
+			logger.Fatal("Start port must be less than or equal to end port")
+		}
+		if cfg.StartPort < 1 || cfg.EndPort > 65535 {
+			logger.Fatal("Ports must be in range 1-65535")
+		}
+		for port := cfg.StartPort; port <= cfg.EndPort; port++ {
+			ports = append(ports, strconv.Itoa(port))
+		}
+		return ports
+	}
+
+	// Method 3: Start port and total ports
+	if cfg.StartPort > 0 && cfg.TotalPorts > 0 {
+		if cfg.StartPort < 1 {
+			logger.Fatal("Start port must be >= 1")
+		}
+		if cfg.TotalPorts <= 0 {
+			logger.Fatal("Total ports must be > 0")
+		}
+		endPort := cfg.StartPort + cfg.TotalPorts - 1
+		if endPort > 65535 {
+			logger.Fatal("Port range exceeds maximum port 65535")
+		}
+		for i := 0; i < cfg.TotalPorts; i++ {
+			ports = append(ports, strconv.Itoa(cfg.StartPort+i))
+		}
+		return ports
+	}
+
+	// If only startPort is given (default to single port)
+	if cfg.StartPort > 0 {
+		if cfg.StartPort < 1 || cfg.StartPort > 65535 {
+			logger.Fatal("Port must be in range 1-65535")
+		}
+		ports = append(ports, strconv.Itoa(cfg.StartPort))
+		return ports
+	}
+
+	return ports
+}
+
+func runServerMode(cfg *Config) {
+	ports := parsePortsForServer(cfg)
+
+	if len(ports) == 0 {
+		fmt.Println("\nUsage examples:")
+		fmt.Println("  Single port:          ./oppor serve -p 8080")
+		fmt.Println("  Multiple ports:       ./oppor serve -p 8080,8081,8082")
+		fmt.Println("  Port range:           ./oppor serve -s 8080 -e 8090")
+		fmt.Println("  Count from start:     ./oppor serve -s 8080 -t 5")
+		fmt.Println("\nNote: -p flag takes precedence over -s/-e/-t flags")
+		logger.Fatal("\nNo valid ports specified.")
+	}
+
+	fmt.Printf("\nStarting %d test servers on ports: %v\n\n", len(ports), ports)
+
+	servers := make(map[string]*TestServer)
+	var wg sync.WaitGroup
+
+	// Start all servers
+	for _, port := range ports {
+		server := NewTestServer(port)
+		servers[port] = server
+		wg.Add(1)
+
+		go func(s *TestServer) {
+			defer wg.Done()
+			if err := s.Start(); err != nil {
+				logger.Printf("✗ Failed to start server on port %s: %v", s.Port, err)
+			} else {
+				fmt.Printf("✓ Test server started on port %s\n", s.Port)
+				fmt.Printf("  Health check: http://localhost:%s/health\n", s.Port)
+				fmt.Printf("  Metrics:      http://localhost:%s/metrics\n", s.Port)
+				fmt.Printf("  API example:  http://localhost:%s/api/test\n", s.Port)
+				fmt.Println()
+			}
+		}(server)
+	}
+
+	wg.Wait()
+
+	// Print summary
+	fmt.Println("┌────────────────────────────────────────┐")
+	fmt.Println("│        Test Servers Running            │")
+	fmt.Println("└────────────────────────────────────────┘")
+	for port, server := range servers {
+		if server.Started {
+			fmt.Printf("  Port %s: http://localhost:%s\n", port, port)
+		}
+	}
+	fmt.Println("\nPress Ctrl+C to stop all servers...")
+
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Wait for interrupt
+	<-sigChan
+	fmt.Println("\nShutting down servers...")
+
+	// Stop all servers
+	var stopWg sync.WaitGroup
+	for _, server := range servers {
+		if server.Started {
+			stopWg.Add(1)
+			go func(s *TestServer) {
+				defer stopWg.Done()
+				if err := s.Stop(); err != nil {
+					logger.Printf("Error stopping server on port %s: %v", s.Port, err)
+				} else {
+					fmt.Printf("✓ Stopped server on port %s\n", s.Port)
+				}
+			}(server)
+		}
+	}
+
+	stopWg.Wait()
+	fmt.Println("\nAll servers stopped.")
+}
+
+// =================== LOAD TEST METRICS ===================
 type Metrics struct {
 	TotalRequests     atomic.Uint64
 	SuccessCount      atomic.Uint64
@@ -156,6 +422,7 @@ func (m *Metrics) Snapshot() MetricsSnapshot {
 		StatusCode3xx:     m.StatusCode3xx.Load(),
 		StatusCode4xx:     m.StatusCode4xx.Load(),
 		StatusCode5xx:     m.StatusCode5xx.Load(),
+		TotalBytes:        m.TotalBytes.Load(),
 	}
 }
 
@@ -177,7 +444,7 @@ type MetricsSnapshot struct {
 	TotalBytes        uint64  `json:"total_bytes"`
 }
 
-// =================== WORKER ===================
+// =================== LOAD TEST WORKER ===================
 type Worker struct {
 	ID       int
 	Config   *Config
@@ -267,7 +534,12 @@ func (w *Worker) makeRequest() {
 	target := w.Config.Targets[rand.Intn(len(w.Config.Targets))]
 	start := time.Now()
 
-	req, err := http.NewRequest(w.Config.Method, target, nil)
+	var bodyReader io.Reader
+	if w.Config.Body != "" && (w.Config.Method == "POST" || w.Config.Method == "PUT") {
+		bodyReader = strings.NewReader(w.Config.Body)
+	}
+
+	req, err := http.NewRequest(w.Config.Method, target, bodyReader)
 	if err != nil {
 		w.Metrics.Record(time.Since(start), 0, 0, err)
 		return
@@ -288,9 +560,8 @@ func (w *Worker) makeRequest() {
 		}
 	}
 
-	// Add body if POST/PUT
+	// Add body length
 	if w.Config.Body != "" && (w.Config.Method == "POST" || w.Config.Method == "PUT") {
-		req.Body = io.NopCloser(strings.NewReader(w.Config.Body))
 		req.ContentLength = int64(len(w.Config.Body))
 	}
 
@@ -317,7 +588,7 @@ func (w *Worker) makeRequest() {
 	if w.Config.Verbose {
 		logMsg := fmt.Sprintf("[Worker %d] %s %s - %d (%s) - %v",
 			w.ID, w.Config.Method, target, resp.StatusCode, http.StatusText(resp.StatusCode), latency)
-		LogQueue <- logMsg
+		logQueue <- logMsg
 	}
 }
 
@@ -334,7 +605,7 @@ func generateIPPool(size int) []string {
 	return pool
 }
 
-// =================== TUI MODEL ===================
+// =================== TUI MODEL FOR LOAD TEST ===================
 type Model struct {
 	Config    Config
 	Metrics   *Metrics
@@ -357,6 +628,16 @@ type Model struct {
 
 	// Control
 	Quit bool
+
+	// External metrics from Agbero
+	AgberoMetrics map[string]interface{}
+
+	// For progress tracking
+	TotalRequests     uint64
+	CompletedRequests uint64
+
+	// Channel for sending messages from goroutines
+	msgChan chan tea.Msg
 }
 
 func NewModel(cfg Config) Model {
@@ -420,26 +701,29 @@ func NewModel(cfg Config) Model {
 	t.SetStyles(s)
 
 	return Model{
-		Config:      cfg,
-		Metrics:     &Metrics{},
-		Running:     true,
-		StartTime:   time.Now(),
-		Progress:    prog,
-		Spinner:     spin,
-		MetricsView: metricsView,
-		LogView:     logView,
-		Table:       t,
-		Logs:        []string{},
-		LastUpdate:  time.Now(),
+		Config:        cfg,
+		Metrics:       &Metrics{},
+		Running:       true,
+		StartTime:     time.Now(),
+		Progress:      prog,
+		Spinner:       spin,
+		MetricsView:   metricsView,
+		LogView:       logView,
+		Table:         t,
+		Logs:          []string{},
+		LastUpdate:    time.Now(),
+		msgChan:       make(chan tea.Msg, 100),
+		TotalRequests: uint64(cfg.Requests),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.Spinner.Tick,
-		startLoadTest(m.Config, m.Metrics),
-		listenForLogs(),
+		m.startLoadTest(),
+		m.listenForMessages(),
 		updateMetrics(),
+		fetchAgberoMetrics(m.Config.MetricsURL),
 	)
 }
 
@@ -458,6 +742,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.LogView.LineDown(1)
 		case " ":
 			m.Running = !m.Running
+		case "r", "R":
+			// Refresh external metrics
+			if m.Config.MetricsURL != "" {
+				return m, fetchAgberoMetrics(m.Config.MetricsURL)
+			}
 		}
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
@@ -478,9 +767,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.done {
 			m.Running = false
 			m.Progress.SetPercent(1.0)
+			return m, tea.Quit
 		} else {
-			progressPercent := float64(msg.completed) / float64(msg.total)
-			m.Progress.SetPercent(progressPercent)
+			m.CompletedRequests = msg.completed
+			if msg.total > 0 {
+				progressPercent := float64(msg.completed) / float64(msg.total)
+				m.Progress.SetPercent(progressPercent)
+			}
 		}
 		return m, nil
 	case metricsMsg:
@@ -508,6 +801,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Logs = m.Logs[1:]
 		}
 		m.updateLogView()
+	case agberoMetricsMsg:
+		m.AgberoMetrics = msg.metrics
+		// Refresh every 5 seconds if metrics URL is set
+		if m.Config.MetricsURL != "" {
+			return m, tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+				return fetchAgberoMetrics(m.Config.MetricsURL)()
+			})
+		}
+	case tea.Cmd:
+		// Handle commands from channel
+		return m, msg
 	}
 
 	// Update viewports
@@ -524,44 +828,59 @@ func (m *Model) updateMetricsView(snapshot MetricsSnapshot) {
 		duration = 1
 	}
 
+	totalRPS := uint64(float64(snapshot.TotalRequests) / duration)
 	throughput := float64(snapshot.TotalBytes) / duration / (1024 * 1024) // MB/s
 
-	content := fmt.Sprintf(
-		`┌─────────────────┐
-│ Load Test Status │
-└─────────────────┘
+	// Build metrics content
+	var contentBuilder strings.Builder
 
-Duration:    %s
-Requests:    %d (%d/s)
-Success:     %d (%.1f%%)
-Errors:      %d
-Active:      %d
+	contentBuilder.WriteString("┌─────────────────┐\n")
+	contentBuilder.WriteString("│ Load Test Status │\n")
+	contentBuilder.WriteString("└─────────────────┘\n\n")
 
-Latency (ms):
-  Avg: %.1f  Min: %.1f  Max: %.1f
+	contentBuilder.WriteString(fmt.Sprintf("Duration:    %s\n", time.Since(m.StartTime).Round(time.Second)))
+	contentBuilder.WriteString(fmt.Sprintf("Requests:    %d (%d/s)\n", snapshot.TotalRequests, totalRPS))
+	contentBuilder.WriteString(fmt.Sprintf("Success:     %d (%.1f%%)\n", snapshot.SuccessCount, snapshot.SuccessRate))
+	contentBuilder.WriteString(fmt.Sprintf("Errors:      %d\n", snapshot.ErrorCount))
+	contentBuilder.WriteString(fmt.Sprintf("Active:      %d\n\n", snapshot.ActiveConnections))
 
-Throughput:  %.2f MB/s
+	contentBuilder.WriteString("Latency (ms):\n")
+	contentBuilder.WriteString(fmt.Sprintf("  Avg: %.1f  Min: %.1f  Max: %.1f\n\n",
+		snapshot.AvgLatencyMs, snapshot.MinLatencyMs, snapshot.MaxLatencyMs))
 
-Status Codes:
-  2xx: %d  3xx: %d  4xx: %d  5xx: %d`,
-		time.Since(m.StartTime).Round(time.Second),
-		snapshot.TotalRequests,
-		uint64(float64(snapshot.TotalRequests)/duration),
-		snapshot.SuccessCount,
-		snapshot.SuccessRate,
-		snapshot.ErrorCount,
-		snapshot.ActiveConnections,
-		snapshot.AvgLatencyMs,
-		snapshot.MinLatencyMs,
-		snapshot.MaxLatencyMs,
-		throughput,
-		snapshot.StatusCode2xx,
-		snapshot.StatusCode3xx,
-		snapshot.StatusCode4xx,
-		snapshot.StatusCode5xx,
-	)
+	contentBuilder.WriteString(fmt.Sprintf("Throughput:  %.2f MB/s\n\n", throughput))
 
-	m.MetricsView.SetContent(content)
+	contentBuilder.WriteString("Status Codes:\n")
+	contentBuilder.WriteString(fmt.Sprintf("  2xx: %d  3xx: %d  4xx: %d  5xx: %d\n",
+		snapshot.StatusCode2xx, snapshot.StatusCode3xx, snapshot.StatusCode4xx, snapshot.StatusCode5xx))
+
+	// Add Agbero metrics if available
+	if m.AgberoMetrics != nil {
+		contentBuilder.WriteString("\n┌─────────────────────┐\n")
+		contentBuilder.WriteString("│ Agbero Proxy Stats │\n")
+		contentBuilder.WriteString("└─────────────────────┘\n")
+
+		if hosts, ok := m.AgberoMetrics["hosts"].(map[string]interface{}); ok {
+			for host, data := range hosts {
+				if hostData, ok := data.(map[string]interface{}); ok {
+					if totalReqs, ok := hostData["total_reqs"].(float64); ok && totalReqs > 0 {
+						contentBuilder.WriteString(fmt.Sprintf("\n%s:\n", host))
+						contentBuilder.WriteString(fmt.Sprintf("  Requests: %.0f\n", totalReqs))
+
+						if avgP99, ok := hostData["avg_p99_us"].(float64); ok {
+							contentBuilder.WriteString(fmt.Sprintf("  P99 Latency: %.1fms\n", avgP99/1000))
+						}
+
+						if backends, ok := hostData["total_backends"].(float64); ok {
+							contentBuilder.WriteString(fmt.Sprintf("  Backends: %.0f\n", backends))
+						}
+					}
+				}
+			}
+		}
+	}
+
+	m.MetricsView.SetContent(contentBuilder.String())
 }
 
 func (m *Model) updateLatencyTable() {
@@ -616,7 +935,7 @@ func (m Model) View() string {
 		Foreground(lipgloss.Color("205")).
 		Bold(true).
 		Padding(0, 1).
-		Render("🚀 LAB - Load Testing Tool")
+		Render("🚀 OPPOR - Load Testing Tool")
 
 	// Status line
 	status := "RUNNING"
@@ -630,7 +949,16 @@ func (m Model) View() string {
 		Render(fmt.Sprintf("%s %s", m.Spinner.View(), status))
 
 	// Progress section
-	progressSection := fmt.Sprintf("Progress: %s", m.Progress.View())
+	progressPercent := m.Progress.Percent()
+	progressText := ""
+	if m.TotalRequests > 0 {
+		progressText = fmt.Sprintf("Progress: %s (%d/%d)",
+			m.Progress.ViewAs(progressPercent),
+			m.CompletedRequests,
+			m.TotalRequests)
+	} else {
+		progressText = fmt.Sprintf("Progress: %s", m.Progress.ViewAs(progressPercent))
+	}
 
 	// Layout
 	var sections []string
@@ -651,34 +979,44 @@ func (m Model) View() string {
 		lipgloss.Left,
 		m.MetricsView.View(),
 		"",
-		progressSection,
+		progressText,
 	)
 
 	sections = append(sections, metricsAndProgress)
 	sections = append(sections, "")
 
-	// Latency distribution table
-	tableTitle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("99")).
-		Bold(true).
-		Render("Latency Distribution")
-	sections = append(sections, tableTitle)
-	sections = append(sections, m.Table.View())
-	sections = append(sections, "")
+	// Latency distribution table (if enabled)
+	if m.Config.ShowLatency {
+		tableTitle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("99")).
+			Bold(true).
+			Render("Latency Distribution")
+		sections = append(sections, tableTitle)
+		sections = append(sections, m.Table.View())
+		sections = append(sections, "")
+	}
 
-	// Logs
-	logTitle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("242")).
-		Render("Recent Logs")
-	sections = append(sections, logTitle)
-	sections = append(sections, m.LogView.View())
+	// Logs (if verbose)
+	if m.Config.Verbose {
+		logTitle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("242")).
+			Render("Recent Logs")
+		sections = append(sections, logTitle)
+		sections = append(sections, m.LogView.View())
+		sections = append(sections, "")
+	}
 
-	// Footer
+	// Footer with controls
+	var controls []string
+	controls = append(controls, "Press 'q' to quit | 'space' to pause/resume | '↑/↓' to scroll")
+	if m.Config.MetricsURL != "" {
+		controls = append(controls, "'r' to refresh Agbero metrics")
+	}
+
 	footer := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
-		Render("Press 'q' to quit | 'space' to pause/resume | '↑/↓' to scroll")
+		Render(strings.Join(controls, " | "))
 
-	sections = append(sections, "")
 	sections = append(sections, footer)
 
 	return lipgloss.NewStyle().
@@ -700,11 +1038,28 @@ type logMsg struct {
 	text string
 }
 
+type agberoMetricsMsg struct {
+	metrics map[string]interface{}
+}
+
 // =================== TEA COMMANDS ===================
-func startLoadTest(cfg Config, metrics *Metrics) tea.Cmd {
+func (m *Model) startLoadTest() tea.Cmd {
 	return func() tea.Msg {
-		go runLoadTest(cfg, metrics)
+		go func() {
+			runLoadTest(m.Config, m.Metrics, m.msgChan, m.TotalRequests)
+		}()
 		return nil
+	}
+}
+
+func (m *Model) listenForMessages() tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case msg := <-m.msgChan:
+			return msg
+		default:
+			return nil
+		}
 	}
 }
 
@@ -720,19 +1075,26 @@ func updateMetricsAfter(d time.Duration) tea.Cmd {
 	})
 }
 
-func listenForLogs() tea.Cmd {
+func fetchAgberoMetrics(url string) tea.Cmd {
 	return func() tea.Msg {
-		for msg := range LogQueue {
-			return logMsg{text: msg}
+		if url == "" {
+			return nil
 		}
-		return nil
+
+		metrics, err := fetchExternalMetrics(url)
+		if err != nil {
+			logQueue <- fmt.Sprintf("Failed to fetch Agbero metrics: %v", err)
+			return nil
+		}
+
+		return agberoMetricsMsg{metrics: metrics}
 	}
 }
 
 // =================== LOAD TEST RUNNER ===================
-var LogQueue = make(chan string, 1000)
+var logQueue = make(chan string, 1000)
 
-func runLoadTest(cfg Config, metrics *Metrics) {
+func runLoadTest(cfg Config, metrics *Metrics, msgChan chan tea.Msg, totalRequests uint64) {
 	var requestCounter uint64
 	var wg sync.WaitGroup
 
@@ -764,24 +1126,59 @@ func runLoadTest(cfg Config, metrics *Metrics) {
 					rps := uint64(float64(total) / timeSinceStart)
 					metrics.RequestsPerSec.Store(rps)
 				}
+
+				// Send progress update
+				if cfg.Requests > 0 {
+					completed := atomic.LoadUint64(&requestCounter)
+					msgChan <- progressMsg{
+						completed: completed,
+						total:     totalRequests,
+						done:      completed >= totalRequests,
+					}
+				}
 			case <-stopMetrics:
 				return
 			}
 		}
 	}()
 
+	// Start log forwarder
+	go func() {
+		for log := range logQueue {
+			msgChan <- logMsg{text: log}
+		}
+	}()
+
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
 	// Wait for completion
+	var done bool
 	if cfg.Duration > 0 {
-		time.Sleep(cfg.Duration)
+		select {
+		case <-time.After(cfg.Duration):
+			done = true
+		case <-sigChan:
+			done = true
+		}
 	} else if cfg.Requests > 0 {
-		for atomic.LoadUint64(&requestCounter) < uint64(cfg.Requests) {
-			time.Sleep(100 * time.Millisecond)
+		for !done {
+			select {
+			case <-sigChan:
+				done = true
+			default:
+				if atomic.LoadUint64(&requestCounter) >= totalRequests {
+					done = true
+				} else {
+					time.Sleep(100 * time.Millisecond)
+				}
+			}
 		}
 	} else {
 		// Run until interrupted
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
+		done = true
 	}
 
 	// Stop workers
@@ -793,10 +1190,23 @@ func runLoadTest(cfg Config, metrics *Metrics) {
 	close(stopMetrics)
 
 	wg.Wait()
+
+	// Send final progress
+	if cfg.Requests > 0 {
+		msgChan <- progressMsg{
+			completed: atomic.LoadUint64(&requestCounter),
+			total:     totalRequests,
+			done:      true,
+		}
+	}
+
+	// Clean up
+	close(logQueue)
 }
 
-// =================== CLI ===================
+// =================== GLOBAL VARIABLES ===================
 var (
+	// CLI flags
 	targets     []string
 	concurrency int
 	requests    int
@@ -814,49 +1224,80 @@ var (
 	follow      bool
 	metricsURL  string
 	showLatency bool
+
+	// Server flags
+	serveMode  bool
+	portString string
+	startPort  int
+	endPort    int
+	totalPorts int
+
+	// Global state
+	startTime    time.Time
+	requestCount uint64
 )
 
-var startTime time.Time
-
+// =================== MAIN ===================
 func main() {
-	flaggy.SetName("lab")
-	flaggy.SetDescription("Load testing tool with real-time TUI")
+	flaggy.SetName("oppor")
+	flaggy.SetDescription("Open Performance & Proxy Observer - Test server and load testing tool")
 	flaggy.SetVersion("1.0.0")
 
-	// Required
-	flaggy.StringSlice(&targets, "t", "target", "Target URLs (comma-separated or repeated)")
+	// Mode selection
+	flaggy.Bool(&serveMode, "", "serve", "Run in server mode (create test servers)")
 
-	// Load configuration
+	// Server mode flags
+	flaggy.String(&portString, "p", "port", "Comma-separated ports (e.g., 8080,8081,8082)")
+	flaggy.Int(&startPort, "s", "start", "Start port number")
+	flaggy.Int(&endPort, "e", "end", "End port number (for range)")
+	flaggy.Int(&totalPorts, "t", "total", "Number of ports from start")
+
+	// Load test flags
+	flaggy.StringSlice(&targets, "t", "target", "Target URLs (comma-separated or repeated)")
 	flaggy.Int(&concurrency, "c", "concurrency", "Number of concurrent workers (default: 10)")
 	flaggy.Int(&requests, "n", "requests", "Total number of requests (0 = infinite)")
 	flaggy.String(&duration, "d", "duration", "Test duration (e.g., 30s, 5m, 1h)")
 	flaggy.Int(&rateLimit, "r", "rate", "Requests per second per worker (0 = unlimited)")
-
-	// Request configuration
 	flaggy.String(&method, "X", "method", "HTTP method (default: GET)")
 	flaggy.StringSlice(&headers, "H", "header", "HTTP headers (key:value)")
 	flaggy.String(&body, "b", "body", "Request body")
 	flaggy.Bool(&keepAlive, "k", "keepalive", "Use HTTP keep-alive")
-
-	// Network configuration
 	flaggy.String(&timeout, "T", "timeout", "Request timeout (default: 30s)")
 	flaggy.Bool(&randomIPs, "i", "random-ips", "Use random source IPs")
 	flaggy.Int(&ipPoolSize, "I", "ip-pool", "Size of random IP pool (default: 1000)")
-
-	// Output configuration
 	flaggy.Bool(&outputJSON, "j", "json", "Output final metrics as JSON")
 	flaggy.Bool(&verbose, "v", "verbose", "Verbose output")
 	flaggy.Bool(&follow, "f", "follow", "Follow redirects")
-	flaggy.String(&metricsURL, "m", "metrics", "URL to fetch external metrics from")
+	flaggy.String(&metricsURL, "m", "metrics", "URL to fetch Agbero metrics from (e.g., http://localhost:8080/metrics)")
 	flaggy.Bool(&showLatency, "l", "latency", "Show detailed latency distribution")
 
 	flaggy.Parse()
 
-	if len(targets) == 0 {
-		flaggy.ShowHelpAndExit("At least one target URL is required")
+	// Determine mode
+	if serveMode {
+		// Run in server mode
+		cfg := Config{
+			ServeMode:  true,
+			PortString: portString,
+			StartPort:  startPort,
+			EndPort:    endPort,
+			TotalPorts: totalPorts,
+		}
+		runServerMode(&cfg)
+		return
 	}
 
-	// Parse duration
+	// Run in load test mode
+	if len(targets) == 0 {
+		// Show help based on mode
+		if serveMode {
+			flaggy.ShowHelpAndExit("Server mode requires port configuration")
+		} else {
+			flaggy.ShowHelpAndExit("Load test mode requires target URLs")
+		}
+	}
+
+	// Parse duration for load test
 	var dur time.Duration
 	if duration != "" {
 		var err error
@@ -909,21 +1350,23 @@ func main() {
 		ShowLatency: showLatency,
 	}
 
-	// Start the TUI
+	// Start the TUI for load test
 	startTime = time.Now()
-	p := tea.NewProgram(NewModel(config), tea.WithAltScreen())
+	p := tea.NewProgram(NewModel(config), tea.WithAltScreen(), tea.WithMouseCellMotion())
 
-	if _, err := p.Run(); err != nil {
+	finalModel, err := p.Run()
+	if err != nil {
 		fmt.Printf("Error running TUI: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Output final metrics as JSON if requested
 	if outputJSON {
-		metrics := &Metrics{}
-		snapshot := metrics.Snapshot()
-		jsonData, _ := json.MarshalIndent(snapshot, "", "  ")
-		fmt.Println(string(jsonData))
+		if model, ok := finalModel.(Model); ok {
+			snapshot := model.Metrics.Snapshot()
+			jsonData, _ := json.MarshalIndent(snapshot, "", "  ")
+			fmt.Println(string(jsonData))
+		}
 	}
 }
 
@@ -942,9 +1385,17 @@ func max(a, b int) int {
 	return b
 }
 
-// Additional utility for external metrics
+// Fetch external metrics from Agbero proxy
 func fetchExternalMetrics(url string) (map[string]interface{}, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
+
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, err

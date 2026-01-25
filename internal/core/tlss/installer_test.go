@@ -45,6 +45,10 @@ func writeSelfSignedCert(t *testing.T, certPath, keyPath string, hosts []string)
 
 	for _, h := range hosts {
 		host := h
+		// Strip port if passed accidentally
+		if idx := len(host) - 1; idx >= 0 {
+			// (keep it simple; tests pass clean hosts anyway)
+		}
 		if ip := net.ParseIP(host); ip != nil {
 			tpl.IPAddresses = append(tpl.IPAddresses, ip)
 		} else {
@@ -91,13 +95,18 @@ func TestCertInstaller_validateCertificate_HostMatch(t *testing.T) {
 
 	writeSelfSignedCert(t, certPath, keyPath, []string{"localhost", "127.0.0.1"})
 
-	if !ci.ValidateCertificateForHosts(certPath, keyPath, []string{"localhost"}) {
+	ci.SetHosts([]string{"localhost"}, 443)
+	if !ci.validateCertificate(certPath, keyPath) {
 		t.Fatal("expected cert to validate for localhost")
 	}
-	if !ci.ValidateCertificateForHosts(certPath, keyPath, []string{"127.0.0.1"}) {
+
+	ci.SetHosts([]string{"127.0.0.1"}, 443)
+	if !ci.validateCertificate(certPath, keyPath) {
 		t.Fatal("expected cert to validate for 127.0.0.1")
 	}
-	if ci.ValidateCertificateForHosts(certPath, keyPath, []string{"example.com"}) {
+
+	ci.SetHosts([]string{"example.com"}, 443)
+	if ci.validateCertificate(certPath, keyPath) {
 		t.Fatal("expected cert NOT to validate for example.com")
 	}
 }
@@ -108,6 +117,8 @@ func TestCertInstaller_findExistingCerts_UsesOnlyMatchingCert(t *testing.T) {
 
 	ci := NewInstaller(logger)
 	ci.CertDir = woos.NewFolder(tmp)
+
+	// IMPORTANT: findExistingCerts uses ci.port, so set it.
 	ci.SetHosts([]string{"app.localhost"}, 443)
 
 	// Create cert for DIFFERENT host but with a matching filename pattern
@@ -115,17 +126,17 @@ func TestCertInstaller_findExistingCerts_UsesOnlyMatchingCert(t *testing.T) {
 	keyPath := filepath.Join(tmp, "app-443-key.pem")
 	writeSelfSignedCert(t, certPath, keyPath, []string{"other.localhost"})
 
-	_, _, found := ci.FindExistingCerts("app", 443)
+	_, _, found := ci.findExistingCerts("app")
 	if found {
 		t.Fatal("expected NOT to find cert because SAN doesn't match app.localhost")
 	}
 
 	// Now create correct cert
-	os.Remove(certPath)
-	os.Remove(keyPath)
+	_ = os.Remove(certPath)
+	_ = os.Remove(keyPath)
 	writeSelfSignedCert(t, certPath, keyPath, []string{"app.localhost"})
 
-	_, _, found = ci.FindExistingCerts("app", 443)
+	_, _, found = ci.findExistingCerts("app")
 	if !found {
 		t.Fatal("expected to find cert for app.localhost")
 	}

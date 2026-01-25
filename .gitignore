@@ -2,14 +2,14 @@
 .log
 
 .DS_Store
-all.txt
-cmd/all.txt
+*/all.txt
 
 bin
 tmp
 lab
 dist
 
-server.log
+cmd/agbero/server.log
 cmd/agbero/agbero
+cmd/oppor/oppor
 

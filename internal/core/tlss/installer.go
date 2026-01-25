@@ -28,7 +28,7 @@ const (
 
 type Installer struct {
 	logger    *ll.Logger
-	CertDir   woos.Folder
+	CertDir   woos.Folder // ONLY for leaf certs created by agbero (not mkcert CA root)
 	certHosts []string
 	port      int
 }
@@ -57,12 +57,15 @@ func (ci *Installer) SetStorageDir(dir woos.Folder) error {
 		dir = woos.NewFolder(filepath.Join(home, dir.String()[2:]))
 	}
 
-	if err := dir.Ensure(woos.Folder(""), false); err != nil {
+	// NOTE: This directory is NOT mkcert CAROOT. It is only agbero's cert storage.
+	if err := dir.Ensure(woos.Folder(""), true); err != nil {
 		return fmt.Errorf("failed to create storage directory: %w", err)
 	}
 
 	ci.CertDir = dir
-	ci.logger.Fields("dir", dir).Info("Set certificate storage directory")
+	if ci.logger != nil {
+		ci.logger.Fields("dir", dir).Info("set certificate storage directory")
+	}
 	return nil
 }
 
@@ -71,18 +74,34 @@ func (ci *Installer) SetHosts(hosts []string, port int) {
 	ci.port = port
 }
 
+// EnsureLocalhostCert ensures a leaf certificate for the current host set.
+// It prefers mkcert if available (because it's dev-friendly), otherwise falls back to truststore,
+// otherwise downloads mkcert (last resort).
+//
+// IMPORTANT:
+// - We do NOT redirect mkcert's CAROOT into CertDir.
+// - CertDir is only where we store the resulting LEAF cert/key files.
 func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error) {
 	prefix := ci.certPrefix()
 
 	if cert, key, found := ci.findExistingCerts(prefix); found {
-		ci.logger.Fields("cert", cert, "key", key).Info("Using existing certificates")
+		if ci.logger != nil {
+			ci.logger.Fields("cert", cert, "key", key).Info("using existing certificates")
+		}
 		return cert, key, nil
 	}
 
 	certFile = filepath.Join(ci.CertDir.Path(), fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
 	keyFile = filepath.Join(ci.CertDir.Path(), fmt.Sprintf("%s-%d-key.pem", prefix, ci.port))
 
-	ci.logger.Fields("hosts", ci.certHosts, "cert", certFile).Info("Generating localhost certificates")
+	if ci.logger != nil {
+		ci.logger.Fields("hosts", ci.certHosts, "cert", certFile).Info("generating localhost certificates")
+	}
+
+	// Ensure directory exists for leaf outputs.
+	if err := ci.CertDir.Ensure(woos.Folder(""), true); err != nil {
+		return "", "", fmt.Errorf("ensure cert dir: %w", err)
+	}
 
 	methods := []func() (string, string, error){
 		ci.tryMkcertInPath,
@@ -90,69 +109,75 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 		ci.downloadAndUseMkcert,
 	}
 
+	var lastErr error
 	for _, method := range methods {
-		c, k, err := method()
-		if err == nil {
-			ci.logger.Fields("cert", c).Info("Successfully generated certificates")
+		c, k, e := method()
+		if e == nil {
+			if ci.logger != nil {
+				ci.logger.Fields("cert", c).Info("successfully generated certificates")
+			}
 			return c, k, nil
+		}
+		lastErr = e
+		if ci.logger != nil {
+			ci.logger.Fields("err", e).Debug("cert generation method failed; trying next")
 		}
 	}
 
-	return "", "", fmt.Errorf("all certificate generation methods failed")
+	if lastErr == nil {
+		lastErr = fmt.Errorf("unknown error")
+	}
+	return "", "", fmt.Errorf("all certificate generation methods failed: %w", lastErr)
 }
 
-func (ci *Installer) IsMkcertInstalled() bool {
-	_, err := exec.LookPath("mkcert")
-	return err == nil
-}
-
+// InstallCARootIfNeeded installs mkcert/truststore root into OS trust store.
+// This is only about trusting the CA, not where leaf cert files live.
 func (ci *Installer) InstallCARootIfNeeded() error {
-
-	// 1. Check if already installed
-	if IsCARootInstalled() {
+	// Best effort: if already trusted, stop.
+	if IsCARootTrusted() {
 		return nil
 	}
 
-	ci.logger.Info("CA root not found, attempting to install...")
-
-	// 2. Ensure Storage Directory Exists
-	// We need this because truststore will try to write files here
-	if err := ci.CertDir.Ensure(woos.Folder(""), true); err != nil {
-		return fmt.Errorf("failed to create cert dir: %w", err)
+	if ci.logger != nil {
+		ci.logger.Info("CA root not trusted; attempting installation")
 	}
 
-	// 3. Attempt Install via Internal Library (Priority)
-	ml, err := truststore.NewLib()
-	if err == nil {
-		// Try to install
+	// 1) truststore library (preferred for non-interactive installs if it works on the platform)
+	if ml, err := truststore.NewLib(); err == nil {
 		if err := ml.Install(); err == nil {
-			ci.logger.Info("CA installed successfully via truststore")
+			if ci.logger != nil {
+				ci.logger.Info("CA installed successfully via truststore")
+			}
 			return nil
-		} else {
-			// Log warning but continue to fallback
-			ci.logger.Warnf("truststore library install failed (permissions?): %v", err)
 		}
-	} else {
-		ci.logger.Warnf("failed to init truststore lib: %v", err)
-	}
-
-	// 4. Fallback: External mkcert binary
-	if ci.IsMkcertInstalled() {
-		if path, err := exec.LookPath("mkcert"); err == nil {
-			ci.logger.Info("Falling back to external mkcert binary")
-			return ci.installCAWithMkcert(path)
+		if ci.logger != nil {
+			ci.logger.Fields("err", err).Warn("truststore install failed; will try mkcert")
 		}
 	}
 
-	return fmt.Errorf("failed to install CA root: %w", err)
-}
-
-func (ci *Installer) installCAWithMkcert(mkcertPath string) error {
-	ci.logger.Info("Installing CA with mkcert")
-	cmd := exec.Command(mkcertPath, "-install")
-	output, err := cmd.CombinedOutput()
+	// 2) mkcert binary (fallback)
+	mkcertPath, err := exec.LookPath("mkcert")
 	if err != nil {
-		return fmt.Errorf("mkcert -install failed: %s", string(output))
+		return fmt.Errorf("mkcert not found and truststore failed; cannot install CA root")
+	}
+
+	// Make mkcert environment stable (HOME/USER/LOGNAME/CAROOT default).
+	// We DO NOT point CAROOT to ci.CertDir.
+	if os.Getenv("CAROOT") == "" {
+		if caroot, err := MkcertDefaultCAROOT(mkcertPath); err == nil {
+			_ = os.Setenv("CAROOT", caroot)
+		}
+	}
+
+	cmd := exec.Command(mkcertPath, "-install")
+	cmd.Env = mkcertEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("mkcert -install failed: %s", strings.TrimSpace(string(out)))
+	}
+
+	if ci.logger != nil {
+		ci.logger.Info("CA installed successfully via mkcert")
 	}
 	return nil
 }
@@ -175,7 +200,7 @@ func (ci *Installer) ListCertificates() ([]string, error) {
 }
 
 func (ci *Installer) tryMkcertInPath() (string, string, error) {
-	path, err := exec.LookPath("mkcert")
+	mkcertPath, err := exec.LookPath("mkcert")
 	if err != nil {
 		return "", "", fmt.Errorf("mkcert not in PATH: %w", err)
 	}
@@ -184,24 +209,28 @@ func (ci *Installer) tryMkcertInPath() (string, string, error) {
 	certFile := filepath.Join(ci.CertDir.Path(), fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
 	keyFile := filepath.Join(ci.CertDir.Path(), fmt.Sprintf("%s-%d-key.pem", prefix, ci.port))
 
-	return ci.generateWithMkcert(path, certFile, keyFile)
+	return ci.generateWithMkcert(mkcertPath, certFile, keyFile)
 }
 
 func (ci *Installer) generateWithMkcert(mkcertPath, certFile, keyFile string) (string, string, error) {
-	ci.logger.Fields("mkcert_path", mkcertPath).Info("Using mkcert")
+	if ci.logger != nil {
+		ci.logger.Fields("mkcert_path", mkcertPath).Info("using mkcert for leaf cert")
+	}
 
 	args := []string{"-key-file", keyFile, "-cert-file", certFile}
 	args = append(args, ci.certHosts...)
 
 	cmd := exec.Command(mkcertPath, args...)
-	output, err := cmd.CombinedOutput()
+	cmd.Env = mkcertEnv()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", "", fmt.Errorf("mkcert failed: %s", string(output))
+		return "", "", fmt.Errorf("mkcert failed: %s", strings.TrimSpace(string(out)))
 	}
 
-	if !IsCARootInstalled() {
-		ci.logger.Info("Attempting to install mkcert CA root")
+	// If CA isn't trusted, try installing it (best-effort; do not block leaf generation success).
+	if !IsCARootTrusted() {
 		installCmd := exec.Command(mkcertPath, "-install")
+		installCmd.Env = mkcertEnv()
 		_ = installCmd.Run()
 	}
 
@@ -212,16 +241,14 @@ func (ci *Installer) tryTruststore() (string, string, error) {
 	prefix := ci.certPrefix()
 	certFile := filepath.Join(ci.CertDir.Path(), fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
 	keyFile := filepath.Join(ci.CertDir.Path(), fmt.Sprintf("%s-%d-key.pem", prefix, ci.port))
-	return ci.tryTruststoreWithPaths(certFile, keyFile)
-}
 
-func (ci *Installer) tryTruststoreWithPaths(certFile, keyFile string) (string, string, error) {
 	ml, err := truststore.NewLib()
 	if err != nil {
 		return "", "", fmt.Errorf("truststore init failed: %w", err)
 	}
 
-	if !IsCARootInstalled() {
+	// Best-effort install (may require elevated permissions).
+	if !IsCARootTrusted() {
 		_ = ml.Install()
 	}
 
@@ -241,16 +268,15 @@ func (ci *Installer) tryTruststoreWithPaths(certFile, keyFile string) (string, s
 }
 
 func (ci *Installer) downloadAndUseMkcert() (string, string, error) {
-	ci.logger.Info("Downloading mkcert from GitHub")
+	if ci.logger != nil {
+		ci.logger.Info("downloading mkcert from GitHub")
+	}
 
 	mkcertPath, err := ci.downloadMkcert()
 	if err != nil {
 		return "", "", err
 	}
-
-	defer func() {
-		_ = os.Remove(mkcertPath)
-	}()
+	defer func() { _ = os.Remove(mkcertPath) }()
 
 	prefix := ci.certPrefix()
 	certFile := filepath.Join(ci.CertDir.Path(), fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
@@ -290,13 +316,12 @@ func (ci *Installer) downloadMkcert() (string, error) {
 	}
 
 	version := strings.TrimPrefix(release.TagName, "v")
+
 	mkcertArch := runtime.GOARCH
-	if mkcertArch == "amd64" {
-		mkcertArch = "amd64"
-	} else if mkcertArch == "386" {
-		mkcertArch = "386"
-	} else if mkcertArch == "arm64" {
-		mkcertArch = "arm64"
+	switch mkcertArch {
+	case "amd64", "386", "arm64":
+	default:
+		// best-effort
 	}
 
 	binaryName := fmt.Sprintf("mkcert-%s-%s-%s", version, runtime.GOOS, mkcertArch)
@@ -317,19 +342,21 @@ func (ci *Installer) downloadMkcert() (string, error) {
 		return "", fmt.Errorf("mkcert binary not found in release")
 	}
 
-	req, _ = http.NewRequest("GET", checksumURL, nil)
-	resp, err = client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	checksumData, _ := io.ReadAll(resp.Body)
-
 	var expectedChecksum string
-	for _, line := range strings.Split(string(checksumData), "\n") {
-		if strings.Contains(line, binaryName) {
-			expectedChecksum = strings.Fields(line)[0]
-			break
+	if checksumURL != "" {
+		req, _ = http.NewRequest("GET", checksumURL, nil)
+		resp, err = client.Do(req)
+		if err != nil {
+			return "", err
+		}
+		checksumData, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+
+		for _, line := range strings.Split(string(checksumData), "\n") {
+			if strings.Contains(line, binaryName) {
+				expectedChecksum = strings.Fields(line)[0]
+				break
+			}
 		}
 	}
 
@@ -353,9 +380,11 @@ func (ci *Installer) downloadMkcert() (string, error) {
 		return "", err
 	}
 
-	calculated := hex.EncodeToString(hash.Sum(nil))
-	if expectedChecksum != "" && !strings.EqualFold(calculated, expectedChecksum) {
-		return "", fmt.Errorf("checksum mismatch")
+	if expectedChecksum != "" {
+		calculated := hex.EncodeToString(hash.Sum(nil))
+		if !strings.EqualFold(calculated, expectedChecksum) {
+			return "", fmt.Errorf("checksum mismatch")
+		}
 	}
 
 	if runtime.GOOS != "windows" {
@@ -370,15 +399,13 @@ func (ci *Installer) findExistingCerts(prefix string) (certFile, keyFile string,
 		certPattern string
 		keyPattern  string
 	}{
-		{fmt.Sprintf("%s.serve-cert.pem", prefix), fmt.Sprintf("%s.serve-key.pem", prefix)},
-		{fmt.Sprintf("%s.pem", prefix), fmt.Sprintf("%s.key.pem", prefix)},
 		{fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port), fmt.Sprintf("%s-%d-key.pem", prefix, ci.port)},
 		{"localhost.pem", "localhost.key.pem"},
 	}
 
-	for _, pattern := range patterns {
-		certPath := filepath.Join(ci.CertDir.Path(), pattern.certPattern)
-		keyPath := filepath.Join(ci.CertDir.Path(), pattern.keyPattern)
+	for _, p := range patterns {
+		certPath := filepath.Join(ci.CertDir.Path(), p.certPattern)
+		keyPath := filepath.Join(ci.CertDir.Path(), p.keyPattern)
 
 		if _, err := os.Stat(certPath); err == nil {
 			if _, err := os.Stat(keyPath); err == nil {
@@ -425,20 +452,6 @@ func (ci *Installer) validateCertificate(certFile, keyFile string) bool {
 		}
 	}
 	return true
-}
-
-func (ci *Installer) ValidateCertificateForHosts(certFile, keyFile string, hosts []string) bool {
-	originalHosts := ci.certHosts
-	ci.certHosts = hosts
-	defer func() { ci.certHosts = originalHosts }()
-	return ci.validateCertificate(certFile, keyFile)
-}
-
-func (ci *Installer) FindExistingCerts(prefix string, port int) (certFile, keyFile string, found bool) {
-	originalPort := ci.port
-	ci.port = port
-	defer func() { ci.port = originalPort }()
-	return ci.findExistingCerts(prefix)
 }
 
 func (ci *Installer) certPrefix() string {
