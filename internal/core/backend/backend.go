@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
@@ -81,9 +82,18 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 	origDirector := rp.Director
 	rp.Director = func(req *http.Request) {
 		origDirector(req)
-		req.Host = u.Host
-		req.Header.Set("X-Forwarded-Host", req.Host)
+
+		originalHost := req.Host
+
+		req.Host = b.URL.Host
+
+		req.Header.Set("X-Forwarded-Host", originalHost)
 		req.Header.Set("X-Forwarded-Proto", req.URL.Scheme)
+
+		req.Header.Set("X-Forwarded-Server", woos.Name)
+		req.Header.Add("Via", fmt.Sprintf("1.1 %s", woos.Name)) // (RFC 7230 / RFC 9110)
+
+		// Hygiene
 		req.Header.Del("Keep-Alive")
 		req.Header.Del("Proxy-Authenticate")
 		req.Header.Del("Proxy-Authorization")
@@ -120,13 +130,12 @@ func (b *Backend) Stop() {
 
 func (b *Backend) healthCheckLoop() {
 	interval := 10 * time.Second
-	if b.hcConfig.Interval != 0 {
+	if b.hcConfig.Interval > 0 {
 		interval = b.hcConfig.Interval
-
 	}
 
 	timeout := 5 * time.Second
-	if b.hcConfig.Timeout != 0 {
+	if b.hcConfig.Timeout > 0 {
 		timeout = b.hcConfig.Timeout
 	}
 
@@ -135,28 +144,38 @@ func (b *Backend) healthCheckLoop() {
 		threshold = b.hcConfig.Threshold
 	}
 
-	// Add initial jitter to desync checks
-	jitter := time.Duration(rand.Int63n(int64(interval) / 2)) // 0-50% jitter
-	time.Sleep(jitter)
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
+	// Dedicated client with keep-alives ON
 	client := &http.Client{
-		Timeout:   timeout,
-		Transport: &http.Transport{DisableKeepAlives: true},
+		Timeout: timeout,
+		Transport: &http.Transport{
+			MaxIdleConnsPerHost: 2,
+		},
 	}
 
-	targetURL := b.URL.ResolveReference(&url.URL{Path: b.hcConfig.Path}).String()
-	consecutiveFailures := 0
+	targetURL := b.URL.ResolveReference(
+		&url.URL{Path: b.hcConfig.Path},
+	).String()
+
+	failures := 0
+
+	// initial jitter (0–50%)
+	jitter := time.Duration(rand.Int63n(int64(interval / 2)))
+	timer := time.NewTimer(jitter)
+
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-b.stop:
 			return
-		case <-ticker.C:
+
+		case <-timer.C:
 			resp, err := client.Get(targetURL)
-			healthy := err == nil && resp != nil && resp.StatusCode >= 200 && resp.StatusCode < 500
+
+			healthy := err == nil &&
+				resp != nil &&
+				resp.StatusCode >= 200 &&
+				resp.StatusCode < 500
 
 			if resp != nil && resp.Body != nil {
 				_, _ = io.Copy(io.Discard, resp.Body)
@@ -164,26 +183,30 @@ func (b *Backend) healthCheckLoop() {
 			}
 
 			if healthy {
+				failures = 0
 				b.Failures.Store(0)
 
-				consecutiveFailures = 0
 				if !b.Alive.Load() {
 					now := time.Now().UnixNano()
 					b.Alive.Store(true)
 					b.lastRecovery.Store(now)
-					b.logger.Fields("backend", b.URL.Host).Info("backend recovered/UP")
+					b.logger.Fields("backend", b.URL.Host).
+						Info("backend recovered / UP")
 				}
 			} else {
-				consecutiveFailures++
-				if consecutiveFailures >= threshold && b.Alive.Load() {
+				failures++
+				if failures >= threshold && b.Alive.Load() {
 					b.Alive.Store(false)
-					b.logger.Fields("backend", b.URL.Host, "err", err).Warn("backend health check failed")
+					b.logger.Fields(
+						"backend", b.URL.Host,
+						"err", err,
+					).Warn("backend marked DOWN by health check")
 				}
 			}
 
-			// Add jitter to next tick (reset ticker for variance)
-			jitter = time.Duration(rand.Int63n(int64(interval) / 2))
-			ticker.Reset(interval + jitter)
+			// re-arm timer with jitter
+			jitter = time.Duration(rand.Int63n(int64(interval / 2)))
+			timer.Reset(interval + jitter)
 		}
 	}
 }
