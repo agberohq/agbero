@@ -42,7 +42,6 @@ type LoadBalancer struct {
 
 	// hot path: read-only after UpdateBackends()
 	backends atomic.Value // -> *[]*backend.Backend
-	wheel    atomic.Value // -> *weightWheel
 
 	rrCounter atomic.Uint64
 }
@@ -58,11 +57,14 @@ func NewLoadBalancer(backends []*backend.Backend, strategy string, timeout time.
 }
 
 func (lb *LoadBalancer) UpdateBackends(list []*backend.Backend) {
-	cp := make([]*backend.Backend, len(list))
-	copy(cp, list)
-
+	cp := make([]*backend.Backend, 0, len(list))
+	for _, b := range list {
+		if b == nil {
+			continue
+		}
+		cp = append(cp, b)
+	}
 	lb.backends.Store(&cp)
-	lb.wheel.Store(buildWheel(cp))
 }
 
 func (lb *LoadBalancer) Snapshot() []*backend.Backend {
@@ -97,6 +99,14 @@ func (lb *LoadBalancer) PickBackend(r *http.Request) *backend.Backend {
 	if len(list) == 0 {
 		return nil
 	}
+
+	// Conditions can narrow the candidate pool.
+	// IMPORTANT: must not break selection indices (wheel must be built on the candidate slice).
+	list = lb.filterByConditions(list, r)
+	if len(list) == 0 {
+		return nil
+	}
+
 	if len(list) == 1 {
 		if list[0].Alive.Load() {
 			return list[0]
@@ -140,7 +150,7 @@ func (lb *LoadBalancer) setStrategy(s string) {
 	}
 }
 
-/* ---------- snapshot / wheel helpers --------------------------------------- */
+/* ---------- snapshot helpers ------------------------------------------------ */
 
 func (lb *LoadBalancer) mustSnapshot() []*backend.Backend {
 	if v := lb.backends.Load(); v != nil {
@@ -149,36 +159,29 @@ func (lb *LoadBalancer) mustSnapshot() []*backend.Backend {
 	return nil
 }
 
-func (lb *LoadBalancer) mustWheel() *weightWheel {
-	if v := lb.wheel.Load(); v != nil {
-		w := v.(*weightWheel)
-		if w != nil && w.total > 0 {
-			return w
-		}
-	}
-	return nil
-}
+/* ---------- pick strategies (SAFE after filtering) -------------------------- */
 
 func (lb *LoadBalancer) pickRoundRobin(list []*backend.Backend) *backend.Backend {
-	w := lb.mustWheel()
+	// ✅ build wheel on candidate slice (avoids OOR after filterByConditions)
+	w := buildWheel(list)
 
-	// If no wheel, fallback to plain RR.
-	if w == nil || w.total == 0 {
-		start := lb.rrCounter.Add(1)
-		n := uint64(len(list))
+	// Weighted wheel RR.
+	if w != nil && w.total > 0 {
 		for i := 0; i < len(list); i++ {
-			idx := int((start + uint64(i)) % n)
-			if list[idx].Alive.Load() {
+			idx := w.next(lb.rrCounter.Add(1))
+			if idx >= 0 && idx < len(list) && list[idx].Alive.Load() {
 				return list[idx]
 			}
 		}
 		return nil
 	}
 
-	// Weighted wheel RR.
+	// Fallback: plain RR.
+	start := lb.rrCounter.Add(1)
+	n := uint64(len(list))
 	for i := 0; i < len(list); i++ {
-		idx := w.next(lb.rrCounter.Add(1))
-		if idx >= 0 && idx < len(list) && list[idx].Alive.Load() {
+		idx := int((start + uint64(i)) % n)
+		if list[idx].Alive.Load() {
 			return list[idx]
 		}
 	}
@@ -186,9 +189,10 @@ func (lb *LoadBalancer) pickRoundRobin(list []*backend.Backend) *backend.Backend
 }
 
 func (lb *LoadBalancer) pickRandom(list []*backend.Backend) *backend.Backend {
-	w := lb.mustWheel()
+	// ✅ build wheel on candidate slice (avoids OOR after filterByConditions)
+	w := buildWheel(list)
 
-	// Treat as uniform if wheel is missing or wheel total == len(list) (all weights 1).
+	// Treat as uniform if weights are all 1 (wheel total == len(list)).
 	if w == nil || w.total == 0 || w.total == uint64(len(list)) {
 		r := rngPool.Get().(*rng)
 		start := r.Uint64n(uint64(len(list)))
@@ -204,7 +208,7 @@ func (lb *LoadBalancer) pickRandom(list []*backend.Backend) *backend.Backend {
 		return nil
 	}
 
-	// Weighted: pick by cumulative weights, then do bounded scan if chosen is dead.
+	// Weighted: pick by cumulative weights, then bounded scan if chosen is dead.
 	r := rngPool.Get().(*rng)
 	target := r.Uint64n(w.total)
 	rngPool.Put(r)
@@ -241,7 +245,9 @@ func (lb *LoadBalancer) pickURLHash(list []*backend.Backend, r *http.Request) *b
 func (lb *LoadBalancer) hashPick(list []*backend.Backend, key string) *backend.Backend {
 	h := hashStr(key)
 
-	w := lb.mustWheel()
+	// ✅ build wheel on candidate slice (avoids OOR after filterByConditions)
+	w := buildWheel(list)
+
 	if w == nil || w.total == 0 || w.total == uint64(len(list)) {
 		// uniform
 		idx := int(h % uint64(len(list)))
@@ -264,7 +270,7 @@ func (lb *LoadBalancer) pickLeastConn(list []*backend.Backend) *backend.Backend 
 	min := int64(math.MaxInt64)
 
 	for _, b := range list {
-		if !b.Alive.Load() {
+		if b == nil || !b.Alive.Load() {
 			continue
 		}
 		if c := b.InFlight.Load(); c < min {
@@ -277,12 +283,11 @@ func (lb *LoadBalancer) pickLeastConn(list []*backend.Backend) *backend.Backend 
 
 func (lb *LoadBalancer) pickWeightedLeastConn(list []*backend.Backend) *backend.Backend {
 	var best *backend.Backend
-
 	var bestW uint64
 	var bestC uint64
 
 	for _, b := range list {
-		if !b.Alive.Load() {
+		if b == nil || !b.Alive.Load() {
 			continue
 		}
 
@@ -307,6 +312,54 @@ func (lb *LoadBalancer) pickWeightedLeastConn(list []*backend.Backend) *backend.
 	return best
 }
 
+/* ---------- conditions ------------------------------------------------------ */
+
+// NOTE: this expects your backend.Backend to expose:
+//   - b.Cond != nil
+//   - b.Cond.HasRules() bool
+//   - b.Cond.Match(*http.Request) bool
+//
+// Production-safe behavior:
+//   - If any backends match rules AND at least one matched backend is healthy => use matched set
+//   - If matches exist but all matched are DOWN => fall back to full pool (avoid accidental 502s)
+//   - If no matches => use full pool
+func (lb *LoadBalancer) filterByConditions(list []*backend.Backend, r *http.Request) []*backend.Backend {
+	if len(list) == 0 {
+		return nil
+	}
+
+	var matched []*backend.Backend
+	var matchedHealthy []*backend.Backend
+
+	for _, b := range list {
+		if b == nil || b.Cond == nil || !b.Cond.HasRules() {
+			continue
+		}
+		if b.Cond.Match(r) {
+			matched = append(matched, b)
+			if b.Alive.Load() {
+				matchedHealthy = append(matchedHealthy, b)
+			}
+		}
+	}
+
+	// No rules matched => default pool.
+	if len(matched) == 0 {
+		return list
+	}
+
+	// Rules matched and some are healthy => restrict to matched (healthy or not is handled by pickers).
+	// We prefer the healthy-only slice to reduce scans.
+	if len(matchedHealthy) > 0 {
+		return matchedHealthy
+	}
+
+	// Rules matched but all targets are down => fall back to default pool.
+	return list
+}
+
+/* ---------- wheel helpers --------------------------------------------------- */
+
 type weightWheel struct {
 	cumul []uint64 // strictly increasing cumulative weights
 	total uint64
@@ -321,9 +374,9 @@ func buildWheel(list []*backend.Backend) *weightWheel {
 	var sum uint64
 
 	for i, b := range list {
-		w := uint64(b.Weight)
-		if w == 0 {
-			w = 1
+		w := uint64(1)
+		if b != nil && b.Weight > 0 {
+			w = uint64(b.Weight)
 		}
 		sum += w
 		cumul[i] = sum
@@ -356,6 +409,8 @@ func (w *weightWheel) search(target uint64) int {
 	}
 	return i
 }
+
+/* ---------- misc ------------------------------------------------------------ */
 
 // cheap hash (djb2)
 func hashStr(s string) uint64 {

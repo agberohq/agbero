@@ -35,6 +35,7 @@ type Backend struct {
 	startTime    time.Time
 	lastRecovery atomic.Int64 // Unix nano of last time marked alive
 	Weight       int          // Added
+	Cond         *CompiledConditions
 }
 
 func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backend, error) {
@@ -43,10 +44,16 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 		return nil, err
 	}
 
+	cond, err := CompileConditions(cfg.Conditions)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now()
 	b := &Backend{
 		URL:       u,
-		Weight:    cfg.Weight, // Store weight
+		Weight:    cfg.Weight,
+		Cond:      cond,
 		hcConfig:  route.HealthCheck,
 		logger:    logger,
 		stop:      make(chan struct{}),
@@ -91,9 +98,8 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 		req.Header.Set("X-Forwarded-Proto", req.URL.Scheme)
 
 		req.Header.Set("X-Forwarded-Server", woos.Name)
-		req.Header.Add("Via", fmt.Sprintf("1.1 %s", woos.Name)) // (RFC 7230 / RFC 9110)
+		req.Header.Add("Via", fmt.Sprintf("1.1 %s", woos.Name))
 
-		// Hygiene
 		req.Header.Del("Keep-Alive")
 		req.Header.Del("Proxy-Authenticate")
 		req.Header.Del("Proxy-Authorization")
