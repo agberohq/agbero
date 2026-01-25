@@ -75,12 +75,34 @@ func (ci *Installer) SetHosts(hosts []string, port int) {
 func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error) {
 	prefix := ci.certPrefix()
 
+	// FIX: Force default local domains.
+	// We use a map to deduplicate before appending.
+	seen := make(map[string]bool)
+	for _, h := range ci.certHosts {
+		seen[h] = true
+	}
+
+	defaults := []string{
+		"localhost",
+		"*.localhost",
+		"127.0.0.1",
+		"::1",
+		"*.local",
+		"*.agbero",
+	}
+
+	for _, d := range defaults {
+		if !seen[d] {
+			ci.certHosts = append(ci.certHosts, d)
+			seen[d] = true
+		}
+	}
+
 	if cert, key, found := ci.findExistingCerts(prefix); found {
 		ci.logger.Fields("cert", cert, "key", key).Info("Using existing certificates")
 		return cert, key, nil
 	}
 
-	// Ensure our cert storage exists (this is NOT mkcert CAROOT; it’s our own cert cache dir)
 	if err := ci.CertDir.Ensure(woos.Folder(""), true); err != nil {
 		return "", "", fmt.Errorf("failed to ensure cert dir: %w", err)
 	}
@@ -88,7 +110,7 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 	certFile = filepath.Join(ci.CertDir.Path(), fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
 	keyFile = filepath.Join(ci.CertDir.Path(), fmt.Sprintf("%s-%d-key.pem", prefix, ci.port))
 
-	ci.logger.Fields("hosts", ci.certHosts, "cert", certFile).Info("Generating localhost certificates")
+	ci.logger.Fields("hosts", ci.certHosts, "cert", certFile).Info("Generating localhost certificates with expanded wildcards")
 
 	methods := []func() (string, string, error){
 		ci.tryMkcertInPath,
