@@ -96,6 +96,9 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 			return
 		}
 
+		//next.ServeHTTP(w, r)
+		//return
+
 		_, pol, ok := rl.policy(r)
 		if !ok || pol.Requests <= 0 {
 			next.ServeHTTP(w, r)
