@@ -1,13 +1,12 @@
 package handlers
 
 import (
-	"crypto/rand"
-	"encoding/binary"
 	"net/http"
-	"strings"
-	"sync/atomic"
+	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/backend"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/lb"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/web"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/compress"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/headers"
@@ -53,10 +52,7 @@ func NewRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 
 func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 	// Web route doesn't need backends or load balancing
-	chain := &webHandler{
-		route:  route,
-		logger: logger,
-	}
+	chain := web.New(logger, route)
 
 	// Build middleware chain (same as proxy routes)
 	var handler http.Handler = chain
@@ -86,31 +82,31 @@ func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 }
 
 func newProxyRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
-	lb := &LoadBalancer{
-		stripPrefixes: append([]string(nil), route.StripPrefixes...),
-		strategy:      strings.ToLower(strings.TrimSpace(route.Backends.LBStrategy)),
-	}
-
-	if lb.strategy == "" {
-		lb.strategy = alaye.StrategyRoundRobin
-	}
-
-	if route.Timeouts != nil && route.Timeouts.Request != 0 {
-		lb.timeout = route.Timeouts.Request
-	}
+	var backends []*backend.Backend
 
 	for _, backendCfg := range route.Backends.Servers {
 		b, err := backend.NewBackend(backendCfg, route, logger)
 		if err != nil {
-			logger.Fields("backend", backendCfg.Address, "err", err).Error("failed to create backend")
+			logger.Fields("backend", backendCfg.Address, "err", err).
+				Error("failed to create backend")
 			continue
 		}
-		lb.Backends = append(lb.Backends, b)
+		backends = append(backends, b)
 	}
 
-	lb.recalculateTotalWeight()
+	timeout := time.Duration(0)
+	if route.Timeouts != nil && route.Timeouts.Request != 0 {
+		timeout = route.Timeouts.Request
+	}
 
-	var chain http.Handler = lb
+	loadBalancer := lb.NewLoadBalancer(
+		backends,
+		route.Backends.LBStrategy,
+		timeout,
+		route.StripPrefixes,
+	)
+
+	var chain http.Handler = loadBalancer
 
 	if route.BasicAuth != nil && len(route.BasicAuth.Users) > 0 {
 		chain = auth.Basic(route.BasicAuth)(chain)
@@ -118,18 +114,16 @@ func newProxyRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 	if route.ForwardAuth != nil && route.ForwardAuth.URL != "" {
 		chain = auth.Forward(route.ForwardAuth)(chain)
 	}
-
 	if route.Headers != nil {
 		chain = headers.Headers(route.Headers)(chain)
 	}
-
 	if route.CompressionConfig.Compression {
 		chain = compress.Compress(route)(chain)
 	}
 
 	return &RouteHandler{
 		handler:  chain,
-		Backends: lb.Backends,
+		Backends: backends, // for Close() / metrics only
 	}
 }
 
@@ -141,14 +135,4 @@ func (h *RouteHandler) Close() {
 	for _, b := range h.Backends {
 		b.Stop()
 	}
-}
-
-var fallbackRand uint64
-
-func randUint64() uint64 {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err == nil {
-		return binary.LittleEndian.Uint64(b[:])
-	}
-	return atomic.AddUint64(&fallbackRand, 1)
 }

@@ -1,5 +1,4 @@
-// internal/handlers/web.go
-package handlers
+package web
 
 import (
 	_ "embed"
@@ -53,6 +52,8 @@ func init() {
 	}
 }
 
+var mimeCache sync.Map // ext -> type
+
 type dirItem struct {
 	Name    string
 	IsDir   bool
@@ -66,7 +67,12 @@ type webHandler struct {
 	logger *ll.Logger
 }
 
-var mimeCache sync.Map // ext -> type
+func New(logger *ll.Logger, route *alaye.Route) *webHandler {
+	return &webHandler{
+		route:  route,
+		logger: logger,
+	}
+}
 
 func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {

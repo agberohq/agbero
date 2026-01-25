@@ -19,6 +19,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery/gossip"
 	handlers2 "git.imaxinacion.net/aibox/agbero/internal/handlers"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/h3"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
@@ -349,7 +350,7 @@ func (s *Server) startMetricsServer() {
 	mux := http.NewServeMux()
 
 	// The core metrics endpoint (JSON structure with HdrHistogram stats)
-	mux.HandleFunc("/metrics", handlers2.Metrics(s.hostManager))
+	mux.HandleFunc("/metrics", metrics.Metrics(s.hostManager))
 
 	// Simple liveness probe for load balancers (AWS ALB, K8s, etc.)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

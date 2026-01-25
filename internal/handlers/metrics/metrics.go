@@ -1,4 +1,4 @@
-package handlers
+package metrics
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
 
@@ -21,8 +22,6 @@ func Metrics(hm *discovery.Host) http.HandlerFunc {
 		_ = enc.Encode(snapshot)
 	}
 }
-
-// --- Data Structures for JSON Output ---
 
 type SystemSnapshot struct {
 	Timestamp time.Time                `json:"timestamp"`
@@ -84,7 +83,7 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 			// Check cache for active stats
 			if v, ok := woos.RouteCache.Load(route.Key()); ok {
 				item := v.(*woos.RouteCacheItem)
-				handler := item.Handler.(*RouteHandler)
+				handler := item.Handler.(*handlers.RouteHandler)
 
 				for _, b := range handler.Backends {
 					lat := b.Metrics.Snapshot()
