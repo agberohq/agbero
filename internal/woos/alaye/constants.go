@@ -10,11 +10,11 @@ const (
 
 const (
 	StrategyRandom            = "random"
-	StrategyLeastConn         = "leastconn"
+	StrategyLeastConn         = "least_conn"
 	StrategyRoundRobin        = "round_robin"
-	StrategyIPHash            = "iphash"
-	StrategyURLHash           = "urlhash"
-	StrategyWeightedLeastConn = "weighted_leastconn"
+	StrategyIPHash            = "ip_hash"
+	StrategyURLHash           = "url_hash"
+	StrategyWeightedLeastConn = "weighted_least_conn"
 )
 
 // Default Timeouts

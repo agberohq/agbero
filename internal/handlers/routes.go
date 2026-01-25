@@ -25,29 +25,27 @@ type RouteHandler struct {
 
 func NewRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 	if route == nil {
-		logger.Error("nil route")
-		return nil
+		return FallbackRouteHandler("nil route")
 	}
 
-	// Validate route semantics first (web XOR backends, required fields, etc.)
 	if err := route.Validate(); err != nil {
 		logger.Fields("path", route.Path, "err", err).Error("invalid route config")
-		return nil
+		return FallbackRouteHandler("invalid route config")
 	}
 
-	logger.Fields("path", route.Path, "web_root_raw", string(route.Web.Root), "backends", route.Backends).
-		Debug("creating route handler")
-
-	// At this point route.Validate() guaranteed exactly one of these:
-	// - web route with root set
-	// - proxy route with backends set
 	if route.Web.Root.IsSet() {
-		logger.Debug("treating as WEB route")
 		return newWebRouteHandler(route, logger)
 	}
 
-	logger.Debug("treating as PROXY route")
 	return newProxyRouteHandler(route, logger)
+}
+
+func FallbackRouteHandler(msg string) *RouteHandler {
+	return &RouteHandler{
+		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, msg, http.StatusBadGateway)
+		}),
+	}
 }
 
 func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
@@ -128,6 +126,10 @@ func newProxyRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 }
 
 func (h *RouteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h == nil || h.handler == nil {
+		http.Error(w, "route handler not initialized", http.StatusBadGateway)
+		return
+	}
 	h.handler.ServeHTTP(w, r)
 }
 

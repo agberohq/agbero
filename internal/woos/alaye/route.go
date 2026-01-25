@@ -215,13 +215,25 @@ func (r *Route) validateProxyRoute() error {
 
 	// Load balancing strategy validation (if provided)
 	if r.Backends.LBStrategy != "" {
-		r.Backends.LBStrategy = strings.ToLower(r.Backends.LBStrategy)
-		switch r.Backends.LBStrategy {
-		case StrategyRoundRobin, StrategyLeastConn, StrategyRandom:
-			// Valid
+		s := strings.ToLower(strings.TrimSpace(r.Backends.LBStrategy))
+
+		switch s {
+		case StrategyRoundRobin,
+			StrategyLeastConn,
+			StrategyRandom,
+			StrategyIPHash,
+			StrategyURLHash,
+			StrategyWeightedLeastConn:
 		default:
-			return errors.Newf("lb_strategy %q must be one of: %s, %s, %s",
-				r.Backends.LBStrategy, StrategyRoundRobin, StrategyLeastConn, StrategyRandom)
+			return errors.Newf(
+				`lb_strategy %q must be one of: %s, %s, %s, %s, %s`,
+				s,
+				StrategyRoundRobin,
+				StrategyLeastConn,
+				StrategyRandom,
+				StrategyIPHash,
+				StrategyURLHash,
+			)
 		}
 	}
 
