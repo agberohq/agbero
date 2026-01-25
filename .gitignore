@@ -1,9 +1,14 @@
 .idea
 .log
 
+.DS_Store
+all.txt
+cmd/all.txt
+
 bin
 tmp
 lab
 
 server.log
 cmd/agbero/agbero
+
