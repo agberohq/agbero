@@ -25,7 +25,6 @@ const (
 	stWeightedLeastConn
 )
 
-// We only use crypto/rand once per pooled RNG instance (seed).
 var rngPool = sync.Pool{
 	New: func() any {
 		var seed uint64
@@ -34,15 +33,18 @@ var rngPool = sync.Pool{
 	},
 }
 
+// snapshotHolder stores immutable state for the current config generation
+type snapshotHolder struct {
+	backends []*backend.Backend
+	wheel    *weightWheel
+}
+
 type LoadBalancer struct {
-	// immutable after build / config
 	strategy    uint8
 	timeout     time.Duration
 	stripPrefix []string
 
-	// hot path: read-only after UpdateBackends()
-	backends atomic.Value // -> *[]*backend.Backend
-
+	state     atomic.Value // holds *snapshotHolder
 	rrCounter atomic.Uint64
 }
 
@@ -57,24 +59,39 @@ func NewLoadBalancer(backends []*backend.Backend, strategy string, timeout time.
 }
 
 func (lb *LoadBalancer) UpdateBackends(list []*backend.Backend) {
+	// Filter nils and create clean copy
 	cp := make([]*backend.Backend, 0, len(list))
 	for _, b := range list {
-		if b == nil {
-			continue
+		if b != nil {
+			cp = append(cp, b)
 		}
-		cp = append(cp, b)
 	}
-	lb.backends.Store(&cp)
+
+	// Pre-calculate selection wheel
+	wheel := buildWheel(cp)
+
+	lb.state.Store(&snapshotHolder{
+		backends: cp,
+		wheel:    wheel,
+	})
 }
 
+// Snapshot returns a copy of the current backend list (Requested by Metrics)
 func (lb *LoadBalancer) Snapshot() []*backend.Backend {
-	s := lb.mustSnapshot()
-	if len(s) == 0 {
+	holder := lb.getHolder()
+	if holder == nil || len(holder.backends) == 0 {
 		return nil
 	}
-	out := make([]*backend.Backend, len(s))
-	copy(out, s)
-	return out
+	// Return slice directly as it is treated as immutable once stored
+	return holder.backends
+}
+
+func (lb *LoadBalancer) getHolder() *snapshotHolder {
+	val := lb.state.Load()
+	if val == nil {
+		return nil
+	}
+	return val.(*snapshotHolder)
 }
 
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -95,18 +112,39 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (lb *LoadBalancer) PickBackend(r *http.Request) *backend.Backend {
-	list := lb.mustSnapshot()
-	if len(list) == 0 {
+	holder := lb.getHolder()
+	if holder == nil || len(holder.backends) == 0 {
 		return nil
 	}
 
-	// Conditions can narrow the candidate pool.
-	// IMPORTANT: must not break selection indices (wheel must be built on the candidate slice).
-	list = lb.filterByConditions(list, r)
-	if len(list) == 0 {
-		return nil
+	list := holder.backends
+	wheel := holder.wheel
+
+	// Check for conditions (e.g. source IP restrictions)
+	// Optimization: Only scan for conditions if at least one backend has them
+	hasConditions := false
+	for _, b := range list {
+		if b.Cond != nil && b.Cond.HasRules() {
+			hasConditions = true
+			break
+		}
 	}
 
+	if hasConditions {
+		filtered := lb.filterByConditions(list, r)
+		if len(filtered) == 0 {
+			return nil
+		}
+		// If filtering occurred, we must rebuild a temporary wheel or use simple selection
+		if len(filtered) != len(list) {
+			return lb.pickWithList(filtered, buildWheel(filtered), r)
+		}
+	}
+
+	return lb.pickWithList(list, wheel, r)
+}
+
+func (lb *LoadBalancer) pickWithList(list []*backend.Backend, w *weightWheel, r *http.Request) *backend.Backend {
 	if len(list) == 1 {
 		if list[0].Alive.Load() {
 			return list[0]
@@ -116,57 +154,23 @@ func (lb *LoadBalancer) PickBackend(r *http.Request) *backend.Backend {
 
 	switch lb.strategy {
 	case stIPHash:
-		return lb.pickIPHash(list, r)
+		return lb.pickIPHash(list, w, r)
 	case stURLHash:
-		return lb.pickURLHash(list, r)
+		return lb.pickURLHash(list, w, r)
 	case stLeastConn:
 		return lb.pickLeastConn(list)
 	case stRandom:
-		return lb.pickRandom(list)
+		return lb.pickRandom(list, w)
 	case stWeightedLeastConn:
 		return lb.pickWeightedLeastConn(list)
 	default:
-		return lb.pickRoundRobin(list)
+		return lb.pickRoundRobin(list, w)
 	}
 }
 
-/* ---------- strategy parsing ------------------------------------------------ */
-
-func (lb *LoadBalancer) setStrategy(s string) {
-	s = strings.ToLower(strings.TrimSpace(s))
-	switch s {
-	case strings.ToLower(alaye.StrategyIPHash):
-		lb.strategy = stIPHash
-	case strings.ToLower(alaye.StrategyURLHash):
-		lb.strategy = stURLHash
-	case strings.ToLower(alaye.StrategyLeastConn):
-		lb.strategy = stLeastConn
-	case strings.ToLower(alaye.StrategyRandom):
-		lb.strategy = stRandom
-	case strings.ToLower(alaye.StrategyWeightedLeastConn):
-		lb.strategy = stWeightedLeastConn
-	default:
-		lb.strategy = stRoundRobin
-	}
-}
-
-/* ---------- snapshot helpers ------------------------------------------------ */
-
-func (lb *LoadBalancer) mustSnapshot() []*backend.Backend {
-	if v := lb.backends.Load(); v != nil {
-		return *(v.(*[]*backend.Backend))
-	}
-	return nil
-}
-
-/* ---------- pick strategies (SAFE after filtering) -------------------------- */
-
-func (lb *LoadBalancer) pickRoundRobin(list []*backend.Backend) *backend.Backend {
-	// ✅ build wheel on candidate slice (avoids OOR after filterByConditions)
-	w := buildWheel(list)
-
-	// Weighted wheel RR.
-	if w != nil && w.total > 0 {
+func (lb *LoadBalancer) pickRoundRobin(list []*backend.Backend, w *weightWheel) *backend.Backend {
+	// Weighted Round Robin
+	if w != nil && w.total > 0 && len(w.cumul) > 0 {
 		for i := 0; i < len(list); i++ {
 			idx := w.next(lb.rrCounter.Add(1))
 			if idx >= 0 && idx < len(list) && list[idx].Alive.Load() {
@@ -176,7 +180,7 @@ func (lb *LoadBalancer) pickRoundRobin(list []*backend.Backend) *backend.Backend
 		return nil
 	}
 
-	// Fallback: plain RR.
+	// Simple Round Robin (Uniform)
 	start := lb.rrCounter.Add(1)
 	n := uint64(len(list))
 	for i := 0; i < len(list); i++ {
@@ -188,12 +192,9 @@ func (lb *LoadBalancer) pickRoundRobin(list []*backend.Backend) *backend.Backend
 	return nil
 }
 
-func (lb *LoadBalancer) pickRandom(list []*backend.Backend) *backend.Backend {
-	// ✅ build wheel on candidate slice (avoids OOR after filterByConditions)
-	w := buildWheel(list)
-
-	// Treat as uniform if weights are all 1 (wheel total == len(list)).
-	if w == nil || w.total == 0 || w.total == uint64(len(list)) {
+func (lb *LoadBalancer) pickRandom(list []*backend.Backend, w *weightWheel) *backend.Backend {
+	// Uniform Random
+	if w == nil || w.total == 0 || len(w.cumul) == 0 {
 		r := rngPool.Get().(*rng)
 		start := r.Uint64n(uint64(len(list)))
 		rngPool.Put(r)
@@ -208,7 +209,7 @@ func (lb *LoadBalancer) pickRandom(list []*backend.Backend) *backend.Backend {
 		return nil
 	}
 
-	// Weighted: pick by cumulative weights, then bounded scan if chosen is dead.
+	// Weighted Random
 	r := rngPool.Get().(*rng)
 	target := r.Uint64n(w.total)
 	rngPool.Put(r)
@@ -217,6 +218,8 @@ func (lb *LoadBalancer) pickRandom(list []*backend.Backend) *backend.Backend {
 	if idx >= 0 && idx < len(list) && list[idx].Alive.Load() {
 		return list[idx]
 	}
+
+	// Fallback linear scan if weighted pick is dead
 	for i := 1; i < len(list); i++ {
 		j := (idx + i) % len(list)
 		if list[j].Alive.Load() {
@@ -226,43 +229,38 @@ func (lb *LoadBalancer) pickRandom(list []*backend.Backend) *backend.Backend {
 	return nil
 }
 
-func (lb *LoadBalancer) pickIPHash(list []*backend.Backend, r *http.Request) *backend.Backend {
+func (lb *LoadBalancer) pickIPHash(list []*backend.Backend, w *weightWheel, r *http.Request) *backend.Backend {
 	key := clientip.ClientIP(r)
 	if key == "" {
-		return lb.pickRoundRobin(list)
+		return lb.pickRoundRobin(list, w)
 	}
-	return lb.hashPick(list, key)
+	return lb.hashPick(list, w, key)
 }
 
-func (lb *LoadBalancer) pickURLHash(list []*backend.Backend, r *http.Request) *backend.Backend {
+func (lb *LoadBalancer) pickURLHash(list []*backend.Backend, w *weightWheel, r *http.Request) *backend.Backend {
 	key := r.URL.Path
 	if key == "" {
 		key = "/"
 	}
-	return lb.hashPick(list, key)
+	return lb.hashPick(list, w, key)
 }
 
-func (lb *LoadBalancer) hashPick(list []*backend.Backend, key string) *backend.Backend {
+func (lb *LoadBalancer) hashPick(list []*backend.Backend, w *weightWheel, key string) *backend.Backend {
 	h := hashStr(key)
 
-	// ✅ build wheel on candidate slice (avoids OOR after filterByConditions)
-	w := buildWheel(list)
-
-	if w == nil || w.total == 0 || w.total == uint64(len(list)) {
-		// uniform
+	if w == nil || w.total == 0 || len(w.cumul) == 0 {
 		idx := int(h % uint64(len(list)))
 		if list[idx].Alive.Load() {
 			return list[idx]
 		}
-		return lb.pickRandom(list)
+		return lb.pickRandom(list, w)
 	}
 
-	// weighted
 	idx := w.search(h % w.total)
 	if idx >= 0 && idx < len(list) && list[idx].Alive.Load() {
 		return list[idx]
 	}
-	return lb.pickRandom(list)
+	return lb.pickRandom(list, w)
 }
 
 func (lb *LoadBalancer) pickLeastConn(list []*backend.Backend) *backend.Backend {
@@ -283,51 +281,33 @@ func (lb *LoadBalancer) pickLeastConn(list []*backend.Backend) *backend.Backend 
 
 func (lb *LoadBalancer) pickWeightedLeastConn(list []*backend.Backend) *backend.Backend {
 	var best *backend.Backend
-	var bestW uint64
-	var bestC uint64
+	var bestRatio float64 = -1
 
 	for _, b := range list {
 		if b == nil || !b.Alive.Load() {
 			continue
 		}
 
-		w := uint64(b.Weight)
-		if w == 0 {
+		w := float64(b.Weight)
+		if w <= 0 {
 			w = 1
 		}
-		c := uint64(b.InFlight.Load() + 1)
 
-		if best == nil {
-			best, bestW, bestC = b, w, c
-			continue
-		}
+		// Active connections + 1 to avoid division by zero
+		c := float64(b.InFlight.Load() + 1)
 
-		// Compare w/c > bestW/bestC using cross-multiplication:
-		// w*bestC > bestW*c
-		if w*bestC > bestW*c {
-			best, bestW, bestC = b, w, c
+		// We want to minimize Connections / Weight
+		ratio := c / w
+
+		if best == nil || ratio < bestRatio {
+			best = b
+			bestRatio = ratio
 		}
 	}
-
 	return best
 }
 
-/* ---------- conditions ------------------------------------------------------ */
-
-// NOTE: this expects your backend.Backend to expose:
-//   - b.Cond != nil
-//   - b.Cond.HasRules() bool
-//   - b.Cond.Match(*http.Request) bool
-//
-// Production-safe behavior:
-//   - If any backends match rules AND at least one matched backend is healthy => use matched set
-//   - If matches exist but all matched are DOWN => fall back to full pool (avoid accidental 502s)
-//   - If no matches => use full pool
 func (lb *LoadBalancer) filterByConditions(list []*backend.Backend, r *http.Request) []*backend.Backend {
-	if len(list) == 0 {
-		return nil
-	}
-
 	var matched []*backend.Backend
 	var matchedHealthy []*backend.Backend
 
@@ -343,25 +323,36 @@ func (lb *LoadBalancer) filterByConditions(list []*backend.Backend, r *http.Requ
 		}
 	}
 
-	// No rules matched => default pool.
 	if len(matched) == 0 {
 		return list
 	}
-
-	// Rules matched and some are healthy => restrict to matched (healthy or not is handled by pickers).
-	// We prefer the healthy-only slice to reduce scans.
 	if len(matchedHealthy) > 0 {
 		return matchedHealthy
 	}
-
-	// Rules matched but all targets are down => fall back to default pool.
 	return list
 }
 
-/* ---------- wheel helpers --------------------------------------------------- */
+func (lb *LoadBalancer) setStrategy(s string) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	switch s {
+	case strings.ToLower(alaye.StrategyIPHash):
+		lb.strategy = stIPHash
+	case strings.ToLower(alaye.StrategyURLHash):
+		lb.strategy = stURLHash
+	case strings.ToLower(alaye.StrategyLeastConn):
+		lb.strategy = stLeastConn
+	case strings.ToLower(alaye.StrategyRandom):
+		lb.strategy = stRandom
+	case strings.ToLower(alaye.StrategyWeightedLeastConn):
+		lb.strategy = stWeightedLeastConn
+	default:
+		lb.strategy = stRoundRobin
+	}
+}
 
+// Weight Wheel Logic
 type weightWheel struct {
-	cumul []uint64 // strictly increasing cumulative weights
+	cumul []uint64
 	total uint64
 }
 
@@ -369,19 +360,26 @@ func buildWheel(list []*backend.Backend) *weightWheel {
 	if len(list) == 0 {
 		return &weightWheel{}
 	}
-
 	cumul := make([]uint64, len(list))
 	var sum uint64
+	allOne := true
 
 	for i, b := range list {
 		w := uint64(1)
 		if b != nil && b.Weight > 0 {
 			w = uint64(b.Weight)
 		}
+		if w != 1 {
+			allOne = false
+		}
 		sum += w
 		cumul[i] = sum
 	}
 
+	// Optimization: If all weights are 1, return empty cumul to signal uniform distribution
+	if allOne {
+		return &weightWheel{total: sum, cumul: nil}
+	}
 	return &weightWheel{cumul: cumul, total: sum}
 }
 
@@ -389,12 +387,18 @@ func (w *weightWheel) next(counter uint64) int {
 	if w == nil || w.total == 0 {
 		return 0
 	}
+	if len(w.cumul) == 0 {
+		return int(counter % w.total)
+	}
 	target := counter % w.total
 	return w.search(target)
 }
 
 func (w *weightWheel) search(target uint64) int {
-	// lower_bound: first index with cumul[i] > target
+	if len(w.cumul) == 0 {
+		return int(target)
+	}
+
 	i, j := 0, len(w.cumul)
 	for i < j {
 		h := int(uint(i+j) >> 1)
@@ -410,9 +414,6 @@ func (w *weightWheel) search(target uint64) int {
 	return i
 }
 
-/* ---------- misc ------------------------------------------------------------ */
-
-// cheap hash (djb2)
 func hashStr(s string) uint64 {
 	var h uint64 = 5381
 	for i := 0; i < len(s); i++ {
@@ -421,14 +422,12 @@ func hashStr(s string) uint64 {
 	return h
 }
 
-// fast rng (xoshiro256+ style)
 type rng struct {
 	s [4]uint64
 }
 
 func newRng(seed uint64) *rng {
 	var r rng
-	// Simple expansion; good enough for load balancing randomness.
 	r.s[0] = seed
 	r.s[1] = seed*0x9e3779b97f4a7c15 + 0xbf58476d1ce4e5b9
 	r.s[2] = seed ^ 0x94d049bb133111eb
@@ -440,7 +439,6 @@ func (r *rng) Uint64() uint64 {
 	x := r.s[0]
 	y := r.s[3]
 	result := x + y
-
 	y ^= x
 	r.s[0] = rotl(x, 24) ^ y ^ (y << 16)
 	r.s[3] = rotl(y, 37)
