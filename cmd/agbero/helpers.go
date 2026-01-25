@@ -79,7 +79,9 @@ func ensureConfig(path string) error {
 
 	// 1. Write Main Config
 	// Inject hosts_dir into the template (using string representation of Folder constant)
-	content := fmt.Sprintf(configDevTmpl, woos.HostDir.String())
+	content := strings.ReplaceAll(configDevTmpl, "{HOST_DIR}", woos.HostDir.String())
+
+	//ll.Dump(content)
 	if err := os.WriteFile(path, []byte(content), woos.FilePerm); err != nil {
 		return fmt.Errorf("write default config: %w", err)
 	}
@@ -88,7 +90,7 @@ func ensureConfig(path string) error {
 	// We assume relative to config file for dev mode usually
 	hostsDir := baseDir.Join(woos.HostDir.Name())
 
-	if err := hostsDir.Ensure(woos.Folder(""), false); err != nil {
+	if err := hostsDir.Ensure("", false); err != nil {
 		logger.Warnf("failed to create hosts directory: %v", err)
 	} else {
 		// Write Sample Host
@@ -98,7 +100,7 @@ func ensureConfig(path string) error {
 
 	// 3. Create Certs Directory (Secure)
 	certsDir := baseDir.Join(woos.CertDir.Name())
-	if err := certsDir.Ensure(woos.Folder(""), true); err != nil { // true = SecurePerm (0700)
+	if err := certsDir.Ensure("", true); err != nil { // true = SecurePerm (0700)
 		logger.Warnf("failed to create certs directory: %v", err)
 	}
 
@@ -129,7 +131,7 @@ func installDefaults() error {
 	logger.Fields("dir", defaults.HostsDir).Info("creating system directory")
 
 	// Create Hosts Dir
-	if err := defaults.HostsDir.Ensure(woos.Folder(""), false); err != nil {
+	if err := defaults.HostsDir.Ensure("", false); err != nil {
 		return fmt.Errorf("mkdir hosts: %w", err)
 	}
 

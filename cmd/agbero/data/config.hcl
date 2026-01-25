@@ -26,7 +26,7 @@ bind {
 # -------------------------------------------------------------
 storage {
   # Directory containing .hcl files for individual hosts/domains
-  hosts_dir = "./hosts.d"
+  hosts_dir = "{HOST_DIR}"
 
   # Directory where TLS certificates are stored/cached
   certs_dir = "./certs.d"

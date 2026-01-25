@@ -9,7 +9,7 @@ bind {
 
 storage {
   # Hosts directory injected by Agbero install
-  hosts_dir = "%s"
+  hosts_dir = "{HOST_DIR}"
   certs_dir = "./certs.d"
 }
 
