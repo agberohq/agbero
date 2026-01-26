@@ -1,3 +1,4 @@
+// cmd/oppor/worker.go
 package main
 
 import (
@@ -112,6 +113,8 @@ func (w *Worker) makeRequest() {
 	req, err := http.NewRequest(w.Config.Method, target, bodyReader)
 	if err != nil {
 		w.Metrics.Record(time.Since(start), 0, 0, err)
+		// ALWAYS log errors
+		logQueue <- fmt.Sprintf("[Worker %d] ERROR creating request: %v", w.ID, err)
 		return
 	}
 
@@ -140,6 +143,8 @@ func (w *Worker) makeRequest() {
 
 	if err != nil {
 		w.Metrics.Record(latency, 0, 0, err)
+		// ALWAYS log errors
+		logQueue <- fmt.Sprintf("[Worker %d] ERROR: %v", w.ID, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -154,8 +159,8 @@ func (w *Worker) makeRequest() {
 
 	w.Metrics.Record(latency, resp.StatusCode, int64(len(body)), nil)
 
-	// Log if verbose
-	if w.Config.Verbose {
+	// Log if verbose OR if status code is an error
+	if w.Config.Verbose || resp.StatusCode >= 400 {
 		logMsg := fmt.Sprintf("[Worker %d] %s %s - %d (%s) - %v",
 			w.ID, w.Config.Method, target, resp.StatusCode, http.StatusText(resp.StatusCode), latency)
 		logQueue <- logMsg
