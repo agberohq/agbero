@@ -128,8 +128,7 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 	mkcertPath, ok := findMkcertPath()
 	if !ok {
 		return "", "", fmt.Errorf(
-			"mkcert is required for dev TLS but was not found. Install and run 'mkcert -install'. " +
-				"macOS: 'brew install mkcert' then 'mkcert -install'",
+			"mkcert is required for dev TLS but was not found. Install and run 'mkcert -install'. " + "macOS: 'brew install mkcert' then 'mkcert -install'",
 		)
 	}
 
