@@ -96,11 +96,16 @@ func (m *Metrics) Snapshot() MetricsSnapshot {
 		avgLatency = float64(m.TotalLatency.Load()) / float64(success) / 1000.0 // in ms
 	}
 
+	successRate := 0.0
+	if total > 0 {
+		successRate = float64(success) / float64(total) * 100
+	}
+
 	return MetricsSnapshot{
 		TotalRequests:     total,
 		SuccessCount:      success,
 		ErrorCount:        errors,
-		SuccessRate:       float64(success) / float64(total) * 100,
+		SuccessRate:       successRate,
 		AvgLatencyMs:      avgLatency,
 		MinLatencyMs:      float64(m.MinLatency.Load()) / 1000.0,
 		MaxLatencyMs:      float64(m.MaxLatency.Load()) / 1000.0,
