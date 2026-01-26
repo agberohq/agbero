@@ -207,6 +207,7 @@ func listHosts(path string) error {
 
 func welcome() {
 	fmt.Print(bannerTmpl)
+	fmt.Println("\n" + woos.Name + " - " + woos.Description + " v" + woos.Version)
 }
 
 func getExecutableName() string {
@@ -229,7 +230,7 @@ func handleServiceError(err error, cmd string, configPath string) error {
 	exeName := getExecutableName()
 
 	// macOS specific guidance
-	if runtime.GOOS == "darwin" && strings.Contains(errStr, "launchctl") {
+	if runtime.GOOS == woos.Darwin && strings.Contains(errStr, "launchctl") {
 		if strings.Contains(errStr, "Expecting a LaunchAgents path") {
 			return fmt.Errorf(`%s
 
@@ -308,7 +309,7 @@ func showHelpExamples(configPath string) {
 	fmt.Printf("  %s gossip status --config \"%s\"\n", exeName, configPath)
 	fmt.Println("")
 
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == woos.Darwin {
 		fmt.Println("macOS SERVICE:")
 		fmt.Printf("  sudo %s install --config \"%s\"\n", exeName, configPath)
 		fmt.Printf("  sudo %s start --config \"%s\"\n", exeName, configPath)

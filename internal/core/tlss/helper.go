@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/olekukonko/ll"
 )
 
@@ -143,13 +144,13 @@ func IsMkcertRootPresent(mkcertPath string) bool {
 // This function is a best-effort trust check.
 func IsCARootInstalled() bool {
 	switch runtime.GOOS {
-	case "darwin":
+	case woos.Darwin:
 		// "mkcert development CA" is the usual subject label.
 		// Query system keychain for that exact label.
 		cmd := exec.Command("security", "find-certificate", "-c", "mkcert development CA")
 		return cmd.Run() == nil
 
-	case "linux":
+	case woos.Linux:
 		// Linux is distro-dependent. We check common trust store paths.
 		paths := []string{
 			"/etc/ssl/certs/mkcert-root.pem",
@@ -163,7 +164,7 @@ func IsCARootInstalled() bool {
 		}
 		return false
 
-	case "windows":
+	case woos.Windows:
 		// Check both LocalMachine and CurrentUser Root stores (because mkcert can install to user).
 		ps := `
 $found = $false

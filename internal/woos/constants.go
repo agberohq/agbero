@@ -2,7 +2,8 @@ package woos
 
 const (
 	Name        = "agbero"
-	Description = "Production reverse proxy automatic Tls. "
+	Display     = "agbero proxy"
+	Description = "High-performance reverse proxy / load balancer with Tls"
 )
 
 const (
@@ -41,4 +42,10 @@ const (
 
 const (
 	DefaultConfigName = "agbero.hcl"
+)
+
+const (
+	Darwin  = "darwin"
+	Linux   = "linux"
+	Windows = "windows"
 )

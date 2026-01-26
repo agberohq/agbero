@@ -67,7 +67,12 @@ func (h *Victoria) Handle(e *lx.Entry) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	resp, err := h.client.Post(h.url, "application/json", bytes.NewReader(data))
+	victoriaURL := fmt.Sprintf("%s/insert/jsonline?"+
+		"_msg_field=msg"+
+		"&_time_field=ts"+
+		"&_stream_fields=app,env,level,ns,host", h.url)
+
+	resp, err := h.client.Post(victoriaURL, "application/json", bytes.NewReader(data))
 	if err != nil {
 		return err
 	}

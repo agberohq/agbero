@@ -37,6 +37,9 @@ storage {
 
   # Directory where TLS certificates are stored/cached
   certs_dir = "./certs.d"
+
+  # Data directory used for Firewall, etc.
+  data_dir = "./data.d"
 }
 
 # -------------------------------------------------------------
@@ -47,14 +50,14 @@ logging {
   level = "info"
 
   # Optional JSON log file
-  # file = "/var/log/agbero.log"
+  # file = "./agbero.log"
 
   # VictoriaLogs Integration (Optional)
-  victoria {
-    enabled    = false
-    url        = "http://victoria-logs:9428/insert/jsonline"
-    batch_size = 500
-  }
+  # victoria {
+  #   enabled    = false
+  #   url        = "http://localhost:9428"
+  #   batch_size = 500
+  # }
 }
 
 # -------------------------------------------------------------

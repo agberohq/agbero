@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -176,9 +177,9 @@ func main() {
 	// --- Service Configuration ---
 	// Define base config. We will tweak this based on Install mode or Platform.
 	svcConfig := &service.Config{
-		Name:        "agbero",
-		DisplayName: "Agbero Proxy",
-		Description: "High-performance reverse proxy",
+		Name:        woos.Name,
+		DisplayName: woos.Display,
+		Description: woos.Description,
 		Arguments:   []string{"run", "-c", resolvedPath}, // Default to resolved path
 	}
 
@@ -187,13 +188,30 @@ func main() {
 	}
 
 	// Default macOS behavior (Try to detect if root)
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == woos.Darwin {
 		if os.Geteuid() == 0 {
+			// Root User -> System Daemon
 			svcConfig.Option = service.KeyValue{"RunAtLoad": true, "SessionType": "System"}
 		} else {
-			// If not root, prepare for User Agent, but name needs to include domain usually
-			svcConfig.Name = "net.imaxinacion.agbero"
-			svcConfig.Option = service.KeyValue{"RunAtLoad": true} // Removed SessionCreate for generic safety
+			// Non-Root -> User Agent
+			// We must ensure this matches the logic used in the Install block below
+			svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
+
+			cwd, _ := os.Getwd()
+			configDir := filepath.Dir(resolvedPath)
+
+			// If the config is in the current directory, assume it's the "dev" service
+			if configDir == cwd {
+				svcConfig.Name = "net.imaxinacion.agbero.dev"
+			} else {
+				// Otherwise assume it's the standard user service (~/.config/...)
+				svcConfig.Name = "net.imaxinacion.agbero"
+			}
+		}
+	} else if runtime.GOOS == woos.Linux {
+		// Linux systemd user service support
+		if os.Geteuid() != 0 {
+			svcConfig.Option = service.KeyValue{"UserService": true}
 		}
 	}
 
@@ -217,9 +235,9 @@ func main() {
 			userHome, _ := os.UserHomeDir()
 			cwd, _ := os.Getwd()
 
-			sysConfig := "/etc/agbero/agbero.hcl"
-			userConfig := filepath.Join(userHome, ".config", "agbero", "agbero.hcl")
-			cwdConfig := filepath.Join(cwd, "agbero.hcl")
+			sysConfig := fmt.Sprintf("/etc/agbero/%s", woos.DefaultConfigName)
+			userConfig := filepath.Join(userHome, ".config", "agbero", woos.DefaultConfigName)
+			cwdConfig := filepath.Join(cwd, woos.DefaultConfigName)
 
 			form := huh.NewForm(
 				huh.NewGroup(
@@ -252,7 +270,7 @@ func main() {
 				targetHostsDir = filepath.Join(userHome, ".config", "agbero", "hosts.d")
 
 				// Fix Service Config for User Mode
-				if runtime.GOOS == "darwin" {
+				if runtime.GOOS == woos.Darwin {
 					svcConfig.Name = "net.imaxinacion.agbero"
 					svcConfig.Option = service.KeyValue{
 						"RunAtLoad":   true,
@@ -268,7 +286,7 @@ func main() {
 				targetConfigPath = cwdConfig
 				targetHostsDir = filepath.Join(cwd, "hosts.d")
 				// CWD is usually for testing, behaves like User mode generally
-				if runtime.GOOS == "darwin" {
+				if runtime.GOOS == woos.Darwin {
 					svcConfig.Name = "net.imaxinacion.agbero.dev"
 					svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
 				}
@@ -335,7 +353,7 @@ func main() {
 	if cmdUninstall.Used {
 		logger.Info("Uninstalling service...")
 		// On macOS, we need the correct Name to uninstall properly
-		if runtime.GOOS == "darwin" && os.Geteuid() != 0 {
+		if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
 			svcConfig.Name = "net.imaxinacion.agbero"
 		}
 		// Re-init service just in case
