@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"github.com/charmbracelet/huh"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/ll"
@@ -44,7 +46,7 @@ var (
 )
 
 func main() {
-	// 1) BOOTSTRAP LOGGER: simple terminal logger for CLI ops until config is loaded
+	// 1) BOOTSTRAP LOGGER
 	logger = ll.New(woos.Name,
 		ll.WithHandler(lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(true))),
 		ll.WithFatalExits(true),
@@ -122,105 +124,200 @@ func main() {
 	welcome()
 
 	// --- Config Resolution ---
+	// DO NOT overwrite configPath here yet, or we lose the user's intent.
+	// We calculate resolvedPath but only use it for commands that need it immediately.
 	resolvedPath, exists := resolveConfigPath(configPath)
-	if configPath != "" && !exists {
+
+	// If user explicitly passed a path that doesn't exist, fail early (except for install/init)
+	if configPath != "" && !exists && !cmdInstall.Used {
 		logger.Fatal("Config file not found: ", configPath)
 	}
-	configPath = resolvedPath
 
-	// IMPORTANT:
-	// main should not do manual CAROOT manipulation.
-	// tlss is the single source of truth for service env bootstrapping.
+	// Bootstrap TLS Env
 	if err := tlss.BootstrapEnv(logger); err != nil {
 		logger.Warnf("TLS env bootstrap: %v", err)
 	}
 
-	// --- Handle Simple Commands (No full config load needed) ---
+	// --- Handle Commands that don't need Service Context ---
 	if cmdHelp.Used {
-		showHelpExamples(configPath)
+		showHelpExamples(resolvedPath)
 		return
 	}
-
 	if cmdGossip.Used {
 		handleGossipCommands(cmdGossipInit.Used, cmdGossipToken.Used, cmdGossipStatus.Used)
 		return
 	}
-
 	if cmdCert.Used {
+		// Cert commands might need config to find cert dir
+		configPath = resolvedPath
 		handleCertCommands(cmdInstallCA.Used, cmdListCerts.Used, cmdCertInfo.Used)
 		return
 	}
-
 	if cmdKey.Used {
+		configPath = resolvedPath
 		handleKeyCommands(cmdKeyInit.Used, cmdKeyGen.Used)
 		return
 	}
-
-	// --- Handle Utility Commands ---
 	if cmdValidate.Used {
 		logger.Info("Validating configuration...")
-		if err := validateConfig(configPath); err != nil {
+		if err := validateConfig(resolvedPath); err != nil {
 			logger.Fatal("Configuration validation failed: ", err)
 		}
 		return
 	}
-
 	if cmdHosts.Used {
 		logger.Info("Listing configured hosts...")
-		if err := listHosts(configPath); err != nil {
+		if err := listHosts(resolvedPath); err != nil {
 			logger.Fatal("Failed to list hosts: ", err)
 		}
 		return
 	}
 
-	// --- Setup Service Context ---
+	// --- Service Configuration ---
+	// Define base config. We will tweak this based on Install mode or Platform.
 	svcConfig := &service.Config{
 		Name:        "agbero",
 		DisplayName: "Agbero Proxy",
 		Description: "High-performance reverse proxy",
-		Arguments:   []string{"run", "-c", configPath},
+		Arguments:   []string{"run", "-c", resolvedPath}, // Default to resolved path
 	}
 
 	if devMode {
 		svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
 	}
 
+	// Default macOS behavior (Try to detect if root)
 	if runtime.GOOS == "darwin" {
 		if os.Geteuid() == 0 {
 			svcConfig.Option = service.KeyValue{"RunAtLoad": true, "SessionType": "System"}
 		} else {
+			// If not root, prepare for User Agent, but name needs to include domain usually
 			svcConfig.Name = "net.imaxinacion.agbero"
-			svcConfig.Option = service.KeyValue{"RunAtLoad": true, "SessionCreate": true}
+			svcConfig.Option = service.KeyValue{"RunAtLoad": true} // Removed SessionCreate for generic safety
 		}
 	}
 
 	prg := &program{
-		configPath: configPath,
+		configPath: resolvedPath, // Default
 		devMode:    devMode,
 	}
 
+	// --- Handle Install (Interactive) ---
+	if cmdInstall.Used {
+		var targetConfigPath string
+		var targetHostsDir string
+		var installType string
+
+		// If user provided flag, trust it
+		if configPath != "" {
+			targetConfigPath = configPath
+			targetHostsDir = filepath.Join(filepath.Dir(configPath), "hosts.d")
+		} else {
+			// Interactive Form
+			userHome, _ := os.UserHomeDir()
+			cwd, _ := os.Getwd()
+
+			sysConfig := "/etc/agbero/agbero.hcl"
+			userConfig := filepath.Join(userHome, ".config", "agbero", "agbero.hcl")
+			cwdConfig := filepath.Join(cwd, "agbero.hcl")
+
+			form := huh.NewForm(
+				huh.NewGroup(
+					huh.NewSelect[string]().
+						Title("Where should Agbero be installed?").
+						Description("Select the configuration location for the service.").
+						Options(
+							huh.NewOption("System (/etc/agbero) - Requires Sudo", "system"),
+							huh.NewOption("User (~/.config/agbero) - No Sudo", "user"),
+							huh.NewOption("Current Directory - Testing", "cwd"),
+						).
+						Value(&installType),
+				),
+			)
+
+			if err := form.Run(); err != nil {
+				logger.Fatal("Installation cancelled")
+			}
+
+			switch installType {
+			case "system":
+				if os.Geteuid() != 0 {
+					logger.Fatal("⚠ System installation requires root privileges.\nPlease run: sudo agbero install")
+				}
+				targetConfigPath = sysConfig
+				targetHostsDir = filepath.Join("/etc/agbero", "hosts.d")
+				// Service Config is already defaulted to System for root
+			case "user":
+				targetConfigPath = userConfig
+				targetHostsDir = filepath.Join(userHome, ".config", "agbero", "hosts.d")
+
+				// Fix Service Config for User Mode
+				if runtime.GOOS == "darwin" {
+					svcConfig.Name = "net.imaxinacion.agbero"
+					svcConfig.Option = service.KeyValue{
+						"RunAtLoad":   true,
+						"UserService": true, // Force User Service
+					}
+				} else {
+					// Linux User Mode (systemd user)
+					svcConfig.Option = service.KeyValue{
+						"UserService": true,
+					}
+				}
+			case "cwd":
+				targetConfigPath = cwdConfig
+				targetHostsDir = filepath.Join(cwd, "hosts.d")
+				// CWD is usually for testing, behaves like User mode generally
+				if runtime.GOOS == "darwin" {
+					svcConfig.Name = "net.imaxinacion.agbero.dev"
+					svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
+				}
+			}
+		}
+
+		logger.Info("Installing service...")
+
+		// 1. Install Files
+		if err := installDefaults(targetConfigPath, targetHostsDir); err != nil {
+			logger.Fatal("Failed to setup config files: ", err)
+		}
+
+		// 2. Update Service Args to point to new config
+		svcConfig.Arguments = []string{"run", "-c", targetConfigPath}
+		if devMode {
+			svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
+		}
+
+		// 3. Create Service Instance with updated config
+		s, err := service.New(prg, svcConfig)
+		if err != nil {
+			logger.Fatal("Failed to init service: ", err)
+		}
+
+		// 4. Install
+		if err := s.Install(); err != nil {
+			logger.Fatal(handleServiceError(err, "install", targetConfigPath))
+		}
+
+		logger.Fields("config", targetConfigPath).Info("Service installed successfully")
+
+		if runtime.GOOS == "linux" && installType == "user" {
+			logger.Info("To start: systemctl --user start agbero")
+		}
+		return
+	}
+
+	// --- Initialize Service for other commands ---
+	// We use the resolved path for Start/Stop/Run logic
 	s, err := service.New(prg, svcConfig)
 	if err != nil {
 		logger.Fatal("Failed to create service: ", err)
 	}
 
-	// --- Handle Service Commands ---
-	if cmdInstall.Used {
-		logger.Info("Installing service...")
-		if err := installDefaults(); err != nil {
-			logger.Fatal("Failed to setup defaults: ", err)
-		}
-		if err := s.Install(); err != nil {
-			logger.Fatal(handleServiceError(err, "install", configPath))
-		}
-		logger.Info("Service installed successfully")
-		return
-	}
-
 	if cmdStart.Used {
 		logger.Info("Starting service...")
 		if err := s.Start(); err != nil {
-			logger.Fatal(handleServiceError(err, "start", configPath))
+			logger.Fatal(handleServiceError(err, "start", resolvedPath))
 		}
 		logger.Info("Service started")
 		return
@@ -229,7 +326,7 @@ func main() {
 	if cmdStop.Used {
 		logger.Info("Stopping service...")
 		if err := s.Stop(); err != nil {
-			logger.Fatal(handleServiceError(err, "stop", configPath))
+			logger.Fatal(handleServiceError(err, "stop", resolvedPath))
 		}
 		logger.Info("Service stopped")
 		return
@@ -237,8 +334,14 @@ func main() {
 
 	if cmdUninstall.Used {
 		logger.Info("Uninstalling service...")
-		if err := s.Uninstall(); err != nil {
-			logger.Fatal(handleServiceError(err, "uninstall", configPath))
+		// On macOS, we need the correct Name to uninstall properly
+		if runtime.GOOS == "darwin" && os.Geteuid() != 0 {
+			svcConfig.Name = "net.imaxinacion.agbero"
+		}
+		// Re-init service just in case
+		sUnix, _ := service.New(prg, svcConfig)
+		if err := sUnix.Uninstall(); err != nil {
+			logger.Fatal(handleServiceError(err, "uninstall", resolvedPath))
 		}
 		logger.Info("Service uninstalled")
 		return
@@ -246,27 +349,27 @@ func main() {
 
 	// --- RUN SERVER ---
 	if cmdRun.Used {
-		// 1) Ensure Config Exists
+		// For run, we rely on resolvedPath being correct
+		configPath = resolvedPath
+
 		if err := ensureConfig(configPath); err != nil {
 			logger.Fatal("Failed to generate configuration: ", err)
 		}
 
-		// 2) Load Config
 		global, err := loadConfig(configPath)
 		if err != nil {
 			logger.Fatal("Failed to load config: ", err)
 		}
 
-		// 3) UPGRADE LOGGER (Apply File/VictoriaLogs config)
+		// Upgrade Logger
 		newLogger, cleanup, err := logging.Setup(global.Logging, devMode)
 		if err != nil {
-			logger.Warn("Failed to setup advanced logging, using terminal only: ", err)
+			logger.Warn("Failed to setup advanced logging: ", err)
 		} else {
 			logger = newLogger
-			defer cleanup() // flush buffers on exit
+			defer cleanup()
 		}
 
-		// 4) Auto-Install CA (using upgraded global logger)
 		checkAndInstallCA(global)
 
 		logger.Info("Running in interactive mode. Press Ctrl+C to stop.")
@@ -275,7 +378,6 @@ func main() {
 			logger.Warn("Development mode enabled")
 		}
 
-		// Silence kardianos/service internal logging if not needed
 		if !service.Interactive() {
 			errs := make(chan error, 5)
 			_, _ = s.Logger(errs)
@@ -293,7 +395,7 @@ func main() {
 		return
 	}
 
-	showHelpExamples(configPath)
+	showHelpExamples(resolvedPath)
 }
 
 // checkAndInstallCA checks if HTTPS is enabled and installs CA root if missing.

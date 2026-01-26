@@ -1,4 +1,3 @@
-# Makefile
 APP_NAME := agbero
 BUILD_DIR := bin
 SRC_DIR := ./cmd/agbero
@@ -6,22 +5,47 @@ SRC_DIR := ./cmd/agbero
 # Git remote for pushing tags
 REMOTE ?= origin
 
-# Release version for tagging and GoReleaser (set explicitly)
-# Example:
-#   make release RELEASE_VERSION=0.0.2
+# --------------------------
+# Install Configuration
+# --------------------------
+
+# 1. Detect Go Bin path via 'go env' (more reliable than shell env)
+GO_ENV_GOPATH := $(shell go env GOPATH)
+GO_ENV_GOBIN  := $(shell go env GOBIN)
+
+# 2. Determine BINDIR (Installation Directory)
+# Logic:
+#   A. If PREFIX is explicitly set (make install PREFIX=/usr/local), use $(PREFIX)/bin.
+#   B. Else if GOBIN is set (go env GOBIN), use that.
+#   C. Else if GOPATH is set (go env GOPATH), use $(GOPATH)/bin.
+#   D. Fallback to /usr/local/bin.
+
+ifdef PREFIX
+	BINDIR := $(PREFIX)/bin
+else
+	ifneq ($(GO_ENV_GOBIN),)
+		BINDIR := $(GO_ENV_GOBIN)
+	else ifneq ($(GO_ENV_GOPATH),)
+		BINDIR := $(GO_ENV_GOPATH)/bin
+	else
+		BINDIR := /usr/local/bin
+	endif
+endif
+
+# Release version for tagging and GoReleaser
 RELEASE_VERSION ?=
 
-# Version variables (will be injected via ldflags)
+# Version variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# LDFLAGS for version injection (matches GoReleaser)
+# LDFLAGS for version injection
 LDFLAGS := -s -w -X "git.imaxinacion.net/aibox/agbero/internal/woos.Version=$(VERSION)" \
            -X "git.imaxinacion.net/aibox/agbero/internal/woos.Commit=$(COMMIT)" \
            -X "git.imaxinacion.net/aibox/agbero/internal/woos.Date=$(DATE)"
 
-.PHONY: all build clean run install-deps build-all version help \
+.PHONY: all build clean run install build-all version help \
         deps test test-verbose fmt lint tidy snapshot goreleaser-check changelog dev update-deps \
         ensure-clean ensure-release-version tag release release-dry
 
@@ -31,6 +55,8 @@ help:
 	@echo "Available targets:"
 	@echo "  all            - Alias for 'build'"
 	@echo "  build          - Build for current OS with version injection"
+	@echo "  install        - Install binary to $(BINDIR)"
+	@echo "                   (Use 'make install PREFIX=/usr/local' to force system install)"
 	@echo "  run            - Run interactively (Development helper)"
 	@echo "  clean          - Clean build artifacts"
 	@echo "  build-all      - Cross-compile for all platforms"
@@ -71,6 +97,13 @@ build:
 	go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME) $(SRC_DIR)
 	@echo "Done! Binary is in $(BUILD_DIR)/$(APP_NAME)"
 	@$(BUILD_DIR)/$(APP_NAME) --version
+
+# Install to BINDIR (Autodetected GOPATH or Custom PREFIX)
+install: build
+	@echo "Installing binary to $(DESTDIR)$(BINDIR)..."
+	@mkdir -p $(DESTDIR)$(BINDIR)
+	@install -m 755 $(BUILD_DIR)/$(APP_NAME) $(DESTDIR)$(BINDIR)/$(APP_NAME)
+	@echo "Installation complete."
 
 # Run interactively (Development helper)
 run:
@@ -137,7 +170,6 @@ tidy:
 	go mod tidy
 
 # Special target for GoReleaser snapshot builds
-# This matches GoReleaser's behavior for local testing
 snapshot:
 	@echo "Building snapshot release..."
 	VERSION=$(VERSION)-SNAPSHOT $(MAKE) build-all
@@ -150,7 +182,7 @@ goreleaser-check:
 	@echo "Dry-run GoReleaser build..."
 	goreleaser release --snapshot --clean --skip=publish
 
-# Generate changelog (optional, if you have git-chglog)
+# Generate changelog
 changelog:
 	git-chglog -o CHANGELOG.md
 
@@ -187,7 +219,6 @@ tag: ensure-clean ensure-release-version
 	@echo "Creating tag $(RELEASE_VERSION) at HEAD $$(git rev-parse --short HEAD)"
 	@git tag -a $(RELEASE_VERSION) -m "v$(RELEASE_VERSION)"
 	@git push $(REMOTE) $(RELEASE_VERSION)
-
 
 release: tag
 	@echo "Running GoReleaser for $(RELEASE_VERSION)..."

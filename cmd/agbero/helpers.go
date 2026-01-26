@@ -124,24 +124,32 @@ func loadConfig(path string) (*alaye.Global, error) {
 	return global, nil
 }
 
-func installDefaults() error {
-	defaults := woos.DefaultPaths()
+// Update the signature to accept paths
+func installDefaults(configFile, hostsDir string) error {
+	// 1. Create Hosts Directory
+	// We use woos.NewFolder to handle the creation logic cleanly
+	hDir := woos.NewFolder(hostsDir)
 
-	logger.Fields("dir", defaults.HostsDir).Info("creating system directory")
-
-	// Create Hosts Dir
-	if err := defaults.HostsDir.Ensure("", false); err != nil {
+	logger.Fields("dir", hostsDir).Info("creating configuration directory")
+	if err := hDir.Ensure("", false); err != nil {
 		return fmt.Errorf("mkdir hosts: %w", err)
 	}
 
-	// Check/Create Config File
-	if _, err := os.Stat(defaults.ConfigFile); os.IsNotExist(err) {
-		logger.Fields("file", defaults.ConfigFile).Info("writing default system config")
+	// 2. Check/Create Config File
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		logger.Fields("file", configFile).Info("writing default config")
 
-		// Use relative notation for system config template usually
-		content := strings.ReplaceAll(configTmpl, "{HOST_DIR}", woos.HostDir.String())
+		// Calculate relative path for template if possible, otherwise use absolute
+		// For the template, we want the hosts_dir string to be injected
+		content := strings.ReplaceAll(configTmpl, "{HOST_DIR}", hostsDir)
 
-		if err := os.WriteFile(defaults.ConfigFile, []byte(content), woos.FilePerm); err != nil {
+		// Create parent dir for config file if it doesn't exist
+		configDir := filepath.Dir(configFile)
+		if err := os.MkdirAll(configDir, 0755); err != nil {
+			return fmt.Errorf("mkdir config parent: %w", err)
+		}
+
+		if err := os.WriteFile(configFile, []byte(content), woos.FilePerm); err != nil {
 			return fmt.Errorf("write config: %w", err)
 		}
 	}

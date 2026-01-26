@@ -548,7 +548,6 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 
 	fields := []interface{}{
 		"host", host,
-		"method", r.Method,
 		"path", r.URL.Path,
 		"remote", clientip.ClientIP(r),
 		"duration", time.Since(start),
@@ -565,7 +564,7 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 		fields = append(fields, "ua", truncateUA(r.UserAgent(), 50))
 	}
 
-	s.logger.Fields(fields...).Info("request")
+	s.logger.Fields(fields...).Info(r.Method)
 }
 
 func (s *Server) shouldLogUserAgent(r *http.Request) bool {
