@@ -1,65 +1,75 @@
-// model.go
+// cmd/oppor/model.go
 package main
 
 import (
 	"fmt"
 	"math"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// ---------- Styles (keep in THIS file so they exist) ----------
+// --- Color Palette & Styles ---
 
 var (
-	styleTopBar = lipgloss.NewStyle().
+	subtle    = lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}
+	highlight = lipgloss.AdaptiveColor{Light: "#874BFD", Dark: "#7D56F4"}
+	special   = lipgloss.AdaptiveColor{Light: "#43BF6D", Dark: "#73F59F"}
+	warning   = lipgloss.AdaptiveColor{Light: "#F25D94", Dark: "#F55385"}
+	text      = lipgloss.AdaptiveColor{Light: "#333333", Dark: "#EEEEEE"}
+
+	// Gradients for latency
+	gradGreen  = lipgloss.Color("#04B575")
+	gradYellow = lipgloss.Color("#FFFF00")
+	gradRed    = lipgloss.Color("#FF0000")
+
+	styleBase = lipgloss.NewStyle().
+			Foreground(text)
+
+	styleBorder = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(highlight).
+			Padding(0, 1)
+
+	styleTitle = lipgloss.NewStyle().
+			Foreground(special).
+			Bold(true).
 			Padding(0, 1).
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderBottom(true)
+			Background(lipgloss.Color("#1a1a1a")).
+			MarginBottom(1)
 
-	stylePanel = lipgloss.NewStyle().
+	styleStatBox = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(subtle).
 			Padding(0, 1).
-			BorderStyle(lipgloss.RoundedBorder())
+			Width(22)
 
-	stylePanelTitle = lipgloss.NewStyle().
-			Bold(true)
+	styleStatLabel = lipgloss.NewStyle().
+			Foreground(subtle).
+			Faint(true)
 
-	styleMuted = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245"))
-
-	styleGood = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("42"))
-
-	styleBad = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196"))
-
-	styleWarn = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214"))
+	styleStatValue = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(text).
+			Padding(1, 0, 0, 0) // Fixed: Capitalized Padding
 )
-
-// ---------- Bubble Tea Messages ----------
 
 type Model struct {
 	Config    Config
 	Metrics   *Metrics
 	Running   bool
 	StartTime time.Time
-	Duration  time.Duration
 
 	// UI Components
-	Progress    progress.Model
-	Spinner     spinner.Model
-	MetricsView viewport.Model
-	LogView     viewport.Model
-	Table       table.Model
+	Progress progress.Model
+	Spinner  spinner.Model
+	LogView  viewport.Model
 
 	// Data
 	Logs       []string
@@ -68,75 +78,32 @@ type Model struct {
 	Height     int
 
 	// Control
-	Quit bool
-
-	// External metrics from Agbero
+	Quit          bool
 	AgberoMetrics map[string]interface{}
 
-	// For progress tracking
+	// Progress tracking
 	TotalRequests     uint64
 	CompletedRequests uint64
 
-	// Channel for sending messages from goroutines
 	msgChan chan tea.Msg
 }
 
 func NewModel(cfg Config) Model {
-	// Progress bar
-	prog := progress.New(progress.WithDefaultGradient())
-	prog.Width = 40
-
-	// Spinner
-	spin := spinner.New()
-	spin.Spinner = spinner.Dot
-
-	// Metrics view
-	metricsView := viewport.New(80, 12)
-	metricsView.Style = lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62")).
-		Padding(0, 1)
-
-	// Log view
-	logView := viewport.New(80, 10)
-	logView.Style = lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("241")).
-		Padding(0, 1)
-
-	// Table (kept for future / optional)
-	columns := []table.Column{
-		{Title: "Latency Range", Width: 15},
-		{Title: "Count", Width: 10},
-		{Title: "Percentage", Width: 15},
-	}
-	rows := make([]table.Row, 10)
-	ranges := []string{
-		"< 10ms", "10-50ms", "50-100ms", "100-250ms",
-		"250-500ms", "500ms-1s", "1-2s", "2-5s",
-		"5-10s", "> 10s",
-	}
-	for i, r := range ranges {
-		rows[i] = table.Row{r, "0", "0%"}
-	}
-
-	t := table.New(
-		table.WithColumns(columns),
-		table.WithRows(rows),
-		table.WithFocused(false),
-		table.WithHeight(12),
+	// Styled Progress Bar
+	prog := progress.New(
+		progress.WithDefaultGradient(),
+		progress.WithWidth(40),
+		progress.WithoutPercentage(),
 	)
-	s := table.DefaultStyles()
-	s.Header = s.Header.
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		BorderBottom(true).
-		Bold(false)
-	s.Selected = s.Selected.
-		Foreground(lipgloss.Color("229")).
-		Background(lipgloss.Color("57")).
-		Bold(false)
-	t.SetStyles(s)
+
+	// Styled Spinner
+	spin := spinner.New()
+	spin.Spinner = spinner.Pulse
+	spin.Style = lipgloss.NewStyle().Foreground(special)
+
+	// Logs Viewport
+	logView := viewport.New(80, 10)
+	logView.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#a0a0a0"))
 
 	return Model{
 		Config:        cfg,
@@ -145,9 +112,7 @@ func NewModel(cfg Config) Model {
 		StartTime:     time.Now(),
 		Progress:      prog,
 		Spinner:       spin,
-		MetricsView:   metricsView,
 		LogView:       logView,
-		Table:         t,
 		Logs:          []string{},
 		LastUpdate:    time.Now(),
 		msgChan:       make(chan tea.Msg, 1000),
@@ -160,14 +125,12 @@ func (m Model) Init() tea.Cmd {
 		m.Spinner.Tick,
 		m.startLoadTest(),
 		m.listenForMessages(),
-		updateMetricsAfter(200*time.Millisecond),
+		updateMetricsAfter(100*time.Millisecond),
 		fetchAgberoMetrics(m.Config.MetricsURL),
 	)
 }
 
-// IMPORTANT: stays open after DONE (until 'q')
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Always keep listening for goroutine messages.
 	cmds := []tea.Cmd{m.listenForMessages()}
 
 	switch msg := msg.(type) {
@@ -176,34 +139,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.Quit = true
 			return m, tea.Quit
-
 		case "up", "k":
-			m.MetricsView.LineUp(1)
 			m.LogView.LineUp(1)
-
 		case "down", "j":
-			m.MetricsView.LineDown(1)
 			m.LogView.LineDown(1)
-
-		case "r", "R":
-			if m.Config.MetricsURL != "" {
-				cmds = append(cmds, fetchAgberoMetrics(m.Config.MetricsURL))
-			}
 		}
 
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
-
-		// We'll also resize in View(), but keep sane defaults here
-		m.MetricsView.Width = msg.Width - 4
-		m.MetricsView.Height = 12
-
-		m.LogView.Width = msg.Width - 4
-		m.LogView.Height = max(6, msg.Height-20)
-
-		m.Progress.Width = min(40, msg.Width-10)
-		m.Table.SetWidth(msg.Width - 4)
+		m.LogView.Width = msg.Width - 6
+		m.Progress.Width = msg.Width - 10
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -212,25 +158,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case progressMsg:
 		m.CompletedRequests = msg.completed
-
 		if msg.total > 0 {
 			m.Progress.SetPercent(float64(msg.completed) / float64(msg.total))
 		}
-
-		// Done: do NOT quit; stay open
 		if msg.done {
 			m.Running = false
-			m.Progress.SetPercent(1.0) // force 100% on completion
+			m.Progress.SetPercent(1.0)
 		}
 
 	case metricsMsg:
 		m.LastUpdate = time.Now()
-
 		snap := m.Metrics.Snapshot()
-		m.updateMetricsView(snap)
-		m.updateLatencyTable()
-
-		// Stop conditions: mark done only; do NOT quit
+		// Auto-stop checks
 		if m.Config.Duration > 0 && time.Since(m.StartTime) >= m.Config.Duration {
 			m.Running = false
 			if m.Config.Requests > 0 {
@@ -241,12 +180,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Running = false
 			m.Progress.SetPercent(1.0)
 		}
-
-		// Keep refreshing (cheap). You can gate this by m.Running if you want.
-		cmds = append(cmds, updateMetricsAfter(500*time.Millisecond))
+		if m.Running {
+			cmds = append(cmds, updateMetricsAfter(250*time.Millisecond))
+		}
 
 	case logMsg:
-		m.Logs = append(m.Logs, msg.text)
+		// Colorize log line based on method and status
+		styledLog := styleLogLine(msg.text)
+		m.Logs = append(m.Logs, styledLog)
 		if len(m.Logs) > 300 {
 			m.Logs = m.Logs[len(m.Logs)-300:]
 		}
@@ -254,8 +195,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agberoMetricsMsg:
 		m.AgberoMetrics = msg.metrics
-
-		// Refresh every 5 seconds if configured
 		if m.Config.MetricsURL != "" {
 			cmds = append(cmds, tea.Tick(5*time.Second, func(time.Time) tea.Msg {
 				return fetchAgberoMetrics(m.Config.MetricsURL)()
@@ -263,309 +202,293 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Let viewports handle wheel scroll and such too
 	var cmd tea.Cmd
-	m.MetricsView, cmd = m.MetricsView.Update(msg)
-	if cmd != nil {
-		cmds = append(cmds, cmd)
-	}
 	m.LogView, cmd = m.LogView.Update(msg)
-	if cmd != nil {
-		cmds = append(cmds, cmd)
-	}
+	cmds = append(cmds, cmd)
 
 	return m, tea.Batch(cmds...)
 }
 
-// ---------- Dashboard View ----------
-
 func (m Model) View() string {
-	if m.Width == 0 || m.Height == 0 {
-		// Bubble Tea sends a WindowSizeMsg shortly after start
-		return "Initializing..."
+	if m.Width == 0 {
+		return "Initializing UI..."
 	}
 
 	snap := m.Metrics.Snapshot()
 
-	// ---- Top bar ----
-	status := "RUNNING"
-	statusStyle := styleGood
-	if !m.Running {
-		status = "DONE (press q to quit)"
-		statusStyle = styleWarn
+	// 1. Header Section
+	header := m.renderHeader(snap)
+
+	// 2. Stats Grid (Hero Stats)
+	stats := m.renderHeroStats(snap)
+
+	// 3. Middle Section: Latency Graph & Codes
+	middleHeight := 10 // Fixed height for graph area
+	middle := m.renderMiddleSection(snap, middleHeight)
+
+	// 4. Logs Section (Fill remaining height)
+	usedHeight := lipgloss.Height(header) + lipgloss.Height(stats) + lipgloss.Height(middle) + 4
+	logHeight := m.Height - usedHeight
+	if logHeight < 5 {
+		logHeight = 5
 	}
-	if snap.ErrorCount > 0 {
-		statusStyle = styleBad
+	m.LogView.Height = logHeight
+
+	// Fixed: Manually render title inside the border since BorderLabel doesn't exist
+	logTitle := styleTitle.Render(" Real-time Logs ")
+	logs := styleBorder.
+		Width(m.Width - 2).
+		Render(lipgloss.JoinVertical(lipgloss.Left, logTitle, m.LogView.View()))
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		stats,
+		middle,
+		logs,
+	)
+}
+
+// --- Render Helpers ---
+
+func (m Model) renderHeader(snap MetricsSnapshot) string {
+	var status string
+	if m.Running {
+		status = fmt.Sprintf("%s RUNNING", m.Spinner.View())
+	} else {
+		status = "✔ DONE"
 	}
 
 	target := "-"
 	if len(m.Config.Targets) > 0 {
-		if len(m.Config.Targets) == 1 {
-			target = m.Config.Targets[0]
-		} else {
-			target = fmt.Sprintf("%s (+%d)", m.Config.Targets[0], len(m.Config.Targets)-1)
+		target = m.Config.Targets[0]
+		if len(m.Config.Targets) > 1 {
+			target += fmt.Sprintf(" (+%d)", len(m.Config.Targets)-1)
+		}
+	}
+	// Truncate target if too long
+	if len(target) > 30 {
+		target = target[:27] + "..."
+	}
+
+	elapsed := time.Since(m.StartTime).Round(time.Second).String()
+
+	// Progress Bar Section
+	var progStr string
+	if m.Config.Requests > 0 {
+		progStr = fmt.Sprintf(" %s %d/%d", m.Progress.View(), m.CompletedRequests, m.TotalRequests)
+	} else if m.Config.Duration > 0 {
+		remain := m.Config.Duration - time.Since(m.StartTime)
+		if remain < 0 {
+			remain = 0
+		}
+		progStr = fmt.Sprintf(" Time Remaining: %s", remain.Round(time.Second))
+	} else {
+		progStr = " Infinite Run (Ctrl+C to stop)"
+	}
+
+	left := lipgloss.JoinVertical(lipgloss.Left,
+		styleTitle.MarginBottom(0).Render(" OPPOЯ "),
+		lipgloss.NewStyle().PaddingLeft(1).Foreground(subtle).Render(target),
+	)
+
+	right := lipgloss.JoinVertical(lipgloss.Right,
+		lipgloss.NewStyle().Bold(true).Foreground(highlight).Render(status),
+		lipgloss.NewStyle().Foreground(subtle).Render(elapsed),
+	)
+
+	topBar := lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.NewStyle().Width(m.Width/2).Align(lipgloss.Left).Render(left),
+		lipgloss.NewStyle().Width(m.Width/2-4).Align(lipgloss.Right).Render(right),
+	)
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		topBar,
+		lipgloss.NewStyle().Padding(1, 0).Render(progStr),
+	)
+}
+
+func (m Model) renderHeroStats(snap MetricsSnapshot) string {
+	// Calc dynamic RPS
+	rps := snap.RequestsPerSec
+	if rps == 0 && snap.TotalRequests > 0 {
+		dur := time.Since(m.StartTime).Seconds()
+		if dur > 0 {
+			rps = uint64(float64(snap.TotalRequests) / dur)
 		}
 	}
 
-	elapsed := time.Since(m.StartTime).Round(time.Second)
-
-	rps := snap.RequestsPerSec
-	if rps == 0 {
-		sec := math.Max(1, time.Since(m.StartTime).Seconds())
-		rps = uint64(float64(snap.TotalRequests) / sec)
+	// Format large numbers
+	formatNum := func(n uint64) string {
+		if n >= 1_000_000 {
+			return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+		} else if n >= 1_000 {
+			return fmt.Sprintf("%.1fK", float64(n)/1_000)
+		}
+		return fmt.Sprintf("%d", n)
 	}
 
-	top := styleTopBar.Render(
-		lipgloss.JoinHorizontal(lipgloss.Top,
-			statusStyle.Render(" "+status+" "),
-			styleMuted.Render("  target: ")+target,
-			styleMuted.Render("  elapsed: ")+elapsed.String(),
-			styleMuted.Render("  rps: ")+fmt.Sprintf("%d", rps),
-			styleMuted.Render("  errors: ")+fmt.Sprintf("%d", snap.ErrorCount),
+	boxTotal := renderStatBox("TOTAL REQ", formatNum(snap.TotalRequests), "")
+	boxRPS := renderStatBox("RPS", fmt.Sprintf("%d", rps), "")
+	boxSucc := renderStatBox("SUCCESS %", fmt.Sprintf("%.1f%%", snap.SuccessRate), getSuccessColor(snap.SuccessRate))
+	boxLat := renderStatBox("AVG LATENCY", fmt.Sprintf("%.1f ms", snap.AvgLatencyMs), getLatencyColor(snap.AvgLatencyMs))
+
+	// Create a responsive grid
+	availWidth := m.Width - 4
+	// Allow boxes to shrink slightly if needed, or wrap
+	row := lipgloss.JoinHorizontal(lipgloss.Top,
+		boxTotal, boxRPS, boxSucc, boxLat,
+	)
+
+	return lipgloss.NewStyle().Padding(0, 1, 1, 1).MaxWidth(availWidth).Render(row)
+}
+
+func renderStatBox(label, value, colorHex string) string {
+	valStyle := styleStatValue.Copy()
+	if colorHex != "" {
+		valStyle = valStyle.Foreground(lipgloss.Color(colorHex))
+	}
+
+	return styleStatBox.Render(
+		lipgloss.JoinVertical(lipgloss.Left,
+			styleStatLabel.Render(label),
+			valStyle.Render(value),
 		),
 	)
-
-	// ---- Progress line ----
-	progressLine := ""
-	if m.Config.Requests > 0 {
-		progressLine = fmt.Sprintf(
-			"%s %s %s",
-			styleMuted.Render("Progress:"),
-			m.Progress.View(),
-			styleMuted.Render(fmt.Sprintf(" %d/%d", m.CompletedRequests, m.TotalRequests)),
-		)
-	} else if m.Config.Duration > 0 {
-		remaining := m.Config.Duration - time.Since(m.StartTime)
-		if remaining < 0 {
-			remaining = 0
-		}
-		progressLine = fmt.Sprintf("%s %s", styleMuted.Render("Time left:"), remaining.Round(time.Second))
-	} else {
-		progressLine = styleMuted.Render("Mode: infinite (q / Ctrl+C to quit)")
-	}
-
-	// ---- Layout calculations ----
-	bodyHeight := m.Height - lipgloss.Height(top) - 3 // top + progress + spacing
-	if bodyHeight < 10 {
-		bodyHeight = 10
-	}
-
-	logsHeight := clamp(bodyHeight/3, 7, 14)
-	panelsHeight := bodyHeight - logsHeight - 1
-
-	gap := 2
-	leftW := (m.Width - gap) / 2
-	rightW := m.Width - gap - leftW
-
-	leftPanel := m.renderMetricsPanel(snap, panelsHeight, leftW)
-	rightPanel := m.renderLatencyPanel(panelsHeight, rightW)
-
-	panelsRow := lipgloss.JoinHorizontal(lipgloss.Top,
-		leftPanel,
-		lipgloss.NewStyle().Width(gap).Render(""),
-		rightPanel,
-	)
-
-	logsPanel := m.renderLogsPanel(logsHeight, m.Width)
-
-	var out strings.Builder
-	out.WriteString(top)
-	out.WriteString("\n")
-	out.WriteString(progressLine)
-	out.WriteString("\n\n")
-	out.WriteString(panelsRow)
-	out.WriteString("\n\n")
-	out.WriteString(logsPanel)
-
-	return out.String()
 }
 
-func (m Model) renderMetricsPanel(snap MetricsSnapshot, h, w int) string {
-	title := stylePanelTitle.Render("Load Test")
-	var body strings.Builder
+func (m Model) renderMiddleSection(snap MetricsSnapshot, h int) string {
+	// Left: Latency Histogram
+	// Right: Status Codes & Agbero Info
 
-	sec := math.Max(1, time.Since(m.StartTime).Seconds())
-	throughput := float64(snap.TotalBytes) / sec / (1024 * 1024)
+	halfWidth := (m.Width / 2) - 4
+	if halfWidth < 30 {
+		halfWidth = 30
+	}
 
-	body.WriteString(fmt.Sprintf("%s %d\n", styleMuted.Render("Requests:"), snap.TotalRequests))
-	body.WriteString(fmt.Sprintf("%s %d (%.1f%%)\n", styleMuted.Render("Success:"), snap.SuccessCount, snap.SuccessRate))
-	body.WriteString(fmt.Sprintf("%s %d\n", styleMuted.Render("Errors:"), snap.ErrorCount))
-	body.WriteString(fmt.Sprintf("%s %d\n\n", styleMuted.Render("Active:"), snap.ActiveConnections))
+	// --- Histogram ---
+	labels := []string{"<10ms", "50ms", "100ms", "250ms", "500ms", "1s", ">1s"}
 
-	body.WriteString(stylePanelTitle.Render("Latency (ms)") + "\n")
-	body.WriteString(fmt.Sprintf("avg: %.1f   min: %.1f   max: %.1f\n\n",
-		snap.AvgLatencyMs, snap.MinLatencyMs, snap.MaxLatencyMs))
+	// Map metrics buckets to these labels
+	counts := []uint64{
+		m.Metrics.LatencyBuckets[0].Load(), // <10
+		m.Metrics.LatencyBuckets[1].Load(), // 10-50
+		m.Metrics.LatencyBuckets[2].Load(), // 50-100
+		m.Metrics.LatencyBuckets[3].Load(), // 100-250
+		m.Metrics.LatencyBuckets[4].Load(), // 250-500
+		m.Metrics.LatencyBuckets[5].Load(), // 500-1000
+	}
+	// Sum remaining buckets for >1s
+	var slow uint64
+	for i := 6; i < 10; i++ {
+		slow += m.Metrics.LatencyBuckets[i].Load()
+	}
+	counts = append(counts, slow)
 
-	body.WriteString(stylePanelTitle.Render("Traffic") + "\n")
-	body.WriteString(fmt.Sprintf("rps: %d\n", snap.RequestsPerSec))
-	body.WriteString(fmt.Sprintf("throughput: %.2f MB/s\n\n", throughput))
+	hist := renderVisualHistogram(labels, counts, snap.TotalRequests, halfWidth)
 
-	body.WriteString(stylePanelTitle.Render("Status Codes") + "\n")
-	body.WriteString(fmt.Sprintf("2xx: %d   3xx: %d\n", snap.StatusCode2xx, snap.StatusCode3xx))
-	body.WriteString(fmt.Sprintf("4xx: %d   5xx: %d\n", snap.StatusCode4xx, snap.StatusCode5xx))
+	// Fixed: Manual title inside border
+	histTitle := styleTitle.Render(" Latency Dist. ")
+	histBox := styleBorder.Width(halfWidth).Height(h).Render(
+		lipgloss.JoinVertical(lipgloss.Left, histTitle, hist),
+	)
 
+	// --- Status Codes & Details ---
+
+	// Status Code Grid
+	statusContent := lipgloss.JoinVertical(lipgloss.Left,
+		fmt.Sprintf("%s %d", styleBase.Foreground(gradGreen).Render("2xx OK:   "), snap.StatusCode2xx),
+		fmt.Sprintf("%s %d", styleBase.Foreground(lipgloss.Color("#5fafff")).Render("3xx Redir:"), snap.StatusCode3xx),
+		fmt.Sprintf("%s %d", styleBase.Foreground(warning).Render("4xx User: "), snap.StatusCode4xx),
+		fmt.Sprintf("%s %d", styleBase.Foreground(gradRed).Render("5xx Err:  "), snap.StatusCode5xx),
+		"",
+		fmt.Sprintf("Active Conns: %d", snap.ActiveConnections),
+		fmt.Sprintf("Throughput:   %.1f MB/s", snap.ThroughputMBps),
+	)
+
+	// Add Agbero context if available
 	if m.AgberoMetrics != nil {
-		body.WriteString("\n\n")
-		body.WriteString(stylePanelTitle.Render("Agbero (top hosts)") + "\n")
-		body.WriteString(m.renderAgberoSummary(w - 4))
+		statusContent += "\n\n" + styleStatLabel.Render("-- Agbero Proxy --")
+		statusContent += "\n" + m.renderAgberoSummary(halfWidth-4)
 	}
 
-	return stylePanel.Width(w).Height(h).Render(title + "\n\n" + body.String())
-}
-
-func (m Model) renderLatencyPanel(h, w int) string {
-	title := stylePanelTitle.Render("Latency Distribution")
-
-	total := m.Metrics.TotalRequests.Load()
-
-	graph := renderHistogram(
-		[]string{"<10ms", "10-50", "50-100", "100-250", "250-500", "500-1s", "1-2s", "2-5s", "5-10s", ">10s"},
-		func(i int) uint64 { return m.Metrics.LatencyBuckets[i].Load() },
-		total,
-		w-4,
-		h-4,
+	// Fixed: Manual title inside border
+	statusTitle := styleTitle.Render(" Details ")
+	statusBox := styleBorder.Width(halfWidth).Height(h).Render(
+		lipgloss.JoinVertical(lipgloss.Left, statusTitle, statusContent),
 	)
 
-	return stylePanel.Width(w).Height(h).Render(title + "\n\n" + graph)
+	return lipgloss.JoinHorizontal(lipgloss.Top, histBox, statusBox)
 }
 
-func (m Model) renderLogsPanel(h, w int) string {
-	title := stylePanelTitle.Render("Logs")
-
-	// Ensure viewport matches the panel inner size
-	m.LogView.Width = w - 4
-	m.LogView.Height = h - 4
-
-	content := m.LogView.View()
-	if strings.TrimSpace(content) == "" {
-		content = styleMuted.Render("No logs yet. Run with -v to see per-request logs.")
-	}
-
-	return stylePanel.Width(w).Height(h).Render(title + "\n\n" + content)
-}
-
-func (m Model) renderAgberoSummary(maxWidth int) string {
-	hosts, ok := m.AgberoMetrics["hosts"].(map[string]interface{})
-	if !ok || len(hosts) == 0 {
-		return styleMuted.Render("No host data")
-	}
-
-	type row struct {
-		host      string
-		totalReqs float64
-		p99us     float64
-		backends  float64
-	}
-
-	rows := make([]row, 0, len(hosts))
-	for host, data := range hosts {
-		hostData, ok := data.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		r := row{host: host}
-		if v, ok := hostData["total_reqs"].(float64); ok {
-			r.totalReqs = v
-		}
-		if v, ok := hostData["avg_p99_us"].(float64); ok {
-			r.p99us = v
-		}
-		if v, ok := hostData["total_backends"].(float64); ok {
-			r.backends = v
-		}
-
-		rows = append(rows, r)
-	}
-
-	sort.Slice(rows, func(i, j int) bool { return rows[i].totalReqs > rows[j].totalReqs })
-	if len(rows) > 6 {
-		rows = rows[:6]
-	}
-
-	var b strings.Builder
-	for _, r := range rows {
-		line := fmt.Sprintf("%s reqs=%.0f  p99=%.1fms  backends=%.0f",
-			r.host, r.totalReqs, r.p99us/1000.0, r.backends)
-
-		if maxWidth > 0 {
-			line = truncate(line, maxWidth)
-		}
-		b.WriteString(line + "\n")
-	}
-
-	return strings.TrimRight(b.String(), "\n")
-}
-
-// ---------- Existing helpers you already had (kept) ----------
-
-func (m *Model) updateMetricsView(snapshot MetricsSnapshot) {
-	duration := time.Since(m.StartTime).Seconds()
-	if duration == 0 {
-		duration = 1
-	}
-
-	totalRPS := uint64(float64(snapshot.TotalRequests) / duration)
-	throughput := float64(snapshot.TotalBytes) / duration / (1024 * 1024) // MB/s
-
-	var contentBuilder strings.Builder
-	contentBuilder.WriteString("Load Test Status\n\n")
-	contentBuilder.WriteString(fmt.Sprintf("Duration:    %s\n", time.Since(m.StartTime).Round(time.Second)))
-	contentBuilder.WriteString(fmt.Sprintf("Requests:    %d (%d/s)\n", snapshot.TotalRequests, totalRPS))
-	contentBuilder.WriteString(fmt.Sprintf("Success:     %d (%.1f%%)\n", snapshot.SuccessCount, snapshot.SuccessRate))
-	contentBuilder.WriteString(fmt.Sprintf("Errors:      %d\n", snapshot.ErrorCount))
-	contentBuilder.WriteString(fmt.Sprintf("Active:      %d\n\n", snapshot.ActiveConnections))
-
-	contentBuilder.WriteString("Latency (ms):\n")
-	contentBuilder.WriteString(fmt.Sprintf("  Avg: %.1f  Min: %.1f  Max: %.1f\n\n",
-		snapshot.AvgLatencyMs, snapshot.MinLatencyMs, snapshot.MaxLatencyMs))
-
-	contentBuilder.WriteString(fmt.Sprintf("Throughput:  %.2f MB/s\n\n", throughput))
-
-	contentBuilder.WriteString("Status Codes:\n")
-	contentBuilder.WriteString(fmt.Sprintf("  2xx: %d  3xx: %d  4xx: %d  5xx: %d\n",
-		snapshot.StatusCode2xx, snapshot.StatusCode3xx, snapshot.StatusCode4xx, snapshot.StatusCode5xx))
-
-	m.MetricsView.SetContent(contentBuilder.String())
-}
-
-func (m *Model) updateLatencyTable() {
-	total := m.Metrics.TotalRequests.Load()
+func renderVisualHistogram(labels []string, counts []uint64, total uint64, width int) string {
 	if total == 0 {
-		return
+		return "Waiting for data..."
 	}
 
-	rows := make([]table.Row, 10)
-	ranges := []string{
-		"< 10ms", "10-50ms", "50-100ms", "100-250ms",
-		"250-500ms", "500ms-1s", "1-2s", "2-5s",
-		"5-10s", "> 10s",
-	}
-
-	for i := 0; i < 10; i++ {
-		count := m.Metrics.LatencyBuckets[i].Load()
-		percentage := float64(count) / float64(total) * 100
-		rows[i] = table.Row{
-			ranges[i],
-			strconv.FormatUint(count, 10),
-			fmt.Sprintf("%.1f%%", percentage),
+	var maxVal uint64
+	for _, c := range counts {
+		if c > maxVal {
+			maxVal = c
 		}
 	}
+	if maxVal == 0 {
+		return "No latency data"
+	}
 
-	m.Table.SetRows(rows)
+	// Effective bar width (width - label width - percentage width)
+	labelW := 7
+	percentW := 6
+	barW := width - labelW - percentW - 4
+	if barW < 5 {
+		barW = 5
+	}
+
+	var s strings.Builder
+	for i, count := range counts {
+		if i >= len(labels) {
+			break
+		}
+
+		pct := 0.0
+		if total > 0 {
+			pct = (float64(count) / float64(total)) * 100
+		}
+
+		// Determine bar color based on index (higher index = slower = redder)
+		barColor := gradGreen
+		if i > 2 {
+			barColor = gradYellow
+		}
+		if i > 4 {
+			barColor = gradRed
+		}
+
+		barLen := int(math.Round(float64(count) / float64(maxVal) * float64(barW)))
+		barChar := "▇"
+
+		barStr := lipgloss.NewStyle().Foreground(barColor).Render(strings.Repeat(barChar, barLen))
+		emptyStr := strings.Repeat(" ", barW-barLen)
+
+		line := fmt.Sprintf("%-*s %s%s %5.1f%%",
+			labelW, labels[i],
+			barStr, emptyStr,
+			pct,
+		)
+		s.WriteString(line + "\n")
+	}
+	return s.String()
 }
+
+// --- Logic Helpers ---
 
 func (m *Model) updateLogView() {
 	if len(m.Logs) == 0 {
 		return
 	}
-	start := max(0, len(m.Logs)-max(10, m.LogView.Height))
-	logContent := strings.Join(m.Logs[start:], "\n")
-	m.LogView.SetContent(logContent)
+	content := strings.Join(m.Logs, "\n")
+	m.LogView.SetContent(content)
 	m.LogView.GotoBottom()
 }
-
-// ---------- Commands ----------
 
 func (m Model) startLoadTest() tea.Cmd {
 	return func() tea.Msg {
@@ -576,94 +499,76 @@ func (m Model) startLoadTest() tea.Cmd {
 
 func (m *Model) listenForMessages() tea.Cmd {
 	return func() tea.Msg {
-		select {
-		case msg := <-m.msgChan:
-			return msg
-		case <-time.After(100 * time.Millisecond):
-			return nil
-		}
+		return <-m.msgChan
 	}
 }
 
-// ---------- Small helpers (local) ----------
-
-func renderHistogram(labels []string, get func(i int) uint64, total uint64, width, height int) string {
-	if width < 20 {
-		width = 20
-	}
-	if height < 8 {
-		height = 8
-	}
-	if total == 0 {
-		return styleMuted.Render("No data yet.")
+func (m Model) renderAgberoSummary(w int) string {
+	hosts, ok := m.AgberoMetrics["hosts"].(map[string]interface{})
+	if !ok || len(hosts) == 0 {
+		return "No host data"
 	}
 
-	labelW := 8
-	for _, l := range labels {
-		if len(l) > labelW {
-			labelW = len(l)
+	type row struct {
+		h    string
+		reqs float64
+	}
+	var rows []row
+	for k, v := range hosts {
+		if data, ok := v.(map[string]interface{}); ok {
+			if r, ok := data["total_reqs"].(float64); ok {
+				rows = append(rows, row{k, r})
+			}
 		}
 	}
-	labelW = clamp(labelW, 6, 12)
+	sort.Slice(rows, func(i, j int) bool { return rows[i].reqs > rows[j].reqs })
 
-	barW := width - labelW - 12 // space for " 123 (12.3%)"
-	if barW < 10 {
-		barW = 10
+	if len(rows) > 3 {
+		rows = rows[:3]
 	}
 
-	var maxV uint64
-	for i := range labels {
-		v := get(i)
-		if v > maxV {
-			maxV = v
-		}
+	var out strings.Builder
+	for _, r := range rows {
+		out.WriteString(fmt.Sprintf("• %s: %.0f\n", r.h, r.reqs))
 	}
-	if maxV == 0 {
-		return styleMuted.Render("No latency samples.")
-	}
-
-	lines := make([]string, 0, len(labels))
-	for i, label := range labels {
-		v := get(i)
-		pct := (float64(v) / float64(total)) * 100.0
-
-		fill := int(math.Round(float64(v) / float64(maxV) * float64(barW)))
-		if fill < 0 {
-			fill = 0
-		}
-		if fill > barW {
-			fill = barW
-		}
-
-		bar := strings.Repeat("█", fill) + strings.Repeat(" ", barW-fill)
-		line := fmt.Sprintf("%-*s %s %6d (%5.1f%%)", labelW, label, bar, v, pct)
-		lines = append(lines, line)
-	}
-
-	// Fit to available height
-	if len(lines) > height {
-		lines = lines[:height]
-	}
-
-	return strings.Join(lines, "\n")
+	return out.String()
 }
 
-func truncate(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	if max <= 1 {
-		return s[:max]
-	}
-	return s[:max-1] + "…"
+// --- Styling Helpers ---
+
+func getSuccessColor(rate float64) string {
+	if rate >= 99.0 {
+		return "#04B575"
+	} // Green
+	if rate >= 95.0 {
+		return "#FFFF00"
+	} // Yellow
+	return "#FF0000" // Red
 }
 
-func clamp(v, lo, hi int) int {
-	if v < lo {
-		return lo
+func getLatencyColor(ms float64) string {
+	if ms < 100 {
+		return "#04B575"
 	}
-	if v > hi {
-		return hi
+	if ms < 500 {
+		return "#FFFF00"
 	}
-	return v
+	return "#FF0000"
+}
+
+func styleLogLine(line string) string {
+	// Basic syntax highlighting for logs
+	if strings.Contains(line, " 200 ") {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#55aa55")).Render(line)
+	}
+	if strings.Contains(line, " 500 ") || strings.Contains(line, " 502 ") {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Render(line)
+	}
+	if strings.Contains(line, "GET") {
+		return strings.Replace(line, "GET", lipgloss.NewStyle().Foreground(lipgloss.Color("#5fafff")).Bold(true).Render("GET"), 1)
+	}
+	if strings.Contains(line, "POST") {
+		return strings.Replace(line, "POST", lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaf00")).Bold(true).Render("POST"), 1)
+	}
+	return line
 }
