@@ -19,10 +19,11 @@ const (
 
 // Default Timeouts
 const (
-	DefaultReadTimeout       = 10 * time.Second
-	DefaultWriteTimeout      = 30 * time.Second
-	DefaultIdleTimeout       = 120 * time.Second
-	DefaultReadHeaderTimeout = 5 * time.Second
+	DefaultReadTimeout        = 10 * time.Second
+	DefaultWriteTimeout       = 30 * time.Second
+	DefaultIdleTimeout        = 120 * time.Second
+	DefaultReadHeaderTimeout  = 5 * time.Second
+	DefaultProxyFlushInterval = 100 * time.Millisecond
 )
 
 // Default Limits

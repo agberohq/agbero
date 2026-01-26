@@ -36,10 +36,10 @@ storage {
   hosts_dir = "{HOST_DIR}"
 
   # Directory where TLS certificates are stored/cached
-  certs_dir = "./certs.d"
+  certs_dir = "{CERTS_DIR}"
 
   # Data directory used for Firewall, etc.
-  data_dir = "./data.d"
+  data_dir = "{DATA_DIR}"
 }
 
 # -------------------------------------------------------------
@@ -50,7 +50,7 @@ logging {
   level = "info"
 
   # Optional JSON log file
-  # file = "./agbero.log"
+  file = "./agbero.log"
 
   # VictoriaLogs Integration (Optional)
   # victoria {

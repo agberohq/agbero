@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,7 +41,7 @@ func (h *Victoria) Handle(e *lx.Entry) error {
 
 	line := map[string]interface{}{
 		"ts":    e.Timestamp.Format(time.RFC3339Nano),
-		"level": e.Level.String(),
+		"level": strings.ToLower(e.Level.String()),
 		"msg":   e.Message,
 		"ns":    e.Namespace,
 		"app":   woos.Name,

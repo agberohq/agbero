@@ -133,7 +133,7 @@ func (f Folder) Abs(base Folder) string {
 }
 
 func (f Folder) Name() string {
-	return filepath.Base(f.Path())
+	return filepath.Base(filepath.Clean(f.String()))
 }
 
 func (f Folder) Ensure(base Folder, secure bool) error {

@@ -3,6 +3,7 @@ package alaye
 import (
 	"net"
 	"strings"
+	"time"
 
 	"github.com/olekukonko/errors"
 )
@@ -14,10 +15,25 @@ type Conditions struct {
 
 // Server represents an upstream server configuration
 type Server struct {
-	Address string `hcl:"address"`
-	Weight  int    `hcl:"weight,optional"`
-	// Future-proofing for advanced routing
+	Address    string      `hcl:"address"`
+	Weight     int         `hcl:"weight,optional"`
 	Conditions *Conditions `hcl:"conditions,block"`
+	Streaming  *Streaming  `hcl:"streaming,block"` // optional by nature when pointer
+}
+
+type Streaming struct {
+	Enabled       bool          `hcl:"enabled,optional"`
+	FlushInterval time.Duration `hcl:"flush_interval,optional"`
+}
+
+func (s *Streaming) EffectiveFlushInterval() time.Duration {
+	if s == nil || !s.Enabled {
+		return -1
+	}
+	if s.FlushInterval <= 0 {
+		return DefaultProxyFlushInterval
+	}
+	return s.FlushInterval
 }
 
 func NewServer(address string) Server {

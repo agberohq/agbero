@@ -73,6 +73,18 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 	rp.FlushInterval = -1
 	rp.BufferPool = sharedBufferPool
 
+	if cfg.Streaming != nil && cfg.Streaming.Enabled {
+		t := woos.Transport.Clone()
+		t.ResponseHeaderTimeout = 0 // important for tail/live streams
+		rp.Transport = t
+
+		fi := cfg.Streaming.FlushInterval
+		if fi <= 0 {
+			fi = alaye.DefaultProxyFlushInterval
+		}
+		rp.FlushInterval = fi
+	}
+
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		if !errors.Is(err, context.Canceled) {
 			newFailures := b.Failures.Add(1)
@@ -94,8 +106,13 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 
 		req.Host = b.URL.Host
 
+		proto := woos.Http
+		if req.TLS != nil {
+			proto = woos.Https
+		}
+
 		req.Header.Set("X-Forwarded-Host", originalHost)
-		req.Header.Set("X-Forwarded-Proto", req.URL.Scheme)
+		req.Header.Set("X-Forwarded-Proto", proto)
 
 		req.Header.Set("X-Forwarded-Server", woos.Name)
 		req.Header.Add("Via", fmt.Sprintf("1.1 %s", woos.Name))

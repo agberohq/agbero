@@ -35,9 +35,13 @@ const (
 )
 
 const (
-	HostDir Folder = "./hosts.d"
-	CertDir Folder = "./certs.d"
-	DataDir Folder = "./data.d"
+	Http  = "http"
+	Https = "https"
+)
+const (
+	HostDir Folder = "hosts.d"
+	CertDir Folder = "certs.d"
+	DataDir Folder = "data.d"
 )
 
 const (
@@ -48,4 +52,8 @@ const (
 	Darwin  = "darwin"
 	Linux   = "linux"
 	Windows = "windows"
+)
+
+const (
+	User = "user"
 )

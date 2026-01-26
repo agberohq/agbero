@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/logging"
@@ -21,7 +21,6 @@ import (
 )
 
 var (
-	// The single global logger instance
 	logger  *ll.Logger
 	version = woos.Version
 )
@@ -63,7 +62,7 @@ func main() {
 	flaggy.Bool(&devMode, "d", "dev", "Enable development mode")
 	flaggy.Bool(&enableGossip, "", "gossip", "Enable/disable gossip in run mode")
 
-	// --- Subcommands Setup ---
+	// --- Subcommands ---
 	cmdInstall := flaggy.NewSubcommand("install")
 	cmdUninstall := flaggy.NewSubcommand("uninstall")
 	cmdStart := flaggy.NewSubcommand("start")
@@ -124,22 +123,20 @@ func main() {
 	flaggy.Parse()
 	welcome()
 
-	// --- Config Resolution ---
-	// DO NOT overwrite configPath here yet, or we lose the user's intent.
-	// We calculate resolvedPath but only use it for commands that need it immediately.
+	// Resolve config path (do not overwrite user intent)
 	resolvedPath, exists := resolveConfigPath(configPath)
 
-	// If user explicitly passed a path that doesn't exist, fail early (except for install/init)
-	if configPath != "" && !exists && !cmdInstall.Used {
-		logger.Fatal("Config file not found: ", configPath)
+	// If user explicitly passed a path that doesn't exist, fail early (except install)
+	if strings.TrimSpace(configPath) != "" && !exists && !cmdInstall.Used {
+		logger.Fatal("Config file not found: ", resolvedPath)
 	}
 
-	// Bootstrap TLS Env
+	// Bootstrap TLS Env (PATH, cert tools, etc.)
 	if err := tlss.BootstrapEnv(logger); err != nil {
 		logger.Warnf("TLS env bootstrap: %v", err)
 	}
 
-	// --- Handle Commands that don't need Service Context ---
+	// --- Commands that don't need service context ---
 	if cmdHelp.Used {
 		showHelpExamples(resolvedPath)
 		return
@@ -149,7 +146,6 @@ func main() {
 		return
 	}
 	if cmdCert.Used {
-		// Cert commands might need config to find cert dir
 		configPath = resolvedPath
 		handleCertCommands(cmdInstallCA.Used, cmdListCerts.Used, cmdCertInfo.Used)
 		return
@@ -174,150 +170,89 @@ func main() {
 		return
 	}
 
-	// --- Service Configuration ---
-	// Define base config. We will tweak this based on Install mode or Platform.
+	// --- Default service config (will be adjusted per OS + install mode) ---
 	svcConfig := &service.Config{
 		Name:        woos.Name,
 		DisplayName: woos.Display,
 		Description: woos.Description,
-		Arguments:   []string{"run", "-c", resolvedPath}, // Default to resolved path
+		Arguments:   []string{"run", "-c", resolvedPath},
 	}
 
 	if devMode {
 		svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
 	}
 
-	// Default macOS behavior (Try to detect if root)
-	if runtime.GOOS == woos.Darwin {
-		if os.Geteuid() == 0 {
-			// Root User -> System Daemon
-			svcConfig.Option = service.KeyValue{"RunAtLoad": true, "SessionType": "System"}
+	// macOS name selection for user services (so "cwd dev" doesn't collide)
+	if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
+		cwd, _ := os.Getwd()
+		if filepath.Dir(resolvedPath) == cwd {
+			svcConfig.Name = "net.imaxinacion.agbero.dev"
 		} else {
-			// Non-Root -> User Agent
-			// We must ensure this matches the logic used in the Install block below
-			svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
-
-			cwd, _ := os.Getwd()
-			configDir := filepath.Dir(resolvedPath)
-
-			// If the config is in the current directory, assume it's the "dev" service
-			if configDir == cwd {
-				svcConfig.Name = "net.imaxinacion.agbero.dev"
-			} else {
-				// Otherwise assume it's the standard user service (~/.config/...)
-				svcConfig.Name = "net.imaxinacion.agbero"
-			}
+			svcConfig.Name = "net.imaxinacion.agbero"
 		}
-	} else if runtime.GOOS == woos.Linux {
-		// Linux systemd user service support
-		if os.Geteuid() != 0 {
-			svcConfig.Option = service.KeyValue{"UserService": true}
-		}
+		svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
+	}
+
+	// Linux user service support
+	if runtime.GOOS == woos.Linux && os.Geteuid() != 0 {
+		svcConfig.Option = service.KeyValue{"UserService": true}
 	}
 
 	prg := &program{
-		configPath: resolvedPath, // Default
+		configPath: resolvedPath,
 		devMode:    devMode,
 	}
 
-	// --- Handle Install (Interactive) ---
+	// --- INSTALL (Interactive) ---
 	if cmdInstall.Used {
-		var targetConfigPath string
-		var targetHostsDir string
-		var installType string
+		targetConfigPath, installType := pickInstallConfigPath(resolvedPath, configPath)
 
-		// If user provided flag, trust it
-		if configPath != "" {
-			targetConfigPath = configPath
-			targetHostsDir = filepath.Join(filepath.Dir(configPath), "hosts.d")
-		} else {
-			// Interactive Form
-			userHome, _ := os.UserHomeDir()
-			cwd, _ := os.Getwd()
-
-			sysConfig := fmt.Sprintf("/etc/agbero/%s", woos.DefaultConfigName)
-			userConfig := filepath.Join(userHome, ".config", "agbero", woos.DefaultConfigName)
-			cwdConfig := filepath.Join(cwd, woos.DefaultConfigName)
-
-			form := huh.NewForm(
-				huh.NewGroup(
-					huh.NewSelect[string]().
-						Title("Where should Agbero be installed?").
-						Description("Select the configuration location for the service.").
-						Options(
-							huh.NewOption("System (/etc/agbero) - Requires Sudo", "system"),
-							huh.NewOption("User (~/.config/agbero) - No Sudo", "user"),
-							huh.NewOption("Current Directory - Testing", "cwd"),
-						).
-						Value(&installType),
-				),
-			)
-
-			if err := form.Run(); err != nil {
-				logger.Fatal("Installation cancelled")
-			}
-
-			switch installType {
-			case "system":
-				if os.Geteuid() != 0 {
-					logger.Fatal("⚠ System installation requires root privileges.\nPlease run: sudo agbero install")
-				}
-				targetConfigPath = sysConfig
-				targetHostsDir = filepath.Join("/etc/agbero", "hosts.d")
-				// Service Config is already defaulted to System for root
-			case "user":
-				targetConfigPath = userConfig
-				targetHostsDir = filepath.Join(userHome, ".config", "agbero", "hosts.d")
-
-				// Fix Service Config for User Mode
-				if runtime.GOOS == woos.Darwin {
-					svcConfig.Name = "net.imaxinacion.agbero"
-					svcConfig.Option = service.KeyValue{
-						"RunAtLoad":   true,
-						"UserService": true, // Force User Service
-					}
-				} else {
-					// Linux User Mode (systemd user)
-					svcConfig.Option = service.KeyValue{
-						"UserService": true,
-					}
-				}
-			case "cwd":
-				targetConfigPath = cwdConfig
-				targetHostsDir = filepath.Join(cwd, "hosts.d")
-				// CWD is usually for testing, behaves like User mode generally
-				if runtime.GOOS == woos.Darwin {
-					svcConfig.Name = "net.imaxinacion.agbero.dev"
-					svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
-				}
-			}
-		}
-
-		logger.Info("Installing service...")
-
-		// 1. Install Files
-		if err := installDefaults(targetConfigPath, targetHostsDir); err != nil {
+		// Ensure config + directories exist
+		if err := ensureConfig(targetConfigPath); err != nil {
 			logger.Fatal("Failed to setup config files: ", err)
 		}
 
-		// 2. Update Service Args to point to new config
+		// Adjust service config based on target
 		svcConfig.Arguments = []string{"run", "-c", targetConfigPath}
 		if devMode {
 			svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
 		}
 
-		// 3. Create Service Instance with updated config
+		// macOS: ensure Name matches target
+		if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
+			cwd, _ := os.Getwd()
+			if filepath.Dir(targetConfigPath) == cwd {
+				svcConfig.Name = "net.imaxinacion.agbero.dev"
+			} else {
+				svcConfig.Name = "net.imaxinacion.agbero"
+			}
+			svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
+		}
+
+		// Create service instance
 		s, err := service.New(prg, svcConfig)
 		if err != nil {
 			logger.Fatal("Failed to init service: ", err)
 		}
 
-		// 4. Install
+		logger.Info("Installing service...")
+
+		// If already installed, uninstall then install (solves the .plist already exists case)
 		if err := s.Install(); err != nil {
-			logger.Fatal(handleServiceError(err, "install", targetConfigPath))
+			// kardianos/service on macOS often reports: "Init already exists: <plist>"
+			if strings.Contains(strings.ToLower(err.Error()), "already exists") {
+				logger.Warn("Service already exists, attempting to replace it...")
+				_ = s.Stop()
+				_ = s.Uninstall()
+				if err2 := s.Install(); err2 != nil {
+					logger.Fatal(handleServiceError(err2, "install", targetConfigPath))
+				}
+			} else {
+				logger.Fatal(handleServiceError(err, "install", targetConfigPath))
+			}
 		}
 
-		logger.Fields("config", targetConfigPath).Info("Service installed successfully")
+		logger.Fields("config", targetConfigPath, "mode", installType).Info("Service installed successfully")
 
 		if runtime.GOOS == "linux" && installType == "user" {
 			logger.Info("To start: systemctl --user start agbero")
@@ -325,8 +260,7 @@ func main() {
 		return
 	}
 
-	// --- Initialize Service for other commands ---
-	// We use the resolved path for Start/Stop/Run logic
+	// --- Initialize service for start/stop/uninstall/run ---
 	s, err := service.New(prg, svcConfig)
 	if err != nil {
 		logger.Fatal("Failed to create service: ", err)
@@ -352,13 +286,26 @@ func main() {
 
 	if cmdUninstall.Used {
 		logger.Info("Uninstalling service...")
-		// On macOS, we need the correct Name to uninstall properly
+
+		// On macOS user installs, Name must match what we used during install
 		if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
-			svcConfig.Name = "net.imaxinacion.agbero"
+			cwd, _ := os.Getwd()
+			if filepath.Dir(resolvedPath) == cwd {
+				svcConfig.Name = "net.imaxinacion.agbero.dev"
+			} else {
+				svcConfig.Name = "net.imaxinacion.agbero"
+			}
+			s2, _ := service.New(prg, svcConfig)
+			_ = s2.Stop()
+			if err := s2.Uninstall(); err != nil {
+				logger.Fatal(handleServiceError(err, "uninstall", resolvedPath))
+			}
+			logger.Info("Service uninstalled")
+			return
 		}
-		// Re-init service just in case
-		sUnix, _ := service.New(prg, svcConfig)
-		if err := sUnix.Uninstall(); err != nil {
+
+		_ = s.Stop()
+		if err := s.Uninstall(); err != nil {
 			logger.Fatal(handleServiceError(err, "uninstall", resolvedPath))
 		}
 		logger.Info("Service uninstalled")
@@ -367,9 +314,9 @@ func main() {
 
 	// --- RUN SERVER ---
 	if cmdRun.Used {
-		// For run, we rely on resolvedPath being correct
 		configPath = resolvedPath
 
+		// Ensure config + layout
 		if err := ensureConfig(configPath); err != nil {
 			logger.Fatal("Failed to generate configuration: ", err)
 		}
@@ -400,7 +347,7 @@ func main() {
 			errs := make(chan error, 5)
 			_, _ = s.Logger(errs)
 			go func() {
-				for err := <-errs; err != nil; {
+				for err := range errs {
 					logger.Errorf("Service internal error: %v", err)
 				}
 			}()
@@ -416,10 +363,64 @@ func main() {
 	showHelpExamples(resolvedPath)
 }
 
+// pickInstallConfigPath selects the target config path for install.
+// - If user passed --config, we use it.
+// - Else we ask (system/user/cwd).
+func pickInstallConfigPath(resolvedPath, flagPath string) (targetConfigPath string, installType string) {
+	if strings.TrimSpace(flagPath) != "" {
+		// user explicitly selected path; we install “next to it”
+		return resolvedPath, "custom"
+	}
+
+	userHome, _ := os.UserHomeDir()
+	cwd, _ := os.Getwd()
+
+	sysConfig := filepath.Join("/etc", woos.Name, woos.DefaultConfigName)
+	userConfig := filepath.Join(userHome, ".config", woos.Name, woos.DefaultConfigName)
+	cwdConfig := filepath.Join(cwd, woos.DefaultConfigName)
+
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Where should Agbero be installed?").
+				Description("Select the configuration location for the service.").
+				Options(
+					huh.NewOption("System (/etc/agbero) - Requires Sudo", "system"),
+					huh.NewOption("User (~/.config/agbero) - No Sudo", "user"),
+					huh.NewOption("Current Directory - Testing", "cwd"),
+				).
+				Value(&installType),
+		),
+	)
+
+	if err := form.Run(); err != nil {
+		logger.Fatal("Installation cancelled")
+	}
+
+	switch installType {
+	case "system":
+		if os.Geteuid() != 0 {
+			logger.Fatal("⚠ System installation requires root privileges.\nPlease run: sudo agbero install")
+		}
+		return sysConfig, "system"
+	case "user":
+		return userConfig, "user"
+	case "cwd":
+		return cwdConfig, "cwd"
+	default:
+		return userConfig, "user"
+	}
+}
+
 // checkAndInstallCA checks if HTTPS is enabled and installs CA root if missing.
 func checkAndInstallCA(global *alaye.Global) {
 	if len(global.Bind.HTTPS) == 0 {
 		return
+	}
+
+	// Make sure certs dir exists (service mode might have different cwd; we rely on resolved absolute paths)
+	if err := os.MkdirAll(global.Storage.CertsDir, woos.SecurePerm); err != nil {
+		logger.Warnf("Failed to ensure certs dir: %v", err)
 	}
 
 	installer := tlss.NewInstaller(logger)
@@ -452,7 +453,6 @@ func handleCertCommands(install, list, info bool) {
 	}
 
 	if list {
-		// Attempt to load dir from config
 		global, err := loadConfig(configPath)
 		if err == nil && global.Storage.CertsDir != "" {
 			_ = installer.SetStorageDir(woos.NewFolder(global.Storage.CertsDir))
@@ -480,7 +480,8 @@ func handleKeyCommands(init, gen bool) {
 	if init {
 		target := "server.key"
 
-		if global, err := loadConfig(configPath); err == nil && &global.Gossip != nil && global.Gossip.PrivateKeyFile != "" {
+		global, err := loadConfig(configPath)
+		if err == nil && global.Gossip.PrivateKeyFile != "" {
 			target = global.Gossip.PrivateKeyFile
 		}
 
@@ -501,7 +502,7 @@ func handleKeyCommands(init, gen bool) {
 			logger.Fatal("Error loading config: ", err)
 		}
 
-		if &global.Gossip == nil || global.Gossip.PrivateKeyFile == "" {
+		if global.Gossip.PrivateKeyFile == "" {
 			logger.Fatal("Error: 'gossip.private_key_file' is not set")
 		}
 

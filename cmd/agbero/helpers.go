@@ -28,144 +28,138 @@ var hostSampleTmpl string
 //go:embed data/banner.txt
 var bannerTmpl string
 
+func welcome() {
+	fmt.Print(bannerTmpl)
+	fmt.Println(woos.Name + " - " + woos.Description)
+	fmt.Println("Version: " + woos.Version + "")
+}
+
 // resolveConfigPath implements the search order:
-// resolveConfigPath implements the search order:
+//  1. explicit flag (may or may not exist)
+//  2. CWD/agbero.hcl
+//  3. ~/.config/agbero/agbero.hcl
+//  4. /etc/agbero/agbero.hcl
 func resolveConfigPath(flagPath string) (string, bool) {
-	// 1. Explicit Flag
-	if flagPath != "" {
-		if _, err := os.Stat(flagPath); err == nil {
-			return flagPath, true
+	// 1) Explicit Flag
+	if strings.TrimSpace(flagPath) != "" {
+		p := flagPath
+		if abs, err := filepath.Abs(flagPath); err == nil {
+			p = abs
 		}
-		return flagPath, false
+		_, err := os.Stat(p)
+		return p, err == nil
 	}
 
-	// 2. CWD
+	// 2) CWD
 	cwd, _ := os.Getwd()
 	cwdPath := filepath.Join(cwd, woos.DefaultConfigName)
 	if _, err := os.Stat(cwdPath); err == nil {
 		return cwdPath, true
 	}
 
-	// 3. User Config
+	// 3) User Config
 	if userPaths, err := woos.GetUserDefaults(); err == nil {
 		if _, err := os.Stat(userPaths.ConfigFile); err == nil {
 			return userPaths.ConfigFile, true
 		}
 	}
 
-	// 4. System Config
+	// 4) System Config
 	sysPaths := woos.DefaultPaths()
 	if _, err := os.Stat(sysPaths.ConfigFile); err == nil {
 		return sysPaths.ConfigFile, true
 	}
 
+	// Default fallback: CWD path (may not exist)
 	return cwdPath, false
 }
 
-// ensureConfig checks if config exists, if not, generates a default one using embedded templates.
-func ensureConfig(path string) error {
-	if _, err := os.Stat(path); err == nil {
-		return nil
+// ensureConfig creates a default config (and the standard directories) if missing.
+// This is safe to call in both interactive run and service mode.
+func ensureConfig(configFile string) error {
+	if configFile == "" {
+		return fmt.Errorf("config path is empty")
 	}
 
-	logger.Fields("path", path).Info("config not found, generating default")
-
-	// Create Base Directory
-	baseDir := woos.NewFolder(filepath.Dir(path))
-	if err := baseDir.Ensure(woos.Folder(""), false); err != nil {
-		return fmt.Errorf("ensure base dir: %w", err)
+	// If config exists, still ensure layout exists (dirs), because users might delete folders.
+	if _, err := os.Stat(configFile); err == nil {
+		return ensureLayoutForConfig(configFile)
 	}
 
-	// 1. Write Main Config
-	// Inject hosts_dir into the template (using string representation of Folder constant)
+	logger.Fields("path", configFile).Info("config not found, generating default")
+
+	// Parent dir
+	if err := os.MkdirAll(filepath.Dir(configFile), woos.DirPerm); err != nil {
+		return fmt.Errorf("mkdir config parent: %w", err)
+	}
+
+	// Write config (inject folder names, not "./paths")
 	content := strings.ReplaceAll(configTmpl, "{HOST_DIR}", woos.HostDir.String())
+	content = strings.ReplaceAll(content, "{CERTS_DIR}", woos.CertDir.String())
+	content = strings.ReplaceAll(content, "{DATA_DIR}", woos.DataDir.String())
 
-	//ll.Dump(content)
-	if err := os.WriteFile(path, []byte(content), woos.FilePerm); err != nil {
+	if err := os.WriteFile(configFile, []byte(content), woos.FilePerm); err != nil {
 		return fmt.Errorf("write default config: %w", err)
 	}
 
-	// 2. Create Hosts Directory
-	// We assume relative to config file for dev mode usually
-	hostsDir := baseDir.Join(woos.HostDir.Name())
+	// Create standard layout next to config
+	if err := ensureLayoutForConfig(configFile); err != nil {
+		return err
+	}
+
+	logger.Fields("file", configFile).Info("default configuration created")
+	return nil
+}
+
+// ensureLayoutForConfig ensures hosts.d/, certs.d/, data.d/ exist beside the config file.
+// Also drops a sample host file if hosts.d is empty.
+func ensureLayoutForConfig(configFile string) error {
+	base := woos.NewFolder(filepath.Dir(configFile))
+
+	hostsDir := base.Join(woos.HostDir.String())
+	certsDir := base.Join(woos.CertDir.String())
+	dataDir := base.Join(woos.DataDir.String())
 
 	if err := hostsDir.Ensure("", false); err != nil {
-		logger.Warnf("failed to create hosts directory: %v", err)
-	} else {
-		// Write Sample Host
+		return fmt.Errorf("ensure hosts dir: %w", err)
+	}
+	if err := certsDir.Ensure("", true); err != nil { // secure dir for keys/certs
+		return fmt.Errorf("ensure certs dir: %w", err)
+	}
+	if err := dataDir.Ensure("", false); err != nil {
+		return fmt.Errorf("ensure data dir: %w", err)
+	}
+
+	// Seed sample host if empty
+	if empty, err := hostsDir.IsEmpty(); err == nil && empty {
 		samplePath := filepath.Join(hostsDir.Path(), "localhost.hcl")
 		_ = os.WriteFile(samplePath, []byte(hostSampleTmpl), woos.FilePerm)
 	}
 
-	// 3. Create Certs Directory (Secure)
-	certsDir := baseDir.Join(woos.CertDir.Name())
-	if err := certsDir.Ensure("", true); err != nil { // true = SecurePerm (0700)
-		logger.Warnf("failed to create certs directory: %v", err)
-	}
-
-	logger.Fields("file", path).Info("default configuration created")
 	return nil
 }
 
-// loadConfig parses the config and ensures hosts_dir is absolute.
-func loadConfig(path string) (*alaye.Global, error) {
-	// Parse using Core
-	global, err := core.LoadGlobal(path)
+// loadConfig parses the config and applies defaults + path resolution.
+func loadConfig(configFile string) (*alaye.Global, error) {
+	global, err := core.LoadGlobal(configFile)
 	if err != nil {
 		return nil, err
 	}
 
-	// Apply Defaults (Includes Path resolution logic)
-	// We rely on woos.DefaultApply to handle the Folder/Path logic
-	// passing the absolute path of the config file to resolve relative paths against it.
-	absConfigPath, _ := filepath.Abs(path)
-	woos.DefaultApply(global, absConfigPath)
-
+	abs, _ := filepath.Abs(configFile)
+	woos.DefaultApply(global, abs)
 	return global, nil
 }
 
-// Update the signature to accept paths
-func installDefaults(configFile, hostsDir string) error {
-	// 1. Create Hosts Directory
-	// We use woos.NewFolder to handle the creation logic cleanly
-	hDir := woos.NewFolder(hostsDir)
-
-	logger.Fields("dir", hostsDir).Info("creating configuration directory")
-	if err := hDir.Ensure("", false); err != nil {
-		return fmt.Errorf("mkdir hosts: %w", err)
-	}
-
-	// 2. Check/Create Config File
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		logger.Fields("file", configFile).Info("writing default config")
-
-		// Calculate relative path for template if possible, otherwise use absolute
-		// For the template, we want the hosts_dir string to be injected
-		content := strings.ReplaceAll(configTmpl, "{HOST_DIR}", hostsDir)
-
-		// Create parent dir for config file if it doesn't exist
-		configDir := filepath.Dir(configFile)
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			return fmt.Errorf("mkdir config parent: %w", err)
-		}
-
-		if err := os.WriteFile(configFile, []byte(content), woos.FilePerm); err != nil {
-			return fmt.Errorf("write config: %w", err)
-		}
-	}
-	return nil
-}
-
-func validateConfig(path string) error {
-	global, err := loadConfig(path)
+func validateConfig(configFile string) error {
+	global, err := loadConfig(configFile)
 	if err != nil {
 		return err
 	}
 
-	// Use Folder type from Config
-	hostsFolder := woos.MakeFolder(global.Storage.HostsDir, woos.HostDir)
-
+	hostsFolder := woos.NewFolder(global.Storage.HostsDir)
 	hm := discovery.NewHostFolder(hostsFolder, discovery.WithLogger(logger))
+
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err
@@ -175,13 +169,13 @@ func validateConfig(path string) error {
 	return nil
 }
 
-func listHosts(path string) error {
-	global, err := loadConfig(path)
+func listHosts(configFile string) error {
+	global, err := loadConfig(configFile)
 	if err != nil {
 		return err
 	}
 
-	hostsFolder := woos.MakeFolder(global.Storage.HostsDir, woos.HostDir)
+	hostsFolder := woos.NewFolder(global.Storage.HostsDir)
 	hm := discovery.NewHostFolder(hostsFolder, discovery.WithLogger(logger))
 
 	hosts, err := hm.LoadAll()
@@ -205,20 +199,15 @@ func listHosts(path string) error {
 	return nil
 }
 
-func welcome() {
-	fmt.Print(bannerTmpl)
-	fmt.Println("\n" + woos.Name + " - " + woos.Description + " v" + woos.Version)
-}
-
 func getExecutableName() string {
 	if len(os.Args) > 0 {
 		base := filepath.Base(os.Args[0])
 		if strings.Contains(base, "go-build") || base == "helpers" {
-			return "agbero"
+			return woos.Name
 		}
 		return base
 	}
-	return "agbero"
+	return woos.Name
 }
 
 func handleServiceError(err error, cmd string, configPath string) error {
@@ -240,7 +229,7 @@ You are trying to install a system service without root privileges.
 
 FIXES:
 1. Run as root: sudo %s install --config "%s"
-2. Run as user: Check if service configuration is set to User mode.
+2. Run as user: Choose "User" install mode or run without sudo.
 `, err, exeName, configPath)
 		}
 
@@ -335,42 +324,36 @@ func showCertInfo(configPath string) {
 		return
 	}
 
-	// Resolve cert folder using woos logic
-	storageDir := woos.MakeFolder(global.Storage.CertsDir, woos.CertDir)
-
-	// Fallback if not set in config (though DefaultApply should have handled it)
-	if !storageDir.IsSet() {
-		homeDir, _ := os.UserHomeDir()
-		storageDir = woos.NewFolder(filepath.Join(homeDir, ".cert"))
-	}
+	storageDir := woos.NewFolder(global.Storage.CertsDir)
 
 	fmt.Println("\nCERTIFICATE INFORMATION")
 	fmt.Println("===============================================================")
 	fmt.Printf("Storage Listing: %s\n", storageDir.Path())
 
-	if !storageDir.Exists(woos.Folder("")) {
+	if !storageDir.Exists("") {
 		fmt.Println("⚠  Listing does not exist")
-	} else {
-		// Use Folder.ReadFiles to simplify filtering
-		files, err := storageDir.ReadFiles()
-		if err != nil {
-			fmt.Printf("⚠  Cannot read directory: %v\n", err)
-		} else {
-			count := 0
-			for _, file := range files {
-				if strings.HasSuffix(file.Name(), ".pem") {
-					count++
-					info, _ := file.Info()
-					fmt.Printf("  • %s (%s, %s)\n",
-						file.Name(),
-						humanize.Bytes(uint64(info.Size())),
-						info.ModTime().Format("2006-01-02"))
-				}
-			}
-			if count == 0 {
-				fmt.Println("  (No certificates found)")
-			}
+		return
+	}
+
+	files, err := storageDir.ReadFiles()
+	if err != nil {
+		fmt.Printf("⚠  Cannot read directory: %v\n", err)
+		return
+	}
+
+	count := 0
+	for _, file := range files {
+		if strings.HasSuffix(file.Name(), ".pem") {
+			count++
+			info, _ := file.Info()
+			fmt.Printf("  • %s (%s, %s)\n",
+				file.Name(),
+				humanize.Bytes(uint64(info.Size())),
+				info.ModTime().Format("2006-01-02"))
 		}
+	}
+	if count == 0 {
+		fmt.Println("  (No certificates found)")
 	}
 }
 
@@ -380,25 +363,20 @@ func handleGossipInit(configPath string) {
 		logger.Fatal("Error loading config: ", err)
 	}
 
-	// Determine key path (use certs directory)
-	certsDir := woos.MakeFolder(global.Storage.CertsDir, woos.CertDir)
+	certsDir := woos.NewFolder(global.Storage.CertsDir)
 	keyPath := filepath.Join(certsDir.Path(), "gossip.key")
 
-	// Generate key if it doesn't exist
 	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
 		logger.Info("Generating gossip private key...")
 		if err := security.GenerateNewKeyFile(keyPath); err != nil {
 			logger.Fatal("Failed to generate key: ", err)
 		}
+		_ = os.Chmod(keyPath, 0600)
 		logger.Info("Generated gossip key: ", keyPath)
-
-		// Set secure permissions
-		os.Chmod(keyPath, 0600)
 	} else {
 		logger.Info("Gossip key already exists: ", keyPath)
 	}
 
-	// Display configuration guidance
 	fmt.Println("\nGossip configuration guide:")
 	fmt.Println("==========================")
 	fmt.Printf("Private key: %s\n", keyPath)
@@ -423,26 +401,22 @@ func handleGossipToken(configPath string) {
 		logger.Fatal("Error loading config: ", err)
 	}
 
-	// Check if gossip is configured
-	if &global.Gossip == nil || global.Gossip.PrivateKeyFile == "" {
+	if !global.Gossip.Enabled || global.Gossip.PrivateKeyFile == "" {
 		logger.Fatal("Gossip not configured. Run 'agbero gossip init' first.")
 	}
 
-	// Verify key exists
 	keyPath := global.Gossip.PrivateKeyFile
 	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
 		logger.Fatalf("Gossip key not found: %s\nRun 'agbero gossip init' to generate it.", keyPath)
 	}
 
-	// Load key and generate token
 	tm, err := security.LoadKeys(keyPath)
 	if err != nil {
 		logger.Fatal("Error loading gossip key: ", err)
 	}
 
-	// Set default TTL (30 days)
 	if gossipTTL == 0 {
-		gossipTTL = 720 * time.Hour // 30 days
+		gossipTTL = 720 * time.Hour
 	}
 
 	token, err := tm.Mint(gossipService, gossipTTL)
@@ -450,14 +424,12 @@ func handleGossipToken(configPath string) {
 		logger.Fatal("Error generating token: ", err)
 	}
 
-	// Output token
 	fmt.Printf("\nGossip token for service: %s\n", gossipService)
 	fmt.Printf("TTL: %s\n", gossipTTL)
 	fmt.Println("--------------------------")
 	fmt.Println(token)
 	fmt.Println("--------------------------")
 
-	// Usage example
 	fmt.Printf("\nUse in your service metadata:\n")
 	fmt.Printf(`{"token":"%s","port":8080,"host":"%s.example.com","path":"/"}`, token, gossipService)
 	fmt.Println()
@@ -472,7 +444,7 @@ func handleGossipStatus(configPath string) {
 	fmt.Println("\nGossip Configuration Status")
 	fmt.Println("===========================")
 
-	if &global.Gossip == nil || !global.Gossip.Enabled {
+	if !global.Gossip.Enabled {
 		fmt.Println("Status: DISABLED")
 		fmt.Println("\nTo enable: agbero gossip init")
 		return
@@ -481,12 +453,9 @@ func handleGossipStatus(configPath string) {
 	fmt.Println("Status: ENABLED")
 	fmt.Printf("Port: %d\n", global.Gossip.Port)
 
-	// Check key
 	if global.Gossip.PrivateKeyFile != "" {
 		if _, err := os.Stat(global.Gossip.PrivateKeyFile); err == nil {
 			fmt.Printf("Private key: %s (exists)\n", global.Gossip.PrivateKeyFile)
-
-			// Test key validity
 			if _, err := security.LoadKeys(global.Gossip.PrivateKeyFile); err == nil {
 				fmt.Println("Key status: VALID")
 			} else {
@@ -499,14 +468,12 @@ func handleGossipStatus(configPath string) {
 		fmt.Println("Private key: NOT CONFIGURED")
 	}
 
-	// Seeds
 	if len(global.Gossip.Seeds) > 0 {
 		fmt.Printf("Cluster seeds: %v\n", global.Gossip.Seeds)
 	} else {
 		fmt.Println("Cluster seeds: none (standalone mode)")
 	}
 
-	// Encryption
 	if global.Gossip.SecretKey != "" {
 		fmt.Println("Encryption: ENABLED")
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"git.imaxinacion.net/aibox/agbero"
@@ -61,6 +62,18 @@ func (p *program) run() {
 		return
 	}
 	defer hm.Close()
+
+	logger.Fields(
+		"os", runtime.GOOS,
+		"euid", os.Geteuid(),
+		"config", p.configPath,
+	).Info("service starting")
+
+	logger.Fields(
+		"hosts_dir", global.Storage.HostsDir,
+		"certs_dir", global.Storage.CertsDir,
+		"https", len(global.Bind.HTTPS),
+	).Info("resolved paths")
 
 	server := agbero.NewServer(
 		agbero.WithHostManager(hm),
