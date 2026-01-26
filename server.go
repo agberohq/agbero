@@ -152,7 +152,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	).Info("host configuration loaded")
 
 	// Gossip Cluster Initialization
-	if &s.global.Gossip != nil && s.global.Gossip.Enabled {
+	if s.global.Gossip.Enabled {
 		gs, err := gossip.NewService(s.hostManager, &s.global.Gossip, s.logger)
 		if err != nil {
 			return errors.Newf("failed to start gossip: %w", err)

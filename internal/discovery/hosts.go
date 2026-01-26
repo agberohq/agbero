@@ -344,14 +344,12 @@ func (hm *Host) ReloadFull() {
 }
 
 func (hm *Host) Get(hostname string) *alaye.Host {
-	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	hostname = core.NormalizeHost(hostname) // MUST strip port
 	if hostname == "" {
 		return nil
 	}
-
 	hm.mu.RLock()
 	defer hm.mu.RUnlock()
-
 	return hm.lookupMap[hostname]
 }
 
@@ -376,14 +374,12 @@ func (hm *Host) Changed() <-chan struct{} {
 }
 
 func (hm *Host) GetRouter(hostname string) *matcher.Tree {
-	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	hostname = core.NormalizeHost(hostname)
 	if hostname == "" {
 		return nil
 	}
-
 	hm.mu.RLock()
 	defer hm.mu.RUnlock()
-
 	return hm.routers[hostname]
 }
 
@@ -449,10 +445,15 @@ func (hm *Host) loadAllLocked() error {
 		nextHosts[hostID] = cfg
 		loadedFiles = append(loadedFiles, rel)
 
+		primary := ""
+		if len(cfg.Domains) > 0 {
+			primary = cfg.Domains[0]
+		}
+
 		hm.logger.Fields(
 			"file", rel,
-			"host_id", hostID,
-			"domains", len(cfg.Domains),
+			"primary_domain", primary,
+			"domains", cfg.Domains, // or count + first N
 			"routes", len(cfg.Routes),
 		).Debug("loaded host config")
 
@@ -622,7 +623,7 @@ func (hm *Host) loadOne(path string) (*alaye.Host, error) {
 		return nil, err
 	}
 	for i := range hostConfig.Domains {
-		hostConfig.Domains[i] = strings.ToLower(strings.TrimSpace(hostConfig.Domains[i]))
+		hostConfig.Domains[i] = core.NormalizeHost(hostConfig.Domains[i])
 	}
 	sortRoutes(hostConfig.Routes)
 	return &hostConfig, nil

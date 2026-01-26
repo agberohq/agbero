@@ -138,14 +138,29 @@ func TestTlsManager_EnsureCertMagic_NoEmail(t *testing.T) {
 	}
 }
 
-func TestTlsManager_CmForHost_DevMode(t *testing.T) {
-	m := &Manager{Global: &alaye.Global{Development: true}}
+func TestTlsManager_CmForHost_StagingDefault(t *testing.T) {
+	m := &Manager{Global: &alaye.Global{
+		LetsEncrypt: alaye.LetsEncrypt{Staging: true},
+	}}
 	m.cmProd = &certmagic.Config{}
 	m.cmStaging = &certmagic.Config{}
 
 	cm := m.CmForHost(nil)
 	if cm != m.cmStaging {
-		t.Error("Expected staging in dev mode")
+		t.Error("Expected staging when staging_default=true")
+	}
+}
+
+func TestTlsManager_CmForHost_ProdDefault(t *testing.T) {
+	m := &Manager{Global: &alaye.Global{
+		LetsEncrypt: alaye.LetsEncrypt{Staging: false},
+	}}
+	m.cmProd = &certmagic.Config{}
+	m.cmStaging = &certmagic.Config{}
+
+	cm := m.CmForHost(nil)
+	if cm != m.cmProd {
+		t.Error("Expected prod when staging_default=false")
 	}
 }
 

@@ -163,24 +163,39 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 	}
 
 	h := next
-	if m.issProd != nil {
-		h = m.issProd.HTTPChallengeHandler(h)
-	}
-	if m.issStaging != nil {
-		h = m.issStaging.HTTPChallengeHandler(h)
+
+	useStaging := m.Global != nil && m.Global.LetsEncrypt.Staging
+
+	if useStaging {
+		if m.issStaging != nil {
+			h = m.issStaging.HTTPChallengeHandler(h)
+		}
+	} else {
+		if m.issProd != nil {
+			h = m.issProd.HTTPChallengeHandler(h)
+		}
 	}
 
 	return h, nil
+
 }
 
 func (m *Manager) CmForHost(hcfg *alaye.Host) *certmagic.Config {
-	if m.Global != nil && m.Global.Development {
-		return m.cmStaging
+	useStaging := false
+	if m.Global != nil {
+		useStaging = m.Global.LetsEncrypt.Staging
 	}
-	if hcfg != nil && &hcfg.TLS != nil {
+
+	if hcfg != nil {
+		// if TLS is struct: just read it
+		// if TLS is *TLS: guard nil properly
 		if hcfg.TLS.LetsEncrypt.Staging {
-			return m.cmStaging
+			useStaging = true
 		}
+	}
+
+	if useStaging {
+		return m.cmStaging
 	}
 	return m.cmProd
 }

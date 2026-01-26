@@ -2,6 +2,15 @@ APP_NAME := agbero
 BUILD_DIR := bin
 SRC_DIR := ./cmd/agbero
 
+# Remote
+PLAY_HOST ?= aibox.play
+PLAY_USER ?= root
+PLAY_PATH ?= /usr/local/bin
+PLAY_OS   ?= linux
+PLAY_ARCH ?= amd64
+
+
+
 # Git remote for pushing tags
 REMOTE ?= origin
 
@@ -47,7 +56,7 @@ LDFLAGS := -s -w -X "git.imaxinacion.net/aibox/agbero/internal/woos.Version=$(VE
 
 .PHONY: all build clean run install build-all version help \
         deps test test-verbose fmt lint tidy snapshot goreleaser-check changelog dev update-deps \
-        ensure-clean ensure-release-version tag release release-dry
+        ensure-clean ensure-release-version tag release release-dry play
 
 all: build
 
@@ -227,3 +236,19 @@ release: tag
 release-dry: tag
 	@echo "Running GoReleaser dry-run for $(RELEASE_VERSION)..."
 	goreleaser release --clean --skip=publish
+
+
+.PHONY: play
+
+play:
+	@echo "Building $(APP_NAME) for linux/amd64..."
+	@mkdir -p $(BUILD_DIR)
+	GOOS=linux GOARCH=amd64 \
+		go build -ldflags="$(LDFLAGS)" -trimpath \
+		-o $(BUILD_DIR)/$(APP_NAME) $(SRC_DIR)
+
+	@echo "Sending binary to $(PLAY_USER)@$(PLAY_HOST):$(PLAY_PATH)..."
+	scp $(BUILD_DIR)/$(APP_NAME) \
+		$(PLAY_USER)@$(PLAY_HOST):$(PLAY_PATH)/$(APP_NAME)
+
+	@echo "Binary deployed ✔"
