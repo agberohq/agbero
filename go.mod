@@ -7,7 +7,7 @@ require (
 	github.com/alecthomas/hcl v0.5.5
 	github.com/andybalholm/brotli v1.2.0
 	github.com/caddyserver/certmagic v0.25.1
-	github.com/cespare/xxhash/v2 v2.1.1
+	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/charmbracelet/bubbles v0.21.1-0.20250623103423-23b8fd6302d7
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
@@ -20,7 +20,7 @@ require (
 	github.com/klauspost/compress v1.18.3
 	github.com/maypok86/otter/v2 v2.3.0
 	github.com/olekukonko/errors v1.2.0
-	github.com/olekukonko/ll v0.1.4-0.20260122041744-2017be7a914c
+	github.com/olekukonko/ll v0.1.4
 	github.com/quic-go/quic-go v0.59.0
 	github.com/yl2chen/cidranger v1.0.2
 	go.etcd.io/bbolt v1.4.3
