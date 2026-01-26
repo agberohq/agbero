@@ -101,7 +101,7 @@ func main() {
 		Verbose:     verbose,
 	}
 
-	// Initialize Model in Config State
+	// Initialize Ui in Config State
 	model := NewModel(config)
 
 	p := tea.NewProgram(&model, tea.WithAltScreen())

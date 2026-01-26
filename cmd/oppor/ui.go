@@ -1,4 +1,3 @@
-// model.go
 package main
 
 import (
@@ -7,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -150,57 +150,8 @@ var (
 			Foreground(textSecondary).
 			Padding(0, 1)
 
-	keyStyle = lipgloss.NewStyle().
-			Foreground(primaryColor).
-			Bold(true)
-
-	helpStyle = lipgloss.NewStyle().
-			Foreground(textSecondary)
-
 	methods = []string{"GET", "POST", "PUT", "DEL", "PAT", "HED", "OPT"}
 )
-
-// Key mappings
-type ModelKeyMap struct {
-	Run       key.Binding
-	Stop      key.Binding
-	FocusURL  key.Binding
-	FocusNext key.Binding
-	FocusPrev key.Binding
-	Quit      key.Binding
-	Help      key.Binding
-}
-
-var modelKeys = ModelKeyMap{
-	Run: key.NewBinding(
-		key.WithKeys("enter", "ctrl+r"),
-		key.WithHelp("enter", "run"),
-	),
-	Stop: key.NewBinding(
-		key.WithKeys("ctrl+c", "esc"),
-		key.WithHelp("esc", "stop"),
-	),
-	FocusURL: key.NewBinding(
-		key.WithKeys("ctrl+l"),
-		key.WithHelp("ctrl+l", "url"),
-	),
-	FocusNext: key.NewBinding(
-		key.WithKeys("tab"),
-		key.WithHelp("tab", "next"),
-	),
-	FocusPrev: key.NewBinding(
-		key.WithKeys("shift+tab"),
-		key.WithHelp("shift+tab", "prev"),
-	),
-	Quit: key.NewBinding(
-		key.WithKeys("ctrl+q"),
-		key.WithHelp("ctrl+q", "quit"),
-	),
-	Help: key.NewBinding(
-		key.WithKeys("?"),
-		key.WithHelp("?", "help"),
-	),
-}
 
 // Input indices
 const (
@@ -225,7 +176,7 @@ const (
 	NumTabs
 )
 
-type Model struct {
+type Ui struct {
 	Config  Config
 	Metrics *Metrics
 
@@ -247,11 +198,11 @@ type Model struct {
 	Spinner      spinner.Model
 	ResponseView viewport.Model
 	MetricsTable table.Model
-	KeyMap       ModelKeyMap
+	KeyMap       KeyMap
+	Help         help.Model
 
 	// Data
 	Logs       []string
-	Responses  []string
 	WorkerPool *Pool
 	msgChan    chan tea.Msg
 
@@ -266,22 +217,27 @@ type Model struct {
 	}
 }
 
-// Added missing struct definition
 type savedConfigMsg struct {
 	message string
 }
 
-func NewModel(cfg Config) Model {
+type loadMsg struct {
+	cfg Config
+	err error
+}
+
+func NewModel(cfg Config) Ui {
 	inputs := make([]textinput.Model, NumNonButtonInputs)
 
 	inputs[InputMethod] = textinput.New()
 	inputs[InputMethod].SetValue(cfg.Method)
+	inputs[InputMethod].Width = 5
 
 	inputs[InputURL] = textinput.New()
 	inputs[InputURL].Placeholder = "http://localhost:8080"
 	inputs[InputURL].Focus()
 	if len(cfg.Targets) > 0 {
-		inputs[InputURL].SetValue(cfg.Targets[0])
+		inputs[InputURL].SetValue(strings.Join(cfg.Targets, ", "))
 	}
 
 	inputs[InputConcurrency] = textinput.New()
@@ -348,7 +304,7 @@ func NewModel(cfg Config) Model {
 		cfg.Method = "GET"
 	}
 
-	return Model{
+	return Ui{
 		Config:       cfg,
 		Metrics:      &Metrics{},
 		Inputs:       inputs,
@@ -359,21 +315,22 @@ func NewModel(cfg Config) Model {
 		Spinner:      spin,
 		ResponseView: responseView,
 		MetricsTable: metricsTable,
-		KeyMap:       modelKeys,
+		KeyMap:       defaultKeyMap,
+		Help:         help.New(),
 		Logs:         []string{},
 		msgChan:      make(chan tea.Msg, 1000),
 	}
 }
 
-func (m Model) Init() tea.Cmd {
+func (m Ui) Init() tea.Cmd {
 	return tea.Batch(m.Inputs[m.FocusIndex].Focus(), m.waitForMsg(), m.Spinner.Tick, updateMetricsAfter(time.Second))
 }
 
-func (m *Model) waitForMsg() tea.Cmd {
+func (m *Ui) waitForMsg() tea.Cmd {
 	return func() tea.Msg { return <-m.msgChan }
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
 
@@ -418,6 +375,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.focusNext()
 		case key.Matches(msg, m.KeyMap.FocusPrev):
 			m.focusPrev()
+		case key.Matches(msg, m.KeyMap.ToggleVerbose):
+			m.Config.Verbose = !m.Config.Verbose
+			m.StatusMessage = fmt.Sprintf("Verbose: %t", m.Config.Verbose)
+			m.startStatusMessageTimer()
+		case key.Matches(msg, m.KeyMap.ClearLogs):
+			m.Logs = []string{}
+			m.updateResponseView()
+		case key.Matches(msg, m.KeyMap.SaveConfig):
+			return m, func() tea.Msg {
+				err := saveCurrentConfig(m.Config, "default")
+				message := "Config saved"
+				if err != nil {
+					message = "Save failed: " + err.Error()
+				}
+				return savedConfigMsg{message: message}
+			}
+		case key.Matches(msg, m.KeyMap.LoadConfig):
+			return m, func() tea.Msg {
+				cfg, err := loadConfigPreset("default")
+				return loadMsg{cfg: cfg, err: err}
+			}
 		}
 
 		if m.FocusIndex == InputMethod {
@@ -450,6 +428,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Height = msg.Height
 		m.calculateLayout()
 		m.updateViewportSize()
+
+		// Set dynamic widths for inputs
+		methodW := 35
+		btnW := 12
+		urlW := m.Width - methodW - btnW - 6
+		if urlW < 10 {
+			urlW = 10
+		}
+		m.Inputs[InputURL].Width = urlW - 2
+
+		colW := (m.Width / 2) - 4
+		if colW < 30 {
+			colW = m.Width - 4
+		}
+		inW := colW - 14 - 2 // label width + padding
+		if inW < 10 {
+			inW = 10
+		}
+		for i := InputConcurrency; i < NumNonButtonInputs; i++ {
+			m.Inputs[i].Width = inW - 2
+		}
+		m.Inputs[InputMethod].Width = 5
 
 	case spinner.TickMsg:
 		if m.Running {
@@ -489,6 +489,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case savedConfigMsg:
 		m.StatusMessage = msg.message
 		m.startStatusMessageTimer()
+
+	case loadMsg:
+		if msg.err != nil {
+			m.StatusMessage = "Load failed: " + msg.err.Error()
+		} else {
+			m.Config = msg.cfg
+			m.updateInputsFromConfig()
+			m.StatusMessage = "Config loaded"
+		}
+		m.startStatusMessageTimer()
 	}
 
 	if m.FocusIndex > InputMethod && m.FocusIndex < NumNonButtonInputs {
@@ -503,10 +513,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *Model) calculateLayout() {
+func (m *Ui) updateInputsFromConfig() {
+	m.Inputs[InputMethod].SetValue(m.Config.Method)
+	for i, mth := range methods {
+		if mth == m.Config.Method {
+			m.MethodIndex = i
+			break
+		}
+	}
+	m.Inputs[InputURL].SetValue(strings.Join(m.Config.Targets, ", "))
+	m.Inputs[InputConcurrency].SetValue(strconv.Itoa(m.Config.Concurrency))
+	m.Inputs[InputRequests].SetValue(strconv.Itoa(m.Config.Requests))
+	if m.Config.Duration > 0 {
+		m.Inputs[InputDuration].SetValue(m.Config.Duration.String())
+	} else {
+		m.Inputs[InputDuration].SetValue("")
+	}
+	m.Inputs[InputRateLimit].SetValue(strconv.Itoa(m.Config.RateLimit))
+	m.Inputs[InputHeaders].SetValue(strings.Join(m.Config.Headers, ", "))
+	m.Inputs[InputBody].SetValue(m.Config.Body)
+}
+
+func (m *Ui) calculateLayout() {
 	m.layout.headerHeight = 1
 	m.layout.requestHeight = 3
-	m.layout.configHeight = 6 // Compacted
+	m.layout.configHeight = 6
 	m.layout.dashboardHeight = 6
 	m.layout.statusHeight = 1
 
@@ -517,12 +548,12 @@ func (m *Model) calculateLayout() {
 	}
 }
 
-func (m *Model) updateViewportSize() {
+func (m *Ui) updateViewportSize() {
 	m.ResponseView.Width = m.Width - 4
 	m.ResponseView.Height = m.layout.responseHeight - 2
 }
 
-func (m *Model) setFocus(index int) {
+func (m *Ui) setFocus(index int) {
 	if m.FocusIndex >= 0 && m.FocusIndex < NumNonButtonInputs {
 		m.Inputs[m.FocusIndex].Blur()
 	}
@@ -536,23 +567,23 @@ func (m *Model) setFocus(index int) {
 	m.FocusIndex = index
 }
 
-func (m *Model) focusNext() {
+func (m *Ui) focusNext() {
 	next := m.FocusIndex + 1
-	if next > NumNonButtonInputs { // Wrap around
-		next = 0 // InputMethod
+	if next > NumNonButtonInputs {
+		next = 0
 	}
 	m.setFocus(next)
 }
 
-func (m *Model) focusPrev() {
+func (m *Ui) focusPrev() {
 	prev := m.FocusIndex - 1
 	if prev < 0 {
-		prev = NumNonButtonInputs // Button
+		prev = NumNonButtonInputs
 	}
 	m.setFocus(prev)
 }
 
-func (m Model) toggleRun() (Model, tea.Cmd) {
+func (m Ui) toggleRun() (Ui, tea.Cmd) {
 	if m.Running {
 		m.stopTest()
 		return m, nil
@@ -560,14 +591,18 @@ func (m Model) toggleRun() (Model, tea.Cmd) {
 	return m.startTest()
 }
 
-func (m Model) startTest() (Model, tea.Cmd) {
-	target := strings.TrimSpace(m.Inputs[InputURL].Value())
-	if target == "" {
+func (m Ui) startTest() (Ui, tea.Cmd) {
+	targetStr := strings.TrimSpace(m.Inputs[InputURL].Value())
+	if targetStr == "" {
 		m.StatusMessage = "URL required"
 		m.startStatusMessageTimer()
 		return m, nil
 	}
-	m.Config.Targets = []string{target}
+	targets := strings.Split(targetStr, ",")
+	for i := range targets {
+		targets[i] = strings.TrimSpace(targets[i])
+	}
+	m.Config.Targets = targets
 
 	c, _ := strconv.Atoi(m.Inputs[InputConcurrency].Value())
 	if c > 0 {
@@ -603,7 +638,6 @@ func (m Model) startTest() (Model, tea.Cmd) {
 	m.updateResponseView()
 	m.Progress.SetPercent(0)
 
-	// Fix infinite progress bar
 	progTotal := uint64(m.Config.Requests)
 	m.WorkerPool = NewWorkerPool(m.Config, m.Metrics, m.msgChan, progTotal)
 
@@ -619,7 +653,7 @@ func (m Model) startTest() (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *Model) stopTest() {
+func (m *Ui) stopTest() {
 	m.Running = false
 	m.EndTime = time.Now()
 	if m.WorkerPool != nil {
@@ -632,7 +666,7 @@ func (m *Model) stopTest() {
 	m.startStatusMessageTimer()
 }
 
-func (m *Model) updateResponseView() {
+func (m *Ui) updateResponseView() {
 	var content string
 	switch m.ActiveTab {
 	case TabConsole:
@@ -649,7 +683,7 @@ func (m *Model) updateResponseView() {
 	m.ResponseView.GotoBottom()
 }
 
-func (m *Model) updateMetricsTable(snap MetricsSnapshot) {
+func (m *Ui) updateMetricsTable(snap MetricsSnapshot) {
 	rows := []table.Row{
 		{"Reqs", fmt.Sprintf("%d", snap.TotalRequests), getStatusEmoji(snap.SuccessRate)},
 		{"Rate", fmt.Sprintf("%.1f%%", snap.SuccessRate), getStatusColor(snap.SuccessRate)},
@@ -659,7 +693,7 @@ func (m *Model) updateMetricsTable(snap MetricsSnapshot) {
 	m.MetricsTable.SetRows(rows)
 }
 
-func (m *Model) startStatusMessageTimer() {
+func (m *Ui) startStatusMessageTimer() {
 	if m.StatusMessageTimer != nil {
 		m.StatusMessageTimer.Stop()
 	}
@@ -668,15 +702,14 @@ func (m *Model) startStatusMessageTimer() {
 
 // --- View Rendering ---
 
-func (m Model) View() string {
+func (m Ui) View() string {
 	if m.Width == 0 || m.Height == 0 {
 		return "Loading..."
 	}
 
-	// Calculate strict effective width to prevent overflow
 	effWidth := m.Width
 	if effWidth > 2 {
-		effWidth -= 2 // Safety margin
+		effWidth -= 2
 	}
 
 	header := m.renderHeader(effWidth)
@@ -696,37 +729,27 @@ func (m Model) View() string {
 	)
 
 	if m.ShowHelp {
-		// Overlay help
 		return appStyle.Width(m.Width).Height(m.Height).Render(m.renderHelp(effWidth))
 	}
 
 	return appStyle.Width(m.Width).Height(m.Height).Render(view)
 }
 
-func (m Model) renderHeader(w int) string {
+func (m Ui) renderHeader(w int) string {
 	title := "OPPOR"
 	status := "IDLE"
 	if m.Running {
 		status = fmt.Sprintf("RUNNING %s", m.Spinner.View())
 	}
 
-	// Manual alignment - Using lipgloss.Width to calculate length
-	avail := w - len(title) - lipgloss.Width(status) - 4
-	if avail < 0 {
-		avail = 0
-	}
-	gap := strings.Repeat(" ", avail)
-
-	return headerStyle.Width(w).Render(title + gap + status)
+	return headerStyle.Width(w).Render(lipgloss.JoinHorizontal(lipgloss.Left, title, lipgloss.NewStyle().Align(lipgloss.Right).Width(w-lipgloss.Width(title)-2).Render(status)))
 }
 
-func (m Model) renderRequestBar(w int) string {
-	// Fixed widths for button and method
-	methodW := 24
+func (m Ui) renderRequestBar(w int) string {
+	methodW := 35
 	btnW := 12
 
-	// Dynamic URL width
-	urlW := w - methodW - btnW - 6 // margins
+	urlW := w - methodW - btnW - 6
 	if urlW < 10 {
 		urlW = 10
 	}
@@ -746,7 +769,7 @@ func (m Model) renderRequestBar(w int) string {
 	)
 }
 
-func (m Model) renderSendButton(w int) string {
+func (m Ui) renderSendButton(w int) string {
 	txt := "SEND"
 	style := sendButtonStyle.Width(w)
 	if m.Running {
@@ -758,7 +781,7 @@ func (m Model) renderSendButton(w int) string {
 	return style.Render(txt)
 }
 
-func (m Model) renderMethodSelector() string {
+func (m Ui) renderMethodSelector() string {
 	var s strings.Builder
 	for i, met := range methods {
 		if i == m.MethodIndex {
@@ -773,18 +796,14 @@ func (m Model) renderMethodSelector() string {
 	return s.String()
 }
 
-func (m Model) renderConfigPanel(w int) string {
-	// We'll do 2 columns if space permits, else 1
-	// Col width = (w / 2) - padding
+func (m Ui) renderConfigPanel(w int) string {
 	colW := (w / 2) - 4
 	if colW < 30 {
-		colW = w - 4 // stacked
+		colW = w - 4
 	}
 
-	// Helper to render a row (Label + Input)
 	renderRow := func(label string, idx int) string {
 		l := configLabelStyle.Render(label)
-		// Input fills remaining space in col
 		inW := colW - lipgloss.Width(l) - 2
 		if inW < 10 {
 			inW = 10
@@ -795,13 +814,7 @@ func (m Model) renderConfigPanel(w int) string {
 			s = configInputFocusedStyle.Width(inW)
 		}
 
-		val := m.Inputs[idx].View()
-		// Force clip value if too long to prevent wrap
-		if len(val) > inW {
-			val = val[len(val)-inW:]
-		}
-
-		return lipgloss.JoinHorizontal(lipgloss.Left, l, s.Render(val))
+		return lipgloss.JoinHorizontal(lipgloss.Left, l, s.Render(m.Inputs[idx].View()))
 	}
 
 	col1 := lipgloss.JoinVertical(lipgloss.Left,
@@ -822,10 +835,9 @@ func (m Model) renderConfigPanel(w int) string {
 	return configPanelStyle.Width(w).Render(lipgloss.JoinHorizontal(lipgloss.Top, col1, "  ", col2))
 }
 
-func (m Model) renderDashboard(w int) string {
+func (m Ui) renderDashboard(w int) string {
 	snap := m.Metrics.Snapshot()
 
-	// Dynamic calculation for 4 cards
 	cardW := (w - 10) / 4
 	if cardW < 15 {
 		cardW = 15
@@ -847,7 +859,6 @@ func (m Model) renderDashboard(w int) string {
 		renderCard("LAT", fmt.Sprintf("%.0fms", snap.AvgLatencyMs)),
 	)
 
-	// Add progress bar if needed
 	if m.Running && m.Config.Requests > 0 {
 		m.Progress.Width = w - 20
 		prog := lipgloss.NewStyle().PaddingTop(1).Render(m.Progress.View())
@@ -857,8 +868,7 @@ func (m Model) renderDashboard(w int) string {
 	return dashboardStyle.Width(w).Render(cards)
 }
 
-func (m Model) renderResponsePanel(w int) string {
-	// Tab bar
+func (m Ui) renderResponsePanel(w int) string {
 	tabs := []string{"LOGS", "METRICS", "HISTO"}
 	var renderedTabs []string
 	for i, t := range tabs {
@@ -870,7 +880,6 @@ func (m Model) renderResponsePanel(w int) string {
 	}
 	tabBar := lipgloss.JoinHorizontal(lipgloss.Bottom, renderedTabs...)
 
-	// Border between tabs and content
 	border := lipgloss.NewStyle().Width(w).Border(lipgloss.NormalBorder(), false, false, true, false).BorderForeground(borderColor).Render("")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -880,28 +889,27 @@ func (m Model) renderResponsePanel(w int) string {
 	)
 }
 
-func (m Model) renderMetricsDetail() string {
+func (m Ui) renderMetricsDetail() string {
 	snap := m.Metrics.Snapshot()
 	s := fmt.Sprintf(`
-  Total: %d
-  Success: %d (%.1f%%)
-  Errors: %d
-  RPS: %d
-  Avg Latency: %.0fms
-  Min: %.0fms
-  Max: %.0fms
-  Codes: 2xx:%d, 3xx:%d, 4xx:%d, 5xx:%d
+Total: %d
+Success: %d (%.1f%%)
+Errors: %d
+RPS: %d
+Avg Latency: %.0fms
+Min: %.0fms
+Max: %.0fms
+Codes: 2xx:%d, 3xx:%d, 4xx:%d, 5xx:%d
 `, snap.TotalRequests, snap.SuccessCount, snap.SuccessRate, snap.ErrorCount,
 		snap.RequestsPerSec, snap.AvgLatencyMs, snap.MinLatencyMs, snap.MaxLatencyMs,
 		snap.StatusCode2xx, snap.StatusCode3xx, snap.StatusCode4xx, snap.StatusCode5xx)
 	return s
 }
 
-func (m Model) renderHistogramDetail() string {
-	// Simplified histogram text
+func (m Ui) renderHistogramDetail() string {
 	var sb strings.Builder
 	sb.WriteString("Latency Distribution:\n\n")
-	labels := []string{"<10ms", "<50ms", "<100ms", "<250ms", "<500ms", "<1s", "<2s", "<5s", "5s+", "10s+"}
+	labels := []string{"<10ms", "10-50ms", "50-100ms", "100-250ms", "250-500ms", "500-1s", "1-2s", "2-5s", "5-10s", ">10s"}
 	var maxVal uint64 = 0
 	for _, b := range m.Metrics.LatencyBuckets {
 		v := b.Load()
@@ -919,13 +927,13 @@ func (m Model) renderHistogramDetail() string {
 		if maxVal > 0 {
 			barLen = int((float64(val) / float64(maxVal)) * 40)
 		}
-		bar := strings.Repeat("|", barLen)
-		sb.WriteString(fmt.Sprintf("%-8s %s %d\n", labels[i], bar, val))
+		bar := strings.Repeat("█", barLen)
+		sb.WriteString(fmt.Sprintf("%-10s %s %d\n", labels[i], bar, val))
 	}
 	return sb.String()
 }
 
-func (m Model) renderStatusBar(w int) string {
+func (m Ui) renderStatusBar(w int) string {
 	dur := "0s"
 	if m.Running {
 		dur = time.Since(m.StartTime).Round(time.Second).String()
@@ -937,9 +945,9 @@ func (m Model) renderStatusBar(w int) string {
 	}
 
 	left := fmt.Sprintf(" %s | %s", dur, status)
-	right := "CTRL+Q: Quit | ?: Help "
+	right := m.Help.ShortHelpView(m.KeyMap.ShortHelp())
 
-	space := w - len(left) - len(right)
+	space := w - lipgloss.Width(left) - lipgloss.Width(right)
 	if space < 0 {
 		space = 0
 	}
@@ -947,11 +955,10 @@ func (m Model) renderStatusBar(w int) string {
 	return statusBarStyle.Width(w).Render(left + strings.Repeat(" ", space) + right)
 }
 
-func (m Model) renderHelp(w int) string {
-	// Just a simple overlay
+func (m Ui) renderHelp(w int) string {
 	return lipgloss.Place(w, m.Height, lipgloss.Center, lipgloss.Center,
 		lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Background(surfaceColor).Padding(1, 2).Render(
-			"HELP\n\nEnter/Ctrl+R: Run\nTab: Next Field\nCtrl+L: Focus URL\nCtrl+Q: Quit",
+			m.Help.FullHelpView(m.KeyMap.FullHelp()),
 		),
 	)
 }
