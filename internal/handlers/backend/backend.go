@@ -69,13 +69,22 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 	}
 
 	rp := httputil.NewSingleHostReverseProxy(u)
-	rp.Transport = woos.Transport
-	rp.FlushInterval = -1
 	rp.BufferPool = sharedBufferPool
 
-	if cfg.Streaming != nil && cfg.Streaming.Enabled {
+	// default transport/flush behavior for non-streaming
+	rp.Transport = woos.Transport
+	rp.FlushInterval = -1
+
+	if cfg.Streaming.Enabled {
+		// clone transport so we don't affect global behavior
 		t := woos.Transport.Clone()
-		t.ResponseHeaderTimeout = 0 // important for tail/live streams
+
+		// critical: streaming endpoints may not send headers quickly
+		t.ResponseHeaderTimeout = 0
+
+		// optional for very long lived streams
+		// t.IdleConnTimeout = 0
+
 		rp.Transport = t
 
 		fi := cfg.Streaming.FlushInterval
@@ -86,12 +95,16 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 	}
 
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		if !errors.Is(err, context.Canceled) {
-			newFailures := b.Failures.Add(1)
-			if newFailures >= int64(cbThreshold) {
-				if b.Alive.Swap(false) {
-					b.logger.Fields("backend", u.Host, "failures", newFailures).Warn("circuit breaker tripped")
-				}
+		// IMPORTANT: don't count client cancels as backend failures
+		if errors.Is(err, context.Canceled) {
+			b.logger.Fields("upstream", u.Host, "err", err).Debug("upstream canceled by client")
+			return
+		}
+
+		newFailures := b.Failures.Add(1)
+		if newFailures >= int64(cbThreshold) {
+			if b.Alive.Swap(false) {
+				b.logger.Fields("backend", u.Host, "failures", newFailures).Warn("circuit breaker tripped")
 			}
 		}
 		b.logger.Fields("upstream", u.Host, "err", err).Error("upstream proxy error")

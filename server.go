@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -78,8 +79,14 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		s.logger = ll.New(woos.Name).Enable()
 	}
 
-	// Apply defaults (resolves Paths including DataDir)
-	woos.DefaultApply(s.global, s.configPath)
+	// Normalize config path for correct relative resolution
+	absConfigPath, err := filepath.Abs(configPath)
+	if err != nil {
+		absConfigPath = configPath
+	}
+
+	// Apply defaults (resolves HostsDir/CertsDir/DataDir relative to config)
+	woos.DefaultApply(s.global, absConfigPath)
 
 	// Log global config summary
 	adminAddr := "disabled"
@@ -88,7 +95,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	}
 
 	s.logger.Fields(
-		"config_path", configPath,
+		"config_path", absConfigPath,
 		"hosts_dir", s.global.Storage.HostsDir,
 		"cert_dir", s.global.Storage.CertsDir,
 		"data_dir", s.global.Storage.DataDir,
@@ -96,7 +103,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		"admin_addr", adminAddr,
 	).Info("starting agbero")
 
-	// Start Admin Server (Metrics/Health/Firewall API)
+	// Start Admin + internal subsystems
 	s.startAdminServer()
 	s.startCacheReaper(parentCtx)
 
@@ -107,19 +114,41 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		return err
 	}
 
-	// Log host summary
+	// Host summary + detect whether any route needs streaming-safe server timeouts
 	hostCount := len(hosts)
 	routeCount := 0
 	tcpCount := 0
+	anyStreaming := false
+
 	for _, host := range hosts {
 		routeCount += len(host.Routes)
 		tcpCount += len(host.TCPProxy)
+
+		// Scan for streaming backends: route.backend.server.streaming.enabled = true
+		for _, rt := range host.Routes {
+			for _, srv := range rt.Backends.Servers {
+				// Assumes:
+				//   srv.Streaming.Enabled bool
+				// If you made Streaming a pointer, change to: if srv.Streaming != nil && srv.Streaming.Enabled { ... }
+				if srv.Streaming.Enabled {
+					anyStreaming = true
+					break
+				}
+			}
+			if anyStreaming {
+				break
+			}
+		}
+		if anyStreaming {
+			break
+		}
 	}
 
 	s.logger.Fields(
 		"hosts", hostCount,
 		"http_routes", routeCount,
 		"tcp_routes", tcpCount,
+		"streaming", anyStreaming,
 	).Info("host configuration loaded")
 
 	// Gossip Cluster Initialization
@@ -140,7 +169,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	s.ipMiddleware = clientip.NewIPMiddleware(s.global.Security.TrustedProxies)
 	s.rateLimiter = s.buildRateLimiterFromConfig()
 
-	// Firewall Initialization
+	// Firewall Initialization (needs DataDir resolved)
 	dataDir := woos.NewFolder(s.global.Storage.DataDir)
 	s.firewall, err = firewall.New(s.global.Security.Firewall, dataDir, s.logger)
 	if err != nil {
@@ -150,20 +179,16 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		defer s.firewall.Close()
 	}
 
-	// Base HTTP Handler
+	// Base handler
 	baseHandler := http.HandlerFunc(s.handleRequest)
 
-	// Determine the fallback handler for HTTP (Port 80).
-	// If HTTPS is configured, we want HTTP to redirect to HTTPS.
-	// If HTTPS is NOT configured, HTTP serves the app directly.
+	// HTTP fallback: redirect to HTTPS if HTTPS listeners exist; otherwise serve normally
 	var httpFallbackHandler http.Handler = baseHandler
 	if len(s.global.Bind.HTTPS) > 0 {
 		httpFallbackHandler = http.HandlerFunc(s.redirectToHTTPS)
 	}
 
-	// TLS Manager Initialization
-	// We pass httpFallbackHandler. If ACME is active, it wraps this handler.
-	// Flow: Request -> ACME Check -> (if not challenge) -> Redirect OR App
+	// TLS Manager Initialization (ACME handler wrapping)
 	tlsCfg, httpHandler, err := s.buildTLS(httpFallbackHandler)
 	if err != nil {
 		s.logger.Fields("err", err.Error()).Warn("TLS setup failed; HTTPS listeners may not start")
@@ -172,16 +197,26 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		tlsCfg = nil
 	}
 
-	// Helper to build the final HTTP chain:
-	// IP -> Firewall -> RateLimit -> [AltSvc] -> Router
+	// Build chain: IP -> Firewall -> RateLimit -> [AltSvc] -> Router
 	buildChain := func(next http.Handler, advertiseH3 bool, port string) http.Handler {
 		h := next
+
 		if advertiseH3 {
 			h = h3.H3Middleware(port)(h)
 		}
-		h = s.rateLimiter.Handler(h)
-		h = s.firewall.Handler(h)
-		h = s.ipMiddleware.Handler(h)
+
+		if s.rateLimiter != nil {
+			h = s.rateLimiter.Handler(h)
+		}
+
+		if s.firewall != nil {
+			h = s.firewall.Handler(h)
+		}
+
+		if s.ipMiddleware != nil {
+			h = s.ipMiddleware.Handler(h)
+		}
+
 		return h
 	}
 
@@ -189,7 +224,6 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	for _, host := range hosts {
 		for _, route := range host.TCPProxy {
 			tp := tcp.NewProxy(route.Listen, s.logger)
-			// Default Route
 			tp.AddRoute("*", route)
 
 			if err := tp.Start(); err != nil {
@@ -206,23 +240,29 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 
 		var handler http.Handler
 		if isTLS {
-			// For TLS, advertise HTTP/3 via Alt-Svc
-			handler = buildChain(baseHandler, true, port)
+			handler = buildChain(baseHandler, true, port) // advertise h3 for TLS listeners
 		} else {
 			handler = buildChain(httpHandler, false, "")
 		}
 
-		// Inject Port into Context
+		// Inject listener port into context
 		wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), portContextKey, port)
 			handler.ServeHTTP(w, r.WithContext(ctx))
 		})
 
+		// IMPORTANT: if any route is streaming, server-level WriteTimeout must be 0,
+		// otherwise long-lived streams get killed (e.g. VictoriaLogs /tail).
+		writeTimeout := core.Or(s.global.Timeouts.Write, alaye.DefaultWriteTimeout)
+		if anyStreaming {
+			writeTimeout = 0
+		}
+
 		srv := &http.Server{
 			Addr:              addr,
 			Handler:           wrappedHandler,
 			ReadTimeout:       core.Or(s.global.Timeouts.Read, alaye.DefaultReadTimeout),
-			WriteTimeout:      core.Or(s.global.Timeouts.Write, alaye.DefaultWriteTimeout),
+			WriteTimeout:      writeTimeout,
 			IdleTimeout:       core.Or(s.global.Timeouts.Idle, alaye.DefaultIdleTimeout),
 			ReadHeaderTimeout: core.Or(s.global.Timeouts.ReadHeader, alaye.DefaultReadHeaderTimeout),
 			MaxHeaderBytes:    s.global.General.MaxHeaderBytes,
@@ -249,7 +289,6 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		}
 		_, port, _ := net.SplitHostPort(addr)
 
-		// HTTP/3 doesn't need Alt-Svc middleware
 		handler := buildChain(baseHandler, false, "")
 
 		wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -280,7 +319,6 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	for _, addr := range s.global.Bind.HTTP {
 		startTCPServer(addr, false)
 	}
-
 	for _, addr := range s.global.Bind.HTTPS {
 		startTCPServer(addr, true)
 		startQUICServer(addr)
@@ -321,7 +359,6 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
-	// Handle signals for reload/shutdown
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 	go func() {

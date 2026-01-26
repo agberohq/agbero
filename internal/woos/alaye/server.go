@@ -18,7 +18,7 @@ type Server struct {
 	Address    string      `hcl:"address"`
 	Weight     int         `hcl:"weight,optional"`
 	Conditions *Conditions `hcl:"conditions,block"`
-	Streaming  *Streaming  `hcl:"streaming,block"` // optional by nature when pointer
+	Streaming  Streaming   `hcl:"streaming,block,optional"` // optional by nature when pointer
 }
 
 type Streaming struct {
