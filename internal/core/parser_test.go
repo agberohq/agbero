@@ -16,11 +16,11 @@ development = true
 bind {
   http    = [":8080", ":8081"]
   https   = [":8443"]
-  
-  # Corrected: Admin block instead of metrics attribute
-  admin {
-    address = ":9090"
-  }
+}
+
+# Admin block instead of metrics attribute
+admin {
+  address = ":9090"
 }
 
 storage {
@@ -77,11 +77,11 @@ letsencrypt {
 		t.Error("expected 2 http bind addresses")
 	}
 	// Verify Admin block parsing
-	if global.Bind.Admin == nil {
+	if global.Admin == nil {
 		t.Fatal("expected admin block to be parsed")
 	}
-	if global.Bind.Admin.Address != ":9090" {
-		t.Errorf("expected admin address :9090, got %v", global.Bind.Admin.Address)
+	if global.Admin.Address != ":9090" {
+		t.Errorf("expected admin address :9090, got %v", global.Admin.Address)
 	}
 	if global.Storage.DataDir != "./my_data" {
 		t.Errorf("expected data_dir ./my_data, got %s", global.Storage.DataDir)

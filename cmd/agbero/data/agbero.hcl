@@ -16,10 +16,17 @@ bind {
 
   # List of addresses to listen for HTTPS/HTTP3 traffic
   https = [":443"]
-
-  # Address for Prometheus metrics and health check
-  metrics = ":9090"
 }
+
+
+# -------------------------------------------------------------
+# ADMIN
+# -------------------------------------------------------------
+admin {
+  # List of addresses to listen for HTTP traffic (redirects to HTTPS if configured)
+  address = ":9090"
+}
+
 
 # -------------------------------------------------------------
 # STORAGE

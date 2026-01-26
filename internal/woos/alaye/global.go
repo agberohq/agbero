@@ -18,6 +18,7 @@ type Global struct {
 	Security    Security    `hcl:"security,block"`
 	General     General     `hcl:"general,block"`
 	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block"`
+	Admin       *Admin      `hcl:"admin,block"`
 }
 
 type Security struct {
@@ -51,6 +52,10 @@ func (g *Global) Validate() error {
 	// Bind config validation
 	if err := g.Bind.Validate(); err != nil {
 		return errors.Newf("bind: %w", err)
+	}
+
+	if err := g.Admin.Validate(); err != nil {
+		return errors.Newf("admin: %w", err)
 	}
 
 	// Timeouts validation

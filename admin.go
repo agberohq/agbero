@@ -10,11 +10,11 @@ import (
 )
 
 func (s *Server) startAdminServer() {
-	if s.global.Bind.Admin == nil || s.global.Bind.Admin.Address == "" {
+	if s.global.Admin == nil || s.global.Admin.Address == "" {
 		return
 	}
 
-	cfg := s.global.Bind.Admin
+	cfg := s.global.Admin
 	mux := http.NewServeMux()
 
 	// Metrics

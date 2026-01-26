@@ -230,10 +230,8 @@ func TestServer_reapOldRoutes_Recent(t *testing.T) {
 func TestServer_StartAdminServer(t *testing.T) {
 	// Corrected: Use Admin struct, not Metrics string
 	global := &alaye.Global{
-		Bind: alaye.Bind{
-			Admin: &alaye.Admin{
-				Address: ":0",
-			},
+		Admin: &alaye.Admin{
+			Address: ":0",
 		},
 	}
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
@@ -253,9 +251,7 @@ func TestServer_StartAdminServer(t *testing.T) {
 
 func TestServer_StartAdminServer_NoConfig(t *testing.T) {
 	global := &alaye.Global{
-		Bind: alaye.Bind{
-			Admin: nil, // Explicitly nil
-		},
+		Admin: nil,
 	}
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 	s := &Server{

@@ -83,8 +83,8 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 
 	// Log global config summary
 	adminAddr := "disabled"
-	if s.global.Bind.Admin != nil {
-		adminAddr = s.global.Bind.Admin.Address
+	if s.global.Admin != nil {
+		adminAddr = s.global.Admin.Address
 	}
 
 	s.logger.Fields(
