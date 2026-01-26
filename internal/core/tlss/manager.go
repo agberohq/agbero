@@ -150,9 +150,10 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 		cmStaging.OnDemand = &certmagic.OnDemandConfig{DecisionFunc: decision}
 		cmStaging.Storage = &certmagic.FileStorage{Path: storageDir}
 		acme := certmagic.ACMEIssuer{
-			Email:  email,
-			Agreed: true,
-			CA:     letsEncryptStagingDir,
+			Email:                   email,
+			Agreed:                  true,
+			CA:                      letsEncryptProdDir,
+			DisableTLSALPNChallenge: true,
 		}
 		issuer := certmagic.NewACMEIssuer(cmStaging, acme)
 		cmStaging.Issuers = []certmagic.Issuer{issuer}
@@ -273,13 +274,22 @@ func (m *Manager) invalidateLocal(cacheKey, host string) {
 }
 
 func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	if chi == nil || chi.ServerName == "" {
+	if chi == nil || strings.TrimSpace(chi.ServerName) == "" {
 		return nil, errors.New("missing SNI")
 	}
 
-	sni := core.NormalizeSubject(chi.ServerName)
+	// Normalize SNI (strip port, lowercase, trim)
+	sni := core.NormalizeHost(chi.ServerName) // prefer NormalizeHost for SNI
+	if sni == "" {
+		return nil, errors.New("missing SNI")
+	}
+
+	// If SNI is an IP address, treat it specially.
+	// Certs generally won’t exist for bare IP SNI; you can either:
+	//  - allow local auto only for localhost-ish
+	//  - or return a clearer error.
 	if net.ParseIP(sni) != nil {
-		// Just log, continue logic
+		// Keep behavior: proceed, but it will likely become "unknown host".
 	}
 
 	hcfg := m.hostManager.Get(sni)
@@ -287,10 +297,9 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return nil, errors.Newf("unknown host %q", sni)
 	}
 
-	var mode alaye.TlsMode
-	if &hcfg.TLS != nil && hcfg.TLS.Mode != "" {
-		mode = hcfg.TLS.Mode
-	} else {
+	// Decide mode: host override or smart default.
+	mode := hcfg.TLS.Mode
+	if strings.TrimSpace(string(mode)) == "" {
 		// Smart Default
 		if core.IsLocalhost(sni) {
 			mode = alaye.ModeLocalAuto
@@ -304,12 +313,17 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return nil, errors.Newf("tls disabled for host %q", sni)
 
 	case alaye.ModeLocalCert:
-		if &hcfg.TLS == nil {
-			return nil, errors.Newf("tls=local requires tls block for host %q", sni)
+		// Requires local cert paths
+		if strings.TrimSpace(hcfg.TLS.Local.CertFile) == "" || strings.TrimSpace(hcfg.TLS.Local.KeyFile) == "" {
+			return nil, errors.Newf("tls=local_cert requires tls.local cert_file + key_file for host %q", sni)
 		}
 		return m.GetLocalCertificate(hcfg.TLS.Local, sni)
 
 	case alaye.ModeLocalAuto:
+		// IMPORTANT: never try mkcert/local CA for public domains
+		if !core.IsLocalhost(sni) {
+			return nil, errors.Newf("tls=local_auto is only allowed for localhost hosts (got %q)", sni)
+		}
 		return m.GetAutoLocalCertificate(sni)
 
 	case alaye.ModeLetsEncrypt:
@@ -317,20 +331,23 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		if cm == nil {
 			return nil, errors.Newf("letsencrypt not enabled globally (host %q)", sni)
 		}
-		if &hcfg.TLS != nil && hcfg.TLS.LetsEncrypt.ShortLived {
+
+		// Per-host short-lived override
+		if hcfg.TLS.LetsEncrypt.ShortLived {
 			for _, iss := range cm.Issuers {
 				if acmeIss, ok := iss.(*certmagic.ACMEIssuer); ok {
 					acmeIss.Profile = acmeProfileShortLived
 				}
 			}
 		}
+
 		cmTLS := cm.TLSConfig()
 		chi2 := *chi
 		chi2.ServerName = sni
 		return cmTLS.GetCertificate(&chi2)
 
 	case alaye.ModeCustomCA:
-		if &hcfg.TLS == nil || hcfg.TLS.CustomCA.Root == "" {
+		if strings.TrimSpace(hcfg.TLS.CustomCA.Root) == "" {
 			return nil, errors.Newf("tls=custom_ca requires root cert for host %q", sni)
 		}
 		return m.getCustomCACert(hcfg.TLS.CustomCA.Root, sni)
