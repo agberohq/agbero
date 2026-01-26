@@ -153,10 +153,21 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	// Base HTTP Handler
 	baseHandler := http.HandlerFunc(s.handleRequest)
 
+	// Determine the fallback handler for HTTP (Port 80).
+	// If HTTPS is configured, we want HTTP to redirect to HTTPS.
+	// If HTTPS is NOT configured, HTTP serves the app directly.
+	var httpFallbackHandler http.Handler = baseHandler
+	if len(s.global.Bind.HTTPS) > 0 {
+		httpFallbackHandler = http.HandlerFunc(s.redirectToHTTPS)
+	}
+
 	// TLS Manager Initialization
-	tlsCfg, httpHandler, err := s.buildTLS(baseHandler)
+	// We pass httpFallbackHandler. If ACME is active, it wraps this handler.
+	// Flow: Request -> ACME Check -> (if not challenge) -> Redirect OR App
+	tlsCfg, httpHandler, err := s.buildTLS(httpFallbackHandler)
 	if err != nil {
 		s.logger.Fields("err", err.Error()).Warn("TLS setup failed; HTTPS listeners may not start")
+		// If TLS fails, do not redirect to broken HTTPS; fall back to serving app over HTTP
 		httpHandler = baseHandler
 		tlsCfg = nil
 	}
@@ -681,6 +692,38 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.RouteHand
 	}
 
 	return h
+}
+
+func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
+	// 1. Get the host without the incoming HTTP port
+	// e.g. "example.com:8080" -> "example.com"
+	host, _, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		// If there is no port in the Host header, use it as is
+		host = r.Host
+	}
+
+	// 2. Determine the target HTTPS port from global config
+	targetPort := "443" // Default
+	if len(s.global.Bind.HTTPS) > 0 {
+		// We use the first configured HTTPS address as the redirect target
+		_, port, err := net.SplitHostPort(s.global.Bind.HTTPS[0])
+		if err == nil {
+			targetPort = port
+		}
+	}
+
+	// 3. Construct the destination URL
+	var target string
+	if targetPort == "443" {
+		// Standard HTTPS (clean URL)
+		target = fmt.Sprintf("https://%s%s", host, r.URL.RequestURI())
+	} else {
+		// Non-standard port (e.g. https://example.com:8443/foo)
+		target = fmt.Sprintf("https://%s:%s%s", host, targetPort, r.URL.RequestURI())
+	}
+
+	http.Redirect(w, r, target, http.StatusMovedPermanently)
 }
 
 func truncateUA(ua string, maxLen int) string {
