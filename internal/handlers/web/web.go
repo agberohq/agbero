@@ -10,9 +10,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
@@ -46,13 +49,24 @@ func init() {
 	}
 
 	for ext, mimeType := range types {
-		if err := mime.AddExtensionType(ext, mimeType); err != nil {
-			// ignore error
-		}
+		_ = mime.AddExtensionType(ext, mimeType)
 	}
 }
 
-var mimeCache sync.Map // ext -> type
+var (
+	mimeCache sync.Map // ext -> type
+
+	// Cache for gzip existence checks to avoid filesystem "miss" cost on every request.
+	// We use a short TTL so if you deploy new .gz assets, the server will discover them soon.
+	gzExistsCache sync.Map // string -> gzCacheEntry
+)
+
+type gzCacheEntry struct {
+	Exists bool
+	Exp    time.Time
+}
+
+const gzCacheTTL = 60 * time.Second
 
 type dirItem struct {
 	Name    string
@@ -60,6 +74,10 @@ type dirItem struct {
 	Size    string
 	ModTime string
 	URL     string
+
+	// For UI: faster + reliable icons and "Type" column.
+	Ext  string // ".pdf"
+	MIME string // "application/pdf"
 }
 
 type webHandler struct {
@@ -124,28 +142,35 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// --- SECURITY CHECK END ---
 
 	// 3. Try Serving Gzip (Optimized)
-	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-		gzPath := reqPath + ".gz"
-		if reqPath == "." {
-			indexName := "index.html"
-			if h.route.Web.Index != "" {
-				indexName = h.route.Web.Index
-			}
-			gzPath = indexName + ".gz"
-		}
+	if clientAcceptsGzip(r) {
+		gzPath, gzOrigPath := h.resolveGzipPath(reqPath)
 
-		fGz, err := root.Open(gzPath)
-		if err == nil {
-			defer fGz.Close()
-			infoGz, err := fGz.Stat()
-			if err == nil && !infoGz.IsDir() {
-				origType := getMimeType(strings.TrimSuffix(gzPath, ".gz"))
-				if origType != "" {
-					w.Header().Set("Content-Type", origType)
+		// gzip existence cache check (with TTL)
+		if h.gzMayExist(gzPath) {
+			fGz, err := root.Open(gzPath)
+			if err == nil {
+				defer fGz.Close()
+				infoGz, err := fGz.Stat()
+				if err == nil && !infoGz.IsDir() {
+					if h.setCommonHeaders(w, r, gzOrigPath, infoGz.ModTime(), infoGz.Size(), true) {
+						return
+					}
+
+					origType := getMimeType(gzOrigPath)
+					if origType != "" {
+						w.Header().Set("Content-Type", origType)
+					}
+					w.Header().Set("Content-Encoding", "gzip")
+					w.Header().Add("Vary", "Accept-Encoding")
+
+					http.ServeContent(w, r, gzPath, infoGz.ModTime(), fGz)
+					h.gzSetExists(gzPath, true)
+					return
 				}
-				w.Header().Set("Content-Encoding", "gzip")
-				http.ServeContent(w, r, gzPath, infoGz.ModTime(), fGz)
-				return
+				// If it was a dir or stat failed, treat as not found for gzip purposes.
+				h.gzSetExists(gzPath, false)
+			} else if errors.Is(err, fs.ErrNotExist) {
+				h.gzSetExists(gzPath, false)
 			}
 		}
 	}
@@ -189,11 +214,16 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			indexName = h.route.Web.Index
 		}
 
-		indexFile, err := root.Open(filepath.Join(reqPath, indexName))
+		indexPath := filepath.Join(reqPath, indexName)
+		indexFile, err := root.Open(indexPath)
 		if err == nil {
 			defer indexFile.Close()
 			indexInfo, err := indexFile.Stat()
 			if err == nil && !indexInfo.IsDir() {
+				if h.setCommonHeaders(w, r, indexName, indexInfo.ModTime(), indexInfo.Size(), false) {
+					return
+				}
+
 				ctype := getMimeType(indexName)
 				if ctype != "" {
 					w.Header().Set("Content-Type", ctype)
@@ -213,12 +243,15 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.setCommonHeaders(w, r, reqPath, info.ModTime(), info.Size(), false) {
+		return
+	}
+
 	ctype := getMimeType(reqPath)
 	if ctype != "" {
 		w.Header().Set("Content-Type", ctype)
 	}
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
-	return
 }
 
 func (h *webHandler) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *os.File, displayPath string) {
@@ -228,7 +261,7 @@ func (h *webHandler) serveDirectoryListing(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var items []dirItem
+	items := make([]dirItem, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
 
@@ -257,12 +290,22 @@ func (h *webHandler) serveDirectoryListing(w http.ResponseWriter, r *http.Reques
 			size = humanize.Bytes(uint64(info.Size()))
 		}
 
+		ext := strings.ToLower(filepath.Ext(name))
+
+		// NOTE: This is extension-based MIME (no file reads) => fast.
+		mimeType := "-"
+		if !entry.IsDir() {
+			mimeType = getMimeType(name)
+		}
+
 		items = append(items, dirItem{
 			Name:    name,
 			IsDir:   entry.IsDir(),
 			Size:    size,
 			ModTime: info.ModTime().Format("2006-01-02 15:04:05"),
 			URL:     url.PathEscape(name),
+			Ext:     ext,
+			MIME:    mimeType,
 		})
 	}
 
@@ -274,15 +317,21 @@ func (h *webHandler) serveDirectoryListing(w http.ResponseWriter, r *http.Reques
 	})
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Listing pages should revalidate often.
+	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 
 	data := struct {
 		Path       string
 		ShowParent bool
 		Items      []dirItem
+		FileCount  int
+		Breadcrumb []crumb
 	}{
 		Path:       displayPath,
 		ShowParent: displayPath != "/",
 		Items:      items,
+		FileCount:  len(items),
+		Breadcrumb: buildBreadcrumbs(displayPath),
 	}
 
 	if err := tmpl.Execute(w, data); err != nil {
@@ -300,10 +349,140 @@ func getMimeType(path string) string {
 
 	if ctype == "" {
 		ctype = "application/octet-stream"
-	} else if (strings.HasPrefix(ctype, "text/") || strings.Contains(ctype, "javascript") || strings.Contains(ctype, "json")) && !strings.Contains(ctype, "charset") {
+	} else if (strings.HasPrefix(ctype, "text/") ||
+		strings.Contains(ctype, "javascript") ||
+		strings.Contains(ctype, "json")) &&
+		!strings.Contains(ctype, "charset") {
 		ctype += "; charset=utf-8"
 	}
 
 	mimeCache.Store(ext, ctype)
 	return ctype
+}
+
+func clientAcceptsGzip(r *http.Request) bool {
+	ae := r.Header.Get("Accept-Encoding")
+	return strings.Contains(ae, "gzip")
+}
+
+func (h *webHandler) resolveGzipPath(reqPath string) (gzPath string, origPath string) {
+	origPath = reqPath
+	gzPath = reqPath + ".gz"
+
+	if reqPath == "." {
+		indexName := "index.html"
+		if h.route.Web.Index != "" {
+			indexName = h.route.Web.Index
+		}
+		origPath = indexName
+		gzPath = indexName + ".gz"
+	}
+	return gzPath, origPath
+}
+
+func (h *webHandler) gzMayExist(gzPath string) bool {
+	now := time.Now()
+	if v, ok := gzExistsCache.Load(gzPath); ok {
+		e := v.(gzCacheEntry)
+		if now.Before(e.Exp) {
+			return e.Exists
+		}
+		gzExistsCache.Delete(gzPath)
+	}
+	return true
+}
+
+func (h *webHandler) gzSetExists(gzPath string, exists bool) {
+	gzExistsCache.Store(gzPath, gzCacheEntry{
+		Exists: exists,
+		Exp:    time.Now().Add(gzCacheTTL),
+	})
+}
+
+var fingerprintRe = regexp.MustCompile(`(?i)(?:[._-])[a-f0-9]{8,}(?:[._-])`)
+
+func (h *webHandler) setCommonHeaders(
+	w http.ResponseWriter,
+	r *http.Request,
+	reqPath string,
+	modTime time.Time,
+	size int64,
+	isGzipVariant bool,
+) (notModified bool) {
+	ext := strings.ToLower(filepath.Ext(reqPath))
+
+	cacheControl := "public, max-age=0, must-revalidate"
+	if ext == ".html" || ext == "" || strings.HasSuffix(r.URL.Path, "/") {
+		cacheControl = "public, max-age=0, must-revalidate"
+	} else {
+		base := filepath.Base(reqPath)
+		isFingerprinted := fingerprintRe.FindStringIndex(base) != nil
+		if isFingerprinted {
+			cacheControl = "public, max-age=31536000, immutable"
+		} else {
+			cacheControl = "public, max-age=300"
+		}
+	}
+	w.Header().Set("Cache-Control", cacheControl)
+
+	if isGzipVariant {
+		w.Header().Add("Vary", "Accept-Encoding")
+	}
+
+	etag := weakETag(size, modTime)
+	w.Header().Set("ETag", etag)
+
+	inm := r.Header.Get("If-None-Match")
+	if inm != "" && ifNoneMatchHas(inm, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return true
+	}
+
+	return false
+}
+
+func weakETag(size int64, modTime time.Time) string {
+	return `W/"` + strconv.FormatInt(size, 10) + "-" + strconv.FormatInt(modTime.UnixNano(), 10) + `"`
+}
+
+func ifNoneMatchHas(inm string, etag string) bool {
+	if strings.TrimSpace(inm) == "*" {
+		return true
+	}
+	parts := strings.Split(inm, ",")
+	for _, p := range parts {
+		if strings.TrimSpace(p) == etag {
+			return true
+		}
+	}
+	return false
+}
+
+// inside web.go
+
+type crumb struct {
+	Name string // label shown to user
+	Href string // absolute path (ends with "/")
+}
+
+func buildBreadcrumbs(displayPath string) []crumb {
+	// displayPath is r.URL.Path (starts with "/")
+	p := strings.Trim(displayPath, "/")
+	if p == "" {
+		return []crumb{{Name: "root", Href: "/"}}
+	}
+
+	parts := strings.Split(p, "/")
+	out := make([]crumb, 0, len(parts)+1)
+	out = append(out, crumb{Name: "root", Href: "/"})
+
+	var cur string
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		cur += "/" + part
+		out = append(out, crumb{Name: part, Href: cur + "/"})
+	}
+	return out
 }
