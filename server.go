@@ -310,7 +310,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		go func() {
 			s.logger.Fields("bind", addr, "proto", "h3").Info("listener starting")
 			if err := h3Server.ListenAndServe(); err != nil {
-				s.logger.Fields("err", err, "proto", "h3").Error("h3 listener stopped")
+				s.logger.Fields("err", err, "proto", "h3").Warn("h3 listener stopped")
 			}
 		}()
 	}

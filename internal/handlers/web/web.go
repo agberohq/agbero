@@ -21,6 +21,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/dustin/go-humanize"
 	"github.com/olekukonko/ll"
+	"github.com/yookoala/gofast"
 )
 
 //go:embed dir.html
@@ -80,16 +81,80 @@ type dirItem struct {
 	MIME string // "application/pdf"
 }
 
+type crumb struct {
+	Name string // label shown to user
+	Href string // absolute path (ends with "/")
+}
+
+func buildBreadcrumbs(displayPath string) []crumb {
+	// displayPath is r.URL.Path (starts with "/")
+	p := strings.Trim(displayPath, "/")
+	if p == "" {
+		return []crumb{{Name: "root", Href: "/"}}
+	}
+
+	parts := strings.Split(p, "/")
+	out := make([]crumb, 0, len(parts)+1)
+	out = append(out, crumb{Name: "root", Href: "/"})
+
+	var cur string
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		cur += "/" + part
+		out = append(out, crumb{Name: part, Href: cur + "/"})
+	}
+	return out
+}
+
 type webHandler struct {
 	route  *alaye.Route
 	logger *ll.Logger
+
+	php http.Handler // nil if disabled
 }
 
 func New(logger *ll.Logger, route *alaye.Route) *webHandler {
-	return &webHandler{
+	h := &webHandler{
 		route:  route,
 		logger: logger,
 	}
+
+	// PHP FastCGI support (value-type config; no pointers).
+	if route != nil && route.Web.PHP.Enabled {
+		root := route.Web.Root.String()
+
+		network, address := "tcp", "127.0.0.1:9000"
+		if strings.TrimSpace(route.Web.PHP.Address) != "" {
+			addr := strings.TrimSpace(route.Web.PHP.Address)
+			if strings.HasPrefix(addr, "unix:") {
+				network = "unix"
+				address = strings.TrimSpace(strings.TrimPrefix(addr, "unix:"))
+			} else {
+				network = "tcp"
+				address = addr
+			}
+		}
+
+		connFactory := gofast.SimpleConnFactory(network, address)
+		clientFactory := gofast.SimpleClientFactory(connFactory)
+
+		sess := gofast.Chain(
+			gofast.BasicParamsMap,
+			gofast.MapHeader,
+			gofast.MapRemoteHost,
+		)(gofast.BasicSession)
+
+		h.php = gofast.NewHandler(
+			gofast.NewPHPFS(root)(sess),
+			clientFactory,
+		)
+
+		h.logger.Fields("php", true, "php_net", network, "php_addr", address, "root", root).Info("web php enabled")
+	}
+
+	return h
 }
 
 func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -120,8 +185,8 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- SECURITY CHECK START ---
-	// Prevent access to sensitive directories (dotfiles and *.d config folders)
-	// This prevents "curl localhost/hosts.d/secret.hcl" even if not listed.
+	// Keep your original behavior: allow "." and ".." segments (skip),
+	// but block dotfiles and *.d folders.
 	pathParts := strings.Split(reqPath, "/")
 	for _, part := range pathParts {
 		if part == "." || part == ".." {
@@ -141,7 +206,31 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// --- SECURITY CHECK END ---
 
-	// 3. Try Serving Gzip (Optimized)
+	phpEnabled := h.php != nil
+
+	// Never serve PHP source as static.
+	// If PHP is disabled, pretend it doesn't exist.
+	if strings.HasSuffix(strings.ToLower(reqPath), ".php") && !phpEnabled {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+
+	// 3. Direct PHP execution for *.php
+	// We verify existence with OpenRoot before dispatching to php-fpm.
+	if phpEnabled && strings.HasSuffix(strings.ToLower(reqPath), ".php") {
+		ff, err := root.Open(reqPath)
+		if err == nil {
+			info, serr := ff.Stat()
+			_ = ff.Close()
+			if serr == nil && !info.IsDir() {
+				h.php.ServeHTTP(w, r)
+				return
+			}
+		}
+		// Not found -> let normal logic 404.
+	}
+
+	// 4. Try Serving Gzip (Optimized)
 	if clientAcceptsGzip(r) {
 		gzPath, gzOrigPath := h.resolveGzipPath(reqPath)
 
@@ -167,7 +256,6 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					h.gzSetExists(gzPath, true)
 					return
 				}
-				// If it was a dir or stat failed, treat as not found for gzip purposes.
 				h.gzSetExists(gzPath, false)
 			} else if errors.Is(err, fs.ErrNotExist) {
 				h.gzSetExists(gzPath, false)
@@ -175,7 +263,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 4. Open Target File
+	// 5. Open Target File
 	f, err := root.Open(reqPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -196,7 +284,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. Handle Listing
+	// 6. Handle Listing
 	if info.IsDir() {
 		// Enforce trailing slash
 		if !strings.HasSuffix(r.URL.Path, "/") {
@@ -208,7 +296,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Try Index File
+		// Try Index HTML
 		indexName := "index.html"
 		if h.route.Web.Index != "" {
 			indexName = h.route.Web.Index
@@ -233,7 +321,33 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// No Index Found. Check if Listing is enabled.
+		// Try Index PHP (if enabled)
+		if phpEnabled {
+			phpIndex := "index.php"
+			if strings.TrimSpace(h.route.Web.PHP.Index) != "" {
+				phpIndex = strings.TrimSpace(h.route.Web.PHP.Index)
+			}
+
+			phpIndexPath := filepath.Join(reqPath, phpIndex)
+			ff, err := root.Open(phpIndexPath)
+			if err == nil {
+				info2, serr := ff.Stat()
+				_ = ff.Close()
+				if serr == nil && !info2.IsDir() {
+					// rewrite request path so gofast resolves script correctly
+					reqOut := *r
+					if r.URL != nil {
+						u := *r.URL
+						u.Path = strings.TrimSuffix(r.URL.Path, "/") + "/" + phpIndex
+						reqOut.URL = &u
+					}
+					h.php.ServeHTTP(w, &reqOut)
+					return
+				}
+			}
+		}
+
+		// No index found. Listing?
 		if h.route.Web.Listing {
 			h.serveDirectoryListing(w, r, f, r.URL.Path)
 			return
@@ -456,33 +570,4 @@ func ifNoneMatchHas(inm string, etag string) bool {
 		}
 	}
 	return false
-}
-
-// inside web.go
-
-type crumb struct {
-	Name string // label shown to user
-	Href string // absolute path (ends with "/")
-}
-
-func buildBreadcrumbs(displayPath string) []crumb {
-	// displayPath is r.URL.Path (starts with "/")
-	p := strings.Trim(displayPath, "/")
-	if p == "" {
-		return []crumb{{Name: "root", Href: "/"}}
-	}
-
-	parts := strings.Split(p, "/")
-	out := make([]crumb, 0, len(parts)+1)
-	out = append(out, crumb{Name: "root", Href: "/"})
-
-	var cur string
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		cur += "/" + part
-		out = append(out, crumb{Name: part, Href: cur + "/"})
-	}
-	return out
 }
