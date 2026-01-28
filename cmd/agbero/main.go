@@ -341,7 +341,10 @@ func main() {
 			logger.Warn("Development mode enabled")
 		}
 
-		if !service.Interactive() {
+		// Check for container environment to force stdout logging behavior
+		isContainer := os.Getenv("AGBERO_CONTAINER") == "true" || os.Getenv("KUBERNETES_SERVICE_HOST") != ""
+
+		if !service.Interactive() && !isContainer {
 			errs := make(chan error, 5)
 			_, _ = s.Logger(errs)
 			go func() {
