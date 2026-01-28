@@ -1,3 +1,4 @@
+// hosts_test.go
 package discovery
 
 import (
@@ -15,12 +16,16 @@ var (
 )
 
 // Helper to write valid HCL content
+// FIXED: Updated structure to match alaye.Backend and alaye.Server struct tags
+// (server is a block, not a string attribute)
 func validHCL(domain string) []byte {
 	return []byte(`
 domains = ["` + domain + `"]
 route "/" {
   backend {
-    server = "http://127.0.0.1:8080"
+    server {
+      address = "http://127.0.0.1:8080"
+    }
   }
 }
 `)

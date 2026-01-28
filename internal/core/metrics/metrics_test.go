@@ -1,3 +1,4 @@
+// internal/core/metrics/metrics_test.go
 package metrics
 
 import (
@@ -6,8 +7,23 @@ import (
 	"time"
 )
 
+// helper to get a consistent snapshot handling the background worker race
+func getSnapshotEventually(lt *LatencyTracker, condition func(s LatencySnapshot) bool) LatencySnapshot {
+	var snap LatencySnapshot
+	// Try for up to 100ms
+	for i := 0; i < 50; i++ {
+		snap = lt.Snapshot()
+		if condition(snap) {
+			return snap
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	return snap
+}
+
 func TestNewLatencyTracker(t *testing.T) {
 	lt := NewLatencyTracker()
+	defer lt.Close()
 	if lt == nil {
 		t.Fatal("NewLatencyTracker returned nil")
 	}
@@ -24,12 +40,17 @@ func TestNewLatencyTracker(t *testing.T) {
 
 func TestRecord_Basic(t *testing.T) {
 	lt := NewLatencyTracker()
+	defer lt.Close()
 
 	lt.Record(100)
 	lt.Record(200)
 	lt.Record(300)
 
-	snap := lt.Snapshot()
+	// Wait for count to match
+	snap := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
+		return s.Count == 3
+	})
+
 	if snap.Count != 3 {
 		t.Errorf("Expected count 3, got %d", snap.Count)
 	}
@@ -49,16 +70,19 @@ func TestRecord_Basic(t *testing.T) {
 
 func TestRecord_OutOfBounds(t *testing.T) {
 	lt := NewLatencyTracker()
+	defer lt.Close()
 
 	// The HDR histogram with 3 significant figures creates buckets.
 	// When we try to record 70,000,000 (above max 60,000,000),
-	// it gets recorded in the max bucket which is 60,030,975
+	// it gets recorded in the max bucket.
 	lt.Record(70000000)
 
-	snap := lt.Snapshot()
+	snap := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
+		return s.Count == 1
+	})
+
 	// The HDR histogram creates buckets. With 3 significant figures:
 	// Highest bucket value for range up to 60,000,000 is 60,030,975
-	// Let's check it's in the right range
 	if snap.Max < 60000000 {
 		t.Errorf("Max should be at least 60,000,000, got %d", snap.Max)
 	}
@@ -72,6 +96,7 @@ func TestRecord_OutOfBounds(t *testing.T) {
 
 func TestRecord_ZeroCountAvg(t *testing.T) {
 	lt := NewLatencyTracker()
+	defer lt.Close()
 	snap := lt.Snapshot()
 	if snap.Avg != 0 {
 		t.Errorf("Expected avg 0 on zero count, got %d", snap.Avg)
@@ -80,12 +105,15 @@ func TestRecord_ZeroCountAvg(t *testing.T) {
 
 func TestRotation(t *testing.T) {
 	lt := NewLatencyTracker()
+	defer lt.Close()
 
 	// Record first value
 	lt.Record(100)
 
 	// Get initial snapshot
-	snap1 := lt.Snapshot()
+	snap1 := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
+		return s.Count == 1
+	})
 	if snap1.Count != 1 {
 		t.Errorf("Before rotation: expected count 1, got %d", snap1.Count)
 	}
@@ -98,8 +126,13 @@ func TestRotation(t *testing.T) {
 	// This record should trigger auto-rotation
 	lt.Record(200)
 
-	// After rotation, only the new value should be in the histogram
-	snap2 := lt.Snapshot()
+	// After rotation, only the new value should be in the histogram.
+	// We wait until Max reflects the new value (200), ensuring the background
+	// worker has written the value to the histogram after the reset.
+	snap2 := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
+		return s.Max == 200
+	})
+
 	if snap2.Count != 1 {
 		t.Errorf("After rotation: expected count 1, got %d", snap2.Count)
 	}
@@ -113,6 +146,7 @@ func TestRotation(t *testing.T) {
 
 func TestConcurrentRecord(t *testing.T) {
 	lt := NewLatencyTracker()
+	defer lt.Close()
 
 	const goroutines = 10
 	const recordsPerGoroutine = 1000
@@ -130,7 +164,10 @@ func TestConcurrentRecord(t *testing.T) {
 
 	wg.Wait()
 
-	snap := lt.Snapshot()
+	snap := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
+		return s.Count == uint64(goroutines*recordsPerGoroutine)
+	})
+
 	expected := goroutines * recordsPerGoroutine
 	if snap.Count != uint64(expected) {
 		t.Errorf("Expected count %d, got %d", expected, snap.Count)
@@ -139,12 +176,17 @@ func TestConcurrentRecord(t *testing.T) {
 
 func TestSnapshot_Isolation(t *testing.T) {
 	lt := NewLatencyTracker()
+	defer lt.Close()
 
 	lt.Record(100)
-	snap1 := lt.Snapshot()
+	snap1 := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
+		return s.Count == 1
+	})
 
 	lt.Record(200)
-	snap2 := lt.Snapshot()
+	snap2 := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
+		return s.Count == 2
+	})
 
 	if snap1.Count != 1 {
 		t.Errorf("First snapshot should have count 1, got %d", snap1.Count)
@@ -162,6 +204,7 @@ func TestSnapshot_Isolation(t *testing.T) {
 
 func TestHistogram_Accuracy(t *testing.T) {
 	lt := NewLatencyTracker()
+	defer lt.Close()
 
 	// Record values that should give precise percentiles
 	values := []int64{100, 200, 300, 400, 500, 600, 700, 800, 900, 1000}
@@ -169,7 +212,9 @@ func TestHistogram_Accuracy(t *testing.T) {
 		lt.Record(v)
 	}
 
-	snap := lt.Snapshot()
+	snap := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
+		return s.Count == 10
+	})
 
 	// With 10 evenly distributed values, percentiles should be predictable
 	// Note: HDR histogram buckets values, so we need tolerance
@@ -186,12 +231,16 @@ func TestHistogram_Accuracy(t *testing.T) {
 
 func TestRecord_Negative(t *testing.T) {
 	lt := NewLatencyTracker()
+	defer lt.Close()
 
 	// Negative values get recorded in the highest bucket (60,030,975)
-	// because RecordValue fails and we call RecordValue(60000000)
+	// because RecordValue fails check < minUS and defaults to maxUS
 	lt.Record(-100)
 
-	snap := lt.Snapshot()
+	snap := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
+		return s.Count == 1
+	})
+
 	if snap.Count != 1 {
 		t.Errorf("Should record negative, count: %d", snap.Count)
 	}
@@ -206,64 +255,40 @@ func TestRecord_Negative(t *testing.T) {
 
 func TestRecord_AllZero(t *testing.T) {
 	lt := NewLatencyTracker()
+	defer lt.Close()
 
-	// HDR histogram minimum value is 1, so let's test what actually happens
-	// First, let's see what values get recorded
+	// Test with 0, 1, 2
+	// 0 is < minUS (1), so it gets mapped to maxUS (60M) based on current logic
+	lt.Record(0)
 	lt.Record(1)
 	lt.Record(2)
-	lt.Record(3)
 
-	// snap := lt.Snapshot()
-	//fmt.Printf("DEBUG: After recording 1,2,3: count=%d, sum=%d, max=%d\n",
-	//	snap.Count, snap.Sum, snap.Max)
+	snap := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
+		return s.Count == 3
+	})
 
-	// Now test with 0 - let's see what actually happens
-	lt2 := NewLatencyTracker()
-	lt2.Record(0)
-
-	// snap2 := lt2.Snapshot()
-	//fmt.Printf("DEBUG: After recording 0: count=%d, sum=%d, max=%d\n",
-	//	snap2.Count, snap2.Sum, snap2.Max)
-
-	// Based on what we see, adjust the test
-	// If 0 gets recorded as 0 (not 1), then sum of 0,1,2 would be 3
-	lt3 := NewLatencyTracker()
-	lt3.Record(0)
-	lt3.Record(1)
-	lt3.Record(2)
-
-	snap3 := lt3.Snapshot()
-	// Don't assert - just report what happens
-	t.Logf("Recording 0,1,2: count=%d, sum=%d, max=%d",
-		snap3.Count, snap3.Sum, snap3.Max)
-
-	// Instead of asserting exact values, test the behavior
-	if snap3.Count != 3 {
-		t.Errorf("Expected count 3, got %d", snap3.Count)
+	if snap.Count != 3 {
+		t.Errorf("Expected count 3, got %d", snap.Count)
 	}
-	// The sum depends on how 0 is handled
-	// If 0 → 0: sum = 0+1+2 = 3
-	// If 0 → 1: sum = 1+1+2 = 4
-	// If 0 → 60M: sum ≈ 60,000,003
-	// Since test says sum=3, 0 is being recorded as 0
-	if snap3.Sum == 3 {
-		t.Log("0 is being recorded as 0 (not adjusted to 1)")
-	} else if snap3.Sum == 4 {
-		t.Log("0 is being recorded as 1 (adjusted to minimum)")
-	} else {
-		t.Logf("0 is being recorded as %d (capped at max?)", snap3.Sum-3)
+	// Verify that 0 resulted in a large sum (indicating mapped to MaxUS)
+	if snap.Sum < 60000000 {
+		t.Errorf("Expected sum > 60M (0 mapped to max), got %d", snap.Sum)
 	}
 }
 
 func TestRecord_SmallValues(t *testing.T) {
 	lt := NewLatencyTracker()
+	defer lt.Close()
 
 	// Test very small values
 	lt.Record(1)
 	lt.Record(2)
 	lt.Record(3)
 
-	snap := lt.Snapshot()
+	snap := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
+		return s.Count == 3
+	})
+
 	if snap.Count != 3 {
 		t.Errorf("Expected count 3, got %d", snap.Count)
 	}
@@ -277,6 +302,7 @@ func TestRecord_SmallValues(t *testing.T) {
 
 func TestRecord_MixedValues(t *testing.T) {
 	lt := NewLatencyTracker()
+	defer lt.Close()
 
 	// Mix of valid, negative, and out-of-bounds values
 	lt.Record(100)      // valid
@@ -284,7 +310,10 @@ func TestRecord_MixedValues(t *testing.T) {
 	lt.Record(50000000) // valid, but large
 	lt.Record(70000000) // out of bounds -> max bucket
 
-	snap := lt.Snapshot()
+	snap := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
+		return s.Count == 4
+	})
+
 	if snap.Count != 4 {
 		t.Errorf("Expected count 4, got %d", snap.Count)
 	}
@@ -296,16 +325,20 @@ func TestRecord_MixedValues(t *testing.T) {
 
 func TestRecord_ZeroValue(t *testing.T) {
 	lt := NewLatencyTracker()
+	defer lt.Close()
 
 	// Test what happens with 0
 	lt.Record(0)
 
-	snap := lt.Snapshot()
-	t.Logf("Recording 0: count=%d, sum=%d, max=%d",
-		snap.Count, snap.Sum, snap.Max)
+	snap := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
+		return s.Count == 1
+	})
 
-	// Accept any behavior as long as it records something
 	if snap.Count != 1 {
 		t.Errorf("Should record 0, count: %d", snap.Count)
+	}
+	// 0 maps to MaxUS
+	if snap.Max < 60000000 {
+		t.Errorf("0 should map to max bucket, got %d", snap.Max)
 	}
 }

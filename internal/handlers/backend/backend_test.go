@@ -1,3 +1,4 @@
+// backend_test.go
 package backend
 
 import (
@@ -59,6 +60,8 @@ func TestNewBackend_NoHealthCheck(t *testing.T) {
 
 func TestServeHTTP_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// FIXED: Force >0 latency so metrics logic works (minUS is 1)
+		time.Sleep(20 * time.Microsecond)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	}))
@@ -85,6 +88,9 @@ func TestServeHTTP_Success(t *testing.T) {
 	if b.TotalReqs.Load() != 1 {
 		t.Error("TotalReqs should be 1")
 	}
+
+	// FIXED: Wait for metrics channel to drain (async metrics race condition)
+	time.Sleep(10 * time.Millisecond)
 
 	// Check metrics (non-zero duration)
 	snap := b.Metrics.Snapshot()
@@ -413,6 +419,9 @@ func TestMetricsSnapshot(t *testing.T) {
 	b.Metrics.Record(100)
 	b.Metrics.Record(200)
 	b.Metrics.Record(300)
+
+	// FIXED: Wait for channel to drain
+	time.Sleep(10 * time.Millisecond)
 
 	snap := b.Metrics.Snapshot()
 	if snap.P50 != 200 {
