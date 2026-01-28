@@ -97,6 +97,10 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 		"127.0.0.1",
 		"::1",
 	}
+
+	// NEW: Add LAN IPs so https://192.168.x.x works
+	defaults = append(defaults, getLocalLANIPs()...)
+
 	for _, d := range defaults {
 		if !seen[d] {
 			ci.certHosts = append(ci.certHosts, d)
@@ -487,4 +491,20 @@ func findMkcertPath() (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func getLocalLANIPs() []string {
+	var ips []string
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				ips = append(ips, ipnet.IP.String())
+			}
+		}
+	}
+	return ips
 }

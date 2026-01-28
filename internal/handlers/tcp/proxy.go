@@ -2,15 +2,12 @@ package tcp
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"io"
-	"math"
 	"net"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
@@ -22,18 +19,6 @@ const (
 	stLeastConn
 	stRandom
 )
-
-type TCPBackend struct {
-	Address     string
-	Weight      int
-	ActiveConns atomic.Int64
-}
-
-type TCPBalancer struct {
-	backends  []*TCPBackend
-	strategy  int
-	rrCounter atomic.Uint64
-}
 
 type Proxy struct {
 	Listen string
@@ -62,40 +47,13 @@ func NewProxy(listen string, logger *ll.Logger) *Proxy {
 // AddRoute registers a balancer for a specific SNI hostname.
 // If hostname is empty, it sets the default balancer.
 func (p *Proxy) AddRoute(hostname string, cfg alaye.TCPRoute) {
-	bal := createBalancer(cfg)
+	bal := newTCPBalancer(cfg)
 
 	hostname = strings.ToLower(strings.TrimSpace(hostname))
 	if hostname == "" || hostname == "*" {
 		p.Default = bal
 	} else {
 		p.Routes[hostname] = bal
-	}
-}
-
-func createBalancer(cfg alaye.TCPRoute) *TCPBalancer {
-	var backends []*TCPBackend
-	for _, b := range cfg.Backends {
-		w := b.Weight
-		if w <= 0 {
-			w = 1
-		}
-		backends = append(backends, &TCPBackend{
-			Address: b.Address,
-			Weight:  w,
-		})
-	}
-
-	strat := stRoundRobin
-	switch strings.ToLower(cfg.Strategy) {
-	case "least_conn":
-		strat = stLeastConn
-	case "random":
-		strat = stRandom
-	}
-
-	return &TCPBalancer{
-		backends: backends,
-		strategy: strat,
 	}
 }
 
@@ -168,7 +126,7 @@ func (p *Proxy) handle(src net.Conn) {
 
 	sni := ""
 	if n > 0 {
-		sni, _ = readClientHello(peekBuf[:n])
+		sni, _ = p.readClientHello(peekBuf[:n])
 	}
 
 	// pick balancer (same as your code)
@@ -220,11 +178,10 @@ func (p *Proxy) handle(src net.Conn) {
 		return
 	}
 
-	pipe(wrappedSrc, dest)
+	p.pipe(wrappedSrc, dest)
 }
 
-// pipe copies data bidirectionally
-func pipe(src, dst net.Conn) {
+func (p *Proxy) pipe(src, dst net.Conn) {
 	defer src.Close()
 	defer dst.Close()
 
@@ -240,20 +197,7 @@ func pipe(src, dst net.Conn) {
 	<-errc
 }
 
-// -- Helpers --
-
-type peekedConn struct {
-	net.Conn
-	reader io.Reader
-}
-
-func (c *peekedConn) Read(p []byte) (int, error) {
-	return c.reader.Read(p)
-}
-
-// Minimal TLS SNI Parser
-// Returns empty string if not a valid TLS ClientHello with SNI
-func readClientHello(data []byte) (string, error) {
+func (p *Proxy) readClientHello(data []byte) (string, error) {
 	if len(data) < 6 {
 		return "", errors.New("short data")
 	}
@@ -346,49 +290,11 @@ func readClientHello(data []byte) (string, error) {
 	return "", nil
 }
 
-// -- Balancer Logic --
-
-func (tb *TCPBalancer) Pick() *TCPBackend {
-	if len(tb.backends) == 0 {
-		return nil
-	}
-	if len(tb.backends) == 1 {
-		return tb.backends[0]
-	}
-
-	switch tb.strategy {
-	case stLeastConn:
-		return tb.pickLeastConn()
-	case stRandom:
-		return tb.pickRandom()
-	default:
-		return tb.pickRoundRobin()
-	}
+type peekedConn struct {
+	net.Conn
+	reader io.Reader
 }
 
-func (tb *TCPBalancer) pickRoundRobin() *TCPBackend {
-	n := uint64(len(tb.backends))
-	idx := tb.rrCounter.Add(1) % n
-	return tb.backends[idx]
-}
-
-func (tb *TCPBalancer) pickRandom() *TCPBackend {
-	var seed uint64
-	binary.Read(rand.Reader, binary.LittleEndian, &seed)
-	idx := seed % uint64(len(tb.backends))
-	return tb.backends[idx]
-}
-
-func (tb *TCPBalancer) pickLeastConn() *TCPBackend {
-	var best *TCPBackend
-	var min int64 = math.MaxInt64
-
-	for _, b := range tb.backends {
-		c := b.ActiveConns.Load()
-		if c < min {
-			min = c
-			best = b
-		}
-	}
-	return best
+func (c *peekedConn) Read(p []byte) (int, error) {
+	return c.reader.Read(p)
 }

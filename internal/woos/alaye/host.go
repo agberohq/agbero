@@ -9,12 +9,12 @@ import (
 
 type Host struct {
 	Domains     []string   `hcl:"domains"`
-	BindPorts   []string   `hcl:"bind_ports,optional"`
+	Bind        []string   `hcl:"bind,optional"`
+	Compression bool       `hcl:"compression,optional"`
 	Routes      []Route    `hcl:"route,block"`
 	TLS         TLS        `hcl:"tls,block"`
 	Limits      Limit      `hcl:"limits,block"`
 	Headers     Headers    `hcl:"headers,block"`
-	Compression bool       `hcl:"compression,optional"`
 	TCPProxy    []TCPRoute `hcl:"tcp_proxy,block"`
 }
 
@@ -36,19 +36,19 @@ func (h *Host) Validate() error {
 	}
 
 	// Bind ports validation (if provided)
-	for i, port := range h.BindPorts {
+	for i, port := range h.Bind {
 		port = strings.TrimSpace(port)
 		if port == "" {
-			return errors.Newf("bind_ports[%d]: cannot be empty", i)
+			return errors.Newf("bind[%d]: cannot be empty", i)
 		}
-		// Port should be just a port number or :port
+		// Normalize ":3000" to "3000"
 		if strings.HasPrefix(port, ":") {
 			port = port[1:]
 		}
 		if _, err := net.LookupPort("tcp", port); err != nil {
-			return errors.Newf("bind_ports[%d]: %q is not a valid port", i, port)
+			return errors.Newf("bind[%d]: %q is not a valid port", i, port)
 		}
-		h.BindPorts[i] = port // Normalize
+		h.Bind[i] = port
 	}
 
 	// Routes validation

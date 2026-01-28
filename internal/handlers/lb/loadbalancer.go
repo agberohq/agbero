@@ -33,7 +33,6 @@ var rngPool = sync.Pool{
 	},
 }
 
-// snapshotHolder stores immutable state for the current config generation
 type snapshotHolder struct {
 	backends []*backend.Backend
 	wheel    *weightWheel
@@ -44,7 +43,7 @@ type LoadBalancer struct {
 	timeout     time.Duration
 	stripPrefix []string
 
-	state     atomic.Value // holds *snapshotHolder
+	state     atomic.Value
 	rrCounter atomic.Uint64
 }
 
@@ -54,35 +53,29 @@ func NewLoadBalancer(backends []*backend.Backend, strategy string, timeout time.
 		stripPrefix: append([]string(nil), stripPrefixes...),
 	}
 	lb.setStrategy(strategy)
-	lb.UpdateBackends(backends)
+	lb.Update(backends)
 	return lb
 }
 
-func (lb *LoadBalancer) UpdateBackends(list []*backend.Backend) {
-	// Filter nils and create clean copy
+func (lb *LoadBalancer) Update(list []*backend.Backend) {
 	cp := make([]*backend.Backend, 0, len(list))
 	for _, b := range list {
 		if b != nil {
 			cp = append(cp, b)
 		}
 	}
-
-	// Pre-calculate selection wheel
 	wheel := buildWheel(cp)
-
 	lb.state.Store(&snapshotHolder{
 		backends: cp,
 		wheel:    wheel,
 	})
 }
 
-// Snapshot returns a copy of the current backend list (Requested by Metrics)
 func (lb *LoadBalancer) Snapshot() []*backend.Backend {
 	holder := lb.getHolder()
 	if holder == nil || len(holder.backends) == 0 {
 		return nil
 	}
-	// Return slice directly as it is treated as immutable once stored
 	return holder.backends
 }
 
@@ -97,6 +90,7 @@ func (lb *LoadBalancer) getHolder() *snapshotHolder {
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	be := lb.PickBackend(r)
 	if be == nil {
+		// Explicit 502 Bad Gateway
 		http.Error(w, "no healthy backends", http.StatusBadGateway)
 		return
 	}
@@ -120,8 +114,6 @@ func (lb *LoadBalancer) PickBackend(r *http.Request) *backend.Backend {
 	list := holder.backends
 	wheel := holder.wheel
 
-	// Check for conditions (e.g. source IP restrictions)
-	// Optimization: Only scan for conditions if at least one backend has them
 	hasConditions := false
 	for _, b := range list {
 		if b.Cond != nil && b.Cond.HasRules() {
@@ -135,7 +127,6 @@ func (lb *LoadBalancer) PickBackend(r *http.Request) *backend.Backend {
 		if len(filtered) == 0 {
 			return nil
 		}
-		// If filtering occurred, we must rebuild a temporary wheel or use simple selection
 		if len(filtered) != len(list) {
 			return lb.pickWithList(filtered, buildWheel(filtered), r)
 		}
@@ -169,7 +160,6 @@ func (lb *LoadBalancer) pickWithList(list []*backend.Backend, w *weightWheel, r 
 }
 
 func (lb *LoadBalancer) pickRoundRobin(list []*backend.Backend, w *weightWheel) *backend.Backend {
-	// Weighted Round Robin
 	if w != nil && w.total > 0 && len(w.cumul) > 0 {
 		for i := 0; i < len(list); i++ {
 			idx := w.next(lb.rrCounter.Add(1))
@@ -180,7 +170,6 @@ func (lb *LoadBalancer) pickRoundRobin(list []*backend.Backend, w *weightWheel) 
 		return nil
 	}
 
-	// Simple Round Robin (Uniform)
 	start := lb.rrCounter.Add(1)
 	n := uint64(len(list))
 	for i := 0; i < len(list); i++ {
@@ -193,7 +182,6 @@ func (lb *LoadBalancer) pickRoundRobin(list []*backend.Backend, w *weightWheel) 
 }
 
 func (lb *LoadBalancer) pickRandom(list []*backend.Backend, w *weightWheel) *backend.Backend {
-	// Uniform Random
 	if w == nil || w.total == 0 || len(w.cumul) == 0 {
 		r := rngPool.Get().(*rng)
 		start := r.Uint64n(uint64(len(list)))
@@ -209,7 +197,6 @@ func (lb *LoadBalancer) pickRandom(list []*backend.Backend, w *weightWheel) *bac
 		return nil
 	}
 
-	// Weighted Random
 	r := rngPool.Get().(*rng)
 	target := r.Uint64n(w.total)
 	rngPool.Put(r)
@@ -219,7 +206,6 @@ func (lb *LoadBalancer) pickRandom(list []*backend.Backend, w *weightWheel) *bac
 		return list[idx]
 	}
 
-	// Fallback linear scan if weighted pick is dead
 	for i := 1; i < len(list); i++ {
 		j := (idx + i) % len(list)
 		if list[j].Alive.Load() {
@@ -246,7 +232,7 @@ func (lb *LoadBalancer) pickURLHash(list []*backend.Backend, w *weightWheel, r *
 }
 
 func (lb *LoadBalancer) hashPick(list []*backend.Backend, w *weightWheel, key string) *backend.Backend {
-	h := hashStr(key)
+	h := lb.hashStr(key)
 
 	if w == nil || w.total == 0 || len(w.cumul) == 0 {
 		idx := int(h % uint64(len(list)))
@@ -292,11 +278,7 @@ func (lb *LoadBalancer) pickWeightedLeastConn(list []*backend.Backend) *backend.
 		if w <= 0 {
 			w = 1
 		}
-
-		// Active connections + 1 to avoid division by zero
 		c := float64(b.InFlight.Load() + 1)
-
-		// We want to minimize Connections / Weight
 		ratio := c / w
 
 		if best == nil || ratio < bestRatio {
@@ -350,116 +332,10 @@ func (lb *LoadBalancer) setStrategy(s string) {
 	}
 }
 
-// Weight Wheel Logic
-type weightWheel struct {
-	cumul []uint64
-	total uint64
-}
-
-func buildWheel(list []*backend.Backend) *weightWheel {
-	if len(list) == 0 {
-		return &weightWheel{}
-	}
-	cumul := make([]uint64, len(list))
-	var sum uint64
-	allOne := true
-
-	for i, b := range list {
-		w := uint64(1)
-		if b != nil && b.Weight > 0 {
-			w = uint64(b.Weight)
-		}
-		if w != 1 {
-			allOne = false
-		}
-		sum += w
-		cumul[i] = sum
-	}
-
-	// Optimization: If all weights are 1, return empty cumul to signal uniform distribution
-	if allOne {
-		return &weightWheel{total: sum, cumul: nil}
-	}
-	return &weightWheel{cumul: cumul, total: sum}
-}
-
-func (w *weightWheel) next(counter uint64) int {
-	if w == nil || w.total == 0 {
-		return 0
-	}
-	if len(w.cumul) == 0 {
-		return int(counter % w.total)
-	}
-	target := counter % w.total
-	return w.search(target)
-}
-
-func (w *weightWheel) search(target uint64) int {
-	if len(w.cumul) == 0 {
-		return int(target)
-	}
-
-	i, j := 0, len(w.cumul)
-	for i < j {
-		h := int(uint(i+j) >> 1)
-		if w.cumul[h] <= target {
-			i = h + 1
-		} else {
-			j = h
-		}
-	}
-	if i >= len(w.cumul) {
-		return len(w.cumul) - 1
-	}
-	return i
-}
-
-func hashStr(s string) uint64 {
+func (lb *LoadBalancer) hashStr(s string) uint64 {
 	var h uint64 = 5381
 	for i := 0; i < len(s); i++ {
 		h = ((h << 5) + h) + uint64(s[i])
 	}
 	return h
 }
-
-type rng struct {
-	s [4]uint64
-}
-
-func newRng(seed uint64) *rng {
-	var r rng
-	r.s[0] = seed
-	r.s[1] = seed*0x9e3779b97f4a7c15 + 0xbf58476d1ce4e5b9
-	r.s[2] = seed ^ 0x94d049bb133111eb
-	r.s[3] = seed + 0x2545f4914f6cdd1d
-	return &r
-}
-
-func (r *rng) Uint64() uint64 {
-	x := r.s[0]
-	y := r.s[3]
-	result := x + y
-	y ^= x
-	r.s[0] = rotl(x, 24) ^ y ^ (y << 16)
-	r.s[3] = rotl(y, 37)
-	return result
-}
-
-func (r *rng) Uint64n(n uint64) uint64 {
-	if n == 0 {
-		return 0
-	}
-	mask := n - 1
-	if (n & mask) == 0 {
-		return r.Uint64() & mask
-	}
-	limit := math.MaxUint64 - (math.MaxUint64 % n)
-	for {
-		v := r.Uint64()
-		if v < limit {
-			return v % n
-		}
-	}
-}
-
-func rotl(x uint64, k int) uint64 { return (x << k) | (x >> (64 - k)) }

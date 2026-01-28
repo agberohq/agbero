@@ -34,12 +34,10 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 			LBStrategy: alaye.StrategyRoundRobin,
 			Servers:    alaye.NewServers(srv1.URL, srv2.URL),
 		},
-		//Backend:   alaye.MakeBackend(srv1.URL, srv2.URL),
-		//LBStrategy: alaye.StrategyRoundRobin,
 	}
 
 	// 3. Init Handler
-	h := NewRouteHandler(route, testLogger)
+	h := NewRoute(route, testLogger)
 	defer h.Close()
 
 	// 4. Test Round Robin (Should oscillate)
@@ -82,7 +80,7 @@ func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
 		},
 	}
 
-	h := NewRouteHandler(route, testLogger)
+	h := NewRoute(route, testLogger)
 	defer h.Close()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -101,7 +99,7 @@ func TestRouteHandler_Proxy_NoHealthyBackends(t *testing.T) {
 		Backends: alaye.MakeBackend("http://127.0.0.1:54321"),
 	}
 
-	h := NewRouteHandler(route, testLogger)
+	h := NewRoute(route, testLogger)
 	defer h.Close()
 
 	// Manually mark dead for test immediate response
@@ -134,7 +132,7 @@ func TestRouteHandler_Proxy_Timeout(t *testing.T) {
 		},
 	}
 
-	h := NewRouteHandler(route, testLogger)
+	h := NewRoute(route, testLogger)
 	defer h.Close()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -162,7 +160,7 @@ func TestRouteHandler_Proxy_StripPrefix(t *testing.T) {
 		StripPrefixes: []string{"/api"},
 	}
 
-	h := NewRouteHandler(route, testLogger)
+	h := NewRoute(route, testLogger)
 	defer h.Close()
 
 	// Simulate what handleRoute does: strip prefix before calling handler
@@ -194,7 +192,7 @@ func TestRouteHandler_Web_BasicFileServing(t *testing.T) {
 		},
 	}
 
-	h := NewRouteHandler(route, testLogger)
+	h := NewRoute(route, testLogger)
 
 	// Test index file
 	req := httptest.NewRequest("GET", "/", nil)
@@ -242,7 +240,7 @@ func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
 		},
 	}
 
-	h := NewRouteHandler(route, testLogger)
+	h := NewRoute(route, testLogger)
 
 	// Request with gzip support
 	req := httptest.NewRequest("GET", "/style.css", nil)
@@ -280,7 +278,7 @@ func TestRouteHandler_Web_CustomIndex(t *testing.T) {
 		},
 	}
 
-	h := NewRouteHandler(route, testLogger)
+	h := NewRoute(route, testLogger)
 
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
@@ -306,7 +304,7 @@ func TestRouteHandler_Web_MethodNotAllowed(t *testing.T) {
 		},
 	}
 
-	h := NewRouteHandler(route, testLogger)
+	h := NewRoute(route, testLogger)
 
 	req := httptest.NewRequest("POST", "/", nil)
 	w := httptest.NewRecorder()
@@ -330,7 +328,7 @@ func TestRouteHandler_Web_DirectoryWithoutIndex(t *testing.T) {
 		},
 	}
 
-	h := NewRouteHandler(route, testLogger)
+	h := NewRoute(route, testLogger)
 
 	req := httptest.NewRequest(http.MethodGet, "/subdir/", nil)
 	w := httptest.NewRecorder()
@@ -357,7 +355,7 @@ func TestRouteHandler_Web_PathTraversalPrevented(t *testing.T) {
 		},
 	}
 
-	h := NewRouteHandler(route, testLogger)
+	h := NewRoute(route, testLogger)
 
 	// Try to traverse outside the root
 	req := httptest.NewRequest("GET", "/files/../../../"+filepath.Base(outsideFile), nil)
@@ -396,7 +394,7 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 		},
 	}
 
-	h := NewRouteHandler(route, testLogger)
+	h := NewRoute(route, testLogger)
 
 	req := httptest.NewRequest("GET", "/test.txt", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -476,7 +474,7 @@ func TestRouteHandler_Validation(t *testing.T) {
 				tt.prepare(t, tt.route)
 			}
 
-			h := NewRouteHandler(tt.route, testLogger)
+			h := NewRoute(tt.route, testLogger)
 			if h == nil {
 				t.Fatal("handler must never be nil")
 			}

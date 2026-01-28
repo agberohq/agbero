@@ -388,3 +388,22 @@ func (m *Manager) ClearCache() {
 	// Also clear CertMagic cache if needed, though that is usually handled internally by CertMagic's own storage mechanisms.
 	m.logger.Info("TLS certificate cache cleared")
 }
+
+func (m *Manager) GetCertificateForPort(chi *tls.ClientHelloInfo, port string) (*tls.Certificate, error) {
+	// 1. Try Standard SNI
+	if chi.ServerName != "" {
+		if cert, err := m.GetCertificate(chi); err == nil {
+			return cert, nil
+		}
+	}
+
+	// 2. Fallback: Port Lookup
+	hcfg := m.hostManager.GetByPort(port)
+	if hcfg != nil && len(hcfg.Domains) > 0 {
+		// Pretend SNI was the primary domain to trigger cert generation/loading
+		chi.ServerName = hcfg.Domains[0]
+		return m.GetCertificate(chi)
+	}
+
+	return nil, errors.New("no cert found")
+}

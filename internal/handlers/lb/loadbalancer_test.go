@@ -140,7 +140,7 @@ func TestLoadBalancer_UpdateBackendsAtomic(t *testing.T) {
 		nil,
 	)
 
-	lb.UpdateBackends([]*backend.Backend{b1, b2, b3})
+	lb.Update([]*backend.Backend{b1, b2, b3})
 
 	snap := lb.Snapshot()
 	if len(snap) != 3 {

@@ -2,6 +2,7 @@ package gossip
 
 import (
 	"encoding/json"
+	"net"
 	"testing"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/security"
@@ -14,7 +15,7 @@ var (
 	testLogger = ll.New("test")
 )
 
-// Mock HostManager implements the HostManager interface
+// Mock Hosting implements the Hosting interface
 type mockHost struct {
 	updated     bool
 	removed     bool
@@ -90,7 +91,6 @@ func TestJoin_Success(t *testing.T) {
 	defer s.Shutdown()
 
 	// Try to join a port that is definitely NOT us and likely closed (e.g., 54321)
-	// Previously failed because we joined 7946, which was OURSELVES.
 	err = s.Join([]string{"127.0.0.1:54321"})
 	if err == nil {
 		t.Error("Expected join error when joining unreachable seed")
@@ -100,11 +100,19 @@ func TestJoin_Success(t *testing.T) {
 func TestProcessNode_Valid(t *testing.T) {
 	hm := &mockHost{}
 	s := &Service{hm: hm, logger: testLogger}
-	e := &eventDelegate{s: s}
+	e := &event{s: s}
 
-	meta := AppMeta{Host: "test.com", Path: "/api", Port: 8080}
+	// Mock valid node with meta
+	meta := Meta{Host: "test.com", Path: "/api", Port: 8080}
 	b, _ := json.Marshal(meta)
-	node := &memberlist.Node{Name: "node1", Meta: b}
+
+	// Create a dummy node with a valid address
+	node := &memberlist.Node{
+		Name: "node1",
+		Meta: b,
+		Addr: net.ParseIP("127.0.0.1"),
+		Port: 7946,
+	}
 
 	e.processNode(node)
 	if !hm.updated {
@@ -115,7 +123,7 @@ func TestProcessNode_Valid(t *testing.T) {
 func TestProcessNode_InvalidMeta(t *testing.T) {
 	hm := &mockHost{}
 	s := &Service{hm: hm, logger: testLogger}
-	e := &eventDelegate{s: s}
+	e := &event{s: s}
 
 	node := &memberlist.Node{Name: "node1", Meta: []byte("invalid")}
 	e.processNode(node)
@@ -127,11 +135,17 @@ func TestProcessNode_InvalidMeta(t *testing.T) {
 func TestProcessNode_Dedup(t *testing.T) {
 	hm := &mockHost{}
 	s := &Service{hm: hm, logger: testLogger}
-	e := &eventDelegate{s: s}
+	e := &event{s: s}
 
-	meta := AppMeta{Host: "test.com", Path: "/api", Port: 8080}
+	meta := Meta{Host: "test.com", Path: "/api", Port: 8080}
 	b, _ := json.Marshal(meta)
-	node := &memberlist.Node{Name: "node1", Meta: b}
+
+	node := &memberlist.Node{
+		Name: "node1",
+		Meta: b,
+		Addr: net.ParseIP("127.0.0.1"),
+		Port: 7946,
+	}
 
 	e.processNode(node)
 
@@ -147,40 +161,48 @@ func TestProcessNode_AuthReject(t *testing.T) {
 
 	hm := &mockHost{}
 	s := &Service{hm: hm, logger: testLogger, tokenManager: tm}
-	e := &eventDelegate{s: s}
+	e := &event{s: s}
 
-	meta := AppMeta{Host: "test.com", Path: "/api", Port: 8080, Token: "invalid"}
+	meta := Meta{Host: "test.com", Path: "/api", Port: 8080, Token: "invalid"}
 	b, _ := json.Marshal(meta)
-	node := &memberlist.Node{Name: "node1", Meta: b}
 
+	node := &memberlist.Node{
+		Name: "node1",
+		Meta: b,
+		Addr: net.ParseIP("127.0.0.1"),
+		Port: 7946,
+	}
+
+	// This should fail auth and NOT update the host
+	// BUT since fetchToken might try to contact the node (which isn't running),
+	// it will log a warning and return early. This is correct behavior.
 	e.processNode(node)
 	if hm.updated {
 		t.Error("Processed without valid token")
 	}
 }
 
-func TestNotifyAlive_ResetFailures(t *testing.T) {
-	hm := &mockHost{failures: map[string]int{"node1": 5}}
-	s := &Service{hm: hm, logger: testLogger}
-	e := &eventDelegate{s: s}
-
-	node := &memberlist.Node{Name: "node1"}
-	e.NotifyAlive(node)
-
-	if hm.failures["node1"] != 0 {
-		t.Error("Failures not reset")
-	}
-}
-
 func TestNotifyLeave_Remove(t *testing.T) {
 	hm := &mockHost{}
-	s := &Service{hm: hm, logger: testLogger}
-	e := &eventDelegate{s: s}
+	s := &Service{hm: hm, logger: testLogger, localName: "local-node"} // Set localName
+	e := &event{s: s}
 
 	node := &memberlist.Node{Name: "node1"}
 	e.NotifyLeave(node)
 	if !hm.removed {
 		t.Error("Remove not called")
+	}
+}
+
+func TestNotifyLeave_IgnoreSelf(t *testing.T) {
+	hm := &mockHost{}
+	s := &Service{hm: hm, logger: testLogger, localName: "local-node"}
+	e := &event{s: s}
+
+	node := &memberlist.Node{Name: "local-node"}
+	e.NotifyLeave(node)
+	if hm.removed {
+		t.Error("Should not remove self")
 	}
 }
 

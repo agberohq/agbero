@@ -33,9 +33,9 @@ type Backend struct {
 	logger       *ll.Logger
 	stop         chan struct{}
 	startTime    time.Time
-	lastRecovery atomic.Int64 // Unix nano of last time marked alive
-	Weight       int          // Added
-	Cond         *CompiledConditions
+	lastRecovery atomic.Int64
+	Weight       int
+	Cond         *Conditions
 }
 
 func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backend, error) {
@@ -44,7 +44,7 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 		return nil, err
 	}
 
-	cond, err := CompileConditions(cfg.Conditions)
+	cond, err := NewConditions(cfg.Conditions)
 	if err != nil {
 		return nil, err
 	}
@@ -70,34 +70,20 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 
 	rp := httputil.NewSingleHostReverseProxy(u)
 	rp.BufferPool = sharedBufferPool
-
-	// default transport/flush behavior for non-streaming
 	rp.Transport = woos.Transport
 	rp.FlushInterval = -1
 
 	if cfg.Streaming.Enabled {
-		// clone transport so we don't affect global behavior
 		t := woos.Transport.Clone()
-
-		// critical: streaming endpoints may not send headers quickly
 		t.ResponseHeaderTimeout = 0
-
-		// optional for very long lived streams
-		// t.IdleConnTimeout = 0
-
 		rp.Transport = t
 
-		fi := cfg.Streaming.FlushInterval
-		if fi <= 0 {
-			fi = alaye.DefaultProxyFlushInterval
-		}
+		fi := cfg.Streaming.EffectiveFlushInterval()
 		rp.FlushInterval = fi
 	}
 
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		// IMPORTANT: don't count client cancels as backend failures
 		if errors.Is(err, context.Canceled) {
-			b.logger.Fields("upstream", u.Host, "err", err).Debug("upstream canceled by client")
 			return
 		}
 
@@ -107,16 +93,14 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 				b.logger.Fields("backend", u.Host, "failures", newFailures).Warn("circuit breaker tripped")
 			}
 		}
-		b.logger.Fields("upstream", u.Host, "err", err).Error("upstream proxy error")
+		// Explicit 502 Bad Gateway
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 	}
 
 	origDirector := rp.Director
 	rp.Director = func(req *http.Request) {
 		origDirector(req)
-
 		originalHost := req.Host
-
 		req.Host = b.URL.Host
 
 		proto := woos.Http
@@ -126,7 +110,6 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 
 		req.Header.Set("X-Forwarded-Host", originalHost)
 		req.Header.Set("X-Forwarded-Proto", proto)
-
 		req.Header.Set("X-Forwarded-Server", woos.Name)
 		req.Header.Add("Via", fmt.Sprintf("1.1 %s", woos.Name))
 
@@ -156,7 +139,6 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	dur := time.Since(start).Microseconds()
 	b.Metrics.Record(dur)
-
 	b.TotalReqs.Add(1)
 }
 
@@ -180,7 +162,6 @@ func (b *Backend) healthCheckLoop() {
 		threshold = b.hcConfig.Threshold
 	}
 
-	// Dedicated client with keep-alives ON
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
@@ -193,25 +174,17 @@ func (b *Backend) healthCheckLoop() {
 	).String()
 
 	failures := 0
-
-	// initial jitter (0–50%)
 	jitter := time.Duration(rand.Int63n(int64(interval / 2)))
 	timer := time.NewTimer(jitter)
-
 	defer timer.Stop()
 
 	for {
 		select {
 		case <-b.stop:
 			return
-
 		case <-timer.C:
 			resp, err := client.Get(targetURL)
-
-			healthy := err == nil &&
-				resp != nil &&
-				resp.StatusCode >= 200 &&
-				resp.StatusCode < 500
+			healthy := err == nil && resp != nil && resp.StatusCode >= 200 && resp.StatusCode < 500
 
 			if resp != nil && resp.Body != nil {
 				_, _ = io.Copy(io.Discard, resp.Body)
@@ -221,38 +194,27 @@ func (b *Backend) healthCheckLoop() {
 			if healthy {
 				failures = 0
 				b.Failures.Store(0)
-
 				if !b.Alive.Load() {
 					now := time.Now().UnixNano()
 					b.Alive.Store(true)
 					b.lastRecovery.Store(now)
-					b.logger.Fields("backend", b.URL.Host).
-						Info("backend recovered / UP")
 				}
 			} else {
 				failures++
 				if failures >= threshold && b.Alive.Load() {
 					b.Alive.Store(false)
-					b.logger.Fields(
-						"backend", b.URL.Host,
-						"err", err,
-					).Warn("backend marked DOWN by health check")
 				}
 			}
-
-			// re-arm timer with jitter
 			jitter = time.Duration(rand.Int63n(int64(interval / 2)))
 			timer.Reset(interval + jitter)
 		}
 	}
 }
 
-// Uptime returns time since backend creation
 func (b *Backend) Uptime() time.Duration {
 	return time.Since(b.startTime)
 }
 
-// LastRecovery returns time of last recovery to alive state
 func (b *Backend) LastRecovery() time.Time {
 	return time.Unix(0, b.lastRecovery.Load())
 }

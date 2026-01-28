@@ -14,48 +14,33 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-type RouteHandler struct {
-	// The final handler in the chain (Load Balancer)
-	// wrapped by middlewares.
-	handler http.Handler
-
-	// Internal access needed for "Close" and Metrics
+type Route struct {
+	handler  http.Handler
 	Backends []*backend.Backend
 }
 
-func NewRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
+func NewRoute(route *alaye.Route, logger *ll.Logger) *Route {
 	if route == nil {
-		return FallbackRouteHandler("nil route")
+		return FallbackRoute("nil route")
 	}
 
 	if err := route.Validate(); err != nil {
 		logger.Fields("path", route.Path, "err", err).Error("invalid route config")
-		return FallbackRouteHandler("invalid route config")
+		return FallbackRoute("invalid route config")
 	}
 
 	if route.Web.Root.IsSet() {
-		return newWebRouteHandler(route, logger)
+		return newWebRoute(route, logger)
 	}
 
-	return newProxyRouteHandler(route, logger)
+	return newProxyRoute(route, logger)
 }
 
-func FallbackRouteHandler(msg string) *RouteHandler {
-	return &RouteHandler{
-		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, msg, http.StatusBadGateway)
-		}),
-	}
-}
-
-func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
-	// Web route doesn't need backends or load balancing
+func newWebRoute(route *alaye.Route, logger *ll.Logger) *Route {
 	chain := web.New(logger, route)
 
-	// Build middleware chain (same as proxy routes)
 	var handler http.Handler = chain
 
-	// Authentication
 	if route.BasicAuth != nil && len(route.BasicAuth.Users) > 0 {
 		handler = auth.Basic(route.BasicAuth)(handler)
 	}
@@ -63,23 +48,21 @@ func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 		handler = auth.Forward(route.ForwardAuth)(handler)
 	}
 
-	// Headers
 	if route.Headers != nil {
 		handler = headers.Headers(route.Headers)(handler)
 	}
 
-	// Compression
 	if route.CompressionConfig.Compression {
 		handler = compress.Compress(route)(handler)
 	}
 
-	return &RouteHandler{
+	return &Route{
 		handler:  handler,
-		Backends: nil, // No backends for web routes
+		Backends: nil,
 	}
 }
 
-func newProxyRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
+func newProxyRoute(route *alaye.Route, logger *ll.Logger) *Route {
 	var backends []*backend.Backend
 
 	for _, backendCfg := range route.Backends.Servers {
@@ -119,13 +102,13 @@ func newProxyRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 		chain = compress.Compress(route)(chain)
 	}
 
-	return &RouteHandler{
+	return &Route{
 		handler:  chain,
-		Backends: backends, // for Close() / metrics only
+		Backends: backends,
 	}
 }
 
-func (h *RouteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h == nil || h.handler == nil {
 		http.Error(w, "route handler not initialized", http.StatusBadGateway)
 		return
@@ -133,8 +116,16 @@ func (h *RouteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.handler.ServeHTTP(w, r)
 }
 
-func (h *RouteHandler) Close() {
+func (h *Route) Close() {
 	for _, b := range h.Backends {
 		b.Stop()
+	}
+}
+
+func FallbackRoute(msg string) *Route {
+	return &Route{
+		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, msg, http.StatusBadGateway)
+		}),
 	}
 }

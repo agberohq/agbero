@@ -16,18 +16,18 @@ type ipRule struct {
 	cidr *net.IPNet
 }
 
-type CompiledConditions struct {
+type Conditions struct {
 	hasRules bool
 	ips      []ipRule
 	headers  map[string]string // canonical header key -> expected value
 }
 
-func CompileConditions(c *alaye.Conditions) (*CompiledConditions, error) {
+func NewConditions(c *alaye.Conditions) (*Conditions, error) {
 	if c == nil {
 		return nil, nil
 	}
 
-	out := &CompiledConditions{
+	out := &Conditions{
 		headers: make(map[string]string),
 	}
 
@@ -74,11 +74,11 @@ func CompileConditions(c *alaye.Conditions) (*CompiledConditions, error) {
 	return out, nil
 }
 
-func (c *CompiledConditions) HasRules() bool {
+func (c *Conditions) HasRules() bool {
 	return c != nil && c.hasRules
 }
 
-func (c *CompiledConditions) Match(r *http.Request) bool {
+func (c *Conditions) Match(r *http.Request) bool {
 	if c == nil || !c.hasRules {
 		return true
 	}
