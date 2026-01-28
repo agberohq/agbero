@@ -21,7 +21,7 @@ require (
 	github.com/klauspost/compress v1.18.3
 	github.com/maypok86/otter/v2 v2.3.0
 	github.com/olekukonko/errors v1.2.0
-	github.com/olekukonko/ll v0.1.5-0.20260128143524-7f29b049b87b
+	github.com/olekukonko/ll v0.1.5-0.20260128152051-cfba7471e893
 	github.com/quic-go/quic-go v0.59.0
 	github.com/yl2chen/cidranger v1.0.2
 	github.com/yookoala/gofast v0.8.0

@@ -37,6 +37,11 @@ func Logging(cfg alaye.Logging, devMode bool) (*ll.Logger, func(), error) {
 			return nil, nil, err
 		}
 
+		err = vl.Ping()
+		if err != nil {
+			return nil, nil, err
+		}
+
 		batchSize := cfg.Victoria.BatchSize
 		if batchSize <= 0 {
 			batchSize = 500
