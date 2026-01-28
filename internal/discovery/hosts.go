@@ -49,7 +49,8 @@ type Host struct {
 	logger  *ll.Logger
 	changed chan struct{}
 
-	routers map[string]*matcher.Tree
+	routers    map[string]*matcher.Tree
+	portLookup map[string]*alaye.Host
 }
 
 // NewHost creates a new host discovery manager (compatible with string)
@@ -63,6 +64,7 @@ func NewHost(hostsDir string, opts ...Option) *Host {
 		nodeFailures:  make(map[string]int),
 		changed:       make(chan struct{}, 1),
 		routers:       make(map[string]*matcher.Tree),
+		portLookup:    make(map[string]*alaye.Host),
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -486,11 +488,14 @@ func (hm *Host) rebuildLookupLocked() {
 	// Caller MUST hold hm.mu.Lock()
 
 	newLookup := make(map[string]*alaye.Host)
+	newPortLookup := make(map[string]*alaye.Host)
 	domainToRoutes := make(map[string][]alaye.Route)
 	domainToConfig := make(map[string]*alaye.Host)
 
 	// 1) Base Layer: File Hosts
 	for _, cfg := range hm.hosts {
+
+		// Domains
 		for _, domain := range cfg.Domains {
 			domain = strings.ToLower(strings.TrimSpace(domain))
 			if domain == "" {
@@ -500,6 +505,14 @@ func (hm *Host) rebuildLookupLocked() {
 			if _, exists := domainToConfig[domain]; !exists {
 				domainToConfig[domain] = cfg
 			}
+		}
+
+		// Ports
+		for _, port := range cfg.Bind {
+			if _, exists := newPortLookup[port]; exists {
+				hm.logger.Warnf("port conflict detected: %s is claimed by multiple hosts", port)
+			}
+			newPortLookup[port] = cfg
 		}
 	}
 
@@ -612,8 +625,10 @@ func (hm *Host) rebuildLookupLocked() {
 		newRouters[domain] = tr
 	}
 
+	// update values
 	hm.lookupMap = newLookup
 	hm.routers = newRouters
+	hm.portLookup = newPortLookup
 }
 
 func (hm *Host) loadOne(path string) (*alaye.Host, error) {
@@ -635,6 +650,12 @@ func (hm *Host) snapshotLocked() map[string]*alaye.Host {
 		out[k] = v
 	}
 	return out
+}
+
+func (hm *Host) GetByPort(port string) *alaye.Host {
+	hm.mu.RLock()
+	defer hm.mu.RUnlock()
+	return hm.portLookup[port]
 }
 
 func sortRoutes(routes []alaye.Route) {
