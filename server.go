@@ -1,4 +1,3 @@
-// server.go
 package agbero
 
 import (
@@ -215,8 +214,17 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 			usedPorts[port] = true
 
 			addr := ":" + port
-			s.startTCPServer(addr, true, h, tlsCfg, baseHandler, httpFallbackHandler, anyStreaming)
-			s.startQUICServer(addr, h, tlsCfg, baseHandler)
+			// Determine if private binding should use TLS
+			isTLS := true
+			if h.TLS.Mode == alaye.ModeLocalNone {
+				isTLS = false
+			}
+
+			s.startTCPServer(addr, isTLS, h, tlsCfg, baseHandler, httpFallbackHandler, anyStreaming)
+			// Only start QUIC if TLS is enabled
+			if isTLS {
+				s.startQUICServer(addr, h, tlsCfg, baseHandler)
+			}
 		}
 	}
 
@@ -658,6 +666,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	var host string
 	var hcfg *alaye.Host
 
+	// 1. Check Port Ownership (Short-Circuit)
 	if owner, ok := r.Context().Value(woos.OwnerKey).(*alaye.Host); ok && owner != nil {
 		hcfg = owner
 		if len(hcfg.Domains) > 0 {
@@ -666,6 +675,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			host = "private-binding"
 		}
 	} else {
+		// 2. Standard Global Listener (SNI/Host based)
 		host = core.NormalizeHost(r.Host)
 		hcfg = s.hostManager.Get(host)
 	}
@@ -676,25 +686,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(hcfg.Bind) > 0 {
-		portCtx := r.Context().Value(portContextKey)
-		listenerPort, ok := portCtx.(string)
-
-		if ok && listenerPort != "" {
-			allowed := false
-			for _, p := range hcfg.Bind {
-				if p == listenerPort {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
-				http.Error(w, "Misdirected Request", http.StatusMisdirectedRequest)
-				s.logRequest(host, r, start, http.StatusMisdirectedRequest, 0)
-				return
-			}
-		}
-	}
+	// NOTE: Misdirected Request check has been removed to allow
+	// requests on global listeners even if private bind ports are configured.
 
 	maxBody := int64(alaye.DefaultMaxBodySize)
 	if &hcfg.Limits != nil && hcfg.Limits.MaxBodySize > 0 {

@@ -98,7 +98,7 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 		"::1",
 	}
 
-	// Add LAN IPs for secure local access via port fallback
+	// NEW: Add LAN IPs so https://192.168.x.x works
 	defaults = append(defaults, getLocalLANIPs()...)
 
 	for _, d := range defaults {

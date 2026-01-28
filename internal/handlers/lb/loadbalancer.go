@@ -33,7 +33,6 @@ var rngPool = sync.Pool{
 	},
 }
 
-// snapshotHolder stores immutable state for the current config generation
 type snapshotHolder struct {
 	backends []*backend.Backend
 	wheel    *weightWheel
@@ -44,7 +43,7 @@ type LoadBalancer struct {
 	timeout     time.Duration
 	stripPrefix []string
 
-	state     atomic.Value // holds *snapshotHolder
+	state     atomic.Value
 	rrCounter atomic.Uint64
 }
 
@@ -59,30 +58,24 @@ func NewLoadBalancer(backends []*backend.Backend, strategy string, timeout time.
 }
 
 func (lb *LoadBalancer) UpdateBackends(list []*backend.Backend) {
-	// Filter nils and create clean copy
 	cp := make([]*backend.Backend, 0, len(list))
 	for _, b := range list {
 		if b != nil {
 			cp = append(cp, b)
 		}
 	}
-
-	// Pre-calculate selection wheel
 	wheel := buildWheel(cp)
-
 	lb.state.Store(&snapshotHolder{
 		backends: cp,
 		wheel:    wheel,
 	})
 }
 
-// Snapshot returns a copy of the current backend list (Requested by Metrics)
 func (lb *LoadBalancer) Snapshot() []*backend.Backend {
 	holder := lb.getHolder()
 	if holder == nil || len(holder.backends) == 0 {
 		return nil
 	}
-	// Return slice directly as it is treated as immutable once stored
 	return holder.backends
 }
 
@@ -97,6 +90,7 @@ func (lb *LoadBalancer) getHolder() *snapshotHolder {
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	be := lb.PickBackend(r)
 	if be == nil {
+		// Explicit 502 Bad Gateway
 		http.Error(w, "no healthy backends", http.StatusBadGateway)
 		return
 	}
@@ -120,8 +114,6 @@ func (lb *LoadBalancer) PickBackend(r *http.Request) *backend.Backend {
 	list := holder.backends
 	wheel := holder.wheel
 
-	// Check for conditions (e.g. source IP restrictions)
-	// Optimization: Only scan for conditions if at least one backend has them
 	hasConditions := false
 	for _, b := range list {
 		if b.Cond != nil && b.Cond.HasRules() {
@@ -135,7 +127,6 @@ func (lb *LoadBalancer) PickBackend(r *http.Request) *backend.Backend {
 		if len(filtered) == 0 {
 			return nil
 		}
-		// If filtering occurred, we must rebuild a temporary wheel or use simple selection
 		if len(filtered) != len(list) {
 			return lb.pickWithList(filtered, buildWheel(filtered), r)
 		}
@@ -169,7 +160,6 @@ func (lb *LoadBalancer) pickWithList(list []*backend.Backend, w *weightWheel, r 
 }
 
 func (lb *LoadBalancer) pickRoundRobin(list []*backend.Backend, w *weightWheel) *backend.Backend {
-	// Weighted Round Robin
 	if w != nil && w.total > 0 && len(w.cumul) > 0 {
 		for i := 0; i < len(list); i++ {
 			idx := w.next(lb.rrCounter.Add(1))
@@ -180,7 +170,6 @@ func (lb *LoadBalancer) pickRoundRobin(list []*backend.Backend, w *weightWheel) 
 		return nil
 	}
 
-	// Simple Round Robin (Uniform)
 	start := lb.rrCounter.Add(1)
 	n := uint64(len(list))
 	for i := 0; i < len(list); i++ {
@@ -193,7 +182,6 @@ func (lb *LoadBalancer) pickRoundRobin(list []*backend.Backend, w *weightWheel) 
 }
 
 func (lb *LoadBalancer) pickRandom(list []*backend.Backend, w *weightWheel) *backend.Backend {
-	// Uniform Random
 	if w == nil || w.total == 0 || len(w.cumul) == 0 {
 		r := rngPool.Get().(*rng)
 		start := r.Uint64n(uint64(len(list)))
@@ -209,7 +197,6 @@ func (lb *LoadBalancer) pickRandom(list []*backend.Backend, w *weightWheel) *bac
 		return nil
 	}
 
-	// Weighted Random
 	r := rngPool.Get().(*rng)
 	target := r.Uint64n(w.total)
 	rngPool.Put(r)
@@ -219,7 +206,6 @@ func (lb *LoadBalancer) pickRandom(list []*backend.Backend, w *weightWheel) *bac
 		return list[idx]
 	}
 
-	// Fallback linear scan if weighted pick is dead
 	for i := 1; i < len(list); i++ {
 		j := (idx + i) % len(list)
 		if list[j].Alive.Load() {
@@ -292,11 +278,7 @@ func (lb *LoadBalancer) pickWeightedLeastConn(list []*backend.Backend) *backend.
 		if w <= 0 {
 			w = 1
 		}
-
-		// Active connections + 1 to avoid division by zero
 		c := float64(b.InFlight.Load() + 1)
-
-		// We want to minimize Connections / Weight
 		ratio := c / w
 
 		if best == nil || ratio < bestRatio {
@@ -350,7 +332,6 @@ func (lb *LoadBalancer) setStrategy(s string) {
 	}
 }
 
-// Weight Wheel Logic
 type weightWheel struct {
 	cumul []uint64
 	total uint64
@@ -376,7 +357,6 @@ func buildWheel(list []*backend.Backend) *weightWheel {
 		cumul[i] = sum
 	}
 
-	// Optimization: If all weights are 1, return empty cumul to signal uniform distribution
 	if allOne {
 		return &weightWheel{total: sum, cumul: nil}
 	}

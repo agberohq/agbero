@@ -55,24 +55,7 @@ type Host struct {
 
 // NewHost creates a new host discovery manager (compatible with string)
 func NewHost(hostsDir string, opts ...Option) *Host {
-	h := &Host{
-		hostsDir:      woos.NewFolder(hostsDir),
-		hosts:         make(map[string]*alaye.Host),
-		lookupMap:     make(map[string]*alaye.Host),
-		dynamicRoutes: make(map[routeKey]*routeEntry),
-		nodeIndex:     make(map[string]map[routeKey]struct{}),
-		nodeFailures:  make(map[string]int),
-		changed:       make(chan struct{}, 1),
-		routers:       make(map[string]*matcher.Tree),
-		portLookup:    make(map[string]*alaye.Host),
-	}
-	for _, opt := range opts {
-		opt(h)
-	}
-	if h.logger == nil {
-		h.logger = ll.New(woos.Name).Enable()
-	}
-	return h
+	return NewHostFolder(woos.NewFolder(hostsDir), opts...)
 }
 
 // NewHostFolder creates a new host discovery manager with Folder type
@@ -81,6 +64,7 @@ func NewHostFolder(hostsDir woos.Folder, opts ...Option) *Host {
 		hostsDir:      hostsDir,
 		hosts:         make(map[string]*alaye.Host),
 		lookupMap:     make(map[string]*alaye.Host),
+		portLookup:    make(map[string]*alaye.Host), // NEW
 		dynamicRoutes: make(map[routeKey]*routeEntry),
 		nodeIndex:     make(map[string]map[routeKey]struct{}),
 		nodeFailures:  make(map[string]int),
@@ -94,18 +78,6 @@ func NewHostFolder(hostsDir woos.Folder, opts ...Option) *Host {
 		h.logger = ll.New(woos.Name).Enable()
 	}
 	return h
-}
-
-// normalizeHostPath makes host+path stable and safe.
-func normalizeHostPath(host, path string) (string, string) {
-	host = strings.ToLower(strings.TrimSpace(host))
-	if path == "" {
-		path = "/"
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	return host, path
 }
 
 // UpdateGossipNode upserts (merges) a dynamic route from a gossip node.
@@ -346,7 +318,7 @@ func (hm *Host) ReloadFull() {
 }
 
 func (hm *Host) Get(hostname string) *alaye.Host {
-	hostname = core.NormalizeHost(hostname) // MUST strip port
+	hostname = core.NormalizeHost(hostname)
 	if hostname == "" {
 		return nil
 	}
@@ -485,17 +457,18 @@ func (hm *Host) loadAllLocked() error {
 }
 
 func (hm *Host) rebuildLookupLocked() {
-	// Caller MUST hold hm.mu.Lock()
-
 	newLookup := make(map[string]*alaye.Host)
-	newPortLookup := make(map[string]*alaye.Host)
+	newPortLookup := make(map[string]*alaye.Host) // NEW
 	domainToRoutes := make(map[string][]alaye.Route)
 	domainToConfig := make(map[string]*alaye.Host)
 
 	// 1) Base Layer: File Hosts
 	for _, cfg := range hm.hosts {
+		// NEW: Populate Port Lookup
+		for _, port := range cfg.Bind {
+			newPortLookup[port] = cfg
+		}
 
-		// Domains
 		for _, domain := range cfg.Domains {
 			domain = strings.ToLower(strings.TrimSpace(domain))
 			if domain == "" {
@@ -506,41 +479,30 @@ func (hm *Host) rebuildLookupLocked() {
 				domainToConfig[domain] = cfg
 			}
 		}
-
-		// Ports
-		for _, port := range cfg.Bind {
-			if _, exists := newPortLookup[port]; exists {
-				hm.logger.Warnf("port conflict detected: %s is claimed by multiple hosts", port)
-			}
-			newPortLookup[port] = cfg
-		}
 	}
 
+	// ... [Rest of logic for Routes and Dynamic entries remains the same] ...
+	// ... (domainToRoutes processing loop) ...
 	for domain, routes := range domainToRoutes {
 		baseCfg := domainToConfig[domain]
 		if baseCfg == nil {
 			continue
 		}
-
 		merged := *baseCfg
 		merged.Domains = []string{domain}
-
 		merged.Routes = make([]alaye.Route, len(routes))
 		copy(merged.Routes, routes)
-
 		sortRoutes(merged.Routes)
 		newLookup[domain] = &merged
 	}
 
-	// 2) Dynamic Layer: merge dynamicRoutes into lookup
+	// ... (dynamicRoutes processing loop) ...
+	// (Copy the dynamic logic from original file)
 	dynamicMap := make(map[string][]alaye.Route)
-
 	for k, ent := range hm.dynamicRoutes {
 		if k.host == "" || ent == nil {
 			continue
 		}
-
-		// rebuild Servers from ent.backends
 		var servers []alaye.Server
 		for _, ss := range ent.backends {
 			servers = append(servers, ss...)
@@ -548,12 +510,10 @@ func (hm *Host) rebuildLookupLocked() {
 		if len(servers) == 0 {
 			continue
 		}
-
 		rt := ent.base
 		rt.Path = k.path
-		rt.Web = alaye.Web{} // force proxy behavior
+		rt.Web = alaye.Web{}
 		rt.Backends.Servers = servers
-
 		dynamicMap[k.host] = append(dynamicMap[k.host], rt)
 	}
 
@@ -562,10 +522,8 @@ func (hm *Host) rebuildLookupLocked() {
 		if ok && existing != nil {
 			combined := *existing
 			combined.Domains = []string{domain}
-
 			combined.Routes = make([]alaye.Route, len(existing.Routes))
 			copy(combined.Routes, existing.Routes)
-
 			byPath := make(map[string]*alaye.Route, len(combined.Routes))
 			for i := range combined.Routes {
 				p := combined.Routes[i].Path
@@ -575,7 +533,6 @@ func (hm *Host) rebuildLookupLocked() {
 				}
 				byPath[p] = &combined.Routes[i]
 			}
-
 			for i := range dynRoutes {
 				r := dynRoutes[i]
 				p := r.Path
@@ -583,21 +540,13 @@ func (hm *Host) rebuildLookupLocked() {
 					p = "/"
 					r.Path = "/"
 				}
-
 				if ex := byPath[p]; ex != nil {
-					// MERGE servers for same path
 					ex.Backends.Servers = append(ex.Backends.Servers, r.Backends.Servers...)
-					// Optional: allow dynamic strategy override (uncomment if desired):
-					// if strings.TrimSpace(r.Backends.LBStrategy) != "" {
-					//     ex.Backends.LBStrategy = r.Backends.LBStrategy
-					// }
 					continue
 				}
-
 				combined.Routes = append(combined.Routes, r)
 				byPath[p] = &combined.Routes[len(combined.Routes)-1]
 			}
-
 			sortRoutes(combined.Routes)
 			newLookup[domain] = &combined
 		} else {
@@ -609,11 +558,9 @@ func (hm *Host) rebuildLookupLocked() {
 		}
 	}
 
-	// 3) Build Routers from final merged configs
 	newRouters := make(map[string]*matcher.Tree, len(newLookup))
 	for domain, cfg := range newLookup {
 		tr := matcher.NewTree()
-
 		for i := range cfg.Routes {
 			rt := &cfg.Routes[i]
 			if rt.Path == "" {
@@ -621,14 +568,12 @@ func (hm *Host) rebuildLookupLocked() {
 			}
 			_ = tr.Insert(rt.Path, rt)
 		}
-
 		newRouters[domain] = tr
 	}
 
-	// update values
 	hm.lookupMap = newLookup
+	hm.portLookup = newPortLookup // NEW
 	hm.routers = newRouters
-	hm.portLookup = newPortLookup
 }
 
 func (hm *Host) loadOne(path string) (*alaye.Host, error) {
@@ -656,6 +601,18 @@ func (hm *Host) GetByPort(port string) *alaye.Host {
 	hm.mu.RLock()
 	defer hm.mu.RUnlock()
 	return hm.portLookup[port]
+}
+
+// normalizeHostPath makes host+path stable and safe.
+func normalizeHostPath(host, path string) (string, string) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return host, path
 }
 
 func sortRoutes(routes []alaye.Route) {

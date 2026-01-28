@@ -34,8 +34,6 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 			LBStrategy: alaye.StrategyRoundRobin,
 			Servers:    alaye.NewServers(srv1.URL, srv2.URL),
 		},
-		//Backend:   alaye.MakeBackend(srv1.URL, srv2.URL),
-		//LBStrategy: alaye.StrategyRoundRobin,
 	}
 
 	// 3. Init Handler

@@ -15,11 +15,7 @@ import (
 )
 
 type RouteHandler struct {
-	// The final handler in the chain (Load Balancer)
-	// wrapped by middlewares.
-	handler http.Handler
-
-	// Internal access needed for "Close" and Metrics
+	handler  http.Handler
 	Backends []*backend.Backend
 }
 
@@ -49,13 +45,10 @@ func FallbackRouteHandler(msg string) *RouteHandler {
 }
 
 func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
-	// Web route doesn't need backends or load balancing
 	chain := web.New(logger, route)
 
-	// Build middleware chain (same as proxy routes)
 	var handler http.Handler = chain
 
-	// Authentication
 	if route.BasicAuth != nil && len(route.BasicAuth.Users) > 0 {
 		handler = auth.Basic(route.BasicAuth)(handler)
 	}
@@ -63,19 +56,17 @@ func newWebRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 		handler = auth.Forward(route.ForwardAuth)(handler)
 	}
 
-	// Headers
 	if route.Headers != nil {
 		handler = headers.Headers(route.Headers)(handler)
 	}
 
-	// Compression
 	if route.CompressionConfig.Compression {
 		handler = compress.Compress(route)(handler)
 	}
 
 	return &RouteHandler{
 		handler:  handler,
-		Backends: nil, // No backends for web routes
+		Backends: nil,
 	}
 }
 
@@ -121,7 +112,7 @@ func newProxyRouteHandler(route *alaye.Route, logger *ll.Logger) *RouteHandler {
 
 	return &RouteHandler{
 		handler:  chain,
-		Backends: backends, // for Close() / metrics only
+		Backends: backends,
 	}
 }
 
