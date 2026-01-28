@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/logging"
 	"git.imaxinacion.net/aibox/agbero/internal/core/security"
+	"git.imaxinacion.net/aibox/agbero/internal/core/setup"
 	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/charmbracelet/huh"
@@ -51,7 +51,7 @@ func main() {
 		ll.WithFatalExits(true),
 	).Enable()
 
-	// 2) Setup Flaggy
+	// 2) Logging Flaggy
 	flaggy.SetName(woos.Name)
 	flaggy.SetDescription(woos.Description)
 	flaggy.SetVersion(version)
@@ -327,7 +327,7 @@ func main() {
 		}
 
 		// Upgrade Logger
-		newLogger, cleanup, err := logging.Setup(global.Logging, devMode)
+		newLogger, cleanup, err := setup.Logging(global.Logging, devMode)
 		if err != nil {
 			logger.Warn("Failed to setup advanced logging: ", err)
 		} else {

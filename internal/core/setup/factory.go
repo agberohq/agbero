@@ -1,4 +1,4 @@
-package logging
+package setup
 
 import (
 	"os"
@@ -7,12 +7,13 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/ll/l3rd/victoria"
 	"github.com/olekukonko/ll/lh"
 	"github.com/olekukonko/ll/lx"
 )
 
-// Setup creates the final logger based on config and returns a cleanup function to flush buffers.
-func Setup(cfg alaye.Logging, devMode bool) (*ll.Logger, func(), error) {
+// Logging creates the final logger based on config and returns a cleanup function to flush buffers.
+func Logging(cfg alaye.Logging, devMode bool) (*ll.Logger, func(), error) {
 	var handlers []lx.Handler
 	var closers []func()
 
@@ -31,7 +32,10 @@ func Setup(cfg alaye.Logging, devMode bool) (*ll.Logger, func(), error) {
 
 	// 3. VictoriaLogs Handler (Buffered)
 	if cfg.Victoria.Enabled {
-		vl := NewVictoriaHandler(cfg.Victoria.URL, devMode)
+		vl, err := victoria.New(victoria.WithURL(cfg.Victoria.URL), victoria.WithDevMode(devMode))
+		if err != nil {
+			return nil, nil, err
+		}
 
 		batchSize := cfg.Victoria.BatchSize
 		if batchSize <= 0 {
@@ -46,7 +50,9 @@ func Setup(cfg alaye.Logging, devMode bool) (*ll.Logger, func(), error) {
 		handlers = append(handlers, buffered)
 
 		// Ensure buffer flushes on shutdown
-		closers = append(closers, func() { buffered.Close() })
+		closers = append(closers, func() {
+			buffered.Close()
+		})
 	}
 
 	multi := lh.NewMultiHandler(handlers...)
