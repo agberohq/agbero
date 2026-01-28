@@ -144,7 +144,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	route := &alaye.Route{Path: "/test", Backends: alaye.MakeBackend("http://localhost:8080")}
 	key := route.Key()
 
-	handler := handlers.NewRouteHandler(route, testLogger)
+	handler := handlers.NewRoute(route, testLogger)
 	item := &woos.RouteCacheItem{
 		Handler: handler,
 	}
@@ -186,7 +186,7 @@ func TestServer_reapOldRoutes(t *testing.T) {
 		Path:     "/test",
 		Backends: alaye.MakeBackend("http://localhost:8080"),
 	}
-	handler := handlers.NewRouteHandler(route, testLogger)
+	handler := handlers.NewRoute(route, testLogger)
 
 	item := &woos.RouteCacheItem{
 		Handler: handler,
@@ -209,7 +209,7 @@ func TestServer_reapOldRoutes_Recent(t *testing.T) {
 		Path:     "/test",
 		Backends: alaye.MakeBackend("http://localhost:8080"),
 	}
-	handler := handlers.NewRouteHandler(route, testLogger)
+	handler := handlers.NewRoute(route, testLogger)
 
 	item := &woos.RouteCacheItem{
 		Handler: handler,

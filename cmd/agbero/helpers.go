@@ -34,11 +34,7 @@ func welcome() {
 	fmt.Println("Version: " + woos.Version + "")
 }
 
-// resolveConfigPath implements the search order:
-//  1. explicit flag (may or may not exist)
-//  2. CWD/agbero.hcl
-//  3. ~/.config/agbero/agbero.hcl
-//  4. /etc/agbero/agbero.hcl
+// resolveConfigPath implements the search order
 func resolveConfigPath(flagPath string) (string, bool) {
 	// 1) Explicit Flag
 	if strings.TrimSpace(flagPath) != "" {
@@ -74,26 +70,21 @@ func resolveConfigPath(flagPath string) (string, bool) {
 	return cwdPath, false
 }
 
-// ensureConfig creates a default config (and the standard directories) if missing.
-// This is safe to call in both interactive run and service mode.
 func ensureConfig(configFile string) error {
 	if configFile == "" {
 		return fmt.Errorf("config path is empty")
 	}
 
-	// If config exists, still ensure layout exists (dirs), because users might delete folders.
 	if _, err := os.Stat(configFile); err == nil {
 		return ensureLayoutForConfig(configFile)
 	}
 
 	logger.Fields("path", configFile).Info("config not found, generating default")
 
-	// Parent dir
 	if err := os.MkdirAll(filepath.Dir(configFile), woos.DirPerm); err != nil {
 		return fmt.Errorf("mkdir config parent: %w", err)
 	}
 
-	// Write config (inject folder names, not "./paths")
 	content := strings.ReplaceAll(configTmpl, "{HOST_DIR}", woos.HostDir.String())
 	content = strings.ReplaceAll(content, "{CERTS_DIR}", woos.CertDir.String())
 	content = strings.ReplaceAll(content, "{DATA_DIR}", woos.DataDir.String())
@@ -102,7 +93,6 @@ func ensureConfig(configFile string) error {
 		return fmt.Errorf("write default config: %w", err)
 	}
 
-	// Create standard layout next to config
 	if err := ensureLayoutForConfig(configFile); err != nil {
 		return err
 	}
@@ -111,8 +101,6 @@ func ensureConfig(configFile string) error {
 	return nil
 }
 
-// ensureLayoutForConfig ensures hosts.d/, certs.d/, data.d/ exist beside the config file.
-// Also drops a sample host file if hosts.d is empty.
 func ensureLayoutForConfig(configFile string) error {
 	base := woos.NewFolder(filepath.Dir(configFile))
 
@@ -123,14 +111,13 @@ func ensureLayoutForConfig(configFile string) error {
 	if err := hostsDir.Ensure("", false); err != nil {
 		return fmt.Errorf("ensure hosts dir: %w", err)
 	}
-	if err := certsDir.Ensure("", true); err != nil { // secure dir for keys/certs
+	if err := certsDir.Ensure("", true); err != nil {
 		return fmt.Errorf("ensure certs dir: %w", err)
 	}
 	if err := dataDir.Ensure("", false); err != nil {
 		return fmt.Errorf("ensure data dir: %w", err)
 	}
 
-	// Seed sample host if empty
 	if empty, err := hostsDir.IsEmpty(); err == nil && empty {
 		samplePath := filepath.Join(hostsDir.Path(), "localhost.hcl")
 		_ = os.WriteFile(samplePath, []byte(hostSampleTmpl), woos.FilePerm)
@@ -139,7 +126,6 @@ func ensureLayoutForConfig(configFile string) error {
 	return nil
 }
 
-// loadConfig parses the config and applies defaults + path resolution.
 func loadConfig(configFile string) (*alaye.Global, error) {
 	global, err := core.LoadGlobal(configFile)
 	if err != nil {
@@ -218,7 +204,6 @@ func handleServiceError(err error, cmd string, configPath string) error {
 	errStr := err.Error()
 	exeName := getExecutableName()
 
-	// macOS specific guidance
 	if runtime.GOOS == woos.Darwin && strings.Contains(errStr, "launchctl") {
 		if strings.Contains(errStr, "Expecting a LaunchAgents path") {
 			return fmt.Errorf(`%s
@@ -247,7 +232,6 @@ FIXES:
 		}
 	}
 
-	// Linux systemd guidance
 	if runtime.GOOS == "linux" && strings.Contains(errStr, "systemctl") {
 		return fmt.Errorf(`%s
 
@@ -261,7 +245,6 @@ FIXES:
 `, err, exeName, cmd, configPath)
 	}
 
-	// Generic fallback
 	return fmt.Errorf(`%s
 
 AGBERO SERVICE ERROR
@@ -402,7 +385,7 @@ func handleGossipToken(configPath string) {
 	}
 
 	if !global.Gossip.Enabled || global.Gossip.PrivateKeyFile == "" {
-		logger.Fatal("Gossip not configured. Run 'agbero gossip init' first.")
+		logger.Fatal("Gossip not configured or key file missing in config. Run 'agbero gossip init' first.")
 	}
 
 	keyPath := global.Gossip.PrivateKeyFile
@@ -431,7 +414,7 @@ func handleGossipToken(configPath string) {
 	fmt.Println("--------------------------")
 
 	fmt.Printf("\nUse in your service metadata:\n")
-	fmt.Printf(`{"token":"%s","port":8080,"host":"%s.example.com","path":"/"}`, token, gossipService)
+	fmt.Printf(`{"token":"%s","port":PORT,"host":"%s.example.com","path":"/"}`, token, gossipService)
 	fmt.Println()
 }
 

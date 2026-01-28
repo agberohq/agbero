@@ -35,7 +35,7 @@ type Backend struct {
 	startTime    time.Time
 	lastRecovery atomic.Int64
 	Weight       int
-	Cond         *CompiledConditions
+	Cond         *Conditions
 }
 
 func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backend, error) {
@@ -44,7 +44,7 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 		return nil, err
 	}
 
-	cond, err := CompileConditions(cfg.Conditions)
+	cond, err := NewConditions(cfg.Conditions)
 	if err != nil {
 		return nil, err
 	}

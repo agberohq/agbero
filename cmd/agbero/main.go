@@ -122,7 +122,7 @@ func main() {
 	flaggy.Parse()
 	welcome()
 
-	// Resolve config path (do not overwrite user intent)
+	// Resolve config path (do not overwrite user intent yet)
 	resolvedPath, exists := resolveConfigPath(configPath)
 
 	// If user explicitly passed a path that doesn't exist, fail early (except install)
@@ -141,6 +141,7 @@ func main() {
 		return
 	}
 	if cmdGossip.Used {
+		configPath = resolvedPath
 		handleGossipCommands(cmdGossipInit.Used, cmdGossipToken.Used, cmdGossipStatus.Used)
 		return
 	}
@@ -334,8 +335,6 @@ func main() {
 			defer cleanup()
 		}
 
-		// checkAndInstallCA(global)
-
 		logger.Info("Running in interactive mode. Press Ctrl+C to stop.")
 		if devMode {
 			logger.Level(lx.LevelDebug)
@@ -363,8 +362,6 @@ func main() {
 }
 
 // pickInstallConfigPath selects the target config path for install.
-// - If user passed --config, we use it.
-// - Else we ask (system/user/cwd).
 func pickInstallConfigPath(resolvedPath, flagPath string) (targetConfigPath string, installType string) {
 	if strings.TrimSpace(flagPath) != "" {
 		// user explicitly selected path; we install “next to it”
@@ -410,49 +407,6 @@ func pickInstallConfigPath(resolvedPath, flagPath string) (targetConfigPath stri
 		return userConfig, "user"
 	}
 }
-
-// checkAndInstallCA checks if HTTPS is enabled and installs CA root if missing.
-//func checkAndInstallCA(global *alaye.Global) {
-//	if len(global.Bind.HTTPS) == 0 {
-//		return
-//	}
-//
-//	// Make sure certs dir exists (service mode might have different cwd; we rely on resolved absolute paths)
-//	if err := os.MkdirAll(global.Storage.CertsDir, woos.SecurePerm); err != nil {
-//		logger.Warnf("Failed to ensure certs dir: %v", err)
-//	}
-//
-//	installer := tlss.NewInstaller(logger)
-//
-//	if !tlss.IsCARootInstalled() {
-//		logger.Info("HTTPS enabled but CA root not found. Auto-installing...")
-//		if err := installer.InstallCARootIfNeeded(); err != nil {
-//			logger.Warnf("Failed to auto-install CA root: %v", err)
-//		} else {
-//			logger.Info("CA root installed successfully.")
-//		}
-//	}
-//}func checkAndInstallCA(global *alaye.Global) {
-//	if len(global.Bind.HTTPS) == 0 {
-//		return
-//	}
-//
-//	// Make sure certs dir exists (service mode might have different cwd; we rely on resolved absolute paths)
-//	if err := os.MkdirAll(global.Storage.CertsDir, woos.SecurePerm); err != nil {
-//		logger.Warnf("Failed to ensure certs dir: %v", err)
-//	}
-//
-//	installer := tlss.NewInstaller(logger)
-//
-//	if !tlss.IsCARootInstalled() {
-//		logger.Info("HTTPS enabled but CA root not found. Auto-installing...")
-//		if err := installer.InstallCARootIfNeeded(); err != nil {
-//			logger.Warnf("Failed to auto-install CA root: %v", err)
-//		} else {
-//			logger.Info("CA root installed successfully.")
-//		}
-//	}
-//}
 
 // Helper switchers for subcommands
 func handleCertCommands(install, list, info bool) {

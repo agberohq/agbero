@@ -53,11 +53,11 @@ func NewLoadBalancer(backends []*backend.Backend, strategy string, timeout time.
 		stripPrefix: append([]string(nil), stripPrefixes...),
 	}
 	lb.setStrategy(strategy)
-	lb.UpdateBackends(backends)
+	lb.Update(backends)
 	return lb
 }
 
-func (lb *LoadBalancer) UpdateBackends(list []*backend.Backend) {
+func (lb *LoadBalancer) Update(list []*backend.Backend) {
 	cp := make([]*backend.Backend, 0, len(list))
 	for _, b := range list {
 		if b != nil {
@@ -232,7 +232,7 @@ func (lb *LoadBalancer) pickURLHash(list []*backend.Backend, w *weightWheel, r *
 }
 
 func (lb *LoadBalancer) hashPick(list []*backend.Backend, w *weightWheel, key string) *backend.Backend {
-	h := hashStr(key)
+	h := lb.hashStr(key)
 
 	if w == nil || w.total == 0 || len(w.cumul) == 0 {
 		idx := int(h % uint64(len(list)))
@@ -332,114 +332,10 @@ func (lb *LoadBalancer) setStrategy(s string) {
 	}
 }
 
-type weightWheel struct {
-	cumul []uint64
-	total uint64
-}
-
-func buildWheel(list []*backend.Backend) *weightWheel {
-	if len(list) == 0 {
-		return &weightWheel{}
-	}
-	cumul := make([]uint64, len(list))
-	var sum uint64
-	allOne := true
-
-	for i, b := range list {
-		w := uint64(1)
-		if b != nil && b.Weight > 0 {
-			w = uint64(b.Weight)
-		}
-		if w != 1 {
-			allOne = false
-		}
-		sum += w
-		cumul[i] = sum
-	}
-
-	if allOne {
-		return &weightWheel{total: sum, cumul: nil}
-	}
-	return &weightWheel{cumul: cumul, total: sum}
-}
-
-func (w *weightWheel) next(counter uint64) int {
-	if w == nil || w.total == 0 {
-		return 0
-	}
-	if len(w.cumul) == 0 {
-		return int(counter % w.total)
-	}
-	target := counter % w.total
-	return w.search(target)
-}
-
-func (w *weightWheel) search(target uint64) int {
-	if len(w.cumul) == 0 {
-		return int(target)
-	}
-
-	i, j := 0, len(w.cumul)
-	for i < j {
-		h := int(uint(i+j) >> 1)
-		if w.cumul[h] <= target {
-			i = h + 1
-		} else {
-			j = h
-		}
-	}
-	if i >= len(w.cumul) {
-		return len(w.cumul) - 1
-	}
-	return i
-}
-
-func hashStr(s string) uint64 {
+func (lb *LoadBalancer) hashStr(s string) uint64 {
 	var h uint64 = 5381
 	for i := 0; i < len(s); i++ {
 		h = ((h << 5) + h) + uint64(s[i])
 	}
 	return h
 }
-
-type rng struct {
-	s [4]uint64
-}
-
-func newRng(seed uint64) *rng {
-	var r rng
-	r.s[0] = seed
-	r.s[1] = seed*0x9e3779b97f4a7c15 + 0xbf58476d1ce4e5b9
-	r.s[2] = seed ^ 0x94d049bb133111eb
-	r.s[3] = seed + 0x2545f4914f6cdd1d
-	return &r
-}
-
-func (r *rng) Uint64() uint64 {
-	x := r.s[0]
-	y := r.s[3]
-	result := x + y
-	y ^= x
-	r.s[0] = rotl(x, 24) ^ y ^ (y << 16)
-	r.s[3] = rotl(y, 37)
-	return result
-}
-
-func (r *rng) Uint64n(n uint64) uint64 {
-	if n == 0 {
-		return 0
-	}
-	mask := n - 1
-	if (n & mask) == 0 {
-		return r.Uint64() & mask
-	}
-	limit := math.MaxUint64 - (math.MaxUint64 % n)
-	for {
-		v := r.Uint64()
-		if v < limit {
-			return v % n
-		}
-	}
-}
-
-func rotl(x uint64, k int) uint64 { return (x << k) | (x >> (64 - k)) }

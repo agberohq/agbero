@@ -17,7 +17,7 @@ func Setup(cfg alaye.Logging, devMode bool) (*ll.Logger, func(), error) {
 	var closers []func()
 
 	// 1. Terminal Handler (Always on)
-	handlers = append(handlers, lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(true)))
+	handlers = append(handlers, lh.NewColorizedHandler(os.Stdout))
 
 	// 2. File Handler
 	if cfg.File != "" {

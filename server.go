@@ -675,13 +675,13 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			host = "private-binding"
 		}
 	} else {
-		// 2. Standard Global Listener (SNI/Host based)
+		// 2. Standard Global Listener (SNI/Hosting based)
 		host = core.NormalizeHost(r.Host)
 		hcfg = s.hostManager.Get(host)
 	}
 
 	if hcfg == nil {
-		http.Error(w, "Host not found", http.StatusNotFound)
+		http.Error(w, "Hosting not found", http.StatusNotFound)
 		s.logRequest(host, r, start, http.StatusNotFound, 0)
 		return
 	}
@@ -715,7 +715,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if router == nil {
-		http.Error(w, "Host configuration found but router unavailable", http.StatusNotFound)
+		http.Error(w, "Hosting configuration found but router unavailable", http.StatusNotFound)
 		s.logRequest(host, r, start, http.StatusNotFound, 0)
 		return
 	}
@@ -761,17 +761,17 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	h.ServeHTTP(w, &reqOut)
 }
 
-func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.RouteHandler {
+func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.Route {
 	key := route.Key()
 	now := time.Now().UnixNano()
 
 	if v, ok := woos.RouteCache.Load(key); ok {
 		item := v.(*woos.RouteCacheItem)
 		item.LastAccessed.Store(now)
-		return item.Handler.(*handlers2.RouteHandler)
+		return item.Handler.(*handlers2.Route)
 	}
 
-	h := handlers2.NewRouteHandler(route, s.logger)
+	h := handlers2.NewRoute(route, s.logger)
 	newItem := &woos.RouteCacheItem{
 		Handler: h,
 	}
@@ -781,7 +781,7 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.RouteHand
 		h.Close()
 		item := v.(*woos.RouteCacheItem)
 		item.LastAccessed.Store(now)
-		return item.Handler.(*handlers2.RouteHandler)
+		return item.Handler.(*handlers2.Route)
 	}
 
 	return h
