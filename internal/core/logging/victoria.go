@@ -50,8 +50,9 @@ func (h *Victoria) Handle(e *lx.Entry) error {
 		"host":  hostname,
 	}
 
-	for k, v := range e.Fields {
-		line[k] = v
+	// Updated: Iterate over slice instead of map
+	for _, pair := range e.Fields {
+		line[pair.Key] = pair.Value
 	}
 
 	if len(e.Stack) > 0 {
