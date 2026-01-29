@@ -786,31 +786,32 @@ rate_limit {
 ## 🔗 Integration Examples
 
 ### Docker Compose
+
 ```yaml
 version: '3.8'
 services:
-  agbero:
-    image: your-registry/agbero:latest
-    ports:
-      - "80:80"
-      - "443:443"
-      - "7946:7946"  # Gossip port
-    volumes:
-      - ./config.hcl:/etc/agbero/config.hcl
-      - ./hosts.d:/etc/agbero/hosts.d
-      - agbero-data:/var/lib/agbero
-    environment:
-      - LETSENCRYPT_EMAIL=admin@example.com
+   agbero:
+      image: your-registry/agbero:latest
+      ports:
+         - "80:80"
+         - "443:443"
+         - "7946:7946"  # Gossip port
+      volumes:
+         - ./config.hcl:/etc/agbero/config.hcl
+         - ./hosts.d:/etc/agbero/hosts.d
+         - agbero-data:/var/lib/agbero
+      environment:
+         - LETSENCRYPT_EMAIL=admin@example.com
 
-  your-app:
-    build: .
-    environment:
-      - GOSSIP_TOKEN=${GOSSIP_TOKEN}
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+   your-app:
+      build: ..
+      environment:
+         - GOSSIP_TOKEN=${GOSSIP_TOKEN}
+      healthcheck:
+         test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+         interval: 30s
+         timeout: 5s
+         retries: 3
 ```
 
 ### Kubernetes ConfigMap
