@@ -1,6 +1,8 @@
+// cmd/agbero/main.go
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,6 +19,7 @@ import (
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/ll/lh"
 	"github.com/olekukonko/ll/lx"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var (
@@ -32,6 +35,9 @@ var (
 	// Key Management Flags
 	keyService string
 	keyTTL     time.Duration
+
+	// Hash Utility Flags
+	hashPassword string
 
 	// Certificate Management Flags
 	forceCAInstall bool
@@ -70,6 +76,11 @@ func main() {
 	cmdValidate := flaggy.NewSubcommand("validate")
 	cmdHosts := flaggy.NewSubcommand("hosts")
 	cmdHelp := flaggy.NewSubcommand("help")
+
+	// Hash command
+	cmdHash := flaggy.NewSubcommand("hash")
+	cmdHash.Description = "Generate bcrypt hash for passwords (use in basic_auth)"
+	cmdHash.String(&hashPassword, "p", "password", "Password to hash (will prompt if empty)")
 
 	// Certificate commands
 	cmdCert := flaggy.NewSubcommand("cert")
@@ -115,6 +126,7 @@ func main() {
 	flaggy.AttachSubcommand(cmdValidate, 1)
 	flaggy.AttachSubcommand(cmdHosts, 1)
 	flaggy.AttachSubcommand(cmdHelp, 1)
+	flaggy.AttachSubcommand(cmdHash, 1)
 	flaggy.AttachSubcommand(cmdCert, 1)
 	flaggy.AttachSubcommand(cmdKey, 1)
 	flaggy.AttachSubcommand(cmdGossip, 1)
@@ -138,6 +150,23 @@ func main() {
 	// --- Commands that don't need service context ---
 	if cmdHelp.Used {
 		showHelpExamples(resolvedPath)
+		return
+	}
+	if cmdHash.Used {
+		if hashPassword == "" {
+			// Simple prompt if flag not provided
+			fmt.Print("Enter password to hash: ")
+			fmt.Scanln(&hashPassword)
+		}
+		if hashPassword == "" {
+			logger.Fatal("Password cannot be empty")
+		}
+
+		hash, err := bcrypt.GenerateFromPassword([]byte(hashPassword), bcrypt.DefaultCost)
+		if err != nil {
+			logger.Fatal("Failed to hash password: ", err)
+		}
+		fmt.Printf("\nBcrypt Hash:\n%s\n\nUsage in config:\nusers = [\"admin:%s\"]\n", string(hash), string(hash))
 		return
 	}
 	if cmdGossip.Used {
@@ -364,7 +393,8 @@ func main() {
 	showHelpExamples(resolvedPath)
 }
 
-// pickInstallConfigPath selects the target config path for install.
+// pickInstallConfigPath, handleCertCommands, handleKeyCommands, handleGossipCommands...
+// (Keep existing implementations as provided in your file)
 func pickInstallConfigPath(resolvedPath, flagPath string) (targetConfigPath string, installType string) {
 	if strings.TrimSpace(flagPath) != "" {
 		// user explicitly selected path; we install “next to it”
