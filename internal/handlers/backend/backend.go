@@ -44,6 +44,19 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 		return nil, err
 	}
 
+	if u.Scheme == "" {
+		return nil, errors.New("backend address is missing scheme (http or https)")
+	}
+	if u.Host == "" {
+		return nil, errors.New("backend address is missing host")
+	}
+	switch u.Scheme {
+	case "http", "https":
+		// ok
+	default:
+		return nil, fmt.Errorf("unsupported backend scheme: %q", u.Scheme)
+	}
+
 	cond, err := NewConditions(cfg.Conditions)
 	if err != nil {
 		return nil, err

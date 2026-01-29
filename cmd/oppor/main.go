@@ -1,4 +1,3 @@
-// cmd/oppor/main.go
 package main
 
 import (
@@ -23,15 +22,8 @@ var (
 	method      string
 	headers     []string
 	body        string
-	keepAlive   bool
-	timeout     string
-	randomIPs   bool
-	ipPoolSize  int
-	outputJSON  bool
-	verbose     bool
-	follow      bool
-	metricsURL  string
 
+	// Server mode flags
 	serveMode  bool
 	portString string
 	startPort  int
@@ -52,17 +44,17 @@ func main() {
 	serveCmd.Int(&totalPorts, "P", "total", "Total ports")
 	flaggy.AttachSubcommand(serveCmd, 1)
 
-	// Load Test Flags (Defaults for the UI)
+	// Load Test Flags
 	flaggy.StringSlice(&targets, "t", "target", "Target URLs")
 	flaggy.Int(&concurrency, "c", "concurrency", "Workers (default: 10)")
 	flaggy.Int(&requests, "n", "requests", "Total requests")
-	flaggy.String(&duration, "d", "duration", "Duration")
-	flaggy.Int(&rateLimit, "r", "rate", "Rate limit")
-	flaggy.String(&method, "X", "method", "Method")
-	flaggy.Bool(&verbose, "v", "verbose", "Verbose logging")
+	flaggy.String(&duration, "d", "duration", "Duration (e.g. 10s, 1m)")
+	flaggy.Int(&rateLimit, "r", "rate", "Rate limit (req/s)")
+	flaggy.String(&method, "X", "method", "HTTP Method")
 
 	flaggy.Parse()
 
+	// Handle Server Mode
 	if serveCmd.Used {
 		cfg := Config{
 			ServeMode:  true,
@@ -75,11 +67,11 @@ func main() {
 		return
 	}
 
+	// Prepare Default Config
 	var dur time.Duration
 	if duration != "" {
 		dur, _ = time.ParseDuration(duration)
 	}
-
 	if concurrency <= 0 {
 		concurrency = 10
 	}
@@ -98,13 +90,11 @@ func main() {
 		Body:        body,
 		KeepAlive:   true,
 		Timeout:     30 * time.Second,
-		Verbose:     verbose,
 	}
 
-	// Initialize Ui in Config State
+	// Start UI
 	model := NewModel(config)
-
-	p := tea.NewProgram(&model, tea.WithAltScreen())
+	p := tea.NewProgram(model, tea.WithAltScreen()) // WithAltScreen is crucial for TUI
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)

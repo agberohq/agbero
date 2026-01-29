@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -10,320 +11,232 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// --- Constants & Styles ---
-var (
-	// Colors
-	primaryColor    = lipgloss.Color("#FF6C37") // Postman orange
-	secondaryColor  = lipgloss.Color("#9CA3AF")
-	successColor    = lipgloss.Color("#34D399")
-	warningColor    = lipgloss.Color("#FBBF24")
-	errorColor      = lipgloss.Color("#F87171")
-	backgroundColor = lipgloss.Color("#121212")
-	surfaceColor    = lipgloss.Color("#262626")
-	borderColor     = lipgloss.Color("#404040")
-	textPrimary     = lipgloss.Color("#FFFFFF")
-	textSecondary   = lipgloss.Color("#A3A3A3")
+// --- Styles ---
 
-	// Base Styles
-	appStyle = lipgloss.NewStyle().
-			Background(backgroundColor).
-			Foreground(textPrimary)
+var (
+	pColor = lipgloss.Color("#FF6C37") // Brand Orange
+	sColor = lipgloss.Color("#262626") // Surface Dark
+	bColor = lipgloss.Color("#121212") // Background Black
+	tColor = lipgloss.Color("#A3A3A3") // Text Muted
+	wColor = lipgloss.Color("#FFFFFF") // White
+
+	// Layout Containers
+	appStyle = lipgloss.NewStyle().Background(bColor).Foreground(wColor)
+
+	panelStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#404040")).
+			Padding(0, 1)
 
 	// Header
 	headerStyle = lipgloss.NewStyle().
-			Background(primaryColor).
-			Foreground(textPrimary).
-			Bold(true).
-			Padding(0, 1)
-
-	// Request Bar
-	requestBarStyle = lipgloss.NewStyle().
-			Background(surfaceColor).
-			Border(lipgloss.NormalBorder(), false, false, true, false).
-			BorderForeground(borderColor).
-			Padding(1, 1)
-
-	methodSelectorStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("#171717")).
-				Foreground(textPrimary).
-				Padding(0, 1).
-				MarginRight(1)
-
-	methodOptionStyle = lipgloss.NewStyle().
-				Foreground(textSecondary).
-				Padding(0, 1)
-
-	methodOptionSelectedStyle = lipgloss.NewStyle().
-					Foreground(primaryColor).
-					Bold(true).
-					Padding(0, 1)
-
-	urlInputStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("#171717")).
-			Padding(0, 1)
-
-	sendButtonStyle = lipgloss.NewStyle().
-			Background(primaryColor).
-			Foreground(textPrimary).
-			Bold(true).
-			Padding(0, 3).
-			Align(lipgloss.Center)
-
-	sendButtonHoverStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("#FF8C5C")).
-				Foreground(textPrimary).
-				Bold(true).
-				Padding(0, 3).
-				Align(lipgloss.Center)
-
-	// Configuration Panel
-	configPanelStyle = lipgloss.NewStyle().
-				Background(surfaceColor).
-				Border(lipgloss.NormalBorder(), false, false, true, false).
-				BorderForeground(borderColor).
-				Padding(1)
-
-	configLabelStyle = lipgloss.NewStyle().
-				Foreground(secondaryColor).
-				Width(14).
-				Align(lipgloss.Right).
-				PaddingRight(1)
-
-	configInputStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("#171717")).
-				Foreground(textPrimary).
-				Padding(0, 1)
-
-	configInputFocusedStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("#171717")).
-				Foreground(textPrimary).
-				Border(lipgloss.NormalBorder(), false, false, true, false).
-				BorderForeground(primaryColor).
-				Padding(0, 1)
-
-	// Dashboard
-	dashboardStyle = lipgloss.NewStyle().
-			Background(surfaceColor).
-			Border(lipgloss.NormalBorder(), false, false, true, false).
-			BorderForeground(borderColor).
-			Padding(1)
-
-	statCardStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("#1E1E1E")).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(borderColor).
+			Background(sColor).
+			Foreground(wColor).
 			Padding(0, 1).
-			MarginRight(1)
-
-	statValueStyle = lipgloss.NewStyle().
-			Foreground(textPrimary).
 			Bold(true)
 
-	statLabelStyle = lipgloss.NewStyle().
-			Foreground(textSecondary)
+	// Inputs
+	labelStyle = lipgloss.NewStyle().Foreground(tColor).Bold(true).MarginRight(1)
 
-	// Response/Log Panel
-	responsePanelStyle = lipgloss.NewStyle().
-				Background(backgroundColor)
-
-	tabActiveStyle = lipgloss.NewStyle().
-			Foreground(primaryColor).
-			Border(lipgloss.NormalBorder(), false, false, true, false).
-			BorderForeground(primaryColor).
-			Padding(0, 2).
-			Bold(true)
-
-	tabInactiveStyle = lipgloss.NewStyle().
-				Foreground(textSecondary).
-				Padding(0, 2)
-
-	// Status Bar
-	statusBarStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("#000000")).
-			Foreground(textSecondary).
+	inputStyle = lipgloss.NewStyle().
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(lipgloss.Color("#404040")).
 			Padding(0, 1)
 
-	methods = []string{"GET", "POST", "PUT", "DEL", "PAT", "HED", "OPT"}
+	focusStyle = lipgloss.NewStyle().
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(pColor).
+			Padding(0, 1)
+
+	// Stats Cards
+	cardStyle = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), false, true, false, false).
+			BorderForeground(lipgloss.Color("#404040")).
+			Padding(0, 2)
+
+	// FIXED: Replaced InternalSize with Width
+	cardLabelStyle = lipgloss.NewStyle().Foreground(tColor).Width(12)
+	cardValueStyle = lipgloss.NewStyle().Foreground(wColor).Bold(true)
+
+	// Tabs
+	tabStyle = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), false, false, true, false).
+			BorderForeground(lipgloss.Color("#404040")).
+			Padding(0, 2)
+
+	activeTabStyle = tabStyle.Copy().
+			BorderForeground(pColor).
+			Foreground(pColor).
+			Bold(true)
+
+	// Logs
+	logTimeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#555")).MarginRight(1)
+	logInfoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#34D399"))
+	logErrStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171"))
 )
 
-// Input indices
+// --- Keys ---
+
+type keyMap struct {
+	Run      key.Binding
+	Stop     key.Binding
+	Quit     key.Binding
+	Cycle    key.Binding
+	Back     key.Binding
+	Logs     key.Binding
+	Metrics  key.Binding
+	Histo    key.Binding
+	Clear    key.Binding // Esc to clear focus
+	PageUp   key.Binding
+	PageDown key.Binding
+}
+
+var keys = keyMap{
+	Run:      key.NewBinding(key.WithKeys("enter", "ctrl+r"), key.WithHelp("enter", "run/next")),
+	Stop:     key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "stop")),
+	Quit:     key.NewBinding(key.WithKeys("ctrl+q"), key.WithHelp("ctrl+q", "quit")),
+	Cycle:    key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
+	Back:     key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("sh+tab", "prev field")),
+	Logs:     key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "logs")),
+	Metrics:  key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "metrics")),
+	Histo:    key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "histogram")),
+	Clear:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "unfocus")),
+	PageUp:   key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "scroll up")),
+	PageDown: key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "scroll down")),
+}
+
+func (k keyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Run, k.Stop, k.Cycle, k.Clear, k.Quit}
+}
+func (k keyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{k.ShortHelp()}
+}
+
+// --- Enums ---
+
 const (
 	InputMethod = iota
 	InputURL
 	InputConcurrency
 	InputRequests
 	InputDuration
-	InputRateLimit
+	InputRate
 	InputHeaders
 	InputBody
-	NumNonButtonInputs
+	inputCount
 )
 
-const TotalFocusableElements = NumNonButtonInputs + 1
-
-// Tab indices
 const (
-	TabConsole = iota
-	TabMetrics
-	TabHistogram
-	NumTabs
+	ViewLogs = iota
+	ViewMetrics
+	ViewHistogram
 )
+
+// --- Model ---
 
 type Ui struct {
 	Config  Config
 	Metrics *Metrics
 
-	// UI State
-	Running            bool
-	ActiveTab          int
-	ShowHelp           bool
-	Width, Height      int
-	StartTime          time.Time
-	EndTime            time.Time
-	StatusMessage      string
-	StatusMessageTimer *time.Timer
-
-	// UI Components
-	Inputs       []textinput.Model
-	FocusIndex   int
-	MethodIndex  int
-	Progress     progress.Model
-	Spinner      spinner.Model
-	ResponseView viewport.Model
-	MetricsTable table.Model
-	KeyMap       KeyMap
-	Help         help.Model
-
-	// Data
-	Logs       []string
-	WorkerPool *Pool
-	msgChan    chan tea.Msg
+	// State
+	Running   bool
+	StartTime time.Time
+	Logs      []string
 
 	// Layout
-	layout struct {
-		headerHeight    int
-		requestHeight   int
-		configHeight    int
-		dashboardHeight int
-		responseHeight  int
-		statusHeight    int
-	}
-}
+	Width, Height int
+	ActiveView    int
+	FocusIndex    int // -1 means no input focused
 
-type savedConfigMsg struct {
-	message string
-}
+	// Components
+	Inputs      []textinput.Model
+	Spinner     spinner.Model
+	ProgressBar progress.Model
+	Viewport    viewport.Model
+	Help        help.Model
 
-type loadMsg struct {
-	cfg Config
-	err error
+	// Internal
+	WorkerPool *Pool
+	msgChan    chan tea.Msg
 }
 
 func NewModel(cfg Config) Ui {
-	inputs := make([]textinput.Model, NumNonButtonInputs)
+	inputs := make([]textinput.Model, inputCount)
 
-	inputs[InputMethod] = textinput.New()
-	inputs[InputMethod].SetValue(cfg.Method)
-	inputs[InputMethod].Width = 5
+	for i := range inputs {
+		t := textinput.New()
+		t.Cursor.Style = lipgloss.NewStyle().Foreground(pColor)
 
-	inputs[InputURL] = textinput.New()
-	inputs[InputURL].Placeholder = "http://localhost:8080"
-	inputs[InputURL].Focus()
-	if len(cfg.Targets) > 0 {
-		inputs[InputURL].SetValue(strings.Join(cfg.Targets, ", "))
-	}
-
-	inputs[InputConcurrency] = textinput.New()
-	inputs[InputConcurrency].Placeholder = "10"
-	inputs[InputConcurrency].SetValue(fmt.Sprintf("%d", max(1, cfg.Concurrency)))
-
-	inputs[InputRequests] = textinput.New()
-	inputs[InputRequests].Placeholder = "0 (∞)"
-	inputs[InputRequests].SetValue(fmt.Sprintf("%d", max(0, cfg.Requests)))
-
-	inputs[InputDuration] = textinput.New()
-	inputs[InputDuration].Placeholder = "10s"
-	if cfg.Duration > 0 {
-		inputs[InputDuration].SetValue(cfg.Duration.String())
-	}
-
-	inputs[InputRateLimit] = textinput.New()
-	inputs[InputRateLimit].Placeholder = "0"
-	inputs[InputRateLimit].SetValue(fmt.Sprintf("%d", cfg.RateLimit))
-
-	inputs[InputHeaders] = textinput.New()
-	inputs[InputHeaders].Placeholder = "Key: Value"
-	if len(cfg.Headers) > 0 {
-		inputs[InputHeaders].SetValue(strings.Join(cfg.Headers, ", "))
-	}
-
-	inputs[InputBody] = textinput.New()
-	inputs[InputBody].Placeholder = "JSON"
-	inputs[InputBody].SetValue(cfg.Body)
-
-	prog := progress.New(
-		progress.WithDefaultGradient(),
-		progress.WithoutPercentage(),
-		progress.WithScaledGradient("#FF6C37", "#FF8C5C"),
-	)
-
-	spin := spinner.New()
-	spin.Spinner = spinner.Pulse
-	spin.Style = lipgloss.NewStyle().Foreground(primaryColor)
-
-	responseView := viewport.New(80, 20)
-	responseView.SetContent("Ready. Enter URL and press Enter to start.")
-
-	// Table setup
-	columns := []table.Column{{Title: "Metric", Width: 20}, {Title: "Value", Width: 15}, {Title: "Status", Width: 10}}
-	rows := []table.Row{{"Requests", "0", "Idle"}, {"Success", "0%", "Idle"}}
-	metricsTable := table.New(table.WithColumns(columns), table.WithRows(rows), table.WithFocused(false), table.WithHeight(6))
-	s := table.DefaultStyles()
-	s.Header = s.Header.BorderStyle(lipgloss.NormalBorder()).BorderForeground(borderColor).BorderBottom(true).Bold(false)
-	metricsTable.SetStyles(s)
-
-	methodIndex := 0
-	for i, m := range methods {
-		if m == cfg.Method {
-			methodIndex = i
-			break
+		switch i {
+		case InputMethod:
+			t.SetValue("GET")
+			t.Placeholder = "GET"
+			t.CharLimit = 7
+		case InputURL:
+			t.Placeholder = "http://localhost:8080"
+			if len(cfg.Targets) > 0 {
+				t.SetValue(cfg.Targets[0])
+			}
+		case InputConcurrency:
+			t.SetValue("10")
+			t.Placeholder = "10"
+			t.CharLimit = 5
+		case InputRequests:
+			t.SetValue("0")
+			t.Placeholder = "Inf"
+			t.CharLimit = 8
+		case InputDuration:
+			t.SetValue("10s")
+			t.Placeholder = "10s"
+			t.CharLimit = 8
+		case InputRate:
+			t.SetValue("0")
+			t.Placeholder = "No Limit"
+			t.CharLimit = 8
+		case InputHeaders:
+			t.Placeholder = "Key: Val, Key2: Val2"
+		case InputBody:
+			t.Placeholder = `{"json": "payload"}`
 		}
+		inputs[i] = t
 	}
 
-	if cfg.Concurrency == 0 {
-		cfg.Concurrency = 10
-	}
-	if cfg.Method == "" {
-		cfg.Method = "GET"
-	}
+	// Start with URL focused
+	inputs[InputURL].Focus()
+
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(pColor)
+
+	vp := viewport.New(0, 0)
 
 	return Ui{
-		Config:       cfg,
-		Metrics:      &Metrics{},
-		Inputs:       inputs,
-		FocusIndex:   InputURL,
-		MethodIndex:  methodIndex,
-		ActiveTab:    TabConsole,
-		Progress:     prog,
-		Spinner:      spin,
-		ResponseView: responseView,
-		MetricsTable: metricsTable,
-		KeyMap:       defaultKeyMap,
-		Help:         help.New(),
-		Logs:         []string{},
-		msgChan:      make(chan tea.Msg, 1000),
+		Config:      cfg,
+		Metrics:     &Metrics{},
+		Inputs:      inputs,
+		FocusIndex:  InputURL,
+		Spinner:     s,
+		ProgressBar: progress.New(progress.WithDefaultGradient()),
+		Viewport:    vp,
+		Help:        help.New(),
+		msgChan:     make(chan tea.Msg, 1000),
+		ActiveView:  ViewLogs,
+		Logs:        []string{},
 	}
 }
 
 func (m Ui) Init() tea.Cmd {
-	return tea.Batch(m.Inputs[m.FocusIndex].Focus(), m.waitForMsg(), m.Spinner.Tick, updateMetricsAfter(time.Second))
+	return tea.Batch(
+		textinput.Blink,
+		m.Spinner.Tick,
+		m.waitForMsg(),
+	)
 }
 
 func (m *Ui) waitForMsg() tea.Cmd {
@@ -334,280 +247,304 @@ func (m Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
 
-	if m.StatusMessageTimer != nil {
-		select {
-		case <-m.StatusMessageTimer.C:
-			m.StatusMessage = ""
-			m.StatusMessageTimer.Stop()
-			m.StatusMessageTimer = nil
-		default:
-		}
-	}
-
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		if key.Matches(msg, m.KeyMap.Quit) {
-			if m.WorkerPool != nil {
-				m.WorkerPool.Stop()
-			}
-			return m, tea.Quit
-		}
-		if key.Matches(msg, m.KeyMap.Help) {
-			m.ShowHelp = !m.ShowHelp
-			return m, nil
-		}
-		if m.ShowHelp {
-			return m, nil // Trap keys in help
-		}
-
-		if key.Matches(msg, m.KeyMap.Run) {
-			return m.toggleRun()
-		}
-		if key.Matches(msg, m.KeyMap.Stop) && m.Running {
-			m.stopTest()
-			return m, nil
-		}
-
-		switch {
-		case key.Matches(msg, m.KeyMap.FocusURL):
-			m.setFocus(InputURL)
-		case key.Matches(msg, m.KeyMap.FocusNext):
-			m.focusNext()
-		case key.Matches(msg, m.KeyMap.FocusPrev):
-			m.focusPrev()
-		case key.Matches(msg, m.KeyMap.ToggleVerbose):
-			m.Config.Verbose = !m.Config.Verbose
-			m.StatusMessage = fmt.Sprintf("Verbose: %t", m.Config.Verbose)
-			m.startStatusMessageTimer()
-		case key.Matches(msg, m.KeyMap.ClearLogs):
-			m.Logs = []string{}
-			m.updateResponseView()
-		case key.Matches(msg, m.KeyMap.SaveConfig):
-			return m, func() tea.Msg {
-				err := saveCurrentConfig(m.Config, "default")
-				message := "Config saved"
-				if err != nil {
-					message = "Save failed: " + err.Error()
-				}
-				return savedConfigMsg{message: message}
-			}
-		case key.Matches(msg, m.KeyMap.LoadConfig):
-			return m, func() tea.Msg {
-				cfg, err := loadConfigPreset("default")
-				return loadMsg{cfg: cfg, err: err}
-			}
-		}
-
-		if m.FocusIndex == InputMethod {
-			switch msg.String() {
-			case "left", "h":
-				m.MethodIndex = (m.MethodIndex - 1 + len(methods)) % len(methods)
-				m.Config.Method = methods[m.MethodIndex]
-				m.Inputs[InputMethod].SetValue(methods[m.MethodIndex])
-			case "right", "l":
-				m.MethodIndex = (m.MethodIndex + 1) % len(methods)
-				m.Config.Method = methods[m.MethodIndex]
-				m.Inputs[InputMethod].SetValue(methods[m.MethodIndex])
-			}
-		}
-
-		switch msg.String() {
-		case "1":
-			m.ActiveTab = TabConsole
-			m.updateResponseView()
-		case "2":
-			m.ActiveTab = TabMetrics
-			m.updateResponseView()
-		case "3":
-			m.ActiveTab = TabHistogram
-			m.updateResponseView()
-		}
 
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
-		m.calculateLayout()
-		m.updateViewportSize()
+		m.resizeComponents()
 
-		// Set dynamic widths for inputs
-		methodW := 35
-		btnW := 12
-		urlW := m.Width - methodW - btnW - 6
-		if urlW < 10 {
-			urlW = 10
-		}
-		m.Inputs[InputURL].Width = urlW - 2
+	case tea.KeyMsg:
+		// 1. Global High Priority
+		switch {
+		case key.Matches(msg, keys.Stop):
+			if m.Running {
+				m.stopTest()
+				return m, nil
+			}
+			return m, tea.Quit
 
-		colW := (m.Width / 2) - 4
-		if colW < 30 {
-			colW = m.Width - 4
+		case key.Matches(msg, keys.Quit):
+			if m.Running {
+				m.stopTest()
+			}
+			return m, tea.Quit
+
+		case key.Matches(msg, keys.Clear):
+			m.FocusIndex = -1
+			for i := range m.Inputs {
+				m.Inputs[i].Blur()
+			}
+			return m, nil
+
+		case key.Matches(msg, keys.Cycle):
+			m.cycleFocus(1)
+			return m, nil
+
+		case key.Matches(msg, keys.Back):
+			m.cycleFocus(-1)
+			return m, nil
 		}
-		inW := colW - 14 - 2 // label width + padding
-		if inW < 10 {
-			inW = 10
+
+		// 2. Input Handling (If focused)
+		if m.FocusIndex != -1 {
+			// Special handling for Enter in inputs
+			if msg.Type == tea.KeyEnter {
+				if m.FocusIndex == InputURL {
+					if !m.Running {
+						return m.startTest()
+					}
+				} else {
+					m.cycleFocus(1)
+				}
+				return m, nil
+			}
+
+			m.Inputs[m.FocusIndex], cmd = m.Inputs[m.FocusIndex].Update(msg)
+			return m, cmd
 		}
-		for i := InputConcurrency; i < NumNonButtonInputs; i++ {
-			m.Inputs[i].Width = inW - 2
+
+		// 3. Navigation (If NOT focused on input)
+		switch {
+		case key.Matches(msg, keys.Run):
+			if !m.Running {
+				return m.startTest()
+			}
+		case key.Matches(msg, keys.Logs):
+			m.ActiveView = ViewLogs
+			m.updateViewport()
+		case key.Matches(msg, keys.Metrics):
+			m.ActiveView = ViewMetrics
+			m.updateViewport()
+		case key.Matches(msg, keys.Histo):
+			m.ActiveView = ViewHistogram
+			m.updateViewport()
+		case key.Matches(msg, keys.PageUp):
+			m.Viewport.ViewUp()
+		case key.Matches(msg, keys.PageDown):
+			m.Viewport.ViewDown()
 		}
-		m.Inputs[InputMethod].Width = 5
+
+	case metricsMsg:
+		if m.Running {
+			cmds = append(cmds, m.waitForMsg())
+			m.updateViewport()
+		}
+
+	case logMsg:
+		m.appendLog(msg.text)
+		if m.ActiveView == ViewLogs {
+			atBottom := m.Viewport.AtBottom()
+			m.updateViewport()
+			if atBottom {
+				m.Viewport.GotoBottom()
+			}
+		}
+		cmds = append(cmds, m.waitForMsg())
+
+	case progressMsg:
+		if msg.done {
+			m.stopTest()
+		}
+		cmds = append(cmds, m.waitForMsg())
 
 	case spinner.TickMsg:
 		if m.Running {
 			m.Spinner, cmd = m.Spinner.Update(msg)
 			cmds = append(cmds, cmd)
 		}
-
-	case progressMsg:
-		if msg.total > 0 {
-			m.Progress.SetPercent(float64(msg.completed) / float64(msg.total))
-		}
-		if msg.done && m.Running {
-			m.stopTest()
-			m.StatusMessage = "Done"
-			m.startStatusMessageTimer()
-		}
-		cmds = append(cmds, m.waitForMsg())
-
-	case metricsMsg:
-		snap := m.Metrics.Snapshot()
-		m.updateMetricsTable(snap)
-		if m.ActiveTab == TabMetrics || m.ActiveTab == TabHistogram {
-			m.updateResponseView()
-		}
-		cmds = append(cmds, m.waitForMsg(), updateMetricsAfter(500*time.Millisecond))
-
-	case logMsg:
-		m.Logs = append(m.Logs, styleLogLine(msg.text))
-		if len(m.Logs) > 500 {
-			m.Logs = m.Logs[len(m.Logs)-500:]
-		}
-		if m.ActiveTab == TabConsole {
-			m.updateResponseView()
-		}
-		cmds = append(cmds, m.waitForMsg())
-
-	case savedConfigMsg:
-		m.StatusMessage = msg.message
-		m.startStatusMessageTimer()
-
-	case loadMsg:
-		if msg.err != nil {
-			m.StatusMessage = "Load failed: " + msg.err.Error()
-		} else {
-			m.Config = msg.cfg
-			m.updateInputsFromConfig()
-			m.StatusMessage = "Config loaded"
-		}
-		m.startStatusMessageTimer()
 	}
 
-	if m.FocusIndex > InputMethod && m.FocusIndex < NumNonButtonInputs {
-		m.Inputs[m.FocusIndex], cmd = m.Inputs[m.FocusIndex].Update(msg)
-		cmds = append(cmds, cmd)
-	}
-
-	var vcmd tea.Cmd
-	m.ResponseView, vcmd = m.ResponseView.Update(msg)
-	cmds = append(cmds, vcmd)
+	m.Viewport, cmd = m.Viewport.Update(msg)
+	cmds = append(cmds, cmd)
 
 	return m, tea.Batch(cmds...)
 }
 
-func (m *Ui) updateInputsFromConfig() {
-	m.Inputs[InputMethod].SetValue(m.Config.Method)
-	for i, mth := range methods {
-		if mth == m.Config.Method {
-			m.MethodIndex = i
-			break
+func (m Ui) View() string {
+	if m.Height < 10 {
+		return "Terminal too small"
+	}
+
+	// 1. Header
+	header := m.renderHeader()
+
+	// 2. Config Panel
+	config := m.renderConfig()
+
+	// 3. Stats (only if running or has data)
+	stats := ""
+	if m.Running || m.Metrics.TotalRequests.Load() > 0 {
+		stats = m.renderStats()
+	}
+
+	// 4. Tabs
+	tabs := m.renderTabs()
+
+	// 5. Footer
+	footer := m.renderFooter()
+
+	// Calculate Viewport Height
+	fixedHeight := lipgloss.Height(header) + lipgloss.Height(config) + lipgloss.Height(stats) + lipgloss.Height(tabs) + lipgloss.Height(footer)
+	availHeight := m.Height - fixedHeight
+	if availHeight < 5 {
+		availHeight = 5
+	}
+	m.Viewport.Height = availHeight
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		config,
+		stats,
+		tabs,
+		m.Viewport.View(),
+		footer,
+	)
+}
+
+// --- Renderers ---
+
+func (m Ui) renderHeader() string {
+	logo := lipgloss.NewStyle().Foreground(pColor).Bold(true).Render("AGBERO")
+	desc := lipgloss.NewStyle().Foreground(tColor).Render(" Load Tester")
+
+	status := lipgloss.NewStyle().Foreground(lipgloss.Color("#555")).Render("IDLE")
+	if m.Running {
+		status = lipgloss.NewStyle().Foreground(lipgloss.Color("#34D399")).Render(m.Spinner.View() + " RUNNING")
+	}
+
+	gap := m.Width - lipgloss.Width(logo) - lipgloss.Width(desc) - lipgloss.Width(status) - 2
+	if gap < 0 {
+		gap = 0
+	}
+
+	return headerStyle.Width(m.Width).Render(
+		lipgloss.JoinHorizontal(lipgloss.Center, logo, desc, strings.Repeat(" ", gap), status),
+	)
+}
+
+func (m Ui) renderConfig() string {
+	// Helper for inputs
+	field := func(id int, label string, width int) string {
+		m.Inputs[id].Width = width
+		s := inputStyle
+		if m.FocusIndex == id {
+			s = focusStyle
+		}
+		return lipgloss.JoinVertical(lipgloss.Left,
+			labelStyle.Render(label),
+			s.Render(m.Inputs[id].View()),
+		)
+	}
+
+	// Row 1: Method | URL | Concurrency
+	row1 := lipgloss.JoinHorizontal(lipgloss.Top,
+		field(InputMethod, "METHOD", 8),
+		field(InputURL, "URL", m.Width-35),
+		field(InputConcurrency, "WORKERS", 8),
+	)
+
+	// Row 2: Duration | Requests | Rate
+	row2 := lipgloss.JoinHorizontal(lipgloss.Top,
+		field(InputDuration, "DURATION", 10),
+		field(InputRequests, "REQUESTS", 10),
+		field(InputRate, "RATE/s", 10),
+	)
+
+	// Row 3: Headers | Body (Split 50/50)
+	halfW := (m.Width / 2) - 4
+	if halfW < 10 {
+		halfW = 10
+	}
+	row3 := lipgloss.JoinHorizontal(lipgloss.Top,
+		field(InputHeaders, "HEADERS", halfW),
+		field(InputBody, "BODY", halfW),
+	)
+
+	return panelStyle.Width(m.Width - 2).Render(
+		lipgloss.JoinVertical(lipgloss.Left, row1, row2, row3),
+	)
+}
+
+func (m Ui) renderStats() string {
+	snap := m.Metrics.Snapshot()
+
+	// Progress Bar
+	var prog string
+	if m.Running && (m.Config.Requests > 0 || m.Config.Duration > 0) {
+		pct := 0.0
+		if m.Config.Duration > 0 {
+			elapsed := time.Since(m.StartTime).Seconds()
+			pct = elapsed / m.Config.Duration.Seconds()
+		} else if m.Config.Requests > 0 {
+			pct = float64(snap.TotalRequests) / float64(m.Config.Requests)
+		}
+		if pct > 1.0 {
+			pct = 1.0
+		}
+		m.ProgressBar.Width = m.Width - 4
+		prog = "\n" + m.ProgressBar.ViewAs(pct)
+	}
+
+	// FIXED: Render method call
+	stat := func(label, val string, color lipgloss.Color) string {
+		return cardStyle.Render(lipgloss.JoinVertical(lipgloss.Center,
+			cardLabelStyle.Render(label),
+			cardValueStyle.Foreground(color).Render(val),
+		))
+	}
+
+	row := lipgloss.JoinHorizontal(lipgloss.Top,
+		stat("TOTAL", fmt.Sprintf("%d", snap.TotalRequests), wColor),
+		stat("RPS", fmt.Sprintf("%d", snap.RequestsPerSec), pColor),
+		stat("ERRORS", fmt.Sprintf("%d", snap.ErrorCount), lipgloss.Color("#F87171")),
+		stat("AVG LAT", fmt.Sprintf("%.0fms", snap.AvgLatencyMs), lipgloss.Color("#FBBF24")),
+	)
+
+	return panelStyle.Width(m.Width - 2).Render(row + prog)
+}
+
+func (m Ui) renderTabs() string {
+	opts := []string{"1. LOGS", "2. METRICS", "3. HISTOGRAM"}
+	var rendered []string
+
+	for i, opt := range opts {
+		if i == m.ActiveView {
+			rendered = append(rendered, activeTabStyle.Render(opt))
+		} else {
+			rendered = append(rendered, tabStyle.Render(opt))
 		}
 	}
-	m.Inputs[InputURL].SetValue(strings.Join(m.Config.Targets, ", "))
-	m.Inputs[InputConcurrency].SetValue(strconv.Itoa(m.Config.Concurrency))
-	m.Inputs[InputRequests].SetValue(strconv.Itoa(m.Config.Requests))
-	if m.Config.Duration > 0 {
-		m.Inputs[InputDuration].SetValue(m.Config.Duration.String())
-	} else {
-		m.Inputs[InputDuration].SetValue("")
+
+	tabsWidth := lipgloss.Width(lipgloss.JoinHorizontal(lipgloss.Top, rendered...))
+	gap := m.Width - tabsWidth - 2
+	if gap < 0 {
+		gap = 0
 	}
-	m.Inputs[InputRateLimit].SetValue(strconv.Itoa(m.Config.RateLimit))
-	m.Inputs[InputHeaders].SetValue(strings.Join(m.Config.Headers, ", "))
-	m.Inputs[InputBody].SetValue(m.Config.Body)
+	border := lipgloss.NewStyle().Foreground(lipgloss.Color("#404040")).Render(strings.Repeat("─", gap))
+
+	return lipgloss.JoinHorizontal(lipgloss.Bottom, append(rendered, border)...)
 }
 
-func (m *Ui) calculateLayout() {
-	m.layout.headerHeight = 1
-	m.layout.requestHeight = 3
-	m.layout.configHeight = 6
-	m.layout.dashboardHeight = 6
-	m.layout.statusHeight = 1
-
-	used := m.layout.headerHeight + m.layout.requestHeight + m.layout.configHeight + m.layout.dashboardHeight + m.layout.statusHeight
-	m.layout.responseHeight = m.Height - used
-	if m.layout.responseHeight < 5 {
-		m.layout.responseHeight = 5
-	}
+func (m Ui) renderFooter() string {
+	return lipgloss.NewStyle().
+		Width(m.Width).
+		Background(sColor).
+		Padding(0, 1).
+		Render(m.Help.View(keys))
 }
 
-func (m *Ui) updateViewportSize() {
-	m.ResponseView.Width = m.Width - 4
-	m.ResponseView.Height = m.layout.responseHeight - 2
-}
+// --- Logic Helpers ---
 
-func (m *Ui) setFocus(index int) {
-	if m.FocusIndex >= 0 && m.FocusIndex < NumNonButtonInputs {
-		m.Inputs[m.FocusIndex].Blur()
-	}
-	if index == -1 {
-		m.FocusIndex = -1
-		return
-	}
-	if index >= 0 && index < NumNonButtonInputs {
-		m.Inputs[index].Focus()
-	}
-	m.FocusIndex = index
-}
-
-func (m *Ui) focusNext() {
-	next := m.FocusIndex + 1
-	if next > NumNonButtonInputs {
-		next = 0
-	}
-	m.setFocus(next)
-}
-
-func (m *Ui) focusPrev() {
-	prev := m.FocusIndex - 1
-	if prev < 0 {
-		prev = NumNonButtonInputs
-	}
-	m.setFocus(prev)
-}
-
-func (m Ui) toggleRun() (Ui, tea.Cmd) {
-	if m.Running {
-		m.stopTest()
-		return m, nil
-	}
-	return m.startTest()
-}
-
-func (m Ui) startTest() (Ui, tea.Cmd) {
-	targetStr := strings.TrimSpace(m.Inputs[InputURL].Value())
-	if targetStr == "" {
-		m.StatusMessage = "URL required"
-		m.startStatusMessageTimer()
-		return m, nil
-	}
-	targets := strings.Split(targetStr, ",")
-	for i := range targets {
-		targets[i] = strings.TrimSpace(targets[i])
-	}
-	m.Config.Targets = targets
+func (m *Ui) startTest() (Ui, tea.Cmd) {
+	m.Config.Method = m.Inputs[InputMethod].Value()
+	m.Config.Targets = []string{m.Inputs[InputURL].Value()}
 
 	c, _ := strconv.Atoi(m.Inputs[InputConcurrency].Value())
-	if c > 0 {
-		m.Config.Concurrency = c
+	if c < 1 {
+		c = 1
 	}
+	m.Config.Concurrency = c
 
 	r, _ := strconv.Atoi(m.Inputs[InputRequests].Value())
 	m.Config.Requests = r
@@ -615,382 +552,140 @@ func (m Ui) startTest() (Ui, tea.Cmd) {
 	d, _ := time.ParseDuration(m.Inputs[InputDuration].Value())
 	m.Config.Duration = d
 
-	rl, _ := strconv.Atoi(m.Inputs[InputRateLimit].Value())
+	rl, _ := strconv.Atoi(m.Inputs[InputRate].Value())
 	m.Config.RateLimit = rl
 
-	// Parse headers
-	m.Config.Headers = []string{}
-	parts := strings.Split(m.Inputs[InputHeaders].Value(), ",")
-	for _, p := range parts {
-		if strings.Contains(p, ":") {
-			m.Config.Headers = append(m.Config.Headers, strings.TrimSpace(p))
-		}
+	m.Metrics = &Metrics{}
+	m.Logs = []string{styleLog("SYS", "Initializing...", logInfoStyle)}
+	m.StartTime = time.Now()
+	m.Running = true
+	m.updateViewport()
+
+	limit := uint64(m.Config.Requests)
+	if limit == 0 {
+		limit = math.MaxUint64
 	}
 
-	m.Config.Body = m.Inputs[InputBody].Value()
-	m.Config.Method = m.Inputs[InputMethod].Value()
+	m.WorkerPool = NewWorkerPool(m.Config, m.Metrics, m.msgChan, limit)
 
-	m.Running = true
-	m.StartTime = time.Now()
-	m.EndTime = time.Time{}
-	m.Metrics = &Metrics{}
-	m.Logs = []string{styleLogLine("INFO: Starting...")}
-	m.updateResponseView()
-	m.Progress.SetPercent(0)
-
-	progTotal := uint64(m.Config.Requests)
-	m.WorkerPool = NewWorkerPool(m.Config, m.Metrics, m.msgChan, progTotal)
-
-	cmds := []tea.Cmd{
+	return *m, tea.Batch(
 		func() tea.Msg {
 			go m.WorkerPool.Start()
 			return nil
 		},
-		m.Spinner.Tick,
-		updateMetricsAfter(100 * time.Millisecond),
-	}
-	m.setFocus(-1)
-	return m, tea.Batch(cmds...)
+		m.waitForMsg(),
+	)
 }
 
 func (m *Ui) stopTest() {
 	m.Running = false
-	m.EndTime = time.Now()
 	if m.WorkerPool != nil {
 		m.WorkerPool.Stop()
-		m.WorkerPool = nil
 	}
-	m.Logs = append(m.Logs, styleLogLine("INFO: Stopped"))
-	m.updateResponseView()
-	m.StatusMessage = "Stopped"
-	m.startStatusMessageTimer()
+	m.Logs = append(m.Logs, styleLog("SYS", "Stopped.", logErrStyle))
+	m.updateViewport()
 }
 
-func (m *Ui) updateResponseView() {
+func (m *Ui) cycleFocus(dir int) {
+	if m.FocusIndex != -1 {
+		m.Inputs[m.FocusIndex].Blur()
+	}
+	m.FocusIndex += dir
+	if m.FocusIndex >= len(m.Inputs) {
+		m.FocusIndex = 0
+	} else if m.FocusIndex < 0 {
+		m.FocusIndex = len(m.Inputs) - 1
+	}
+	m.Inputs[m.FocusIndex].Focus()
+}
+
+func (m *Ui) resizeComponents() {
+	m.Viewport.Width = m.Width
+}
+
+func (m *Ui) appendLog(txt string) {
+	t := time.Now().Format("15:04:05")
+	line := fmt.Sprintf("%s %s", logTimeStyle.Render(t), txt)
+	m.Logs = append(m.Logs, line)
+	if len(m.Logs) > 500 {
+		m.Logs = m.Logs[len(m.Logs)-500:]
+	}
+}
+
+func (m *Ui) updateViewport() {
 	var content string
-	switch m.ActiveTab {
-	case TabConsole:
-		content = strings.Join(m.Logs, "\n")
-		if content == "" {
-			content = "No logs."
+	switch m.ActiveView {
+	case ViewLogs:
+		if len(m.Logs) == 0 {
+			content = "Waiting for logs..."
+		} else {
+			content = strings.Join(m.Logs, "\n")
 		}
-	case TabMetrics:
+	case ViewMetrics:
 		content = m.renderMetricsDetail()
-	case TabHistogram:
-		content = m.renderHistogramDetail()
+	case ViewHistogram:
+		content = m.renderHistogram()
 	}
-	m.ResponseView.SetContent(content)
-	m.ResponseView.GotoBottom()
+	m.Viewport.SetContent(content)
 }
 
-func (m *Ui) updateMetricsTable(snap MetricsSnapshot) {
-	rows := []table.Row{
-		{"Reqs", fmt.Sprintf("%d", snap.TotalRequests), getStatusEmoji(snap.SuccessRate)},
-		{"Rate", fmt.Sprintf("%.1f%%", snap.SuccessRate), getStatusColor(snap.SuccessRate)},
-		{"Lat", fmt.Sprintf("%.0fms", snap.AvgLatencyMs), getLatencyStatus(snap.AvgLatencyMs)},
-		{"RPS", fmt.Sprintf("%d", snap.RequestsPerSec), ""},
-	}
-	m.MetricsTable.SetRows(rows)
-}
-
-func (m *Ui) startStatusMessageTimer() {
-	if m.StatusMessageTimer != nil {
-		m.StatusMessageTimer.Stop()
-	}
-	m.StatusMessageTimer = time.NewTimer(3 * time.Second)
-}
-
-// --- View Rendering ---
-
-func (m Ui) View() string {
-	if m.Width == 0 || m.Height == 0 {
-		return "Loading..."
-	}
-
-	effWidth := m.Width
-	if effWidth > 2 {
-		effWidth -= 2
-	}
-
-	header := m.renderHeader(effWidth)
-	requestBar := m.renderRequestBar(effWidth)
-	configPanel := m.renderConfigPanel(effWidth)
-	dashboard := m.renderDashboard(effWidth)
-	responsePanel := m.renderResponsePanel(effWidth)
-	statusBar := m.renderStatusBar(effWidth)
-
-	view := lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		requestBar,
-		configPanel,
-		dashboard,
-		responsePanel,
-		statusBar,
-	)
-
-	if m.ShowHelp {
-		return appStyle.Width(m.Width).Height(m.Height).Render(m.renderHelp(effWidth))
-	}
-
-	return appStyle.Width(m.Width).Height(m.Height).Render(view)
-}
-
-func (m Ui) renderHeader(w int) string {
-	title := "OPPOR"
-	status := "IDLE"
-	if m.Running {
-		status = fmt.Sprintf("RUNNING %s", m.Spinner.View())
-	}
-
-	return headerStyle.Width(w).Render(lipgloss.JoinHorizontal(lipgloss.Left, title, lipgloss.NewStyle().Align(lipgloss.Right).Width(w-lipgloss.Width(title)-2).Render(status)))
-}
-
-func (m Ui) renderRequestBar(w int) string {
-	methodW := 35
-	btnW := 12
-
-	urlW := w - methodW - btnW - 6
-	if urlW < 10 {
-		urlW = 10
-	}
-
-	methodSel := methodSelectorStyle.Width(methodW).Render(m.renderMethodSelector())
-
-	urlStyle := urlInputStyle.Width(urlW)
-	if m.FocusIndex == InputURL {
-		urlStyle = urlStyle.Border(lipgloss.NormalBorder(), false, false, true, false).BorderForeground(primaryColor)
-	}
-	urlIn := urlStyle.Render(m.Inputs[InputURL].View())
-
-	btn := m.renderSendButton(btnW)
-
-	return requestBarStyle.Width(w).Render(
-		lipgloss.JoinHorizontal(lipgloss.Top, methodSel, urlIn, btn),
-	)
-}
-
-func (m Ui) renderSendButton(w int) string {
-	txt := "SEND"
-	style := sendButtonStyle.Width(w)
-	if m.Running {
-		txt = "STOP"
-		style = style.Background(errorColor)
-	} else if m.FocusIndex == NumNonButtonInputs {
-		style = sendButtonHoverStyle.Width(w)
-	}
-	return style.Render(txt)
-}
-
-func (m Ui) renderMethodSelector() string {
-	var s strings.Builder
-	for i, met := range methods {
-		if i == m.MethodIndex {
-			s.WriteString(methodOptionSelectedStyle.Render(met))
-		} else {
-			s.WriteString(methodOptionStyle.Render(met))
-		}
-		if i < len(methods)-1 {
-			s.WriteString(" ")
-		}
-	}
-	return s.String()
-}
-
-func (m Ui) renderConfigPanel(w int) string {
-	colW := (w / 2) - 4
-	if colW < 30 {
-		colW = w - 4
-	}
-
-	renderRow := func(label string, idx int) string {
-		l := configLabelStyle.Render(label)
-		inW := colW - lipgloss.Width(l) - 2
-		if inW < 10 {
-			inW = 10
-		}
-
-		s := configInputStyle.Width(inW)
-		if m.FocusIndex == idx {
-			s = configInputFocusedStyle.Width(inW)
-		}
-
-		return lipgloss.JoinHorizontal(lipgloss.Left, l, s.Render(m.Inputs[idx].View()))
-	}
-
-	col1 := lipgloss.JoinVertical(lipgloss.Left,
-		renderRow("Concurrency", InputConcurrency),
-		renderRow("Requests", InputRequests),
-		renderRow("Duration", InputDuration),
-	)
-
-	col2 := lipgloss.JoinVertical(lipgloss.Left,
-		renderRow("Rate Limit", InputRateLimit),
-		renderRow("Headers", InputHeaders),
-		renderRow("Body", InputBody),
-	)
-
-	if colW == w-4 {
-		return configPanelStyle.Width(w).Render(lipgloss.JoinVertical(lipgloss.Left, col1, col2))
-	}
-	return configPanelStyle.Width(w).Render(lipgloss.JoinHorizontal(lipgloss.Top, col1, "  ", col2))
-}
-
-func (m Ui) renderDashboard(w int) string {
-	snap := m.Metrics.Snapshot()
-
-	cardW := (w - 10) / 4
-	if cardW < 15 {
-		cardW = 15
-	}
-
-	renderCard := func(label, val string) string {
-		return statCardStyle.Width(cardW).Render(
-			lipgloss.JoinVertical(lipgloss.Left,
-				statLabelStyle.Render(label),
-				statValueStyle.Render(val),
-			),
-		)
-	}
-
-	cards := lipgloss.JoinHorizontal(lipgloss.Top,
-		renderCard("REQS", fmt.Sprintf("%d", snap.TotalRequests)),
-		renderCard("RPS", fmt.Sprintf("%d", snap.RequestsPerSec)),
-		renderCard("OK", fmt.Sprintf("%.0f%%", snap.SuccessRate)),
-		renderCard("LAT", fmt.Sprintf("%.0fms", snap.AvgLatencyMs)),
-	)
-
-	if m.Running && m.Config.Requests > 0 {
-		m.Progress.Width = w - 20
-		prog := lipgloss.NewStyle().PaddingTop(1).Render(m.Progress.View())
-		return dashboardStyle.Width(w).Render(lipgloss.JoinVertical(lipgloss.Left, cards, prog))
-	}
-
-	return dashboardStyle.Width(w).Render(cards)
-}
-
-func (m Ui) renderResponsePanel(w int) string {
-	tabs := []string{"LOGS", "METRICS", "HISTO"}
-	var renderedTabs []string
-	for i, t := range tabs {
-		if i == m.ActiveTab {
-			renderedTabs = append(renderedTabs, tabActiveStyle.Render(t))
-		} else {
-			renderedTabs = append(renderedTabs, tabInactiveStyle.Render(t))
-		}
-	}
-	tabBar := lipgloss.JoinHorizontal(lipgloss.Bottom, renderedTabs...)
-
-	border := lipgloss.NewStyle().Width(w).Border(lipgloss.NormalBorder(), false, false, true, false).BorderForeground(borderColor).Render("")
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		tabBar,
-		border,
-		responsePanelStyle.Width(w).Render(m.ResponseView.View()),
-	)
+func styleLog(prefix, msg string, style lipgloss.Style) string {
+	return fmt.Sprintf("%s %s", style.Render(prefix), msg)
 }
 
 func (m Ui) renderMetricsDetail() string {
 	snap := m.Metrics.Snapshot()
-	s := fmt.Sprintf(`
-Total: %d
-Success: %d (%.1f%%)
-Errors: %d
-RPS: %d
-Avg Latency: %.0fms
-Min: %.0fms
-Max: %.0fms
-Codes: 2xx:%d, 3xx:%d, 4xx:%d, 5xx:%d
-`, snap.TotalRequests, snap.SuccessCount, snap.SuccessRate, snap.ErrorCount,
-		snap.RequestsPerSec, snap.AvgLatencyMs, snap.MinLatencyMs, snap.MaxLatencyMs,
-		snap.StatusCode2xx, snap.StatusCode3xx, snap.StatusCode4xx, snap.StatusCode5xx)
-	return s
-}
+	return fmt.Sprintf(`
+  PERFORMANCE METRICS
+  ───────────────────
+  Total Requests:   %d
+  Success Count:    %d
+  Error Count:      %d
+  Success Rate:     %.2f%%
+  Throughput:       %.2f MB/s
+  Active Conns:     %d
 
-func (m Ui) renderHistogramDetail() string {
-	var sb strings.Builder
-	sb.WriteString("Latency Distribution:\n\n")
-	labels := []string{"<10ms", "10-50ms", "50-100ms", "100-250ms", "250-500ms", "500-1s", "1-2s", "2-5s", "5-10s", ">10s"}
-	var maxVal uint64 = 0
-	for _, b := range m.Metrics.LatencyBuckets {
-		v := b.Load()
-		if v > maxVal {
-			maxVal = v
-		}
-	}
+  LATENCY
+  ───────
+  Average:          %.2f ms
+  Minimum:          %.2f ms
+  Maximum:          %.2f ms
 
-	for i, b := range m.Metrics.LatencyBuckets {
-		if i >= len(labels) {
-			break
-		}
-		val := b.Load()
-		barLen := 0
-		if maxVal > 0 {
-			barLen = int((float64(val) / float64(maxVal)) * 40)
-		}
-		bar := strings.Repeat("█", barLen)
-		sb.WriteString(fmt.Sprintf("%-10s %s %d\n", labels[i], bar, val))
-	}
-	return sb.String()
-}
-
-func (m Ui) renderStatusBar(w int) string {
-	dur := "0s"
-	if m.Running {
-		dur = time.Since(m.StartTime).Round(time.Second).String()
-	}
-
-	status := m.StatusMessage
-	if status == "" {
-		status = "Ready"
-	}
-
-	left := fmt.Sprintf(" %s | %s", dur, status)
-	right := m.Help.ShortHelpView(m.KeyMap.ShortHelp())
-
-	space := w - lipgloss.Width(left) - lipgloss.Width(right)
-	if space < 0 {
-		space = 0
-	}
-
-	return statusBarStyle.Width(w).Render(left + strings.Repeat(" ", space) + right)
-}
-
-func (m Ui) renderHelp(w int) string {
-	return lipgloss.Place(w, m.Height, lipgloss.Center, lipgloss.Center,
-		lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Background(surfaceColor).Padding(1, 2).Render(
-			m.Help.FullHelpView(m.KeyMap.FullHelp()),
-		),
+  STATUS CODES
+  ────────────
+  2xx: %d
+  3xx: %d
+  4xx: %d
+  5xx: %d
+`,
+		snap.TotalRequests, snap.SuccessCount, snap.ErrorCount,
+		snap.SuccessRate, snap.ThroughputMBps, snap.ActiveConnections,
+		snap.AvgLatencyMs, snap.MinLatencyMs, snap.MaxLatencyMs,
+		snap.StatusCode2xx, snap.StatusCode3xx, snap.StatusCode4xx, snap.StatusCode5xx,
 	)
 }
 
-// --- Helpers ---
-func getStatusEmoji(rate float64) string {
-	if rate > 95 {
-		return "ok"
-	}
-	return "!!"
-}
+func (m Ui) renderHistogram() string {
+	var sb strings.Builder
+	sb.WriteString("\n  LATENCY HISTOGRAM\n  ─────────────────\n\n")
 
-func getStatusColor(rate float64) string {
-	if rate > 95 {
-		return lipgloss.NewStyle().Foreground(successColor).Render("OK")
+	labels := []string{"<10ms", "10-50", "50-100", "100-250", "250-500", "500-1s", "1s-2s", "2s-5s", "5s-10s", ">10s"}
+	var maxVal uint64
+	for _, v := range m.Metrics.LatencyBuckets {
+		val := v.Load()
+		if val > maxVal {
+			maxVal = val
+		}
 	}
-	return lipgloss.NewStyle().Foreground(errorColor).Render("LOW")
-}
 
-func getLatencyStatus(lat float64) string {
-	if lat < 200 {
-		return lipgloss.NewStyle().Foreground(successColor).Render("FAST")
+	for i, label := range labels {
+		val := m.Metrics.LatencyBuckets[i].Load()
+		barLen := 0
+		if maxVal > 0 {
+			barLen = int((float64(val) / float64(maxVal)) * 50)
+		}
+		bar := strings.Repeat("█", barLen)
+		sb.WriteString(fmt.Sprintf("  %-8s │ %s %d\n", label, bar, val))
 	}
-	return lipgloss.NewStyle().Foreground(warningColor).Render("SLOW")
-}
-
-func styleLogLine(line string) string {
-	if strings.Contains(line, "ERROR") {
-		return lipgloss.NewStyle().Foreground(errorColor).Render(line)
-	}
-	if strings.Contains(line, "INFO") {
-		return lipgloss.NewStyle().Foreground(successColor).Render(line)
-	}
-	return lipgloss.NewStyle().Foreground(textSecondary).Render(line)
+	return sb.String()
 }

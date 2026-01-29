@@ -337,3 +337,54 @@ func TestSortRoutes(t *testing.T) {
 		t.Fatal("routes not sorted by length desc")
 	}
 }
+
+func TestGet_WildcardResolution(t *testing.T) {
+	hm := NewHost("/tmp")
+
+	// Simulate a loaded configuration with a wildcard domain
+	wildcardDomain := "*.localhost"
+	hm.mu.Lock()
+	hm.lookupMap[wildcardDomain] = &alaye.Host{
+		Domains: []string{wildcardDomain},
+	}
+	hm.mu.Unlock()
+
+	tests := []struct {
+		name      string
+		input     string
+		shouldHit bool
+	}{
+		{
+			name:      "Exact Wildcard Match (Unlikely in real requests but possible)",
+			input:     "*.localhost",
+			shouldHit: true, // This passes currently because it's an exact string match
+		},
+		{
+			name:      "Subdomain Match 1",
+			input:     "api.localhost",
+			shouldHit: true, // BUG: This currently FAILS
+		},
+		{
+			name:      "Subdomain Match 2",
+			input:     "app.service.localhost",
+			shouldHit: true, // BUG: This currently FAILS
+		},
+		{
+			name:      "Non-matching Domain",
+			input:     "api.otherhost",
+			shouldHit: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hm.Get(tt.input)
+			if tt.shouldHit && got == nil {
+				t.Fatalf("Expected to find host for '%s' via wildcard '%s', but got nil", tt.input, wildcardDomain)
+			}
+			if !tt.shouldHit && got != nil {
+				t.Fatalf("Expected nil for '%s', but got a host", tt.input)
+			}
+		})
+	}
+}

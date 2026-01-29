@@ -309,9 +309,31 @@ func (hm *Host) Get(hostname string) *alaye.Host {
 	if hostname == "" {
 		return nil
 	}
+
 	hm.mu.RLock()
 	defer hm.mu.RUnlock()
-	return hm.lookupMap[hostname]
+
+	key := hm.resolveDomainLocked(hostname)
+	if key == "" {
+		return nil
+	}
+	return hm.lookupMap[key]
+}
+
+func (hm *Host) GetRouter(hostname string) *matcher.Tree {
+	hostname = core.NormalizeHost(hostname)
+	if hostname == "" {
+		return nil
+	}
+
+	hm.mu.RLock()
+	defer hm.mu.RUnlock()
+
+	key := hm.resolveDomainLocked(hostname)
+	if key == "" {
+		return nil
+	}
+	return hm.routers[key]
 }
 
 func (hm *Host) GetByPort(port string) *alaye.Host {
@@ -338,16 +360,6 @@ func (hm *Host) Close() error {
 
 func (hm *Host) Changed() <-chan struct{} {
 	return hm.changed
-}
-
-func (hm *Host) GetRouter(hostname string) *matcher.Tree {
-	hostname = core.NormalizeHost(hostname)
-	if hostname == "" {
-		return nil
-	}
-	hm.mu.RLock()
-	defer hm.mu.RUnlock()
-	return hm.routers[hostname]
 }
 
 func (hm *Host) notifyChanged() {
@@ -608,4 +620,19 @@ func (hm *Host) sortRoutes(routes []alaye.Route) {
 	sort.SliceStable(routes, func(i, j int) bool {
 		return len(routes[i].Path) > len(routes[j].Path)
 	})
+}
+
+func (hm *Host) resolveDomainLocked(hostname string) string {
+	if _, ok := hm.lookupMap[hostname]; ok {
+		return hostname
+	}
+	for domain := range hm.lookupMap {
+		if strings.HasPrefix(domain, "*.") {
+			suffix := domain[1:]
+			if strings.HasSuffix(hostname, suffix) {
+				return domain
+			}
+		}
+	}
+	return ""
 }

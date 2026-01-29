@@ -9,6 +9,8 @@ type KeyMap struct {
 	FocusNext     key.Binding
 	FocusPrev     key.Binding
 	ToggleVerbose key.Binding
+	ToggleConfig  key.Binding
+	MethodPicker  key.Binding
 	ScrollUp      key.Binding
 	ScrollDown    key.Binding
 	PageUp        key.Binding
@@ -21,26 +23,27 @@ type KeyMap struct {
 }
 
 func (k KeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Run, k.Stop, k.Help, k.Quit}
+	return []key.Binding{k.Run, k.Stop, k.MethodPicker, k.ToggleConfig, k.Help, k.Quit}
 }
 
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Run, k.Stop, k.FocusURL, k.ToggleVerbose},
-		{k.FocusNext, k.FocusPrev, k.ScrollUp, k.ScrollDown},
-		{k.PageUp, k.PageDown, k.ClearLogs, k.SaveConfig},
-		{k.Help, k.Quit},
+		{k.Run, k.Stop, k.FocusURL, k.MethodPicker},
+		{k.FocusNext, k.FocusPrev, k.ToggleVerbose, k.ToggleConfig},
+		{k.ScrollUp, k.ScrollDown, k.PageUp, k.PageDown},
+		{k.ClearLogs, k.SaveConfig, k.LoadConfig, k.Help},
+		{k.Quit},
 	}
 }
 
 var defaultKeyMap = KeyMap{
 	Run: key.NewBinding(
 		key.WithKeys("enter", "ctrl+r"),
-		key.WithHelp("enter/ctrl+r", "run test"),
+		key.WithHelp("enter/ctrl+r", "run/stop"),
 	),
 	Stop: key.NewBinding(
 		key.WithKeys("ctrl+c", "esc"),
-		key.WithHelp("ctrl+c/esc", "stop test"),
+		key.WithHelp("ctrl+c/esc", "stop"),
 	),
 	FocusURL: key.NewBinding(
 		key.WithKeys("ctrl+l"),
@@ -48,15 +51,23 @@ var defaultKeyMap = KeyMap{
 	),
 	FocusNext: key.NewBinding(
 		key.WithKeys("tab"),
-		key.WithHelp("tab", "next field"),
+		key.WithHelp("tab", "next"),
 	),
 	FocusPrev: key.NewBinding(
 		key.WithKeys("shift+tab"),
-		key.WithHelp("shift+tab", "previous field"),
+		key.WithHelp("shift+tab", "prev"),
 	),
 	ToggleVerbose: key.NewBinding(
 		key.WithKeys("ctrl+v"),
 		key.WithHelp("ctrl+v", "toggle verbose"),
+	),
+	ToggleConfig: key.NewBinding(
+		key.WithKeys("c"),
+		key.WithHelp("c", "toggle config"),
+	),
+	MethodPicker: key.NewBinding(
+		key.WithKeys("m"),
+		key.WithHelp("m", "pick method"),
 	),
 	ScrollUp: key.NewBinding(
 		key.WithKeys("up", "k"),
@@ -75,8 +86,8 @@ var defaultKeyMap = KeyMap{
 		key.WithHelp("pgdown/ctrl+d", "page down"),
 	),
 	Quit: key.NewBinding(
-		key.WithKeys("ctrl+q", "ctrl+c"),
-		key.WithHelp("ctrl+q/c", "quit"),
+		key.WithKeys("ctrl+q"),
+		key.WithHelp("ctrl+q", "quit"),
 	),
 	Help: key.NewBinding(
 		key.WithKeys("?"),
