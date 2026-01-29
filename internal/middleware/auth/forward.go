@@ -40,7 +40,7 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// FIX: Include cfg.URL in cache key to prevent cross-service cache pollution
+			// Include config URL in cache key to avoid collisions between different routes using different auth services
 			cacheKey := cfg.URL + "|" + r.Header.Get("Authorization") + "|" + r.Header.Get("Cookie") + "|" + r.Method + "|" + r.URL.Path
 
 			if allowed, ok := authCache.GetIfPresent(cacheKey); ok {
@@ -48,6 +48,7 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 					next.ServeHTTP(w, r)
 					return
 				}
+				// Cached Deny (generic forbidden)
 				http.Error(w, "Forbidden (Cached)", http.StatusForbidden)
 				return
 			}
@@ -66,16 +67,17 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 
 			resp, err := client.Do(authReq)
 			if err != nil {
-				// Failure fallback
+				// Network Failure case
 				if onFailure == "allow" {
 					next.ServeHTTP(w, r)
 					return
 				}
-				http.Error(w, "Forbidden", http.StatusForbidden)
+				http.Error(w, "Auth Service Unavailable", http.StatusForbidden)
 				return
 			}
 			defer resp.Body.Close()
 
+			// SUCCESS: 2xx means authorized
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				ttl := time.Minute // Default TTL
 				cc := resp.Header.Get("Cache-Control")
@@ -98,15 +100,22 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 				return
 			}
 
+			// FAILURE: 4xx/5xx means unauthorized (or error)
+			// Cache the failure briefly (10s) to prevent hammering auth service on denial
 			authCache.Set(cacheKey, false)
-			authCache.SetExpiresAfter(cacheKey, 30*time.Second)
+			authCache.SetExpiresAfter(cacheKey, 10*time.Second)
 
+			// Pass through the Auth Service's response headers (e.g. WWW-Authenticate, Content-Type)
 			for k, vv := range resp.Header {
 				for _, v := range vv {
 					w.Header().Add(k, v)
 				}
 			}
+
+			// Pass through status code
 			w.WriteHeader(resp.StatusCode)
+
+			// Pass through the response body (JSON error, HTML, etc)
 			io.Copy(w, resp.Body)
 		})
 	}
