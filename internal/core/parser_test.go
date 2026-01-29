@@ -179,3 +179,55 @@ route "/api" {
 		t.Errorf("Expected weight 3, got %d", apiRoute.Backends.Servers[1].Weight)
 	}
 }
+
+// TestParser_EnvironmentValue verifies that the alaye.Value unmarshaling
+// works correctly when parsing a real HCL file with env variables.
+func TestParser_EnvironmentValue(t *testing.T) {
+	// Set test environment variable
+	secret := "test-gossip-secret-12345678" // 24 bytes
+	os.Setenv("AGBERO_TEST_SECRET", secret)
+	defer os.Unsetenv("AGBERO_TEST_SECRET")
+
+	// Config using different syntax styles for the secret
+	content := `
+enabled = true
+# Test unwrapped env
+secret_key = "env.AGBERO_TEST_SECRET"
+`
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "gossip.hcl")
+	err := os.WriteFile(configPath, []byte(content), 0644)
+	if err != nil {
+		t.Fatalf("failed to write temp config: %v", err)
+	}
+
+	var gossip alaye.Gossip
+	parser := NewParser(configPath)
+	err = parser.Unmarshal(&gossip)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if gossip.SecretKey.String() != secret {
+		t.Errorf("Expected secret %q, got %q", secret, gossip.SecretKey.String())
+	}
+
+	// Test 2: Wrapped syntax ${env.VAR}
+	content2 := `
+enabled = true
+secret_key = "${env.AGBERO_TEST_SECRET}"
+`
+	configPath2 := filepath.Join(tmpDir, "gossip_wrapped.hcl")
+	os.WriteFile(configPath2, []byte(content2), 0644)
+
+	var gossip2 alaye.Gossip
+	parser2 := NewParser(configPath2)
+	err = parser2.Unmarshal(&gossip2)
+	if err != nil {
+		t.Fatalf("Unmarshal wrapped failed: %v", err)
+	}
+
+	if gossip2.SecretKey.String() != secret {
+		t.Errorf("Expected secret %q from wrapped syntax, got %q", secret, gossip2.SecretKey.String())
+	}
+}

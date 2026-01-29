@@ -6,7 +6,7 @@ import (
 
 type JWTAuth struct {
 	// Secret for HMAC (HS256) or Path to Public Key (RS256/ES256)
-	Secret string `hcl:"secret"`
+	Secret Value `hcl:"secret"`
 	// Map claims to headers: e.g. "sub" = "X-User-ID"
 	ClaimMap map[string]string `hcl:"claims_to_headers,optional"`
 	// Optional: Validate 'iss' or 'aud'

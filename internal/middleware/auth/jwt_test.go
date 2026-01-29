@@ -11,7 +11,7 @@ import (
 )
 
 func TestJWT(t *testing.T) {
-	secret := "test-secret-key-12345"
+	secret := alaye.Value("test-secret-key-12345")
 
 	// Helper to generate a valid token
 	genToken := func(claims jwt.MapClaims, signingSecret string) string {
@@ -45,7 +45,7 @@ func TestJWT(t *testing.T) {
 			authHeader: "Bearer " + genToken(jwt.MapClaims{
 				"sub": "user123",
 				"exp": time.Now().Add(time.Hour).Unix(),
-			}, secret),
+			}, secret.String()),
 			wantStatus: http.StatusOK,
 		},
 		{
@@ -69,7 +69,7 @@ func TestJWT(t *testing.T) {
 				"sub":  "user_888",
 				"role": "admin",
 				"exp":  time.Now().Add(time.Hour).Unix(),
-			}, secret),
+			}, secret.String()),
 			wantStatus: http.StatusOK,
 			wantHeaderKeys: map[string]string{
 				"X-User-ID":   "user_888",
@@ -85,7 +85,7 @@ func TestJWT(t *testing.T) {
 			authHeader: "Bearer " + genToken(jwt.MapClaims{
 				"sub": "user123",
 				"iss": "auth.agbero.com",
-			}, secret),
+			}, secret.String()),
 			wantStatus: http.StatusOK,
 		},
 		{
@@ -97,7 +97,7 @@ func TestJWT(t *testing.T) {
 			authHeader: "Bearer " + genToken(jwt.MapClaims{
 				"sub": "user123",
 				"iss": "evil.com",
-			}, secret),
+			}, secret.String()),
 			wantStatus: http.StatusUnauthorized,
 		},
 	}
