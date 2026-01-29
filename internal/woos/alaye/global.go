@@ -8,6 +8,7 @@ import (
 )
 
 type Global struct {
+	Version     int         `hcl:"version,optional"`
 	Development bool        `hcl:"development,optional"`
 	Bind        Bind        `hcl:"bind,block"`
 	Logging     Logging     `hcl:"logging,block"`

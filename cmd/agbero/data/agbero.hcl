@@ -3,6 +3,8 @@
 # -------------------------------------------------------------
 # GLOBAL SETTINGS
 # -------------------------------------------------------------
+# Configuration version
+version = 2
 
 # Enable detailed logs and development features (disable for production)
 development = false
@@ -110,24 +112,40 @@ timeouts {
 # GLOBAL RATE LIMITING (Optional)
 # -------------------------------------------------------------
 rate_limits {
+  enabled = true
   ttl = "30m"
   max_entries = 100000
 
-  # Paths that trigger stricter 'auth' rate limits
-  auth_prefixes = ["/login", "/auth", "/admin"]
-
-  # General traffic limits
-  global {
-    requests = 120
-    window   = "1s"
-    burst    = 240
+  # Black Friday / Payment Rules (Applied First)
+  rule "payment" {
+    prefixes = ["/api/checkout", "/api/payment"]
+    methods  = ["POST", "PUT"]
+    requests = 5
+    window   = "1m"
+    key      = "ip" # or "header:Authorization"
   }
 
-  # Auth traffic limits
-  auth {
+  # Auth Rules
+  rule "auth_limit" {
+    prefixes = ["/login", "/auth", "/admin"]
     requests = 10
     window   = "1m"
-    burst    = 10
+    key      = "ip"
+  }
+
+  # General API Rules (Matched if above don't apply)
+  rule "general_api" {
+    prefixes = ["/api"]
+    requests = 1000
+    window   = "1m"
+    key      = "header:X-API-Key"
+  }
+
+  # Catch-all
+  rule "global" {
+    requests = 5000
+    window   = "1m"
+    key      = "ip"
   }
 }
 

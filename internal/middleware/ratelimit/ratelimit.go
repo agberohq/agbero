@@ -13,10 +13,10 @@ import (
 )
 
 type RatePolicy struct {
-	Requests  int
-	Window    time.Duration
-	Burst     int
-	KeyHeader string // e.g., "X-API-Key" or "Authorization"
+	Requests int
+	Window   time.Duration
+	Burst    int
+	KeySpec  string // "ip", "header:Key", "cookie:Name"
 }
 
 func (p RatePolicy) limiter() *rate.Limiter {
@@ -82,7 +82,6 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Always allow ACME challenges
 		if strings.HasPrefix(r.URL.Path, "/.well-known/acme-challenge/") {
 			next.ServeHTTP(w, r)
 			return
@@ -95,22 +94,28 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 		}
 
 		key := ""
-		// 1. Try Header (Identity)
-		if pol.KeyHeader != "" {
-			key = r.Header.Get(pol.KeyHeader)
-		}
+		spec := strings.ToLower(pol.KeySpec)
 
-		// 2. Fallback to IP
-		if key == "" {
+		if strings.HasPrefix(spec, "header:") {
+			headerName := strings.TrimPrefix(spec, "header:")
+			key = r.Header.Get(headerName)
+		} else if strings.HasPrefix(spec, "cookie:") {
+			cookieName := strings.TrimPrefix(spec, "cookie:")
+			if c, err := r.Cookie(cookieName); err == nil {
+				key = c.Value
+			}
+		} else {
+			// Default to IP
 			key = clientip.ClientIP(r)
 		}
 
 		if key == "" {
-			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
-			return
+			// If key strategy failed (missing header/cookie), we typically
+			// shouldn't block, or we should fallback to IP.
+			// Here we fallback to IP to ensure protection.
+			key = clientip.ClientIP(r)
 		}
 
-		// Unique key per bucket policy
 		fullKey := bucketName + ":" + key
 
 		now := time.Now().UnixNano()

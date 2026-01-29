@@ -25,10 +25,12 @@ type Route struct {
 	Timeouts       *TimeoutRoute   `hcl:"timeouts,block"`
 
 	// Middleware Configs
+	JWTAuth     *JWTAuth     `hcl:"jwt_auth,block"`
 	BasicAuth   *BasicAuth   `hcl:"basic_auth,block"`
 	ForwardAuth *ForwardAuth `hcl:"forward_auth,block"`
 	Headers     *Headers     `hcl:"headers,block"`
 	Wasm        *Wasm        `hcl:"wasm,block"`
+	RateLimit   *Rate        `hcl:"rate_limit,block"`
 
 	CompressionConfig Compression `hcl:"compression,block"`
 }
@@ -105,6 +107,33 @@ func (r *Route) Key() string {
 		if r.Web.Index != "" {
 			sb.WriteString("|i=")
 			sb.WriteString(r.Web.Index)
+		}
+	}
+
+	if r.RateLimit != nil {
+		sb.WriteString("|rl=")
+		if r.RateLimit.Enabled {
+			sb.WriteString("on")
+			// Iterate through rules to ensure config changes trigger reloads
+			for _, rule := range r.RateLimit.Rules {
+				sb.WriteString(";")
+				sb.WriteString(rule.Name)
+				sb.WriteString(":")
+				sb.WriteString(fmt.Sprint(rule.Requests))
+				sb.WriteString("/")
+				sb.WriteString(fmt.Sprint(rule.Window))
+				sb.WriteString("/")
+				sb.WriteString(fmt.Sprint(rule.Burst))
+				sb.WriteString("@")
+				sb.WriteString(rule.Key)
+				// Include length of matchers to detect structural changes
+				sb.WriteString("#p")
+				sb.WriteString(fmt.Sprint(len(rule.Prefixes)))
+				sb.WriteString("#m")
+				sb.WriteString(fmt.Sprint(len(rule.Methods)))
+			}
+		} else {
+			sb.WriteString("off")
 		}
 	}
 

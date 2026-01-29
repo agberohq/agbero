@@ -53,7 +53,7 @@ var (
 func main() {
 	// 1) BOOTSTRAP LOGGER
 	logger = ll.New(woos.Name,
-		ll.WithHandler(lh.NewColorizedHandler(os.Stdout, lh.WithColorShowTime(true))),
+		ll.WithHandler(lh.NewColorizedHandler(os.Stdout)),
 		ll.WithFatalExits(true),
 	).Enable()
 

@@ -13,6 +13,10 @@ const (
 // Hosts & Network
 
 const (
+	ConfigFormatVersion = 2
+)
+
+const (
 	Localhost     = "localhost"
 	LocalhostIPv4 = "127.0.0.1"
 

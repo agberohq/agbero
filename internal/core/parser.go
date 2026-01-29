@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -47,6 +48,25 @@ func LoadGlobal(path string) (*alaye.Global, error) {
 	if err := parser.Unmarshal(&global); err != nil {
 		return nil, err
 	}
+
+	// Version Check
+	if global.Version != woos.ConfigFormatVersion {
+		// Specific help for the v1 -> v2 transition (Rate Limit refactor)
+		if global.Version < woos.ConfigFormatVersion {
+			return nil, fmt.Errorf(
+				"\nConfig version mismatch (found v%d, expected v%d).\n"+
+					"Please update your %s file to version = %d and restructure 'rate_limits'.",
+				global.Version, woos.ConfigFormatVersion, filepath.Base(path), woos.ConfigFormatVersion,
+			)
+		}
+
+		// Generic version mismatch error
+		return nil, fmt.Errorf(
+			"config format version mismatch: file is v%d, binary expects v%d. Please update your configuration",
+			global.Version, woos.ConfigFormatVersion,
+		)
+	}
+
 	return &global, nil
 }
 

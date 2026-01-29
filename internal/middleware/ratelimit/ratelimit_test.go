@@ -16,7 +16,6 @@ func TestRateLimiter_BlocksAfterLimit(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 	h := rl.Handler(next)
 
-	// Use RemoteAddr to simulate client IP
 	req := httptest.NewRequest("GET", "http://x/", nil)
 	req.RemoteAddr = "9.9.9.9:1234"
 
@@ -59,7 +58,6 @@ func TestRateLimiter_TTL_EvictsEventually(t *testing.T) {
 		t.Fatalf("expected 429, got %d", rr.Code)
 	}
 
-	// Wait and retry until it becomes 200 (evicted + recreated).
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		time.Sleep(120 * time.Millisecond)
@@ -78,10 +76,10 @@ func TestRateLimiter_Identity(t *testing.T) {
 	// Policy limits by X-API-Key if present, else IP
 	rl := NewRateLimiter(1*time.Minute, 1000, func(r *http.Request) (string, RatePolicy, bool) {
 		return "identity", RatePolicy{
-			Requests:  2,
-			Window:    time.Second,
-			Burst:     2,
-			KeyHeader: "X-API-Key",
+			Requests: 2,
+			Window:   time.Second,
+			Burst:    2,
+			KeySpec:  "header:X-API-Key",
 		}, true
 	})
 	defer rl.Close()
@@ -90,17 +88,14 @@ func TestRateLimiter_Identity(t *testing.T) {
 	h := rl.Handler(next)
 
 	// Scenario 1: Same IP, Different Keys -> Should be separate buckets
-	// Key A
 	reqA := httptest.NewRequest("GET", "/", nil)
 	reqA.RemoteAddr = "10.0.0.1:1234"
 	reqA.Header.Set("X-API-Key", "user_A")
 
-	// Key B
 	reqB := httptest.NewRequest("GET", "/", nil)
 	reqB.RemoteAddr = "10.0.0.1:1234" // Same IP
 	reqB.Header.Set("X-API-Key", "user_B")
 
-	// Consume Key A quota
 	for i := 0; i < 2; i++ {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, reqA)
@@ -108,14 +103,12 @@ func TestRateLimiter_Identity(t *testing.T) {
 			t.Fatalf("Key A: expected 200 at i=%d got %d", i, rr.Code)
 		}
 	}
-	// Key A blocked
 	rrA := httptest.NewRecorder()
 	h.ServeHTTP(rrA, reqA)
 	if rrA.Code != 429 {
 		t.Fatalf("Key A: expected 429, got %d", rrA.Code)
 	}
 
-	// Key B should still be allowed (separate bucket despite same IP)
 	rrB := httptest.NewRecorder()
 	h.ServeHTTP(rrB, reqB)
 	if rrB.Code != 200 {
@@ -126,7 +119,6 @@ func TestRateLimiter_Identity(t *testing.T) {
 	reqNoHeader := httptest.NewRequest("GET", "/", nil)
 	reqNoHeader.RemoteAddr = "10.0.0.2:1234" // New IP
 
-	// Consume IP quota
 	for i := 0; i < 2; i++ {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, reqNoHeader)
@@ -134,7 +126,6 @@ func TestRateLimiter_Identity(t *testing.T) {
 			t.Fatalf("NoHeader: expected 200 at i=%d got %d", i, rr.Code)
 		}
 	}
-	// IP blocked
 	rrIP := httptest.NewRecorder()
 	h.ServeHTTP(rrIP, reqNoHeader)
 	if rrIP.Code != 429 {
@@ -143,7 +134,6 @@ func TestRateLimiter_Identity(t *testing.T) {
 }
 
 func TestRateLimiter_Blocks(t *testing.T) {
-	// 1. Setup Policy: 5 reqs / 1 sec
 	policy := func(r *http.Request) (string, RatePolicy, bool) {
 		return "test_bucket", RatePolicy{
 			Requests: 5,
@@ -155,17 +145,15 @@ func TestRateLimiter_Blocks(t *testing.T) {
 	rl := NewRateLimiter(1*time.Minute, 1000, policy)
 	defer rl.Close()
 
-	// 2. Create Handler chain
 	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
 	handler := rl.Handler(nextHandler)
 
-	// 3. Send 5 allowed requests
 	for i := 0; i < 5; i++ {
 		req := httptest.NewRequest("GET", "/", nil)
-		req.RemoteAddr = "1.2.3.4:1234" // Client IP
+		req.RemoteAddr = "1.2.3.4:1234"
 		w := httptest.NewRecorder()
 
 		handler.ServeHTTP(w, req)
@@ -174,7 +162,6 @@ func TestRateLimiter_Blocks(t *testing.T) {
 		}
 	}
 
-	// 4. Send 6th request (Should block)
 	req := httptest.NewRequest("GET", "/", nil)
 	req.RemoteAddr = "1.2.3.4:1234"
 	w := httptest.NewRecorder()
@@ -184,7 +171,6 @@ func TestRateLimiter_Blocks(t *testing.T) {
 		t.Errorf("Request 6 should be blocked (429), got %d", w.Code)
 	}
 
-	// 5. Different IP should be allowed
 	req2 := httptest.NewRequest("GET", "/", nil)
 	req2.RemoteAddr = "5.6.7.8:1234"
 	w2 := httptest.NewRecorder()

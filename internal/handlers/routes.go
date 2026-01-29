@@ -2,14 +2,17 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/backend"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/lb"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/web"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/compress"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/headers"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
 )
@@ -37,27 +40,34 @@ func NewRoute(route *alaye.Route, logger *ll.Logger) *Route {
 }
 
 func newWebRoute(route *alaye.Route, logger *ll.Logger) *Route {
-	chain := web.New(logger, route)
+	chain := http.Handler(web.New(logger, route))
 
-	var handler http.Handler = chain
-
+	if route.JWTAuth != nil {
+		chain = auth.JWT(route.JWTAuth)(chain)
+	}
 	if route.BasicAuth != nil && len(route.BasicAuth.Users) > 0 {
-		handler = auth.Basic(route.BasicAuth)(handler)
+		chain = auth.Basic(route.BasicAuth)(chain)
 	}
 	if route.ForwardAuth != nil && route.ForwardAuth.URL != "" {
-		handler = auth.Forward(route.ForwardAuth)(handler)
+		chain = auth.Forward(route.ForwardAuth)(chain)
+	}
+
+	if route.RateLimit != nil && route.RateLimit.Enabled {
+		if rl := buildRouteLimiter(route.RateLimit); rl != nil {
+			chain = rl.Handler(chain)
+		}
 	}
 
 	if route.Headers != nil {
-		handler = headers.Headers(route.Headers)(handler)
+		chain = headers.Headers(route.Headers)(chain)
 	}
 
 	if route.CompressionConfig.Compression {
-		handler = compress.Compress(route)(handler)
+		chain = compress.Compress(route)(chain)
 	}
 
 	return &Route{
-		handler:  handler,
+		handler:  chain,
 		Backends: nil,
 	}
 }
@@ -89,12 +99,22 @@ func newProxyRoute(route *alaye.Route, logger *ll.Logger) *Route {
 
 	var chain http.Handler = loadBalancer
 
+	if route.JWTAuth != nil {
+		chain = auth.JWT(route.JWTAuth)(chain)
+	}
 	if route.BasicAuth != nil && len(route.BasicAuth.Users) > 0 {
 		chain = auth.Basic(route.BasicAuth)(chain)
 	}
 	if route.ForwardAuth != nil && route.ForwardAuth.URL != "" {
 		chain = auth.Forward(route.ForwardAuth)(chain)
 	}
+
+	if route.RateLimit != nil && route.RateLimit.Enabled {
+		if rl := buildRouteLimiter(route.RateLimit); rl != nil {
+			chain = rl.Handler(chain)
+		}
+	}
+
 	if route.Headers != nil {
 		chain = headers.Headers(route.Headers)(chain)
 	}
@@ -128,4 +148,65 @@ func FallbackRoute(msg string) *Route {
 			http.Error(w, msg, http.StatusBadGateway)
 		}),
 	}
+}
+
+func buildRouteLimiter(rlc *alaye.Rate) *ratelimit.RateLimiter {
+	if rlc == nil || !rlc.Enabled || len(rlc.Rules) == 0 {
+		return nil
+	}
+
+	ttl := core.Or(rlc.TTL, 30*time.Minute)
+	maxEntries := rlc.MaxEntries
+	if maxEntries <= 0 {
+		maxEntries = 100_000
+	}
+
+	policy := func(r *http.Request) (bucket string, pol ratelimit.RatePolicy, ok bool) {
+		path := r.URL.Path
+		if strings.HasPrefix(path, "/.well-known/acme-challenge/") {
+			return "", ratelimit.RatePolicy{}, false
+		}
+
+		for _, rule := range rlc.Rules {
+			// 1. Check Method
+			if len(rule.Methods) > 0 {
+				methodMatch := false
+				for _, m := range rule.Methods {
+					if m == r.Method {
+						methodMatch = true
+						break
+					}
+				}
+				if !methodMatch {
+					continue
+				}
+			}
+
+			// 2. Check Prefix
+			if len(rule.Prefixes) > 0 {
+				prefixMatch := false
+				for _, p := range rule.Prefixes {
+					if strings.HasPrefix(path, p) {
+						prefixMatch = true
+						break
+					}
+				}
+				if !prefixMatch {
+					continue
+				}
+			}
+
+			// Match Found
+			return rule.Name, ratelimit.RatePolicy{
+				Requests: rule.Requests,
+				Window:   rule.Window,
+				Burst:    rule.Burst,
+				KeySpec:  rule.Key,
+			}, true
+		}
+
+		return "", ratelimit.RatePolicy{}, false
+	}
+
+	return ratelimit.NewRateLimiter(ttl, maxEntries, policy)
 }

@@ -127,9 +127,21 @@ func TestServer_buildTLS_NoEmail(t *testing.T) {
 func TestServer_buildRateLimiterFromConfig(t *testing.T) {
 	s := &Server{global: &alaye.Global{
 		RateLimits: alaye.Rate{
+			Enabled:    true,
 			TTL:        time.Minute,
 			MaxEntries: 100,
-			Global:     alaye.RatePolicy{Requests: 10, Window: time.Second},
+			// Global:     alaye.RatePolicy{Requests: 10, Window: time.Second},
+			Rules: []alaye.RateRule{
+				{
+					Name:     "test_rule",
+					Requests: 10,
+					Window:   time.Second,
+					Burst:    20,
+					Key:      "ip",
+					Prefixes: []string{"/test"},
+					Methods:  []string{"GET"},
+				},
+			},
 		},
 	}}
 
