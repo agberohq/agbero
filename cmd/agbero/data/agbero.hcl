@@ -112,7 +112,7 @@ timeouts {
 # GLOBAL RATE LIMITING (Optional)
 # -------------------------------------------------------------
 rate_limits {
-  enabled = true
+  enabled = false
   ttl = "30m"
   max_entries = 100000
 
