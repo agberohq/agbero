@@ -566,8 +566,8 @@ func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
 	gr, gw, gb, gok := rlc.Global.Policy()
 	ar, aw, ab, aok := rlc.Auth.Policy()
 
-	globalPolicy := ratelimit.RatePolicy{Requests: gr, Window: gw, Burst: gb}
-	authPolicy := ratelimit.RatePolicy{Requests: ar, Window: aw, Burst: ab}
+	globalPolicy := ratelimit.RatePolicy{Requests: gr, Window: gw, Burst: gb, KeyHeader: rlc.Global.KeyHeader}
+	authPolicy := ratelimit.RatePolicy{Requests: ar, Window: aw, Burst: ab, KeyHeader: rlc.Global.KeyHeader}
 
 	authPrefixes := rlc.AuthPrefixes
 	if len(authPrefixes) == 0 {

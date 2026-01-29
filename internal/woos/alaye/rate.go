@@ -50,9 +50,10 @@ func (r *Rate) Validate() error {
 }
 
 type RatePolicy struct {
-	Requests int           `hcl:"requests"`
-	Burst    int           `hcl:"burst,optional"`
-	Window   time.Duration `hcl:"window"`
+	Requests  int           `hcl:"requests"`
+	Burst     int           `hcl:"burst,optional"`
+	Window    time.Duration `hcl:"window"`
+	KeyHeader string        `hcl:"key_header,optional"`
 }
 
 func (r *RatePolicy) Validate() error {
@@ -79,6 +80,10 @@ func (r *RatePolicy) Validate() error {
 	}
 	if r.Burst < r.Requests {
 		return errors.New("burst cannot be less than requests")
+	}
+
+	if r.KeyHeader != "" && strings.Contains(r.KeyHeader, " ") {
+		return errors.New("key_header cannot contain spaces")
 	}
 
 	return nil

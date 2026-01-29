@@ -1,18 +1,11 @@
 package ratelimit
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 )
-
-type clientIPCtxKey struct{}
-
-func contextWithClientIP(ctx context.Context, ip string) context.Context {
-	return context.WithValue(ctx, clientIPCtxKey{}, ip)
-}
 
 func TestRateLimiter_BlocksAfterLimit(t *testing.T) {
 	rl := NewRateLimiter(30*time.Minute, 1000, func(r *http.Request) (string, RatePolicy, bool) {
@@ -23,8 +16,9 @@ func TestRateLimiter_BlocksAfterLimit(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 	h := rl.Handler(next)
 
+	// Use RemoteAddr to simulate client IP
 	req := httptest.NewRequest("GET", "http://x/", nil)
-	req = req.WithContext(contextWithClientIP(req.Context(), "9.9.9.9"))
+	req.RemoteAddr = "9.9.9.9:1234"
 
 	for i := 0; i < 2; i++ {
 		rr := httptest.NewRecorder()
@@ -51,7 +45,7 @@ func TestRateLimiter_TTL_EvictsEventually(t *testing.T) {
 	h := rl.Handler(next)
 
 	req := httptest.NewRequest("GET", "http://x/", nil)
-	req = req.WithContext(contextWithClientIP(req.Context(), "8.8.8.8"))
+	req.RemoteAddr = "8.8.8.8:1234"
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -77,6 +71,74 @@ func TestRateLimiter_TTL_EvictsEventually(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("expected 200 after TTL eviction, still %d", rr2.Code)
 		}
+	}
+}
+
+func TestRateLimiter_Identity(t *testing.T) {
+	// Policy limits by X-API-Key if present, else IP
+	rl := NewRateLimiter(1*time.Minute, 1000, func(r *http.Request) (string, RatePolicy, bool) {
+		return "identity", RatePolicy{
+			Requests:  2,
+			Window:    time.Second,
+			Burst:     2,
+			KeyHeader: "X-API-Key",
+		}, true
+	})
+	defer rl.Close()
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	h := rl.Handler(next)
+
+	// Scenario 1: Same IP, Different Keys -> Should be separate buckets
+	// Key A
+	reqA := httptest.NewRequest("GET", "/", nil)
+	reqA.RemoteAddr = "10.0.0.1:1234"
+	reqA.Header.Set("X-API-Key", "user_A")
+
+	// Key B
+	reqB := httptest.NewRequest("GET", "/", nil)
+	reqB.RemoteAddr = "10.0.0.1:1234" // Same IP
+	reqB.Header.Set("X-API-Key", "user_B")
+
+	// Consume Key A quota
+	for i := 0; i < 2; i++ {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, reqA)
+		if rr.Code != 200 {
+			t.Fatalf("Key A: expected 200 at i=%d got %d", i, rr.Code)
+		}
+	}
+	// Key A blocked
+	rrA := httptest.NewRecorder()
+	h.ServeHTTP(rrA, reqA)
+	if rrA.Code != 429 {
+		t.Fatalf("Key A: expected 429, got %d", rrA.Code)
+	}
+
+	// Key B should still be allowed (separate bucket despite same IP)
+	rrB := httptest.NewRecorder()
+	h.ServeHTTP(rrB, reqB)
+	if rrB.Code != 200 {
+		t.Fatalf("Key B: expected 200 (separate bucket), got %d", rrB.Code)
+	}
+
+	// Scenario 2: Fallback to IP when header missing
+	reqNoHeader := httptest.NewRequest("GET", "/", nil)
+	reqNoHeader.RemoteAddr = "10.0.0.2:1234" // New IP
+
+	// Consume IP quota
+	for i := 0; i < 2; i++ {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, reqNoHeader)
+		if rr.Code != 200 {
+			t.Fatalf("NoHeader: expected 200 at i=%d got %d", i, rr.Code)
+		}
+	}
+	// IP blocked
+	rrIP := httptest.NewRecorder()
+	h.ServeHTTP(rrIP, reqNoHeader)
+	if rrIP.Code != 429 {
+		t.Fatalf("NoHeader: expected 429, got %d", rrIP.Code)
 	}
 }
 
