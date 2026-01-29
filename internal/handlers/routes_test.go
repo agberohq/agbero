@@ -427,8 +427,10 @@ func TestRouteHandler_Validation(t *testing.T) {
 		{
 			name: "valid proxy route",
 			route: &alaye.Route{
-				Path:     "/api",
-				Backends: alaye.MakeBackend("http://localhost:3000"),
+				Path: "/api",
+				// Changed from localhost:3000 to avoid port conflicts in CI/dev environments.
+				// Using a high, presumably unused port ensures a connection error (502).
+				Backends: alaye.MakeBackend("http://127.0.0.1:59999"),
 			},
 			wantStatus: http.StatusBadGateway, // backend not running
 		},
