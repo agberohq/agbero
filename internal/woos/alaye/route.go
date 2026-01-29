@@ -28,6 +28,7 @@ type Route struct {
 	BasicAuth   *BasicAuth   `hcl:"basic_auth,block"`
 	ForwardAuth *ForwardAuth `hcl:"forward_auth,block"`
 	Headers     *Headers     `hcl:"headers,block"`
+	Wasm        *Wasm        `hcl:"wasm,block"`
 
 	CompressionConfig Compression `hcl:"compression,block"`
 }

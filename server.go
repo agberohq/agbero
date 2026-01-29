@@ -3,6 +3,7 @@ package agbero
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/firewall"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/h3"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/wasm"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/errors"
@@ -52,6 +54,8 @@ type Server struct {
 	logger       *ll.Logger
 	ipMiddleware *clientip.IPMiddleware
 	rateLimiter  *ratelimit.RateLimiter
+
+	wasmCache sync.Map
 }
 
 func NewServer(opts ...Option) *Server {
@@ -733,12 +737,14 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alaye.Route) {
+	// Clone request to ensure thread safety when modifying path/URL
 	reqOut := *r
 	if r.URL != nil {
 		u := *r.URL
 		reqOut.URL = &u
 	}
 
+	// 1. Strip Prefixes logic
 	if len(route.StripPrefixes) > 0 {
 		for _, prefix := range route.StripPrefixes {
 			if prefix == "" {
@@ -757,8 +763,25 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 		}
 	}
 
-	h := s.getOrBuildRouteHandler(route)
-	h.ServeHTTP(w, &reqOut)
+	// 2. Get the core handler (Reverse Proxy or File Server)
+	// This is cached by the Route Key in the global RouteCache
+	var handler http.Handler = s.getOrBuildRouteHandler(route)
+
+	// 3. Apply WASM Middleware (if configured)
+	if route.Wasm != nil {
+		wm, err := s.getWasmManager(route.Wasm)
+		if err != nil {
+			s.logger.Fields("err", err, "module", route.Wasm.Module).Error("wasm: failed to load middleware")
+			// Fail open or closed? Usually closed for middleware errors.
+			http.Error(w, "Internal Server Error (WASM)", http.StatusInternalServerError)
+			return
+		}
+		// Wrap the core handler with the WASM handler
+		handler = wm.Handler(handler)
+	}
+
+	// 4. Execute
+	handler.ServeHTTP(w, &reqOut)
 }
 
 func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.Route {
@@ -785,6 +808,36 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.Route {
 	}
 
 	return h
+}
+
+func (s *Server) getWasmManager(cfg *alaye.Wasm) (*wasm.Manager, error) {
+	// Create a unique cache key based on the module path AND the configuration map.
+	// We use JSON marshalling to create a deterministic string key.
+	// This ensures that if the config block changes, we get a new instance.
+	keyBytes, _ := json.Marshal(cfg)
+	key := string(keyBytes)
+
+	// Fast path: Load from cache
+	if v, ok := s.wasmCache.Load(key); ok {
+		return v.(*wasm.Manager), nil
+	}
+
+	// Slow path: Compile and Initialize
+	// Using Background context here because the Manager lifecycle lives beyond the request
+	mgr, err := wasm.NewManager(context.Background(), s.logger, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in cache
+	// Use LoadOrStore to handle race conditions during startup
+	if actual, loaded := s.wasmCache.LoadOrStore(key, mgr); loaded {
+		// Another goroutine beat us, close our unused one and use theirs
+		mgr.Close(context.Background())
+		return actual.(*wasm.Manager), nil
+	}
+
+	return mgr, nil
 }
 
 func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
