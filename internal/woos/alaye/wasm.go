@@ -15,27 +15,27 @@ type Wasm struct {
 
 func (w *Wasm) Validate() error {
 	if w.Module == "" {
-		return errors.New("wasm: module path is required")
+		return ErrModulePathRequired
 	}
 
 	// Validate access list
 	for _, a := range w.Access {
 		switch strings.ToLower(a) {
-		case "headers", "body", "method", "uri", "config":
+		case AccessHeaders, AccessBody, AccessMethod, AccessURI, AccessConfig:
 			// ok
 		default:
-			return errors.Newf("wasm: unknown access capability %q", a)
+			return errors.Newf("%w %q", ErrUnknownCapability, a)
 		}
 	}
 
 	if w.MaxBodySize < 0 {
-		return errors.New("wasm: max_body_size cannot be negative")
+		return ErrNegativeBodySize
 	}
 
 	return nil
 }
 
-// Helper to check permissions quickly
+// HasAccess is a helper to check permissions quickly
 func (w *Wasm) HasAccess(capability string) bool {
 	for _, a := range w.Access {
 		if strings.EqualFold(a, capability) {

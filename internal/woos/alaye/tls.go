@@ -37,8 +37,8 @@ func (t *TLS) Validate() error {
 		case ModeLocalNone, ModeLocalCert, ModeLetsEncrypt, ModeCustomCA:
 			// Valid modes
 		default:
-			return errors.Newf("tls mode %q must be one of: %s, %s, %s, %s",
-				t.Mode, ModeLocalNone, ModeLocalCert, ModeLetsEncrypt, ModeCustomCA)
+			return errors.Newf("%w: %q must be one of: %s, %s, %s, %s",
+				ErrInvalidTLSMode, t.Mode, ModeLocalNone, ModeLocalCert, ModeLetsEncrypt, ModeCustomCA)
 		}
 	} else {
 		t.Mode = ModeLetsEncrypt // Default
@@ -56,25 +56,25 @@ func (t *TLS) Validate() error {
 		// No TLS, nothing to validate
 		return nil
 	default:
-		return errors.Newf("unsupported tls mode: %s", t.Mode)
+		return errors.Newf("%w: %s", ErrUnsupportedTLSMode, t.Mode)
 	}
 }
 
 func (l *LocalCert) Validate() error {
 	// Cert file validation
 	if l.CertFile == "" {
-		return errors.New("cert_file is required for local tls")
+		return ErrCertFileRequired
 	}
 	if !strings.HasPrefix(l.CertFile, "/") {
-		return errors.New("cert_file must be an absolute path")
+		return ErrCertFileAbsolute
 	}
 
 	// Key file validation
 	if l.KeyFile == "" {
-		return errors.New("key_file is required for local tls")
+		return ErrKeyFileRequired
 	}
 	if !strings.HasPrefix(l.KeyFile, "/") {
-		return errors.New("key_file must be an absolute path")
+		return ErrKeyFileAbsolute
 	}
 
 	return nil
@@ -83,7 +83,7 @@ func (l *LocalCert) Validate() error {
 func (l *LetsEncrypt) Validate() error {
 	// Email validation (if provided)
 	if l.Email != "" && !strings.Contains(l.Email, "@") {
-		return errors.New("email must be a valid email address")
+		return ErrInvalidEmail
 	}
 
 	// Staging and ShortLived are booleans, no validation needed
@@ -93,10 +93,10 @@ func (l *LetsEncrypt) Validate() error {
 func (c *CustomCA) Validate() error {
 	// Root CA file validation
 	if c.Root == "" {
-		return errors.New("root is required for custom_ca")
+		return ErrRootRequiredCustomCA
 	}
 	if !strings.HasPrefix(c.Root, "/") {
-		return errors.New("root must be an absolute path")
+		return ErrRootAbsolute
 	}
 
 	return nil
