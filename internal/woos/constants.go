@@ -1,5 +1,7 @@
 package woos
 
+import "time"
+
 const (
 	Name        = "agbero"
 	Display     = "agbero proxy"
@@ -56,4 +58,29 @@ const (
 
 const (
 	User = "user"
+)
+
+// srv
+const (
+	DefaultConfigAddr          = "disabled"
+	H3KeyPrefix                = "h3@"
+	RouteCacheTTL              = int64(10 * time.Minute)
+	DefaultRateLimitTTL        = 30 * time.Minute
+	DefaultRateLimitMaxEntries = 100_000
+
+	//buckets
+
+	BucketACME           = "acme"
+	BucketAuth           = "auth"
+	BucketAuthDisabled   = "auth_disabled"
+	BucketGlobal         = "global"
+	BucketGlobalDisabled = "global_disabled"
+
+	AlpnH3  = "h3"
+	AlpnH2  = "h2"
+	AlpnH11 = "http/1.1"
+
+	PrivateBindingHost = "private-binding"
+
+	DefaultHTTPSPort = "443"
 )
