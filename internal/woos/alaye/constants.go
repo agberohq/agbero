@@ -40,3 +40,12 @@ const (
 	ModeLetsEncrypt TlsMode = "letsencrypt"
 	ModeCustomCA    TlsMode = "custom_ca"
 )
+
+// wasm
+const (
+	AccessHeaders = "headers"
+	AccessBody    = "body"
+	AccessMethod  = "method"
+	AccessURI     = "uri"
+	AccessConfig  = "config"
+)

@@ -1,4 +1,3 @@
-// internal/woos/version.go
 package woos
 
 var (

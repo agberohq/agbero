@@ -16,11 +16,11 @@ type Web struct {
 
 func (w *Web) Validate() error {
 	if !w.Root.IsSet() {
-		return errors.New("root is required for web block")
+		return ErrRootRequired
 	}
 
 	if w.Index != "" && strings.Contains(w.Index, "/") {
-		return errors.New("index cannot contain path separators")
+		return ErrIndexPath
 	}
 
 	if w.PHP.Enabled {
@@ -51,18 +51,18 @@ func (p *PHP) Validate() error {
 	// Accept either unix:/path.sock or host:port
 	if strings.HasPrefix(addr, "unix:") {
 		if len(strings.TrimSpace(strings.TrimPrefix(addr, "unix:"))) == 0 {
-			return errors.New("address unix:... cannot be empty")
+			return ErrNoAddress
 		}
 		return nil
 	}
 
 	// Very light check; real dial will validate host:port
 	if !strings.Contains(addr, ":") {
-		return errors.New("address must be unix:/path.sock or host:port")
+		return ErrBadAddress
 	}
 
 	if p.Index != "" && strings.Contains(p.Index, "/") {
-		return errors.New("index cannot contain path separators")
+		return ErrIndexPath
 	}
 
 	return nil

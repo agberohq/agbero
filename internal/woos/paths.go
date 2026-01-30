@@ -1,4 +1,3 @@
-// internal/woos/paths.go
 package woos
 
 import (

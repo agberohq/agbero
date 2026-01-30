@@ -37,7 +37,7 @@ type contextKey struct {
 	name string
 }
 
-var portContextKey = &contextKey{"local-port"}
+var portContextKey = &contextKey{woos.CtxPort}
 
 type Server struct {
 	hostManager *discovery.Host
@@ -73,10 +73,10 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	s.configPath = configPath
 
 	if s.hostManager == nil {
-		return errors.New("host manager is required")
+		return woos.ErrHostManagerRequired
 	}
 	if s.global == nil {
-		return errors.New("global config is required")
+		return woos.ErrGlobalConfigRequired
 	}
 	if s.logger == nil {
 		s.logger = ll.New(woos.Name).Enable()
@@ -89,7 +89,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 
 	woos.DefaultApply(s.global, absConfigPath)
 
-	adminAddr := "disabled"
+	adminAddr := woos.DefaultConfigAddr
 	if s.global.Admin != nil {
 		adminAddr = s.global.Admin.Address
 	}
@@ -213,7 +213,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	for _, h := range hosts {
 		for _, port := range h.Bind {
 			if usedPorts[port] {
-				return errors.Newf("port conflict: %s is already in use by a global listener or another host", port)
+				return errors.Newf("%w: %s is already in use by a global listener or another host", woos.ErrPortConflict, port)
 			}
 			usedPorts[port] = true
 
@@ -233,7 +233,7 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	}
 
 	if len(s.servers) == 0 && len(s.tcpProxies) == 0 {
-		return errors.New("no http/https/tcp bind addresses configured")
+		return woos.ErrNoBindAddr
 	}
 
 	errCh := make(chan error, len(s.servers))
@@ -398,7 +398,7 @@ func (s *Server) startQUICServer(
 		TLSConfig: serverTLSCfg,
 	}
 
-	key := "h3@" + addr
+	key := woos.H3KeyPrefix + addr
 	s.mu.Lock()
 	s.h3Servers[key] = h3Server
 	s.mu.Unlock()
@@ -539,7 +539,7 @@ func (s *Server) shutdownImpl() error {
 
 func (s *Server) reapOldRoutes() {
 	now := time.Now().UnixNano()
-	expiration := int64(10 * time.Minute)
+	//expiration := woos.RouteCacheTTL
 
 	woos.RouteCache.Range(func(key, value any) bool {
 		item, ok := value.(*woos.RouteCacheItem)
@@ -548,7 +548,7 @@ func (s *Server) reapOldRoutes() {
 		}
 
 		last := item.LastAccessed.Load()
-		if now-last > expiration {
+		if now-last > woos.RouteCacheTTL {
 			if h, ok := item.Handler.(interface{ Close() }); ok {
 				h.Close()
 			}
@@ -561,10 +561,10 @@ func (s *Server) reapOldRoutes() {
 func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
 	rlc := s.global.RateLimits
 
-	ttl := core.Or(rlc.TTL, 30*time.Minute)
+	ttl := core.Or(rlc.TTL, woos.DefaultRateLimitTTL)
 	maxEntries := rlc.MaxEntries
 	if maxEntries <= 0 {
-		maxEntries = 100_000
+		maxEntries = woos.DefaultRateLimitMaxEntries
 	}
 
 	gr, gw, gb, gok := rlc.Global.Policy()
@@ -582,22 +582,22 @@ func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
 		p := r.URL.Path
 
 		if strings.HasPrefix(p, "/.well-known/acme-challenge/") {
-			return "acme", ratelimit.RatePolicy{}, false
+			return woos.BucketACME, ratelimit.RatePolicy{}, false
 		}
 
 		for _, pref := range authPrefixes {
 			if pref != "" && strings.HasPrefix(p, pref) {
 				if aok {
-					return "auth", authPolicy, true
+					return woos.BucketAuth, authPolicy, true
 				}
-				return "auth_disabled", ratelimit.RatePolicy{}, false
+				return woos.BucketAuthDisabled, ratelimit.RatePolicy{}, false
 			}
 		}
 
 		if gok {
-			return "global", globalPolicy, true
+			return woos.BucketGlobal, globalPolicy, true
 		}
-		return "global_disabled", ratelimit.RatePolicy{}, false
+		return woos.BucketGlobalDisabled, ratelimit.RatePolicy{}, false
 	}
 
 	return ratelimit.NewRateLimiter(ttl, maxEntries, policy)
@@ -605,13 +605,13 @@ func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
 
 func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) {
 	if s.global == nil {
-		return nil, nil, errors.New("global config is required")
+		return nil, nil, woos.ErrGlobalConfigRequired
 	}
 	if s.logger == nil {
-		return nil, nil, errors.New("logger is required")
+		return nil, nil, woos.ErrLoggerRequired
 	}
 	if s.hostManager == nil {
-		return nil, nil, errors.New("host manager is required")
+		return nil, nil, woos.ErrHostManagerRequired
 	}
 
 	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global)
@@ -624,7 +624,7 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 
 	tlsCfg := &tls.Config{
 		MinVersion:     tls.VersionTLS12,
-		NextProtos:     []string{"h3", "h2", "http/1.1"},
+		NextProtos:     []string{woos.AlpnH3, woos.AlpnH2, woos.AlpnH11},
 		GetCertificate: s.tlsManager.GetCertificate,
 	}
 
@@ -676,7 +676,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if len(hcfg.Domains) > 0 {
 			host = hcfg.Domains[0]
 		} else {
-			host = "private-binding"
+			host = woos.PrivateBindingHost
 		}
 	} else {
 		// 2. Standard Global Listener (SNI/Hosting based)
@@ -846,7 +846,7 @@ func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 		host = r.Host
 	}
 
-	targetPort := "443"
+	targetPort := woos.DefaultHTTPSPort
 	if len(s.global.Bind.HTTPS) > 0 {
 		_, port, err := net.SplitHostPort(s.global.Bind.HTTPS[0])
 		if err == nil {
@@ -855,7 +855,7 @@ func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var target string
-	if targetPort == "443" {
+	if targetPort == woos.DefaultHTTPSPort {
 		target = fmt.Sprintf("https://%s%s", host, r.URL.RequestURI())
 	} else {
 		target = fmt.Sprintf("https://%s:%s%s", host, targetPort, r.URL.RequestURI())
