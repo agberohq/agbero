@@ -4,6 +4,11 @@ import (
 	"github.com/olekukonko/errors"
 )
 
+// shared
+var (
+	ErrCannotBeEmpty = errors.New("cannot be empty")
+)
+
 var (
 	ErrRootRequired = errors.New("root is required for web block")
 	ErrIndexPath    = errors.New("index cannot contain path separators")
@@ -90,8 +95,8 @@ var (
 //host
 
 var (
-	ErrNoDomains         = errors.New("host must have at least one domain")
-	ErrCannotBeEmpty     = errors.New("cannot be empty")
+	ErrNoDomains = errors.New("host must have at least one domain")
+
 	ErrDomainHasProtocol = errors.New("domain must not include protocol")
 	ErrInvalidPort       = errors.New("Invalid Port")
 	ErrNoRoutes          = errors.New("host must have at least one route")
@@ -133,4 +138,47 @@ var (
 var (
 	ErrInvalidProxy           = errors.New("trusted proxy must be a valid CIDR or IP address")
 	ErrNegativeMaxHeaderBytes = errors.New("max_header_bytes cannot be negative")
+)
+
+// compression
+var (
+	ErrInvalidCompressionLevel = errors.New("compression_level must be between 0 and 11")
+	ErrInvalidCompressionType  = errors.New("compression type must be 'gzip' or 'brotli'")
+)
+
+// circuitBreaker
+var (
+	//ErrNegativeThreshold = errors.New("threshold cannot be negative")
+
+	ErrNegativeDuration = errors.New("duration cannot be negative")
+)
+
+// bind
+var (
+	ErrEmptyAddress    = errors.New("address cannot be empty")
+	ErrNoBindAddresses = errors.New("at least one of 'http' or 'https' bind addresses must be configured")
+)
+
+// jwt
+
+var (
+	ErrSecretRequired = errors.New("secret is required")
+)
+
+// auth-fwd
+var (
+	ErrForwardAuthURLRequired      = errors.New("url is required for forward_auth")
+	ErrForwardAuthURLInvalid       = errors.New("url must start with http:// or https://")
+	ErrForwardAuthOnFailureInvalid = errors.New("on_failure must be 'allow' or 'deny'")
+)
+
+// auth-basic
+var (
+	ErrEmptyUsers   = errors.New("users cannot be empty for basic_auth")
+	ErrInvaliFormat = errors.New("invalid format")
+)
+
+// admin
+var (
+	ErrAdminAddressRequired = errors.New("admin address is required")
 )

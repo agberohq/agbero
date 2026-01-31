@@ -2,8 +2,6 @@ package alaye
 
 import (
 	"strings"
-
-	"github.com/olekukonko/errors"
 )
 
 type Compression struct {
@@ -18,18 +16,18 @@ func (c *Compression) Validate() error {
 	}
 
 	// Level validation
-	if c.Level < 0 || c.Level > 11 {
-		return errors.New("compression_level must be between 0 and 11")
+	if c.Level < MinCompressionLevel || c.Level > MaxCompressionLevel {
+		return ErrInvalidCompressionLevel
 	}
 
 	// Type validation (if provided)
 	if c.Type != "" {
 		c.Type = strings.ToLower(c.Type)
 		if c.Type != "gzip" && c.Type != "brotli" {
-			return errors.New("compression type must be 'gzip' or 'brotli'")
+			return ErrInvalidCompressionType
 		}
 	} else {
-		c.Type = "gzip" // Default
+		c.Type = DefaultCompressionType // Default
 	}
 
 	return nil

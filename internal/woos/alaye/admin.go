@@ -18,7 +18,7 @@ func (a *Admin) Validate() error {
 		return nil
 	}
 	if a.Address == "" {
-		return errors.New("admin address is required")
+		return ErrAdminAddressRequired
 	}
 	if _, _, err := net.SplitHostPort(a.Address); err != nil {
 		// Try parsing as port only

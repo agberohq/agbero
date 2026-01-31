@@ -14,7 +14,7 @@ type Bind struct {
 
 func (b *Bind) Validate() error {
 	if len(b.HTTP) == 0 && len(b.HTTPS) == 0 {
-		return errors.New("at least one of 'http' or 'https' bind addresses must be configured")
+		return ErrNoBindAddresses
 	}
 
 	for i, addr := range b.HTTP {
@@ -34,7 +34,7 @@ func (b *Bind) Validate() error {
 
 func (b *Bind) validateAddress(addr string) error {
 	if addr == "" {
-		return errors.New("address cannot be empty")
+		return ErrEmptyAddress
 	}
 	if strings.HasPrefix(addr, ":") {
 		if _, err := net.LookupPort("tcp", addr[1:]); err != nil {

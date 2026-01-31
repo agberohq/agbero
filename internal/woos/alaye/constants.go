@@ -68,3 +68,22 @@ const (
 	SecretKeyLen24 = 24
 	SecretKeyLen32 = 32
 )
+
+// compression
+
+const (
+	DefaultCompressionType = "gzip"
+	MinCompressionLevel    = 0
+	MaxCompressionLevel    = 11
+)
+
+// circuit breaker
+const (
+	DefaultCircuitBreakerThreshold = 5
+	DefaultCircuitBreakerDuration  = 30 * time.Second
+)
+
+// auth-forward
+const (
+	DefaultForwardAuthOnFailure = "deny"
+)

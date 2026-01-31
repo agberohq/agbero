@@ -22,23 +22,23 @@ type ForwardAuth struct {
 func (f *ForwardAuth) Validate() error {
 	// URL validation
 	if f.URL == "" {
-		return errors.New("url is required for forward_auth")
+		return ErrForwardAuthURLRequired
 	}
 	if !strings.HasPrefix(f.URL, "http://") && !strings.HasPrefix(f.URL, "https://") {
-		return errors.New("url must start with http:// or https://")
+		return ErrForwardAuthURLInvalid
 	}
 
 	// Request headers validation (if provided)
 	for i, header := range f.RequestHeaders {
 		if header == "" {
-			return errors.Newf("request_headers[%d]: cannot be empty", i)
+			return errors.Newf("request_headers[%d]: %w", i, ErrCannotBeEmpty)
 		}
 	}
 
 	// Auth response headers validation (if provided)
 	for i, header := range f.AuthResponseHeaders {
 		if header == "" {
-			return errors.Newf("auth_response_headers[%d]: cannot be empty", i)
+			return errors.Newf("auth_response_headers[%d]: %w", i, ErrCannotBeEmpty)
 		}
 	}
 
@@ -46,10 +46,10 @@ func (f *ForwardAuth) Validate() error {
 	if f.OnFailure != "" {
 		f.OnFailure = strings.ToLower(f.OnFailure)
 		if f.OnFailure != "allow" && f.OnFailure != "deny" {
-			return errors.New("on_failure must be 'allow' or 'deny'")
+			return ErrForwardAuthOnFailureInvalid
 		}
 	} else {
-		f.OnFailure = "deny" // Default
+		f.OnFailure = DefaultForwardAuthOnFailure // Default
 	}
 
 	return nil
