@@ -47,7 +47,7 @@ var (
 // security
 
 var (
-	ErrInvalidPEMFile = errors.New("invalid PEM file")
+	ErrInvalidPEMFile = errors.New("invalid pem file")
 	ErrNotEd25519Key  = errors.New("key is not ed25519")
 )
 
@@ -58,4 +58,11 @@ var (
 	ErrInvalidClaims          = errors.New("invalid claims")
 	ErrMissingTokenSubject    = errors.New("token missing subject")
 	ErrUnexpectedSiningMethod = errors.New("unexpected signing method")
+)
+
+//mkcert
+
+var (
+	ErrMkCertCAROOTFail  = errors.New("mkcert -CAROOT failed")
+	ErrMkCertEmptyCAROOT = errors.New("mkcert returned empty CAROOT")
 )
