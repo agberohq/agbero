@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/admin/ui"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/ipallow"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -28,63 +28,49 @@ func (s *Server) startAdminServer() {
 	cfg := s.global.Admin
 	mux := http.NewServeMux()
 
-	// --- 1. Public Endpoints ---
+	// --- 1. PUBLIC ENDPOINTS (No Auth Required) ---
 
+	// Health Check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
 
-	// Login Handler: Exchanges BasicAuth credentials for a JWT.
-	// This allows the UI to work with a token even if BasicAuth is configured backing store.
+	// Login Handler: Exchanges Credentials for JWT
 	mux.HandleFunc("/login", s.handleAdminLogin)
 
-	// --- 2. Protected Endpoints ---
+	// UI Assets (HTML/JS/CSS) - served publicly so login.html loads
+	uiHandler := ui.Handler()
+	mux.Handle("/", uiHandler)
+
+	// Helper to wrap handlers with JWT Auth
+	protect := func(h http.HandlerFunc) http.Handler {
+		// If JWT is configured, enforce it.
+		if cfg.JWTAuth != nil {
+			return auth.JWT(cfg.JWTAuth)(h)
+		}
+		// Fallback: If BasicAuth is configured but no JWT, enforce BasicAuth on API too
+		if cfg.BasicAuth != nil && len(cfg.BasicAuth.Users) > 0 {
+			return auth.Basic(cfg.BasicAuth)(h)
+		}
+		// If no auth configured at all, return raw handler (Insecure mode)
+		return h
+	}
 
 	// Metrics
-	mux.HandleFunc("/metrics", metrics.Metrics(s.hostManager))
+	mux.Handle("/metrics", protect(metrics.Metrics(s.hostManager)))
 
-	// Config Dump (Sanitized)
-	mux.HandleFunc("/config", s.handleAdminConfigDump)
+	// Config Dump
+	mux.Handle("/config", protect(s.handleAdminConfigDump))
 
-	// Firewall Management API
+	// Firewall Management
 	if s.firewall != nil {
-		mux.HandleFunc("/firewall", s.handleFirewallAPI)
-	}
-
-	// --- 3. Middleware Chain Construction ---
-	// Order: IPAllow -> OAuth -> JWT -> Basic -> Forward -> Handler
-
-	var handler http.Handler = mux
-
-	//  IP Restriction (Gatekeeper - First Line of Defense)
-	if len(cfg.AllowedIPs) > 0 {
-		handler = ipallow.New(cfg.AllowedIPs, s.logger)(handler)
-	}
-
-	// Layer A: Forward Auth (External)
-	if cfg.ForwardAuth != nil && cfg.ForwardAuth.URL != "" {
-		handler = auth.Forward(cfg.ForwardAuth)(handler)
-	}
-
-	// Layer B: Basic Auth (Traditional)
-	if cfg.BasicAuth != nil && len(cfg.BasicAuth.Users) > 0 {
-		handler = auth.Basic(cfg.BasicAuth)(handler)
-	}
-
-	// Layer C: JWT Auth (API / UI Token)
-	if cfg.JWTAuth != nil {
-		handler = auth.JWT(cfg.JWTAuth)(handler)
-	}
-
-	// Layer D: OAuth (Browser / SSO)
-	if cfg.OAuth != nil {
-		handler = auth.OAuth(cfg.OAuth)(handler)
+		mux.Handle("/firewall", protect(s.handleFirewallAPI))
 	}
 
 	srv := &http.Server{
 		Addr:         cfg.Address,
-		Handler:      handler,
+		Handler:      mux,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  30 * time.Second,
@@ -98,7 +84,7 @@ func (s *Server) startAdminServer() {
 	}()
 }
 
-// handleAdminLogin authenticates against configured BasicAuth users and issues a JWT.
+// handleAdminLogin verifies credentials against agbero.hcl > admin > basic_auth > users
 func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -107,18 +93,17 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 
 	cfg := s.global.Admin
 
-	// We need BasicAuth users to verify credentials
+	// 1. Validation: Ensure we have users and a secret configured
 	if cfg.BasicAuth == nil || len(cfg.BasicAuth.Users) == 0 {
-		http.Error(w, "No admin users configured", http.StatusForbidden)
+		http.Error(w, "Server Config Error: No admin users defined in 'basic_auth'", http.StatusForbidden)
 		return
 	}
-
-	// We need JWTAuth config to sign the token
 	if cfg.JWTAuth == nil || cfg.JWTAuth.Secret == "" {
-		http.Error(w, "JWT signing secret not configured", http.StatusForbidden)
+		http.Error(w, "Server Config Error: 'jwt_auth.secret' is required for login", http.StatusForbidden)
 		return
 	}
 
+	// 2. Parse Request
 	var creds struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -128,12 +113,13 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify Creds
+	// 3. Verify Credentials against Config
 	found := false
 	for _, u := range cfg.BasicAuth.Users {
-		// Format "user:hash"
+		// Expected format in HCL: "username:bcrypt_hash"
 		parts := strings.SplitN(u, ":", 2)
 		if len(parts) == 2 && parts[0] == creds.Username {
+			// Check Password
 			if err := bcrypt.CompareHashAndPassword([]byte(parts[1]), []byte(creds.Password)); err == nil {
 				found = true
 				break
@@ -142,13 +128,13 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !found {
-		// Fake delay to prevent timing attacks
-		time.Sleep(100 * time.Millisecond)
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		// Add delay to prevent timing attacks
+		time.Sleep(200 * time.Millisecond)
+		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 		return
 	}
 
-	// Generate Token
+	// 4. Generate JWT
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &AdminClaims{
 		User: creds.Username,
@@ -158,98 +144,37 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	// Use secret from JWTAuth config
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString([]byte(cfg.JWTAuth.Secret.String()))
 	if err != nil {
+		s.logger.Error("Failed to sign admin token: ", err)
 		http.Error(w, "Internal Signing Error", http.StatusInternalServerError)
 		return
 	}
 
+	// 5. Return Token
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"token":   tokenString,
 		"expires": expirationTime.Format(time.RFC3339),
+		"user":    creds.Username,
 	})
 }
 
 // handleAdminConfigDump returns a sanitized JSON dump of the running configuration.
 func (s *Server) handleAdminConfigDump(w http.ResponseWriter, r *http.Request) {
-	// 1. Get Host Snapshot
 	hosts, _ := s.hostManager.LoadAll()
-
-	// 2. Sanitize
-	safeGlobal := sanitizeGlobal(s.global)
-	safeHosts := sanitizeHosts(hosts)
 
 	resp := struct {
 		Global any `json:"global"`
 		Hosts  any `json:"hosts"`
 	}{
-		Global: safeGlobal,
-		Hosts:  safeHosts,
+		Global: sanitizeGlobal(s.global),
+		Hosts:  sanitizeHosts(hosts),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
-}
-
-// --- Sanitization Helpers ---
-
-func sanitizeGlobal(g *alaye.Global) *alaye.Global {
-	b, _ := json.Marshal(g)
-	var clone alaye.Global
-	_ = json.Unmarshal(b, &clone)
-
-	// Scrub Secrets
-	if clone.Gossip.SecretKey != "" {
-		clone.Gossip.SecretKey = "******"
-	}
-	if clone.Gossip.PrivateKeyFile != "" {
-		clone.Gossip.PrivateKeyFile = "******"
-	}
-
-	if clone.Admin != nil {
-		if clone.Admin.BasicAuth != nil {
-			clone.Admin.BasicAuth.Users = []string{"****** (hidden)"}
-		}
-		if clone.Admin.JWTAuth != nil {
-			clone.Admin.JWTAuth.Secret = "******"
-		}
-		if clone.Admin.OAuth != nil {
-			clone.Admin.OAuth.ClientSecret = "******"
-			clone.Admin.OAuth.CookieSecret = "******"
-		}
-	}
-
-	return &clone
-}
-
-func sanitizeHosts(hosts map[string]*alaye.Host) map[string]*alaye.Host {
-	out := make(map[string]*alaye.Host)
-	for k, v := range hosts {
-		b, _ := json.Marshal(v)
-		var clone alaye.Host
-		_ = json.Unmarshal(b, &clone)
-
-		for i := range clone.Routes {
-			if clone.Routes[i].BasicAuth != nil {
-				clone.Routes[i].BasicAuth.Users = []string{"******"}
-			}
-			if clone.Routes[i].JWTAuth != nil {
-				clone.Routes[i].JWTAuth.Secret = "******"
-			}
-			if clone.Routes[i].OAuth != nil {
-				clone.Routes[i].OAuth.ClientSecret = "******"
-				clone.Routes[i].OAuth.CookieSecret = "******"
-			}
-			if clone.Routes[i].ForwardAuth != nil {
-				// URL might be considered sensitive if internal, but usually kept
-			}
-		}
-		out[k] = &clone
-	}
-	return out
 }
 
 // handleFirewallAPI manages IP blocks via API
@@ -310,4 +235,50 @@ func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// sanitizeGlobal strips secrets from the global config
+func sanitizeGlobal(g *alaye.Global) *alaye.Global {
+	b, _ := json.Marshal(g)
+	var clone alaye.Global
+	_ = json.Unmarshal(b, &clone)
+
+	if clone.Gossip.SecretKey != "" {
+		clone.Gossip.SecretKey = "***"
+	}
+	if clone.Gossip.PrivateKeyFile != "" {
+		clone.Gossip.PrivateKeyFile = "***"
+	}
+	if clone.Admin != nil {
+		if clone.Admin.BasicAuth != nil {
+			clone.Admin.BasicAuth.Users = []string{"***"}
+		}
+		if clone.Admin.JWTAuth != nil {
+			clone.Admin.JWTAuth.Secret = "***"
+		}
+		// Removed OAuth reference since we removed it from struct
+	}
+	return &clone
+}
+
+// sanitizeHosts strips secrets from host configs
+func sanitizeHosts(hosts map[string]*alaye.Host) map[string]*alaye.Host {
+	out := make(map[string]*alaye.Host)
+	for k, v := range hosts {
+		b, _ := json.Marshal(v)
+		var clone alaye.Host
+		_ = json.Unmarshal(b, &clone)
+
+		for i := range clone.Routes {
+			if clone.Routes[i].BasicAuth != nil {
+				clone.Routes[i].BasicAuth.Users = []string{"***"}
+			}
+			if clone.Routes[i].JWTAuth != nil {
+				clone.Routes[i].JWTAuth.Secret = "***"
+			}
+			// Removed OAuth reference
+		}
+		out[k] = &clone
+	}
+	return out
 }

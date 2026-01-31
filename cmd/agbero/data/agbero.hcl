@@ -25,6 +25,9 @@ bind {
 # ADMIN
 # -------------------------------------------------------------
 admin {
+  # allowed ip
+  allowed_ips = ["127.0.0.1"]
+
   # List of addresses to listen for HTTP traffic (redirects to HTTPS if configured)
   address = ":9090"
 }

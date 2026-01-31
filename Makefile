@@ -9,6 +9,10 @@ PLAY_PATH ?= /usr/local/bin
 PLAY_OS   ?= linux
 PLAY_ARCH ?= amd64
 
+## UO
+REPO_URL = https://git.imaxinacion.net/aibox/agbero-ui
+TARGET_DIR = internal/admin/ui/web
+TEMP_DIR = tmp
 
 
 # Git remote for pushing tags
@@ -124,6 +128,19 @@ clean:
 	@echo "Cleaning build artifacts..."
 	rm -rf $(BUILD_DIR)
 	@echo "Clean complete"
+
+
+# Pull and filter specific assets
+fetch-ui:
+	@echo "Fetching clean assets from $(REPO_URL)..."
+	@mkdir -p $(TARGET_DIR) $(TEMP_DIR)
+	# 1. Clone only the latest commit to a temp folder (still has .git)
+	git clone --depth 1 $(REPO_URL) $(TEMP_DIR)
+	# 2. Sync ONLY html, css, js into your target dir (this ignores .git and README)
+	rsync -avm --include='*/' --include='*.html' --include='*.css' --include='*.js' --exclude='*' $(TEMP_DIR)/ $(TARGET_DIR)/
+	# 3. Cleanup temp folder
+	@rm -rf $(TEMP_DIR)
+	@echo "UI Assets successfully updated in $(TARGET_DIR)"
 
 # Cross-compile for release (matching GoReleaser targets)
 build-all: clean
