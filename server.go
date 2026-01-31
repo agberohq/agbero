@@ -561,43 +561,66 @@ func (s *Server) reapOldRoutes() {
 func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
 	rlc := s.global.RateLimits
 
+	if !rlc.Enabled {
+		return nil
+	}
+
 	ttl := core.Or(rlc.TTL, woos.DefaultRateLimitTTL)
 	maxEntries := rlc.MaxEntries
 	if maxEntries <= 0 {
 		maxEntries = woos.DefaultRateLimitMaxEntries
 	}
 
-	gr, gw, gb, gok := rlc.Global.Policy()
-	ar, aw, ab, aok := rlc.Auth.Policy()
-
-	globalPolicy := ratelimit.RatePolicy{Requests: gr, Window: gw, Burst: gb, KeyHeader: rlc.Global.KeyHeader}
-	authPolicy := ratelimit.RatePolicy{Requests: ar, Window: aw, Burst: ab, KeyHeader: rlc.Global.KeyHeader}
-
-	authPrefixes := rlc.AuthPrefixes
-	if len(authPrefixes) == 0 {
-		authPrefixes = []string{"/login", "/otp", "/auth"}
-	}
-
 	policy := func(r *http.Request) (bucket string, pol ratelimit.RatePolicy, ok bool) {
 		p := r.URL.Path
 
+		// Always allow ACME challenges
 		if strings.HasPrefix(p, "/.well-known/acme-challenge/") {
 			return woos.BucketACME, ratelimit.RatePolicy{}, false
 		}
 
-		for _, pref := range authPrefixes {
-			if pref != "" && strings.HasPrefix(p, pref) {
-				if aok {
-					return woos.BucketAuth, authPolicy, true
+		// Iterate over rules in the order defined in HCL
+		for _, rule := range rlc.Rules {
+			// 1. Check Method (if defined)
+			if len(rule.Methods) > 0 {
+				methodMatch := false
+				currentMethod := r.Method
+				for _, m := range rule.Methods {
+					if strings.EqualFold(m, currentMethod) {
+						methodMatch = true
+						break
+					}
 				}
-				return woos.BucketAuthDisabled, ratelimit.RatePolicy{}, false
+				if !methodMatch {
+					continue // Method didn't match, try next rule
+				}
 			}
+
+			// 2. Check Prefix (if defined)
+			if len(rule.Prefixes) > 0 {
+				prefixMatch := false
+				for _, pref := range rule.Prefixes {
+					if strings.HasPrefix(p, pref) {
+						prefixMatch = true
+						break
+					}
+				}
+				if !prefixMatch {
+					continue // Prefix didn't match, try next rule
+				}
+			}
+
+			// Match Found!
+			return rule.Name, ratelimit.RatePolicy{
+				Requests: rule.Requests,
+				Window:   rule.Window,
+				Burst:    rule.Burst,
+				KeySpec:  rule.Key, // Passed to ratelimit.go logic
+			}, true
 		}
 
-		if gok {
-			return woos.BucketGlobal, globalPolicy, true
-		}
-		return woos.BucketGlobalDisabled, ratelimit.RatePolicy{}, false
+		// No rule matched
+		return "", ratelimit.RatePolicy{}, false
 	}
 
 	return ratelimit.NewRateLimiter(ttl, maxEntries, policy)

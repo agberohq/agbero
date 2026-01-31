@@ -44,17 +44,17 @@ func (h *Header) Validate() error {
 	// Add headers validation
 	for k, v := range h.Add {
 		if k == "" {
-			return AddHeaderKeyEmpty
+			return ErrAddHeaderKeyEmpty
 		}
 		if v == "" {
-			return errors.Newf("%w: %q value cannot be empty", AddHederValueEmpty, k)
+			return errors.Newf("%w: %q value cannot be empty", ErrAddHeaderValueEmpty, k)
 		}
 	}
 
 	// Remove headers validation
 	for i, header := range h.Remove {
 		if header == "" {
-			return errors.Newf("remove[%d]: %w", i, HeaderNameEmpty)
+			return errors.Newf("remove[%d]: %w", i, ErrHeaderNameEmpty)
 		}
 	}
 

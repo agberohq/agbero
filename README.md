@@ -174,6 +174,11 @@ graph TB
 - **[CLI Reference](cmd/agbero/README.md)**: Command-line interface documentation.
 - **[Examples](examples/)**: Ready-to-run configuration examples.
 
+
+## ⚠️ Caution 
+
+ > Security Warning: When configuring forward_auth, ensure the URL is trusted. Do not allow end-users to control this URL. If running in cloud environments (AWS/GCP), ensure the proxy cannot access instance metadata services (e.g., 169.254.169.254) via network policies.
+
 ## 🛣 Roadmap
 
 - [x] Auto-TLS (Local & Let's Encrypt)

@@ -29,6 +29,20 @@ func (s *Server) startAdminServer() {
 		mux.HandleFunc("/firewall", s.handleFirewallAPI)
 	}
 
+	//mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
+	//	// SECURITY: Ensure this endpoint is behind Auth!
+	//
+	//	// 1. Get snapshot of hosts
+	//	hosts, _ := s.hostManager.LoadAll()
+	//
+	//	// 2. Create a "Sanitized" struct that hides secrets
+	//	// (You don't want to dump raw bcrypt hashes or JWT secrets via API)
+	//	sanitized := sanitizeConfig(hosts)
+	//
+	//	w.Header().Set("Content-Type", "application/json")
+	//	json.NewEncoder(w).Encode(sanitized)
+	//})
+
 	var handler http.Handler = mux
 
 	// Apply Admin Authentication

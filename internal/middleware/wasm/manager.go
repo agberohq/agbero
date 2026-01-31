@@ -29,8 +29,20 @@ func NewManager(ctx context.Context, logger *ll.Logger, cfg *alaye.Wasm) (*Manag
 		return nil, err
 	}
 
+	// Explicitly isolate the config map to ensure no parent struct leakage.
+	// We create a new map to be absolutely sure we strictly serialize key-values.
+	safeConfig := make(map[string]string)
+	if cfg.Config != nil {
+		for k, v := range cfg.Config {
+			safeConfig[k] = v
+		}
+	}
+
 	// 2. Serialize user config to JSON once
-	cfgJSON, _ := json.Marshal(cfg.Config)
+	cfgJSON, err := json.Marshal(safeConfig)
+	if err != nil {
+		return nil, err
+	}
 
 	// 3. Create Runtime
 	r := wazero.NewRuntime(ctx)

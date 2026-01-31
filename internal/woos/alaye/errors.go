@@ -10,10 +10,11 @@ var (
 )
 
 var (
-	ErrRootRequired = errors.New("root is required for web block")
-	ErrIndexPath    = errors.New("index cannot contain path separators")
-	ErrNoAddress    = errors.New("address unix:... cannot be empty")
-	ErrBadAddress   = errors.New("address must be unix:/path.sock or host:port")
+	ErrRootRequired      = errors.New("root is required for web block")
+	ErrIndexPath         = errors.New("index cannot contain path separators")
+	ErrNoAddress         = errors.New("address unix:... cannot be empty")
+	ErrBadAddress        = errors.New("address must be unix:/path.sock or host:port")
+	ErrNegativeThreshold = errors.New("threshold cannot be negative")
 )
 
 // wasm
@@ -111,18 +112,16 @@ var (
 	ErrNegativeInterval       = errors.New("interval cannot be negative")
 	ErrNegativeTimeout        = errors.New("timeout cannot be negative")
 	ErrTimeoutExceedsInterval = errors.New("timeout cannot be greater than interval")
-
-	ErrNegativeThreshold = errors.New("threshold cannot be negative")
 )
 
 // header
 var (
 	ErrSetHeaderKeyEmpty   = errors.New("set header key cannot be empty")
 	ErrSetHeaderValueEmpty = errors.New("empty set header value")
-	HeaderNameEmpty        = errors.New("header name cannot be empty")
+	ErrHeaderNameEmpty     = errors.New("header name cannot be empty")
 
-	AddHeaderKeyEmpty  = errors.New("add header key cannot be empty")
-	AddHederValueEmpty = errors.New("empty add header value")
+	ErrAddHeaderKeyEmpty   = errors.New("add header key cannot be empty")
+	ErrAddHeaderValueEmpty = errors.New("empty add header value")
 )
 
 // gossip

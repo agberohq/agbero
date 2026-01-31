@@ -60,7 +60,7 @@ var (
 	ErrUnexpectedSiningMethod = errors.New("unexpected signing method")
 )
 
-//mkcert
+// mkcert
 
 var (
 	ErrMkCertCAROOTFail  = errors.New("mkcert -CAROOT failed")
@@ -97,7 +97,7 @@ var (
 	ErrStorageDirCreateFail = errors.New("failed to create storage directory")
 )
 
-// instaler
+// Installer
 var (
 	ErrMkCertRequired        = errors.New("mkcert is required for development TLS")
 	ErrMkCertInstalledFailed = errors.New("mkcert -install failed")
