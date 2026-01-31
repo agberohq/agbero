@@ -49,3 +49,22 @@ const (
 	AccessURI     = "uri"
 	AccessConfig  = "config"
 )
+
+// health
+const (
+	DefaultHealthInterval  = 10 * time.Second
+	DefaultHealthTimeout   = 5 * time.Second
+	DefaultHealthThreshold = 3
+)
+
+// gossip
+const (
+	DefaultGossipPort = 7946
+
+	MinPort = 0
+	MaxPort = 65535
+
+	SecretKeyLen16 = 16
+	SecretKeyLen24 = 24
+	SecretKeyLen32 = 32
+)

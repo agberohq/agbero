@@ -111,7 +111,7 @@ type General struct {
 
 func (g *General) Validate() error {
 	if g.MaxHeaderBytes < 0 {
-		return errors.New("max_header_bytes cannot be negative")
+		return ErrNegativeMaxHeaderBytes
 	}
 	return nil
 }

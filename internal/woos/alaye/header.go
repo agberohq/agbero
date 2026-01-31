@@ -34,27 +34,27 @@ func (h *Header) Validate() error {
 	// Set headers validation
 	for k, v := range h.Set {
 		if k == "" {
-			return errors.New("set header key cannot be empty")
+			return ErrSetHeaderKeyEmpty
 		}
 		if v == "" {
-			return errors.Newf("set header %q value cannot be empty", k)
+			return errors.Newf("%w: %q value cannot be empty", ErrSetHeaderValueEmpty, k)
 		}
 	}
 
 	// Add headers validation
 	for k, v := range h.Add {
 		if k == "" {
-			return errors.New("add header key cannot be empty")
+			return AddHeaderKeyEmpty
 		}
 		if v == "" {
-			return errors.Newf("add header %q value cannot be empty", k)
+			return errors.Newf("%w: %q value cannot be empty", AddHederValueEmpty, k)
 		}
 	}
 
 	// Remove headers validation
 	for i, header := range h.Remove {
 		if header == "" {
-			return errors.Newf("remove[%d]: header name cannot be empty", i)
+			return errors.Newf("remove[%d]: %w", i, HeaderNameEmpty)
 		}
 	}
 

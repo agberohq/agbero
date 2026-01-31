@@ -21,16 +21,16 @@ type Host struct {
 func (h *Host) Validate() error {
 	// Domains validation
 	if len(h.Domains) == 0 {
-		return errors.New("host must have at least one domain")
+		return ErrNoDomains
 	}
 	for i, domain := range h.Domains {
 		domain = strings.ToLower(strings.TrimSpace(domain))
 		if domain == "" {
-			return errors.Newf("domains[%d]: cannot be empty", i)
+			return errors.Newf("domain [%d]: %w", i, ErrCannotBeEmpty)
 		}
 		// Basic domain validation
 		if strings.Contains(domain, "://") {
-			return errors.Newf("domains[%d]: %q should not include protocol", i, domain)
+			return errors.Newf("domains[%d]: %q %w", i, domain, ErrDomainHasProtocol)
 		}
 		h.Domains[i] = domain // Normalize
 	}
@@ -39,21 +39,21 @@ func (h *Host) Validate() error {
 	for i, port := range h.Bind {
 		port = strings.TrimSpace(port)
 		if port == "" {
-			return errors.Newf("bind[%d]: cannot be empty", i)
+			return errors.Newf("bind[%d]: %w", ErrCannotBeEmpty, i)
 		}
 		// Normalize ":3000" to "3000"
 		if strings.HasPrefix(port, ":") {
 			port = port[1:]
 		}
 		if _, err := net.LookupPort("tcp", port); err != nil {
-			return errors.Newf("bind[%d]: %q is not a valid port", i, port)
+			return errors.Newf("%w-bind[%d]: %q is not a valid port", ErrInvalidPort, i, port)
 		}
 		h.Bind[i] = port
 	}
 
 	// Routes validation
 	if len(h.Routes) == 0 {
-		return errors.New("host must have at least one route")
+		return ErrNoRoutes
 	}
 	for i, route := range h.Routes {
 		if err := route.Validate(); err != nil {
