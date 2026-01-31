@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/olekukonko/errors"
 )
@@ -24,8 +25,8 @@ func LoadKeys(privateKeyPath string) (*TokenManager, error) {
 	}
 
 	block, _ := pem.Decode(b)
-	if block == nil || block.Type != "PRIVATE KEY" {
-		return nil, errors.New("invalid pem file")
+	if block == nil || block.Type != woos.BlockPrivateKey {
+		return nil, woos.ErrInvalidPEMFile
 	}
 
 	k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
@@ -35,7 +36,7 @@ func LoadKeys(privateKeyPath string) (*TokenManager, error) {
 
 	priv, ok := k.(ed25519.PrivateKey)
 	if !ok {
-		return nil, errors.New("key is not ed25519")
+		return nil, woos.ErrNotEd25519Key
 	}
 
 	return &TokenManager{
@@ -56,7 +57,7 @@ func GenerateNewKeyFile(path string) error {
 	}
 
 	pemBlock := &pem.Block{
-		Type:  "PRIVATE KEY",
+		Type:  woos.BlockPrivateKey,
 		Bytes: b,
 	}
 
@@ -74,7 +75,7 @@ func (tm *TokenManager) Mint(serviceName string, ttl time.Duration) (string, err
 		"sub": serviceName,
 		"iat": time.Now().Unix(),
 		"exp": time.Now().Add(ttl).Unix(),
-		"iss": "agbero",
+		"iss": woos.DefaultIssuer,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
@@ -84,27 +85,27 @@ func (tm *TokenManager) Mint(serviceName string, ttl time.Duration) (string, err
 func (tm *TokenManager) Verify(tokenString string) (serviceName string, err error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			return nil, fmt.Errorf("%w: %v", woos.ErrUnexpectedSiningMethod, token.Header[woos.TokenAlg])
 		}
 		return tm.publicKey, nil
 	})
 
 	if err != nil {
-		return "", err
+		return "", errors.Newf("parse err: %w", err)
 	}
 
 	if !token.Valid {
-		return "", errors.New("invalid token")
+		return "", woos.ErrInvalidToken
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return "", errors.New("invalid claims")
+		return "", woos.ErrInvalidClaims
 	}
 
-	sub, ok := claims["sub"].(string)
+	sub, ok := claims[woos.TokenSub].(string)
 	if !ok || sub == "" {
-		return "", errors.New("token missing subject")
+		return "", woos.ErrMissingTokenSubject
 	}
 
 	return sub, nil

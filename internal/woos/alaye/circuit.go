@@ -2,8 +2,6 @@ package alaye
 
 import (
 	"time"
-
-	"github.com/olekukonko/errors"
 )
 
 type CircuitBreaker struct {
@@ -14,18 +12,18 @@ type CircuitBreaker struct {
 func (c *CircuitBreaker) Validate() error {
 	// Threshold validation (if provided)
 	if c.Threshold < 0 {
-		return errors.New("threshold cannot be negative")
+		return ErrNegativeThreshold
 	}
 	if c.Threshold == 0 {
-		c.Threshold = 5 // Default
+		c.Threshold = DefaultCircuitBreakerThreshold // Default
 	}
 
 	// Duration validation (if provided)
 	if c.Duration < 0 {
-		return errors.New("duration cannot be negative")
+		return ErrNegativeDuration
 	}
 	if c.Duration == 0 {
-		c.Duration = 30 * time.Second // Default
+		c.Duration = DefaultCircuitBreakerDuration // Default
 	}
 
 	return nil

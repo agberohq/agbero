@@ -3,6 +3,7 @@ package gossip
 import (
 	"strings"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/olekukonko/ll"
 )
 
@@ -27,17 +28,17 @@ type logAdapter struct {
 func (l *logAdapter) Write(p []byte) (n int, err error) {
 	msg := strings.TrimSpace(string(p))
 
-	if strings.Contains(msg, "Stream connection") ||
-		strings.Contains(msg, "Initiating push/pull sync") {
+	if strings.Contains(msg, woos.IgnoreStreamMsg1) ||
+		strings.Contains(msg, woos.IgnoreStreamMsg2) {
 		return len(p), nil
 	}
 
 	switch {
-	case strings.Contains(msg, "[DEBUG]"):
+	case strings.Contains(msg, woos.LogDebug):
 		l.logger.Debug(msg)
-	case strings.Contains(msg, "[WARN]"):
+	case strings.Contains(msg, woos.LogWarn):
 		l.logger.Warn(msg)
-	case strings.Contains(msg, "[ERR]"):
+	case strings.Contains(msg, woos.LogErr):
 		l.logger.Error(msg)
 	default:
 		l.logger.Info(msg)

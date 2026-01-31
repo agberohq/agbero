@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/security"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/hashicorp/memberlist"
 	"github.com/olekukonko/ll"
@@ -37,7 +38,7 @@ func NewService(hm Hosting, cfg *alaye.Gossip, logger *ll.Logger) (*Service, err
 	s := &Service{
 		hm:          hm,
 		logger:      logger,
-		authTimeout: 2 * time.Second,
+		authTimeout: woos.DefaultAuthTimeout,
 	}
 
 	if cfg.PrivateKeyFile != "" {
@@ -52,22 +53,22 @@ func NewService(hm Hosting, cfg *alaye.Gossip, logger *ll.Logger) (*Service, err
 	}
 
 	c := memberlist.DefaultLANConfig()
-	c.Name = "agbero-" + c.Name
+	c.Name = woos.MemberlistNamePrefix + c.Name
 
 	c.BindPort = cfg.Port
 	if c.BindPort == 0 {
-		c.BindPort = 7946
+		c.BindPort = woos.DefaultGossipPort
 	}
 
 	if cfg.SecretKey != "" {
 		key := []byte(cfg.SecretKey)
 		if len(key) != 16 && len(key) != 24 && len(key) != 32 {
-			return nil, fmt.Errorf("gossip secret key must be 16, 24, or 32 bytes")
+			return nil, woos.ErrInvalidSecretKey
 		}
 		c.SecretKey = key
 	}
 
-	c.PushPullInterval = 60 * time.Second
+	c.PushPullInterval = woos.DefaultPushPullInterval
 	s.localName = c.Name
 	c.Events = &event{s: s}
 	c.Logger = log.New(&logAdapter{logger: logger}, "[gossip] ", 0)

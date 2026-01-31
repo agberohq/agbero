@@ -17,37 +17,37 @@ type HealthCheck struct {
 func (h *HealthCheck) Validate() error {
 	// Path validation
 	if h.Path == "" {
-		return errors.New("path is required for health_check")
+		return ErrHealthPathRequired
 	}
 	if !strings.HasPrefix(h.Path, "/") {
-		return errors.Newf("path %q must start with '/'", h.Path)
+		return errors.Newf(" %w: path %q must start with '/'", ErrHealthPathInvalid, h.Path)
 	}
 
 	// Interval validation (if provided)
 	if h.Interval < 0 {
-		return errors.New("interval cannot be negative")
+		return ErrNegativeInterval
 	}
 	if h.Interval == 0 {
-		h.Interval = 10 * time.Second // Default
+		h.Interval = DefaultHealthInterval // Default
 	}
 
 	// Timeout validation (if provided)
 	if h.Timeout < 0 {
-		return errors.New("timeout cannot be negative")
+		return ErrNegativeTimeout
 	}
 	if h.Timeout == 0 {
-		h.Timeout = 5 * time.Second // Default
+		h.Timeout = DefaultHealthTimeout // Default
 	}
 	if h.Timeout > h.Interval {
-		return errors.New("timeout cannot be greater than interval")
+		return ErrTimeoutExceedsInterval
 	}
 
 	// Threshold validation (if provided)
 	if h.Threshold < 0 {
-		return errors.New("threshold cannot be negative")
+		return ErrNegativeThreshold
 	}
 	if h.Threshold == 0 {
-		h.Threshold = 3 // Default
+		h.Threshold = DefaultHealthThreshold // Default
 	}
 
 	return nil

@@ -41,7 +41,7 @@ func (s Security) Validate() error {
 		}
 		if _, _, err := net.ParseCIDR(proxy); err != nil {
 			if ip := net.ParseIP(proxy); ip == nil {
-				return errors.Newf("trusted_proxies[%d]: %q is not a valid CIDR or IP address", i, proxy)
+				return errors.Newf("%w: trusted_proxies[%d]=%q", ErrInvalidProxy, i, proxy)
 			}
 		}
 	}
@@ -111,7 +111,7 @@ type General struct {
 
 func (g *General) Validate() error {
 	if g.MaxHeaderBytes < 0 {
-		return errors.New("max_header_bytes cannot be negative")
+		return ErrNegativeMaxHeaderBytes
 	}
 	return nil
 }

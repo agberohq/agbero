@@ -22,38 +22,38 @@ func (g *Gossip) Validate() error {
 	}
 
 	// Port validation
-	if g.Port < 0 || g.Port > 65535 {
-		return errors.New("port must be between 0 and 65535")
+	if g.Port < MinPort || g.Port > MaxPort {
+		return errors.Newf("%w: port must be between 0 and 65535", ErrInvalidPort)
 	}
 	if g.Port == 0 {
-		g.Port = 7946 // Default memberlist port
+		g.Port = DefaultGossipPort // Default memberlist port
 	}
 
 	// Secret key validation (if provided)
 	if g.SecretKey != "" {
 		keyLen := len(g.SecretKey)
-		if keyLen != 16 && keyLen != 24 && keyLen != 32 {
-			return errors.New("secret_key must be 16, 24, or 32 bytes")
+		if keyLen != SecretKeyLen16 && keyLen != SecretKeyLen24 && keyLen != SecretKeyLen32 {
+			return ErrInvalidSecretKey
 		}
 	}
 
 	// Seeds validation
 	for i, seed := range g.Seeds {
 		if seed == "" {
-			return errors.Newf("seeds[%d]: cannot be empty", i)
+			return errors.Newf("seeds[%d]: %w", i, ErrSeedEmpty)
 		}
 		// Basic host:port validation
 		if _, _, err := net.SplitHostPort(seed); err != nil {
 			// Try adding default port
 			if _, _, err := net.SplitHostPort(seed + ":7946"); err != nil {
-				return errors.Newf("seeds[%d]: %q is not a valid host:port", i, seed)
+				return errors.Newf("%w: seeds[%d]: %q is not a valid host:port", ErrInvalidSeedFormat, i, seed)
 			}
 		}
 	}
 
 	// Private key file validation (if provided)
 	if g.PrivateKeyFile != "" && !strings.HasPrefix(g.PrivateKeyFile, "/") {
-		return errors.New("private_key_file must be an absolute path")
+		return ErrPrivateKeyAbsolute
 	}
 
 	return nil

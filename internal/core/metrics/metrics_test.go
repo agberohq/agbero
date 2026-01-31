@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
 
 // helper to get a consistent snapshot handling the background worker race
@@ -120,7 +122,7 @@ func TestRotation(t *testing.T) {
 
 	// Manually force rotation by setting lastRotation far in the past
 	lt.mu.Lock()
-	lt.lastRotation = time.Now().Add(-HistogramWindow - time.Second)
+	lt.lastRotation = time.Now().Add(-woos.HistogramWindow - time.Second)
 	lt.mu.Unlock()
 
 	// This record should trigger auto-rotation
@@ -234,7 +236,7 @@ func TestRecord_Negative(t *testing.T) {
 	defer lt.Close()
 
 	// Negative values get recorded in the highest bucket (60,030,975)
-	// because RecordValue fails check < minUS and defaults to maxUS
+	// because RecordValue fails check < MinUS and defaults to MaxUS
 	lt.Record(-100)
 
 	snap := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
@@ -258,7 +260,7 @@ func TestRecord_AllZero(t *testing.T) {
 	defer lt.Close()
 
 	// Test with 0, 1, 2
-	// 0 is < minUS (1), so it gets mapped to maxUS (60M) based on current logic
+	// 0 is < MinUS (1), so it gets mapped to MaxUS (60M) based on current logic
 	lt.Record(0)
 	lt.Record(1)
 	lt.Record(2)

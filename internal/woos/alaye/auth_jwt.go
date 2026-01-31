@@ -16,7 +16,7 @@ type JWTAuth struct {
 
 func (j *JWTAuth) Validate() error {
 	if j.Secret == "" {
-		return errors.New("jwt_auth: secret is required")
+		return errors.Newf("jwt_auth: %w", ErrSecretRequired)
 	}
 	return nil
 }

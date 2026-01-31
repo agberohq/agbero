@@ -15,9 +15,9 @@ import (
 
 // IsMkcertInstalled checks if mkcert is available on the system.
 // It checks PATH and common installation directories.
+
 func IsMkcertInstalled() bool {
-	// 1) PATH
-	if path, err := exec.LookPath("mkcert"); err == nil {
+	if path, err := exec.LookPath(woos.MkCertBinary); err == nil {
 		cmd := exec.Command(path, "-version")
 		if err := cmd.Run(); err == nil {
 			return true
@@ -27,11 +27,11 @@ func IsMkcertInstalled() bool {
 	// 2) Common locations
 	home, _ := os.UserHomeDir()
 	commonPaths := []string{
-		"/usr/local/bin/mkcert",
-		"/usr/bin/mkcert",
-		"/opt/homebrew/bin/mkcert",
-		filepath.Join(home, "go", "bin", "mkcert"),
-		filepath.Join(home, ".local", "bin", "mkcert"),
+		woos.MkcertPathUsrLocalBin,
+		woos.MkcertPathUsrBin,
+		woos.MkcertPathOptHomebrewBin,
+		filepath.Join(home, woos.MkcertPathGoBin),
+		filepath.Join(home, woos.MkcertPathLocalBin),
 	}
 
 	if runtime.GOOS == "windows" {
@@ -56,22 +56,22 @@ func BootstrapEnv(logger *ll.Logger) error {
 	changed := false
 
 	// HOME
-	if os.Getenv("HOME") == "" {
+	if os.Getenv(woos.EnvHome) == "" {
 		if u, err := user.Current(); err == nil && u.HomeDir != "" {
-			_ = os.Setenv("HOME", u.HomeDir)
+			_ = os.Setenv(woos.EnvHome, u.HomeDir)
 			changed = true
 		}
 	}
 
 	// USER + LOGNAME
-	if os.Getenv("USER") == "" {
+	if os.Getenv(woos.EnvUser) == "" {
 		if u, err := user.Current(); err == nil && u.Username != "" {
-			_ = os.Setenv("USER", u.Username)
+			_ = os.Setenv(woos.EnvUser, u.Username)
 			changed = true
 		}
 	}
-	if os.Getenv("LOGNAME") == "" && os.Getenv("USER") != "" {
-		_ = os.Setenv("LOGNAME", os.Getenv("USER"))
+	if os.Getenv(woos.EnvLogName) == "" && os.Getenv(woos.EnvUser) != "" {
+		_ = os.Setenv(woos.EnvLogName, os.Getenv(woos.EnvUser))
 		changed = true
 	}
 
@@ -89,21 +89,21 @@ func mkcertEnv(extra ...string) []string {
 	env := append([]string(nil), os.Environ()...)
 
 	// Ensure HOME is set (mkcert needs it to find its default CAROOT).
-	if os.Getenv("HOME") == "" {
+	if os.Getenv(woos.EnvHome) == "" {
 		if u, err := user.Current(); err == nil && u.HomeDir != "" {
-			env = append(env, "HOME="+u.HomeDir)
+			env = append(env, woos.EnvUser+"="+u.Username)
 		}
 	}
 
 	// Ensure USER/LOGNAME are set.
-	if os.Getenv("USER") == "" {
+	if os.Getenv(woos.EnvUser) == "" {
 		if u, err := user.Current(); err == nil && u.Username != "" {
-			env = append(env, "USER="+u.Username)
+			env = append(env, woos.EnvUser+"="+u.Username)
 		}
 	}
-	if os.Getenv("LOGNAME") == "" {
-		if os.Getenv("USER") != "" {
-			env = append(env, "LOGNAME="+os.Getenv("USER"))
+	if os.Getenv(woos.EnvLogName) == "" {
+		if os.Getenv(woos.EnvUser) != "" {
+			env = append(env, woos.EnvLogName+"="+os.Getenv(woos.EnvUser))
 		}
 	}
 
@@ -114,16 +114,16 @@ func mkcertEnv(extra ...string) []string {
 // MkcertDefaultCAROOT returns mkcert's own default CA root directory (as mkcert reports it).
 // Works even under services because mkcertEnv guarantees HOME/USER.
 func MkcertDefaultCAROOT(mkcertPath string) (string, error) {
-	cmd := exec.Command(mkcertPath, "-CAROOT")
+	cmd := exec.Command(mkcertPath, woos.MkCertCAROOTFlag)
 	cmd.Env = mkcertEnv()
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("mkcert -CAROOT failed: %s", strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("%w: %s", woos.ErrMkCertCAROOTFail, strings.TrimSpace(string(out)))
 	}
 	caroot := strings.TrimSpace(string(out))
 	if caroot == "" {
-		return "", fmt.Errorf("mkcert returned empty CAROOT")
+		return "", woos.ErrMkCertEmptyCAROOT
 	}
 	return filepath.Clean(caroot), nil
 }
@@ -134,7 +134,7 @@ func IsMkcertRootPresent(mkcertPath string) bool {
 	if err != nil {
 		return false
 	}
-	_, err = os.Stat(filepath.Join(caroot, "rootCA.pem"))
+	_, err = os.Stat(filepath.Join(caroot, woos.MkCertCAROOTFlag))
 	return err == nil
 }
 
@@ -147,15 +147,15 @@ func IsCARootInstalled() bool {
 	case woos.Darwin:
 		// "mkcert development CA" is the usual subject label.
 		// Query system keychain for that exact label.
-		cmd := exec.Command("security", "find-certificate", "-c", "mkcert development CA")
+		cmd := exec.Command("security", "find-certificate", "-c", woos.MkCertDefaultCAName)
 		return cmd.Run() == nil
 
 	case woos.Linux:
 		// Linux is distro-dependent. We check common trust store paths.
 		paths := []string{
-			"/etc/ssl/certs/mkcert-root.pem",
-			"/usr/local/share/ca-certificates/mkcert-root.crt",
-			filepath.Join(os.Getenv("HOME"), ".local/share/mkcert/rootCA.pem"),
+			woos.UnixSSLCertsMakeCertRoot,
+			woos.UnixLocalCACertificates,
+			filepath.Join(os.Getenv(woos.EnvHome), woos.UnixHomeMakeCertRoot),
 		}
 		for _, p := range paths {
 			if _, err := os.Stat(p); err == nil {
@@ -174,7 +174,7 @@ if ($found) { "yes" }
 `
 		cmd := exec.Command("powershell", "-NoProfile", "-Command", ps)
 		out, err := cmd.Output()
-		return err == nil && strings.Contains(strings.ToLower(string(out)), "yes")
+		return err == nil && strings.Contains(strings.ToLower(string(out)), woos.PowershellYes)
 	}
 	return false
 }

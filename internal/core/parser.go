@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/alecthomas/hcl"
 	"github.com/olekukonko/errors"
@@ -19,7 +20,7 @@ func NewParser(path string) *Parser {
 
 func (p *Parser) Unmarshal(output any) error {
 	if p.path == "" {
-		return errors.New("config path is empty")
+		return woos.ErrEmptyConfigPath
 	}
 
 	abs, err := filepath.Abs(p.path)
@@ -61,7 +62,7 @@ func ParseHostConfig(path string) (*alaye.Host, error) {
 
 // EnsureHostsDir creates the hosts directory if it doesn't exist
 func EnsureHostsDir(hostsDir string) error {
-	return os.MkdirAll(hostsDir, 0755)
+	return os.MkdirAll(hostsDir, woos.DefaultFilePermDir)
 }
 
 // ConfigPath returns the absolute path to a config file

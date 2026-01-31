@@ -18,21 +18,21 @@ type Rate struct {
 func (r *Rate) Validate() error {
 	// TTL validation (if provided)
 	if r.TTL < 0 {
-		return errors.New("ttl cannot be negative")
+		return ErrProxyRouteNegativeTTL
 	}
 
 	// Max entries validation (if provided)
 	if r.MaxEntries < 0 {
-		return errors.New("max_entries cannot be negative")
+		return ErrProxyRouteNegativeMaxEntries
 	}
 
 	// Auth prefixes validation (if provided)
 	for i, prefix := range r.AuthPrefixes {
 		if prefix == "" {
-			return errors.Newf("auth_prefixes[%d]: cannot be empty", i)
+			return errors.Newf("%w: [%d]: cannot be empty", ErrProxyRouteInvalidAuthPrefix, i)
 		}
 		if !strings.HasPrefix(prefix, "/") {
-			return errors.Newf("auth_prefixes[%d]: %q must start with '/'", i, prefix)
+			return errors.Newf("%w [%d]: %q must start with '/'", ErrProxyRouteInvalidAuthPrefix, i, prefix)
 		}
 	}
 
@@ -61,7 +61,7 @@ func (r *RatePolicy) Validate() error {
 	// But an empty/zero policy is valid (means no rate limiting)
 
 	if r.Requests < 0 {
-		return errors.New("requests cannot be negative")
+		return ErrRateLimitNegativeRequests
 	}
 	if r.Requests == 0 {
 		// Zero requests means no rate limiting, which is valid
@@ -69,21 +69,21 @@ func (r *RatePolicy) Validate() error {
 	}
 
 	if r.Window <= 0 {
-		return errors.New("window must be positive when requests > 0")
+		return ErrRateLimitInvalidWindow
 	}
 
 	if r.Burst < 0 {
-		return errors.New("burst cannot be negative")
+		return ErrRateLimitNegativeBurst
 	}
 	if r.Burst == 0 {
 		r.Burst = r.Requests // Default burst to requests
 	}
 	if r.Burst < r.Requests {
-		return errors.New("burst cannot be less than requests")
+		return ErrRateLimitBurstTooSmall
 	}
 
 	if r.KeyHeader != "" && strings.Contains(r.KeyHeader, " ") {
-		return errors.New("key_header cannot contain spaces")
+		return ErrRateLimitInvalidKeyHeader
 	}
 
 	return nil

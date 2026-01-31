@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/hashicorp/memberlist"
 )
@@ -42,10 +43,10 @@ func (e *event) NotifyUpdate(node *memberlist.Node) {
 func (e *event) fetchToken(node *memberlist.Node, meta *Meta) (string, error) {
 	authPath := meta.AuthPath
 	if authPath == "" {
-		authPath = "/.well-known/agbero"
+		authPath = woos.DefaultAuthPath
 	}
 
-	url := fmt.Sprintf("http://%s:%d%s", node.Addr.String(), meta.Port, authPath)
+	url := fmt.Sprintf(woos.URLFormat, node.Addr.String(), meta.Port, authPath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), e.s.authTimeout)
 	defer cancel()
@@ -58,7 +59,7 @@ func (e *event) fetchToken(node *memberlist.Node, meta *Meta) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("auth endpoint status %d", resp.StatusCode)
+		return "", fmt.Errorf("%w: status = (%d)", woos.ErrAuthEndpoint, resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -73,7 +74,7 @@ func (e *event) fetchToken(node *memberlist.Node, meta *Meta) (string, error) {
 		return "", err
 	}
 	if out.Token == "" {
-		return "", fmt.Errorf("empty token from auth endpoint")
+		return "", woos.ErrEmptyToken
 	}
 	return out.Token, nil
 }
@@ -94,10 +95,10 @@ func (e *event) processNode(node *memberlist.Node) {
 	}
 
 	if meta.Path == "" {
-		meta.Path = "/"
+		meta.Path = woos.Slash
 	}
-	if !strings.HasPrefix(meta.Path, "/") {
-		meta.Path = "/" + meta.Path
+	if !strings.HasPrefix(meta.Path, woos.Slash) {
+		meta.Path = woos.Slash + meta.Path
 	}
 
 	if e.s.tokenManager != nil {
@@ -127,13 +128,13 @@ func (e *event) processNode(node *memberlist.Node) {
 
 	healthPath := meta.HealthPath
 	if healthPath == "" {
-		healthPath = "/"
+		healthPath = woos.Slash
 	}
-	if !strings.HasPrefix(healthPath, "/") {
-		healthPath = "/" + healthPath
+	if !strings.HasPrefix(healthPath, woos.Slash) {
+		healthPath = woos.Slash + healthPath
 	}
 
-	target := fmt.Sprintf("http://%s:%d", node.Addr.String(), meta.Port)
+	target := fmt.Sprintf(woos.URLPrefixFormat, node.Addr.String(), meta.Port)
 
 	route := alaye.Route{
 		Path: meta.Path,

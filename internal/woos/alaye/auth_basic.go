@@ -15,16 +15,16 @@ type BasicAuth struct {
 func (b *BasicAuth) Validate() error {
 	// Users validation
 	if len(b.Users) == 0 {
-		return errors.New("users cannot be empty for basic_auth")
+		return ErrEmptyUsers
 	}
 	for i, user := range b.Users {
 		user = strings.TrimSpace(user)
 		if user == "" {
-			return errors.Newf("users[%d]: cannot be empty", i)
+			return errors.Newf("users[%d]: %w", i, ErrCannotBeEmpty)
 		}
 		// Check for username:password format
 		if !strings.Contains(user, ":") {
-			return errors.Newf("users[%d]: %q must be in format 'username:password'", i, user)
+			return errors.Newf("%w: users[%d]: %q must be in format 'username:password'", ErrInvaliFormat, i, user)
 		}
 		b.Users[i] = user // Normalize
 	}

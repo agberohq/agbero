@@ -2,7 +2,6 @@ package setup
 
 import (
 	"os"
-	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
@@ -22,7 +21,7 @@ func Logging(cfg alaye.Logging, devMode bool) (*ll.Logger, func(), error) {
 
 	// 2. File Handler
 	if cfg.File != "" {
-		fp, err := os.OpenFile(cfg.File, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+		fp, err := os.OpenFile(cfg.File, os.O_APPEND|os.O_CREATE|os.O_WRONLY, woos.DefaultFilePermFile)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -44,13 +43,13 @@ func Logging(cfg alaye.Logging, devMode bool) (*ll.Logger, func(), error) {
 
 		batchSize := cfg.Victoria.BatchSize
 		if batchSize <= 0 {
-			batchSize = 500
+			batchSize = woos.DefaultVictoriaBatch
 		}
 
 		buffered := lh.NewBuffered(vl,
 			lh.WithBatchSize(batchSize),
-			lh.WithFlushInterval(700*time.Millisecond),
-			lh.WithMaxBuffer(12000),
+			lh.WithFlushInterval(woos.DefaultFlushInterval),
+			lh.WithMaxBuffer(woos.DefaultMaxBuffer),
 		)
 		handlers = append(handlers, buffered)
 
@@ -65,11 +64,11 @@ func Logging(cfg alaye.Logging, devMode bool) (*ll.Logger, func(), error) {
 
 	// Set Level
 	switch cfg.Level {
-	case "debug":
+	case woos.LogLevelDebug:
 		l.Level(lx.LevelDebug)
-	case "warn":
+	case woos.LogLevelWarn:
 		l.Level(lx.LevelWarn)
-	case "error":
+	case woos.LogLevelError:
 		l.Level(lx.LevelError)
 	default:
 		l.Level(lx.LevelInfo)

@@ -4,6 +4,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
 
 func NormalizeHost(hostport string) string {
@@ -15,26 +17,26 @@ func NormalizeHost(hostport string) string {
 
 func ServerKey(addr string, tls bool) string {
 	if tls {
-		return "https@" + addr
+		return woos.SchemeHTTPS + addr
 	}
-	return "http@" + addr
+	return woos.SchemeHTTP + addr
 }
 
 func IsServerKeyTLS(key string) bool {
-	return strings.HasPrefix(key, "https@")
+	return strings.HasPrefix(key, woos.SchemeHTTPS)
 }
 
 func NormalizeSubject(s string) string {
 	s = strings.TrimSpace(s)
-	s = strings.TrimSuffix(s, ".")
+	s = strings.TrimSuffix(s, woos.Dot)
 	s = strings.ToLower(s)
 
 	if h, _, err := net.SplitHostPort(s); err == nil {
 		s = h
 	}
 
-	s = strings.TrimPrefix(s, "[")
-	s = strings.TrimSuffix(s, "]")
+	s = strings.TrimPrefix(s, woos.IPv6BracketOpen)
+	s = strings.TrimSuffix(s, woos.IPv6BracketClose)
 
 	return s
 }
@@ -63,16 +65,16 @@ func Debounce(delay time.Duration, f func()) func() {
 // IsLocalhost determines if a hostname implies local development
 func IsLocalhost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "localhost" {
+	if host == woos.LocalhostExact {
 		return true
 	}
-	if strings.HasSuffix(host, ".localhost") {
+	if strings.HasSuffix(host, woos.LocalhostSuffixDotLocalhost) {
 		return true
 	}
-	if strings.HasSuffix(host, ".local") {
+	if strings.HasSuffix(host, woos.LocalhostSuffixDotLocal) {
 		return true
 	}
-	if strings.HasSuffix(host, ".test") {
+	if strings.HasSuffix(host, woos.LocalhostSuffixDotTest) {
 		return true
 	}
 	// Check loopback IPs

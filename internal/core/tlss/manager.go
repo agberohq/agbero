@@ -21,12 +21,6 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-const (
-	letsEncryptProdDir    = "https://acme-v02.api.letsencrypt.org/directory"
-	letsEncryptStagingDir = "https://acme-staging-v02.api.letsencrypt.org/directory"
-	acmeProfileShortLived = "shortlived"
-)
-
 type Manager struct {
 	hostManager *discovery.Host
 	Global      *alaye.Global
@@ -105,17 +99,17 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 	defer m.cmMu.Unlock()
 
 	if m.Global == nil {
-		return next, errors.New("global config is required")
+		return next, woos.ErrGlobalConfigRequired
 	}
 
 	email := strings.TrimSpace(m.Global.LetsEncrypt.Email)
 	if email == "" {
-		return next, errors.New("le_email is empty")
+		return next, woos.ErrEmptyLEEmail
 	}
 
 	storageDir := strings.TrimSpace(m.Global.Storage.CertsDir)
 	if storageDir == "" {
-		return next, errors.New("cert_dir is empty")
+		return next, woos.ErrEmptyCertFile
 	}
 	storageDir = filepath.Clean(storageDir)
 
@@ -125,7 +119,7 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 		if m.hostManager != nil && m.hostManager.Get(name) != nil {
 			return nil
 		}
-		return errors.Newf("on-demand denied for %q", name)
+		return errors.Newf("%w for %q", woos.ErrOnDemandDenied, name)
 	}
 
 	if m.cmProd == nil {
@@ -135,7 +129,7 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 		acme := certmagic.ACMEIssuer{
 			Email:  email,
 			Agreed: true,
-			CA:     letsEncryptProdDir,
+			CA:     woos.LetsEncryptProdDir,
 		}
 		issuer := certmagic.NewACMEIssuer(cmProd, acme)
 		cmProd.Issuers = []certmagic.Issuer{issuer}
@@ -152,7 +146,7 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 		acme := certmagic.ACMEIssuer{
 			Email:                   email,
 			Agreed:                  true,
-			CA:                      letsEncryptProdDir,
+			CA:                      woos.LetsEncryptProdDir,
 			DisableTLSALPNChallenge: true,
 		}
 		issuer := certmagic.NewACMEIssuer(cmStaging, acme)
@@ -206,7 +200,7 @@ func (m *Manager) GetLocalCertificate(local alaye.LocalCert, host string) (*tls.
 	keyFile := strings.TrimSpace(local.KeyFile)
 
 	if certFile == "" || keyFile == "" {
-		return nil, errors.Newf("local tls requires cert_file and key_file (host=%q)", host)
+		return nil, errors.Newf("%w (host=%q)", woos.ErrLocalTLSMissingFiles, host)
 	}
 
 	certFile = filepath.Clean(certFile)
@@ -245,7 +239,7 @@ func (m *Manager) GetAutoLocalCertificate(host string) (*tls.Certificate, error)
 
 	// 4. Initialize installer with explicit directory
 	installer := NewInstaller(m.logger, woos.MakeFolder(m.Global.Storage.CertsDir, woos.CertDir))
-	installer.SetHosts([]string{host}, 443)
+	installer.SetHosts([]string{host}, woos.DefaultHTTPSPort)
 
 	certFile, keyFile, err := installer.EnsureLocalhostCert()
 	if err != nil {
@@ -281,7 +275,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 	// Normalize SNI (strip port, lowercase, trim)
 	sni := core.NormalizeHost(chi.ServerName) // prefer NormalizeHost for SNI
 	if sni == "" {
-		return nil, errors.New("missing SNI")
+		return nil, woos.ErrMissingSNI
 	}
 
 	// If SNI is an IP address, treat it specially.
@@ -294,7 +288,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 
 	hcfg := m.hostManager.Get(sni)
 	if hcfg == nil {
-		return nil, errors.Newf("unknown host %q", sni)
+		return nil, errors.Newf("%w %q", woos.ErrUnknownHost, sni)
 	}
 
 	// Decide mode: host override or smart default.
@@ -310,33 +304,33 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 
 	switch mode {
 	case alaye.ModeLocalNone:
-		return nil, errors.Newf("tls disabled for host %q", sni)
+		return nil, errors.Newf("%w: tls disabled for host %q", woos.ErrTLSDisabled, sni)
 
 	case alaye.ModeLocalCert:
 		// Requires local cert paths
 		if strings.TrimSpace(hcfg.TLS.Local.CertFile) == "" || strings.TrimSpace(hcfg.TLS.Local.KeyFile) == "" {
-			return nil, errors.Newf("tls=local_cert requires tls.local cert_file + key_file for host %q", sni)
+			return nil, errors.Newf("%w %q", woos.ErrLocalCertMissingFiles, sni)
 		}
 		return m.GetLocalCertificate(hcfg.TLS.Local, sni)
 
 	case alaye.ModeLocalAuto:
 		// IMPORTANT: never try mkcert/local CA for public domains
 		if !core.IsLocalhost(sni) {
-			return nil, errors.Newf("tls=local_auto is only allowed for localhost hosts (got %q)", sni)
+			return nil, errors.Newf("%w (got %q)", woos.ErrLocalAutoNotAllowed, sni)
 		}
 		return m.GetAutoLocalCertificate(sni)
 
 	case alaye.ModeLetsEncrypt:
 		cm := m.CmForHost(hcfg)
 		if cm == nil {
-			return nil, errors.Newf("letsencrypt not enabled globally (host %q)", sni)
+			return nil, errors.Newf("%w(host %q)", woos.ErrLetsEncryptNotEnabled, sni)
 		}
 
 		// Per-host short-lived override
 		if hcfg.TLS.LetsEncrypt.ShortLived {
 			for _, iss := range cm.Issuers {
 				if acmeIss, ok := iss.(*certmagic.ACMEIssuer); ok {
-					acmeIss.Profile = acmeProfileShortLived
+					acmeIss.Profile = woos.AcmeProfileShortLived
 				}
 			}
 		}
@@ -348,28 +342,28 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 
 	case alaye.ModeCustomCA:
 		if strings.TrimSpace(hcfg.TLS.CustomCA.Root) == "" {
-			return nil, errors.Newf("tls=custom_ca requires root cert for host %q", sni)
+			return nil, errors.Newf("%w for host %q", woos.ErrCustomCAMissingRoot, sni)
 		}
 		return m.getCustomCACert(hcfg.TLS.CustomCA.Root, sni)
 
 	default:
-		return nil, errors.Newf("unknown tls mode %q for host %q", mode, sni)
+		return nil, errors.Newf("%w: %q for host %q", woos.ErrUnknownTLSMode, mode, sni)
 	}
 }
 
 func (m *Manager) getCustomCACert(root string, host string) (*tls.Certificate, error) {
 	caCert, err := os.ReadFile(root)
 	if err != nil {
-		return nil, errors.Newf("load custom CA root (host=%q): %w", host, err)
+		return nil, errors.Newf("%w: (host=%q): %w", woos.ErrLoadCustomCARoot, host, err)
 	}
 	caPool := x509.NewCertPool()
 	if !caPool.AppendCertsFromPEM(caCert) {
-		return nil, errors.Newf("invalid custom CA PEM (host=%q)", host)
+		return nil, errors.Newf("%w:(host=%q)", woos.ErrInvalidCustomCAPEM, host)
 	}
 	if hcfg := m.hostManager.Get(host); hcfg != nil && &hcfg.TLS != nil {
 		return m.GetLocalCertificate(hcfg.TLS.Local, host)
 	}
-	return nil, errors.Newf("custom_ca requires local cert/key for host %q", host)
+	return nil, errors.Newf("%w for host %q", woos.ErrCustomCALocalCertRequired, host)
 }
 
 func (m *Manager) Close() {
@@ -405,5 +399,5 @@ func (m *Manager) GetCertificateForPort(chi *tls.ClientHelloInfo, port string) (
 		return m.GetCertificate(chi)
 	}
 
-	return nil, errors.New("no cert found")
+	return nil, woos.ErrCertNotfound
 }

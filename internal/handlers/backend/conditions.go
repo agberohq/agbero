@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/errors"
 )
@@ -38,10 +39,10 @@ func NewConditions(c *alaye.Conditions) (*Conditions, error) {
 			continue
 		}
 
-		if strings.Contains(s, "/") {
+		if strings.Contains(s, woos.Slash) {
 			_, n, err := net.ParseCIDR(s)
 			if err != nil {
-				return nil, errors.Newf("invalid source ip/cidr condition: %s", s)
+				return nil, errors.Newf("%w: %s", woos.ErrInvalidSrcCond, s)
 			}
 			out.ips = append(out.ips, ipRule{cidr: n})
 			out.hasRules = true
@@ -50,7 +51,7 @@ func NewConditions(c *alaye.Conditions) (*Conditions, error) {
 
 		ip := net.ParseIP(s)
 		if ip == nil {
-			return nil, errors.Newf("invalid source ip/cidr condition: %s", s)
+			return nil, errors.Newf("%w: %s", woos.ErrInvalidSrcCond, s)
 		}
 		out.ips = append(out.ips, ipRule{ip: ip})
 		out.hasRules = true

@@ -31,7 +31,7 @@ func (m *Manager) Handler(next http.Handler) http.Handler {
 		inst, err := m.GetInstance(ctx)
 		if err != nil {
 			m.logger.Fields("err", err).Error("wasm: failed to instantiate")
-			http.Error(w, "Internal Server Error", 500)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
 		defer m.PutInstance(ctx, inst)
@@ -54,7 +54,7 @@ func (m *Manager) Handler(next http.Handler) http.Handler {
 		_, err = handleFunc.Call(ctx)
 		if err != nil {
 			m.logger.Fields("err", err).Error("wasm: execution failed")
-			http.Error(w, "Internal Server Error", 500)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
 

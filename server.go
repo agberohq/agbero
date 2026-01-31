@@ -846,7 +846,7 @@ func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 		host = r.Host
 	}
 
-	targetPort := woos.DefaultHTTPSPort
+	targetPort := woos.DefaultHTTPSPortInt
 	if len(s.global.Bind.HTTPS) > 0 {
 		_, port, err := net.SplitHostPort(s.global.Bind.HTTPS[0])
 		if err == nil {
@@ -855,7 +855,7 @@ func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var target string
-	if targetPort == woos.DefaultHTTPSPort {
+	if targetPort == woos.DefaultHTTPSPortInt {
 		target = fmt.Sprintf("https://%s%s", host, r.URL.RequestURI())
 	} else {
 		target = fmt.Sprintf("https://%s:%s%s", host, targetPort, r.URL.RequestURI())

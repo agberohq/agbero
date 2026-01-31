@@ -5,12 +5,13 @@ import (
 	"strings"
 	"testing"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
 // --- paths ---
 const (
-	pSlash     = Slash
+	pSlash     = woos.Slash
 	pApi       = "/api"
 	pApi2      = "/api2"
 	pApiID     = "/api/id"
@@ -186,8 +187,8 @@ func TestMatcher_CatchAll(t *testing.T) {
 		t.Fatalf("catch-all params missing: path=%q", pHit)
 	}
 
-	v, ok := got.Params[TemplateWildcardKey]
-	if !ok || v == Empty {
+	v, ok := got.Params[woos.TemplateWildcardKey]
+	if !ok || v == woos.Empty {
 		t.Fatalf("catch-all wildcard missing/Empty: path=%q params=%v", pHit, got.Params)
 	}
 
@@ -208,12 +209,12 @@ func TestMatcher_CatchAll(t *testing.T) {
 
 // Old matcher (your deprecated code)
 func oldMatch(requestPath, pattern string) bool {
-	if pattern == Star {
+	if pattern == woos.Star {
 		return true
 	}
 
-	if strings.HasSuffix(pattern, Star) {
-		prefix := strings.TrimSuffix(pattern, Star)
+	if strings.HasSuffix(pattern, woos.Star) {
+		prefix := strings.TrimSuffix(pattern, woos.Star)
 		return strings.HasPrefix(requestPath, prefix)
 	}
 
@@ -222,7 +223,7 @@ func oldMatch(requestPath, pattern string) bool {
 
 // Old-router-style scan: check all patterns, pick the longest match.
 func oldRouterFind(requestPath string, patterns []string) string {
-	best := Empty
+	best := woos.Empty
 	bestLen := -1
 
 	for _, p := range patterns {
