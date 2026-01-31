@@ -8,9 +8,13 @@ import (
 )
 
 type Admin struct {
-	Address     string       `hcl:"address"` // e.g. ":9090"
+	Address    string   `hcl:"address"` // e.g. ":9090"
+	AllowedIPs []string `hcl:"allowed_ips,optional"`
+
 	BasicAuth   *BasicAuth   `hcl:"basic_auth,block"`
 	ForwardAuth *ForwardAuth `hcl:"forward_auth,block"`
+	JWTAuth     *JWTAuth     `hcl:"jwt_auth,block"` // Now using struct
+	OAuth       *OAuth       `hcl:"o_auth,block"`   // New
 }
 
 func (a *Admin) Validate() error {
@@ -39,6 +43,16 @@ func (a *Admin) Validate() error {
 	if a.ForwardAuth != nil {
 		if err := a.ForwardAuth.Validate(); err != nil {
 			return errors.Newf("forward_auth: %w", err)
+		}
+	}
+	if a.JWTAuth != nil {
+		if err := a.JWTAuth.Validate(); err != nil {
+			return errors.Newf("jwt_auth: %w", err)
+		}
+	}
+	if a.OAuth != nil {
+		if err := a.OAuth.Validate(); err != nil {
+			return errors.Newf("o_auth: %w", err)
 		}
 	}
 	return nil

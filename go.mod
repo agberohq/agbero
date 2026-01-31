@@ -19,10 +19,12 @@ require (
 	github.com/integrii/flaggy v1.8.0
 	github.com/kardianos/service v1.2.4
 	github.com/klauspost/compress v1.18.3
+	github.com/markbates/goth v1.81.0
 	github.com/maypok86/otter/v2 v2.3.0
 	github.com/olekukonko/errors v1.2.0
 	github.com/olekukonko/ll v0.1.5-0.20260128152051-cfba7471e893
 	github.com/quic-go/quic-go v0.59.0
+	github.com/tetratelabs/wazero v1.11.0
 	github.com/yl2chen/cidranger v1.0.2
 	github.com/yookoala/gofast v0.8.0
 	go.etcd.io/bbolt v1.4.3
@@ -33,6 +35,8 @@ require (
 )
 
 require (
+	cloud.google.com/go/compute v1.20.1 // indirect
+	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	github.com/alecthomas/participle/v2 v2.1.4 // indirect
 	github.com/alecthomas/repr v0.5.2 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
@@ -75,16 +79,15 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/sahilm/fuzzy v0.1.1 // indirect
 	github.com/sean-/seed v0.0.0-20170313163322-e2103e2c3529 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
-	github.com/tetratelabs/wazero v1.11.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
 	golang.org/x/mod v0.32.0 // indirect
 	golang.org/x/net v0.49.0 // indirect
+	golang.org/x/oauth2 v0.19.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/tools v0.41.0 // indirect

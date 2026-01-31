@@ -12,6 +12,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/compress"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/headers"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/ipallow"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
@@ -42,6 +43,11 @@ func NewRoute(route *alaye.Route, logger *ll.Logger) *Route {
 func newWebRoute(route *alaye.Route, logger *ll.Logger) *Route {
 	chain := http.Handler(web.New(logger, route))
 
+	// Check if IP address is allowed
+	if len(route.AllowedIPs) > 0 {
+		chain = ipallow.New(route.AllowedIPs, logger)(chain)
+	}
+
 	if route.JWTAuth != nil {
 		chain = auth.JWT(route.JWTAuth)(chain)
 	}
@@ -62,7 +68,7 @@ func newWebRoute(route *alaye.Route, logger *ll.Logger) *Route {
 		chain = headers.Headers(route.Headers)(chain)
 	}
 
-	if route.CompressionConfig.Compression {
+	if route.CompressionConfig.Enabled {
 		chain = compress.Compress(route)(chain)
 	}
 
@@ -99,6 +105,11 @@ func newProxyRoute(route *alaye.Route, logger *ll.Logger) *Route {
 
 	var chain http.Handler = loadBalancer
 
+	// Check if IP address is allowed
+	if len(route.AllowedIPs) > 0 {
+		chain = ipallow.New(route.AllowedIPs, logger)(chain)
+	}
+
 	if route.JWTAuth != nil {
 		chain = auth.JWT(route.JWTAuth)(chain)
 	}
@@ -118,7 +129,7 @@ func newProxyRoute(route *alaye.Route, logger *ll.Logger) *Route {
 	if route.Headers != nil {
 		chain = headers.Headers(route.Headers)(chain)
 	}
-	if route.CompressionConfig.Compression {
+	if route.CompressionConfig.Enabled {
 		chain = compress.Compress(route)(chain)
 	}
 

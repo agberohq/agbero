@@ -73,7 +73,7 @@ func makeSNIClientHello(sni string) []byte {
 	allExtLen := extBlockLen
 
 	// 2. Handshake Body (ClientHello)
-	// Version (2) + Random (32) + SessionID (1) + Ciphers (2+2) + Compression (1+1) + Extensions (2 + ext)
+	// Version (2) + Random (32) + SessionID (1) + Ciphers (2+2) + Enabled (1+1) + Extensions (2 + ext)
 	handshakeBodyLen := 2 + 32 + 1 + 4 + 2 + 2 + allExtLen
 	handshakeBody := make([]byte, handshakeBodyLen)
 
@@ -97,7 +97,7 @@ func makeSNIClientHello(sni string) []byte {
 	pos++
 	handshakeBody[pos] = 0
 	pos++
-	// Compression (Length 1, value 0)
+	// Enabled (Length 1, value 0)
 	handshakeBody[pos] = 1
 	pos++
 	handshakeBody[pos] = 0

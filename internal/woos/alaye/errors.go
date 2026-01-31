@@ -141,7 +141,7 @@ var (
 
 // compression
 var (
-	ErrInvalidCompressionLevel = errors.New("compression_level must be between 0 and 11")
+	ErrInvalidCompressionLevel = errors.New("compression level must be between 0 and 11")
 	ErrInvalidCompressionType  = errors.New("compression type must be 'gzip' or 'brotli'")
 )
 

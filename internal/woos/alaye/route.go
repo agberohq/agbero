@@ -12,11 +12,12 @@ type Route struct {
 	Path string `hcl:"path,label"`
 
 	StripPrefixes []string `hcl:"strip_prefixes,optional"`
+	AllowedIPs    []string `hcl:"allowed_ips,optional"`
 
 	// web hosting (Value type)
 	Web Web `hcl:"web,block"`
 
-	// CHANGED: Structured Backends
+	// Backends defines the backend configuration for routing, including load balancing strategy and server definitions.
 	Backends Backend `hcl:"backend,block"`
 
 	// High-Availability Configs
@@ -25,12 +26,14 @@ type Route struct {
 	Timeouts       *TimeoutRoute   `hcl:"timeouts,block"`
 
 	// Middleware Configs
-	JWTAuth     *JWTAuth     `hcl:"jwt_auth,block"`
 	BasicAuth   *BasicAuth   `hcl:"basic_auth,block"`
 	ForwardAuth *ForwardAuth `hcl:"forward_auth,block"`
-	Headers     *Headers     `hcl:"headers,block"`
-	Wasm        *Wasm        `hcl:"wasm,block"`
-	RateLimit   *Rate        `hcl:"rate_limit,block"`
+	JWTAuth     *JWTAuth     `hcl:"jwt_auth,block"`
+	OAuth       *OAuth       `hcl:"o_auth,block"`
+
+	Headers   *Headers `hcl:"headers,block"`
+	Wasm      *Wasm    `hcl:"wasm,block"`
+	RateLimit *Rate    `hcl:"rate_limit,block"`
 
 	CompressionConfig Compression `hcl:"compression,block"`
 }
@@ -80,7 +83,7 @@ func (r *Route) Key() string {
 		sb.WriteString(fmt.Sprint(r.Timeouts.Request))
 	}
 
-	if r.CompressionConfig.Compression {
+	if r.CompressionConfig.Enabled {
 		sb.WriteString("|comp=")
 		sb.WriteString(r.CompressionConfig.Type)
 		sb.WriteString(fmt.Sprint(r.CompressionConfig.Level))
@@ -212,7 +215,7 @@ func (r *Route) validateWebRoute() error {
 		}
 	}
 
-	if r.CompressionConfig.Compression {
+	if r.CompressionConfig.Enabled {
 		if err := r.CompressionConfig.Validate(); err != nil {
 			return errors.Newf("compression: %w", err)
 		}
@@ -310,8 +313,8 @@ func (r *Route) validateProxyRoute() error {
 		}
 	}
 
-	// Compression validation (if provided)
-	if r.CompressionConfig.Compression {
+	// Enabled validation (if provided)
+	if r.CompressionConfig.Enabled {
 		if err := r.CompressionConfig.Validate(); err != nil {
 			return errors.Newf("compression: %w", err)
 		}

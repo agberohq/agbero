@@ -230,7 +230,7 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 		return "", woos.ErrShort
 	}
 
-	// Compression Methods
+	// Enabled Methods
 	compLen := int(data[pos])
 	pos += 1 + compLen
 	if pos+2 >= len(data) {

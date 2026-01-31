@@ -151,7 +151,7 @@ route "/api" {
 	}
 
 	if !host.Compression {
-		t.Error("Compression: expected true")
+		t.Error("Enabled: expected true")
 	}
 
 	if host.TLS.Mode != alaye.ModeLocalCert {

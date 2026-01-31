@@ -745,6 +745,37 @@ route "/cdn" {
 }
 ```
 
+### IP Restriction 
+
+- Route Middleware (ip_allow): "Am I allowed to access this API Route at all?" (Gatekeeper).
+- Backend Conditions: "Given I am allowed, which specific server inside the backend pool should I use?" (Routing logic).
+
+```hcl
+route "/api" {
+   backend {
+      # Who is allowed to use this backend
+     allowed_ips = ["10.0.0.0/8"]
+     server {
+       address = "http://127.0.0.1:8080"
+     }
+   }
+}
+```
+
+```hcl
+route "/admin-area" {
+  backend {
+    server "http://127.0.0.1:8080" {
+      conditions {
+        # Acts as an Allow List. 
+        # Access is denied for anyone NOT in this list.
+        source_ips = ["127.0.0.1", "::1", "203.0.113.55"] 
+      }
+    }
+  }
+}
+```
+
 ## 🚨 Common Issues & Solutions
 
 ### Issue: "Certificate not trusted" in browser

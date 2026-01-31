@@ -380,9 +380,9 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 			Root: alaye.WebRoot(root),
 		},
 		CompressionConfig: alaye.Compression{
-			Compression: true,
-			Type:        "gzip",
-			Level:       5,
+			Enabled: true,
+			Type:    "gzip",
+			Level:   5,
 		},
 		Headers: &alaye.Headers{
 			Response: &alaye.Header{

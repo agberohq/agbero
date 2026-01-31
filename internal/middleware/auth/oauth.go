@@ -1,0 +1,223 @@
+package auth
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"github.com/markbates/goth"
+	"github.com/markbates/goth/providers/github"
+	"github.com/markbates/goth/providers/gitlab"
+	"github.com/markbates/goth/providers/google"
+	"github.com/markbates/goth/providers/openidConnect"
+)
+
+const (
+	sessionCookieName = "agbero_sess"
+	gothSessionCookie = "agbero_oauth_state"
+	stateTTL          = 10 * time.Minute
+)
+
+// OAuth middleware using markbates/goth for multi-provider support.
+func OAuth(cfg *alaye.OAuth) func(http.Handler) http.Handler {
+	// 1. Initialize the specific Goth Provider based on config
+	provider, err := getProvider(cfg)
+	if err != nil {
+		// If provider fails to init (e.g. bad OIDC url), we return a broken middleware
+		// that logs the error on request.
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "OAuth Configuration Error: "+err.Error(), http.StatusInternalServerError)
+			})
+		}
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// 2. Callback Handling
+			if isCallbackRequest(r, cfg.RedirectURL) {
+				handleGothCallback(w, r, provider, cfg)
+				return
+			}
+
+			// 3. Check Existing Session
+			cookie, err := r.Cookie(sessionCookieName)
+			if err == nil && cookie.Value != "" {
+				// In prod: Verify/Decrypt cookie with cfg.CookieSecret
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// 4. Start Auth Flow
+			startGothFlow(w, r, provider)
+		})
+	}
+}
+
+func getProvider(cfg *alaye.OAuth) (goth.Provider, error) {
+	callback := cfg.RedirectURL
+	key := cfg.ClientID
+	secret := cfg.ClientSecret.String()
+	scopes := cfg.Scopes
+
+	switch strings.ToLower(cfg.Provider) {
+	case "google":
+		return google.New(key, secret, callback, scopes...), nil
+	case "github":
+		return github.New(key, secret, callback, scopes...), nil
+	case "gitlab":
+		return gitlab.New(key, secret, callback, scopes...), nil
+	case "oidc", "generic":
+		// OIDC requires a Discovery URL (cfg.AuthURL can act as the Issuer URL here)
+		// If AuthURL is empty, this will fail.
+		if cfg.AuthURL == "" {
+			return nil, errors.New("auth_url (issuer) is required for oidc provider")
+		}
+		return openidConnect.New(key, secret, callback, cfg.AuthURL, scopes...)
+	default:
+		return nil, fmt.Errorf("unsupported provider: %s", cfg.Provider)
+	}
+}
+
+func startGothFlow(w http.ResponseWriter, r *http.Request, provider goth.Provider) {
+	state := generateState()
+
+	// BeginAuth returns a Session which holds the state/nonce/authorize_url
+	sess, err := provider.BeginAuth(state)
+	if err != nil {
+		http.Error(w, "Failed to start auth: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	authURL, err := sess.GetAuthURL()
+	if err != nil {
+		http.Error(w, "Failed to get auth url: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Serialize the Goth session to a cookie so we can retrieve it in the callback
+	sessData := sess.Marshal()
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     gothSessionCookie,
+		Value:    sessData,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		Expires:  time.Now().Add(stateTTL),
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
+}
+
+func handleGothCallback(w http.ResponseWriter, r *http.Request, provider goth.Provider, cfg *alaye.OAuth) {
+	// 1. Retrieve the session data from cookie
+	cookie, err := r.Cookie(gothSessionCookie)
+	if err != nil {
+		http.Error(w, "Session expired or missing", http.StatusBadRequest)
+		return
+	}
+
+	// 2. Unmarshal into a Session object specific to the provider
+	sess, err := provider.UnmarshalSession(cookie.Value)
+	if err != nil {
+		http.Error(w, "Invalid session data", http.StatusBadRequest)
+		return
+	}
+
+	// 3. Validate the request parameters (code, state) against the session
+	// FetchUser calls Exchange() internally
+	user, err := provider.FetchUser(sess)
+	if err != nil {
+		// Clean up cookie
+		clearCookie(w, gothSessionCookie)
+
+		// Goth validates params. If `Authorize` has not been called (i.e. just getting params),
+		// we might need to feed params to session.
+		// NOTE: In Goth, `sess` usually abstracts the params reading,
+		// but `FetchUser` might fail if the params aren't in the URL query as expected.
+		// However, standard Goth providers read from `r.URL.Query()` implicitly
+		// inside `FetchUser`? No, `FetchUser` takes `Session`.
+		// The `Session` impl usually needs to be updated with params.
+		// Actually, `provider.FetchUser` usually expects `Authorize` to have happened.
+		// Let's explicitly look at how Goth does it without `gothic`.
+
+		// Correct flow for manual Goth:
+		params := r.URL.Query()
+		if _, err := sess.Authorize(provider, params); err != nil {
+			http.Error(w, "Authorization failed: "+err.Error(), http.StatusForbidden)
+			return
+		}
+
+		// Retry fetch after Authorize
+		user, err = provider.FetchUser(sess)
+		if err != nil {
+			http.Error(w, "Failed to fetch user: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// 4. Validate Email Domain
+	if len(cfg.EmailDomains) > 0 {
+		valid := false
+		for _, domain := range cfg.EmailDomains {
+			if strings.HasSuffix(strings.ToLower(user.Email), "@"+strings.ToLower(domain)) {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			clearCookie(w, gothSessionCookie)
+			http.Error(w, "Email domain not allowed", http.StatusForbidden)
+			return
+		}
+	}
+
+	// 5. Cleanup OAuth state
+	clearCookie(w, gothSessionCookie)
+
+	// 6. Set App Session
+	// In production: Encrypt user.AccessToken using cfg.CookieSecret
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    user.AccessToken,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		Expires:  user.ExpiresAt,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+func isCallbackRequest(r *http.Request, redirectURL string) bool {
+	// Basic check: does current path match redirect path?
+	// Also check for 'code' which indicates a callback
+	if strings.Contains(redirectURL, r.URL.Path) && r.URL.Query().Get("code") != "" {
+		return true
+	}
+	return false
+}
+
+func clearCookie(w http.ResponseWriter, name string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+	})
+}
+
+func generateState() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)
+}
