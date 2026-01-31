@@ -66,3 +66,30 @@ var (
 	ErrMkCertCAROOTFail  = errors.New("mkcert -CAROOT failed")
 	ErrMkCertEmptyCAROOT = errors.New("mkcert returned empty CAROOT")
 )
+
+// parser
+var (
+	ErrEmptyConfigPath = errors.New("config path is empty")
+)
+
+// manager
+var (
+	ErrEmptyLEEmail         = errors.New("le_email is empty")
+	ErrEmptyCertFile        = errors.New("cert_dir is empty")
+	ErrOnDemandDenied       = errors.New("on-demand denied")
+	ErrLocalTLSMissingFiles = errors.New("local tls requires cert_file and key_file")
+
+	ErrMissingSNI            = errors.New("missing SNI")
+	ErrUnknownHost           = errors.New("unknown host")
+	ErrTLSDisabled           = errors.New("tls disabled")
+	ErrLocalCertMissingFiles = errors.New("tls=local_cert requires tls.local cert_file and key_file")
+	ErrLocalAutoNotAllowed   = errors.New("tls=local_auto is only allowed for localhost hosts")
+	ErrLetsEncryptNotEnabled = errors.New("letsencrypt not enabled globally")
+	ErrCustomCAMissingRoot   = errors.New("tls=custom_ca requires root cert")
+	ErrUnknownTLSMode        = errors.New("unknown tls mode")
+
+	ErrLoadCustomCARoot          = errors.New("loading custom CA root error")
+	ErrInvalidCustomCAPEM        = errors.New("invalid custom CA PEM")
+	ErrCustomCALocalCertRequired = errors.New("custom_ca requires local cert_file and key_file")
+	ErrCertNotfound              = errors.New("cert not found")
+)
