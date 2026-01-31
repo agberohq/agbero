@@ -13,13 +13,6 @@ import (
 	"github.com/olekukonko/errors"
 )
 
-const (
-	BlockPrivateKey = "PRIVATE KEY"
-	DefaultIssuer   = "agbero"
-	TokenSub        = "sub"
-	TokenAlg        = "alg"
-)
-
 type TokenManager struct {
 	privateKey ed25519.PrivateKey
 	publicKey  ed25519.PublicKey
@@ -32,7 +25,7 @@ func LoadKeys(privateKeyPath string) (*TokenManager, error) {
 	}
 
 	block, _ := pem.Decode(b)
-	if block == nil || block.Type != BlockPrivateKey {
+	if block == nil || block.Type != woos.BlockPrivateKey {
 		return nil, woos.ErrInvalidPEMFile
 	}
 
@@ -64,7 +57,7 @@ func GenerateNewKeyFile(path string) error {
 	}
 
 	pemBlock := &pem.Block{
-		Type:  BlockPrivateKey,
+		Type:  woos.BlockPrivateKey,
 		Bytes: b,
 	}
 
@@ -82,7 +75,7 @@ func (tm *TokenManager) Mint(serviceName string, ttl time.Duration) (string, err
 		"sub": serviceName,
 		"iat": time.Now().Unix(),
 		"exp": time.Now().Add(ttl).Unix(),
-		"iss": DefaultIssuer,
+		"iss": woos.DefaultIssuer,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
@@ -92,7 +85,7 @@ func (tm *TokenManager) Mint(serviceName string, ttl time.Duration) (string, err
 func (tm *TokenManager) Verify(tokenString string) (serviceName string, err error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
-			return nil, fmt.Errorf("%w: %v", woos.ErrUnexpectedSiningMethod, token.Header[TokenAlg])
+			return nil, fmt.Errorf("%w: %v", woos.ErrUnexpectedSiningMethod, token.Header[woos.TokenAlg])
 		}
 		return tm.publicKey, nil
 	})
@@ -110,7 +103,7 @@ func (tm *TokenManager) Verify(tokenString string) (serviceName string, err erro
 		return "", woos.ErrInvalidClaims
 	}
 
-	sub, ok := claims[TokenSub].(string)
+	sub, ok := claims[woos.TokenSub].(string)
 	if !ok || sub == "" {
 		return "", woos.ErrMissingTokenSubject
 	}

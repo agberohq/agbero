@@ -5,14 +5,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/HdrHistogram/hdrhistogram-go"
-)
-
-const HistogramWindow = 60 * time.Second
-
-const (
-	minUS = int64(1)
-	maxUS = int64(60_000_000)
 )
 
 type LatencyTracker struct {
@@ -31,7 +25,7 @@ type LatencyTracker struct {
 
 func NewLatencyTracker() *LatencyTracker {
 	lt := &LatencyTracker{
-		histogram:    hdrhistogram.New(minUS, maxUS, 3),
+		histogram:    hdrhistogram.New(woos.MinUS, woos.MaxUS, 3),
 		lastRotation: time.Now(),
 		ch:           make(chan int64, 8192),
 		stop:         make(chan struct{}),
@@ -59,8 +53,8 @@ func (lt *LatencyTracker) Record(microseconds int64) {
 	lt.mu.Unlock()
 
 	v := microseconds
-	if v < minUS || v > maxUS {
-		v = maxUS
+	if v < woos.MinUS || v > woos.MaxUS {
+		v = woos.MaxUS
 	}
 
 	atomic.AddUint64(&lt.count, 1)
@@ -147,7 +141,7 @@ func (lt *LatencyTracker) flushLocked() {
 }
 
 func (lt *LatencyTracker) rotateLocked(now time.Time) {
-	if now.Sub(lt.lastRotation) <= HistogramWindow {
+	if now.Sub(lt.lastRotation) <= woos.HistogramWindow {
 		return
 	}
 

@@ -2,7 +2,6 @@ package setup
 
 import (
 	"os"
-	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
@@ -10,18 +9,6 @@ import (
 	"github.com/olekukonko/ll/l3rd/victoria"
 	"github.com/olekukonko/ll/lh"
 	"github.com/olekukonko/ll/lx"
-)
-
-const (
-	DefaultFilePerm      = 0o666
-	DefaultFlushInterval = 700 * time.Millisecond
-	DefaultMaxBuffer     = 12000
-	DefaultVictoriaBatch = 500
-
-	LogLevelDebug = "debug"
-	LogLevelWarn  = "warn"
-	LogLevelError = "error"
-	LogLevelInfo  = "info"
 )
 
 // Logging creates the final logger based on config and returns a cleanup function to flush buffers.
@@ -34,7 +21,7 @@ func Logging(cfg alaye.Logging, devMode bool) (*ll.Logger, func(), error) {
 
 	// 2. File Handler
 	if cfg.File != "" {
-		fp, err := os.OpenFile(cfg.File, os.O_APPEND|os.O_CREATE|os.O_WRONLY, DefaultFilePerm)
+		fp, err := os.OpenFile(cfg.File, os.O_APPEND|os.O_CREATE|os.O_WRONLY, woos.DefaultFilePerm)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -56,13 +43,13 @@ func Logging(cfg alaye.Logging, devMode bool) (*ll.Logger, func(), error) {
 
 		batchSize := cfg.Victoria.BatchSize
 		if batchSize <= 0 {
-			batchSize = DefaultVictoriaBatch
+			batchSize = woos.DefaultVictoriaBatch
 		}
 
 		buffered := lh.NewBuffered(vl,
 			lh.WithBatchSize(batchSize),
-			lh.WithFlushInterval(DefaultFlushInterval),
-			lh.WithMaxBuffer(DefaultMaxBuffer),
+			lh.WithFlushInterval(woos.DefaultFlushInterval),
+			lh.WithMaxBuffer(woos.DefaultMaxBuffer),
 		)
 		handlers = append(handlers, buffered)
 
@@ -77,11 +64,11 @@ func Logging(cfg alaye.Logging, devMode bool) (*ll.Logger, func(), error) {
 
 	// Set Level
 	switch cfg.Level {
-	case LogLevelDebug:
+	case woos.LogLevelDebug:
 		l.Level(lx.LevelDebug)
-	case LogLevelWarn:
+	case woos.LogLevelWarn:
 		l.Level(lx.LevelWarn)
-	case LogLevelError:
+	case woos.LogLevelError:
 		l.Level(lx.LevelError)
 	default:
 		l.Level(lx.LevelInfo)
