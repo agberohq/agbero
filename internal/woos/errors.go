@@ -92,4 +92,24 @@ var (
 	ErrInvalidCustomCAPEM        = errors.New("invalid custom CA PEM")
 	ErrCustomCALocalCertRequired = errors.New("custom_ca requires local cert_file and key_file")
 	ErrCertNotfound              = errors.New("cert not found")
+
+	ErrHomeDirNotFound      = errors.New("failed to resolve user home directory")
+	ErrStorageDirCreateFail = errors.New("failed to create storage directory")
+)
+
+// instaler
+var (
+	ErrMkCertRequired        = errors.New("mkcert is required for development TLS")
+	ErrMkCertInstalledFailed = errors.New("mkcert -install failed")
+	ErrMkCertFailed          = errors.New("mkcert failed")
+	
+	ErrReadCert       = errors.New("read cert")
+	ErrReadKey        = errors.New("read key")
+	ErrNoCertificate  = errors.New("no certificate in key pair")
+	ErrX509Pair       = errors.New("x509 key pair")
+	ErrParseLeaf      = errors.New("parse leaf")
+	ErrExpired        = errors.New("expired")
+	ErrNotYetValid    = errors.New("not yet valid")
+	ErrVerifyHost     = errors.New("verify host")
+	ErrVerifyWildcard = errors.New("verify wildcard via")
 )

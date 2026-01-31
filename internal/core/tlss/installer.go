@@ -1,4 +1,3 @@
-// installer.go
 package tlss
 
 import (
@@ -14,8 +13,50 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 )
+
+const (
+	HomeDirPrefix        = "~/"
+	Localhost            = "localhost"
+	LocalhostWildcardSAN = "*.localhost"
+	IPv4LoopbackSAN      = "127.0.0.1"
+	IPv6LoopbackSAN      = "::1"
+
+	CertExtPEM = ".pem"
+	CertExtCRT = ".crt"
+	CertExtKEY = ".key"
+
+	CAMarkerFile    = ".mkcert_ca_installed"
+	FileModePrivate = 0600
+
+	IPv6BracketOpen  = "["
+	IPv6BracketClose = "]"
+	Colon            = ":"
+
+	MkcertExecutable = "mkcert"
+	MkcertWindowsExe = "mkcert.exe"
+
+	// Common Unix paths
+	MkcertPathUsrLocalBin    = "/usr/local/bin/mkcert"
+	MkcertPathUsrBin         = "/usr/bin/mkcert"
+	MkcertPathOptHomebrewBin = "/opt/homebrew/bin/mkcert"
+
+	// Home subpaths
+	MkcertPathGoBin    = "go/bin/mkcert"
+	MkcertPathLocalBin = ".local/bin/mkcert"
+
+	// Windows home subpaths
+	MkcertPathScoopShims = "scoop/shims/mkcert.exe"
+	MkcertPathChocoBin   = "choco/bin/mkcert.exe"
+)
+
+const MkcertInstallHint = "mkcert was not found. Install and run 'mkcert -install'. " +
+	"macOS: 'brew install mkcert' then 'mkcert -install'"
+
+const MkcertNotFoundMsg = "mkcert is required to install the local CA root but was not found. " +
+	"macOS: 'brew install mkcert' then 'mkcert -install'"
 
 // mkcert-only design (dev-friendly, deterministic):
 // - Always use mkcert for BOTH CA install and leaf cert generation.
@@ -48,16 +89,16 @@ func (ci *Installer) SetStorageDir(dir woos.Folder) error {
 		return nil
 	}
 
-	if strings.HasPrefix(dir.String(), "~/") {
+	if strings.HasPrefix(dir.String(), HomeDirPrefix) {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return fmt.Errorf("failed to get home directory: %w", err)
+			return errors.Newf("failed to get home directory: %w", err)
 		}
 		dir = woos.NewFolder(filepath.Join(home, dir.String()[2:]))
 	}
 
 	if err := dir.Ensure(woos.Folder(""), false); err != nil {
-		return fmt.Errorf("failed to create storage directory: %w", err)
+		return errors.Newf("failed to create storage directory: %w", err)
 	}
 
 	ci.CertDir = dir
@@ -92,10 +133,10 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 
 	// Default local SANs (sane dev defaults)
 	defaults := []string{
-		"localhost",
-		"*.localhost",
-		"127.0.0.1",
-		"::1",
+		Localhost,
+		LocalhostWildcardSAN,
+		IPv4LoopbackSAN,
+		IPv6LoopbackSAN,
 	}
 
 	// NEW: Add LAN IPs so https://192.168.x.x works
@@ -110,7 +151,7 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 
 	// Ensure cert dir exists (secure)
 	if err := ci.CertDir.Ensure(woos.Folder(""), true); err != nil {
-		return "", "", fmt.Errorf("failed to ensure cert dir: %w", err)
+		return "", "", errors.Newf("failed to ensure cert dir: %w", err)
 	}
 
 	certFile = filepath.Join(ci.CertDir.Path(), fmt.Sprintf("%s-%d-cert.pem", prefix, ci.port))
@@ -131,14 +172,12 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 	// mkcert is REQUIRED
 	mkcertPath, ok := findMkcertPath()
 	if !ok {
-		return "", "", fmt.Errorf(
-			"mkcert is required for dev TLS but was not found. Install and run 'mkcert -install'. " + "macOS: 'brew install mkcert' then 'mkcert -install'",
-		)
+		return "", "", errors.Newf("%w: %s", woos.ErrMkCertRequired, MkcertInstallHint)
 	}
 
 	// Sanity: mkcert must be able to resolve its default CAROOT
 	if _, err := MkcertDefaultCAROOT(mkcertPath); err != nil {
-		return "", "", fmt.Errorf("mkcert default CAROOT not resolvable: %w", err)
+		return "", "", errors.Newf("mkcert default CAROOT not resolvable: %w", err)
 	}
 
 	// Ensure mkcert CA is installed (best-effort), but don't loop forever.
@@ -172,10 +211,7 @@ func (ci *Installer) InstallCARootIfNeeded() error {
 
 	mkcertPath, ok := findMkcertPath()
 	if !ok {
-		return fmt.Errorf(
-			"mkcert is required to install local CA root but was not found. " +
-				"macOS: 'brew install mkcert' then 'mkcert -install'",
-		)
+		return errors.New(MkcertNotFoundMsg)
 	}
 
 	if ci.logger != nil {
@@ -199,7 +235,7 @@ func (ci *Installer) installCAWithMkcert(mkcertPath string) error {
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("mkcert -install failed: %s", strings.TrimSpace(string(out)))
+		return errors.Newf("%w: %s", woos.ErrMkCertInstalledFailed, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -215,11 +251,11 @@ func (ci *Installer) generateWithMkcert(mkcertPath, certFile, keyFile string) (s
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", "", fmt.Errorf("mkcert failed: %s", strings.TrimSpace(string(out)))
+		return "", "", errors.Newf("%w: %s", woos.ErrMkCertFailed, strings.TrimSpace(string(out)))
 	}
 
 	if err := ci.validateCertificate(certFile, keyFile); err != nil {
-		return "", "", fmt.Errorf("generated cert does not validate: %w", err)
+		return "", "", errors.Newf("generated cert does not validate: %w", err)
 	}
 
 	if ci.logger != nil {
@@ -233,14 +269,14 @@ func (ci *Installer) generateWithMkcert(mkcertPath, certFile, keyFile string) (s
 func (ci *Installer) ListCertificates() ([]string, error) {
 	names, err := ci.CertDir.ReadNames()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read cert directory: %w", err)
+		return nil, errors.Newf("failed to read cert directory: %w", err)
 	}
 
 	var certs []string
 	for _, name := range names {
-		if strings.HasSuffix(name, ".pem") ||
-			strings.HasSuffix(name, ".crt") ||
-			strings.HasSuffix(name, ".key") {
+		if strings.HasSuffix(name, CertExtPEM) ||
+			strings.HasSuffix(name, CertExtCRT) ||
+			strings.HasSuffix(name, CertExtKEY) {
 			certs = append(certs, name)
 		}
 	}
@@ -278,32 +314,32 @@ func (ci *Installer) FindExistingCerts(prefix string, port int) (certFile, keyFi
 func (ci *Installer) validateCertificate(certFile, keyFile string) error {
 	certData, err := os.ReadFile(certFile)
 	if err != nil {
-		return fmt.Errorf("read cert: %w", err)
+		return errors.Newf("read cert: %w", err)
 	}
 	keyData, err := os.ReadFile(keyFile)
 	if err != nil {
-		return fmt.Errorf("read key: %w", err)
+		return errors.Newf("read key: %w", err)
 	}
 
 	pair, err := tls.X509KeyPair(certData, keyData)
 	if err != nil || len(pair.Certificate) == 0 {
 		if err == nil {
-			err = fmt.Errorf("no certificate in key pair")
+			err = woos.ErrNoCertificate
 		}
-		return fmt.Errorf("x509 key pair: %w", err)
+		return errors.Newf("x509 key pair: %w", err)
 	}
 
 	leaf, err := x509.ParseCertificate(pair.Certificate[0])
 	if err != nil {
-		return fmt.Errorf("parse leaf: %w", err)
+		return errors.Newf("parse leaf: %w", err)
 	}
 
 	now := time.Now()
 	if now.After(leaf.NotAfter) {
-		return fmt.Errorf("expired: notAfter=%s", leaf.NotAfter)
+		return errors.Newf("%w: notAfter=%s", woos.ErrExpired, leaf.NotAfter)
 	}
 	if now.Before(leaf.NotBefore.Add(-2 * time.Minute)) {
-		return fmt.Errorf("not yet valid: notBefore=%s", leaf.NotBefore)
+		return errors.Newf("%s: notBefore=%s", woos.ErrNotYetValid, leaf.NotBefore)
 	}
 
 	if ci.logger != nil {
@@ -325,13 +361,13 @@ func (ci *Installer) validateCertificate(certFile, keyFile string) error {
 		if strings.HasPrefix(target, "*.") {
 			testHost := "example" + target[1:] // "*.localhost" -> "example.localhost"
 			if err := leaf.VerifyHostname(testHost); err != nil {
-				return fmt.Errorf("verify wildcard via %q (from %q): %w", testHost, target, err)
+				return errors.Newf("verify wildcard via %q (from %q): %w", testHost, target, err)
 			}
 			continue
 		}
 
 		if err := leaf.VerifyHostname(target); err != nil {
-			return fmt.Errorf("verify host %q: %w", target, err)
+			return errors.Newf("verify host %q: %w", target, err)
 		}
 	}
 
@@ -340,18 +376,18 @@ func (ci *Installer) validateCertificate(certFile, keyFile string) error {
 
 func (ci *Installer) certPrefix() string {
 	if len(ci.certHosts) == 0 {
-		return "localhost"
+		return Localhost
 	}
 
 	raw := strings.TrimSpace(ci.certHosts[0])
 	if raw == "" {
-		return "localhost"
+		return Localhost
 	}
 
 	// Use the same safe normalization used by validation.
 	host, ok := normalizeHostForVerify(raw)
 	if !ok || host == "" {
-		return "localhost"
+		return Localhost
 	}
 
 	// If it's an IP, just use it.
@@ -363,7 +399,7 @@ func (ci *Installer) certPrefix() string {
 	if len(parts) > 0 && parts[0] != "" && parts[0] != "*" {
 		return parts[0]
 	}
-	return "localhost"
+	return Localhost
 }
 
 func (ci *Installer) purgeStaleLeafCerts() {
@@ -413,7 +449,7 @@ func (ci *Installer) caMarkerPath() string {
 	if !ci.CertDir.IsSet() {
 		return ""
 	}
-	return filepath.Join(ci.CertDir.Path(), ".mkcert_ca_installed")
+	return filepath.Join(ci.CertDir.Path(), CAMarkerFile)
 }
 
 func (ci *Installer) writeCAMarker() error {
@@ -422,7 +458,7 @@ func (ci *Installer) writeCAMarker() error {
 		return nil
 	}
 	// Keep it simple; contents not important.
-	return os.WriteFile(m, []byte(time.Now().UTC().Format(time.RFC3339)), 0600)
+	return os.WriteFile(m, []byte(time.Now().UTC().Format(time.RFC3339)), FileModePrivate)
 }
 
 // normalizeHostForVerify returns a hostname/IP suitable for x509 hostname verification.
@@ -439,19 +475,19 @@ func normalizeHostForVerify(raw string) (string, bool) {
 	}
 
 	// Bracketed IPv6 with port: [::1]:443
-	if strings.HasPrefix(s, "[") && strings.Contains(s, "]") {
+	if strings.HasPrefix(s, IPv6BracketOpen) && strings.Contains(s, IPv6BracketClose) {
 		if h, _, err := net.SplitHostPort(s); err == nil && h != "" {
 			return h, true
 		}
 		// If SplitHostPort fails, fall through to return cleaned string.
-		s = strings.TrimPrefix(s, "[")
-		s = strings.TrimSuffix(s, "]")
+		s = strings.TrimPrefix(s, IPv6BracketOpen)
+		s = strings.TrimSuffix(s, IPv6BracketClose)
 		return s, s != ""
 	}
 
 	// If it looks like host:port (single colon and port is numeric), split it.
 	// Avoid breaking raw IPv6 like "::1" or "fe80::1".
-	if strings.Count(s, ":") == 1 {
+	if strings.Count(s, Colon) == 1 {
 		if h, p, err := net.SplitHostPort(s); err == nil && h != "" && p != "" {
 			return h, true
 		}
@@ -471,17 +507,17 @@ func findMkcertPath() (string, bool) {
 
 	home, _ := os.UserHomeDir()
 	common := []string{
-		"/usr/local/bin/mkcert",
-		"/usr/bin/mkcert",
-		"/opt/homebrew/bin/mkcert",
-		filepath.Join(home, "go", "bin", "mkcert"),
-		filepath.Join(home, ".local", "bin", "mkcert"),
+		MkcertPathUsrLocalBin,
+		MkcertPathUsrBin,
+		MkcertPathOptHomebrewBin,
+		filepath.Join(home, MkcertPathGoBin),
+		filepath.Join(home, MkcertPathLocalBin),
 	}
 
 	if runtime.GOOS == "windows" {
 		common = append(common,
-			filepath.Join(home, "scoop", "shims", "mkcert.exe"),
-			filepath.Join(home, "choco", "bin", "mkcert.exe"),
+			filepath.Join(home, MkcertPathScoopShims),
+			filepath.Join(home, MkcertPathChocoBin),
 		)
 	}
 
