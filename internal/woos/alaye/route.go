@@ -113,20 +113,20 @@ func (r *Route) Key() string {
 
 func (r *Route) Validate() error {
 	if r.Path == "" {
-		return errors.New("path is required")
+		return ErrRoutePathRequired
 	}
 	if !strings.HasPrefix(r.Path, "/") {
-		return errors.Newf("path %q must start with '/'", r.Path)
+		return errors.Newf("%w: path %q must start with '/'", ErrRouteInvalidPrefix, r.Path)
 	}
 
 	hasBackends := len(r.Backends.Servers) > 0
 	hasWeb := r.Web.Root.IsSet()
 
 	if !hasBackends && !hasWeb {
-		return errors.New("route must have either 'backend' blocks or a 'web' block")
+		return ErrRouteNoBackendOrWeb
 	}
 	if hasBackends && hasWeb {
-		return errors.New("route cannot have both 'backend' blocks and a 'web' block")
+		return ErrRouteBothBackendAndWeb
 	}
 
 	if hasBackends {
@@ -137,7 +137,7 @@ func (r *Route) Validate() error {
 
 func (r *Route) validateWebRoute() error {
 	if !r.Web.Root.IsSet() {
-		return errors.New("web root cannot be empty")
+		return ErrWebRouteRootRequired
 	}
 
 	if err := r.Web.Validate(); err != nil {
@@ -145,18 +145,18 @@ func (r *Route) validateWebRoute() error {
 	}
 
 	if len(r.StripPrefixes) > 0 {
-		return errors.New("web routes cannot have strip_prefixes")
+		return ErrWebRouteStripPrefixes
 	}
 
 	if r.Backends.LBStrategy != "" && r.Backends.LBStrategy != StrategyRoundRobin {
-		return errors.New("web routes only support default load balancing")
+		return ErrWebRouteUnsupportedLB
 	}
 
 	if r.HealthCheck != nil {
-		return errors.New("web routes cannot have health_check")
+		return ErrWebRouteHealthCheck
 	}
 	if r.CircuitBreaker != nil {
-		return errors.New("web routes cannot have circuit_breaker")
+		return ErrWebRouteCircuitBreaker
 	}
 
 	if r.Timeouts != nil {
@@ -195,7 +195,7 @@ func (r *Route) validateWebRoute() error {
 func (r *Route) validateProxyRoute() error {
 	// Backend validation
 	if len(r.Backends.Servers) == 0 {
-		return errors.New("backends cannot be empty for proxy route")
+		return ErrProxyRouteNoBackends
 	}
 
 	for i, b := range r.Backends.Servers {
@@ -207,10 +207,10 @@ func (r *Route) validateProxyRoute() error {
 	// Strip prefixes validation (if provided)
 	for i, prefix := range r.StripPrefixes {
 		if prefix == "" {
-			return errors.Newf("strip_prefixes[%d]: cannot be empty", i)
+			return errors.Newf("%w [%d]: cannot be empty", ErrProxyRouteInvalidStrip, i)
 		}
 		if !strings.HasPrefix(prefix, "/") {
-			return errors.Newf("strip_prefixes[%d]: %q must start with '/'", i, prefix)
+			return errors.Newf("%w [%d]: %q must start with '/'", ErrProxyRouteInvalidStrip, i, prefix)
 		}
 	}
 
@@ -227,7 +227,8 @@ func (r *Route) validateProxyRoute() error {
 			StrategyWeightedLeastConn:
 		default:
 			return errors.Newf(
-				`lb_strategy %q must be one of: %s, %s, %s, %s, %s`,
+				`%w %q must be one of: %s, %s, %s, %s, %s`,
+				ErrProxyRouteInvalidLBStrategy,
 				s,
 				StrategyRoundRobin,
 				StrategyLeastConn,

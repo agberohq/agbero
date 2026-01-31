@@ -31,3 +31,58 @@ var (
 	ErrRootRequiredCustomCA = errors.New("root is required for custom_ca")
 	ErrRootAbsolute         = errors.New("root must be an absolute path")
 )
+
+// timeout
+
+var (
+	ErrNegativeReadTimeout       = errors.New("read timeout cannot be negative")
+	ErrNegativeWriteTimeout      = errors.New("write timeout cannot be negative")
+	ErrNegativeIdleTimeout       = errors.New("idle timeout cannot be negative")
+	ErrNegativeReadHeaderTimeout = errors.New("read_header timeout cannot be negative")
+	ErrNegativeRequestTimeout    = errors.New("request timeout cannot be negative")
+)
+
+// server
+var (
+	ErrBackendAddressRequired = errors.New("backend address is required")
+	ErrBackendInvalidScheme   = errors.New("invalid scheme")
+	ErrBackendNegativeWeight  = errors.New("backend weight cannot be negative")
+	ErrBackendInvalidSourceIP = errors.New("invalid source IP/CIDR condition")
+)
+
+// route
+
+var (
+	ErrRoutePathRequired      = errors.New("path is required")
+	ErrRouteInvalidPrefix     = errors.New("invalid path prefix")
+	ErrRouteNoBackendOrWeb    = errors.New("route must have either 'backend' blocks or a 'web' block")
+	ErrRouteBothBackendAndWeb = errors.New("route cannot have both 'backend' blocks and a 'web' block")
+
+	ErrWebRouteStripPrefixes  = errors.New("web routes cannot have strip_prefixes")
+	ErrWebRouteUnsupportedLB  = errors.New("web routes only support default load balancing")
+	ErrWebRouteHealthCheck    = errors.New("web routes cannot have health_check")
+	ErrWebRouteCircuitBreaker = errors.New("web routes cannot have circuit_breaker")
+	ErrWebRouteRootRequired   = errors.New("web root cannot be empty")
+
+	ErrProxyRouteNoBackends        = errors.New("backends cannot be empty for proxy route")
+	ErrProxyRouteInvalidStrip      = errors.New("invalid strip_fixes")
+	ErrProxyRouteInvalidLBStrategy = errors.New("lb_strategy is invalid")
+)
+
+// rate
+var (
+	ErrProxyRouteNegativeTTL        = errors.New("ttl cannot be negative")
+	ErrProxyRouteNegativeMaxEntries = errors.New("max_entries cannot be negative")
+	ErrProxyRouteInvalidAuthPrefix  = errors.New("invalid auth_prefix")
+
+	ErrRateLimitNegativeRequests = errors.New("requests cannot be negative")
+	ErrRateLimitInvalidWindow    = errors.New("window must be positive when requests > 0")
+	ErrRateLimitNegativeBurst    = errors.New("burst cannot be negative")
+	ErrRateLimitBurstTooSmall    = errors.New("burst cannot be less than requests")
+	ErrRateLimitInvalidKeyHeader = errors.New("key_header cannot contain spaces")
+)
+
+// limit
+var (
+	ErrNegativeMacBodySize = errors.New("max_body_size cannot be negative")
+)
