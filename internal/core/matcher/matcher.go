@@ -1,14 +1,15 @@
 package matcher
 
 import (
-	"fmt"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"github.com/olekukonko/errors"
 )
 
 const (
@@ -85,7 +86,7 @@ func (t *Tree) Insert(pattern string, route *alaye.Route) error {
 	}
 
 	if err := t.validatePattern(pattern); err != nil {
-		return fmt.Errorf("invalid route pattern %q: %w", pattern, err)
+		return errors.Newf("invalid route pattern %q: %w", pattern, err)
 	}
 
 	pattern = cleanPattern(pattern)
@@ -175,7 +176,7 @@ func (t *Tree) BulkInsert(routes map[string]*alaye.Route) []error {
 	var errs []error
 	for pattern, route := range routes {
 		if err := t.Insert(pattern, route); err != nil {
-			errs = append(errs, fmt.Errorf("pattern %q: %w", pattern, err))
+			errs = append(errs, errors.Newf("pattern %q: %w", pattern, err))
 		}
 	}
 	return errs
@@ -239,7 +240,7 @@ func (t *Tree) Rebuild(routes []alaye.Route) {
 // insertLocked assumes the caller holds t.mu (write lock).
 func (t *Tree) insertLocked(pattern string, route *alaye.Route) error {
 	if err := t.validatePattern(pattern); err != nil {
-		return fmt.Errorf("invalid route pattern %q: %w", pattern, err)
+		return errors.Newf("invalid route pattern %q: %w", pattern, err)
 	}
 
 	pattern = cleanPattern(pattern)
@@ -253,16 +254,16 @@ func (t *Tree) insertLocked(pattern string, route *alaye.Route) error {
 
 func (t *Tree) validatePattern(pattern string) error {
 	if pattern == Empty {
-		return fmt.Errorf("Empty pattern")
+		return woos.ErrEmptyPattern
 	}
 
 	// Catch-all rules.
 	starCount := strings.Count(pattern, SlashStar)
 	if starCount > 1 {
-		return fmt.Errorf("multiple catch-alls not allowed")
+		return woos.ErrMultipleCatchAllsMsg
 	}
 	if starCount == 1 && !strings.HasSuffix(pattern, SlashStar) {
-		return fmt.Errorf("catch-all must be at the end")
+		return woos.ErrCatchAllNotAtEndMsg
 	}
 
 	return t.validateParamNames(pattern)
@@ -274,10 +275,10 @@ func (t *Tree) validateParamNames(pattern string) error {
 
 	for _, name := range paramNames {
 		if name == Empty {
-			return fmt.Errorf("Empty parameter name")
+			return woos.ErrEmptyParamName
 		}
 		if seen[name] {
-			return fmt.Errorf("duplicate parameter name %q", name)
+			return errors.Newf("%w: %q", woos.ErrDuplicateParamName, name)
 		}
 		seen[name] = true
 	}
@@ -332,7 +333,7 @@ func (t *Tree) insertRecursive(parent *Node, path string, route *alaye.Route) er
 	// IMPORTANT: root route
 	if path == Slash {
 		if parent.route != nil {
-			return fmt.Errorf("duplicate route for pattern %q", Slash)
+			return errors.Newf("%w for pattern %q", woos.ErrDuplicateRoute, Slash)
 		}
 		parent.route = route
 		return nil
@@ -341,7 +342,7 @@ func (t *Tree) insertRecursive(parent *Node, path string, route *alaye.Route) er
 	// Pattern fully consumed: set the route here.
 	if path == Empty {
 		if parent.route != nil {
-			return fmt.Errorf("duplicate route for pattern %q", parent.prefix)
+			return errors.Newf("%w for pattern %q", woos.ErrDuplicateRoute, parent.prefix)
 		}
 		parent.route = route
 		return nil
@@ -349,7 +350,7 @@ func (t *Tree) insertRecursive(parent *Node, path string, route *alaye.Route) er
 
 	seg, rest, segKind, err := t.parseSegment(path)
 	if err != nil {
-		return fmt.Errorf("failed to parse segment in %q: %w", path, err)
+		return errors.Newf("failed to parse segment in %q: %w", path, err)
 	}
 
 	// Optimization flags.
@@ -376,7 +377,7 @@ func (t *Tree) insertRecursive(parent *Node, path string, route *alaye.Route) er
 	// Catch-all ends the pattern; route should attach to that node.
 	if segKind == kindCatchAll {
 		if child.route != nil {
-			return fmt.Errorf("duplicate route for pattern %q", seg)
+			return errors.Newf("%w for pattern %q", woos.ErrDuplicateRoute, seg)
 		}
 		child.route = route
 		return nil
@@ -468,7 +469,7 @@ func (t *Tree) createNode(seg string, k kind) (*Node, error) {
 		// seg is "/~expr"
 		expr := strings.TrimPrefix(seg, Slash+RegexPrefix)
 		if expr == Empty {
-			return nil, fmt.Errorf("Empty regex pattern in segment %q", seg)
+			return nil, errors.Newf("%w: %q", woos.ErrEmptyRegexPatternSegment, seg)
 		}
 
 		// Anchor the regex to the segment value (not including leading Slash).
@@ -476,7 +477,7 @@ func (t *Tree) createNode(seg string, k kind) (*Node, error) {
 
 		re, err := regexp.Compile(expr)
 		if err != nil {
-			return nil, fmt.Errorf("invalid regex %q: %w", expr, err)
+			return nil, errors.Newf("invalid regex %q: %w", expr, err)
 		}
 		n.re = re
 
@@ -486,20 +487,20 @@ func (t *Tree) createNode(seg string, k kind) (*Node, error) {
 		content = strings.TrimSuffix(content, TemplateClose)
 
 		if content == Empty {
-			return nil, fmt.Errorf("Empty template parameter in segment %q", seg)
+			return nil, errors.Newf("%w in segment %q", woos.ErrEmptyTemplateParam, seg)
 		}
 
 		parts := strings.SplitN(content, TemplateSep, 2)
 		n.paramKey = parts[0]
 		if n.paramKey == Empty {
-			return nil, fmt.Errorf("Empty parameter name in template %q", seg)
+			return nil, errors.Newf("%w in template %q", woos.ErrEmptyParamName, seg)
 		}
 
 		if len(parts) == 2 && parts[1] != Empty {
 			expr := ensureAnchors(parts[1])
 			re, err := regexp.Compile(expr)
 			if err != nil {
-				return nil, fmt.Errorf("invalid regex in template %q: %w", seg, err)
+				return nil, errors.Newf("invalid regex in template %q: %w", seg, err)
 			}
 			n.re = re
 		}
@@ -593,10 +594,10 @@ func (n *Node) findChild(seg string, k kind) *Node {
 
 func (t *Tree) parseSegment(path string) (seg, rest string, k kind, err error) {
 	if path == Empty {
-		return Empty, Empty, 0, fmt.Errorf("Empty path")
+		return Empty, Empty, 0, woos.ErrEmptyPath
 	}
 	if path[0] != SlashByte {
-		return Empty, Empty, 0, fmt.Errorf("path must start with %q", Slash)
+		return Empty, Empty, 0, errors.Newf("%w: path must start with %q", woos.ErrInvalidPath, Slash)
 	}
 
 	// Catch-all.
@@ -621,10 +622,10 @@ func (t *Tree) parseSegment(path string) (seg, rest string, k kind, err error) {
 	case strings.Contains(seg, TemplateOpen):
 		// Template must be exactly one "{...}" block in the segment.
 		if !strings.Contains(seg, TemplateClose) {
-			return Empty, Empty, 0, fmt.Errorf("unclosed template in segment %q", seg)
+			return Empty, Empty, 0, errors.Newf("%w in segment %q", woos.ErrUnclosedTemplate, seg)
 		}
 		if strings.Count(seg, TemplateOpen) != 1 || strings.Count(seg, TemplateClose) != 1 {
-			return Empty, Empty, 0, fmt.Errorf("invalid template braces in segment %q", seg)
+			return Empty, Empty, 0, errors.Newf("%w in segment %q", woos.ErrInvalidTemplateBraces, seg)
 		}
 		k = kindTemplate
 

@@ -21,3 +21,41 @@ var (
 	ErrNoBindAddr           = errors.New("no http/https/tcp bind addresses configured")
 	ErrLoggerRequired       = errors.New("logger is required")
 )
+
+// matcher
+
+var (
+	ErrEmptyPattern         = errors.New("empty pattern")
+	ErrMultipleCatchAllsMsg = errors.New("multiple catch-alls not allowed")
+	ErrCatchAllNotAtEndMsg  = errors.New("catch-all must be at the end")
+
+	ErrEmptyParamName           = errors.New("empty parameter name")
+	ErrDuplicateParamName       = errors.New("duplicate parameter name")
+	ErrDuplicateRoute           = errors.New("duplicate route")
+	ErrEmptyRegexPatternSegment = errors.New("empty regex pattern in segment")
+
+	ErrEmptyTemplateParam = errors.New("empty template parameter")
+	ErrInvalidParamRegex  = errors.New("invalid parameter regex")
+
+	ErrEmptyPath   = errors.New("empty path")
+	ErrInvalidPath = errors.New("invalid path")
+
+	ErrUnclosedTemplate      = errors.New("unclosed template")
+	ErrInvalidTemplateBraces = errors.New("invalid template braces")
+)
+
+// security
+
+var (
+	ErrInvalidPEMFile = errors.New("invalid PEM file")
+	ErrNotEd25519Key  = errors.New("key is not ed25519")
+)
+
+// token
+
+var (
+	ErrInvalidToken           = errors.New("invalid token")
+	ErrInvalidClaims          = errors.New("invalid claims")
+	ErrMissingTokenSubject    = errors.New("token missing subject")
+	ErrUnexpectedSiningMethod = errors.New("unexpected signing method")
+)
