@@ -21,13 +21,6 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-const (
-	letsEncryptProdDir    = "https://acme-v02.api.letsencrypt.org/directory"
-	letsEncryptStagingDir = "https://acme-staging-v02.api.letsencrypt.org/directory"
-	acmeProfileShortLived = "shortlived"
-	DefaultHTTPsPort      = 443
-)
-
 type Manager struct {
 	hostManager *discovery.Host
 	Global      *alaye.Global
@@ -136,7 +129,7 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 		acme := certmagic.ACMEIssuer{
 			Email:  email,
 			Agreed: true,
-			CA:     letsEncryptProdDir,
+			CA:     woos.LetsEncryptProdDir,
 		}
 		issuer := certmagic.NewACMEIssuer(cmProd, acme)
 		cmProd.Issuers = []certmagic.Issuer{issuer}
@@ -153,7 +146,7 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 		acme := certmagic.ACMEIssuer{
 			Email:                   email,
 			Agreed:                  true,
-			CA:                      letsEncryptProdDir,
+			CA:                      woos.LetsEncryptProdDir,
 			DisableTLSALPNChallenge: true,
 		}
 		issuer := certmagic.NewACMEIssuer(cmStaging, acme)
@@ -246,7 +239,7 @@ func (m *Manager) GetAutoLocalCertificate(host string) (*tls.Certificate, error)
 
 	// 4. Initialize installer with explicit directory
 	installer := NewInstaller(m.logger, woos.MakeFolder(m.Global.Storage.CertsDir, woos.CertDir))
-	installer.SetHosts([]string{host}, DefaultHTTPsPort)
+	installer.SetHosts([]string{host}, woos.DefaultHTTPSPort)
 
 	certFile, keyFile, err := installer.EnsureLocalhostCert()
 	if err != nil {
@@ -337,7 +330,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		if hcfg.TLS.LetsEncrypt.ShortLived {
 			for _, iss := range cm.Issuers {
 				if acmeIss, ok := iss.(*certmagic.ACMEIssuer); ok {
-					acmeIss.Profile = acmeProfileShortLived
+					acmeIss.Profile = woos.AcmeProfileShortLived
 				}
 			}
 		}

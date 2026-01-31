@@ -16,8 +16,16 @@ const (
 	Localhost     = "localhost"
 	LocalhostIPv4 = "127.0.0.1"
 
+	LocalhostExact              = "localhost"
+	LocalhostSuffixDotLocal     = ".local"
+	LocalhostSuffixDotLocalhost = ".localhost"
+	LocalhostSuffixDotTest      = ".test"
+
 	Http  = "http"
 	Https = "https"
+
+	SchemeHTTP  = "http@"
+	SchemeHTTPS = "https@"
 )
 
 // Standard Headers
@@ -40,6 +48,7 @@ const (
 )
 
 // Internal Context Keys
+
 const (
 	CtxPort = "local-port"
 	CtxIP   = "client-ip"
@@ -71,11 +80,14 @@ const User = "user"
 
 const (
 	DefaultConfigAddr          = "disabled"
-	DefaultHTTPSPort           = "443"
+	DefaultHTTPSPort           = 443
+	DefaultHTTPSPortInt        = "443"
 	H3KeyPrefix                = "h3@"
 	RouteCacheTTL              = int64(10 * time.Minute)
 	DefaultRateLimitTTL        = 30 * time.Minute
 	DefaultRateLimitMaxEntries = 100_000
+
+	PrivateBindingHost = "private-binding"
 
 	// Buckets
 	BucketACME           = "acme"
@@ -88,11 +100,10 @@ const (
 	AlpnH3  = "h3"
 	AlpnH2  = "h2"
 	AlpnH11 = "http/1.1"
-
-	PrivateBindingHost = "private-binding"
 )
 
 // Path & Template Constants
+
 const (
 	Empty               = ""
 	Slash               = "/"
@@ -107,6 +118,7 @@ const (
 )
 
 // Cache
+
 const CacheMax = int64(10_000)
 
 // Route Segment Kinds
@@ -137,13 +149,16 @@ const (
 	TokenAlg        = "alg"
 )
 
-// Setup / Logging
+// Setup / Logging / Buffer
 
 const (
-	DefaultFilePerm      = 0o666
+	DefaultFilePermFile  = 0o666 // for normal files
+	DefaultFilePermDir   = 0o755 // for directories / executables
 	DefaultFlushInterval = 700 * time.Millisecond
 	DefaultMaxBuffer     = 12_000
 	DefaultVictoriaBatch = 500
+
+	BufferSize = 32 * 1024 // generic buffer size
 
 	LogLevelDebug = "debug"
 	LogLevelInfo  = "info"
@@ -155,6 +170,7 @@ const (
 
 const (
 	MkCertBinary        = "mkcert"
+	MkCertWindowsExe    = "mkcert.exe"
 	MkCertRootCAFile    = "rootCA.pem"
 	MkCertDefaultCAName = "mkcert development CA"
 	MkCertCAROOTFlag    = "-CAROOT"
@@ -164,16 +180,57 @@ const (
 	EnvUser    = "USER"
 	EnvLogName = "LOGNAME"
 
-	// Common Paths
-	UnixUsrLocalBinMkCert    = "/usr/local/bin/mkcert"
-	UnixUsrBinMkCert         = "/usr/bin/mkcert"
-	UnixOptHomebrewBinMkCert = "/opt/homebrew/bin/mkcert"
-	UnixLocalBinMkCert       = ".local/bin/mkcert"
-	UnixGoBinMkCert          = "go/bin/mkcert"
+	// mkcert Common Paths
+	MkcertPathUsrLocalBin    = "/usr/local/bin/mkcert"
+	MkcertPathUsrBin         = "/usr/bin/mkcert"
+	MkcertPathOptHomebrewBin = "/opt/homebrew/bin/mkcert"
+	MkcertPathGoBin          = "go/bin/mkcert"
+	MkcertPathLocalBin       = ".local/bin/mkcert"
 
+	// Windows Home Subpaths
+	MkcertPathScoopShims = "scoop/shims/mkcert.exe"
+	MkcertPathChocoBin   = "choco/bin/mkcert.exe"
+
+	PowershellYes = "yes"
+
+	// mkcert SSL Paths
 	UnixSSLCertsMakeCertRoot = "/etc/ssl/certs/mkcert-root.pem"
 	UnixLocalCACertificates  = "/usr/local/share/ca-certificates/mkcert-root.crt"
 	UnixHomeMakeCertRoot     = ".local/share/mkcert/rootCA.pem"
 
-	PowershellYes = "yes"
+	// mkcert hints & errors
+	MkcertInstallHint = "mkcert was not found. Install and run 'mkcert -install'. macOS: 'brew install mkcert' then 'mkcert -install'"
+	MkcertNotFoundMsg = "mkcert is required to install the local CA root but was not found. macOS: 'brew install mkcert' then 'mkcert -install'"
+)
+
+// SAN / Certificates / Files
+
+const (
+	HomeDirPrefix        = "~/"
+	LocalhostWildcardSAN = "*.localhost"
+	IPv4LoopbackSAN      = "127.0.0.1"
+	IPv6LoopbackSAN      = "::1"
+
+	CertExtPEM = ".pem"
+	CertExtCRT = ".crt"
+	CertExtKEY = ".key"
+
+	CAMarkerFile    = ".mkcert_ca_installed"
+	FileModePrivate = 0600
+
+	IPv6BracketOpen  = "["
+	IPv6BracketClose = "]"
+	Colon            = ":"
+
+	LeftBracket  = "["
+	RightBracket = "]"
+	Dot          = "."
+)
+
+// LetsEncrypt
+
+const (
+	LetsEncryptProdDir    = "https://acme-v02.api.letsencrypt.org/directory"
+	LetsEncryptStagingDir = "https://acme-staging-v02.api.letsencrypt.org/directory"
+	AcmeProfileShortLived = "shortlived"
 )

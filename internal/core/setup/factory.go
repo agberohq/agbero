@@ -21,7 +21,7 @@ func Logging(cfg alaye.Logging, devMode bool) (*ll.Logger, func(), error) {
 
 	// 2. File Handler
 	if cfg.File != "" {
-		fp, err := os.OpenFile(cfg.File, os.O_APPEND|os.O_CREATE|os.O_WRONLY, woos.DefaultFilePerm)
+		fp, err := os.OpenFile(cfg.File, os.O_APPEND|os.O_CREATE|os.O_WRONLY, woos.DefaultFilePermFile)
 		if err != nil {
 			return nil, nil, err
 		}

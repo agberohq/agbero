@@ -27,11 +27,11 @@ func IsMkcertInstalled() bool {
 	// 2) Common locations
 	home, _ := os.UserHomeDir()
 	commonPaths := []string{
-		woos.UnixUsrLocalBinMkCert,
-		woos.UnixUsrBinMkCert,
-		woos.UnixOptHomebrewBinMkCert,
-		filepath.Join(home, woos.UnixGoBinMkCert),
-		filepath.Join(home, woos.UnixLocalBinMkCert),
+		woos.MkcertPathUsrLocalBin,
+		woos.MkcertPathUsrBin,
+		woos.MkcertPathOptHomebrewBin,
+		filepath.Join(home, woos.MkcertPathGoBin),
+		filepath.Join(home, woos.MkcertPathLocalBin),
 	}
 
 	if runtime.GOOS == "windows" {

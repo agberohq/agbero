@@ -17,47 +17,6 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-const (
-	HomeDirPrefix        = "~/"
-	Localhost            = "localhost"
-	LocalhostWildcardSAN = "*.localhost"
-	IPv4LoopbackSAN      = "127.0.0.1"
-	IPv6LoopbackSAN      = "::1"
-
-	CertExtPEM = ".pem"
-	CertExtCRT = ".crt"
-	CertExtKEY = ".key"
-
-	CAMarkerFile    = ".mkcert_ca_installed"
-	FileModePrivate = 0600
-
-	IPv6BracketOpen  = "["
-	IPv6BracketClose = "]"
-	Colon            = ":"
-
-	MkcertExecutable = "mkcert"
-	MkcertWindowsExe = "mkcert.exe"
-
-	// Common Unix paths
-	MkcertPathUsrLocalBin    = "/usr/local/bin/mkcert"
-	MkcertPathUsrBin         = "/usr/bin/mkcert"
-	MkcertPathOptHomebrewBin = "/opt/homebrew/bin/mkcert"
-
-	// Home subpaths
-	MkcertPathGoBin    = "go/bin/mkcert"
-	MkcertPathLocalBin = ".local/bin/mkcert"
-
-	// Windows home subpaths
-	MkcertPathScoopShims = "scoop/shims/mkcert.exe"
-	MkcertPathChocoBin   = "choco/bin/mkcert.exe"
-)
-
-const MkcertInstallHint = "mkcert was not found. Install and run 'mkcert -install'. " +
-	"macOS: 'brew install mkcert' then 'mkcert -install'"
-
-const MkcertNotFoundMsg = "mkcert is required to install the local CA root but was not found. " +
-	"macOS: 'brew install mkcert' then 'mkcert -install'"
-
 // mkcert-only design (dev-friendly, deterministic):
 // - Always use mkcert for BOTH CA install and leaf cert generation.
 // - Never download mkcert from GitHub.
@@ -89,7 +48,7 @@ func (ci *Installer) SetStorageDir(dir woos.Folder) error {
 		return nil
 	}
 
-	if strings.HasPrefix(dir.String(), HomeDirPrefix) {
+	if strings.HasPrefix(dir.String(), woos.HomeDirPrefix) {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return errors.Newf("failed to get home directory: %w", err)
@@ -133,10 +92,10 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 
 	// Default local SANs (sane dev defaults)
 	defaults := []string{
-		Localhost,
-		LocalhostWildcardSAN,
-		IPv4LoopbackSAN,
-		IPv6LoopbackSAN,
+		woos.Localhost,
+		woos.LocalhostWildcardSAN,
+		woos.IPv4LoopbackSAN,
+		woos.IPv6LoopbackSAN,
 	}
 
 	// NEW: Add LAN IPs so https://192.168.x.x works
@@ -172,7 +131,7 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 	// mkcert is REQUIRED
 	mkcertPath, ok := findMkcertPath()
 	if !ok {
-		return "", "", errors.Newf("%w: %s", woos.ErrMkCertRequired, MkcertInstallHint)
+		return "", "", errors.Newf("%w: %s", woos.ErrMkCertRequired, woos.MkcertInstallHint)
 	}
 
 	// Sanity: mkcert must be able to resolve its default CAROOT
@@ -211,7 +170,7 @@ func (ci *Installer) InstallCARootIfNeeded() error {
 
 	mkcertPath, ok := findMkcertPath()
 	if !ok {
-		return errors.New(MkcertNotFoundMsg)
+		return errors.New(woos.MkcertNotFoundMsg)
 	}
 
 	if ci.logger != nil {
@@ -274,9 +233,9 @@ func (ci *Installer) ListCertificates() ([]string, error) {
 
 	var certs []string
 	for _, name := range names {
-		if strings.HasSuffix(name, CertExtPEM) ||
-			strings.HasSuffix(name, CertExtCRT) ||
-			strings.HasSuffix(name, CertExtKEY) {
+		if strings.HasSuffix(name, woos.CertExtPEM) ||
+			strings.HasSuffix(name, woos.CertExtCRT) ||
+			strings.HasSuffix(name, woos.CertExtKEY) {
 			certs = append(certs, name)
 		}
 	}
@@ -376,18 +335,18 @@ func (ci *Installer) validateCertificate(certFile, keyFile string) error {
 
 func (ci *Installer) certPrefix() string {
 	if len(ci.certHosts) == 0 {
-		return Localhost
+		return woos.Localhost
 	}
 
 	raw := strings.TrimSpace(ci.certHosts[0])
 	if raw == "" {
-		return Localhost
+		return woos.Localhost
 	}
 
 	// Use the same safe normalization used by validation.
 	host, ok := normalizeHostForVerify(raw)
 	if !ok || host == "" {
-		return Localhost
+		return woos.Localhost
 	}
 
 	// If it's an IP, just use it.
@@ -399,7 +358,7 @@ func (ci *Installer) certPrefix() string {
 	if len(parts) > 0 && parts[0] != "" && parts[0] != "*" {
 		return parts[0]
 	}
-	return Localhost
+	return woos.Localhost
 }
 
 func (ci *Installer) purgeStaleLeafCerts() {
@@ -449,7 +408,7 @@ func (ci *Installer) caMarkerPath() string {
 	if !ci.CertDir.IsSet() {
 		return ""
 	}
-	return filepath.Join(ci.CertDir.Path(), CAMarkerFile)
+	return filepath.Join(ci.CertDir.Path(), woos.CAMarkerFile)
 }
 
 func (ci *Installer) writeCAMarker() error {
@@ -458,7 +417,7 @@ func (ci *Installer) writeCAMarker() error {
 		return nil
 	}
 	// Keep it simple; contents not important.
-	return os.WriteFile(m, []byte(time.Now().UTC().Format(time.RFC3339)), FileModePrivate)
+	return os.WriteFile(m, []byte(time.Now().UTC().Format(time.RFC3339)), woos.FileModePrivate)
 }
 
 // normalizeHostForVerify returns a hostname/IP suitable for x509 hostname verification.
@@ -475,19 +434,19 @@ func normalizeHostForVerify(raw string) (string, bool) {
 	}
 
 	// Bracketed IPv6 with port: [::1]:443
-	if strings.HasPrefix(s, IPv6BracketOpen) && strings.Contains(s, IPv6BracketClose) {
+	if strings.HasPrefix(s, woos.IPv6BracketOpen) && strings.Contains(s, woos.IPv6BracketClose) {
 		if h, _, err := net.SplitHostPort(s); err == nil && h != "" {
 			return h, true
 		}
 		// If SplitHostPort fails, fall through to return cleaned string.
-		s = strings.TrimPrefix(s, IPv6BracketOpen)
-		s = strings.TrimSuffix(s, IPv6BracketClose)
+		s = strings.TrimPrefix(s, woos.IPv6BracketOpen)
+		s = strings.TrimSuffix(s, woos.IPv6BracketClose)
 		return s, s != ""
 	}
 
 	// If it looks like host:port (single colon and port is numeric), split it.
 	// Avoid breaking raw IPv6 like "::1" or "fe80::1".
-	if strings.Count(s, Colon) == 1 {
+	if strings.Count(s, woos.Colon) == 1 {
 		if h, p, err := net.SplitHostPort(s); err == nil && h != "" && p != "" {
 			return h, true
 		}
@@ -507,17 +466,17 @@ func findMkcertPath() (string, bool) {
 
 	home, _ := os.UserHomeDir()
 	common := []string{
-		MkcertPathUsrLocalBin,
-		MkcertPathUsrBin,
-		MkcertPathOptHomebrewBin,
-		filepath.Join(home, MkcertPathGoBin),
-		filepath.Join(home, MkcertPathLocalBin),
+		woos.MkcertPathUsrLocalBin,
+		woos.MkcertPathUsrBin,
+		woos.MkcertPathOptHomebrewBin,
+		filepath.Join(home, woos.MkcertPathGoBin),
+		filepath.Join(home, woos.MkcertPathLocalBin),
 	}
 
 	if runtime.GOOS == "windows" {
 		common = append(common,
-			filepath.Join(home, MkcertPathScoopShims),
-			filepath.Join(home, MkcertPathChocoBin),
+			filepath.Join(home, woos.MkcertPathScoopShims),
+			filepath.Join(home, woos.MkcertPathChocoBin),
 		)
 	}
 

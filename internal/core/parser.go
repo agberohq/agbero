@@ -10,10 +10,6 @@ import (
 	"github.com/olekukonko/errors"
 )
 
-const (
-	DefaultFilePerm = 0o755
-)
-
 type Parser struct {
 	path string
 }
@@ -66,7 +62,7 @@ func ParseHostConfig(path string) (*alaye.Host, error) {
 
 // EnsureHostsDir creates the hosts directory if it doesn't exist
 func EnsureHostsDir(hostsDir string) error {
-	return os.MkdirAll(hostsDir, DefaultFilePerm)
+	return os.MkdirAll(hostsDir, woos.DefaultFilePermDir)
 }
 
 // ConfigPath returns the absolute path to a config file
