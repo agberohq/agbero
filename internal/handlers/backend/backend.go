@@ -2,7 +2,6 @@ package backend
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -16,6 +15,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 )
 
@@ -45,16 +45,16 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 	}
 
 	if u.Scheme == "" {
-		return nil, errors.New("backend address is missing scheme (http or https)")
+		return nil, errors.Newf("%w :(http or https)", woos.ErrBackendMissingScheme)
 	}
 	if u.Host == "" {
-		return nil, errors.New("backend address is missing host")
+		return nil, woos.ErrBackendMissingHost
 	}
 	switch u.Scheme {
-	case "http", "https":
+	case woos.Http, woos.Https:
 		// ok
 	default:
-		return nil, fmt.Errorf("unsupported backend scheme: %q", u.Scheme)
+		return nil, fmt.Errorf("%w: %q", woos.ErrBackendBadScheme, u.Scheme)
 	}
 
 	cond, err := NewConditions(cfg.Conditions)
@@ -76,7 +76,7 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 	b.Alive.Store(true)
 	b.lastRecovery.Store(now.UnixNano())
 
-	cbThreshold := 5
+	cbThreshold := woos.DefaultCircuitBreakerThreshold
 	if route.CircuitBreaker != nil && route.CircuitBreaker.Threshold > 0 {
 		cbThreshold = route.CircuitBreaker.Threshold
 	}
@@ -121,17 +121,17 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 			proto = woos.Https
 		}
 
-		req.Header.Set("X-Forwarded-Host", originalHost)
-		req.Header.Set("X-Forwarded-Proto", proto)
-		req.Header.Set("X-Forwarded-Server", woos.Name)
-		req.Header.Add("Via", fmt.Sprintf("1.1 %s", woos.Name))
+		req.Header.Set(woos.HeaderXForwardedHost, originalHost)
+		req.Header.Set(woos.HeaderXForwardedProto, proto)
+		req.Header.Set(woos.HeaderXForwardedServer, woos.Name)
+		req.Header.Add(woos.HeaderVia, fmt.Sprintf("1.1 %s", woos.Name))
 
-		req.Header.Del("Keep-Alive")
-		req.Header.Del("Proxy-Authenticate")
-		req.Header.Del("Proxy-Authorization")
-		req.Header.Del("Te")
-		req.Header.Del("Trailers")
-		req.Header.Del("Transfer-Encoding")
+		req.Header.Del(woos.HeaderKeepAlive)
+		req.Header.Del(woos.HeaderProxyAuthenticate)
+		req.Header.Del(woos.HeaderProxyAuthorization)
+		req.Header.Del(woos.HeaderTE)
+		req.Header.Del(woos.HeaderTrailers)
+		req.Header.Del(woos.HeaderTransferEncoding)
 	}
 
 	b.Proxy = rp
@@ -160,17 +160,17 @@ func (b *Backend) Stop() {
 }
 
 func (b *Backend) healthCheckLoop() {
-	interval := 10 * time.Second
+	interval := woos.DefaultHealthCheckInterval
 	if b.hcConfig.Interval > 0 {
 		interval = b.hcConfig.Interval
 	}
 
-	timeout := 5 * time.Second
+	timeout := woos.DefaultHealthCheckTimeout
 	if b.hcConfig.Timeout > 0 {
 		timeout = b.hcConfig.Timeout
 	}
 
-	threshold := 3
+	threshold := woos.DefaultHealthCheckThreshold
 	if b.hcConfig.Threshold > 0 {
 		threshold = b.hcConfig.Threshold
 	}
@@ -178,7 +178,7 @@ func (b *Backend) healthCheckLoop() {
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			MaxIdleConnsPerHost: 2,
+			MaxIdleConnsPerHost: woos.DefaultMaxIdleConnsPerHost,
 		},
 	}
 
@@ -187,7 +187,7 @@ func (b *Backend) healthCheckLoop() {
 	).String()
 
 	failures := 0
-	jitter := time.Duration(rand.Int63n(int64(interval / 2)))
+	jitter := time.Duration(rand.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
 	timer := time.NewTimer(jitter)
 	defer timer.Stop()
 
@@ -197,7 +197,7 @@ func (b *Backend) healthCheckLoop() {
 			return
 		case <-timer.C:
 			resp, err := client.Get(targetURL)
-			healthy := err == nil && resp != nil && resp.StatusCode >= 200 && resp.StatusCode < 500
+			healthy := err == nil && resp != nil && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusInternalServerError
 
 			if resp != nil && resp.Body != nil {
 				_, _ = io.Copy(io.Discard, resp.Body)
@@ -218,7 +218,7 @@ func (b *Backend) healthCheckLoop() {
 					b.Alive.Store(false)
 				}
 			}
-			jitter = time.Duration(rand.Int63n(int64(interval / 2)))
+			jitter = time.Duration(rand.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
 			timer.Reset(interval + jitter)
 		}
 	}

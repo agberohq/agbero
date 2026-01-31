@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
@@ -34,17 +35,17 @@ func newTCPBalancer(cfg alaye.TCPRoute) *TCPBalancer {
 		})
 	}
 
-	strat := stRoundRobin
+	strat := woos.StRoundRobin
 	switch strings.ToLower(cfg.Strategy) {
 	case "least_conn":
-		strat = stLeastConn
+		strat = woos.StLeastConn
 	case "random":
-		strat = stRandom
+		strat = woos.StRandom
 	}
 
 	return &TCPBalancer{
 		backends: backends,
-		strategy: strat,
+		strategy: int(strat),
 	}
 }
 
@@ -57,9 +58,9 @@ func (tb *TCPBalancer) Pick() *TCPBackend {
 	}
 
 	switch tb.strategy {
-	case stLeastConn:
+	case int(woos.StLeastConn):
 		return tb.pickLeastConn()
-	case stRandom:
+	case int(woos.StRandom):
 		return tb.pickRandom()
 	default:
 		return tb.pickRoundRobin()

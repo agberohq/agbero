@@ -13,16 +13,8 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/backend"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
-)
-
-const (
-	stRoundRobin uint8 = iota
-	stIPHash
-	stURLHash
-	stLeastConn
-	stRandom
-	stWeightedLeastConn
 )
 
 var rngPool = sync.Pool{
@@ -144,15 +136,15 @@ func (lb *LoadBalancer) pickWithList(list []*backend.Backend, w *weightWheel, r 
 	}
 
 	switch lb.strategy {
-	case stIPHash:
+	case woos.StIPHash:
 		return lb.pickIPHash(list, w, r)
-	case stURLHash:
+	case woos.StURLHash:
 		return lb.pickURLHash(list, w, r)
-	case stLeastConn:
+	case woos.StLeastConn:
 		return lb.pickLeastConn(list)
-	case stRandom:
+	case woos.StRandom:
 		return lb.pickRandom(list, w)
-	case stWeightedLeastConn:
+	case woos.StWeightedLeastConn:
 		return lb.pickWeightedLeastConn(list)
 	default:
 		return lb.pickRoundRobin(list, w)
@@ -226,7 +218,7 @@ func (lb *LoadBalancer) pickIPHash(list []*backend.Backend, w *weightWheel, r *h
 func (lb *LoadBalancer) pickURLHash(list []*backend.Backend, w *weightWheel, r *http.Request) *backend.Backend {
 	key := r.URL.Path
 	if key == "" {
-		key = "/"
+		key = woos.Slash
 	}
 	return lb.hashPick(list, w, key)
 }
@@ -318,17 +310,17 @@ func (lb *LoadBalancer) setStrategy(s string) {
 	s = strings.ToLower(strings.TrimSpace(s))
 	switch s {
 	case strings.ToLower(alaye.StrategyIPHash):
-		lb.strategy = stIPHash
+		lb.strategy = woos.StIPHash
 	case strings.ToLower(alaye.StrategyURLHash):
-		lb.strategy = stURLHash
+		lb.strategy = woos.StURLHash
 	case strings.ToLower(alaye.StrategyLeastConn):
-		lb.strategy = stLeastConn
+		lb.strategy = woos.StLeastConn
 	case strings.ToLower(alaye.StrategyRandom):
-		lb.strategy = stRandom
+		lb.strategy = woos.StRandom
 	case strings.ToLower(alaye.StrategyWeightedLeastConn):
-		lb.strategy = stWeightedLeastConn
+		lb.strategy = woos.StWeightedLeastConn
 	default:
-		lb.strategy = stRoundRobin
+		lb.strategy = woos.StRoundRobin
 	}
 }
 

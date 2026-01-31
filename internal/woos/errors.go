@@ -120,3 +120,24 @@ var (
 	ErrEmptyToken       = errors.New("empty token received from auth endpoint")
 	ErrInvalidSecretKey = errors.New("gossip secret key must be 16, 24, or 32 bytes")
 )
+
+// backend
+var (
+	ErrBackendMissingScheme = errors.New("backend address is missing scheme")
+	ErrBackendMissingHost   = errors.New("backend address is missing host")
+	ErrBackendBadScheme     = errors.New("unsupported backend scheme")
+	ErrInvalidSrcCond       = errors.New("invalid source ip/cidr condition")
+)
+
+// tcp
+
+var (
+	ErrShortData      = errors.New("short data")
+	ErrNotTLS         = errors.New("not tls")
+	ErrNotClientHello = errors.New("not client hello")
+	ErrShort          = errors.New("short data during parsing")
+	ErrShortSNI       = errors.New("short sni extension")
+	ErrShortSNIList   = errors.New("short sni list")
+	ErrShortName      = errors.New("short hostname")
+	ErrShortExt       = errors.New("short ext")
+)

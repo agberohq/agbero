@@ -28,17 +28,30 @@ const (
 	SchemeHTTPS = "https@"
 
 	HCLSuffix = ".hcl"
+	TCP       = "tcp"
 )
 
 // Standard Headers
 
 const (
-	HeaderContentType     = "Content-Type"
-	HeaderContentEnc      = "Content-Encoding"
-	HeaderXForwardedFor   = "X-Forwarded-For"
-	HeaderXForwardedProto = "X-Forwarded-Proto"
-	HeaderXRealIP         = "X-Real-IP"
-	HeaderServer          = "Server"
+	HeaderContentType   = "Content-Type"
+	HeaderContentEnc    = "Content-Encoding"
+	HeaderXForwardedFor = "X-Forwarded-For"
+	HeaderXRealIP       = "X-Real-IP"
+	HeaderServer        = "Server"
+
+	HeaderXForwardedHost   = "X-Forwarded-Host"
+	HeaderXForwardedProto  = "X-Forwarded-Proto"
+	HeaderXForwardedServer = "X-Forwarded-Server"
+	HeaderVia              = "Via"
+
+	// Hop-by-hop Headers (RFC 7230 §6.1)
+	HeaderKeepAlive          = "Keep-Alive"
+	HeaderProxyAuthenticate  = "Proxy-Authenticate"
+	HeaderProxyAuthorization = "Proxy-Authorization"
+	HeaderTE                 = "Te"
+	HeaderTrailers           = "Trailers"
+	HeaderTransferEncoding   = "Transfer-Encoding"
 )
 
 // MIME Types
@@ -248,6 +261,56 @@ const (
 	DefaultPushPullInterval = 60 * time.Second
 	DefaultAuthTimeout      = 2 * time.Second
 
-	// Memberlist name prefix
 	MemberlistNamePrefix = "agbero-"
+
+	IgnoreStreamMsg1 = "Stream connection"
+	IgnoreStreamMsg2 = "Initiating push/pull sync"
+
+	LogDebug = "[DEBUG]"
+	LogWarn  = "[WARN]"
+	LogErr   = "[ERR]"
+)
+
+// backend
+
+const (
+	DefaultCircuitBreakerThreshold = 5
+	DefaultMaxIdleConnsPerHost     = 2
+	HealthCheckJitterFraction      = 2 // 50% jitter
+
+	DefaultHealthCheckInterval  = 10 * time.Second
+	DefaultHealthCheckTimeout   = 5 * time.Second
+	DefaultHealthCheckThreshold = 3
+)
+
+// lb
+const (
+	StRoundRobin uint8 = iota
+	StIPHash
+	StURLHash
+	StLeastConn
+	StRandom
+	StWeightedLeastConn
+)
+
+// tcp
+
+const (
+	AcceptLoopDeadline = 500 * time.Millisecond
+	PeekBufferSize     = 4096
+	InitialReadTimeout = 50 * time.Millisecond
+	BackendDialTimeout = 5 * time.Second
+
+	RecordTypeHandshake      = 0x16
+	HandshakeTypeClientHello = 0x01
+	RecordHeaderLen          = 5
+	HandshakeTypeLen         = 1
+	HandshakeLength          = 3
+	VersionLen               = 2
+	RandomLen                = 32
+
+	ExtTypeServerName = 0x0000
+	NameTypeHostName  = 0x00
+
+	MinClientHelloLen = 6
 )
