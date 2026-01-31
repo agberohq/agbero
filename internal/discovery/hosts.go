@@ -75,10 +75,10 @@ func NewHostFolder(hostsDir woos.Folder, opts ...Option) *Host {
 func normalizeHostPath(host, path string) (string, string) {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if path == "" {
-		path = "/"
+		path = woos.Slash
 	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
+	if !strings.HasPrefix(path, woos.Slash) {
+		path = woos.Slash + path
 	}
 	return host, path
 }
@@ -183,7 +183,7 @@ func (hm *Host) RouteExists(host, path string) bool {
 	for _, r := range cfg.Routes {
 		p := r.Path
 		if p == "" {
-			p = "/"
+			p = woos.Slash
 		}
 		if p == path {
 			return true
@@ -271,7 +271,7 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 	}
 
 	name := strings.ToLower(event.Name)
-	if !strings.HasSuffix(name, ".hcl") {
+	if !strings.HasSuffix(name, woos.HCLSuffix) {
 		return
 	}
 
@@ -395,7 +395,7 @@ func (hm *Host) loadAllLocked() error {
 		}
 
 		name := d.Name()
-		if !strings.HasSuffix(strings.ToLower(name), ".hcl") {
+		if !strings.HasSuffix(strings.ToLower(name), woos.HCLSuffix) {
 			return nil
 		}
 
@@ -416,8 +416,8 @@ func (hm *Host) loadAllLocked() error {
 		if relErr != nil {
 			rel = p
 		}
-		hostID := strings.TrimSuffix(rel, ".hcl")
-		hostID = strings.ReplaceAll(hostID, string(filepath.Separator), "/")
+		hostID := strings.TrimSuffix(rel, woos.HCLSuffix)
+		hostID = strings.ReplaceAll(hostID, string(filepath.Separator), woos.Slash)
 
 		nextHosts[hostID] = cfg
 		loadedFiles = append(loadedFiles, rel)
@@ -536,8 +536,8 @@ func (hm *Host) rebuildLookupLocked() {
 			for i := range combined.Routes {
 				p := combined.Routes[i].Path
 				if p == "" {
-					p = "/"
-					combined.Routes[i].Path = "/"
+					p = woos.Slash
+					combined.Routes[i].Path = woos.Slash
 				}
 				byPath[p] = &combined.Routes[i]
 			}
@@ -546,8 +546,8 @@ func (hm *Host) rebuildLookupLocked() {
 				r := dynRoutes[i]
 				p := r.Path
 				if p == "" {
-					p = "/"
-					r.Path = "/"
+					p = woos.Slash
+					r.Path = woos.Slash
 				}
 
 				if ex := byPath[p]; ex != nil {
@@ -577,7 +577,7 @@ func (hm *Host) rebuildLookupLocked() {
 		for i := range cfg.Routes {
 			rt := &cfg.Routes[i]
 			if rt.Path == "" {
-				rt.Path = "/"
+				rt.Path = woos.Slash
 			}
 			_ = tr.Insert(rt.Path, rt)
 		}

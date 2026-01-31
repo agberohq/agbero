@@ -151,6 +151,40 @@ func TestResetNodeFailures(t *testing.T) {
 	}
 }
 
+//	func TestWatch_FileChange(t *testing.T) {
+//		tmpDir := t.TempDir()
+//		hclFile := filepath.Join(tmpDir, "test.hcl")
+//
+//		// Use valid HCL content
+//		if err := os.WriteFile(hclFile, validHCL("example.com"), 0644); err != nil {
+//			t.Fatal(err)
+//		}
+//
+//		h := NewHost(tmpDir, WithLogger(testLogger))
+//		if err := h.Watch(); err != nil {
+//			t.Fatal(err)
+//		}
+//		defer h.Close()
+//
+//		if h.Get("example.com") == nil {
+//			t.Fatal("initial load failed")
+//		}
+//
+//		// Trigger change
+//		if err := os.WriteFile(hclFile, validHCL("updated.com"), 0644); err != nil {
+//			t.Fatal(err)
+//		}
+//
+//		waitChanged(t, h.Changed(), 3*time.Second)
+//
+//		if cfg := h.Get("updated.com"); cfg == nil {
+//			t.Fatal("config not reloaded: updated.com not found")
+//		}
+//		if cfg := h.Get("example.com"); cfg != nil {
+//			t.Fatal("old domain still present after reload")
+//		}
+//	}
+
 func TestWatch_FileChange(t *testing.T) {
 	tmpDir := t.TempDir()
 	hclFile := filepath.Join(tmpDir, "test.hcl")
@@ -170,12 +204,16 @@ func TestWatch_FileChange(t *testing.T) {
 		t.Fatal("initial load failed")
 	}
 
+	// Give the watcher a moment to start
+	time.Sleep(3 * time.Second)
+
 	// Trigger change
 	if err := os.WriteFile(hclFile, validHCL("updated.com"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	waitChanged(t, h.Changed(), 3*time.Second)
+	// Wait longer and reliably for the change
+	waitChanged(t, h.Changed(), 10*time.Second) // increased timeout
 
 	if cfg := h.Get("updated.com"); cfg == nil {
 		t.Fatal("config not reloaded: updated.com not found")

@@ -102,7 +102,7 @@ var (
 	ErrMkCertRequired        = errors.New("mkcert is required for development TLS")
 	ErrMkCertInstalledFailed = errors.New("mkcert -install failed")
 	ErrMkCertFailed          = errors.New("mkcert failed")
-	
+
 	ErrReadCert       = errors.New("read cert")
 	ErrReadKey        = errors.New("read key")
 	ErrNoCertificate  = errors.New("no certificate in key pair")
@@ -112,4 +112,11 @@ var (
 	ErrNotYetValid    = errors.New("not yet valid")
 	ErrVerifyHost     = errors.New("verify host")
 	ErrVerifyWildcard = errors.New("verify wildcard via")
+)
+
+// gossip
+var (
+	ErrAuthEndpoint     = errors.New("auth endpoint returned non-OK status")
+	ErrEmptyToken       = errors.New("empty token received from auth endpoint")
+	ErrInvalidSecretKey = errors.New("gossip secret key must be 16, 24, or 32 bytes")
 )

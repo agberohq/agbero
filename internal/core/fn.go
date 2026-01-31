@@ -35,8 +35,8 @@ func NormalizeSubject(s string) string {
 		s = h
 	}
 
-	s = strings.TrimPrefix(s, woos.LeftBracket)
-	s = strings.TrimSuffix(s, woos.RightBracket)
+	s = strings.TrimPrefix(s, woos.IPv6BracketOpen)
+	s = strings.TrimSuffix(s, woos.IPv6BracketClose)
 
 	return s
 }

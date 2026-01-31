@@ -26,6 +26,8 @@ const (
 
 	SchemeHTTP  = "http@"
 	SchemeHTTPS = "https@"
+
+	HCLSuffix = ".hcl"
 )
 
 // Standard Headers
@@ -221,10 +223,7 @@ const (
 	IPv6BracketOpen  = "["
 	IPv6BracketClose = "]"
 	Colon            = ":"
-
-	LeftBracket  = "["
-	RightBracket = "]"
-	Dot          = "."
+	Dot              = "."
 )
 
 // LetsEncrypt
@@ -233,4 +232,22 @@ const (
 	LetsEncryptProdDir    = "https://acme-v02.api.letsencrypt.org/directory"
 	LetsEncryptStagingDir = "https://acme-staging-v02.api.letsencrypt.org/directory"
 	AcmeProfileShortLived = "shortlived"
+)
+
+// woos
+const (
+	DefaultAuthPath = "/.well-known/agbero"
+	URLFormat       = "http://%s:%d%s" // scheme + host + port + path
+	URLPrefixFormat = "http://%s:%d"   // scheme + host + port
+)
+
+// gosip
+
+const (
+	DefaultGossipPort       = 7946
+	DefaultPushPullInterval = 60 * time.Second
+	DefaultAuthTimeout      = 2 * time.Second
+
+	// Memberlist name prefix
+	MemberlistNamePrefix = "agbero-"
 )
