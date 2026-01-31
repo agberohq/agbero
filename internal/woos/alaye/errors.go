@@ -127,8 +127,10 @@ var (
 	ErrInvalidSeed        = errors.New("seed must be a valid host:port")
 	ErrInvalidSeedFormat  = errors.New("invalid seed format")
 	ErrPrivateKeyAbsolute = errors.New("private_key_file must be an absolute path")
+)
 
-	// global
-
+// global
+var (
+	ErrInvalidProxy           = errors.New("trusted proxy must be a valid CIDR or IP address")
 	ErrNegativeMaxHeaderBytes = errors.New("max_header_bytes cannot be negative")
 )
