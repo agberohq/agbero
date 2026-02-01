@@ -777,17 +777,21 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alaye.Route) {
-	// Clone request to ensure thread safety when modifying path/URL
-	reqOut := *r
+	// 1. Save Original Path to Context
+	// We do this BEFORE modifying the path so the Web Handler knows the browser's actual URL
+	ctx := context.WithValue(r.Context(), woos.CtxOriginalPath, r.URL.Path)
+
+	// 2. Create a shallow copy of the request with the new context
+	// reqOut is type *http.Request
+	reqOut := r.WithContext(ctx)
+
+	// 3. Deep copy URL to ensure thread safety when modifying path
 	if r.URL != nil {
 		u := *r.URL
 		reqOut.URL = &u
 	}
 
-	ctx := context.WithValue(reqOut.Context(), woos.CtxOriginalPath, reqOut.URL.Path)
-	reqOut = reqOut.WithContext(ctx)
-
-	// 1. Strip Prefixes logic
+	// 4. Strip Prefixes logic
 	if len(route.StripPrefixes) > 0 {
 		for _, prefix := range route.StripPrefixes {
 			if prefix == "" {
@@ -806,25 +810,22 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 		}
 	}
 
-	// 2. Get the core handler (Reverse Proxy or File Server)
-	// This is cached by the Route Key in the global RouteCache
+	// 5. Get the core handler (Reverse Proxy or File Server)
 	var handler http.Handler = s.getOrBuildRouteHandler(route)
 
-	// 3. Apply WASM Middleware (if configured)
+	// 6. Apply WASM Middleware (if configured)
 	if route.Wasm != nil {
 		wm, err := s.getWasmManager(route.Wasm)
 		if err != nil {
 			s.logger.Fields("err", err, "module", route.Wasm.Module).Error("wasm: failed to load middleware")
-			// Fail open or closed? Usually closed for middleware errors.
 			http.Error(w, "Internal Server Error (WASM)", http.StatusInternalServerError)
 			return
 		}
-		// Wrap the core handler with the WASM handler
 		handler = wm.Handler(handler)
 	}
 
-	// 4. Execute
-	handler.ServeHTTP(w, &reqOut)
+	// 7. Execute
+	handler.ServeHTTP(w, reqOut)
 }
 
 func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.Route {

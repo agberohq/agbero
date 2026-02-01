@@ -1,4 +1,4 @@
-package metrics
+package uptime
 
 import (
 	"encoding/json"
@@ -21,8 +21,8 @@ type SystemStats struct {
 	MemRSS       uint64 `json:"mem_rss"`   // Approximate RSS
 }
 
-// Metrics returns a JSON snapshot of the proxy state
-func Metrics(hm *discovery.Host) http.HandlerFunc {
+// Uptime returns a JSON snapshot of the proxy state
+func Uptime(hm *discovery.Host) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		snapshot := collectMetrics(hm)
 

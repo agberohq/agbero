@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/admin/ui"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/metrics"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/uptime"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/golang-jwt/jwt/v5"
@@ -60,8 +60,8 @@ func (s *Server) startAdminServer() {
 		return h
 	}
 
-	// Metrics
-	mux.Handle("/uptime", protect(metrics.Metrics(s.hostManager)))
+	// Uptime
+	mux.Handle("/uptime", protect(uptime.Uptime(s.hostManager)))
 
 	mux.Handle("/metrics", protect(promhttp.Handler().ServeHTTP))
 

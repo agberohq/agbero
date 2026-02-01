@@ -163,6 +163,15 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 0. Resolve the "Browser Path" (what the user sees in the address bar)
+	// This is critical when strip_prefixes is used.
+	browserPath := r.URL.Path
+	if v := r.Context().Value(woos.CtxOriginalPath); v != nil {
+		if s, ok := v.(string); ok {
+			browserPath = s
+		}
+	}
+
 	// 1. Resolve Root Listing (Securely)
 	rootPath := h.route.Web.Root.String()
 	if rootPath == "" {
@@ -178,21 +187,19 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer root.Close()
 
-	// 2. Resolve Request Path
+	// 2. Resolve Request Path (Relative to Root)
+	// r.URL.Path here is already stripped by handleRoute if applicable
 	reqPath := strings.TrimPrefix(r.URL.Path, "/")
 	if reqPath == "" {
 		reqPath = "."
 	}
 
 	// --- SECURITY CHECK START ---
-	// Keep your original behavior: allow "." and ".." segments (skip),
-	// but block dotfiles and *.d folders.
 	pathParts := strings.Split(reqPath, "/")
 	for _, part := range pathParts {
 		if part == "." || part == ".." {
 			continue
 		}
-
 		// Block hidden files/dirs (.git, .env)
 		if strings.HasPrefix(part, ".") {
 			http.Error(w, "Forbidden", http.StatusForbidden)
@@ -209,14 +216,12 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	phpEnabled := h.php != nil
 
 	// Never serve PHP source as static.
-	// If PHP is disabled, pretend it doesn't exist.
 	if strings.HasSuffix(strings.ToLower(reqPath), ".php") && !phpEnabled {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
 	}
 
 	// 3. Direct PHP execution for *.php
-	// We verify existence with OpenRoot before dispatching to php-fpm.
 	if phpEnabled && strings.HasSuffix(strings.ToLower(reqPath), ".php") {
 		ff, err := root.Open(reqPath)
 		if err == nil {
@@ -227,14 +232,12 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		// Not found -> let normal logic 404.
 	}
 
 	// 4. Try Serving Gzip (Optimized)
 	if clientAcceptsGzip(r) {
 		gzPath, gzOrigPath := h.resolveGzipPath(reqPath)
 
-		// gzip existence cache check (with TTL)
 		if h.gzMayExist(gzPath) {
 			fGz, err := root.Open(gzPath)
 			if err == nil {
@@ -286,9 +289,10 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 6. Handle Listing
 	if info.IsDir() {
-		// Enforce trailing slash
-		if !strings.HasSuffix(r.URL.Path, "/") {
-			target := r.URL.Path + "/"
+		// Enforce trailing slash using BROWSER PATH
+		// This fixes the issue where redirection removed the stripped prefix
+		if !strings.HasSuffix(browserPath, "/") {
+			target := browserPath + "/"
 			if len(r.URL.RawQuery) > 0 {
 				target += "?" + r.URL.RawQuery
 			}
@@ -338,6 +342,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					reqOut := *r
 					if r.URL != nil {
 						u := *r.URL
+						// PHP handler needs the relative path from root
 						u.Path = strings.TrimSuffix(r.URL.Path, "/") + "/" + phpIndex
 						reqOut.URL = &u
 					}
@@ -349,7 +354,8 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// No index found. Listing?
 		if h.route.Web.Listing {
-			h.serveDirectoryListing(w, r, f, r.URL.Path)
+			// Pass the BROWSER PATH so links are generated correctly relative to user's URL
+			h.serveDirectoryListing(w, r, f, browserPath)
 			return
 		}
 
