@@ -279,7 +279,7 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 		"event", event.Op.String(),
 		"file", filepath.Base(event.Name),
 		"full_path", event.Name,
-	).Info("config change detected, scheduling reload")
+	).Warn("config change detected, scheduling reload")
 
 	debouncedReload()
 }

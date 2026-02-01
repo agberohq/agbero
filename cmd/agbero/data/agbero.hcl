@@ -72,6 +72,7 @@ logging {
   skip = [
     "/health",
     "/metrics",
+    "/uptime",
     "/favicon.ico"
   ]
   
