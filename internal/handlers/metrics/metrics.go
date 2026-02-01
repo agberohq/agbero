@@ -3,6 +3,7 @@ package metrics
 import (
 	"encoding/json"
 	"net/http"
+	"runtime"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
@@ -10,6 +11,15 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
+
+type SystemStats struct {
+	NumCPU       int    `json:"num_cpu"`
+	NumGoroutine int    `json:"num_goroutine"`
+	MemAlloc     uint64 `json:"mem_alloc"` // Bytes allocated and not yet freed
+	MemTotal     uint64 `json:"mem_total"` // Total bytes allocated (cumulative)
+	MemSys       uint64 `json:"mem_sys"`   // Bytes obtained from OS
+	MemRSS       uint64 `json:"mem_rss"`   // Approximate RSS
+}
 
 // Metrics returns a JSON snapshot of the proxy state
 func Metrics(hm *discovery.Host) http.HandlerFunc {
@@ -25,6 +35,7 @@ func Metrics(hm *discovery.Host) http.HandlerFunc {
 
 type SystemSnapshot struct {
 	Timestamp time.Time                `json:"timestamp"`
+	System    SystemStats              `json:"system"`
 	Hosts     map[string]*HostSnapshot `json:"hosts"`
 }
 
@@ -54,8 +65,22 @@ type BackendSnapshot struct {
 // --- Collection Logic ---
 
 func collectMetrics(hm *discovery.Host) *SystemSnapshot {
+
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	sysStats := SystemStats{
+		NumCPU:       runtime.NumCPU(),
+		NumGoroutine: runtime.NumGoroutine(),
+		MemAlloc:     m.Alloc,
+		MemTotal:     m.TotalAlloc,
+		MemSys:       m.Sys,
+		MemRSS:       m.HeapSys, // Approximation of RSS for Go
+	}
+
 	sys := &SystemSnapshot{
 		Timestamp: time.Now(),
+		System:    sysStats,
 		Hosts:     make(map[string]*HostSnapshot),
 	}
 

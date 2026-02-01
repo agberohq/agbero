@@ -24,6 +24,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/firewall"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/h3"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/wasm"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
@@ -442,6 +443,7 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 		h = s.ipMiddleware.Handler(h)
 	}
 
+	h = metrics.PrometheusMiddleware(h)
 	return h
 }
 

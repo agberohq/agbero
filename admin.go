@@ -13,6 +13,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -60,7 +61,9 @@ func (s *Server) startAdminServer() {
 	}
 
 	// Metrics
-	mux.Handle("/metrics", protect(metrics.Metrics(s.hostManager)))
+	mux.Handle("/uptime", protect(metrics.Metrics(s.hostManager)))
+
+	mux.Handle("/metrics", protect(promhttp.Handler().ServeHTTP))
 
 	// Config Dump
 	mux.Handle("/config", protect(s.handleAdminConfigDump))
@@ -185,7 +188,16 @@ func (s *Server) handleAdminConfigDump(w http.ResponseWriter, r *http.Request) {
 // handleFirewallAPI manages IP blocks via API
 func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 	if s.firewall == nil {
-		http.Error(w, "Firewall disabled", http.StatusNotImplemented)
+		if r.Method == http.MethodGet {
+			// Return a special flag indicating disabled
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"enabled": false,
+				"rules":   []string{},
+			})
+			return
+		}
+		http.Error(w, "firewall is disabled in configuration", http.StatusNotImplemented)
 		return
 	}
 
@@ -197,7 +209,10 @@ func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rules)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"enabled": true,
+			"rules":   rules,
+		})
 
 	case http.MethodPost:
 		var req struct {
