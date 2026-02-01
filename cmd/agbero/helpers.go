@@ -25,8 +25,11 @@ import (
 //go:embed data/agbero.hcl
 var configTmpl string
 
-//go:embed data/sample.hcl
-var hostSampleTmpl string
+//go:embed data/hosts.d/web.hcl
+var tplWebHcl string
+
+//go:embed data/hosts.d/admin.hcl
+var tplAdminHcl string
 
 //go:embed data/banner.txt
 var bannerTmpl string
@@ -135,8 +138,12 @@ func ensureLayoutForConfig(configFile string) error {
 	}
 
 	if empty, err := hostsDir.IsEmpty(); err == nil && empty {
-		samplePath := filepath.Join(hostsDir.Path(), "localhost.hcl")
-		_ = os.WriteFile(samplePath, []byte(hostSampleTmpl), woos.FilePerm)
+		samplePath := filepath.Join(hostsDir.Path(), "web.hcl")
+		_ = os.WriteFile(samplePath, []byte(tplWebHcl), woos.FilePerm)
+
+		samplePath = filepath.Join(hostsDir.Path(), "admin.hcl")
+		_ = os.WriteFile(samplePath, []byte(tplAdminHcl), woos.FilePerm)
+
 	}
 
 	return nil

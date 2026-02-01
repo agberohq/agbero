@@ -1,6 +1,7 @@
 domains = ["admin.localhost"]
 
-# The route label must be a PATH (e.g. "/" or "/api"), not a domain.
+
+## Default route for the admin
 route "/" {
   backend {
     server {
