@@ -26,10 +26,21 @@ bind {
 # -------------------------------------------------------------
 admin {
   # allowed ip
-  allowed_ips = ["127.0.0.1"]
+  allowed_ips = ["127.0.0.1","::1"]
 
   # List of addresses to listen for HTTP traffic (redirects to HTTPS if configured)
   address = ":9090"
+
+  # Basic Auth for the Login API
+  basic_auth {
+    # Format: "username:bcrypt_hash"
+    users = [
+      "admin:{ADMIN_PASSWORD}"
+    ]
+  }
+  jwt_auth {
+    secret = "{ADMIN_SECRET}"
+  }
 }
 
 

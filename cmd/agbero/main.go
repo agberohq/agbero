@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -36,9 +37,6 @@ var (
 	keyService string
 	keyTTL     time.Duration
 
-	// Hash Utility Flags
-	hashPassword string
-
 	// Certificate Management Flags
 	forceCAInstall bool
 	caMethod       string
@@ -50,8 +48,14 @@ var (
 	enableGossip  bool
 )
 
+var (
+	// Hash Utility Flags
+	hashPassword = "admin"
+)
+
 func main() {
-	// 1) BOOTSTRAP LOGGER
+	rand.Seed(time.Now().UnixNano())
+
 	logger = ll.New(woos.Name,
 		ll.WithHandler(lh.NewColorizedHandler(os.Stdout)),
 		ll.WithFatalExits(true),

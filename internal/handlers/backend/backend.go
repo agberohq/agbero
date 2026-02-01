@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,6 +37,8 @@ type Backend struct {
 	lastRecovery atomic.Int64
 	Weight       int
 	Cond         *Conditions
+	rnd          *rand.Rand
+	stopOnce     sync.Once
 }
 
 func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backend, error) {
@@ -140,6 +143,7 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 		go b.healthCheckLoop()
 	}
 
+	b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 	return b, nil
 }
 
@@ -156,7 +160,9 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Backend) Stop() {
-	close(b.stop)
+	b.stopOnce.Do(func() {
+		close(b.stop)
+	})
 }
 
 func (b *Backend) healthCheckLoop() {
@@ -187,8 +193,7 @@ func (b *Backend) healthCheckLoop() {
 	).String()
 
 	failures := 0
-	jitter := time.Duration(rand.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
-	timer := time.NewTimer(jitter)
+	timer := time.NewTimer(b.Jitter(interval))
 	defer timer.Stop()
 
 	for {
@@ -197,7 +202,7 @@ func (b *Backend) healthCheckLoop() {
 			return
 		case <-timer.C:
 			resp, err := client.Get(targetURL)
-			healthy := err == nil && resp != nil && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusInternalServerError
+			healthy := err == nil && resp != nil && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest
 
 			if resp != nil && resp.Body != nil {
 				_, _ = io.Copy(io.Discard, resp.Body)
@@ -218,8 +223,8 @@ func (b *Backend) healthCheckLoop() {
 					b.Alive.Store(false)
 				}
 			}
-			jitter = time.Duration(rand.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
-			timer.Reset(interval + jitter)
+
+			timer.Reset(interval + b.Jitter(interval))
 		}
 	}
 }
@@ -230,4 +235,11 @@ func (b *Backend) Uptime() time.Duration {
 
 func (b *Backend) LastRecovery() time.Time {
 	return time.Unix(0, b.lastRecovery.Load())
+}
+
+func (b *Backend) Jitter(interval time.Duration) time.Duration {
+	if b.rnd == nil {
+		b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
+	}
+	return time.Duration(b.rnd.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
 }

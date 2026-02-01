@@ -1,0 +1,261 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>agbero</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="container">
+    <header class="top-header">
+        <div class="header-left">
+            <h1>agbero</h1>
+        </div>
+        <div class="header-right">
+            <nav class="top-nav">
+                <a href="#" class="nav-link active" data-page="dashboard">Dashboard</a>
+                <a href="#" class="nav-link" data-page="hosts">Hosts</a>
+                <a href="#" class="nav-link" data-page="firewall">Firewall</a>
+                <a href="#" class="nav-link" data-page="config">Config</a>
+            </nav>
+            <div class="header-actions">
+                <button class="icon-btn" id="refreshBtn" title="Refresh">
+                    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M13.5 2.5C12.5 1.5 11 1 9.5 1 6.5 1 4 3.5 4 6.5H2l2.5 3L7 6.5H5c0-2.5 2-4.5 4.5-4.5 1 0 1.5.5 2.5 1.5L14 4l-.5.5z"/>
+                        <path d="M13.5 13.5c1-1 1.5-2.5 1.5-4 0-3-2.5-5.5-5.5-5.5-1 0-1.5.5-2.5 1.5L2 4l.5-.5L5 2 7.5 5H5.5c0 2.5 2 4.5 4.5 4.5 1 0 1.5-.5 2.5-1.5L14 12l-.5.5z"/>
+                    </svg>
+                </button>
+
+                <button class="icon-btn login" id="loginBtn" title="Admin Login">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M8 8c2.2 0 4-1.8 4-4s-1.8-4-4-4-4 1.8-4 4 1.8 4 4 4zm0 2c-2.8 0-5 2.2-5 5v1h10v-1c0-2.8-2.2-5-5-5z"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <!-- Dashboard Page -->
+        <div id="dashboardPage" class="page active">
+            <div class="time-header">
+                <h2>Response Time</h2>
+                <div class="time-selector">
+                    <select id="timeRange" aria-label="Time range">
+                        <option value="1h">Past hour</option>
+                        <option value="6h">Past 6 hours</option>
+                        <option value="24h" selected>Past day</option>
+                        <option value="7d">Past week</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="graph-section">
+                <div class="graph-header">
+                    <h3>Latency distribution</h3>
+                    <div class="graph-stats">
+                        <span class="stat-label">Mean:</span>
+                        <span class="stat-value" id="meanResponse">—</span>
+                    </div>
+                </div>
+
+                <div class="graph-container">
+                    <div class="graph-scale">
+                        <span>fast</span>
+                        <span>ok</span>
+                        <span>slow</span>
+                    </div>
+
+                    <div class="graph-bars" id="responseGraph" aria-label="Latency histogram"></div>
+                </div>
+
+                <div class="legend">
+                    <div class="legend-item"><span class="legend-swatch fast"></span> Fast</div>
+                    <div class="legend-item"><span class="legend-swatch mid"></span> OK</div>
+                    <div class="legend-item"><span class="legend-swatch slow"></span> Slow</div>
+                </div>
+            </div>
+
+            <div class="stats-section">
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">UPTIME</div>
+                        <div class="stat-value" id="uptimeStat">—</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">DOWNTIME</div>
+                        <div class="stat-value" id="downtimeStat">—</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">APDEX</div>
+                        <div class="stat-value" id="apdexStat">—</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">MEAN RESPONSE</div>
+                        <div class="stat-value" id="meanResponseStat">—</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">HEADER SIZE</div>
+                        <div class="stat-value" id="headerSizeStat">—</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">BODY SIZE</div>
+                        <div class="stat-value" id="bodySizeStat">—</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">ERRORS</div>
+                        <div class="stat-value" id="errorsStat">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Raw metrics panel (shows ONLY real /metrics response when it's text or unknown JSON) -->
+            <div class="raw-metrics hidden">
+                <div class="raw-header">
+                    <h3>Raw metrics</h3>
+                    <div class="raw-hint">Shown when /metrics is not in a known JSON shape.</div>
+                </div>
+                <pre><code id="metricsRaw"></code></pre>
+            </div>
+        </div>
+
+        <!-- Hosts Page -->
+        <div id="hostsPage" class="page">
+            <div class="page-header">
+                <h2>Hosts</h2>
+                <div class="page-actions">
+                    <button class="text-btn" id="addHostBtn">Add Host</button>
+                </div>
+            </div>
+            <div class="hosts-list" id="hostsList"></div>
+        </div>
+
+        <!-- Firewall Page -->
+        <div id="firewallPage" class="page">
+            <div class="page-header">
+                <h2>Firewall rules</h2>
+                <div class="page-actions">
+                    <button class="text-btn" id="addRuleBtn">Add rule</button>
+                </div>
+            </div>
+
+            <div class="rules-table">
+                <div class="table-header">
+                    <div class="table-col">IP / CIDR</div>
+                    <div class="table-col">Reason</div>
+                    <div class="table-col">Added</div>
+                    <div class="table-col">Actions</div>
+                </div>
+                <div class="table-body" id="firewallTable"></div>
+            </div>
+        </div>
+
+        <!-- Config Page -->
+        <div id="configPage" class="page">
+            <div class="page-header">
+                <h2>Configuration</h2>
+                <div class="page-actions">
+                    <button class="text-btn" id="reloadConfigBtn" disabled>Reload</button>
+                </div>
+            </div>
+
+            <div class="config-viewer">
+                <pre id="configContent"><code>{}</code></pre>
+            </div>
+        </div>
+    </main>
+
+    <!-- Login Modal -->
+    <div class="modal-overlay" id="loginModal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="loginTitle">Admin login</h3>
+                <button class="icon-btn close-modal" aria-label="Close">
+                    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M14 2L2 14M2 2l12 12"/>
+                    </svg>
+                </button>
+            </div>
+
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="username" class="label">Username</label>
+                    <input type="text" id="username" autocomplete="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="password" class="label">Password</label>
+                    <input type="password" id="password" autocomplete="current-password" required>
+                </div>
+
+                <button type="submit" class="submit-btn">Login</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Firewall Rule Modal -->
+    <div class="modal-overlay" id="ruleModal" role="dialog" aria-modal="true" aria-labelledby="ruleTitle">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="ruleTitle">Block IP / CIDR</h3>
+                <button class="icon-btn close-modal" aria-label="Close">
+                    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M14 2L2 14M2 2l12 12"/>
+                    </svg>
+                </button>
+            </div>
+
+            <form id="ruleForm">
+                <div class="form-group">
+                    <label for="ipAddress" class="label">IP or CIDR</label>
+                    <input type="text" id="ipAddress" placeholder="203.0.113.4 or 203.0.113.0/24" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="reason" class="label">Reason</label>
+                    <input type="text" id="reason" placeholder="Brute force, abuse, scanner…" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="duration" class="label">Duration</label>
+                    <select id="duration">
+                        <option value="3600">1 hour</option>
+                        <option value="86400">24 hours</option>
+                        <option value="604800">7 days</option>
+                        <option value="0">Permanent</option>
+                    </select>
+                </div>
+
+                <button type="submit" class="submit-btn danger">Block</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Confirm Modal -->
+    <div class="modal-overlay" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="confirmTitle">Confirm</h3>
+                <button class="icon-btn close-modal" aria-label="Close">
+                    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M14 2L2 14M2 2l12 12"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="modal-body">
+                <p id="confirmText" class="confirm-text"></p>
+                <div class="confirm-actions">
+                    <button class="text-btn" id="confirmCancel" type="button">Cancel</button>
+                    <button class="submit-btn" id="confirmOk" type="button">OK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

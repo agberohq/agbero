@@ -28,6 +28,13 @@ var rngPool = sync.Pool{
 type snapshotHolder struct {
 	backends []*backend.Backend
 	wheel    *weightWheel
+
+	// Precomputed to avoid per-request scanning.
+	hasConditions bool
+
+	// If true, wheel.cumul is empty (all weights treated as 1),
+	// so building wheels for filtered sets is often unnecessary.
+	weightsAllOne bool
 }
 
 type LoadBalancer struct {
@@ -51,15 +58,26 @@ func NewLoadBalancer(backends []*backend.Backend, strategy string, timeout time.
 
 func (lb *LoadBalancer) Update(list []*backend.Backend) {
 	cp := make([]*backend.Backend, 0, len(list))
+
+	hasCond := false
 	for _, b := range list {
-		if b != nil {
-			cp = append(cp, b)
+		if b == nil {
+			continue
+		}
+		cp = append(cp, b)
+		if !hasCond && b.Cond != nil && b.Cond.HasRules() {
+			hasCond = true
 		}
 	}
+
 	wheel := buildWheel(cp)
+	weightsAllOne := wheel == nil || len(wheel.cumul) == 0
+
 	lb.state.Store(&snapshotHolder{
-		backends: cp,
-		wheel:    wheel,
+		backends:      cp,
+		wheel:         wheel,
+		hasConditions: hasCond,
+		weightsAllOne: weightsAllOne,
 	})
 }
 
@@ -82,7 +100,6 @@ func (lb *LoadBalancer) getHolder() *snapshotHolder {
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	be := lb.PickBackend(r)
 	if be == nil {
-		// Explicit 502 Bad Gateway
 		http.Error(w, "no healthy backends", http.StatusBadGateway)
 		return
 	}
@@ -106,21 +123,10 @@ func (lb *LoadBalancer) PickBackend(r *http.Request) *backend.Backend {
 	list := holder.backends
 	wheel := holder.wheel
 
-	hasConditions := false
-	for _, b := range list {
-		if b.Cond != nil && b.Cond.HasRules() {
-			hasConditions = true
-			break
-		}
-	}
-
-	if hasConditions {
-		filtered := lb.filterByConditions(list, r)
-		if len(filtered) == 0 {
-			return nil
-		}
-		if len(filtered) != len(list) {
-			return lb.pickWithList(filtered, buildWheel(filtered), r)
+	// Hot path: if no conditions exist anywhere, skip condition logic entirely.
+	if holder.hasConditions {
+		if be, handled := lb.pickByConditions(list, wheel, r, holder.weightsAllOne); handled {
+			return be
 		}
 	}
 
@@ -281,29 +287,61 @@ func (lb *LoadBalancer) pickWeightedLeastConn(list []*backend.Backend) *backend.
 	return best
 }
 
-func (lb *LoadBalancer) filterByConditions(list []*backend.Backend, r *http.Request) []*backend.Backend {
-	var matched []*backend.Backend
+// pickByConditions keeps your original semantics without building a filtered slice:
+//
+// - If no backend matches any condition rules: return (nil, false) → caller uses full list
+// - If some match and any matched are healthy: pick among healthy matches and return (be, true)
+// - If some match but none healthy: return (nil, false) → caller uses full list
+//
+// Notes on weights:
+//   - If weights are all one, we can pass nil wheel and your pickers use unweighted paths.
+//   - If weights are not all one and you care about honoring weights in the matched set,
+//     we build a wheel only in the handled/healthy-match case.
+func (lb *LoadBalancer) pickByConditions(
+	list []*backend.Backend,
+	snapshotWheel *weightWheel,
+	r *http.Request,
+	weightsAllOne bool,
+) (*backend.Backend, bool) {
+
+	// We only need the healthy matches for decision making.
+	// Also track whether any match happened at all.
 	var matchedHealthy []*backend.Backend
+	anyMatch := false
 
 	for _, b := range list {
 		if b == nil || b.Cond == nil || !b.Cond.HasRules() {
 			continue
 		}
-		if b.Cond.Match(r) {
-			matched = append(matched, b)
-			if b.Alive.Load() {
-				matchedHealthy = append(matchedHealthy, b)
-			}
+		if !b.Cond.Match(r) {
+			continue
+		}
+		anyMatch = true
+		if b.Alive.Load() {
+			matchedHealthy = append(matchedHealthy, b)
 		}
 	}
 
-	if len(matched) == 0 {
-		return list
+	// No conditions matched anywhere -> not handled (use full list).
+	if !anyMatch {
+		return nil, false
 	}
-	if len(matchedHealthy) > 0 {
-		return matchedHealthy
+
+	// Some matched, but none healthy -> fall back to full list (not handled).
+	if len(matchedHealthy) == 0 {
+		return nil, false
 	}
-	return list
+
+	// Some matched and some healthy -> handled.
+	// Preserve weight behavior:
+	// - if all weights are 1, pass nil wheel
+	// - else build wheel for the matched set
+	if weightsAllOne {
+		return lb.pickWithList(matchedHealthy, nil, r), true
+	}
+
+	// If snapshotWheel is nil or unweighted, buildWheel will produce the right structure anyway.
+	return lb.pickWithList(matchedHealthy, buildWheel(matchedHealthy), r), true
 }
 
 func (lb *LoadBalancer) setStrategy(s string) {

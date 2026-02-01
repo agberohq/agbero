@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	_ "embed"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/dustin/go-humanize"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Embedded Assets
@@ -88,6 +91,19 @@ func ensureConfig(configFile string) error {
 	content := strings.ReplaceAll(configTmpl, "{HOST_DIR}", woos.HostDir.String())
 	content = strings.ReplaceAll(content, "{CERTS_DIR}", woos.CertDir.String())
 	content = strings.ReplaceAll(content, "{DATA_DIR}", woos.DataDir.String())
+
+	secret, err := generateSecureKey(128)
+	if err != nil {
+		return fmt.Errorf("generate secure key: %w", err)
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(hashPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("generate bcrypt hash: %w", err)
+	}
+
+	content = strings.ReplaceAll(content, "{ADMIN_PASSWORD}", string(hash))
+	content = strings.ReplaceAll(content, "{ADMIN_SECRET}", secret)
 
 	if err := os.WriteFile(configFile, []byte(content), woos.FilePerm); err != nil {
 		return fmt.Errorf("write default config: %w", err)
@@ -477,4 +493,16 @@ func showGossipHelp() {
 	fmt.Printf("  %s gossip token --service api --ttl 168h\n", exeName)
 	fmt.Printf("  %s gossip status\n", exeName)
 	fmt.Println()
+}
+
+// generateSecureKey generates a URL-safe, base64-encoded string from random bytes.
+func generateSecureKey(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	// Use Base64URLEncoding to ensure the key is safe for use in URLs/environment variables
+	encoded := base64.URLEncoding.EncodeToString(b)
+	// The resulting string will be longer than 'n' bytes (roughly 4/3 * n)
+	return encoded, nil
 }
