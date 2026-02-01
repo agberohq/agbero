@@ -7,11 +7,11 @@ import (
 )
 
 type RuntimePaths struct {
-	BaseDir    Folder
-	ConfigFile string // File paths remain strings usually, or specific File type
-	HostsDir   Folder
-	CertsDir   Folder
-	DataDir    Folder
+	BaseDir    Folder `json:"base_dir"`
+	ConfigFile string `json:"config_file"` // File paths remain strings usually, or specific File type
+	HostsDir   Folder `json:"hosts_dir"`
+	CertsDir   Folder `json:"certs_dir"`
+	DataDir    Folder `json:"data_dir"`
 }
 
 // GetUserDefaults returns defaults for the current user (~/.config/agbero)
@@ -37,10 +37,10 @@ func DefaultPaths() RuntimePaths {
 	// Logic moved from cmd/helpers.go and default.go to here
 	var base string
 	// Simplified OS check logic
-	if runtime.GOOS == "windows" || os.PathSeparator == '\\' { // Windows detection via separator or runtime.GOOS
-		base = filepath.Join(os.Getenv("ProgramData"), Name)
+	if runtime.GOOS == Windows || os.PathSeparator == WindowBackSlash { // Windows detection via separator or runtime.GOOS
+		base = filepath.Join(os.Getenv(ENVProgramData), Name)
 	} else {
-		base = filepath.Join("/etc", Name)
+		base = filepath.Join(ETCPath, Name)
 	}
 
 	baseFolder := NewFolder(base)

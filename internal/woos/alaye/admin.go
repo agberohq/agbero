@@ -8,13 +8,13 @@ import (
 )
 
 type Admin struct {
-	Address    string   `hcl:"address"` // e.g. ":9090"
-	AllowedIPs []string `hcl:"allowed_ips,optional"`
+	Address    string   `hcl:"address" json:"address"` // e.g. ":9090"
+	AllowedIPs []string `hcl:"allowed_ips,optional" json:"allowed_ips"`
 
-	BasicAuth   *BasicAuth   `hcl:"basic_auth,block"`
-	ForwardAuth *ForwardAuth `hcl:"forward_auth,block"`
-	JWTAuth     *JWTAuth     `hcl:"jwt_auth,block"` // Now using struct
-	OAuth       *OAuth       `hcl:"o_auth,block"`   // New
+	BasicAuth   *BasicAuth   `hcl:"basic_auth,block" json:"basic_auth"`
+	ForwardAuth *ForwardAuth `hcl:"forward_auth,block" json:"forward_auth"`
+	JWTAuth     *JWTAuth     `hcl:"jwt_auth,block" json:"jwt_auth"` // Now using struct
+	OAuth       *OAuth       `hcl:"o_auth,block" json:"o_auth"`     // New
 }
 
 func (a *Admin) Validate() error {
@@ -27,7 +27,7 @@ func (a *Admin) Validate() error {
 	if _, _, err := net.SplitHostPort(a.Address); err != nil {
 		// Try parsing as port only
 		if strings.HasPrefix(a.Address, ":") {
-			if _, err := net.LookupPort("tcp", a.Address[1:]); err != nil {
+			if _, err := net.LookupPort(TCP, a.Address[1:]); err != nil {
 				return err
 			}
 		} else {

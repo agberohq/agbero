@@ -87,3 +87,9 @@ const (
 const (
 	DefaultForwardAuthOnFailure = "deny"
 )
+
+const (
+	TCP         = "tcp"
+	HTTPPrefix  = "http://"
+	HTTPSPrefix = "https://"
+)
