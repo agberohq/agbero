@@ -5,10 +5,10 @@ import (
 )
 
 type Timeout struct {
-	Read       time.Duration `hcl:"read,optional"`
-	Write      time.Duration `hcl:"write,optional"`
-	Idle       time.Duration `hcl:"idle,optional"`
-	ReadHeader time.Duration `hcl:"read_header,optional"`
+	Read       time.Duration `hcl:"read,optional" json:"read"`
+	Write      time.Duration `hcl:"write,optional" json:"write"`
+	Idle       time.Duration `hcl:"idle,optional" json:"idle"`
+	ReadHeader time.Duration `hcl:"read_header,optional" json:"read_header"`
 }
 
 func (t *Timeout) Validate() error {
@@ -32,7 +32,7 @@ func (t *Timeout) Validate() error {
 }
 
 type TimeoutRoute struct {
-	Request time.Duration `hcl:"request,optional"`
+	Request time.Duration `hcl:"request,optional" json:"request"`
 }
 
 func (t *TimeoutRoute) Validate() error {

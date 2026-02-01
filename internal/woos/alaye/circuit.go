@@ -5,8 +5,8 @@ import (
 )
 
 type CircuitBreaker struct {
-	Threshold int           `hcl:"threshold,optional"`
-	Duration  time.Duration `hcl:"duration,optional"`
+	Threshold int           `hcl:"threshold,optional" json:"threshold"`
+	Duration  time.Duration `hcl:"duration,optional" json:"duration"`
 }
 
 func (c *CircuitBreaker) Validate() error {

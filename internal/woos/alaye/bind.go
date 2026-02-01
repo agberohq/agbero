@@ -8,8 +8,8 @@ import (
 )
 
 type Bind struct {
-	HTTP  []string `hcl:"http,optional"`
-	HTTPS []string `hcl:"https,optional"`
+	HTTP  []string `hcl:"http,optional" json:"http"`
+	HTTPS []string `hcl:"https,optional" json:"https"`
 }
 
 func (b *Bind) Validate() error {
@@ -37,7 +37,7 @@ func (b *Bind) validateAddress(addr string) error {
 		return ErrEmptyAddress
 	}
 	if strings.HasPrefix(addr, ":") {
-		if _, err := net.LookupPort("tcp", addr[1:]); err != nil {
+		if _, err := net.LookupPort(TCP, addr[1:]); err != nil {
 			return err
 		}
 		return nil

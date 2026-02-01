@@ -8,23 +8,23 @@ import (
 )
 
 type Rate struct {
-	Enabled    bool          `hcl:"enabled,optional"`
-	TTL        time.Duration `hcl:"ttl,optional"`
-	MaxEntries int64         `hcl:"max_entries,optional"`
-	Rules      []RateRule    `hcl:"rule,block"`
+	Enabled    bool          `hcl:"enabled,optional" json:"enabled"`
+	TTL        time.Duration `hcl:"ttl,optional" json:"ttl"`
+	MaxEntries int64         `hcl:"max_entries,optional" json:"max_entries"`
+	Rules      []RateRule    `hcl:"rule,block" json:"rules"`
 }
 
 type RateRule struct {
-	Name     string   `hcl:"name,label"`
-	Prefixes []string `hcl:"prefixes,optional"`
-	Methods  []string `hcl:"methods,optional"`
+	Name     string   `hcl:"name,label" json:"name"`
+	Prefixes []string `hcl:"prefixes,optional" json:"prefixes"`
+	Methods  []string `hcl:"methods,optional" json:"methods"`
 
-	Requests int           `hcl:"requests"`
-	Window   time.Duration `hcl:"window"`
-	Burst    int           `hcl:"burst,optional"`
+	Requests int           `hcl:"requests" json:"requests"`
+	Window   time.Duration `hcl:"window" json:"window"`
+	Burst    int           `hcl:"burst,optional" json:"burst"`
 
 	// "ip", "header:X-API-Key", "cookie:SessionID"
-	Key string `hcl:"key,optional"`
+	Key string `hcl:"key,optional" json:"key"`
 }
 
 func (r *Rate) Validate() error {
@@ -69,7 +69,7 @@ func (r *RateRule) Validate() error {
 	}
 
 	for _, p := range r.Prefixes {
-		if !strings.HasPrefix(p, "/") {
+		if !strings.HasPrefix(p, Slash) {
 			return errors.Newf("prefix %q must start with '/'", p)
 		}
 	}

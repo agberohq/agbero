@@ -7,11 +7,11 @@ import (
 )
 
 type Web struct {
-	Root    WebRoot `hcl:"root,optional"`
-	Index   string  `hcl:"index,optional"`
-	Listing bool    `hcl:"listing,optional"` // list files
+	Root    WebRoot `hcl:"root,optional" json:"root"`
+	Index   string  `hcl:"index,optional" json:"index"`
+	Listing bool    `hcl:"listing,optional" json:"listing"` // list files
 
-	PHP PHP `hcl:"php,block,optional"`
+	PHP PHP `hcl:"php,block,optional" json:"php"`
 }
 
 func (w *Web) Validate() error {
@@ -19,7 +19,7 @@ func (w *Web) Validate() error {
 		return ErrRootRequired
 	}
 
-	if w.Index != "" && strings.Contains(w.Index, "/") {
+	if w.Index != "" && strings.Contains(w.Index, Slash) {
 		return ErrIndexPath
 	}
 
@@ -32,9 +32,9 @@ func (w *Web) Validate() error {
 }
 
 type PHP struct {
-	Enabled bool   `hcl:"enabled,optional"`
-	Address string `hcl:"address,optional"` // unix:/path/to.sock OR 127.0.0.1:9000
-	Index   string `hcl:"index,optional"`   // default: index.php
+	Enabled bool   `hcl:"enabled,optional" json:"enabled"`
+	Address string `hcl:"address,optional" json:"address"` // unix:/path/to.sock OR 127.0.0.1:9000
+	Index   string `hcl:"index,optional" json:"index"`     // default: index.php
 }
 
 func (p *PHP) Validate() error {
@@ -49,8 +49,8 @@ func (p *PHP) Validate() error {
 	}
 
 	// Accept either unix:/path.sock or host:port
-	if strings.HasPrefix(addr, "unix:") {
-		if len(strings.TrimSpace(strings.TrimPrefix(addr, "unix:"))) == 0 {
+	if strings.HasPrefix(addr, UNIXPrefix) {
+		if len(strings.TrimSpace(strings.TrimPrefix(addr, UNIXPrefix))) == 0 {
 			return ErrNoAddress
 		}
 		return nil
@@ -61,7 +61,7 @@ func (p *PHP) Validate() error {
 		return ErrBadAddress
 	}
 
-	if p.Index != "" && strings.Contains(p.Index, "/") {
+	if p.Index != "" && strings.Contains(p.Index, Slash) {
 		return ErrIndexPath
 	}
 

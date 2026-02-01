@@ -8,8 +8,8 @@ import (
 
 type BasicAuth struct {
 	// List of "username:password" (Plaintext for now, or bcrypt in future)
-	Users []string `hcl:"users"`
-	Realm string   `hcl:"realm,optional"`
+	Users []string `hcl:"users" json:"users"`
+	Realm string   `hcl:"realm,optional" json:"realm"`
 }
 
 func (b *BasicAuth) Validate() error {

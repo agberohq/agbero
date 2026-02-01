@@ -8,10 +8,10 @@ import (
 )
 
 type HealthCheck struct {
-	Path      string        `hcl:"path"`
-	Interval  time.Duration `hcl:"interval,optional"`
-	Timeout   time.Duration `hcl:"timeout,optional"`
-	Threshold int           `hcl:"threshold,optional"`
+	Path      string        `hcl:"path" json:"path"`
+	Interval  time.Duration `hcl:"interval,optional" json:"interval"`
+	Timeout   time.Duration `hcl:"timeout,optional" json:"timeout"`
+	Threshold int           `hcl:"threshold,optional" json:"threshold"`
 }
 
 func (h *HealthCheck) Validate() error {
@@ -19,7 +19,7 @@ func (h *HealthCheck) Validate() error {
 	if h.Path == "" {
 		return ErrHealthPathRequired
 	}
-	if !strings.HasPrefix(h.Path, "/") {
+	if !strings.HasPrefix(h.Path, Slash) {
 		return errors.Newf(" %w: path %q must start with '/'", ErrHealthPathInvalid, h.Path)
 	}
 

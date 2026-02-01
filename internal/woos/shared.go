@@ -5,13 +5,12 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 // RouteCacheItem wraps the handler with usage tracking for the Reaper
 type RouteCacheItem struct {
-	Handler      any          // *core.RouteHandler
-	LastAccessed atomic.Int64 // UnixNano
+	Handler      any          `json:"handler"`       // *core.RouteHandler
+	LastAccessed atomic.Int64 `json:"last_accessed"` // UnixNano
 }
 
 // RouteCache stores compiled handlers per unique route definition.
@@ -22,17 +21,17 @@ var RouteCache sync.Map
 var Transport = &http.Transport{
 	Proxy: http.ProxyFromEnvironment,
 	DialContext: (&net.Dialer{
-		Timeout:   3 * time.Second, // was 30s
-		KeepAlive: 30 * time.Second,
+		Timeout:   DefaultTransportDialTimeout, // was 30s
+		KeepAlive: DefaultTransportKeepAlive,
 	}).DialContext,
 
 	ForceAttemptHTTP2: true,
 
-	MaxIdleConns:        1000,
-	MaxIdleConnsPerHost: 100,
-	IdleConnTimeout:     90 * time.Second,
+	MaxIdleConns:        DefaultTransportMaxIdleConns,
+	MaxIdleConnsPerHost: DefaultTransportMaxIdleConnsPerHost,
+	IdleConnTimeout:     DefaultTransportIdleConnTimeout,
 
-	TLSHandshakeTimeout:   5 * time.Second, //
-	ResponseHeaderTimeout: 5 * time.Second, //
-	ExpectContinueTimeout: 1 * time.Second,
+	TLSHandshakeTimeout:   DefaultTransportTLSHandshakeTimeout,   //
+	ResponseHeaderTimeout: DefaultTransportResponseHeaderTimeout, //
+	ExpectContinueTimeout: DefaultTransportExpectContinueTimeout,
 }

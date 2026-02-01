@@ -59,7 +59,8 @@ const (
 
 // gossip
 const (
-	DefaultGossipPort = 7946
+	DefaultGossipPort    = 7946
+	DefaultGossipPortStr = "7946"
 
 	MinPort = 0
 	MaxPort = 65535
@@ -86,4 +87,47 @@ const (
 // auth-forward
 const (
 	DefaultForwardAuthOnFailure = "deny"
+)
+
+const (
+	TCP         = "tcp"
+	HTTPPrefix  = "http://"
+	HTTPSPrefix = "https://"
+	TCPPrefix   = "tcp://"
+
+	UNIXPrefix = "unix:"
+
+	CompressionGzip   = "gzip"
+	CompressionBrotli = "brotli"
+)
+
+const (
+	Empty               = ""
+	Slash               = "/"
+	Star                = "*"
+	SlashStar           = "/*"
+	SlashByte           = '/'
+	RegexPrefix         = "~"
+	TemplateOpen        = "{"
+	TemplateClose       = "}"
+	TemplateSep         = ":"
+	TemplateWildcardKey = "*"
+)
+
+const (
+	WindowBackSlash = '\\'
+	ENVProgramData  = "ProgramData"
+	ETCPath         = "/etc"
+)
+
+const (
+	ProtocolSeparator = "://"
+
+	ProviderGoogle = "google"
+	ProviderOIDC   = "oidc"
+	ProviderGitHub = "github"
+
+	ScopeOpenID  = "openid"
+	ScopeProfile = "profile"
+	ScopeEmail   = "email"
 )

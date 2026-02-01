@@ -5,9 +5,9 @@ import (
 )
 
 type Compression struct {
-	Enabled bool   `hcl:"enabled,optional"`
-	Level   int    `hcl:"level,optional"` // 1-11, default 5
-	Type    string `hcl:"type,optional"`  // "gzip" (default) or "brotli"
+	Enabled bool   `hcl:"enabled,optional" json:"enabled"`
+	Level   int    `hcl:"level,optional" json:"level"` // 1-11, default 5
+	Type    string `hcl:"type,optional" json:"type"`   // "gzip" (default) or "brotli"
 }
 
 func (c *Compression) Validate() error {
@@ -23,7 +23,7 @@ func (c *Compression) Validate() error {
 	// Type validation (if provided)
 	if c.Type != "" {
 		c.Type = strings.ToLower(c.Type)
-		if c.Type != "gzip" && c.Type != "brotli" {
+		if c.Type != CompressionGzip && c.Type != CompressionBrotli {
 			return ErrInvalidCompressionType
 		}
 	} else {

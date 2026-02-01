@@ -318,3 +318,25 @@ const (
 
 	MinClientHelloLen = 6
 )
+
+const (
+	WindowBackSlash = '\\'
+	ENVProgramData  = "ProgramData"
+	ETCPath         = "/etc"
+)
+
+const (
+	// Dialer
+	DefaultTransportDialTimeout = 3 * time.Second
+	DefaultTransportKeepAlive   = 30 * time.Second
+
+	// Connection pooling
+	DefaultTransportMaxIdleConns        = 1000
+	DefaultTransportMaxIdleConnsPerHost = 100
+
+	// Timeouts
+	DefaultTransportIdleConnTimeout       = 90 * time.Second
+	DefaultTransportTLSHandshakeTimeout   = 5 * time.Second
+	DefaultTransportResponseHeaderTimeout = 5 * time.Second
+	DefaultTransportExpectContinueTimeout = 1 * time.Second
+)
