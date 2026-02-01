@@ -8,14 +8,14 @@ import (
 )
 
 type Host struct {
-	Domains     []string   `hcl:"domains"`
-	Bind        []string   `hcl:"bind,optional"`
-	Compression bool       `hcl:"compression,optional"`
-	Routes      []Route    `hcl:"route,block"`
-	TLS         TLS        `hcl:"tls,block"`
-	Limits      Limit      `hcl:"limits,block"`
-	Headers     Headers    `hcl:"headers,block"`
-	TCPProxy    []TCPRoute `hcl:"tcp_proxy,block"`
+	Domains     []string   `hcl:"domains" json:"domains"`
+	Bind        []string   `hcl:"bind,optional" json:"bind"`
+	Compression bool       `hcl:"compression,optional" json:"compression"`
+	Routes      []Route    `hcl:"route,block" json:"routes"`
+	TLS         TLS        `hcl:"tls,block" json:"tls"`
+	Limits      Limit      `hcl:"limits,block" json:"limits"`
+	Headers     Headers    `hcl:"headers,block" json:"headers"`
+	TCPProxy    []TCPRoute `hcl:"tcp_proxy,block" json:"tcp_proxy"`
 }
 
 func (h *Host) Validate() error {
@@ -29,7 +29,7 @@ func (h *Host) Validate() error {
 			return errors.Newf("domain [%d]: %w", i, ErrCannotBeEmpty)
 		}
 		// Basic domain validation
-		if strings.Contains(domain, "://") {
+		if strings.Contains(domain, ProtocolSeparator) {
 			return errors.Newf("domains[%d]: %q %w", i, domain, ErrDomainHasProtocol)
 		}
 		h.Domains[i] = domain // Normalize
@@ -45,7 +45,7 @@ func (h *Host) Validate() error {
 		if strings.HasPrefix(port, ":") {
 			port = port[1:]
 		}
-		if _, err := net.LookupPort("tcp", port); err != nil {
+		if _, err := net.LookupPort(TCP, port); err != nil {
 			return errors.Newf("%w-bind[%d]: %q is not a valid port", ErrInvalidPort, i, port)
 		}
 		h.Bind[i] = port
@@ -80,7 +80,7 @@ func (h *Host) Validate() error {
 }
 
 type TCPRoute struct {
-	Listen   string   `hcl:"listen"`
-	Backends []Server `hcl:"backend,block"`
-	Strategy string   `hcl:"strategy,optional"` // round_robin, least_conn, random
+	Listen   string   `hcl:"listen" json:"listen"`
+	Backends []Server `hcl:"backend,block" json:"backends"`
+	Strategy string   `hcl:"strategy,optional" json:"strategy"` // round_robin, least_conn, random
 }

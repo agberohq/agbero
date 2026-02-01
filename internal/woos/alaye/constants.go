@@ -116,3 +116,15 @@ const (
 	ENVProgramData  = "ProgramData"
 	ETCPath         = "/etc"
 )
+
+const (
+	ProtocolSeparator = "://"
+
+	ProviderGoogle = "google"
+	ProviderOIDC   = "oidc"
+	ProviderGitHub = "github"
+
+	ScopeOpenID  = "openid"
+	ScopeProfile = "profile"
+	ScopeEmail   = "email"
+)

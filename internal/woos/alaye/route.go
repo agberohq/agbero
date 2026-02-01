@@ -9,33 +9,33 @@ import (
 
 type Route struct {
 	// Routing Core
-	Path string `hcl:"path,label"`
+	Path string `hcl:"path,label" json:"path"`
 
-	StripPrefixes []string `hcl:"strip_prefixes,optional"`
-	AllowedIPs    []string `hcl:"allowed_ips,optional"`
+	StripPrefixes []string `hcl:"strip_prefixes,optional" json:"strip_prefixes"`
+	AllowedIPs    []string `hcl:"allowed_ips,optional" json:"allowed_ips"`
 
 	// web hosting (Value type)
-	Web Web `hcl:"web,block"`
+	Web Web `hcl:"web,block" json:"web"`
 
 	// Backends defines the backend configuration for routing, including load balancing strategy and server definitions.
-	Backends Backend `hcl:"backend,block"`
+	Backends Backend `hcl:"backend,block" json:"backends"`
 
 	// High-Availability Configs
-	HealthCheck    *HealthCheck    `hcl:"health_check,block"`
-	CircuitBreaker *CircuitBreaker `hcl:"circuit_breaker,block"`
-	Timeouts       *TimeoutRoute   `hcl:"timeouts,block"`
+	HealthCheck    *HealthCheck    `hcl:"health_check,block" json:"health_check"`
+	CircuitBreaker *CircuitBreaker `hcl:"circuit_breaker,block" json:"circuit_breaker"`
+	Timeouts       *TimeoutRoute   `hcl:"timeouts,block" json:"timeouts"`
 
 	// Middleware Configs
-	BasicAuth   *BasicAuth   `hcl:"basic_auth,block"`
-	ForwardAuth *ForwardAuth `hcl:"forward_auth,block"`
-	JWTAuth     *JWTAuth     `hcl:"jwt_auth,block"`
-	OAuth       *OAuth       `hcl:"o_auth,block"`
+	BasicAuth   *BasicAuth   `hcl:"basic_auth,block" json:"basic_auth"`
+	ForwardAuth *ForwardAuth `hcl:"forward_auth,block" json:"forward_auth"`
+	JWTAuth     *JWTAuth     `hcl:"jwt_auth,block" json:"jwt_auth"`
+	OAuth       *OAuth       `hcl:"o_auth,block" json:"oauth"`
 
-	Headers   *Headers `hcl:"headers,block"`
-	Wasm      *Wasm    `hcl:"wasm,block"`
-	RateLimit *Rate    `hcl:"rate_limit,block"`
+	Headers   *Headers `hcl:"headers,block" json:"headers"`
+	Wasm      *Wasm    `hcl:"wasm,block" json:"wasm"`
+	RateLimit *Rate    `hcl:"rate_limit,block" json:"rate_limit"`
 
-	CompressionConfig Compression `hcl:"compression,block"`
+	CompressionConfig Compression `hcl:"compression,block" json:"compression_config"`
 }
 
 func (r *Route) Key() string {
@@ -147,7 +147,7 @@ func (r *Route) Validate() error {
 	if r.Path == "" {
 		return ErrRoutePathRequired
 	}
-	if !strings.HasPrefix(r.Path, "/") {
+	if !strings.HasPrefix(r.Path, Slash) {
 		return errors.Newf("%w: path %q must start with '/'", ErrRouteInvalidPrefix, r.Path)
 	}
 
@@ -241,7 +241,7 @@ func (r *Route) validateProxyRoute() error {
 		if prefix == "" {
 			return errors.Newf("%w [%d]: cannot be empty", ErrProxyRouteInvalidStrip, i)
 		}
-		if !strings.HasPrefix(prefix, "/") {
+		if !strings.HasPrefix(prefix, Slash) {
 			return errors.Newf("%w [%d]: %q must start with '/'", ErrProxyRouteInvalidStrip, i, prefix)
 		}
 	}

@@ -7,17 +7,17 @@ import (
 )
 
 type OAuth struct {
-	Provider     string `hcl:"provider"` // "google", "github", "oidc"
-	ClientID     string `hcl:"client_id"`
-	ClientSecret Value  `hcl:"client_secret"`
-	RedirectURL  string `hcl:"redirect_url"`          // e.g. https://agbero.com/auth/callback
-	AuthURL      string `hcl:"auth_url,optional"`     // For generic/custom provider
-	TokenURL     string `hcl:"token_url,optional"`    // For generic/custom provider
-	UserApiURL   string `hcl:"user_api_url,optional"` // For generic (to fetch email)
+	Provider     string `hcl:"provider" json:"provider"` // "google", "github", "oidc"
+	ClientID     string `hcl:"client_id" json:"client_id"`
+	ClientSecret Value  `hcl:"client_secret" json:"client_secret"`
+	RedirectURL  string `hcl:"redirect_url" json:"redirect_url"`          // e.g. https://agbero.com/auth/callback
+	AuthURL      string `hcl:"auth_url,optional" json:"auth_url"`         // For generic/custom provider
+	TokenURL     string `hcl:"token_url,optional" json:"token_url"`       // For generic/custom provider
+	UserApiURL   string `hcl:"user_api_url,optional" json:"user_api_url"` // For generic (to fetch email)
 
-	Scopes       []string `hcl:"scopes,optional"`
-	CookieSecret Value    `hcl:"cookie_secret"`          // To encrypt session cookie
-	EmailDomains []string `hcl:"email_domains,optional"` // Restrict to @company.com
+	Scopes       []string `hcl:"scopes,optional" json:"scopes"`
+	CookieSecret Value    `hcl:"cookie_secret" json:"cookie_secret"`          // To encrypt session cookie
+	EmailDomains []string `hcl:"email_domains,optional" json:"email_domains"` // Restrict to @company.com
 }
 
 func (o *OAuth) Validate() error {
@@ -39,9 +39,9 @@ func (o *OAuth) Validate() error {
 
 	// Default Scopes if empty
 	if len(o.Scopes) == 0 {
-		if strings.EqualFold(o.Provider, "google") || strings.EqualFold(o.Provider, "oidc") {
-			o.Scopes = []string{"openid", "profile", "email"}
-		} else if strings.EqualFold(o.Provider, "github") {
+		if strings.EqualFold(o.Provider, ProviderGoogle) || strings.EqualFold(o.Provider, ProviderOIDC) {
+			o.Scopes = []string{ScopeOpenID, ScopeProfile, ScopeEmail}
+		} else if strings.EqualFold(o.Provider, ProviderGitHub) {
 			o.Scopes = []string{"user:email"}
 		}
 	}
