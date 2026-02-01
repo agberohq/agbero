@@ -19,6 +19,7 @@
                 <a href="#" class="nav-link" data-page="hosts">Hosts</a>
                 <a href="#" class="nav-link" data-page="firewall">Firewall</a>
                 <a href="#" class="nav-link" data-page="config">Config</a>
+                <a href="#" class="nav-link" data-page="logs">Logs</a>
             </nav>
             <div class="header-actions">
                 <button class="icon-btn" id="refreshBtn" title="Refresh">
@@ -166,6 +167,28 @@
                 <pre id="configContent"><code>{}</code></pre>
             </div>
         </div>
+
+        <div id="logsPage" class="page">
+            <div class="page-header">
+                <h2>Logs <span id="logsStatus" style="font-size:12px;color:var(--text-tertiary);font-weight:600;margin-left:8px;">—</span></h2>
+                <div class="page-actions" style="display:flex;gap:8px;align-items:center;">
+                    <select id="logsTailSelect" style="padding:7px 10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary);">
+                        <option value="50">Tail 50</option>
+                        <option value="200" selected>Tail 200</option>
+                        <option value="500">Tail 500</option>
+                        <option value="1000">Tail 1000</option>
+                    </select>
+                    <button class="text-btn" id="logsPauseBtn" type="button">Pause</button>
+                    <button class="text-btn" id="logsClearBtn" type="button">Clear</button>
+                </div>
+            </div>
+
+            <div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+                <div id="logsList" style="max-height:520px;overflow:auto;padding:0 16px;background:var(--bg-primary);"></div>
+            </div>
+        </div>
+
+
     </main>
 
     <!-- Login Modal -->

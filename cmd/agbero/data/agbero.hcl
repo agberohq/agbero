@@ -68,6 +68,13 @@ logging {
   # Optional JSON log file
   file = "./agbero.log"
 
+  # Skip Prefix
+  skip = [
+    "/health",
+    "/metrics",
+    "/favicon.ico"
+  ]
+  
   # VictoriaLogs Integration (Optional)
   # victoria {
   #   enabled    = false

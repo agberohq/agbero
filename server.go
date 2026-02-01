@@ -56,6 +56,9 @@ type Server struct {
 	rateLimiter  *ratelimit.RateLimiter
 
 	wasmCache sync.Map
+
+	// Add this field to store ignored paths efficiently
+	skipLogPaths map[string]bool
 }
 
 func NewServer(opts ...Option) *Server {
@@ -158,6 +161,13 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 
 	s.ipMiddleware = clientip.NewIPMiddleware(s.global.Security.TrustedProxies)
 	s.rateLimiter = s.buildRateLimiterFromConfig()
+
+	s.skipLogPaths = make(map[string]bool)
+	if len(s.global.Logging.Skip) > 0 {
+		for _, p := range s.global.Logging.Skip {
+			s.skipLogPaths[p] = true
+		}
+	}
 
 	dataDir := woos.NewFolder(s.global.Storage.DataDir)
 	s.firewall, err = firewall.New(s.global.Security.Firewall, dataDir, s.logger)
@@ -661,6 +671,10 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 		return
 	}
 
+	if s.skipLogPaths[r.URL.Path] {
+		return
+	}
+
 	fields := []interface{}{
 		"host", host,
 		"path", r.URL.Path,
@@ -678,7 +692,6 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 	if s.global != nil && s.shouldLogUserAgent(r) {
 		fields = append(fields, "ua", truncateUA(r.UserAgent(), 50))
 	}
-
 	s.logger.Fields(fields...).Info(r.Method)
 }
 

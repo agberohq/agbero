@@ -97,6 +97,7 @@ func (g *Global) Validate() error {
 type Logging struct {
 	Level    string   `hcl:"level,optional" json:"level"` // debug, info, warn, error
 	File     string   `hcl:"file,optional" json:"file"`   // /var/log/agbero.log
+	Skip     []string `hcl:"skip,optional"`
 	Victoria Victoria `hcl:"victoria,block" json:"victoria"`
 }
 
