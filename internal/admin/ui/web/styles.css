@@ -15,6 +15,8 @@
 
     --panel-bg: #f9f9f9;
     --hover-bg: #f4f4f4;
+
+    --chart-bar-fill: #3b82f6;
 }
 
 [data-theme="dark"] {
@@ -135,8 +137,9 @@ body {
 /* CHART */
 .chart-wrapper {
     width: 100%;
-    height: 300px;
+    height: 200px;
     margin-bottom: 40px;
+    position: relative;
 }
 
 /* STATS FOOTER */
@@ -469,4 +472,11 @@ body {
 
 .divider {
     color: var(--border);
+}
+
+
+svg text {
+    user-select: none;
+    pointer-events: none;
+    opacity: 0.7;
 }

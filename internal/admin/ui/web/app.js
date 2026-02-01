@@ -200,24 +200,55 @@ class AgberoApp {
 
     renderGraph() {
         const el = document.getElementById("responseGraph");
-        if (this.page !== "dashboard") return;
-        const w = el.clientWidth;
-        const h = el.clientHeight;
-        const max = Math.max(10, ...this.metricsSeries) * 1.2;
+        if(this.page !== "dashboard") return;
 
+        // Dimensions
+        const rect = el.getBoundingClientRect();
+        const w = rect.width;
+        const h = rect.height;
+
+        // Padding for labels
+        const pTop = 15;
+        const pBottom = 15;
+        const drawH = h - pTop - pBottom;
+
+        if (this.metricsSeries.length === 0) {
+            el.innerHTML = `<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-mute);font-size:11px;">Waiting for data...</div>`;
+            return;
+        }
+
+        const max = Math.max(10, ...this.metricsSeries) * 1.1;
+
+        // 1. Generate Bars
         const bars = this.metricsSeries.map((val, i) => {
-            const barH = Math.max(2, (val / max) * h);
+            const barH = Math.max(2, (val / max) * drawH);
             const x = (i / 60) * 100;
-            const width = (100 / 60) - 0.2;
+            const width = (100 / 60) - 0.3;
 
-            let color = "var(--success)";
-            if (val > 200) color = "var(--warning)";
-            if (val > 500) color = "var(--danger)";
+            let color = "var(--accent)"; // Default color
+            if(val > 200) color = "var(--warning)";
+            if(val > 500) color = "var(--danger)";
 
-            return `<rect x="${x}%" y="${h - barH}" width="${width}%" height="${barH}" fill="${color}" rx="1"></rect>`;
+            // y pos accounting for padding
+            const y = (pTop + drawH) - barH;
+
+            return `<rect x="${x}%" y="${y}" width="${width}%" height="${barH}" fill="${color}" rx="1"></rect>`;
         }).join("");
 
-        el.innerHTML = `<svg width="100%" height="100%">${bars}</svg>`;
+        // 2. Y-Axis Label (Top Left - Max Value)
+        const yLabel = `<text x="0" y="10" fill="var(--text-mute)" font-size="10" font-family="monospace" font-weight="500">${max.toFixed(0)}ms</text>`;
+
+        // 3. X-Axis Labels (Bottom - Time)
+        const xLabels = `
+            <text x="0" y="${h}" fill="var(--text-mute)" font-size="10" font-family="monospace">-2m</text>
+            <text x="50%" y="${h}" fill="var(--text-mute)" font-size="10" font-family="monospace" text-anchor="middle">-1m</text>
+            <text x="100%" y="${h}" fill="var(--text-mute)" font-size="10" font-family="monospace" text-anchor="end">now</text>
+        `;
+
+        // 4. Reference Line (Dashed line at top value)
+        const grid = `<line x1="0" y1="${pTop}" x2="100%" y2="${pTop}" stroke="var(--border)" stroke-dasharray="4 4" stroke-width="1" />`;
+
+        el.innerHTML = `<svg width="100%" height="100%">${grid}${yLabel}${xLabels}${bars}</svg>`;
     }
 
     // ================== HOSTS ==================

@@ -784,6 +784,9 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 		reqOut.URL = &u
 	}
 
+	ctx := context.WithValue(reqOut.Context(), woos.CtxOriginalPath, reqOut.URL.Path)
+	reqOut = reqOut.WithContext(ctx)
+
 	// 1. Strip Prefixes logic
 	if len(route.StripPrefixes) > 0 {
 		for _, prefix := range route.StripPrefixes {

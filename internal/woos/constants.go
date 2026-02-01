@@ -69,8 +69,9 @@ const (
 // Internal Context Keys
 
 const (
-	CtxPort = "local-port"
-	CtxIP   = "client-ip"
+	CtxPort         = "local-port"
+	CtxIP           = "client-ip"
+	CtxOriginalPath = "original-path"
 )
 
 // File & Folder Names

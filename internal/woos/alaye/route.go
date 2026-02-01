@@ -176,9 +176,9 @@ func (r *Route) validateWebRoute() error {
 		return errors.Newf("web: %w", err)
 	}
 
-	if len(r.StripPrefixes) > 0 {
-		return ErrWebRouteStripPrefixes
-	}
+	//if len(r.StripPrefixes) > 0 {
+	//	return ErrWebRouteStripPrefixes
+	//}
 
 	if r.Backends.LBStrategy != "" && r.Backends.LBStrategy != StrategyRoundRobin {
 		return ErrWebRouteUnsupportedLB
