@@ -103,7 +103,6 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		"admin_addr", adminAddr,
 	).Info("starting agbero")
 
-	s.startAdminServer()
 	s.startCacheReaper(parentCtx)
 
 	hosts, err := s.hostManager.LoadAll()
@@ -168,6 +167,9 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 	if s.firewall != nil {
 		defer s.firewall.Close()
 	}
+
+	// stat the admin server
+	s.startAdminServer()
 
 	baseHandler := http.HandlerFunc(s.handleRequest)
 

@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
@@ -28,11 +29,10 @@ var (
 	metricsRemoteErrors uint64
 )
 
-// IPSet is the main firewall controller handling local blocklists (IP/CIDR) and remote verification.
 type IPSet struct {
 	mu     sync.RWMutex
-	v4     map[netip.Addr]struct{}
-	v6     map[netip.Addr]struct{}
+	v4     map[netip.Addr][]*Rule // Supports multiple rules per IP
+	v6     map[netip.Addr][]*Rule
 	ranger cidranger.Ranger
 
 	store *Store
@@ -81,12 +81,10 @@ func (c *ttlCache) get(key string) (bool, bool) {
 	if !ok {
 		return false, false
 	}
-
 	if time.Now().After(entry.expireAt) {
 		delete(c.entries, key)
 		return false, false
 	}
-
 	return entry.blocked, true
 }
 
@@ -94,21 +92,16 @@ func (c *ttlCache) set(key string, blocked bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Cache duration strategy:
-	// Blocked IPs: Cache longer (5m) to reduce load.
-	// Allowed IPs: Cache shorter (1m) to catch status changes quickly.
 	ttl := 1 * time.Minute
 	if blocked {
 		ttl = 5 * time.Minute
 	}
-
 	c.entries[key] = cacheEntry{
 		blocked:  blocked,
 		expireAt: time.Now().Add(ttl),
 	}
 }
 
-// New initializes the firewall subsystem.
 func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*IPSet, error) {
 	if cfg == nil || !cfg.Enabled {
 		return nil, nil
@@ -120,8 +113,8 @@ func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*IPSet, e
 	}
 
 	f := &IPSet{
-		v4:     make(map[netip.Addr]struct{}),
-		v6:     make(map[netip.Addr]struct{}),
+		v4:     make(map[netip.Addr][]*Rule),
+		v6:     make(map[netip.Addr][]*Rule),
 		ranger: cidranger.NewPCTrieRanger(),
 		remote: cfg.RemoteCheck,
 		client: &http.Client{
@@ -137,27 +130,24 @@ func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*IPSet, e
 		logger: logger,
 	}
 
-	// 1. Initialize Persistent Storage (BoltDB)
 	store, err := NewStore(dataDir, logger)
 	if err != nil {
 		return nil, fmt.Errorf("firewall store init: %w", err)
 	}
 	f.store = store
 
-	// 2. Load Persisted Rules
 	rules, err := store.LoadAll()
 	if err != nil {
-		return nil, fmt.Errorf("firewall load persistent rules: %w", err)
+		return nil, fmt.Errorf("firewall load rules: %w", err)
 	}
 	for _, r := range rules {
 		f.addRuleInMemory(r)
 	}
 	logger.Fields("count", len(rules)).Info("loaded persistent firewall rules")
 
-	// 3. Load Static Blocklist File (if configured)
 	if cfg.BlockList != "" {
 		if err := f.importTextFile(cfg.BlockList); err != nil {
-			logger.Warnf("failed to load blocklist file %q: %v", cfg.BlockList, err)
+			logger.Warnf("failed to load blocklist %q: %v", cfg.BlockList, err)
 		}
 	}
 
@@ -171,7 +161,6 @@ func (f *IPSet) Close() error {
 	return f.store.Close()
 }
 
-// List returns all currently active persistent rules
 func (f *IPSet) List() ([]Rule, error) {
 	if f.store == nil {
 		return nil, nil
@@ -179,19 +168,15 @@ func (f *IPSet) List() ([]Rule, error) {
 	return f.store.LoadAll()
 }
 
-// Unblock removes an IP from storage and reloads the memory state
 func (f *IPSet) Unblock(ip string) error {
 	if f.store == nil {
 		return nil
 	}
 
-	// 1. Remove from Disk
 	if err := f.store.Remove(ip); err != nil {
 		return err
 	}
 
-	// 2. Reload Memory (Simplest way to ensure consistency for mixed IP/CIDR)
-	// For massive lists, we might want targeted removal, but rebuild is safer for now.
 	rules, err := f.store.LoadAll()
 	if err != nil {
 		return err
@@ -200,17 +185,14 @@ func (f *IPSet) Unblock(ip string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// Reset Memory Maps
-	f.v4 = make(map[netip.Addr]struct{})
-	f.v6 = make(map[netip.Addr]struct{})
+	f.v4 = make(map[netip.Addr][]*Rule)
+	f.v6 = make(map[netip.Addr][]*Rule)
 	f.ranger = cidranger.NewPCTrieRanger()
 
-	// Re-populate
 	for _, r := range rules {
 		f.addRuleInMemory(r)
 	}
 
-	// Also clear remote cache for this IP
 	f.cache.mu.Lock()
 	delete(f.cache.entries, ip)
 	f.cache.mu.Unlock()
@@ -219,10 +201,11 @@ func (f *IPSet) Unblock(ip string) error {
 	return nil
 }
 
-// Block adds a rule to storage and memory immediately.
-func (f *IPSet) Block(ip, reason string, duration time.Duration) error {
+func (f *IPSet) Block(ip, host, path, reason string, duration time.Duration) error {
 	r := Rule{
 		IP:        ip,
+		Host:      strings.ToLower(host),
+		Path:      path,
 		Reason:    reason,
 		CreatedAt: time.Now(),
 	}
@@ -236,12 +219,10 @@ func (f *IPSet) Block(ip, reason string, duration time.Duration) error {
 		r.Type = BlockTypeSingle
 	}
 
-	// Persist first
 	if err := f.store.Add(r); err != nil {
 		return err
 	}
 
-	// Update memory
 	f.mu.Lock()
 	f.addRuleInMemory(r)
 	f.mu.Unlock()
@@ -250,7 +231,6 @@ func (f *IPSet) Block(ip, reason string, duration time.Duration) error {
 }
 
 func (f *IPSet) addRuleInMemory(r Rule) {
-	// CIDR
 	if r.Type == BlockTypeCIDR {
 		_, network, err := net.ParseCIDR(r.IP)
 		if err == nil {
@@ -259,14 +239,14 @@ func (f *IPSet) addRuleInMemory(r Rule) {
 		return
 	}
 
-	// Single IP
 	addr, err := netip.ParseAddr(r.IP)
 	if err == nil {
 		addr = addr.Unmap()
+		rCopy := r // Copy rule
 		if addr.Is4() {
-			f.v4[addr] = struct{}{}
+			f.v4[addr] = append(f.v4[addr], &rCopy)
 		} else {
-			f.v6[addr] = struct{}{}
+			f.v6[addr] = append(f.v6[addr], &rCopy)
 		}
 	}
 }
@@ -302,10 +282,12 @@ func (f *IPSet) importTextFile(path string) error {
 		addr, err := netip.ParseAddr(line)
 		if err == nil {
 			addr = addr.Unmap()
+			// Text file imports are always Global blocks
+			r := Rule{IP: line, Type: BlockTypeSingle}
 			if addr.Is4() {
-				f.v4[addr] = struct{}{}
+				f.v4[addr] = append(f.v4[addr], &r)
 			} else {
-				f.v6[addr] = struct{}{}
+				f.v6[addr] = append(f.v6[addr], &r)
 			}
 			count++
 		}
@@ -323,27 +305,42 @@ func (f *IPSet) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ipStr := clientip.ClientIP(r)
 
-		// 1. Fast Map Lookup (Single IPs)
+		// 1. Single IP Lookup
 		addr, err := netip.ParseAddr(ipStr)
 		if err == nil {
 			addr = addr.Unmap()
 			f.mu.RLock()
-			var blocked bool
+			var rules []*Rule
 			if addr.Is4() {
-				_, blocked = f.v4[addr]
+				rules = f.v4[addr]
 			} else {
-				_, blocked = f.v6[addr]
+				rules = f.v6[addr]
 			}
 			f.mu.RUnlock()
 
-			if blocked {
-				atomic.AddUint64(&metricsLocalBlocks, 1)
-				http.Error(w, "Access Denied", http.StatusForbidden)
-				return
+			if len(rules) > 0 {
+				reqHost := core.NormalizeHost(r.Host)
+				reqPath := r.URL.Path
+
+				for _, rule := range rules {
+					// Check Host Match (Empty rule.Host matches ALL)
+					if rule.Host != "" && rule.Host != reqHost {
+						continue
+					}
+					// Check Path Match (Empty rule.Path matches ALL)
+					if rule.Path != "" && !strings.HasPrefix(reqPath, rule.Path) {
+						continue
+					}
+
+					// Match Found -> Block
+					atomic.AddUint64(&metricsLocalBlocks, 1)
+					http.Error(w, "Access Denied", http.StatusForbidden)
+					return
+				}
 			}
 		}
 
-		// 2. Ranger Lookup (CIDRs)
+		// 2. CIDR Lookup (Always Global for now)
 		netIP := net.ParseIP(ipStr)
 		if netIP != nil {
 			contains, err := f.ranger.Contains(netIP)

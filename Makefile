@@ -131,7 +131,7 @@ clean:
 
 
 # Pull and filter specific assets
-fetch-ui:
+ui:
 	@echo "Fetching clean assets from $(REPO_URL)..."
 	@mkdir -p $(TARGET_DIR) $(TEMP_DIR)
 	# 1. Clone only the latest commit to a temp folder (still has .git)

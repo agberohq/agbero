@@ -2,7 +2,9 @@ package agbero
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -62,6 +64,9 @@ func (s *Server) startAdminServer() {
 
 	// Config Dump
 	mux.Handle("/config", protect(s.handleAdminConfigDump))
+
+	// Logs
+	mux.Handle("/logs", protect(s.handleAdminLogs))
 
 	// Firewall Management
 	if s.firewall != nil {
@@ -198,6 +203,8 @@ func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			IP          string `json:"ip"`
 			Reason      string `json:"reason"`
+			Host        string `json:"host"`         // Added
+			Path        string `json:"path"`         // Added
 			DurationSec int    `json:"duration_sec"` // 0 = permanent
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -210,7 +217,7 @@ func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 		}
 
 		dur := time.Duration(req.DurationSec) * time.Second
-		if err := s.firewall.Block(req.IP, req.Reason, dur); err != nil {
+		if err := s.firewall.Block(req.IP, req.Host, req.Path, req.Reason, dur); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -235,6 +242,38 @@ func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleAdminLogs reads the log file backwards efficiently
+func (s *Server) handleAdminLogs(w http.ResponseWriter, r *http.Request) {
+	logPath := s.global.Logging.File
+	if logPath == "" {
+		http.Error(w, "File logging disabled", http.StatusNotImplemented)
+		return
+	}
+
+	// Default 50 lines, max 1000
+	limit := 50
+	// (Add query param parsing here if desired)
+
+	lines, err := readLastLines(logPath, limit)
+	if err != nil {
+		http.Error(w, "Error reading logs: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var logs []map[string]any
+	for _, l := range lines {
+		if l == "" {
+			continue
+		}
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(l), &entry); err == nil {
+			logs = append(logs, entry)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(logs)
 }
 
 // sanitizeGlobal strips secrets from the global config
@@ -281,4 +320,71 @@ func sanitizeHosts(hosts map[string]*alaye.Host) map[string]*alaye.Host {
 		out[k] = &clone
 	}
 	return out
+}
+
+func readLastLines(filename string, n int) ([]string, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	fileSize := stat.Size()
+	var lines []string
+
+	// Buffer size for reading chunks backwards
+	const bufSize = 1024
+	buf := make([]byte, bufSize)
+
+	var offset int64 = fileSize
+	var leftover string
+
+	for offset > 0 && len(lines) < n {
+		readSize := int64(bufSize)
+		if offset < readSize {
+			readSize = offset
+		}
+		offset -= readSize
+
+		_, err := file.Seek(offset, io.SeekStart)
+		if err != nil {
+			return nil, err
+		}
+
+		_, err = file.Read(buf[:readSize])
+		if err != nil {
+			return nil, err
+		}
+
+		// Convert chunk to string and prepend leftover from previous loop
+		chunk := string(buf[:readSize]) + leftover
+
+		// Split lines
+		parts := strings.Split(chunk, "\n")
+
+		// The first part matches the end of the previous chunk (going backwards),
+		// so it is the "leftover" for the next iteration, unless we are at the very start of file.
+		if offset > 0 {
+			leftover = parts[0]
+			parts = parts[1:]
+		}
+
+		// Process parts in reverse order
+		for i := len(parts) - 1; i >= 0; i-- {
+			line := strings.TrimSpace(parts[i])
+			if line != "" {
+				lines = append(lines, line)
+				if len(lines) >= n {
+					break
+				}
+			}
+		}
+	}
+
+	return lines, nil
 }
