@@ -1,8 +1,8 @@
 package alaye
 
 type Backend struct {
-	LBStrategy string   `hcl:"lb_strategy,optional"`
-	Servers    []Server `hcl:"server,block"`
+	LBStrategy string   `hcl:"lb_strategy,optional" json:"lb_strategy"`
+	Servers    []Server `hcl:"server,block" json:"servers"`
 }
 
 func MakeBackend(address ...string) Backend {

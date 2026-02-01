@@ -3,14 +3,14 @@ package alaye
 import "github.com/olekukonko/errors"
 
 type Headers struct {
-	Request  *Header `hcl:"request,block"`
-	Response *Header `hcl:"response,block"`
+	Request  *Header `hcl:"request,block" json:"request"`
+	Response *Header `hcl:"response,block" json:"response"`
 }
 
 type Header struct {
-	Set    map[string]string `hcl:"set,optional"`
-	Add    map[string]string `hcl:"add,optional"`
-	Remove []string          `hcl:"remove,optional"`
+	Set    map[string]string `hcl:"set,optional" json:"set"`
+	Add    map[string]string `hcl:"add,optional" json:"add"`
+	Remove []string          `hcl:"remove,optional" json:"remove"`
 }
 
 func (h *Headers) Validate() error {

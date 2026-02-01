@@ -8,12 +8,12 @@ import (
 )
 
 type Gossip struct {
-	Enabled        bool     `hcl:"enabled"`
-	Port           int      `hcl:"port,optional"`
-	SecretKey      Value    `hcl:"secret_key,optional"`       // Memberlist encryption key (16, 24, or 32 bytes)
-	Seeds          []string `hcl:"seeds,optional"`            // Initial cluster peers
-	PrivateKeyFile string   `hcl:"private_key_file,optional"` // Path to Ed25519 private key for app auth
-	TTL            int      `hcl:"ttl,optional"`              // how long since I last heard from you before I assume you’re dead
+	Enabled        bool     `hcl:"enabled" json:"enabled"`
+	Port           int      `hcl:"port,optional" json:"port"`
+	SecretKey      Value    `hcl:"secret_key,optional" json:"secret-key"`             // Memberlist encryption key (16, 24, or 32 bytes)
+	Seeds          []string `hcl:"seeds,optional" json:"seeds"`                       // Initial cluster peers
+	PrivateKeyFile string   `hcl:"private_key_file,optional" json:"private_key_file"` // Path to Ed25519 private key for app auth
+	TTL            int      `hcl:"ttl,optional" json:"ttl"`                           // how long since I last heard from you before I assume you’re dead
 }
 
 func (g *Gossip) Validate() error {
@@ -45,14 +45,14 @@ func (g *Gossip) Validate() error {
 		// Basic host:port validation
 		if _, _, err := net.SplitHostPort(seed); err != nil {
 			// Try adding default port
-			if _, _, err := net.SplitHostPort(seed + ":7946"); err != nil {
+			if _, _, err := net.SplitHostPort(seed + ":" + DefaultGossipPortStr); err != nil {
 				return errors.Newf("%w: seeds[%d]: %q is not a valid host:port", ErrInvalidSeedFormat, i, seed)
 			}
 		}
 	}
 
 	// Private key file validation (if provided)
-	if g.PrivateKeyFile != "" && !strings.HasPrefix(g.PrivateKeyFile, "/") {
+	if g.PrivateKeyFile != "" && !strings.HasPrefix(g.PrivateKeyFile, Slash) {
 		return ErrPrivateKeyAbsolute
 	}
 

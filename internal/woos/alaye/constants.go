@@ -59,7 +59,8 @@ const (
 
 // gossip
 const (
-	DefaultGossipPort = 7946
+	DefaultGossipPort    = 7946
+	DefaultGossipPortStr = "7946"
 
 	MinPort = 0
 	MaxPort = 65535
@@ -92,4 +93,26 @@ const (
 	TCP         = "tcp"
 	HTTPPrefix  = "http://"
 	HTTPSPrefix = "https://"
+
+	CompressionGzip   = "gzip"
+	CompressionBrotli = "brotli"
+)
+
+const (
+	Empty               = ""
+	Slash               = "/"
+	Star                = "*"
+	SlashStar           = "/*"
+	SlashByte           = '/'
+	RegexPrefix         = "~"
+	TemplateOpen        = "{"
+	TemplateClose       = "}"
+	TemplateSep         = ":"
+	TemplateWildcardKey = "*"
+)
+
+const (
+	WindowBackSlash = '\\'
+	ENVProgramData  = "ProgramData"
+	ETCPath         = "/etc"
 )

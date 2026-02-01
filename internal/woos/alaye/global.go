@@ -8,30 +8,30 @@ import (
 )
 
 type Global struct {
-	Version     int         `hcl:"version,optional"`
-	Development bool        `hcl:"development,optional"`
-	Bind        Bind        `hcl:"bind,block"`
-	Logging     Logging     `hcl:"logging,block"`
-	Gossip      Gossip      `hcl:"gossip,block"`
-	Timeouts    Timeout     `hcl:"timeouts,block"`
-	RateLimits  Rate        `hcl:"rate_limits,block"`
-	Storage     Storage     `hcl:"storage,block"`
-	Security    Security    `hcl:"security,block"`
-	General     General     `hcl:"general,block"`
-	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block"`
-	Admin       *Admin      `hcl:"admin,block"`
+	Version     int         `hcl:"version,optional" json:"version"`
+	Development bool        `hcl:"development,optional" json:"development"`
+	Bind        Bind        `hcl:"bind,block" json:"bind"`
+	Logging     Logging     `hcl:"logging,block" json:"logging"`
+	Gossip      Gossip      `hcl:"gossip,block" json:"gossip"`
+	Timeouts    Timeout     `hcl:"timeouts,block" json:"timeouts"`
+	RateLimits  Rate        `hcl:"rate_limits,block" json:"rateLimits"`
+	Storage     Storage     `hcl:"storage,block" json:"storage"`
+	Security    Security    `hcl:"security,block" json:"security"`
+	General     General     `hcl:"general,block" json:"general"`
+	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt"`
+	Admin       *Admin      `hcl:"admin,block" json:"admin,omitempty"`
 }
 
 type Security struct {
-	TrustedProxies []string  `hcl:"trusted_proxies,optional"`
-	Firewall       *Firewall `hcl:"firewall,block"`
+	TrustedProxies []string  `hcl:"trusted_proxies,optional" json:"trusted_proxies"`
+	Firewall       *Firewall `hcl:"firewall,block" json:"firewall,omitempty"`
 }
 
 type Firewall struct {
-	Enabled       bool   `hcl:"enabled"`
-	BlockList     string `hcl:"block_list_file,optional"`
-	RemoteCheck   string `hcl:"remote_check_url,optional"`
-	RemoteTimeout int    `hcl:"remote_timeout,optional"` // Seconds
+	Enabled       bool   `hcl:"enabled" json:"enabled"`
+	BlockList     string `hcl:"block_list_file,optional" json:"blockList"`
+	RemoteCheck   string `hcl:"remote_check_url,optional" json:"remote_check"`
+	RemoteTimeout int    `hcl:"remote_timeout,optional" json:"remote_timeout"` // Seconds
 }
 
 func (s Security) Validate() error {
@@ -95,19 +95,19 @@ func (g *Global) Validate() error {
 }
 
 type Logging struct {
-	Level    string   `hcl:"level,optional"` // debug, info, warn, error
-	File     string   `hcl:"file,optional"`  // /var/log/agbero.log
-	Victoria Victoria `hcl:"victoria,block"`
+	Level    string   `hcl:"level,optional" json:"level"` // debug, info, warn, error
+	File     string   `hcl:"file,optional" json:"file"`   // /var/log/agbero.log
+	Victoria Victoria `hcl:"victoria,block" json:"victoria"`
 }
 
 type Victoria struct {
-	Enabled   bool   `hcl:"enabled,optional"`
-	URL       string `hcl:"url,optional"` // http://victoria-logs:9428/insert/jsonline
-	BatchSize int    `hcl:"batch_size,optional"`
+	Enabled   bool   `hcl:"enabled,optional" json:"enabled"`
+	URL       string `hcl:"url,optional" json:"URL"` // http://victoria-logs:9428/insert/jsonline
+	BatchSize int    `hcl:"batch_size,optional" json:"batch_size"`
 }
 
 type General struct {
-	MaxHeaderBytes int `hcl:"max_header_bytes,optional"`
+	MaxHeaderBytes int `hcl:"max_header_bytes,optional" json:"max_header_bytes"`
 }
 
 func (g *General) Validate() error {
@@ -118,9 +118,9 @@ func (g *General) Validate() error {
 }
 
 type Storage struct {
-	HostsDir string `hcl:"hosts_dir,optional"`
-	CertsDir string `hcl:"certs_dir,optional"`
-	DataDir  string `hcl:"data_dir,optional"`
+	HostsDir string `hcl:"hosts_dir,optional" json:"hosts_dir"`
+	CertsDir string `hcl:"certs_dir,optional" json:"certs_dir"`
+	DataDir  string `hcl:"data_dir,optional" json:"data_dir"`
 }
 
 func (s Storage) Validate() error {
