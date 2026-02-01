@@ -9,21 +9,21 @@ import (
 )
 
 type Conditions struct {
-	SourceIPs []string          `hcl:"source_ips,optional"`
-	Headers   map[string]string `hcl:"headers,optional"`
+	SourceIPs []string          `hcl:"source_ips,optional" json:"source_ips"`
+	Headers   map[string]string `hcl:"headers,optional" json:"headers"`
 }
 
 // Server represents an upstream server configuration
 type Server struct {
-	Address    string      `hcl:"address"`
-	Weight     int         `hcl:"weight,optional"`
-	Conditions *Conditions `hcl:"conditions,block"`
-	Streaming  Streaming   `hcl:"streaming,block,optional"` // optional by nature when pointer
+	Address    string      `hcl:"address" json:"address"`
+	Weight     int         `hcl:"weight,optional" json:"weight"`
+	Conditions *Conditions `hcl:"conditions,block" json:"conditions"`
+	Streaming  Streaming   `hcl:"streaming,block,optional" json:"streaming"` // optional by nature when pointer
 }
 
 type Streaming struct {
-	Enabled       bool          `hcl:"enabled,optional"`
-	FlushInterval time.Duration `hcl:"flush_interval,optional"`
+	Enabled       bool          `hcl:"enabled,optional" json:"enabled"`
+	FlushInterval time.Duration `hcl:"flush_interval,optional" json:"flush_interval"`
 }
 
 func (s *Streaming) EffectiveFlushInterval() time.Duration {
@@ -49,15 +49,15 @@ func NewServers(address ...string) []Server {
 }
 
 func (b Server) IsHTTP() bool {
-	return strings.HasPrefix(b.Address, "http://")
+	return strings.HasPrefix(b.Address, HTTPPrefix)
 }
 
 func (b Server) IsHTTPS() bool {
-	return strings.HasPrefix(b.Address, "https://")
+	return strings.HasPrefix(b.Address, HTTPSPrefix)
 }
 
 func (b Server) IsTCP() bool {
-	return strings.HasPrefix(b.Address, "tcp://")
+	return strings.HasPrefix(b.Address, TCPPrefix)
 }
 
 func (b Server) String() string {

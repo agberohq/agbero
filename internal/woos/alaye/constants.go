@@ -93,6 +93,9 @@ const (
 	TCP         = "tcp"
 	HTTPPrefix  = "http://"
 	HTTPSPrefix = "https://"
+	TCPPrefix   = "tcp://"
+
+	UNIXPrefix = "unix:"
 
 	CompressionGzip   = "gzip"
 	CompressionBrotli = "brotli"

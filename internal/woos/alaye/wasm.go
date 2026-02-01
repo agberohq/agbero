@@ -7,10 +7,10 @@ import (
 )
 
 type Wasm struct {
-	Module      string            `hcl:"module"`                 // Path to .wasm file
-	Config      map[string]string `hcl:"config,optional"`        // Key-values passed to WASM
-	MaxBodySize int64             `hcl:"max_body_size,optional"` // Max bytes to copy to WASM (0 = none)
-	Access      []string          `hcl:"access,optional"`        // "headers", "body", "method", "uri"
+	Module      string            `hcl:"module" json:"module"`                        // Path to .wasm file
+	Config      map[string]string `hcl:"config,optional" json:"config"`               // Key-values passed to WASM
+	MaxBodySize int64             `hcl:"max_body_size,optional" json:"max_body_size"` // Max bytes to copy to WASM (0 = none)
+	Access      []string          `hcl:"access,optional" json:"access"`               // "headers", "body", "method", "uri"
 }
 
 func (w *Wasm) Validate() error {
