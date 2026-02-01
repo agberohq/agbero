@@ -151,7 +151,7 @@ func New(logger *ll.Logger, route *alaye.Route) *webHandler {
 			clientFactory,
 		)
 
-		h.logger.Fields("php", true, "php_net", network, "php_addr", address, "root", root).Info("web php enabled")
+		h.logger.Fields("route", route.Path, "php", true, "php_net", network, "php_addr", address, "root", root).Info("PHP")
 	}
 
 	return h
