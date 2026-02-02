@@ -22,7 +22,7 @@ require (
 	github.com/markbates/goth v1.81.0
 	github.com/maypok86/otter/v2 v2.3.0
 	github.com/olekukonko/errors v1.2.0
-	github.com/olekukonko/ll v0.1.5-0.20260128152051-cfba7471e893
+	github.com/olekukonko/ll v0.1.5-0.20260201190904-6f29ef6b74dc
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.59.0
 	github.com/tetratelabs/wazero v1.11.0
