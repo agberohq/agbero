@@ -319,6 +319,15 @@ func main() {
 	if cmdStart.Used {
 		logger.Info("Starting service...")
 		if err := s.Start(); err != nil {
+			// UX Improvement: Check if it's just already running
+			msg := strings.ToLower(err.Error())
+			if strings.Contains(msg, "already running") ||
+				strings.Contains(msg, "already started") ||
+				strings.Contains(msg, "service is running") {
+				logger.Warn("Service is already running")
+				return
+			}
+			// Actual error
 			logger.Fatal(handleServiceError(err, "start", resolvedPath))
 		}
 		logger.Info("Service started")
