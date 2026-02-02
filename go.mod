@@ -2,6 +2,8 @@ module git.imaxinacion.net/aibox/agbero
 
 go 1.25.5
 
+// replace github.com/olekukonko/ll => /Users/oleku/gopath/src/github.com/olekukonko/ll
+
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
 	github.com/alecthomas/hcl v0.5.5
@@ -14,7 +16,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fsnotify/fsnotify v1.9.0
-	github.com/golang-jwt/jwt/v5 v5.3.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/memberlist v0.5.4
 	github.com/integrii/flaggy v1.8.0
 	github.com/kardianos/service v1.2.4
@@ -22,7 +24,7 @@ require (
 	github.com/markbates/goth v1.81.0
 	github.com/maypok86/otter/v2 v2.3.0
 	github.com/olekukonko/errors v1.2.0
-	github.com/olekukonko/ll v0.1.5-0.20260201190904-6f29ef6b74dc
+	github.com/olekukonko/ll v0.1.5-0.20260202103841-65bca58ef64e
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.59.0
 	github.com/tetratelabs/wazero v1.11.0
@@ -31,7 +33,7 @@ require (
 	go.etcd.io/bbolt v1.4.3
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.47.0
-	golang.org/x/oauth2 v0.30.0
+	golang.org/x/oauth2 v0.34.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/time v0.14.0
 )

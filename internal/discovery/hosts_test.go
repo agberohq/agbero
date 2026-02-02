@@ -16,7 +16,7 @@ var (
 )
 
 // Helper to write valid HCL content
-// FIXED: Updated structure to match alaye.Backend and alaye.Server struct tags
+// Updated structure to match alaye.Backend and alaye.Server struct tags
 // (server is a block, not a string attribute)
 func validHCL(domain string) []byte {
 	return []byte(`

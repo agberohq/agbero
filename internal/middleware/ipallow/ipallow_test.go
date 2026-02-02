@@ -103,7 +103,7 @@ func TestNew(t *testing.T) {
 			// Create Request
 			req := httptest.NewRequest("GET", "/", nil)
 
-			// FIX: Handle IPv6 Bracket formatting for RemoteAddr
+			// Handle IPv6 Bracket formatting for RemoteAddr
 			// net.SplitHostPort expects "[::1]:1234", not "::1:1234"
 			if strings.Contains(tt.clientIP, ":") {
 				req.RemoteAddr = "[" + tt.clientIP + "]:1234"

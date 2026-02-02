@@ -60,7 +60,7 @@ func TestNewBackend_NoHealthCheck(t *testing.T) {
 
 func TestServeHTTP_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// FIXED: Force >0 latency so metrics logic works (minUS is 1)
+		// Force >0 latency so metrics logic works (minUS is 1)
 		time.Sleep(20 * time.Microsecond)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
@@ -89,7 +89,7 @@ func TestServeHTTP_Success(t *testing.T) {
 		t.Error("TotalReqs should be 1")
 	}
 
-	// FIXED: Wait for metrics channel to drain (async metrics race condition)
+	// Wait for metrics channel to drain (async metrics race condition)
 	time.Sleep(10 * time.Millisecond)
 
 	// Check metrics (non-zero duration)
@@ -420,7 +420,7 @@ func TestMetricsSnapshot(t *testing.T) {
 	b.Metrics.Record(200)
 	b.Metrics.Record(300)
 
-	// FIXED: Wait for channel to drain
+	// Wait for channel to drain
 	time.Sleep(10 * time.Millisecond)
 
 	snap := b.Metrics.Snapshot()

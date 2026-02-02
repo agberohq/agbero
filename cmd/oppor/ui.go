@@ -60,7 +60,6 @@ var (
 			BorderForeground(lipgloss.Color("#404040")).
 			Padding(0, 2)
 
-	// FIXED: Replaced InternalSize with Width
 	cardLabelStyle = lipgloss.NewStyle().Foreground(tColor).Width(12)
 	cardValueStyle = lipgloss.NewStyle().Foreground(wColor).Bold(true)
 
@@ -486,7 +485,6 @@ func (m Ui) renderStats() string {
 		prog = "\n" + m.ProgressBar.ViewAs(pct)
 	}
 
-	// FIXED: Render method call
 	stat := func(label, val string, color lipgloss.Color) string {
 		return cardStyle.Render(lipgloss.JoinVertical(lipgloss.Center,
 			cardLabelStyle.Render(label),

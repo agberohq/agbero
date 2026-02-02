@@ -35,9 +35,18 @@ var tplAdminHcl string
 var bannerTmpl string
 
 func welcome() {
-	fmt.Print(bannerTmpl)
-	fmt.Println(woos.Name + " - " + woos.Description)
-	fmt.Println("Version: " + woos.Version + "")
+	fmt.Println(bannerTmpl)
+	fmt.Printf("\033[1;34m%s\033[0m - %s\n", woos.Name, woos.Description)
+	fmt.Printf("\033[90mVersion: %s\033[0m\n\n", woos.Version)
+
+	fmt.Println("\033[1mQuick Start:\033[0m")
+	fmt.Println("  agbero <command> [arguments]")
+	fmt.Println()
+	fmt.Println("\033[1mExamples:\033[0m")
+	fmt.Println("  agbero run          # Run the application")
+	fmt.Println("  agbero run --dev    # Run application in dev mode")
+	fmt.Println("  agbero help         # Show all available commands")
+	fmt.Println()
 }
 
 // resolveConfigPath implements the search order

@@ -64,7 +64,7 @@ func TestLoadKeys_InvalidPEM(t *testing.T) {
 func TestLoadKeys_NotEd25519(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "rsa.key")
 
-	// FIX: Generate a valid RSA key so ParsePKCS8PrivateKey succeeds
+	// Generate a valid RSA key so ParsePKCS8PrivateKey succeeds
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)

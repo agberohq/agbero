@@ -1,4 +1,3 @@
-// cmd/agbero/main.go
 package main
 
 import (
@@ -73,13 +72,28 @@ func main() {
 
 	// --- Subcommands ---
 	cmdInstall := flaggy.NewSubcommand("install")
+	cmdInstall.Description = "Install service (interactive)"
+
 	cmdUninstall := flaggy.NewSubcommand("uninstall")
+	cmdUninstall.Description = "Uninstall service"
+
 	cmdStart := flaggy.NewSubcommand("start")
+	cmdStart.Description = "Start service"
+
 	cmdStop := flaggy.NewSubcommand("stop")
+	cmdStop.Description = "Stop service"
+
 	cmdRun := flaggy.NewSubcommand("run")
+	cmdRun.Description = "Run server quickly without installing"
+
 	cmdValidate := flaggy.NewSubcommand("validate")
+	cmdValidate.Description = "Validate configuration"
+
 	cmdHosts := flaggy.NewSubcommand("hosts")
+	cmdHosts.Description = "List configured hosts"
+
 	cmdHelp := flaggy.NewSubcommand("help")
+	cmdHelp.Description = "Show help examples"
 
 	// Hash command
 	cmdHash := flaggy.NewSubcommand("hash")
@@ -88,7 +102,10 @@ func main() {
 
 	// Certificate commands
 	cmdCert := flaggy.NewSubcommand("cert")
+	cmdCert.Description = "Manage TLS certificates"
+
 	cmdInstallCA := flaggy.NewSubcommand("install-ca")
+	cmdInstallCA.Description = "Install CA certificate"
 	cmdInstallCA.Bool(&forceCAInstall, "f", "force", "Force reinstall")
 	cmdInstallCA.String(&caMethod, "m", "method", "Method: auto|mkcert|truststore")
 

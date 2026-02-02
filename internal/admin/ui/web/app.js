@@ -156,8 +156,7 @@ class AgberoApp {
 
         try {
             const res = await fetch(this.apiBase + path, opts);
-
-            // CRITICAL FIX: Handle 401 without reloading page
+            
             if (res.status === 401) {
                 this.handleSessionExpired();
                 return null;

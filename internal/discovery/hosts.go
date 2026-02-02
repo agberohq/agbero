@@ -45,6 +45,9 @@ type Host struct {
 	changed chan struct{}
 
 	routers map[string]*matcher.Tree
+
+	// loaded indicates if the initial disk scan has completed.
+	loaded bool
 }
 
 func NewHost(hostsDir string, opts ...Option) *Host {
@@ -62,6 +65,7 @@ func NewHostFolder(hostsDir woos.Folder, opts ...Option) *Host {
 		nodeFailures:  make(map[string]int),
 		changed:       make(chan struct{}, 1),
 		routers:       make(map[string]*matcher.Tree),
+		loaded:        false,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -345,6 +349,15 @@ func (hm *Host) GetByPort(port string) *alaye.Host {
 func (hm *Host) LoadAll() (map[string]*alaye.Host, error) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
+
+	// Ensure we load from disk if this is a fresh instance (e.g. CLI usage)
+	// that hasn't called Watch().
+	if !hm.loaded {
+		if err := hm.loadAllLocked(); err != nil {
+			return nil, err
+		}
+	}
+
 	return hm.snapshotLocked(), nil
 }
 
@@ -370,6 +383,9 @@ func (hm *Host) notifyChanged() {
 }
 
 func (hm *Host) loadAllLocked() error {
+	// Mark as loaded regardless of success to prevent infinite loops on error
+	hm.loaded = true
+
 	if exists := hm.hostsDir.Exists(""); !exists {
 		hm.logger.Fields("hosts_dir", hm.hostsDir).
 			Warn("hosts directory not found, clearing configuration")
@@ -409,6 +425,12 @@ func (hm *Host) loadAllLocked() error {
 				"err", err,
 			).Error("failed to load host config")
 			failedFiles = append(failedFiles, p)
+			return nil
+		}
+
+		// Ensure we don't load configs with no domains as they are effectively useless
+		if len(cfg.Domains) == 0 {
+			hm.logger.Fields("file", name).Warn("host file loaded but contains no 'domains'; ignoring")
 			return nil
 		}
 

@@ -54,7 +54,7 @@ func (t *Tree) Insert(pattern string, route *alaye.Route) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// FIX: Normalize "/*" to "/" at the root level using constants.
+	// Normalize "/*" to "/" at the root level using constants.
 	if pattern == woos.SlashStar {
 		pattern = woos.Slash
 	}
