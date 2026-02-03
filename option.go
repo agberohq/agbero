@@ -3,6 +3,7 @@ package agbero
 import (
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
 
@@ -23,5 +24,11 @@ func WithGlobalConfig(global *alaye.Global) Option {
 func WithLogger(logger *ll.Logger) Option {
 	return func(server *Server) {
 		server.logger = logger
+	}
+}
+
+func WithShutdownManager(sm *jack.Shutdown) Option {
+	return func(server *Server) {
+		server.shutdown = sm
 	}
 }

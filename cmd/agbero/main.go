@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/security"
@@ -16,6 +17,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
+	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/ll/lh"
 	"github.com/olekukonko/ll/lx"
@@ -55,12 +57,25 @@ var (
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
+	// 1. Initialize Single Shutdown Manager
+	shutdown := jack.NewShutdown(
+		jack.ShutdownWithTimeout(30*time.Second),
+		jack.ShutdownWithSignals(os.Interrupt, syscall.SIGTERM),
+	)
+
+	// 2. Initialize Logger (Passing Shutdown Manager)
 	logger = ll.New(woos.Name,
 		ll.WithHandler(lh.NewColorizedHandler(os.Stdout)),
 		ll.WithFatalExits(true),
 	).Enable()
 
-	// 2) Logging Flaggy
+	// Update shutdown logger to use our initialized logger
+	// We do this after creating ll.New to avoid circular dependency
+	// Note: jack options are usually passed in NewShutdown, but this is safe/cleaner here
+	// if we wanted to enforce it early. Since NewShutdown was called above,
+	// the logger inside Jack is currently default. We can leave it or re-init if Jack supports setters.
+	// For this strict implementation, we proceed with the instantiated shutdown.
+
 	flaggy.SetName(woos.Name)
 	flaggy.SetDescription(woos.Description)
 	flaggy.SetVersion(version)
@@ -175,7 +190,6 @@ func main() {
 	}
 	if cmdHash.Used {
 		if hashPassword == "" {
-			// Simple prompt if flag not provided
 			fmt.Print("Enter password to hash: ")
 			fmt.Scanln(&hashPassword)
 		}
@@ -220,7 +234,7 @@ func main() {
 		return
 	}
 
-	// --- Default service config (will be adjusted per OS + install mode) ---
+	// --- Service Config ---
 	svcConfig := &service.Config{
 		Name:        woos.Name,
 		DisplayName: woos.Display,
@@ -232,7 +246,7 @@ func main() {
 		svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
 	}
 
-	// macOS name selection for user services (so "cwd dev" doesn't collide)
+	// macOS name selection for user services
 	if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
 		cwd, _ := os.Getwd()
 		if filepath.Dir(resolvedPath) == cwd {
@@ -243,32 +257,30 @@ func main() {
 		svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
 	}
 
-	// Linux user service support
 	if runtime.GOOS == woos.Linux && os.Geteuid() != 0 {
 		svcConfig.Option = service.KeyValue{"UserService": true}
 	}
 
+	// Pass the SINGLE shutdown instance to the program
 	prg := &program{
 		configPath: resolvedPath,
 		devMode:    devMode,
+		shutdown:   shutdown,
 	}
 
 	// --- INSTALL (Interactive) ---
 	if cmdInstall.Used {
 		targetConfigPath, installType := pickInstallConfigPath(resolvedPath, configPath)
 
-		// Ensure config + directories exist
 		if err := ensureConfig(targetConfigPath); err != nil {
 			logger.Fatal("Failed to setup config files: ", err)
 		}
 
-		// Adjust service config based on target
 		svcConfig.Arguments = []string{"run", "-c", targetConfigPath}
 		if devMode {
 			svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
 		}
 
-		// macOS: ensure Name matches target
 		if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
 			cwd, _ := os.Getwd()
 			if filepath.Dir(targetConfigPath) == cwd {
@@ -279,7 +291,6 @@ func main() {
 			svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
 		}
 
-		// Create service instance
 		s, err := service.New(prg, svcConfig)
 		if err != nil {
 			logger.Fatal("Failed to init service: ", err)
@@ -287,9 +298,7 @@ func main() {
 
 		logger.Info("Installing service...")
 
-		// If already installed, uninstall then install (solves the .plist already exists case)
 		if err := s.Install(); err != nil {
-			// kardianos/service on macOS often reports: "Init already exists: <plist>"
 			if strings.Contains(strings.ToLower(err.Error()), "already exists") {
 				logger.Warn("Service already exists, attempting to replace it...")
 				_ = s.Stop()
@@ -310,7 +319,7 @@ func main() {
 		return
 	}
 
-	// --- Initialize service for start/stop/uninstall/run ---
+	// --- Initialize Service ---
 	s, err := service.New(prg, svcConfig)
 	if err != nil {
 		logger.Fatal("Failed to create service: ", err)
@@ -319,7 +328,6 @@ func main() {
 	if cmdStart.Used {
 		logger.Info("Starting service...")
 		if err := s.Start(); err != nil {
-			// UX Improvement: Check if it's just already running
 			msg := strings.ToLower(err.Error())
 			if strings.Contains(msg, "already running") ||
 				strings.Contains(msg, "already started") ||
@@ -327,7 +335,6 @@ func main() {
 				logger.Warn("Service is already running")
 				return
 			}
-			// Actual error
 			logger.Fatal(handleServiceError(err, "start", resolvedPath))
 		}
 		logger.Info("Service started")
@@ -345,8 +352,6 @@ func main() {
 
 	if cmdUninstall.Used {
 		logger.Info("Uninstalling service...")
-
-		// On macOS user installs, Name must match what we used during install
 		if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
 			cwd, _ := os.Getwd()
 			if filepath.Dir(resolvedPath) == cwd {
@@ -375,7 +380,6 @@ func main() {
 	if cmdRun.Used {
 		configPath = resolvedPath
 
-		// Ensure config + layout
 		if err := ensureConfig(configPath); err != nil {
 			logger.Fatal("Failed to generate configuration: ", err)
 		}
@@ -385,13 +389,12 @@ func main() {
 			logger.Fatal("Failed to load config: ", err)
 		}
 
-		// Upgrade Logger
-		newLogger, cleanup, err := setup.Logging(global.Logging, devMode)
+		// Upgrade Logger using the single shutdown instance
+		newLogger, err := setup.Logging(global.Logging, devMode, shutdown)
 		if err != nil {
 			logger.Warn("Failed to setup advanced logging: ", err)
 		} else {
 			logger = newLogger
-			defer cleanup()
 		}
 
 		logger.Info("Running in interactive mode. Press Ctrl+C to stop.")
@@ -400,7 +403,6 @@ func main() {
 			logger.Warn("Development mode enabled")
 		}
 
-		// Check for container environment to force stdout logging behavior
 		isContainer := os.Getenv("AGBERO_CONTAINER") == "true" || os.Getenv("KUBERNETES_SERVICE_HOST") != ""
 
 		if !service.Interactive() && !isContainer {

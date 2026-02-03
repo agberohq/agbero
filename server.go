@@ -7,12 +7,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
@@ -26,10 +23,12 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/h3"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/recovery"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/wasm"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/errors"
+	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/quic-go/quic-go/http3"
 )
@@ -56,10 +55,12 @@ type Server struct {
 	ipMiddleware *clientip.IPMiddleware
 	rateLimiter  *ratelimit.RateLimiter
 
-	wasmCache sync.Map
-
-	// Add this field to store ignored paths efficiently
+	wasmCache    sync.Map
 	skipLogPaths map[string]bool
+
+	// Jack Integration
+	shutdown *jack.Shutdown
+	reaper   *jack.Reaper
 }
 
 func NewServer(opts ...Option) *Server {
@@ -73,7 +74,7 @@ func NewServer(opts ...Option) *Server {
 	return s
 }
 
-func (s *Server) Start(parentCtx context.Context, configPath string) error {
+func (s *Server) Start(configPath string) error {
 	s.configPath = configPath
 
 	if s.hostManager == nil {
@@ -107,7 +108,27 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		"admin_addr", adminAddr,
 	).Info("starting agbero")
 
-	s.startCacheReaper(parentCtx)
+	// 1. Initialize Reaper for Route Cache
+	s.reaper = jack.NewReaper(
+		woos.RouteCacheTTL,
+		jack.ReaperWithLogger(s.logger),
+		jack.ReaperWithHandler(func(ctx context.Context, id string) {
+			if v, ok := woos.RouteCache.Load(id); ok {
+				item := v.(*woos.RouteCacheItem)
+				if h, ok := item.Handler.(interface{ Close() }); ok {
+					h.Close()
+				}
+				woos.RouteCache.Delete(id)
+				s.logger.Fields("route_key", id).Debug("reaped idle route handler")
+			}
+		}),
+	)
+	s.reaper.Start()
+
+	// Register Reaper shutdown
+	if s.shutdown != nil {
+		s.shutdown.RegisterFunc("RouteReaper", s.reaper.Stop)
+	}
 
 	hosts, err := s.hostManager.LoadAll()
 	if err != nil {
@@ -115,38 +136,9 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		return err
 	}
 
-	hostCount := len(hosts)
-	routeCount := 0
-	tcpCount := 0
-	anyStreaming := false
+	s.logHostStats(hosts)
 
-	for _, host := range hosts {
-		routeCount += len(host.Routes)
-		tcpCount += len(host.TCPProxy)
-
-		for _, rt := range host.Routes {
-			for _, srv := range rt.Backends.Servers {
-				if srv.Streaming.Enabled {
-					anyStreaming = true
-					break
-				}
-			}
-			if anyStreaming {
-				break
-			}
-		}
-		if anyStreaming {
-			break
-		}
-	}
-
-	s.logger.Fields(
-		"hosts", hostCount,
-		"http_routes", routeCount,
-		"tcp_routes", tcpCount,
-		"streaming", anyStreaming,
-	).Info("host configuration loaded")
-
+	// Gossip Setup
 	if s.global.Gossip.Enabled {
 		gs, err := gossip.NewService(s.hostManager, &s.global.Gossip, s.logger)
 		if err != nil {
@@ -157,7 +149,9 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 				s.logger.Warn("failed to join gossip seeds")
 			}
 		}
-		defer gs.Shutdown()
+		if s.shutdown != nil {
+			s.shutdown.RegisterFunc("Gossip", func() { _ = gs.Shutdown() })
+		}
 	}
 
 	s.ipMiddleware = clientip.NewIPMiddleware(s.global.Security.TrustedProxies)
@@ -176,10 +170,11 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		return errors.Newf("firewall init: %w", err)
 	}
 	if s.firewall != nil {
-		defer s.firewall.Close()
+		if s.shutdown != nil {
+			s.shutdown.RegisterFunc("Firewall", func() { _ = s.firewall.Close() })
+		}
 	}
 
-	// stat the admin server
 	s.startAdminServer()
 
 	baseHandler := http.HandlerFunc(s.handleRequest)
@@ -195,6 +190,12 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		tlsCfg = nil
 	}
 
+	// Register TLS Manager shutdown
+	if s.tlsManager != nil && s.shutdown != nil {
+		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
+	}
+
+	// Initialize TCP Proxies
 	for _, host := range hosts {
 		for _, route := range host.TCPProxy {
 			tp := tcp.NewProxy(route.Listen, s.logger)
@@ -208,6 +209,8 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		}
 	}
 
+	// Start Listeners
+	anyStreaming := s.hasStreaming(hosts)
 	usedPorts := make(map[string]bool)
 
 	for _, addr := range s.global.Bind.HTTP {
@@ -231,14 +234,12 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 			usedPorts[port] = true
 
 			addr := ":" + port
-			// Determine if private binding should use TLS
 			isTLS := true
 			if h.TLS.Mode == alaye.ModeLocalNone {
 				isTLS = false
 			}
 
 			s.startTCPServer(addr, isTLS, h, tlsCfg, baseHandler, httpFallbackHandler, anyStreaming)
-			// Only start QUIC if TLS is enabled
 			if isTLS {
 				s.startQUICServer(addr, h, tlsCfg, baseHandler)
 			}
@@ -249,49 +250,102 @@ func (s *Server) Start(parentCtx context.Context, configPath string) error {
 		return woos.ErrNoBindAddr
 	}
 
-	errCh := make(chan error, len(s.servers))
+	// Register Listeners Shutdown
+	if s.shutdown != nil {
+		s.shutdown.RegisterWithContext("Listeners", s.shutdownImpl)
+	}
 
+	// Wait for errors or shutdown
+	errCh := make(chan error, len(s.servers))
 	s.mu.RLock()
 	for key, srv := range s.servers {
-		key := key
-		srv := srv
-
-		go func() {
-			s.logger.Fields("bind", srv.Addr, "key", key).Info("listener starting")
-
+		go func(k string, server *http.Server) {
+			s.logger.Fields("bind", server.Addr, "key", k).Info("listener starting")
 			var err error
-			if core.IsServerKeyTLS(key) {
-				err = srv.ListenAndServeTLS("", "")
+			if core.IsServerKeyTLS(k) {
+				err = server.ListenAndServeTLS("", "")
 			} else {
-				err = srv.ListenAndServe()
+				err = server.ListenAndServe()
 			}
-
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errCh <- err
-				return
 			}
-			errCh <- nil
-		}()
+		}(key, srv)
 	}
 	s.mu.RUnlock()
 
-	ctx, cancel := context.WithCancel(parentCtx)
-	defer cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			return err
+		}
+	case <-s.shutdown.Done():
+		return nil
+	}
+	return nil
+}
 
-	signalCh := make(chan os.Signal, 1)
-	signal.Notify(signalCh, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		for sig := range signalCh {
-			switch sig {
-			case syscall.SIGHUP:
-				s.reload()
-			case syscall.SIGINT, syscall.SIGTERM:
-				cancel()
+func (s *Server) shutdownImpl(ctx context.Context) error {
+	if s.rateLimiter != nil {
+		s.rateLimiter.Close()
+	}
+
+	for _, tp := range s.tcpProxies {
+		tp.Stop()
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for key, srv := range s.h3Servers {
+		if err := srv.Close(); err != nil {
+			s.logger.Fields("key", key, "err", err).Warn("h3 graceful shutdown error")
+		}
+	}
+
+	var wg sync.WaitGroup
+	for key, srv := range s.servers {
+		wg.Add(1)
+		go func(k string, server *http.Server) {
+			defer wg.Done()
+			if err := server.Shutdown(ctx); err != nil {
+				s.logger.Fields("key", k, "err", err).Error("listener shutdown error")
+			} else {
+				s.logger.Fields("key", k).Info("listener stopped")
+			}
+		}(key, srv)
+	}
+	wg.Wait()
+
+	return nil
+}
+
+func (s *Server) logHostStats(hosts map[string]*alaye.Host) {
+	hostCount := len(hosts)
+	routeCount := 0
+	tcpCount := 0
+	for _, host := range hosts {
+		routeCount += len(host.Routes)
+		tcpCount += len(host.TCPProxy)
+	}
+	s.logger.Fields(
+		"hosts", hostCount,
+		"http_routes", routeCount,
+		"tcp_routes", tcpCount,
+	).Info("host configuration loaded")
+}
+
+func (s *Server) hasStreaming(hosts map[string]*alaye.Host) bool {
+	for _, host := range hosts {
+		for _, rt := range host.Routes {
+			for _, srv := range rt.Backends.Servers {
+				if srv.Streaming.Enabled {
+					return true
+				}
 			}
 		}
-	}()
-
-	return s.waitOrShutdown(ctx, errCh)
+	}
+	return false
 }
 
 func (s *Server) startTCPServer(
@@ -444,6 +498,8 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 	}
 
 	h = metrics.PrometheusMiddleware(h)
+	h = recovery.New(s.logger)(h)
+
 	return h
 }
 
@@ -486,92 +542,6 @@ func (s *Server) reload() {
 	).Info("configuration reloaded successfully")
 }
 
-func (s *Server) startCacheReaper(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Minute)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				s.reapOldRoutes()
-			}
-		}
-	}()
-}
-
-func (s *Server) waitOrShutdown(ctx context.Context, errCh <-chan error) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return s.shutdownImpl()
-		case err := <-errCh:
-			if err != nil {
-				_ = s.shutdownImpl()
-				return err
-			}
-		}
-	}
-}
-
-func (s *Server) shutdownImpl() error {
-	if s.rateLimiter != nil {
-		s.rateLimiter.Close()
-	}
-
-	for _, tp := range s.tcpProxies {
-		tp.Stop()
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	for key, srv := range s.h3Servers {
-		if err := srv.Close(); err != nil {
-			s.logger.Fields("key", key, "err", err).Warn("h3 graceful shutdown error")
-		}
-	}
-
-	var firstErr error
-	for key, srv := range s.servers {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err := srv.Shutdown(ctx)
-		cancel()
-
-		if err != nil && firstErr == nil {
-			firstErr = err
-		}
-		s.logger.Fields("key", key).Info("listener stopped")
-	}
-
-	if s.tlsManager != nil {
-		s.tlsManager.Close()
-	}
-
-	return firstErr
-}
-
-func (s *Server) reapOldRoutes() {
-	now := time.Now().UnixNano()
-	//expiration := woos.RouteCacheTTL
-
-	woos.RouteCache.Range(func(key, value any) bool {
-		item, ok := value.(*woos.RouteCacheItem)
-		if !ok {
-			return true
-		}
-
-		last := item.LastAccessed.Load()
-		if now-last > woos.RouteCacheTTL {
-			if h, ok := item.Handler.(interface{ Close() }); ok {
-				h.Close()
-			}
-			woos.RouteCache.Delete(key)
-		}
-		return true
-	})
-}
-
 func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
 	rlc := s.global.RateLimits
 
@@ -588,14 +558,11 @@ func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
 	policy := func(r *http.Request) (bucket string, pol ratelimit.RatePolicy, ok bool) {
 		p := r.URL.Path
 
-		// Always allow ACME challenges
 		if strings.HasPrefix(p, "/.well-known/acme-challenge/") {
 			return woos.BucketACME, ratelimit.RatePolicy{}, false
 		}
 
-		// Iterate over rules in the order defined in HCL
 		for _, rule := range rlc.Rules {
-			// 1. Check Method (if defined)
 			if len(rule.Methods) > 0 {
 				methodMatch := false
 				currentMethod := r.Method
@@ -606,11 +573,10 @@ func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
 					}
 				}
 				if !methodMatch {
-					continue // Method didn't match, try next rule
+					continue
 				}
 			}
 
-			// 2. Check Prefix (if defined)
 			if len(rule.Prefixes) > 0 {
 				prefixMatch := false
 				for _, pref := range rule.Prefixes {
@@ -620,20 +586,18 @@ func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
 					}
 				}
 				if !prefixMatch {
-					continue // Prefix didn't match, try next rule
+					continue
 				}
 			}
 
-			// Match Found!
 			return rule.Name, ratelimit.RatePolicy{
 				Requests: rule.Requests,
 				Window:   rule.Window,
 				Burst:    rule.Burst,
-				KeySpec:  rule.Key, // Passed to ratelimit.go logic
+				KeySpec:  rule.Key,
 			}, true
 		}
 
-		// No rule matched
 		return "", ratelimit.RatePolicy{}, false
 	}
 
@@ -710,7 +674,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	var host string
 	var hcfg *alaye.Host
 
-	// 1. Check Port Ownership (Short-Circuit)
 	if owner, ok := r.Context().Value(woos.OwnerKey).(*alaye.Host); ok && owner != nil {
 		hcfg = owner
 		if len(hcfg.Domains) > 0 {
@@ -719,7 +682,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			host = woos.PrivateBindingHost
 		}
 	} else {
-		// 2. Standard Global Listener (SNI/Hosting based)
 		host = core.NormalizeHost(r.Host)
 		hcfg = s.hostManager.Get(host)
 	}
@@ -729,9 +691,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		s.logRequest(host, r, start, http.StatusNotFound, 0)
 		return
 	}
-
-	// NOTE: Misdirected Request check has been removed to allow
-	// requests on global listeners even if private bind ports are configured.
 
 	maxBody := int64(alaye.DefaultMaxBodySize)
 	if &hcfg.Limits != nil && hcfg.Limits.MaxBodySize > 0 {
@@ -777,21 +736,14 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alaye.Route) {
-	// 1. Save Original Path to Context
-	// We do this BEFORE modifying the path so the Web Handler knows the browser's actual URL
 	ctx := context.WithValue(r.Context(), woos.CtxOriginalPath, r.URL.Path)
-
-	// 2. Create a shallow copy of the request with the new context
-	// reqOut is type *http.Request
 	reqOut := r.WithContext(ctx)
 
-	// 3. Deep copy URL to ensure thread safety when modifying path
 	if r.URL != nil {
 		u := *r.URL
 		reqOut.URL = &u
 	}
 
-	// 4. Strip Prefixes logic
 	if len(route.StripPrefixes) > 0 {
 		for _, prefix := range route.StripPrefixes {
 			if prefix == "" {
@@ -810,11 +762,12 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 		}
 	}
 
-	// 5. Get the core handler (Reverse Proxy or File Server)
 	var handler http.Handler = s.getOrBuildRouteHandler(route)
 
-	// 6. Apply WASM Middleware (if configured)
 	if route.Wasm != nil {
+		s.logger.Fields(
+			"module", route.Wasm.Module,
+			"route", route.Path).Warn("Wasm middleware active: ensure module is trusted")
 		wm, err := s.getWasmManager(route.Wasm)
 		if err != nil {
 			s.logger.Fields("err", err, "module", route.Wasm.Module).Error("wasm: failed to load middleware")
@@ -824,17 +777,15 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 		handler = wm.Handler(handler)
 	}
 
-	// 7. Execute
 	handler.ServeHTTP(w, reqOut)
 }
 
 func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.Route {
 	key := route.Key()
-	now := time.Now().UnixNano()
 
 	if v, ok := woos.RouteCache.Load(key); ok {
+		s.reaper.Touch(key) // Notify reaper this route is active
 		item := v.(*woos.RouteCacheItem)
-		item.LastAccessed.Store(now)
 		return item.Handler.(*handlers2.Route)
 	}
 
@@ -842,41 +793,32 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.Route {
 	newItem := &woos.RouteCacheItem{
 		Handler: h,
 	}
-	newItem.LastAccessed.Store(now)
 
 	if v, loaded := woos.RouteCache.LoadOrStore(key, newItem); loaded {
 		h.Close()
+		s.reaper.Touch(key)
 		item := v.(*woos.RouteCacheItem)
-		item.LastAccessed.Store(now)
 		return item.Handler.(*handlers2.Route)
 	}
 
+	s.reaper.Touch(key) // Add new item to reaper
 	return h
 }
 
 func (s *Server) getWasmManager(cfg *alaye.Wasm) (*wasm.Manager, error) {
-	// Create a unique cache key based on the module path AND the configuration map.
-	// We use JSON marshalling to create a deterministic string key.
-	// This ensures that if the config block changes, we get a new instance.
 	keyBytes, _ := json.Marshal(cfg)
 	key := string(keyBytes)
 
-	// Fast path: Load from cache
 	if v, ok := s.wasmCache.Load(key); ok {
 		return v.(*wasm.Manager), nil
 	}
 
-	// Slow path: Compile and Initialize
-	// Using Background context here because the Manager lifecycle lives beyond the request
 	mgr, err := wasm.NewManager(context.Background(), s.logger, cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	// Store in cache
-	// Use LoadOrStore to handle race conditions during startup
 	if actual, loaded := s.wasmCache.LoadOrStore(key, mgr); loaded {
-		// Another goroutine beat us, close our unused one and use theirs
 		mgr.Close(context.Background())
 		return actual.(*wasm.Manager), nil
 	}

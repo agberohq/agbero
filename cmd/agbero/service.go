@@ -1,44 +1,36 @@
 package main
 
 import (
-	"context"
 	"os"
-	"os/signal"
 	"runtime"
-	"syscall"
 
 	"git.imaxinacion.net/aibox/agbero"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/kardianos/service"
+	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll/lx"
 )
 
 type program struct {
 	configPath string
 	devMode    bool
-	ctx        context.Context
-	cancel     context.CancelFunc
-	exit       chan struct{}
+	shutdown   *jack.Shutdown // Use the passed-in instance
 }
 
 func (p *program) Start(s service.Service) error {
-	p.ctx, p.cancel = context.WithCancel(context.Background())
-	p.exit = make(chan struct{})
+	// We do NOT create a new shutdown instance here. We use p.shutdown.
 	go p.run()
 	return nil
 }
 
 func (p *program) Stop(s service.Service) error {
-	if p.cancel != nil {
-		p.cancel()
-	}
-	<-p.exit
+	// Trigger the Jack shutdown, which will unblock p.shutdown.Wait() in run()
+	p.shutdown.TriggerShutdown()
 	return nil
 }
 
 func (p *program) run() {
-	defer close(p.exit)
 	logger.Info("starting agbero proxy service")
 
 	global, err := loadConfig(p.configPath)
@@ -53,15 +45,21 @@ func (p *program) run() {
 		global.Development = true
 	}
 
-	// Use woos.MakeFolder and NewHostFolder
 	hostFolder := woos.MakeFolder(global.Storage.HostsDir, woos.HostDir)
 
 	hm := discovery.NewHostFolder(hostFolder, discovery.WithLogger(logger))
+
+	// Register HostManager cleanup with Jack
+	p.shutdown.RegisterFunc("HostManager", func() {
+		if err := hm.Close(); err != nil {
+			logger.Error("host manager close error", err)
+		}
+	})
+
 	if err := hm.Watch(); err != nil {
 		logger.Fields("dir", hostFolder, "err", err).Fatal("failed to watch hosts")
 		return
 	}
-	defer hm.Close()
 
 	logger.Fields(
 		"os", runtime.GOOS,
@@ -75,31 +73,32 @@ func (p *program) run() {
 		"https", len(global.Bind.HTTPS),
 	).Info("resolved paths")
 
+	// Pass Shutdown manager to Server via new Option
 	server := agbero.NewServer(
 		agbero.WithHostManager(hm),
 		agbero.WithGlobalConfig(global),
 		agbero.WithLogger(logger),
+		agbero.WithShutdownManager(p.shutdown),
 	)
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	runCtx, runCancel := context.WithCancel(p.ctx)
-
+	// Start server in goroutine; Start() blocks until shutdown triggers
 	go func() {
-		select {
-		case <-p.ctx.Done():
-		case <-sigChan:
-			logger.Info("shutting down via signal")
-			runCancel()
+		if err := server.Start(p.configPath); err != nil {
+			logger.Error(err)
+			// If server fails to start, trigger shutdown to exit program
+			p.shutdown.TriggerShutdown()
 		}
 	}()
 
-	// Pass configPath for reload capability
-	if err := server.Start(runCtx, p.configPath); err != nil {
-		logger.Error(err)
-	}
-
 	hosts, _ := hm.LoadAll()
 	logger.Fields("hosts_count", len(hosts)).Info("service running")
+
+	// Block here until Stop() is called or OS signal received
+	stats := p.shutdown.Wait()
+
+	logger.Fields(
+		"duration", stats.EndTime.Sub(stats.StartTime),
+		"tasks_total", stats.TotalEvents,
+		"tasks_failed", stats.FailedEvents,
+	).Info("agbero stopped gracefully")
 }

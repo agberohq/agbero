@@ -1,9 +1,9 @@
 package agbero
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +13,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
 
@@ -29,7 +30,7 @@ func TestNewServer_Basic(t *testing.T) {
 
 func TestServer_Start_NoConfig(t *testing.T) {
 	s := NewServer()
-	err := s.Start(context.Background(), "")
+	err := s.Start("")
 	if err == nil || !strings.Contains(err.Error(), "host manager is required") {
 		t.Errorf("Expected host manager error, got %v", err)
 	}
@@ -38,15 +39,16 @@ func TestServer_Start_NoConfig(t *testing.T) {
 func TestServer_Start_NoGlobalConfig(t *testing.T) {
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 	s := NewServer(WithHostManager(hm))
-	err := s.Start(context.Background(), "")
+	err := s.Start("")
 	if err == nil || !strings.Contains(err.Error(), "global config is required") {
 		t.Errorf("Expected global config error, got %v", err)
 	}
 }
 
 func TestServer_Start_Minimal(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
+	shutdown := jack.NewShutdown(
+		jack.ShutdownWithTimeout(100 * time.Millisecond),
+	)
 
 	global := &alaye.Global{
 		Bind: alaye.Bind{HTTP: []string{":0"}},
@@ -59,16 +61,28 @@ func TestServer_Start_Minimal(t *testing.T) {
 		WithGlobalConfig(global),
 		WithHostManager(hm),
 		WithLogger(testLogger),
+		WithShutdownManager(shutdown),
 	)
 
-	// Create temp config file
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.hcl")
+	_ = os.WriteFile(configPath, []byte(""), 0644)
 
-	err := s.Start(ctx, configPath)
-	// The server will start and then be stopped by context timeout
-	if err != nil && !strings.Contains(err.Error(), "context deadline exceeded") {
-		t.Errorf("Unexpected error: %v", err)
+	errCh := make(chan error)
+	go func() {
+		errCh <- s.Start(configPath)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	shutdown.TriggerShutdown()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Errorf("Unexpected error from Start: %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Error("Test timed out waiting for server shutdown")
 	}
 }
 
@@ -83,7 +97,6 @@ func TestServer_buildTLS(t *testing.T) {
 				CertsDir: tmpDir,
 			},
 		},
-
 		logger:      testLogger,
 		hostManager: discovery.NewHost("", discovery.WithLogger(nil)),
 	}
@@ -130,7 +143,6 @@ func TestServer_buildRateLimiterFromConfig(t *testing.T) {
 			Enabled:    true,
 			TTL:        time.Minute,
 			MaxEntries: 100,
-			// Global:     alaye.RatePolicy{Requests: 10, Window: time.Second},
 			Rules: []alaye.RateRule{
 				{
 					Name:     "test_rule",
@@ -152,7 +164,11 @@ func TestServer_buildRateLimiterFromConfig(t *testing.T) {
 }
 
 func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
-	s := &Server{logger: testLogger}
+	s := &Server{
+		logger: testLogger,
+		reaper: jack.NewReaper(time.Minute),
+	}
+
 	route := &alaye.Route{Path: "/test", Backends: alaye.MakeBackend("http://localhost:8080")}
 	key := route.Key()
 
@@ -173,7 +189,11 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 }
 
 func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
-	s := &Server{logger: testLogger}
+	s := &Server{
+		logger: testLogger,
+		reaper: jack.NewReaper(time.Minute),
+	}
+
 	route := &alaye.Route{
 		Path:     "/test",
 		Backends: alaye.MakeBackend("http://localhost:8080"),
@@ -190,57 +210,7 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 	woos.RouteCache.Delete(route.Key())
 }
 
-func TestServer_reapOldRoutes(t *testing.T) {
-	s := &Server{logger: testLogger}
-	key := "test-route-key"
-
-	route := &alaye.Route{
-		Path:     "/test",
-		Backends: alaye.MakeBackend("http://localhost:8080"),
-	}
-	handler := handlers.NewRoute(route, testLogger)
-
-	item := &woos.RouteCacheItem{
-		Handler: handler,
-	}
-	item.LastAccessed.Store(time.Now().Add(-11 * time.Minute).UnixNano())
-	woos.RouteCache.Store(key, item)
-
-	s.reapOldRoutes()
-
-	if _, ok := woos.RouteCache.Load(key); ok {
-		t.Error("Old route not reaped")
-	}
-}
-
-func TestServer_reapOldRoutes_Recent(t *testing.T) {
-	s := &Server{logger: testLogger}
-	key := "test-route-key-recent"
-
-	route := &alaye.Route{
-		Path:     "/test",
-		Backends: alaye.MakeBackend("http://localhost:8080"),
-	}
-	handler := handlers.NewRoute(route, testLogger)
-
-	item := &woos.RouteCacheItem{
-		Handler: handler,
-	}
-	item.LastAccessed.Store(time.Now().UnixNano())
-	woos.RouteCache.Store(key, item)
-
-	s.reapOldRoutes()
-
-	if _, ok := woos.RouteCache.Load(key); !ok {
-		t.Error("Recent route should not be reaped")
-	}
-
-	handler.Close()
-	woos.RouteCache.Delete(key)
-}
-
 func TestServer_StartAdminServer(t *testing.T) {
-	// Corrected: Use Admin struct, not Metrics string
 	global := &alaye.Global{
 		Admin: &alaye.Admin{
 			Address: ":0",
@@ -253,11 +223,7 @@ func TestServer_StartAdminServer(t *testing.T) {
 		hostManager: hm,
 	}
 
-	// This starts a goroutine, we'll just verify it doesn't panic
-	// Corrected: calling startAdminServer, not startMetricsServer
 	s.startAdminServer()
-
-	// Give it a moment to start
 	time.Sleep(50 * time.Millisecond)
 }
 
@@ -272,7 +238,6 @@ func TestServer_StartAdminServer_NoConfig(t *testing.T) {
 		hostManager: hm,
 	}
 
-	// Should not panic when no admin config
 	s.startAdminServer()
 }
 
@@ -281,6 +246,7 @@ func TestServer_HandleRequest_NoHost(t *testing.T) {
 	s := &Server{
 		hostManager: hm,
 		logger:      testLogger,
+		reaper:      jack.NewReaper(time.Minute),
 	}
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -311,6 +277,7 @@ func TestServer_HandleRequest_WithHost(t *testing.T) {
 	s := &Server{
 		hostManager: hm,
 		logger:      testLogger,
+		reaper:      jack.NewReaper(time.Minute),
 	}
 
 	req := httptest.NewRequest("GET", "/", nil)

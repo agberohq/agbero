@@ -103,7 +103,7 @@ const (
 	DefaultHTTPSPort           = 443
 	DefaultHTTPSPortInt        = "443"
 	H3KeyPrefix                = "h3@"
-	RouteCacheTTL              = int64(10 * time.Minute)
+	RouteCacheTTL              = 10 * time.Minute
 	DefaultRateLimitTTL        = 30 * time.Minute
 	DefaultRateLimitMaxEntries = 100_000
 
