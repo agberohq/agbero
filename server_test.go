@@ -179,7 +179,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	item.LastAccessed.Store(time.Now().UnixNano())
 	woos.RouteCache.Store(key, item)
 
-	h := s.getOrBuildRouteHandler(route)
+	h := s.getOrBuildRouteHandler(route, key)
 	if h != handler {
 		t.Error("Cache miss unexpectedly")
 	}
@@ -201,7 +201,7 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 
 	woos.RouteCache.Delete(route.Key())
 
-	h := s.getOrBuildRouteHandler(route)
+	h := s.getOrBuildRouteHandler(route, route.Key())
 	if h == nil {
 		t.Error("Handler should be created on cache miss")
 	}

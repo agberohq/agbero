@@ -8,10 +8,11 @@ import (
 
 type RuntimePaths struct {
 	BaseDir    Folder `json:"base_dir"`
-	ConfigFile string `json:"config_file"` // File paths remain strings usually, or specific File type
+	ConfigFile string `json:"config_file"`
 	HostsDir   Folder `json:"hosts_dir"`
 	CertsDir   Folder `json:"certs_dir"`
 	DataDir    Folder `json:"data_dir"`
+	LogsDir    Folder `json:"logs_dir"`
 }
 
 // GetUserDefaults returns defaults for the current user (~/.config/agbero)
@@ -29,15 +30,14 @@ func GetUserDefaults() (RuntimePaths, error) {
 		HostsDir:   base.Join(HostDir.Name()),
 		CertsDir:   base.Join(CertDir.Name()),
 		DataDir:    base.Join(DataDir.Name()),
+		LogsDir:    base.Join(LogDir.Name()),
 	}, nil
 }
 
 // DefaultPaths returns the OS-specific default paths.
 func DefaultPaths() RuntimePaths {
-	// Logic moved from cmd/helpers.go and default.go to here
 	var base string
-	// Simplified OS check logic
-	if runtime.GOOS == Windows || os.PathSeparator == WindowBackSlash { // Windows detection via separator or runtime.GOOS
+	if runtime.GOOS == Windows || os.PathSeparator == WindowBackSlash {
 		base = filepath.Join(os.Getenv(ENVProgramData), Name)
 	} else {
 		base = filepath.Join(ETCPath, Name)
@@ -51,5 +51,6 @@ func DefaultPaths() RuntimePaths {
 		HostsDir:   baseFolder.Join(HostDir.Name()),
 		CertsDir:   baseFolder.Join(CertDir.Name()),
 		DataDir:    baseFolder.Join(DataDir.Name()),
+		LogsDir:    baseFolder.Join(LogDir.Name()),
 	}
 }

@@ -3,7 +3,6 @@ package agbero
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -33,11 +32,11 @@ import (
 	"github.com/quic-go/quic-go/http3"
 )
 
+var portContextKey = &contextKey{woos.CtxPort}
+
 type contextKey struct {
 	name string
 }
-
-var portContextKey = &contextKey{woos.CtxPort}
 
 type Server struct {
 	hostManager *discovery.Host
@@ -58,7 +57,7 @@ type Server struct {
 	wasmCache    sync.Map
 	skipLogPaths map[string]bool
 
-	// Jack Integration
+	// Jack Lifecycle Management
 	shutdown *jack.Shutdown
 	reaper   *jack.Reaper
 }
@@ -108,13 +107,14 @@ func (s *Server) Start(configPath string) error {
 		"admin_addr", adminAddr,
 	).Info("starting agbero")
 
-	// 1. Initialize Reaper for Route Cache
+	// 1. Initialize Reaper for Route Cache Cleanup
 	s.reaper = jack.NewReaper(
 		woos.RouteCacheTTL,
 		jack.ReaperWithLogger(s.logger),
 		jack.ReaperWithHandler(func(ctx context.Context, id string) {
 			if v, ok := woos.RouteCache.Load(id); ok {
 				item := v.(*woos.RouteCacheItem)
+				// Close handler resources (e.g. backend connections)
 				if h, ok := item.Handler.(interface{ Close() }); ok {
 					h.Close()
 				}
@@ -125,20 +125,19 @@ func (s *Server) Start(configPath string) error {
 	)
 	s.reaper.Start()
 
-	// Register Reaper shutdown
 	if s.shutdown != nil {
 		s.shutdown.RegisterFunc("RouteReaper", s.reaper.Stop)
 	}
 
+	// 2. Load Hosts
 	hosts, err := s.hostManager.LoadAll()
 	if err != nil {
 		s.logger.Fields("err", err).Error("failed to load initial hosts")
 		return err
 	}
-
 	s.logHostStats(hosts)
 
-	// Gossip Setup
+	// 3. Setup Gossip
 	if s.global.Gossip.Enabled {
 		gs, err := gossip.NewService(s.hostManager, &s.global.Gossip, s.logger)
 		if err != nil {
@@ -154,6 +153,7 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
+	// 4. Setup Middleware
 	s.ipMiddleware = clientip.NewIPMiddleware(s.global.Security.TrustedProxies)
 	s.rateLimiter = s.buildRateLimiterFromConfig()
 
@@ -164,43 +164,41 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
+	// 5. Setup Firewall
 	dataDir := woos.NewFolder(s.global.Storage.DataDir)
 	s.firewall, err = firewall.New(s.global.Security.Firewall, dataDir, s.logger)
 	if err != nil {
 		return errors.Newf("firewall init: %w", err)
 	}
-	if s.firewall != nil {
-		if s.shutdown != nil {
-			s.shutdown.RegisterFunc("Firewall", func() { _ = s.firewall.Close() })
-		}
+	if s.firewall != nil && s.shutdown != nil {
+		s.shutdown.RegisterFunc("Firewall", func() { _ = s.firewall.Close() })
 	}
 
+	// 6. Start Admin
 	s.startAdminServer()
 
+	// 7. Setup Handlers
 	baseHandler := http.HandlerFunc(s.handleRequest)
-
 	var httpFallbackHandler http.Handler = baseHandler
 	if len(s.global.Bind.HTTPS) > 0 {
 		httpFallbackHandler = http.HandlerFunc(s.redirectToHTTPS)
 	}
 
+	// 8. Setup TLS
 	tlsCfg, _, err := s.buildTLS(httpFallbackHandler)
 	if err != nil {
 		s.logger.Fields("err", err.Error()).Warn("TLS setup failed; HTTPS listeners may not start")
 		tlsCfg = nil
 	}
-
-	// Register TLS Manager shutdown
 	if s.tlsManager != nil && s.shutdown != nil {
 		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
 	}
 
-	// Initialize TCP Proxies
+	// 9. Start TCP Proxies
 	for _, host := range hosts {
 		for _, route := range host.TCPProxy {
 			tp := tcp.NewProxy(route.Listen, s.logger)
 			tp.AddRoute("*", route)
-
 			if err := tp.Start(); err != nil {
 				s.logger.Fields("listen", route.Listen, "err", err).Error("failed to start tcp proxy")
 				continue
@@ -209,7 +207,7 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	// Start Listeners
+	// 10. Start HTTP/QUIC Listeners
 	anyStreaming := s.hasStreaming(hosts)
 	usedPorts := make(map[string]bool)
 
@@ -250,12 +248,12 @@ func (s *Server) Start(configPath string) error {
 		return woos.ErrNoBindAddr
 	}
 
-	// Register Listeners Shutdown
+	// Register Listener Shutdown
 	if s.shutdown != nil {
 		s.shutdown.RegisterWithContext("Listeners", s.shutdownImpl)
 	}
 
-	// Wait for errors or shutdown
+	// Wait for errors or external shutdown signal
 	errCh := make(chan error, len(s.servers))
 	s.mu.RLock()
 	for key, srv := range s.servers {
@@ -274,15 +272,13 @@ func (s *Server) Start(configPath string) error {
 	}
 	s.mu.RUnlock()
 
+	// Block until error or shutdown done
 	select {
 	case err := <-errCh:
-		if err != nil {
-			return err
-		}
+		return err
 	case <-s.shutdown.Done():
 		return nil
 	}
-	return nil
 }
 
 func (s *Server) shutdownImpl(ctx context.Context) error {
@@ -762,13 +758,15 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 		}
 	}
 
-	var handler http.Handler = s.getOrBuildRouteHandler(route)
+	// Performance Fix: Calculate Key once
+	routeKey := route.Key()
 
+	// Get handler (cached or new)
+	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey)
+
+	// Apply WASM (Cached via routeKey to avoid O(N) config hashing)
 	if route.Wasm != nil {
-		s.logger.Fields(
-			"module", route.Wasm.Module,
-			"route", route.Path).Warn("Wasm middleware active: ensure module is trusted")
-		wm, err := s.getWasmManager(route.Wasm)
+		wm, err := s.getWasmManager(route.Wasm, routeKey)
 		if err != nil {
 			s.logger.Fields("err", err, "module", route.Wasm.Module).Error("wasm: failed to load middleware")
 			http.Error(w, "Internal Server Error (WASM)", http.StatusInternalServerError)
@@ -780,11 +778,9 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	handler.ServeHTTP(w, reqOut)
 }
 
-func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.Route {
-	key := route.Key()
-
+func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handlers2.Route {
 	if v, ok := woos.RouteCache.Load(key); ok {
-		s.reaper.Touch(key) // Notify reaper this route is active
+		s.reaper.Touch(key)
 		item := v.(*woos.RouteCacheItem)
 		return item.Handler.(*handlers2.Route)
 	}
@@ -801,14 +797,13 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route) *handlers2.Route {
 		return item.Handler.(*handlers2.Route)
 	}
 
-	s.reaper.Touch(key) // Add new item to reaper
+	s.reaper.Touch(key)
 	return h
 }
 
-func (s *Server) getWasmManager(cfg *alaye.Wasm) (*wasm.Manager, error) {
-	keyBytes, _ := json.Marshal(cfg)
-	key := string(keyBytes)
-
+// Optimization: Accept key to reuse route.Key() calculation
+func (s *Server) getWasmManager(cfg *alaye.Wasm, key string) (*wasm.Manager, error) {
+	// The key is route.Key(), which is unique per route config (including WASM config)
 	if v, ok := s.wasmCache.Load(key); ok {
 		return v.(*wasm.Manager), nil
 	}

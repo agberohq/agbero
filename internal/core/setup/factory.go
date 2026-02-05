@@ -1,7 +1,11 @@
 package setup
 
 import (
+	"compress/gzip"
+	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
@@ -20,15 +24,53 @@ func Logging(cfg alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, er
 	// Terminal (always)
 	handlers = append(handlers, lh.NewColorizedHandler(os.Stdout))
 
-	// File
+	// File with Rotation
 	if cfg.File != "" {
-		fp, err := os.OpenFile(cfg.File, os.O_APPEND|os.O_CREATE|os.O_WRONLY, woos.DefaultFilePermFile)
-		if err != nil {
-			return nil, err
+		// Ensure log directory exists
+		logDir := filepath.Dir(cfg.File)
+		if err := os.MkdirAll(logDir, woos.DefaultFilePermDir); err != nil {
+			return nil, fmt.Errorf("failed to create log dir %s: %w", logDir, err)
 		}
-		_ = sm.Register(fp) // io.Closer
 
-		handlers = append(handlers, lh.NewJSONHandler(fp))
+		// Define rotation source
+		src := lh.RotateSource{
+			Open: func() (io.WriteCloser, error) {
+				return os.OpenFile(cfg.File, os.O_APPEND|os.O_CREATE|os.O_WRONLY, woos.DefaultFilePermFile)
+			},
+			Size: func() (int64, error) {
+				fi, err := os.Stat(cfg.File)
+				if err != nil {
+					if os.IsNotExist(err) {
+						return 0, nil
+					}
+					return 0, err
+				}
+				return fi.Size(), nil
+			},
+			Rotate: func() error {
+				// 1. Rename current file
+				timestamp := time.Now().Format("20060102-150405")
+				backupName := cfg.File + "." + timestamp
+				if err := os.Rename(cfg.File, backupName); err != nil {
+					return err
+				}
+
+				// 2. Compress in background to avoid blocking logging
+				go compressLogFile(backupName)
+				return nil
+			},
+		}
+
+		baseHandler := lh.NewJSONHandler(nil) // Output set by rotator
+
+		// 50MB Rotation Limit
+		rotator, err := lh.NewRotating(baseHandler, woos.DefaultLogRotateSize, src)
+		if err != nil {
+			return nil, fmt.Errorf("failed to init log rotation: %w", err)
+		}
+
+		_ = sm.Register(rotator)
+		handlers = append(handlers, rotator)
 	}
 
 	// VictoriaLogs (buffered)
@@ -56,21 +98,17 @@ func Logging(cfg alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, er
 		)
 
 		handlers = append(handlers, buffered)
-		_ = sm.Register(buffered) // Close() error => flush + stop worker
-
-		// If vl itself has Close(), register it too (safe if it doesn't)
+		_ = sm.Register(buffered)
 		_ = sm.Register(vl)
 	}
 
 	multi := lh.NewMultiHandler(handlers...)
 
-	// Optional: dedup around multi (good ordering)
 	final := lh.NewDedup(multi, 2*time.Second)
-	_ = sm.Register(final) // if Dedup has Close() (recommended), this stops its ticker/goroutine
+	_ = sm.Register(final)
 
 	l := ll.New(woos.Name, ll.WithHandler(final), ll.WithFatalExits(true))
 
-	// Level setup (same intent)
 	switch cfg.Level {
 	case woos.LogLevelDebug:
 		l.Level(lx.LevelDebug)
@@ -86,4 +124,32 @@ func Logging(cfg alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, er
 	}
 
 	return l.Enable(), nil
+}
+
+func compressLogFile(srcPath string) {
+	dstPath := srcPath + ".gz"
+
+	in, err := os.Open(srcPath)
+	if err != nil {
+		return
+	}
+	defer in.Close()
+
+	out, err := os.Create(dstPath)
+	if err != nil {
+		return
+	}
+	defer out.Close()
+
+	gw := gzip.NewWriter(out)
+	defer gw.Close()
+
+	if _, err := io.Copy(gw, in); err != nil {
+		return
+	}
+
+	// If successful, remove original
+	gw.Close()
+	in.Close()
+	_ = os.Remove(srcPath)
 }

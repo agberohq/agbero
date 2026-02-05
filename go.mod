@@ -4,6 +4,8 @@ go 1.25.5
 
 replace github.com/olekukonko/ll => /Users/oleku/gopath/src/github.com/olekukonko/ll
 
+replace github.com/olekukonko/jack => /Users/oleku/gopath/src/github.com/olekukonko/jack
+
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
 	github.com/alecthomas/hcl v0.5.5
@@ -24,6 +26,7 @@ require (
 	github.com/markbates/goth v1.81.0
 	github.com/maypok86/otter/v2 v2.3.0
 	github.com/olekukonko/errors v1.2.0
+	github.com/olekukonko/jack v0.0.0-20260126193354-c1c25375fc11
 	github.com/olekukonko/ll v0.1.5-0.20260202103841-65bca58ef64e
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.59.0
@@ -82,7 +85,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
-	github.com/olekukonko/jack v0.0.0-20260126193354-c1c25375fc11 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect

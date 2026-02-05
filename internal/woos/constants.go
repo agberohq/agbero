@@ -3,7 +3,6 @@ package woos
 import "time"
 
 // General Info
-
 const (
 	Name        = "agbero"
 	Display     = "agbero proxy"
@@ -11,7 +10,6 @@ const (
 )
 
 // Hosts & Network
-
 const (
 	ConfigFormatVersion = 2
 )
@@ -36,7 +34,6 @@ const (
 )
 
 // Standard Headers
-
 const (
 	HeaderContentType   = "Content-Type"
 	HeaderContentEnc    = "Content-Encoding"
@@ -59,7 +56,6 @@ const (
 )
 
 // MIME Types
-
 const (
 	MimeJSON = "application/json"
 	MimeHTML = "text/html; charset=utf-8"
@@ -67,7 +63,6 @@ const (
 )
 
 // Internal Context Keys
-
 const (
 	CtxPort         = "local-port"
 	CtxIP           = "client-ip"
@@ -75,17 +70,17 @@ const (
 )
 
 // File & Folder Names
-
 const (
 	HostDir Folder = "hosts.d"
 	CertDir Folder = "certs.d"
 	DataDir Folder = "data.d"
+	LogDir  Folder = "logs.d" // New log directory
 
 	DefaultConfigName = "agbero.hcl"
+	DefaultLogName    = "agbero.log"
 )
 
 // Operating Systems
-
 const (
 	Darwin  = "darwin"
 	Linux   = "linux"
@@ -93,11 +88,9 @@ const (
 )
 
 // Users
-
 const User = "user"
 
 // Server Defaults & Settings
-
 const (
 	DefaultConfigAddr          = "disabled"
 	DefaultHTTPSPort           = 443
@@ -123,7 +116,6 @@ const (
 )
 
 // Path & Template Constants
-
 const (
 	Empty               = ""
 	Slash               = "/"
@@ -138,22 +130,19 @@ const (
 )
 
 // Cache
-
 const CacheMax = int64(10_000)
 
 // Route Segment Kinds
-
 type Kind uint8
 
 const (
-	KindLiteral  Kind = iota // literal segment: "/api"
-	KindTemplate             // template segment: "/{id}" or "/{id:[0-9]+}"
-	KindRegex                // regex segment: "/~[0-9]+"
-	KindCatchAll             // "/*"
+	KindLiteral Kind = iota
+	KindTemplate
+	KindRegex
+	KindCatchAll
 )
 
 // Metrics
-
 const (
 	HistogramWindow = 60 * time.Second
 	MinUS           = int64(1)
@@ -161,7 +150,6 @@ const (
 )
 
 // Token & Security
-
 const (
 	BlockPrivateKey = "PRIVATE KEY"
 	DefaultIssuer   = "agbero"
@@ -170,15 +158,17 @@ const (
 )
 
 // Setup / Logging / Buffer
-
 const (
-	DefaultFilePermFile  = 0o666 // for normal files
-	DefaultFilePermDir   = 0o755 // for directories / executables
+	DefaultFilePermFile  = 0o666
+	DefaultFilePermDir   = 0o755
 	DefaultFlushInterval = 700 * time.Millisecond
 	DefaultMaxBuffer     = 12_000
 	DefaultVictoriaBatch = 500
 
-	BufferSize = 32 * 1024 // generic buffer size
+	// Rotate logs at 50MB by default
+	DefaultLogRotateSize = 50 * 1024 * 1024
+
+	BufferSize = 32 * 1024
 
 	LogLevelDebug = "debug"
 	LogLevelInfo  = "info"
@@ -187,7 +177,6 @@ const (
 )
 
 // TLS / mkcert
-
 const (
 	MkCertBinary        = "mkcert"
 	MkCertWindowsExe    = "mkcert.exe"
@@ -195,36 +184,30 @@ const (
 	MkCertDefaultCAName = "mkcert development CA"
 	MkCertCAROOTFlag    = "-CAROOT"
 
-	// Environment Variables
 	EnvHome    = "HOME"
 	EnvUser    = "USER"
 	EnvLogName = "LOGNAME"
 
-	// mkcert Common Paths
 	MkcertPathUsrLocalBin    = "/usr/local/bin/mkcert"
 	MkcertPathUsrBin         = "/usr/bin/mkcert"
 	MkcertPathOptHomebrewBin = "/opt/homebrew/bin/mkcert"
 	MkcertPathGoBin          = "go/bin/mkcert"
 	MkcertPathLocalBin       = ".local/bin/mkcert"
 
-	// Windows Home Subpaths
 	MkcertPathScoopShims = "scoop/shims/mkcert.exe"
 	MkcertPathChocoBin   = "choco/bin/mkcert.exe"
 
 	PowershellYes = "yes"
 
-	// mkcert SSL Paths
 	UnixSSLCertsMakeCertRoot = "/etc/ssl/certs/mkcert-root.pem"
 	UnixLocalCACertificates  = "/usr/local/share/ca-certificates/mkcert-root.crt"
 	UnixHomeMakeCertRoot     = ".local/share/mkcert/rootCA.pem"
 
-	// mkcert hints & errors
 	MkcertInstallHint = "mkcert was not found. Install and run 'mkcert -install'. macOS: 'brew install mkcert' then 'mkcert -install'"
 	MkcertNotFoundMsg = "mkcert is required to install the local CA root but was not found. macOS: 'brew install mkcert' then 'mkcert -install'"
 )
 
 // SAN / Certificates / Files
-
 const (
 	HomeDirPrefix        = "~/"
 	LocalhostWildcardSAN = "*.localhost"
@@ -245,7 +228,6 @@ const (
 )
 
 // LetsEncrypt
-
 const (
 	LetsEncryptProdDir    = "https://acme-v02.api.letsencrypt.org/directory"
 	LetsEncryptStagingDir = "https://acme-staging-v02.api.letsencrypt.org/directory"
@@ -255,12 +237,11 @@ const (
 // woos
 const (
 	DefaultAuthPath = "/.well-known/agbero"
-	URLFormat       = "http://%s:%d%s" // scheme + host + port + path
-	URLPrefixFormat = "http://%s:%d"   // scheme + host + port
+	URLFormat       = "http://%s:%d%s"
+	URLPrefixFormat = "http://%s:%d"
 )
 
-// gosip
-
+// gossip
 const (
 	DefaultGossipPort       = 7946
 	DefaultPushPullInterval = 60 * time.Second
@@ -277,11 +258,10 @@ const (
 )
 
 // backend
-
 const (
 	DefaultCircuitBreakerThreshold = 5
 	DefaultMaxIdleConnsPerHost     = 2
-	HealthCheckJitterFraction      = 2 // 50% jitter
+	HealthCheckJitterFraction      = 2
 
 	DefaultHealthCheckInterval  = 10 * time.Second
 	DefaultHealthCheckTimeout   = 5 * time.Second
@@ -299,7 +279,6 @@ const (
 )
 
 // tcp
-
 const (
 	AcceptLoopDeadline = 500 * time.Millisecond
 	PeekBufferSize     = 4096
@@ -327,15 +306,10 @@ const (
 )
 
 const (
-	// Dialer
-	DefaultTransportDialTimeout = 3 * time.Second
-	DefaultTransportKeepAlive   = 30 * time.Second
-
-	// Connection pooling
-	DefaultTransportMaxIdleConns        = 1000
-	DefaultTransportMaxIdleConnsPerHost = 100
-
-	// Timeouts
+	DefaultTransportDialTimeout           = 3 * time.Second
+	DefaultTransportKeepAlive             = 30 * time.Second
+	DefaultTransportMaxIdleConns          = 1000
+	DefaultTransportMaxIdleConnsPerHost   = 100
 	DefaultTransportIdleConnTimeout       = 90 * time.Second
 	DefaultTransportTLSHandshakeTimeout   = 5 * time.Second
 	DefaultTransportResponseHeaderTimeout = 5 * time.Second
