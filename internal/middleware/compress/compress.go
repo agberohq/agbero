@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/gzip"
@@ -32,7 +33,7 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Check if WebSocket (cannot compress upgrade requests)
-			if r.Header.Get("Connection") == "Upgrade" {
+			if r.Header.Get(woos.HeaderKeyConnection) == woos.HeaderKeyUpgrade {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -43,21 +44,21 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 				return
 			}
 
-			ae := r.Header.Get("Accept-Encoding")
+			ae := r.Header.Get(woos.HeaderAcceptEncoding)
 			compType := strings.ToLower(cc.Type)
 			if compType == "" {
-				compType = "gzip" // Default
+				compType = woos.CompressionGzip // Default
 			}
 
 			var useComp bool
 			var encoding string
 			switch compType {
-			case "brotli":
+			case woos.CompressionBrotli:
 				useComp = strings.Contains(ae, "br")
-				encoding = "br"
-			case "gzip":
+				encoding = woos.BrotliEncodingType
+			case woos.CompressionGzip:
 				useComp = strings.Contains(ae, "gzip")
-				encoding = "gzip"
+				encoding = woos.GzipEncodingType
 			default:
 				next.ServeHTTP(w, r)
 				return
@@ -75,8 +76,8 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 			}
 
 			var writer io.WriteCloser
-			if compType == "brotli" {
-				w.Header().Set("Content-Encoding", encoding)
+			if compType == woos.CompressionBrotli {
+				w.Header().Set(woos.HeaderContentEnc, encoding)
 				brw := brotliWriterPool.Get().(*brotli.Writer) // Update type cast
 				brw.Reset(w)
 				writer = brw
@@ -85,7 +86,7 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 					brotliWriterPool.Put(brw)
 				}()
 			} else {
-				w.Header().Set("Content-Encoding", encoding)
+				w.Header().Set(woos.HeaderContentEnc, encoding)
 				gzw := gzipWriterPool.Get().(*gzip.Writer)
 				gzw.Reset(w)
 				writer = gzw
@@ -94,7 +95,7 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 					gzipWriterPool.Put(gzw)
 				}()
 			}
-			w.Header().Add("Vary", "Accept-Encoding")
+			w.Header().Add(woos.HeaderKeyVary, woos.HeaderAcceptEncoding)
 
 			cw := &compressWriter{
 				ResponseWriter: w,

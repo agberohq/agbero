@@ -20,7 +20,7 @@ type Store struct {
 
 func NewStore(dataDir woos.Folder, logger *ll.Logger) (*Store, error) {
 	if !dataDir.IsSet() {
-		return nil, fmt.Errorf("data directory not set")
+		return nil, woos.ErrDataDirNotSet
 	}
 
 	if err := dataDir.Ensure(woos.Folder(""), true); err != nil {

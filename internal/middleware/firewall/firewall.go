@@ -213,7 +213,7 @@ func (f *IPSet) Block(ip, host, path, reason string, duration time.Duration) err
 		r.ExpiresAt = time.Now().Add(duration)
 	}
 
-	if strings.Contains(ip, "/") {
+	if strings.Contains(ip, woos.Slash) {
 		r.Type = BlockTypeCIDR
 	} else {
 		r.Type = BlockTypeSingle
@@ -270,7 +270,7 @@ func (f *IPSet) importTextFile(path string) error {
 			continue
 		}
 
-		if strings.Contains(line, "/") {
+		if strings.Contains(line, woos.Slash) {
 			_, network, err := net.ParseCIDR(line)
 			if err == nil {
 				f.ranger.Insert(cidranger.NewBasicRangerEntry(*network))

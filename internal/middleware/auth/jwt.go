@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"strings"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/olekukonko/errors"
 )
 
 func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
@@ -14,19 +16,19 @@ func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get("Authorization")
+			authHeader := r.Header.Get(woos.AuthorizationHeaderKey)
 			if authHeader == "" {
 				http.Error(w, `{"error":"missing_authorization"}`, http.StatusUnauthorized)
 				return
 			}
 
-			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+			tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
 
 			// Parse & Validate
 			token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 				// Enforce HMAC for simplicity in this iteration
 				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+					return nil, errors.Newf("%w: %v", woos.ErrUnexpectedSigningMethod, token.Header["alg"])
 				}
 				return secretBytes, nil
 			})

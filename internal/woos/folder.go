@@ -6,13 +6,6 @@ import (
 	"path/filepath"
 )
 
-// Standardize permissions here
-const (
-	DirPerm    = 0755
-	FilePerm   = 0644
-	SecurePerm = 0700 // For keys/certs
-)
-
 type Folder string
 
 func NewFolder(path string) Folder {

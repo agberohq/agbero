@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/markbates/goth"
 	"golang.org/x/oauth2"
@@ -82,7 +83,7 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 		cookies := rec.Result().Cookies()
 		found := false
 		for _, c := range cookies {
-			if c.Name == gothSessionCookie && c.Value == "valid_session_data" {
+			if c.Name == woos.GothSessionCookie && c.Value == "valid_session_data" {
 				found = true
 				break
 			}
@@ -100,7 +101,7 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 
 		req := httptest.NewRequest("GET", "/callback?code=123&state=xyz", nil)
 		// Inject the cookie that startGothFlow would have set
-		req.AddCookie(&http.Cookie{Name: gothSessionCookie, Value: "valid_session_data"})
+		req.AddCookie(&http.Cookie{Name: woos.GothSessionCookie, Value: "valid_session_data"})
 
 		rec := httptest.NewRecorder()
 
@@ -114,7 +115,7 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 		cookies := rec.Result().Cookies()
 		found := false
 		for _, c := range cookies {
-			if c.Name == sessionCookieName && c.Value == "mock_token_123" {
+			if c.Name == woos.SessionCookieName && c.Value == "mock_token_123" {
 				found = true
 				break
 			}
@@ -131,7 +132,7 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 		}
 
 		req := httptest.NewRequest("GET", "/callback?code=123", nil)
-		req.AddCookie(&http.Cookie{Name: gothSessionCookie, Value: "valid_session_data"})
+		req.AddCookie(&http.Cookie{Name: woos.GothSessionCookie, Value: "valid_session_data"})
 
 		rec := httptest.NewRecorder()
 
