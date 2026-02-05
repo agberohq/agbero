@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/errors"
 	"golang.org/x/crypto/bcrypt"
@@ -13,13 +14,13 @@ import (
 func Basic(cfg *alaye.BasicAuth) func(http.Handler) http.Handler {
 	secrets := make(map[string][]byte)
 	for _, u := range cfg.Users {
-		parts := strings.SplitN(u, ":", 2)
+		parts := strings.SplitN(u, woos.Colon, 2)
 		if len(parts) == 2 {
 			secrets[parts[0]] = []byte(parts[1]) // Assume hashed; plaintext fallback logs warn
 		}
 	}
 
-	realm := "Restricted"
+	realm := woos.Realm
 	if cfg.Realm != "" {
 		realm = cfg.Realm
 	}
@@ -61,6 +62,6 @@ func Basic(cfg *alaye.BasicAuth) func(http.Handler) http.Handler {
 }
 
 func unauthorized(w http.ResponseWriter, realm string) {
-	w.Header().Set("WWW-Authenticate", `Basic realm="`+realm+`"`)
+	w.Header().Set(woos.HeaderWWWAuthenticate, `Basic realm="`+realm+`"`)
 	http.Error(w, "Unauthorized", http.StatusUnauthorized)
 }

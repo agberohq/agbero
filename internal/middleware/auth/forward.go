@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/maypok86/otter/v2"
 	"github.com/maypok86/otter/v2/stats"
@@ -15,7 +16,7 @@ import (
 // Global Auth Cache (10k items, with stats enabled)
 var counter = stats.NewCounter()
 var authCache = otter.Must(&otter.Options[string, bool]{
-	MaximumSize:   10_000,
+	MaximumSize:   woos.MaxSizeCache,
 	StatsRecorder: counter,
 })
 
@@ -25,15 +26,15 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 	}
 
 	onFailure := strings.ToLower(cfg.OnFailure)
-	if onFailure != "allow" {
-		onFailure = "deny" // Default
+	if onFailure != woos.Allow {
+		onFailure = woos.Deny // Default
 	}
 
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 		Transport: &http.Transport{
-			MaxIdleConns:       100,
-			IdleConnTimeout:    90 * time.Second,
+			MaxIdleConns:       woos.CacheClientMaxIdleCons,
+			IdleConnTimeout:    woos.CacheClientMaxIdleTimeOuts,
 			DisableCompression: true,
 		},
 	}
@@ -41,7 +42,7 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Include config URL in cache key to avoid collisions between different routes using different auth services
-			cacheKey := cfg.URL + "|" + r.Header.Get("Authorization") + "|" + r.Header.Get("Cookie") + "|" + r.Method + "|" + r.URL.Path
+			cacheKey := cfg.URL + woos.Straight + r.Header.Get(woos.AuthorizationHeaderKey) + woos.Straight + r.Header.Get(woos.CookieHeaderKey) + woos.Straight + r.Method + woos.Straight + r.URL.Path
 
 			if allowed, ok := authCache.GetIfPresent(cacheKey); ok {
 				if allowed {
@@ -61,14 +62,14 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 
 			copyHeaders(r.Header, authReq.Header, cfg.RequestHeaders)
 
-			authReq.Header.Set("X-Original-URI", r.URL.RequestURI())
-			authReq.Header.Set("X-Original-Method", r.Method)
-			authReq.Header.Set("X-Forwarded-For", r.Header.Get("X-Forwarded-For"))
+			authReq.Header.Set(woos.HeaderXOriginalURI, r.URL.RequestURI())
+			authReq.Header.Set(woos.HeaderXOriginalMethod, r.Method)
+			authReq.Header.Set(woos.HeaderXForwardedFor, r.Header.Get(woos.HeaderXForwardedFor))
 
 			resp, err := client.Do(authReq)
 			if err != nil {
 				// Network Failure case
-				if onFailure == "allow" {
+				if onFailure == woos.Allow {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -78,9 +79,9 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 			defer resp.Body.Close()
 
 			// SUCCESS: 2xx means authorized
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 				ttl := time.Minute // Default TTL
-				cc := resp.Header.Get("Cache-Control")
+				cc := resp.Header.Get(woos.HeaderCacheControl)
 				if cc != "" && strings.Contains(cc, "max-age=") {
 					parts := strings.SplitAfter(cc, "max-age=")
 					if len(parts) > 1 {
@@ -103,7 +104,7 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 			// FAILURE: 4xx/5xx means unauthorized (or error)
 			// Cache the failure briefly (10s) to prevent hammering auth service on denial
 			authCache.Set(cacheKey, false)
-			authCache.SetExpiresAfter(cacheKey, 10*time.Second)
+			authCache.SetExpiresAfter(cacheKey, woos.CacheSetTTL)
 
 			// Pass through the Auth Service's response headers (e.g. WWW-Authenticate, Content-Type)
 			for k, vv := range resp.Header {
@@ -123,13 +124,13 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 
 func copyHeaders(src http.Header, dst http.Header, keys []string) {
 	if len(keys) == 0 {
-		val := src.Get("Authorization")
+		val := src.Get(woos.AuthorizationHeaderKey)
 		if val != "" {
-			dst.Set("Authorization", val)
+			dst.Set(woos.AuthorizationHeaderKey, val)
 		}
-		val = src.Get("Cookie")
+		val = src.Get(woos.CookieHeaderKey)
 		if val != "" {
-			dst.Set("Cookie", val)
+			dst.Set(woos.CookieHeaderKey, val)
 		}
 		return
 	}

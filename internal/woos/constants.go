@@ -38,11 +38,13 @@ const (
 // Standard Headers
 
 const (
-	HeaderContentType   = "Content-Type"
-	HeaderContentEnc    = "Content-Encoding"
-	HeaderXForwardedFor = "X-Forwarded-For"
-	HeaderXRealIP       = "X-Real-IP"
-	HeaderServer        = "Server"
+	HeaderContentType     = "Content-Type"
+	HeaderContentEnc      = "Content-Encoding"
+	HeaderXForwardedFor   = "X-Forwarded-For"
+	HeaderXOriginalURI    = "X-Original-URI"
+	HeaderXOriginalMethod = "X-Original-Method"
+	HeaderXRealIP         = "X-Real-IP"
+	HeaderServer          = "Server"
 
 	HeaderXForwardedHost   = "X-Forwarded-Host"
 	HeaderXForwardedProto  = "X-Forwarded-Proto"
@@ -56,6 +58,9 @@ const (
 	HeaderTE                 = "Te"
 	HeaderTrailers           = "Trailers"
 	HeaderTransferEncoding   = "Transfer-Encoding"
+
+	HeaderCacheControl    = "Cache-Control"
+	HeaderWWWAuthenticate = "WWW-Authenticate"
 )
 
 // MIME Types
@@ -135,6 +140,7 @@ const (
 	TemplateClose       = "}"
 	TemplateSep         = ":"
 	TemplateWildcardKey = "*"
+	Straight            = "|"
 )
 
 // Cache
@@ -340,4 +346,18 @@ const (
 	DefaultTransportTLSHandshakeTimeout   = 5 * time.Second
 	DefaultTransportResponseHeaderTimeout = 5 * time.Second
 	DefaultTransportExpectContinueTimeout = 1 * time.Second
+)
+
+// middleware
+const (
+	Realm                  = "Restricted"
+	MaxSizeCache           = 10_000
+	Allow                  = "allow"
+	Deny                   = "deny"
+	CacheClientMaxIdleCons = 100
+
+	CacheClientMaxIdleTimeOuts = 90 * time.Second
+	AuthorizationHeaderKey     = "Authorization"
+	CookieHeaderKey            = "Cookie"
+	CacheSetTTL                = 10 * time.Second
 )
