@@ -118,6 +118,17 @@ func (e *event) processNode(node *memberlist.Node) {
 				Warn("gossip rejected: invalid token")
 			return
 		}
+
+		// Security: Enforce that the token subject matches the service/host being announced.
+		// We expect the subject to equal the host, or if it's a subdomain, the root matches.
+		// Simplest strict check: subject must match meta.Host OR meta.Service if we add that field.
+		// Assuming 'svcName' is the identity from the token.
+		if svcName != meta.Host && !strings.HasSuffix(meta.Host, "."+svcName) {
+			e.s.logger.Fields("node", node.Name, "token_sub", svcName, "host", meta.Host).
+				Warn("gossip rejected: token subject does not authorize this host")
+			return
+		}
+
 		e.s.logger.Fields("node", node.Name, "svc", svcName).Debug("gossip authorized")
 	}
 
