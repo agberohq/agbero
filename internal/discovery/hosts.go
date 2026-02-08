@@ -13,7 +13,6 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/fsnotify/fsnotify"
-	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 )
 
@@ -211,7 +210,8 @@ func (hm *Host) Watch() error {
 		return err
 	}
 
-	if err := hm.loadAllLocked(); err != nil {
+	// Initial load
+	if err := hm.ReloadFull(); err != nil {
 		_ = hm.watcher.Close()
 		return err
 	}
@@ -243,7 +243,10 @@ func (hm *Host) addWatchRecursive(root string) error {
 }
 
 func (hm *Host) watchLoop() {
-	debouncedReload := core.Debounce(500*time.Millisecond, hm.ReloadFull)
+	// Debounce to prevent multiple reloads on atomic writes (vim/emacs style)
+	debouncedReload := core.Debounce(500*time.Millisecond, func() {
+		_ = hm.ReloadFull()
+	})
 
 	for {
 		select {
@@ -282,30 +285,85 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 	hm.logger.Fields(
 		"event", event.Op.String(),
 		"file", filepath.Base(event.Name),
-		"full_path", event.Name,
-	).Warn("config change detected, scheduling reload")
+	).Debug("config change detected, scheduling reload")
 
 	debouncedReload()
 }
 
-func (hm *Host) ReloadFull() {
+// ReloadFull performs a safe, lock-minimized reload from disk.
+func (hm *Host) ReloadFull() error {
+	// 1. Load from disk WITHOUT lock (Heavy I/O)
+	newHosts, stats, err := hm.scanFromDisk()
+	if err != nil {
+		hm.logger.Fields("err", err).Error("failed to scan hosts from disk")
+		return err
+	}
+
+	// 2. Lock ONLY to swap maps
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
-	previousCount := len(hm.lookupMap)
+	hm.hosts = newHosts
+	hm.loaded = true
+	hm.rebuildLookupLocked()
 
-	if err := hm.loadAllLocked(); err != nil {
-		hm.logger.Fields("err", err).Error("failed to reload file hosts")
-		return
+	hm.logger.Fields(
+		"total_files", stats.TotalFiles,
+		"valid_hosts", len(newHosts),
+	).Info("host configuration reloaded")
+
+	hm.notifyChanged()
+	return nil
+}
+
+// scanFromDisk reads HCL files and returns a map of valid configs.
+func (hm *Host) scanFromDisk() (map[string]*alaye.Host, struct{ TotalFiles int }, error) {
+	out := make(map[string]*alaye.Host)
+	stats := struct{ TotalFiles int }{}
+
+	if !hm.hostsDirExists() {
+		return out, stats, nil
 	}
 
-	currentCount := len(hm.lookupMap)
-	hm.logger.Fields(
-		"previous_hosts", previousCount,
-		"current_hosts", currentCount,
-		"change", currentCount-previousCount,
-	).Info("host configuration reloaded")
-	hm.notifyChanged()
+	root := hm.hostsDir.Path()
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		name := d.Name()
+		if !strings.HasSuffix(strings.ToLower(name), woos.HCLSuffix) {
+			return nil
+		}
+
+		stats.TotalFiles++
+
+		cfg, err := hm.loadOne(p)
+		if err != nil {
+			hm.logger.Fields("file", name, "err", err).Error("failed to parse host config")
+			return nil // continue
+		}
+
+		if len(cfg.Domains) == 0 {
+			hm.logger.Fields("file", name).Warn("host file has no domains, ignoring")
+			return nil
+		}
+
+		rel, relErr := filepath.Rel(root, p)
+		if relErr != nil {
+			rel = p
+		}
+		hostID := strings.TrimSuffix(rel, woos.HCLSuffix)
+		hostID = strings.ReplaceAll(hostID, string(filepath.Separator), woos.Slash)
+
+		out[hostID] = cfg
+		return nil
+	})
+
+	return out, stats, err
 }
 
 func (hm *Host) Get(hostname string) *alaye.Host {
@@ -350,12 +408,16 @@ func (hm *Host) LoadAll() (map[string]*alaye.Host, error) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
-	// Ensure we load from disk if this is a fresh instance (e.g. CLI usage)
-	// that hasn't called Watch().
 	if !hm.loaded {
-		if err := hm.loadAllLocked(); err != nil {
+		// Fallback for CLI tools that didn't call ReloadFull
+		// Note: This does I/O under lock, but it's only for CLI/Startup
+		nh, _, err := hm.scanFromDisk()
+		if err != nil {
 			return nil, err
 		}
+		hm.hosts = nh
+		hm.rebuildLookupLocked()
+		hm.loaded = true
 	}
 
 	return hm.snapshotLocked(), nil
@@ -382,105 +444,6 @@ func (hm *Host) notifyChanged() {
 	}
 }
 
-func (hm *Host) loadAllLocked() error {
-	// Mark as loaded regardless of success to prevent infinite loops on error
-	hm.loaded = true
-
-	if exists := hm.hostsDir.Exists(""); !exists {
-		hm.logger.Fields("hosts_dir", hm.hostsDir).
-			Warn("hosts directory not found, clearing configuration")
-
-		hm.hosts = make(map[string]*alaye.Host)
-		hm.rebuildLookupLocked()
-		return nil
-	}
-
-	root := hm.hostsDir.Path()
-
-	nextHosts := make(map[string]*alaye.Host)
-	loadedFiles := []string{}
-	failedFiles := []string{}
-	totalFiles := 0
-
-	err := filepath.WalkDir(root, func(p string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() {
-			return nil
-		}
-
-		name := d.Name()
-		if !strings.HasSuffix(strings.ToLower(name), woos.HCLSuffix) {
-			return nil
-		}
-
-		totalFiles++
-
-		cfg, err := hm.loadOne(p)
-		if err != nil {
-			hm.logger.Fields(
-				"file", name,
-				"full_path", p,
-				"err", err,
-			).Error("failed to load host config")
-			failedFiles = append(failedFiles, p)
-			return nil
-		}
-
-		// Ensure we don't load configs with no domains as they are effectively useless
-		if len(cfg.Domains) == 0 {
-			hm.logger.Fields("file", name).Warn("host file loaded but contains no 'domains'; ignoring")
-			return nil
-		}
-
-		rel, relErr := filepath.Rel(root, p)
-		if relErr != nil {
-			rel = p
-		}
-		hostID := strings.TrimSuffix(rel, woos.HCLSuffix)
-		hostID = strings.ReplaceAll(hostID, string(filepath.Separator), woos.Slash)
-
-		nextHosts[hostID] = cfg
-		loadedFiles = append(loadedFiles, rel)
-
-		primary := ""
-		if len(cfg.Domains) > 0 {
-			primary = cfg.Domains[0]
-		}
-
-		hm.logger.Fields(
-			"file", rel,
-			"primary_domain", primary,
-			"domains", cfg.Domains,
-			"routes", len(cfg.Routes),
-		).Debug("loaded host config")
-
-		return nil
-	})
-	if err != nil {
-		return errors.Newf("walk hosts dir: %w", err)
-	}
-
-	hm.hosts = nextHosts
-	hm.rebuildLookupLocked()
-
-	hm.logger.Fields(
-		"hosts_dir", hm.hostsDir,
-		"total_hcl_files", totalFiles,
-		"loaded_files", len(loadedFiles),
-		"failed_files", len(failedFiles),
-		"host_configs", len(nextHosts),
-	).Info("host discovery completed")
-
-	if len(failedFiles) > 0 {
-		hm.logger.Fields("failed_files", failedFiles).
-			Warn("some host configs failed to load")
-	}
-
-	return nil
-}
-
 func (hm *Host) rebuildLookupLocked() {
 	newLookup := make(map[string]*alaye.Host)
 	newPortLookup := make(map[string]*alaye.Host)
@@ -500,7 +463,6 @@ func (hm *Host) rebuildLookupLocked() {
 			}
 			domainToRoutes[domain] = append(domainToRoutes[domain], cfg.Routes...)
 
-			// pick the first config as the "base" config for this domain
 			if _, exists := domainToConfig[domain]; !exists {
 				domainToConfig[domain] = cfg
 			}
