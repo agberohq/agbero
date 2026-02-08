@@ -87,9 +87,3 @@ func (h *Host) Validate() error {
 
 	return nil
 }
-
-type TCPRoute struct {
-	Listen   string   `hcl:"listen" json:"listen"`
-	Backends []Server `hcl:"backend,block" json:"backends"`
-	Strategy string   `hcl:"strategy,optional" json:"strategy"` // round_robin, least_conn, random
-}

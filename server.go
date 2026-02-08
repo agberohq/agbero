@@ -62,6 +62,10 @@ type Server struct {
 	// Jack Lifecycle Management
 	shutdown *jack.Shutdown
 	reaper   *jack.Reaper
+
+	// HAProxy features
+	ProxyProtocol  bool  `hcl:"proxy_protocol,optional" json:"proxy_protocol"`
+	MaxConnections int64 `hcl:"max_connections,optional" json:"max_connections"`
 }
 
 func NewServer(opts ...Option) *Server {

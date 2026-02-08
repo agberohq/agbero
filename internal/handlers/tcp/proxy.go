@@ -12,6 +12,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
+	"github.com/pires/go-proxyproto"
 )
 
 type Proxy struct {
@@ -264,6 +265,26 @@ func (p *Proxy) handle(src net.Conn) {
 	if dst == nil {
 		_ = client.Close()
 		return
+	}
+
+	if balancer.useProtocol() {
+		// We must write the header BEFORE sending any client bytes
+
+		// Determine Source/Dest
+		// We cast to proper net.Addr types usually, but the library handles it.
+		header := proxyproto.HeaderProxyFromAddrs(
+			byte(1), // PROXY protocol version 1 (Text) is most compatible with DBs
+			client.RemoteAddr(),
+			client.LocalAddr(),
+		)
+
+		// Write to backend connection
+		if _, err := header.WriteTo(dst); err != nil {
+			p.Logger.Fields("err", err).Error("failed to write proxy protocol header")
+			_ = client.Close()
+			_ = dst.Close()
+			return
+		}
 	}
 
 	// KeepAlive on backend connection

@@ -15,10 +15,11 @@ type Conditions struct {
 
 // Server represents an upstream server configuration
 type Server struct {
-	Address    string      `hcl:"address" json:"address"`
-	Weight     int         `hcl:"weight,optional" json:"weight"`
-	Conditions *Conditions `hcl:"conditions,block" json:"conditions"`
-	Streaming  Streaming   `hcl:"streaming,block,optional" json:"streaming"` // optional by nature when pointer
+	Address        string      `hcl:"address" json:"address"`
+	Weight         int         `hcl:"weight,optional" json:"weight"`
+	Conditions     *Conditions `hcl:"conditions,block" json:"conditions"`
+	Streaming      Streaming   `hcl:"streaming,block,optional" json:"streaming"` // optional by nature when pointer
+	MaxConnections int64       `hcl:"max_connections,optional" json:"max_connections"`
 }
 
 type Streaming struct {
