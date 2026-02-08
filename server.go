@@ -116,7 +116,6 @@ func (s *Server) Start(configPath string) error {
 		jack.ReaperWithHandler(func(ctx context.Context, id string) {
 			if v, ok := woos.RouteCache.Load(id); ok {
 				item := v.(*woos.RouteCacheItem)
-				// Close handler resources (e.g. backend connections)
 				if h, ok := item.Handler.(interface{ Close() }); ok {
 					h.Close()
 				}
@@ -132,13 +131,10 @@ func (s *Server) Start(configPath string) error {
 	}
 
 	// 2. Load Hosts
-	// We call ReloadFull here to ensure initial load uses the robust logic
 	if err := s.hostManager.ReloadFull(); err != nil {
 		s.logger.Fields("err", err).Error("failed to load initial hosts")
 		return err
 	}
-
-	// Get snapshot for logging/setup
 	hosts, _ := s.hostManager.LoadAll()
 	s.logHostStats(hosts)
 
@@ -253,17 +249,10 @@ func (s *Server) Start(configPath string) error {
 		return woos.ErrNoBindAddr
 	}
 
-	// Register SIGHUP for reload (if supported by Jack, typically handles signals)
-	// Or we rely on the internal watcher.
-	// Also register Listener Shutdown
 	if s.shutdown != nil {
 		s.shutdown.RegisterWithContext("Listeners", s.shutdownImpl)
-		// Register reload trigger if available in jack/signals,
-		// otherwise host watcher handles host reloads.
-		// Global config reload is tricky without restarting listeners, so we mostly reload hosts.
 	}
 
-	// Wait for errors or external shutdown signal
 	errCh := make(chan error, len(s.servers))
 	s.mu.RLock()
 	for key, srv := range s.servers {
@@ -282,7 +271,6 @@ func (s *Server) Start(configPath string) error {
 	}
 	s.mu.RUnlock()
 
-	// Block until error or shutdown done
 	select {
 	case err := <-errCh:
 		return err
@@ -532,7 +520,6 @@ func (s *Server) reload() {
 	previousHosts, _ := s.hostManager.LoadAll()
 	previousCount := len(previousHosts)
 
-	// Use robust reload
 	if err := s.hostManager.ReloadFull(); err != nil {
 		s.logger.Fields("err", err).Error("failed to reload hosts")
 		return
@@ -755,7 +742,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveDefaultFavicon(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/x-icon")
 	w.Header().Set("Cache-Control", "public, max-age=31536000")
-	// Use embedded asset from ui package
 	if len(ui.Favicon) > 0 {
 		http.ServeContent(w, r, "favicon.ico", ui.ModTime, bytes.NewReader(ui.Favicon))
 	} else {
@@ -790,13 +776,9 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 		}
 	}
 
-	// Performance Fix: Calculate Key once
 	routeKey := route.Key()
-
-	// Get handler (cached or new)
 	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey)
 
-	// Apply WASM (Cached via routeKey to avoid O(N) config hashing)
 	if route.Wasm != nil {
 		wm, err := s.getWasmManager(route.Wasm, routeKey)
 		if err != nil {
@@ -834,7 +816,6 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handler
 }
 
 func (s *Server) getWasmManager(cfg *alaye.Wasm, key string) (*wasm.Manager, error) {
-	// The key is route.Key(), which is unique per route config (including WASM config)
 	if v, ok := s.wasmCache.Load(key); ok {
 		return v.(*wasm.Manager), nil
 	}

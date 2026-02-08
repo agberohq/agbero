@@ -8,15 +8,16 @@ import (
 )
 
 type Host struct {
-	Domains      []string   `hcl:"domains" json:"domains"`
-	Bind         []string   `hcl:"bind,optional" json:"bind"`
-	Compression  bool       `hcl:"compression,optional" json:"compression"`
-	Routes       []Route    `hcl:"route,block" json:"routes"`
-	TLS          TLS        `hcl:"tls,block" json:"tls"`
-	Limits       Limit      `hcl:"limits,block" json:"limits"`
-	Headers      Headers    `hcl:"headers,block" json:"headers"`
-	TCPProxy     []TCPRoute `hcl:"tcp_proxy,block" json:"tcp_proxy"`
-	NotFoundPage string     `hcl:"not_found_page,optional" json:"not_found_page"` // New: Custom 404
+	Domains      []string      `hcl:"domains" json:"domains"`
+	Bind         []string      `hcl:"bind,optional" json:"bind"`
+	Compression  bool          `hcl:"compression,optional" json:"compression"`
+	Routes       []Route       `hcl:"route,block" json:"routes"`
+	TLS          TLS           `hcl:"tls,block" json:"tls"`
+	Limits       Limit         `hcl:"limits,block" json:"limits"`
+	Headers      Headers       `hcl:"headers,block" json:"headers"`
+	TCPProxy     []TCPRoute    `hcl:"tcp_proxy,block" json:"tcp_proxy"`
+	Tunnel       *TunnelConfig `hcl:"tunnel,block" json:"tunnel,omitempty"`
+	NotFoundPage string        `hcl:"not_found_page,optional" json:"not_found_page"`
 }
 
 func (h *Host) Validate() error {
@@ -77,6 +78,13 @@ func (h *Host) Validate() error {
 		return errors.Newf("headers: %w", err)
 	}
 
+	// Tunnel validation
+	if h.Tunnel != nil {
+		if err := h.Tunnel.Validate(); err != nil {
+			return errors.Newf("tunnel: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -84,28 +92,4 @@ type TCPRoute struct {
 	Listen   string   `hcl:"listen" json:"listen"`
 	Backends []Server `hcl:"backend,block" json:"backends"`
 	Strategy string   `hcl:"strategy,optional" json:"strategy"` // round_robin, least_conn, random
-}
-
-// TunnelConfig holds configuration for FRP integrations.
-type TunnelConfig struct {
-	Server *TunnelServer `hcl:"server,block" json:"server,omitempty"`
-	Client *TunnelClient `hcl:"client,block" json:"client,omitempty"`
-	Router *TunnelRouter `hcl:"router,block" json:"router,omitempty"`
-}
-
-type TunnelServer struct {
-	Enabled bool `hcl:"enabled" json:"enabled"`
-	// Additional FRP server settings
-}
-
-type TunnelClient struct {
-	Enabled   bool              `hcl:"enabled" json:"enabled"`
-	Server    string            `hcl:"server" json:"server"`       // wss://tunnel.agbero.com/_connect
-	Subdomain string            `hcl:"subdomain" json:"subdomain"` // e.g. "blog"
-	Headers   map[string]string `hcl:"headers,optional" json:"headers"`
-}
-
-type TunnelRouter struct {
-	Enabled bool `hcl:"enabled" json:"enabled"`
-	// This tells Agbero to look up FRP proxies for this host
 }

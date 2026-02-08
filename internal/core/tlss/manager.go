@@ -116,15 +116,27 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 	decision := func(ctx context.Context, name string) error {
 		_ = ctx
 		name = core.NormalizeSubject(name)
-		if m.hostManager != nil && m.hostManager.Get(name) != nil {
-			return nil
+
+		// Strict Check: Only issue certs for explicitly configured domains.
+		hcfg := m.hostManager.Get(name)
+		if hcfg == nil {
+			return errors.Newf("%w for %q (host not configured)", woos.ErrOnDemandDenied, name)
 		}
-		return errors.Newf("%w for %q", woos.ErrOnDemandDenied, name)
+
+		// Mode check: If this host is configured as a Tunnel Client,
+		// we MUST NOT attempt ACME issuance. The laptop cannot solve challenges.
+		if hcfg.Tunnel != nil && hcfg.Tunnel.Client != nil && hcfg.Tunnel.Client.Enabled {
+			return errors.Newf("acme denied for tunnel client host: %q", name)
+		}
+
+		return nil
 	}
 
 	if m.cmProd == nil {
 		cmProd := certmagic.NewDefault()
-		cmProd.OnDemand = &certmagic.OnDemandConfig{DecisionFunc: decision}
+		cmProd.OnDemand = &certmagic.OnDemandConfig{
+			DecisionFunc: decision,
+		}
 		cmProd.Storage = &certmagic.FileStorage{Path: storageDir}
 		acme := certmagic.ACMEIssuer{
 			Email:  email,
@@ -146,7 +158,7 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 		acme := certmagic.ACMEIssuer{
 			Email:                   email,
 			Agreed:                  true,
-			CA:                      woos.LetsEncryptProdDir,
+			CA:                      woos.LetsEncryptStagingDir,
 			DisableTLSALPNChallenge: true,
 		}
 		issuer := certmagic.NewACMEIssuer(cmStaging, acme)
@@ -154,7 +166,6 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 
 		m.cmStaging = cmStaging
 		m.issStaging = issuer
-
 	}
 
 	h := next
@@ -172,7 +183,6 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 	}
 
 	return h, nil
-
 }
 
 func (m *Manager) CmForHost(hcfg *alaye.Host) *certmagic.Config {
@@ -182,8 +192,6 @@ func (m *Manager) CmForHost(hcfg *alaye.Host) *certmagic.Config {
 	}
 
 	if hcfg != nil {
-		// if TLS is struct: just read it
-		// if TLS is *TLS: guard nil properly
 		if hcfg.TLS.LetsEncrypt.Staging {
 			useStaging = true
 		}
@@ -237,7 +245,6 @@ func (m *Manager) GetAutoLocalCertificate(host string) (*tls.Certificate, error)
 	}
 	m.localMu.RUnlock()
 
-	// 4. Initialize installer with explicit directory
 	installer := NewInstaller(m.logger, woos.MakeFolder(m.Global.Storage.CertsDir, woos.CertDir))
 	installer.SetHosts([]string{host}, woos.DefaultHTTPSPort)
 
@@ -272,18 +279,13 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return nil, errors.New("missing SNI")
 	}
 
-	// Normalize SNI (strip port, lowercase, trim)
-	sni := core.NormalizeHost(chi.ServerName) // prefer NormalizeHost for SNI
+	sni := core.NormalizeHost(chi.ServerName)
 	if sni == "" {
 		return nil, woos.ErrMissingSNI
 	}
 
-	// If SNI is an IP address, treat it specially.
-	// Certs generally won’t exist for bare IP SNI; you can either:
-	//  - allow local auto only for localhost-ish
-	//  - or return a clearer error.
 	if net.ParseIP(sni) != nil {
-		// Keep behavior: proceed, but it will likely become "unknown host".
+		return nil, nil
 	}
 
 	hcfg := m.hostManager.Get(sni)
@@ -291,10 +293,8 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return nil, errors.Newf("%w %q", woos.ErrUnknownHost, sni)
 	}
 
-	// Decide mode: host override or smart default.
 	mode := hcfg.TLS.Mode
 	if strings.TrimSpace(string(mode)) == "" {
-		// Smart Default
 		if core.IsLocalhost(sni) {
 			mode = alaye.ModeLocalAuto
 		} else {
@@ -302,19 +302,26 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		}
 	}
 
+	// Force Disable TLS if Tunnel Client is enabled on this host
+	// This prevents laptops from trying to issue certs for "blog.tunnel.agbero.com"
+	if hcfg.Tunnel != nil && hcfg.Tunnel.Client != nil && hcfg.Tunnel.Client.Enabled {
+		mode = alaye.ModeLocalNone
+	}
+
 	switch mode {
 	case alaye.ModeLocalNone:
+		// Return nil error to allow handshake to proceed with default cert or fail gracefully at TCP level,
+		// but typically we want to signal "No Cert".
+		// However, returning an error here aborts the handshake immediately.
 		return nil, errors.Newf("%w: tls disabled for host %q", woos.ErrTLSDisabled, sni)
 
 	case alaye.ModeLocalCert:
-		// Requires local cert paths
 		if strings.TrimSpace(hcfg.TLS.Local.CertFile) == "" || strings.TrimSpace(hcfg.TLS.Local.KeyFile) == "" {
 			return nil, errors.Newf("%w %q", woos.ErrLocalCertMissingFiles, sni)
 		}
 		return m.GetLocalCertificate(hcfg.TLS.Local, sni)
 
 	case alaye.ModeLocalAuto:
-		// IMPORTANT: never try mkcert/local CA for public domains
 		if !core.IsLocalhost(sni) {
 			return nil, errors.Newf("%w (got %q)", woos.ErrLocalAutoNotAllowed, sni)
 		}
@@ -326,7 +333,6 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 			return nil, errors.Newf("%w(host %q)", woos.ErrLetsEncryptNotEnabled, sni)
 		}
 
-		// Per-host short-lived override
 		if hcfg.TLS.LetsEncrypt.ShortLived {
 			for _, iss := range cm.Issuers {
 				if acmeIss, ok := iss.(*certmagic.ACMEIssuer); ok {
@@ -360,10 +366,13 @@ func (m *Manager) getCustomCACert(root string, host string) (*tls.Certificate, e
 	if !caPool.AppendCertsFromPEM(caCert) {
 		return nil, errors.Newf("%w:(host=%q)", woos.ErrInvalidCustomCAPEM, host)
 	}
-	if hcfg := m.hostManager.Get(host); hcfg != nil && &hcfg.TLS != nil {
+	if hcfg := m.hostManager.Get(host); hcfg != nil {
+		if hcfg.TLS.Local.CertFile == "" || hcfg.TLS.Local.KeyFile == "" {
+			return nil, errors.Newf("%w for host %q", woos.ErrCustomCALocalCertRequired, host)
+		}
 		return m.GetLocalCertificate(hcfg.TLS.Local, host)
 	}
-	return nil, errors.Newf("%w for host %q", woos.ErrCustomCALocalCertRequired, host)
+	return nil, errors.Newf("%w for host %q", woos.ErrUnknownHost, host)
 }
 
 func (m *Manager) Close() {
@@ -375,26 +384,19 @@ func (m *Manager) Close() {
 func (m *Manager) ClearCache() {
 	m.localMu.Lock()
 	defer m.localMu.Unlock()
-
-	// Wipe the map. Next request will re-read files from disk.
 	m.LocalCache = make(map[string]*tls.Certificate)
-
-	// Also clear CertMagic cache if needed, though that is usually handled internally by CertMagic's own storage mechanisms.
 	m.logger.Info("TLS certificate cache cleared")
 }
 
 func (m *Manager) GetCertificateForPort(chi *tls.ClientHelloInfo, port string) (*tls.Certificate, error) {
-	// 1. Try Standard SNI
 	if chi.ServerName != "" {
 		if cert, err := m.GetCertificate(chi); err == nil {
 			return cert, nil
 		}
 	}
 
-	// 2. Fallback: Port Lookup
 	hcfg := m.hostManager.GetByPort(port)
 	if hcfg != nil && len(hcfg.Domains) > 0 {
-		// Pretend SNI was the primary domain to trigger cert generation/loading
 		chi.ServerName = hcfg.Domains[0]
 		return m.GetCertificate(chi)
 	}

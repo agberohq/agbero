@@ -45,7 +45,6 @@ type Host struct {
 
 	routers map[string]*matcher.Tree
 
-	// loaded indicates if the initial disk scan has completed.
 	loaded bool
 }
 
@@ -210,8 +209,8 @@ func (hm *Host) Watch() error {
 		return err
 	}
 
-	// Initial load
-	if err := hm.ReloadFull(); err != nil {
+	// Initial synchronous load without notifying to avoid test races
+	if err := hm.loadInternal(); err != nil {
 		_ = hm.watcher.Close()
 		return err
 	}
@@ -243,7 +242,6 @@ func (hm *Host) addWatchRecursive(root string) error {
 }
 
 func (hm *Host) watchLoop() {
-	// Debounce to prevent multiple reloads on atomic writes (vim/emacs style)
 	debouncedReload := core.Debounce(500*time.Millisecond, func() {
 		_ = hm.ReloadFull()
 	})
@@ -270,6 +268,7 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 		return
 	}
 
+	// Watch new directories recursively
 	if event.Has(fsnotify.Create) {
 		if fi, err := os.Stat(event.Name); err == nil && fi.IsDir() {
 			_ = hm.addWatchRecursive(event.Name)
@@ -277,6 +276,7 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 		}
 	}
 
+	// Strict filter: Only process .hcl files
 	name := strings.ToLower(event.Name)
 	if !strings.HasSuffix(name, woos.HCLSuffix) {
 		return
@@ -290,16 +290,25 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 	debouncedReload()
 }
 
-// ReloadFull performs a safe, lock-minimized reload from disk.
+// ReloadFull scans the disk and updates the configuration.
+// It is thread-safe and minimizes lock contention.
 func (hm *Host) ReloadFull() error {
-	// 1. Load from disk WITHOUT lock (Heavy I/O)
+	if err := hm.loadInternal(); err != nil {
+		return err
+	}
+	hm.notifyChanged()
+	return nil
+}
+
+func (hm *Host) loadInternal() error {
+	// 1. I/O Phase: Scan disk without lock
 	newHosts, stats, err := hm.scanFromDisk()
 	if err != nil {
 		hm.logger.Fields("err", err).Error("failed to scan hosts from disk")
 		return err
 	}
 
-	// 2. Lock ONLY to swap maps
+	// 2. Critical Section: Swap pointer
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
@@ -310,13 +319,11 @@ func (hm *Host) ReloadFull() error {
 	hm.logger.Fields(
 		"total_files", stats.TotalFiles,
 		"valid_hosts", len(newHosts),
-	).Info("host configuration reloaded")
+	).Info("host configuration loaded")
 
-	hm.notifyChanged()
 	return nil
 }
 
-// scanFromDisk reads HCL files and returns a map of valid configs.
 func (hm *Host) scanFromDisk() (map[string]*alaye.Host, struct{ TotalFiles int }, error) {
 	out := make(map[string]*alaye.Host)
 	stats := struct{ TotalFiles int }{}
@@ -409,8 +416,6 @@ func (hm *Host) LoadAll() (map[string]*alaye.Host, error) {
 	defer hm.mu.Unlock()
 
 	if !hm.loaded {
-		// Fallback for CLI tools that didn't call ReloadFull
-		// Note: This does I/O under lock, but it's only for CLI/Startup
 		nh, _, err := hm.scanFromDisk()
 		if err != nil {
 			return nil, err
@@ -606,17 +611,28 @@ func (hm *Host) sortRoutes(routes []alaye.Route) {
 	})
 }
 
+// resolveDomainLocked finds the best matching domain configuration.
+// It prioritizes Exact Matches, then Longest Wildcard Suffix.
 func (hm *Host) resolveDomainLocked(hostname string) string {
+	// 1. Exact Match
 	if _, ok := hm.lookupMap[hostname]; ok {
 		return hostname
 	}
+
+	// 2. Wildcard Match (Longest Suffix Wins)
+	var bestMatch string
+	var maxLen int
+
 	for domain := range hm.lookupMap {
 		if strings.HasPrefix(domain, "*.") {
-			suffix := domain[1:]
+			suffix := domain[1:] // includes dot, e.g. ".example.com"
 			if strings.HasSuffix(hostname, suffix) {
-				return domain
+				if len(suffix) > maxLen {
+					maxLen = len(suffix)
+					bestMatch = domain
+				}
 			}
 		}
 	}
-	return ""
+	return bestMatch
 }
