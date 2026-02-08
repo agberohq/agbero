@@ -1,6 +1,7 @@
 package agbero
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -24,6 +25,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/recovery"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/wasm"
+	"git.imaxinacion.net/aibox/agbero/internal/ui"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/errors"
@@ -130,11 +132,14 @@ func (s *Server) Start(configPath string) error {
 	}
 
 	// 2. Load Hosts
-	hosts, err := s.hostManager.LoadAll()
-	if err != nil {
+	// We call ReloadFull here to ensure initial load uses the robust logic
+	if err := s.hostManager.ReloadFull(); err != nil {
 		s.logger.Fields("err", err).Error("failed to load initial hosts")
 		return err
 	}
+
+	// Get snapshot for logging/setup
+	hosts, _ := s.hostManager.LoadAll()
 	s.logHostStats(hosts)
 
 	// 3. Setup Gossip
@@ -248,9 +253,14 @@ func (s *Server) Start(configPath string) error {
 		return woos.ErrNoBindAddr
 	}
 
-	// Register Listener Shutdown
+	// Register SIGHUP for reload (if supported by Jack, typically handles signals)
+	// Or we rely on the internal watcher.
+	// Also register Listener Shutdown
 	if s.shutdown != nil {
 		s.shutdown.RegisterWithContext("Listeners", s.shutdownImpl)
+		// Register reload trigger if available in jack/signals,
+		// otherwise host watcher handles host reloads.
+		// Global config reload is tricky without restarting listeners, so we mostly reload hosts.
 	}
 
 	// Wait for errors or external shutdown signal
@@ -500,7 +510,7 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 }
 
 func (s *Server) reload() {
-	s.logger.Info("received SIGHUP, reloading configuration")
+	s.logger.Info("reloading configuration")
 
 	global, err := core.LoadGlobal(s.configPath)
 	if err != nil {
@@ -522,7 +532,11 @@ func (s *Server) reload() {
 	previousHosts, _ := s.hostManager.LoadAll()
 	previousCount := len(previousHosts)
 
-	s.hostManager.ReloadFull()
+	// Use robust reload
+	if err := s.hostManager.ReloadFull(); err != nil {
+		s.logger.Fields("err", err).Error("failed to reload hosts")
+		return
+	}
 
 	currentHosts, _ := s.hostManager.LoadAll()
 	currentCount := len(currentHosts)
@@ -667,6 +681,13 @@ func (s *Server) shouldLogUserAgent(r *http.Request) bool {
 
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+
+	// Special handling for favicon at root of listener
+	if r.URL.Path == "/favicon.ico" {
+		s.serveDefaultFavicon(w, r)
+		return
+	}
+
 	var host string
 	var hcfg *alaye.Host
 
@@ -727,25 +748,20 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//ll.Dbg(r.URL.Path)
-	//
-	//// this is not working
-	//// this should show if route
-	//if r.URL.Path == "favicon.ico" {
-	//	s.serveDefaultFavicon(w, r)
-	//	return
-	//}
-
 	http.Error(w, "Not found", http.StatusNotFound)
 	s.logRequest(host, r, start, http.StatusNotFound, 0)
 }
 
-//func (s *Server) serveDefaultFavicon(w http.ResponseWriter, r *http.Request) {
-//	w.Header().Set("Content-Type", "image/x-icon")
-//	w.Header().Set("Cache-Control", "public, max-age=31536000")
-//	// Use the embedded bytes
-//	http.ServeContent(w, r, "favicon.ico", ui.ModTime, bytes.NewReader(ui.Favicon))
-//}
+func (s *Server) serveDefaultFavicon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/x-icon")
+	w.Header().Set("Cache-Control", "public, max-age=31536000")
+	// Use embedded asset from ui package
+	if len(ui.Favicon) > 0 {
+		http.ServeContent(w, r, "favicon.ico", ui.ModTime, bytes.NewReader(ui.Favicon))
+	} else {
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
 
 func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alaye.Route) {
 	ctx := context.WithValue(r.Context(), woos.CtxOriginalPath, r.URL.Path)
