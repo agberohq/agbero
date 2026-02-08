@@ -123,7 +123,7 @@ func (p *Proxy) handle(src net.Conn) {
 		sni, _ = p.readClientHello(peekBuf[:n])
 	}
 
-	// pick balancer (same as your code)
+	// pick balancer
 	var balancer *TCPBalancer
 	if sni != "" {
 		sni = strings.ToLower(sni)
@@ -191,56 +191,60 @@ func (p *Proxy) pipe(src, dst net.Conn) {
 	<-errc
 }
 
+// readClientHello extracts SNI from TLS ClientHello with strict bounds checking.
 func (p *Proxy) readClientHello(data []byte) (string, error) {
 	if len(data) < woos.MinClientHelloLen {
 		return "", woos.ErrShortData
 	}
 
-	// TLS Record Header
-	// 0x16 = Handshake
+	// 1. Record Layer
+	// Type (1) + Ver (2) + Len (2) = 5 bytes
 	if data[0] != woos.RecordTypeHandshake {
 		return "", woos.ErrNotTLS
 	}
-	// Version (ignore)
-	// Length (2 bytes) at index 3
-	// Handshake Header starts at 5
-	// Handshake Type 0x01 = ClientHello
-	if data[5] != woos.HandshakeTypeClientHello {
+
+	// 2. Handshake Layer
+	// HandshakeType(1) + Length(3) + Ver(2) + Random(32)
+	// Start at offset 5
+	pos := 5
+	if pos >= len(data) {
+		return "", woos.ErrShort
+	}
+	if data[pos] != woos.HandshakeTypeClientHello {
 		return "", woos.ErrNotClientHello
 	}
 
-	// Skip Record Header (5) + Handshake Type (1) + Length (3) + Version (2) + Random (32)
-	// Session ID Len (1)
-	pos := woos.RecordHeaderLen + woos.HandshakeTypeLen + woos.HandshakeLength + woos.VersionLen + woos.RandomLen
+	// Skip Type(1) + Len(3) + Ver(2) + Random(32) = 38 bytes
+	pos += 38
 	if pos >= len(data) {
 		return "", woos.ErrShort
 	}
 
+	// 3. Session ID
 	sessionIdLen := int(data[pos])
 	pos++
 	pos += sessionIdLen
-	if pos+2 >= len(data) {
+	if pos+2 > len(data) {
 		return "", woos.ErrShort
 	}
 
-	// Cipher Suites
+	// 4. Cipher Suites
 	cipherLen := int(binary.BigEndian.Uint16(data[pos:]))
 	pos += 2 + cipherLen
-	if pos+1 >= len(data) {
+	if pos+1 > len(data) {
 		return "", woos.ErrShort
 	}
 
-	// Enabled Methods
+	// 5. Compression Methods
 	compLen := int(data[pos])
 	pos += 1 + compLen
-	if pos+2 >= len(data) {
+	if pos+2 > len(data) {
 		return "", woos.ErrShort
 	}
 
-	// Extensions
+	// 6. Extensions
 	extLen := int(binary.BigEndian.Uint16(data[pos:]))
 	pos += 2
-
 	if pos+extLen > len(data) {
 		return "", woos.ErrShortExt
 	}
@@ -251,8 +255,12 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 		extSize := int(binary.BigEndian.Uint16(data[pos+2:]))
 		pos += 4
 
-		if extType == woos.ExtTypeServerName { // Server Name Extension
-			if pos+2 > end {
+		if pos+extSize > end {
+			return "", woos.ErrShortExt
+		}
+
+		if extType == woos.ExtTypeServerName {
+			if extSize < 2 {
 				return "", woos.ErrShortSNI
 			}
 			// SNI List Length
@@ -260,9 +268,8 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 			pos += 2
 
 			listEnd := pos + listLen
-			if listEnd > end {
+			if listEnd > pos+extSize-2 {
 				return "", woos.ErrShortSNIList
-
 			}
 
 			for pos+3 <= listEnd {
@@ -270,16 +277,18 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 				nameLen := int(binary.BigEndian.Uint16(data[pos+1:]))
 				pos += 3
 
-				if nameType == woos.NameTypeHostName { // Host Name
-					if pos+nameLen > listEnd {
-						return "", woos.ErrShortName
-					}
+				if pos+nameLen > listEnd {
+					return "", woos.ErrShortName
+				}
+
+				if nameType == woos.NameTypeHostName {
 					return string(data[pos : pos+nameLen]), nil
 				}
 				pos += nameLen
 			}
+		} else {
+			pos += extSize
 		}
-		pos += extSize
 	}
 
 	return "", nil
