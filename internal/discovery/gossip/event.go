@@ -21,8 +21,10 @@ func (e *event) NotifyJoin(node *memberlist.Node) {
 	if node.Name == e.s.localName {
 		return
 	}
-	e.processNode(node)
-	e.s.logger.Fields("node", node.Name).Info("node joined")
+	go func(n *memberlist.Node) {
+		e.processNode(n)
+		e.s.logger.Fields("node", n.Name).Info("node joined")
+	}(node)
 }
 
 func (e *event) NotifyLeave(node *memberlist.Node) {
@@ -37,7 +39,8 @@ func (e *event) NotifyUpdate(node *memberlist.Node) {
 	if node.Name == e.s.localName {
 		return
 	}
-	e.processNode(node)
+	// Run asynchronously
+	go e.processNode(node)
 }
 
 func (e *event) fetchToken(node *memberlist.Node, meta *Meta) (string, error) {
