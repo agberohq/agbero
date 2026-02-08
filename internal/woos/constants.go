@@ -282,16 +282,21 @@ const (
 const (
 	AcceptLoopDeadline = 500 * time.Millisecond
 	PeekBufferSize     = 4096
-	InitialReadTimeout = 50 * time.Millisecond
+
+	InitialReadTimeout = 1000 * time.Millisecond
 	BackendDialTimeout = 5 * time.Second
+
+	TCPHealthCheckInterval = 5 * time.Second
+	TCPHealthCheckTimeout  = 2 * time.Second
 
 	RecordTypeHandshake      = 0x16
 	HandshakeTypeClientHello = 0x01
-	RecordHeaderLen          = 5
-	HandshakeTypeLen         = 1
-	HandshakeLength          = 3
-	VersionLen               = 2
-	RandomLen                = 32
+
+	RecordHeaderLen  = 5
+	HandshakeTypeLen = 1
+	HandshakeLength  = 3
+	VersionLen       = 2
+	RandomLen        = 32
 
 	ExtTypeServerName = 0x0000
 	NameTypeHostName  = 0x00

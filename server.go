@@ -109,7 +109,7 @@ func (s *Server) Start(configPath string) error {
 		"admin_addr", adminAddr,
 	).Info("starting agbero")
 
-	// 1. Initialize Reaper for Route Cache Cleanup
+	// Initialize Reaper for Route Cache Cleanup
 	s.reaper = jack.NewReaper(
 		woos.RouteCacheTTL,
 		jack.ReaperWithLogger(s.logger),
@@ -130,7 +130,7 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("RouteReaper", s.reaper.Stop)
 	}
 
-	// 2. Load Hosts
+	// Load Hosts
 	if err := s.hostManager.ReloadFull(); err != nil {
 		s.logger.Fields("err", err).Error("failed to load initial hosts")
 		return err
@@ -138,7 +138,7 @@ func (s *Server) Start(configPath string) error {
 	hosts, _ := s.hostManager.LoadAll()
 	s.logHostStats(hosts)
 
-	// 3. Setup Gossip
+	// Setup Gossip
 	if s.global.Gossip.Enabled {
 		gs, err := gossip.NewService(s.hostManager, &s.global.Gossip, s.logger)
 		if err != nil {
@@ -154,7 +154,7 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	// 4. Setup Middleware
+	// Setup Middleware
 	s.ipMiddleware = clientip.NewIPMiddleware(s.global.Security.TrustedProxies)
 	s.rateLimiter = s.buildRateLimiterFromConfig()
 
@@ -165,7 +165,7 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	// 5. Setup Firewall
+	// Setup Firewall
 	dataDir := woos.NewFolder(s.global.Storage.DataDir)
 	s.firewall, err = firewall.New(s.global.Security.Firewall, dataDir, s.logger)
 	if err != nil {
@@ -175,17 +175,17 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("Firewall", func() { _ = s.firewall.Close() })
 	}
 
-	// 6. Start Admin
+	// Start Admin
 	s.startAdminServer()
 
-	// 7. Setup Handlers
+	// Setup Handlers
 	baseHandler := http.HandlerFunc(s.handleRequest)
 	var httpFallbackHandler http.Handler = baseHandler
 	if len(s.global.Bind.HTTPS) > 0 {
 		httpFallbackHandler = http.HandlerFunc(s.redirectToHTTPS)
 	}
 
-	// 8. Setup TLS
+	// Setup TLS
 	tlsCfg, _, err := s.buildTLS(httpFallbackHandler)
 	if err != nil {
 		s.logger.Fields("err", err.Error()).Warn("TLS setup failed; HTTPS listeners may not start")
@@ -195,7 +195,7 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
 	}
 
-	// 9. Start TCP Proxies
+	// Start TCP Proxies
 	for _, host := range hosts {
 		for _, route := range host.TCPProxy {
 			tp := tcp.NewProxy(route.Listen, s.logger)
@@ -208,7 +208,7 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	// 10. Start HTTP/QUIC Listeners
+	// Start HTTP/QUIC Listeners
 	anyStreaming := s.hasStreaming(hosts)
 	usedPorts := make(map[string]bool)
 
@@ -500,23 +500,20 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 func (s *Server) reload() {
 	s.logger.Info("reloading configuration")
 
+	// Load new global config
 	global, err := core.LoadGlobal(s.configPath)
 	if err != nil {
 		s.logger.Fields("err", err, "config_path", s.configPath).Error("reload config failed")
 		return
 	}
 
-	var changes []string
+	// Detect log level changes
 	if s.global.Logging.Level != global.Logging.Level {
-		changes = append(changes, fmt.Sprintf("log_level: %s → %s", s.global.Logging.Level, global.Logging.Level))
+		s.logger.Infof("log_level: %s → %s", s.global.Logging.Level, global.Logging.Level)
 	}
-
 	s.global = global
 
-	if len(changes) > 0 {
-		s.logger.Fields("changes", changes).Info("global config updated")
-	}
-
+	// Reload Hosts
 	previousHosts, _ := s.hostManager.LoadAll()
 	previousCount := len(previousHosts)
 
@@ -525,12 +522,63 @@ func (s *Server) reload() {
 		return
 	}
 
-	currentHosts, _ := s.hostManager.LoadAll()
-	currentCount := len(currentHosts)
+	newHosts, _ := s.hostManager.LoadAll()
+	currentCount := len(newHosts)
 
+	// Clear TLS Cache (certs might have changed)
 	if s.tlsManager != nil {
 		s.tlsManager.ClearCache()
 	}
+
+	// Hot Reload TCP Proxies
+	// We do not restart listeners (to avoid downtime). We replace the routing tables safely.
+	s.mu.Lock()
+	for _, tp := range s.tcpProxies {
+		// Extract port from the running listener (e.g., ":3306" -> "3306")
+		_, port, _ := net.SplitHostPort(tp.Listen)
+		if port == "" {
+			// Handle ":port" case if SplitHostPort failed or returned empty host
+			if strings.HasPrefix(tp.Listen, ":") {
+				port = tp.Listen[1:]
+			} else {
+				continue
+			}
+		}
+
+		newRoutes := make(map[string]*tcp.Balancer)
+		var newDefault *tcp.Balancer
+
+		// Scan all new hosts to find routes claiming this port
+		for _, host := range newHosts {
+			for _, route := range host.TCPProxy {
+				// Normalize listener for comparison
+				rPort := route.Listen
+				if strings.Contains(rPort, ":") {
+					_, p, _ := net.SplitHostPort(rPort)
+					rPort = p
+				}
+
+				if rPort == port {
+					// Create new balancer with fresh config
+					bal := tcp.NewBalancer(route)
+
+					// Hostname routing logic
+					if len(host.Domains) > 0 {
+						for _, domain := range host.Domains {
+							newRoutes[strings.ToLower(domain)] = bal
+						}
+					} else {
+						// No domain? Treat as default/fallback
+						newDefault = bal
+					}
+				}
+			}
+		}
+
+		// Hot Swap
+		tp.UpdateRoutes(newRoutes, newDefault)
+	}
+	s.mu.Unlock()
 
 	s.logger.Fields(
 		"previous_hosts", previousCount,

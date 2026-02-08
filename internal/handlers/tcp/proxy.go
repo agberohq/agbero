@@ -17,38 +17,63 @@ import (
 type Proxy struct {
 	Listen string
 
-	// Map of SNI Hostname -> Balancer
-	Routes map[string]*TCPBalancer
-	// Fallback balancer if no SNI matches or non-TLS
-	Default *TCPBalancer
+	// RWMutex protects Routes and Default during hot reloads
+	mu      sync.RWMutex
+	Routes  map[string]*Balancer
+	Default *Balancer
 
 	Logger *ll.Logger
-	quit   chan struct{}
-	wg     sync.WaitGroup
+
+	// Connection tracking for graceful shutdown
+	connsMu sync.Mutex
+	conns   map[net.Conn]struct{}
+
+	quit chan struct{}
+	wg   sync.WaitGroup
 }
 
-// NewProxy creates a proxy for a specific listener address.
-// Routes are added subsequently.
 func NewProxy(listen string, logger *ll.Logger) *Proxy {
 	return &Proxy{
 		Listen: listen,
-		Routes: make(map[string]*TCPBalancer),
+		Routes: make(map[string]*Balancer),
 		Logger: logger,
+		conns:  make(map[net.Conn]struct{}),
 		quit:   make(chan struct{}),
 	}
 }
 
-// AddRoute registers a balancer for a specific SNI hostname.
-// If hostname is empty, it sets the default balancer.
 func (p *Proxy) AddRoute(hostname string, cfg alaye.TCPRoute) {
-	bal := newTCPBalancer(cfg)
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
+	bal := NewBalancer(cfg) // Ensure NewBalancer is exported in tcp.go
 	hostname = strings.ToLower(strings.TrimSpace(hostname))
+
 	if hostname == "" || hostname == "*" {
 		p.Default = bal
 	} else {
 		p.Routes[hostname] = bal
 	}
+}
+
+// UpdateRoutes allows hot-swapping the routing logic without dropping connections
+func (p *Proxy) UpdateRoutes(newRoutes map[string]*Balancer, newDefault *Balancer) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// 1. Stop health checks on old balancers
+	if p.Default != nil {
+		p.Default.Stop()
+	}
+	for _, r := range p.Routes {
+		r.Stop()
+	}
+
+	// 2. Swap
+	p.Routes = newRoutes
+	p.Default = newDefault
+
+	p.Logger.Fields("listen", p.Listen).Info("tcp proxy routes updated")
 }
 
 func (p *Proxy) Start() error {
@@ -70,7 +95,7 @@ func (p *Proxy) Start() error {
 			}
 
 			if t, ok := l.(*net.TCPListener); ok {
-				t.SetDeadline(time.Now().Add(woos.AcceptLoopDeadline))
+				_ = t.SetDeadline(time.Now().Add(woos.AcceptLoopDeadline))
 			}
 
 			conn, err := l.Accept()
@@ -87,125 +112,247 @@ func (p *Proxy) Start() error {
 		}
 	}()
 
-	p.Logger.Fields("bind", p.Listen, "sni_routes", len(p.Routes)).Info("tcp proxy started")
+	p.Logger.Fields("bind", p.Listen).Info("tcp proxy started")
 	return nil
 }
 
 func (p *Proxy) Stop() {
-	close(p.quit)
+	select {
+	case <-p.quit:
+		return
+	default:
+		close(p.quit)
+	}
+
+	p.mu.Lock()
+	if p.Default != nil {
+		p.Default.Stop()
+	}
+	for _, r := range p.Routes {
+		r.Stop()
+	}
+	p.mu.Unlock()
+
+	// Force close active connections after grace period
+	// This prevents DB/Long-lived connections from hanging the server process forever
+	go func() {
+		time.Sleep(5 * time.Second)
+		p.connsMu.Lock()
+		count := len(p.conns)
+		for c := range p.conns {
+			_ = c.Close()
+		}
+		p.connsMu.Unlock()
+		if count > 0 {
+			p.Logger.Fields("count", count).Warn("forced closed active tcp connections")
+		}
+	}()
+
 	p.wg.Wait()
 }
 
+func (p *Proxy) trackConn(c net.Conn, add bool) {
+	p.connsMu.Lock()
+	defer p.connsMu.Unlock()
+	if add {
+		p.conns[c] = struct{}{}
+	} else {
+		delete(p.conns, c)
+	}
+}
+
 func (p *Proxy) handle(src net.Conn) {
+	p.trackConn(src, true)
+	defer p.trackConn(src, false)
 	defer p.wg.Done()
 
-	peekBuf := make([]byte, woos.PeekBufferSize)
-
-	// keep this small so plain TCP doesn't stall waiting for client data
-	src.SetReadDeadline(time.Now().Add(woos.InitialReadTimeout))
-	n, err := src.Read(peekBuf)
-	src.SetReadDeadline(time.Time{})
-
-	// If we timed out *and* read nothing, that's fine: assume non-TLS/no SNI yet.
-	if err != nil {
-		if ne, ok := err.(net.Error); ok && ne.Timeout() && n == 0 {
-			err = nil
-		}
+	// Enable KeepAlive to prevent intermediate firewalls (AWS/Azure) from dropping idle DB conns
+	if tcpConn, ok := src.(*net.TCPConn); ok {
+		_ = tcpConn.SetKeepAlive(true)
+		_ = tcpConn.SetKeepAlivePeriod(30 * time.Second)
 	}
 
-	if err != nil && err != io.EOF {
-		_ = src.Close()
-		return
-	}
+	// Acquire Read Lock to check if we need SNI sniffing
+	p.mu.RLock()
+	needSNI := len(p.Routes) > 0
+	p.mu.RUnlock()
 
-	sni := ""
-	if n > 0 {
-		sni, _ = p.readClientHello(peekBuf[:n])
-	}
+	var (
+		peekBuf   []byte
+		n         int
+		sni       string
+		readBytes bool
+	)
 
-	// pick balancer
-	var balancer *TCPBalancer
-	if sni != "" {
-		sni = strings.ToLower(sni)
-		if b, ok := p.Routes[sni]; ok {
-			balancer = b
-		} else {
-			for routeSNI, b := range p.Routes {
-				if strings.HasPrefix(routeSNI, "*.") {
-					suffix := routeSNI[1:]
-					if strings.HasSuffix(sni, suffix) {
-						balancer = b
-						break
-					}
+	if needSNI {
+		peekBuf = make([]byte, woos.PeekBufferSize)
+
+		// 1s timeout to allow slow mobile/IoT clients to send ClientHello
+		_ = src.SetReadDeadline(time.Now().Add(woos.InitialReadTimeout))
+		n0, err := src.Read(peekBuf)
+		_ = src.SetReadDeadline(time.Time{})
+
+		if err != nil {
+			// If timeout with 0 bytes, client is silent.
+			// If we have a default route, we might route blindly, but usually this is a dead conn.
+			if isTimeout(err) && n0 == 0 {
+				p.mu.RLock()
+				hasDefault := p.Default != nil
+				p.mu.RUnlock()
+
+				if !hasDefault {
+					_ = src.Close()
+					return
 				}
+				// Proceed blindly to default
+			} else if err != io.EOF {
+				_ = src.Close()
+				return
 			}
 		}
+
+		if n0 > 0 {
+			n = n0
+			readBytes = true
+			sni, _ = p.readClientHello(peekBuf[:n0])
+		}
 	}
-	if balancer == nil {
-		balancer = p.Default
-	}
+
+	balancer := p.pickBalancer(sni)
 	if balancer == nil {
 		_ = src.Close()
 		return
 	}
 
-	backend := balancer.Pick()
-	if backend == nil {
-		_ = src.Close()
-		return
-	}
-
-	var wrappedSrc net.Conn = src
-	if n > 0 {
-		wrappedSrc = &peekedConn{
+	var client net.Conn = src
+	if readBytes && n > 0 {
+		client = &peekedConn{
 			Conn:   src,
 			reader: io.MultiReader(bytes.NewReader(peekBuf[:n]), src),
 		}
 	}
 
-	backend.ActiveConns.Add(1)
-	defer backend.ActiveConns.Add(-1)
+	// Dial with Retries
+	tried := make(map[*Backend]struct{}, 4)
+	var (
+		dst     net.Conn
+		backend *Backend
+		err     error
+	)
 
-	dest, err := net.DialTimeout(woos.TCP, backend.Address, woos.BackendDialTimeout)
-	if err != nil {
-		_ = src.Close()
+	maxAttempts := 3
+	if c := balancer.BackendCount(); c > 0 && c < maxAttempts {
+		maxAttempts = c
+	}
+
+	for i := 0; i < maxAttempts; i++ {
+		backend = balancer.Pick(tried)
+		if backend == nil {
+			break
+		}
+		tried[backend] = struct{}{}
+
+		dst, err = net.DialTimeout(woos.TCP, backend.Address, woos.BackendDialTimeout)
+		if err == nil {
+			break
+		}
+
+		backend.OnDialFailure(err)
+		p.Logger.Fields("backend", backend.Address, "err", err).Warn("tcp dial failed, retrying")
+	}
+
+	if dst == nil {
+		_ = client.Close()
 		return
 	}
 
-	p.pipe(wrappedSrc, dest)
+	// KeepAlive on backend connection
+	if tcpConn, ok := dst.(*net.TCPConn); ok {
+		_ = tcpConn.SetKeepAlive(true)
+		_ = tcpConn.SetKeepAlivePeriod(30 * time.Second)
+	}
+
+	backend.ActiveConns.Add(1)
+	defer backend.ActiveConns.Add(-1)
+
+	p.pipe(client, dst)
 }
 
-func (p *Proxy) pipe(src, dst net.Conn) {
-	defer src.Close()
-	defer dst.Close()
+func (p *Proxy) pickBalancer(sni string) *Balancer {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 
+	if sni != "" {
+		sni = strings.ToLower(strings.TrimSpace(sni))
+		if sni != "" {
+			if b, ok := p.Routes[sni]; ok {
+				return b
+			}
+			for routeSNI, b := range p.Routes {
+				if strings.HasPrefix(routeSNI, "*.") {
+					suffix := routeSNI[1:]
+					if strings.HasSuffix(sni, suffix) {
+						return b
+					}
+				}
+			}
+		}
+	}
+	return p.Default
+}
+
+// pipe ensures robust bidirectional copying with support for TCP Half-Close.
+// This is critical for gRPC, PostgreSQL, and other protocols that use
+// half-closed states to signal end-of-request.
+func (p *Proxy) pipe(client, backend net.Conn) {
+	// Channels to capture errors (like connection reset) to abort the bridge immediately
 	errc := make(chan error, 1)
-	go func() {
+
+	copyAndClose := func(dst, src net.Conn) {
 		_, err := io.Copy(dst, src)
-		errc <- err
-	}()
+		if err != nil {
+			// Real error (not EOF) -> kill the bridge
+			select {
+			case errc <- err:
+			default:
+			}
+			// Force close the destination to unblock the other read loop
+			_ = dst.Close()
+			_ = src.Close()
+		} else {
+			// EOF -> Half Close
+			closeWrite(dst)
+		}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
 	go func() {
-		_, err := io.Copy(src, dst)
-		errc <- err
+		defer wg.Done()
+		copyAndClose(backend, client)
 	}()
-	<-errc
+
+	go func() {
+		defer wg.Done()
+		copyAndClose(client, backend)
+	}()
+
+	wg.Wait()
+
+	_ = client.Close()
+	_ = backend.Close()
 }
 
-// readClientHello extracts SNI from TLS ClientHello with strict bounds checking.
 func (p *Proxy) readClientHello(data []byte) (string, error) {
 	if len(data) < woos.MinClientHelloLen {
 		return "", woos.ErrShortData
 	}
 
-	// 1. Record Layer
-	// Type (1) + Ver (2) + Len (2) = 5 bytes
 	if data[0] != woos.RecordTypeHandshake {
 		return "", woos.ErrNotTLS
 	}
 
-	// 2. Handshake Layer
-	// HandshakeType(1) + Length(3) + Ver(2) + Random(32)
-	// Start at offset 5
 	pos := 5
 	if pos >= len(data) {
 		return "", woos.ErrShort
@@ -214,35 +361,29 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 		return "", woos.ErrNotClientHello
 	}
 
-	// Skip Type(1) + Len(3) + Ver(2) + Random(32) = 38 bytes
-	pos += 38
+	pos += 38 // Skip fixed headers
 	if pos >= len(data) {
 		return "", woos.ErrShort
 	}
 
-	// 3. Session ID
 	sessionIdLen := int(data[pos])
-	pos++
-	pos += sessionIdLen
+	pos += 1 + sessionIdLen
 	if pos+2 > len(data) {
 		return "", woos.ErrShort
 	}
 
-	// 4. Cipher Suites
 	cipherLen := int(binary.BigEndian.Uint16(data[pos:]))
 	pos += 2 + cipherLen
 	if pos+1 > len(data) {
 		return "", woos.ErrShort
 	}
 
-	// 5. Compression Methods
 	compLen := int(data[pos])
 	pos += 1 + compLen
 	if pos+2 > len(data) {
 		return "", woos.ErrShort
 	}
 
-	// 6. Extensions
 	extLen := int(binary.BigEndian.Uint16(data[pos:]))
 	pos += 2
 	if pos+extLen > len(data) {
@@ -263,24 +404,19 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 			if extSize < 2 {
 				return "", woos.ErrShortSNI
 			}
-			// SNI List Length
 			listLen := int(binary.BigEndian.Uint16(data[pos:]))
 			pos += 2
-
 			listEnd := pos + listLen
 			if listEnd > pos+extSize-2 {
 				return "", woos.ErrShortSNIList
 			}
-
 			for pos+3 <= listEnd {
 				nameType := data[pos]
 				nameLen := int(binary.BigEndian.Uint16(data[pos+1:]))
 				pos += 3
-
 				if pos+nameLen > listEnd {
 					return "", woos.ErrShortName
 				}
-
 				if nameType == woos.NameTypeHostName {
 					return string(data[pos : pos+nameLen]), nil
 				}
@@ -290,7 +426,6 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 			pos += extSize
 		}
 	}
-
 	return "", nil
 }
 
@@ -299,6 +434,24 @@ type peekedConn struct {
 	reader io.Reader
 }
 
-func (c *peekedConn) Read(p []byte) (int, error) {
-	return c.reader.Read(p)
+func (c *peekedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+
+func closeWrite(c net.Conn) {
+	switch v := c.(type) {
+	case *net.TCPConn:
+		_ = v.CloseWrite()
+	case *peekedConn:
+		closeWrite(v.Conn)
+	default:
+		// Fallback for non-TCP connections (e.g. buffers in tests)
+		// Usually no-op or full Close depending on implementation,
+		// but we leave full Close to the defer in pipe()
+	}
+}
+
+func isTimeout(err error) bool {
+	if netErr, ok := err.(net.Error); ok {
+		return netErr.Timeout()
+	}
+	return false
 }
