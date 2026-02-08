@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"strconv"
@@ -40,8 +42,13 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Include config URL in cache key to avoid collisions between different routes using different auth services
-			cacheKey := cfg.URL + "|" + r.Header.Get("Authorization") + "|" + r.Header.Get("Cookie") + "|" + r.Method + "|" + r.URL.Path
+			// Construct raw key
+			rawKey := cfg.URL + "|" + r.Header.Get("Authorization") + "|" + r.Header.Get("Cookie") + "|" + r.Method + "|" + r.URL.Path
+
+			// Hash key to ensure fixed size (Fix for large JWT/Cookie DOS)
+			hasher := sha256.New()
+			hasher.Write([]byte(rawKey))
+			cacheKey := hex.EncodeToString(hasher.Sum(nil))
 
 			if allowed, ok := authCache.GetIfPresent(cacheKey); ok {
 				if allowed {
