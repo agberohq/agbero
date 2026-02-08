@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/admin/ui"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/uptime"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
+	"git.imaxinacion.net/aibox/agbero/internal/ui"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -30,8 +30,6 @@ func (s *Server) startAdminServer() {
 
 	cfg := s.global.Admin
 	mux := http.NewServeMux()
-
-	// --- 1. PUBLIC ENDPOINTS (No Auth Required) ---
 
 	// Health Check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

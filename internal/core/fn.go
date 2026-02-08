@@ -85,3 +85,11 @@ func IsLocalhost(host string) bool {
 	}
 	return false
 }
+
+// Truncate truncates the user agent string to a specified max length and appends "..." if truncation occurs.
+func Truncate(ua string, maxLen int) string {
+	if len(ua) <= maxLen {
+		return ua
+	}
+	return ua[:maxLen] + "..."
+}

@@ -652,7 +652,7 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 	}
 
 	if s.global != nil && s.shouldLogUserAgent(r) {
-		fields = append(fields, "ua", truncateUA(r.UserAgent(), 50))
+		fields = append(fields, "ua", core.Truncate(r.UserAgent(), 50))
 	}
 	s.logger.Fields(fields...).Info(r.Method)
 }
@@ -727,9 +727,25 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	//ll.Dbg(r.URL.Path)
+	//
+	//// this is not working
+	//// this should show if route
+	//if r.URL.Path == "favicon.ico" {
+	//	s.serveDefaultFavicon(w, r)
+	//	return
+	//}
+
 	http.Error(w, "Not found", http.StatusNotFound)
 	s.logRequest(host, r, start, http.StatusNotFound, 0)
 }
+
+//func (s *Server) serveDefaultFavicon(w http.ResponseWriter, r *http.Request) {
+//	w.Header().Set("Content-Type", "image/x-icon")
+//	w.Header().Set("Cache-Control", "public, max-age=31536000")
+//	// Use the embedded bytes
+//	http.ServeContent(w, r, "favicon.ico", ui.ModTime, bytes.NewReader(ui.Favicon))
+//}
 
 func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alaye.Route) {
 	ctx := context.WithValue(r.Context(), woos.CtxOriginalPath, r.URL.Path)
@@ -801,7 +817,6 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handler
 	return h
 }
 
-// Optimization: Accept key to reuse route.Key() calculation
 func (s *Server) getWasmManager(cfg *alaye.Wasm, key string) (*wasm.Manager, error) {
 	// The key is route.Key(), which is unique per route config (including WASM config)
 	if v, ok := s.wasmCache.Load(key); ok {
@@ -843,13 +858,6 @@ func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
-}
-
-func truncateUA(ua string, maxLen int) string {
-	if len(ua) <= maxLen {
-		return ua
-	}
-	return ua[:maxLen] + "..."
 }
 
 type responseWrapper struct {

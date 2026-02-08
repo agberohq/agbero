@@ -1,4 +1,4 @@
-package web
+package ui
 
 import (
 	_ "embed"
@@ -24,10 +24,9 @@ import (
 	"github.com/yookoala/gofast"
 )
 
-//go:embed dir.html
-var dirListingHTML string
-
-var tmpl = template.Must(template.New("dir").Parse(dirListingHTML))
+//go:embed web/dir.html
+var dirListing string
+var tmpl = template.Must(template.New("dir").Parse(dirListing))
 
 // Ensure critical web types are registered
 func init() {
@@ -68,7 +67,7 @@ var (
 	mimeCache sync.Map // ext -> type
 
 	// Cache for gzip existence checks to avoid filesystem "miss" cost on every request.
-	// We use a short TTL so if you deploy new .gz assets, the server will discover them soon.
+	// We use a short TTL so if you deploy new .gz admin, the server will discover them soon.
 	gzExistsCache sync.Map // string -> gzCacheEntry
 )
 
@@ -182,7 +181,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 1. Resolve Root Listing (Securely)
+	// 1. Resolve Root dirListing (Securely)
 	rootPath := h.route.Web.Root.String()
 	if rootPath == "" {
 		rootPath = "."
@@ -297,7 +296,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 6. Handle Listing
+	// 6. Handle dirListing
 	if info.IsDir() {
 		// Enforce trailing slash using BROWSER PATH
 		// This fixes the issue where redirection removed the stripped prefix
@@ -362,7 +361,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// No index found. Listing?
+		// No index found. dirListing?
 		if h.route.Web.Listing {
 			// Pass the BROWSER PATH so links are generated correctly relative to user's URL
 			h.serveDirectoryListing(w, r, f, browserPath)
@@ -447,7 +446,7 @@ func (h *webHandler) serveDirectoryListing(w http.ResponseWriter, r *http.Reques
 	})
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// Listing pages should revalidate often.
+	// dirListing pages should revalidate often.
 	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 
 	data := struct {

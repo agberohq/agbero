@@ -8,12 +8,12 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/backend"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/lb"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/web"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/compress"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/headers"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ipallow"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
+	"git.imaxinacion.net/aibox/agbero/internal/ui"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
 )
@@ -41,7 +41,7 @@ func NewRoute(route *alaye.Route, logger *ll.Logger) *Route {
 }
 
 func newWebRoute(route *alaye.Route, logger *ll.Logger) *Route {
-	chain := http.Handler(web.New(logger, route))
+	chain := http.Handler(ui.New(logger, route))
 
 	// Check if IP address is allowed
 	if len(route.AllowedIPs) > 0 {
