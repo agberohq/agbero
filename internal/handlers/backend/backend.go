@@ -129,13 +129,6 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 		req.Header.Set(woos.HeaderXForwardedProto, proto)
 		req.Header.Set(woos.HeaderXForwardedServer, woos.Name)
 		req.Header.Add(woos.HeaderVia, fmt.Sprintf("1.1 %s", woos.Name))
-
-		req.Header.Del(woos.HeaderKeepAlive)
-		req.Header.Del(woos.HeaderProxyAuthenticate)
-		req.Header.Del(woos.HeaderProxyAuthorization)
-		req.Header.Del(woos.HeaderTE)
-		req.Header.Del(woos.HeaderTrailers)
-		req.Header.Del(woos.HeaderTransferEncoding)
 	}
 
 	b.Proxy = rp
