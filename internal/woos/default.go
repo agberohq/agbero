@@ -2,6 +2,7 @@ package woos
 
 import (
 	"path/filepath"
+	"strings"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
@@ -31,35 +32,55 @@ func DefaultApply(g *alaye.Global, configAbsPath string) {
 		if g.RateLimits.MaxEntries <= 0 {
 			g.RateLimits.MaxEntries = 100000
 		}
-		// Note: We no longer inject default Global/Auth policies here.
-		// If the user enables rate limiting, they must define 'rule' blocks in the config.
 	}
 
 	// --- 3. Directory Defaults ---
-	// If we don't have a config path (e.g. testing), default to CWD
 	baseDir := "."
 	if configAbsPath != "" {
 		baseDir = filepath.Dir(configAbsPath)
 	}
 
-	// Resolve HostsDir
 	if g.Storage.HostsDir == "" {
 		g.Storage.HostsDir = filepath.Join(baseDir, HostDir.Name())
 	} else if !filepath.IsAbs(g.Storage.HostsDir) {
 		g.Storage.HostsDir = filepath.Join(baseDir, g.Storage.HostsDir)
 	}
 
-	// Resolve CertsDir
 	if g.Storage.CertsDir == "" {
 		g.Storage.CertsDir = filepath.Join(baseDir, CertDir.Name())
 	} else if !filepath.IsAbs(g.Storage.CertsDir) {
 		g.Storage.CertsDir = filepath.Join(baseDir, g.Storage.CertsDir)
 	}
 
-	// Resolve DataDir
 	if g.Storage.DataDir == "" {
 		g.Storage.DataDir = filepath.Join(baseDir, DataDir.Name())
 	} else if !filepath.IsAbs(g.Storage.DataDir) {
 		g.Storage.DataDir = filepath.Join(baseDir, g.Storage.DataDir)
+	}
+
+	// --- 4. Logging Defaults ---
+	// Logic:
+	// 1. Empty? -> Default to logs.d/agbero.log
+	// 2. Relative? -> Prepend logs.d directory to keep it organized.
+	//    (e.g., "server.log" -> "logs.d/server.log")
+	// 3. Absolute? -> Use as is.
+
+	logDir := filepath.Join(baseDir, LogDir.Name())
+
+	if g.Logging.File == "" {
+		g.Logging.File = filepath.Join(logDir, DefaultLogName)
+	} else if !filepath.IsAbs(g.Logging.File) {
+		// Clean the path to handle "./agbero.log" -> "agbero.log"
+		cleanName := filepath.Clean(g.Logging.File)
+
+		// If it's just a filename (no dir separators), or a relative path, enforce logs.d
+		// This handles the case where template had `file = "./agbero.log"`
+		// We want to force it into logs.d unless the user broke out with "../"
+		if !strings.HasPrefix(cleanName, "..") {
+			g.Logging.File = filepath.Join(logDir, filepath.Base(cleanName))
+		} else {
+			// User explicitly trying to go up a dir, respect relative from base
+			g.Logging.File = filepath.Join(baseDir, g.Logging.File)
+		}
 	}
 }

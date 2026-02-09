@@ -8,14 +8,16 @@ import (
 )
 
 type Host struct {
-	Domains     []string   `hcl:"domains" json:"domains"`
-	Bind        []string   `hcl:"bind,optional" json:"bind"`
-	Compression bool       `hcl:"compression,optional" json:"compression"`
-	Routes      []Route    `hcl:"route,block" json:"routes"`
-	TLS         TLS        `hcl:"tls,block" json:"tls"`
-	Limits      Limit      `hcl:"limits,block" json:"limits"`
-	Headers     Headers    `hcl:"headers,block" json:"headers"`
-	TCPProxy    []TCPRoute `hcl:"tcp_proxy,block" json:"tcp_proxy"`
+	Domains      []string      `hcl:"domains" json:"domains"`
+	Bind         []string      `hcl:"bind,optional" json:"bind"`
+	Compression  bool          `hcl:"compression,optional" json:"compression"`
+	Routes       []Route       `hcl:"route,block" json:"routes"`
+	TLS          TLS           `hcl:"tls,block" json:"tls"`
+	Limits       Limit         `hcl:"limits,block" json:"limits"`
+	Headers      Headers       `hcl:"headers,block" json:"headers"`
+	TCPProxy     []TCPRoute    `hcl:"tcp_proxy,block" json:"tcp_proxy"`
+	Tunnel       *TunnelConfig `hcl:"tunnel,block" json:"tunnel,omitempty"`
+	NotFoundPage string        `hcl:"not_found_page,optional" json:"not_found_page"`
 }
 
 func (h *Host) Validate() error {
@@ -76,11 +78,12 @@ func (h *Host) Validate() error {
 		return errors.Newf("headers: %w", err)
 	}
 
-	return nil
-}
+	// Tunnel validation
+	if h.Tunnel != nil {
+		if err := h.Tunnel.Validate(); err != nil {
+			return errors.Newf("tunnel: %w", err)
+		}
+	}
 
-type TCPRoute struct {
-	Listen   string   `hcl:"listen" json:"listen"`
-	Backends []Server `hcl:"backend,block" json:"backends"`
-	Strategy string   `hcl:"strategy,optional" json:"strategy"` // round_robin, least_conn, random
+	return nil
 }

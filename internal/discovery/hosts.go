@@ -13,7 +13,6 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/fsnotify/fsnotify"
-	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 )
 
@@ -46,7 +45,6 @@ type Host struct {
 
 	routers map[string]*matcher.Tree
 
-	// loaded indicates if the initial disk scan has completed.
 	loaded bool
 }
 
@@ -211,7 +209,8 @@ func (hm *Host) Watch() error {
 		return err
 	}
 
-	if err := hm.loadAllLocked(); err != nil {
+	// Initial synchronous load without notifying to avoid test races
+	if err := hm.loadInternal(); err != nil {
 		_ = hm.watcher.Close()
 		return err
 	}
@@ -243,7 +242,9 @@ func (hm *Host) addWatchRecursive(root string) error {
 }
 
 func (hm *Host) watchLoop() {
-	debouncedReload := core.Debounce(500*time.Millisecond, hm.ReloadFull)
+	debouncedReload := core.Debounce(500*time.Millisecond, func() {
+		_ = hm.ReloadFull()
+	})
 
 	for {
 		select {
@@ -267,6 +268,7 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 		return
 	}
 
+	// Watch new directories recursively
 	if event.Has(fsnotify.Create) {
 		if fi, err := os.Stat(event.Name); err == nil && fi.IsDir() {
 			_ = hm.addWatchRecursive(event.Name)
@@ -274,6 +276,7 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 		}
 	}
 
+	// Strict filter: Only process .hcl files
 	name := strings.ToLower(event.Name)
 	if !strings.HasSuffix(name, woos.HCLSuffix) {
 		return
@@ -282,30 +285,92 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 	hm.logger.Fields(
 		"event", event.Op.String(),
 		"file", filepath.Base(event.Name),
-		"full_path", event.Name,
-	).Warn("config change detected, scheduling reload")
+	).Debug("config change detected, scheduling reload")
 
 	debouncedReload()
 }
 
-func (hm *Host) ReloadFull() {
+// ReloadFull scans the disk and updates the configuration.
+// It is thread-safe and minimizes lock contention.
+func (hm *Host) ReloadFull() error {
+	if err := hm.loadInternal(); err != nil {
+		return err
+	}
+	hm.notifyChanged()
+	return nil
+}
+
+func (hm *Host) loadInternal() error {
+	// 1. I/O Phase: Scan disk without lock
+	newHosts, stats, err := hm.scanFromDisk()
+	if err != nil {
+		hm.logger.Fields("err", err).Error("failed to scan hosts from disk")
+		return err
+	}
+
+	// 2. Critical Section: Swap pointer
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
-	previousCount := len(hm.lookupMap)
+	hm.hosts = newHosts
+	hm.loaded = true
+	hm.rebuildLookupLocked()
 
-	if err := hm.loadAllLocked(); err != nil {
-		hm.logger.Fields("err", err).Error("failed to reload file hosts")
-		return
+	hm.logger.Fields(
+		"total_files", stats.TotalFiles,
+		"valid_hosts", len(newHosts),
+	).Info("host configuration loaded")
+
+	return nil
+}
+
+func (hm *Host) scanFromDisk() (map[string]*alaye.Host, struct{ TotalFiles int }, error) {
+	out := make(map[string]*alaye.Host)
+	stats := struct{ TotalFiles int }{}
+
+	if !hm.hostsDirExists() {
+		return out, stats, nil
 	}
 
-	currentCount := len(hm.lookupMap)
-	hm.logger.Fields(
-		"previous_hosts", previousCount,
-		"current_hosts", currentCount,
-		"change", currentCount-previousCount,
-	).Info("host configuration reloaded")
-	hm.notifyChanged()
+	root := hm.hostsDir.Path()
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		name := d.Name()
+		if !strings.HasSuffix(strings.ToLower(name), woos.HCLSuffix) {
+			return nil
+		}
+
+		stats.TotalFiles++
+
+		cfg, err := hm.loadOne(p)
+		if err != nil {
+			hm.logger.Fields("file", name, "err", err).Error("failed to parse host config")
+			return nil // continue
+		}
+
+		if len(cfg.Domains) == 0 {
+			hm.logger.Fields("file", name).Warn("host file has no domains, ignoring")
+			return nil
+		}
+
+		rel, relErr := filepath.Rel(root, p)
+		if relErr != nil {
+			rel = p
+		}
+		hostID := strings.TrimSuffix(rel, woos.HCLSuffix)
+		hostID = strings.ReplaceAll(hostID, string(filepath.Separator), woos.Slash)
+
+		out[hostID] = cfg
+		return nil
+	})
+
+	return out, stats, err
 }
 
 func (hm *Host) Get(hostname string) *alaye.Host {
@@ -350,12 +415,14 @@ func (hm *Host) LoadAll() (map[string]*alaye.Host, error) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
-	// Ensure we load from disk if this is a fresh instance (e.g. CLI usage)
-	// that hasn't called Watch().
 	if !hm.loaded {
-		if err := hm.loadAllLocked(); err != nil {
+		nh, _, err := hm.scanFromDisk()
+		if err != nil {
 			return nil, err
 		}
+		hm.hosts = nh
+		hm.rebuildLookupLocked()
+		hm.loaded = true
 	}
 
 	return hm.snapshotLocked(), nil
@@ -382,105 +449,6 @@ func (hm *Host) notifyChanged() {
 	}
 }
 
-func (hm *Host) loadAllLocked() error {
-	// Mark as loaded regardless of success to prevent infinite loops on error
-	hm.loaded = true
-
-	if exists := hm.hostsDir.Exists(""); !exists {
-		hm.logger.Fields("hosts_dir", hm.hostsDir).
-			Warn("hosts directory not found, clearing configuration")
-
-		hm.hosts = make(map[string]*alaye.Host)
-		hm.rebuildLookupLocked()
-		return nil
-	}
-
-	root := hm.hostsDir.Path()
-
-	nextHosts := make(map[string]*alaye.Host)
-	loadedFiles := []string{}
-	failedFiles := []string{}
-	totalFiles := 0
-
-	err := filepath.WalkDir(root, func(p string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() {
-			return nil
-		}
-
-		name := d.Name()
-		if !strings.HasSuffix(strings.ToLower(name), woos.HCLSuffix) {
-			return nil
-		}
-
-		totalFiles++
-
-		cfg, err := hm.loadOne(p)
-		if err != nil {
-			hm.logger.Fields(
-				"file", name,
-				"full_path", p,
-				"err", err,
-			).Error("failed to load host config")
-			failedFiles = append(failedFiles, p)
-			return nil
-		}
-
-		// Ensure we don't load configs with no domains as they are effectively useless
-		if len(cfg.Domains) == 0 {
-			hm.logger.Fields("file", name).Warn("host file loaded but contains no 'domains'; ignoring")
-			return nil
-		}
-
-		rel, relErr := filepath.Rel(root, p)
-		if relErr != nil {
-			rel = p
-		}
-		hostID := strings.TrimSuffix(rel, woos.HCLSuffix)
-		hostID = strings.ReplaceAll(hostID, string(filepath.Separator), woos.Slash)
-
-		nextHosts[hostID] = cfg
-		loadedFiles = append(loadedFiles, rel)
-
-		primary := ""
-		if len(cfg.Domains) > 0 {
-			primary = cfg.Domains[0]
-		}
-
-		hm.logger.Fields(
-			"file", rel,
-			"primary_domain", primary,
-			"domains", cfg.Domains,
-			"routes", len(cfg.Routes),
-		).Debug("loaded host config")
-
-		return nil
-	})
-	if err != nil {
-		return errors.Newf("walk hosts dir: %w", err)
-	}
-
-	hm.hosts = nextHosts
-	hm.rebuildLookupLocked()
-
-	hm.logger.Fields(
-		"hosts_dir", hm.hostsDir,
-		"total_hcl_files", totalFiles,
-		"loaded_files", len(loadedFiles),
-		"failed_files", len(failedFiles),
-		"host_configs", len(nextHosts),
-	).Info("host discovery completed")
-
-	if len(failedFiles) > 0 {
-		hm.logger.Fields("failed_files", failedFiles).
-			Warn("some host configs failed to load")
-	}
-
-	return nil
-}
-
 func (hm *Host) rebuildLookupLocked() {
 	newLookup := make(map[string]*alaye.Host)
 	newPortLookup := make(map[string]*alaye.Host)
@@ -500,7 +468,6 @@ func (hm *Host) rebuildLookupLocked() {
 			}
 			domainToRoutes[domain] = append(domainToRoutes[domain], cfg.Routes...)
 
-			// pick the first config as the "base" config for this domain
 			if _, exists := domainToConfig[domain]; !exists {
 				domainToConfig[domain] = cfg
 			}
@@ -644,17 +611,28 @@ func (hm *Host) sortRoutes(routes []alaye.Route) {
 	})
 }
 
+// resolveDomainLocked finds the best matching domain configuration.
+// It prioritizes Exact Matches, then Longest Wildcard Suffix.
 func (hm *Host) resolveDomainLocked(hostname string) string {
+	// 1. Exact Match
 	if _, ok := hm.lookupMap[hostname]; ok {
 		return hostname
 	}
+
+	// 2. Wildcard Match (Longest Suffix Wins)
+	var bestMatch string
+	var maxLen int
+
 	for domain := range hm.lookupMap {
 		if strings.HasPrefix(domain, "*.") {
-			suffix := domain[1:]
+			suffix := domain[1:] // includes dot, e.g. ".example.com"
 			if strings.HasSuffix(hostname, suffix) {
-				return domain
+				if len(suffix) > maxLen {
+					maxLen = len(suffix)
+					bestMatch = domain
+				}
 			}
 		}
 	}
-	return ""
+	return bestMatch
 }

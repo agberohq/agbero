@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/admin/ui"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/uptime"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
+	"git.imaxinacion.net/aibox/agbero/internal/ui"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -30,8 +30,6 @@ func (s *Server) startAdminServer() {
 
 	cfg := s.global.Admin
 	mux := http.NewServeMux()
-
-	// --- 1. PUBLIC ENDPOINTS (No Auth Required) ---
 
 	// Health Check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -323,6 +321,7 @@ func sanitizeHosts(hosts map[string]*alaye.Host) map[string]*alaye.Host {
 		var clone alaye.Host
 		_ = json.Unmarshal(b, &clone)
 
+		// Sanitize Route Auth (Existing)
 		for i := range clone.Routes {
 			if clone.Routes[i].BasicAuth != nil {
 				clone.Routes[i].BasicAuth.Users = []string{"***"}
@@ -330,8 +329,23 @@ func sanitizeHosts(hosts map[string]*alaye.Host) map[string]*alaye.Host {
 			if clone.Routes[i].JWTAuth != nil {
 				clone.Routes[i].JWTAuth.Secret = "***"
 			}
-			// Removed OAuth reference
+			if clone.Routes[i].OAuth != nil {
+				clone.Routes[i].OAuth.ClientSecret = "***"
+				clone.Routes[i].OAuth.CookieSecret = "***"
+			}
+			// Sanitize Wasm Config
+			if clone.Routes[i].Wasm != nil && len(clone.Routes[i].Wasm.Config) > 0 {
+				clone.Routes[i].Wasm.Config = map[string]string{"***": "***"}
+			}
 		}
+
+		// Sanitize Tunnel Auth
+		if clone.Tunnel != nil && clone.Tunnel.Client != nil {
+			if len(clone.Tunnel.Client.Auth) > 0 {
+				clone.Tunnel.Client.Auth = map[string]string{"***": "***"}
+			}
+		}
+
 		out[k] = &clone
 	}
 	return out

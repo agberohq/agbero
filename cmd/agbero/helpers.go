@@ -49,9 +49,7 @@ func welcome() {
 	fmt.Println()
 }
 
-// resolveConfigPath implements the search order
 func resolveConfigPath(flagPath string) (string, bool) {
-	// 1) Explicit Flag
 	if strings.TrimSpace(flagPath) != "" {
 		p := flagPath
 		if abs, err := filepath.Abs(flagPath); err == nil {
@@ -61,27 +59,23 @@ func resolveConfigPath(flagPath string) (string, bool) {
 		return p, err == nil
 	}
 
-	// 2) CWD
 	cwd, _ := os.Getwd()
 	cwdPath := filepath.Join(cwd, woos.DefaultConfigName)
 	if _, err := os.Stat(cwdPath); err == nil {
 		return cwdPath, true
 	}
 
-	// 3) User Config
 	if userPaths, err := woos.GetUserDefaults(); err == nil {
 		if _, err := os.Stat(userPaths.ConfigFile); err == nil {
 			return userPaths.ConfigFile, true
 		}
 	}
 
-	// 4) System Config
 	sysPaths := woos.DefaultPaths()
 	if _, err := os.Stat(sysPaths.ConfigFile); err == nil {
 		return sysPaths.ConfigFile, true
 	}
 
-	// Default fallback: CWD path (may not exist)
 	return cwdPath, false
 }
 
@@ -100,9 +94,12 @@ func ensureConfig(configFile string) error {
 		return fmt.Errorf("mkdir config parent: %w", err)
 	}
 
+	// Replace placeholders in the template
 	content := strings.ReplaceAll(configTmpl, "{HOST_DIR}", woos.HostDir.String())
 	content = strings.ReplaceAll(content, "{CERTS_DIR}", woos.CertDir.String())
 	content = strings.ReplaceAll(content, "{DATA_DIR}", woos.DataDir.String())
+	// NEW: Inject logs directory
+	content = strings.ReplaceAll(content, "{LOGS_DIR}", woos.LogDir.String())
 
 	secret, err := generateSecureKey(128)
 	if err != nil {
@@ -135,6 +132,7 @@ func ensureLayoutForConfig(configFile string) error {
 	hostsDir := base.Join(woos.HostDir.String())
 	certsDir := base.Join(woos.CertDir.String())
 	dataDir := base.Join(woos.DataDir.String())
+	logsDir := base.Join(woos.LogDir.String())
 
 	if err := hostsDir.Ensure("", false); err != nil {
 		return fmt.Errorf("ensure hosts dir: %w", err)
@@ -146,13 +144,16 @@ func ensureLayoutForConfig(configFile string) error {
 		return fmt.Errorf("ensure data dir: %w", err)
 	}
 
+	if err := logsDir.Ensure("", false); err != nil {
+		return fmt.Errorf("ensure logs dir: %w", err)
+	}
+
 	if empty, err := hostsDir.IsEmpty(); err == nil && empty {
 		samplePath := filepath.Join(hostsDir.Path(), "web.hcl")
 		_ = os.WriteFile(samplePath, []byte(tplWebHcl), woos.FilePerm)
 
 		samplePath = filepath.Join(hostsDir.Path(), "admin.hcl")
 		_ = os.WriteFile(samplePath, []byte(tplAdminHcl), woos.FilePerm)
-
 	}
 
 	return nil
@@ -511,14 +512,11 @@ func showGossipHelp() {
 	fmt.Println()
 }
 
-// generateSecureKey generates a URL-safe, base64-encoded string from random bytes.
 func generateSecureKey(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	// Use Base64URLEncoding to ensure the key is safe for use in URLs/environment variables
 	encoded := base64.URLEncoding.EncodeToString(b)
-	// The resulting string will be longer than 'n' bytes (roughly 4/3 * n)
 	return encoded, nil
 }

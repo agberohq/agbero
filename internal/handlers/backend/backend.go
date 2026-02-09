@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -86,16 +87,14 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 
 	rp := httputil.NewSingleHostReverseProxy(u)
 	rp.BufferPool = sharedBufferPool
-	rp.Transport = woos.Transport
+	rp.Transport = woos.Transport.Clone()
 	rp.FlushInterval = -1
 
 	if cfg.Streaming.Enabled {
 		t := woos.Transport.Clone()
 		t.ResponseHeaderTimeout = 0
 		rp.Transport = t
-
-		fi := cfg.Streaming.EffectiveFlushInterval()
-		rp.FlushInterval = fi
+		rp.FlushInterval = cfg.Streaming.EffectiveFlushInterval()
 	}
 
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -103,13 +102,25 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 			return
 		}
 
+		// Trip Circuit Breaker
 		newFailures := b.Failures.Add(1)
 		if newFailures >= int64(cbThreshold) {
 			if b.Alive.Swap(false) {
 				b.logger.Fields("backend", u.Host, "failures", newFailures).Warn("circuit breaker tripped")
 			}
 		}
-		// Explicit 502 Bad Gateway
+
+		// gRPC-aware Error Handling
+		// gRPC uses HTTP/2 and expects status 200 with specific headers for protocol errors
+		// instead of generic HTTP 502/503 which clients may misinterpret as transport errors.
+		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
+			w.Header().Set("Content-Type", "application/grpc")
+			w.Header().Set("Grpc-Status", "14") // 14 = UNAVAILABLE
+			w.Header().Set("Grpc-Message", "upstream backend unavailable")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 	}
 
@@ -128,13 +139,6 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 		req.Header.Set(woos.HeaderXForwardedProto, proto)
 		req.Header.Set(woos.HeaderXForwardedServer, woos.Name)
 		req.Header.Add(woos.HeaderVia, fmt.Sprintf("1.1 %s", woos.Name))
-
-		req.Header.Del(woos.HeaderKeepAlive)
-		req.Header.Del(woos.HeaderProxyAuthenticate)
-		req.Header.Del(woos.HeaderProxyAuthorization)
-		req.Header.Del(woos.HeaderTE)
-		req.Header.Del(woos.HeaderTrailers)
-		req.Header.Del(woos.HeaderTransferEncoding)
 	}
 
 	b.Proxy = rp

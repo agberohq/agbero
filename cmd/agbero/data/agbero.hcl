@@ -66,13 +66,14 @@ logging {
   level = "info"
 
   # Optional JSON log file
-  file = "./agbero.log"
+  file = "{LOGS_DIR}/agbero.log"
 
   # Skip Prefix
   skip = [
     "/health",
     "/metrics",
     "/uptime",
+    "/logs",
     "/favicon.ico"
   ]
   

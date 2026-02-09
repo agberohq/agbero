@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/olekukonko/errors"
 )
 
@@ -39,108 +40,126 @@ type Route struct {
 }
 
 func (r *Route) Key() string {
-	var sb strings.Builder
-	sb.Grow(256)
+	w := xxhash.New()
 
-	sb.WriteString("p=")
-	sb.WriteString(r.Path)
-	sb.WriteString("|s=")
-	sb.WriteString(strings.ToLower(strings.TrimSpace(r.Backends.LBStrategy)))
+	// Path & Strategy
+	w.WriteString(r.Path)
+	w.WriteString(strings.ToLower(strings.TrimSpace(r.Backends.LBStrategy)))
 
-	sb.WriteString("|b=")
-	for i, b := range r.Backends.Servers {
-		if i > 0 {
-			sb.WriteByte(',')
-		}
-		sb.WriteString(b.String())
-		sb.WriteString(fmt.Sprintf("(w:%d)", b.Weight))
+	// Backends
+	for _, b := range r.Backends.Servers {
+		w.WriteString(b.Address)
+		w.WriteString(fmt.Sprint(b.Weight))
 	}
 
-	sb.WriteString("|sp=")
-	for i, p := range r.StripPrefixes {
-		if i > 0 {
-			sb.WriteByte(',')
-		}
-		sb.WriteString(p)
+	// Strip Prefixes
+	for _, p := range r.StripPrefixes {
+		w.WriteString(p)
 	}
 
+	// Allowed IPs
+	for _, ip := range r.AllowedIPs {
+		w.WriteString(ip)
+	}
+
+	// HealthCheck
 	if r.HealthCheck != nil {
-		sb.WriteString("|hc=")
-		sb.WriteString(r.HealthCheck.Path)
-		sb.WriteString(fmt.Sprint(r.HealthCheck.Interval))
-		sb.WriteString(fmt.Sprint(r.HealthCheck.Timeout))
-		sb.WriteString(fmt.Sprint(r.HealthCheck.Threshold))
+		w.WriteString(r.HealthCheck.Path)
+		w.WriteString(fmt.Sprint(r.HealthCheck.Interval))
+		w.WriteString(fmt.Sprint(r.HealthCheck.Timeout))
+		w.WriteString(fmt.Sprint(r.HealthCheck.Threshold))
 	}
 
+	// CircuitBreaker
 	if r.CircuitBreaker != nil {
-		sb.WriteString("|cb=")
-		sb.WriteString(fmt.Sprint(r.CircuitBreaker.Threshold))
-		sb.WriteString(fmt.Sprint(r.CircuitBreaker.Duration))
+		w.WriteString(fmt.Sprint(r.CircuitBreaker.Threshold))
+		w.WriteString(fmt.Sprint(r.CircuitBreaker.Duration))
 	}
 
+	// Timeouts
 	if r.Timeouts != nil {
-		sb.WriteString("|to=")
-		sb.WriteString(fmt.Sprint(r.Timeouts.Request))
+		w.WriteString(fmt.Sprint(r.Timeouts.Request))
 	}
 
+	// Compression
 	if r.CompressionConfig.Enabled {
-		sb.WriteString("|comp=")
-		sb.WriteString(r.CompressionConfig.Type)
-		sb.WriteString(fmt.Sprint(r.CompressionConfig.Level))
+		w.WriteString(r.CompressionConfig.Type)
+		w.WriteString(fmt.Sprint(r.CompressionConfig.Level))
 	}
 
+	// Headers
 	if r.Headers != nil {
-		sb.WriteString("|hd=1")
+		// Just presence flag is enough if we assume immutable config objects per reload
+		w.WriteString("hd")
 	}
 
+	// BasicAuth
 	if r.BasicAuth != nil {
-		sb.WriteString("|ba=")
-		sb.WriteByte(byte(len(r.BasicAuth.Users)))
+		for _, u := range r.BasicAuth.Users {
+			w.WriteString(u)
+		}
 	}
 
+	// ForwardAuth
 	if r.ForwardAuth != nil {
-		sb.WriteString("|fa=")
-		sb.WriteString(r.ForwardAuth.URL)
+		w.WriteString(r.ForwardAuth.URL)
 	}
 
-	// Web route check (Root.IsSet is the signal)
-	if r.Web.Root.IsSet() || r.Web.Index != "" {
-		sb.WriteString("|w=")
-		sb.WriteString(r.Web.Root.String())
-		if r.Web.Index != "" {
-			sb.WriteString("|i=")
-			sb.WriteString(r.Web.Index)
+	// JWT Auth
+	if r.JWTAuth != nil {
+		w.WriteString(r.JWTAuth.Secret.String())
+	}
+
+	// OAuth
+	if r.OAuth != nil {
+		w.WriteString(r.OAuth.Provider)
+		w.WriteString(r.OAuth.ClientID)
+	}
+
+	// Web
+	if r.Web.Root.IsSet() {
+		w.WriteString(r.Web.Root.String())
+		w.WriteString(r.Web.Index)
+		if r.Web.Listing {
+			w.WriteString("ls")
+		}
+		if r.Web.PHP.Enabled {
+			w.WriteString("php")
+			w.WriteString(r.Web.PHP.Address)
 		}
 	}
 
-	if r.RateLimit != nil {
-		sb.WriteString("|rl=")
-		if r.RateLimit.Enabled {
-			sb.WriteString("on")
-			// Iterate through rules to ensure config changes trigger reloads
-			for _, rule := range r.RateLimit.Rules {
-				sb.WriteString(";")
-				sb.WriteString(rule.Name)
-				sb.WriteString(":")
-				sb.WriteString(fmt.Sprint(rule.Requests))
-				sb.WriteString("/")
-				sb.WriteString(fmt.Sprint(rule.Window))
-				sb.WriteString("/")
-				sb.WriteString(fmt.Sprint(rule.Burst))
-				sb.WriteString("@")
-				sb.WriteString(rule.Key)
-				// Include length of matchers to detect structural changes
-				sb.WriteString("#p")
-				sb.WriteString(fmt.Sprint(len(rule.Prefixes)))
-				sb.WriteString("#m")
-				sb.WriteString(fmt.Sprint(len(rule.Methods)))
+	// Wasm
+	if r.Wasm != nil {
+		w.WriteString(r.Wasm.Module)
+		// Config map is crucial
+		for k, v := range r.Wasm.Config {
+			w.WriteString(k)
+			w.WriteString(v)
+		}
+	}
+
+	// RateLimit
+	if r.RateLimit != nil && r.RateLimit.Enabled {
+		w.WriteString("rl_on")
+		w.WriteString(fmt.Sprint(r.RateLimit.TTL))
+		w.WriteString(fmt.Sprint(r.RateLimit.MaxEntries))
+		for _, rule := range r.RateLimit.Rules {
+			w.WriteString(rule.Name)
+			w.WriteString(fmt.Sprint(rule.Requests))
+			w.WriteString(fmt.Sprint(rule.Window))
+			w.WriteString(fmt.Sprint(rule.Burst))
+			w.WriteString(rule.Key)
+			for _, p := range rule.Prefixes {
+				w.WriteString(p)
 			}
-		} else {
-			sb.WriteString("off")
+			for _, m := range rule.Methods {
+				w.WriteString(m)
+			}
 		}
 	}
 
-	return sb.String()
+	return fmt.Sprintf("%x", w.Sum64())
 }
 
 func (r *Route) Validate() error {
@@ -175,10 +194,6 @@ func (r *Route) validateWebRoute() error {
 	if err := r.Web.Validate(); err != nil {
 		return errors.Newf("web: %w", err)
 	}
-
-	//if len(r.StripPrefixes) > 0 {
-	//	return ErrWebRouteStripPrefixes
-	//}
 
 	if r.Backends.LBStrategy != "" && r.Backends.LBStrategy != StrategyRoundRobin {
 		return ErrWebRouteUnsupportedLB
@@ -225,7 +240,6 @@ func (r *Route) validateWebRoute() error {
 }
 
 func (r *Route) validateProxyRoute() error {
-	// Backend validation
 	if len(r.Backends.Servers) == 0 {
 		return ErrProxyRouteNoBackends
 	}
@@ -236,7 +250,6 @@ func (r *Route) validateProxyRoute() error {
 		}
 	}
 
-	// Strip prefixes validation (if provided)
 	for i, prefix := range r.StripPrefixes {
 		if prefix == "" {
 			return errors.Newf("%w [%d]: cannot be empty", ErrProxyRouteInvalidStrip, i)
@@ -246,7 +259,6 @@ func (r *Route) validateProxyRoute() error {
 		}
 	}
 
-	// Load balancing strategy validation (if provided)
 	if r.Backends.LBStrategy != "" {
 		s := strings.ToLower(strings.TrimSpace(r.Backends.LBStrategy))
 
@@ -271,49 +283,42 @@ func (r *Route) validateProxyRoute() error {
 		}
 	}
 
-	// Health check validation (if provided)
 	if r.HealthCheck != nil {
 		if err := r.HealthCheck.Validate(); err != nil {
 			return errors.Newf("health_check: %w", err)
 		}
 	}
 
-	// Circuit breaker validation (if provided)
 	if r.CircuitBreaker != nil {
 		if err := r.CircuitBreaker.Validate(); err != nil {
 			return errors.Newf("circuit_breaker: %w", err)
 		}
 	}
 
-	// Timeouts validation (if provided)
 	if r.Timeouts != nil {
 		if err := r.Timeouts.Validate(); err != nil {
 			return errors.Newf("timeouts: %w", err)
 		}
 	}
 
-	// Basic auth validation (if provided)
 	if r.BasicAuth != nil {
 		if err := r.BasicAuth.Validate(); err != nil {
 			return errors.Newf("basic_auth: %w", err)
 		}
 	}
 
-	// Forward auth validation (if provided)
 	if r.ForwardAuth != nil {
 		if err := r.ForwardAuth.Validate(); err != nil {
 			return errors.Newf("forward_auth: %w", err)
 		}
 	}
 
-	// Headers validation (if provided)
 	if r.Headers != nil {
 		if err := r.Headers.Validate(); err != nil {
 			return errors.Newf("headers: %w", err)
 		}
 	}
 
-	// Enabled validation (if provided)
 	if r.CompressionConfig.Enabled {
 		if err := r.CompressionConfig.Validate(); err != nil {
 			return errors.Newf("compression: %w", err)

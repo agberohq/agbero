@@ -21,8 +21,10 @@ func (e *event) NotifyJoin(node *memberlist.Node) {
 	if node.Name == e.s.localName {
 		return
 	}
-	e.processNode(node)
-	e.s.logger.Fields("node", node.Name).Info("node joined")
+	go func(n *memberlist.Node) {
+		e.processNode(n)
+		e.s.logger.Fields("node", n.Name).Info("node joined")
+	}(node)
 }
 
 func (e *event) NotifyLeave(node *memberlist.Node) {
@@ -37,7 +39,8 @@ func (e *event) NotifyUpdate(node *memberlist.Node) {
 	if node.Name == e.s.localName {
 		return
 	}
-	e.processNode(node)
+	// Run asynchronously
+	go e.processNode(node)
 }
 
 func (e *event) fetchToken(node *memberlist.Node, meta *Meta) (string, error) {
@@ -118,6 +121,17 @@ func (e *event) processNode(node *memberlist.Node) {
 				Warn("gossip rejected: invalid token")
 			return
 		}
+
+		// Security: Enforce that the token subject matches the service/host being announced.
+		// We expect the subject to equal the host, or if it's a subdomain, the root matches.
+		// Simplest strict check: subject must match meta.Host OR meta.Service if we add that field.
+		// Assuming 'svcName' is the identity from the token.
+		if svcName != meta.Host && !strings.HasSuffix(meta.Host, "."+svcName) {
+			e.s.logger.Fields("node", node.Name, "token_sub", svcName, "host", meta.Host).
+				Warn("gossip rejected: token subject does not authorize this host")
+			return
+		}
+
 		e.s.logger.Fields("node", node.Name, "svc", svcName).Debug("gossip authorized")
 	}
 

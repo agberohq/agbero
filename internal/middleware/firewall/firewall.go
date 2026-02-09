@@ -1,3 +1,4 @@
+// internal/middleware/firewall/firewall.go
 package firewall
 
 import (
@@ -31,7 +32,7 @@ var (
 
 type IPSet struct {
 	mu     sync.RWMutex
-	v4     map[netip.Addr][]*Rule // Supports multiple rules per IP
+	v4     map[netip.Addr][]*Rule
 	v6     map[netip.Addr][]*Rule
 	ranger cidranger.Ranger
 
@@ -52,22 +53,31 @@ type cacheEntry struct {
 type ttlCache struct {
 	mu      sync.Mutex
 	entries map[string]cacheEntry
+	stop    chan struct{}
 }
 
 func newTTLCache(cleanupInterval time.Duration) *ttlCache {
-	c := &ttlCache{entries: make(map[string]cacheEntry)}
+	c := &ttlCache{
+		entries: make(map[string]cacheEntry),
+		stop:    make(chan struct{}),
+	}
 	go func() {
 		ticker := time.NewTicker(cleanupInterval)
 		defer ticker.Stop()
-		for range ticker.C {
-			c.mu.Lock()
-			now := time.Now()
-			for k, v := range c.entries {
-				if now.After(v.expireAt) {
-					delete(c.entries, k)
+		for {
+			select {
+			case <-c.stop:
+				return
+			case <-ticker.C:
+				c.mu.Lock()
+				now := time.Now()
+				for k, v := range c.entries {
+					if now.After(v.expireAt) {
+						delete(c.entries, k)
+					}
 				}
+				c.mu.Unlock()
 			}
-			c.mu.Unlock()
 		}
 	}()
 	return c
@@ -102,6 +112,10 @@ func (c *ttlCache) set(key string, blocked bool) {
 	}
 }
 
+func (c *ttlCache) close() {
+	close(c.stop)
+}
+
 func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*IPSet, error) {
 	if cfg == nil || !cfg.Enabled {
 		return nil, nil
@@ -132,12 +146,14 @@ func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*IPSet, e
 
 	store, err := NewStore(dataDir, logger)
 	if err != nil {
+		f.cache.close() // Cleanup on error
 		return nil, fmt.Errorf("firewall store init: %w", err)
 	}
 	f.store = store
 
 	rules, err := store.LoadAll()
 	if err != nil {
+		f.cache.close()
 		return nil, fmt.Errorf("firewall load rules: %w", err)
 	}
 	for _, r := range rules {
@@ -155,7 +171,14 @@ func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*IPSet, e
 }
 
 func (f *IPSet) Close() error {
-	if f == nil || f.store == nil {
+	if f == nil {
+		return nil
+	}
+	// Stop cache goroutine
+	if f.cache != nil {
+		f.cache.close()
+	}
+	if f.store == nil {
 		return nil
 	}
 	return f.store.Close()
@@ -242,7 +265,7 @@ func (f *IPSet) addRuleInMemory(r Rule) {
 	addr, err := netip.ParseAddr(r.IP)
 	if err == nil {
 		addr = addr.Unmap()
-		rCopy := r // Copy rule
+		rCopy := r
 		if addr.Is4() {
 			f.v4[addr] = append(f.v4[addr], &rCopy)
 		} else {
@@ -282,7 +305,6 @@ func (f *IPSet) importTextFile(path string) error {
 		addr, err := netip.ParseAddr(line)
 		if err == nil {
 			addr = addr.Unmap()
-			// Text file imports are always Global blocks
 			r := Rule{IP: line, Type: BlockTypeSingle}
 			if addr.Is4() {
 				f.v4[addr] = append(f.v4[addr], &r)
@@ -305,7 +327,6 @@ func (f *IPSet) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ipStr := clientip.ClientIP(r)
 
-		// 1. Single IP Lookup
 		addr, err := netip.ParseAddr(ipStr)
 		if err == nil {
 			addr = addr.Unmap()
@@ -323,16 +344,13 @@ func (f *IPSet) Handler(next http.Handler) http.Handler {
 				reqPath := r.URL.Path
 
 				for _, rule := range rules {
-					// Check Host Match (Empty rule.Host matches ALL)
 					if rule.Host != "" && rule.Host != reqHost {
 						continue
 					}
-					// Check Path Match (Empty rule.Path matches ALL)
 					if rule.Path != "" && !strings.HasPrefix(reqPath, rule.Path) {
 						continue
 					}
 
-					// Match Found -> Block
 					atomic.AddUint64(&metricsLocalBlocks, 1)
 					http.Error(w, "Access Denied", http.StatusForbidden)
 					return
@@ -340,7 +358,6 @@ func (f *IPSet) Handler(next http.Handler) http.Handler {
 			}
 		}
 
-		// 2. CIDR Lookup (Always Global for now)
 		netIP := net.ParseIP(ipStr)
 		if netIP != nil {
 			contains, err := f.ranger.Contains(netIP)
@@ -351,7 +368,6 @@ func (f *IPSet) Handler(next http.Handler) http.Handler {
 			}
 		}
 
-		// 3. Remote Check
 		if f.remote != "" {
 			if f.cachedRemoteCheck(r.Context(), ipStr) {
 				atomic.AddUint64(&metricsRemoteBlocks, 1)
