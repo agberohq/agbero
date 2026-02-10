@@ -220,6 +220,8 @@ github.com/olekukonko/jack v0.0.0-20260210232842-601d62a15f5c h1:j2gS47DdZytxNse
 github.com/olekukonko/jack v0.0.0-20260210232842-601d62a15f5c/go.mod h1:JG8zF4sOHREilMt/T72T7qLJJBXiF8fIa+txqvzN1DY=
 github.com/olekukonko/ll v0.1.5-0.20260202103841-65bca58ef64e h1:OAzfr+x9JS0rkaKmmuMRtNCyX/LVYBL+uLqFtKIrmvc=
 github.com/olekukonko/ll v0.1.5-0.20260202103841-65bca58ef64e/go.mod h1:b52bVQRRPObe+yyBl0TxNfhesL0nedD4Cht0/zx55Ew=
+github.com/olekukonko/ll v0.1.5-0.20260204203631-e8a2a39131bf h1:Q8zoxGRxaANF+EOSZ7MEQvdY17cWJpTrYZ0lnNwDhQw=
+github.com/olekukonko/ll v0.1.5-0.20260204203631-e8a2a39131bf/go.mod h1:NVUmjBb/aCtUpjKk75BhWrOlARz3dqsM+OtszpY4o88=
 github.com/pascaldekloe/goe v0.1.0 h1:cBOtyMzM9HTpWjXfbbunk26uA6nG3a8n06Wieeh0MwY=
 github.com/pascaldekloe/goe v0.1.0/go.mod h1:lzWF7FIEvWOWxwDKqyGYQf6ZUaNfKdP144TG7ZOy1lc=
 github.com/pborman/getopt v0.0.0-20170112200414-7148bc3a4c30/go.mod h1:85jBQOZwpVEaDAr341tbn15RS4fCAsIst0qp7i8ex1o=
