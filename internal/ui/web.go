@@ -172,8 +172,6 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 0. Resolve the "Browser Path" (what the user sees in the address bar)
-	// This is critical when strip_prefixes is used.
 	browserPath := r.URL.Path
 	if v := r.Context().Value(woos.CtxOriginalPath); v != nil {
 		if s, ok := v.(string); ok {
@@ -181,13 +179,11 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 1. Resolve Root dirListing (Securely)
 	rootPath := h.route.Web.Root.String()
 	if rootPath == "" {
 		rootPath = "."
 	}
 
-	// os.OpenRoot (Go 1.24+) prevents escaping this directory
 	root, err := os.OpenRoot(rootPath)
 	if err != nil {
 		h.logger.Fields("err", err, "root", rootPath).Error("failed to open web root")
@@ -196,41 +192,35 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer root.Close()
 
-	// 2. Resolve Request Path (Relative to Root)
-	// r.URL.Path here is already stripped by handleRoute if applicable
-	reqPath := strings.TrimPrefix(r.URL.Path, "/")
-	if reqPath == "" {
-		reqPath = "."
+	// FIX: Clean the path to resolve ".." and "." before processing
+	cleanedPath := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+	if cleanedPath == "." || cleanedPath == "/" {
+		cleanedPath = "."
 	}
 
-	// --- SECURITY CHECK START ---
-	pathParts := strings.Split(reqPath, "/")
+	// Validation logic after cleaning
+	pathParts := strings.Split(cleanedPath, string(filepath.Separator))
 	for _, part := range pathParts {
-		if part == "." || part == ".." {
+		if part == "." || part == ".." || part == "" {
 			continue
 		}
+
 		// Block hidden files/dirs (.git, .env)
-		if strings.HasPrefix(part, ".") {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
 		// Block config directories (hosts.d, certs.d, etc.)
-		if strings.HasSuffix(part, ".d") {
+		if strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".d") {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
 	}
-	// --- SECURITY CHECK END ---
 
+	reqPath := cleanedPath
 	phpEnabled := h.php != nil
 
-	// Never serve PHP source as static.
 	if strings.HasSuffix(strings.ToLower(reqPath), ".php") && !phpEnabled {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
 	}
 
-	// 3. Direct PHP execution for *.php
 	if phpEnabled && strings.HasSuffix(strings.ToLower(reqPath), ".php") {
 		ff, err := root.Open(reqPath)
 		if err == nil {
@@ -243,10 +233,8 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 4. Try Serving Gzip (Optimized)
 	if clientAcceptsGzip(r) {
 		gzPath, gzOrigPath := h.resolveGzipPath(reqPath)
-
 		if h.gzMayExist(gzPath) {
 			fGz, err := root.Open(gzPath)
 			if err == nil {
@@ -256,14 +244,12 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					if h.setCommonHeaders(w, r, gzOrigPath, infoGz.ModTime(), infoGz.Size(), true) {
 						return
 					}
-
 					origType := getMimeType(gzOrigPath)
 					if origType != "" {
 						w.Header().Set("Content-Type", origType)
 					}
 					w.Header().Set("Content-Encoding", "gzip")
 					w.Header().Add("Vary", "Accept-Encoding")
-
 					http.ServeContent(w, r, gzPath, infoGz.ModTime(), fGz)
 					h.gzSetExists(gzPath, true)
 					return
@@ -275,15 +261,11 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 5. Open Target File
 	f, err := root.Open(reqPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			http.Error(w, "Not Found", http.StatusNotFound)
-		} else if errors.Is(err, fs.ErrPermission) {
-			http.Error(w, "Forbidden", http.StatusForbidden)
 		} else {
-			h.logger.Fields("err", err, "path", reqPath).Debug("file open failed")
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		}
 		return
@@ -296,25 +278,15 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 6. Handle dirListing
 	if info.IsDir() {
-		// Enforce trailing slash using BROWSER PATH
-		// This fixes the issue where redirection removed the stripped prefix
 		if !strings.HasSuffix(browserPath, "/") {
-			target := browserPath + "/"
-			if len(r.URL.RawQuery) > 0 {
-				target += "?" + r.URL.RawQuery
-			}
-			http.Redirect(w, r, target, http.StatusMovedPermanently)
+			http.Redirect(w, r, browserPath+"/", http.StatusMovedPermanently)
 			return
 		}
-
-		// Try Index HTML
 		indexName := "index.html"
 		if h.route.Web.Index != "" {
 			indexName = h.route.Web.Index
 		}
-
 		indexPath := filepath.Join(reqPath, indexName)
 		indexFile, err := root.Open(indexPath)
 		if err == nil {
@@ -324,50 +296,15 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if h.setCommonHeaders(w, r, indexName, indexInfo.ModTime(), indexInfo.Size(), false) {
 					return
 				}
-
-				ctype := getMimeType(indexName)
-				if ctype != "" {
-					w.Header().Set("Content-Type", ctype)
-				}
+				w.Header().Set("Content-Type", getMimeType(indexName))
 				http.ServeContent(w, r, indexName, indexInfo.ModTime(), indexFile)
 				return
 			}
 		}
-
-		// Try Index PHP (if enabled)
-		if phpEnabled {
-			phpIndex := "index.php"
-			if strings.TrimSpace(h.route.Web.PHP.Index) != "" {
-				phpIndex = strings.TrimSpace(h.route.Web.PHP.Index)
-			}
-
-			phpIndexPath := filepath.Join(reqPath, phpIndex)
-			ff, err := root.Open(phpIndexPath)
-			if err == nil {
-				info2, serr := ff.Stat()
-				_ = ff.Close()
-				if serr == nil && !info2.IsDir() {
-					// rewrite request path so gofast resolves script correctly
-					reqOut := *r
-					if r.URL != nil {
-						u := *r.URL
-						// PHP handler needs the relative path from root
-						u.Path = strings.TrimSuffix(r.URL.Path, "/") + "/" + phpIndex
-						reqOut.URL = &u
-					}
-					h.php.ServeHTTP(w, &reqOut)
-					return
-				}
-			}
-		}
-
-		// No index found. dirListing?
 		if h.route.Web.Listing {
-			// Pass the BROWSER PATH so links are generated correctly relative to user's URL
 			h.serveDirectoryListing(w, r, f, browserPath)
 			return
 		}
-
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -375,11 +312,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.setCommonHeaders(w, r, reqPath, info.ModTime(), info.Size(), false) {
 		return
 	}
-
-	ctype := getMimeType(reqPath)
-	if ctype != "" {
-		w.Header().Set("Content-Type", ctype)
-	}
+	w.Header().Set("Content-Type", getMimeType(reqPath))
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }
 
