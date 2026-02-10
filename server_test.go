@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	testLogger = ll.New("test")
+	testLogger = ll.New("test").Disable()
 )
 
 func TestNewServer_Basic(t *testing.T) {

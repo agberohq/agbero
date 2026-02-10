@@ -14,7 +14,7 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-var testLogger = ll.New("test")
+var testLogger = ll.New("test").Disable()
 
 func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 	// 1. Create 2 dummy backends

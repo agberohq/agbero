@@ -102,7 +102,7 @@ func writeSelfSignedCert(t *testing.T, certPath, keyPath string, hosts []string)
 
 func TestCertInstaller_validateCertificate_HostMatch(t *testing.T) {
 	tmp := t.TempDir()
-	logger := ll.New("test")
+	logger := ll.New("test").Disable()
 
 	ci := NewInstaller(logger)
 	ci.CertDir = woos.NewFolder(tmp)
@@ -130,7 +130,7 @@ func TestCertInstaller_validateCertificate_HostMatch(t *testing.T) {
 
 func TestCertInstaller_validateCertificate_StripsPortAndBracketedIPv6(t *testing.T) {
 	tmp := t.TempDir()
-	logger := ll.New("test")
+	logger := ll.New("test").Disable()
 
 	ci := NewInstaller(logger)
 	ci.CertDir = woos.NewFolder(tmp)
@@ -160,7 +160,7 @@ func TestCertInstaller_validateCertificate_StripsPortAndBracketedIPv6(t *testing
 
 func TestCertInstaller_validateCertificate_Wildcard_VerifiedByConcreteSubdomain(t *testing.T) {
 	tmp := t.TempDir()
-	logger := ll.New("test")
+	logger := ll.New("test").Disable()
 
 	ci := NewInstaller(logger)
 	ci.CertDir = woos.NewFolder(tmp)
@@ -186,7 +186,7 @@ func TestCertInstaller_validateCertificate_Wildcard_VerifiedByConcreteSubdomain(
 
 func TestCertInstaller_findExistingCerts_UsesOnlyMatchingCert(t *testing.T) {
 	tmp := t.TempDir()
-	logger := ll.New("test")
+	logger := ll.New("test").Disable()
 
 	ci := NewInstaller(logger)
 	ci.CertDir = woos.NewFolder(tmp)
@@ -218,7 +218,7 @@ func TestCertInstaller_findExistingCerts_UsesOnlyMatchingCert(t *testing.T) {
 }
 
 func TestCertInstaller_certPrefix_NormalizesPortsAndIPv6(t *testing.T) {
-	logger := ll.New("test")
+	logger := ll.New("test").Disable()
 	ci := NewInstaller(logger)
 
 	ci.SetHosts([]string{"app.localhost:443"}, 443)

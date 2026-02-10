@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	testLogger = ll.New("backend")
+	testLogger = ll.New("backend").Disable()
 )
 
 // Helper to create a backend with customizable params

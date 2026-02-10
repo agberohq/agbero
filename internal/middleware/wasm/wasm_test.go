@@ -92,7 +92,7 @@ func main() {}
 	}
 
 	// 4. Initialize Manager
-	logger := ll.New("test")
+	logger := ll.New("test").Disable()
 	cfg := &alaye.Wasm{
 		Module: wasmOut,
 		Access: []string{"headers"}, // Required permissions
@@ -198,7 +198,7 @@ func main() {}
 		Access: []string{}, // Empty!
 	}
 
-	mgr, _ := NewManager(context.Background(), ll.New("test"), cfg)
+	mgr, _ := NewManager(context.Background(), ll.New("test").Disable(), cfg)
 	defer mgr.Close(context.Background())
 
 	h := mgr.Handler(http.NotFoundHandler())

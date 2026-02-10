@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	testLogger = ll.New("hosts/test")
+	testLogger = ll.New("hosts/test").Disable()
 )
 
 // Helper to write valid HCL content

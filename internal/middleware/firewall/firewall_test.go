@@ -14,7 +14,7 @@ import (
 )
 
 func newTestLogger() *ll.Logger {
-	return ll.New("test")
+	return ll.New("test").Disable()
 }
 
 func createTempDir(t *testing.T) string {

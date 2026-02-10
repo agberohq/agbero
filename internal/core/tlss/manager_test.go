@@ -24,7 +24,7 @@ import (
 )
 
 var (
-	testLogger = ll.New("tlss")
+	testLogger = ll.New("tlss").Disable()
 )
 
 // generateTestCert creates a minimal self-signed certificate for testing
