@@ -353,9 +353,10 @@ const (
 
 // Standardize permissions here
 const (
-	DirPerm    = 0755
-	FilePerm   = 0644
-	SecurePerm = 0700 // For keys/certs
+	DirPerm         = 0755
+	FilePerm        = 0644
+	FilePermSecured = 0600
+	SecurePerm      = 0700 // For keys/certs
 )
 
 //oauth

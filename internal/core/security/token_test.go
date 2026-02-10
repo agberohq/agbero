@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -53,7 +54,7 @@ func TestLoadKeys_Success(t *testing.T) {
 
 func TestLoadKeys_InvalidPEM(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "invalid.key")
-	os.WriteFile(tmpFile, []byte("invalid"), 0644)
+	os.WriteFile(tmpFile, []byte("invalid"), woos.FilePerm)
 
 	_, err := LoadKeys(tmpFile)
 	if err == nil || !strings.Contains(err.Error(), "invalid pem") {

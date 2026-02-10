@@ -12,6 +12,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -66,7 +67,7 @@ func TestServer_Start_Minimal(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.hcl")
-	_ = os.WriteFile(configPath, []byte(""), 0644)
+	_ = os.WriteFile(configPath, []byte(""), woos.FilePerm)
 
 	errCh := make(chan error)
 	go func() {

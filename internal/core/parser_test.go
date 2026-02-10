@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
@@ -58,7 +59,7 @@ letsencrypt {
 `
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "agbero.hcl")
-	err := os.WriteFile(configPath, []byte(content), 0644)
+	err := os.WriteFile(configPath, []byte(content), woos.FilePerm)
 	if err != nil {
 		t.Fatalf("failed to write temp config: %v", err)
 	}
@@ -135,7 +136,7 @@ route "/api" {
 `
 	tmpDir := t.TempDir()
 	hostPath := filepath.Join(tmpDir, "example.hcl")
-	err := os.WriteFile(hostPath, []byte(content), 0644)
+	err := os.WriteFile(hostPath, []byte(content), woos.FilePerm)
 	if err != nil {
 		t.Fatalf("failed to write temp host config: %v", err)
 	}
@@ -196,7 +197,7 @@ secret_key = "env.AGBERO_TEST_SECRET"
 `
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "gossip.hcl")
-	err := os.WriteFile(configPath, []byte(content), 0644)
+	err := os.WriteFile(configPath, []byte(content), woos.FilePerm)
 	if err != nil {
 		t.Fatalf("failed to write temp config: %v", err)
 	}
@@ -218,7 +219,7 @@ enabled = true
 secret_key = "${env.AGBERO_TEST_SECRET}"
 `
 	configPath2 := filepath.Join(tmpDir, "gossip_wrapped.hcl")
-	os.WriteFile(configPath2, []byte(content2), 0644)
+	os.WriteFile(configPath2, []byte(content2), woos.FilePerm)
 
 	var gossip2 alaye.Gossip
 	parser2 := NewParser(configPath2)

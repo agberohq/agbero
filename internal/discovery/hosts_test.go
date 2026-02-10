@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
 )
@@ -156,7 +157,7 @@ func TestWatch_FileChange(t *testing.T) {
 	hclFile := filepath.Join(tmpDir, "test.hcl")
 
 	// Use valid HCL content
-	if err := os.WriteFile(hclFile, validHCL("example.com"), 0644); err != nil {
+	if err := os.WriteFile(hclFile, validHCL("example.com"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -171,7 +172,7 @@ func TestWatch_FileChange(t *testing.T) {
 	}
 
 	// Trigger change
-	if err := os.WriteFile(hclFile, validHCL("updated.com"), 0644); err != nil {
+	if err := os.WriteFile(hclFile, validHCL("updated.com"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -194,7 +195,7 @@ func TestWatch_SubdirFileChange(t *testing.T) {
 	}
 
 	hclFile := filepath.Join(sub, "agbero.hcl")
-	if err := os.WriteFile(hclFile, validHCL("a.com"), 0644); err != nil {
+	if err := os.WriteFile(hclFile, validHCL("a.com"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -208,7 +209,7 @@ func TestWatch_SubdirFileChange(t *testing.T) {
 		t.Fatal("initial subdir load failed")
 	}
 
-	if err := os.WriteFile(hclFile, validHCL("b.com"), 0644); err != nil {
+	if err := os.WriteFile(hclFile, validHCL("b.com"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -223,7 +224,7 @@ func TestWatch_AtomicReplace(t *testing.T) {
 	tmpDir := t.TempDir()
 	hclFile := filepath.Join(tmpDir, "test.hcl")
 
-	if err := os.WriteFile(hclFile, validHCL("one.com"), 0644); err != nil {
+	if err := os.WriteFile(hclFile, validHCL("one.com"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -238,7 +239,7 @@ func TestWatch_AtomicReplace(t *testing.T) {
 	}
 
 	tmp := filepath.Join(tmpDir, "test.hcl.tmp")
-	if err := os.WriteFile(tmp, validHCL("two.com"), 0644); err != nil {
+	if err := os.WriteFile(tmp, validHCL("two.com"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Rename(tmp, hclFile); err != nil {
@@ -256,7 +257,7 @@ func TestWatch_NonHCL_DoesNotTriggerChanged(t *testing.T) {
 	tmpDir := t.TempDir()
 	txtFile := filepath.Join(tmpDir, "ignore.txt")
 
-	if err := os.WriteFile(txtFile, []byte("test"), 0644); err != nil {
+	if err := os.WriteFile(txtFile, []byte("test"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -266,7 +267,7 @@ func TestWatch_NonHCL_DoesNotTriggerChanged(t *testing.T) {
 	}
 	defer h.Close()
 
-	if err := os.WriteFile(txtFile, []byte("updated"), 0644); err != nil {
+	if err := os.WriteFile(txtFile, []byte("updated"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
