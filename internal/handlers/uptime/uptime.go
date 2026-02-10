@@ -6,10 +6,10 @@ import (
 	"runtime"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
 
 type SystemStats struct {
@@ -106,9 +106,8 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 			}
 
 			// Check cache for active stats
-			if v, ok := woos.RouteCache.Load(route.Key()); ok {
-				item := v.(*woos.RouteCacheItem)
-				handler := item.Handler.(*handlers.Route)
+			if v, ok := cache.RouteCache.Load(route.Key()); ok {
+				handler := v.Handler.(*handlers.Route)
 
 				for _, b := range handler.Backends {
 					lat := b.Metrics.Snapshot()
