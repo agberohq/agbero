@@ -177,7 +177,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 		Handler: handler,
 	}
 	item.LastAccessed.Store(time.Now().UnixNano())
-	cache.RouteCache.LoadOrStore(key, item)
+	cache.Route.LoadOrStore(key, item)
 
 	h := s.getOrBuildRouteHandler(route, key)
 	if h != handler {
@@ -185,7 +185,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	}
 
 	handler.Close()
-	cache.RouteCache.Delete(key)
+	cache.Route.Delete(key)
 }
 
 func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
@@ -199,7 +199,7 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 		Backends: alaye.MakeBackend("http://localhost:8080"),
 	}
 
-	cache.RouteCache.Delete(route.Key())
+	cache.Route.Delete(route.Key())
 
 	h := s.getOrBuildRouteHandler(route, route.Key())
 	if h == nil {
@@ -207,7 +207,7 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 	}
 
 	h.Close()
-	cache.RouteCache.Delete(route.Key())
+	cache.Route.Delete(route.Key())
 }
 
 func TestServer_StartAdminServer(t *testing.T) {

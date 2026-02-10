@@ -1,4 +1,4 @@
 package cache
 
-// Global bounded cache
-var RouteCache = NewMap()
+// Route is a globally shared map that provides lifecycle-managed access to route configurations and their handlers.
+var Route = NewMap()

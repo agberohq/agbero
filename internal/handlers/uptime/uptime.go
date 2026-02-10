@@ -106,7 +106,7 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 			}
 
 			// Check cache for active stats
-			if v, ok := cache.RouteCache.Load(route.Key()); ok {
+			if v, ok := cache.Route.Load(route.Key()); ok {
 				handler := v.Handler.(*handlers.Route)
 
 				for _, b := range handler.Backends {

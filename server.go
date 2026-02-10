@@ -121,11 +121,11 @@ func (s *Server) Start(configPath string) error {
 		woos.RouteCacheTTL,
 		jack.ReaperWithLogger(s.logger),
 		jack.ReaperWithHandler(func(ctx context.Context, id string) {
-			if v, ok := cache.RouteCache.Load(id); ok {
+			if v, ok := cache.Route.Load(id); ok {
 				if h, ok := v.Handler.(interface{ Close() }); ok {
 					h.Close()
 				}
-				cache.RouteCache.Delete(id)
+				cache.Route.Delete(id)
 				s.logger.Fields("route_key", id).Debug("reaped idle route handler")
 			}
 		}),
@@ -866,7 +866,7 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 }
 
 func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handlers2.Route {
-	if v, ok := cache.RouteCache.Load(key); ok {
+	if v, ok := cache.Route.Load(key); ok {
 		s.reaper.Touch(key)
 		return v.Handler.(*handlers2.Route)
 	}
@@ -876,7 +876,7 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handler
 		Handler: h,
 	}
 
-	if v, loaded := cache.RouteCache.LoadOrStore(key, newItem); loaded {
+	if v, loaded := cache.Route.LoadOrStore(key, newItem); loaded {
 		h.Close()
 		s.reaper.Touch(key)
 		return v.Handler.(*handlers2.Route)
