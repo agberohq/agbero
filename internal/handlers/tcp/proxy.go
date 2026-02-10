@@ -326,22 +326,23 @@ func (p *Proxy) pickBalancer(sni string) *Balancer {
 // This is critical for gRPC, PostgreSQL, and other protocols that use
 // half-closed states to signal end-of-request.
 func (p *Proxy) pipe(client, backend net.Conn) {
-	// Channels to capture errors (like connection reset) to abort the bridge immediately
-	errc := make(chan error, 1)
+	// Set an idle timeout (e.g., 5 minutes) to prevent leaks from silent drops
+	idleTimeout := 5 * time.Minute
 
+	cWrapped := &deadlineConn{Conn: client, timeout: idleTimeout}
+	bWrapped := &deadlineConn{Conn: backend, timeout: idleTimeout}
+
+	errc := make(chan error, 1)
 	copyAndClose := func(dst, src net.Conn) {
 		_, err := io.Copy(dst, src)
 		if err != nil {
-			// Real error (not EOF) -> kill the bridge
 			select {
 			case errc <- err:
 			default:
 			}
-			// Force close the destination to unblock the other read loop
 			_ = dst.Close()
 			_ = src.Close()
 		} else {
-			// EOF -> Half Close
 			closeWrite(dst)
 		}
 	}
@@ -351,16 +352,15 @@ func (p *Proxy) pipe(client, backend net.Conn) {
 
 	go func() {
 		defer wg.Done()
-		copyAndClose(backend, client)
+		copyAndClose(bWrapped, cWrapped)
 	}()
 
 	go func() {
 		defer wg.Done()
-		copyAndClose(client, backend)
+		copyAndClose(cWrapped, bWrapped)
 	}()
 
 	wg.Wait()
-
 	_ = client.Close()
 	_ = backend.Close()
 }
@@ -475,4 +475,23 @@ func isTimeout(err error) bool {
 		return netErr.Timeout()
 	}
 	return false
+}
+
+type deadlineConn struct {
+	net.Conn
+	timeout time.Duration
+}
+
+func (c *deadlineConn) Read(b []byte) (int, error) {
+	if c.timeout > 0 {
+		_ = c.SetReadDeadline(time.Now().Add(c.timeout))
+	}
+	return c.Conn.Read(b)
+}
+
+func (c *deadlineConn) Write(b []byte) (int, error) {
+	if c.timeout > 0 {
+		_ = c.SetWriteDeadline(time.Now().Add(c.timeout))
+	}
+	return c.Conn.Write(b)
 }
