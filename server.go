@@ -121,8 +121,10 @@ func (s *Server) Start(configPath string) error {
 		woos.RouteCacheTTL,
 		jack.ReaperWithLogger(s.logger),
 		jack.ReaperWithHandler(func(ctx context.Context, id string) {
-			if _, ok := cache.Route.Load(id); !ok {
-				return
+			if it, ok := cache.Route.Load(id); ok {
+				if h, ok := cache.Get[*handlers.Route](it); ok {
+					h.Close()
+				}
 			}
 			cache.Route.Delete(id)
 			s.logger.Fields("route_key", id).Debug("reaped idle route handler")
