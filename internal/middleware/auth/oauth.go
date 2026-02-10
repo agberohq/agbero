@@ -3,24 +3,18 @@ package auth
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/providers/github"
 	"github.com/markbates/goth/providers/gitlab"
 	"github.com/markbates/goth/providers/google"
 	"github.com/markbates/goth/providers/openidConnect"
-)
-
-const (
-	sessionCookieName = "agbero_sess"
-	gothSessionCookie = "agbero_oauth_state"
-	stateTTL          = 10 * time.Minute
+	"github.com/olekukonko/errors"
 )
 
 // OAuth middleware using markbates/goth for multi-provider support.
@@ -46,7 +40,7 @@ func OAuth(cfg *alaye.OAuth) func(http.Handler) http.Handler {
 			}
 
 			// 3. Check Existing Session
-			cookie, err := r.Cookie(sessionCookieName)
+			cookie, err := r.Cookie(woos.SessionCookieName)
 			if err == nil && cookie.Value != "" {
 				// In prod: Verify/Decrypt cookie with cfg.CookieSecret
 				next.ServeHTTP(w, r)
@@ -66,21 +60,21 @@ func getProvider(cfg *alaye.OAuth) (goth.Provider, error) {
 	scopes := cfg.Scopes
 
 	switch strings.ToLower(cfg.Provider) {
-	case "google":
+	case woos.ProviderGoogle:
 		return google.New(key, secret, callback, scopes...), nil
-	case "github":
+	case woos.ProviderGitHub:
 		return github.New(key, secret, callback, scopes...), nil
-	case "gitlab":
+	case woos.ProviderGitLab:
 		return gitlab.New(key, secret, callback, scopes...), nil
-	case "oidc", "generic":
+	case woos.ProviderOIDC, woos.ProviderGeneric:
 		// OIDC requires a Discovery URL (cfg.AuthURL can act as the Issuer URL here)
 		// If AuthURL is empty, this will fail.
 		if cfg.AuthURL == "" {
-			return nil, errors.New("auth_url (issuer) is required for oidc provider")
+			return nil, woos.ErrInvalidAuthURL
 		}
 		return openidConnect.New(key, secret, callback, cfg.AuthURL, scopes...)
 	default:
-		return nil, fmt.Errorf("unsupported provider: %s", cfg.Provider)
+		return nil, errors.Newf("%w: %s", woos.ErrUnsupportedProvider, cfg.Provider)
 	}
 }
 
@@ -104,12 +98,12 @@ func startGothFlow(w http.ResponseWriter, r *http.Request, provider goth.Provide
 	sessData := sess.Marshal()
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     gothSessionCookie,
+		Name:     woos.GothSessionCookie,
 		Value:    sessData,
-		Path:     "/",
+		Path:     woos.Slash,
 		HttpOnly: true,
 		Secure:   r.TLS != nil,
-		Expires:  time.Now().Add(stateTTL),
+		Expires:  time.Now().Add(woos.StateTTL),
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -118,7 +112,7 @@ func startGothFlow(w http.ResponseWriter, r *http.Request, provider goth.Provide
 
 func handleGothCallback(w http.ResponseWriter, r *http.Request, provider goth.Provider, cfg *alaye.OAuth) {
 	// 1. Retrieve the session data from cookie
-	cookie, err := r.Cookie(gothSessionCookie)
+	cookie, err := r.Cookie(woos.GothSessionCookie)
 	if err != nil {
 		http.Error(w, "Session expired or missing", http.StatusBadRequest)
 		return
@@ -136,7 +130,7 @@ func handleGothCallback(w http.ResponseWriter, r *http.Request, provider goth.Pr
 	user, err := provider.FetchUser(sess)
 	if err != nil {
 		// Clean up cookie
-		clearCookie(w, gothSessionCookie)
+		clearCookie(w, woos.GothSessionCookie)
 
 		// Goth validates params. If `Authorize` has not been called (i.e. just getting params),
 		// we might need to feed params to session.
@@ -173,34 +167,34 @@ func handleGothCallback(w http.ResponseWriter, r *http.Request, provider goth.Pr
 			}
 		}
 		if !valid {
-			clearCookie(w, gothSessionCookie)
+			clearCookie(w, woos.GothSessionCookie)
 			http.Error(w, "Email domain not allowed", http.StatusForbidden)
 			return
 		}
 	}
 
 	// 5. Cleanup OAuth state
-	clearCookie(w, gothSessionCookie)
+	clearCookie(w, woos.GothSessionCookie)
 
 	// 6. Set App Session
 	// In production: Encrypt user.AccessToken using cfg.CookieSecret
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
+		Name:     woos.SessionCookieName,
 		Value:    user.AccessToken,
-		Path:     "/",
+		Path:     woos.Slash,
 		HttpOnly: true,
 		Secure:   r.TLS != nil,
 		Expires:  user.ExpiresAt,
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	http.Redirect(w, r, "/", http.StatusFound)
+	http.Redirect(w, r, woos.Slash, http.StatusFound)
 }
 
 func isCallbackRequest(r *http.Request, redirectURL string) bool {
 	// Basic check: does current path match redirect path?
 	// Also check for 'code' which indicates a callback
-	if strings.Contains(redirectURL, r.URL.Path) && r.URL.Query().Get("code") != "" {
+	if strings.Contains(redirectURL, r.URL.Path) && r.URL.Query().Get(woos.CallBackCodeKey) != "" {
 		return true
 	}
 	return false
@@ -210,14 +204,14 @@ func clearCookie(w http.ResponseWriter, name string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
 		Value:    "",
-		Path:     "/",
+		Path:     woos.Slash,
 		MaxAge:   -1,
 		HttpOnly: true,
 	})
 }
 
 func generateState() string {
-	b := make([]byte, 16)
+	b := make([]byte, woos.DefaultByteLen)
 	rand.Read(b)
 	return base64.URLEncoding.EncodeToString(b)
 }

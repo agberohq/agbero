@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/olekukonko/ll"
 )
 
@@ -18,7 +19,7 @@ func New(allowed []string, logger *ll.Logger) func(http.Handler) http.Handler {
 	var singleIPs []net.IP
 
 	for _, s := range allowed {
-		if strings.Contains(s, "/") {
+		if strings.Contains(s, woos.Slash) {
 			_, n, err := net.ParseCIDR(s)
 			if err == nil {
 				ipNets = append(ipNets, n)

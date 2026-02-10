@@ -35,11 +35,13 @@ const (
 
 // Standard Headers
 const (
-	HeaderContentType   = "Content-Type"
-	HeaderContentEnc    = "Content-Encoding"
-	HeaderXForwardedFor = "X-Forwarded-For"
-	HeaderXRealIP       = "X-Real-IP"
-	HeaderServer        = "Server"
+	HeaderContentType     = "Content-Type"
+	HeaderContentEnc      = "Content-Encoding"
+	HeaderXForwardedFor   = "X-Forwarded-For"
+	HeaderXOriginalURI    = "X-Original-URI"
+	HeaderXOriginalMethod = "X-Original-Method"
+	HeaderXRealIP         = "X-Real-IP"
+	HeaderServer          = "Server"
 
 	HeaderXForwardedHost   = "X-Forwarded-Host"
 	HeaderXForwardedProto  = "X-Forwarded-Proto"
@@ -53,6 +55,15 @@ const (
 	HeaderTE                 = "Te"
 	HeaderTrailers           = "Trailers"
 	HeaderTransferEncoding   = "Transfer-Encoding"
+
+	HeaderCacheControl    = "Cache-Control"
+	HeaderWWWAuthenticate = "WWW-Authenticate"
+	HeaderKeyBearer       = "Bearer"
+	HeaderKeyConnection   = "Connection"
+	HeaderKeyUpgrade      = "Upgrade"
+	HeaderAcceptEncoding  = "Accept-Encoding"
+	HeaderKeyVary         = "Vary"
+	HeaderKeyAltSvc       = "Alt-Svc"
 )
 
 // MIME Types
@@ -127,6 +138,7 @@ const (
 	TemplateClose       = "}"
 	TemplateSep         = ":"
 	TemplateWildcardKey = "*"
+	Straight            = "|"
 )
 
 // Cache
@@ -319,4 +331,60 @@ const (
 	DefaultTransportTLSHandshakeTimeout   = 5 * time.Second
 	DefaultTransportResponseHeaderTimeout = 5 * time.Second
 	DefaultTransportExpectContinueTimeout = 1 * time.Second
+)
+
+// middleware
+const (
+	Realm                  = "Restricted"
+	MaxSizeCache           = 10_000
+	Allow                  = "allow"
+	Deny                   = "deny"
+	CacheClientMaxIdleCons = 100
+
+	CacheClientMaxIdleTimeOuts = 90 * time.Second
+	AuthorizationHeaderKey     = "Authorization"
+	CookieHeaderKey            = "Cookie"
+	CacheSetTTL                = 10 * time.Second
+)
+
+// folder
+
+// Standardize permissions here
+const (
+	DirPerm    = 0755
+	FilePerm   = 0644
+	SecurePerm = 0700 // For keys/certs
+)
+
+//oauth
+
+const (
+	SessionCookieName = "agbero_sess"
+	GothSessionCookie = "agbero_oauth_state"
+	StateTTL          = 10 * time.Minute
+	DefaultByteLen    = 16
+	CallBackCodeKey   = "code"
+)
+
+const (
+	ProtocolSeparator = "://"
+
+	ProviderGoogle  = "google"
+	ProviderOIDC    = "oidc"
+	ProviderGitHub  = "github"
+	ProviderGitLab  = "gitlab"
+	ProviderGeneric = "generic"
+
+	ScopeOpenID  = "openid"
+	ScopeProfile = "profile"
+	ScopeEmail   = "email"
+)
+
+const (
+	MinCompressionLevel = 0
+	MaxCompressionLevel = 11
+	CompressionGzip     = "gzip"
+	GzipEncodingType    = "gzip"
+	CompressionBrotli   = "brotli"
+	BrotliEncodingType  = "br"
 )

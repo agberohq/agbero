@@ -141,3 +141,18 @@ var (
 	ErrShortName      = errors.New("short hostname")
 	ErrShortExt       = errors.New("short ext")
 )
+
+//jwt
+
+var (
+	ErrUnexpectedSigningMethod = errors.New("unexpected signing method")
+	ErrUnsupportedProvider     = errors.New("unsupported provider")
+	ErrInvalidAuthURL          = errors.New("auth_url (issuer) is required for oidc provider")
+)
+
+// firewall
+
+var (
+	ErrDataDirNotSet  = errors.New("data directory not set")
+	ErrFailedToOpenDB = errors.New("failed to open firewall db")
+)
