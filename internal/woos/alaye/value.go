@@ -25,41 +25,9 @@ func (v *Value) UnmarshalText(text []byte) error {
 		return nil
 	}
 
-	// Normalize wrapper styles:
-	// {env.X}, ${env.X}, with optional whitespace.
-	unwrapped := raw
-
-	// ${ ... }
-	if strings.HasPrefix(unwrapped, "${") && strings.HasSuffix(unwrapped, "}") {
-		unwrapped = strings.TrimSpace(unwrapped[2 : len(unwrapped)-1])
-	}
-	// { ... }
-	if strings.HasPrefix(unwrapped, "{") && strings.HasSuffix(unwrapped, "}") {
-		unwrapped = strings.TrimSpace(unwrapped[1 : len(unwrapped)-1])
-	}
-
-	// Normalize $env. prefix
-	if strings.HasPrefix(unwrapped, "$env.") {
-		unwrapped = "env." + strings.TrimPrefix(unwrapped, "$env.")
-	}
-
-	// 1) Environment Variable: env.MY_SECRET
-	if strings.HasPrefix(unwrapped, "env.") {
-		envVar := strings.TrimPrefix(unwrapped, "env.")
-		val := os.Getenv(envVar)
-
-		// Decide policy: error vs empty.
-		// If you want strict:
-		// if val == "" { return fmt.Errorf("missing env var %q", envVar) }
-
-		*v = Value(val)
-		return nil
-	}
-
-	// 2) Base64: b64.SGVsbG8=
-	// (You can also mirror the same wrappers/prefixes for b64 if you want later.)
-	if strings.HasPrefix(unwrapped, "b64.") {
-		b64Str := strings.TrimPrefix(unwrapped, "b64.")
+	// 1. Base64 Handling
+	if strings.HasPrefix(raw, "b64.") {
+		b64Str := strings.TrimPrefix(raw, "b64.")
 		decoded, err := base64.StdEncoding.DecodeString(b64Str)
 		if err != nil {
 			return fmt.Errorf("failed to decode base64 config value: %w", err)
@@ -68,7 +36,21 @@ func (v *Value) UnmarshalText(text []byte) error {
 		return nil
 	}
 
-	// 3) Literal
-	*v = Value(raw) // keep original raw (not unwrapped) so "{hello}" stays literal unless it matches env forms
+	// 2. Explicit Env Var (Legacy/Simple style: "env.MY_VAR")
+	// This handles the failing test case where no ${} wrappers are used.
+	if strings.HasPrefix(raw, "env.") {
+		key := strings.TrimPrefix(raw, "env.")
+		*v = Value(os.Getenv(key))
+		return nil
+	}
+
+	// 3. Shell Expansion style: "${env.MY_VAR}" or "foo-${env.BAR}"
+	// We use os.Expand but add logic to strip the "env." prefix inside the key.
+	resolved := os.Expand(raw, func(key string) string {
+		key = strings.TrimPrefix(key, "env.")
+		return os.Getenv(key)
+	})
+
+	*v = Value(resolved)
 	return nil
 }
