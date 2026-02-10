@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
+	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery/gossip"
@@ -66,6 +67,8 @@ type Server struct {
 	// HAProxy features
 	ProxyProtocol  bool  `hcl:"proxy_protocol,optional" json:"proxy_protocol"`
 	MaxConnections int64 `hcl:"max_connections,optional" json:"max_connections"`
+
+	h3Wg sync.WaitGroup
 }
 
 func NewServer(opts ...Option) *Server {
@@ -118,12 +121,11 @@ func (s *Server) Start(configPath string) error {
 		woos.RouteCacheTTL,
 		jack.ReaperWithLogger(s.logger),
 		jack.ReaperWithHandler(func(ctx context.Context, id string) {
-			if v, ok := woos.RouteCache.Load(id); ok {
-				item := v.(*woos.RouteCacheItem)
-				if h, ok := item.Handler.(interface{ Close() }); ok {
+			if v, ok := cache.RouteCache.Load(id); ok {
+				if h, ok := v.Handler.(interface{ Close() }); ok {
 					h.Close()
 				}
-				woos.RouteCache.Delete(id)
+				cache.RouteCache.Delete(id)
 				s.logger.Fields("route_key", id).Debug("reaped idle route handler")
 			}
 		}),
@@ -295,9 +297,24 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// Graceful wait for HTTP/3 requests with a timeout
+	h3Done := make(chan struct{})
+	go func() {
+		s.h3Wg.Wait()
+		close(h3Done)
+	}()
+
+	select {
+	case <-h3Done:
+		s.logger.Info("h3 connections drained successfully")
+	case <-ctx.Done():
+		s.logger.Warn("timeout waiting for h3 connections to drain")
+	}
+
+	// Now close the listeners
 	for key, srv := range s.h3Servers {
 		if err := srv.Close(); err != nil {
-			s.logger.Fields("key", key, "err", err).Warn("h3 graceful shutdown error")
+			s.logger.Fields("key", key, "err", err).Warn("h3 shutdown error")
 		}
 	}
 
@@ -431,7 +448,11 @@ func (s *Server) startQUICServer(
 
 	handler := s.buildChain(baseHandler, false, "")
 
+	// Wrap handler to track active requests
 	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.h3Wg.Add(1)
+		defer s.h3Wg.Done()
+
 		ctx := r.Context()
 		ctx = context.WithValue(ctx, portContextKey, port)
 		if owner != nil {
@@ -845,22 +866,20 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 }
 
 func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handlers2.Route {
-	if v, ok := woos.RouteCache.Load(key); ok {
+	if v, ok := cache.RouteCache.Load(key); ok {
 		s.reaper.Touch(key)
-		item := v.(*woos.RouteCacheItem)
-		return item.Handler.(*handlers2.Route)
+		return v.Handler.(*handlers2.Route)
 	}
 
 	h := handlers2.NewRoute(route, s.logger)
-	newItem := &woos.RouteCacheItem{
+	newItem := &cache.Item{
 		Handler: h,
 	}
 
-	if v, loaded := woos.RouteCache.LoadOrStore(key, newItem); loaded {
+	if v, loaded := cache.RouteCache.LoadOrStore(key, newItem); loaded {
 		h.Close()
 		s.reaper.Touch(key)
-		item := v.(*woos.RouteCacheItem)
-		return item.Handler.(*handlers2.Route)
+		return v.Handler.(*handlers2.Route)
 	}
 
 	s.reaper.Touch(key)
