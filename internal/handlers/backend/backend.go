@@ -87,15 +87,24 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 
 	rp := httputil.NewSingleHostReverseProxy(u)
 	rp.BufferPool = sharedBufferPool
-	rp.Transport = woos.Transport.Clone()
+
+	// Clone transport and explicitly disable ExpectContinueTimeout.
+	// Since ReverseProxy strips the "Expect" header (it's hop-by-hop),
+	// keeping this timeout causes the Transport to wait 1s unnecessarily
+	// for a 100-Continue that the backend will never send.
+	t := woos.Transport.Clone()
+	t.ExpectContinueTimeout = 0
+
+	// Ensure we don't carry over unlimited flushes unless streaming
 	rp.FlushInterval = -1
 
 	if cfg.Streaming.Enabled {
-		t := woos.Transport.Clone()
+		// For streaming, we might need a separate transport config if needed,
+		// but usually just removing the timeout is sufficient.
 		t.ResponseHeaderTimeout = 0
-		rp.Transport = t
 		rp.FlushInterval = cfg.Streaming.EffectiveFlushInterval()
 	}
+	rp.Transport = t
 
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		if errors.Is(err, context.Canceled) {
@@ -111,8 +120,6 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 		}
 
 		// gRPC-aware Error Handling
-		// gRPC uses HTTP/2 and expects status 200 with specific headers for protocol errors
-		// instead of generic HTTP 502/503 which clients may misinterpret as transport errors.
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
 			w.Header().Set("Content-Type", "application/grpc")
 			w.Header().Set("Grpc-Status", "14") // 14 = UNAVAILABLE
@@ -166,6 +173,7 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
+		b.Metrics.Close() // Ensure metrics routines are cleaned up
 	})
 }
 
@@ -189,6 +197,7 @@ func (b *Backend) healthCheckLoop() {
 		Timeout: timeout,
 		Transport: &http.Transport{
 			MaxIdleConnsPerHost: woos.DefaultMaxIdleConnsPerHost,
+			DisableKeepAlives:   true, // Active checks should not hog connections
 		},
 	}
 
