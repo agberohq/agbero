@@ -2,17 +2,13 @@ module git.imaxinacion.net/aibox/agbero
 
 go 1.25.5
 
-replace github.com/olekukonko/ll => /Users/oleku/gopath/src/github.com/olekukonko/ll
-
-replace github.com/olekukonko/jack => /Users/oleku/gopath/src/github.com/olekukonko/jack
-
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
 	github.com/alecthomas/hcl v0.5.5
 	github.com/andybalholm/brotli v1.2.0
 	github.com/caddyserver/certmagic v0.25.1
 	github.com/cespare/xxhash/v2 v2.3.0
-	github.com/charmbracelet/bubbles v0.21.1-0.20250623103423-23b8fd6302d7
+	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/huh v0.8.0
 	github.com/charmbracelet/lipgloss v1.1.0
@@ -22,12 +18,13 @@ require (
 	github.com/hashicorp/memberlist v0.5.4
 	github.com/integrii/flaggy v1.8.0
 	github.com/kardianos/service v1.2.4
-	github.com/klauspost/compress v1.18.3
+	github.com/klauspost/compress v1.18.4
 	github.com/markbates/goth v1.81.0
 	github.com/maypok86/otter/v2 v2.3.0
 	github.com/olekukonko/errors v1.2.0
-	github.com/olekukonko/jack v0.0.0-20260126193354-c1c25375fc11
+	github.com/olekukonko/jack v0.0.0-20260210232842-601d62a15f5c
 	github.com/olekukonko/ll v0.1.5-0.20260202103841-65bca58ef64e
+	github.com/pires/go-proxyproto v0.10.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.59.0
 	github.com/tetratelabs/wazero v1.11.0
@@ -53,13 +50,13 @@ require (
 	github.com/catppuccin/go v0.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.4.1 // indirect
 	github.com/charmbracelet/harmonica v0.2.0 // indirect
-	github.com/charmbracelet/x/ansi v0.11.4 // indirect
-	github.com/charmbracelet/x/cellbuf v0.0.14 // indirect
+	github.com/charmbracelet/x/ansi v0.11.6 // indirect
+	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
 	github.com/charmbracelet/x/exp/strings v0.0.0-20240722160745-212f7b056ed0 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
-	github.com/clipperhouse/displaywidth v0.7.0 // indirect
+	github.com/clipperhouse/displaywidth v0.9.0 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
-	github.com/clipperhouse/uax29/v2 v2.4.0 // indirect
+	github.com/clipperhouse/uax29/v2 v2.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/google/btree v1.1.3 // indirect
@@ -85,7 +82,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
-	github.com/pires/go-proxyproto v0.10.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
