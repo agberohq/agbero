@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
+	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -59,35 +60,31 @@ func init() {
 	prometheus.MustRegister(activeConnections)
 }
 
-// Middleware wraps the handler to capture metrics
-func PrometheusMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
+func PrometheusMiddleware(hm *discovery.Host) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			host := core.NormalizeHost(r.Host)
 
-		// Normalize Host for consistent labeling
-		host := core.NormalizeHost(r.Host)
-		if host == "" {
-			host = "unknown"
-		}
+			// Prevent cardinality explosion by verifying the host exists in config
+			if hm.Get(host) == nil {
+				host = "unauthorized_or_unknown"
+			}
 
-		activeConnections.WithLabelValues(host).Inc()
-		defer activeConnections.WithLabelValues(host).Dec()
+			activeConnections.WithLabelValues(host).Inc()
+			defer activeConnections.WithLabelValues(host).Dec()
 
-		// Wrap ResponseWriter to capture Status Code
-		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			next.ServeHTTP(rw, r)
 
-		next.ServeHTTP(rw, r)
+			duration := time.Since(start).Seconds()
+			statusCode := strconv.Itoa(rw.statusCode)
 
-		duration := time.Since(start).Seconds()
-		statusCode := strconv.Itoa(rw.statusCode)
-
-		// Record Metrics
-		httpRequestsTotal.WithLabelValues(host, r.Method, statusCode).Inc()
-		httpRequestDuration.WithLabelValues(host, r.Method).Observe(duration)
-
-		// Update "Last Seen" timestamp for this host
-		lastRequestTimestamp.WithLabelValues(host).Set(float64(time.Now().Unix()))
-	})
+			httpRequestsTotal.WithLabelValues(host, r.Method, statusCode).Inc()
+			httpRequestDuration.WithLabelValues(host, r.Method).Observe(duration)
+			lastRequestTimestamp.WithLabelValues(host).Set(float64(time.Now().Unix()))
+		})
+	}
 }
 
 // Simple wrapper to steal the status code

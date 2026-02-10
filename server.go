@@ -495,7 +495,7 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 		h = s.ipMiddleware.Handler(h)
 	}
 
-	h = metrics.PrometheusMiddleware(h)
+	h = metrics.PrometheusMiddleware(s.hostManager)(h)
 	h = recovery.New(s.logger)(h)
 
 	return h
