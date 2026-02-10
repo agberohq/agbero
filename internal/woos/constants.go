@@ -304,6 +304,8 @@ const (
 	RecordTypeHandshake      = 0x16
 	HandshakeTypeClientHello = 0x01
 
+	IdleTimeoutDeadline = 5 * time.Minute
+
 	RecordHeaderLen  = 5
 	HandshakeTypeLen = 1
 	HandshakeLength  = 3

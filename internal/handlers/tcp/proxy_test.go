@@ -333,6 +333,7 @@ func TestProxy_HalfClose_PropagatesEOF(t *testing.T) {
 
 	proxyAddr := getFreePort(t)
 	p := NewProxy(proxyAddr, newTestLogger())
+	p.SetIdleTimeout(5 * time.Second)
 	p.AddRoute("*", alaye.TCPRoute{
 		Backends: []alaye.Server{{Address: up}},
 	})

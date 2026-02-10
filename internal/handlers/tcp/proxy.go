@@ -16,7 +16,8 @@ import (
 )
 
 type Proxy struct {
-	Listen string
+	Listen      string
+	IdleTimeout time.Duration
 
 	// RWMutex protects Routes and Default during hot reloads
 	mu      sync.RWMutex
@@ -41,6 +42,14 @@ func NewProxy(listen string, logger *ll.Logger) *Proxy {
 		conns:  make(map[net.Conn]struct{}),
 		quit:   make(chan struct{}),
 	}
+}
+
+func (p *Proxy) BackendCount() int {
+	return len(p.conns)
+}
+
+func (p *Proxy) SetIdleTimeout(timeout time.Duration) {
+	p.IdleTimeout = timeout
 }
 
 func (p *Proxy) AddRoute(hostname string, cfg alaye.TCPRoute) {
@@ -326,13 +335,16 @@ func (p *Proxy) pickBalancer(sni string) *Balancer {
 // This is critical for gRPC, PostgreSQL, and other protocols that use
 // half-closed states to signal end-of-request.
 func (p *Proxy) pipe(client, backend net.Conn) {
-	// Set an idle timeout (e.g., 5 minutes) to prevent leaks from silent drops
-	idleTimeout := 5 * time.Minute
+	timeout := p.IdleTimeout
+	if timeout == 0 {
+		timeout = woos.IdleTimeoutDeadline
+	}
 
-	cWrapped := &deadlineConn{Conn: client, timeout: idleTimeout}
-	bWrapped := &deadlineConn{Conn: backend, timeout: idleTimeout}
+	cWrapped := &deadlineConn{Conn: client, timeout: timeout}
+	bWrapped := &deadlineConn{Conn: backend, timeout: timeout}
 
 	errc := make(chan error, 1)
+
 	copyAndClose := func(dst, src net.Conn) {
 		_, err := io.Copy(dst, src)
 		if err != nil {
@@ -340,6 +352,7 @@ func (p *Proxy) pipe(client, backend net.Conn) {
 			case errc <- err:
 			default:
 			}
+			// Force close to unblock the other direction immediately
 			_ = dst.Close()
 			_ = src.Close()
 		} else {
@@ -361,6 +374,7 @@ func (p *Proxy) pipe(client, backend net.Conn) {
 	}()
 
 	wg.Wait()
+
 	_ = client.Close()
 	_ = backend.Close()
 }
@@ -463,10 +477,16 @@ func closeWrite(c net.Conn) {
 		_ = v.CloseWrite()
 	case *peekedConn:
 		closeWrite(v.Conn)
+	case *deadlineConn:
+		closeWrite(v.Conn)
 	default:
-		// Fallback for non-TCP connections (e.g. buffers in tests)
-		// Usually no-op or full Close depending on implementation,
-		// but we leave full Close to the defer in pipe()
+		// Attempt to upgrade to interface if the struct is private or other wrappers exist
+		type closer interface {
+			CloseWrite() error
+		}
+		if cw, ok := c.(closer); ok {
+			_ = cw.CloseWrite()
+		}
 	}
 }
 

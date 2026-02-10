@@ -281,8 +281,11 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return nil, woos.ErrMissingSNI
 	}
 
+	// Explicitly reject IP addresses in SNI.
+	// Returning nil, nil causes Go to fall back to default certs or error confusingly.
+	// We want to fail the handshake immediately if SNI is an IP.
 	if net.ParseIP(sni) != nil {
-		return nil, nil
+		return nil, woos.ErrMissingSNI
 	}
 
 	hcfg := m.hostManager.Get(sni)
@@ -299,17 +302,12 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		}
 	}
 
-	// Force Disable TLS if Tunnel Client is enabled on this host
-	// This prevents laptops from trying to issue certs for "blog.tunnel.agbero.com"
 	if hcfg.Tunnel != nil && hcfg.Tunnel.Client != nil && hcfg.Tunnel.Client.Enabled {
 		mode = alaye.ModeLocalNone
 	}
 
 	switch mode {
 	case alaye.ModeLocalNone:
-		// Return nil error to allow handshake to proceed with default cert or fail gracefully at TCP level,
-		// but typically we want to signal "No Cert".
-		// However, returning an error here aborts the handshake immediately.
 		return nil, errors.Newf("%w: tls disabled for host %q", woos.ErrTLSDisabled, sni)
 
 	case alaye.ModeLocalCert:

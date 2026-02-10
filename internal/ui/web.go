@@ -5,14 +5,12 @@ import (
 	"errors"
 	"html/template"
 	"io/fs"
-	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,46 +27,15 @@ var dirListing string
 var tmpl = template.Must(template.New("dir").Parse(dirListing))
 
 // Ensure critical web types are registered
-func init() {
-	types := map[string]string{
-		".html":        "text/html; charset=utf-8",
-		".css":         "text/css; charset=utf-8",
-		".js":          "application/javascript; charset=utf-8",
-		".json":        "application/json; charset=utf-8",
-		".xml":         "text/xml; charset=utf-8",
-		".svg":         "image/svg+xml",
-		".txt":         "text/plain; charset=utf-8",
-		".png":         "image/png",
-		".jpg":         "image/jpeg",
-		".jpeg":        "image/jpeg",
-		".gif":         "image/gif",
-		".webp":        "image/webp",
-		".ico":         "image/x-icon",
-		".woff2":       "font/woff2",
-		".wasm":        "application/wasm",
-		".md":          "text/markdown",
-		".mjs":         "text/javascript; charset=utf-8",
-		".webmanifest": "application/manifest+json",
-		".pdf":         "application/pdf",
-		".csv":         "text/csv; charset=utf-8",
-		".avif":        "image/avif",
-		".mp4":         "video/mp4",
-		".mp3":         "audio/mpeg",
-		".woff":        "font/woff",
-		".zip":         "application/zip",
-	}
-
-	for ext, mimeType := range types {
-		_ = mime.AddExtensionType(ext, mimeType)
-	}
-}
 
 var (
-	mimeCache sync.Map // ext -> type
 
 	// Cache for gzip existence checks to avoid filesystem "miss" cost on every request.
 	// We use a short TTL so if you deploy new .gz admin, the server will discover them soon.
 	gzExistsCache sync.Map // string -> gzCacheEntry
+
+	// fingerprintRe is a compiled regular expression that matches fingerprinted file names containing 8+ hexadecimal characters.
+	fingerprintRe = regexp.MustCompile(`(?i)(?:[._-])[a-f0-9]{8,}(?:[._-])`)
 )
 
 type gzCacheEntry struct {
@@ -93,28 +60,6 @@ type dirItem struct {
 type crumb struct {
 	Name string // label shown to user
 	Href string // absolute path (ends with "/")
-}
-
-func buildBreadcrumbs(displayPath string) []crumb {
-	// displayPath is r.URL.Path (starts with "/")
-	p := strings.Trim(displayPath, "/")
-	if p == "" {
-		return []crumb{{Name: "root", Href: "/"}}
-	}
-
-	parts := strings.Split(p, "/")
-	out := make([]crumb, 0, len(parts)+1)
-	out = append(out, crumb{Name: "root", Href: "/"})
-
-	var cur string
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		cur += "/" + part
-		out = append(out, crumb{Name: part, Href: cur + "/"})
-	}
-	return out
 }
 
 type webHandler struct {
@@ -184,6 +129,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rootPath = "."
 	}
 
+	// Open the root securely
 	root, err := os.OpenRoot(rootPath)
 	if err != nil {
 		h.logger.Fields("err", err, "root", rootPath).Error("failed to open web root")
@@ -192,28 +138,36 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer root.Close()
 
-	// FIX: Clean the path to resolve ".." and "." before processing
-	cleanedPath := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
-	if cleanedPath == "." || cleanedPath == "/" {
-		cleanedPath = "."
+	// 1. Clean the path
+	reqPath := strings.TrimPrefix(r.URL.Path, "/")
+	if reqPath == "" {
+		reqPath = "."
+	}
+	cleanedPath := filepath.Clean(reqPath)
+
+	// Explicitly check for traversal
+	// filepath.Clean resolves ".." purely lexically. If the result starts with "..",
+	// it means the path is trying to go above the CWD (which is the root in this context).
+	if strings.HasPrefix(cleanedPath, "..") || strings.HasPrefix(cleanedPath, string(filepath.Separator)+"..") {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
 	}
 
-	// Validation logic after cleaning
+	// Check for hidden files/dirs (dotfiles)
 	pathParts := strings.Split(cleanedPath, string(filepath.Separator))
 	for _, part := range pathParts {
 		if part == "." || part == ".." || part == "" {
 			continue
 		}
-
-		// Block hidden files/dirs (.git, .env)
-		// Block config directories (hosts.d, certs.d, etc.)
 		if strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".d") {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
 	}
 
-	reqPath := cleanedPath
+	// Update reqPath to the cleaned, safe version
+	reqPath = cleanedPath
+
 	phpEnabled := h.php != nil
 
 	if strings.HasSuffix(strings.ToLower(reqPath), ".php") && !phpEnabled {
@@ -265,7 +219,11 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			http.Error(w, "Not Found", http.StatusNotFound)
+		} else if errors.Is(err, fs.ErrPermission) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
 		} else {
+			// This fallback 500 should now only happen for real IO errors, not traversal
+			h.logger.Fields("err", err, "path", reqPath).Debug("file open failed")
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		}
 		return
@@ -393,38 +351,12 @@ func (h *webHandler) serveDirectoryListing(w http.ResponseWriter, r *http.Reques
 		ShowParent: displayPath != "/",
 		Items:      items,
 		FileCount:  len(items),
-		Breadcrumb: buildBreadcrumbs(displayPath),
+		Breadcrumb: h.buildBreadcrumbs(displayPath),
 	}
 
 	if err := tmpl.Execute(w, data); err != nil {
 		h.logger.Error("template execute error: ", err)
 	}
-}
-
-func getMimeType(path string) string {
-	ext := filepath.Ext(path)
-	if v, ok := mimeCache.Load(ext); ok {
-		return v.(string)
-	}
-
-	ctype := mime.TypeByExtension(ext)
-
-	if ctype == "" {
-		ctype = "application/octet-stream"
-	} else if (strings.HasPrefix(ctype, "text/") ||
-		strings.Contains(ctype, "javascript") ||
-		strings.Contains(ctype, "json")) &&
-		!strings.Contains(ctype, "charset") {
-		ctype += "; charset=utf-8"
-	}
-
-	mimeCache.Store(ext, ctype)
-	return ctype
-}
-
-func clientAcceptsGzip(r *http.Request) bool {
-	ae := r.Header.Get("Accept-Encoding")
-	return strings.Contains(ae, "gzip")
 }
 
 func (h *webHandler) resolveGzipPath(reqPath string) (gzPath string, origPath string) {
@@ -460,8 +392,6 @@ func (h *webHandler) gzSetExists(gzPath string, exists bool) {
 		Exp:    time.Now().Add(gzCacheTTL),
 	})
 }
-
-var fingerprintRe = regexp.MustCompile(`(?i)(?:[._-])[a-f0-9]{8,}(?:[._-])`)
 
 func (h *webHandler) setCommonHeaders(
 	w http.ResponseWriter,
@@ -503,19 +433,24 @@ func (h *webHandler) setCommonHeaders(
 	return false
 }
 
-func weakETag(size int64, modTime time.Time) string {
-	return `W/"` + strconv.FormatInt(size, 10) + "-" + strconv.FormatInt(modTime.UnixNano(), 10) + `"`
-}
+func (h *webHandler) buildBreadcrumbs(displayPath string) []crumb {
+	// displayPath is r.URL.Path (starts with "/")
+	p := strings.Trim(displayPath, "/")
+	if p == "" {
+		return []crumb{{Name: "root", Href: "/"}}
+	}
 
-func ifNoneMatchHas(inm string, etag string) bool {
-	if strings.TrimSpace(inm) == "*" {
-		return true
-	}
-	parts := strings.Split(inm, ",")
-	for _, p := range parts {
-		if strings.TrimSpace(p) == etag {
-			return true
+	parts := strings.Split(p, "/")
+	out := make([]crumb, 0, len(parts)+1)
+	out = append(out, crumb{Name: "root", Href: "/"})
+
+	var cur string
+	for _, part := range parts {
+		if part == "" {
+			continue
 		}
+		cur += "/" + part
+		out = append(out, crumb{Name: part, Href: cur + "/"})
 	}
-	return false
+	return out
 }
