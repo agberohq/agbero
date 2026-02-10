@@ -19,7 +19,7 @@ func (m *Manager) ExportHostFunctions() {
 	// We create a "env" module which is the standard for C/Rust/TinyGo
 	builder := m.runtime.NewHostModuleBuilder("env")
 
-	// 1. Get Header: agbero_get_header(key_ptr, key_len, val_ptr, max_len) -> val_len
+	// Get Header: agbero_get_header(key_ptr, key_len, val_ptr, max_len) -> val_len
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
 			// Logic to read header from ctx and write to WASM memory
@@ -54,7 +54,7 @@ func (m *Manager) ExportHostFunctions() {
 			[]api.ValueType{api.ValueTypeI32}).
 		Export("agbero_get_header")
 
-	// 2. Set Header: agbero_set_header(key_ptr, key_len, val_ptr, val_len)
+	// Set Header: agbero_set_header(key_ptr, key_len, val_ptr, val_len)
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
 			w := ctx.Value("w").(http.ResponseWriter)
@@ -78,7 +78,7 @@ func (m *Manager) ExportHostFunctions() {
 			[]api.ValueType{}).
 		Export("agbero_set_header")
 
-	// 3. Get Config: agbero_get_config(buf_ptr, buf_len) -> actual_len
+	// Get Config: agbero_get_config(buf_ptr, buf_len) -> actual_len
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
 			bufPtr := uint32(stack[0])
@@ -97,7 +97,7 @@ func (m *Manager) ExportHostFunctions() {
 			[]api.ValueType{api.ValueTypeI32}).
 		Export("agbero_get_config")
 
-	// 4. Block/Allow: agbero_done(status_code)
+	// Block/Allow: agbero_done(status_code)
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
 			status := uint32(stack[0])

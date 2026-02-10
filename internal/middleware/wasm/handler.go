@@ -1,4 +1,3 @@
-// internal/middleware/wasm/handler.go
 package wasm
 
 import (
@@ -31,7 +30,6 @@ func (m *Manager) Handler(next http.Handler) http.Handler {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		//  Use updated cleanup method
 		defer m.CloseInstance(ctx, inst)
 
 		handleFunc := inst.mod.ExportedFunction("handle_request")

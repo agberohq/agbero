@@ -2,7 +2,6 @@ package ui
 
 import (
 	"mime"
-	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -69,10 +68,10 @@ func getMimeType(path string) string {
 	return ctype
 }
 
-func clientAcceptsGzip(r *http.Request) bool {
-	ae := r.Header.Get("Accept-Encoding")
-	return strings.Contains(ae, "gzip")
-}
+//func clientAcceptsGzip(r *http.Request) bool {
+//	ae := r.Header.Get("Accept-Encoding")
+//	return strings.Contains(ae, "gzip")
+//}
 
 func weakETag(size int64, modTime time.Time) string {
 	return `W/"` + strconv.FormatInt(size, 10) + "-" + strconv.FormatInt(modTime.UnixNano(), 10) + `"`

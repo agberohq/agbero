@@ -3,6 +3,7 @@ package tcp
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -205,7 +206,7 @@ func (p *Proxy) handle(src net.Conn) {
 		if err != nil {
 			// If timeout with 0 bytes, client is silent.
 			// If we have a default route, we might route blindly, but usually this is a dead conn.
-			if isTimeout(err) && n0 == 0 {
+			if p.isTimeout(err) && n0 == 0 {
 				p.mu.RLock()
 				hasDefault := p.Default != nil
 				p.mu.RUnlock()
@@ -464,54 +465,10 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 	return "", nil
 }
 
-type peekedConn struct {
-	net.Conn
-	reader io.Reader
-}
-
-func (c *peekedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
-
-func closeWrite(c net.Conn) {
-	switch v := c.(type) {
-	case *net.TCPConn:
-		_ = v.CloseWrite()
-	case *peekedConn:
-		closeWrite(v.Conn)
-	case *deadlineConn:
-		closeWrite(v.Conn)
-	default:
-		// Attempt to upgrade to interface if the struct is private or other wrappers exist
-		type closer interface {
-			CloseWrite() error
-		}
-		if cw, ok := c.(closer); ok {
-			_ = cw.CloseWrite()
-		}
-	}
-}
-
-func isTimeout(err error) bool {
-	if netErr, ok := err.(net.Error); ok {
+func (p *Proxy) isTimeout(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) {
 		return netErr.Timeout()
 	}
 	return false
-}
-
-type deadlineConn struct {
-	net.Conn
-	timeout time.Duration
-}
-
-func (c *deadlineConn) Read(b []byte) (int, error) {
-	if c.timeout > 0 {
-		_ = c.SetReadDeadline(time.Now().Add(c.timeout))
-	}
-	return c.Conn.Read(b)
-}
-
-func (c *deadlineConn) Write(b []byte) (int, error) {
-	if c.timeout > 0 {
-		_ = c.SetWriteDeadline(time.Now().Add(c.timeout))
-	}
-	return c.Conn.Write(b)
 }

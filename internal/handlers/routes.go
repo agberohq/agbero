@@ -41,7 +41,7 @@ func NewRoute(route *alaye.Route, logger *ll.Logger) *Route {
 }
 
 func newWebRoute(route *alaye.Route, logger *ll.Logger) *Route {
-	chain := http.Handler(ui.New(logger, route))
+	chain := http.Handler(ui.NewWeb(logger, route))
 
 	// Check if IP address is allowed
 	if len(route.AllowedIPs) > 0 {

@@ -37,11 +37,11 @@ func (s *Server) startAdminServer() {
 		w.Write([]byte("OK"))
 	})
 
-	// Login Handler: Exchanges Credentials for JWT
+	// Login Admin: Exchanges Credentials for JWT
 	mux.HandleFunc("/login", s.handleAdminLogin)
 
 	// UI Assets (HTML/JS/CSS) - served publicly so login.html loads
-	uiHandler := ui.Handler()
+	uiHandler := ui.Admin()
 	mux.Handle("/", uiHandler)
 
 	// Helper to wrap handlers with JWT Auth

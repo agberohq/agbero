@@ -17,7 +17,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery/gossip"
-	handlers2 "git.imaxinacion.net/aibox/agbero/internal/handlers"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/tcp"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/firewall"
@@ -121,13 +121,11 @@ func (s *Server) Start(configPath string) error {
 		woos.RouteCacheTTL,
 		jack.ReaperWithLogger(s.logger),
 		jack.ReaperWithHandler(func(ctx context.Context, id string) {
-			if v, ok := cache.Route.Load(id); ok {
-				if h, ok := v.Handler.(interface{ Close() }); ok {
-					h.Close()
-				}
-				cache.Route.Delete(id)
-				s.logger.Fields("route_key", id).Debug("reaped idle route handler")
+			if _, ok := cache.Route.Load(id); !ok {
+				return
 			}
+			cache.Route.Delete(id)
+			s.logger.Fields("route_key", id).Debug("reaped idle route handler")
 		}),
 	)
 	s.reaper.Start()
@@ -865,21 +863,26 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	handler.ServeHTTP(w, reqOut)
 }
 
-func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handlers2.Route {
-	if v, ok := cache.Route.Load(key); ok {
-		s.reaper.Touch(key)
-		return v.Handler.(*handlers2.Route)
+func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handlers.Route {
+	if it, ok := cache.Route.Load(key); ok {
+		if h, ok := cache.Get[*handlers.Route](it); ok {
+			s.reaper.Touch(key)
+			return h
+		}
 	}
 
-	h := handlers2.NewRoute(route, s.logger)
+	h := handlers.NewRoute(route, s.logger)
+
 	newItem := &cache.Item{
-		Handler: h,
+		Value: h,
 	}
 
-	if v, loaded := cache.Route.LoadOrStore(key, newItem); loaded {
+	if it, loaded := cache.Route.LoadOrStore(key, newItem); loaded {
 		h.Close()
-		s.reaper.Touch(key)
-		return v.Handler.(*handlers2.Route)
+		if existing, ok := cache.Get[*handlers.Route](it); ok {
+			s.reaper.Touch(key)
+			return existing
+		}
 	}
 
 	s.reaper.Touch(key)

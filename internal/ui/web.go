@@ -12,9 +12,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/dustin/go-humanize"
@@ -23,25 +23,16 @@ import (
 )
 
 //go:embed web/dir.html
-var dirListing string
-var tmpl = template.Must(template.New("dir").Parse(dirListing))
-
-// Ensure critical web types are registered
-
+var webHtml string
 var (
+	tmpl = template.Must(template.New("web").Parse(webHtml))
 
-	// Cache for gzip existence checks to avoid filesystem "miss" cost on every request.
-	// We use a short TTL so if you deploy new .gz admin, the server will discover them soon.
-	gzExistsCache sync.Map // string -> gzCacheEntry
+	gzExistsCache = cache.New(cache.Options{
+		MaximumSize: woos.CacheMax,
+	})
 
-	// fingerprintRe is a compiled regular expression that matches fingerprinted file names containing 8+ hexadecimal characters.
 	fingerprintRe = regexp.MustCompile(`(?i)(?:[._-])[a-f0-9]{8,}(?:[._-])`)
 )
-
-type gzCacheEntry struct {
-	Exists bool
-	Exp    time.Time
-}
 
 const gzCacheTTL = 60 * time.Second
 
@@ -52,9 +43,8 @@ type dirItem struct {
 	ModTime string
 	URL     string
 
-	// For UI: faster + reliable icons and "Type" column.
-	Ext  string // ".pdf"
-	MIME string // "application/pdf"
+	Ext  string
+	MIME string
 }
 
 type crumb struct {
@@ -62,15 +52,15 @@ type crumb struct {
 	Href string // absolute path (ends with "/")
 }
 
-type webHandler struct {
+type web struct {
 	route  *alaye.Route
 	logger *ll.Logger
 
 	php http.Handler // nil if disabled
 }
 
-func New(logger *ll.Logger, route *alaye.Route) *webHandler {
-	h := &webHandler{
+func NewWeb(logger *ll.Logger, route *alaye.Route) *web {
+	h := &web{
 		route:  route,
 		logger: logger,
 	}
@@ -111,7 +101,7 @@ func New(logger *ll.Logger, route *alaye.Route) *webHandler {
 	return h
 }
 
-func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
@@ -187,7 +177,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if clientAcceptsGzip(r) {
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 		gzPath, gzOrigPath := h.resolveGzipPath(reqPath)
 		if h.gzMayExist(gzPath) {
 			fGz, err := root.Open(gzPath)
@@ -274,7 +264,7 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }
 
-func (h *webHandler) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *os.File, displayPath string) {
+func (h *web) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *os.File, displayPath string) {
 	entries, err := f.ReadDir(-1)
 	if err != nil {
 		http.Error(w, "Error reading directory", http.StatusInternalServerError)
@@ -337,7 +327,7 @@ func (h *webHandler) serveDirectoryListing(w http.ResponseWriter, r *http.Reques
 	})
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// dirListing pages should revalidate often.
+	// webHtml pages should revalidate often.
 	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 
 	data := struct {
@@ -359,7 +349,7 @@ func (h *webHandler) serveDirectoryListing(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func (h *webHandler) resolveGzipPath(reqPath string) (gzPath string, origPath string) {
+func (h *web) resolveGzipPath(reqPath string) (gzPath string, origPath string) {
 	origPath = reqPath
 	gzPath = reqPath + ".gz"
 
@@ -374,26 +364,23 @@ func (h *webHandler) resolveGzipPath(reqPath string) (gzPath string, origPath st
 	return gzPath, origPath
 }
 
-func (h *webHandler) gzMayExist(gzPath string) bool {
-	now := time.Now()
-	if v, ok := gzExistsCache.Load(gzPath); ok {
-		e := v.(gzCacheEntry)
-		if now.Before(e.Exp) {
-			return e.Exists
-		}
-		gzExistsCache.Delete(gzPath)
+func (h *web) gzMayExist(gzPath string) bool {
+	it, ok := gzExistsCache.Load(gzPath)
+	if !ok {
+		return true
 	}
-	return true
+	v, ok := cache.Get[bool](it)
+	if !ok {
+		return true
+	}
+	return v
 }
 
-func (h *webHandler) gzSetExists(gzPath string, exists bool) {
-	gzExistsCache.Store(gzPath, gzCacheEntry{
-		Exists: exists,
-		Exp:    time.Now().Add(gzCacheTTL),
-	})
+func (h *web) gzSetExists(gzPath string, exists bool) {
+	gzExistsCache.StoreTTL(gzPath, &cache.Item{Value: exists}, gzCacheTTL)
 }
 
-func (h *webHandler) setCommonHeaders(
+func (h *web) setCommonHeaders(
 	w http.ResponseWriter,
 	r *http.Request,
 	reqPath string,
@@ -433,7 +420,7 @@ func (h *webHandler) setCommonHeaders(
 	return false
 }
 
-func (h *webHandler) buildBreadcrumbs(displayPath string) []crumb {
+func (h *web) buildBreadcrumbs(displayPath string) []crumb {
 	// displayPath is r.URL.Path (starts with "/")
 	p := strings.Trim(displayPath, "/")
 	if p == "" {

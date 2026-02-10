@@ -173,10 +173,12 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	key := route.Key()
 
 	handler := handlers.NewRoute(route, testLogger)
+
 	item := &cache.Item{
-		Handler: handler,
+		Value: handler,
 	}
 	item.LastAccessed.Store(time.Now().UnixNano())
+
 	cache.Route.LoadOrStore(key, item)
 
 	h := s.getOrBuildRouteHandler(route, key)
