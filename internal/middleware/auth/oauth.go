@@ -102,7 +102,7 @@ func startGothFlow(w http.ResponseWriter, r *http.Request, provider goth.Provide
 		Value:    sessData,
 		Path:     woos.Slash,
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   isSecure(r),
 		Expires:  time.Now().Add(woos.StateTTL),
 		SameSite: http.SameSiteLaxMode,
 	})
@@ -183,7 +183,7 @@ func handleGothCallback(w http.ResponseWriter, r *http.Request, provider goth.Pr
 		Value:    user.AccessToken,
 		Path:     woos.Slash,
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   isSecure(r),
 		Expires:  user.ExpiresAt,
 		SameSite: http.SameSiteLaxMode,
 	})
@@ -214,4 +214,15 @@ func generateState() string {
 	b := make([]byte, woos.DefaultByteLen)
 	rand.Read(b)
 	return base64.URLEncoding.EncodeToString(b)
+}
+
+func isSecure(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	// Check X-Forwarded-Proto header (standard for proxies)
+	if scheme := r.Header.Get("X-Forwarded-Proto"); scheme != "" {
+		return strings.ToLower(scheme) == "https"
+	}
+	return false
 }
