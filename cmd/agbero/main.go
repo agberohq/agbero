@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -55,15 +54,14 @@ var (
 )
 
 func main() {
-	rand.Seed(time.Now().UnixNano())
 
-	// 1. Initialize Single Shutdown Manager
+	// Initialize Single Shutdown Manager
 	shutdown := jack.NewShutdown(
 		jack.ShutdownWithTimeout(30*time.Second),
 		jack.ShutdownWithSignals(os.Interrupt, syscall.SIGTERM),
 	)
 
-	// 2. Initialize Logger (Passing Shutdown Manager)
+	// Initialize Logger (Passing Shutdown Manager)
 	logger = ll.New(woos.Name,
 		ll.WithHandler(lh.NewColorizedHandler(os.Stdout)),
 		ll.WithFatalExits(true),
