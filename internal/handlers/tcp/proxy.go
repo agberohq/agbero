@@ -177,13 +177,13 @@ func (p *Proxy) handle(src net.Conn) {
 	defer p.trackConn(src, false)
 	defer p.wg.Done()
 
-	// Enable KeepAlive to prevent intermediate firewalls (AWS/Azure) from dropping idle DB conns
+	remoteAddr := src.RemoteAddr().String()
+
 	if tcpConn, ok := src.(*net.TCPConn); ok {
 		_ = tcpConn.SetKeepAlive(true)
 		_ = tcpConn.SetKeepAlivePeriod(30 * time.Second)
 	}
 
-	// Acquire Read Lock to check if we need SNI sniffing
 	p.mu.RLock()
 	needSNI := len(p.Routes) > 0
 	p.mu.RUnlock()
@@ -197,26 +197,23 @@ func (p *Proxy) handle(src net.Conn) {
 
 	if needSNI {
 		peekBuf = make([]byte, woos.PeekBufferSize)
-
-		// 1s timeout to allow slow mobile/IoT clients to send ClientHello
 		_ = src.SetReadDeadline(time.Now().Add(woos.InitialReadTimeout))
 		n0, err := src.Read(peekBuf)
 		_ = src.SetReadDeadline(time.Time{})
 
 		if err != nil {
-			// If timeout with 0 bytes, client is silent.
-			// If we have a default route, we might route blindly, but usually this is a dead conn.
 			if p.isTimeout(err) && n0 == 0 {
 				p.mu.RLock()
 				hasDefault := p.Default != nil
 				p.mu.RUnlock()
 
 				if !hasDefault {
+					p.Logger.Fields("remote", remoteAddr).Debug("tcp peek timeout, no default route")
 					_ = src.Close()
 					return
 				}
-				// Proceed blindly to default
 			} else if err != io.EOF {
+				p.Logger.Fields("remote", remoteAddr, "err", err).Debug("tcp peek error")
 				_ = src.Close()
 				return
 			}
@@ -231,6 +228,7 @@ func (p *Proxy) handle(src net.Conn) {
 
 	balancer := p.pickBalancer(sni)
 	if balancer == nil {
+		p.Logger.Fields("remote", remoteAddr, "sni", sni).Debug("no tcp route found")
 		_ = src.Close()
 		return
 	}
@@ -243,7 +241,6 @@ func (p *Proxy) handle(src net.Conn) {
 		}
 	}
 
-	// Dial with Retries
 	tried := make(map[*Backend]struct{}, 4)
 	var (
 		dst     net.Conn
@@ -269,26 +266,21 @@ func (p *Proxy) handle(src net.Conn) {
 		}
 
 		backend.OnDialFailure(err)
-		p.Logger.Fields("backend", backend.Address, "err", err).Warn("tcp dial failed, retrying")
+		p.Logger.Fields("backend", backend.Address, "err", err).Warn("tcp dial failed")
 	}
 
 	if dst == nil {
+		p.Logger.Fields("remote", remoteAddr, "sni", sni).Warn("tcp proxy: upstream unavailable")
 		_ = client.Close()
 		return
 	}
 
 	if balancer.useProtocol() {
-		// We must write the header BEFORE sending any client bytes
-
-		// Determine Source/Dest
-		// We cast to proper net.Addr types usually, but the library handles it.
 		header := proxyproto.HeaderProxyFromAddrs(
-			byte(1), // PROXY protocol version 1 (Text) is most compatible with DBs
+			byte(1),
 			client.RemoteAddr(),
 			client.LocalAddr(),
 		)
-
-		// Write to backend connection
 		if _, err := header.WriteTo(dst); err != nil {
 			p.Logger.Fields("err", err).Error("failed to write proxy protocol header")
 			_ = client.Close()
@@ -297,7 +289,6 @@ func (p *Proxy) handle(src net.Conn) {
 		}
 	}
 
-	// KeepAlive on backend connection
 	if tcpConn, ok := dst.(*net.TCPConn); ok {
 		_ = tcpConn.SetKeepAlive(true)
 		_ = tcpConn.SetKeepAlivePeriod(30 * time.Second)

@@ -1,6 +1,17 @@
 package lb
 
-import "math"
+import (
+	"math"
+	"math/rand/v2"
+	"sync"
+)
+
+var rngPool = sync.Pool{
+	New: func() any {
+		// Each goroutine gets its own seeded generator
+		return rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+	},
+}
 
 type rng struct {
 	s [4]uint64
