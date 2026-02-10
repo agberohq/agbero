@@ -159,9 +159,15 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 }
 
 func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
+	if !b.Alive.Load() {
+		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
 	b.InFlight.Add(1)
 	defer b.InFlight.Add(-1)
+
+	start := time.Now()
 
 	b.Proxy.ServeHTTP(w, r)
 
