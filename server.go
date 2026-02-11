@@ -192,11 +192,19 @@ func (s *Server) Start(configPath string) error {
 	}
 
 	// Setup TLS
-	tlsCfg, _, err := s.buildTLS(httpFallbackHandler)
+	// Capture acmeHandler to ensure HTTP challenges are intercepted before redirection
+	tlsCfg, acmeHandler, err := s.buildTLS(httpFallbackHandler)
 	if err != nil {
 		s.logger.Fields("err", err.Error()).Warn("TLS setup failed; HTTPS listeners may not start")
 		tlsCfg = nil
+		acmeHandler = httpFallbackHandler
 	}
+	//else if tlsCfg != nil {
+	//	// Ensure "acme-tls/1" is present for TLS-ALPN-01 challenges
+	//	// This prevents "remote error: tls: no application protocol"
+	//	tlsCfg.NextProtos = append([]string{woos.AlpnTls}, tlsCfg.NextProtos...)
+	//}
+
 	if s.tlsManager != nil && s.shutdown != nil {
 		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
 	}
@@ -221,13 +229,15 @@ func (s *Server) Start(configPath string) error {
 	for _, addr := range s.global.Bind.HTTP {
 		_, port, _ := net.SplitHostPort(addr)
 		usedPorts[port] = true
-		s.startTCPServer(addr, false, nil, nil, baseHandler, httpFallbackHandler, anyStreaming)
+		// Use acmeHandler instead of httpFallbackHandler
+		s.startTCPServer(addr, false, nil, nil, baseHandler, acmeHandler, anyStreaming)
 	}
 
 	for _, addr := range s.global.Bind.HTTPS {
 		_, port, _ := net.SplitHostPort(addr)
 		usedPorts[port] = true
-		s.startTCPServer(addr, true, nil, tlsCfg, baseHandler, httpFallbackHandler, anyStreaming)
+		// FIX: Use acmeHandler here too (though strictly needed mostly for port 80)
+		s.startTCPServer(addr, true, nil, tlsCfg, baseHandler, acmeHandler, anyStreaming)
 		s.startQUICServer(addr, nil, tlsCfg, baseHandler)
 	}
 
@@ -244,7 +254,8 @@ func (s *Server) Start(configPath string) error {
 				isTLS = false
 			}
 
-			s.startTCPServer(addr, isTLS, h, tlsCfg, baseHandler, httpFallbackHandler, anyStreaming)
+			// FIX: Use acmeHandler for the non-TLS fallback argument
+			s.startTCPServer(addr, isTLS, h, tlsCfg, baseHandler, acmeHandler, anyStreaming)
 			if isTLS {
 				s.startQUICServer(addr, h, tlsCfg, baseHandler)
 			}
@@ -695,7 +706,7 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 
 	tlsCfg := &tls.Config{
 		MinVersion:     tls.VersionTLS12,
-		NextProtos:     []string{woos.AlpnH3, woos.AlpnH2, woos.AlpnH11},
+		NextProtos:     []string{woos.AlpnTls, woos.AlpnH3, woos.AlpnH2, woos.AlpnH11},
 		GetCertificate: s.tlsManager.GetCertificate,
 	}
 

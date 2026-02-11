@@ -124,6 +124,7 @@ const (
 	AlpnH3  = "h3"
 	AlpnH2  = "h2"
 	AlpnH11 = "http/1.1"
+	AlpnTls = "acme-tls/1"
 )
 
 // Path & Template Constants
