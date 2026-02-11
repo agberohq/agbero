@@ -147,6 +147,7 @@ func (m *Manager) initCertMagic() error {
 	}
 	issuerStaging := certmagic.NewACMEIssuer(cmStaging, acmeStaging)
 	cmStaging.Issuers = []certmagic.Issuer{issuerStaging}
+	cmProd.Logger = newTLSLogger(m.logger)
 
 	m.cmStaging = cmStaging
 	m.issStaging = issuerStaging
