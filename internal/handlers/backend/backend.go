@@ -87,15 +87,19 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 
 	rp := httputil.NewSingleHostReverseProxy(u)
 	rp.BufferPool = sharedBufferPool
-	rp.Transport = woos.Transport.Clone()
+
+	// Clone transport and explicitly disable ExpectContinueTimeout.
+	t := woos.Transport.Clone()
+	t.ExpectContinueTimeout = 0
+
+	// Ensure we don't carry over unlimited flushes unless streaming
 	rp.FlushInterval = -1
 
 	if cfg.Streaming.Enabled {
-		t := woos.Transport.Clone()
 		t.ResponseHeaderTimeout = 0
-		rp.Transport = t
 		rp.FlushInterval = cfg.Streaming.EffectiveFlushInterval()
 	}
+	rp.Transport = t
 
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		if errors.Is(err, context.Canceled) {
@@ -111,8 +115,6 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 		}
 
 		// gRPC-aware Error Handling
-		// gRPC uses HTTP/2 and expects status 200 with specific headers for protocol errors
-		// instead of generic HTTP 502/503 which clients may misinterpret as transport errors.
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
 			w.Header().Set("Content-Type", "application/grpc")
 			w.Header().Set("Grpc-Status", "14") // 14 = UNAVAILABLE
@@ -143,18 +145,32 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 
 	b.Proxy = rp
 
+	// FIX: Initialize RNG here, BEFORE starting the health check loop to avoid data race
+	b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
+
 	if b.hcConfig != nil && b.hcConfig.Path != "" {
 		go b.healthCheckLoop()
 	}
 
-	b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 	return b, nil
 }
 
+// Jitter returns a random duration to avoid thundering herd.
+// The lazy init check is removed as NewBackend guarantees initialization.
+func (b *Backend) Jitter(interval time.Duration) time.Duration {
+	return time.Duration(b.rnd.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
+}
+
 func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
+	if !b.Alive.Load() {
+		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
 	b.InFlight.Add(1)
 	defer b.InFlight.Add(-1)
+
+	start := time.Now()
 
 	b.Proxy.ServeHTTP(w, r)
 
@@ -166,6 +182,7 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
+		b.Metrics.Close() // Ensure metrics routines are cleaned up
 	})
 }
 
@@ -189,6 +206,7 @@ func (b *Backend) healthCheckLoop() {
 		Timeout: timeout,
 		Transport: &http.Transport{
 			MaxIdleConnsPerHost: woos.DefaultMaxIdleConnsPerHost,
+			DisableKeepAlives:   true, // Active checks should not hog connections
 		},
 	}
 
@@ -241,9 +259,9 @@ func (b *Backend) LastRecovery() time.Time {
 	return time.Unix(0, b.lastRecovery.Load())
 }
 
-func (b *Backend) Jitter(interval time.Duration) time.Duration {
-	if b.rnd == nil {
-		b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
-	}
-	return time.Duration(b.rnd.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
-}
+//func (b *Backend) Jitter(interval time.Duration) time.Duration {
+//	if b.rnd == nil {
+//		b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
+//	}
+//	return time.Duration(b.rnd.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
+//}

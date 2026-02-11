@@ -264,6 +264,9 @@ play:
 		go build -ldflags="$(LDFLAGS)" -trimpath \
 		-o $(BUILD_DIR)/$(APP_NAME) $(SRC_DIR)
 
+	# @echo "Killing existing process on remote (if any)..."
+	# ssh $(PLAY_USER)@$(PLAY_HOST) "pkill $(APP_NAME)" || true
+
 	@echo "Sending binary to $(PLAY_USER)@$(PLAY_HOST):$(PLAY_PATH)..."
 	scp $(BUILD_DIR)/$(APP_NAME) \
 		$(PLAY_USER)@$(PLAY_HOST):$(PLAY_PATH)/$(APP_NAME)

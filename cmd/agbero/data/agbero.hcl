@@ -164,6 +164,14 @@ rate_limits {
     key      = "header:X-API-Key"
   }
 
+  # Testing url
+  rule "testing" {
+    prefixes = ["/testing"]
+    requests = 1000000
+    window   = "1m"
+    key      = "ip"
+  }
+
   # Catch-all
   rule "global" {
     requests = 5000

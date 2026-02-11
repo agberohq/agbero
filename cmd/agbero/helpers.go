@@ -114,7 +114,7 @@ func ensureConfig(configFile string) error {
 	content = strings.ReplaceAll(content, "{ADMIN_PASSWORD}", string(hash))
 	content = strings.ReplaceAll(content, "{ADMIN_SECRET}", secret)
 
-	if err := os.WriteFile(configFile, []byte(content), woos.FilePerm); err != nil {
+	if err := os.WriteFile(configFile, []byte(content), woos.FilePermSecured); err != nil {
 		return fmt.Errorf("write default config: %w", err)
 	}
 

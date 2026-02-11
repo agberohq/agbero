@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
 
 const configDir = ".oppor"
@@ -55,7 +57,7 @@ func saveCurrentConfig(cfg Config, name string) error {
 		return err
 	}
 
-	return os.WriteFile(filePath, data, 0644)
+	return os.WriteFile(filePath, data, woos.FilePermSecured)
 }
 
 func loadConfigPreset(name string) (Config, error) {

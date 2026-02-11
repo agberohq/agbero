@@ -2,12 +2,10 @@ package lb
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/binary"
 	"math"
+	"math/rand/v2"
 	"net/http"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -16,14 +14,6 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
-
-var rngPool = sync.Pool{
-	New: func() any {
-		var seed uint64
-		_ = binary.Read(rand.Reader, binary.LittleEndian, &seed)
-		return newRng(seed)
-	},
-}
 
 type snapshotHolder struct {
 	backends []*backend.Backend
@@ -180,14 +170,16 @@ func (lb *LoadBalancer) pickRoundRobin(list []*backend.Backend, w *weightWheel) 
 }
 
 func (lb *LoadBalancer) pickRandom(list []*backend.Backend, w *weightWheel) *backend.Backend {
-	if w == nil || w.total == 0 || len(w.cumul) == 0 {
-		r := rngPool.Get().(*rng)
-		start := r.Uint64n(uint64(len(list)))
-		rngPool.Put(r)
+	// FIX: Use *rand.Rand (v2) and IntN
+	r := rngPool.Get().(*rand.Rand)
+	defer rngPool.Put(r)
 
-		n := uint64(len(list))
+	if w == nil || w.total == 0 || len(w.cumul) == 0 {
+		start := r.IntN(len(list))
+
+		n := len(list)
 		for i := 0; i < len(list); i++ {
-			idx := int((start + uint64(i)) % n)
+			idx := (start + i) % n
 			if list[idx].Alive.Load() {
 				return list[idx]
 			}
@@ -195,10 +187,7 @@ func (lb *LoadBalancer) pickRandom(list []*backend.Backend, w *weightWheel) *bac
 		return nil
 	}
 
-	r := rngPool.Get().(*rng)
-	target := r.Uint64n(w.total)
-	rngPool.Put(r)
-
+	target := r.Uint64N(w.total)
 	idx := w.search(target)
 	if idx >= 0 && idx < len(list) && list[idx].Alive.Load() {
 		return list[idx]
@@ -287,16 +276,6 @@ func (lb *LoadBalancer) pickWeightedLeastConn(list []*backend.Backend) *backend.
 	return best
 }
 
-// pickByConditions keeps your original semantics without building a filtered slice:
-//
-// - If no backend matches any condition rules: return (nil, false) → caller uses full list
-// - If some match and any matched are healthy: pick among healthy matches and return (be, true)
-// - If some match but none healthy: return (nil, false) → caller uses full list
-//
-// Notes on weights:
-//   - If weights are all one, we can pass nil wheel and your pickers use unweighted paths.
-//   - If weights are not all one and you care about honoring weights in the matched set,
-//     we build a wheel only in the handled/healthy-match case.
 func (lb *LoadBalancer) pickByConditions(
 	list []*backend.Backend,
 	snapshotWheel *weightWheel,
@@ -304,8 +283,6 @@ func (lb *LoadBalancer) pickByConditions(
 	weightsAllOne bool,
 ) (*backend.Backend, bool) {
 
-	// We only need the healthy matches for decision making.
-	// Also track whether any match happened at all.
 	var matchedHealthy []*backend.Backend
 	anyMatch := false
 
@@ -322,25 +299,18 @@ func (lb *LoadBalancer) pickByConditions(
 		}
 	}
 
-	// No conditions matched anywhere -> not handled (use full list).
 	if !anyMatch {
 		return nil, false
 	}
 
-	// Some matched, but none healthy -> fall back to full list (not handled).
 	if len(matchedHealthy) == 0 {
 		return nil, false
 	}
 
-	// Some matched and some healthy -> handled.
-	// Preserve weight behavior:
-	// - if all weights are 1, pass nil wheel
-	// - else build wheel for the matched set
 	if weightsAllOne {
 		return lb.pickWithList(matchedHealthy, nil, r), true
 	}
 
-	// If snapshotWheel is nil or unweighted, buildWheel will produce the right structure anyway.
 	return lb.pickWithList(matchedHealthy, buildWheel(matchedHealthy), r), true
 }
 

@@ -11,7 +11,7 @@ import (
 
 func TestNew(t *testing.T) {
 	// Mock Logger (discard output)
-	logger := ll.New("test")
+	logger := ll.New("test").Disable()
 
 	tests := []struct {
 		name           string

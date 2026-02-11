@@ -9,11 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
 )
 
-var testLogger = ll.New("test")
+var testLogger = ll.New("test").Disable()
 
 func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 	// 1. Create 2 dummy backends
@@ -177,10 +178,10 @@ func TestRouteHandler_Proxy_StripPrefix(t *testing.T) {
 
 func TestRouteHandler_Web_BasicFileServing(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("INDEX"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("INDEX"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "hello.html"), []byte("HELLO"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "hello.html"), []byte("HELLO"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -226,10 +227,10 @@ func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
 	root := t.TempDir()
 
 	// Create regular and gzipped versions
-	if err := os.WriteFile(filepath.Join(root, "style.css"), []byte("/* regular */"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "style.css"), []byte("/* regular */"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "style.css.gz"), []byte("/* gzipped */"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "style.css.gz"), []byte("/* gzipped */"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -266,7 +267,7 @@ func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
 
 func TestRouteHandler_Web_CustomIndex(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "home.htm"), []byte("HOME"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "home.htm"), []byte("HOME"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -344,7 +345,7 @@ func TestRouteHandler_Web_PathTraversalPrevented(t *testing.T) {
 
 	// Create a file outside the temp dir to test traversal
 	outsideFile := filepath.Join(t.TempDir(), "secret.txt")
-	if err := os.WriteFile(outsideFile, []byte("SECRET"), 0644); err != nil {
+	if err := os.WriteFile(outsideFile, []byte("SECRET"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -370,7 +371,7 @@ func TestRouteHandler_Web_PathTraversalPrevented(t *testing.T) {
 
 func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "test.txt"), []byte("test"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "test.txt"), []byte("test"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -444,7 +445,7 @@ func TestRouteHandler_Validation(t *testing.T) {
 				t.Helper()
 
 				root := t.TempDir()
-				if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("OK"), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("OK"), woos.FilePerm); err != nil {
 					t.Fatal(err)
 				}
 

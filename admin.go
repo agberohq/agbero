@@ -1,6 +1,7 @@
 package agbero
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -15,6 +16,10 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/crypto/bcrypt"
+)
+
+var (
+	dummyHash = []byte("$2a$10$X7V.A.1iX8.F1.2.3.4.5.6.7.8.9.0.1.2.3.4.5.6.7.8.9.0")
 )
 
 // AdminClaims defines the JWT structure for Admin access
@@ -37,11 +42,11 @@ func (s *Server) startAdminServer() {
 		w.Write([]byte("OK"))
 	})
 
-	// Login Handler: Exchanges Credentials for JWT
+	// Login Admin: Exchanges Credentials for JWT
 	mux.HandleFunc("/login", s.handleAdminLogin)
 
 	// UI Assets (HTML/JS/CSS) - served publicly so login.html loads
-	uiHandler := ui.Handler()
+	uiHandler := ui.Admin()
 	mux.Handle("/", uiHandler)
 
 	// Helper to wrap handlers with JWT Auth
@@ -99,11 +104,12 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 
 	cfg := s.global.Admin
 
-	// 1. Validation: Ensure we have users and a secret configured
+	// 1. Validation
 	if cfg.BasicAuth == nil || len(cfg.BasicAuth.Users) == 0 {
 		http.Error(w, "Server Config Error: No admin users defined in 'basic_auth'", http.StatusForbidden)
 		return
 	}
+
 	if cfg.JWTAuth == nil || cfg.JWTAuth.Secret == "" {
 		http.Error(w, "Server Config Error: 'jwt_auth.secret' is required for login", http.StatusForbidden)
 		return
@@ -114,33 +120,52 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
+
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
-	// 3. Verify Credentials against Config
-	found := false
+	// 3. Constant-Time User Lookup
+	// We do NOT return early if the user isn't found.
+	// We allow the loop to finish to hide the number of configured users.
+
+	var foundHash []byte
+	userFound := 0
+
 	for _, u := range cfg.BasicAuth.Users {
-		// Expected format in HCL: "username:bcrypt_hash"
 		parts := strings.SplitN(u, ":", 2)
-		if len(parts) == 2 && parts[0] == creds.Username {
-			// Check Password
-			if err := bcrypt.CompareHashAndPassword([]byte(parts[1]), []byte(creds.Password)); err == nil {
-				found = true
-				break
+		if len(parts) == 2 {
+			// ConstantTimeCompare returns 1 if strings match, 0 otherwise.
+			// This prevents timing leaks on the username string comparison.
+			if subtle.ConstantTimeCompare([]byte(parts[0]), []byte(creds.Username)) == 1 {
+				foundHash = []byte(parts[1])
+				userFound = 1
 			}
 		}
 	}
 
-	if !found {
-		// Add delay to prevent timing attacks
-		time.Sleep(200 * time.Millisecond)
+	// 4. Normalize Execution Time (The Defense)
+	// If user was found, we compare against their real hash.
+	// If user was NOT found, we compare against the dummyHash.
+	// This ensures we ALWAYS pay the expensive bcrypt cost (~100ms),
+	// preventing "username enumeration" via timing.
+
+	targetHash := foundHash
+	if userFound == 0 {
+		targetHash = dummyHash
+	}
+
+	err := bcrypt.CompareHashAndPassword(targetHash, []byte(creds.Password))
+
+	// If the user wasn't found (userFound == 0), we must fail.
+	// If the password was wrong (err != nil), we must fail.
+	if userFound == 0 || err != nil {
 		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 		return
 	}
 
-	// 4. Generate JWT
+	// 5. Generate JWT
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &AdminClaims{
 		User: creds.Username,
@@ -158,7 +183,7 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. Return Token
+	// 6. Return Token
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"token":   tokenString,

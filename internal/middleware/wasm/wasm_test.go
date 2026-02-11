@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
 )
@@ -80,7 +81,7 @@ func handle_request() {
 
 func main() {}
 `
-	if err := os.WriteFile(goSrc, []byte(code), 0644); err != nil {
+	if err := os.WriteFile(goSrc, []byte(code), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -91,7 +92,7 @@ func main() {}
 	}
 
 	// 4. Initialize Manager
-	logger := ll.New("test")
+	logger := ll.New("test").Disable()
 	cfg := &alaye.Wasm{
 		Module: wasmOut,
 		Access: []string{"headers"}, // Required permissions
@@ -188,7 +189,7 @@ func handle_request() {
 }
 func main() {}
 `
-	os.WriteFile(goSrc, []byte(code), 0644)
+	os.WriteFile(goSrc, []byte(code), woos.FilePerm)
 	exec.Command("tinygo", "build", "-o", wasmOut, "-target=wasi", "-no-debug", goSrc).Run()
 
 	// Config with NO permissions
@@ -197,7 +198,7 @@ func main() {}
 		Access: []string{}, // Empty!
 	}
 
-	mgr, _ := NewManager(context.Background(), ll.New("test"), cfg)
+	mgr, _ := NewManager(context.Background(), ll.New("test").Disable(), cfg)
 	defer mgr.Close(context.Background())
 
 	h := mgr.Handler(http.NotFoundHandler())

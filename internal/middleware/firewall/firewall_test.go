@@ -14,7 +14,7 @@ import (
 )
 
 func newTestLogger() *ll.Logger {
-	return ll.New("test")
+	return ll.New("test").Disable()
 }
 
 func createTempDir(t *testing.T) string {
@@ -141,7 +141,7 @@ func TestFirewall_RemoteCheck(t *testing.T) {
 func TestFirewall_ImportFile(t *testing.T) {
 	dataDir := createTempDir(t)
 	blockFile := filepath.Join(dataDir, "blocked.txt")
-	os.WriteFile(blockFile, []byte("1.2.3.4\n10.0.0.0/24"), 0644)
+	os.WriteFile(blockFile, []byte("1.2.3.4\n10.0.0.0/24"), woos.FilePerm)
 
 	cfg := &alaye.Firewall{Enabled: true, BlockList: blockFile}
 	f, _ := New(cfg, woos.NewFolder(dataDir), newTestLogger())

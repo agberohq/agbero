@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	testLogger = ll.New("test")
+	testLogger = ll.New("test").Disable()
 )
 
 // Mock Hosting implements the Hosting interface

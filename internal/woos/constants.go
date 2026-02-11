@@ -124,6 +124,7 @@ const (
 	AlpnH3  = "h3"
 	AlpnH2  = "h2"
 	AlpnH11 = "http/1.1"
+	AlpnTls = "acme-tls/1"
 )
 
 // Path & Template Constants
@@ -142,7 +143,7 @@ const (
 )
 
 // Cache
-const CacheMax = int64(10_000)
+const CacheMax = 10_000
 
 // Route Segment Kinds
 type Kind uint8
@@ -304,6 +305,8 @@ const (
 	RecordTypeHandshake      = 0x16
 	HandshakeTypeClientHello = 0x01
 
+	IdleTimeoutDeadline = 5 * time.Minute
+
 	RecordHeaderLen  = 5
 	HandshakeTypeLen = 1
 	HandshakeLength  = 3
@@ -351,9 +354,10 @@ const (
 
 // Standardize permissions here
 const (
-	DirPerm    = 0755
-	FilePerm   = 0644
-	SecurePerm = 0700 // For keys/certs
+	DirPerm         = 0755
+	FilePerm        = 0644
+	FilePermSecured = 0600
+	SecurePerm      = 0700 // For keys/certs
 )
 
 //oauth

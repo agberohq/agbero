@@ -11,11 +11,10 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
-	"github.com/olekukonko/ll/lh"
 )
 
 func newTestLogger() *ll.Logger {
-	return ll.New("test", ll.WithHandler(lh.NewTextHandler(io.Discard)))
+	return ll.New("test").Disable()
 }
 
 func waitTCPReady(t *testing.T, addr string, d time.Duration) {
@@ -333,6 +332,7 @@ func TestProxy_HalfClose_PropagatesEOF(t *testing.T) {
 
 	proxyAddr := getFreePort(t)
 	p := NewProxy(proxyAddr, newTestLogger())
+	p.SetIdleTimeout(5 * time.Second)
 	p.AddRoute("*", alaye.TCPRoute{
 		Backends: []alaye.Server{{Address: up}},
 	})
