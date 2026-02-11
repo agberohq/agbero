@@ -89,9 +89,6 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 	rp.BufferPool = sharedBufferPool
 
 	// Clone transport and explicitly disable ExpectContinueTimeout.
-	// Since ReverseProxy strips the "Expect" header (it's hop-by-hop),
-	// keeping this timeout causes the Transport to wait 1s unnecessarily
-	// for a 100-Continue that the backend will never send.
 	t := woos.Transport.Clone()
 	t.ExpectContinueTimeout = 0
 
@@ -99,8 +96,6 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 	rp.FlushInterval = -1
 
 	if cfg.Streaming.Enabled {
-		// For streaming, we might need a separate transport config if needed,
-		// but usually just removing the timeout is sufficient.
 		t.ResponseHeaderTimeout = 0
 		rp.FlushInterval = cfg.Streaming.EffectiveFlushInterval()
 	}
@@ -150,12 +145,20 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 
 	b.Proxy = rp
 
+	// FIX: Initialize RNG here, BEFORE starting the health check loop to avoid data race
+	b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
+
 	if b.hcConfig != nil && b.hcConfig.Path != "" {
 		go b.healthCheckLoop()
 	}
 
-	b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 	return b, nil
+}
+
+// Jitter returns a random duration to avoid thundering herd.
+// The lazy init check is removed as NewBackend guarantees initialization.
+func (b *Backend) Jitter(interval time.Duration) time.Duration {
+	return time.Duration(b.rnd.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
 }
 
 func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -256,9 +259,9 @@ func (b *Backend) LastRecovery() time.Time {
 	return time.Unix(0, b.lastRecovery.Load())
 }
 
-func (b *Backend) Jitter(interval time.Duration) time.Duration {
-	if b.rnd == nil {
-		b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
-	}
-	return time.Duration(b.rnd.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
-}
+//func (b *Backend) Jitter(interval time.Duration) time.Duration {
+//	if b.rnd == nil {
+//		b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
+//	}
+//	return time.Duration(b.rnd.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
+//}

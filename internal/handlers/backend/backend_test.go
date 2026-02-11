@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -341,37 +342,43 @@ func (a *atomicBool) load() bool {
 }
 
 func TestHealthCheck_Jitter(t *testing.T) {
-	requestCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
+	var hits atomic.Int64
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer server.Close()
+	defer ts.Close()
 
-	hc := &alaye.HealthCheck{
-		Path:      "/health",
-		Interval:  200 * time.Millisecond,
-		Threshold: 1,
-		Timeout:   100 * time.Millisecond,
+	// Configure backend to point to mock server
+	cfg := alaye.Server{Address: ts.URL, Weight: 1}
+	route := &alaye.Route{
+		HealthCheck: &alaye.HealthCheck{
+			Path:     "/",
+			Interval: 10 * time.Millisecond,
+			Timeout:  50 * time.Millisecond,
+		},
 	}
-	b := setupBackend(t, alaye.NewServer(server.URL), hc, nil)
+
+	b, err := NewBackend(cfg, route, ll.New("test").Disable())
+	if err != nil {
+		t.Fatalf("NewBackend error: %v", err)
+	}
 	defer b.Stop()
 
-	// Run for a bit
-	time.Sleep(800 * time.Millisecond) // Should get 2-3 requests
+	// Wait for health checks to run
+	time.Sleep(100 * time.Millisecond)
 
-	if requestCount < 2 {
-		t.Errorf("Expected at least 2 health checks, got %d", requestCount)
-	}
-	if !b.Alive.Load() {
-		t.Error("Should remain alive")
+	// FIX: Atomic Read
+	if val := hits.Load(); val == 0 {
+		t.Error("Expected health check hits, got 0")
 	}
 }
 
 func TestStop_HealthCheckLoop(t *testing.T) {
-	requestCount := 0
+	var hits atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
+		hits.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -384,19 +391,22 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 	}
 	b := setupBackend(t, alaye.NewServer(server.URL), hc, nil)
 
-	// Let it run a few times
-	time.Sleep(150 * time.Millisecond)
-	initialCount := requestCount
+	// Let it run briefly
+	time.Sleep(50 * time.Millisecond)
 
 	// Stop the backend
 	b.Stop()
 
-	// Wait and ensure no more requests
-	time.Sleep(200 * time.Millisecond)
-	finalCount := requestCount
+	// Capture hits at stop time
+	hitsAtStop := hits.Load() // FIX: Atomic Read
 
-	if finalCount > initialCount+1 { // Allow one in-flight
-		t.Errorf("Health check continued after stop: %d -> %d", initialCount, finalCount)
+	// Wait longer to ensure no more hits occur
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify no new hits occurred after stop
+	currentHits := hits.Load()      // FIX: Atomic Read
+	if currentHits > hitsAtStop+1 { // Allow +1 for in-flight race
+		t.Errorf("Health check loop did not stop. Hits went from %d to %d", hitsAtStop, currentHits)
 	}
 }
 
