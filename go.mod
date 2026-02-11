@@ -19,12 +19,12 @@ require (
 	github.com/integrii/flaggy v1.8.0
 	github.com/kardianos/service v1.2.4
 	github.com/klauspost/compress v1.18.4
-	github.com/markbates/goth v1.81.0
+	github.com/markbates/goth v1.82.0
 	github.com/maypok86/otter/v2 v2.3.0
 	github.com/olekukonko/errors v1.2.0
-	github.com/olekukonko/jack v0.0.0-20260210232842-601d62a15f5c
-	github.com/olekukonko/ll v0.1.5-0.20260204203631-e8a2a39131bf
-	github.com/pires/go-proxyproto v0.10.0
+	github.com/olekukonko/jack v0.0.0-20260211212132-ec50c2ab5be7
+	github.com/olekukonko/ll v0.1.5
+	github.com/pires/go-proxyproto v0.11.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.59.0
 	github.com/tetratelabs/wazero v1.11.0
@@ -32,8 +32,8 @@ require (
 	github.com/yookoala/gofast v0.8.0
 	go.etcd.io/bbolt v1.4.3
 	go.uber.org/zap v1.27.1
-	golang.org/x/crypto v0.47.0
-	golang.org/x/oauth2 v0.34.0
+	golang.org/x/crypto v0.48.0
+	golang.org/x/oauth2 v0.35.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/time v0.14.0
 )
@@ -97,8 +97,8 @@ require (
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/mod v0.32.0 // indirect
 	golang.org/x/net v0.49.0 // indirect
-	golang.org/x/sys v0.40.0 // indirect
-	golang.org/x/text v0.33.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/tools v0.41.0 // indirect
 	golang.org/x/tools/godoc v0.1.0-deprecated // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
