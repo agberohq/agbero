@@ -1,4 +1,3 @@
-<!-- index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -30,11 +29,20 @@
             <h1 id="heroTitle">System Status</h1>
             <p id="heroSub">Monitoring <span id="heroHostCount">0</span> hosts and <span id="heroRouteCount">0</span> routes.</p>
 
-            <!-- NEW: System Stats in Hero -->
             <div class="hero-meta">
                 <span title="Goroutines">📦 <span id="sysCpu">—</span></span>
                 <span class="divider">·</span>
                 <span title="Memory Usage">💾 <span id="sysMem">—</span></span>
+            </div>
+
+            <div class="health-bar-container">
+                <div class="health-bar" id="globalHealthBar">
+                    <div class="hb-seg hb-ok" style="width: 100%"></div>
+                </div>
+                <div class="health-legend">
+                    <span><span class="dot ok"></span> Success</span>
+                    <span><span class="dot down"></span> Error</span>
+                </div>
             </div>
         </div>
 
@@ -46,7 +54,8 @@
     <!-- HOSTS -->
     <div id="hostsPage" class="page">
         <div class="flex-right">
-            <button class="btn" id="refreshHostsBtn">Refresh Data</button>
+            <input type="text" id="hostSearch" class="search-input" placeholder="Search hosts, paths, or backends...">
+            <button class="btn" id="refreshHostsBtn">Refresh</button>
         </div>
         <div id="hostsContainer"></div>
     </div>
@@ -73,6 +82,15 @@
     <!-- LOGS -->
     <div id="logsPage" class="page" style="max-width: 100%;">
         <div class="flex-right">
+            <div class="filter-chips">
+                <span class="chip active" data-level="ALL">ALL</span>
+                <span class="chip" data-level="INFO">INFO</span>
+                <span class="chip" data-level="WARN">WARN</span>
+                <span class="chip" data-level="ERROR">ERROR</span>
+            </div>
+
+            <span class="divider-v"></span>
+
             <select id="logsTailSelect" style="width: auto; margin:0;">
                 <option value="100">100 Lines</option>
                 <option value="500">500 Lines</option>

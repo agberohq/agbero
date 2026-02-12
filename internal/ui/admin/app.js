@@ -1,3 +1,4 @@
+// app.js
 class AgberoApp {
     constructor() {
         this.apiBase = window.location.origin;
@@ -7,20 +8,19 @@ class AgberoApp {
         // State
         this.page = "dashboard";
         this.metricsSeries = [];
-
-        // RPS Calculation
         this.lastReqTotal = 0;
         this.lastReqTime = Date.now();
 
+        // Data Caches
+        this.hostsData = { config: {}, stats: {} };
         this.logs = [];
-        this.logsPaused = false;
 
-        // Timers object to manage intervals
-        this.timers = {
-            metrics: null,
-            config: null,
-            logs: null
-        };
+        // Settings
+        this.logsPaused = false;
+        this.logFilter = "ALL"; // ALL, INFO, WARN, ERROR
+
+        // Timers
+        this.timers = { metrics: null, config: null, logs: null };
 
         this.init();
     }
@@ -30,12 +30,10 @@ class AgberoApp {
         this.bindEvents();
         this.updateAuthButton();
 
-        // Check if we have credentials before starting the noise
         if (this.token || this.basic) {
             this.startLoop();
-            this.fetchHostsData();
+            this.fetchHostsData(); // Initial Load
         } else {
-            // No credentials? Don't start loop. Just show login.
             this.openModal("loginModal");
         }
     }
@@ -55,7 +53,7 @@ class AgberoApp {
 
     // ================== EVENTS ==================
     bindEvents() {
-        // Nav
+        // Navigation
         document.querySelectorAll(".nav-link").forEach(l => {
             l.addEventListener("click", e => {
                 if (e.target.id === 'loginBtn') return;
@@ -68,12 +66,15 @@ class AgberoApp {
         document.getElementById("loginBtn").addEventListener("click", () => this.handleAuthClick());
         document.getElementById("refreshHostsBtn").addEventListener("click", () => this.fetchHostsData());
 
+        // Host Search
+        document.getElementById("hostSearch").addEventListener("input", (e) => this.renderHosts(e.target.value));
+
         // Forms
         document.getElementById("loginForm").addEventListener("submit", e => this.doLogin(e));
         document.getElementById("addRuleBtn").addEventListener("click", () => this.openModal("ruleModal"));
         document.getElementById("ruleForm").addEventListener("submit", e => this.addFirewallRule(e));
 
-        // Logs
+        // Logs Controls
         document.getElementById("logsPauseBtn").addEventListener("click", () => {
             this.logsPaused = !this.logsPaused;
             document.getElementById("logsPauseBtn").innerText = this.logsPaused ? "Resume" : "Pause";
@@ -83,9 +84,19 @@ class AgberoApp {
             this.renderLogs();
         });
 
+        // Log Filters
+        document.querySelectorAll(".chip").forEach(chip => {
+            chip.addEventListener("click", (e) => {
+                document.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
+                e.target.classList.add("active");
+                this.logFilter = e.target.dataset.level;
+                this.renderLogs();
+            });
+        });
+
         // Modals
         document.querySelectorAll(".close-modal").forEach(b => {
-            b.addEventListener("click", () => document.querySelectorAll(".modal-overlay").forEach(m => m.classList.remove("active")));
+            b.addEventListener("click", () => this.closeModals());
         });
 
         document.getElementById("confirmCancel").addEventListener("click", () => this.closeModals());
@@ -103,23 +114,18 @@ class AgberoApp {
         document.querySelectorAll(".page").forEach(div => div.classList.remove("active"));
         document.getElementById(p + "Page").classList.add("active");
 
-        // Only refresh if we are authenticated to avoid 401 loops
         if (this.token || this.basic) {
             this.refreshCurrentPage();
         }
     }
 
-    // ================== DATA LOOP CONTROL ==================
+    // ================== LOOP & AUTH ==================
     startLoop() {
-        // Clear existing to avoid duplicates
         this.stopLoop();
-
         this.timers.metrics = setInterval(() => this.fetchMetrics(), 2000);
-
         this.timers.config = setInterval(() => {
             if (this.page === 'hosts') this.fetchHostsData();
         }, 10000);
-
         this.timers.logs = setInterval(() => {
             if (this.page === 'logs' && !this.logsPaused) this.fetchLogs();
         }, 2000);
@@ -129,10 +135,7 @@ class AgberoApp {
         if (this.timers.metrics) clearInterval(this.timers.metrics);
         if (this.timers.config) clearInterval(this.timers.config);
         if (this.timers.logs) clearInterval(this.timers.logs);
-
-        this.timers.metrics = null;
-        this.timers.config = null;
-        this.timers.logs = null;
+        this.timers = { metrics: null, config: null, logs: null };
     }
 
     async refreshCurrentPage() {
@@ -142,7 +145,6 @@ class AgberoApp {
         if (this.page === 'logs') await this.fetchLogs();
     }
 
-    // ================== API CLIENT ==================
     async api(path, method = "GET", body = null) {
         const headers = {};
         if (this.token) headers["Authorization"] = "Bearer " + this.token;
@@ -156,12 +158,7 @@ class AgberoApp {
 
         try {
             const res = await fetch(this.apiBase + path, opts);
-            
-            if (res.status === 401) {
-                this.handleSessionExpired();
-                return null;
-            }
-
+            if (res.status === 401) { this.handleSessionExpired(); return null; }
             if (res.status === 204) return true;
             return await res.json();
         } catch (e) {
@@ -170,37 +167,23 @@ class AgberoApp {
         }
     }
 
-    // ================== AUTH HANDLERS ==================
-
-    // Called when user clicks "Login" or "Logout"
     handleAuthClick() {
         if (this.token || this.basic) {
-            // User requested logout
-            this.token = null;
-            this.basic = null;
             sessionStorage.clear();
-            this.stopLoop(); // Stop hammering the server
+            this.token = null; this.basic = null;
+            this.stopLoop();
             this.updateAuthButton();
-            window.location.reload(); // Reload to clear state cleanly
+            window.location.reload();
         } else {
             this.openModal("loginModal");
         }
     }
 
-    // Called when Server returns 401
     handleSessionExpired() {
-        // 1. Stop sending requests immediately
         this.stopLoop();
-
-        // 2. Clear credentials
-        this.token = null;
-        this.basic = null;
         sessionStorage.clear();
-
-        // 3. Update UI
+        this.token = null; this.basic = null;
         this.updateAuthButton();
-
-        // 4. Show Login Modal (Do NOT reload page, preventing recursion)
         this.openModal("loginModal");
     }
 
@@ -209,7 +192,7 @@ class AgberoApp {
         const u = document.getElementById("username").value;
         const p = document.getElementById("password").value;
 
-        // 1. Try JWT
+        // Try JWT
         const jwt = await this.api("/login", "POST", {username: u, password: p});
         if (jwt && jwt.token) {
             this.token = jwt.token;
@@ -218,19 +201,15 @@ class AgberoApp {
             return;
         }
 
-        // 2. Try Basic (Fallback)
-        // Temporarily set basic to try the request
+        // Try Basic Fallback
         const tempBasic = btoa(u + ":" + p);
         this.basic = tempBasic;
-
-        // Use a lightweight call to verify
         const check = await this.api("/health");
-
         if (check) {
             sessionStorage.setItem("ag_bas", this.basic);
             this.finishLoginSuccess();
         } else {
-            this.basic = null; // Bad credentials
+            this.basic = null;
             alert("Login Failed");
         }
     }
@@ -238,8 +217,8 @@ class AgberoApp {
     finishLoginSuccess() {
         this.closeModals();
         this.updateAuthButton();
-        this.startLoop(); // Restart polling
-        this.fetchHostsData(); // Immediate fetch
+        this.startLoop();
+        this.fetchHostsData();
     }
 
     updateAuthButton() {
@@ -254,16 +233,16 @@ class AgberoApp {
 
         const stats = this.parseMetricsJSON(data);
 
+        // Text Updates
         document.getElementById("totalReqsStat").innerText = this.fmtNum(stats.total_reqs);
         document.getElementById("errorsStat").innerText = this.fmtNum(stats.total_errors);
         document.getElementById("meanResponseStat").innerText = stats.avg_ms.toFixed(0) + "ms";
         document.getElementById("activeBackendsStat").innerText = stats.active_backends;
         document.getElementById("apdexStat").innerText = stats.apdex;
-
         document.getElementById("sysCpu").innerText = stats.sys_cpu;
         document.getElementById("sysMem").innerText = stats.sys_mem;
 
-        // RPS Logic
+        // RPS
         const now = Date.now();
         const timeDiff = (now - this.lastReqTime) / 1000;
         let rps = 0;
@@ -274,9 +253,25 @@ class AgberoApp {
         this.lastReqTime = now;
         document.getElementById("rpsStat").innerText = rps.toFixed(1);
 
+        // Update Charts & Health Bar
         this.metricsSeries.push(stats.avg_ms);
         if (this.metricsSeries.length > 60) this.metricsSeries.shift();
         this.renderGraph();
+        this.renderHealthBar(stats.total_reqs, stats.total_errors);
+    }
+
+    renderHealthBar(total, errors) {
+        const bar = document.getElementById("globalHealthBar");
+        if (total === 0) return;
+
+        // Simple 2-segment calc (Success vs Error) since logic for 4xx vs 5xx might vary
+        const errPct = (errors / total) * 100;
+        const okPct = 100 - errPct;
+
+        bar.innerHTML = `
+            <div class="hb-seg hb-ok" style="width: ${okPct}%"></div>
+            <div class="hb-seg hb-err" style="width: ${errPct}%"></div>
+        `;
     }
 
     parseMetricsJSON(obj) {
@@ -317,12 +312,9 @@ class AgberoApp {
     renderGraph() {
         const el = document.getElementById("responseGraph");
         if (this.page !== "dashboard") return;
-        const w = el.clientWidth || 500;
         const h = el.clientHeight || 200;
-
-        // Padding
-        const pTop = 15, pBottom = 15;
-        const drawH = h - pTop - pBottom;
+        const pTop = 15;
+        const drawH = h - 30;
 
         if (this.metricsSeries.length === 0) {
             el.innerHTML = `<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-mute);font-size:11px;">Waiting for data...</div>`;
@@ -330,77 +322,120 @@ class AgberoApp {
         }
 
         const max = Math.max(10, ...this.metricsSeries) * 1.1;
-
         const bars = this.metricsSeries.map((val, i) => {
             const barH = Math.max(2, (val / max) * drawH);
             const x = (i / 60) * 100;
             const width = (100 / 60) - 0.3;
-            let color = "var(--accent)";
+            let color = "var(--chart-bar-fill)";
             if (val > 200) color = "var(--warning)";
             if (val > 500) color = "var(--danger)";
             const y = (pTop + drawH) - barH;
             return `<rect x="${x}%" y="${y}" width="${width}%" height="${barH}" fill="${color}" rx="1"></rect>`;
         }).join("");
 
-        // Guides
-        const yLabel = `<text x="0" y="10" fill="var(--text-mute)" font-size="10" font-family="monospace">${max.toFixed(0)}ms</text>`;
-        const xLabels = `
-            <text x="0" y="${h}" fill="var(--text-mute)" font-size="10" font-family="monospace">-2m</text>
-            <text x="100%" y="${h}" fill="var(--text-mute)" font-size="10" font-family="monospace" text-anchor="end">now</text>
-        `;
-        const grid = `<line x1="0" y1="${pTop}" x2="100%" y2="${pTop}" stroke="var(--border)" stroke-dasharray="4 4" stroke-width="1" />`;
-
-        el.innerHTML = `<svg width="100%" height="100%">${grid}${yLabel}${xLabels}${bars}</svg>`;
+        el.innerHTML = `<svg width="100%" height="100%">
+            <text x="0" y="10" fill="var(--text-mute)" font-size="10" font-family="monospace">${max.toFixed(0)}ms</text>
+            <line x1="0" y1="${pTop}" x2="100%" y2="${pTop}" stroke="var(--border)" stroke-dasharray="4 4" stroke-width="1" />
+            ${bars}
+        </svg>`;
     }
 
     // ================== HOSTS ==================
     async fetchHostsData() {
+        // Fetch raw data
         const [config, stats] = await Promise.all([this.api("/config"), this.api("/uptime")]);
         if (!config || !config.hosts) return;
 
+        // Save to instance for filtering
+        this.hostsData.config = config.hosts;
+        this.hostsData.stats = stats?.hosts || {};
+
+        // Render with current search term
+        const searchTerm = document.getElementById("hostSearch").value;
+        this.renderHosts(searchTerm);
+    }
+
+    renderHosts(filterTerm = "") {
         const container = document.getElementById("hostsContainer");
+        const hosts = this.hostsData.config;
+        const stats = this.hostsData.stats;
+
+        filterTerm = filterTerm.toLowerCase();
         let html = "";
         let hostCount = 0, routeCount = 0;
 
-        for (const [hostname, cfg] of Object.entries(config.hosts)) {
-            hostCount++;
-            const rtStats = stats?.hosts?.[hostname] || {};
+        for (const [hostname, cfg] of Object.entries(hosts)) {
+            // Basic filtering on Hostname or Domains
+            const domainsStr = (cfg.domains || []).join(" ");
+            const matchesHost = hostname.toLowerCase().includes(filterTerm) || domainsStr.toLowerCase().includes(filterTerm);
 
+            // We also need to check internal routes if the host doesn't match directly
+            // but we'll generate HTML first and assume if filter matches anything inside, we show it.
+
+            let hostHtml = "";
+            let hostHasMatch = matchesHost;
+
+            hostCount++;
+            const rtStats = stats[hostname] || {};
+
+            // TLS Info
             let tlsMode = cfg.tls?.mode || "";
             let tlsText = "Auto (Secure)";
             let tlsClass = "tls";
+            let tlsTitle = "Managed by Agbero";
+
             if (tlsMode === "none") {
-                tlsClass = "sec";
-                tlsText = "No TLS";
+                tlsClass = "sec"; tlsText = "No TLS";
             } else if (tlsMode.includes("local")) {
-                tlsClass = "local";
-                tlsText = "Local TLS";
+                tlsClass = "local"; tlsText = "Local TLS";
             }
 
-            html += `
+            // TLS Expiry Calculation (mock logic if not in API, or use cert data if available)
+            if (cfg.tls?.expiry) {
+                const daysLeft = Math.floor((new Date(cfg.tls.expiry) - Date.now()) / 86400000);
+                tlsTitle = `Expires: ${cfg.tls.expiry} (${daysLeft} days)`;
+                if (daysLeft < 7) { tlsClass = "sec"; tlsText += " (Expiring)"; }
+            }
+
+            hostHtml += `
             <div class="host-row">
                 <div class="host-header">
-                    <div class="host-name">${hostname} <span class="badge ${tlsClass}">${tlsText}</span></div>
+                    <div class="host-name">${hostname} 
+                        <span class="badge ${tlsClass}" title="${tlsTitle}">${tlsText}</span>
+                    </div>
                     <div class="host-meta">${cfg.domains?.join(", ")} &bull; ${this.fmtNum(rtStats.total_reqs || 0)} Reqs</div>
                 </div>`;
 
             if (cfg.routes) {
                 cfg.routes.forEach((route, idx) => {
                     routeCount++;
+
+                    // Filter Logic: Check path
+                    const pathMatches = route.path.toLowerCase().includes(filterTerm);
+
                     const routeStats = rtStats.routes?.[idx];
                     let backendHtml = "";
                     const backendList = routeStats?.backends || (route.backends?.servers || []);
 
+                    // Backend List
                     if (backendList.length > 0) {
                         backendHtml = `<div class="backend-list">`;
                         backendList.forEach(b => {
                             const url = b.url || b.address;
+                            // Filter Logic: Check backend URL
+                            if (pathMatches || matchesHost || url.toLowerCase().includes(filterTerm)) {
+                                hostHasMatch = true;
+                            }
+
                             const alive = b.alive !== false;
                             const p99 = b.latency_us?.p99 ? (b.latency_us.p99 / 1000).toFixed(0) + "ms" : "-";
                             const reqs = b.total_reqs || 0;
+
                             backendHtml += `
                                 <div class="backend-row ${alive ? '' : 'down'}">
-                                    <span class="dot ${alive ? 'ok pulse' : 'down'}"></span>
+                                    <span class="be-actions" onclick="app.toggleBackend('${hostname}', ${idx}, '${url}', ${alive})">
+                                        <span class="dot ${alive ? 'ok' : 'down'}" title="Toggle Backend"></span>
+                                    </span>
                                     <span class="be-url">${url}</span>
                                     <span class="be-stat">W: ${b.weight || '-'}</span>
                                     <span class="be-stat">${p99}</span>
@@ -409,23 +444,41 @@ class AgberoApp {
                         });
                         backendHtml += `</div>`;
                     } else if (route.web && route.web.root) {
-                        backendHtml = `<div class="backend-row"><span class="dot ok pulse"></span> <span>📂 ${route.web.root}</span></div>`;
+                        backendHtml = `<div class="backend-row"><span class="dot ok"></span> <span>📂 ${route.web.root}</span></div>`;
+                        if (route.web.root.toLowerCase().includes(filterTerm)) hostHasMatch = true;
                     }
 
-                    html += `
-                        <div class="route-block">
-                            <div class="route-header">
-                                <span class="route-path">${route.path}</span>
-                            </div>
-                            ${backendHtml}
-                        </div>`;
+                    if (filterTerm === "" || hostHasMatch || pathMatches) {
+                        hostHtml += `
+                            <div class="route-block">
+                                <div class="route-header">
+                                    <span class="route-path">${route.path}</span>
+                                </div>
+                                ${backendHtml}
+                            </div>`;
+                    }
                 });
             }
-            html += `</div>`;
+            hostHtml += `</div>`;
+
+            if (hostHasMatch) {
+                html += hostHtml;
+            }
         }
-        container.innerHTML = html;
+
+        container.innerHTML = html || `<div style="text-align:center;color:var(--text-mute);margin-top:40px;">No hosts found matching "${filterTerm}"</div>`;
         document.getElementById("heroHostCount").innerText = hostCount;
         document.getElementById("heroRouteCount").innerText = routeCount;
+    }
+
+    async toggleBackend(host, routeIdx, backendUrl, currentStatus) {
+        const action = currentStatus ? "disable" : "enable";
+        this.confirm("Confirm Action", `Are you sure you want to ${action} ${backendUrl}?`, async () => {
+            // Simulated API Call
+            // await this.api(`/config/backend/toggle`, "POST", { host, routeIdx, url: backendUrl, active: !currentStatus });
+            alert("Backend toggle signal sent (Simulated). In a real setup, this endpoint would update cluster state.");
+            this.fetchHostsData(); // Refresh UI
+        });
     }
 
     // ================== FIREWALL & UTILS ==================
@@ -474,6 +527,7 @@ class AgberoApp {
         document.getElementById("configContent").innerText = JSON.stringify(data, null, 2);
     }
 
+    // ================== LOGS ==================
     async fetchLogs() {
         const n = document.getElementById("logsTailSelect").value;
         const data = await this.api(`/logs?lines=${n}`);
@@ -484,14 +538,26 @@ class AgberoApp {
     }
 
     renderLogs() {
-        document.getElementById("logsList").innerHTML = this.logs.map(l => {
+        const container = document.getElementById("logsList");
+
+        // Filter Logs
+        const filtered = this.logs.filter(l => {
+            if (this.logFilter === "ALL") return true;
+            let lvl = "INFO";
+            if (typeof l === 'object') lvl = l.lvl || "INFO";
+            else if (typeof l === 'string' && l.includes("ERR")) lvl = "ERROR";
+            return lvl === this.logFilter;
+        });
+
+        if (filtered.length === 0) {
+            container.innerHTML = `<div style="color:var(--text-mute);text-align:center;">No logs for filter: ${this.logFilter}</div>`;
+            return;
+        }
+
+        container.innerHTML = filtered.map(l => {
             let lvl = "INFO", msg = "", ts = "";
             if (typeof l === 'string') {
-                try {
-                    l = JSON.parse(l);
-                } catch {
-                    msg = l;
-                }
+                try { l = JSON.parse(l); } catch { msg = l; }
             }
             if (typeof l === 'object') {
                 lvl = l.lvl || "INFO";
@@ -506,6 +572,7 @@ class AgberoApp {
         }).join("");
     }
 
+    // ================== HELPERS ==================
     fmtNum(n) {
         if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
         if (n >= 1000) return (n / 1000).toFixed(1) + "k";
@@ -519,13 +586,8 @@ class AgberoApp {
         return parseFloat((b / Math.pow(k, i)).toFixed(1)) + s[i];
     }
 
-    openModal(id) {
-        document.getElementById(id).classList.add("active");
-    }
-
-    closeModals() {
-        document.querySelectorAll(".modal-overlay").forEach(m => m.classList.remove("active"));
-    }
+    openModal(id) { document.getElementById(id).classList.add("active"); }
+    closeModals() { document.querySelectorAll(".modal-overlay").forEach(m => m.classList.remove("active")); }
 
     confirm(t, msg, fn) {
         this._confirmFn = fn;

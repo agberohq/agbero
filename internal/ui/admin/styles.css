@@ -44,7 +44,7 @@ body {
     flex-direction: column;
 }
 
-/* NAVBAR & LAYOUT - Minimal changes */
+/* NAVBAR & LAYOUT */
 .navbar {
     padding: 25px 40px;
     display: flex;
@@ -113,7 +113,7 @@ body {
     }
 }
 
-/* HERO */
+/* HERO & HEALTH BAR */
 .hero {
     text-align: center;
     margin: 60px 0 80px 0;
@@ -132,6 +132,51 @@ body {
     font-weight: 300;
     font-size: 18px;
     margin-top: 15px;
+}
+
+.hero-meta {
+    margin-top: 15px;
+    font-size: 13px;
+    color: var(--text-mute);
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+}
+
+.health-bar-container {
+    width: 300px;
+    margin: 25px auto 0;
+}
+
+.health-bar {
+    height: 4px;
+    width: 100%;
+    background: var(--border);
+    border-radius: 2px;
+    display: flex;
+    overflow: hidden;
+}
+
+.hb-seg {
+    height: 100%;
+    transition: width 0.5s ease;
+}
+
+.hb-ok {
+    background: var(--success);
+}
+
+.hb-err {
+    background: var(--danger);
+}
+
+.health-legend {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text-mute);
+    margin-top: 5px;
+    font-family: monospace;
 }
 
 /* CHART */
@@ -182,7 +227,7 @@ body {
     letter-spacing: -0.5px;
 }
 
-/* DETAILED LISTS (Hosts/Routes) */
+/* HOSTS & ROUTES */
 .host-row {
     margin-bottom: 40px;
     border-bottom: 1px solid var(--border);
@@ -268,12 +313,24 @@ body {
     text-align: right;
 }
 
+.be-actions {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.be-actions:hover .dot {
+    transform: scale(1.2);
+}
+
 /* STATUS ELEMENTS */
 .dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
     display: inline-block;
+    transition: all 0.2s ease;
 }
 
 .dot.ok {
@@ -283,6 +340,10 @@ body {
 
 .dot.down {
     background: var(--danger);
+}
+
+.dot.warn {
+    background: var(--warning);
 }
 
 .dot.pulse {
@@ -304,6 +365,7 @@ body {
     }
 }
 
+/* BADGES & CHIPS */
 .badge {
     padding: 3px 8px;
     border-radius: 4px;
@@ -313,6 +375,7 @@ body {
     border: 1px solid var(--border);
     color: var(--text-mute);
     background: var(--bg);
+    cursor: help;
 }
 
 .badge.tls {
@@ -325,18 +388,39 @@ body {
     color: var(--warning);
 }
 
-/* Yellow for Local TLS */
-.badge.auth {
-    border-color: var(--accent);
-    color: var(--accent);
-}
-
 .badge.sec {
     border-color: var(--danger);
     color: var(--danger);
 }
 
-/* Red for No TLS */
+.filter-chips {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+}
+
+.chip {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 12px;
+    background: var(--panel-bg);
+    color: var(--text-mute);
+    cursor: pointer;
+    border: 1px solid var(--border);
+    transition: all 0.2s ease;
+}
+
+.chip:hover {
+    color: var(--fg);
+    border-color: var(--fg);
+}
+
+.chip.active {
+    background: var(--fg);
+    color: var(--bg);
+    border-color: var(--fg);
+}
 
 /* UTILS */
 .btn {
@@ -354,9 +438,21 @@ body {
     border: none;
 }
 
+.search-input {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 13px;
+    width: 250px;
+}
+
 .flex-right {
     display: flex;
     justify-content: flex-end;
+    align-items: center;
     gap: 10px;
     margin-bottom: 20px;
 }
@@ -455,25 +551,16 @@ body {
     cursor: pointer;
 }
 
-.hero-meta {
-    margin-top: 15px;
-    font-size: 13px;
-    color: var(--text-mute);
-    display: flex;
-    justify-content: center;
-    gap: 15px;
-}
-
-.hero-meta span {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-}
-
 .divider {
     color: var(--border);
+    margin: 0 5px;
 }
 
+.divider-v {
+    border-right: 1px solid var(--border);
+    height: 20px;
+    margin: 0 5px;
+}
 
 svg text {
     user-select: none;
