@@ -192,18 +192,12 @@ func (s *Server) Start(configPath string) error {
 	}
 
 	// Setup TLS
-	// Capture acmeHandler to ensure HTTP challenges are intercepted before redirection
 	tlsCfg, acmeHandler, err := s.buildTLS(httpFallbackHandler)
 	if err != nil {
 		s.logger.Fields("err", err.Error()).Warn("TLS setup failed; HTTPS listeners may not start")
 		tlsCfg = nil
 		acmeHandler = httpFallbackHandler
 	}
-	//else if tlsCfg != nil {
-	//	// Ensure "acme-tls/1" is present for TLS-ALPN-01 challenges
-	//	// This prevents "remote error: tls: no application protocol"
-	//	tlsCfg.NextProtos = append([]string{woos.AlpnTls}, tlsCfg.NextProtos...)
-	//}
 
 	if s.tlsManager != nil && s.shutdown != nil {
 		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
@@ -229,14 +223,12 @@ func (s *Server) Start(configPath string) error {
 	for _, addr := range s.global.Bind.HTTP {
 		_, port, _ := net.SplitHostPort(addr)
 		usedPorts[port] = true
-		// Use acmeHandler instead of httpFallbackHandler
 		s.startTCPServer(addr, false, nil, nil, baseHandler, acmeHandler, anyStreaming)
 	}
 
 	for _, addr := range s.global.Bind.HTTPS {
 		_, port, _ := net.SplitHostPort(addr)
 		usedPorts[port] = true
-		// FIX: Use acmeHandler here too (though strictly needed mostly for port 80)
 		s.startTCPServer(addr, true, nil, tlsCfg, baseHandler, acmeHandler, anyStreaming)
 		s.startQUICServer(addr, nil, tlsCfg, baseHandler)
 	}
@@ -254,7 +246,6 @@ func (s *Server) Start(configPath string) error {
 				isTLS = false
 			}
 
-			// FIX: Use acmeHandler for the non-TLS fallback argument
 			s.startTCPServer(addr, isTLS, h, tlsCfg, baseHandler, acmeHandler, anyStreaming)
 			if isTLS {
 				s.startQUICServer(addr, h, tlsCfg, baseHandler)
@@ -308,7 +299,6 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Graceful wait for HTTP/3 requests with a timeout
 	h3Done := make(chan struct{})
 	go func() {
 		s.h3Wg.Wait()
@@ -322,7 +312,6 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 		s.logger.Warn("timeout waiting for h3 connections to drain")
 	}
 
-	// Now close the listeners
 	for key, srv := range s.h3Servers {
 		if err := srv.Close(); err != nil {
 			s.logger.Fields("key", key, "err", err).Warn("h3 shutdown error")
@@ -459,7 +448,6 @@ func (s *Server) startQUICServer(
 
 	handler := s.buildChain(baseHandler, false, "")
 
-	// Wrap handler to track active requests
 	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.h3Wg.Add(1)
 		defer s.h3Wg.Done()
@@ -533,23 +521,21 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 	return h
 }
 
-func (s *Server) reload() {
+// Reload is the public method to trigger a configuration reload.
+func (s *Server) Reload() {
 	s.logger.Info("reloading configuration")
 
-	// Load new global config
 	global, err := core.LoadGlobal(s.configPath)
 	if err != nil {
 		s.logger.Fields("err", err, "config_path", s.configPath).Error("reload config failed")
 		return
 	}
 
-	// Detect log level changes
 	if s.global.Logging.Level != global.Logging.Level {
 		s.logger.Infof("log_level: %s → %s", s.global.Logging.Level, global.Logging.Level)
 	}
 	s.global = global
 
-	// Reload Hosts
 	previousHosts, _ := s.hostManager.LoadAll()
 	previousCount := len(previousHosts)
 
@@ -561,19 +547,14 @@ func (s *Server) reload() {
 	newHosts, _ := s.hostManager.LoadAll()
 	currentCount := len(newHosts)
 
-	// Clear TLS Cache (certs might have changed)
 	if s.tlsManager != nil {
 		s.tlsManager.ClearCache()
 	}
 
-	// Hot Reload TCP Proxies
-	// We do not restart listeners (to avoid downtime). We replace the routing tables safely.
 	s.mu.Lock()
 	for _, tp := range s.tcpProxies {
-		// Extract port from the running listener (e.g., ":3306" -> "3306")
 		_, port, _ := net.SplitHostPort(tp.Listen)
 		if port == "" {
-			// Handle ":port" case if SplitHostPort failed or returned empty host
 			if strings.HasPrefix(tp.Listen, ":") {
 				port = tp.Listen[1:]
 			} else {
@@ -584,10 +565,8 @@ func (s *Server) reload() {
 		newRoutes := make(map[string]*tcp.Balancer)
 		var newDefault *tcp.Balancer
 
-		// Scan all new hosts to find routes claiming this port
 		for _, host := range newHosts {
 			for _, route := range host.TCPProxy {
-				// Normalize listener for comparison
 				rPort := route.Listen
 				if strings.Contains(rPort, ":") {
 					_, p, _ := net.SplitHostPort(rPort)
@@ -595,23 +574,17 @@ func (s *Server) reload() {
 				}
 
 				if rPort == port {
-					// Create new balancer with fresh config
 					bal := tcp.NewBalancer(route)
-
-					// Hostname routing logic
 					if len(host.Domains) > 0 {
 						for _, domain := range host.Domains {
 							newRoutes[strings.ToLower(domain)] = bal
 						}
 					} else {
-						// No domain? Treat as default/fallback
 						newDefault = bal
 					}
 				}
 			}
 		}
-
-		// Hot Swap
 		tp.UpdateRoutes(newRoutes, newDefault)
 	}
 	s.mu.Unlock()
@@ -753,7 +726,6 @@ func (s *Server) shouldLogUserAgent(r *http.Request) bool {
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	// Special handling for favicon at root of listener
 	if r.URL.Path == "/favicon.ico" {
 		s.serveDefaultFavicon(w, r)
 		return

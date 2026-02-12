@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	"git.imaxinacion.net/aibox/agbero"
@@ -15,17 +17,16 @@ import (
 type program struct {
 	configPath string
 	devMode    bool
-	shutdown   *jack.Shutdown // Use the passed-in instance
+	shutdown   *jack.Shutdown
+	server     *agbero.Server
 }
 
 func (p *program) Start(s service.Service) error {
-	// We do NOT create a new shutdown instance here. We use p.shutdown.
 	go p.run()
 	return nil
 }
 
 func (p *program) Stop(s service.Service) error {
-	// Trigger the Jack shutdown, which will unblock p.shutdown.Wait() in run()
 	p.shutdown.TriggerShutdown()
 	return nil
 }
@@ -39,6 +40,17 @@ func (p *program) run() {
 		return
 	}
 
+	// Write PID file for reload command
+	// We use the data directory defined in the config
+	if global.Storage.DataDir != "" {
+		if err := os.MkdirAll(global.Storage.DataDir, woos.DirPerm); err == nil {
+			pidFile := filepath.Join(global.Storage.DataDir, "agbero.pid")
+			_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
+			// Remove on shutdown
+			p.shutdown.RegisterFunc("PIDFile", func() { _ = os.Remove(pidFile) })
+		}
+	}
+
 	if p.devMode {
 		logger.Level(lx.LevelDebug)
 		logger.Warn("running in development mode")
@@ -46,10 +58,8 @@ func (p *program) run() {
 	}
 
 	hostFolder := woos.MakeFolder(global.Storage.HostsDir, woos.HostDir)
-
 	hm := discovery.NewHostFolder(hostFolder, discovery.WithLogger(logger))
 
-	// Register HostManager cleanup with Jack
 	p.shutdown.RegisterFunc("HostManager", func() {
 		if err := hm.Close(); err != nil {
 			logger.Error("host manager close error", err)
@@ -73,19 +83,17 @@ func (p *program) run() {
 		"https", len(global.Bind.HTTPS),
 	).Info("resolved paths")
 
-	// Pass Shutdown manager to Server via new Option
-	server := agbero.NewServer(
+	// Store server in struct for Reload access
+	p.server = agbero.NewServer(
 		agbero.WithHostManager(hm),
 		agbero.WithGlobalConfig(global),
 		agbero.WithLogger(logger),
 		agbero.WithShutdownManager(p.shutdown),
 	)
 
-	// Start server in goroutine; Start() blocks until shutdown triggers
 	go func() {
-		if err := server.Start(p.configPath); err != nil {
+		if err := p.server.Start(p.configPath); err != nil {
 			logger.Error(err)
-			// If server fails to start, trigger shutdown to exit program
 			p.shutdown.TriggerShutdown()
 		}
 	}()
@@ -93,7 +101,6 @@ func (p *program) run() {
 	hosts, _ := hm.LoadAll()
 	logger.Fields("hosts_count", len(hosts)).Info("service running")
 
-	// Block here until Stop() is called or OS signal received
 	stats := p.shutdown.Wait()
 
 	logger.Fields(

@@ -8,15 +8,19 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/core/security"
+	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/dustin/go-humanize"
+	"github.com/integrii/flaggy"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -38,15 +42,6 @@ func welcome() {
 	fmt.Println(bannerTmpl)
 	fmt.Printf("\033[1;34m%s\033[0m - %s\n", woos.Name, woos.Description)
 	fmt.Printf("\033[90mVersion: %s\033[0m\n\n", woos.Version)
-
-	fmt.Println("\033[1mQuick Start:\033[0m")
-	fmt.Println("  agbero <command> [arguments]")
-	fmt.Println()
-	fmt.Println("\033[1mExamples:\033[0m")
-	fmt.Println("  agbero run          # Run the application")
-	fmt.Println("  agbero run --dev    # Run application in dev mode")
-	fmt.Println("  agbero help         # Show all available commands")
-	fmt.Println()
 }
 
 func resolveConfigPath(flagPath string) (string, bool) {
@@ -55,8 +50,10 @@ func resolveConfigPath(flagPath string) (string, bool) {
 		if abs, err := filepath.Abs(flagPath); err == nil {
 			p = abs
 		}
-		_, err := os.Stat(p)
-		return p, err == nil
+		if _, err := os.Stat(p); err == nil {
+			return p, true
+		}
+		return p, false
 	}
 
 	cwd, _ := os.Getwd()
@@ -76,37 +73,60 @@ func resolveConfigPath(flagPath string) (string, bool) {
 		return sysPaths.ConfigFile, true
 	}
 
-	return cwdPath, false
+	return "", false
 }
 
-func ensureConfig(configFile string) error {
-	if configFile == "" {
-		return fmt.Errorf("config path is empty")
+func installConfiguration(here bool) error {
+	var targetDir string
+
+	if here {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		targetDir = cwd
+	} else {
+		sysPaths := woos.DefaultPaths()
+		if err := os.MkdirAll(sysPaths.BaseDir.Path(), woos.DirPerm); err == nil {
+			targetDir = sysPaths.BaseDir.Path()
+		} else {
+			userPaths, err := woos.GetUserDefaults()
+			if err != nil {
+				return fmt.Errorf("could not determine user config path: %w", err)
+			}
+			targetDir = userPaths.BaseDir.Path()
+		}
 	}
 
+	configFile := filepath.Join(targetDir, woos.DefaultConfigName)
 	if _, err := os.Stat(configFile); err == nil {
-		return ensureLayoutForConfig(configFile)
+		return fmt.Errorf("configuration already exists at %s", configFile)
 	}
 
-	logger.Fields("path", configFile).Info("config not found, generating default")
-
-	if err := os.MkdirAll(filepath.Dir(configFile), woos.DirPerm); err != nil {
-		return fmt.Errorf("mkdir config parent: %w", err)
+	dirs := []string{
+		woos.HostDir.String(),
+		woos.CertDir.String(),
+		woos.DataDir.String(),
+		woos.LogDir.String(),
 	}
 
-	// Replace placeholders in the template
+	for _, d := range dirs {
+		path := filepath.Join(targetDir, d)
+		if err := os.MkdirAll(path, woos.DirPerm); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", path, err)
+		}
+	}
+
 	content := strings.ReplaceAll(configTmpl, "{HOST_DIR}", woos.HostDir.String())
 	content = strings.ReplaceAll(content, "{CERTS_DIR}", woos.CertDir.String())
 	content = strings.ReplaceAll(content, "{DATA_DIR}", woos.DataDir.String())
-	// NEW: Inject logs directory
 	content = strings.ReplaceAll(content, "{LOGS_DIR}", woos.LogDir.String())
 
 	secret, err := generateSecureKey(128)
 	if err != nil {
 		return fmt.Errorf("generate secure key: %w", err)
 	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(hashPassword), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
 	if err != nil {
 		return fmt.Errorf("generate bcrypt hash: %w", err)
 	}
@@ -115,45 +135,50 @@ func ensureConfig(configFile string) error {
 	content = strings.ReplaceAll(content, "{ADMIN_SECRET}", secret)
 
 	if err := os.WriteFile(configFile, []byte(content), woos.FilePermSecured); err != nil {
-		return fmt.Errorf("write default config: %w", err)
+		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
-	if err := ensureLayoutForConfig(configFile); err != nil {
-		return err
-	}
+	hostDir := filepath.Join(targetDir, woos.HostDir.String())
+	_ = os.WriteFile(filepath.Join(hostDir, "web.hcl"), []byte(tplWebHcl), woos.FilePerm)
+	_ = os.WriteFile(filepath.Join(hostDir, "admin.hcl"), []byte(tplAdminHcl), woos.FilePerm)
 
-	logger.Fields("file", configFile).Info("default configuration created")
+	logger.Fields("path", configFile).Info("Configuration installed successfully")
 	return nil
 }
 
-func ensureLayoutForConfig(configFile string) error {
-	base := woos.NewFolder(filepath.Dir(configFile))
-
-	hostsDir := base.Join(woos.HostDir.String())
-	certsDir := base.Join(woos.CertDir.String())
-	dataDir := base.Join(woos.DataDir.String())
-	logsDir := base.Join(woos.LogDir.String())
-
-	if err := hostsDir.Ensure("", false); err != nil {
-		return fmt.Errorf("ensure hosts dir: %w", err)
-	}
-	if err := certsDir.Ensure("", true); err != nil {
-		return fmt.Errorf("ensure certs dir: %w", err)
-	}
-	if err := dataDir.Ensure("", false); err != nil {
-		return fmt.Errorf("ensure data dir: %w", err)
+func reloadService(configFile string) error {
+	if runtime.GOOS == woos.Windows {
+		return fmt.Errorf("reload not supported via CLI on Windows, use Service Control")
 	}
 
-	if err := logsDir.Ensure("", false); err != nil {
-		return fmt.Errorf("ensure logs dir: %w", err)
+	global, err := loadConfig(configFile)
+	if err != nil {
+		return fmt.Errorf("could not load config: %w", err)
 	}
 
-	if empty, err := hostsDir.IsEmpty(); err == nil && empty {
-		samplePath := filepath.Join(hostsDir.Path(), "web.hcl")
-		_ = os.WriteFile(samplePath, []byte(tplWebHcl), woos.FilePerm)
+	if global.Storage.DataDir == "" {
+		return fmt.Errorf("data_dir not configured")
+	}
 
-		samplePath = filepath.Join(hostsDir.Path(), "admin.hcl")
-		_ = os.WriteFile(samplePath, []byte(tplAdminHcl), woos.FilePerm)
+	pidFile := filepath.Join(global.Storage.DataDir, "agbero.pid")
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		return fmt.Errorf("could not read pid file %s: %w", pidFile, err)
+	}
+
+	pidStr := strings.TrimSpace(string(b))
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		return fmt.Errorf("invalid pid in file: %w", err)
+	}
+
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("could not find process %d: %w", pid, err)
+	}
+
+	if err := process.Signal(syscall.SIGHUP); err != nil {
+		return fmt.Errorf("failed to signal process %d: %w", pid, err)
 	}
 
 	return nil
@@ -164,7 +189,6 @@ func loadConfig(configFile string) (*alaye.Global, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	abs, _ := filepath.Abs(configFile)
 	woos.DefaultApply(global, abs)
 	return global, nil
@@ -175,15 +199,12 @@ func validateConfig(configFile string) error {
 	if err != nil {
 		return err
 	}
-
 	hostsFolder := woos.NewFolder(global.Storage.HostsDir)
 	hm := discovery.NewHostFolder(hostsFolder, discovery.WithLogger(logger))
-
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err
 	}
-
 	logger.Fields("hosts_count", len(hosts), "hosts_dir", global.Storage.HostsDir).Info("configuration is valid")
 	return nil
 }
@@ -193,20 +214,16 @@ func listHosts(configFile string) error {
 	if err != nil {
 		return err
 	}
-
 	hostsFolder := woos.NewFolder(global.Storage.HostsDir)
 	hm := discovery.NewHostFolder(hostsFolder, discovery.WithLogger(logger))
-
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err
 	}
-
 	if len(hosts) == 0 {
 		logger.Warn("no hosts found")
 		return nil
 	}
-
 	for name, c := range hosts {
 		logger.Fields(
 			"host_id", name,
@@ -214,123 +231,58 @@ func listHosts(configFile string) error {
 			"routes", len(c.Routes),
 		).Info("configured host")
 	}
-
 	return nil
-}
-
-func getExecutableName() string {
-	if len(os.Args) > 0 {
-		base := filepath.Base(os.Args[0])
-		if strings.Contains(base, "go-build") || base == "helpers" {
-			return woos.Name
-		}
-		return base
-	}
-	return woos.Name
 }
 
 func handleServiceError(err error, cmd string, configPath string) error {
 	if err == nil {
 		return nil
 	}
-
 	errStr := err.Error()
 	exeName := getExecutableName()
 
 	if runtime.GOOS == woos.Darwin && strings.Contains(errStr, "launchctl") {
 		if strings.Contains(errStr, "Expecting a LaunchAgents path") {
-			return fmt.Errorf(`%s
-
-AGBERO SERVICE HELP (macOS)
-===============================================================
-You are trying to install a system service without root privileges.
-
-FIXES:
-1. Run as root: sudo %s install --config "%s"
-2. Run as user: Choose "User" install mode or run without sudo.
-`, err, exeName, configPath)
-		}
-
-		if strings.Contains(errStr, "Load failed: 5") {
-			return fmt.Errorf(`%s
-
-AGBERO SERVICE HELP (macOS)
-===============================================================
-Service load failed. Usually permission or file issues.
-
-FIXES:
-1. Unload existing: sudo launchctl unload /Library/LaunchDaemons/agbero.plist
-2. Reinstall with sudo: sudo %s install --config "%s"
-`, err, exeName, configPath)
+			return fmt.Errorf("requires root: sudo %s service install", exeName)
 		}
 	}
-
-	if runtime.GOOS == "linux" && strings.Contains(errStr, "systemctl") {
-		return fmt.Errorf(`%s
-
-AGBERO SERVICE HELP (Linux)
-===============================================================
-Systemd operation failed. Ensure you are using sudo.
-
-FIXES:
-1. Run with sudo: sudo %s %s --config "%s"
-2. Check logs: sudo journalctl -u agbero -f
-`, err, exeName, cmd, configPath)
+	if runtime.GOOS == woos.Linux && strings.Contains(errStr, "systemctl") {
+		return fmt.Errorf("requires root: sudo %s service %s", exeName, cmd)
 	}
+	return fmt.Errorf("failed to %s service: %v", cmd, err)
+}
 
-	return fmt.Errorf(`%s
-
-AGBERO SERVICE ERROR
-===============================================================
-Failed to %s service.
-
-FIXES:
-1. Try running with sudo/Administrator privileges.
-2. Check if the config file exists at "%s".
-3. Use interactive mode: %s run --config "%s"
-`, err, cmd, configPath, exeName, configPath)
+func getExecutableName() string {
+	if len(os.Args) > 0 {
+		return filepath.Base(os.Args[0])
+	}
+	return woos.Name
 }
 
 func showHelpExamples(configPath string) {
 	exeName := getExecutableName()
-
 	fmt.Println("\n" + woos.Name + " - " + woos.Description + " v" + woos.Version)
 	fmt.Println("\n===============================================================")
 	fmt.Println("USAGE EXAMPLES")
 	fmt.Println("===============================================================")
 	fmt.Println("")
-	fmt.Println("DEVELOPMENT / TESTING:")
-	fmt.Printf("  %s run --config \"%s\"\n", exeName, configPath)
-	fmt.Printf("  %s run --dev --config \"%s\"\n", exeName, configPath)
-	fmt.Printf("  %s run --dev --gossip --config \"%s\"\n", exeName, configPath)
+	fmt.Println("SCAFFOLDING:")
+	fmt.Printf("  %s install --here   # Create config in current folder\n", exeName)
+	fmt.Printf("  %s install          # Create config in system folder (requires root)\n", exeName)
 	fmt.Println("")
-	fmt.Println("CONFIGURATION:")
-	fmt.Printf("  %s validate --config \"%s\"\n", exeName, configPath)
-	fmt.Printf("  %s hosts --config \"%s\"\n", exeName, configPath)
+	fmt.Println("EXECUTION:")
+	fmt.Printf("  %s run              # Run using discovered config\n", exeName)
+	fmt.Printf("  %s run --dev        # Run with debug logging\n", exeName)
+	fmt.Printf("  %s reload           # Hot reload running instance\n", exeName)
 	fmt.Println("")
-	fmt.Println("GOSSIP CLUSTER:")
-	fmt.Printf("  %s gossip init --config \"%s\"\n", exeName, configPath)
-	fmt.Printf("  %s gossip token --service myservice --config \"%s\"\n", exeName, configPath)
-	fmt.Printf("  %s gossip status --config \"%s\"\n", exeName, configPath)
-	fmt.Println("")
-
-	if runtime.GOOS == woos.Darwin {
-		fmt.Println("macOS SERVICE:")
-		fmt.Printf("  sudo %s install --config \"%s\"\n", exeName, configPath)
-		fmt.Printf("  sudo %s start --config \"%s\"\n", exeName, configPath)
-	} else if runtime.GOOS == "linux" {
-		fmt.Println("LINUX SERVICE:")
-		fmt.Printf("  sudo %s install --config \"%s\"\n", exeName, configPath)
-		fmt.Printf("  sudo %s start --config \"%s\"\n", exeName, configPath)
-	} else if runtime.GOOS == "windows" {
-		fmt.Println("WINDOWS SERVICE:")
-		fmt.Printf("  %s install --config \"%s\"\n", exeName, configPath)
-		fmt.Printf("  %s start --config \"%s\"\n", exeName, configPath)
+	fmt.Println("SERVICE MANAGEMENT:")
+	if runtime.GOOS == woos.Windows {
+		fmt.Printf("  %s install\n", exeName)
+		fmt.Printf("  %s start\n", exeName)
+	} else {
+		fmt.Printf("  sudo %s install\n", exeName)
+		fmt.Printf("  sudo %s start\n", exeName)
 	}
-
-	fmt.Println("\n===============================================================")
-	fmt.Println("For more options, use: " + exeName + " --help")
-	fmt.Println("===============================================================")
 }
 
 func showCertInfo(configPath string) {
@@ -339,24 +291,18 @@ func showCertInfo(configPath string) {
 		logger.Warnf("Could not load config: %v", err)
 		return
 	}
-
 	storageDir := woos.NewFolder(global.Storage.CertsDir)
-
 	fmt.Println("\nCERTIFICATE INFORMATION")
-	fmt.Println("===============================================================")
 	fmt.Printf("Storage Listing: %s\n", storageDir.Path())
-
 	if !storageDir.Exists("") {
 		fmt.Println("⚠  Listing does not exist")
 		return
 	}
-
 	files, err := storageDir.ReadFiles()
 	if err != nil {
 		fmt.Printf("⚠  Cannot read directory: %v\n", err)
 		return
 	}
-
 	count := 0
 	for _, file := range files {
 		if strings.HasSuffix(file.Name(), ".pem") {
@@ -373,15 +319,105 @@ func showCertInfo(configPath string) {
 	}
 }
 
+func handleCertCommands(install, list, info bool) {
+	installer := tlss.NewInstaller(logger)
+	if install {
+		if tlss.IsCARootInstalled() && !forceCAInstall {
+			logger.Info("CA root certificate is already installed. Use --force to reinstall.")
+			return
+		}
+		logger.Info("Installing CA root certificate...")
+		if err := installer.InstallCARootIfNeeded(); err != nil {
+			logger.Fatal("Failed to install CA: ", err)
+		}
+		return
+	}
+	if list {
+		global, err := loadConfig(configPath)
+		if err == nil && global.Storage.CertsDir != "" {
+			_ = installer.SetStorageDir(woos.NewFolder(global.Storage.CertsDir))
+		}
+		certs, err := installer.ListCertificates()
+		if err != nil {
+			logger.Fatal("Failed to list certs: ", err)
+		}
+		for i, cert := range certs {
+			logger.Printf("%d. %s\n", i+1, cert)
+		}
+		return
+	}
+	if info {
+		showCertInfo(configPath)
+		return
+	}
+	flaggy.ShowHelpAndExit("cert")
+}
+
+func handleKeyCommands(init, gen bool) {
+	if init {
+		target := "server.key"
+		global, err := loadConfig(configPath)
+		if err == nil && global.Gossip.PrivateKeyFile != "" {
+			target = global.Gossip.PrivateKeyFile
+		}
+		if err := security.GenerateNewKeyFile(target); err != nil {
+			logger.Fatal("Error generating key: ", err)
+		}
+		logger.Info("Generated private key: ", target)
+		return
+	}
+	if gen {
+		if keyService == "" {
+			logger.Fatal("Error: --service name is required")
+		}
+		global, err := loadConfig(configPath)
+		if err != nil {
+			logger.Fatal("Error loading config: ", err)
+		}
+		if global.Gossip.PrivateKeyFile == "" {
+			logger.Fatal("Error: 'gossip.private_key_file' is not set")
+		}
+		tm, err := security.LoadKeys(global.Gossip.PrivateKeyFile)
+		if err != nil {
+			logger.Fatal("Error loading private key: ", err)
+		}
+		token, err := tm.Mint(keyService, keyTTL)
+		if err != nil {
+			logger.Fatal("Error minting token: ", err)
+		}
+		logger.Println(token)
+		return
+	}
+	flaggy.ShowHelpAndExit("key")
+}
+
+func handleGossipCommands(init, token, secret, status bool) {
+	if init {
+		handleGossipInit(configPath)
+		return
+	}
+	if token {
+		handleGossipToken(configPath)
+		return
+	}
+	if secret {
+		handleGossipSecret()
+		return
+	}
+	if status {
+		handleGossipStatus(configPath)
+		return
+	}
+	showGossipHelp()
+}
+
 func handleGossipInit(configPath string) {
 	global, err := loadConfig(configPath)
 	if err != nil {
 		logger.Fatal("Error loading config: ", err)
 	}
-
 	certsDir := woos.NewFolder(global.Storage.CertsDir)
 	keyPath := filepath.Join(certsDir.Path(), "gossip.key")
-
 	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
 		logger.Info("Generating gossip private key...")
 		if err := security.GenerateNewKeyFile(keyPath); err != nil {
@@ -392,63 +428,65 @@ func handleGossipInit(configPath string) {
 	} else {
 		logger.Info("Gossip key already exists: ", keyPath)
 	}
-
-	fmt.Println("\nGossip configuration guide:")
-	fmt.Println("==========================")
-	fmt.Printf("Private key: %s\n", keyPath)
-	fmt.Println("\nAdd to your agbero.hcl config:")
+	fmt.Println("\n[ACTION REQUIRED] Gossip configuration guide:")
+	fmt.Println("===========================================")
+	fmt.Printf("1. Private key location: %s\n", keyPath)
+	fmt.Println("2. You MUST add this block to your agbero.hcl to enable gossip:")
 	fmt.Printf(`
 gossip {
   enabled = true
   port    = 7946
   private_key_file = "%s"
-  # Optional: seeds = ["node2:7946", "node3:7946"]
+  # seeds = ["node2:7946"]
 }`, keyPath)
-	fmt.Println()
+	fmt.Println("\n===========================================")
 }
 
 func handleGossipToken(configPath string) {
 	if gossipService == "" {
 		logger.Fatal("Error: --service flag is required for gossip token")
 	}
-
 	global, err := loadConfig(configPath)
 	if err != nil {
 		logger.Fatal("Error loading config: ", err)
 	}
-
 	if !global.Gossip.Enabled || global.Gossip.PrivateKeyFile == "" {
-		logger.Fatal("Gossip not configured or key file missing in config. Run 'agbero gossip init' first.")
+		logger.Fatal("Gossip is disabled in config. Run 'agbero gossip init' AND update your config file.")
 	}
-
-	keyPath := global.Gossip.PrivateKeyFile
-	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
-		logger.Fatalf("Gossip key not found: %s\nRun 'agbero gossip init' to generate it.", keyPath)
-	}
-
-	tm, err := security.LoadKeys(keyPath)
+	tm, err := security.LoadKeys(global.Gossip.PrivateKeyFile)
 	if err != nil {
 		logger.Fatal("Error loading gossip key: ", err)
 	}
-
 	if gossipTTL == 0 {
 		gossipTTL = 720 * time.Hour
 	}
-
 	token, err := tm.Mint(gossipService, gossipTTL)
 	if err != nil {
 		logger.Fatal("Error generating token: ", err)
 	}
-
 	fmt.Printf("\nGossip token for service: %s\n", gossipService)
 	fmt.Printf("TTL: %s\n", gossipTTL)
-	fmt.Println("--------------------------")
 	fmt.Println(token)
-	fmt.Println("--------------------------")
+}
 
-	fmt.Printf("\nUse in your service metadata:\n")
-	fmt.Printf(`{"token":"%s","port":PORT,"host":"%s.example.com","path":"/"}`, token, gossipService)
-	fmt.Println()
+func handleGossipSecret() {
+	// Generate 32 bytes (256 bits)
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		logger.Fatal("Random generation failed: ", err)
+	}
+
+	// We use StdEncoding because the config parser (alaye/value.go) uses base64.StdEncoding.DecodeString
+	encoded := base64.StdEncoding.EncodeToString(key)
+
+	fmt.Println("\nGenerated 32-byte Secret Key (AES-256 compatible):")
+	fmt.Println("==================================================")
+	fmt.Printf("b64.%s\n", encoded)
+	fmt.Println("==================================================")
+	fmt.Println("\nUsage in agbero.hcl:")
+	fmt.Println("gossip {")
+	fmt.Printf("  secret_key = \"b64.%s\"\n", encoded)
+	fmt.Println("}")
 }
 
 func handleGossipStatus(configPath string) {
@@ -456,16 +494,12 @@ func handleGossipStatus(configPath string) {
 	if err != nil {
 		logger.Fatal("Error loading config: ", err)
 	}
-
 	fmt.Println("\nGossip Configuration Status")
 	fmt.Println("===========================")
-
 	if !global.Gossip.Enabled {
 		fmt.Println("Status: DISABLED")
-		fmt.Println("\nTo enable: agbero gossip init")
 		return
 	}
-
 	fmt.Println("Status: ENABLED")
 	fmt.Printf("Port: %d\n", global.Gossip.Port)
 
@@ -492,6 +526,8 @@ func handleGossipStatus(configPath string) {
 
 	if global.Gossip.SecretKey != "" {
 		fmt.Println("Encryption: ENABLED")
+	} else {
+		fmt.Println("Encryption: DISABLED (Warning: Cluster traffic is unencrypted)")
 	}
 }
 
@@ -499,17 +535,11 @@ func showGossipHelp() {
 	exeName := getExecutableName()
 	fmt.Printf("\n%s gossip - Manage gossip cluster configuration\n", exeName)
 	fmt.Println("================================================")
-	fmt.Println()
 	fmt.Println("Commands:")
-	fmt.Printf("  %s gossip init              Generate gossip key and show configuration\n", exeName)
-	fmt.Printf("  %s gossip token --service NAME  Generate token for a service\n", exeName)
-	fmt.Printf("  %s gossip status            Show current gossip configuration\n", exeName)
-	fmt.Println()
-	fmt.Println("Examples:")
-	fmt.Printf("  %s gossip init\n", exeName)
-	fmt.Printf("  %s gossip token --service api --ttl 168h\n", exeName)
-	fmt.Printf("  %s gossip status\n", exeName)
-	fmt.Println()
+	fmt.Printf("  %s gossip init              Generate gossip key\n", exeName)
+	fmt.Printf("  %s gossip secret            Generate encryption secret\n", exeName)
+	fmt.Printf("  %s gossip token --service X Generate auth token\n", exeName)
+	fmt.Printf("  %s gossip status            Show status\n", exeName)
 }
 
 func generateSecureKey(n int) (string, error) {
