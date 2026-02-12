@@ -76,7 +76,11 @@ func (m *IPMiddleware) Handler(next http.Handler) http.Handler {
 					ip = candidate
 				}
 			} else if xrip := strings.TrimSpace(r.Header.Get("X-Real-IP")); xrip != "" {
-				if net.ParseIP(xrip) != nil {
+				if parsed := net.ParseIP(xrip); parsed != nil {
+					// Only use X-Real-IP if it's NOT a trusted proxy itself,
+					// or if we decide to trust the last hop's assertion.
+					// Most implementations treat X-Real-IP as the immediate client
+					// known to the proxy.
 					ip = xrip
 				}
 			}

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -398,7 +399,17 @@ func (f *IPSet) cachedRemoteCheck(ctx context.Context, ip string) bool {
 }
 
 func (f *IPSet) checkRemote(ip string) bool {
-	req, err := http.NewRequest("GET", f.remote+"?ip="+ip, nil)
+	// Security: ip is validated to be a valid IP address by the caller (Handler/netip.ParseAddr)
+	// before calling cachedRemoteCheck/checkRemote.
+	u, err := url.Parse(f.remote)
+	if err != nil {
+		return false
+	}
+	q := u.Query()
+	q.Set("ip", ip)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
 		return false
 	}

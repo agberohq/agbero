@@ -34,13 +34,23 @@ func (m *Metrics) Record(latency time.Duration, status int, bytes int64, err err
 	m.TotalLatency.Add(latencyUs)
 
 	// Update min/max
-	currentMin := m.MinLatency.Load()
-	if currentMin == 0 || latencyUs < currentMin {
-		m.MinLatency.Store(latencyUs)
+	for {
+		currentMin := m.MinLatency.Load()
+		if currentMin != 0 && latencyUs >= currentMin {
+			break
+		}
+		if m.MinLatency.CompareAndSwap(currentMin, latencyUs) {
+			break
+		}
 	}
-	currentMax := m.MaxLatency.Load()
-	if latencyUs > currentMax {
-		m.MaxLatency.Store(latencyUs)
+	for {
+		currentMax := m.MaxLatency.Load()
+		if currentMax != 0 && latencyUs <= currentMax {
+			break
+		}
+		if m.MaxLatency.CompareAndSwap(currentMax, latencyUs) {
+			break
+		}
 	}
 
 	// Update status codes

@@ -669,8 +669,8 @@ func (m Ui) renderHistogram() string {
 
 	labels := []string{"<10ms", "10-50", "50-100", "100-250", "250-500", "500-1s", "1s-2s", "2s-5s", "5s-10s", ">10s"}
 	var maxVal uint64
-	for _, v := range m.Metrics.LatencyBuckets {
-		val := v.Load()
+	for i := range m.Metrics.LatencyBuckets {
+		val := m.Metrics.LatencyBuckets[i].Load()
 		if val > maxVal {
 			maxVal = val
 		}
