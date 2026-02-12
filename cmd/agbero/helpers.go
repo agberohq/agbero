@@ -76,74 +76,68 @@ func resolveConfigPath(flagPath string) (string, bool) {
 	return "", false
 }
 
-func installConfiguration(here bool) error {
+func installConfiguration(here bool) (string, error) {
 	var targetDir string
 
 	if here {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return err
+			return "", err
 		}
 		targetDir = cwd
 	} else {
 		sysPaths := woos.DefaultPaths()
-		if err := os.MkdirAll(sysPaths.BaseDir.Path(), woos.DirPerm); err == nil {
+
+		if os.Geteuid() == 0 {
 			targetDir = sysPaths.BaseDir.Path()
 		} else {
 			userPaths, err := woos.GetUserDefaults()
 			if err != nil {
-				return fmt.Errorf("could not determine user config path: %w", err)
+				return "", err
 			}
 			targetDir = userPaths.BaseDir.Path()
 		}
 	}
 
-	configFile := filepath.Join(targetDir, woos.DefaultConfigName)
-	if _, err := os.Stat(configFile); err == nil {
-		return fmt.Errorf("configuration already exists at %s", configFile)
+	if err := os.MkdirAll(targetDir, woos.DirPerm); err != nil {
+		return "", err
 	}
 
-	dirs := []string{
+	configFile := filepath.Join(targetDir, woos.DefaultConfigName)
+
+	if _, err := os.Stat(configFile); err == nil {
+		return "", fmt.Errorf("configuration already exists at %s", configFile)
+	}
+
+	// create subdirs
+	for _, d := range []string{
 		woos.HostDir.String(),
 		woos.CertDir.String(),
 		woos.DataDir.String(),
 		woos.LogDir.String(),
-	}
-
-	for _, d := range dirs {
-		path := filepath.Join(targetDir, d)
-		if err := os.MkdirAll(path, woos.DirPerm); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", path, err)
+	} {
+		if err := os.MkdirAll(filepath.Join(targetDir, d), woos.DirPerm); err != nil {
+			return "", err
 		}
 	}
 
+	// write config
 	content := strings.ReplaceAll(configTmpl, "{HOST_DIR}", woos.HostDir.String())
 	content = strings.ReplaceAll(content, "{CERTS_DIR}", woos.CertDir.String())
 	content = strings.ReplaceAll(content, "{DATA_DIR}", woos.DataDir.String())
 	content = strings.ReplaceAll(content, "{LOGS_DIR}", woos.LogDir.String())
 
-	secret, err := generateSecureKey(128)
-	if err != nil {
-		return fmt.Errorf("generate secure key: %w", err)
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
-	if err != nil {
-		return fmt.Errorf("generate bcrypt hash: %w", err)
-	}
+	secret, _ := generateSecureKey(128)
+	hash, _ := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
 
 	content = strings.ReplaceAll(content, "{ADMIN_PASSWORD}", string(hash))
 	content = strings.ReplaceAll(content, "{ADMIN_SECRET}", secret)
 
 	if err := os.WriteFile(configFile, []byte(content), woos.FilePermSecured); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
+		return "", err
 	}
 
-	hostDir := filepath.Join(targetDir, woos.HostDir.String())
-	_ = os.WriteFile(filepath.Join(hostDir, "web.hcl"), []byte(tplWebHcl), woos.FilePerm)
-	_ = os.WriteFile(filepath.Join(hostDir, "admin.hcl"), []byte(tplAdminHcl), woos.FilePerm)
-
-	logger.Fields("path", configFile).Info("Configuration installed successfully")
-	return nil
+	return configFile, nil
 }
 
 func reloadService(configFile string) error {

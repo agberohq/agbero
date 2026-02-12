@@ -3,11 +3,15 @@ package agbero
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -42,10 +46,12 @@ type contextKey struct {
 }
 
 type Server struct {
+	configPath string
+	configSHA  string
+
 	hostManager *discovery.Host
 	global      *alaye.Global
 	tlsManager  *tlss.Manager
-	configPath  string
 	firewall    *firewall.IPSet
 
 	mu         sync.RWMutex
@@ -91,6 +97,7 @@ func (s *Server) Start(configPath string) error {
 	if s.global == nil {
 		return woos.ErrGlobalConfigRequired
 	}
+
 	if s.logger == nil {
 		s.logger = ll.New(woos.Name).Enable()
 	}
@@ -102,19 +109,26 @@ func (s *Server) Start(configPath string) error {
 
 	woos.DefaultApply(s.global, absConfigPath)
 
-	adminAddr := woos.DefaultConfigAddr
-	if s.global.Admin != nil {
-		adminAddr = s.global.Admin.Address
+	sha, err := s.computeFullConfigSHA()
+	if err != nil {
+		s.logger.Warn("could not compute config sha: ", err)
+	} else {
+		s.configSHA = sha
+		s.logger.Fields(
+			"config_path", absConfigPath,
+			"sha256", sha[:12],
+		).Infof("config loaded")
 	}
+	s.logger.Fields(
+		"dev_mode", s.global.Development,
+		"gossip_mode", s.global.Gossip.Enabled,
+	).Info("configuring")
 
 	s.logger.Fields(
-		"config_path", absConfigPath,
 		"hosts_dir", s.global.Storage.HostsDir,
 		"cert_dir", s.global.Storage.CertsDir,
 		"data_dir", s.global.Storage.DataDir,
-		"dev_mode", s.global.Development,
-		"admin_addr", adminAddr,
-	).Info("starting agbero")
+	).Info("directories initialized")
 
 	// Initialize Reaper for Route Cache Cleanup
 	s.reaper = jack.NewReaper(
@@ -525,15 +539,43 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 func (s *Server) Reload() {
 	s.logger.Info("reloading configuration")
 
-	global, err := core.LoadGlobal(s.configPath)
+	sha, err := s.computeFullConfigSHA()
 	if err != nil {
-		s.logger.Fields("err", err, "config_path", s.configPath).Error("reload config failed")
+		s.logger.Warn("could not compute config sha: ", err)
 		return
 	}
 
-	if s.global.Logging.Level != global.Logging.Level {
-		s.logger.Infof("log_level: %s → %s", s.global.Logging.Level, global.Logging.Level)
+	if sha == s.configSHA {
+		s.logger.Info("reload requested: no configuration changes detected")
+	} else {
+		s.logger.Fields(
+			"from", s.configSHA[:12],
+			"to", sha[:12],
+		).Infof("configuration changed")
+		s.configSHA = sha
 	}
+
+	global, err := core.LoadGlobal(s.configPath)
+	if err != nil {
+		s.logger.Fields("err", err, "config_path", s.configPath).
+			Error("reload config failed")
+		return
+	}
+
+	absConfigPath, err := filepath.Abs(s.configPath)
+	if err != nil {
+		absConfigPath = s.configPath
+	}
+
+	woos.DefaultApply(global, absConfigPath)
+
+	if s.global.Logging.Level != global.Logging.Level {
+		s.logger.Infof("log_level: %s → %s",
+			s.global.Logging.Level,
+			global.Logging.Level,
+		)
+	}
+
 	s.global = global
 
 	previousHosts, _ := s.hostManager.LoadAll()
@@ -914,6 +956,47 @@ func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
+}
+
+func (s *Server) computeFullConfigSHA() (string, error) {
+	hasher := sha256.New()
+
+	// 1️⃣ main config
+	mainData, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return "", err
+	}
+	hasher.Write(mainData)
+
+	// 2️⃣ host files
+	hostDir := s.global.Storage.HostsDir
+
+	entries, err := os.ReadDir(hostDir)
+	if err != nil {
+		return "", err
+	}
+
+	var files []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		files = append(files, e.Name())
+	}
+
+	sort.Strings(files)
+
+	for _, name := range files {
+		path := filepath.Join(hostDir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		hasher.Write([]byte(name)) // include filename
+		hasher.Write(data)
+	}
+
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 type responseWrapper struct {

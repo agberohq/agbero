@@ -74,14 +74,13 @@ func (p *program) run() {
 	logger.Fields(
 		"os", runtime.GOOS,
 		"euid", os.Geteuid(),
-		"config", p.configPath,
 	).Info("service starting")
 
-	logger.Fields(
-		"hosts_dir", global.Storage.HostsDir,
-		"certs_dir", global.Storage.CertsDir,
-		"https", len(global.Bind.HTTPS),
-	).Info("resolved paths")
+	//logger.Fields(
+	//	"hosts_dir", global.Storage.HostsDir,
+	//	"certs_dir", global.Storage.CertsDir,
+	//	"https", len(global.Bind.HTTPS),
+	//).Info("resolved paths")
 
 	// Store server in struct for Reload access
 	p.server = agbero.NewServer(

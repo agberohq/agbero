@@ -3,6 +3,7 @@ package agbero
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -88,8 +89,8 @@ func (s *Server) startAdminServer() {
 	}
 
 	go func() {
-		s.logger.Fields("bind", cfg.Address).Info("admin server starting")
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		s.logger.Fields("bind", cfg.Address).Info("listener admin")
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.logger.Fields("err", err).Error("admin server failed")
 		}
 	}()

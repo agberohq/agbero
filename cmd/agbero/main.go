@@ -181,16 +181,21 @@ func main() {
 
 	flaggy.Parse()
 
+	welcome()
+
 	// --- CONFIG PATH RESOLUTION ---
 	var resolvedPath string
 	var configExists bool
 
 	// Special handling for Install: We determine where to write
 	if cmdInstall.Used {
-		if err := installConfiguration(installHere); err != nil {
+		path, err := installConfiguration(installHere)
+		if err != nil {
 			logger.Fatal("Install failed: ", err)
 		}
-		resolvedPath, configExists = resolveConfigPath(configPath)
+
+		resolvedPath = path
+		configExists = true
 	} else {
 		resolvedPath, configExists = resolveConfigPath(configPath)
 	}
@@ -212,7 +217,6 @@ func main() {
 	}
 
 	if cmdHelp.Used {
-		welcome()
 		showHelpExamples(resolvedPath)
 		return
 	}
@@ -402,6 +406,5 @@ func main() {
 		return
 	}
 
-	welcome()
 	showHelpExamples(resolvedPath)
 }
