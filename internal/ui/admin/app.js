@@ -506,98 +506,175 @@ class AgberoApp {
     openRouteDrawer(hostname, routeIdx) {
         const route = this.hostsData.config[hostname].routes[routeIdx];
 
+        // Fetch Live Stats for this specific route to show Real-time status in drawer
+        const routeStats = this.hostsData.stats[hostname]?.routes?.[routeIdx] || {};
+
         document.getElementById("drawerRoutePath").innerText = route.path;
         document.getElementById("drawerHostName").innerText = hostname;
 
         const content = document.getElementById("drawerBody");
         content.innerHTML = ""; // Clear previous
 
-        // 1. Backends Section
-        const backends = route.backends?.servers || [];
-        if (backends.length > 0) {
+        // ================= SECTION 1: THE HANDLER (Backend/PHP/Static) =================
+
+        // CASE A: Static File Server
+        if (route.web && route.web.root) {
             content.innerHTML += `
                 <div class="detail-section">
-                    <div class="detail-title">📡 Backends (${backends.length})</div>
-                    <div class="detail-card">
-                        ${backends.map(b => `
-                            <div class="detail-list-item">
-                                <span class="mono">${b.address}</span>
-                                <span class="badge ${b.alive === false ? 'sec' : 'tls'}">Weight: ${b.weight || 1}</span>
-                            </div>
-                        `).join('')}
-                        <div class="kv-grid" style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--border)">
-                            <div class="kv-item"><label>Strategy</label><div>${route.backends.load_balancing?.strategy || 'Round Robin'}</div></div>
-                            <div class="kv-item"><label>Health Check</label><div>${route.backends.health_check ? 'Enabled' : 'Disabled'}</div></div>
+                    <div class="detail-title">📂 Static File Handler</div>
+                    <div class="handler-card">
+                        <span class="handler-icon">📁</span>
+                        <div class="handler-info">
+                            <strong>File Server</strong>
+                            <span>Root: ${route.web.root}</span>
+                            <span>Listing: ${route.web.listing ? 'Enabled' : 'Disabled'}</span>
                         </div>
                     </div>
                 </div>`;
         }
 
-        // 2. Middleware: Access Control (IP Whitelist / Basic Auth)
-        if (route.middleware) {
-            const mw = route.middleware;
-
-            // IP Filter
-            if (mw.ip_allowlist && mw.ip_allowlist.length > 0) {
-                content.innerHTML += `
-                    <div class="detail-section">
-                        <div class="detail-title">🛡️ IP Whitelist</div>
-                        <div class="detail-card">
-                            ${mw.ip_allowlist.map(ip => `<span class="chip">${ip}</span>`).join(' ')}
+        // CASE B: PHP Handler
+        if (route.web && route.web.php && route.web.php.enabled) {
+            content.innerHTML += `
+                <div class="detail-section">
+                    <div class="detail-title">🐘 PHP Handler</div>
+                    <div class="handler-card">
+                        <span class="handler-icon">⚙️</span>
+                        <div class="handler-info">
+                            <strong>FastCGI Proxy</strong>
+                            <span>Address: ${route.web.php.address}</span>
+                            <span>Index: ${route.web.php.index || 'index.php'}</span>
                         </div>
-                    </div>`;
-            }
-
-            // Authentication
-            if (mw.basic_auth || mw.webauthn) {
-                let authHtml = "";
-                if (mw.basic_auth) {
-                    authHtml += `<div class="detail-list-item"><span>Basic Auth</span> <span class="badge tls">Enabled</span></div>`;
-                    authHtml += `<div style="font-size:11px; color:var(--text-mute); margin-top:5px;">Users: ${Object.keys(mw.basic_auth).join(", ")}</div>`;
-                }
-                if (mw.webauthn) {
-                    authHtml += `<div class="detail-list-item" style="margin-top:5px;"><span>WebAuthn (Passkeys)</span> <span class="badge local">Enabled</span></div>`;
-                }
-
-                content.innerHTML += `
-                    <div class="detail-section">
-                        <div class="detail-title">🔐 Authentication</div>
-                        <div class="detail-card">${authHtml}</div>
-                    </div>`;
-            }
-
-            // Rate Limiting
-            if (mw.rate_limit) {
-                content.innerHTML += `
-                    <div class="detail-section">
-                        <div class="detail-title">🚦 Rate Limiting</div>
-                        <div class="detail-card kv-grid">
-                            <div class="kv-item"><label>Requests</label><div>${mw.rate_limit.requests}</div></div>
-                            <div class="kv-item"><label>Window</label><div>${mw.rate_limit.window_seconds}s</div></div>
-                        </div>
-                    </div>`;
-            }
-
-            // Modifications (Headers / Compression)
-            let modHtml = "";
-            if (mw.compress) modHtml += `<div class="detail-list-item"><span>Compression</span> <span>Gzip/Brotli</span></div>`;
-            if (mw.headers) {
-                modHtml += `<div style="margin-top:10px;"><label style="font-size:10px;color:var(--text-mute);">CUSTOM HEADERS</label></div>`;
-                for (const [k, v] of Object.entries(mw.headers)) {
-                    modHtml += `<div class="detail-list-item"><span class="mono">${k}</span> <span class="mono">${v}</span></div>`;
-                }
-            }
-
-            if (modHtml) {
-                content.innerHTML += `
-                    <div class="detail-section">
-                        <div class="detail-title">⚡ Modifications</div>
-                        <div class="detail-card">${modHtml}</div>
-                    </div>`;
-            }
+                    </div>
+                </div>`;
         }
 
-        // 3. Raw Config Dump
+        // CASE C: Load Balancer (Backends)
+        const configBackends = route.backends?.servers || [];
+        const statBackends = routeStats.backends || [];
+
+        // Merge Config + Stats for the Drawer list
+        const displayBackends = configBackends.length > 0 ? configBackends : statBackends;
+
+        if (displayBackends.length > 0) {
+            let backendsHtml = "";
+
+            displayBackends.forEach((b, i) => {
+                const s = statBackends[i] || {};
+
+                // Data Merging
+                const url = b.address || b.url || s.url || s.address;
+                const weight = (b.weight !== undefined) ? b.weight : (s.weight || '-');
+                const alive = s.alive !== false; // Default to true if no stats
+                const p99 = s.latency_us?.p99 ? (s.latency_us.p99 / 1000).toFixed(0) + "ms" : "";
+
+                backendsHtml += `
+                    <div class="drawer-row ${alive ? '' : 'down'}">
+                        <div class="row-left">
+                            <span class="dot ${alive ? 'ok' : 'down'}" title="${alive ? 'Healthy' : 'Unhealthy'}"></span>
+                            <span class="mono">${url}</span>
+                        </div>
+                        <div class="row-right">
+                            ${p99 ? `<span class="badge" style="border:none;background:var(--panel-bg)">${p99}</span>` : ''}
+                            <span class="badge ${alive ? 'tls' : 'sec'}">W: ${weight}</span>
+                        </div>
+                    </div>`;
+            });
+
+            content.innerHTML += `
+                <div class="detail-section">
+                    <div class="detail-title">📡 Upstreams & Load Balancing</div>
+                    ${backendsHtml}
+                    <div class="kv-grid" style="margin-top:15px;">
+                        <div class="kv-item"><label>Strategy</label><div>${route.backends?.load_balancing?.strategy || 'Round Robin'}</div></div>
+                        <div class="kv-item"><label>Health Check</label><div>${route.backends?.health_check ? 'Enabled' : 'Disabled'}</div></div>
+                    </div>
+                </div>`;
+        }
+
+        // ================= SECTION 2: MIDDLEWARE GRID =================
+        let mwHtml = "";
+        const mw = route.middleware || {};
+
+        // Security Group
+        if (mw.ip_allowlist && mw.ip_allowlist.length > 0) {
+            mwHtml += `
+                <div class="mw-card security">
+                    <div class="mw-head">Access Control</div>
+                    <div class="mw-body">${mw.ip_allowlist.length} IPs Allowed</div>
+                    <div class="mw-sub">${mw.ip_allowlist.join(", ")}</div>
+                </div>`;
+        }
+
+        if (mw.basic_auth) {
+            mwHtml += `
+                <div class="mw-card security">
+                    <div class="mw-head">Authentication</div>
+                    <div class="mw-body">Basic Auth</div>
+                    <div class="mw-sub">${Object.keys(mw.basic_auth).length} Users Configured</div>
+                </div>`;
+        }
+
+        if (mw.webauthn) {
+            mwHtml += `
+                <div class="mw-card security">
+                    <div class="mw-head">Authentication</div>
+                    <div class="mw-body">Passkeys (WebAuthn)</div>
+                    <div class="mw-sub">Relying Party Configured</div>
+                </div>`;
+        }
+
+        // Traffic Group
+        if (mw.rate_limit) {
+            mwHtml += `
+                <div class="mw-card traffic">
+                    <div class="mw-head">Rate Limiter</div>
+                    <div class="mw-body">${mw.rate_limit.requests} req / ${mw.rate_limit.window_seconds}s</div>
+                    <div class="mw-sub">Local Strategy</div>
+                </div>`;
+        }
+
+        if (mw.circuit_breaker) {
+            mwHtml += `
+                <div class="mw-card traffic">
+                    <div class="mw-head">Circuit Breaker</div>
+                    <div class="mw-body">Enabled</div>
+                    <div class="mw-sub">Protecting Upstreams</div>
+                </div>`;
+        }
+
+        // Transform Group
+        if (mw.compress) {
+            mwHtml += `
+                <div class="mw-card transform">
+                    <div class="mw-head">Optimization</div>
+                    <div class="mw-body">Compression</div>
+                    <div class="mw-sub">Gzip / Brotli</div>
+                </div>`;
+        }
+
+        if (mw.headers) {
+            const count = Object.keys(mw.headers).length;
+            mwHtml += `
+                <div class="mw-card transform">
+                    <div class="mw-head">Header Mod</div>
+                    <div class="mw-body">${count} Rules</div>
+                    <div class="mw-sub">Request/Response</div>
+                </div>`;
+        }
+
+        // Render Middleware Section if any exist
+        if (mwHtml) {
+            content.innerHTML += `
+                <div class="detail-section">
+                    <div class="detail-title">⚡ Active Middleware</div>
+                    <div class="mw-grid">
+                        ${mwHtml}
+                    </div>
+                </div>`;
+        }
+
+        // ================= SECTION 3: RAW CONFIG =================
         content.innerHTML += `
             <div class="detail-section">
                 <div class="detail-title">📜 Raw Config</div>

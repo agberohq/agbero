@@ -113,7 +113,7 @@ body {
     }
 }
 
-/* HERO & HEALTH BAR */
+/* HERO */
 .hero {
     text-align: center;
     margin: 60px 0 80px 0;
@@ -143,6 +143,13 @@ body {
     gap: 15px;
 }
 
+.hero-meta span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+/* HEALTH BAR (New) */
 .health-bar-container {
     width: 300px;
     margin: 25px auto 0;
@@ -227,7 +234,7 @@ body {
     letter-spacing: -0.5px;
 }
 
-/* HOSTS & ROUTES */
+/* HOSTS & ROUTES (Main List) */
 .host-row {
     margin-bottom: 40px;
     border-bottom: 1px solid var(--border);
@@ -262,6 +269,17 @@ body {
     padding: 20px;
     margin-top: 15px;
     border: 1px solid var(--border);
+    cursor: pointer;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.route-block:hover {
+    border-color: var(--accent);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.route-block:hover .route-path {
+    text-decoration: underline;
 }
 
 .route-header {
@@ -422,7 +440,7 @@ body {
     border-color: var(--fg);
 }
 
-/* UTILS */
+/* UTILS & BUTTONS */
 .btn {
     background: var(--bg);
     border: 1px solid var(--border);
@@ -507,6 +525,17 @@ body {
     width: 40px;
 }
 
+.divider {
+    color: var(--border);
+    margin: 0 5px;
+}
+
+.divider-v {
+    border-right: 1px solid var(--border);
+    height: 20px;
+    margin: 0 5px;
+}
+
 /* MODALS */
 .modal-overlay {
     position: fixed;
@@ -551,31 +580,14 @@ body {
     cursor: pointer;
 }
 
-.divider {
-    color: var(--border);
-    margin: 0 5px;
-}
-
-.divider-v {
-    border-right: 1px solid var(--border);
-    height: 20px;
-    margin: 0 5px;
-}
-
-svg text {
-    user-select: none;
-    pointer-events: none;
-    opacity: 0.7;
-}
-
-
+/* ================== DRAWER / SLIDE PANEL ================== */
 .drawer-backdrop {
     position: fixed;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.3); /* Dimmer background than modal */
+    background: rgba(0, 0, 0, 0.3);
     z-index: 500;
     opacity: 0;
     visibility: hidden;
@@ -593,7 +605,7 @@ svg text {
     top: 0;
     right: 0;
     height: 100%;
-    width: 500px; /* Wide enough for details */
+    width: 500px; /* Wide enough for detailed configs */
     max-width: 90%;
     background: var(--bg);
     box-shadow: -5px 0 30px rgba(0, 0, 0, 0.15);
@@ -652,7 +664,7 @@ svg text {
     padding: 30px;
 }
 
-/* Drawer Sections (Cards) */
+/* Drawer Components */
 .detail-section {
     margin-bottom: 30px;
 }
@@ -676,7 +688,7 @@ svg text {
     padding: 15px;
 }
 
-/* Config Key-Value Grid */
+/* KV Grid for Drawer */
 .kv-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -688,6 +700,7 @@ svg text {
     font-size: 10px;
     color: var(--text-mute);
     margin-bottom: 4px;
+    text-transform: uppercase;
 }
 
 .kv-item div {
@@ -697,29 +710,135 @@ svg text {
     word-break: break-all;
 }
 
-/* List items in drawer */
-.detail-list-item {
-    padding: 8px 0;
-    border-bottom: 1px solid var(--border);
-    font-size: 13px;
+/* Enhanced Backend Row in Drawer */
+.drawer-row {
     display: flex;
+    align-items: center;
     justify-content: space-between;
+    padding: 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    font-family: monospace;
+    font-size: 13px;
 }
 
-.detail-list-item:last-child {
-    border-bottom: none;
+.drawer-row.down {
+    opacity: 0.6;
+    border-color: var(--border);
+    background: var(--panel-bg);
 }
 
-/* Clickable Route hover effect in main list */
-.route-block {
-    cursor: pointer;
-    transition: border-color 0.2s;
+.row-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--fg);
 }
 
-.route-block:hover {
-    border-color: var(--accent);
+.row-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
-.route-block:hover .route-path {
-    text-decoration: underline;
+/* Handler Cards (PHP/Static) */
+.handler-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    padding: 20px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.handler-icon {
+    font-size: 24px;
+}
+
+.handler-info strong {
+    display: block;
+    color: var(--fg);
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+
+.handler-info span {
+    display: block;
+    color: var(--text-mute);
+    font-size: 12px;
+    font-family: monospace;
+}
+
+/* Middleware Grid */
+.mw-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
+}
+
+.mw-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Colored Strips for Middleware Categories */
+.mw-card::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: var(--border);
+}
+
+.mw-card.security::before {
+    background: var(--danger);
+}
+
+.mw-card.traffic::before {
+    background: var(--warning);
+}
+
+.mw-card.transform::before {
+    background: var(--accent);
+}
+
+.mw-head {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-mute);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    padding-left: 10px;
+}
+
+.mw-body {
+    font-size: 13px;
+    color: var(--fg);
+    font-weight: 500;
+    padding-left: 10px;
+}
+
+.mw-sub {
+    font-size: 11px;
+    color: var(--text-mute);
+    margin-top: 4px;
+    padding-left: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+svg text {
+    user-select: none;
+    pointer-events: none;
+    opacity: 0.7;
 }
