@@ -104,6 +104,15 @@ class AgberoApp {
             if (this._confirmFn) await this._confirmFn();
             this.closeModals();
         });
+
+        // Drawer
+        document.getElementById("drawerCloseBtn").addEventListener("click", () => this.closeDrawer());
+        document.getElementById("drawerBackdrop").addEventListener("click", () => this.closeDrawer());
+
+        // Escape key to close drawer
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") this.closeDrawer();
+        });
     }
 
     setPage(p) {
@@ -264,7 +273,6 @@ class AgberoApp {
         const bar = document.getElementById("globalHealthBar");
         if (total === 0) return;
 
-        // Simple 2-segment calc (Success vs Error) since logic for 4xx vs 5xx might vary
         const errPct = (errors / total) * 100;
         const okPct = 100 - errPct;
 
@@ -369,9 +377,6 @@ class AgberoApp {
             const domainsStr = (cfg.domains || []).join(" ");
             const matchesHost = hostname.toLowerCase().includes(filterTerm) || domainsStr.toLowerCase().includes(filterTerm);
 
-            // We also need to check internal routes if the host doesn't match directly
-            // but we'll generate HTML first and assume if filter matches anything inside, we show it.
-
             let hostHtml = "";
             let hostHasMatch = matchesHost;
 
@@ -390,7 +395,6 @@ class AgberoApp {
                 tlsClass = "local"; tlsText = "Local TLS";
             }
 
-            // TLS Expiry Calculation (mock logic if not in API, or use cert data if available)
             if (cfg.tls?.expiry) {
                 const daysLeft = Math.floor((new Date(cfg.tls.expiry) - Date.now()) / 86400000);
                 tlsTitle = `Expires: ${cfg.tls.expiry} (${daysLeft} days)`;
@@ -409,50 +413,67 @@ class AgberoApp {
             if (cfg.routes) {
                 cfg.routes.forEach((route, idx) => {
                     routeCount++;
-
-                    // Filter Logic: Check path
                     const pathMatches = route.path.toLowerCase().includes(filterTerm);
-
                     const routeStats = rtStats.routes?.[idx];
-                    let backendHtml = "";
-                    const backendList = routeStats?.backends || (route.backends?.servers || []);
 
-                    // Backend List
-                    if (backendList.length > 0) {
+                    let backendHtml = "";
+
+                    // --- FIX START ---
+                    // 1. Get Static Config (Source of Truth for Weight/Address)
+                    const configBackends = route.backends?.servers || [];
+                    // 2. Get Runtime Stats (Source of Truth for Reqs/Latency)
+                    const statBackends = routeStats?.backends || [];
+
+                    // Use config as base, fallback to stats if config is empty (dynamic backends)
+                    const displayBackends = configBackends.length > 0 ? configBackends : statBackends;
+
+                    if (displayBackends.length > 0) {
                         backendHtml = `<div class="backend-list">`;
-                        backendList.forEach(b => {
-                            const url = b.url || b.address;
-                            // Filter Logic: Check backend URL
-                            if (pathMatches || matchesHost || url.toLowerCase().includes(filterTerm)) {
+
+                        displayBackends.forEach((b, bIdx) => {
+                            // Find matching stats object by index
+                            const bStats = statBackends[bIdx] || {};
+
+                            // Prefer Config address, fallback to Stats url
+                            const url = b.address || b.url || bStats.url || bStats.address;
+
+                            // Prefer Config weight
+                            const weight = (b.weight !== undefined) ? b.weight : (bStats.weight || '-');
+
+                            if (pathMatches || matchesHost || (url && url.toLowerCase().includes(filterTerm))) {
                                 hostHasMatch = true;
                             }
 
-                            const alive = b.alive !== false;
-                            const p99 = b.latency_us?.p99 ? (b.latency_us.p99 / 1000).toFixed(0) + "ms" : "-";
-                            const reqs = b.total_reqs || 0;
+                            // Use Stats for liveness (default true if stats missing)
+                            const alive = bStats.alive !== false;
+                            const p99 = bStats.latency_us?.p99 ? (bStats.latency_us.p99 / 1000).toFixed(0) + "ms" : "-";
+                            const reqs = bStats.total_reqs || 0;
 
                             backendHtml += `
                                 <div class="backend-row ${alive ? '' : 'down'}">
-                                    <span class="be-actions" onclick="app.toggleBackend('${hostname}', ${idx}, '${url}', ${alive})">
+                                    <span class="be-actions" onclick="event.stopPropagation(); app.toggleBackend('${hostname}', ${idx}, '${url}', ${alive})">
                                         <span class="dot ${alive ? 'ok' : 'down'}" title="Toggle Backend"></span>
                                     </span>
                                     <span class="be-url">${url}</span>
-                                    <span class="be-stat">W: ${b.weight || '-'}</span>
+                                    <span class="be-stat">W: ${weight}</span>
                                     <span class="be-stat">${p99}</span>
                                     <span class="be-stat">${this.fmtNum(reqs)}</span>
                                 </div>`;
                         });
                         backendHtml += `</div>`;
-                    } else if (route.web && route.web.root) {
+                    }
+                    // --- FIX END ---
+                    else if (route.web && route.web.root) {
                         backendHtml = `<div class="backend-row"><span class="dot ok"></span> <span>📂 ${route.web.root}</span></div>`;
                         if (route.web.root.toLowerCase().includes(filterTerm)) hostHasMatch = true;
                     }
 
                     if (filterTerm === "" || hostHasMatch || pathMatches) {
                         hostHtml += `
-                            <div class="route-block">
+                            <div class="route-block" onclick="app.openRouteDrawer('${hostname}', ${idx})">
                                 <div class="route-header">
                                     <span class="route-path">${route.path}</span>
+                                    <span class="badge" style="margin-left:auto; font-size:9px;">DETAILS &rarr;</span>
                                 </div>
                                 ${backendHtml}
                             </div>`;
@@ -479,6 +500,120 @@ class AgberoApp {
             alert("Backend toggle signal sent (Simulated). In a real setup, this endpoint would update cluster state.");
             this.fetchHostsData(); // Refresh UI
         });
+    }
+
+    // ================== DRAWER (Route Details) ==================
+    openRouteDrawer(hostname, routeIdx) {
+        const route = this.hostsData.config[hostname].routes[routeIdx];
+
+        document.getElementById("drawerRoutePath").innerText = route.path;
+        document.getElementById("drawerHostName").innerText = hostname;
+
+        const content = document.getElementById("drawerBody");
+        content.innerHTML = ""; // Clear previous
+
+        // 1. Backends Section
+        const backends = route.backends?.servers || [];
+        if (backends.length > 0) {
+            content.innerHTML += `
+                <div class="detail-section">
+                    <div class="detail-title">📡 Backends (${backends.length})</div>
+                    <div class="detail-card">
+                        ${backends.map(b => `
+                            <div class="detail-list-item">
+                                <span class="mono">${b.address}</span>
+                                <span class="badge ${b.alive === false ? 'sec' : 'tls'}">Weight: ${b.weight || 1}</span>
+                            </div>
+                        `).join('')}
+                        <div class="kv-grid" style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--border)">
+                            <div class="kv-item"><label>Strategy</label><div>${route.backends.load_balancing?.strategy || 'Round Robin'}</div></div>
+                            <div class="kv-item"><label>Health Check</label><div>${route.backends.health_check ? 'Enabled' : 'Disabled'}</div></div>
+                        </div>
+                    </div>
+                </div>`;
+        }
+
+        // 2. Middleware: Access Control (IP Whitelist / Basic Auth)
+        if (route.middleware) {
+            const mw = route.middleware;
+
+            // IP Filter
+            if (mw.ip_allowlist && mw.ip_allowlist.length > 0) {
+                content.innerHTML += `
+                    <div class="detail-section">
+                        <div class="detail-title">🛡️ IP Whitelist</div>
+                        <div class="detail-card">
+                            ${mw.ip_allowlist.map(ip => `<span class="chip">${ip}</span>`).join(' ')}
+                        </div>
+                    </div>`;
+            }
+
+            // Authentication
+            if (mw.basic_auth || mw.webauthn) {
+                let authHtml = "";
+                if (mw.basic_auth) {
+                    authHtml += `<div class="detail-list-item"><span>Basic Auth</span> <span class="badge tls">Enabled</span></div>`;
+                    authHtml += `<div style="font-size:11px; color:var(--text-mute); margin-top:5px;">Users: ${Object.keys(mw.basic_auth).join(", ")}</div>`;
+                }
+                if (mw.webauthn) {
+                    authHtml += `<div class="detail-list-item" style="margin-top:5px;"><span>WebAuthn (Passkeys)</span> <span class="badge local">Enabled</span></div>`;
+                }
+
+                content.innerHTML += `
+                    <div class="detail-section">
+                        <div class="detail-title">🔐 Authentication</div>
+                        <div class="detail-card">${authHtml}</div>
+                    </div>`;
+            }
+
+            // Rate Limiting
+            if (mw.rate_limit) {
+                content.innerHTML += `
+                    <div class="detail-section">
+                        <div class="detail-title">🚦 Rate Limiting</div>
+                        <div class="detail-card kv-grid">
+                            <div class="kv-item"><label>Requests</label><div>${mw.rate_limit.requests}</div></div>
+                            <div class="kv-item"><label>Window</label><div>${mw.rate_limit.window_seconds}s</div></div>
+                        </div>
+                    </div>`;
+            }
+
+            // Modifications (Headers / Compression)
+            let modHtml = "";
+            if (mw.compress) modHtml += `<div class="detail-list-item"><span>Compression</span> <span>Gzip/Brotli</span></div>`;
+            if (mw.headers) {
+                modHtml += `<div style="margin-top:10px;"><label style="font-size:10px;color:var(--text-mute);">CUSTOM HEADERS</label></div>`;
+                for (const [k, v] of Object.entries(mw.headers)) {
+                    modHtml += `<div class="detail-list-item"><span class="mono">${k}</span> <span class="mono">${v}</span></div>`;
+                }
+            }
+
+            if (modHtml) {
+                content.innerHTML += `
+                    <div class="detail-section">
+                        <div class="detail-title">⚡ Modifications</div>
+                        <div class="detail-card">${modHtml}</div>
+                    </div>`;
+            }
+        }
+
+        // 3. Raw Config Dump
+        content.innerHTML += `
+            <div class="detail-section">
+                <div class="detail-title">📜 Raw Config</div>
+                <div class="code-box" style="max-height: 200px;">
+                    <pre>${JSON.stringify(route, null, 2)}</pre>
+                </div>
+            </div>`;
+
+        // Open Drawer
+        document.getElementById("drawerBackdrop").classList.add("active");
+        document.getElementById("routeDrawer").classList.add("active");
+    }
+
+    closeDrawer() {
+        document.getElementById("drawerBackdrop").classList.remove("active");
+        document.getElementById("routeDrawer").classList.remove("active");
     }
 
     // ================== FIREWALL & UTILS ==================
