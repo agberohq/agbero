@@ -4,7 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"runtime"
+	"sync"
 	"time"
+
+	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/mem"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
@@ -12,26 +16,21 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
 )
 
+// --- System Stats ---
+
 type SystemStats struct {
-	NumCPU       int    `json:"num_cpu"`
-	NumGoroutine int    `json:"num_goroutine"`
-	MemAlloc     uint64 `json:"mem_alloc"` // Bytes allocated and not yet freed
-	MemTotal     uint64 `json:"mem_total"` // Total bytes allocated (cumulative)
-	MemSys       uint64 `json:"mem_sys"`   // Bytes obtained from OS
-	MemRSS       uint64 `json:"mem_rss"`   // Approximate RSS
+	NumCPU       int     `json:"num_cpu"`
+	NumGoroutine int     `json:"num_goroutine"`
+	MemAlloc     uint64  `json:"mem_alloc"`    // Go bytes allocated and not freed
+	MemTotal     uint64  `json:"mem_total"`    // Go cumulative bytes allocated
+	MemSys       uint64  `json:"mem_sys"`      // Go memory obtained from OS
+	MemRSS       uint64  `json:"mem_rss"`      // Approx RSS for Go
+	CPUPercent   float64 `json:"cpu_percent"`  // OS CPU usage
+	MemUsed      uint64  `json:"mem_used"`     // OS memory used
+	MemTotalOS   uint64  `json:"mem_total_os"` // OS total memory
 }
 
-// Uptime returns a JSON snapshot of the proxy state
-func Uptime(hm *discovery.Host) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		snapshot := collectMetrics(hm)
-
-		w.Header().Set("Content-Type", "application/json")
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(snapshot)
-	}
-}
+// --- Snapshot structs ---
 
 type SystemSnapshot struct {
 	Timestamp time.Time                `json:"timestamp"`
@@ -53,21 +52,64 @@ type RouteSnapshot struct {
 }
 
 type BackendSnapshot struct {
-	URL       string `json:"url"`
-	Alive     bool   `json:"alive"`
-	InFlight  int64  `json:"in_flight"`
-	Failures  int64  `json:"failures"`
-	TotalReqs uint64 `json:"total_reqs"`
-	// Latency in Microseconds
-	Latency metrics.LatencySnapshot `json:"latency_us"`
+	URL       string                  `json:"url"`
+	Alive     bool                    `json:"alive"`
+	InFlight  int64                   `json:"in_flight"`
+	Failures  int64                   `json:"failures"`
+	TotalReqs uint64                  `json:"total_reqs"`
+	Latency   metrics.LatencySnapshot `json:"latency_us"`
+	Healthy   bool                    `json:"healthy"`
 }
 
-// --- Collection Logic ---
+// --- CPU cache to avoid expensive repeated queries ---
+var (
+	lastCPUCheck     time.Time
+	lastCPUPercent   float64
+	cpuMutex         sync.Mutex
+	cpuCacheDuration = time.Second
+)
+
+func getCPUPercent() float64 {
+	cpuMutex.Lock()
+	defer cpuMutex.Unlock()
+
+	if time.Since(lastCPUCheck) < cpuCacheDuration {
+		return lastCPUPercent
+	}
+
+	percent, err := cpu.Percent(0, false)
+	if err != nil || len(percent) == 0 {
+		lastCPUPercent = 0
+	} else {
+		lastCPUPercent = percent[0]
+	}
+
+	lastCPUCheck = time.Now()
+	return lastCPUPercent
+}
+
+// --- Uptime handler ---
+
+func Uptime(hm *discovery.Host) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		snapshot := collectMetrics(hm)
+
+		w.Header().Set("Content-Type", "application/json")
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(snapshot)
+	}
+}
+
+// --- Collect Metrics ---
 
 func collectMetrics(hm *discovery.Host) *SystemSnapshot {
-
+	// Go runtime stats
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
+
+	// OS memory stats
+	vmStat, _ := mem.VirtualMemory()
 
 	sysStats := SystemStats{
 		NumCPU:       runtime.NumCPU(),
@@ -75,18 +117,20 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 		MemAlloc:     m.Alloc,
 		MemTotal:     m.TotalAlloc,
 		MemSys:       m.Sys,
-		MemRSS:       m.HeapSys, // Approximation of RSS for Go
+		MemRSS:       m.HeapSys,
+		CPUPercent:   getCPUPercent(),
+		MemUsed:      vmStat.Used,
+		MemTotalOS:   vmStat.Total,
 	}
 
-	sys := &SystemSnapshot{
+	sysSnap := &SystemSnapshot{
 		Timestamp: time.Now(),
 		System:    sysStats,
 		Hosts:     make(map[string]*HostSnapshot),
 	}
 
-	// Get all configured hosts (active + inactive)
-	hosts, _ := hm.LoadAll() // Returns map[string]*Host
-
+	// Load all hosts
+	hosts, _ := hm.LoadAll()
 	for domain, hcfg := range hosts {
 		hSnap := &HostSnapshot{
 			Routes: make([]*RouteSnapshot, 0, len(hcfg.Routes)),
@@ -97,7 +141,6 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 		var sumP99 int64
 		var p99Count int
 
-		// Add all configured routes (even inactive)
 		for _, route := range hcfg.Routes {
 			rSnap := &RouteSnapshot{
 				Path:     route.Path,
@@ -105,40 +148,39 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 				Backends: make([]*BackendSnapshot, 0),
 			}
 
-			// Check cache for active stats
 			if v, ok := cache.Route.Load(route.Key()); ok {
 				handler := v.Value.(*handlers.Route)
 
 				for _, b := range handler.Backends {
-					lat := b.Metrics.Snapshot()
 					bSnap := &BackendSnapshot{
 						URL:       b.URL.String(),
 						Alive:     b.Alive.Load(),
-						InFlight:  b.InFlight.Load(),
-						Failures:  b.Failures.Load(),
-						TotalReqs: b.TotalReqs.Load(),
-						Latency:   lat,
+						InFlight:  b.Activity.InFlight.Load(),
+						Failures:  int64(b.Activity.Failures.Load()),
+						TotalReqs: b.Activity.Requests.Load(),
+						Latency:   b.Activity.Latency.Snapshot(),
+						Healthy:   b.Health.IsHealthy(),
 					}
 					rSnap.Backends = append(rSnap.Backends, bSnap)
 
-					totalReqs += b.TotalReqs.Load()
-					if lat.Count > 0 && lat.P99 > 0 {
-						sumP99 += lat.P99
+					totalReqs += b.Activity.Requests.Load()
+					if bSnap.Latency.Count > 0 && bSnap.Latency.P99 > 0 {
+						sumP99 += bSnap.Latency.P99
 						p99Count++
 					}
 				}
 			} else {
-				// Inactive: Zero stats, list configured backends
+				// Inactive route, just show configured backends
 				for _, url := range route.Backends.Servers {
-					bSnap := &BackendSnapshot{
+					rSnap.Backends = append(rSnap.Backends, &BackendSnapshot{
 						URL:       url.Address,
-						Alive:     false, // Inactive
+						Alive:     false,
+						Healthy:   false,
+						Latency:   metrics.LatencySnapshot{},
 						InFlight:  0,
 						Failures:  0,
 						TotalReqs: 0,
-						Latency:   metrics.LatencySnapshot{},
-					}
-					rSnap.Backends = append(rSnap.Backends, bSnap)
+					})
 				}
 			}
 
@@ -152,8 +194,8 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 			hSnap.AvgP99 = sumP99 / int64(p99Count)
 		}
 
-		sys.Hosts[domain] = hSnap
+		sysSnap.Hosts[domain] = hSnap
 	}
 
-	return sys
+	return sysSnap
 }
