@@ -103,8 +103,7 @@ func Logging(cfg alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, er
 	}
 
 	multi := lh.NewMultiHandler(handlers...)
-
-	final := lh.NewDedup(multi, 2*time.Second)
+	final := lh.NewDedup(multi, 5*time.Second, lh.WithDedupIgnore("duration"))
 	_ = sm.Register(final)
 
 	l := ll.New(woos.Name, ll.WithHandler(final), ll.WithFatalExits(true))

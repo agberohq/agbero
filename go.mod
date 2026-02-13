@@ -22,7 +22,7 @@ require (
 	github.com/maypok86/otter/v2 v2.3.0
 	github.com/olekukonko/errors v1.2.0
 	github.com/olekukonko/jack v0.0.0-20260211212132-ec50c2ab5be7
-	github.com/olekukonko/ll v0.1.6
+	github.com/olekukonko/ll v0.1.7-0.20260213142606-cf309e29ab2a
 	github.com/pires/go-proxyproto v0.11.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.59.0
