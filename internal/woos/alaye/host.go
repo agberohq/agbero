@@ -10,18 +10,17 @@ import (
 type Host struct {
 	Domains      []string      `hcl:"domains" json:"domains"`
 	Bind         []string      `hcl:"bind,optional" json:"bind"`
+	NotFoundPage string        `hcl:"not_found_page,optional" json:"not_found_page"`
 	Compression  bool          `hcl:"compression,optional" json:"compression"`
-	Routes       []Route       `hcl:"route,block" json:"routes"`
 	TLS          TLS           `hcl:"tls,block" json:"tls"`
 	Limits       Limit         `hcl:"limits,block" json:"limits"`
 	Headers      Headers       `hcl:"headers,block" json:"headers"`
-	TCPProxy     []TCPRoute    `hcl:"tcp_proxy,block" json:"tcp_proxy"`
+	Routes       []Route       `hcl:"route,block" json:"routes"`
+	Proxies      []TCPRoute    `hcl:"proxy,block" json:"proxies"` // Renamed & Tag Updated
 	Tunnel       *TunnelConfig `hcl:"tunnel,block" json:"tunnel,omitempty"`
-	NotFoundPage string        `hcl:"not_found_page,optional" json:"not_found_page"`
 }
 
 func (h *Host) Validate() error {
-	// Domains validation
 	if len(h.Domains) == 0 {
 		return ErrNoDomains
 	}
@@ -30,20 +29,17 @@ func (h *Host) Validate() error {
 		if domain == "" {
 			return errors.Newf("domain [%d]: %w", i, ErrCannotBeEmpty)
 		}
-		// Basic domain validation
 		if strings.Contains(domain, ProtocolSeparator) {
 			return errors.Newf("domains[%d]: %q %w", i, domain, ErrDomainHasProtocol)
 		}
-		h.Domains[i] = domain // Normalize
+		h.Domains[i] = domain
 	}
 
-	// Bind ports validation (if provided)
 	for i, port := range h.Bind {
 		port = strings.TrimSpace(port)
 		if port == "" {
 			return errors.Newf("bind[%d]: %w", ErrCannotBeEmpty, i)
 		}
-		// Normalize ":3000" to "3000"
 		if strings.HasPrefix(port, ":") {
 			port = port[1:]
 		}
@@ -53,7 +49,6 @@ func (h *Host) Validate() error {
 		h.Bind[i] = port
 	}
 
-	// Routes validation
 	if len(h.Routes) == 0 {
 		return ErrNoRoutes
 	}
@@ -63,22 +58,18 @@ func (h *Host) Validate() error {
 		}
 	}
 
-	// TLS validation
 	if err := h.TLS.Validate(); err != nil {
 		return errors.Newf("tls: %w", err)
 	}
 
-	// Limits validation
 	if err := h.Limits.Validate(); err != nil {
 		return errors.Newf("limits: %w", err)
 	}
 
-	// Headers validation
 	if err := h.Headers.Validate(); err != nil {
 		return errors.Newf("headers: %w", err)
 	}
 
-	// Tunnel validation
 	if h.Tunnel != nil {
 		if err := h.Tunnel.Validate(); err != nil {
 			return errors.Newf("tunnel: %w", err)

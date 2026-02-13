@@ -317,10 +317,8 @@ func (p *Proxy) pickBalancer(sni string) *Balancer {
 			}
 			for routeSNI, b := range p.Routes {
 				if strings.HasPrefix(routeSNI, "*.") {
-					// CORRECTED LOGIC:
-					// routeSNI = "*.w.com" -> root = "w.com"
-					// We match if sni == "w.com" OR sni ends with ".w.com"
 					root := routeSNI[2:]
+					// Correct logic: matches "w.com" or "x.w.com"
 					if sni == root || strings.HasSuffix(sni, "."+root) {
 						return b
 					}

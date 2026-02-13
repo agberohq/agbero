@@ -138,3 +138,15 @@ func Get[T any](it *Item) (T, bool) {
 	v, ok := it.Value.(T)
 	return v, ok
 }
+
+// LoadOrStore
+//if it, loaded := cache.Route.LoadOrStore(key, newItem); loaded {
+//h.Close()
+//if existing, ok := it.Value.(*handlers.Route); ok {
+//s.reaper.Touch(key)
+//return existing
+//}
+//}
+//func Load[T any](key string, fn func() (T, error)) (T, error) {
+//
+//}

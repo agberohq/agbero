@@ -140,7 +140,6 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 				Backends: make([]*BackendSnapshot, 0),
 			}
 
-			// CORRECTED: Access item.Value directly as item is *cache.Item struct
 			if item, ok := cache.Route.Load(route.Key()); ok {
 				if handler, ok := item.Value.(*handlers.Route); ok {
 					for _, b := range handler.Backends {
@@ -179,9 +178,8 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 		}
 
 		// --- TCP Routes ---
-		if len(hcfg.TCPProxy) > 0 {
-			for _, tcpCfg := range hcfg.TCPProxy {
-				// CORRECTED: Access item.Value directly
+		if len(hcfg.Proxies) > 0 {
+			for _, tcpCfg := range hcfg.Proxies {
 				item, ok := cache.TCP.Load(tcpCfg.Listen)
 				if !ok {
 					continue

@@ -61,7 +61,7 @@ type Server struct {
 
 	logger       *ll.Logger
 	ipMiddleware *clientip.IPMiddleware
-	rateLimiter  *ratelimit.RateLimiter // Global Default Limiter
+	rateLimiter  *ratelimit.RateLimiter
 
 	wasmCache    sync.Map
 	skipLogPaths map[string]bool
@@ -133,11 +133,9 @@ func (s *Server) Start(configPath string) error {
 		jack.ReaperWithLogger(s.logger),
 		jack.ReaperWithHandler(func(ctx context.Context, id string) {
 			if it, ok := cache.Route.Load(id); ok {
-				//if item, ok := it.(*cache.Item); ok {
 				if h, ok := it.Value.(*handlers.Route); ok {
 					h.Close()
 				}
-				// }
 			}
 			cache.Route.Delete(id)
 			s.logger.Fields("route_key", id).Debug("reaped idle route handler")
@@ -209,16 +207,29 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
 	}
 
+	// Group TCP Routes by Listener Address
+	tcpGroups := make(map[string][]*alaye.TCPRoute)
 	for _, host := range hosts {
-		for _, route := range host.TCPProxy {
-			tp := tcp.NewProxy(route.Listen, s.logger)
-			tp.AddRoute("*", route)
-			if err := tp.Start(); err != nil {
-				s.logger.Fields("listen", route.Listen, "err", err).Error("failed to start tcp proxy")
-				continue
-			}
-			s.tcpProxies = append(s.tcpProxies, tp)
+		for i := range host.Proxies {
+			p := &host.Proxies[i]
+			tcpGroups[p.Listen] = append(tcpGroups[p.Listen], p)
 		}
+	}
+
+	for listen, routes := range tcpGroups {
+		tp := tcp.NewProxy(listen, s.logger)
+		for _, r := range routes {
+			pattern := r.SNI
+			if pattern == "" {
+				pattern = "*"
+			}
+			tp.AddRoute(pattern, *r)
+		}
+		if err := tp.Start(); err != nil {
+			s.logger.Fields("listen", listen, "err", err).Error("failed to start tcp proxy")
+			continue
+		}
+		s.tcpProxies = append(s.tcpProxies, tp)
 	}
 
 	anyStreaming := s.hasStreaming(hosts)
@@ -345,7 +356,7 @@ func (s *Server) logHostStats(hosts map[string]*alaye.Host) {
 	tcpCount := 0
 	for _, host := range hosts {
 		routeCount += len(host.Routes)
-		tcpCount += len(host.TCPProxy)
+		tcpCount += len(host.Proxies)
 	}
 	s.logger.Fields(
 		"hosts", hostCount,
@@ -500,9 +511,6 @@ func (s *Server) startQUICServer(
 	}()
 }
 
-// buildChain constructs the middleware chain.
-// NOTE: We do NOT apply the global rate limiter here anymore.
-// It is applied inside handleRoute to support per-route overrides.
 func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) http.Handler {
 	h := next
 
@@ -566,7 +574,6 @@ func (s *Server) Reload() {
 
 	s.global = global
 
-	// Rebuild global rate limiter
 	if s.rateLimiter != nil {
 		s.rateLimiter.Close()
 	}
@@ -588,6 +595,16 @@ func (s *Server) Reload() {
 	}
 
 	s.mu.Lock()
+	// Group TCP Routes by Listener Address for Reload
+	tcpGroups := make(map[string][]*alaye.TCPRoute)
+	for _, host := range newHosts {
+		for i := range host.Proxies {
+			p := &host.Proxies[i]
+			tcpGroups[p.Listen] = append(tcpGroups[p.Listen], p)
+		}
+	}
+
+	// Update existing proxies or start new ones (Note: dynamic start not fully implemented here for new ports, relies on existing listeners logic for now or full restart, but Route update is supported)
 	for _, tp := range s.tcpProxies {
 		_, port, _ := net.SplitHostPort(tp.Listen)
 		if port == "" {
@@ -598,27 +615,38 @@ func (s *Server) Reload() {
 			}
 		}
 
+		// Find the group for this proxy's listen address
+		var group []*alaye.TCPRoute
+		// Try exact match first
+		if g, ok := tcpGroups[tp.Listen]; ok {
+			group = g
+		} else {
+			// Try matching by port if Listen was :PORT
+			for l, g := range tcpGroups {
+				if strings.HasSuffix(l, ":"+port) {
+					group = g
+					break
+				}
+			}
+		}
+
+		if group == nil {
+			// Listener removed in config? Disable all routes
+			tp.UpdateRoutes(nil, nil)
+			continue
+		}
+
 		newRoutes := make(map[string]*tcp.Balancer)
 		var newDefault *tcp.Balancer
 
-		for _, host := range newHosts {
-			for _, route := range host.TCPProxy {
-				rPort := route.Listen
-				if strings.Contains(rPort, ":") {
-					_, p, _ := net.SplitHostPort(rPort)
-					rPort = p
-				}
-
-				if rPort == port {
-					bal := tcp.NewBalancer(route)
-					if len(host.Domains) > 0 {
-						for _, domain := range host.Domains {
-							newRoutes[strings.ToLower(domain)] = bal
-						}
-					} else {
-						newDefault = bal
-					}
-				}
+		for _, route := range group {
+			bal := tcp.NewBalancer(*route)
+			if route.SNI != "" {
+				newRoutes[strings.ToLower(route.SNI)] = bal
+			} else {
+				// If Name is present but no SNI, treat as default if alone, or ignore?
+				// User config: proxy "name" { listen=":X" } -> SNI defaults to empty -> "*"
+				newDefault = bal
 			}
 		}
 		tp.UpdateRoutes(newRoutes, newDefault)
@@ -680,7 +708,6 @@ func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
 				}
 			}
 
-			// Default rule found
 			ruleName := rule.Name
 			if ruleName == "" {
 				ruleName = "global_default"
@@ -875,7 +902,6 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	}
 
 	routeKey := route.Key()
-	// Pass global rate limits so the route handler builder can resolve policies
 	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey, &s.global.RateLimits)
 
 	if route.Wasm != nil {
@@ -888,7 +914,6 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 		handler = wm.Handler(handler)
 	}
 
-	// Apply Global Rate Limiter (unless ignored by route)
 	if s.rateLimiter != nil {
 		ignoreGlobal := false
 		if route.RateLimit != nil && route.RateLimit.IgnoreGlobal {
@@ -904,12 +929,10 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 
 func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string, globalRate *alaye.GlobalRate) *handlers.Route {
 	if it, ok := cache.Route.Load(key); ok {
-		//if item, ok := it.(*cache.Item); ok {
 		if h, ok := it.Value.(*handlers.Route); ok {
 			s.reaper.Touch(key)
 			return h
 		}
-		//}
 	}
 
 	h := handlers.NewRoute(route, globalRate, s.logger)
@@ -920,12 +943,10 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string, globalRa
 
 	if it, loaded := cache.Route.LoadOrStore(key, newItem); loaded {
 		h.Close()
-		//if item, ok := it.(*cache.Item); ok {
 		if existing, ok := it.Value.(*handlers.Route); ok {
 			s.reaper.Touch(key)
 			return existing
 		}
-		//}
 	}
 
 	s.reaper.Touch(key)

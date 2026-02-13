@@ -4,7 +4,7 @@ domains = ["cockroach.internal"]
 # -----------------------------------------------------------------------
 # TCP Proxy Configuration for CockroachDB (SQL Interface)
 # -----------------------------------------------------------------------
-tcp_proxy {
+proxy "cockroach" {
   # The port Agbero will listen on (Standard CockroachDB port)
   listen = ":26257"
 
