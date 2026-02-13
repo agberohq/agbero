@@ -9,6 +9,7 @@ import (
 
 type Global struct {
 	Version     int         `hcl:"version,optional" json:"version"`
+	Build       string      `hcl:"-,optional" json:"build"`
 	Development bool        `hcl:"development,optional" json:"development"`
 	Bind        Bind        `hcl:"bind,block" json:"bind"`
 	Logging     Logging     `hcl:"logging,block" json:"logging"`

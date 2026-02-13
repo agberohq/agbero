@@ -23,8 +23,7 @@ import (
 )
 
 var (
-	logger  *ll.Logger
-	version = woos.Version
+	logger *ll.Logger
 )
 
 // CLI flags
@@ -70,7 +69,7 @@ func main() {
 
 	flaggy.SetName(woos.Name)
 	flaggy.SetDescription(woos.Description)
-	flaggy.SetVersion(version)
+	flaggy.SetVersion(woos.Version)
 
 	// Global flags
 	flaggy.String(&configPath, "c", "config", "Path to configuration file")

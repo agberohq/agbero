@@ -1,4 +1,3 @@
-/* styles.css - COMPLETE PRODUCTION VERSION */
 @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap');
 
 :root {
@@ -460,15 +459,6 @@ body {
     opacity: 0.6;
 }
 
-.be-actions {
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 12px 0;
-    margin: -12px 0;
-}
-
 .be-url {
     color: var(--fg);
     word-break: break-all;
@@ -698,6 +688,15 @@ body {
     color: var(--fg);
     border: 1px solid var(--border);
     border-radius: 4px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.code-box pre {
+    margin: 0;
+    font-family: monospace;
+    white-space: pre-wrap;
+    word-wrap: break-word;
 }
 
 /* ========== LOGS CONSOLE ========== */
@@ -1067,10 +1066,6 @@ body {
     align-items: center;
 }
 
-.cert-days {
-    font-weight: 600;
-}
-
 /* ========== MIDDLEWARE GRID ========== */
 .mw-grid {
     display: grid;
@@ -1139,25 +1134,149 @@ body {
     font-family: monospace;
 }
 
-
-
-.be-badge {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    min-width: 40px;
-}
-
-.be-badge .badge {
-    white-space: nowrap;
-    margin-left: auto;
-}
-
 /* ========== SVG CHART ========== */
 svg text {
     user-select: none;
     pointer-events: none;
     opacity: 0.7;
+}
+
+/* ========== CONFIG PAGE IMPROVEMENTS ========== */
+.config-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.config-header h2 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 300;
+    color: var(--fg);
+}
+
+.config-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 15px;
+    margin-bottom: 30px;
+}
+
+.metric-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    border-color: var(--accent);
+}
+
+.metric-content {
+    flex: 1;
+    text-align: center;
+}
+
+.metric-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-mute);
+    margin-bottom: 2px;
+    font-weight: 500;
+}
+
+.metric-value {
+    font-size: 22px;
+    font-weight: 300;
+    color: var(--fg);
+    font-family: monospace;
+    line-height: 1.2;
+}
+
+.config-section {
+    margin-bottom: 30px;
+    background: var(--panel-bg);
+    border-radius: 8px;
+    padding: 20px;
+    border: 1px solid var(--border);
+}
+
+.config-section h3 {
+    margin: 0 0 15px 0;
+    font-size: 16px;
+    font-weight: 400;
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.config-details-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+}
+
+.config-detail-item {
+    padding: 12px;
+    background: var(--bg);
+    border-radius: 6px;
+    border: 1px solid var(--border);
+}
+
+.config-detail-label {
+    font-size: 9px;
+    text-transform: uppercase;
+    color: var(--text-mute);
+    margin-bottom: 4px;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+
+.config-detail-value {
+    font-size: 13px;
+    color: var(--fg);
+    font-family: monospace;
+    word-break: break-word;
+    font-weight: 400;
+}
+
+.config-header h2 span {
+    font-size: 14px;
+    color: var(--text-mute);
+    margin-left: 10px;
+    font-weight: 300;
+}
+
+#configContent {
+    max-height: 400px;
+    overflow: auto;
+    transition: max-height 0.3s ease;
+    font-family: monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+#configContent.expanded {
+    max-height: 800px;
+}
+
+.config-actions {
+    display: flex;
+    gap: 8px;
 }
 
 /* ========== MOBILE RESPONSIVE ========== */
@@ -1282,6 +1401,10 @@ svg text {
     .drawer {
         width: 100%;
     }
+
+    .config-metrics-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
 }
 
 @media screen and (max-width: 480px) {
@@ -1351,5 +1474,22 @@ svg text {
     .session-warning {
         width: 90%;
         bottom: calc(var(--footer-height) + var(--sys-bar-height) + 5px);
+    }
+
+    .config-metrics-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .config-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .metric-card {
+        padding: 12px 10px;
+    }
+
+    .metric-value {
+        font-size: 18px;
     }
 }

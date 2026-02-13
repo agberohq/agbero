@@ -1,0 +1,543 @@
+class AgberoApp {
+    constructor() {
+        this.apiBase = window.location.origin;
+        this.token = sessionStorage.getItem("ag_tok");
+        this.basic = sessionStorage.getItem("ag_bas");
+
+        // State
+        this.page = "dashboard";
+        this.metricsSeries = [];
+        this.lastReqTotal = 0;
+        this.lastReqTime = Date.now();
+        this.lastUpdateTime = Date.now();
+        this.staleTimer = null;
+        this.searchTerm = sessionStorage.getItem("ag_search") || "";
+        this.sessionExpiry = null;
+        this.sessionWarningShown = false;
+        this.version = null;
+        this.build = null;
+
+        // Data Caches
+        this.hostsData = { config: {}, stats: {} };
+        this.logs = [];
+        this.certificates = [];
+
+        // Settings
+        this.logsPaused = false;
+        this.logFilter = "ALL";
+
+        // Timers
+        this.timers = { metrics: null, config: null, logs: null };
+
+        // Page
+        this.page = sessionStorage.getItem("ag_page") || "dashboard";
+
+        // Add this for config caching
+        this.lastConfig = null;
+
+    }
+
+    // ================== API & DATA FETCHING ==================
+    async api(path, method = "GET", body = null) {
+        const headers = {};
+        if (this.token) headers["Authorization"] = "Bearer " + this.token;
+        else if (this.basic) headers["Authorization"] = "Basic " + this.basic;
+
+        const opts = { method, headers };
+        if (body) {
+            headers["Content-Type"] = "application/json";
+            opts.body = JSON.stringify(body);
+        }
+
+        try {
+            const res = await fetch(this.apiBase + path, opts);
+            if (res.status === 401) { this.handleSessionExpired(); return null; }
+            if (res.status === 204) return true;
+            return await res.json();
+        } catch (e) {
+            console.error("API Error", e);
+            return null;
+        }
+    }
+
+    async fetchVersion() {
+        try {
+            const config = await this.api("/config");
+            if (config && config.global && config.global.version) {
+                this.version = "v" + config.global.version;
+                this.build = "b" + config.global.build;
+            } else {
+                this.version = "dev";
+                this.build = "dev";
+            }
+        } catch (e) {
+            this.version = "—";
+            this.build = "—";
+        }
+        UI.updateVersionDisplay(this.version);
+    }
+
+    async fetchMetrics() {
+        const data = await this.api("/uptime");
+        if (!data) return;
+
+        this.lastUpdateTime = Date.now();
+
+        const stats = this.parseMetricsJSON(data);
+        const metrics = {
+            stats,
+            system: data.system,
+            certificates: this.certificates,
+            lastReqTotal: this.lastReqTotal,
+            lastReqTime: this.lastReqTime,
+            lastUpdateTime: this.lastUpdateTime
+        };
+
+        // Update metrics series
+        this.metricsSeries.push(stats.p99_ms || 0);
+        if (this.metricsSeries.length > 60) this.metricsSeries.shift();
+
+        // Update state for RPS calculation
+        this.lastReqTotal = stats.total_reqs;
+        this.lastReqTime = Date.now();
+
+        UI.updateMetrics(metrics, this.metricsSeries);
+    }
+
+    parseMetricsJSON(obj) {
+        let total_reqs = 0, total_errors = 0, active_backends = 0;
+        let sumLat = 0, countLat = 0;
+        let total_p99 = 0, hosts_with_p99 = 0;
+        let uptime = "100%";
+
+        if (obj.hosts) {
+            Object.values(obj.hosts).forEach(h => {
+                if (h.routes) h.routes.forEach(r => {
+                    if (r.backends) r.backends.forEach(b => {
+                        total_reqs += (b.total_reqs || 0);
+                        total_errors += (b.failures || 0);
+
+                        const isHTTP = b.url && b.url.startsWith('http');
+                        if (isHTTP) {
+                            const healthy = b.healthy !== undefined ? b.healthy : (b.alive === true);
+                            if (healthy) active_backends++;
+                        }
+
+                        if (b.latency_us && b.latency_us.count > 0) {
+                            sumLat += b.latency_us.sum_us;
+                            countLat += b.latency_us.count;
+
+                            if (b.latency_us.p99 > 0) {
+                                total_p99 += b.latency_us.p99;
+                                hosts_with_p99++;
+                            }
+                        }
+                    });
+                });
+
+                if (h.proxies) h.proxies.forEach(p => {
+                    if (p.backends) p.backends.forEach(b => {
+                        total_reqs += (b.total_reqs || 0);
+                        total_errors += (b.failures || 0);
+
+                        const isHTTP = b.url && b.url.startsWith('http');
+                        if (isHTTP) {
+                            const healthy = b.healthy !== undefined ? b.healthy : (b.alive === true);
+                            if (healthy) active_backends++;
+                        }
+
+                        if (b.latency_us && b.latency_us.count > 0) {
+                            sumLat += b.latency_us.sum_us;
+                            countLat += b.latency_us.count;
+
+                            if (b.latency_us.p99 > 0) {
+                                total_p99 += b.latency_us.p99;
+                                hosts_with_p99++;
+                            }
+                        }
+                    });
+                });
+
+                if (h.avg_p99_us > 0) {
+                    total_p99 += h.avg_p99_us;
+                    hosts_with_p99++;
+                }
+            });
+        }
+
+        const avg_ms = countLat > 0 ? (sumLat / countLat / 1000) : 0;
+        const p99_ms = hosts_with_p99 > 0 ? (total_p99 / hosts_with_p99 / 1000) : 0;
+        const apdex = avg_ms < 200 ? 1.0 : (avg_ms < 1000 ? 0.8 : 0.5);
+
+        return {
+            total_reqs,
+            total_errors,
+            active_backends,
+            avg_ms,
+            p99_ms,
+            apdex: apdex.toFixed(2),
+            uptime
+        };
+    }
+
+    async fetchHostsData() {
+        const [config, stats] = await Promise.all([this.api("/config"), this.api("/uptime")]);
+        if (!config || !config.hosts) return;
+
+        this.hostsData.config = config.hosts;
+        this.hostsData.stats = stats?.hosts || {};
+
+        this.parseCertificates();
+        UI.renderHosts(this.hostsData, this.searchTerm, this.certificates);
+        UI.updateHeroCounts(Object.keys(this.hostsData.config).length, this.getRouteCount());
+    }
+
+    getRouteCount(config = this.hostsData.config) {
+        let count = 0;
+        if (!config) return 0;
+        Object.values(config).forEach(host => {
+            if (host.routes) count += host.routes.length;
+            if (host.proxies) count += host.proxies.length;
+        });
+        return count;
+    }
+
+    parseCertificates() {
+        const certs = [];
+        const hosts = this.hostsData.config || {};
+
+        for (const [hostname, cfg] of Object.entries(hosts)) {
+            if (cfg.tls && cfg.tls.expiry) {
+                const expiry = new Date(cfg.tls.expiry);
+                const daysLeft = Math.floor((expiry - Date.now()) / 86400000);
+                certs.push({
+                    host: hostname,
+                    expiry: expiry,
+                    daysLeft: daysLeft,
+                    mode: cfg.tls.mode || "auto",
+                    issuer: cfg.tls.issuer || "Let's Encrypt"
+                });
+            }
+        }
+        this.certificates = certs;
+    }
+
+    async fetchFirewall() {
+        const res = await this.api("/firewall");
+        UI.renderFirewall(res);
+    }
+
+    async deleteFw(ip) {
+        await this.api(`/firewall?ip=${encodeURIComponent(ip)}`, "DELETE");
+        this.fetchFirewall();
+    }
+
+    async addFirewallRule(e) {
+        e.preventDefault();
+        const body = {
+            ip: document.getElementById("fwIp").value,
+            reason: document.getElementById("fwReason").value,
+            path: document.getElementById("fwPath").value,
+            duration_sec: parseInt(document.getElementById("fwDuration").value)
+        };
+        await this.api("/firewall", "POST", body);
+        Modal.closeAll();
+        this.fetchFirewall();
+    }
+
+    async fetchConfig() {
+        const data = await this.api("/config");
+        this.lastConfig = data;
+
+        if (data) {
+            // Extract key metrics
+            const metrics = {
+                httpPort: data.global?.bind?.http?.[0]?.replace(':', '') || 80,
+                httpsPort: data.global?.bind?.https?.[0]?.replace(':', '') || 443,
+                version: "v" + (data.global?.version || '?'),
+                build: data.global?.build || 'dev',
+                logLevel: data.global?.logging?.level || 'info',
+                hostCount: Object.keys(data.hosts || {}).length,
+                routeCount: this.getRouteCount(data.hosts),
+                tlsCount: this.getTLSConfigCount(data)
+            };
+
+            UI.renderConfigMetrics(metrics);
+            UI.renderGlobalSettings(data.global);
+            UI.renderRawConfig(data);
+
+            // Update version in title if needed
+            this.updateConfigTitle(metrics.version, metrics.build);
+        }
+    }
+
+    // Add helper methods for config
+    getTLSConfigCount(config) {
+        let count = 0;
+        if (!config.hosts) return 0;
+
+        Object.values(config.hosts).forEach(host => {
+            if (host.tls && host.tls.mode !== 'none') count++;
+        });
+        return count;
+    }
+
+
+    async fetchLogs() {
+        const n = document.getElementById("logsTailSelect").value;
+        const data = await this.api(`/logs?lines=${n}`);
+        if (data && Array.isArray(data)) {
+            this.logs = data.reverse();
+            UI.renderLogs(this.logs, this.logFilter);
+        }
+    }
+
+    // ================== SESSION MANAGEMENT ==================
+    parseJWTExpiry() {
+        if (!this.token) return;
+        try {
+            const parts = this.token.split('.');
+            if (parts.length === 3) {
+                const payload = JSON.parse(atob(parts[1]));
+                if (payload.exp) {
+                    this.sessionExpiry = payload.exp * 1000;
+                    this.startSessionWarning();
+                }
+            }
+        } catch (e) {}
+    }
+
+    startSessionWarning() {
+        if (!this.sessionExpiry) return;
+        const checkExpiry = () => {
+            const now = Date.now();
+            const timeLeft = this.sessionExpiry - now;
+            if (timeLeft <= 0) {
+                this.handleSessionExpired();
+                return;
+            }
+            if (timeLeft < 300000 && !this.sessionWarningShown) {
+                this.sessionWarningShown = true;
+                UI.showSessionWarning(timeLeft);
+            }
+        };
+        setInterval(checkExpiry, 10000);
+        checkExpiry();
+    }
+
+    renewSession() {
+        UI.hideSessionWarning();
+        this.sessionWarningShown = false;
+    }
+
+    handleSessionExpired() {
+        this.stopLoop();
+        sessionStorage.clear();
+        this.token = null;
+        this.basic = null;
+        this.updateAuthButton();
+        Modal.open("loginModal");
+        UI.hideSessionWarning();
+    }
+
+    // ================== AUTH ==================
+    async doLogin(e) {
+        e.preventDefault();
+        const u = document.getElementById("username").value;
+        const p = document.getElementById("password").value;
+
+        const jwt = await this.api("/login", "POST", { username: u, password: p });
+        if (jwt && jwt.token) {
+            this.token = jwt.token;
+            sessionStorage.setItem("ag_tok", this.token);
+            this.finishLoginSuccess();
+            this.parseJWTExpiry();
+            return;
+        }
+
+        const tempBasic = btoa(u + ":" + p);
+        this.basic = tempBasic;
+        const check = await this.api("/health");
+        if (check) {
+            sessionStorage.setItem("ag_bas", this.basic);
+            this.finishLoginSuccess();
+        } else {
+            this.basic = null;
+            alert("Login Failed");
+        }
+    }
+
+    finishLoginSuccess() {
+        Modal.closeAll();
+        this.updateAuthButton();
+        this.startLoop();
+        this.fetchHostsData();
+        this.fetchVersion();
+    }
+
+    handleAuthClick() {
+        if (this.token || this.basic) {
+            sessionStorage.clear();
+            this.token = null; this.basic = null;
+            this.stopLoop();
+            this.updateAuthButton();
+            window.location.reload();
+        } else {
+            Modal.open("loginModal");
+        }
+    }
+
+    updateAuthButton() {
+        const btn = document.getElementById("loginBtn");
+        if (btn) btn.innerText = (this.token || this.basic) ? "Logout" : "Login";
+    }
+
+    updateConfigTitle(version, build) {
+        const titleEl = document.querySelector('#configPage .config-header h2');
+        if (titleEl) {
+            titleEl.innerHTML = `Configuration Overview <span style="font-size: 14px; color: var(--text-mute); margin-left: 10px;">${version} (${build})</span>`;
+        }
+    }
+
+    // ================== LOOP CONTROL ==================
+    startLoop() {
+        this.stopLoop();
+        this.timers.metrics = setInterval(() => this.fetchMetrics(), 2000);
+        this.timers.config = setInterval(() => {
+            if (this.page === 'hosts') this.fetchHostsData();
+        }, 10000);
+        this.timers.logs = setInterval(() => {
+            if (this.page === 'logs' && !this.logsPaused) this.fetchLogs();
+        }, 2000);
+    }
+
+    stopLoop() {
+        if (this.timers.metrics) clearInterval(this.timers.metrics);
+        if (this.timers.config) clearInterval(this.timers.config);
+        if (this.timers.logs) clearInterval(this.timers.logs);
+        this.timers = { metrics: null, config: null, logs: null };
+    }
+
+    // ================== PAGE NAVIGATION ==================
+    setPage(p) {
+        this.page = p;
+        sessionStorage.setItem("ag_page", p);
+
+        document.querySelectorAll(".nav-link").forEach(n => n.classList.remove("active"));
+        document.querySelector(`.nav-link[data-page="${p}"]`)?.classList.add("active");
+        document.querySelectorAll(".page").forEach(div => div.classList.remove("active"));
+        document.getElementById(p + "Page").classList.add("active");
+
+        if (this.token || this.basic) {
+            this.refreshCurrentPage();
+        }
+    }
+
+    async refreshCurrentPage() {
+        if (this.page === 'hosts') await this.fetchHostsData();
+        if (this.page === 'firewall') await this.fetchFirewall();
+        if (this.page === 'config') await this.fetchConfig();
+        if (this.page === 'logs') await this.fetchLogs();
+    }
+
+    // ================== UTILITIES ==================
+    fmtNum(n) {
+        if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+        if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+        return n;
+    }
+
+    formatBytes(b) {
+        if (b === 0) return "0";
+        const k = 1024, s = ["B", "KB", "MB", "GB"];
+        const i = Math.floor(Math.log(b) / Math.log(k));
+        return parseFloat((b / Math.pow(k, i)).toFixed(1)) + s[i];
+    }
+
+    timeAgo(timestamp) {
+        const seconds = Math.floor((Date.now() - timestamp) / 1000);
+        if (seconds < 10) return 'just now';
+        if (seconds < 60) return `${seconds}s ago`;
+        return `${Math.floor(seconds / 60)}m ago`;
+    }
+
+    copyToClipboard(text) {
+        navigator.clipboard?.writeText(text).then(() => {}).catch(() => {});
+    }
+
+    confirm(title, msg, fn) {
+        this._confirmFn = fn;
+        UI.showConfirmDialog(title, msg);
+        Modal.open("confirmModal");
+    }
+
+    // ================== DRAWER ==================
+    openRouteDrawer(hostname, idx, type = 'route') {
+        let cfg_item;
+        let itemStats;
+        if (type === 'proxy') {
+            cfg_item = this.hostsData.config[hostname].proxies[idx];
+            itemStats = this.hostsData.stats[hostname]?.proxies?.[idx] || {};
+        } else {
+            cfg_item = this.hostsData.config[hostname].routes[idx];
+            itemStats = this.hostsData.stats[hostname]?.routes?.[idx] || {};
+        }
+
+        UI.renderDrawer(hostname, cfg_item, itemStats, type, this.certificates);
+        Drawer.open();
+    }
+
+    closeDrawer() {
+        Drawer.close();
+    }
+
+    // ================== INIT ==================
+    init() {
+        this.loadTheme();
+        this.updateAuthButton();
+        this.fetchVersion();
+
+        if (this.token || this.basic) {
+            this.startLoop();
+            this.fetchHostsData();
+            this.parseJWTExpiry();
+
+            // ADD THIS BLOCK - Restore saved page
+            const savedPage = sessionStorage.getItem("ag_page");
+            if (savedPage && savedPage !== "dashboard") {
+                this.setPage(savedPage);
+            }
+        } else {
+            Modal.open("loginModal");
+        }
+
+        if (this.searchTerm) {
+            const searchInput = document.getElementById("hostSearch");
+            if (searchInput) {
+                searchInput.value = this.searchTerm;
+            }
+        }
+
+        this.startStaleDetection();
+        EventHandler.bindAll(this);
+    }
+
+    loadTheme() {
+        const t = localStorage.getItem("theme") || "light";
+        document.documentElement.setAttribute("data-theme", t);
+    }
+
+    toggleTheme() {
+        const cur = document.documentElement.getAttribute("data-theme");
+        const next = cur === "light" ? "dark" : "light";
+        document.documentElement.setAttribute("data-theme", next);
+        localStorage.setItem("theme", next);
+    }
+
+    startStaleDetection() {
+        this.staleTimer = setInterval(() => {
+            const staleTime = Date.now() - this.lastUpdateTime;
+            UI.updateStaleState(staleTime > 10000);
+        }, 1000);
+    }
+}

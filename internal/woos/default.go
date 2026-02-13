@@ -9,6 +9,9 @@ import (
 )
 
 func DefaultApply(g *alaye.Global, configAbsPath string) {
+	// set the build version
+	g.Build = Version
+
 	if g.Timeouts.Read == 0 {
 		g.Timeouts.Read = alaye.DefaultReadTimeout
 	}

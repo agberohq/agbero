@@ -98,10 +98,81 @@
         <div id="logsList" class="logs-console"></div>
     </div>
 
-    <!-- CONFIG -->
+    <!-- CONFIG PAGE - Replace the entire config page div -->
     <div id="configPage" class="page">
-        <div class="code-box">
-            <pre id="configContent"></pre>
+        <div class="config-header">
+            <h2>Configuration Overview</h2>
+            <button class="btn config-refresh">⟳ Refresh</button>
+        </div>
+
+        <!-- Key Metrics Cards -->
+        <div class="config-metrics-grid">
+            <div class="metric-card">
+                <div class="metric-content">
+                    <div class="metric-label">HTTP Port</div>
+                    <div class="metric-value" id="configHttpPort">—</div>
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-content">
+                    <div class="metric-label">HTTPS Port</div>
+                    <div class="metric-value" id="configHttpsPort">—</div>
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-content">
+                    <div class="metric-label">Version</div>
+                    <div class="metric-value" id="configVersion">—</div>
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-content">
+                    <div class="metric-label">Hosts</div>
+                    <div class="metric-value" id="configHostCount">0</div>
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-content">
+                    <div class="metric-label">Routes</div>
+                    <div class="metric-value" id="configRouteCount">0</div>
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-content">
+                    <div class="metric-label">TLS Domains</div>
+                    <div class="metric-value" id="configTlsCount">0</div>
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-content">
+                    <div class="metric-label">Log Level</div>
+                    <div class="metric-value" id="configLogLevel">—</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Global Settings Section -->
+        <div class="config-section">
+            <h3>⚙️ Global Settings</h3>
+            <div class="config-details-grid" id="configGlobalDetails"></div>
+        </div>
+
+        <!-- Raw Configuration -->
+        <div class="config-section">
+            <div class="config-header">
+                <h3>📄 Raw Configuration</h3>
+                <div class="config-actions">
+                    <button class="btn small config-copy">📋 Copy</button>
+                    <button class="btn small config-expand">↕️ Expand</button>
+                </div>
+            </div>
+            <div class="code-box" id="configContent"></div>
         </div>
     </div>
 </div>
@@ -130,7 +201,7 @@
         <span class="sys-item" title="CPU Usage">⚡ <span id="sysCpu">—</span></span>
         <span class="sys-item hide-mobile" title="CPU Cores">🎛️ <span id="sysCpuCores">—</span></span>
         <span class="sys-divider">·</span>
-        
+
         <!-- OS Memory -->
         <span class="sys-item hide-mobile" title="OS Memory Used">🖥️ <span id="sysMemUsed">—</span></span>
         <span class="sys-divider hide-mobile">·</span>
@@ -236,6 +307,9 @@
     <div class="drawer-content" id="drawerBody"></div>
 </div>
 
-<script src="app.js"></script>
+<script src="js/app.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/events.js"></script>
+<script src="js/main.js"></script>
 </body>
 </html>
