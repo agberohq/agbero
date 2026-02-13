@@ -1,4 +1,4 @@
-// app.js
+// app.js - COMPLETE WITH VERSION, CERTS, SESSION, EMPTY STATES
 class AgberoApp {
     constructor() {
         this.apiBase = window.location.origin;
@@ -10,14 +10,21 @@ class AgberoApp {
         this.metricsSeries = [];
         this.lastReqTotal = 0;
         this.lastReqTime = Date.now();
+        this.lastUpdateTime = Date.now();
+        this.staleTimer = null;
+        this.searchTerm = sessionStorage.getItem("ag_search") || "";
+        this.sessionExpiry = null;
+        this.sessionWarningShown = false;
+        this.version = null;
 
         // Data Caches
         this.hostsData = { config: {}, stats: {} };
         this.logs = [];
+        this.certificates = []; // New: certificate store
 
         // Settings
         this.logsPaused = false;
-        this.logFilter = "ALL"; // ALL, INFO, WARN, ERROR
+        this.logFilter = "ALL";
 
         // Timers
         this.timers = { metrics: null, config: null, logs: null };
@@ -29,13 +36,143 @@ class AgberoApp {
         this.loadTheme();
         this.bindEvents();
         this.updateAuthButton();
+        this.fetchVersion(); // New: get version on load
 
         if (this.token || this.basic) {
             this.startLoop();
-            this.fetchHostsData(); // Initial Load
+            this.fetchHostsData();
+            this.parseJWTExpiry(); // New: decode token for expiry
         } else {
             this.openModal("loginModal");
         }
+
+        // Set saved search term
+        if (this.searchTerm) {
+            const searchInput = document.getElementById("hostSearch");
+            if (searchInput) {
+                searchInput.value = this.searchTerm;
+            }
+        }
+
+        // Stale detection
+        this.startStaleDetection();
+    }
+
+    // ================== VERSION DISCOVERY ==================
+    async fetchVersion() {
+        try {
+            // Try to get version from /health headers first
+            const res = await fetch(this.apiBase + "/health", { method: "HEAD" });
+            const serverHeader = res.headers.get("Server");
+            if (serverHeader && serverHeader.includes("agbero/")) {
+                this.version = serverHeader.split("agbero/")[1].split(" ")[0];
+            } else {
+                // Fallback: try /config and extract
+                const config = await this.api("/config");
+                if (config && config.global && config.global.version) {
+                    this.version = "v" + config.global.version;
+                } else {
+                    this.version = "dev";
+                }
+            }
+        } catch (e) {
+            this.version = "—";
+        }
+        document.getElementById("versionDisplay").innerText = this.version || "v—";
+    }
+
+    // ================== SESSION MANAGEMENT ==================
+    parseJWTExpiry() {
+        if (!this.token) return;
+        try {
+            const parts = this.token.split('.');
+            if (parts.length === 3) {
+                const payload = JSON.parse(atob(parts[1]));
+                if (payload.exp) {
+                    this.sessionExpiry = payload.exp * 1000; // ms
+                    this.startSessionWarning();
+                }
+            }
+        } catch (e) {
+            // Not a JWT or can't parse
+        }
+    }
+
+    startSessionWarning() {
+        if (!this.sessionExpiry) return;
+
+        const checkExpiry = () => {
+            const now = Date.now();
+            const timeLeft = this.sessionExpiry - now;
+
+            if (timeLeft <= 0) {
+                this.handleSessionExpired();
+                return;
+            }
+
+            if (timeLeft < 300000 && !this.sessionWarningShown) { // 5 minutes
+                this.sessionWarningShown = true;
+                this.showSessionWarning(timeLeft);
+            }
+        };
+
+        setInterval(checkExpiry, 10000);
+        checkExpiry();
+    }
+
+    showSessionWarning(timeLeft) {
+        const minutes = Math.floor(timeLeft / 60000);
+        const seconds = Math.floor((timeLeft % 60000) / 1000);
+        const banner = document.getElementById("sessionWarning");
+        const timeSpan = document.getElementById("sessionExpiryTime");
+
+        if (banner && timeSpan) {
+            timeSpan.innerText = `${minutes}m ${seconds}s`;
+            banner.classList.add("active");
+        }
+    }
+
+    // ================== CERTIFICATE MANAGEMENT ==================
+    parseCertificates() {
+        const certs = [];
+        const hosts = this.hostsData.config || {};
+
+        for (const [hostname, cfg] of Object.entries(hosts)) {
+            if (cfg.tls && cfg.tls.expiry) {
+                const expiry = new Date(cfg.tls.expiry);
+                const daysLeft = Math.floor((expiry - Date.now()) / 86400000);
+                certs.push({
+                    host: hostname,
+                    expiry: expiry,
+                    daysLeft: daysLeft,
+                    mode: cfg.tls.mode || "auto",
+                    issuer: cfg.tls.issuer || "Let's Encrypt"
+                });
+            }
+        }
+
+        this.certificates = certs;
+
+        // Update sys-bar counters
+        const activeCerts = certs.filter(c => c.daysLeft > 0).length;
+        const expiringCerts = certs.filter(c => c.daysLeft > 0 && c.daysLeft < 7).length;
+
+        document.getElementById("activeCertsCount").innerText = activeCerts;
+        document.getElementById("expiringCertsCount").innerText = expiringCerts;
+    }
+
+    // ================== STALE DETECTION ==================
+    startStaleDetection() {
+        this.staleTimer = setInterval(() => {
+            const staleTime = Date.now() - this.lastUpdateTime;
+            const footer = document.querySelector(".stats-footer");
+
+            if (staleTime > 10000) { // 10 seconds
+                footer?.classList.add("stale");
+            } else {
+                footer?.classList.remove("stale");
+            }
+        }, 1000);
     }
 
     // ================== THEME ==================
@@ -66,15 +203,21 @@ class AgberoApp {
         document.getElementById("loginBtn").addEventListener("click", () => this.handleAuthClick());
         document.getElementById("refreshHostsBtn").addEventListener("click", () => this.fetchHostsData());
 
-        // Host Search
-        document.getElementById("hostSearch").addEventListener("input", (e) => this.renderHosts(e.target.value));
+        // Search with persistence
+        const searchInput = document.getElementById("hostSearch");
+        searchInput.addEventListener("input", (e) => {
+            const term = e.target.value;
+            sessionStorage.setItem("ag_search", term);
+            this.searchTerm = term;
+            this.renderHosts(term);
+        });
 
-        // Forms
+        // Login form
         document.getElementById("loginForm").addEventListener("submit", e => this.doLogin(e));
         document.getElementById("addRuleBtn").addEventListener("click", () => this.openModal("ruleModal"));
         document.getElementById("ruleForm").addEventListener("submit", e => this.addFirewallRule(e));
 
-        // Logs Controls
+        // Logs
         document.getElementById("logsPauseBtn").addEventListener("click", () => {
             this.logsPaused = !this.logsPaused;
             document.getElementById("logsPauseBtn").innerText = this.logsPaused ? "Resume" : "Pause";
@@ -84,7 +227,7 @@ class AgberoApp {
             this.renderLogs();
         });
 
-        // Log Filters
+        // Log filters
         document.querySelectorAll(".chip").forEach(chip => {
             chip.addEventListener("click", (e) => {
                 document.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
@@ -108,11 +251,66 @@ class AgberoApp {
         // Drawer
         document.getElementById("drawerCloseBtn").addEventListener("click", () => this.closeDrawer());
         document.getElementById("drawerBackdrop").addEventListener("click", () => this.closeDrawer());
+        document.getElementById("drawerBackToHosts").addEventListener("click", () => {
+            this.closeDrawer();
+            this.setPage("hosts");
+        });
 
-        // Escape key to close drawer
+        const hostNameEl = document.getElementById("drawerHostName");
+        if (hostNameEl) {
+            hostNameEl.addEventListener("click", () => {
+                const hostname = hostNameEl.innerText;
+                this.closeDrawer();
+                this.setPage("hosts");
+
+                // Set search term to this host
+                const searchInput = document.getElementById("hostSearch");
+                searchInput.value = hostname;
+                sessionStorage.setItem("ag_search", hostname);
+                this.searchTerm = hostname;
+                this.renderHosts(hostname);
+            });
+        }
+
+        // Escape key
         document.addEventListener("keydown", (e) => {
             if (e.key === "Escape") this.closeDrawer();
         });
+
+        // Session renew
+        document.getElementById("refreshSessionBtn").addEventListener("click", () => {
+            this.renewSession();
+        });
+
+        // Mobile swipe for drawer
+        this.initTouchEvents();
+    }
+
+    initTouchEvents() {
+        const drawer = document.getElementById("routeDrawer");
+        let touchStartX = 0;
+
+        drawer.addEventListener("touchstart", (e) => {
+            touchStartX = e.touches[0].clientX;
+        }, false);
+
+        drawer.addEventListener("touchmove", (e) => {
+            if (!drawer.classList.contains("active")) return;
+
+            const touchX = e.touches[0].clientX;
+            const diff = touchX - touchStartX;
+
+            if (diff > 50) { // Swipe right
+                this.closeDrawer();
+            }
+        }, false);
+    }
+
+    async renewSession() {
+        // Re-login with stored credentials? Not possible with JWT.
+        // Instead, close banner and let user relogin when needed
+        document.getElementById("sessionWarning").classList.remove("active");
+        this.sessionWarningShown = false;
     }
 
     setPage(p) {
@@ -159,7 +357,7 @@ class AgberoApp {
         if (this.token) headers["Authorization"] = "Bearer " + this.token;
         else if (this.basic) headers["Authorization"] = "Basic " + this.basic;
 
-        const opts = {method, headers};
+        const opts = { method, headers };
         if (body) {
             headers["Content-Type"] = "application/json";
             opts.body = JSON.stringify(body);
@@ -194,6 +392,7 @@ class AgberoApp {
         this.token = null; this.basic = null;
         this.updateAuthButton();
         this.openModal("loginModal");
+        document.getElementById("sessionWarning")?.classList.remove("active");
     }
 
     async doLogin(e) {
@@ -201,16 +400,15 @@ class AgberoApp {
         const u = document.getElementById("username").value;
         const p = document.getElementById("password").value;
 
-        // Try JWT
-        const jwt = await this.api("/login", "POST", {username: u, password: p});
+        const jwt = await this.api("/login", "POST", { username: u, password: p });
         if (jwt && jwt.token) {
             this.token = jwt.token;
             sessionStorage.setItem("ag_tok", this.token);
             this.finishLoginSuccess();
+            this.parseJWTExpiry();
             return;
         }
 
-        // Try Basic Fallback
         const tempBasic = btoa(u + ":" + p);
         this.basic = tempBasic;
         const check = await this.api("/health");
@@ -228,6 +426,7 @@ class AgberoApp {
         this.updateAuthButton();
         this.startLoop();
         this.fetchHostsData();
+        this.fetchVersion();
     }
 
     updateAuthButton() {
@@ -240,18 +439,29 @@ class AgberoApp {
         const data = await this.api("/uptime");
         if (!data) return;
 
+        this.lastUpdateTime = Date.now();
+        document.querySelector(".stats-footer")?.classList.remove("stale");
+
         const stats = this.parseMetricsJSON(data);
 
-        // Text Updates
+        // Update last updated text
+        document.getElementById("lastUpdatedText").innerText = `Updated ${this.timeAgo(this.lastUpdateTime)}`;
+
+        // System stats bar
+        document.getElementById("sysCpu").innerText = stats.sys_cpu;
+        document.getElementById("sysMem").innerText = stats.sys_mem;
+
+        // Footer stats
         document.getElementById("totalReqsStat").innerText = this.fmtNum(stats.total_reqs);
         document.getElementById("errorsStat").innerText = this.fmtNum(stats.total_errors);
         document.getElementById("meanResponseStat").innerText = stats.avg_ms.toFixed(0) + "ms";
         document.getElementById("activeBackendsStat").innerText = stats.active_backends;
         document.getElementById("apdexStat").innerText = stats.apdex;
-        document.getElementById("sysCpu").innerText = stats.sys_cpu;
-        document.getElementById("sysMem").innerText = stats.sys_mem;
 
-        // RPS
+        // Error rate
+        const errorRate = stats.total_reqs > 0 ? ((stats.total_errors / stats.total_reqs) * 100).toFixed(1) : 0;
+        document.getElementById("errorRateText").innerText = `${errorRate}% errors`;
+
         const now = Date.now();
         const timeDiff = (now - this.lastReqTime) / 1000;
         let rps = 0;
@@ -262,11 +472,17 @@ class AgberoApp {
         this.lastReqTime = now;
         document.getElementById("rpsStat").innerText = rps.toFixed(1);
 
-        // Update Charts & Health Bar
         this.metricsSeries.push(stats.avg_ms);
         if (this.metricsSeries.length > 60) this.metricsSeries.shift();
         this.renderGraph();
         this.renderHealthBar(stats.total_reqs, stats.total_errors);
+    }
+
+    timeAgo(timestamp) {
+        const seconds = Math.floor((Date.now() - timestamp) / 1000);
+        if (seconds < 10) return 'just now';
+        if (seconds < 60) return `${seconds}s ago`;
+        return `${Math.floor(seconds / 60)}m ago`;
     }
 
     renderHealthBar(total, errors) {
@@ -325,7 +541,7 @@ class AgberoApp {
         const drawH = h - 30;
 
         if (this.metricsSeries.length === 0) {
-            el.innerHTML = `<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-mute);font-size:11px;">Waiting for data...</div>`;
+            el.innerHTML = `<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-mute);font-size:11px;">⚡ Waiting for metrics...</div>`;
             return;
         }
 
@@ -350,16 +566,16 @@ class AgberoApp {
 
     // ================== HOSTS ==================
     async fetchHostsData() {
-        // Fetch raw data
         const [config, stats] = await Promise.all([this.api("/config"), this.api("/uptime")]);
         if (!config || !config.hosts) return;
 
-        // Save to instance for filtering
         this.hostsData.config = config.hosts;
         this.hostsData.stats = stats?.hosts || {};
 
-        // Render with current search term
-        const searchTerm = document.getElementById("hostSearch").value;
+        // Parse certificates from config
+        this.parseCertificates();
+
+        const searchTerm = this.searchTerm;
         this.renderHosts(searchTerm);
     }
 
@@ -372,8 +588,17 @@ class AgberoApp {
         let html = "";
         let hostCount = 0, routeCount = 0;
 
+        if (Object.keys(hosts).length === 0) {
+            container.innerHTML = `<div class="empty-state">
+                <span>🔮 No hosts configured</span>
+                <span>Add a host in agbero.hcl and restart</span>
+            </div>`;
+            document.getElementById("heroHostCount").innerText = "0";
+            document.getElementById("heroRouteCount").innerText = "0";
+            return;
+        }
+
         for (const [hostname, cfg] of Object.entries(hosts)) {
-            // Basic filtering on Hostname or Domains
             const domainsStr = (cfg.domains || []).join(" ");
             const matchesHost = hostname.toLowerCase().includes(filterTerm) || domainsStr.toLowerCase().includes(filterTerm);
 
@@ -383,22 +608,25 @@ class AgberoApp {
             hostCount++;
             const rtStats = stats[hostname] || {};
 
-            // TLS Info
+            // TLS Badge - using unified colors
             let tlsMode = cfg.tls?.mode || "";
             let tlsText = "Auto (Secure)";
-            let tlsClass = "tls";
+            let tlsClass = "success";
             let tlsTitle = "Managed by Agbero";
 
             if (tlsMode === "none") {
-                tlsClass = "sec"; tlsText = "No TLS";
+                tlsClass = "error"; tlsText = "No TLS";
             } else if (tlsMode.includes("local")) {
-                tlsClass = "local"; tlsText = "Local TLS";
+                tlsClass = "warning"; tlsText = "Local TLS";
             }
 
             if (cfg.tls?.expiry) {
                 const daysLeft = Math.floor((new Date(cfg.tls.expiry) - Date.now()) / 86400000);
                 tlsTitle = `Expires: ${cfg.tls.expiry} (${daysLeft} days)`;
-                if (daysLeft < 7) { tlsClass = "sec"; tlsText += " (Expiring)"; }
+                if (daysLeft < 7) {
+                    tlsClass = daysLeft < 0 ? "error" : "warning";
+                    tlsText = daysLeft < 0 ? "Expired" : `Expires in ${daysLeft}d`;
+                }
             }
 
             hostHtml += `
@@ -418,51 +646,37 @@ class AgberoApp {
 
                     let backendHtml = "";
 
-                    // --- FIX START ---
-                    // 1. Get Static Config (Source of Truth for Weight/Address)
                     const configBackends = route.backends?.servers || [];
-                    // 2. Get Runtime Stats (Source of Truth for Reqs/Latency)
                     const statBackends = routeStats?.backends || [];
-
-                    // Use config as base, fallback to stats if config is empty (dynamic backends)
                     const displayBackends = configBackends.length > 0 ? configBackends : statBackends;
 
                     if (displayBackends.length > 0) {
                         backendHtml = `<div class="backend-list">`;
 
                         displayBackends.forEach((b, bIdx) => {
-                            // Find matching stats object by index
                             const bStats = statBackends[bIdx] || {};
-
-                            // Prefer Config address, fallback to Stats url
                             const url = b.address || b.url || bStats.url || bStats.address;
-
-                            // Prefer Config weight
                             const weight = (b.weight !== undefined) ? b.weight : (bStats.weight || '-');
 
                             if (pathMatches || matchesHost || (url && url.toLowerCase().includes(filterTerm))) {
                                 hostHasMatch = true;
                             }
 
-                            // Use Stats for liveness (default true if stats missing)
                             const alive = bStats.alive !== false;
                             const p99 = bStats.latency_us?.p99 ? (bStats.latency_us.p99 / 1000).toFixed(0) + "ms" : "-";
                             const reqs = bStats.total_reqs || 0;
 
                             backendHtml += `
-                                <div class="backend-row ${alive ? '' : 'down'}">
-                                    <span class="be-actions" onclick="event.stopPropagation(); app.toggleBackend('${hostname}', ${idx}, '${url}', ${alive})">
-                                        <span class="dot ${alive ? 'ok' : 'down'}" title="Toggle Backend"></span>
-                                    </span>
-                                    <span class="be-url">${url}</span>
-                                    <span class="be-stat">W: ${weight}</span>
-                                    <span class="be-stat">${p99}</span>
-                                    <span class="be-stat">${this.fmtNum(reqs)}</span>
-                                </div>`;
+                                        <div class="backend-row ${alive ? '' : 'down'}">
+                                            <span class="dot ${alive ? 'ok' : 'down'}" title="${alive ? 'Healthy' : 'Unhealthy'}"></span>
+                                            <span class="be-url" onclick="event.stopPropagation(); app.copyToClipboard('${url}')" title="Click to copy URL">${url}</span>
+                                            <span class="be-stat">W: ${weight}</span>
+                                            <span class="be-stat">${p99}</span>
+                                            <span class="be-stat">${this.fmtNum(reqs)}</span>
+                                        </div>`;
                         });
                         backendHtml += `</div>`;
                     }
-                    // --- FIX END ---
                     else if (route.web && route.web.root) {
                         backendHtml = `<div class="backend-row"><span class="dot ok"></span> <span>📂 ${route.web.root}</span></div>`;
                         if (route.web.root.toLowerCase().includes(filterTerm)) hostHasMatch = true;
@@ -473,7 +687,7 @@ class AgberoApp {
                             <div class="route-block" onclick="app.openRouteDrawer('${hostname}', ${idx})">
                                 <div class="route-header">
                                     <span class="route-path">${route.path}</span>
-                                    <span class="badge" style="margin-left:auto; font-size:9px;">DETAILS &rarr;</span>
+                                    <span class="badge info" style="margin-left:auto; font-size:9px;">DETAILS →</span>
                                 </div>
                                 ${backendHtml}
                             </div>`;
@@ -487,37 +701,40 @@ class AgberoApp {
             }
         }
 
-        container.innerHTML = html || `<div style="text-align:center;color:var(--text-mute);margin-top:40px;">No hosts found matching "${filterTerm}"</div>`;
+        container.innerHTML = html || `<div class="empty-state">
+            <span>🔍 No hosts found matching "${filterTerm}"</span>
+            <span>Try a different search term</span>
+        </div>`;
+
         document.getElementById("heroHostCount").innerText = hostCount;
         document.getElementById("heroRouteCount").innerText = routeCount;
     }
 
-    async toggleBackend(host, routeIdx, backendUrl, currentStatus) {
-        const action = currentStatus ? "disable" : "enable";
-        this.confirm("Confirm Action", `Are you sure you want to ${action} ${backendUrl}?`, async () => {
-            // Simulated API Call
-            // await this.api(`/config/backend/toggle`, "POST", { host, routeIdx, url: backendUrl, active: !currentStatus });
-            alert("Backend toggle signal sent (Simulated). In a real setup, this endpoint would update cluster state.");
-            this.fetchHostsData(); // Refresh UI
-        });
+    // async toggleBackend(host, routeIdx, backendUrl, currentStatus) {
+    //     const action = currentStatus ? "disable" : "enable";
+    //     this.confirm("Confirm Action", `Are you sure you want to ${action} ${backendUrl}?`, async () => {
+    //         this.fetchHostsData();
+    //     });
+    // }
+
+    copyToClipboard(text) {
+        navigator.clipboard?.writeText(text).then(() => {
+            // Flash feedback - could add toast, but minimalism wins
+        }).catch(() => {});
     }
 
-    // ================== DRAWER (Route Details) ==================
+    // ================== DRAWER ==================
     openRouteDrawer(hostname, routeIdx) {
         const route = this.hostsData.config[hostname].routes[routeIdx];
-
-        // Fetch Live Stats for this specific route to show Real-time status in drawer
         const routeStats = this.hostsData.stats[hostname]?.routes?.[routeIdx] || {};
 
         document.getElementById("drawerRoutePath").innerText = route.path;
         document.getElementById("drawerHostName").innerText = hostname;
 
         const content = document.getElementById("drawerBody");
-        content.innerHTML = ""; // Clear previous
+        content.innerHTML = "";
 
-        // ================= SECTION 1: THE HANDLER (Backend/PHP/Static) =================
-
-        // CASE A: Static File Server
+        // Handler section
         if (route.web && route.web.root) {
             content.innerHTML += `
                 <div class="detail-section">
@@ -533,7 +750,6 @@ class AgberoApp {
                 </div>`;
         }
 
-        // CASE B: PHP Handler
         if (route.web && route.web.php && route.web.php.enabled) {
             content.innerHTML += `
                 <div class="detail-section">
@@ -549,11 +765,8 @@ class AgberoApp {
                 </div>`;
         }
 
-        // CASE C: Load Balancer (Backends)
         const configBackends = route.backends?.servers || [];
         const statBackends = routeStats.backends || [];
-
-        // Merge Config + Stats for the Drawer list
         const displayBackends = configBackends.length > 0 ? configBackends : statBackends;
 
         if (displayBackends.length > 0) {
@@ -561,11 +774,9 @@ class AgberoApp {
 
             displayBackends.forEach((b, i) => {
                 const s = statBackends[i] || {};
-
-                // Data Merging
                 const url = b.address || b.url || s.url || s.address;
                 const weight = (b.weight !== undefined) ? b.weight : (s.weight || '-');
-                const alive = s.alive !== false; // Default to true if no stats
+                const alive = s.alive !== false;
                 const p99 = s.latency_us?.p99 ? (s.latency_us.p99 / 1000).toFixed(0) + "ms" : "";
 
                 backendsHtml += `
@@ -575,28 +786,132 @@ class AgberoApp {
                             <span class="mono">${url}</span>
                         </div>
                         <div class="row-right">
-                            ${p99 ? `<span class="badge" style="border:none;background:var(--panel-bg)">${p99}</span>` : ''}
-                            <span class="badge ${alive ? 'tls' : 'sec'}">W: ${weight}</span>
+                            ${p99 ? `<span class="badge info" style="border:none;">${p99}</span>` : ''}
+                            <span class="badge ${alive ? 'success' : 'error'}">W: ${weight}</span>
                         </div>
                     </div>`;
             });
+
+            const lbStrategy = route.backends?.lb_strategy || route.backends?.load_balancing?.strategy || "round_robin";
+            let strategyDisplay = "Round Robin";
+            if (lbStrategy === "least_conn") strategyDisplay = "Least Connections";
+            else if (lbStrategy === "ip_hash") strategyDisplay = "IP Hash";
+            else if (lbStrategy === "uri_hash") strategyDisplay = "URI Hash";
+
+            const healthCheck = route.health_check || route.backends?.health_check;
+            let healthCheckHtml = '<div class="kv-item"><label>Health Check</label><div><span class="badge error">Not Configured</span></div></div>';
+            if (healthCheck) {
+                const hcPath = healthCheck.path || '/health';
+                const hcInterval = healthCheck.interval ? (healthCheck.interval/1000000000)+'s' : '30s';
+                const hcTimeout = healthCheck.timeout ? (healthCheck.timeout/1000000000)+'s' : '5s';
+                healthCheckHtml = `
+                    <div class="kv-item"><label>Health Check</label><div><span class="badge success">${hcPath} | ${hcInterval} | ${hcTimeout}</span></div></div>
+                `;
+            }
+
+            let cbHtml = '';
+            const cb = route.circuit_breaker || route.backends?.circuit_breaker;
+            if (cb && cb.enabled) {
+                const cbStatus = s.circuit_breaker_state || 'closed';
+                const cbClass = cbStatus === 'closed' ? 'success' : (cbStatus === 'open' ? 'error' : 'warning');
+                cbHtml = `
+                    <div class="kv-item"><label>Circuit Breaker</label><div><span class="badge ${cbClass}">${cbStatus} | ${cb.failure_threshold || 5} fails</span></div></div>
+                `;
+            }
+
+            const timeouts = route.timeouts || {};
+            const readTimeout = timeouts.read ? (timeouts.read/1000000000)+'s' : 'inherit';
+            const writeTimeout = timeouts.write ? (timeouts.write/1000000000)+'s' : 'inherit';
+            const idleTimeout = timeouts.idle ? (timeouts.idle/1000000000)+'s' : 'inherit';
+
+            let compressionHtml = '';
+            const compression = route.compression_config || {};
+            if (compression.enabled) {
+                const algo = compression.type || 'gzip';
+                const level = compression.level || 'default';
+                compressionHtml = `
+                    <div class="kv-item"><label>Compression</label><div><span class="badge info">${algo} (lvl ${level})</span></div></div>
+                `;
+            }
+
+            let rateLimitHtml = '';
+            const rl = route.rate_limit;
+            if (rl) {
+                const keyType = rl.key || 'ip';
+                rateLimitHtml = `
+                    <div class="kv-item"><label>Rate Limit</label><div><span class="badge warning">${rl.requests || 0} req / ${rl.window_seconds || 60}s (${keyType})</span></div></div>
+                `;
+            }
+
+            let wasmHtml = '';
+            const wasm = route.wasm;
+            if (wasm && wasm.enabled !== false) {
+                const moduleName = wasm.path ? wasm.path.split('/').pop() : 'filter.wasm';
+                wasmHtml = `
+                    <div class="kv-item"><label>WASM Filter</label><div><span class="badge info">${moduleName}</span></div></div>
+                `;
+            }
 
             content.innerHTML += `
                 <div class="detail-section">
                     <div class="detail-title">📡 Upstreams & Load Balancing</div>
                     ${backendsHtml}
                     <div class="kv-grid" style="margin-top:15px;">
-                        <div class="kv-item"><label>Strategy</label><div>${route.backends?.load_balancing?.strategy || 'Round Robin'}</div></div>
-                        <div class="kv-item"><label>Health Check</label><div>${route.backends?.health_check ? 'Enabled' : 'Disabled'}</div></div>
+                        <div class="kv-item"><label>Strategy</label><div><span class="badge success">${strategyDisplay}</span></div></div>
+                        ${healthCheckHtml}
+                        ${cbHtml}
+                        ${compressionHtml}
+                        ${rateLimitHtml}
+                        ${wasmHtml}
+                    </div>
+                    <div class="kv-grid" style="margin-top:10px;">
+                        <div class="kv-item"><label>Read Timeout</label><div>${readTimeout}</div></div>
+                        <div class="kv-item"><label>Write Timeout</label><div>${writeTimeout}</div></div>
+                        <div class="kv-item"><label>Idle Timeout</label><div>${idleTimeout}</div></div>
                     </div>
                 </div>`;
         }
 
-        // ================= SECTION 2: MIDDLEWARE GRID =================
+        // Certificate section for this host
+        const hostCerts = this.certificates.filter(c => c.host === hostname);
+        if (hostCerts.length > 0) {
+            let certHtml = '<div class="cert-grid">';
+            hostCerts.forEach(cert => {
+                let certClass = 'cert-valid';
+                let certText = `${cert.daysLeft}d`;
+                if (cert.daysLeft < 0) {
+                    certClass = 'cert-expired';
+                    certText = 'Expired';
+                } else if (cert.daysLeft < 7) {
+                    certClass = 'cert-expiring';
+                    certText = `${cert.daysLeft}d left`;
+                }
+
+                certHtml += `
+                    <div class="cert-card">
+                        <div class="cert-domain">${cert.host}</div>
+                        <div class="cert-expiry">
+                            <span>${cert.issuer}</span>
+                            <span class="badge ${certClass}">${certText}</span>
+                        </div>
+                        <div style="font-size:9px; color:var(--text-mute); margin-top:6px;">
+                            ${new Date(cert.expiry).toLocaleDateString()}
+                        </div>
+                    </div>
+                `;
+            });
+            certHtml += '</div>';
+
+            content.innerHTML += `
+                <div class="detail-section">
+                    <div class="detail-title">🔐 TLS Certificates</div>
+                    ${certHtml}
+                </div>`;
+        }
+
         let mwHtml = "";
         const mw = route.middleware || {};
 
-        // Security Group
         if (mw.ip_allowlist && mw.ip_allowlist.length > 0) {
             mwHtml += `
                 <div class="mw-card security">
@@ -611,7 +926,7 @@ class AgberoApp {
                 <div class="mw-card security">
                     <div class="mw-head">Authentication</div>
                     <div class="mw-body">Basic Auth</div>
-                    <div class="mw-sub">${Object.keys(mw.basic_auth).length} Users Configured</div>
+                    <div class="mw-sub">${Object.keys(mw.basic_auth).length} Users</div>
                 </div>`;
         }
 
@@ -619,18 +934,17 @@ class AgberoApp {
             mwHtml += `
                 <div class="mw-card security">
                     <div class="mw-head">Authentication</div>
-                    <div class="mw-body">Passkeys (WebAuthn)</div>
-                    <div class="mw-sub">Relying Party Configured</div>
+                    <div class="mw-body">Passkeys</div>
+                    <div class="mw-sub">WebAuthn</div>
                 </div>`;
         }
 
-        // Traffic Group
         if (mw.rate_limit) {
             mwHtml += `
                 <div class="mw-card traffic">
                     <div class="mw-head">Rate Limiter</div>
                     <div class="mw-body">${mw.rate_limit.requests} req / ${mw.rate_limit.window_seconds}s</div>
-                    <div class="mw-sub">Local Strategy</div>
+                    <div class="mw-sub">${mw.rate_limit.key || 'ip'}</div>
                 </div>`;
         }
 
@@ -639,17 +953,16 @@ class AgberoApp {
                 <div class="mw-card traffic">
                     <div class="mw-head">Circuit Breaker</div>
                     <div class="mw-body">Enabled</div>
-                    <div class="mw-sub">Protecting Upstreams</div>
+                    <div class="mw-sub">Threshold: ${mw.circuit_breaker.failure_threshold || 5}</div>
                 </div>`;
         }
 
-        // Transform Group
         if (mw.compress) {
             mwHtml += `
                 <div class="mw-card transform">
                     <div class="mw-head">Optimization</div>
                     <div class="mw-body">Compression</div>
-                    <div class="mw-sub">Gzip / Brotli</div>
+                    <div class="mw-sub">${mw.compress.type || 'gzip'}</div>
                 </div>`;
         }
 
@@ -663,7 +976,6 @@ class AgberoApp {
                 </div>`;
         }
 
-        // Render Middleware Section if any exist
         if (mwHtml) {
             content.innerHTML += `
                 <div class="detail-section">
@@ -674,16 +986,14 @@ class AgberoApp {
                 </div>`;
         }
 
-        // ================= SECTION 3: RAW CONFIG =================
         content.innerHTML += `
             <div class="detail-section">
-                <div class="detail-title">📜 Raw Config</div>
+                <div class="detail-title">📜 Source (read-only)</div>
                 <div class="code-box" style="max-height: 200px;">
                     <pre>${JSON.stringify(route, null, 2)}</pre>
                 </div>
             </div>`;
 
-        // Open Drawer
         document.getElementById("drawerBackdrop").classList.add("active");
         document.getElementById("routeDrawer").classList.add("active");
     }
@@ -693,27 +1003,50 @@ class AgberoApp {
         document.getElementById("routeDrawer").classList.remove("active");
     }
 
-    // ================== FIREWALL & UTILS ==================
+    // ================== FIREWALL ==================
     async fetchFirewall() {
         const res = await this.api("/firewall");
         const tbody = document.getElementById("firewallTable");
         tbody.innerHTML = "";
 
-        if (res && res.enabled === false) {
-            tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:20px; color:var(--text-mute);">Firewall Disabled</td></tr>`;
+        if (!res) {
+            tbody.innerHTML = `<tr><td colspan="5" style="padding:20px;"><div class="empty-state">⚠️ Firewall unavailable</div></td></tr>`;
             return;
         }
+
+        if (res.enabled === false) {
+            tbody.innerHTML = `<tr><td colspan="5" style="padding:20px;"><div class="empty-state">
+                <span>🛡️ Firewall disabled</span>
+                <span>Enable in agbero.hcl to block IPs</span>
+            </div></td></tr>`;
+            return;
+        }
+
         const rules = res.rules || res || [];
+        if (Array.isArray(rules) && rules.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" style="padding:20px;"><div class="empty-state">
+                <span>✅ No blocked IPs</span>
+                <span>All traffic is allowed</span>
+            </div></td></tr>`;
+            return;
+        }
+
         if (Array.isArray(rules)) {
             tbody.innerHTML = rules.map(r => `
                 <tr>
                     <td class="mono">${r.ip}</td>
                     <td>${r.reason || '-'}</td>
-                    <td>${r.host || '*'} / ${r.path || '*'}</td>
-                    <td>${new Date(r.created_at).toLocaleDateString()}</td>
-                    <td><button class="btn small" onclick="app.deleteFw('${r.ip}')">Unblock</button></td>
+                    <td class="hide-mobile">${r.host || '*'} / ${r.path || '*'}</td>
+                    <td class="hide-mobile">${new Date(r.created_at).toLocaleDateString()}</td>
+                    <td><button class="btn small error" onclick="app.confirmDeleteFw('${r.ip}')">Unblock</button></td>
                 </tr>`).join("");
         }
+    }
+
+    confirmDeleteFw(ip) {
+        this.confirm("Unblock IP", `Remove ${ip} from firewall?`, async () => {
+            await this.deleteFw(ip);
+        });
     }
 
     async addFirewallRule(e) {
@@ -752,7 +1085,14 @@ class AgberoApp {
     renderLogs() {
         const container = document.getElementById("logsList");
 
-        // Filter Logs
+        if (this.logs.length === 0) {
+            container.innerHTML = `<div style="color:var(--text-mute); text-align:center; padding:40px;">
+                <span style="display:block; font-size:24px; margin-bottom:10px;">📭</span>
+                No logs yet. Waiting for traffic...
+            </div>`;
+            return;
+        }
+
         const filtered = this.logs.filter(l => {
             if (this.logFilter === "ALL") return true;
             let lvl = "INFO";
@@ -762,7 +1102,7 @@ class AgberoApp {
         });
 
         if (filtered.length === 0) {
-            container.innerHTML = `<div style="color:var(--text-mute);text-align:center;">No logs for filter: ${this.logFilter}</div>`;
+            container.innerHTML = `<div style="color:var(--text-mute);text-align:center; padding:20px;">No logs for filter: ${this.logFilter}</div>`;
             return;
         }
 

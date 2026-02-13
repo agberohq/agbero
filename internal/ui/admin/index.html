@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <title>AGBERO</title>
     <link rel="stylesheet" href="styles.css">
 </head>
@@ -29,21 +29,16 @@
             <h1 id="heroTitle">System Status</h1>
             <p id="heroSub">Monitoring <span id="heroHostCount">0</span> hosts and <span id="heroRouteCount">0</span> routes.</p>
 
-            <div class="hero-meta">
-                <span title="Goroutines">📦 <span id="sysCpu">—</span></span>
-                <span class="divider">·</span>
-                <span title="Memory Usage">💾 <span id="sysMem">—</span></span>
-            </div>
-
             <div class="health-bar-container">
                 <div class="health-bar" id="globalHealthBar">
                     <div class="hb-seg hb-ok" style="width: 100%"></div>
                 </div>
                 <div class="health-legend">
                     <span><span class="dot ok"></span> Success</span>
-                    <span><span class="dot down"></span> Error</span>
+                    <span class="error-rate" id="errorRateText">0% errors</span>
                 </div>
             </div>
+            <div class="last-updated" id="lastUpdatedText">Updated just now</div>
         </div>
 
         <div class="chart-wrapper">
@@ -54,7 +49,7 @@
     <!-- HOSTS -->
     <div id="hostsPage" class="page">
         <div class="flex-right">
-            <input type="text" id="hostSearch" class="search-input" placeholder="Search hosts, paths, or backends...">
+            <input type="text" id="hostSearch" class="search-input" placeholder="Search hosts, paths, or backends..." autocomplete="off">
             <button class="btn" id="refreshHostsBtn">Refresh</button>
         </div>
         <div id="hostsContainer"></div>
@@ -65,23 +60,25 @@
         <div class="flex-right">
             <button class="btn primary" id="addRuleBtn">Block IP</button>
         </div>
-        <table class="simple-table">
-            <thead>
-            <tr>
-                <th>IP / CIDR</th>
-                <th>REASON</th>
-                <th>SCOPE</th>
-                <th>CREATED</th>
-                <th>ACTION</th>
-            </tr>
-            </thead>
-            <tbody id="firewallTable"></tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="simple-table">
+                <thead>
+                <tr>
+                    <th>IP / CIDR</th>
+                    <th>REASON</th>
+                    <th class="hide-mobile">SCOPE</th>
+                    <th class="hide-mobile">CREATED</th>
+                    <th>ACTION</th>
+                </tr>
+                </thead>
+                <tbody id="firewallTable"></tbody>
+            </table>
+        </div>
     </div>
 
     <!-- LOGS -->
     <div id="logsPage" class="page" style="max-width: 100%;">
-        <div class="flex-right">
+        <div class="flex-right wrap-mobile">
             <div class="filter-chips">
                 <span class="chip active" data-level="ALL">ALL</span>
                 <span class="chip" data-level="INFO">INFO</span>
@@ -89,7 +86,7 @@
                 <span class="chip" data-level="ERROR">ERROR</span>
             </div>
 
-            <span class="divider-v"></span>
+            <span class="divider-v hide-mobile"></span>
 
             <select id="logsTailSelect" style="width: auto; margin:0;">
                 <option value="100">100 Lines</option>
@@ -109,7 +106,23 @@
     </div>
 </div>
 
-<!-- BOTTOM STATS PANEL -->
+<!-- SYSTEM STATS BAR - WITH VERSION + CERTS -->
+<div class="sys-bar">
+    <div class="sys-bar-left">
+        <span class="sys-item" title="Goroutines">📦 <span id="sysCpu">—</span></span>
+        <span class="sys-divider">·</span>
+        <span class="sys-item" title="Memory RSS">💾 <span id="sysMem">—</span></span>
+        <span class="sys-divider">·</span>
+        <span class="sys-item" title="Active Certificates">🔐 <span id="activeCertsCount">0</span></span>
+        <span class="sys-divider">·</span>
+        <span class="sys-item" title="Expiring soon (<7d)">⚠️ <span id="expiringCertsCount">0</span></span>
+    </div>
+    <div class="sys-bar-right">
+        <span class="sys-item" id="versionDisplay" title="Agbero Version">v—</span>
+    </div>
+</div>
+
+<!-- BOTTOM STATS PANEL - EXACT ORIGINAL HEIGHT -->
 <div class="stats-footer">
     <div class="stat-item">
         <label>Uptime</label>
@@ -141,7 +154,7 @@
     </div>
 </div>
 
-<!-- MODALS (Login, Rule, Confirm) -->
+<!-- MODALS -->
 <div class="modal-overlay" id="loginModal">
     <div class="modal">
         <h3>Admin Login</h3>
@@ -183,20 +196,28 @@
     </div>
 </div>
 
+<!-- SESSION EXPIRY BANNER -->
+<div class="session-warning" id="sessionWarning">
+    <span>🔐 Your session expires in <span id="sessionExpiryTime">5m 0s</span></span>
+    <button id="refreshSessionBtn" class="btn small">Renew</button>
+</div>
 
+<!-- DRAWER -->
 <div class="drawer-backdrop" id="drawerBackdrop"></div>
 <div class="drawer" id="routeDrawer">
     <div class="drawer-header">
         <div class="drawer-title">
+            <div class="drawer-breadcrumb">
+                <span class="drawer-back-link" id="drawerBackToHosts">← All hosts</span>
+            </div>
             <h2 id="drawerRoutePath">/api/v1</h2>
-            <span id="drawerHostName">api.agbero.com</span>
+            <span id="drawerHostName" class="clickable-host">api.agbero.com</span>
         </div>
         <button class="drawer-close" id="drawerCloseBtn">&times;</button>
     </div>
-    <div class="drawer-content" id="drawerBody">
-        <!-- Dynamic Content Injected Here -->
-    </div>
+    <div class="drawer-content" id="drawerBody"></div>
 </div>
+
 <script src="app.js"></script>
 </body>
 </html>
