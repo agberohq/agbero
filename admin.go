@@ -1,6 +1,7 @@
 package agbero
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -132,12 +133,17 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	var foundHash []byte
 	userFound := 0
 
+	// Pre-hash input credential once
+	inputUserHash := sha256.Sum256([]byte(creds.Username))
+
 	for _, u := range cfg.BasicAuth.Users {
 		parts := strings.SplitN(u, ":", 2)
 		if len(parts) == 2 {
-			// ConstantTimeCompare returns 1 if strings match, 0 otherwise.
-			// This prevents timing leaks on the username string comparison.
-			if subtle.ConstantTimeCompare([]byte(parts[0]), []byte(creds.Username)) == 1 {
+			// Hash stored username
+			storedUserHash := sha256.Sum256([]byte(parts[0]))
+
+			// ConstantTimeCompare on FIXED SIZE (32 bytes) hashes
+			if subtle.ConstantTimeCompare(inputUserHash[:], storedUserHash[:]) == 1 {
 				foundHash = []byte(parts[1])
 				userFound = 1
 			}

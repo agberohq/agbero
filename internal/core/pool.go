@@ -14,7 +14,6 @@ func NewBufferPool() *BufferPool {
 	return &BufferPool{
 		pool: sync.Pool{
 			New: func() any {
-				// We create a slice of specific size
 				b := make([]byte, woos.BufferSize)
 				return &b
 			},
@@ -24,12 +23,14 @@ func NewBufferPool() *BufferPool {
 
 func (b *BufferPool) Get() []byte {
 	ptr := b.pool.Get().(*[]byte)
-	return *ptr // Return the slice
+	// Reslice to full capacity to ensure we give out a usable buffer
+	// even if the previous user sliced it down.
+	return (*ptr)[:cap(*ptr)]
 }
 
 func (b *BufferPool) Put(x []byte) {
-	// Only put back if it's the right size (sanity check)
-	if len(x) == woos.BufferSize {
+	// io.Copy often returns a slice (e.g. x[:n]), but we want to reuse the underlying array.
+	if cap(x) >= woos.BufferSize {
 		b.pool.Put(&x)
 	}
 }

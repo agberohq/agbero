@@ -875,27 +875,33 @@ func (s *Server) serveDefaultFavicon(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alaye.Route) {
+	// Create a shallow copy of the request with a new context
 	ctx := context.WithValue(r.Context(), woos.CtxOriginalPath, r.URL.Path)
 	reqOut := r.WithContext(ctx)
 
+	// Shallow copy URL to modify Path without affecting original request
 	if r.URL != nil {
 		u := *r.URL
 		reqOut.URL = &u
 	}
 
+	// Logic to Strip Prefixes securely
 	if len(route.StripPrefixes) > 0 {
 		for _, prefix := range route.StripPrefixes {
 			if prefix == "" {
 				continue
 			}
+			// Check against the decoded path
 			if strings.HasPrefix(reqOut.URL.Path, prefix) {
 				reqOut.URL.Path = strings.TrimPrefix(reqOut.URL.Path, prefix)
-				if reqOut.URL.RawPath != "" {
-					reqOut.URL.RawPath = strings.TrimPrefix(reqOut.URL.RawPath, prefix)
-				}
+
+				// Ensure root slash if path becomes empty
 				if reqOut.URL.Path == "" {
 					reqOut.URL.Path = "/"
 				}
+
+				// Clear RawPath.
+				reqOut.URL.RawPath = ""
 				break
 			}
 		}

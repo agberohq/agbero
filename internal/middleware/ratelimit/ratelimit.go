@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -82,12 +83,21 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/.well-known/acme-challenge/") {
+		cleanPath := path.Clean(r.URL.Path)
+
+		if strings.HasPrefix(cleanPath, "/.well-known/acme-challenge/") {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		bucketName, pol, ok := rl.policy(r)
+		rForPolicy := *r
+		if r.URL != nil {
+			u := *r.URL
+			u.Path = cleanPath
+			rForPolicy.URL = &u
+		}
+
+		bucketName, pol, ok := rl.policy(&rForPolicy)
 		if !ok || pol.Requests <= 0 {
 			next.ServeHTTP(w, r)
 			return
@@ -105,14 +115,10 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 				key = c.Value
 			}
 		} else {
-			// Default to IP
 			key = clientip.ClientIP(r)
 		}
 
 		if key == "" {
-			// If key strategy failed (missing header/cookie), we typically
-			// shouldn't block, or we should fallback to IP.
-			// Here we fallback to IP to ensure protection.
 			key = clientip.ClientIP(r)
 		}
 

@@ -307,6 +307,8 @@ const (
 
 	IdleTimeoutDeadline = 5 * time.Minute
 
+	BackendRetry = 3
+
 	RecordHeaderLen  = 5
 	HandshakeTypeLen = 1
 	HandshakeLength  = 3

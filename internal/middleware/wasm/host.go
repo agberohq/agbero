@@ -16,50 +16,46 @@ type RequestContext struct {
 
 // ExportHostFunctions registers Agbero's API into the WASM runtime
 func (m *Manager) ExportHostFunctions() {
-	// We create a "env" module which is the standard for C/Rust/TinyGo
 	builder := m.runtime.NewHostModuleBuilder("env")
 
-	// Get Header: agbero_get_header(key_ptr, key_len, val_ptr, max_len) -> val_len
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
-			// Logic to read header from ctx and write to WASM memory
 			req := ctx.Value("req").(*http.Request)
 
-			// If "headers" not in access list, return 0
 			if !m.config.HasAccess("headers") {
 				stack[0] = 0
 				return
 			}
 
-			// Read arguments from stack
 			keyPtr := uint32(stack[0])
 			keyLen := uint32(stack[1])
 			bufPtr := uint32(stack[2])
 			bufLen := uint32(stack[3])
 
-			// Read key from WASM memory
 			keyBytes, _ := mod.Memory().Read(keyPtr, keyLen)
 			val := req.Header.Get(string(keyBytes))
-
-			// Write value back
 			valBytes := []byte(val)
-			if uint32(len(valBytes)) > bufLen {
-				valBytes = valBytes[:bufLen] // Truncate if buffer too small
-			}
-			mod.Memory().Write(bufPtr, valBytes)
+			totalLen := uint64(len(valBytes))
 
-			stack[0] = uint64(len(valBytes))
+			writeLen := uint32(totalLen)
+			if writeLen > bufLen {
+				writeLen = bufLen
+			}
+
+			if writeLen > 0 {
+				mod.Memory().Write(bufPtr, valBytes[:writeLen])
+			}
+
+			stack[0] = totalLen
 		}),
 			[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
 			[]api.ValueType{api.ValueTypeI32}).
 		Export("agbero_get_header")
 
-	// Set Header: agbero_set_header(key_ptr, key_len, val_ptr, val_len)
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
 			w := ctx.Value("w").(http.ResponseWriter)
 
-			// Security check
 			if !m.config.HasAccess("headers") {
 				return
 			}
@@ -78,26 +74,27 @@ func (m *Manager) ExportHostFunctions() {
 			[]api.ValueType{}).
 		Export("agbero_set_header")
 
-	// Get Config: agbero_get_config(buf_ptr, buf_len) -> actual_len
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
 			bufPtr := uint32(stack[0])
 			bufLen := uint32(stack[1])
+			totalLen := uint64(len(m.configJSON))
 
-			if uint32(len(m.configJSON)) > bufLen {
-				// Buffer too small, just return needed size
-				stack[0] = uint64(len(m.configJSON))
-				return
+			writeLen := uint32(totalLen)
+			if writeLen > bufLen {
+				writeLen = bufLen
 			}
 
-			mod.Memory().Write(bufPtr, m.configJSON)
-			stack[0] = uint64(len(m.configJSON))
+			if writeLen > 0 {
+				mod.Memory().Write(bufPtr, m.configJSON[:writeLen])
+			}
+
+			stack[0] = totalLen
 		}),
 			[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32},
 			[]api.ValueType{api.ValueTypeI32}).
 		Export("agbero_get_config")
 
-	// Block/Allow: agbero_done(status_code)
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
 			status := uint32(stack[0])

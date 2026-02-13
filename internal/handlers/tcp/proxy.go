@@ -247,7 +247,7 @@ func (p *Proxy) handle(src net.Conn) {
 		err     error
 	)
 
-	maxAttempts := 3
+	maxAttempts := woos.BackendRetry
 	if c := balancer.BackendCount(); c > 0 && c < maxAttempts {
 		maxAttempts = c
 	}
@@ -257,6 +257,8 @@ func (p *Proxy) handle(src net.Conn) {
 		if backend == nil {
 			break
 		}
+
+		// Mark as tried so Pick() won't return it again in the next iteration
 		tried[backend] = struct{}{}
 
 		dst, err = net.DialTimeout(woos.TCP, backend.Address, woos.BackendDialTimeout)
