@@ -27,19 +27,19 @@ type Backend struct {
 	URL          *url.URL
 	Proxy        *httputil.ReverseProxy
 	Alive        atomic.Bool
-	InFlight     atomic.Int64
-	Failures     atomic.Int64
-	TotalReqs    atomic.Uint64
-	Metrics      *metrics.LatencyTracker
-	hcConfig     *alaye.HealthCheck
-	logger       *ll.Logger
 	stop         chan struct{}
+	stopOnce     sync.Once
 	startTime    time.Time
 	lastRecovery atomic.Int64
 	Weight       int
 	Cond         *Conditions
 	rnd          *rand.Rand
-	stopOnce     sync.Once
+	logger       *ll.Logger
+
+	Health   *metrics.Health
+	Activity *metrics.Activity
+
+	hcConfig *alaye.HealthCheck
 }
 
 func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backend, error) {
@@ -56,7 +56,6 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 	}
 	switch u.Scheme {
 	case woos.Http, woos.Https:
-		// ok
 	default:
 		return nil, fmt.Errorf("%w: %q", woos.ErrBackendBadScheme, u.Scheme)
 	}
@@ -68,14 +67,16 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 
 	now := time.Now()
 	b := &Backend{
-		URL:       u,
-		Weight:    cfg.Weight,
-		Cond:      cond,
-		hcConfig:  route.HealthCheck,
-		logger:    logger,
-		stop:      make(chan struct{}),
-		Metrics:   metrics.NewLatencyTracker(),
-		startTime: now,
+		URL:          u,
+		Weight:       cfg.Weight,
+		Cond:         cond,
+		hcConfig:     route.HealthCheck,
+		logger:       logger,
+		stop:         make(chan struct{}),
+		startTime:    now,
+		lastRecovery: atomic.Int64{},
+		Health:       metrics.NewHealthTracker(),
+		Activity:     metrics.NewActivityTracker(),
 	}
 	b.Alive.Store(true)
 	b.lastRecovery.Store(now.UnixNano())
@@ -88,13 +89,10 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 	rp := httputil.NewSingleHostReverseProxy(u)
 	rp.BufferPool = sharedBufferPool
 
-	// Clone transport and explicitly disable ExpectContinueTimeout.
 	t := woos.Transport.Clone()
 	t.ExpectContinueTimeout = 0
 
-	// Ensure we don't carry over unlimited flushes unless streaming
 	rp.FlushInterval = -1
-
 	if cfg.Streaming.Enabled {
 		t.ResponseHeaderTimeout = 0
 		rp.FlushInterval = cfg.Streaming.EffectiveFlushInterval()
@@ -106,18 +104,14 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 			return
 		}
 
-		// Trip Circuit Breaker
-		newFailures := b.Failures.Add(1)
-		if newFailures >= int64(cbThreshold) {
-			if b.Alive.Swap(false) {
-				b.logger.Fields("backend", u.Host, "failures", newFailures).Warn("circuit breaker tripped")
-			}
+		newFailures := b.Activity.Failures.Add(1)
+		if newFailures >= uint64(cbThreshold) && b.Alive.Swap(false) {
+			b.logger.Fields("backend", u.Host, "failures", newFailures).Warn("circuit breaker tripped")
 		}
 
-		// gRPC-aware Error Handling
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
 			w.Header().Set("Content-Type", "application/grpc")
-			w.Header().Set("Grpc-Status", "14") // 14 = UNAVAILABLE
+			w.Header().Set("Grpc-Status", "14")
 			w.Header().Set("Grpc-Message", "upstream backend unavailable")
 			w.WriteHeader(http.StatusOK)
 			return
@@ -144,8 +138,6 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 	}
 
 	b.Proxy = rp
-
-	// FIX: Initialize RNG here, BEFORE starting the health check loop to avoid data race
 	b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	if b.hcConfig != nil && b.hcConfig.Path != "" {
@@ -156,7 +148,6 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 }
 
 // Jitter returns a random duration to avoid thundering herd.
-// The lazy init check is removed as NewBackend guarantees initialization.
 func (b *Backend) Jitter(interval time.Duration) time.Duration {
 	return time.Duration(b.rnd.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
 }
@@ -167,22 +158,20 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b.InFlight.Add(1)
-	defer b.InFlight.Add(-1)
-
 	start := time.Now()
+	b.Activity.StartRequest()
+	defer func() {
+		dur := time.Since(start).Microseconds()
+		b.Activity.EndRequest(dur, false)
+	}()
 
 	b.Proxy.ServeHTTP(w, r)
-
-	dur := time.Since(start).Microseconds()
-	b.Metrics.Record(dur)
-	b.TotalReqs.Add(1)
 }
 
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
-		b.Metrics.Close() // Ensure metrics routines are cleaned up
+		b.Activity.Latency.Close()
 	})
 }
 
@@ -206,15 +195,13 @@ func (b *Backend) healthCheckLoop() {
 		Timeout: timeout,
 		Transport: &http.Transport{
 			MaxIdleConnsPerHost: woos.DefaultMaxIdleConnsPerHost,
-			DisableKeepAlives:   true, // Active checks should not hog connections
+			DisableKeepAlives:   true,
 		},
 	}
 
-	targetURL := b.URL.ResolveReference(
-		&url.URL{Path: b.hcConfig.Path},
-	).String()
+	targetURL := b.URL.ResolveReference(&url.URL{Path: b.hcConfig.Path}).String()
 
-	failures := 0
+	failures := int64(0)
 	timer := time.NewTimer(b.Jitter(interval))
 	defer timer.Stop()
 
@@ -224,7 +211,8 @@ func (b *Backend) healthCheckLoop() {
 			return
 		case <-timer.C:
 			resp, err := client.Get(targetURL)
-			healthy := err == nil && resp != nil && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest
+			healthy := err == nil && resp != nil &&
+				resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest
 
 			if resp != nil && resp.Body != nil {
 				_, _ = io.Copy(io.Discard, resp.Body)
@@ -233,15 +221,17 @@ func (b *Backend) healthCheckLoop() {
 
 			if healthy {
 				failures = 0
-				b.Failures.Store(0)
+				b.Health.RecordSuccess()
+				b.Activity.Failures.Store(0)
+
 				if !b.Alive.Load() {
-					now := time.Now().UnixNano()
 					b.Alive.Store(true)
-					b.lastRecovery.Store(now)
+					b.lastRecovery.Store(time.Now().UnixNano())
 				}
 			} else {
 				failures++
-				if failures >= threshold && b.Alive.Load() {
+				b.Health.RecordFailure()
+				if failures >= int64(threshold) {
 					b.Alive.Store(false)
 				}
 			}
@@ -258,10 +248,3 @@ func (b *Backend) Uptime() time.Duration {
 func (b *Backend) LastRecovery() time.Time {
 	return time.Unix(0, b.lastRecovery.Load())
 }
-
-//func (b *Backend) Jitter(interval time.Duration) time.Duration {
-//	if b.rnd == nil {
-//		b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
-//	}
-//	return time.Duration(b.rnd.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
-//}

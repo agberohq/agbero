@@ -50,7 +50,6 @@ func TestNewBackend_NoHealthCheck(t *testing.T) {
 	b := setupBackend(t, alaye.NewServer(server.URL), nil, nil)
 	defer b.Stop()
 
-	// No health check goroutine, just basic setup
 	if b.Proxy == nil {
 		t.Error("Proxy should be initialized")
 	}
@@ -61,7 +60,6 @@ func TestNewBackend_NoHealthCheck(t *testing.T) {
 
 func TestServeHTTP_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Force >0 latency so metrics logic works (minUS is 1)
 		time.Sleep(20 * time.Microsecond)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
@@ -83,27 +81,23 @@ func TestServeHTTP_Success(t *testing.T) {
 		t.Errorf("Expected body 'OK', got %q", body)
 	}
 
-	if b.InFlight.Load() != 0 {
+	if b.Activity.InFlight.Load() != 0 {
 		t.Error("InFlight should be 0 after request")
 	}
-	if b.TotalReqs.Load() != 1 {
-		t.Error("TotalReqs should be 1")
+	if b.Activity.Requests.Load() != 1 {
+		t.Error("Requests should be 1")
 	}
 
-	// Wait for metrics channel to drain (async metrics race condition)
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond) // wait for async metrics
 
-	// Check metrics (non-zero duration)
-	snap := b.Metrics.Snapshot()
+	snap := b.Activity.Latency.Snapshot()
 	if snap.Max == 0 {
 		t.Error("Expected non-zero max latency")
 	}
 }
 
 func TestServeHTTP_ContextCancel(t *testing.T) {
-	// Create a server that hangs forever
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Block indefinitely
 		<-r.Context().Done()
 	}))
 	defer server.Close()
@@ -114,11 +108,8 @@ func TestServeHTTP_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	req := httptest.NewRequest("GET", "/", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
-
-	// Cancel immediately - before the request starts
 	cancel()
 
-	// Need to wrap this to capture the panic from the reverse proxy
 	var panicErr interface{}
 	func() {
 		defer func() {
@@ -129,10 +120,7 @@ func TestServeHTTP_ContextCancel(t *testing.T) {
 		b.ServeHTTP(w, req)
 	}()
 
-	// The reverse proxy will panic on canceled context, that's expected
-	// We just want to ensure the backend handles it gracefully
 	if panicErr == nil {
-		// If no panic, check the response
 		if w.Code != http.StatusBadGateway {
 			t.Logf("Expected 502 or panic on cancel, got %d", w.Code)
 		}
@@ -168,27 +156,21 @@ func TestProxy_DirectorModifications(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// Parse the server URL to get expected host
 	u, _ := url.Parse(server.URL)
 	expectedHost := u.Host
 
 	if receivedHost != expectedHost {
 		t.Errorf("Expected Host header to be %q, got %q", expectedHost, receivedHost)
 	}
-
 	if receivedHeaders.Get("X-Forwarded-Host") == "" {
 		t.Error("Missing X-Forwarded-Host header")
 	}
-
 	if receivedHeaders.Get("X-Forwarded-Proto") == "" {
 		t.Error("Missing X-Forwarded-Proto header")
 	}
-
-	// These headers should be stripped by the director
 	if receivedHeaders.Get("Keep-Alive") != "" {
 		t.Error("Keep-Alive header should be stripped")
 	}
-
 	if receivedHeaders.Get("Proxy-Authorization") != "" {
 		t.Error("Proxy-Authorization header should be stripped")
 	}
@@ -213,19 +195,17 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 
-	// Simulate failures by calling error handler directly
 	for i := 0; i < 2; i++ {
 		b.Proxy.ErrorHandler(w, req, errors.New("test error"))
 	}
 
-	// Wait a bit for atomic updates
 	time.Sleep(50 * time.Millisecond)
 
 	if b.Alive.Load() {
 		t.Error("Should trip after 2 failures")
 	}
-	if b.Failures.Load() < 2 {
-		t.Errorf("Expected at least 2 failures, got %d", b.Failures.Load())
+	if b.Activity.Failures.Load() < 2 {
+		t.Errorf("Expected at least 2 failures, got %d", b.Activity.Failures.Load())
 	}
 }
 
@@ -250,12 +230,9 @@ func TestCircuitBreaker_NoTripOnCancel(t *testing.T) {
 
 	b.Proxy.ErrorHandler(w, req, context.Canceled)
 
-	// Should not trip on context cancel
 	if !b.Alive.Load() {
 		t.Error("Context cancel should not trip circuit")
 	}
-	// Failures might be incremented, but circuit shouldn't trip
-	// The actual implementation checks for context.Canceled
 }
 
 func TestHealthCheck_Failure(t *testing.T) {
@@ -273,7 +250,6 @@ func TestHealthCheck_Failure(t *testing.T) {
 	b := setupBackend(t, alaye.NewServer(server.URL), hc, nil)
 	defer b.Stop()
 
-	// Wait for health check to run a few times
 	time.Sleep(500 * time.Millisecond)
 
 	if b.Alive.Load() {
@@ -303,27 +279,24 @@ func TestHealthCheck_Recovery(t *testing.T) {
 	b := setupBackend(t, alaye.NewServer(server.URL), hc, nil)
 	defer b.Stop()
 
-	// Start unhealthy
-	time.Sleep(300 * time.Millisecond) // Should mark as down
+	time.Sleep(300 * time.Millisecond)
 	if b.Alive.Load() {
 		t.Error("Should be down initially")
 	}
 
-	// Make healthy
 	healthy.store(true)
 
-	// Wait for recovery
 	time.Sleep(300 * time.Millisecond)
 
 	if !b.Alive.Load() {
 		t.Error("Should recover when healthy")
 	}
-	if b.Failures.Load() != 0 {
+	if b.Activity.Failures.Load() != 0 {
 		t.Error("Failures should be reset on recovery")
 	}
 }
 
-// Simple atomic bool for test
+// atomic bool helper
 type atomicBool struct {
 	val bool
 	mu  sync.RWMutex
@@ -350,7 +323,6 @@ func TestHealthCheck_Jitter(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	// Configure backend to point to mock server
 	cfg := alaye.Server{Address: ts.URL, Weight: 1}
 	route := &alaye.Route{
 		HealthCheck: &alaye.HealthCheck{
@@ -366,10 +338,8 @@ func TestHealthCheck_Jitter(t *testing.T) {
 	}
 	defer b.Stop()
 
-	// Wait for health checks to run
 	time.Sleep(100 * time.Millisecond)
 
-	// FIX: Atomic Read
 	if val := hits.Load(); val == 0 {
 		t.Error("Expected health check hits, got 0")
 	}
@@ -391,21 +361,14 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 	}
 	b := setupBackend(t, alaye.NewServer(server.URL), hc, nil)
 
-	// Let it run briefly
 	time.Sleep(50 * time.Millisecond)
-
-	// Stop the backend
 	b.Stop()
 
-	// Capture hits at stop time
-	hitsAtStop := hits.Load() // FIX: Atomic Read
-
-	// Wait longer to ensure no more hits occur
+	hitsAtStop := hits.Load()
 	time.Sleep(50 * time.Millisecond)
 
-	// Verify no new hits occurred after stop
-	currentHits := hits.Load()      // FIX: Atomic Read
-	if currentHits > hitsAtStop+1 { // Allow +1 for in-flight race
+	currentHits := hits.Load()
+	if currentHits > hitsAtStop+1 {
 		t.Errorf("Health check loop did not stop. Hits went from %d to %d", hitsAtStop, currentHits)
 	}
 }
@@ -421,19 +384,20 @@ func TestUptime(t *testing.T) {
 	}
 }
 
-func TestMetricsSnapshot(t *testing.T) {
+func TestActivitySnapshot(t *testing.T) {
 	b := setupBackend(t, alaye.NewServer("http://example.com"), nil, nil)
 	defer b.Stop()
 
-	// Record some values directly on metrics
-	b.Metrics.Record(100)
-	b.Metrics.Record(200)
-	b.Metrics.Record(300)
+	b.Activity.StartRequest()
+	b.Activity.EndRequest(100, false)
+	b.Activity.StartRequest()
+	b.Activity.EndRequest(200, false)
+	b.Activity.StartRequest()
+	b.Activity.EndRequest(300, false)
 
-	// Wait for channel to drain
 	time.Sleep(10 * time.Millisecond)
 
-	snap := b.Metrics.Snapshot()
+	snap := b.Activity.Latency.Snapshot()
 	if snap.P50 != 200 {
 		t.Errorf("P50 expected 200, got %d", snap.P50)
 	}
@@ -445,5 +409,15 @@ func TestMetricsSnapshot(t *testing.T) {
 	}
 	if snap.Sum != 600 {
 		t.Errorf("Sum expected 600, got %d", snap.Sum)
+	}
+
+	if b.Activity.Requests.Load() != 3 {
+		t.Errorf("Requests expected 3, got %d", b.Activity.Requests.Load())
+	}
+	if b.Activity.Failures.Load() != 0 {
+		t.Errorf("Failures expected 0, got %d", b.Activity.Failures.Load())
+	}
+	if b.Activity.InFlight.Load() != 0 {
+		t.Errorf("InFlight expected 0, got %d", b.Activity.InFlight.Load())
 	}
 }

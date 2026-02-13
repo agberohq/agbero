@@ -5,12 +5,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/backend"
 )
 
 func makeBackend(weight int, alive bool) *backend.Backend {
 	b := &backend.Backend{
-		Weight: weight,
+		Weight:   weight,
+		Activity: &metrics.Activity{},
 	}
 	b.Alive.Store(alive)
 	return b
@@ -68,8 +70,8 @@ func TestLoadBalancer_LeastConn(t *testing.T) {
 	b1 := makeBackend(1, true)
 	b2 := makeBackend(1, true)
 
-	b1.InFlight.Store(10)
-	b2.InFlight.Store(2)
+	b1.Activity.InFlight.Store(10)
+	b2.Activity.InFlight.Store(2)
 
 	lb := NewLoadBalancer(
 		[]*backend.Backend{b1, b2},
@@ -90,8 +92,8 @@ func TestLoadBalancer_WeightedLeastConn(t *testing.T) {
 	b1 := makeBackend(10, true)
 	b2 := makeBackend(1, true)
 
-	b1.InFlight.Store(10)
-	b2.InFlight.Store(0)
+	b1.Activity.InFlight.Store(10)
+	b2.Activity.InFlight.Store(0)
 
 	lb := NewLoadBalancer(
 		[]*backend.Backend{b1, b2},

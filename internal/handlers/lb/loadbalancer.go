@@ -19,11 +19,7 @@ type snapshotHolder struct {
 	backends []*backend.Backend
 	wheel    *weightWheel
 
-	// Precomputed to avoid per-request scanning.
 	hasConditions bool
-
-	// If true, wheel.cumul is empty (all weights treated as 1),
-	// so building wheels for filtered sets is often unnecessary.
 	weightsAllOne bool
 }
 
@@ -48,8 +44,8 @@ func NewLoadBalancer(backends []*backend.Backend, strategy string, timeout time.
 
 func (lb *LoadBalancer) Update(list []*backend.Backend) {
 	cp := make([]*backend.Backend, 0, len(list))
-
 	hasCond := false
+
 	for _, b := range list {
 		if b == nil {
 			continue
@@ -113,7 +109,6 @@ func (lb *LoadBalancer) PickBackend(r *http.Request) *backend.Backend {
 	list := holder.backends
 	wheel := holder.wheel
 
-	// Hot path: if no conditions exist anywhere, skip condition logic entirely.
 	if holder.hasConditions {
 		if be, handled := lb.pickByConditions(list, wheel, r, holder.weightsAllOne); handled {
 			return be
@@ -170,16 +165,13 @@ func (lb *LoadBalancer) pickRoundRobin(list []*backend.Backend, w *weightWheel) 
 }
 
 func (lb *LoadBalancer) pickRandom(list []*backend.Backend, w *weightWheel) *backend.Backend {
-	// FIX: Use *rand.Rand (v2) and IntN
 	r := rngPool.Get().(*rand.Rand)
 	defer rngPool.Put(r)
 
 	if w == nil || w.total == 0 || len(w.cumul) == 0 {
 		start := r.IntN(len(list))
-
-		n := len(list)
 		for i := 0; i < len(list); i++ {
-			idx := (start + i) % n
+			idx := (start + i) % len(list)
 			if list[idx].Alive.Load() {
 				return list[idx]
 			}
@@ -244,7 +236,7 @@ func (lb *LoadBalancer) pickLeastConn(list []*backend.Backend) *backend.Backend 
 		if b == nil || !b.Alive.Load() {
 			continue
 		}
-		if c := b.InFlight.Load(); c < min {
+		if c := b.Activity.InFlight.Load(); c < min {
 			min = c
 			best = b
 		}
@@ -254,7 +246,7 @@ func (lb *LoadBalancer) pickLeastConn(list []*backend.Backend) *backend.Backend 
 
 func (lb *LoadBalancer) pickWeightedLeastConn(list []*backend.Backend) *backend.Backend {
 	var best *backend.Backend
-	var bestRatio float64 = -1
+	bestRatio := -1.0
 
 	for _, b := range list {
 		if b == nil || !b.Alive.Load() {
@@ -265,7 +257,7 @@ func (lb *LoadBalancer) pickWeightedLeastConn(list []*backend.Backend) *backend.
 		if w <= 0 {
 			w = 1
 		}
-		c := float64(b.InFlight.Load() + 1)
+		c := float64(b.Activity.InFlight.Load() + 1)
 		ratio := c / w
 
 		if best == nil || ratio < bestRatio {
@@ -299,11 +291,7 @@ func (lb *LoadBalancer) pickByConditions(
 		}
 	}
 
-	if !anyMatch {
-		return nil, false
-	}
-
-	if len(matchedHealthy) == 0 {
+	if !anyMatch || len(matchedHealthy) == 0 {
 		return nil, false
 	}
 
