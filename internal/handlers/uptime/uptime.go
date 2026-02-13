@@ -140,7 +140,7 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 				Backends: make([]*BackendSnapshot, 0),
 			}
 
-			// Load returns *cache.Item, not interface{}
+			// CORRECTED: Access item.Value directly as item is *cache.Item struct
 			if item, ok := cache.Route.Load(route.Key()); ok {
 				if handler, ok := item.Value.(*handlers.Route); ok {
 					for _, b := range handler.Backends {
@@ -181,19 +181,17 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 		// --- TCP Routes ---
 		if len(hcfg.TCPProxy) > 0 {
 			for _, tcpCfg := range hcfg.TCPProxy {
-				// Load returns *cache.Item directly
+				// CORRECTED: Access item.Value directly
 				item, ok := cache.TCP.Load(tcpCfg.Listen)
 				if !ok {
 					continue
 				}
 
-				// Assert Value field directly
 				rtProxy, ok := item.Value.(*tcp.Proxy)
 				if !ok {
 					continue
 				}
 
-				// Lock Proxy to safely read Balancers
 				rtProxy.Mu.RLock()
 
 				// 1. SNI Routes

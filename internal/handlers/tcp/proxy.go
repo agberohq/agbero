@@ -68,16 +68,13 @@ func (p *Proxy) AddRoute(hostname string, cfg alaye.TCPRoute) {
 
 func (p *Proxy) UpdateRoutes(newRoutes map[string]*Balancer, newDefault *Balancer) {
 	p.Mu.Lock()
-	// Capture old balancers to stop them safely outside the lock
-	oldRoutes := p.Routes
 	oldDefault := p.Default
+	oldRoutes := p.Routes
 
-	// Swap
 	p.Routes = newRoutes
 	p.Default = newDefault
 	p.Mu.Unlock()
 
-	// Fix 7: Stop old resources after swapping to avoid blocking/races on the map
 	if oldDefault != nil {
 		oldDefault.Stop()
 	}
@@ -279,8 +276,6 @@ func (p *Proxy) handle(src net.Conn) {
 
 	backend.Activity.StartRequest()
 	start := time.Now()
-
-	// Ensure metrics are recorded even if Proxy Protocol write fails
 	requestFailed := false
 	defer func() {
 		duration := time.Since(start).Microseconds()
@@ -293,12 +288,11 @@ func (p *Proxy) handle(src net.Conn) {
 			client.RemoteAddr(),
 			client.LocalAddr(),
 		)
-		// Fix 9: Handle header write failure correctly
 		if _, err := header.WriteTo(dst); err != nil {
 			p.Logger.Fields("err", err).Error("failed to write proxy protocol header")
 			_ = client.Close()
 			_ = dst.Close()
-			requestFailed = true // Mark as failed for metrics
+			requestFailed = true
 			return
 		}
 	}
@@ -321,12 +315,13 @@ func (p *Proxy) pickBalancer(sni string) *Balancer {
 			if b, ok := p.Routes[sni]; ok {
 				return b
 			}
-			// Fix 8: Correct SNI Logic
 			for routeSNI, b := range p.Routes {
 				if strings.HasPrefix(routeSNI, "*.") {
-					suffix := routeSNI[1:] // e.g. "example.com"
-					// Must match exact domain OR .domain
-					if sni == suffix || strings.HasSuffix(sni, "."+suffix) {
+					// CORRECTED LOGIC:
+					// routeSNI = "*.w.com" -> root = "w.com"
+					// We match if sni == "w.com" OR sni ends with ".w.com"
+					root := routeSNI[2:]
+					if sni == root || strings.HasSuffix(sni, "."+root) {
 						return b
 					}
 				}

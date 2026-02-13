@@ -428,31 +428,24 @@ class AgberoApp {
             memEl.innerText = this.formatBytes(data.system.mem_rss || 0);
 
             // ADDITIONAL SYSTEM METRICS
-            // CPU Cores
             const cpuCoresEl = document.getElementById("sysCpuCores");
             if (cpuCoresEl) cpuCoresEl.innerText = data.system.num_cpu || '—';
 
-            // Goroutines
             const goroutinesEl = document.getElementById("sysGoroutines");
             if (goroutinesEl) goroutinesEl.innerText = data.system.num_goroutine || '—';
 
-            // Memory Allocated
             const memAllocEl = document.getElementById("sysMemAlloc");
             if (memAllocEl) memAllocEl.innerText = this.formatBytes(data.system.mem_alloc || 0);
 
-            // Total Allocated
             const memTotalEl = document.getElementById("sysMemTotal");
             if (memTotalEl) memTotalEl.innerText = this.formatBytes(data.system.mem_total || 0);
 
-            // System Memory
             const memSysEl = document.getElementById("sysMemSys");
             if (memSysEl) memSysEl.innerText = this.formatBytes(data.system.mem_sys || 0);
 
-            // OS Memory Used
             const memUsedEl = document.getElementById("sysMemUsed");
             if (memUsedEl) memUsedEl.innerText = this.formatBytes(data.system.mem_used || 0);
 
-            // OS Total Memory
             const memTotalOsEl = document.getElementById("sysMemTotalOs");
             if (memTotalOsEl) memTotalOsEl.innerText = this.formatBytes(data.system.mem_total_os || 0);
         }
@@ -506,14 +499,14 @@ class AgberoApp {
                         total_reqs += (b.total_reqs || 0);
                         total_errors += (b.failures || 0);
 
-                        // Proper health detection - EACH BACKEND HAS ITS OWN INDICATOR
-                        const hasStats = b !== undefined;
-                        const healthy = hasStats ? (b.healthy !== undefined ? b.healthy : (b.alive === true)) : false;
-                        if (healthy) {
-                            active_backends++;
+                        // FIXED: Only count HTTP backends as "active" for dashboard stats
+                        const isHTTP = b.url && b.url.startsWith('http');
+                        if (isHTTP) {
+                            const healthy = b.healthy !== undefined ? b.healthy : (b.alive === true);
+                            if (healthy) active_backends++;
                         }
 
-                        // Latency metrics
+                        // Latency metrics - apply to all backend types
                         if (b.latency_us && b.latency_us.count > 0) {
                             sumLat += b.latency_us.sum_us;
                             countLat += b.latency_us.count;
@@ -614,6 +607,7 @@ class AgberoApp {
         this.renderHosts(searchTerm);
     }
 
+    // ================== RENDER HOSTS - COMPLETELY FIXED ==================
     renderHosts(filterTerm = "") {
         const container = document.getElementById("hostsContainer");
         const hosts = this.hostsData.config;
@@ -625,9 +619,9 @@ class AgberoApp {
 
         if (Object.keys(hosts).length === 0) {
             container.innerHTML = `<div class="empty-state">
-                <span>🔮 No hosts configured</span>
-                <span>Add a host in agbero.hcl and restart</span>
-            </div>`;
+            <span>🔮 No hosts configured</span>
+            <span>Add a host in agbero.hcl and restart</span>
+        </div>`;
             document.getElementById("heroHostCount").innerText = "0";
             document.getElementById("heroRouteCount").innerText = "0";
             return;
@@ -643,7 +637,6 @@ class AgberoApp {
             hostCount++;
             const rtStats = stats[hostname] || {};
 
-            // TLS Badge
             let tlsMode = cfg.tls?.mode || "";
             let tlsText = "Auto (Secure)";
             let tlsClass = "success";
@@ -665,13 +658,13 @@ class AgberoApp {
             }
 
             hostHtml += `
-            <div class="host-row">
-                <div class="host-header">
-                    <div class="host-name">${hostname} 
-                        <span class="badge ${tlsClass}" title="${tlsTitle}">${tlsText}</span>
-                    </div>
-                    <div class="host-meta">${cfg.domains?.join(", ")} &bull; ${this.fmtNum(rtStats.total_reqs || 0)} Reqs</div>
-                </div>`;
+        <div class="host-row">
+            <div class="host-header">
+                <div class="host-name">${hostname} 
+                    <span class="badge ${tlsClass}" title="${tlsTitle}">${tlsText}</span>
+                </div>
+                <div class="host-meta">${cfg.domains?.join(", ")} &bull; ${this.fmtNum(rtStats.total_reqs || 0)} Reqs</div>
+            </div>`;
 
             if (cfg.routes) {
                 cfg.routes.forEach((route, idx) => {
@@ -682,71 +675,91 @@ class AgberoApp {
                     let backendHtml = "";
 
                     const configBackends = route.backends?.servers || [];
-                    const statBackends = routeStats?.backends || [];
-                    const displayBackends = configBackends.length > 0 ? configBackends : statBackends;
+                    const uptimeBackends = routeStats?.backends || [];
+                    const hasAnyBackends = configBackends.length > 0 || uptimeBackends.length > 0;
 
-                    if (displayBackends.length > 0) {
+                    if (hasAnyBackends) {
+                        const displayBackends = uptimeBackends.length > 0 ? uptimeBackends : configBackends;
                         backendHtml = `<div class="backend-list">`;
 
                         displayBackends.forEach((b, bIdx) => {
-                            const bStats = statBackends[bIdx] || {};
-                            const url = b.address || b.url || bStats.url || bStats.address;
-                            const weight = (b.weight !== undefined) ? b.weight : (bStats.weight || '-');
+                            const configBackend = configBackends[bIdx] || {};
+                            const url = b.address || b.url || configBackend.address || configBackend.url;
+                            const weight = configBackend.weight !== undefined ? configBackend.weight : (b.weight || '-');
 
-                            if (pathMatches || matchesHost || (url && url.toLowerCase().includes(filterTerm))) {
+                            const hasStats = uptimeBackends[bIdx] !== undefined;
+                            let healthStatus = 'unknown';
+                            let dotColor = 'warn';
+                            let healthy = false;
+
+                            if (hasStats) {
+                                if (b.healthy !== undefined) {
+                                    healthy = b.healthy;
+                                    healthStatus = healthy ? 'ok' : 'down';
+                                    dotColor = healthy ? 'ok' : 'down';
+                                } else if (b.alive !== undefined) {
+                                    const isTCPBackend = url && !url.startsWith('http');
+                                    if (isTCPBackend) {
+                                        healthy = true;
+                                        healthStatus = b.alive ? 'ok' : 'warn';
+                                        dotColor = b.alive ? 'ok' : 'warn';
+                                    } else {
+                                        healthy = b.alive === true;
+                                        healthStatus = healthy ? 'ok' : 'down';
+                                        dotColor = healthy ? 'ok' : 'down';
+                                    }
+                                }
+                            }
+
+                            if (url && url.toLowerCase().includes(filterTerm)) {
                                 hostHasMatch = true;
                             }
 
-                            // Proper health detection with per-backend indicators
-                            const hasStats = statBackends[bIdx] !== undefined;
-                            const healthy = hasStats ? (bStats.healthy !== undefined ? bStats.healthy : (bStats.alive === true)) : false;
-                            const healthStatus = hasStats ? (healthy ? 'ok' : 'down') : 'unknown';
-                            const dotColor = healthStatus === 'ok' ? 'ok' : (healthStatus === 'unknown' ? 'warn' : 'down');
-
-                            const p99 = bStats.latency_us?.p99 ? (bStats.latency_us.p99 / 1000).toFixed(0) + "ms" : "-";
-                            const reqs = bStats.total_reqs || 0;
-                            const in_flight = bStats.in_flight || 0;
+                            const p99 = b.latency_us?.p99 ? (b.latency_us.p99 / 1000).toFixed(0) + "ms" : "-";
+                            const reqs = b.total_reqs || 0;
+                            const in_flight = b.in_flight || 0;
 
                             backendHtml += `
-                                <div class="backend-row ${hasStats && !healthy ? 'down' : ''}">
-                                    <span class="dot ${dotColor}" title="${hasStats ? (healthy ? 'Healthy' : 'Unhealthy') : 'No health data yet'}"></span>
-                                    <span class="be-url" onclick="event.stopPropagation(); app.copyToClipboard('${url}')" title="Click to copy URL">${url}</span>
-                                    <span class="be-stat">W: ${weight}</span>
-                                    <span class="be-stat">${p99}</span>
-                                    <span class="be-stat">${this.fmtNum(reqs)}</span>
-                                    <span class="be-badge">${in_flight > 0 ? `<span class="badge info" style="font-size:8px;">⚡${in_flight}</span>` : ''}</span>
-                                </div>`;
+                            <div class="backend-row ${hasStats && healthStatus === 'down' ? 'down' : ''}">
+                                <span class="dot ${dotColor}" title="${hasStats ? (healthStatus === 'ok' ? 'Healthy' : healthStatus === 'warn' ? 'Idle' : 'Unhealthy') : 'No data'}"></span>
+                                <span class="be-url" onclick="event.stopPropagation(); app.copyToClipboard('${url}')">${url}</span>
+                                <span class="be-stat">W: ${weight}</span>
+                                <span class="be-stat">${p99}</span>
+                                <span class="be-stat">${this.fmtNum(reqs)}</span>
+                                <span class="be-badge">${in_flight > 0 ? `<span class="badge info">⚡${in_flight}</span>` : ''}</span>
+                            </div>`;
                         });
                         backendHtml += `</div>`;
-                    }
-                    else if (route.web && route.web.root) {
+                    } else if (route.web && route.web.root) {
                         backendHtml = `<div class="backend-row"><span class="dot ok"></span> <span>📂 ${route.web.root}</span></div>`;
                         if (route.web.root.toLowerCase().includes(filterTerm)) hostHasMatch = true;
                     }
 
-                    if (filterTerm === "" || hostHasMatch || pathMatches) {
+                    const shouldShowRoute = filterTerm === "" || hostHasMatch || pathMatches || route.protocol === 'tcp';
+
+                    if (shouldShowRoute) {
                         hostHtml += `
-                            <div class="route-block" onclick="app.openRouteDrawer('${hostname}', ${idx})">
-                                <div class="route-header">
-                                    <span class="route-path">${route.path}</span>
-                                    <span class="badge info" style="margin-left:auto; font-size:9px;">DETAILS →</span>
-                                </div>
-                                ${backendHtml}
-                            </div>`;
+                        <div class="route-block" onclick="app.openRouteDrawer('${hostname}', ${idx})">
+                            <div class="route-header">
+                                <span class="route-path">${route.path}</span>
+                                <span class="badge info" style="margin-left:auto; font-size:9px;">DETAILS →</span>
+                            </div>
+                            ${backendHtml}
+                        </div>`;
                     }
                 });
             }
             hostHtml += `</div>`;
 
-            if (hostHasMatch) {
+            if (hostHasMatch || filterTerm === "") {
                 html += hostHtml;
             }
         }
 
         container.innerHTML = html || `<div class="empty-state">
-            <span>🔍 No hosts found matching "${filterTerm}"</span>
-            <span>Try a different search term</span>
-        </div>`;
+        <span>🔍 No hosts found matching "${filterTerm}"</span>
+        <span>Try a different search term</span>
+    </div>`;
 
         document.getElementById("heroHostCount").innerText = hostCount;
         document.getElementById("heroRouteCount").innerText = routeCount;
@@ -756,7 +769,7 @@ class AgberoApp {
         navigator.clipboard?.writeText(text).then(() => {}).catch(() => {});
     }
 
-    // ================== DRAWER ==================
+    // ================== DRAWER - FIXED HEALTH DETECTION ==================
     openRouteDrawer(hostname, routeIdx) {
         const route = this.hostsData.config[hostname].routes[routeIdx];
         const routeStats = this.hostsData.stats[hostname]?.routes?.[routeIdx] || {};
@@ -810,11 +823,31 @@ class AgberoApp {
                 const url = b.address || b.url || s.url || s.address;
                 const weight = (b.weight !== undefined) ? b.weight : (s.weight || '-');
 
-                // Proper health detection for drawer
+                // Proper health detection for drawer (same logic as renderHosts)
                 const hasStats = statBackends[i] !== undefined;
-                const healthy = hasStats ? (s.healthy !== undefined ? s.healthy : (s.alive === true)) : false;
-                const healthStatus = hasStats ? (healthy ? 'ok' : 'down') : 'unknown';
-                const dotColor = healthStatus === 'ok' ? 'ok' : (healthStatus === 'unknown' ? 'warn' : 'down');
+                let healthStatus = 'unknown';
+                let dotColor = 'warn';
+                let healthy = false;
+
+                if (hasStats) {
+                    if (s.healthy !== undefined) {
+                        healthy = s.healthy;
+                        healthStatus = healthy ? 'ok' : 'down';
+                        dotColor = healthy ? 'ok' : 'down';
+                    }
+                    else if (s.alive !== undefined) {
+                        const isTCPBackend = url && !url.startsWith('http');
+                        if (isTCPBackend) {
+                            healthy = true;
+                            healthStatus = s.alive ? 'ok' : 'warn';
+                            dotColor = s.alive ? 'ok' : 'warn';
+                        } else {
+                            healthy = s.alive === true;
+                            healthStatus = healthy ? 'ok' : 'down';
+                            dotColor = healthy ? 'ok' : 'down';
+                        }
+                    }
+                }
 
                 const p99 = s.latency_us?.p99 ? (s.latency_us.p99 / 1000).toFixed(0) + "ms" : "";
                 const in_flight = s.in_flight || 0;
@@ -822,16 +855,16 @@ class AgberoApp {
                 const total_reqs = s.total_reqs || 0;
 
                 backendsHtml += `
-                    <div class="drawer-row ${hasStats && !healthy ? 'down' : ''}">
+                    <div class="drawer-row ${hasStats && healthStatus === 'down' ? 'down' : ''}">
                         <div class="row-left">
-                            <span class="dot ${dotColor}" title="${hasStats ? (healthy ? 'Healthy' : 'Unhealthy') : 'No health data yet'}"></span>
+                            <span class="dot ${dotColor}" title="${hasStats ? (healthStatus === 'ok' ? 'Healthy' : healthStatus === 'warn' ? 'Idle/Healthy' : 'Unhealthy') : 'No health data yet'}"></span>
                             <span class="mono">${url}</span>
-                            ${in_flight > 0 ? `<span class="badge info" style="background: var(--accent);">⚡ ${in_flight} in flight</span>` : ''}
+                            ${in_flight > 0 ? `<span class="badge info">⚡ ${in_flight} in flight</span>` : ''}
                             ${failures > 0 ? `<span class="badge error">⚠️ ${failures} failures</span>` : ''}
                         </div>
                         <div class="row-right">
-                            ${p99 ? `<span class="badge info" style="border:none;">p99: ${p99}</span>` : ''}
-                            <span class="badge ${healthy ? 'success' : 'error'}">W: ${weight}</span>
+                            ${p99 ? `<span class="badge info">p99: ${p99}</span>` : ''}
+                            <span class="badge ${healthStatus === 'ok' ? 'success' : healthStatus === 'warn' ? 'warning' : 'error'}">W: ${weight}</span>
                             <span class="badge" style="background: var(--text-mute);">${this.fmtNum(total_reqs)} reqs</span>
                         </div>
                     </div>`;

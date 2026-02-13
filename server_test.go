@@ -51,10 +51,16 @@ func TestServer_Start_Minimal(t *testing.T) {
 		jack.ShutdownWithTimeout(100 * time.Millisecond),
 	)
 
+	tmpDir := t.TempDir()
+	hostsDir := filepath.Join(tmpDir, "hosts")
+	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+
 	global := &alaye.Global{
 		Bind: alaye.Bind{HTTP: []string{":0"}},
 		Storage: alaye.Storage{
-			HostsDir: "./hosts",
+			HostsDir: hostsDir,
 		},
 	}
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
@@ -65,7 +71,6 @@ func TestServer_Start_Minimal(t *testing.T) {
 		WithShutdownManager(shutdown),
 	)
 
-	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.hcl")
 	_ = os.WriteFile(configPath, []byte(""), woos.FilePerm)
 
@@ -120,7 +125,7 @@ func TestServer_buildTLS_NoEmail(t *testing.T) {
 	s := &Server{
 		global: &alaye.Global{
 			Storage: alaye.Storage{
-				HostsDir: tmpDir,
+				CertsDir: tmpDir,
 			},
 		},
 		logger:      testLogger,
@@ -138,9 +143,9 @@ func TestServer_buildTLS_NoEmail(t *testing.T) {
 	_ = cfg
 }
 
-func TestServer_buildRateLimiterFromConfig(t *testing.T) {
+func TestServer_buildGlobalRateLimiter(t *testing.T) {
 	s := &Server{global: &alaye.Global{
-		RateLimits: alaye.Rate{
+		RateLimits: alaye.GlobalRate{
 			Enabled:    true,
 			TTL:        time.Minute,
 			MaxEntries: 100,
@@ -158,7 +163,7 @@ func TestServer_buildRateLimiterFromConfig(t *testing.T) {
 		},
 	}}
 
-	rl := s.buildRateLimiterFromConfig()
+	rl := s.buildGlobalRateLimiter()
 	if rl == nil {
 		t.Error("RateLimiter not created")
 	}
@@ -170,19 +175,19 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 		reaper: jack.NewReaper(time.Minute),
 	}
 
-	route := &alaye.Route{Path: "/test", Backends: alaye.MakeBackend("http://localhost:8080")}
+	route := &alaye.Route{Path: "/test", Backends: alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")}}
 	key := route.Key()
 
-	handler := handlers.NewRoute(route, testLogger)
+	handler := handlers.NewRoute(route, nil, testLogger)
 
 	item := &cache.Item{
 		Value: handler,
 	}
 	item.LastAccessed.Store(time.Now().UnixNano())
 
-	cache.Route.LoadOrStore(key, item)
+	cache.Route.Store(key, item)
 
-	h := s.getOrBuildRouteHandler(route, key)
+	h := s.getOrBuildRouteHandler(route, key, nil)
 	if h != handler {
 		t.Error("Cache miss unexpectedly")
 	}
@@ -199,12 +204,12 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 
 	route := &alaye.Route{
 		Path:     "/test",
-		Backends: alaye.MakeBackend("http://localhost:8080"),
+		Backends: alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")},
 	}
 
 	cache.Route.Delete(route.Key())
 
-	h := s.getOrBuildRouteHandler(route, route.Key())
+	h := s.getOrBuildRouteHandler(route, route.Key(), nil)
 	if h == nil {
 		t.Error("Handler should be created on cache miss")
 	}
@@ -270,12 +275,29 @@ func TestServer_HandleRequest_WithHost(t *testing.T) {
 	}))
 	defer backend.Close()
 
-	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
+	tmpDir := t.TempDir()
+	hostsDir := filepath.Join(tmpDir, "hosts")
+	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
 
-	hm.UpdateGossipNode("test", "example.com", alaye.Route{
-		Path:     "/",
-		Backends: alaye.MakeBackend(backend.URL),
-	})
+	hostFile := filepath.Join(hostsDir, "example.com.hcl")
+	content := `host "example.com" {
+    domains = ["example.com"]
+    route "/" {
+        backend "test" {
+            address = "` + backend.URL + `"
+        }
+    }
+}`
+	if err := os.WriteFile(hostFile, []byte(content), woos.FilePerm); err != nil {
+		t.Fatal(err)
+	}
+
+	hm := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
+	if err := hm.ReloadFull(); err != nil {
+		t.Fatal(err)
+	}
 
 	s := &Server{
 		hostManager: hm,

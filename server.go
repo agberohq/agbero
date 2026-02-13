@@ -61,16 +61,14 @@ type Server struct {
 
 	logger       *ll.Logger
 	ipMiddleware *clientip.IPMiddleware
-	rateLimiter  *ratelimit.RateLimiter
+	rateLimiter  *ratelimit.RateLimiter // Global Default Limiter
 
 	wasmCache    sync.Map
 	skipLogPaths map[string]bool
 
-	// Jack Lifecycle Management
 	shutdown *jack.Shutdown
 	reaper   *jack.Reaper
 
-	// HAProxy features
 	ProxyProtocol  bool  `hcl:"proxy_protocol,optional" json:"proxy_protocol"`
 	MaxConnections int64 `hcl:"max_connections,optional" json:"max_connections"`
 
@@ -130,15 +128,16 @@ func (s *Server) Start(configPath string) error {
 		"data_dir", s.global.Storage.DataDir,
 	).Info("directories initialized")
 
-	// Initialize Reaper for Route Cache Cleanup
 	s.reaper = jack.NewReaper(
 		woos.RouteCacheTTL,
 		jack.ReaperWithLogger(s.logger),
 		jack.ReaperWithHandler(func(ctx context.Context, id string) {
 			if it, ok := cache.Route.Load(id); ok {
-				if h, ok := cache.Get[*handlers.Route](it); ok {
+				//if item, ok := it.(*cache.Item); ok {
+				if h, ok := it.Value.(*handlers.Route); ok {
 					h.Close()
 				}
+				// }
 			}
 			cache.Route.Delete(id)
 			s.logger.Fields("route_key", id).Debug("reaped idle route handler")
@@ -150,7 +149,6 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("RouteReaper", s.reaper.Stop)
 	}
 
-	// Load Hosts
 	if err := s.hostManager.ReloadFull(); err != nil {
 		s.logger.Fields("err", err).Error("failed to load initial hosts")
 		return err
@@ -158,7 +156,6 @@ func (s *Server) Start(configPath string) error {
 	hosts, _ := s.hostManager.LoadAll()
 	s.logHostStats(hosts)
 
-	// Setup Gossip
 	if s.global.Gossip.Enabled {
 		gs, err := gossip.NewService(s.hostManager, &s.global.Gossip, s.logger)
 		if err != nil {
@@ -174,9 +171,8 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	// Setup Middleware
 	s.ipMiddleware = clientip.NewIPMiddleware(s.global.Security.TrustedProxies)
-	s.rateLimiter = s.buildRateLimiterFromConfig()
+	s.rateLimiter = s.buildGlobalRateLimiter()
 
 	s.skipLogPaths = make(map[string]bool)
 	if len(s.global.Logging.Skip) > 0 {
@@ -185,7 +181,6 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	// Setup Firewall
 	dataDir := woos.NewFolder(s.global.Storage.DataDir)
 	s.firewall, err = firewall.New(s.global.Security.Firewall, dataDir, s.logger)
 	if err != nil {
@@ -195,17 +190,14 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("Firewall", func() { _ = s.firewall.Close() })
 	}
 
-	// Start Admin
 	s.startAdminServer()
 
-	// Setup Handlers
 	baseHandler := http.HandlerFunc(s.handleRequest)
 	var httpFallbackHandler http.Handler = baseHandler
 	if len(s.global.Bind.HTTPS) > 0 {
 		httpFallbackHandler = http.HandlerFunc(s.redirectToHTTPS)
 	}
 
-	// Setup TLS
 	tlsCfg, acmeHandler, err := s.buildTLS(httpFallbackHandler)
 	if err != nil {
 		s.logger.Fields("err", err.Error()).Warn("TLS setup failed; HTTPS listeners may not start")
@@ -217,7 +209,6 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
 	}
 
-	// Start TCP Proxies
 	for _, host := range hosts {
 		for _, route := range host.TCPProxy {
 			tp := tcp.NewProxy(route.Listen, s.logger)
@@ -230,7 +221,6 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	// Start HTTP/QUIC Listeners
 	anyStreaming := s.hasStreaming(hosts)
 	usedPorts := make(map[string]bool)
 
@@ -510,15 +500,14 @@ func (s *Server) startQUICServer(
 	}()
 }
 
+// buildChain constructs the middleware chain.
+// NOTE: We do NOT apply the global rate limiter here anymore.
+// It is applied inside handleRoute to support per-route overrides.
 func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) http.Handler {
 	h := next
 
 	if advertiseH3 {
 		h = h3.H3Middleware(port)(h)
-	}
-
-	if s.rateLimiter != nil {
-		h = s.rateLimiter.Handler(h)
 	}
 
 	if s.firewall != nil {
@@ -535,7 +524,6 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 	return h
 }
 
-// Reload is the public method to trigger a configuration reload.
 func (s *Server) Reload() {
 	s.logger.Info("reloading configuration")
 
@@ -577,6 +565,12 @@ func (s *Server) Reload() {
 	}
 
 	s.global = global
+
+	// Rebuild global rate limiter
+	if s.rateLimiter != nil {
+		s.rateLimiter.Close()
+	}
+	s.rateLimiter = s.buildGlobalRateLimiter()
 
 	previousHosts, _ := s.hostManager.LoadAll()
 	previousCount := len(previousHosts)
@@ -638,10 +632,10 @@ func (s *Server) Reload() {
 	).Info("configuration reloaded successfully")
 }
 
-func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
+func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
 	rlc := s.global.RateLimits
 
-	if !rlc.Enabled {
+	if !rlc.Enabled || len(rlc.Rules) == 0 {
 		return nil
 	}
 
@@ -686,7 +680,13 @@ func (s *Server) buildRateLimiterFromConfig() *ratelimit.RateLimiter {
 				}
 			}
 
-			return rule.Name, ratelimit.RatePolicy{
+			// Default rule found
+			ruleName := rule.Name
+			if ruleName == "" {
+				ruleName = "global_default"
+			}
+
+			return ruleName, ratelimit.RatePolicy{
 				Requests: rule.Requests,
 				Window:   rule.Window,
 				Burst:    rule.Burst,
@@ -875,7 +875,8 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	}
 
 	routeKey := route.Key()
-	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey)
+	// Pass global rate limits so the route handler builder can resolve policies
+	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey, &s.global.RateLimits)
 
 	if route.Wasm != nil {
 		wm, err := s.getWasmManager(route.Wasm, routeKey)
@@ -887,18 +888,31 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 		handler = wm.Handler(handler)
 	}
 
-	handler.ServeHTTP(w, reqOut)
-}
-
-func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handlers.Route {
-	if it, ok := cache.Route.Load(key); ok {
-		if h, ok := cache.Get[*handlers.Route](it); ok {
-			s.reaper.Touch(key)
-			return h
+	// Apply Global Rate Limiter (unless ignored by route)
+	if s.rateLimiter != nil {
+		ignoreGlobal := false
+		if route.RateLimit != nil && route.RateLimit.IgnoreGlobal {
+			ignoreGlobal = true
+		}
+		if !ignoreGlobal {
+			handler = s.rateLimiter.Handler(handler)
 		}
 	}
 
-	h := handlers.NewRoute(route, s.logger)
+	handler.ServeHTTP(w, reqOut)
+}
+
+func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string, globalRate *alaye.GlobalRate) *handlers.Route {
+	if it, ok := cache.Route.Load(key); ok {
+		//if item, ok := it.(*cache.Item); ok {
+		if h, ok := it.Value.(*handlers.Route); ok {
+			s.reaper.Touch(key)
+			return h
+		}
+		//}
+	}
+
+	h := handlers.NewRoute(route, globalRate, s.logger)
 
 	newItem := &cache.Item{
 		Value: h,
@@ -906,10 +920,12 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handler
 
 	if it, loaded := cache.Route.LoadOrStore(key, newItem); loaded {
 		h.Close()
-		if existing, ok := cache.Get[*handlers.Route](it); ok {
+		//if item, ok := it.(*cache.Item); ok {
+		if existing, ok := it.Value.(*handlers.Route); ok {
 			s.reaper.Touch(key)
 			return existing
 		}
+		//}
 	}
 
 	s.reaper.Touch(key)
@@ -961,14 +977,12 @@ func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 func (s *Server) computeFullConfigSHA() (string, error) {
 	hasher := sha256.New()
 
-	// 1️⃣ main config
 	mainData, err := os.ReadFile(s.configPath)
 	if err != nil {
 		return "", err
 	}
 	hasher.Write(mainData)
 
-	// 2️⃣ host files
 	hostDir := s.global.Storage.HostsDir
 
 	entries, err := os.ReadDir(hostDir)
@@ -992,7 +1006,7 @@ func (s *Server) computeFullConfigSHA() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		hasher.Write([]byte(name)) // include filename
+		hasher.Write([]byte(name))
 		hasher.Write(data)
 	}
 

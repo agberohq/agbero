@@ -7,71 +7,123 @@ import (
 	"github.com/olekukonko/errors"
 )
 
-type Rate struct {
+// GlobalRate defines the global registry and default rules.
+type GlobalRate struct {
 	Enabled    bool          `hcl:"enabled,optional" json:"enabled"`
 	TTL        time.Duration `hcl:"ttl,optional" json:"ttl"`
 	MaxEntries int64         `hcl:"max_entries,optional" json:"max_entries"`
-	Rules      []RateRule    `hcl:"rule,block" json:"rules"`
+
+	// Default rules applied to all routes (unless ignored)
+	Rules []RateRule `hcl:"rule,block" json:"rules"`
+
+	// Named policies that routes can opt-in to
+	Policies []RatePolicy `hcl:"policy,block" json:"policies"`
 }
 
+// RouteRate defines rate limiting for a specific route.
+type RouteRate struct {
+	Enabled      bool      `hcl:"enabled,optional" json:"enabled"`
+	IgnoreGlobal bool      `hcl:"ignore_global,optional" json:"ignore_global"` // Stop global rules processing
+	UsePolicy    string    `hcl:"use_policy,optional" json:"use_policy"`       // Reference a named policy
+	Rule         *RateRule `hcl:"rule,block" json:"rule,omitempty"`            // Ad-hoc definition
+}
+
+// RatePolicy is a named configuration in the global scope.
+type RatePolicy struct {
+	Name     string        `hcl:"name,label" json:"name"`
+	Requests int           `hcl:"requests" json:"requests"`
+	Window   time.Duration `hcl:"window" json:"window"`
+	Burst    int           `hcl:"burst,optional" json:"burst"`
+	Key      string        `hcl:"key,optional" json:"key"` // "ip", "header:X", etc.
+}
+
+// RateRule is a specific rule application (matching path/method).
 type RateRule struct {
-	Name     string   `hcl:"name,label" json:"name"`
+	Name     string   `hcl:"name,label,optional" json:"name"` // Optional label for logging
 	Prefixes []string `hcl:"prefixes,optional" json:"prefixes"`
 	Methods  []string `hcl:"methods,optional" json:"methods"`
 
 	Requests int           `hcl:"requests" json:"requests"`
 	Window   time.Duration `hcl:"window" json:"window"`
 	Burst    int           `hcl:"burst,optional" json:"burst"`
-
-	// "ip", "header:X-API-Key", "cookie:SessionID"
-	Key string `hcl:"key,optional" json:"key"`
+	Key      string        `hcl:"key,optional" json:"key"`
 }
 
-func (r *Rate) Validate() error {
-	if !r.Enabled {
+func (g *GlobalRate) Validate() error {
+	if !g.Enabled {
 		return nil
 	}
 
-	if r.TTL < 0 {
-		return errors.New("ttl cannot be negative")
+	if g.TTL < 0 {
+		return ErrProxyRouteNegativeTTL
+	}
+	if g.MaxEntries < 0 {
+		return ErrProxyRouteNegativeMaxEntries
 	}
 
-	if r.MaxEntries < 0 {
-		return errors.New("max_entries cannot be negative")
-	}
-
-	for i, rule := range r.Rules {
+	for i, rule := range g.Rules {
 		if err := rule.Validate(); err != nil {
-			return errors.Newf("rule[%d] %q: %w", i, rule.Name, err)
+			return errors.Newf("global rule[%d]: %w", i, err)
+		}
+	}
+
+	for _, pol := range g.Policies {
+		if err := pol.Validate(); err != nil {
+			return errors.Newf("policy %q: %w", pol.Name, err)
 		}
 	}
 
 	return nil
 }
 
+func (r *RouteRate) Validate() error {
+	if !r.Enabled {
+		return nil
+	}
+
+	if r.Rule != nil {
+		if err := r.Rule.Validate(); err != nil {
+			return errors.Newf("ad-hoc rule: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (p *RatePolicy) Validate() error {
+	if p.Name == "" {
+		return errors.New("policy name is required")
+	}
+	// Re-use logic by casting to RateRule for validation
+	rr := RateRule{
+		Requests: p.Requests,
+		Window:   p.Window,
+		Burst:    p.Burst,
+	}
+	return rr.Validate()
+}
+
 func (r *RateRule) Validate() error {
 	if r.Requests <= 0 {
-		return errors.New("requests must be positive")
+		return ErrRateLimitNegativeRequests
 	}
 
 	if r.Window <= 0 {
-		return errors.New("window must be positive")
+		return ErrRateLimitInvalidWindow
 	}
 
 	if r.Burst < 0 {
-		return errors.New("burst cannot be negative")
+		return ErrRateLimitNegativeBurst
 	}
 	if r.Burst == 0 {
 		r.Burst = r.Requests
 	}
 	if r.Burst < r.Requests {
-		return errors.New("burst cannot be less than requests")
+		return ErrRateLimitBurstTooSmall
 	}
 
-	for _, p := range r.Prefixes {
-		if !strings.HasPrefix(p, Slash) {
-			return errors.Newf("prefix %q must start with '/'", p)
-		}
+	if strings.Contains(r.Key, " ") {
+		return ErrRateLimitInvalidKeyHeader
 	}
 
 	for i, m := range r.Methods {

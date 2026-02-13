@@ -14,7 +14,7 @@ type Global struct {
 	Logging     Logging     `hcl:"logging,block" json:"logging"`
 	Gossip      Gossip      `hcl:"gossip,block" json:"gossip"`
 	Timeouts    Timeout     `hcl:"timeouts,block" json:"timeouts"`
-	RateLimits  Rate        `hcl:"rate_limits,block" json:"rateLimits"`
+	RateLimits  GlobalRate  `hcl:"rate_limits,block" json:"rateLimits"`
 	Storage     Storage     `hcl:"storage,block" json:"storage"`
 	Security    Security    `hcl:"security,block" json:"security"`
 	General     General     `hcl:"general,block" json:"general"`
@@ -31,7 +31,7 @@ type Firewall struct {
 	Enabled       bool   `hcl:"enabled" json:"enabled"`
 	BlockList     string `hcl:"block_list_file,optional" json:"blockList"`
 	RemoteCheck   string `hcl:"remote_check_url,optional" json:"remote_check"`
-	RemoteTimeout int    `hcl:"remote_timeout,optional" json:"remote_timeout"` // Seconds
+	RemoteTimeout int    `hcl:"remote_timeout,optional" json:"remote_timeout"`
 }
 
 func (s Security) Validate() error {
@@ -50,7 +50,6 @@ func (s Security) Validate() error {
 }
 
 func (g *Global) Validate() error {
-	// Bind config validation
 	if err := g.Bind.Validate(); err != nil {
 		return errors.Newf("bind: %w", err)
 	}
@@ -59,17 +58,14 @@ func (g *Global) Validate() error {
 		return errors.Newf("admin: %w", err)
 	}
 
-	// Timeouts validation
 	if err := g.Timeouts.Validate(); err != nil {
 		return errors.Newf("timeouts: %w", err)
 	}
 
-	// Rate limits validation
 	if err := g.RateLimits.Validate(); err != nil {
 		return errors.Newf("rate_limits: %w", err)
 	}
 
-	// Gossip config validation (if enabled)
 	if &g.Gossip != nil {
 		if err := g.Gossip.Validate(); err != nil {
 			return errors.Newf("gossip: %w", err)
@@ -95,15 +91,15 @@ func (g *Global) Validate() error {
 }
 
 type Logging struct {
-	Level    string   `hcl:"level,optional" json:"level"` // debug, info, warn, error
-	File     string   `hcl:"file,optional" json:"file"`   // /var/log/agbero.log
+	Level    string   `hcl:"level,optional" json:"level"`
+	File     string   `hcl:"file,optional" json:"file"`
 	Skip     []string `hcl:"skip,optional"`
 	Victoria Victoria `hcl:"victoria,block" json:"victoria"`
 }
 
 type Victoria struct {
 	Enabled   bool   `hcl:"enabled,optional" json:"enabled"`
-	URL       string `hcl:"url,optional" json:"URL"` // http://victoria-logs:9428/insert/jsonline
+	URL       string `hcl:"url,optional" json:"URL"`
 	BatchSize int    `hcl:"batch_size,optional" json:"batch_size"`
 }
 

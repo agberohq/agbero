@@ -9,32 +9,27 @@ import (
 )
 
 type Route struct {
-	// Routing Core
 	Path string `hcl:"path,label" json:"path"`
 
 	StripPrefixes []string `hcl:"strip_prefixes,optional" json:"strip_prefixes"`
 	AllowedIPs    []string `hcl:"allowed_ips,optional" json:"allowed_ips"`
 
-	// web hosting (Value type)
 	Web Web `hcl:"web,block" json:"web"`
 
-	// Backends defines the backend configuration for routing, including load balancing strategy and server definitions.
 	Backends Backend `hcl:"backend,block" json:"backends"`
 
-	// High-Availability Configs
 	HealthCheck    *HealthCheck    `hcl:"health_check,block" json:"health_check"`
 	CircuitBreaker *CircuitBreaker `hcl:"circuit_breaker,block" json:"circuit_breaker"`
 	Timeouts       *TimeoutRoute   `hcl:"timeouts,block" json:"timeouts"`
 
-	// Middleware Configs
 	BasicAuth   *BasicAuth   `hcl:"basic_auth,block" json:"basic_auth"`
 	ForwardAuth *ForwardAuth `hcl:"forward_auth,block" json:"forward_auth"`
 	JWTAuth     *JWTAuth     `hcl:"jwt_auth,block" json:"jwt_auth"`
 	OAuth       *OAuth       `hcl:"o_auth,block" json:"oauth"`
 
-	Headers   *Headers `hcl:"headers,block" json:"headers"`
-	Wasm      *Wasm    `hcl:"wasm,block" json:"wasm"`
-	RateLimit *Rate    `hcl:"rate_limit,block" json:"rate_limit"`
+	Headers   *Headers   `hcl:"headers,block" json:"headers"`
+	Wasm      *Wasm      `hcl:"wasm,block" json:"wasm"`
+	RateLimit *RouteRate `hcl:"rate_limit,block" json:"rate_limit"`
 
 	CompressionConfig Compression `hcl:"compression,block" json:"compression_config"`
 }
@@ -42,27 +37,22 @@ type Route struct {
 func (r *Route) Key() string {
 	w := xxhash.New()
 
-	// Path & Strategy
 	w.WriteString(r.Path)
 	w.WriteString(strings.ToLower(strings.TrimSpace(r.Backends.LBStrategy)))
 
-	// Backends
 	for _, b := range r.Backends.Servers {
 		w.WriteString(b.Address)
 		w.WriteString(fmt.Sprint(b.Weight))
 	}
 
-	// Strip Prefixes
 	for _, p := range r.StripPrefixes {
 		w.WriteString(p)
 	}
 
-	// Allowed IPs
 	for _, ip := range r.AllowedIPs {
 		w.WriteString(ip)
 	}
 
-	// HealthCheck
 	if r.HealthCheck != nil {
 		w.WriteString(r.HealthCheck.Path)
 		w.WriteString(fmt.Sprint(r.HealthCheck.Interval))
@@ -70,53 +60,43 @@ func (r *Route) Key() string {
 		w.WriteString(fmt.Sprint(r.HealthCheck.Threshold))
 	}
 
-	// CircuitBreaker
 	if r.CircuitBreaker != nil {
 		w.WriteString(fmt.Sprint(r.CircuitBreaker.Threshold))
 		w.WriteString(fmt.Sprint(r.CircuitBreaker.Duration))
 	}
 
-	// Timeouts
 	if r.Timeouts != nil {
 		w.WriteString(fmt.Sprint(r.Timeouts.Request))
 	}
 
-	// Compression
 	if r.CompressionConfig.Enabled {
 		w.WriteString(r.CompressionConfig.Type)
 		w.WriteString(fmt.Sprint(r.CompressionConfig.Level))
 	}
 
-	// Headers
 	if r.Headers != nil {
-		// Just presence flag is enough if we assume immutable config objects per reload
 		w.WriteString("hd")
 	}
 
-	// BasicAuth
 	if r.BasicAuth != nil {
 		for _, u := range r.BasicAuth.Users {
 			w.WriteString(u)
 		}
 	}
 
-	// ForwardAuth
 	if r.ForwardAuth != nil {
 		w.WriteString(r.ForwardAuth.URL)
 	}
 
-	// JWT Auth
 	if r.JWTAuth != nil {
 		w.WriteString(r.JWTAuth.Secret.String())
 	}
 
-	// OAuth
 	if r.OAuth != nil {
 		w.WriteString(r.OAuth.Provider)
 		w.WriteString(r.OAuth.ClientID)
 	}
 
-	// Web
 	if r.Web.Root.IsSet() {
 		w.WriteString(r.Web.Root.String())
 		w.WriteString(r.Web.Index)
@@ -129,22 +109,21 @@ func (r *Route) Key() string {
 		}
 	}
 
-	// Wasm
 	if r.Wasm != nil {
 		w.WriteString(r.Wasm.Module)
-		// Config map is crucial
 		for k, v := range r.Wasm.Config {
 			w.WriteString(k)
 			w.WriteString(v)
 		}
 	}
 
-	// RateLimit
 	if r.RateLimit != nil && r.RateLimit.Enabled {
 		w.WriteString("rl_on")
-		w.WriteString(fmt.Sprint(r.RateLimit.TTL))
-		w.WriteString(fmt.Sprint(r.RateLimit.MaxEntries))
-		for _, rule := range r.RateLimit.Rules {
+		if r.RateLimit.IgnoreGlobal {
+			w.WriteString("ig")
+		}
+		w.WriteString(r.RateLimit.UsePolicy)
+		if rule := r.RateLimit.Rule; rule != nil {
 			w.WriteString(rule.Name)
 			w.WriteString(fmt.Sprint(rule.Requests))
 			w.WriteString(fmt.Sprint(rule.Window))
@@ -178,6 +157,12 @@ func (r *Route) Validate() error {
 	}
 	if hasBackends && hasWeb {
 		return ErrRouteBothBackendAndWeb
+	}
+
+	if r.RateLimit != nil {
+		if err := r.RateLimit.Validate(); err != nil {
+			return errors.Newf("rate_limit: %w", err)
+		}
 	}
 
 	if hasBackends {

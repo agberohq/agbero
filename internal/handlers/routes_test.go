@@ -38,7 +38,7 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 	}
 
 	// 3. Init Handler
-	h := NewRoute(route, testLogger)
+	h := NewRoute(route, nil, testLogger)
 	defer h.Close()
 
 	// 4. Test Round Robin (Should oscillate)
@@ -60,6 +60,46 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 	}
 }
 
+func TestRouteHandler_Proxy_RateLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	route := &alaye.Route{
+		Path: "/",
+		Backends: alaye.Backend{
+			Servers: alaye.NewServers(srv.URL),
+		},
+		RateLimit: &alaye.RouteRate{
+			Enabled: true,
+			Rule: &alaye.RateRule{
+				Requests: 1,
+				Window:   time.Minute,
+				Key:      "ip",
+			},
+		},
+	}
+
+	h := NewRoute(route, nil, testLogger)
+	defer h.Close()
+
+	// First request (allowed)
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200 OK, got %d", w.Code)
+	}
+
+	// Second request (rate limited)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("Expected 429 Too Many Requests, got %d", w.Code)
+	}
+}
+
 func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
 	// Server checks for header
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -72,8 +112,10 @@ func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
 	defer srv.Close()
 
 	route := &alaye.Route{
-		Path:     "/",
-		Backends: alaye.MakeBackend(srv.URL),
+		Path: "/",
+		Backends: alaye.Backend{
+			Servers: alaye.NewServers(srv.URL),
+		},
 		Headers: &alaye.Headers{
 			Request: &alaye.Header{
 				Set: map[string]string{"X-Test": "Added"},
@@ -81,7 +123,7 @@ func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, testLogger)
+	h := NewRoute(route, nil, testLogger)
 	defer h.Close()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -96,11 +138,13 @@ func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
 func TestRouteHandler_Proxy_NoHealthyBackends(t *testing.T) {
 	// Point to closed port
 	route := &alaye.Route{
-		Path:     "/",
-		Backends: alaye.MakeBackend("http://127.0.0.1:54321"),
+		Path: "/",
+		Backends: alaye.Backend{
+			Servers: alaye.NewServers("http://127.0.0.1:54321"),
+		},
 	}
 
-	h := NewRoute(route, testLogger)
+	h := NewRoute(route, nil, testLogger)
 	defer h.Close()
 
 	// Manually mark dead for test immediate response
@@ -126,14 +170,16 @@ func TestRouteHandler_Proxy_Timeout(t *testing.T) {
 	defer srv.Close()
 
 	route := &alaye.Route{
-		Path:     "/",
-		Backends: alaye.MakeBackend(srv.URL),
+		Path: "/",
+		Backends: alaye.Backend{
+			Servers: alaye.NewServers(srv.URL),
+		},
 		Timeouts: &alaye.TimeoutRoute{
 			Request: 10 * time.Millisecond, // Very short
 		},
 	}
 
-	h := NewRoute(route, testLogger)
+	h := NewRoute(route, nil, testLogger)
 	defer h.Close()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -156,12 +202,14 @@ func TestRouteHandler_Proxy_StripPrefix(t *testing.T) {
 	defer srv.Close()
 
 	route := &alaye.Route{
-		Path:          "/api",
-		Backends:      alaye.MakeBackend(srv.URL),
+		Path: "/api",
+		Backends: alaye.Backend{
+			Servers: alaye.NewServers(srv.URL),
+		},
 		StripPrefixes: []string{"/api"},
 	}
 
-	h := NewRoute(route, testLogger)
+	h := NewRoute(route, nil, testLogger)
 	defer h.Close()
 
 	// Simulate what handleRoute does: strip prefix before calling handler
@@ -193,7 +241,7 @@ func TestRouteHandler_Web_BasicFileServing(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, testLogger)
+	h := NewRoute(route, nil, testLogger)
 
 	// Test index file
 	req := httptest.NewRequest("GET", "/", nil)
@@ -241,7 +289,7 @@ func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, testLogger)
+	h := NewRoute(route, nil, testLogger)
 
 	// Request with gzip support
 	req := httptest.NewRequest("GET", "/style.css", nil)
@@ -279,7 +327,7 @@ func TestRouteHandler_Web_CustomIndex(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, testLogger)
+	h := NewRoute(route, nil, testLogger)
 
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
@@ -305,7 +353,7 @@ func TestRouteHandler_Web_MethodNotAllowed(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, testLogger)
+	h := NewRoute(route, nil, testLogger)
 
 	req := httptest.NewRequest("POST", "/", nil)
 	w := httptest.NewRecorder()
@@ -329,7 +377,7 @@ func TestRouteHandler_Web_DirectoryWithoutIndex(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, testLogger)
+	h := NewRoute(route, nil, testLogger)
 
 	req := httptest.NewRequest(http.MethodGet, "/subdir/", nil)
 	w := httptest.NewRecorder()
@@ -356,7 +404,7 @@ func TestRouteHandler_Web_PathTraversalPrevented(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, testLogger)
+	h := NewRoute(route, nil, testLogger)
 
 	// Try to traverse outside the root
 	req := httptest.NewRequest("GET", "/files/../../../"+filepath.Base(outsideFile), nil)
@@ -395,7 +443,7 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, testLogger)
+	h := NewRoute(route, nil, testLogger)
 
 	req := httptest.NewRequest("GET", "/test.txt", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -431,7 +479,9 @@ func TestRouteHandler_Validation(t *testing.T) {
 				Path: "/api",
 				// Changed from localhost:3000 to avoid port conflicts in CI/dev environments.
 				// Using a high, presumably unused port ensures a connection error (502).
-				Backends: alaye.MakeBackend("http://127.0.0.1:59999"),
+				Backends: alaye.Backend{
+					Servers: alaye.NewServers("http://127.0.0.1:59999"),
+				},
 			},
 			wantStatus: http.StatusBadGateway, // backend not running
 		},
@@ -458,9 +508,11 @@ func TestRouteHandler_Validation(t *testing.T) {
 		{
 			name: "invalid: both web and backends",
 			route: &alaye.Route{
-				Path:     "/",
-				Backends: alaye.MakeBackend("http://localhost:3000"),
-				Web:      alaye.Web{Root: alaye.WebRoot("/tmp")},
+				Path: "/",
+				Backends: alaye.Backend{
+					Servers: alaye.NewServers("http://localhost:3000"),
+				},
+				Web: alaye.Web{Root: alaye.WebRoot("/tmp")},
 			},
 			wantStatus: http.StatusBadGateway,
 		},
@@ -477,7 +529,7 @@ func TestRouteHandler_Validation(t *testing.T) {
 				tt.prepare(t, tt.route)
 			}
 
-			h := NewRoute(tt.route, testLogger)
+			h := NewRoute(tt.route, nil, testLogger)
 			if h == nil {
 				t.Fatal("handler must never be nil")
 			}
