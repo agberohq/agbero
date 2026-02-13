@@ -106,23 +106,41 @@
     </div>
 </div>
 
-<!-- SYSTEM STATS BAR - WITH VERSION + CERTS -->
+<!-- SYSTEM STATS BAR - ENHANCED WITH FULL SYSTEM METRICS -->
 <div class="sys-bar">
     <div class="sys-bar-left">
-        <span class="sys-item" title="Goroutines">📦 <span id="sysCpu">—</span></span>
-        <span class="sys-divider">·</span>
+
+
+        <!-- Memory Section -->
         <span class="sys-item" title="Memory RSS">💾 <span id="sysMem">—</span></span>
+        <span class="sys-item hide-mobile" title="Memory Allocated">📊 <span id="sysMemAlloc">—</span></span>
+        <span class="sys-divider hide-mobile">·</span>
+
+        <!-- Goroutines -->
+        <span class="sys-item hide-mobile" title="Goroutines">🧵 <span id="sysGoroutines">—</span></span>
         <span class="sys-divider">·</span>
+
+        <!-- Certificates -->
         <span class="sys-item" title="Active Certificates">🔐 <span id="activeCertsCount">0</span></span>
         <span class="sys-divider">·</span>
         <span class="sys-item" title="Expiring soon (<7d)">⚠️ <span id="expiringCertsCount">0</span></span>
     </div>
     <div class="sys-bar-right">
+        <!-- CPU Section -->
+        <span class="sys-item" title="CPU Usage">⚡ <span id="sysCpu">—</span></span>
+        <span class="sys-item hide-mobile" title="CPU Cores">🎛️ <span id="sysCpuCores">—</span></span>
+        <span class="sys-divider">·</span>
+        
+        <!-- OS Memory -->
+        <span class="sys-item hide-mobile" title="OS Memory Used">🖥️ <span id="sysMemUsed">—</span></span>
+        <span class="sys-divider hide-mobile">·</span>
+        <span class="sys-item hide-mobile" title="Total OS Memory">💿 <span id="sysMemTotalOs">—</span></span>
+        <span class="sys-divider hide-mobile">·</span>
         <span class="sys-item" id="versionDisplay" title="Agbero Version">v—</span>
     </div>
 </div>
 
-<!-- BOTTOM STATS PANEL - EXACT ORIGINAL HEIGHT -->
+<!-- BOTTOM STATS PANEL - POSITIONING -->
 <div class="stats-footer">
     <div class="stat-item">
         <label>Uptime</label>

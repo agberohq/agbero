@@ -1,4 +1,3 @@
-// app.js - COMPLETE WITH VERSION, CERTS, SESSION, EMPTY STATES
 class AgberoApp {
     constructor() {
         this.apiBase = window.location.origin;
@@ -20,7 +19,7 @@ class AgberoApp {
         // Data Caches
         this.hostsData = { config: {}, stats: {} };
         this.logs = [];
-        this.certificates = []; // New: certificate store
+        this.certificates = [];
 
         // Settings
         this.logsPaused = false;
@@ -36,17 +35,16 @@ class AgberoApp {
         this.loadTheme();
         this.bindEvents();
         this.updateAuthButton();
-        this.fetchVersion(); // New: get version on load
+        this.fetchVersion();
 
         if (this.token || this.basic) {
             this.startLoop();
             this.fetchHostsData();
-            this.parseJWTExpiry(); // New: decode token for expiry
+            this.parseJWTExpiry();
         } else {
             this.openModal("loginModal");
         }
 
-        // Set saved search term
         if (this.searchTerm) {
             const searchInput = document.getElementById("hostSearch");
             if (searchInput) {
@@ -54,20 +52,17 @@ class AgberoApp {
             }
         }
 
-        // Stale detection
         this.startStaleDetection();
     }
 
     // ================== VERSION DISCOVERY ==================
     async fetchVersion() {
         try {
-            // Try to get version from /health headers first
             const res = await fetch(this.apiBase + "/health", { method: "HEAD" });
             const serverHeader = res.headers.get("Server");
             if (serverHeader && serverHeader.includes("agbero/")) {
                 this.version = serverHeader.split("agbero/")[1].split(" ")[0];
             } else {
-                // Fallback: try /config and extract
                 const config = await this.api("/config");
                 if (config && config.global && config.global.version) {
                     this.version = "v" + config.global.version;
@@ -89,33 +84,27 @@ class AgberoApp {
             if (parts.length === 3) {
                 const payload = JSON.parse(atob(parts[1]));
                 if (payload.exp) {
-                    this.sessionExpiry = payload.exp * 1000; // ms
+                    this.sessionExpiry = payload.exp * 1000;
                     this.startSessionWarning();
                 }
             }
-        } catch (e) {
-            // Not a JWT or can't parse
-        }
+        } catch (e) {}
     }
 
     startSessionWarning() {
         if (!this.sessionExpiry) return;
-
         const checkExpiry = () => {
             const now = Date.now();
             const timeLeft = this.sessionExpiry - now;
-
             if (timeLeft <= 0) {
                 this.handleSessionExpired();
                 return;
             }
-
-            if (timeLeft < 300000 && !this.sessionWarningShown) { // 5 minutes
+            if (timeLeft < 300000 && !this.sessionWarningShown) {
                 this.sessionWarningShown = true;
                 this.showSessionWarning(timeLeft);
             }
         };
-
         setInterval(checkExpiry, 10000);
         checkExpiry();
     }
@@ -125,7 +114,6 @@ class AgberoApp {
         const seconds = Math.floor((timeLeft % 60000) / 1000);
         const banner = document.getElementById("sessionWarning");
         const timeSpan = document.getElementById("sessionExpiryTime");
-
         if (banner && timeSpan) {
             timeSpan.innerText = `${minutes}m ${seconds}s`;
             banner.classList.add("active");
@@ -153,7 +141,6 @@ class AgberoApp {
 
         this.certificates = certs;
 
-        // Update sys-bar counters
         const activeCerts = certs.filter(c => c.daysLeft > 0).length;
         const expiringCerts = certs.filter(c => c.daysLeft > 0 && c.daysLeft < 7).length;
 
@@ -166,8 +153,7 @@ class AgberoApp {
         this.staleTimer = setInterval(() => {
             const staleTime = Date.now() - this.lastUpdateTime;
             const footer = document.querySelector(".stats-footer");
-
-            if (staleTime > 10000) { // 10 seconds
+            if (staleTime > 10000) {
                 footer?.classList.add("stale");
             } else {
                 footer?.classList.remove("stale");
@@ -190,7 +176,6 @@ class AgberoApp {
 
     // ================== EVENTS ==================
     bindEvents() {
-        // Navigation
         document.querySelectorAll(".nav-link").forEach(l => {
             l.addEventListener("click", e => {
                 if (e.target.id === 'loginBtn') return;
@@ -203,7 +188,6 @@ class AgberoApp {
         document.getElementById("loginBtn").addEventListener("click", () => this.handleAuthClick());
         document.getElementById("refreshHostsBtn").addEventListener("click", () => this.fetchHostsData());
 
-        // Search with persistence
         const searchInput = document.getElementById("hostSearch");
         searchInput.addEventListener("input", (e) => {
             const term = e.target.value;
@@ -212,12 +196,10 @@ class AgberoApp {
             this.renderHosts(term);
         });
 
-        // Login form
         document.getElementById("loginForm").addEventListener("submit", e => this.doLogin(e));
         document.getElementById("addRuleBtn").addEventListener("click", () => this.openModal("ruleModal"));
         document.getElementById("ruleForm").addEventListener("submit", e => this.addFirewallRule(e));
 
-        // Logs
         document.getElementById("logsPauseBtn").addEventListener("click", () => {
             this.logsPaused = !this.logsPaused;
             document.getElementById("logsPauseBtn").innerText = this.logsPaused ? "Resume" : "Pause";
@@ -227,7 +209,6 @@ class AgberoApp {
             this.renderLogs();
         });
 
-        // Log filters
         document.querySelectorAll(".chip").forEach(chip => {
             chip.addEventListener("click", (e) => {
                 document.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
@@ -237,7 +218,6 @@ class AgberoApp {
             });
         });
 
-        // Modals
         document.querySelectorAll(".close-modal").forEach(b => {
             b.addEventListener("click", () => this.closeModals());
         });
@@ -248,7 +228,6 @@ class AgberoApp {
             this.closeModals();
         });
 
-        // Drawer
         document.getElementById("drawerCloseBtn").addEventListener("click", () => this.closeDrawer());
         document.getElementById("drawerBackdrop").addEventListener("click", () => this.closeDrawer());
         document.getElementById("drawerBackToHosts").addEventListener("click", () => {
@@ -262,8 +241,6 @@ class AgberoApp {
                 const hostname = hostNameEl.innerText;
                 this.closeDrawer();
                 this.setPage("hosts");
-
-                // Set search term to this host
                 const searchInput = document.getElementById("hostSearch");
                 searchInput.value = hostname;
                 sessionStorage.setItem("ag_search", hostname);
@@ -272,43 +249,34 @@ class AgberoApp {
             });
         }
 
-        // Escape key
         document.addEventListener("keydown", (e) => {
             if (e.key === "Escape") this.closeDrawer();
         });
 
-        // Session renew
         document.getElementById("refreshSessionBtn").addEventListener("click", () => {
             this.renewSession();
         });
 
-        // Mobile swipe for drawer
         this.initTouchEvents();
     }
 
     initTouchEvents() {
         const drawer = document.getElementById("routeDrawer");
         let touchStartX = 0;
-
         drawer.addEventListener("touchstart", (e) => {
             touchStartX = e.touches[0].clientX;
         }, false);
-
         drawer.addEventListener("touchmove", (e) => {
             if (!drawer.classList.contains("active")) return;
-
             const touchX = e.touches[0].clientX;
             const diff = touchX - touchStartX;
-
-            if (diff > 50) { // Swipe right
+            if (diff > 50) {
                 this.closeDrawer();
             }
         }, false);
     }
 
     async renewSession() {
-        // Re-login with stored credentials? Not possible with JWT.
-        // Instead, close banner and let user relogin when needed
         document.getElementById("sessionWarning").classList.remove("active");
         this.sessionWarningShown = false;
     }
@@ -317,10 +285,8 @@ class AgberoApp {
         this.page = p;
         document.querySelectorAll(".nav-link").forEach(n => n.classList.remove("active"));
         document.querySelector(`.nav-link[data-page="${p}"]`)?.classList.add("active");
-
         document.querySelectorAll(".page").forEach(div => div.classList.remove("active"));
         document.getElementById(p + "Page").classList.add("active");
-
         if (this.token || this.basic) {
             this.refreshCurrentPage();
         }
@@ -447,9 +413,55 @@ class AgberoApp {
         // Update last updated text
         document.getElementById("lastUpdatedText").innerText = `Updated ${this.timeAgo(this.lastUpdateTime)}`;
 
-        // System stats bar
-        document.getElementById("sysCpu").innerText = stats.sys_cpu;
-        document.getElementById("sysMem").innerText = stats.sys_mem;
+        // ===== SYSTEM STATS BAR - COMPLETE SYSTEM METRICS =====
+        if (data.system) {
+            // CPU Usage
+            const cpuEl = document.getElementById("sysCpu");
+            if (data.system.cpu_percent !== undefined) {
+                cpuEl.innerText = `${data.system.cpu_percent.toFixed(1)}%`;
+            } else {
+                cpuEl.innerText = `${data.system.num_goroutine || 0} GRs`;
+            }
+
+            // Memory RSS
+            const memEl = document.getElementById("sysMem");
+            memEl.innerText = this.formatBytes(data.system.mem_rss || 0);
+
+            // ADDITIONAL SYSTEM METRICS
+            // CPU Cores
+            const cpuCoresEl = document.getElementById("sysCpuCores");
+            if (cpuCoresEl) cpuCoresEl.innerText = data.system.num_cpu || '—';
+
+            // Goroutines
+            const goroutinesEl = document.getElementById("sysGoroutines");
+            if (goroutinesEl) goroutinesEl.innerText = data.system.num_goroutine || '—';
+
+            // Memory Allocated
+            const memAllocEl = document.getElementById("sysMemAlloc");
+            if (memAllocEl) memAllocEl.innerText = this.formatBytes(data.system.mem_alloc || 0);
+
+            // Total Allocated
+            const memTotalEl = document.getElementById("sysMemTotal");
+            if (memTotalEl) memTotalEl.innerText = this.formatBytes(data.system.mem_total || 0);
+
+            // System Memory
+            const memSysEl = document.getElementById("sysMemSys");
+            if (memSysEl) memSysEl.innerText = this.formatBytes(data.system.mem_sys || 0);
+
+            // OS Memory Used
+            const memUsedEl = document.getElementById("sysMemUsed");
+            if (memUsedEl) memUsedEl.innerText = this.formatBytes(data.system.mem_used || 0);
+
+            // OS Total Memory
+            const memTotalOsEl = document.getElementById("sysMemTotalOs");
+            if (memTotalOsEl) memTotalOsEl.innerText = this.formatBytes(data.system.mem_total_os || 0);
+        }
+
+        // Certificate counts - refresh from parsed certificates
+        const activeCerts = this.certificates.filter(c => c.daysLeft > 0).length;
+        const expiringCerts = this.certificates.filter(c => c.daysLeft > 0 && c.daysLeft < 7).length;
+        document.getElementById("activeCertsCount").innerText = activeCerts;
+        document.getElementById("expiringCertsCount").innerText = expiringCerts;
 
         // Footer stats
         document.getElementById("totalReqsStat").innerText = this.fmtNum(stats.total_reqs);
@@ -457,11 +469,13 @@ class AgberoApp {
         document.getElementById("meanResponseStat").innerText = stats.avg_ms.toFixed(0) + "ms";
         document.getElementById("activeBackendsStat").innerText = stats.active_backends;
         document.getElementById("apdexStat").innerText = stats.apdex;
+        document.getElementById("uptimeStat").innerText = stats.uptime || "100%";
 
         // Error rate
         const errorRate = stats.total_reqs > 0 ? ((stats.total_errors / stats.total_reqs) * 100).toFixed(1) : 0;
         document.getElementById("errorRateText").innerText = `${errorRate}% errors`;
 
+        // RPS calculation
         const now = Date.now();
         const timeDiff = (now - this.lastReqTime) / 1000;
         let rps = 0;
@@ -472,10 +486,68 @@ class AgberoApp {
         this.lastReqTime = now;
         document.getElementById("rpsStat").innerText = rps.toFixed(1);
 
-        this.metricsSeries.push(stats.avg_ms);
+        // Update metrics series for graph (using p99 latency)
+        this.metricsSeries.push(stats.p99_ms || 0);
         if (this.metricsSeries.length > 60) this.metricsSeries.shift();
         this.renderGraph();
         this.renderHealthBar(stats.total_reqs, stats.total_errors);
+    }
+
+    parseMetricsJSON(obj) {
+        let total_reqs = 0, total_errors = 0, active_backends = 0;
+        let sumLat = 0, countLat = 0;
+        let total_p99 = 0, hosts_with_p99 = 0;
+        let uptime = "100%";
+
+        if (obj.hosts) {
+            Object.values(obj.hosts).forEach(h => {
+                if (h.routes) h.routes.forEach(r => {
+                    if (r.backends) r.backends.forEach(b => {
+                        total_reqs += (b.total_reqs || 0);
+                        total_errors += (b.failures || 0);
+
+                        // Proper health detection - EACH BACKEND HAS ITS OWN INDICATOR
+                        const hasStats = b !== undefined;
+                        const healthy = hasStats ? (b.healthy !== undefined ? b.healthy : (b.alive === true)) : false;
+                        if (healthy) {
+                            active_backends++;
+                        }
+
+                        // Latency metrics
+                        if (b.latency_us && b.latency_us.count > 0) {
+                            sumLat += b.latency_us.sum_us;
+                            countLat += b.latency_us.count;
+
+                            if (b.latency_us.p99 > 0) {
+                                total_p99 += b.latency_us.p99;
+                                hosts_with_p99++;
+                            }
+                        }
+                    });
+                });
+
+                if (h.avg_p99_us > 0) {
+                    total_p99 += h.avg_p99_us;
+                    hosts_with_p99++;
+                }
+            });
+        }
+
+        const avg_ms = countLat > 0 ? (sumLat / countLat / 1000) : 0;
+        const p99_ms = hosts_with_p99 > 0 ? (total_p99 / hosts_with_p99 / 1000) : 0;
+
+        // Apdex based on average latency
+        const apdex = avg_ms < 200 ? 1.0 : (avg_ms < 1000 ? 0.8 : 0.5);
+
+        return {
+            total_reqs,
+            total_errors,
+            active_backends,
+            avg_ms,
+            p99_ms,
+            apdex: apdex.toFixed(2),
+            uptime
+        };
     }
 
     timeAgo(timestamp) {
@@ -488,54 +560,18 @@ class AgberoApp {
     renderHealthBar(total, errors) {
         const bar = document.getElementById("globalHealthBar");
         if (total === 0) return;
-
         const errPct = (errors / total) * 100;
         const okPct = 100 - errPct;
-
         bar.innerHTML = `
             <div class="hb-seg hb-ok" style="width: ${okPct}%"></div>
             <div class="hb-seg hb-err" style="width: ${errPct}%"></div>
         `;
     }
 
-    parseMetricsJSON(obj) {
-        let total_reqs = 0, total_errors = 0, active_backends = 0;
-        let sumLat = 0, countLat = 0;
-
-        if (obj.hosts) {
-            Object.values(obj.hosts).forEach(h => {
-                if (h.routes) h.routes.forEach(r => {
-                    if (r.backends) r.backends.forEach(b => {
-                        total_reqs += (b.total_reqs || 0);
-                        total_errors += (b.failures || 0);
-                        if (b.alive) active_backends++;
-                        if (b.latency_us && b.latency_us.count > 0) {
-                            sumLat += b.latency_us.sum_us;
-                            countLat += b.latency_us.count;
-                        }
-                    });
-                });
-            });
-        }
-
-        const avg_ms = countLat > 0 ? (sumLat / countLat / 1000) : 0;
-        const apdex = avg_ms < 200 ? 1.0 : (avg_ms < 1000 ? 0.8 : 0.5);
-
-        let sys_cpu = "—", sys_mem = "—";
-        if (obj.system) {
-            sys_cpu = (obj.system.num_goroutine || 0) + " GRs";
-            sys_mem = this.formatBytes(obj.system.mem_rss || 0);
-        }
-
-        return {
-            total_reqs, total_errors, active_backends, avg_ms,
-            apdex: apdex.toFixed(2), sys_cpu, sys_mem
-        };
-    }
-
     renderGraph() {
         const el = document.getElementById("responseGraph");
-        if (this.page !== "dashboard") return;
+        if (this.page !== "dashboard" || !el) return;
+
         const h = el.clientHeight || 200;
         const pTop = 15;
         const drawH = h - 30;
@@ -572,7 +608,6 @@ class AgberoApp {
         this.hostsData.config = config.hosts;
         this.hostsData.stats = stats?.hosts || {};
 
-        // Parse certificates from config
         this.parseCertificates();
 
         const searchTerm = this.searchTerm;
@@ -608,7 +643,7 @@ class AgberoApp {
             hostCount++;
             const rtStats = stats[hostname] || {};
 
-            // TLS Badge - using unified colors
+            // TLS Badge
             let tlsMode = cfg.tls?.mode || "";
             let tlsText = "Auto (Secure)";
             let tlsClass = "success";
@@ -662,18 +697,25 @@ class AgberoApp {
                                 hostHasMatch = true;
                             }
 
-                            const alive = bStats.alive !== false;
+                            // Proper health detection with per-backend indicators
+                            const hasStats = statBackends[bIdx] !== undefined;
+                            const healthy = hasStats ? (bStats.healthy !== undefined ? bStats.healthy : (bStats.alive === true)) : false;
+                            const healthStatus = hasStats ? (healthy ? 'ok' : 'down') : 'unknown';
+                            const dotColor = healthStatus === 'ok' ? 'ok' : (healthStatus === 'unknown' ? 'warn' : 'down');
+
                             const p99 = bStats.latency_us?.p99 ? (bStats.latency_us.p99 / 1000).toFixed(0) + "ms" : "-";
                             const reqs = bStats.total_reqs || 0;
+                            const in_flight = bStats.in_flight || 0;
 
                             backendHtml += `
-                                        <div class="backend-row ${alive ? '' : 'down'}">
-                                            <span class="dot ${alive ? 'ok' : 'down'}" title="${alive ? 'Healthy' : 'Unhealthy'}"></span>
-                                            <span class="be-url" onclick="event.stopPropagation(); app.copyToClipboard('${url}')" title="Click to copy URL">${url}</span>
-                                            <span class="be-stat">W: ${weight}</span>
-                                            <span class="be-stat">${p99}</span>
-                                            <span class="be-stat">${this.fmtNum(reqs)}</span>
-                                        </div>`;
+                                <div class="backend-row ${hasStats && !healthy ? 'down' : ''}">
+                                    <span class="dot ${dotColor}" title="${hasStats ? (healthy ? 'Healthy' : 'Unhealthy') : 'No health data yet'}"></span>
+                                    <span class="be-url" onclick="event.stopPropagation(); app.copyToClipboard('${url}')" title="Click to copy URL">${url}</span>
+                                    <span class="be-stat">W: ${weight}</span>
+                                    <span class="be-stat">${p99}</span>
+                                    <span class="be-stat">${this.fmtNum(reqs)}</span>
+                                    <span class="be-badge">${in_flight > 0 ? `<span class="badge info" style="font-size:8px;">⚡${in_flight}</span>` : ''}</span>
+                                </div>`;
                         });
                         backendHtml += `</div>`;
                     }
@@ -710,17 +752,8 @@ class AgberoApp {
         document.getElementById("heroRouteCount").innerText = routeCount;
     }
 
-    // async toggleBackend(host, routeIdx, backendUrl, currentStatus) {
-    //     const action = currentStatus ? "disable" : "enable";
-    //     this.confirm("Confirm Action", `Are you sure you want to ${action} ${backendUrl}?`, async () => {
-    //         this.fetchHostsData();
-    //     });
-    // }
-
     copyToClipboard(text) {
-        navigator.clipboard?.writeText(text).then(() => {
-            // Flash feedback - could add toast, but minimalism wins
-        }).catch(() => {});
+        navigator.clipboard?.writeText(text).then(() => {}).catch(() => {});
     }
 
     // ================== DRAWER ==================
@@ -776,18 +809,30 @@ class AgberoApp {
                 const s = statBackends[i] || {};
                 const url = b.address || b.url || s.url || s.address;
                 const weight = (b.weight !== undefined) ? b.weight : (s.weight || '-');
-                const alive = s.alive !== false;
+
+                // Proper health detection for drawer
+                const hasStats = statBackends[i] !== undefined;
+                const healthy = hasStats ? (s.healthy !== undefined ? s.healthy : (s.alive === true)) : false;
+                const healthStatus = hasStats ? (healthy ? 'ok' : 'down') : 'unknown';
+                const dotColor = healthStatus === 'ok' ? 'ok' : (healthStatus === 'unknown' ? 'warn' : 'down');
+
                 const p99 = s.latency_us?.p99 ? (s.latency_us.p99 / 1000).toFixed(0) + "ms" : "";
+                const in_flight = s.in_flight || 0;
+                const failures = s.failures || 0;
+                const total_reqs = s.total_reqs || 0;
 
                 backendsHtml += `
-                    <div class="drawer-row ${alive ? '' : 'down'}">
+                    <div class="drawer-row ${hasStats && !healthy ? 'down' : ''}">
                         <div class="row-left">
-                            <span class="dot ${alive ? 'ok' : 'down'}" title="${alive ? 'Healthy' : 'Unhealthy'}"></span>
+                            <span class="dot ${dotColor}" title="${hasStats ? (healthy ? 'Healthy' : 'Unhealthy') : 'No health data yet'}"></span>
                             <span class="mono">${url}</span>
+                            ${in_flight > 0 ? `<span class="badge info" style="background: var(--accent);">⚡ ${in_flight} in flight</span>` : ''}
+                            ${failures > 0 ? `<span class="badge error">⚠️ ${failures} failures</span>` : ''}
                         </div>
                         <div class="row-right">
-                            ${p99 ? `<span class="badge info" style="border:none;">${p99}</span>` : ''}
-                            <span class="badge ${alive ? 'success' : 'error'}">W: ${weight}</span>
+                            ${p99 ? `<span class="badge info" style="border:none;">p99: ${p99}</span>` : ''}
+                            <span class="badge ${healthy ? 'success' : 'error'}">W: ${weight}</span>
+                            <span class="badge" style="background: var(--text-mute);">${this.fmtNum(total_reqs)} reqs</span>
                         </div>
                     </div>`;
             });
@@ -872,18 +917,18 @@ class AgberoApp {
                 </div>`;
         }
 
-        // Certificate section for this host
+        // Certificate section
         const hostCerts = this.certificates.filter(c => c.host === hostname);
         if (hostCerts.length > 0) {
             let certHtml = '<div class="cert-grid">';
             hostCerts.forEach(cert => {
-                let certClass = 'cert-valid';
+                let certClass = 'success';
                 let certText = `${cert.daysLeft}d`;
                 if (cert.daysLeft < 0) {
-                    certClass = 'cert-expired';
+                    certClass = 'error';
                     certText = 'Expired';
                 } else if (cert.daysLeft < 7) {
-                    certClass = 'cert-expiring';
+                    certClass = 'warning';
                     certText = `${cert.daysLeft}d left`;
                 }
 

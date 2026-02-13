@@ -1139,6 +1139,20 @@ body {
     font-family: monospace;
 }
 
+
+
+.be-badge {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    min-width: 40px;
+}
+
+.be-badge .badge {
+    white-space: nowrap;
+    margin-left: auto;
+}
+
 /* ========== SVG CHART ========== */
 svg text {
     user-select: none;
