@@ -9,7 +9,7 @@ import (
 	"github.com/HdrHistogram/hdrhistogram-go"
 )
 
-type LatencyTracker struct {
+type Latency struct {
 	mu           sync.Mutex
 	histogram    *hdrhistogram.Histogram
 	lastRotation time.Time
@@ -23,8 +23,8 @@ type LatencyTracker struct {
 	wg   sync.WaitGroup
 }
 
-func NewLatencyTracker() *LatencyTracker {
-	lt := &LatencyTracker{
+func NewLatency() *Latency {
+	lt := &Latency{
 		histogram:    hdrhistogram.New(woos.MinUS, woos.MaxUS, 3),
 		lastRotation: time.Now(),
 		ch:           make(chan int64, 8192),
@@ -35,7 +35,7 @@ func NewLatencyTracker() *LatencyTracker {
 	return lt
 }
 
-func (lt *LatencyTracker) Close() {
+func (lt *Latency) Close() {
 	select {
 	case <-lt.stop:
 		return
@@ -45,7 +45,7 @@ func (lt *LatencyTracker) Close() {
 	lt.wg.Wait()
 }
 
-func (lt *LatencyTracker) Record(microseconds int64) {
+func (lt *Latency) Record(microseconds int64) {
 	now := time.Now()
 
 	lt.mu.Lock()
@@ -79,7 +79,7 @@ type LatencySnapshot struct {
 	Dropped uint64 `json:"dropped,omitempty"`
 }
 
-func (lt *LatencyTracker) Snapshot() LatencySnapshot {
+func (lt *Latency) Snapshot() LatencySnapshot {
 	now := time.Now()
 
 	lt.mu.Lock()
@@ -105,7 +105,7 @@ func (lt *LatencyTracker) Snapshot() LatencySnapshot {
 	return snap
 }
 
-func (lt *LatencyTracker) run() {
+func (lt *Latency) run() {
 	defer lt.wg.Done()
 
 	ticker := time.NewTicker(time.Second)
@@ -129,7 +129,7 @@ func (lt *LatencyTracker) run() {
 	}
 }
 
-func (lt *LatencyTracker) flushLocked() {
+func (lt *Latency) flushLocked() {
 	for {
 		select {
 		case us := <-lt.ch:
@@ -140,7 +140,7 @@ func (lt *LatencyTracker) flushLocked() {
 	}
 }
 
-func (lt *LatencyTracker) rotateLocked(now time.Time) {
+func (lt *Latency) rotateLocked(now time.Time) {
 	if now.Sub(lt.lastRotation) <= woos.HistogramWindow {
 		return
 	}

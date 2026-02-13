@@ -10,7 +10,7 @@ import (
 )
 
 // helper to get a consistent snapshot handling the background worker race
-func getSnapshotEventually(lt *LatencyTracker, condition func(s LatencySnapshot) bool) LatencySnapshot {
+func getSnapshotEventually(lt *Latency, condition func(s LatencySnapshot) bool) LatencySnapshot {
 	var snap LatencySnapshot
 	// Try for up to 100ms
 	for i := 0; i < 50; i++ {
@@ -24,10 +24,10 @@ func getSnapshotEventually(lt *LatencyTracker, condition func(s LatencySnapshot)
 }
 
 func TestNewLatencyTracker(t *testing.T) {
-	lt := NewLatencyTracker()
+	lt := NewLatency()
 	defer lt.Close()
 	if lt == nil {
-		t.Fatal("NewLatencyTracker returned nil")
+		t.Fatal("NewLatency returned nil")
 	}
 	if lt.histogram == nil {
 		t.Error("Histogram not initialized")
@@ -41,7 +41,7 @@ func TestNewLatencyTracker(t *testing.T) {
 }
 
 func TestRecord_Basic(t *testing.T) {
-	lt := NewLatencyTracker()
+	lt := NewLatency()
 	defer lt.Close()
 
 	lt.Record(100)
@@ -71,7 +71,7 @@ func TestRecord_Basic(t *testing.T) {
 }
 
 func TestRecord_OutOfBounds(t *testing.T) {
-	lt := NewLatencyTracker()
+	lt := NewLatency()
 	defer lt.Close()
 
 	// The HDR histogram with 3 significant figures creates buckets.
@@ -97,7 +97,7 @@ func TestRecord_OutOfBounds(t *testing.T) {
 }
 
 func TestRecord_ZeroCountAvg(t *testing.T) {
-	lt := NewLatencyTracker()
+	lt := NewLatency()
 	defer lt.Close()
 	snap := lt.Snapshot()
 	if snap.Avg != 0 {
@@ -106,7 +106,7 @@ func TestRecord_ZeroCountAvg(t *testing.T) {
 }
 
 func TestRotation(t *testing.T) {
-	lt := NewLatencyTracker()
+	lt := NewLatency()
 	defer lt.Close()
 
 	// Record first value
@@ -147,7 +147,7 @@ func TestRotation(t *testing.T) {
 }
 
 func TestConcurrentRecord(t *testing.T) {
-	lt := NewLatencyTracker()
+	lt := NewLatency()
 	defer lt.Close()
 
 	const goroutines = 10
@@ -177,7 +177,7 @@ func TestConcurrentRecord(t *testing.T) {
 }
 
 func TestSnapshot_Isolation(t *testing.T) {
-	lt := NewLatencyTracker()
+	lt := NewLatency()
 	defer lt.Close()
 
 	lt.Record(100)
@@ -205,7 +205,7 @@ func TestSnapshot_Isolation(t *testing.T) {
 }
 
 func TestHistogram_Accuracy(t *testing.T) {
-	lt := NewLatencyTracker()
+	lt := NewLatency()
 	defer lt.Close()
 
 	// Record values that should give precise percentiles
@@ -232,7 +232,7 @@ func TestHistogram_Accuracy(t *testing.T) {
 }
 
 func TestRecord_Negative(t *testing.T) {
-	lt := NewLatencyTracker()
+	lt := NewLatency()
 	defer lt.Close()
 
 	// Negative values get recorded in the highest bucket (60,030,975)
@@ -256,7 +256,7 @@ func TestRecord_Negative(t *testing.T) {
 }
 
 func TestRecord_AllZero(t *testing.T) {
-	lt := NewLatencyTracker()
+	lt := NewLatency()
 	defer lt.Close()
 
 	// Test with 0, 1, 2
@@ -279,7 +279,7 @@ func TestRecord_AllZero(t *testing.T) {
 }
 
 func TestRecord_SmallValues(t *testing.T) {
-	lt := NewLatencyTracker()
+	lt := NewLatency()
 	defer lt.Close()
 
 	// Test very small values
@@ -303,7 +303,7 @@ func TestRecord_SmallValues(t *testing.T) {
 }
 
 func TestRecord_MixedValues(t *testing.T) {
-	lt := NewLatencyTracker()
+	lt := NewLatency()
 	defer lt.Close()
 
 	// Mix of valid, negative, and out-of-bounds values
@@ -326,7 +326,7 @@ func TestRecord_MixedValues(t *testing.T) {
 }
 
 func TestRecord_ZeroValue(t *testing.T) {
-	lt := NewLatencyTracker()
+	lt := NewLatency()
 	defer lt.Close()
 
 	// Test what happens with 0
