@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
 )
@@ -27,7 +28,7 @@ func setupBackend(t *testing.T, server alaye.Server, hc *alaye.HealthCheck, cb *
 		CircuitBreaker: cb,
 	}
 
-	b, err := NewBackend(server, route, testLogger)
+	b, err := NewBackend(server, route, testLogger, metrics.DefaultRegistry)
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -35,7 +36,7 @@ func setupBackend(t *testing.T, server alaye.Server, hc *alaye.HealthCheck, cb *
 }
 
 func TestNewBackend_InvalidURL(t *testing.T) {
-	_, err := NewBackend(alaye.NewServer("://invalid-url"), &alaye.Route{}, testLogger)
+	_, err := NewBackend(alaye.NewServer("://invalid-url"), &alaye.Route{}, testLogger, metrics.DefaultRegistry)
 	if err == nil {
 		t.Error("Expected error for invalid URL, got nil")
 	}
@@ -186,7 +187,7 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 		CircuitBreaker: &alaye.CircuitBreaker{Threshold: 2},
 	}
 
-	b, err := NewBackend(alaye.NewServer(server.URL), route, testLogger)
+	b, err := NewBackend(alaye.NewServer(server.URL), route, testLogger, metrics.DefaultRegistry)
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -219,7 +220,7 @@ func TestCircuitBreaker_NoTripOnCancel(t *testing.T) {
 		CircuitBreaker: &alaye.CircuitBreaker{Threshold: 1},
 	}
 
-	b, err := NewBackend(alaye.NewServer(server.URL), route, testLogger)
+	b, err := NewBackend(alaye.NewServer(server.URL), route, testLogger, metrics.DefaultRegistry)
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -332,7 +333,7 @@ func TestHealthCheck_Jitter(t *testing.T) {
 		},
 	}
 
-	b, err := NewBackend(cfg, route, ll.New("test").Disable())
+	b, err := NewBackend(cfg, route, ll.New("test").Disable(), metrics.DefaultRegistry)
 	if err != nil {
 		t.Fatalf("NewBackend error: %v", err)
 	}

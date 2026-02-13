@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/lb"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/xhttp"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
@@ -83,7 +84,7 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 	var backends []*xhttp.Backend
 
 	for _, backendCfg := range route.Backends.Servers {
-		b, err := xhttp.NewBackend(backendCfg, route, logger)
+		b, err := xhttp.NewBackend(backendCfg, route, logger, metrics.DefaultRegistry)
 		if err != nil {
 			logger.Fields("backend", backendCfg.Address, "err", err).
 				Error("failed to create backend")

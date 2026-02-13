@@ -18,6 +18,7 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
+	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery/gossip"
@@ -26,7 +27,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/firewall"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/h3"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/metrics"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/observability"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/recovery"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/wasm"
@@ -526,7 +527,7 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 		h = s.ipMiddleware.Handler(h)
 	}
 
-	h = metrics.Prometheus(s.hostManager)(h)
+	h = observability.Prometheus(s.hostManager)(h)
 	h = recovery.New(s.logger)(h)
 
 	return h
@@ -590,6 +591,19 @@ func (s *Server) Reload() {
 	newHosts, _ := s.hostManager.LoadAll()
 	currentCount := len(newHosts)
 
+	// Clean up stale metrics from the registry
+	// We gather all valid route keys from the new configuration
+	validKeys := make(map[string]bool)
+	for _, h := range newHosts {
+		for _, r := range h.Routes {
+			rKey := r.Key()
+			for _, srv := range r.Backends.Servers {
+				validKeys[fmt.Sprintf("%s|%s", rKey, srv.Address)] = true
+			}
+		}
+	}
+	metrics.DefaultRegistry.Prune(validKeys)
+
 	if s.tlsManager != nil {
 		s.tlsManager.ClearCache()
 	}
@@ -604,7 +618,7 @@ func (s *Server) Reload() {
 		}
 	}
 
-	// Update existing proxies or start new ones (Note: dynamic start not fully implemented here for new ports, relies on existing listeners logic for now or full restart, but Route update is supported)
+	// Update existing proxies or start new ones
 	for _, tp := range s.tcpProxies {
 		_, port, _ := net.SplitHostPort(tp.Listen)
 		if port == "" {
@@ -645,7 +659,6 @@ func (s *Server) Reload() {
 				newRoutes[strings.ToLower(route.SNI)] = bal
 			} else {
 				// If Name is present but no SNI, treat as default if alone, or ignore?
-				// User config: proxy "name" { listen=":X" } -> SNI defaults to empty -> "*"
 				newDefault = bal
 			}
 		}

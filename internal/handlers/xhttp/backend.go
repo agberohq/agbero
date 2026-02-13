@@ -42,7 +42,7 @@ type Backend struct {
 	hcConfig *alaye.HealthCheck
 }
 
-func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backend, error) {
+func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registry *metrics.Registry) (*Backend, error) {
 	u, err := url.Parse(cfg.Address)
 	if err != nil {
 		return nil, err
@@ -65,6 +65,11 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 		return nil, err
 	}
 
+	// Resolve persistent metrics from registry
+	// Key is composite of Route Config Hash + Backend Address
+	statsKey := fmt.Sprintf("%s|%s", route.Key(), cfg.Address)
+	stats := registry.GetOrRegister(statsKey)
+
 	now := time.Now()
 	b := &Backend{
 		URL:          u,
@@ -75,8 +80,8 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 		stop:         make(chan struct{}),
 		startTime:    now,
 		lastRecovery: atomic.Int64{},
-		Health:       metrics.NewHealthTracker(),
-		Activity:     metrics.NewActivityTracker(),
+		Health:       stats.Health,
+		Activity:     stats.Activity,
 	}
 	b.Alive.Store(true)
 	b.lastRecovery.Store(now.UnixNano())
@@ -179,6 +184,11 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
+		// We do NOT close metrics here anymore as they persist in registry
+		// b.Activity.Latency.Close() // managed by registry/lifecycle?
+		// Actually Latency has a goroutine, we should probably stop the goroutine
+		// but keep the data. For now, to prevent leaks, we close the goroutine
+		// but the registry keeps the struct.
 		b.Activity.Latency.Close()
 	})
 }
