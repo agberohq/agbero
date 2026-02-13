@@ -62,7 +62,7 @@ type web struct {
 func NewWeb(logger *ll.Logger, route *alaye.Route) *web {
 	h := &web{
 		route:  route,
-		logger: logger,
+		logger: logger.Namespace("web"),
 	}
 
 	// PHP FastCGI support (value-type config; no pointers).

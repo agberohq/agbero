@@ -1,4 +1,4 @@
-package tcp
+package xtcp
 
 import (
 	"bytes"
@@ -22,7 +22,7 @@ var rngPool = sync.Pool{
 	},
 }
 
-type TCPSnapshot struct {
+type Snapshot struct {
 	Address     string
 	Alive       bool
 	ActiveConns int64
@@ -142,8 +142,8 @@ func (b *Backend) check() bool {
 	return true
 }
 
-func (b *Backend) Snapshot() *TCPSnapshot {
-	return &TCPSnapshot{
+func (b *Backend) Snapshot() *Snapshot {
+	return &Snapshot{
 		Address:     b.Address,
 		Alive:       b.Alive.Load(),
 		ActiveConns: b.Activity.InFlight.Load(),

@@ -8,9 +8,9 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 )
 
-// H3Middleware adds the Alt-Svc header to advertise HTTP/3 support.
+// AdvertiseHTTP3 adds the Alt-Svc header to advertise HTTP/3 support.
 // port is the string port (e.g., "443").
-func H3Middleware(port string) func(http.Handler) http.Handler {
+func AdvertiseHTTP3(port string) func(http.Handler) http.Handler {
 	// Cache the header value to avoid allocation per request
 	// ma=2592000 means "cache this info for 30 days"
 	altSvcValue := fmt.Sprintf(`h3=":%s"; ma=2592000`, port)
@@ -24,8 +24,8 @@ func H3Middleware(port string) func(http.Handler) http.Handler {
 	}
 }
 
-// Helper to extract port cleanly
-func ExtractPort(addr string) string {
+// Port Helper to extract port cleanly
+func Port(addr string) string {
 	// Handle ":443" or "0.0.0.0:443" or "[::]:443"
 	if idx := strings.LastIndex(addr, woos.Colon); idx != -1 {
 		return addr[idx+1:]

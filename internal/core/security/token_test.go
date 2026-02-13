@@ -99,7 +99,7 @@ func TestLoadKeys_NotEd25519(t *testing.T) {
 }
 
 func TestMint_Success(t *testing.T) {
-	tm := &TokenManager{} // Mock keys (real gen for test)
+	tm := &Token{} // Mock keys (real gen for test)
 	_, priv, _ := ed25519.GenerateKey(nil)
 	tm.privateKey = priv
 	tm.publicKey = priv.Public().(ed25519.PublicKey)
@@ -124,7 +124,7 @@ func TestMint_Success(t *testing.T) {
 }
 
 func TestVerify_Success(t *testing.T) {
-	tm := &TokenManager{} // Mock
+	tm := &Token{} // Mock
 	_, priv, _ := ed25519.GenerateKey(nil)
 	tm.privateKey = priv
 	tm.publicKey = priv.Public().(ed25519.PublicKey)
@@ -140,7 +140,7 @@ func TestVerify_Success(t *testing.T) {
 }
 
 func TestVerify_Expired(t *testing.T) {
-	tm := &TokenManager{}
+	tm := &Token{}
 	_, priv, _ := ed25519.GenerateKey(nil)
 	tm.privateKey = priv
 	tm.publicKey = priv.Public().(ed25519.PublicKey)
@@ -153,7 +153,7 @@ func TestVerify_Expired(t *testing.T) {
 }
 
 func TestVerify_InvalidSig(t *testing.T) {
-	tm := &TokenManager{}
+	tm := &Token{}
 	_, priv, _ := ed25519.GenerateKey(nil)
 	tm.privateKey = priv
 	tm.publicKey = priv.Public().(ed25519.PublicKey)
@@ -168,7 +168,7 @@ func TestVerify_InvalidSig(t *testing.T) {
 }
 
 func TestVerify_MissingSub(t *testing.T) {
-	tm := &TokenManager{}
+	tm := &Token{}
 	_, priv, _ := ed25519.GenerateKey(nil)
 	tm.privateKey = priv
 	tm.publicKey = priv.Public().(ed25519.PublicKey)

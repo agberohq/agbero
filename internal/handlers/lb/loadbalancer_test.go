@@ -6,11 +6,11 @@ import (
 	"testing"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/backend"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/xhttp"
 )
 
-func makeBackend(weight int, alive bool) *backend.Backend {
-	b := &backend.Backend{
+func makeBackend(weight int, alive bool) *xhttp.Backend {
+	b := &xhttp.Backend{
 		Weight:   weight,
 		Activity: &metrics.Activity{},
 	}
@@ -24,13 +24,13 @@ func TestLoadBalancer_RoundRobin(t *testing.T) {
 	b3 := makeBackend(1, true)
 
 	lb := NewLoadBalancer(
-		[]*backend.Backend{b1, b2, b3},
+		[]*xhttp.Backend{b1, b2, b3},
 		"round_robin",
 		0,
 		nil,
 	)
 
-	seen := map[*backend.Backend]int{}
+	seen := map[*xhttp.Backend]int{}
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 
@@ -52,7 +52,7 @@ func TestLoadBalancer_SkipDeadBackend(t *testing.T) {
 	b2 := makeBackend(1, true)
 
 	lb := NewLoadBalancer(
-		[]*backend.Backend{b1, b2},
+		[]*xhttp.Backend{b1, b2},
 		"round_robin",
 		0,
 		nil,
@@ -74,7 +74,7 @@ func TestLoadBalancer_LeastConn(t *testing.T) {
 	b2.Activity.InFlight.Store(2)
 
 	lb := NewLoadBalancer(
-		[]*backend.Backend{b1, b2},
+		[]*xhttp.Backend{b1, b2},
 		"least_conn",
 		0,
 		nil,
@@ -96,7 +96,7 @@ func TestLoadBalancer_WeightedLeastConn(t *testing.T) {
 	b2.Activity.InFlight.Store(0)
 
 	lb := NewLoadBalancer(
-		[]*backend.Backend{b1, b2},
+		[]*xhttp.Backend{b1, b2},
 		"weighted_least_conn",
 		0,
 		nil,
@@ -115,7 +115,7 @@ func TestLoadBalancer_RandomDoesNotPanic(t *testing.T) {
 	b2 := makeBackend(1, true)
 
 	lb := NewLoadBalancer(
-		[]*backend.Backend{b1, b2},
+		[]*xhttp.Backend{b1, b2},
 		"random",
 		0,
 		nil,
@@ -136,13 +136,13 @@ func TestLoadBalancer_UpdateBackendsAtomic(t *testing.T) {
 	b3 := makeBackend(1, true)
 
 	lb := NewLoadBalancer(
-		[]*backend.Backend{b1},
+		[]*xhttp.Backend{b1},
 		"round_robin",
 		0,
 		nil,
 	)
 
-	lb.Update([]*backend.Backend{b1, b2, b3})
+	lb.Update([]*xhttp.Backend{b1, b2, b3})
 
 	snap := lb.Snapshot()
 	if len(snap) != 3 {

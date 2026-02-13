@@ -22,7 +22,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery/gossip"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/tcp"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/xtcp"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/firewall"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/h3"
@@ -57,7 +57,7 @@ type Server struct {
 	mu         sync.RWMutex
 	servers    map[string]*http.Server
 	h3Servers  map[string]*http3.Server
-	tcpProxies []*tcp.Proxy
+	tcpProxies []*xtcp.Proxy
 
 	logger       *ll.Logger
 	ipMiddleware *clientip.IPMiddleware
@@ -217,7 +217,7 @@ func (s *Server) Start(configPath string) error {
 	}
 
 	for listen, routes := range tcpGroups {
-		tp := tcp.NewProxy(listen, s.logger)
+		tp := xtcp.NewProxy(listen, s.logger)
 		for _, r := range routes {
 			pattern := r.SNI
 			if pattern == "" {
@@ -515,7 +515,7 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 	h := next
 
 	if advertiseH3 {
-		h = h3.H3Middleware(port)(h)
+		h = h3.AdvertiseHTTP3(port)(h)
 	}
 
 	if s.firewall != nil {
@@ -526,7 +526,7 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 		h = s.ipMiddleware.Handler(h)
 	}
 
-	h = metrics.PrometheusMiddleware(s.hostManager)(h)
+	h = metrics.Prometheus(s.hostManager)(h)
 	h = recovery.New(s.logger)(h)
 
 	return h
@@ -636,11 +636,11 @@ func (s *Server) Reload() {
 			continue
 		}
 
-		newRoutes := make(map[string]*tcp.Balancer)
-		var newDefault *tcp.Balancer
+		newRoutes := make(map[string]*xtcp.Balancer)
+		var newDefault *xtcp.Balancer
 
 		for _, route := range group {
-			bal := tcp.NewBalancer(*route)
+			bal := xtcp.NewBalancer(*route)
 			if route.SNI != "" {
 				newRoutes[strings.ToLower(route.SNI)] = bal
 			} else {

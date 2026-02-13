@@ -33,7 +33,7 @@ type Manager struct {
 
 func NewManager(logger *ll.Logger) *Manager {
 	return &Manager{
-		logger:           logger,
+		logger:           logger.Namespace("tunnel"),
 		activePorts:      make(map[string]int),
 		virtualListeners: make(map[string]*virtual.Listener),
 	}

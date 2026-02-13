@@ -46,7 +46,7 @@ func NewManager(ctx context.Context, logger *ll.Logger, cfg *alaye.Wasm) (*Manag
 	}
 
 	return &Manager{
-		logger:     logger,
+		logger:     logger.Namespace("wasm"),
 		runtime:    r,
 		compiled:   compiled,
 		config:     cfg,

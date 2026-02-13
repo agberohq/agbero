@@ -1,4 +1,4 @@
-package tcp
+package xtcp
 
 import (
 	"bytes"
@@ -38,7 +38,7 @@ func NewProxy(listen string, logger *ll.Logger) *Proxy {
 	return &Proxy{
 		Listen: listen,
 		Routes: make(map[string]*Balancer),
-		Logger: logger,
+		Logger: logger.Namespace("proxy"),
 		conns:  make(map[net.Conn]struct{}),
 		quit:   make(chan struct{}),
 	}

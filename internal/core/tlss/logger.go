@@ -16,7 +16,7 @@ func newTLSLogger(logger *ll.Logger) *zap.Logger {
 	config := zap.NewProductionConfig()
 	config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
 
-	wrapper := &tlsLogger{logger: logger}
+	wrapper := &tlsLogger{logger: logger.Namespace("zap")}
 
 	// Create a minimal zap core that delegates to your logger
 	core := zapcore.NewCore(

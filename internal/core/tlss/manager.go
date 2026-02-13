@@ -49,7 +49,7 @@ func NewManager(logger *ll.Logger, hostManager *discovery.Host, global *alaye.Gl
 		logger.Fatal(err)
 	}
 	m := &Manager{
-		logger:      logger,
+		logger:      logger.Namespace("tlss"),
 		hostManager: hostManager,
 		Global:      global,
 		LocalCache:  make(map[string]*tls.Certificate),

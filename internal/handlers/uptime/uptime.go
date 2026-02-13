@@ -14,7 +14,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/tcp"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/xtcp"
 )
 
 type SystemStats struct {
@@ -186,7 +186,7 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 					continue
 				}
 
-				rtProxy, ok := item.Value.(*tcp.Proxy)
+				rtProxy, ok := item.Value.(*xtcp.Proxy)
 				if !ok {
 					continue
 				}

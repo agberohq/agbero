@@ -23,7 +23,7 @@ type Service struct {
 	list         *memberlist.Memberlist
 	hm           Hosting
 	logger       *ll.Logger
-	tokenManager *security.TokenManager
+	tokenManager *security.Token
 
 	localName string
 
@@ -37,7 +37,7 @@ func NewService(hm Hosting, cfg *alaye.Gossip, logger *ll.Logger) (*Service, err
 
 	s := &Service{
 		hm:          hm,
-		logger:      logger,
+		logger:      logger.Namespace("gossip"),
 		authTimeout: woos.DefaultAuthTimeout,
 	}
 

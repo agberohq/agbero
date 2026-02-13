@@ -8,7 +8,7 @@ import (
 )
 
 func TestH3Middleware_HeaderAdded(t *testing.T) {
-	handler := H3Middleware("443")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AdvertiseHTTP3("443")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -34,7 +34,7 @@ func TestExtractPort_Various(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		port := ExtractPort(tt.addr)
+		port := Port(tt.addr)
 		if port != tt.expected {
 			t.Errorf("For %q, expected %q, got %q", tt.addr, tt.expected, port)
 		}
@@ -42,7 +42,7 @@ func TestExtractPort_Various(t *testing.T) {
 }
 
 func TestH3Middleware_NoChangeNonTLS(t *testing.T) {
-	handler := H3Middleware("80")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AdvertiseHTTP3("80")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

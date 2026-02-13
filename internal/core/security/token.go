@@ -13,12 +13,12 @@ import (
 	"github.com/olekukonko/errors"
 )
 
-type TokenManager struct {
+type Token struct {
 	privateKey ed25519.PrivateKey
 	publicKey  ed25519.PublicKey
 }
 
-func LoadKeys(privateKeyPath string) (*TokenManager, error) {
+func LoadKeys(privateKeyPath string) (*Token, error) {
 	b, err := os.ReadFile(privateKeyPath)
 	if err != nil {
 		return nil, errors.Newf("read key file: %w", err)
@@ -39,7 +39,7 @@ func LoadKeys(privateKeyPath string) (*TokenManager, error) {
 		return nil, woos.ErrNotEd25519Key
 	}
 
-	return &TokenManager{
+	return &Token{
 		privateKey: priv,
 		publicKey:  priv.Public().(ed25519.PublicKey),
 	}, nil
@@ -70,7 +70,7 @@ func GenerateNewKeyFile(path string) error {
 	return pem.Encode(f, pemBlock)
 }
 
-func (tm *TokenManager) Mint(serviceName string, ttl time.Duration) (string, error) {
+func (tm *Token) Mint(serviceName string, ttl time.Duration) (string, error) {
 	claims := jwt.MapClaims{
 		"sub": serviceName,
 		"iat": time.Now().Unix(),
@@ -82,7 +82,7 @@ func (tm *TokenManager) Mint(serviceName string, ttl time.Duration) (string, err
 	return token.SignedString(tm.privateKey)
 }
 
-func (tm *TokenManager) Verify(tokenString string) (serviceName string, err error) {
+func (tm *Token) Verify(tokenString string) (serviceName string, err error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
 			return nil, fmt.Errorf("%w: %v", woos.ErrUnexpectedSiningMethod, token.Header[woos.TokenAlg])

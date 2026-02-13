@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/backend"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/lb"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/xhttp"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/compress"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/headers"
@@ -19,7 +19,7 @@ import (
 
 type Route struct {
 	handler  http.Handler
-	Backends []*backend.Backend
+	Backends []*xhttp.Backend
 }
 
 // NewRoute constructs the handler chain.
@@ -80,10 +80,10 @@ func newWebRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Lo
 }
 
 func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Logger) *Route {
-	var backends []*backend.Backend
+	var backends []*xhttp.Backend
 
 	for _, backendCfg := range route.Backends.Servers {
-		b, err := backend.NewBackend(backendCfg, route, logger)
+		b, err := xhttp.NewBackend(backendCfg, route, logger)
 		if err != nil {
 			logger.Fields("backend", backendCfg.Address, "err", err).
 				Error("failed to create backend")

@@ -1,13 +1,13 @@
 package lb
 
-import "git.imaxinacion.net/aibox/agbero/internal/handlers/backend"
+import "git.imaxinacion.net/aibox/agbero/internal/handlers/xhttp"
 
 type weightWheel struct {
 	cumul []uint64
 	total uint64
 }
 
-func buildWheel(list []*backend.Backend) *weightWheel {
+func buildWheel(list []*xhttp.Backend) *weightWheel {
 	if len(list) == 0 {
 		return &weightWheel{}
 	}

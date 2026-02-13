@@ -142,7 +142,7 @@ func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*IPSet, e
 			},
 		},
 		cache:  newTTLCache(5 * time.Minute),
-		logger: logger,
+		logger: logger.Namespace("firewall"),
 	}
 
 	store, err := NewStore(dataDir, logger)
