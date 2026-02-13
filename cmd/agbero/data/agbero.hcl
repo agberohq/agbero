@@ -149,7 +149,7 @@ rate_limits {
   }
 
   # Auth Rules
-  rule "auth_limit" {
+  rule "auth" {
     prefixes = ["/login", "/auth", "/admin"]
     requests = 10
     window   = "1m"
@@ -157,19 +157,11 @@ rate_limits {
   }
 
   # General API Rules (Matched if above don't apply)
-  rule "general_api" {
+  rule "api" {
     prefixes = ["/api"]
     requests = 1000
     window   = "1m"
     key      = "header:X-API-Key"
-  }
-
-  # Testing url
-  rule "testing" {
-    prefixes = ["/testing"]
-    requests = 1000000
-    window   = "1m"
-    key      = "ip"
   }
 
   # Catch-all

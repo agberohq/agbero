@@ -745,14 +745,15 @@ class AgberoApp {
                             const reqs = b.total_reqs || 0;
                             const in_flight = b.in_flight || 0;
 
+
                             backendHtml += `
                             <div class="backend-row ${hasStats && healthStatus === 'down' ? 'down' : ''}">
                                 <span class="dot ${dotColor}" title="${hasStats ? (healthStatus === 'ok' ? 'Healthy' : healthStatus === 'warn' ? 'Idle' : 'Unhealthy') : 'No data'}"></span>
-                                <span class="be-url" onclick="event.stopPropagation(); app.copyToClipboard('${url}')">${url}</span>
+                                <span class="be-url" onclick="event.stopPropagation(); app.copyToClipboard('${url}')">${url}  ${in_flight > 0 ? `<span class="badge warn">⚡${in_flight}</span>` : ''}</span>
                                 <span class="be-stat">W: ${weight}</span>
                                 <span class="be-stat">${p99}</span>
                                 <span class="be-stat">${this.fmtNum(reqs)}</span>
-                                <span class="be-badge">${in_flight > 0 ? `<span class="badge info">⚡${in_flight}</span>` : ''}</span>
+                               
                             </div>`;
                         });
                         backendHtml += `</div>`;
@@ -763,11 +764,15 @@ class AgberoApp {
 
                     const shouldShowRoute = filterTerm === "" || hostHasMatch || pathMatches || route.protocol === 'tcp';
 
+                    // In routes loop:
+                    const protocolBadgeClass = (route.protocol || 'http') === 'http' ? 'success' : 'info';
+                    const protocolBadge = `<span class="badge ${protocolBadgeClass}">${(route.protocol || 'HTTP').toUpperCase()}</span>`;
+
                     if (shouldShowRoute) {
                         hostHtml += `
                         <div class="route-block" onclick="app.openRouteDrawer('${hostname}', ${idx})">
                             <div class="route-header">
-                                <span class="route-path">${route.path}</span>
+                               ${protocolBadge} <span class="route-path">${route.path}</span>
                                 <span class="badge info" style="margin-left:auto; font-size:9px;">DETAILS →</span>
                             </div>
                             ${backendHtml}
@@ -833,11 +838,11 @@ class AgberoApp {
                             backendHtml += `
                             <div class="backend-row ${hasStats && healthStatus === 'down' ? 'down' : ''}">
                                 <span class="dot ${dotColor}" title="${hasStats ? (healthStatus === 'ok' ? 'Healthy' : healthStatus === 'warn' ? 'Idle' : 'Unhealthy') : 'No data'}"></span>
-                                <span class="be-url" onclick="event.stopPropagation(); app.copyToClipboard('${url}')">${url}</span>
+                                <span class="be-url" onclick="event.stopPropagation(); app.copyToClipboard('${url}')">${url} ${in_flight > 0 ? `<span class="badge warn">⚡${in_flight}</span>` : ''} </span>
                                 <span class="be-stat">W: ${weight}</span>
                                 <span class="be-stat">${p99}</span>
                                 <span class="be-stat">${this.fmtNum(reqs)}</span>
-                                <span class="be-badge">${in_flight > 0 ? `<span class="badge info">⚡${in_flight}</span>` : ''}</span>
+                
                             </div>`;
                         });
                         backendHtml += `</div>`;
@@ -848,11 +853,15 @@ class AgberoApp {
 
                     const shouldShowRoute = filterTerm === "" || hostHasMatch || pathMatches || proxy.protocol === 'tcp';
 
+// In renderHosts, proxies loop:
+                    const protocolBadgeClass = (proxy.protocol || 'tcp') === 'http' ? 'success' : 'info';
+                    const protocolBadge = `<span class="badge ${protocolBadgeClass}">${(proxy.protocol || 'TCP').toUpperCase()}</span>`;
+
                     if (shouldShowRoute) {
                         hostHtml += `
                         <div class="route-block" onclick="app.openRouteDrawer('${hostname}', ${pidx}, 'proxy')">
                             <div class="route-header">
-                                <span class="route-path">${path}</span>
+                               ${protocolBadge} <span class="route-path">${path}</span>
                                 <span class="badge info" style="margin-left:auto; font-size:9px;">DETAILS →</span>
                             </div>
                             ${backendHtml}

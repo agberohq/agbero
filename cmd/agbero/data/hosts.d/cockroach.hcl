@@ -6,6 +6,8 @@ domains = ["cockroach.localhost"]
 # -----------------------------------------------------------------------
 proxy "primary" {
   # The port Agbero will listen on (Standard CockroachDB port)
+  # This works regardless of the 'domains' above because it binds
+  # explicitly to port 4045 on the host machine.
   listen = ":4045"
 
   # Strategy: "least_conn" is highly recommended for Databases.
@@ -36,18 +38,16 @@ proxy "primary" {
 # -----------------------------------------------------------------------
 # Optional: HTTP Reverse Proxy for CockroachDB Admin UI
 # -----------------------------------------------------------------------
-route "/admin" {
-
-  strip_prefixes = ["/admin"]
-
+route "/*" {
   backend {
+
     server {
       address = "http://127.0.0.1:7580"
     }
+
     server {
       address = "http://127.0.0.1:7581"
     }
-
     # Use "ip_hash" for UI to keep session stickiness
     lb_strategy = "ip_hash"
   }

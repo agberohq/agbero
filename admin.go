@@ -76,9 +76,7 @@ func (s *Server) startAdminServer() {
 	mux.Handle("/logs", protect(s.handleAdminLogs))
 
 	// Firewall Management
-	if s.firewall != nil {
-		mux.Handle("/firewall", protect(s.handleFirewallAPI))
-	}
+	mux.Handle("/firewall", protect(s.handleFirewallAPI))
 
 	srv := &http.Server{
 		Addr:         cfg.Address,
