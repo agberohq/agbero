@@ -26,17 +26,37 @@ func getSnapshotEventually(lt *Latency, condition func(s LatencySnapshot) bool) 
 func TestNewLatencyTracker(t *testing.T) {
 	lt := NewLatency()
 	defer lt.Close()
+
 	if lt == nil {
 		t.Fatal("NewLatency returned nil")
 	}
 	if lt.histogram == nil {
 		t.Error("Histogram not initialized")
 	}
-	if lt.count != 0 {
-		t.Error("Initial count should be 0")
+	if lt.ctx == nil {
+		t.Error("Context not initialized")
 	}
-	if lt.sum != 0 {
-		t.Error("Initial sum should be 0")
+	if lt.cancel == nil {
+		t.Error("Cancel function not initialized")
+	}
+	if lt.ch == nil {
+		t.Error("Channel not initialized")
+	}
+
+	// Check atomic counters using Load()
+	if lt.count.Load() != 0 {
+		t.Errorf("Initial count should be 0, got %d", lt.count.Load())
+	}
+	if lt.sum.Load() != 0 {
+		t.Errorf("Initial sum should be 0, got %d", lt.sum.Load())
+	}
+	if lt.dropped.Load() != 0 {
+		t.Errorf("Initial dropped should be 0, got %d", lt.dropped.Load())
+	}
+
+	// Verify lastRotation was set
+	if lt.lastRotation.IsZero() {
+		t.Error("lastRotation should be set to current time")
 	}
 }
 

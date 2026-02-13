@@ -24,8 +24,8 @@ func (ht *Health) RecordSuccess() {
 	now := time.Now().UnixNano()
 	ht.lastSuccess.Store(now)
 	ht.consecutiveFailures.Store(0)
-	ht.healthy.Store(true)
 	ht.totalChecks.Add(1)
+	ht.healthy.Store(true)
 }
 
 func (ht *Health) RecordFailure() {
@@ -34,6 +34,7 @@ func (ht *Health) RecordFailure() {
 	ht.consecutiveFailures.Add(1)
 	ht.totalChecks.Add(1)
 	ht.totalFailures.Add(1)
+	ht.healthy.Store(false)
 }
 
 func (ht *Health) IsHealthy() bool {
@@ -45,11 +46,19 @@ func (ht *Health) ConsecutiveFailures() int64 {
 }
 
 func (ht *Health) LastSuccess() time.Time {
-	return time.Unix(0, ht.lastSuccess.Load())
+	ts := ht.lastSuccess.Load()
+	if ts == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ts)
 }
 
 func (ht *Health) LastFailure() time.Time {
-	return time.Unix(0, ht.lastFailure.Load())
+	ts := ht.lastFailure.Load()
+	if ts == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ts)
 }
 
 func (ht *Health) TotalChecks() uint64 {
