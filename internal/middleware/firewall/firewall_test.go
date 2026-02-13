@@ -155,3 +155,46 @@ func TestFirewall_ImportFile(t *testing.T) {
 		t.Error("Imported IP not blocked")
 	}
 }
+
+func TestFirewall_UnblockSingleIPInsideCIDR(t *testing.T) {
+	dataDir := createTempDir(t)
+	cfg := &alaye.Firewall{Enabled: true}
+	f, _ := New(cfg, woos.NewFolder(dataDir), newTestLogger())
+	defer f.Close()
+
+	// CIDR block: 192.168.1.0/24
+	cidr := "192.168.1.0/24"
+	f.Block(cidr, "", "", "block subnet", 0)
+
+	// Test an IP inside CIDR: should be blocked
+	ip := "192.168.1.55"
+	req := httptest.NewRequest("GET", "http://example.com/", nil)
+	req.RemoteAddr = ip + ":1234"
+	w := httptest.NewRecorder()
+	f.Handler(mockHandler).ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Error("IP inside blocked CIDR should be blocked")
+	}
+
+	// Now unblock the specific IP
+	f.Unblock(ip)
+
+	// Test again: should now be allowed
+	req2 := httptest.NewRequest("GET", "http://example.com/", nil)
+	req2.RemoteAddr = ip + ":1234"
+	w2 := httptest.NewRecorder()
+	f.Handler(mockHandler).ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Error("Unblocked IP inside CIDR should be allowed")
+	}
+
+	// Another IP in the CIDR should still be blocked
+	otherIP := "192.168.1.77"
+	req3 := httptest.NewRequest("GET", "http://example.com/", nil)
+	req3.RemoteAddr = otherIP + ":1234"
+	w3 := httptest.NewRecorder()
+	f.Handler(mockHandler).ServeHTTP(w3, req3)
+	if w3.Code != http.StatusForbidden {
+		t.Error("Other IP inside CIDR should remain blocked")
+	}
+}

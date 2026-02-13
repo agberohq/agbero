@@ -104,9 +104,17 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger) (*Backe
 			return
 		}
 
+		// Increment failures with atomic add
 		newFailures := b.Activity.Failures.Add(1)
+
+		// Only trip the breaker if we haven't already tripped
 		if newFailures >= uint64(cbThreshold) && b.Alive.Swap(false) {
 			b.logger.Fields("backend", u.Host, "failures", newFailures).Warn("circuit breaker tripped")
+		}
+
+		// Reset counter if Alive is false but traffic is low and time passed since last recovery
+		if !b.Alive.Load() && time.Since(b.LastRecovery()) > 5*time.Second {
+			b.Activity.Failures.Store(0)
 		}
 
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {

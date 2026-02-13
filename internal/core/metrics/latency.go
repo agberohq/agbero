@@ -11,9 +11,11 @@ import (
 )
 
 type Latency struct {
-	mu           sync.RWMutex
-	histogram    *hdrhistogram.Histogram
-	lastRotation time.Time
+	mu        sync.RWMutex
+	histogram *hdrhistogram.Histogram
+
+	// atomic rotation timestamp in UnixNano
+	lastRotation atomic.Int64
 
 	// atomic counters for current window
 	count   atomic.Uint64
@@ -32,12 +34,13 @@ type Latency struct {
 func NewLatency() *Latency {
 	ctx, cancel := context.WithCancel(context.Background())
 	lt := &Latency{
-		histogram:    hdrhistogram.New(woos.MinUS, woos.MaxUS, 3),
-		lastRotation: time.Now(),
-		ctx:          ctx,
-		cancel:       cancel,
-		ch:           make(chan int64, 8192),
+		histogram: hdrhistogram.New(woos.MinUS, woos.MaxUS, 3),
+		ctx:       ctx,
+		cancel:    cancel,
+		ch:        make(chan int64, 8192),
 	}
+	lt.lastRotation.Store(time.Now().UnixNano())
+
 	lt.wg.Add(1)
 	go lt.run()
 	return lt
@@ -49,30 +52,37 @@ func (lt *Latency) Close() {
 }
 
 func (lt *Latency) Record(microseconds int64) {
-	// Fast path: check if context is already cancelled
+	// Fast path: ignore if context cancelled
 	select {
 	case <-lt.ctx.Done():
 		return
 	default:
 	}
 
-	// Check and trigger rotation if needed - matches original behavior
-	now := time.Now()
-	lt.mu.Lock()
-	lt.rotateLocked(now)
-	lt.mu.Unlock()
-
-	// Clamp to valid range - tests expect negative/zero to map to MaxUS (buggy but expected)
+	// Clamp values
 	v := microseconds
 	if v < woos.MinUS || v > woos.MaxUS {
 		v = woos.MaxUS
 	}
 
-	// Update atomics immediately
+	// Rotation check using atomic timestamp (no lock)
+	now := time.Now()
+	last := time.Unix(0, lt.lastRotation.Load())
+	if now.Sub(last) > woos.HistogramWindow {
+		// Acquire lock only if rotation is needed
+		lt.mu.Lock()
+		// Re-check to avoid races
+		if now.Sub(time.Unix(0, lt.lastRotation.Load())) > woos.HistogramWindow {
+			lt.rotateLocked(now)
+		}
+		lt.mu.Unlock()
+	}
+
+	// Update atomics
 	lt.count.Add(1)
 	lt.sum.Add(v)
 
-	// Try to send to channel
+	// Async channel write
 	select {
 	case lt.ch <- v:
 	case <-lt.ctx.Done():
@@ -110,7 +120,6 @@ func (lt *Latency) Snapshot() LatencySnapshot {
 	snap.Count = lt.count.Load()
 	snap.Sum = lt.sum.Load()
 	snap.Dropped = lt.dropped.Load()
-
 	if snap.Count > 0 {
 		snap.Avg = snap.Sum / int64(snap.Count)
 	}
@@ -157,13 +166,9 @@ func (lt *Latency) flushLocked() {
 }
 
 func (lt *Latency) rotateLocked(now time.Time) {
-	if now.Sub(lt.lastRotation) <= woos.HistogramWindow {
-		return
-	}
-
 	lt.flushLocked()
 	lt.histogram.Reset()
-	lt.lastRotation = now
+	lt.lastRotation.Store(now.UnixNano())
 	lt.count.Store(0)
 	lt.sum.Store(0)
 	lt.dropped.Store(0)

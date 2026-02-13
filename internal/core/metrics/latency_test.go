@@ -55,7 +55,7 @@ func TestNewLatencyTracker(t *testing.T) {
 	}
 
 	// Verify lastRotation was set
-	if lt.lastRotation.IsZero() {
+	if lt.lastRotation.Load() == 0 {
 		t.Error("lastRotation should be set to current time")
 	}
 }
@@ -141,9 +141,7 @@ func TestRotation(t *testing.T) {
 	}
 
 	// Manually force rotation by setting lastRotation far in the past
-	lt.mu.Lock()
-	lt.lastRotation = time.Now().Add(-woos.HistogramWindow - time.Second)
-	lt.mu.Unlock()
+	lt.lastRotation.Store(time.Now().Add(-woos.HistogramWindow - time.Second).UnixNano())
 
 	// This record should trigger auto-rotation
 	lt.Record(200)

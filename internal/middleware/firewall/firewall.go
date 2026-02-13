@@ -1,4 +1,3 @@
-// internal/middleware/firewall/firewall.go
 package firewall
 
 import (
@@ -32,10 +31,15 @@ var (
 )
 
 type IPSet struct {
-	mu     sync.RWMutex
-	v4     map[netip.Addr][]*Rule
-	v6     map[netip.Addr][]*Rule
+	mu sync.RWMutex
+
+	v4 map[netip.Addr][]*Rule
+	v6 map[netip.Addr][]*Rule
+
 	ranger cidranger.Ranger
+
+	// blockedExceptions stores IPs explicitly unblocked even if inside a CIDR
+	blockedExceptions map[netip.Addr]struct{}
 
 	store *Store
 
@@ -128,10 +132,11 @@ func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*IPSet, e
 	}
 
 	f := &IPSet{
-		v4:     make(map[netip.Addr][]*Rule),
-		v6:     make(map[netip.Addr][]*Rule),
-		ranger: cidranger.NewPCTrieRanger(),
-		remote: cfg.RemoteCheck,
+		v4:                make(map[netip.Addr][]*Rule),
+		v6:                make(map[netip.Addr][]*Rule),
+		ranger:            cidranger.NewPCTrieRanger(),
+		blockedExceptions: make(map[netip.Addr]struct{}),
+		remote:            cfg.RemoteCheck,
 		client: &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
@@ -147,7 +152,7 @@ func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*IPSet, e
 
 	store, err := NewStore(dataDir, logger)
 	if err != nil {
-		f.cache.close() // Cleanup on error
+		f.cache.close()
 		return nil, fmt.Errorf("firewall store init: %w", err)
 	}
 	f.store = store
@@ -175,7 +180,6 @@ func (f *IPSet) Close() error {
 	if f == nil {
 		return nil
 	}
-	// Stop cache goroutine
 	if f.cache != nil {
 		f.cache.close()
 	}
@@ -199,6 +203,14 @@ func (f *IPSet) Unblock(ip string) error {
 
 	if err := f.store.Remove(ip); err != nil {
 		return err
+	}
+
+	addr, err := netip.ParseAddr(ip)
+	if err == nil {
+		addr = addr.Unmap()
+		f.mu.Lock()
+		f.blockedExceptions[addr] = struct{}{}
+		f.mu.Unlock()
 	}
 
 	rules, err := f.store.LoadAll()
@@ -327,10 +339,10 @@ func (f *IPSet) Handler(next http.Handler) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ipStr := clientip.ClientIP(r)
-
 		addr, err := netip.ParseAddr(ipStr)
 		if err == nil {
 			addr = addr.Unmap()
+
 			f.mu.RLock()
 			var rules []*Rule
 			if addr.Is4() {
@@ -340,6 +352,7 @@ func (f *IPSet) Handler(next http.Handler) http.Handler {
 			}
 			f.mu.RUnlock()
 
+			// Evaluate per-IP host/path rules
 			if len(rules) > 0 {
 				reqHost := core.NormalizeHost(r.Host)
 				reqPath := r.URL.Path
@@ -359,16 +372,27 @@ func (f *IPSet) Handler(next http.Handler) http.Handler {
 			}
 		}
 
+		// Check CIDR blocks, skip if IP is explicitly unblocked
 		netIP := net.ParseIP(ipStr)
 		if netIP != nil {
-			contains, err := f.ranger.Contains(netIP)
-			if err == nil && contains {
-				atomic.AddUint64(&metricsLocalBlocks, 1)
-				http.Error(w, "Access Denied", http.StatusForbidden)
-				return
+			addr, _ := netip.ParseAddr(ipStr)
+			addr = addr.Unmap()
+
+			f.mu.RLock()
+			_, isUnblocked := f.blockedExceptions[addr]
+			f.mu.RUnlock()
+
+			if !isUnblocked {
+				contains, err := f.ranger.Contains(netIP)
+				if err == nil && contains {
+					atomic.AddUint64(&metricsLocalBlocks, 1)
+					http.Error(w, "Access Denied", http.StatusForbidden)
+					return
+				}
 			}
 		}
 
+		// Remote check
 		if f.remote != "" {
 			if f.cachedRemoteCheck(r.Context(), ipStr) {
 				atomic.AddUint64(&metricsRemoteBlocks, 1)
@@ -399,8 +423,6 @@ func (f *IPSet) cachedRemoteCheck(ctx context.Context, ip string) bool {
 }
 
 func (f *IPSet) checkRemote(ip string) bool {
-	// Security: ip is validated to be a valid IP address by the caller (Handler/netip.ParseAddr)
-	// before calling cachedRemoteCheck/checkRemote.
 	u, err := url.Parse(f.remote)
 	if err != nil {
 		return false

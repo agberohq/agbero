@@ -17,6 +17,8 @@ import (
 	"github.com/pires/go-proxyproto"
 )
 
+var noopBalancer = &Balancer{}
+
 type Proxy struct {
 	Listen      string
 	IdleTimeout time.Duration
@@ -320,7 +322,6 @@ func (p *Proxy) pickBalancer(sni string) *Balancer {
 			for routeSNI, b := range p.Routes {
 				if strings.HasPrefix(routeSNI, "*.") {
 					root := routeSNI[2:]
-					// Correct logic: matches "w.com" or "x.w.com"
 					if sni == root || strings.HasSuffix(sni, "."+root) {
 						return b
 					}
@@ -328,7 +329,13 @@ func (p *Proxy) pickBalancer(sni string) *Balancer {
 			}
 		}
 	}
-	return p.Default
+
+	if p.Default != nil {
+		return p.Default
+	}
+
+	// Return the singleton no-op balancer
+	return noopBalancer
 }
 
 func (p *Proxy) pipe(client, backend net.Conn) {
