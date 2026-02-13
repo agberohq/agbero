@@ -14,23 +14,20 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/tcp"
 )
-
-// --- System Stats ---
 
 type SystemStats struct {
 	NumCPU       int     `json:"num_cpu"`
 	NumGoroutine int     `json:"num_goroutine"`
-	MemAlloc     uint64  `json:"mem_alloc"`    // Go bytes allocated and not freed
-	MemTotal     uint64  `json:"mem_total"`    // Go cumulative bytes allocated
-	MemSys       uint64  `json:"mem_sys"`      // Go memory obtained from OS
-	MemRSS       uint64  `json:"mem_rss"`      // Approx RSS for Go
-	CPUPercent   float64 `json:"cpu_percent"`  // OS CPU usage
-	MemUsed      uint64  `json:"mem_used"`     // OS memory used
-	MemTotalOS   uint64  `json:"mem_total_os"` // OS total memory
+	MemAlloc     uint64  `json:"mem_alloc"`
+	MemTotal     uint64  `json:"mem_total"`
+	MemSys       uint64  `json:"mem_sys"`
+	MemRSS       uint64  `json:"mem_rss"`
+	CPUPercent   float64 `json:"cpu_percent"`
+	MemUsed      uint64  `json:"mem_used"`
+	MemTotalOS   uint64  `json:"mem_total_os"`
 }
-
-// --- Snapshot structs ---
 
 type SystemSnapshot struct {
 	Timestamp time.Time                `json:"timestamp"`
@@ -40,12 +37,13 @@ type SystemSnapshot struct {
 
 type HostSnapshot struct {
 	Routes        []*RouteSnapshot `json:"routes"`
-	TotalReqs     uint64           `json:"total_reqs"`     // Sum across routes
-	TotalBackends int              `json:"total_backends"` // Count across routes
-	AvgP99        int64            `json:"avg_p99_us"`     // Avg P99 (non-zero samples only)
+	TotalReqs     uint64           `json:"total_reqs"`
+	TotalBackends int              `json:"total_backends"`
+	AvgP99        int64            `json:"avg_p99_us"`
 }
 
 type RouteSnapshot struct {
+	Protocol string             `json:"protocol"` // "http" or "tcp"
 	Path     string             `json:"path"`
 	Strategy string             `json:"strategy"`
 	Backends []*BackendSnapshot `json:"backends"`
@@ -61,7 +59,6 @@ type BackendSnapshot struct {
 	Healthy   bool                    `json:"healthy"`
 }
 
-// --- CPU cache to avoid expensive repeated queries ---
 var (
 	lastCPUCheck     time.Time
 	lastCPUPercent   float64
@@ -88,8 +85,6 @@ func getCPUPercent() float64 {
 	return lastCPUPercent
 }
 
-// --- Uptime handler ---
-
 func Uptime(hm *discovery.Host) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		snapshot := collectMetrics(hm)
@@ -101,14 +96,10 @@ func Uptime(hm *discovery.Host) http.HandlerFunc {
 	}
 }
 
-// --- Collect Metrics ---
-
 func collectMetrics(hm *discovery.Host) *SystemSnapshot {
-	// Go runtime stats
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
-	// OS memory stats
 	vmStat, _ := mem.VirtualMemory()
 
 	sysStats := SystemStats{
@@ -129,7 +120,6 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 		Hosts:     make(map[string]*HostSnapshot),
 	}
 
-	// Load all hosts
 	hosts, _ := hm.LoadAll()
 	for domain, hcfg := range hosts {
 		hSnap := &HostSnapshot{
@@ -141,51 +131,138 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 		var sumP99 int64
 		var p99Count int
 
+		// --- HTTP Routes ---
 		for _, route := range hcfg.Routes {
 			rSnap := &RouteSnapshot{
+				Protocol: "http",
 				Path:     route.Path,
 				Strategy: route.Backends.LBStrategy,
 				Backends: make([]*BackendSnapshot, 0),
 			}
 
-			if v, ok := cache.Route.Load(route.Key()); ok {
-				handler := v.Value.(*handlers.Route)
+			// Load returns *cache.Item, not interface{}
+			if item, ok := cache.Route.Load(route.Key()); ok {
+				if handler, ok := item.Value.(*handlers.Route); ok {
+					for _, b := range handler.Backends {
+						bSnap := &BackendSnapshot{
+							URL:       b.URL.String(),
+							Alive:     b.Alive.Load(),
+							InFlight:  b.Activity.InFlight.Load(),
+							Failures:  int64(b.Activity.Failures.Load()),
+							TotalReqs: b.Activity.Requests.Load(),
+							Latency:   b.Activity.Latency.Snapshot(),
+							Healthy:   b.Health.IsHealthy(),
+						}
+						rSnap.Backends = append(rSnap.Backends, bSnap)
 
-				for _, b := range handler.Backends {
-					bSnap := &BackendSnapshot{
-						URL:       b.URL.String(),
-						Alive:     b.Alive.Load(),
-						InFlight:  b.Activity.InFlight.Load(),
-						Failures:  int64(b.Activity.Failures.Load()),
-						TotalReqs: b.Activity.Requests.Load(),
-						Latency:   b.Activity.Latency.Snapshot(),
-						Healthy:   b.Health.IsHealthy(),
-					}
-					rSnap.Backends = append(rSnap.Backends, bSnap)
-
-					totalReqs += b.Activity.Requests.Load()
-					if bSnap.Latency.Count > 0 && bSnap.Latency.P99 > 0 {
-						sumP99 += bSnap.Latency.P99
-						p99Count++
+						totalReqs += b.Activity.Requests.Load()
+						if bSnap.Latency.Count > 0 && bSnap.Latency.P99 > 0 {
+							sumP99 += bSnap.Latency.P99
+							p99Count++
+						}
 					}
 				}
 			} else {
-				// Inactive route, just show configured backends
+				// Fallback for inactive routes
 				for _, url := range route.Backends.Servers {
 					rSnap.Backends = append(rSnap.Backends, &BackendSnapshot{
-						URL:       url.Address,
-						Alive:     false,
-						Healthy:   false,
-						Latency:   metrics.LatencySnapshot{},
-						InFlight:  0,
-						Failures:  0,
-						TotalReqs: 0,
+						URL:     url.Address,
+						Alive:   false,
+						Healthy: false,
+						Latency: metrics.LatencySnapshot{},
 					})
 				}
 			}
 
 			totalBackends += len(rSnap.Backends)
 			hSnap.Routes = append(hSnap.Routes, rSnap)
+		}
+
+		// --- TCP Routes ---
+		if len(hcfg.TCPProxy) > 0 {
+			for _, tcpCfg := range hcfg.TCPProxy {
+				// Load returns *cache.Item directly
+				item, ok := cache.TCP.Load(tcpCfg.Listen)
+				if !ok {
+					continue
+				}
+
+				// Assert Value field directly
+				rtProxy, ok := item.Value.(*tcp.Proxy)
+				if !ok {
+					continue
+				}
+
+				// Lock Proxy to safely read Balancers
+				rtProxy.Mu.RLock()
+
+				// 1. SNI Routes
+				for sni, bal := range rtProxy.Routes {
+					rSnap := &RouteSnapshot{
+						Protocol: "tcp",
+						Path:     sni,
+						Strategy: bal.GetStrategyName(),
+						Backends: make([]*BackendSnapshot, 0),
+					}
+
+					for _, b := range bal.Backends() {
+						snapLat := b.Activity.Latency.Snapshot()
+
+						bSnap := &BackendSnapshot{
+							URL:       b.Address,
+							Alive:     b.Alive.Load(),
+							InFlight:  b.Activity.InFlight.Load(),
+							Failures:  int64(b.Activity.Failures.Load()),
+							TotalReqs: b.Activity.Requests.Load(),
+							Latency:   snapLat,
+							Healthy:   b.Health.IsHealthy(),
+						}
+						rSnap.Backends = append(rSnap.Backends, bSnap)
+
+						totalReqs += b.Activity.Requests.Load()
+						if snapLat.Count > 0 && snapLat.P99 > 0 {
+							sumP99 += snapLat.P99
+							p99Count++
+						}
+					}
+					totalBackends += len(rSnap.Backends)
+					hSnap.Routes = append(hSnap.Routes, rSnap)
+				}
+
+				// 2. Default Route
+				if rtProxy.Default != nil {
+					rSnap := &RouteSnapshot{
+						Protocol: "tcp",
+						Path:     "*default*",
+						Strategy: rtProxy.Default.GetStrategyName(),
+						Backends: make([]*BackendSnapshot, 0),
+					}
+					for _, b := range rtProxy.Default.Backends() {
+						snapLat := b.Activity.Latency.Snapshot()
+
+						bSnap := &BackendSnapshot{
+							URL:       b.Address,
+							Alive:     b.Alive.Load(),
+							InFlight:  b.Activity.InFlight.Load(),
+							Failures:  int64(b.Activity.Failures.Load()),
+							TotalReqs: b.Activity.Requests.Load(),
+							Latency:   snapLat,
+							Healthy:   b.Health.IsHealthy(),
+						}
+						rSnap.Backends = append(rSnap.Backends, bSnap)
+
+						totalReqs += b.Activity.Requests.Load()
+						if snapLat.Count > 0 && snapLat.P99 > 0 {
+							sumP99 += snapLat.P99
+							p99Count++
+						}
+					}
+					totalBackends += len(rSnap.Backends)
+					hSnap.Routes = append(hSnap.Routes, rSnap)
+				}
+
+				rtProxy.Mu.RUnlock()
+			}
 		}
 
 		hSnap.TotalReqs = totalReqs

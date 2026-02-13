@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
@@ -20,14 +21,12 @@ type Proxy struct {
 	Listen      string
 	IdleTimeout time.Duration
 
-	// RWMutex protects Routes and Default during hot reloads
-	mu      sync.RWMutex
+	Mu      sync.RWMutex
 	Routes  map[string]*Balancer
 	Default *Balancer
 
 	Logger *ll.Logger
 
-	// Connection tracking for graceful shutdown
 	connsMu sync.Mutex
 	conns   map[net.Conn]struct{}
 
@@ -54,10 +53,10 @@ func (p *Proxy) SetIdleTimeout(timeout time.Duration) {
 }
 
 func (p *Proxy) AddRoute(hostname string, cfg alaye.TCPRoute) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.Mu.Lock()
+	defer p.Mu.Unlock()
 
-	bal := NewBalancer(cfg) // Ensure NewBalancer is exported in tcp.go
+	bal := NewBalancer(cfg)
 	hostname = strings.ToLower(strings.TrimSpace(hostname))
 
 	if hostname == "" || hostname == "*" {
@@ -67,22 +66,24 @@ func (p *Proxy) AddRoute(hostname string, cfg alaye.TCPRoute) {
 	}
 }
 
-// UpdateRoutes allows hot-swapping the routing logic without dropping connections
 func (p *Proxy) UpdateRoutes(newRoutes map[string]*Balancer, newDefault *Balancer) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.Mu.Lock()
+	// Capture old balancers to stop them safely outside the lock
+	oldRoutes := p.Routes
+	oldDefault := p.Default
 
-	// 1. Stop health checks on old balancers
-	if p.Default != nil {
-		p.Default.Stop()
-	}
-	for _, r := range p.Routes {
-		r.Stop()
-	}
-
-	// 2. Swap
+	// Swap
 	p.Routes = newRoutes
 	p.Default = newDefault
+	p.Mu.Unlock()
+
+	// Fix 7: Stop old resources after swapping to avoid blocking/races on the map
+	if oldDefault != nil {
+		oldDefault.Stop()
+	}
+	for _, r := range oldRoutes {
+		r.Stop()
+	}
 
 	p.Logger.Fields("listen", p.Listen).Info("tcp proxy routes updated")
 }
@@ -93,10 +94,13 @@ func (p *Proxy) Start() error {
 		return err
 	}
 
+	cache.TCP.Store(p.Listen, &cache.Item{Value: p})
+
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
 		defer l.Close()
+		defer cache.TCP.Delete(p.Listen)
 
 		for {
 			select {
@@ -135,17 +139,15 @@ func (p *Proxy) Stop() {
 		close(p.quit)
 	}
 
-	p.mu.Lock()
+	p.Mu.Lock()
 	if p.Default != nil {
 		p.Default.Stop()
 	}
 	for _, r := range p.Routes {
 		r.Stop()
 	}
-	p.mu.Unlock()
+	p.Mu.Unlock()
 
-	// Force close active connections after grace period
-	// This prevents DB/Long-lived connections from hanging the server process forever
 	go func() {
 		time.Sleep(5 * time.Second)
 		p.connsMu.Lock()
@@ -184,9 +186,9 @@ func (p *Proxy) handle(src net.Conn) {
 		_ = tcpConn.SetKeepAlivePeriod(30 * time.Second)
 	}
 
-	p.mu.RLock()
+	p.Mu.RLock()
 	needSNI := len(p.Routes) > 0
-	p.mu.RUnlock()
+	p.Mu.RUnlock()
 
 	var (
 		peekBuf   []byte
@@ -203,9 +205,9 @@ func (p *Proxy) handle(src net.Conn) {
 
 		if err != nil {
 			if p.isTimeout(err) && n0 == 0 {
-				p.mu.RLock()
+				p.Mu.RLock()
 				hasDefault := p.Default != nil
-				p.mu.RUnlock()
+				p.Mu.RUnlock()
 
 				if !hasDefault {
 					p.Logger.Fields("remote", remoteAddr).Debug("tcp peek timeout, no default route")
@@ -275,16 +277,28 @@ func (p *Proxy) handle(src net.Conn) {
 		return
 	}
 
+	backend.Activity.StartRequest()
+	start := time.Now()
+
+	// Ensure metrics are recorded even if Proxy Protocol write fails
+	requestFailed := false
+	defer func() {
+		duration := time.Since(start).Microseconds()
+		backend.Activity.EndRequest(duration, requestFailed)
+	}()
+
 	if balancer.useProtocol() {
 		header := proxyproto.HeaderProxyFromAddrs(
 			byte(1),
 			client.RemoteAddr(),
 			client.LocalAddr(),
 		)
+		// Fix 9: Handle header write failure correctly
 		if _, err := header.WriteTo(dst); err != nil {
 			p.Logger.Fields("err", err).Error("failed to write proxy protocol header")
 			_ = client.Close()
 			_ = dst.Close()
+			requestFailed = true // Mark as failed for metrics
 			return
 		}
 	}
@@ -294,15 +308,12 @@ func (p *Proxy) handle(src net.Conn) {
 		_ = tcpConn.SetKeepAlivePeriod(30 * time.Second)
 	}
 
-	backend.ActiveConns.Add(1)
-	defer backend.ActiveConns.Add(-1)
-
 	p.pipe(client, dst)
 }
 
 func (p *Proxy) pickBalancer(sni string) *Balancer {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+	p.Mu.RLock()
+	defer p.Mu.RUnlock()
 
 	if sni != "" {
 		sni = strings.ToLower(strings.TrimSpace(sni))
@@ -310,10 +321,12 @@ func (p *Proxy) pickBalancer(sni string) *Balancer {
 			if b, ok := p.Routes[sni]; ok {
 				return b
 			}
+			// Fix 8: Correct SNI Logic
 			for routeSNI, b := range p.Routes {
 				if strings.HasPrefix(routeSNI, "*.") {
-					suffix := routeSNI[1:]
-					if strings.HasSuffix(sni, suffix) {
+					suffix := routeSNI[1:] // e.g. "example.com"
+					// Must match exact domain OR .domain
+					if sni == suffix || strings.HasSuffix(sni, "."+suffix) {
 						return b
 					}
 				}
@@ -323,9 +336,6 @@ func (p *Proxy) pickBalancer(sni string) *Balancer {
 	return p.Default
 }
 
-// pipe ensures robust bidirectional copying with support for TCP Half-Close.
-// This is critical for gRPC, PostgreSQL, and other protocols that use
-// half-closed states to signal end-of-request.
 func (p *Proxy) pipe(client, backend net.Conn) {
 	timeout := p.IdleTimeout
 	if timeout == 0 {
@@ -344,7 +354,6 @@ func (p *Proxy) pipe(client, backend net.Conn) {
 			case errc <- err:
 			default:
 			}
-			// Force close to unblock the other direction immediately
 			_ = dst.Close()
 			_ = src.Close()
 		} else {
@@ -388,7 +397,7 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 		return "", woos.ErrNotClientHello
 	}
 
-	pos += 38 // Skip fixed headers
+	pos += 38
 	if pos >= len(data) {
 		return "", woos.ErrShort
 	}
@@ -462,4 +471,18 @@ func (p *Proxy) isTimeout(err error) bool {
 		return netErr.Timeout()
 	}
 	return false
+}
+
+func (p *Proxy) SnapBackends() []*Backend {
+	p.Mu.RLock()
+	defer p.Mu.RUnlock()
+
+	var all []*Backend
+	for _, bal := range p.Routes {
+		all = append(all, bal.Backends()...)
+	}
+	if p.Default != nil {
+		all = append(all, p.Default.Backends()...)
+	}
+	return all
 }

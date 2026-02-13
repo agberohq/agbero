@@ -7,3 +7,8 @@ var Route = New(Options{
 	MaximumSize: woos.CacheMax,
 	OnDelete:    CloserDelete,
 })
+
+var TCP = New(Options{
+	MaximumSize: woos.CacheMax,
+	OnDelete:    CloserDelete,
+})
