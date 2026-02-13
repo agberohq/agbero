@@ -1,4 +1,3 @@
-// cmd/oppor/worker.go
 package main
 
 import (

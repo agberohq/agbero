@@ -1,4 +1,3 @@
-// cmd/oppor/worker_pool.go
 package main
 
 import (
