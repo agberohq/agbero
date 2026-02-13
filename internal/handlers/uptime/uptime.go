@@ -36,15 +36,21 @@ type SystemSnapshot struct {
 }
 
 type HostSnapshot struct {
-	Routes        []*RouteSnapshot `json:"routes"`
-	TotalReqs     uint64           `json:"total_reqs"`
-	TotalBackends int              `json:"total_backends"`
-	AvgP99        int64            `json:"avg_p99_us"`
+	Routes    []*RouteSnapshot `json:"routes"`
+	Proxies   []*ProxySnapshot `json:"proxies"`
+	TotalReqs uint64           `json:"total_reqs"`
 }
 
 type RouteSnapshot struct {
-	Protocol string             `json:"protocol"` // "http" or "tcp"
+	Protocol string             `json:"protocol"` // "http"
 	Path     string             `json:"path"`
+	Strategy string             `json:"strategy"`
+	Backends []*BackendSnapshot `json:"backends"`
+}
+
+type ProxySnapshot struct {
+	Protocol string             `json:"protocol"` // "tcp"
+	Name     string             `json:"name"`     // SNI name or "*default*"
 	Strategy string             `json:"strategy"`
 	Backends []*BackendSnapshot `json:"backends"`
 }
@@ -123,13 +129,11 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 	hosts, _ := hm.LoadAll()
 	for domain, hcfg := range hosts {
 		hSnap := &HostSnapshot{
-			Routes: make([]*RouteSnapshot, 0, len(hcfg.Routes)),
+			Routes:  make([]*RouteSnapshot, 0),
+			Proxies: make([]*ProxySnapshot, 0),
 		}
 
 		var totalReqs uint64
-		var totalBackends int
-		var sumP99 int64
-		var p99Count int
 
 		// --- HTTP Routes ---
 		for _, route := range hcfg.Routes {
@@ -153,31 +157,28 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 							Healthy:   b.Health.IsHealthy(),
 						}
 						rSnap.Backends = append(rSnap.Backends, bSnap)
-
 						totalReqs += b.Activity.Requests.Load()
-						if bSnap.Latency.Count > 0 && bSnap.Latency.P99 > 0 {
-							sumP99 += bSnap.Latency.P99
-							p99Count++
-						}
 					}
 				}
 			} else {
-				// Fallback for inactive routes
+				// Fallback for inactive/unloaded routes (config only)
 				for _, url := range route.Backends.Servers {
 					rSnap.Backends = append(rSnap.Backends, &BackendSnapshot{
-						URL:     url.Address,
-						Alive:   false,
-						Healthy: false,
-						Latency: metrics.LatencySnapshot{},
+						URL:       url.Address,
+						Alive:     false,
+						Healthy:   false,
+						Latency:   metrics.LatencySnapshot{},
+						InFlight:  0,
+						Failures:  0,
+						TotalReqs: 0,
 					})
 				}
 			}
 
-			totalBackends += len(rSnap.Backends)
 			hSnap.Routes = append(hSnap.Routes, rSnap)
 		}
 
-		// --- TCP Routes ---
+		// --- TCP Proxies ---
 		if len(hcfg.Proxies) > 0 {
 			for _, tcpCfg := range hcfg.Proxies {
 				item, ok := cache.TCP.Load(tcpCfg.Listen)
@@ -194,67 +195,51 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 
 				// 1. SNI Routes
 				for sni, bal := range rtProxy.Routes {
-					rSnap := &RouteSnapshot{
+					pSnap := &ProxySnapshot{
 						Protocol: "tcp",
-						Path:     sni,
+						Name:     sni,
 						Strategy: bal.GetStrategyName(),
 						Backends: make([]*BackendSnapshot, 0),
 					}
 
 					for _, b := range bal.Backends() {
-						snapLat := b.Activity.Latency.Snapshot()
-
 						bSnap := &BackendSnapshot{
 							URL:       b.Address,
 							Alive:     b.Alive.Load(),
 							InFlight:  b.Activity.InFlight.Load(),
 							Failures:  int64(b.Activity.Failures.Load()),
 							TotalReqs: b.Activity.Requests.Load(),
-							Latency:   snapLat,
+							Latency:   b.Activity.Latency.Snapshot(),
 							Healthy:   b.Health.IsHealthy(),
 						}
-						rSnap.Backends = append(rSnap.Backends, bSnap)
-
+						pSnap.Backends = append(pSnap.Backends, bSnap)
 						totalReqs += b.Activity.Requests.Load()
-						if snapLat.Count > 0 && snapLat.P99 > 0 {
-							sumP99 += snapLat.P99
-							p99Count++
-						}
 					}
-					totalBackends += len(rSnap.Backends)
-					hSnap.Routes = append(hSnap.Routes, rSnap)
+					hSnap.Proxies = append(hSnap.Proxies, pSnap)
 				}
 
 				// 2. Default Route
 				if rtProxy.Default != nil {
-					rSnap := &RouteSnapshot{
+					pSnap := &ProxySnapshot{
 						Protocol: "tcp",
-						Path:     "*default*",
+						Name:     "*default*",
 						Strategy: rtProxy.Default.GetStrategyName(),
 						Backends: make([]*BackendSnapshot, 0),
 					}
 					for _, b := range rtProxy.Default.Backends() {
-						snapLat := b.Activity.Latency.Snapshot()
-
 						bSnap := &BackendSnapshot{
 							URL:       b.Address,
 							Alive:     b.Alive.Load(),
 							InFlight:  b.Activity.InFlight.Load(),
 							Failures:  int64(b.Activity.Failures.Load()),
 							TotalReqs: b.Activity.Requests.Load(),
-							Latency:   snapLat,
+							Latency:   b.Activity.Latency.Snapshot(),
 							Healthy:   b.Health.IsHealthy(),
 						}
-						rSnap.Backends = append(rSnap.Backends, bSnap)
-
+						pSnap.Backends = append(pSnap.Backends, bSnap)
 						totalReqs += b.Activity.Requests.Load()
-						if snapLat.Count > 0 && snapLat.P99 > 0 {
-							sumP99 += snapLat.P99
-							p99Count++
-						}
 					}
-					totalBackends += len(rSnap.Backends)
-					hSnap.Routes = append(hSnap.Routes, rSnap)
+					hSnap.Proxies = append(hSnap.Proxies, pSnap)
 				}
 
 				rtProxy.Mu.RUnlock()
@@ -262,11 +247,6 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 		}
 
 		hSnap.TotalReqs = totalReqs
-		hSnap.TotalBackends = totalBackends
-		if p99Count > 0 {
-			hSnap.AvgP99 = sumP99 / int64(p99Count)
-		}
-
 		sysSnap.Hosts[domain] = hSnap
 	}
 

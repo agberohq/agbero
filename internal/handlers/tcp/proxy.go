@@ -269,7 +269,7 @@ func (p *Proxy) handle(src net.Conn) {
 	}
 
 	if dst == nil {
-		p.Logger.Fields("remote", remoteAddr, "sni", sni).Warn("tcp proxy: upstream unavailable")
+		p.Logger.Fields("remote", remoteAddr, "sni", sni).Warnf("tcp proxy: upstream (%s) unavailable", backend.Address)
 		_ = client.Close()
 		return
 	}

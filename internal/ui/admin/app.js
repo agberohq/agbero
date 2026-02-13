@@ -1,3 +1,4 @@
+// app.js
 class AgberoApp {
     constructor() {
         this.apiBase = window.location.origin;
@@ -499,6 +500,31 @@ class AgberoApp {
                         total_reqs += (b.total_reqs || 0);
                         total_errors += (b.failures || 0);
 
+                        // Only count HTTP backends as "active" for dashboard stats
+                        const isHTTP = b.url && b.url.startsWith('http');
+                        if (isHTTP) {
+                            const healthy = b.healthy !== undefined ? b.healthy : (b.alive === true);
+                            if (healthy) active_backends++;
+                        }
+
+                        // Latency metrics - apply to all backend types
+                        if (b.latency_us && b.latency_us.count > 0) {
+                            sumLat += b.latency_us.sum_us;
+                            countLat += b.latency_us.count;
+
+                            if (b.latency_us.p99 > 0) {
+                                total_p99 += b.latency_us.p99;
+                                hosts_with_p99++;
+                            }
+                        }
+                    });
+                });
+
+                if (h.proxies) h.proxies.forEach(p => {
+                    if (p.backends) p.backends.forEach(b => {
+                        total_reqs += (b.total_reqs || 0);
+                        total_errors += (b.failures || 0);
+
                         // FIXED: Only count HTTP backends as "active" for dashboard stats
                         const isHTTP = b.url && b.url.startsWith('http');
                         if (isHTTP) {
@@ -749,6 +775,91 @@ class AgberoApp {
                     }
                 });
             }
+
+            if (cfg.proxies) {
+                cfg.proxies.forEach((proxy, pidx) => {
+                    routeCount++;
+                    const path = proxy.name ? proxy.name.replace('*default*', '* (TCP)') : proxy.path || proxy.protocol || "*";
+                    const pathMatches = path.toLowerCase().includes(filterTerm);
+                    const proxyStats = rtStats.proxies?.[pidx];
+
+                    let backendHtml = "";
+
+                    const configBackends = proxy.backends?.servers || [];
+                    const uptimeBackends = proxyStats?.backends || [];
+                    const hasAnyBackends = configBackends.length > 0 || uptimeBackends.length > 0;
+
+                    if (hasAnyBackends) {
+                        const displayBackends = uptimeBackends.length > 0 ? uptimeBackends : configBackends;
+                        backendHtml = `<div class="backend-list">`;
+
+                        displayBackends.forEach((b, bIdx) => {
+                            const configBackend = configBackends[bIdx] || {};
+                            const url = b.address || b.url || configBackend.address || configBackend.url;
+                            const weight = configBackend.weight !== undefined ? configBackend.weight : (b.weight || '-');
+
+                            const hasStats = uptimeBackends[bIdx] !== undefined;
+                            let healthStatus = 'unknown';
+                            let dotColor = 'warn';
+                            let healthy = false;
+
+                            if (hasStats) {
+                                if (b.healthy !== undefined) {
+                                    healthy = b.healthy;
+                                    healthStatus = healthy ? 'ok' : 'down';
+                                    dotColor = healthy ? 'ok' : 'down';
+                                } else if (b.alive !== undefined) {
+                                    const isTCPBackend = url && !url.startsWith('http');
+                                    if (isTCPBackend) {
+                                        healthy = true;
+                                        healthStatus = b.alive ? 'ok' : 'warn';
+                                        dotColor = b.alive ? 'ok' : 'warn';
+                                    } else {
+                                        healthy = b.alive === true;
+                                        healthStatus = healthy ? 'ok' : 'down';
+                                        dotColor = healthy ? 'ok' : 'down';
+                                    }
+                                }
+                            }
+
+                            if (url && url.toLowerCase().includes(filterTerm)) {
+                                hostHasMatch = true;
+                            }
+
+                            const p99 = b.latency_us?.p99 ? (b.latency_us.p99 / 1000).toFixed(0) + "ms" : "-";
+                            const reqs = b.total_reqs || 0;
+                            const in_flight = b.in_flight || 0;
+
+                            backendHtml += `
+                            <div class="backend-row ${hasStats && healthStatus === 'down' ? 'down' : ''}">
+                                <span class="dot ${dotColor}" title="${hasStats ? (healthStatus === 'ok' ? 'Healthy' : healthStatus === 'warn' ? 'Idle' : 'Unhealthy') : 'No data'}"></span>
+                                <span class="be-url" onclick="event.stopPropagation(); app.copyToClipboard('${url}')">${url}</span>
+                                <span class="be-stat">W: ${weight}</span>
+                                <span class="be-stat">${p99}</span>
+                                <span class="be-stat">${this.fmtNum(reqs)}</span>
+                                <span class="be-badge">${in_flight > 0 ? `<span class="badge info">⚡${in_flight}</span>` : ''}</span>
+                            </div>`;
+                        });
+                        backendHtml += `</div>`;
+                    } else if (proxy.web && proxy.web.root) {
+                        backendHtml = `<div class="backend-row"><span class="dot ok"></span> <span>📂 ${proxy.web.root}</span></div>`;
+                        if (proxy.web.root.toLowerCase().includes(filterTerm)) hostHasMatch = true;
+                    }
+
+                    const shouldShowRoute = filterTerm === "" || hostHasMatch || pathMatches || proxy.protocol === 'tcp';
+
+                    if (shouldShowRoute) {
+                        hostHtml += `
+                        <div class="route-block" onclick="app.openRouteDrawer('${hostname}', ${pidx}, 'proxy')">
+                            <div class="route-header">
+                                <span class="route-path">${path}</span>
+                                <span class="badge info" style="margin-left:auto; font-size:9px;">DETAILS →</span>
+                            </div>
+                            ${backendHtml}
+                        </div>`;
+                    }
+                });
+            }
             hostHtml += `</div>`;
 
             if (hostHasMatch || filterTerm === "") {
@@ -770,18 +881,26 @@ class AgberoApp {
     }
 
     // ================== DRAWER - FIXED HEALTH DETECTION ==================
-    openRouteDrawer(hostname, routeIdx) {
-        const route = this.hostsData.config[hostname].routes[routeIdx];
-        const routeStats = this.hostsData.stats[hostname]?.routes?.[routeIdx] || {};
+    openRouteDrawer(hostname, idx, type = 'route') {
+        let cfg_item;
+        let itemStats;
+        if (type === 'proxy') {
+            cfg_item = this.hostsData.config[hostname].proxies[idx];
+            itemStats = this.hostsData.stats[hostname]?.proxies?.[idx] || {};
+        } else {
+            cfg_item = this.hostsData.config[hostname].routes[idx];
+            itemStats = this.hostsData.stats[hostname]?.routes?.[idx] || {};
+        }
 
-        document.getElementById("drawerRoutePath").innerText = route.path;
+        const path = cfg_item.path || (cfg_item.name ? cfg_item.name.replace('*default*', '* (TCP)') : cfg_item.protocol || "*");
+        document.getElementById("drawerRoutePath").innerText = path;
         document.getElementById("drawerHostName").innerText = hostname;
 
         const content = document.getElementById("drawerBody");
         content.innerHTML = "";
 
         // Handler section
-        if (route.web && route.web.root) {
+        if (cfg_item.web && cfg_item.web.root) {
             content.innerHTML += `
                 <div class="detail-section">
                     <div class="detail-title">📂 Static File Handler</div>
@@ -789,14 +908,14 @@ class AgberoApp {
                         <span class="handler-icon">📁</span>
                         <div class="handler-info">
                             <strong>File Server</strong>
-                            <span>Root: ${route.web.root}</span>
-                            <span>Listing: ${route.web.listing ? 'Enabled' : 'Disabled'}</span>
+                            <span>Root: ${cfg_item.web.root}</span>
+                            <span>Listing: ${cfg_item.web.listing ? 'Enabled' : 'Disabled'}</span>
                         </div>
                     </div>
                 </div>`;
         }
 
-        if (route.web && route.web.php && route.web.php.enabled) {
+        if (cfg_item.web && cfg_item.web.php && cfg_item.web.php.enabled) {
             content.innerHTML += `
                 <div class="detail-section">
                     <div class="detail-title">🐘 PHP Handler</div>
@@ -804,15 +923,15 @@ class AgberoApp {
                         <span class="handler-icon">⚙️</span>
                         <div class="handler-info">
                             <strong>FastCGI Proxy</strong>
-                            <span>Address: ${route.web.php.address}</span>
-                            <span>Index: ${route.web.php.index || 'index.php'}</span>
+                            <span>Address: ${cfg_item.web.php.address}</span>
+                            <span>Index: ${cfg_item.web.php.index || 'index.php'}</span>
                         </div>
                     </div>
                 </div>`;
         }
 
-        const configBackends = route.backends?.servers || [];
-        const statBackends = routeStats.backends || [];
+        const configBackends = cfg_item.backends?.servers || [];
+        const statBackends = itemStats.backends || [];
         const displayBackends = configBackends.length > 0 ? configBackends : statBackends;
 
         if (displayBackends.length > 0) {
@@ -870,13 +989,13 @@ class AgberoApp {
                     </div>`;
             });
 
-            const lbStrategy = route.backends?.lb_strategy || route.backends?.load_balancing?.strategy || "round_robin";
+            const lbStrategy = cfg_item.backends?.lb_strategy || cfg_item.backends?.load_balancing?.strategy || "round_robin";
             let strategyDisplay = "Round Robin";
             if (lbStrategy === "least_conn") strategyDisplay = "Least Connections";
             else if (lbStrategy === "ip_hash") strategyDisplay = "IP Hash";
             else if (lbStrategy === "uri_hash") strategyDisplay = "URI Hash";
 
-            const healthCheck = route.health_check || route.backends?.health_check;
+            const healthCheck = cfg_item.health_check || cfg_item.backends?.health_check;
             let healthCheckHtml = '<div class="kv-item"><label>Health Check</label><div><span class="badge error">Not Configured</span></div></div>';
             if (healthCheck) {
                 const hcPath = healthCheck.path || '/health';
@@ -888,7 +1007,7 @@ class AgberoApp {
             }
 
             let cbHtml = '';
-            const cb = route.circuit_breaker || route.backends?.circuit_breaker;
+            const cb = cfg_item.circuit_breaker || cfg_item.backends?.circuit_breaker;
             if (cb && cb.enabled) {
                 const cbStatus = s.circuit_breaker_state || 'closed';
                 const cbClass = cbStatus === 'closed' ? 'success' : (cbStatus === 'open' ? 'error' : 'warning');
@@ -897,13 +1016,13 @@ class AgberoApp {
                 `;
             }
 
-            const timeouts = route.timeouts || {};
+            const timeouts = cfg_item.timeouts || {};
             const readTimeout = timeouts.read ? (timeouts.read/1000000000)+'s' : 'inherit';
             const writeTimeout = timeouts.write ? (timeouts.write/1000000000)+'s' : 'inherit';
             const idleTimeout = timeouts.idle ? (timeouts.idle/1000000000)+'s' : 'inherit';
 
             let compressionHtml = '';
-            const compression = route.compression_config || {};
+            const compression = cfg_item.compression_config || {};
             if (compression.enabled) {
                 const algo = compression.type || 'gzip';
                 const level = compression.level || 'default';
@@ -913,7 +1032,7 @@ class AgberoApp {
             }
 
             let rateLimitHtml = '';
-            const rl = route.rate_limit;
+            const rl = cfg_item.rate_limit;
             if (rl) {
                 const keyType = rl.key || 'ip';
                 rateLimitHtml = `
@@ -922,7 +1041,7 @@ class AgberoApp {
             }
 
             let wasmHtml = '';
-            const wasm = route.wasm;
+            const wasm = cfg_item.wasm;
             if (wasm && wasm.enabled !== false) {
                 const moduleName = wasm.path ? wasm.path.split('/').pop() : 'filter.wasm';
                 wasmHtml = `
@@ -988,7 +1107,7 @@ class AgberoApp {
         }
 
         let mwHtml = "";
-        const mw = route.middleware || {};
+        const mw = cfg_item.middleware || {};
 
         if (mw.ip_allowlist && mw.ip_allowlist.length > 0) {
             mwHtml += `
@@ -1068,7 +1187,7 @@ class AgberoApp {
             <div class="detail-section">
                 <div class="detail-title">📜 Source (read-only)</div>
                 <div class="code-box" style="max-height: 200px;">
-                    <pre>${JSON.stringify(route, null, 2)}</pre>
+                    <pre>${JSON.stringify(cfg_item, null, 2)}</pre>
                 </div>
             </div>`;
 

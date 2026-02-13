@@ -282,14 +282,19 @@ func TestServer_HandleRequest_WithHost(t *testing.T) {
 	}
 
 	hostFile := filepath.Join(hostsDir, "example.com.hcl")
-	content := `host "example.com" {
-    domains = ["example.com"]
-    route "/" {
-        backend "test" {
+
+	// FIX 1: Correct HCL structure (removed 'host' wrapper, correct nesting)
+	content := `
+domains = ["example.com"]
+
+route "/" {
+    backend {
+        server {
             address = "` + backend.URL + `"
         }
     }
-}`
+}
+`
 	if err := os.WriteFile(hostFile, []byte(content), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
@@ -303,6 +308,7 @@ func TestServer_HandleRequest_WithHost(t *testing.T) {
 		hostManager: hm,
 		logger:      testLogger,
 		reaper:      jack.NewReaper(time.Minute),
+		global:      &alaye.Global{}, // FIX 2: Initialize Global config to prevent panic
 	}
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -312,7 +318,7 @@ func TestServer_HandleRequest_WithHost(t *testing.T) {
 	s.handleRequest(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("Expected 200, got %d", w.Code)
+		t.Errorf("Expected 200, got %d. Body: %s", w.Code, w.Body.String())
 	}
 	if w.Body.String() != "backend response" {
 		t.Errorf("Expected 'backend response', got %q", w.Body.String())
