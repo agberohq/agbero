@@ -2,84 +2,73 @@ package xhttp
 
 import (
 	"context"
-	"math"
-	"math/rand/v2"
 	"net/http"
-	"strings"
-	"sync/atomic"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/balancer"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
-type snapshotHolder struct {
-	backends []*Backend
-	wheel    *weightWheel
-
-	hasConditions bool
-	weightsAllOne bool
-}
-
+// LoadBalancer wraps the new balancer package for HTTP backends
 type LoadBalancer struct {
-	strategy    uint8
+	selector    *balancer.Selector
 	timeout     time.Duration
 	stripPrefix []string
+}
 
-	state     atomic.Value
-	rrCounter atomic.Uint64
+// httpBackend wraps xhttp.Backend to implement balancer.Backend interface
+type httpBackend struct {
+	*Backend
+}
+
+func (b httpBackend) Alive() bool     { return b.Backend.Alive.Load() }
+func (b httpBackend) Weight() int     { return b.Backend.Weight }
+func (b httpBackend) InFlight() int64 { return b.Backend.Activity.InFlight.Load() }
+
+func (b httpBackend) ResponseTime() int64 {
+	// Get average latency from metrics
+	snap := b.Backend.Activity.Latency.Snapshot()
+	if snap.Count == 0 {
+		return 0
+	}
+	return snap.Avg // Changed from Mean to Avg
 }
 
 func NewLoadBalancer(backends []*Backend, strategy string, timeout time.Duration, stripPrefixes []string) *LoadBalancer {
+	wrapped := make([]balancer.Backend, 0, len(backends))
+	for _, b := range backends {
+		if b != nil {
+			wrapped = append(wrapped, httpBackend{b})
+		}
+	}
+
 	lb := &LoadBalancer{
 		timeout:     timeout,
 		stripPrefix: append([]string(nil), stripPrefixes...),
 	}
-	lb.setStrategy(strategy)
-	lb.Update(backends)
+	lb.selector = balancer.NewSelector(wrapped, balancer.ParseStrategy(strategy))
 	return lb
 }
 
 func (lb *LoadBalancer) Update(list []*Backend) {
-	cp := make([]*Backend, 0, len(list))
-	hasCond := false
-
+	wrapped := make([]balancer.Backend, 0, len(list))
 	for _, b := range list {
-		if b == nil {
-			continue
-		}
-		cp = append(cp, b)
-		if !hasCond && b.Cond != nil && b.Cond.HasRules() {
-			hasCond = true
+		if b != nil {
+			wrapped = append(wrapped, httpBackend{b})
 		}
 	}
-
-	wheel := buildWheel(cp)
-	weightsAllOne := wheel == nil || len(wheel.cumul) == 0
-
-	lb.state.Store(&snapshotHolder{
-		backends:      cp,
-		wheel:         wheel,
-		hasConditions: hasCond,
-		weightsAllOne: weightsAllOne,
-	})
+	lb.selector.Update(wrapped)
 }
 
 func (lb *LoadBalancer) Snapshot() []*Backend {
-	holder := lb.getHolder()
-	if holder == nil || len(holder.backends) == 0 {
-		return nil
+	// Return underlying backends
+	var result []*Backend
+	for _, hb := range lb.selector.Backends() {
+		if b, ok := hb.(httpBackend); ok {
+			result = append(result, b.Backend)
+		}
 	}
-	return holder.backends
-}
-
-func (lb *LoadBalancer) getHolder() *snapshotHolder {
-	val := lb.state.Load()
-	if val == nil {
-		return nil
-	}
-	return val.(*snapshotHolder)
+	return result
 }
 
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -100,229 +89,29 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (lb *LoadBalancer) PickBackend(r *http.Request) *Backend {
-	holder := lb.getHolder()
-	if holder == nil || len(holder.backends) == 0 {
+	key := lb.hashKey(r)
+	b := lb.selector.Pick(r, func() uint64 { return key })
+	if b == nil {
 		return nil
 	}
-
-	list := holder.backends
-	wheel := holder.wheel
-
-	if holder.hasConditions {
-		if be, handled := lb.pickByConditions(list, wheel, r, holder.weightsAllOne); handled {
-			return be
-		}
-	}
-
-	return lb.pickWithList(list, wheel, r)
-}
-
-func (lb *LoadBalancer) pickWithList(list []*Backend, w *weightWheel, r *http.Request) *Backend {
-	if len(list) == 1 {
-		if list[0].Alive.Load() {
-			return list[0]
-		}
-		return nil
-	}
-
-	switch lb.strategy {
-	case woos.StIPHash:
-		return lb.pickIPHash(list, w, r)
-	case woos.StURLHash:
-		return lb.pickURLHash(list, w, r)
-	case woos.StLeastConn:
-		return lb.pickLeastConn(list)
-	case woos.StRandom:
-		return lb.pickRandom(list, w)
-	case woos.StWeightedLeastConn:
-		return lb.pickWeightedLeastConn(list)
-	default:
-		return lb.pickRoundRobin(list, w)
-	}
-}
-
-func (lb *LoadBalancer) pickRoundRobin(list []*Backend, w *weightWheel) *Backend {
-	if w != nil && w.total > 0 && len(w.cumul) > 0 {
-		for i := 0; i < len(list); i++ {
-			idx := w.next(lb.rrCounter.Add(1))
-			if idx >= 0 && idx < len(list) && list[idx].Alive.Load() {
-				return list[idx]
-			}
-		}
-		return nil
-	}
-
-	start := lb.rrCounter.Add(1)
-	n := uint64(len(list))
-	for i := 0; i < len(list); i++ {
-		idx := int((start + uint64(i)) % n)
-		if list[idx].Alive.Load() {
-			return list[idx]
-		}
+	if hb, ok := b.(httpBackend); ok {
+		return hb.Backend
 	}
 	return nil
 }
 
-func (lb *LoadBalancer) pickRandom(list []*Backend, w *weightWheel) *Backend {
-	r := rngPool.Get().(*rand.Rand)
-	defer rngPool.Put(r)
-
-	if w == nil || w.total == 0 || len(w.cumul) == 0 {
-		start := r.IntN(len(list))
-		for i := 0; i < len(list); i++ {
-			idx := (start + i) % len(list)
-			if list[idx].Alive.Load() {
-				return list[idx]
-			}
+func (lb *LoadBalancer) hashKey(r *http.Request) uint64 {
+	switch lb.selector.Strategy {
+	case balancer.StrategyIPHash:
+		ip := clientip.ClientIP(r)
+		return balancer.HashString(ip)
+	case balancer.StrategyURLHash:
+		path := r.URL.Path
+		if path == "" {
+			path = "/"
 		}
-		return nil
-	}
-
-	target := r.Uint64N(w.total)
-	idx := w.search(target)
-	if idx >= 0 && idx < len(list) && list[idx].Alive.Load() {
-		return list[idx]
-	}
-
-	for i := 1; i < len(list); i++ {
-		j := (idx + i) % len(list)
-		if list[j].Alive.Load() {
-			return list[j]
-		}
-	}
-	return nil
-}
-
-func (lb *LoadBalancer) pickIPHash(list []*Backend, w *weightWheel, r *http.Request) *Backend {
-	key := clientip.ClientIP(r)
-	if key == "" {
-		return lb.pickRoundRobin(list, w)
-	}
-	return lb.hashPick(list, w, key)
-}
-
-func (lb *LoadBalancer) pickURLHash(list []*Backend, w *weightWheel, r *http.Request) *Backend {
-	key := r.URL.Path
-	if key == "" {
-		key = woos.Slash
-	}
-	return lb.hashPick(list, w, key)
-}
-
-func (lb *LoadBalancer) hashPick(list []*Backend, w *weightWheel, key string) *Backend {
-	h := lb.hashStr(key)
-
-	if w == nil || w.total == 0 || len(w.cumul) == 0 {
-		idx := int(h % uint64(len(list)))
-		if list[idx].Alive.Load() {
-			return list[idx]
-		}
-		return lb.pickRandom(list, w)
-	}
-
-	idx := w.search(h % w.total)
-	if idx >= 0 && idx < len(list) && list[idx].Alive.Load() {
-		return list[idx]
-	}
-	return lb.pickRandom(list, w)
-}
-
-func (lb *LoadBalancer) pickLeastConn(list []*Backend) *Backend {
-	var best *Backend
-	min := int64(math.MaxInt64)
-
-	for _, b := range list {
-		if b == nil || !b.Alive.Load() {
-			continue
-		}
-		if c := b.Activity.InFlight.Load(); c < min {
-			min = c
-			best = b
-		}
-	}
-	return best
-}
-
-func (lb *LoadBalancer) pickWeightedLeastConn(list []*Backend) *Backend {
-	var best *Backend
-	bestRatio := -1.0
-
-	for _, b := range list {
-		if b == nil || !b.Alive.Load() {
-			continue
-		}
-
-		w := float64(b.Weight)
-		if w <= 0 {
-			w = 1
-		}
-		c := float64(b.Activity.InFlight.Load() + 1)
-		ratio := c / w
-
-		if best == nil || ratio < bestRatio {
-			best = b
-			bestRatio = ratio
-		}
-	}
-	return best
-}
-
-func (lb *LoadBalancer) pickByConditions(
-	list []*Backend,
-	snapshotWheel *weightWheel,
-	r *http.Request,
-	weightsAllOne bool,
-) (*Backend, bool) {
-
-	var matchedHealthy []*Backend
-	anyMatch := false
-
-	for _, b := range list {
-		if b == nil || b.Cond == nil || !b.Cond.HasRules() {
-			continue
-		}
-		if !b.Cond.Match(r) {
-			continue
-		}
-		anyMatch = true
-		if b.Alive.Load() {
-			matchedHealthy = append(matchedHealthy, b)
-		}
-	}
-
-	if !anyMatch || len(matchedHealthy) == 0 {
-		return nil, false
-	}
-
-	if weightsAllOne {
-		return lb.pickWithList(matchedHealthy, nil, r), true
-	}
-
-	return lb.pickWithList(matchedHealthy, buildWheel(matchedHealthy), r), true
-}
-
-func (lb *LoadBalancer) setStrategy(s string) {
-	s = strings.ToLower(strings.TrimSpace(s))
-	switch s {
-	case strings.ToLower(alaye.StrategyIPHash):
-		lb.strategy = woos.StIPHash
-	case strings.ToLower(alaye.StrategyURLHash):
-		lb.strategy = woos.StURLHash
-	case strings.ToLower(alaye.StrategyLeastConn):
-		lb.strategy = woos.StLeastConn
-	case strings.ToLower(alaye.StrategyRandom):
-		lb.strategy = woos.StRandom
-	case strings.ToLower(alaye.StrategyWeightedLeastConn):
-		lb.strategy = woos.StWeightedLeastConn
+		return balancer.HashString(path)
 	default:
-		lb.strategy = woos.StRoundRobin
+		return 0
 	}
-}
-
-func (lb *LoadBalancer) hashStr(s string) uint64 {
-	var h uint64 = 5381
-	for i := 0; i < len(s); i++ {
-		h = ((h << 5) + h) + uint64(s[i])
-	}
-	return h
 }

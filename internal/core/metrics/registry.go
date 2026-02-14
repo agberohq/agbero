@@ -5,8 +5,6 @@ import (
 	"sync/atomic"
 )
 
-// DefaultRegistry is the singleton instance used to persist metrics
-// across handler recreation cycles (e.g. by the Reaper).
 var DefaultRegistry = NewRegistry()
 
 type BackendStats struct {
@@ -15,7 +13,6 @@ type BackendStats struct {
 	Alive    *atomic.Bool
 }
 
-// Close releases resources associated with the stats (e.g. Latency goroutines).
 func (s *BackendStats) Close() {
 	if s.Activity != nil && s.Activity.Latency != nil {
 		s.Activity.Latency.Close()
@@ -33,8 +30,6 @@ func NewRegistry() *Registry {
 	}
 }
 
-// GetOrRegister returns existing stats for the key or creates new ones.
-// It initializes Alive to true for new entries.
 func (r *Registry) GetOrRegister(key string) *BackendStats {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -55,22 +50,25 @@ func (r *Registry) GetOrRegister(key string) *BackendStats {
 	return s
 }
 
-// Get returns existing stats or nil.
 func (r *Registry) Get(key string) *BackendStats {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.items[key]
 }
 
-// Prune removes any keys not present in the keepKeys map and closes them.
 func (r *Registry) Prune(keepKeys map[string]bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	var toClose []*BackendStats
 
+	r.mu.Lock()
 	for k, v := range r.items {
 		if !keepKeys[k] {
-			v.Close() // Stop background goroutines (e.g. Latency histogram)
+			toClose = append(toClose, v)
 			delete(r.items, k)
 		}
+	}
+	r.mu.Unlock()
+
+	for _, v := range toClose {
+		v.Close()
 	}
 }

@@ -21,13 +21,13 @@ func (at *Activity) StartRequest() {
 	at.InFlight.Add(1)
 }
 
-func (at *Activity) EndRequest(duration int64, failed bool) {
-	at.InFlight.Add(-1)
+func (at *Activity) EndRequest(duration int64, isFailure bool) {
 	at.Requests.Add(1)
-	if failed {
+	if isFailure {
 		at.Failures.Add(1)
 	}
 	at.Latency.Record(duration)
+	at.InFlight.Add(-1)
 }
 
 func (at *Activity) Snapshot() map[string]interface{} {

@@ -15,6 +15,9 @@ const (
 	StrategyIPHash            = "ip_hash"
 	StrategyURLHash           = "url_hash"
 	StrategyWeightedLeastConn = "weighted_least_conn"
+	StrategyLeastResponseTime = "least_response_time"
+	StrategyPowerOfTwoChoices = "power_of_two"
+	StrategyConsistentHash    = "consistent_hash"
 )
 
 // Default Timeouts

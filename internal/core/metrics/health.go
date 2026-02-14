@@ -31,10 +31,12 @@ func (ht *Health) RecordSuccess() {
 func (ht *Health) RecordFailure() {
 	now := time.Now().UnixNano()
 	ht.lastFailure.Store(now)
-	ht.consecutiveFailures.Add(1)
+	cf := ht.consecutiveFailures.Add(1)
 	ht.totalChecks.Add(1)
 	ht.totalFailures.Add(1)
-	ht.healthy.Store(false)
+	if cf >= 3 {
+		ht.healthy.Store(false)
+	}
 }
 
 func (ht *Health) IsHealthy() bool {

@@ -1,22 +1,35 @@
+// xtcp/balancer.go - Complete rewrite using new balancer package
 package xtcp
 
 import (
 	"fmt"
-	"math/rand"
 	"strings"
-	"sync/atomic"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/balancer"
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
-type Balancer struct {
-	backends     []*Backend
-	strategy     uint8
-	strategyName string
+// tcpBackend wraps xtcp.Backend to implement balancer.Backend interface
+type tcpBackend struct {
+	*Backend
+}
 
-	rrCounter     atomic.Uint64
+func (b tcpBackend) Alive() bool     { return b.Backend.Alive.Load() }
+func (b tcpBackend) Weight() int     { return b.Backend.Weight }
+func (b tcpBackend) InFlight() int64 { return b.Backend.Activity.InFlight.Load() }
+func (b tcpBackend) ResponseTime() int64 {
+	snap := b.Backend.Activity.Latency.Snapshot()
+	if snap.Count == 0 {
+		return 0
+	}
+	return snap.Avg // Changed from Mean to Avg
+}
+
+type Balancer struct {
+	selector      *balancer.Selector
+	strategyName  string
 	proxyProtocol bool
 }
 
@@ -61,6 +74,7 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 		registry = metrics.DefaultRegistry
 	}
 
+	wrappedBackends := make([]balancer.Backend, 0, len(cfg.Backends))
 	for _, b := range cfg.Backends {
 		w := b.Weight
 		if w <= 0 {
@@ -81,39 +95,31 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 			hcExpect:   expectBytes,
 			failThresh: 2,
 			stop:       make(chan struct{}),
-			Activity:   stats.Activity, // Injected
-			Health:     stats.Health,   // Injected
-			Alive:      stats.Alive,    // Injected
+			Activity:   stats.Activity,
+			Health:     stats.Health,
+			Alive:      stats.Alive,
 		}
-		// NOTE: We do not hardcode Alive to true here.
-		// If the registry has it as false, it stays false until check() passes.
 
 		go be.healthCheckLoop()
 		backends = append(backends, be)
+		wrappedBackends = append(wrappedBackends, tcpBackend{be})
 	}
 
-	strat := woos.StRoundRobin
-	stratName := alaye.StrategyRoundRobin
-
-	switch strings.ToLower(strings.TrimSpace(cfg.Strategy)) {
-	case "least_conn":
-		strat = woos.StLeastConn
-		stratName = alaye.StrategyLeastConn
-	case "random":
-		strat = woos.StRandom
-		stratName = alaye.StrategyRandom
+	strategy := balancer.ParseStrategy(cfg.Strategy)
+	stratName := cfg.Strategy
+	if stratName == "" {
+		stratName = alaye.StrategyRoundRobin
 	}
 
 	return &Balancer{
-		backends:      backends,
-		strategy:      strat,
+		selector:      balancer.NewSelector(wrappedBackends, strategy),
 		strategyName:  stratName,
 		proxyProtocol: cfg.ProxyProtocol,
 	}
 }
 
 func (tb *Balancer) Stop() {
-	for _, b := range tb.backends {
+	for _, b := range tb.Backends() {
 		if b != nil {
 			b.Stop()
 		}
@@ -121,7 +127,7 @@ func (tb *Balancer) Stop() {
 }
 
 func (tb *Balancer) BackendCount() int {
-	return len(tb.backends)
+	return len(tb.selector.Backends())
 }
 
 func (tb *Balancer) GetStrategyName() string {
@@ -129,102 +135,51 @@ func (tb *Balancer) GetStrategyName() string {
 }
 
 func (tb *Balancer) Pick(exclude map[*Backend]struct{}) *Backend {
-	if len(tb.backends) == 0 {
-		return nil
-	}
-	if len(tb.backends) == 1 {
-		b := tb.backends[0]
-		if b != nil && b.Alive.Load() {
-			if b.MaxConns > 0 && b.Activity.InFlight.Load() >= b.MaxConns {
-				return nil
-			}
-			if _, ok := exclude[b]; !ok {
-				return b
-			}
-		}
+	backends := tb.selector.Backends()
+	if len(backends) == 0 {
 		return nil
 	}
 
-	switch tb.strategy {
-	case woos.StLeastConn:
-		return tb.pickLeastConn(exclude)
-	case woos.StRandom:
-		return tb.pickRandom(exclude)
-	default:
-		return tb.pickRoundRobin(exclude)
+	// Filter out excluded and unusable backends
+	var candidates []balancer.Backend
+	for _, b := range backends {
+		tb := b.(tcpBackend)
+		if tb.Backend == nil || !tb.Backend.Alive.Load() {
+			continue
+		}
+		if tb.Backend.MaxConns > 0 && tb.Backend.Activity.InFlight.Load() >= tb.Backend.MaxConns {
+			continue
+		}
+		if _, ok := exclude[tb.Backend]; ok {
+			continue
+		}
+		candidates = append(candidates, b)
 	}
-}
 
-func (tb *Balancer) pickRoundRobin(exclude map[*Backend]struct{}) *Backend {
-	n := uint64(len(tb.backends))
-	if n == 0 {
+	if len(candidates) == 0 {
 		return nil
 	}
 
-	raw := tb.rrCounter.Add(1)
-	start := int(raw % n)
+	// Use selector's strategy on filtered candidates
+	// Create a temporary selector with just candidates
+	tempSelector := balancer.NewSelector(candidates, tb.selector.Strategy)
 
-	for i := 0; i < len(tb.backends); i++ {
-		idx := (start + i) % len(tb.backends)
-		b := tb.backends[idx]
-		if !tb.isUsable(b, exclude) {
-			continue
-		}
-		return b
+	// For strategies that need request info, we pass nil
+	selected := tempSelector.Pick(nil, func() uint64 { return 0 })
+	if selected == nil {
+		return nil
 	}
-	return nil
-}
-
-func (tb *Balancer) pickRandom(exclude map[*Backend]struct{}) *Backend {
-	r := rngPool.Get().(*rand.Rand)
-	start := r.Intn(len(tb.backends))
-	rngPool.Put(r)
-
-	n := len(tb.backends)
-	for i := 0; i < n; i++ {
-		idx := (start + i) % n
-		b := tb.backends[idx]
-		if !tb.isUsable(b, exclude) {
-			continue
-		}
-		return b
-	}
-	return nil
-}
-
-func (tb *Balancer) pickLeastConn(exclude map[*Backend]struct{}) *Backend {
-	var best *Backend
-	var min int64 = -1
-
-	for _, b := range tb.backends {
-		if !tb.isUsable(b, exclude) {
-			continue
-		}
-
-		c := b.Activity.InFlight.Load()
-		if min == -1 || c < min {
-			min = c
-			best = b
-		}
-	}
-	return best
-}
-
-func (tb *Balancer) isUsable(b *Backend, exclude map[*Backend]struct{}) bool {
-	if b == nil || !b.Alive.Load() {
-		return false
-	}
-	if b.MaxConns > 0 && b.Activity.InFlight.Load() >= b.MaxConns {
-		return false
-	}
-	if _, ok := exclude[b]; ok {
-		return false
-	}
-	return true
+	return selected.(tcpBackend).Backend
 }
 
 func (tb *Balancer) useProtocol() bool { return tb != nil && tb.proxyProtocol }
 
 func (tb *Balancer) Backends() []*Backend {
-	return tb.backends
+	var result []*Backend
+	for _, b := range tb.selector.Backends() {
+		if tb, ok := b.(tcpBackend); ok {
+			result = append(result, tb.Backend)
+		}
+	}
+	return result
 }
