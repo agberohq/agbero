@@ -1,13 +1,22 @@
-package lb
+package xhttp
 
-import "git.imaxinacion.net/aibox/agbero/internal/handlers/xhttp"
+import (
+	"math/rand/v2"
+	"sync"
+)
+
+var rngPool = sync.Pool{
+	New: func() any {
+		return rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+	},
+}
 
 type weightWheel struct {
 	cumul []uint64
 	total uint64
 }
 
-func buildWheel(list []*xhttp.Backend) *weightWheel {
+func buildWheel(list []*Backend) *weightWheel {
 	if len(list) == 0 {
 		return &weightWheel{}
 	}

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/lb"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/xhttp"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/compress"
@@ -99,7 +98,7 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 		timeout = route.Timeouts.Request
 	}
 
-	loadBalancer := lb.NewLoadBalancer(
+	loadBalancer := xhttp.NewLoadBalancer(
 		backends,
 		route.Backends.LBStrategy,
 		timeout,

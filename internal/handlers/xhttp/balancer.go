@@ -1,4 +1,4 @@
-package lb
+package xhttp
 
 import (
 	"context"
@@ -9,14 +9,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/xhttp"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
 type snapshotHolder struct {
-	backends []*xhttp.Backend
+	backends []*Backend
 	wheel    *weightWheel
 
 	hasConditions bool
@@ -32,7 +31,7 @@ type LoadBalancer struct {
 	rrCounter atomic.Uint64
 }
 
-func NewLoadBalancer(backends []*xhttp.Backend, strategy string, timeout time.Duration, stripPrefixes []string) *LoadBalancer {
+func NewLoadBalancer(backends []*Backend, strategy string, timeout time.Duration, stripPrefixes []string) *LoadBalancer {
 	lb := &LoadBalancer{
 		timeout:     timeout,
 		stripPrefix: append([]string(nil), stripPrefixes...),
@@ -42,8 +41,8 @@ func NewLoadBalancer(backends []*xhttp.Backend, strategy string, timeout time.Du
 	return lb
 }
 
-func (lb *LoadBalancer) Update(list []*xhttp.Backend) {
-	cp := make([]*xhttp.Backend, 0, len(list))
+func (lb *LoadBalancer) Update(list []*Backend) {
+	cp := make([]*Backend, 0, len(list))
 	hasCond := false
 
 	for _, b := range list {
@@ -67,7 +66,7 @@ func (lb *LoadBalancer) Update(list []*xhttp.Backend) {
 	})
 }
 
-func (lb *LoadBalancer) Snapshot() []*xhttp.Backend {
+func (lb *LoadBalancer) Snapshot() []*Backend {
 	holder := lb.getHolder()
 	if holder == nil || len(holder.backends) == 0 {
 		return nil
@@ -100,7 +99,7 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	be.ServeHTTP(w, r.WithContext(ctx))
 }
 
-func (lb *LoadBalancer) PickBackend(r *http.Request) *xhttp.Backend {
+func (lb *LoadBalancer) PickBackend(r *http.Request) *Backend {
 	holder := lb.getHolder()
 	if holder == nil || len(holder.backends) == 0 {
 		return nil
@@ -118,7 +117,7 @@ func (lb *LoadBalancer) PickBackend(r *http.Request) *xhttp.Backend {
 	return lb.pickWithList(list, wheel, r)
 }
 
-func (lb *LoadBalancer) pickWithList(list []*xhttp.Backend, w *weightWheel, r *http.Request) *xhttp.Backend {
+func (lb *LoadBalancer) pickWithList(list []*Backend, w *weightWheel, r *http.Request) *Backend {
 	if len(list) == 1 {
 		if list[0].Alive.Load() {
 			return list[0]
@@ -142,7 +141,7 @@ func (lb *LoadBalancer) pickWithList(list []*xhttp.Backend, w *weightWheel, r *h
 	}
 }
 
-func (lb *LoadBalancer) pickRoundRobin(list []*xhttp.Backend, w *weightWheel) *xhttp.Backend {
+func (lb *LoadBalancer) pickRoundRobin(list []*Backend, w *weightWheel) *Backend {
 	if w != nil && w.total > 0 && len(w.cumul) > 0 {
 		for i := 0; i < len(list); i++ {
 			idx := w.next(lb.rrCounter.Add(1))
@@ -164,7 +163,7 @@ func (lb *LoadBalancer) pickRoundRobin(list []*xhttp.Backend, w *weightWheel) *x
 	return nil
 }
 
-func (lb *LoadBalancer) pickRandom(list []*xhttp.Backend, w *weightWheel) *xhttp.Backend {
+func (lb *LoadBalancer) pickRandom(list []*Backend, w *weightWheel) *Backend {
 	r := rngPool.Get().(*rand.Rand)
 	defer rngPool.Put(r)
 
@@ -194,7 +193,7 @@ func (lb *LoadBalancer) pickRandom(list []*xhttp.Backend, w *weightWheel) *xhttp
 	return nil
 }
 
-func (lb *LoadBalancer) pickIPHash(list []*xhttp.Backend, w *weightWheel, r *http.Request) *xhttp.Backend {
+func (lb *LoadBalancer) pickIPHash(list []*Backend, w *weightWheel, r *http.Request) *Backend {
 	key := clientip.ClientIP(r)
 	if key == "" {
 		return lb.pickRoundRobin(list, w)
@@ -202,7 +201,7 @@ func (lb *LoadBalancer) pickIPHash(list []*xhttp.Backend, w *weightWheel, r *htt
 	return lb.hashPick(list, w, key)
 }
 
-func (lb *LoadBalancer) pickURLHash(list []*xhttp.Backend, w *weightWheel, r *http.Request) *xhttp.Backend {
+func (lb *LoadBalancer) pickURLHash(list []*Backend, w *weightWheel, r *http.Request) *Backend {
 	key := r.URL.Path
 	if key == "" {
 		key = woos.Slash
@@ -210,7 +209,7 @@ func (lb *LoadBalancer) pickURLHash(list []*xhttp.Backend, w *weightWheel, r *ht
 	return lb.hashPick(list, w, key)
 }
 
-func (lb *LoadBalancer) hashPick(list []*xhttp.Backend, w *weightWheel, key string) *xhttp.Backend {
+func (lb *LoadBalancer) hashPick(list []*Backend, w *weightWheel, key string) *Backend {
 	h := lb.hashStr(key)
 
 	if w == nil || w.total == 0 || len(w.cumul) == 0 {
@@ -228,8 +227,8 @@ func (lb *LoadBalancer) hashPick(list []*xhttp.Backend, w *weightWheel, key stri
 	return lb.pickRandom(list, w)
 }
 
-func (lb *LoadBalancer) pickLeastConn(list []*xhttp.Backend) *xhttp.Backend {
-	var best *xhttp.Backend
+func (lb *LoadBalancer) pickLeastConn(list []*Backend) *Backend {
+	var best *Backend
 	min := int64(math.MaxInt64)
 
 	for _, b := range list {
@@ -244,8 +243,8 @@ func (lb *LoadBalancer) pickLeastConn(list []*xhttp.Backend) *xhttp.Backend {
 	return best
 }
 
-func (lb *LoadBalancer) pickWeightedLeastConn(list []*xhttp.Backend) *xhttp.Backend {
-	var best *xhttp.Backend
+func (lb *LoadBalancer) pickWeightedLeastConn(list []*Backend) *Backend {
+	var best *Backend
 	bestRatio := -1.0
 
 	for _, b := range list {
@@ -269,13 +268,13 @@ func (lb *LoadBalancer) pickWeightedLeastConn(list []*xhttp.Backend) *xhttp.Back
 }
 
 func (lb *LoadBalancer) pickByConditions(
-	list []*xhttp.Backend,
+	list []*Backend,
 	snapshotWheel *weightWheel,
 	r *http.Request,
 	weightsAllOne bool,
-) (*xhttp.Backend, bool) {
+) (*Backend, bool) {
 
-	var matchedHealthy []*xhttp.Backend
+	var matchedHealthy []*Backend
 	anyMatch := false
 
 	for _, b := range list {

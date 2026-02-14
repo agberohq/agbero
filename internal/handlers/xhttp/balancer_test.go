@@ -1,20 +1,24 @@
-package lb
+package xhttp
 
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/xhttp"
 )
 
-func makeBackend(weight int, alive bool) *xhttp.Backend {
-	b := &xhttp.Backend{
+func makeBackend(weight int, alive bool) *Backend {
+	// 1. Initialize the atomic bool pointer
+	ab := &atomic.Bool{}
+	ab.Store(alive)
+
+	b := &Backend{
 		Weight:   weight,
 		Activity: &metrics.Activity{},
+		Alive:    ab, // 2. Assign the pointer
 	}
-	b.Alive.Store(alive)
 	return b
 }
 
@@ -24,13 +28,13 @@ func TestLoadBalancer_RoundRobin(t *testing.T) {
 	b3 := makeBackend(1, true)
 
 	lb := NewLoadBalancer(
-		[]*xhttp.Backend{b1, b2, b3},
+		[]*Backend{b1, b2, b3},
 		"round_robin",
 		0,
 		nil,
 	)
 
-	seen := map[*xhttp.Backend]int{}
+	seen := map[*Backend]int{}
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 
@@ -52,7 +56,7 @@ func TestLoadBalancer_SkipDeadBackend(t *testing.T) {
 	b2 := makeBackend(1, true)
 
 	lb := NewLoadBalancer(
-		[]*xhttp.Backend{b1, b2},
+		[]*Backend{b1, b2},
 		"round_robin",
 		0,
 		nil,
@@ -74,7 +78,7 @@ func TestLoadBalancer_LeastConn(t *testing.T) {
 	b2.Activity.InFlight.Store(2)
 
 	lb := NewLoadBalancer(
-		[]*xhttp.Backend{b1, b2},
+		[]*Backend{b1, b2},
 		"least_conn",
 		0,
 		nil,
@@ -96,7 +100,7 @@ func TestLoadBalancer_WeightedLeastConn(t *testing.T) {
 	b2.Activity.InFlight.Store(0)
 
 	lb := NewLoadBalancer(
-		[]*xhttp.Backend{b1, b2},
+		[]*Backend{b1, b2},
 		"weighted_least_conn",
 		0,
 		nil,
@@ -115,7 +119,7 @@ func TestLoadBalancer_RandomDoesNotPanic(t *testing.T) {
 	b2 := makeBackend(1, true)
 
 	lb := NewLoadBalancer(
-		[]*xhttp.Backend{b1, b2},
+		[]*Backend{b1, b2},
 		"random",
 		0,
 		nil,
@@ -136,13 +140,13 @@ func TestLoadBalancer_UpdateBackendsAtomic(t *testing.T) {
 	b3 := makeBackend(1, true)
 
 	lb := NewLoadBalancer(
-		[]*xhttp.Backend{b1},
+		[]*Backend{b1},
 		"round_robin",
 		0,
 		nil,
 	)
 
-	lb.Update([]*xhttp.Backend{b1, b2, b3})
+	lb.Update([]*Backend{b1, b2, b3})
 
 	snap := lb.Snapshot()
 	if len(snap) != 3 {
