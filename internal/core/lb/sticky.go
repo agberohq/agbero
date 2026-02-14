@@ -1,4 +1,4 @@
-package balancer
+package lb
 
 import (
 	"net/http"
@@ -8,8 +8,8 @@ import (
 	"github.com/cespare/xxhash/v2"
 )
 
-// StickySelector adds session persistence on top of base Selector
-type StickySelector struct {
+// Sticky adds session persistence on top of base Selector
+type Sticky struct {
 	*Selector
 	stickyTable sync.Map // map[string]stickyEntry
 	ttl         time.Duration
@@ -21,18 +21,18 @@ type stickyEntry struct {
 }
 
 // NewStickySelector wraps a selector with session affinity
-func NewStickySelector(selector *Selector, ttl time.Duration) *StickySelector {
+func NewStickySelector(selector *Selector, ttl time.Duration) *Sticky {
 	if ttl <= 0 {
 		ttl = 30 * time.Minute
 	}
-	return &StickySelector{
+	return &Sticky{
 		Selector: selector,
 		ttl:      ttl,
 	}
 }
 
 // PickWithSticky selects backend with session affinity
-func (s *StickySelector) PickWithSticky(r *http.Request, keyFunc func() uint64, sessionExtractor func(*http.Request) string) Backend {
+func (s *Sticky) PickWithSticky(r *http.Request, keyFunc func() uint64, sessionExtractor func(*http.Request) string) Backend {
 	sessionID := sessionExtractor(r)
 	if sessionID == "" {
 		return s.Selector.Pick(r, keyFunc)
@@ -68,7 +68,7 @@ func (s *StickySelector) PickWithSticky(r *http.Request, keyFunc func() uint64, 
 }
 
 // PickWithStickyHash uses xxhash for session key hashing
-func (s *StickySelector) PickWithStickyHash(r *http.Request, sessionKey string) Backend {
+func (s *Sticky) PickWithStickyHash(r *http.Request, sessionKey string) Backend {
 	// Hash the session key for better distribution if used for backend selection
 	hasher := xxhash.New()
 	hasher.WriteString(sessionKey)
@@ -79,7 +79,7 @@ func (s *StickySelector) PickWithStickyHash(r *http.Request, sessionKey string) 
 	})
 }
 
-func (s *StickySelector) findBackendIndex(target Backend) int {
+func (s *Sticky) findBackendIndex(target Backend) int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for i, b := range s.backends {
@@ -91,7 +91,7 @@ func (s *StickySelector) findBackendIndex(target Backend) int {
 }
 
 // Cleanup removes expired entries (call periodically)
-func (s *StickySelector) Cleanup() {
+func (s *Sticky) Cleanup() {
 	now := time.Now()
 	s.stickyTable.Range(func(key, value any) bool {
 		if entry := value.(stickyEntry); now.After(entry.expires) {

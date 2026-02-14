@@ -1,4 +1,4 @@
-package balancer
+package lb
 
 import (
 	"math/rand/v2"
@@ -9,8 +9,8 @@ import (
 	"github.com/cespare/xxhash/v2"
 )
 
-// AdaptiveSelector learns from past performance
-type AdaptiveSelector struct {
+// Adaptive learns from past performance
+type Adaptive struct {
 	*Selector
 	mu              sync.RWMutex
 	performanceData map[Backend]*backendMetrics
@@ -27,12 +27,12 @@ type backendMetrics struct {
 	consecutiveSuccesses uint64
 }
 
-// NewAdaptiveSelector creates a learning-based selector
-func NewAdaptiveSelector(selector *Selector, learningRate float64) *AdaptiveSelector {
+// NewAdaptive creates a learning-based selector
+func NewAdaptive(selector *Selector, learningRate float64) *Adaptive {
 	if learningRate < 0 || learningRate > 1 {
 		learningRate = 0.1
 	}
-	return &AdaptiveSelector{
+	return &Adaptive{
 		Selector:        selector,
 		performanceData: make(map[Backend]*backendMetrics),
 		learningRate:    learningRate,
@@ -41,7 +41,7 @@ func NewAdaptiveSelector(selector *Selector, learningRate float64) *AdaptiveSele
 }
 
 // RecordResult updates metrics after a request
-func (s *AdaptiveSelector) RecordResult(backend Backend, latencyMicros int64, failed bool) {
+func (s *Adaptive) RecordResult(backend Backend, latencyMicros int64, failed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -76,7 +76,7 @@ func (s *AdaptiveSelector) RecordResult(backend Backend, latencyMicros int64, fa
 }
 
 // PickAdaptive selects based on learned performance
-func (s *AdaptiveSelector) PickAdaptive(r *http.Request, keyFunc func() uint64) Backend {
+func (s *Adaptive) PickAdaptive(r *http.Request, keyFunc func() uint64) Backend {
 	// Exploration: random selection
 	if randFloat() < s.learningRate {
 		return s.pickRandom()
@@ -129,7 +129,7 @@ func (s *AdaptiveSelector) PickAdaptive(r *http.Request, keyFunc func() uint64) 
 }
 
 // PickAdaptiveWithHash uses xxhash for key-based selection with fallback
-func (s *AdaptiveSelector) PickAdaptiveWithHash(r *http.Request, key string) Backend {
+func (s *Adaptive) PickAdaptiveWithHash(r *http.Request, key string) Backend {
 	// Use xxhash for consistent hashing of the key
 	h := xxhash.Sum64String(key)
 

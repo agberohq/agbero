@@ -1,5 +1,5 @@
 // balancer_test.go - Core selector strategies
-package balancer
+package lb
 
 import (
 	"net/http/httptest"
@@ -537,7 +537,7 @@ func TestPickConsistentHash(t *testing.T) {
 	t.Run("empty ring", func(t *testing.T) {
 		b1 := newMockBackend(1, true, 1)
 		s := NewSelector([]Backend{b1}, StrategyConsistentHash)
-		s.ring = &ConsistentHashRing{}
+		s.ring = &Consistent{}
 
 		if b := s.Pick(nil, func() uint64 { return 1 }); b != b1 {
 			t.Error("expected fallback when ring empty")

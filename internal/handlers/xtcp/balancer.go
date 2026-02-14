@@ -1,34 +1,17 @@
-// xtcp/balancer.go - Complete rewrite using new balancer package
 package xtcp
 
 import (
 	"fmt"
 	"strings"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/balancer"
+	"git.imaxinacion.net/aibox/agbero/internal/core/lb"
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
-// tcpBackend wraps xtcp.Backend to implement balancer.Backend interface
-type tcpBackend struct {
-	*Backend
-}
-
-func (b tcpBackend) Alive() bool     { return b.Backend.Alive.Load() }
-func (b tcpBackend) Weight() int     { return b.Backend.Weight }
-func (b tcpBackend) InFlight() int64 { return b.Backend.Activity.InFlight.Load() }
-func (b tcpBackend) ResponseTime() int64 {
-	snap := b.Backend.Activity.Latency.Snapshot()
-	if snap.Count == 0 {
-		return 0
-	}
-	return snap.Avg // Changed from Mean to Avg
-}
-
 type Balancer struct {
-	selector      *balancer.Selector
+	selector      *lb.Selector
 	strategyName  string
 	proxyProtocol bool
 }
@@ -74,7 +57,7 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 		registry = metrics.DefaultRegistry
 	}
 
-	wrappedBackends := make([]balancer.Backend, 0, len(cfg.Backends))
+	wrappedBackends := make([]lb.Backend, 0, len(cfg.Backends))
 	for _, b := range cfg.Backends {
 		w := b.Weight
 		if w <= 0 {
@@ -105,14 +88,14 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 		wrappedBackends = append(wrappedBackends, tcpBackend{be})
 	}
 
-	strategy := balancer.ParseStrategy(cfg.Strategy)
+	strategy := lb.ParseStrategy(cfg.Strategy)
 	stratName := cfg.Strategy
 	if stratName == "" {
 		stratName = alaye.StrategyRoundRobin
 	}
 
 	return &Balancer{
-		selector:      balancer.NewSelector(wrappedBackends, strategy),
+		selector:      lb.NewSelector(wrappedBackends, strategy),
 		strategyName:  stratName,
 		proxyProtocol: cfg.ProxyProtocol,
 	}
@@ -141,7 +124,7 @@ func (tb *Balancer) Pick(exclude map[*Backend]struct{}) *Backend {
 	}
 
 	// Filter out excluded and unusable backends
-	var candidates []balancer.Backend
+	var candidates []lb.Backend
 	for _, b := range backends {
 		tb := b.(tcpBackend)
 		if tb.Backend == nil || !tb.Backend.Alive.Load() {
@@ -162,7 +145,7 @@ func (tb *Balancer) Pick(exclude map[*Backend]struct{}) *Backend {
 
 	// Use selector's strategy on filtered candidates
 	// Create a temporary selector with just candidates
-	tempSelector := balancer.NewSelector(candidates, tb.selector.Strategy)
+	tempSelector := lb.NewSelector(candidates, tb.selector.Strategy)
 
 	// For strategies that need request info, we pass nil
 	selected := tempSelector.Pick(nil, func() uint64 { return 0 })

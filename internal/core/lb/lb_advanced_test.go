@@ -1,4 +1,4 @@
-package balancer
+package lb
 
 import (
 	"net/http"
@@ -11,7 +11,7 @@ import (
 func TestNewAdaptiveSelector(t *testing.T) {
 	t.Run("default learning rate", func(t *testing.T) {
 		base := NewSelector([]Backend{}, StrategyRoundRobin)
-		a := NewAdaptiveSelector(base, 0.5)
+		a := NewAdaptive(base, 0.5)
 		if a.learningRate != 0.5 {
 			t.Errorf("expected learning rate 0.5, got %f", a.learningRate)
 		}
@@ -19,7 +19,7 @@ func TestNewAdaptiveSelector(t *testing.T) {
 
 	t.Run("clamp negative learning rate", func(t *testing.T) {
 		base := NewSelector([]Backend{}, StrategyRoundRobin)
-		a := NewAdaptiveSelector(base, -0.1)
+		a := NewAdaptive(base, -0.1)
 		if a.learningRate != 0.1 {
 			t.Errorf("expected clamped learning rate 0.1, got %f", a.learningRate)
 		}
@@ -27,7 +27,7 @@ func TestNewAdaptiveSelector(t *testing.T) {
 
 	t.Run("clamp high learning rate", func(t *testing.T) {
 		base := NewSelector([]Backend{}, StrategyRoundRobin)
-		a := NewAdaptiveSelector(base, 1.5)
+		a := NewAdaptive(base, 1.5)
 		if a.learningRate != 0.1 {
 			t.Errorf("expected clamped learning rate 0.1, got %f", a.learningRate)
 		}
@@ -35,7 +35,7 @@ func TestNewAdaptiveSelector(t *testing.T) {
 
 	t.Run("initialize performance data map", func(t *testing.T) {
 		base := NewSelector([]Backend{}, StrategyRoundRobin)
-		a := NewAdaptiveSelector(base, 0.1)
+		a := NewAdaptive(base, 0.1)
 		if a.performanceData == nil {
 			t.Error("expected performance data map to be initialized")
 		}
@@ -46,7 +46,7 @@ func TestNewAdaptiveSelector(t *testing.T) {
 func TestRecordResult(t *testing.T) {
 	b1 := newMockBackend(1, true, 1)
 	base := NewSelector([]Backend{b1}, StrategyRoundRobin)
-	a := NewAdaptiveSelector(base, 0.1)
+	a := NewAdaptive(base, 0.1)
 
 	t.Run("record success", func(t *testing.T) {
 		a.RecordResult(b1, 1000, false)
@@ -136,7 +136,7 @@ func TestPickAdaptive(t *testing.T) {
 		b1 := newMockBackend(1, true, 1)
 		b2 := newMockBackend(2, true, 1)
 		base := NewSelector([]Backend{b1, b2}, StrategyRoundRobin)
-		a := NewAdaptiveSelector(base, 1.0) // 100% exploration
+		a := NewAdaptive(base, 1.0) // 100% exploration
 
 		seen := make(map[Backend]bool)
 		for i := 0; i < 20; i++ {
@@ -154,7 +154,7 @@ func TestPickAdaptive(t *testing.T) {
 		b1 := newMockBackend(1, true, 1)
 		b2 := newMockBackend(2, true, 1)
 		base := NewSelector([]Backend{b1, b2}, StrategyRoundRobin)
-		a := NewAdaptiveSelector(base, 0.0) // 0% exploration
+		a := NewAdaptive(base, 0.0) // 0% exploration
 
 		// Record good performance for b1, bad for b2
 		a.RecordResult(b1, 1000, false)
@@ -172,7 +172,7 @@ func TestPickAdaptive(t *testing.T) {
 		b1 := newMockBackend(1, false, 1)
 		b2 := newMockBackend(2, true, 1)
 		base := NewSelector([]Backend{b1, b2}, StrategyRoundRobin)
-		a := NewAdaptiveSelector(base, 0.0)
+		a := NewAdaptive(base, 0.0)
 
 		for i := 0; i < 10; i++ {
 			if b := a.PickAdaptive(nil, nil); b != b2 {
@@ -185,7 +185,7 @@ func TestPickAdaptive(t *testing.T) {
 		b1 := newMockBackend(1, true, 1)
 		b2 := newMockBackend(2, true, 1)
 		base := NewSelector([]Backend{b1, b2}, StrategyRoundRobin)
-		a := NewAdaptiveSelector(base, 0.0)
+		a := NewAdaptive(base, 0.0)
 
 		// Only record for b1, b2 is new
 		a.RecordResult(b1, 1000, false)
@@ -206,7 +206,7 @@ func TestPickAdaptive(t *testing.T) {
 	t.Run("fallback when no metrics", func(t *testing.T) {
 		b1 := newMockBackend(1, true, 1)
 		base := NewSelector([]Backend{b1}, StrategyRoundRobin)
-		a := NewAdaptiveSelector(base, 0.0)
+		a := NewAdaptive(base, 0.0)
 
 		// Don't record any metrics
 		if b := a.PickAdaptive(nil, nil); b != b1 {
@@ -218,7 +218,7 @@ func TestPickAdaptive(t *testing.T) {
 		b1 := newMockBackend(1, false, 1)
 		b2 := newMockBackend(2, false, 1)
 		base := NewSelector([]Backend{b1, b2}, StrategyRoundRobin)
-		a := NewAdaptiveSelector(base, 0.0)
+		a := NewAdaptive(base, 0.0)
 
 		// All dead, should fallback to base Pick which returns nil
 		if b := a.PickAdaptive(nil, nil); b != nil {
@@ -232,7 +232,7 @@ func TestPickAdaptiveWithHash(t *testing.T) {
 	b1 := newMockBackend(1, true, 1)
 	b2 := newMockBackend(2, true, 1)
 	base := NewSelector([]Backend{b1, b2}, StrategyRoundRobin)
-	a := NewAdaptiveSelector(base, 0.0)
+	a := NewAdaptive(base, 0.0)
 
 	t.Run("consistent with same key", func(t *testing.T) {
 		first := a.PickAdaptiveWithHash(nil, "session-123")
@@ -486,7 +486,7 @@ func TestConcurrencyAdvanced(t *testing.T) {
 		b1 := newMockBackend(1, true, 1)
 		b2 := newMockBackend(2, true, 1)
 		base := NewSelector([]Backend{b1, b2}, StrategyRoundRobin)
-		a := NewAdaptiveSelector(base, 0.5)
+		a := NewAdaptive(base, 0.5)
 
 		done := make(chan bool)
 		for i := 0; i < 10; i++ {
@@ -534,7 +534,7 @@ func BenchmarkAdaptivePick(b *testing.B) {
 		newMockBackend(2, true, 1),
 	}
 	base := NewSelector(backends, StrategyRoundRobin)
-	a := NewAdaptiveSelector(base, 0.1)
+	a := NewAdaptive(base, 0.1)
 
 	// Warm up metrics
 	a.RecordResult(backends[0], 1000, false)
@@ -568,7 +568,7 @@ func BenchmarkRecordResult(b *testing.B) {
 		newMockBackend(1, true, 1),
 	}
 	base := NewSelector(backends, StrategyRoundRobin)
-	a := NewAdaptiveSelector(base, 0.1)
+	a := NewAdaptive(base, 0.1)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

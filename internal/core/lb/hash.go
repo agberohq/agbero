@@ -1,5 +1,4 @@
-// hash.go
-package balancer
+package lb
 
 import (
 	"sort"
@@ -7,20 +6,20 @@ import (
 	"github.com/cespare/xxhash/v2"
 )
 
-// ConsistentHashRing for minimal redistribution using xxhash
-type ConsistentHashRing struct {
+// Consistent for minimal redistribution using xxhash
+type Consistent struct {
 	ring     []uint64
 	backends []int // maps ring position to backend index
 	replicas int
 }
 
-// BuildConsistentHash creates a consistent hash ring with xxhash
-func BuildConsistentHash(count int, replicas int) *ConsistentHashRing {
+// NewConsistent creates a consistent hash ring with xxhash
+func NewConsistent(count int, replicas int) *Consistent {
 	if count == 0 || replicas <= 0 {
-		return &ConsistentHashRing{}
+		return &Consistent{}
 	}
 
-	r := &ConsistentHashRing{
+	r := &Consistent{
 		ring:     make([]uint64, 0, count*replicas),
 		backends: make([]int, 0, count*replicas),
 		replicas: replicas,
@@ -62,7 +61,7 @@ func BuildConsistentHash(count int, replicas int) *ConsistentHashRing {
 }
 
 // Get returns backend index for key
-func (r *ConsistentHashRing) Get(key uint64) int {
+func (r *Consistent) Get(key uint64) int {
 	if len(r.ring) == 0 {
 		return 0
 	}

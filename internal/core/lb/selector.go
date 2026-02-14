@@ -1,4 +1,4 @@
-package balancer
+package lb
 
 import (
 	"math"
@@ -19,7 +19,7 @@ type Selector struct {
 	mu       sync.RWMutex
 	wheel    *WeightWheel
 	backends []Backend
-	ring     *ConsistentHashRing
+	ring     *Consistent
 }
 
 // NewSelector creates a strategy selector for backends
@@ -34,10 +34,10 @@ func NewSelector(backends []Backend, strategy Strategy) *Selector {
 	for i, b := range backends {
 		weights[i] = b.Weight()
 	}
-	s.wheel = BuildWheel(weights)
+	s.wheel = NewWheel(weights)
 
 	if strategy == StrategyConsistentHash {
-		s.ring = BuildConsistentHash(len(backends), 150) // 150 replicas per backend
+		s.ring = NewConsistent(len(backends), 150) // 150 replicas per backend
 	}
 
 	return s
@@ -55,10 +55,10 @@ func (s *Selector) Update(backends []Backend) {
 	for i, b := range backends {
 		weights[i] = b.Weight()
 	}
-	s.wheel = BuildWheel(weights)
+	s.wheel = NewWheel(weights)
 
 	if s.Strategy == StrategyConsistentHash {
-		s.ring = BuildConsistentHash(len(backends), 150)
+		s.ring = NewConsistent(len(backends), 150)
 	}
 }
 

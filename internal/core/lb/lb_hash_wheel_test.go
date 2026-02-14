@@ -1,4 +1,4 @@
-package balancer
+package lb
 
 import (
 	"math"
@@ -9,21 +9,21 @@ import (
 // TestBuildConsistentHash covers ring creation
 func TestBuildConsistentHash(t *testing.T) {
 	t.Run("empty count", func(t *testing.T) {
-		r := BuildConsistentHash(0, 10)
+		r := NewConsistent(0, 10)
 		if len(r.ring) != 0 {
 			t.Error("expected empty ring")
 		}
 	})
 
 	t.Run("zero replicas", func(t *testing.T) {
-		r := BuildConsistentHash(3, 0)
+		r := NewConsistent(3, 0)
 		if len(r.ring) != 0 {
 			t.Error("expected empty ring with zero replicas")
 		}
 	})
 
 	t.Run("valid ring", func(t *testing.T) {
-		r := BuildConsistentHash(3, 150)
+		r := NewConsistent(3, 150)
 		expectedLen := 3 * 150
 		if len(r.ring) != expectedLen {
 			t.Errorf("expected %d entries, got %d", expectedLen, len(r.ring))
@@ -34,7 +34,7 @@ func TestBuildConsistentHash(t *testing.T) {
 	})
 
 	t.Run("sorted ring", func(t *testing.T) {
-		r := BuildConsistentHash(5, 100)
+		r := NewConsistent(5, 100)
 		for i := 1; i < len(r.ring); i++ {
 			if r.ring[i] < r.ring[i-1] {
 				t.Error("ring should be sorted")
@@ -43,7 +43,7 @@ func TestBuildConsistentHash(t *testing.T) {
 	})
 
 	t.Run("backend distribution", func(t *testing.T) {
-		r := BuildConsistentHash(2, 10)
+		r := NewConsistent(2, 10)
 		counts := make(map[int]int)
 		for _, b := range r.backends {
 			counts[b]++
@@ -62,7 +62,7 @@ func TestBuildConsistentHash(t *testing.T) {
 // TestConsistentHashRingGet covers key lookup
 func TestConsistentHashRingGet(t *testing.T) {
 	t.Run("empty ring", func(t *testing.T) {
-		r := &ConsistentHashRing{}
+		r := &Consistent{}
 		idx := r.Get(12345)
 		if idx != 0 {
 			t.Errorf("expected 0 for empty ring, got %d", idx)
@@ -70,7 +70,7 @@ func TestConsistentHashRingGet(t *testing.T) {
 	})
 
 	t.Run("exact match", func(t *testing.T) {
-		r := BuildConsistentHash(3, 150)
+		r := NewConsistent(3, 150)
 		// Use a hash that exists in the ring
 		h := r.ring[50]
 		idx := r.Get(h)
@@ -80,7 +80,7 @@ func TestConsistentHashRingGet(t *testing.T) {
 	})
 
 	t.Run("wrap around", func(t *testing.T) {
-		r := BuildConsistentHash(3, 150)
+		r := NewConsistent(3, 150)
 		// Use max uint64 to force wrap
 		idx := r.Get(math.MaxUint64)
 		// Should wrap to first backend
@@ -90,7 +90,7 @@ func TestConsistentHashRingGet(t *testing.T) {
 	})
 
 	t.Run("between hashes", func(t *testing.T) {
-		r := BuildConsistentHash(3, 150)
+		r := NewConsistent(3, 150)
 		if len(r.ring) < 2 {
 			t.Fatal("ring too small")
 		}
@@ -104,7 +104,7 @@ func TestConsistentHashRingGet(t *testing.T) {
 	})
 
 	t.Run("distribution uniformity", func(t *testing.T) {
-		r := BuildConsistentHash(5, 200)
+		r := NewConsistent(5, 200)
 		counts := make(map[int]int)
 
 		// Test many random keys
@@ -134,14 +134,14 @@ func TestConsistentHashRingGet(t *testing.T) {
 // TestBuildWheel covers weight wheel creation
 func TestBuildWheel(t *testing.T) {
 	t.Run("empty weights", func(t *testing.T) {
-		w := BuildWheel([]int{})
+		w := NewWheel([]int{})
 		if w.total != 0 {
 			t.Error("expected zero total for empty weights")
 		}
 	})
 
 	t.Run("uniform weights", func(t *testing.T) {
-		w := BuildWheel([]int{1, 1, 1})
+		w := NewWheel([]int{1, 1, 1})
 		if w.cumul != nil {
 			t.Error("expected nil cumul for uniform weights")
 		}
@@ -151,7 +151,7 @@ func TestBuildWheel(t *testing.T) {
 	})
 
 	t.Run("varying weights", func(t *testing.T) {
-		w := BuildWheel([]int{1, 2, 3})
+		w := NewWheel([]int{1, 2, 3})
 		if w.cumul == nil {
 			t.Error("expected cumul for varying weights")
 		}
@@ -167,14 +167,14 @@ func TestBuildWheel(t *testing.T) {
 	})
 
 	t.Run("zero weights treated as one", func(t *testing.T) {
-		w := BuildWheel([]int{0, 2, 0})
+		w := NewWheel([]int{0, 2, 0})
 		if w.total != 4 { // 1 + 2 + 1
 			t.Errorf("expected total 4, got %d", w.total)
 		}
 	})
 
 	t.Run("negative weights treated as one", func(t *testing.T) {
-		w := BuildWheel([]int{-1, 2, -5})
+		w := NewWheel([]int{-1, 2, -5})
 		if w.total != 4 { // 1 + 2 + 1
 			t.Errorf("expected total 4, got %d", w.total)
 		}
@@ -200,7 +200,7 @@ func TestWeightWheelNext(t *testing.T) {
 	})
 
 	t.Run("uniform weights", func(t *testing.T) {
-		w := BuildWheel([]int{1, 1, 1})
+		w := NewWheel([]int{1, 1, 1})
 		seen := make(map[int]bool)
 		for i := uint64(0); i < 6; i++ {
 			idx := w.Next(i)
@@ -215,7 +215,7 @@ func TestWeightWheelNext(t *testing.T) {
 	})
 
 	t.Run("weighted distribution", func(t *testing.T) {
-		w := BuildWheel([]int{1, 2, 1}) // total 4
+		w := NewWheel([]int{1, 2, 1}) // total 4
 		counts := make(map[int]int)
 		for i := uint64(0); i < 4000; i++ {
 			idx := w.Next(i)
@@ -228,7 +228,7 @@ func TestWeightWheelNext(t *testing.T) {
 	})
 
 	t.Run("counter modulo", func(t *testing.T) {
-		w := BuildWheel([]int{1, 1, 1})
+		w := NewWheel([]int{1, 1, 1})
 		// Counter wraps around
 		idx1 := w.Next(0)
 		idx2 := w.Next(3)
@@ -250,7 +250,7 @@ func TestWeightWheelRandomIndex(t *testing.T) {
 	})
 
 	t.Run("uniform random", func(t *testing.T) {
-		w := BuildWheel([]int{1, 1, 1})
+		w := NewWheel([]int{1, 1, 1})
 		r := rand.New(rand.NewPCG(1, 2))
 		seen := make(map[int]bool)
 		for i := 0; i < 30; i++ {
@@ -263,7 +263,7 @@ func TestWeightWheelRandomIndex(t *testing.T) {
 	})
 
 	t.Run("weighted random", func(t *testing.T) {
-		w := BuildWheel([]int{1, 5, 1}) // Backend 1 has 5x weight
+		w := NewWheel([]int{1, 5, 1}) // Backend 1 has 5x weight
 		r := rand.New(rand.NewPCG(1, 2))
 		counts := make(map[int]int)
 		for i := 0; i < 7000; i++ {
@@ -280,7 +280,7 @@ func TestWeightWheelRandomIndex(t *testing.T) {
 // TestWeightWheelSearch covers binary search
 func TestWeightWheelSearch(t *testing.T) {
 	t.Run("empty cumul", func(t *testing.T) {
-		w := BuildWheel([]int{1, 1, 1})
+		w := NewWheel([]int{1, 1, 1})
 		idx := w.search(1)
 		if idx != 1 {
 			t.Errorf("expected 1, got %d", idx)
@@ -288,7 +288,7 @@ func TestWeightWheelSearch(t *testing.T) {
 	})
 
 	t.Run("find first", func(t *testing.T) {
-		w := BuildWheel([]int{5, 5, 5})
+		w := NewWheel([]int{5, 5, 5})
 		idx := w.search(0)
 		if idx != 0 {
 			t.Errorf("expected 0, got %d", idx)
@@ -296,7 +296,7 @@ func TestWeightWheelSearch(t *testing.T) {
 	})
 
 	t.Run("find last", func(t *testing.T) {
-		w := BuildWheel([]int{1, 2, 3})
+		w := NewWheel([]int{1, 2, 3})
 		idx := w.search(5) // Last position
 		if idx != 2 {
 			t.Errorf("expected 2, got %d", idx)
@@ -304,15 +304,15 @@ func TestWeightWheelSearch(t *testing.T) {
 	})
 
 	t.Run("find middle", func(t *testing.T) {
-		w := BuildWheel([]int{1, 3, 1}) // cumul: [1, 4, 5]
-		idx := w.search(2)              // Should find index 1
+		w := NewWheel([]int{1, 3, 1}) // cumul: [1, 4, 5]
+		idx := w.search(2)            // Should find index 1
 		if idx != 1 {
 			t.Errorf("expected 1, got %d", idx)
 		}
 	})
 
 	t.Run("boundary", func(t *testing.T) {
-		w := BuildWheel([]int{1, 2, 3}) // cumul: [1, 3, 6]
+		w := NewWheel([]int{1, 2, 3}) // cumul: [1, 3, 6]
 		// target == cumul[i] should return i+1
 		idx := w.search(1)
 		if idx != 1 {
@@ -321,7 +321,7 @@ func TestWeightWheelSearch(t *testing.T) {
 	})
 
 	t.Run("target exceeds total", func(t *testing.T) {
-		w := BuildWheel([]int{1, 2, 3})
+		w := NewWheel([]int{1, 2, 3})
 		idx := w.search(10)
 		if idx != 2 {
 			t.Errorf("expected last index 2, got %d", idx)
@@ -329,7 +329,7 @@ func TestWeightWheelSearch(t *testing.T) {
 	})
 
 	t.Run("single element", func(t *testing.T) {
-		w := BuildWheel([]int{5})
+		w := NewWheel([]int{5})
 		idx := w.search(0)
 		if idx != 0 {
 			t.Errorf("expected 0, got %d", idx)
@@ -345,7 +345,7 @@ func TestWeightWheelSearch(t *testing.T) {
 // minimizes key redistribution
 func TestConsistentHashMinimalRedistribution(t *testing.T) {
 	// Build initial ring with 4 backends
-	r1 := BuildConsistentHash(4, 100)
+	r1 := NewConsistent(4, 100)
 
 	// Map 1000 keys to backends
 	keyCount := 1000
@@ -357,7 +357,7 @@ func TestConsistentHashMinimalRedistribution(t *testing.T) {
 	}
 
 	// Build new ring with 5 backends
-	r2 := BuildConsistentHash(5, 100)
+	r2 := NewConsistent(5, 100)
 
 	// Check how many keys moved
 	moved := 0
@@ -382,12 +382,12 @@ func TestConsistentHashMinimalRedistribution(t *testing.T) {
 // Benchmarks
 func BenchmarkConsistentHashBuild(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		BuildConsistentHash(10, 150)
+		NewConsistent(10, 150)
 	}
 }
 
 func BenchmarkConsistentHashGet(b *testing.B) {
-	r := BuildConsistentHash(10, 150)
+	r := NewConsistent(10, 150)
 	keys := make([]uint64, 1000)
 	for i := range keys {
 		keys[i] = rand.Uint64()
@@ -400,7 +400,7 @@ func BenchmarkConsistentHashGet(b *testing.B) {
 }
 
 func BenchmarkWeightWheelNext(b *testing.B) {
-	w := BuildWheel([]int{1, 2, 3, 4, 5})
+	w := NewWheel([]int{1, 2, 3, 4, 5})
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -409,7 +409,7 @@ func BenchmarkWeightWheelNext(b *testing.B) {
 }
 
 func BenchmarkWeightWheelSearch(b *testing.B) {
-	w := BuildWheel([]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
+	w := NewWheel([]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
 	targets := make([]uint64, 1000)
 	for i := range targets {
 		targets[i] = rand.Uint64N(w.total)
@@ -422,7 +422,7 @@ func BenchmarkWeightWheelSearch(b *testing.B) {
 }
 
 func BenchmarkWeightWheelRandomIndex(b *testing.B) {
-	w := BuildWheel([]int{1, 2, 3, 4, 5})
+	w := NewWheel([]int{1, 2, 3, 4, 5})
 	r := rand.New(rand.NewPCG(1, 2))
 
 	b.ResetTimer()

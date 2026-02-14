@@ -1,4 +1,4 @@
-package balancer
+package lb
 
 import (
 	"math/rand/v2"
@@ -10,8 +10,8 @@ type WeightWheel struct {
 	total uint64
 }
 
-// BuildWheel creates a weight distribution wheel
-func BuildWheel(weights []int) *WeightWheel {
+// NewWheel creates a weight distribution wheel
+func NewWheel(weights []int) *WeightWheel {
 	if len(weights) == 0 {
 		return &WeightWheel{}
 	}
