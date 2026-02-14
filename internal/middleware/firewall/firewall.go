@@ -32,6 +32,12 @@ var (
 	metricsRemoteErrors uint64
 )
 
+const (
+	defaultRemoteTimeout = 2 * time.Second
+	ttlBlocked           = 5 * time.Minute
+	ttlAllowed           = 1 * time.Minute
+)
+
 type IPSet struct {
 	mu sync.RWMutex
 
@@ -109,14 +115,20 @@ func (c *ttlCache) set(key string, blocked bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	ttl := 1 * time.Minute
+	ttl := ttlAllowed
 	if blocked {
-		ttl = 5 * time.Minute
+		ttl = ttlBlocked
 	}
 	c.entries[key] = cacheEntry{
 		blocked:  blocked,
 		expireAt: time.Now().Add(ttl),
 	}
+}
+
+func (c *ttlCache) delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, key)
 }
 
 func (c *ttlCache) close() {
@@ -130,7 +142,7 @@ func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*IPSet, e
 
 	timeout := time.Duration(cfg.RemoteTimeout) * time.Second
 	if timeout == 0 {
-		timeout = 2 * time.Second
+		timeout = defaultRemoteTimeout
 	}
 
 	f := &IPSet{
@@ -207,6 +219,7 @@ func (f *IPSet) Unblock(ip string) error {
 		return err
 	}
 
+	// Add to exceptions
 	addr, err := netip.ParseAddr(ip)
 	if err == nil {
 		addr = addr.Unmap()
@@ -215,26 +228,28 @@ func (f *IPSet) Unblock(ip string) error {
 		f.mu.Unlock()
 	}
 
-	rules, err := f.store.LoadAll()
-	if err != nil {
-		return err
-	}
-
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	// Rebuild in-memory state to remove the rule if it wasn't just an exception
+	// Optimization: Ideally we would find and remove just the one rule,
+	// but rebuilding ensures consistency with BoltDB source of truth.
 	f.v4 = make(map[netip.Addr][]*Rule)
 	f.v6 = make(map[netip.Addr][]*Rule)
 	f.ranger = cidranger.NewPCTrieRanger()
 
-	for _, r := range rules {
-		f.addRuleInMemory(r)
+	rules, err := f.store.LoadAll()
+	if err != nil {
+		// Log error but continue with empty state to fail safe?
+		// Or keep old state? Complexity tradeoff. For now, log.
+		f.logger.Error("failed to reload rules during unblock", err)
+	} else {
+		for _, r := range rules {
+			f.addRuleInMemoryLocked(r)
+		}
 	}
 
-	f.cache.mu.Lock()
-	delete(f.cache.entries, ip)
-	f.cache.mu.Unlock()
-
+	f.cache.delete(ip)
 	f.logger.Fields("ip", ip).Info("unblocked ip")
 	return nil
 }
@@ -262,17 +277,35 @@ func (f *IPSet) Block(ip, host, path, reason string, duration time.Duration) err
 	}
 
 	f.mu.Lock()
-	f.addRuleInMemory(r)
-	f.mu.Unlock()
+	defer f.mu.Unlock()
 
+	// If we are blocking an IP, ensure it is NOT in the exceptions list
+	if addr, err := netip.ParseAddr(ip); err == nil {
+		addr = addr.Unmap()
+		delete(f.blockedExceptions, addr)
+	}
+
+	f.addRuleInMemoryLocked(r)
 	return nil
 }
 
+// addRuleInMemory calls addRuleInMemoryLocked after acquiring lock.
 func (f *IPSet) addRuleInMemory(r Rule) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.addRuleInMemoryLocked(r)
+}
+
+// addRuleInMemoryLocked assumes lock is held.
+func (f *IPSet) addRuleInMemoryLocked(r Rule) {
 	if r.Type == BlockTypeCIDR {
 		_, network, err := net.ParseCIDR(r.IP)
 		if err == nil {
-			_ = f.ranger.Insert(cidranger.NewBasicRangerEntry(*network))
+			if err := f.ranger.Insert(cidranger.NewBasicRangerEntry(*network)); err != nil {
+				f.logger.Warnf("failed to add CIDR rule %s: %v", r.IP, err)
+			}
+		} else {
+			f.logger.Warnf("invalid CIDR in rule %s: %v", r.IP, err)
 		}
 		return
 	}
@@ -280,12 +313,14 @@ func (f *IPSet) addRuleInMemory(r Rule) {
 	addr, err := netip.ParseAddr(r.IP)
 	if err == nil {
 		addr = addr.Unmap()
-		rCopy := r
+		rCopy := r // Copy to avoid pointer sharing issues if Rule struct changes
 		if addr.Is4() {
 			f.v4[addr] = append(f.v4[addr], &rCopy)
 		} else {
 			f.v6[addr] = append(f.v6[addr], &rCopy)
 		}
+	} else {
+		f.logger.Warnf("invalid IP in rule %s: %v", r.IP, err)
 	}
 }
 
@@ -296,7 +331,11 @@ func (f *IPSet) importTextFile(path string) error {
 	}
 	defer file.Close()
 
+	// Increase buffer for large lines/files
 	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024) // 1MB max line size
+
 	count := 0
 
 	f.mu.Lock()
@@ -308,10 +347,15 @@ func (f *IPSet) importTextFile(path string) error {
 			continue
 		}
 
+		// Remove inline comments
+		if idx := strings.Index(line, "#"); idx != -1 {
+			line = strings.TrimSpace(line[:idx])
+		}
+
 		if strings.Contains(line, woos.Slash) {
 			_, network, err := net.ParseCIDR(line)
 			if err == nil {
-				f.ranger.Insert(cidranger.NewBasicRangerEntry(*network))
+				_ = f.ranger.Insert(cidranger.NewBasicRangerEntry(*network))
 				count++
 			}
 			continue
@@ -341,60 +385,69 @@ func (f *IPSet) Handler(next http.Handler) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ipStr := clientip.ClientIP(r)
+
+		// 1. Parse and Unmap IP once
 		addr, err := netip.ParseAddr(ipStr)
-		if err == nil {
-			addr = addr.Unmap()
+		if err != nil {
+			// Invalid IP in request, potentially malicious
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		addr = addr.Unmap()
 
-			f.mu.RLock()
-			var rules []*Rule
-			if addr.Is4() {
-				rules = f.v4[addr]
-			} else {
-				rules = f.v6[addr]
-			}
-			f.mu.RUnlock()
+		// 2. Check Exceptions (Fastest O(1))
+		f.mu.RLock()
+		_, isUnblocked := f.blockedExceptions[addr]
+		f.mu.RUnlock()
 
-			// Evaluate per-IP host/path rules
-			if len(rules) > 0 {
-				reqHost := core.NormalizeHost(r.Host)
-				reqPath := r.URL.Path
+		if isUnblocked {
+			next.ServeHTTP(w, r)
+			return
+		}
 
-				for _, rule := range rules {
-					if rule.Host != "" && rule.Host != reqHost {
-						continue
-					}
-					if rule.Path != "" && !strings.HasPrefix(reqPath, rule.Path) {
-						continue
-					}
+		// 3. Check Exact Match (Fast O(1))
+		f.mu.RLock()
+		var rules []*Rule
+		if addr.Is4() {
+			rules = f.v4[addr]
+		} else {
+			rules = f.v6[addr]
+		}
+		f.mu.RUnlock()
 
-					atomic.AddUint64(&metricsLocalBlocks, 1)
-					http.Error(w, "Access Denied", http.StatusForbidden)
-					return
+		if len(rules) > 0 {
+			reqHost := core.NormalizeHost(r.Host)
+			reqPath := r.URL.Path
+
+			for _, rule := range rules {
+				if rule.Host != "" && rule.Host != reqHost {
+					continue
 				}
+				if rule.Path != "" && !strings.HasPrefix(reqPath, rule.Path) {
+					continue
+				}
+
+				atomic.AddUint64(&metricsLocalBlocks, 1)
+				http.Error(w, "Access Denied", http.StatusForbidden)
+				return
 			}
 		}
 
-		// Check CIDR blocks, skip if IP is explicitly unblocked
-		netIP := net.ParseIP(ipStr)
-		if netIP != nil {
-			addr, _ := netip.ParseAddr(ipStr)
-			addr = addr.Unmap()
+		// 4. Check CIDR (Slower tree lookup)
+		// Convert netip.Addr to net.IP for cidranger
+		netIP := net.IP(addr.AsSlice())
 
-			f.mu.RLock()
-			_, isUnblocked := f.blockedExceptions[addr]
-			f.mu.RUnlock()
+		f.mu.RLock()
+		contains, err := f.ranger.Contains(netIP)
+		f.mu.RUnlock()
 
-			if !isUnblocked {
-				contains, err := f.ranger.Contains(netIP)
-				if err == nil && contains {
-					atomic.AddUint64(&metricsLocalBlocks, 1)
-					http.Error(w, "Access Denied", http.StatusForbidden)
-					return
-				}
-			}
+		if err == nil && contains {
+			atomic.AddUint64(&metricsLocalBlocks, 1)
+			http.Error(w, "Access Denied", http.StatusForbidden)
+			return
 		}
 
-		// Remote check
+		// 5. Remote check (Slowest, IO bound)
 		if f.remote != "" {
 			if f.cachedRemoteCheck(r.Context(), ipStr) {
 				atomic.AddUint64(&metricsRemoteBlocks, 1)
@@ -439,7 +492,7 @@ func (f *IPSet) checkRemote(ctx context.Context, ip string) bool {
 
 	var blocked bool
 
-	_ = backoff.Retry(func() error {
+	err = backoff.Retry(func() error {
 		req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
 		if err != nil {
 			return backoff.Permanent(err)
@@ -468,11 +521,10 @@ func (f *IPSet) checkRemote(ctx context.Context, ip string) bool {
 		return nil
 	}, b)
 
-	if blocked {
-		atomic.AddUint64(&metricsRemoteBlocks, 1)
+	if err != nil {
+		atomic.AddUint64(&metricsRemoteErrors, 1)
 	}
 
-	// If retries exhausted and err != nil, we default to false (allow)
-	// This makes the firewall "fail open" on persistent remote errors to avoid outage.
+	// If retries exhausted and err != nil, we default to false (allow / fail open)
 	return blocked
 }

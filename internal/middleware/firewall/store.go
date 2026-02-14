@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
@@ -16,6 +17,7 @@ var bucketName = []byte("firewall_rules")
 type Store struct {
 	db     *bbolt.DB
 	logger *ll.Logger
+	wg     sync.WaitGroup // Tracks background cleanup tasks
 }
 
 func NewStore(dataDir woos.Folder, logger *ll.Logger) (*Store, error) {
@@ -49,6 +51,8 @@ func NewStore(dataDir woos.Folder, logger *ll.Logger) (*Store, error) {
 }
 
 func (s *Store) Close() error {
+	// Wait for any background cleanup goroutines to finish
+	s.wg.Wait()
 	return s.db.Close()
 }
 
@@ -72,7 +76,7 @@ func (s *Store) Remove(ip string) error {
 	})
 }
 
-// LoadAll returns all active rules. It automatically deletes expired rules from disk.
+// LoadAll returns all active rules. It automatically deletes expired rules from disk asynchronously.
 func (s *Store) LoadAll() ([]Rule, error) {
 	var active []Rule
 	var expiredKeys [][]byte
@@ -101,17 +105,24 @@ func (s *Store) LoadAll() ([]Rule, error) {
 		return nil
 	})
 
-	// FIX: Check if DB is open/valid before async update
 	if len(expiredKeys) > 0 {
+		s.wg.Add(1)
 		go func(keys [][]byte) {
-			_ = s.db.Update(func(tx *bbolt.Tx) error {
+			defer s.wg.Done()
+			err := s.db.Update(func(tx *bbolt.Tx) error {
 				b := tx.Bucket(bucketName)
 				for _, k := range keys {
-					_ = b.Delete(k)
+					if err := b.Delete(k); err != nil {
+						return err
+					}
 				}
 				return nil
 			})
-			s.logger.Info("cleaned up expired firewall rules", "count", len(keys))
+			if err != nil {
+				s.logger.Warnf("failed to cleanup expired rules: %v", err)
+			} else {
+				s.logger.Info("cleaned up expired firewall rules", "count", len(keys))
+			}
 		}(expiredKeys)
 	}
 
