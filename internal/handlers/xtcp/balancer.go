@@ -1,6 +1,7 @@
 package xtcp
 
 import (
+	"fmt"
 	"math/rand"
 	"strings"
 	"sync/atomic"
@@ -13,13 +14,13 @@ import (
 type Balancer struct {
 	backends     []*Backend
 	strategy     uint8
-	strategyName string // Store string representation for Uptime
+	strategyName string
 
 	rrCounter     atomic.Uint64
 	proxyProtocol bool
 }
 
-func NewBalancer(cfg alaye.TCPRoute) *Balancer {
+func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 	var backends []*Backend
 
 	interval := woos.TCPHealthCheckInterval
@@ -36,7 +37,6 @@ func NewBalancer(cfg alaye.TCPRoute) *Balancer {
 		send = cfg.HealthCheck.Send
 		expect = cfg.HealthCheck.Expect
 	} else {
-		// Smart defaults for Redis, etc.
 		for _, b := range cfg.Backends {
 			if strings.HasSuffix(b.Address, ":6379") {
 				send = "PING\r\n"
@@ -56,11 +56,21 @@ func NewBalancer(cfg alaye.TCPRoute) *Balancer {
 		expectBytes = []byte(expect)
 	}
 
+	// Ensure registry is not nil (fallback to global default)
+	if registry == nil {
+		registry = metrics.DefaultRegistry
+	}
+
 	for _, b := range cfg.Backends {
 		w := b.Weight
 		if w <= 0 {
 			w = 1
 		}
+
+		// Persistent Stats Key: tcp|<listen>|<sni>|<addr>
+		// Note: SNI might be empty for default routes, that is okay.
+		statsKey := fmt.Sprintf("tcp|%s|%s|%s", cfg.Listen, cfg.SNI, b.Address)
+		stats := registry.GetOrRegister(statsKey)
 
 		be := &Backend{
 			Address:    b.Address,
@@ -72,8 +82,8 @@ func NewBalancer(cfg alaye.TCPRoute) *Balancer {
 			hcExpect:   expectBytes,
 			failThresh: 2,
 			stop:       make(chan struct{}),
-			Activity:   metrics.NewActivityTracker(),
-			Health:     metrics.NewHealthTracker(),
+			Activity:   stats.Activity, // Injected
+			Health:     stats.Health,   // Injected
 		}
 		be.Alive.Store(true)
 		go be.healthCheckLoop()
@@ -149,8 +159,6 @@ func (tb *Balancer) pickRoundRobin(exclude map[*Backend]struct{}) *Backend {
 		return nil
 	}
 
-	// Fix Integer Overflow:
-	// We only care about the offset relative to n.
 	raw := tb.rrCounter.Add(1)
 	start := int(raw % n)
 

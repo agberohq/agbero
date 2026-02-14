@@ -65,8 +65,7 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 		return nil, err
 	}
 
-	// Resolve persistent metrics from registry
-	// Key is composite of Route Config Hash + Backend Address
+	// Persistent Metrics Lookup
 	statsKey := fmt.Sprintf("%s|%s", route.Key(), cfg.Address)
 	stats := registry.GetOrRegister(statsKey)
 
@@ -109,15 +108,12 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 			return
 		}
 
-		// Increment failures with atomic add
 		newFailures := b.Activity.Failures.Add(1)
 
-		// Only trip the breaker if we haven't already tripped
 		if newFailures >= uint64(cbThreshold) && b.Alive.Swap(false) {
 			b.logger.Fields("backend", u.Host, "failures", newFailures).Warn("circuit breaker tripped")
 		}
 
-		// Reset counter if Alive is false but traffic is low and time passed since last recovery
 		if !b.Alive.Load() && time.Since(b.LastRecovery()) > 5*time.Second {
 			b.Activity.Failures.Store(0)
 		}
@@ -160,7 +156,6 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 	return b, nil
 }
 
-// Jitter returns a random duration to avoid thundering herd.
 func (b *Backend) Jitter(interval time.Duration) time.Duration {
 	return time.Duration(b.rnd.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
 }
@@ -184,12 +179,9 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
-		// We do NOT close metrics here anymore as they persist in registry
-		// b.Activity.Latency.Close() // managed by registry/lifecycle?
-		// Actually Latency has a goroutine, we should probably stop the goroutine
-		// but keep the data. For now, to prevent leaks, we close the goroutine
-		// but the registry keeps the struct.
-		b.Activity.Latency.Close()
+		// NOTE: We do NOT close the Latency metrics here anymore.
+		// Lifecycle of metrics is now managed by the Registry.
+		// b.Activity.Latency.Close()
 	})
 }
 

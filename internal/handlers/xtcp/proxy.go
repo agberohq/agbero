@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
+	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
@@ -58,7 +59,8 @@ func (p *Proxy) AddRoute(hostname string, cfg alaye.TCPRoute) {
 	p.Mu.Lock()
 	defer p.Mu.Unlock()
 
-	bal := NewBalancer(cfg)
+	// Use DefaultRegistry for persistence
+	bal := NewBalancer(cfg, metrics.DefaultRegistry)
 	hostname = strings.ToLower(strings.TrimSpace(hostname))
 
 	if hostname == "" || hostname == "*" {
@@ -260,7 +262,6 @@ func (p *Proxy) handle(src net.Conn) {
 			break
 		}
 
-		// Mark as tried so Pick() won't return it again in the next iteration
 		tried[backend] = struct{}{}
 
 		dst, err = net.DialTimeout(woos.TCP, backend.Address, woos.BackendDialTimeout)
@@ -334,7 +335,6 @@ func (p *Proxy) pickBalancer(sni string) *Balancer {
 		return p.Default
 	}
 
-	// Return the singleton no-op balancer
 	return noopBalancer
 }
 

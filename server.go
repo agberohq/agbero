@@ -592,13 +592,19 @@ func (s *Server) Reload() {
 	currentCount := len(newHosts)
 
 	// Clean up stale metrics from the registry
-	// We gather all valid route keys from the new configuration
 	validKeys := make(map[string]bool)
 	for _, h := range newHosts {
+		// HTTP Routes
 		for _, r := range h.Routes {
 			rKey := r.Key()
 			for _, srv := range r.Backends.Servers {
 				validKeys[fmt.Sprintf("%s|%s", rKey, srv.Address)] = true
+			}
+		}
+		// TCP Routes
+		for _, proxy := range h.Proxies {
+			for _, srv := range proxy.Backends {
+				validKeys[fmt.Sprintf("tcp|%s|%s|%s", proxy.Listen, proxy.SNI, srv.Address)] = true
 			}
 		}
 	}
@@ -629,13 +635,10 @@ func (s *Server) Reload() {
 			}
 		}
 
-		// Find the group for this proxy's listen address
 		var group []*alaye.TCPRoute
-		// Try exact match first
 		if g, ok := tcpGroups[tp.Listen]; ok {
 			group = g
 		} else {
-			// Try matching by port if Listen was :PORT
 			for l, g := range tcpGroups {
 				if strings.HasSuffix(l, ":"+port) {
 					group = g
@@ -645,7 +648,6 @@ func (s *Server) Reload() {
 		}
 
 		if group == nil {
-			// Listener removed in config? Disable all routes
 			tp.UpdateRoutes(nil, nil)
 			continue
 		}
@@ -654,11 +656,11 @@ func (s *Server) Reload() {
 		var newDefault *xtcp.Balancer
 
 		for _, route := range group {
-			bal := xtcp.NewBalancer(*route)
+			// Pass registry here (Default)
+			bal := xtcp.NewBalancer(*route, metrics.DefaultRegistry)
 			if route.SNI != "" {
 				newRoutes[strings.ToLower(route.SNI)] = bal
 			} else {
-				// If Name is present but no SNI, treat as default if alone, or ignore?
 				newDefault = bal
 			}
 		}

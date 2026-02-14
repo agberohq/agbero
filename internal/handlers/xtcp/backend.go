@@ -55,9 +55,10 @@ type Backend struct {
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
-		if b.Activity != nil && b.Activity.Latency != nil {
-			b.Activity.Latency.Close()
-		}
+		// We do NOT close metrics here anymore. Registry owns them.
+		// if b.Activity != nil && b.Activity.Latency != nil {
+		// 	b.Activity.Latency.Close()
+		// }
 	})
 }
 
@@ -65,7 +66,6 @@ func (b *Backend) OnDialFailure(_ error) {
 	b.Activity.Failures.Add(1)
 
 	// We use the Activity failure count for immediate circuit breaking
-	// distinct from the background health check failures
 	if b.failThresh > 0 {
 		current := b.Activity.Failures.Load()
 		if int64(current) >= b.failThresh {
@@ -83,7 +83,6 @@ func (b *Backend) healthCheckLoop() {
 	ticker := time.NewTicker(b.hcInterval)
 	defer ticker.Stop()
 
-	// Local tracker for consecutive failures in the health loop
 	consecutiveFailures := int64(0)
 
 	for {

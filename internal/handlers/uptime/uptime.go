@@ -11,10 +11,8 @@ import (
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/xtcp"
 )
 
 type SystemStats struct {
@@ -144,18 +142,15 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 				Backends: make([]*BackendSnapshot, 0),
 			}
 
-			// We fetch from Registry to show stats even if handler is reaped
 			rKey := route.Key()
 
 			for _, srv := range route.Backends.Servers {
 				statsKey := fmt.Sprintf("%s|%s", rKey, srv.Address)
 
-				// Defaults for uninitialized metrics
 				var latSnap metrics.LatencySnapshot
 				var failures, reqs, inFlight int64
 				healthy := false
 
-				// Lookup in persistent registry
 				if stats := metrics.DefaultRegistry.Get(statsKey); stats != nil {
 					snap := stats.Activity.Snapshot()
 					latSnap = snap["latency"].(metrics.LatencySnapshot)
@@ -165,22 +160,9 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 					healthy = stats.Health.IsHealthy()
 				}
 
-				// Alive status still depends on Active Handlers?
-				// No, ideally we'd peek the handler, but since handlers get reaped,
-				// "Alive" for a reaped route is effectively "Unknown" or "True" (will re-check).
-				// However, if the route IS active, we want real Alive status.
-				alive := true
-
-				// Try to peek active handler for "Alive" status (circuit breaker state)
-				// If not found, assume Alive=true (it will be re-initialized as true on next request)
-				/*
-				   NOTE: Accessing the handler via cache here is optional but provides better
-				   real-time status for Active routes.
-				*/
-
 				bSnap := &BackendSnapshot{
 					URL:       srv.Address,
-					Alive:     alive,
+					Alive:     true, // Approximated for decoupled metrics
 					InFlight:  inFlight,
 					Failures:  failures,
 					TotalReqs: uint64(reqs),
@@ -197,68 +179,46 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 		// --- TCP Proxies ---
 		if len(hcfg.Proxies) > 0 {
 			for _, tcpCfg := range hcfg.Proxies {
-				item, ok := cache.TCP.Load(tcpCfg.Listen)
-				if !ok {
-					continue
+				pSnap := &ProxySnapshot{
+					Protocol: "tcp",
+					Name:     tcpCfg.SNI,
+					Strategy: tcpCfg.Strategy,
+					Backends: make([]*BackendSnapshot, 0),
+				}
+				if pSnap.Name == "" {
+					pSnap.Name = "*default*"
 				}
 
-				rtProxy, ok := item.Value.(*xtcp.Proxy)
-				if !ok {
-					continue
+				for _, b := range tcpCfg.Backends {
+					// Reconstruct key: tcp|<listen>|<sni>|<addr>
+					statsKey := fmt.Sprintf("tcp|%s|%s|%s", tcpCfg.Listen, tcpCfg.SNI, b.Address)
+
+					var latSnap metrics.LatencySnapshot
+					var failures, reqs, inFlight int64
+					healthy := false
+
+					if stats := metrics.DefaultRegistry.Get(statsKey); stats != nil {
+						snap := stats.Activity.Snapshot()
+						latSnap = snap["latency"].(metrics.LatencySnapshot)
+						failures = int64(snap["failures"].(uint64))
+						reqs = int64(snap["requests"].(uint64))
+						inFlight = snap["in_flight"].(int64)
+						healthy = stats.Health.IsHealthy()
+					}
+
+					bSnap := &BackendSnapshot{
+						URL:       b.Address,
+						Alive:     true, // Approximated
+						InFlight:  inFlight,
+						Failures:  failures,
+						TotalReqs: uint64(reqs),
+						Latency:   latSnap,
+						Healthy:   healthy,
+					}
+					pSnap.Backends = append(pSnap.Backends, bSnap)
+					totalReqs += uint64(reqs)
 				}
-
-				rtProxy.Mu.RLock()
-
-				// 1. SNI Routes
-				for sni, bal := range rtProxy.Routes {
-					pSnap := &ProxySnapshot{
-						Protocol: "tcp",
-						Name:     sni,
-						Strategy: bal.GetStrategyName(),
-						Backends: make([]*BackendSnapshot, 0),
-					}
-
-					for _, b := range bal.Backends() {
-						bSnap := &BackendSnapshot{
-							URL:       b.Address,
-							Alive:     b.Alive.Load(),
-							InFlight:  b.Activity.InFlight.Load(),
-							Failures:  int64(b.Activity.Failures.Load()),
-							TotalReqs: b.Activity.Requests.Load(),
-							Latency:   b.Activity.Latency.Snapshot(),
-							Healthy:   b.Health.IsHealthy(),
-						}
-						pSnap.Backends = append(pSnap.Backends, bSnap)
-						totalReqs += b.Activity.Requests.Load()
-					}
-					hSnap.Proxies = append(hSnap.Proxies, pSnap)
-				}
-
-				// 2. Default Route
-				if rtProxy.Default != nil {
-					pSnap := &ProxySnapshot{
-						Protocol: "tcp",
-						Name:     "*default*",
-						Strategy: rtProxy.Default.GetStrategyName(),
-						Backends: make([]*BackendSnapshot, 0),
-					}
-					for _, b := range rtProxy.Default.Backends() {
-						bSnap := &BackendSnapshot{
-							URL:       b.Address,
-							Alive:     b.Alive.Load(),
-							InFlight:  b.Activity.InFlight.Load(),
-							Failures:  int64(b.Activity.Failures.Load()),
-							TotalReqs: b.Activity.Requests.Load(),
-							Latency:   b.Activity.Latency.Snapshot(),
-							Healthy:   b.Health.IsHealthy(),
-						}
-						pSnap.Backends = append(pSnap.Backends, bSnap)
-						totalReqs += b.Activity.Requests.Load()
-					}
-					hSnap.Proxies = append(hSnap.Proxies, pSnap)
-				}
-
-				rtProxy.Mu.RUnlock()
+				hSnap.Proxies = append(hSnap.Proxies, pSnap)
 			}
 		}
 

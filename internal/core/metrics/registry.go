@@ -11,6 +11,13 @@ type BackendStats struct {
 	Health   *Health
 }
 
+// Close releases resources associated with the stats (e.g. Latency goroutines).
+func (s *BackendStats) Close() {
+	if s.Activity != nil && s.Activity.Latency != nil {
+		s.Activity.Latency.Close()
+	}
+}
+
 type Registry struct {
 	mu    sync.RWMutex
 	items map[string]*BackendStats
@@ -46,13 +53,14 @@ func (r *Registry) Get(key string) *BackendStats {
 	return r.items[key]
 }
 
-// Prune removes any keys not present in the keepKeys map.
+// Prune removes any keys not present in the keepKeys map and closes them.
 func (r *Registry) Prune(keepKeys map[string]bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	for k := range r.items {
+	for k, v := range r.items {
 		if !keepKeys[k] {
+			v.Close() // Important: Stop the latency recording goroutine
 			delete(r.items, k)
 		}
 	}
