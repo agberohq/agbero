@@ -3,20 +3,26 @@ package xhttp
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/lb"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
-// Balancer wraps the new balancer package for HTTP backends
+// Balancer wraps the core/lb logic for HTTP backends, handling strategy composition.
 type Balancer struct {
-	selector    *lb.Selector
+	lb          lb.Balancer
+	adaptive    *lb.Adaptive
 	timeout     time.Duration
 	stripPrefix []string
+	strategy    string
 }
 
-func NewLoadBalancer(backends []*Backend, strategy string, timeout time.Duration, stripPrefixes []string) *Balancer {
+// NewBalancer creates a configured balancer chain (Selector -> Adaptive -> Sticky).
+func NewBalancer(backends []*Backend, strategy string, timeout time.Duration, stripPrefixes []string) *Balancer {
 	wrapped := make([]lb.Backend, 0, len(backends))
 	for _, b := range backends {
 		if b != nil {
@@ -24,37 +30,52 @@ func NewLoadBalancer(backends []*Backend, strategy string, timeout time.Duration
 		}
 	}
 
-	load := &Balancer{
+	baseStrat := lb.ParseStrategy(strategy)
+	baseSelector := lb.NewSelector(wrapped, baseStrat)
+
+	var root lb.Balancer = baseSelector
+	var adaptiveRef *lb.Adaptive
+
+	s := strings.ToLower(strategy)
+
+	if strings.Contains(s, alaye.StrategyAdaptive) {
+		adaptiveRef = lb.NewAdaptive(root, 0.15)
+		root = adaptiveRef
+	}
+
+	if strings.Contains(s, alaye.StrategySticky) {
+		extractor := func(r *http.Request) string {
+			if c, err := r.Cookie(woos.SessionCookieName); err == nil {
+				return c.Value
+			}
+			return clientip.ClientIP(r)
+		}
+		root = lb.NewSticky(root, 30*time.Minute, extractor)
+	}
+
+	return &Balancer{
+		lb:          root,
+		adaptive:    adaptiveRef,
 		timeout:     timeout,
 		stripPrefix: append([]string(nil), stripPrefixes...),
+		strategy:    strategy,
 	}
-	load.selector = lb.NewSelector(wrapped, lb.ParseStrategy(strategy))
-	return load
 }
 
+// Update refreshes the backend list across the entire balancer chain.
 func (b *Balancer) Update(list []*Backend) {
 	wrapped := make([]lb.Backend, 0, len(list))
-	for _, b := range list {
-		if b != nil {
-			wrapped = append(wrapped, httpBackend{b})
+	for _, backend := range list {
+		if backend != nil {
+			wrapped = append(wrapped, httpBackend{backend})
 		}
 	}
-	b.selector.Update(wrapped)
+	b.lb.Update(wrapped)
 }
 
-func (b *Balancer) Snapshot() []*Backend {
-	// Return underlying backends
-	var result []*Backend
-	for _, hb := range b.selector.Backends() {
-		if b, ok := hb.(httpBackend); ok {
-			result = append(result, b.Backend)
-		}
-	}
-	return result
-}
-
+// ServeHTTP handles the request lifecycle including backend selection, timeouts, and metric recording.
 func (b *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	be := b.PickBackend(r)
+	be := b.Pick(r)
 	if be == nil {
 		http.Error(w, "no healthy backends", http.StatusBadGateway)
 		return
@@ -67,12 +88,20 @@ func (b *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 	}
 
+	start := time.Now()
+
 	be.ServeHTTP(w, r.WithContext(ctx))
+
+	if b.adaptive != nil {
+		latency := time.Since(start).Microseconds()
+		b.adaptive.RecordResult(httpBackend{be}, latency, false)
+	}
 }
 
-func (b *Balancer) PickBackend(r *http.Request) *Backend {
-	key := b.hashKey(r)
-	pick := b.selector.Pick(r, func() uint64 { return key })
+// Pick selects a concrete Backend using the configured load balancing chain.
+func (b *Balancer) Pick(r *http.Request) *Backend {
+	pick := b.lb.Pick(r, func() uint64 { return b.hashKey(r) })
+
 	if pick == nil {
 		return nil
 	}
@@ -82,18 +111,18 @@ func (b *Balancer) PickBackend(r *http.Request) *Backend {
 	return nil
 }
 
+// hashKey generates a consistent hash key for IP/URL strategies.
 func (b *Balancer) hashKey(r *http.Request) uint64 {
-	switch b.selector.Strategy {
-	case lb.StrategyIPHash:
+	if strings.Contains(b.strategy, alaye.StrategyIPHash) || strings.Contains(b.strategy, alaye.StrategyConsistentHash) {
 		ip := clientip.ClientIP(r)
 		return lb.HashString(ip)
-	case lb.StrategyURLHash:
+	}
+	if strings.Contains(b.strategy, alaye.StrategyURLHash) {
 		path := r.URL.Path
 		if path == "" {
 			path = "/"
 		}
 		return lb.HashString(path)
-	default:
-		return 0
 	}
+	return 0
 }

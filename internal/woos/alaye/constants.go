@@ -18,6 +18,8 @@ const (
 	StrategyLeastResponseTime = "least_response_time"
 	StrategyPowerOfTwoChoices = "power_of_two"
 	StrategyConsistentHash    = "consistent_hash"
+	StrategyAdaptive          = "adaptive"
+	StrategySticky            = "sticky"
 )
 
 // Default Timeouts

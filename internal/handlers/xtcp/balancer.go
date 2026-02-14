@@ -110,6 +110,7 @@ func (tb *Balancer) Stop() {
 }
 
 func (tb *Balancer) BackendCount() int {
+	// Safe to call, returns slice length
 	return len(tb.selector.Backends())
 }
 
@@ -117,42 +118,66 @@ func (tb *Balancer) GetStrategyName() string {
 	return tb.strategyName
 }
 
+// Pick selects a backend without re-allocating the selector.
 func (tb *Balancer) Pick(exclude map[*Backend]struct{}) *Backend {
-	backends := tb.selector.Backends()
-	if len(backends) == 0 {
+	count := tb.BackendCount()
+	if count == 0 {
 		return nil
 	}
 
-	// Filter out excluded and unusable backends
-	var candidates []lb.Backend
-	for _, b := range backends {
-		tb := b.(tcpBackend)
-		if tb.Backend == nil || !tb.Backend.Alive.Load() {
-			continue
-		}
-		if tb.Backend.MaxConns > 0 && tb.Backend.Activity.InFlight.Load() >= tb.Backend.MaxConns {
-			continue
-		}
-		if _, ok := exclude[tb.Backend]; ok {
-			continue
-		}
-		candidates = append(candidates, b)
+	// 1. Fast Path: Try the selector strategy up to 'attempts' times.
+	// This respects weights and RR logic without rebuilding the world.
+	attempts := count
+	if attempts > 5 {
+		attempts = 5
 	}
 
-	if len(candidates) == 0 {
-		return nil
+	// Used for dummy hash keys since we don't have request context in TCP Pick
+	dummyKeyFunc := func() uint64 { return 0 }
+
+	for i := 0; i < attempts; i++ {
+		// Pass nil request as TCP selection here doesn't access HTTP headers
+		candidate := tb.selector.Pick(nil, dummyKeyFunc)
+		if candidate == nil {
+			continue
+		}
+
+		tbBackend, ok := candidate.(tcpBackend)
+		if !ok {
+			continue
+		}
+
+		if tb.isUsable(tbBackend.Backend, exclude) {
+			return tbBackend.Backend
+		}
 	}
 
-	// Use selector's strategy on filtered candidates
-	// Create a temporary selector with just candidates
-	tempSelector := lb.NewSelector(candidates, tb.selector.Strategy)
-
-	// For strategies that need request info, we pass nil
-	selected := tempSelector.Pick(nil, func() uint64 { return 0 })
-	if selected == nil {
-		return nil
+	// 2. Slow Path: Linear scan.
+	// If the intelligent picker kept hitting excluded nodes, just find *any* healthy one.
+	for _, b := range tb.selector.Backends() {
+		tbBackend, ok := b.(tcpBackend)
+		if !ok {
+			continue
+		}
+		if tb.isUsable(tbBackend.Backend, exclude) {
+			return tbBackend.Backend
+		}
 	}
-	return selected.(tcpBackend).Backend
+
+	return nil
+}
+
+func (tb *Balancer) isUsable(b *Backend, exclude map[*Backend]struct{}) bool {
+	if b == nil || !b.Alive.Load() {
+		return false
+	}
+	if b.MaxConns > 0 && b.Activity.InFlight.Load() >= b.MaxConns {
+		return false
+	}
+	if _, ok := exclude[b]; ok {
+		return false
+	}
+	return true
 }
 
 func (tb *Balancer) useProtocol() bool { return tb != nil && tb.proxyProtocol }

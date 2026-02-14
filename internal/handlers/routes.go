@@ -98,7 +98,7 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 		timeout = route.Timeouts.Request
 	}
 
-	loadBalancer := xhttp.NewLoadBalancer(
+	loadBalancer := xhttp.NewBalancer(
 		backends,
 		route.Backends.LBStrategy,
 		timeout,

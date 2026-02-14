@@ -2,6 +2,7 @@ package lb
 
 import (
 	"math/rand/v2"
+	"net/http"
 	"sync"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
@@ -19,6 +20,16 @@ type Backend interface {
 	Activity
 	Alive() bool
 	Weight() int
+}
+
+// Balancer is the common interface for all strategies and wrappers.
+type Balancer interface {
+	// Pick selects a backend for the request.
+	// keyFunc is a closure that returns a hash (IP/URL) if needed by the underlying strategy.
+	Pick(r *http.Request, keyFunc func() uint64) Backend
+
+	// Update refreshes the backend list atomically.
+	Update(backends []Backend)
 }
 
 // Strategy defines the load balancing algorithm
