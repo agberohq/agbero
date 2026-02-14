@@ -38,7 +38,7 @@ type Backend struct {
 
 	Activity *metrics.Activity
 	Health   *metrics.Health
-	Alive    atomic.Bool
+	Alive    *atomic.Bool
 
 	MaxConns int64
 
@@ -55,17 +55,13 @@ type Backend struct {
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
-		// We do NOT close metrics here anymore. Registry owns them.
-		// if b.Activity != nil && b.Activity.Latency != nil {
-		// 	b.Activity.Latency.Close()
-		// }
+		// Lifecycle managed by Registry now
 	})
 }
 
 func (b *Backend) OnDialFailure(_ error) {
 	b.Activity.Failures.Add(1)
 
-	// We use the Activity failure count for immediate circuit breaking
 	if b.failThresh > 0 {
 		current := b.Activity.Failures.Load()
 		if int64(current) >= b.failThresh {

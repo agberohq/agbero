@@ -1,6 +1,9 @@
 package metrics
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // DefaultRegistry is the singleton instance used to persist metrics
 // across handler recreation cycles (e.g. by the Reaper).
@@ -9,6 +12,7 @@ var DefaultRegistry = NewRegistry()
 type BackendStats struct {
 	Activity *Activity
 	Health   *Health
+	Alive    *atomic.Bool
 }
 
 // Close releases resources associated with the stats (e.g. Latency goroutines).
@@ -30,6 +34,7 @@ func NewRegistry() *Registry {
 }
 
 // GetOrRegister returns existing stats for the key or creates new ones.
+// It initializes Alive to true for new entries.
 func (r *Registry) GetOrRegister(key string) *BackendStats {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -38,9 +43,13 @@ func (r *Registry) GetOrRegister(key string) *BackendStats {
 		return s
 	}
 
+	alive := &atomic.Bool{}
+	alive.Store(true)
+
 	s := &BackendStats{
 		Activity: NewActivityTracker(),
 		Health:   NewHealthTracker(),
+		Alive:    alive,
 	}
 	r.items[key] = s
 	return s
@@ -60,7 +69,7 @@ func (r *Registry) Prune(keepKeys map[string]bool) {
 
 	for k, v := range r.items {
 		if !keepKeys[k] {
-			v.Close() // Important: Stop the latency recording goroutine
+			v.Close() // Stop background goroutines (e.g. Latency histogram)
 			delete(r.items, k)
 		}
 	}

@@ -68,7 +68,6 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 		}
 
 		// Persistent Stats Key: tcp|<listen>|<sni>|<addr>
-		// Note: SNI might be empty for default routes, that is okay.
 		statsKey := fmt.Sprintf("tcp|%s|%s|%s", cfg.Listen, cfg.SNI, b.Address)
 		stats := registry.GetOrRegister(statsKey)
 
@@ -84,8 +83,11 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 			stop:       make(chan struct{}),
 			Activity:   stats.Activity, // Injected
 			Health:     stats.Health,   // Injected
+			Alive:      stats.Alive,    // Injected
 		}
-		be.Alive.Store(true)
+		// NOTE: We do not hardcode Alive to true here.
+		// If the registry has it as false, it stays false until check() passes.
+
 		go be.healthCheckLoop()
 		backends = append(backends, be)
 	}

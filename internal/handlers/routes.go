@@ -84,6 +84,7 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 	var backends []*xhttp.Backend
 
 	for _, backendCfg := range route.Backends.Servers {
+		// Pass DefaultRegistry for persistent metrics
 		b, err := xhttp.NewBackend(backendCfg, route, logger, metrics.DefaultRegistry)
 		if err != nil {
 			logger.Fields("backend", backendCfg.Address, "err", err).

@@ -23,10 +23,22 @@ import (
 
 var sharedBufferPool = core.NewBufferPool()
 
+// Hop-by-hop headers to strip. RFC 7230, section 6.1
+var hopHeaders = []string{
+	woos.HeaderKeyConnection,
+	woos.HeaderKeepAlive,
+	woos.HeaderProxyAuthenticate,
+	woos.HeaderProxyAuthorization,
+	woos.HeaderTE,
+	woos.HeaderTrailers,
+	woos.HeaderTransferEncoding,
+	woos.HeaderKeyUpgrade,
+}
+
 type Backend struct {
 	URL          *url.URL
 	Proxy        *httputil.ReverseProxy
-	Alive        atomic.Bool
+	Alive        *atomic.Bool // Pointer to Registry-owned state
 	stop         chan struct{}
 	stopOnce     sync.Once
 	startTime    time.Time
@@ -66,6 +78,7 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 	}
 
 	// Persistent Metrics Lookup
+	// Key: RouteHash|BackendAddr
 	statsKey := fmt.Sprintf("%s|%s", route.Key(), cfg.Address)
 	stats := registry.GetOrRegister(statsKey)
 
@@ -81,8 +94,10 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 		lastRecovery: atomic.Int64{},
 		Health:       stats.Health,
 		Activity:     stats.Activity,
+		Alive:        stats.Alive,
 	}
-	b.Alive.Store(true)
+
+	// Ensure recovery timestamp is set for logic checks
 	b.lastRecovery.Store(now.UnixNano())
 
 	cbThreshold := woos.DefaultCircuitBreakerThreshold
@@ -135,6 +150,11 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 		originalHost := req.Host
 		req.Host = b.URL.Host
 
+		// Strip Hop-by-hop headers to prevent request smuggling
+		for _, h := range hopHeaders {
+			req.Header.Del(h)
+		}
+
 		proto := woos.Http
 		if req.TLS != nil {
 			proto = woos.Https
@@ -179,13 +199,16 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
-		// NOTE: We do NOT close the Latency metrics here anymore.
-		// Lifecycle of metrics is now managed by the Registry.
+		// We do NOT close metrics here anymore. The Registry owns their lifecycle.
 		// b.Activity.Latency.Close()
 	})
 }
 
 func (b *Backend) healthCheckLoop() {
+	if b.hcConfig == nil {
+		return
+	}
+
 	interval := woos.DefaultHealthCheckInterval
 	if b.hcConfig.Interval > 0 {
 		interval = b.hcConfig.Interval

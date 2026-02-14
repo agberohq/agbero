@@ -592,6 +592,7 @@ func (s *Server) Reload() {
 	currentCount := len(newHosts)
 
 	// Clean up stale metrics from the registry
+	// We gather all valid route keys from the new configuration
 	validKeys := make(map[string]bool)
 	for _, h := range newHosts {
 		// HTTP Routes
@@ -603,8 +604,11 @@ func (s *Server) Reload() {
 		}
 		// TCP Routes
 		for _, proxy := range h.Proxies {
+			sni := proxy.SNI
+			// TCP metrics key logic matches xtcp/balancer.go (if/when updated)
+			// Using consistent format: tcp|<listen>|<sni>|<addr>
 			for _, srv := range proxy.Backends {
-				validKeys[fmt.Sprintf("tcp|%s|%s|%s", proxy.Listen, proxy.SNI, srv.Address)] = true
+				validKeys[fmt.Sprintf("tcp|%s|%s|%s", proxy.Listen, sni, srv.Address)] = true
 			}
 		}
 	}
@@ -635,10 +639,13 @@ func (s *Server) Reload() {
 			}
 		}
 
+		// Find the group for this proxy's listen address
 		var group []*alaye.TCPRoute
+		// Try exact match first
 		if g, ok := tcpGroups[tp.Listen]; ok {
 			group = g
 		} else {
+			// Try matching by port if Listen was :PORT
 			for l, g := range tcpGroups {
 				if strings.HasSuffix(l, ":"+port) {
 					group = g
@@ -648,6 +655,7 @@ func (s *Server) Reload() {
 		}
 
 		if group == nil {
+			// Listener removed in config? Disable all routes
 			tp.UpdateRoutes(nil, nil)
 			continue
 		}
@@ -656,7 +664,6 @@ func (s *Server) Reload() {
 		var newDefault *xtcp.Balancer
 
 		for _, route := range group {
-			// Pass registry here (Default)
 			bal := xtcp.NewBalancer(*route, metrics.DefaultRegistry)
 			if route.SNI != "" {
 				newRoutes[strings.ToLower(route.SNI)] = bal

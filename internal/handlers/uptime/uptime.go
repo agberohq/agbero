@@ -11,8 +11,10 @@ import (
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/xtcp"
 )
 
 type SystemStats struct {
@@ -150,6 +152,7 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 				var latSnap metrics.LatencySnapshot
 				var failures, reqs, inFlight int64
 				healthy := false
+				alive := true // Default until found
 
 				if stats := metrics.DefaultRegistry.Get(statsKey); stats != nil {
 					snap := stats.Activity.Snapshot()
@@ -158,11 +161,12 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 					reqs = int64(snap["requests"].(uint64))
 					inFlight = snap["in_flight"].(int64)
 					healthy = stats.Health.IsHealthy()
+					alive = stats.Alive.Load() // Read actual state
 				}
 
 				bSnap := &BackendSnapshot{
 					URL:       srv.Address,
-					Alive:     true, // Approximated for decoupled metrics
+					Alive:     alive,
 					InFlight:  inFlight,
 					Failures:  failures,
 					TotalReqs: uint64(reqs),
@@ -179,46 +183,68 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 		// --- TCP Proxies ---
 		if len(hcfg.Proxies) > 0 {
 			for _, tcpCfg := range hcfg.Proxies {
-				pSnap := &ProxySnapshot{
-					Protocol: "tcp",
-					Name:     tcpCfg.SNI,
-					Strategy: tcpCfg.Strategy,
-					Backends: make([]*BackendSnapshot, 0),
-				}
-				if pSnap.Name == "" {
-					pSnap.Name = "*default*"
+				item, ok := cache.TCP.Load(tcpCfg.Listen)
+				if !ok {
+					continue
 				}
 
-				for _, b := range tcpCfg.Backends {
-					// Reconstruct key: tcp|<listen>|<sni>|<addr>
-					statsKey := fmt.Sprintf("tcp|%s|%s|%s", tcpCfg.Listen, tcpCfg.SNI, b.Address)
+				rtProxy, ok := item.Value.(*xtcp.Proxy)
+				if !ok {
+					continue
+				}
 
-					var latSnap metrics.LatencySnapshot
-					var failures, reqs, inFlight int64
-					healthy := false
+				rtProxy.Mu.RLock()
 
-					if stats := metrics.DefaultRegistry.Get(statsKey); stats != nil {
-						snap := stats.Activity.Snapshot()
-						latSnap = snap["latency"].(metrics.LatencySnapshot)
-						failures = int64(snap["failures"].(uint64))
-						reqs = int64(snap["requests"].(uint64))
-						inFlight = snap["in_flight"].(int64)
-						healthy = stats.Health.IsHealthy()
+				// 1. SNI Routes
+				for sni, bal := range rtProxy.Routes {
+					pSnap := &ProxySnapshot{
+						Protocol: "tcp",
+						Name:     sni,
+						Strategy: bal.GetStrategyName(),
+						Backends: make([]*BackendSnapshot, 0),
 					}
 
-					bSnap := &BackendSnapshot{
-						URL:       b.Address,
-						Alive:     true, // Approximated
-						InFlight:  inFlight,
-						Failures:  failures,
-						TotalReqs: uint64(reqs),
-						Latency:   latSnap,
-						Healthy:   healthy,
+					for _, b := range bal.Backends() {
+						bSnap := &BackendSnapshot{
+							URL:       b.Address,
+							Alive:     b.Alive.Load(),
+							InFlight:  b.Activity.InFlight.Load(),
+							Failures:  int64(b.Activity.Failures.Load()),
+							TotalReqs: b.Activity.Requests.Load(),
+							Latency:   b.Activity.Latency.Snapshot(),
+							Healthy:   b.Health.IsHealthy(),
+						}
+						pSnap.Backends = append(pSnap.Backends, bSnap)
+						totalReqs += b.Activity.Requests.Load()
 					}
-					pSnap.Backends = append(pSnap.Backends, bSnap)
-					totalReqs += uint64(reqs)
+					hSnap.Proxies = append(hSnap.Proxies, pSnap)
 				}
-				hSnap.Proxies = append(hSnap.Proxies, pSnap)
+
+				// 2. Default Route
+				if rtProxy.Default != nil {
+					pSnap := &ProxySnapshot{
+						Protocol: "tcp",
+						Name:     "*default*",
+						Strategy: rtProxy.Default.GetStrategyName(),
+						Backends: make([]*BackendSnapshot, 0),
+					}
+					for _, b := range rtProxy.Default.Backends() {
+						bSnap := &BackendSnapshot{
+							URL:       b.Address,
+							Alive:     b.Alive.Load(),
+							InFlight:  b.Activity.InFlight.Load(),
+							Failures:  int64(b.Activity.Failures.Load()),
+							TotalReqs: b.Activity.Requests.Load(),
+							Latency:   b.Activity.Latency.Snapshot(),
+							Healthy:   b.Health.IsHealthy(),
+						}
+						pSnap.Backends = append(pSnap.Backends, bSnap)
+						totalReqs += b.Activity.Requests.Load()
+					}
+					hSnap.Proxies = append(hSnap.Proxies, pSnap)
+				}
+
+				rtProxy.Mu.RUnlock()
 			}
 		}
 
