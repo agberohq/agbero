@@ -16,9 +16,11 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
+	"git.imaxinacion.net/aibox/agbero/internal/core/retry"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"github.com/cenkalti/backoff/v4"
 	"github.com/olekukonko/ll"
 	"github.com/yl2chen/cidranger"
 	"golang.org/x/sync/singleflight"
@@ -411,7 +413,8 @@ func (f *IPSet) cachedRemoteCheck(ctx context.Context, ip string) bool {
 	}
 
 	val, err, _ := f.flight.Do(ip, func() (interface{}, error) {
-		blocked := f.checkRemote(ip)
+		// Use the retry-enabled check
+		blocked := f.checkRemote(ctx, ip)
 		f.cache.set(ip, blocked)
 		return blocked, nil
 	})
@@ -422,7 +425,7 @@ func (f *IPSet) cachedRemoteCheck(ctx context.Context, ip string) bool {
 	return val.(bool)
 }
 
-func (f *IPSet) checkRemote(ip string) bool {
+func (f *IPSet) checkRemote(ctx context.Context, ip string) bool {
 	u, err := url.Parse(f.remote)
 	if err != nil {
 		return false
@@ -431,20 +434,45 @@ func (f *IPSet) checkRemote(ip string) bool {
 	q.Set("ip", ip)
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest("GET", u.String(), nil)
-	if err != nil {
-		return false
+	// Short retry policy (don't block the request too long)
+	b := backoff.WithContext(retry.NewShort(), ctx)
+
+	var blocked bool
+
+	_ = backoff.Retry(func() error {
+		req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+		if err != nil {
+			return backoff.Permanent(err)
+		}
+
+		resp, err := f.client.Do(req)
+		if err != nil {
+			// Network error, retry
+			return err
+		}
+		defer func() {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}()
+
+		if resp.StatusCode == http.StatusForbidden {
+			blocked = true
+			return nil
+		}
+		if resp.StatusCode >= 500 {
+			// Server error, retry
+			return fmt.Errorf("remote firewall server error: %d", resp.StatusCode)
+		}
+
+		blocked = false
+		return nil
+	}, b)
+
+	if blocked {
+		atomic.AddUint64(&metricsRemoteBlocks, 1)
 	}
 
-	resp, err := f.client.Do(req)
-	if err != nil {
-		atomic.AddUint64(&metricsRemoteErrors, 1)
-		return false
-	}
-	defer func() {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}()
-
-	return resp.StatusCode == http.StatusForbidden
+	// If retries exhausted and err != nil, we default to false (allow)
+	// This makes the firewall "fail open" on persistent remote errors to avoid outage.
+	return blocked
 }

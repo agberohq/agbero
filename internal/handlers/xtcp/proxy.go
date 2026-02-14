@@ -12,6 +12,7 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
+	"git.imaxinacion.net/aibox/agbero/internal/core/retry"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
@@ -103,6 +104,9 @@ func (p *Proxy) Start() error {
 		defer l.Close()
 		defer cache.TCP.Delete(p.Listen)
 
+		// Infinite backoff for temporary accept errors
+		bo := retry.NewInfinite()
+
 		for {
 			select {
 			case <-p.quit:
@@ -116,12 +120,26 @@ func (p *Proxy) Start() error {
 
 			conn, err := l.Accept()
 			if err != nil {
-				if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
+				// Check for temporary/timeout errors
+				var opErr *net.OpError
+				if errors.As(err, &opErr) && opErr.Timeout() {
 					continue
 				}
-				p.Logger.Fields("err", err).Warn("tcp accept error")
-				continue
+
+				// Unexpected error: log and sleep with backoff
+				sleepDuration := bo.NextBackOff()
+				p.Logger.Fields("err", err, "retry_in", sleepDuration).Warn("tcp accept error, backing off")
+
+				select {
+				case <-time.After(sleepDuration):
+					continue
+				case <-p.quit:
+					return
+				}
 			}
+
+			// Success: Reset backoff
+			bo.Reset()
 
 			p.wg.Add(1)
 			go p.handle(conn)

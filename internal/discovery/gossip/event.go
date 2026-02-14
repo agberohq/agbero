@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"strings"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/retry"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"github.com/cenkalti/backoff/v4"
 	"github.com/hashicorp/memberlist"
 )
 
@@ -50,36 +52,50 @@ func (e *event) fetchToken(node *memberlist.Node, meta *Meta) (string, error) {
 	}
 
 	url := fmt.Sprintf(woos.URLFormat, node.Addr.String(), meta.Port, authPath)
+	var token string
 
+	// Use standard retry logic with exponential backoff
+	// Context timeout covers the *entire* retry sequence duration
 	ctx, cancel := context.WithTimeout(context.Background(), e.s.authTimeout)
 	defer cancel()
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
+	err := retry.DoCtx(ctx, func() error {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%w: status = (%d)", woos.ErrAuthEndpoint, resp.StatusCode)
-	}
+		// NOTE: http.DefaultClient has no timeout, but the ctx above handles it
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return err // Will retry on network error
+		}
+		defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
+		if resp.StatusCode != http.StatusOK {
+			// Don't retry on 4xx errors (client error), only 5xx
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				return backoff.Permanent(fmt.Errorf("%w: status = (%d)", woos.ErrAuthEndpoint, resp.StatusCode))
+			}
+			return fmt.Errorf("auth endpoint status %d", resp.StatusCode)
+		}
 
-	var out struct {
-		Token string `json:"token"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return "", err
-	}
-	if out.Token == "" {
-		return "", woos.ErrEmptyToken
-	}
-	return out.Token, nil
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+
+		var out struct {
+			Token string `json:"token"`
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
+			return backoff.Permanent(err) // Don't retry invalid JSON
+		}
+		if out.Token == "" {
+			return backoff.Permanent(woos.ErrEmptyToken)
+		}
+		token = out.Token
+		return nil
+	})
+
+	return token, err
 }
 
 func (e *event) processNode(node *memberlist.Node) {
@@ -122,10 +138,6 @@ func (e *event) processNode(node *memberlist.Node) {
 			return
 		}
 
-		// Security: Enforce that the token subject matches the service/host being announced.
-		// We expect the subject to equal the host, or if it's a subdomain, the root matches.
-		// Simplest strict check: subject must match meta.Host OR meta.Service if we add that field.
-		// Assuming 'svcName' is the identity from the token.
 		if svcName != meta.Host && !strings.HasSuffix(meta.Host, "."+svcName) {
 			e.s.logger.Fields("node", node.Name, "token_sub", svcName, "host", meta.Host).
 				Warn("gossip rejected: token subject does not authorize this host")
