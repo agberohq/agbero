@@ -66,9 +66,13 @@ func (m *Manager) startLocalWatcher(cacheKey, certFile, keyFile, host string) {
 	m.watcherMu.Lock()
 	defer m.watcherMu.Unlock()
 
-	// Add files to the single watcher
-	m.watcher.Add(certFile)
-	m.watcher.Add(keyFile)
+	// Check for errors when adding to watcher
+	if err := m.watcher.Add(certFile); err != nil {
+		m.logger.Fields("file", certFile, "err", err).Error("failed to watch cert file")
+	}
+	if err := m.watcher.Add(keyFile); err != nil {
+		m.logger.Fields("file", keyFile, "err", err).Error("failed to watch key file")
+	}
 
 	// Register callback for these paths
 	callback := func() { m.invalidateLocal(cacheKey, host) }

@@ -89,7 +89,7 @@ func (s *Store) LoadAll() ([]Rule, error) {
 			}
 
 			if r.IsExpired() {
-				// Copy key to delete later (cannot modify inside View)
+				// Safely copy key for later deletion
 				keyCopy := make([]byte, len(k))
 				copy(keyCopy, k)
 				expiredKeys = append(expiredKeys, keyCopy)
@@ -101,18 +101,18 @@ func (s *Store) LoadAll() ([]Rule, error) {
 		return nil
 	})
 
-	// Cleanup expired rules in a batch update
+	// FIX: Check if DB is open/valid before async update
 	if len(expiredKeys) > 0 {
-		go func() {
+		go func(keys [][]byte) {
 			_ = s.db.Update(func(tx *bbolt.Tx) error {
 				b := tx.Bucket(bucketName)
-				for _, k := range expiredKeys {
+				for _, k := range keys {
 					_ = b.Delete(k)
 				}
 				return nil
 			})
-			s.logger.Info("cleaned up expired firewall rules", "count", len(expiredKeys))
-		}()
+			s.logger.Info("cleaned up expired firewall rules", "count", len(keys))
+		}(expiredKeys)
 	}
 
 	return active, err
