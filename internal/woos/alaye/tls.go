@@ -7,26 +7,10 @@ import (
 )
 
 type TLS struct {
-	Mode        TlsMode      `hcl:"mode,optional" json:"mode"`
-	Local       *LocalCert   `hcl:"local,block" json:"local,omitempty"`
-	LetsEncrypt *LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt,omitempty"`
-	CustomCA    *CustomCA    `hcl:"custom_ca,block" json:"custom_ca,omitempty"`
-}
-
-type LocalCert struct {
-	CertFile string `hcl:"cert_file" json:"cert_file"`
-	KeyFile  string `hcl:"key_file" json:"key_file"`
-}
-
-type LetsEncrypt struct {
-	Status     Enabled `hcl:"enabled,optional" json:"enabled"`
-	Email      string  `hcl:"email,optional" json:"email"`
-	Staging    bool    `hcl:"staging,optional" json:"staging"`
-	ShortLived bool    `hcl:"short_lived,optional" json:"short_lived"` // Enable 6-day certs
-}
-
-type CustomCA struct {
-	Root string `hcl:"root" json:"root"` // CA cert file path
+	Mode        TlsMode     `hcl:"mode,optional" json:"mode"`
+	Local       LocalCert   `hcl:"local,block" json:"local,omitempty"`
+	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt,omitempty"`
+	CustomCA    CustomCA    `hcl:"custom_ca,block" json:"custom_ca,omitempty"`
 }
 
 func (t *TLS) Validate() error {
@@ -61,7 +45,16 @@ func (t *TLS) Validate() error {
 	}
 }
 
+type LocalCert struct {
+	Enabled  Enabled `hcl:"enabled,optional" json:"enabled"`
+	CertFile string  `hcl:"cert_file" json:"cert_file"`
+	KeyFile  string  `hcl:"key_file" json:"key_file"`
+}
+
 func (l *LocalCert) Validate() error {
+	if l.Enabled.No() {
+		return nil
+	}
 	// Cert file validation
 	if l.CertFile == "" {
 		return ErrCertFileRequired
@@ -81,7 +74,17 @@ func (l *LocalCert) Validate() error {
 	return nil
 }
 
+type LetsEncrypt struct {
+	Enabled    Enabled `hcl:"enabled,optional" json:"enabled"`
+	Email      string  `hcl:"email,optional" json:"email"`
+	Staging    bool    `hcl:"staging,optional" json:"staging"`
+	ShortLived bool    `hcl:"short_lived,optional" json:"short_lived"` // Enable 6-day certs
+}
+
 func (l *LetsEncrypt) Validate() error {
+	if l.Enabled.No() {
+		return nil
+	}
 	// Email validation (if provided)
 	if l.Email != "" && !strings.Contains(l.Email, "@") {
 		return ErrInvalidEmail
@@ -91,7 +94,15 @@ func (l *LetsEncrypt) Validate() error {
 	return nil
 }
 
+type CustomCA struct {
+	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
+	Root    string  `hcl:"root" json:"root"` // CA cert file path
+}
+
 func (c *CustomCA) Validate() error {
+	if c.Enabled.No() {
+		return nil
+	}
 	// Root CA file validation
 	if c.Root == "" {
 		return ErrRootRequiredCustomCA

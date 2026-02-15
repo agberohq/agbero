@@ -97,8 +97,8 @@ func TestServer_buildTLS(t *testing.T) {
 	s := &Server{
 		global: &alaye.Global{
 			LetsEncrypt: &alaye.LetsEncrypt{
-				Status: alaye.Active,
-				Email:  "test@example.com",
+				Enabled: alaye.Active,
+				Email:   "test@example.com",
 			},
 			Storage: alaye.Storage{
 				CertsDir: tmpDir,

@@ -119,7 +119,7 @@ func (m *Manager) initCertMagic() error {
 	// 2. Check if explicitly disabled (Active check)
 	// Note: We do NOT check .Active() here, because the default (0/Unknown)
 	// implies enabled if the block is present in the HCL.
-	if m.Global.LetsEncrypt.Status.No() {
+	if m.Global.LetsEncrypt.Enabled.No() {
 		return woos.ErrLetsEncryptNotEnabled
 	}
 
