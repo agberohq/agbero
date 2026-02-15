@@ -44,9 +44,6 @@ func (r *Rule) Validate() error {
 	if r.Name == "" {
 		return errors.New("rule name required")
 	}
-	//if r.Action == "" {
-	//	return errors.New("rule action required")
-	//}
 
 	r.Type = strings.ToLower(r.Type)
 	switch r.Type {
@@ -70,8 +67,8 @@ type Match struct {
 	Any       []Condition `hcl:"any,block" json:"any"`
 	All       []Condition `hcl:"all,block" json:"all"`
 	None      []Condition `hcl:"none,block" json:"none"`
-	Extract   Extract     `hcl:"extract,block" json:"extract"`
-	Threshold Threshold   `hcl:"threshold,block" json:"threshold"`
+	Extract   *Extract    `hcl:"extract,block" json:"extract,omitempty"`
+	Threshold *Threshold  `hcl:"threshold,block" json:"threshold,omitempty"`
 }
 
 func (m *Match) Validate() error {
@@ -94,12 +91,16 @@ func (m *Match) Validate() error {
 		}
 	}
 
-	if err := m.Extract.Validate(); err != nil {
-		return errors.Newf("none: %w", err)
+	if m.Extract != nil && m.Extract.Enabled.Yes() {
+		if err := m.Extract.Validate(); err != nil {
+			return errors.Newf("extract: %w", err)
+		}
 	}
 
-	if err := m.Threshold.Validate(); err != nil {
-		return errors.Newf("threshold: %w", err)
+	if m.Threshold != nil && m.Threshold.Enabled.Yes() {
+		if err := m.Threshold.Validate(); err != nil {
+			return errors.Newf("threshold: %w", err)
+		}
 	}
 
 	return nil
@@ -124,7 +125,8 @@ func (c *Condition) Validate() error {
 	}
 	c.Location = strings.ToLower(c.Location)
 	switch c.Location {
-	case "ip", "path", "method", "header", "headers", "query", "body", "uri":
+	case "ip", "path", "method", "header", "headers", "query", "body", "uri", "":
+		// Empty location is allowed (defaults will be handled elsewhere)
 	default:
 		return errors.Newf("unknown location %q", c.Location)
 	}
@@ -150,6 +152,9 @@ type Extract struct {
 }
 
 func (e *Extract) Validate() error {
+	if e.Enabled.No() {
+		return nil
+	}
 	if e.Pattern == "" {
 		return errors.New("extract pattern required")
 	}
@@ -201,7 +206,6 @@ type Response struct {
 	Template     *template.Template `hcl:"-" json:"-"`
 }
 
-// Validate methods remain unchanged...
 func (s *Security) Validate() error {
 	if s == nil {
 		return nil
@@ -223,10 +227,10 @@ func (s *Security) Validate() error {
 
 type Firewall struct {
 	Status              Enabled  `hcl:"enabled,optional" json:"enabled"`
-	Mode                string   `hcl:"mode,attr" json:"mode"`
-	InspectBody         bool     `hcl:"inspect_body,attr" json:"inspect_body"`
-	MaxInspectBytes     int64    `hcl:"max_inspect_bytes,attr" json:"max_inspect_bytes"`
-	InspectContentTypes []string `hcl:"inspect_content_types,attr" json:"inspect_content_types"`
+	Mode                string   `hcl:"mode,optional" json:"mode"`
+	InspectBody         bool     `hcl:"inspect_body,optional" json:"inspect_body"`
+	MaxInspectBytes     int64    `hcl:"max_inspect_bytes,optional" json:"max_inspect_bytes"`
+	InspectContentTypes []string `hcl:"inspect_content_types,optional" json:"inspect_content_types"`
 	Defaults            Defaults `hcl:"defaults,block" json:"defaults"`
 	Rules               []Rule   `hcl:"rule,block" json:"rules"`
 	Actions             []Action `hcl:"action,block" json:"actions"`
@@ -242,7 +246,7 @@ func (f *Firewall) Validate() error {
 		f.Mode = "active"
 	}
 	if f.Mode != "active" && f.Mode != "verbose" && f.Mode != "monitor" {
-		return errors.New("firewall: mode must be 'active' or 'verbose'")
+		return errors.New("firewall: mode must be 'active', 'verbose', or 'monitor'")
 	}
 
 	if f.MaxInspectBytes == 0 {
@@ -279,13 +283,8 @@ func (f *Firewall) Validate() error {
 }
 
 type FirewallRoute struct {
-	Status       Enabled `hcl:"enabled,optional" json:"enabled"`
-	IgnoreGlobal bool    `hcl:"ignore_global,optional" json:"ignore_global"`
-
-	// Apply specific named policies defined globally in Security.Firewall.Rules
-	// or strictly applying specific sets.
-	ApplyRules []string `hcl:"apply_rules,optional" json:"apply_rules"`
-
-	// Define ad-hoc rules specific to this route
-	Rules []Rule `hcl:"rule,block" json:"rules,omitempty"`
+	Status       Enabled  `hcl:"enabled,optional" json:"enabled"`
+	IgnoreGlobal bool     `hcl:"ignore_global,optional" json:"ignore_global"`
+	ApplyRules   []string `hcl:"apply_rules,optional" json:"apply_rules"`
+	Rules        []Rule   `hcl:"rule,block" json:"rules,omitempty"`
 }

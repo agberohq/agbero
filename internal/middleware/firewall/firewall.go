@@ -84,8 +84,6 @@ func (e *Engine) Close() error {
 	return e.store.Close()
 }
 
-// Handler is the middleware.
-// contextRoute is optional (pass nil for global/chain usage).
 func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) http.Handler {
 	if e == nil {
 		return next
@@ -250,9 +248,12 @@ func (e *Engine) Block(ip, reason string, duration time.Duration) error {
 
 func (e *Engine) evaluateRules(rules []alaye.Rule, in *Inspector) (bool, alaye.Rule) {
 	for _, rule := range rules {
+		if !rule.Match.Enabled.Yes() {
+			continue
+		}
 
 		if e.checkMatch(rule.Match, in) {
-			if rule.Type == "dynamic" && rule.Match.Threshold.Enabled.Yes() {
+			if rule.Type == "dynamic" && rule.Match.Threshold != nil && rule.Match.Threshold.Enabled.Yes() {
 				triggered := e.checkThreshold(rule, in)
 				if !triggered {
 					continue
@@ -345,6 +346,10 @@ func (e *Engine) checkMatch(m alaye.Match, in *Inspector) bool {
 }
 
 func (e *Engine) checkCondition(c alaye.Condition, in *Inspector) bool {
+	if c.Enabled.No() {
+		return false
+	}
+
 	var val string
 	switch c.Location {
 	case "ip":
@@ -403,7 +408,7 @@ func (e *Engine) checkCondition(c alaye.Condition, in *Inspector) bool {
 
 func (e *Engine) checkThreshold(rule alaye.Rule, in *Inspector) bool {
 	t := rule.Match.Threshold
-	if t.Enabled.No() {
+	if t == nil || t.Enabled.No() {
 		return true
 	}
 
@@ -418,7 +423,7 @@ func (e *Engine) checkThreshold(rule alaye.Rule, in *Inspector) bool {
 		}
 	}
 
-	if rule.Match.Extract.Enabled.Yes() && rule.Match.Extract.Regex != nil {
+	if rule.Match.Extract != nil && rule.Match.Extract.Enabled.Yes() && rule.Match.Extract.Regex != nil {
 		var src string
 		switch rule.Match.Extract.From {
 		case "body":

@@ -30,15 +30,18 @@ func createTestEngine(t *testing.T, cfg *alaye.Firewall) *Engine {
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 
-	// Manually compile regexes for tests as validation isn't run here
-	for _, r := range cfg.Rules {
+	// Manually compile regexes and set up extract for tests as validation isn't run here
+	for i := range cfg.Rules {
+		r := &cfg.Rules[i]
 		if r.Match.Enabled.Yes() {
-			if r.Match.Extract.Pattern != "" {
-				r.Match.Extract.Regex = regexp.MustCompile(r.Match.Extract.Pattern)
-			}
 			compileConditions(r.Match.Any)
 			compileConditions(r.Match.All)
 			compileConditions(r.Match.None)
+
+			// Set up Extract if enabled but regex is nil
+			if r.Match.Extract != nil && r.Match.Extract.Enabled.Yes() && r.Match.Extract.Regex == nil && r.Match.Extract.Pattern != "" {
+				r.Match.Extract.Regex = regexp.MustCompile(r.Match.Extract.Pattern)
+			}
 		}
 	}
 
@@ -50,8 +53,9 @@ func createTestEngine(t *testing.T, cfg *alaye.Firewall) *Engine {
 }
 
 func compileConditions(conds []alaye.Condition) {
-	for _, c := range conds {
-		if c.Pattern != "" {
+	for i := range conds {
+		c := &conds[i]
+		if c.Pattern != "" && c.Compiled == nil {
 			c.Compiled = regexp.MustCompile(c.Pattern)
 		}
 	}
@@ -65,14 +69,16 @@ func TestStaticRules(t *testing.T) {
 				Name: "whitelist_admin",
 				Type: "whitelist",
 				Match: alaye.Match{
-					IP: []string{"10.0.0.5"},
+					Enabled: alaye.Active,
+					IP:      []string{"10.0.0.5"},
 				},
 			},
 			{
 				Name: "blacklist_bot",
 				Type: "static",
 				Match: alaye.Match{
-					IP: []string{"1.2.3.4", "5.0.0.0/8"},
+					Enabled: alaye.Active,
+					IP:      []string{"1.2.3.4", "5.0.0.0/8"},
 				},
 			},
 		},
@@ -111,9 +117,10 @@ func TestDynamicRules_Logic(t *testing.T) {
 				Name: "bad_req",
 				Type: "dynamic",
 				Match: alaye.Match{
+					Enabled: alaye.Active,
 					Any: []alaye.Condition{
-						{Location: "header", Key: "X-Test", Value: "BlockMe"},
-						{Location: "query", Key: "evil", Value: "true"},
+						{Enabled: alaye.Active, Location: "header", Key: "X-Test", Value: "BlockMe"},
+						{Enabled: alaye.Active, Location: "query", Key: "evil", Value: "true"},
 					},
 				},
 			},
@@ -164,8 +171,9 @@ func TestBodyInspection(t *testing.T) {
 				Name: "sql_injection",
 				Type: "dynamic",
 				Match: alaye.Match{
+					Enabled: alaye.Active,
 					Any: []alaye.Condition{
-						{Location: "body", Pattern: "(?i)union.*select"},
+						{Enabled: alaye.Active, Location: "body", Pattern: "(?i)union.*select"},
 					},
 				},
 			},
@@ -218,9 +226,11 @@ func TestThresholds(t *testing.T) {
 				Name: "rate_limit",
 				Type: "dynamic",
 				Match: alaye.Match{
+					Enabled: alaye.Active,
 					// Match everything
-					Any: []alaye.Condition{{Location: "path", Operator: "prefix", Value: "/"}},
-					Threshold: alaye.Threshold{
+					Any: []alaye.Condition{{Enabled: alaye.Active, Location: "path", Operator: "prefix", Value: "/"}},
+					Threshold: &alaye.Threshold{
+						Enabled: alaye.Active,
 						Count:   3,
 						Window:  1 * time.Minute,
 						TrackBy: "ip",
@@ -301,7 +311,8 @@ func TestRouteOverrides(t *testing.T) {
 				Name: "block_admin",
 				Type: "dynamic",
 				Match: alaye.Match{
-					Path: []string{"/admin"},
+					Enabled: alaye.Active,
+					Path:    []string{"/admin"},
 				},
 			},
 		},
@@ -338,7 +349,8 @@ func TestRouteOverrides(t *testing.T) {
 			Name: "route_block",
 			Type: "dynamic",
 			Match: alaye.Match{
-				Path: []string{"/secret"},
+				Enabled: alaye.Active,
+				Path:    []string{"/secret"},
 			},
 		},
 	}
@@ -362,53 +374,53 @@ func TestConditions_Table(t *testing.T) {
 	}{
 		{
 			name:   "Prefix Match",
-			cond:   alaye.Condition{Location: "path", Operator: "prefix", Value: "/api"},
+			cond:   alaye.Condition{Enabled: alaye.Active, Location: "path", Operator: "prefix", Value: "/api"},
 			reqURL: "/api/v1/users",
 			want:   true,
 		},
 		{
 			name:   "Suffix Match",
-			cond:   alaye.Condition{Location: "path", Operator: "suffix", Value: ".php"},
+			cond:   alaye.Condition{Enabled: alaye.Active, Location: "path", Operator: "suffix", Value: ".php"},
 			reqURL: "/index.php",
 			want:   true,
 		},
 		{
 			name:   "Contains Match",
-			cond:   alaye.Condition{Location: "path", Operator: "contains", Value: "admin"},
+			cond:   alaye.Condition{Enabled: alaye.Active, Location: "path", Operator: "contains", Value: "admin"},
 			reqURL: "/v1/admin/login",
 			want:   true,
 		},
 		{
 			name:      "Header Missing (True)",
-			cond:      alaye.Condition{Location: "header", Key: "X-Auth", Operator: "missing"},
+			cond:      alaye.Condition{Enabled: alaye.Active, Location: "header", Key: "X-Auth", Operator: "missing"},
 			reqURL:    "/",
 			reqHeader: map[string]string{}, // Empty
 			want:      true,
 		},
 		{
 			name:      "Header Missing (False)",
-			cond:      alaye.Condition{Location: "header", Key: "X-Auth", Operator: "missing"},
+			cond:      alaye.Condition{Enabled: alaye.Active, Location: "header", Key: "X-Auth", Operator: "missing"},
 			reqURL:    "/",
 			reqHeader: map[string]string{"X-Auth": "123"},
 			want:      false,
 		},
 		{
 			name:      "Method Exact",
-			cond:      alaye.Condition{Location: "method", Value: "POST"},
+			cond:      alaye.Condition{Enabled: alaye.Active, Location: "method", Value: "POST"},
 			reqURL:    "/",
 			reqMethod: "POST",
 			want:      true,
 		},
 		{
 			name:      "Method IgnoreCase",
-			cond:      alaye.Condition{Location: "method", Value: "post", IgnoreCase: true},
+			cond:      alaye.Condition{Enabled: alaye.Active, Location: "method", Value: "post", IgnoreCase: true},
 			reqURL:    "/",
 			reqMethod: "POST",
 			want:      true,
 		},
 		{
 			name:   "Negate Match",
-			cond:   alaye.Condition{Location: "path", Value: "/safe", Negate: true},
+			cond:   alaye.Condition{Enabled: alaye.Active, Location: "path", Value: "/safe", Negate: true},
 			reqURL: "/safe",
 			want:   false,
 		},
@@ -428,7 +440,6 @@ func TestConditions_Table(t *testing.T) {
 				req.Header.Set(k, v)
 			}
 
-			// We inspect manually instead of running full engine to target checkCondition
 			insp := &Inspector{
 				Req: req,
 				IP:  "1.2.3.4",
