@@ -7,15 +7,16 @@ import (
 )
 
 type Web struct {
-	Status  Status  `hcl:"enabled,optional" json:"enabled"`
+	Status  Enabled `hcl:"enabled,optional" json:"enabled"`
 	Root    WebRoot `hcl:"root,optional" json:"root"`
 	Index   string  `hcl:"index,optional" json:"index"`
 	Listing bool    `hcl:"listing,optional" json:"listing"`
-	PHP     *PHP    `hcl:"php,block" json:"php,omitempty"`
+	PHP     PHP     `hcl:"php,block" json:"php,omitempty"`
 }
 
 func (w *Web) Validate() error {
-	if !w.Status.Enabled() {
+
+	if w.Status.No() {
 		return nil
 	}
 

@@ -22,8 +22,6 @@ type Route struct {
 	Backends []*xhttp.Backend
 }
 
-// NewRoute constructs the handler chain.
-// It requires GlobalRate to resolve named policies if referenced.
 func NewRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Logger) *Route {
 	if route == nil {
 		return FallbackRoute("nil route")
@@ -34,7 +32,7 @@ func NewRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Logge
 		return FallbackRoute("invalid route config")
 	}
 
-	if route.Web.Root.IsSet() {
+	if route.Web != nil && route.Web.Root.IsSet() {
 		return newWebRoute(route, globalRate, logger)
 	}
 
@@ -58,8 +56,7 @@ func newWebRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Lo
 		chain = auth.Forward(route.ForwardAuth)(chain)
 	}
 
-	// Route-Level Rate Limiting
-	if route.RateLimit != nil && route.RateLimit.Status.Enabled() {
+	if route.RateLimit != nil && route.RateLimit.Status.Yes() {
 		if rl := buildRouteLimiter(route.RateLimit, globalRate); rl != nil {
 			chain = rl.Handler(chain)
 		}
@@ -69,7 +66,7 @@ func newWebRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Lo
 		chain = headers.Headers(route.Headers)(chain)
 	}
 
-	if route.CompressionConfig.Status.Enabled() {
+	if route.CompressionConfig != nil && route.CompressionConfig.Status.Yes() {
 		chain = compress.Compress(route)(chain)
 	}
 
@@ -82,8 +79,15 @@ func newWebRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Lo
 func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Logger) *Route {
 	var backends []*xhttp.Backend
 
+	// FIX: Defensive check for Backends
+	if route.Backends == nil {
+		// If no backends and not a web route, this is a misconfiguration or a placeholder route.
+		// We return a fallback to avoid panic.
+		logger.Fields("path", route.Path).Warn("proxy route has no backends configured")
+		return FallbackRoute("proxy route missing backends")
+	}
+
 	for _, backendCfg := range route.Backends.Servers {
-		// Pass DefaultRegistry for persistent metrics
 		b, err := xhttp.NewBackend(backendCfg, route, logger, metrics.DefaultRegistry)
 		if err != nil {
 			logger.Fields("backend", backendCfg.Address, "err", err).
@@ -121,8 +125,7 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 		chain = auth.Forward(route.ForwardAuth)(chain)
 	}
 
-	// Route-Level Rate Limiting
-	if route.RateLimit != nil && route.RateLimit.Status.Enabled() {
+	if route.RateLimit != nil && route.RateLimit.Status.Yes() {
 		if rl := buildRouteLimiter(route.RateLimit, globalRate); rl != nil {
 			chain = rl.Handler(chain)
 		}
@@ -131,7 +134,7 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 	if route.Headers != nil {
 		chain = headers.Headers(route.Headers)(chain)
 	}
-	if route.CompressionConfig.Status.Enabled() {
+	if route.CompressionConfig != nil && route.CompressionConfig.Status.Yes() {
 		chain = compress.Compress(route)(chain)
 	}
 
@@ -163,14 +166,11 @@ func FallbackRoute(msg string) *Route {
 	}
 }
 
-// buildRouteLimiter creates a RateLimiter for the specific route.
-// It handles "UsePolicy" (lookup from Global) and "Rule" (Ad-hoc).
 func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimit.RateLimiter {
-	if rlc == nil || !rlc.Status.Enabled() {
+	if rlc == nil || !rlc.Status.Yes() {
 		return nil
 	}
 
-	// Inherit TTL/MaxEntries from Global defaults if available
 	ttl := 30 * time.Minute
 	maxEntries := int64(100_000)
 
@@ -185,11 +185,9 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 
 	var rules []alaye.RateRule
 
-	// 1. Named Policy Lookup
 	if rlc.UsePolicy != "" && global != nil {
 		for _, pol := range global.Policies {
 			if pol.Name == rlc.UsePolicy {
-				// Convert Policy to Rule (no prefixes/methods restrictions usually)
 				rules = append(rules, alaye.RateRule{
 					Name:     pol.Name,
 					Requests: pol.Requests,
@@ -202,7 +200,6 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 		}
 	}
 
-	// 2. Ad-Hoc Rule
 	if rlc.Rule != nil {
 		rules = append(rules, *rlc.Rule)
 	}
@@ -218,7 +215,6 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 		}
 
 		for _, rule := range rules {
-			// Match Method
 			if len(rule.Methods) > 0 {
 				methodMatch := false
 				for _, m := range rule.Methods {
@@ -232,7 +228,6 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 				}
 			}
 
-			// Match Prefix
 			if len(rule.Prefixes) > 0 {
 				prefixMatch := false
 				for _, p := range rule.Prefixes {
@@ -246,7 +241,6 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 				}
 			}
 
-			// Match
 			return rule.Name, ratelimit.RatePolicy{
 				Requests: rule.Requests,
 				Window:   rule.Window,

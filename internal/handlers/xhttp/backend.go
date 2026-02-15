@@ -23,7 +23,6 @@ import (
 
 var sharedBufferPool = core.NewBufferPool()
 
-// Hop-by-hop headers to strip. RFC 7230, section 6.1
 var hopHeaders = []string{
 	woos.HeaderKeyConnection,
 	woos.HeaderKeepAlive,
@@ -38,7 +37,7 @@ var hopHeaders = []string{
 type Backend struct {
 	URL          *url.URL
 	Proxy        *httputil.ReverseProxy
-	Alive        *atomic.Bool // Pointer to Registry-owned state
+	Alive        *atomic.Bool
 	stop         chan struct{}
 	stopOnce     sync.Once
 	startTime    time.Time
@@ -72,9 +71,13 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 		return nil, fmt.Errorf("%w: %q", woos.ErrBackendBadScheme, u.Scheme)
 	}
 
-	cond, err := NewConditions(cfg.Conditions)
+	cond, err := NewConditions(cfg.Criteria)
 	if err != nil {
 		return nil, err
+	}
+
+	if registry == nil {
+		registry = metrics.DefaultRegistry
 	}
 
 	// Persistent Metrics Lookup
@@ -84,10 +87,11 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 
 	now := time.Now()
 	b := &Backend{
-		URL:          u,
-		Weight:       cfg.Weight,
-		Cond:         cond,
-		hcConfig:     route.HealthCheck,
+		URL:    u,
+		Weight: cfg.Weight,
+		Cond:   cond,
+		// FIX: Use optional HealthCheck from route, guarding against nil route
+		hcConfig:     nil,
 		logger:       logger,
 		stop:         make(chan struct{}),
 		startTime:    now,
@@ -97,11 +101,15 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 		Alive:        stats.Alive,
 	}
 
+	if route != nil {
+		b.hcConfig = route.HealthCheck
+	}
+
 	// Ensure recovery timestamp is set for logic checks
 	b.lastRecovery.Store(now.UnixNano())
 
 	cbThreshold := woos.DefaultCircuitBreakerThreshold
-	if route.CircuitBreaker != nil && route.CircuitBreaker.Threshold > 0 {
+	if route != nil && route.CircuitBreaker != nil && route.CircuitBreaker.Threshold > 0 {
 		cbThreshold = route.CircuitBreaker.Threshold
 	}
 
@@ -112,7 +120,8 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 	t.ExpectContinueTimeout = 0
 
 	rp.FlushInterval = -1
-	if cfg.Streaming.Status.Enabled() {
+	// FIX: Add nil check for cfg.Streaming before accessing Yes
+	if cfg.Streaming != nil && cfg.Streaming.Status.Yes() {
 		t.ResponseHeaderTimeout = 0
 		rp.FlushInterval = cfg.Streaming.EffectiveFlushInterval()
 	}
@@ -150,7 +159,6 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 		originalHost := req.Host
 		req.Host = b.URL.Host
 
-		// Strip Hop-by-hop headers to prevent request smuggling
 		for _, h := range hopHeaders {
 			req.Header.Del(h)
 		}
@@ -199,8 +207,6 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
-		// We do NOT close metrics here anymore. The Registry owns their lifecycle.
-		// b.Activity.Latency.Close()
 	})
 }
 

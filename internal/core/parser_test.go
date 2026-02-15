@@ -82,7 +82,7 @@ letsencrypt {
 		t.Error("expected 2 http bind addresses")
 	}
 	// Verify Admin block parsing
-	if global.Admin.Status.Disabled() {
+	if global.Admin.Status.No() {
 		t.Fatal("expected admin block to be parsed")
 	}
 
@@ -157,7 +157,7 @@ route "/api" {
 	}
 
 	if !host.Compression {
-		t.Error("Status: expected true")
+		t.Error("Yes: expected true")
 	}
 
 	if host.TLS.Mode != alaye.ModeLocalCert {

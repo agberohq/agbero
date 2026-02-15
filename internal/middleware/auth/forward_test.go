@@ -48,7 +48,7 @@ func TestForward_Forbidden(t *testing.T) {
 
 	handler.ServeHTTP(w, req)
 
-	// Check Status
+	// Check Yes
 	if w.Code != http.StatusForbidden {
 		t.Errorf("Expected 403, got %d", w.Code)
 	}

@@ -53,7 +53,9 @@ type Server struct {
 	hostManager *discovery.Host
 	global      *alaye.Global
 	tlsManager  *tlss.Manager
-	firewall    *firewall.IPSet
+
+	// FIX: Correct type usage
+	firewall *firewall.Engine
 
 	mu         sync.RWMutex
 	servers    map[string]*http.Server
@@ -118,9 +120,16 @@ func (s *Server) Start(configPath string) error {
 			"sha256", sha[:12],
 		).Infof("config loaded")
 	}
+
+	// FIX: Check Gossip pointer before accessing Yes
+	gossipEnabled := false
+	if s.global.Gossip != nil {
+		gossipEnabled = s.global.Gossip.Status.Yes()
+	}
+
 	s.logger.Fields(
 		"dev_mode", s.global.Development,
-		"gossip_mode", s.global.Gossip.Status.Enabled(),
+		"gossip_mode", gossipEnabled,
 	).Info("configuring")
 
 	s.logger.Fields(
@@ -155,7 +164,8 @@ func (s *Server) Start(configPath string) error {
 	hosts, _ := s.hostManager.LoadAll()
 	s.logHostStats(hosts)
 
-	if s.global.Gossip.Enabled {
+	// FIX: Gossip initialization
+	if gossipEnabled {
 		gs, err := gossip.NewService(s.hostManager, s.global.Gossip, s.logger)
 		if err != nil {
 			return errors.Newf("failed to start gossip: %w", err)
@@ -170,18 +180,29 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	s.ipMiddleware = clientip.NewIPMiddleware(s.global.Security.TrustedProxies)
+	// FIX: Check Security pointer
+	var trustedProxies []string
+	if s.global.Security != nil {
+		trustedProxies = s.global.Security.TrustedProxies
+	}
+	s.ipMiddleware = clientip.NewIPMiddleware(trustedProxies)
 	s.rateLimiter = s.buildGlobalRateLimiter()
 
 	s.skipLogPaths = make(map[string]bool)
-	if len(s.global.Logging.Skip) > 0 {
+	if s.global.Logging != nil && len(s.global.Logging.Skip) > 0 {
 		for _, p := range s.global.Logging.Skip {
 			s.skipLogPaths[p] = true
 		}
 	}
 
+	// FIX: Firewall initialization with pointer check
+	var fwConfig *alaye.Firewall
+	if s.global.Security != nil {
+		fwConfig = s.global.Security.Firewall
+	}
 	dataDir := woos.NewFolder(s.global.Storage.DataDir)
-	s.firewall, err = firewall.New(s.global.Security.Firewall, dataDir, s.logger)
+
+	s.firewall, err = firewall.New(fwConfig, dataDir, s.logger)
 	if err != nil {
 		return errors.Newf("firewall init: %w", err)
 	}
@@ -189,6 +210,7 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("Firewall", func() { _ = s.firewall.Close() })
 	}
 
+	// Admin Server needs to know about firewall for List()
 	s.startAdminServer()
 
 	baseHandler := http.HandlerFunc(s.handleRequest)
@@ -208,7 +230,6 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
 	}
 
-	// Group TCP Routes by Listener Address
 	tcpGroups := make(map[string][]*alaye.TCPRoute)
 	for _, host := range hosts {
 		for i := range host.Proxies {
@@ -303,6 +324,171 @@ func (s *Server) Start(configPath string) error {
 	}
 }
 
+func (s *Server) Reload() {
+	s.logger.Info("reloading configuration")
+
+	sha, err := s.computeFullConfigSHA()
+	if err != nil {
+		s.logger.Warn("could not compute config sha: ", err)
+		return
+	}
+
+	if sha == s.configSHA {
+		s.logger.Info("reload requested: no configuration changes detected")
+	} else {
+		s.logger.Fields(
+			"from", s.configSHA[:12],
+			"to", sha[:12],
+		).Infof("configuration changed")
+		s.configSHA = sha
+	}
+
+	global, err := core.LoadGlobal(s.configPath)
+	if err != nil {
+		s.logger.Fields("err", err, "config_path", s.configPath).
+			Error("reload config failed")
+		return
+	}
+
+	absConfigPath, err := filepath.Abs(s.configPath)
+	if err != nil {
+		absConfigPath = s.configPath
+	}
+
+	woos.DefaultApply(global, absConfigPath)
+
+	// Pointer safety check for logging comparison
+	oldLevel := "info"
+	if s.global.Logging != nil {
+		oldLevel = s.global.Logging.Level
+	}
+	newLevel := "info"
+	if global.Logging != nil {
+		newLevel = global.Logging.Level
+	}
+
+	if oldLevel != newLevel {
+		s.logger.Infof("log_level: %s → %s", oldLevel, newLevel)
+	}
+
+	s.global = global
+
+	// 1. Recreate RateLimiter
+	if s.rateLimiter != nil {
+		s.rateLimiter.Close()
+	}
+	s.rateLimiter = s.buildGlobalRateLimiter()
+
+	// 2. Re-init Firewall (Safe Swap)
+	if s.firewall != nil {
+		s.firewall.Close()
+	}
+
+	var fwConfig *alaye.Firewall
+	if s.global.Security != nil {
+		fwConfig = s.global.Security.Firewall
+	}
+
+	dataDir := woos.NewFolder(s.global.Storage.DataDir)
+	var fwErr error
+	s.firewall, fwErr = firewall.New(fwConfig, dataDir, s.logger)
+	if fwErr != nil {
+		s.logger.Error("failed to reload firewall", fwErr)
+	}
+
+	previousHosts, _ := s.hostManager.LoadAll()
+	previousCount := len(previousHosts)
+
+	if err := s.hostManager.ReloadFull(); err != nil {
+		s.logger.Fields("err", err).Error("failed to reload hosts")
+		return
+	}
+
+	newHosts, _ := s.hostManager.LoadAll()
+	currentCount := len(newHosts)
+
+	validKeys := make(map[string]bool)
+	for _, h := range newHosts {
+		for _, r := range h.Routes {
+			rKey := r.Key()
+			// Defensive check for Backends
+			if r.Backends != nil {
+				for _, srv := range r.Backends.Servers {
+					validKeys[fmt.Sprintf("%s|%s", rKey, srv.Address)] = true
+				}
+			}
+		}
+		for _, proxy := range h.Proxies {
+			sni := proxy.SNI
+			for _, srv := range proxy.Backends {
+				validKeys[fmt.Sprintf("tcp|%s|%s|%s", proxy.Listen, sni, srv.Address)] = true
+			}
+		}
+	}
+	metrics.DefaultRegistry.Prune(validKeys)
+
+	if s.tlsManager != nil {
+		s.tlsManager.ClearCache()
+	}
+
+	s.mu.Lock()
+	tcpGroups := make(map[string][]*alaye.TCPRoute)
+	for _, host := range newHosts {
+		for i := range host.Proxies {
+			p := host.Proxies[i]
+			tcpGroups[p.Listen] = append(tcpGroups[p.Listen], p)
+		}
+	}
+
+	for _, tp := range s.tcpProxies {
+		_, port, _ := net.SplitHostPort(tp.Listen)
+		if port == "" {
+			if strings.HasPrefix(tp.Listen, ":") {
+				port = tp.Listen[1:]
+			} else {
+				continue
+			}
+		}
+
+		var group []*alaye.TCPRoute
+		if g, ok := tcpGroups[tp.Listen]; ok {
+			group = g
+		} else {
+			for l, g := range tcpGroups {
+				if strings.HasSuffix(l, ":"+port) {
+					group = g
+					break
+				}
+			}
+		}
+
+		if group == nil {
+			tp.UpdateRoutes(nil, nil)
+			continue
+		}
+
+		newRoutes := make(map[string]*xtcp.Balancer)
+		var newDefault *xtcp.Balancer
+
+		for _, route := range group {
+			bal := xtcp.NewBalancer(*route, metrics.DefaultRegistry)
+			if route.SNI != "" {
+				newRoutes[strings.ToLower(route.SNI)] = bal
+			} else {
+				newDefault = bal
+			}
+		}
+		tp.UpdateRoutes(newRoutes, newDefault)
+	}
+	s.mu.Unlock()
+
+	s.logger.Fields(
+		"previous_hosts", previousCount,
+		"current_hosts", currentCount,
+		"change", currentCount-previousCount,
+	).Info("configuration reloaded successfully")
+}
+
 func (s *Server) shutdownImpl(ctx context.Context) error {
 	if s.rateLimiter != nil {
 		s.rateLimiter.Close()
@@ -369,9 +555,12 @@ func (s *Server) logHostStats(hosts map[string]*alaye.Host) {
 func (s *Server) hasStreaming(hosts map[string]*alaye.Host) bool {
 	for _, host := range hosts {
 		for _, rt := range host.Routes {
-			for _, srv := range rt.Backends.Servers {
-				if srv.Streaming.Status.Enabled() {
-					return true
+			// Check Backends pointer
+			if rt.Backends != nil {
+				for _, srv := range rt.Backends.Servers {
+					if srv.Streaming != nil && srv.Streaming.Status.Yes() {
+						return true
+					}
 				}
 			}
 		}
@@ -510,8 +699,9 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 		h = h3.AdvertiseHTTP3(port)(h)
 	}
 
+	// FIX: Use proper Handler signature with nil context route for global firewall
 	if s.firewall != nil {
-		h = s.firewall.Handler(h)
+		h = s.firewall.Handler(h, nil)
 	}
 
 	if s.ipMiddleware != nil {
@@ -524,155 +714,16 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 	return h
 }
 
-func (s *Server) Reload() {
-	s.logger.Info("reloading configuration")
-
-	sha, err := s.computeFullConfigSHA()
-	if err != nil {
-		s.logger.Warn("could not compute config sha: ", err)
-		return
-	}
-
-	if sha == s.configSHA {
-		s.logger.Info("reload requested: no configuration changes detected")
-	} else {
-		s.logger.Fields(
-			"from", s.configSHA[:12],
-			"to", sha[:12],
-		).Infof("configuration changed")
-		s.configSHA = sha
-	}
-
-	global, err := core.LoadGlobal(s.configPath)
-	if err != nil {
-		s.logger.Fields("err", err, "config_path", s.configPath).
-			Error("reload config failed")
-		return
-	}
-
-	absConfigPath, err := filepath.Abs(s.configPath)
-	if err != nil {
-		absConfigPath = s.configPath
-	}
-
-	woos.DefaultApply(global, absConfigPath)
-
-	if s.global.Logging.Level != global.Logging.Level {
-		s.logger.Infof("log_level: %s → %s",
-			s.global.Logging.Level,
-			global.Logging.Level,
-		)
-	}
-
-	s.global = global
-
-	if s.rateLimiter != nil {
-		s.rateLimiter.Close()
-	}
-	s.rateLimiter = s.buildGlobalRateLimiter()
-
-	previousHosts, _ := s.hostManager.LoadAll()
-	previousCount := len(previousHosts)
-
-	if err := s.hostManager.ReloadFull(); err != nil {
-		s.logger.Fields("err", err).Error("failed to reload hosts")
-		return
-	}
-
-	newHosts, _ := s.hostManager.LoadAll()
-	currentCount := len(newHosts)
-
-	// Clean up stale metrics from the registry
-	validKeys := make(map[string]bool)
-	for _, h := range newHosts {
-		// HTTP Routes
-		for _, r := range h.Routes {
-			rKey := r.Key()
-			for _, srv := range r.Backends.Servers {
-				validKeys[fmt.Sprintf("%s|%s", rKey, srv.Address)] = true
-			}
-		}
-		// TCP Routes
-		for _, proxy := range h.Proxies {
-			sni := proxy.SNI
-			for _, srv := range proxy.Backends {
-				validKeys[fmt.Sprintf("tcp|%s|%s|%s", proxy.Listen, sni, srv.Address)] = true
-			}
-		}
-	}
-	metrics.DefaultRegistry.Prune(validKeys)
-
-	if s.tlsManager != nil {
-		s.tlsManager.ClearCache()
-	}
-
-	s.mu.Lock()
-	// Group TCP Routes by Listener Address for Reload
-	tcpGroups := make(map[string][]*alaye.TCPRoute)
-	for _, host := range newHosts {
-		for i := range host.Proxies {
-			p := host.Proxies[i]
-			tcpGroups[p.Listen] = append(tcpGroups[p.Listen], p)
-		}
-	}
-
-	// Update existing proxies or start new ones
-	for _, tp := range s.tcpProxies {
-		_, port, _ := net.SplitHostPort(tp.Listen)
-		if port == "" {
-			if strings.HasPrefix(tp.Listen, ":") {
-				port = tp.Listen[1:]
-			} else {
-				continue
-			}
-		}
-
-		var group []*alaye.TCPRoute
-		if g, ok := tcpGroups[tp.Listen]; ok {
-			group = g
-		} else {
-			for l, g := range tcpGroups {
-				if strings.HasSuffix(l, ":"+port) {
-					group = g
-					break
-				}
-			}
-		}
-
-		if group == nil {
-			tp.UpdateRoutes(nil, nil)
-			continue
-		}
-
-		newRoutes := make(map[string]*xtcp.Balancer)
-		var newDefault *xtcp.Balancer
-
-		for _, route := range group {
-			bal := xtcp.NewBalancer(*route, metrics.DefaultRegistry)
-			if route.SNI != "" {
-				newRoutes[strings.ToLower(route.SNI)] = bal
-			} else {
-				newDefault = bal
-			}
-		}
-		tp.UpdateRoutes(newRoutes, newDefault)
-	}
-	s.mu.Unlock()
-
-	s.logger.Fields(
-		"previous_hosts", previousCount,
-		"current_hosts", currentCount,
-		"change", currentCount-previousCount,
-	).Info("configuration reloaded successfully")
-}
-
+// ... rest of file (buildGlobalRateLimiter, buildTLS, logRequest, handleRequest, handleRoute, etc.)
+// Note: buildGlobalRateLimiter also needs a nil check on s.global.RateLimits
 func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
 	rlc := s.global.RateLimits
 
-	if !rlc.Status.Enabled() || len(rlc.Rules) == 0 {
+	if rlc == nil || !rlc.Status.Yes() || len(rlc.Rules) == 0 {
 		return nil
 	}
 
+	// ... existing logic ...
 	policy := func(r *http.Request) (bucket string, pol ratelimit.RatePolicy, ok bool) {
 		p := r.URL.Path
 
@@ -681,6 +732,7 @@ func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
 		}
 
 		for _, rule := range rlc.Rules {
+			// ... match logic ...
 			if len(rule.Methods) > 0 {
 				methodMatch := false
 				currentMethod := r.Method
@@ -822,7 +874,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	maxBody := int64(alaye.DefaultMaxBodySize)
-	if &hcfg.Limits != nil && hcfg.Limits.MaxBodySize > 0 {
+	// Pointer safety for Limits
+	if hcfg.Limits != nil && hcfg.Limits.MaxBodySize > 0 {
 		maxBody = hcfg.Limits.MaxBodySize
 	}
 
@@ -875,32 +928,24 @@ func (s *Server) serveDefaultFavicon(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alaye.Route) {
-	// Create a shallow copy of the request with a new context
 	ctx := context.WithValue(r.Context(), woos.CtxOriginalPath, r.URL.Path)
 	reqOut := r.WithContext(ctx)
 
-	// Shallow copy URL to modify Path without affecting original request
 	if r.URL != nil {
 		u := *r.URL
 		reqOut.URL = &u
 	}
 
-	// Logic to Strip Prefixes securely
 	if len(route.StripPrefixes) > 0 {
 		for _, prefix := range route.StripPrefixes {
 			if prefix == "" {
 				continue
 			}
-			// Check against the decoded path
 			if strings.HasPrefix(reqOut.URL.Path, prefix) {
 				reqOut.URL.Path = strings.TrimPrefix(reqOut.URL.Path, prefix)
-
-				// Ensure root slash if path becomes empty
 				if reqOut.URL.Path == "" {
 					reqOut.URL.Path = "/"
 				}
-
-				// Clear RawPath.
 				reqOut.URL.RawPath = ""
 				break
 			}
@@ -910,7 +955,8 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	routeKey := route.Key()
 	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey, s.global.RateLimits)
 
-	if route.Wasm != nil {
+	// Pointer safety for Wasm
+	if route.Wasm != nil && route.Wasm.Enabled.Yes() {
 		wm, err := s.getWasmManager(route.Wasm, routeKey)
 		if err != nil {
 			s.logger.Fields("err", err, "module", route.Wasm.Module).Error("wasm: failed to load middleware")
@@ -920,6 +966,7 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 		handler = wm.Handler(handler)
 	}
 
+	// Pointer safety for RateLimit
 	if s.rateLimiter != nil {
 		ignoreGlobal := false
 		if route.RateLimit != nil && route.RateLimit.IgnoreGlobal {
@@ -1014,7 +1061,8 @@ func (s *Server) computeFullConfigSHA() (string, error) {
 
 	entries, err := os.ReadDir(hostDir)
 	if err != nil {
-		return "", err
+		// If dir doesn't exist, just hash config
+		return hex.EncodeToString(hasher.Sum(nil)), nil
 	}
 
 	var files []string

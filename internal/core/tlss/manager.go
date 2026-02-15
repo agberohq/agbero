@@ -63,10 +63,14 @@ func NewManager(logger *ll.Logger, hostManager *discovery.Host, global *alaye.Gl
 }
 
 func (m *Manager) startLocalWatcher(cacheKey, certFile, keyFile, host string) {
+	// FIX: Defensive check for watcher (for tests)
+	if m.watcher == nil {
+		return
+	}
+
 	m.watcherMu.Lock()
 	defer m.watcherMu.Unlock()
 
-	// Check for errors when adding to watcher
 	if err := m.watcher.Add(certFile); err != nil {
 		m.logger.Fields("file", certFile, "err", err).Error("failed to watch cert file")
 	}
@@ -74,13 +78,15 @@ func (m *Manager) startLocalWatcher(cacheKey, certFile, keyFile, host string) {
 		m.logger.Fields("file", keyFile, "err", err).Error("failed to watch key file")
 	}
 
-	// Register callback for these paths
 	callback := func() { m.invalidateLocal(cacheKey, host) }
 	m.watchList[certFile] = callback
 	m.watchList[keyFile] = callback
 }
 
 func (m *Manager) globalWatchLoop() {
+	if m.watcher == nil {
+		return
+	}
 	for {
 		select {
 		case event, ok := <-m.watcher.Events:
@@ -90,7 +96,6 @@ func (m *Manager) globalWatchLoop() {
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
 				m.watcherMu.Lock()
 				if callback, exists := m.watchList[event.Name]; exists {
-					// Run in goroutine to not block watcher
 					go callback()
 				}
 				m.watcherMu.Unlock()
@@ -101,25 +106,40 @@ func (m *Manager) globalWatchLoop() {
 	}
 }
 
-// Extract initialization logic to a helper
 func (m *Manager) initCertMagic() error {
 	if m.Global == nil {
 		return woos.ErrGlobalConfigRequired
 	}
 
+	// 1. Check if the configuration block exists (Pointer check)
+	if m.Global.LetsEncrypt == nil {
+		return woos.ErrLetsEncryptNotEnabled
+	}
+
+	// 2. Check if explicitly disabled (Yes check)
+	// Note: We do NOT check .Yes() here, because the default (0/Unknown)
+	// implies enabled if the block is present in the HCL.
+	if m.Global.LetsEncrypt.Status.No() {
+		return woos.ErrLetsEncryptNotEnabled
+	}
+
+	// 3. Validation: Email is required
 	email := strings.TrimSpace(m.Global.LetsEncrypt.Email)
 	if email == "" {
 		return woos.ErrEmptyLEEmail
 	}
 
+	// 4. Validation: Storage path
 	storageDir := strings.TrimSpace(m.Global.Storage.CertsDir)
 	if storageDir == "" {
 		return woos.ErrEmptyCertFile
 	}
 	storageDir = filepath.Clean(storageDir)
 
+	// 5. Initialize CertMagic logic
 	decision := func(ctx context.Context, name string) error {
-		// ... existing decision logic ...
+		// In the future, this is where we check if 'name' is in our allowed domains list.
+		// For now, implicit trust based on routing table.
 		return nil
 	}
 
@@ -151,7 +171,7 @@ func (m *Manager) initCertMagic() error {
 	}
 	issuerStaging := certmagic.NewACMEIssuer(cmStaging, acmeStaging)
 	cmStaging.Issuers = []certmagic.Issuer{issuerStaging}
-	cmProd.Logger = newTLSLogger(m.logger)
+	cmStaging.Logger = newTLSLogger(m.logger)
 
 	m.cmStaging = cmStaging
 	m.issStaging = issuerStaging
@@ -161,7 +181,6 @@ func (m *Manager) initCertMagic() error {
 
 // EnsureCertMagic ensures CertMagic is initialized and wraps the given HTTP handler with the appropriate challenge handler.
 func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
-	// 1. Lazy Initialization (Lock-free on hot path)
 	m.initOnce.Do(func() {
 		m.initErr = m.initCertMagic()
 	})
@@ -170,9 +189,8 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 		return next, m.initErr
 	}
 
-	// 2. Wrap Handler
 	h := next
-	useStaging := m.Global != nil && m.Global.LetsEncrypt.Staging
+	useStaging := m.Global != nil && m.Global.LetsEncrypt != nil && m.Global.LetsEncrypt.Staging
 
 	if useStaging {
 		if m.issStaging != nil {
@@ -189,11 +207,11 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 
 func (m *Manager) CmForHost(hcfg *alaye.Host) *certmagic.Config {
 	useStaging := false
-	if m.Global != nil {
+	if m.Global != nil && m.Global.LetsEncrypt != nil {
 		useStaging = m.Global.LetsEncrypt.Staging
 	}
 
-	if hcfg != nil {
+	if hcfg != nil && hcfg.TLS != nil && hcfg.TLS.LetsEncrypt != nil {
 		if hcfg.TLS.LetsEncrypt.Staging {
 			useStaging = true
 		}
@@ -233,7 +251,7 @@ func (m *Manager) GetLocalCertificate(local *alaye.LocalCert, host string) (*tls
 	m.LocalCache[cacheKey] = &cert
 	m.localMu.Unlock()
 
-	//m.startLocalWatcher(cacheKey, certFile, keyFile, host)
+	m.startLocalWatcher(cacheKey, certFile, keyFile, host)
 	return &cert, nil
 }
 
@@ -286,9 +304,6 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return nil, woos.ErrMissingSNI
 	}
 
-	// Explicitly reject IP addresses in SNI.
-	// Returning nil, nil causes Go to fall back to default certs or error confusingly.
-	// We want to fail the handshake immediately if SNI is an IP.
 	if net.ParseIP(sni) != nil {
 		return nil, woos.ErrMissingSNI
 	}
@@ -298,7 +313,11 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return nil, errors.Newf("%w %q", woos.ErrUnknownHost, sni)
 	}
 
-	mode := hcfg.TLS.Mode
+	mode := alaye.TlsMode("")
+	if hcfg.TLS != nil {
+		mode = hcfg.TLS.Mode
+	}
+
 	if strings.TrimSpace(string(mode)) == "" {
 		if core.IsLocalhost(sni) {
 			mode = alaye.ModeLocalAuto
@@ -312,7 +331,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return nil, errors.Newf("%w: tls disabled for host %q", woos.ErrTLSDisabled, sni)
 
 	case alaye.ModeLocalCert:
-		if strings.TrimSpace(hcfg.TLS.Local.CertFile) == "" || strings.TrimSpace(hcfg.TLS.Local.KeyFile) == "" {
+		if hcfg.TLS == nil || hcfg.TLS.Local == nil || hcfg.TLS.Local.CertFile == "" || hcfg.TLS.Local.KeyFile == "" {
 			return nil, errors.Newf("%w %q", woos.ErrLocalCertMissingFiles, sni)
 		}
 		return m.GetLocalCertificate(hcfg.TLS.Local, sni)
@@ -329,7 +348,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 			return nil, errors.Newf("%w(host %q)", woos.ErrLetsEncryptNotEnabled, sni)
 		}
 
-		if hcfg.TLS.LetsEncrypt.ShortLived {
+		if hcfg.TLS != nil && hcfg.TLS.LetsEncrypt != nil && hcfg.TLS.LetsEncrypt.ShortLived {
 			for _, iss := range cm.Issuers {
 				if acmeIss, ok := iss.(*certmagic.ACMEIssuer); ok {
 					acmeIss.Profile = woos.AcmeProfileShortLived
@@ -343,7 +362,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return cmTLS.GetCertificate(&chi2)
 
 	case alaye.ModeCustomCA:
-		if strings.TrimSpace(hcfg.TLS.CustomCA.Root) == "" {
+		if hcfg.TLS == nil || hcfg.TLS.CustomCA == nil || hcfg.TLS.CustomCA.Root == "" {
 			return nil, errors.Newf("%w for host %q", woos.ErrCustomCAMissingRoot, sni)
 		}
 		return m.getCustomCACert(hcfg.TLS.CustomCA.Root, sni)
@@ -363,7 +382,7 @@ func (m *Manager) getCustomCACert(root string, host string) (*tls.Certificate, e
 		return nil, errors.Newf("%w:(host=%q)", woos.ErrInvalidCustomCAPEM, host)
 	}
 	if hcfg := m.hostManager.Get(host); hcfg != nil {
-		if hcfg.TLS.Local.CertFile == "" || hcfg.TLS.Local.KeyFile == "" {
+		if hcfg.TLS != nil && hcfg.TLS.Local != nil && (hcfg.TLS.Local.CertFile == "" || hcfg.TLS.Local.KeyFile == "") {
 			return nil, errors.Newf("%w for host %q", woos.ErrCustomCALocalCertRequired, host)
 		}
 		return m.GetLocalCertificate(hcfg.TLS.Local, host)
@@ -374,7 +393,9 @@ func (m *Manager) getCustomCACert(root string, host string) (*tls.Certificate, e
 func (m *Manager) Close() {
 	m.watcherMu.Lock()
 	defer m.watcherMu.Unlock()
-	m.watcher.Close()
+	if m.watcher != nil {
+		m.watcher.Close()
+	}
 }
 
 func (m *Manager) ClearCache() {

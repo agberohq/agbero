@@ -8,27 +8,27 @@ import (
 	"github.com/olekukonko/errors"
 )
 
-type Conditions struct {
+type Criteria struct {
 	SourceIPs []string          `hcl:"source_ips,optional" json:"source_ips"`
 	Headers   map[string]string `hcl:"headers,optional" json:"headers"`
 }
 
 // Server represents an upstream server configuration
 type Server struct {
-	Address        string      `hcl:"address" json:"address"`
-	Weight         int         `hcl:"weight,optional" json:"weight"`
-	Conditions     *Conditions `hcl:"conditions,block" json:"conditions"`
-	Streaming      *Streaming  `hcl:"streaming,block" json:"streaming"` // optional by nature when pointer
-	MaxConnections int64       `hcl:"max_connections,optional" json:"max_connections"`
+	Address        string    `hcl:"address" json:"address"`
+	Weight         int       `hcl:"weight,optional" json:"weight"`
+	Criteria       Criteria  `hcl:"criteria,block" json:"criteria"`
+	Streaming      Streaming `hcl:"streaming,block" json:"streaming"` // optional by nature when pointer
+	MaxConnections int64     `hcl:"max_connections,optional" json:"max_connections"`
 }
 
 type Streaming struct {
-	Status        Status        `hcl:"enabled,optional" json:"enabled"`
+	Status        Enabled       `hcl:"enabled,optional" json:"enabled"`
 	FlushInterval time.Duration `hcl:"flush_interval,optional" json:"flush_interval"`
 }
 
 func (s *Streaming) EffectiveFlushInterval() time.Duration {
-	if s == nil || !s.Status.Enabled() {
+	if s == nil || !s.Status.Yes() {
 		return -1
 	}
 	if s.FlushInterval <= 0 {
@@ -84,12 +84,10 @@ func (b *Server) Validate() error {
 		b.Weight = 1
 	}
 
-	if b.Conditions != nil {
-		for _, ip := range b.Conditions.SourceIPs {
-			if _, _, err := net.ParseCIDR(ip); err != nil {
-				if net.ParseIP(ip) == nil {
-					return errors.Newf("%w: %s", ErrBackendInvalidSourceIP, ip)
-				}
+	for _, ip := range b.Criteria.SourceIPs {
+		if _, _, err := net.ParseCIDR(ip); err != nil {
+			if net.ParseIP(ip) == nil {
+				return errors.Newf("%w: %s", ErrBackendInvalidSourceIP, ip)
 			}
 		}
 	}

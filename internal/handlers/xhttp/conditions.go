@@ -23,7 +23,7 @@ type Conditions struct {
 	headers  map[string]string // canonical header key -> expected value
 }
 
-func NewConditions(c *alaye.Conditions) (*Conditions, error) {
+func NewConditions(c *alaye.Criteria) (*Conditions, error) {
 	if c == nil {
 		return nil, nil
 	}

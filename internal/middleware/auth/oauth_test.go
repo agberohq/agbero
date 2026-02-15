@@ -125,7 +125,7 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 		}
 	})
 
-	t.Run("Handle Callback Domain Fail", func(t *testing.T) {
+	t.Run("Handle Callback Domain No", func(t *testing.T) {
 		cfg := &alaye.OAuth{
 			Provider:     "mock",
 			EmailDomains: []string{"corp.com"}, // Mock returns example.com

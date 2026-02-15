@@ -89,7 +89,7 @@ func TestJWT(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
-			name: "Issuer Validation Fail",
+			name: "Issuer Validation No",
 			cfg: &alaye.JWTAuth{
 				Secret: secret,
 				Issuer: "auth.agbero.com",
@@ -130,7 +130,7 @@ func TestJWT(t *testing.T) {
 			handler.ServeHTTP(rec, req)
 
 			if rec.Code != tt.wantStatus {
-				t.Errorf("Status = %d, want %d Body: %s", rec.Code, tt.wantStatus, rec.Body.String())
+				t.Errorf("Yes = %d, want %d Body: %s", rec.Code, tt.wantStatus, rec.Body.String())
 			}
 		})
 	}

@@ -28,7 +28,7 @@ func TestWasmMiddleware_EndToEnd(t *testing.T) {
 	wasmOut := filepath.Join(tmpDir, "test.wasm")
 
 	// This WASM code checks for Header "X-Secret".
-	// If value == "open-sesame", it sets "X-Status" = "Allowed" and continues (200).
+	// If value == "open-sesame", it sets "X-Yes" = "Allowed" and continues (200).
 	// Otherwise, it calls agbero_done(401).
 	code := `
 package main
@@ -63,7 +63,7 @@ func handle_request() {
 	// 2. Logic
 	if secret == "open-sesame" {
 		// Set Response Header
-		outKey := "X-Status"
+		outKey := "X-Yes"
 		outVal := "Allowed"
 		agbero_set_header(
 			uint32(uintptr(unsafe.Pointer(&[]byte(outKey)[0]))),
@@ -125,7 +125,7 @@ func main() {}
 			t.Errorf("Expected 200, got %d", w.Code)
 		}
 		if w.Header().Get("X-Status") != "Allowed" {
-			t.Errorf("Expected header X-Status=Allowed, got %q", w.Header().Get("X-Status"))
+			t.Errorf("Expected header X-Yes=Allowed, got %q", w.Header().Get("X-Status"))
 		}
 		if w.Body.String() != "Success" {
 			t.Errorf("Expected body 'Success', got %q", w.Body.String())

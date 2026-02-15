@@ -8,7 +8,7 @@ import (
 )
 
 type Gossip struct {
-	Status         Status   `hcl:"enabled,optional" json:"enabled"`
+	Status         Enabled  `hcl:"enabled,optional" json:"enabled"`
 	Port           int      `hcl:"port,optional" json:"port"`
 	SecretKey      Value    `hcl:"secret_key,optional" json:"secret-key"`             // Memberlist encryption key (16, 24, or 32 bytes)
 	Seeds          []string `hcl:"seeds,optional" json:"seeds"`                       // Initial cluster peers
@@ -17,7 +17,7 @@ type Gossip struct {
 }
 
 func (g *Gossip) Validate() error {
-	if !g.Status.Enabled() {
+	if g.Status.No() {
 		return nil // Nothing to validate if not enabled
 	}
 

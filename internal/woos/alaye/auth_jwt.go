@@ -5,7 +5,7 @@ import (
 )
 
 type JWTAuth struct {
-	Status Status `hcl:"enabled,optional" json:"enabled"`
+	Status Enabled `hcl:"enabled,optional" json:"enabled"`
 
 	// Secret for HMAC (HS256) or Path to Public Key (RS256/ES256)
 	Secret Value `hcl:"secret" json:"secret"`
@@ -17,7 +17,7 @@ type JWTAuth struct {
 }
 
 func (j *JWTAuth) Validate() error {
-	if !j.Status.Enabled() {
+	if j.Status.No() {
 		return nil
 	}
 

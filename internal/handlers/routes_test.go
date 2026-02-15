@@ -30,7 +30,8 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 
 	// 2. Config
 	route := &alaye.Route{
-		Path: "/",
+		Status: alaye.Success,
+		Path:   "/",
 		Backends: &alaye.Backend{
 			Status:     alaye.Success,
 			LBStrategy: alaye.StrategyRoundRobin,
@@ -240,7 +241,8 @@ func TestRouteHandler_Web_BasicFileServing(t *testing.T) {
 	}
 
 	route := &alaye.Route{
-		Path: "/",
+		Status: alaye.Success,
+		Path:   "/",
 		Web: &alaye.Web{
 			Status: alaye.Success,
 			Root:   alaye.WebRoot(root),
@@ -290,7 +292,8 @@ func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
 	}
 
 	route := &alaye.Route{
-		Path: "/",
+		Status: alaye.Success,
+		Path:   "/",
 		Web: &alaye.Web{
 			Status: alaye.Success,
 			Root:   alaye.WebRoot(root),
@@ -380,7 +383,8 @@ func TestRouteHandler_Web_DirectoryWithoutIndex(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, "subdir/"), 0755)
 
 	route := &alaye.Route{
-		Path: "/",
+		Status: alaye.Success,
+		Path:   "/",
 		Web: &alaye.Web{
 			Status:  alaye.Success,
 			Root:    alaye.WebRoot(root),
@@ -409,7 +413,8 @@ func TestRouteHandler_Web_PathTraversalPrevented(t *testing.T) {
 	}
 
 	route := &alaye.Route{
-		Path: "/files",
+		Status: alaye.Success,
+		Path:   "/files",
 		Web: &alaye.Web{
 			Status: alaye.Success,
 			Root:   alaye.WebRoot(root),
@@ -436,7 +441,8 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 	}
 
 	route := &alaye.Route{
-		Path: "/",
+		Status: alaye.Success,
+		Path:   "/",
 		Web: &alaye.Web{
 			Status: alaye.Success,
 			Root:   alaye.WebRoot(root),
@@ -447,6 +453,7 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 			Level:  5,
 		},
 		Headers: &alaye.Headers{
+			Status: alaye.Success,
 			Response: &alaye.Header{
 				Set: map[string]string{
 					"X-Custom-Header": "TestValue",

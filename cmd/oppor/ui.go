@@ -143,7 +143,7 @@ type Ui struct {
 	Config  Config
 	Metrics *Metrics
 
-	// Status
+	// Enabled
 	Running   bool
 	StartTime time.Time
 	Logs      []string

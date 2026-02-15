@@ -16,7 +16,7 @@ type Metrics struct {
 	RequestsPerSec    atomic.Uint64
 	ActiveConnections atomic.Int32
 
-	// Status code distribution
+	// Enabled code distribution
 	StatusCode2xx atomic.Uint64
 	StatusCode3xx atomic.Uint64
 	StatusCode4xx atomic.Uint64

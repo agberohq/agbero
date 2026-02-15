@@ -8,33 +8,33 @@ import (
 	"strings"
 )
 
-type Status int
+type Enabled int
 
 const (
-	Success Status = 1
-	Fail    Status = -1
-	Unknown Status = 0
+	Success Enabled = 1
+	Fail    Enabled = -1
+	Unknown Enabled = 0
 )
 
 var (
-	_ encoding.TextUnmarshaler = (*Status)(nil)
-	_ encoding.TextMarshaler   = (*Status)(nil)
-	_ json.Unmarshaler         = (*Status)(nil)
-	_ json.Marshaler           = (*Status)(nil)
+	_ encoding.TextUnmarshaler = (*Enabled)(nil)
+	_ encoding.TextMarshaler   = (*Enabled)(nil)
+	_ json.Unmarshaler         = (*Enabled)(nil)
+	_ json.Marshaler           = (*Enabled)(nil)
 )
 
-func NewStatus(v interface{}) Status {
-	var s Status
+func NewStatus(v interface{}) Enabled {
+	var s Enabled
 	_ = s.Set(v)
 	return s
 }
 
-func (s *Status) Set(v interface{}) error {
+func (s *Enabled) Set(v interface{}) error {
 	switch val := v.(type) {
-	case Status:
+	case Enabled:
 		*s = val
 	case int:
-		*s = Status(val)
+		*s = Enabled(val)
 	case bool:
 		if val {
 			*s = Success
@@ -49,20 +49,20 @@ func (s *Status) Set(v interface{}) error {
 	return nil
 }
 
-func (s Status) Enabled() bool  { return s == Success }
-func (s Status) Disabled() bool { return s == Fail }
-func (s Status) Default() bool  { return s == Unknown }
-func (s Status) Int() int       { return int(s) }
-func (s Status) Bool() bool     { return s == Success }
+func (s Enabled) Yes() bool     { return s == Success }
+func (s Enabled) No() bool      { return s == Fail }
+func (s Enabled) Default() bool { return s == Unknown }
+func (s Enabled) Int() int      { return int(s) }
+func (s Enabled) Bool() bool    { return s == Success }
 
-func (s Status) Toggle() Status {
-	if s.Disabled() {
+func (s Enabled) Toggle() Enabled {
+	if s.No() {
 		return Success
 	}
 	return Fail
 }
 
-func (s Status) String() string {
+func (s Enabled) String() string {
 	switch s {
 	case Success:
 		return "on"
@@ -73,7 +73,7 @@ func (s Status) String() string {
 	}
 }
 
-func (s *Status) UnmarshalText(text []byte) error {
+func (s *Enabled) UnmarshalText(text []byte) error {
 	raw := strings.ToLower(strings.TrimSpace(string(text)))
 
 	switch raw {
@@ -89,22 +89,22 @@ func (s *Status) UnmarshalText(text []byte) error {
 	}
 
 	if i, err := strconv.Atoi(raw); err == nil {
-		*s = Status(i)
+		*s = Enabled(i)
 		return nil
 	}
 
 	return fmt.Errorf("invalid status value: %s", raw)
 }
 
-func (s Status) MarshalText() ([]byte, error) {
+func (s Enabled) MarshalText() ([]byte, error) {
 	return []byte(s.String()), nil
 }
 
-func (s Status) MarshalJSON() ([]byte, error) {
+func (s Enabled) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s.String())
 }
 
-func (s *Status) UnmarshalJSON(data []byte) error {
+func (s *Enabled) UnmarshalJSON(data []byte) error {
 	var str string
 	if err := json.Unmarshal(data, &str); err == nil {
 		return s.UnmarshalText([]byte(str))
@@ -112,7 +112,7 @@ func (s *Status) UnmarshalJSON(data []byte) error {
 
 	var i int
 	if err := json.Unmarshal(data, &i); err == nil {
-		*s = Status(i)
+		*s = Enabled(i)
 		return nil
 	}
 

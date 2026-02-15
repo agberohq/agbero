@@ -9,7 +9,7 @@ import (
 
 // GlobalRate defines the global registry and default rules.
 type GlobalRate struct {
-	Status     Status        `hcl:"enabled,optional" json:"enabled"`
+	Status     Enabled       `hcl:"enabled,optional" json:"enabled"`
 	TTL        time.Duration `hcl:"ttl,optional" json:"ttl"`
 	MaxEntries int64         `hcl:"max_entries,optional" json:"max_entries"`
 
@@ -21,7 +21,7 @@ type GlobalRate struct {
 }
 
 func (g *GlobalRate) Validate() error {
-	if !g.Status.Enabled() {
+	if g.Status.No() {
 		return nil
 	}
 
@@ -49,14 +49,14 @@ func (g *GlobalRate) Validate() error {
 
 // RouteRate defines rate limiting for a specific route.
 type RouteRate struct {
-	Status       Status    `hcl:"enabled,optional" json:"enabled"`
+	Status       Enabled   `hcl:"enabled,optional" json:"enabled"`
 	IgnoreGlobal bool      `hcl:"ignore_global,optional" json:"ignore_global"` // Stop global rules processing
 	UsePolicy    string    `hcl:"use_policy,optional" json:"use_policy"`       // Reference a named policy
 	Rule         *RateRule `hcl:"rule,block" json:"rule,omitempty"`            // Ad-hoc definition
 }
 
 func (r *RouteRate) Validate() error {
-	if !r.Status.Enabled() {
+	if !r.Status.Yes() {
 		return nil
 	}
 

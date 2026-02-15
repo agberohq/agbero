@@ -3,16 +3,15 @@ package alaye
 import "strings"
 
 type PHP struct {
-	Status  Status `hcl:"enabled,optional" json:"enabled"`
-	Address string `hcl:"address,optional" json:"address"` // unix:/path/to.sock OR 127.0.0.1:9000
-	Index   string `hcl:"index,optional" json:"index"`     // default: index.php
+	Status  Enabled `hcl:"enabled,optional" json:"enabled"`
+	Address string  `hcl:"address,optional" json:"address"` // unix:/path/to.sock OR 127.0.0.1:9000
+	Index   string  `hcl:"index,optional" json:"index"`     // default: index.php
 }
 
 func (p *PHP) Validate() error {
-	if !p.Status.Enabled() {
+	if p.Status.No() {
 		return nil
 	}
-
 	addr := strings.TrimSpace(p.Address)
 	if addr == "" {
 		// allow default (we’ll choose in code), or you can force it required.

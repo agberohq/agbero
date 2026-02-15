@@ -41,7 +41,7 @@ type Engine struct {
 }
 
 func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*Engine, error) {
-	if cfg == nil || cfg.Status.Disabled() {
+	if cfg == nil || cfg.Status.No() {
 		return nil, nil
 	}
 
@@ -84,6 +84,8 @@ func (e *Engine) Close() error {
 	return e.store.Close()
 }
 
+// Handler is the middleware.
+// contextRoute is optional (pass nil for global/chain usage).
 func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) http.Handler {
 	if e == nil {
 		return next
@@ -92,21 +94,25 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := clientip.ClientIP(r)
 
+		// 1. Check dynamic bans
 		if ban, err := e.store.GetBan(ip); err == nil && !ban.IsExpired() {
 			e.blockRequest(w, r, "banned_ip", ban.Reason)
 			return
 		}
 
+		// 2. Check Static Whitelist
 		if e.checkRanger(e.whitelistRanger, ip) {
 			next.ServeHTTP(w, r)
 			return
 		}
 
+		// 3. Check Static Blacklist
 		if e.checkRanger(e.blacklistRanger, ip) {
 			e.handleAction(w, r, nil, "static_blacklist", "blocked_ip")
 			return
 		}
 
+		// 4. Inspect Body if configured
 		var bodySample []byte
 		if e.shouldInspectBody(r) {
 			var err error
@@ -125,19 +131,21 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 			Logger:   e.logger,
 		}
 
+		// 5. Evaluate Global Rules
 		runGlobal := true
 		if contextRoute != nil && contextRoute.IgnoreGlobal {
 			runGlobal = false
 		}
 
-		if runGlobal {
+		if runGlobal && e.cfg.Rules != nil {
 			if matched, rule := e.evaluateRules(e.cfg.Rules, inspector); matched {
 				e.handleAction(w, r, rule, rule.Name, "global_rule_match")
 				return
 			}
 		}
 
-		if contextRoute != nil && contextRoute.Status.Enabled() {
+		// 6. Evaluate Route-Specific Rules
+		if contextRoute != nil && contextRoute.Status.Yes() && contextRoute.Rules != nil {
 			if matched, rule := e.evaluateRules(contextRoute.Rules, inspector); matched {
 				e.handleAction(w, r, rule, rule.Name, "route_rule_match")
 				return
@@ -434,4 +442,11 @@ func (e *Engine) checkThreshold(rule *alaye.Rule, in *Inspector) bool {
 
 	count := e.counters.Increment(rule.Name, key, t.Window)
 	return count >= int64(t.Count)
+}
+
+func (e *Engine) List() ([]Rule, error) {
+	if e == nil || e.store == nil {
+		return nil, nil
+	}
+	return e.store.LoadAll()
 }

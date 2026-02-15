@@ -96,8 +96,9 @@ func TestServer_buildTLS(t *testing.T) {
 	tmpDir := t.TempDir()
 	s := &Server{
 		global: &alaye.Global{
-			LetsEncrypt: alaye.LetsEncrypt{
-				Email: "test@example.com",
+			LetsEncrypt: &alaye.LetsEncrypt{
+				Status: alaye.Success,
+				Email:  "test@example.com",
 			},
 			Storage: alaye.Storage{
 				CertsDir: tmpDir,
@@ -145,8 +146,8 @@ func TestServer_buildTLS_NoEmail(t *testing.T) {
 
 func TestServer_buildGlobalRateLimiter(t *testing.T) {
 	s := &Server{global: &alaye.Global{
-		RateLimits: alaye.GlobalRate{
-			Enabled:    true,
+		RateLimits: &alaye.GlobalRate{
+			Status:     alaye.Success,
 			TTL:        time.Minute,
 			MaxEntries: 100,
 			Rules: []alaye.RateRule{
@@ -175,7 +176,11 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 		reaper: jack.NewReaper(time.Minute),
 	}
 
-	route := &alaye.Route{Path: "/test", Backends: alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")}}
+	route := &alaye.Route{
+		Status:   alaye.Success,
+		Path:     "/test",
+		Backends: &alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")},
+	}
 	key := route.Key()
 
 	handler := handlers.NewRoute(route, nil, testLogger)
@@ -203,8 +208,9 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 	}
 
 	route := &alaye.Route{
+		Status:   alaye.Success,
 		Path:     "/test",
-		Backends: alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")},
+		Backends: &alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")},
 	}
 
 	cache.Route.Delete(route.Key())

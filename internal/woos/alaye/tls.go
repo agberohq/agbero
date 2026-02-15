@@ -19,10 +19,10 @@ type LocalCert struct {
 }
 
 type LetsEncrypt struct {
-	Status     Status `hcl:"enabled,optional" json:"enabled"`
-	Email      string `hcl:"email,optional" json:"email"`
-	Staging    bool   `hcl:"staging,optional" json:"staging"`
-	ShortLived bool   `hcl:"short_lived,optional" json:"short_lived"` // Enable 6-day certs
+	Status     Enabled `hcl:"enabled,optional" json:"enabled"`
+	Email      string  `hcl:"email,optional" json:"email"`
+	Staging    bool    `hcl:"staging,optional" json:"staging"`
+	ShortLived bool    `hcl:"short_lived,optional" json:"short_lived"` // Enable 6-day certs
 }
 
 type CustomCA struct {

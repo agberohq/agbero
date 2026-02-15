@@ -9,36 +9,37 @@ import (
 )
 
 type Route struct {
-	Status Status `hcl:"enabled,optional" json:"enabled"`
-	Path   string `hcl:"path,label" json:"path"`
+	Status Enabled `hcl:"enabled,optional" json:"enabled"`
+	Path   string  `hcl:"path,label" json:"path"`
 
 	StripPrefixes []string `hcl:"strip_prefixes,optional" json:"strip_prefixes"`
 	AllowedIPs    []string `hcl:"allowed_ips,optional" json:"allowed_ips"`
 
-	Web      *Web     `hcl:"web,block" json:"web,omitempty"`
-	Backends *Backend `hcl:"backend,block" json:"backends,omitempty"`
+	Web      Web     `hcl:"web,block" json:"web,omitempty"`
+	Backends Backend `hcl:"backend,block" json:"backends,omitempty"`
 
-	HealthCheck    *HealthCheck    `hcl:"health_check,block" json:"health_check,omitempty"`
-	CircuitBreaker *CircuitBreaker `hcl:"circuit_breaker,block" json:"circuit_breaker,omitempty"`
-	Timeouts       *TimeoutRoute   `hcl:"timeouts,block" json:"timeouts,omitempty"`
+	HealthCheck    HealthCheck    `hcl:"health_check,block" json:"health_check,omitempty"`
+	CircuitBreaker CircuitBreaker `hcl:"circuit_breaker,block" json:"circuit_breaker,omitempty"`
+	Timeouts       TimeoutRoute   `hcl:"timeouts,block" json:"timeouts,omitempty"`
 
-	BasicAuth   *BasicAuth   `hcl:"basic_auth,block" json:"basic_auth,omitempty"`
-	ForwardAuth *ForwardAuth `hcl:"forward_auth,block" json:"forward_auth,omitempty"`
-	JWTAuth     *JWTAuth     `hcl:"jwt_auth,block" json:"jwt_auth,omitempty"`
-	OAuth       *OAuth       `hcl:"o_auth,block" json:"oauth,omitempty"`
+	BasicAuth   BasicAuth   `hcl:"basic_auth,block" json:"basic_auth,omitempty"`
+	ForwardAuth ForwardAuth `hcl:"forward_auth,block" json:"forward_auth,omitempty"`
+	JWTAuth     JWTAuth     `hcl:"jwt_auth,block" json:"jwt_auth,omitempty"`
+	OAuth       OAuth       `hcl:"o_auth,block" json:"oauth,omitempty"`
 
-	Headers           *Headers       `hcl:"headers,block" json:"headers,omitempty"`
-	Wasm              *Wasm          `hcl:"wasm,block" json:"wasm,omitempty"`
-	RateLimit         *RouteRate     `hcl:"rate_limit,block" json:"rate_limit,omitempty"`
-	Firewall          *FirewallRoute `hcl:"firewall,block" json:"firewall,omitempty"`
-	CompressionConfig *Compression   `hcl:"compression,block" json:"compression_config,omitempty"`
+	Headers           Headers       `hcl:"headers,block" json:"headers,omitempty"`
+	Wasm              Wasm          `hcl:"wasm,block" json:"wasm,omitempty"`
+	RateLimit         RouteRate     `hcl:"rate_limit,block" json:"rate_limit,omitempty"`
+	Firewall          FirewallRoute `hcl:"firewall,block" json:"firewall,omitempty"`
+	CompressionConfig Compression   `hcl:"compression,block" json:"compression_config,omitempty"`
 }
 
 func (r *Route) Key() string {
 	w := xxhash.New()
 
 	w.WriteString(r.Path)
-	if r.Backends != nil {
+
+	if r.Backends.Status.Yes() {
 		w.WriteString(strings.ToLower(strings.TrimSpace(r.Backends.LBStrategy)))
 		for _, b := range r.Backends.Servers {
 			w.WriteString(b.Address)
@@ -54,63 +55,63 @@ func (r *Route) Key() string {
 		w.WriteString(ip)
 	}
 
-	if r.HealthCheck != nil && r.HealthCheck.Status.Enabled() {
+	if r.HealthCheck.Status.Yes() {
 		w.WriteString(r.HealthCheck.Path)
 		w.WriteString(fmt.Sprint(r.HealthCheck.Interval))
 		w.WriteString(fmt.Sprint(r.HealthCheck.Timeout))
 		w.WriteString(fmt.Sprint(r.HealthCheck.Threshold))
 	}
 
-	if r.CircuitBreaker != nil && r.CircuitBreaker.Status.Enabled() {
+	if r.CircuitBreaker.Status.Yes() {
 		w.WriteString(fmt.Sprint(r.CircuitBreaker.Threshold))
 		w.WriteString(fmt.Sprint(r.CircuitBreaker.Duration))
 	}
 
-	if r.Timeouts != nil && r.Timeouts.Status.Enabled() {
+	if r.Timeouts.Enabled.Yes() {
 		w.WriteString(fmt.Sprint(r.Timeouts.Request))
 	}
 
-	if r.CompressionConfig != nil && r.CompressionConfig.Status.Enabled() {
+	if r.CompressionConfig.Status.Yes() {
 		w.WriteString(r.CompressionConfig.Type)
 		w.WriteString(fmt.Sprint(r.CompressionConfig.Level))
 	}
 
-	if r.Headers != nil && r.Headers.Status.Enabled() {
+	if r.Headers.Status.Yes() {
 		w.WriteString("hd")
 	}
 
-	if r.BasicAuth != nil && r.BasicAuth.Status.Enabled() {
+	if r.BasicAuth.Status.Yes() {
 		for _, u := range r.BasicAuth.Users {
 			w.WriteString(u)
 		}
 	}
 
-	if r.ForwardAuth != nil && r.ForwardAuth.Status.Enabled() {
+	if r.ForwardAuth.Status.Yes() {
 		w.WriteString(r.ForwardAuth.URL)
 	}
 
-	if r.JWTAuth != nil && r.JWTAuth.Status.Enabled() {
+	if r.JWTAuth.Status.Yes() {
 		w.WriteString(r.JWTAuth.Secret.String())
 	}
 
-	if r.OAuth != nil && r.OAuth.Status.Enabled() {
+	if r.OAuth.Status.Yes() {
 		w.WriteString(r.OAuth.Provider)
 		w.WriteString(r.OAuth.ClientID)
 	}
 
-	if r.Web != nil && r.Web.Root.IsSet() {
+	if r.Web.Root.IsSet() {
 		w.WriteString(r.Web.Root.String())
 		w.WriteString(r.Web.Index)
 		if r.Web.Listing {
 			w.WriteString("ls")
 		}
-		if r.Web.PHP != nil && r.Web.PHP.Status.Enabled() {
+		if r.Web.PHP != nil && r.Web.PHP.Status.Yes() {
 			w.WriteString("php")
 			w.WriteString(r.Web.PHP.Address)
 		}
 	}
 
-	if r.Wasm != nil && r.Wasm.Status.Enabled() {
+	if r.Wasm.Enabled.Yes() {
 		w.WriteString(r.Wasm.Module)
 		for k, v := range r.Wasm.Config {
 			w.WriteString(k)
@@ -118,7 +119,7 @@ func (r *Route) Key() string {
 		}
 	}
 
-	if r.RateLimit != nil && r.RateLimit.Status.Enabled() {
+	if r.RateLimit.Status.Yes() {
 		w.WriteString("rl_on")
 		if r.RateLimit.IgnoreGlobal {
 			w.WriteString("ig")
@@ -139,6 +140,16 @@ func (r *Route) Key() string {
 		}
 	}
 
+	if r.Firewall.Status.Yes() {
+		w.WriteString("fw_on")
+		if r.Firewall.IgnoreGlobal {
+			w.WriteString("ig")
+		}
+		for _, rule := range r.Firewall.Rules {
+			w.WriteString(rule.Name)
+		}
+	}
+
 	return fmt.Sprintf("%x", w.Sum64())
 }
 
@@ -150,8 +161,8 @@ func (r *Route) Validate() error {
 		return errors.Newf("%w: path %q must start with '/'", ErrRouteInvalidPrefix, r.Path)
 	}
 
-	hasBackends := r.Backends != nil && len(r.Backends.Servers) > 0
-	hasWeb := r.Web != nil && r.Web.Root.IsSet()
+	hasBackends := len(r.Backends.Servers) > 0
+	hasWeb := r.Web.Root.IsSet()
 
 	if !hasBackends && !hasWeb {
 		return ErrRouteNoBackendOrWeb
@@ -160,13 +171,11 @@ func (r *Route) Validate() error {
 		return ErrRouteBothBackendAndWeb
 	}
 
-	if r.RateLimit != nil {
-		if err := r.RateLimit.Validate(); err != nil {
-			return errors.Newf("rate_limit: %w", err)
-		}
+	if err := r.RateLimit.Validate(); err != nil {
+		return errors.Newf("rate_limit: %w", err)
 	}
 
-	if r.Firewall != nil && r.Firewall.Status.Enabled() {
+	if r.Firewall.Status.Yes() {
 		// Validate ad-hoc rules
 		for i, rule := range r.Firewall.Rules {
 			if rule.Name == "" {
@@ -184,8 +193,37 @@ func (r *Route) Validate() error {
 	return r.validateWebRoute()
 }
 
+func (r *Route) validateAuth() error {
+	if err := r.BasicAuth.Validate(); err != nil {
+		return errors.Newf("basic_auth: %w", err)
+	}
+	if err := r.ForwardAuth.Validate(); err != nil {
+		return errors.Newf("forward_auth: %w", err)
+	}
+	if err := r.JWTAuth.Validate(); err != nil {
+		return errors.Newf("jwt_auth: %w", err)
+	}
+	if err := r.OAuth.Validate(); err != nil {
+		return errors.Newf("o_auth: %w", err)
+	}
+	return nil
+}
+
+func (r *Route) validatePlugins() error {
+	if err := r.Headers.Validate(); err != nil {
+		return errors.Newf("headers: %w", err)
+	}
+	if err := r.Wasm.Validate(); err != nil {
+		return errors.Newf("wasm: %w", err)
+	}
+	if err := r.CompressionConfig.Validate(); err != nil {
+		return errors.Newf("compression: %w", err)
+	}
+	return nil
+}
+
 func (r *Route) validateWebRoute() error {
-	if r.Web == nil || !r.Web.Root.IsSet() {
+	if !r.Web.Root.IsSet() {
 		return ErrWebRouteRootRequired
 	}
 
@@ -193,52 +231,36 @@ func (r *Route) validateWebRoute() error {
 		return errors.Newf("web: %w", err)
 	}
 
-	if r.Backends != nil && r.Backends.LBStrategy != "" && r.Backends.LBStrategy != StrategyRoundRobin {
+	if r.Backends.LBStrategy != "" && r.Backends.LBStrategy != StrategyRoundRobin {
 		return ErrWebRouteUnsupportedLB
 	}
 
-	if r.HealthCheck != nil && r.HealthCheck.Status.Enabled() {
+	if r.HealthCheck.Status.Yes() {
 		return ErrWebRouteHealthCheck
 	}
-	if r.CircuitBreaker != nil && r.CircuitBreaker.Status.Enabled() {
+	if r.CircuitBreaker.Status.Yes() {
 		return ErrWebRouteCircuitBreaker
 	}
 
-	if r.Timeouts != nil && r.Timeouts.Status.Enabled() {
+	if r.Timeouts.Enabled.Yes() {
 		if err := r.Timeouts.Validate(); err != nil {
 			return errors.Newf("timeouts: %w", err)
 		}
 	}
 
-	if r.BasicAuth != nil {
-		if err := r.BasicAuth.Validate(); err != nil {
-			return errors.Newf("basic_auth: %w", err)
-		}
+	if err := r.validateAuth(); err != nil {
+		return err
 	}
 
-	if r.ForwardAuth != nil {
-		if err := r.ForwardAuth.Validate(); err != nil {
-			return errors.Newf("forward_auth: %w", err)
-		}
-	}
-
-	if r.Headers != nil {
-		if err := r.Headers.Validate(); err != nil {
-			return errors.Newf("headers: %w", err)
-		}
-	}
-
-	if r.CompressionConfig != nil {
-		if err := r.CompressionConfig.Validate(); err != nil {
-			return errors.Newf("compression: %w", err)
-		}
+	if err := r.validatePlugins(); err != nil {
+		return err
 	}
 
 	return nil
 }
 
 func (r *Route) validateProxyRoute() error {
-	if r.Backends == nil || len(r.Backends.Servers) == 0 {
+	if len(r.Backends.Servers) == 0 {
 		return ErrProxyRouteNoBackends
 	}
 
@@ -280,46 +302,24 @@ func (r *Route) validateProxyRoute() error {
 		}
 	}
 
-	if r.HealthCheck != nil {
-		if err := r.HealthCheck.Validate(); err != nil {
-			return errors.Newf("health_check: %w", err)
-		}
+	if err := r.HealthCheck.Validate(); err != nil {
+		return errors.Newf("health_check: %w", err)
 	}
 
-	if r.CircuitBreaker != nil {
-		if err := r.CircuitBreaker.Validate(); err != nil {
-			return errors.Newf("circuit_breaker: %w", err)
-		}
+	if err := r.CircuitBreaker.Validate(); err != nil {
+		return errors.Newf("circuit_breaker: %w", err)
 	}
 
-	if r.Timeouts != nil {
-		if err := r.Timeouts.Validate(); err != nil {
-			return errors.Newf("timeouts: %w", err)
-		}
+	if err := r.Timeouts.Validate(); err != nil {
+		return errors.Newf("timeouts: %w", err)
 	}
 
-	if r.BasicAuth != nil {
-		if err := r.BasicAuth.Validate(); err != nil {
-			return errors.Newf("basic_auth: %w", err)
-		}
+	if err := r.validateAuth(); err != nil {
+		return err
 	}
 
-	if r.ForwardAuth != nil {
-		if err := r.ForwardAuth.Validate(); err != nil {
-			return errors.Newf("forward_auth: %w", err)
-		}
-	}
-
-	if r.Headers != nil {
-		if err := r.Headers.Validate(); err != nil {
-			return errors.Newf("headers: %w", err)
-		}
-	}
-
-	if r.CompressionConfig != nil {
-		if err := r.CompressionConfig.Validate(); err != nil {
-			return errors.Newf("compression: %w", err)
-		}
+	if err := r.validatePlugins(); err != nil {
+		return err
 	}
 
 	return nil

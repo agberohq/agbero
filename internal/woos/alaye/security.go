@@ -11,7 +11,7 @@ import (
 )
 
 type Security struct {
-	Status         Status    `hcl:"enabled,optional" json:"enabled"`
+	Status         Enabled   `hcl:"enabled,optional" json:"enabled"`
 	TrustedProxies []string  `hcl:"trusted_proxies,optional" json:"trusted_proxies"`
 	Firewall       *Firewall `hcl:"firewall,block" json:"firewall,omitempty"`
 }
@@ -37,6 +37,16 @@ type Rule struct {
 }
 
 func (r *Rule) Validate() error {
+	if r == nil {
+		return errors.New("nil rule")
+	}
+	if r.Name == "" {
+		return errors.New("rule name required")
+	}
+	//if r.Action == "" {
+	//	return errors.New("rule action required")
+	//}
+
 	r.Type = strings.ToLower(r.Type)
 	switch r.Type {
 	case "static", "dynamic", "whitelist":
@@ -53,37 +63,28 @@ func (r *Rule) Validate() error {
 }
 
 type Match struct {
-	IP        []string     `hcl:"ip,optional" json:"ip"`
-	Path      []string     `hcl:"path,optional" json:"path"`
-	Methods   []string     `hcl:"methods,optional" json:"methods"`
-	Any       []*Condition `hcl:"any,block" json:"any"`
-	All       []*Condition `hcl:"all,block" json:"all"`
-	None      []*Condition `hcl:"none,block" json:"none"`
-	Extract   *Extract     `hcl:"extract,block" json:"extract"`
-	Threshold *Threshold   `hcl:"threshold,block" json:"threshold"`
+	IP        []string    `hcl:"ip,optional" json:"ip"`
+	Path      []string    `hcl:"path,optional" json:"path"`
+	Methods   []string    `hcl:"methods,optional" json:"methods"`
+	Any       []Condition `hcl:"any,block" json:"any"`
+	All       []Condition `hcl:"all,block" json:"all"`
+	None      []Condition `hcl:"none,block" json:"none"`
+	Extract   Extract     `hcl:"extract,block" json:"extract"`
+	Threshold Threshold   `hcl:"threshold,block" json:"threshold"`
 }
 
 func (m *Match) Validate() error {
 	for i, c := range m.Any {
-		if c == nil {
-			return errors.Newf("any[%d]: nil condition", i)
-		}
 		if err := c.Validate(); err != nil {
 			return errors.Newf("any[%d]: %w", i, err)
 		}
 	}
 	for i, c := range m.All {
-		if c == nil {
-			return errors.Newf("all[%d]: nil condition", i)
-		}
 		if err := c.Validate(); err != nil {
 			return errors.Newf("all[%d]: %w", i, err)
 		}
 	}
 	for i, c := range m.None {
-		if c == nil {
-			return errors.Newf("none[%d]: nil condition", i)
-		}
 		if err := c.Validate(); err != nil {
 			return errors.Newf("none[%d]: %w", i, err)
 		}
@@ -113,18 +114,22 @@ func (m *Match) Validate() error {
 }
 
 type Condition struct {
-	Location   string `hcl:"location,optional" json:"location"`
-	Key        string `hcl:"key,optional" json:"key"`
-	Operator   string `hcl:"operator,optional" json:"operator"`
-	Value      string `hcl:"value,optional" json:"value"`
-	Pattern    string `hcl:"pattern,optional" json:"pattern"`
-	Negate     bool   `hcl:"negate,optional" json:"negate"`
-	IgnoreCase bool   `hcl:"ignore_case,optional" json:"ignore_case"`
+	Status     Enabled `hcl:"enabled,optional" json:"enabled"`
+	Location   string  `hcl:"location,optional" json:"location"`
+	Key        string  `hcl:"key,optional" json:"key"`
+	Operator   string  `hcl:"operator,optional" json:"operator"`
+	Value      string  `hcl:"value,optional" json:"value"`
+	Pattern    string  `hcl:"pattern,optional" json:"pattern"`
+	Negate     bool    `hcl:"negate,optional" json:"negate"`
+	IgnoreCase bool    `hcl:"ignore_case,optional" json:"ignore_case"`
 
 	Compiled *regexp.Regexp `hcl:"-" json:"-"`
 }
 
 func (c *Condition) Validate() error {
+	if c.Status.No() {
+		return nil
+	}
 	c.Location = strings.ToLower(c.Location)
 	switch c.Location {
 	case "ip", "path", "method", "header", "headers", "query", "body", "uri":
@@ -167,7 +172,7 @@ type Action struct {
 }
 
 type Response struct {
-	Status       Status             `hcl:"enabled,optional" json:"enabled"`
+	Status       Enabled            `hcl:"enabled,optional" json:"enabled"`
 	ContentType  string             `hcl:"content_type,optional" json:"content_type"`
 	BodyTemplate string             `hcl:"body_template,optional" json:"body_template"`
 	Headers      map[string]string  `hcl:"headers,optional" json:"headers"`
@@ -177,6 +182,13 @@ type Response struct {
 
 // Validate methods remain unchanged...
 func (s *Security) Validate() error {
+	if s == nil {
+		return nil
+	}
+
+	if s.Status.No() {
+		return nil
+	}
 	for i, proxy := range s.TrustedProxies {
 		if _, _, err := net.ParseCIDR(proxy); err != nil {
 			if ip := net.ParseIP(proxy); ip == nil {
@@ -192,7 +204,7 @@ func (s *Security) Validate() error {
 }
 
 type Firewall struct {
-	Status              Status    `hcl:"enabled,optional" json:"enabled"`
+	Status              Enabled   `hcl:"enabled,optional" json:"enabled"`
 	Mode                string    `hcl:"mode,attr" json:"mode"`
 	InspectBody         bool      `hcl:"inspect_body,attr" json:"inspect_body"`
 	MaxInspectBytes     int64     `hcl:"max_inspect_bytes,attr" json:"max_inspect_bytes"`
@@ -203,7 +215,10 @@ type Firewall struct {
 }
 
 func (f *Firewall) Validate() error {
-	if !f.Status.Enabled() {
+	if f == nil {
+		return nil
+	}
+	if !f.Status.Yes() {
 		return nil
 	}
 
@@ -255,8 +270,8 @@ func (f *Firewall) Validate() error {
 }
 
 type FirewallRoute struct {
-	Status       Status `hcl:"enabled,optional" json:"enabled"`
-	IgnoreGlobal bool   `hcl:"ignore_global,optional" json:"ignore_global"`
+	Status       Enabled `hcl:"enabled,optional" json:"enabled"`
+	IgnoreGlobal bool    `hcl:"ignore_global,optional" json:"ignore_global"`
 
 	// Apply specific named policies defined globally in Security.Firewall.Rules
 	// or strictly applying specific sets.

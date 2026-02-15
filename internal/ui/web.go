@@ -66,7 +66,7 @@ func NewWeb(logger *ll.Logger, route *alaye.Route) *web {
 	}
 
 	// PHP FastCGI support (value-type config; no pointers).
-	if route != nil && route.Web.PHP.Status.Enabled() {
+	if route != nil && route.Web.PHP.Status.Yes() {
 		root := route.Web.Root.String()
 
 		network, address := "tcp", "127.0.0.1:9000"
@@ -102,11 +102,13 @@ func NewWeb(logger *ll.Logger, route *alaye.Route) *web {
 }
 
 func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// 1. Method Check
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	// 2. Resolve Host/Path Context
 	browserPath := r.URL.Path
 	if v := r.Context().Value(woos.CtxOriginalPath); v != nil {
 		if s, ok := v.(string); ok {
@@ -114,12 +116,15 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rootPath := h.route.Web.Root.String()
-	if rootPath == "" {
-		rootPath = "."
+	// 3. Resolve Root Directory
+	// Defensive: h.route.Web should not be nil here if constructed correctly,
+	// but strictly speaking, pointers can be nil.
+	rootPath := "."
+	if h.route != nil && h.route.Web != nil && h.route.Web.Root.IsSet() {
+		rootPath = h.route.Web.Root.String()
 	}
 
-	// Open the root securely
+	// 4. Secure Open (Prevent breakout)
 	root, err := os.OpenRoot(rootPath)
 	if err != nil {
 		h.logger.Fields("err", err, "root", rootPath).Error("failed to open web root")
@@ -128,44 +133,42 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer root.Close()
 
-	// 1. Clean the path
+	// 5. Clean & Validate Path
 	reqPath := strings.TrimPrefix(r.URL.Path, "/")
 	if reqPath == "" {
 		reqPath = "."
 	}
 	cleanedPath := filepath.Clean(reqPath)
 
-	// Explicitly check for traversal
-	// filepath.Clean resolves ".." purely lexically. If the result starts with "..",
-	// it means the path is trying to go above the CWD (which is the root in this context).
+	// Explicit Traversal Check: If clean path tries to go up, block it.
 	if strings.HasPrefix(cleanedPath, "..") || strings.HasPrefix(cleanedPath, string(filepath.Separator)+"..") {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
-	// Check for hidden files/dirs (dotfiles)
+	// Dotfile Protection (Hide .git, .env, etc.)
 	pathParts := strings.Split(cleanedPath, string(filepath.Separator))
 	for _, part := range pathParts {
 		if part == "." || part == ".." || part == "" {
 			continue
 		}
-		if strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".d") {
+		// Allow .well-known but block other dotfiles
+		if strings.HasPrefix(part, ".") && part != ".well-known" {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
 	}
 
-	// Update reqPath to the cleaned, safe version
 	reqPath = cleanedPath
-
 	phpEnabled := h.php != nil
 
-	if strings.HasSuffix(strings.ToLower(reqPath), ".php") && !phpEnabled {
-		http.Error(w, "Not Found", http.StatusNotFound)
-		return
-	}
-
-	if phpEnabled && strings.HasSuffix(strings.ToLower(reqPath), ".php") {
+	// 6. PHP Handling
+	if strings.HasSuffix(strings.ToLower(reqPath), ".php") {
+		if !phpEnabled {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		// Verify file exists before passing to PHP-FPM
 		ff, err := root.Open(reqPath)
 		if err == nil {
 			info, serr := ff.Stat()
@@ -175,8 +178,10 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// If open failed, fall through to 404/Error below
 	}
 
+	// 7. Gzip Pre-compression Lookup
 	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 		gzPath, gzOrigPath := h.resolveGzipPath(reqPath)
 		if h.gzMayExist(gzPath) {
@@ -205,6 +210,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 8. Open Requested File
 	f, err := root.Open(reqPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -212,7 +218,6 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else if errors.Is(err, fs.ErrPermission) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 		} else {
-			// This fallback 500 should now only happen for real IO errors, not traversal
 			h.logger.Fields("err", err, "path", reqPath).Debug("file open failed")
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		}
@@ -226,21 +231,27 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 9. Directory Handling (Index or Listing)
 	if info.IsDir() {
+		// Enforce trailing slash for directories
 		if !strings.HasSuffix(browserPath, "/") {
 			http.Redirect(w, r, browserPath+"/", http.StatusMovedPermanently)
 			return
 		}
+
 		indexName := "index.html"
-		if h.route.Web.Index != "" {
+		if h.route != nil && h.route.Web != nil && h.route.Web.Index != "" {
 			indexName = h.route.Web.Index
 		}
+
+		// Check for Index File
 		indexPath := filepath.Join(reqPath, indexName)
 		indexFile, err := root.Open(indexPath)
 		if err == nil {
 			defer indexFile.Close()
 			indexInfo, err := indexFile.Stat()
 			if err == nil && !indexInfo.IsDir() {
+				// Serve Index
 				if h.setCommonHeaders(w, r, indexName, indexInfo.ModTime(), indexInfo.Size(), false) {
 					return
 				}
@@ -249,14 +260,18 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if h.route.Web.Listing {
+
+		// Directory Listing
+		if h.route != nil && h.route.Web != nil && h.route.Web.Listing {
 			h.serveDirectoryListing(w, r, f, browserPath)
 			return
 		}
+
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
+	// 10. Serve Static File
 	if h.setCommonHeaders(w, r, reqPath, info.ModTime(), info.Size(), false) {
 		return
 	}

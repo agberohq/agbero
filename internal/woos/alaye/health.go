@@ -8,7 +8,7 @@ import (
 )
 
 type HealthCheck struct {
-	Status    Status        `hcl:"enabled,optional" json:"enabled"`
+	Status    Enabled       `hcl:"enabled,optional" json:"enabled"`
 	Path      string        `hcl:"path" json:"path"`
 	Interval  time.Duration `hcl:"interval,optional" json:"interval"`
 	Timeout   time.Duration `hcl:"timeout,optional" json:"timeout"`
@@ -16,8 +16,8 @@ type HealthCheck struct {
 }
 
 func (h *HealthCheck) Validate() error {
-	if !h.Status.Enabled() {
-		return ErrWebRouteHealthCheck
+	if h.Status.No() {
+		return nil
 	}
 	// Path validation
 	if h.Path == "" {

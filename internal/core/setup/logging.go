@@ -18,7 +18,7 @@ import (
 )
 
 // Logging creates the final logger based on config and returns a cleanup function to flush buffers.
-func Logging(cfg alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, error) {
+func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, error) {
 	var handlers []lx.Handler
 
 	// Terminal (always)
@@ -74,7 +74,7 @@ func Logging(cfg alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, er
 	}
 
 	// VictoriaLogs (buffered)
-	if cfg.Victoria.Status.Enabled() {
+	if cfg.Victoria.Status.Yes() {
 		vl, err := victoria.New(
 			victoria.WithURL(cfg.Victoria.URL),
 			victoria.WithDevMode(devMode),

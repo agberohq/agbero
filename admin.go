@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -127,34 +128,21 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Constant-Time User Lookup
-	// We do NOT return early if the user isn't found.
-	// We allow the loop to finish to hide the number of configured users.
-
 	var foundHash []byte
 	userFound := 0
 
-	// Pre-hash input credential once
 	inputUserHash := sha256.Sum256([]byte(creds.Username))
 
 	for _, u := range cfg.BasicAuth.Users {
 		parts := strings.SplitN(u, ":", 2)
 		if len(parts) == 2 {
-			// Hash stored username
 			storedUserHash := sha256.Sum256([]byte(parts[0]))
-
-			// ConstantTimeCompare on FIXED SIZE (32 bytes) hashes
 			if subtle.ConstantTimeCompare(inputUserHash[:], storedUserHash[:]) == 1 {
 				foundHash = []byte(parts[1])
 				userFound = 1
 			}
 		}
 	}
-
-	// 4. Normalize Execution Time (The Defense)
-	// If user was found, we compare against their real hash.
-	// If user was NOT found, we compare against the dummyHash.
-	// This ensures we ALWAYS pay the expensive bcrypt cost (~100ms),
-	// preventing "username enumeration" via timing.
 
 	targetHash := foundHash
 	if userFound == 0 {
@@ -163,8 +151,6 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 
 	err := bcrypt.CompareHashAndPassword(targetHash, []byte(creds.Password))
 
-	// If the user wasn't found (userFound == 0), we must fail.
-	// If the password was wrong (err != nil), we must fail.
 	if userFound == 0 || err != nil {
 		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 		return
@@ -217,7 +203,6 @@ func (s *Server) handleAdminConfigDump(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 	if s.firewall == nil {
 		if r.Method == http.MethodGet {
-			// Return a special flag indicating disabled
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"enabled": false,
@@ -260,11 +245,25 @@ func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 		}
 
 		dur := time.Duration(req.DurationSec) * time.Second
-		if err := s.firewall.Block(req.IP, req.Host, req.Path, req.Reason, dur); err != nil {
+
+		// FIX: Flatten extra context into Reason string for firewall engine
+		reason := req.Reason
+		var details []string
+		if req.Host != "" {
+			details = append(details, "host="+req.Host)
+		}
+		if req.Path != "" {
+			details = append(details, "path="+req.Path)
+		}
+		if len(details) > 0 {
+			reason = fmt.Sprintf("%s (%s)", reason, strings.Join(details, ", "))
+		}
+
+		if err := s.firewall.Block(req.IP, reason, dur); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		s.logger.Fields("ip", req.IP, "reason", req.Reason, "duration", dur).Info("admin: blocked ip")
+		s.logger.Fields("ip", req.IP, "reason", reason, "duration", dur).Info("admin: blocked ip")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Blocked"))
 
@@ -289,16 +288,17 @@ func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 
 // handleAdminLogs reads the log file backwards efficiently
 func (s *Server) handleAdminLogs(w http.ResponseWriter, r *http.Request) {
-	logPath := s.global.Logging.File
+	var logPath string
+	if s.global.Logging != nil {
+		logPath = s.global.Logging.File
+	}
+
 	if logPath == "" {
 		http.Error(w, "File logging disabled", http.StatusNotImplemented)
 		return
 	}
 
-	// Default 50 lines, max 1000
 	limit := 50
-	// (Add query param parsing here if desired)
-
 	lines, err := readLastLines(logPath, limit)
 	if err != nil {
 		http.Error(w, "Error reading logs: "+err.Error(), http.StatusInternalServerError)
@@ -319,17 +319,18 @@ func (s *Server) handleAdminLogs(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(logs)
 }
 
-// sanitizeGlobal strips secrets from the global config
 func sanitizeGlobal(g *alaye.Global) *alaye.Global {
 	b, _ := json.Marshal(g)
 	var clone alaye.Global
 	_ = json.Unmarshal(b, &clone)
 
-	if clone.Gossip.SecretKey != "" {
-		clone.Gossip.SecretKey = "***"
-	}
-	if clone.Gossip.PrivateKeyFile != "" {
-		clone.Gossip.PrivateKeyFile = "***"
+	if clone.Gossip != nil {
+		if clone.Gossip.SecretKey != "" {
+			clone.Gossip.SecretKey = "***"
+		}
+		if clone.Gossip.PrivateKeyFile != "" {
+			clone.Gossip.PrivateKeyFile = "***"
+		}
 	}
 	if clone.Admin != nil {
 		if clone.Admin.BasicAuth != nil {
@@ -338,12 +339,10 @@ func sanitizeGlobal(g *alaye.Global) *alaye.Global {
 		if clone.Admin.JWTAuth != nil {
 			clone.Admin.JWTAuth.Secret = "***"
 		}
-		// Removed OAuth reference since we removed it from struct
 	}
 	return &clone
 }
 
-// sanitizeHosts strips secrets from host configs
 func sanitizeHosts(hosts map[string]*alaye.Host) map[string]*alaye.Host {
 	out := make(map[string]*alaye.Host)
 	for k, v := range hosts {
@@ -351,7 +350,6 @@ func sanitizeHosts(hosts map[string]*alaye.Host) map[string]*alaye.Host {
 		var clone alaye.Host
 		_ = json.Unmarshal(b, &clone)
 
-		// Sanitize Route Auth (Existing)
 		for i := range clone.Routes {
 			if clone.Routes[i].BasicAuth != nil {
 				clone.Routes[i].BasicAuth.Users = []string{"***"}
@@ -363,7 +361,6 @@ func sanitizeHosts(hosts map[string]*alaye.Host) map[string]*alaye.Host {
 				clone.Routes[i].OAuth.ClientSecret = "***"
 				clone.Routes[i].OAuth.CookieSecret = "***"
 			}
-			// Sanitize Wasm Config
 			if clone.Routes[i].Wasm != nil && len(clone.Routes[i].Wasm.Config) > 0 {
 				clone.Routes[i].Wasm.Config = map[string]string{"***": "***"}
 			}
@@ -389,7 +386,6 @@ func readLastLines(filename string, n int) ([]string, error) {
 	fileSize := stat.Size()
 	var lines []string
 
-	// Buffer size for reading chunks backwards
 	const bufSize = 1024
 	buf := make([]byte, bufSize)
 
@@ -413,20 +409,14 @@ func readLastLines(filename string, n int) ([]string, error) {
 			return nil, err
 		}
 
-		// Convert chunk to string and prepend leftover from previous loop
 		chunk := string(buf[:readSize]) + leftover
-
-		// Split lines
 		parts := strings.Split(chunk, "\n")
 
-		// The first part matches the end of the previous chunk (going backwards),
-		// so it is the "leftover" for the next iteration, unless we are at the very start of file.
 		if offset > 0 {
 			leftover = parts[0]
 			parts = parts[1:]
 		}
 
-		// Process parts in reverse order
 		for i := len(parts) - 1; i >= 0; i-- {
 			line := strings.TrimSpace(parts[i])
 			if line != "" {

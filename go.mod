@@ -4,6 +4,7 @@ go 1.25.5
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
+	github.com/alecthomas/hcl v0.5.5
 	github.com/andybalholm/brotli v1.2.0
 	github.com/caddyserver/certmagic v0.25.1
 	github.com/cenkalti/backoff/v4 v4.3.0
@@ -14,7 +15,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/hashicorp/memberlist v0.5.4
 	github.com/integrii/flaggy v1.8.0
 	github.com/kardianos/service v1.2.4
@@ -31,7 +31,6 @@ require (
 	github.com/tetratelabs/wazero v1.11.0
 	github.com/yl2chen/cidranger v1.0.2
 	github.com/yookoala/gofast v0.8.0
-	github.com/zclconf/go-cty v1.16.3
 	go.etcd.io/bbolt v1.4.3
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.48.0
@@ -41,11 +40,8 @@ require (
 
 require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
-	github.com/agext/levenshtein v1.2.1 // indirect
-	github.com/alecthomas/hcl v0.5.5 // indirect
 	github.com/alecthomas/participle/v2 v2.0.0-beta.5 // indirect
 	github.com/alecthomas/repr v0.4.0 // indirect
-	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
@@ -63,7 +59,6 @@ require (
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/google/btree v1.1.3 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-immutable-radix v1.0.0 // indirect
 	github.com/hashicorp/go-metrics v0.5.4 // indirect
@@ -80,7 +75,6 @@ require (
 	github.com/mattn/go-runewidth v0.0.19 // indirect
 	github.com/mholt/acmez/v3 v3.1.4 // indirect
 	github.com/miekg/dns v1.1.70 // indirect
-	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect

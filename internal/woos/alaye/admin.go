@@ -8,18 +8,18 @@ import (
 )
 
 type Admin struct {
-	Status     Status   `hcl:"enabled,optional" json:"enabled"`
+	Status     Enabled  `hcl:"enabled,optional" json:"enabled"`
 	Address    string   `hcl:"address,optional" json:"address"` // e.g. ":9090"
 	AllowedIPs []string `hcl:"allowed_ips,optional" json:"allowed_ips"`
 
-	BasicAuth   *BasicAuth   `hcl:"basic_auth,block" json:"basic_auth"`
-	ForwardAuth *ForwardAuth `hcl:"forward_auth,block" json:"forward_auth"`
-	JWTAuth     *JWTAuth     `hcl:"jwt_auth,block" json:"jwt_auth"` // Now using struct
-	OAuth       *OAuth       `hcl:"o_auth,block" json:"o_auth"`     // New
+	BasicAuth   BasicAuth   `hcl:"basic_auth,block" json:"basic_auth"`
+	ForwardAuth ForwardAuth `hcl:"forward_auth,block" json:"forward_auth"`
+	JWTAuth     JWTAuth     `hcl:"jwt_auth,block" json:"jwt_auth"` // Now using struct
+	OAuth       OAuth       `hcl:"o_auth,block" json:"o_auth"`     // New
 }
 
 func (a *Admin) Validate() error {
-	if !a.Status.Enabled() {
+	if !a.Status.Yes() {
 		return nil
 	}
 	if a.Address == "" {
@@ -36,25 +36,21 @@ func (a *Admin) Validate() error {
 		}
 	}
 
-	if a.BasicAuth != nil {
-		if err := a.BasicAuth.Validate(); err != nil {
-			return errors.Newf("basic_auth: %w", err)
-		}
+	if err := a.BasicAuth.Validate(); err != nil {
+		return errors.Newf("basic_auth: %w", err)
 	}
-	if a.ForwardAuth != nil {
-		if err := a.ForwardAuth.Validate(); err != nil {
-			return errors.Newf("forward_auth: %w", err)
-		}
+
+	if err := a.ForwardAuth.Validate(); err != nil {
+		return errors.Newf("forward_auth: %w", err)
 	}
-	if a.JWTAuth != nil {
-		if err := a.JWTAuth.Validate(); err != nil {
-			return errors.Newf("jwt_auth: %w", err)
-		}
+
+	if err := a.JWTAuth.Validate(); err != nil {
+		return errors.Newf("jwt_auth: %w", err)
 	}
-	if a.OAuth != nil {
-		if err := a.OAuth.Validate(); err != nil {
-			return errors.Newf("o_auth: %w", err)
-		}
+
+	if err := a.OAuth.Validate(); err != nil {
+		return errors.Newf("o_auth: %w", err)
 	}
+
 	return nil
 }
