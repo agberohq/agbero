@@ -1,9 +1,6 @@
 package alaye
 
 import (
-	"net"
-	"strings"
-
 	"github.com/olekukonko/errors"
 )
 
@@ -23,32 +20,32 @@ type Global struct {
 	Admin       *Admin      `hcl:"admin,block" json:"admin,omitempty"`
 }
 
-type Security struct {
-	TrustedProxies []string  `hcl:"trusted_proxies,optional" json:"trusted_proxies"`
-	Firewall       *Firewall `hcl:"firewall,block" json:"firewall,omitempty"`
-}
+//type Security struct {
+//	TrustedProxies []string  `hcl:"trusted_proxies,optional" json:"trusted_proxies"`
+//	Firewall       *Firewall `hcl:"firewall,block" json:"firewall,omitempty"`
+//}
+//
+//type Firewall struct {
+//	Enabled       bool   `hcl:"enabled" json:"enabled"`
+//	BlockList     string `hcl:"block_list_file,optional" json:"blockList"`
+//	RemoteCheck   string `hcl:"remote_check_url,optional" json:"remote_check"`
+//	RemoteTimeout int    `hcl:"remote_timeout,optional" json:"remote_timeout"`
+//}
 
-type Firewall struct {
-	Enabled       bool   `hcl:"enabled" json:"enabled"`
-	BlockList     string `hcl:"block_list_file,optional" json:"blockList"`
-	RemoteCheck   string `hcl:"remote_check_url,optional" json:"remote_check"`
-	RemoteTimeout int    `hcl:"remote_timeout,optional" json:"remote_timeout"`
-}
-
-func (s Security) Validate() error {
-	for i, proxy := range s.TrustedProxies {
-		proxy = strings.TrimSpace(proxy)
-		if proxy == "" {
-			continue
-		}
-		if _, _, err := net.ParseCIDR(proxy); err != nil {
-			if ip := net.ParseIP(proxy); ip == nil {
-				return errors.Newf("%w: trusted_proxies[%d]=%q", ErrInvalidProxy, i, proxy)
-			}
-		}
-	}
-	return nil
-}
+//func (s Security) Validate() error {
+//	for i, proxy := range s.TrustedProxies {
+//		proxy = strings.TrimSpace(proxy)
+//		if proxy == "" {
+//			continue
+//		}
+//		if _, _, err := net.ParseCIDR(proxy); err != nil {
+//			if ip := net.ParseIP(proxy); ip == nil {
+//				return errors.Newf("%w: trusted_proxies[%d]=%q", ErrInvalidProxy, i, proxy)
+//			}
+//		}
+//	}
+//	return nil
+//}
 
 func (g *Global) Validate() error {
 	if err := g.Bind.Validate(); err != nil {
@@ -96,6 +93,7 @@ type Logging struct {
 	File     string   `hcl:"file,optional" json:"file"`
 	Skip     []string `hcl:"skip,optional"`
 	Victoria Victoria `hcl:"victoria,block" json:"victoria"`
+	Include  []string `hcl:"include,optional" json:"include"`
 }
 
 type Victoria struct {

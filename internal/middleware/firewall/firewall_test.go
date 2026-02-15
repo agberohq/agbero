@@ -1,200 +1,346 @@
 package firewall
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
-	"sync/atomic"
+	"regexp"
 	"testing"
+	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
 )
 
-func newTestLogger() *ll.Logger {
-	return ll.New("test").Disable()
-}
-
-func createTempDir(t *testing.T) string {
-	dir, err := os.MkdirTemp("", "agbero-firewall-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	return dir
-}
-
 var mockHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	if r.Body != nil {
+		_, _ = io.ReadAll(r.Body)
+	}
 	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 })
 
-func TestFirewall_Specificity(t *testing.T) {
-	dataDir := createTempDir(t)
-	cfg := &alaye.Firewall{Enabled: true}
-	f, _ := New(cfg, woos.NewFolder(dataDir), newTestLogger())
-	defer f.Close()
+func createTestEngine(t *testing.T, cfg *alaye.Firewall) *Engine {
+	dir, err := os.MkdirTemp("", "firewall_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	// Manually compile regexes for tests as validation isn't run here
+	for _, r := range cfg.Rules {
+		if r.Match != nil {
+			if r.Match.Extract != nil && r.Match.Extract.Pattern != "" {
+				r.Match.Extract.Regex = regexp.MustCompile(r.Match.Extract.Pattern)
+			}
+			compileConditions(r.Match.Any)
+			compileConditions(r.Match.All)
+			compileConditions(r.Match.None)
+		}
+	}
+
+	e, err := New(cfg, woos.NewFolder(dir), ll.New("test").Disable())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+func compileConditions(conds []*alaye.Condition) {
+	for _, c := range conds {
+		if c.Pattern != "" {
+			c.Compiled = regexp.MustCompile(c.Pattern)
+		}
+	}
+}
+
+func TestStaticRules(t *testing.T) {
+	cfg := &alaye.Firewall{
+		Enabled: true,
+		Rules: []*alaye.Rule{
+			{
+				Name: "whitelist_admin",
+				Type: "whitelist",
+				Match: &alaye.Match{
+					IP: []string{"10.0.0.5"},
+				},
+			},
+			{
+				Name: "blacklist_bot",
+				Type: "static",
+				Match: &alaye.Match{
+					IP: []string{"1.2.3.4", "5.0.0.0/8"},
+				},
+			},
+		},
+	}
+
+	e := createTestEngine(t, cfg)
+	defer e.Close()
+	h := e.Handler(mockHandler, nil)
+
+	tests := []struct {
+		ip   string
+		code int
+	}{
+		{"10.0.0.5", 200},    // Whitelisted
+		{"1.2.3.4", 403},     // Blacklisted exact
+		{"5.1.2.3", 403},     // Blacklisted CIDR
+		{"192.168.1.1", 200}, // Normal
+	}
+
+	for _, tc := range tests {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = tc.ip + ":1234"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != tc.code {
+			t.Errorf("IP %s: expected %d, got %d", tc.ip, tc.code, rec.Code)
+		}
+	}
+}
+
+func TestDynamicRules_Logic(t *testing.T) {
+	// Rule: Block if (Header X-Test=BlockMe) OR (Query evil=true)
+	cfg := &alaye.Firewall{
+		Enabled: true,
+		Rules: []*alaye.Rule{
+			{
+				Name: "bad_req",
+				Type: "dynamic",
+				Match: &alaye.Match{
+					Any: []*alaye.Condition{
+						{Location: "header", Key: "X-Test", Value: "BlockMe"},
+						{Location: "query", Key: "evil", Value: "true"},
+					},
+				},
+			},
+		},
+	}
+
+	e := createTestEngine(t, cfg)
+	defer e.Close()
+	h := e.Handler(mockHandler, nil)
+
+	// Case 1: Match Header
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-Test", "BlockMe")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Error("Any: Header match failed")
+	}
+
+	// Case 2: Match Query
+	req = httptest.NewRequest("GET", "/?evil=true", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Error("Any: Query match failed")
+	}
+
+	// Case 3: No Match
+	req = httptest.NewRequest("GET", "/", nil)
+	// Headers and Query are empty, so no condition in Any should match.
+	// checkMatch should return false.
+	// Handler should proceed to next (200).
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Error("Any: False positive. Request matched but should not have.")
+	}
+}
+
+func TestBodyInspection(t *testing.T) {
+	cfg := &alaye.Firewall{
+		Enabled:             true,
+		InspectBody:         true,
+		MaxInspectBytes:     1024,
+		InspectContentTypes: []string{"application/json"},
+		Rules: []*alaye.Rule{
+			{
+				Name: "sql_injection",
+				Type: "dynamic",
+				Match: &alaye.Match{
+					Any: []*alaye.Condition{
+						{Location: "body", Pattern: "(?i)union.*select"},
+					},
+				},
+			},
+		},
+	}
+
+	e := createTestEngine(t, cfg)
+	defer e.Close()
+	h := e.Handler(mockHandler, nil)
+
+	// Case 1: Malicious Body
+	body := bytes.NewBufferString(`{"q": "UNION SELECT * FROM users"}`)
+	req := httptest.NewRequest("POST", "/api", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Error("Body match failed")
+	}
+
+	// Case 2: Safe Body
+	body = bytes.NewBufferString(`{"q": "hello world"}`)
+	req = httptest.NewRequest("POST", "/api", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Error("Body false positive")
+	}
+
+	// Case 3: Ignored Content-Type (Text contains malicious payload, but firewall should ignore)
+	body = bytes.NewBufferString(`UNION SELECT`)
+	req = httptest.NewRequest("POST", "/upload", body)
+	req.Header.Set("Content-Type", "text/plain") // Not in inspect list
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Error("Should ignore unlisted content-type")
+	}
+}
+
+func TestThresholds(t *testing.T) {
+	// Rule: Allow 2 requests per minute, block on 3rd
+	cfg := &alaye.Firewall{
+		Enabled: true,
+		Rules: []*alaye.Rule{
+			{
+				Name: "rate_limit",
+				Type: "dynamic",
+				Match: &alaye.Match{
+					Any: []*alaye.Condition{{Location: "path", Value: "/login"}},
+					Threshold: &alaye.Threshold{
+						Count:   3,
+						Window:  alaye.Duration(1 * time.Minute),
+						TrackBy: "ip",
+					},
+				},
+			},
+		},
+	}
+
+	e := createTestEngine(t, cfg)
+	defer e.Close()
+	h := e.Handler(mockHandler, nil)
 
 	ip := "1.2.3.4"
 
-	// 1. Block globally
-	f.Block(ip, "", "", "global block", 0)
-
-	req := httptest.NewRequest("GET", "http://example.com/api", nil)
-	req.RemoteAddr = ip + ":123"
-	w := httptest.NewRecorder()
-	f.Handler(mockHandler).ServeHTTP(w, req)
-	if w.Code != http.StatusForbidden {
-		t.Error("Global block failed")
+	// Req 1 (Pass)
+	req := httptest.NewRequest("GET", "/login", nil)
+	req.RemoteAddr = ip + ":555"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatal("Req 1 blocked")
 	}
 
-	f.Unblock(ip)
-
-	// 2. Block specific Host
-	f.Block(ip, "api.com", "", "host block", 0)
-
-	// Matching host
-	req = httptest.NewRequest("GET", "http://api.com/foo", nil)
-	req.RemoteAddr = ip + ":123"
-	w = httptest.NewRecorder()
-	f.Handler(mockHandler).ServeHTTP(w, req)
-	if w.Code != http.StatusForbidden {
-		t.Error("Host specific block failed on matching host")
+	// Req 2 (Pass)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatal("Req 2 blocked")
 	}
 
-	// Different host
-	req = httptest.NewRequest("GET", "http://other.com/foo", nil)
-	req.RemoteAddr = ip + ":123"
-	w = httptest.NewRecorder()
-	f.Handler(mockHandler).ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Error("Host specific block affected wrong host")
+	// Req 3 (Block - Threshold Reached)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Fatal("Req 3 not blocked (Threshold failed)")
 	}
 
-	f.Unblock(ip)
-
-	// 3. Block specific Path
-	f.Block(ip, "", "/admin", "path block", 0)
-
-	// Matching path
-	req = httptest.NewRequest("GET", "http://any.com/admin/settings", nil)
-	req.RemoteAddr = ip + ":123"
-	w = httptest.NewRecorder()
-	f.Handler(mockHandler).ServeHTTP(w, req)
-	if w.Code != http.StatusForbidden {
-		t.Error("Path specific block failed on matching path")
-	}
-
-	// Non-matching path
-	req = httptest.NewRequest("GET", "http://any.com/public", nil)
-	req.RemoteAddr = ip + ":123"
-	w = httptest.NewRecorder()
-	f.Handler(mockHandler).ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Error("Path specific block affected wrong path")
+	// Req 4 (Block - Persisted)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Fatal("Req 4 not blocked (Persistence failed)")
 	}
 }
 
-func TestFirewall_RemoteCheck(t *testing.T) {
-	remoteCalls := atomic.Int32{}
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		remoteCalls.Add(1)
-		if r.URL.Query().Get("ip") == "9.9.9.9" {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	dataDir := createTempDir(t)
-	cfg := &alaye.Firewall{Enabled: true, RemoteCheck: ts.URL}
-	f, _ := New(cfg, woos.NewFolder(dataDir), newTestLogger())
-	defer f.Close()
-
-	handler := f.Handler(mockHandler)
-
-	// Blocked
-	req1 := httptest.NewRequest("GET", "/", nil)
-	req1.RemoteAddr = "9.9.9.9:1234"
-	w1 := httptest.NewRecorder()
-	handler.ServeHTTP(w1, req1)
-	if w1.Code != http.StatusForbidden {
-		t.Error("Remote check failed")
+func TestRouteOverrides(t *testing.T) {
+	// Global rule blocks /admin
+	globalCfg := &alaye.Firewall{
+		Enabled: true,
+		Rules: []*alaye.Rule{
+			{
+				Name: "block_admin",
+				Type: "dynamic",
+				Match: &alaye.Match{
+					Path: []string{"/admin"},
+				},
+			},
+		},
 	}
 
-	// Allowed
-	req2 := httptest.NewRequest("GET", "/", nil)
-	req2.RemoteAddr = "8.8.8.8:1234"
-	w2 := httptest.NewRecorder()
-	handler.ServeHTTP(w2, req2)
-	if w2.Code != http.StatusOK {
-		t.Error("Remote check blocked good IP")
+	e := createTestEngine(t, globalCfg)
+	defer e.Close()
+
+	// 1. Test Default Global (Blocked)
+	req := httptest.NewRequest("GET", "/admin", nil)
+	rec := httptest.NewRecorder()
+	e.Handler(mockHandler, nil).ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Error("Global rule should apply")
 	}
 
-	if remoteCalls.Load() != 2 {
-		t.Errorf("Expected 2 calls, got %d", remoteCalls.Load())
+	// 2. Test Route Override (Ignore Global -> Allowed)
+	routeFW := &alaye.RouteFirewall{
+		Enabled:      true, // This ensures route logic runs
+		IgnoreGlobal: true,
+	}
+	rec = httptest.NewRecorder()
+	e.Handler(mockHandler, routeFW).ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Error("Route override failed to ignore global")
+	}
+
+	// 3. Test Route Specific Rule (Block /secret)
+	routeFW.Rules = []*alaye.Rule{
+		{
+			Name: "route_block",
+			Type: "dynamic",
+			Match: &alaye.Match{
+				Path: []string{"/secret"},
+			},
+		},
+	}
+	reqSecret := httptest.NewRequest("GET", "/secret", nil)
+	rec = httptest.NewRecorder()
+	e.Handler(mockHandler, routeFW).ServeHTTP(rec, reqSecret)
+	if rec.Code != 403 {
+		t.Error("Route specific rule failed")
 	}
 }
 
-func TestFirewall_ImportFile(t *testing.T) {
-	dataDir := createTempDir(t)
-	blockFile := filepath.Join(dataDir, "blocked.txt")
-	os.WriteFile(blockFile, []byte("1.2.3.4\n10.0.0.0/24"), woos.FilePerm)
+func TestPersistence(t *testing.T) {
+	dir, _ := os.MkdirTemp("", "persist")
+	defer os.RemoveAll(dir)
 
-	cfg := &alaye.Firewall{Enabled: true, BlockList: blockFile}
-	f, _ := New(cfg, woos.NewFolder(dataDir), newTestLogger())
-	defer f.Close()
+	cfg := &alaye.Firewall{Enabled: true}
+	e1, _ := New(cfg, woos.NewFolder(dir), ll.New("test").Disable())
+
+	// Manually ban
+	e1.Block("1.1.1.1", "manual", 1*time.Hour)
+	e1.Close()
+
+	// Re-open
+	e2, _ := New(cfg, woos.NewFolder(dir), ll.New("test").Disable())
+	defer e2.Close()
 
 	req := httptest.NewRequest("GET", "/", nil)
-	req.RemoteAddr = "1.2.3.4:5555"
-	w := httptest.NewRecorder()
-	f.Handler(mockHandler).ServeHTTP(w, req)
-	if w.Code != http.StatusForbidden {
-		t.Error("Imported IP not blocked")
-	}
-}
+	req.RemoteAddr = "1.1.1.1:123"
+	rec := httptest.NewRecorder()
+	e2.Handler(mockHandler, nil).ServeHTTP(rec, req)
 
-func TestFirewall_UnblockSingleIPInsideCIDR(t *testing.T) {
-	dataDir := createTempDir(t)
-	cfg := &alaye.Firewall{Enabled: true}
-	f, _ := New(cfg, woos.NewFolder(dataDir), newTestLogger())
-	defer f.Close()
-
-	// CIDR block: 192.168.1.0/24
-	cidr := "192.168.1.0/24"
-	f.Block(cidr, "", "", "block subnet", 0)
-
-	// Test an IP inside CIDR: should be blocked
-	ip := "192.168.1.55"
-	req := httptest.NewRequest("GET", "http://example.com/", nil)
-	req.RemoteAddr = ip + ":1234"
-	w := httptest.NewRecorder()
-	f.Handler(mockHandler).ServeHTTP(w, req)
-	if w.Code != http.StatusForbidden {
-		t.Error("IP inside blocked CIDR should be blocked")
-	}
-
-	// Now unblock the specific IP
-	f.Unblock(ip)
-
-	// Test again: should now be allowed
-	req2 := httptest.NewRequest("GET", "http://example.com/", nil)
-	req2.RemoteAddr = ip + ":1234"
-	w2 := httptest.NewRecorder()
-	f.Handler(mockHandler).ServeHTTP(w2, req2)
-	if w2.Code != http.StatusOK {
-		t.Error("Unblocked IP inside CIDR should be allowed")
-	}
-
-	// Another IP in the CIDR should still be blocked
-	otherIP := "192.168.1.77"
-	req3 := httptest.NewRequest("GET", "http://example.com/", nil)
-	req3.RemoteAddr = otherIP + ":1234"
-	w3 := httptest.NewRecorder()
-	f.Handler(mockHandler).ServeHTTP(w3, req3)
-	if w3.Code != http.StatusForbidden {
-		t.Error("Other IP inside CIDR should remain blocked")
+	if rec.Code != 403 {
+		t.Error("Persistence failed: IP not blocked after restart")
 	}
 }

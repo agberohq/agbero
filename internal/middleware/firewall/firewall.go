@@ -1,457 +1,140 @@
 package firewall
 
 import (
-	"bufio"
-	"context"
+	"bytes"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
-	"net/url"
-	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core"
-	"git.imaxinacion.net/aibox/agbero/internal/core/retry"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
-	"github.com/cenkalti/backoff/v4"
 	"github.com/olekukonko/ll"
 	"github.com/yl2chen/cidranger"
-	"golang.org/x/sync/singleflight"
 )
 
-var (
-	metricsLocalBlocks  uint64
-	metricsRemoteBlocks uint64
-	metricsRemoteErrors uint64
-)
+type Engine struct {
+	cfg      *alaye.Firewall
+	store    *Store
+	counters *Counters
+	logger   *ll.Logger
 
-const (
-	defaultRemoteTimeout = 2 * time.Second
-	ttlBlocked           = 5 * time.Minute
-	ttlAllowed           = 1 * time.Minute
-)
+	whitelistRanger cidranger.Ranger
+	blacklistRanger cidranger.Ranger
 
-type IPSet struct {
-	mu sync.RWMutex
-
-	v4 map[netip.Addr][]*Rule
-	v6 map[netip.Addr][]*Rule
-
-	ranger cidranger.Ranger
-
-	// blockedExceptions stores IPs explicitly unblocked even if inside a CIDR
-	blockedExceptions map[netip.Addr]struct{}
-
-	store *Store
-
-	remote string
-	client *http.Client
-	flight singleflight.Group
-	cache  *ttlCache
-	logger *ll.Logger
+	bufPool sync.Pool
 }
 
-type cacheEntry struct {
-	blocked  bool
-	expireAt time.Time
-}
-
-type ttlCache struct {
-	mu      sync.Mutex
-	entries map[string]cacheEntry
-	stop    chan struct{}
-}
-
-func newTTLCache(cleanupInterval time.Duration) *ttlCache {
-	c := &ttlCache{
-		entries: make(map[string]cacheEntry),
-		stop:    make(chan struct{}),
-	}
-	go func() {
-		ticker := time.NewTicker(cleanupInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-c.stop:
-				return
-			case <-ticker.C:
-				c.mu.Lock()
-				now := time.Now()
-				for k, v := range c.entries {
-					if now.After(v.expireAt) {
-						delete(c.entries, k)
-					}
-				}
-				c.mu.Unlock()
-			}
-		}
-	}()
-	return c
-}
-
-func (c *ttlCache) get(key string) (bool, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	entry, ok := c.entries[key]
-	if !ok {
-		return false, false
-	}
-	if time.Now().After(entry.expireAt) {
-		delete(c.entries, key)
-		return false, false
-	}
-	return entry.blocked, true
-}
-
-func (c *ttlCache) set(key string, blocked bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	ttl := ttlAllowed
-	if blocked {
-		ttl = ttlBlocked
-	}
-	c.entries[key] = cacheEntry{
-		blocked:  blocked,
-		expireAt: time.Now().Add(ttl),
-	}
-}
-
-func (c *ttlCache) delete(key string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.entries, key)
-}
-
-func (c *ttlCache) close() {
-	close(c.stop)
-}
-
-func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*IPSet, error) {
+func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*Engine, error) {
 	if cfg == nil || !cfg.Enabled {
 		return nil, nil
 	}
 
-	timeout := time.Duration(cfg.RemoteTimeout) * time.Second
-	if timeout == 0 {
-		timeout = defaultRemoteTimeout
-	}
-
-	f := &IPSet{
-		v4:                make(map[netip.Addr][]*Rule),
-		v6:                make(map[netip.Addr][]*Rule),
-		ranger:            cidranger.NewPCTrieRanger(),
-		blockedExceptions: make(map[netip.Addr]struct{}),
-		remote:            cfg.RemoteCheck,
-		client: &http.Client{
-			Timeout: timeout,
-			Transport: &http.Transport{
-				MaxConnsPerHost:     100,
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 20,
-				IdleConnTimeout:     90 * time.Second,
-			},
-		},
-		cache:  newTTLCache(5 * time.Minute),
-		logger: logger.Namespace("firewall"),
+	// Ensure templates are compiled if New was called without full Validate flow
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
 
 	store, err := NewStore(dataDir, logger)
 	if err != nil {
-		f.cache.close()
 		return nil, fmt.Errorf("firewall store init: %w", err)
 	}
-	f.store = store
 
-	rules, err := store.LoadAll()
-	if err != nil {
-		f.cache.close()
-		return nil, fmt.Errorf("firewall load rules: %w", err)
-	}
-	for _, r := range rules {
-		f.addRuleInMemory(r)
-	}
-	logger.Fields("count", len(rules)).Info("loaded persistent firewall rules")
-
-	if cfg.BlockList != "" {
-		if err := f.importTextFile(cfg.BlockList); err != nil {
-			logger.Warnf("failed to load blocklist %q: %v", cfg.BlockList, err)
-		}
+	e := &Engine{
+		cfg:             cfg,
+		store:           store,
+		counters:        NewCounters(),
+		logger:          logger.Namespace("firewall"),
+		whitelistRanger: cidranger.NewPCTrieRanger(),
+		blacklistRanger: cidranger.NewPCTrieRanger(),
+		bufPool: sync.Pool{
+			New: func() any {
+				return bytes.NewBuffer(make([]byte, 0, cfg.MaxInspectBytes))
+			},
+		},
 	}
 
-	return f, nil
+	if err := e.loadStaticRules(); err != nil {
+		store.Close()
+		return nil, err
+	}
+
+	return e, nil
 }
 
-func (f *IPSet) Close() error {
-	if f == nil {
+func (e *Engine) Close() error {
+	if e == nil {
 		return nil
 	}
-	if f.cache != nil {
-		f.cache.close()
-	}
-	if f.store == nil {
-		return nil
-	}
-	return f.store.Close()
+	e.counters.Stop()
+	return e.store.Close()
 }
 
-func (f *IPSet) List() ([]Rule, error) {
-	if f.store == nil {
-		return nil, nil
-	}
-	return f.store.LoadAll()
-}
-
-func (f *IPSet) Unblock(ip string) error {
-	if f.store == nil {
-		return nil
-	}
-
-	if err := f.store.Remove(ip); err != nil {
-		return err
-	}
-
-	// Add to exceptions
-	addr, err := netip.ParseAddr(ip)
-	if err == nil {
-		addr = addr.Unmap()
-		f.mu.Lock()
-		f.blockedExceptions[addr] = struct{}{}
-		f.mu.Unlock()
-	}
-
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	// Rebuild in-memory state to remove the rule if it wasn't just an exception
-	// Optimization: Ideally we would find and remove just the one rule,
-	// but rebuilding ensures consistency with BoltDB source of truth.
-	f.v4 = make(map[netip.Addr][]*Rule)
-	f.v6 = make(map[netip.Addr][]*Rule)
-	f.ranger = cidranger.NewPCTrieRanger()
-
-	rules, err := f.store.LoadAll()
-	if err != nil {
-		// Log error but continue with empty state to fail safe?
-		// Or keep old state? Complexity tradeoff. For now, log.
-		f.logger.Error("failed to reload rules during unblock", err)
-	} else {
-		for _, r := range rules {
-			f.addRuleInMemoryLocked(r)
-		}
-	}
-
-	f.cache.delete(ip)
-	f.logger.Fields("ip", ip).Info("unblocked ip")
-	return nil
-}
-
-func (f *IPSet) Block(ip, host, path, reason string, duration time.Duration) error {
-	r := Rule{
-		IP:        ip,
-		Host:      strings.ToLower(host),
-		Path:      path,
-		Reason:    reason,
-		CreatedAt: time.Now(),
-	}
-	if duration > 0 {
-		r.ExpiresAt = time.Now().Add(duration)
-	}
-
-	if strings.Contains(ip, woos.Slash) {
-		r.Type = BlockTypeCIDR
-	} else {
-		r.Type = BlockTypeSingle
-	}
-
-	if err := f.store.Add(r); err != nil {
-		return err
-	}
-
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	// If we are blocking an IP, ensure it is NOT in the exceptions list
-	if addr, err := netip.ParseAddr(ip); err == nil {
-		addr = addr.Unmap()
-		delete(f.blockedExceptions, addr)
-	}
-
-	f.addRuleInMemoryLocked(r)
-	return nil
-}
-
-// addRuleInMemory calls addRuleInMemoryLocked after acquiring lock.
-func (f *IPSet) addRuleInMemory(r Rule) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.addRuleInMemoryLocked(r)
-}
-
-// addRuleInMemoryLocked assumes lock is held.
-func (f *IPSet) addRuleInMemoryLocked(r Rule) {
-	if r.Type == BlockTypeCIDR {
-		_, network, err := net.ParseCIDR(r.IP)
-		if err == nil {
-			if err := f.ranger.Insert(cidranger.NewBasicRangerEntry(*network)); err != nil {
-				f.logger.Warnf("failed to add CIDR rule %s: %v", r.IP, err)
-			}
-		} else {
-			f.logger.Warnf("invalid CIDR in rule %s: %v", r.IP, err)
-		}
-		return
-	}
-
-	addr, err := netip.ParseAddr(r.IP)
-	if err == nil {
-		addr = addr.Unmap()
-		rCopy := r // Copy to avoid pointer sharing issues if Rule struct changes
-		if addr.Is4() {
-			f.v4[addr] = append(f.v4[addr], &rCopy)
-		} else {
-			f.v6[addr] = append(f.v6[addr], &rCopy)
-		}
-	} else {
-		f.logger.Warnf("invalid IP in rule %s: %v", r.IP, err)
-	}
-}
-
-func (f *IPSet) importTextFile(path string) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	// Increase buffer for large lines/files
-	scanner := bufio.NewScanner(file)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024) // 1MB max line size
-
-	count := 0
-
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || line[0] == '#' {
-			continue
-		}
-
-		// Remove inline comments
-		if idx := strings.Index(line, "#"); idx != -1 {
-			line = strings.TrimSpace(line[:idx])
-		}
-
-		if strings.Contains(line, woos.Slash) {
-			_, network, err := net.ParseCIDR(line)
-			if err == nil {
-				_ = f.ranger.Insert(cidranger.NewBasicRangerEntry(*network))
-				count++
-			}
-			continue
-		}
-
-		addr, err := netip.ParseAddr(line)
-		if err == nil {
-			addr = addr.Unmap()
-			r := Rule{IP: line, Type: BlockTypeSingle}
-			if addr.Is4() {
-				f.v4[addr] = append(f.v4[addr], &r)
-			} else {
-				f.v6[addr] = append(f.v6[addr], &r)
-			}
-			count++
-		}
-	}
-
-	f.logger.Fields("file", path, "imported", count).Info("imported firewall blocklist")
-	return scanner.Err()
-}
-
-func (f *IPSet) Handler(next http.Handler) http.Handler {
-	if f == nil {
+func (e *Engine) Handler(next http.Handler, contextRoute *alaye.RouteFirewall) http.Handler {
+	if e == nil {
 		return next
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ipStr := clientip.ClientIP(r)
+		ip := clientip.ClientIP(r)
 
-		// 1. Parse and Unmap IP once
-		addr, err := netip.ParseAddr(ipStr)
-		if err != nil {
-			// Invalid IP in request, potentially malicious
-			http.Error(w, "Forbidden", http.StatusForbidden)
+		// 1. Check Bans (Persisted)
+		if ban, err := e.store.GetBan(ip); err == nil && !ban.IsExpired() {
+			e.blockRequest(w, r, "banned_ip", ban.Reason)
 			return
 		}
-		addr = addr.Unmap()
 
-		// 2. Check Exceptions (Fastest O(1))
-		f.mu.RLock()
-		_, isUnblocked := f.blockedExceptions[addr]
-		f.mu.RUnlock()
-
-		if isUnblocked {
+		// 2. Static Whitelist (Always Global)
+		if e.checkRanger(e.whitelistRanger, ip) {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// 3. Check Exact Match (Fast O(1))
-		f.mu.RLock()
-		var rules []*Rule
-		if addr.Is4() {
-			rules = f.v4[addr]
-		} else {
-			rules = f.v6[addr]
+		// 3. Static Blacklist (Always Global)
+		if e.checkRanger(e.blacklistRanger, ip) {
+			e.handleAction(w, r, nil, "static_blacklist", "blocked_ip")
+			return
 		}
-		f.mu.RUnlock()
 
-		if len(rules) > 0 {
-			reqHost := core.NormalizeHost(r.Host)
-			reqPath := r.URL.Path
+		// 4. Body Inspection
+		var bodySample []byte
+		if e.shouldInspectBody(r) {
+			var err error
+			bodySample, err = e.peekBody(r)
+			if err != nil {
+				e.logger.Debug("failed to peek body", "err", err)
+			}
+		}
 
-			for _, rule := range rules {
-				if rule.Host != "" && rule.Host != reqHost {
-					continue
-				}
-				if rule.Path != "" && !strings.HasPrefix(reqPath, rule.Path) {
-					continue
-				}
+		inspector := &Inspector{
+			Req:    r,
+			Body:   bodySample,
+			IP:     ip,
+			Logger: e.logger,
+		}
 
-				atomic.AddUint64(&metricsLocalBlocks, 1)
-				http.Error(w, "Access Denied", http.StatusForbidden)
+		// 5. Global Dynamic Rules
+		// Only run if the route DOES NOT ignore global rules
+		runGlobal := true
+		if contextRoute != nil && contextRoute.IgnoreGlobal {
+			runGlobal = false
+		}
+
+		if runGlobal {
+			if matched, rule := e.evaluateRules(e.cfg.Rules, inspector); matched {
+				e.handleAction(w, r, rule, rule.Name, "global_rule_match")
 				return
 			}
 		}
 
-		// 4. Check CIDR (Slower tree lookup)
-		// Convert netip.Addr to net.IP for cidranger
-		netIP := net.IP(addr.AsSlice())
-
-		f.mu.RLock()
-		contains, err := f.ranger.Contains(netIP)
-		f.mu.RUnlock()
-
-		if err == nil && contains {
-			atomic.AddUint64(&metricsLocalBlocks, 1)
-			http.Error(w, "Access Denied", http.StatusForbidden)
-			return
-		}
-
-		// 5. Remote check (Slowest, IO bound)
-		if f.remote != "" {
-			if f.cachedRemoteCheck(r.Context(), ipStr) {
-				atomic.AddUint64(&metricsRemoteBlocks, 1)
-				http.Error(w, "Access Denied (R)", http.StatusForbidden)
+		// 6. Route Specific Rules
+		if contextRoute != nil && contextRoute.Enabled {
+			if matched, rule := e.evaluateRules(contextRoute.Rules, inspector); matched {
+				e.handleAction(w, r, rule, rule.Name, "route_rule_match")
 				return
 			}
 		}
@@ -460,71 +143,97 @@ func (f *IPSet) Handler(next http.Handler) http.Handler {
 	})
 }
 
-func (f *IPSet) cachedRemoteCheck(ctx context.Context, ip string) bool {
-	if hit, ok := f.cache.get(ip); ok {
-		return hit
-	}
-
-	val, err, _ := f.flight.Do(ip, func() (interface{}, error) {
-		// Use the retry-enabled check
-		blocked := f.checkRemote(ctx, ip)
-		f.cache.set(ip, blocked)
-		return blocked, nil
-	})
-
-	if err != nil {
+func (e *Engine) shouldInspectBody(r *http.Request) bool {
+	if !e.cfg.InspectBody {
 		return false
 	}
-	return val.(bool)
+	// ContentLength -1 means chunked (unknown size), we still peek up to limit
+	if r.ContentLength == 0 {
+		return false
+	}
+
+	ct := r.Header.Get("Content-Type")
+	if ct == "" && len(e.cfg.InspectContentTypes) > 0 {
+		return false // Require explicit CT if whitelist exists
+	}
+
+	for _, allowed := range e.cfg.InspectContentTypes {
+		if strings.Contains(ct, allowed) {
+			return true
+		}
+	}
+	return false
 }
 
-func (f *IPSet) checkRemote(ctx context.Context, ip string) bool {
-	u, err := url.Parse(f.remote)
-	if err != nil {
+func (e *Engine) peekBody(r *http.Request) ([]byte, error) {
+	buf := e.bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer e.bufPool.Put(buf)
+
+	// Read limited amount
+	limitReader := io.LimitReader(r.Body, e.cfg.MaxInspectBytes)
+	n, err := buf.ReadFrom(limitReader)
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+
+	sample := make([]byte, n)
+	copy(sample, buf.Bytes())
+
+	// Restore body
+	r.Body = &readCloserWrapper{
+		Reader: io.MultiReader(bytes.NewReader(sample), r.Body),
+		Closer: r.Body,
+	}
+
+	return sample, nil
+}
+
+type readCloserWrapper struct {
+	io.Reader
+	io.Closer
+}
+
+func (e *Engine) loadStaticRules() error {
+	for _, r := range e.cfg.Rules {
+		if r.Type != "static" && r.Type != "whitelist" {
+			continue
+		}
+		if r.Match != nil && len(r.Match.IP) > 0 {
+			target := e.blacklistRanger
+			if r.Type == "whitelist" {
+				target = e.whitelistRanger
+			}
+			for _, ipCidr := range r.Match.IP {
+				if !strings.Contains(ipCidr, "/") {
+					ipCidr += "/32"
+				}
+				_, network, err := net.ParseCIDR(ipCidr)
+				if err == nil {
+					_ = target.Insert(cidranger.NewBasicRangerEntry(*network))
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (e *Engine) checkRanger(ranger cidranger.Ranger, ip string) bool {
+	netIP := net.ParseIP(ip)
+	if netIP == nil {
 		return false
 	}
-	q := u.Query()
-	q.Set("ip", ip)
-	u.RawQuery = q.Encode()
+	contains, _ := ranger.Contains(netIP)
+	return contains
+}
 
-	// Short retry policy (don't block the request too long)
-	b := backoff.WithContext(retry.NewShort(), ctx)
-
-	var blocked bool
-
-	err = backoff.Retry(func() error {
-		req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
-		if err != nil {
-			return backoff.Permanent(err)
-		}
-
-		resp, err := f.client.Do(req)
-		if err != nil {
-			// Network error, retry
-			return err
-		}
-		defer func() {
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-		}()
-
-		if resp.StatusCode == http.StatusForbidden {
-			blocked = true
-			return nil
-		}
-		if resp.StatusCode >= 500 {
-			// Server error, retry
-			return fmt.Errorf("remote firewall server error: %d", resp.StatusCode)
-		}
-
-		blocked = false
-		return nil
-	}, b)
-
-	if err != nil {
-		atomic.AddUint64(&metricsRemoteErrors, 1)
-	}
-
-	// If retries exhausted and err != nil, we default to false (allow / fail open)
-	return blocked
+func (e *Engine) Unblock(ip string) error { return e.store.Remove(ip) }
+func (e *Engine) Block(ip, reason string, duration time.Duration) error {
+	return e.store.Add(Rule{
+		IP:        ip,
+		Type:      BlockTypeSingle,
+		Reason:    reason,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(duration),
+	})
 }

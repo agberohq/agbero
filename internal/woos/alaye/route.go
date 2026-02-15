@@ -27,11 +27,11 @@ type Route struct {
 	JWTAuth     *JWTAuth     `hcl:"jwt_auth,block" json:"jwt_auth"`
 	OAuth       *OAuth       `hcl:"o_auth,block" json:"oauth"`
 
-	Headers   *Headers   `hcl:"headers,block" json:"headers"`
-	Wasm      *Wasm      `hcl:"wasm,block" json:"wasm"`
-	RateLimit *RouteRate `hcl:"rate_limit,block" json:"rate_limit"`
-
-	CompressionConfig Compression `hcl:"compression,block" json:"compression_config"`
+	Headers           *Headers       `hcl:"headers,block" json:"headers"`
+	Wasm              *Wasm          `hcl:"wasm,block" json:"wasm"`
+	RateLimit         *RouteRate     `hcl:"rate_limit,block" json:"rate_limit"`
+	Firewall          *RouteFirewall `hcl:"firewall,block" json:"firewall,omitempty"`
+	CompressionConfig Compression    `hcl:"compression,block" json:"compression_config"`
 }
 
 func (r *Route) Key() string {
@@ -162,6 +162,19 @@ func (r *Route) Validate() error {
 	if r.RateLimit != nil {
 		if err := r.RateLimit.Validate(); err != nil {
 			return errors.Newf("rate_limit: %w", err)
+		}
+	}
+
+	if r.Firewall != nil {
+		// Validate ad-hoc rules
+		for i, rule := range r.Firewall.Rules {
+			if rule.Name == "" {
+				// Auto-generate name for ad-hoc route rules if missing
+				rule.Name = "route_adhoc_" + r.Path
+			}
+			if err := rule.Validate(); err != nil {
+				return errors.Newf("route firewall rule[%d]: %w", i, err)
+			}
 		}
 	}
 
@@ -311,4 +324,18 @@ func (r *Route) validateProxyRoute() error {
 	}
 
 	return nil
+}
+
+// RouteFirewall allows per-route overrides of the global firewall
+type RouteFirewall struct {
+	Enabled      bool `hcl:"enabled,optional" json:"enabled"`
+	IgnoreGlobal bool `hcl:"ignore_global,optional" json:"ignore_global"`
+
+	// Apply specific named policies defined globally in Security.Firewall.Rules
+	// Note: This refers to rules that might not be auto-applied globally,
+	// or strictly applying specific sets.
+	ApplyRules []string `hcl:"apply_rules,optional" json:"apply_rules"`
+
+	// Define ad-hoc rules specific to this route
+	Rules []*Rule `hcl:"rule,block" json:"rules,omitempty"`
 }
