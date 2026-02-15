@@ -140,7 +140,7 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 			rSnap := &RouteSnapshot{
 				Protocol: "http",
 				Path:     route.Path,
-				Strategy: route.Backends.LBStrategy,
+				Strategy: route.Backends.Strategy,
 				Backends: make([]*BackendSnapshot, 0),
 			}
 

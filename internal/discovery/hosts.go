@@ -112,11 +112,11 @@ func (hm *Host) UpdateGossipNode(nodeID, host string, route alaye.Route) {
 	if ent == nil {
 		base := route
 		base.Path = path
-		base.Web = &alaye.Web{}
+		base.Web = alaye.Web{}
 		base.Backends.Servers = nil
 
-		if strings.TrimSpace(base.Backends.LBStrategy) == "" {
-			base.Backends.LBStrategy = alaye.StrategyRandom
+		if strings.TrimSpace(base.Backends.Strategy) == "" {
+			base.Backends.Strategy = alaye.StrategyRandom
 		}
 
 		ent = &routeEntry{
@@ -452,7 +452,7 @@ func (hm *Host) notifyChanged() {
 func (hm *Host) rebuildLookupLocked() {
 	newLookup := make(map[string]*alaye.Host)
 	newPortLookup := make(map[string]*alaye.Host)
-	domainToRoutes := make(map[string][]*alaye.Route)
+	domainToRoutes := make(map[string][]alaye.Route)
 	domainToConfig := make(map[string]*alaye.Host)
 
 	// 1) Base Layer: File Hosts
@@ -480,7 +480,7 @@ func (hm *Host) rebuildLookupLocked() {
 		combined.Domains = []string{domain}
 
 		rts := domainToRoutes[domain]
-		combined.Routes = make([]*alaye.Route, len(rts))
+		combined.Routes = make([]alaye.Route, len(rts))
 		copy(combined.Routes, rts)
 
 		hm.sortRoutes(combined.Routes)
@@ -506,7 +506,7 @@ func (hm *Host) rebuildLookupLocked() {
 
 		rt := ent.base
 		rt.Path = k.path
-		rt.Web = &alaye.Web{}
+		rt.Web = alaye.Web{}
 		rt.Backends.Servers = servers
 
 		dynamicMap[k.host] = append(dynamicMap[k.host], &rt)
@@ -518,7 +518,7 @@ func (hm *Host) rebuildLookupLocked() {
 			combined := *existing
 			combined.Domains = []string{domain}
 
-			combined.Routes = make([]*alaye.Route, len(existing.Routes))
+			combined.Routes = make([]alaye.Route, len(existing.Routes))
 			copy(combined.Routes, existing.Routes)
 
 			byPath := make(map[string]*alaye.Route, len(combined.Routes))
@@ -528,7 +528,7 @@ func (hm *Host) rebuildLookupLocked() {
 					p = woos.Slash
 					combined.Routes[i].Path = woos.Slash
 				}
-				byPath[p] = combined.Routes[i]
+				byPath[p] = &combined.Routes[i]
 			}
 
 			for i := range dynRoutes {
@@ -539,22 +539,27 @@ func (hm *Host) rebuildLookupLocked() {
 					r.Path = woos.Slash
 				}
 
-				if ex := byPath[p]; ex != nil {
+				ex, ok := byPath[p]
+				if ok {
 					ex.Backends.Servers = append(ex.Backends.Servers, r.Backends.Servers...)
 					continue
 				}
 
-				combined.Routes = append(combined.Routes, r)
-				byPath[p] = combined.Routes[len(combined.Routes)-1]
+				combined.Routes = append(combined.Routes, *r)
+				byPath[p] = &combined.Routes[len(combined.Routes)-1]
 			}
 
 			hm.sortRoutes(combined.Routes)
 			newLookup[domain] = &combined
 		} else {
-			hm.sortRoutes(dynRoutes)
+			var routes []alaye.Route
+			for _, dr := range dynRoutes {
+				routes = append(routes, *dr)
+			}
+			hm.sortRoutes(routes)
 			newLookup[domain] = &alaye.Host{
 				Domains: []string{domain},
-				Routes:  dynRoutes,
+				Routes:  routes,
 			}
 		}
 	}
@@ -564,11 +569,7 @@ func (hm *Host) rebuildLookupLocked() {
 	for domain, cfg := range newLookup {
 		tr := matcher.NewTree()
 		for i := range cfg.Routes {
-			rt := cfg.Routes[i]
-			if rt.Path == "" {
-				rt.Path = woos.Slash
-			}
-			_ = tr.Insert(rt.Path, rt)
+			_ = tr.Insert(cfg.Routes[i].Path, &cfg.Routes[i])
 		}
 		newRouters[domain] = tr
 	}
@@ -605,7 +606,7 @@ func (hm *Host) hostsDirExists() bool {
 	return err == nil && fi.IsDir()
 }
 
-func (hm *Host) sortRoutes(routes []*alaye.Route) {
+func (hm *Host) sortRoutes(routes []alaye.Route) {
 	sort.SliceStable(routes, func(i, j int) bool {
 		return len(routes[i].Path) > len(routes[j].Path)
 	})

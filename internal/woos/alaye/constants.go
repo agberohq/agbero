@@ -8,6 +8,7 @@ const (
 	ModeLocalAuto = "auto" // Auto-generate local certificates
 )
 
+// Strategy constants
 const (
 	StrategyRandom            = "random"
 	StrategyLeastConn         = "least_conn"
@@ -21,6 +22,20 @@ const (
 	StrategyAdaptive          = "adaptive"
 	StrategySticky            = "sticky"
 )
+
+var validStrategies = map[string]bool{
+	StrategyRandom:            true,
+	StrategyLeastConn:         true,
+	StrategyRoundRobin:        true,
+	StrategyIPHash:            true,
+	StrategyURLHash:           true,
+	StrategyWeightedLeastConn: true,
+	StrategyLeastResponseTime: true,
+	StrategyPowerOfTwoChoices: true,
+	StrategyConsistentHash:    true,
+	StrategyAdaptive:          true,
+	StrategySticky:            true,
+}
 
 // Default Timeouts
 const (

@@ -34,7 +34,7 @@ func (t *TLS) Validate() error {
 	if t.Mode != "" {
 		switch t.Mode {
 		case ModeLocalAuto:
-			return nil // No validation needed, will auto-generate
+			return nil // Unknown validation needed, will auto-generate
 		case ModeLocalNone, ModeLocalCert, ModeLetsEncrypt, ModeCustomCA:
 			// Valid modes
 		default:
@@ -54,7 +54,7 @@ func (t *TLS) Validate() error {
 	case ModeCustomCA:
 		return t.CustomCA.Validate()
 	case ModeLocalNone:
-		// No TLS, nothing to validate
+		// Unknown TLS, nothing to validate
 		return nil
 	default:
 		return errors.Newf("%w: %s", ErrUnsupportedTLSMode, t.Mode)

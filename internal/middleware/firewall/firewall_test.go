@@ -59,7 +59,7 @@ func compileConditions(conds []*alaye.Condition) {
 
 func TestStaticRules(t *testing.T) {
 	cfg := &alaye.Firewall{
-		Status: alaye.Success,
+		Status: alaye.Active,
 		Rules: []*alaye.Rule{
 			{
 				Name: "whitelist_admin",
@@ -105,7 +105,7 @@ func TestStaticRules(t *testing.T) {
 
 func TestDynamicRules_Logic(t *testing.T) {
 	cfg := &alaye.Firewall{
-		Status: alaye.Success,
+		Status: alaye.Active,
 		Rules: []*alaye.Rule{
 			{
 				Name: "bad_req",
@@ -143,7 +143,7 @@ func TestDynamicRules_Logic(t *testing.T) {
 		t.Errorf("Any: Query match failed. Got %d", rec.Code)
 	}
 
-	// Case 3: No Match -> Allow IP 1.2.3.3 (Unique IP)
+	// Case 3: Unknown Match -> Allow IP 1.2.3.3 (Unique IP)
 	req = httptest.NewRequest("GET", "/", nil)
 	req.RemoteAddr = "1.2.3.3:123"
 	rec = httptest.NewRecorder()
@@ -155,7 +155,7 @@ func TestDynamicRules_Logic(t *testing.T) {
 
 func TestBodyInspection(t *testing.T) {
 	cfg := &alaye.Firewall{
-		Status:              alaye.Success,
+		Status:              alaye.Active,
 		InspectBody:         true,
 		MaxInspectBytes:     1024,
 		InspectContentTypes: []string{"application/json"},
@@ -164,7 +164,7 @@ func TestBodyInspection(t *testing.T) {
 				Name: "sql_injection",
 				Type: "dynamic",
 				Match: &alaye.Match{
-					Any: []*alaye.Condition{
+					Any: []alaye.Condition{
 						{Location: "body", Pattern: "(?i)union.*select"},
 					},
 				},
@@ -212,15 +212,15 @@ func TestBodyInspection(t *testing.T) {
 
 func TestThresholds(t *testing.T) {
 	cfg := &alaye.Firewall{
-		Status: alaye.Success,
+		Status: alaye.Active,
 		Rules: []*alaye.Rule{
 			{
 				Name: "rate_limit",
 				Type: "dynamic",
 				Match: &alaye.Match{
 					// Match everything
-					Any: []*alaye.Condition{{Location: "path", Operator: "prefix", Value: "/"}},
-					Threshold: &alaye.Threshold{
+					Any: []alaye.Condition{{Location: "path", Operator: "prefix", Value: "/"}},
+					Threshold: alaye.Threshold{
 						Count:   3,
 						Window:  1 * time.Minute,
 						TrackBy: "ip",
@@ -271,7 +271,7 @@ func TestPersistence(t *testing.T) {
 	dir, _ := os.MkdirTemp("", "persist")
 	defer os.RemoveAll(dir)
 
-	cfg := &alaye.Firewall{Status: alaye.Success}
+	cfg := &alaye.Firewall{Status: alaye.Active}
 	e1, _ := New(cfg, woos.NewFolder(dir), ll.New("test").Disable())
 
 	// Manually ban
@@ -295,7 +295,7 @@ func TestPersistence(t *testing.T) {
 func TestRouteOverrides(t *testing.T) {
 	// Global: Block /admin
 	globalCfg := &alaye.Firewall{
-		Status: alaye.Success,
+		Status: alaye.Active,
 		Rules: []*alaye.Rule{
 			{
 				Name: "block_admin",
@@ -321,7 +321,7 @@ func TestRouteOverrides(t *testing.T) {
 
 	// 2. Route Ignore Global (Allow) -> 1.2.3.2
 	routeFW := &alaye.FirewallRoute{
-		Status:       alaye.Success,
+		Status:       alaye.Active,
 		IgnoreGlobal: true,
 	}
 	req = httptest.NewRequest("GET", "/admin", nil)
@@ -414,7 +414,7 @@ func TestConditions_Table(t *testing.T) {
 		},
 	}
 
-	cfg := &alaye.Firewall{Status: alaye.Success}
+	cfg := &alaye.Firewall{Status: alaye.Active}
 	e := createTestEngine(t, cfg)
 	defer e.Close()
 
@@ -433,7 +433,7 @@ func TestConditions_Table(t *testing.T) {
 				Req: req,
 				IP:  "1.2.3.4",
 			}
-			got := e.checkCondition(&tc.cond, insp)
+			got := e.checkCondition(tc.cond, insp)
 			if got != tc.want {
 				t.Errorf("got %v, want %v", got, tc.want)
 			}

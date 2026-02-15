@@ -7,13 +7,13 @@ import (
 )
 
 type BasicAuth struct {
-	Status Enabled  `hcl:"enabled,optional" json:"enabled"`
-	Users  []string `hcl:"users" json:"users"`
-	Realm  string   `hcl:"realm,optional" json:"realm"`
+	Enabled Enabled  `hcl:"enabled,optional" json:"enabled"`
+	Users   []string `hcl:"users" json:"users"`
+	Realm   string   `hcl:"realm,optional" json:"realm"`
 }
 
 func (b *BasicAuth) Validate() error {
-	if b.Status.No() {
+	if b.Enabled.No() {
 		return nil
 	}
 

@@ -138,7 +138,7 @@ func (p *Proxy) Start() error {
 				}
 			}
 
-			// Success: Reset backoff
+			// Active: Reset backoff
 			bo.Reset()
 
 			p.wg.Add(1)

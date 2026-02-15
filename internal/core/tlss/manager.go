@@ -63,7 +63,7 @@ func NewManager(logger *ll.Logger, hostManager *discovery.Host, global *alaye.Gl
 }
 
 func (m *Manager) startLocalWatcher(cacheKey, certFile, keyFile, host string) {
-	// FIX: Defensive check for watcher (for tests)
+	//  Defensive check for watcher (for tests)
 	if m.watcher == nil {
 		return
 	}
@@ -116,8 +116,8 @@ func (m *Manager) initCertMagic() error {
 		return woos.ErrLetsEncryptNotEnabled
 	}
 
-	// 2. Check if explicitly disabled (Yes check)
-	// Note: We do NOT check .Yes() here, because the default (0/Unknown)
+	// 2. Check if explicitly disabled (Active check)
+	// Note: We do NOT check .Active() here, because the default (0/Unknown)
 	// implies enabled if the block is present in the HCL.
 	if m.Global.LetsEncrypt.Status.No() {
 		return woos.ErrLetsEncryptNotEnabled
@@ -211,10 +211,8 @@ func (m *Manager) CmForHost(hcfg *alaye.Host) *certmagic.Config {
 		useStaging = m.Global.LetsEncrypt.Staging
 	}
 
-	if hcfg != nil && hcfg.TLS != nil && hcfg.TLS.LetsEncrypt != nil {
-		if hcfg.TLS.LetsEncrypt.Staging {
-			useStaging = true
-		}
+	if hcfg.TLS.LetsEncrypt.Staging {
+		useStaging = true
 	}
 
 	if useStaging {
@@ -314,7 +312,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 	}
 
 	mode := alaye.TlsMode("")
-	if hcfg.TLS != nil {
+	if hcfg.TLS.Mode != "" {
 		mode = hcfg.TLS.Mode
 	}
 
@@ -331,7 +329,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return nil, errors.Newf("%w: tls disabled for host %q", woos.ErrTLSDisabled, sni)
 
 	case alaye.ModeLocalCert:
-		if hcfg.TLS == nil || hcfg.TLS.Local == nil || hcfg.TLS.Local.CertFile == "" || hcfg.TLS.Local.KeyFile == "" {
+		if hcfg.TLS.Local.CertFile == "" || hcfg.TLS.Local.KeyFile == "" {
 			return nil, errors.Newf("%w %q", woos.ErrLocalCertMissingFiles, sni)
 		}
 		return m.GetLocalCertificate(hcfg.TLS.Local, sni)
@@ -348,7 +346,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 			return nil, errors.Newf("%w(host %q)", woos.ErrLetsEncryptNotEnabled, sni)
 		}
 
-		if hcfg.TLS != nil && hcfg.TLS.LetsEncrypt != nil && hcfg.TLS.LetsEncrypt.ShortLived {
+		if hcfg.TLS.LetsEncrypt.ShortLived {
 			for _, iss := range cm.Issuers {
 				if acmeIss, ok := iss.(*certmagic.ACMEIssuer); ok {
 					acmeIss.Profile = woos.AcmeProfileShortLived
@@ -362,7 +360,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return cmTLS.GetCertificate(&chi2)
 
 	case alaye.ModeCustomCA:
-		if hcfg.TLS == nil || hcfg.TLS.CustomCA == nil || hcfg.TLS.CustomCA.Root == "" {
+		if hcfg.TLS.CustomCA.Root == "" {
 			return nil, errors.Newf("%w for host %q", woos.ErrCustomCAMissingRoot, sni)
 		}
 		return m.getCustomCACert(hcfg.TLS.CustomCA.Root, sni)
@@ -382,7 +380,7 @@ func (m *Manager) getCustomCACert(root string, host string) (*tls.Certificate, e
 		return nil, errors.Newf("%w:(host=%q)", woos.ErrInvalidCustomCAPEM, host)
 	}
 	if hcfg := m.hostManager.Get(host); hcfg != nil {
-		if hcfg.TLS != nil && hcfg.TLS.Local != nil && (hcfg.TLS.Local.CertFile == "" || hcfg.TLS.Local.KeyFile == "") {
+		if hcfg.TLS.Local.CertFile == "" || hcfg.TLS.Local.KeyFile == "" {
 			return nil, errors.Newf("%w for host %q", woos.ErrCustomCALocalCertRequired, host)
 		}
 		return m.GetLocalCertificate(hcfg.TLS.Local, host)

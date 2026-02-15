@@ -159,7 +159,7 @@ func TestPickAdaptiveWithHash(t *testing.T) {
 	b1 := newMockBackend(1, true, 1)
 	b2 := newMockBackend(2, true, 1)
 
-	// FIX: Use ConsistentHash strategy. RoundRobin ignores keys.
+	//  Use ConsistentHash strategy. RoundRobin ignores keys.
 	base := NewSelector([]Backend{b1, b2}, StrategyConsistentHash)
 	a := NewAdaptive(base, 0.0)
 	a.Update([]Backend{b1, b2})
@@ -232,7 +232,7 @@ func TestPickWithSticky(t *testing.T) {
 		b4 := newMockBackend(4, true, 1)
 		base2 := NewSelector([]Backend{b3, b4}, StrategyRoundRobin)
 
-		// FIX: Use a larger TTL that we can reliably wait for
+		//  Use a larger TTL that we can reliably wait for
 		s2 := NewSticky(base2, 50*time.Millisecond, extractor)
 
 		req := httptest.NewRequest("GET", "/", nil)

@@ -3,7 +3,7 @@ package alaye
 import "github.com/olekukonko/errors"
 
 type Headers struct {
-	Status   Enabled `hcl:"enabled,optional" json:"enabled"`
+	Enabled  Enabled `hcl:"enabled,optional" json:"enabled"`
 	Request  *Header `hcl:"request,block" json:"request"`
 	Response *Header `hcl:"response,block" json:"response"`
 }
@@ -15,7 +15,7 @@ type Header struct {
 }
 
 func (h *Headers) Validate() error {
-	if h.Status.No() {
+	if h.Enabled.No() {
 		return nil
 	}
 	// Both Request and Response are optional

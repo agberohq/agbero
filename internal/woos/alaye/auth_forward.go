@@ -7,8 +7,8 @@ import (
 )
 
 type ForwardAuth struct {
-	Status Enabled `hcl:"enabled,optional" json:"enabled"`
-	URL    string  `hcl:"url" json:"url"` // e.g. "http://auth-service:8080/verify"
+	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
+	URL     string  `hcl:"url" json:"url"` // e.g. "http://auth-service:8080/verify"
 	// Headers to copy FROM client request TO auth service (e.g. "Authorization", "Cookie")
 	RequestHeaders []string `hcl:"request_headers,optional" json:"request_headers"`
 
@@ -20,7 +20,7 @@ type ForwardAuth struct {
 }
 
 func (f *ForwardAuth) Validate() error {
-	if f.Status.No() {
+	if f.Enabled.No() {
 		return nil
 	}
 

@@ -87,11 +87,10 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 
 	now := time.Now()
 	b := &Backend{
-		URL:    u,
-		Weight: cfg.Weight,
-		Cond:   cond,
-		// FIX: Use optional HealthCheck from route, guarding against nil route
-		hcConfig:     nil,
+		URL:          u,
+		Weight:       cfg.Weight,
+		Cond:         cond,
+		hcConfig:     &route.HealthCheck,
 		logger:       logger,
 		stop:         make(chan struct{}),
 		startTime:    now,
@@ -101,15 +100,11 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 		Alive:        stats.Alive,
 	}
 
-	if route != nil {
-		b.hcConfig = route.HealthCheck
-	}
-
 	// Ensure recovery timestamp is set for logic checks
 	b.lastRecovery.Store(now.UnixNano())
 
 	cbThreshold := woos.DefaultCircuitBreakerThreshold
-	if route != nil && route.CircuitBreaker != nil && route.CircuitBreaker.Threshold > 0 {
+	if route != nil && route.CircuitBreaker.Threshold > 0 {
 		cbThreshold = route.CircuitBreaker.Threshold
 	}
 
@@ -120,8 +115,8 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 	t.ExpectContinueTimeout = 0
 
 	rp.FlushInterval = -1
-	// FIX: Add nil check for cfg.Streaming before accessing Yes
-	if cfg.Streaming != nil && cfg.Streaming.Status.Yes() {
+	//  Add nil check for cfg.Streaming before accessing Active
+	if cfg.Streaming.Status.Yes() {
 		t.ResponseHeaderTimeout = 0
 		rp.FlushInterval = cfg.Streaming.EffectiveFlushInterval()
 	}

@@ -66,7 +66,7 @@ func newWebRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Lo
 		chain = headers.Headers(route.Headers)(chain)
 	}
 
-	if route.CompressionConfig != nil && route.CompressionConfig.Status.Yes() {
+	if route.CompressionConfig != nil && route.CompressionConfig.Enabled.Yes() {
 		chain = compress.Compress(route)(chain)
 	}
 
@@ -79,7 +79,7 @@ func newWebRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Lo
 func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Logger) *Route {
 	var backends []*xhttp.Backend
 
-	// FIX: Defensive check for Backends
+	//  Defensive check for Backends
 	if route.Backends == nil {
 		// If no backends and not a web route, this is a misconfiguration or a placeholder route.
 		// We return a fallback to avoid panic.
@@ -104,7 +104,7 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 
 	loadBalancer := xhttp.NewBalancer(
 		backends,
-		route.Backends.LBStrategy,
+		route.Backends.Strategy,
 		timeout,
 		route.StripPrefixes,
 	)
@@ -134,7 +134,7 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 	if route.Headers != nil {
 		chain = headers.Headers(route.Headers)(chain)
 	}
-	if route.CompressionConfig != nil && route.CompressionConfig.Status.Yes() {
+	if route.CompressionConfig != nil && route.CompressionConfig.Enabled.Yes() {
 		chain = compress.Compress(route)(chain)
 	}
 

@@ -1,7 +1,7 @@
 package alaye
 
 type Backend struct {
-	Status     Enabled  `hcl:"enabled,optional" json:"enabled"`
-	LBStrategy string   `hcl:"lb_strategy,optional" json:"lb_strategy"`
-	Servers    []Server `hcl:"server,block" json:"servers"`
+	Enabled  Enabled  `hcl:"enabled,optional" json:"enabled"`
+	Strategy string   `hcl:"strategy,optional" json:"strategy"`
+	Servers  []Server `hcl:"server,block" json:"servers"`
 }

@@ -39,8 +39,8 @@ func (r *Route) Key() string {
 
 	w.WriteString(r.Path)
 
-	if r.Backends.Status.Yes() {
-		w.WriteString(strings.ToLower(strings.TrimSpace(r.Backends.LBStrategy)))
+	if r.Backends.Enabled.Yes() {
+		w.WriteString(strings.ToLower(strings.TrimSpace(r.Backends.Strategy)))
 		for _, b := range r.Backends.Servers {
 			w.WriteString(b.Address)
 			w.WriteString(fmt.Sprint(b.Weight))
@@ -55,14 +55,14 @@ func (r *Route) Key() string {
 		w.WriteString(ip)
 	}
 
-	if r.HealthCheck.Status.Yes() {
+	if r.HealthCheck.Enabled.Yes() {
 		w.WriteString(r.HealthCheck.Path)
 		w.WriteString(fmt.Sprint(r.HealthCheck.Interval))
 		w.WriteString(fmt.Sprint(r.HealthCheck.Timeout))
 		w.WriteString(fmt.Sprint(r.HealthCheck.Threshold))
 	}
 
-	if r.CircuitBreaker.Status.Yes() {
+	if r.CircuitBreaker.Enabled.Yes() {
 		w.WriteString(fmt.Sprint(r.CircuitBreaker.Threshold))
 		w.WriteString(fmt.Sprint(r.CircuitBreaker.Duration))
 	}
@@ -71,30 +71,30 @@ func (r *Route) Key() string {
 		w.WriteString(fmt.Sprint(r.Timeouts.Request))
 	}
 
-	if r.CompressionConfig.Status.Yes() {
+	if r.CompressionConfig.Enabled.Yes() {
 		w.WriteString(r.CompressionConfig.Type)
 		w.WriteString(fmt.Sprint(r.CompressionConfig.Level))
 	}
 
-	if r.Headers.Status.Yes() {
+	if r.Headers.Enabled.Yes() {
 		w.WriteString("hd")
 	}
 
-	if r.BasicAuth.Status.Yes() {
+	if r.BasicAuth.Enabled.Yes() {
 		for _, u := range r.BasicAuth.Users {
 			w.WriteString(u)
 		}
 	}
 
-	if r.ForwardAuth.Status.Yes() {
+	if r.ForwardAuth.Enabled.Yes() {
 		w.WriteString(r.ForwardAuth.URL)
 	}
 
-	if r.JWTAuth.Status.Yes() {
+	if r.JWTAuth.Enabled.Yes() {
 		w.WriteString(r.JWTAuth.Secret.String())
 	}
 
-	if r.OAuth.Status.Yes() {
+	if r.OAuth.Enabled.Yes() {
 		w.WriteString(r.OAuth.Provider)
 		w.WriteString(r.OAuth.ClientID)
 	}
@@ -105,7 +105,7 @@ func (r *Route) Key() string {
 		if r.Web.Listing {
 			w.WriteString("ls")
 		}
-		if r.Web.PHP != nil && r.Web.PHP.Status.Yes() {
+		if r.Web.PHP.Status.Yes() {
 			w.WriteString("php")
 			w.WriteString(r.Web.PHP.Address)
 		}
@@ -231,14 +231,14 @@ func (r *Route) validateWebRoute() error {
 		return errors.Newf("web: %w", err)
 	}
 
-	if r.Backends.LBStrategy != "" && r.Backends.LBStrategy != StrategyRoundRobin {
+	if r.Backends.Strategy != "" && r.Backends.Strategy != StrategyRoundRobin {
 		return ErrWebRouteUnsupportedLB
 	}
 
-	if r.HealthCheck.Status.Yes() {
+	if r.HealthCheck.Enabled.Yes() {
 		return ErrWebRouteHealthCheck
 	}
-	if r.CircuitBreaker.Status.Yes() {
+	if r.CircuitBreaker.Enabled.Yes() {
 		return ErrWebRouteCircuitBreaker
 	}
 
@@ -279,27 +279,8 @@ func (r *Route) validateProxyRoute() error {
 		}
 	}
 
-	if r.Backends.LBStrategy != "" {
-		s := strings.ToLower(strings.TrimSpace(r.Backends.LBStrategy))
-		switch s {
-		case StrategyRoundRobin,
-			StrategyLeastConn,
-			StrategyRandom,
-			StrategyIPHash,
-			StrategyURLHash,
-			StrategyWeightedLeastConn:
-		default:
-			return errors.Newf(
-				`%w %q must be one of: %s, %s, %s, %s, %s`,
-				ErrProxyRouteInvalidLBStrategy,
-				s,
-				StrategyRoundRobin,
-				StrategyLeastConn,
-				StrategyRandom,
-				StrategyIPHash,
-				StrategyURLHash,
-			)
-		}
+	if r.Backends.Strategy != "" && !ValidateStrategy(r.Backends.Strategy) {
+		return errors.Newf("invalid strategy %q", r.Backends.Strategy)
 	}
 
 	if err := r.HealthCheck.Validate(); err != nil {

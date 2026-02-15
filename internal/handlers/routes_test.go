@@ -30,12 +30,12 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 
 	// 2. Config
 	route := &alaye.Route{
-		Status: alaye.Success,
+		Status: alaye.Active,
 		Path:   "/",
 		Backends: &alaye.Backend{
-			Status:     alaye.Success,
-			LBStrategy: alaye.StrategyRoundRobin,
-			Servers:    alaye.NewServers(srv1.URL, srv2.URL),
+			Enabled:  alaye.Active,
+			Strategy: alaye.StrategyRoundRobin,
+			Servers:  alaye.NewServers(srv1.URL, srv2.URL),
 		},
 	}
 
@@ -71,11 +71,11 @@ func TestRouteHandler_Proxy_RateLimit(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Backends: &alaye.Backend{
-			Status:  alaye.Success,
+			Enabled: alaye.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 		RateLimit: &alaye.RouteRate{
-			Status: alaye.Success,
+			Status: alaye.Active,
 			Rule: &alaye.RateRule{
 				Requests: 1,
 				Window:   time.Minute,
@@ -117,7 +117,7 @@ func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Backends: &alaye.Backend{
-			Status:  alaye.Success,
+			Enabled: alaye.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 		Headers: &alaye.Headers{
@@ -144,7 +144,7 @@ func TestRouteHandler_Proxy_NoHealthyBackends(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Backends: &alaye.Backend{
-			Status:  alaye.Success,
+			Enabled: alaye.Active,
 			Servers: alaye.NewServers("http://127.0.0.1:54321"),
 		},
 	}
@@ -177,7 +177,7 @@ func TestRouteHandler_Proxy_Timeout(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Backends: &alaye.Backend{
-			Status:  alaye.Success,
+			Enabled: alaye.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 		Timeouts: &alaye.TimeoutRoute{
@@ -210,7 +210,7 @@ func TestRouteHandler_Proxy_StripPrefix(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/api",
 		Backends: &alaye.Backend{
-			Status:  alaye.Success,
+			Enabled: alaye.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 		StripPrefixes: []string{"/api"},
@@ -241,10 +241,10 @@ func TestRouteHandler_Web_BasicFileServing(t *testing.T) {
 	}
 
 	route := &alaye.Route{
-		Status: alaye.Success,
+		Status: alaye.Active,
 		Path:   "/",
 		Web: &alaye.Web{
-			Status: alaye.Success,
+			Status: alaye.Active,
 			Root:   alaye.WebRoot(root),
 			Index:  "index.html",
 		},
@@ -292,10 +292,10 @@ func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
 	}
 
 	route := &alaye.Route{
-		Status: alaye.Success,
+		Status: alaye.Active,
 		Path:   "/",
 		Web: &alaye.Web{
-			Status: alaye.Success,
+			Status: alaye.Active,
 			Root:   alaye.WebRoot(root),
 		},
 	}
@@ -333,7 +333,7 @@ func TestRouteHandler_Web_CustomIndex(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Web: &alaye.Web{
-			Status: alaye.Success,
+			Status: alaye.Active,
 			Root:   alaye.WebRoot(root),
 			Index:  "home.htm",
 		},
@@ -361,7 +361,7 @@ func TestRouteHandler_Web_MethodNotAllowed(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Web: &alaye.Web{
-			Status: alaye.Success,
+			Status: alaye.Active,
 			Root:   alaye.WebRoot(root),
 		},
 	}
@@ -383,10 +383,10 @@ func TestRouteHandler_Web_DirectoryWithoutIndex(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, "subdir/"), 0755)
 
 	route := &alaye.Route{
-		Status: alaye.Success,
+		Status: alaye.Active,
 		Path:   "/",
 		Web: &alaye.Web{
-			Status:  alaye.Success,
+			Status:  alaye.Active,
 			Root:    alaye.WebRoot(root),
 			Listing: false,
 		},
@@ -413,10 +413,10 @@ func TestRouteHandler_Web_PathTraversalPrevented(t *testing.T) {
 	}
 
 	route := &alaye.Route{
-		Status: alaye.Success,
+		Status: alaye.Active,
 		Path:   "/files",
 		Web: &alaye.Web{
-			Status: alaye.Success,
+			Status: alaye.Active,
 			Root:   alaye.WebRoot(root),
 		},
 	}
@@ -441,19 +441,19 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 	}
 
 	route := &alaye.Route{
-		Status: alaye.Success,
+		Status: alaye.Active,
 		Path:   "/",
 		Web: &alaye.Web{
-			Status: alaye.Success,
+			Status: alaye.Active,
 			Root:   alaye.WebRoot(root),
 		},
 		CompressionConfig: &alaye.Compression{
-			Status: alaye.Success,
-			Type:   "gzip",
-			Level:  5,
+			Enabled: alaye.Active,
+			Type:    "gzip",
+			Level:   5,
 		},
 		Headers: &alaye.Headers{
-			Status: alaye.Success,
+			Enabled: alaye.Active,
 			Response: &alaye.Header{
 				Set: map[string]string{
 					"X-Custom-Header": "TestValue",
@@ -496,12 +496,12 @@ func TestRouteHandler_Validation(t *testing.T) {
 		{
 			name: "valid proxy route",
 			route: &alaye.Route{
-				Status: alaye.Success,
+				Status: alaye.Active,
 				Path:   "/api",
 				// Changed from localhost:3000 to avoid port conflicts in CI/dev environments.
 				// Using a high, presumably unused port ensures a connection error (502).
 				Backends: &alaye.Backend{
-					Status:  alaye.Success,
+					Enabled: alaye.Active,
 					Servers: alaye.NewServers("http://127.0.0.1:59999"),
 				},
 			},
@@ -532,7 +532,7 @@ func TestRouteHandler_Validation(t *testing.T) {
 			route: &alaye.Route{
 				Path: "/",
 				Backends: &alaye.Backend{
-					Status:  alaye.Success,
+					Enabled: alaye.Active,
 					Servers: alaye.NewServers("http://localhost:3000"),
 				},
 				Web: &alaye.Web{Root: alaye.WebRoot("/tmp")},

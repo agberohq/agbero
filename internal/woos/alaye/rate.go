@@ -9,7 +9,7 @@ import (
 
 // GlobalRate defines the global registry and default rules.
 type GlobalRate struct {
-	Status     Enabled       `hcl:"enabled,optional" json:"enabled"`
+	Enabled    Enabled       `hcl:"enabled,optional" json:"enabled"`
 	TTL        time.Duration `hcl:"ttl,optional" json:"ttl"`
 	MaxEntries int64         `hcl:"max_entries,optional" json:"max_entries"`
 
@@ -21,7 +21,7 @@ type GlobalRate struct {
 }
 
 func (g *GlobalRate) Validate() error {
-	if g.Status.No() {
+	if g.Enabled.No() {
 		return nil
 	}
 

@@ -3,13 +3,13 @@ package alaye
 import "time"
 
 type CircuitBreaker struct {
-	Status    Enabled       `hcl:"enabled,optional" json:"enabled"`
+	Enabled   Enabled       `hcl:"enabled,optional" json:"enabled"`
 	Threshold int           `hcl:"threshold,optional" json:"threshold"`
 	Duration  time.Duration `hcl:"duration,optional" json:"duration"`
 }
 
 func (c *CircuitBreaker) Validate() error {
-	if c.Status.No() {
+	if c.Enabled.No() {
 		return nil
 	}
 	// Threshold validation (if provided)

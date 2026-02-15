@@ -40,7 +40,7 @@ func TestJWT(t *testing.T) {
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
-			name: "Valid Token, No Headers Mapped",
+			name: "Valid Token, Unknown Headers Mapped",
 			cfg:  &alaye.JWTAuth{Secret: secret},
 			authHeader: "Bearer " + genToken(jwt.MapClaims{
 				"sub": "user123",
@@ -77,7 +77,7 @@ func TestJWT(t *testing.T) {
 			},
 		},
 		{
-			name: "Issuer Validation Success",
+			name: "Issuer Validation Active",
 			cfg: &alaye.JWTAuth{
 				Secret: secret,
 				Issuer: "auth.agbero.com",
@@ -89,7 +89,7 @@ func TestJWT(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
-			name: "Issuer Validation No",
+			name: "Issuer Validation Unknown",
 			cfg: &alaye.JWTAuth{
 				Secret: secret,
 				Issuer: "auth.agbero.com",
@@ -130,7 +130,7 @@ func TestJWT(t *testing.T) {
 			handler.ServeHTTP(rec, req)
 
 			if rec.Code != tt.wantStatus {
-				t.Errorf("Yes = %d, want %d Body: %s", rec.Code, tt.wantStatus, rec.Body.String())
+				t.Errorf("Active = %d, want %d Body: %s", rec.Code, tt.wantStatus, rec.Body.String())
 			}
 		})
 	}

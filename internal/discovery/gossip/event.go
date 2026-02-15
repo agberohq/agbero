@@ -164,8 +164,9 @@ func (e *event) processNode(node *memberlist.Node) {
 
 	route := alaye.Route{
 		Path: meta.Path,
-		Backends: &alaye.Backend{
-			LBStrategy: alaye.StrategyRoundRobin,
+		Backends: alaye.Backend{
+			Enabled:  alaye.Active,
+			Strategy: alaye.StrategyRoundRobin,
 			Servers: []alaye.Server{
 				{
 					Address: target,
@@ -173,8 +174,9 @@ func (e *event) processNode(node *memberlist.Node) {
 				},
 			},
 		},
-		HealthCheck: &alaye.HealthCheck{
-			Path: healthPath,
+		HealthCheck: alaye.HealthCheck{
+			Enabled: alaye.Active,
+			Path:    healthPath,
 		},
 	}
 

@@ -107,7 +107,7 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 
 	// 1. Validation
 	if cfg.BasicAuth == nil || len(cfg.BasicAuth.Users) == 0 {
-		http.Error(w, "Server Config Error: No admin users defined in 'basic_auth'", http.StatusForbidden)
+		http.Error(w, "Server Config Error: Unknown admin users defined in 'basic_auth'", http.StatusForbidden)
 		return
 	}
 
@@ -246,7 +246,7 @@ func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 
 		dur := time.Duration(req.DurationSec) * time.Second
 
-		// FIX: Flatten extra context into Reason string for firewall engine
+		//  Flatten extra context into Reason string for firewall engine
 		reason := req.Reason
 		var details []string
 		if req.Host != "" {

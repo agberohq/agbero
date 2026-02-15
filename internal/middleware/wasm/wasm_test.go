@@ -28,7 +28,7 @@ func TestWasmMiddleware_EndToEnd(t *testing.T) {
 	wasmOut := filepath.Join(tmpDir, "test.wasm")
 
 	// This WASM code checks for Header "X-Secret".
-	// If value == "open-sesame", it sets "X-Yes" = "Allowed" and continues (200).
+	// If value == "open-sesame", it sets "X-Active" = "Allowed" and continues (200).
 	// Otherwise, it calls agbero_done(401).
 	code := `
 package main
@@ -63,7 +63,7 @@ func handle_request() {
 	// 2. Logic
 	if secret == "open-sesame" {
 		// Set Response Header
-		outKey := "X-Yes"
+		outKey := "X-Active"
 		outVal := "Allowed"
 		agbero_set_header(
 			uint32(uintptr(unsafe.Pointer(&[]byte(outKey)[0]))),
@@ -105,15 +105,15 @@ func main() {}
 	defer mgr.Close(context.Background())
 
 	// 5. Build Handler Chain
-	// The "Next" handler simply writes "Success"
+	// The "Next" handler simply writes "Active"
 	finalHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
-		w.Write([]byte("Success"))
+		w.Write([]byte("Active"))
 	})
 
 	h := mgr.Handler(finalHandler)
 
-	// Test Case A: Success (Correct Secret)
+	// Test Case A: Active (Correct Secret)
 	t.Run("Authorized", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.Header.Set("X-Secret", "open-sesame")
@@ -125,10 +125,10 @@ func main() {}
 			t.Errorf("Expected 200, got %d", w.Code)
 		}
 		if w.Header().Get("X-Status") != "Allowed" {
-			t.Errorf("Expected header X-Yes=Allowed, got %q", w.Header().Get("X-Status"))
+			t.Errorf("Expected header X-Active=Allowed, got %q", w.Header().Get("X-Status"))
 		}
-		if w.Body.String() != "Success" {
-			t.Errorf("Expected body 'Success', got %q", w.Body.String())
+		if w.Body.String() != "Active" {
+			t.Errorf("Expected body 'Active', got %q", w.Body.String())
 		}
 	})
 
@@ -144,7 +144,7 @@ func main() {}
 			t.Errorf("Expected 401, got %d", w.Code)
 		}
 		// Should NOT call final handler, so body should be empty (or whatever http.Error writes)
-		if w.Body.String() == "Success" {
+		if w.Body.String() == "Active" {
 			t.Error("Middleware should have blocked the request, but it reached final handler")
 		}
 	})

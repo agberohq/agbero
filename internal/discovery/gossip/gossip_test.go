@@ -50,7 +50,7 @@ func TestNewService_Disabled(t *testing.T) {
 }
 
 func TestNewService_InvalidKey(t *testing.T) {
-	cfg := &alaye.Gossip{Status: alaye.NewStatus(alaye.Success), SecretKey: "short"}
+	cfg := &alaye.Gossip{Enabled: alaye.NewStatus(alaye.Active), SecretKey: "short"}
 	// Must pass a valid logger
 	_, err := NewService(nil, cfg, testLogger)
 	if err == nil {
@@ -62,7 +62,7 @@ func TestNewService_WithAuth(t *testing.T) {
 	tmpFile := t.TempDir() + "/key.pem"
 	security.GenerateNewKeyFile(tmpFile)
 	// Use port 0 to let OS assign a free port
-	cfg := alaye.Gossip{Status: alaye.NewStatus(alaye.Success), PrivateKeyFile: tmpFile, Port: 0}
+	cfg := alaye.Gossip{Enabled: alaye.NewStatus(alaye.Active), PrivateKeyFile: tmpFile, Port: 0}
 	logger := testLogger
 
 	hm := &mockHost{}
@@ -81,7 +81,7 @@ func TestNewService_WithAuth(t *testing.T) {
 func TestJoin_Success(t *testing.T) {
 	hm := &mockHost{}
 	// Use Port 0 to bind to a random available port
-	cfg := &alaye.Gossip{Status: alaye.NewStatus(alaye.Success), Port: 0}
+	cfg := &alaye.Gossip{Enabled: alaye.NewStatus(alaye.Active), Port: 0}
 	logger := testLogger
 	s, err := NewService(hm, cfg, logger)
 	if err != nil {
@@ -207,7 +207,7 @@ func TestNotifyLeave_IgnoreSelf(t *testing.T) {
 }
 
 func TestShutdown(t *testing.T) {
-	cfg := alaye.Gossip{Status: alaye.NewStatus(alaye.Success), Port: 0}
+	cfg := alaye.Gossip{Enabled: alaye.NewStatus(alaye.Active), Port: 0}
 	logger := testLogger
 	s, err := NewService(nil, &cfg, logger)
 	if err != nil {

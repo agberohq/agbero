@@ -8,7 +8,7 @@ import (
 )
 
 type Admin struct {
-	Status     Enabled  `hcl:"enabled,optional" json:"enabled"`
+	Enabled    Enabled  `hcl:"enabled,optional" json:"enabled"`
 	Address    string   `hcl:"address,optional" json:"address"` // e.g. ":9090"
 	AllowedIPs []string `hcl:"allowed_ips,optional" json:"allowed_ips"`
 
@@ -19,12 +19,14 @@ type Admin struct {
 }
 
 func (a *Admin) Validate() error {
-	if !a.Status.Yes() {
+	if a.Enabled.No() {
 		return nil
 	}
+
 	if a.Address == "" {
 		return ErrAdminAddressRequired
 	}
+
 	if _, _, err := net.SplitHostPort(a.Address); err != nil {
 		// Try parsing as port only
 		if strings.HasPrefix(a.Address, ":") {

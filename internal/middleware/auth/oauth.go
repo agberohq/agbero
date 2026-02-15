@@ -137,7 +137,7 @@ func handleGothCallback(w http.ResponseWriter, r *http.Request, provider goth.Pr
 		// NOTE: In Goth, `sess` usually abstracts the params reading,
 		// but `FetchUser` might fail if the params aren't in the URL query as expected.
 		// However, standard Goth providers read from `r.URL.Query()` implicitly
-		// inside `FetchUser`? No, `FetchUser` takes `Session`.
+		// inside `FetchUser`? Unknown, `FetchUser` takes `Session`.
 		// The `Session` impl usually needs to be updated with params.
 		// Actually, `provider.FetchUser` usually expects `Authorize` to have happened.
 		// Let's explicitly look at how Goth does it without `gothic`.

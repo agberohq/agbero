@@ -48,7 +48,7 @@ func TestNewBackend_NoHealthCheck(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b := setupBackend(t, alaye.NewServer(server.URL), nil, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	if b.Proxy == nil {
@@ -326,7 +326,8 @@ func TestHealthCheck_Jitter(t *testing.T) {
 
 	cfg := alaye.Server{Address: ts.URL, Weight: 1}
 	route := &alaye.Route{
-		HealthCheck: &alaye.HealthCheck{
+		HealthCheck: alaye.HealthCheck{
+			Enabled:  alaye.Active,
 			Path:     "/",
 			Interval: 10 * time.Millisecond,
 			Timeout:  50 * time.Millisecond,

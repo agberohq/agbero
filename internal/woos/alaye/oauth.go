@@ -7,7 +7,7 @@ import (
 )
 
 type OAuth struct {
-	Status       Enabled `hcl:"enabled,optional" json:"enabled"`
+	Enabled      Enabled `hcl:"enabled,optional" json:"enabled"`
 	Provider     string  `hcl:"provider" json:"provider"` // "google", "github", "oidc"
 	ClientID     string  `hcl:"client_id" json:"client_id"`
 	ClientSecret Value   `hcl:"client_secret" json:"client_secret"`
@@ -22,10 +22,7 @@ type OAuth struct {
 }
 
 func (o *OAuth) Validate() error {
-	if o == nil {
-		return nil
-	}
-	if !o.Status.Yes() {
+	if !o.Enabled.Yes() {
 		return nil
 	}
 	if o.Provider == "" {

@@ -9,12 +9,12 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
-func (e *Engine) handleAction(w http.ResponseWriter, r *http.Request, rule *alaye.Rule, ruleName, reason string) {
-	var actionDef *alaye.Action
+func (e *Engine) handleAction(w http.ResponseWriter, r *http.Request, rule alaye.Rule, ruleName, reason string) {
+	var actionDef alaye.Action
 	actionName := "ban"
-	if rule != nil && rule.Action != "" {
+	if rule.Action != "" {
 		actionName = rule.Action
-	} else if e.cfg.Defaults != nil && e.cfg.Defaults.Dynamic != nil {
+	} else if e.cfg.Defaults.Dynamic.Action != "" {
 		actionName = e.cfg.Defaults.Dynamic.Action
 	}
 
@@ -25,10 +25,10 @@ func (e *Engine) handleAction(w http.ResponseWriter, r *http.Request, rule *alay
 		}
 	}
 
-	if actionDef == nil {
-		actionDef = &alaye.Action{
-			FirewallAction: "add",
-			Response:       &alaye.Response{StatusCode: 403},
+	if actionDef.Name == "" {
+		actionDef = alaye.Action{
+			Mitigation: "add",
+			Response:   alaye.Response{StatusCode: 403},
 		}
 	}
 
@@ -37,9 +37,9 @@ func (e *Engine) handleAction(w http.ResponseWriter, r *http.Request, rule *alay
 		return
 	}
 
-	if actionDef.FirewallAction == "add" || actionDef.FirewallAction == "ban" {
+	if actionDef.Mitigation == "add" || actionDef.Mitigation == "ban" {
 		duration := 24 * time.Hour
-		if rule != nil && rule.Duration > 0 {
+		if rule.Duration > 0 {
 			duration = rule.Duration
 		}
 
@@ -59,11 +59,11 @@ func (e *Engine) handleAction(w http.ResponseWriter, r *http.Request, rule *alay
 }
 
 func (e *Engine) blockRequest(w http.ResponseWriter, r *http.Request, ruleName, reason string) {
-	e.handleAction(w, r, nil, ruleName, reason)
+	e.handleAction(w, r, alaye.Rule{}, ruleName, reason)
 }
 
-func (e *Engine) sendResponse(w http.ResponseWriter, resp *alaye.Response, ruleName string) {
-	if resp == nil {
+func (e *Engine) sendResponse(w http.ResponseWriter, resp alaye.Response, ruleName string) {
+	if resp.Status.No() {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}

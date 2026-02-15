@@ -28,8 +28,8 @@ func DefaultApply(g *alaye.Global, configAbsPath string) {
 		g.General.MaxHeaderBytes = alaye.DefaultMaxHeaderBytes
 	}
 
-	// RateLimits is a pointer. Must check nil before accessing Yes or fields.
-	if g.RateLimits != nil && g.RateLimits.Status.Default() {
+	// RateLimits is a pointer. Must check nil before accessing Active or fields.
+	if g.RateLimits != nil && g.RateLimits.Enabled.Default() {
 		if g.RateLimits.TTL == 0 {
 			g.RateLimits.TTL = DefaultRateLimitTTL
 		}

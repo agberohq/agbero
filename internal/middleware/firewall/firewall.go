@@ -108,7 +108,7 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 
 		// 3. Check Static Blacklist
 		if e.checkRanger(e.blacklistRanger, ip) {
-			e.handleAction(w, r, nil, "static_blacklist", "blocked_ip")
+			e.handleAction(w, r, alaye.Rule{}, "static_blacklist", "blocked_ip")
 			return
 		}
 
@@ -209,7 +209,7 @@ func (e *Engine) loadStaticRules() error {
 		if r.Type != "static" && r.Type != "whitelist" {
 			continue
 		}
-		if r.Match != nil && len(r.Match.IP) > 0 {
+		if len(r.Match.IP) > 0 {
 			target := e.blacklistRanger
 			if r.Type == "whitelist" {
 				target = e.whitelistRanger
@@ -248,14 +248,11 @@ func (e *Engine) Block(ip, reason string, duration time.Duration) error {
 	})
 }
 
-func (e *Engine) evaluateRules(rules []*alaye.Rule, in *Inspector) (bool, *alaye.Rule) {
+func (e *Engine) evaluateRules(rules []alaye.Rule, in *Inspector) (bool, alaye.Rule) {
 	for _, rule := range rules {
-		if rule.Match == nil {
-			continue
-		}
 
 		if e.checkMatch(rule.Match, in) {
-			if rule.Type == "dynamic" && rule.Match.Threshold != nil {
+			if rule.Type == "dynamic" && rule.Match.Threshold.Enabled.Yes() {
 				triggered := e.checkThreshold(rule, in)
 				if !triggered {
 					continue
@@ -264,10 +261,10 @@ func (e *Engine) evaluateRules(rules []*alaye.Rule, in *Inspector) (bool, *alaye
 			return true, rule
 		}
 	}
-	return false, nil
+	return false, alaye.Rule{}
 }
 
-func (e *Engine) checkMatch(m *alaye.Match, in *Inspector) bool {
+func (e *Engine) checkMatch(m alaye.Match, in *Inspector) bool {
 	if len(m.IP) > 0 {
 		found := false
 		for _, ipStr := range m.IP {
@@ -347,7 +344,7 @@ func (e *Engine) checkMatch(m *alaye.Match, in *Inspector) bool {
 	return true
 }
 
-func (e *Engine) checkCondition(c *alaye.Condition, in *Inspector) bool {
+func (e *Engine) checkCondition(c alaye.Condition, in *Inspector) bool {
 	var val string
 	switch c.Location {
 	case "ip":
@@ -404,9 +401,9 @@ func (e *Engine) checkCondition(c *alaye.Condition, in *Inspector) bool {
 	return match
 }
 
-func (e *Engine) checkThreshold(rule *alaye.Rule, in *Inspector) bool {
+func (e *Engine) checkThreshold(rule alaye.Rule, in *Inspector) bool {
 	t := rule.Match.Threshold
-	if t == nil {
+	if t.Enabled.No() {
 		return true
 	}
 
@@ -421,7 +418,7 @@ func (e *Engine) checkThreshold(rule *alaye.Rule, in *Inspector) bool {
 		}
 	}
 
-	if rule.Match.Extract != nil && rule.Match.Extract.Regex != nil {
+	if rule.Match.Extract.Enabled.Yes() && rule.Match.Extract.Regex != nil {
 		var src string
 		switch rule.Match.Extract.From {
 		case "body":

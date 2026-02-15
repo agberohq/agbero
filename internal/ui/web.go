@@ -120,7 +120,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Defensive: h.route.Web should not be nil here if constructed correctly,
 	// but strictly speaking, pointers can be nil.
 	rootPath := "."
-	if h.route != nil && h.route.Web != nil && h.route.Web.Root.IsSet() {
+	if h.route.Web.Root.IsSet() {
 		rootPath = h.route.Web.Root.String()
 	}
 
@@ -240,7 +240,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		indexName := "index.html"
-		if h.route != nil && h.route.Web != nil && h.route.Web.Index != "" {
+		if h.route.Web.Index != "" {
 			indexName = h.route.Web.Index
 		}
 
@@ -262,7 +262,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Directory Listing
-		if h.route != nil && h.route.Web != nil && h.route.Web.Listing {
+		if h.route.Web.Listing {
 			h.serveDirectoryListing(w, r, f, browserPath)
 			return
 		}

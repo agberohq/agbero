@@ -1,7 +1,7 @@
 package alaye
 
 type Logging struct {
-	Status   Enabled  `hcl:"enabled,optional" json:"enabled"`
+	Enabled  Enabled  `hcl:"enabled,optional" json:"enabled"`
 	Level    string   `hcl:"level,optional" json:"level"`
 	File     string   `hcl:"file,optional" json:"file"`
 	Skip     []string `hcl:"skip,optional"`
@@ -10,7 +10,7 @@ type Logging struct {
 }
 
 type Victoria struct {
-	Status    Enabled `hcl:"enabled,optional" json:"enabled"`
+	Enabled   Enabled `hcl:"enabled,optional" json:"enabled"`
 	URL       string  `hcl:"url,optional" json:"URL"`
 	BatchSize int     `hcl:"batch_size,optional" json:"batch_size"`
 }

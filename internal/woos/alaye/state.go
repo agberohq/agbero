@@ -11,9 +11,9 @@ import (
 type Enabled int
 
 const (
-	Success Enabled = 1
-	Fail    Enabled = -1
-	Unknown Enabled = 0
+	Active   Enabled = 1
+	Inactive Enabled = -1
+	Unknown  Enabled = 0
 )
 
 var (
@@ -37,9 +37,9 @@ func (s *Enabled) Set(v interface{}) error {
 		*s = Enabled(val)
 	case bool:
 		if val {
-			*s = Success
+			*s = Active
 		} else {
-			*s = Fail
+			*s = Inactive
 		}
 	case string:
 		return s.UnmarshalText([]byte(val))
@@ -49,24 +49,24 @@ func (s *Enabled) Set(v interface{}) error {
 	return nil
 }
 
-func (s Enabled) Yes() bool     { return s == Success }
-func (s Enabled) No() bool      { return s == Fail }
+func (s Enabled) Yes() bool     { return s == Active }
+func (s Enabled) No() bool      { return s == Inactive }
 func (s Enabled) Default() bool { return s == Unknown }
 func (s Enabled) Int() int      { return int(s) }
-func (s Enabled) Bool() bool    { return s == Success }
+func (s Enabled) Bool() bool    { return s == Active }
 
 func (s Enabled) Toggle() Enabled {
 	if s.No() {
-		return Success
+		return Active
 	}
-	return Fail
+	return Inactive
 }
 
 func (s Enabled) String() string {
 	switch s {
-	case Success:
+	case Active:
 		return "on"
-	case Fail:
+	case Inactive:
 		return "off"
 	default:
 		return "unknown"
@@ -78,10 +78,10 @@ func (s *Enabled) UnmarshalText(text []byte) error {
 
 	switch raw {
 	case "on", "true", "enabled", "enable", "yes":
-		*s = Success
+		*s = Active
 		return nil
 	case "off", "false", "disabled", "disable", "no":
-		*s = Fail
+		*s = Inactive
 		return nil
 	case "unknown", "default", "":
 		*s = Unknown
@@ -119,9 +119,9 @@ func (s *Enabled) UnmarshalJSON(data []byte) error {
 	var b bool
 	if err := json.Unmarshal(data, &b); err == nil {
 		if b {
-			*s = Success
+			*s = Active
 		} else {
-			*s = Fail
+			*s = Inactive
 		}
 		return nil
 	}

@@ -97,7 +97,7 @@ func TestServer_buildTLS(t *testing.T) {
 	s := &Server{
 		global: &alaye.Global{
 			LetsEncrypt: &alaye.LetsEncrypt{
-				Status: alaye.Success,
+				Status: alaye.Active,
 				Email:  "test@example.com",
 			},
 			Storage: alaye.Storage{
@@ -147,7 +147,7 @@ func TestServer_buildTLS_NoEmail(t *testing.T) {
 func TestServer_buildGlobalRateLimiter(t *testing.T) {
 	s := &Server{global: &alaye.Global{
 		RateLimits: &alaye.GlobalRate{
-			Status:     alaye.Success,
+			Enabled:    alaye.Active,
 			TTL:        time.Minute,
 			MaxEntries: 100,
 			Rules: []alaye.RateRule{
@@ -177,7 +177,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	}
 
 	route := &alaye.Route{
-		Status:   alaye.Success,
+		Status:   alaye.Active,
 		Path:     "/test",
 		Backends: &alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")},
 	}
@@ -208,7 +208,7 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 	}
 
 	route := &alaye.Route{
-		Status:   alaye.Success,
+		Status:   alaye.Active,
 		Path:     "/test",
 		Backends: &alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")},
 	}

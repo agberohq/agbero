@@ -54,7 +54,7 @@ type Server struct {
 	global      *alaye.Global
 	tlsManager  *tlss.Manager
 
-	// FIX: Correct type usage
+	//  Correct type usage
 	firewall *firewall.Engine
 
 	mu         sync.RWMutex
@@ -121,10 +121,10 @@ func (s *Server) Start(configPath string) error {
 		).Infof("config loaded")
 	}
 
-	// FIX: Check Gossip pointer before accessing Yes
+	//  Check Gossip pointer before accessing Active
 	gossipEnabled := false
 	if s.global.Gossip != nil {
-		gossipEnabled = s.global.Gossip.Status.Yes()
+		gossipEnabled = s.global.Gossip.Enabled.Yes()
 	}
 
 	s.logger.Fields(
@@ -164,7 +164,7 @@ func (s *Server) Start(configPath string) error {
 	hosts, _ := s.hostManager.LoadAll()
 	s.logHostStats(hosts)
 
-	// FIX: Gossip initialization
+	//  Gossip initialization
 	if gossipEnabled {
 		gs, err := gossip.NewService(s.hostManager, s.global.Gossip, s.logger)
 		if err != nil {
@@ -180,7 +180,7 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	// FIX: Check Security pointer
+	//  Check Security pointer
 	var trustedProxies []string
 	if s.global.Security != nil {
 		trustedProxies = s.global.Security.TrustedProxies
@@ -195,7 +195,7 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	// FIX: Firewall initialization with pointer check
+	//  Firewall initialization with pointer check
 	var fwConfig *alaye.Firewall
 	if s.global.Security != nil {
 		fwConfig = s.global.Security.Firewall
@@ -699,7 +699,7 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 		h = h3.AdvertiseHTTP3(port)(h)
 	}
 
-	// FIX: Use proper Handler signature with nil context route for global firewall
+	//  Use proper Handler signature with nil context route for global firewall
 	if s.firewall != nil {
 		h = s.firewall.Handler(h, nil)
 	}
@@ -719,7 +719,7 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
 	rlc := s.global.RateLimits
 
-	if rlc == nil || !rlc.Status.Yes() || len(rlc.Rules) == 0 {
+	if rlc == nil || !rlc.Enabled.Yes() || len(rlc.Rules) == 0 {
 		return nil
 	}
 

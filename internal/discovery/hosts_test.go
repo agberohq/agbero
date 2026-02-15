@@ -67,8 +67,9 @@ func TestUpdateGossipNode(t *testing.T) {
 
 	route := alaye.Route{
 		Path: "/api",
-		Backends: &alaye.Backend{
-			LBStrategy: alaye.StrategyRandom,
+		Backends: alaye.Backend{
+			Enabled:  alaye.Active,
+			Strategy: alaye.StrategyRandom,
 			Servers: []alaye.Server{
 				{Address: "http://127.0.0.1:8080", Weight: 1},
 			},
@@ -96,8 +97,9 @@ func TestRemoveGossipNode(t *testing.T) {
 
 	route := alaye.Route{
 		Path: "/api",
-		Backends: &alaye.Backend{
-			LBStrategy: alaye.StrategyRandom,
+		Backends: alaye.Backend{
+			Enabled:  alaye.Active,
+			Strategy: alaye.StrategyRandom,
 			Servers: []alaye.Server{
 				{Address: "http://127.0.0.1:8080", Weight: 1},
 			},
@@ -118,8 +120,9 @@ func TestRouteExists(t *testing.T) {
 
 	route := alaye.Route{
 		Path: "/api",
-		Backends: &alaye.Backend{
-			LBStrategy: alaye.StrategyRandom,
+		Backends: alaye.Backend{
+			Enabled:  alaye.Active,
+			Strategy: alaye.StrategyRandom,
 			Servers: []alaye.Server{
 				{Address: "http://127.0.0.1:8080", Weight: 1},
 			},
@@ -279,11 +282,11 @@ func TestRebuildLookupLocked_MergeFileAndDynamicSamePath(t *testing.T) {
 
 	h.hosts["file"] = &alaye.Host{
 		Domains: []string{"example.com"},
-		Routes: []*alaye.Route{
+		Routes: []alaye.Route{
 			{
 				Path: "/api",
-				Backends: &alaye.Backend{
-					LBStrategy: alaye.StrategyRoundRobin,
+				Backends: alaye.Backend{
+					Strategy: alaye.StrategyRoundRobin,
 					Servers: []alaye.Server{
 						{Address: "http://127.0.0.1:7000", Weight: 1},
 					},
@@ -296,10 +299,14 @@ func TestRebuildLookupLocked_MergeFileAndDynamicSamePath(t *testing.T) {
 	h.dynamicRoutes[rk] = &routeEntry{
 		base: alaye.Route{
 			Path: "/api",
-			Backends: &alaye.Backend{
-				LBStrategy: alaye.StrategyRandom,
+			Backends: alaye.Backend{
+				Enabled:  alaye.Active,
+				Strategy: alaye.StrategyRandom,
 			},
-			HealthCheck: &alaye.HealthCheck{Path: "/"},
+			HealthCheck: alaye.HealthCheck{
+				Enabled: alaye.Active,
+				Path:    "/",
+			},
 		},
 		backends: map[string][]alaye.Server{
 			"node1": {
@@ -326,7 +333,7 @@ func TestRebuildLookupLocked_MergeFileAndDynamicSamePath(t *testing.T) {
 }
 
 func TestSortRoutes(t *testing.T) {
-	routes := []*alaye.Route{
+	routes := []alaye.Route{
 		{Path: "/api"},
 		{Path: "/api/v1/users"},
 		{Path: "/"},
