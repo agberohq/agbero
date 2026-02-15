@@ -177,7 +177,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	}
 
 	route := &alaye.Route{
-		Status:   alaye.Active,
+		Enabled:  alaye.Active,
 		Path:     "/test",
 		Backends: &alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")},
 	}
@@ -208,7 +208,7 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 	}
 
 	route := &alaye.Route{
-		Status:   alaye.Active,
+		Enabled:  alaye.Active,
 		Path:     "/test",
 		Backends: &alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")},
 	}

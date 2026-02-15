@@ -73,6 +73,7 @@ func (t *TCPRoute) Validate() error {
 }
 
 type TCPHealthCheck struct {
+	Enabled  Enabled       `hcl:"enabled,optional" json:"enabled"`
 	Interval time.Duration `hcl:"interval,optional" json:"interval"`
 	Timeout  time.Duration `hcl:"timeout,optional" json:"timeout"`
 	Send     string        `hcl:"send,optional" json:"send"`
@@ -80,7 +81,7 @@ type TCPHealthCheck struct {
 }
 
 func (t *TCPHealthCheck) Validate() error {
-	if t == nil {
+	if t.Enabled.No() {
 		return nil
 	}
 

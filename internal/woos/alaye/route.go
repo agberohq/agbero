@@ -9,8 +9,8 @@ import (
 )
 
 type Route struct {
-	Status Enabled `hcl:"enabled,optional" json:"enabled"`
-	Path   string  `hcl:"path,label" json:"path"`
+	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
+	Path    string  `hcl:"path,label" json:"path"`
 
 	StripPrefixes []string `hcl:"strip_prefixes,optional" json:"strip_prefixes"`
 	AllowedIPs    []string `hcl:"allowed_ips,optional" json:"allowed_ips"`
@@ -119,13 +119,13 @@ func (r *Route) Key() string {
 		}
 	}
 
-	if r.RateLimit.Status.Yes() {
+	if r.RateLimit.Enabled.Yes() {
 		w.WriteString("rl_on")
 		if r.RateLimit.IgnoreGlobal {
 			w.WriteString("ig")
 		}
 		w.WriteString(r.RateLimit.UsePolicy)
-		if rule := r.RateLimit.Rule; rule != nil {
+		if rule := r.RateLimit.Rule; rule.Enabled.Yes() {
 			w.WriteString(rule.Name)
 			w.WriteString(fmt.Sprint(rule.Requests))
 			w.WriteString(fmt.Sprint(rule.Window))

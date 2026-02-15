@@ -29,7 +29,7 @@ func DefaultApply(g *alaye.Global, configAbsPath string) {
 	}
 
 	// RateLimits is a pointer. Must check nil before accessing Active or fields.
-	if g.RateLimits != nil && g.RateLimits.Enabled.Default() {
+	if g.RateLimits.Enabled.Yes() {
 		if g.RateLimits.TTL == 0 {
 			g.RateLimits.TTL = DefaultRateLimitTTL
 		}
@@ -54,7 +54,7 @@ func resolvePaths(g *alaye.Global, configAbsPath string) {
 	logDir := filepath.Join(baseDir, LogDir.Name())
 
 	// Logging is a pointer. Check before access.
-	if g.Logging != nil {
+	if g.Logging.Enabled.Yes() {
 		if g.Logging.File == "" {
 			g.Logging.File = filepath.Join(logDir, DefaultLogName)
 		} else if !filepath.IsAbs(g.Logging.File) {

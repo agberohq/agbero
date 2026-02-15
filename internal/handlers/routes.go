@@ -32,7 +32,7 @@ func NewRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Logge
 		return FallbackRoute("invalid route config")
 	}
 
-	if route.Web != nil && route.Web.Root.IsSet() {
+	if route.Web.Root.IsSet() {
 		return newWebRoute(route, globalRate, logger)
 	}
 
@@ -46,27 +46,27 @@ func newWebRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Lo
 		chain = ipallow.New(route.AllowedIPs, logger)(chain)
 	}
 
-	if route.JWTAuth != nil {
-		chain = auth.JWT(route.JWTAuth)(chain)
+	if route.JWTAuth.Enabled.Yes() {
+		chain = auth.JWT(&route.JWTAuth)(chain)
 	}
-	if route.BasicAuth != nil && len(route.BasicAuth.Users) > 0 {
-		chain = auth.Basic(route.BasicAuth)(chain)
+	if route.BasicAuth.Enabled.Yes() && len(route.BasicAuth.Users) > 0 {
+		chain = auth.Basic(&route.BasicAuth)(chain)
 	}
-	if route.ForwardAuth != nil && route.ForwardAuth.URL != "" {
-		chain = auth.Forward(route.ForwardAuth)(chain)
+	if route.ForwardAuth.Enabled.Yes() && route.ForwardAuth.URL != "" {
+		chain = auth.Forward(&route.ForwardAuth)(chain)
 	}
 
-	if route.RateLimit != nil && route.RateLimit.Status.Yes() {
-		if rl := buildRouteLimiter(route.RateLimit, globalRate); rl != nil {
+	if route.RateLimit.Enabled.Yes() {
+		if rl := buildRouteLimiter(&route.RateLimit, globalRate); rl != nil {
 			chain = rl.Handler(chain)
 		}
 	}
 
-	if route.Headers != nil {
-		chain = headers.Headers(route.Headers)(chain)
+	if route.Headers.Enabled.Yes() {
+		chain = headers.Headers(&route.Headers)(chain)
 	}
 
-	if route.CompressionConfig != nil && route.CompressionConfig.Enabled.Yes() {
+	if route.CompressionConfig.Enabled.Yes() {
 		chain = compress.Compress(route)(chain)
 	}
 
@@ -80,7 +80,7 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 	var backends []*xhttp.Backend
 
 	//  Defensive check for Backends
-	if route.Backends == nil {
+	if route.Backends.Enabled.No() {
 		// If no backends and not a web route, this is a misconfiguration or a placeholder route.
 		// We return a fallback to avoid panic.
 		logger.Fields("path", route.Path).Warn("proxy route has no backends configured")
@@ -98,7 +98,7 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 	}
 
 	timeout := time.Duration(0)
-	if route.Timeouts != nil && route.Timeouts.Request != 0 {
+	if route.Timeouts.Request != 0 {
 		timeout = route.Timeouts.Request
 	}
 
@@ -115,26 +115,26 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 		chain = ipallow.New(route.AllowedIPs, logger)(chain)
 	}
 
-	if route.JWTAuth != nil {
-		chain = auth.JWT(route.JWTAuth)(chain)
+	if route.JWTAuth.Enabled.Yes() {
+		chain = auth.JWT(&route.JWTAuth)(chain)
 	}
-	if route.BasicAuth != nil && len(route.BasicAuth.Users) > 0 {
-		chain = auth.Basic(route.BasicAuth)(chain)
+	if route.BasicAuth.Enabled.Yes() && len(route.BasicAuth.Users) > 0 {
+		chain = auth.Basic(&route.BasicAuth)(chain)
 	}
-	if route.ForwardAuth != nil && route.ForwardAuth.URL != "" {
-		chain = auth.Forward(route.ForwardAuth)(chain)
+	if route.ForwardAuth.Enabled.Yes() && route.ForwardAuth.URL != "" {
+		chain = auth.Forward(&route.ForwardAuth)(chain)
 	}
 
-	if route.RateLimit != nil && route.RateLimit.Status.Yes() {
-		if rl := buildRouteLimiter(route.RateLimit, globalRate); rl != nil {
+	if route.RateLimit.Enabled.Yes() && route.RateLimit.Enabled.Yes() {
+		if rl := buildRouteLimiter(&route.RateLimit, globalRate); rl != nil {
 			chain = rl.Handler(chain)
 		}
 	}
 
-	if route.Headers != nil {
-		chain = headers.Headers(route.Headers)(chain)
+	if route.Headers.Enabled.Yes() {
+		chain = headers.Headers(&route.Headers)(chain)
 	}
-	if route.CompressionConfig != nil && route.CompressionConfig.Enabled.Yes() {
+	if route.CompressionConfig.Enabled.Yes() {
 		chain = compress.Compress(route)(chain)
 	}
 
@@ -167,7 +167,7 @@ func FallbackRoute(msg string) *Route {
 }
 
 func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimit.RateLimiter {
-	if rlc == nil || !rlc.Status.Yes() {
+	if rlc == nil || !rlc.Enabled.Yes() {
 		return nil
 	}
 
@@ -200,8 +200,8 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 		}
 	}
 
-	if rlc.Rule != nil {
-		rules = append(rules, *rlc.Rule)
+	if rlc.Rule.Enabled.Yes() {
+		rules = append(rules, rlc.Rule)
 	}
 
 	if len(rules) == 0 {

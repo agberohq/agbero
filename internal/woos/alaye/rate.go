@@ -49,21 +49,19 @@ func (g *GlobalRate) Validate() error {
 
 // RouteRate defines rate limiting for a specific route.
 type RouteRate struct {
-	Status       Enabled   `hcl:"enabled,optional" json:"enabled"`
-	IgnoreGlobal bool      `hcl:"ignore_global,optional" json:"ignore_global"` // Stop global rules processing
-	UsePolicy    string    `hcl:"use_policy,optional" json:"use_policy"`       // Reference a named policy
-	Rule         *RateRule `hcl:"rule,block" json:"rule,omitempty"`            // Ad-hoc definition
+	Enabled      Enabled  `hcl:"enabled,optional" json:"enabled"`
+	IgnoreGlobal bool     `hcl:"ignore_global,optional" json:"ignore_global"` // Stop global rules processing
+	UsePolicy    string   `hcl:"use_policy,optional" json:"use_policy"`       // Reference a named policy
+	Rule         RateRule `hcl:"rule,block" json:"rule,omitempty"`            // Ad-hoc definition
 }
 
 func (r *RouteRate) Validate() error {
-	if !r.Status.Yes() {
+	if r.Enabled.No() {
 		return nil
 	}
 
-	if r.Rule != nil {
-		if err := r.Rule.Validate(); err != nil {
-			return errors.Newf("ad-hoc rule: %w", err)
-		}
+	if err := r.Rule.Validate(); err != nil {
+		return errors.Newf("ad-hoc rule: %w", err)
 	}
 
 	return nil
@@ -93,6 +91,7 @@ func (p *RatePolicy) Validate() error {
 
 // RateRule is a specific rule application (matching path/method).
 type RateRule struct {
+	Enabled  Enabled  `hcl:"enabled,optional" json:"enabled"`
 	Name     string   `hcl:"name,label,optional" json:"name"` // Optional label for logging
 	Prefixes []string `hcl:"prefixes,optional" json:"prefixes"`
 	Methods  []string `hcl:"methods,optional" json:"methods"`
@@ -104,6 +103,9 @@ type RateRule struct {
 }
 
 func (r *RateRule) Validate() error {
+	if r.Enabled.No() {
+		return nil
+	}
 	if r.Requests <= 0 {
 		return ErrRateLimitNegativeRequests
 	}

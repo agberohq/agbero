@@ -22,7 +22,7 @@ var (
 )
 
 // Helper to create a backend with customizable params
-func setupBackend(t *testing.T, server alaye.Server, hc *alaye.HealthCheck, cb *alaye.CircuitBreaker) *Backend {
+func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb alaye.CircuitBreaker) *Backend {
 	route := &alaye.Route{
 		HealthCheck:    hc,
 		CircuitBreaker: cb,
@@ -67,7 +67,7 @@ func TestServeHTTP_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b := setupBackend(t, alaye.NewServer(server.URL), nil, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -103,7 +103,7 @@ func TestServeHTTP_ContextCancel(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b := setupBackend(t, alaye.NewServer(server.URL), nil, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -142,7 +142,7 @@ func TestProxy_DirectorModifications(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b := setupBackend(t, alaye.NewServer(server.URL), nil, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	req := httptest.NewRequest("GET", "/test", nil)
@@ -184,7 +184,7 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 	defer server.Close()
 
 	route := &alaye.Route{
-		CircuitBreaker: &alaye.CircuitBreaker{Threshold: 2},
+		CircuitBreaker: alaye.CircuitBreaker{Threshold: 2},
 	}
 
 	b, err := NewBackend(alaye.NewServer(server.URL), route, testLogger, metrics.DefaultRegistry)
@@ -217,7 +217,7 @@ func TestCircuitBreaker_NoTripOnCancel(t *testing.T) {
 	defer server.Close()
 
 	route := &alaye.Route{
-		CircuitBreaker: &alaye.CircuitBreaker{Threshold: 1},
+		CircuitBreaker: alaye.CircuitBreaker{Threshold: 1},
 	}
 
 	b, err := NewBackend(alaye.NewServer(server.URL), route, testLogger, metrics.DefaultRegistry)
@@ -242,13 +242,13 @@ func TestHealthCheck_Failure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	hc := &alaye.HealthCheck{
+	hc := alaye.HealthCheck{
 		Path:      "/health",
 		Interval:  100 * time.Millisecond,
 		Threshold: 2,
 		Timeout:   50 * time.Millisecond,
 	}
-	b := setupBackend(t, alaye.NewServer(server.URL), hc, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	time.Sleep(500 * time.Millisecond)
@@ -271,13 +271,14 @@ func TestHealthCheck_Recovery(t *testing.T) {
 	}))
 	defer server.Close()
 
-	hc := &alaye.HealthCheck{
+	hc := alaye.HealthCheck{
+		Enabled:   alaye.Active,
 		Path:      "/health",
 		Interval:  100 * time.Millisecond,
 		Threshold: 2,
 		Timeout:   50 * time.Millisecond,
 	}
-	b := setupBackend(t, alaye.NewServer(server.URL), hc, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	time.Sleep(300 * time.Millisecond)
@@ -355,13 +356,14 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 	}))
 	defer server.Close()
 
-	hc := &alaye.HealthCheck{
+	hc := alaye.HealthCheck{
+		Enabled:   alaye.Active,
 		Path:      "/health",
 		Interval:  50 * time.Millisecond,
 		Threshold: 1,
 		Timeout:   25 * time.Millisecond,
 	}
-	b := setupBackend(t, alaye.NewServer(server.URL), hc, nil)
+	b := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 
 	time.Sleep(50 * time.Millisecond)
 	b.Stop()
@@ -376,7 +378,7 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 }
 
 func TestUptime(t *testing.T) {
-	b := setupBackend(t, alaye.NewServer("http://example.com"), nil, nil)
+	b := setupBackend(t, alaye.NewServer("http://example.com"), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	time.Sleep(100 * time.Millisecond)
@@ -387,7 +389,7 @@ func TestUptime(t *testing.T) {
 }
 
 func TestActivitySnapshot(t *testing.T) {
-	b := setupBackend(t, alaye.NewServer("http://example.com"), nil, nil)
+	b := setupBackend(t, alaye.NewServer("http://example.com"), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	b.Activity.StartRequest()

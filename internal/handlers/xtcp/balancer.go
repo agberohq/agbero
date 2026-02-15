@@ -23,7 +23,7 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 	timeout := woos.TCPHealthCheckTimeout
 	var send, expect string
 
-	if cfg.HealthCheck != nil {
+	if cfg.HealthCheck.Enabled.Yes() {
 		if cfg.HealthCheck.Interval > 0 {
 			interval = cfg.HealthCheck.Interval
 		}

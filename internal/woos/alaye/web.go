@@ -7,7 +7,7 @@ import (
 )
 
 type Web struct {
-	Status  Enabled `hcl:"enabled,optional" json:"enabled"`
+	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
 	Root    WebRoot `hcl:"root,optional" json:"root"`
 	Index   string  `hcl:"index,optional" json:"index"`
 	Listing bool    `hcl:"listing,optional" json:"listing"`
@@ -16,7 +16,7 @@ type Web struct {
 
 func (w *Web) Validate() error {
 
-	if w.Status.No() {
+	if w.Enabled.No() {
 		return nil
 	}
 
