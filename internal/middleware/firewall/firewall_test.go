@@ -32,8 +32,8 @@ func createTestEngine(t *testing.T, cfg *alaye.Firewall) *Engine {
 
 	// Manually compile regexes for tests as validation isn't run here
 	for _, r := range cfg.Rules {
-		if r.Match != nil {
-			if r.Match.Extract != nil && r.Match.Extract.Pattern != "" {
+		if r.Match.Enabled.Yes() {
+			if r.Match.Extract.Pattern != "" {
 				r.Match.Extract.Regex = regexp.MustCompile(r.Match.Extract.Pattern)
 			}
 			compileConditions(r.Match.Any)
@@ -49,7 +49,7 @@ func createTestEngine(t *testing.T, cfg *alaye.Firewall) *Engine {
 	return e
 }
 
-func compileConditions(conds []*alaye.Condition) {
+func compileConditions(conds []alaye.Condition) {
 	for _, c := range conds {
 		if c.Pattern != "" {
 			c.Compiled = regexp.MustCompile(c.Pattern)
@@ -60,18 +60,18 @@ func compileConditions(conds []*alaye.Condition) {
 func TestStaticRules(t *testing.T) {
 	cfg := &alaye.Firewall{
 		Status: alaye.Active,
-		Rules: []*alaye.Rule{
+		Rules: []alaye.Rule{
 			{
 				Name: "whitelist_admin",
 				Type: "whitelist",
-				Match: &alaye.Match{
+				Match: alaye.Match{
 					IP: []string{"10.0.0.5"},
 				},
 			},
 			{
 				Name: "blacklist_bot",
 				Type: "static",
-				Match: &alaye.Match{
+				Match: alaye.Match{
 					IP: []string{"1.2.3.4", "5.0.0.0/8"},
 				},
 			},
@@ -106,12 +106,12 @@ func TestStaticRules(t *testing.T) {
 func TestDynamicRules_Logic(t *testing.T) {
 	cfg := &alaye.Firewall{
 		Status: alaye.Active,
-		Rules: []*alaye.Rule{
+		Rules: []alaye.Rule{
 			{
 				Name: "bad_req",
 				Type: "dynamic",
-				Match: &alaye.Match{
-					Any: []*alaye.Condition{
+				Match: alaye.Match{
+					Any: []alaye.Condition{
 						{Location: "header", Key: "X-Test", Value: "BlockMe"},
 						{Location: "query", Key: "evil", Value: "true"},
 					},
@@ -159,11 +159,11 @@ func TestBodyInspection(t *testing.T) {
 		InspectBody:         true,
 		MaxInspectBytes:     1024,
 		InspectContentTypes: []string{"application/json"},
-		Rules: []*alaye.Rule{
+		Rules: []alaye.Rule{
 			{
 				Name: "sql_injection",
 				Type: "dynamic",
-				Match: &alaye.Match{
+				Match: alaye.Match{
 					Any: []alaye.Condition{
 						{Location: "body", Pattern: "(?i)union.*select"},
 					},
@@ -213,11 +213,11 @@ func TestBodyInspection(t *testing.T) {
 func TestThresholds(t *testing.T) {
 	cfg := &alaye.Firewall{
 		Status: alaye.Active,
-		Rules: []*alaye.Rule{
+		Rules: []alaye.Rule{
 			{
 				Name: "rate_limit",
 				Type: "dynamic",
-				Match: &alaye.Match{
+				Match: alaye.Match{
 					// Match everything
 					Any: []alaye.Condition{{Location: "path", Operator: "prefix", Value: "/"}},
 					Threshold: alaye.Threshold{
@@ -296,11 +296,11 @@ func TestRouteOverrides(t *testing.T) {
 	// Global: Block /admin
 	globalCfg := &alaye.Firewall{
 		Status: alaye.Active,
-		Rules: []*alaye.Rule{
+		Rules: []alaye.Rule{
 			{
 				Name: "block_admin",
 				Type: "dynamic",
-				Match: &alaye.Match{
+				Match: alaye.Match{
 					Path: []string{"/admin"},
 				},
 			},
@@ -333,11 +333,11 @@ func TestRouteOverrides(t *testing.T) {
 	}
 
 	// 3. Route Specific Rule (Block /secret) -> 1.2.3.3
-	routeFW.Rules = []*alaye.Rule{
+	routeFW.Rules = []alaye.Rule{
 		{
 			Name: "route_block",
 			Type: "dynamic",
-			Match: &alaye.Match{
+			Match: alaye.Match{
 				Path: []string{"/secret"},
 			},
 		},

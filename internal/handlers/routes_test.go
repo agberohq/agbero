@@ -121,7 +121,7 @@ func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
 			Servers: alaye.NewServers(srv.URL),
 		},
 		Headers: alaye.Headers{
-			Request: &alaye.Header{
+			Request: alaye.Header{
 				Set: map[string]string{"X-Test": "Added"},
 			},
 		},
@@ -456,7 +456,7 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 		},
 		Headers: alaye.Headers{
 			Enabled: alaye.Active,
-			Response: &alaye.Header{
+			Response: alaye.Header{
 				Set: map[string]string{
 					"X-Custom-Header": "TestValue",
 					"Cache-Control":   "public, max-age=3600",

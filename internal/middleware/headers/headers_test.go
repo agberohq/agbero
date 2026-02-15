@@ -10,7 +10,7 @@ import (
 
 func TestHeaders_RequestMods(t *testing.T) {
 	cfg := &alaye.Headers{
-		Request: &alaye.Header{
+		Request: alaye.Header{
 			Set:    map[string]string{"X-Test": "set-value"},
 			Add:    map[string]string{"X-Multi": "add1"},
 			Remove: []string{"User-Agent"},
@@ -53,7 +53,7 @@ func TestHeaders_RequestMods(t *testing.T) {
 
 func TestHeaders_ResponseMods(t *testing.T) {
 	cfg := &alaye.Headers{
-		Response: &alaye.Header{
+		Response: alaye.Header{
 			Set:    map[string]string{"X-Resp": "resp-value"},
 			Add:    map[string]string{"X-Resp-Multi": "add2"},
 			Remove: []string{"Content-Type"},
