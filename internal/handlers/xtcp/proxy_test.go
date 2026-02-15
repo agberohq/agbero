@@ -210,17 +210,17 @@ func TestProxy_SNIRouting_Exact_Wildcard_Default(t *testing.T) {
 
 	// Exact
 	p.AddRoute("a.com", alaye.TCPRoute{
-		Backends: []alaye.Server{{Address: sA}},
+		Backends: []*alaye.Server{{Address: sA}},
 	})
 
 	// Wildcard
 	p.AddRoute("*.w.com", alaye.TCPRoute{
-		Backends: []alaye.Server{{Address: sW}},
+		Backends: []*alaye.Server{{Address: sW}},
 	})
 
 	// Default
 	p.AddRoute("*", alaye.TCPRoute{
-		Backends: []alaye.Server{{Address: sD}},
+		Backends: []*alaye.Server{{Address: sD}},
 	})
 
 	if err := p.Start(); err != nil {
@@ -267,7 +267,7 @@ func TestProxy_DefaultRoute_NoClientData_StillConnects(t *testing.T) {
 	p := NewProxy(proxyAddr, newTestLogger())
 
 	p.AddRoute("*", alaye.TCPRoute{
-		Backends: []alaye.Server{{Address: sD}},
+		Backends: []*alaye.Server{{Address: sD}},
 	})
 
 	if err := p.Start(); err != nil {
@@ -300,7 +300,7 @@ func TestProxy_DialRetry_SkipsDeadBackend(t *testing.T) {
 	proxyAddr := getFreePort(t)
 	p := NewProxy(proxyAddr, newTestLogger())
 	p.AddRoute("*", alaye.TCPRoute{
-		Backends: []alaye.Server{
+		Backends: []*alaye.Server{
 			{Address: deadAddr},
 			{Address: live},
 		},
@@ -334,7 +334,7 @@ func TestProxy_HalfClose_PropagatesEOF(t *testing.T) {
 	p := NewProxy(proxyAddr, newTestLogger())
 	p.SetIdleTimeout(5 * time.Second)
 	p.AddRoute("*", alaye.TCPRoute{
-		Backends: []alaye.Server{{Address: up}},
+		Backends: []*alaye.Server{{Address: up}},
 	})
 
 	if err := p.Start(); err != nil {

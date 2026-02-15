@@ -39,8 +39,8 @@ func (e *Engine) handleAction(w http.ResponseWriter, r *http.Request, rule *alay
 
 	if actionDef.FirewallAction == "add" || actionDef.FirewallAction == "ban" {
 		duration := 24 * time.Hour
-		if rule != nil && rule.Duration.TimeDuration() > 0 {
-			duration = rule.Duration.TimeDuration()
+		if rule != nil && rule.Duration > 0 {
+			duration = rule.Duration
 		}
 
 		ip := clientip.ClientIP(r)
@@ -59,8 +59,7 @@ func (e *Engine) handleAction(w http.ResponseWriter, r *http.Request, rule *alay
 }
 
 func (e *Engine) blockRequest(w http.ResponseWriter, r *http.Request, ruleName, reason string) {
-	w.WriteHeader(http.StatusForbidden)
-	w.Write([]byte("Access Denied"))
+	e.handleAction(w, r, nil, ruleName, reason)
 }
 
 func (e *Engine) sendResponse(w http.ResponseWriter, resp *alaye.Response, ruleName string) {
@@ -78,9 +77,10 @@ func (e *Engine) sendResponse(w http.ResponseWriter, resp *alaye.Response, ruleN
 
 	if resp.Template != nil {
 		data := map[string]any{"RuleName": ruleName, "Timestamp": time.Now().Unix()}
-		_ = resp.Template.Execute(w, data)
+		if err := resp.Template.Execute(w, data); err != nil {
+			e.logger.Error("template execution failed", "err", err, "rule", ruleName)
+		}
 	} else if resp.BodyTemplate != "" {
-		// Fallback if not compiled (shouldn't happen with Validate)
 		w.Write([]byte(resp.BodyTemplate))
 	}
 }

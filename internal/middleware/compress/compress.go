@@ -39,7 +39,7 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 			}
 
 			cc := route.CompressionConfig
-			if !cc.Enabled {
+			if !cc.Status.Enabled() {
 				next.ServeHTTP(w, r)
 				return
 			}

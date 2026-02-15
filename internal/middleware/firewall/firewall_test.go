@@ -59,7 +59,7 @@ func compileConditions(conds []*alaye.Condition) {
 
 func TestStaticRules(t *testing.T) {
 	cfg := &alaye.Firewall{
-		Enabled: true,
+		Status: alaye.Success,
 		Rules: []*alaye.Rule{
 			{
 				Name: "whitelist_admin",
@@ -104,9 +104,8 @@ func TestStaticRules(t *testing.T) {
 }
 
 func TestDynamicRules_Logic(t *testing.T) {
-	// Rule: Block if (Header X-Test=BlockMe) OR (Query evil=true)
 	cfg := &alaye.Firewall{
-		Enabled: true,
+		Status: alaye.Success,
 		Rules: []*alaye.Rule{
 			{
 				Name: "bad_req",
@@ -125,38 +124,38 @@ func TestDynamicRules_Logic(t *testing.T) {
 	defer e.Close()
 	h := e.Handler(mockHandler, nil)
 
-	// Case 1: Match Header
+	// Case 1: Match Header -> Block IP 1.2.3.1
 	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "1.2.3.1:123"
 	req.Header.Set("X-Test", "BlockMe")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 403 {
-		t.Error("Any: Header match failed")
+		t.Errorf("Any: Header match failed. Got %d", rec.Code)
 	}
 
-	// Case 2: Match Query
+	// Case 2: Match Query -> Block IP 1.2.3.2 (Unique IP)
 	req = httptest.NewRequest("GET", "/?evil=true", nil)
+	req.RemoteAddr = "1.2.3.2:123"
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 403 {
-		t.Error("Any: Query match failed")
+		t.Errorf("Any: Query match failed. Got %d", rec.Code)
 	}
 
-	// Case 3: No Match
+	// Case 3: No Match -> Allow IP 1.2.3.3 (Unique IP)
 	req = httptest.NewRequest("GET", "/", nil)
-	// Headers and Query are empty, so no condition in Any should match.
-	// checkMatch should return false.
-	// Handler should proceed to next (200).
+	req.RemoteAddr = "1.2.3.3:123"
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
-		t.Error("Any: False positive. Request matched but should not have.")
+		t.Errorf("Any: False positive. Got %d", rec.Code)
 	}
 }
 
 func TestBodyInspection(t *testing.T) {
 	cfg := &alaye.Firewall{
-		Enabled:             true,
+		Status:              alaye.Success,
 		InspectBody:         true,
 		MaxInspectBytes:     1024,
 		InspectContentTypes: []string{"application/json"},
@@ -177,50 +176,53 @@ func TestBodyInspection(t *testing.T) {
 	defer e.Close()
 	h := e.Handler(mockHandler, nil)
 
-	// Case 1: Malicious Body
+	// Case 1: Malicious Body (JSON) - Block 1.2.3.1
 	body := bytes.NewBufferString(`{"q": "UNION SELECT * FROM users"}`)
 	req := httptest.NewRequest("POST", "/api", body)
+	req.RemoteAddr = "1.2.3.1:123"
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 403 {
-		t.Error("Body match failed")
+		t.Errorf("Body match failed. Got %d", rec.Code)
 	}
 
-	// Case 2: Safe Body
+	// Case 2: Safe Body - Allow 1.2.3.2
 	body = bytes.NewBufferString(`{"q": "hello world"}`)
 	req = httptest.NewRequest("POST", "/api", body)
+	req.RemoteAddr = "1.2.3.2:123"
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
-		t.Error("Body false positive")
+		t.Errorf("Body false positive. Got %d", rec.Code)
 	}
 
-	// Case 3: Ignored Content-Type (Text contains malicious payload, but firewall should ignore)
+	// Case 3: Malicious Content but Ignored Type - Allow 1.2.3.3
 	body = bytes.NewBufferString(`UNION SELECT`)
 	req = httptest.NewRequest("POST", "/upload", body)
-	req.Header.Set("Content-Type", "text/plain") // Not in inspect list
+	req.RemoteAddr = "1.2.3.3:123"
+	req.Header.Set("Content-Type", "text/plain")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
-		t.Error("Should ignore unlisted content-type")
+		t.Errorf("Should ignore unlisted content-type. Got %d", rec.Code)
 	}
 }
 
 func TestThresholds(t *testing.T) {
-	// Rule: Allow 2 requests per minute, block on 3rd
 	cfg := &alaye.Firewall{
-		Enabled: true,
+		Status: alaye.Success,
 		Rules: []*alaye.Rule{
 			{
 				Name: "rate_limit",
 				Type: "dynamic",
 				Match: &alaye.Match{
-					Any: []*alaye.Condition{{Location: "path", Value: "/login"}},
+					// Match everything
+					Any: []*alaye.Condition{{Location: "path", Operator: "prefix", Value: "/"}},
 					Threshold: &alaye.Threshold{
 						Count:   3,
-						Window:  alaye.Duration(1 * time.Minute),
+						Window:  1 * time.Minute,
 						TrackBy: "ip",
 					},
 				},
@@ -240,83 +242,28 @@ func TestThresholds(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
-		t.Fatal("Req 1 blocked")
+		t.Fatalf("Req 1 blocked: %d", rec.Code)
 	}
 
 	// Req 2 (Pass)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
-		t.Fatal("Req 2 blocked")
+		t.Fatalf("Req 2 blocked: %d", rec.Code)
 	}
 
 	// Req 3 (Block - Threshold Reached)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 403 {
-		t.Fatal("Req 3 not blocked (Threshold failed)")
+		t.Fatalf("Req 3 not blocked (Threshold failed): %d", rec.Code)
 	}
 
 	// Req 4 (Block - Persisted)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 403 {
-		t.Fatal("Req 4 not blocked (Persistence failed)")
-	}
-}
-
-func TestRouteOverrides(t *testing.T) {
-	// Global rule blocks /admin
-	globalCfg := &alaye.Firewall{
-		Enabled: true,
-		Rules: []*alaye.Rule{
-			{
-				Name: "block_admin",
-				Type: "dynamic",
-				Match: &alaye.Match{
-					Path: []string{"/admin"},
-				},
-			},
-		},
-	}
-
-	e := createTestEngine(t, globalCfg)
-	defer e.Close()
-
-	// 1. Test Default Global (Blocked)
-	req := httptest.NewRequest("GET", "/admin", nil)
-	rec := httptest.NewRecorder()
-	e.Handler(mockHandler, nil).ServeHTTP(rec, req)
-	if rec.Code != 403 {
-		t.Error("Global rule should apply")
-	}
-
-	// 2. Test Route Override (Ignore Global -> Allowed)
-	routeFW := &alaye.RouteFirewall{
-		Enabled:      true, // This ensures route logic runs
-		IgnoreGlobal: true,
-	}
-	rec = httptest.NewRecorder()
-	e.Handler(mockHandler, routeFW).ServeHTTP(rec, req)
-	if rec.Code != 200 {
-		t.Error("Route override failed to ignore global")
-	}
-
-	// 3. Test Route Specific Rule (Block /secret)
-	routeFW.Rules = []*alaye.Rule{
-		{
-			Name: "route_block",
-			Type: "dynamic",
-			Match: &alaye.Match{
-				Path: []string{"/secret"},
-			},
-		},
-	}
-	reqSecret := httptest.NewRequest("GET", "/secret", nil)
-	rec = httptest.NewRecorder()
-	e.Handler(mockHandler, routeFW).ServeHTTP(rec, reqSecret)
-	if rec.Code != 403 {
-		t.Error("Route specific rule failed")
+		t.Fatalf("Req 4 not blocked (Persistence failed): %d", rec.Code)
 	}
 }
 
@@ -324,7 +271,7 @@ func TestPersistence(t *testing.T) {
 	dir, _ := os.MkdirTemp("", "persist")
 	defer os.RemoveAll(dir)
 
-	cfg := &alaye.Firewall{Enabled: true}
+	cfg := &alaye.Firewall{Status: alaye.Success}
 	e1, _ := New(cfg, woos.NewFolder(dir), ll.New("test").Disable())
 
 	// Manually ban
@@ -342,5 +289,154 @@ func TestPersistence(t *testing.T) {
 
 	if rec.Code != 403 {
 		t.Error("Persistence failed: IP not blocked after restart")
+	}
+}
+
+func TestRouteOverrides(t *testing.T) {
+	// Global: Block /admin
+	globalCfg := &alaye.Firewall{
+		Status: alaye.Success,
+		Rules: []*alaye.Rule{
+			{
+				Name: "block_admin",
+				Type: "dynamic",
+				Match: &alaye.Match{
+					Path: []string{"/admin"},
+				},
+			},
+		},
+	}
+
+	e := createTestEngine(t, globalCfg)
+	defer e.Close()
+
+	// 1. Default Global (Block) -> 1.2.3.1
+	req := httptest.NewRequest("GET", "/admin", nil)
+	req.RemoteAddr = "1.2.3.1:123"
+	rec := httptest.NewRecorder()
+	e.Handler(mockHandler, nil).ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Error("Global rule should apply")
+	}
+
+	// 2. Route Ignore Global (Allow) -> 1.2.3.2
+	routeFW := &alaye.FirewallRoute{
+		Status:       alaye.Success,
+		IgnoreGlobal: true,
+	}
+	req = httptest.NewRequest("GET", "/admin", nil)
+	req.RemoteAddr = "1.2.3.2:123"
+	rec = httptest.NewRecorder()
+	e.Handler(mockHandler, routeFW).ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Error("Route override failed to ignore global")
+	}
+
+	// 3. Route Specific Rule (Block /secret) -> 1.2.3.3
+	routeFW.Rules = []*alaye.Rule{
+		{
+			Name: "route_block",
+			Type: "dynamic",
+			Match: &alaye.Match{
+				Path: []string{"/secret"},
+			},
+		},
+	}
+	reqSecret := httptest.NewRequest("GET", "/secret", nil)
+	reqSecret.RemoteAddr = "1.2.3.3:123"
+	rec = httptest.NewRecorder()
+	e.Handler(mockHandler, routeFW).ServeHTTP(rec, reqSecret)
+	if rec.Code != 403 {
+		t.Error("Route specific rule failed")
+	}
+}
+
+func TestConditions_Table(t *testing.T) {
+	tests := []struct {
+		name      string
+		cond      alaye.Condition
+		reqURL    string
+		reqHeader map[string]string
+		reqMethod string
+		want      bool
+	}{
+		{
+			name:   "Prefix Match",
+			cond:   alaye.Condition{Location: "path", Operator: "prefix", Value: "/api"},
+			reqURL: "/api/v1/users",
+			want:   true,
+		},
+		{
+			name:   "Suffix Match",
+			cond:   alaye.Condition{Location: "path", Operator: "suffix", Value: ".php"},
+			reqURL: "/index.php",
+			want:   true,
+		},
+		{
+			name:   "Contains Match",
+			cond:   alaye.Condition{Location: "path", Operator: "contains", Value: "admin"},
+			reqURL: "/v1/admin/login",
+			want:   true,
+		},
+		{
+			name:      "Header Missing (True)",
+			cond:      alaye.Condition{Location: "header", Key: "X-Auth", Operator: "missing"},
+			reqURL:    "/",
+			reqHeader: map[string]string{}, // Empty
+			want:      true,
+		},
+		{
+			name:      "Header Missing (False)",
+			cond:      alaye.Condition{Location: "header", Key: "X-Auth", Operator: "missing"},
+			reqURL:    "/",
+			reqHeader: map[string]string{"X-Auth": "123"},
+			want:      false,
+		},
+		{
+			name:      "Method Exact",
+			cond:      alaye.Condition{Location: "method", Value: "POST"},
+			reqURL:    "/",
+			reqMethod: "POST",
+			want:      true,
+		},
+		{
+			name:      "Method IgnoreCase",
+			cond:      alaye.Condition{Location: "method", Value: "post", IgnoreCase: true},
+			reqURL:    "/",
+			reqMethod: "POST",
+			want:      true,
+		},
+		{
+			name:   "Negate Match",
+			cond:   alaye.Condition{Location: "path", Value: "/safe", Negate: true},
+			reqURL: "/safe",
+			want:   false,
+		},
+	}
+
+	cfg := &alaye.Firewall{Status: alaye.Success}
+	e := createTestEngine(t, cfg)
+	defer e.Close()
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.reqMethod, tc.reqURL, nil)
+			if tc.reqMethod == "" {
+				req.Method = "GET"
+			}
+			for k, v := range tc.reqHeader {
+				req.Header.Set(k, v)
+			}
+
+			// We inspect manually instead of running full engine to target checkCondition
+			insp := &Inspector{
+				Req: req,
+				IP:  "1.2.3.4",
+			}
+			got := e.checkCondition(&tc.cond, insp)
+			if got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

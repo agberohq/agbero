@@ -369,13 +369,6 @@ func sanitizeHosts(hosts map[string]*alaye.Host) map[string]*alaye.Host {
 			}
 		}
 
-		// Sanitize Tunnel Auth
-		if clone.Tunnel != nil && clone.Tunnel.Client != nil {
-			if len(clone.Tunnel.Client.Auth) > 0 {
-				clone.Tunnel.Client.Auth = map[string]string{"***": "***"}
-			}
-		}
-
 		out[k] = &clone
 	}
 	return out

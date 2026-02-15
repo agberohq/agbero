@@ -28,7 +28,7 @@ func NewStore(dataDir woos.Folder, logger *ll.Logger) (*Store, error) {
 		return nil, err
 	}
 	dbPath := filepath.Join(dataDir.Path(), "firewall.db")
-	db, err := bbolt.Open(dbPath, 0600, &bbolt.Options{Timeout: 1 * time.Second})
+	db, err := bbolt.Open(dbPath, 0600, &bbolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open firewall db: %w", err)
 	}
@@ -79,8 +79,9 @@ func (s *Store) GetBan(ip string) (*Rule, error) {
 	return &r, err
 }
 
-func (s *Store) LoadAll() ([]Rule, error) {
-	var active []Rule
+type RuleIterator func(Rule) bool
+
+func (s *Store) IterateActive(iter RuleIterator) error {
 	var expiredKeys [][]byte
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket(bucketName)
@@ -91,17 +92,17 @@ func (s *Store) LoadAll() ([]Rule, error) {
 				continue
 			}
 			if r.IsExpired() {
-				// clone k
 				kc := make([]byte, len(k))
 				copy(kc, k)
 				expiredKeys = append(expiredKeys, kc)
 				continue
 			}
-			active = append(active, r)
+			if !iter(r) {
+				break
+			}
 		}
 		return nil
 	})
-	// Async cleanup
 	if len(expiredKeys) > 0 {
 		s.wg.Add(1)
 		go func(keys [][]byte) {
@@ -115,6 +116,15 @@ func (s *Store) LoadAll() ([]Rule, error) {
 			})
 		}(expiredKeys)
 	}
+	return err
+}
+
+func (s *Store) LoadAll() ([]Rule, error) {
+	var active []Rule
+	err := s.IterateActive(func(r Rule) bool {
+		active = append(active, r)
+		return true
+	})
 	return active, err
 }
 

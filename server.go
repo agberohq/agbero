@@ -120,7 +120,7 @@ func (s *Server) Start(configPath string) error {
 	}
 	s.logger.Fields(
 		"dev_mode", s.global.Development,
-		"gossip_mode", s.global.Gossip.Enabled,
+		"gossip_mode", s.global.Gossip.Status.Enabled(),
 	).Info("configuring")
 
 	s.logger.Fields(
@@ -156,7 +156,7 @@ func (s *Server) Start(configPath string) error {
 	s.logHostStats(hosts)
 
 	if s.global.Gossip.Enabled {
-		gs, err := gossip.NewService(s.hostManager, &s.global.Gossip, s.logger)
+		gs, err := gossip.NewService(s.hostManager, s.global.Gossip, s.logger)
 		if err != nil {
 			return errors.Newf("failed to start gossip: %w", err)
 		}
@@ -212,7 +212,7 @@ func (s *Server) Start(configPath string) error {
 	tcpGroups := make(map[string][]*alaye.TCPRoute)
 	for _, host := range hosts {
 		for i := range host.Proxies {
-			p := &host.Proxies[i]
+			p := host.Proxies[i]
 			tcpGroups[p.Listen] = append(tcpGroups[p.Listen], p)
 		}
 	}
@@ -370,7 +370,7 @@ func (s *Server) hasStreaming(hosts map[string]*alaye.Host) bool {
 	for _, host := range hosts {
 		for _, rt := range host.Routes {
 			for _, srv := range rt.Backends.Servers {
-				if srv.Streaming.Enabled {
+				if srv.Streaming.Status.Enabled() {
 					return true
 				}
 			}
@@ -406,23 +406,14 @@ func (s *Server) startTCPServer(
 		handler.ServeHTTP(w, r.WithContext(ctx))
 	})
 
-	writeTimeout := core.Or(s.global.Timeouts.Write, alaye.DefaultWriteTimeout)
-	if anyStreaming {
-		writeTimeout = 0
-	}
-
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           wrappedHandler,
-		ReadTimeout:       core.Or(s.global.Timeouts.Read, alaye.DefaultReadTimeout),
-		WriteTimeout:      writeTimeout,
-		IdleTimeout:       core.Or(s.global.Timeouts.Idle, alaye.DefaultIdleTimeout),
-		ReadHeaderTimeout: core.Or(s.global.Timeouts.ReadHeader, alaye.DefaultReadHeaderTimeout),
+		ReadTimeout:       s.global.Timeouts.Read,
+		WriteTimeout:      s.global.Timeouts.Write,
+		IdleTimeout:       s.global.Timeouts.Idle,
+		ReadHeaderTimeout: s.global.Timeouts.ReadHeader,
 		MaxHeaderBytes:    s.global.General.MaxHeaderBytes,
-	}
-
-	if srv.MaxHeaderBytes == 0 {
-		srv.MaxHeaderBytes = alaye.DefaultMaxHeaderBytes
 	}
 
 	if isTLS && tlsCfg != nil {
@@ -620,7 +611,7 @@ func (s *Server) Reload() {
 	tcpGroups := make(map[string][]*alaye.TCPRoute)
 	for _, host := range newHosts {
 		for i := range host.Proxies {
-			p := &host.Proxies[i]
+			p := host.Proxies[i]
 			tcpGroups[p.Listen] = append(tcpGroups[p.Listen], p)
 		}
 	}
@@ -678,14 +669,8 @@ func (s *Server) Reload() {
 func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
 	rlc := s.global.RateLimits
 
-	if !rlc.Enabled || len(rlc.Rules) == 0 {
+	if !rlc.Status.Enabled() || len(rlc.Rules) == 0 {
 		return nil
-	}
-
-	ttl := core.Or(rlc.TTL, woos.DefaultRateLimitTTL)
-	maxEntries := rlc.MaxEntries
-	if maxEntries <= 0 {
-		maxEntries = woos.DefaultRateLimitMaxEntries
 	}
 
 	policy := func(r *http.Request) (bucket string, pol ratelimit.RatePolicy, ok bool) {
@@ -739,7 +724,7 @@ func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
 		return "", ratelimit.RatePolicy{}, false
 	}
 
-	return ratelimit.NewRateLimiter(ttl, maxEntries, policy)
+	return ratelimit.NewRateLimiter(rlc.TTL, rlc.MaxEntries, policy)
 }
 
 func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) {
@@ -923,7 +908,7 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	}
 
 	routeKey := route.Key()
-	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey, &s.global.RateLimits)
+	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey, s.global.RateLimits)
 
 	if route.Wasm != nil {
 		wm, err := s.getWasmManager(route.Wasm, routeKey)

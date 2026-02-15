@@ -112,7 +112,7 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 	t.ExpectContinueTimeout = 0
 
 	rp.FlushInterval = -1
-	if cfg.Streaming.Enabled {
+	if cfg.Streaming.Status.Enabled() {
 		t.ResponseHeaderTimeout = 0
 		rp.FlushInterval = cfg.Streaming.EffectiveFlushInterval()
 	}

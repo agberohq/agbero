@@ -8,7 +8,8 @@ import (
 )
 
 type Admin struct {
-	Address    string   `hcl:"address" json:"address"` // e.g. ":9090"
+	Status     Status   `hcl:"enabled,optional" json:"enabled"`
+	Address    string   `hcl:"address,optional" json:"address"` // e.g. ":9090"
 	AllowedIPs []string `hcl:"allowed_ips,optional" json:"allowed_ips"`
 
 	BasicAuth   *BasicAuth   `hcl:"basic_auth,block" json:"basic_auth"`
@@ -18,7 +19,7 @@ type Admin struct {
 }
 
 func (a *Admin) Validate() error {
-	if a == nil {
+	if !a.Status.Enabled() {
 		return nil
 	}
 	if a.Address == "" {

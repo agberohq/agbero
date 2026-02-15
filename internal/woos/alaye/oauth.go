@@ -7,6 +7,7 @@ import (
 )
 
 type OAuth struct {
+	Status       Status `hcl:"enabled,optional" json:"enabled"`
 	Provider     string `hcl:"provider" json:"provider"` // "google", "github", "oidc"
 	ClientID     string `hcl:"client_id" json:"client_id"`
 	ClientSecret Value  `hcl:"client_secret" json:"client_secret"`
@@ -21,6 +22,9 @@ type OAuth struct {
 }
 
 func (o *OAuth) Validate() error {
+	if !o.Status.Enabled() {
+		return nil
+	}
 	if o.Provider == "" {
 		return errors.New("oauth provider is required")
 	}

@@ -1,6 +1,7 @@
 package firewall
 
 import (
+	"encoding/hex"
 	"sync"
 	"time"
 )
@@ -30,8 +31,7 @@ func (c *Counters) Stop() {
 }
 
 func (c *Counters) Increment(ruleID, key string, window time.Duration) int64 {
-	// Use null byte as separator to prevent collision
-	fullKey := ruleID + "\x00" + key
+	fullKey := ruleID + ":" + hex.EncodeToString([]byte(key))
 	now := time.Now()
 
 	c.mu.Lock()

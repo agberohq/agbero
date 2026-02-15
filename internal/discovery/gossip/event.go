@@ -164,7 +164,7 @@ func (e *event) processNode(node *memberlist.Node) {
 
 	route := alaye.Route{
 		Path: meta.Path,
-		Backends: alaye.Backend{
+		Backends: &alaye.Backend{
 			LBStrategy: alaye.StrategyRoundRobin,
 			Servers: []alaye.Server{
 				{

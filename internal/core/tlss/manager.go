@@ -205,7 +205,7 @@ func (m *Manager) CmForHost(hcfg *alaye.Host) *certmagic.Config {
 	return m.cmProd
 }
 
-func (m *Manager) GetLocalCertificate(local alaye.LocalCert, host string) (*tls.Certificate, error) {
+func (m *Manager) GetLocalCertificate(local *alaye.LocalCert, host string) (*tls.Certificate, error) {
 	certFile := strings.TrimSpace(local.CertFile)
 	keyFile := strings.TrimSpace(local.KeyFile)
 
@@ -305,10 +305,6 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		} else {
 			mode = alaye.ModeLetsEncrypt
 		}
-	}
-
-	if hcfg.Tunnel != nil && hcfg.Tunnel.Client != nil && hcfg.Tunnel.Client.Enabled {
-		mode = alaye.ModeLocalNone
 	}
 
 	switch mode {

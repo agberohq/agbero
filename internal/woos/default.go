@@ -3,15 +3,29 @@ package woos
 import (
 	"path/filepath"
 	"strings"
-	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
 func DefaultApply(g *alaye.Global, configAbsPath string) {
-	// set the build version
 	g.Build = Version
 
+	// Enable features by default
+	//if g.Admin.Status.Default() {
+	//	g.Admin.Status. = alaye.Success
+	//}
+	//
+	//if g.Timeouts.Status.Default() {
+	//	g.Timeouts.Status = alaye.Success
+	//}
+	//if g.Logging.Status.Default() {
+	//	g.Logging.Status = alaye.Success
+	//}
+	//if g.LetsEncrypt.Status.Default() {
+	//	g.LetsEncrypt.Status = alaye.Success
+	//}
+
+	// Set default timeouts
 	if g.Timeouts.Read == 0 {
 		g.Timeouts.Read = alaye.DefaultReadTimeout
 	}
@@ -25,49 +39,53 @@ func DefaultApply(g *alaye.Global, configAbsPath string) {
 		g.Timeouts.ReadHeader = alaye.DefaultReadHeaderTimeout
 	}
 
-	if g.RateLimits.Enabled {
+	// Other defaults
+	if g.General.MaxHeaderBytes == 0 {
+		g.General.MaxHeaderBytes = alaye.DefaultMaxHeaderBytes
+	}
+
+	if g.RateLimits.Status.Default() {
 		if g.RateLimits.TTL == 0 {
-			g.RateLimits.TTL = 30 * time.Minute
+			g.RateLimits.TTL = DefaultRateLimitTTL
 		}
 		if g.RateLimits.MaxEntries <= 0 {
 			g.RateLimits.MaxEntries = 100000
 		}
 	}
 
+	// Path resolution (this part is unavoidably complex due to business logic)
+	resolvePaths(g, configAbsPath)
+}
+
+func resolvePaths(g *alaye.Global, configAbsPath string) {
 	baseDir := "."
 	if configAbsPath != "" {
 		baseDir = filepath.Dir(configAbsPath)
 	}
 
-	if g.Storage.HostsDir == "" {
-		g.Storage.HostsDir = filepath.Join(baseDir, HostDir.Name())
-	} else if !filepath.IsAbs(g.Storage.HostsDir) {
-		g.Storage.HostsDir = filepath.Join(baseDir, g.Storage.HostsDir)
-	}
+	// Storage dirs
+	setDefaultPath(&g.Storage.HostsDir, baseDir, HostDir.Name())
+	setDefaultPath(&g.Storage.CertsDir, baseDir, CertDir.Name())
+	setDefaultPath(&g.Storage.DataDir, baseDir, DataDir.Name())
 
-	if g.Storage.CertsDir == "" {
-		g.Storage.CertsDir = filepath.Join(baseDir, CertDir.Name())
-	} else if !filepath.IsAbs(g.Storage.CertsDir) {
-		g.Storage.CertsDir = filepath.Join(baseDir, g.Storage.CertsDir)
-	}
-
-	if g.Storage.DataDir == "" {
-		g.Storage.DataDir = filepath.Join(baseDir, DataDir.Name())
-	} else if !filepath.IsAbs(g.Storage.DataDir) {
-		g.Storage.DataDir = filepath.Join(baseDir, g.Storage.DataDir)
-	}
-
+	// Log file (special case)
 	logDir := filepath.Join(baseDir, LogDir.Name())
-
 	if g.Logging.File == "" {
 		g.Logging.File = filepath.Join(logDir, DefaultLogName)
 	} else if !filepath.IsAbs(g.Logging.File) {
 		cleanName := filepath.Clean(g.Logging.File)
-
 		if !strings.HasPrefix(cleanName, "..") {
 			g.Logging.File = filepath.Join(logDir, filepath.Base(cleanName))
 		} else {
 			g.Logging.File = filepath.Join(baseDir, g.Logging.File)
 		}
+	}
+}
+
+func setDefaultPath(field *string, baseDir, defaultName string) {
+	if *field == "" {
+		*field = filepath.Join(baseDir, defaultName)
+	} else if !filepath.IsAbs(*field) {
+		*field = filepath.Join(baseDir, *field)
 	}
 }

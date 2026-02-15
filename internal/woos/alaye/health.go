@@ -8,6 +8,7 @@ import (
 )
 
 type HealthCheck struct {
+	Status    Status        `hcl:"enabled,optional" json:"enabled"`
 	Path      string        `hcl:"path" json:"path"`
 	Interval  time.Duration `hcl:"interval,optional" json:"interval"`
 	Timeout   time.Duration `hcl:"timeout,optional" json:"timeout"`
@@ -15,6 +16,9 @@ type HealthCheck struct {
 }
 
 func (h *HealthCheck) Validate() error {
+	if !h.Status.Enabled() {
+		return ErrWebRouteHealthCheck
+	}
 	// Path validation
 	if h.Path == "" {
 		return ErrHealthPathRequired
@@ -28,7 +32,7 @@ func (h *HealthCheck) Validate() error {
 		return ErrNegativeInterval
 	}
 	if h.Interval == 0 {
-		h.Interval = DefaultHealthInterval // Default
+		h.Interval = DefaultHealthInterval
 	}
 
 	// Timeout validation (if provided)
@@ -36,7 +40,7 @@ func (h *HealthCheck) Validate() error {
 		return ErrNegativeTimeout
 	}
 	if h.Timeout == 0 {
-		h.Timeout = DefaultHealthTimeout // Default
+		h.Timeout = DefaultHealthTimeout
 	}
 	if h.Timeout > h.Interval {
 		return ErrTimeoutExceedsInterval

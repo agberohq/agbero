@@ -21,6 +21,7 @@ bind {
 
 # Admin block instead of metrics attribute
 admin {
+  enabled = true
   address = ":9090"
 }
 
@@ -31,6 +32,7 @@ storage {
 }
 
 security {
+  enabled = true
   trusted_proxies = ["10.0.0.0/8", "127.0.0.1"]
 }
 
@@ -39,6 +41,7 @@ general {
 }
 
 logging {
+  enabled = true
   level = "debug"
   file  = "/var/log/agbero.log"
   victoria {
@@ -48,6 +51,7 @@ logging {
 }
 
 timeouts {
+  enabled = true
   read  = "15s"
   write = "30s"
 }
@@ -78,9 +82,10 @@ letsencrypt {
 		t.Error("expected 2 http bind addresses")
 	}
 	// Verify Admin block parsing
-	if global.Admin == nil {
+	if global.Admin.Status.Disabled() {
 		t.Fatal("expected admin block to be parsed")
 	}
+
 	if global.Admin.Address != ":9090" {
 		t.Errorf("expected admin address :9090, got %v", global.Admin.Address)
 	}
@@ -152,7 +157,7 @@ route "/api" {
 	}
 
 	if !host.Compression {
-		t.Error("Enabled: expected true")
+		t.Error("Status: expected true")
 	}
 
 	if host.TLS.Mode != alaye.ModeLocalCert {
@@ -164,7 +169,7 @@ route "/api" {
 	}
 
 	// Validate Backend Server Parsing
-	var apiRoute alaye.Route
+	var apiRoute *alaye.Route
 	for _, r := range host.Routes {
 		if r.Path == "/api" {
 			apiRoute = r

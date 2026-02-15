@@ -7,12 +7,16 @@ import (
 )
 
 type BasicAuth struct {
-	// List of "username:password" (Plaintext for now, or bcrypt in future)
-	Users []string `hcl:"users" json:"users"`
-	Realm string   `hcl:"realm,optional" json:"realm"`
+	Status Status   `hcl:"enabled,optional" json:"enabled"`
+	Users  []string `hcl:"users" json:"users"`
+	Realm  string   `hcl:"realm,optional" json:"realm"`
 }
 
 func (b *BasicAuth) Validate() error {
+	if !b.Status.Enabled() {
+		return nil
+	}
+
 	// Users validation
 	if len(b.Users) == 0 {
 		return ErrEmptyUsers

@@ -31,7 +31,7 @@ type Service struct {
 }
 
 func NewService(hm Hosting, cfg *alaye.Gossip, logger *ll.Logger) (*Service, error) {
-	if cfg == nil || !cfg.Enabled {
+	if cfg == nil || !cfg.Status.Enabled() {
 		return nil, nil
 	}
 

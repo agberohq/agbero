@@ -5,13 +5,13 @@ import (
 )
 
 type Compression struct {
-	Enabled bool   `hcl:"enabled,optional" json:"enabled"`
-	Level   int    `hcl:"level,optional" json:"level"` // 1-11, default 5
-	Type    string `hcl:"type,optional" json:"type"`   // "gzip" (default) or "brotli"
+	Status Status `hcl:"enabled,optional" json:"enabled"`
+	Level  int    `hcl:"level,optional" json:"level"` // 1-11, default 5
+	Type   string `hcl:"type,optional" json:"type"`   // "gzip" (default) or "brotli"
 }
 
 func (c *Compression) Validate() error {
-	if !c.Enabled {
+	if !c.Status.Enabled() {
 		return nil // No validation needed if compression is disabled
 	}
 

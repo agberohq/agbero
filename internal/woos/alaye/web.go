@@ -7,14 +7,18 @@ import (
 )
 
 type Web struct {
+	Status  Status  `hcl:"enabled,optional" json:"enabled"`
 	Root    WebRoot `hcl:"root,optional" json:"root"`
 	Index   string  `hcl:"index,optional" json:"index"`
-	Listing bool    `hcl:"listing,optional" json:"listing"` // list files
-
-	PHP PHP `hcl:"php,block,optional" json:"php"`
+	Listing bool    `hcl:"listing,optional" json:"listing"`
+	PHP     *PHP    `hcl:"php,block" json:"php,omitempty"`
 }
 
 func (w *Web) Validate() error {
+	if !w.Status.Enabled() {
+		return nil
+	}
+
 	if !w.Root.IsSet() {
 		return ErrRootRequired
 	}
@@ -23,46 +27,8 @@ func (w *Web) Validate() error {
 		return ErrIndexPath
 	}
 
-	if w.PHP.Enabled {
-		if err := w.PHP.Validate(); err != nil {
-			return errors.Newf("php: %w", err)
-		}
-	}
-	return nil
-}
-
-type PHP struct {
-	Enabled bool   `hcl:"enabled,optional" json:"enabled"`
-	Address string `hcl:"address,optional" json:"address"` // unix:/path/to.sock OR 127.0.0.1:9000
-	Index   string `hcl:"index,optional" json:"index"`     // default: index.php
-}
-
-func (p *PHP) Validate() error {
-	if !p.Enabled {
-		return nil
-	}
-
-	addr := strings.TrimSpace(p.Address)
-	if addr == "" {
-		// allow default (we’ll choose in code), or you can force it required.
-		return nil
-	}
-
-	// Accept either unix:/path.sock or host:port
-	if strings.HasPrefix(addr, UNIXPrefix) {
-		if len(strings.TrimSpace(strings.TrimPrefix(addr, UNIXPrefix))) == 0 {
-			return ErrNoAddress
-		}
-		return nil
-	}
-
-	// Very light check; real dial will validate host:port
-	if !strings.Contains(addr, ":") {
-		return ErrBadAddress
-	}
-
-	if p.Index != "" && strings.Contains(p.Index, Slash) {
-		return ErrIndexPath
+	if err := w.PHP.Validate(); err != nil {
+		return errors.Newf("php: %w", err)
 	}
 
 	return nil

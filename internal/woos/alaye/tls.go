@@ -7,10 +7,10 @@ import (
 )
 
 type TLS struct {
-	Mode        TlsMode     `hcl:"mode,optional" json:"mode"`
-	Local       LocalCert   `hcl:"local,block" json:"local"`
-	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt"`
-	CustomCA    CustomCA    `hcl:"custom_ca,block" json:"custom_ca"`
+	Mode        TlsMode      `hcl:"mode,optional" json:"mode"`
+	Local       *LocalCert   `hcl:"local,block" json:"local,omitempty"`
+	LetsEncrypt *LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt,omitempty"`
+	CustomCA    *CustomCA    `hcl:"custom_ca,block" json:"custom_ca,omitempty"`
 }
 
 type LocalCert struct {
@@ -19,6 +19,7 @@ type LocalCert struct {
 }
 
 type LetsEncrypt struct {
+	Status     Status `hcl:"enabled,optional" json:"enabled"`
 	Email      string `hcl:"email,optional" json:"email"`
 	Staging    bool   `hcl:"staging,optional" json:"staging"`
 	ShortLived bool   `hcl:"short_lived,optional" json:"short_lived"` // Enable 6-day certs

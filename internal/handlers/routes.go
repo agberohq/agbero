@@ -59,7 +59,7 @@ func newWebRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Lo
 	}
 
 	// Route-Level Rate Limiting
-	if route.RateLimit != nil && route.RateLimit.Enabled {
+	if route.RateLimit != nil && route.RateLimit.Status.Enabled() {
 		if rl := buildRouteLimiter(route.RateLimit, globalRate); rl != nil {
 			chain = rl.Handler(chain)
 		}
@@ -69,7 +69,7 @@ func newWebRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Lo
 		chain = headers.Headers(route.Headers)(chain)
 	}
 
-	if route.CompressionConfig.Enabled {
+	if route.CompressionConfig.Status.Enabled() {
 		chain = compress.Compress(route)(chain)
 	}
 
@@ -122,7 +122,7 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 	}
 
 	// Route-Level Rate Limiting
-	if route.RateLimit != nil && route.RateLimit.Enabled {
+	if route.RateLimit != nil && route.RateLimit.Status.Enabled() {
 		if rl := buildRouteLimiter(route.RateLimit, globalRate); rl != nil {
 			chain = rl.Handler(chain)
 		}
@@ -131,7 +131,7 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 	if route.Headers != nil {
 		chain = headers.Headers(route.Headers)(chain)
 	}
-	if route.CompressionConfig.Enabled {
+	if route.CompressionConfig.Status.Enabled() {
 		chain = compress.Compress(route)(chain)
 	}
 
@@ -166,7 +166,7 @@ func FallbackRoute(msg string) *Route {
 // buildRouteLimiter creates a RateLimiter for the specific route.
 // It handles "UsePolicy" (lookup from Global) and "Rule" (Ad-hoc).
 func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimit.RateLimiter {
-	if rlc == nil || !rlc.Enabled {
+	if rlc == nil || !rlc.Status.Enabled() {
 		return nil
 	}
 

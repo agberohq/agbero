@@ -9,7 +9,7 @@ import (
 
 // GlobalRate defines the global registry and default rules.
 type GlobalRate struct {
-	Enabled    bool          `hcl:"enabled,optional" json:"enabled"`
+	Status     Status        `hcl:"enabled,optional" json:"enabled"`
 	TTL        time.Duration `hcl:"ttl,optional" json:"ttl"`
 	MaxEntries int64         `hcl:"max_entries,optional" json:"max_entries"`
 
@@ -20,37 +20,8 @@ type GlobalRate struct {
 	Policies []RatePolicy `hcl:"policy,block" json:"policies"`
 }
 
-// RouteRate defines rate limiting for a specific route.
-type RouteRate struct {
-	Enabled      bool      `hcl:"enabled,optional" json:"enabled"`
-	IgnoreGlobal bool      `hcl:"ignore_global,optional" json:"ignore_global"` // Stop global rules processing
-	UsePolicy    string    `hcl:"use_policy,optional" json:"use_policy"`       // Reference a named policy
-	Rule         *RateRule `hcl:"rule,block" json:"rule,omitempty"`            // Ad-hoc definition
-}
-
-// RatePolicy is a named configuration in the global scope.
-type RatePolicy struct {
-	Name     string        `hcl:"name,label" json:"name"`
-	Requests int           `hcl:"requests" json:"requests"`
-	Window   time.Duration `hcl:"window" json:"window"`
-	Burst    int           `hcl:"burst,optional" json:"burst"`
-	Key      string        `hcl:"key,optional" json:"key"` // "ip", "header:X", etc.
-}
-
-// RateRule is a specific rule application (matching path/method).
-type RateRule struct {
-	Name     string   `hcl:"name,label,optional" json:"name"` // Optional label for logging
-	Prefixes []string `hcl:"prefixes,optional" json:"prefixes"`
-	Methods  []string `hcl:"methods,optional" json:"methods"`
-
-	Requests int           `hcl:"requests" json:"requests"`
-	Window   time.Duration `hcl:"window" json:"window"`
-	Burst    int           `hcl:"burst,optional" json:"burst"`
-	Key      string        `hcl:"key,optional" json:"key"`
-}
-
 func (g *GlobalRate) Validate() error {
-	if !g.Enabled {
+	if !g.Status.Enabled() {
 		return nil
 	}
 
@@ -76,8 +47,16 @@ func (g *GlobalRate) Validate() error {
 	return nil
 }
 
+// RouteRate defines rate limiting for a specific route.
+type RouteRate struct {
+	Status       Status    `hcl:"enabled,optional" json:"enabled"`
+	IgnoreGlobal bool      `hcl:"ignore_global,optional" json:"ignore_global"` // Stop global rules processing
+	UsePolicy    string    `hcl:"use_policy,optional" json:"use_policy"`       // Reference a named policy
+	Rule         *RateRule `hcl:"rule,block" json:"rule,omitempty"`            // Ad-hoc definition
+}
+
 func (r *RouteRate) Validate() error {
-	if !r.Enabled {
+	if !r.Status.Enabled() {
 		return nil
 	}
 
@@ -88,6 +67,15 @@ func (r *RouteRate) Validate() error {
 	}
 
 	return nil
+}
+
+// RatePolicy is a named configuration in the global scope.
+type RatePolicy struct {
+	Name     string        `hcl:"name,label" json:"name"`
+	Requests int           `hcl:"requests" json:"requests"`
+	Window   time.Duration `hcl:"window" json:"window"`
+	Burst    int           `hcl:"burst,optional" json:"burst"`
+	Key      string        `hcl:"key,optional" json:"key"` // "ip", "header:X", etc.
 }
 
 func (p *RatePolicy) Validate() error {
@@ -101,6 +89,18 @@ func (p *RatePolicy) Validate() error {
 		Burst:    p.Burst,
 	}
 	return rr.Validate()
+}
+
+// RateRule is a specific rule application (matching path/method).
+type RateRule struct {
+	Name     string   `hcl:"name,label,optional" json:"name"` // Optional label for logging
+	Prefixes []string `hcl:"prefixes,optional" json:"prefixes"`
+	Methods  []string `hcl:"methods,optional" json:"methods"`
+
+	Requests int           `hcl:"requests" json:"requests"`
+	Window   time.Duration `hcl:"window" json:"window"`
+	Burst    int           `hcl:"burst,optional" json:"burst"`
+	Key      string        `hcl:"key,optional" json:"key"`
 }
 
 func (r *RateRule) Validate() error {

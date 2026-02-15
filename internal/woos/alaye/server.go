@@ -18,17 +18,17 @@ type Server struct {
 	Address        string      `hcl:"address" json:"address"`
 	Weight         int         `hcl:"weight,optional" json:"weight"`
 	Conditions     *Conditions `hcl:"conditions,block" json:"conditions"`
-	Streaming      Streaming   `hcl:"streaming,block,optional" json:"streaming"` // optional by nature when pointer
+	Streaming      *Streaming  `hcl:"streaming,block" json:"streaming"` // optional by nature when pointer
 	MaxConnections int64       `hcl:"max_connections,optional" json:"max_connections"`
 }
 
 type Streaming struct {
-	Enabled       bool          `hcl:"enabled,optional" json:"enabled"`
+	Status        Status        `hcl:"enabled,optional" json:"enabled"`
 	FlushInterval time.Duration `hcl:"flush_interval,optional" json:"flush_interval"`
 }
 
 func (s *Streaming) EffectiveFlushInterval() time.Duration {
-	if s == nil || !s.Enabled {
+	if s == nil || !s.Status.Enabled() {
 		return -1
 	}
 	if s.FlushInterval <= 0 {

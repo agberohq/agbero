@@ -1,10 +1,9 @@
 package alaye
 
-import (
-	"time"
-)
+import "time"
 
 type Timeout struct {
+	Status     Status        `hcl:"enabled,optional" json:"enabled"`
 	Read       time.Duration `hcl:"read,optional" json:"read"`
 	Write      time.Duration `hcl:"write,optional" json:"write"`
 	Idle       time.Duration `hcl:"idle,optional" json:"idle"`
@@ -12,7 +11,9 @@ type Timeout struct {
 }
 
 func (t *Timeout) Validate() error {
-	// All timeouts are optional, but if set they must be positive
+	if t.Status.Disabled() {
+		return nil
+	}
 
 	if t.Read < 0 {
 		return ErrNegativeReadTimeout
@@ -32,10 +33,14 @@ func (t *Timeout) Validate() error {
 }
 
 type TimeoutRoute struct {
+	Status  Status        `hcl:"enabled,optional" json:"enabled"`
 	Request time.Duration `hcl:"request,optional" json:"request"`
 }
 
 func (t *TimeoutRoute) Validate() error {
+	if t.Status.Disabled() {
+		return nil
+	}
 	// Request timeout validation (if provided)
 	if t.Request < 0 {
 		return ErrNegativeRequestTimeout

@@ -7,6 +7,7 @@ import (
 )
 
 type Wasm struct {
+	Status      Status            `hcl:"enabled,optional" json:"enabled"`
 	Module      string            `hcl:"module" json:"module"`                        // Path to .wasm file
 	Config      map[string]string `hcl:"config,optional" json:"config"`               // Key-values passed to WASM
 	MaxBodySize int64             `hcl:"max_body_size,optional" json:"max_body_size"` // Max bytes to copy to WASM (0 = none)
@@ -14,6 +15,9 @@ type Wasm struct {
 }
 
 func (w *Wasm) Validate() error {
+	if !w.Status.Enabled() {
+		return nil
+	}
 	if w.Module == "" {
 		return ErrModulePathRequired
 	}
