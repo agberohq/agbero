@@ -10,6 +10,8 @@ import (
 func DefaultApply(g *alaye.Global, configAbsPath string) {
 	g.Build = Version
 
+	// g.GeneralLimits.MaxBodySize
+
 	// Timeouts is a struct (not a pointer), so we can access fields directly.
 	if g.Timeouts.Read == 0 {
 		g.Timeouts.Read = alaye.DefaultReadTimeout
@@ -52,9 +54,11 @@ func resolvePaths(g *alaye.Global, configAbsPath string) {
 	setDefaultPath(&g.Storage.DataDir, baseDir, DataDir.Name())
 
 	logDir := filepath.Join(baseDir, LogDir.Name())
+	g.Logging.Level = "info"
 
 	// Logging is a pointer. Check before access.
 	if g.Logging.Enabled.Yes() {
+
 		if g.Logging.File == "" {
 			g.Logging.File = filepath.Join(logDir, DefaultLogName)
 		} else if !filepath.IsAbs(g.Logging.File) {

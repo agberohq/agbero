@@ -70,7 +70,7 @@ sudo agbero start
 ```hcl
 route "/api" {
   backend {
-    lb_strategy = "weighted_round_robin"
+    strategy = "weighted_round_robin"
     
     # Canary deployment: 10% traffic to new version
     server {

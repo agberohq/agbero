@@ -96,7 +96,7 @@ func TestServer_buildTLS(t *testing.T) {
 	tmpDir := t.TempDir()
 	s := &Server{
 		global: &alaye.Global{
-			LetsEncrypt: &alaye.LetsEncrypt{
+			LetsEncrypt: alaye.LetsEncrypt{
 				Enabled: alaye.Active,
 				Email:   "test@example.com",
 			},
@@ -146,7 +146,7 @@ func TestServer_buildTLS_NoEmail(t *testing.T) {
 
 func TestServer_buildGlobalRateLimiter(t *testing.T) {
 	s := &Server{global: &alaye.Global{
-		RateLimits: &alaye.GlobalRate{
+		RateLimits: alaye.GlobalRate{
 			Enabled:    alaye.Active,
 			TTL:        time.Minute,
 			MaxEntries: 100,
@@ -179,7 +179,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	route := &alaye.Route{
 		Enabled:  alaye.Active,
 		Path:     "/test",
-		Backends: &alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")},
+		Backends: alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")},
 	}
 	key := route.Key()
 
@@ -210,7 +210,7 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 	route := &alaye.Route{
 		Enabled:  alaye.Active,
 		Path:     "/test",
-		Backends: &alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")},
+		Backends: alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")},
 	}
 
 	cache.Route.Delete(route.Key())
@@ -226,7 +226,7 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 
 func TestServer_StartAdminServer(t *testing.T) {
 	global := &alaye.Global{
-		Admin: &alaye.Admin{
+		Admin: alaye.Admin{
 			Address: ":0",
 		},
 	}
@@ -243,7 +243,7 @@ func TestServer_StartAdminServer(t *testing.T) {
 
 func TestServer_StartAdminServer_NoConfig(t *testing.T) {
 	global := &alaye.Global{
-		Admin: nil,
+		Admin: alaye.Admin{},
 	}
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 	s := &Server{

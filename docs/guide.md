@@ -95,7 +95,7 @@ route "/" {
 ```hcl
 route "/api" {
   backend {
-    lb_strategy = "weighted_round_robin"
+    strategy = "weighted_round_robin"
 
     # Stable version - 90% traffic
     server {
@@ -655,7 +655,7 @@ route "/legacy-app" {
 route "/" {
   # Use header-based routing for blue-green
   backend {
-    lb_strategy = "round_robin"
+    strategy = "round_robin"
 
     # Blue environment (active)
     server {
@@ -690,7 +690,7 @@ route "/" {
 ```hcl
 route "/checkout" {
   backend {
-    lb_strategy = "random"
+    strategy = "random"
 
     # Version A - 50% of traffic
     server {

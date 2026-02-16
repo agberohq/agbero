@@ -72,7 +72,7 @@ var (
 
 	ErrProxyRouteNoBackends        = errors.New("backends cannot be empty for proxy route")
 	ErrProxyRouteInvalidStrip      = errors.New("invalid strip_fixes")
-	ErrProxyRouteInvalidLBStrategy = errors.New("lb_strategy is invalid")
+	ErrProxyRouteInvalidLBStrategy = errors.New("strategy is invalid")
 )
 
 // rate

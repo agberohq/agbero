@@ -11,7 +11,7 @@ import (
 )
 
 type Security struct {
-	Status         Enabled  `hcl:"enabled,optional" json:"enabled"`
+	Enabled        Enabled  `hcl:"enabled,optional" json:"enabled"`
 	TrustedProxies []string `hcl:"trusted_proxies,optional" json:"trusted_proxies"`
 	Firewall       Firewall `hcl:"firewall,block" json:"firewall,omitempty"`
 }
@@ -211,7 +211,7 @@ func (s *Security) Validate() error {
 		return nil
 	}
 
-	if s.Status.No() {
+	if s.Enabled.No() {
 		return nil
 	}
 	for i, proxy := range s.TrustedProxies {

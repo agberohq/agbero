@@ -23,12 +23,12 @@ type Server struct {
 }
 
 type Streaming struct {
-	Status        Enabled       `hcl:"enabled,optional" json:"enabled"`
+	Enabled       Enabled       `hcl:"enabled,optional" json:"enabled"`
 	FlushInterval time.Duration `hcl:"flush_interval,optional" json:"flush_interval"`
 }
 
 func (s *Streaming) EffectiveFlushInterval() time.Duration {
-	if s == nil || !s.Status.Yes() {
+	if s == nil || !s.Enabled.Yes() {
 		return -1
 	}
 	if s.FlushInterval <= 0 {

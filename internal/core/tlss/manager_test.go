@@ -89,7 +89,7 @@ func generateTestCert(t *testing.T, certFile, keyFile string) {
 func TestTlsManager_EnsureCertMagic_Success(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		LetsEncrypt: &alaye.LetsEncrypt{Email: "test@example.com"},
+		LetsEncrypt: alaye.LetsEncrypt{Email: "test@example.com"},
 		Storage:     alaye.Storage{CertsDir: tmpDir},
 	}
 
@@ -140,12 +140,12 @@ func TestTlsManager_EnsureCertMagic_NoEmail(t *testing.T) {
 
 func TestTlsManager_CmForHost_StagingDefault(t *testing.T) {
 	m := &Manager{Global: &alaye.Global{
-		LetsEncrypt: &alaye.LetsEncrypt{Staging: true},
+		LetsEncrypt: alaye.LetsEncrypt{Staging: true},
 	}}
 	m.cmProd = &certmagic.Config{}
 	m.cmStaging = &certmagic.Config{}
 
-	cm := m.CmForHost(nil)
+	cm := m.CmForHost(&alaye.Host{})
 	if cm != m.cmStaging {
 		t.Error("Expected staging when staging_default=true")
 	}
@@ -153,12 +153,12 @@ func TestTlsManager_CmForHost_StagingDefault(t *testing.T) {
 
 func TestTlsManager_CmForHost_ProdDefault(t *testing.T) {
 	m := &Manager{Global: &alaye.Global{
-		LetsEncrypt: &alaye.LetsEncrypt{Staging: false},
+		LetsEncrypt: alaye.LetsEncrypt{Staging: false},
 	}}
 	m.cmProd = &certmagic.Config{}
 	m.cmStaging = &certmagic.Config{}
 
-	cm := m.CmForHost(nil)
+	cm := m.CmForHost(&alaye.Host{})
 	if cm != m.cmProd {
 		t.Error("Expected prod when staging_default=false")
 	}
@@ -166,10 +166,11 @@ func TestTlsManager_CmForHost_ProdDefault(t *testing.T) {
 
 func TestTlsManager_CmForHost_StagingOverride(t *testing.T) {
 	m := &Manager{}
+	m.Global = &alaye.Global{}
 	m.cmProd = &certmagic.Config{}
 	m.cmStaging = &certmagic.Config{}
 
-	hcfg := &alaye.Host{TLS: &alaye.TLS{LetsEncrypt: &alaye.LetsEncrypt{Staging: true}}}
+	hcfg := &alaye.Host{TLS: alaye.TLS{LetsEncrypt: alaye.LetsEncrypt{Staging: true}}}
 	cm := m.CmForHost(hcfg)
 	if cm != m.cmStaging {
 		t.Error("Expected staging on host override")

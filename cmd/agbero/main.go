@@ -363,7 +363,7 @@ func main() {
 			logger.Fatal("Failed to load config: ", err)
 		}
 
-		newLogger, err := setup.Logging(global.Logging, devMode, shutdown)
+		newLogger, err := setup.Logging(&global.Logging, devMode, shutdown)
 		if err != nil {
 			logger.Warn("Failed to setup advanced logging: ", err)
 		} else {

@@ -121,15 +121,9 @@ func (s *Server) Start(configPath string) error {
 		).Infof("config loaded")
 	}
 
-	//  Check Gossip pointer before accessing Active
-	gossipEnabled := false
-	if s.global.Gossip != nil {
-		gossipEnabled = s.global.Gossip.Enabled.Yes()
-	}
-
 	s.logger.Fields(
 		"dev_mode", s.global.Development,
-		"gossip_mode", gossipEnabled,
+		"gossip_mode", s.global.Gossip.Enabled.Yes(),
 	).Info("configuring")
 
 	s.logger.Fields(
@@ -165,8 +159,8 @@ func (s *Server) Start(configPath string) error {
 	s.logHostStats(hosts)
 
 	//  Gossip initialization
-	if gossipEnabled {
-		gs, err := gossip.NewService(s.hostManager, s.global.Gossip, s.logger)
+	if s.global.Gossip.Enabled.Yes() {
+		gs, err := gossip.NewService(s.hostManager, &s.global.Gossip, s.logger)
 		if err != nil {
 			return errors.Newf("failed to start gossip: %w", err)
 		}
@@ -182,27 +176,27 @@ func (s *Server) Start(configPath string) error {
 
 	//  Check Security pointer
 	var trustedProxies []string
-	if s.global.Security != nil {
+	if s.global.Security.Enabled.Yes() {
 		trustedProxies = s.global.Security.TrustedProxies
 	}
 	s.ipMiddleware = clientip.NewIPMiddleware(trustedProxies)
 	s.rateLimiter = s.buildGlobalRateLimiter()
 
 	s.skipLogPaths = make(map[string]bool)
-	if s.global.Logging != nil && len(s.global.Logging.Skip) > 0 {
+	if s.global.Logging.Enabled.Yes() && len(s.global.Logging.Skip) > 0 {
 		for _, p := range s.global.Logging.Skip {
 			s.skipLogPaths[p] = true
 		}
 	}
 
 	//  Firewall initialization with pointer check
-	var fwConfig *alaye.Firewall
-	if s.global.Security != nil {
+	var fwConfig alaye.Firewall
+	if s.global.Security.Enabled.Yes() {
 		fwConfig = s.global.Security.Firewall
 	}
 	dataDir := woos.NewFolder(s.global.Storage.DataDir)
 
-	s.firewall, err = firewall.New(fwConfig, dataDir, s.logger)
+	s.firewall, err = firewall.New(&fwConfig, dataDir, s.logger)
 	if err != nil {
 		return errors.Newf("firewall init: %w", err)
 	}
@@ -230,7 +224,7 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
 	}
 
-	tcpGroups := make(map[string][]*alaye.TCPRoute)
+	tcpGroups := make(map[string][]alaye.TCPRoute)
 	for _, host := range hosts {
 		for i := range host.Proxies {
 			p := host.Proxies[i]
@@ -245,7 +239,7 @@ func (s *Server) Start(configPath string) error {
 			if pattern == "" {
 				pattern = "*"
 			}
-			tp.AddRoute(pattern, *r)
+			tp.AddRoute(pattern, r)
 		}
 		if err := tp.Start(); err != nil {
 			s.logger.Fields("listen", listen, "err", err).Error("failed to start tcp proxy")
@@ -357,18 +351,8 @@ func (s *Server) Reload() {
 
 	woos.DefaultApply(global, absConfigPath)
 
-	// Pointer safety check for logging comparison
-	oldLevel := "info"
-	if s.global.Logging != nil {
-		oldLevel = s.global.Logging.Level
-	}
-	newLevel := "info"
-	if global.Logging != nil {
-		newLevel = global.Logging.Level
-	}
-
-	if oldLevel != newLevel {
-		s.logger.Infof("log_level: %s → %s", oldLevel, newLevel)
+	if s.global.Logging.Level != global.Logging.Level {
+		s.logger.Infof("log_level: %s → %s", s.global.Logging.Level, global.Logging.Level)
 	}
 
 	s.global = global
@@ -384,14 +368,14 @@ func (s *Server) Reload() {
 		s.firewall.Close()
 	}
 
-	var fwConfig *alaye.Firewall
-	if s.global.Security != nil {
+	var fwConfig alaye.Firewall
+	if s.global.Security.Enabled.Yes() {
 		fwConfig = s.global.Security.Firewall
 	}
 
 	dataDir := woos.NewFolder(s.global.Storage.DataDir)
 	var fwErr error
-	s.firewall, fwErr = firewall.New(fwConfig, dataDir, s.logger)
+	s.firewall, fwErr = firewall.New(&fwConfig, dataDir, s.logger)
 	if fwErr != nil {
 		s.logger.Error("failed to reload firewall", fwErr)
 	}
@@ -412,7 +396,7 @@ func (s *Server) Reload() {
 		for _, r := range h.Routes {
 			rKey := r.Key()
 			// Defensive check for Backends
-			if r.Backends != nil {
+			if r.Backends.Enabled.Yes() {
 				for _, srv := range r.Backends.Servers {
 					validKeys[fmt.Sprintf("%s|%s", rKey, srv.Address)] = true
 				}
@@ -432,7 +416,7 @@ func (s *Server) Reload() {
 	}
 
 	s.mu.Lock()
-	tcpGroups := make(map[string][]*alaye.TCPRoute)
+	tcpGroups := make(map[string][]alaye.TCPRoute)
 	for _, host := range newHosts {
 		for i := range host.Proxies {
 			p := host.Proxies[i]
@@ -450,7 +434,7 @@ func (s *Server) Reload() {
 			}
 		}
 
-		var group []*alaye.TCPRoute
+		var group []alaye.TCPRoute
 		if g, ok := tcpGroups[tp.Listen]; ok {
 			group = g
 		} else {
@@ -471,7 +455,7 @@ func (s *Server) Reload() {
 		var newDefault *xtcp.Balancer
 
 		for _, route := range group {
-			bal := xtcp.NewBalancer(*route, metrics.DefaultRegistry)
+			bal := xtcp.NewBalancer(route, metrics.DefaultRegistry)
 			if route.SNI != "" {
 				newRoutes[strings.ToLower(route.SNI)] = bal
 			} else {
@@ -556,9 +540,9 @@ func (s *Server) hasStreaming(hosts map[string]*alaye.Host) bool {
 	for _, host := range hosts {
 		for _, rt := range host.Routes {
 			// Check Backends pointer
-			if rt.Backends != nil {
+			if rt.Backends.Enabled.Yes() {
 				for _, srv := range rt.Backends.Servers {
-					if srv.Streaming != nil && srv.Streaming.Status.Yes() {
+					if srv.Streaming.Enabled.Yes() && srv.Streaming.Enabled.Yes() {
 						return true
 					}
 				}
@@ -714,16 +698,13 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 	return h
 }
 
-// ... rest of file (buildGlobalRateLimiter, buildTLS, logRequest, handleRequest, handleRoute, etc.)
-// Note: buildGlobalRateLimiter also needs a nil check on s.global.RateLimits
 func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
 	rlc := s.global.RateLimits
 
-	if rlc == nil || !rlc.Enabled.Yes() || len(rlc.Rules) == 0 {
+	if !rlc.Enabled.Yes() || len(rlc.Rules) == 0 {
 		return nil
 	}
 
-	// ... existing logic ...
 	policy := func(r *http.Request) (bucket string, pol ratelimit.RatePolicy, ok bool) {
 		p := r.URL.Path
 
@@ -875,7 +856,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	maxBody := int64(alaye.DefaultMaxBodySize)
 	// Pointer safety for Limits
-	if hcfg.Limits != nil && hcfg.Limits.MaxBodySize > 0 {
+	if hcfg.Limits.MaxBodySize > 0 {
 		maxBody = hcfg.Limits.MaxBodySize
 	}
 
@@ -953,11 +934,11 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	}
 
 	routeKey := route.Key()
-	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey, s.global.RateLimits)
+	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey, &s.global.RateLimits)
 
 	// Pointer safety for Wasm
-	if route.Wasm != nil && route.Wasm.Enabled.Yes() {
-		wm, err := s.getWasmManager(route.Wasm, routeKey)
+	if route.Wasm.Enabled.Yes() {
+		wm, err := s.getWasmManager(&route.Wasm, routeKey)
 		if err != nil {
 			s.logger.Fields("err", err, "module", route.Wasm.Module).Error("wasm: failed to load middleware")
 			http.Error(w, "Internal Server Error (WASM)", http.StatusInternalServerError)
@@ -969,7 +950,7 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	// Pointer safety for RateLimit
 	if s.rateLimiter != nil {
 		ignoreGlobal := false
-		if route.RateLimit != nil && route.RateLimit.IgnoreGlobal {
+		if route.RateLimit.IgnoreGlobal {
 			ignoreGlobal = true
 		}
 		if !ignoreGlobal {

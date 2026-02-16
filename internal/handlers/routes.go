@@ -27,28 +27,46 @@ func NewRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Logge
 		return FallbackRoute("nil route")
 	}
 
+	// Log route configuration for debugging
+	logger.Fields("path", route.Path, "enabled", route.Enabled).Debug("creating route")
+
+	// Validate the route configuration
 	if err := route.Validate(); err != nil {
 		logger.Fields("path", route.Path, "err", err).Error("invalid route config")
-		return FallbackRoute("invalid route config")
+		return FallbackRoute("invalid route config: " + err.Error())
 	}
 
-	// Check if this is a web route (has valid web root)
-	if route.Web.Root.IsSet() {
+	// Determine route type: web or proxy
+	isWebRoute := route.Web.Root.IsSet()
+	hasBackends := len(route.Backends.Servers) > 0
+
+	if isWebRoute && hasBackends {
+		logger.Fields("path", route.Path).Error("route cannot have both web root and backends")
+		return FallbackRoute("route cannot have both web and proxy config")
+	}
+
+	if isWebRoute {
 		return newWebRoute(route, globalRate, logger)
 	}
 
-	return newProxyRoute(route, globalRate, logger)
+	if hasBackends {
+		return newProxyRoute(route, globalRate, logger)
+	}
+
+	// This shouldn't happen if validation passed, but handle defensively
+	logger.Fields("path", route.Path).Error("route has neither web root nor backends")
+	return FallbackRoute("route has no handler configuration")
 }
 
 func newWebRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Logger) *Route {
 	chain := http.Handler(ui.NewWeb(logger, route))
 
-	// IP allowlist - only wrap if IPs are configured (optimization)
+	// IP allowlist - only if IPs configured (optimization, not Enabled check)
 	if len(route.AllowedIPs) > 0 {
 		chain = ipallow.New(route.AllowedIPs, logger)(chain)
 	}
 
-	// Auth middleware - they handle Enabled check internally, no need to check here
+	// Auth middleware - they handle Enabled check internally
 	chain = auth.JWT(&route.JWTAuth)(chain)
 	chain = auth.Basic(&route.BasicAuth)(chain)
 	chain = auth.Forward(&route.ForwardAuth)(chain)
@@ -72,19 +90,20 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 	var backends []*xhttp.Backend
 
 	// Build backends from config
-	for _, backendCfg := range route.Backends.Servers {
+	for i, backendCfg := range route.Backends.Servers {
 		b, err := xhttp.NewBackend(backendCfg, route, logger, metrics.DefaultRegistry)
 		if err != nil {
-			logger.Fields("backend", backendCfg.Address, "err", err).
+			logger.Fields("index", i, "backend", backendCfg.Address, "err", err).
 				Error("failed to create backend")
 			continue
 		}
 		backends = append(backends, b)
 	}
 
-	// If no backends were created, return fallback
+	// If no backends were created successfully, return fallback
 	if len(backends) == 0 {
-		logger.Fields("path", route.Path).Warn("proxy route has no valid backends configured")
+		logger.Fields("path", route.Path, "configured", len(route.Backends.Servers)).
+			Warn("proxy route has no valid backends")
 		return FallbackRoute("proxy route missing backends")
 	}
 
@@ -102,7 +121,7 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 
 	var chain http.Handler = loadBalancer
 
-	// IP allowlist - only wrap if IPs are configured
+	// IP allowlist - only if IPs configured
 	if len(route.AllowedIPs) > 0 {
 		chain = ipallow.New(route.AllowedIPs, logger)(chain)
 	}
@@ -112,13 +131,12 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.
 	chain = auth.Basic(&route.BasicAuth)(chain)
 	chain = auth.Forward(&route.ForwardAuth)(chain)
 
-	// Rate limiting - removed duplicate Enabled check
+	// Rate limiting - build limiter if configured (Enabled checked inside)
 	if rl := buildRouteLimiter(&route.RateLimit, globalRate); rl != nil {
 		chain = rl.Handler(chain)
 	}
 
 	// Headers and Compression - they handle Enabled check internally
-	// NOTE: Added headers.Headers here, was missing in original proxy route
 	chain = headers.Headers(&route.Headers)(chain)
 	chain = compress.Compress(route)(chain)
 
@@ -138,7 +156,9 @@ func (h *Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Route) Close() {
 	for _, b := range h.Backends {
-		b.Stop()
+		if b != nil {
+			b.Stop()
+		}
 	}
 }
 
@@ -155,7 +175,8 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 		return nil
 	}
 
-	// Check if rate limiting is effectively enabled (either directly or via policy)
+	// Check if rate limiting is effectively enabled
+	// Either explicitly enabled, or using a global policy
 	if !rlc.Enabled.Yes() && rlc.UsePolicy == "" {
 		return nil
 	}
@@ -174,6 +195,7 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 
 	var rules []alaye.RateRule
 
+	// Add policy-based rules if configured
 	if rlc.UsePolicy != "" && global != nil {
 		for _, pol := range global.Policies {
 			if pol.Name == rlc.UsePolicy {
@@ -189,6 +211,7 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 		}
 	}
 
+	// Add explicit rule if enabled
 	if rlc.Rule.Enabled.Yes() {
 		rules = append(rules, rlc.Rule)
 	}
@@ -204,6 +227,7 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 		}
 
 		for _, rule := range rules {
+			// Check method match if methods specified
 			if len(rule.Methods) > 0 {
 				methodMatch := false
 				for _, m := range rule.Methods {
@@ -217,6 +241,7 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 				}
 			}
 
+			// Check prefix match if prefixes specified
 			if len(rule.Prefixes) > 0 {
 				prefixMatch := false
 				for _, p := range rule.Prefixes {

@@ -126,7 +126,7 @@ route "/" {
 route "/api" {
   strip_prefixes = ["/api"]
   backend {
-    lb_strategy = "round_robin"
+    strategy = "round_robin"
     
     server {
         address = "http://localhost:3000"

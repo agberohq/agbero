@@ -17,7 +17,7 @@ route "/api" {
 
 route "/support" {
   backend {
-    lb_strategy = "random"
+    strategy = "random"
     server {
       address = "http://localhost:7060"
     }

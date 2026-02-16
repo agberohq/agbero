@@ -112,7 +112,7 @@ func (m *Manager) initCertMagic() error {
 	}
 
 	// 1. Check if the configuration block exists (Pointer check)
-	if m.Global.LetsEncrypt == nil {
+	if m.Global.LetsEncrypt.Enabled.No() {
 		return woos.ErrLetsEncryptNotEnabled
 	}
 
@@ -190,9 +190,7 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 	}
 
 	h := next
-	useStaging := m.Global != nil && m.Global.LetsEncrypt != nil && m.Global.LetsEncrypt.Staging
-
-	if useStaging {
+	if m.Global.LetsEncrypt.Staging {
 		if m.issStaging != nil {
 			h = m.issStaging.HTTPChallengeHandler(h)
 		}
@@ -206,10 +204,10 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 }
 
 func (m *Manager) CmForHost(hcfg *alaye.Host) *certmagic.Config {
-	useStaging := false
-	if m.Global != nil && m.Global.LetsEncrypt != nil {
-		useStaging = m.Global.LetsEncrypt.Staging
+	if m.Global.LetsEncrypt.Enabled.No() {
+		return m.cmStaging
 	}
+	useStaging := m.Global.LetsEncrypt.Staging
 
 	if hcfg.TLS.LetsEncrypt.Staging {
 		useStaging = true
@@ -332,7 +330,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		if hcfg.TLS.Local.CertFile == "" || hcfg.TLS.Local.KeyFile == "" {
 			return nil, errors.Newf("%w %q", woos.ErrLocalCertMissingFiles, sni)
 		}
-		return m.GetLocalCertificate(hcfg.TLS.Local, sni)
+		return m.GetLocalCertificate(&hcfg.TLS.Local, sni)
 
 	case alaye.ModeLocalAuto:
 		if !core.IsLocalhost(sni) {
@@ -383,7 +381,7 @@ func (m *Manager) getCustomCACert(root string, host string) (*tls.Certificate, e
 		if hcfg.TLS.Local.CertFile == "" || hcfg.TLS.Local.KeyFile == "" {
 			return nil, errors.Newf("%w for host %q", woos.ErrCustomCALocalCertRequired, host)
 		}
-		return m.GetLocalCertificate(hcfg.TLS.Local, host)
+		return m.GetLocalCertificate(&hcfg.TLS.Local, host)
 	}
 	return nil, errors.Newf("%w for host %q", woos.ErrUnknownHost, host)
 }

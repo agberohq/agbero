@@ -568,7 +568,7 @@ const UI = {
                     </div>`;
             });
 
-            const lbStrategy = cfg_item.backends?.lb_strategy || cfg_item.backends?.load_balancing?.strategy || "round_robin";
+            const lbStrategy = cfg_item.backends?.strategy || cfg_item.backends?.load_balancing?.strategy || "round_robin";
             let strategyDisplay = "Round Robin";
             if (lbStrategy === "least_conn") strategyDisplay = "Least Connections";
             else if (lbStrategy === "ip_hash") strategyDisplay = "IP Hash";
