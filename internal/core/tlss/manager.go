@@ -111,32 +111,25 @@ func (m *Manager) initCertMagic() error {
 		return woos.ErrGlobalConfigRequired
 	}
 
-	// 1. Check if the configuration block exists (Pointer check)
+	// Check if the configuration block exists (Pointer check)
 	if m.Global.LetsEncrypt.Enabled.NotActive() {
 		return woos.ErrLetsEncryptNotEnabled
 	}
 
-	// 2. Check if explicitly disabled (Active check)
-	// Note: We do NOT check .Active() here, because the default (0/Unknown)
-	// implies enabled if the block is present in the HCL.
-	if m.Global.LetsEncrypt.Enabled.NotActive() {
-		return woos.ErrLetsEncryptNotEnabled
-	}
-
-	// 3. Validation: Email is required
+	// Validation: Email is required
 	email := strings.TrimSpace(m.Global.LetsEncrypt.Email)
 	if email == "" {
 		return woos.ErrEmptyLEEmail
 	}
 
-	// 4. Validation: Storage path
+	//  Validation: Storage path
 	storageDir := strings.TrimSpace(m.Global.Storage.CertsDir)
 	if storageDir == "" {
 		return woos.ErrEmptyCertFile
 	}
 	storageDir = filepath.Clean(storageDir)
 
-	// 5. Initialize CertMagic logic
+	// Initialize CertMagic logic
 	decision := func(ctx context.Context, name string) error {
 		// In the future, this is where we check if 'name' is in our allowed domains list.
 		// For now, implicit trust based on routing table.
