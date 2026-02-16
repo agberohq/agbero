@@ -1,22 +1,31 @@
 const EventHandler = {
     bindAll(app) {
+        if (!app) return;
+
         // ================== NAVIGATION ==================
         document.querySelectorAll(".nav-link").forEach(l => {
             l.addEventListener("click", e => {
                 if (e.target.id === 'loginBtn') return;
                 e.preventDefault();
-                app.setPage(e.target.dataset.page);
+                const page = e.target.dataset.page;
+                if (page) app.setPage(page);
             });
         });
 
         // ================== THEME ==================
-        document.getElementById("themeToggle")?.addEventListener("click", () => app.toggleTheme());
+        const themeToggle = document.getElementById("themeToggle");
+        if (themeToggle) themeToggle.addEventListener("click", () => app.toggleTheme());
 
         // ================== AUTH ==================
-        document.getElementById("loginBtn")?.addEventListener("click", () => app.handleAuthClick());
+        const loginBtn = document.getElementById("loginBtn");
+        if (loginBtn) loginBtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            app.handleAuthClick();
+        });
 
         // ================== HOSTS PAGE ==================
-        document.getElementById("refreshHostsBtn")?.addEventListener("click", () => app.fetchHostsData());
+        const refreshHostsBtn = document.getElementById("refreshHostsBtn");
+        if (refreshHostsBtn) refreshHostsBtn.addEventListener("click", () => app.fetchHostsData());
 
         const searchInput = document.getElementById("hostSearch");
         if (searchInput) {
@@ -29,24 +38,37 @@ const EventHandler = {
         }
 
         // ================== LOGIN MODAL ==================
-        document.getElementById("loginForm")?.addEventListener("submit", e => app.doLogin(e));
+        const loginForm = document.getElementById("loginForm");
+        if (loginForm) loginForm.addEventListener("submit", e => app.doLogin(e));
 
         // ================== FIREWALL PAGE ==================
-        document.getElementById("addRuleBtn")?.addEventListener("click", () => Modal.open("ruleModal"));
-        document.getElementById("ruleForm")?.addEventListener("submit", e => app.addFirewallRule(e));
+        const addRuleBtn = document.getElementById("addRuleBtn");
+        if (addRuleBtn) addRuleBtn.addEventListener("click", () => Modal.open("ruleModal"));
+
+        const ruleForm = document.getElementById("ruleForm");
+        if (ruleForm) ruleForm.addEventListener("submit", e => app.addFirewallRule(e));
 
         // ================== LOGS PAGE ==================
-        document.getElementById("logsPauseBtn")?.addEventListener("click", () => {
-            app.logsPaused = !app.logsPaused;
-            document.getElementById("logsPauseBtn").innerText = app.logsPaused ? "Resume" : "Pause";
-        });
+        const logsPauseBtn = document.getElementById("logsPauseBtn");
+        if (logsPauseBtn) {
+            logsPauseBtn.addEventListener("click", () => {
+                app.logsPaused = !app.logsPaused;
+                logsPauseBtn.innerText = app.logsPaused ? "Resume" : "Pause";
+            });
+        }
 
-        document.getElementById("logsClearBtn")?.addEventListener("click", () => {
-            app.logs = [];
-            UI.renderLogs(app.logs, app.logFilter);
-        });
+        const logsClearBtn = document.getElementById("logsClearBtn");
+        if (logsClearBtn) {
+            logsClearBtn.addEventListener("click", () => {
+                app.logs = [];
+                UI.renderLogs(app.logs, app.logFilter);
+            });
+        }
 
-        document.getElementById("logsTailSelect")?.addEventListener("change", () => app.fetchLogs());
+        const logsTailSelect = document.getElementById("logsTailSelect");
+        if (logsTailSelect) {
+            logsTailSelect.addEventListener("change", () => app.fetchLogs());
+        }
 
         document.querySelectorAll(".chip").forEach(chip => {
             chip.addEventListener("click", (e) => {
@@ -58,7 +80,6 @@ const EventHandler = {
         });
 
         // ================== CONFIG PAGE ==================
-        // Refresh button
         const configRefreshBtn = document.querySelector('.config-refresh');
         if (configRefreshBtn) {
             configRefreshBtn.addEventListener('click', (e) => {
@@ -67,7 +88,6 @@ const EventHandler = {
             });
         }
 
-        // Copy config button
         const copyConfigBtn = document.querySelector('.config-copy');
         if (copyConfigBtn) {
             copyConfigBtn.addEventListener('click', (e) => {
@@ -78,13 +98,15 @@ const EventHandler = {
             });
         }
 
-        // Expand/collapse config button
         const expandBtn = document.querySelector('.config-expand');
         if (expandBtn) {
             expandBtn.addEventListener('click', (e) => {
                 e.preventDefault();
-                document.getElementById('configContent').classList.toggle('expanded');
-                e.target.innerText = document.getElementById('configContent').classList.contains('expanded') ? '↕️ Collapse' : '↕️ Expand';
+                const configContent = document.getElementById('configContent');
+                if (configContent) {
+                    configContent.classList.toggle('expanded');
+                    e.target.innerText = configContent.classList.contains('expanded') ? '↕️ Collapse' : '↕️ Expand';
+                }
             });
         }
 
@@ -94,19 +116,31 @@ const EventHandler = {
         });
 
         // ================== CONFIRM MODAL ==================
-        document.getElementById("confirmCancel")?.addEventListener("click", () => Modal.closeAll());
-        document.getElementById("confirmOk")?.addEventListener("click", async () => {
-            if (app._confirmFn) await app._confirmFn();
-            Modal.closeAll();
-        });
+        const confirmCancel = document.getElementById("confirmCancel");
+        if (confirmCancel) confirmCancel.addEventListener("click", () => Modal.closeAll());
+
+        const confirmOk = document.getElementById("confirmOk");
+        if (confirmOk) {
+            confirmOk.addEventListener("click", async () => {
+                if (app._confirmFn) await app._confirmFn();
+                Modal.closeAll();
+            });
+        }
 
         // ================== DRAWER CONTROLS ==================
-        document.getElementById("drawerCloseBtn")?.addEventListener("click", () => app.closeDrawer());
-        document.getElementById("drawerBackdrop")?.addEventListener("click", () => app.closeDrawer());
-        document.getElementById("drawerBackToHosts")?.addEventListener("click", () => {
-            app.closeDrawer();
-            app.setPage("hosts");
-        });
+        const drawerCloseBtn = document.getElementById("drawerCloseBtn");
+        if (drawerCloseBtn) drawerCloseBtn.addEventListener("click", () => app.closeDrawer());
+
+        const drawerBackdrop = document.getElementById("drawerBackdrop");
+        if (drawerBackdrop) drawerBackdrop.addEventListener("click", () => app.closeDrawer());
+
+        const drawerBackToHosts = document.getElementById("drawerBackToHosts");
+        if (drawerBackToHosts) {
+            drawerBackToHosts.addEventListener("click", () => {
+                app.closeDrawer();
+                app.setPage("hosts");
+            });
+        }
 
         // Clickable hostname in drawer
         const hostNameEl = document.getElementById("drawerHostName");
@@ -126,9 +160,12 @@ const EventHandler = {
         }
 
         // ================== SESSION MANAGEMENT ==================
-        document.getElementById("refreshSessionBtn")?.addEventListener("click", () => {
-            app.renewSession();
-        });
+        const refreshSessionBtn = document.getElementById("refreshSessionBtn");
+        if (refreshSessionBtn) {
+            refreshSessionBtn.addEventListener("click", () => {
+                app.renewSession();
+            });
+        }
 
         // ================== KEYBOARD SHORTCUTS ==================
         document.addEventListener("keydown", (e) => {
@@ -162,7 +199,8 @@ const EventHandler = {
 // ================== MODAL CONTROLS ==================
 const Modal = {
     open(id) {
-        document.getElementById(id)?.classList.add("active");
+        const modal = document.getElementById(id);
+        if (modal) modal.classList.add("active");
     },
     closeAll() {
         document.querySelectorAll(".modal-overlay").forEach(m => m.classList.remove("active"));
@@ -172,11 +210,15 @@ const Modal = {
 // ================== DRAWER CONTROLS ==================
 const Drawer = {
     open() {
-        document.getElementById("drawerBackdrop")?.classList.add("active");
-        document.getElementById("routeDrawer")?.classList.add("active");
+        const backdrop = document.getElementById("drawerBackdrop");
+        const drawer = document.getElementById("routeDrawer");
+        if (backdrop) backdrop.classList.add("active");
+        if (drawer) drawer.classList.add("active");
     },
     close() {
-        document.getElementById("drawerBackdrop")?.classList.remove("active");
-        document.getElementById("routeDrawer")?.classList.remove("active");
+        const backdrop = document.getElementById("drawerBackdrop");
+        const drawer = document.getElementById("routeDrawer");
+        if (backdrop) backdrop.classList.remove("active");
+        if (drawer) drawer.classList.remove("active");
     }
 };

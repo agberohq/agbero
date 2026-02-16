@@ -34,7 +34,7 @@ class AgberoApp {
 
         // Add this for config caching
         this.lastConfig = null;
-
+        this._confirmFn = null;
     }
 
     // ================== API & DATA FETCHING ==================
@@ -51,9 +51,18 @@ class AgberoApp {
 
         try {
             const res = await fetch(this.apiBase + path, opts);
-            if (res.status === 401) { this.handleSessionExpired(); return null; }
+            if (res.status === 401) {
+                this.handleSessionExpired();
+                return null;
+            }
             if (res.status === 204) return true;
-            return await res.json();
+            if (res.status === 404) return null;
+            const text = await res.text();
+            try {
+                return text ? JSON.parse(text) : null;
+            } catch {
+                return text;
+            }
         } catch (e) {
             console.error("API Error", e);
             return null;
@@ -86,7 +95,7 @@ class AgberoApp {
         const stats = this.parseMetricsJSON(data);
         const metrics = {
             stats,
-            system: data.system,
+            system: data.system || {},
             certificates: this.certificates,
             lastReqTotal: this.lastReqTotal,
             lastReqTime: this.lastReqTime,
@@ -94,12 +103,10 @@ class AgberoApp {
         };
 
         // Update metrics series
-        this.metricsSeries.push(stats.p99_ms || 0);
-        if (this.metricsSeries.length > 60) this.metricsSeries.shift();
-
-        // Update state for RPS calculation
-        this.lastReqTotal = stats.total_reqs;
-        this.lastReqTime = Date.now();
+        if (stats.p99_ms) {
+            this.metricsSeries.push(stats.p99_ms);
+            if (this.metricsSeries.length > 60) this.metricsSeries.shift();
+        }
 
         UI.updateMetrics(metrics, this.metricsSeries);
     }
@@ -124,8 +131,8 @@ class AgberoApp {
                         }
 
                         if (b.latency_us && b.latency_us.count > 0) {
-                            sumLat += b.latency_us.sum_us;
-                            countLat += b.latency_us.count;
+                            sumLat += b.latency_us.sum_us || 0;
+                            countLat += b.latency_us.count || 0;
 
                             if (b.latency_us.p99 > 0) {
                                 total_p99 += b.latency_us.p99;
@@ -147,8 +154,8 @@ class AgberoApp {
                         }
 
                         if (b.latency_us && b.latency_us.count > 0) {
-                            sumLat += b.latency_us.sum_us;
-                            countLat += b.latency_us.count;
+                            sumLat += b.latency_us.sum_us || 0;
+                            countLat += b.latency_us.count || 0;
 
                             if (b.latency_us.p99 > 0) {
                                 total_p99 += b.latency_us.p99;
@@ -228,8 +235,13 @@ class AgberoApp {
     }
 
     async deleteFw(ip) {
+        if (!ip) return;
         await this.api(`/firewall?ip=${encodeURIComponent(ip)}`, "DELETE");
         this.fetchFirewall();
+    }
+
+    async confirmDeleteFw(ip) {
+        this.confirm("Unblock IP", `Are you sure you want to unblock ${ip}?`, () => this.deleteFw(ip));
     }
 
     async addFirewallRule(e) {
@@ -238,7 +250,7 @@ class AgberoApp {
             ip: document.getElementById("fwIp").value,
             reason: document.getElementById("fwReason").value,
             path: document.getElementById("fwPath").value,
-            duration_sec: parseInt(document.getElementById("fwDuration").value)
+            duration_sec: parseInt(document.getElementById("fwDuration").value) || 0
         };
         await this.api("/firewall", "POST", body);
         Modal.closeAll();
@@ -250,10 +262,12 @@ class AgberoApp {
         this.lastConfig = data;
 
         if (data) {
-            // Extract key metrics
+            const bindHttp = data.global?.bind?.http;
+            const bindHttps = data.global?.bind?.https;
+
             const metrics = {
-                httpPort: data.global?.bind?.http?.[0]?.replace(':', '') || 80,
-                httpsPort: data.global?.bind?.https?.[0]?.replace(':', '') || 443,
+                httpPort: bindHttp && bindHttp[0] ? bindHttp[0].replace(':', '') : '80',
+                httpsPort: bindHttps && bindHttps[0] ? bindHttps[0].replace(':', '') : '443',
                 version: "v" + (data.global?.version || '?'),
                 build: data.global?.build || 'dev',
                 logLevel: data.global?.logging?.level || 'info',
@@ -266,25 +280,25 @@ class AgberoApp {
             UI.renderGlobalSettings(data.global);
             UI.renderRawConfig(data);
 
-            // Update version in title if needed
             this.updateConfigTitle(metrics.version, metrics.build);
         }
     }
 
-    // Add helper methods for config
     getTLSConfigCount(config) {
         let count = 0;
         if (!config.hosts) return 0;
 
         Object.values(config.hosts).forEach(host => {
-            if (host.tls && host.tls.mode !== 'none') count++;
+            if (host.tls && host.tls.mode && host.tls.mode !== 'none') count++;
         });
         return count;
     }
 
-
     async fetchLogs() {
-        const n = document.getElementById("logsTailSelect").value;
+        const select = document.getElementById("logsTailSelect");
+        if (!select) return;
+
+        const n = select.value;
         const data = await this.api(`/logs?lines=${n}`);
         if (data && Array.isArray(data)) {
             this.logs = data.reverse();
@@ -373,12 +387,18 @@ class AgberoApp {
         this.startLoop();
         this.fetchHostsData();
         this.fetchVersion();
+
+        const savedPage = sessionStorage.getItem("ag_page");
+        if (savedPage && savedPage !== "dashboard") {
+            this.setPage(savedPage);
+        }
     }
 
     handleAuthClick() {
         if (this.token || this.basic) {
             sessionStorage.clear();
-            this.token = null; this.basic = null;
+            this.token = null;
+            this.basic = null;
             this.stopLoop();
             this.updateAuthButton();
             window.location.reload();
@@ -424,9 +444,12 @@ class AgberoApp {
         sessionStorage.setItem("ag_page", p);
 
         document.querySelectorAll(".nav-link").forEach(n => n.classList.remove("active"));
-        document.querySelector(`.nav-link[data-page="${p}"]`)?.classList.add("active");
+        const link = document.querySelector(`.nav-link[data-page="${p}"]`);
+        if (link) link.classList.add("active");
+
         document.querySelectorAll(".page").forEach(div => div.classList.remove("active"));
-        document.getElementById(p + "Page").classList.add("active");
+        const page = document.getElementById(p + "Page");
+        if (page) page.classList.add("active");
 
         if (this.token || this.basic) {
             this.refreshCurrentPage();
@@ -442,19 +465,21 @@ class AgberoApp {
 
     // ================== UTILITIES ==================
     fmtNum(n) {
+        if (n === undefined || n === null) return "0";
         if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
         if (n >= 1000) return (n / 1000).toFixed(1) + "k";
         return n;
     }
 
     formatBytes(b) {
-        if (b === 0) return "0";
+        if (b === 0 || !b) return "0";
         const k = 1024, s = ["B", "KB", "MB", "GB"];
         const i = Math.floor(Math.log(b) / Math.log(k));
         return parseFloat((b / Math.pow(k, i)).toFixed(1)) + s[i];
     }
 
     timeAgo(timestamp) {
+        if (!timestamp) return 'never';
         const seconds = Math.floor((Date.now() - timestamp) / 1000);
         if (seconds < 10) return 'just now';
         if (seconds < 60) return `${seconds}s ago`;
@@ -462,7 +487,9 @@ class AgberoApp {
     }
 
     copyToClipboard(text) {
-        navigator.clipboard?.writeText(text).then(() => {}).catch(() => {});
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).then(() => {}).catch(() => {});
+        }
     }
 
     confirm(title, msg, fn) {
@@ -474,17 +501,28 @@ class AgberoApp {
     // ================== DRAWER ==================
     openRouteDrawer(hostname, idx, type = 'route') {
         let cfg_item;
-        let itemStats;
+        let itemStats = {};
+
+        if (!this.hostsData.config || !this.hostsData.config[hostname]) return;
+
         if (type === 'proxy') {
-            cfg_item = this.hostsData.config[hostname].proxies[idx];
-            itemStats = this.hostsData.stats[hostname]?.proxies?.[idx] || {};
+            const proxies = this.hostsData.config[hostname].proxies;
+            if (proxies && proxies[idx]) {
+                cfg_item = proxies[idx];
+                itemStats = this.hostsData.stats[hostname]?.proxies?.[idx] || {};
+            }
         } else {
-            cfg_item = this.hostsData.config[hostname].routes[idx];
-            itemStats = this.hostsData.stats[hostname]?.routes?.[idx] || {};
+            const routes = this.hostsData.config[hostname].routes;
+            if (routes && routes[idx]) {
+                cfg_item = routes[idx];
+                itemStats = this.hostsData.stats[hostname]?.routes?.[idx] || {};
+            }
         }
 
-        UI.renderDrawer(hostname, cfg_item, itemStats, type, this.certificates);
-        Drawer.open();
+        if (cfg_item) {
+            UI.renderDrawer(hostname, cfg_item, itemStats, type, this.certificates);
+            Drawer.open();
+        }
     }
 
     closeDrawer() {
@@ -501,12 +539,6 @@ class AgberoApp {
             this.startLoop();
             this.fetchHostsData();
             this.parseJWTExpiry();
-
-            // ADD THIS BLOCK - Restore saved page
-            const savedPage = sessionStorage.getItem("ag_page");
-            if (savedPage && savedPage !== "dashboard") {
-                this.setPage(savedPage);
-            }
         } else {
             Modal.open("loginModal");
         }

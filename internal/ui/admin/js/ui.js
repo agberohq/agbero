@@ -38,9 +38,9 @@ const UI = {
 
         setText("totalReqsStat", this.fmtNum(stats.total_reqs));
         setText("errorsStat", this.fmtNum(stats.total_errors));
-        setText("meanResponseStat", stats.avg_ms.toFixed(0) + "ms");
-        setText("activeBackendsStat", stats.active_backends);
-        setText("apdexStat", stats.apdex);
+        setText("meanResponseStat", stats.avg_ms ? stats.avg_ms.toFixed(0) + "ms" : "0ms");
+        setText("activeBackendsStat", stats.active_backends || 0);
+        setText("apdexStat", stats.apdex || "1.0");
         setText("uptimeStat", stats.uptime || "100%");
 
         const errorRate = stats.total_reqs > 0 ? ((stats.total_errors / stats.total_reqs) * 100).toFixed(1) : 0;
@@ -72,10 +72,11 @@ const UI = {
         setMetric('configHostCount', this.fmtNum(metrics.hostCount));
         setMetric('configRouteCount', this.fmtNum(metrics.routeCount));
         setMetric('configTlsCount', this.fmtNum(metrics.tlsCount));
-        setMetric('configLogLevel', metrics.logLevel.toUpperCase());
+        setMetric('configLogLevel', metrics.logLevel ? metrics.logLevel.toUpperCase() : 'INFO');
     },
 
     updateLastUpdated(timestamp) {
+        if (!timestamp) return;
         const seconds = Math.floor((Date.now() - timestamp) / 1000);
         let text = 'just now';
         if (seconds >= 10) text = seconds < 60 ? `${seconds}s ago` : `${Math.floor(seconds / 60)}m ago`;
@@ -113,11 +114,15 @@ const UI = {
             return;
         }
 
+        const trustedProxies = global.security?.trusted_proxies || [];
         const settings = [
-            { label: 'Environment', value: global.development ? 'development' : 'production' },
-            { label: 'Admin Email', value: global.lets_encrypt?.email || '—' },
-            { label: 'Max Header Size', value: global.general?.max_header_bytes ? this.formatBytes(global.general.max_header_bytes) : '—' },
-            { label: 'Trusted Proxies', value: global.security?.trusted_proxies?.join(', ') || 'none' }
+            {label: 'Environment', value: global.development ? 'development' : 'production'},
+            {label: 'Admin Email', value: global.lets_encrypt?.email || '—'},
+            {
+                label: 'Max Header Size',
+                value: global.general?.max_header_bytes ? this.formatBytes(global.general.max_header_bytes) : '—'
+            },
+            {label: 'Trusted Proxies', value: trustedProxies.length > 0 ? trustedProxies.join(', ') : 'none'}
         ];
 
         container.innerHTML = settings.map(setting => `
@@ -135,7 +140,6 @@ const UI = {
         }
     },
 
-
     renderGraph(series) {
         const el = document.getElementById("responseGraph");
         if (!el) return;
@@ -144,7 +148,7 @@ const UI = {
         const pTop = 15;
         const drawH = h - 30;
 
-        if (series.length === 0) {
+        if (!series || series.length === 0) {
             el.innerHTML = `<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-mute);font-size:11px;">⚡ Waiting for metrics...</div>`;
             return;
         }
@@ -170,10 +174,12 @@ const UI = {
 
     renderHosts(hostsData, filterTerm, certificates) {
         const container = document.getElementById("hostsContainer");
-        const hosts = hostsData.config;
-        const stats = hostsData.stats;
+        if (!container) return;
 
-        filterTerm = filterTerm.toLowerCase();
+        const hosts = hostsData.config || {};
+        const stats = hostsData.stats || {};
+
+        filterTerm = filterTerm ? filterTerm.toLowerCase() : "";
         let html = "";
         let hostCount = 0, routeCount = 0;
 
@@ -201,17 +207,19 @@ const UI = {
             let tlsTitle = "Managed by Agbero";
 
             if (tlsMode === "none") {
-                tlsClass = "error"; tlsText = "No TLS";
-            } else if (tlsMode.includes("local")) {
-                tlsClass = "warning"; tlsText = "Local TLS";
+                tlsClass = "error";
+                tlsText = "No TLS";
+            } else if (tlsMode && tlsMode.includes("local")) {
+                tlsClass = "warning";
+                tlsText = "Local TLS";
             }
 
-            if (cfg.tls?.expiry) {
-                const daysLeft = Math.floor((new Date(cfg.tls.expiry) - Date.now()) / 86400000);
-                tlsTitle = `Expires: ${cfg.tls.expiry} (${daysLeft} days)`;
-                if (daysLeft < 7) {
-                    tlsClass = daysLeft < 0 ? "error" : "warning";
-                    tlsText = daysLeft < 0 ? "Expired" : `Expires in ${daysLeft}d`;
+            const hostCert = certificates.find(c => c.host === hostname);
+            if (hostCert && hostCert.daysLeft !== undefined) {
+                tlsTitle = `Expires: ${new Date(hostCert.expiry).toLocaleDateString()} (${hostCert.daysLeft} days)`;
+                if (hostCert.daysLeft < 7) {
+                    tlsClass = hostCert.daysLeft < 0 ? "error" : "warning";
+                    tlsText = hostCert.daysLeft < 0 ? "Expired" : `Expires in ${hostCert.daysLeft}d`;
                 }
             }
 
@@ -224,15 +232,15 @@ const UI = {
                 <div class="host-meta">${cfg.domains?.join(", ")} &bull; ${this.fmtNum(rtStats.total_reqs || 0)} Reqs</div>
             </div>`;
 
-            if (cfg.routes) {
+            if (cfg.routes && Array.isArray(cfg.routes)) {
                 cfg.routes.forEach((route, idx) => {
                     routeCount++;
-                    const pathMatches = route.path.toLowerCase().includes(filterTerm);
-                    const routeStats = rtStats.routes?.[idx];
+                    const pathMatches = route.path ? route.path.toLowerCase().includes(filterTerm) : false;
+                    const routeStats = rtStats.routes ? rtStats.routes[idx] : {};
 
                     let backendHtml = "";
                     const configBackends = route.backends?.servers || [];
-                    const uptimeBackends = routeStats?.backends || [];
+                    const uptimeBackends = routeStats.backends || [];
 
                     if (configBackends.length > 0 || uptimeBackends.length > 0) {
                         const displayBackends = uptimeBackends.length > 0 ? uptimeBackends : configBackends;
@@ -240,7 +248,7 @@ const UI = {
 
                         displayBackends.forEach((b, bIdx) => {
                             const configBackend = configBackends[bIdx] || {};
-                            const url = b.address || b.url || configBackend.address || configBackend.url;
+                            const url = b.address || b.url || configBackend.address || configBackend.url || '';
                             const weight = configBackend.weight !== undefined ? configBackend.weight : (b.weight || '-');
 
                             const hasStats = uptimeBackends[bIdx] !== undefined;
@@ -272,7 +280,7 @@ const UI = {
                             backendHtml += `
                             <div class="backend-row ${hasStats && healthStatus === 'down' ? 'down' : ''}">
                                 <span class="dot ${dotColor}" title="${hasStats ? (healthStatus === 'ok' ? 'Healthy' : healthStatus === 'warn' ? 'Idle' : 'Unhealthy') : 'No data'}"></span>
-                                <span class="be-url" onclick="event.stopPropagation(); app.copyToClipboard('${url}')">${url} ${in_flight > 0 ? `<span class="badge warn">⚡${in_flight}</span>` : ''}</span>
+                                <span class="be-url" onclick="event.stopPropagation(); window.app.copyToClipboard('${url}')">${url} ${in_flight > 0 ? `<span class="badge warn">⚡${in_flight}</span>` : ''}</span>
                                 <span class="be-stat">W: ${weight}</span>
                                 <span class="be-stat">${p99}</span>
                                 <span class="be-stat">${this.fmtNum(reqs)}</span>
@@ -281,18 +289,18 @@ const UI = {
                         backendHtml += `</div>`;
                     } else if (route.web && route.web.root) {
                         backendHtml = `<div class="backend-row"><span class="dot ok"></span> <span>📂 ${route.web.root}</span></div>`;
-                        if (route.web.root.toLowerCase().includes(filterTerm)) hostHasMatch = true;
+                        if (route.web.root && route.web.root.toLowerCase().includes(filterTerm)) hostHasMatch = true;
                     }
 
-                    const shouldShowRoute = filterTerm === "" || hostHasMatch || pathMatches || route.protocol === 'tcp';
+                    const shouldShowRoute = filterTerm === "" || hostHasMatch || pathMatches;
                     const protocolBadgeClass = (route.protocol || 'http') === 'http' ? 'success' : 'info';
                     const protocolBadge = `<span class="badge ${protocolBadgeClass}">${(route.protocol || 'HTTP').toUpperCase()}</span>`;
 
                     if (shouldShowRoute) {
                         hostHtml += `
-                        <div class="route-block" onclick="app.openRouteDrawer('${hostname}', ${idx})">
+                        <div class="route-block" onclick="window.app.openRouteDrawer('${hostname}', ${idx})">
                             <div class="route-header">
-                               ${protocolBadge} <span class="route-path">${route.path}</span>
+                               ${protocolBadge} <span class="route-path">${route.path || '/'}</span>
                                 <span class="badge info" style="margin-left:auto; font-size:9px;">DETAILS →</span>
                             </div>
                             ${backendHtml}
@@ -301,16 +309,16 @@ const UI = {
                 });
             }
 
-            if (cfg.proxies) {
+            if (cfg.proxies && Array.isArray(cfg.proxies)) {
                 cfg.proxies.forEach((proxy, pidx) => {
                     routeCount++;
-                    const path = proxy.name ? proxy.name.replace('*default*', '* (TCP)') : proxy.path || proxy.protocol || "*";
+                    const path = proxy.name ? proxy.name.replace('*default*', '* (TCP)') : (proxy.path || proxy.protocol || "*");
                     const pathMatches = path.toLowerCase().includes(filterTerm);
-                    const proxyStats = rtStats.proxies?.[pidx];
+                    const proxyStats = rtStats.proxies ? rtStats.proxies[pidx] : {};
 
                     let backendHtml = "";
-                    const configBackends = proxy.backends?.servers || [];
-                    const uptimeBackends = proxyStats?.backends || [];
+                    const configBackends = proxy.backends || [];
+                    const uptimeBackends = proxyStats.backends || [];
 
                     if (configBackends.length > 0 || uptimeBackends.length > 0) {
                         const displayBackends = uptimeBackends.length > 0 ? uptimeBackends : configBackends;
@@ -318,7 +326,7 @@ const UI = {
 
                         displayBackends.forEach((b, bIdx) => {
                             const configBackend = configBackends[bIdx] || {};
-                            const url = b.address || b.url || configBackend.address || configBackend.url;
+                            const url = b.address || b.url || configBackend.address || configBackend.url || '';
                             const weight = configBackend.weight !== undefined ? configBackend.weight : (b.weight || '-');
 
                             const hasStats = uptimeBackends[bIdx] !== undefined;
@@ -350,25 +358,22 @@ const UI = {
                             backendHtml += `
                             <div class="backend-row ${hasStats && healthStatus === 'down' ? 'down' : ''}">
                                 <span class="dot ${dotColor}" title="${hasStats ? (healthStatus === 'ok' ? 'Healthy' : healthStatus === 'warn' ? 'Idle' : 'Unhealthy') : 'No data'}"></span>
-                                <span class="be-url" onclick="event.stopPropagation(); app.copyToClipboard('${url}')">${url} ${in_flight > 0 ? `<span class="badge warn">⚡${in_flight}</span>` : ''}</span>
+                                <span class="be-url" onclick="event.stopPropagation(); window.app.copyToClipboard('${url}')">${url} ${in_flight > 0 ? `<span class="badge warn">⚡${in_flight}</span>` : ''}</span>
                                 <span class="be-stat">W: ${weight}</span>
                                 <span class="be-stat">${p99}</span>
                                 <span class="be-stat">${this.fmtNum(reqs)}</span>
                             </div>`;
                         });
                         backendHtml += `</div>`;
-                    } else if (proxy.web && proxy.web.root) {
-                        backendHtml = `<div class="backend-row"><span class="dot ok"></span> <span>📂 ${proxy.web.root}</span></div>`;
-                        if (proxy.web.root.toLowerCase().includes(filterTerm)) hostHasMatch = true;
                     }
 
-                    const shouldShowRoute = filterTerm === "" || hostHasMatch || pathMatches || proxy.protocol === 'tcp';
+                    const shouldShowRoute = filterTerm === "" || hostHasMatch || pathMatches;
                     const protocolBadgeClass = (proxy.protocol || 'tcp') === 'http' ? 'success' : 'info';
                     const protocolBadge = `<span class="badge ${protocolBadgeClass}">${(proxy.protocol || 'TCP').toUpperCase()}</span>`;
 
                     if (shouldShowRoute) {
                         hostHtml += `
-                        <div class="route-block" onclick="app.openRouteDrawer('${hostname}', ${pidx}, 'proxy')">
+                        <div class="route-block" onclick="window.app.openRouteDrawer('${hostname}', ${pidx}, 'proxy')">
                             <div class="route-header">
                                ${protocolBadge} <span class="route-path">${path}</span>
                                 <span class="badge info" style="margin-left:auto; font-size:9px;">DETAILS →</span>
@@ -411,8 +416,8 @@ const UI = {
             return;
         }
 
-        const rules = data.rules || data || [];
-        if (Array.isArray(rules) && rules.length === 0) {
+        const rules = data.rules || [];
+        if (rules.length === 0) {
             tbody.innerHTML = `<tr><td colspan="5" style="padding:20px;"><div class="empty-state">
                 <span>✅ No blocked IPs</span>
                 <span>All traffic is allowed</span>
@@ -420,23 +425,25 @@ const UI = {
             return;
         }
 
-        if (Array.isArray(rules)) {
-            tbody.innerHTML = rules.map(r => `
-                <tr>
-                    <td class="mono">${r.ip}</td>
-                    <td>${r.reason || '-'}</td>
-                    <td class="hide-mobile">${r.host || '*'} / ${r.path || '*'}</td>
-                    <td class="hide-mobile">${new Date(r.created_at).toLocaleDateString()}</td>
-                    <td><button class="btn small error" onclick="app.confirmDeleteFw('${r.ip}')">Unblock</button></td>
-                </tr>`).join("");
-        }
+        tbody.innerHTML = rules.map(r => {
+            const created = r.created_at ? new Date(r.created_at) : new Date();
+            const createdStr = !isNaN(created.getTime()) ? created.toLocaleDateString() : 'N/A';
+
+            return `<tr>
+                <td class="mono">${r.ip || '0.0.0.0'}</td>
+                <td>${r.reason || '-'}</td>
+                <td class="hide-mobile">${r.host || '*'} / ${r.path || '*'}</td>
+                <td class="hide-mobile">${createdStr}</td>
+                <td><button class="btn small error" onclick="window.app.confirmDeleteFw('${r.ip || ''}')">Unblock</button></td>
+            </tr>`;
+        }).join("");
     },
 
     renderLogs(logs, filter) {
         const container = document.getElementById("logsList");
         if (!container) return;
 
-        if (logs.length === 0) {
+        if (!logs || logs.length === 0) {
             container.innerHTML = `<div style="color:var(--text-mute); text-align:center; padding:40px;">
                 <span style="display:block; font-size:24px; margin-bottom:10px;">📭</span>
                 No logs yet. Waiting for traffic...
@@ -447,7 +454,7 @@ const UI = {
         const filtered = logs.filter(l => {
             if (filter === "ALL") return true;
             let lvl = "INFO";
-            if (typeof l === 'object') lvl = l.lvl || "INFO";
+            if (typeof l === 'object' && l !== null) lvl = l.lvl || l.level || "INFO";
             else if (typeof l === 'string' && l.includes("ERR")) lvl = "ERROR";
             return lvl === filter;
         });
@@ -460,139 +467,194 @@ const UI = {
         container.innerHTML = filtered.map(l => {
             let lvl = "INFO", msg = "", ts = "";
             if (typeof l === 'string') {
-                try { l = JSON.parse(l); } catch { msg = l; }
-            }
-            if (typeof l === 'object') {
-                lvl = l.lvl || "INFO";
-                msg = l.msg || "";
-                ts = l.ts ? l.ts.split('T')[1].split('.')[0] : "";
+                try {
+                    const parsed = JSON.parse(l);
+                    lvl = parsed.lvl || parsed.level || "INFO";
+                    msg = parsed.msg || parsed.message || l;
+                    ts = parsed.ts || parsed.time || "";
+                } catch {
+                    msg = l;
+                }
+            } else if (typeof l === 'object' && l !== null) {
+                lvl = l.lvl || l.level || "INFO";
+                msg = l.msg || l.message || "";
+                ts = l.ts || l.time || "";
+                if (ts) ts = ts.split('T')[1]?.split('.')[0] || ts;
                 if (l.fields) msg += ` [${l.fields.method || ''} ${l.fields.path || ''}]`;
             }
-            let c = "#aaa";
-            if (lvl === "ERROR") c = "var(--danger)";
-            if (lvl === "WARN") c = "var(--warning)";
-            return `<div class="log-entry"><div class="log-ts">${ts}</div><div class="log-lvl" style="color:${c}">${lvl}</div><div class="log-msg">${msg}</div></div>`;
+            let color = "#aaa";
+            if (lvl === "ERROR") color = "var(--danger)";
+            if (lvl === "WARN") color = "var(--warning)";
+            return `<div class="log-entry"><div class="log-ts">${ts}</div><div class="log-lvl" style="color:${color}">${lvl}</div><div class="log-msg">${msg}</div></div>`;
         }).join("");
     },
-
+    
     renderDrawer(hostname, cfg_item, itemStats, type, certificates) {
         const path = cfg_item.path || (cfg_item.name ? cfg_item.name.replace('*default*', '* (TCP)') : cfg_item.protocol || "*");
         document.getElementById("drawerRoutePath").innerText = path;
         document.getElementById("drawerHostName").innerText = hostname;
 
         const content = document.getElementById("drawerBody");
+        if (!content) return;
         content.innerHTML = "";
 
-        // Handler section
-        if (cfg_item.web && cfg_item.web.root) {
-            content.innerHTML += `
-                <div class="detail-section">
-                    <div class="detail-title">📂 Static File Handler</div>
-                    <div class="handler-card">
-                        <span class="handler-icon">📁</span>
-                        <div class="handler-info">
-                            <strong>File Server</strong>
-                            <span>Root: ${cfg_item.web.root}</span>
-                            <span>Listing: ${cfg_item.web.listing ? 'Enabled' : 'Disabled'}</span>
-                        </div>
-                    </div>
-                </div>`;
-        }
+        // Detect if this is a TCP proxy route
+        const isTCPProxy = type === 'proxy' || cfg_item.protocol === 'tcp' || (cfg_item.listen && !cfg_item.listen.includes('http'));
 
-        if (cfg_item.web && cfg_item.web.php && cfg_item.web.php.enabled) {
-            content.innerHTML += `
+        // Handler section - only for HTTP routes
+        if (!isTCPProxy && cfg_item.web && cfg_item.web.root) {
+            let webHtml = `
+            <div class="detail-section">
+                <div class="detail-title">📂 Static File Handler</div>
+                <div class="handler-card">
+                    <span class="handler-icon">📁</span>
+                    <div class="handler-info">
+                        <strong>File Server</strong>
+                        <span>Root: ${cfg_item.web.root}</span>
+                        <span>Listing: ${cfg_item.web.listing ? 'Enabled' : 'Disabled'}</span>
+                    </div>
+                </div>
+            </div>`;
+
+            if (cfg_item.web.php && cfg_item.web.php.enabled && cfg_item.web.php.enabled === "on") {
+                webHtml += `
                 <div class="detail-section">
                     <div class="detail-title">🐘 PHP Handler</div>
                     <div class="handler-card">
                         <span class="handler-icon">⚙️</span>
                         <div class="handler-info">
                             <strong>FastCGI Proxy</strong>
-                            <span>Address: ${cfg_item.web.php.address}</span>
+                            <span>Address: ${cfg_item.web.php.address || '127.0.0.1:9000'}</span>
                             <span>Index: ${cfg_item.web.php.index || 'index.php'}</span>
                         </div>
                     </div>
                 </div>`;
+            }
+            content.innerHTML += webHtml;
         }
 
         const configBackends = cfg_item.backends?.servers || [];
-        const statBackends = itemStats.backends || [];
+        const statBackends = (itemStats && itemStats.backends) || [];
         const displayBackends = configBackends.length > 0 ? configBackends : statBackends;
 
         if (displayBackends.length > 0) {
             let backendsHtml = "";
 
+            // Check if ANY backend is TCP to determine overall protocol
+            const hasTCPBackend = displayBackends.some(b => {
+                const url = b.address || b.url || '';
+                return url.startsWith('tcp://') || url.startsWith('unix:') || (!url.startsWith('http') && url.includes(':'));
+            });
+
+            const protocolType = hasTCPBackend ? 'TCP' : 'HTTP';
+            const protocolIcon = hasTCPBackend ? '🔌' : '🌐';
+            const protocolClass = hasTCPBackend ? 'info' : 'success';
+
             displayBackends.forEach((b, i) => {
-                const s = statBackends[i] || {};
-                const url = b.address || b.url || s.url || s.address;
-                const weight = (b.weight !== undefined) ? b.weight : (s.weight || '-');
+                const backendStats = statBackends[i] || {};
+                const url = b.address || b.url || backendStats.address || backendStats.url || '';
+                const weight = (b.weight !== undefined) ? b.weight : (backendStats.weight || '-');
 
                 const hasStats = statBackends[i] !== undefined;
                 let healthStatus = 'unknown';
                 let dotColor = 'warn';
 
                 if (hasStats) {
-                    if (s.healthy !== undefined) {
-                        healthStatus = s.healthy ? 'ok' : 'down';
-                        dotColor = s.healthy ? 'ok' : 'down';
+                    if (backendStats.healthy !== undefined) {
+                        healthStatus = backendStats.healthy ? 'ok' : 'down';
+                        dotColor = backendStats.healthy ? 'ok' : 'down';
                     }
-                    else if (s.alive !== undefined) {
-                        const isTCPBackend = url && !url.startsWith('http');
+                    else if (backendStats.alive !== undefined) {
+                        const isTCPBackend = url.startsWith('tcp://') || url.startsWith('unix:') || (!url.startsWith('http') && url.includes(':'));
                         if (isTCPBackend) {
-                            healthStatus = s.alive ? 'ok' : 'warn';
-                            dotColor = s.alive ? 'ok' : 'warn';
+                            healthStatus = backendStats.alive ? 'ok' : 'warn';
+                            dotColor = backendStats.alive ? 'ok' : 'warn';
                         } else {
-                            healthStatus = s.alive ? 'ok' : 'down';
-                            dotColor = s.alive ? 'ok' : 'down';
+                            healthStatus = backendStats.alive ? 'ok' : 'down';
+                            dotColor = backendStats.alive ? 'ok' : 'down';
                         }
                     }
                 }
 
-                const p99 = s.latency_us?.p99 ? (s.latency_us.p99 / 1000).toFixed(0) + "ms" : "";
-                const in_flight = s.in_flight || 0;
-                const failures = s.failures || 0;
-                const total_reqs = s.total_reqs || 0;
+                const p99 = backendStats.latency_us?.p99 ? (backendStats.latency_us.p99 / 1000).toFixed(0) + "ms" : "";
+                const in_flight = backendStats.in_flight || 0;
+                const failures = backendStats.failures || 0;
+                const total_reqs = backendStats.total_reqs || 0;
 
                 backendsHtml += `
-                    <div class="drawer-row ${hasStats && healthStatus === 'down' ? 'down' : ''}">
-                        <div class="row-left">
-                            <span class="dot ${dotColor}" title="${hasStats ? (healthStatus === 'ok' ? 'Healthy' : healthStatus === 'warn' ? 'Idle/Healthy' : 'Unhealthy') : 'No health data yet'}"></span>
-                            <span class="mono">${url}</span>
-                            ${in_flight > 0 ? `<span class="badge info">⚡ ${in_flight} in flight</span>` : ''}
-                            ${failures > 0 ? `<span class="badge error">⚠️ ${failures} failures</span>` : ''}
-                        </div>
-                        <div class="row-right">
-                            ${p99 ? `<span class="badge info">p99: ${p99}</span>` : ''}
-                            <span class="badge ${healthStatus === 'ok' ? 'success' : healthStatus === 'warn' ? 'warning' : 'error'}">W: ${weight}</span>
-                            <span class="badge" style="background: var(--text-mute);">${this.fmtNum(total_reqs)} reqs</span>
-                        </div>
-                    </div>`;
+                <div class="drawer-row ${hasStats && healthStatus === 'down' ? 'down' : ''}">
+                    <div class="row-left">
+                        <span class="dot ${dotColor}" title="${hasStats ? (healthStatus === 'ok' ? 'Healthy' : healthStatus === 'warn' ? 'Idle/Healthy' : 'Unhealthy') : 'No health data yet'}"></span>
+                        <span class="mono">${url}</span>
+                        ${in_flight > 0 ? `<span class="badge info">⚡ ${in_flight} in flight</span>` : ''}
+                        ${failures > 0 ? `<span class="badge error">⚠️ ${failures} failures</span>` : ''}
+                    </div>
+                    <div class="row-right">
+                        ${p99 ? `<span class="badge info">p99: ${p99}</span>` : ''}
+                        <span class="badge ${healthStatus === 'ok' ? 'success' : healthStatus === 'warn' ? 'warning' : 'error'}">W: ${weight}</span>
+                        <span class="badge" style="background: var(--text-mute);">${window.app.fmtNum(total_reqs)} reqs</span>
+                    </div>
+                </div>`;
             });
 
+            // Format strategy name
             const lbStrategy = cfg_item.backends?.strategy || cfg_item.backends?.load_balancing?.strategy || "round_robin";
-            let strategyDisplay = "Round Robin";
-            if (lbStrategy === "least_conn") strategyDisplay = "Least Connections";
-            else if (lbStrategy === "ip_hash") strategyDisplay = "IP Hash";
-            else if (lbStrategy === "uri_hash") strategyDisplay = "URI Hash";
+            const strategyDisplay = lbStrategy.split('_').map(word =>
+                word.charAt(0).toUpperCase() + word.slice(1)
+            ).join(' ');
+
+            // TCP Proxy specific details
+            let tcpDetailsHtml = '';
+            if (isTCPProxy) {
+                if (cfg_item.listen) {
+                    tcpDetailsHtml += `
+                    <div class="kv-item"><label>Listen</label><div><span class="badge info">${cfg_item.listen}</span></div></div>
+                `;
+                }
+                if (cfg_item.sni) {
+                    tcpDetailsHtml += `
+                    <div class="kv-item"><label>SNI</label><div><span class="badge info">${cfg_item.sni}</span></div></div>
+                `;
+                }
+                if (cfg_item.proxy_protocol) {
+                    tcpDetailsHtml += `
+                    <div class="kv-item"><label>Proxy Protocol</label><div><span class="badge success">Enabled</span></div></div>
+                `;
+                }
+                if (cfg_item.max_connections > 0) {
+                    tcpDetailsHtml += `
+                    <div class="kv-item"><label>Max Connections</label><div><span class="badge info">${cfg_item.max_connections}</span></div></div>
+                `;
+                }
+            }
 
             const healthCheck = cfg_item.health_check || cfg_item.backends?.health_check;
             let healthCheckHtml = '<div class="kv-item"><label>Health Check</label><div><span class="badge error">Not Configured</span></div></div>';
-            if (healthCheck) {
+            if (healthCheck && healthCheck.enabled && healthCheck.enabled === "on") {
                 const hcPath = healthCheck.path || '/health';
                 const hcInterval = healthCheck.interval ? (healthCheck.interval/1000000000)+'s' : '30s';
                 const hcTimeout = healthCheck.timeout ? (healthCheck.timeout/1000000000)+'s' : '5s';
-                healthCheckHtml = `
+
+                if (isTCPProxy && healthCheck.send) {
+                    healthCheckHtml = `
+                    <div class="kv-item"><label>Health Check</label><div><span class="badge success">Send: ${healthCheck.send} | Expect: ${healthCheck.expect || 'connection'}</span></div></div>
+                `;
+                } else {
+                    healthCheckHtml = `
                     <div class="kv-item"><label>Health Check</label><div><span class="badge success">${hcPath} | ${hcInterval} | ${hcTimeout}</span></div></div>
                 `;
+                }
             }
 
             let cbHtml = '';
             const cb = cfg_item.circuit_breaker || cfg_item.backends?.circuit_breaker;
-            if (cb && cb.enabled) {
-                const cbStatus = s.circuit_breaker_state || 'closed';
+            if (cb && cb.enabled && cb.enabled === "on") {
+                const firstBackendStats = statBackends[0] || {};
+                const cbStatus = firstBackendStats.circuit_breaker_state || 'closed';
                 const cbClass = cbStatus === 'closed' ? 'success' : (cbStatus === 'open' ? 'error' : 'warning');
                 cbHtml = `
-                    <div class="kv-item"><label>Circuit Breaker</label><div><span class="badge ${cbClass}">${cbStatus} | ${cb.failure_threshold || 5} fails</span></div></div>
-                `;
+                <div class="kv-item"><label>Circuit Breaker</label><div><span class="badge ${cbClass}">${cbStatus} | ${cb.threshold || 5} fails</span></div></div>
+            `;
             }
 
             const timeouts = cfg_item.timeouts || {};
@@ -600,52 +662,71 @@ const UI = {
             const writeTimeout = timeouts.write ? (timeouts.write/1000000000)+'s' : 'inherit';
             const idleTimeout = timeouts.idle ? (timeouts.idle/1000000000)+'s' : 'inherit';
 
-            let compressionHtml = '';
-            const compression = cfg_item.compression_config || {};
-            if (compression.enabled) {
-                const algo = compression.type || 'gzip';
-                const level = compression.level || 'default';
-                compressionHtml = `
+            // Main upstreams section with protocol badge
+            let upstreamsHtml = `
+            <div class="detail-section">
+                <div class="detail-title">
+                    <span class="badge ${protocolClass}" style="margin-right: 8px;">${protocolIcon} ${protocolType}</span>
+                    Upstreams & Load Balancing
+                </div>
+                ${backendsHtml}
+                <div class="kv-grid" style="margin-top:15px;">
+                    <div class="kv-item"><label>Strategy</label><div><span class="badge success">${strategyDisplay}</span></div></div>
+                    ${tcpDetailsHtml}
+                    ${healthCheckHtml}
+                    ${cbHtml}
+                </div>
+                <div class="kv-grid" style="margin-top:10px;">
+                    <div class="kv-item"><label>Read Timeout</label><div>${readTimeout}</div></div>
+                    <div class="kv-item"><label>Write Timeout</label><div>${writeTimeout}</div></div>
+                    <div class="kv-item"><label>Idle Timeout</label><div>${idleTimeout}</div></div>
+                </div>
+            </div>`;
+
+            content.innerHTML += upstreamsHtml;
+
+            // Add HTTP-specific features only for HTTP routes
+            if (!isTCPProxy) {
+                let httpFeaturesHtml = '';
+
+                const compression = cfg_item.compression_config || {};
+                if (compression.enabled && compression.enabled === "on") {
+                    const algo = compression.type || 'gzip';
+                    const level = compression.level || 'default';
+                    httpFeaturesHtml += `
                     <div class="kv-item"><label>Compression</label><div><span class="badge info">${algo} (lvl ${level})</span></div></div>
                 `;
-            }
+                }
 
-            let rateLimitHtml = '';
-            const rl = cfg_item.rate_limit;
-            if (rl) {
-                const keyType = rl.key || 'ip';
-                rateLimitHtml = `
-                    <div class="kv-item"><label>Rate Limit</label><div><span class="badge warning">${rl.requests || 0} req / ${rl.window_seconds || 60}s (${keyType})</span></div></div>
+                const rl = cfg_item.rate_limit;
+                if (rl && rl.enabled && rl.enabled === "on") {
+                    const keyType = rl.key || 'ip';
+                    const rule = rl.rule || {};
+                    httpFeaturesHtml += `
+                    <div class="kv-item"><label>Rate Limit</label><div><span class="badge warning">${rule.requests || rl.requests || 0} req / ${(rule.window || rl.window || 60)/1000000000}s (${keyType})</span></div></div>
                 `;
-            }
+                }
 
-            let wasmHtml = '';
-            const wasm = cfg_item.wasm;
-            if (wasm && wasm.enabled !== false) {
-                const moduleName = wasm.path ? wasm.path.split('/').pop() : 'filter.wasm';
-                wasmHtml = `
-                    <div class="kv-item"><label>WASM Filter</label><div><span class="badge info">${moduleName}</span></div></div>
+                const wasm = cfg_item.wasm;
+                if (wasm && wasm.enabled && wasm.enabled === "on") {
+                    const moduleName = wasm.module ? wasm.module.split('/').pop() : 'filter.wasm';
+                    const access = wasm.access ? wasm.access.join(', ') : 'none';
+                    httpFeaturesHtml += `
+                    <div class="kv-item"><label>WASM Filter</label><div><span class="badge info">${moduleName} (${access})</span></div></div>
                 `;
-            }
+                }
 
-            content.innerHTML += `
-                <div class="detail-section">
-                    <div class="detail-title">📡 Upstreams & Load Balancing</div>
-                    ${backendsHtml}
-                    <div class="kv-grid" style="margin-top:15px;">
-                        <div class="kv-item"><label>Strategy</label><div><span class="badge success">${strategyDisplay}</span></div></div>
-                        ${healthCheckHtml}
-                        ${cbHtml}
-                        ${compressionHtml}
-                        ${rateLimitHtml}
-                        ${wasmHtml}
+                if (httpFeaturesHtml) {
+                    content.innerHTML += `
+                    <div class="detail-section">
+                        <div class="detail-title">⚙️ HTTP Features</div>
+                        <div class="kv-grid">
+                            ${httpFeaturesHtml}
+                        </div>
                     </div>
-                    <div class="kv-grid" style="margin-top:10px;">
-                        <div class="kv-item"><label>Read Timeout</label><div>${readTimeout}</div></div>
-                        <div class="kv-item"><label>Write Timeout</label><div>${writeTimeout}</div></div>
-                        <div class="kv-item"><label>Idle Timeout</label><div>${idleTimeout}</div></div>
-                    </div>
-                </div>`;
+                `;
+                }
+            }
         }
 
         // Certificate section
@@ -664,111 +745,112 @@ const UI = {
                 }
 
                 certHtml += `
-                    <div class="cert-card">
-                        <div class="cert-domain">${cert.host}</div>
-                        <div class="cert-expiry">
-                            <span>${cert.issuer}</span>
-                            <span class="badge ${certClass}">${certText}</span>
-                        </div>
-                        <div style="font-size:9px; color:var(--text-mute); margin-top:6px;">
-                            ${new Date(cert.expiry).toLocaleDateString()}
-                        </div>
+                <div class="cert-card">
+                    <div class="cert-domain">${cert.host}</div>
+                    <div class="cert-expiry">
+                        <span>${cert.issuer || 'Let\'s Encrypt'}</span>
+                        <span class="badge ${certClass}">${certText}</span>
                     </div>
-                `;
+                    <div style="font-size:9px; color:var(--text-mute); margin-top:6px;">
+                        ${new Date(cert.expiry).toLocaleDateString()}
+                    </div>
+                </div>
+            `;
             });
             certHtml += '</div>';
 
             content.innerHTML += `
+            <div class="detail-section">
+                <div class="detail-title">🔐 TLS Certificates</div>
+                ${certHtml}
+            </div>`;
+        }
+
+        // Auth section - only for HTTP routes
+        if (!isTCPProxy) {
+            let authHtml = '';
+
+            if (cfg_item.basic_auth && cfg_item.basic_auth.enabled === "on") {
+                authHtml += `
+                <div class="mw-card security">
+                    <div class="mw-head">Basic Auth</div>
+                    <div class="mw-body">${cfg_item.basic_auth.users ? cfg_item.basic_auth.users.length + ' users' : 'Enabled'}</div>
+                    <div class="mw-sub">Realm: ${cfg_item.basic_auth.realm || 'default'}</div>
+                </div>`;
+            }
+
+            if (cfg_item.jwt_auth && cfg_item.jwt_auth.enabled === "on") {
+                authHtml += `
+                <div class="mw-card security">
+                    <div class="mw-head">JWT Auth</div>
+                    <div class="mw-body">${cfg_item.jwt_auth.issuer || 'No issuer'}</div>
+                    <div class="mw-sub">Audience: ${cfg_item.jwt_auth.audience || 'any'}</div>
+                </div>`;
+            }
+
+            if (cfg_item.oauth && cfg_item.oauth.enabled === "on") {
+                authHtml += `
+                <div class="mw-card security">
+                    <div class="mw-head">OAuth</div>
+                    <div class="mw-body">${cfg_item.oauth.provider || 'OIDC'}</div>
+                    <div class="mw-sub">${cfg_item.oauth.scopes ? cfg_item.oauth.scopes.join(', ') : 'openid'}</div>
+                </div>`;
+            }
+
+            if (cfg_item.forward_auth && cfg_item.forward_auth.enabled === "on") {
+                authHtml += `
+                <div class="mw-card security">
+                    <div class="mw-head">Forward Auth</div>
+                    <div class="mw-body">${cfg_item.forward_auth.name || 'auth service'}</div>
+                    <div class="mw-sub">${cfg_item.forward_auth.url || 'No URL'}</div>
+                </div>`;
+            }
+
+            if (authHtml) {
+                content.innerHTML += `
                 <div class="detail-section">
-                    <div class="detail-title">🔐 TLS Certificates</div>
-                    ${certHtml}
-                </div>`;
-        }
-
-        let mwHtml = "";
-        const mw = cfg_item.middleware || {};
-
-        if (mw.ip_allowlist && mw.ip_allowlist.length > 0) {
-            mwHtml += `
-                <div class="mw-card security">
-                    <div class="mw-head">Access Control</div>
-                    <div class="mw-body">${mw.ip_allowlist.length} IPs Allowed</div>
-                    <div class="mw-sub">${mw.ip_allowlist.join(", ")}</div>
-                </div>`;
-        }
-
-        if (mw.basic_auth) {
-            mwHtml += `
-                <div class="mw-card security">
-                    <div class="mw-head">Authentication</div>
-                    <div class="mw-body">Basic Auth</div>
-                    <div class="mw-sub">${Object.keys(mw.basic_auth).length} Users</div>
-                </div>`;
-        }
-
-        if (mw.webauthn) {
-            mwHtml += `
-                <div class="mw-card security">
-                    <div class="mw-head">Authentication</div>
-                    <div class="mw-body">Passkeys</div>
-                    <div class="mw-sub">WebAuthn</div>
-                </div>`;
-        }
-
-        if (mw.rate_limit) {
-            mwHtml += `
-                <div class="mw-card traffic">
-                    <div class="mw-head">Rate Limiter</div>
-                    <div class="mw-body">${mw.rate_limit.requests} req / ${mw.rate_limit.window_seconds}s</div>
-                    <div class="mw-sub">${mw.rate_limit.key || 'ip'}</div>
-                </div>`;
-        }
-
-        if (mw.circuit_breaker) {
-            mwHtml += `
-                <div class="mw-card traffic">
-                    <div class="mw-head">Circuit Breaker</div>
-                    <div class="mw-body">Enabled</div>
-                    <div class="mw-sub">Threshold: ${mw.circuit_breaker.failure_threshold || 5}</div>
-                </div>`;
-        }
-
-        if (mw.compress) {
-            mwHtml += `
-                <div class="mw-card transform">
-                    <div class="mw-head">Optimization</div>
-                    <div class="mw-body">Compression</div>
-                    <div class="mw-sub">${mw.compress.type || 'gzip'}</div>
-                </div>`;
-        }
-
-        if (mw.headers) {
-            const count = Object.keys(mw.headers).length;
-            mwHtml += `
-                <div class="mw-card transform">
-                    <div class="mw-head">Header Mod</div>
-                    <div class="mw-body">${count} Rules</div>
-                    <div class="mw-sub">Request/Response</div>
-                </div>`;
-        }
-
-        if (mwHtml) {
-            content.innerHTML += `
-                <div class="detail-section">
-                    <div class="detail-title">⚡ Active Middleware</div>
+                    <div class="detail-title">🔑 Authentication</div>
                     <div class="mw-grid">
-                        ${mwHtml}
+                        ${authHtml}
                     </div>
                 </div>`;
+            }
+
+            // Headers section - only for HTTP routes
+            if (cfg_item.headers && cfg_item.headers.enabled === "on") {
+                const reqHeaders = cfg_item.headers.request || {};
+                const resHeaders = cfg_item.headers.response || {};
+                const headerCount = (reqHeaders.set ? Object.keys(reqHeaders.set).length : 0) +
+                    (reqHeaders.add ? Object.keys(reqHeaders.add).length : 0) +
+                    (reqHeaders.remove ? reqHeaders.remove.length : 0) +
+                    (resHeaders.set ? Object.keys(resHeaders.set).length : 0) +
+                    (resHeaders.add ? Object.keys(resHeaders.add).length : 0) +
+                    (resHeaders.remove ? resHeaders.remove.length : 0);
+
+                if (headerCount > 0) {
+                    content.innerHTML += `
+                    <div class="detail-section">
+                        <div class="detail-title">📋 Header Rules</div>
+                        <div class="handler-card">
+                            <span class="handler-icon">📝</span>
+                            <div class="handler-info">
+                                <strong>${headerCount} Header Modifications</strong>
+                                <span>Request/Response headers</span>
+                            </div>
+                        </div>
+                    </div>`;
+                }
+            }
         }
 
+        // Source section
         content.innerHTML += `
-            <div class="detail-section">
-                <div class="detail-title">📜 Source (read-only)</div>
-                <div class="code-box" style="max-height: 200px;">
-                    <pre>${JSON.stringify(cfg_item, null, 2)}</pre>
-                </div>
-            </div>`;
+        <div class="detail-section">
+            <div class="detail-title">📜 Source (read-only)</div>
+            <div class="code-box" style="max-height: 200px;">
+                <pre>${JSON.stringify(cfg_item, null, 2)}</pre>
+            </div>
+        </div>`;
     },
 
     showSessionWarning(timeLeft) {
@@ -793,6 +875,7 @@ const UI = {
     },
 
     fmtNum(n) {
+        if (n === undefined || n === null) return "0";
         if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
         if (n >= 1000) return (n / 1000).toFixed(1) + "k";
         return n;

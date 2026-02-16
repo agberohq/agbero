@@ -315,7 +315,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 	}
 
 	if strings.TrimSpace(string(mode)) == "" {
-		if core.IsLocalhost(sni) {
+		if woos.IsLocalhost(sni) {
 			mode = alaye.ModeLocalAuto
 		} else {
 			mode = alaye.ModeLetsEncrypt
@@ -333,7 +333,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return m.GetLocalCertificate(&hcfg.TLS.Local, sni)
 
 	case alaye.ModeLocalAuto:
-		if !core.IsLocalhost(sni) {
+		if !woos.IsLocalhost(sni) {
 			return nil, errors.Newf("%w (got %q)", woos.ErrLocalAutoNotAllowed, sni)
 		}
 		return m.GetAutoLocalCertificate(sni)

@@ -62,30 +62,6 @@ func Debounce(delay time.Duration, f func()) func() {
 	}
 }
 
-// IsLocalhost determines if a hostname implies local development
-func IsLocalhost(host string) bool {
-	host = strings.ToLower(strings.TrimSpace(host))
-	if host == woos.LocalhostExact {
-		return true
-	}
-	if strings.HasSuffix(host, woos.LocalhostSuffixDotLocalhost) {
-		return true
-	}
-	if strings.HasSuffix(host, woos.LocalhostSuffixDotLocal) {
-		return true
-	}
-	if strings.HasSuffix(host, woos.LocalhostSuffixDotTest) {
-		return true
-	}
-	// Check loopback IPs
-	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() {
-			return true
-		}
-	}
-	return false
-}
-
 // Truncate truncates the user agent string to a specified max length and appends "..." if truncation occurs.
 func Truncate(ua string, maxLen int) string {
 	if len(ua) <= maxLen {

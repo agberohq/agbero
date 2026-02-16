@@ -599,8 +599,8 @@ func (hm *Host) loadOne(path string) (*alaye.Host, error) {
 		return nil, err
 	}
 
-	// Apply Defaults & Implicit Activation via woos package
-	woos.ApplyHost(&hostConfig)
+	// Single source of truth for defaults
+	woos.DefaultHost(&hostConfig) // ← Replace woos.ApplyHost with this
 
 	hm.sortRoutes(hostConfig.Routes)
 	return &hostConfig, nil
