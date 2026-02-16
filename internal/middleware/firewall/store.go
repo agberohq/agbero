@@ -14,6 +14,8 @@ import (
 
 var bucketName = []byte("firewall_rules")
 
+type RuleIterator func(Rule) bool
+
 type Store struct {
 	db     *bbolt.DB
 	logger *ll.Logger
@@ -79,8 +81,6 @@ func (s *Store) GetBan(ip string) (*Rule, error) {
 	return &r, err
 }
 
-type RuleIterator func(Rule) bool
-
 func (s *Store) IterateActive(iter RuleIterator) error {
 	var expiredKeys [][]byte
 	err := s.db.View(func(tx *bbolt.Tx) error {
@@ -126,6 +126,68 @@ func (s *Store) LoadAll() ([]Rule, error) {
 		return true
 	})
 	return active, err
+}
+
+func (s *Store) Clear() error {
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		if err := tx.DeleteBucket(bucketName); err != nil {
+			if err == bbolt.ErrBucketNotFound {
+				return nil
+			}
+			return err
+		}
+		_, err := tx.CreateBucket(bucketName)
+		return err
+	})
+}
+
+func (s *Store) PruneExpired() (int, error) {
+	count := 0
+	var toDelete [][]byte
+
+	err := s.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		if b == nil {
+			return nil
+		}
+
+		c := b.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			var r Rule
+			if err := json.Unmarshal(v, &r); err != nil {
+				continue
+			}
+			if r.IsExpired() {
+				// Copy key because cursor remains valid only inside tx
+				keyCopy := make([]byte, len(k))
+				copy(keyCopy, k)
+				toDelete = append(toDelete, keyCopy)
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return 0, err
+	}
+	if len(toDelete) == 0 {
+		return 0, nil
+	}
+
+	err = s.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		if b == nil {
+			return nil
+		}
+		for _, k := range toDelete {
+			if err := b.Delete(k); err == nil {
+				count++
+			}
+		}
+		return nil
+	})
+
+	return count, err
 }
 
 type BlockType uint8

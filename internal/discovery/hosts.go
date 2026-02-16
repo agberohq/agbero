@@ -13,6 +13,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/fsnotify/fsnotify"
+	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
 
@@ -33,7 +34,7 @@ type Host struct {
 	mu         sync.RWMutex
 	hosts      map[string]*alaye.Host // Loaded from disk (ID -> Config)
 	lookupMap  map[string]*alaye.Host // Final O(1) Map (Domain -> Config)
-	portLookup map[string]*alaye.Host // Port -> Config (Short-circuit)
+	portLookup map[string]*alaye.Host // Port -> Config
 
 	dynamicRoutes map[routeKey]*routeEntry
 	nodeIndex     map[string]map[routeKey]struct{}
@@ -45,7 +46,8 @@ type Host struct {
 
 	routers map[string]*matcher.Tree
 
-	loaded bool
+	debouncer *jack.Debouncer
+	loaded    bool
 }
 
 func NewHost(hostsDir string, opts ...Option) *Host {
@@ -71,6 +73,13 @@ func NewHostFolder(hostsDir woos.Folder, opts ...Option) *Host {
 	if h.logger == nil {
 		h.logger = ll.New(woos.Name).Enable()
 	}
+
+	// Initialize Debouncer for batched rebuilds
+	h.debouncer = jack.NewDebouncer(
+		jack.WithDebounceDelay(500*time.Millisecond),
+		jack.WithDebounceMaxWait(2*time.Second),
+	)
+
 	return h
 }
 
@@ -135,9 +144,10 @@ func (hm *Host) UpdateGossipNode(nodeID, host string, route alaye.Route) {
 	}
 	hm.nodeIndex[nodeID][k] = struct{}{}
 
-	hm.rebuildLookupLocked()
-	hm.logger.Fields("node", nodeID, "host", host, "path", path).Info("gossip route upserted")
-	hm.notifyChanged()
+	// Schedule Rebuild (Non-blocking)
+	hm.debouncer.Do(hm.rebuildAndNotify)
+
+	hm.logger.Fields("node", nodeID, "host", host, "path", path).Debug("gossip route queued")
 }
 
 func (hm *Host) RemoveGossipNode(nodeID string) {
@@ -164,8 +174,17 @@ func (hm *Host) RemoveGossipNode(nodeID string) {
 
 	delete(hm.nodeIndex, nodeID)
 
+	// Schedule Rebuild
+	hm.debouncer.Do(hm.rebuildAndNotify)
+
+	hm.logger.Fields("node", nodeID).Info("gossip node removed")
+}
+
+func (hm *Host) rebuildAndNotify() {
+	hm.mu.Lock()
 	hm.rebuildLookupLocked()
-	hm.logger.Fields("node", nodeID).Info("gossip node removed (dynamic backends pruned)")
+	hm.mu.Unlock()
+	hm.logger.Info("router rebuilt from gossip updates")
 	hm.notifyChanged()
 }
 
@@ -209,7 +228,6 @@ func (hm *Host) Watch() error {
 		return err
 	}
 
-	// Initial synchronous load without notifying to avoid test races
 	if err := hm.loadInternal(); err != nil {
 		_ = hm.watcher.Close()
 		return err
@@ -268,7 +286,6 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 		return
 	}
 
-	// Watch new directories recursively
 	if event.Has(fsnotify.Create) {
 		if fi, err := os.Stat(event.Name); err == nil && fi.IsDir() {
 			_ = hm.addWatchRecursive(event.Name)
@@ -276,7 +293,6 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 		}
 	}
 
-	// Strict filter: Only process .hcl files
 	name := strings.ToLower(event.Name)
 	if !strings.HasSuffix(name, woos.HCLSuffix) {
 		return
@@ -290,8 +306,6 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 	debouncedReload()
 }
 
-// ReloadFull scans the disk and updates the configuration.
-// It is thread-safe and minimizes lock contention.
 func (hm *Host) ReloadFull() error {
 	if err := hm.loadInternal(); err != nil {
 		return err
@@ -301,14 +315,12 @@ func (hm *Host) ReloadFull() error {
 }
 
 func (hm *Host) loadInternal() error {
-	// 1. I/O Phase: Scan disk without lock
 	newHosts, stats, err := hm.scanFromDisk()
 	if err != nil {
 		hm.logger.Fields("err", err).Error("failed to scan hosts from disk")
 		return err
 	}
 
-	// 2. Critical Section: Swap pointer
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
@@ -351,7 +363,7 @@ func (hm *Host) scanFromDisk() (map[string]*alaye.Host, struct{ TotalFiles int }
 		cfg, err := hm.loadOne(p)
 		if err != nil {
 			hm.logger.Fields("file", name, "err", err).Error("failed to parse host config")
-			return nil // continue
+			return nil
 		}
 
 		if len(cfg.Domains) == 0 {
@@ -432,6 +444,10 @@ func (hm *Host) Close() error {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
+	if hm.debouncer != nil {
+		hm.debouncer.Cancel()
+	}
+
 	if hm.watcher != nil {
 		return hm.watcher.Close()
 	}
@@ -474,7 +490,6 @@ func (hm *Host) rebuildLookupLocked() {
 		}
 	}
 
-	// Materialize file-based hosts into newLookup
 	for domain, baseCfg := range domainToConfig {
 		combined := *baseCfg
 		combined.Domains = []string{domain}
@@ -487,7 +502,7 @@ func (hm *Host) rebuildLookupLocked() {
 		newLookup[domain] = &combined
 	}
 
-	// 2) Dynamic Layer: merge dynamicRoutes into lookup
+	// 2) Dynamic Layer
 	dynamicMap := make(map[string][]*alaye.Route)
 
 	for k, ent := range hm.dynamicRoutes {
@@ -612,21 +627,17 @@ func (hm *Host) sortRoutes(routes []alaye.Route) {
 	})
 }
 
-// resolveDomainLocked finds the best matching domain configuration.
-// It prioritizes Exact Matches, then Longest Wildcard Suffix.
 func (hm *Host) resolveDomainLocked(hostname string) string {
-	// 1. Exact Match
 	if _, ok := hm.lookupMap[hostname]; ok {
 		return hostname
 	}
 
-	// 2. Wildcard Match (Longest Suffix Wins)
 	var bestMatch string
 	var maxLen int
 
 	for domain := range hm.lookupMap {
 		if strings.HasPrefix(domain, "*.") {
-			suffix := domain[1:] // includes dot, e.g. ".example.com"
+			suffix := domain[1:]
 			if strings.HasSuffix(hostname, suffix) {
 				if len(suffix) > maxLen {
 					maxLen = len(suffix)

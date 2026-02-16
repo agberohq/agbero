@@ -1,26 +1,37 @@
 package firewall
 
 import (
-	"encoding/hex"
 	"sync"
 	"time"
+
+	"github.com/cespare/xxhash/v2"
 )
+
+const shardCount = 64
 
 type counterItem struct {
 	count    int64
 	expireAt time.Time
 }
 
-type Counters struct {
+type counterShard struct {
 	mu    sync.Mutex
 	items map[string]*counterItem
-	stop  chan struct{}
+}
+
+type Counters struct {
+	shards [shardCount]*counterShard
+	stop   chan struct{}
 }
 
 func NewCounters() *Counters {
 	c := &Counters{
-		items: make(map[string]*counterItem),
-		stop:  make(chan struct{}),
+		stop: make(chan struct{}),
+	}
+	for i := 0; i < shardCount; i++ {
+		c.shards[i] = &counterShard{
+			items: make(map[string]*counterItem),
+		}
 	}
 	go c.janitor()
 	return c
@@ -31,15 +42,18 @@ func (c *Counters) Stop() {
 }
 
 func (c *Counters) Increment(ruleID, key string, window time.Duration) int64 {
-	fullKey := ruleID + ":" + hex.EncodeToString([]byte(key))
+	fullKey := ruleID + "|" + key
+	hash := xxhash.Sum64String(fullKey)
+	shard := c.shards[hash%shardCount]
+
 	now := time.Now()
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
 
-	item, exists := c.items[fullKey]
+	item, exists := shard.items[fullKey]
 	if !exists || now.After(item.expireAt) {
-		c.items[fullKey] = &counterItem{
+		shard.items[fullKey] = &counterItem{
 			count:    1,
 			expireAt: now.Add(window),
 		}
@@ -59,18 +73,16 @@ func (c *Counters) janitor() {
 		case <-c.stop:
 			return
 		case <-ticker.C:
-			c.cleanup()
-		}
-	}
-}
-
-func (c *Counters) cleanup() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	now := time.Now()
-	for k, v := range c.items {
-		if now.After(v.expireAt) {
-			delete(c.items, k)
+			now := time.Now()
+			for _, shard := range c.shards {
+				shard.mu.Lock()
+				for k, v := range shard.items {
+					if now.After(v.expireAt) {
+						delete(shard.items, k)
+					}
+				}
+				shard.mu.Unlock()
+			}
 		}
 	}
 }

@@ -16,16 +16,10 @@ func (c *CircuitBreaker) Validate() error {
 	if c.Threshold < 0 {
 		return ErrNegativeThreshold
 	}
-	if c.Threshold == 0 {
-		c.Threshold = DefaultCircuitBreakerThreshold // Default
-	}
 
 	// Duration validation (if provided)
 	if c.Duration < 0 {
 		return ErrNegativeDuration
-	}
-	if c.Duration == 0 {
-		c.Duration = DefaultCircuitBreakerDuration
 	}
 
 	return nil

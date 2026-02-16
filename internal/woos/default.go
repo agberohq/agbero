@@ -8,11 +8,11 @@ import (
 )
 
 func DefaultApply(g *alaye.Global, configAbsPath string) {
-	g.Build = Version
+	if g.Build == "" {
+		g.Build = Version
+	}
 
-	// g.GeneralLimits.MaxBodySize
-
-	// Timeouts is a struct (not a pointer), so we can access fields directly.
+	// Timeouts
 	if g.Timeouts.Read == 0 {
 		g.Timeouts.Read = alaye.DefaultReadTimeout
 	}
@@ -26,17 +26,51 @@ func DefaultApply(g *alaye.Global, configAbsPath string) {
 		g.Timeouts.ReadHeader = alaye.DefaultReadHeaderTimeout
 	}
 
+	// General
 	if g.General.MaxHeaderBytes == 0 {
 		g.General.MaxHeaderBytes = alaye.DefaultMaxHeaderBytes
 	}
 
-	// RateLimits is a pointer. Must check nil before accessing Active or fields.
+	// Rate Limits
 	if g.RateLimits.Enabled.Active() {
 		if g.RateLimits.TTL == 0 {
 			g.RateLimits.TTL = DefaultRateLimitTTL
 		}
 		if g.RateLimits.MaxEntries <= 0 {
-			g.RateLimits.MaxEntries = 100000
+			g.RateLimits.MaxEntries = DefaultRateLimitMaxEntries
+		}
+	}
+
+	// Firewall Defaults
+	if g.Security.Firewall.Status.Active() {
+		fw := &g.Security.Firewall
+		if fw.MaxInspectBytes == 0 {
+			fw.MaxInspectBytes = 8192
+		}
+		if len(fw.InspectContentTypes) == 0 {
+			fw.InspectContentTypes = []string{
+				"application/json",
+				"application/xml",
+				"application/x-www-form-urlencoded",
+				"text/plain",
+			}
+		}
+		if fw.Mode == "" {
+			fw.Mode = "active"
+		}
+	}
+
+	// Admin Defaults
+	if g.Admin.Enabled.Active() {
+		if g.Admin.Address == "" {
+			g.Admin.Address = ":9090"
+		}
+	}
+
+	// Gossip Defaults
+	if g.Gossip.Enabled.Active() {
+		if g.Gossip.Port == 0 {
+			g.Gossip.Port = DefaultGossipPort
 		}
 	}
 
@@ -54,11 +88,11 @@ func resolvePaths(g *alaye.Global, configAbsPath string) {
 	setDefaultPath(&g.Storage.DataDir, baseDir, DataDir.Name())
 
 	logDir := filepath.Join(baseDir, LogDir.Name())
-	g.Logging.Level = "info"
 
-	// Logging is a pointer. Check before access.
 	if g.Logging.Enabled.Active() {
-
+		if g.Logging.Level == "" {
+			g.Logging.Level = "info"
+		}
 		if g.Logging.File == "" {
 			g.Logging.File = filepath.Join(logDir, DefaultLogName)
 		} else if !filepath.IsAbs(g.Logging.File) {
@@ -69,11 +103,6 @@ func resolvePaths(g *alaye.Global, configAbsPath string) {
 				g.Logging.File = filepath.Join(baseDir, g.Logging.File)
 			}
 		}
-	} else {
-		// If nil, we can optionally initialize it or leave it nil.
-		// Leaving it nil implies disabled logging, which is safer if logic respects nil.
-		// However, to set a default file path in case it gets enabled later:
-		// But strictly for defaults, we usually only touch what exists.
 	}
 }
 

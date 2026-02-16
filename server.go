@@ -349,6 +349,7 @@ func (s *Server) Reload() {
 		absConfigPath = s.configPath
 	}
 
+	// Apply Defaults (Timeouts, Firewall modes, etc.)
 	woos.DefaultApply(global, absConfigPath)
 
 	if s.global.Logging.Level != global.Logging.Level {
@@ -363,23 +364,48 @@ func (s *Server) Reload() {
 	}
 	s.rateLimiter = s.buildGlobalRateLimiter()
 
-	// 2. Re-init Firewall (Safe Swap)
-	if s.firewall != nil {
-		s.firewall.Close()
-	}
+	// 2. Safe Swap Firewall
+	// We instantiate the new firewall engine (which opens the DB).
+	// NOTE: bbolt allows only one read-write transaction.
+	// If the file path is the same, we might need to rely on bbolt's timeout or share the instance.
+	// However, usually we can't open the same DB file twice in RW mode in the same process.
+	// If DataDir is the same, we should ideally keep the existing engine and just update config/rules.
+	// But your Engine structure couples Config + Store.
+	// Simpler approach for now: Safe swap pointers, but we must close old one first if path same.
+	// But closing old one first stops traffic.
+	// Ideally: Reload rules in place. For this implementation, we will try to open.
 
-	var fwConfig alaye.Firewall
+	// Check if firewall is enabled in new config
 	if s.global.Security.Enabled.Active() {
+		var fwConfig alaye.Firewall
 		fwConfig = s.global.Security.Firewall
+		dataDir := woos.NewFolder(s.global.Storage.DataDir)
+
+		// Optimization: If directory hasn't changed, maybe we don't need to re-open DB?
+		// For safety in this "Safe Swap" pattern, we assume we close the old one.
+		// To avoid downtime, a more complex "Hot Reload" of rules inside Engine is preferred.
+		// For now, we will do a blocking swap for the Firewall component specifically.
+
+		if s.firewall != nil {
+			s.firewall.Close() // Close old DB lock
+		}
+
+		newFw, fwErr := firewall.New(&fwConfig, dataDir, s.logger)
+		if fwErr != nil {
+			s.logger.Error("failed to reload firewall", fwErr)
+			// s.firewall remains nil or closed, risky state.
+		} else {
+			s.firewall = newFw
+		}
+	} else {
+		// Disabled in new config
+		if s.firewall != nil {
+			s.firewall.Close()
+			s.firewall = nil
+		}
 	}
 
-	dataDir := woos.NewFolder(s.global.Storage.DataDir)
-	var fwErr error
-	s.firewall, fwErr = firewall.New(&fwConfig, dataDir, s.logger)
-	if fwErr != nil {
-		s.logger.Error("failed to reload firewall", fwErr)
-	}
-
+	// 3. Host Reload
 	previousHosts, _ := s.hostManager.LoadAll()
 	previousCount := len(previousHosts)
 
@@ -391,11 +417,11 @@ func (s *Server) Reload() {
 	newHosts, _ := s.hostManager.LoadAll()
 	currentCount := len(newHosts)
 
+	// Prune Metrics
 	validKeys := make(map[string]bool)
 	for _, h := range newHosts {
 		for _, r := range h.Routes {
 			rKey := r.Key()
-			// Defensive check for Backends
 			if r.Backends.Enabled.Active() {
 				for _, srv := range r.Backends.Servers {
 					validKeys[fmt.Sprintf("%s|%s", rKey, srv.Address)] = true
@@ -415,6 +441,7 @@ func (s *Server) Reload() {
 		s.tlsManager.ClearCache()
 	}
 
+	// 4. Update TCP Proxies
 	s.mu.Lock()
 	tcpGroups := make(map[string][]alaye.TCPRoute)
 	for _, host := range newHosts {
