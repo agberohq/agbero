@@ -289,7 +289,7 @@ func TestServer_HandleRequest_WithHost(t *testing.T) {
 
 	hostFile := filepath.Join(hostsDir, "example.com.hcl")
 
-	// FIX 1: Correct HCL structure (removed 'host' wrapper, correct nesting)
+	// Create valid HCL for the test
 	content := `
 domains = ["example.com"]
 
@@ -310,6 +310,7 @@ route "/" {
 		t.Fatal(err)
 	}
 
+	// Create a complete Global config
 	globalCfg := &alaye.Global{
 		Bind: alaye.Bind{HTTP: []string{":8080"}},
 		Storage: alaye.Storage{
@@ -317,14 +318,14 @@ route "/" {
 			DataDir:  t.TempDir(),
 		},
 	}
-	// Apply defaults to ensure timeouts etc are set
+	// Apply defaults (Implicit Activation) to ensure struct validity
 	woos.DefaultApply(globalCfg, "")
 
 	s := &Server{
 		hostManager: hm,
 		logger:      testLogger,
 		reaper:      jack.NewReaper(time.Minute),
-		global:      globalCfg, // FIX: Inject valid global config
+		global:      globalCfg,
 	}
 
 	req := httptest.NewRequest("GET", "/", nil)

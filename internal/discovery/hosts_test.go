@@ -16,8 +16,6 @@ var (
 )
 
 // Helper to write valid HCL content
-// Updated structure to match alaye.Backend and alaye.Server struct tags
-// (server is a block, not a string attribute)
 func validHCL(domain string) []byte {
 	return []byte(`
 domains = ["` + domain + `"]
@@ -35,7 +33,9 @@ func waitChanged(t *testing.T, ch <-chan struct{}, timeout time.Duration) {
 	t.Helper()
 	select {
 	case <-ch:
-		time.Sleep(10 * time.Millisecond) // Grace period
+		// Debouncer fires the action in a goroutine, then notifies.
+		// A tiny sleep ensures the map swap is fully visible to the test reader.
+		time.Sleep(10 * time.Millisecond)
 		return
 	case <-time.After(timeout):
 		t.Fatalf("timeout waiting for Changed()")
@@ -78,6 +78,9 @@ func TestUpdateGossipNode(t *testing.T) {
 
 	h.UpdateGossipNode("node1", "example.com", route)
 
+	// FIX: Wait for async rebuild
+	waitChanged(t, h.Changed(), time.Second)
+
 	hosts, _ := h.LoadAll()
 	if len(hosts) != 1 {
 		t.Fatalf("expected 1 host in snapshot, got %d", len(hosts))
@@ -93,7 +96,7 @@ func TestUpdateGossipNode(t *testing.T) {
 }
 
 func TestRemoveGossipNode(t *testing.T) {
-	h := NewHost("/tmp")
+	h := NewHost("/tmp", WithLogger(testLogger))
 
 	route := alaye.Route{
 		Path: "/api",
@@ -107,7 +110,10 @@ func TestRemoveGossipNode(t *testing.T) {
 	}
 
 	h.UpdateGossipNode("node1", "example.com", route)
+	waitChanged(t, h.Changed(), time.Second)
+
 	h.RemoveGossipNode("node1")
+	waitChanged(t, h.Changed(), time.Second)
 
 	hosts, _ := h.LoadAll()
 	if len(hosts) != 0 {
@@ -116,23 +122,8 @@ func TestRemoveGossipNode(t *testing.T) {
 }
 
 func TestRouteExists(t *testing.T) {
-	// Initialize with logger to see debug output
-	hm := NewHost("", WithLogger(ll.New("test").Enable()))
+	hm := NewHost("", WithLogger(testLogger))
 
-	// Create a channel to wait for updates
-	done := make(chan struct{})
-
-	// Start a goroutine that waits for the change signal
-	go func() {
-		select {
-		case <-hm.Changed():
-			close(done)
-		case <-time.After(2 * time.Second):
-			// Timeout fallback
-		}
-	}()
-
-	// Trigger the update
 	hm.UpdateGossipNode("node1", "example.com", alaye.Route{
 		Path: "/api",
 		Backends: alaye.Backend{
@@ -140,15 +131,8 @@ func TestRouteExists(t *testing.T) {
 		},
 	})
 
-	// Wait for the debouncer to fire and the update to complete
-	select {
-	case <-done:
-		// Update received
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for gossip update")
-	}
+	waitChanged(t, hm.Changed(), 2*time.Second)
 
-	// Now check the route
 	if !hm.RouteExists("example.com", "/api") {
 		t.Error("route not found")
 	}
@@ -173,7 +157,6 @@ func TestWatch_FileChange(t *testing.T) {
 	tmpDir := t.TempDir()
 	hclFile := filepath.Join(tmpDir, "test.hcl")
 
-	// Use valid HCL content
 	if err := os.WriteFile(hclFile, validHCL("example.com"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +346,6 @@ func TestSortRoutes(t *testing.T) {
 func TestGet_WildcardResolution(t *testing.T) {
 	hm := NewHost("/tmp")
 
-	// Simulate a loaded configuration with a wildcard domain
 	wildcardDomain := "*.localhost"
 	hm.mu.Lock()
 	hm.lookupMap[wildcardDomain] = &alaye.Host{
@@ -377,19 +359,19 @@ func TestGet_WildcardResolution(t *testing.T) {
 		shouldHit bool
 	}{
 		{
-			name:      "Exact Wildcard Match (Unlikely in real requests but possible)",
+			name:      "Exact Wildcard Match",
 			input:     "*.localhost",
-			shouldHit: true, // This passes currently because it's an exact string match
+			shouldHit: true,
 		},
 		{
 			name:      "Subdomain Match 1",
 			input:     "api.localhost",
-			shouldHit: true, // BUG: This currently FAILS
+			shouldHit: true,
 		},
 		{
 			name:      "Subdomain Match 2",
 			input:     "app.service.localhost",
-			shouldHit: true, // BUG: This currently FAILS
+			shouldHit: true,
 		},
 		{
 			name:      "Non-matching Domain",

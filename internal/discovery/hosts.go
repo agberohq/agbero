@@ -74,7 +74,6 @@ func NewHostFolder(hostsDir woos.Folder, opts ...Option) *Host {
 		h.logger = ll.New(woos.Name).Enable()
 	}
 
-	// Initialize Debouncer for batched rebuilds
 	h.debouncer = jack.NewDebouncer(
 		jack.WithDebounceDelay(500*time.Millisecond),
 		jack.WithDebounceMaxWait(2*time.Second),
@@ -144,9 +143,7 @@ func (hm *Host) UpdateGossipNode(nodeID, host string, route alaye.Route) {
 	}
 	hm.nodeIndex[nodeID][k] = struct{}{}
 
-	// Schedule Rebuild (Non-blocking)
 	hm.debouncer.Do(hm.rebuildAndNotify)
-
 	hm.logger.Fields("node", nodeID, "host", host, "path", path).Debug("gossip route queued")
 }
 
@@ -174,9 +171,7 @@ func (hm *Host) RemoveGossipNode(nodeID string) {
 
 	delete(hm.nodeIndex, nodeID)
 
-	// Schedule Rebuild
 	hm.debouncer.Do(hm.rebuildAndNotify)
-
 	hm.logger.Fields("node", nodeID).Info("gossip node removed")
 }
 
@@ -490,11 +485,13 @@ func (hm *Host) rebuildLookupLocked() {
 		}
 	}
 
+	// Materialize file-based hosts into newLookup
 	for domain, baseCfg := range domainToConfig {
-		combined := *baseCfg
+		combined := *baseCfg // Shallow copy of struct
 		combined.Domains = []string{domain}
 
 		rts := domainToRoutes[domain]
+		// Deep copy the routes slice to prevent aliasing issues across domains
 		combined.Routes = make([]alaye.Route, len(rts))
 		copy(combined.Routes, rts)
 
@@ -502,7 +499,7 @@ func (hm *Host) rebuildLookupLocked() {
 		newLookup[domain] = &combined
 	}
 
-	// 2) Dynamic Layer
+	// 2) Dynamic Layer (Gossip)
 	dynamicMap := make(map[string][]*alaye.Route)
 
 	for k, ent := range hm.dynamicRoutes {
@@ -533,9 +530,11 @@ func (hm *Host) rebuildLookupLocked() {
 			combined := *existing
 			combined.Domains = []string{domain}
 
+			// Copy existing routes again for safety
 			combined.Routes = make([]alaye.Route, len(existing.Routes))
 			copy(combined.Routes, existing.Routes)
 
+			// Merge Dynamic Routes
 			byPath := make(map[string]*alaye.Route, len(combined.Routes))
 			for i := range combined.Routes {
 				p := combined.Routes[i].Path
@@ -554,19 +553,18 @@ func (hm *Host) rebuildLookupLocked() {
 					r.Path = woos.Slash
 				}
 
-				ex, ok := byPath[p]
-				if ok {
+				if ex, ok := byPath[p]; ok {
 					ex.Backends.Servers = append(ex.Backends.Servers, r.Backends.Servers...)
-					continue
+				} else {
+					combined.Routes = append(combined.Routes, *r)
+					byPath[p] = &combined.Routes[len(combined.Routes)-1]
 				}
-
-				combined.Routes = append(combined.Routes, *r)
-				byPath[p] = &combined.Routes[len(combined.Routes)-1]
 			}
 
 			hm.sortRoutes(combined.Routes)
 			newLookup[domain] = &combined
 		} else {
+			// New Dynamic Host
 			var routes []alaye.Route
 			for _, dr := range dynRoutes {
 				routes = append(routes, *dr)
@@ -600,9 +598,10 @@ func (hm *Host) loadOne(path string) (*alaye.Host, error) {
 	if err := parser.Unmarshal(&hostConfig); err != nil {
 		return nil, err
 	}
-	for i := range hostConfig.Domains {
-		hostConfig.Domains[i] = core.NormalizeHost(hostConfig.Domains[i])
-	}
+
+	// Apply Defaults & Implicit Activation via woos package
+	woos.ApplyHost(&hostConfig)
+
 	hm.sortRoutes(hostConfig.Routes)
 	return &hostConfig, nil
 }
@@ -647,11 +646,4 @@ func (hm *Host) resolveDomainLocked(hostname string) string {
 		}
 	}
 	return bestMatch
-}
-func (hm *Host) ForceSync() {
-	if hm.debouncer != nil {
-		hm.debouncer.Flush()
-		// Sleep briefly because Flush runs the callback in a goroutine
-		time.Sleep(10 * time.Millisecond)
-	}
 }
