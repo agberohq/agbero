@@ -340,6 +340,7 @@ func sanitizeGlobal(g *alaye.Global) *alaye.Global {
 			clone.Admin.JWTAuth.Secret = "***"
 		}
 	}
+
 	return &clone
 }
 
