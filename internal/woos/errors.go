@@ -54,10 +54,9 @@ var (
 // token
 
 var (
-	ErrInvalidToken           = errors.New("invalid token")
-	ErrInvalidClaims          = errors.New("invalid claims")
-	ErrMissingTokenSubject    = errors.New("token missing subject")
-	ErrUnexpectedSiningMethod = errors.New("unexpected signing method")
+	ErrInvalidToken        = errors.New("invalid token")
+	ErrInvalidClaims       = errors.New("invalid claims")
+	ErrMissingTokenSubject = errors.New("token missing subject")
 )
 
 // mkcert
