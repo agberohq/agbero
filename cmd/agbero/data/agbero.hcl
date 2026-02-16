@@ -26,7 +26,7 @@ bind {
 # -------------------------------------------------------------
 admin {
   # allowed ip
-  allowed_ips = ["127.0.0.1","::1"]
+  allowed_ips = ["127.0.0.1", "::1"]
 
   # List of addresses to listen for HTTP traffic (redirects to HTTPS if configured)
   address = ":9090"
@@ -76,7 +76,7 @@ logging {
     "/logs",
     "/favicon.ico"
   ]
-  
+
   # VictoriaLogs Integration (Optional)
   # victoria {
   #   enabled    = false
@@ -97,6 +97,145 @@ security {
     "172.16.0.0/12",
     "192.168.0.0/16"
   ]
+
+
+  firewall {
+    mode = "active"
+
+    inspect_body      = true
+    max_inspect_bytes = 8192
+    inspect_content_types = ["application/json", "application/x-www-form-urlencoded"]
+
+    defaults {
+      dynamic {
+        action   = "ban_short"
+        duration = "1h"
+      }
+      static {
+        action   = "ban_hard"
+        duration = "8760h"
+      }
+    }
+
+    # --- ACTIONS ---
+    # Field 'firewall_action' renamed to 'mitigation' to match Go struct
+
+    action "ban_hard" {
+      mitigation = "add"
+      response {
+        status_code   = 403
+        content_type  = "application/json"
+        body_template = "{\"error\": \"Permanent Ban\", \"rule\": \"{{.RuleName}}\"}"
+      }
+    }
+
+    action "ban_short" {
+      mitigation = "add"
+      response {
+        status_code   = 429
+        body_template = "Too many requests. Triggered: {{.RuleName}}"
+      }
+    }
+
+    action "log_only" {
+      mitigation = "none"
+      logging {
+        level = "warn"
+      }
+    }
+
+    # --- RULES ---
+    # Whitelist Internal Tools
+    rule "allow_internal_monitoring" {
+      priority = 5
+      type     = "whitelist"
+      match {
+        any {
+          location = "ip"
+          value    = "10.0.0.50"
+        }
+        any {
+          location = "header"
+          key      = "X-Internal-Secret"
+          value    = "SuperSecretKey"
+        }
+      }
+    }
+
+    # Block Known Bad IPs
+    rule "global_blacklist" {
+      priority = 10
+      type     = "static"
+      action   = "ban_hard"
+      match {
+        ip = ["1.2.3.4", "5.6.7.0/24"]
+      }
+    }
+
+    # SQL Injection Protection
+    rule "block_sqli" {
+      priority = 20
+      type     = "dynamic"
+      action   = "ban_hard"
+
+      match {
+        any {
+          location = "body"
+          pattern  = "(?i)(union\\s+select|select\\s+.*\\s+from)"
+        }
+        any {
+          location = "query"
+          pattern  = "(?i)(union\\s+select|select\\s+.*\\s+from)"
+        }
+      }
+    }
+
+    # Login Brute Force Protection
+    rule "protect_login" {
+      priority = 30
+      type     = "dynamic"
+      action   = "ban_short"
+
+      match {
+        path = ["/login", "/auth"]
+        methods = ["POST"]
+
+        threshold {
+          count     = 5
+          window    = "1m"
+          track_by  = "ip"
+          on_exceed = "ban"
+        }
+      }
+    }
+
+    # Block Suspicious User Agents
+    rule "bad_bots" {
+      priority = 40
+      type     = "dynamic"
+      action   = "ban_hard"
+
+      match {
+        any {
+          location = "header"
+          key      = "User-Agent"
+          operator = "contains"
+          value    = "sqlmap"
+        }
+        any {
+          location = "header"
+          key      = "User-Agent"
+          operator = "contains"
+          value    = "nikto"
+        }
+        any {
+          location = "header"
+          key      = "User-Agent"
+          operator = "empty"
+        }
+      }
+    }
+  }
 }
 
 # -------------------------------------------------------------
@@ -135,14 +274,14 @@ timeouts {
 # GLOBAL RATE LIMITING (Optional)
 # -------------------------------------------------------------
 rate_limits {
-  enabled = false
-  ttl = "30m"
+  enabled     = false
+  ttl         = "30m"
   max_entries = 100000
 
   # Black Friday / Payment Rules (Applied First)
   rule "payment" {
     prefixes = ["/api/checkout", "/api/payment"]
-    methods  = ["POST", "PUT"]
+    methods = ["POST", "PUT"]
     requests = 5
     window   = "1m"
     key      = "ip" # or "header:Authorization"

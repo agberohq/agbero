@@ -648,7 +648,6 @@ func (hm *Host) resolveDomainLocked(hostname string) string {
 	}
 	return bestMatch
 }
-
 func (hm *Host) ForceSync() {
 	if hm.debouncer != nil {
 		hm.debouncer.Flush()

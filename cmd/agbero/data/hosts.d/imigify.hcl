@@ -2,7 +2,7 @@ domains = ["imigify.localhost"]
 
 route "/api" {
   backend {
-    lb_strategy = "round_robin"
+    strategy = "round_robin"
 
     server {
       address = "http://localhost:6060"

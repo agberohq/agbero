@@ -49,6 +49,6 @@ route "/*" {
       address = "http://127.0.0.1:7581"
     }
     # Use "ip_hash" for UI to keep session stickiness
-    lb_strategy = "ip_hash"
+    strategy = "ip_hash"
   }
 }

@@ -130,3 +130,9 @@ func (s *Enabled) UnmarshalJSON(data []byte) error {
 
 	return fmt.Errorf("invalid JSON status: %s", string(data))
 }
+
+func (s *Enabled) Ensure(def Enabled) {
+	if *s == Unknown {
+		*s = def
+	}
+}
