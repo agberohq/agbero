@@ -13,7 +13,7 @@ import (
 
 func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
 	// Return passthrough if disabled
-	if cfg.Enabled.No() {
+	if cfg.Enabled.NotActive() {
 		return func(next http.Handler) http.Handler { return next }
 	}
 

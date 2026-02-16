@@ -15,7 +15,7 @@ type Wasm struct {
 }
 
 func (w *Wasm) Validate() error {
-	if w.Enabled.No() {
+	if w.Enabled.NotActive() {
 		return nil
 	}
 

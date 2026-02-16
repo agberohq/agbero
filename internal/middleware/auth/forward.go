@@ -58,7 +58,7 @@ var defaultHTTPClient = &http.Client{
 }
 
 func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
-	if cfg.Enabled.No() {
+	if cfg.Enabled.NotActive() {
 		return func(next http.Handler) http.Handler { return next }
 	}
 
@@ -83,7 +83,7 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 	}
 
 	var client *http.Client
-	if cfg.TLS != nil && cfg.TLS.Enabled.Yes() {
+	if cfg.TLS != nil && cfg.TLS.Enabled.Active() {
 		tlsConfig, err := createTLSConfig(cfg.TLS)
 		if err != nil {
 			return func(next http.Handler) http.Handler {
@@ -112,7 +112,7 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 
 			if cached, ok := authCache.Load(cacheKey); ok {
 				if allowed, ok := cache.Get[bool](cached); ok && allowed {
-					if cfg.Response.Enabled.Yes() {
+					if cfg.Response.Enabled.Active() {
 						if headersItem, ok := authCache.Load(cacheKey + "_headers"); ok {
 							if headers, ok := cache.Get[http.Header](headersItem); ok {
 								copyHeadersToRequest(headers, r, cfg.Response.CopyHeaders)
@@ -140,13 +140,13 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 				return
 			}
 
-			if cfg.Request.Enabled.Yes() {
+			if cfg.Request.Enabled.Active() {
 				copyHeaders(r.Header, authReq.Header, cfg.Request.Headers)
 			} else {
 				copyHeaders(r.Header, authReq.Header, nil)
 			}
 
-			if cfg.Request.Enabled.Yes() {
+			if cfg.Request.Enabled.Active() {
 				if cfg.Request.ForwardMethod {
 					authReq.Header.Set(woos.HeaderXOriginalMethod, r.Method)
 				}
@@ -158,7 +158,7 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 				}
 			}
 
-			if cfg.Request.Enabled.Yes() {
+			if cfg.Request.Enabled.Active() {
 				switch cfg.Request.BodyMode {
 				case "metadata":
 					authReq.Header.Set("Content-Type", r.Header.Get("Content-Type"))
@@ -193,7 +193,7 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 			defer resp.Body.Close()
 
 			if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-				if cfg.Response.Enabled.Yes() {
+				if cfg.Response.Enabled.Active() {
 					headersToCopy := make(http.Header)
 					for _, h := range cfg.Response.CopyHeaders {
 						if v := resp.Header.Get(h); v != "" {

@@ -21,7 +21,7 @@ type GlobalRate struct {
 }
 
 func (g *GlobalRate) Validate() error {
-	if g.Enabled.No() {
+	if !g.Enabled.Active() {
 		return nil
 	}
 
@@ -56,7 +56,7 @@ type RouteRate struct {
 }
 
 func (r *RouteRate) Validate() error {
-	if r.Enabled.No() {
+	if !r.Enabled.Active() {
 		return nil
 	}
 
@@ -103,9 +103,10 @@ type RateRule struct {
 }
 
 func (r *RateRule) Validate() error {
-	if r.Enabled.No() {
+	if !r.Enabled.Active() {
 		return nil
 	}
+
 	if r.Requests <= 0 {
 		return ErrRateLimitNegativeRequests
 	}

@@ -11,7 +11,7 @@ type Compression struct {
 }
 
 func (c *Compression) Validate() error {
-	if c.Enabled.No() {
+	if c.Enabled.NotActive() {
 		return nil // Unknown validation needed if compression is disabled
 	}
 

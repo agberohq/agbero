@@ -9,7 +9,7 @@ type Headers struct {
 }
 
 func (h *Headers) Validate() error {
-	if h.Enabled.No() {
+	if !h.Enabled.Active() {
 		return nil
 	}
 	// Both Request and Response are optional
@@ -33,7 +33,7 @@ type Header struct {
 }
 
 func (h *Header) Validate() error {
-	if h.Enabled.No() {
+	if !h.Enabled.Active() {
 		return nil
 	}
 

@@ -22,7 +22,7 @@ type OAuth struct {
 }
 
 func (o *OAuth) Validate() error {
-	if !o.Enabled.Yes() {
+	if !o.Enabled.Active() {
 		return nil
 	}
 	if o.Provider == "" {

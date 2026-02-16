@@ -82,7 +82,7 @@ letsencrypt {
 		t.Error("expected 2 http bind addresses")
 	}
 	// Verify Admin block parsing
-	if global.Admin.Enabled.No() {
+	if global.Admin.Enabled.NotActive() {
 		t.Fatal("expected admin block to be parsed")
 	}
 

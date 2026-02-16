@@ -22,7 +22,7 @@ type TCPRoute struct {
 }
 
 func (t *TCPRoute) Validate() error {
-	if t.Enabled.No() {
+	if t.Enabled.NotActive() {
 		return nil
 	}
 
@@ -81,7 +81,7 @@ type TCPHealthCheck struct {
 }
 
 func (t *TCPHealthCheck) Validate() error {
-	if t.Enabled.No() {
+	if t.Enabled.NotActive() {
 		return nil
 	}
 

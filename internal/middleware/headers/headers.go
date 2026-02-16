@@ -10,13 +10,13 @@ func Headers(cfg *alaye.Headers) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// 1. Modify Request Headers (Going Upstream)
-			if cfg.Request.Enabled.Yes() {
+			if cfg.Request.Enabled.Active() {
 				applyHeaders(r.Header, cfg.Request)
 			}
 
 			// 2. Modify Response Headers (Going Downstream)
 			// We need to wrap the ResponseWriter to modify headers before WriteHeader is called.
-			if cfg.Response.Enabled.Yes() {
+			if cfg.Response.Enabled.Active() {
 				writer := &headerWriter{ResponseWriter: w, ops: cfg.Response}
 				next.ServeHTTP(writer, r)
 			} else {

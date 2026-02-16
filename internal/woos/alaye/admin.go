@@ -19,7 +19,7 @@ type Admin struct {
 }
 
 func (a *Admin) Validate() error {
-	if a.Enabled.No() {
+	if a.Enabled.NotActive() {
 		return nil
 	}
 

@@ -19,7 +19,7 @@ import (
 
 // OAuth middleware using markbates/goth for multi-provider support.
 func OAuth(cfg *alaye.OAuth) func(http.Handler) http.Handler {
-	if cfg.Enabled.No() {
+	if cfg.Enabled.NotActive() {
 		return func(next http.Handler) http.Handler { return next }
 	}
 

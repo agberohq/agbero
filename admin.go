@@ -32,7 +32,7 @@ type AdminClaims struct {
 }
 
 func (s *Server) startAdminServer() {
-	if s.global.Admin.Enabled.No() || s.global.Admin.Address == "" {
+	if s.global.Admin.Enabled.NotActive() || s.global.Admin.Address == "" {
 		return
 	}
 
@@ -55,7 +55,7 @@ func (s *Server) startAdminServer() {
 	// Helper to wrap handlers with JWT Auth
 	protect := func(h http.HandlerFunc) http.Handler {
 		// If JWT is configured, enforce it.
-		if cfg.JWTAuth.Enabled.Yes() {
+		if cfg.JWTAuth.Enabled.Active() {
 			return auth.JWT(&cfg.JWTAuth)(h)
 		}
 		// Fallback: If BasicAuth is configured but no JWT, enforce BasicAuth on API too
@@ -106,12 +106,12 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	cfg := s.global.Admin
 
 	// 1. Validation
-	if cfg.BasicAuth.Enabled.No() || len(cfg.BasicAuth.Users) == 0 {
+	if !cfg.BasicAuth.Enabled.Active() || len(cfg.BasicAuth.Users) == 0 {
 		http.Error(w, "Server Config Error: Unknown admin users defined in 'basic_auth'", http.StatusForbidden)
 		return
 	}
 
-	if cfg.JWTAuth.Enabled.No() || cfg.JWTAuth.Secret == "" {
+	if !cfg.JWTAuth.Enabled.Active() || cfg.JWTAuth.Secret == "" {
 		http.Error(w, "Server Config Error: 'jwt_auth.secret' is required for login", http.StatusForbidden)
 		return
 	}
@@ -289,7 +289,7 @@ func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 // handleAdminLogs reads the log file backwards efficiently
 func (s *Server) handleAdminLogs(w http.ResponseWriter, r *http.Request) {
 	var logPath string
-	if s.global.Logging.Enabled.Yes() {
+	if s.global.Logging.Enabled.Active() {
 		logPath = s.global.Logging.File
 	}
 
@@ -324,7 +324,7 @@ func sanitizeGlobal(g *alaye.Global) *alaye.Global {
 	var clone alaye.Global
 	_ = json.Unmarshal(b, &clone)
 
-	if clone.Gossip.Enabled.Yes() {
+	if clone.Gossip.Enabled.Active() {
 		if clone.Gossip.SecretKey != "" {
 			clone.Gossip.SecretKey = "***"
 		}
@@ -332,11 +332,11 @@ func sanitizeGlobal(g *alaye.Global) *alaye.Global {
 			clone.Gossip.PrivateKeyFile = "***"
 		}
 	}
-	if clone.Admin.Enabled.Yes() {
-		if clone.Admin.BasicAuth.Enabled.Yes() {
+	if clone.Admin.Enabled.Active() {
+		if clone.Admin.BasicAuth.Enabled.Active() {
 			clone.Admin.BasicAuth.Users = []string{"***"}
 		}
-		if clone.Admin.JWTAuth.Enabled.Yes() {
+		if clone.Admin.JWTAuth.Enabled.Active() {
 			clone.Admin.JWTAuth.Secret = "***"
 		}
 	}
@@ -351,17 +351,17 @@ func sanitizeHosts(hosts map[string]*alaye.Host) map[string]*alaye.Host {
 		_ = json.Unmarshal(b, &clone)
 
 		for i := range clone.Routes {
-			if clone.Routes[i].BasicAuth.Enabled.Yes() {
+			if clone.Routes[i].BasicAuth.Enabled.Active() {
 				clone.Routes[i].BasicAuth.Users = []string{"***"}
 			}
-			if clone.Routes[i].JWTAuth.Enabled.Yes() {
+			if clone.Routes[i].JWTAuth.Enabled.Active() {
 				clone.Routes[i].JWTAuth.Secret = "***"
 			}
-			if clone.Routes[i].OAuth.Enabled.Yes() {
+			if clone.Routes[i].OAuth.Enabled.Active() {
 				clone.Routes[i].OAuth.ClientSecret = "***"
 				clone.Routes[i].OAuth.CookieSecret = "***"
 			}
-			if clone.Routes[i].Wasm.Enabled.Yes() && len(clone.Routes[i].Wasm.Config) > 0 {
+			if clone.Routes[i].Wasm.Enabled.Active() && len(clone.Routes[i].Wasm.Config) > 0 {
 				clone.Routes[i].Wasm.Config = map[string]string{"***": "***"}
 			}
 		}

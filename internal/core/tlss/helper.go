@@ -80,7 +80,7 @@ func BootstrapEnv(logger *ll.Logger) error {
 			os.Getenv("HOME"), os.Getenv("USER"), os.Getenv("LOGNAME"))
 	}
 
-	// No fatal condition here: we allow running without mkcert too.
+	// Inactive fatal condition here: we allow running without mkcert too.
 	return nil
 }
 

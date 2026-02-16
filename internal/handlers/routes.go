@@ -177,7 +177,7 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 
 	// Check if rate limiting is effectively enabled
 	// Either explicitly enabled, or using a global policy
-	if !rlc.Enabled.Yes() && rlc.UsePolicy == "" {
+	if !rlc.Enabled.Active() && rlc.UsePolicy == "" {
 		return nil
 	}
 
@@ -212,7 +212,7 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 	}
 
 	// Add explicit rule if enabled
-	if rlc.Rule.Enabled.Yes() {
+	if rlc.Rule.Enabled.Active() {
 		rules = append(rules, rlc.Rule)
 	}
 

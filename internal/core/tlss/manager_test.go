@@ -89,7 +89,7 @@ func generateTestCert(t *testing.T, certFile, keyFile string) {
 func TestTlsManager_EnsureCertMagic_Success(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		LetsEncrypt: alaye.LetsEncrypt{Email: "test@example.com"},
+		LetsEncrypt: alaye.LetsEncrypt{Enabled: alaye.Active, Email: "test@example.com"},
 		Storage:     alaye.Storage{CertsDir: tmpDir},
 	}
 
@@ -128,7 +128,8 @@ func TestTlsManager_EnsureCertMagic_NoEmail(t *testing.T) {
 		logger:      testLogger,
 		hostManager: &discovery.Host{},
 		Global: &alaye.Global{
-			Storage: alaye.Storage{CertsDir: "/tmp"},
+			Storage:     alaye.Storage{CertsDir: "/tmp"},
+			LetsEncrypt: alaye.LetsEncrypt{Enabled: alaye.Active},
 		},
 	}
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
@@ -153,7 +154,7 @@ func TestTlsManager_CmForHost_StagingDefault(t *testing.T) {
 
 func TestTlsManager_CmForHost_ProdDefault(t *testing.T) {
 	m := &Manager{Global: &alaye.Global{
-		LetsEncrypt: alaye.LetsEncrypt{Staging: false},
+		LetsEncrypt: alaye.LetsEncrypt{Enabled: alaye.Active, Staging: false},
 	}}
 	m.cmProd = &certmagic.Config{}
 	m.cmStaging = &certmagic.Config{}

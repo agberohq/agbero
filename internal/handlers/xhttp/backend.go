@@ -116,7 +116,7 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 
 	rp.FlushInterval = -1
 	//  Add nil check for cfg.Streaming before accessing Active
-	if cfg.Streaming.Enabled.Yes() {
+	if cfg.Streaming.Enabled.Active() {
 		t.ResponseHeaderTimeout = 0
 		rp.FlushInterval = cfg.Streaming.EffectiveFlushInterval()
 	}

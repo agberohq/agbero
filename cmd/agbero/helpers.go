@@ -444,7 +444,7 @@ func handleGossipToken(configPath string) {
 	if err != nil {
 		logger.Fatal("Error loading config: ", err)
 	}
-	if global.Gossip.Enabled.Yes() || global.Gossip.PrivateKeyFile == "" {
+	if global.Gossip.Enabled.Active() || global.Gossip.PrivateKeyFile == "" {
 		logger.Fatal("Gossip is disabled in config. Run 'agbero gossip init' AND update your config file.")
 	}
 	tm, err := security.LoadKeys(global.Gossip.PrivateKeyFile)
@@ -490,7 +490,7 @@ func handleGossipStatus(configPath string) {
 	}
 	fmt.Println("\nGossip Configuration Active")
 	fmt.Println("===========================")
-	if global.Gossip.Enabled.No() {
+	if !global.Gossip.Enabled.Active() {
 		fmt.Println("Active: DISABLED")
 		return
 	}

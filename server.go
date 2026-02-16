@@ -123,7 +123,7 @@ func (s *Server) Start(configPath string) error {
 
 	s.logger.Fields(
 		"dev_mode", s.global.Development,
-		"gossip_mode", s.global.Gossip.Enabled.Yes(),
+		"gossip_mode", s.global.Gossip.Enabled.Active(),
 	).Info("configuring")
 
 	s.logger.Fields(
@@ -159,7 +159,7 @@ func (s *Server) Start(configPath string) error {
 	s.logHostStats(hosts)
 
 	//  Gossip initialization
-	if s.global.Gossip.Enabled.Yes() {
+	if s.global.Gossip.Enabled.Active() {
 		gs, err := gossip.NewService(s.hostManager, &s.global.Gossip, s.logger)
 		if err != nil {
 			return errors.Newf("failed to start gossip: %w", err)
@@ -176,14 +176,14 @@ func (s *Server) Start(configPath string) error {
 
 	//  Check Security pointer
 	var trustedProxies []string
-	if s.global.Security.Enabled.Yes() {
+	if s.global.Security.Enabled.Active() {
 		trustedProxies = s.global.Security.TrustedProxies
 	}
 	s.ipMiddleware = clientip.NewIPMiddleware(trustedProxies)
 	s.rateLimiter = s.buildGlobalRateLimiter()
 
 	s.skipLogPaths = make(map[string]bool)
-	if s.global.Logging.Enabled.Yes() && len(s.global.Logging.Skip) > 0 {
+	if s.global.Logging.Enabled.Active() && len(s.global.Logging.Skip) > 0 {
 		for _, p := range s.global.Logging.Skip {
 			s.skipLogPaths[p] = true
 		}
@@ -191,7 +191,7 @@ func (s *Server) Start(configPath string) error {
 
 	//  Firewall initialization with pointer check
 	var fwConfig alaye.Firewall
-	if s.global.Security.Enabled.Yes() {
+	if s.global.Security.Enabled.Active() {
 		fwConfig = s.global.Security.Firewall
 	}
 	dataDir := woos.NewFolder(s.global.Storage.DataDir)
@@ -369,7 +369,7 @@ func (s *Server) Reload() {
 	}
 
 	var fwConfig alaye.Firewall
-	if s.global.Security.Enabled.Yes() {
+	if s.global.Security.Enabled.Active() {
 		fwConfig = s.global.Security.Firewall
 	}
 
@@ -396,7 +396,7 @@ func (s *Server) Reload() {
 		for _, r := range h.Routes {
 			rKey := r.Key()
 			// Defensive check for Backends
-			if r.Backends.Enabled.Yes() {
+			if r.Backends.Enabled.Active() {
 				for _, srv := range r.Backends.Servers {
 					validKeys[fmt.Sprintf("%s|%s", rKey, srv.Address)] = true
 				}
@@ -540,9 +540,9 @@ func (s *Server) hasStreaming(hosts map[string]*alaye.Host) bool {
 	for _, host := range hosts {
 		for _, rt := range host.Routes {
 			// Check Backends pointer
-			if rt.Backends.Enabled.Yes() {
+			if rt.Backends.Enabled.Active() {
 				for _, srv := range rt.Backends.Servers {
-					if srv.Streaming.Enabled.Yes() && srv.Streaming.Enabled.Yes() {
+					if srv.Streaming.Enabled.Active() && srv.Streaming.Enabled.Active() {
 						return true
 					}
 				}
@@ -701,7 +701,7 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
 	rlc := s.global.RateLimits
 
-	if !rlc.Enabled.Yes() || len(rlc.Rules) == 0 {
+	if !rlc.Enabled.Active() || len(rlc.Rules) == 0 {
 		return nil
 	}
 
@@ -937,7 +937,7 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey, &s.global.RateLimits)
 
 	// Pointer safety for Wasm
-	if route.Wasm.Enabled.Yes() {
+	if route.Wasm.Enabled.Active() {
 		wm, err := s.getWasmManager(&route.Wasm, routeKey)
 		if err != nil {
 			s.logger.Fields("err", err, "module", route.Wasm.Module).Error("wasm: failed to load middleware")

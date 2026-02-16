@@ -66,7 +66,7 @@ func NewWeb(logger *ll.Logger, route *alaye.Route) *web {
 	}
 
 	// PHP FastCGI support (value-type config; no pointers).
-	if route != nil && route.Web.PHP.Status.Yes() {
+	if route != nil && route.Web.PHP.Status.Active() {
 		root := route.Web.Root.String()
 
 		network, address := "tcp", "127.0.0.1:9000"

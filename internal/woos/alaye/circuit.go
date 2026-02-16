@@ -9,7 +9,7 @@ type CircuitBreaker struct {
 }
 
 func (c *CircuitBreaker) Validate() error {
-	if c.Enabled.No() {
+	if !c.Enabled.Active() {
 		return nil
 	}
 	// Threshold validation (if provided)

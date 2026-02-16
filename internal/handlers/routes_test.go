@@ -69,7 +69,8 @@ func TestRouteHandler_Proxy_RateLimit(t *testing.T) {
 	defer srv.Close()
 
 	route := &alaye.Route{
-		Path: "/",
+		Enabled: alaye.Active,
+		Path:    "/",
 		Backends: alaye.Backend{
 			Enabled: alaye.Active,
 			Servers: alaye.NewServers(srv.URL),
@@ -77,6 +78,7 @@ func TestRouteHandler_Proxy_RateLimit(t *testing.T) {
 		RateLimit: alaye.RouteRate{
 			Enabled: alaye.Active,
 			Rule: alaye.RateRule{
+				Enabled:  alaye.Active,
 				Requests: 1,
 				Window:   time.Minute,
 				Key:      "ip",
@@ -115,14 +117,17 @@ func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
 	defer srv.Close()
 
 	route := &alaye.Route{
-		Path: "/",
+		Enabled: alaye.Active,
+		Path:    "/",
 		Backends: alaye.Backend{
 			Enabled: alaye.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 		Headers: alaye.Headers{
+			Enabled: alaye.Active,
 			Request: alaye.Header{
-				Set: map[string]string{"X-Test": "Added"},
+				Enabled: alaye.Active,
+				Set:     map[string]string{"X-Test": "Added"},
 			},
 		},
 	}
@@ -457,6 +462,7 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 		Headers: alaye.Headers{
 			Enabled: alaye.Active,
 			Response: alaye.Header{
+				Enabled: alaye.Active,
 				Set: map[string]string{
 					"X-Custom-Header": "TestValue",
 					"Cache-Control":   "public, max-age=3600",

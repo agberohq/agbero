@@ -16,7 +16,7 @@ type Web struct {
 
 func (w *Web) Validate() error {
 
-	if w.Enabled.No() {
+	if w.Enabled.NotActive() {
 		return nil
 	}
 

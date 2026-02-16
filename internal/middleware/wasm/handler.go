@@ -23,7 +23,7 @@ type Instance struct {
 }
 
 func (m *Manager) Handler(next http.Handler) http.Handler {
-	if m == nil || !m.config.Enabled.Yes() {
+	if m == nil || !m.config.Enabled.Active() {
 		return next
 	}
 

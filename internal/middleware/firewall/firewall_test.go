@@ -33,13 +33,13 @@ func createTestEngine(t *testing.T, cfg *alaye.Firewall) *Engine {
 	// Manually compile regexes and set up extract for tests as validation isn't run here
 	for i := range cfg.Rules {
 		r := &cfg.Rules[i]
-		if r.Match.Enabled.Yes() {
+		if r.Match.Enabled.Active() {
 			compileConditions(r.Match.Any)
 			compileConditions(r.Match.All)
 			compileConditions(r.Match.None)
 
 			// Set up Extract if enabled but regex is nil
-			if r.Match.Extract != nil && r.Match.Extract.Enabled.Yes() && r.Match.Extract.Regex == nil && r.Match.Extract.Pattern != "" {
+			if r.Match.Extract != nil && r.Match.Extract.Enabled.Active() && r.Match.Extract.Regex == nil && r.Match.Extract.Pattern != "" {
 				r.Match.Extract.Regex = regexp.MustCompile(r.Match.Extract.Pattern)
 			}
 		}
@@ -156,7 +156,7 @@ func TestDynamicRules_Logic(t *testing.T) {
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
-		t.Errorf("Any: False positive. Got %d", rec.Code)
+		t.Errorf("Any: NotActive positive. Got %d", rec.Code)
 	}
 }
 
@@ -398,7 +398,7 @@ func TestConditions_Table(t *testing.T) {
 			want:      true,
 		},
 		{
-			name:      "Header Missing (False)",
+			name:      "Header Missing (NotActive)",
 			cond:      alaye.Condition{Enabled: alaye.Active, Location: "header", Key: "X-Auth", Operator: "missing"},
 			reqURL:    "/",
 			reqHeader: map[string]string{"X-Auth": "123"},

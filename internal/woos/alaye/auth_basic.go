@@ -13,7 +13,7 @@ type BasicAuth struct {
 }
 
 func (b *BasicAuth) Validate() error {
-	if b.Enabled.No() {
+	if b.Enabled.NotActive() {
 		return nil
 	}
 

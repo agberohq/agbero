@@ -11,7 +11,7 @@ type Timeout struct {
 }
 
 func (t *Timeout) Validate() error {
-	if t.Enabled.No() {
+	if t.Enabled.NotActive() {
 		return nil
 	}
 
@@ -38,7 +38,7 @@ type TimeoutRoute struct {
 }
 
 func (t *TimeoutRoute) Validate() error {
-	if t.Enabled.No() {
+	if t.Enabled.NotActive() {
 		return nil
 	}
 	// Request timeout validation (if provided)

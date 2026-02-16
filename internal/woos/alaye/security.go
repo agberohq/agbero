@@ -72,7 +72,7 @@ type Match struct {
 }
 
 func (m *Match) Validate() error {
-	if m.Enabled.No() {
+	if m.Enabled.NotActive() {
 		return nil
 	}
 	for i, c := range m.Any {
@@ -91,13 +91,13 @@ func (m *Match) Validate() error {
 		}
 	}
 
-	if m.Extract != nil && m.Extract.Enabled.Yes() {
+	if m.Extract != nil && m.Extract.Enabled.Active() {
 		if err := m.Extract.Validate(); err != nil {
 			return errors.Newf("extract: %w", err)
 		}
 	}
 
-	if m.Threshold != nil && m.Threshold.Enabled.Yes() {
+	if m.Threshold != nil && m.Threshold.Enabled.Active() {
 		if err := m.Threshold.Validate(); err != nil {
 			return errors.Newf("threshold: %w", err)
 		}
@@ -120,7 +120,7 @@ type Condition struct {
 }
 
 func (c *Condition) Validate() error {
-	if c.Enabled.No() {
+	if c.Enabled.NotActive() {
 		return nil
 	}
 	c.Location = strings.ToLower(c.Location)
@@ -152,7 +152,7 @@ type Extract struct {
 }
 
 func (e *Extract) Validate() error {
-	if e.Enabled.No() {
+	if e.Enabled.NotActive() {
 		return nil
 	}
 	if e.Pattern == "" {
@@ -177,7 +177,7 @@ type Threshold struct {
 }
 
 func (t *Threshold) Validate() error {
-	if t.Enabled.No() {
+	if t.Enabled.NotActive() {
 		return nil
 	}
 	if t.Count <= 0 {
@@ -211,7 +211,7 @@ func (s *Security) Validate() error {
 		return nil
 	}
 
-	if s.Enabled.No() {
+	if s.Enabled.NotActive() {
 		return nil
 	}
 	for i, proxy := range s.TrustedProxies {
@@ -237,7 +237,7 @@ type Firewall struct {
 }
 
 func (f *Firewall) Validate() error {
-	if f.Status.No() {
+	if f.Status.Inactive() {
 		return nil
 	}
 

@@ -20,7 +20,7 @@ func TestNew(t *testing.T) {
 		expectedStatus int
 	}{
 		{
-			name:           "No rules configured (allow all)",
+			name:           "Inactive rules configured (allow all)",
 			allowed:        []string{},
 			clientIP:       "1.2.3.4",
 			expectedStatus: http.StatusOK,

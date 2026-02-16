@@ -74,7 +74,7 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 	}
 
 	// VictoriaLogs (buffered)
-	if cfg.Victoria.Enabled.Yes() {
+	if cfg.Victoria.Enabled.Active() {
 		vl, err := victoria.New(
 			victoria.WithURL(cfg.Victoria.URL),
 			victoria.WithDevMode(devMode),

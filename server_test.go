@@ -310,11 +310,21 @@ route "/" {
 		t.Fatal(err)
 	}
 
+	globalCfg := &alaye.Global{
+		Bind: alaye.Bind{HTTP: []string{":8080"}},
+		Storage: alaye.Storage{
+			HostsDir: hostsDir,
+			DataDir:  t.TempDir(),
+		},
+	}
+	// Apply defaults to ensure timeouts etc are set
+	woos.DefaultApply(globalCfg, "")
+
 	s := &Server{
 		hostManager: hm,
 		logger:      testLogger,
 		reaper:      jack.NewReaper(time.Minute),
-		global:      &alaye.Global{}, // FIX 2: Initialize Global config to prevent panic
+		global:      globalCfg, // FIX: Inject valid global config
 	}
 
 	req := httptest.NewRequest("GET", "/", nil)

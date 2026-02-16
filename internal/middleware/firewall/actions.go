@@ -63,7 +63,7 @@ func (e *Engine) blockRequest(w http.ResponseWriter, r *http.Request, ruleName, 
 }
 
 func (e *Engine) sendResponse(w http.ResponseWriter, resp alaye.Response, ruleName string) {
-	if resp.Status.No() {
+	if resp.Status.Inactive() {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}

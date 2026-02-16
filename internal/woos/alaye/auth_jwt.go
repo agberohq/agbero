@@ -17,7 +17,7 @@ type JWTAuth struct {
 }
 
 func (j *JWTAuth) Validate() error {
-	if j.Enabled.No() {
+	if j.Enabled.NotActive() {
 		return nil
 	}
 

@@ -49,14 +49,16 @@ func (s *Enabled) Set(v interface{}) error {
 	return nil
 }
 
-func (s Enabled) Yes() bool     { return s == Active }
-func (s Enabled) No() bool      { return s == Inactive }
+func (s Enabled) Active() bool    { return s == Active }
+func (s Enabled) Inactive() bool  { return s == Inactive }
+func (s Enabled) NotActive() bool { return s != Active }
+
 func (s Enabled) Default() bool { return s == Unknown }
 func (s Enabled) Int() int      { return int(s) }
 func (s Enabled) Bool() bool    { return s == Active }
 
 func (s Enabled) Toggle() Enabled {
-	if s.No() {
+	if s.Inactive() {
 		return Active
 	}
 	return Inactive

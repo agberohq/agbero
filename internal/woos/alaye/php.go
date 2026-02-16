@@ -9,7 +9,7 @@ type PHP struct {
 }
 
 func (p *PHP) Validate() error {
-	if p.Status.No() {
+	if p.Status.Inactive() {
 		return nil
 	}
 	addr := strings.TrimSpace(p.Address)

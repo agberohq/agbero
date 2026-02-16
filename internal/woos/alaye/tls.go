@@ -52,7 +52,7 @@ type LocalCert struct {
 }
 
 func (l *LocalCert) Validate() error {
-	if l.Enabled.No() {
+	if l.Enabled.NotActive() {
 		return nil
 	}
 	// Cert file validation
@@ -82,7 +82,7 @@ type LetsEncrypt struct {
 }
 
 func (l *LetsEncrypt) Validate() error {
-	if l.Enabled.No() {
+	if l.Enabled.NotActive() {
 		return nil
 	}
 	// Email validation (if provided)
@@ -100,7 +100,7 @@ type CustomCA struct {
 }
 
 func (c *CustomCA) Validate() error {
-	if c.Enabled.No() {
+	if c.Enabled.NotActive() {
 		return nil
 	}
 	// Root CA file validation

@@ -28,7 +28,7 @@ type Streaming struct {
 }
 
 func (s *Streaming) EffectiveFlushInterval() time.Duration {
-	if s == nil || !s.Enabled.Yes() {
+	if s == nil || !s.Enabled.Active() {
 		return -1
 	}
 	if s.FlushInterval <= 0 {

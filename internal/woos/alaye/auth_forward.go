@@ -50,7 +50,7 @@ type ForwardAuthResponse struct {
 }
 
 func (f *ForwardAuth) Validate() error {
-	if f.Enabled.No() {
+	if f.Enabled.NotActive() {
 		return nil
 	}
 
@@ -84,7 +84,7 @@ func (f *ForwardAuth) Validate() error {
 		return errors.New("forward_auth: on_failure must be 'allow' or 'deny'")
 	}
 
-	if f.TLS != nil && f.TLS.Enabled.Yes() {
+	if f.TLS != nil && f.TLS.Enabled.Active() {
 		if (f.TLS.ClientCert != "" && f.TLS.ClientKey == "") || (f.TLS.ClientCert == "" && f.TLS.ClientKey != "") {
 			return errors.New("forward_auth: both client_cert and client_key required for mTLS")
 		}

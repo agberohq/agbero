@@ -16,7 +16,7 @@ type HealthCheck struct {
 }
 
 func (h *HealthCheck) Validate() error {
-	if h.Enabled.No() {
+	if !h.Enabled.Active() {
 		return nil
 	}
 	// Path validation

@@ -112,14 +112,14 @@ func (m *Manager) initCertMagic() error {
 	}
 
 	// 1. Check if the configuration block exists (Pointer check)
-	if m.Global.LetsEncrypt.Enabled.No() {
+	if m.Global.LetsEncrypt.Enabled.NotActive() {
 		return woos.ErrLetsEncryptNotEnabled
 	}
 
 	// 2. Check if explicitly disabled (Active check)
 	// Note: We do NOT check .Active() here, because the default (0/Unknown)
 	// implies enabled if the block is present in the HCL.
-	if m.Global.LetsEncrypt.Enabled.No() {
+	if m.Global.LetsEncrypt.Enabled.NotActive() {
 		return woos.ErrLetsEncryptNotEnabled
 	}
 
@@ -204,7 +204,7 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 }
 
 func (m *Manager) CmForHost(hcfg *alaye.Host) *certmagic.Config {
-	if m.Global.LetsEncrypt.Enabled.No() {
+	if m.Global.LetsEncrypt.Enabled.NotActive() {
 		return m.cmStaging
 	}
 	useStaging := m.Global.LetsEncrypt.Staging

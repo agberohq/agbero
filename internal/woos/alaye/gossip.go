@@ -17,7 +17,7 @@ type Gossip struct {
 }
 
 func (g *Gossip) Validate() error {
-	if g.Enabled.No() {
+	if g.Enabled.NotActive() {
 		return nil // Nothing to validate if not enabled
 	}
 

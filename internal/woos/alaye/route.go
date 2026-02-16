@@ -39,7 +39,7 @@ func (r *Route) Key() string {
 
 	w.WriteString(r.Path)
 
-	if r.Backends.Enabled.Yes() {
+	if r.Backends.Enabled.Active() {
 		w.WriteString(strings.ToLower(strings.TrimSpace(r.Backends.Strategy)))
 		for _, b := range r.Backends.Servers {
 			w.WriteString(b.Address)
@@ -55,46 +55,46 @@ func (r *Route) Key() string {
 		w.WriteString(ip)
 	}
 
-	if r.HealthCheck.Enabled.Yes() {
+	if r.HealthCheck.Enabled.Active() {
 		w.WriteString(r.HealthCheck.Path)
 		w.WriteString(fmt.Sprint(r.HealthCheck.Interval))
 		w.WriteString(fmt.Sprint(r.HealthCheck.Timeout))
 		w.WriteString(fmt.Sprint(r.HealthCheck.Threshold))
 	}
 
-	if r.CircuitBreaker.Enabled.Yes() {
+	if r.CircuitBreaker.Enabled.Active() {
 		w.WriteString(fmt.Sprint(r.CircuitBreaker.Threshold))
 		w.WriteString(fmt.Sprint(r.CircuitBreaker.Duration))
 	}
 
-	if r.Timeouts.Enabled.Yes() {
+	if r.Timeouts.Enabled.Active() {
 		w.WriteString(fmt.Sprint(r.Timeouts.Request))
 	}
 
-	if r.CompressionConfig.Enabled.Yes() {
+	if r.CompressionConfig.Enabled.Active() {
 		w.WriteString(r.CompressionConfig.Type)
 		w.WriteString(fmt.Sprint(r.CompressionConfig.Level))
 	}
 
-	if r.Headers.Enabled.Yes() {
+	if r.Headers.Enabled.Active() {
 		w.WriteString("hd")
 	}
 
-	if r.BasicAuth.Enabled.Yes() {
+	if r.BasicAuth.Enabled.Active() {
 		for _, u := range r.BasicAuth.Users {
 			w.WriteString(u)
 		}
 	}
 
-	if r.ForwardAuth.Enabled.Yes() {
+	if r.ForwardAuth.Enabled.Active() {
 		w.WriteString(r.ForwardAuth.URL)
 	}
 
-	if r.JWTAuth.Enabled.Yes() {
+	if r.JWTAuth.Enabled.Active() {
 		w.WriteString(r.JWTAuth.Secret.String())
 	}
 
-	if r.OAuth.Enabled.Yes() {
+	if r.OAuth.Enabled.Active() {
 		w.WriteString(r.OAuth.Provider)
 		w.WriteString(r.OAuth.ClientID)
 	}
@@ -105,13 +105,13 @@ func (r *Route) Key() string {
 		if r.Web.Listing {
 			w.WriteString("ls")
 		}
-		if r.Web.PHP.Status.Yes() {
+		if r.Web.PHP.Status.Active() {
 			w.WriteString("php")
 			w.WriteString(r.Web.PHP.Address)
 		}
 	}
 
-	if r.Wasm.Enabled.Yes() {
+	if r.Wasm.Enabled.Active() {
 		w.WriteString(r.Wasm.Module)
 		for k, v := range r.Wasm.Config {
 			w.WriteString(k)
@@ -119,13 +119,13 @@ func (r *Route) Key() string {
 		}
 	}
 
-	if r.RateLimit.Enabled.Yes() {
+	if r.RateLimit.Enabled.Active() {
 		w.WriteString("rl_on")
 		if r.RateLimit.IgnoreGlobal {
 			w.WriteString("ig")
 		}
 		w.WriteString(r.RateLimit.UsePolicy)
-		if rule := r.RateLimit.Rule; rule.Enabled.Yes() {
+		if rule := r.RateLimit.Rule; rule.Enabled.Active() {
 			w.WriteString(rule.Name)
 			w.WriteString(fmt.Sprint(rule.Requests))
 			w.WriteString(fmt.Sprint(rule.Window))
@@ -140,7 +140,7 @@ func (r *Route) Key() string {
 		}
 	}
 
-	if r.Firewall.Status.Yes() {
+	if r.Firewall.Status.Active() {
 		w.WriteString("fw_on")
 		if r.Firewall.IgnoreGlobal {
 			w.WriteString("ig")
@@ -175,7 +175,7 @@ func (r *Route) Validate() error {
 		return errors.Newf("rate_limit: %w", err)
 	}
 
-	if r.Firewall.Status.Yes() {
+	if r.Firewall.Status.Active() {
 		// Validate ad-hoc rules
 		for i, rule := range r.Firewall.Rules {
 			if rule.Name == "" {
@@ -235,14 +235,14 @@ func (r *Route) validateWebRoute() error {
 		return ErrWebRouteUnsupportedLB
 	}
 
-	if r.HealthCheck.Enabled.Yes() {
+	if r.HealthCheck.Enabled.Active() {
 		return ErrWebRouteHealthCheck
 	}
-	if r.CircuitBreaker.Enabled.Yes() {
+	if r.CircuitBreaker.Enabled.Active() {
 		return ErrWebRouteCircuitBreaker
 	}
 
-	if r.Timeouts.Enabled.Yes() {
+	if r.Timeouts.Enabled.Active() {
 		if err := r.Timeouts.Validate(); err != nil {
 			return errors.Newf("timeouts: %w", err)
 		}

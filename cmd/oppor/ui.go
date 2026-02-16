@@ -196,7 +196,7 @@ func NewModel(cfg Config) Ui {
 			t.CharLimit = 8
 		case InputRate:
 			t.SetValue("0")
-			t.Placeholder = "No Limit"
+			t.Placeholder = "Inactive Limit"
 			t.CharLimit = 8
 		case InputHeaders:
 			t.Placeholder = "Key: Val, Key2: Val2"

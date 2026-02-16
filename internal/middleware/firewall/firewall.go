@@ -41,7 +41,7 @@ type Engine struct {
 }
 
 func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*Engine, error) {
-	if cfg == nil || cfg.Status.No() {
+	if cfg == nil || cfg.Status.Inactive() {
 		return nil, nil
 	}
 
@@ -143,7 +143,7 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 		}
 
 		// 6. Evaluate Route-Specific Rules
-		if contextRoute != nil && contextRoute.Status.Yes() && contextRoute.Rules != nil {
+		if contextRoute != nil && contextRoute.Status.Active() && contextRoute.Rules != nil {
 			if matched, rule := e.evaluateRules(contextRoute.Rules, inspector); matched {
 				e.handleAction(w, r, rule, rule.Name, "route_rule_match")
 				return
@@ -248,12 +248,12 @@ func (e *Engine) Block(ip, reason string, duration time.Duration) error {
 
 func (e *Engine) evaluateRules(rules []alaye.Rule, in *Inspector) (bool, alaye.Rule) {
 	for _, rule := range rules {
-		if !rule.Match.Enabled.Yes() {
+		if !rule.Match.Enabled.Active() {
 			continue
 		}
 
 		if e.checkMatch(rule.Match, in) {
-			if rule.Type == "dynamic" && rule.Match.Threshold != nil && rule.Match.Threshold.Enabled.Yes() {
+			if rule.Type == "dynamic" && rule.Match.Threshold != nil && rule.Match.Threshold.Enabled.Active() {
 				triggered := e.checkThreshold(rule, in)
 				if !triggered {
 					continue
@@ -346,7 +346,7 @@ func (e *Engine) checkMatch(m alaye.Match, in *Inspector) bool {
 }
 
 func (e *Engine) checkCondition(c alaye.Condition, in *Inspector) bool {
-	if c.Enabled.No() {
+	if c.Enabled.NotActive() {
 		return false
 	}
 
@@ -408,7 +408,7 @@ func (e *Engine) checkCondition(c alaye.Condition, in *Inspector) bool {
 
 func (e *Engine) checkThreshold(rule alaye.Rule, in *Inspector) bool {
 	t := rule.Match.Threshold
-	if t == nil || t.Enabled.No() {
+	if t == nil || t.Enabled.NotActive() {
 		return true
 	}
 
@@ -423,7 +423,7 @@ func (e *Engine) checkThreshold(rule alaye.Rule, in *Inspector) bool {
 		}
 	}
 
-	if rule.Match.Extract != nil && rule.Match.Extract.Enabled.Yes() && rule.Match.Extract.Regex != nil {
+	if rule.Match.Extract != nil && rule.Match.Extract.Enabled.Active() && rule.Match.Extract.Regex != nil {
 		var src string
 		switch rule.Match.Extract.From {
 		case "body":
