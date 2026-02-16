@@ -12,7 +12,10 @@ import (
 func TestBasic_SuccessHashed(t *testing.T) {
 	// Generate hash
 	hash, _ := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
-	cfg := &alaye.BasicAuth{Users: []string{"user:" + string(hash)}}
+	cfg := &alaye.BasicAuth{
+		Enabled: alaye.Active,
+		Users:   []string{"user:" + string(hash)},
+	}
 
 	handler := Basic(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -29,7 +32,7 @@ func TestBasic_SuccessHashed(t *testing.T) {
 }
 
 func TestBasic_SuccessPlaintextFallback(t *testing.T) {
-	cfg := &alaye.BasicAuth{Users: []string{"user:pass"}}
+	cfg := &alaye.BasicAuth{Enabled: alaye.Active, Users: []string{"user:pass"}}
 
 	handler := Basic(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -47,7 +50,7 @@ func TestBasic_SuccessPlaintextFallback(t *testing.T) {
 
 func TestBasic_InvalidPassword(t *testing.T) {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
-	cfg := &alaye.BasicAuth{Users: []string{"user:" + string(hash)}}
+	cfg := &alaye.BasicAuth{Enabled: alaye.Active, Users: []string{"user:" + string(hash)}}
 
 	handler := Basic(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
@@ -62,7 +65,7 @@ func TestBasic_InvalidPassword(t *testing.T) {
 }
 
 func TestBasic_NoAuthHeader(t *testing.T) {
-	cfg := &alaye.BasicAuth{Users: []string{"user:pass"}}
+	cfg := &alaye.BasicAuth{Enabled: alaye.Active, Users: []string{"user:pass"}}
 
 	handler := Basic(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
@@ -79,7 +82,7 @@ func TestBasic_NoAuthHeader(t *testing.T) {
 }
 
 func TestBasic_InvalidUser(t *testing.T) {
-	cfg := &alaye.BasicAuth{Users: []string{"user:pass"}}
+	cfg := &alaye.BasicAuth{Enabled: alaye.Active, Users: []string{"user:pass"}}
 
 	handler := Basic(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 

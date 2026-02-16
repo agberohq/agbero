@@ -32,6 +32,11 @@ func New(allowed []string, logger *ll.Logger) func(http.Handler) http.Handler {
 		}
 	}
 
+	// If no valid IPs/nets after parsing, allow all
+	if len(singleIPs) == 0 && len(ipNets) == 0 {
+		return func(next http.Handler) http.Handler { return next }
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			clientIPStr := clientip.ClientIP(r)
@@ -42,7 +47,6 @@ func New(allowed []string, logger *ll.Logger) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Check exact IPs
 			for _, ip := range singleIPs {
 				if ip.Equal(clientIP) {
 					next.ServeHTTP(w, r)
@@ -50,7 +54,6 @@ func New(allowed []string, logger *ll.Logger) func(http.Handler) http.Handler {
 				}
 			}
 
-			// Check CIDRs
 			for _, n := range ipNets {
 				if n.Contains(clientIP) {
 					next.ServeHTTP(w, r)
@@ -58,7 +61,6 @@ func New(allowed []string, logger *ll.Logger) func(http.Handler) http.Handler {
 				}
 			}
 
-			// No match found
 			if logger != nil {
 				logger.Fields("ip", clientIPStr, "path", r.URL.Path).Debug("route ip_allow denied request")
 			}

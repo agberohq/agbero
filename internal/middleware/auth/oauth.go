@@ -19,6 +19,10 @@ import (
 
 // OAuth middleware using markbates/goth for multi-provider support.
 func OAuth(cfg *alaye.OAuth) func(http.Handler) http.Handler {
+	if cfg.Enabled.No() {
+		return func(next http.Handler) http.Handler { return next }
+	}
+
 	// 1. Initialize the specific Goth Provider based on config
 	provider, err := getProvider(cfg)
 	if err != nil {

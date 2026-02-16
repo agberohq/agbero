@@ -2,21 +2,51 @@ package alaye
 
 import (
 	"strings"
+	"time"
 
 	"github.com/olekukonko/errors"
 )
 
 type ForwardAuth struct {
 	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
-	URL     string  `hcl:"url" json:"url"` // e.g. "http://auth-service:8080/verify"
-	// Headers to copy FROM client request TO auth service (e.g. "Authorization", "Cookie")
-	RequestHeaders []string `hcl:"request_headers,optional" json:"request_headers"`
+	Name    string  `hcl:"name,label" json:"name"`
+	URL     string  `hcl:"url" json:"url"`
 
-	// Headers to copy FROM auth response TO backend request (e.g. "X-User-ID")
-	AuthResponseHeaders []string `hcl:"auth_response_headers,optional" json:"auth_response_headers"`
+	TLS *ForwardTLS `hcl:"tls,block" json:"tls,omitempty"`
 
-	// On auth server failure (e.g., timeout): "deny" (default) or "allow"
-	OnFailure string `hcl:"on_failure,optional" json:"on_failure"`
+	Request  ForwardAuthRequest  `hcl:"request,block" json:"request"`
+	Response ForwardAuthResponse `hcl:"response,block" json:"response"`
+
+	OnFailure string        `hcl:"on_failure,optional" json:"on_failure"`
+	Timeout   time.Duration `hcl:"timeout,optional" json:"timeout"`
+}
+
+type ForwardTLS struct {
+	Enabled            Enabled `hcl:"enabled,optional" json:"enabled"`
+	InsecureSkipVerify bool    `hcl:"insecure_skip_verify,optional" json:"insecure_skip_verify"`
+	ClientCert         Value   `hcl:"client_cert,optional" json:"client_cert"`
+	ClientKey          Value   `hcl:"client_key,optional" json:"client_key"`
+	CA                 Value   `hcl:"ca,optional" json:"ca"`
+}
+
+type ForwardAuthRequest struct {
+	Enabled       Enabled  `hcl:"enabled,optional" json:"enabled"` // ADDED
+	Headers       []string `hcl:"headers,optional" json:"headers"`
+	Method        string   `hcl:"method,optional" json:"method"`
+	ForwardMethod bool     `hcl:"forward_method,optional" json:"forward_method"`
+	ForwardURI    bool     `hcl:"forward_uri,optional" json:"forward_uri"`
+	ForwardIP     bool     `hcl:"forward_ip,optional" json:"forward_ip"`
+
+	BodyMode string `hcl:"body_mode,optional" json:"body_mode"`
+	MaxBody  int64  `hcl:"max_body,optional" json:"max_body"`
+
+	CacheKey []string `hcl:"cache_key,optional" json:"cache_key"`
+}
+
+type ForwardAuthResponse struct {
+	Enabled     Enabled       `hcl:"enabled,optional" json:"enabled"` // ADDED
+	CopyHeaders []string      `hcl:"copy_headers,optional" json:"copy_headers"`
+	CacheTTL    time.Duration `hcl:"cache_ttl,optional" json:"cache_ttl"`
 }
 
 func (f *ForwardAuth) Validate() error {
@@ -27,32 +57,37 @@ func (f *ForwardAuth) Validate() error {
 	if f.URL == "" {
 		return ErrForwardAuthURLRequired
 	}
-	if !strings.HasPrefix(f.URL, HTTPPrefix) && !strings.HasPrefix(f.URL, HTTPSPrefix) {
-		return ErrForwardAuthURLInvalid
+
+	if !strings.HasPrefix(f.URL, "http://") && !strings.HasPrefix(f.URL, "https://") {
+		return errors.New("forward_auth: url must start with http:// or https://")
 	}
 
-	// Request headers validation (if provided)
-	for i, header := range f.RequestHeaders {
-		if header == "" {
-			return errors.Newf("request_headers[%d]: %w", i, ErrCannotBeEmpty)
-		}
+	f.Request.BodyMode = strings.ToLower(f.Request.BodyMode)
+	if f.Request.BodyMode == "" {
+		f.Request.BodyMode = "none"
+	}
+	switch f.Request.BodyMode {
+	case "none", "metadata", "limited":
+	default:
+		return errors.New("forward_auth: body_mode must be 'none', 'metadata', or 'limited'")
 	}
 
-	// Auth response headers validation (if provided)
-	for i, header := range f.AuthResponseHeaders {
-		if header == "" {
-			return errors.Newf("auth_response_headers[%d]: %w", i, ErrCannotBeEmpty)
-		}
+	if f.Timeout <= 0 {
+		f.Timeout = 5 * time.Second
 	}
 
-	// OnFailure validation (if provided)
-	if f.OnFailure != "" {
-		f.OnFailure = strings.ToLower(f.OnFailure)
-		if f.OnFailure != "allow" && f.OnFailure != "deny" {
-			return ErrForwardAuthOnFailureInvalid
+	f.OnFailure = strings.ToLower(f.OnFailure)
+	if f.OnFailure == "" {
+		f.OnFailure = "deny"
+	}
+	if f.OnFailure != "allow" && f.OnFailure != "deny" {
+		return errors.New("forward_auth: on_failure must be 'allow' or 'deny'")
+	}
+
+	if f.TLS != nil && f.TLS.Enabled.Yes() {
+		if (f.TLS.ClientCert != "" && f.TLS.ClientKey == "") || (f.TLS.ClientCert == "" && f.TLS.ClientKey != "") {
+			return errors.New("forward_auth: both client_cert and client_key required for mTLS")
 		}
-	} else {
-		f.OnFailure = DefaultForwardAuthOnFailure // Default
 	}
 
 	return nil

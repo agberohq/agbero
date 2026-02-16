@@ -11,9 +11,10 @@ import (
 func TestHeaders_RequestMods(t *testing.T) {
 	cfg := &alaye.Headers{
 		Request: alaye.Header{
-			Set:    map[string]string{"X-Test": "set-value"},
-			Add:    map[string]string{"X-Multi": "add1"},
-			Remove: []string{"User-Agent"},
+			Enabled: alaye.Active, // Added
+			Set:     map[string]string{"X-Test": "set-value"},
+			Add:     map[string]string{"X-Multi": "add1"},
+			Remove:  []string{"User-Agent"},
 		},
 	}
 
@@ -54,9 +55,10 @@ func TestHeaders_RequestMods(t *testing.T) {
 func TestHeaders_ResponseMods(t *testing.T) {
 	cfg := &alaye.Headers{
 		Response: alaye.Header{
-			Set:    map[string]string{"X-Resp": "resp-value"},
-			Add:    map[string]string{"X-Resp-Multi": "add2"},
-			Remove: []string{"Content-Type"},
+			Enabled: alaye.Active, // Added
+			Set:     map[string]string{"X-Resp": "resp-value"},
+			Add:     map[string]string{"X-Resp-Multi": "add2"},
+			Remove:  []string{"Content-Type"},
 		},
 	}
 
@@ -97,7 +99,7 @@ func TestHeaders_ResponseMods(t *testing.T) {
 }
 
 func TestHeaders_NoOps(t *testing.T) {
-	cfg := &alaye.Headers{} // Empty
+	cfg := &alaye.Headers{} // Empty - both Request and Response are disabled by default
 
 	handler := Headers(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -109,5 +111,35 @@ func TestHeaders_NoOps(t *testing.T) {
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Error("Handler affected by empty config")
+	}
+}
+
+func TestHeaders_Disabled(t *testing.T) {
+	// Test that explicitly disabled headers don't apply
+	cfg := &alaye.Headers{
+		Request: alaye.Header{
+			Enabled: alaye.Inactive, // Explicitly disabled
+			Set:     map[string]string{"X-Test": "should-not-appear"},
+		},
+		Response: alaye.Header{
+			Enabled: alaye.Inactive, // Explicitly disabled
+			Set:     map[string]string{"X-Resp": "should-not-appear"},
+		},
+	}
+
+	handler := Headers(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Test") != "" {
+			t.Error("Disabled request header was applied")
+		}
+		w.Header().Set("X-Check", "value")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+	if w.Header().Get("X-Resp") != "" {
+		t.Error("Disabled response header was applied")
 	}
 }

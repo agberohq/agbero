@@ -12,6 +12,11 @@ import (
 )
 
 func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
+	// Return passthrough if disabled
+	if cfg.Enabled.No() {
+		return func(next http.Handler) http.Handler { return next }
+	}
+
 	secretBytes := []byte(cfg.Secret)
 
 	return func(next http.Handler) http.Handler {
@@ -24,9 +29,7 @@ func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
 
 			tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
 
-			// Parse & Validate
 			token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-				// Enforce HMAC for simplicity in this iteration
 				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 					return nil, errors.Newf("%w: %v", woos.ErrUnexpectedSigningMethod, token.Header["alg"])
 				}
@@ -44,7 +47,6 @@ func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Validate Issuer/Audience if configured
 			if cfg.Issuer != "" {
 				if iss, _ := claims.GetIssuer(); iss != cfg.Issuer {
 					http.Error(w, `{"error":"invalid_issuer"}`, http.StatusUnauthorized)
@@ -52,7 +54,6 @@ func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
 				}
 			}
 
-			// Extract claims to headers
 			for claimKey, headerName := range cfg.ClaimMap {
 				if val, ok := claims[claimKey]; ok {
 					r.Header.Set(headerName, fmt.Sprintf("%v", val))

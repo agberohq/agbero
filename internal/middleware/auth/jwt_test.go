@@ -29,19 +29,19 @@ func TestJWT(t *testing.T) {
 	}{
 		{
 			name:       "Missing Authorization Header",
-			cfg:        &alaye.JWTAuth{Secret: secret},
+			cfg:        &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret},
 			authHeader: "",
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
 			name:       "Invalid Token Format",
-			cfg:        &alaye.JWTAuth{Secret: secret},
+			cfg:        &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret},
 			authHeader: "Bearer invalid.token.string",
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
 			name: "Valid Token, Unknown Headers Mapped",
-			cfg:  &alaye.JWTAuth{Secret: secret},
+			cfg:  &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret},
 			authHeader: "Bearer " + genToken(jwt.MapClaims{
 				"sub": "user123",
 				"exp": time.Now().Add(time.Hour).Unix(),
@@ -50,7 +50,7 @@ func TestJWT(t *testing.T) {
 		},
 		{
 			name: "Valid Token, Wrong Secret",
-			cfg:  &alaye.JWTAuth{Secret: secret},
+			cfg:  &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret},
 			authHeader: "Bearer " + genToken(jwt.MapClaims{
 				"sub": "user123",
 			}, "wrong-secret"),
@@ -59,7 +59,8 @@ func TestJWT(t *testing.T) {
 		{
 			name: "Claims Mapping",
 			cfg: &alaye.JWTAuth{
-				Secret: secret,
+				Enabled: alaye.Active,
+				Secret:  secret,
 				ClaimMap: map[string]string{
 					"sub":  "X-User-ID",
 					"role": "X-User-Role",
@@ -79,8 +80,9 @@ func TestJWT(t *testing.T) {
 		{
 			name: "Issuer Validation Active",
 			cfg: &alaye.JWTAuth{
-				Secret: secret,
-				Issuer: "auth.agbero.com",
+				Enabled: alaye.Active,
+				Secret:  secret,
+				Issuer:  "auth.agbero.com",
 			},
 			authHeader: "Bearer " + genToken(jwt.MapClaims{
 				"sub": "user123",
@@ -91,8 +93,9 @@ func TestJWT(t *testing.T) {
 		{
 			name: "Issuer Validation Unknown",
 			cfg: &alaye.JWTAuth{
-				Secret: secret,
-				Issuer: "auth.agbero.com",
+				Enabled: alaye.Active,
+				Secret:  secret,
+				Issuer:  "auth.agbero.com",
 			},
 			authHeader: "Bearer " + genToken(jwt.MapClaims{
 				"sub": "user123",

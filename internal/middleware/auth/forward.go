@@ -1,150 +1,315 @@
 package auth
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
-	"github.com/maypok86/otter/v2"
-	"github.com/maypok86/otter/v2/stats"
+	"github.com/olekukonko/errors"
 )
 
-// Global Auth Cache (10k items, with stats enabled)
-var counter = stats.NewCounter()
-var authCache = otter.Must(&otter.Options[string, bool]{
-	MaximumSize:   woos.MaxSizeCache,
-	StatsRecorder: counter,
-})
+var authCaches = make(map[string]*cache.Cache)
+var cacheMu sync.RWMutex
+
+func getCache(name string) *cache.Cache {
+	cacheMu.RLock()
+	if c, ok := authCaches[name]; ok {
+		cacheMu.RUnlock()
+		return c
+	}
+	cacheMu.RUnlock()
+
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+
+	if c, ok := authCaches[name]; ok {
+		return c
+	}
+
+	c := cache.New(cache.Options{
+		MaximumSize: 10000,
+		OnDelete:    cache.CloserDelete,
+	})
+	authCaches[name] = c
+	return c
+}
+
+var defaultHTTPClient = &http.Client{
+	Timeout: 5 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+		DisableCompression:  true,
+	},
+}
 
 func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
+	if cfg.Enabled.No() {
+		return func(next http.Handler) http.Handler { return next }
+	}
+
 	if cfg.URL == "" {
 		return func(next http.Handler) http.Handler { return next }
 	}
 
 	onFailure := strings.ToLower(cfg.OnFailure)
 	if onFailure != woos.Allow {
-		onFailure = woos.Deny // Default
+		onFailure = woos.Deny
 	}
 
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConns:       woos.CacheClientMaxIdleCons,
-			IdleConnTimeout:    woos.CacheClientMaxIdleTimeOuts,
-			DisableCompression: true,
-		},
+	cacheName := cfg.Name
+	if cacheName == "" {
+		cacheName = "default_" + cfg.URL
+	}
+	authCache := getCache(cacheName)
+
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+
+	var client *http.Client
+	if cfg.TLS != nil && cfg.TLS.Enabled.Yes() {
+		tlsConfig, err := createTLSConfig(cfg.TLS)
+		if err != nil {
+			return func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					http.Error(w, "Forward Auth TLS Error: "+err.Error(), http.StatusInternalServerError)
+				})
+			}
+		}
+		client = &http.Client{
+			Timeout: timeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 100,
+				IdleConnTimeout:     90 * time.Second,
+				DisableCompression:  true,
+				TLSClientConfig:     tlsConfig,
+			},
+		}
+	} else {
+		client = defaultHTTPClient
 	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Construct raw key
-			rawKey := cfg.URL + "|" + r.Header.Get("Authorization") + "|" + r.Header.Get("Cookie") + "|" + r.Method + "|" + r.URL.Path
+			cacheKey := buildCacheKey(r, cfg.Request.CacheKey, cfg.Name)
 
-			// Hash key to ensure fixed size (Fix for large JWT/Cookie DOS)
-			hasher := sha256.New()
-			hasher.Write([]byte(rawKey))
-			cacheKey := hex.EncodeToString(hasher.Sum(nil))
-
-			if allowed, ok := authCache.GetIfPresent(cacheKey); ok {
-				if allowed {
+			if cached, ok := authCache.Load(cacheKey); ok {
+				if allowed, ok := cache.Get[bool](cached); ok && allowed {
+					if cfg.Response.Enabled.Yes() {
+						if headersItem, ok := authCache.Load(cacheKey + "_headers"); ok {
+							if headers, ok := cache.Get[http.Header](headersItem); ok {
+								copyHeadersToRequest(headers, r, cfg.Response.CopyHeaders)
+							}
+						}
+					}
 					next.ServeHTTP(w, r)
 					return
 				}
-				// Cached Deny (generic forbidden)
 				http.Error(w, "Forbidden (Cached)", http.StatusForbidden)
 				return
 			}
 
-			authReq, err := http.NewRequest(r.Method, cfg.URL, nil)
+			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+			defer cancel()
+
+			method := http.MethodGet
+			if cfg.Request.Method != "" {
+				method = strings.ToUpper(cfg.Request.Method)
+			}
+
+			authReq, err := http.NewRequestWithContext(ctx, method, cfg.URL, nil)
 			if err != nil {
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				handleFailure(w, r, onFailure, next, "failed to create auth request")
 				return
 			}
 
-			copyHeaders(r.Header, authReq.Header, cfg.RequestHeaders)
+			if cfg.Request.Enabled.Yes() {
+				copyHeaders(r.Header, authReq.Header, cfg.Request.Headers)
+			} else {
+				copyHeaders(r.Header, authReq.Header, nil)
+			}
 
-			authReq.Header.Set(woos.HeaderXOriginalURI, r.URL.RequestURI())
-			authReq.Header.Set(woos.HeaderXOriginalMethod, r.Method)
-			authReq.Header.Set(woos.HeaderXForwardedFor, r.Header.Get(woos.HeaderXForwardedFor))
+			if cfg.Request.Enabled.Yes() {
+				if cfg.Request.ForwardMethod {
+					authReq.Header.Set(woos.HeaderXOriginalMethod, r.Method)
+				}
+				if cfg.Request.ForwardURI {
+					authReq.Header.Set(woos.HeaderXOriginalURI, r.URL.RequestURI())
+				}
+				if cfg.Request.ForwardIP {
+					authReq.Header.Set(woos.HeaderXForwardedFor, clientip.ClientIP(r))
+				}
+			}
+
+			if cfg.Request.Enabled.Yes() {
+				switch cfg.Request.BodyMode {
+				case "metadata":
+					authReq.Header.Set("Content-Type", r.Header.Get("Content-Type"))
+					contentLength := r.Header.Get("Content-Length")
+					if contentLength == "" && r.ContentLength > 0 {
+						contentLength = strconv.FormatInt(r.ContentLength, 10)
+					}
+					if contentLength != "" {
+						authReq.Header.Set("Content-Length", contentLength)
+					}
+				case "limited":
+					maxBody := cfg.Request.MaxBody
+					if maxBody <= 0 {
+						maxBody = 64 * 1024
+					}
+					body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
+					if err != nil {
+						handleFailure(w, r, onFailure, next, "failed to read body")
+						return
+					}
+					r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+					authReq.Body = io.NopCloser(bytes.NewReader(body))
+					authReq.ContentLength = int64(len(body))
+				}
+			}
 
 			resp, err := client.Do(authReq)
 			if err != nil {
-				// Network Failure case
-				if onFailure == woos.Allow {
-					next.ServeHTTP(w, r)
-					return
-				}
-				http.Error(w, "Auth Service Unavailable", http.StatusForbidden)
+				handleFailure(w, r, onFailure, next, "auth service unavailable")
 				return
 			}
 			defer resp.Body.Close()
 
-			// SUCCESS: 2xx means authorized
 			if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-				ttl := time.Minute // Default TTL
-				cc := resp.Header.Get(woos.HeaderCacheControl)
-				if cc != "" && strings.Contains(cc, "max-age=") {
-					parts := strings.SplitAfter(cc, "max-age=")
-					if len(parts) > 1 {
-						maStr := strings.Split(parts[1], ",")[0]
-						maStr = strings.TrimSpace(maStr)
-						if sec, err := strconv.Atoi(maStr); err == nil && sec > 0 {
-							ttl = time.Duration(sec) * time.Second
+				if cfg.Response.Enabled.Yes() {
+					headersToCopy := make(http.Header)
+					for _, h := range cfg.Response.CopyHeaders {
+						if v := resp.Header.Get(h); v != "" {
+							headersToCopy.Set(h, v)
+							r.Header.Set(h, v)
 						}
 					}
+
+					if cfg.Response.CacheTTL > 0 {
+						allowItem := &cache.Item{Value: true}
+						headersItem := &cache.Item{Value: headersToCopy}
+						authCache.StoreTTL(cacheKey, allowItem, cfg.Response.CacheTTL)
+						authCache.StoreTTL(cacheKey+"_headers", headersItem, cfg.Response.CacheTTL)
+					}
+				} else if cfg.Response.CacheTTL > 0 {
+					allowItem := &cache.Item{Value: true}
+					authCache.StoreTTL(cacheKey, allowItem, cfg.Response.CacheTTL)
 				}
 
-				authCache.Set(cacheKey, true)
-				authCache.SetExpiresAfter(cacheKey, ttl)
-
-				copyHeaders(resp.Header, r.Header, cfg.AuthResponseHeaders)
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			// FAILURE: 4xx/5xx means unauthorized (or error)
-			// Cache the failure briefly (10s) to prevent hammering auth service on denial
-			authCache.Set(cacheKey, false)
-			authCache.SetExpiresAfter(cacheKey, woos.CacheSetTTL)
+			denyItem := &cache.Item{Value: false}
+			authCache.StoreTTL(cacheKey, denyItem, 10*time.Second)
 
-			// Pass through the Auth Service's response headers (e.g. WWW-Authenticate, Content-Type)
 			for k, vv := range resp.Header {
 				for _, v := range vv {
 					w.Header().Add(k, v)
 				}
 			}
-
-			// Pass through status code
 			w.WriteHeader(resp.StatusCode)
-
-			// Pass through the response body (JSON error, HTML, etc)
 			io.Copy(w, resp.Body)
 		})
 	}
 }
 
+func createTLSConfig(cfg *alaye.ForwardTLS) (*tls.Config, error) {
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+
+	if cfg.InsecureSkipVerify {
+		tlsConfig.InsecureSkipVerify = true
+	}
+
+	if cfg.ClientCert != "" && cfg.ClientKey != "" {
+		cert, err := tls.X509KeyPair(
+			[]byte(cfg.ClientCert.String()),
+			[]byte(cfg.ClientKey.String()),
+		)
+		if err != nil {
+			return nil, errors.Newf("failed to parse client cert/key: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	if cfg.CA != "" {
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM([]byte(cfg.CA.String())) {
+			return nil, errors.New("failed to parse CA certificate")
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	return tlsConfig, nil
+}
+
+func buildCacheKey(r *http.Request, cacheKeyHeaders []string, prefix string) string {
+	h := sha256.New()
+
+	if prefix != "" {
+		h.Write([]byte(prefix))
+		h.Write([]byte("|"))
+	}
+
+	if len(cacheKeyHeaders) == 0 {
+		cacheKeyHeaders = []string{"Authorization"}
+	}
+
+	for _, header := range cacheKeyHeaders {
+		h.Write([]byte(r.Header.Get(header)))
+		h.Write([]byte("|"))
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 func copyHeaders(src http.Header, dst http.Header, keys []string) {
 	if len(keys) == 0 {
-		val := src.Get(woos.AuthorizationHeaderKey)
-		if val != "" {
-			dst.Set(woos.AuthorizationHeaderKey, val)
-		}
-		val = src.Get(woos.CookieHeaderKey)
-		if val != "" {
-			dst.Set(woos.CookieHeaderKey, val)
+		for _, key := range []string{"Authorization", "Cookie"} {
+			if v := src.Get(key); v != "" {
+				dst.Set(key, v)
+			}
 		}
 		return
 	}
 
 	for _, k := range keys {
-		if val := src.Get(k); val != "" {
-			dst.Set(k, val)
+		if v := src.Get(k); v != "" {
+			dst.Set(k, v)
 		}
 	}
+}
+
+func copyHeadersToRequest(src http.Header, r *http.Request, keys []string) {
+	for _, k := range keys {
+		if v := src.Get(k); v != "" {
+			r.Header.Set(k, v)
+		}
+	}
+}
+
+func handleFailure(w http.ResponseWriter, r *http.Request, onFailure string, next http.Handler, msg string) {
+	if onFailure == woos.Allow {
+		next.ServeHTTP(w, r)
+		return
+	}
+	http.Error(w, msg, http.StatusForbidden)
 }

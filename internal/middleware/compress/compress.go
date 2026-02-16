@@ -12,15 +12,33 @@ import (
 	"github.com/klauspost/compress/gzip"
 )
 
-// Use a sync.Pool to reuse writers and reduce allocation overhead.
-// klauspost/compress writers are heavy to allocate.
+// Pool for default level (5) - most common case
 var gzipWriterPool = sync.Pool{
 	New: func() any {
-		// Level 5 offers a great balance between compression ratio and speed.
-		// Standard lib default is usually equivalent to level 6.
 		w, _ := gzip.NewWriterLevel(io.Discard, 5)
 		return w
 	},
+}
+
+// For custom levels, we can't use the pool effectively without level-specific pools
+// For now, create new writers for non-default levels
+func getGzipWriter(w io.Writer, level int) *gzip.Writer {
+	if level == 5 {
+		gzw := gzipWriterPool.Get().(*gzip.Writer)
+		gzw.Reset(w)
+		return gzw
+	}
+	// Create new writer for custom level
+	gzw, _ := gzip.NewWriterLevel(w, level)
+	return gzw
+}
+
+func putGzipWriter(gzw *gzip.Writer, level int) {
+	if level == 5 {
+		gzw.Close()
+		gzipWriterPool.Put(gzw)
+	}
+	// Otherwise, let it be GC'd
 }
 
 var brotliWriterPool = sync.Pool{
@@ -32,8 +50,8 @@ var brotliWriterPool = sync.Pool{
 func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Check if WebSocket (cannot compress upgrade requests)
-			if r.Header.Get(woos.HeaderKeyConnection) == woos.HeaderKeyUpgrade {
+			if strings.EqualFold(r.Header.Get(woos.HeaderKeyConnection), woos.HeaderKeyUpgrade) &&
+				strings.EqualFold(r.Header.Get(woos.HeaderKeyUpgrade), "websocket") {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -47,7 +65,7 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 			ae := r.Header.Get(woos.HeaderAcceptEncoding)
 			compType := strings.ToLower(cc.Type)
 			if compType == "" {
-				compType = woos.CompressionGzip // Default
+				compType = woos.CompressionGzip
 			}
 
 			var useComp bool
@@ -69,16 +87,15 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Set headers
 			level := cc.Level
 			if level < 1 || level > 11 {
-				level = 5 // Default balanced
+				level = 5
 			}
 
 			var writer io.WriteCloser
 			if compType == woos.CompressionBrotli {
 				w.Header().Set(woos.HeaderContentEnc, encoding)
-				brw := brotliWriterPool.Get().(*brotli.Writer) // Update type cast
+				brw := brotliWriterPool.Get().(*brotli.Writer)
 				brw.Reset(w)
 				writer = brw
 				defer func() {
@@ -87,12 +104,10 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 				}()
 			} else {
 				w.Header().Set(woos.HeaderContentEnc, encoding)
-				gzw := gzipWriterPool.Get().(*gzip.Writer)
-				gzw.Reset(w)
+				gzw := getGzipWriter(w, level)
 				writer = gzw
 				defer func() {
-					gzw.Close()
-					gzipWriterPool.Put(gzw)
+					putGzipWriter(gzw, level)
 				}()
 			}
 			w.Header().Add(woos.HeaderKeyVary, woos.HeaderAcceptEncoding)
@@ -109,14 +124,18 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 
 type compressWriter struct {
 	http.ResponseWriter
-	w io.WriteCloser
+	w      io.WriteCloser
+	header bool
 }
 
 func (cw *compressWriter) Write(b []byte) (int, error) {
+	if !cw.header {
+		cw.ResponseWriter.WriteHeader(http.StatusOK)
+		cw.header = true
+	}
 	return cw.w.Write(b)
 }
 
-// Flush is required for streaming responses (e.g. server-sent events)
 func (cw *compressWriter) Flush() {
 	if f, ok := cw.w.(interface{ Flush() }); ok {
 		f.Flush()

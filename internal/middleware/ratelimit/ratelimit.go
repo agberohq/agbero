@@ -179,7 +179,10 @@ func (rl *RateLimiter) pruneShardLocked(sh *rateShard, now int64) {
 	for k, e := range sh.m {
 		if e == nil || e.lastSeen < cutoff {
 			delete(sh.m, k)
-			rl.size.Add(-1)
+			// Prevent underflow
+			if rl.size.Load() > 0 {
+				rl.size.Add(-1)
+			}
 		}
 	}
 }

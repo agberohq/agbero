@@ -8,6 +8,14 @@ import (
 	"github.com/tetratelabs/wazero/api"
 )
 
+type contextKey string
+
+const (
+	wResponseWriter contextKey = "w"
+	wRequest        contextKey = "req"
+	wRequestContext contextKey = "rc"
+)
+
 type Instance struct {
 	m   *Manager
 	c   wazero.ModuleConfig
@@ -15,14 +23,18 @@ type Instance struct {
 }
 
 func (m *Manager) Handler(next http.Handler) http.Handler {
+	if m == nil || !m.config.Enabled.Yes() {
+		return next
+	}
+
 	m.ExportHostFunctions()
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rc := &RequestContext{W: w, R: r, Next: true}
 
-		ctx := context.WithValue(r.Context(), "w", w)
-		ctx = context.WithValue(ctx, "req", r)
-		ctx = context.WithValue(ctx, "rc", rc)
+		ctx := context.WithValue(r.Context(), wResponseWriter, w)
+		ctx = context.WithValue(ctx, wRequest, r)
+		ctx = context.WithValue(ctx, wRequestContext, rc)
 
 		inst, err := m.GetInstance(ctx)
 		if err != nil {
@@ -39,6 +51,7 @@ func (m *Manager) Handler(next http.Handler) http.Handler {
 
 		if handleFunc == nil {
 			m.logger.Error("wasm: module must export 'handle_request'")
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
 

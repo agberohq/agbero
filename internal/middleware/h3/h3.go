@@ -30,5 +30,6 @@ func Port(addr string) string {
 	if idx := strings.LastIndex(addr, woos.Colon); idx != -1 {
 		return addr[idx+1:]
 	}
-	return woos.DefaultHTTPSPortInt // Default fallback
+	// Default fallback for addresses without port (e.g., "example.com")
+	return woos.DefaultHTTPSPortInt
 }

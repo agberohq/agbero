@@ -11,8 +11,6 @@ import (
 )
 
 var (
-	// 1. Total Requests (Counter)
-	// Labels: host, method, code
 	httpRequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "agbero_http_requests_total",
@@ -21,19 +19,15 @@ var (
 		[]string{"host", "method", "code"},
 	)
 
-	// 2. Latency (Histogram)
-	// Labels: host, method
 	httpRequestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "agbero_http_request_duration_seconds",
 			Help:    "HTTP request latency distribution.",
-			Buckets: prometheus.DefBuckets, // .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10
+			Buckets: prometheus.DefBuckets,
 		},
 		[]string{"host", "method"},
 	)
 
-	// 3. Idle Timer (Gauge)
-	// Solves your "how long has it been idle" question.
 	lastRequestTimestamp = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "agbero_last_request_timestamp_seconds",
@@ -42,7 +36,6 @@ var (
 		[]string{"host"},
 	)
 
-	// 4. Active Connections (Gauge)
 	activeConnections = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "agbero_active_connections",
@@ -53,7 +46,6 @@ var (
 )
 
 func init() {
-	// Register metrics with Prometheus's default registry
 	prometheus.MustRegister(httpRequestsTotal)
 	prometheus.MustRegister(httpRequestDuration)
 	prometheus.MustRegister(lastRequestTimestamp)
@@ -66,7 +58,6 @@ func Prometheus(hm *discovery.Host) func(http.Handler) http.Handler {
 			start := time.Now()
 			host := core.NormalizeHost(r.Host)
 
-			// Prevent cardinality explosion by verifying the host exists in config
 			if hm.Get(host) == nil {
 				host = "unauthorized_or_unknown"
 			}
@@ -87,13 +78,34 @@ func Prometheus(hm *discovery.Host) func(http.Handler) http.Handler {
 	}
 }
 
-// Simple wrapper to steal the status code
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
+	written    bool
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
-	rw.statusCode = code
-	rw.ResponseWriter.WriteHeader(code)
+	if !rw.written {
+		rw.statusCode = code
+		rw.written = true
+		rw.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	if !rw.written {
+		rw.written = true
+		if rw.statusCode == http.StatusOK {
+			// If Write is called without WriteHeader, Go sets 200
+			rw.statusCode = http.StatusOK
+		}
+	}
+	return rw.ResponseWriter.Write(b)
+}
+
+// Implement http.Flusher
+func (rw *responseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }

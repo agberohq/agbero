@@ -12,11 +12,16 @@ import (
 )
 
 func Basic(cfg *alaye.BasicAuth) func(http.Handler) http.Handler {
+	// Return passthrough if disabled
+	if cfg.Enabled.No() {
+		return func(next http.Handler) http.Handler { return next }
+	}
+
 	secrets := make(map[string][]byte)
 	for _, u := range cfg.Users {
 		parts := strings.SplitN(u, woos.Colon, 2)
 		if len(parts) == 2 {
-			secrets[parts[0]] = []byte(parts[1]) // Assume hashed; plaintext fallback logs warn
+			secrets[parts[0]] = []byte(parts[1])
 		}
 	}
 
@@ -28,7 +33,6 @@ func Basic(cfg *alaye.BasicAuth) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user, pass, ok := r.BasicAuth()
-
 			if !ok {
 				unauthorized(w, realm)
 				return
@@ -40,18 +44,16 @@ func Basic(cfg *alaye.BasicAuth) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Try bcrypt compare (constant-time internally)
+			// Try bcrypt compare first
 			if err := bcrypt.CompareHashAndPassword(validHash, []byte(pass)); err == nil {
 				next.ServeHTTP(w, r)
 				return
 			} else if !errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
-				// Log non-mismatch errors (e.g., invalid hash format)
-				// Note: In prod, avoid logging to prevent timing leaks
+				// Log non-mismatch errors
 			}
 
-			// Fallback plaintext (insecure; warn)
+			// Fallback to plaintext comparison
 			if subtle.ConstantTimeCompare([]byte(pass), validHash) == 1 {
-				// Log warn: "plaintext auth used" (once?)
 				next.ServeHTTP(w, r)
 				return
 			}
