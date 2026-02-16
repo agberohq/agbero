@@ -130,12 +130,14 @@ func (s *Store) LoadAll() ([]Rule, error) {
 
 func (s *Store) Clear() error {
 	return s.db.Update(func(tx *bbolt.Tx) error {
+		// Delete the bucket
 		if err := tx.DeleteBucket(bucketName); err != nil {
 			if err == bbolt.ErrBucketNotFound {
 				return nil
 			}
 			return err
 		}
+		// Recreate it empty
 		_, err := tx.CreateBucket(bucketName)
 		return err
 	})
@@ -145,6 +147,7 @@ func (s *Store) PruneExpired() (int, error) {
 	count := 0
 	var toDelete [][]byte
 
+	// 1. Scan for expired keys (Read-Only View)
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket(bucketName)
 		if b == nil {
@@ -158,7 +161,7 @@ func (s *Store) PruneExpired() (int, error) {
 				continue
 			}
 			if r.IsExpired() {
-				// Copy key because cursor remains valid only inside tx
+				// Copy key bytes because the cursor pointer is only valid inside this tx
 				keyCopy := make([]byte, len(k))
 				copy(keyCopy, k)
 				toDelete = append(toDelete, keyCopy)
@@ -174,6 +177,7 @@ func (s *Store) PruneExpired() (int, error) {
 		return 0, nil
 	}
 
+	// 2. Delete them (Write Transaction)
 	err = s.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket(bucketName)
 		if b == nil {

@@ -648,3 +648,11 @@ func (hm *Host) resolveDomainLocked(hostname string) string {
 	}
 	return bestMatch
 }
+
+func (hm *Host) ForceSync() {
+	if hm.debouncer != nil {
+		hm.debouncer.Flush()
+		// Sleep briefly because Flush runs the callback in a goroutine
+		time.Sleep(10 * time.Millisecond)
+	}
+}

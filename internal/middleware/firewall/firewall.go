@@ -28,6 +28,11 @@ type Inspector struct {
 	Logger   *ll.Logger
 }
 
+type readCloserWrapper struct {
+	io.Reader
+	io.Closer
+}
+
 type Engine struct {
 	cfg      *alaye.Firewall
 	store    *Store
@@ -195,11 +200,6 @@ func (e *Engine) peekBody(r *http.Request) ([]byte, error) {
 	}
 
 	return sample, nil
-}
-
-type readCloserWrapper struct {
-	io.Reader
-	io.Closer
 }
 
 func (e *Engine) loadStaticRules() error {
@@ -451,4 +451,18 @@ func (e *Engine) List() ([]Rule, error) {
 		return nil, nil
 	}
 	return e.store.LoadAll()
+}
+
+func (e *Engine) ClearStore() error {
+	if e == nil || e.store == nil {
+		return nil
+	}
+	return e.store.Clear()
+}
+
+func (e *Engine) PruneStore() (int, error) {
+	if e == nil || e.store == nil {
+		return 0, nil
+	}
+	return e.store.PruneExpired()
 }

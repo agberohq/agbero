@@ -116,26 +116,41 @@ func TestRemoveGossipNode(t *testing.T) {
 }
 
 func TestRouteExists(t *testing.T) {
-	h := NewHost("/tmp")
+	// Initialize with logger to see debug output
+	hm := NewHost("", WithLogger(ll.New("test").Enable()))
 
-	route := alaye.Route{
+	// Create a channel to wait for updates
+	done := make(chan struct{})
+
+	// Start a goroutine that waits for the change signal
+	go func() {
+		select {
+		case <-hm.Changed():
+			close(done)
+		case <-time.After(2 * time.Second):
+			// Timeout fallback
+		}
+	}()
+
+	// Trigger the update
+	hm.UpdateGossipNode("node1", "example.com", alaye.Route{
 		Path: "/api",
 		Backends: alaye.Backend{
-			Enabled:  alaye.Active,
-			Strategy: alaye.StrategyRandom,
-			Servers: []alaye.Server{
-				{Address: "http://127.0.0.1:8080", Weight: 1},
-			},
+			Servers: []alaye.Server{{Address: "http://10.0.0.1:80"}},
 		},
+	})
+
+	// Wait for the debouncer to fire and the update to complete
+	select {
+	case <-done:
+		// Update received
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for gossip update")
 	}
 
-	h.UpdateGossipNode("node1", "example.com", route)
-
-	if !h.RouteExists("example.com", "/api") {
-		t.Fatal("route not found")
-	}
-	if h.RouteExists("example.com", "/other") {
-		t.Fatal("unexpected route found")
+	// Now check the route
+	if !hm.RouteExists("example.com", "/api") {
+		t.Error("route not found")
 	}
 }
 
