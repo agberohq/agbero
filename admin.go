@@ -23,8 +23,13 @@ import (
 )
 
 var (
-	dummyHash = []byte("$2a$10$X7V.A.1iX8.F1.2.3.4.5.6.7.8.9.0.1.2.3.4.5.6.7.8.9.0")
+	dummyHash []byte
 )
+
+func init() {
+	hash, _ := bcrypt.GenerateFromPassword([]byte("dummy-password-for-timing"), bcrypt.DefaultCost)
+	dummyHash = hash
+}
 
 // AdminClaims defines the JWT structure for Admin access
 type AdminClaims struct {
@@ -120,12 +125,10 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	s.mu.RLock()
 	cfg := s.global.Admin
 	s.mu.RUnlock()
 
-	// Validation
 	if !cfg.BasicAuth.Enabled.Active() || len(cfg.BasicAuth.Users) == 0 {
 		http.Error(w, "Server Config Error: Unknown admin users defined in 'basic_auth'", http.StatusForbidden)
 		return
@@ -136,23 +139,18 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse Request
 	var creds struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
-	// Constant-Time User Lookup
 	var foundHash []byte
 	userFound := 0
-
 	inputUserHash := sha256.Sum256([]byte(creds.Username))
-
 	for _, u := range cfg.BasicAuth.Users {
 		parts := strings.SplitN(u, ":", 2)
 		if len(parts) == 2 {
@@ -170,13 +168,11 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err := bcrypt.CompareHashAndPassword(targetHash, []byte(creds.Password))
-
 	if userFound == 0 || err != nil {
 		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 		return
 	}
 
-	// Generate JWT
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &AdminClaims{
 		User: creds.Username,
@@ -185,7 +181,6 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 			Issuer:    "agbero-admin",
 		},
 	}
-
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString([]byte(cfg.JWTAuth.Secret.String()))
 	if err != nil {
@@ -194,7 +189,6 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return Token
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"token":   tokenString,
