@@ -338,20 +338,36 @@ func sanitizeGlobal(g *alaye.Global) *alaye.Global {
 	_ = json.Unmarshal(b, &clone)
 
 	if clone.Gossip.Enabled.Active() {
-		if clone.Gossip.SecretKey != "" {
-			clone.Gossip.SecretKey = "***"
-		}
-		if clone.Gossip.PrivateKeyFile != "" {
-			clone.Gossip.PrivateKeyFile = "***"
-		}
+		clone.Gossip.SecretKey = "***"
+		clone.Gossip.PrivateKeyFile = "***"
 	}
+
 	if clone.Admin.Enabled.Active() {
 		if clone.Admin.BasicAuth.Enabled.Active() {
-			clone.Admin.BasicAuth.Users = []string{"***"}
+			for i := range clone.Admin.BasicAuth.Users {
+				clone.Admin.BasicAuth.Users[i] = "***"
+			}
 		}
 		if clone.Admin.JWTAuth.Enabled.Active() {
 			clone.Admin.JWTAuth.Secret = "***"
 		}
+		if clone.Admin.ForwardAuth.Enabled.Active() {
+			clone.Admin.ForwardAuth.URL = "***"
+		}
+		if clone.Admin.OAuth.Enabled.Active() {
+			clone.Admin.OAuth.ClientSecret = "***"
+			clone.Admin.OAuth.CookieSecret = "***"
+		}
+	}
+
+	if clone.Security.Enabled.Active() {
+		for i := range clone.Security.TrustedProxies {
+			clone.Security.TrustedProxies[i] = "***"
+		}
+	}
+
+	if clone.LetsEncrypt.Enabled.Active() {
+		clone.LetsEncrypt.Email = "***"
 	}
 
 	return &clone
@@ -366,7 +382,9 @@ func sanitizeHosts(hosts map[string]*alaye.Host) map[string]*alaye.Host {
 
 		for i := range clone.Routes {
 			if clone.Routes[i].BasicAuth.Enabled.Active() {
-				clone.Routes[i].BasicAuth.Users = []string{"***"}
+				for j := range clone.Routes[i].BasicAuth.Users {
+					clone.Routes[i].BasicAuth.Users[j] = "***"
+				}
 			}
 			if clone.Routes[i].JWTAuth.Enabled.Active() {
 				clone.Routes[i].JWTAuth.Secret = "***"
@@ -378,8 +396,10 @@ func sanitizeHosts(hosts map[string]*alaye.Host) map[string]*alaye.Host {
 			if clone.Routes[i].Wasm.Enabled.Active() && len(clone.Routes[i].Wasm.Config) > 0 {
 				clone.Routes[i].Wasm.Config = map[string]string{"***": "***"}
 			}
+			if clone.Routes[i].ForwardAuth.Enabled.Active() {
+				clone.Routes[i].ForwardAuth.URL = "***"
+			}
 		}
-
 		out[k] = &clone
 	}
 	return out

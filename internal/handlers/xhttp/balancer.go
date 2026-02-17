@@ -89,12 +89,15 @@ func (b *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-
 	be.ServeHTTP(w, r.WithContext(ctx))
 
 	if b.adaptive != nil {
 		latency := time.Since(start).Microseconds()
-		b.adaptive.RecordResult(httpBackend{be}, latency, false)
+		failed := false
+		if latency > b.timeout.Microseconds() && b.timeout > 0 {
+			failed = true
+		}
+		b.adaptive.RecordResult(httpBackend{be}, latency, failed)
 	}
 }
 
