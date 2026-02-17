@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
 	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
@@ -376,63 +377,54 @@ func (m *Manager) GetConfigForClient(chi *tls.ClientHelloInfo) (*tls.Config, err
 		return nil, woos.ErrMissingSNI
 	}
 
-	// Check cache first
 	if cached, ok := m.configCache.Load(sni); ok {
 		config, valid := cache.Get[*tls.Config](cached)
 		if valid && config != nil {
-			// Update certificate (may have changed)
-			cert, err := m.GetCertificate(chi)
-			if err != nil {
-				return nil, err
+			if len(config.Certificates) > 0 {
+				cert := config.Certificates[0]
+				if len(cert.Certificate) > 0 {
+					leaf, err := x509.ParseCertificate(cert.Certificate[0])
+					if err == nil && time.Now().Before(leaf.NotAfter.Add(-5*time.Minute)) {
+						newConfig := &tls.Config{
+							Certificates:                []tls.Certificate{cert},
+							ClientSessionCache:          config.ClientSessionCache,
+							SessionTicketsDisabled:      config.SessionTicketsDisabled,
+							CurvePreferences:            config.CurvePreferences,
+							CipherSuites:                config.CipherSuites,
+							MinVersion:                  config.MinVersion,
+							MaxVersion:                  config.MaxVersion,
+							DynamicRecordSizingDisabled: config.DynamicRecordSizingDisabled,
+						}
+						return newConfig, nil
+					}
+				}
 			}
-			// Return copy with updated cert to avoid race conditions
-			newConfig := &tls.Config{
-				Certificates:                []tls.Certificate{*cert},
-				ClientSessionCache:          config.ClientSessionCache,
-				SessionTicketsDisabled:      config.SessionTicketsDisabled,
-				CurvePreferences:            config.CurvePreferences,
-				CipherSuites:                config.CipherSuites,
-				MinVersion:                  config.MinVersion,
-				MaxVersion:                  config.MaxVersion,
-				DynamicRecordSizingDisabled: config.DynamicRecordSizingDisabled,
-			}
-			return newConfig, nil
+			m.configCache.Delete(sni)
 		}
 	}
 
-	// Build optimized config
 	cert, err := m.GetCertificate(chi)
 	if err != nil {
 		return nil, err
 	}
 
 	config := &tls.Config{
-		Certificates: []tls.Certificate{*cert},
-
-		// CRITICAL: Enable session resumption
+		Certificates:           []tls.Certificate{*cert},
 		ClientSessionCache:     m.sessionCache,
 		SessionTicketsDisabled: false,
-
-		// REMOVED: PreferServerCipherSuites (deprecated in Go 1.17+)
-		// Go now automatically selects optimal cipher suite
-
-		// Performance optimizations
 		CurvePreferences: []tls.CurveID{
-			tls.X25519, // Fastest
+			tls.X25519,
 			tls.CurveP256,
 		},
 		CipherSuites: []uint16{
-			tls.TLS_AES_128_GCM_SHA256, // TLS 1.3 (fastest)
+			tls.TLS_AES_128_GCM_SHA256,
 			tls.TLS_AES_256_GCM_SHA384,
 			tls.TLS_CHACHA20_POLY1305_SHA256,
 		},
-		MinVersion: tls.VersionTLS12, // Support 1.2 for compatibility, 1.3 preferred
-
-		// Dynamic record sizing for throughput
+		MinVersion:                  tls.VersionTLS12,
 		DynamicRecordSizingDisabled: false,
 	}
 
-	// Cache this config
 	m.configCache.Store(sni, &cache.Item{
 		Value: config,
 	})

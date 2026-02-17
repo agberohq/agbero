@@ -985,7 +985,6 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string, globalRa
 	}
 
 	h := handlers.NewRoute(route, globalRate, s.logger)
-
 	newItem := &cache.Item{
 		Value: h,
 	}

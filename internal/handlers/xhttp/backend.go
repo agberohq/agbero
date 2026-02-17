@@ -231,6 +231,13 @@ func (b *Backend) healthCheckLoop() {
 		threshold = b.hcConfig.Threshold
 	}
 
+	cbThreshold := woos.DefaultCircuitBreakerThreshold
+	if b.hcConfig != nil {
+		if route := b.hcConfig; route.Threshold > 0 {
+			cbThreshold = route.Threshold
+		}
+	}
+
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
@@ -240,7 +247,6 @@ func (b *Backend) healthCheckLoop() {
 	}
 
 	targetURL := b.URL.ResolveReference(&url.URL{Path: b.hcConfig.Path}).String()
-
 	failures := int64(0)
 	timer := time.NewTimer(b.Jitter(interval))
 	defer timer.Stop()
@@ -263,19 +269,21 @@ func (b *Backend) healthCheckLoop() {
 				failures = 0
 				b.Health.RecordSuccess()
 				b.Activity.Failures.Store(0)
-
 				if !b.Alive.Load() {
 					b.Alive.Store(true)
 					b.lastRecovery.Store(time.Now().UnixNano())
+					b.logger.Fields("backend", b.URL.Host).Info("backend recovered")
 				}
 			} else {
 				failures++
 				b.Health.RecordFailure()
-				if failures >= int64(threshold) {
-					b.Alive.Store(false)
+				newFailures := b.Activity.Failures.Add(1)
+				if failures >= int64(threshold) || newFailures >= uint64(cbThreshold) {
+					if b.Alive.Swap(false) {
+						b.logger.Fields("backend", b.URL.Host, "failures", failures).Warn("circuit breaker tripped")
+					}
 				}
 			}
-
 			timer.Reset(interval + b.Jitter(interval))
 		}
 	}
