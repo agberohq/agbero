@@ -31,11 +31,21 @@ func NewAdaptive(child Balancer, learningRate float64) *Adaptive {
 	if learningRate < 0 || learningRate > 1 {
 		learningRate = 0.1
 	}
-	return &Adaptive{
+	a := &Adaptive{
 		balancer:        child,
 		performanceData: make(map[Backend]*backendMetrics),
 		learningRate:    learningRate,
 		decayFactor:     0.95,
+	}
+	go a.cleanupLoop()
+	return a
+}
+
+func (s *Adaptive) cleanupLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.Cleanup()
 	}
 }
 
@@ -66,7 +76,6 @@ func (s *Adaptive) Update(backends []Backend) {
 func (s *Adaptive) Cleanup() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	threshold := time.Now().Add(-1 * time.Hour)
 	for b, m := range s.performanceData {
 		if m.lastUpdated.Before(threshold) {
