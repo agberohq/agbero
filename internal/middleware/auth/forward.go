@@ -264,20 +264,20 @@ func createTLSConfig(cfg *alaye.ForwardTLS) (*tls.Config, error) {
 
 func buildCacheKey(r *http.Request, cacheKeyHeaders []string, prefix string) string {
 	h := sha256.New()
-
 	if prefix != "" {
 		h.Write([]byte(prefix))
 		h.Write([]byte("|"))
 	}
-
 	if len(cacheKeyHeaders) == 0 {
 		cacheKeyHeaders = []string{"Authorization"}
 	}
-
 	for _, header := range cacheKeyHeaders {
 		h.Write([]byte(r.Header.Get(header)))
 		h.Write([]byte("|"))
 	}
+	h.Write([]byte(r.Method))
+	h.Write([]byte("|"))
+	h.Write([]byte(r.URL.Path))
 	return hex.EncodeToString(h.Sum(nil))
 }
 

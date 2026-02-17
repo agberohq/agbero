@@ -496,61 +496,48 @@ func (hm *Host) rebuildLookupLocked() {
 	domainToRoutes := make(map[string][]alaye.Route)
 	domainToConfig := make(map[string]*alaye.Host)
 
-	// 1) Base Layer: File Hosts
 	for _, cfg := range hm.hosts {
 		for _, port := range cfg.Bind {
 			newPortLookup[port] = cfg
 		}
-
 		for _, domain := range cfg.Domains {
 			domain = strings.ToLower(strings.TrimSpace(domain))
 			if domain == "" {
 				continue
 			}
 			domainToRoutes[domain] = append(domainToRoutes[domain], cfg.Routes...)
-
 			if _, exists := domainToConfig[domain]; !exists {
 				domainToConfig[domain] = cfg
 			}
 		}
 	}
 
-	// Materialize file-based hosts into newLookup
 	for domain, baseCfg := range domainToConfig {
-		combined := *baseCfg // Shallow copy of struct
+		combined := *baseCfg
 		combined.Domains = []string{domain}
-
 		rts := domainToRoutes[domain]
-		// Deep copy the routes slice to prevent aliasing issues across domains
 		combined.Routes = make([]alaye.Route, len(rts))
 		copy(combined.Routes, rts)
-
 		hm.sortRoutes(combined.Routes)
 		newLookup[domain] = &combined
 	}
 
-	// 2) Dynamic Layer (Gossip)
 	dynamicMap := make(map[string][]*alaye.Route)
-
 	for k, ent := range hm.dynamicRoutes {
 		if k.host == "" || ent == nil {
 			continue
 		}
-
 		var servers []alaye.Server
 		for _, ss := range ent.backends {
 			servers = append(servers, ss...)
 		}
-
 		if len(servers) == 0 {
 			continue
 		}
-
 		rt := ent.base
 		rt.Path = k.path
 		rt.Web = alaye.Web{}
 		rt.Backends.Servers = servers
-
 		dynamicMap[k.host] = append(dynamicMap[k.host], &rt)
 	}
 
@@ -559,12 +546,9 @@ func (hm *Host) rebuildLookupLocked() {
 		if ok && existing != nil {
 			combined := *existing
 			combined.Domains = []string{domain}
-
-			// Copy existing routes again for safety
 			combined.Routes = make([]alaye.Route, len(existing.Routes))
 			copy(combined.Routes, existing.Routes)
 
-			// Merge Dynamic Routes
 			byPath := make(map[string]*alaye.Route, len(combined.Routes))
 			for i := range combined.Routes {
 				p := combined.Routes[i].Path
@@ -582,7 +566,6 @@ func (hm *Host) rebuildLookupLocked() {
 					p = woos.Slash
 					r.Path = woos.Slash
 				}
-
 				if ex, ok := byPath[p]; ok {
 					ex.Backends.Servers = append(ex.Backends.Servers, r.Backends.Servers...)
 				} else {
@@ -590,11 +573,9 @@ func (hm *Host) rebuildLookupLocked() {
 					byPath[p] = &combined.Routes[len(combined.Routes)-1]
 				}
 			}
-
 			hm.sortRoutes(combined.Routes)
 			newLookup[domain] = &combined
 		} else {
-			// New Dynamic Host
 			var routes []alaye.Route
 			for _, dr := range dynRoutes {
 				routes = append(routes, *dr)
@@ -607,7 +588,6 @@ func (hm *Host) rebuildLookupLocked() {
 		}
 	}
 
-	// 3) Build Routers
 	newRouters := make(map[string]*matcher.Tree, len(newLookup))
 	for domain, cfg := range newLookup {
 		tr := matcher.NewTree()
