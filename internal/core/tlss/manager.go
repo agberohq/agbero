@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core"
+	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
@@ -41,6 +42,12 @@ type Manager struct {
 
 	initOnce sync.Once
 	initErr  error
+
+	// Session cache for TLS resumption (shared across all certs)
+	sessionCache tls.ClientSessionCache
+
+	// Config cache using your cache package
+	configCache *cache.Cache
 }
 
 func NewManager(logger *ll.Logger, hostManager *discovery.Host, global *alaye.Global) *Manager {
@@ -49,21 +56,21 @@ func NewManager(logger *ll.Logger, hostManager *discovery.Host, global *alaye.Gl
 		logger.Fatal(err)
 	}
 	m := &Manager{
-		logger:      logger.Namespace("tlss"),
-		hostManager: hostManager,
-		Global:      global,
-		LocalCache:  make(map[string]*tls.Certificate),
-		watchList:   make(map[string]func()),
-		watcher:     watcher,
+		logger:       logger.Namespace("tlss"),
+		hostManager:  hostManager,
+		Global:       global,
+		LocalCache:   make(map[string]*tls.Certificate),
+		watchList:    make(map[string]func()),
+		watcher:      watcher,
+		sessionCache: tls.NewLRUClientSessionCache(10000),         // 10k sessions
+		configCache:  cache.New(cache.Options{MaximumSize: 1000}), // 1000 host configs
 	}
 
 	go m.globalWatchLoop()
 	return m
-
 }
 
 func (m *Manager) startLocalWatcher(cacheKey, certFile, keyFile, host string) {
-	//  Defensive check for watcher (for tests)
 	if m.watcher == nil {
 		return
 	}
@@ -111,32 +118,25 @@ func (m *Manager) initCertMagic() error {
 		return woos.ErrGlobalConfigRequired
 	}
 
-	// Check if the configuration block exists (Pointer check)
 	if m.Global.LetsEncrypt.Enabled.NotActive() {
 		return woos.ErrLetsEncryptNotEnabled
 	}
 
-	// Validation: Email is required
 	email := strings.TrimSpace(m.Global.LetsEncrypt.Email)
 	if email == "" {
 		return woos.ErrEmptyLEEmail
 	}
 
-	//  Validation: Storage path
 	storageDir := strings.TrimSpace(m.Global.Storage.CertsDir)
 	if storageDir == "" {
 		return woos.ErrEmptyCertFile
 	}
 	storageDir = filepath.Clean(storageDir)
 
-	// Initialize CertMagic logic
 	decision := func(ctx context.Context, name string) error {
-		// In the future, this is where we check if 'name' is in our allowed domains list.
-		// For now, implicit trust based on routing table.
 		return nil
 	}
 
-	// Initialize Prod
 	cmProd := certmagic.NewDefault()
 	cmProd.OnDemand = &certmagic.OnDemandConfig{DecisionFunc: decision}
 	cmProd.Storage = &certmagic.FileStorage{Path: storageDir}
@@ -152,7 +152,6 @@ func (m *Manager) initCertMagic() error {
 	m.cmProd = cmProd
 	m.issProd = issuerProd
 
-	// Initialize Staging
 	cmStaging := certmagic.NewDefault()
 	cmStaging.OnDemand = &certmagic.OnDemandConfig{DecisionFunc: decision}
 	cmStaging.Storage = &certmagic.FileStorage{Path: storageDir}
@@ -172,7 +171,6 @@ func (m *Manager) initCertMagic() error {
 	return nil
 }
 
-// EnsureCertMagic ensures CertMagic is initialized and wraps the given HTTP handler with the appropriate challenge handler.
 func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 	m.initOnce.Do(func() {
 		m.initErr = m.initCertMagic()
@@ -280,6 +278,10 @@ func (m *Manager) invalidateLocal(cacheKey, host string) {
 	m.localMu.Lock()
 	delete(m.LocalCache, cacheKey)
 	m.localMu.Unlock()
+
+	// Also invalidate config cache since cert changed
+	m.configCache.Delete(host)
+
 	m.logger.Fields("host", host, "key", cacheKey).Info("local cert invalidated; will reload on next request")
 }
 
@@ -361,6 +363,83 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 	}
 }
 
+// GetConfigForClient returns a complete TLS config with session resumption
+// Use this instead of GetCertificate for optimal performance
+// manager.go - Updated GetConfigForClient without deprecated field
+func (m *Manager) GetConfigForClient(chi *tls.ClientHelloInfo) (*tls.Config, error) {
+	if chi == nil || strings.TrimSpace(chi.ServerName) == "" {
+		return nil, errors.New("missing SNI")
+	}
+
+	sni := core.NormalizeHost(chi.ServerName)
+	if sni == "" {
+		return nil, woos.ErrMissingSNI
+	}
+
+	// Check cache first
+	if cached, ok := m.configCache.Load(sni); ok {
+		config, valid := cache.Get[*tls.Config](cached)
+		if valid && config != nil {
+			// Update certificate (may have changed)
+			cert, err := m.GetCertificate(chi)
+			if err != nil {
+				return nil, err
+			}
+			// Return copy with updated cert to avoid race conditions
+			newConfig := &tls.Config{
+				Certificates:                []tls.Certificate{*cert},
+				ClientSessionCache:          config.ClientSessionCache,
+				SessionTicketsDisabled:      config.SessionTicketsDisabled,
+				CurvePreferences:            config.CurvePreferences,
+				CipherSuites:                config.CipherSuites,
+				MinVersion:                  config.MinVersion,
+				MaxVersion:                  config.MaxVersion,
+				DynamicRecordSizingDisabled: config.DynamicRecordSizingDisabled,
+			}
+			return newConfig, nil
+		}
+	}
+
+	// Build optimized config
+	cert, err := m.GetCertificate(chi)
+	if err != nil {
+		return nil, err
+	}
+
+	config := &tls.Config{
+		Certificates: []tls.Certificate{*cert},
+
+		// CRITICAL: Enable session resumption
+		ClientSessionCache:     m.sessionCache,
+		SessionTicketsDisabled: false,
+
+		// REMOVED: PreferServerCipherSuites (deprecated in Go 1.17+)
+		// Go now automatically selects optimal cipher suite
+
+		// Performance optimizations
+		CurvePreferences: []tls.CurveID{
+			tls.X25519, // Fastest
+			tls.CurveP256,
+		},
+		CipherSuites: []uint16{
+			tls.TLS_AES_128_GCM_SHA256, // TLS 1.3 (fastest)
+			tls.TLS_AES_256_GCM_SHA384,
+			tls.TLS_CHACHA20_POLY1305_SHA256,
+		},
+		MinVersion: tls.VersionTLS12, // Support 1.2 for compatibility, 1.3 preferred
+
+		// Dynamic record sizing for throughput
+		DynamicRecordSizingDisabled: false,
+	}
+
+	// Cache this config
+	m.configCache.Store(sni, &cache.Item{
+		Value: config,
+	})
+
+	return config, nil
+}
+
 func (m *Manager) getCustomCACert(root string, host string) (*tls.Certificate, error) {
 	caCert, err := os.ReadFile(root)
 	if err != nil {
@@ -391,6 +470,10 @@ func (m *Manager) ClearCache() {
 	m.localMu.Lock()
 	defer m.localMu.Unlock()
 	m.LocalCache = make(map[string]*tls.Certificate)
+
+	// Clear config cache too
+	m.configCache = cache.New(cache.Options{MaximumSize: 1000})
+
 	m.logger.Info("TLS certificate cache cleared")
 }
 

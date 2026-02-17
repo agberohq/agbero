@@ -507,9 +507,14 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 		s.logger.Warn("timeout waiting for h3 connections to drain")
 	}
 
+	// Gracefully shutdown HTTP/3 servers
 	for key, srv := range s.h3Servers {
-		if err := srv.Close(); err != nil {
-			s.logger.Fields("key", key, "err", err).Warn("h3 shutdown error")
+		// Shutdown stops accepting new connections and waits for existing ones
+		// or until ctx is canceled.
+		if err := srv.Shutdown(ctx); err != nil {
+			s.logger.Fields("key", key, "err", err).Warn("h3 graceful shutdown failed")
+			// Fallback to hard close if graceful fails
+			_ = srv.Close()
 		}
 	}
 
@@ -703,7 +708,6 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 
 	h = observability.Prometheus(s.hostManager)(h)
 	h = recovery.New(s.logger)(h)
-
 	return h
 }
 
@@ -788,10 +792,12 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 		httpHandler = next
 	}
 
+	// Use GetConfigForClient for optimal performance with session resumption
 	tlsCfg := &tls.Config{
-		MinVersion:     tls.VersionTLS12,
-		NextProtos:     []string{woos.AlpnTls, woos.AlpnH3, woos.AlpnH2, woos.AlpnH11},
-		GetCertificate: s.tlsManager.GetCertificate,
+		MinVersion:         tls.VersionTLS12,
+		MaxVersion:         tls.VersionTLS13,
+		NextProtos:         []string{woos.AlpnTls, woos.AlpnH3, woos.AlpnH2, woos.AlpnH11},
+		GetConfigForClient: s.tlsManager.GetConfigForClient,
 	}
 
 	return tlsCfg, httpHandler, nil

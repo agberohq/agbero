@@ -114,14 +114,20 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 	t := woos.Transport.Clone()
 	t.ExpectContinueTimeout = 0
 
-	rp.FlushInterval = -1
-	//  Add nil check for cfg.Streaming before accessing Active
 	if cfg.Streaming.Enabled.Active() {
 		t.ResponseHeaderTimeout = 0
+		// Use the configured flush interval, or default to 100ms for streaming
 		rp.FlushInterval = cfg.Streaming.EffectiveFlushInterval()
+		if rp.FlushInterval <= 0 {
+			rp.FlushInterval = 100 * time.Millisecond
+		}
+	} else {
+		// Disable flushing for normal responses
+		// Go's bufio will  handle it
+		rp.FlushInterval = 0
 	}
-	rp.Transport = t
 
+	rp.Transport = t
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		if errors.Is(err, context.Canceled) {
 			return

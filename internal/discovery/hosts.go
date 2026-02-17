@@ -453,6 +453,36 @@ func (hm *Host) Changed() <-chan struct{} {
 	return hm.changed
 }
 
+func (hm *Host) Set(domain string, cfg *alaye.Host) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+
+	if hm.lookupMap == nil {
+		hm.lookupMap = make(map[string]*alaye.Host)
+	}
+	if hm.routers == nil {
+		hm.routers = make(map[string]*matcher.Tree)
+	}
+
+	// Normalize domain
+	domain = core.NormalizeHost(domain)
+	if domain == "" {
+		return
+	}
+
+	// Store the config
+	hm.lookupMap[domain] = cfg
+
+	// Build router for this host
+	if cfg != nil && len(cfg.Routes) > 0 {
+		tr := matcher.NewTree()
+		for i := range cfg.Routes {
+			_ = tr.Insert(cfg.Routes[i].Path, &cfg.Routes[i])
+		}
+		hm.routers[domain] = tr
+	}
+}
+
 func (hm *Host) notifyChanged() {
 	select {
 	case hm.changed <- struct{}{}:

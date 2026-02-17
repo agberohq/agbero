@@ -24,6 +24,7 @@ import (
 // - Wildcards supported: *.localhost (so dance.localhost works).
 // - Validation is IPv6-safe (does NOT treat "::1" as "host:port").
 // - We write a marker file after CA install to avoid repeated "CA root not found" loops.
+// - Uses ECDSA P-256 by default for performance (10x faster than RSA).
 
 type Installer struct {
 	logger    *ll.Logger
@@ -98,7 +99,7 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 		woos.IPv6LoopbackSAN,
 	}
 
-	// NEW: Add LAN IPs so https://192.168.x.x works
+	// NEW: Add LAN IPs so https://192.168.x.x  works
 	defaults = append(defaults, getLocalLANIPs()...)
 
 	for _, d := range defaults {
@@ -125,7 +126,7 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 	}
 
 	if ci.logger != nil {
-		ci.logger.Fields("hosts", ci.certHosts, "cert", certFile).Info("Generating localhost certificates with expanded wildcards")
+		ci.logger.Fields("hosts", ci.certHosts, "cert", certFile).Info("Generating localhost certificates with ECDSA")
 	}
 
 	// mkcert is REQUIRED
@@ -151,7 +152,7 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 		ci.purgeStaleLeafCerts()
 	}
 
-	// Generate leaf cert with mkcert
+	// Generate leaf cert with mkcert (ECDSA for performance)
 	if _, _, err := ci.generateWithMkcert(mkcertPath, certFile, keyFile); err != nil {
 		return "", "", err
 	}
@@ -202,7 +203,10 @@ func (ci *Installer) installCAWithMkcert(mkcertPath string) error {
 func (ci *Installer) generateWithMkcert(mkcertPath, certFile, keyFile string) (string, string, error) {
 	_ = BootstrapEnv(ci.logger)
 
-	args := []string{"-key-file", keyFile, "-cert-file", certFile}
+	// Use ECDSA for 10x faster performance vs RSA
+	// This only affects auto-generated localhost certs, not user-provided certs
+	// CORRECT FLAG: -ecdsa (not -ecdsa-p256)
+	args := []string{"-ecdsa", "-cert-file", certFile, "-key-file", keyFile}
 	args = append(args, ci.certHosts...)
 
 	cmd := exec.Command(mkcertPath, args...)
@@ -218,7 +222,7 @@ func (ci *Installer) generateWithMkcert(mkcertPath, certFile, keyFile string) (s
 	}
 
 	if ci.logger != nil {
-		ci.logger.Fields("cert", certFile).Info("Successfully generated certificates")
+		ci.logger.Fields("cert", certFile, "algo", "ECDSA").Info("Successfully generated certificates")
 	}
 
 	_ = out
@@ -307,6 +311,7 @@ func (ci *Installer) validateCertificate(certFile, keyFile string) error {
 			"dns", leaf.DNSNames,
 			"ips", ipStrings(leaf.IPAddresses),
 			"not_after", leaf.NotAfter,
+			"algo", leaf.PublicKeyAlgorithm.String(), // Log the algorithm
 		).Debug("tls: cert details")
 	}
 

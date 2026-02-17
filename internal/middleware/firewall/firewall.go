@@ -97,25 +97,21 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := clientip.ClientIP(r)
 
-		// 1. Check dynamic bans
 		if ban, err := e.store.GetBan(ip); err == nil && !ban.IsExpired() {
 			e.blockRequest(w, r, "banned_ip", ban.Reason)
 			return
 		}
 
-		// 2. Check Static Whitelist
 		if e.checkRanger(e.whitelistRanger, ip) {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// 3. Check Static Blacklist
 		if e.checkRanger(e.blacklistRanger, ip) {
 			e.handleAction(w, r, alaye.Rule{}, "static_blacklist", "blocked_ip")
 			return
 		}
 
-		// 4. Inspect Body if configured
 		var bodySample []byte
 		if e.shouldInspectBody(r) {
 			var err error
@@ -134,7 +130,6 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 			Logger:   e.logger,
 		}
 
-		// 5. Evaluate Global Rules
 		runGlobal := true
 		if contextRoute != nil && contextRoute.IgnoreGlobal {
 			runGlobal = false
@@ -147,7 +142,6 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 			}
 		}
 
-		// 6. Evaluate Route-Specific Rules
 		if contextRoute != nil && contextRoute.Status.Active() && contextRoute.Rules != nil {
 			if matched, rule := e.evaluateRules(contextRoute.Rules, inspector); matched {
 				e.handleAction(w, r, rule, rule.Name, "route_rule_match")
@@ -377,7 +371,12 @@ func (e *Engine) checkCondition(c alaye.Condition, in *Inspector) bool {
 	if c.Compiled != nil {
 		match = c.Compiled.MatchString(val)
 	} else if c.Pattern != "" {
-		match, _ = regexp.MatchString(c.Pattern, val)
+		if re, err := regexp.Compile(c.Pattern); err == nil {
+			match = re.MatchString(val)
+		} else {
+			e.logger.Debug("invalid regex pattern in rule", "pattern", c.Pattern)
+			return false
+		}
 	} else {
 		target := c.Value
 		if c.IgnoreCase {

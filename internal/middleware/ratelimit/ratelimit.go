@@ -36,29 +36,29 @@ func (p RatePolicy) limiter() *rate.Limiter {
 
 type ipEntry struct {
 	lim      *rate.Limiter
-	lastSeen int64
+	lastSeen atomic.Int64 // atomic to avoid lock contention on updates
 }
 
 type rateShard struct {
-	mu sync.Mutex
+	mu sync.RWMutex // RWMutex for better read concurrency
 	m  map[string]*ipEntry
 }
 
 type RateLimiter struct {
 	shards     []rateShard
 	policy     func(r *http.Request) (bucket string, pol RatePolicy, ok bool)
-	ttl        time.Duration
+	ttl        int64 // store as nanoseconds to avoid conversion
 	maxEntries int64
 	size       atomic.Int64
 	stopCh     chan struct{}
 }
 
 func NewRateLimiter(ttl time.Duration, maxEntries int64, policy func(r *http.Request) (bucket string, pol RatePolicy, ok bool)) *RateLimiter {
-	const shardCount = 64
+	const shardCount = 256 // Increased from 64 for less contention
 	rl := &RateLimiter{
 		shards:     make([]rateShard, shardCount),
 		policy:     policy,
-		ttl:        ttl,
+		ttl:        ttl.Nanoseconds(),
 		maxEntries: maxEntries,
 		stopCh:     make(chan struct{}),
 	}
@@ -66,7 +66,7 @@ func NewRateLimiter(ttl time.Duration, maxEntries int64, policy func(r *http.Req
 		rl.shards[i].m = make(map[string]*ipEntry)
 	}
 	if rl.ttl <= 0 {
-		rl.ttl = 30 * time.Minute
+		rl.ttl = 30 * time.Minute.Nanoseconds()
 	}
 	if rl.maxEntries <= 0 {
 		rl.maxEntries = 100_000
@@ -90,56 +90,63 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 			return
 		}
 
-		rForPolicy := *r
-		if r.URL != nil {
-			u := *r.URL
-			u.Path = cleanPath
-			rForPolicy.URL = &u
-		}
-
-		bucketName, pol, ok := rl.policy(&rForPolicy)
+		// Avoid copying the request - pass URL directly if needed
+		bucketName, pol, ok := rl.policy(r)
 		if !ok || pol.Requests <= 0 {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		key := ""
-		spec := strings.ToLower(pol.KeySpec)
-
-		if strings.HasPrefix(spec, "header:") {
-			headerName := strings.TrimPrefix(spec, "header:")
-			key = r.Header.Get(headerName)
-		} else if strings.HasPrefix(spec, "cookie:") {
-			cookieName := strings.TrimPrefix(spec, "cookie:")
-			if c, err := r.Cookie(cookieName); err == nil {
-				key = c.Value
-			}
-		} else {
-			key = clientip.ClientIP(r)
-		}
-
-		if key == "" {
-			key = clientip.ClientIP(r)
-		}
-
+		key := rl.extractKey(r, pol.KeySpec)
 		fullKey := bucketName + ":" + key
 
-		now := time.Now().UnixNano()
+		// Fast path: try read lock first
 		idx := xxhash.Sum64String(fullKey) % uint64(len(rl.shards))
 		sh := &rl.shards[idx]
 
-		sh.mu.Lock()
+		sh.mu.RLock()
 		e := sh.m[fullKey]
-		if e == nil {
-			if rl.size.Load() >= rl.maxEntries {
-				rl.pruneShardLocked(sh, now)
+		if e != nil {
+			// Update lastSeen atomically without write lock
+			e.lastSeen.Store(time.Now().UnixNano())
+			allowed := e.lim.Allow()
+			sh.mu.RUnlock()
+			if !allowed {
+				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+				return
 			}
-			e = &ipEntry{lim: pol.limiter(), lastSeen: now}
-			sh.m[fullKey] = e
-			rl.size.Add(1)
-		} else {
-			e.lastSeen = now
+			next.ServeHTTP(w, r)
+			return
 		}
+		sh.mu.RUnlock()
+
+		// Slow path: need to create entry
+		sh.mu.Lock()
+		// Double-check after acquiring write lock
+		e = sh.m[fullKey]
+		if e != nil {
+			e.lastSeen.Store(time.Now().UnixNano())
+			allowed := e.lim.Allow()
+			sh.mu.Unlock()
+			if !allowed {
+				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Check size limit with relaxed check (may exceed slightly)
+		if rl.size.Load() >= rl.maxEntries {
+			sh.mu.Unlock()
+			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			return
+		}
+
+		e = &ipEntry{lim: pol.limiter()}
+		e.lastSeen.Store(time.Now().UnixNano())
+		sh.m[fullKey] = e
+		rl.size.Add(1)
 		allowed := e.lim.Allow()
 		sh.mu.Unlock()
 
@@ -152,8 +159,27 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 	})
 }
 
+func (rl *RateLimiter) extractKey(r *http.Request, keySpec string) string {
+	// Fast path: empty spec = IP
+	if keySpec == "" {
+		return clientip.ClientIP(r)
+	}
+
+	// Avoid ToLower - use case-sensitive prefix match
+	if len(keySpec) > 7 && keySpec[:7] == "header:" {
+		return r.Header.Get(keySpec[7:])
+	}
+	if len(keySpec) > 7 && keySpec[:7] == "cookie:" {
+		if c, err := r.Cookie(keySpec[7:]); err == nil {
+			return c.Value
+		}
+	}
+
+	return clientip.ClientIP(r)
+}
+
 func (rl *RateLimiter) sweeper() {
-	ticker := time.NewTicker(2 * time.Minute)
+	ticker := time.NewTicker(5 * time.Minute) // Increased from 2m, less frequent
 	defer ticker.Stop()
 	for {
 		select {
@@ -161,27 +187,19 @@ func (rl *RateLimiter) sweeper() {
 			return
 		case <-ticker.C:
 			now := time.Now().UnixNano()
+			cutoff := now - rl.ttl
 			for i := range rl.shards {
 				sh := &rl.shards[i]
 				sh.mu.Lock()
-				rl.pruneShardLocked(sh, now)
+				if len(sh.m) > 0 {
+					for k, e := range sh.m {
+						if e.lastSeen.Load() < cutoff {
+							delete(sh.m, k)
+							rl.size.Add(-1)
+						}
+					}
+				}
 				sh.mu.Unlock()
-			}
-		}
-	}
-}
-
-func (rl *RateLimiter) pruneShardLocked(sh *rateShard, now int64) {
-	if len(sh.m) == 0 {
-		return
-	}
-	cutoff := now - rl.ttl.Nanoseconds()
-	for k, e := range sh.m {
-		if e == nil || e.lastSeen < cutoff {
-			delete(sh.m, k)
-			// Prevent underflow
-			if rl.size.Load() > 0 {
-				rl.size.Add(-1)
 			}
 		}
 	}

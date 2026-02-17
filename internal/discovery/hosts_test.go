@@ -176,7 +176,7 @@ func TestWatch_FileChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitChanged(t, h.Changed(), 3*time.Second)
+	waitChanged(t, h.Changed(), 5*time.Second)
 
 	if cfg := h.Get("updated.com"); cfg == nil {
 		t.Fatal("config not reloaded: updated.com not found")

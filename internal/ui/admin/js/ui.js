@@ -488,7 +488,7 @@ const UI = {
             return `<div class="log-entry"><div class="log-ts">${ts}</div><div class="log-lvl" style="color:${color}">${lvl}</div><div class="log-msg">${msg}</div></div>`;
         }).join("");
     },
-    
+
     renderDrawer(hostname, cfg_item, itemStats, type, certificates) {
         const path = cfg_item.path || (cfg_item.name ? cfg_item.name.replace('*default*', '* (TCP)') : cfg_item.protocol || "*");
         document.getElementById("drawerRoutePath").innerText = path;
@@ -498,11 +498,17 @@ const UI = {
         if (!content) return;
         content.innerHTML = "";
 
-        // Detect if this is a TCP proxy route
-        const isTCPProxy = type === 'proxy' || cfg_item.protocol === 'tcp' || (cfg_item.listen && !cfg_item.listen.includes('http'));
+        // Determine protocol at the route level, not per backend
+        // TCP if: it's a proxy type, or protocol is explicitly tcp, or it has a listen address (TCP proxy)
+        const isTCPRoute = type === 'proxy' || cfg_item.protocol === 'tcp' || (cfg_item.listen && !cfg_item.listen.includes('http'));
+
+        // Set protocol display once for the entire route
+        const protocolType = isTCPRoute ? 'TCP' : 'HTTP';
+        const protocolIcon = isTCPRoute ? '🔌' : '🌐';
+        const protocolClass = isTCPRoute ? 'info' : 'success';
 
         // Handler section - only for HTTP routes
-        if (!isTCPProxy && cfg_item.web && cfg_item.web.root) {
+        if (!isTCPRoute && cfg_item.web && cfg_item.web.root) {
             let webHtml = `
             <div class="detail-section">
                 <div class="detail-title">📂 Static File Handler</div>
@@ -540,16 +546,6 @@ const UI = {
         if (displayBackends.length > 0) {
             let backendsHtml = "";
 
-            // Check if ANY backend is TCP to determine overall protocol
-            const hasTCPBackend = displayBackends.some(b => {
-                const url = b.address || b.url || '';
-                return url.startsWith('tcp://') || url.startsWith('unix:') || (!url.startsWith('http') && url.includes(':'));
-            });
-
-            const protocolType = hasTCPBackend ? 'TCP' : 'HTTP';
-            const protocolIcon = hasTCPBackend ? '🔌' : '🌐';
-            const protocolClass = hasTCPBackend ? 'info' : 'success';
-
             displayBackends.forEach((b, i) => {
                 const backendStats = statBackends[i] || {};
                 const url = b.address || b.url || backendStats.address || backendStats.url || '';
@@ -565,8 +561,8 @@ const UI = {
                         dotColor = backendStats.healthy ? 'ok' : 'down';
                     }
                     else if (backendStats.alive !== undefined) {
-                        const isTCPBackend = url.startsWith('tcp://') || url.startsWith('unix:') || (!url.startsWith('http') && url.includes(':'));
-                        if (isTCPBackend) {
+                        // For TCP backends, alive means connection works
+                        if (isTCPRoute) {
                             healthStatus = backendStats.alive ? 'ok' : 'warn';
                             dotColor = backendStats.alive ? 'ok' : 'warn';
                         } else {
@@ -605,7 +601,7 @@ const UI = {
 
             // TCP Proxy specific details
             let tcpDetailsHtml = '';
-            if (isTCPProxy) {
+            if (isTCPRoute) {
                 if (cfg_item.listen) {
                     tcpDetailsHtml += `
                     <div class="kv-item"><label>Listen</label><div><span class="badge info">${cfg_item.listen}</span></div></div>
@@ -631,15 +627,14 @@ const UI = {
             const healthCheck = cfg_item.health_check || cfg_item.backends?.health_check;
             let healthCheckHtml = '<div class="kv-item"><label>Health Check</label><div><span class="badge error">Not Configured</span></div></div>';
             if (healthCheck && healthCheck.enabled && healthCheck.enabled === "on") {
-                const hcPath = healthCheck.path || '/health';
-                const hcInterval = healthCheck.interval ? (healthCheck.interval/1000000000)+'s' : '30s';
-                const hcTimeout = healthCheck.timeout ? (healthCheck.timeout/1000000000)+'s' : '5s';
-
-                if (isTCPProxy && healthCheck.send) {
+                if (isTCPRoute && healthCheck.send) {
                     healthCheckHtml = `
                     <div class="kv-item"><label>Health Check</label><div><span class="badge success">Send: ${healthCheck.send} | Expect: ${healthCheck.expect || 'connection'}</span></div></div>
                 `;
                 } else {
+                    const hcPath = healthCheck.path || '/health';
+                    const hcInterval = healthCheck.interval ? (healthCheck.interval/1000000000)+'s' : '30s';
+                    const hcTimeout = healthCheck.timeout ? (healthCheck.timeout/1000000000)+'s' : '5s';
                     healthCheckHtml = `
                     <div class="kv-item"><label>Health Check</label><div><span class="badge success">${hcPath} | ${hcInterval} | ${hcTimeout}</span></div></div>
                 `;
@@ -662,7 +657,7 @@ const UI = {
             const writeTimeout = timeouts.write ? (timeouts.write/1000000000)+'s' : 'inherit';
             const idleTimeout = timeouts.idle ? (timeouts.idle/1000000000)+'s' : 'inherit';
 
-            // Main upstreams section with protocol badge
+            // Single protocol badge at the section title level
             let upstreamsHtml = `
             <div class="detail-section">
                 <div class="detail-title">
@@ -685,8 +680,8 @@ const UI = {
 
             content.innerHTML += upstreamsHtml;
 
-            // Add HTTP-specific features only for HTTP routes
-            if (!isTCPProxy) {
+            // HTTP-specific features only for HTTP routes
+            if (!isTCPRoute) {
                 let httpFeaturesHtml = '';
 
                 const compression = cfg_item.compression_config || {};
@@ -729,7 +724,7 @@ const UI = {
             }
         }
 
-        // Certificate section
+        // Certificate section (works for both HTTP and TCP with TLS)
         const hostCerts = certificates.filter(c => c.host === hostname);
         if (hostCerts.length > 0) {
             let certHtml = '<div class="cert-grid">';
@@ -767,7 +762,7 @@ const UI = {
         }
 
         // Auth section - only for HTTP routes
-        if (!isTCPProxy) {
+        if (!isTCPRoute) {
             let authHtml = '';
 
             if (cfg_item.basic_auth && cfg_item.basic_auth.enabled === "on") {

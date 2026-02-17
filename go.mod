@@ -1,6 +1,6 @@
 module git.imaxinacion.net/aibox/agbero
 
-go 1.25.5
+go 1.26
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0

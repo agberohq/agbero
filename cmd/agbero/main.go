@@ -406,4 +406,5 @@ func main() {
 	}
 
 	showHelpExamples(resolvedPath)
+
 }

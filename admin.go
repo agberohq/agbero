@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"strings"
 	"time"
@@ -39,53 +40,70 @@ func (s *Server) startAdminServer() {
 	cfg := s.global.Admin
 	mux := http.NewServeMux()
 
-	// Health Check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
 
-	// Login Admin: Exchanges Credentials for JWT
 	mux.HandleFunc("/login", s.handleAdminLogin)
 
-	// UI Assets (HTML/JS/CSS) - served publicly so login.html loads
 	uiHandler := ui.Admin()
 	mux.Handle("/", uiHandler)
 
-	// Helper to wrap handlers with JWT Auth
-	protect := func(h http.HandlerFunc) http.Handler {
-		// If JWT is configured, enforce it.
+	// protect enforces the primary API authentication method (usually JWT).
+	// This prevents browser popups on the dashboard if the token expires.
+	protect := func(h http.Handler) http.Handler {
 		if cfg.JWTAuth.Enabled.Active() {
 			return auth.JWT(&cfg.JWTAuth)(h)
 		}
-		// Fallback: If BasicAuth is configured but no JWT, enforce BasicAuth on API too
 		if len(cfg.BasicAuth.Users) > 0 {
 			return auth.Basic(&cfg.BasicAuth)(h)
 		}
-		// If no auth configured at all, return raw handler (Insecure mode)
 		return h
 	}
 
-	// Uptime
+	// protectBasic enforces Basic Auth specifically for pprof.
+	// This ensures browsers prompt for credentials when accessing debug tools directly.
+	protectBasic := func(h http.Handler) http.Handler {
+		if len(cfg.BasicAuth.Users) > 0 {
+			return auth.Basic(&cfg.BasicAuth)(h)
+		}
+		// Fallback to JWT for CLI tools if Basic Auth is not configured
+		if cfg.JWTAuth.Enabled.Active() {
+			return auth.JWT(&cfg.JWTAuth)(h)
+		}
+		return h
+	}
+
 	mux.Handle("/uptime", protect(uptime.Uptime(s.hostManager)))
+	mux.Handle("/metrics", protect(promhttp.Handler()))
+	mux.Handle("/config", protect(http.HandlerFunc(s.handleAdminConfigDump)))
+	mux.Handle("/logs", protect(http.HandlerFunc(s.handleAdminLogs)))
+	mux.Handle("/firewall", protect(http.HandlerFunc(s.handleFirewallAPI)))
 
-	mux.Handle("/metrics", protect(promhttp.Handler().ServeHTTP))
+	if cfg.Pprof.Active() {
+		s.logger.Warn("pprof debugging enabled on admin interface")
 
-	// Config Dump
-	mux.Handle("/config", protect(s.handleAdminConfigDump))
+		mux.Handle("/debug/pprof/", protectBasic(http.HandlerFunc(pprof.Index)))
+		mux.Handle("/debug/pprof/cmdline", protectBasic(http.HandlerFunc(pprof.Cmdline)))
+		mux.Handle("/debug/pprof/profile", protectBasic(http.HandlerFunc(pprof.Profile)))
+		mux.Handle("/debug/pprof/symbol", protectBasic(http.HandlerFunc(pprof.Symbol)))
+		mux.Handle("/debug/pprof/trace", protectBasic(http.HandlerFunc(pprof.Trace)))
 
-	// Logs
-	mux.Handle("/logs", protect(s.handleAdminLogs))
-
-	// Firewall Management
-	mux.Handle("/firewall", protect(s.handleFirewallAPI))
+		mux.Handle("/debug/pprof/heap", protectBasic(pprof.Handler("heap")))
+		mux.Handle("/debug/pprof/goroutine", protectBasic(pprof.Handler("goroutine")))
+		mux.Handle("/debug/pprof/threadcreate", protectBasic(pprof.Handler("threadcreate")))
+		mux.Handle("/debug/pprof/block", protectBasic(pprof.Handler("block")))
+		mux.Handle("/debug/pprof/mutex", protectBasic(pprof.Handler("mutex")))
+		mux.Handle("/debug/pprof/allocs", protectBasic(pprof.Handler("allocs")))
+	}
 
 	srv := &http.Server{
 		Addr:         cfg.Address,
 		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  30 * time.Second,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	go func() {
@@ -103,9 +121,11 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.mu.RLock()
 	cfg := s.global.Admin
+	s.mu.RUnlock()
 
-	// 1. Validation
+	// Validation
 	if !cfg.BasicAuth.Enabled.Active() || len(cfg.BasicAuth.Users) == 0 {
 		http.Error(w, "Server Config Error: Unknown admin users defined in 'basic_auth'", http.StatusForbidden)
 		return
@@ -116,7 +136,7 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Parse Request
+	// Parse Request
 	var creds struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -127,7 +147,7 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Constant-Time User Lookup
+	// Constant-Time User Lookup
 	var foundHash []byte
 	userFound := 0
 
@@ -156,7 +176,7 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. Generate JWT
+	// Generate JWT
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &AdminClaims{
 		User: creds.Username,
@@ -174,7 +194,7 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 6. Return Token
+	// Return Token
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"token":   tokenString,
@@ -231,9 +251,9 @@ func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			IP          string `json:"ip"`
 			Reason      string `json:"reason"`
-			Host        string `json:"host"`         // Added
-			Path        string `json:"path"`         // Added
-			DurationSec int    `json:"duration_sec"` // 0 = permanent
+			Host        string `json:"host"`
+			Path        string `json:"path"`
+			DurationSec int    `json:"duration_sec"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -246,7 +266,6 @@ func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 
 		dur := time.Duration(req.DurationSec) * time.Second
 
-		//  Flatten extra context into Reason string for firewall engine
 		reason := req.Reason
 		var details []string
 		if req.Host != "" {

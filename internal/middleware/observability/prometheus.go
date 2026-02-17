@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -94,18 +95,22 @@ func (rw *responseWriter) WriteHeader(code int) {
 
 func (rw *responseWriter) Write(b []byte) (int, error) {
 	if !rw.written {
-		rw.written = true
-		if rw.statusCode == http.StatusOK {
-			// If Write is called without WriteHeader, Go sets 200
-			rw.statusCode = http.StatusOK
-		}
+		// If Write is called without WriteHeader, Go assumes 200 OK
+		rw.WriteHeader(http.StatusOK)
 	}
+	// Pass directly to underlying writer. Do not buffer.
 	return rw.ResponseWriter.Write(b)
 }
 
-// Implement http.Flusher
 func (rw *responseWriter) Flush() {
 	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+func (rw *responseWriter) ReadFrom(r io.Reader) (n int64, err error) {
+	if rf, ok := rw.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(rw.ResponseWriter, r)
 }

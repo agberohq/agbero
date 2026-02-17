@@ -9,6 +9,7 @@ import (
 
 type Admin struct {
 	Enabled    Enabled  `hcl:"enabled,optional" json:"enabled"`
+	Pprof      Enabled  `hcl:"pprof,optional" json:"pprof"`
 	Address    string   `hcl:"address,optional" json:"address"` // e.g. ":9090"
 	AllowedIPs []string `hcl:"allowed_ips,optional" json:"allowed_ips"`
 

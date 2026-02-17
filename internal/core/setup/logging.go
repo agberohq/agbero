@@ -48,14 +48,14 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 				return fi.Size(), nil
 			},
 			Rotate: func() error {
-				// 1. Rename current file
-				timestamp := time.Now().Format("20060102-150405")
+				// Rename current file
+				timestamp := time.Now().Format("20060102-150405.000000")
 				backupName := cfg.File + "." + timestamp
 				if err := os.Rename(cfg.File, backupName); err != nil {
 					return err
 				}
 
-				// 2. Compress in background to avoid blocking logging
+				// Compress in background to avoid blocking logging
 				go compressLogFile(backupName)
 				return nil
 			},
