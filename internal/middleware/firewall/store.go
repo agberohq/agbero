@@ -103,19 +103,20 @@ func (s *Store) IterateActive(iter RuleIterator) error {
 		}
 		return nil
 	})
+
 	if len(expiredKeys) > 0 {
-		s.wg.Add(1)
-		go func(keys [][]byte) {
-			defer s.wg.Done()
-			_ = s.db.Update(func(tx *bbolt.Tx) error {
-				b := tx.Bucket(bucketName)
-				for _, k := range keys {
-					_ = b.Delete(k)
-				}
-				return nil
-			})
-		}(expiredKeys)
+		err = s.db.Update(func(tx *bbolt.Tx) error {
+			b := tx.Bucket(bucketName)
+			for _, k := range expiredKeys {
+				_ = b.Delete(k)
+			}
+			return nil
+		})
+		if err != nil {
+			s.logger.Fields("err", err).Error("failed to delete expired rules")
+		}
 	}
+
 	return err
 }
 
