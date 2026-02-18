@@ -314,53 +314,100 @@ func showCertInfo(configPath string) {
 }
 
 func handleCertCommands(install, uninstall, list, info bool) {
+	// 1. Setup Installer & Directory
 	installer := tlss2.NewInstaller(logger)
-	if install {
-		global, err := loadConfig(configPath)
-		if err == nil && global.Storage.CertsDir != "" {
-			_ = installer.SetStorageDir(woos.NewFolder(global.Storage.CertsDir))
+
+	// Load config to find the correct certs directory
+	if global, err := loadConfig(configPath); err == nil && global.Storage.CertsDir != "" {
+		folder := woos.NewFolder(global.Storage.CertsDir)
+		_ = installer.SetStorageDir(folder)
+		logger.Fields("dir", folder.Path()).Info("storage directory")
+	}
+
+	// 2. Handle Uninstall
+	if uninstall {
+		logger.Info("Uninstalling CA...")
+
+		// Attempt to remove from system trust store
+		if err := installer.UninstallCARoot(); err != nil {
+			logger.Warnf("System trust store cleanup: %v (might already be removed)", err)
+		} else {
+			logger.Info("Removed CA from system trust store")
 		}
-		certDir := installer.CertDir.Path()
-		if tlss2.IsCARootInstalled(certDir) && !forceCAInstall {
-			logger.Info("CA root certificate is already installed. Use --force to reinstall.")
+
+		// Physical file cleanup
+		dir := installer.CertDir.Path()
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			logger.Warnf("Could not read dir: %v", err)
 			return
 		}
-		logger.Info("Installing CA root certificate...")
+
+		count := 0
+		for _, f := range files {
+			name := f.Name()
+			// Delete specific cert extensions
+			if strings.HasSuffix(name, ".pem") ||
+				strings.HasSuffix(name, ".key") ||
+				strings.HasSuffix(name, ".crt") {
+
+				if err := os.Remove(filepath.Join(dir, name)); err == nil {
+					count++
+				}
+			}
+		}
+
+		if count > 0 {
+			logger.Infof("Deleted %d certificate files from disk", count)
+		} else {
+			logger.Warn("No certificate files found to delete")
+		}
+
+		logger.Info("Uninstall complete")
+		return
+	}
+
+	// 3. Handle Install
+	if install {
+		if tlss2.IsCARootInstalled(installer.CertDir.Path()) && !forceCAInstall {
+			logger.Info("CA root is already installed. Use --force to reinstall.")
+			return
+		}
 		if err := installer.InstallCARootIfNeeded(); err != nil {
 			logger.Fatal("Failed to install CA: ", err)
 		}
-		logger.Info("CA root installed. Browsers should now trust localhost certificates.")
+		logger.Info("CA root installed successfully.")
 		return
 	}
-	if uninstall {
-		logger.Info("Uninstalling CA root certificate...")
-		if err := installer.UninstallCARoot(); err != nil {
-			logger.Fatal("Failed to uninstall CA: ", err)
-		}
-		logger.Info("CA root uninstalled from system trust store.")
-		return
-	}
+
+	// 4. Handle List
 	if list {
-		global, err := loadConfig(configPath)
-		if err == nil && global.Storage.CertsDir != "" {
-			_ = installer.SetStorageDir(woos.NewFolder(global.Storage.CertsDir))
-		}
 		certs, err := installer.ListCertificates()
 		if err != nil {
-			logger.Fatal("Failed to list certs: ", err)
+			logger.Fatal("Failed to list certificates: ", err)
 		}
+
+		if len(certs) == 0 {
+			logger.Warn("No certificates found")
+			return
+		}
+
+		logger.Infof("Found %d certificates:", len(certs))
 		for i, cert := range certs {
-			logger.Printf("%d. %s\n", i+1, cert)
+			logger.Printf("  %d. %s\n", i+1, cert)
 		}
 		return
 	}
+
+	// 5. Handle Info
 	if info {
 		showCertInfo(configPath)
 		return
 	}
+
+	// Fallback if no specific subcommand provided
 	flaggy.ShowHelpAndExit("cert")
 }
-
 func handleKeyCommands(init, gen bool) {
 	if init {
 		target := "server.key"

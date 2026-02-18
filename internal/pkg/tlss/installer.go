@@ -53,12 +53,12 @@ func (ci *Installer) SetStorageDir(dir woos.Folder) error {
 		}
 		dir = woos.NewFolder(filepath.Join(home, dir.String()[2:]))
 	}
-	if err := dir.Ensure(woos.Folder(""), false); err != nil {
+	if err := dir.Ensure("", false); err != nil {
 		return errors.Newf("failed to create storage directory: %w", err)
 	}
 	ci.CertDir = dir
 	if ci.logger != nil {
-		ci.logger.Fields("dir", dir).Info("Set certificate storage directory")
+		ci.logger.Fields("dir", dir).Info("storage directory")
 	}
 	return nil
 }

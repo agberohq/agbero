@@ -262,7 +262,7 @@ func main() {
 	// Subcommand Dispatchers
 	if cmdCert.Used {
 		configPath = resolvedPath
-		handleCertCommands(cmdInstallCA.Used, cmdUninstall.Used, cmdListCerts.Used, cmdCertInfo.Used)
+		handleCertCommands(cmdInstallCA.Used, cmdUninstallCA.Used, cmdListCerts.Used, cmdCertInfo.Used)
 		return
 	}
 
