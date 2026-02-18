@@ -5,9 +5,9 @@ import (
 	"strings"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/lb"
-	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 )
 
 type Balancer struct {

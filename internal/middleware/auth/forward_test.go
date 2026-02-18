@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	cache2 "git.imaxinacion.net/aibox/agbero/internal/pkg/cache"
 )
 
 // Clear caches between tests
@@ -22,9 +22,9 @@ func clearTestCaches() {
 	defer cacheMu.Unlock()
 	for name, c := range authCaches {
 		// Clear all entries by creating new cache
-		authCaches[name] = cache.New(cache.Options{
+		authCaches[name] = cache2.New(cache2.Options{
 			MaximumSize: 1000,
-			OnDelete:    cache.CloserDelete,
+			OnDelete:    cache2.CloserDelete,
 		})
 		_ = c // old cache will be GC'd
 	}

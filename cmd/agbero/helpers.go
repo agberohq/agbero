@@ -14,11 +14,11 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/parser"
-	"git.imaxinacion.net/aibox/agbero/internal/core/security"
-	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/parser"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/security"
+	tlss2 "git.imaxinacion.net/aibox/agbero/internal/pkg/tlss"
 	"github.com/dustin/go-humanize"
 	"github.com/integrii/flaggy"
 	"golang.org/x/crypto/bcrypt"
@@ -314,14 +314,14 @@ func showCertInfo(configPath string) {
 }
 
 func handleCertCommands(install, uninstall, list, info bool) {
-	installer := tlss.NewInstaller(logger)
+	installer := tlss2.NewInstaller(logger)
 	if install {
 		global, err := loadConfig(configPath)
 		if err == nil && global.Storage.CertsDir != "" {
 			_ = installer.SetStorageDir(woos.NewFolder(global.Storage.CertsDir))
 		}
 		certDir := installer.CertDir.Path()
-		if tlss.IsCARootInstalled(certDir) && !forceCAInstall {
+		if tlss2.IsCARootInstalled(certDir) && !forceCAInstall {
 			logger.Info("CA root certificate is already installed. Use --force to reinstall.")
 			return
 		}

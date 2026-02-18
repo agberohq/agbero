@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/setup"
-	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/tlss"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/jack"
@@ -365,7 +365,7 @@ func main() {
 			logger.Fatal("Failed to load config: ", err)
 		}
 
-		newLogger, err := setup.Logging(&global.Logging, devMode, shutdown)
+		newLogger, err := zulu.Logging(&global.Logging, devMode, shutdown)
 		if err != nil {
 			logger.Warn("Failed to setup advanced logging: ", err)
 		} else {

@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/cache"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
@@ -190,7 +191,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	}
 	item.LastAccessed.Store(time.Now().UnixNano())
 
-	cache.Route.Store(key, item)
+	zulu.Route.Store(key, item)
 
 	h := s.getOrBuildRouteHandler(route, key)
 	if h != handler {
@@ -198,7 +199,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	}
 
 	handler.Close()
-	cache.Route.Delete(key)
+	zulu.Route.Delete(key)
 }
 
 func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
@@ -213,7 +214,7 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 		Backends: alaye.Backend{Servers: alaye.NewServers("http://localhost:8080")},
 	}
 
-	cache.Route.Delete(route.Key())
+	zulu.Route.Delete(route.Key())
 
 	h := s.getOrBuildRouteHandler(route, route.Key())
 	if h == nil {
@@ -221,7 +222,7 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 	}
 
 	h.Close()
-	cache.Route.Delete(route.Key())
+	zulu.Route.Delete(route.Key())
 }
 
 func TestServer_StartAdminServer(t *testing.T) {

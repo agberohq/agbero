@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/lb"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
 )
 
 // Balancer wraps the core/lb logic for HTTP backends, handling strategy composition.

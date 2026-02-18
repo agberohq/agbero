@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/retry"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"github.com/cenkalti/backoff/v4"
 	"github.com/hashicorp/memberlist"
 )
@@ -59,7 +59,7 @@ func (e *event) fetchToken(node *memberlist.Node, meta *Meta) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), e.s.authTimeout)
 	defer cancel()
 
-	err := retry.DoCtx(ctx, func() error {
+	err := zulu.DoCtx(ctx, func() error {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 
 		// NOTE: http.DefaultClient has no timeout, but the ctx above handles it

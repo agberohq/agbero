@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"github.com/olekukonko/ll"
 )
 

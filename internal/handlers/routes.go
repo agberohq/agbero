@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/xhttp"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/compress"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/headers"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ipallow"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/ui"
 	"github.com/olekukonko/ll"
 )

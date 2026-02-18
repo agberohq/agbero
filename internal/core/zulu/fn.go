@@ -1,4 +1,4 @@
-package xfn
+package zulu
 
 import (
 	"fmt"

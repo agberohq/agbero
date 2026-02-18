@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/xfn"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/cache"
 	"github.com/caddyserver/certmagic"
 	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/errors"
@@ -291,7 +291,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return nil, errors.New("missing SNI")
 	}
 
-	sni := xfn.NormalizeHost(chi.ServerName)
+	sni := zulu.NormalizeHost(chi.ServerName)
 	if sni == "" {
 		return nil, woos.ErrMissingSNI
 	}
@@ -372,7 +372,7 @@ func (m *Manager) GetConfigForClient(chi *tls.ClientHelloInfo) (*tls.Config, err
 		return nil, errors.New("missing SNI")
 	}
 
-	sni := xfn.NormalizeHost(chi.ServerName)
+	sni := zulu.NormalizeHost(chi.ServerName)
 	if sni == "" {
 		return nil, woos.ErrMissingSNI
 	}

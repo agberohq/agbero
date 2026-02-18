@@ -17,12 +17,8 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
-	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
-	"git.imaxinacion.net/aibox/agbero/internal/core/parser"
-	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/xfn"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery/gossip"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
@@ -35,6 +31,10 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/recovery"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/wasm"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/cache"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/parser"
+	tlss2 "git.imaxinacion.net/aibox/agbero/internal/pkg/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/ui"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
@@ -54,7 +54,7 @@ type Server struct {
 
 	hostManager *discovery.Host
 	global      *alaye.Global
-	tlsManager  *tlss.Manager
+	tlsManager  *tlss2.Manager
 
 	//  Correct type usage
 	firewall *firewall.Engine
@@ -142,12 +142,12 @@ func (s *Server) Start(configPath string) error {
 		woos.RouteCacheTTL,
 		jack.ReaperWithLogger(s.logger),
 		jack.ReaperWithHandler(func(ctx context.Context, id string) {
-			if it, ok := cache.Route.Load(id); ok {
+			if it, ok := zulu.Route.Load(id); ok {
 				if h, ok := it.Value.(*handlers.Route); ok {
 					h.Close()
 				}
 			}
-			cache.Route.Delete(id)
+			zulu.Route.Delete(id)
 			s.logger.Fields("route_key", id).Debug("reaped idle route handler")
 		}),
 	)
@@ -304,7 +304,7 @@ func (s *Server) Start(configPath string) error {
 		go func(k string, server *http.Server) {
 			s.logger.Fields("bind", server.Addr, "key", k).Info("listener starting")
 			var err error
-			if xfn.IsServerKeyTLS(k) {
+			if zulu.IsServerKeyTLS(k) {
 				err = server.ListenAndServeTLS("", "")
 			} else {
 				err = server.ListenAndServe()
@@ -351,7 +351,7 @@ func (s *Server) Reload() {
 	}
 
 	if s.global.Logging.Diff.Active() {
-		for _, v := range xfn.Diff(s.global, global) {
+		for _, v := range zulu.Diff(s.global, global) {
 			s.logger.Debug(v)
 		}
 	}
@@ -622,7 +622,7 @@ func (s *Server) startTCPServer(
 		}
 	}
 
-	key := xfn.ServerKey(addr, isTLS)
+	key := zulu.ServerKey(addr, isTLS)
 	s.mu.Lock()
 	s.servers[key] = srv
 	s.mu.Unlock()
@@ -786,7 +786,7 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 		return nil, nil, woos.ErrHostManagerRequired
 	}
 
-	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global)
+	s.tlsManager = tlss2.NewManager(s.logger, s.hostManager, s.global)
 
 	httpHandler, err := s.tlsManager.EnsureCertMagic(next)
 	if err != nil {
@@ -831,7 +831,7 @@ func (s *Server) validateTLSConfig() error {
 					case alaye.ModeLocalAuto, alaye.ModeLocalCert:
 						// Validate CA is installed
 						certDir := woos.MakeFolder(s.global.Storage.CertsDir, woos.CertDir)
-						if !tlss.IsCARootInstalled(certDir.Path()) {
+						if !tlss2.IsCARootInstalled(certDir.Path()) {
 							return errors.Newf(
 								"HTTPS binding on %s requires local CA. Run: agbero cert install",
 								addr,
@@ -870,7 +870,7 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 	}
 
 	if s.global != nil && s.shouldLogUserAgent(r) {
-		fields = append(fields, "ua", xfn.Truncate(r.UserAgent(), 50))
+		fields = append(fields, "ua", zulu.Truncate(r.UserAgent(), 50))
 	}
 	s.logger.Fields(fields...).Info(r.Method)
 }
@@ -902,7 +902,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			host = woos.PrivateBindingHost
 		}
 	} else {
-		host = xfn.NormalizeHost(r.Host)
+		host = zulu.NormalizeHost(r.Host)
 		hcfg = s.hostManager.Get(host)
 	}
 
@@ -1020,7 +1020,7 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 }
 
 func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handlers.Route {
-	if it, ok := cache.Route.Load(key); ok {
+	if it, ok := zulu.Route.Load(key); ok {
 		if h, ok := it.Value.(*handlers.Route); ok {
 			s.reaper.Touch(key)
 			return h
@@ -1032,7 +1032,7 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handler
 		Value: h,
 	}
 
-	if it, loaded := cache.Route.LoadOrStore(key, newItem); loaded {
+	if it, loaded := zulu.Route.LoadOrStore(key, newItem); loaded {
 		h.Close()
 		if existing, ok := it.Value.(*handlers.Route); ok {
 			s.reaper.Touch(key)

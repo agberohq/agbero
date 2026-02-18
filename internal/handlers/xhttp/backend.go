@@ -14,14 +14,14 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/xlib/pool"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
+	metrics2 "git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 )
 
-var sharedBufferPool = pool.NewBufferPool()
+var sharedBufferPool = zulu.NewBufferPool()
 
 var hopHeaders = []string{
 	woos.HeaderKeyConnection,
@@ -47,13 +47,13 @@ type Backend struct {
 	rnd          *rand.Rand
 	logger       *ll.Logger
 
-	Health   *metrics.Health
-	Activity *metrics.Activity
+	Health   *metrics2.Health
+	Activity *metrics2.Activity
 
 	hcConfig *alaye.HealthCheck
 }
 
-func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registry *metrics.Registry) (*Backend, error) {
+func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registry *metrics2.Registry) (*Backend, error) {
 	u, err := url.Parse(cfg.Address)
 	if err != nil {
 		return nil, err
@@ -77,7 +77,7 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 	}
 
 	if registry == nil {
-		registry = metrics.DefaultRegistry
+		registry = metrics2.DefaultRegistry
 	}
 
 	// Persistent Metrics Lookup

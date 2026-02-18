@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/security"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/security"
 	"github.com/hashicorp/memberlist"
 	"github.com/olekukonko/ll"
 )

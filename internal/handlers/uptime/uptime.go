@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
+	metrics2 "git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
-	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/xtcp"
 )
@@ -56,13 +56,13 @@ type ProxySnapshot struct {
 }
 
 type BackendSnapshot struct {
-	URL       string                  `json:"url"`
-	Alive     bool                    `json:"alive"`
-	InFlight  int64                   `json:"in_flight"`
-	Failures  int64                   `json:"failures"`
-	TotalReqs uint64                  `json:"total_reqs"`
-	Latency   metrics.LatencySnapshot `json:"latency_us"`
-	Healthy   bool                    `json:"healthy"`
+	URL       string                   `json:"url"`
+	Alive     bool                     `json:"alive"`
+	InFlight  int64                    `json:"in_flight"`
+	Failures  int64                    `json:"failures"`
+	TotalReqs uint64                   `json:"total_reqs"`
+	Latency   metrics2.LatencySnapshot `json:"latency_us"`
+	Healthy   bool                     `json:"healthy"`
 }
 
 var (
@@ -149,14 +149,14 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 			for _, srv := range route.Backends.Servers {
 				statsKey := fmt.Sprintf("%s|%s", rKey, srv.Address)
 
-				var latSnap metrics.LatencySnapshot
+				var latSnap metrics2.LatencySnapshot
 				var failures, reqs, inFlight int64
 				healthy := false
 				alive := true // Default until found
 
-				if stats := metrics.DefaultRegistry.Get(statsKey); stats != nil {
+				if stats := metrics2.DefaultRegistry.Get(statsKey); stats != nil {
 					snap := stats.Activity.Snapshot()
-					latSnap = snap["latency"].(metrics.LatencySnapshot)
+					latSnap = snap["latency"].(metrics2.LatencySnapshot)
 					failures = int64(snap["failures"].(uint64))
 					reqs = int64(snap["requests"].(uint64))
 					inFlight = snap["in_flight"].(int64)
@@ -183,7 +183,7 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 		// --- TCP Proxies ---
 		if len(hcfg.Proxies) > 0 {
 			for _, tcpCfg := range hcfg.Proxies {
-				item, ok := cache.TCP.Load(tcpCfg.Listen)
+				item, ok := zulu.TCP.Load(tcpCfg.Listen)
 				if !ok {
 					continue
 				}

@@ -1,4 +1,4 @@
-package setup
+package zulu
 
 import (
 	"compress/gzip"

@@ -15,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	metrics2 "git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 )
 
 var rngPool = sync.Pool{
@@ -207,15 +207,15 @@ type Snapshot struct {
 	Failures    int64
 	MaxConns    int64
 	TotalReqs   uint64
-	Latency     metrics.LatencySnapshot
+	Latency     metrics2.LatencySnapshot
 }
 
 type Backend struct {
 	Address string
 	Weight  int
 
-	Activity *metrics.Activity
-	Health   *metrics.Health
+	Activity *metrics2.Activity
+	Health   *metrics2.Health
 	Alive    *atomic.Bool
 
 	MaxConns int64

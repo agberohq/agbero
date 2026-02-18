@@ -15,16 +15,16 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	cache2 "git.imaxinacion.net/aibox/agbero/internal/pkg/cache"
 	"github.com/olekukonko/errors"
 )
 
-var authCaches = make(map[string]*cache.Cache)
+var authCaches = make(map[string]*cache2.Cache)
 var cacheMu sync.RWMutex
 
-func getCache(name string) *cache.Cache {
+func getCache(name string) *cache2.Cache {
 	cacheMu.RLock()
 	if c, ok := authCaches[name]; ok {
 		cacheMu.RUnlock()
@@ -39,9 +39,9 @@ func getCache(name string) *cache.Cache {
 		return c
 	}
 
-	c := cache.New(cache.Options{
+	c := cache2.New(cache2.Options{
 		MaximumSize: 10000,
-		OnDelete:    cache.CloserDelete,
+		OnDelete:    cache2.CloserDelete,
 	})
 	authCaches[name] = c
 	return c
@@ -111,10 +111,10 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 			cacheKey := buildCacheKey(r, cfg.Request.CacheKey, cfg.Name)
 
 			if cached, ok := authCache.Load(cacheKey); ok {
-				if allowed, ok := cache.Get[bool](cached); ok && allowed {
+				if allowed, ok := cache2.Get[bool](cached); ok && allowed {
 					if cfg.Response.Enabled.Active() {
 						if headersItem, ok := authCache.Load(cacheKey + "_headers"); ok {
-							if headers, ok := cache.Get[http.Header](headersItem); ok {
+							if headers, ok := cache2.Get[http.Header](headersItem); ok {
 								copyHeadersToRequest(headers, r, cfg.Response.CopyHeaders)
 							}
 						}
@@ -203,13 +203,13 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 					}
 
 					if cfg.Response.CacheTTL > 0 {
-						allowItem := &cache.Item{Value: true}
-						headersItem := &cache.Item{Value: headersToCopy}
+						allowItem := &cache2.Item{Value: true}
+						headersItem := &cache2.Item{Value: headersToCopy}
 						authCache.StoreTTL(cacheKey, allowItem, cfg.Response.CacheTTL)
 						authCache.StoreTTL(cacheKey+"_headers", headersItem, cfg.Response.CacheTTL)
 					}
 				} else if cfg.Response.CacheTTL > 0 {
-					allowItem := &cache.Item{Value: true}
+					allowItem := &cache2.Item{Value: true}
 					authCache.StoreTTL(cacheKey, allowItem, cfg.Response.CacheTTL)
 				}
 
@@ -217,7 +217,7 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 				return
 			}
 
-			denyItem := &cache.Item{Value: false}
+			denyItem := &cache2.Item{Value: false}
 			authCache.StoreTTL(cacheKey, denyItem, 10*time.Second)
 
 			for k, vv := range resp.Header {
