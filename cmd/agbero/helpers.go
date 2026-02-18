@@ -313,10 +313,15 @@ func showCertInfo(configPath string) {
 	}
 }
 
-func handleCertCommands(install, list, info bool) {
+func handleCertCommands(install, uninstall, list, info bool) {
 	installer := tlss.NewInstaller(logger)
 	if install {
-		if tlss.IsCARootInstalled() && !forceCAInstall {
+		global, err := loadConfig(configPath)
+		if err == nil && global.Storage.CertsDir != "" {
+			_ = installer.SetStorageDir(woos.NewFolder(global.Storage.CertsDir))
+		}
+		certDir := installer.CertDir.Path()
+		if tlss.IsCARootInstalled(certDir) && !forceCAInstall {
 			logger.Info("CA root certificate is already installed. Use --force to reinstall.")
 			return
 		}
@@ -324,6 +329,15 @@ func handleCertCommands(install, list, info bool) {
 		if err := installer.InstallCARootIfNeeded(); err != nil {
 			logger.Fatal("Failed to install CA: ", err)
 		}
+		logger.Info("CA root installed. Browsers should now trust localhost certificates.")
+		return
+	}
+	if uninstall {
+		logger.Info("Uninstalling CA root certificate...")
+		if err := installer.UninstallCARoot(); err != nil {
+			logger.Fatal("Failed to uninstall CA: ", err)
+		}
+		logger.Info("CA root uninstalled from system trust store.")
 		return
 	}
 	if list {

@@ -120,14 +120,16 @@ func main() {
 	// Certificate commands
 	cmdCert := flaggy.NewSubcommand("cert")
 	cmdCert.Description = "Manage TLS certificates"
-	cmdInstallCA := flaggy.NewSubcommand("install-ca")
+	cmdInstallCA := flaggy.NewSubcommand("install")
 	cmdInstallCA.Description = "Install CA certificate"
 	cmdInstallCA.Bool(&forceCAInstall, "f", "force", "Force reinstall")
-	cmdInstallCA.String(&caMethod, "m", "method", "Method: auto|mkcert|truststore")
+	cmdUninstallCA := flaggy.NewSubcommand("uninstall")
+	cmdUninstallCA.Description = "Uninstall CA certificate"
 	cmdListCerts := flaggy.NewSubcommand("list")
 	cmdCertInfo := flaggy.NewSubcommand("info")
 	cmdCertInfo.String(&certDir, "d", "dir", "Cert directory")
 	cmdCert.AttachSubcommand(cmdInstallCA, 1)
+	cmdCert.AttachSubcommand(cmdUninstallCA, 1)
 	cmdCert.AttachSubcommand(cmdListCerts, 1)
 	cmdCert.AttachSubcommand(cmdCertInfo, 1)
 
@@ -260,7 +262,7 @@ func main() {
 	// Subcommand Dispatchers
 	if cmdCert.Used {
 		configPath = resolvedPath
-		handleCertCommands(cmdInstallCA.Used, cmdListCerts.Used, cmdCertInfo.Used)
+		handleCertCommands(cmdInstallCA.Used, cmdUninstall.Used, cmdListCerts.Used, cmdCertInfo.Used)
 		return
 	}
 

@@ -30,6 +30,11 @@ func defaultGlobal(g *alaye.Global, configPath string) {
 		g.General.MaxHeaderBytes = alaye.DefaultMaxHeaderBytes
 	}
 
+	// Bind defaults
+	if g.Bind.Redirect == alaye.Unknown {
+		g.Bind.Redirect = alaye.Active
+	}
+
 	// Timeouts - auto-enable if any timeout configured, or apply defaults
 	defaultTimeout(&g.Timeouts)
 
@@ -213,6 +218,13 @@ func defaultLogging(l *alaye.Logging) {
 	}
 	if l.Victoria.BatchSize == 0 {
 		l.Victoria.BatchSize = DefaultVictoriaBatch
+	}
+
+	if l.Prometheus.Enabled == alaye.Unknown {
+		l.Prometheus.Enabled = alaye.Inactive
+	}
+	if l.Prometheus.Path == "" {
+		l.Prometheus.Path = "/metrics"
 	}
 }
 

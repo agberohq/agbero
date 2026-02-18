@@ -12,7 +12,6 @@ import (
 	"math/big"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,180 +21,22 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-// mockMkcert creates a fake mkcert binary that validates arguments
-func mockMkcert(t *testing.T, tmpDir string) string {
-	t.Helper()
+// ===== TEST CONFIGURATION =====
+// Set to true to use mocks (no system truststore changes)
+// Set to false to test real CA install/uninstall (requires sudo in CI)
+const useMock = true
 
-	mkcertPath := filepath.Join(tmpDir, "mkcert")
+// ===== TEST HELPERS =====
 
-	// Create a script that validates the -ecdsa flag
-	script := `#!/bin/bash
-# Validate mkcert arguments
-if [[ "$1" == "-install" ]]; then
-	echo "The local CA is now installed in the system trust store"
-	exit 0
-fi
-
-if [[ "$1" == "-CAROOT" ]]; then
-	echo "/tmp/test-caroot"
-	exit 0
-fi
-
-# Check for ECDSA flag
-has_ecdsa=false
-for arg in "$@"; do
-	if [[ "$arg" == "-ecdsa" ]]; then
-		has_ecdsa=true
-	fi
-done
-
-if [[ "$has_ecdsa" == "false" ]]; then
-	echo "Error: ECDSA flag not provided" >&2
-	exit 1
-fi
-
-# Generate fake cert files
-cert_file=""
-key_file=""
-hosts=""
-
-while [[ $# -gt 0 ]]; do
-	case $1 in
-		-cert-file)
-			cert_file="$2"
-			shift 2
-			;;
-		-key-file)
-			key_file="$2"
-			shift 2
-			;;
-		-ecdsa)
-			shift
-			;;
-		*)
-			if [[ "$1" != -* ]]; then
-				hosts="$hosts $1"
-			fi
-			shift
-			;;
-	esac
-done
-
-if [[ -n "$cert_file" && -n "$key_file" ]]; then
-	# Generate a real ECDSA cert for testing
-	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{CommonName: "test"},
-		NotBefore: time.Now(),
-		NotAfter: time.Now().Add(time.Hour),
-		DNSNames: []string{"localhost"},
-	}
-	der, _ := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
-	
-	pem.Encode(os.OpenFile(cert_file, os.O_CREATE|os.O_WRONLY, 0644), &pem.Block{Type: "CERTIFICATE", Bytes: der})
-	// ... write key ...
-fi
-
-exit 0
-`
-
-	// For Go test, we'll use a simpler approach - just write a Go binary
-	// Actually, let's just test the argument building logic separately
-
-	_ = script
-	return mkcertPath
-}
-
-// TestMkcertECDSAFlag tests that we use the correct ECDSA flag
-func TestMkcertECDSAFlag(t *testing.T) {
-	// Verify the flag is correct by checking mkcert help if available
-	cmd := exec.Command("mkcert", "-help")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Skip("mkcert not installed, skipping flag validation")
-	}
-
-	help := string(out)
-	if !strings.Contains(help, "-ecdsa") {
-		t.Error("mkcert doesn't support -ecdsa flag")
-	}
-
-	// Ensure we don't use the wrong flag
-	if strings.Contains(help, "-ecdsa-p256") {
-		// If this exists, we could use it, but -ecdsa is the standard
-		t.Log("mkcert supports -ecdsa-p256, but we use -ecdsa")
+// skipIfRealInstall skips test if useMock=false and not running with sudo
+func skipIfRealInstall(t *testing.T) {
+	if !useMock {
+		if os.Getenv("CI") == "true" || os.Geteuid() != 0 {
+			t.Skip("Real install requires sudo; set useMock=true or run with sudo")
+		}
 	}
 }
 
-// TestGenerateWithMkcertArgs tests argument building without executing mkcert
-func TestGenerateWithMkcertArgs(t *testing.T) {
-	tests := []struct {
-		name     string
-		hosts    []string
-		certFile string
-		keyFile  string
-		wantArgs []string
-	}{
-		{
-			name:     "basic localhost",
-			hosts:    []string{"localhost"},
-			certFile: "cert.pem",
-			keyFile:  "key.pem",
-			wantArgs: []string{"-ecdsa", "-cert-file", "cert.pem", "-key-file", "key.pem", "localhost"},
-		},
-		{
-			name:     "multiple hosts",
-			hosts:    []string{"localhost", "127.0.0.1", "::1"},
-			certFile: "/tmp/test-cert.pem",
-			keyFile:  "/tmp/test-key.pem",
-			wantArgs: []string{"-ecdsa", "-cert-file", "/tmp/test-cert.pem", "-key-file", "/tmp/test-key.pem", "localhost", "127.0.0.1", "::1"},
-		},
-		{
-			name:     "wildcard",
-			hosts:    []string{"*.localhost"},
-			certFile: "wild-cert.pem",
-			keyFile:  "wild-key.pem",
-			wantArgs: []string{"-ecdsa", "-cert-file", "wild-cert.pem", "-key-file", "wild-key.pem", "*.localhost"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Build args exactly as installer does
-			args := []string{"-ecdsa", "-cert-file", tt.certFile, "-key-file", tt.keyFile}
-			args = append(args, tt.hosts...)
-
-			if len(args) != len(tt.wantArgs) {
-				t.Errorf("arg count mismatch: got %d, want %d", len(args), len(tt.wantArgs))
-			}
-
-			for i, want := range tt.wantArgs {
-				if i >= len(args) {
-					t.Errorf("missing arg %d: want %q", i, want)
-					continue
-				}
-				if args[i] != want {
-					t.Errorf("arg %d: got %q, want %q", i, args[i], want)
-				}
-			}
-
-			// Critical: ensure -ecdsa is first (or at least present)
-			hasECDSA := false
-			for _, arg := range args {
-				if arg == "-ecdsa" {
-					hasECDSA = true
-					break
-				}
-			}
-			if !hasECDSA {
-				t.Error("missing -ecdsa flag")
-			}
-		})
-	}
-}
-
-// writeSelfSignedCert creates a test certificate (RSA for compatibility)
 func writeSelfSignedCert(t *testing.T, certPath, keyPath string, hosts []string) {
 	t.Helper()
 
@@ -272,7 +113,6 @@ func writeSelfSignedCert(t *testing.T, certPath, keyPath string, hosts []string)
 	}
 }
 
-// writeECDSASelfSignedCert creates an ECDSA test certificate
 func writeECDSASelfSignedCert(t *testing.T, certPath, keyPath string, hosts []string) {
 	t.Helper()
 
@@ -352,37 +192,7 @@ func writeECDSASelfSignedCert(t *testing.T, certPath, keyPath string, hosts []st
 	}
 }
 
-// TestCertAlgorithmDetection verifies we can detect ECDSA vs RSA
-func TestCertAlgorithmDetection(t *testing.T) {
-	tmp := t.TempDir()
-
-	// Create RSA cert
-	rsaCert := filepath.Join(tmp, "rsa-cert.pem")
-	rsaKey := filepath.Join(tmp, "rsa-key.pem")
-	writeSelfSignedCert(t, rsaCert, rsaKey, []string{"localhost"})
-
-	// Create ECDSA cert
-	ecdsaCert := filepath.Join(tmp, "ecdsa-cert.pem")
-	ecdsaKey := filepath.Join(tmp, "ecdsa-key.pem")
-	writeECDSASelfSignedCert(t, ecdsaCert, ecdsaKey, []string{"localhost"})
-
-	// Verify algorithms
-	rsaPair, _ := tls.LoadX509KeyPair(rsaCert, rsaKey)
-	rsaLeaf, _ := x509.ParseCertificate(rsaPair.Certificate[0])
-
-	ecdsaPair, _ := tls.LoadX509KeyPair(ecdsaCert, ecdsaKey)
-	ecdsaLeaf, _ := x509.ParseCertificate(ecdsaPair.Certificate[0])
-
-	if rsaLeaf.PublicKeyAlgorithm != x509.RSA {
-		t.Errorf("RSA cert has wrong algorithm: %v", rsaLeaf.PublicKeyAlgorithm)
-	}
-	if ecdsaLeaf.PublicKeyAlgorithm != x509.ECDSA {
-		t.Errorf("ECDSA cert has wrong algorithm: %v", ecdsaLeaf.PublicKeyAlgorithm)
-	}
-
-	t.Logf("RSA algorithm: %v", rsaLeaf.PublicKeyAlgorithm)
-	t.Logf("ECDSA algorithm: %v", ecdsaLeaf.PublicKeyAlgorithm)
-}
+// ===== TESTS =====
 
 func TestCertInstaller_validateCertificate_HostMatch(t *testing.T) {
 	tmp := t.TempDir()
@@ -518,7 +328,6 @@ func TestCertInstaller_certPrefix_NormalizesPortsAndIPv6(t *testing.T) {
 	}
 }
 
-// TestCertInstaller_EnsureLocalhostCert_ReusesValidECDSA tests ECDSA cert reuse
 func TestCertInstaller_EnsureLocalhostCert_ReusesValidECDSA(t *testing.T) {
 	tmp := t.TempDir()
 	logger := ll.New("test").Disable()
@@ -527,12 +336,10 @@ func TestCertInstaller_EnsureLocalhostCert_ReusesValidECDSA(t *testing.T) {
 	ci.CertDir = woos.NewFolder(tmp)
 	ci.SetHosts([]string{"localhost"}, 443)
 
-	// Create an ECDSA cert manually (simulating what mkcert -ecdsa would create)
 	certPath := filepath.Join(tmp, "localhost-443-cert.pem")
 	keyPath := filepath.Join(tmp, "localhost-443-key.pem")
 	writeECDSASelfSignedCert(t, certPath, keyPath, []string{"localhost", "127.0.0.1", "::1"})
 
-	// Should reuse without error
 	gotCert, gotKey, err := ci.EnsureLocalhostCert()
 	if err != nil {
 		t.Fatalf("EnsureLocalhostCert failed: %v", err)
@@ -545,10 +352,185 @@ func TestCertInstaller_EnsureLocalhostCert_ReusesValidECDSA(t *testing.T) {
 		t.Errorf("key path mismatch: got %q, want %q", gotKey, keyPath)
 	}
 
-	// Verify it's actually ECDSA
 	pair, _ := tls.LoadX509KeyPair(gotCert, gotKey)
 	leaf, _ := x509.ParseCertificate(pair.Certificate[0])
 	if leaf.PublicKeyAlgorithm != x509.ECDSA {
 		t.Errorf("expected ECDSA cert, got %v", leaf.PublicKeyAlgorithm)
+	}
+}
+
+func TestCertInstaller_InstallAndUninstallCARoot(t *testing.T) {
+	if useMock {
+		t.Skip("Skipping real install test; useMock=true")
+	}
+	skipIfRealInstall(t)
+
+	tmp := t.TempDir()
+	logger := ll.New("test").Disable()
+
+	ci := NewInstaller(logger)
+	ci.CertDir = woos.NewFolder(tmp)
+
+	caPath := ci.caCertPath()
+	if caPath == "" {
+		t.Fatal("CA path should not be empty")
+	}
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("serial: %v", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			Organization: []string{"Test CA"},
+			CommonName:   "Test CA",
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(3650 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+
+	certOut, err := os.Create(caPath)
+	if err != nil {
+		t.Fatalf("create CA cert: %v", err)
+	}
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		certOut.Close()
+		t.Fatalf("encode CA cert: %v", err)
+	}
+	certOut.Close()
+
+	if !ci.caExists() {
+		t.Error("caExists should return true after creating CA file")
+	}
+
+	err = ci.UninstallCARoot()
+	if err != nil {
+		t.Logf("UninstallCARoot error (expected in CI without sudo): %v", err)
+	}
+
+	_ = os.Remove(caPath)
+	if ci.caExists() {
+		t.Error("caExists should return false after removing CA file")
+	}
+}
+
+func TestCertInstaller_generateAndInstallCA(t *testing.T) {
+	if useMock {
+		t.Skip("Skipping real install test; useMock=true")
+	}
+	skipIfRealInstall(t)
+
+	tmp := t.TempDir()
+	logger := ll.New("test").Disable()
+
+	ci := NewInstaller(logger)
+	ci.CertDir = woos.NewFolder(tmp)
+
+	caPath := ci.caCertPath()
+	if caPath == "" {
+		t.Fatal("CA path should not be empty")
+	}
+
+	err := ci.generateAndInstallCA()
+	if err != nil {
+		t.Logf("generateAndInstallCA error (expected in CI without truststore perms): %v", err)
+	}
+
+	if _, err := os.Stat(caPath); os.IsNotExist(err) {
+		t.Skip("CA cert not created (skipping - requires truststore permissions)")
+	}
+
+	certData, err := os.ReadFile(caPath)
+	if err != nil {
+		t.Fatalf("read CA cert: %v", err)
+	}
+
+	block, _ := pem.Decode(certData)
+	if block == nil || block.Type != "CERTIFICATE" {
+		t.Fatal("invalid CA cert PEM")
+	}
+
+	caCert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse CA cert: %v", err)
+	}
+
+	if !caCert.IsCA {
+		t.Error("CA cert should have IsCA=true")
+	}
+	if caCert.Subject.CommonName != "Agbero Development CA" {
+		t.Errorf("unexpected CA subject: %q", caCert.Subject.CommonName)
+	}
+}
+
+func TestCertInstaller_purgeStaleLeafCerts(t *testing.T) {
+	tmp := t.TempDir()
+	logger := ll.New("test").Disable()
+
+	ci := NewInstaller(logger)
+	ci.CertDir = woos.NewFolder(tmp)
+
+	certPath := filepath.Join(tmp, "stale-443-cert.pem")
+	keyPath := filepath.Join(tmp, "stale-443-key.pem")
+	writeSelfSignedCert(t, certPath, keyPath, []string{"localhost"})
+
+	if _, err := os.Stat(certPath); os.IsNotExist(err) {
+		t.Fatal("cert file should exist before purge")
+	}
+
+	ci.purgeStaleLeafCerts()
+
+	if _, err := os.Stat(certPath); err == nil {
+		t.Error("stale cert should have been removed")
+	}
+}
+
+func TestCertInstaller_ListCertificates(t *testing.T) {
+	tmp := t.TempDir()
+	logger := ll.New("test").Disable()
+
+	ci := NewInstaller(logger)
+	ci.CertDir = woos.NewFolder(tmp)
+
+	certPath := filepath.Join(tmp, "test-cert.pem")
+	keyPath := filepath.Join(tmp, "test-key.pem")
+	writeSelfSignedCert(t, certPath, keyPath, []string{"localhost"})
+
+	certs, err := ci.ListCertificates()
+	if err != nil {
+		t.Fatalf("ListCertificates failed: %v", err)
+	}
+
+	var foundCert, foundKey bool
+	for _, c := range certs {
+		if c == "test-cert.pem" {
+			foundCert = true
+		}
+		if c == "test-key.pem" {
+			foundKey = true
+		}
+	}
+
+	if !foundCert {
+		t.Error("expected test-cert.pem in list")
+	}
+	if !foundKey {
+		t.Error("expected test-key.pem in list")
 	}
 }

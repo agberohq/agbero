@@ -27,6 +27,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/firewall"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/h3"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/memory"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/observability"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/recovery"
@@ -98,7 +99,6 @@ func (s *Server) Start(configPath string) error {
 	if s.global == nil {
 		return woos.ErrGlobalConfigRequired
 	}
-
 	if s.logger == nil {
 		s.logger = ll.New(woos.Name).Enable()
 	}
@@ -131,6 +131,11 @@ func (s *Server) Start(configPath string) error {
 		"cert_dir", s.global.Storage.CertsDir,
 		"data_dir", s.global.Storage.DataDir,
 	).Info("directories initialized")
+
+	if err := s.validateTLSConfig(); err != nil {
+		s.logger.Fatal(err)
+		return err
+	}
 
 	s.reaper = jack.NewReaper(
 		woos.RouteCacheTTL,
@@ -691,7 +696,7 @@ func (s *Server) startQUICServer(
 }
 
 func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) http.Handler {
-	h := next
+	h := memory.Middleware(next)
 
 	if advertiseH3 {
 		h = h3.AdvertiseHTTP3(port)(h)
@@ -706,7 +711,10 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 		h = s.ipMiddleware.Handler(h)
 	}
 
-	h = observability.Prometheus(s.hostManager)(h)
+	if s.global.Logging.Prometheus.Enabled.Active() {
+		h = observability.Prometheus(s.hostManager)(h)
+	}
+
 	h = recovery.New(s.logger)(h)
 	return h
 }
@@ -801,6 +809,47 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 	}
 
 	return tlsCfg, httpHandler, nil
+}
+
+func (s *Server) validateTLSConfig() error {
+	// Only validate for localhost/dev modes
+	if !s.global.Development {
+		return nil
+	}
+
+	// Check HTTPS bindings
+	for _, addr := range s.global.Bind.HTTPS {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			continue
+		}
+		// Skip non-localhost bindings (production)
+		if !woos.IsLocalhost(host) && host != "" && host != "0.0.0.0" && host != "::" {
+			continue
+		}
+
+		// Check if any host uses auto/local TLS
+		hosts, _ := s.hostManager.LoadAll()
+		for _, h := range hosts {
+			for _, bindPort := range h.Bind {
+				if bindPort == port {
+					switch h.TLS.Mode {
+					case alaye.ModeLocalAuto, alaye.ModeLocalCert:
+						// Validate CA is installed
+						certDir := woos.MakeFolder(s.global.Storage.CertsDir, woos.CertDir)
+						if !tlss.IsCARootInstalled(certDir.Path()) {
+							return errors.Newf(
+								"HTTPS binding on %s requires local CA. Run: agbero cert install",
+								addr,
+							)
+						}
+					}
+					break
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Server) logRequest(host string, r *http.Request, start time.Time, status int, bytes int64) {
@@ -1025,6 +1074,19 @@ func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 		host = r.Host
 	}
 
+	// Check if this request has an owner (host-specific config)
+	if owner, ok := r.Context().Value(woos.OwnerKey).(*alaye.Host); ok && owner != nil {
+		// Use host-specific HTTPS bind if available
+		for _, bindPort := range owner.Bind {
+			if bindPort != "" {
+				target := fmt.Sprintf("https://%s:%s%s", host, bindPort, r.URL.RequestURI())
+				http.Redirect(w, r, target, http.StatusMovedPermanently)
+				return
+			}
+		}
+	}
+
+	// Fallback to global config
 	targetPort := woos.DefaultHTTPSPortInt
 	if len(s.global.Bind.HTTPS) > 0 {
 		_, port, err := net.SplitHostPort(s.global.Bind.HTTPS[0])
@@ -1032,14 +1094,12 @@ func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 			targetPort = port
 		}
 	}
-
 	var target string
 	if targetPort == woos.DefaultHTTPSPortInt {
 		target = fmt.Sprintf("https://%s%s", host, r.URL.RequestURI())
 	} else {
 		target = fmt.Sprintf("https://%s:%s%s", host, targetPort, r.URL.RequestURI())
 	}
-
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
 }
 

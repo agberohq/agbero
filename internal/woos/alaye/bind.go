@@ -8,13 +8,18 @@ import (
 )
 
 type Bind struct {
-	HTTP  []string `hcl:"http,optional" json:"http"`
-	HTTPS []string `hcl:"https,optional" json:"https"`
+	HTTP     []string `hcl:"http,optional" json:"http"`
+	HTTPS    []string `hcl:"https,optional" json:"https"`
+	Redirect Enabled  `hcl:"redirect,optional" json:"redirect"`
 }
 
 func (b *Bind) Validate() error {
 	if len(b.HTTP) == 0 && len(b.HTTPS) == 0 {
 		return ErrNoBindAddresses
+	}
+
+	if b.Redirect == Unknown {
+		b.Redirect = Active
 	}
 
 	for i, addr := range b.HTTP {
