@@ -369,9 +369,6 @@ func (m *Manager) GetCertificateForPort(chi *tls.ClientHelloInfo, port string) (
 	return nil, woos.ErrCertNotfound
 }
 
-// GetConfigForClient returns a complete TLS config with session resumption
-// Use this instead of GetCertificate for optimal performance
-// manager.go - Updated GetConfigForClient without deprecated field
 func (m *Manager) GetConfigForClient(chi *tls.ClientHelloInfo) (*tls.Config, error) {
 	if chi == nil || strings.TrimSpace(chi.ServerName) == "" {
 		return nil, errors.New("missing SNI")
