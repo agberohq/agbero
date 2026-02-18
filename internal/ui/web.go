@@ -16,9 +16,10 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/cache"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"github.com/dustin/go-humanize"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/mappo"
 	"github.com/yookoala/gofast"
 )
 
@@ -27,7 +28,7 @@ var webHtml string
 var (
 	tmpl = template.Must(template.New("web").Parse(webHtml))
 
-	gzExistsCache = cache.New(cache.Options{
+	gzExistsCache = mappo.NewCache(mappo.CacheOptions{
 		MaximumSize: woos.CacheMax,
 	})
 
@@ -384,7 +385,7 @@ func (h *web) gzMayExist(gzPath string) bool {
 	if !ok {
 		return true
 	}
-	v, ok := cache.Get[bool](it)
+	v, ok := zulu.GetCache[bool](it)
 	if !ok {
 		return true
 	}
@@ -392,7 +393,7 @@ func (h *web) gzMayExist(gzPath string) bool {
 }
 
 func (h *web) gzSetExists(gzPath string, exists bool) {
-	gzExistsCache.StoreTTL(gzPath, &cache.Item{Value: exists}, gzCacheTTL)
+	gzExistsCache.StoreTTL(gzPath, &mappo.Item{Value: exists}, gzCacheTTL)
 }
 
 func (h *web) setCommonHeaders(

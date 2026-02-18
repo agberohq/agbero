@@ -16,11 +16,11 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/cache"
 	"github.com/caddyserver/certmagic"
 	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/mappo"
 )
 
 type Manager struct {
@@ -48,7 +48,7 @@ type Manager struct {
 	sessionCache tls.ClientSessionCache
 
 	// Config cache using your cache package
-	configCache *cache.Cache
+	configCache *mappo.Cache
 }
 
 func NewManager(logger *ll.Logger, hostManager *discovery.Host, global *alaye.Global) *Manager {
@@ -63,8 +63,8 @@ func NewManager(logger *ll.Logger, hostManager *discovery.Host, global *alaye.Gl
 		LocalCache:   make(map[string]*tls.Certificate),
 		watchList:    make(map[string]func()),
 		watcher:      watcher,
-		sessionCache: tls.NewLRUClientSessionCache(10000),         // 10k sessions
-		configCache:  cache.New(cache.Options{MaximumSize: 1000}), // 1000 host configs
+		sessionCache: tls.NewLRUClientSessionCache(10000),                   // 10k sessions
+		configCache:  mappo.NewCache(mappo.CacheOptions{MaximumSize: 1000}), // 1000 host configs
 	}
 
 	go m.globalWatchLoop()
@@ -378,7 +378,7 @@ func (m *Manager) GetConfigForClient(chi *tls.ClientHelloInfo) (*tls.Config, err
 	}
 
 	if cached, ok := m.configCache.Load(sni); ok {
-		config, valid := cache.Get[*tls.Config](cached)
+		config, valid := zulu.GetCache[*tls.Config](cached)
 		if valid && config != nil {
 			if len(config.Certificates) > 0 {
 				cert := config.Certificates[0]
@@ -425,7 +425,7 @@ func (m *Manager) GetConfigForClient(chi *tls.ClientHelloInfo) (*tls.Config, err
 		DynamicRecordSizingDisabled: false,
 	}
 
-	m.configCache.Store(sni, &cache.Item{
+	m.configCache.Store(sni, &mappo.Item{
 		Value: config,
 	})
 
@@ -464,7 +464,7 @@ func (m *Manager) ClearCache() {
 	m.LocalCache = make(map[string]*tls.Certificate)
 
 	// Clear config cache too
-	m.configCache = cache.New(cache.Options{MaximumSize: 1000})
+	m.configCache = mappo.NewCache(mappo.CacheOptions{MaximumSize: 1000})
 
 	m.logger.Info("TLS certificate cache cleared")
 }

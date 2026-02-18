@@ -31,7 +31,6 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/recovery"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/wasm"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/parser"
 	tlss2 "git.imaxinacion.net/aibox/agbero/internal/pkg/tlss"
@@ -39,6 +38,7 @@ import (
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/mappo"
 	"github.com/quic-go/quic-go/http3"
 )
 
@@ -946,9 +946,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	res := router.Find(r.URL.Path)
 	if res.Route != nil {
-		rw := &responseWrapper{ResponseWriter: w, statusCode: 200}
+		rw := &zulu.ResponseWriter{ResponseWriter: w, StatusCode: 200}
 		s.handleRoute(rw, r, res.Route)
-		s.logRequest(host, r, start, rw.statusCode, rw.bytesWritten)
+		s.logRequest(host, r, start, rw.StatusCode, rw.BytesWritten)
 		return
 	}
 
@@ -1028,12 +1028,12 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handler
 	}
 
 	h := handlers.NewRoute(s.global, route, s.logger)
-	newItem := &cache.Item{
+	newItem := &mappo.Item{
 		Value: h,
 	}
 
 	if it, loaded := zulu.Route.LoadOrStore(key, newItem); loaded {
-		h.Close()
+		h.Close() // Close duplicate
 		if existing, ok := it.Value.(*handlers.Route); ok {
 			s.reaper.Touch(key)
 			return existing
@@ -1135,34 +1135,4 @@ func (s *Server) computeFullConfigSHA() (string, error) {
 	}
 
 	return hex.EncodeToString(hasher.Sum(nil)), nil
-}
-
-type responseWrapper struct {
-	http.ResponseWriter
-	statusCode   int
-	bytesWritten int64
-	wroteHeader  bool
-}
-
-func (rw *responseWrapper) WriteHeader(statusCode int) {
-	if !rw.wroteHeader {
-		rw.statusCode = statusCode
-		rw.wroteHeader = true
-	}
-	rw.ResponseWriter.WriteHeader(statusCode)
-}
-
-func (rw *responseWrapper) Write(b []byte) (int, error) {
-	if !rw.wroteHeader {
-		rw.WriteHeader(http.StatusOK)
-	}
-	n, err := rw.ResponseWriter.Write(b)
-	rw.bytesWritten += int64(n)
-	return n, err
-}
-
-func (rw *responseWrapper) Flush() {
-	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
 }

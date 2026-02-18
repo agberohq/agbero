@@ -75,23 +75,34 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, globalFallb
 		}
 		backends = append(backends, b)
 	}
+
+	// Resolve fallback configuration (Route > Global)
+	fallbackCfg := resolveFallback(&route.Fallback, globalFallback)
+	var fallbackHandler http.Handler
+	if fallbackCfg.IsActive() {
+		fallbackHandler = buildFallbackHandler(fallbackCfg, logger)
+	}
+
 	if len(backends) == 0 {
-		fallback := resolveFallback(&route.Fallback, globalFallback)
-		if fallback.IsActive() {
-			logger.Fields("path", route.Path, "fallback_type", fallback.Type).Info("using fallback handler")
+		if fallbackHandler != nil {
+			logger.Fields("path", route.Path, "fallback_type", fallbackCfg.Type).Info("using fallback handler (no valid backends)")
 			return &Route{
-				handler:  buildFallbackHandler(fallback, logger),
+				handler:  fallbackHandler,
 				Backends: nil,
 			}
 		}
 		logger.Fields("path", route.Path, "configured", len(route.Backends.Servers)).Warn("proxy route has no valid backends")
 		return FallbackRoute("proxy route missing backends")
 	}
+
 	timeout := time.Duration(0)
 	if route.Timeouts.Request != 0 {
 		timeout = route.Timeouts.Request
 	}
-	loadBalancer := xhttp.NewBalancer(backends, route.Backends.Strategy, timeout, route.StripPrefixes)
+
+	// Pass fallbackHandler to balancer
+	loadBalancer := xhttp.NewBalancer(backends, route.Backends.Strategy, timeout, route.StripPrefixes, fallbackHandler)
+
 	var chain http.Handler = loadBalancer
 	if len(route.AllowedIPs) > 0 {
 		chain = ipallow.New(route.AllowedIPs, logger)(chain)

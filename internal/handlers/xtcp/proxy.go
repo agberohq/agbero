@@ -13,9 +13,9 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/mappo"
 	"github.com/pires/go-proxyproto"
 )
 
@@ -96,7 +96,7 @@ func (p *Proxy) Start() error {
 		return err
 	}
 
-	zulu.TCP.Store(p.Listen, &cache.Item{Value: p})
+	zulu.TCP.Store(p.Listen, &mappo.Item{Value: p})
 
 	p.wg.Add(1)
 	go func() {

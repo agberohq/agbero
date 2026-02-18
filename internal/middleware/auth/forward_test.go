@@ -13,7 +13,7 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	cache2 "git.imaxinacion.net/aibox/agbero/internal/pkg/cache"
+	"github.com/olekukonko/mappo"
 )
 
 // Clear caches between tests
@@ -22,9 +22,9 @@ func clearTestCaches() {
 	defer cacheMu.Unlock()
 	for name, c := range authCaches {
 		// Clear all entries by creating new cache
-		authCaches[name] = cache2.New(cache2.Options{
+		authCaches[name] = mappo.NewCache(mappo.CacheOptions{
 			MaximumSize: 1000,
-			OnDelete:    cache2.CloserDelete,
+			OnDelete:    mappo.CloserDelete,
 		})
 		_ = c // old cache will be GC'd
 	}

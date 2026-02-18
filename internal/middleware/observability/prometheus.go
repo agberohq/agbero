@@ -1,7 +1,6 @@
 package observability
 
 import (
-	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -75,51 +74,13 @@ func Prometheus(hm *discovery.Host) func(http.Handler) http.Handler {
 			activeConnections.WithLabelValues(host).Inc()
 			defer activeConnections.WithLabelValues(host).Dec()
 
-			rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			rw := &zulu.ResponseWriter{ResponseWriter: w, StatusCode: http.StatusOK}
 			next.ServeHTTP(rw, r)
 
 			duration := time.Since(start).Seconds()
-			statusCode := strconv.Itoa(rw.statusCode)
-
-			httpRequestsTotal.WithLabelValues(host, r.Method, statusCode).Inc()
+			httpRequestsTotal.WithLabelValues(host, r.Method, strconv.Itoa(rw.StatusCode)).Inc()
 			httpRequestDuration.WithLabelValues(host, r.Method).Observe(duration)
 			lastRequestTimestamp.WithLabelValues(host).Set(float64(time.Now().Unix()))
 		})
 	}
-}
-
-type responseWriter struct {
-	http.ResponseWriter
-	statusCode int
-	written    bool
-}
-
-func (rw *responseWriter) WriteHeader(code int) {
-	if !rw.written {
-		rw.statusCode = code
-		rw.written = true
-		rw.ResponseWriter.WriteHeader(code)
-	}
-}
-
-func (rw *responseWriter) Write(b []byte) (int, error) {
-	if !rw.written {
-		// If Write is called without WriteHeader, Go assumes 200 OK
-		rw.WriteHeader(http.StatusOK)
-	}
-	// Pass directly to underlying writer. Do not buffer.
-	return rw.ResponseWriter.Write(b)
-}
-
-func (rw *responseWriter) Flush() {
-	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-func (rw *responseWriter) ReadFrom(r io.Reader) (n int64, err error) {
-	if rf, ok := rw.ResponseWriter.(io.ReaderFrom); ok {
-		return rf.ReadFrom(r)
-	}
-	return io.Copy(rw.ResponseWriter, r)
 }

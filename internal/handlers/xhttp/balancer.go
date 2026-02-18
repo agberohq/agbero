@@ -19,10 +19,11 @@ type Balancer struct {
 	timeout     time.Duration
 	stripPrefix []string
 	strategy    string
+	fallback    http.Handler
 }
 
 // NewBalancer creates a configured balancer chain (Selector -> Adaptive -> Sticky).
-func NewBalancer(backends []*Backend, strategy string, timeout time.Duration, stripPrefixes []string) *Balancer {
+func NewBalancer(backends []*Backend, strategy string, timeout time.Duration, stripPrefixes []string, fallback http.Handler) *Balancer {
 	wrapped := make([]lb.Backend, 0, len(backends))
 	for _, b := range backends {
 		if b != nil {
@@ -59,6 +60,7 @@ func NewBalancer(backends []*Backend, strategy string, timeout time.Duration, st
 		timeout:     timeout,
 		stripPrefix: append([]string(nil), stripPrefixes...),
 		strategy:    strategy,
+		fallback:    fallback,
 	}
 }
 
@@ -77,6 +79,10 @@ func (b *Balancer) Update(list []*Backend) {
 func (b *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	be := b.Pick(r)
 	if be == nil {
+		if b.fallback != nil {
+			b.fallback.ServeHTTP(w, r)
+			return
+		}
 		http.Error(w, "no healthy backends", http.StatusBadGateway)
 		return
 	}

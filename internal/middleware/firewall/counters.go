@@ -1,97 +1,73 @@
 package firewall
 
 import (
-	"sync"
 	"time"
 
-	"github.com/cespare/xxhash/v2"
+	"github.com/olekukonko/jack"
+	"github.com/olekukonko/mappo"
 )
-
-const shardCount = 64
 
 type counterItem struct {
 	count    int64
 	expireAt time.Time
 }
 
-type counterShard struct {
-	mu    sync.Mutex
-	items map[string]*counterItem
-}
-
 type Counters struct {
-	shards [shardCount]*counterShard
-	stop   chan struct{}
+	data      *mappo.Sharded[string, *counterItem]
+	scheduler *jack.Scheduler
 }
 
 func NewCounters() *Counters {
 	c := &Counters{
-		stop: make(chan struct{}),
+		data: mappo.NewSharded[string, *counterItem](),
 	}
-	for i := 0; i < shardCount; i++ {
-		c.shards[i] = &counterShard{
-			items: make(map[string]*counterItem),
-		}
-	}
-	go c.janitor()
+
+	// Use jack scheduler for cleanup
+	sched, _ := jack.NewScheduler("fw-counters-gc", jack.NewPool(1), jack.Routine{
+		Interval: 1 * time.Minute,
+	})
+
+	_ = sched.Do(jack.Do(c.cleanup))
+	c.scheduler = sched
+
 	return c
 }
 
 func (c *Counters) Stop() {
-	close(c.stop)
+	if c.scheduler != nil {
+		_ = c.scheduler.Stop()
+	}
+	c.data.Clear()
 }
+
+// internal/middleware/firewall/counters.go
 
 func (c *Counters) Increment(ruleID, key string, window time.Duration) int64 {
 	fullKey := ruleID + "|" + key
-	hash := xxhash.Sum64String(fullKey)
-	shard := c.shards[hash%shardCount]
-
 	now := time.Now()
 
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-
-	item, exists := shard.items[fullKey]
-	if !exists || now.After(item.expireAt) {
-		shard.items[fullKey] = &counterItem{
-			count:    1,
-			expireAt: now.Add(window),
+	item := c.data.Compute(fullKey, func(curr *counterItem, exists bool) (*counterItem, bool) {
+		if !exists || now.After(curr.expireAt) {
+			return &counterItem{
+				count:    1,
+				expireAt: now.Add(window),
+			}, true
 		}
-		return 1
-	}
+		// Create NEW item to be safe with CAS / concurrency
+		// Modifying 'curr' in place is unsafe if other readers have it
+		next := &counterItem{
+			count:    curr.count + 1,
+			expireAt: curr.expireAt,
+		}
+		return next, true
+	})
 
-	item.count++
 	return item.count
 }
 
-func (c *Counters) janitor() {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-c.stop:
-			for i := range c.shards {
-				shard := c.shards[i]
-				shard.mu.Lock()
-				shard.items = make(map[string]*counterItem)
-				shard.mu.Unlock()
-			}
-			return
-		case <-ticker.C:
-			now := time.Now()
-			var removed int
-			for _, shard := range c.shards {
-				shard.mu.Lock()
-				for k, v := range shard.items {
-					if now.After(v.expireAt) {
-						delete(shard.items, k)
-						removed++
-					}
-				}
-				shard.mu.Unlock()
-			}
-			if removed > 0 {
-			}
-		}
-	}
+func (c *Counters) cleanup() {
+	now := time.Now()
+	c.data.ClearIf(func(k string, v *counterItem) bool {
+		return now.After(v.expireAt)
+	})
 }

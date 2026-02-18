@@ -86,8 +86,12 @@ func writeSelfSignedCert(t *testing.T, certPath, keyPath string, hosts []string)
 		t.Fatalf("create key: %v", err)
 	}
 	defer keyOut.Close()
-	keyBytes := x509.MarshalPKCS1PrivateKey(priv)
-	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes}); err != nil {
+
+	keyBytes, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatalf("marshal private key: %v", err)
+	}
+	if err := pem.Encode(keyOut, &pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes}); err != nil {
 		t.Fatalf("encode key: %v", err)
 	}
 }
@@ -147,12 +151,65 @@ func writeECDSASelfSignedCert(t *testing.T, certPath, keyPath string, hosts []st
 		t.Fatalf("create key: %v", err)
 	}
 	defer keyOut.Close()
-	keyBytes, err := x509.MarshalECPrivateKey(priv)
+
+	keyBytes, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
 		t.Fatalf("marshal EC key: %v", err)
 	}
-	if err := pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes}); err != nil {
+	if err := pem.Encode(keyOut, &pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes}); err != nil {
 		t.Fatalf("encode key: %v", err)
+	}
+}
+
+func writeCACert(t *testing.T, dir string) {
+	t.Helper()
+	certPath := filepath.Join(dir, "ca-cert.pem")
+	keyPath := filepath.Join(dir, "ca-key.pem")
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey CA: %v", err)
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("serial CA: %v", err)
+	}
+	tpl := x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "Agbero Mock CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, &tpl, &tpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("CreateCertificate CA: %v", err)
+	}
+
+	certOut, err := os.Create(certPath)
+	if err != nil {
+		t.Fatalf("create CA cert file: %v", err)
+	}
+	defer certOut.Close()
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
+		t.Fatalf("encode CA cert: %v", err)
+	}
+
+	keyOut, err := os.Create(keyPath)
+	if err != nil {
+		t.Fatalf("create CA key file: %v", err)
+	}
+	defer keyOut.Close()
+
+	keyBytes, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatalf("marshal CA key: %v", err)
+	}
+	if err := pem.Encode(keyOut, &pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes}); err != nil {
+		t.Fatalf("encode CA key: %v", err)
 	}
 }
 
@@ -266,6 +323,9 @@ func TestCertInstaller_EnsureLocalhostCert_ReusesValidECDSA(t *testing.T) {
 	ci.CertDir = woos.NewFolder(tmp)
 	ci.SetHosts([]string{"localhost"}, 443)
 	ci.mockMode = true
+
+	// Ensure CA exists because EnsureLocalhostCert tries to load it
+	writeCACert(t, tmp)
 
 	certPath := filepath.Join(tmp, "localhost-443-cert.pem")
 	keyPath := filepath.Join(tmp, "localhost-443-key.pem")

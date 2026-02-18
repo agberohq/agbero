@@ -4,12 +4,12 @@ import (
 	"net/http"
 	"path"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
-	"github.com/cespare/xxhash/v2"
+	"github.com/olekukonko/jack"
+	"github.com/olekukonko/mappo"
 	"golang.org/x/time/rate"
 )
 
@@ -36,46 +36,48 @@ func (p RatePolicy) limiter() *rate.Limiter {
 
 type ipEntry struct {
 	lim      *rate.Limiter
-	lastSeen atomic.Int64 // atomic to avoid lock contention on updates
-}
-
-type rateShard struct {
-	mu sync.RWMutex // RWMutex for better read concurrency
-	m  map[string]*ipEntry
+	lastSeen atomic.Int64
 }
 
 type RateLimiter struct {
-	shards     []rateShard
+	data       *mappo.Sharded[string, *ipEntry]
 	policy     func(r *http.Request) (bucket string, pol RatePolicy, ok bool)
-	ttl        int64 // store as nanoseconds to avoid conversion
-	maxEntries int64
-	size       atomic.Int64
-	stopCh     chan struct{}
+	ttl        int64 // nanoseconds
+	maxEntries int
+	scheduler  *jack.Scheduler
 }
 
 func NewRateLimiter(ttl time.Duration, maxEntries int64, policy func(r *http.Request) (bucket string, pol RatePolicy, ok bool)) *RateLimiter {
-	const shardCount = 256 // Increased from 64 for less contention
 	rl := &RateLimiter{
-		shards:     make([]rateShard, shardCount),
+		data:       mappo.NewShardedWithConfig[string, *ipEntry](mappo.ShardedConfig{ShardCount: 256}),
 		policy:     policy,
 		ttl:        ttl.Nanoseconds(),
-		maxEntries: maxEntries,
-		stopCh:     make(chan struct{}),
+		maxEntries: int(maxEntries),
 	}
-	for i := range rl.shards {
-		rl.shards[i].m = make(map[string]*ipEntry)
-	}
+
 	if rl.ttl <= 0 {
 		rl.ttl = 30 * time.Minute.Nanoseconds()
 	}
 	if rl.maxEntries <= 0 {
 		rl.maxEntries = 100_000
 	}
-	go rl.sweeper()
+
+	// Start Janitor using jack.Scheduler
+	sched, _ := jack.NewScheduler("ratelimit-gc", jack.NewPool(1), jack.Routine{
+		Interval: 5 * time.Minute,
+	})
+	_ = sched.Do(jack.Do(rl.sweeper))
+	rl.scheduler = sched
+
 	return rl
 }
 
-func (rl *RateLimiter) Close() { close(rl.stopCh) }
+func (rl *RateLimiter) Close() {
+	if rl.scheduler != nil {
+		_ = rl.scheduler.Stop()
+	}
+	rl.data.Clear()
+}
 
 func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 	if rl == nil || rl.policy == nil {
@@ -90,7 +92,6 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 			return
 		}
 
-		// Avoid copying the request - pass URL directly if needed
 		bucketName, pol, ok := rl.policy(r)
 		if !ok || pol.Requests <= 0 {
 			next.ServeHTTP(w, r)
@@ -100,57 +101,36 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 		key := rl.extractKey(r, pol.KeySpec)
 		fullKey := bucketName + ":" + key
 
-		// Fast path: try read lock first
-		idx := xxhash.Sum64String(fullKey) % uint64(len(rl.shards))
-		sh := &rl.shards[idx]
+		now := time.Now().UnixNano()
 
-		sh.mu.RLock()
-		e := sh.m[fullKey]
-		if e != nil {
-			// Update lastSeen atomically without write lock
-			e.lastSeen.Store(time.Now().UnixNano())
-			allowed := e.lim.Allow()
-			sh.mu.RUnlock()
-			if !allowed {
-				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
-				return
+		// Atomic Get-Or-Create-Or-Update
+		entry := rl.data.Compute(fullKey, func(curr *ipEntry, exists bool) (*ipEntry, bool) {
+			if exists {
+				// Update existing timestamp
+				curr.lastSeen.Store(now)
+				return curr, true
 			}
-			next.ServeHTTP(w, r)
-			return
-		}
-		sh.mu.RUnlock()
-
-		// Slow path: need to create entry
-		sh.mu.Lock()
-		// Double-check after acquiring write lock
-		e = sh.m[fullKey]
-		if e != nil {
-			e.lastSeen.Store(time.Now().UnixNano())
-			allowed := e.lim.Allow()
-			sh.mu.Unlock()
-			if !allowed {
-				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
-				return
+			// Enforce size limit
+			// Note: rl.data.Len() is an estimate, but safer than iterating shards inside a lock
+			if rl.data.Len() >= rl.maxEntries {
+				return nil, false
 			}
-			next.ServeHTTP(w, r)
-			return
-		}
+			return &ipEntry{
+				lim:      pol.limiter(),
+				lastSeen: atomic.Int64{}, // Will set below, or initialize here
+			}, true
+		})
 
-		// Check size limit with relaxed check (may exceed slightly)
-		if rl.size.Load() >= rl.maxEntries {
-			sh.mu.Unlock()
+		if entry == nil {
 			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			return
 		}
 
-		e = &ipEntry{lim: pol.limiter()}
-		e.lastSeen.Store(time.Now().UnixNano())
-		sh.m[fullKey] = e
-		rl.size.Add(1)
-		allowed := e.lim.Allow()
-		sh.mu.Unlock()
+		if entry.lastSeen.Load() == 0 {
+			entry.lastSeen.Store(now)
+		}
 
-		if !allowed {
+		if !entry.lim.Allow() {
 			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			return
 		}
@@ -160,12 +140,9 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 }
 
 func (rl *RateLimiter) extractKey(r *http.Request, keySpec string) string {
-	// Fast path: empty spec = IP
 	if keySpec == "" {
 		return clientip.ClientIP(r)
 	}
-
-	// Avoid ToLower - use case-sensitive prefix match
 	if len(keySpec) > 7 && keySpec[:7] == "header:" {
 		return r.Header.Get(keySpec[7:])
 	}
@@ -174,42 +151,14 @@ func (rl *RateLimiter) extractKey(r *http.Request, keySpec string) string {
 			return c.Value
 		}
 	}
-
 	return clientip.ClientIP(r)
 }
 
 func (rl *RateLimiter) sweeper() {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-rl.stopCh:
-			for i := range rl.shards {
-				sh := &rl.shards[i]
-				sh.mu.Lock()
-				sh.m = make(map[string]*ipEntry)
-				sh.mu.Unlock()
-			}
-			rl.size.Store(0)
-			return
-		case <-ticker.C:
-			now := time.Now().UnixNano()
-			cutoff := now - rl.ttl
-			var removed int64
-			for i := range rl.shards {
-				sh := &rl.shards[i]
-				sh.mu.Lock()
-				for k, e := range sh.m {
-					if e.lastSeen.Load() < cutoff {
-						delete(sh.m, k)
-						removed++
-					}
-				}
-				sh.mu.Unlock()
-			}
-			if removed > 0 {
-				rl.size.Add(-removed)
-			}
-		}
-	}
+	now := time.Now().UnixNano()
+	cutoff := now - rl.ttl
+
+	rl.data.ClearIf(func(key string, e *ipEntry) bool {
+		return e.lastSeen.Load() < cutoff
+	})
 }

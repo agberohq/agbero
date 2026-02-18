@@ -9,6 +9,7 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/mappo"
 	"go.etcd.io/bbolt"
 )
 
@@ -16,10 +17,30 @@ var bucketName = []byte("firewall_rules")
 
 type RuleIterator func(Rule) bool
 
+type opType int
+
+const (
+	opAdd opType = iota
+	opRemove
+)
+
+type operation struct {
+	Type opType
+	Key  string
+	Rule Rule
+}
+
 type Store struct {
 	db     *bbolt.DB
 	logger *ll.Logger
 	wg     sync.WaitGroup
+
+	// In-memory cache for O(1) lookups using mappo
+	cache *mappo.Sharded[string, Rule]
+
+	// Async write buffer
+	writeCh chan operation
+	quit    chan struct{}
 }
 
 func NewStore(dataDir woos.Folder, logger *ll.Logger) (*Store, error) {
@@ -34,6 +55,7 @@ func NewStore(dataDir woos.Folder, logger *ll.Logger) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open firewall db: %w", err)
 	}
+
 	err = db.Update(func(tx *bbolt.Tx) error {
 		_, err := tx.CreateBucketIfNotExists(bucketName)
 		return err
@@ -42,48 +64,29 @@ func NewStore(dataDir woos.Folder, logger *ll.Logger) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, logger: logger}, nil
+
+	s := &Store{
+		db:      db,
+		logger:  logger,
+		cache:   mappo.NewSharded[string, Rule](),
+		writeCh: make(chan operation, 1000), // Buffer bursts
+		quit:    make(chan struct{}),
+	}
+
+	if err := s.loadToMemory(); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	s.wg.Add(1)
+	go s.persistLoop()
+
+	return s, nil
 }
 
-func (s *Store) Close() error {
-	s.wg.Wait()
-	return s.db.Close()
-}
-
-func (s *Store) Add(r Rule) error {
-	return s.db.Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket(bucketName)
-		val, err := json.Marshal(r)
-		if err != nil {
-			return err
-		}
-		return b.Put([]byte(r.IP), val)
-	})
-}
-
-func (s *Store) Remove(ip string) error {
-	return s.db.Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket(bucketName)
-		return b.Delete([]byte(ip))
-	})
-}
-
-func (s *Store) GetBan(ip string) (*Rule, error) {
-	var r Rule
-	err := s.db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket(bucketName)
-		v := b.Get([]byte(ip))
-		if v == nil {
-			return fmt.Errorf("not found")
-		}
-		return json.Unmarshal(v, &r)
-	})
-	return &r, err
-}
-
-func (s *Store) IterateActive(iter RuleIterator) error {
-	var expiredKeys [][]byte
-	err := s.db.View(func(tx *bbolt.Tx) error {
+// loadToMemory populates the cache on startup
+func (s *Store) loadToMemory() error {
+	return s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket(bucketName)
 		if b == nil {
 			return nil
@@ -94,80 +97,96 @@ func (s *Store) IterateActive(iter RuleIterator) error {
 			if err := json.Unmarshal(v, &r); err != nil {
 				continue
 			}
-			if r.IsExpired() {
-				kc := make([]byte, len(k))
-				copy(kc, k)
-				expiredKeys = append(expiredKeys, kc)
-				continue
-			}
-			if !iter(r) {
-				break
+			if !r.IsExpired() {
+				s.cache.Set(string(k), r)
 			}
 		}
 		return nil
 	})
+}
 
-	// Delete within same transaction scope using Update
-	if len(expiredKeys) > 0 {
-		err = s.db.Update(func(tx *bbolt.Tx) error {
-			b := tx.Bucket(bucketName)
-			if b == nil {
-				return nil
-			}
-			for _, k := range expiredKeys {
-				// Re-check expiration before delete (defense against race)
-				v := b.Get(k)
-				if v != nil {
-					var r Rule
-					if json.Unmarshal(v, &r) == nil && r.IsExpired() {
-						_ = b.Delete(k)
-					}
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			s.logger.Fields("err", err).Error("failed to delete expired rules")
-		}
+func (s *Store) Close() error {
+	close(s.quit)
+	s.wg.Wait()
+	return s.db.Close()
+}
+
+// Add updates memory immediately and queues persistence
+func (s *Store) Add(r Rule) error {
+	s.cache.Set(r.IP, r)
+	select {
+	case s.writeCh <- operation{Type: opAdd, Key: r.IP, Rule: r}:
+	default:
+		s.logger.Warn("firewall write buffer full, persistence delayed")
 	}
-	return err
+	return nil
+}
+
+// Remove updates memory immediately and queues persistence
+func (s *Store) Remove(ip string) error {
+	s.cache.Delete(ip)
+	select {
+	case s.writeCh <- operation{Type: opRemove, Key: ip}:
+	default:
+		s.logger.Warn("firewall write buffer full, persistence delayed")
+	}
+	return nil
+}
+
+// GetBan checks memory cache (Fast path)
+func (s *Store) GetBan(ip string) (*Rule, error) {
+	if r, ok := s.cache.Get(ip); ok {
+		return &r, nil
+	}
+	return nil, fmt.Errorf("not found")
+}
+
+func (s *Store) IterateActive(iter RuleIterator) error {
+	s.cache.ForEach(func(k string, r Rule) bool {
+		if r.IsExpired() {
+			return true // Skip but continue
+		}
+		return iter(r)
+	})
+	return nil
 }
 
 func (s *Store) LoadAll() ([]Rule, error) {
 	var active []Rule
-	err := s.IterateActive(func(r Rule) bool {
+	s.IterateActive(func(r Rule) bool {
 		active = append(active, r)
 		return true
 	})
-	return active, err
+	return active, nil
 }
 
 func (s *Store) Clear() error {
+	s.cache.Clear()
+	// Sync clear DB
 	return s.db.Update(func(tx *bbolt.Tx) error {
-		// Delete the bucket
 		if err := tx.DeleteBucket(bucketName); err != nil {
 			if err == bbolt.ErrBucketNotFound {
 				return nil
 			}
 			return err
 		}
-		// Recreate it empty
 		_, err := tx.CreateBucket(bucketName)
 		return err
 	})
 }
 
 func (s *Store) PruneExpired() (int, error) {
-	count := 0
-	var toDelete [][]byte
+	// 1. Clean memory
+	removed := s.cache.ClearIf(func(key string, r Rule) bool {
+		return r.IsExpired()
+	})
 
-	// 1. Scan for expired keys (Read-Only View)
-	err := s.db.View(func(tx *bbolt.Tx) error {
+	// 2. Queue generic DB cleanup via transaction
+	err := s.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket(bucketName)
 		if b == nil {
 			return nil
 		}
-
 		c := b.Cursor()
 		for k, v := c.First(); k != nil; k, v = c.Next() {
 			var r Rule
@@ -175,37 +194,67 @@ func (s *Store) PruneExpired() (int, error) {
 				continue
 			}
 			if r.IsExpired() {
-				// Copy key bytes because the cursor pointer is only valid inside this tx
-				keyCopy := make([]byte, len(k))
-				copy(keyCopy, k)
-				toDelete = append(toDelete, keyCopy)
+				_ = b.Delete(k)
 			}
 		}
 		return nil
 	})
 
-	if err != nil {
-		return 0, err
-	}
-	if len(toDelete) == 0 {
-		return 0, nil
-	}
+	return removed, err
+}
 
-	// 2. Delete them (Write Transaction)
-	err = s.db.Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket(bucketName)
-		if b == nil {
+// persistLoop handles batch writing to BoltDB
+func (s *Store) persistLoop() {
+	defer s.wg.Done()
+
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	var ops []operation
+
+	flush := func() {
+		if len(ops) == 0 {
+			return
+		}
+		err := s.db.Update(func(tx *bbolt.Tx) error {
+			b := tx.Bucket(bucketName)
+			for _, op := range ops {
+				switch op.Type {
+				case opAdd:
+					val, _ := json.Marshal(op.Rule)
+					if err := b.Put([]byte(op.Key), val); err != nil {
+						return err
+					}
+				case opRemove:
+					if err := b.Delete([]byte(op.Key)); err != nil {
+						return err
+					}
+				}
+			}
 			return nil
+		})
+		if err != nil {
+			s.logger.Fields("err", err).Error("failed to flush firewall rules to db")
 		}
-		for _, k := range toDelete {
-			if err := b.Delete(k); err == nil {
-				count++
-			}
-		}
-		return nil
-	})
+		// Clear slice keeping capacity
+		ops = ops[:0]
+	}
 
-	return count, err
+	for {
+		select {
+		case op := <-s.writeCh:
+			ops = append(ops, op)
+			// Flush if batch gets too big
+			if len(ops) >= 100 {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
+		case <-s.quit:
+			flush()
+			return
+		}
+	}
 }
 
 type BlockType uint8

@@ -14,9 +14,9 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/cache"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/mappo"
 )
 
 var (
@@ -173,6 +173,7 @@ func TestServer_buildGlobalRateLimiter(t *testing.T) {
 
 func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	s := &Server{
+		global: &alaye.Global{},
 		logger: testLogger,
 		reaper: jack.NewReaper(time.Minute),
 	}
@@ -186,7 +187,8 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 
 	handler := handlers.NewRoute(&alaye.Global{}, route, testLogger)
 
-	item := &cache.Item{
+	// Use mappo.Item
+	item := &mappo.Item{
 		Value: handler,
 	}
 	item.LastAccessed.Store(time.Now().UnixNano())
@@ -204,6 +206,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 
 func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 	s := &Server{
+		global: &alaye.Global{}, // Ensure global is not nil to prevent panic in NewRoute
 		logger: testLogger,
 		reaper: jack.NewReaper(time.Minute),
 	}
@@ -290,7 +293,6 @@ func TestServer_HandleRequest_WithHost(t *testing.T) {
 
 	hostFile := filepath.Join(hostsDir, "example.com.hcl")
 
-	// Create valid HCL for the test
 	content := `
 domains = ["example.com"]
 
@@ -311,7 +313,6 @@ route "/" {
 		t.Fatal(err)
 	}
 
-	// Create a complete Global config
 	globalCfg := &alaye.Global{
 		Bind: alaye.Bind{HTTP: []string{":8080"}},
 		Storage: alaye.Storage{
@@ -319,7 +320,6 @@ route "/" {
 			DataDir:  t.TempDir(),
 		},
 	}
-	// Apply defaults (Implicit Activation) to ensure struct validity
 	woos.DefaultApply(globalCfg, "")
 
 	s := &Server{
