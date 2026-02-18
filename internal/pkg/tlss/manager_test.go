@@ -239,7 +239,7 @@ func TestTlsManager_GetLocalCertificate_Success(t *testing.T) {
 	})
 
 	local := alaye.LocalCert{CertFile: certFile, KeyFile: keyFile}
-	cert, err := m.GetLocalCertificate(&local, "test.com")
+	cert, err := m.GetCertificateLocal(&local, "test.com")
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -259,7 +259,7 @@ func TestTlsManager_GetLocalCertificate_MissingFile(t *testing.T) {
 		CertFile: filepath.Join(tmpDir, "nonexistent.pem"),
 		KeyFile:  filepath.Join(tmpDir, "nonexistent.key"),
 	}
-	_, err := m.GetLocalCertificate(&local, "test.com")
+	_, err := m.GetCertificateLocal(&local, "test.com")
 	if err == nil {
 		t.Error("Expected error for missing files")
 	}
@@ -269,7 +269,7 @@ func TestTlsManager_GetLocalCertificate_EmptyPaths(t *testing.T) {
 	m := NewManager(testLogger, &discovery.Host{}, &alaye.Global{})
 
 	local := alaye.LocalCert{CertFile: "", KeyFile: ""}
-	_, err := m.GetLocalCertificate(&local, "test.com")
+	_, err := m.GetCertificateLocal(&local, "test.com")
 	if err == nil || !strings.Contains(err.Error(), "local tls requires") {
 		t.Errorf("Expected missing cert/key error, got %v", err)
 	}
@@ -308,12 +308,12 @@ func TestTlsManager_GetLocalCertificate_Caching(t *testing.T) {
 
 	local := alaye.LocalCert{CertFile: certFile, KeyFile: keyFile}
 
-	cert1, err := m.GetLocalCertificate(&local, "test.com")
+	cert1, err := m.GetCertificateLocal(&local, "test.com")
 	if err != nil {
 		t.Fatalf("First load failed: %v", err)
 	}
 
-	cert2, err := m.GetLocalCertificate(&local, "test.com")
+	cert2, err := m.GetCertificateLocal(&local, "test.com")
 	if err != nil {
 		t.Fatalf("Second load failed: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestTlsManager_InvalidateLocal(t *testing.T) {
 	local := alaye.LocalCert{CertFile: certFile, KeyFile: keyFile}
 	cacheKey := certFile + "|" + keyFile
 
-	_, err := m.GetLocalCertificate(&local, "test.com")
+	_, err := m.GetCertificateLocal(&local, "test.com")
 	if err != nil {
 		t.Fatalf("Failed to load certificate: %v", err)
 	}

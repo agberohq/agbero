@@ -42,8 +42,8 @@ func (r *Registry) GetOrRegister(key string) *BackendStats {
 	alive.Store(true)
 
 	s := &BackendStats{
-		Activity: NewActivityTracker(),
-		Health:   NewHealthTracker(),
+		Activity: NewActivity(),
+		Health:   NewHealth(),
 		Alive:    alive,
 	}
 	r.items[key] = s

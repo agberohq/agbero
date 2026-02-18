@@ -14,7 +14,7 @@ type Health struct {
 	lastSuccess         atomic.Int64
 }
 
-func NewHealthTracker() *Health {
+func NewHealth() *Health {
 	ht := &Health{}
 	ht.healthy.Store(true)
 	return ht

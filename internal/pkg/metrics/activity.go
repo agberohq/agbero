@@ -11,7 +11,7 @@ type Activity struct {
 	Latency  *Latency
 }
 
-func NewActivityTracker() *Activity {
+func NewActivity() *Activity {
 	return &Activity{
 		Latency: NewLatency(),
 	}

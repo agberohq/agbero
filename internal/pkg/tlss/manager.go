@@ -211,7 +211,7 @@ func (m *Manager) CmForHost(hcfg *alaye.Host) *certmagic.Config {
 	return m.cmProd
 }
 
-func (m *Manager) GetLocalCertificate(local *alaye.LocalCert, host string) (*tls.Certificate, error) {
+func (m *Manager) GetCertificateLocal(local *alaye.LocalCert, host string) (*tls.Certificate, error) {
 	certFile := strings.TrimSpace(local.CertFile)
 	keyFile := strings.TrimSpace(local.KeyFile)
 
@@ -243,7 +243,7 @@ func (m *Manager) GetLocalCertificate(local *alaye.LocalCert, host string) (*tls
 	return &cert, nil
 }
 
-func (m *Manager) GetAutoLocalCertificate(host string) (*tls.Certificate, error) {
+func (m *Manager) GetCertificateAutoLocal(host string) (*tls.Certificate, error) {
 	cacheKey := "auto|" + host
 
 	m.localMu.RLock()
@@ -273,17 +273,6 @@ func (m *Manager) GetAutoLocalCertificate(host string) (*tls.Certificate, error)
 	m.startLocalWatcher(cacheKey, certFile, keyFile, host)
 
 	return &cert, nil
-}
-
-func (m *Manager) invalidateLocal(cacheKey, host string) {
-	m.localMu.Lock()
-	delete(m.LocalCache, cacheKey)
-	m.localMu.Unlock()
-
-	// Also invalidate config cache since cert changed
-	m.configCache.Delete(host)
-
-	m.logger.Fields("host", host, "key", cacheKey).Info("local cert invalidated; will reload on next request")
 }
 
 func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -326,13 +315,13 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		if hcfg.TLS.Local.CertFile == "" || hcfg.TLS.Local.KeyFile == "" {
 			return nil, errors.Newf("%w %q", woos.ErrLocalCertMissingFiles, sni)
 		}
-		return m.GetLocalCertificate(&hcfg.TLS.Local, sni)
+		return m.GetCertificateLocal(&hcfg.TLS.Local, sni)
 
 	case alaye.ModeLocalAuto:
 		if !woos.IsLocalhost(sni) {
 			return nil, errors.Newf("%w (got %q)", woos.ErrLocalAutoNotAllowed, sni)
 		}
-		return m.GetAutoLocalCertificate(sni)
+		return m.GetCertificateAutoLocal(sni)
 
 	case alaye.ModeLetsEncrypt:
 		cm := m.CmForHost(hcfg)
@@ -362,6 +351,22 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 	default:
 		return nil, errors.Newf("%w: %q for host %q", woos.ErrUnknownTLSMode, mode, sni)
 	}
+}
+
+func (m *Manager) GetCertificateForPort(chi *tls.ClientHelloInfo, port string) (*tls.Certificate, error) {
+	if chi.ServerName != "" {
+		if cert, err := m.GetCertificate(chi); err == nil {
+			return cert, nil
+		}
+	}
+
+	hcfg := m.hostManager.GetByPort(port)
+	if hcfg != nil && len(hcfg.Domains) > 0 {
+		chi.ServerName = hcfg.Domains[0]
+		return m.GetCertificate(chi)
+	}
+
+	return nil, woos.ErrCertNotfound
 }
 
 // GetConfigForClient returns a complete TLS config with session resumption
@@ -432,6 +437,17 @@ func (m *Manager) GetConfigForClient(chi *tls.ClientHelloInfo) (*tls.Config, err
 	return config, nil
 }
 
+func (m *Manager) invalidateLocal(cacheKey, host string) {
+	m.localMu.Lock()
+	delete(m.LocalCache, cacheKey)
+	m.localMu.Unlock()
+
+	// Also invalidate config cache since cert changed
+	m.configCache.Delete(host)
+
+	m.logger.Fields("host", host, "key", cacheKey).Info("local cert invalidated; will reload on next request")
+}
+
 func (m *Manager) getCustomCACert(root string, host string) (*tls.Certificate, error) {
 	caCert, err := os.ReadFile(root)
 	if err != nil {
@@ -445,7 +461,7 @@ func (m *Manager) getCustomCACert(root string, host string) (*tls.Certificate, e
 		if hcfg.TLS.Local.CertFile == "" || hcfg.TLS.Local.KeyFile == "" {
 			return nil, errors.Newf("%w for host %q", woos.ErrCustomCALocalCertRequired, host)
 		}
-		return m.GetLocalCertificate(&hcfg.TLS.Local, host)
+		return m.GetCertificateLocal(&hcfg.TLS.Local, host)
 	}
 	return nil, errors.Newf("%w for host %q", woos.ErrUnknownHost, host)
 }
@@ -467,20 +483,4 @@ func (m *Manager) ClearCache() {
 	m.configCache = mappo.NewCache(mappo.CacheOptions{MaximumSize: 1000})
 
 	m.logger.Info("TLS certificate cache cleared")
-}
-
-func (m *Manager) GetCertificateForPort(chi *tls.ClientHelloInfo, port string) (*tls.Certificate, error) {
-	if chi.ServerName != "" {
-		if cert, err := m.GetCertificate(chi); err == nil {
-			return cert, nil
-		}
-	}
-
-	hcfg := m.hostManager.GetByPort(port)
-	if hcfg != nil && len(hcfg.Domains) > 0 {
-		chi.ServerName = hcfg.Domains[0]
-		return m.GetCertificate(chi)
-	}
-
-	return nil, woos.ErrCertNotfound
 }
