@@ -2,6 +2,8 @@ module git.imaxinacion.net/aibox/agbero
 
 go 1.26
 
+replace github.com/olekukonko/mappo => /Users/oleku/gopath/src/github.com/olekukonko/mappo
+
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
 	github.com/alecthomas/hcl v0.5.5
@@ -20,14 +22,16 @@ require (
 	github.com/kardianos/service v1.2.4
 	github.com/klauspost/compress v1.18.4
 	github.com/markbates/goth v1.82.0
-	github.com/maypok86/otter/v2 v2.3.0
 	github.com/olekukonko/errors v1.2.0
 	github.com/olekukonko/jack v0.0.0-20260211212132-ec50c2ab5be7
 	github.com/olekukonko/ll v0.1.7-0.20260213142606-cf309e29ab2a
+	github.com/olekukonko/mappo v0.0.0-20260218145932-d87e3dba3c5d
 	github.com/pires/go-proxyproto v0.11.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.59.0
+	github.com/r3labs/diff/v3 v3.0.2
 	github.com/shirou/gopsutil/v3 v3.24.5
+	github.com/smallstep/truststore v0.13.0
 	github.com/tetratelabs/wazero v1.11.0
 	github.com/yl2chen/cidranger v1.0.2
 	github.com/yookoala/gofast v0.8.0
@@ -73,6 +77,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
+	github.com/maypok86/otter/v2 v2.3.0 // indirect
 	github.com/mholt/acmez/v3 v3.1.4 // indirect
 	github.com/miekg/dns v1.1.70 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
@@ -81,7 +86,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
-	github.com/olekukonko/mappo v0.0.0-20260218145932-d87e3dba3c5d // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
@@ -89,11 +93,9 @@ require (
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/puzpuzpuz/xsync/v3 v3.5.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/r3labs/diff/v3 v3.0.2 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sean-/seed v0.0.0-20170313163322-e2103e2c3529 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
-	github.com/smallstep/truststore v0.13.0 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect

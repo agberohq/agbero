@@ -1,6 +1,7 @@
 package tlss
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -318,6 +319,7 @@ func (ci *Installer) loadCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	certPath := ci.caCertPath()
 	keyPath := ci.caKeyPath()
 
+	// Load and parse CA certificate
 	certData, err := os.ReadFile(certPath)
 	if err != nil {
 		return nil, nil, err
@@ -331,6 +333,7 @@ func (ci *Installer) loadCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 		return nil, nil, err
 	}
 
+	// Load and parse CA private key (dual-format support)
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, nil, err
@@ -339,9 +342,17 @@ func (ci *Installer) loadCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	if keyBlock == nil {
 		return nil, nil, errors.New("invalid CA key PEM")
 	}
-	caKey, err := x509.ParseECPrivateKey(keyBlock.Bytes)
+
+	// Use parsePrivateKey helper for PKCS#8 + SEC1 support
+	priv, err := parsePrivateKey(keyBlock.Bytes)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errors.Newf("parse CA private key: %w", err)
+	}
+
+	// Assert to ECDSA (as required by your codebase)
+	caKey, ok := priv.(*ecdsa.PrivateKey)
+	if !ok {
+		return nil, nil, errors.Newf("expected ECDSA key, got %T", priv)
 	}
 
 	return caCert, caKey, nil
@@ -546,4 +557,13 @@ func getLocalLANIPs() []string {
 		}
 	}
 	return ips
+}
+
+func parsePrivateKey(der []byte) (crypto.PrivateKey, error) {
+	// Try PKCS#8 first (RFC 5958, modern standard)
+	if key, err := x509.ParsePKCS8PrivateKey(der); err == nil {
+		return key, nil
+	}
+	// Fallback to SEC1 for ECDSA (legacy compatibility)
+	return x509.ParseECPrivateKey(der)
 }

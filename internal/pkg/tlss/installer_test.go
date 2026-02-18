@@ -162,55 +162,47 @@ func writeECDSASelfSignedCert(t *testing.T, certPath, keyPath string, hosts []st
 }
 
 func writeCACert(t *testing.T, dir string) {
-	t.Helper()
-	certPath := filepath.Join(dir, "ca-cert.pem")
-	keyPath := filepath.Join(dir, "ca-key.pem")
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate CA key: %v", err)
+	}
 
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("GenerateKey CA: %v", err)
-	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		t.Fatalf("serial CA: %v", err)
-	}
-	tpl := x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "Agbero Mock CA"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"Test CA"},
+			CommonName:   "Test CA",
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 	}
 
-	der, err := x509.CreateCertificate(rand.Reader, &tpl, &tpl, &priv.PublicKey, priv)
+	derBytes, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
 	if err != nil {
-		t.Fatalf("CreateCertificate CA: %v", err)
+		t.Fatalf("create CA cert: %v", err)
 	}
 
-	certOut, err := os.Create(certPath)
-	if err != nil {
-		t.Fatalf("create CA cert file: %v", err)
-	}
-	defer certOut.Close()
-	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
-		t.Fatalf("encode CA cert: %v", err)
-	}
+	certPath := filepath.Join(dir, "ca-cert.pem")
+	keyPath := filepath.Join(dir, "ca-key.pem")
 
-	keyOut, err := os.Create(keyPath)
-	if err != nil {
-		t.Fatalf("create CA key file: %v", err)
-	}
-	defer keyOut.Close()
+	_ = os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: derBytes,
+	}), 0644)
 
-	keyBytes, err := x509.MarshalPKCS8PrivateKey(priv)
+	// Use SEC1 format for ECDSA (matches production generateCAFilesOnly)
+	keyBytes, err := x509.MarshalECPrivateKey(priv)
 	if err != nil {
-		t.Fatalf("marshal CA key: %v", err)
+		t.Fatalf("marshal ECDSA key: %v", err)
 	}
-	if err := pem.Encode(keyOut, &pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes}); err != nil {
-		t.Fatalf("encode CA key: %v", err)
-	}
+	_ = os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{
+		Type:  "EC PRIVATE KEY",
+		Bytes: keyBytes,
+	}), 0600)
 }
 
 func TestCertInstaller_validateCertificate_HostMatch(t *testing.T) {
