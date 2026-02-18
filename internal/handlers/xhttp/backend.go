@@ -16,12 +16,12 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/xlib"
+	"git.imaxinacion.net/aibox/agbero/internal/core/xlib/pool"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 )
 
-var sharedBufferPool = xlib.NewBufferPool()
+var sharedBufferPool = pool.NewBufferPool()
 
 var hopHeaders = []string{
 	woos.HeaderKeyConnection,

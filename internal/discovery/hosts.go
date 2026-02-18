@@ -12,7 +12,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/matcher"
 	"git.imaxinacion.net/aibox/agbero/internal/core/parser"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/xlib"
+	"git.imaxinacion.net/aibox/agbero/internal/core/xfn"
 	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -256,7 +256,7 @@ func (hm *Host) addWatchRecursive(root string) error {
 }
 
 func (hm *Host) watchLoop() {
-	debouncedReload := xlib.Debounce(500*time.Millisecond, func() {
+	debouncedReload := xfn.Debounce(500*time.Millisecond, func() {
 		_ = hm.ReloadFull()
 	})
 
@@ -382,7 +382,7 @@ func (hm *Host) scanFromDisk() (map[string]*alaye.Host, struct{ TotalFiles int }
 }
 
 func (hm *Host) Get(hostname string) *alaye.Host {
-	hostname = xlib.NormalizeHost(hostname)
+	hostname = xfn.NormalizeHost(hostname)
 	if hostname == "" {
 		return nil
 	}
@@ -398,7 +398,7 @@ func (hm *Host) Get(hostname string) *alaye.Host {
 }
 
 func (hm *Host) GetRouter(hostname string) *matcher.Tree {
-	hostname = xlib.NormalizeHost(hostname)
+	hostname = xfn.NormalizeHost(hostname)
 	if hostname == "" {
 		return nil
 	}
@@ -466,7 +466,7 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 	}
 
 	// Normalize domain
-	domain = xlib.NormalizeHost(domain)
+	domain = xfn.NormalizeHost(domain)
 	if domain == "" {
 		return
 	}

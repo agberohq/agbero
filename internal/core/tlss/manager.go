@@ -15,7 +15,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/xlib"
+	"git.imaxinacion.net/aibox/agbero/internal/core/xfn"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"github.com/caddyserver/certmagic"
 	"github.com/fsnotify/fsnotify"
@@ -291,7 +291,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return nil, errors.New("missing SNI")
 	}
 
-	sni := xlib.NormalizeHost(chi.ServerName)
+	sni := xfn.NormalizeHost(chi.ServerName)
 	if sni == "" {
 		return nil, woos.ErrMissingSNI
 	}
@@ -372,7 +372,7 @@ func (m *Manager) GetConfigForClient(chi *tls.ClientHelloInfo) (*tls.Config, err
 		return nil, errors.New("missing SNI")
 	}
 
-	sni := xlib.NormalizeHost(chi.ServerName)
+	sni := xfn.NormalizeHost(chi.ServerName)
 	if sni == "" {
 		return nil, woos.ErrMissingSNI
 	}

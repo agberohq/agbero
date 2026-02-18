@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/xlib"
+	"git.imaxinacion.net/aibox/agbero/internal/core/xfn"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -66,7 +66,7 @@ func Prometheus(hm *discovery.Host) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			host := xlib.NormalizeHost(r.Host)
+			host := xfn.NormalizeHost(r.Host)
 
 			if hm.Get(host) == nil {
 				host = "unauthorized_or_unknown"

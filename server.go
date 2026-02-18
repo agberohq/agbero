@@ -22,7 +22,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/parser"
 	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/xlib"
+	"git.imaxinacion.net/aibox/agbero/internal/core/xfn"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery/gossip"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
@@ -304,7 +304,7 @@ func (s *Server) Start(configPath string) error {
 		go func(k string, server *http.Server) {
 			s.logger.Fields("bind", server.Addr, "key", k).Info("listener starting")
 			var err error
-			if xlib.IsServerKeyTLS(k) {
+			if xfn.IsServerKeyTLS(k) {
 				err = server.ListenAndServeTLS("", "")
 			} else {
 				err = server.ListenAndServe()
@@ -351,7 +351,7 @@ func (s *Server) Reload() {
 	}
 
 	if s.global.Logging.Diff.Active() {
-		for _, v := range xlib.Diff(s.global, global) {
+		for _, v := range xfn.Diff(s.global, global) {
 			s.logger.Debug(v)
 		}
 	}
@@ -622,7 +622,7 @@ func (s *Server) startTCPServer(
 		}
 	}
 
-	key := xlib.ServerKey(addr, isTLS)
+	key := xfn.ServerKey(addr, isTLS)
 	s.mu.Lock()
 	s.servers[key] = srv
 	s.mu.Unlock()
@@ -870,7 +870,7 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 	}
 
 	if s.global != nil && s.shouldLogUserAgent(r) {
-		fields = append(fields, "ua", xlib.Truncate(r.UserAgent(), 50))
+		fields = append(fields, "ua", xfn.Truncate(r.UserAgent(), 50))
 	}
 	s.logger.Fields(fields...).Info(r.Method)
 }
@@ -902,7 +902,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			host = woos.PrivateBindingHost
 		}
 	} else {
-		host = xlib.NormalizeHost(r.Host)
+		host = xfn.NormalizeHost(r.Host)
 		hcfg = s.hostManager.Get(host)
 	}
 

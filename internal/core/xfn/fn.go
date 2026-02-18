@@ -1,4 +1,4 @@
-package xlib
+package xfn
 
 import (
 	"fmt"
