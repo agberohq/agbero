@@ -4,9 +4,10 @@ import "time"
 
 // General Info
 const (
-	Name        = "agbero"
-	Display     = "agbero proxy"
-	Description = "High-performance reverse proxy / load balancer with TLS"
+	Name         = "agbero"
+	Organization = "aibox Systems"
+	Display      = "agbero proxy"
+	Description  = "High-performance reverse proxy / load balancer with TLS"
 )
 
 // Hosts & Network

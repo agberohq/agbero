@@ -178,29 +178,37 @@ func (ci *Installer) generateCAFilesOnly() error {
 	if err != nil {
 		return errors.Newf("generate CA key: %w", err)
 	}
+
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return errors.Newf("generate serial: %w", err)
 	}
+
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			Organization: []string{"Agbero Development CA"},
-			CommonName:   "Agbero Development CA",
+			Organization:       []string{woos.Organization},
+			OrganizationalUnit: []string{fmt.Sprintf("%s Development", woos.Name)},
+			CommonName:         fmt.Sprintf("%s %s Development CA", woos.Name, woos.Organization),
+			Country:            []string{"NG"},
 		},
 		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(3650 * 24 * time.Hour),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{},
 		BasicConstraintsValid: true,
 		IsCA:                  true,
+		MaxPathLen:            0,
 	}
+
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
 	if err != nil {
 		return errors.Newf("create CA cert: %w", err)
 	}
+
 	certPath := ci.caCertPath()
 	keyPath := ci.caKeyPath()
+
 	certOut, err := os.Create(certPath)
 	if err != nil {
 		return errors.Newf("create CA cert file: %w", err)
@@ -210,10 +218,12 @@ func (ci *Installer) generateCAFilesOnly() error {
 		return errors.Newf("encode CA cert: %w", err)
 	}
 	certOut.Close()
+
 	keyBytes, err := x509.MarshalECPrivateKey(priv)
 	if err != nil {
 		return errors.Newf("marshal CA key: %w", err)
 	}
+
 	keyOut, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return errors.Newf("create CA key file: %w", err)
@@ -223,6 +233,7 @@ func (ci *Installer) generateCAFilesOnly() error {
 		return errors.Newf("encode CA key: %w", err)
 	}
 	keyOut.Close()
+
 	return nil
 }
 
@@ -256,24 +267,33 @@ func (ci *Installer) generateLeaf(certFile, keyFile string) (string, string, err
 		return "", "", errors.Newf("generate serial: %w", err)
 	}
 
+	// Build SANs from hosts
+	var dnsNames []string
+	var ipAddresses []net.IP
+	for _, h := range ci.certHosts {
+		if ip := net.ParseIP(h); ip != nil {
+			ipAddresses = append(ipAddresses, ip)
+		} else {
+			dnsNames = append(dnsNames, h)
+		}
+	}
+
+	// CN for load balancer - not dynamic
+	commonName := fmt.Sprintf("%s Load Balancer - %s", woos.Name, woos.Organization)
+
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			Organization: []string{"Agbero Development"},
-			CommonName:   ci.certHosts[0],
+			Organization:       []string{woos.Organization},
+			OrganizationalUnit: []string{fmt.Sprintf("%s Development", woos.Name)},
+			CommonName:         commonName,
 		},
+		DNSNames:    dnsNames,
+		IPAddresses: ipAddresses,
 		NotBefore:   time.Now(),
-		NotAfter:    time.Now().Add(365 * 24 * time.Hour),
-		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		NotAfter:    time.Now().Add(2 * 365 * 24 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-
-	for _, h := range ci.certHosts {
-		if ip := net.ParseIP(h); ip != nil {
-			template.IPAddresses = append(template.IPAddresses, ip)
-		} else {
-			template.DNSNames = append(template.DNSNames, h)
-		}
 	}
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, caCert, &priv.PublicKey, caKey)
@@ -310,7 +330,7 @@ func (ci *Installer) generateLeaf(certFile, keyFile string) (string, string, err
 	}
 
 	if ci.logger != nil {
-		ci.logger.Fields("cert", certFile, "algo", "ECDSA").Info("Successfully generated certificates")
+		ci.logger.Fields("cert", certFile, "cn", commonName, "algo", "ECDSA").Info("Successfully generated certificates")
 	}
 	return certFile, keyFile, nil
 }
@@ -491,14 +511,6 @@ func (ci *Installer) purgeStaleLeafCerts() {
 	}
 }
 
-func ipStrings(ips []net.IP) []string {
-	out := make([]string, 0, len(ips))
-	for _, ip := range ips {
-		out = append(out, ip.String())
-	}
-	return out
-}
-
 func (ci *Installer) caExists() bool {
 	m := ci.caCertPath()
 	if m == "" {
@@ -520,6 +532,14 @@ func (ci *Installer) caKeyPath() string {
 		return ""
 	}
 	return filepath.Join(ci.CertDir.Path(), "ca-key.pem")
+}
+
+func ipStrings(ips []net.IP) []string {
+	out := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		out = append(out, ip.String())
+	}
+	return out
 }
 
 func normalizeHostForVerify(raw string) (string, bool) {
