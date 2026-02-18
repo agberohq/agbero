@@ -5,8 +5,8 @@ import (
 	"net"
 	"testing"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/security"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/hashicorp/memberlist"
 	"github.com/olekukonko/ll"
 )

@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/uptime"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/ui"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/crypto/bcrypt"
@@ -44,20 +44,6 @@ func (s *Server) startAdminServer() {
 
 	cfg := s.global.Admin
 	mux := http.NewServeMux()
-
-	mux.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasPrefix(r.URL.Path, "/admin") {
-				w.Header().Set("Content-Security-Policy",
-					"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
-						"img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'")
-				w.Header().Set("X-Content-Type-Options", "nosniff")
-				w.Header().Set("X-Frame-Options", "DENY")
-				w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-			}
-			next.ServeHTTP(w, r)
-		})
-	})
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -117,9 +103,23 @@ func (s *Server) startAdminServer() {
 		mux.Handle("/debug/pprof/allocs", protectBasic(pprof.Handler("allocs")))
 	}
 
+	// Wrap the mux with the middleware for setting security headers.
+	// Standard http.ServeMux lacks a Use method, so chain manually.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/admin") {
+			w.Header().Set("Content-Security-Policy",
+				"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
+					"img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		}
+		mux.ServeHTTP(w, r)
+	})
+
 	srv := &http.Server{
 		Addr:         cfg.Address,
-		Handler:      mux,
+		Handler:      handler, // Use the wrapped handler.
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  120 * time.Second,

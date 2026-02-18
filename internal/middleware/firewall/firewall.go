@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/ll"
 	"github.com/yl2chen/cidranger"
 )

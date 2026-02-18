@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 )
 
 const configDir = ".oppor"

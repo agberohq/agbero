@@ -1,4 +1,4 @@
-package core
+package xlib
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"github.com/r3labs/diff/v3"
 )
 

@@ -12,7 +12,7 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/setup"
 	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/jack"

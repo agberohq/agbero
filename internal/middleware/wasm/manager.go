@@ -6,7 +6,7 @@ import (
 	"os"
 	"sync"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"github.com/olekukonko/ll"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 )
 
 func (e *Engine) handleAction(w http.ResponseWriter, r *http.Request, rule alaye.Rule, ruleName, reason string) {

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 )
 
 // DefaultApply applies all defaults to global configuration

@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"strings"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/retry"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"github.com/cenkalti/backoff/v4"
 	"github.com/hashicorp/memberlist"
 )

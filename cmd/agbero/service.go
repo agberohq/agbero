@@ -7,8 +7,8 @@ import (
 	"runtime"
 
 	"git.imaxinacion.net/aibox/agbero"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll/lx"

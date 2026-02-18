@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 )
 
 var rngPool = sync.Pool{

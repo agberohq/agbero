@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 )
 
 // --- paths ---

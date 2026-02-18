@@ -9,12 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"github.com/olekukonko/ll"
 )
 
 var testLogger = ll.New("test").Disable()
+var global = &alaye.Global{}
 
 func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 	// 1. Create 2 dummy backends
@@ -40,7 +41,7 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 	}
 
 	// 3. Init Handler
-	h := NewRoute(route, nil, testLogger)
+	h := NewRoute(global, route, testLogger)
 	defer h.Close()
 
 	// 4. Test Round Robin (Should oscillate)
@@ -86,7 +87,7 @@ func TestRouteHandler_Proxy_RateLimit(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, nil, testLogger)
+	h := NewRoute(global, route, testLogger)
 	defer h.Close()
 
 	// First request (allowed)
@@ -132,7 +133,7 @@ func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, nil, testLogger)
+	h := NewRoute(global, route, testLogger)
 	defer h.Close()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -154,7 +155,7 @@ func TestRouteHandler_Proxy_NoHealthyBackends(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, nil, testLogger)
+	h := NewRoute(global, route, testLogger)
 	defer h.Close()
 
 	// Manually mark dead for test immediate response
@@ -190,7 +191,7 @@ func TestRouteHandler_Proxy_Timeout(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, nil, testLogger)
+	h := NewRoute(global, route, testLogger)
 	defer h.Close()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -221,7 +222,7 @@ func TestRouteHandler_Proxy_StripPrefix(t *testing.T) {
 		StripPrefixes: []string{"/api"},
 	}
 
-	h := NewRoute(route, nil, testLogger)
+	h := NewRoute(global, route, testLogger)
 	defer h.Close()
 
 	// Simulate what handleRoute does: strip prefix before calling handler
@@ -255,7 +256,7 @@ func TestRouteHandler_Web_BasicFileServing(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, nil, testLogger)
+	h := NewRoute(global, route, testLogger)
 
 	// Test index file
 	req := httptest.NewRequest("GET", "/", nil)
@@ -305,7 +306,7 @@ func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, nil, testLogger)
+	h := NewRoute(global, route, testLogger)
 
 	// Request with gzip support
 	req := httptest.NewRequest("GET", "/style.css", nil)
@@ -345,7 +346,7 @@ func TestRouteHandler_Web_CustomIndex(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, nil, testLogger)
+	h := NewRoute(global, route, testLogger)
 
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
@@ -373,7 +374,7 @@ func TestRouteHandler_Web_MethodNotAllowed(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, nil, testLogger)
+	h := NewRoute(global, route, testLogger)
 
 	req := httptest.NewRequest("POST", "/", nil)
 	w := httptest.NewRecorder()
@@ -399,7 +400,7 @@ func TestRouteHandler_Web_DirectoryWithoutIndex(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, nil, testLogger)
+	h := NewRoute(global, route, testLogger)
 
 	req := httptest.NewRequest(http.MethodGet, "/subdir/", nil)
 	w := httptest.NewRecorder()
@@ -428,7 +429,7 @@ func TestRouteHandler_Web_PathTraversalPrevented(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, nil, testLogger)
+	h := NewRoute(global, route, testLogger)
 
 	// Try to traverse outside the root
 	req := httptest.NewRequest("GET", "/files/../../../"+filepath.Base(outsideFile), nil)
@@ -471,7 +472,7 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(route, nil, testLogger)
+	h := NewRoute(global, route, testLogger)
 
 	req := httptest.NewRequest("GET", "/test.txt", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -562,7 +563,7 @@ func TestRouteHandler_Validation(t *testing.T) {
 				tt.prepare(t, tt.route)
 			}
 
-			h := NewRoute(tt.route, nil, testLogger)
+			h := NewRoute(global, tt.route, testLogger)
 			if h == nil {
 				t.Fatal("handler must never be nil")
 			}

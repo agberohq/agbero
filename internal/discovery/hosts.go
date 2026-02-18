@@ -8,10 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core"
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/matcher"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/parser"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/xlib"
 	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -255,7 +256,7 @@ func (hm *Host) addWatchRecursive(root string) error {
 }
 
 func (hm *Host) watchLoop() {
-	debouncedReload := core.Debounce(500*time.Millisecond, func() {
+	debouncedReload := xlib.Debounce(500*time.Millisecond, func() {
 		_ = hm.ReloadFull()
 	})
 
@@ -381,7 +382,7 @@ func (hm *Host) scanFromDisk() (map[string]*alaye.Host, struct{ TotalFiles int }
 }
 
 func (hm *Host) Get(hostname string) *alaye.Host {
-	hostname = core.NormalizeHost(hostname)
+	hostname = xlib.NormalizeHost(hostname)
 	if hostname == "" {
 		return nil
 	}
@@ -397,7 +398,7 @@ func (hm *Host) Get(hostname string) *alaye.Host {
 }
 
 func (hm *Host) GetRouter(hostname string) *matcher.Tree {
-	hostname = core.NormalizeHost(hostname)
+	hostname = xlib.NormalizeHost(hostname)
 	if hostname == "" {
 		return nil
 	}
@@ -465,7 +466,7 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 	}
 
 	// Normalize domain
-	domain = core.NormalizeHost(domain)
+	domain = xlib.NormalizeHost(domain)
 	if domain == "" {
 		return
 	}
@@ -604,7 +605,7 @@ func (hm *Host) rebuildLookupLocked() {
 
 func (hm *Host) loadOne(path string) (*alaye.Host, error) {
 	var hostConfig alaye.Host
-	parser := core.NewParser(path)
+	parser := parser.NewParser(path)
 	if err := parser.Unmarshal(&hostConfig); err != nil {
 		return nil, err
 	}

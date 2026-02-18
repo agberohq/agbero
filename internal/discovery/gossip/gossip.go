@@ -5,9 +5,9 @@ import (
 	"log"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/security"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"github.com/hashicorp/memberlist"
 	"github.com/olekukonko/ll"
 )

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"sync"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"github.com/cespare/xxhash/v2"
 )
 

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"github.com/olekukonko/errors"
 	"golang.org/x/crypto/bcrypt"
 )

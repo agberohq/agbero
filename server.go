@@ -16,10 +16,13 @@ import (
 	"sync"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core"
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
+	"git.imaxinacion.net/aibox/agbero/internal/core/parser"
 	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/xlib"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery/gossip"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
@@ -33,8 +36,6 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/recovery"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/wasm"
 	"git.imaxinacion.net/aibox/agbero/internal/ui"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -303,7 +304,7 @@ func (s *Server) Start(configPath string) error {
 		go func(k string, server *http.Server) {
 			s.logger.Fields("bind", server.Addr, "key", k).Info("listener starting")
 			var err error
-			if core.IsServerKeyTLS(k) {
+			if xlib.IsServerKeyTLS(k) {
 				err = server.ListenAndServeTLS("", "")
 			} else {
 				err = server.ListenAndServe()
@@ -342,7 +343,7 @@ func (s *Server) Reload() {
 		"to", sha[:12],
 	).Infof("configuration changed")
 
-	global, err := core.LoadGlobal(s.configPath)
+	global, err := parser.LoadGlobal(s.configPath)
 	if err != nil {
 		s.logger.Fields("err", err, "config_path", s.configPath).
 			Error("reload config failed")
@@ -350,7 +351,7 @@ func (s *Server) Reload() {
 	}
 
 	if s.global.Logging.Diff.Active() {
-		for _, v := range core.Diff(s.global, global) {
+		for _, v := range xlib.Diff(s.global, global) {
 			s.logger.Debug(v)
 		}
 	}
@@ -621,7 +622,7 @@ func (s *Server) startTCPServer(
 		}
 	}
 
-	key := core.ServerKey(addr, isTLS)
+	key := xlib.ServerKey(addr, isTLS)
 	s.mu.Lock()
 	s.servers[key] = srv
 	s.mu.Unlock()
@@ -869,7 +870,7 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 	}
 
 	if s.global != nil && s.shouldLogUserAgent(r) {
-		fields = append(fields, "ua", core.Truncate(r.UserAgent(), 50))
+		fields = append(fields, "ua", xlib.Truncate(r.UserAgent(), 50))
 	}
 	s.logger.Fields(fields...).Info(r.Method)
 }
@@ -901,7 +902,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			host = woos.PrivateBindingHost
 		}
 	} else {
-		host = core.NormalizeHost(r.Host)
+		host = xlib.NormalizeHost(r.Host)
 		hcfg = s.hostManager.Get(host)
 	}
 

@@ -13,15 +13,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core"
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/xlib"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 )
 
-var sharedBufferPool = core.NewBufferPool()
+var sharedBufferPool = xlib.NewBufferPool()
 
 var hopHeaders = []string{
 	woos.HeaderKeyConnection,

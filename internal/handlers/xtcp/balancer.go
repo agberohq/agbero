@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/lb"
 	"git.imaxinacion.net/aibox/agbero/internal/core/metrics"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 )
 
 type Balancer struct {

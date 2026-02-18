@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/cache"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
@@ -183,7 +183,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	}
 	key := route.Key()
 
-	handler := handlers.NewRoute(route, nil, testLogger)
+	handler := handlers.NewRoute(&alaye.Global{}, route, testLogger)
 
 	item := &cache.Item{
 		Value: handler,
@@ -192,7 +192,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 
 	cache.Route.Store(key, item)
 
-	h := s.getOrBuildRouteHandler(route, key, nil)
+	h := s.getOrBuildRouteHandler(route, key)
 	if h != handler {
 		t.Error("Cache miss unexpectedly")
 	}
@@ -215,7 +215,7 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 
 	cache.Route.Delete(route.Key())
 
-	h := s.getOrBuildRouteHandler(route, route.Key(), nil)
+	h := s.getOrBuildRouteHandler(route, route.Key())
 	if h == nil {
 		t.Error("Handler should be created on cache miss")
 	}

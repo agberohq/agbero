@@ -1,9 +1,9 @@
-package core
+package xlib
 
 import (
 	"sync"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 )
 
 type BufferPool struct {

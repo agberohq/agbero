@@ -13,12 +13,12 @@ import (
 	"syscall"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core"
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/parser"
 	"git.imaxinacion.net/aibox/agbero/internal/core/security"
 	"git.imaxinacion.net/aibox/agbero/internal/core/tlss"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/woos/alaye"
 	"github.com/dustin/go-humanize"
 	"github.com/integrii/flaggy"
 	"golang.org/x/crypto/bcrypt"
@@ -179,7 +179,7 @@ func reloadService(configFile string) error {
 }
 
 func loadConfig(configFile string) (*alaye.Global, error) {
-	global, err := core.LoadGlobal(configFile)
+	global, err := parser.LoadGlobal(configFile)
 	if err != nil {
 		return nil, err
 	}

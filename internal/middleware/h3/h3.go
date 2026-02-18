@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 )
 
 // AdvertiseHTTP3 adds the Alt-Svc header to advertise HTTP/3 support.

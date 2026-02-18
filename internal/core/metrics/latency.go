@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"github.com/HdrHistogram/hdrhistogram-go"
 )
 
