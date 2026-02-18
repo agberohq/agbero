@@ -2,6 +2,7 @@ package alaye
 
 type Logging struct {
 	Enabled    Enabled    `hcl:"enabled,optional" json:"enabled"`
+	Diff       Enabled    `hcl:"diff,optional" json:"diff"`
 	Level      string     `hcl:"level,optional" json:"level"`
 	File       string     `hcl:"file,optional" json:"file"`
 	Skip       []string   `hcl:"skip,optional"`

@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"time"
 
@@ -22,127 +24,142 @@ type Route struct {
 	Backends []*xhttp.Backend
 }
 
-func NewRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Logger) *Route {
+func NewRoute(global *alaye.Global, route *alaye.Route, logger *ll.Logger) *Route {
 	if route == nil {
 		return FallbackRoute("nil route")
 	}
-
-	// Log route configuration for debugging
 	logger.Fields("path", route.Path, "enabled", route.Enabled).Debug("creating route")
-
-	// Validate the route configuration
 	if err := route.Validate(); err != nil {
 		logger.Fields("path", route.Path, "err", err).Error("invalid route config")
 		return FallbackRoute("invalid route config: " + err.Error())
 	}
-
-	// Determine route type: web or proxy
 	isWebRoute := route.Web.Root.IsSet()
 	hasBackends := len(route.Backends.Servers) > 0
-
 	if isWebRoute && hasBackends {
 		logger.Fields("path", route.Path).Error("route cannot have both web root and backends")
 		return FallbackRoute("route cannot have both web and proxy config")
 	}
-
 	if isWebRoute {
-		return newWebRoute(route, globalRate, logger)
+		return newWebRoute(route, &global.RateLimits, &global.Fallback, logger)
 	}
-
 	if hasBackends {
-		return newProxyRoute(route, globalRate, logger)
+		return newProxyRoute(route, &global.RateLimits, &global.Fallback, logger)
 	}
-
-	// This shouldn't happen if validation passed, but handle defensively
 	logger.Fields("path", route.Path).Error("route has neither web root nor backends")
 	return FallbackRoute("route has no handler configuration")
 }
 
-func newWebRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Logger) *Route {
+func newWebRoute(route *alaye.Route, globalRate *alaye.GlobalRate, globalFallback *alaye.Fallback, logger *ll.Logger) *Route {
 	chain := http.Handler(ui.NewWeb(logger, route))
-
-	// IP allowlist - only if IPs configured (optimization, not Enabled check)
 	if len(route.AllowedIPs) > 0 {
 		chain = ipallow.New(route.AllowedIPs, logger)(chain)
 	}
-
-	// Auth middleware - they handle Enabled check internally
 	chain = auth.JWT(&route.JWTAuth)(chain)
 	chain = auth.Basic(&route.BasicAuth)(chain)
 	chain = auth.Forward(&route.ForwardAuth)(chain)
-
-	// Rate limiting - build limiter if rules are configured
 	if rl := buildRouteLimiter(&route.RateLimit, globalRate); rl != nil {
 		chain = rl.Handler(chain)
 	}
-
-	// Headers and Compression - they handle Enabled check internally
 	chain = headers.Headers(&route.Headers)(chain)
 	chain = compress.Compress(route)(chain)
-
-	return &Route{
-		handler:  chain,
-		Backends: nil,
-	}
+	return &Route{handler: chain, Backends: nil}
 }
 
-func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, logger *ll.Logger) *Route {
+func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, globalFallback *alaye.Fallback, logger *ll.Logger) *Route {
 	var backends []*xhttp.Backend
-
-	// Build backends from config
 	for i, backendCfg := range route.Backends.Servers {
 		b, err := xhttp.NewBackend(backendCfg, route, logger, metrics.DefaultRegistry)
 		if err != nil {
-			logger.Fields("index", i, "backend", backendCfg.Address, "err", err).
-				Error("failed to create backend")
+			logger.Fields("index", i, "backend", backendCfg.Address, "err", err).Error("failed to create backend")
 			continue
 		}
 		backends = append(backends, b)
 	}
-
-	// If no backends were created successfully, return fallback
 	if len(backends) == 0 {
-		logger.Fields("path", route.Path, "configured", len(route.Backends.Servers)).
-			Warn("proxy route has no valid backends")
+		fallback := resolveFallback(&route.Fallback, globalFallback)
+		if fallback.IsActive() {
+			logger.Fields("path", route.Path, "fallback_type", fallback.Type).Info("using fallback handler")
+			return &Route{
+				handler:  buildFallbackHandler(fallback, logger),
+				Backends: nil,
+			}
+		}
+		logger.Fields("path", route.Path, "configured", len(route.Backends.Servers)).Warn("proxy route has no valid backends")
 		return FallbackRoute("proxy route missing backends")
 	}
-
 	timeout := time.Duration(0)
 	if route.Timeouts.Request != 0 {
 		timeout = route.Timeouts.Request
 	}
-
-	loadBalancer := xhttp.NewBalancer(
-		backends,
-		route.Backends.Strategy,
-		timeout,
-		route.StripPrefixes,
-	)
-
+	loadBalancer := xhttp.NewBalancer(backends, route.Backends.Strategy, timeout, route.StripPrefixes)
 	var chain http.Handler = loadBalancer
-
-	// IP allowlist - only if IPs configured
 	if len(route.AllowedIPs) > 0 {
 		chain = ipallow.New(route.AllowedIPs, logger)(chain)
 	}
-
-	// Auth middleware - they handle Enabled check internally
 	chain = auth.JWT(&route.JWTAuth)(chain)
 	chain = auth.Basic(&route.BasicAuth)(chain)
 	chain = auth.Forward(&route.ForwardAuth)(chain)
-
-	// Rate limiting - build limiter if configured (Enabled checked inside)
 	if rl := buildRouteLimiter(&route.RateLimit, globalRate); rl != nil {
 		chain = rl.Handler(chain)
 	}
-
-	// Headers and Compression - they handle Enabled check internally
 	chain = headers.Headers(&route.Headers)(chain)
 	chain = compress.Compress(route)(chain)
+	return &Route{handler: chain, Backends: backends}
+}
 
-	return &Route{
-		handler:  chain,
-		Backends: backends,
+func resolveFallback(routeFallback, globalFallback *alaye.Fallback) *alaye.Fallback {
+	if routeFallback.Enabled.Active() {
+		return routeFallback
+	}
+	if routeFallback.Enabled == alaye.Unknown && globalFallback.IsActive() {
+		return globalFallback
+	}
+	return routeFallback
+}
+
+func buildFallbackHandler(fallback *alaye.Fallback, logger *ll.Logger) http.Handler {
+	switch strings.ToLower(fallback.Type) {
+	case "static":
+		body := []byte(fallback.Body)
+		contentType := fallback.ContentType
+		statusCode := fallback.StatusCode
+		cacheTTL := fallback.CacheTTL
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if contentType != "" {
+				w.Header().Set("Content-Type", contentType)
+			}
+			if cacheTTL > 0 {
+				w.Header().Set("Cache-Control", "public, max-age="+string(rune(cacheTTL)))
+			}
+			w.WriteHeader(statusCode)
+			if len(body) > 0 {
+				_, _ = w.Write(body)
+			}
+		})
+	case "redirect":
+		redirectURL := fallback.RedirectURL
+		statusCode := fallback.StatusCode
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, redirectURL, statusCode)
+		})
+	case "proxy":
+		proxyURL, err := url.Parse(fallback.ProxyURL)
+		if err != nil {
+			logger.Fields("err", err, "proxy_url", fallback.ProxyURL).Error("invalid fallback proxy URL")
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "Fallback configuration error", http.StatusInternalServerError)
+			})
+		}
+		proxy := httputil.NewSingleHostReverseProxy(proxyURL)
+		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			logger.Fields("err", err, "fallback_proxy", fallback.ProxyURL).Error("fallback proxy failed")
+			http.Error(w, "Fallback service unavailable", http.StatusBadGateway)
+		}
+		return proxy
+	default:
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
+		})
 	}
 }
 
@@ -174,16 +191,11 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 	if rlc == nil {
 		return nil
 	}
-
-	// Check if rate limiting is effectively enabled
-	// Either explicitly enabled, or using a global policy
 	if !rlc.Enabled.Active() && rlc.UsePolicy == "" {
 		return nil
 	}
-
 	ttl := 30 * time.Minute
 	maxEntries := int64(100_000)
-
 	if global != nil {
 		if global.TTL > 0 {
 			ttl = global.TTL
@@ -192,10 +204,7 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 			maxEntries = global.MaxEntries
 		}
 	}
-
 	var rules []alaye.RateRule
-
-	// Add policy-based rules if configured
 	if rlc.UsePolicy != "" && global != nil {
 		for _, pol := range global.Policies {
 			if pol.Name == rlc.UsePolicy {
@@ -210,24 +219,18 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 			}
 		}
 	}
-
-	// Add explicit rule if enabled
 	if rlc.Rule.Enabled.Active() {
 		rules = append(rules, rlc.Rule)
 	}
-
 	if len(rules) == 0 {
 		return nil
 	}
-
 	policy := func(r *http.Request) (bucket string, pol ratelimit.RatePolicy, ok bool) {
 		path := r.URL.Path
 		if strings.HasPrefix(path, "/.well-known/acme-challenge/") {
 			return "", ratelimit.RatePolicy{}, false
 		}
-
 		for _, rule := range rules {
-			// Check method match if methods specified
 			if len(rule.Methods) > 0 {
 				methodMatch := false
 				for _, m := range rule.Methods {
@@ -240,8 +243,6 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 					continue
 				}
 			}
-
-			// Check prefix match if prefixes specified
 			if len(rule.Prefixes) > 0 {
 				prefixMatch := false
 				for _, p := range rule.Prefixes {
@@ -254,7 +255,6 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 					continue
 				}
 			}
-
 			return rule.Name, ratelimit.RatePolicy{
 				Requests: rule.Requests,
 				Window:   rule.Window,
@@ -262,9 +262,7 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 				KeySpec:  rule.Key,
 			}, true
 		}
-
 		return "", ratelimit.RatePolicy{}, false
 	}
-
 	return ratelimit.NewRateLimiter(ttl, maxEntries, policy)
 }

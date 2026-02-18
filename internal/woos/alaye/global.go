@@ -23,6 +23,7 @@ type Global struct {
 	RateLimits  GlobalRate  `hcl:"rate_limits,block" json:"rateLimits,omitempty"`
 	Gossip      Gossip      `hcl:"gossip,block" json:"gossip,omitempty"`
 	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt,omitempty"`
+	Fallback    Fallback    `hcl:"fallback,block" json:"fallback,omitempty"`
 }
 
 func (g *Global) Validate() error {
@@ -61,6 +62,11 @@ func (g *Global) Validate() error {
 	if err := g.Storage.Validate(); err != nil {
 		return errors.Newf("storage: %w", err)
 	}
+
+	if err := g.Fallback.Validate(); err != nil {
+		return errors.Newf("fallback: %w", err)
+	}
+
 	return nil
 }
 

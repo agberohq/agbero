@@ -27,6 +27,7 @@ type Installer struct {
 	CertDir   woos.Folder
 	certHosts []string
 	port      int
+	mockMode  bool
 }
 
 func NewInstaller(logger *ll.Logger, absoluteCertDir ...woos.Folder) *Installer {
@@ -136,6 +137,9 @@ func (ci *Installer) InstallCARootIfNeeded() error {
 	if ci.caExists() {
 		return nil
 	}
+	if ci.mockMode {
+		return ci.generateCAFilesOnly()
+	}
 	if ci.logger != nil {
 		ci.logger.Info("Generating and installing local CA root...")
 	}
@@ -168,17 +172,15 @@ func (ci *Installer) UninstallCARoot() error {
 	return nil
 }
 
-func (ci *Installer) generateAndInstallCA() error {
+func (ci *Installer) generateCAFilesOnly() error {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return errors.Newf("generate CA key: %w", err)
 	}
-
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return errors.Newf("generate serial: %w", err)
 	}
-
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
@@ -192,15 +194,12 @@ func (ci *Installer) generateAndInstallCA() error {
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 	}
-
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
 	if err != nil {
 		return errors.Newf("create CA cert: %w", err)
 	}
-
 	certPath := ci.caCertPath()
 	keyPath := ci.caKeyPath()
-
 	certOut, err := os.Create(certPath)
 	if err != nil {
 		return errors.Newf("create CA cert file: %w", err)
@@ -210,7 +209,6 @@ func (ci *Installer) generateAndInstallCA() error {
 		return errors.Newf("encode CA cert: %w", err)
 	}
 	certOut.Close()
-
 	keyBytes, err := x509.MarshalECPrivateKey(priv)
 	if err != nil {
 		return errors.Newf("marshal CA key: %w", err)
@@ -224,15 +222,20 @@ func (ci *Installer) generateAndInstallCA() error {
 		return errors.Newf("encode CA key: %w", err)
 	}
 	keyOut.Close()
+	return nil
+}
 
+func (ci *Installer) generateAndInstallCA() error {
+	if err := ci.generateCAFilesOnly(); err != nil {
+		return err
+	}
+	certPath := ci.caCertPath()
 	if err := truststore.InstallFile(certPath, truststore.WithFirefox(), truststore.WithJava()); err != nil {
 		return errors.Newf("failed to install CA to system trust store: %w", err)
 	}
-
 	if ci.logger != nil {
 		ci.logger.Fields("cert", certPath).Info("CA root installed to system trust store")
 	}
-
 	return nil
 }
 

@@ -58,6 +58,9 @@ func defaultGlobal(g *alaye.Global, configPath string) {
 
 	// LetsEncrypt - auto-enable if email configured
 	defaultLetsEncrypt(&g.LetsEncrypt)
+
+	// Fallback - set global fallback option
+	defaultFallback(&g.Fallback)
 }
 
 // DefaultHost applies defaults to a host configuration
@@ -98,6 +101,8 @@ func DefaultRoute(r *alaye.Route) {
 	} else if hasBackends {
 		defaultProxyRoute(r)
 	}
+
+	defaultFallback(&r.Fallback)
 }
 
 func defaultWebRoute(r *alaye.Route) {
@@ -607,6 +612,30 @@ func defaultTCPHealthCheck(thc *alaye.TCPHealthCheck) {
 		}
 		if thc.Timeout == 0 {
 			thc.Timeout = TCPHealthCheckTimeout
+		}
+	}
+}
+
+func defaultFallback(f *alaye.Fallback) {
+	if f.Enabled == alaye.Unknown {
+		f.Enabled = alaye.Inactive // Disabled by default globally
+	}
+	if f.Enabled.Active() {
+		if f.Type == "" {
+			f.Type = "static"
+		}
+		if f.StatusCode == 0 {
+			switch f.Type {
+			case "redirect":
+				f.StatusCode = 307
+			case "proxy":
+				f.StatusCode = 200
+			default:
+				f.StatusCode = 503
+			}
+		}
+		if f.ContentType == "" && f.Type == "static" {
+			f.ContentType = "application/json"
 		}
 	}
 }

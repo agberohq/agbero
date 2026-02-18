@@ -85,6 +85,9 @@ func (s *Store) IterateActive(iter RuleIterator) error {
 	var expiredKeys [][]byte
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket(bucketName)
+		if b == nil {
+			return nil
+		}
 		c := b.Cursor()
 		for k, v := c.First(); k != nil; k, v = c.Next() {
 			var r Rule
@@ -104,11 +107,22 @@ func (s *Store) IterateActive(iter RuleIterator) error {
 		return nil
 	})
 
+	// Delete within same transaction scope using Update
 	if len(expiredKeys) > 0 {
 		err = s.db.Update(func(tx *bbolt.Tx) error {
 			b := tx.Bucket(bucketName)
+			if b == nil {
+				return nil
+			}
 			for _, k := range expiredKeys {
-				_ = b.Delete(k)
+				// Re-check expiration before delete (defense against race)
+				v := b.Get(k)
+				if v != nil {
+					var r Rule
+					if json.Unmarshal(v, &r) == nil && r.IsExpired() {
+						_ = b.Delete(k)
+					}
+				}
 			}
 			return nil
 		})
@@ -116,7 +130,6 @@ func (s *Store) IterateActive(iter RuleIterator) error {
 			s.logger.Fields("err", err).Error("failed to delete expired rules")
 		}
 	}
-
 	return err
 }
 

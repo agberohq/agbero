@@ -67,21 +67,30 @@ func (c *Counters) Increment(ruleID, key string, window time.Duration) int64 {
 func (c *Counters) janitor() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-c.stop:
+			for i := range c.shards {
+				shard := c.shards[i]
+				shard.mu.Lock()
+				shard.items = make(map[string]*counterItem)
+				shard.mu.Unlock()
+			}
 			return
 		case <-ticker.C:
 			now := time.Now()
+			var removed int
 			for _, shard := range c.shards {
 				shard.mu.Lock()
 				for k, v := range shard.items {
 					if now.After(v.expireAt) {
 						delete(shard.items, k)
+						removed++
 					}
 				}
 				shard.mu.Unlock()
+			}
+			if removed > 0 {
 			}
 		}
 	}

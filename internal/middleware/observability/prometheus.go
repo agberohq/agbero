@@ -44,6 +44,14 @@ var (
 		},
 		[]string{"host"},
 	)
+
+	circuitBreakerTripped = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "agbero_circuit_breaker_tripped_total",
+			Help: "Total circuit breaker trips per backend",
+		},
+		[]string{"backend", "host"},
+	)
 )
 
 func init() {
@@ -51,6 +59,7 @@ func init() {
 	prometheus.MustRegister(httpRequestDuration)
 	prometheus.MustRegister(lastRequestTimestamp)
 	prometheus.MustRegister(activeConnections)
+	prometheus.MustRegister(circuitBreakerTripped)
 }
 
 func Prometheus(hm *discovery.Host) func(http.Handler) http.Handler {

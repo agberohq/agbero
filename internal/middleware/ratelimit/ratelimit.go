@@ -179,27 +179,36 @@ func (rl *RateLimiter) extractKey(r *http.Request, keySpec string) string {
 }
 
 func (rl *RateLimiter) sweeper() {
-	ticker := time.NewTicker(5 * time.Minute) // Increased from 2m, less frequent
+	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-rl.stopCh:
+			for i := range rl.shards {
+				sh := &rl.shards[i]
+				sh.mu.Lock()
+				sh.m = make(map[string]*ipEntry)
+				sh.mu.Unlock()
+			}
+			rl.size.Store(0)
 			return
 		case <-ticker.C:
 			now := time.Now().UnixNano()
 			cutoff := now - rl.ttl
+			var removed int64
 			for i := range rl.shards {
 				sh := &rl.shards[i]
 				sh.mu.Lock()
-				if len(sh.m) > 0 {
-					for k, e := range sh.m {
-						if e.lastSeen.Load() < cutoff {
-							delete(sh.m, k)
-							rl.size.Add(-1)
-						}
+				for k, e := range sh.m {
+					if e.lastSeen.Load() < cutoff {
+						delete(sh.m, k)
+						removed++
 					}
 				}
 				sh.mu.Unlock()
+			}
+			if removed > 0 {
+				rl.size.Add(-removed)
 			}
 		}
 	}

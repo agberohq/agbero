@@ -32,6 +32,165 @@ type Route struct {
 	RateLimit         RouteRate     `hcl:"rate_limit,block" json:"rate_limit,omitempty"`
 	Firewall          FirewallRoute `hcl:"firewall,block" json:"firewall,omitempty"`
 	CompressionConfig Compression   `hcl:"compression,block" json:"compression_config,omitempty"`
+	Fallback          Fallback      `hcl:"fallback,block" json:"fallback,omitempty"`
+}
+
+func (r *Route) Validate() error {
+	if r.Path == "" {
+		return ErrRoutePathRequired
+	}
+	if !strings.HasPrefix(r.Path, Slash) {
+		return errors.Newf("%w: path %q must start with '/'", ErrRouteInvalidPrefix, r.Path)
+	}
+
+	hasBackends := len(r.Backends.Servers) > 0
+	hasWeb := r.Web.Root.IsSet()
+
+	if !hasBackends && !hasWeb {
+		return ErrRouteNoBackendOrWeb
+	}
+	if hasBackends && hasWeb {
+		return ErrRouteBothBackendAndWeb
+	}
+
+	if err := r.RateLimit.Validate(); err != nil {
+		return errors.Newf("rate_limit: %w", err)
+	}
+
+	if r.Firewall.Status.Active() {
+		// Validate ad-hoc rules
+		for i, rule := range r.Firewall.Rules {
+			if rule.Name == "" {
+				rule.Name = "route_adhoc_" + r.Path
+			}
+			if err := rule.Validate(); err != nil {
+				return errors.Newf("route firewall rule[%d]: %w", i, err)
+			}
+		}
+	}
+
+	if hasBackends {
+		return r.validateProxyRoute()
+	}
+
+	if err := r.Fallback.Validate(); err != nil {
+		return errors.Newf("fallback: %w", err)
+	}
+
+	return r.validateWebRoute()
+}
+
+func (r *Route) validateAuth() error {
+	if err := r.BasicAuth.Validate(); err != nil {
+		return errors.Newf("basic_auth: %w", err)
+	}
+	if err := r.ForwardAuth.Validate(); err != nil {
+		return errors.Newf("forward_auth: %w", err)
+	}
+	if err := r.JWTAuth.Validate(); err != nil {
+		return errors.Newf("jwt_auth: %w", err)
+	}
+	if err := r.OAuth.Validate(); err != nil {
+		return errors.Newf("o_auth: %w", err)
+	}
+	return nil
+}
+
+func (r *Route) validatePlugins() error {
+	if err := r.Headers.Validate(); err != nil {
+		return errors.Newf("headers: %w", err)
+	}
+	if err := r.Wasm.Validate(); err != nil {
+		return errors.Newf("wasm: %w", err)
+	}
+	if err := r.CompressionConfig.Validate(); err != nil {
+		return errors.Newf("compression: %w", err)
+	}
+	return nil
+}
+
+func (r *Route) validateWebRoute() error {
+	if !r.Web.Root.IsSet() {
+		return ErrWebRouteRootRequired
+	}
+
+	if err := r.Web.Validate(); err != nil {
+		return errors.Newf("web: %w", err)
+	}
+
+	if r.Backends.Strategy != "" && r.Backends.Strategy != StrategyRoundRobin {
+		return ErrWebRouteUnsupportedLB
+	}
+
+	if r.HealthCheck.Enabled.Active() {
+		return ErrWebRouteHealthCheck
+	}
+	if r.CircuitBreaker.Enabled.Active() {
+		return ErrWebRouteCircuitBreaker
+	}
+
+	if r.Timeouts.Enabled.Active() {
+		if err := r.Timeouts.Validate(); err != nil {
+			return errors.Newf("timeouts: %w", err)
+		}
+	}
+
+	if err := r.validateAuth(); err != nil {
+		return err
+	}
+
+	if err := r.validatePlugins(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *Route) validateProxyRoute() error {
+	if len(r.Backends.Servers) == 0 {
+		return ErrProxyRouteNoBackends
+	}
+
+	for i, b := range r.Backends.Servers {
+		if err := b.Validate(); err != nil {
+			return errors.Newf("backend[%d]: %w", i, err)
+		}
+	}
+
+	for i, prefix := range r.StripPrefixes {
+		if prefix == "" {
+			return errors.Newf("%w [%d]: cannot be empty", ErrProxyRouteInvalidStrip, i)
+		}
+		if !strings.HasPrefix(prefix, Slash) {
+			return errors.Newf("%w [%d]: %q must start with '/'", ErrProxyRouteInvalidStrip, i, prefix)
+		}
+	}
+
+	if r.Backends.Strategy != "" && !ValidateStrategy(r.Backends.Strategy) {
+		return errors.Newf("invalid strategy %q", r.Backends.Strategy)
+	}
+
+	if err := r.HealthCheck.Validate(); err != nil {
+		return errors.Newf("health_check: %w", err)
+	}
+
+	if err := r.CircuitBreaker.Validate(); err != nil {
+		return errors.Newf("circuit_breaker: %w", err)
+	}
+
+	if err := r.Timeouts.Validate(); err != nil {
+		return errors.Newf("timeouts: %w", err)
+	}
+
+	if err := r.validateAuth(); err != nil {
+		return err
+	}
+
+	if err := r.validatePlugins(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *Route) Key() string {
@@ -151,157 +310,4 @@ func (r *Route) Key() string {
 	}
 
 	return fmt.Sprintf("%x", w.Sum64())
-}
-
-func (r *Route) Validate() error {
-	if r.Path == "" {
-		return ErrRoutePathRequired
-	}
-	if !strings.HasPrefix(r.Path, Slash) {
-		return errors.Newf("%w: path %q must start with '/'", ErrRouteInvalidPrefix, r.Path)
-	}
-
-	hasBackends := len(r.Backends.Servers) > 0
-	hasWeb := r.Web.Root.IsSet()
-
-	if !hasBackends && !hasWeb {
-		return ErrRouteNoBackendOrWeb
-	}
-	if hasBackends && hasWeb {
-		return ErrRouteBothBackendAndWeb
-	}
-
-	if err := r.RateLimit.Validate(); err != nil {
-		return errors.Newf("rate_limit: %w", err)
-	}
-
-	if r.Firewall.Status.Active() {
-		// Validate ad-hoc rules
-		for i, rule := range r.Firewall.Rules {
-			if rule.Name == "" {
-				rule.Name = "route_adhoc_" + r.Path
-			}
-			if err := rule.Validate(); err != nil {
-				return errors.Newf("route firewall rule[%d]: %w", i, err)
-			}
-		}
-	}
-
-	if hasBackends {
-		return r.validateProxyRoute()
-	}
-	return r.validateWebRoute()
-}
-
-func (r *Route) validateAuth() error {
-	if err := r.BasicAuth.Validate(); err != nil {
-		return errors.Newf("basic_auth: %w", err)
-	}
-	if err := r.ForwardAuth.Validate(); err != nil {
-		return errors.Newf("forward_auth: %w", err)
-	}
-	if err := r.JWTAuth.Validate(); err != nil {
-		return errors.Newf("jwt_auth: %w", err)
-	}
-	if err := r.OAuth.Validate(); err != nil {
-		return errors.Newf("o_auth: %w", err)
-	}
-	return nil
-}
-
-func (r *Route) validatePlugins() error {
-	if err := r.Headers.Validate(); err != nil {
-		return errors.Newf("headers: %w", err)
-	}
-	if err := r.Wasm.Validate(); err != nil {
-		return errors.Newf("wasm: %w", err)
-	}
-	if err := r.CompressionConfig.Validate(); err != nil {
-		return errors.Newf("compression: %w", err)
-	}
-	return nil
-}
-
-func (r *Route) validateWebRoute() error {
-	if !r.Web.Root.IsSet() {
-		return ErrWebRouteRootRequired
-	}
-
-	if err := r.Web.Validate(); err != nil {
-		return errors.Newf("web: %w", err)
-	}
-
-	if r.Backends.Strategy != "" && r.Backends.Strategy != StrategyRoundRobin {
-		return ErrWebRouteUnsupportedLB
-	}
-
-	if r.HealthCheck.Enabled.Active() {
-		return ErrWebRouteHealthCheck
-	}
-	if r.CircuitBreaker.Enabled.Active() {
-		return ErrWebRouteCircuitBreaker
-	}
-
-	if r.Timeouts.Enabled.Active() {
-		if err := r.Timeouts.Validate(); err != nil {
-			return errors.Newf("timeouts: %w", err)
-		}
-	}
-
-	if err := r.validateAuth(); err != nil {
-		return err
-	}
-
-	if err := r.validatePlugins(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (r *Route) validateProxyRoute() error {
-	if len(r.Backends.Servers) == 0 {
-		return ErrProxyRouteNoBackends
-	}
-
-	for i, b := range r.Backends.Servers {
-		if err := b.Validate(); err != nil {
-			return errors.Newf("backend[%d]: %w", i, err)
-		}
-	}
-
-	for i, prefix := range r.StripPrefixes {
-		if prefix == "" {
-			return errors.Newf("%w [%d]: cannot be empty", ErrProxyRouteInvalidStrip, i)
-		}
-		if !strings.HasPrefix(prefix, Slash) {
-			return errors.Newf("%w [%d]: %q must start with '/'", ErrProxyRouteInvalidStrip, i, prefix)
-		}
-	}
-
-	if r.Backends.Strategy != "" && !ValidateStrategy(r.Backends.Strategy) {
-		return errors.Newf("invalid strategy %q", r.Backends.Strategy)
-	}
-
-	if err := r.HealthCheck.Validate(); err != nil {
-		return errors.Newf("health_check: %w", err)
-	}
-
-	if err := r.CircuitBreaker.Validate(); err != nil {
-		return errors.Newf("circuit_breaker: %w", err)
-	}
-
-	if err := r.Timeouts.Validate(); err != nil {
-		return errors.Newf("timeouts: %w", err)
-	}
-
-	if err := r.validateAuth(); err != nil {
-		return err
-	}
-
-	if err := r.validatePlugins(); err != nil {
-		return err
-	}
-
-	return nil
 }

@@ -181,3 +181,10 @@ var (
 var (
 	ErrAdminAddressRequired = errors.New("admin address is required")
 )
+
+var (
+	ErrFallbackRedirectURLRequired = errors.New("fallback: redirect_url required for type=redirect")
+	ErrFallbackProxyURLRequired    = errors.New("fallback: proxy_url required for type=proxy")
+	ErrFallbackTypeInvalid         = errors.New("fallback: type must be 'static', 'redirect', or 'proxy'")
+	ErrFallbackBodyRequired        = errors.New("fallback: body required for type=static")
+)

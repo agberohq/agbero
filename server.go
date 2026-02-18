@@ -334,13 +334,13 @@ func (s *Server) Reload() {
 
 	if sha == s.configSHA {
 		s.logger.Info("reload requested: no configuration changes detected")
-	} else {
-		s.logger.Fields(
-			"from", s.configSHA[:12],
-			"to", sha[:12],
-		).Infof("configuration changed")
-		s.configSHA = sha
+		return
 	}
+
+	s.logger.Fields(
+		"from", s.configSHA[:12],
+		"to", sha[:12],
+	).Infof("configuration changed")
 
 	global, err := core.LoadGlobal(s.configPath)
 	if err != nil {
@@ -349,50 +349,18 @@ func (s *Server) Reload() {
 		return
 	}
 
+	if s.global.Logging.Diff.Active() {
+		for _, v := range core.Diff(s.global, global) {
+			s.logger.Debug(v)
+		}
+	}
+
 	absConfigPath, err := filepath.Abs(s.configPath)
 	if err != nil {
 		absConfigPath = s.configPath
 	}
-
-	// Apply Defaults (Implicit Activation)
 	woos.DefaultApply(global, absConfigPath)
 
-	if s.global.Logging.Level != global.Logging.Level {
-		s.logger.Infof("log_level: %s → %s", s.global.Logging.Level, global.Logging.Level)
-	}
-
-	s.global = global
-
-	// 1. Recreate RateLimiter
-	if s.rateLimiter != nil {
-		s.rateLimiter.Close()
-	}
-	s.rateLimiter = s.buildGlobalRateLimiter()
-
-	// 2. Safe Swap Firewall
-	if s.global.Security.Enabled.Active() {
-		var fwConfig alaye.Firewall
-		fwConfig = s.global.Security.Firewall
-		dataDir := woos.NewFolder(s.global.Storage.DataDir)
-
-		if s.firewall != nil {
-			s.firewall.Close()
-		}
-
-		newFw, fwErr := firewall.New(&fwConfig, dataDir, s.logger)
-		if fwErr != nil {
-			s.logger.Error("failed to reload firewall", fwErr)
-		} else {
-			s.firewall = newFw
-		}
-	} else {
-		if s.firewall != nil {
-			s.firewall.Close()
-			s.firewall = nil
-		}
-	}
-
-	// 3. Host Reload
 	previousHosts, _ := s.hostManager.LoadAll()
 	previousCount := len(previousHosts)
 
@@ -404,7 +372,6 @@ func (s *Server) Reload() {
 	newHosts, _ := s.hostManager.LoadAll()
 	currentCount := len(newHosts)
 
-	// Prune Metrics
 	validKeys := make(map[string]bool)
 	for _, h := range newHosts {
 		for _, r := range h.Routes {
@@ -422,14 +389,7 @@ func (s *Server) Reload() {
 			}
 		}
 	}
-	metrics.DefaultRegistry.Prune(validKeys)
 
-	if s.tlsManager != nil {
-		s.tlsManager.ClearCache()
-	}
-
-	// 4. Update TCP Proxies
-	s.mu.Lock()
 	tcpGroups := make(map[string][]alaye.TCPRoute)
 	for _, host := range newHosts {
 		for i := range host.Proxies {
@@ -437,6 +397,32 @@ func (s *Server) Reload() {
 			tcpGroups[p.Listen] = append(tcpGroups[p.Listen], p)
 		}
 	}
+
+	newRateLimiter := s.buildGlobalRateLimiter()
+
+	var newFirewall *firewall.Engine
+	if global.Security.Enabled.Active() {
+		fwConfig := global.Security.Firewall
+		dataDir := woos.NewFolder(global.Storage.DataDir)
+		newFirewall, _ = firewall.New(&fwConfig, dataDir, s.logger)
+	}
+
+	s.mu.Lock()
+	if s.global.Logging.Level != global.Logging.Level {
+		s.logger.Infof("log_level: %s → %s", s.global.Logging.Level, global.Logging.Level)
+	}
+	s.configSHA = sha
+	s.global = global
+
+	if s.rateLimiter != nil {
+		s.rateLimiter.Close()
+	}
+	s.rateLimiter = newRateLimiter
+
+	if s.firewall != nil {
+		s.firewall.Close()
+	}
+	s.firewall = newFirewall
 
 	for _, tp := range s.tcpProxies {
 		_, port, _ := net.SplitHostPort(tp.Listen)
@@ -478,7 +464,14 @@ func (s *Server) Reload() {
 		}
 		tp.UpdateRoutes(newRoutes, newDefault)
 	}
+
+	if s.tlsManager != nil {
+		s.tlsManager.ClearCache()
+	}
+
 	s.mu.Unlock()
+
+	metrics.DefaultRegistry.Prune(validKeys)
 
 	s.logger.Fields(
 		"previous_hosts", previousCount,
@@ -998,7 +991,7 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	}
 
 	routeKey := route.Key()
-	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey, &s.global.RateLimits)
+	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey)
 
 	// Pointer safety for Wasm
 	if route.Wasm.Enabled.Active() {
@@ -1025,7 +1018,7 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	handler.ServeHTTP(w, reqOut)
 }
 
-func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string, globalRate *alaye.GlobalRate) *handlers.Route {
+func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handlers.Route {
 	if it, ok := cache.Route.Load(key); ok {
 		if h, ok := it.Value.(*handlers.Route); ok {
 			s.reaper.Touch(key)
@@ -1033,7 +1026,7 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string, globalRa
 		}
 	}
 
-	h := handlers.NewRoute(route, globalRate, s.logger)
+	h := handlers.NewRoute(s.global, route, s.logger)
 	newItem := &cache.Item{
 		Value: h,
 	}

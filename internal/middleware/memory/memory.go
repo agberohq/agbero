@@ -38,6 +38,9 @@ func Middleware(next http.Handler) http.Handler {
 			reqID = Generate()
 		}
 
+		w.Header().Del("Server")
+		w.Header().Set("Server", "agbero")
+
 		// Add to response header
 		w.Header().Set("X-Request-ID", reqID)
 

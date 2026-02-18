@@ -17,7 +17,8 @@ func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
 		return func(next http.Handler) http.Handler { return next }
 	}
 
-	secretBytes := []byte(cfg.Secret)
+	// Resolve value to string
+	secretBytes := []byte(cfg.Secret.String())
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

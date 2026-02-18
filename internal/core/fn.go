@@ -1,11 +1,13 @@
 package core
 
 import (
+	"fmt"
 	"net"
 	"strings"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/woos"
+	"github.com/r3labs/diff/v3"
 )
 
 func NormalizeHost(hostport string) string {
@@ -68,4 +70,14 @@ func Truncate(ua string, maxLen int) string {
 		return ua
 	}
 	return ua[:maxLen] + "..."
+}
+
+func Diff(old, new any) []string {
+	var changes []string
+	changelog, _ := diff.Diff(old, new)
+	for _, change := range changelog {
+		path := strings.Join(change.Path, ".")
+		changes = append(changes, fmt.Sprintf("%s: %v → %v", path, change.From, change.To))
+	}
+	return changes
 }
