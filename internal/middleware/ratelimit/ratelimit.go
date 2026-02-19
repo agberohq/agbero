@@ -55,7 +55,7 @@ type RateLimiter struct {
 // NewRateLimiter creates a new rate limiter (backward compatible)
 func NewRateLimiter(ttl time.Duration, maxEntries int64, policy func(r *http.Request) (bucket string, pol RatePolicy, ok bool)) *RateLimiter {
 	rl := &RateLimiter{
-		data:       mappo.NewShardedWithConfig[string, *atomicEntry](mappo.ShardedConfig{ShardCount: 256}),
+		data:       mappo.NewSharded[string, *atomicEntry](),
 		policy:     policy,
 		ttl:        ttl.Nanoseconds(),
 		maxEntries: int(maxEntries),
