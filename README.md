@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/agbero.1.png" width="300" alt="Agbero Logo">
+  <img src="assets/agbero.2.png" width="300" alt="Agbero Logo">
 </p>
 
 > **Agbero**: *noun* (Yoruba) - A tout or traffic controller at a bus stop.
