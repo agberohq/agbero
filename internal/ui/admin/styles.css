@@ -239,6 +239,38 @@ body {
     font-family: monospace;
 }
 
+.chart-controls {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    gap: 5px;
+    z-index: 10;
+}
+
+.chart-tab {
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    color: var(--text-mute);
+    font-family: monospace;
+    transition: all 0.2s;
+    background: var(--bg);
+    border: 1px solid var(--border);
+}
+
+.chart-tab:hover {
+    color: var(--fg);
+    border-color: var(--accent);
+}
+
+.chart-tab.active {
+    background: var(--fg);
+    color: var(--bg);
+    border-color: var(--fg);
+    font-weight: 600;
+}
 /* ========== SYSTEM STATS BAR ========== */
 .sys-bar {
     position: fixed;

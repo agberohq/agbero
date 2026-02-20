@@ -42,6 +42,11 @@
         </div>
 
         <div class="chart-wrapper">
+            <div class="chart-controls">
+                <span class="chart-tab active" data-type="all">ALL</span>
+                <span class="chart-tab" data-type="http">HTTP</span>
+                <span class="chart-tab" data-type="tcp">TCP</span>
+            </div>
             <div id="responseGraph" style="width:100%; height:100%;"></div>
         </div>
     </div>
@@ -98,14 +103,13 @@
         <div id="logsList" class="logs-console"></div>
     </div>
 
-    <!-- CONFIG PAGE - Replace the entire config page div -->
+    <!-- CONFIG PAGE -->
     <div id="configPage" class="page">
         <div class="config-header">
             <h2>Configuration Overview</h2>
             <button class="btn config-refresh">⟳ Refresh</button>
         </div>
 
-        <!-- Key Metrics Cards -->
         <div class="config-metrics-grid">
             <div class="metric-card">
                 <div class="metric-content">
@@ -157,13 +161,11 @@
             </div>
         </div>
 
-        <!-- Global Settings Section -->
         <div class="config-section">
             <h3>⚙️ Global Settings</h3>
             <div class="config-details-grid" id="configGlobalDetails"></div>
         </div>
 
-        <!-- Raw Configuration -->
         <div class="config-section">
             <div class="config-header">
                 <h3>📄 Raw Configuration</h3>
@@ -177,32 +179,22 @@
     </div>
 </div>
 
-<!-- SYSTEM STATS BAR - ENHANCED WITH FULL SYSTEM METRICS -->
+<!-- SYSTEM STATS BAR -->
 <div class="sys-bar">
     <div class="sys-bar-left">
-
-
-        <!-- Memory Section -->
         <span class="sys-item" title="Memory RSS">💾 <span id="sysMem">—</span></span>
         <span class="sys-item hide-mobile" title="Memory Allocated">📊 <span id="sysMemAlloc">—</span></span>
         <span class="sys-divider hide-mobile">·</span>
-
-        <!-- Goroutines -->
         <span class="sys-item hide-mobile" title="Goroutines">🧵 <span id="sysGoroutines">—</span></span>
         <span class="sys-divider">·</span>
-
-        <!-- Certificates -->
         <span class="sys-item" title="Active Certificates">🔐 <span id="activeCertsCount">0</span></span>
         <span class="sys-divider">·</span>
         <span class="sys-item" title="Expiring soon (<7d)">⚠️ <span id="expiringCertsCount">0</span></span>
     </div>
     <div class="sys-bar-right">
-        <!-- CPU Section -->
         <span class="sys-item" title="CPU Usage">⚡ <span id="sysCpu">—</span></span>
         <span class="sys-item hide-mobile" title="CPU Cores">🎛️ <span id="sysCpuCores">—</span></span>
         <span class="sys-divider">·</span>
-
-        <!-- OS Memory -->
         <span class="sys-item hide-mobile" title="OS Memory Used">🖥️ <span id="sysMemUsed">—</span></span>
         <span class="sys-divider hide-mobile">·</span>
         <span class="sys-item hide-mobile" title="Total OS Memory">💿 <span id="sysMemTotalOs">—</span></span>
@@ -211,7 +203,7 @@
     </div>
 </div>
 
-<!-- BOTTOM STATS PANEL - POSITIONING -->
+<!-- BOTTOM STATS PANEL -->
 <div class="stats-footer">
     <div class="stat-item">
         <label>Uptime</label>

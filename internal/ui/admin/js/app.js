@@ -4,9 +4,13 @@ class AgberoApp {
         this.token = sessionStorage.getItem("ag_tok");
         this.basic = sessionStorage.getItem("ag_bas");
 
-        // State
         this.page = "dashboard";
-        this.metricsSeries = [];
+        this.metricsHistory = {
+            all: [],
+            http: [],
+            tcp: []
+        };
+        this.activeChart = 'all';
         this.lastReqTotal = 0;
         this.lastReqTime = Date.now();
         this.lastUpdateTime = Date.now();
@@ -17,27 +21,19 @@ class AgberoApp {
         this.version = null;
         this.build = null;
 
-        // Data Caches
         this.hostsData = { config: {}, stats: {} };
         this.logs = [];
         this.certificates = [];
 
-        // Settings
         this.logsPaused = false;
         this.logFilter = "ALL";
 
-        // Timers
         this.timers = { metrics: null, config: null, logs: null };
-
-        // Page
         this.page = sessionStorage.getItem("ag_page") || "dashboard";
-
-        // Add this for config caching
         this.lastConfig = null;
         this._confirmFn = null;
     }
 
-    // ================== API & DATA FETCHING ==================
     async api(path, method = "GET", body = null) {
         const headers = {};
         if (this.token) headers["Authorization"] = "Bearer " + this.token;
@@ -102,20 +98,21 @@ class AgberoApp {
             lastUpdateTime: this.lastUpdateTime
         };
 
-        // Update metrics series
-        if (stats.p99_ms) {
-            this.metricsSeries.push(stats.p99_ms);
-            if (this.metricsSeries.length > 60) this.metricsSeries.shift();
-        }
+        const global = data.global || {};
+        this.metricsHistory.all.push(global.avg_p99_ms || 0);
+        this.metricsHistory.http.push(global.http_p99_ms || 0);
+        this.metricsHistory.tcp.push(global.tcp_p99_ms || 0);
 
-        UI.updateMetrics(metrics, this.metricsSeries);
+        ['all', 'http', 'tcp'].forEach(k => {
+            if (this.metricsHistory[k].length > 60) this.metricsHistory[k].shift();
+        });
+
+        UI.updateMetrics(metrics, this.metricsHistory[this.activeChart]);
     }
 
     parseMetricsJSON(obj) {
         let total_reqs = 0, total_errors = 0, active_backends = 0;
         let sumLat = 0, countLat = 0;
-        let total_p99 = 0, hosts_with_p99 = 0;
-        let uptime = "100%";
 
         if (obj.hosts) {
             Object.values(obj.hosts).forEach(h => {
@@ -133,11 +130,6 @@ class AgberoApp {
                         if (b.latency_us && b.latency_us.count > 0) {
                             sumLat += b.latency_us.sum_us || 0;
                             countLat += b.latency_us.count || 0;
-
-                            if (b.latency_us.p99 > 0) {
-                                total_p99 += b.latency_us.p99;
-                                hosts_with_p99++;
-                            }
                         }
                     });
                 });
@@ -156,24 +148,13 @@ class AgberoApp {
                         if (b.latency_us && b.latency_us.count > 0) {
                             sumLat += b.latency_us.sum_us || 0;
                             countLat += b.latency_us.count || 0;
-
-                            if (b.latency_us.p99 > 0) {
-                                total_p99 += b.latency_us.p99;
-                                hosts_with_p99++;
-                            }
                         }
                     });
                 });
-
-                if (h.avg_p99_us > 0) {
-                    total_p99 += h.avg_p99_us;
-                    hosts_with_p99++;
-                }
             });
         }
 
         const avg_ms = countLat > 0 ? (sumLat / countLat / 1000) : 0;
-        const p99_ms = hosts_with_p99 > 0 ? (total_p99 / hosts_with_p99 / 1000) : 0;
         const apdex = avg_ms < 200 ? 1.0 : (avg_ms < 1000 ? 0.8 : 0.5);
 
         return {
@@ -181,9 +162,8 @@ class AgberoApp {
             total_errors,
             active_backends,
             avg_ms,
-            p99_ms,
             apdex: apdex.toFixed(2),
-            uptime
+            uptime: "100%"
         };
     }
 
@@ -306,7 +286,6 @@ class AgberoApp {
         }
     }
 
-    // ================== SESSION MANAGEMENT ==================
     parseJWTExpiry() {
         if (!this.token) return;
         try {
@@ -354,7 +333,6 @@ class AgberoApp {
         UI.hideSessionWarning();
     }
 
-    // ================== AUTH ==================
     async doLogin(e) {
         e.preventDefault();
         const u = document.getElementById("username").value;
@@ -419,7 +397,6 @@ class AgberoApp {
         }
     }
 
-    // ================== LOOP CONTROL ==================
     startLoop() {
         this.stopLoop();
         this.timers.metrics = setInterval(() => this.fetchMetrics(), 2000);
@@ -438,7 +415,6 @@ class AgberoApp {
         this.timers = { metrics: null, config: null, logs: null };
     }
 
-    // ================== PAGE NAVIGATION ==================
     setPage(p) {
         this.page = p;
         sessionStorage.setItem("ag_page", p);
@@ -463,7 +439,6 @@ class AgberoApp {
         if (this.page === 'logs') await this.fetchLogs();
     }
 
-    // ================== UTILITIES ==================
     fmtNum(n) {
         if (n === undefined || n === null) return "0";
         if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
@@ -498,7 +473,6 @@ class AgberoApp {
         Modal.open("confirmModal");
     }
 
-    // ================== DRAWER ==================
     openRouteDrawer(hostname, idx, type = 'route') {
         let cfg_item;
         let itemStats = {};
@@ -529,7 +503,14 @@ class AgberoApp {
         Drawer.close();
     }
 
-    // ================== INIT ==================
+    setChartType(type) {
+        this.activeChart = type;
+        document.querySelectorAll('.chart-tab').forEach(t => t.classList.remove('active'));
+        const tab = document.querySelector(`.chart-tab[data-type="${type}"]`);
+        if (tab) tab.classList.add('active');
+        UI.renderGraph(this.metricsHistory[type]);
+    }
+
     init() {
         this.loadTheme();
         this.updateAuthButton();
@@ -552,6 +533,13 @@ class AgberoApp {
 
         this.startStaleDetection();
         EventHandler.bindAll(this);
+
+        document.querySelectorAll('.chart-tab').forEach(tab => {
+            tab.addEventListener('click', (e) => {
+                const type = e.target.dataset.type;
+                this.setChartType(type);
+            });
+        });
     }
 
     loadTheme() {
