@@ -25,7 +25,7 @@ type routeKey struct {
 
 type routeEntry struct {
 	base      alaye.Route
-	backends  map[string][]alaye.Server // nodeID -> servers
+	backends  map[string][]alaye.Server
 	lastWrite time.Time
 }
 
@@ -33,9 +33,9 @@ type Host struct {
 	hostsDir woos.Folder
 
 	mu         sync.RWMutex
-	hosts      map[string]*alaye.Host // Loaded from disk (ID -> Config)
-	lookupMap  map[string]*alaye.Host // Final O(1) Map (Domain -> Config)
-	portLookup map[string]*alaye.Host // Port -> Config
+	hosts      map[string]*alaye.Host
+	lookupMap  map[string]*alaye.Host
+	portLookup map[string]*alaye.Host
 
 	dynamicRoutes map[routeKey]*routeEntry
 	nodeIndex     map[string]map[routeKey]struct{}
@@ -92,6 +92,25 @@ func normalizeHostPath(host, path string) (string, string) {
 		path = woos.Slash + path
 	}
 	return host, path
+}
+
+// LoadStatic initializes the host manager with an in-memory map of hosts.
+// This bypasses disk scanning and file watching, suitable for ephemeral mode.
+func (hm *Host) LoadStatic(staticHosts map[string]*alaye.Host) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+
+	// Apply defaults to the static hosts
+	for _, h := range staticHosts {
+		woos.DefaultHost(h)
+		hm.sortRoutes(h.Routes)
+	}
+
+	hm.hosts = staticHosts
+	hm.rebuildLookupLocked()
+	hm.loaded = true
+
+	hm.logger.Fields("count", len(staticHosts)).Info("static hosts loaded from memory")
 }
 
 func (hm *Host) UpdateGossipNode(nodeID, host string, route alaye.Route) {
@@ -465,16 +484,13 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 		hm.routers = make(map[string]*matcher.Tree)
 	}
 
-	// Normalize domain
 	domain = zulu.NormalizeHost(domain)
 	if domain == "" {
 		return
 	}
 
-	// Store the config
 	hm.lookupMap[domain] = cfg
 
-	// Build router for this host
 	if cfg != nil && len(cfg.Routes) > 0 {
 		tr := matcher.NewTree()
 		for i := range cfg.Routes {
@@ -610,8 +626,7 @@ func (hm *Host) loadOne(path string) (*alaye.Host, error) {
 		return nil, err
 	}
 
-	// Single source of truth for defaults
-	woos.DefaultHost(&hostConfig) // ← Replace woos.ApplyHost with this
+	woos.DefaultHost(&hostConfig)
 
 	hm.sortRoutes(hostConfig.Routes)
 	return &hostConfig, nil

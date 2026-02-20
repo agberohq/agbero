@@ -40,13 +40,23 @@ var (
 
 	// Certificate Management Flags
 	forceCAInstall bool
-	caMethod       string
 	certDir        string
 
 	// Gossip flags
 	gossipService string
 	gossipTTL     time.Duration
 	enableGossip  bool
+
+	// Ephemeral flags
+	servePath   string = "."
+	servePort   int    = 8000
+	serveBind   string
+	serveHTTPS  bool
+	proxyTarget string
+	proxyDomain string
+	proxyPort   int = 80
+	proxyBind   string
+	proxyHTTPS  bool
 )
 
 var (
@@ -112,6 +122,44 @@ func main() {
 	cmdHelp := flaggy.NewSubcommand("help")
 	cmdHelp.Description = "Show help examples"
 
+	// 7. Ephemeral Commands
+	cmdServe := flaggy.NewSubcommand("serve")
+	cmdServe.Description = "Serve a static directory instantly"
+	cmdServe.AddPositionalValue(&servePath, "path", 1, false, "Path to serve (default: current)")
+	cmdServe.Int(&servePort, "p", "port", "Port to listen on (default: 8000)")
+	cmdServe.String(&serveBind, "b", "bind", "Bind address (default: 0.0.0.0)")
+	cmdServe.Bool(&serveHTTPS, "s", "https", "Enable HTTPS (auto-generates certs)")
+
+	cmdProxy := flaggy.NewSubcommand("proxy")
+	cmdProxy.Description = "Reverse proxy a local target instantly"
+	cmdProxy.AddPositionalValue(&proxyTarget, "target", 1, true, "Target address (e.g. :3000)")
+	cmdProxy.AddPositionalValue(&proxyDomain, "domain", 2, false, "Domain name (default: localhost)")
+	cmdProxy.Int(&proxyPort, "p", "port", "Port to listen on (default: 80)")
+	cmdProxy.String(&proxyBind, "b", "bind", "Bind address (default: 0.0.0.0)")
+	cmdProxy.Bool(&proxyHTTPS, "s", "https", "Enable HTTPS (auto-generates certs)")
+
+	// 8. Route Management
+	cmdRoute := flaggy.NewSubcommand("route")
+	cmdRoute.Description = "Manage persistent routes (Interactive)"
+	cmdRouteAdd := flaggy.NewSubcommand("add")
+	cmdRouteAdd.Description = "Add a new route"
+	cmdRouteRemove := flaggy.NewSubcommand("remove")
+	cmdRouteRemove.Description = "Remove an existing route"
+	cmdRoute.AttachSubcommand(cmdRouteAdd, 1)
+	cmdRoute.AttachSubcommand(cmdRouteRemove, 1)
+
+	// 9. Tunnel Command
+	cmdTunnel := flaggy.NewSubcommand("tunnel")
+	cmdTunnel.Description = "Create a secure SSH tunnel"
+	cmdTunnel.String(&tunnelServer, "s", "server", "SSH Server (e.g. host.com or host.com:22)")
+	cmdTunnel.String(&tunnelUser, "u", "user", "SSH Username (default: root)")
+	cmdTunnel.String(&tunnelKey, "k", "key", "Private Key Path (default: ~/.ssh/id_rsa)")
+	cmdTunnel.Bool(&tunnelPassword, "", "password", "Use password authentication")
+	cmdTunnel.String(&tunnelLocalPort, "l", "local-port", "Local port to bind")
+	cmdTunnel.String(&tunnelRemoteHost, "rh", "remote-host", "Remote host to tunnel to (required)")
+	cmdTunnel.String(&tunnelRemotePort, "rp", "remote-port", "Remote port to tunnel to (required)")
+	cmdTunnel.Bool(&tunnelAutoReconnect, "", "reconnect", "Auto-reconnect on failure")
+
 	// Hash command
 	cmdHash := flaggy.NewSubcommand("hash")
 	cmdHash.Description = "Generate bcrypt hash for passwords"
@@ -162,7 +210,7 @@ func main() {
 
 	cmdGossip.AttachSubcommand(cmdGossipInit, 1)
 	cmdGossip.AttachSubcommand(cmdGossipToken, 1)
-	cmdGossip.AttachSubcommand(cmdGossipSecret, 1) // New
+	cmdGossip.AttachSubcommand(cmdGossipSecret, 1)
 	cmdGossip.AttachSubcommand(cmdGossipStatus, 1)
 
 	// Attach main commands
@@ -179,10 +227,35 @@ func main() {
 	flaggy.AttachSubcommand(cmdKey, 1)
 	flaggy.AttachSubcommand(cmdGossip, 1)
 	flaggy.AttachSubcommand(cmdHelp, 1)
+	flaggy.AttachSubcommand(cmdServe, 1)
+	flaggy.AttachSubcommand(cmdProxy, 1)
+	flaggy.AttachSubcommand(cmdRoute, 1)
+	flaggy.AttachSubcommand(cmdTunnel, 1)
 
 	flaggy.Parse()
 
 	welcome()
+
+	// --- EPHEMERAL & TUI COMMANDS ---
+	if cmdServe.Used {
+		handleServe(servePath, servePort, serveBind, serveHTTPS)
+		return
+	}
+
+	if cmdProxy.Used {
+		handleProxy(proxyTarget, proxyPort, proxyBind, proxyDomain, proxyHTTPS)
+		return
+	}
+
+	if cmdRoute.Used {
+		handleRouteCommands(cmdRouteAdd.Used, cmdRouteRemove.Used, configPath)
+		return
+	}
+
+	if cmdTunnel.Used {
+		handleTunnel()
+		return
+	}
 
 	// --- CONFIG PATH RESOLUTION ---
 	var resolvedPath string
@@ -274,7 +347,6 @@ func main() {
 
 	if cmdGossip.Used {
 		configPath = resolvedPath
-		// Added cmdGossipSecret.Used to args
 		handleGossipCommands(cmdGossipInit.Used, cmdGossipToken.Used, cmdGossipSecret.Used, cmdGossipStatus.Used)
 		return
 	}
@@ -408,5 +480,4 @@ func main() {
 	}
 
 	showHelpExamples(resolvedPath)
-
 }

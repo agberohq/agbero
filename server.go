@@ -56,7 +56,6 @@ type Server struct {
 	global      *alaye.Global
 	tlsManager  *tlss2.Manager
 
-	//  Correct type usage
 	firewall *firewall.Engine
 
 	mu         sync.RWMutex
@@ -104,22 +103,30 @@ func (s *Server) Start(configPath string) error {
 		s.logger = ll.New(woos.Name).Enable()
 	}
 
-	absConfigPath, err := filepath.Abs(configPath)
-	if err != nil {
-		absConfigPath = configPath
-	}
+	// Persistent mode: Load config from file
+	if configPath != "" {
+		absConfigPath, err := filepath.Abs(configPath)
+		if err != nil {
+			absConfigPath = configPath
+		}
 
-	woos.DefaultApply(s.global, absConfigPath)
+		woos.DefaultApply(s.global, absConfigPath)
 
-	sha, err := s.computeFullConfigSHA()
-	if err != nil {
-		s.logger.Warn("could not compute config sha: ", err)
+		sha, err := s.computeFullConfigSHA()
+		if err != nil {
+			s.logger.Warn("could not compute config sha: ", err)
+		} else {
+			s.configSHA = sha
+			s.logger.Fields(
+				"config_path", absConfigPath,
+				"sha256", sha[:12],
+			).Infof("config loaded")
+		}
 	} else {
-		s.configSHA = sha
-		s.logger.Fields(
-			"config_path", absConfigPath,
-			"sha256", sha[:12],
-		).Infof("config loaded")
+		// Ephemeral/Memory mode
+		// Apply defaults relative to CWD, assuming no config file
+		woos.DefaultApply(s.global, ".")
+		s.logger.Info("starting in ephemeral mode")
 	}
 
 	s.logger.Fields(
@@ -157,14 +164,17 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("RouteReaper", s.reaper.Stop)
 	}
 
-	if err := s.hostManager.ReloadFull(); err != nil {
-		s.logger.Fields("err", err).Error("failed to load initial hosts")
-		return err
+	// Only trigger file load if we are in persistent mode
+	if configPath != "" {
+		if err := s.hostManager.ReloadFull(); err != nil {
+			s.logger.Fields("err", err).Error("failed to load initial hosts")
+			return err
+		}
 	}
+
 	hosts, _ := s.hostManager.LoadAll()
 	s.logHostStats(hosts)
 
-	//  Gossip initialization
 	if s.global.Gossip.Enabled.Active() {
 		gs, err := gossip.NewService(s.hostManager, &s.global.Gossip, s.logger)
 		if err != nil {
@@ -180,7 +190,6 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	//  Check Security pointer
 	var trustedProxies []string
 	if s.global.Security.Enabled.Active() {
 		trustedProxies = s.global.Security.TrustedProxies
@@ -195,13 +204,13 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	//  Firewall initialization with pointer check
 	var fwConfig alaye.Firewall
 	if s.global.Security.Enabled.Active() {
 		fwConfig = s.global.Security.Firewall
 	}
 	dataDir := woos.NewFolder(s.global.Storage.DataDir)
 
+	var err error
 	s.firewall, err = firewall.New(&fwConfig, dataDir, s.logger)
 	if err != nil {
 		return errors.Newf("firewall init: %w", err)
@@ -210,7 +219,6 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("Firewall", func() { _ = s.firewall.Close() })
 	}
 
-	// Admin Server needs to know about firewall for List()
 	s.startAdminServer()
 
 	baseHandler := http.HandlerFunc(s.handleRequest)
@@ -325,6 +333,12 @@ func (s *Server) Start(configPath string) error {
 }
 
 func (s *Server) Reload() {
+	// Skip reload in ephemeral mode
+	if s.configPath == "" {
+		s.logger.Info("reload ignored in ephemeral mode")
+		return
+	}
+
 	s.logger.Info("reloading configuration")
 
 	sha, err := s.computeFullConfigSHA()
@@ -506,13 +520,9 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 		s.logger.Warn("timeout waiting for h3 connections to drain")
 	}
 
-	// Gracefully shutdown HTTP/3 servers
 	for key, srv := range s.h3Servers {
-		// Shutdown stops accepting new connections and waits for existing ones
-		// or until ctx is canceled.
 		if err := srv.Shutdown(ctx); err != nil {
 			s.logger.Fields("key", key, "err", err).Warn("h3 graceful shutdown failed")
-			// Fallback to hard close if graceful fails
 			_ = srv.Close()
 		}
 	}
@@ -552,7 +562,6 @@ func (s *Server) logHostStats(hosts map[string]*alaye.Host) {
 func (s *Server) hasStreaming(hosts map[string]*alaye.Host) bool {
 	for _, host := range hosts {
 		for _, rt := range host.Routes {
-			// Check Backends pointer
 			if rt.Backends.Enabled.Active() {
 				for _, srv := range rt.Backends.Servers {
 					if srv.Streaming.Enabled.Active() && srv.Streaming.Enabled.Active() {
@@ -696,7 +705,6 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 		h = h3.AdvertiseHTTP3(port)(h)
 	}
 
-	//  Use proper Handler signature with nil context route for global firewall
 	if s.firewall != nil {
 		h = s.firewall.Handler(h, nil)
 	}
@@ -728,7 +736,6 @@ func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
 		}
 
 		for _, rule := range rlc.Rules {
-			// ... match logic ...
 			if len(rule.Methods) > 0 {
 				methodMatch := false
 				currentMethod := r.Method
@@ -794,7 +801,6 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 		httpHandler = next
 	}
 
-	// Use GetConfigForClient for optimal performance with session resumption
 	tlsCfg := &tls.Config{
 		MinVersion:         tls.VersionTLS12,
 		MaxVersion:         tls.VersionTLS13,
@@ -806,30 +812,25 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 }
 
 func (s *Server) validateTLSConfig() error {
-	// Only validate for localhost/dev modes
 	if !s.global.Development {
 		return nil
 	}
 
-	// Check HTTPS bindings
 	for _, addr := range s.global.Bind.HTTPS {
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			continue
 		}
-		// Skip non-localhost bindings (production)
 		if !woos.IsLocalhost(host) && host != "" && host != "0.0.0.0" && host != "::" {
 			continue
 		}
 
-		// Check if any host uses auto/local TLS
 		hosts, _ := s.hostManager.LoadAll()
 		for _, h := range hosts {
 			for _, bindPort := range h.Bind {
 				if bindPort == port {
 					switch h.TLS.Mode {
 					case alaye.ModeLocalAuto, alaye.ModeLocalCert:
-						// Validate CA is installed
 						certDir := woos.MakeFolder(s.global.Storage.CertsDir, woos.CertDir)
 						if !tlss2.IsCARootInstalled(certDir.Path()) {
 							return errors.Newf(
@@ -913,7 +914,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	maxBody := int64(alaye.DefaultMaxBodySize)
-	// Pointer safety for Limits
 	if hcfg.Limits.MaxBodySize > 0 {
 		maxBody = hcfg.Limits.MaxBodySize
 	}
@@ -994,7 +994,6 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	routeKey := route.Key()
 	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey)
 
-	// Pointer safety for Wasm
 	if route.Wasm.Enabled.Active() {
 		wm, err := s.getWasmManager(&route.Wasm, routeKey)
 		if err != nil {
@@ -1005,7 +1004,6 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 		handler = wm.Handler(handler)
 	}
 
-	// Pointer safety for RateLimit
 	if s.rateLimiter != nil {
 		ignoreGlobal := false
 		if route.RateLimit.IgnoreGlobal {
@@ -1033,7 +1031,7 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string) *handler
 	}
 
 	if it, loaded := zulu.Route.LoadOrStore(key, newItem); loaded {
-		h.Close() // Close duplicate
+		h.Close()
 		if existing, ok := it.Value.(*handlers.Route); ok {
 			s.reaper.Touch(key)
 			return existing
@@ -1068,9 +1066,7 @@ func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 		host = r.Host
 	}
 
-	// Check if this request has an owner (host-specific config)
 	if owner, ok := r.Context().Value(woos.OwnerKey).(*alaye.Host); ok && owner != nil {
-		// Use host-specific HTTPS bind if available
 		for _, bindPort := range owner.Bind {
 			if bindPort != "" {
 				target := fmt.Sprintf("https://%s:%s%s", host, bindPort, r.URL.RequestURI())
@@ -1080,7 +1076,6 @@ func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Fallback to global config
 	targetPort := woos.DefaultHTTPSPortInt
 	if len(s.global.Bind.HTTPS) > 0 {
 		_, port, err := net.SplitHostPort(s.global.Bind.HTTPS[0])
@@ -1110,7 +1105,6 @@ func (s *Server) computeFullConfigSHA() (string, error) {
 
 	entries, err := os.ReadDir(hostDir)
 	if err != nil {
-		// If dir doesn't exist, just hash config
 		return hex.EncodeToString(hasher.Sum(nil)), nil
 	}
 
