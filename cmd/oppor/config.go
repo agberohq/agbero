@@ -1,48 +1,70 @@
 package main
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
-type Config struct {
-	// Load test config
-	Targets     []string      `json:"targets"`
-	Concurrency int           `json:"concurrency"`
-	Requests    int           `json:"requests"` // 0 = infinite
-	Duration    time.Duration `json:"duration"`
-	RateLimit   int           `json:"rate_limit"` // reqs/sec, 0 = unlimited
-	Method      string        `json:"method"`
-	Headers     []string      `json:"headers"`
-	Body        string        `json:"body"`
-	KeepAlive   bool          `json:"keep_alive"`
-	Timeout     time.Duration `json:"timeout"`
-	RandomIPs   bool          `json:"random_ips"`
-	IPPoolSize  int           `json:"ip_pool_size"`
-	OutputJSON  bool          `json:"output_json"`
-	Verbose     bool          `json:"verbose"`
-	Follow      bool          `json:"follow"`
-	MetricsURL  string        `json:"metrics_url"`
-	ShowLatency bool          `json:"show_latency"`
-
-	// Server config
-	ServeMode  bool     `json:"serve_mode"`
-	Ports      []string `json:"ports"`
-	StartPort  int      `json:"start_port"`
-	EndPort    int      `json:"end_port"`
-	TotalPorts int      `json:"total_ports"`
-	PortString string   `json:"port_string"`
+type LoadConfig struct {
+	Targets     []string
+	Concurrency int
+	Requests    int
+	Duration    time.Duration
+	RateLimit   int
+	Method      string
+	Headers     map[string]string
+	Body        string
+	Timeout     time.Duration
 }
 
-type progressMsg struct {
-	completed uint64
-	total     uint64
-	done      bool
+type ServerConfig struct {
+	Port           string
+	PortRange      string
+	Speed          string
+	FailureRate    float64
+	BaseLatency    time.Duration
+	Jitter         time.Duration
+	ResponseSize   string
+	FailureCodes   []int
+	FailurePattern string
+	ContentMode    string
+	SlowEndpoint   string
+	CPULoad        float64
+	MemoryPerReq   int
+	SessionMode    string
+	CacheHitRate   float64
+	TLSCert        string
+	TLSKey         string
 }
 
-type metricsMsg struct{}
-
-type logMsg struct {
-	text string
+func (c ServerConfig) Validate() error {
+	if c.FailureRate < 0 || c.FailureRate > 1 {
+		return fmt.Errorf("failure rate must be between 0 and 1")
+	}
+	if c.CacheHitRate < 0 || c.CacheHitRate > 1 {
+		return fmt.Errorf("cache hit rate must be between 0 and 1")
+	}
+	if c.CPULoad < 0 || c.CPULoad > 1 {
+		return fmt.Errorf("CPU load must be between 0 and 1")
+	}
+	return nil
 }
 
-type agberoMetricsMsg struct {
-	metrics map[string]interface{}
+func (c LoadConfig) Validate() error {
+	if len(c.Targets) == 0 {
+		return fmt.Errorf("at least one target required")
+	}
+	for _, t := range c.Targets {
+		if !strings.HasPrefix(t, "http://") && !strings.HasPrefix(t, "https://") {
+			return fmt.Errorf("invalid target URL: %s", t)
+		}
+	}
+	if c.Concurrency <= 0 {
+		return fmt.Errorf("concurrency must be > 0")
+	}
+	if c.Requests < 0 {
+		return fmt.Errorf("requests cannot be negative")
+	}
+	return nil
 }
