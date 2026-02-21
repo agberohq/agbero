@@ -124,7 +124,6 @@ func (s *Server) Start(configPath string) error {
 		}
 	} else {
 		// Ephemeral/Memory mode
-		// Apply defaults relative to CWD, assuming no config file
 		woos.DefaultApply(s.global, ".")
 		s.logger.Info("starting in ephemeral mode")
 	}
@@ -134,11 +133,14 @@ func (s *Server) Start(configPath string) error {
 		"gossip_mode", s.global.Gossip.Enabled.Active(),
 	).Info("configuring")
 
-	s.logger.Fields(
-		"hosts_dir", s.global.Storage.HostsDir,
-		"cert_dir", s.global.Storage.CertsDir,
-		"data_dir", s.global.Storage.DataDir,
-	).Info("directories initialized")
+	// Only show storage paths in persistent mode to reduce noise
+	if configPath != "" {
+		s.logger.Fields(
+			"hosts_dir", s.global.Storage.HostsDir,
+			"cert_dir", s.global.Storage.CertsDir,
+			"data_dir", s.global.Storage.DataDir,
+		).Info("directories initialized")
+	}
 
 	if err := s.validateTLSConfig(); err != nil {
 		s.logger.Fatal(err)
@@ -204,21 +206,25 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	var fwConfig alaye.Firewall
+	// Only initialize firewall if explicitly enabled (Active)
+	// Ephemeral mode sets Security=Inactive by default, so no DB is created.
 	if s.global.Security.Enabled.Active() {
-		fwConfig = s.global.Security.Firewall
+		fwConfig := s.global.Security.Firewall
+		// Check firewall status specifically
+		if fwConfig.Status.Active() {
+			dataDir := woos.NewFolder(s.global.Storage.DataDir)
+			var err error
+			s.firewall, err = firewall.New(&fwConfig, dataDir, s.logger)
+			if err != nil {
+				return errors.Newf("firewall init: %w", err)
+			}
+			if s.shutdown != nil {
+				s.shutdown.RegisterFunc("Firewall", func() { _ = s.firewall.Close() })
+			}
+		}
 	}
-	dataDir := woos.NewFolder(s.global.Storage.DataDir)
 
-	var err error
-	s.firewall, err = firewall.New(&fwConfig, dataDir, s.logger)
-	if err != nil {
-		return errors.Newf("firewall init: %w", err)
-	}
-	if s.firewall != nil && s.shutdown != nil {
-		s.shutdown.RegisterFunc("Firewall", func() { _ = s.firewall.Close() })
-	}
-
+	// Admin interface (disabled in ephemeral by default)
 	s.startAdminServer()
 
 	baseHandler := http.HandlerFunc(s.handleRequest)
@@ -229,7 +235,10 @@ func (s *Server) Start(configPath string) error {
 
 	tlsCfg, acmeHandler, err := s.buildTLS(httpFallbackHandler)
 	if err != nil {
-		s.logger.Fields("err", err.Error()).Warn("TLS setup failed; HTTPS listeners may not start")
+		// Suppress certmagic warning in ephemeral mode if not requested
+		if configPath != "" {
+			s.logger.Fields("err", err.Error()).Warn("TLS setup failed; HTTPS listeners may not start")
+		}
 		tlsCfg = nil
 		acmeHandler = httpFallbackHandler
 	}
@@ -317,6 +326,7 @@ func (s *Server) Start(configPath string) error {
 			} else {
 				err = server.ListenAndServe()
 			}
+			// Idiomatic check for server closed
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errCh <- err
 			}
@@ -328,12 +338,12 @@ func (s *Server) Start(configPath string) error {
 	case err := <-errCh:
 		return err
 	case <-s.shutdown.Done():
+		// Wait a moment for graceful shutdown logic in listeners
 		return nil
 	}
 }
 
 func (s *Server) Reload() {
-	// Skip reload in ephemeral mode
 	if s.configPath == "" {
 		s.logger.Info("reload ignored in ephemeral mode")
 		return
