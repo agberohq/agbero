@@ -54,9 +54,9 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # LDFLAGS for version injection
-LDFLAGS := -s -w -X "git.imaxinacion.net/aibox/agbero/internal/woos.Version=$(VERSION)" \
-           -X "git.imaxinacion.net/aibox/agbero/internal/woos.Commit=$(COMMIT)" \
-           -X "git.imaxinacion.net/aibox/agbero/internal/woos.Date=$(DATE)"
+LDFLAGS := -s -w -X "git.imaxinacion.net/aibox/agbero/internal/core/woos.Version=$(VERSION)" \
+           -X "git.imaxinacion.net/aibox/agbero/internal/core/woos.Commit=$(COMMIT)" \
+           -X "git.imaxinacion.net/aibox/agbero/internal/core/woos.Date=$(DATE)"
 
 .PHONY: all build clean run install build-all version help \
         deps test test-verbose fmt lint tidy snapshot goreleaser-check changelog dev update-deps \
