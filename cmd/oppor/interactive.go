@@ -33,7 +33,7 @@ func runInteractive() {
 	)
 
 	if err := form.Run(); err != nil {
-		fmt.Println("Error:", err)
+		logger.Fields("error", err).Error("error running interactive form")
 		return
 	}
 
@@ -144,7 +144,7 @@ func runInteractiveLoadTest() {
 		Method:      "GET",
 	}
 
-	runLoadTest(cfg)
+	runLoadTest(cfg, export)
 }
 
 func runInteractiveServer() {

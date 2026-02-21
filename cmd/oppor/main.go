@@ -7,12 +7,41 @@ import (
 	"strings"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"github.com/integrii/flaggy"
+	"github.com/olekukonko/ll"
+	"github.com/olekukonko/ll/lh"
+	"github.com/olekukonko/ll/lx"
 )
 
 var version = "3.0.0"
 
+var (
+	logger *ll.Logger
+)
+
+var (
+	targets     []string
+	concurrency int
+	requests    int
+	duration    string
+	rateLimit   int
+	method      string
+	headers     []string
+	body        string
+	timeout     string
+	export      bool
+	debug       bool
+)
+
 func main() {
+
+	// Initialize Logger
+	logger = ll.New(woos.Name,
+		ll.WithHandler(lh.NewColorizedHandler(os.Stdout)),
+		ll.WithFatalExits(true),
+	).Enable()
+
 	flaggy.SetName("oppor")
 	flaggy.SetDescription("Production-grade load tester & test server for load balancers")
 	flaggy.SetVersion(version)
@@ -54,15 +83,6 @@ func main() {
 
 	// Load test subcommand
 	runCmd := flaggy.NewSubcommand("run")
-	var targets []string
-	var concurrency int
-	var requests int
-	var duration string
-	var rateLimit int
-	var method string
-	var headers []string
-	var body string
-	var timeout string
 
 	runCmd.StringSlice(&targets, "t", "target", "Target URLs (required)")
 	runCmd.Int(&concurrency, "c", "concurrency", "Number of workers")
@@ -73,10 +93,17 @@ func main() {
 	runCmd.StringSlice(&headers, "H", "header", "Custom headers (Key:Value)")
 	runCmd.String(&body, "b", "body", "Request body")
 	runCmd.String(&timeout, "timeout", "", "Request timeout")
+	runCmd.Bool(&export, "", "export", "Disable automatic export of JSON/CSV results")
+	runCmd.Bool(&debug, "", "debug", "enable debugging")
 
 	flaggy.AttachSubcommand(runCmd, 1)
-
 	flaggy.Parse()
+
+	logger.Level(lx.LevelInfo)
+
+	if debug {
+		logger.Level(lx.LevelDebug)
+	}
 
 	if interactive {
 		runInteractive()
@@ -163,7 +190,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		runLoadTest(cfg)
+		runLoadTest(cfg, export)
 		return
 	}
 

@@ -30,10 +30,12 @@ func runEphemeral(e *ephemeral, global *alaye.Global, hosts map[string]*alaye.Ho
 	hm := discovery.NewHostFolder(woos.NewFolder(""), discovery.WithLogger(e.logger))
 	hm.LoadStatic(hosts)
 
+	l, _ := zulu.Logging(&global.Logging, devMode, e.shutdown)
+
 	srv := agbero.NewServer(
 		agbero.WithHostManager(hm),
 		agbero.WithGlobalConfig(global),
-		agbero.WithLogger(e.logger),
+		agbero.WithLogger(l),
 		agbero.WithShutdownManager(e.shutdown),
 	)
 

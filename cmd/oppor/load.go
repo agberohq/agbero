@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -222,7 +221,7 @@ func (lt *Load) executeRequest(workerID int) RequestResult {
 
 	// Detailed logging for debugging
 	if !success {
-		fmt.Printf("[worker %d] %s -> %d (latency: %v, ttfb: %v, dns: %v, conn: %v)\n",
+		logger.Debugf("[worker %d] %s -> %d (latency: %v, ttfb: %v, dns: %v, conn: %v)",
 			workerID, target, resp.StatusCode, latency, ttfb, dnsDuration, connDuration)
 	}
 

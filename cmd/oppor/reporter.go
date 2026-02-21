@@ -26,29 +26,29 @@ func (r *Reporter) PrintSummary() {
 	fmt.Println("                    LOAD TEST RESULTS")
 	fmt.Println(strings.Repeat("=", 60))
 
-	fmt.Printf("\n📊 Configuration:\n")
+	fmt.Printf("\nConfiguration:\n")
 	fmt.Printf("  Targets:      %v\n", r.Config.Targets)
 	fmt.Printf("  Concurrency:  %d workers\n", r.Config.Concurrency)
-	fmt.Printf("  Duration:     %.2fs\n", snap["elapsed"])
+	fmt.Printf("  Duration:     %.2fs\n", snap["elapsed"].(float64))
 
-	fmt.Printf("\n📈 Requests:\n")
+	fmt.Printf("\nRequests:\n")
 	fmt.Printf("  Total:        %d\n", snap["total"])
 	fmt.Printf("  Successful:   %d (%.2f%%)\n", snap["success"], snap["success_rate"])
 	fmt.Printf("  Errors:       %d\n", snap["errors"])
 	fmt.Printf("  RPS:          %.2f req/sec\n", snap["rps"])
 
-	fmt.Printf("\n⏱️  Latency:\n")
-	fmt.Printf("  Average:      %.2f ms\n", snap["latency_avg"])
-	fmt.Printf("  P50:          %.2f ms\n", snap["latency_p50"])
-	fmt.Printf("  P95:          %.2f ms\n", snap["latency_p95"])
-	fmt.Printf("  P99:          %.2f ms\n", snap["latency_p99"])
-	fmt.Printf("  Std Dev:      %.2f ms\n", snap["latency_std"])
+	fmt.Printf("\nLatency:\n")
+	fmt.Printf("  Average:      %.2f ms\n", float64(snap["latency_avg"].(int64)))
+	fmt.Printf("  P50:          %.2f ms\n", float64(snap["latency_p50"].(int64)))
+	fmt.Printf("  P95:          %.2f ms\n", float64(snap["latency_p95"].(int64)))
+	fmt.Printf("  P99:          %.2f ms\n", float64(snap["latency_p99"].(int64)))
+	fmt.Printf("  Std Dev:      %.2f ms\n", float64(snap["latency_std"].(int64)))
 
-	fmt.Printf("\n📦 Data:\n")
+	fmt.Printf("\nData:\n")
 	fmt.Printf("  Total:        %s\n", snap["bytes_human"])
 
 	if codes, ok := snap["status_codes"].(map[string]uint64); ok && len(codes) > 0 {
-		fmt.Printf("\n🔢 Status Codes:\n")
+		fmt.Printf("\nStatus Codes:\n")
 		var keys []string
 		for k := range codes {
 			keys = append(keys, k)
@@ -60,7 +60,7 @@ func (r *Reporter) PrintSummary() {
 	}
 
 	if errors, ok := snap["error_types"].(map[string]uint64); ok && len(errors) > 0 {
-		fmt.Printf("\n❌ Error Types:\n")
+		fmt.Printf("\nError Types:\n")
 		var keys []string
 		for k := range errors {
 			keys = append(keys, k)
@@ -136,8 +136,8 @@ func (r *Reporter) ExportCSV(filename string) error {
 	return nil
 }
 
-func runLoadTest(cfg LoadConfig) {
-	fmt.Printf("Starting load test with %d workers", cfg.Concurrency)
+func runLoadTest(cfg LoadConfig, exportEnabled bool) {
+	logger.Printf("Starting load test with %d workers", cfg.Concurrency)
 	if cfg.Requests > 0 {
 		fmt.Printf(", %d requests", cfg.Requests)
 	}
@@ -154,6 +154,10 @@ func runLoadTest(cfg LoadConfig) {
 
 	reporter := NewReporter(metrics, cfg)
 	reporter.PrintSummary()
+
+	if !exportEnabled {
+		return
+	}
 
 	// Auto-export results
 	timestamp := time.Now().Format("20060102-150405")

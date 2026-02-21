@@ -1,19 +1,26 @@
 # Agbero CLI Reference
 
-Complete documentation for the Agbero command-line interface.
+Agbero is a modern reverse proxy, load balancer, and API gateway written in Go. It supports HTTP/HTTPS proxying, TCP proxying, static file serving, firewall rules, rate limiting, Let's Encrypt integration, clustering via gossip protocol, and more. Configurations are written in HCL format for simplicity and readability.
+
+This README provides complete documentation for the Agbero command-line interface (CLI).
 
 ## Installation
 
 ### From Binary Release
+Download the latest release from the repository and install it manually.
+
+For Linux/macOS:
 ```bash
-# Linux/macOS
-curl -L https://github.com/yourorg/agbero/releases/latest/download/agbero-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m) -o agbero
+curl -L https://git.imaxinacion.net/aibox/agbero/releases/latest/download/agbero-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m) -o agbero
 chmod +x agbero
 sudo mv agbero /usr/local/bin/
 
 # Verify installation
 agbero --version
 ```
+
+For Windows:
+Download the executable from the releases page and add it to your PATH.
 
 ### From Source
 ```bash
@@ -24,134 +31,111 @@ go install git.imaxinacion.net/aibox/agbero/cmd/agbero@latest
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `-c, --config` | Path to configuration file | Auto-detected |
-| `-d, --dev` | Enable development mode | `false` |
+| `-c, --config` | Path to configuration file (`.hcl`) | Auto-detected (see Configuration Discovery Order) |
+| `-d, --dev` | Enable development mode (detailed logs, staging certificates) | `false` |
 | `--version` | Show version information | N/A |
 | `--help` | Show help | N/A |
 
 ## Commands Overview
 
+Agbero supports a variety of commands for running, managing, and configuring the proxy.
+
 ### 🚀 `run` - Run in foreground
-Run Agbero interactively (perfect for development).
+Run Agbero interactively, ideal for development or testing.
 
 **Usage:**
 ```bash
 agbero run [flags]
 ```
 
+**Flags:**
+- `--dev`: Enable development mode
+- `--gossip`: Enable gossip clustering (overrides config if set)
+
 **Examples:**
 ```bash
-# Simple development server
+# Run with auto-detected config
 agbero run
 
-# With custom config
-agbero run --config ./my-config.hcl
+# Run with custom config and dev mode
+agbero run --config ./agbero.hcl --dev
 
-# Development mode (debug logs, staging certificates)
-agbero run --dev --config ./config.hcl
-
-# Enable gossip clustering
-agbero run --gossip --config cluster-config.hcl
+# Run with gossip enabled
+agbero run --config ./cluster.hcl --gossip
 ```
 
-**What happens:**
-1. Configuration is validated and loaded
-2. Missing directories are created
-3. TLS certificates are generated if needed
-4. Server starts listening on configured ports
-5. File watchers monitor configuration changes
+**Behavior:**
+- Loads and validates configuration.
+- Starts HTTP/HTTPS listeners based on `bind` settings.
+- Watches for host configuration changes in `hosts_dir`.
+- Supports hot reload via SIGHUP signal.
+- In dev mode: Enables debug logging and uses Let's Encrypt staging.
 
 **Exit codes:**
-- `0`: Clean shutdown
-- `1`: Configuration error
-- `2`: Runtime error
-- `130`: Interrupted by signal
+- `0`: Graceful shutdown
+- `1`: Error (e.g., config invalid)
 
----
-
-### 🔧 `install` - Install as system service
-Install Agbero as a background service for your OS.
+### 🔧 `install` - Scaffold configuration and install as system service
+Generates a default configuration and optionally installs Agbero as a background service.
 
 **Usage:**
 ```bash
 agbero install [flags]
 ```
 
-**Interactive installation:**
-```bash
-agbero install
-```
-You'll be prompted to choose installation type:
-- **System** (`/etc/agbero/`) - Requires sudo, runs as root
-- **User** (`~/.config/agbero/`) - No sudo, runs as your user
-- **Current Directory** - For testing, uses CWD
+**Flags:**
+- `--here`: Install configuration in the current directory (skips service installation)
 
 **Examples:**
 ```bash
-# System installation (Linux/macOS)
-sudo agbero install --config /etc/agbero/config.hcl
+# System-wide installation (requires sudo on Linux/macOS)
+sudo agbero install
 
-# User installation (no sudo)
-agbero install --config ~/.config/agbero/config.hcl
+# User-local installation (no sudo)
+agbero install --here
 
-# Custom path
-agbero install --config /opt/agbero/config.hcl
-
-# With development mode
-agbero install --dev --config ./config.hcl
+# Custom config path (service install)
+sudo agbero install --config /etc/agbero/agbero.hcl
 ```
 
-**Supported platforms:**
-- **Linux**: Systemd (`/etc/systemd/system/agbero.service`)
-- **macOS**: Launchd (`/Library/LaunchDaemons/net.imaxinacion.agbero.plist`)
-- **Windows**: Windows Service (`Agbero Service`)
+**Behavior:**
+- Generates `agbero.hcl` with placeholders for secrets.
+- Creates directories: `hosts.d`, `certs`, `data`, `logs`.
+- Adds default host configs (`admin.hcl`, `web.hcl`).
+- If not `--here`, installs as a system service (systemd on Linux, launchd on macOS, Windows Service on Windows).
+- Service runs as root (system) or current user (`--here`).
 
-**Service management after installation:**
-```bash
-# Linux
-sudo systemctl status agbero
-sudo systemctl restart agbero
-sudo journalctl -u agbero -f
+**Supported Platforms:**
+- Linux: systemd
+- macOS: launchd
+- Windows: Windows Services
 
-# macOS
-sudo launchctl list | grep agbero
-sudo launchctl unload /Library/LaunchDaemons/net.imaxinacion.agbero.plist
-
-# Windows
-sc query agbero
-sc stop agbero
-```
-
----
-
-### ⚡ `start` / `stop` / `restart` - Service control
+### ⚡ `start` / `stop` - Service control
 Control the installed Agbero service.
 
 **Usage:**
 ```bash
 agbero start [flags]
 agbero stop [flags]
-agbero restart [flags]
 ```
 
 **Examples:**
 ```bash
-# Start the service
-sudo agbero start --config /etc/agbero/config.hcl
+# Start system service
+sudo agbero start --config /etc/agbero/agbero.hcl
 
-# Stop the service
-sudo agbero stop --config /etc/agbero/config.hcl
-
-# Restart (reloads configuration)
-sudo agbero restart --config /etc/agbero/config.hcl
+# Stop user service
+agbero stop --config ~/.config/agbero/agbero.hcl
 ```
 
-**Note:** Configuration path must match what was used during `install`.
+**Behavior:**
+- Requires the same `--config` as used in `install`.
+- On Linux/macOS, may require sudo for system services.
 
----
+Note: There is no explicit `restart` command; use `stop` followed by `start`, or `reload` for hot reload.
 
 ### 🗑️ `uninstall` - Remove service
-Remove Agbero service from your system.
+Uninstall the Agbero service (configuration files are preserved).
 
 **Usage:**
 ```bash
@@ -161,22 +145,33 @@ agbero uninstall [flags]
 **Examples:**
 ```bash
 # Uninstall system service
-sudo agbero uninstall --config /etc/agbero/config.hcl
-
-# Uninstall user service
-agbero uninstall --config ~/.config/agbero/config.hcl
+sudo agbero uninstall --config /etc/agbero/agbero.hcl
 ```
 
-**What happens:**
-1. Service is stopped
-2. Service definition is removed
-3. **Configuration files are preserved**
-4. Certificate files are preserved
+**Behavior:**
+- Stops the service if running.
+- Removes service definitions (e.g., systemd unit, launchd plist).
 
----
+### 🔄 `reload` - Hot reload configuration
+Sends SIGHUP to the running process to reload hosts without restart.
+
+**Usage:**
+```bash
+agbero reload [flags]
+```
+
+**Examples:**
+```bash
+# Reload system service
+sudo agbero reload --config /etc/agbero/agbero.hcl
+```
+
+**Behavior:**
+- Reads PID from `data_dir/agbero.pid`.
+- Triggers reload of host configurations.
 
 ### ✅ `validate` - Validate configuration
-Check configuration files for syntax errors and validity.
+Checks the main config and all host files for syntax and validity.
 
 **Usage:**
 ```bash
@@ -185,33 +180,16 @@ agbero validate [flags]
 
 **Examples:**
 ```bash
-# Validate default config
-agbero validate
-
-# Validate specific config
-agbero validate --config ./config.hcl
-
-# Validate with verbose output
-agbero validate --config ./config.hcl -v
+agbero validate --config ./agbero.hcl
 ```
 
-**Output:**
+**Output Example:**
 ```
-✅ Configuration is valid
-  Config file: /etc/agbero/config.hcl
-  Hosts loaded: 5
-  Routes: 12
-  TLS certificates: 3
+INFO configuration is valid hosts_count=5 hosts_dir=/etc/agbero/hosts.d
 ```
-
-**Exit codes:**
-- `0`: Configuration is valid
-- `1`: Configuration has errors (details shown)
-
----
 
 ### 📋 `hosts` - List configured hosts
-Display all discovered host configurations.
+Lists all loaded host configurations from `hosts_dir`.
 
 **Usage:**
 ```bash
@@ -220,71 +198,116 @@ agbero hosts [flags]
 
 **Examples:**
 ```bash
-# List all hosts
-agbero hosts --config ./config.hcl
-
-# Output format
-agbero hosts --config ./config.hcl --json
+agbero hosts --config ./agbero.hcl
 ```
 
-**Sample output:**
+**Output Example:**
 ```
-HOST CONFIGURATIONS
-===================
-
-api.example.com
-  Config: api.hcl
-  Routes: 3
-    • /api/v1/users → http://backend:8080
-    • /api/v1/orders → http://backend:8080
-    • /static/* → ./public (web)
-
-app.example.com
-  Config: app.hcl  
-  Routes: 1
-    • / → ./dist (web)
-
-Total: 2 hosts, 4 routes
+INFO configured host host_id=admin domains=[admin.localhost] routes=1
+INFO configured host host_id=cockroach domains=[cockroach.localhost] routes=1
 ```
 
----
-
-### 🔐 `hash` - Generate password hash
-Generate bcrypt hashes for Basic Authentication.
+### 🔐 `hash` - Generate bcrypt hash
+Generates a bcrypt hash for passwords (used in `basic_auth`).
 
 **Usage:**
 ```bash
 agbero hash [flags]
 ```
 
+**Flags:**
+- `-p, --password`: Password to hash (interactive if omitted)
+
 **Examples:**
 ```bash
-# Interactive prompt
+# Interactive
 agbero hash
-# Enter password: ******
 
-# Direct password
+# Direct
 agbero hash --password "mysecret"
-
-# With custom cost
-agbero hash --password "mysecret" --cost 12
 ```
 
-**Output:**
+**Output Example:**
 ```
-Bcrypt Hash:
-$2a$10$N9qo8uLOickgx2ZMRZoMye.Md5cKXzqGc9LpBqQ6GpUJYx5e4vY1C
-
-Usage in config:
-users = ["admin:$2a$10$N9qo8uLOickgx2ZMRZoMye.Md5cKXzqGc9LpBqQ6GpUJYx5e4vY1C"]
+$2a$10$...
 ```
 
----
+### 🌐 `serve` - Ephemeral static file server
+Serve a directory instantly (no persistent config).
+
+**Usage:**
+```bash
+agbero serve [path] [flags]
+```
+
+**Flags:**
+- `-p, --port`: Listen port (default: 8000)
+- `-b, --bind`: Bind address (default: localhost)
+- `-s, --https`: Enable HTTPS (auto-generates cert)
+
+**Examples:**
+```bash
+# Serve current directory on port 8000
+agbero serve
+
+# Serve specific path with HTTPS
+agbero serve /var/www --port 8443 --https
+```
+
+### 🔀 `proxy` - Ephemeral reverse proxy
+Proxy a local target instantly (no persistent config).
+
+**Usage:**
+```bash
+agbero proxy <target> [domain] [flags]
+```
+
+**Flags:**
+- `-p, --port`: Listen port (default: 8080)
+- `-b, --bind`: Bind address (default: localhost)
+- `-s, --https`: Enable HTTPS
+
+**Examples:**
+```bash
+# Proxy localhost:3000 as localhost:8080
+agbero proxy :3000
+
+# Proxy with domain and HTTPS
+agbero proxy http://127.0.0.1:3000 app.localhost --https
+```
+
+### 🛣️ `route` - Manage routes interactively
+Add or remove host configurations using interactive prompts.
+
+**Subcommands:**
+- `route add`: Add a new route (proxy, static, or TCP)
+- `route remove`: Remove an existing route file
+
+**Usage:**
+```bash
+agbero route add [flags]
+agbero route remove [flags]
+```
+
+**Examples:**
+```bash
+# Add a new route
+agbero route add --config ./agbero.hcl
+
+# Remove a route
+agbero route remove --config ./agbero.hcl
+```
+
+**Behavior:**
+- Uses interactive forms to collect domain, target, etc.
+- Writes `.hcl` files to `hosts_dir`.
+- Supports reverse proxy, static sites, TCP proxies.
 
 ## Gossip Commands
+Manage clustering with Serf gossip protocol.
 
-### 🔄 `gossip init` - Initialize gossip cluster
-Generate gossip private key and show configuration.
+### 🔄 `gossip init` - Initialize gossip
+Generate private key and display config snippet.
 
 **Usage:**
 ```bash
@@ -293,35 +316,11 @@ agbero gossip init [flags]
 
 **Examples:**
 ```bash
-# Initialize with default config
-agbero gossip init --config ./config.hcl
-
-# Specify custom key location
-agbero gossip init --key ./custom-gossip.key
+agbero gossip init --config ./agbero.hcl
 ```
-
-**What happens:**
-1. Ed25519 key pair is generated
-2. Key is saved to configured location
-3. Sample configuration is shown
-
-**Output:**
-```
-Generated gossip key: /etc/agbero/gossip.key
-
-Add to your config.hcl:
-gossip {
-  enabled = true
-  port    = 7946
-  private_key_file = "/etc/agbero/gossip.key"
-  seeds = ["node2:7946", "node3:7946"]
-}
-```
-
----
 
 ### 🎫 `gossip token` - Generate service token
-Create JWT tokens for service authentication.
+Create a JWT for dynamic service registration.
 
 **Usage:**
 ```bash
@@ -330,33 +329,23 @@ agbero gossip token [flags]
 
 **Flags:**
 - `-s, --service`: Service name (required)
-- `-t, --ttl`: Token TTL (default: `720h` = 30 days)
-- `--config`: Configuration file path
+- `-t, --ttl`: Token duration (default: 720h)
 
 **Examples:**
 ```bash
-# Generate 30-day token
-agbero gossip token --service payment-api --config ./config.hcl
-
-# 7-day token
-agbero gossip token --service user-api --ttl 168h --config ./config.hcl
-
-# Output only token (for scripting)
-agbero gossip token --service auth-service --quiet
+agbero gossip token --service my-app --ttl 24h --config ./agbero.hcl
 ```
 
-**Sample token output:**
-```
-eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJwYXltZW50LWFwaS...
+### 🔑 `gossip secret` - Generate encryption secret
+Generate a base64-encoded AES key for gossip encryption.
 
-Use in your service metadata:
-{"token":"eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9...","port":8080,"host":"payment.internal"}
+**Usage:**
+```bash
+agbero gossip secret
 ```
-
----
 
 ### 📊 `gossip status` - Show gossip status
-Display current gossip cluster status and configuration.
+Display gossip configuration and key status.
 
 **Usage:**
 ```bash
@@ -365,177 +354,63 @@ agbero gossip status [flags]
 
 **Examples:**
 ```bash
-# Check status
-agbero gossip status --config ./config.hcl
-
-# Detailed output
-agbero gossip status --config ./config.hcl --verbose
+agbero gossip status --config ./agbero.hcl
 ```
-
-**Sample output:**
-```
-GOSSIP STATUS
-=============
-
-Configuration:
-  Enabled: YES
-  Port: 7946
-  Private key: /etc/agbero/gossip.key (VALID)
-  Encryption: DISABLED
-  Seeds: node2:7946, node3:7946
-
-Cluster:
-  Members: 3
-    • agbero-node1 (self)
-    • agbero-node2 (alive, 1s ago)
-    • payment-api (alive, 5s ago)
-
-Discovered Services:
-  • payment-api → payment.internal:8080 (/api)
-  • user-api → users.internal:8081 (/users)
-```
-
----
 
 ## Certificate Commands
+Manage TLS certificates (using mkcert or similar).
 
-### 📜 `cert` - Certificate management
-Manage TLS certificates and CA.
-
-**Subcommands:**
-- `cert install-ca` - Install local CA certificate
-- `cert list` - List generated certificates
-- `cert info` - Show certificate information
-
----
-
-### `cert install-ca` - Install local CA
-Install mkcert CA root to system trust store.
+### 📜 `cert install` - Install CA root
+Install self-signed CA to system trust store.
 
 **Usage:**
 ```bash
-agbero cert install-ca [flags]
+agbero cert install [flags]
 ```
 
 **Flags:**
 - `-f, --force`: Force reinstall
-- `-m, --method`: Installation method (`auto|mkcert|truststore`)
 
-**Examples:**
+### 🗑️ `cert uninstall` - Uninstall CA
+Remove CA from trust store and delete files.
+
+**Usage:**
 ```bash
-# Install CA
-agbero cert install-ca --config ./config.hcl
-
-# Force reinstall
-agbero cert install-ca --force --config ./config.hcl
-
-# Specific method
-agbero cert install-ca --method mkcert --config ./config.hcl
+agbero cert uninstall
 ```
 
-**Platform support:**
-- **macOS**: Installs to system keychain
-- **Linux**: Installs to system CA store
-- **Windows**: Installs to certificate store
-
----
-
-### `cert list` - List certificates
-Show all certificates in the certificate directory.
+### 📋 `cert list` - List certificates
+List all certificates in `certs_dir`.
 
 **Usage:**
 ```bash
 agbero cert list [flags]
 ```
 
-**Examples:**
-```bash
-# List certificates
-agbero cert list --config ./config.hcl
-
-# With directory override
-agbero cert list --dir ./certs
-```
-
-**Sample output:**
-```
-CERTIFICATES
-============
-
-Directory: /etc/agbero/certs
-
-1. localhost-8443-cert.pem
-   • Size: 2.1 KB
-   • Modified: 2024-01-15 14:30:22
-   • SANs: localhost, *.localhost, 127.0.0.1, ::1
-
-2. example.localhost-443-cert.pem
-   • Size: 2.2 KB  
-   • Modified: 2024-01-15 14:35:10
-   • SANs: example.localhost
-
-Total: 2 certificates
-```
-
----
-
-### `cert info` - Certificate information
-Show detailed certificate information.
+### ℹ️ `cert info` - Show cert directory info
+Display certificate storage details.
 
 **Usage:**
 ```bash
 agbero cert info [flags]
 ```
 
-**Examples:**
-```bash
-# Show cert info from config
-agbero cert info --config ./config.hcl
-
-# Specific directory
-agbero cert info --dir ./certs
-```
-
----
+**Flags:**
+- `-d, --dir`: Override directory
 
 ## Key Management Commands
+Manage Ed25519 keys for gossip auth.
 
-### 🔑 `key` - Key management
-Manage cryptographic keys for gossip and tokens.
-
-**Subcommands:**
-- `key init` - Generate new private key
-- `key gen` - Generate token from existing key
-
----
-
-### `key init` - Initialize key
-Generate a new Ed25519 private key.
+### 🔑 `key init` - Generate private key
+Create a new key file.
 
 **Usage:**
 ```bash
 agbero key init [flags]
 ```
 
-**Examples:**
-```bash
-# Generate default key
-agbero key init --config ./config.hcl
-
-# Custom output path
-agbero key init --output ./custom.key
-```
-
-**Output:**
-```
-Generated private key: /etc/agbero/gossip.key
-File mode: 0600 (read/write owner only)
-```
-
----
-
-### `key gen` - Generate token
-Create a JWT token using existing private key.
+### 🎫 `key gen` - Generate token
+Create a JWT using the private key.
 
 **Usage:**
 ```bash
@@ -543,156 +418,82 @@ agbero key gen [flags]
 ```
 
 **Flags:**
-- `-s, --service`: Service name (required)
-- `-t, --ttl`: Token TTL (default: `720h`)
-- `--config`: Configuration file
-
-**Examples:**
-```bash
-# Generate token
-agbero key gen --service my-app --config ./config.hcl
-
-# Custom TTL
-agbero key gen --service my-app --ttl 24h --config ./config.hcl
-```
-
----
+- `-s, --service`: Service name
+- `-t, --ttl`: Duration
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `AGBERO_CONFIG` | Configuration file path | Auto-detected |
-| `AGBERO_DEV` | Enable development mode | `0` |
-| `AGBERO_LOG_LEVEL` | Log level | `info` |
-| `HOME` | User home directory | System default |
-| `USER` | Current user | System default |
-
-**Example:**
-```bash
-export AGBERO_CONFIG=/etc/agbero/config.hcl
-export AGBERO_DEV=1
-agbero run
-```
-
----
+| `AGBERO_CONTAINER` | Detect container environment | `false` |
+| `KUBERNETES_SERVICE_HOST` | Kubernetes detection | N/A |
 
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `1` | Generic error |
-| `2` | Configuration error |
-| `3` | Service error |
-| `4` | Certificate error |
-| `5` | Network error |
-| `130` | Interrupted (Ctrl+C) |
-| `143` | Terminated |
-
----
+| `1` | General error (details logged) |
 
 ## Configuration Discovery Order
+Without `--config`:
 
-When `--config` is not specified, Agbero searches:
-
-1. **Command line flag**: `--config /path/to/config.hcl`
-2. **Environment variable**: `AGBERO_CONFIG`
-3. **Current directory**: `./agbero.hcl`
-4. **User config**: `~/.config/agbero/agbero.hcl`
-5. **System config**: `/etc/agbero/agbero.hcl`
-6. **Fallback**: Current directory with auto-generation
-
----
+1. Environment `AGBERO_CONFIG`
+2. Current dir `./agbero.hcl`
+3. User dir `~/.config/agbero/agbero.hcl`
+4. System dir `/etc/agbero/agbero.hcl`
 
 ## Examples
 
-### Complete Development Setup
+### Development Setup
 ```bash
-# 1. Navigate to project
-cd ~/projects/myapp
+# Install config locally
+agbero install --here
 
-# 2. Generate config and start
+# Run in foreground
 agbero run --dev
 
-# 3. Install as user service
-agbero install
-
-# 4. Start service
-agbero start
+# Add a route
+agbero route add
 ```
 
-### Production Deployment
+### Production Cluster
 ```bash
-# 1. Install system-wide
-sudo agbero install --config /etc/agbero/config.hcl
+# Install system-wide
+sudo agbero install
 
-# 2. Validate config
-sudo agbero validate --config /etc/agbero/config.hcl
+# Init gossip
+sudo agbero gossip init
 
-# 3. Start service
-sudo agbero start --config /etc/agbero/config.hcl
+# Generate secret
+agbero gossip secret
 
-# 4. Check status
-sudo agbero gossip status --config /etc/agbero/config.hcl
+# Update config with gossip block
+
+# Start service
+sudo agbero start
+
+# Generate token for a service
+agbero gossip token --service app1
 ```
-
-### Generate Service Tokens
-```bash
-# Generate tokens for all services
-agbero gossip token --service api-gateway > api-token.txt
-agbero gossip token --service payment-service > payment-token.txt
-agbero gossip token --service user-service > user-token.txt
-```
-
----
 
 ## Troubleshooting
 
-### Service Won't Start
-```bash
-# Check logs
-sudo journalctl -u agbero -f
-
-# Validate config
-sudo agbero validate --config /etc/agbero/config.hcl
-
-# Run in foreground to see errors
-sudo agbero run --config /etc/agbero/config.hcl
-```
-
-### Certificate Issues
-```bash
-# Install CA
-agbero cert install-ca --force
-
-# Check existing certs
-agbero cert list
-
-# Run with dev mode to regenerate
-agbero run --dev
-```
-
-### Gossip Not Working
-```bash
-# Check status
-agbero gossip status
-
-# Verify ports
-sudo lsof -i :7946
-sudo netstat -an | grep 7946
-
-# Regenerate key
-agbero gossip init --force
-```
-
----
+- **Config not found:** Use `--config` or run `install`.
+- **Service errors:** Check logs in `logs_dir/agbero.log`.
+- **Port conflicts:** Use `netstat` or `lsof` to check ports.
+- **CA install fails:** Run with sudo; check trust store.
+- **Reload not working:** Ensure `data_dir` is set and PID file exists.
 
 ## Tips & Best Practices
 
-1. **Use `--dev` flag** during development for auto-TLS
-2. **Validate config** before installing as service
-3. **Store tokens securely** - never commit to git
-4. **Use environment variables** for secrets
-5. **Check `agbero gossip status`** after cluster changes
-6. **Monitor with `journalctl`** on Linux systems
+- Use `--dev` for local testing.
+- Secure secrets: Replace placeholders in generated config.
+- Monitor: Integrate with VictoriaLogs for advanced logging.
+- Clustering: Use gossip for dynamic service discovery.
+- Firewall: Configure rules in `security.firewall` for protection.
+- Rate Limits: Define global and per-route limits.
+- Auto-reload: Edit host files; changes apply without restart.
+- Ephemeral mode: Use `serve`/`proxy` for quick tests.
+
+For full config reference, see the embedded `data/agbero.hcl` template.
