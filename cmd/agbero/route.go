@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"github.com/charmbracelet/huh"
+	"github.com/olekukonko/ll"
 )
 
 const (
@@ -17,35 +19,14 @@ const (
 	RouteTypeTCP    = "TCP Proxy"
 )
 
-var proxyTpl = `domains = ["{{ .Domain }}"]
+//go:embed template/proxy.hcl
+var proxyTpl string
 
-route {
-  path = "/"
-  backends {
-    server { address = "{{ .Target }}" }
-  }
-}
-`
+//go:embed template/static.hcl
+var staticTpl string
 
-var staticTpl = `domains = ["{{ .Domain }}"]
-
-route {
-  path = "/"
-  web {
-    root = "{{ .Target }}"
-    listing = true
-  }
-}
-`
-
-var tcpTpl = `domains = ["{{ .Domain }}"]
-
-proxy {
-  name = "tcp-service"
-  listen = ":{{ .Port }}"
-  backend { address = "{{ .Target }}" }
-}
-`
+//go:embed template/tcp.hcl
+var tcpTpl string
 
 type routeData struct {
 	Domain string
@@ -53,10 +34,19 @@ type routeData struct {
 	Port   string
 }
 
-func handleRouteCommands(add, remove bool, configPath string) {
-	resolvedPath, exists := resolveConfigPath(configPath)
+type routeManager struct {
+	logger *ll.Logger
+}
+
+func newRouteManager(logger *ll.Logger) *routeManager {
+	return &routeManager{logger: logger}
+}
+
+func (r *routeManager) handleRouteCommands(add, remove bool, configPath string) {
+	hel := newHelper(r.logger)
+	resolvedPath, exists := hel.resolveConfigPath(configPath)
 	if !exists {
-		logger.Fatal("Config file not found. Run 'agbero install' first.")
+		r.logger.Fatal("Config file not found. Run 'agbero install' first.")
 	}
 
 	configDir := filepath.Dir(resolvedPath)
@@ -64,18 +54,18 @@ func handleRouteCommands(add, remove bool, configPath string) {
 
 	if _, err := os.Stat(hostsDir); os.IsNotExist(err) {
 		if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
-			logger.Fatal("Failed to create hosts directory: ", err)
+			r.logger.Fatal("Failed to create hosts directory: ", err)
 		}
 	}
 
 	if add {
-		handleRouteAdd(hostsDir)
+		r.handleRouteAdd(hostsDir)
 	} else if remove {
-		handleRouteRemove(hostsDir)
+		r.handleRouteRemove(hostsDir)
 	}
 }
 
-func handleRouteAdd(hostsDir string) {
+func (r *routeManager) handleRouteAdd(hostsDir string) {
 	var (
 		rType  string
 		domain string
@@ -195,7 +185,7 @@ func handleRouteAdd(hostsDir string) {
 
 	t, err := template.New("route").Parse(tplString)
 	if err != nil {
-		logger.Fatal("Template error: ", err)
+		r.logger.Fatal("Template error: ", err)
 	}
 
 	filename := fmt.Sprintf("%s.hcl", domain)
@@ -205,22 +195,22 @@ func handleRouteAdd(hostsDir string) {
 
 	f, err := os.Create(filePath)
 	if err != nil {
-		logger.Fatal("Failed to create file: ", err)
+		r.logger.Fatal("Failed to create file: ", err)
 	}
 	defer f.Close()
 
 	if err := t.Execute(f, data); err != nil {
-		logger.Fatal("Failed to write config: ", err)
+		r.logger.Fatal("Failed to write config: ", err)
 	}
 
-	logger.Infof("Route created: %s", filePath)
+	r.logger.Infof("Route created: %s", filePath)
 	fmt.Println("Agbero daemon will pick up changes automatically.")
 }
 
-func handleRouteRemove(hostsDir string) {
+func (r *routeManager) handleRouteRemove(hostsDir string) {
 	entries, err := os.ReadDir(hostsDir)
 	if err != nil {
-		logger.Fatal("Failed to read hosts dir: ", err)
+		r.logger.Fatal("Failed to read hosts dir: ", err)
 	}
 
 	var files []string
@@ -257,8 +247,8 @@ func handleRouteRemove(hostsDir string) {
 
 	targetPath := filepath.Join(hostsDir, selected)
 	if err := os.Remove(targetPath); err != nil {
-		logger.Fatal("Failed to delete file: ", err)
+		r.logger.Fatal("Failed to delete file: ", err)
 	}
 
-	logger.Infof("Removed route: %s", selected)
+	r.logger.Infof("Removed route: %s", selected)
 }

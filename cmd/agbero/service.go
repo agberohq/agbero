@@ -34,7 +34,8 @@ func (p *program) Stop(s service.Service) error {
 func (p *program) run() {
 	logger.Info("starting agbero proxy service")
 
-	global, err := loadConfig(p.configPath)
+	hel := newHelper(logger)
+	global, err := hel.loadConfig(p.configPath)
 	if err != nil {
 		logger.Fields("file", p.configPath, "err", err).Fatal("failed to load config")
 		return
@@ -77,9 +78,9 @@ func (p *program) run() {
 	).Info("service starting")
 
 	//logger.Fields(
-	//	"hosts_dir", global.Storage.HostsDir,
-	//	"certs_dir", global.Storage.CertsDir,
-	//	"https", len(global.Bind.HTTPS),
+	// "hosts_dir", global.Storage.HostsDir,
+	// "certs_dir", global.Storage.CertsDir,
+	// "https", len(global.Bind.HTTPS),
 	//).Info("resolved paths")
 
 	// Store server in struct for Reload access

@@ -47,14 +47,14 @@ var (
 	gossipTTL     time.Duration
 	enableGossip  bool
 
-	// Ephemeral flags
+	// ephemeral flags
 	servePath   string = "."
 	servePort   int    = 8000
 	serveBind   string
 	serveHTTPS  bool
 	proxyTarget string
 	proxyDomain string
-	proxyPort   int = 80
+	proxyPort   int = 8080 // Default to 8080 to minimize conflicts
 	proxyBind   string
 	proxyHTTPS  bool
 )
@@ -122,7 +122,7 @@ func main() {
 	cmdHelp := flaggy.NewSubcommand("help")
 	cmdHelp.Description = "Show help examples"
 
-	// 7. Ephemeral Commands
+	// 7. ephemeral Commands
 	cmdServe := flaggy.NewSubcommand("serve")
 	cmdServe.Description = "Serve a static directory instantly"
 	cmdServe.AddPositionalValue(&servePath, "path", 1, false, "Path to serve (default: current)")
@@ -134,7 +134,7 @@ func main() {
 	cmdProxy.Description = "Reverse proxy a local target instantly"
 	cmdProxy.AddPositionalValue(&proxyTarget, "target", 1, true, "Target address (e.g. :3000)")
 	cmdProxy.AddPositionalValue(&proxyDomain, "domain", 2, false, "Domain name (default: localhost)")
-	cmdProxy.Int(&proxyPort, "p", "port", "Port to listen on (default: 80)")
+	cmdProxy.Int(&proxyPort, "p", "port", "Port to listen on (default: 8080)")
 	cmdProxy.String(&proxyBind, "b", "bind", "Bind address (default: 0.0.0.0)")
 	cmdProxy.Bool(&proxyHTTPS, "s", "https", "Enable HTTPS (auto-generates certs)")
 
@@ -147,18 +147,6 @@ func main() {
 	cmdRouteRemove.Description = "Remove an existing route"
 	cmdRoute.AttachSubcommand(cmdRouteAdd, 1)
 	cmdRoute.AttachSubcommand(cmdRouteRemove, 1)
-
-	// 9. Tunnel Command
-	cmdTunnel := flaggy.NewSubcommand("tunnel")
-	cmdTunnel.Description = "Create a secure SSH tunnel"
-	cmdTunnel.String(&tunnelServer, "s", "server", "SSH Server (e.g. host.com or host.com:22)")
-	cmdTunnel.String(&tunnelUser, "u", "user", "SSH Username (default: root)")
-	cmdTunnel.String(&tunnelKey, "k", "key", "Private Key Path (default: ~/.ssh/id_rsa)")
-	cmdTunnel.Bool(&tunnelPassword, "", "password", "Use password authentication")
-	cmdTunnel.String(&tunnelLocalPort, "l", "local-port", "Local port to bind")
-	cmdTunnel.String(&tunnelRemoteHost, "rh", "remote-host", "Remote host to tunnel to (required)")
-	cmdTunnel.String(&tunnelRemotePort, "rp", "remote-port", "Remote port to tunnel to (required)")
-	cmdTunnel.Bool(&tunnelAutoReconnect, "", "reconnect", "Auto-reconnect on failure")
 
 	// Hash command
 	cmdHash := flaggy.NewSubcommand("hash")
@@ -230,30 +218,43 @@ func main() {
 	flaggy.AttachSubcommand(cmdServe, 1)
 	flaggy.AttachSubcommand(cmdProxy, 1)
 	flaggy.AttachSubcommand(cmdRoute, 1)
-	flaggy.AttachSubcommand(cmdTunnel, 1)
 
 	flaggy.Parse()
 
-	welcome()
+	hel := newHelper(logger)
+	hel.welcome()
 
 	// --- EPHEMERAL & TUI COMMANDS ---
 	if cmdServe.Used {
-		handleServe(servePath, servePort, serveBind, serveHTTPS)
+		e := &ephemeral{
+			logger:   logger,
+			shutdown: shutdown,
+			path:     servePath,
+			bindHost: serveBind,
+			port:     servePort,
+			useHTTPS: serveHTTPS,
+		}
+		e.handleServe()
 		return
 	}
 
 	if cmdProxy.Used {
-		handleProxy(proxyTarget, proxyPort, proxyBind, proxyDomain, proxyHTTPS)
+		e := &ephemeral{
+			logger:   logger,
+			shutdown: shutdown,
+			target:   proxyTarget,
+			domain:   proxyDomain,
+			bindHost: proxyBind,
+			port:     proxyPort,
+			useHTTPS: proxyHTTPS,
+		}
+		e.handleProxy()
 		return
 	}
 
 	if cmdRoute.Used {
-		handleRouteCommands(cmdRouteAdd.Used, cmdRouteRemove.Used, configPath)
-		return
-	}
-
-	if cmdTunnel.Used {
-		handleTunnel()
+		rm := newRouteManager(logger)
+		rm.handleRouteCommands(cmdRouteAdd.Used, cmdRouteRemove.Used, configPath)
 		return
 	}
 
@@ -263,7 +264,7 @@ func main() {
 
 	// Special handling for Install: We determine where to write
 	if cmdInstall.Used {
-		path, err := installConfiguration(installHere)
+		path, err := hel.installConfiguration(installHere)
 		if err != nil {
 			logger.Fatal("Install failed: ", err)
 		}
@@ -271,7 +272,7 @@ func main() {
 		resolvedPath = path
 		configExists = true
 	} else {
-		resolvedPath, configExists = resolveConfigPath(configPath)
+		resolvedPath, configExists = hel.resolveConfigPath(configPath)
 	}
 
 	// Commands that REQUIRE config to exist
@@ -291,12 +292,12 @@ func main() {
 	}
 
 	if cmdHelp.Used {
-		showHelpExamples(resolvedPath)
+		hel.showHelpExamples(resolvedPath)
 		return
 	}
 
 	if cmdReload.Used {
-		if err := reloadService(resolvedPath); err != nil {
+		if err := hel.reloadService(resolvedPath); err != nil {
 			logger.Fatal("Reload failed: ", err)
 		}
 		logger.Info("Signal sent to process. Check logs for reload status.")
@@ -318,7 +319,7 @@ func main() {
 
 	if cmdValidate.Used {
 		logger.Info("Validating configuration...")
-		if err := validateConfig(resolvedPath); err != nil {
+		if err := hel.validateConfig(resolvedPath); err != nil {
 			logger.Fatal("Invalid config: ", err)
 		}
 		logger.Info("Configuration OK")
@@ -326,7 +327,7 @@ func main() {
 	}
 
 	if cmdHosts.Used {
-		if err := listHosts(resolvedPath); err != nil {
+		if err := hel.listHosts(resolvedPath); err != nil {
 			logger.Fatal(err)
 		}
 		return
@@ -334,20 +335,17 @@ func main() {
 
 	// Subcommand Dispatchers
 	if cmdCert.Used {
-		configPath = resolvedPath
-		handleCertCommands(cmdInstallCA.Used, cmdUninstallCA.Used, cmdListCerts.Used, cmdCertInfo.Used)
+		hel.handleCertCommands(cmdInstallCA.Used, cmdUninstallCA.Used, cmdListCerts.Used, cmdCertInfo.Used, forceCAInstall, certDir)
 		return
 	}
 
 	if cmdKey.Used {
-		configPath = resolvedPath
-		handleKeyCommands(cmdKeyInit.Used, cmdKeyGen.Used)
+		hel.handleKeyCommands(cmdKeyInit.Used, cmdKeyGen.Used, keyService, keyTTL)
 		return
 	}
 
 	if cmdGossip.Used {
-		configPath = resolvedPath
-		handleGossipCommands(cmdGossipInit.Used, cmdGossipToken.Used, cmdGossipSecret.Used, cmdGossipStatus.Used)
+		hel.handleGossipCommands(cmdGossipInit.Used, cmdGossipToken.Used, cmdGossipSecret.Used, cmdGossipStatus.Used, gossipService, gossipTTL)
 		return
 	}
 
@@ -392,7 +390,7 @@ func main() {
 				if strings.Contains(strings.ToLower(err.Error()), "already exists") {
 					logger.Warn("Service already exists.")
 				} else {
-					logger.Fatal(handleServiceError(err, "install", resolvedPath))
+					logger.Fatal(hel.handleServiceError(err, "install", resolvedPath))
 				}
 			} else {
 				logger.Info("Service installed.")
@@ -406,7 +404,7 @@ func main() {
 	if cmdUninstall.Used {
 		logger.Info("Uninstalling system service...")
 		if err := s.Uninstall(); err != nil {
-			logger.Fatal(handleServiceError(err, "uninstall", resolvedPath))
+			logger.Fatal(hel.handleServiceError(err, "uninstall", resolvedPath))
 		}
 		logger.Info("Service uninstalled.")
 		return
@@ -415,7 +413,7 @@ func main() {
 	if cmdStart.Used {
 		logger.Info("Starting system service...")
 		if err := s.Start(); err != nil {
-			logger.Fatal(handleServiceError(err, "start", resolvedPath))
+			logger.Fatal(hel.handleServiceError(err, "start", resolvedPath))
 		}
 		logger.Info("Service started.")
 		return
@@ -424,7 +422,7 @@ func main() {
 	if cmdStop.Used {
 		logger.Info("Stopping system service...")
 		if err := s.Stop(); err != nil {
-			logger.Fatal(handleServiceError(err, "stop", resolvedPath))
+			logger.Fatal(hel.handleServiceError(err, "stop", resolvedPath))
 		}
 		logger.Info("Service stopped.")
 		return
@@ -432,7 +430,7 @@ func main() {
 
 	// --- RUN ---
 	if cmdRun.Used {
-		global, err := loadConfig(resolvedPath)
+		global, err := hel.loadConfig(resolvedPath)
 		if err != nil {
 			logger.Fatal("Failed to load config: ", err)
 		}
@@ -479,5 +477,5 @@ func main() {
 		return
 	}
 
-	showHelpExamples(resolvedPath)
+	hel.showHelpExamples(resolvedPath)
 }

@@ -18,9 +18,10 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/parser"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/security"
-	tlss2 "git.imaxinacion.net/aibox/agbero/internal/pkg/tlss"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/tlss"
 	"github.com/dustin/go-humanize"
 	"github.com/integrii/flaggy"
+	"github.com/olekukonko/ll"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -29,22 +30,31 @@ import (
 //go:embed data/agbero.hcl
 var configTmpl string
 
-//go:embed data/hosts.d/web.hcl
-var tplWebHcl string
-
-//go:embed data/hosts.d/admin.hcl
-var tplAdminHcl string
-
 //go:embed data/banner.txt
 var bannerTmpl string
 
-func welcome() {
-	fmt.Println(bannerTmpl)
-	fmt.Printf("\033[1;34m%s\033[0m - %s\n", woos.Name, woos.Description)
-	fmt.Printf("\033[90mVersion: %s\033[0m\n\n", woos.Version)
+//go:embed data/hosts.d/web.hcl
+var tplWebHcl []byte
+
+//go:embed data/hosts.d/admin.hcl
+var tplAdminHcl []byte
+
+type helper struct {
+	logger *ll.Logger
 }
 
-func resolveConfigPath(flagPath string) (string, bool) {
+func newHelper(logger *ll.Logger) *helper {
+	return &helper{logger: logger}
+}
+
+func (h *helper) welcome() {
+	fmt.Println(bannerTmpl)
+	fmt.Printf("\033[1;34m%s\033[0m - %s\n", woos.Name, woos.Description)
+	fmt.Printf("\033[90mVersion: %s\033[0m\n", woos.Version)
+	fmt.Printf("\033[90mDate: %s\033[0m\n\n", woos.Date)
+}
+
+func (h *helper) resolveConfigPath(flagPath string) (string, bool) {
 	if strings.TrimSpace(flagPath) != "" {
 		p := flagPath
 		if abs, err := filepath.Abs(flagPath); err == nil {
@@ -76,7 +86,7 @@ func resolveConfigPath(flagPath string) (string, bool) {
 	return "", false
 }
 
-func installConfiguration(here bool) (string, error) {
+func (h *helper) installConfiguration(here bool) (string, error) {
 	var targetDir string
 
 	if here {
@@ -127,7 +137,7 @@ func installConfiguration(here bool) (string, error) {
 	content = strings.ReplaceAll(content, "{DATA_DIR}", woos.DataDir.String())
 	content = strings.ReplaceAll(content, "{LOGS_DIR}", woos.LogDir.String())
 
-	secret, _ := generateSecureKey(128)
+	secret, _ := h.generateSecureKey(128)
 	hash, _ := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
 
 	content = strings.ReplaceAll(content, "{ADMIN_PASSWORD}", string(hash))
@@ -137,15 +147,24 @@ func installConfiguration(here bool) (string, error) {
 		return "", err
 	}
 
+	// Write default host configs
+	hostsDir := filepath.Join(targetDir, woos.HostDir.String())
+
+	adminFile := filepath.Join(hostsDir, "admin.hcl")
+	if err := os.WriteFile(adminFile, tplAdminHcl, woos.FilePerm); err != nil {
+		return "", err
+	}
+
+	webFile := filepath.Join(hostsDir, "web.hcl")
+	if err := os.WriteFile(webFile, tplWebHcl, woos.FilePerm); err != nil {
+		return "", err
+	}
+
 	return configFile, nil
 }
 
-func reloadService(configFile string) error {
-	if runtime.GOOS == woos.Windows {
-		return fmt.Errorf("reload not supported via CLI on Windows, use Service Control")
-	}
-
-	global, err := loadConfig(configFile)
+func (h *helper) reloadService(configFile string) error {
+	global, err := h.loadConfig(configFile)
 	if err != nil {
 		return fmt.Errorf("could not load config: %w", err)
 	}
@@ -178,7 +197,7 @@ func reloadService(configFile string) error {
 	return nil
 }
 
-func loadConfig(configFile string) (*alaye.Global, error) {
+func (h *helper) loadConfig(configFile string) (*alaye.Global, error) {
 	global, err := parser.LoadGlobal(configFile)
 	if err != nil {
 		return nil, err
@@ -188,38 +207,38 @@ func loadConfig(configFile string) (*alaye.Global, error) {
 	return global, nil
 }
 
-func validateConfig(configFile string) error {
-	global, err := loadConfig(configFile)
+func (h *helper) validateConfig(configFile string) error {
+	global, err := h.loadConfig(configFile)
 	if err != nil {
 		return err
 	}
 	hostsFolder := woos.NewFolder(global.Storage.HostsDir)
-	hm := discovery.NewHostFolder(hostsFolder, discovery.WithLogger(logger))
+	hm := discovery.NewHostFolder(hostsFolder, discovery.WithLogger(h.logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err
 	}
-	logger.Fields("hosts_count", len(hosts), "hosts_dir", global.Storage.HostsDir).Info("configuration is valid")
+	h.logger.Fields("hosts_count", len(hosts), "hosts_dir", global.Storage.HostsDir).Info("configuration is valid")
 	return nil
 }
 
-func listHosts(configFile string) error {
-	global, err := loadConfig(configFile)
+func (h *helper) listHosts(configFile string) error {
+	global, err := h.loadConfig(configFile)
 	if err != nil {
 		return err
 	}
 	hostsFolder := woos.NewFolder(global.Storage.HostsDir)
-	hm := discovery.NewHostFolder(hostsFolder, discovery.WithLogger(logger))
+	hm := discovery.NewHostFolder(hostsFolder, discovery.WithLogger(h.logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err
 	}
 	if len(hosts) == 0 {
-		logger.Warn("no hosts found")
+		h.logger.Warn("no hosts found")
 		return nil
 	}
 	for name, c := range hosts {
-		logger.Fields(
+		h.logger.Fields(
 			"host_id", name,
 			"domains", c.Domains,
 			"routes", len(c.Routes),
@@ -228,12 +247,12 @@ func listHosts(configFile string) error {
 	return nil
 }
 
-func handleServiceError(err error, cmd string, configPath string) error {
+func (h *helper) handleServiceError(err error, cmd string, configPath string) error {
 	if err == nil {
 		return nil
 	}
 	errStr := err.Error()
-	exeName := getExecutableName()
+	exeName := h.getExecutableName()
 
 	if runtime.GOOS == woos.Darwin && strings.Contains(errStr, "launchctl") {
 		if strings.Contains(errStr, "Expecting a LaunchAgents path") {
@@ -246,15 +265,15 @@ func handleServiceError(err error, cmd string, configPath string) error {
 	return fmt.Errorf("failed to %s service: %v", cmd, err)
 }
 
-func getExecutableName() string {
+func (h *helper) getExecutableName() string {
 	if len(os.Args) > 0 {
 		return filepath.Base(os.Args[0])
 	}
 	return woos.Name
 }
 
-func showHelpExamples(configPath string) {
-	exeName := getExecutableName()
+func (h *helper) showHelpExamples(configPath string) {
+	exeName := h.getExecutableName()
 	fmt.Println("\n" + woos.Name + " - " + woos.Description + " v" + woos.Version)
 	fmt.Println("\n===============================================================")
 	fmt.Println("USAGE EXAMPLES")
@@ -279,10 +298,10 @@ func showHelpExamples(configPath string) {
 	}
 }
 
-func showCertInfo(configPath string) {
-	global, err := loadConfig(configPath)
+func (h *helper) showCertInfo(configPath string) {
+	global, err := h.loadConfig(configPath)
 	if err != nil {
-		logger.Warnf("Could not load config: %v", err)
+		h.logger.Warnf("Could not load config: %v", err)
 		return
 	}
 	storageDir := woos.NewFolder(global.Storage.CertsDir)
@@ -313,33 +332,33 @@ func showCertInfo(configPath string) {
 	}
 }
 
-func handleCertCommands(install, uninstall, list, info bool) {
+func (h *helper) handleCertCommands(install, uninstall, list, info bool, force bool, certDir string) {
 	// 1. Setup Installer & Directory
-	installer := tlss2.NewInstaller(logger)
+	installer := tlss.NewInstaller(h.logger)
 
 	// Load config to find the correct certs directory
-	if global, err := loadConfig(configPath); err == nil && global.Storage.CertsDir != "" {
+	if global, err := h.loadConfig(configPath); err == nil && global.Storage.CertsDir != "" {
 		folder := woos.NewFolder(global.Storage.CertsDir)
 		_ = installer.SetStorageDir(folder)
-		logger.Fields("dir", folder.Path()).Info("storage directory")
+		h.logger.Fields("dir", folder.Path()).Info("storage directory")
 	}
 
 	// 2. Handle Uninstall
 	if uninstall {
-		logger.Info("Uninstalling CA...")
+		h.logger.Info("Uninstalling CA...")
 
 		// Attempt to remove from system trust store
 		if err := installer.UninstallCARoot(); err != nil {
-			logger.Warnf("System trust store cleanup: %v (might already be removed)", err)
+			h.logger.Warnf("System trust store cleanup: %v (might already be removed)", err)
 		} else {
-			logger.Info("Removed CA from system trust store")
+			h.logger.Info("Removed CA from system trust store")
 		}
 
 		// Physical file cleanup
 		dir := installer.CertDir.Path()
 		files, err := os.ReadDir(dir)
 		if err != nil {
-			logger.Warnf("Could not read dir: %v", err)
+			h.logger.Warnf("Could not read dir: %v", err)
 			return
 		}
 
@@ -358,25 +377,25 @@ func handleCertCommands(install, uninstall, list, info bool) {
 		}
 
 		if count > 0 {
-			logger.Infof("Deleted %d certificate files from disk", count)
+			h.logger.Infof("Deleted %d certificate files from disk", count)
 		} else {
-			logger.Warn("No certificate files found to delete")
+			h.logger.Warn("No certificate files found to delete")
 		}
 
-		logger.Info("Uninstall complete")
+		h.logger.Info("Uninstall complete")
 		return
 	}
 
 	// 3. Handle Install
 	if install {
-		if tlss2.IsCARootInstalled(installer.CertDir.Path()) && !forceCAInstall {
-			logger.Info("CA root is already installed. Use --force to reinstall.")
+		if tlss.IsCARootInstalled(installer.CertDir.Path()) && !force {
+			h.logger.Info("CA root is already installed. Use --force to reinstall.")
 			return
 		}
 		if err := installer.InstallCARootIfNeeded(); err != nil {
-			logger.Fatal("Failed to install CA: ", err)
+			h.logger.Fatal("Failed to install CA: ", err)
 		}
-		logger.Info("CA root installed successfully.")
+		h.logger.Info("CA root installed successfully.")
 		return
 	}
 
@@ -384,104 +403,105 @@ func handleCertCommands(install, uninstall, list, info bool) {
 	if list {
 		certs, err := installer.ListCertificates()
 		if err != nil {
-			logger.Fatal("Failed to list certificates: ", err)
+			h.logger.Fatal("Failed to list certificates: ", err)
 		}
 
 		if len(certs) == 0 {
-			logger.Warn("No certificates found")
+			h.logger.Warn("No certificates found")
 			return
 		}
 
-		logger.Infof("Found %d certificates:", len(certs))
+		h.logger.Infof("Found %d certificates:", len(certs))
 		for i, cert := range certs {
-			logger.Printf("  %d. %s\n", i+1, cert)
+			h.logger.Printf("  %d. %s\n", i+1, cert)
 		}
 		return
 	}
 
 	// 5. Handle Info
 	if info {
-		showCertInfo(configPath)
+		h.showCertInfo(configPath)
 		return
 	}
 
 	// Fallback if no specific subcommand provided
 	flaggy.ShowHelpAndExit("cert")
 }
-func handleKeyCommands(init, gen bool) {
+
+func (h *helper) handleKeyCommands(init, gen bool, service string, ttl time.Duration) {
 	if init {
 		target := "server.key"
-		global, err := loadConfig(configPath)
+		global, err := h.loadConfig(configPath)
 		if err == nil && global.Gossip.PrivateKeyFile != "" {
 			target = global.Gossip.PrivateKeyFile
 		}
 		if err := security.GenerateNewKeyFile(target); err != nil {
-			logger.Fatal("Error generating key: ", err)
+			h.logger.Fatal("Error generating key: ", err)
 		}
-		logger.Info("Generated private key: ", target)
+		h.logger.Info("Generated private key: ", target)
 		return
 	}
 	if gen {
-		if keyService == "" {
-			logger.Fatal("Error: --service name is required")
+		if service == "" {
+			h.logger.Fatal("Error: --service name is required")
 		}
-		global, err := loadConfig(configPath)
+		global, err := h.loadConfig(configPath)
 		if err != nil {
-			logger.Fatal("Error loading config: ", err)
+			h.logger.Fatal("Error loading config: ", err)
 		}
 		if global.Gossip.PrivateKeyFile == "" {
-			logger.Fatal("Error: 'gossip.private_key_file' is not set")
+			h.logger.Fatal("Error: 'gossip.private_key_file' is not set")
 		}
 		tm, err := security.LoadKeys(global.Gossip.PrivateKeyFile)
 		if err != nil {
-			logger.Fatal("Error loading private key: ", err)
+			h.logger.Fatal("Error loading private key: ", err)
 		}
-		token, err := tm.Mint(keyService, keyTTL)
+		token, err := tm.Mint(service, ttl)
 		if err != nil {
-			logger.Fatal("Error minting token: ", err)
+			h.logger.Fatal("Error minting token: ", err)
 		}
-		logger.Println(token)
+		h.logger.Println(token)
 		return
 	}
 	flaggy.ShowHelpAndExit("key")
 }
 
-func handleGossipCommands(init, token, secret, status bool) {
+func (h *helper) handleGossipCommands(init, token, secret, status bool, service string, ttl time.Duration) {
 	if init {
-		handleGossipInit(configPath)
+		h.handleGossipInit(configPath)
 		return
 	}
 	if token {
-		handleGossipToken(configPath)
+		h.handleGossipToken(configPath, service, ttl)
 		return
 	}
 	if secret {
-		handleGossipSecret()
+		h.handleGossipSecret()
 		return
 	}
 	if status {
-		handleGossipStatus(configPath)
+		h.handleGossipStatus(configPath)
 		return
 	}
-	showGossipHelp()
+	h.showGossipHelp()
 }
 
-func handleGossipInit(configPath string) {
-	global, err := loadConfig(configPath)
+func (h *helper) handleGossipInit(configPath string) {
+	global, err := h.loadConfig(configPath)
 	if err != nil {
-		logger.Fatal("Error loading config: ", err)
+		h.logger.Fatal("Error loading config: ", err)
 	}
 	certsDir := woos.NewFolder(global.Storage.CertsDir)
 	keyPath := filepath.Join(certsDir.Path(), "gossip.key")
 	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
-		logger.Info("Generating gossip private key...")
+		h.logger.Info("Generating gossip private key...")
 		if err := security.GenerateNewKeyFile(keyPath); err != nil {
-			logger.Fatal("Failed to generate key: ", err)
+			h.logger.Fatal("Failed to generate key: ", err)
 		}
 		_ = os.Chmod(keyPath, 0600)
-		logger.Info("Generated gossip key: ", keyPath)
+		h.logger.Info("Generated gossip key: ", keyPath)
 	} else {
-		logger.Info("Gossip key already exists: ", keyPath)
+		h.logger.Info("Gossip key already exists: ", keyPath)
 	}
 	fmt.Println("\n[ACTION REQUIRED] Gossip configuration guide:")
 	fmt.Println("===========================================")
@@ -497,38 +517,38 @@ gossip {
 	fmt.Println("\n===========================================")
 }
 
-func handleGossipToken(configPath string) {
-	if gossipService == "" {
-		logger.Fatal("Error: --service flag is required for gossip token")
+func (h *helper) handleGossipToken(configPath string, service string, ttl time.Duration) {
+	if service == "" {
+		h.logger.Fatal("Error: --service flag is required for gossip token")
 	}
-	global, err := loadConfig(configPath)
+	global, err := h.loadConfig(configPath)
 	if err != nil {
-		logger.Fatal("Error loading config: ", err)
+		h.logger.Fatal("Error loading config: ", err)
 	}
 	if global.Gossip.Enabled.NotActive() || global.Gossip.PrivateKeyFile == "" {
-		logger.Fatal("Gossip is disabled in config. Run 'agbero gossip init' AND update your config file.")
+		h.logger.Fatal("Gossip is disabled in config. Run 'agbero gossip init' AND update your config file.")
 	}
 	tm, err := security.LoadKeys(global.Gossip.PrivateKeyFile)
 	if err != nil {
-		logger.Fatal("Error loading gossip key: ", err)
+		h.logger.Fatal("Error loading gossip key: ", err)
 	}
-	if gossipTTL == 0 {
-		gossipTTL = 720 * time.Hour
+	if ttl == 0 {
+		ttl = 720 * time.Hour
 	}
-	token, err := tm.Mint(gossipService, gossipTTL)
+	token, err := tm.Mint(service, ttl)
 	if err != nil {
-		logger.Fatal("Error generating token: ", err)
+		h.logger.Fatal("Error generating token: ", err)
 	}
-	fmt.Printf("\nGossip token for service: %s\n", gossipService)
-	fmt.Printf("TTL: %s\n", gossipTTL)
+	fmt.Printf("\nGossip token for service: %s\n", service)
+	fmt.Printf("TTL: %s\n", ttl)
 	fmt.Println(token)
 }
 
-func handleGossipSecret() {
+func (h *helper) handleGossipSecret() {
 	// Generate 32 bytes (256 bits)
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
-		logger.Fatal("Random generation failed: ", err)
+		h.logger.Fatal("Random generation failed: ", err)
 	}
 
 	// We use StdEncoding because the config parser (alaye/value.go) uses base64.StdEncoding.DecodeString
@@ -544,10 +564,10 @@ func handleGossipSecret() {
 	fmt.Println("}")
 }
 
-func handleGossipStatus(configPath string) {
-	global, err := loadConfig(configPath)
+func (h *helper) handleGossipStatus(configPath string) {
+	global, err := h.loadConfig(configPath)
 	if err != nil {
-		logger.Fatal("Error loading config: ", err)
+		h.logger.Fatal("Error loading config: ", err)
 	}
 	fmt.Println("\nGossip Configuration Active")
 	fmt.Println("===========================")
@@ -586,8 +606,8 @@ func handleGossipStatus(configPath string) {
 	}
 }
 
-func showGossipHelp() {
-	exeName := getExecutableName()
+func (h *helper) showGossipHelp() {
+	exeName := h.getExecutableName()
 	fmt.Printf("\n%s gossip - Manage gossip cluster configuration\n", exeName)
 	fmt.Println("================================================")
 	fmt.Println("Commands:")
@@ -597,7 +617,7 @@ func showGossipHelp() {
 	fmt.Printf("  %s gossip status            Show status\n", exeName)
 }
 
-func generateSecureKey(n int) (string, error) {
+func (h *helper) generateSecureKey(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
 		return "", err

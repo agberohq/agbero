@@ -13,6 +13,7 @@ const (
 // Hosts & Network
 const (
 	ConfigFormatVersion = 2
+	MaxPortRetries      = 10
 )
 
 const (

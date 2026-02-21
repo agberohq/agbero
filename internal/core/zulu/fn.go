@@ -81,3 +81,29 @@ func Diff(old, new any) []string {
 	}
 	return changes
 }
+
+func PortScan(bindHost string, port, maxPortRetries int) (int, error) {
+	bindHost = Or(bindHost, "0.0.0.0")
+	startPort := port
+	if startPort == 0 {
+		startPort = 1024
+	}
+
+	for i := 0; i < maxPortRetries; i++ {
+		port := startPort + i
+		addr := fmt.Sprintf("%s:%d", bindHost, port)
+
+		listener, err := net.Listen("tcp", addr)
+		if err == nil {
+			_ = listener.Close()
+			return port, nil
+		}
+
+		// Only warn on specific bind errors or first attempt
+		if i == 0 {
+			fmt.Printf("Warning: Port %d is busy, trying next available...\n", port)
+		}
+	}
+
+	return 0, fmt.Errorf("failed to find a free port on %s after %d attempts", bindHost, maxPortRetries)
+}

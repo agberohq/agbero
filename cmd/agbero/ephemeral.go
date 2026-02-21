@@ -5,51 +5,80 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
-	"time"
 
 	"git.imaxinacion.net/aibox/agbero"
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
-	"github.com/olekukonko/ll/lh"
 )
 
-func runEphemeral(global *alaye.Global, hosts map[string]*alaye.Host) {
-	l := ll.New(woos.Name,
-		ll.WithHandler(lh.NewColorizedHandler(os.Stdout)),
-		ll.WithFatalExits(true),
-	).Enable()
+type ephemeral struct {
+	logger   *ll.Logger
+	shutdown *jack.Shutdown
+	path     string
+	target   string
+	bindHost string
+	port     int
+	domain   string
+	useHTTPS bool
+}
 
-	shutdown := jack.NewShutdown(
-		jack.ShutdownWithTimeout(5*time.Second),
-		jack.ShutdownWithSignals(os.Interrupt, syscall.SIGTERM),
-	)
-
-	// Initialize HostManager in static mode
-	hm := discovery.NewHostFolder(woos.NewFolder(""), discovery.WithLogger(l))
+func runEphemeral(e *ephemeral, global *alaye.Global, hosts map[string]*alaye.Host) {
+	hm := discovery.NewHostFolder(woos.NewFolder(""), discovery.WithLogger(e.logger))
 	hm.LoadStatic(hosts)
 
 	srv := agbero.NewServer(
 		agbero.WithHostManager(hm),
 		agbero.WithGlobalConfig(global),
-		agbero.WithLogger(l),
-		agbero.WithShutdownManager(shutdown),
+		agbero.WithLogger(e.logger),
+		agbero.WithShutdownManager(e.shutdown),
 	)
 
-	if err := srv.Start(""); err != nil {
-		l.Fatal("server failed: ", err)
-	}
+	// Start server (blocks until error or shutdown)
+	go func() {
+		if err := srv.Start(""); err != nil {
+			logger.Error(err)
+			e.shutdown.TriggerShutdown()
+		}
+	}()
+
+	stats := e.shutdown.Wait()
+
+	logger.Fields(
+		"duration", stats.EndTime.Sub(stats.StartTime),
+		"tasks_total", stats.TotalEvents,
+		"tasks_failed", stats.FailedEvents,
+	).Info("agbero stopped gracefully")
+
 }
 
-func handleServe(path string, port int, bindHost string, useHTTPS bool) {
-	if path == "" {
-		path = "."
+func (e *ephemeral) createGlobal(port int) *alaye.Global {
+	global := alaye.NewEphemeralGlobal(port, e.useHTTPS)
+	if e.bindHost != "" {
+		addr := fmt.Sprintf("%s:%d", e.bindHost, port)
+		if e.useHTTPS {
+			global.Bind.HTTPS = []string{addr}
+		} else {
+			global.Bind.HTTP = []string{addr}
+		}
 	}
+	return global
+}
 
-	absPath, err := filepath.Abs(path)
+func (e *ephemeral) getScheme() string {
+	if e.useHTTPS {
+		return "https"
+	}
+	return "http"
+}
+
+func (e *ephemeral) handleServe() {
+	e.path = zulu.Or(e.path, ".")
+
+	absPath, err := filepath.Abs(e.path)
 	if err != nil {
 		fmt.Printf("Error resolving path: %v\n", err)
 		os.Exit(1)
@@ -61,80 +90,60 @@ func handleServe(path string, port int, bindHost string, useHTTPS bool) {
 		os.Exit(1)
 	}
 
-	global := alaye.NewEphemeralGlobal(port, useHTTPS)
-	if bindHost != "" {
-		addr := fmt.Sprintf("%s:%d", bindHost, port)
-		if useHTTPS {
-			global.Bind.HTTPS = []string{addr}
-		} else {
-			global.Bind.HTTP = []string{addr}
-		}
+	finalPort, err := zulu.PortScan(e.bindHost, e.port, woos.MaxPortRetries)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
 	}
 
+	global := e.createGlobal(finalPort)
 	hostConfig := alaye.NewStaticHost("localhost", absPath, false)
-
-	// If HTTPS is requested but user didn't specify a domain, localhost is assumed.
-	// Agbero's TLS logic will handle localhost cert generation automatically.
 
 	hosts := map[string]*alaye.Host{
 		"localhost": hostConfig,
 	}
+	scheme := e.getScheme()
+	host := fmt.Sprintf("%s://%s:%d", scheme, zulu.Or(e.bindHost, "localhost"), finalPort)
 
-	scheme := "http"
-	if useHTTPS {
-		scheme = "https"
-	}
-
-	fmt.Printf("\nServing %s on %s://%s:%d\n\n", absPath, scheme, or(bindHost, "localhost"), port)
-	runEphemeral(global, hosts)
+	logger.Fields("path", absPath).Infof("Serving Web Server")
+	logger.Infof("web → %s", host)
+	logger.Line(2)
+	runEphemeral(e, global, hosts)
 }
 
-func handleProxy(target string, port int, bindHost string, domain string, useHTTPS bool) {
-	if target == "" {
+func (e *ephemeral) handleProxy() {
+	if e.target == "" {
 		fmt.Println("Error: target required (e.g., :3000 or http://127.0.0.1:3000)")
 		os.Exit(1)
 	}
 
-	if strings.HasPrefix(target, ":") {
-		target = "127.0.0.1" + target
+	if strings.HasPrefix(e.target, ":") {
+		e.target = "127.0.0.1" + e.target
 	}
-	if !strings.HasPrefix(target, "http") {
-		target = "http://" + target
-	}
-
-	if domain == "" {
-		domain = "localhost"
+	if !strings.HasPrefix(e.target, "http") {
+		e.target = "http://" + e.target
 	}
 
-	global := alaye.NewEphemeralGlobal(port, useHTTPS)
-	if bindHost != "" {
-		addr := fmt.Sprintf("%s:%d", bindHost, port)
-		if useHTTPS {
-			global.Bind.HTTPS = []string{addr}
-		} else {
-			global.Bind.HTTP = []string{addr}
-		}
+	if e.domain == "" {
+		e.domain = "localhost"
 	}
 
-	hostConfig := alaye.NewStaticHost(domain, target, true)
+	finalPort, err := zulu.PortScan(e.bindHost, e.port, woos.MaxPortRetries)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	global := e.createGlobal(finalPort)
+	hostConfig := alaye.NewStaticHost(e.domain, e.target, true)
 
 	hosts := map[string]*alaye.Host{
-		domain: hostConfig,
+		e.domain: hostConfig,
 	}
 
-	scheme := "http"
-	if useHTTPS {
-		scheme = "https"
-	}
-
-	fmt.Printf("\nProxying %s -> %s\n", domain, target)
-	fmt.Printf("Listening on %s://%s:%d\n\n", scheme, or(bindHost, "localhost"), port)
-	runEphemeral(global, hosts)
-}
-
-func or(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
+	scheme := e.getScheme()
+	logger.Infof("Proxying %s → %s\n", e.domain, e.target)
+	logger.Infof("Listening on %s://%s:%d", scheme, zulu.Or(e.bindHost, "localhost"), finalPort)
+	logger.Line(2)
+	runEphemeral(e, global, hosts)
 }
