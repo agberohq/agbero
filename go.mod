@@ -2,7 +2,7 @@ module git.imaxinacion.net/aibox/agbero
 
 go 1.26
 
-replace github.com/olekukonko/mappo => /Users/oleku/gopath/src/github.com/olekukonko/mappo
+// replace github.com/olekukonko/mappo => /Users/oleku/gopath/src/github.com/olekukonko/mappo
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
@@ -23,9 +23,9 @@ require (
 	github.com/klauspost/compress v1.18.4
 	github.com/markbates/goth v1.82.0
 	github.com/olekukonko/errors v1.2.0
-	github.com/olekukonko/jack v0.0.0-20260211212132-ec50c2ab5be7
-	github.com/olekukonko/ll v0.1.7-0.20260213142606-cf309e29ab2a
-	github.com/olekukonko/mappo v0.0.0-20260218145932-d87e3dba3c5d
+	github.com/olekukonko/jack v0.0.0-20260212195112-28631b233562
+	github.com/olekukonko/ll v0.1.7
+	github.com/olekukonko/mappo v0.0.0-20260219011920-b562da2ab13d
 	github.com/pires/go-proxyproto v0.11.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.59.0
@@ -65,6 +65,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-immutable-radix v1.0.0 // indirect
