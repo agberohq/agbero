@@ -876,3 +876,68 @@ data:
       }
     }
 ```
+
+
+
+###  mTLS Implementation Details
+
+You can configure mTLS globally or per host.
+
+```hcl
+host {
+  domains = ["secure.example.com"]
+  
+  tls {
+    mode = "letsencrypt" 
+    email = "admin@example.com"
+
+    # mTLS Configuration
+    # Options: "none", "request", "require", "verify_if_given", "require_and_verify"
+    client_auth = "require_and_verify"
+
+    # Path to the CA that signed your client certificates
+    # Must be absolute paths
+    client_cas = ["/etc/agbero/certs/internal-ca.pem"]
+  }
+
+  route "/" {
+    web {
+      root = "/var/www/html"
+    }
+  }
+}
+```
+
+#### Testing the Implementation
+
+**1. Generate Test Keys (Simulating a Private PKI)**
+
+```bash
+# 1. Generate Custom CA
+openssl genrsa -out ca.key 2048
+openssl req -new -x509 -days 365 -key ca.key -out ca.crt -subj "/CN=MyPrivateCA"
+
+# 2. Generate Client Key & CSR
+openssl genrsa -out client.key 2048
+openssl req -new -key client.key -out client.csr -subj "/CN=AuthorizedUser"
+
+# 3. Sign Client Cert with CA
+openssl x509 -req -days 365 -in client.csr -CA ca.crt -CAkey ca.key -set_serial 01 -out client.crt
+```
+
+**2. Configure Agbero**
+Point `client_cas` to the absolute path of `ca.crt`.
+
+**3. Test with Curl**
+
+*   **Without Cert (Should Fail):**
+    ```bash
+    curl -v https://secure.example.com
+    # Output: OpenSSL SSL_connect: SSL_ERROR_SYSCALL... (Handshake drops)
+    ```
+
+*   **With Cert (Should Success):**
+    ```bash
+    curl -v --cert client.crt --key client.key https://secure.example.com
+    # Output: HTTP/2 200 ...
+    ```

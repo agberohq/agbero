@@ -35,10 +35,8 @@ type Store struct {
 	logger *ll.Logger
 	wg     sync.WaitGroup
 
-	// In-memory cache for O(1) lookups using mappo
 	cache *mappo.Sharded[string, Rule]
 
-	// Async write buffer
 	writeCh chan operation
 	quit    chan struct{}
 }
@@ -69,7 +67,7 @@ func NewStore(dataDir woos.Folder, logger *ll.Logger) (*Store, error) {
 		db:      db,
 		logger:  logger,
 		cache:   mappo.NewSharded[string, Rule](),
-		writeCh: make(chan operation, 1000), // Buffer bursts
+		writeCh: make(chan operation, 1000),
 		quit:    make(chan struct{}),
 	}
 
@@ -84,7 +82,6 @@ func NewStore(dataDir woos.Folder, logger *ll.Logger) (*Store, error) {
 	return s, nil
 }
 
-// loadToMemory populates the cache on startup
 func (s *Store) loadToMemory() error {
 	return s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket(bucketName)
@@ -111,29 +108,26 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// Add updates memory immediately and queues persistence
 func (s *Store) Add(r Rule) error {
 	s.cache.Set(r.IP, r)
 	select {
 	case s.writeCh <- operation{Type: opAdd, Key: r.IP, Rule: r}:
 	default:
-		s.logger.Warn("firewall write buffer full, persistence delayed")
+		s.logger.Warn("firewall write buffer full, persistence dropped to preserve throughput")
 	}
 	return nil
 }
 
-// Remove updates memory immediately and queues persistence
 func (s *Store) Remove(ip string) error {
 	s.cache.Delete(ip)
 	select {
 	case s.writeCh <- operation{Type: opRemove, Key: ip}:
 	default:
-		s.logger.Warn("firewall write buffer full, persistence delayed")
+		s.logger.Warn("firewall write buffer full, persistence dropped to preserve throughput")
 	}
 	return nil
 }
 
-// GetBan checks memory cache (Fast path)
 func (s *Store) GetBan(ip string) (*Rule, error) {
 	if r, ok := s.cache.Get(ip); ok {
 		return &r, nil
@@ -144,7 +138,7 @@ func (s *Store) GetBan(ip string) (*Rule, error) {
 func (s *Store) IterateActive(iter RuleIterator) error {
 	s.cache.ForEach(func(k string, r Rule) bool {
 		if r.IsExpired() {
-			return true // Skip but continue
+			return true
 		}
 		return iter(r)
 	})
@@ -162,7 +156,6 @@ func (s *Store) LoadAll() ([]Rule, error) {
 
 func (s *Store) Clear() error {
 	s.cache.Clear()
-	// Sync clear DB
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		if err := tx.DeleteBucket(bucketName); err != nil {
 			if err == bbolt.ErrBucketNotFound {
@@ -176,12 +169,10 @@ func (s *Store) Clear() error {
 }
 
 func (s *Store) PruneExpired() (int, error) {
-	// 1. Clean memory
 	removed := s.cache.ClearIf(func(key string, r Rule) bool {
 		return r.IsExpired()
 	})
 
-	// 2. Queue generic DB cleanup via transaction
 	err := s.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket(bucketName)
 		if b == nil {
@@ -203,7 +194,6 @@ func (s *Store) PruneExpired() (int, error) {
 	return removed, err
 }
 
-// persistLoop handles batch writing to BoltDB
 func (s *Store) persistLoop() {
 	defer s.wg.Done()
 
@@ -236,7 +226,6 @@ func (s *Store) persistLoop() {
 		if err != nil {
 			s.logger.Fields("err", err).Error("failed to flush firewall rules to db")
 		}
-		// Clear slice keeping capacity
 		ops = ops[:0]
 	}
 
@@ -244,7 +233,6 @@ func (s *Store) persistLoop() {
 		select {
 		case op := <-s.writeCh:
 			ops = append(ops, op)
-			// Flush if batch gets too big
 			if len(ops) >= 100 {
 				flush()
 			}

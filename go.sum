@@ -230,6 +230,8 @@ github.com/olekukonko/ll v0.1.7-0.20260213142606-cf309e29ab2a h1:hhtcN2XRkycQe1+
 github.com/olekukonko/ll v0.1.7-0.20260213142606-cf309e29ab2a/go.mod h1:NVUmjBb/aCtUpjKk75BhWrOlARz3dqsM+OtszpY4o88=
 github.com/olekukonko/ll v0.1.7 h1:WyK1YZwOTUKHEXZz3VydBDT5t3zDqa9yI8iJg5PHon4=
 github.com/olekukonko/ll v0.1.7/go.mod h1:RPRC6UcscfFZgjo1nulkfMH5IM0QAYim0LfnMvUuozw=
+github.com/olekukonko/ll v0.1.8-0.20260223201107-fb099d6d5efd h1:hKg+KgsYZ6LncgDKl/NEnT4XBaCDV2g1njagqNGQqr4=
+github.com/olekukonko/ll v0.1.8-0.20260223201107-fb099d6d5efd/go.mod h1:RPRC6UcscfFZgjo1nulkfMH5IM0QAYim0LfnMvUuozw=
 github.com/olekukonko/mappo v0.0.0-20260218145932-d87e3dba3c5d/go.mod h1:RssTtd4lvZjDRx74ywD04esa7IerE8J/Vfrb9PkBOCA=
 github.com/olekukonko/mappo v0.0.0-20260219011920-b562da2ab13d h1:rZ182n6alqFMJiwnHWh1SuWZSCrSoUHnUUi1hLX5pao=
 github.com/olekukonko/mappo v0.0.0-20260219011920-b562da2ab13d/go.mod h1:3OH5ndUVOorYmxkJtvIGcgakYzq0DWvbtZbBoQnBzW0=
