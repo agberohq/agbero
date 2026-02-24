@@ -28,7 +28,13 @@ Agbero is a modern reverse proxy that bridges local development and production d
 - **Native Authentication**: Built-in JWT validation and Forward Auth.
 - **Rate Limiting**: Identity-based limiting (API Key/IP) with distributed sharding.
 
+
+<p align="center">
+  <img src="assets/dash.1.png" width="500" alt="Agbero Logo">
+</p>
+
 ## 🚀 Quick Start
+
 
 ### Installation
 
