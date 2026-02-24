@@ -13,13 +13,19 @@ type HealthCheck struct {
 	Interval  time.Duration `hcl:"interval,optional" json:"interval"`
 	Timeout   time.Duration `hcl:"timeout,optional" json:"timeout"`
 	Threshold int           `hcl:"threshold,optional" json:"threshold"`
+
+	// New Advanced Fields
+	Method         string            `hcl:"method,optional" json:"method"`
+	Headers        map[string]string `hcl:"headers,optional" json:"headers"`
+	ExpectedStatus []int             `hcl:"expected_status,optional" json:"expected_status"`
+	ExpectedBody   string            `hcl:"expected_body,optional" json:"expected_body"`
 }
 
 func (h *HealthCheck) Validate() error {
 	if !h.Enabled.Active() {
 		return nil
 	}
-	// Path validation
+
 	if h.Path == "" {
 		return ErrHealthPathRequired
 	}
@@ -27,7 +33,6 @@ func (h *HealthCheck) Validate() error {
 		return errors.Newf(" %w: path %q must start with '/'", ErrHealthPathInvalid, h.Path)
 	}
 
-	// Interval validation (if provided)
 	if h.Interval < 0 {
 		return ErrNegativeInterval
 	}
@@ -35,7 +40,6 @@ func (h *HealthCheck) Validate() error {
 		h.Interval = DefaultHealthInterval
 	}
 
-	// Timeout validation (if provided)
 	if h.Timeout < 0 {
 		return ErrNegativeTimeout
 	}
@@ -46,12 +50,22 @@ func (h *HealthCheck) Validate() error {
 		return ErrTimeoutExceedsInterval
 	}
 
-	// Threshold validation (if provided)
 	if h.Threshold < 0 {
 		return ErrNegativeThreshold
 	}
 	if h.Threshold == 0 {
-		h.Threshold = DefaultHealthThreshold // Default
+		h.Threshold = DefaultHealthThreshold
+	}
+
+	if h.Method != "" {
+		h.Method = strings.ToUpper(h.Method)
+		switch h.Method {
+		case "GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH":
+		default:
+			return errors.Newf("invalid health check method: %s", h.Method)
+		}
+	} else {
+		h.Method = "GET"
 	}
 
 	return nil

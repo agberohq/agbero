@@ -1,4 +1,3 @@
-// backend_test.go
 package xhttp
 
 import (
@@ -21,7 +20,6 @@ var (
 	testLogger = ll.New("backend").Disable()
 )
 
-// Helper to create a backend with customizable params
 func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb alaye.CircuitBreaker) *Backend {
 	route := &alaye.Route{
 		HealthCheck:    hc,
@@ -89,7 +87,7 @@ func TestServeHTTP_Success(t *testing.T) {
 		t.Error("Requests should be 1")
 	}
 
-	time.Sleep(10 * time.Millisecond) // wait for async metrics
+	time.Sleep(10 * time.Millisecond)
 
 	snap := b.Activity.Latency.Snapshot()
 	if snap.Max == 0 {
@@ -298,22 +296,67 @@ func TestHealthCheck_Recovery(t *testing.T) {
 	}
 }
 
-// atomic bool helper
-type atomicBool struct {
-	val bool
-	mu  sync.RWMutex
+func TestHealthCheck_Advanced(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if r.Header.Get("X-Check") != "true" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusCreated) // 201
+		w.Write([]byte(`{"status": "OK"}`))
+	}))
+	defer server.Close()
+
+	hc := alaye.HealthCheck{
+		Enabled:        alaye.Active,
+		Path:           "/health",
+		Method:         "POST",
+		Headers:        map[string]string{"X-Check": "true"},
+		ExpectedStatus: []int{201},
+		ExpectedBody:   `"status": "OK"`,
+		Interval:       50 * time.Millisecond,
+		Threshold:      1,
+		Timeout:        50 * time.Millisecond,
+	}
+
+	b := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
+	defer b.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	if !b.Alive.Load() {
+		t.Error("Backend should be healthy with correct advanced check")
+	}
 }
 
-func (a *atomicBool) store(val bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.val = val
-}
+func TestHealthCheck_Advanced_BodyMismatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status": "FAIL"}`))
+	}))
+	defer server.Close()
 
-func (a *atomicBool) load() bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.val
+	hc := alaye.HealthCheck{
+		Enabled:      alaye.Active,
+		Path:         "/health",
+		ExpectedBody: `"status": "OK"`,
+		Interval:     50 * time.Millisecond,
+		Threshold:    1,
+		Timeout:      50 * time.Millisecond,
+	}
+
+	b := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
+	defer b.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	if b.Alive.Load() {
+		t.Error("Backend should be down due to body mismatch")
+	}
 }
 
 func TestHealthCheck_Jitter(t *testing.T) {
@@ -424,4 +467,21 @@ func TestActivitySnapshot(t *testing.T) {
 	if b.Activity.InFlight.Load() != 0 {
 		t.Errorf("InFlight expected 0, got %d", b.Activity.InFlight.Load())
 	}
+}
+
+type atomicBool struct {
+	val bool
+	mu  sync.RWMutex
+}
+
+func (a *atomicBool) store(val bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.val = val
+}
+
+func (a *atomicBool) load() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.val
 }

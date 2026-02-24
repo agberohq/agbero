@@ -248,16 +248,53 @@ func (b *Backend) healthCheckLoop() {
 	timer := time.NewTimer(b.Jitter(interval))
 	defer timer.Stop()
 
+	// Default expectation is 200-399 if not specified
+	expectedStatus := b.hcConfig.ExpectedStatus
+	expectedBody := b.hcConfig.ExpectedBody
+	method := b.hcConfig.Method
+	if method == "" {
+		method = "GET"
+	}
+
 	for {
 		select {
 		case <-b.stop:
 			return
 		case <-timer.C:
-			resp, err := client.Get(targetURL)
-			healthy := err == nil && resp != nil &&
-				resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest
+			req, err := http.NewRequest(method, targetURL, nil)
+			var resp *http.Response
+			if err == nil {
+				// Inject custom headers if configured
+				for k, v := range b.hcConfig.Headers {
+					req.Header.Set(k, v)
+				}
+				resp, err = client.Do(req)
+			}
 
-			if resp != nil && resp.Body != nil {
+			healthy := false
+			if err == nil && resp != nil {
+				// Status Code Check
+				if len(expectedStatus) > 0 {
+					for _, s := range expectedStatus {
+						if resp.StatusCode == s {
+							healthy = true
+							break
+						}
+					}
+				} else {
+					// Default safe range
+					healthy = resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest
+				}
+
+				// Body Check (only if status was ok so far)
+				if healthy && expectedBody != "" {
+					bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*10)) // Limit check to 10KB
+					if !strings.Contains(string(bodyBytes), expectedBody) {
+						healthy = false
+					}
+				}
+
+				// Drain remaining body to reuse connection
 				_, _ = io.Copy(io.Discard, resp.Body)
 				_ = resp.Body.Close()
 			}
