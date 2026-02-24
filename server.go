@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -41,12 +42,6 @@ import (
 	"github.com/olekukonko/mappo"
 	"github.com/quic-go/quic-go/http3"
 )
-
-var portContextKey = &contextKey{woos.CtxPort}
-
-type contextKey struct {
-	name string
-}
 
 type Server struct {
 	configPath string
@@ -103,7 +98,6 @@ func (s *Server) Start(configPath string) error {
 		s.logger = ll.New(woos.Name).Enable()
 	}
 
-	// Persistent mode: Load config from file
 	if configPath != "" {
 		absConfigPath, err := filepath.Abs(configPath)
 		if err != nil {
@@ -123,7 +117,6 @@ func (s *Server) Start(configPath string) error {
 			).Infof("config loaded")
 		}
 	} else {
-		// Ephemeral/Memory mode
 		woos.DefaultApply(s.global, ".")
 		s.logger.Info("starting in ephemeral mode")
 	}
@@ -133,7 +126,6 @@ func (s *Server) Start(configPath string) error {
 		"gossip_mode", s.global.Gossip.Enabled.Active(),
 	).Info("configuring")
 
-	// Only show storage paths in persistent mode to reduce noise
 	if configPath != "" {
 		s.logger.Fields(
 			"hosts_dir", s.global.Storage.HostsDir,
@@ -166,7 +158,6 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("RouteReaper", s.reaper.Stop)
 	}
 
-	// Only trigger file load if we are in persistent mode
 	if configPath != "" {
 		if err := s.hostManager.ReloadFull(); err != nil {
 			s.logger.Fields("err", err).Error("failed to load initial hosts")
@@ -206,11 +197,8 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	// Only initialize firewall if explicitly enabled (Active)
-	// Ephemeral mode sets Security=Inactive by default, so no DB is created.
 	if s.global.Security.Enabled.Active() {
 		fwConfig := s.global.Security.Firewall
-		// Check firewall status specifically
 		if fwConfig.Status.Active() {
 			dataDir := woos.NewFolder(s.global.Storage.DataDir)
 			var err error
@@ -224,7 +212,6 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	// Admin interface (disabled in ephemeral by default)
 	s.startAdminServer()
 
 	baseHandler := http.HandlerFunc(s.handleRequest)
@@ -235,7 +222,6 @@ func (s *Server) Start(configPath string) error {
 
 	tlsCfg, acmeHandler, err := s.buildTLS(httpFallbackHandler)
 	if err != nil {
-		// Suppress certmagic warning in ephemeral mode if not requested
 		if configPath != "" {
 			s.logger.Fields("err", err.Error()).Warn("TLS setup failed; HTTPS listeners may not start")
 		}
@@ -326,7 +312,6 @@ func (s *Server) Start(configPath string) error {
 			} else {
 				err = server.ListenAndServe()
 			}
-			// Idiomatic check for server closed
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errCh <- err
 			}
@@ -338,7 +323,6 @@ func (s *Server) Start(configPath string) error {
 	case err := <-errCh:
 		return err
 	case <-s.shutdown.Done():
-		// Wait a moment for graceful shutdown logic in listeners
 		return nil
 	}
 }
@@ -584,6 +568,37 @@ func (s *Server) hasStreaming(hosts map[string]*alaye.Host) bool {
 	return false
 }
 
+func (s *Server) applyMTLS(cfg *tls.Config, host *alaye.Host) {
+	if host.TLS.ClientAuth == "" && len(host.TLS.ClientCAs) == 0 {
+		return
+	}
+
+	switch strings.ToLower(host.TLS.ClientAuth) {
+	case "request":
+		cfg.ClientAuth = tls.RequestClientCert
+	case "require":
+		cfg.ClientAuth = tls.RequireAnyClientCert
+	case "verify_if_given":
+		cfg.ClientAuth = tls.VerifyClientCertIfGiven
+	case "require_and_verify":
+		cfg.ClientAuth = tls.RequireAndVerifyClientCert
+	default:
+		cfg.ClientAuth = tls.NoClientCert
+	}
+
+	if len(host.TLS.ClientCAs) > 0 {
+		pool := x509.NewCertPool()
+		for _, path := range host.TLS.ClientCAs {
+			if pem, err := os.ReadFile(path); err == nil {
+				pool.AppendCertsFromPEM(pem)
+			} else {
+				s.logger.Warnf("failed to read client CA %s: %v", path, err)
+			}
+		}
+		cfg.ClientCAs = pool
+	}
+}
+
 func (s *Server) startTCPServer(
 	addr string,
 	isTLS bool,
@@ -604,7 +619,7 @@ func (s *Server) startTCPServer(
 
 	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		ctx = context.WithValue(ctx, portContextKey, port)
+		ctx = context.WithValue(ctx, woos.CtxPort, port)
 		if owner != nil {
 			ctx = context.WithValue(ctx, woos.OwnerKey, owner)
 		}
@@ -624,6 +639,7 @@ func (s *Server) startTCPServer(
 	if isTLS && tlsCfg != nil {
 		if owner != nil {
 			localCfg := tlsCfg.Clone()
+			s.applyMTLS(localCfg, owner)
 			localCfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 				cert, err := s.tlsManager.GetCertificate(chi)
 				if err == nil {
@@ -665,7 +681,7 @@ func (s *Server) startQUICServer(
 		defer s.h3Wg.Done()
 
 		ctx := r.Context()
-		ctx = context.WithValue(ctx, portContextKey, port)
+		ctx = context.WithValue(ctx, woos.CtxPort, port)
 		if owner != nil {
 			ctx = context.WithValue(ctx, woos.OwnerKey, owner)
 		}
@@ -675,6 +691,7 @@ func (s *Server) startQUICServer(
 	serverTLSCfg := tlsCfg
 	if owner != nil {
 		localCfg := tlsCfg.Clone()
+		s.applyMTLS(localCfg, owner)
 		localCfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			cert, err := s.tlsManager.GetCertificate(chi)
 			if err == nil {
@@ -876,7 +893,7 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 		"bytes", bytes,
 	}
 
-	if port, ok := r.Context().Value(portContextKey).(string); ok && port != "" {
+	if port, ok := r.Context().Value(woos.CtxPort).(string); ok && port != "" {
 		fields = append(fields, "port", port)
 	}
 

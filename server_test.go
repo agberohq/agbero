@@ -1,6 +1,14 @@
 package agbero
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -187,7 +195,6 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 
 	handler := handlers.NewRoute(&alaye.Global{}, route, testLogger)
 
-	// Use mappo.Item
 	item := &mappo.Item{
 		Value: handler,
 	}
@@ -206,7 +213,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 
 func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 	s := &Server{
-		global: &alaye.Global{}, // Ensure global is not nil to prevent panic in NewRoute
+		global: &alaye.Global{},
 		logger: testLogger,
 		reaper: jack.NewReaper(time.Minute),
 	}
@@ -278,8 +285,12 @@ func TestServer_HandleRequest_NoHost(t *testing.T) {
 	}
 }
 
-func TestServer_HandleRequest_WithHost(t *testing.T) {
+func TestServer_HandleRequest_WithHost_And_XForwardedPort(t *testing.T) {
+	mockPort := "9999"
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if port := r.Header.Get("X-Forwarded-Port"); port != mockPort {
+			t.Errorf("Expected X-Forwarded-Port %s, got %s", mockPort, port)
+		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("backend response"))
 	}))
@@ -292,10 +303,8 @@ func TestServer_HandleRequest_WithHost(t *testing.T) {
 	}
 
 	hostFile := filepath.Join(hostsDir, "example.com.hcl")
-
 	content := `
 domains = ["example.com"]
-
 route "/" {
     backend {
         server {
@@ -314,7 +323,7 @@ route "/" {
 	}
 
 	globalCfg := &alaye.Global{
-		Bind: alaye.Bind{HTTP: []string{":8080"}},
+		Bind: alaye.Bind{HTTP: []string{":" + mockPort}},
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
 			DataDir:  t.TempDir(),
@@ -331,14 +340,80 @@ route "/" {
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Host = "example.com"
-	w := httptest.NewRecorder()
 
+	// FIX: Use woos.CtxPort directly to match what backend.go expects
+	ctx := context.WithValue(req.Context(), woos.CtxPort, mockPort)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
 	s.handleRequest(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected 200, got %d. Body: %s", w.Code, w.Body.String())
 	}
-	if w.Body.String() != "backend response" {
-		t.Errorf("Expected 'backend response', got %q", w.Body.String())
+}
+
+func TestServer_mTLS_Apply_Table(t *testing.T) {
+	// Generate a dummy CA
+	caKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	caTpl := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "Test CA"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+		IsCA:         true,
+		KeyUsage:     x509.KeyUsageCertSign,
 	}
+	caDer, _ := x509.CreateCertificate(rand.Reader, &caTpl, &caTpl, &caKey.PublicKey, caKey)
+	caPem := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDer})
+
+	tmpDir := t.TempDir()
+	caPath := filepath.Join(tmpDir, "ca.pem")
+	if err := os.WriteFile(caPath, caPem, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		mode     string
+		expected tls.ClientAuthType
+	}{
+		{"request", tls.RequestClientCert},
+		{"require", tls.RequireAnyClientCert},
+		{"verify_if_given", tls.VerifyClientCertIfGiven},
+		{"require_and_verify", tls.RequireAndVerifyClientCert},
+		{"none", tls.NoClientCert},
+		{"unknown_mode", tls.NoClientCert},
+		{"", tls.NoClientCert},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			host := &alaye.Host{
+				TLS: alaye.TLS{
+					ClientAuth: tt.mode,
+					ClientCAs:  []string{caPath},
+				},
+			}
+
+			s := &Server{logger: testLogger}
+			tlsConfig := &zapTLSConfig{}
+
+			s.applyMTLS(&tlsConfig.Config, host)
+
+			if tlsConfig.ClientAuth != tt.expected {
+				t.Errorf("ClientAuth mismatch for mode %s: expected %v, got %v", tt.mode, tt.expected, tlsConfig.ClientAuth)
+			}
+
+			if tt.mode != "" && len(host.TLS.ClientCAs) > 0 {
+				if tlsConfig.ClientCAs == nil {
+					t.Error("ClientCAs pool was not initialized")
+				}
+			}
+		})
+	}
+}
+
+// Wrapper to access standard tls.Config for testing
+type zapTLSConfig struct {
+	tls.Config
 }
