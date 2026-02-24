@@ -1,4 +1,3 @@
-// loadtest_test.go
 package main
 
 import (
@@ -6,8 +5,13 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/olekukonko/ll"
 )
 
+func TestMain(m *testing.M) {
+	logger = ll.New("test").Disable()
+}
 func TestLoadTester_Basic(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
