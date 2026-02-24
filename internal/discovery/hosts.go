@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
@@ -32,10 +33,12 @@ type routeEntry struct {
 type Host struct {
 	hostsDir woos.Folder
 
-	mu         sync.RWMutex
-	hosts      map[string]*alaye.Host
-	lookupMap  map[string]*alaye.Host
-	portLookup map[string]*alaye.Host
+	mu    sync.RWMutex
+	hosts map[string]*alaye.Host
+
+	lookupMap  atomic.Value // map[string]*alaye.Host
+	portLookup atomic.Value // map[string]*alaye.Host
+	routers    atomic.Value // map[string]*matcher.Tree
 
 	dynamicRoutes map[routeKey]*routeEntry
 	nodeIndex     map[string]map[routeKey]struct{}
@@ -44,8 +47,6 @@ type Host struct {
 	watcher *fsnotify.Watcher
 	logger  *ll.Logger
 	changed chan struct{}
-
-	routers map[string]*matcher.Tree
 
 	debouncer *jack.Debouncer
 	loaded    bool
@@ -59,13 +60,10 @@ func NewHostFolder(hostsDir woos.Folder, opts ...Option) *Host {
 	h := &Host{
 		hostsDir:      hostsDir,
 		hosts:         make(map[string]*alaye.Host),
-		lookupMap:     make(map[string]*alaye.Host),
-		portLookup:    make(map[string]*alaye.Host),
 		dynamicRoutes: make(map[routeKey]*routeEntry),
 		nodeIndex:     make(map[string]map[routeKey]struct{}),
 		nodeFailures:  make(map[string]int),
 		changed:       make(chan struct{}, 1),
-		routers:       make(map[string]*matcher.Tree),
 		loaded:        false,
 	}
 	for _, opt := range opts {
@@ -74,6 +72,10 @@ func NewHostFolder(hostsDir woos.Folder, opts ...Option) *Host {
 	if h.logger == nil {
 		h.logger = ll.New(woos.Name).Enable()
 	}
+
+	h.lookupMap.Store(make(map[string]*alaye.Host))
+	h.portLookup.Store(make(map[string]*alaye.Host))
+	h.routers.Store(make(map[string]*matcher.Tree))
 
 	h.debouncer = jack.NewDebouncer(
 		jack.WithDebounceDelay(500*time.Millisecond),
@@ -94,13 +96,10 @@ func normalizeHostPath(host, path string) (string, string) {
 	return host, path
 }
 
-// LoadStatic initializes the host manager with an in-memory map of hosts.
-// This bypasses disk scanning and file watching, suitable for ephemeral mode.
 func (hm *Host) LoadStatic(staticHosts map[string]*alaye.Host) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
-	// Apply defaults to the static hosts
 	for _, h := range staticHosts {
 		woos.DefaultHost(h)
 		hm.sortRoutes(h.Routes)
@@ -209,10 +208,8 @@ func (hm *Host) RouteExists(host, path string) bool {
 		return false
 	}
 
-	hm.mu.RLock()
-	defer hm.mu.RUnlock()
-
-	cfg, ok := hm.lookupMap[host]
+	m := hm.lookupMap.Load().(map[string]*alaye.Host)
+	cfg, ok := m[host]
 	if !ok || cfg == nil {
 		return false
 	}
@@ -406,14 +403,12 @@ func (hm *Host) Get(hostname string) *alaye.Host {
 		return nil
 	}
 
-	hm.mu.RLock()
-	defer hm.mu.RUnlock()
-
-	key := hm.resolveDomainLocked(hostname)
+	m := hm.lookupMap.Load().(map[string]*alaye.Host)
+	key := hm.resolveDomain(m, hostname)
 	if key == "" {
 		return nil
 	}
-	return hm.lookupMap[key]
+	return m[key]
 }
 
 func (hm *Host) GetRouter(hostname string) *matcher.Tree {
@@ -422,20 +417,19 @@ func (hm *Host) GetRouter(hostname string) *matcher.Tree {
 		return nil
 	}
 
-	hm.mu.RLock()
-	defer hm.mu.RUnlock()
-
-	key := hm.resolveDomainLocked(hostname)
+	m := hm.lookupMap.Load().(map[string]*alaye.Host)
+	key := hm.resolveDomain(m, hostname)
 	if key == "" {
 		return nil
 	}
-	return hm.routers[key]
+
+	r := hm.routers.Load().(map[string]*matcher.Tree)
+	return r[key]
 }
 
 func (hm *Host) GetByPort(port string) *alaye.Host {
-	hm.mu.RLock()
-	defer hm.mu.RUnlock()
-	return hm.portLookup[port]
+	m := hm.portLookup.Load().(map[string]*alaye.Host)
+	return m[port]
 }
 
 func (hm *Host) LoadAll() (map[string]*alaye.Host, error) {
@@ -452,7 +446,12 @@ func (hm *Host) LoadAll() (map[string]*alaye.Host, error) {
 		hm.loaded = true
 	}
 
-	return hm.snapshotLocked(), nil
+	m := hm.lookupMap.Load().(map[string]*alaye.Host)
+	out := make(map[string]*alaye.Host, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out, nil
 }
 
 func (hm *Host) Close() error {
@@ -477,27 +476,36 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
-	if hm.lookupMap == nil {
-		hm.lookupMap = make(map[string]*alaye.Host)
-	}
-	if hm.routers == nil {
-		hm.routers = make(map[string]*matcher.Tree)
-	}
-
 	domain = zulu.NormalizeHost(domain)
 	if domain == "" {
 		return
 	}
 
-	hm.lookupMap[domain] = cfg
+	// Clone existing maps
+	currentLookup := hm.lookupMap.Load().(map[string]*alaye.Host)
+	newLookup := make(map[string]*alaye.Host, len(currentLookup)+1)
+	for k, v := range currentLookup {
+		newLookup[k] = v
+	}
+
+	currentRouters := hm.routers.Load().(map[string]*matcher.Tree)
+	newRouters := make(map[string]*matcher.Tree, len(currentRouters)+1)
+	for k, v := range currentRouters {
+		newRouters[k] = v
+	}
+
+	newLookup[domain] = cfg
 
 	if cfg != nil && len(cfg.Routes) > 0 {
 		tr := matcher.NewTree()
 		for i := range cfg.Routes {
 			_ = tr.Insert(cfg.Routes[i].Path, &cfg.Routes[i])
 		}
-		hm.routers[domain] = tr
+		newRouters[domain] = tr
 	}
+
+	hm.lookupMap.Store(newLookup)
+	hm.routers.Store(newRouters)
 }
 
 func (hm *Host) notifyChanged() {
@@ -614,9 +622,9 @@ func (hm *Host) rebuildLookupLocked() {
 		newRouters[domain] = tr
 	}
 
-	hm.lookupMap = newLookup
-	hm.portLookup = newPortLookup
-	hm.routers = newRouters
+	hm.lookupMap.Store(newLookup)
+	hm.portLookup.Store(newPortLookup)
+	hm.routers.Store(newRouters)
 }
 
 func (hm *Host) loadOne(path string) (*alaye.Host, error) {
@@ -632,14 +640,6 @@ func (hm *Host) loadOne(path string) (*alaye.Host, error) {
 	return &hostConfig, nil
 }
 
-func (hm *Host) snapshotLocked() map[string]*alaye.Host {
-	out := make(map[string]*alaye.Host, len(hm.lookupMap))
-	for k, v := range hm.lookupMap {
-		out[k] = v
-	}
-	return out
-}
-
 func (hm *Host) hostsDirExists() bool {
 	p := hm.hostsDir.Path()
 	fi, err := os.Stat(p)
@@ -652,15 +652,15 @@ func (hm *Host) sortRoutes(routes []alaye.Route) {
 	})
 }
 
-func (hm *Host) resolveDomainLocked(hostname string) string {
-	if _, ok := hm.lookupMap[hostname]; ok {
+func (hm *Host) resolveDomain(lookup map[string]*alaye.Host, hostname string) string {
+	if _, ok := lookup[hostname]; ok {
 		return hostname
 	}
 
 	var bestMatch string
 	var maxLen int
 
-	for domain := range hm.lookupMap {
+	for domain := range lookup {
 		if strings.HasPrefix(domain, "*.") {
 			suffix := domain[1:]
 			if strings.HasSuffix(hostname, suffix) {

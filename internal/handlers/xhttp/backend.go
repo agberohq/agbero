@@ -80,8 +80,6 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 		registry = metrics2.DefaultRegistry
 	}
 
-	// Persistent Metrics Lookup
-	// Key: RouteHash|BackendAddr
 	statsKey := fmt.Sprintf("%s|%s", route.Key(), cfg.Address)
 	stats := registry.GetOrRegister(statsKey)
 
@@ -100,7 +98,6 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 		Alive:        stats.Alive,
 	}
 
-	// Ensure recovery timestamp is set for logic checks
 	b.lastRecovery.Store(now.UnixNano())
 
 	cbThreshold := woos.DefaultCircuitBreakerThreshold
@@ -116,14 +113,11 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 
 	if cfg.Streaming.Enabled.Active() {
 		t.ResponseHeaderTimeout = 0
-		// Use the configured flush interval, or default to 100ms for streaming
 		rp.FlushInterval = cfg.Streaming.EffectiveFlushInterval()
 		if rp.FlushInterval <= 0 {
 			rp.FlushInterval = 100 * time.Millisecond
 		}
 	} else {
-		// Disable flushing for normal responses
-		// Go's bufio will  handle it
 		rp.FlushInterval = 0
 	}
 
@@ -172,6 +166,9 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 		req.Header.Set(woos.HeaderXForwardedHost, originalHost)
 		req.Header.Set(woos.HeaderXForwardedProto, proto)
 		req.Header.Set(woos.HeaderXForwardedServer, woos.Name)
+		if port, ok := req.Context().Value(woos.CtxPort).(string); ok {
+			req.Header.Set("X-Forwarded-Port", port)
+		}
 		req.Header.Add(woos.HeaderVia, fmt.Sprintf("1.1 %s", woos.Name))
 	}
 

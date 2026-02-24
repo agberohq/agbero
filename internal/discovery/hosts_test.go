@@ -34,8 +34,7 @@ func waitChanged(t *testing.T, ch <-chan struct{}, timeout time.Duration) {
 	select {
 	case <-ch:
 		// Debouncer fires the action in a goroutine, then notifies.
-		// A tiny sleep ensures the map swap is fully visible to the test reader.
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 		return
 	case <-time.After(timeout):
 		t.Fatalf("timeout waiting for Changed()")
@@ -54,7 +53,7 @@ func assertNoChanged(t *testing.T, ch <-chan struct{}, timeout time.Duration) {
 
 func TestNewHost_Basic(t *testing.T) {
 	h := NewHost("/tmp")
-	if h.hosts == nil || h.lookupMap == nil || h.dynamicRoutes == nil || h.nodeIndex == nil || h.nodeFailures == nil {
+	if h.hosts == nil || h.lookupMap.Load() == nil || h.dynamicRoutes == nil || h.nodeIndex == nil || h.nodeFailures == nil {
 		t.Fatal("maps not initialized")
 	}
 	if h.logger == nil {
@@ -78,16 +77,17 @@ func TestUpdateGossipNode(t *testing.T) {
 
 	h.UpdateGossipNode("node1", "example.com", route)
 
-	// FIX: Wait for async rebuild
 	waitChanged(t, h.Changed(), time.Second)
 
 	hosts, _ := h.LoadAll()
 	if len(hosts) != 1 {
 		t.Fatalf("expected 1 host in snapshot, got %d", len(hosts))
 	}
+
 	if cfg := h.Get("example.com"); cfg == nil || len(cfg.Routes) != 1 {
 		t.Fatal("route not added")
 	}
+
 	if cfg := h.Get("example.com"); cfg != nil {
 		if got := len(cfg.Routes[0].Backends.Servers); got != 1 {
 			t.Fatalf("expected 1 backend server, got %d", got)
@@ -171,7 +171,6 @@ func TestWatch_FileChange(t *testing.T) {
 		t.Fatal("initial load failed")
 	}
 
-	// Trigger change
 	if err := os.WriteFile(hclFile, validHCL("updated.com"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +323,7 @@ func TestRebuildLookupLocked_MergeFileAndDynamicSamePath(t *testing.T) {
 	if len(cfg.Routes) != 1 {
 		t.Fatalf("expected 1 route, got %d", len(cfg.Routes))
 	}
-	// The file backend + dynamic backend = 2 servers
+
 	if got := len(cfg.Routes[0].Backends.Servers); got != 2 {
 		t.Fatalf("expected merged 2 backend servers, got %d", got)
 	}
@@ -347,11 +346,14 @@ func TestGet_WildcardResolution(t *testing.T) {
 	hm := NewHost("/tmp")
 
 	wildcardDomain := "*.localhost"
-	hm.mu.Lock()
-	hm.lookupMap[wildcardDomain] = &alaye.Host{
+
+	// Create map matching atomic structure
+	m := make(map[string]*alaye.Host)
+	m[wildcardDomain] = &alaye.Host{
 		Domains: []string{wildcardDomain},
 	}
-	hm.mu.Unlock()
+
+	hm.lookupMap.Store(m)
 
 	tests := []struct {
 		name      string
