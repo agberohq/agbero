@@ -11,6 +11,7 @@ import (
 	mrand "math/rand"
 	"net"
 	"net/netip"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,7 +28,6 @@ var rngPool = sync.Pool{
 	},
 }
 
-// pooledConn wraps a net.Conn with metadata for the pool
 type pooledConn struct {
 	net.Conn
 	lastUsed time.Time
@@ -35,14 +35,13 @@ type pooledConn struct {
 	failed   atomic.Bool
 }
 
-// connPool manages reusable connections for health checks
 type connPool struct {
 	mu       sync.RWMutex
 	conns    []*pooledConn
 	maxSize  int
 	timeout  time.Duration
 	addr     string
-	resolved netip.AddrPort // cached resolved address
+	resolved netip.AddrPort
 }
 
 func newConnPool(addr string, maxSize int, timeout time.Duration) *connPool {
@@ -53,12 +52,10 @@ func newConnPool(addr string, maxSize int, timeout time.Duration) *connPool {
 	}
 }
 
-// get returns a usable connection from the pool or creates new one
 func (p *connPool) get() (*pooledConn, error) {
 	p.mu.RLock()
 	for _, c := range p.conns {
 		if c.inUse.CompareAndSwap(false, true) && !c.failed.Load() {
-			// Verify connection is still alive with a quick peek
 			if p.isAlive(c.Conn) {
 				c.lastUsed = time.Now()
 				p.mu.RUnlock()
@@ -70,7 +67,6 @@ func (p *connPool) get() (*pooledConn, error) {
 	}
 	p.mu.RUnlock()
 
-	// Create new connection
 	conn, err := p.dial()
 	if err != nil {
 		return nil, err
@@ -82,12 +78,10 @@ func (p *connPool) get() (*pooledConn, error) {
 	}
 	pc.inUse.Store(true)
 
-	// Try to add to pool if space available
 	p.mu.Lock()
 	if len(p.conns) < p.maxSize {
 		p.conns = append(p.conns, pc)
 	} else {
-		// Replace oldest failed/idle connection
 		replaced := false
 		for i, c := range p.conns {
 			if c.failed.Load() || (!c.inUse.Load() && time.Since(c.lastUsed) > 5*time.Minute) {
@@ -97,7 +91,6 @@ func (p *connPool) get() (*pooledConn, error) {
 				break
 			}
 		}
-		// If no slot available, close the new connection and return error
 		if !replaced {
 			_ = pc.Conn.Close()
 			p.mu.Unlock()
@@ -110,17 +103,14 @@ func (p *connPool) get() (*pooledConn, error) {
 }
 
 func (p *connPool) dial() (net.Conn, error) {
-	// Use cached resolved address if available
 	if p.resolved.IsValid() {
 		conn, err := net.DialTimeout(woos.TCP, p.resolved.String(), p.timeout)
 		if err == nil {
 			return conn, nil
 		}
-		// Resolution might be stale, clear and retry with DNS
 		p.resolved = netip.AddrPort{}
 	}
 
-	// Resolve and cache
 	host, port, err := net.SplitHostPort(p.addr)
 	if err != nil {
 		return nil, err
@@ -129,7 +119,6 @@ func (p *connPool) dial() (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()
 
-	// Use resolver with caching
 	resolver := &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -140,11 +129,9 @@ func (p *connPool) dial() (net.Conn, error) {
 
 	addrs, err := resolver.LookupNetIP(ctx, "ip4", host)
 	if err != nil || len(addrs) == 0 {
-		// Fallback to standard dial
 		return net.DialTimeout(woos.TCP, p.addr, p.timeout)
 	}
 
-	// Try each resolved address
 	var lastErr error
 	for _, addr := range addrs {
 		addrPort := netip.AddrPortFrom(addr, parsePort(port))
@@ -162,13 +149,10 @@ func (p *connPool) dial() (net.Conn, error) {
 }
 
 func (p *connPool) isAlive(conn net.Conn) bool {
-	// Set very short read deadline to test liveness without blocking
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
 	buf := make([]byte, 1)
 	_, err := conn.Read(buf)
 	_ = conn.SetReadDeadline(time.Time{})
-
-	// EOF or timeout means dead, nil or data means alive
 	return err == nil || (!errors.Is(err, io.EOF) && !isTimeout(err))
 }
 
@@ -229,15 +213,13 @@ type Backend struct {
 	stop     chan struct{}
 	stopOnce sync.Once
 	pool     *connPool
-	poolOnce sync.Once // ensures pool is initialized only once
+	poolOnce sync.Once
 }
 
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
-		// Use poolOnce to safely check/close pool even if healthCheckLoop hasn't run yet
 		b.poolOnce.Do(func() {
-			// Pool might not be initialized, check nil
 			if b.pool != nil {
 				b.pool.close()
 			}
@@ -257,7 +239,13 @@ func (b *Backend) OnDialFailure(_ error) {
 }
 
 func (b *Backend) healthCheckLoop() {
-	// Initialize connection pool exactly once
+	// Added Panic Recovery
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("[CRITICAL] TCP health check panic for %s: %v\nStack: %s\n", b.Address, r, debug.Stack())
+		}
+	}()
+
 	b.poolOnce.Do(func() {
 		b.pool = newConnPool(b.Address, 3, b.hcTimeout)
 	})
@@ -272,7 +260,6 @@ func (b *Backend) healthCheckLoop() {
 
 	consecutiveFailures := int64(0)
 	currentInterval := b.hcInterval
-	// Cap backoff at 30s using existing hcInterval as base
 	maxBackoff := 30 * time.Second
 	if b.hcInterval > maxBackoff {
 		maxBackoff = b.hcInterval * 10
@@ -288,7 +275,6 @@ func (b *Backend) healthCheckLoop() {
 				b.Health.RecordSuccess()
 				b.Activity.Failures.Store(0)
 
-				// Reset interval on success
 				if currentInterval != b.hcInterval {
 					currentInterval = b.hcInterval
 					ticker.Reset(currentInterval)
@@ -303,7 +289,6 @@ func (b *Backend) healthCheckLoop() {
 
 				if consecutiveFailures >= b.failThresh {
 					b.Alive.Store(false)
-					// Exponential backoff: double the interval, cap at maxBackoff
 					currentInterval *= 2
 					if currentInterval > maxBackoff {
 						currentInterval = maxBackoff
@@ -316,18 +301,15 @@ func (b *Backend) healthCheckLoop() {
 }
 
 func (b *Backend) check() bool {
-	// Fast path: simple TCP connect with pooled connection
 	if len(b.hcSend) == 0 && len(b.hcExpect) == 0 {
 		pc, err := b.pool.get()
 		if err != nil {
 			return false
 		}
-		// Just having a usable connection means it's alive
 		b.pool.put(pc)
 		return true
 	}
 
-	// Full check with send/expect - need dedicated connection
 	pc, err := b.pool.get()
 	if err != nil {
 		return false
@@ -345,7 +327,6 @@ func (b *Backend) check() bool {
 	}
 
 	if len(b.hcExpect) > 0 {
-		// Reuse buffer from pool to avoid alloc
 		buf := getCheckBuf()
 		defer putCheckBuf(buf)
 
@@ -362,7 +343,6 @@ func (b *Backend) check() bool {
 	return true
 }
 
-// Buffer pool for health check reads
 var checkBufPool = sync.Pool{
 	New: func() any {
 		b := make([]byte, 1024)

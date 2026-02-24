@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -209,6 +210,12 @@ func (b *Backend) Stop() {
 }
 
 func (b *Backend) healthCheckLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			b.logger.Fields("panic", r, "stack", string(debug.Stack()), "backend", b.URL.Host).
+				Error("health check loop panicked (recovered)")
+		}
+	}()
 	if b.hcConfig == nil {
 		return
 	}
