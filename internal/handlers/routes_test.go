@@ -40,13 +40,11 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 		},
 	}
 
-	// 3. Init Handler
-	h := NewRoute(global, route, testLogger)
+	// 3. Init Handler (passing nil domains)
+	h := NewRoute(global, route, nil, testLogger)
 	defer h.Close()
 
 	// 4. Test Round Robin (Should oscillate)
-	// Note: The atomic counter increment order depends on implementation details,
-	// but it should distribute.
 	hits := make(map[string]int)
 
 	for i := 0; i < 10; i++ {
@@ -87,7 +85,7 @@ func TestRouteHandler_Proxy_RateLimit(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(global, route, testLogger)
+	h := NewRoute(global, route, nil, testLogger)
 	defer h.Close()
 
 	// First request (allowed)
@@ -133,7 +131,7 @@ func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(global, route, testLogger)
+	h := NewRoute(global, route, nil, testLogger)
 	defer h.Close()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -155,11 +153,10 @@ func TestRouteHandler_Proxy_NoHealthyBackends(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(global, route, testLogger)
+	h := NewRoute(global, route, nil, testLogger)
 	defer h.Close()
 
 	// Manually mark dead for test immediate response
-	// (Real world relies on health check or dial failure, but middleware might just error)
 	for _, b := range h.Backends {
 		b.Alive.Store(false)
 	}
@@ -191,7 +188,7 @@ func TestRouteHandler_Proxy_Timeout(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(global, route, testLogger)
+	h := NewRoute(global, route, nil, testLogger)
 	defer h.Close()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -222,7 +219,7 @@ func TestRouteHandler_Proxy_StripPrefix(t *testing.T) {
 		StripPrefixes: []string{"/api"},
 	}
 
-	h := NewRoute(global, route, testLogger)
+	h := NewRoute(global, route, nil, testLogger)
 	defer h.Close()
 
 	// Simulate what handleRoute does: strip prefix before calling handler
@@ -256,7 +253,7 @@ func TestRouteHandler_Web_BasicFileServing(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(global, route, testLogger)
+	h := NewRoute(global, route, nil, testLogger)
 
 	// Test index file
 	req := httptest.NewRequest("GET", "/", nil)
@@ -306,7 +303,7 @@ func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(global, route, testLogger)
+	h := NewRoute(global, route, nil, testLogger)
 
 	// Request with gzip support
 	req := httptest.NewRequest("GET", "/style.css", nil)
@@ -346,7 +343,7 @@ func TestRouteHandler_Web_CustomIndex(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(global, route, testLogger)
+	h := NewRoute(global, route, nil, testLogger)
 
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
@@ -374,7 +371,7 @@ func TestRouteHandler_Web_MethodNotAllowed(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(global, route, testLogger)
+	h := NewRoute(global, route, nil, testLogger)
 
 	req := httptest.NewRequest("POST", "/", nil)
 	w := httptest.NewRecorder()
@@ -400,7 +397,7 @@ func TestRouteHandler_Web_DirectoryWithoutIndex(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(global, route, testLogger)
+	h := NewRoute(global, route, nil, testLogger)
 
 	req := httptest.NewRequest(http.MethodGet, "/subdir/", nil)
 	w := httptest.NewRecorder()
@@ -429,7 +426,7 @@ func TestRouteHandler_Web_PathTraversalPrevented(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(global, route, testLogger)
+	h := NewRoute(global, route, nil, testLogger)
 
 	// Try to traverse outside the root
 	req := httptest.NewRequest("GET", "/files/../../../"+filepath.Base(outsideFile), nil)
@@ -472,7 +469,7 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 		},
 	}
 
-	h := NewRoute(global, route, testLogger)
+	h := NewRoute(global, route, nil, testLogger)
 
 	req := httptest.NewRequest("GET", "/test.txt", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -507,8 +504,6 @@ func TestRouteHandler_Validation(t *testing.T) {
 			route: &alaye.Route{
 				Enabled: alaye.Active,
 				Path:    "/api",
-				// Changed from localhost:3000 to avoid port conflicts in CI/dev environments.
-				// Using a high, presumably unused port ensures a connection error (502).
 				Backends: alaye.Backend{
 					Enabled: alaye.Active,
 					Servers: alaye.NewServers("http://127.0.0.1:59999"),
@@ -533,7 +528,6 @@ func TestRouteHandler_Validation(t *testing.T) {
 
 				r.Web.Root = alaye.WebRoot(root)
 				r.Web.Index = "index.html"
-				// listing stays default false, but index exists => 200
 			},
 			wantStatus: http.StatusOK,
 		},
@@ -563,7 +557,7 @@ func TestRouteHandler_Validation(t *testing.T) {
 				tt.prepare(t, tt.route)
 			}
 
-			h := NewRoute(global, tt.route, testLogger)
+			h := NewRoute(global, tt.route, nil, testLogger)
 			if h == nil {
 				t.Fatal("handler must never be nil")
 			}

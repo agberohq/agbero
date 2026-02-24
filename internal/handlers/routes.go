@@ -24,7 +24,8 @@ type Route struct {
 	Backends []*xhttp.Backend
 }
 
-func NewRoute(global *alaye.Global, route *alaye.Route, logger *ll.Logger) *Route {
+// NewRoute updated to accept domains
+func NewRoute(global *alaye.Global, route *alaye.Route, domains []string, logger *ll.Logger) *Route {
 	if route == nil {
 		return FallbackRoute("nil route")
 	}
@@ -43,7 +44,7 @@ func NewRoute(global *alaye.Global, route *alaye.Route, logger *ll.Logger) *Rout
 		return newWebRoute(route, &global.RateLimits, &global.Fallback, logger)
 	}
 	if hasBackends {
-		return newProxyRoute(route, &global.RateLimits, &global.Fallback, logger)
+		return newProxyRoute(route, domains, &global.RateLimits, &global.Fallback, logger)
 	}
 	logger.Fields("path", route.Path).Error("route has neither web root nor backends")
 	return FallbackRoute("route has no handler configuration")
@@ -65,10 +66,12 @@ func newWebRoute(route *alaye.Route, globalRate *alaye.GlobalRate, globalFallbac
 	return &Route{handler: chain, Backends: nil}
 }
 
-func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, globalFallback *alaye.Fallback, logger *ll.Logger) *Route {
+// newProxyRoute updated to pass domains
+func newProxyRoute(route *alaye.Route, domains []string, globalRate *alaye.GlobalRate, globalFallback *alaye.Fallback, logger *ll.Logger) *Route {
 	var backends []*xhttp.Backend
 	for i, backendCfg := range route.Backends.Servers {
-		b, err := xhttp.NewBackend(backendCfg, route, logger, metrics.DefaultRegistry)
+		// Pass domains here
+		b, err := xhttp.NewBackend(backendCfg, route, domains, logger, metrics.DefaultRegistry)
 		if err != nil {
 			logger.Fields("index", i, "backend", backendCfg.Address, "err", err).Error("failed to create backend")
 			continue
@@ -76,7 +79,6 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, globalFallb
 		backends = append(backends, b)
 	}
 
-	// Resolve fallback configuration (Route > Global)
 	fallbackCfg := resolveFallback(&route.Fallback, globalFallback)
 	var fallbackHandler http.Handler
 	if fallbackCfg.IsActive() {
@@ -100,7 +102,6 @@ func newProxyRoute(route *alaye.Route, globalRate *alaye.GlobalRate, globalFallb
 		timeout = route.Timeouts.Request
 	}
 
-	// Pass fallbackHandler to balancer
 	loadBalancer := xhttp.NewBalancer(backends, route.Backends.Strategy, timeout, route.StripPrefixes, fallbackHandler)
 
 	var chain http.Handler = loadBalancer

@@ -193,7 +193,8 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	}
 	key := route.Key()
 
-	handler := handlers.NewRoute(&alaye.Global{}, route, testLogger)
+	// Pass nil domains
+	handler := handlers.NewRoute(&alaye.Global{}, route, nil, testLogger)
 
 	item := &mappo.Item{
 		Value: handler,
@@ -202,7 +203,8 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 
 	zulu.Route.Store(key, item)
 
-	h := s.getOrBuildRouteHandler(route, key)
+	// Pass nil domains
+	h := s.getOrBuildRouteHandler(route, key, nil)
 	if h != handler {
 		t.Error("Cache miss unexpectedly")
 	}
@@ -226,7 +228,8 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 
 	zulu.Route.Delete(route.Key())
 
-	h := s.getOrBuildRouteHandler(route, route.Key())
+	// Pass nil domains
+	h := s.getOrBuildRouteHandler(route, route.Key(), nil)
 	if h == nil {
 		t.Error("Handler should be created on cache miss")
 	}
@@ -341,7 +344,6 @@ route "/" {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Host = "example.com"
 
-	// FIX: Use woos.CtxPort directly to match what backend.go expects
 	ctx := context.WithValue(req.Context(), woos.CtxPort, mockPort)
 	req = req.WithContext(ctx)
 
@@ -354,7 +356,6 @@ route "/" {
 }
 
 func TestServer_mTLS_Apply_Table(t *testing.T) {
-	// Generate a dummy CA
 	caKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	caTpl := x509.Certificate{
 		SerialNumber: big.NewInt(1),
@@ -413,7 +414,6 @@ func TestServer_mTLS_Apply_Table(t *testing.T) {
 	}
 }
 
-// Wrapper to access standard tls.Config for testing
 type zapTLSConfig struct {
 	tls.Config
 }

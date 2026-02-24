@@ -51,10 +51,12 @@ type Backend struct {
 	Health   *metrics2.Health
 	Activity *metrics2.Activity
 
-	hcConfig *alaye.HealthCheck
+	hcConfig     *alaye.HealthCheck
+	routeDomains []string
 }
 
-func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registry *metrics2.Registry) (*Backend, error) {
+// NewBackend updated to accept domains argument
+func NewBackend(cfg alaye.Server, route *alaye.Route, domains []string, logger *ll.Logger, registry *metrics2.Registry) (*Backend, error) {
 	u, err := url.Parse(cfg.Address)
 	if err != nil {
 		return nil, err
@@ -97,6 +99,11 @@ func NewBackend(cfg alaye.Server, route *alaye.Route, logger *ll.Logger, registr
 		Health:       stats.Health,
 		Activity:     stats.Activity,
 		Alive:        stats.Alive,
+	}
+
+	if len(domains) > 0 {
+		b.routeDomains = make([]string, len(domains))
+		copy(b.routeDomains, domains)
 	}
 
 	b.lastRecovery.Store(now.UnixNano())
@@ -216,6 +223,7 @@ func (b *Backend) healthCheckLoop() {
 				Error("health check loop panicked (recovered)")
 		}
 	}()
+
 	if b.hcConfig == nil {
 		return
 	}
@@ -255,7 +263,6 @@ func (b *Backend) healthCheckLoop() {
 	timer := time.NewTimer(b.Jitter(interval))
 	defer timer.Stop()
 
-	// Default expectation is 200-399 if not specified
 	expectedStatus := b.hcConfig.ExpectedStatus
 	expectedBody := b.hcConfig.ExpectedBody
 	method := b.hcConfig.Method
@@ -263,24 +270,40 @@ func (b *Backend) healthCheckLoop() {
 		method = "GET"
 	}
 
+	hostHeader := ""
+	if v, ok := b.hcConfig.Headers["Host"]; ok {
+		hostHeader = v
+	} else if len(b.routeDomains) > 0 {
+		hostHeader = b.routeDomains[0]
+	}
+
 	for {
 		select {
 		case <-b.stop:
 			return
 		case <-timer.C:
-			req, err := http.NewRequest(method, targetURL, nil)
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			req, err := http.NewRequestWithContext(ctx, method, targetURL, nil)
+
+			if err == nil {
+				if hostHeader != "" {
+					req.Host = hostHeader
+				}
+				for k, v := range b.hcConfig.Headers {
+					if k != "Host" {
+						req.Header.Set(k, v)
+					}
+				}
+			}
+
 			var resp *http.Response
 			if err == nil {
-				// Inject custom headers if configured
-				for k, v := range b.hcConfig.Headers {
-					req.Header.Set(k, v)
-				}
 				resp, err = client.Do(req)
 			}
+			cancel()
 
 			healthy := false
 			if err == nil && resp != nil {
-				// Status Code Check
 				if len(expectedStatus) > 0 {
 					for _, s := range expectedStatus {
 						if resp.StatusCode == s {
@@ -289,19 +312,16 @@ func (b *Backend) healthCheckLoop() {
 						}
 					}
 				} else {
-					// Default safe range
 					healthy = resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest
 				}
 
-				// Body Check (only if status was ok so far)
 				if healthy && expectedBody != "" {
-					bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*10)) // Limit check to 10KB
+					bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*10))
 					if !strings.Contains(string(bodyBytes), expectedBody) {
 						healthy = false
 					}
 				}
 
-				// Drain remaining body to reuse connection
 				_, _ = io.Copy(io.Discard, resp.Body)
 				_ = resp.Body.Close()
 			}

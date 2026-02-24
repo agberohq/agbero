@@ -26,7 +26,8 @@ func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb al
 		CircuitBreaker: cb,
 	}
 
-	b, err := NewBackend(server, route, testLogger, metrics.DefaultRegistry)
+	// Pass nil domains
+	b, err := NewBackend(server, route, nil, testLogger, metrics.DefaultRegistry)
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -34,7 +35,8 @@ func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb al
 }
 
 func TestNewBackend_InvalidURL(t *testing.T) {
-	_, err := NewBackend(alaye.NewServer("://invalid-url"), &alaye.Route{}, testLogger, metrics.DefaultRegistry)
+	// Pass nil domains
+	_, err := NewBackend(alaye.NewServer("://invalid-url"), &alaye.Route{}, nil, testLogger, metrics.DefaultRegistry)
 	if err == nil {
 		t.Error("Expected error for invalid URL, got nil")
 	}
@@ -185,7 +187,7 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 		CircuitBreaker: alaye.CircuitBreaker{Threshold: 2},
 	}
 
-	b, err := NewBackend(alaye.NewServer(server.URL), route, testLogger, metrics.DefaultRegistry)
+	b, err := NewBackend(alaye.NewServer(server.URL), route, nil, testLogger, metrics.DefaultRegistry)
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -218,7 +220,7 @@ func TestCircuitBreaker_NoTripOnCancel(t *testing.T) {
 		CircuitBreaker: alaye.CircuitBreaker{Threshold: 1},
 	}
 
-	b, err := NewBackend(alaye.NewServer(server.URL), route, testLogger, metrics.DefaultRegistry)
+	b, err := NewBackend(alaye.NewServer(server.URL), route, nil, testLogger, metrics.DefaultRegistry)
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -378,7 +380,7 @@ func TestHealthCheck_Jitter(t *testing.T) {
 		},
 	}
 
-	b, err := NewBackend(cfg, route, ll.New("test").Disable(), metrics.DefaultRegistry)
+	b, err := NewBackend(cfg, route, nil, ll.New("test").Disable(), metrics.DefaultRegistry)
 	if err != nil {
 		t.Fatalf("NewBackend error: %v", err)
 	}
