@@ -11,25 +11,41 @@ type TLS struct {
 	Local       LocalCert   `hcl:"local,block" json:"local,omitempty"`
 	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt,omitempty"`
 	CustomCA    CustomCA    `hcl:"custom_ca,block" json:"custom_ca,omitempty"`
+
+	ClientAuth string   `hcl:"client_auth,optional" json:"client_auth"`
+	ClientCAs  []string `hcl:"client_cas,optional" json:"client_cas"`
 }
 
 func (t *TLS) Validate() error {
-	// Mode validation (if provided)
 	if t.Mode != "" {
 		switch t.Mode {
 		case ModeLocalAuto:
-			return nil // Unknown validation needed, will auto-generate
+			return nil
 		case ModeLocalNone, ModeLocalCert, ModeLetsEncrypt, ModeCustomCA:
-			// Valid modes
 		default:
 			return errors.Newf("%w: %q must be one of: %s, %s, %s, %s",
 				ErrInvalidTLSMode, t.Mode, ModeLocalNone, ModeLocalCert, ModeLetsEncrypt, ModeCustomCA)
 		}
 	} else {
-		t.Mode = ModeLetsEncrypt // Default
+		t.Mode = ModeLetsEncrypt
 	}
 
-	// Validate based on mode
+	if t.ClientAuth != "" {
+		switch strings.ToLower(t.ClientAuth) {
+		case "none", "request", "require", "verify_if_given", "require_and_verify":
+		default:
+			return errors.Newf("invalid client_auth mode: %s", t.ClientAuth)
+		}
+	}
+
+	if len(t.ClientCAs) > 0 {
+		for _, ca := range t.ClientCAs {
+			if !strings.HasPrefix(ca, Slash) {
+				return errors.Newf("client_ca path must be absolute: %s", ca)
+			}
+		}
+	}
+
 	switch t.Mode {
 	case ModeLocalCert:
 		return t.Local.Validate()
@@ -38,7 +54,6 @@ func (t *TLS) Validate() error {
 	case ModeCustomCA:
 		return t.CustomCA.Validate()
 	case ModeLocalNone:
-		// Unknown TLS, nothing to validate
 		return nil
 	default:
 		return errors.Newf("%w: %s", ErrUnsupportedTLSMode, t.Mode)
