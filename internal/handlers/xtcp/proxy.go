@@ -21,6 +21,8 @@ import (
 
 var noopBalancer = &Balancer{}
 
+var proxyBufPool = zulu.NewBufferPool()
+
 type Proxy struct {
 	Listen      string
 	IdleTimeout time.Duration
@@ -60,7 +62,6 @@ func (p *Proxy) AddRoute(hostname string, cfg alaye.TCPRoute) {
 	p.Mu.Lock()
 	defer p.Mu.Unlock()
 
-	// Use DefaultRegistry for persistence
 	bal := NewBalancer(cfg, metrics.DefaultRegistry)
 	hostname = strings.ToLower(strings.TrimSpace(hostname))
 
@@ -104,7 +105,6 @@ func (p *Proxy) Start() error {
 		defer l.Close()
 		defer zulu.TCP.Delete(p.Listen)
 
-		// Infinite backoff for temporary accept errors
 		bo := zulu.NewInfinite()
 
 		for {
@@ -120,13 +120,11 @@ func (p *Proxy) Start() error {
 
 			conn, err := l.Accept()
 			if err != nil {
-				// Check for temporary/timeout errors
 				var opErr *net.OpError
 				if errors.As(err, &opErr) && opErr.Timeout() {
 					continue
 				}
 
-				// Unexpected error: log and sleep with backoff
 				sleepDuration := bo.NextBackOff()
 				p.Logger.Fields("err", err, "retry_in", sleepDuration).Warn("tcp accept error, backing off")
 
@@ -138,7 +136,6 @@ func (p *Proxy) Start() error {
 				}
 			}
 
-			// Active: Reset backoff
 			bo.Reset()
 
 			p.wg.Add(1)
@@ -219,7 +216,7 @@ func (p *Proxy) handle(src net.Conn) {
 	if needSNI {
 		peekBuf = make([]byte, woos.PeekBufferSize)
 		_ = src.SetReadDeadline(time.Now().Add(woos.InitialReadTimeout))
-		n0, err := src.Read(peekBuf)
+		n0, err := io.ReadAtLeast(src, peekBuf, 1)
 		_ = src.SetReadDeadline(time.Time{})
 
 		if err != nil {
@@ -233,7 +230,7 @@ func (p *Proxy) handle(src net.Conn) {
 					_ = src.Close()
 					return
 				}
-			} else if err != io.EOF {
+			} else if err != io.EOF && err != io.ErrUnexpectedEOF {
 				p.Logger.Fields("remote", remoteAddr, "err", err).Debug("tcp peek error")
 				_ = src.Close()
 				return
@@ -368,7 +365,9 @@ func (p *Proxy) pipe(client, backend net.Conn) {
 	errc := make(chan error, 1)
 
 	copyAndClose := func(dst, src net.Conn) {
-		_, err := io.Copy(dst, src)
+		buf := proxyBufPool.Get()
+		defer proxyBufPool.Put(buf)
+		_, err := io.CopyBuffer(dst, src, buf)
 		if err != nil {
 			select {
 			case errc <- err:

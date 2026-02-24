@@ -574,13 +574,13 @@ func (s *Server) applyMTLS(cfg *tls.Config, host *alaye.Host) {
 	}
 
 	switch strings.ToLower(host.TLS.ClientAuth) {
-	case "request":
+	case alaye.TlsRequest:
 		cfg.ClientAuth = tls.RequestClientCert
-	case "require":
+	case alaye.TlsRequire:
 		cfg.ClientAuth = tls.RequireAnyClientCert
-	case "verify_if_given":
+	case alaye.TlsVerifyIfGiven:
 		cfg.ClientAuth = tls.VerifyClientCertIfGiven
-	case "require_and_verify":
+	case alaye.TlsRequireAndVerify:
 		cfg.ClientAuth = tls.RequireAndVerifyClientCert
 	default:
 		cfg.ClientAuth = tls.NoClientCert

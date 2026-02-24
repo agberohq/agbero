@@ -59,6 +59,12 @@ const (
 	ModeLocalCert   TlsMode = "local"
 	ModeLetsEncrypt TlsMode = "letsencrypt"
 	ModeCustomCA    TlsMode = "custom_ca"
+
+	TlsNone             = "none"
+	TlsRequest          = "request"
+	TlsRequire          = "require"
+	TlsVerifyIfGiven    = "verify_if_given"
+	TlsRequireAndVerify = "require_and_verify"
 )
 
 // wasm

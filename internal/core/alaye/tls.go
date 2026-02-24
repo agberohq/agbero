@@ -32,7 +32,7 @@ func (t *TLS) Validate() error {
 
 	if t.ClientAuth != "" {
 		switch strings.ToLower(t.ClientAuth) {
-		case "none", "request", "require", "verify_if_given", "require_and_verify":
+		case TlsNone, TlsRequest, TlsRequire, TlsRequireAndVerify, TlsVerifyIfGiven:
 		default:
 			return errors.Newf("invalid client_auth mode: %s", t.ClientAuth)
 		}
