@@ -11,7 +11,7 @@ type Web struct {
 	Root    WebRoot `hcl:"root,optional" json:"root"`
 	Index   string  `hcl:"index,optional" json:"index"`
 	Listing bool    `hcl:"listing,optional" json:"listing"`
-	PHP     PHP     `hcl:"php,block" json:"php,omitempty"`
+	PHP     PHP     `hcl:"php,block" json:"php"`
 }
 
 func (w *Web) Validate() error {

@@ -8,9 +8,9 @@ import (
 
 type TLS struct {
 	Mode        TlsMode     `hcl:"mode,optional" json:"mode"`
-	Local       LocalCert   `hcl:"local,block" json:"local,omitempty"`
-	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt,omitempty"`
-	CustomCA    CustomCA    `hcl:"custom_ca,block" json:"custom_ca,omitempty"`
+	Local       LocalCert   `hcl:"local,block" json:"local"`
+	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt"`
+	CustomCA    CustomCA    `hcl:"custom_ca,block" json:"custom_ca"`
 
 	ClientAuth string   `hcl:"client_auth,optional" json:"client_auth"`
 	ClientCAs  []string `hcl:"client_cas,optional" json:"client_cas"`

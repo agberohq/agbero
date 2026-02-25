@@ -257,7 +257,7 @@ type Rule struct {
 	Type      BlockType `json:"type"`
 	Reason    string    `json:"reason,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 func (r *Rule) IsExpired() bool {

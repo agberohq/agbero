@@ -213,8 +213,8 @@ func oldMatch(requestPath, pattern string) bool {
 		return true
 	}
 
-	if strings.HasSuffix(pattern, woos.Star) {
-		prefix := strings.TrimSuffix(pattern, woos.Star)
+	if before, ok := strings.CutSuffix(pattern, woos.Star); ok {
+		prefix := before
 		return strings.HasPrefix(requestPath, prefix)
 	}
 

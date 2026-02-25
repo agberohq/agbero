@@ -51,7 +51,7 @@ func TestBuildConsistentHash(t *testing.T) {
 		if len(counts) != 2 {
 			t.Error("should have entries for both backends")
 		}
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			if counts[i] != 10 {
 				t.Errorf("backend %d should have 10 replicas, got %d", i, counts[i])
 			}
@@ -108,14 +108,14 @@ func TestConsistentHashRingGet(t *testing.T) {
 		counts := make(map[int]int)
 
 		// Test many random keys
-		for i := 0; i < 10000; i++ {
+		for range 10000 {
 			key := rand.Uint64()
 			idx := r.Get(key)
 			counts[idx]++
 		}
 
 		// Check all backends got some traffic
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			if counts[i] == 0 {
 				t.Errorf("backend %d got no traffic", i)
 			}
@@ -123,7 +123,7 @@ func TestConsistentHashRingGet(t *testing.T) {
 
 		// Check rough uniformity (within 50% of average)
 		avg := 10000 / 5
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			if counts[i] < avg/2 || counts[i] > avg*3/2 {
 				t.Logf("Warning: backend %d has %d hits (avg %d)", i, counts[i], avg)
 			}
@@ -202,7 +202,7 @@ func TestWeightWheelNext(t *testing.T) {
 	t.Run("uniform weights", func(t *testing.T) {
 		w := NewWheel([]int{1, 1, 1})
 		seen := make(map[int]bool)
-		for i := uint64(0); i < 6; i++ {
+		for i := range uint64(6) {
 			idx := w.Next(i)
 			seen[idx] = true
 			if idx != int(i%3) {
@@ -217,7 +217,7 @@ func TestWeightWheelNext(t *testing.T) {
 	t.Run("weighted distribution", func(t *testing.T) {
 		w := NewWheel([]int{1, 2, 1}) // total 4
 		counts := make(map[int]int)
-		for i := uint64(0); i < 4000; i++ {
+		for i := range uint64(4000) {
 			idx := w.Next(i)
 			counts[idx]++
 		}
@@ -253,7 +253,7 @@ func TestWeightWheelRandomIndex(t *testing.T) {
 		w := NewWheel([]int{1, 1, 1})
 		r := rand.New(rand.NewPCG(1, 2))
 		seen := make(map[int]bool)
-		for i := 0; i < 30; i++ {
+		for range 30 {
 			idx := w.RandomIndex(r)
 			seen[idx] = true
 		}
@@ -266,7 +266,7 @@ func TestWeightWheelRandomIndex(t *testing.T) {
 		w := NewWheel([]int{1, 5, 1}) // Backend 1 has 5x weight
 		r := rand.New(rand.NewPCG(1, 2))
 		counts := make(map[int]int)
-		for i := 0; i < 7000; i++ {
+		for range 7000 {
 			idx := w.RandomIndex(r)
 			counts[idx]++
 		}
@@ -350,7 +350,7 @@ func TestConsistentHashMinimalRedistribution(t *testing.T) {
 	// Map 1000 keys to backends
 	keyCount := 1000
 	initialMapping := make(map[int]int)
-	for i := 0; i < keyCount; i++ {
+	for i := range keyCount {
 		key := uint64(i * 1844674407370955161 / keyCount) // Spread across uint64 range
 		idx := r1.Get(key)
 		initialMapping[i] = idx
@@ -361,7 +361,7 @@ func TestConsistentHashMinimalRedistribution(t *testing.T) {
 
 	// Check how many keys moved
 	moved := 0
-	for i := 0; i < keyCount; i++ {
+	for i := range keyCount {
 		key := uint64(i * 1844674407370955161 / keyCount)
 		newIdx := r2.Get(key)
 		if newIdx != initialMapping[i] {

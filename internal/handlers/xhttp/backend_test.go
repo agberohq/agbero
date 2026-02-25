@@ -111,7 +111,7 @@ func TestServeHTTP_ContextCancel(t *testing.T) {
 	w := httptest.NewRecorder()
 	cancel()
 
-	var panicErr interface{}
+	var panicErr any
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -196,7 +196,7 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		b.Proxy.ErrorHandler(w, req, errors.New("test error"))
 	}
 

@@ -37,10 +37,7 @@ func (m *Manager) ExportHostFunctions() {
 			valBytes := []byte(val)
 			totalLen := uint64(len(valBytes))
 
-			writeLen := uint32(totalLen)
-			if writeLen > bufLen {
-				writeLen = bufLen
-			}
+			writeLen := min(uint32(totalLen), bufLen)
 
 			if writeLen > 0 {
 				mod.Memory().Write(bufPtr, valBytes[:writeLen])
@@ -80,10 +77,7 @@ func (m *Manager) ExportHostFunctions() {
 			bufLen := uint32(stack[1])
 			totalLen := uint64(len(m.configJSON))
 
-			writeLen := uint32(totalLen)
-			if writeLen > bufLen {
-				writeLen = bufLen
-			}
+			writeLen := min(uint32(totalLen), bufLen)
 
 			if writeLen > 0 {
 				mod.Memory().Write(bufPtr, m.configJSON[:writeLen])

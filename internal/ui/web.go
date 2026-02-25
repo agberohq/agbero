@@ -148,8 +148,8 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Dotfile Protection (Hide .git, .env, etc.)
-	pathParts := strings.Split(cleanedPath, string(filepath.Separator))
-	for _, part := range pathParts {
+	pathParts := strings.SplitSeq(cleanedPath, string(filepath.Separator))
+	for part := range pathParts {
 		if part == "." || part == ".." || part == "" {
 			continue
 		}
@@ -447,13 +447,13 @@ func (h *web) buildBreadcrumbs(displayPath string) []crumb {
 	out := make([]crumb, 0, len(parts)+1)
 	out = append(out, crumb{Name: "root", Href: "/"})
 
-	var cur string
+	var cur strings.Builder
 	for _, part := range parts {
 		if part == "" {
 			continue
 		}
-		cur += "/" + part
-		out = append(out, crumb{Name: part, Href: cur + "/"})
+		cur.WriteString("/" + part)
+		out = append(out, crumb{Name: part, Href: cur.String() + "/"})
 	}
 	return out
 }

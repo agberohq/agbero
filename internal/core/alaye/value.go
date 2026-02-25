@@ -29,8 +29,8 @@ func (v *Value) resolve(raw string) error {
 	}
 
 	// 1. Base64 Handling: "b64.encodedstring"
-	if strings.HasPrefix(raw, "b64.") {
-		b64Str := strings.TrimPrefix(raw, "b64.")
+	if after, ok := strings.CutPrefix(raw, "b64."); ok {
+		b64Str := after
 		decoded, err := base64.StdEncoding.DecodeString(b64Str)
 		if err != nil {
 			return fmt.Errorf("failed to decode base64 config value: %w", err)
@@ -40,8 +40,8 @@ func (v *Value) resolve(raw string) error {
 	}
 
 	// 2. Explicit Env Var: "env.MY_VAR"
-	if strings.HasPrefix(raw, "env.") {
-		key := strings.TrimPrefix(raw, "env.")
+	if after, ok := strings.CutPrefix(raw, "env."); ok {
+		key := after
 		*v = Value(os.Getenv(key))
 		return nil
 	}

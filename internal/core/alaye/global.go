@@ -17,13 +17,13 @@ type Global struct {
 	General  General `hcl:"general,block" json:"general"`
 
 	// Fields that require you to enable it
-	Admin       Admin       `hcl:"admin,block" json:"admin,omitempty"`
-	Logging     Logging     `hcl:"logging,block" json:"logging,omitempty"`
-	Security    Security    `hcl:"security,block" json:"security,omitempty"`
-	RateLimits  GlobalRate  `hcl:"rate_limits,block" json:"rateLimits,omitempty"`
-	Gossip      Gossip      `hcl:"gossip,block" json:"gossip,omitempty"`
-	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt,omitempty"`
-	Fallback    Fallback    `hcl:"fallback,block" json:"fallback,omitempty"`
+	Admin       Admin       `hcl:"admin,block" json:"admin"`
+	Logging     Logging     `hcl:"logging,block" json:"logging"`
+	Security    Security    `hcl:"security,block" json:"security"`
+	RateLimits  GlobalRate  `hcl:"rate_limits,block" json:"rateLimits"`
+	Gossip      Gossip      `hcl:"gossip,block" json:"gossip"`
+	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt"`
+	Fallback    Fallback    `hcl:"fallback,block" json:"fallback"`
 }
 
 func (g *Global) Validate() error {

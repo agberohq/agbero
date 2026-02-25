@@ -30,7 +30,7 @@ func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
 
 			tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
 
-			token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+			token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (any, error) {
 				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 					return nil, errors.Newf("%w: %v", woos.ErrUnexpectedSigningMethod, token.Header["alg"])
 				}

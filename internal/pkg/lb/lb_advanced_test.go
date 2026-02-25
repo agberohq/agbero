@@ -95,7 +95,7 @@ func TestPickAdaptive(t *testing.T) {
 		a := NewAdaptive(base, 1.0) // 100% exploration
 
 		seen := make(map[Backend]bool)
-		for i := 0; i < 20; i++ {
+		for range 20 {
 			b := a.Pick(nil, nil)
 			if b != nil {
 				seen[b] = true
@@ -120,7 +120,7 @@ func TestPickAdaptive(t *testing.T) {
 		a.RecordResult(b1, 1000, false)
 		a.RecordResult(b2, 10000, true)
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			if b := a.Pick(nil, nil); b != b1 {
 				t.Error("exploitation should select best performing backend")
 			}
@@ -142,7 +142,7 @@ func TestPickAdaptive(t *testing.T) {
 		// Logic: len(perf) < len(all), so Pick forces exploration (fallback to base).
 		// Base is RR, so it will eventually pick b2.
 		found := false
-		for i := 0; i < 20; i++ {
+		for range 20 {
 			if b := a.Pick(nil, nil); b == b2 {
 				found = true
 				break
@@ -169,7 +169,7 @@ func TestPickAdaptiveWithHash(t *testing.T) {
 	t.Run("consistent with same key", func(t *testing.T) {
 		// Since we have no metrics, Adaptive falls back to Base (ConsistentHash)
 		first := a.Pick(nil, keyFunc)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			if b := a.Pick(nil, keyFunc); b != first {
 				t.Error("same key should return same backend")
 			}
@@ -220,7 +220,7 @@ func TestPickWithSticky(t *testing.T) {
 			t.Fatal("expected backend")
 		}
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			if b := s.Pick(req, nil); b != first {
 				t.Error("should stick to same backend")
 			}
@@ -309,16 +309,16 @@ func TestConcurrencyAdvanced(t *testing.T) {
 		a := NewAdaptive(base, 0.5)
 
 		done := make(chan bool)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			go func() {
-				for j := 0; j < 100; j++ {
+				for range 100 {
 					a.Pick(nil, nil)
 					a.RecordResult(b1, 1000, false)
 				}
 				done <- true
 			}()
 		}
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			<-done
 		}
 	})
@@ -332,16 +332,16 @@ func TestConcurrencyAdvanced(t *testing.T) {
 		s := NewSticky(base, time.Hour, extractor)
 
 		done := make(chan bool)
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			go func(id int) {
-				for j := 0; j < 100; j++ {
+				for range 100 {
 					req := httptest.NewRequest("GET", "/", nil)
 					s.Pick(req, nil)
 				}
 				done <- true
 			}(i)
 		}
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			<-done
 		}
 	})

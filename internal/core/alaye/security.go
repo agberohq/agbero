@@ -13,7 +13,7 @@ import (
 type Security struct {
 	Enabled        Enabled  `hcl:"enabled,optional" json:"enabled"`
 	TrustedProxies []string `hcl:"trusted_proxies,optional" json:"trusted_proxies"`
-	Firewall       Firewall `hcl:"firewall,block" json:"firewall,omitempty"`
+	Firewall       Firewall `hcl:"firewall,block" json:"firewall"`
 }
 
 type Defaults struct {

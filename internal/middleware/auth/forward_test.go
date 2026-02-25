@@ -684,10 +684,8 @@ func TestForward_ConcurrentRequests(t *testing.T) {
 
 	var wg sync.WaitGroup
 	successCount := int64(0)
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			req := httptest.NewRequest("GET", "/", nil)
 			req.Header.Set("Authorization", "Bearer concurrent-token")
 			w := httptest.NewRecorder()
@@ -695,7 +693,7 @@ func TestForward_ConcurrentRequests(t *testing.T) {
 			if w.Code == http.StatusOK {
 				atomic.AddInt64(&successCount, 1)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

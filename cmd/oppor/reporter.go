@@ -76,8 +76,8 @@ func (r *Reporter) PrintSummary() {
 
 func (r *Reporter) ExportJSON(filename string) error {
 	snap := r.Metrics.Snapshot()
-	data := map[string]interface{}{
-		"config": map[string]interface{}{
+	data := map[string]any{
+		"config": map[string]any{
 			"targets":     r.Config.Targets,
 			"concurrency": r.Config.Concurrency,
 			"requests":    r.Config.Requests,

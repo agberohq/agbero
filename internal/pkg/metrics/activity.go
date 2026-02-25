@@ -30,9 +30,9 @@ func (at *Activity) EndRequest(duration int64, isFailure bool) {
 	at.InFlight.Add(-1)
 }
 
-func (at *Activity) Snapshot() map[string]interface{} {
+func (at *Activity) Snapshot() map[string]any {
 	lat := at.Latency.Snapshot()
-	return map[string]interface{}{
+	return map[string]any{
 		"in_flight": at.InFlight.Load(),
 		"requests":  at.Requests.Load(),
 		"failures":  at.Failures.Load(),

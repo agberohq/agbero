@@ -232,7 +232,7 @@ func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 	if s.firewall == nil {
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"enabled": false,
 				"rules":   []string{},
 			})
@@ -250,7 +250,7 @@ func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"enabled": true,
 			"rules":   rules,
 		})
@@ -441,10 +441,7 @@ func readLastLines(filename string, n int) ([]string, error) {
 	var leftover string
 
 	for offset > 0 && len(lines) < n {
-		readSize := int64(bufSize)
-		if offset < readSize {
-			readSize = offset
-		}
+		readSize := min(offset, int64(bufSize))
 		offset -= readSize
 
 		_, err := file.Seek(offset, io.SeekStart)

@@ -9,6 +9,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -305,11 +306,8 @@ func (b *Backend) healthCheckLoop() {
 			healthy := false
 			if err == nil && resp != nil {
 				if len(expectedStatus) > 0 {
-					for _, s := range expectedStatus {
-						if resp.StatusCode == s {
-							healthy = true
-							break
-						}
+					if slices.Contains(expectedStatus, resp.StatusCode) {
+						healthy = true
 					}
 				} else {
 					healthy = resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest

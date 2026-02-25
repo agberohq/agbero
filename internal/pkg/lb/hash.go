@@ -1,6 +1,7 @@
 package lb
 
 import (
+	"slices"
 	"sort"
 
 	"github.com/cespare/xxhash/v2"
@@ -26,8 +27,8 @@ func NewConsistent(count int, replicas int) *Consistent {
 	}
 
 	// Use xxhash for better distribution
-	for i := 0; i < count; i++ {
-		for j := 0; j < replicas; j++ {
+	for i := range count {
+		for j := range replicas {
 			// Create a unique key for each replica using xxhash
 			key := make([]byte, 12)
 			// Backend index
@@ -53,9 +54,7 @@ func NewConsistent(count int, replicas int) *Consistent {
 	}
 
 	// Sort ring
-	sort.Slice(r.ring, func(i, j int) bool {
-		return r.ring[i] < r.ring[j]
-	})
+	slices.Sort(r.ring)
 
 	return r
 }

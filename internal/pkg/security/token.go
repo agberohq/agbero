@@ -83,7 +83,7 @@ func (tm *Token) Mint(serviceName string, ttl time.Duration) (string, error) {
 }
 
 func (tm *Token) Verify(tokenString string) (serviceName string, err error) {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
 			return nil, fmt.Errorf("%w: %v", woos.ErrUnexpectedSigningMethod, token.Header[woos.TokenAlg])
 		}

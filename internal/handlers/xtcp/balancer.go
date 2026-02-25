@@ -127,10 +127,7 @@ func (tb *Balancer) Pick(exclude map[*Backend]struct{}) *Backend {
 
 	// 1. Fast Path: Try the selector strategy up to 'attempts' times.
 	// This respects weights and RR logic without rebuilding the world.
-	attempts := count
-	if attempts > 5 {
-		attempts = 5
-	}
+	attempts := min(count, 5)
 
 	// Used for dummy hash keys since we don't have request context in TCP Pick
 	dummyKeyFunc := func() uint64 { return 0 }

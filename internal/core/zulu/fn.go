@@ -89,7 +89,7 @@ func PortScan(bindHost string, port, maxPortRetries int) (int, error) {
 		startPort = 1024
 	}
 
-	for i := 0; i < maxPortRetries; i++ {
+	for i := range maxPortRetries {
 		port := startPort + i
 		addr := fmt.Sprintf("%s:%d", bindHost, port)
 

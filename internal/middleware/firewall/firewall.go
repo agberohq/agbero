@@ -412,11 +412,11 @@ func (e *Engine) checkThreshold(rule alaye.Rule, in *Inspector) bool {
 	}
 
 	key := in.IP
-	if strings.HasPrefix(t.TrackBy, "header:") {
-		h := strings.TrimPrefix(t.TrackBy, "header:")
+	if after, ok := strings.CutPrefix(t.TrackBy, "header:"); ok {
+		h := after
 		key = in.Req.Header.Get(h)
-	} else if strings.HasPrefix(t.TrackBy, "cookie:") {
-		c := strings.TrimPrefix(t.TrackBy, "cookie:")
+	} else if after, ok := strings.CutPrefix(t.TrackBy, "cookie:"); ok {
+		c := after
 		if cookie, err := in.Req.Cookie(c); err == nil {
 			key = cookie.Value
 		}

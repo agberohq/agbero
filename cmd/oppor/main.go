@@ -131,7 +131,7 @@ func main() {
 		}
 
 		if failureCodes != "" {
-			for _, c := range strings.Split(failureCodes, ",") {
+			for c := range strings.SplitSeq(failureCodes, ",") {
 				if code, err := strconv.Atoi(strings.TrimSpace(c)); err == nil {
 					cfg.FailureCodes = append(cfg.FailureCodes, code)
 				}

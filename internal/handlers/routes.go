@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -244,13 +245,7 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 		}
 		for _, rule := range rules {
 			if len(rule.Methods) > 0 {
-				methodMatch := false
-				for _, m := range rule.Methods {
-					if m == r.Method {
-						methodMatch = true
-						break
-					}
-				}
+				methodMatch := slices.Contains(rule.Methods, r.Method)
 				if !methodMatch {
 					continue
 				}

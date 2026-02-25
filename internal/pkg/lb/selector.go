@@ -114,7 +114,7 @@ func (s *Selector) pickRoundRobin() Backend {
 		return nil
 	}
 
-	for i := 0; i < n; i++ {
+	for range n {
 		counter := s.rrCounter.Add(1)
 		var idx int
 
@@ -142,7 +142,7 @@ func (s *Selector) pickRandom() Backend {
 	defer rngPool.Put(rng)
 
 	start := rng.IntN(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		idx := (start + i) % n
 		if s.backends[idx].Alive() {
 			return s.backends[idx]

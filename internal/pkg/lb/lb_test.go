@@ -150,7 +150,7 @@ func TestPickRoundRobin(t *testing.T) {
 		s := NewSelector([]Backend{b1, b2}, StrategyRoundRobin)
 
 		seen := make(map[Backend]bool)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			b := s.Pick(nil, nil)
 			if b == nil {
 				t.Fatal("expected backend")
@@ -167,7 +167,7 @@ func TestPickRoundRobin(t *testing.T) {
 		b2 := newMockBackend(2, true, 1)
 		s := NewSelector([]Backend{b1, b2}, StrategyRoundRobin)
 
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			if b := s.Pick(nil, nil); b != b2 {
 				t.Error("expected only alive backend")
 			}
@@ -207,7 +207,7 @@ func TestPickRandom(t *testing.T) {
 		s := NewSelector([]Backend{b1, b2}, StrategyRandom)
 
 		seen := make(map[Backend]bool)
-		for i := 0; i < 20; i++ {
+		for range 20 {
 			b := s.Pick(nil, nil)
 			if b == nil {
 				t.Fatal("expected backend")
@@ -224,7 +224,7 @@ func TestPickRandom(t *testing.T) {
 		b2 := newMockBackend(2, true, 1)
 		s := NewSelector([]Backend{b1, b2}, StrategyRandom)
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			if b := s.Pick(nil, nil); b != b2 {
 				t.Error("expected only alive backend")
 			}
@@ -245,7 +245,7 @@ func TestPickLeastConn(t *testing.T) {
 
 		s := NewSelector([]Backend{b1, b2, b3}, StrategyLeastConn)
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			if b := s.Pick(nil, nil); b != b2 {
 				t.Error("expected backend with least connections")
 			}
@@ -303,7 +303,7 @@ func TestPickIPHash(t *testing.T) {
 		req.RemoteAddr = "192.168.1.1:12345"
 
 		first := s.Pick(req, nil)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			if b := s.Pick(req, nil); b != first {
 				t.Error("IP hash should be consistent")
 			}
@@ -316,7 +316,7 @@ func TestPickIPHash(t *testing.T) {
 		s := NewSelector([]Backend{b1, b2}, StrategyIPHash)
 
 		seen := make(map[Backend]bool)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			req := httptest.NewRequest("GET", "/", nil)
 			req.RemoteAddr = "192.168.1." + string(rune('0'+i%10)) + ":12345"
 			if b := s.Pick(req, nil); b != nil {
@@ -347,7 +347,7 @@ func TestPickURLHash(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/users", nil)
 
 		first := s.Pick(req, nil)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			if b := s.Pick(req, nil); b != first {
 				t.Error("URL hash should be consistent")
 			}
@@ -384,7 +384,7 @@ func TestPickLeastResponseTime(t *testing.T) {
 
 		s := NewSelector([]Backend{b1, b2}, StrategyLeastResponseTime)
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			if b := s.Pick(nil, nil); b != b2 {
 				t.Error("expected backend with least response time")
 			}
@@ -418,7 +418,7 @@ func TestPickLeastResponseTime(t *testing.T) {
 		// b2 score: 1100 * (1 + 0) = 1100
 		// b2 should win
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			if b := s.Pick(nil, nil); b != b2 {
 				t.Error("expected backend with lower score")
 			}
@@ -454,7 +454,7 @@ func TestPickPowerOfTwoChoices(t *testing.T) {
 
 		// Should usually pick b2 due to fewer connections
 		b2Count := 0
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			if b := s.Pick(nil, nil); b == b2 {
 				b2Count++
 			}
@@ -473,7 +473,7 @@ func TestPickPowerOfTwoChoices(t *testing.T) {
 
 		// Should fallback to least conn which finds b3
 		found := false
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			if b := s.Pick(nil, nil); b == b3 {
 				found = true
 			}
@@ -494,7 +494,7 @@ func TestPickConsistentHash(t *testing.T) {
 		keyFunc := func() uint64 { return 12345 }
 
 		first := s.Pick(nil, keyFunc)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			if b := s.Pick(nil, keyFunc); b != first {
 				t.Error("consistent hash should return same backend for same key")
 			}
@@ -596,14 +596,12 @@ func TestConcurrency(t *testing.T) {
 	s := NewSelector([]Backend{b1, b2}, StrategyRoundRobin)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
+	for range 100 {
+		wg.Go(func() {
+			for range 100 {
 				s.Pick(nil, nil)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

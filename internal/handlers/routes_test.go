@@ -47,7 +47,7 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 	// 4. Test Round Robin (Should oscillate)
 	hits := make(map[string]int)
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		req := httptest.NewRequest("GET", "/", nil)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)

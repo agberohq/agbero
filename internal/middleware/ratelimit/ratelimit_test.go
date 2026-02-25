@@ -19,7 +19,7 @@ func TestRateLimiter_BlocksAfterLimit(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://x/", nil)
 	req.RemoteAddr = "9.9.9.9:1234"
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req)
 		if rr.Code != 200 {
@@ -96,7 +96,7 @@ func TestRateLimiter_Identity(t *testing.T) {
 	reqB.RemoteAddr = "10.0.0.1:1234" // Same IP
 	reqB.Header.Set("X-API-Key", "user_B")
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, reqA)
 		if rr.Code != 200 {
@@ -119,7 +119,7 @@ func TestRateLimiter_Identity(t *testing.T) {
 	reqNoHeader := httptest.NewRequest("GET", "/", nil)
 	reqNoHeader.RemoteAddr = "10.0.0.2:1234" // New IP
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, reqNoHeader)
 		if rr.Code != 200 {
@@ -151,7 +151,7 @@ func TestRateLimiter_Blocks(t *testing.T) {
 
 	handler := rl.Handler(nextHandler)
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.RemoteAddr = "1.2.3.4:1234"
 		w := httptest.NewRecorder()

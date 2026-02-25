@@ -10,7 +10,7 @@ import (
 
 func getSnapshotEventually(lt *Latency, condition func(s LatencySnapshot) bool) LatencySnapshot {
 	var snap LatencySnapshot
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		snap = lt.Snapshot()
 		if condition(snap) {
 			return snap
@@ -139,10 +139,10 @@ func TestConcurrentRecord(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 
-	for g := 0; g < goroutines; g++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
-			for i := 0; i < recordsPerGoroutine; i++ {
+			for i := range recordsPerGoroutine {
 				lt.Record(int64(i + 1))
 			}
 		}()

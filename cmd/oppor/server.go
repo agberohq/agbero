@@ -11,7 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -195,7 +195,7 @@ func (s *Server) sendFailure(w http.ResponseWriter) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	json.NewEncoder(w).Encode(map[string]any{
 		"error":     http.StatusText(code),
 		"code":      code,
 		"server":    s.Port,
@@ -240,7 +240,7 @@ func (s *Server) simulateCPU() {
 	target := time.Duration(float64(time.Millisecond) * s.Config.CPULoad * 10)
 	end := time.Now().Add(target)
 	for time.Now().Before(end) {
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			_ = i * i
 		}
 	}
@@ -289,20 +289,20 @@ func (s *Server) writeResponse(w http.ResponseWriter, r *http.Request, latency t
 
 	switch s.Config.ContentMode {
 	case "dynamic":
-		response := map[string]interface{}{
-			"server": map[string]interface{}{
+		response := map[string]any{
+			"server": map[string]any{
 				"port":     s.Port,
 				"uptime":   time.Since(s.StartTime).Seconds(),
 				"requests": s.Requests.Load(),
 				"active":   s.Active.Load(),
 			},
-			"request": map[string]interface{}{
+			"request": map[string]any{
 				"path":    r.URL.Path,
 				"method":  r.Method,
 				"remote":  r.RemoteAddr,
 				"headers": r.Header,
 			},
-			"performance": map[string]interface{}{
+			"performance": map[string]any{
 				"latency_ms": latency.Milliseconds(),
 				"timestamp":  time.Now().Unix(),
 			},
@@ -313,7 +313,7 @@ func (s *Server) writeResponse(w http.ResponseWriter, r *http.Request, latency t
 		flusher, ok := w.(http.Flusher)
 		if ok {
 			w.Header().Set("Transfer-Encoding", "chunked")
-			for i := 0; i < 10; i++ {
+			for i := range 10 {
 				fmt.Fprintf(w, "chunk %d: %s\n", i, strings.Repeat("x", size/10))
 				flusher.Flush()
 				time.Sleep(10 * time.Millisecond)
@@ -340,7 +340,7 @@ func (s *Server) slowHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	json.NewEncoder(w).Encode(map[string]any{
 		"status":    "healthy",
 		"port":      s.Port,
 		"requests":  s.Requests.Load(),
@@ -366,7 +366,7 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var avg, p99 time.Duration
 	if len(latencies) > 0 {
-		sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
+		slices.Sort(latencies)
 		var sum time.Duration
 		for _, l := range latencies {
 			sum += l
@@ -399,14 +399,14 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	runtime.ReadMemStats(&m)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"server": map[string]interface{}{
+	json.NewEncoder(w).Encode(map[string]any{
+		"server": map[string]any{
 			"port":     s.Port,
 			"requests": s.Requests.Load(),
 			"active":   s.Active.Load(),
 			"uptime":   time.Since(s.StartTime).Seconds(),
 		},
-		"memory": map[string]interface{}{
+		"memory": map[string]any{
 			"alloc":       m.Alloc,
 			"total_alloc": m.TotalAlloc,
 			"sys":         m.Sys,

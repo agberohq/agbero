@@ -883,7 +883,7 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 		return
 	}
 
-	fields := []interface{}{
+	fields := []any{
 		"host", host,
 		"path", r.URL.Path,
 		"remote", clientip.ClientIP(r),
@@ -1008,8 +1008,8 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 			if prefix == "" {
 				continue
 			}
-			if strings.HasPrefix(reqOut.URL.Path, prefix) {
-				reqOut.URL.Path = strings.TrimPrefix(reqOut.URL.Path, prefix)
+			if after, ok := strings.CutPrefix(reqOut.URL.Path, prefix); ok {
+				reqOut.URL.Path = after
 				if reqOut.URL.Path == "" {
 					reqOut.URL.Path = "/"
 				}

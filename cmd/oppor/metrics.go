@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -55,7 +55,7 @@ func (h *Histogram) Percentile(p float64) time.Duration {
 
 	sorted := make([]time.Duration, len(h.values))
 	copy(sorted, h.values)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	slices.Sort(sorted)
 
 	idx := int(float64(len(sorted)-1) * p / 100)
 	return sorted[idx]
@@ -177,7 +177,7 @@ func (m *LoadMetrics) GetPerSecond() []SecondMetrics {
 	return result
 }
 
-func (m *LoadMetrics) Snapshot() map[string]interface{} {
+func (m *LoadMetrics) Snapshot() map[string]any {
 	total := m.Total.Load()
 	success := m.Success.Load()
 	errors := m.Errors.Load()
@@ -199,19 +199,19 @@ func (m *LoadMetrics) Snapshot() map[string]interface{} {
 
 	// Collect status codes
 	statusMap := make(map[string]uint64)
-	m.StatusCodes.Range(func(key, value interface{}) bool {
+	m.StatusCodes.Range(func(key, value any) bool {
 		statusMap[fmt.Sprintf("%d", key)] = value.(uint64)
 		return true
 	})
 
 	// Collect error types
 	errorMap := make(map[string]uint64)
-	m.ErrorTypes.Range(func(key, value interface{}) bool {
+	m.ErrorTypes.Range(func(key, value any) bool {
 		errorMap[key.(string)] = value.(uint64)
 		return true
 	})
 
-	return map[string]interface{}{
+	return map[string]any{
 		"total":        total,
 		"success":      success,
 		"errors":       errors,

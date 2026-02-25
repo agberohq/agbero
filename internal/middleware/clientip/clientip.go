@@ -122,7 +122,7 @@ func clientFromXFF(xff string, trusted []*net.IPNet) string {
 		}
 		return p
 	}
-	for i := 0; i < len(parts); i++ {
+	for i := range parts {
 		p := strings.TrimSpace(parts[i])
 		if net.ParseIP(p) != nil {
 			return p

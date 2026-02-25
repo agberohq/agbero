@@ -3,6 +3,7 @@ package wasm
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
 	"sync"
 
@@ -33,9 +34,7 @@ func NewManager(ctx context.Context, logger *ll.Logger, cfg *alaye.Wasm) (*Manag
 	// Safe copy of config
 	safeConfig := make(map[string]string)
 	if cfg.Config != nil {
-		for k, v := range cfg.Config {
-			safeConfig[k] = v
-		}
+		maps.Copy(safeConfig, cfg.Config)
 	}
 	cfgJSON, err := json.Marshal(safeConfig)
 	if err != nil {

@@ -3,6 +3,7 @@ package headers
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
@@ -24,13 +25,7 @@ func TestHeaders_RequestMods(t *testing.T) {
 		}
 
 		// Fix: Check if "add1" exists in the slice of values
-		found := false
-		for _, v := range r.Header.Values("X-Multi") {
-			if v == "add1" {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(r.Header.Values("X-Multi"), "add1")
 		if !found {
 			t.Errorf("Add header not applied. Got: %v", r.Header["X-Multi"])
 		}

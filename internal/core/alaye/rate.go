@@ -52,7 +52,7 @@ type RouteRate struct {
 	Enabled      Enabled  `hcl:"enabled,optional" json:"enabled"`
 	IgnoreGlobal bool     `hcl:"ignore_global,optional" json:"ignore_global"` // Stop global rules processing
 	UsePolicy    string   `hcl:"use_policy,optional" json:"use_policy"`       // Reference a named policy
-	Rule         RateRule `hcl:"rule,block" json:"rule,omitempty"`            // Ad-hoc definition
+	Rule         RateRule `hcl:"rule,block" json:"rule"`                      // Ad-hoc definition
 }
 
 func (r *RouteRate) Validate() error {

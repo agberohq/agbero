@@ -76,8 +76,8 @@ func ifNoneMatchHas(inm string, etag string) bool {
 	if strings.TrimSpace(inm) == "*" {
 		return true
 	}
-	parts := strings.Split(inm, ",")
-	for _, p := range parts {
+	parts := strings.SplitSeq(inm, ",")
+	for p := range parts {
 		if strings.TrimSpace(p) == etag {
 			return true
 		}

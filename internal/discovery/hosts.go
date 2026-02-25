@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -448,9 +449,7 @@ func (hm *Host) LoadAll() (map[string]*alaye.Host, error) {
 
 	m := hm.lookupMap.Load().(map[string]*alaye.Host)
 	out := make(map[string]*alaye.Host, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
+	maps.Copy(out, m)
 	return out, nil
 }
 
@@ -484,15 +483,11 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 	// Clone existing maps
 	currentLookup := hm.lookupMap.Load().(map[string]*alaye.Host)
 	newLookup := make(map[string]*alaye.Host, len(currentLookup)+1)
-	for k, v := range currentLookup {
-		newLookup[k] = v
-	}
+	maps.Copy(newLookup, currentLookup)
 
 	currentRouters := hm.routers.Load().(map[string]*matcher.Tree)
 	newRouters := make(map[string]*matcher.Tree, len(currentRouters)+1)
-	for k, v := range currentRouters {
-		newRouters[k] = v
-	}
+	maps.Copy(newRouters, currentRouters)
 
 	newLookup[domain] = cfg
 

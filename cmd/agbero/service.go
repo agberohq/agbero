@@ -46,7 +46,7 @@ func (p *program) run() {
 	if global.Storage.DataDir != "" {
 		if err := os.MkdirAll(global.Storage.DataDir, woos.DirPerm); err == nil {
 			pidFile := filepath.Join(global.Storage.DataDir, "agbero.pid")
-			_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
+			_ = os.WriteFile(pidFile, fmt.Appendf(nil, "%d", os.Getpid()), 0644)
 			// Remove on shutdown
 			p.shutdown.RegisterFunc("PIDFile", func() { _ = os.Remove(pidFile) })
 		}

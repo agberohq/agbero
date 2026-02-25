@@ -15,24 +15,24 @@ type Route struct {
 	StripPrefixes []string `hcl:"strip_prefixes,optional" json:"strip_prefixes"`
 	AllowedIPs    []string `hcl:"allowed_ips,optional" json:"allowed_ips"`
 
-	Web      Web     `hcl:"web,block" json:"web,omitempty"`
-	Backends Backend `hcl:"backend,block" json:"backends,omitempty"`
+	Web      Web     `hcl:"web,block" json:"web"`
+	Backends Backend `hcl:"backend,block" json:"backends"`
 
-	HealthCheck    HealthCheck    `hcl:"health_check,block" json:"health_check,omitempty"`
-	CircuitBreaker CircuitBreaker `hcl:"circuit_breaker,block" json:"circuit_breaker,omitempty"`
-	Timeouts       TimeoutRoute   `hcl:"timeouts,block" json:"timeouts,omitempty"`
+	HealthCheck    HealthCheck    `hcl:"health_check,block" json:"health_check"`
+	CircuitBreaker CircuitBreaker `hcl:"circuit_breaker,block" json:"circuit_breaker"`
+	Timeouts       TimeoutRoute   `hcl:"timeouts,block" json:"timeouts"`
 
-	BasicAuth   BasicAuth   `hcl:"basic_auth,block" json:"basic_auth,omitempty"`
-	ForwardAuth ForwardAuth `hcl:"forward_auth,block" json:"forward_auth,omitempty"`
-	JWTAuth     JWTAuth     `hcl:"jwt_auth,block" json:"jwt_auth,omitempty"`
-	OAuth       OAuth       `hcl:"o_auth,block" json:"oauth,omitempty"`
+	BasicAuth   BasicAuth   `hcl:"basic_auth,block" json:"basic_auth"`
+	ForwardAuth ForwardAuth `hcl:"forward_auth,block" json:"forward_auth"`
+	JWTAuth     JWTAuth     `hcl:"jwt_auth,block" json:"jwt_auth"`
+	OAuth       OAuth       `hcl:"o_auth,block" json:"oauth"`
 
-	Headers           Headers       `hcl:"headers,block" json:"headers,omitempty"`
-	Wasm              Wasm          `hcl:"wasm,block" json:"wasm,omitempty"`
-	RateLimit         RouteRate     `hcl:"rate_limit,block" json:"rate_limit,omitempty"`
-	Firewall          FirewallRoute `hcl:"firewall,block" json:"firewall,omitempty"`
-	CompressionConfig Compression   `hcl:"compression,block" json:"compression_config,omitempty"`
-	Fallback          Fallback      `hcl:"fallback,block" json:"fallback,omitempty"`
+	Headers           Headers       `hcl:"headers,block" json:"headers"`
+	Wasm              Wasm          `hcl:"wasm,block" json:"wasm"`
+	RateLimit         RouteRate     `hcl:"rate_limit,block" json:"rate_limit"`
+	Firewall          FirewallRoute `hcl:"firewall,block" json:"firewall"`
+	CompressionConfig Compression   `hcl:"compression,block" json:"compression_config"`
+	Fallback          Fallback      `hcl:"fallback,block" json:"fallback"`
 }
 
 func (r *Route) Validate() error {

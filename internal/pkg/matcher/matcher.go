@@ -1,6 +1,7 @@
 package matcher
 
 import (
+	"maps"
 	"regexp"
 	"sort"
 	"strings"
@@ -262,12 +263,8 @@ func (t *Tree) findWithBacktrack(node *Node, remaining string, params map[string
 			} else {
 				// Merge into new map only when both exist
 				nextParams = make(map[string]string, len(params)+len(captured))
-				for k, v := range params {
-					nextParams[k] = v
-				}
-				for k, v := range captured {
-					nextParams[k] = v
-				}
+				maps.Copy(nextParams, params)
+				maps.Copy(nextParams, captured)
 			}
 		} else {
 			nextParams = params
@@ -288,9 +285,7 @@ func (t *Tree) findWithBacktrack(node *Node, remaining string, params map[string
 					out = map[string]string{woos.TemplateWildcardKey: remaining}
 				} else {
 					out = make(map[string]string, len(params)+1)
-					for k, v := range params {
-						out[k] = v
-					}
+					maps.Copy(out, params)
 					out[woos.TemplateWildcardKey] = remaining
 				}
 				return Result{Route: child.route, Params: out}

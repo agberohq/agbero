@@ -23,13 +23,13 @@ var (
 	_ json.Marshaler           = (*Enabled)(nil)
 )
 
-func NewStatus(v interface{}) Enabled {
+func NewStatus(v any) Enabled {
 	var s Enabled
 	_ = s.Set(v)
 	return s
 }
 
-func (s *Enabled) Set(v interface{}) error {
+func (s *Enabled) Set(v any) error {
 	switch val := v.(type) {
 	case Enabled:
 		*s = val

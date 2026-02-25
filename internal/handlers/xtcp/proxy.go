@@ -99,9 +99,7 @@ func (p *Proxy) Start() error {
 
 	zulu.TCP.Store(p.Listen, &mappo.Item{Value: p})
 
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
+	p.wg.Go(func() {
 		defer l.Close()
 		defer zulu.TCP.Delete(p.Listen)
 
@@ -141,7 +139,7 @@ func (p *Proxy) Start() error {
 			p.wg.Add(1)
 			go p.handle(conn)
 		}
-	}()
+	})
 
 	p.Logger.Fields("bind", p.Listen).Info("tcp proxy started")
 	return nil

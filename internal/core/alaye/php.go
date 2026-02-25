@@ -19,8 +19,8 @@ func (p *PHP) Validate() error {
 	}
 
 	// Accept either unix:/path.sock or host:port
-	if strings.HasPrefix(addr, UNIXPrefix) {
-		if len(strings.TrimSpace(strings.TrimPrefix(addr, UNIXPrefix))) == 0 {
+	if after, ok := strings.CutPrefix(addr, UNIXPrefix); ok {
+		if len(strings.TrimSpace(after)) == 0 {
 			return ErrNoAddress
 		}
 		return nil
