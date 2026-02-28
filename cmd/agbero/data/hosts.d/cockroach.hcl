@@ -1,4 +1,3 @@
-# The 'domains' field is required by the schema, but ignored for pure TCP proxies.
 domains = ["cockroach.localhost"]
 
 # -----------------------------------------------------------------------

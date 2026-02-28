@@ -6,10 +6,7 @@ route "/*" {
   # RATE LIMIT BYPASS
   # ---------------------------------------------------------
   rate_limit {
-    # 1. Ensure no local limits are applied
-    enabled = false
-
-    # 2. IMPORTANT: Tell Agbero to ignore the global rate_limits defined in agbero.hcl
+    # Tell Agbero to ignore the global rate_limits defined in agbero.hcl
     ignore_global = true
 
 
@@ -21,12 +18,6 @@ route "/*" {
       key      = "ip"
     }
 
-    # Catch-all
-    rule "general" {
-      requests = 5000
-      window   = "1m"
-      key      = "ip"
-    }
   }
 
   health_check {
@@ -36,27 +27,27 @@ route "/*" {
   backend {
     server {
       address = "http://localhost:6060"
-      weight  = 2
+      weight = 2
     }
     server {
       address = "http://localhost:6061"
-      weight  = 1
+      weight = 1
     }
     server {
       address = "http://localhost:6062"
-      weight  = 1
+      weight = 1
     }
     server {
       address = "http://localhost:6063"
-      weight  = 1
+      weight = 1
     }
     server {
       address = "http://localhost:6064"
-      weight  = 1
+      weight = 1
     }
     server {
       address = "http://localhost:6065"
-      weight  = 1
+      weight = 1
     }
   }
 }

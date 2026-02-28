@@ -25,6 +25,12 @@ bind {
 # ADMIN
 # -------------------------------------------------------------
 admin {
+  # enable
+  enabled = 1
+
+  # pprof
+  pprof = 1
+
   # allowed ip
   allowed_ips = ["127.0.0.1", "::1"]
 
@@ -33,12 +39,17 @@ admin {
 
   # Basic Auth for the Login API
   basic_auth {
+    # enable
+    enabled = 1
+
     # Format: "username:bcrypt_hash"
     users = [
       "admin:{ADMIN_PASSWORD}"
     ]
   }
   jwt_auth {
+    # enable
+    enabled = 1
     secret = "{ADMIN_SECRET}"
   }
 }
@@ -62,6 +73,9 @@ storage {
 # LOGGING
 # -------------------------------------------------------------
 logging {
+  # enable
+  enabled = 1
+
   # Levels: debug, info, warn, error
   level = "info"
 
@@ -89,8 +103,9 @@ logging {
 # SECURITY
 # -------------------------------------------------------------
 security {
-  # List of IP CIDRs to trust for X-Forwarded-For headers.
-  # Essential if running behind Cloudflare, AWS ALB, or Nginx.
+  # enable
+  enabled = 1
+
   trusted_proxies = [
     "127.0.0.0/8",
     "10.0.0.0/8",
@@ -98,9 +113,9 @@ security {
     "192.168.0.0/16"
   ]
 
-
   firewall {
-    mode = "active"
+    enabled = 1
+    mode    = "active"
 
     inspect_body      = true
     max_inspect_bytes = 8192
@@ -118,7 +133,6 @@ security {
     }
 
     # --- ACTIONS ---
-    # Field 'firewall_action' renamed to 'mitigation' to match Go struct
 
     action "ban_hard" {
       mitigation = "add"
@@ -145,7 +159,8 @@ security {
     }
 
     # --- RULES ---
-    # Whitelist Internal Tools
+
+    # 1. Whitelist Internal Tools
     rule "allow_internal_monitoring" {
       priority = 5
       type     = "whitelist"
@@ -162,7 +177,7 @@ security {
       }
     }
 
-    # Block Known Bad IPs
+    # 2. Block Known Bad IPs
     rule "global_blacklist" {
       priority = 10
       type     = "static"
@@ -172,7 +187,7 @@ security {
       }
     }
 
-    # SQL Injection Protection
+    # 3. SQL Injection Protection
     rule "block_sqli" {
       priority = 20
       type     = "dynamic"
@@ -190,7 +205,7 @@ security {
       }
     }
 
-    # Login Brute Force Protection
+    # 4. Login Brute Force Protection
     rule "protect_login" {
       priority = 30
       type     = "dynamic"
@@ -209,7 +224,7 @@ security {
       }
     }
 
-    # Block Suspicious User Agents
+    # 5. Block Suspicious User Agents
     rule "bad_bots" {
       priority = 40
       type     = "dynamic"
@@ -250,6 +265,9 @@ general {
 # ACME / LET'S ENCRYPT
 # -------------------------------------------------------------
 letsencrypt {
+  # enable
+  enabled = 1
+
   # Email used for registration and recovery contact
   email = "admin@example.com"
 
@@ -263,9 +281,11 @@ letsencrypt {
 # -------------------------------------------------------------
 # GLOBAL TIMEOUTS (Optional)
 # -------------------------------------------------------------
-timeouts {
-  read        = "10s"
-  write       = "30s"
+timeouts {  # enable
+  enabled = 1
+
+  read        = "30s"
+  write       = "60s"
   idle        = "120s"
   read_header = "5s"
 }
@@ -274,7 +294,7 @@ timeouts {
 # GLOBAL RATE LIMITING (Optional)
 # -------------------------------------------------------------
 rate_limits {
-  enabled     = false
+  enabled     = 1
   ttl         = "30m"
   max_entries = 100000
 
@@ -288,7 +308,7 @@ rate_limits {
   }
 
   # Auth Rules
-  rule "auth" {
+  rule "auth_limit" {
     prefixes = ["/login", "/auth", "/admin"]
     requests = 10
     window   = "1m"
@@ -296,11 +316,19 @@ rate_limits {
   }
 
   # General API Rules (Matched if above don't apply)
-  rule "api" {
+  rule "general_api" {
     prefixes = ["/api"]
     requests = 1000
     window   = "1m"
     key      = "header:X-API-Key"
+  }
+
+  # Testing url
+  rule "testing" {
+    prefixes = ["/testing"]
+    requests = 1000000
+    window   = "1m"
+    key      = "ip"
   }
 
   # Catch-all
@@ -315,7 +343,7 @@ rate_limits {
 # CLUSTERING / GOSSIP (Optional)
 # -------------------------------------------------------------
 gossip {
-  enabled = false
+  enabled = 1
   port    = 7946
 
   # Secret key for encryption (16, 24, or 32 bytes)

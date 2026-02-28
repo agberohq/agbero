@@ -86,6 +86,68 @@ func (h *helper) resolveConfigPath(flagPath string) (string, bool) {
 	return "", false
 }
 
+// initConfiguration creates a complete configuration structure at the target location.
+// Unlike installConfiguration, this does not check for service existence.
+func (h *helper) initConfiguration(targetDir string) (string, error) {
+	if targetDir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		targetDir = cwd
+	}
+
+	if err := os.MkdirAll(targetDir, woos.DirPerm); err != nil {
+		return "", err
+	}
+
+	configFile := filepath.Join(targetDir, woos.DefaultConfigName)
+
+	if _, err := os.Stat(configFile); err == nil {
+		return "", fmt.Errorf("configuration already exists at %s", configFile)
+	}
+
+	for _, d := range []string{
+		woos.HostDir.String(),
+		woos.CertDir.String(),
+		woos.DataDir.String(),
+		woos.LogDir.String(),
+	} {
+		if err := os.MkdirAll(filepath.Join(targetDir, d), woos.DirPerm); err != nil {
+			return "", err
+		}
+	}
+
+	content := strings.ReplaceAll(configTmpl, "{HOST_DIR}", woos.HostDir.String())
+	content = strings.ReplaceAll(content, "{CERTS_DIR}", woos.CertDir.String())
+	content = strings.ReplaceAll(content, "{DATA_DIR}", woos.DataDir.String())
+	content = strings.ReplaceAll(content, "{LOGS_DIR}", woos.LogDir.String())
+
+	secret, _ := h.generateSecureKey(128)
+	hash, _ := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
+
+	content = strings.ReplaceAll(content, "{ADMIN_PASSWORD}", string(hash))
+	content = strings.ReplaceAll(content, "{ADMIN_SECRET}", secret)
+
+	if err := os.WriteFile(configFile, []byte(content), woos.FilePermSecured); err != nil {
+		return "", err
+	}
+
+	hostsDir := filepath.Join(targetDir, woos.HostDir.String())
+
+	adminFile := filepath.Join(hostsDir, "admin.hcl")
+	if err := os.WriteFile(adminFile, tplAdminHcl, woos.FilePerm); err != nil {
+		return "", err
+	}
+
+	webFile := filepath.Join(hostsDir, "web.hcl")
+	if err := os.WriteFile(webFile, tplWebHcl, woos.FilePerm); err != nil {
+		return "", err
+	}
+
+	return configFile, nil
+}
+
 func (h *helper) installConfiguration(here bool) (string, error) {
 	var targetDir string
 
@@ -109,58 +171,7 @@ func (h *helper) installConfiguration(here bool) (string, error) {
 		}
 	}
 
-	if err := os.MkdirAll(targetDir, woos.DirPerm); err != nil {
-		return "", err
-	}
-
-	configFile := filepath.Join(targetDir, woos.DefaultConfigName)
-
-	if _, err := os.Stat(configFile); err == nil {
-		return "", fmt.Errorf("configuration already exists at %s", configFile)
-	}
-
-	// create subdirs
-	for _, d := range []string{
-		woos.HostDir.String(),
-		woos.CertDir.String(),
-		woos.DataDir.String(),
-		woos.LogDir.String(),
-	} {
-		if err := os.MkdirAll(filepath.Join(targetDir, d), woos.DirPerm); err != nil {
-			return "", err
-		}
-	}
-
-	// write config
-	content := strings.ReplaceAll(configTmpl, "{HOST_DIR}", woos.HostDir.String())
-	content = strings.ReplaceAll(content, "{CERTS_DIR}", woos.CertDir.String())
-	content = strings.ReplaceAll(content, "{DATA_DIR}", woos.DataDir.String())
-	content = strings.ReplaceAll(content, "{LOGS_DIR}", woos.LogDir.String())
-
-	secret, _ := h.generateSecureKey(128)
-	hash, _ := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
-
-	content = strings.ReplaceAll(content, "{ADMIN_PASSWORD}", string(hash))
-	content = strings.ReplaceAll(content, "{ADMIN_SECRET}", secret)
-
-	if err := os.WriteFile(configFile, []byte(content), woos.FilePermSecured); err != nil {
-		return "", err
-	}
-
-	// Write default host configs
-	hostsDir := filepath.Join(targetDir, woos.HostDir.String())
-
-	adminFile := filepath.Join(hostsDir, "admin.hcl")
-	if err := os.WriteFile(adminFile, tplAdminHcl, woos.FilePerm); err != nil {
-		return "", err
-	}
-
-	webFile := filepath.Join(hostsDir, "web.hcl")
-	if err := os.WriteFile(webFile, tplWebHcl, woos.FilePerm); err != nil {
-		return "", err
-	}
-
-	return configFile, nil
+	return h.initConfiguration(targetDir)
 }
 
 func (h *helper) reloadService(configFile string) error {
@@ -280,8 +291,8 @@ func (h *helper) showHelpExamples(configPath string) {
 	fmt.Println("===============================================================")
 	fmt.Println("")
 	fmt.Println("SCAFFOLDING:")
-	fmt.Printf("  %s install --here   # Create config in current folder\n", exeName)
-	fmt.Printf("  %s install          # Create config in system folder (requires root)\n", exeName)
+	fmt.Printf("  %s init             # Create config in current folder\n", exeName)
+	fmt.Printf("  %s install          # Create config in system folder & install service (requires root)\n", exeName)
 	fmt.Println("")
 	fmt.Println("EXECUTION:")
 	fmt.Printf("  %s run              # Run using discovered config\n", exeName)
@@ -333,28 +344,23 @@ func (h *helper) showCertInfo(configPath string) {
 }
 
 func (h *helper) handleCertCommands(install, uninstall, list, info bool, force bool, certDir string) {
-	// 1. Setup Installer & Directory
 	installer := tlss.NewInstaller(h.logger)
 
-	// Load config to find the correct certs directory
 	if global, err := h.loadConfig(configPath); err == nil && global.Storage.CertsDir != "" {
 		folder := woos.NewFolder(global.Storage.CertsDir)
 		_ = installer.SetStorageDir(folder)
 		h.logger.Fields("dir", folder.Path()).Info("storage directory")
 	}
 
-	// 2. Handle Uninstall
 	if uninstall {
 		h.logger.Info("Uninstalling CA...")
 
-		// Attempt to remove from system trust store
 		if err := installer.UninstallCARoot(); err != nil {
 			h.logger.Warnf("System trust store cleanup: %v (might already be removed)", err)
 		} else {
 			h.logger.Info("Removed CA from system trust store")
 		}
 
-		// Physical file cleanup
 		dir := installer.CertDir.Path()
 		files, err := os.ReadDir(dir)
 		if err != nil {
@@ -365,7 +371,6 @@ func (h *helper) handleCertCommands(install, uninstall, list, info bool, force b
 		count := 0
 		for _, f := range files {
 			name := f.Name()
-			// Delete specific cert extensions
 			if strings.HasSuffix(name, ".pem") ||
 				strings.HasSuffix(name, ".key") ||
 				strings.HasSuffix(name, ".crt") {
@@ -386,7 +391,6 @@ func (h *helper) handleCertCommands(install, uninstall, list, info bool, force b
 		return
 	}
 
-	// 3. Handle Install
 	if install {
 		if tlss.IsCARootInstalled(installer.CertDir.Path()) && !force {
 			h.logger.Info("CA root is already installed. Use --force to reinstall.")
@@ -399,7 +403,6 @@ func (h *helper) handleCertCommands(install, uninstall, list, info bool, force b
 		return
 	}
 
-	// 4. Handle List
 	if list {
 		certs, err := installer.ListCertificates()
 		if err != nil {
@@ -418,13 +421,11 @@ func (h *helper) handleCertCommands(install, uninstall, list, info bool, force b
 		return
 	}
 
-	// 5. Handle Info
 	if info {
 		h.showCertInfo(configPath)
 		return
 	}
 
-	// Fallback if no specific subcommand provided
 	flaggy.ShowHelpAndExit("cert")
 }
 
@@ -545,13 +546,11 @@ func (h *helper) handleGossipToken(configPath string, service string, ttl time.D
 }
 
 func (h *helper) handleGossipSecret() {
-	// Generate 32 bytes (256 bits)
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		h.logger.Fatal("Random generation failed: ", err)
 	}
 
-	// We use StdEncoding because the config parser (alaye/value.go) uses base64.StdEncoding.DecodeString
 	encoded := base64.StdEncoding.EncodeToString(key)
 
 	fmt.Println("\nGenerated 32-byte Secret Key (AES-256 compatible):")

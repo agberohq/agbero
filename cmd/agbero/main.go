@@ -26,52 +26,43 @@ var (
 	logger *ll.Logger
 )
 
-// CLI flags
 var (
 	configPath string
 	devMode    bool
 
-	// Install flags
 	installHere bool
 
-	// Key Management Flags
 	keyService string
 	keyTTL     time.Duration
 
-	// Certificate Management Flags
 	forceCAInstall bool
 	certDir        string
 
-	// Gossip flags
 	gossipService string
 	gossipTTL     time.Duration
 	enableGossip  bool
 
-	// ephemeral flags
 	servePath   string = "."
 	servePort   int    = 8000
 	serveBind   string
 	serveHTTPS  bool
 	proxyTarget string
 	proxyDomain string
-	proxyPort   int = 8080 // Default to 8080 to minimize conflicts
+	proxyPort   int = 8080
 	proxyBind   string
 	proxyHTTPS  bool
 )
 
 var (
-	// Hash Utility Flags
 	hashPassword = "admin"
 )
 
 func main() {
-	// Initialize Single Shutdown Manager
 	shutdown := jack.NewShutdown(
 		jack.ShutdownWithTimeout(30*time.Second),
 		jack.ShutdownWithSignals(os.Interrupt, syscall.SIGTERM),
 	)
 
-	// Initialize Logger
 	logger = ll.New(woos.Name,
 		ll.WithHandler(lh.NewColorizedHandler(os.Stdout)),
 		ll.WithFatalExits(true),
@@ -81,38 +72,32 @@ func main() {
 	flaggy.SetDescription(woos.Description)
 	flaggy.SetVersion(woos.Version)
 
-	// Global flags
 	flaggy.String(&configPath, "c", "config", "Path to configuration file")
 
-	// --- Subcommands ---
+	cmdInit := flaggy.NewSubcommand("init")
+	cmdInit.Description = "Scaffold configuration in current directory (no service)"
 
-	// 1. Install
 	cmdInstall := flaggy.NewSubcommand("install")
 	cmdInstall.Description = "Install configuration (and system service if applicable)"
 	cmdInstall.Bool(&installHere, "", "here", "Install configuration in current directory (skip service install)")
 
-	// 2. Uninstall
 	cmdUninstall := flaggy.NewSubcommand("uninstall")
 	cmdUninstall.Description = "Uninstall system service"
 
-	// 3. Service Control
 	cmdStart := flaggy.NewSubcommand("start")
 	cmdStart.Description = "Start system service"
 
 	cmdStop := flaggy.NewSubcommand("stop")
 	cmdStop.Description = "Stop system service"
 
-	// 4. Run
 	cmdRun := flaggy.NewSubcommand("run")
 	cmdRun.Description = "Run the application (requires existing config)"
 	cmdRun.Bool(&devMode, "d", "dev", "Enable development mode")
 	cmdRun.Bool(&enableGossip, "", "gossip", "Enable/disable gossip in run mode")
 
-	// 5. Reload
 	cmdReload := flaggy.NewSubcommand("reload")
 	cmdReload.Description = "Reload configuration of the running service (SIGHUP)"
 
-	// 6. Tools & Helpers
 	cmdValidate := flaggy.NewSubcommand("validate")
 	cmdValidate.Description = "Validate configuration file"
 
@@ -122,7 +107,6 @@ func main() {
 	cmdHelp := flaggy.NewSubcommand("help")
 	cmdHelp.Description = "Show help examples"
 
-	// 7. ephemeral Commands
 	cmdServe := flaggy.NewSubcommand("serve")
 	cmdServe.Description = "Serve a static directory instantly"
 	cmdServe.AddPositionalValue(&servePath, "path", 1, false, "Path to serve (default: current)")
@@ -138,7 +122,6 @@ func main() {
 	cmdProxy.String(&proxyBind, "b", "bind", "Bind address (default: 0.0.0.0)")
 	cmdProxy.Bool(&proxyHTTPS, "s", "https", "Enable HTTPS (auto-generates certs)")
 
-	// 8. Route Management
 	cmdRoute := flaggy.NewSubcommand("route")
 	cmdRoute.Description = "Manage persistent routes (Interactive)"
 	cmdRouteAdd := flaggy.NewSubcommand("add")
@@ -148,12 +131,10 @@ func main() {
 	cmdRoute.AttachSubcommand(cmdRouteAdd, 1)
 	cmdRoute.AttachSubcommand(cmdRouteRemove, 1)
 
-	// Hash command
 	cmdHash := flaggy.NewSubcommand("hash")
 	cmdHash.Description = "Generate bcrypt hash for passwords"
 	cmdHash.String(&hashPassword, "p", "password", "Password to hash")
 
-	// Certificate commands
 	cmdCert := flaggy.NewSubcommand("cert")
 	cmdCert.Description = "Manage TLS certificates"
 	cmdInstallCA := flaggy.NewSubcommand("install")
@@ -169,7 +150,6 @@ func main() {
 	cmdCert.AttachSubcommand(cmdListCerts, 1)
 	cmdCert.AttachSubcommand(cmdCertInfo, 1)
 
-	// Key commands
 	cmdKey := flaggy.NewSubcommand("key")
 	cmdKeyGen := flaggy.NewSubcommand("gen")
 	cmdKeyGen.String(&keyService, "s", "service", "Service name")
@@ -178,7 +158,6 @@ func main() {
 	cmdKey.AttachSubcommand(cmdKeyGen, 1)
 	cmdKey.AttachSubcommand(cmdKeyInit, 1)
 
-	// Gossip Commands
 	cmdGossip := flaggy.NewSubcommand("gossip")
 	cmdGossip.Description = "Manage cluster gossip settings"
 
@@ -201,7 +180,7 @@ func main() {
 	cmdGossip.AttachSubcommand(cmdGossipSecret, 1)
 	cmdGossip.AttachSubcommand(cmdGossipStatus, 1)
 
-	// Attach main commands
+	flaggy.AttachSubcommand(cmdInit, 1)
 	flaggy.AttachSubcommand(cmdInstall, 1)
 	flaggy.AttachSubcommand(cmdUninstall, 1)
 	flaggy.AttachSubcommand(cmdStart, 1)
@@ -224,7 +203,6 @@ func main() {
 	hel := newHelper(logger)
 	hel.welcome()
 
-	// --- EPHEMERAL & TUI COMMANDS ---
 	if cmdServe.Used {
 		e := &ephemeral{
 			logger:   logger,
@@ -258,11 +236,18 @@ func main() {
 		return
 	}
 
-	// --- CONFIG PATH RESOLUTION ---
+	if cmdInit.Used {
+		path, err := hel.initConfiguration("")
+		if err != nil {
+			logger.Fatal("Init failed: ", err)
+		}
+		logger.Info("Initialized configuration at: ", path)
+		return
+	}
+
 	var resolvedPath string
 	var configExists bool
 
-	// Special handling for Install: We determine where to write
 	if cmdInstall.Used {
 		path, err := hel.installConfiguration(installHere)
 		if err != nil {
@@ -275,7 +260,6 @@ func main() {
 		resolvedPath, configExists = hel.resolveConfigPath(configPath)
 	}
 
-	// Commands that REQUIRE config to exist
 	needsConfig := cmdRun.Used || cmdReload.Used || cmdValidate.Used || cmdHosts.Used || cmdStart.Used || (cmdGossip.Used && !cmdGossipSecret.Used) || cmdKey.Used
 
 	if needsConfig && !configExists {
@@ -286,7 +270,6 @@ func main() {
 		}
 	}
 
-	// Bootstrap TLS Env
 	if err := tlss.BootstrapEnv(logger); err != nil {
 		logger.Warnf("TLS env bootstrap: %v", err)
 	}
@@ -333,7 +316,6 @@ func main() {
 		return
 	}
 
-	// Subcommand Dispatchers
 	if cmdCert.Used {
 		hel.handleCertCommands(cmdInstallCA.Used, cmdUninstallCA.Used, cmdListCerts.Used, cmdCertInfo.Used, forceCAInstall, certDir)
 		return
@@ -349,7 +331,6 @@ func main() {
 		return
 	}
 
-	// --- SERVICE SETUP ---
 	svcConfig := &service.Config{
 		Name:        woos.Name,
 		DisplayName: woos.Display,
@@ -428,7 +409,6 @@ func main() {
 		return
 	}
 
-	// --- RUN ---
 	if cmdRun.Used {
 		global, err := hel.loadConfig(resolvedPath)
 		if err != nil {

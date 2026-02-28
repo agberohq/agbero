@@ -254,7 +254,7 @@ func (hm *Host) Watch() error {
 		go hm.watchLoop()
 		hm.logger.Fields("dir", hm.hostsDir).Info("host discovery watching")
 	} else {
-		hm.logger.Fields("dir", hm.hostsDir).Warn("hosts directory does not exist, skipping watch")
+		hm.logger.Fields("dir", hm.hostsDir).Error("hosts directory does not exist, skipping watch")
 	}
 
 	return nil
