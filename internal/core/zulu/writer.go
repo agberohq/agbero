@@ -14,13 +14,17 @@ type ResponseWriter struct {
 	WroteHeader  bool
 }
 
+// writerOnly hides the ReadFrom method from io.Copy to prevent infinite recursion
+type writerOnly struct {
+	io.Writer
+}
+
 func (rw *ResponseWriter) WriteHeader(code int) {
 	if !rw.WroteHeader {
 		rw.StatusCode = code
 		rw.WroteHeader = true
 		rw.ResponseWriter.WriteHeader(code)
 	}
-	// Ignore subsequent calls to prevent multiple header writes.
 }
 
 func (rw *ResponseWriter) Write(b []byte) (int, error) {
@@ -42,13 +46,20 @@ func (rw *ResponseWriter) ReadFrom(r io.Reader) (n int64, err error) {
 	if !rw.WroteHeader {
 		rw.WriteHeader(http.StatusOK)
 	}
+
+	// Try efficient zero-copy if underlying writer supports it
 	if rf, ok := rw.ResponseWriter.(io.ReaderFrom); ok {
 		n, err = rf.ReadFrom(r)
-		if err == nil {
+		// We trust the underlying ReadFrom to write the bytes,
+		// so we just update our counter.
+		if n > 0 {
 			rw.BytesWritten += n
 		}
 		return n, err
 	}
-	// Fall back to io.Copy, which will use our Write method to count bytes.
-	return io.Copy(rw, r)
+
+	// Fallback to standard Read/Write loop.
+	// We MUST wrap 'rw' to hide this ReadFrom method, otherwise
+	// io.Copy detects it and calls us back, causing infinite recursion.
+	return io.Copy(writerOnly{rw}, r)
 }
