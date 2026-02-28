@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -86,8 +87,19 @@ func (h *helper) resolveConfigPath(flagPath string) (string, bool) {
 	return "", false
 }
 
-// initConfiguration creates a complete configuration structure at the target location.
-// Unlike installConfiguration, this does not check for service existence.
+func (h *helper) generateRandomPassword(length int) (string, error) {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
+	b := make([]byte, length)
+	for i := range b {
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", err
+		}
+		b[i] = charset[num.Int64()]
+	}
+	return string(b), nil
+}
+
 func (h *helper) initConfiguration(targetDir string) (string, error) {
 	if targetDir == "" {
 		cwd, err := os.Getwd()
@@ -124,7 +136,14 @@ func (h *helper) initConfiguration(targetDir string) (string, error) {
 	content = strings.ReplaceAll(content, "{LOGS_DIR}", woos.LogDir.String())
 
 	secret, _ := h.generateSecureKey(128)
-	hash, _ := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
+
+	// Generate random password
+	password, err := h.generateRandomPassword(16)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate password: %w", err)
+	}
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 
 	content = strings.ReplaceAll(content, "{ADMIN_PASSWORD}", string(hash))
 	content = strings.ReplaceAll(content, "{ADMIN_SECRET}", secret)
@@ -144,6 +163,17 @@ func (h *helper) initConfiguration(targetDir string) (string, error) {
 	if err := os.WriteFile(webFile, tplWebHcl, woos.FilePerm); err != nil {
 		return "", err
 	}
+
+	fmt.Println("")
+	fmt.Println("===============================================================")
+	fmt.Println("CONFIGURATION INITIALIZED")
+	fmt.Println("===============================================================")
+	fmt.Printf("Config File:    %s\n", configFile)
+	fmt.Printf("Admin User:     admin\n")
+	fmt.Printf("Admin Password: %s\n", password)
+	fmt.Println("===============================================================")
+	fmt.Println("Note: This password is now hashed in your config file.")
+	fmt.Println("")
 
 	return configFile, nil
 }

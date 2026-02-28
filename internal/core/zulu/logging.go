@@ -17,28 +17,25 @@ import (
 	"github.com/olekukonko/ll/lx"
 )
 
-// Logging creates the final logger based on config and returns a cleanup function to flush buffers.
 func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, error) {
 	var handlers []lx.Handler
 
-	// Terminal (always)
 	handlers = append(handlers, lh.NewColorizedHandler(os.Stdout))
 
-	// File with Rotation
-	if cfg.File != "" {
-		// Ensure log directory exists
-		logDir := filepath.Dir(cfg.File)
+	// Updated to use nested File struct
+	if cfg.File.Enabled.Active() && cfg.File.Path != "" {
+		logPath := cfg.File.Path
+		logDir := filepath.Dir(logPath)
 		if err := os.MkdirAll(logDir, woos.DefaultFilePermDir); err != nil {
 			return nil, fmt.Errorf("failed to create log dir %s: %w", logDir, err)
 		}
 
-		// Define rotation source
 		src := lh.RotateSource{
 			Open: func() (io.WriteCloser, error) {
-				return os.OpenFile(cfg.File, os.O_APPEND|os.O_CREATE|os.O_WRONLY, woos.DefaultFilePermFile)
+				return os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, woos.DefaultFilePermFile)
 			},
 			Size: func() (int64, error) {
-				fi, err := os.Stat(cfg.File)
+				fi, err := os.Stat(logPath)
 				if err != nil {
 					if os.IsNotExist(err) {
 						return 0, nil
@@ -48,22 +45,17 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 				return fi.Size(), nil
 			},
 			Rotate: func() error {
-				// Rename current file
 				timestamp := time.Now().Format("20060102-150405.000000")
-				backupName := cfg.File + "." + timestamp
-				if err := os.Rename(cfg.File, backupName); err != nil {
+				backupName := logPath + "." + timestamp
+				if err := os.Rename(logPath, backupName); err != nil {
 					return err
 				}
-
-				// Compress in background to avoid blocking logging
 				go compressLogFile(backupName)
 				return nil
 			},
 		}
 
-		baseHandler := lh.NewJSONHandler(nil) // Output set by rotator
-
-		// 50MB Rotation Limit
+		baseHandler := lh.NewJSONHandler(nil)
 		rotator, err := lh.NewRotating(baseHandler, woos.DefaultLogRotateSize, src)
 		if err != nil {
 			return nil, fmt.Errorf("failed to init log rotation: %w", err)
@@ -73,7 +65,6 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 		handlers = append(handlers, rotator)
 	}
 
-	// VictoriaLogs (buffered)
 	if cfg.Victoria.Enabled.Active() {
 		vl, err := victoria.New(
 			victoria.WithURL(cfg.Victoria.URL),
@@ -147,7 +138,6 @@ func compressLogFile(srcPath string) {
 		return
 	}
 
-	// If successful, remove original
 	gw.Close()
 	in.Close()
 	_ = os.Remove(srcPath)

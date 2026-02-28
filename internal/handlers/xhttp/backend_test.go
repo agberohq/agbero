@@ -20,23 +20,27 @@ var (
 	testLogger = ll.New("backend").Disable()
 )
 
-func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb alaye.CircuitBreaker) *Backend {
+// Helper to create a backend with customizable params and fresh registry
+func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb alaye.CircuitBreaker) (*Backend, *metrics.Registry) {
 	route := &alaye.Route{
 		HealthCheck:    hc,
 		CircuitBreaker: cb,
 	}
 
+	// Create a FRESH registry for each test to avoid cross-test pollution
+	registry := metrics.NewRegistry()
+
 	// Pass nil domains
-	b, err := NewBackend(server, route, nil, testLogger, metrics.DefaultRegistry)
+	b, err := NewBackend(server, route, nil, testLogger, registry)
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	return b
+	return b, registry
 }
 
 func TestNewBackend_InvalidURL(t *testing.T) {
-	// Pass nil domains
-	_, err := NewBackend(alaye.NewServer("://invalid-url"), &alaye.Route{}, nil, testLogger, metrics.DefaultRegistry)
+	registry := metrics.NewRegistry()
+	_, err := NewBackend(alaye.NewServer("://invalid-url"), &alaye.Route{}, nil, testLogger, registry)
 	if err == nil {
 		t.Error("Expected error for invalid URL, got nil")
 	}
@@ -48,7 +52,7 @@ func TestNewBackend_NoHealthCheck(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
+	b, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	if b.Proxy == nil {
@@ -67,7 +71,7 @@ func TestServeHTTP_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
+	b, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -103,7 +107,7 @@ func TestServeHTTP_ContextCancel(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
+	b, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -142,7 +146,7 @@ func TestProxy_DirectorModifications(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
+	b, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	req := httptest.NewRequest("GET", "/test", nil)
@@ -187,7 +191,8 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 		CircuitBreaker: alaye.CircuitBreaker{Threshold: 2},
 	}
 
-	b, err := NewBackend(alaye.NewServer(server.URL), route, nil, testLogger, metrics.DefaultRegistry)
+	registry := metrics.NewRegistry()
+	b, err := NewBackend(alaye.NewServer(server.URL), route, nil, testLogger, registry)
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -220,7 +225,8 @@ func TestCircuitBreaker_NoTripOnCancel(t *testing.T) {
 		CircuitBreaker: alaye.CircuitBreaker{Threshold: 1},
 	}
 
-	b, err := NewBackend(alaye.NewServer(server.URL), route, nil, testLogger, metrics.DefaultRegistry)
+	registry := metrics.NewRegistry()
+	b, err := NewBackend(alaye.NewServer(server.URL), route, nil, testLogger, registry)
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -248,7 +254,7 @@ func TestHealthCheck_Failure(t *testing.T) {
 		Threshold: 2,
 		Timeout:   50 * time.Millisecond,
 	}
-	b := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
+	b, _ := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	time.Sleep(500 * time.Millisecond)
@@ -278,7 +284,7 @@ func TestHealthCheck_Recovery(t *testing.T) {
 		Threshold: 2,
 		Timeout:   50 * time.Millisecond,
 	}
-	b := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
+	b, _ := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	time.Sleep(300 * time.Millisecond)
@@ -325,7 +331,7 @@ func TestHealthCheck_Advanced(t *testing.T) {
 		Timeout:        50 * time.Millisecond,
 	}
 
-	b := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
+	b, _ := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	time.Sleep(200 * time.Millisecond)
@@ -351,13 +357,48 @@ func TestHealthCheck_Advanced_BodyMismatch(t *testing.T) {
 		Timeout:      50 * time.Millisecond,
 	}
 
-	b := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
+	b, _ := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	time.Sleep(200 * time.Millisecond)
 
 	if b.Alive.Load() {
 		t.Error("Backend should be down due to body mismatch")
+	}
+}
+
+func TestHealthCheck_HostHeader_From_Domains(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != "api.example.com" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	hc := alaye.HealthCheck{
+		Enabled:  alaye.Active,
+		Path:     "/",
+		Interval: 50 * time.Millisecond,
+		Timeout:  50 * time.Millisecond,
+	}
+
+	route := &alaye.Route{
+		HealthCheck: hc,
+	}
+
+	registry := metrics.NewRegistry()
+	b, err := NewBackend(alaye.NewServer(server.URL), route, []string{"api.example.com"}, testLogger, registry)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer b.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	if !b.Alive.Load() {
+		t.Error("Backend should be alive with correct Host header from domains")
 	}
 }
 
@@ -380,7 +421,8 @@ func TestHealthCheck_Jitter(t *testing.T) {
 		},
 	}
 
-	b, err := NewBackend(cfg, route, nil, ll.New("test").Disable(), metrics.DefaultRegistry)
+	registry := metrics.NewRegistry()
+	b, err := NewBackend(cfg, route, nil, ll.New("test").Disable(), registry)
 	if err != nil {
 		t.Fatalf("NewBackend error: %v", err)
 	}
@@ -408,7 +450,7 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 		Threshold: 1,
 		Timeout:   25 * time.Millisecond,
 	}
-	b := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
+	b, _ := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 
 	time.Sleep(50 * time.Millisecond)
 	b.Stop()
@@ -423,7 +465,7 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 }
 
 func TestUptime(t *testing.T) {
-	b := setupBackend(t, alaye.NewServer("http://example.com"), alaye.HealthCheck{}, alaye.CircuitBreaker{})
+	b, _ := setupBackend(t, alaye.NewServer("http://example.com"), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	time.Sleep(100 * time.Millisecond)
@@ -434,7 +476,7 @@ func TestUptime(t *testing.T) {
 }
 
 func TestActivitySnapshot(t *testing.T) {
-	b := setupBackend(t, alaye.NewServer("http://example.com"), alaye.HealthCheck{}, alaye.CircuitBreaker{})
+	b, _ := setupBackend(t, alaye.NewServer("http://example.com"), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	b.Activity.StartRequest()

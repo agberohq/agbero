@@ -168,13 +168,33 @@ func defaultAdmin(a *alaye.Admin) {
 }
 
 func defaultLogging(l *alaye.Logging) {
-	if l.Enabled == alaye.Unknown && (l.File != "" || l.Victoria.URL != "") {
-		l.Enabled = alaye.Active
-	}
-	if l.Level == "" {
-		l.Level = LogLevelInfo
+	// If parent block is disabled, everything is disabled
+	if l.Enabled.Inactive() {
+		l.File.Enabled = alaye.Inactive
+		l.Victoria.Enabled = alaye.Inactive
+		l.Prometheus.Enabled = alaye.Inactive
+		return
 	}
 
+	// Auto-enable parent if unknown and sub-components are configured
+	hasConfig := l.File.Path != "" || l.Victoria.URL != ""
+	if l.Enabled == alaye.Unknown && hasConfig {
+		l.Enabled = alaye.Active
+	}
+
+	if l.Level == "" {
+		l.Level = "info"
+	}
+
+	// File Logging Defaults
+	if l.File.Enabled == alaye.Unknown && l.File.Path != "" {
+		l.File.Enabled = alaye.Active
+	}
+	if l.File.BatchSize == 0 {
+		l.File.BatchSize = DefaultVictoriaBatch // Reuse consistent batch size
+	}
+
+	// Victoria Logging Defaults
 	if l.Victoria.Enabled == alaye.Unknown && l.Victoria.URL != "" {
 		l.Victoria.Enabled = alaye.Active
 	}
@@ -182,6 +202,7 @@ func defaultLogging(l *alaye.Logging) {
 		l.Victoria.BatchSize = DefaultVictoriaBatch
 	}
 
+	// Prometheus Defaults
 	if l.Prometheus.Enabled == alaye.Unknown {
 		l.Prometheus.Enabled = alaye.Inactive
 	}

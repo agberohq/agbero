@@ -73,14 +73,8 @@ storage {
 # LOGGING
 # -------------------------------------------------------------
 logging {
-  # enable
+  # global enable
   enabled = 1
-
-  # Levels: debug, info, warn, error
-  level = "info"
-
-  # Optional JSON log file
-  file = "{LOGS_DIR}/agbero.log"
 
   # Skip Prefix
   skip = [
@@ -91,12 +85,22 @@ logging {
     "/favicon.ico"
   ]
 
+  # Levels: debug, info, warn, error
+  level = "info"
+
+  # File logging
+  file {
+    enabled    = 1
+    path       = "{LOGS_DIR}/agbero.log"
+    batch_size = 500
+  }
+
   # VictoriaLogs Integration (Optional)
-  # victoria {
-  #   enabled    = false
-  #   url        = "http://localhost:9428"
-  #   batch_size = 500
-  # }
+  victoria {
+    enabled    = 0
+    url        = "http://localhost:9428"
+    batch_size = 500
+  }
 }
 
 # -------------------------------------------------------------

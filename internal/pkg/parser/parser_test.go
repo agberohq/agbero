@@ -43,7 +43,12 @@ general {
 logging {
   enabled = true
   level = "debug"
-  file  = "/var/log/agbero.log"
+
+  file {
+    enabled = true
+    path  = "/var/log/agbero.log"
+  }
+
   victoria {
     enabled = true
     url     = "http://victoria:8428"

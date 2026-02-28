@@ -5,7 +5,12 @@ import (
 	"strings"
 )
 
-// IsLocalhost determines if a hostname implies local development
+// IsLocalContext returns true if the host is either loopback or a private LAN IP.
+func IsLocalContext(host string) bool {
+	return IsLocalhost(host) || IsLocalArea(host)
+}
+
+// IsLocalhost determines if a hostname implies the machine itself.
 func IsLocalhost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if host == LocalhostExact {
@@ -22,9 +27,16 @@ func IsLocalhost(host string) bool {
 	}
 	// Check loopback IPs
 	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() {
-			return true
-		}
+		return ip.IsLoopback()
 	}
 	return false
+}
+
+// IsLocalArea determines if a host is a Private Network IP (RFC 1918).
+func IsLocalArea(host string) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsPrivate() && !ip.IsLoopback()
 }

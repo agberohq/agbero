@@ -316,8 +316,8 @@ func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
 // handleAdminLogs reads the log file backwards efficiently
 func (s *Server) handleAdminLogs(w http.ResponseWriter, r *http.Request) {
 	var logPath string
-	if s.global.Logging.Enabled.Active() {
-		logPath = s.global.Logging.File
+	if s.global.Logging.File.Enabled.Active() {
+		logPath = s.global.Logging.File.Path
 	}
 
 	if logPath == "" {

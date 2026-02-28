@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -42,6 +43,18 @@ import (
 	"github.com/olekukonko/mappo"
 	"github.com/quic-go/quic-go/http3"
 )
+
+// llWriter bridges std/log to the structured ll logger
+type llWriter struct {
+	logger *ll.Logger
+}
+
+func (w *llWriter) Write(p []byte) (n int, err error) {
+	msg := strings.TrimSpace(string(p))
+	// Log as Error because http.Server.ErrorLog usually reports connection/handler failures
+	w.logger.Fields("source", "std_http").Error(msg)
+	return len(p), nil
+}
 
 type Server struct {
 	configPath string
@@ -634,6 +647,7 @@ func (s *Server) startTCPServer(
 		IdleTimeout:       s.global.Timeouts.Idle,
 		ReadHeaderTimeout: s.global.Timeouts.ReadHeader,
 		MaxHeaderBytes:    s.global.General.MaxHeaderBytes,
+		ErrorLog:          log.New(&llWriter{logger: s.logger}, "", 0),
 	}
 
 	if isTLS && tlsCfg != nil {
@@ -974,7 +988,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	res := router.Find(r.URL.Path)
 	if res.Route != nil {
 		rw := &zulu.ResponseWriter{ResponseWriter: w, StatusCode: 200}
-		// Pass hcfg.Domains
 		s.handleRoute(rw, r, res.Route, hcfg.Domains)
 		s.logRequest(host, r, start, rw.StatusCode, rw.BytesWritten)
 		return
@@ -1020,7 +1033,6 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	}
 
 	routeKey := route.Key()
-	// Pass domains
 	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey, domains)
 
 	if route.Wasm.Enabled.Active() {
@@ -1054,7 +1066,6 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string, domains 
 		}
 	}
 
-	// Pass domains
 	h := handlers.NewRoute(s.global, route, domains, s.logger)
 	newItem := &mappo.Item{
 		Value: h,
