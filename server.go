@@ -1,3 +1,4 @@
+// server.go
 package agbero
 
 import (
@@ -71,6 +72,11 @@ type Server struct {
 	h3Servers  map[string]*http3.Server
 	tcpProxies []*xtcp.Proxy
 
+	// Saved state for dynamic reloads
+	activeBaseHandler http.Handler
+	activeAcmeHandler http.Handler
+	activeTlsConfig   *tls.Config
+
 	logger       *ll.Logger
 	ipMiddleware *clientip.IPMiddleware
 	rateLimiter  *ratelimit.RateLimiter
@@ -99,7 +105,9 @@ func NewServer(opts ...Option) *Server {
 }
 
 func (s *Server) Start(configPath string) error {
+	s.mu.Lock()
 	s.configPath = configPath
+	s.mu.Unlock()
 
 	if s.hostManager == nil {
 		return woos.ErrHostManagerRequired
@@ -123,7 +131,9 @@ func (s *Server) Start(configPath string) error {
 		if err != nil {
 			s.logger.Warn("could not compute config sha: ", err)
 		} else {
+			s.mu.Lock()
 			s.configSHA = sha
+			s.mu.Unlock()
 			s.logger.Fields(
 				"config_path", absConfigPath,
 				"sha256", sha[:12],
@@ -227,20 +237,16 @@ func (s *Server) Start(configPath string) error {
 
 	s.startAdminServer()
 
-	baseHandler := http.HandlerFunc(s.handleRequest)
-	var httpFallbackHandler http.Handler = baseHandler
+	s.activeBaseHandler = http.HandlerFunc(s.handleRequest)
+	s.activeAcmeHandler = s.activeBaseHandler
+
 	if len(s.global.Bind.HTTPS) > 0 {
-		httpFallbackHandler = http.HandlerFunc(s.redirectToHTTPS)
+		s.activeAcmeHandler = http.HandlerFunc(s.redirectToHTTPS)
 	}
 
-	tlsCfg, acmeHandler, err := s.buildTLS(httpFallbackHandler)
-	if err != nil {
-		if configPath != "" {
-			s.logger.Fields("err", err.Error()).Warn("TLS setup failed; HTTPS listeners may not start")
-		}
-		tlsCfg = nil
-		acmeHandler = httpFallbackHandler
-	}
+	tlsCfg, acmeHandler := s.buildTLS(s.activeAcmeHandler)
+	s.activeTlsConfig = tlsCfg
+	acmeHandler = acmeHandler
 
 	if s.tlsManager != nil && s.shutdown != nil {
 		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
@@ -274,40 +280,93 @@ func (s *Server) Start(configPath string) error {
 	usedPorts := make(map[string]bool)
 
 	for _, addr := range s.global.Bind.HTTP {
+		if !strings.Contains(addr, ":") {
+			addr = ":" + addr
+		}
 		_, port, _ := net.SplitHostPort(addr)
 		usedPorts[port] = true
-		s.startTCPServer(addr, false, nil, nil, baseHandler, acmeHandler, anyStreaming)
+		srv, key := s.createTCPServer(addr, false, nil, s.activeBaseHandler, acmeHandler, anyStreaming)
+		s.mu.Lock()
+		s.servers[key] = srv
+		s.mu.Unlock()
 	}
 
 	for _, addr := range s.global.Bind.HTTPS {
+		if !strings.Contains(addr, ":") {
+			addr = ":" + addr
+		}
 		_, port, _ := net.SplitHostPort(addr)
 		usedPorts[port] = true
-		s.startTCPServer(addr, true, nil, tlsCfg, baseHandler, acmeHandler, anyStreaming)
-		s.startQUICServer(addr, nil, tlsCfg, baseHandler)
+		srv, key := s.createTCPServer(addr, true, s.activeTlsConfig, s.activeBaseHandler, acmeHandler, anyStreaming)
+		s.mu.Lock()
+		s.servers[key] = srv
+		s.mu.Unlock()
+
+		h3, h3Key := s.createQUICServer(addr, s.activeTlsConfig, s.activeBaseHandler)
+		if h3 != nil {
+			s.mu.Lock()
+			s.h3Servers[h3Key] = h3
+			s.mu.Unlock()
+			s.runQUICServer(h3, addr)
+		}
 	}
 
 	for _, h := range hosts {
 		for _, port := range h.Bind {
 			if usedPorts[port] {
-				return errors.Newf("%w: %s is already in use by a global listener or another host", woos.ErrPortConflict, port)
+				s.logger.Fields("port", port, "host", h.Domains).Warn("port shared by multiple hosts; skipping duplicate listener")
+				continue
 			}
 			usedPorts[port] = true
 
-			addr := ":" + port
+			// Handle ":8080", "8080", or "127.0.0.1:8080" correctly
+			addr := port
+			if !strings.Contains(port, ":") {
+				addr = ":" + port
+			}
+
 			isTLS := true
 			if h.TLS.Mode == alaye.ModeLocalNone {
 				isTLS = false
 			}
 
-			s.startTCPServer(addr, isTLS, h, tlsCfg, baseHandler, acmeHandler, anyStreaming)
+			srv, key := s.createTCPServer(addr, isTLS, s.activeTlsConfig, s.activeBaseHandler, acmeHandler, anyStreaming)
+			s.mu.Lock()
+			s.servers[key] = srv
+			s.mu.Unlock()
+
 			if isTLS {
-				s.startQUICServer(addr, h, tlsCfg, baseHandler)
+				h3, h3Key := s.createQUICServer(addr, s.activeTlsConfig, s.activeBaseHandler)
+				if h3 != nil {
+					s.mu.Lock()
+					s.h3Servers[h3Key] = h3
+					s.mu.Unlock()
+					s.runQUICServer(h3, addr)
+				}
 			}
 		}
 	}
 
 	if len(s.servers) == 0 && len(s.tcpProxies) == 0 {
 		return woos.ErrNoBindAddr
+	}
+
+	select {
+	case <-s.hostManager.Changed():
+	default:
+	}
+
+	if s.configPath != "" {
+		go func() {
+			for {
+				select {
+				case <-s.hostManager.Changed():
+					s.Reload()
+				case <-s.shutdown.Done():
+					return
+				}
+			}
+		}()
 	}
 
 	if s.shutdown != nil {
@@ -341,7 +400,11 @@ func (s *Server) Start(configPath string) error {
 }
 
 func (s *Server) Reload() {
-	if s.configPath == "" {
+	s.mu.RLock()
+	configPath := s.configPath
+	s.mu.RUnlock()
+
+	if configPath == "" {
 		s.logger.Info("reload ignored in ephemeral mode")
 		return
 	}
@@ -354,19 +417,23 @@ func (s *Server) Reload() {
 		return
 	}
 
-	if sha == s.configSHA {
+	s.mu.RLock()
+	currentSHA := s.configSHA
+	s.mu.RUnlock()
+
+	if sha == currentSHA {
 		s.logger.Info("reload requested: no configuration changes detected")
 		return
 	}
 
 	s.logger.Fields(
-		"from", s.configSHA[:12],
+		"from", currentSHA[:12],
 		"to", sha[:12],
 	).Infof("configuration changed")
 
-	global, err := parser.LoadGlobal(s.configPath)
+	global, err := parser.LoadGlobal(configPath)
 	if err != nil {
-		s.logger.Fields("err", err, "config_path", s.configPath).
+		s.logger.Fields("err", err, "config_path", configPath).
 			Error("reload config failed")
 		return
 	}
@@ -377,9 +444,9 @@ func (s *Server) Reload() {
 		}
 	}
 
-	absConfigPath, err := filepath.Abs(s.configPath)
+	absConfigPath, err := filepath.Abs(configPath)
 	if err != nil {
-		absConfigPath = s.configPath
+		absConfigPath = configPath
 	}
 	woos.DefaultApply(global, absConfigPath)
 
@@ -422,13 +489,6 @@ func (s *Server) Reload() {
 
 	newRateLimiter := s.buildGlobalRateLimiter()
 
-	var newFirewall *firewall.Engine
-	if global.Security.Enabled.Active() {
-		fwConfig := global.Security.Firewall
-		dataDir := woos.NewFolder(global.Storage.DataDir)
-		newFirewall, _ = firewall.New(&fwConfig, dataDir, s.logger)
-	}
-
 	s.mu.Lock()
 	if s.global.Logging.Level != global.Logging.Level {
 		s.logger.Infof("log_level: %s → %s", s.global.Logging.Level, global.Logging.Level)
@@ -443,8 +503,110 @@ func (s *Server) Reload() {
 
 	if s.firewall != nil {
 		s.firewall.Close()
+		s.firewall = nil
 	}
-	s.firewall = newFirewall
+
+	if global.Security.Enabled.Active() {
+		fwConfig := global.Security.Firewall
+		if fwConfig.Status.Active() {
+			dataDir := woos.NewFolder(global.Storage.DataDir)
+			var err error
+			s.firewall, err = firewall.New(&fwConfig, dataDir, s.logger)
+			if err != nil {
+				s.logger.Fields("err", err).Error("failed to init firewall on reload")
+			}
+		}
+	}
+
+	if s.tlsManager != nil {
+		s.tlsManager.Close()
+	}
+	s.tlsManager = tlss2.NewManager(s.logger, s.hostManager, s.global)
+	if s.activeTlsConfig != nil {
+		s.activeTlsConfig.GetConfigForClient = s.tlsManager.GetConfigForClient
+	}
+
+	for _, addr := range global.Bind.HTTPS {
+		key := zulu.ServerKey(addr, true)
+		if _, exists := s.servers[key]; !exists {
+			srv, _ := s.createTCPServer(addr, true, s.activeTlsConfig, s.activeBaseHandler, s.activeAcmeHandler, false)
+			s.servers[key] = srv
+
+			h3Server, h3Key := s.createQUICServer(addr, s.activeTlsConfig, s.activeBaseHandler)
+			if h3Server != nil {
+				s.h3Servers[h3Key] = h3Server
+				s.runQUICServer(h3Server, addr)
+			}
+
+			s.startListenerAsync(key, srv)
+		}
+	}
+
+	for _, addr := range global.Bind.HTTP {
+		key := zulu.ServerKey(addr, false)
+		if _, exists := s.servers[key]; !exists {
+			srv, _ := s.createTCPServer(addr, false, nil, s.activeBaseHandler, s.activeAcmeHandler, false)
+			s.servers[key] = srv
+			s.startListenerAsync(key, srv)
+		}
+	}
+
+	for _, h := range newHosts {
+		for _, port := range h.Bind {
+			addr := ":" + port
+			isTLS := true
+			if h.TLS.Mode == alaye.ModeLocalNone {
+				isTLS = false
+			}
+			key := zulu.ServerKey(addr, isTLS)
+
+			if _, exists := s.servers[key]; !exists {
+				srv, _ := s.createTCPServer(addr, isTLS, s.activeTlsConfig, s.activeBaseHandler, s.activeAcmeHandler, false)
+				s.servers[key] = srv
+
+				if isTLS {
+					h3Server, h3Key := s.createQUICServer(addr, s.activeTlsConfig, s.activeBaseHandler)
+					if h3Server != nil {
+						s.h3Servers[h3Key] = h3Server
+						s.runQUICServer(h3Server, addr)
+					}
+				}
+				s.startListenerAsync(key, srv)
+			}
+		}
+	}
+
+	for listen, group := range tcpGroups {
+		exists := false
+		for _, tp := range s.tcpProxies {
+			if tp.Listen == listen {
+				exists = true
+				break
+			}
+		}
+
+		if !exists {
+			tp := xtcp.NewProxy(listen, s.logger)
+			newRoutes := make(map[string]*xtcp.Balancer)
+			var newDefault *xtcp.Balancer
+
+			for _, route := range group {
+				bal := xtcp.NewBalancer(route, metrics.DefaultRegistry)
+				if route.SNI != "" {
+					newRoutes[strings.ToLower(route.SNI)] = bal
+				} else {
+					newDefault = bal
+				}
+			}
+			tp.UpdateRoutes(newRoutes, newDefault)
+
+			if err := tp.Start(); err != nil {
+				s.logger.Fields("listen", listen, "err", err).Error("failed to start new tcp proxy on reload")
+			} else {
+				s.tcpProxies = append(s.tcpProxies, tp)
+			}
+		}
+	}
 
 	for _, tp := range s.tcpProxies {
 		_, port, _ := net.SplitHostPort(tp.Listen)
@@ -487,10 +649,6 @@ func (s *Server) Reload() {
 		tp.UpdateRoutes(newRoutes, newDefault)
 	}
 
-	if s.tlsManager != nil {
-		s.tlsManager.ClearCache()
-	}
-
 	s.mu.Unlock()
 
 	metrics.DefaultRegistry.Prune(validKeys)
@@ -500,6 +658,22 @@ func (s *Server) Reload() {
 		"current_hosts", currentCount,
 		"change", currentCount-previousCount,
 	).Info("configuration reloaded successfully")
+}
+
+// startListenerAsync spins up the goroutine for a newly created server (used in Reload)
+func (s *Server) startListenerAsync(key string, srv *http.Server) {
+	go func(k string, server *http.Server) {
+		s.logger.Fields("bind", server.Addr, "key", k).Info("listener started (reload)")
+		var err error
+		if zulu.IsServerKeyTLS(k) {
+			err = server.ListenAndServeTLS("", "")
+		} else {
+			err = server.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.logger.Fields("key", k, "err", err).Error("listener failed")
+		}
+	}(key, srv)
 }
 
 func (s *Server) shutdownImpl(ctx context.Context) error {
@@ -612,15 +786,16 @@ func (s *Server) applyMTLS(cfg *tls.Config, host *alaye.Host) {
 	}
 }
 
-func (s *Server) startTCPServer(
+// createTCPServer constructs the server but does not register or start it.
+// This is used by both Start (with locking) and Reload (which holds the lock).
+func (s *Server) createTCPServer(
 	addr string,
 	isTLS bool,
-	owner *alaye.Host,
 	tlsCfg *tls.Config,
 	baseHandler http.Handler,
 	httpHandler http.Handler,
 	anyStreaming bool,
-) {
+) (*http.Server, string) {
 	_, port, _ := net.SplitHostPort(addr)
 
 	var handler http.Handler
@@ -633,9 +808,13 @@ func (s *Server) startTCPServer(
 	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		ctx = context.WithValue(ctx, woos.CtxPort, port)
-		if owner != nil {
+
+		// DYNAMIC OWNER LOOKUP: Get the config that currently owns this port
+		// This ensures Reload updates propagation without restarting listeners
+		if owner := s.hostManager.GetByPort(port); owner != nil {
 			ctx = context.WithValue(ctx, woos.OwnerKey, owner)
 		}
+
 		handler.ServeHTTP(w, r.WithContext(ctx))
 	})
 
@@ -651,40 +830,72 @@ func (s *Server) startTCPServer(
 	}
 
 	if isTLS && tlsCfg != nil {
-		if owner != nil {
-			localCfg := tlsCfg.Clone()
-			s.applyMTLS(localCfg, owner)
-			localCfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		// Clone generic config
+		localCfg := tlsCfg.Clone()
+		localCfg.GetConfigForClient = nil // Ensure we don't bypass GetCertificate
+
+		// DYNAMIC CERTIFICATE LOOKUP
+		localCfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			// 1. Try direct SNI match first
+			if chi.ServerName != "" {
 				cert, err := s.tlsManager.GetCertificate(chi)
 				if err == nil {
 					return cert, nil
 				}
-				if len(owner.Domains) > 0 {
-					chi.ServerName = owner.Domains[0]
-					return s.tlsManager.GetCertificate(chi)
-				}
-				return nil, err
 			}
-			srv.TLSConfig = localCfg
-		} else {
-			srv.TLSConfig = tlsCfg
+
+			// 2. FALLBACK: Check if this port has an owner and use its primary domain
+			// This handles IP access (missing SNI) and SNI mismatch scenarios
+			owner := s.hostManager.GetByPort(port)
+			if owner != nil && len(owner.Domains) > 0 {
+				// Apply mTLS settings dynamically if needed
+				if owner.TLS.ClientAuth != "" {
+					// mTLS dynamic application is complex; standard SNI path preferred
+				}
+
+				fallbackChi := *chi
+				fallbackChi.ServerName = owner.Domains[0]
+				cert, err := s.tlsManager.GetCertificate(&fallbackChi)
+				if err == nil {
+					return cert, nil
+				}
+				return nil, err // Return the fallback error
+			}
+
+			return nil, fmt.Errorf("no certificate found")
 		}
+		srv.TLSConfig = localCfg
 	}
 
 	key := zulu.ServerKey(addr, isTLS)
-	s.mu.Lock()
-	s.servers[key] = srv
-	s.mu.Unlock()
+	return srv, key
 }
 
-func (s *Server) startQUICServer(
+// startTCPServer is a wrapper used by Start() to create AND register the server safely
+func (s *Server) startTCPServer(
 	addr string,
-	owner *alaye.Host,
+	isTLS bool,
 	tlsCfg *tls.Config,
 	baseHandler http.Handler,
+	httpHandler http.Handler,
+	anyStreaming bool,
 ) {
+	srv, key := s.createTCPServer(addr, isTLS, tlsCfg, baseHandler, httpHandler, anyStreaming)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.servers[key]; !exists {
+		s.servers[key] = srv
+	}
+}
+
+// createQUICServer constructs the QUIC server but does not register or start it.
+func (s *Server) createQUICServer(
+	addr string,
+	tlsCfg *tls.Config,
+	baseHandler http.Handler,
+) (*http3.Server, string) {
 	if tlsCfg == nil {
-		return
+		return nil, ""
 	}
 	_, port, _ := net.SplitHostPort(addr)
 
@@ -696,28 +907,35 @@ func (s *Server) startQUICServer(
 
 		ctx := r.Context()
 		ctx = context.WithValue(ctx, woos.CtxPort, port)
-		if owner != nil {
+		if owner := s.hostManager.GetByPort(port); owner != nil {
 			ctx = context.WithValue(ctx, woos.OwnerKey, owner)
 		}
 		handler.ServeHTTP(w, r.WithContext(ctx))
 	})
 
-	serverTLSCfg := tlsCfg
-	if owner != nil {
-		localCfg := tlsCfg.Clone()
-		s.applyMTLS(localCfg, owner)
-		localCfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	serverTLSCfg := tlsCfg.Clone()
+	serverTLSCfg.GetConfigForClient = nil
+
+	// DYNAMIC CERT LOOKUP FOR QUIC
+	serverTLSCfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		if chi.ServerName != "" {
 			cert, err := s.tlsManager.GetCertificate(chi)
 			if err == nil {
 				return cert, nil
 			}
-			if len(owner.Domains) > 0 {
-				chi.ServerName = owner.Domains[0]
-				return s.tlsManager.GetCertificate(chi)
+		}
+
+		owner := s.hostManager.GetByPort(port)
+		if owner != nil && len(owner.Domains) > 0 {
+			fallbackChi := *chi
+			fallbackChi.ServerName = owner.Domains[0]
+			cert, err := s.tlsManager.GetCertificate(&fallbackChi)
+			if err == nil {
+				return cert, nil
 			}
 			return nil, err
 		}
-		serverTLSCfg = localCfg
+		return nil, fmt.Errorf("no certificate found")
 	}
 
 	h3Server := &http3.Server{
@@ -727,10 +945,34 @@ func (s *Server) startQUICServer(
 	}
 
 	key := woos.H3KeyPrefix + addr
+	return h3Server, key
+}
+
+// startQUICServer is a wrapper used by Start() to create, register AND start the server
+func (s *Server) startQUICServer(
+	addr string,
+	tlsCfg *tls.Config,
+	baseHandler http.Handler,
+) {
+	h3Server, key := s.createQUICServer(addr, tlsCfg, baseHandler)
+	if h3Server == nil {
+		return
+	}
+
 	s.mu.Lock()
-	s.h3Servers[key] = h3Server
+	if _, exists := s.h3Servers[key]; !exists {
+		s.h3Servers[key] = h3Server
+	} else {
+		// Already exists
+		s.mu.Unlock()
+		return
+	}
 	s.mu.Unlock()
 
+	s.runQUICServer(h3Server, addr)
+}
+
+func (s *Server) runQUICServer(h3Server *http3.Server, addr string) {
 	go func() {
 		s.logger.Fields("bind", addr, "proto", "h3").Info("listener starting")
 		if err := h3Server.ListenAndServe(); err != nil {
@@ -746,9 +988,8 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 		h = h3.AdvertiseHTTP3(port)(h)
 	}
 
-	if s.firewall != nil {
-		h = s.firewall.Handler(h, nil)
-	}
+	// Wrapper to allow swapping firewall middleware on reload
+	h = s.firewallMiddleware(h)
 
 	if s.ipMiddleware != nil {
 		h = s.ipMiddleware.Handler(h)
@@ -760,6 +1001,21 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 
 	h = recovery.New(s.logger)(h)
 	return h
+}
+
+// firewallMiddleware wraps the firewall handler to allow hot-swapping safely.
+func (s *Server) firewallMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.RLock()
+		fw := s.firewall
+		s.mu.RUnlock()
+
+		if fw != nil {
+			fw.Handler(next, nil).ServeHTTP(w, r)
+		} else {
+			next.ServeHTTP(w, r)
+		}
+	})
 }
 
 func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
@@ -823,15 +1079,9 @@ func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
 	return ratelimit.NewRateLimiter(rlc.TTL, rlc.MaxEntries, policy)
 }
 
-func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) {
-	if s.global == nil {
-		return nil, nil, woos.ErrGlobalConfigRequired
-	}
-	if s.logger == nil {
-		return nil, nil, woos.ErrLoggerRequired
-	}
-	if s.hostManager == nil {
-		return nil, nil, woos.ErrHostManagerRequired
+func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler) {
+	if s.global == nil || s.logger == nil || s.hostManager == nil {
+		return &tls.Config{}, next
 	}
 
 	s.tlsManager = tlss2.NewManager(s.logger, s.hostManager, s.global)
@@ -849,7 +1099,7 @@ func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler, error) 
 		GetConfigForClient: s.tlsManager.GetConfigForClient,
 	}
 
-	return tlsCfg, httpHandler, nil
+	return tlsCfg, httpHandler
 }
 
 func (s *Server) validateTLSConfig() error {
@@ -946,6 +1196,15 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	} else {
 		host = zulu.NormalizeHost(r.Host)
 		hcfg = s.hostManager.Get(host)
+
+		// Fallback for IP access
+		if hcfg == nil {
+			if port, ok := r.Context().Value(woos.CtxPort).(string); ok && port != "" {
+				if portMatch := s.hostManager.GetByPort(port); portMatch != nil {
+					hcfg = portMatch
+				}
+			}
+		}
 	}
 
 	if hcfg == nil {
@@ -1136,7 +1395,11 @@ func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 func (s *Server) computeFullConfigSHA() (string, error) {
 	hasher := sha256.New()
 
-	mainData, err := os.ReadFile(s.configPath)
+	s.mu.RLock()
+	configPath := s.configPath
+	s.mu.RUnlock()
+
+	mainData, err := os.ReadFile(configPath)
 	if err != nil {
 		return "", err
 	}

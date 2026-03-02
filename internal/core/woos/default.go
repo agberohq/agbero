@@ -125,28 +125,24 @@ func defaultTimeout(t *alaye.Timeout) {
 }
 
 func defaultStorage(s *alaye.Storage, configPath string) {
-	// If configPath is "disabled" or empty (ephemeral mode), do not manipulate paths
 	if configPath == "" || configPath == "disabled" || configPath == "." {
 		return
 	}
 
 	configDir := filepath.Dir(configPath)
 
-	// Resolve HostsDir
 	if s.HostsDir == "" {
 		s.HostsDir = filepath.Join(configDir, HostDir.String())
 	} else if !filepath.IsAbs(s.HostsDir) {
 		s.HostsDir = filepath.Join(configDir, s.HostsDir)
 	}
 
-	// Resolve CertsDir
 	if s.CertsDir == "" {
 		s.CertsDir = filepath.Join(configDir, CertDir.String())
 	} else if !filepath.IsAbs(s.CertsDir) {
 		s.CertsDir = filepath.Join(configDir, s.CertsDir)
 	}
 
-	// Resolve DataDir
 	if s.DataDir == "" {
 		s.DataDir = filepath.Join(configDir, DataDir.String())
 	} else if !filepath.IsAbs(s.DataDir) {
@@ -168,7 +164,6 @@ func defaultAdmin(a *alaye.Admin) {
 }
 
 func defaultLogging(l *alaye.Logging) {
-	// If parent block is disabled, everything is disabled
 	if l.Enabled.Inactive() {
 		l.File.Enabled = alaye.Inactive
 		l.Victoria.Enabled = alaye.Inactive
@@ -176,7 +171,6 @@ func defaultLogging(l *alaye.Logging) {
 		return
 	}
 
-	// Auto-enable parent if unknown and sub-components are configured
 	hasConfig := l.File.Path != "" || l.Victoria.URL != ""
 	if l.Enabled == alaye.Unknown && hasConfig {
 		l.Enabled = alaye.Active
@@ -186,15 +180,13 @@ func defaultLogging(l *alaye.Logging) {
 		l.Level = "info"
 	}
 
-	// File Logging Defaults
 	if l.File.Enabled == alaye.Unknown && l.File.Path != "" {
 		l.File.Enabled = alaye.Active
 	}
 	if l.File.BatchSize == 0 {
-		l.File.BatchSize = DefaultVictoriaBatch // Reuse consistent batch size
+		l.File.BatchSize = DefaultVictoriaBatch
 	}
 
-	// Victoria Logging Defaults
 	if l.Victoria.Enabled == alaye.Unknown && l.Victoria.URL != "" {
 		l.Victoria.Enabled = alaye.Active
 	}
@@ -202,7 +194,6 @@ func defaultLogging(l *alaye.Logging) {
 		l.Victoria.BatchSize = DefaultVictoriaBatch
 	}
 
-	// Prometheus Defaults
 	if l.Prometheus.Enabled == alaye.Unknown {
 		l.Prometheus.Enabled = alaye.Inactive
 	}
@@ -311,7 +302,7 @@ func defaultTLS(t *alaye.TLS, domains []string) {
 	if t.Mode == "" && len(domains) > 0 {
 		allLocal := true
 		for _, d := range domains {
-			if !IsLocalhost(d) {
+			if !IsLocalContext(d) {
 				allLocal = false
 				break
 			}

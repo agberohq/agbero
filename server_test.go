@@ -8,7 +8,9 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -118,10 +120,7 @@ func TestServer_buildTLS(t *testing.T) {
 	}
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
-	cfg, handler, err := s.buildTLS(next)
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
+	cfg, handler := s.buildTLS(next)
 	if cfg == nil {
 		t.Error("TLS config not created")
 	}
@@ -143,14 +142,13 @@ func TestServer_buildTLS_NoEmail(t *testing.T) {
 	}
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
-	cfg, handler, err := s.buildTLS(next)
-	if err != nil {
-		t.Errorf("Should handle missing email gracefully, got error: %v", err)
+	cfg, handler := s.buildTLS(next)
+	if cfg == nil {
+		t.Error("TLS config should be created even if email is missing (for local dev)")
 	}
 	if handler == nil {
 		t.Error("Handler should still be created")
 	}
-	_ = cfg
 }
 
 func TestServer_buildGlobalRateLimiter(t *testing.T) {
@@ -416,4 +414,139 @@ func TestServer_mTLS_Apply_Table(t *testing.T) {
 
 type zapTLSConfig struct {
 	tls.Config
+}
+
+func TestServer_Reload_DynamicBind(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("backend-ok"))
+	}))
+	defer backend.Close()
+
+	tmpDir := t.TempDir()
+	hostsDir := filepath.Join(tmpDir, "hosts")
+	os.MkdirAll(hostsDir, 0755)
+
+	hostFile := filepath.Join(hostsDir, "dynamic.hcl")
+	// TLS mode "none" to simplify testing (avoids CA generation)
+	initialConfig := fmt.Sprintf(`
+domains = ["localhost"]
+tls { mode = "none" }
+route "/" {
+  backend {
+    server { address = "%s" }
+  }
+}
+`, backend.URL)
+	os.WriteFile(hostFile, []byte(initialConfig), 0644)
+
+	configFile := filepath.Join(tmpDir, "agbero.hcl")
+	mainPort := getFreePort(t)
+	// Give OS time to release mainPort from TIME_WAIT
+	time.Sleep(500 * time.Millisecond)
+
+	// Ensure version = 2 is present for parser validation
+	globalContent := fmt.Sprintf(`version = 2
+bind {
+  http = [":%d"]
+}
+storage {
+  hosts_dir = "%s"
+  data_dir = "%s"
+}
+`, mainPort, hostsDir, tmpDir)
+	os.WriteFile(configFile, []byte(globalContent), 0644)
+
+	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
+	hm := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
+
+	// Pre-load hosts to establish initial state
+	hm.ReloadFull()
+
+	s := NewServer(
+		WithHostManager(hm),
+		WithLogger(ll.New("test").Enable()),
+		WithShutdownManager(shutdown),
+	)
+
+	go s.Start(configFile)
+	defer shutdown.TriggerShutdown()
+
+	waitForPort(t, mainPort)
+
+	targetPort := getFreePort(t)
+	// Ensure the new target port is actually free before we try to use it
+	// If it's still open (race condition), wait a bit
+	if isPortOpen(t, targetPort) {
+		time.Sleep(500 * time.Millisecond)
+		if isPortOpen(t, targetPort) {
+			t.Fatalf("Port %d is stuck open", targetPort)
+		}
+	} else {
+		// Even if closed, wait for TIME_WAIT state to clear
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Update host config with new bind.
+	// We use just the number here, relying on Server.Start/Reload to handle normalization.
+	updatedConfig := fmt.Sprintf(`
+domains = ["localhost"]
+bind = ["%d"]
+tls { mode = "none" }
+route "/" {
+  backend {
+    server { address = "%s" }
+  }
+}
+`, targetPort, backend.URL)
+	os.WriteFile(hostFile, []byte(updatedConfig), 0644)
+
+	s.Reload()
+
+	waitForPort(t, targetPort)
+
+	// Use standard HTTP client since we disabled TLS
+	client := &http.Client{}
+
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d", targetPort))
+	if err != nil {
+		t.Fatalf("Failed to connect to dynamic port: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Errorf("Expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func getFreePort(t *testing.T) int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+func waitForPort(t *testing.T, port int) {
+	// Increased deadline for slower environments/TLS gen
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("Timeout waiting for port %d", port)
+}
+
+func isPortOpen(t *testing.T, port int) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+	if err == nil {
+		conn.Close()
+		return true
+	}
+	return false
 }
