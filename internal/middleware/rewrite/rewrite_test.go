@@ -15,7 +15,6 @@ var (
 )
 
 func TestRewrite(t *testing.T) {
-
 	tests := []struct {
 		name          string
 		stripPrefixes []string
@@ -167,8 +166,6 @@ func TestRewrite(t *testing.T) {
 }
 
 func TestRewriteChain(t *testing.T) {
-
-	// Test that multiple middleware in chain work correctly
 	middleware1 := New(testLogger, []string{"/api"}, nil)
 	middleware2 := New(testLogger, nil, []alaye.Rewrite{
 		{Pattern: "^/v1/(.*)", Target: "/v2/$1", Regex: regexp.MustCompile("^/v1/(.*)")},
@@ -196,4 +193,181 @@ func TestRewriteChain(t *testing.T) {
 	if receivedHeader != "true" {
 		t.Errorf("chain: X-Agbero-Rewrite header = %q, want true", receivedHeader)
 	}
+}
+
+// Benchmarks for hot path optimization analysis
+
+func BenchmarkNoRewrite(b *testing.B) {
+	handler := New(testLogger, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/api/users", nil)
+	rec := httptest.NewRecorder()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		handler.ServeHTTP(rec, req)
+	}
+}
+
+func BenchmarkStripPrefixMatch(b *testing.B) {
+	handler := New(testLogger, []string{"/api"}, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/api/users", nil)
+	rec := httptest.NewRecorder()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		handler.ServeHTTP(rec, req)
+	}
+}
+
+func BenchmarkStripPrefixNoMatch(b *testing.B) {
+	handler := New(testLogger, []string{"/v1"}, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/v2/users", nil)
+	rec := httptest.NewRecorder()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		handler.ServeHTTP(rec, req)
+	}
+}
+
+func BenchmarkRegexRewrite(b *testing.B) {
+	rewrites := []alaye.Rewrite{
+		{Pattern: "^/old/(.*)", Target: "/new/$1", Regex: regexp.MustCompile("^/old/(.*)")},
+	}
+	handler := New(testLogger, nil, rewrites)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/old/page", nil)
+	rec := httptest.NewRecorder()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		handler.ServeHTTP(rec, req)
+	}
+}
+
+func BenchmarkRegexNoMatch(b *testing.B) {
+	rewrites := []alaye.Rewrite{
+		{Pattern: "^/admin", Target: "/hidden", Regex: regexp.MustCompile("^/admin")},
+	}
+	handler := New(testLogger, nil, rewrites)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/public", nil)
+	rec := httptest.NewRecorder()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		handler.ServeHTTP(rec, req)
+	}
+}
+
+func BenchmarkStripThenRewrite(b *testing.B) {
+	rewrites := []alaye.Rewrite{
+		{Pattern: "^/v1/(.*)", Target: "/v2/$1", Regex: regexp.MustCompile("^/v1/(.*)")},
+	}
+	handler := New(testLogger, []string{"/service"}, rewrites)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/service/v1/data", nil)
+	rec := httptest.NewRecorder()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		handler.ServeHTTP(rec, req)
+	}
+}
+
+func BenchmarkMultiplePrefixes(b *testing.B) {
+	handler := New(testLogger, []string{"/api", "/v1", "/internal", "/service"}, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/service/users", nil)
+	rec := httptest.NewRecorder()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		handler.ServeHTTP(rec, req)
+	}
+}
+
+func BenchmarkMultipleRewrites(b *testing.B) {
+	rewrites := []alaye.Rewrite{
+		{Pattern: "^/api/(.*)", Target: "/internal/$1", Regex: regexp.MustCompile("^/api/(.*)")},
+		{Pattern: "^/v1/(.*)", Target: "/v2/$1", Regex: regexp.MustCompile("^/v1/(.*)")},
+		{Pattern: "^/old/(.*)", Target: "/new/$1", Regex: regexp.MustCompile("^/old/(.*)")},
+	}
+	handler := New(testLogger, nil, rewrites)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/v1/users", nil)
+	rec := httptest.NewRecorder()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		handler.ServeHTTP(rec, req)
+	}
+}
+
+func BenchmarkParallelStripPrefix(b *testing.B) {
+	handler := New(testLogger, []string{"/api"}, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		// Each goroutine gets its own req/rec to avoid data races
+		req := httptest.NewRequest("GET", "/api/users", nil)
+		rec := httptest.NewRecorder()
+		for pb.Next() {
+			handler.ServeHTTP(rec, req)
+			// Reset for next iteration
+			req = httptest.NewRequest("GET", "/api/users", nil)
+			rec = httptest.NewRecorder()
+		}
+	})
+}
+
+func BenchmarkParallelRegexRewrite(b *testing.B) {
+	rewrites := []alaye.Rewrite{
+		{Pattern: "^/users/(\\d+)", Target: "/u/$1", Regex: regexp.MustCompile("^/users/(\\d+)")},
+	}
+	handler := New(testLogger, nil, rewrites)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		req := httptest.NewRequest("GET", "/users/123", nil)
+		rec := httptest.NewRecorder()
+		for pb.Next() {
+			handler.ServeHTTP(rec, req)
+			req = httptest.NewRequest("GET", "/users/123", nil)
+			rec = httptest.NewRecorder()
+		}
+	})
 }
