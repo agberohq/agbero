@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"encoding/json"
 	"maps"
 	"os"
 	"path/filepath"
@@ -20,30 +21,26 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-type routeKey struct {
-	host string
-	path string
-}
+// ClusterRoutePrefix is the key prefix for routes stored in the cluster.
+const ClusterRoutePrefix = "route:"
 
-type routeEntry struct {
-	base      alaye.Route
-	backends  map[string][]alaye.Server
-	lastWrite time.Time
+// routeWrapper mirrors the JSON structure used by the API to avoid import cycles.
+type routeWrapper struct {
+	Route     alaye.Route `json:"route"`
+	ExpiresAt time.Time   `json:"expires_at"`
 }
 
 type Host struct {
 	hostsDir woos.Folder
 
-	mu    sync.RWMutex
-	hosts map[string]*alaye.Host
+	mu               sync.RWMutex
+	hosts            map[string]*alaye.Host // Static file hosts
+	clusterRoutes    map[string]alaye.Route
+	routeExpirations map[string]time.Time
 
 	lookupMap  atomic.Value // map[string]*alaye.Host
 	portLookup atomic.Value // map[string]*alaye.Host
 	routers    atomic.Value // map[string]*matcher.Tree
-
-	dynamicRoutes map[routeKey]*routeEntry
-	nodeIndex     map[string]map[routeKey]struct{}
-	nodeFailures  map[string]int
 
 	watcher *fsnotify.Watcher
 	logger  *ll.Logger
@@ -53,19 +50,14 @@ type Host struct {
 	loaded    bool
 }
 
-func NewHost(hostsDir string, opts ...Option) *Host {
-	return NewHostFolder(woos.NewFolder(hostsDir), opts...)
-}
-
-func NewHostFolder(hostsDir woos.Folder, opts ...Option) *Host {
+func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 	h := &Host{
-		hostsDir:      hostsDir,
-		hosts:         make(map[string]*alaye.Host),
-		dynamicRoutes: make(map[routeKey]*routeEntry),
-		nodeIndex:     make(map[string]map[routeKey]struct{}),
-		nodeFailures:  make(map[string]int),
-		changed:       make(chan struct{}, 1),
-		loaded:        false,
+		hostsDir:         hostsDir,
+		hosts:            make(map[string]*alaye.Host),
+		clusterRoutes:    make(map[string]alaye.Route),
+		routeExpirations: make(map[string]time.Time),
+		changed:          make(chan struct{}, 1),
+		loaded:           false,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -83,18 +75,80 @@ func NewHostFolder(hostsDir woos.Folder, opts ...Option) *Host {
 		jack.WithDebounceMaxWait(2*time.Second),
 	)
 
+	go h.pruneLoop()
+
 	return h
 }
 
-func normalizeHostPath(host, path string) (string, string) {
-	host = strings.ToLower(strings.TrimSpace(host))
-	if path == "" {
-		path = woos.Slash
+// OnClusterChange implements cluster.UpdateHandler.
+func (hm *Host) OnClusterChange(key string, value []byte, deleted bool) {
+	if !strings.HasPrefix(key, ClusterRoutePrefix) {
+		return
 	}
-	if !strings.HasPrefix(path, woos.Slash) {
-		path = woos.Slash + path
+
+	trimmedKey := strings.TrimPrefix(key, ClusterRoutePrefix)
+
+	hm.mu.Lock()
+	if deleted {
+		delete(hm.clusterRoutes, trimmedKey)
+		delete(hm.routeExpirations, trimmedKey)
+		hm.logger.Fields("key", trimmedKey).Info("cluster route removed")
+	} else {
+		var wrapper routeWrapper
+		if err := json.Unmarshal(value, &wrapper); err != nil {
+			// Fallback for backward compatibility
+			var simpleRoute alaye.Route
+			if err2 := json.Unmarshal(value, &simpleRoute); err2 == nil {
+				wrapper.Route = simpleRoute
+			} else {
+				hm.logger.Fields("key", key, "err", err).Error("failed to unmarshal cluster route")
+				hm.mu.Unlock()
+				return
+			}
+		}
+
+		if !wrapper.ExpiresAt.IsZero() && time.Now().After(wrapper.ExpiresAt) {
+			delete(hm.clusterRoutes, trimmedKey)
+			delete(hm.routeExpirations, trimmedKey)
+			hm.logger.Fields("key", trimmedKey).Debug("ignoring expired route update")
+			hm.mu.Unlock()
+			return
+		}
+
+		woos.DefaultRoute(&wrapper.Route)
+		hm.clusterRoutes[trimmedKey] = wrapper.Route
+		if !wrapper.ExpiresAt.IsZero() {
+			hm.routeExpirations[trimmedKey] = wrapper.ExpiresAt
+		} else {
+			delete(hm.routeExpirations, trimmedKey)
+		}
+
+		hm.logger.Fields("key", trimmedKey).Debug("cluster route updated")
 	}
-	return host, path
+	hm.mu.Unlock()
+
+	hm.debouncer.Do(hm.rebuildAndNotify)
+}
+
+func (hm *Host) pruneLoop() {
+	ticker := time.NewTicker(1 * time.Minute)
+	for range ticker.C {
+		hm.mu.Lock()
+		now := time.Now()
+		changed := false
+		for key, exp := range hm.routeExpirations {
+			if !exp.IsZero() && now.After(exp) {
+				delete(hm.clusterRoutes, key)
+				delete(hm.routeExpirations, key)
+				changed = true
+				hm.logger.Fields("key", key).Info("route expired")
+			}
+		}
+		hm.mu.Unlock()
+		if changed {
+			hm.rebuildAndNotify()
+		}
+	}
 }
 
 func (hm *Host) LoadStatic(staticHosts map[string]*alaye.Host) {
@@ -113,93 +167,11 @@ func (hm *Host) LoadStatic(staticHosts map[string]*alaye.Host) {
 	hm.logger.Fields("count", len(staticHosts)).Info("static hosts loaded from memory")
 }
 
-func (hm *Host) UpdateGossipNode(nodeID, host string, route alaye.Route) {
-	hm.mu.Lock()
-	defer hm.mu.Unlock()
-
-	host, path := normalizeHostPath(host, route.Path)
-	if host == "" || nodeID == "" {
-		return
-	}
-	route.Path = path
-
-	servers := route.Backends.Servers
-	if len(servers) == 0 {
-		return
-	}
-
-	for i := range servers {
-		if servers[i].Weight <= 0 {
-			servers[i].Weight = 1
-		}
-	}
-
-	k := routeKey{host: host, path: path}
-
-	ent := hm.dynamicRoutes[k]
-	if ent == nil {
-		base := route
-		base.Path = path
-		base.Web = alaye.Web{}
-		base.Backends.Servers = nil
-
-		if strings.TrimSpace(base.Backends.Strategy) == "" {
-			base.Backends.Strategy = alaye.StrategyRandom
-		}
-
-		ent = &routeEntry{
-			base:      base,
-			backends:  make(map[string][]alaye.Server),
-			lastWrite: time.Now(),
-		}
-		hm.dynamicRoutes[k] = ent
-	}
-
-	ent.backends[nodeID] = servers
-	ent.lastWrite = time.Now()
-
-	if hm.nodeIndex[nodeID] == nil {
-		hm.nodeIndex[nodeID] = make(map[routeKey]struct{})
-	}
-	hm.nodeIndex[nodeID][k] = struct{}{}
-
-	hm.debouncer.Do(hm.rebuildAndNotify)
-	hm.logger.Fields("node", nodeID, "host", host, "path", path).Debug("gossip route queued")
-}
-
-func (hm *Host) RemoveGossipNode(nodeID string) {
-	hm.mu.Lock()
-	defer hm.mu.Unlock()
-
-	keys := hm.nodeIndex[nodeID]
-	if len(keys) == 0 {
-		return
-	}
-
-	for k := range keys {
-		ent := hm.dynamicRoutes[k]
-		if ent == nil {
-			continue
-		}
-		delete(ent.backends, nodeID)
-		if len(ent.backends) == 0 {
-			delete(hm.dynamicRoutes, k)
-		} else {
-			ent.lastWrite = time.Now()
-		}
-	}
-
-	delete(hm.nodeIndex, nodeID)
-
-	hm.debouncer.Do(hm.rebuildAndNotify)
-	hm.logger.Fields("node", nodeID).Info("gossip node removed")
-}
-
 func (hm *Host) rebuildAndNotify() {
 	hm.mu.Lock()
 	hm.rebuildLookupLocked()
 	hm.mu.Unlock()
-	hm.logger.Info("router rebuilt from gossip updates")
+	hm.logger.Info("router rebuilt from updates")
 	hm.notifyChanged()
 }
 
@@ -224,14 +196,6 @@ func (hm *Host) RouteExists(host, path string) bool {
 		}
 	}
 	return false
-}
-
-func (hm *Host) ResetNodeFailures(nodeName string) {
-	hm.mu.Lock()
-	defer hm.mu.Unlock()
-
-	hm.nodeFailures[nodeName] = 0
-	hm.logger.Fields("node", nodeName).Debug("node failures reset")
 }
 
 func (hm *Host) Watch() error {
@@ -471,38 +435,6 @@ func (hm *Host) Changed() <-chan struct{} {
 	return hm.changed
 }
 
-func (hm *Host) Set(domain string, cfg *alaye.Host) {
-	hm.mu.Lock()
-	defer hm.mu.Unlock()
-
-	domain = zulu.NormalizeHost(domain)
-	if domain == "" {
-		return
-	}
-
-	// Clone existing maps
-	currentLookup := hm.lookupMap.Load().(map[string]*alaye.Host)
-	newLookup := make(map[string]*alaye.Host, len(currentLookup)+1)
-	maps.Copy(newLookup, currentLookup)
-
-	currentRouters := hm.routers.Load().(map[string]*matcher.Tree)
-	newRouters := make(map[string]*matcher.Tree, len(currentRouters)+1)
-	maps.Copy(newRouters, currentRouters)
-
-	newLookup[domain] = cfg
-
-	if cfg != nil && len(cfg.Routes) > 0 {
-		tr := matcher.NewTree()
-		for i := range cfg.Routes {
-			_ = tr.Insert(cfg.Routes[i].Path, &cfg.Routes[i])
-		}
-		newRouters[domain] = tr
-	}
-
-	hm.lookupMap.Store(newLookup)
-	hm.routers.Store(newRouters)
-}
-
 func (hm *Host) notifyChanged() {
 	select {
 	case hm.changed <- struct{}{}:
@@ -513,8 +445,8 @@ func (hm *Host) notifyChanged() {
 func (hm *Host) rebuildLookupLocked() {
 	newLookup := make(map[string]*alaye.Host)
 	newPortLookup := make(map[string]*alaye.Host)
-	domainToRoutes := make(map[string][]alaye.Route)
 	domainToConfig := make(map[string]*alaye.Host)
+	domainToRoutes := make(map[string][]alaye.Route)
 
 	for _, cfg := range hm.hosts {
 		for _, port := range cfg.Bind {
@@ -525,87 +457,43 @@ func (hm *Host) rebuildLookupLocked() {
 			if domain == "" {
 				continue
 			}
-			domainToRoutes[domain] = append(domainToRoutes[domain], cfg.Routes...)
 			if _, exists := domainToConfig[domain]; !exists {
 				domainToConfig[domain] = cfg
 			}
+			domainToRoutes[domain] = append(domainToRoutes[domain], cfg.Routes...)
+		}
+	}
+
+	for key, route := range hm.clusterRoutes {
+		parts := strings.SplitN(key, "|", 2)
+		host := parts[0]
+
+		if len(parts) > 1 && route.Path == "" {
+			route.Path = parts[1]
+		}
+		if route.Path == "" {
+			route.Path = "/"
+		}
+
+		domainToRoutes[host] = append(domainToRoutes[host], route)
+
+		if _, exists := domainToConfig[host]; !exists {
+			defaultHost := alaye.NewStaticHost(host, "", true)
+			defaultHost.Routes = nil
+			domainToConfig[host] = defaultHost
 		}
 	}
 
 	for domain, baseCfg := range domainToConfig {
 		combined := *baseCfg
 		combined.Domains = []string{domain}
+
 		rts := domainToRoutes[domain]
 		combined.Routes = make([]alaye.Route, len(rts))
 		copy(combined.Routes, rts)
+
 		hm.sortRoutes(combined.Routes)
 		newLookup[domain] = &combined
-	}
-
-	dynamicMap := make(map[string][]*alaye.Route)
-	for k, ent := range hm.dynamicRoutes {
-		if k.host == "" || ent == nil {
-			continue
-		}
-		var servers []alaye.Server
-		for _, ss := range ent.backends {
-			servers = append(servers, ss...)
-		}
-		if len(servers) == 0 {
-			continue
-		}
-		rt := ent.base
-		rt.Path = k.path
-		rt.Web = alaye.Web{}
-		rt.Backends.Servers = servers
-		dynamicMap[k.host] = append(dynamicMap[k.host], &rt)
-	}
-
-	for domain, dynRoutes := range dynamicMap {
-		existing, ok := newLookup[domain]
-		if ok && existing != nil {
-			combined := *existing
-			combined.Domains = []string{domain}
-			combined.Routes = make([]alaye.Route, len(existing.Routes))
-			copy(combined.Routes, existing.Routes)
-
-			byPath := make(map[string]*alaye.Route, len(combined.Routes))
-			for i := range combined.Routes {
-				p := combined.Routes[i].Path
-				if p == "" {
-					p = woos.Slash
-					combined.Routes[i].Path = woos.Slash
-				}
-				byPath[p] = &combined.Routes[i]
-			}
-
-			for i := range dynRoutes {
-				r := dynRoutes[i]
-				p := r.Path
-				if p == "" {
-					p = woos.Slash
-					r.Path = woos.Slash
-				}
-				if ex, ok := byPath[p]; ok {
-					ex.Backends.Servers = append(ex.Backends.Servers, r.Backends.Servers...)
-				} else {
-					combined.Routes = append(combined.Routes, *r)
-					byPath[p] = &combined.Routes[len(combined.Routes)-1]
-				}
-			}
-			hm.sortRoutes(combined.Routes)
-			newLookup[domain] = &combined
-		} else {
-			var routes []alaye.Route
-			for _, dr := range dynRoutes {
-				routes = append(routes, *dr)
-			}
-			hm.sortRoutes(routes)
-			newLookup[domain] = &alaye.Host{
-				Domains: []string{domain},
-				Routes:  routes,
-			}
-		}
 	}
 
 	newRouters := make(map[string]*matcher.Tree, len(newLookup))
@@ -667,4 +555,35 @@ func (hm *Host) resolveDomain(lookup map[string]*alaye.Host, hostname string) st
 		}
 	}
 	return bestMatch
+}
+
+func (hm *Host) Set(domain string, cfg *alaye.Host) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+
+	domain = zulu.NormalizeHost(domain)
+	if domain == "" {
+		return
+	}
+
+	// Update the internal hosts map to simulate a file load or manual override
+	if cfg == nil {
+		delete(hm.hosts, domain)
+	} else {
+		// Use a key that won't collide with files, or just use domain
+		hm.hosts[domain] = cfg
+	}
+
+	hm.rebuildLookupLocked()
+}
+
+func normalizeHostPath(host, path string) (string, string) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if path == "" {
+		path = woos.Slash
+	}
+	if !strings.HasPrefix(path, woos.Slash) {
+		path = woos.Slash + path
+	}
+	return host, path
 }
