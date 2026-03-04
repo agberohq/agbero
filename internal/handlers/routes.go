@@ -20,8 +20,8 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ipallow"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/rewrite"
+	"git.imaxinacion.net/aibox/agbero/internal/operation"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
-	"git.imaxinacion.net/aibox/agbero/internal/ui"
 	"github.com/olekukonko/ll"
 )
 
@@ -63,7 +63,7 @@ func NewRoute(global *alaye.Global, host *alaye.Host, route *alaye.Route, logger
 }
 
 func newWebRoute(global *alaye.Global, host *alaye.Host, route *alaye.Route, logger *ll.Logger) *Route {
-	chain := http.Handler(ui.NewWeb(logger, route))
+	chain := http.Handler(operation.NewWeb(logger, route))
 
 	if len(route.AllowedIPs) > 0 {
 		chain = ipallow.New(route.AllowedIPs, logger)(chain)

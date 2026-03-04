@@ -33,10 +33,10 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/recovery"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/wasm"
+	"git.imaxinacion.net/aibox/agbero/internal/operation"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/parser"
 	tlss2 "git.imaxinacion.net/aibox/agbero/internal/pkg/tlss"
-	"git.imaxinacion.net/aibox/agbero/internal/ui"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -1293,8 +1293,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveDefaultFavicon(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/x-icon")
 	w.Header().Set("Cache-Control", "public, max-age=31536000")
-	if len(ui.Favicon) > 0 {
-		http.ServeContent(w, r, "favicon.ico", ui.ModTime, bytes.NewReader(ui.Favicon))
+	if len(operation.Favicon) > 0 {
+		http.ServeContent(w, r, "favicon.ico", operation.ModTime, bytes.NewReader(operation.Favicon))
 	} else {
 		w.WriteHeader(http.StatusNotFound)
 	}

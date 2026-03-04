@@ -17,7 +17,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/uptime"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
-	"git.imaxinacion.net/aibox/agbero/internal/ui"
+	"git.imaxinacion.net/aibox/agbero/internal/operation"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/crypto/bcrypt"
@@ -53,7 +53,7 @@ func (s *Server) startAdminServer() {
 
 	mux.HandleFunc("/login", s.handleAdminLogin)
 
-	uiHandler := ui.Admin()
+	uiHandler := operation.Admin()
 	mux.Handle("/", uiHandler)
 
 	apiRouter := api.NewRouter(s.clusterManager, s.logger)

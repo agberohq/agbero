@@ -1,4 +1,4 @@
-package ui
+package operation
 
 import (
 	"embed"
