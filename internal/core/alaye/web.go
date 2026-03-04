@@ -11,6 +11,7 @@ type Web struct {
 	Root    WebRoot `hcl:"root,optional" json:"root"`
 	Index   string  `hcl:"index,optional" json:"index"`
 	Listing bool    `hcl:"listing,optional" json:"listing"`
+	SPA     bool    `hcl:"spa,optional" json:"spa"`
 	PHP     PHP     `hcl:"php,block" json:"php"`
 }
 

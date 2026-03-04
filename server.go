@@ -105,6 +105,7 @@ func NewServer(opts ...Option) *Server {
 }
 
 func (s *Server) Start(configPath string) error {
+	// LOCK: Protect critical state during startup configuration
 	s.mu.Lock()
 	s.configPath = configPath
 	s.mu.Unlock()
@@ -119,6 +120,7 @@ func (s *Server) Start(configPath string) error {
 		s.logger = ll.New(woos.Name).Enable()
 	}
 
+	// 1. Initial Configuration Load
 	if configPath != "" {
 		absConfigPath, err := filepath.Abs(configPath)
 		if err != nil {
@@ -162,6 +164,7 @@ func (s *Server) Start(configPath string) error {
 		return err
 	}
 
+	// 2. Start Background Services
 	s.reaper = jack.NewReaper(
 		woos.RouteCacheTTL,
 		jack.ReaperWithLogger(s.logger),
@@ -181,6 +184,7 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("RouteReaper", s.reaper.Stop)
 	}
 
+	// 3. Load Hosts
 	if configPath != "" {
 		if err := s.hostManager.ReloadFull(); err != nil {
 			s.logger.Fields("err", err).Error("failed to load initial hosts")
@@ -191,6 +195,7 @@ func (s *Server) Start(configPath string) error {
 	hosts, _ := s.hostManager.LoadAll()
 	s.logHostStats(hosts)
 
+	// 4. Initialize Subsystems (Gossip, Firewall, etc.)
 	if s.global.Gossip.Enabled.Active() {
 		gs, err := gossip.NewService(s.hostManager, &s.global.Gossip, s.logger)
 		if err != nil {
@@ -237,6 +242,7 @@ func (s *Server) Start(configPath string) error {
 
 	s.startAdminServer()
 
+	// 5. Prepare Handlers
 	s.activeBaseHandler = http.HandlerFunc(s.handleRequest)
 	s.activeAcmeHandler = s.activeBaseHandler
 
@@ -252,6 +258,7 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
 	}
 
+	// 6. Setup TCP Proxies
 	tcpGroups := make(map[string][]alaye.TCPRoute)
 	for _, host := range hosts {
 		for i := range host.Proxies {
@@ -279,6 +286,7 @@ func (s *Server) Start(configPath string) error {
 	anyStreaming := s.hasStreaming(hosts)
 	usedPorts := make(map[string]bool)
 
+	// 7. Create Listeners (Global HTTP)
 	for _, addr := range s.global.Bind.HTTP {
 		if !strings.Contains(addr, ":") {
 			addr = ":" + addr
@@ -291,6 +299,7 @@ func (s *Server) Start(configPath string) error {
 		s.mu.Unlock()
 	}
 
+	// 8. Create Listeners (Global HTTPS)
 	for _, addr := range s.global.Bind.HTTPS {
 		if !strings.Contains(addr, ":") {
 			addr = ":" + addr
@@ -311,6 +320,7 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
+	// 9. Create Listeners (Per Host)
 	for _, h := range hosts {
 		for _, port := range h.Bind {
 			if usedPorts[port] {
@@ -319,7 +329,7 @@ func (s *Server) Start(configPath string) error {
 			}
 			usedPorts[port] = true
 
-			// Handle ":8080", "8080", or "127.0.0.1:8080" correctly
+			// Normalize addr
 			addr := port
 			if !strings.Contains(port, ":") {
 				addr = ":" + port
@@ -351,12 +361,14 @@ func (s *Server) Start(configPath string) error {
 		return woos.ErrNoBindAddr
 	}
 
+	// Drain any initial signal
 	select {
 	case <-s.hostManager.Changed():
 	default:
 	}
 
-	if s.configPath != "" {
+	// 10. Start Config Watcher
+	if configPath != "" {
 		go func() {
 			for {
 				select {
@@ -373,6 +385,7 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterWithContext("Listeners", s.shutdownImpl)
 	}
 
+	// 11. Start Serving
 	errCh := make(chan error, len(s.servers))
 	s.mu.RLock()
 	for key, srv := range s.servers {

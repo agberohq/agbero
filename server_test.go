@@ -24,6 +24,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/parser"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
@@ -417,19 +418,23 @@ type zapTLSConfig struct {
 }
 
 func TestServer_Reload_DynamicBind(t *testing.T) {
+	// Setup Upstream Backend
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("backend-ok"))
 	}))
 	defer backend.Close()
 
+	// Setup Directories
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts")
-	os.MkdirAll(hostsDir, 0755)
+	if err := os.MkdirAll(hostsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
+	// Create Initial Host Config
 	hostFile := filepath.Join(hostsDir, "dynamic.hcl")
-	// TLS mode "none" to simplify testing (avoids CA generation)
-	initialConfig := fmt.Sprintf(`
+	initialHostConfig := fmt.Sprintf(`
 domains = ["localhost"]
 tls { mode = "none" }
 route "/" {
@@ -438,15 +443,15 @@ route "/" {
   }
 }
 `, backend.URL)
-	os.WriteFile(hostFile, []byte(initialConfig), 0644)
+	writeSyncedFile(t, hostFile, []byte(initialHostConfig))
 
+	// Create Initial Global Config
 	configFile := filepath.Join(tmpDir, "agbero.hcl")
 	mainPort := getFreePort(t)
-	// Give OS time to release mainPort from TIME_WAIT
-	time.Sleep(500 * time.Millisecond)
+	// Allow OS to clean up the port binding from getFreePort
+	time.Sleep(100 * time.Millisecond)
 
-	// Ensure version = 2 is present for parser validation
-	globalContent := fmt.Sprintf(`version = 2
+	initialGlobalConfig := fmt.Sprintf(`version = 2
 bind {
   http = [":%d"]
 }
@@ -455,71 +460,118 @@ storage {
   data_dir = "%s"
 }
 `, mainPort, hostsDir, tmpDir)
-	os.WriteFile(configFile, []byte(globalContent), 0644)
+	writeSyncedFile(t, configFile, []byte(initialGlobalConfig))
 
-	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
+	// Prepare Server Dependencies
+	global, err := parser.LoadGlobal(configFile)
+	if err != nil {
+		t.Fatalf("Failed to parse initial config: %v", err)
+	}
+	woos.DefaultApply(global, configFile)
+
+	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(10 * time.Second))
 	hm := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
 
-	// Pre-load hosts to establish initial state
-	hm.ReloadFull()
+	// Watch must be started for reload to work
+	if err := hm.Watch(); err != nil {
+		t.Fatalf("Failed to start watcher: %v", err)
+	}
+	defer hm.Close()
 
 	s := NewServer(
+		WithGlobalConfig(global),
 		WithHostManager(hm),
 		WithLogger(ll.New("test").Enable()),
 		WithShutdownManager(shutdown),
 	)
 
-	go s.Start(configFile)
+	// start Server
+	go func() {
+		if err := s.Start(configFile); err != nil {
+			t.Logf("Server stopped: %v", err)
+		}
+	}()
 	defer shutdown.TriggerShutdown()
 
+	// Verify Initial Port
 	waitForPort(t, mainPort)
 
+	// Prepare New Port for Reload
 	targetPort := getFreePort(t)
-	// Ensure the new target port is actually free before we try to use it
-	// If it's still open (race condition), wait a bit
-	if isPortOpen(t, targetPort) {
-		time.Sleep(500 * time.Millisecond)
-		if isPortOpen(t, targetPort) {
-			t.Fatalf("Port %d is stuck open", targetPort)
-		}
-	} else {
-		// Even if closed, wait for TIME_WAIT state to clear
-		time.Sleep(500 * time.Millisecond)
+	if targetPort == mainPort {
+		t.Fatal("getFreePort returned the same port as mainPort")
 	}
 
-	// Update host config with new bind.
-	// We use just the number here, relying on Server.Start/Reload to handle normalization.
-	updatedConfig := fmt.Sprintf(`
-domains = ["localhost"]
-bind = ["%d"]
-tls { mode = "none" }
-route "/" {
-  backend {
-    server { address = "%s" }
-  }
+	// Wait for OS to clear TIME_WAIT on the new port
+	time.Sleep(500 * time.Millisecond)
+
+	if isPortOpen(t, targetPort) {
+		t.Fatalf("Port %d is still open (zombie listener?)", targetPort)
+	}
+
+	// Update Configs to Trigger Reload
+	// Update Global Config with NEW port
+	updatedGlobalConfig := fmt.Sprintf(`version = 2
+bind {
+  http = [":%d"]
 }
-`, targetPort, backend.URL)
-	os.WriteFile(hostFile, []byte(updatedConfig), 0644)
+storage {
+  hosts_dir = "%s"
+  data_dir = "%s"
+}
+`, targetPort, hostsDir, tmpDir)
+	writeSyncedFile(t, configFile, []byte(updatedGlobalConfig))
 
-	s.Reload()
+	// Touch Host File to trigger the Watcher -> Reload sequence
+	writeSyncedFile(t, hostFile, []byte(initialHostConfig+" # trigger reload"))
 
+	// Wait for New Port to Open
 	waitForPort(t, targetPort)
 
-	// Use standard HTTP client since we disabled TLS
-	client := &http.Client{}
+	// Verify HTTP connectivity
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+	}
 
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d", targetPort))
+	// CONNECT to 127.0.0.1, but set Host header to "localhost"
+	// because that is what is defined in dynamic.hcl.
+	reqURL := fmt.Sprintf("http://127.0.0.1:%d", targetPort)
+	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
-		t.Fatalf("Failed to connect to dynamic port: %v", err)
+		t.Fatal(err)
+	}
+	req.Host = "localhost"
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Failed to connect to dynamic port %d: %v", targetPort, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		t.Errorf("Expected 200, got %d", resp.StatusCode)
+		t.Errorf("Expected 200 OK, got %d", resp.StatusCode)
+	}
+}
+
+// writeSyncedFile ensures data is flushed to disk to help fsnotify pick it up reliably
+func writeSyncedFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Sync(); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func getFreePort(t *testing.T) int {
+	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -529,20 +581,22 @@ func getFreePort(t *testing.T) int {
 }
 
 func waitForPort(t *testing.T, port int) {
-	// Increased deadline for slower environments/TLS gen
+	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
+		timeout := 200 * time.Millisecond
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), timeout)
 		if err == nil {
 			conn.Close()
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("Timeout waiting for port %d", port)
+	t.Fatalf("Timeout waiting for port %d to open", port)
 }
 
 func isPortOpen(t *testing.T, port int) bool {
+	t.Helper()
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
 	if err == nil {
 		conn.Close()
