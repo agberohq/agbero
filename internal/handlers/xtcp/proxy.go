@@ -1,7 +1,6 @@
 package xtcp
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -251,10 +250,7 @@ func (p *Proxy) handle(src net.Conn) {
 
 	var client net.Conn = src
 	if readBytes && n > 0 {
-		client = &peekedConn{
-			Conn:   src,
-			reader: io.MultiReader(bytes.NewReader(peekBuf[:n]), src),
-		}
+		client = newPeekedConn(src, peekBuf[:n])
 	}
 
 	tried := make(map[*Backend]struct{}, 4)
