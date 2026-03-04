@@ -24,6 +24,7 @@ type Global struct {
 	Gossip      Gossip      `hcl:"gossip,block" json:"gossip"`
 	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt"`
 	Fallback    Fallback    `hcl:"fallback,block" json:"fallback"`
+	ErrorPages  ErrorPages  `hcl:"error_pages,block" json:"error_pages"`
 }
 
 func (g *Global) Validate() error {
@@ -65,6 +66,10 @@ func (g *Global) Validate() error {
 
 	if err := g.Fallback.Validate(); err != nil {
 		return errors.Newf("fallback: %w", err)
+	}
+
+	if err := g.ErrorPages.Validate(); err != nil {
+		return errors.Newf("global error_pages: %w", err)
 	}
 
 	return nil

@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	testLogger = ll.New("").Suspend()
+	testLogger = ll.New("").Disable()
 )
 
 func TestRewrite(t *testing.T) {

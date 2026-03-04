@@ -10,3 +10,4 @@ exclude_files {
 use_gitignore = true
 detailed = false
 go_mode = "code"
+minify = false

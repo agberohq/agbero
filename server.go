@@ -1,4 +1,3 @@
-// server.go
 package agbero
 
 import (
@@ -1260,7 +1259,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	res := router.Find(r.URL.Path)
 	if res.Route != nil {
 		rw := &zulu.ResponseWriter{ResponseWriter: w, StatusCode: 200}
-		s.handleRoute(rw, r, res.Route, hcfg.Domains)
+		s.handleRoute(rw, r, res.Route, hcfg)
 		s.logRequest(host, r, start, rw.StatusCode, rw.BytesWritten)
 		return
 	}
@@ -1279,7 +1278,7 @@ func (s *Server) serveDefaultFavicon(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alaye.Route, domains []string) {
+func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alaye.Route, host *alaye.Host) {
 	ctx := context.WithValue(r.Context(), woos.CtxOriginalPath, r.URL.Path)
 	reqOut := r.WithContext(ctx)
 
@@ -1305,7 +1304,7 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	}
 
 	routeKey := route.Key()
-	var handler http.Handler = s.getOrBuildRouteHandler(route, routeKey, domains)
+	var handler http.Handler = s.getOrBuildRouteHandler(route, host)
 
 	if route.Wasm.Enabled.Active() {
 		wm, err := s.getWasmManager(&route.Wasm, routeKey)
@@ -1330,7 +1329,8 @@ func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request, route *alay
 	handler.ServeHTTP(w, reqOut)
 }
 
-func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string, domains []string) *handlers.Route {
+func (s *Server) getOrBuildRouteHandler(route *alaye.Route, host *alaye.Host) *handlers.Route {
+	key := route.Key()
 	if it, ok := zulu.Route.Load(key); ok {
 		if h, ok := it.Value.(*handlers.Route); ok {
 			s.reaper.Touch(key)
@@ -1338,7 +1338,7 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route, key string, domains 
 		}
 	}
 
-	h := handlers.NewRoute(s.global, route, domains, s.logger)
+	h := handlers.NewRoute(s.global, host, route, s.logger)
 	newItem := &mappo.Item{
 		Value: h,
 	}

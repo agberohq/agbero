@@ -14,7 +14,7 @@ func TestRedisCache(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping Redis tests in short mode")
 	}
-	logger := ll.New("").Suspend()
+	logger := ll.New("").Disable()
 	cfg := &alaye.Cache{
 		Enabled: alaye.Active,
 		Driver:  "redis",
@@ -192,7 +192,7 @@ func TestRedisStoreOptions(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping Redis tests in short mode")
 	}
-	logger := ll.New("").Suspend()
+	logger := ll.New("").Disable()
 	tests := []struct {
 		name    string
 		options map[string]string

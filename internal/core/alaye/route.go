@@ -12,8 +12,11 @@ type Route struct {
 	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
 	Path    string  `hcl:"path,label" json:"path"`
 
-	StripPrefixes []string `hcl:"strip_prefixes,optional" json:"strip_prefixes"`
-	AllowedIPs    []string `hcl:"allowed_ips,optional" json:"allowed_ips"`
+	// Path Manipulation
+	StripPrefixes []string  `hcl:"strip_prefixes,optional" json:"strip_prefixes"`
+	Rewrites      []Rewrite `hcl:"rewrite,block" json:"rewrites"`
+
+	AllowedIPs []string `hcl:"allowed_ips,optional" json:"allowed_ips"`
 
 	Web      Web     `hcl:"web,block" json:"web"`
 	Backends Backend `hcl:"backend,block" json:"backends"`
@@ -28,6 +31,9 @@ type Route struct {
 	OAuth       OAuth       `hcl:"o_auth,block" json:"oauth"`
 
 	Headers           Headers       `hcl:"headers,block" json:"headers"`
+	CORS              CORS          `hcl:"cors,block" json:"cors"`
+	Cache             Cache         `hcl:"cache,block" json:"cache"`
+	ErrorPages        ErrorPages    `hcl:"error_pages,block" json:"error_pages"`
 	Wasm              Wasm          `hcl:"wasm,block" json:"wasm"`
 	RateLimit         RouteRate     `hcl:"rate_limit,block" json:"rate_limit"`
 	Firewall          FirewallRoute `hcl:"firewall,block" json:"firewall"`
@@ -55,6 +61,24 @@ func (r *Route) Validate() error {
 
 	if err := r.RateLimit.Validate(); err != nil {
 		return errors.Newf("rate_limit: %w", err)
+	}
+
+	if err := r.CORS.Validate(); err != nil {
+		return errors.Newf("cors: %w", err)
+	}
+
+	if err := r.Cache.Validate(); err != nil {
+		return errors.Newf("cache: %w", err)
+	}
+
+	if err := r.ErrorPages.Validate(); err != nil {
+		return errors.Newf("route error_pages: %w", err)
+	}
+
+	for i, rw := range r.Rewrites {
+		if err := rw.Validate(); err != nil {
+			return errors.Newf("rewrite[%d]: %w", i, err)
+		}
 	}
 
 	if r.Firewall.Status.Active() {
@@ -307,6 +331,28 @@ func (r *Route) Key() string {
 		for _, rule := range r.Firewall.Rules {
 			w.WriteString(rule.Name)
 		}
+	}
+
+	if r.CORS.Enabled.Active() {
+		w.WriteString("cors")
+		for _, o := range r.CORS.AllowedOrigins {
+			w.WriteString(o)
+		}
+	}
+
+	for _, rw := range r.Rewrites {
+		w.WriteString(rw.Pattern)
+		w.WriteString(rw.Target)
+	}
+
+	for _, sp := range r.StripPrefixes {
+		w.WriteString(sp)
+	}
+
+	if r.Cache.Enabled.Active() {
+		w.WriteString("cache")
+		w.WriteString(r.Cache.Driver)
+		w.WriteString(r.Cache.TTL.String())
 	}
 
 	return fmt.Sprintf("%x", w.Sum64())

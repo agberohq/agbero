@@ -12,7 +12,7 @@ import (
 )
 
 func TestCacheMiddleware(t *testing.T) {
-	logger := ll.New("").Suspend()
+	logger := ll.New("").Disable()
 	tests := []struct {
 		name           string
 		config         *alaye.Cache
@@ -234,7 +234,7 @@ func TestCacheMiddleware(t *testing.T) {
 }
 
 func TestCacheDisabled(t *testing.T) {
-	logger := ll.New("").Suspend()
+	logger := ll.New("").Disable()
 	cfg := &alaye.Cache{
 		Enabled: alaye.Inactive,
 	}

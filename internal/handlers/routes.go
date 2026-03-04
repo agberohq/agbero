@@ -10,11 +10,15 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/xhttp"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/attic"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/compress"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/cors"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/errorpages"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/headers"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ipallow"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
+	"git.imaxinacion.net/aibox/agbero/internal/middleware/rewrite"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/ui"
 	"github.com/olekukonko/ll"
@@ -26,7 +30,7 @@ type Route struct {
 }
 
 // NewRoute updated to accept domains
-func NewRoute(global *alaye.Global, route *alaye.Route, domains []string, logger *ll.Logger) *Route {
+func NewRoute(global *alaye.Global, host *alaye.Host, route *alaye.Route, logger *ll.Logger) *Route {
 	if route == nil {
 		return FallbackRoute("nil route")
 	}
@@ -35,44 +39,65 @@ func NewRoute(global *alaye.Global, route *alaye.Route, domains []string, logger
 		logger.Fields("path", route.Path, "err", err).Error("invalid route config")
 		return FallbackRoute("invalid route config: " + err.Error())
 	}
+
 	isWebRoute := route.Web.Root.IsSet()
 	hasBackends := len(route.Backends.Servers) > 0
+
 	if isWebRoute && hasBackends {
-		logger.Fields("path", route.Path).Error("route cannot have both web root and backends")
 		return FallbackRoute("route cannot have both web and proxy config")
 	}
+
 	if isWebRoute {
-		return newWebRoute(route, &global.RateLimits, &global.Fallback, logger)
+		return newWebRoute(global, host, route, logger)
 	}
 	if hasBackends {
-		return newProxyRoute(route, domains, &global.RateLimits, &global.Fallback, logger)
+		return newProxyRoute(global, host, route, logger)
 	}
-	logger.Fields("path", route.Path).Error("route has neither web root nor backends")
+
 	return FallbackRoute("route has no handler configuration")
 }
 
-func newWebRoute(route *alaye.Route, globalRate *alaye.GlobalRate, globalFallback *alaye.Fallback, logger *ll.Logger) *Route {
+func newWebRoute(global *alaye.Global, host *alaye.Host, route *alaye.Route, logger *ll.Logger) *Route {
 	chain := http.Handler(ui.NewWeb(logger, route))
+
 	if len(route.AllowedIPs) > 0 {
 		chain = ipallow.New(route.AllowedIPs, logger)(chain)
 	}
+
 	chain = auth.JWT(&route.JWTAuth)(chain)
 	chain = auth.Basic(&route.BasicAuth)(chain)
 	chain = auth.Forward(&route.ForwardAuth)(chain)
-	if rl := buildRouteLimiter(&route.RateLimit, globalRate); rl != nil {
+	chain = auth.OAuth(&route.OAuth)(chain)
+
+	if rl := buildRouteLimiter(&route.RateLimit, &global.RateLimits); rl != nil {
 		chain = rl.Handler(chain)
 	}
+
 	chain = headers.Headers(&route.Headers)(chain)
 	chain = compress.Compress(route)(chain)
+
+	// Cache
+	chain = attic.New(&route.Cache, logger)(chain)
+
+	// Error Pages
+	errCfg := errorpages.Config{
+		RoutePages:  route.ErrorPages,
+		HostPages:   host.ErrorPages,
+		GlobalPages: global.ErrorPages,
+	}
+	chain = errorpages.New(errCfg)(chain)
+
+	chain = cors.New(&route.CORS)(chain)
+	chain = rewrite.New(logger, route.StripPrefixes, route.Rewrites)(chain)
+
 	return &Route{handler: chain, Backends: nil}
 }
 
 // newProxyRoute updated to pass domains
-func newProxyRoute(route *alaye.Route, domains []string, globalRate *alaye.GlobalRate, globalFallback *alaye.Fallback, logger *ll.Logger) *Route {
+func newProxyRoute(global *alaye.Global, host *alaye.Host, route *alaye.Route, logger *ll.Logger) *Route {
 	var backends []*xhttp.Backend
 	for i, backendCfg := range route.Backends.Servers {
-		// Pass domains here
-		b, err := xhttp.NewBackend(backendCfg, route, domains, logger, metrics.DefaultRegistry)
+		b, err := xhttp.NewBackend(backendCfg, route, host.Domains, logger, metrics.DefaultRegistry)
 		if err != nil {
 			logger.Fields("index", i, "backend", backendCfg.Address, "err", err).Error("failed to create backend")
 			continue
@@ -80,7 +105,7 @@ func newProxyRoute(route *alaye.Route, domains []string, globalRate *alaye.Globa
 		backends = append(backends, b)
 	}
 
-	fallbackCfg := resolveFallback(&route.Fallback, globalFallback)
+	fallbackCfg := resolveFallback(&route.Fallback, &global.Fallback)
 	var fallbackHandler http.Handler
 	if fallbackCfg.IsActive() {
 		fallbackHandler = buildFallbackHandler(fallbackCfg, logger)
@@ -88,13 +113,8 @@ func newProxyRoute(route *alaye.Route, domains []string, globalRate *alaye.Globa
 
 	if len(backends) == 0 {
 		if fallbackHandler != nil {
-			logger.Fields("path", route.Path, "fallback_type", fallbackCfg.Type).Info("using fallback handler (no valid backends)")
-			return &Route{
-				handler:  fallbackHandler,
-				Backends: nil,
-			}
+			return &Route{handler: fallbackHandler, Backends: nil}
 		}
-		logger.Fields("path", route.Path, "configured", len(route.Backends.Servers)).Warn("proxy route has no valid backends")
 		return FallbackRoute("proxy route missing backends")
 	}
 
@@ -103,20 +123,46 @@ func newProxyRoute(route *alaye.Route, domains []string, globalRate *alaye.Globa
 		timeout = route.Timeouts.Request
 	}
 
-	loadBalancer := xhttp.NewBalancer(backends, route.Backends.Strategy, timeout, route.StripPrefixes, fallbackHandler)
+	balancerCfg := xhttp.Config{
+		Strategy: route.Backends.Strategy,
+		Timeout:  timeout,
+		Fallback: fallbackHandler,
+	}
+
+	loadBalancer := xhttp.NewBalancer(balancerCfg, backends)
 
 	var chain http.Handler = loadBalancer
+
 	if len(route.AllowedIPs) > 0 {
 		chain = ipallow.New(route.AllowedIPs, logger)(chain)
 	}
+
 	chain = auth.JWT(&route.JWTAuth)(chain)
 	chain = auth.Basic(&route.BasicAuth)(chain)
 	chain = auth.Forward(&route.ForwardAuth)(chain)
-	if rl := buildRouteLimiter(&route.RateLimit, globalRate); rl != nil {
+	chain = auth.OAuth(&route.OAuth)(chain)
+
+	if rl := buildRouteLimiter(&route.RateLimit, &global.RateLimits); rl != nil {
 		chain = rl.Handler(chain)
 	}
+
 	chain = headers.Headers(&route.Headers)(chain)
 	chain = compress.Compress(route)(chain)
+
+	// Cache
+	chain = attic.New(&route.Cache, logger)(chain)
+
+	// Error Pages
+	errCfg := errorpages.Config{
+		RoutePages:  route.ErrorPages,
+		HostPages:   host.ErrorPages,
+		GlobalPages: global.ErrorPages,
+	}
+	chain = errorpages.New(errCfg)(chain)
+
+	chain = cors.New(&route.CORS)(chain)
+	chain = rewrite.New(logger, route.StripPrefixes, route.Rewrites)(chain)
+
 	return &Route{handler: chain, Backends: backends}
 }
 

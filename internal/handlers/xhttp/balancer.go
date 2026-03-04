@@ -12,18 +12,17 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
 )
 
-// Balancer wraps the core/lb logic for HTTP backends, handling strategy composition.
 type Balancer struct {
-	lb          lb.Balancer
-	adaptive    *lb.Adaptive
-	timeout     time.Duration
-	stripPrefix []string
-	strategy    string
-	fallback    http.Handler
+	lb       lb.Balancer
+	adaptive *lb.Adaptive
+	timeout  time.Duration
+	strategy string
+	fallback http.Handler
 }
 
-// NewBalancer creates a configured balancer chain (Selector -> Adaptive -> Sticky).
-func NewBalancer(backends []*Backend, strategy string, timeout time.Duration, stripPrefixes []string, fallback http.Handler) *Balancer {
+// NewBalancer accepts a Config object and the list of backends.
+// The stripPrefix logic is removed from here as it is now handled by middleware.
+func NewBalancer(cfg Config, backends []*Backend) *Balancer {
 	wrapped := make([]lb.Backend, 0, len(backends))
 	for _, b := range backends {
 		if b != nil {
@@ -31,13 +30,13 @@ func NewBalancer(backends []*Backend, strategy string, timeout time.Duration, st
 		}
 	}
 
-	baseStrat := lb.ParseStrategy(strategy)
+	baseStrat := lb.ParseStrategy(cfg.Strategy)
 	baseSelector := lb.NewSelector(wrapped, baseStrat)
 
 	var root lb.Balancer = baseSelector
 	var adaptiveRef *lb.Adaptive
 
-	s := strings.ToLower(strategy)
+	s := strings.ToLower(cfg.Strategy)
 
 	if strings.Contains(s, alaye.StrategyAdaptive) {
 		adaptiveRef = lb.NewAdaptive(root, 0.15)
@@ -55,16 +54,14 @@ func NewBalancer(backends []*Backend, strategy string, timeout time.Duration, st
 	}
 
 	return &Balancer{
-		lb:          root,
-		adaptive:    adaptiveRef,
-		timeout:     timeout,
-		stripPrefix: append([]string(nil), stripPrefixes...),
-		strategy:    strategy,
-		fallback:    fallback,
+		lb:       root,
+		adaptive: adaptiveRef,
+		timeout:  cfg.Timeout,
+		strategy: cfg.Strategy,
+		fallback: cfg.Fallback,
 	}
 }
 
-// Update refreshes the backend list across the entire balancer chain.
 func (b *Balancer) Update(list []*Backend) {
 	wrapped := make([]lb.Backend, 0, len(list))
 	for _, backend := range list {
@@ -75,7 +72,6 @@ func (b *Balancer) Update(list []*Backend) {
 	b.lb.Update(wrapped)
 }
 
-// ServeHTTP handles the request lifecycle including backend selection, timeouts, and metric recording.
 func (b *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	be := b.Pick(r)
 	if be == nil {
@@ -107,7 +103,6 @@ func (b *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Pick selects a concrete Backend using the configured load balancing chain.
 func (b *Balancer) Pick(r *http.Request) *Backend {
 	pick := b.lb.Pick(r, func() uint64 { return b.hashKey(r) })
 
@@ -120,7 +115,6 @@ func (b *Balancer) Pick(r *http.Request) *Backend {
 	return nil
 }
 
-// hashKey generates a consistent hash key for IP/URL strategies.
 func (b *Balancer) hashKey(r *http.Request) uint64 {
 	if strings.Contains(b.strategy, alaye.StrategyIPHash) || strings.Contains(b.strategy, alaye.StrategyConsistentHash) {
 		ip := clientip.ClientIP(r)

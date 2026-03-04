@@ -8,15 +8,18 @@ import (
 )
 
 type Host struct {
-	Domains      []string   `hcl:"domains" json:"domains"`
-	Bind         []string   `hcl:"bind,optional" json:"bind"`
-	NotFoundPage string     `hcl:"not_found_page,optional" json:"not_found_page"`
-	Compression  bool       `hcl:"compression,optional" json:"compression"`
-	TLS          TLS        `hcl:"tls,block" json:"tls"`
-	Limits       Limit      `hcl:"limits,block" json:"limits"`
-	Headers      Headers    `hcl:"headers,block" json:"headers"`
-	Routes       []Route    `hcl:"route,block" json:"routes"`
-	Proxies      []TCPRoute `hcl:"proxy,block" json:"proxies"` // Renamed & Tag Updated
+	Domains      []string `hcl:"domains" json:"domains"`
+	Bind         []string `hcl:"bind,optional" json:"bind"`
+	NotFoundPage string   `hcl:"not_found_page,optional" json:"not_found_page"`
+	Compression  bool     `hcl:"compression,optional" json:"compression"`
+
+	TLS        TLS        `hcl:"tls,block" json:"tls"`
+	Limits     Limit      `hcl:"limits,block" json:"limits"`
+	Headers    Headers    `hcl:"headers,block" json:"headers"`
+	ErrorPages ErrorPages `hcl:"error_pages,block" json:"error_pages"`
+
+	Routes  []Route    `hcl:"route,block" json:"routes"`
+	Proxies []TCPRoute `hcl:"proxy,block" json:"proxies"`
 }
 
 func (h *Host) Validate() error {
@@ -67,6 +70,10 @@ func (h *Host) Validate() error {
 
 	if err := h.Headers.Validate(); err != nil {
 		return errors.Newf("headers: %w", err)
+	}
+
+	if err := h.ErrorPages.Validate(); err != nil {
+		return errors.Newf("host error_pages: %w", err)
 	}
 
 	return nil

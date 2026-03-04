@@ -64,7 +64,8 @@ func DefaultRoute(r *alaye.Route) {
 	} else if hasBackends {
 		defaultProxyRoute(r)
 	}
-
+	defaultCORS(&r.CORS)
+	defaultCache(&r.Cache)
 	defaultFallback(&r.Fallback)
 }
 
@@ -573,6 +574,44 @@ func defaultFallback(f *alaye.Fallback) {
 	}
 }
 
+func defaultCORS(c *alaye.CORS) {
+	if c.Enabled.NotActive() {
+		// Auto-enable if configured but status unknown
+		if len(c.AllowedOrigins) > 0 {
+			c.Enabled = alaye.Active
+		} else {
+			return
+		}
+	}
+
+	if len(c.AllowedOrigins) == 0 {
+		c.AllowedOrigins = []string{"*"}
+	}
+	if len(c.AllowedMethods) == 0 {
+		c.AllowedMethods = []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+	}
+	if len(c.AllowedHeaders) == 0 {
+		c.AllowedHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With"}
+	}
+	if c.MaxAge == 0 {
+		c.MaxAge = 86400 // 24 hours
+	}
+}
+
+func defaultCache(c *alaye.Cache) {
+	if c.Enabled.NotActive() {
+		return
+	}
+	if c.TTL == 0 {
+		c.TTL = 5 * time.Minute
+	}
+	if len(c.Methods) == 0 {
+		c.Methods = []string{"GET", "HEAD"}
+	}
+	if c.Driver == "" {
+		c.Driver = "memory"
+	}
+}
 func compileCondition(c *alaye.Condition) {
 	if c.Pattern != "" && c.Compiled == nil {
 		c.Compiled = regexp.MustCompile(c.Pattern)
