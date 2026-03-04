@@ -254,7 +254,7 @@ func (h *helper) validateConfig(configFile string) error {
 		return err
 	}
 	hostsFolder := woos.NewFolder(global.Storage.HostsDir)
-	hm := discovery.NewHostFolder(hostsFolder, discovery.WithLogger(h.logger))
+	hm := discovery.NewHost(hostsFolder, discovery.WithLogger(h.logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err
@@ -269,7 +269,7 @@ func (h *helper) listHosts(configFile string) error {
 		return err
 	}
 	hostsFolder := woos.NewFolder(global.Storage.HostsDir)
-	hm := discovery.NewHostFolder(hostsFolder, discovery.WithLogger(h.logger))
+	hm := discovery.NewHost(hostsFolder, discovery.WithLogger(h.logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err
@@ -328,6 +328,10 @@ func (h *helper) showHelpExamples(configPath string) {
 	fmt.Printf("  %s run              # Run using discovered config\n", exeName)
 	fmt.Printf("  %s run --dev        # Run with debug logging\n", exeName)
 	fmt.Printf("  %s reload           # Hot reload running instance\n", exeName)
+	fmt.Println("")
+	fmt.Println("API MANAGEMENT:")
+	fmt.Printf("  %s key init         # Generate API master key\n", exeName)
+	fmt.Printf("  %s key gen -s myapp # Generate token for app 'myapp'\n", exeName)
 	fmt.Println("")
 	fmt.Println("SERVICE MANAGEMENT:")
 	if runtime.GOOS == woos.Windows {
@@ -461,121 +465,90 @@ func (h *helper) handleCertCommands(install, uninstall, list, info bool, force b
 
 func (h *helper) handleKeyCommands(init, gen bool, service string, ttl time.Duration) {
 	if init {
-		target := "server.key"
-		global, err := h.loadConfig(configPath)
-		if err == nil && global.Gossip.PrivateKeyFile != "" {
-			target = global.Gossip.PrivateKeyFile
-		}
-		if err := security.GenerateNewKeyFile(target); err != nil {
-			h.logger.Fatal("Error generating key: ", err)
-		}
-		h.logger.Info("Generated private key: ", target)
+		h.handleKeyInit()
 		return
 	}
 	if gen {
-		if service == "" {
-			h.logger.Fatal("Error: --service name is required")
-		}
-		global, err := h.loadConfig(configPath)
-		if err != nil {
-			h.logger.Fatal("Error loading config: ", err)
-		}
-		if global.Gossip.PrivateKeyFile == "" {
-			h.logger.Fatal("Error: 'gossip.private_key_file' is not set")
-		}
-		tm, err := security.LoadKeys(global.Gossip.PrivateKeyFile)
-		if err != nil {
-			h.logger.Fatal("Error loading private key: ", err)
-		}
-		token, err := tm.Mint(service, ttl)
-		if err != nil {
-			h.logger.Fatal("Error minting token: ", err)
-		}
-		h.logger.Println(token)
+		h.handleKeyGen(service, ttl)
 		return
 	}
 	flaggy.ShowHelpAndExit("key")
 }
 
-func (h *helper) handleGossipCommands(init, token, secret, status bool, service string, ttl time.Duration) {
-	if init {
-		h.handleGossipInit(configPath)
-		return
-	}
-	if token {
-		h.handleGossipToken(configPath, service, ttl)
-		return
-	}
-	if secret {
-		h.handleGossipSecret()
-		return
-	}
-	if status {
-		h.handleGossipStatus(configPath)
-		return
-	}
-	h.showGossipHelp()
-}
-
-func (h *helper) handleGossipInit(configPath string) {
+func (h *helper) handleKeyInit() {
 	global, err := h.loadConfig(configPath)
-	if err != nil {
-		h.logger.Fatal("Error loading config: ", err)
-	}
-	certsDir := woos.NewFolder(global.Storage.CertsDir)
-	keyPath := filepath.Join(certsDir.Path(), "gossip.key")
-	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
-		h.logger.Info("Generating gossip private key...")
-		if err := security.GenerateNewKeyFile(keyPath); err != nil {
-			h.logger.Fatal("Failed to generate key: ", err)
-		}
-		_ = os.Chmod(keyPath, 0600)
-		h.logger.Info("Generated gossip key: ", keyPath)
+	var targetPath string
+
+	if err == nil && global.API.PrivateKeyFile != "" {
+		targetPath = global.API.PrivateKeyFile
 	} else {
-		h.logger.Info("Gossip key already exists: ", keyPath)
+		// Default location if config not set
+		sysPaths := woos.DefaultPaths()
+		targetPath = filepath.Join(sysPaths.CertsDir.Path(), "api.key")
 	}
-	fmt.Println("\n[ACTION REQUIRED] Gossip configuration guide:")
-	fmt.Println("===========================================")
-	fmt.Printf("1. Private key location: %s\n", keyPath)
-	fmt.Println("2. You MUST add this block to your agbero.hcl to enable gossip:")
+
+	if _, err := os.Stat(targetPath); err == nil {
+		h.logger.Warn("key file already exists: ", targetPath)
+		return
+	}
+
+	// Ensure dir exists
+	dir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		h.logger.Fatal("failed to create directory: ", err)
+	}
+
+	if err := security.GenerateNewKeyFile(targetPath); err != nil {
+		h.logger.Fatal("failed to generate key: ", err)
+	}
+
+	h.logger.Info("generated API private key: ", targetPath)
+	fmt.Println("\nAdd this to your agbero.hcl:")
 	fmt.Printf(`
-gossip {
+api {
   enabled = true
-  port    = 7946
+  address = ":9091"
   private_key_file = "%s"
-  # seeds = ["node2:7946"]
-}`, keyPath)
-	fmt.Println("\n===========================================")
+}
+`, targetPath)
 }
 
-func (h *helper) handleGossipToken(configPath string, service string, ttl time.Duration) {
+func (h *helper) handleKeyGen(service string, ttl time.Duration) {
 	if service == "" {
-		h.logger.Fatal("Error: --service flag is required for gossip token")
+		h.logger.Fatal("error: --service name is required")
 	}
+
 	global, err := h.loadConfig(configPath)
 	if err != nil {
-		h.logger.Fatal("Error loading config: ", err)
+		h.logger.Fatal("failed to load config: ", err)
 	}
-	if global.Gossip.Enabled.NotActive() || global.Gossip.PrivateKeyFile == "" {
-		h.logger.Fatal("Gossip is disabled in config. Run 'agbero gossip init' AND update your config file.")
+
+	if global.API.PrivateKeyFile == "" {
+		h.logger.Fatal("error: 'api.private_key_file' is not set in config")
 	}
-	tm, err := security.LoadKeys(global.Gossip.PrivateKeyFile)
+
+	tm, err := security.LoadKeys(global.API.PrivateKeyFile)
 	if err != nil {
-		h.logger.Fatal("Error loading gossip key: ", err)
+		h.logger.Fatal("failed to load private key: ", err)
 	}
+
 	if ttl == 0 {
-		ttl = 720 * time.Hour
+		ttl = 365 * 24 * time.Hour // Default 1 year
 	}
+
 	token, err := tm.Mint(service, ttl)
 	if err != nil {
-		h.logger.Fatal("Error generating token: ", err)
+		h.logger.Fatal("failed to mint token: ", err)
 	}
-	fmt.Printf("\nGossip token for service: %s\n", service)
-	fmt.Printf("TTL: %s\n", ttl)
+
+	fmt.Printf("\nAPI Token for service: %s\n", service)
+	fmt.Printf("Expires: %s (%s)\n", time.Now().Add(ttl).Format(time.RFC3339), ttl)
+	fmt.Println("------------------------------------------------------------")
 	fmt.Println(token)
+	fmt.Println("------------------------------------------------------------")
 }
 
-func (h *helper) handleGossipSecret() {
+func (h *helper) handleClusterSecret() {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		h.logger.Fatal("Random generation failed: ", err)
@@ -591,59 +564,6 @@ func (h *helper) handleGossipSecret() {
 	fmt.Println("gossip {")
 	fmt.Printf("  secret_key = \"b64.%s\"\n", encoded)
 	fmt.Println("}")
-}
-
-func (h *helper) handleGossipStatus(configPath string) {
-	global, err := h.loadConfig(configPath)
-	if err != nil {
-		h.logger.Fatal("Error loading config: ", err)
-	}
-	fmt.Println("\nGossip Configuration Active")
-	fmt.Println("===========================")
-	if !global.Gossip.Enabled.Active() {
-		fmt.Println("Active: DISABLED")
-		return
-	}
-	fmt.Println("Active: ENABLED")
-	fmt.Printf("Port: %d\n", global.Gossip.Port)
-
-	if global.Gossip.PrivateKeyFile != "" {
-		if _, err := os.Stat(global.Gossip.PrivateKeyFile); err == nil {
-			fmt.Printf("Private key: %s (exists)\n", global.Gossip.PrivateKeyFile)
-			if _, err := security.LoadKeys(global.Gossip.PrivateKeyFile); err == nil {
-				fmt.Println("Key status: VALID")
-			} else {
-				fmt.Printf("Key status: INVALID (%v)\n", err)
-			}
-		} else {
-			fmt.Printf("Private key: %s (NOT FOUND)\n", global.Gossip.PrivateKeyFile)
-		}
-	} else {
-		fmt.Println("Private key: NOT CONFIGURED")
-	}
-
-	if len(global.Gossip.Seeds) > 0 {
-		fmt.Printf("Cluster seeds: %v\n", global.Gossip.Seeds)
-	} else {
-		fmt.Println("Cluster seeds: none (standalone mode)")
-	}
-
-	if global.Gossip.SecretKey != "" {
-		fmt.Println("Encryption: ENABLED")
-	} else {
-		fmt.Println("Encryption: DISABLED (Warning: Cluster traffic is unencrypted)")
-	}
-}
-
-func (h *helper) showGossipHelp() {
-	exeName := h.getExecutableName()
-	fmt.Printf("\n%s gossip - Manage gossip cluster configuration\n", exeName)
-	fmt.Println("================================================")
-	fmt.Println("Commands:")
-	fmt.Printf("  %s gossip init              Generate gossip key\n", exeName)
-	fmt.Printf("  %s gossip secret            Generate encryption secret\n", exeName)
-	fmt.Printf("  %s gossip token --service X Generate auth token\n", exeName)
-	fmt.Printf("  %s gossip status            Show status\n", exeName)
 }
 
 func (h *helper) generateSecureKey(n int) (string, error) {

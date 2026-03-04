@@ -38,9 +38,8 @@ var (
 	forceCAInstall bool
 	certDir        string
 
-	gossipService string
-	gossipTTL     time.Duration
-	enableGossip  bool
+	// Cluster (formerly Gossip)
+	clusterSecret bool
 
 	servePath   string = "."
 	servePort   int    = 8000
@@ -74,6 +73,7 @@ func main() {
 
 	flaggy.String(&configPath, "c", "config", "Path to configuration file")
 
+	// --- Scaffolding & Service ---
 	cmdInit := flaggy.NewSubcommand("init")
 	cmdInit.Description = "Scaffold configuration in current directory (no service)"
 
@@ -93,7 +93,6 @@ func main() {
 	cmdRun := flaggy.NewSubcommand("run")
 	cmdRun.Description = "Run the application (requires existing config)"
 	cmdRun.Bool(&devMode, "d", "dev", "Enable development mode")
-	cmdRun.Bool(&enableGossip, "", "gossip", "Enable/disable gossip in run mode")
 
 	cmdReload := flaggy.NewSubcommand("reload")
 	cmdReload.Description = "Reload configuration of the running service (SIGHUP)"
@@ -107,6 +106,7 @@ func main() {
 	cmdHelp := flaggy.NewSubcommand("help")
 	cmdHelp.Description = "Show help examples"
 
+	// --- Ephemeral ---
 	cmdServe := flaggy.NewSubcommand("serve")
 	cmdServe.Description = "Serve a static directory instantly"
 	cmdServe.AddPositionalValue(&servePath, "path", 1, false, "Path to serve (default: current)")
@@ -122,6 +122,7 @@ func main() {
 	cmdProxy.String(&proxyBind, "b", "bind", "Bind address (default: 0.0.0.0)")
 	cmdProxy.Bool(&proxyHTTPS, "s", "https", "Enable HTTPS (auto-generates certs)")
 
+	// --- Route Management ---
 	cmdRoute := flaggy.NewSubcommand("route")
 	cmdRoute.Description = "Manage persistent routes (Interactive)"
 	cmdRouteAdd := flaggy.NewSubcommand("add")
@@ -131,6 +132,7 @@ func main() {
 	cmdRoute.AttachSubcommand(cmdRouteAdd, 1)
 	cmdRoute.AttachSubcommand(cmdRouteRemove, 1)
 
+	// --- Utilities ---
 	cmdHash := flaggy.NewSubcommand("hash")
 	cmdHash.Description = "Generate bcrypt hash for passwords"
 	cmdHash.String(&hashPassword, "p", "password", "Password to hash")
@@ -150,36 +152,30 @@ func main() {
 	cmdCert.AttachSubcommand(cmdListCerts, 1)
 	cmdCert.AttachSubcommand(cmdCertInfo, 1)
 
+	// --- API Key Management ---
 	cmdKey := flaggy.NewSubcommand("key")
+	cmdKey.Description = "Manage API authentication keys"
+
 	cmdKeyGen := flaggy.NewSubcommand("gen")
-	cmdKeyGen.String(&keyService, "s", "service", "Service name")
-	cmdKeyGen.Duration(&keyTTL, "t", "ttl", "Token TTL")
+	cmdKeyGen.Description = "Generate an auth token for an application"
+	cmdKeyGen.String(&keyService, "s", "service", "Service identifier")
+	cmdKeyGen.Duration(&keyTTL, "t", "ttl", "Token validity duration (default 1y)")
+
 	cmdKeyInit := flaggy.NewSubcommand("init")
+	cmdKeyInit.Description = "Generate the master private key for the API"
+
 	cmdKey.AttachSubcommand(cmdKeyGen, 1)
 	cmdKey.AttachSubcommand(cmdKeyInit, 1)
 
-	cmdGossip := flaggy.NewSubcommand("gossip")
-	cmdGossip.Description = "Manage cluster gossip settings"
+	// --- Cluster Management ---
+	cmdCluster := flaggy.NewSubcommand("cluster")
+	cmdCluster.Description = "Manage cluster settings"
 
-	cmdGossipInit := flaggy.NewSubcommand("init")
-	cmdGossipInit.Description = "Generate private key for auth"
+	cmdClusterSecret := flaggy.NewSubcommand("secret")
+	cmdClusterSecret.Description = "Generate encryption secret for cluster config"
+	cmdCluster.AttachSubcommand(cmdClusterSecret, 1)
 
-	cmdGossipToken := flaggy.NewSubcommand("token")
-	cmdGossipToken.Description = "Generate auth token for a service"
-	cmdGossipToken.String(&gossipService, "s", "service", "Service name")
-	cmdGossipToken.Duration(&gossipTTL, "t", "ttl", "Token TTL")
-
-	cmdGossipSecret := flaggy.NewSubcommand("secret")
-	cmdGossipSecret.Description = "Generate encryption secret_key"
-
-	cmdGossipStatus := flaggy.NewSubcommand("status")
-	cmdGossipStatus.Description = "Show current status"
-
-	cmdGossip.AttachSubcommand(cmdGossipInit, 1)
-	cmdGossip.AttachSubcommand(cmdGossipToken, 1)
-	cmdGossip.AttachSubcommand(cmdGossipSecret, 1)
-	cmdGossip.AttachSubcommand(cmdGossipStatus, 1)
-
+	// Attach Top Level
 	flaggy.AttachSubcommand(cmdInit, 1)
 	flaggy.AttachSubcommand(cmdInstall, 1)
 	flaggy.AttachSubcommand(cmdUninstall, 1)
@@ -192,7 +188,7 @@ func main() {
 	flaggy.AttachSubcommand(cmdHash, 1)
 	flaggy.AttachSubcommand(cmdCert, 1)
 	flaggy.AttachSubcommand(cmdKey, 1)
-	flaggy.AttachSubcommand(cmdGossip, 1)
+	flaggy.AttachSubcommand(cmdCluster, 1)
 	flaggy.AttachSubcommand(cmdHelp, 1)
 	flaggy.AttachSubcommand(cmdServe, 1)
 	flaggy.AttachSubcommand(cmdProxy, 1)
@@ -202,6 +198,8 @@ func main() {
 
 	hel := newHelper(logger)
 	hel.welcome()
+
+	// --- Handlers ---
 
 	if cmdServe.Used {
 		e := &ephemeral{
@@ -260,7 +258,7 @@ func main() {
 		resolvedPath, configExists = hel.resolveConfigPath(configPath)
 	}
 
-	needsConfig := cmdRun.Used || cmdReload.Used || cmdValidate.Used || cmdHosts.Used || cmdStart.Used || (cmdGossip.Used && !cmdGossipSecret.Used) || cmdKey.Used
+	needsConfig := cmdRun.Used || cmdReload.Used || cmdValidate.Used || cmdHosts.Used || cmdStart.Used || cmdKey.Used || (cmdCluster.Used && !cmdClusterSecret.Used)
 
 	if needsConfig && !configExists {
 		if strings.TrimSpace(configPath) != "" {
@@ -326,8 +324,12 @@ func main() {
 		return
 	}
 
-	if cmdGossip.Used {
-		hel.handleGossipCommands(cmdGossipInit.Used, cmdGossipToken.Used, cmdGossipSecret.Used, cmdGossipStatus.Used, gossipService, gossipTTL)
+	if cmdCluster.Used {
+		if cmdClusterSecret.Used {
+			hel.handleClusterSecret()
+			return
+		}
+		flaggy.ShowHelpAndExit("cluster")
 		return
 	}
 

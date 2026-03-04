@@ -18,6 +18,7 @@ type Global struct {
 
 	// Fields that require you to enable it
 	Admin       Admin       `hcl:"admin,block" json:"admin"`
+	API         API         `hcl:"api,block" json:"api"`
 	Logging     Logging     `hcl:"logging,block" json:"logging"`
 	Security    Security    `hcl:"security,block" json:"security"`
 	RateLimits  GlobalRate  `hcl:"rate_limits,block" json:"rateLimits"`
@@ -34,6 +35,10 @@ func (g *Global) Validate() error {
 
 	if err := g.Admin.Validate(); err != nil {
 		return errors.Newf("admin: %w", err)
+	}
+
+	if err := g.API.Validate(); err != nil {
+		return errors.Newf("api: %w", err)
 	}
 
 	if err := g.Timeouts.Validate(); err != nil {

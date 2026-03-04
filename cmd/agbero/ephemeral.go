@@ -27,7 +27,7 @@ type ephemeral struct {
 }
 
 func runEphemeral(e *ephemeral, global *alaye.Global, hosts map[string]*alaye.Host) {
-	hm := discovery.NewHostFolder(woos.NewFolder(""), discovery.WithLogger(e.logger))
+	hm := discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(e.logger))
 	hm.LoadStatic(hosts)
 
 	l, _ := zulu.Logging(&global.Logging, devMode, e.shutdown)

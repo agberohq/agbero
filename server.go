@@ -18,11 +18,11 @@ import (
 	"sync"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/cluster"
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
-	"git.imaxinacion.net/aibox/agbero/internal/discovery/gossip"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/xtcp"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
@@ -85,9 +85,11 @@ type Server struct {
 	activeAcmeHandler http.Handler
 	activeTlsConfig   *tls.Config
 
-	logger       *ll.Logger
-	ipMiddleware *clientip.IPMiddleware
-	rateLimiter  *ratelimit.RateLimiter
+	logger *ll.Logger
+
+	ipMiddleware   *clientip.IPMiddleware
+	rateLimiter    *ratelimit.RateLimiter
+	clusterManager *cluster.Manager
 
 	wasmCache    sync.Map
 	skipLogPaths map[string]bool
@@ -113,7 +115,6 @@ func NewServer(opts ...Option) *Server {
 }
 
 func (s *Server) Start(configPath string) error {
-	// LOCK: Protect critical state during startup configuration
 	s.mu.Lock()
 	s.configPath = configPath
 	s.mu.Unlock()
@@ -128,7 +129,6 @@ func (s *Server) Start(configPath string) error {
 		s.logger = ll.New(woos.Name).Enable()
 	}
 
-	// 1. Initial Configuration Load
 	if configPath != "" {
 		absConfigPath, err := filepath.Abs(configPath)
 		if err != nil {
@@ -156,7 +156,7 @@ func (s *Server) Start(configPath string) error {
 
 	s.logger.Fields(
 		"dev_mode", s.global.Development,
-		"gossip_mode", s.global.Gossip.Enabled.Active(),
+		"cluster_mode", s.global.Gossip.Enabled.Active(),
 	).Info("configuring")
 
 	if configPath != "" {
@@ -172,7 +172,6 @@ func (s *Server) Start(configPath string) error {
 		return err
 	}
 
-	// 2. Start Background Services
 	s.reaper = jack.NewReaper(
 		woos.RouteCacheTTL,
 		jack.ReaperWithLogger(s.logger),
@@ -192,7 +191,6 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("RouteReaper", s.reaper.Stop)
 	}
 
-	// 3. Load Hosts
 	if configPath != "" {
 		if err := s.hostManager.ReloadFull(); err != nil {
 			s.logger.Fields("err", err).Error("failed to load initial hosts")
@@ -203,19 +201,28 @@ func (s *Server) Start(configPath string) error {
 	hosts, _ := s.hostManager.LoadAll()
 	s.logHostStats(hosts)
 
-	// 4. Initialize Subsystems (Gossip, Firewall, etc.)
 	if s.global.Gossip.Enabled.Active() {
-		gs, err := gossip.NewService(s.hostManager, &s.global.Gossip, s.logger)
+		cfg := cluster.Config{
+			Name:     s.global.Admin.Address,
+			BindAddr: "",
+			BindPort: s.global.Gossip.Port,
+			Secret:   []byte(s.global.Gossip.SecretKey),
+			Seeds:    s.global.Gossip.Seeds,
+		}
+
+		if cfg.Name == "" || strings.HasPrefix(cfg.Name, ":") {
+			hostname, _ := os.Hostname()
+			cfg.Name = fmt.Sprintf("agbero-%s-%d", hostname, s.global.Gossip.Port)
+		}
+
+		cm, err := cluster.NewManager(cfg, s.hostManager, s.logger)
 		if err != nil {
-			return errors.Newf("failed to start gossip: %w", err)
+			return errors.Newf("failed to start cluster manager: %w", err)
 		}
-		if len(s.global.Gossip.Seeds) > 0 {
-			if err := gs.Join(s.global.Gossip.Seeds); err != nil {
-				s.logger.Warn("failed to join gossip seeds")
-			}
-		}
+		s.clusterManager = cm
+
 		if s.shutdown != nil {
-			s.shutdown.RegisterFunc("Gossip", func() { _ = gs.Shutdown() })
+			s.shutdown.RegisterFunc("Cluster", func() { _ = s.clusterManager.Shutdown() })
 		}
 	}
 
@@ -250,7 +257,6 @@ func (s *Server) Start(configPath string) error {
 
 	s.startAdminServer()
 
-	// 5. Prepare Handlers
 	s.activeBaseHandler = http.HandlerFunc(s.handleRequest)
 	s.activeAcmeHandler = s.activeBaseHandler
 
@@ -266,7 +272,6 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
 	}
 
-	// 6. Setup TCP Proxies
 	tcpGroups := make(map[string][]alaye.TCPRoute)
 	for _, host := range hosts {
 		for i := range host.Proxies {
@@ -294,7 +299,6 @@ func (s *Server) Start(configPath string) error {
 	anyStreaming := s.hasStreaming(hosts)
 	usedPorts := make(map[string]bool)
 
-	// 7. Create Listeners (Global HTTP)
 	for _, addr := range s.global.Bind.HTTP {
 		if !strings.Contains(addr, ":") {
 			addr = ":" + addr
@@ -307,7 +311,6 @@ func (s *Server) Start(configPath string) error {
 		s.mu.Unlock()
 	}
 
-	// 8. Create Listeners (Global HTTPS)
 	for _, addr := range s.global.Bind.HTTPS {
 		if !strings.Contains(addr, ":") {
 			addr = ":" + addr
@@ -328,7 +331,6 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	// 9. Create Listeners (Per Host)
 	for _, h := range hosts {
 		for _, port := range h.Bind {
 			if usedPorts[port] {
@@ -337,7 +339,6 @@ func (s *Server) Start(configPath string) error {
 			}
 			usedPorts[port] = true
 
-			// Normalize addr
 			addr := port
 			if !strings.Contains(port, ":") {
 				addr = ":" + port
@@ -369,13 +370,11 @@ func (s *Server) Start(configPath string) error {
 		return woos.ErrNoBindAddr
 	}
 
-	// Drain any initial signal
 	select {
 	case <-s.hostManager.Changed():
 	default:
 	}
 
-	// 10. Start Config Watcher
 	if configPath != "" {
 		go func() {
 			for {
@@ -393,7 +392,6 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterWithContext("Listeners", s.shutdownImpl)
 	}
 
-	// 11. Start Serving
 	errCh := make(chan error, len(s.servers))
 	s.mu.RLock()
 	for key, srv := range s.servers {

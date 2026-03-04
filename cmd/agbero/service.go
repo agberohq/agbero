@@ -59,7 +59,7 @@ func (p *program) run() {
 	}
 
 	hostFolder := woos.MakeFolder(global.Storage.HostsDir, woos.HostDir)
-	hm := discovery.NewHostFolder(hostFolder, discovery.WithLogger(logger))
+	hm := discovery.NewHost(hostFolder, discovery.WithLogger(logger))
 
 	p.shutdown.RegisterFunc("HostManager", func() {
 		if err := hm.Close(); err != nil {

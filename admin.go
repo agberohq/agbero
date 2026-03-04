@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/api"
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/uptime"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
@@ -55,8 +56,9 @@ func (s *Server) startAdminServer() {
 	uiHandler := ui.Admin()
 	mux.Handle("/", uiHandler)
 
-	// protect enforces the primary API authentication method (usually JWT).
-	// This prevents browser popups on the dashboard if the token expires.
+	apiRouter := api.NewRouter(s.clusterManager, s.logger)
+	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", apiRouter))
+
 	protect := func(h http.Handler) http.Handler {
 		if cfg.JWTAuth.Enabled.Active() {
 			return auth.JWT(&cfg.JWTAuth)(h)
@@ -67,13 +69,10 @@ func (s *Server) startAdminServer() {
 		return h
 	}
 
-	// protectBasic enforces Basic Auth specifically for pprof.
-	// This ensures browsers prompt for credentials when accessing debug tools directly.
 	protectBasic := func(h http.Handler) http.Handler {
 		if len(cfg.BasicAuth.Users) > 0 {
 			return auth.Basic(&cfg.BasicAuth)(h)
 		}
-		// Fallback to JWT for CLI tools if Basic Auth is not configured
 		if cfg.JWTAuth.Enabled.Active() {
 			return auth.JWT(&cfg.JWTAuth)(h)
 		}
@@ -103,8 +102,6 @@ func (s *Server) startAdminServer() {
 		mux.Handle("/debug/pprof/allocs", protectBasic(pprof.Handler("allocs")))
 	}
 
-	// Wrap the mux with the middleware for setting security headers.
-	// Standard http.ServeMux lacks a Use method, so chain manually.
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/admin") {
 			w.Header().Set("Content-Security-Policy",
@@ -119,7 +116,7 @@ func (s *Server) startAdminServer() {
 
 	srv := &http.Server{
 		Addr:         cfg.Address,
-		Handler:      handler, // Use the wrapped handler.
+		Handler:      handler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -216,11 +213,18 @@ func (s *Server) handleAdminConfigDump(w http.ResponseWriter, r *http.Request) {
 	hosts, _ := s.hostManager.LoadAll()
 
 	resp := struct {
-		Global any `json:"global"`
-		Hosts  any `json:"hosts"`
+		Global  any `json:"global"`
+		Hosts   any `json:"hosts"`
+		Cluster any `json:"cluster,omitempty"`
 	}{
 		Global: sanitizeGlobal(s.global),
 		Hosts:  sanitizeHosts(hosts),
+	}
+
+	if s.clusterManager != nil {
+		resp.Cluster = map[string]interface{}{
+			"members": s.clusterManager.Members(),
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -353,7 +357,6 @@ func sanitizeGlobal(g *alaye.Global) *alaye.Global {
 
 	if clone.Gossip.Enabled.Active() {
 		clone.Gossip.SecretKey = "***"
-		clone.Gossip.PrivateKeyFile = "***"
 	}
 
 	if clone.Admin.Enabled.Active() {

@@ -8,40 +8,44 @@ import (
 	"os"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/olekukonko/errors"
 )
 
-type Token struct {
+type TokenClaims struct {
+	Service string `json:"svc"`
+	jwt.RegisteredClaims
+}
+
+type Manager struct {
 	privateKey ed25519.PrivateKey
 	publicKey  ed25519.PublicKey
 }
 
-func LoadKeys(privateKeyPath string) (*Token, error) {
-	b, err := os.ReadFile(privateKeyPath)
+func LoadKeys(path string) (*Manager, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, errors.Newf("read key file: %w", err)
+		return nil, err
 	}
 
-	block, _ := pem.Decode(b)
-	if block == nil || block.Type != woos.BlockPrivateKey {
-		return nil, woos.ErrInvalidPEMFile
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "PRIVATE KEY" {
+		return nil, errors.New("invalid pem file: missing PRIVATE KEY block")
 	}
 
-	k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		return nil, errors.Newf("parse private key: %w", err)
+		return nil, fmt.Errorf("failed to parse private key: %w", err)
 	}
 
-	priv, ok := k.(ed25519.PrivateKey)
+	edKey, ok := key.(ed25519.PrivateKey)
 	if !ok {
-		return nil, woos.ErrNotEd25519Key
+		return nil, errors.New("key is not ed25519")
 	}
 
-	return &Token{
-		privateKey: priv,
-		publicKey:  priv.Public().(ed25519.PublicKey),
+	return &Manager{
+		privateKey: edKey,
+		publicKey:  edKey.Public().(ed25519.PublicKey),
 	}, nil
 }
 
@@ -57,7 +61,7 @@ func GenerateNewKeyFile(path string) error {
 	}
 
 	pemBlock := &pem.Block{
-		Type:  woos.BlockPrivateKey,
+		Type:  "PRIVATE KEY",
 		Bytes: b,
 	}
 
@@ -67,46 +71,44 @@ func GenerateNewKeyFile(path string) error {
 	}
 	defer f.Close()
 
-	return pem.Encode(f, pemBlock)
+	if err := pem.Encode(f, pemBlock); err != nil {
+		return err
+	}
+
+	return f.Chmod(0600)
 }
 
-func (tm *Token) Mint(serviceName string, ttl time.Duration) (string, error) {
-	claims := jwt.MapClaims{
-		"sub": serviceName,
-		"iat": time.Now().Unix(),
-		"exp": time.Now().Add(ttl).Unix(),
-		"iss": woos.DefaultIssuer,
+func (m *Manager) Mint(serviceName string, ttl time.Duration) (string, error) {
+	now := time.Now()
+	claims := TokenClaims{
+		Service: serviceName,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "agbero-api",
+			Subject:   serviceName,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
-	return token.SignedString(tm.privateKey)
+	return token.SignedString(m.privateKey)
 }
 
-func (tm *Token) Verify(tokenString string) (serviceName string, err error) {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
+func (m *Manager) Verify(tokenString string) (string, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
-			return nil, fmt.Errorf("%w: %v", woos.ErrUnexpectedSigningMethod, token.Header[woos.TokenAlg])
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return tm.publicKey, nil
+		return m.publicKey, nil
 	})
 
 	if err != nil {
-		return "", errors.Newf("parse err: %w", err)
+		return "", err
 	}
 
-	if !token.Valid {
-		return "", woos.ErrInvalidToken
+	if claims, ok := token.Claims.(*TokenClaims); ok && token.Valid {
+		return claims.Service, nil
 	}
 
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return "", woos.ErrInvalidClaims
-	}
-
-	sub, ok := claims[woos.TokenSub].(string)
-	if !ok || sub == "" {
-		return "", woos.ErrMissingTokenSubject
-	}
-
-	return sub, nil
+	return "", errors.New("invalid token claims")
 }

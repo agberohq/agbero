@@ -87,7 +87,7 @@ func TestServer_Start_Minimal(t *testing.T) {
 		},
 	}
 
-	hm := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
+	hm := discovery.NewHost(woos.Folder(hostsDir), discovery.WithLogger(testLogger))
 	s := NewServer(
 		WithGlobalConfig(global),
 		WithHostManager(hm),
@@ -330,7 +330,7 @@ route "/" {
 		t.Fatal(err)
 	}
 
-	hm := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
+	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
 	if err := hm.ReloadFull(); err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ route "/" {
 		t.Fatal(err)
 	}
 
-	hm := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
+	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
 	if err := hm.ReloadFull(); err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +595,7 @@ timeouts {
 	woos.DefaultApply(global, configFile)
 
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(10 * time.Second))
-	hm := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
+	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
 
 	// Watch must be started for reload to work
 	if err := hm.Watch(); err != nil {
