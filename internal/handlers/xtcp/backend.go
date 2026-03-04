@@ -7,13 +7,13 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	mrand "math/rand"
 	"net"
 	"net/netip"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
@@ -149,11 +149,41 @@ func (p *connPool) dial() (net.Conn, error) {
 }
 
 func (p *connPool) isAlive(conn net.Conn) bool {
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
-	buf := make([]byte, 1)
-	_, err := conn.Read(buf)
-	_ = conn.SetReadDeadline(time.Time{})
-	return err == nil || (!errors.Is(err, io.EOF) && !isTimeout(err))
+	sys, ok := conn.(syscall.Conn)
+	if !ok {
+		return true
+	}
+	raw, err := sys.SyscallConn()
+	if err != nil {
+		return false
+	}
+
+	var sysErr error
+	var n int
+
+	// Read raw file descriptor
+	err = raw.Read(func(fd uintptr) bool {
+		buf := make([]byte, 1)
+		// MSG_PEEK: Read without removing from queue
+		// MSG_DONTWAIT: Return immediately if no data
+		n, _, sysErr = syscall.Recvfrom(int(fd), buf, syscall.MSG_PEEK|syscall.MSG_DONTWAIT)
+		return true
+	})
+
+	if err != nil {
+		return false
+	}
+
+	if sysErr != nil {
+		// EWOULDBLOCK/EAGAIN means connection is open but no data is waiting
+		if errors.Is(sysErr, syscall.EAGAIN) || errors.Is(sysErr, syscall.EWOULDBLOCK) {
+			return true
+		}
+		return false
+	}
+
+	// n == 0 indicates EOF (peer closed connection)
+	return n > 0
 }
 
 func (p *connPool) put(pc *pooledConn) {

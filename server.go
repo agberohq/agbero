@@ -56,6 +56,15 @@ func (w *llWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
+var logArgsPool = sync.Pool{
+	New: func() any {
+		// Pre-allocate capacity for common fields (host, path, method, status, ip, time, etc)
+		// Capacity 16 covers ~8 pairs of key/values
+		s := make([]any, 0, 16)
+		return &s
+	},
+}
+
 type Server struct {
 	configPath string
 	configSHA  string
@@ -442,6 +451,9 @@ func (s *Server) Reload() {
 		"from", currentSHA[:12],
 		"to", sha[:12],
 	).Infof("configuration changed")
+
+	// cleanup wasm
+	s.cleanupWasm()
 
 	global, err := parser.LoadGlobal(configPath)
 	if err != nil {
@@ -1159,24 +1171,36 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 		return
 	}
 
-	fields := []any{
-		"host", host,
-		"path", r.URL.Path,
-		"remote", clientip.ClientIP(r),
-		"duration", time.Since(start),
-		"proto", r.Proto,
-		"status", status,
-		"bytes", bytes,
-	}
+	// 2. Get slice pointer from pool
+	argsPtr := logArgsPool.Get().(*[]any)
+	args := *argsPtr // Dereference to use
+
+	// Reset length, keep capacity
+	args = args[:0]
+
+	// 3. Append Key/Value pairs
+	args = append(args, "host", host)
+	args = append(args, "path", r.URL.Path)
+	args = append(args, "remote", clientip.ClientIP(r))
+	args = append(args, "duration", time.Since(start))
+	args = append(args, "proto", r.Proto)
+	args = append(args, "status", status)
+	args = append(args, "bytes", bytes)
 
 	if port, ok := r.Context().Value(woos.CtxPort).(string); ok && port != "" {
-		fields = append(fields, "port", port)
+		args = append(args, "port", port)
 	}
 
 	if s.global != nil && s.shouldLogUserAgent(r) {
-		fields = append(fields, "ua", zulu.Truncate(r.UserAgent(), 50))
+		args = append(args, "ua", zulu.Truncate(r.UserAgent(), 50))
 	}
-	s.logger.Fields(fields...).Info(r.Method)
+
+	// 4. Log using the slice expansion
+	s.logger.Fields(args...).Info(r.Method)
+
+	// 5. Put back in pool (save the expanded capacity)
+	*argsPtr = args
+	logArgsPool.Put(argsPtr)
 }
 
 func (s *Server) shouldLogUserAgent(r *http.Request) bool {
@@ -1371,6 +1395,17 @@ func (s *Server) getWasmManager(cfg *alaye.Wasm, key string) (*wasm.Manager, err
 	}
 
 	return mgr, nil
+}
+
+func (s *Server) cleanupWasm() {
+	s.wasmCache.Range(func(key, value any) bool {
+		if mgr, ok := value.(*wasm.Manager); ok {
+			// Context used for cleanup, usually background is fine here
+			mgr.Close(context.Background())
+		}
+		s.wasmCache.Delete(key)
+		return true
+	})
 }
 
 func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {

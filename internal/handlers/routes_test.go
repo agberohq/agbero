@@ -617,8 +617,13 @@ func TestRouteHandler_Validation(t *testing.T) {
 				AllowedIPs: []string{"127.0.0.1/32"},
 				Web: alaye.Web{
 					Enabled: alaye.Active,
-					Root:    alaye.WebRoot(t.TempDir()),
 				},
+			},
+			prepare: func(t *testing.T, r *alaye.Route) {
+				root := t.TempDir()
+				os.WriteFile(filepath.Join(root, "index.html"), []byte("ok"), 0644)
+				r.Web.Root = alaye.WebRoot(root)
+				r.Web.Index = "index.html"
 			},
 			wantStatus: http.StatusOK,
 		},
@@ -638,7 +643,7 @@ func TestRouteHandler_Validation(t *testing.T) {
 
 			rr := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
-
+			req.RemoteAddr = "127.0.0.1:12345"
 			h.ServeHTTP(rr, req)
 
 			if rr.Code != tt.wantStatus {
@@ -807,6 +812,10 @@ func TestRouteHandler_WithOAuth(t *testing.T) {
 }
 
 func TestRouteHandler_WithForwardAuth(t *testing.T) {
+
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "index.html"), []byte("ok"), 0644)
+
 	// Create auth server
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -825,7 +834,8 @@ func TestRouteHandler_WithForwardAuth(t *testing.T) {
 		},
 		Web: alaye.Web{
 			Enabled: alaye.Active,
-			Root:    alaye.WebRoot(t.TempDir()),
+			Root:    alaye.WebRoot(root),
+			Index:   "index.html",
 		},
 	}
 

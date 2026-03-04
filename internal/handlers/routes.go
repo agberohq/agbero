@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/xhttp"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/attic"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
@@ -34,6 +35,10 @@ func NewRoute(global *alaye.Global, host *alaye.Host, route *alaye.Route, logger
 	if route == nil {
 		return FallbackRoute("nil route")
 	}
+
+	// ensure to apply default again
+	woos.DefaultRoute(route)
+
 	logger.Fields("path", route.Path, "enabled", route.Enabled).Debug("creating route")
 	if err := route.Validate(); err != nil {
 		logger.Fields("path", route.Path, "err", err).Error("invalid route config")

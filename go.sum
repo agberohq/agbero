@@ -230,8 +230,12 @@ github.com/olekukonko/errors v1.2.0 h1:10Zcn4GeV59t/EGqJc8fUjtFT/FuUh5bTMzZ1XwmC
 github.com/olekukonko/errors v1.2.0/go.mod h1:ppzxA5jBKcO1vIpCXQ9ZqgDh8iwODz6OXIGKU8r5m4Y=
 github.com/olekukonko/jack v0.0.0-20260212195112-28631b233562 h1:LwDz4aOnam1ewzbRyZkQc1RQvHiVbExU22sdj953arE=
 github.com/olekukonko/jack v0.0.0-20260212195112-28631b233562/go.mod h1:DO5wvYWCkIkvvqssDZv8f2x6aMBAu9lIjMXBDQW8R3c=
+github.com/olekukonko/jack v0.0.0-20260219101915-012d7877ecbe h1:TJq83p8keq3G3STpTwuQQTL54imyXKE67CJENIP/P3E=
+github.com/olekukonko/jack v0.0.0-20260219101915-012d7877ecbe/go.mod h1:DO5wvYWCkIkvvqssDZv8f2x6aMBAu9lIjMXBDQW8R3c=
 github.com/olekukonko/ll v0.1.8-0.20260223201107-fb099d6d5efd h1:hKg+KgsYZ6LncgDKl/NEnT4XBaCDV2g1njagqNGQqr4=
 github.com/olekukonko/ll v0.1.8-0.20260223201107-fb099d6d5efd/go.mod h1:RPRC6UcscfFZgjo1nulkfMH5IM0QAYim0LfnMvUuozw=
+github.com/olekukonko/ll v0.1.8-0.20260304195808-a35061d98ce9 h1:6KPqLKXS7F9kQnbDSxvjfT1blI+EwIWrRW/qXKTm0Is=
+github.com/olekukonko/ll v0.1.8-0.20260304195808-a35061d98ce9/go.mod h1:RPRC6UcscfFZgjo1nulkfMH5IM0QAYim0LfnMvUuozw=
 github.com/olekukonko/mappo v0.0.0-20260219011920-b562da2ab13d h1:rZ182n6alqFMJiwnHWh1SuWZSCrSoUHnUUi1hLX5pao=
 github.com/olekukonko/mappo v0.0.0-20260219011920-b562da2ab13d/go.mod h1:3OH5ndUVOorYmxkJtvIGcgakYzq0DWvbtZbBoQnBzW0=
 github.com/onsi/ginkgo v1.16.5 h1:8xi0RTUf59SOSfEtZMvwTvXYMzG4gV23XVHOZiXNtnE=

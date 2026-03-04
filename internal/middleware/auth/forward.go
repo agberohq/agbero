@@ -3,10 +3,8 @@ package auth
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
 	"io"
 	"net/http"
 	"strconv"
@@ -17,6 +15,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	"github.com/cespare/xxhash/v2"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/mappo"
 )
@@ -263,22 +262,30 @@ func createTLSConfig(cfg *alaye.ForwardTLS) (*tls.Config, error) {
 }
 
 func buildCacheKey(r *http.Request, cacheKeyHeaders []string, prefix string) string {
-	h := sha256.New()
+	h := xxhash.New()
+
 	if prefix != "" {
-		h.Write([]byte(prefix))
-		h.Write([]byte("|"))
+		h.WriteString(prefix)
+		h.WriteString("|")
 	}
+
+	// Default header
 	if len(cacheKeyHeaders) == 0 {
 		cacheKeyHeaders = []string{"Authorization"}
 	}
+
 	for _, header := range cacheKeyHeaders {
-		h.Write([]byte(r.Header.Get(header)))
-		h.Write([]byte("|"))
+		h.WriteString(r.Header.Get(header))
+		h.WriteString("|")
 	}
-	h.Write([]byte(r.Method))
-	h.Write([]byte("|"))
-	h.Write([]byte(r.URL.Path))
-	return hex.EncodeToString(h.Sum(nil))
+
+	h.WriteString(r.Method)
+	h.WriteString("|")
+	h.WriteString(r.URL.Path)
+	h.WriteString("|")
+	h.WriteString(r.URL.RawQuery)
+
+	return strconv.FormatUint(h.Sum64(), 16)
 }
 
 func copyHeaders(src http.Header, dst http.Header, keys []string) {

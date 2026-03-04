@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -51,23 +52,13 @@ func (s *MockSession) Authorize(provider goth.Provider, params goth.Params) (str
 	return "mock_token_123", nil
 }
 
-// --- Tests ---
-
 func TestOAuthMiddleware_Goth(t *testing.T) {
-	// Setup Mock Provider
 	mockProv := &MockProvider{
 		Session: &MockSession{AuthURL: "http://provider.com/auth"},
 	}
 
-	// Override the getProvider function behavior by wrapping OAuth or
-	// slightly modifying OAuth implementation to accept a provider injector for testing.
-	// Since we can't easily inject into the closure without changing the signature,
-	// we will manually test the logic flow functions (startGothFlow, handleGothCallback)
-	// or perform an integration test with a "generic" provider config that fails
-	// but verify logic before that.
-
-	// Better approach for unit test: Test the helper functions directly
-	// since we want to verify OUR logic, not Goth's internal logic.
+	// Calculate expected Base64 value for "valid_session_data"
+	validSessionB64 := base64.StdEncoding.EncodeToString([]byte("valid_session_data"))
 
 	t.Run("Start Goth Flow", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
@@ -79,17 +70,17 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 			t.Errorf("Expected 307 redirect, got %d", rec.Code)
 		}
 
-		// Verify Cookie set
 		cookies := rec.Result().Cookies()
 		found := false
 		for _, c := range cookies {
-			if c.Name == woos.GothSessionCookie && c.Value == "valid_session_data" {
+			// Check for the Base64 encoded value
+			if c.Name == woos.GothSessionCookie && c.Value == validSessionB64 {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Error("Goth session cookie not set correctly")
+			t.Error("Goth session cookie not set correctly (expected base64 encoded)")
 		}
 	})
 
@@ -101,18 +92,17 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 		}
 
 		req := httptest.NewRequest("GET", "/callback?code=123&state=xyz", nil)
-		// Inject the cookie that startGothFlow would have set
-		req.AddCookie(&http.Cookie{Name: woos.GothSessionCookie, Value: "valid_session_data"})
+		// Inject the Base64 encoded cookie
+		req.AddCookie(&http.Cookie{Name: woos.GothSessionCookie, Value: validSessionB64})
 
 		rec := httptest.NewRecorder()
 
 		handleGothCallback(rec, req, mockProv, cfg)
 
 		if rec.Code != http.StatusFound {
-			t.Errorf("Expected 302 redirect, got %d", rec.Code)
+			t.Errorf("Expected 302 redirect, got %d. Body: %s", rec.Code, rec.Body.String())
 		}
 
-		// Verify App Session Cookie
 		cookies := rec.Result().Cookies()
 		found := false
 		for _, c := range cookies {
@@ -130,11 +120,12 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 		cfg := &alaye.OAuth{
 			Enabled:      alaye.Active,
 			Provider:     "mock",
-			EmailDomains: []string{"corp.com"}, // Mock returns example.com
+			EmailDomains: []string{"corp.com"},
 		}
 
 		req := httptest.NewRequest("GET", "/callback?code=123", nil)
-		req.AddCookie(&http.Cookie{Name: woos.GothSessionCookie, Value: "valid_session_data"})
+		// Inject the Base64 encoded cookie
+		req.AddCookie(&http.Cookie{Name: woos.GothSessionCookie, Value: validSessionB64})
 
 		rec := httptest.NewRecorder()
 

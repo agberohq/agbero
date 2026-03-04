@@ -226,8 +226,12 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 			Servers: alaye.NewServers("http://localhost:8080"),
 		},
 	}
+
+	woos.DefaultRoute(route)
 	key := route.Key()
 
+	// NewRoute also calls DefaultRoute internally, but since we called it above,
+	// the struct is stable now.
 	handler := handlers.NewRoute(s.global, host, route, testLogger)
 
 	item := &mappo.Item{

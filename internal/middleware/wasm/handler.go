@@ -11,9 +11,9 @@ import (
 type contextKey string
 
 const (
-	wResponseWriter contextKey = "w"
-	wRequest        contextKey = "req"
-	wRequestContext contextKey = "rc"
+	CtxKeyResponseWriter contextKey = "w"
+	CtxKeyRequest        contextKey = "rc"
+	CtxKeyContext        contextKey = "req"
 )
 
 type Instance struct {
@@ -32,9 +32,9 @@ func (m *Manager) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rc := &RequestContext{W: w, R: r, Next: true}
 
-		ctx := context.WithValue(r.Context(), wResponseWriter, w)
-		ctx = context.WithValue(ctx, wRequest, r)
-		ctx = context.WithValue(ctx, wRequestContext, rc)
+		ctx := context.WithValue(r.Context(), CtxKeyResponseWriter, w)
+		ctx = context.WithValue(ctx, CtxKeyContext, r)
+		ctx = context.WithValue(ctx, CtxKeyRequest, rc)
 
 		inst, err := m.GetInstance(ctx)
 		if err != nil {

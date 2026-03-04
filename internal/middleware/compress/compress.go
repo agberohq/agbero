@@ -92,29 +92,49 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 				level = 5
 			}
 
-			var writer io.WriteCloser
-			if compType == woos.CompressionBrotli {
-				w.Header().Set(woos.HeaderContentEnc, encoding)
-				brw := brotliWriterPool.Get().(*brotli.Writer)
-				brw.Reset(w)
-				writer = brw
-				defer func() {
-					brw.Close()
-					brotliWriterPool.Put(brw)
-				}()
-			} else {
-				w.Header().Set(woos.HeaderContentEnc, encoding)
-				gzw := getGzipWriter(w, level)
-				writer = gzw
-				defer func() {
-					putGzipWriter(gzw, level)
-				}()
-			}
 			w.Header().Add(woos.HeaderKeyVary, woos.HeaderAcceptEncoding)
 
 			cw := &compressWriter{
 				ResponseWriter: w,
-				w:              writer,
+			}
+
+			// Defer closure logic
+			defer func() {
+				if cw.bypass {
+					// If bypassed, ensure the writer doesn't flush trailers to the real response
+					if c, ok := cw.w.(*gzip.Writer); ok {
+						c.Reset(io.Discard)
+						putGzipWriter(c, level)
+					} else if c, ok := cw.w.(*brotli.Writer); ok {
+						c.Reset(io.Discard)
+						brotliWriterPool.Put(c)
+					}
+					return
+				}
+
+				// Normal closure
+				if c, ok := cw.w.(io.Closer); ok {
+					c.Close()
+				}
+
+				// Return to pool
+				if c, ok := cw.w.(*gzip.Writer); ok {
+					putGzipWriter(c, level)
+				} else if c, ok := cw.w.(*brotli.Writer); ok {
+					brotliWriterPool.Put(c)
+				}
+			}()
+
+			// Initialize writer
+			if compType == woos.CompressionBrotli {
+				brw := brotliWriterPool.Get().(*brotli.Writer)
+				brw.Reset(w)
+				cw.w = brw
+				cw.encoding = encoding // Store to set header later if not bypassed
+			} else {
+				gzw := getGzipWriter(w, level)
+				cw.w = gzw
+				cw.encoding = encoding
 			}
 
 			next.ServeHTTP(cw, r)
@@ -124,21 +144,44 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 
 type compressWriter struct {
 	http.ResponseWriter
-	w      io.WriteCloser
-	header bool
+	w        io.Writer
+	encoding string
+	header   bool
+	bypass   bool
+}
+
+func (cw *compressWriter) WriteHeader(code int) {
+	if cw.header {
+		return
+	}
+	// Check if downstream already set Content-Encoding (e.g. pre-compressed file)
+	if cw.ResponseWriter.Header().Get("Content-Encoding") != "" {
+		cw.bypass = true
+	} else {
+		// Only set encoding if we are actually compressing
+		cw.ResponseWriter.Header().Set("Content-Encoding", cw.encoding)
+		// Delete Content-Length because compression changes it
+		cw.ResponseWriter.Header().Del("Content-Length")
+	}
+	cw.header = true
+	cw.ResponseWriter.WriteHeader(code)
 }
 
 func (cw *compressWriter) Write(b []byte) (int, error) {
 	if !cw.header {
-		cw.ResponseWriter.WriteHeader(http.StatusOK)
-		cw.header = true
+		cw.WriteHeader(http.StatusOK)
+	}
+	if cw.bypass {
+		return cw.ResponseWriter.Write(b)
 	}
 	return cw.w.Write(b)
 }
 
 func (cw *compressWriter) Flush() {
-	if f, ok := cw.w.(interface{ Flush() }); ok {
-		f.Flush()
+	if !cw.bypass {
+		if f, ok := cw.w.(interface{ Flush() }); ok {
+			f.Flush()
+		}
 	}
 	if f, ok := cw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()

@@ -100,10 +100,11 @@ func startGothFlow(w http.ResponseWriter, r *http.Request, provider goth.Provide
 
 	// Serialize the Goth session to a cookie so we can retrieve it in the callback
 	sessData := sess.Marshal()
+	encodedSess := base64.StdEncoding.EncodeToString([]byte(sessData))
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     woos.GothSessionCookie,
-		Value:    sessData,
+		Value:    encodedSess,
 		Path:     woos.Slash,
 		HttpOnly: true,
 		Secure:   isSecure(r),
@@ -123,7 +124,14 @@ func handleGothCallback(w http.ResponseWriter, r *http.Request, provider goth.Pr
 	}
 
 	// 2. Unmarshal into a Session object specific to the provider
-	sess, err := provider.UnmarshalSession(cookie.Value)
+
+	decodedSess, err := base64.StdEncoding.DecodeString(cookie.Value)
+	if err != nil {
+		http.Error(w, "Invalid cookie encoding", http.StatusBadRequest)
+		return
+	}
+
+	sess, err := provider.UnmarshalSession(string(decodedSess))
 	if err != nil {
 		http.Error(w, "Invalid session data", http.StatusBadRequest)
 		return

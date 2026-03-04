@@ -20,8 +20,13 @@ func (m *Manager) ExportHostFunctions() {
 
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
-			req := ctx.Value("req").(*http.Request)
+			reqRaw := ctx.Value(CtxKeyRequest)
+			if reqRaw == nil {
+				stack[0] = 0
+				return
+			}
 
+			req := reqRaw.(*http.Request)
 			if !m.config.HasAccess("headers") {
 				stack[0] = 0
 				return
