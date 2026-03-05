@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -374,12 +375,117 @@ func TestGet_WildcardResolution(t *testing.T) {
 	}
 }
 
+func TestHost_OnClusterChange_RoutePropagation(t *testing.T) {
+	tmpDir := t.TempDir()
+	hostsDir := filepath.Join(tmpDir, "hosts")
+	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := ll.New("test").Disable()
+	hm := NewHost(woos.NewFolder(hostsDir), WithLogger(logger))
+
+	route := alaye.Route{
+		Enabled: alaye.Active,
+		Path:    "/api/test",
+		Backends: alaye.Backend{
+			Enabled: alaye.Active,
+			Servers: alaye.NewServers("http://localhost:9000"),
+		},
+	}
+	wrapper := struct {
+		Route     alaye.Route `json:"route"`
+		ExpiresAt time.Time   `json:"expires_at"`
+	}{
+		Route:     route,
+		ExpiresAt: time.Time{},
+	}
+	val, err := json.Marshal(wrapper)
+	if err != nil {
+		t.Fatalf("Failed to marshal route: %v", err)
+	}
+
+	key := fmt.Sprintf("%s%s|%s", ClusterRoutePrefix, "test.example.com", "/api/test")
+	hm.OnClusterChange(key, val, false)
+
+	waitChanged(t, hm.Changed(), 2*time.Second)
+
+	host := hm.Get("test.example.com")
+	if host == nil {
+		t.Fatal("Host not created after cluster route update")
+	}
+
+	found := false
+	for _, r := range host.Routes {
+		if r.Path == "/api/test" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Route not added to host after OnClusterChange")
+	}
+}
+
+func TestHost_OnClusterChange_Deletion(t *testing.T) {
+	tmpDir := t.TempDir()
+	hostsDir := filepath.Join(tmpDir, "hosts")
+	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := ll.New("test").Disable()
+	hm := NewHost(woos.NewFolder(hostsDir), WithLogger(logger))
+
+	route := alaye.Route{
+		Enabled: alaye.Active,
+		Path:    "/to-delete",
+		Backends: alaye.Backend{
+			Enabled: alaye.Active,
+			Servers: alaye.NewServers("http://localhost:9001"),
+		},
+	}
+	wrapper := struct {
+		Route     alaye.Route `json:"route"`
+		ExpiresAt time.Time   `json:"expires_at"`
+	}{
+		Route:     route,
+		ExpiresAt: time.Time{},
+	}
+	val, err := json.Marshal(wrapper)
+	if err != nil {
+		t.Fatalf("Failed to marshal route: %v", err)
+	}
+
+	key := fmt.Sprintf("%s%s|%s", ClusterRoutePrefix, "delete.example.com", "/to-delete")
+	hm.OnClusterChange(key, val, false)
+	waitChanged(t, hm.Changed(), 2*time.Second)
+
+	host := hm.Get("delete.example.com")
+	if host == nil {
+		t.Fatal("Host not created")
+	}
+
+	hm.OnClusterChange(key, nil, true)
+	waitChanged(t, hm.Changed(), 2*time.Second)
+
+	hostAfter := hm.Get("delete.example.com")
+	if hostAfter != nil {
+		for _, r := range hostAfter.Routes {
+			if r.Path == "/to-delete" {
+				t.Error("Route still present after deletion")
+			}
+		}
+	}
+}
+
 func TestHost_RouteExpiration(t *testing.T) {
 	hm := NewHost(woos.Folder("."), WithLogger(testLogger))
 	defer hm.Close()
 
 	route := alaye.Route{Path: "/expire", Enabled: alaye.Active}
-	expiry := time.Now().Add(500 * time.Millisecond)
+	// Use longer TTL to ensure route exists after debounced rebuild
+	expiry := time.Now().Add(2 * time.Second)
 
 	wrapper := routeWrapper{
 		Route:     route,
@@ -390,16 +496,71 @@ func TestHost_RouteExpiration(t *testing.T) {
 	key := ClusterRoutePrefix + "example.com|/expire"
 
 	hm.OnClusterChange(key, data, false)
-
-	waitChanged(t, hm.Changed(), time.Second)
+	waitChanged(t, hm.Changed(), 3*time.Second)
 
 	if !hm.RouteExists("example.com", "/expire") {
 		t.Fatal("route should exist immediately after update")
 	}
 
-	time.Sleep(1200 * time.Millisecond)
+	// Wait for expiration
+	time.Sleep(2500 * time.Millisecond)
+	waitChanged(t, hm.Changed(), 3*time.Second)
 
 	if hm.RouteExists("example.com", "/expire") {
 		t.Fatal("route should have expired")
+	}
+}
+
+func TestHost_OnClusterChange_WithTTL(t *testing.T) {
+	tmpDir := t.TempDir()
+	hostsDir := filepath.Join(tmpDir, "hosts")
+	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := ll.New("test").Disable()
+	hm := NewHost(woos.NewFolder(hostsDir), WithLogger(logger))
+
+	route := alaye.Route{
+		Enabled: alaye.Active,
+		Path:    "/ephemeral",
+		Backends: alaye.Backend{
+			Enabled: alaye.Active,
+			Servers: alaye.NewServers("http://localhost:9002"),
+		},
+	}
+	// Longer TTL to survive debounce + check
+	wrapper := struct {
+		Route     alaye.Route `json:"route"`
+		ExpiresAt time.Time   `json:"expires_at"`
+	}{
+		Route:     route,
+		ExpiresAt: time.Now().Add(2 * time.Second),
+	}
+	val, err := json.Marshal(wrapper)
+	if err != nil {
+		t.Fatalf("Failed to marshal route: %v", err)
+	}
+
+	key := fmt.Sprintf("%s%s|%s", ClusterRoutePrefix, "ttl.example.com", "/ephemeral")
+	hm.OnClusterChange(key, val, false)
+	waitChanged(t, hm.Changed(), 3*time.Second)
+
+	host := hm.Get("ttl.example.com")
+	if host == nil {
+		t.Fatal("Host not created for TTL route")
+	}
+
+	// Wait for expiration
+	time.Sleep(2200 * time.Millisecond)
+	waitChanged(t, hm.Changed(), 3*time.Second)
+
+	hostAfter := hm.Get("ttl.example.com")
+	if hostAfter != nil {
+		for _, r := range hostAfter.Routes {
+			if r.Path == "/ephemeral" {
+				t.Error("TTL route still present after expiration")
+			}
+		}
 	}
 }

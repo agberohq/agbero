@@ -22,10 +22,8 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-// ClusterRoutePrefix is the key prefix for routes stored in the cluster.
 const ClusterRoutePrefix = "route:"
 
-// routeWrapper mirrors the JSON structure used by the API to avoid import cycles.
 type routeWrapper struct {
 	Route     alaye.Route `json:"route"`
 	ExpiresAt time.Time   `json:"expires_at"`
@@ -35,12 +33,12 @@ type Host struct {
 	hostsDir woos.Folder
 
 	mu            sync.RWMutex
-	hosts         map[string]*alaye.Host // Static file hosts
+	hosts         map[string]*alaye.Host
 	clusterRoutes map[string]alaye.Route
 
-	lookupMap  atomic.Value // map[string]*alaye.Host
-	portLookup atomic.Value // map[string]*alaye.Host
-	routers    atomic.Value // map[string]*matcher.Tree
+	lookupMap  atomic.Value
+	portLookup atomic.Value
+	routers    atomic.Value
 
 	watcher *fsnotify.Watcher
 	logger  *ll.Logger
@@ -68,7 +66,7 @@ func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 
 	h.lifetimes = jack.NewLifetimeManager(
 		jack.LifetimeManagerWithLogger(h.logger),
-		jack.LifetimeManagerWithShards(32), // Reduce lock contention
+		jack.LifetimeManagerWithShards(32),
 	)
 
 	h.lookupMap.Store(make(map[string]*alaye.Host))
@@ -83,7 +81,6 @@ func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 	return h
 }
 
-// OnClusterChange implements cluster.UpdateHandler.
 func (hm *Host) OnClusterChange(key string, value []byte, deleted bool) {
 	if !strings.HasPrefix(key, ClusterRoutePrefix) {
 		return
@@ -103,7 +100,6 @@ func (hm *Host) handleRouteDeletion(key string) {
 	delete(hm.clusterRoutes, key)
 	hm.mu.Unlock()
 
-	// Cancel any pending expiration timer
 	hm.lifetimes.CancelTimed(key)
 
 	hm.logger.Fields("key", key).Info("cluster route removed")
@@ -113,17 +109,18 @@ func (hm *Host) handleRouteDeletion(key string) {
 func (hm *Host) handleRouteUpdate(originalKey, trimmedKey string, value []byte) {
 	var wrapper routeWrapper
 	if err := json.Unmarshal(value, &wrapper); err != nil {
-		// Fallback for backward compatibility
+		// Fallback for backward compatibility mapping
 		var simpleRoute alaye.Route
 		if err2 := json.Unmarshal(value, &simpleRoute); err2 == nil {
 			wrapper.Route = simpleRoute
+			// Reset expiration in fallback since it wasn't provided
+			wrapper.ExpiresAt = time.Time{}
 		} else {
 			hm.logger.Fields("key", originalKey, "err", err).Error("failed to unmarshal cluster route")
 			return
 		}
 	}
 
-	// Check if already expired
 	if !wrapper.ExpiresAt.IsZero() {
 		timeLeft := time.Until(wrapper.ExpiresAt)
 		if timeLeft <= 0 {
@@ -131,13 +128,11 @@ func (hm *Host) handleRouteUpdate(originalKey, trimmedKey string, value []byte) 
 			return
 		}
 
-		// Schedule expiration using Jack Lifetime
 		hm.lifetimes.ScheduleTimed(context.Background(), trimmedKey, func(ctx context.Context, id string) {
 			hm.logger.Fields("key", id).Info("route expired via lifetime")
 			hm.handleRouteDeletion(id)
 		}, timeLeft)
 	} else {
-		// Ensure no timer exists if expiration was removed
 		hm.lifetimes.CancelTimed(trimmedKey)
 	}
 
