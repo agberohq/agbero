@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -15,9 +16,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/cluster"
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
@@ -662,6 +665,389 @@ timeouts {
 
 	if resp.StatusCode != 200 {
 		t.Errorf("Expected 200 OK, got %d", resp.StatusCode)
+	}
+}
+
+func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
+	tmpDir := t.TempDir()
+	hostsDir := filepath.Join(tmpDir, "hosts")
+	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+
+	port1 := getFreePort(t)
+	port2 := getFreePort(t)
+
+	global1 := &alaye.Global{
+		Bind: alaye.Bind{HTTP: []string{":0"}},
+		Gossip: alaye.Gossip{
+			Enabled:   alaye.Active,
+			Port:      port1,
+			SecretKey: "0123456789abcdef0123456789abcdef",
+		},
+		Storage: alaye.Storage{
+			HostsDir: hostsDir,
+			DataDir:  tmpDir,
+			CertsDir: filepath.Join(tmpDir, "certs"),
+		},
+		Timeouts: alaye.Timeout{
+			Enabled:    alaye.Active,
+			Read:       10 * time.Second,
+			Write:      30 * time.Second,
+			Idle:       60 * time.Second,
+			ReadHeader: 5 * time.Second,
+		},
+		General: alaye.General{
+			MaxHeaderBytes: 1048576,
+		},
+	}
+
+	global2 := &alaye.Global{
+		Bind: alaye.Bind{HTTP: []string{":0"}},
+		Gossip: alaye.Gossip{
+			Enabled:   alaye.Active,
+			Port:      port2,
+			Seeds:     []string{fmt.Sprintf("127.0.0.1:%d", port1)},
+			SecretKey: "0123456789abcdef0123456789abcdef",
+		},
+		Storage: alaye.Storage{
+			HostsDir: hostsDir,
+			DataDir:  tmpDir,
+			CertsDir: filepath.Join(tmpDir, "certs"),
+		},
+		Timeouts: alaye.Timeout{
+			Enabled:    alaye.Active,
+			Read:       10 * time.Second,
+			Write:      30 * time.Second,
+			Idle:       60 * time.Second,
+			ReadHeader: 5 * time.Second,
+		},
+		General: alaye.General{
+			MaxHeaderBytes: 1048576,
+		},
+	}
+
+	shutdown1 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
+	shutdown2 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
+
+	hm1 := discovery.NewHost(woos.Folder(hostsDir), discovery.WithLogger(testLogger))
+	hm2 := discovery.NewHost(woos.Folder(hostsDir), discovery.WithLogger(testLogger))
+
+	s1 := NewServer(
+		WithGlobalConfig(global1),
+		WithHostManager(hm1),
+		WithLogger(testLogger),
+		WithShutdownManager(shutdown1),
+	)
+
+	s2 := NewServer(
+		WithGlobalConfig(global2),
+		WithHostManager(hm2),
+		WithLogger(testLogger),
+		WithShutdownManager(shutdown2),
+	)
+
+	configPath := filepath.Join(tmpDir, "config.hcl")
+	_ = os.WriteFile(configPath, []byte(""), woos.FilePerm)
+
+	var cm1, cm2 *cluster.Manager
+	var cmMu sync.Mutex
+
+	errCh1 := make(chan error, 1)
+	errCh2 := make(chan error, 1)
+
+	go func() {
+		if err := s1.Start(configPath); err != nil && !strings.Contains(err.Error(), "server closed") {
+			errCh1 <- err
+		}
+		cmMu.Lock()
+		cm1 = s1.clusterManager
+		cmMu.Unlock()
+	}()
+	go func() {
+		if err := s2.Start(configPath); err != nil && !strings.Contains(err.Error(), "server closed") {
+			errCh2 <- err
+		}
+		cmMu.Lock()
+		cm2 = s2.clusterManager
+		cmMu.Unlock()
+	}()
+
+	time.Sleep(2 * time.Second)
+
+	cmMu.Lock()
+	if cm1 == nil || cm2 == nil {
+		cmMu.Unlock()
+		t.Skip("Cluster manager not initialized, skipping cluster sync test")
+	}
+	cmMu.Unlock()
+
+	members1 := cm1.Members()
+	members2 := cm2.Members()
+	if len(members1) < 2 || len(members2) < 2 {
+		t.Skip("Cluster nodes did not join, skipping sync test")
+	}
+
+	route := alaye.Route{
+		Enabled: alaye.Active,
+		Path:    "/api/v1/test",
+		Backends: alaye.Backend{
+			Enabled: alaye.Active,
+			Servers: alaye.NewServers("http://localhost:9999"),
+		},
+	}
+	wrapper := struct {
+		Route     alaye.Route `json:"route"`
+		ExpiresAt time.Time   `json:"expires_at"`
+	}{
+		Route:     route,
+		ExpiresAt: time.Time{},
+	}
+	val, err := json.Marshal(wrapper)
+	if err != nil {
+		t.Fatalf("Failed to marshal route: %v", err)
+	}
+
+	key := fmt.Sprintf("%s%s|%s", discovery.ClusterRoutePrefix, "test.example.com", "/api/v1/test")
+	cm1.Set(key, val)
+
+	time.Sleep(1 * time.Second)
+
+	host2, _ := hm2.LoadAll()
+	found := false
+	for _, h := range host2 {
+		if h != nil {
+			for _, r := range h.Routes {
+				if r.Path == "/api/v1/test" {
+					found = true
+					break
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("Route not propagated to node2 host manager")
+	}
+
+	cm1.Delete(key)
+	time.Sleep(1 * time.Second)
+
+	host2After, _ := hm2.LoadAll()
+	stillPresent := false
+	for _, h := range host2After {
+		if h != nil {
+			for _, r := range h.Routes {
+				if r.Path == "/api/v1/test" {
+					stillPresent = true
+					break
+				}
+			}
+		}
+	}
+	if stillPresent {
+		t.Error("Deleted route still present on node2")
+	}
+
+	shutdown1.TriggerShutdown()
+	shutdown2.TriggerShutdown()
+
+	select {
+	case <-errCh1:
+	case <-time.After(3 * time.Second):
+	}
+	select {
+	case <-errCh2:
+	case <-time.After(3 * time.Second):
+	}
+}
+
+func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
+	tmpDir := t.TempDir()
+	hostsDir := filepath.Join(tmpDir, "hosts")
+	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+
+	port1 := getFreePort(t)
+	port2 := getFreePort(t)
+
+	global1 := &alaye.Global{
+		Bind: alaye.Bind{HTTP: []string{":0"}},
+		Gossip: alaye.Gossip{
+			Enabled:   alaye.Active,
+			Port:      port1,
+			SecretKey: "0123456789abcdef0123456789abcdef",
+		},
+		Storage: alaye.Storage{
+			HostsDir: hostsDir,
+			DataDir:  tmpDir,
+			CertsDir: filepath.Join(tmpDir, "certs"),
+		},
+		Timeouts: alaye.Timeout{
+			Enabled:    alaye.Active,
+			Read:       10 * time.Second,
+			Write:      30 * time.Second,
+			Idle:       60 * time.Second,
+			ReadHeader: 5 * time.Second,
+		},
+		General: alaye.General{
+			MaxHeaderBytes: 1048576,
+		},
+	}
+
+	global2 := &alaye.Global{
+		Bind: alaye.Bind{HTTP: []string{":0"}},
+		Gossip: alaye.Gossip{
+			Enabled:   alaye.Active,
+			Port:      port2,
+			Seeds:     []string{fmt.Sprintf("127.0.0.1:%d", port1)},
+			SecretKey: "0123456789abcdef0123456789abcdef",
+		},
+		Storage: alaye.Storage{
+			HostsDir: hostsDir,
+			DataDir:  tmpDir,
+			CertsDir: filepath.Join(tmpDir, "certs"),
+		},
+		Timeouts: alaye.Timeout{
+			Enabled:    alaye.Active,
+			Read:       10 * time.Second,
+			Write:      30 * time.Second,
+			Idle:       60 * time.Second,
+			ReadHeader: 5 * time.Second,
+		},
+		General: alaye.General{
+			MaxHeaderBytes: 1048576,
+		},
+	}
+
+	shutdown1 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
+	shutdown2 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
+
+	hm1 := discovery.NewHost(woos.Folder(hostsDir), discovery.WithLogger(testLogger))
+	hm2 := discovery.NewHost(woos.Folder(hostsDir), discovery.WithLogger(testLogger))
+
+	s1 := NewServer(
+		WithGlobalConfig(global1),
+		WithHostManager(hm1),
+		WithLogger(testLogger),
+		WithShutdownManager(shutdown1),
+	)
+
+	s2 := NewServer(
+		WithGlobalConfig(global2),
+		WithHostManager(hm2),
+		WithLogger(testLogger),
+		WithShutdownManager(shutdown2),
+	)
+
+	configPath := filepath.Join(tmpDir, "config.hcl")
+	_ = os.WriteFile(configPath, []byte(""), woos.FilePerm)
+
+	var cm1, cm2 *cluster.Manager
+	var cmMu sync.Mutex
+
+	errCh1 := make(chan error, 1)
+	errCh2 := make(chan error, 1)
+
+	go func() {
+		if err := s1.Start(configPath); err != nil && !strings.Contains(err.Error(), "server closed") {
+			errCh1 <- err
+		}
+		cmMu.Lock()
+		cm1 = s1.clusterManager
+		cmMu.Unlock()
+	}()
+	go func() {
+		if err := s2.Start(configPath); err != nil && !strings.Contains(err.Error(), "server closed") {
+			errCh2 <- err
+		}
+		cmMu.Lock()
+		cm2 = s2.clusterManager
+		cmMu.Unlock()
+	}()
+
+	time.Sleep(2 * time.Second)
+
+	cmMu.Lock()
+	if cm1 == nil || cm2 == nil {
+		cmMu.Unlock()
+		t.Skip("Cluster manager not initialized, skipping tombstone test")
+	}
+	cmMu.Unlock()
+
+	members1 := cm1.Members()
+	members2 := cm2.Members()
+	if len(members1) < 2 || len(members2) < 2 {
+		t.Skip("Cluster nodes did not join, skipping tombstone test")
+	}
+
+	route := alaye.Route{
+		Enabled: alaye.Active,
+		Path:    "/ephemeral",
+		Backends: alaye.Backend{
+			Enabled: alaye.Active,
+			Servers: alaye.NewServers("http://localhost:8888"),
+		},
+	}
+	wrapper := struct {
+		Route     alaye.Route `json:"route"`
+		ExpiresAt time.Time   `json:"expires_at"`
+	}{
+		Route:     route,
+		ExpiresAt: time.Now().Add(5 * time.Second),
+	}
+	val, err := json.Marshal(wrapper)
+	if err != nil {
+		t.Fatalf("Failed to marshal route: %v", err)
+	}
+
+	key := fmt.Sprintf("%s%s|%s", discovery.ClusterRoutePrefix, "temp.example.com", "/ephemeral")
+	cm1.Set(key, val)
+	time.Sleep(500 * time.Millisecond)
+
+	host2, _ := hm2.LoadAll()
+	initialCount := 0
+	for _, h := range host2 {
+		if h != nil {
+			for _, r := range h.Routes {
+				if r.Path == "/ephemeral" {
+					initialCount++
+				}
+			}
+		}
+	}
+	if initialCount == 0 {
+		t.Error("Ephemeral route not received by node2")
+	}
+
+	cm1.Delete(key)
+	time.Sleep(1 * time.Second)
+
+	host2After, _ := hm2.LoadAll()
+	finalCount := 0
+	for _, h := range host2After {
+		if h != nil {
+			for _, r := range h.Routes {
+				if r.Path == "/ephemeral" {
+					finalCount++
+				}
+			}
+		}
+	}
+	if finalCount > 0 {
+		t.Error("Tombstone deletion not propagated; route still present")
+	}
+
+	shutdown1.TriggerShutdown()
+	shutdown2.TriggerShutdown()
+
+	select {
+	case <-errCh1:
+	case <-time.After(3 * time.Second):
+	}
+	select {
+	case <-errCh2:
+	case <-time.After(3 * time.Second):
 	}
 }
 

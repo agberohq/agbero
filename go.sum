@@ -248,6 +248,8 @@ github.com/olekukonko/ll v0.1.8-0.20260304195808-a35061d98ce9 h1:6KPqLKXS7F9kQnb
 github.com/olekukonko/ll v0.1.8-0.20260304195808-a35061d98ce9/go.mod h1:RPRC6UcscfFZgjo1nulkfMH5IM0QAYim0LfnMvUuozw=
 github.com/olekukonko/mappo v0.0.0-20260219011920-b562da2ab13d h1:rZ182n6alqFMJiwnHWh1SuWZSCrSoUHnUUi1hLX5pao=
 github.com/olekukonko/mappo v0.0.0-20260219011920-b562da2ab13d/go.mod h1:3OH5ndUVOorYmxkJtvIGcgakYzq0DWvbtZbBoQnBzW0=
+github.com/olekukonko/mappo v0.0.0-20260305135522-3435c72de434 h1:IeShslIhcROPO5X0opgn4M5pbJN4y72zI+ujUMkmxjE=
+github.com/olekukonko/mappo v0.0.0-20260305135522-3435c72de434/go.mod h1:3OH5ndUVOorYmxkJtvIGcgakYzq0DWvbtZbBoQnBzW0=
 github.com/onsi/ginkgo v1.16.5 h1:8xi0RTUf59SOSfEtZMvwTvXYMzG4gV23XVHOZiXNtnE=
 github.com/onsi/ginkgo v1.16.5/go.mod h1:+E8gABHa3K6zRBolWtd+ROzc/U5bkGt0FwiG042wbpU=
 github.com/onsi/gomega v1.18.1 h1:M1GfJqGRrBrrGGsbxzV5dqM2U2ApXefZCQpkukxYRLE=

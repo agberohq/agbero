@@ -4,13 +4,11 @@ import (
 	"math/rand/v2"
 )
 
-// WeightWheel for weighted distribution
 type WeightWheel struct {
 	cumul []uint64
 	total uint64
 }
 
-// NewWheel creates a weight distribution wheel
 func NewWheel(weights []int) *WeightWheel {
 	if len(weights) == 0 {
 		return &WeightWheel{}
@@ -37,7 +35,6 @@ func NewWheel(weights []int) *WeightWheel {
 	return &WeightWheel{cumul: cumul, total: sum}
 }
 
-// Next returns index for round-robin with weight
 func (w *WeightWheel) Next(counter uint64) int {
 	if w == nil || w.total == 0 {
 		return 0
@@ -48,7 +45,6 @@ func (w *WeightWheel) Next(counter uint64) int {
 	return w.search(counter % w.total)
 }
 
-// RandomIndex returns random weighted index
 func (w *WeightWheel) RandomIndex(r *rand.Rand) int {
 	if w == nil || w.total == 0 {
 		return 0
@@ -59,7 +55,6 @@ func (w *WeightWheel) RandomIndex(r *rand.Rand) int {
 	return w.search(r.Uint64N(w.total))
 }
 
-// Search finds bucket for target value using binary search
 func (w *WeightWheel) search(target uint64) int {
 	if len(w.cumul) == 0 {
 		return int(target)

@@ -18,16 +18,10 @@ import (
 
 // Clear caches between tests
 func clearTestCaches() {
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
-	for name, c := range authCaches {
-		// Clear all entries by creating new cache
-		authCaches[name] = mappo.NewCache(mappo.CacheOptions{
-			MaximumSize: 1000,
-			OnDelete:    mappo.CloserDelete,
-		})
-		_ = c // old cache will be GC'd
-	}
+	globalAuthCache = mappo.NewCache(mappo.CacheOptions{
+		MaximumSize: 100_000,
+		OnDelete:    mappo.CloserDelete,
+	})
 }
 
 func TestForward_Disabled(t *testing.T) {

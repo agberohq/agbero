@@ -7,12 +7,11 @@ import (
 	"time"
 )
 
-// Adaptive learns from past performance to bias selection towards faster/healthier backends.
 type Adaptive struct {
 	balancer        Balancer
 	mu              sync.RWMutex
 	performanceData map[Backend]*backendMetrics
-	allBackends     []Backend // Cache of all backends to detect new ones
+	allBackends     []Backend
 	learningRate    float64
 	decayFactor     float64
 }
@@ -26,7 +25,6 @@ type backendMetrics struct {
 	consecutiveSuccesses uint64
 }
 
-// NewAdaptive creates a learning-based selector wrapper.
 func NewAdaptive(child Balancer, learningRate float64) *Adaptive {
 	if learningRate < 0 || learningRate > 1 {
 		learningRate = 0.1
@@ -49,14 +47,12 @@ func (s *Adaptive) cleanupLoop() {
 	}
 }
 
-// Update propagates the update to the child balancer and cleans up stale metrics.
 func (s *Adaptive) Update(backends []Backend) {
 	s.balancer.Update(backends)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Store reference to backends to identify new ones later
 	s.allBackends = make([]Backend, len(backends))
 	copy(s.allBackends, backends)
 
@@ -72,7 +68,6 @@ func (s *Adaptive) Update(backends []Backend) {
 	}
 }
 
-// Cleanup manually forces removal of old entries based on time.
 func (s *Adaptive) Cleanup() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -84,19 +79,13 @@ func (s *Adaptive) Cleanup() {
 	}
 }
 
-// Pick selects a backend using either exploration or exploitation.
 func (s *Adaptive) Pick(r *http.Request, keyFunc func() uint64) Backend {
-	// Exploration: Randomly defer to the underlying strategy
 	if randFloat() < s.learningRate {
 		return s.balancer.Pick(r, keyFunc)
 	}
 
 	s.mu.RLock()
 
-	// Check if we have unknown backends (not in performanceData).
-	// If we do, we MUST fallback to the balancer to give them a chance,
-	// because the loop below only iterates known metrics.
-	// This is a heuristic: if map size < total backends, some are new.
 	if len(s.performanceData) < len(s.allBackends) {
 		s.mu.RUnlock()
 		return s.balancer.Pick(r, keyFunc)
@@ -110,10 +99,6 @@ func (s *Adaptive) Pick(r *http.Request, keyFunc func() uint64) Backend {
 			continue
 		}
 
-		// Score calculation:
-		// 1. Success Rate (Heavy weight)
-		// 2. Latency (Medium weight) - Inverse normalization
-		// 3. InFlight (Light weight) - Inverse normalization
 		latencyScore := 1.0 / (1.0 + m.avgLatency/1000.0)
 		inflightScore := 1.0 / (1.0 + float64(b.InFlight())/10.0)
 
@@ -130,11 +115,9 @@ func (s *Adaptive) Pick(r *http.Request, keyFunc func() uint64) Backend {
 		return best
 	}
 
-	// Fallback if no valid metrics found
 	return s.balancer.Pick(r, keyFunc)
 }
 
-// RecordResult updates the performance metrics for a specific backend.
 func (s *Adaptive) RecordResult(backend Backend, latencyMicros int64, failed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

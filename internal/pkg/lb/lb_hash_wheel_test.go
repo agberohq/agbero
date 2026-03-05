@@ -44,7 +44,7 @@ func TestBuildConsistentHash(t *testing.T) {
 
 	t.Run("backend distribution", func(t *testing.T) {
 		r := NewConsistent(2, 10)
-		counts := make(map[int]int)
+		counts := make(map[int32]int)
 		for _, b := range r.backends {
 			counts[b]++
 		}
@@ -52,8 +52,9 @@ func TestBuildConsistentHash(t *testing.T) {
 			t.Error("should have entries for both backends")
 		}
 		for i := range 2 {
-			if counts[i] != 10 {
-				t.Errorf("backend %d should have 10 replicas, got %d", i, counts[i])
+			i32 := int32(i)
+			if counts[i32] != 10 {
+				t.Errorf("backend %d should have 10 replicas, got %d", i, counts[i32])
 			}
 		}
 	})
@@ -377,56 +378,4 @@ func TestConsistentHashMinimalRedistribution(t *testing.T) {
 	}
 
 	t.Logf("Redistribution: %.2f%% keys moved (ideal ~20%%)", moveRatio*100)
-}
-
-// Benchmarks
-func BenchmarkConsistentHashBuild(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		NewConsistent(10, 150)
-	}
-}
-
-func BenchmarkConsistentHashGet(b *testing.B) {
-	r := NewConsistent(10, 150)
-	keys := make([]uint64, 1000)
-	for i := range keys {
-		keys[i] = rand.Uint64()
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		r.Get(keys[i%1000])
-	}
-}
-
-func BenchmarkWeightWheelNext(b *testing.B) {
-	w := NewWheel([]int{1, 2, 3, 4, 5})
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		w.Next(uint64(i))
-	}
-}
-
-func BenchmarkWeightWheelSearch(b *testing.B) {
-	w := NewWheel([]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
-	targets := make([]uint64, 1000)
-	for i := range targets {
-		targets[i] = rand.Uint64N(w.total)
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		w.search(targets[i%1000])
-	}
-}
-
-func BenchmarkWeightWheelRandomIndex(b *testing.B) {
-	w := NewWheel([]int{1, 2, 3, 4, 5})
-	r := rand.New(rand.NewPCG(1, 2))
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		w.RandomIndex(r)
-	}
 }

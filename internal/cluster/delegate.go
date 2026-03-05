@@ -25,7 +25,7 @@ type delegate struct {
 
 func newDelegate(handler UpdateHandler, logger *ll.Logger, metrics Metrics) *delegate {
 	if metrics == nil {
-		metrics = &noopMetrics{}
+		metrics = &RealMetrics{}
 	}
 	return &delegate{
 		store:   make(map[string]Envelope),

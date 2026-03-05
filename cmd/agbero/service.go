@@ -7,6 +7,7 @@ import (
 	"runtime"
 
 	"git.imaxinacion.net/aibox/agbero"
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"github.com/kardianos/service"
@@ -15,10 +16,13 @@ import (
 )
 
 type program struct {
-	configPath string
-	devMode    bool
-	shutdown   *jack.Shutdown
-	server     *agbero.Server
+	configPath    string
+	devMode       bool
+	shutdown      *jack.Shutdown
+	server        *agbero.Server
+	clusterStart  bool
+	clusterJoinIP string
+	clusterSecret string
 }
 
 func (p *program) Start(s service.Service) error {
@@ -39,6 +43,17 @@ func (p *program) run() {
 	if err != nil {
 		logger.Fields("file", p.configPath, "err", err).Fatal("failed to load config")
 		return
+	}
+
+	// Inject cluster overrides if started via cluster commands
+	if p.clusterStart || p.clusterJoinIP != "" {
+		global.Gossip.Enabled = alaye.Active
+		if p.clusterJoinIP != "" {
+			global.Gossip.Seeds = []string{p.clusterJoinIP}
+		}
+		if p.clusterSecret != "" {
+			global.Gossip.SecretKey = alaye.Value(p.clusterSecret)
+		}
 	}
 
 	// Write PID file for reload command
@@ -76,12 +91,6 @@ func (p *program) run() {
 		"os", runtime.GOOS,
 		"euid", os.Geteuid(),
 	).Info("service starting")
-
-	//logger.Fields(
-	// "hosts_dir", global.Storage.HostsDir,
-	// "certs_dir", global.Storage.CertsDir,
-	// "https", len(global.Bind.HTTPS),
-	//).Info("resolved paths")
 
 	// Store server in struct for Reload access
 	p.server = agbero.NewServer(

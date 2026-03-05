@@ -23,10 +23,10 @@ type Manager struct {
 	delegate *delegate
 	events   *eventDelegate
 	logger   *ll.Logger
+	metrics  Metrics
 	stopCh   chan struct{}
 }
 
-// eventDelegate handles Node Join/Leave logs
 type eventDelegate struct {
 	logger  *ll.Logger
 	metrics Metrics
@@ -52,11 +52,9 @@ func NewManager(cfg Config, handler UpdateHandler, logger *ll.Logger) (*Manager,
 		mConfig.SecretKey = cfg.Secret
 	}
 
-	// Quiet down standard memberlist logging
 	mConfig.Logger = log.New(io.Discard, "", 0)
 
-	// In a real scenario, you'd pass a real metrics collector here
-	metrics := &noopMetrics{}
+	metrics := NewMetrics()
 
 	del := newDelegate(handler, logger, metrics)
 	events := &eventDelegate{logger: logger, metrics: metrics}
@@ -69,13 +67,11 @@ func NewManager(cfg Config, handler UpdateHandler, logger *ll.Logger) (*Manager,
 		return nil, fmt.Errorf("failed to create memberlist: %w", err)
 	}
 
-	// Initialize queue safely after list creation
 	queue := &memberlist.TransmitLimitedQueue{
 		NumNodes:       func() int { return list.NumMembers() },
 		RetransmitMult: 3,
 	}
 
-	// Delegate owns the queue, but we set it here where it's safe
 	del.mu.Lock()
 	del.queue = queue
 	del.mu.Unlock()
@@ -85,6 +81,7 @@ func NewManager(cfg Config, handler UpdateHandler, logger *ll.Logger) (*Manager,
 		delegate: del,
 		events:   events,
 		logger:   logger,
+		metrics:  metrics,
 		stopCh:   make(chan struct{}),
 	}
 
@@ -137,9 +134,12 @@ func (m *Manager) Members() []string {
 	return names
 }
 
+func (m *Manager) Metrics() map[string]uint64 {
+	return m.metrics.Snapshot()
+}
+
 func (m *Manager) Shutdown() error {
 	close(m.stopCh)
-	// Leave politely
 	if err := m.list.Leave(5 * time.Second); err != nil {
 		m.logger.Warn("cluster leave failed", "err", err)
 	}

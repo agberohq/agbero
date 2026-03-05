@@ -107,3 +107,10 @@ func PortScan(bindHost string, port, maxPortRetries int) (int, error) {
 
 	return 0, fmt.Errorf("failed to find a free port on %s after %d attempts", bindHost, maxPortRetries)
 }
+
+func CutPrefixFold(s, prefix string) (string, bool) {
+	if len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix) {
+		return s[len(prefix):], true
+	}
+	return s, false
+}

@@ -6,14 +6,9 @@ import (
 	"github.com/cespare/xxhash/v2"
 )
 
-type ringEntry struct {
-	hash    uint64
-	backend int
-}
-
 type Consistent struct {
 	ring     []uint64
-	backends []int
+	backends []int32
 	replicas int
 }
 
@@ -21,34 +16,34 @@ func NewConsistent(count int, replicas int) *Consistent {
 	if count == 0 || replicas <= 0 {
 		return &Consistent{}
 	}
-
 	total := count * replicas
-	entries := make([]ringEntry, total)
 
+	type ringEntry struct {
+		hash    uint64
+		backend int32
+	}
+
+	entries := make([]ringEntry, total)
 	var key [12]byte
 	key[8], key[9], key[10], key[11] = 0xde, 0xad, 0xbe, 0xef
-
 	idx := 0
 	for i := range count {
 		key[0] = byte(i)
 		key[1] = byte(i >> 8)
 		key[2] = byte(i >> 16)
 		key[3] = byte(i >> 24)
-
 		for j := range replicas {
 			key[4] = byte(j)
 			key[5] = byte(j >> 8)
 			key[6] = byte(j >> 16)
 			key[7] = byte(j >> 24)
-
 			entries[idx] = ringEntry{
 				hash:    xxhash.Sum64(key[:]),
-				backend: i,
+				backend: int32(i),
 			}
 			idx++
 		}
 	}
-
 	slices.SortFunc(entries, func(a, b ringEntry) int {
 		if a.hash < b.hash {
 			return -1
@@ -58,30 +53,34 @@ func NewConsistent(count int, replicas int) *Consistent {
 		}
 		return 0
 	})
-
-	r := &Consistent{
-		ring:     make([]uint64, total),
-		backends: make([]int, total),
+	ring := make([]uint64, total)
+	backends := make([]int32, total)
+	for i, e := range entries {
+		ring[i] = e.hash
+		backends[i] = e.backend
+	}
+	return &Consistent{
+		ring:     ring,
+		backends: backends,
 		replicas: replicas,
 	}
-
-	for i, e := range entries {
-		r.ring[i] = e.hash
-		r.backends[i] = e.backend
-	}
-
-	return r
 }
 
 func (r *Consistent) Get(key uint64) int {
 	if len(r.ring) == 0 {
 		return 0
 	}
-
-	idx, _ := slices.BinarySearch(r.ring, key)
-	if idx == len(r.ring) {
-		idx = 0
+	lo, hi := 0, len(r.ring)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if r.ring[mid] < key {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
 	}
-
-	return r.backends[idx]
+	if lo == len(r.ring) {
+		lo = 0
+	}
+	return int(r.backends[lo])
 }

@@ -136,7 +136,7 @@ func (s *Store) GetBan(ip string) (*Rule, error) {
 }
 
 func (s *Store) IterateActive(iter RuleIterator) error {
-	s.cache.ForEach(func(k string, r Rule) bool {
+	s.cache.Range(func(k string, r Rule) bool {
 		if r.IsExpired() {
 			return true
 		}

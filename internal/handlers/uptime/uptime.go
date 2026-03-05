@@ -36,8 +36,9 @@ type GlobalStats struct {
 }
 
 type ClusterStats struct {
-	Enabled bool     `json:"enabled"`
-	Members []string `json:"members,omitempty"`
+	Enabled bool              `json:"enabled"`
+	Members []string          `json:"members,omitempty"`
+	Metrics map[string]uint64 `json:"metrics,omitempty"`
 }
 
 type SystemSnapshot struct {
@@ -143,6 +144,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 		sysSnap.Cluster = ClusterStats{
 			Enabled: true,
 			Members: cm.Members(),
+			Metrics: cm.Metrics(),
 		}
 	} else {
 		sysSnap.Cluster = ClusterStats{Enabled: false}

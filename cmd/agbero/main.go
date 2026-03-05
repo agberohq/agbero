@@ -27,19 +27,16 @@ var (
 )
 
 var (
-	configPath string
-	devMode    bool
-
-	installHere bool
-
-	keyService string
-	keyTTL     time.Duration
-
+	configPath     string
+	devMode        bool
+	installHere    bool
+	keyService     string
+	keyTTL         time.Duration
 	forceCAInstall bool
 	certDir        string
 
-	// Cluster (formerly Gossip)
-	clusterSecret bool
+	clusterJoinIP string
+	clusterSecret string
 
 	servePath   string = "."
 	servePort   int    = 8000
@@ -73,7 +70,6 @@ func main() {
 
 	flaggy.String(&configPath, "c", "config", "Path to configuration file")
 
-	// --- Scaffolding & Service ---
 	cmdInit := flaggy.NewSubcommand("init")
 	cmdInit.Description = "Scaffold configuration in current directory (no service)"
 
@@ -106,7 +102,6 @@ func main() {
 	cmdHelp := flaggy.NewSubcommand("help")
 	cmdHelp.Description = "Show help examples"
 
-	// --- Ephemeral ---
 	cmdServe := flaggy.NewSubcommand("serve")
 	cmdServe.Description = "Serve a static directory instantly"
 	cmdServe.AddPositionalValue(&servePath, "path", 1, false, "Path to serve (default: current)")
@@ -122,7 +117,6 @@ func main() {
 	cmdProxy.String(&proxyBind, "b", "bind", "Bind address (default: 0.0.0.0)")
 	cmdProxy.Bool(&proxyHTTPS, "s", "https", "Enable HTTPS (auto-generates certs)")
 
-	// --- Route Management ---
 	cmdRoute := flaggy.NewSubcommand("route")
 	cmdRoute.Description = "Manage persistent routes (Interactive)"
 	cmdRouteAdd := flaggy.NewSubcommand("add")
@@ -132,7 +126,6 @@ func main() {
 	cmdRoute.AttachSubcommand(cmdRouteAdd, 1)
 	cmdRoute.AttachSubcommand(cmdRouteRemove, 1)
 
-	// --- Utilities ---
 	cmdHash := flaggy.NewSubcommand("hash")
 	cmdHash.Description = "Generate bcrypt hash for passwords"
 	cmdHash.String(&hashPassword, "p", "password", "Password to hash")
@@ -152,30 +145,35 @@ func main() {
 	cmdCert.AttachSubcommand(cmdListCerts, 1)
 	cmdCert.AttachSubcommand(cmdCertInfo, 1)
 
-	// --- API Key Management ---
 	cmdKey := flaggy.NewSubcommand("key")
 	cmdKey.Description = "Manage API authentication keys"
-
 	cmdKeyGen := flaggy.NewSubcommand("gen")
 	cmdKeyGen.Description = "Generate an auth token for an application"
 	cmdKeyGen.String(&keyService, "s", "service", "Service identifier")
 	cmdKeyGen.Duration(&keyTTL, "t", "ttl", "Token validity duration (default 1y)")
-
 	cmdKeyInit := flaggy.NewSubcommand("init")
 	cmdKeyInit.Description = "Generate the master private key for the API"
-
 	cmdKey.AttachSubcommand(cmdKeyGen, 1)
 	cmdKey.AttachSubcommand(cmdKeyInit, 1)
 
-	// --- Cluster Management ---
 	cmdCluster := flaggy.NewSubcommand("cluster")
 	cmdCluster.Description = "Manage cluster settings"
 
 	cmdClusterSecret := flaggy.NewSubcommand("secret")
 	cmdClusterSecret.Description = "Generate encryption secret for cluster config"
-	cmdCluster.AttachSubcommand(cmdClusterSecret, 1)
 
-	// Attach Top Level
+	cmdClusterStart := flaggy.NewSubcommand("start")
+	cmdClusterStart.Description = "Start agbero as a cluster seed node"
+
+	cmdClusterJoin := flaggy.NewSubcommand("join")
+	cmdClusterJoin.Description = "Join an existing agbero cluster"
+	cmdClusterJoin.AddPositionalValue(&clusterJoinIP, "ip", 1, true, "IP address of the cluster seed")
+	cmdClusterJoin.String(&clusterSecret, "s", "secret", "Cluster secret key")
+
+	cmdCluster.AttachSubcommand(cmdClusterSecret, 1)
+	cmdCluster.AttachSubcommand(cmdClusterStart, 1)
+	cmdCluster.AttachSubcommand(cmdClusterJoin, 1)
+
 	flaggy.AttachSubcommand(cmdInit, 1)
 	flaggy.AttachSubcommand(cmdInstall, 1)
 	flaggy.AttachSubcommand(cmdUninstall, 1)
@@ -198,8 +196,6 @@ func main() {
 
 	hel := newHelper(logger)
 	hel.welcome()
-
-	// --- Handlers ---
 
 	if cmdServe.Used {
 		e := &ephemeral{
@@ -245,20 +241,18 @@ func main() {
 
 	var resolvedPath string
 	var configExists bool
-
 	if cmdInstall.Used {
 		path, err := hel.installConfiguration(installHere)
 		if err != nil {
 			logger.Fatal("Install failed: ", err)
 		}
-
 		resolvedPath = path
 		configExists = true
 	} else {
 		resolvedPath, configExists = hel.resolveConfigPath(configPath)
 	}
 
-	needsConfig := cmdRun.Used || cmdReload.Used || cmdValidate.Used || cmdHosts.Used || cmdStart.Used || cmdKey.Used || (cmdCluster.Used && !cmdClusterSecret.Used)
+	needsConfig := cmdRun.Used || cmdReload.Used || cmdValidate.Used || cmdHosts.Used || cmdStart.Used || cmdKey.Used || cmdClusterStart.Used || cmdClusterJoin.Used || (cmdCluster.Used && !cmdClusterSecret.Used)
 
 	if needsConfig && !configExists {
 		if strings.TrimSpace(configPath) != "" {
@@ -329,8 +323,10 @@ func main() {
 			hel.handleClusterSecret()
 			return
 		}
-		flaggy.ShowHelpAndExit("cluster")
-		return
+		if !cmdClusterStart.Used && !cmdClusterJoin.Used {
+			flaggy.ShowHelpAndExit("cluster")
+			return
+		}
 	}
 
 	svcConfig := &service.Config{
@@ -342,7 +338,6 @@ func main() {
 	if devMode {
 		svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
 	}
-
 	if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
 		cwd, _ := os.Getwd()
 		if filepath.Dir(resolvedPath) == cwd {
@@ -356,9 +351,12 @@ func main() {
 	}
 
 	prg := &program{
-		configPath: resolvedPath,
-		devMode:    devMode,
-		shutdown:   shutdown,
+		configPath:    resolvedPath,
+		devMode:       devMode,
+		shutdown:      shutdown,
+		clusterStart:  cmdClusterStart.Used,
+		clusterJoinIP: clusterJoinIP,
+		clusterSecret: clusterSecret,
 	}
 
 	s, err := service.New(prg, svcConfig)
@@ -411,12 +409,11 @@ func main() {
 		return
 	}
 
-	if cmdRun.Used {
+	if cmdRun.Used || cmdClusterStart.Used || cmdClusterJoin.Used {
 		global, err := hel.loadConfig(resolvedPath)
 		if err != nil {
 			logger.Fatal("Failed to load config: ", err)
 		}
-
 		newLogger, err := zulu.Logging(&global.Logging, devMode, shutdown)
 		if err != nil {
 			logger.Warn("Failed to setup advanced logging: ", err)

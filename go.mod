@@ -25,7 +25,7 @@ require (
 	github.com/olekukonko/errors v1.2.0
 	github.com/olekukonko/jack v0.0.0-20260304221010-b11e7daa6b78
 	github.com/olekukonko/ll v0.1.8-0.20260304195808-a35061d98ce9
-	github.com/olekukonko/mappo v0.0.0-20260219011920-b562da2ab13d
+	github.com/olekukonko/mappo v0.0.0-20260305135522-3435c72de434
 	github.com/pires/go-proxyproto v0.11.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.59.0

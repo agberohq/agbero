@@ -223,7 +223,7 @@ func TestClusterSync(t *testing.T) {
 
 func TestDelegate_LWW_and_Tombstones(t *testing.T) {
 	logger := ll.New("test").Disable()
-	metrics := &noopMetrics{}
+	metrics := &RealMetrics{}
 	del := newDelegate(nil, logger, metrics)
 
 	// 1. Initial Set

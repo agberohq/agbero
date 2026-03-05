@@ -11,7 +11,6 @@ import (
 	"github.com/cespare/xxhash/v2"
 )
 
-// Selector implements all load balancing strategies
 type Selector struct {
 	Strategy  Strategy
 	rrCounter atomic.Uint64
@@ -22,7 +21,6 @@ type Selector struct {
 	ring     *Consistent
 }
 
-// NewSelector creates a strategy selector for backends
 func NewSelector(backends []Backend, strategy Strategy) *Selector {
 	s := &Selector{
 		Strategy: strategy,
@@ -37,13 +35,12 @@ func NewSelector(backends []Backend, strategy Strategy) *Selector {
 	s.wheel = NewWheel(weights)
 
 	if strategy == StrategyConsistentHash {
-		s.ring = NewConsistent(len(backends), 150) // 150 replicas per backend
+		s.ring = NewConsistent(len(backends), 150)
 	}
 
 	return s
 }
 
-// Update refreshes backend list and weights atomically
 func (s *Selector) Update(backends []Backend) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -62,7 +59,6 @@ func (s *Selector) Update(backends []Backend) {
 	}
 }
 
-// Backends returns the current backend list (read-only, for snapshot)
 func (s *Selector) Backends() []Backend {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -71,7 +67,6 @@ func (s *Selector) Backends() []Backend {
 	return result
 }
 
-// Pick selects backend using configured strategy
 func (s *Selector) Pick(r *http.Request, keyFunc func() uint64) Backend {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -118,7 +113,6 @@ func (s *Selector) pickRoundRobin() Backend {
 		counter := s.rrCounter.Add(1)
 		var idx int
 
-		// Use weighted wheel if weights vary, else simple modulo
 		if s.wheel != nil && len(s.wheel.cumul) > 0 {
 			idx = s.wheel.Next(counter)
 		} else {
@@ -191,7 +185,6 @@ func (s *Selector) pickWeightedLeastConn() Backend {
 	return best
 }
 
-// pickIPHash uses xxhash for IP-based hashing
 func (s *Selector) pickIPHash(r *http.Request) Backend {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -202,7 +195,6 @@ func (s *Selector) pickIPHash(r *http.Request) Backend {
 	return s.pickHash(key)
 }
 
-// pickURLHash uses xxhash for URL-based hashing
 func (s *Selector) pickURLHash(r *http.Request) Backend {
 	key := xxhash.Sum64String(r.URL.Path)
 	return s.pickHash(key)
@@ -231,11 +223,10 @@ func (s *Selector) pickLeastResponseTime() Backend {
 
 		responseTime := float64(b.ResponseTime())
 		if responseTime <= 0 {
-			responseTime = 1000 // Default 1ms if no data
+			responseTime = 1000
 		}
 		inflight := float64(b.InFlight())
 
-		// Penalize high inflight
 		score := responseTime * (1 + inflight*0.1)
 
 		if score < bestScore {
@@ -258,14 +249,12 @@ func (s *Selector) pickPowerOfTwoChoices() Backend {
 	rng := rngPool.Get().(*rand.Rand)
 	defer rngPool.Put(rng)
 
-	// Pick two distinct random backends
 	idx1 := rng.IntN(n)
 	idx2 := rng.IntN(n - 1)
 	if idx2 >= idx1 {
 		idx2++
 	}
 
-	// Check bounds and alive
 	var candidates []int
 	if idx1 < n && s.backends[idx1].Alive() {
 		candidates = append(candidates, idx1)
@@ -281,7 +270,6 @@ func (s *Selector) pickPowerOfTwoChoices() Backend {
 		return s.backends[candidates[0]]
 	}
 
-	// Choose least connections
 	if s.backends[candidates[0]].InFlight() < s.backends[candidates[1]].InFlight() {
 		return s.backends[candidates[0]]
 	}
@@ -293,14 +281,12 @@ func (s *Selector) pickConsistentHash(key uint64) Backend {
 		return s.pickRandom()
 	}
 
-	// Use xxhash on the key for better distribution
 	h := HashUint64(key)
 	idx := s.ring.Get(h)
 	if idx < 0 || idx >= len(s.backends) {
 		return s.pickRandom()
 	}
 
-	// Linear probe for alive backend
 	for i := 0; i < len(s.backends); i++ {
 		checkIdx := (idx + i) % len(s.backends)
 		if s.backends[checkIdx].Alive() {
