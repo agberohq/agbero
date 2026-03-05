@@ -1,97 +1,116 @@
 package lb
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/olekukonko/jack"
+	"github.com/olekukonko/mappo"
 )
 
-// Sticky adds session persistence.
+// Sticky adds session persistence using jack.Reaper for efficient TTL management
 type Sticky struct {
-	balancer    Balancer
-	stickyTable sync.Map // map[string]stickyEntry
-	ttl         time.Duration
-	extractor   func(*http.Request) string
-}
-
-type stickyEntry struct {
-	backend Backend
-	expires time.Time
+	balancer  Balancer
+	reaper    *jack.Reaper
+	cache     *mappo.LRU[string, Backend]
+	extractor func(*http.Request) string
+	ttl       time.Duration
+	mu        sync.RWMutex
+	stopOnce  sync.Once
 }
 
 // NewSticky wraps a balancer with session affinity.
+// Uses jack.Reaper for O(log N) expiration and mappo.LRU for bounded caching.
 func NewSticky(child Balancer, ttl time.Duration, extractor func(*http.Request) string) *Sticky {
 	if ttl <= 0 {
 		ttl = 30 * time.Minute
 	}
-	return &Sticky{
+
+	if extractor == nil {
+		extractor = ClientIP
+	}
+
+	s := &Sticky{
 		balancer:  child,
 		ttl:       ttl,
 		extractor: extractor,
+		cache:     mappo.NewLRU[string, Backend](1024),
 	}
+
+	s.reaper = jack.NewReaper(ttl, jack.ReaperWithHandler(func(ctx context.Context, id string) {
+		s.cache.Delete(id)
+	}))
+	s.reaper.Start()
+
+	return s
 }
 
 // Update propagates update and clears invalid sticky sessions.
 func (s *Sticky) Update(backends []Backend) {
 	s.balancer.Update(backends)
 
-	// Create a quick lookup for valid backends
-	valid := make(map[Backend]bool)
+	valid := make(map[Backend]struct{}, len(backends))
 	for _, b := range backends {
-		valid[b] = true
+		valid[b] = struct{}{}
 	}
 
-	// Prune sticky entries pointing to dead/removed backends
-	s.stickyTable.Range(func(key, value any) bool {
-		entry := value.(stickyEntry)
-		if !valid[entry.backend] {
-			s.stickyTable.Delete(key)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Collect keys to delete first (avoid modifying cache during Range)
+	var toDelete []string
+	s.cache.Range(func(key string, value Backend) bool {
+		if _, ok := valid[value]; !ok {
+			toDelete = append(toDelete, key)
 		}
 		return true
 	})
+
+	for _, key := range toDelete {
+		s.cache.Delete(key)
+		s.reaper.Remove(key)
+	}
 }
 
-// Cleanup removes expired entries from the map.
-func (s *Sticky) Cleanup() {
-	now := time.Now()
-	s.stickyTable.Range(func(key, value any) bool {
-		entry := value.(stickyEntry)
-		if now.After(entry.expires) {
-			s.stickyTable.Delete(key)
-		}
-		return true
+// Stop gracefully shuts down the reaper.
+func (s *Sticky) Stop() {
+	s.stopOnce.Do(func() {
+		s.reaper.Stop()
 	})
 }
 
+// Pick selects a backend with session affinity.
 func (s *Sticky) Pick(r *http.Request, keyFunc func() uint64) Backend {
-	// 1. Extract Session ID (Cookie/Header/IP)
-	sessionID := ""
-	if s.extractor != nil {
-		sessionID = s.extractor(r)
+	sessionID := s.extractor(r)
+	if sessionID == "" {
+		return s.balancer.Pick(r, keyFunc)
 	}
 
-	// 2. Check Table
-	if sessionID != "" {
-		if val, ok := s.stickyTable.Load(sessionID); ok {
-			entry := val.(stickyEntry)
-			// Check expiration and liveness
-			if time.Now().Before(entry.expires) && entry.backend.Alive() {
-				return entry.backend
-			}
-			s.stickyTable.Delete(sessionID)
-		}
+	s.mu.RLock()
+	if backend, ok := s.cache.Get(sessionID); ok && backend.Alive() {
+		s.mu.RUnlock()
+		s.reaper.Touch(sessionID)
+		return backend
 	}
+	s.mu.RUnlock()
 
-	// 3. Fallback to child balancer
 	backend := s.balancer.Pick(r, keyFunc)
-
-	// 4. Store new affinity
-	if backend != nil && sessionID != "" {
-		s.stickyTable.Store(sessionID, stickyEntry{
-			backend: backend,
-			expires: time.Now().Add(s.ttl),
-		})
+	if backend != nil {
+		s.mu.Lock()
+		s.cache.Set(sessionID, backend)
+		s.mu.Unlock()
+		s.reaper.Touch(sessionID)
 	}
 
 	return backend
+}
+
+// GetStats returns statistics about the sticky table.
+func (s *Sticky) GetStats() map[string]interface{} {
+	return map[string]interface{}{
+		"cached_entries": s.cache.Len(),
+		"reaper_tasks":   s.reaper.Count(),
+	}
 }

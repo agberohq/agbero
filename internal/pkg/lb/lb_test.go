@@ -1,4 +1,3 @@
-// balancer_test.go - Core selector strategies
 package lb
 
 import (
