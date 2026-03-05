@@ -36,6 +36,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/operation"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/parser"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/security"
 	tlss2 "git.imaxinacion.net/aibox/agbero/internal/pkg/tlss"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
@@ -69,9 +70,10 @@ type Server struct {
 	configPath string
 	configSHA  string
 
-	hostManager *discovery.Host
-	global      *alaye.Global
-	tlsManager  *tlss2.Manager
+	hostManager     *discovery.Host
+	global          *alaye.Global
+	tlsManager      *tlss2.Manager
+	securityManager *security.Manager
 
 	firewall *firewall.Engine
 
@@ -165,6 +167,20 @@ func (s *Server) Start(configPath string) error {
 			"cert_dir", s.global.Storage.CertsDir,
 			"data_dir", s.global.Storage.DataDir,
 		).Info("directories initialized")
+	}
+
+	// Initialize Internal Security Manager (Auth)
+	if s.global.Security.Enabled.Active() && s.global.Security.InternalAuthKey != "" {
+		mgr, err := security.LoadKeys(s.global.Security.InternalAuthKey)
+		if err != nil {
+			s.logger.Fields("err", err, "key_file", s.global.Security.InternalAuthKey).Error("failed to load internal auth key")
+			return err
+		}
+		s.securityManager = mgr
+		s.logger.Info("internal security manager initialized")
+	} else if s.global.API.Enabled.Active() {
+		// Fallback warning if API is enabled but keys missing in new location
+		s.logger.Warn("API enabled but security.internal_auth_key not set; API endpoints may fail auth")
 	}
 
 	if err := s.validateTLSConfig(); err != nil {
@@ -537,6 +553,16 @@ func (s *Server) Reload() {
 			if err != nil {
 				s.logger.Fields("err", err).Error("failed to init firewall on reload")
 			}
+		}
+	}
+
+	// Reload Internal Auth Key if changed
+	if global.Security.Enabled.Active() && global.Security.InternalAuthKey != "" {
+		mgr, err := security.LoadKeys(global.Security.InternalAuthKey)
+		if err != nil {
+			s.logger.Fields("err", err).Error("failed to reload internal auth key")
+		} else {
+			s.securityManager = mgr
 		}
 	}
 

@@ -51,7 +51,7 @@ func OAuth(cfg *alaye.OAuth) func(http.Handler) http.Handler {
 				return
 			}
 
-			// 4. Start Auth Flow
+			// 4. Start Internal Flow
 			startGothFlow(w, r, provider)
 		})
 	}

@@ -14,14 +14,14 @@ type Router struct {
 	logger  *ll.Logger
 }
 
-func NewRouter(cluster *cluster.Manager, logger *ll.Logger) *Router {
+func NewRouter(cluster *cluster.Manager, logger *ll.Logger, authMiddleware func(http.Handler) http.Handler) *Router {
 	r := &Router{
 		mux:     http.NewServeMux(),
 		cluster: cluster,
 		logger:  logger.Namespace("api"),
 	}
 
-	r.routes()
+	r.routes(authMiddleware)
 	return r
 }
 
@@ -29,8 +29,17 @@ func (ar *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ar.mux.ServeHTTP(w, r)
 }
 
-func (ar *Router) routes() {
-	ar.mux.HandleFunc("/routes", ar.handleRoutes)
+func (ar *Router) routes(authMiddleware func(http.Handler) http.Handler) {
+	// Create the routes handler
+	routesHandler := http.HandlerFunc(ar.handleRoutes)
+
+	// Apply auth middleware - both sides are now http.Handler interface
+	var handler http.Handler = routesHandler
+	if authMiddleware != nil {
+		handler = authMiddleware(handler)
+	}
+
+	ar.mux.Handle("/routes", handler)
 }
 
 // handleRoutes dispatches route management requests

@@ -16,7 +16,6 @@ var (
 	testLogger = ll.New("hosts/test").Disable()
 )
 
-// Helper to write valid HCL content
 func validHCL(domain string) []byte {
 	return []byte(`
 domains = ["` + domain + `"]
@@ -34,7 +33,6 @@ func waitChanged(t *testing.T, ch <-chan struct{}, timeout time.Duration) {
 	t.Helper()
 	select {
 	case <-ch:
-		time.Sleep(20 * time.Millisecond)
 		return
 	case <-time.After(timeout):
 		t.Fatalf("timeout waiting for Changed()")
@@ -78,7 +76,6 @@ func TestOnClusterChange_Add(t *testing.T) {
 	wrapper := routeWrapper{Route: route}
 	val, _ := json.Marshal(wrapper)
 
-	// Simulate cluster update: route:example.com|/api
 	key := ClusterRoutePrefix + "example.com"
 	h.OnClusterChange(key, val, false)
 
@@ -120,7 +117,7 @@ func TestOnClusterChange_Remove(t *testing.T) {
 	h.OnClusterChange(key, val, false)
 	waitChanged(t, h.Changed(), time.Second)
 
-	h.OnClusterChange(key, nil, true) // Delete
+	h.OnClusterChange(key, nil, true)
 	waitChanged(t, h.Changed(), time.Second)
 
 	hosts, _ := h.LoadAll()
@@ -289,7 +286,6 @@ func TestRebuildLookupLocked_MergeFileAndDynamicSamePath(t *testing.T) {
 		},
 	}
 
-	// Dynamic overwrite
 	h.clusterRoutes["example.com"] = alaye.Route{
 		Path: "/api",
 		Backends: alaye.Backend{
@@ -307,14 +303,6 @@ func TestRebuildLookupLocked_MergeFileAndDynamicSamePath(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("expected example.com to exist")
 	}
-
-	// With the new logic, file + dynamic with same path might append or override based on sort.
-	// Since we append both to domainToRoutes and then sort, we should see both backends if merged
-	// or distinct routes if logic differs.
-	// In rebuildLookupLocked:
-	// 1. File routes added.
-	// 2. Cluster routes added.
-	// 3. Merged.
 
 	if len(cfg.Routes) != 2 {
 		t.Fatalf("expected 2 routes (1 from file, 1 from cluster), got %d", len(cfg.Routes))
@@ -339,7 +327,6 @@ func TestGet_WildcardResolution(t *testing.T) {
 
 	wildcardDomain := "*.localhost"
 
-	// Create map matching atomic structure
 	m := make(map[string]*alaye.Host)
 	m[wildcardDomain] = &alaye.Host{
 		Domains: []string{wildcardDomain},
@@ -384,5 +371,35 @@ func TestGet_WildcardResolution(t *testing.T) {
 				t.Fatalf("Expected nil for '%s', but got a host", tt.input)
 			}
 		})
+	}
+}
+
+func TestHost_RouteExpiration(t *testing.T) {
+	hm := NewHost(woos.Folder("."), WithLogger(testLogger))
+	defer hm.Close()
+
+	route := alaye.Route{Path: "/expire", Enabled: alaye.Active}
+	expiry := time.Now().Add(500 * time.Millisecond)
+
+	wrapper := routeWrapper{
+		Route:     route,
+		ExpiresAt: expiry,
+	}
+	data, _ := json.Marshal(wrapper)
+
+	key := ClusterRoutePrefix + "example.com|/expire"
+
+	hm.OnClusterChange(key, data, false)
+
+	waitChanged(t, hm.Changed(), time.Second)
+
+	if !hm.RouteExists("example.com", "/expire") {
+		t.Fatal("route should exist immediately after update")
+	}
+
+	time.Sleep(1200 * time.Millisecond)
+
+	if hm.RouteExists("example.com", "/expire") {
+		t.Fatal("route should have expired")
 	}
 }

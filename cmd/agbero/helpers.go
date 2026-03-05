@@ -137,7 +137,6 @@ func (h *helper) initConfiguration(targetDir string) (string, error) {
 
 	secret, _ := h.generateSecureKey(128)
 
-	// Generate random password
 	password, err := h.generateRandomPassword(16)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate password: %w", err)
@@ -330,7 +329,7 @@ func (h *helper) showHelpExamples(configPath string) {
 	fmt.Printf("  %s reload           # Hot reload running instance\n", exeName)
 	fmt.Println("")
 	fmt.Println("API MANAGEMENT:")
-	fmt.Printf("  %s key init         # Generate API master key\n", exeName)
+	fmt.Printf("  %s key init         # Generate internal auth key\n", exeName)
 	fmt.Printf("  %s key gen -s myapp # Generate token for app 'myapp'\n", exeName)
 	fmt.Println("")
 	fmt.Println("SERVICE MANAGEMENT:")
@@ -479,12 +478,12 @@ func (h *helper) handleKeyInit() {
 	global, err := h.loadConfig(configPath)
 	var targetPath string
 
-	if err == nil && global.API.PrivateKeyFile != "" {
-		targetPath = global.API.PrivateKeyFile
+	// Use config value if set, otherwise default to certs dir
+	if err == nil && global.Security.InternalAuthKey != "" {
+		targetPath = global.Security.InternalAuthKey
 	} else {
-		// Default location if config not set
 		sysPaths := woos.DefaultPaths()
-		targetPath = filepath.Join(sysPaths.CertsDir.Path(), "api.key")
+		targetPath = filepath.Join(sysPaths.CertsDir.Path(), "internal_auth.key")
 	}
 
 	if _, err := os.Stat(targetPath); err == nil {
@@ -502,13 +501,13 @@ func (h *helper) handleKeyInit() {
 		h.logger.Fatal("failed to generate key: ", err)
 	}
 
-	h.logger.Info("generated API private key: ", targetPath)
-	fmt.Println("\nAdd this to your agbero.hcl:")
+	h.logger.Info("generated internal auth key: ", targetPath)
+	fmt.Println("\nAdd this to your agbero.hcl under the security block:")
 	fmt.Printf(`
-api {
+security {
   enabled = true
-  address = ":9091"
-  private_key_file = "%s"
+  internal_auth_key = "%s"
+  # ... other security settings
 }
 `, targetPath)
 }
@@ -523,11 +522,21 @@ func (h *helper) handleKeyGen(service string, ttl time.Duration) {
 		h.logger.Fatal("failed to load config: ", err)
 	}
 
-	if global.API.PrivateKeyFile == "" {
-		h.logger.Fatal("error: 'api.private_key_file' is not set in config")
+	keyPath := global.Security.InternalAuthKey
+	if keyPath == "" {
+		// Fallback to default if not in config
+		sysPaths := woos.DefaultPaths()
+		defaultPath := filepath.Join(sysPaths.CertsDir.Path(), "internal_auth.key")
+		if _, err := os.Stat(defaultPath); err == nil {
+			keyPath = defaultPath
+		}
 	}
 
-	tm, err := security.LoadKeys(global.API.PrivateKeyFile)
+	if keyPath == "" {
+		h.logger.Fatal("error: 'security.internal_auth_key' is not set in config and default file not found")
+	}
+
+	tm, err := security.LoadKeys(keyPath)
 	if err != nil {
 		h.logger.Fatal("failed to load private key: ", err)
 	}

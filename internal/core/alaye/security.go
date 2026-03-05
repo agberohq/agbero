@@ -11,9 +11,10 @@ import (
 )
 
 type Security struct {
-	Enabled        Enabled  `hcl:"enabled,optional" json:"enabled"`
-	TrustedProxies []string `hcl:"trusted_proxies,optional" json:"trusted_proxies"`
-	Firewall       Firewall `hcl:"firewall,block" json:"firewall"`
+	Enabled         Enabled  `hcl:"enabled,optional" json:"enabled"`
+	TrustedProxies  []string `hcl:"trusted_proxies,optional" json:"trusted_proxies"`
+	InternalAuthKey string   `hcl:"internal_auth_key,optional" json:"internal_auth_key"` // Moved from API
+	Firewall        Firewall `hcl:"firewall,block" json:"firewall"`
 }
 
 type Defaults struct {
@@ -126,7 +127,6 @@ func (c *Condition) Validate() error {
 	c.Location = strings.ToLower(c.Location)
 	switch c.Location {
 	case "ip", "path", "method", "header", "headers", "query", "body", "uri", "":
-		// Empty location is allowed (defaults will be handled elsewhere)
 	default:
 		return errors.Newf("unknown location %q", c.Location)
 	}

@@ -376,7 +376,7 @@ func TestForward_BodyMode_None(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	if bodyReceived {
-		t.Error("Auth service should NOT receive body in 'none' mode")
+		t.Error("Internal service should NOT receive body in 'none' mode")
 	}
 }
 
@@ -388,7 +388,7 @@ func TestForward_BodyMode_Metadata(t *testing.T) {
 		if r.Body != nil {
 			body, _ := io.ReadAll(r.Body)
 			if len(body) > 0 {
-				t.Error("Auth service should not receive body in 'metadata' mode")
+				t.Error("Internal service should not receive body in 'metadata' mode")
 			}
 		}
 		w.WriteHeader(http.StatusOK)
@@ -465,7 +465,7 @@ func TestForward_BodyMode_Limited(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	if authBody != smallBody {
-		t.Errorf("Auth service should receive body, got %s", authBody)
+		t.Errorf("Internal service should receive body, got %s", authBody)
 	}
 	if backendBody != smallBody {
 		t.Errorf("Backend should receive full body, got %s", backendBody)
@@ -480,7 +480,7 @@ func TestForward_BodyMode_Limited(t *testing.T) {
 	handler.ServeHTTP(w2, req2)
 
 	if len(authBody) != 100 {
-		t.Errorf("Auth service should receive only 100 bytes, got %d", len(authBody))
+		t.Errorf("Internal service should receive only 100 bytes, got %d", len(authBody))
 	}
 	if backendBody != largeBody {
 		t.Errorf("Backend should receive full 1000 bytes, got %d", len(backendBody))

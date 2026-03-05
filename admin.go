@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/api"
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/uptime"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
 	"git.imaxinacion.net/aibox/agbero/internal/operation"
+	"git.imaxinacion.net/aibox/agbero/internal/operation/api"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/crypto/bcrypt"
@@ -56,8 +56,15 @@ func (s *Server) startAdminServer() {
 	uiHandler := operation.Admin()
 	mux.Handle("/", uiHandler)
 
-	apiRouter := api.NewRouter(s.clusterManager, s.logger)
-	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", apiRouter))
+	// API Routes (Enabled)
+	if s.clusterManager != nil && s.securityManager != nil {
+		apiRouter := api.NewRouter(s.clusterManager, s.logger, auth.Internal(s.securityManager, s.logger))
+		mux.Handle("/api/v1/", http.StripPrefix("/api/v1", apiRouter))
+	} else if s.clusterManager == nil {
+		s.logger.Warn("admin api disabled: cluster manager not active")
+	} else if s.securityManager == nil {
+		s.logger.Warn("admin api disabled: security manager (internal_auth_key) not configured")
+	}
 
 	protect := func(h http.Handler) http.Handler {
 		if cfg.JWTAuth.Enabled.Active() {
@@ -79,7 +86,7 @@ func (s *Server) startAdminServer() {
 		return h
 	}
 
-	mux.Handle("/uptime", protect(uptime.Uptime(s.hostManager)))
+	mux.Handle("/uptime", protect(uptime.Uptime(s.hostManager, s.clusterManager)))
 	mux.Handle("/metrics", protect(promhttp.Handler()))
 	mux.Handle("/config", protect(http.HandlerFunc(s.handleAdminConfigDump)))
 	mux.Handle("/logs", protect(http.HandlerFunc(s.handleAdminLogs)))

@@ -87,7 +87,7 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 		if err != nil {
 			return func(next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					http.Error(w, "Forward Auth TLS Error: "+err.Error(), http.StatusInternalServerError)
+					http.Error(w, "Forward Internal TLS Error: "+err.Error(), http.StatusInternalServerError)
 				})
 			}
 		}

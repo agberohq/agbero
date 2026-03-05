@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/cluster"
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/xtcp"
@@ -34,10 +35,16 @@ type GlobalStats struct {
 	TcpP99  float64 `json:"tcp_p99_ms"`
 }
 
+type ClusterStats struct {
+	Enabled bool     `json:"enabled"`
+	Members []string `json:"members,omitempty"`
+}
+
 type SystemSnapshot struct {
 	Timestamp time.Time                `json:"timestamp"`
 	System    SystemStats              `json:"system"`
 	Global    GlobalStats              `json:"global"`
+	Cluster   ClusterStats             `json:"cluster"`
 	Hosts     map[string]*HostSnapshot `json:"hosts"`
 }
 
@@ -97,9 +104,9 @@ func getCPUPercent() float64 {
 	return lastCPUPercent
 }
 
-func Uptime(hm *discovery.Host) http.HandlerFunc {
+func Uptime(hm *discovery.Host, cm *cluster.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		snapshot := collectMetrics(hm)
+		snapshot := collectMetrics(hm, cm)
 
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
@@ -108,7 +115,7 @@ func Uptime(hm *discovery.Host) http.HandlerFunc {
 	}
 }
 
-func collectMetrics(hm *discovery.Host) *SystemSnapshot {
+func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
@@ -130,6 +137,15 @@ func collectMetrics(hm *discovery.Host) *SystemSnapshot {
 		Timestamp: time.Now(),
 		System:    sysStats,
 		Hosts:     make(map[string]*HostSnapshot),
+	}
+
+	if cm != nil {
+		sysSnap.Cluster = ClusterStats{
+			Enabled: true,
+			Members: cm.Members(),
+		}
+	} else {
+		sysSnap.Cluster = ClusterStats{Enabled: false}
 	}
 
 	var (

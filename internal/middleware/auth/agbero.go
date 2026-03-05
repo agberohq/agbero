@@ -1,4 +1,4 @@
-package api
+package auth
 
 import (
 	"net/http"
@@ -8,7 +8,7 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-func Auth(tm *security.Manager, logger *ll.Logger) func(http.Handler) http.Handler {
+func Internal(tm *security.Manager, logger *ll.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -33,7 +33,6 @@ func Auth(tm *security.Manager, logger *ll.Logger) func(http.Handler) http.Handl
 
 			// Add service name to header for downstream handlers if needed
 			r.Header.Set("X-Agbero-Service", serviceName)
-
 			next.ServeHTTP(w, r)
 		})
 	}

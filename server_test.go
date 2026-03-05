@@ -30,7 +30,7 @@ import (
 )
 
 var (
-	testLogger = ll.New("test").Disable() // Properly suspend logging in tests
+	testLogger = ll.New("test").Disable()
 )
 
 func TestNewServer_Basic(t *testing.T) {
@@ -230,8 +230,6 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	woos.DefaultRoute(route)
 	key := route.Key()
 
-	// NewRoute also calls DefaultRoute internally, but since we called it above,
-	// the struct is stable now.
 	handler := handlers.NewRoute(s.global, host, route, testLogger)
 
 	item := &mappo.Item{
@@ -411,7 +409,6 @@ route "/" {
 		global:      &alaye.Global{},
 	}
 
-	// Request with body larger than limit
 	largeBody := strings.Repeat("a", 20)
 	req := httptest.NewRequest("POST", "/", strings.NewReader(largeBody))
 	req.Host = "example.com"
@@ -531,14 +528,12 @@ func TestServer_redirectToHTTPS_WithCustomPort(t *testing.T) {
 }
 
 func TestServer_Reload_DynamicBind(t *testing.T) {
-	// Setup Upstream Backend
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("backend-ok"))
 	}))
 	defer backend.Close()
 
-	// Setup Directories
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts")
 	if err := os.MkdirAll(hostsDir, 0755); err != nil {
@@ -549,7 +544,6 @@ func TestServer_Reload_DynamicBind(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create Initial Host Config
 	hostFile := filepath.Join(hostsDir, "dynamic.hcl")
 	initialHostConfig := fmt.Sprintf(`
 domains = ["localhost"]
@@ -562,10 +556,8 @@ route "/" {
 `, backend.URL)
 	writeSyncedFile(t, hostFile, []byte(initialHostConfig))
 
-	// Create Initial Global Config
 	configFile := filepath.Join(tmpDir, "agbero.hcl")
 	mainPort := getFreePort(t)
-	// Allow OS to clean up the port binding from getFreePort
 	time.Sleep(100 * time.Millisecond)
 
 	initialGlobalConfig := fmt.Sprintf(`version = 2
@@ -587,7 +579,6 @@ timeouts {
 `, mainPort, hostsDir, certsDir, tmpDir)
 	writeSyncedFile(t, configFile, []byte(initialGlobalConfig))
 
-	// Prepare Server Dependencies
 	global, err := parser.LoadGlobal(configFile)
 	if err != nil {
 		t.Fatalf("Failed to parse initial config: %v", err)
@@ -597,7 +588,6 @@ timeouts {
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(10 * time.Second))
 	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
 
-	// Watch must be started for reload to work
 	if err := hm.Watch(); err != nil {
 		t.Fatalf("Failed to start watcher: %v", err)
 	}
@@ -610,7 +600,6 @@ timeouts {
 		WithShutdownManager(shutdown),
 	)
 
-	// start Server
 	go func() {
 		if err := s.Start(configFile); err != nil && !strings.Contains(err.Error(), "server closed") {
 			t.Logf("Server stopped: %v", err)
@@ -618,24 +607,19 @@ timeouts {
 	}()
 	defer shutdown.TriggerShutdown()
 
-	// Verify Initial Port
 	waitForPort(t, mainPort)
 
-	// Prepare New Port for Reload
 	targetPort := getFreePort(t)
 	if targetPort == mainPort {
 		t.Fatal("getFreePort returned the same port as mainPort")
 	}
 
-	// Wait for OS to clear TIME_WAIT on the new port
 	time.Sleep(500 * time.Millisecond)
 
 	if isPortOpen(t, targetPort) {
 		t.Fatalf("Port %d is still open (zombie listener?)", targetPort)
 	}
 
-	// Update Configs to Trigger Reload
-	// Update Global Config with NEW port
 	updatedGlobalConfig := fmt.Sprintf(`version = 2
 bind {
   http = [":%d"]
@@ -655,19 +639,14 @@ timeouts {
 `, targetPort, hostsDir, certsDir, tmpDir)
 	writeSyncedFile(t, configFile, []byte(updatedGlobalConfig))
 
-	// Touch Host File to trigger the Watcher -> Reload sequence
 	writeSyncedFile(t, hostFile, []byte(initialHostConfig+" # trigger reload"))
 
-	// Wait for New Port to Open
 	waitForPort(t, targetPort)
 
-	// Verify HTTP connectivity
 	client := &http.Client{
 		Timeout: 2 * time.Second,
 	}
 
-	// CONNECT to 127.0.0.1, but set Host header to "localhost"
-	// because that is what is defined in dynamic.hcl.
 	reqURL := fmt.Sprintf("http://127.0.0.1:%d", targetPort)
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
@@ -686,9 +665,6 @@ timeouts {
 	}
 }
 
-// Helper functions
-
-// writeSyncedFile ensures data is flushed to disk to help fsnotify pick it up reliably
 func writeSyncedFile(t *testing.T, path string, data []byte) {
 	t.Helper()
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
@@ -740,11 +716,6 @@ func isPortOpen(t *testing.T, port int) bool {
 	return false
 }
 
-func TestServer_WithWASM(t *testing.T) {
-	// Skip if no wasm file available
-	t.Skip("WASM tests require actual .wasm files")
-}
-
 func TestServer_WithFirewall(t *testing.T) {
 	tmpDir := t.TempDir()
 	dataDir := filepath.Join(tmpDir, "data")
@@ -775,7 +746,6 @@ func TestServer_WithFirewall(t *testing.T) {
 		},
 	}
 
-	// Just verify the config is valid, don't create unused server
 	if !global.Security.Enabled.Active() {
 		t.Error("Security should be enabled")
 	}

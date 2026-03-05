@@ -25,10 +25,9 @@ func (m *mockHandler) OnClusterChange(key string, value []byte, deleted bool) {
 }
 
 func TestRouteAPI(t *testing.T) {
-	logger := ll.New("test").Enable()
+	logger := ll.New("test").Disable()
 	handler := &mockHandler{kv: make(map[string][]byte)}
 
-	// Create cluster (standalone)
 	cMgr, err := cluster.NewManager(cluster.Config{
 		BindAddr: "127.0.0.1",
 		BindPort: 0,
@@ -39,11 +38,14 @@ func TestRouteAPI(t *testing.T) {
 	}
 	defer cMgr.Shutdown()
 
-	router := NewRouter(cMgr, logger)
+	noopMiddleware := func(h http.Handler) http.Handler {
+		return h
+	}
+
+	router := NewRouter(cMgr, logger, noopMiddleware)
 	ts := httptest.NewServer(router)
 	defer ts.Close()
 
-	// 1. ADD ROUTE
 	route := alaye.Route{
 		Path: "/api",
 		Backends: alaye.Backend{
@@ -65,14 +67,24 @@ func TestRouteAPI(t *testing.T) {
 		t.Errorf("expected 200 OK, got %d", resp.StatusCode)
 	}
 
-	// Verify it reached handler
 	expectedKey := "route:example.com|/api"
-	// give cluster chan a moment (though local delegate applies immediately)
-	if _, ok := handler.kv[expectedKey]; !ok {
+	// API operations on cluster are eventual, but local delegate is applied immediately in mock
+	// However, the Manager.Set is async. We might need a small wait in a real integration test,
+	// but here we are checking the mockHandler which relies on the Manager's delegate.
+	// Since Manager.Set calls delegate.set which locks and calls handler, it should be visible.
+
+	// Wait for async propagation if necessary (memberlist might be async internally)
+	// But local set usually applies directly.
+	// Let's verify against the handler's map.
+
+	_, exists := handler.kv[expectedKey]
+	if !exists {
+		// Manager.Set is async/gossip based in some implementations, but Set() calls delegate.set() directly in this implementation.
+		// Check implementation details: Manager.Set -> delegate.set -> apply -> handler.OnClusterChange.
+		// It should be synchronous for the local node.
 		t.Error("route not found in cluster state")
 	}
 
-	// 2. DELETE ROUTE
 	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/routes?host=example.com&path=/api", nil)
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {

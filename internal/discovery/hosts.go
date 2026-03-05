@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
 	"os"
@@ -33,10 +34,9 @@ type routeWrapper struct {
 type Host struct {
 	hostsDir woos.Folder
 
-	mu               sync.RWMutex
-	hosts            map[string]*alaye.Host // Static file hosts
-	clusterRoutes    map[string]alaye.Route
-	routeExpirations map[string]time.Time
+	mu            sync.RWMutex
+	hosts         map[string]*alaye.Host // Static file hosts
+	clusterRoutes map[string]alaye.Route
 
 	lookupMap  atomic.Value // map[string]*alaye.Host
 	portLookup atomic.Value // map[string]*alaye.Host
@@ -47,17 +47,17 @@ type Host struct {
 	changed chan struct{}
 
 	debouncer *jack.Debouncer
+	lifetimes *jack.LifetimeManager
 	loaded    bool
 }
 
 func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 	h := &Host{
-		hostsDir:         hostsDir,
-		hosts:            make(map[string]*alaye.Host),
-		clusterRoutes:    make(map[string]alaye.Route),
-		routeExpirations: make(map[string]time.Time),
-		changed:          make(chan struct{}, 1),
-		loaded:           false,
+		hostsDir:      hostsDir,
+		hosts:         make(map[string]*alaye.Host),
+		clusterRoutes: make(map[string]alaye.Route),
+		changed:       make(chan struct{}, 1),
+		loaded:        false,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -65,6 +65,11 @@ func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 	if h.logger == nil {
 		h.logger = ll.New(woos.Name).Enable()
 	}
+
+	h.lifetimes = jack.NewLifetimeManager(
+		jack.LifetimeManagerWithLogger(h.logger),
+		jack.LifetimeManagerWithShards(32), // Reduce lock contention
+	)
 
 	h.lookupMap.Store(make(map[string]*alaye.Host))
 	h.portLookup.Store(make(map[string]*alaye.Host))
@@ -74,8 +79,6 @@ func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 		jack.WithDebounceDelay(500*time.Millisecond),
 		jack.WithDebounceMaxWait(2*time.Second),
 	)
-
-	go h.pruneLoop()
 
 	return h
 }
@@ -88,67 +91,64 @@ func (hm *Host) OnClusterChange(key string, value []byte, deleted bool) {
 
 	trimmedKey := strings.TrimPrefix(key, ClusterRoutePrefix)
 
-	hm.mu.Lock()
 	if deleted {
-		delete(hm.clusterRoutes, trimmedKey)
-		delete(hm.routeExpirations, trimmedKey)
-		hm.logger.Fields("key", trimmedKey).Info("cluster route removed")
+		hm.handleRouteDeletion(trimmedKey)
 	} else {
-		var wrapper routeWrapper
-		if err := json.Unmarshal(value, &wrapper); err != nil {
-			// Fallback for backward compatibility
-			var simpleRoute alaye.Route
-			if err2 := json.Unmarshal(value, &simpleRoute); err2 == nil {
-				wrapper.Route = simpleRoute
-			} else {
-				hm.logger.Fields("key", key, "err", err).Error("failed to unmarshal cluster route")
-				hm.mu.Unlock()
-				return
-			}
-		}
-
-		if !wrapper.ExpiresAt.IsZero() && time.Now().After(wrapper.ExpiresAt) {
-			delete(hm.clusterRoutes, trimmedKey)
-			delete(hm.routeExpirations, trimmedKey)
-			hm.logger.Fields("key", trimmedKey).Debug("ignoring expired route update")
-			hm.mu.Unlock()
-			return
-		}
-
-		woos.DefaultRoute(&wrapper.Route)
-		hm.clusterRoutes[trimmedKey] = wrapper.Route
-		if !wrapper.ExpiresAt.IsZero() {
-			hm.routeExpirations[trimmedKey] = wrapper.ExpiresAt
-		} else {
-			delete(hm.routeExpirations, trimmedKey)
-		}
-
-		hm.logger.Fields("key", trimmedKey).Debug("cluster route updated")
+		hm.handleRouteUpdate(key, trimmedKey, value)
 	}
+}
+
+func (hm *Host) handleRouteDeletion(key string) {
+	hm.mu.Lock()
+	delete(hm.clusterRoutes, key)
 	hm.mu.Unlock()
 
+	// Cancel any pending expiration timer
+	hm.lifetimes.CancelTimed(key)
+
+	hm.logger.Fields("key", key).Info("cluster route removed")
 	hm.debouncer.Do(hm.rebuildAndNotify)
 }
 
-func (hm *Host) pruneLoop() {
-	ticker := time.NewTicker(1 * time.Minute)
-	for range ticker.C {
-		hm.mu.Lock()
-		now := time.Now()
-		changed := false
-		for key, exp := range hm.routeExpirations {
-			if !exp.IsZero() && now.After(exp) {
-				delete(hm.clusterRoutes, key)
-				delete(hm.routeExpirations, key)
-				changed = true
-				hm.logger.Fields("key", key).Info("route expired")
-			}
-		}
-		hm.mu.Unlock()
-		if changed {
-			hm.rebuildAndNotify()
+func (hm *Host) handleRouteUpdate(originalKey, trimmedKey string, value []byte) {
+	var wrapper routeWrapper
+	if err := json.Unmarshal(value, &wrapper); err != nil {
+		// Fallback for backward compatibility
+		var simpleRoute alaye.Route
+		if err2 := json.Unmarshal(value, &simpleRoute); err2 == nil {
+			wrapper.Route = simpleRoute
+		} else {
+			hm.logger.Fields("key", originalKey, "err", err).Error("failed to unmarshal cluster route")
+			return
 		}
 	}
+
+	// Check if already expired
+	if !wrapper.ExpiresAt.IsZero() {
+		timeLeft := time.Until(wrapper.ExpiresAt)
+		if timeLeft <= 0 {
+			hm.handleRouteDeletion(trimmedKey)
+			return
+		}
+
+		// Schedule expiration using Jack Lifetime
+		hm.lifetimes.ScheduleTimed(context.Background(), trimmedKey, func(ctx context.Context, id string) {
+			hm.logger.Fields("key", id).Info("route expired via lifetime")
+			hm.handleRouteDeletion(id)
+		}, timeLeft)
+	} else {
+		// Ensure no timer exists if expiration was removed
+		hm.lifetimes.CancelTimed(trimmedKey)
+	}
+
+	woos.DefaultRoute(&wrapper.Route)
+
+	hm.mu.Lock()
+	hm.clusterRoutes[trimmedKey] = wrapper.Route
+	hm.mu.Unlock()
+
+	hm.logger.Fields("key", trimmedKey).Debug("cluster route updated")
+	hm.debouncer.Do(hm.rebuildAndNotify)
 }
 
 func (hm *Host) LoadStatic(staticHosts map[string]*alaye.Host) {
@@ -421,6 +421,10 @@ func (hm *Host) Close() error {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
+	if hm.lifetimes != nil {
+		hm.lifetimes.Stop()
+	}
+
 	if hm.debouncer != nil {
 		hm.debouncer.Cancel()
 	}
@@ -566,11 +570,9 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 		return
 	}
 
-	// Update the internal hosts map to simulate a file load or manual override
 	if cfg == nil {
 		delete(hm.hosts, domain)
 	} else {
-		// Use a key that won't collide with files, or just use domain
 		hm.hosts[domain] = cfg
 	}
 

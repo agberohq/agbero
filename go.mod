@@ -8,7 +8,7 @@ require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
 	github.com/alecthomas/hcl v0.5.5
 	github.com/andybalholm/brotli v1.2.0
-	github.com/caddyserver/certmagic v0.25.1
+	github.com/caddyserver/certmagic v0.25.2
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/charmbracelet/huh v0.8.0
@@ -23,7 +23,7 @@ require (
 	github.com/klauspost/compress v1.18.4
 	github.com/markbates/goth v1.82.0
 	github.com/olekukonko/errors v1.2.0
-	github.com/olekukonko/jack v0.0.0-20260219101915-012d7877ecbe
+	github.com/olekukonko/jack v0.0.0-20260304221010-b11e7daa6b78
 	github.com/olekukonko/ll v0.1.8-0.20260304195808-a35061d98ce9
 	github.com/olekukonko/mappo v0.0.0-20260219011920-b562da2ab13d
 	github.com/pires/go-proxyproto v0.11.0
@@ -50,7 +50,7 @@ require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/caddyserver/zerossl v0.1.4 // indirect
+	github.com/caddyserver/zerossl v0.1.5 // indirect
 	github.com/catppuccin/go v0.3.0 // indirect
 	github.com/charmbracelet/bubbles v1.0.0 // indirect
 	github.com/charmbracelet/bubbletea v1.3.10 // indirect
@@ -82,8 +82,8 @@ require (
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.20 // indirect
 	github.com/maypok86/otter/v2 v2.3.0 // indirect
-	github.com/mholt/acmez/v3 v3.1.4 // indirect
-	github.com/miekg/dns v1.1.70 // indirect
+	github.com/mholt/acmez/v3 v3.1.6 // indirect
+	github.com/miekg/dns v1.1.72 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
@@ -112,12 +112,12 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
-	golang.org/x/mod v0.32.0 // indirect
-	golang.org/x/net v0.49.0 // indirect
+	golang.org/x/mod v0.33.0 // indirect
+	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
-	golang.org/x/tools v0.41.0 // indirect
+	golang.org/x/tools v0.42.0 // indirect
 	golang.org/x/tools/godoc v0.1.0-deprecated // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

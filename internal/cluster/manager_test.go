@@ -3,26 +3,45 @@ package cluster
 import (
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/olekukonko/ll"
 )
 
-// mockHandler captures updates for assertions
+// mockHandler captures updates for assertions in TestClusterReplication
 type mockHandler struct {
+	mu      sync.RWMutex
 	updates map[string]string
 }
 
 func (m *mockHandler) OnClusterChange(key string, value []byte, deleted bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.updates == nil {
 		m.updates = make(map[string]string)
 	}
 	if deleted {
 		delete(m.updates, key)
 	} else {
-		m.updates[key] = string(value)
+		// Copy to avoid sharing underlying byte slice
+		m.updates[key] = string(append([]byte(nil), value...))
 	}
+}
+
+func (m *mockHandler) get(key string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	v, ok := m.updates[key]
+	return v, ok
+}
+
+func (m *mockHandler) has(key string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, ok := m.updates[key]
+	return ok
 }
 
 func getFreePort() int {
@@ -79,9 +98,9 @@ func TestClusterReplication(t *testing.T) {
 		t.Errorf("Node2 failed to receive update. Got %q, want %q", got, val)
 	}
 
-	// Test 2: Handler invocation check
-	if h2.updates[key] != string(val) {
-		t.Errorf("Node2 handler not triggered correctly. Map: %v", h2.updates)
+	// Test 2: Handler invocation check (thread-safe)
+	if got, ok := h2.get(key); !ok || got != string(val) {
+		t.Errorf("Node2 handler not triggered correctly")
 	}
 
 	// Test 3: Node 2 updates data (LWW) -> Node 1 receives
@@ -101,5 +120,172 @@ func TestClusterReplication(t *testing.T) {
 
 	if _, ok := node2.Get(key); ok {
 		t.Error("Node2 still has key after deletion")
+	}
+}
+
+// testHandler is used for TestClusterSync and TestDelegate_LWW_and_Tombstones
+type testHandler struct {
+	mu   sync.RWMutex
+	data map[string][]byte
+}
+
+func (h *testHandler) OnClusterChange(key string, value []byte, deleted bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.data == nil {
+		h.data = make(map[string][]byte)
+	}
+	if deleted {
+		delete(h.data, key)
+	} else {
+		// Copy to avoid sharing underlying byte slice
+		h.data[key] = append([]byte(nil), value...)
+	}
+}
+
+func (h *testHandler) get(key string) ([]byte, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	v, ok := h.data[key]
+	if ok {
+		return append([]byte(nil), v...), true
+	}
+	return nil, false
+}
+
+func (h *testHandler) has(key string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	_, ok := h.data[key]
+	return ok
+}
+
+func TestClusterSync(t *testing.T) {
+	logger := ll.New("test").Disable()
+
+	// Node 1
+	h1 := &testHandler{data: make(map[string][]byte)}
+	c1, err := NewManager(Config{
+		BindAddr: "127.0.0.1",
+		BindPort: 0,
+		Name:     "node1",
+	}, h1, logger)
+	if err != nil {
+		t.Fatalf("node1 init failed: %v", err)
+	}
+	defer c1.Shutdown()
+
+	port1 := c1.list.LocalNode().Port
+
+	// Node 2 (Joins Node 1)
+	h2 := &testHandler{data: make(map[string][]byte)}
+	c2, err := NewManager(Config{
+		BindAddr: "127.0.0.1",
+		BindPort: 0,
+		Name:     "node2",
+		Seeds:    []string{fmt.Sprintf("127.0.0.1:%d", port1)},
+	}, h2, logger)
+	if err != nil {
+		t.Fatalf("node2 init failed: %v", err)
+	}
+	defer c2.Shutdown()
+
+	// Wait for join
+	time.Sleep(2 * time.Second)
+	if c1.list.NumMembers() != 2 || c2.list.NumMembers() != 2 {
+		t.Fatalf("nodes failed to join: n1=%d n2=%d", c1.list.NumMembers(), c2.list.NumMembers())
+	}
+
+	// Test Propagation: Node 1 sets value
+	key := "test-key"
+	val := []byte("hello-world")
+	c1.Set(key, val)
+
+	// Wait for sync
+	time.Sleep(1 * time.Second)
+
+	// Thread-safe assertion
+	if got, ok := h2.get(key); !ok || string(got) != string(val) {
+		t.Fatalf("node2 did not receive update. got %v, want %v", string(got), string(val))
+	}
+
+	// Test Deletion Propagation
+	c2.Delete(key)
+	time.Sleep(1 * time.Second)
+
+	if h1.has(key) {
+		t.Fatal("node1 did not receive deletion")
+	}
+	if h2.has(key) {
+		t.Fatal("node2 failed to delete local key")
+	}
+}
+
+func TestDelegate_LWW_and_Tombstones(t *testing.T) {
+	logger := ll.New("test").Disable()
+	metrics := &noopMetrics{}
+	del := newDelegate(nil, logger, metrics)
+
+	// 1. Initial Set
+	ts1 := time.Now().UnixNano()
+	env1 := Envelope{Key: "foo", Op: OpSet, Value: []byte("v1"), Timestamp: ts1}
+	del.apply(env1, true)
+
+	val, ok := del.get("foo")
+	if !ok || string(val) != "v1" {
+		t.Fatalf("expected v1, got %v", string(val))
+	}
+
+	// 2. Out-of-order Set (Older timestamp)
+	envOld := Envelope{Key: "foo", Op: OpSet, Value: []byte("v0"), Timestamp: ts1 - 1000}
+	del.apply(envOld, false)
+
+	val, ok = del.get("foo")
+	if !ok || string(val) != "v1" {
+		t.Fatalf("LWW failed: expected v1 to persist over v0")
+	}
+
+	// 3. Newer Set
+	ts2 := ts1 + 1000
+	env2 := Envelope{Key: "foo", Op: OpSet, Value: []byte("v2"), Timestamp: ts2}
+	del.apply(env2, false)
+
+	val, ok = del.get("foo")
+	if !ok || string(val) != "v2" {
+		t.Fatalf("LWW failed: expected v2 to overwrite v1")
+	}
+
+	// 4. Delete (Tombstone)
+	ts3 := ts2 + 1000
+	envDel := Envelope{Key: "foo", Op: OpDel, Timestamp: ts3}
+	del.apply(envDel, false)
+
+	_, ok = del.get("foo")
+	if ok {
+		t.Fatalf("expected key to be deleted (hidden by getter)")
+	}
+
+	// Verify tombstone exists internally
+	del.mu.RLock()
+	internalEnv, exists := del.store["foo"]
+	del.mu.RUnlock()
+
+	if !exists {
+		t.Fatalf("tombstone missing from internal store")
+	}
+	if internalEnv.Op != OpDel {
+		t.Fatalf("tombstone Op mismatch")
+	}
+	if internalEnv.Value != nil {
+		t.Fatalf("tombstone value should be nil")
+	}
+
+	// 5. Stale Set attempting to revive deleted key (Older than tombstone)
+	envStale := Envelope{Key: "foo", Op: OpSet, Value: []byte("v2"), Timestamp: ts2}
+	del.apply(envStale, false)
+
+	_, ok = del.get("foo")
+	if ok {
+		t.Fatalf("stale update revived deleted key")
 	}
 }

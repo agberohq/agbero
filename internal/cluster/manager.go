@@ -23,17 +23,21 @@ type Manager struct {
 	delegate *delegate
 	events   *eventDelegate
 	logger   *ll.Logger
+	stopCh   chan struct{}
 }
 
 // eventDelegate handles Node Join/Leave logs
 type eventDelegate struct {
-	logger *ll.Logger
+	logger  *ll.Logger
+	metrics Metrics
 }
 
 func (e *eventDelegate) NotifyJoin(n *memberlist.Node) {
+	e.metrics.IncJoin()
 	e.logger.Info("node joined cluster", "node", n.Name, "addr", n.Addr)
 }
 func (e *eventDelegate) NotifyLeave(n *memberlist.Node) {
+	e.metrics.IncLeave()
 	e.logger.Info("node left cluster", "node", n.Name)
 }
 func (e *eventDelegate) NotifyUpdate(n *memberlist.Node) {}
@@ -51,8 +55,11 @@ func NewManager(cfg Config, handler UpdateHandler, logger *ll.Logger) (*Manager,
 	// Quiet down standard memberlist logging
 	mConfig.Logger = log.New(io.Discard, "", 0)
 
-	del := newDelegate(handler, logger)
-	events := &eventDelegate{logger: logger}
+	// In a real scenario, you'd pass a real metrics collector here
+	metrics := &noopMetrics{}
+
+	del := newDelegate(handler, logger, metrics)
+	events := &eventDelegate{logger: logger, metrics: metrics}
 
 	mConfig.Delegate = del
 	mConfig.Events = events
@@ -62,17 +69,23 @@ func NewManager(cfg Config, handler UpdateHandler, logger *ll.Logger) (*Manager,
 		return nil, fmt.Errorf("failed to create memberlist: %w", err)
 	}
 
-	// Link queue to delegate
-	del.setQueue(&memberlist.TransmitLimitedQueue{
+	// Initialize queue safely after list creation
+	queue := &memberlist.TransmitLimitedQueue{
 		NumNodes:       func() int { return list.NumMembers() },
 		RetransmitMult: 3,
-	})
+	}
+
+	// Delegate owns the queue, but we set it here where it's safe
+	del.mu.Lock()
+	del.queue = queue
+	del.mu.Unlock()
 
 	mgr := &Manager{
 		list:     list,
 		delegate: del,
 		events:   events,
 		logger:   logger,
+		stopCh:   make(chan struct{}),
 	}
 
 	if len(cfg.Seeds) > 0 {
@@ -84,7 +97,23 @@ func NewManager(cfg Config, handler UpdateHandler, logger *ll.Logger) (*Manager,
 		}
 	}
 
+	go mgr.maintenanceLoop()
+
 	return mgr, nil
+}
+
+func (m *Manager) maintenanceLoop() {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.stopCh:
+			return
+		case <-ticker.C:
+			m.delegate.pruneTombstones()
+		}
+	}
 }
 
 func (m *Manager) Set(key string, value []byte) {
@@ -109,6 +138,7 @@ func (m *Manager) Members() []string {
 }
 
 func (m *Manager) Shutdown() error {
+	close(m.stopCh)
 	// Leave politely
 	if err := m.list.Leave(5 * time.Second); err != nil {
 		m.logger.Warn("cluster leave failed", "err", err)

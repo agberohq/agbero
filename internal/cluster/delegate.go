@@ -9,6 +9,10 @@ import (
 	"github.com/olekukonko/ll"
 )
 
+const (
+	tombstoneTTL = 24 * time.Hour
+)
+
 type delegate struct {
 	mu    sync.RWMutex
 	store map[string]Envelope
@@ -16,18 +20,19 @@ type delegate struct {
 	queue   *memberlist.TransmitLimitedQueue
 	handler UpdateHandler
 	logger  *ll.Logger
+	metrics Metrics
 }
 
-func newDelegate(handler UpdateHandler, logger *ll.Logger) *delegate {
+func newDelegate(handler UpdateHandler, logger *ll.Logger, metrics Metrics) *delegate {
+	if metrics == nil {
+		metrics = &noopMetrics{}
+	}
 	return &delegate{
 		store:   make(map[string]Envelope),
 		handler: handler,
 		logger:  logger,
+		metrics: metrics,
 	}
-}
-
-func (d *delegate) setQueue(q *memberlist.TransmitLimitedQueue) {
-	d.queue = q
 }
 
 // NodeMeta is used to validate nodes joining the cluster
@@ -52,6 +57,11 @@ func (d *delegate) NotifyMsg(b []byte) {
 
 // GetBroadcasts is called when sending a gossip packet
 func (d *delegate) GetBroadcasts(overhead, limit int) [][]byte {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.queue == nil {
+		return nil
+	}
 	return d.queue.GetBroadcasts(overhead, limit)
 }
 
@@ -60,7 +70,11 @@ func (d *delegate) LocalState(join bool) []byte {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	b, _ := json.Marshal(d.store)
+	b, err := json.Marshal(d.store)
+	if err != nil {
+		d.logger.Error("cluster: failed to marshal local state", "err", err)
+		return []byte("{}")
+	}
 	return b
 }
 
@@ -81,16 +95,26 @@ func (d *delegate) MergeRemoteState(buf []byte, join bool) {
 	}
 }
 
-// apply handles Last-Writer-Wins logic
+// apply handles Last-Writer-Wins logic and Tombstones
 func (d *delegate) apply(env Envelope, local bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	d.metrics.IncUpdatesReceived()
 
 	existing, exists := d.store[env.Key]
 
 	// Conflict Resolution: LWW (Last Writer Wins)
 	if exists && existing.Timestamp >= env.Timestamp {
+		d.metrics.IncUpdatesIgnored()
 		return
+	}
+
+	// For deletions, we keep a tombstone (OpDel + Timestamp) but with nil value
+	// to ensure the delete propagates to nodes that might have the old key.
+	if env.Op == OpDel {
+		env.Value = nil
+		d.metrics.IncDeletes()
 	}
 
 	// Apply update
@@ -99,14 +123,34 @@ func (d *delegate) apply(env Envelope, local bool) {
 	// Notify system
 	if d.handler != nil {
 		isDelete := env.Op == OpDel
+		// If it's a delete, we notify the handler so it acts immediately,
+		// even though we keep the envelope in the store for consistency.
 		d.handler.OnClusterChange(env.Key, env.Value, isDelete)
 	}
 
-	// If this update came from us (local), broadcast it.
-	// If it came from remote, memberlist gossip protocol handles re-propagation.
+	// Broadcast if local update
 	if local && d.queue != nil {
 		d.queue.QueueBroadcast(&peerUpdate{env: env})
 	}
+}
+
+func (d *delegate) pruneTombstones() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	now := time.Now().UnixNano()
+	threshold := int64(tombstoneTTL)
+
+	for k, env := range d.store {
+		if env.Op == OpDel {
+			// Convert diff to duration to check expiry
+			age := time.Duration(now - env.Timestamp)
+			if age > tombstoneTTL {
+				delete(d.store, k)
+			}
+		}
+	}
+	_ = threshold // keeps compiler happy if logic changes
 }
 
 // Direct access methods for the Manager
