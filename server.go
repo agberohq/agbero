@@ -1,3 +1,4 @@
+// server.go
 package agbero
 
 import (
@@ -44,22 +45,20 @@ import (
 	"github.com/quic-go/quic-go/http3"
 )
 
-// llWriter bridges std/log to the structured ll logger
 type llWriter struct {
 	logger *ll.Logger
 }
 
 func (w *llWriter) Write(p []byte) (n int, err error) {
 	msg := strings.TrimSpace(string(p))
-	// Log as Error because http.Server.ErrorLog usually reports connection/handler failures
+
 	w.logger.Fields("source", "std_http").Error(msg)
 	return len(p), nil
 }
 
 var logArgsPool = sync.Pool{
 	New: func() any {
-		// Pre-allocate capacity for common fields (host, path, method, status, ip, time, etc)
-		// Capacity 16 covers ~8 pairs of key/values
+
 		s := make([]any, 0, 16)
 		return &s
 	},
@@ -81,7 +80,6 @@ type Server struct {
 	h3Servers  map[string]*http3.Server
 	tcpProxies []*xtcp.Proxy
 
-	// Saved state for dynamic reloads
 	activeBaseHandler http.Handler
 	activeAcmeHandler http.Handler
 	activeTlsConfig   *tls.Config
@@ -168,7 +166,6 @@ func (s *Server) Start(configPath string) error {
 		).Info("directories initialized")
 	}
 
-	// Initialize Internal Security Manager (Auth)
 	if s.global.Security.Enabled.Active() && s.global.Security.InternalAuthKey != "" {
 		mgr, err := security.LoadKeys(s.global.Security.InternalAuthKey)
 		if err != nil {
@@ -178,7 +175,7 @@ func (s *Server) Start(configPath string) error {
 		s.securityManager = mgr
 		s.logger.Info("internal security manager initialized")
 	} else if s.global.API.Enabled.Active() {
-		// Fallback warning if API is enabled but keys missing in new location
+
 		s.logger.Warn("API enabled but security.internal_auth_key not set; API endpoints may fail auth")
 	}
 
@@ -248,8 +245,7 @@ func (s *Server) Start(configPath string) error {
 
 	s.ipMgr = zulu.NewIPManager(trustedProxies)
 
-	//s.ipMiddleware = clientip.NewIPMiddleware(trustedProxies)
-	s.rateLimiter = s.buildGlobalRateLimiter()
+	s.rateLimiter = s.buildGlobalRateLimiter(s.global, s.ipMgr)
 
 	s.skipLogPaths = make(map[string]bool)
 	if s.global.Logging.Enabled.Active() && len(s.global.Logging.Skip) > 0 {
@@ -470,7 +466,6 @@ func (s *Server) Reload() {
 		"to", sha[:12],
 	).Infof("configuration changed")
 
-	// cleanup wasm
 	s.cleanupWasm()
 
 	global, err := parser.LoadGlobal(configPath)
@@ -529,7 +524,15 @@ func (s *Server) Reload() {
 		}
 	}
 
-	newRateLimiter := s.buildGlobalRateLimiter()
+	// Rebuild IP Manager based on new config
+	var trustedProxies []string
+	if global.Security.Enabled.Active() {
+		trustedProxies = global.Security.TrustedProxies
+	}
+	newIPMgr := zulu.NewIPManager(trustedProxies)
+
+	// Rebuild Global Rate Limiter with new config and IP Manager
+	newRateLimiter := s.buildGlobalRateLimiter(global, newIPMgr)
 
 	s.mu.Lock()
 	if s.global.Logging.Level != global.Logging.Level {
@@ -537,6 +540,7 @@ func (s *Server) Reload() {
 	}
 	s.configSHA = sha
 	s.global = global
+	s.ipMgr = newIPMgr // Update the IP manager atomically under lock
 
 	if s.rateLimiter != nil {
 		s.rateLimiter.Close()
@@ -554,7 +558,7 @@ func (s *Server) Reload() {
 			dataDir := woos.NewFolder(global.Storage.DataDir)
 			var err error
 			s.firewall, err = firewall.New(firewall.Config{
-				Firewall: &fwConfig, DataDir: dataDir, Logger: s.logger, IPMgr: s.ipMgr,
+				Firewall: &fwConfig, DataDir: dataDir, Logger: s.logger, IPMgr: newIPMgr,
 			})
 			if err != nil {
 				s.logger.Fields("err", err).Error("failed to init firewall on reload")
@@ -562,7 +566,6 @@ func (s *Server) Reload() {
 		}
 	}
 
-	// Reload Internal Auth Key if changed
 	if global.Security.Enabled.Active() && global.Security.InternalAuthKey != "" {
 		mgr, err := security.LoadKeys(global.Security.InternalAuthKey)
 		if err != nil {
@@ -579,6 +582,9 @@ func (s *Server) Reload() {
 	if s.activeTlsConfig != nil {
 		s.activeTlsConfig.GetConfigForClient = s.tlsManager.GetConfigForClient
 	}
+
+	// Invalidate route cache to ensure new routes pick up new IP manager and config
+	zulu.Route.Clear()
 
 	for _, addr := range global.Bind.HTTPS {
 		key := zulu.ServerKey(addr, true)
@@ -714,7 +720,6 @@ func (s *Server) Reload() {
 	).Info("configuration reloaded successfully")
 }
 
-// startListenerAsync spins up the goroutine for a newly created server (used in Reload)
 func (s *Server) startListenerAsync(key string, srv *http.Server) {
 	go func(k string, server *http.Server) {
 		s.logger.Fields("bind", server.Addr, "key", k).Info("listener started (reload)")
@@ -840,8 +845,6 @@ func (s *Server) applyMTLS(cfg *tls.Config, host *alaye.Host) {
 	}
 }
 
-// createTCPServer constructs the server but does not register or start it.
-// This is used by both Start (with locking) and Reload (which holds the lock).
 func (s *Server) createTCPServer(
 	addr string,
 	isTLS bool,
@@ -863,8 +866,6 @@ func (s *Server) createTCPServer(
 		ctx := r.Context()
 		ctx = context.WithValue(ctx, woos.CtxPort, port)
 
-		// DYNAMIC OWNER LOOKUP: Get the config that currently owns this port
-		// This ensures Reload updates propagation without restarting listeners
 		if owner := s.hostManager.GetByPort(port); owner != nil {
 			ctx = context.WithValue(ctx, woos.OwnerKey, owner)
 		}
@@ -884,13 +885,12 @@ func (s *Server) createTCPServer(
 	}
 
 	if isTLS && tlsCfg != nil {
-		// Clone generic config
-		localCfg := tlsCfg.Clone()
-		localCfg.GetConfigForClient = nil // Ensure we don't bypass GetCertificate
 
-		// DYNAMIC CERTIFICATE LOOKUP
+		localCfg := tlsCfg.Clone()
+		localCfg.GetConfigForClient = nil
+
 		localCfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			// 1. Try direct SNI match first
+
 			if chi.ServerName != "" {
 				cert, err := s.tlsManager.GetCertificate(chi)
 				if err == nil {
@@ -898,13 +898,11 @@ func (s *Server) createTCPServer(
 				}
 			}
 
-			// 2. FALLBACK: Check if this port has an owner and use its primary domain
-			// This handles IP access (missing SNI) and SNI mismatch scenarios
 			owner := s.hostManager.GetByPort(port)
 			if owner != nil && len(owner.Domains) > 0 {
-				// Apply mTLS settings dynamically if needed
+
 				if owner.TLS.ClientAuth != "" {
-					// mTLS dynamic application is complex; standard SNI path preferred
+
 				}
 
 				fallbackChi := *chi
@@ -913,7 +911,7 @@ func (s *Server) createTCPServer(
 				if err == nil {
 					return cert, nil
 				}
-				return nil, err // Return the fallback error
+				return nil, err
 			}
 
 			return nil, fmt.Errorf("no certificate found")
@@ -925,7 +923,6 @@ func (s *Server) createTCPServer(
 	return srv, key
 }
 
-// startTCPServer is a wrapper used by Start() to create AND register the server safely
 func (s *Server) startTCPServer(
 	addr string,
 	isTLS bool,
@@ -942,7 +939,6 @@ func (s *Server) startTCPServer(
 	}
 }
 
-// createQUICServer constructs the QUIC server but does not register or start it.
 func (s *Server) createQUICServer(
 	addr string,
 	tlsCfg *tls.Config,
@@ -970,7 +966,6 @@ func (s *Server) createQUICServer(
 	serverTLSCfg := tlsCfg.Clone()
 	serverTLSCfg.GetConfigForClient = nil
 
-	// DYNAMIC CERT LOOKUP FOR QUIC
 	serverTLSCfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		if chi.ServerName != "" {
 			cert, err := s.tlsManager.GetCertificate(chi)
@@ -1002,7 +997,6 @@ func (s *Server) createQUICServer(
 	return h3Server, key
 }
 
-// startQUICServer is a wrapper used by Start() to create, register AND start the server
 func (s *Server) startQUICServer(
 	addr string,
 	tlsCfg *tls.Config,
@@ -1017,7 +1011,7 @@ func (s *Server) startQUICServer(
 	if _, exists := s.h3Servers[key]; !exists {
 		s.h3Servers[key] = h3Server
 	} else {
-		// Already exists
+
 		s.mu.Unlock()
 		return
 	}
@@ -1042,12 +1036,7 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 		h = h3.AdvertiseHTTP3(port)(h)
 	}
 
-	// Wrapper to allow swapping firewall middleware on reload
 	h = s.firewallMiddleware(h)
-
-	//if s.ipMiddleware != nil {
-	//	h = s.ipMiddleware.Handler(h)
-	//}
 
 	if s.global.Logging.Prometheus.Enabled.Active() {
 		h = observability.Prometheus(s.hostManager)(h)
@@ -1057,7 +1046,6 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 	return h
 }
 
-// firewallMiddleware wraps the firewall handler to allow hot-swapping safely.
 func (s *Server) firewallMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.RLock()
@@ -1072,8 +1060,12 @@ func (s *Server) firewallMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
-	rlc := s.global.RateLimits
+func (s *Server) buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager) *ratelimit.RateLimiter {
+	if global == nil {
+		return nil
+	}
+
+	rlc := global.RateLimits
 
 	if !rlc.Enabled.Active() || len(rlc.Rules) == 0 {
 		return nil
@@ -1131,7 +1123,10 @@ func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
 	}
 
 	return ratelimit.New(ratelimit.Config{
-		TTL: rlc.TTL, MaxEntries: rlc.MaxEntries, Policy: policy,
+		TTL:        rlc.TTL,
+		MaxEntries: rlc.MaxEntries,
+		Policy:     policy,
+		IPManager:  ipMgr,
 	})
 }
 
@@ -1203,17 +1198,19 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 		return
 	}
 
-	// 2. Get slice pointer from pool
 	argsPtr := logArgsPool.Get().(*[]any)
-	args := *argsPtr // Dereference to use
+	args := *argsPtr
 
-	// Reset length, keep capacity
 	args = args[:0]
 
-	// 3. Append Key/Value pairs
+	remoteIP := r.RemoteAddr
+	if s.ipMgr != nil {
+		remoteIP = s.ipMgr.ClientIP(r)
+	}
+
 	args = append(args, "host", host)
 	args = append(args, "path", r.URL.Path)
-	args = append(args, "remote", s.ipMgr.ClientIP(r))
+	args = append(args, "remote", remoteIP)
 	args = append(args, "duration", time.Since(start))
 	args = append(args, "proto", r.Proto)
 	args = append(args, "status", status)
@@ -1227,10 +1224,8 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 		args = append(args, "ua", zulu.Truncate(r.UserAgent(), 50))
 	}
 
-	// 4. Log using the slice expansion
 	s.logger.Fields(args...).Info(r.Method)
 
-	// 5. Put back in pool (save the expanded capacity)
 	*argsPtr = args
 	logArgsPool.Put(argsPtr)
 }
@@ -1265,7 +1260,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		host = zulu.NormalizeHost(r.Host)
 		hcfg = s.hostManager.Get(host)
 
-		// Fallback for IP access
 		if hcfg == nil {
 			if port, ok := r.Context().Value(woos.CtxPort).(string); ok && port != "" {
 				if portMatch := s.hostManager.GetByPort(port); portMatch != nil {
@@ -1395,7 +1389,10 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route, host *alaye.Host) *h
 	}
 
 	h := handlers.NewRoute(handlers.Config{
-		Global: s.global, Host: host, Logger: s.logger,
+		Global: s.global,
+		Host:   host,
+		Logger: s.logger,
+		IPMgr:  s.ipMgr,
 	}, route)
 	newItem := &mappo.Item{
 		Value: h,
@@ -1434,7 +1431,7 @@ func (s *Server) getWasmManager(cfg *alaye.Wasm, key string) (*wasm.Manager, err
 func (s *Server) cleanupWasm() {
 	s.wasmCache.Range(func(key, value any) bool {
 		if mgr, ok := value.(*wasm.Manager); ok {
-			// Context used for cleanup, usually background is fine here
+
 			mgr.Close(context.Background())
 		}
 		s.wasmCache.Delete(key)

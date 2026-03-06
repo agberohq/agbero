@@ -191,7 +191,8 @@ func TestServer_buildGlobalRateLimiter(t *testing.T) {
 		},
 	}}
 
-	rl := s.buildGlobalRateLimiter()
+	ipMgr := zulu.NewIPManager(nil)
+	rl := s.buildGlobalRateLimiter(s.global, ipMgr)
 	if rl == nil {
 		t.Error("RateLimiter not created")
 	}
@@ -204,7 +205,8 @@ func TestServer_buildGlobalRateLimiter_Disabled(t *testing.T) {
 		},
 	}}
 
-	rl := s.buildGlobalRateLimiter()
+	ipMgr := zulu.NewIPManager(nil)
+	rl := s.buildGlobalRateLimiter(s.global, ipMgr)
 	if rl != nil {
 		t.Error("RateLimiter should be nil when disabled")
 	}
