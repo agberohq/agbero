@@ -6,11 +6,11 @@ import (
 	"strings"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"github.com/olekukonko/ll"
 )
 
-func New(allowed []string, logger *ll.Logger) func(http.Handler) http.Handler {
+func New(allowed []string, logger *ll.Logger, ipMgr *zulu.IPManager) func(http.Handler) http.Handler {
 	if len(allowed) == 0 {
 		return func(next http.Handler) http.Handler { return next }
 	}
@@ -32,14 +32,19 @@ func New(allowed []string, logger *ll.Logger) func(http.Handler) http.Handler {
 		}
 	}
 
-	// If no valid IPs/nets after parsing, allow all
 	if len(singleIPs) == 0 && len(ipNets) == 0 {
 		return func(next http.Handler) http.Handler { return next }
 	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			clientIPStr := clientip.ClientIP(r)
+			var clientIPStr string
+			if ipMgr != nil {
+				clientIPStr = ipMgr.ClientIP(r)
+			} else {
+				clientIPStr, _, _ = net.SplitHostPort(r.RemoteAddr)
+			}
+
 			clientIP := net.ParseIP(clientIPStr)
 
 			if clientIP == nil {

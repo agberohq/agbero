@@ -104,24 +104,6 @@ func (c *peekedConn) WriteTo(w io.Writer) (int64, error) {
 	return total + n, err
 }
 
-func closeWrite(c net.Conn) {
-	switch v := c.(type) {
-	case *net.TCPConn:
-		_ = v.CloseWrite()
-	case *peekedConn:
-		closeWrite(v.Conn)
-	case *deadlineConn:
-		closeWrite(v.Conn)
-	default:
-		type closer interface {
-			CloseWrite() error
-		}
-		if cw, ok := c.(closer); ok {
-			_ = cw.CloseWrite()
-		}
-	}
-}
-
 type deadlineConn struct {
 	net.Conn
 	timeout time.Duration
@@ -139,4 +121,22 @@ func (c *deadlineConn) Write(b []byte) (int, error) {
 		_ = c.SetWriteDeadline(time.Now().Add(c.timeout))
 	}
 	return c.Conn.Write(b)
+}
+
+func closeWrite(c net.Conn) {
+	switch v := c.(type) {
+	case *net.TCPConn:
+		_ = v.CloseWrite()
+	case *peekedConn:
+		closeWrite(v.Conn)
+	case *deadlineConn:
+		closeWrite(v.Conn)
+	default:
+		type closer interface {
+			CloseWrite() error
+		}
+		if cw, ok := c.(closer); ok {
+			_ = cw.CloseWrite()
+		}
+	}
 }

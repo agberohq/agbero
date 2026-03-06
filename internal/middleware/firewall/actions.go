@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 )
 
 func (e *Engine) handleAction(w http.ResponseWriter, r *http.Request, rule alaye.Rule, ruleName, reason string) {
@@ -33,7 +32,7 @@ func (e *Engine) handleAction(w http.ResponseWriter, r *http.Request, rule alaye
 	}
 
 	if e.cfg.Mode == "verbose" || e.cfg.Mode == "monitor" {
-		e.logger.Fields("mode", "monitor", "rule", ruleName, "ip", clientip.ClientIP(r)).Warn("simulated block")
+		e.logger.Fields("mode", "monitor", "rule", ruleName, "ip", e.ipMgr.ClientIP(r)).Warn("simulated block")
 		return
 	}
 
@@ -43,7 +42,7 @@ func (e *Engine) handleAction(w http.ResponseWriter, r *http.Request, rule alaye
 			duration = rule.Duration
 		}
 
-		ip := clientip.ClientIP(r)
+		ip := e.ipMgr.ClientIP(r)
 		banRule := Rule{
 			IP:        ip,
 			Type:      BlockTypeSingle,

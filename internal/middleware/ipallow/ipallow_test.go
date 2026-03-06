@@ -6,8 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"github.com/olekukonko/ll"
 )
+
+var ipMgr = zulu.NewIP()
 
 func TestNew(t *testing.T) {
 	// Mock Logger (discard output)
@@ -90,7 +93,7 @@ func TestNew(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create Middleware
-			mw := New(tt.allowed, logger)
+			mw := New(tt.allowed, logger, ipMgr)
 
 			// Create a dummy handler that returns 200 OK
 			nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

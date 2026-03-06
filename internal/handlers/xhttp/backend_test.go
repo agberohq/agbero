@@ -20,18 +20,19 @@ var (
 	testLogger = ll.New("backend").Disable()
 )
 
-// Helper to create a backend with customizable params and fresh registry
 func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb alaye.CircuitBreaker) (*Backend, *metrics.Registry) {
 	route := &alaye.Route{
 		HealthCheck:    hc,
 		CircuitBreaker: cb,
 	}
 
-	// Create a FRESH registry for each test to avoid cross-test pollution
 	registry := metrics.NewRegistry()
 
-	// Pass nil domains
-	b, err := NewBackend(server, route, nil, testLogger, registry)
+	b, err := NewBackend(server, ConfigBackend{
+		Route:    route,
+		Logger:   testLogger,
+		Registry: registry,
+	})
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -39,8 +40,10 @@ func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb al
 }
 
 func TestNewBackend_InvalidURL(t *testing.T) {
-	registry := metrics.NewRegistry()
-	_, err := NewBackend(alaye.NewServer("://invalid-url"), &alaye.Route{}, nil, testLogger, registry)
+	_, err := NewBackend(alaye.NewServer("://invalid-url"), ConfigBackend{
+		Logger:   testLogger,
+		Registry: metrics.NewRegistry(),
+	})
 	if err == nil {
 		t.Error("Expected error for invalid URL, got nil")
 	}
@@ -58,7 +61,7 @@ func TestNewBackend_NoHealthCheck(t *testing.T) {
 	if b.Proxy == nil {
 		t.Error("Proxy should be initialized")
 	}
-	if !b.Alive.Load() {
+	if !b.Alive() {
 		t.Error("Server should start alive")
 	}
 }
@@ -174,7 +177,7 @@ func TestProxy_DirectorModifications(t *testing.T) {
 		t.Error("Missing X-Forwarded-Proto header")
 	}
 	if receivedHeaders.Get("Keep-Alive") != "" {
-		t.Error("Keep-Alive header should be stripped")
+		t.Error("Keep-alive header should be stripped")
 	}
 	if receivedHeaders.Get("Proxy-Authorization") != "" {
 		t.Error("Proxy-Authorization header should be stripped")
@@ -192,7 +195,11 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 	}
 
 	registry := metrics.NewRegistry()
-	b, err := NewBackend(alaye.NewServer(server.URL), route, nil, testLogger, registry)
+	b, err := NewBackend(alaye.NewServer(server.URL), ConfigBackend{
+		Route:    route,
+		Logger:   testLogger,
+		Registry: registry,
+	})
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -207,7 +214,7 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	if b.Alive.Load() {
+	if b.Alive() {
 		t.Error("Should trip after 2 failures")
 	}
 	if b.Activity.Failures.Load() < 2 {
@@ -226,7 +233,11 @@ func TestCircuitBreaker_NoTripOnCancel(t *testing.T) {
 	}
 
 	registry := metrics.NewRegistry()
-	b, err := NewBackend(alaye.NewServer(server.URL), route, nil, testLogger, registry)
+	b, err := NewBackend(alaye.NewServer(server.URL), ConfigBackend{
+		Route:    route,
+		Logger:   testLogger,
+		Registry: registry,
+	})
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -237,7 +248,7 @@ func TestCircuitBreaker_NoTripOnCancel(t *testing.T) {
 
 	b.Proxy.ErrorHandler(w, req, context.Canceled)
 
-	if !b.Alive.Load() {
+	if !b.Alive() {
 		t.Error("Context cancel should not trip circuit")
 	}
 }
@@ -259,7 +270,7 @@ func TestHealthCheck_Failure(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	if b.Alive.Load() {
+	if b.Alive() {
 		t.Error("Should mark down after health check failures")
 	}
 }
@@ -288,7 +299,7 @@ func TestHealthCheck_Recovery(t *testing.T) {
 	defer b.Stop()
 
 	time.Sleep(300 * time.Millisecond)
-	if b.Alive.Load() {
+	if b.Alive() {
 		t.Error("Should be down initially")
 	}
 
@@ -296,7 +307,7 @@ func TestHealthCheck_Recovery(t *testing.T) {
 
 	time.Sleep(300 * time.Millisecond)
 
-	if !b.Alive.Load() {
+	if !b.Alive() {
 		t.Error("Should recover when healthy")
 	}
 	if b.Activity.Failures.Load() != 0 {
@@ -314,7 +325,7 @@ func TestHealthCheck_Advanced(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		w.WriteHeader(http.StatusCreated) // 201
+		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte(`{"status": "OK"}`))
 	}))
 	defer server.Close()
@@ -336,7 +347,7 @@ func TestHealthCheck_Advanced(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	if !b.Alive.Load() {
+	if !b.Alive() {
 		t.Error("Backend should be healthy with correct advanced check")
 	}
 }
@@ -362,7 +373,7 @@ func TestHealthCheck_Advanced_BodyMismatch(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	if b.Alive.Load() {
+	if b.Alive() {
 		t.Error("Backend should be down due to body mismatch")
 	}
 }
@@ -389,7 +400,12 @@ func TestHealthCheck_HostHeader_From_Domains(t *testing.T) {
 	}
 
 	registry := metrics.NewRegistry()
-	b, err := NewBackend(alaye.NewServer(server.URL), route, []string{"api.example.com"}, testLogger, registry)
+	b, err := NewBackend(alaye.NewServer(server.URL), ConfigBackend{
+		Route:    route,
+		Domains:  []string{"api.example.com"},
+		Logger:   testLogger,
+		Registry: registry,
+	})
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -397,7 +413,7 @@ func TestHealthCheck_HostHeader_From_Domains(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	if !b.Alive.Load() {
+	if !b.Alive() {
 		t.Error("Backend should be alive with correct Host header from domains")
 	}
 }
@@ -422,7 +438,11 @@ func TestHealthCheck_Jitter(t *testing.T) {
 	}
 
 	registry := metrics.NewRegistry()
-	b, err := NewBackend(cfg, route, nil, ll.New("test").Disable(), registry)
+	b, err := NewBackend(cfg, ConfigBackend{
+		Route:    route,
+		Logger:   ll.New("test").Disable(),
+		Registry: registry,
+	})
 	if err != nil {
 		t.Fatalf("NewBackend error: %v", err)
 	}

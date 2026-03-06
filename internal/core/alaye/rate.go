@@ -11,7 +11,7 @@ import (
 type GlobalRate struct {
 	Enabled    Enabled       `hcl:"enabled,optional" json:"enabled"`
 	TTL        time.Duration `hcl:"ttl,optional" json:"ttl"`
-	MaxEntries int64         `hcl:"max_entries,optional" json:"max_entries"`
+	MaxEntries int           `hcl:"max_entries,optional" json:"max_entries"`
 
 	// Default rules applied to all routes (unless ignored)
 	Rules []RateRule `hcl:"rule,block" json:"rules"`

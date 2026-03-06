@@ -8,14 +8,9 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"github.com/olekukonko/errors"
 )
-
-type ipRule struct {
-	ip   net.IP
-	cidr *net.IPNet
-}
 
 type Conditions struct {
 	hasRules bool
@@ -80,9 +75,10 @@ func (c *Conditions) Match(r *http.Request) bool {
 		return true
 	}
 
+	ipMgr := zulu.NewIP()
 	// IP/CIDR check
 	if len(c.ips) > 0 {
-		ipStr := clientip.ClientIP(r)
+		ipStr := ipMgr.ClientIP(r)
 		ip := net.ParseIP(ipStr)
 		if ip == nil {
 			return false

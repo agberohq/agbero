@@ -13,7 +13,7 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"github.com/cespare/xxhash/v2"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/mappo"
@@ -124,6 +124,7 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 			}
 
 			if cfg.Request.Enabled.Active() {
+				ipMgr := zulu.NewIP()
 				if cfg.Request.ForwardMethod {
 					authReq.Header.Set(woos.HeaderXOriginalMethod, r.Method)
 				}
@@ -131,7 +132,7 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 					authReq.Header.Set(woos.HeaderXOriginalURI, r.URL.RequestURI())
 				}
 				if cfg.Request.ForwardIP {
-					authReq.Header.Set(woos.HeaderXForwardedFor, clientip.ClientIP(r))
+					authReq.Header.Set(woos.HeaderXForwardedFor, ipMgr.ClientIP(r))
 				}
 			}
 

@@ -51,7 +51,7 @@ const (
 	HeaderVia              = "Via"
 
 	// Hop-by-hop Headers (RFC 7230 §6.1)
-	HeaderKeepAlive          = "Keep-Alive"
+	HeaderKeepAlive          = "Keep-alive"
 	HeaderProxyAuthenticate  = "Proxy-Authenticate"
 	HeaderProxyAuthorization = "Proxy-Authorization"
 	HeaderTE                 = "Te"

@@ -4,12 +4,12 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"slices"
 	"strings"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/xhttp"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/attic"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
@@ -25,23 +25,29 @@ import (
 	"github.com/olekukonko/ll"
 )
 
+type Config struct {
+	Global *alaye.Global
+	Host   *alaye.Host
+	Logger *ll.Logger
+	IPMgr  *zulu.IPManager
+}
+
 type Route struct {
 	handler  http.Handler
 	Backends []*xhttp.Backend
+	ipMgr    *zulu.IPManager
 }
 
-// NewRoute updated to accept domains
-func NewRoute(global *alaye.Global, host *alaye.Host, route *alaye.Route, logger *ll.Logger) *Route {
+func NewRoute(cfg Config, route *alaye.Route) *Route {
 	if route == nil {
 		return FallbackRoute("nil route")
 	}
 
-	// ensure to apply default again
 	woos.DefaultRoute(route)
 
-	logger.Fields("path", route.Path, "enabled", route.Enabled).Debug("creating route")
+	cfg.Logger.Fields("path", route.Path, "enabled", route.Enabled).Debug("creating route")
 	if err := route.Validate(); err != nil {
-		logger.Fields("path", route.Path, "err", err).Error("invalid route config")
+		cfg.Logger.Fields("path", route.Path, "err", err).Error("invalid route config")
 		return FallbackRoute("invalid route config: " + err.Error())
 	}
 
@@ -53,20 +59,38 @@ func NewRoute(global *alaye.Global, host *alaye.Host, route *alaye.Route, logger
 	}
 
 	if isWebRoute {
-		return newWebRoute(global, host, route, logger)
+		return newWebRoute(cfg, route)
 	}
 	if hasBackends {
-		return newProxyRoute(global, host, route, logger)
+		return newProxyRoute(cfg, route)
 	}
 
 	return FallbackRoute("route has no handler configuration")
 }
 
-func newWebRoute(global *alaye.Global, host *alaye.Host, route *alaye.Route, logger *ll.Logger) *Route {
-	chain := http.Handler(operation.NewWeb(logger, route))
+func (h *Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h == nil || h.handler == nil {
+		http.Error(w, "route handler not initialized", http.StatusBadGateway)
+		return
+	}
+	h.handler.ServeHTTP(w, r)
+}
+
+func (h *Route) Close() {
+	for _, b := range h.Backends {
+		if b != nil {
+			b.Stop()
+		}
+	}
+}
+
+func newWebRoute(cfg Config, route *alaye.Route) *Route {
+	chain := http.Handler(operation.NewWeb(cfg.Logger, route))
+
+	ipMgr := zulu.NewIPManager(cfg.Global.Security.TrustedProxies)
 
 	if len(route.AllowedIPs) > 0 {
-		chain = ipallow.New(route.AllowedIPs, logger)(chain)
+		chain = ipallow.New(route.AllowedIPs, cfg.Logger, ipMgr)(chain)
 	}
 
 	chain = auth.JWT(&route.JWTAuth)(chain)
@@ -74,72 +98,72 @@ func newWebRoute(global *alaye.Global, host *alaye.Host, route *alaye.Route, log
 	chain = auth.Forward(&route.ForwardAuth)(chain)
 	chain = auth.OAuth(&route.OAuth)(chain)
 
-	if rl := buildRouteLimiter(&route.RateLimit, &global.RateLimits); rl != nil {
+	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, ipMgr); rl != nil {
 		chain = rl.Handler(chain)
 	}
 
 	chain = headers.Headers(&route.Headers)(chain)
 	chain = compress.Compress(route)(chain)
 
-	// Cache
-	chain = attic.New(&route.Cache, logger)(chain)
+	chain = attic.New(&route.Cache, cfg.Logger)(chain)
 
-	// Error Pages
 	errCfg := errorpages.Config{
 		RoutePages:  route.ErrorPages,
-		HostPages:   host.ErrorPages,
-		GlobalPages: global.ErrorPages,
+		HostPages:   cfg.Host.ErrorPages,
+		GlobalPages: cfg.Global.ErrorPages,
 	}
 	chain = errorpages.New(errCfg)(chain)
 
 	chain = cors.New(&route.CORS)(chain)
-	chain = rewrite.New(logger, route.StripPrefixes, route.Rewrites)(chain)
+	chain = rewrite.New(cfg.Logger, route.StripPrefixes, route.Rewrites)(chain)
 
-	return &Route{handler: chain, Backends: nil}
+	return &Route{handler: chain, Backends: nil, ipMgr: ipMgr}
 }
 
-// newProxyRoute updated to pass domains
-func newProxyRoute(global *alaye.Global, host *alaye.Host, route *alaye.Route, logger *ll.Logger) *Route {
+func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 	var backends []*xhttp.Backend
 	for i, backendCfg := range route.Backends.Servers {
-		b, err := xhttp.NewBackend(backendCfg, route, host.Domains, logger, metrics.DefaultRegistry)
+		b, err := xhttp.NewBackend(backendCfg, xhttp.ConfigBackend{
+			Route: route, Domains: cfg.Host.Domains, Logger: cfg.Logger, Registry: metrics.DefaultRegistry,
+		})
 		if err != nil {
-			logger.Fields("index", i, "backend", backendCfg.Address, "err", err).Error("failed to create backend")
+			cfg.Logger.Fields("index", i, "backend", backendCfg.Address, "err", err).Error("failed to create backend")
 			continue
 		}
 		backends = append(backends, b)
 	}
 
-	fallbackCfg := resolveFallback(&route.Fallback, &global.Fallback)
+	fallbackCfg := resolveFallback(&route.Fallback, &cfg.Global.Fallback)
 	var fallbackHandler http.Handler
 	if fallbackCfg.IsActive() {
-		fallbackHandler = buildFallbackHandler(fallbackCfg, logger)
+		fallbackHandler = buildFallbackHandler(fallbackCfg, cfg.Logger)
 	}
 
 	if len(backends) == 0 {
 		if fallbackHandler != nil {
-			return &Route{handler: fallbackHandler, Backends: nil}
+			return &Route{handler: fallbackHandler, Backends: nil, ipMgr: cfg.IPMgr}
 		}
 		return FallbackRoute("proxy route missing backends")
 	}
 
-	timeout := time.Duration(0)
+	timeout := cfg.Global.Timeouts.Read
 	if route.Timeouts.Request != 0 {
 		timeout = route.Timeouts.Request
 	}
 
-	balancerCfg := xhttp.Config{
+	balancerCfg := xhttp.ConfigBalancer{
 		Strategy: route.Backends.Strategy,
+		Keys:     route.Backends.Keys,
 		Timeout:  timeout,
 		Fallback: fallbackHandler,
 	}
 
-	loadBalancer := xhttp.NewBalancer(balancerCfg, backends)
+	loadBalancer := xhttp.NewBalancer(balancerCfg, backends, cfg.IPMgr)
 
 	var chain http.Handler = loadBalancer
 
 	if len(route.AllowedIPs) > 0 {
-		chain = ipallow.New(route.AllowedIPs, logger)(chain)
+		chain = ipallow.New(route.AllowedIPs, cfg.Logger, cfg.IPMgr)(chain)
 	}
 
 	chain = auth.JWT(&route.JWTAuth)(chain)
@@ -147,28 +171,26 @@ func newProxyRoute(global *alaye.Global, host *alaye.Host, route *alaye.Route, l
 	chain = auth.Forward(&route.ForwardAuth)(chain)
 	chain = auth.OAuth(&route.OAuth)(chain)
 
-	if rl := buildRouteLimiter(&route.RateLimit, &global.RateLimits); rl != nil {
+	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, cfg.IPMgr); rl != nil {
 		chain = rl.Handler(chain)
 	}
 
 	chain = headers.Headers(&route.Headers)(chain)
 	chain = compress.Compress(route)(chain)
 
-	// Cache
-	chain = attic.New(&route.Cache, logger)(chain)
+	chain = attic.New(&route.Cache, cfg.Logger)(chain)
 
-	// Error Pages
 	errCfg := errorpages.Config{
 		RoutePages:  route.ErrorPages,
-		HostPages:   host.ErrorPages,
-		GlobalPages: global.ErrorPages,
+		HostPages:   cfg.Host.ErrorPages,
+		GlobalPages: cfg.Global.ErrorPages,
 	}
 	chain = errorpages.New(errCfg)(chain)
 
 	chain = cors.New(&route.CORS)(chain)
-	chain = rewrite.New(logger, route.StripPrefixes, route.Rewrites)(chain)
+	chain = rewrite.New(cfg.Logger, route.StripPrefixes, route.Rewrites)(chain)
 
-	return &Route{handler: chain, Backends: backends}
+	return &Route{handler: chain, Backends: backends, ipMgr: cfg.IPMgr}
 }
 
 func resolveFallback(routeFallback, globalFallback *alaye.Fallback) *alaye.Fallback {
@@ -215,6 +237,18 @@ func buildFallbackHandler(fallback *alaye.Fallback, logger *ll.Logger) http.Hand
 			})
 		}
 		proxy := httputil.NewSingleHostReverseProxy(proxyURL)
+		proxy.Rewrite = func(pr *httputil.ProxyRequest) {
+			pr.SetXForwarded()
+			pr.Out.Header.Del("Connection")
+			pr.Out.Header.Del("Keep-Alive")
+			pr.Out.Header.Del("Proxy-Authenticate")
+			pr.Out.Header.Del("Proxy-Authorization")
+			pr.Out.Header.Del("Te")
+			pr.Out.Header.Del("Trailers")
+			pr.Out.Header.Del("Transfer-Encoding")
+			pr.Out.Header.Del("Upgrade")
+			pr.Out.Host = proxyURL.Host
+		}
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 			logger.Fields("err", err, "fallback_proxy", fallback.ProxyURL).Error("fallback proxy failed")
 			http.Error(w, "Fallback service unavailable", http.StatusBadGateway)
@@ -227,22 +261,6 @@ func buildFallbackHandler(fallback *alaye.Fallback, logger *ll.Logger) http.Hand
 	}
 }
 
-func (h *Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if h == nil || h.handler == nil {
-		http.Error(w, "route handler not initialized", http.StatusBadGateway)
-		return
-	}
-	h.handler.ServeHTTP(w, r)
-}
-
-func (h *Route) Close() {
-	for _, b := range h.Backends {
-		if b != nil {
-			b.Stop()
-		}
-	}
-}
-
 func FallbackRoute(msg string) *Route {
 	return &Route{
 		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -251,7 +269,7 @@ func FallbackRoute(msg string) *Route {
 	}
 }
 
-func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimit.RateLimiter {
+func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate, ipMgr *zulu.IPManager) *ratelimit.RateLimiter {
 	if rlc == nil {
 		return nil
 	}
@@ -259,7 +277,7 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 		return nil
 	}
 	ttl := 30 * time.Minute
-	maxEntries := int64(100_000)
+	maxEntries := 100_000
 	if global != nil {
 		if global.TTL > 0 {
 			ttl = global.TTL
@@ -296,7 +314,13 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 		}
 		for _, rule := range rules {
 			if len(rule.Methods) > 0 {
-				methodMatch := slices.Contains(rule.Methods, r.Method)
+				methodMatch := false
+				for _, m := range rule.Methods {
+					if strings.EqualFold(m, r.Method) {
+						methodMatch = true
+						break
+					}
+				}
 				if !methodMatch {
 					continue
 				}
@@ -322,5 +346,10 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate) *ratelimi
 		}
 		return "", ratelimit.RatePolicy{}, false
 	}
-	return ratelimit.NewRateLimiter(ttl, maxEntries, policy)
+	return ratelimit.New(ratelimit.Config{
+		TTL:        ttl,
+		MaxEntries: int(maxEntries),
+		Policy:     policy,
+		IPManager:  ipMgr,
+	})
 }

@@ -25,7 +25,6 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/xtcp"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/firewall"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/h3"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/memory"
@@ -89,7 +88,7 @@ type Server struct {
 
 	logger *ll.Logger
 
-	ipMiddleware   *clientip.IPMiddleware
+	ipMgr          *zulu.IPManager
 	rateLimiter    *ratelimit.RateLimiter
 	clusterManager *cluster.Manager
 
@@ -246,7 +245,10 @@ func (s *Server) Start(configPath string) error {
 	if s.global.Security.Enabled.Active() {
 		trustedProxies = s.global.Security.TrustedProxies
 	}
-	s.ipMiddleware = clientip.NewIPMiddleware(trustedProxies)
+
+	s.ipMgr = zulu.NewIPManager(trustedProxies)
+
+	//s.ipMiddleware = clientip.NewIPMiddleware(trustedProxies)
 	s.rateLimiter = s.buildGlobalRateLimiter()
 
 	s.skipLogPaths = make(map[string]bool)
@@ -261,7 +263,9 @@ func (s *Server) Start(configPath string) error {
 		if fwConfig.Status.Active() {
 			dataDir := woos.NewFolder(s.global.Storage.DataDir)
 			var err error
-			s.firewall, err = firewall.New(&fwConfig, dataDir, s.logger)
+			s.firewall, err = firewall.New(firewall.Config{
+				Firewall: &fwConfig, DataDir: dataDir, Logger: s.logger, IPMgr: s.ipMgr,
+			})
 			if err != nil {
 				return errors.Newf("firewall init: %w", err)
 			}
@@ -549,7 +553,9 @@ func (s *Server) Reload() {
 		if fwConfig.Status.Active() {
 			dataDir := woos.NewFolder(global.Storage.DataDir)
 			var err error
-			s.firewall, err = firewall.New(&fwConfig, dataDir, s.logger)
+			s.firewall, err = firewall.New(firewall.Config{
+				Firewall: &fwConfig, DataDir: dataDir, Logger: s.logger, IPMgr: s.ipMgr,
+			})
 			if err != nil {
 				s.logger.Fields("err", err).Error("failed to init firewall on reload")
 			}
@@ -1039,9 +1045,9 @@ func (s *Server) buildChain(next http.Handler, advertiseH3 bool, port string) ht
 	// Wrapper to allow swapping firewall middleware on reload
 	h = s.firewallMiddleware(h)
 
-	if s.ipMiddleware != nil {
-		h = s.ipMiddleware.Handler(h)
-	}
+	//if s.ipMiddleware != nil {
+	//	h = s.ipMiddleware.Handler(h)
+	//}
 
 	if s.global.Logging.Prometheus.Enabled.Active() {
 		h = observability.Prometheus(s.hostManager)(h)
@@ -1124,7 +1130,9 @@ func (s *Server) buildGlobalRateLimiter() *ratelimit.RateLimiter {
 		return "", ratelimit.RatePolicy{}, false
 	}
 
-	return ratelimit.NewRateLimiter(rlc.TTL, rlc.MaxEntries, policy)
+	return ratelimit.New(ratelimit.Config{
+		TTL: rlc.TTL, MaxEntries: rlc.MaxEntries, Policy: policy,
+	})
 }
 
 func (s *Server) buildTLS(next http.Handler) (*tls.Config, http.Handler) {
@@ -1205,7 +1213,7 @@ func (s *Server) logRequest(host string, r *http.Request, start time.Time, statu
 	// 3. Append Key/Value pairs
 	args = append(args, "host", host)
 	args = append(args, "path", r.URL.Path)
-	args = append(args, "remote", clientip.ClientIP(r))
+	args = append(args, "remote", s.ipMgr.ClientIP(r))
 	args = append(args, "duration", time.Since(start))
 	args = append(args, "proto", r.Proto)
 	args = append(args, "status", status)
@@ -1386,7 +1394,9 @@ func (s *Server) getOrBuildRouteHandler(route *alaye.Route, host *alaye.Host) *h
 		}
 	}
 
-	h := handlers.NewRoute(s.global, host, route, s.logger)
+	h := handlers.NewRoute(handlers.Config{
+		Global: s.global, Host: host, Logger: s.logger,
+	}, route)
 	newItem := &mappo.Item{
 		Value: h,
 	}

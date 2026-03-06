@@ -227,7 +227,7 @@ func parseMaxAge(cc string) time.Duration {
 
 func removeHopByHopHeaders(hdr http.Header) {
 	hop := []string{
-		"Connection", "Keep-Alive", "Proxy-Authenticate",
+		"Connection", "Keep-alive", "Proxy-Authenticate",
 		"Proxy-Authorization", "TE", "Trailers",
 		"Transfer-Encoding", "Upgrade",
 	}

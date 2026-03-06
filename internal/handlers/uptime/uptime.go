@@ -12,7 +12,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/xtcp"
-	metrics2 "git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 )
@@ -70,13 +70,13 @@ type ProxySnapshot struct {
 }
 
 type BackendSnapshot struct {
-	URL       string                   `json:"url"`
-	Alive     bool                     `json:"alive"`
-	InFlight  int64                    `json:"in_flight"`
-	Failures  int64                    `json:"failures"`
-	TotalReqs uint64                   `json:"total_reqs"`
-	Latency   metrics2.LatencySnapshot `json:"latency_us"`
-	Healthy   bool                     `json:"healthy"`
+	URL       string                  `json:"url"`
+	Alive     bool                    `json:"alive"`
+	InFlight  int64                   `json:"in_flight"`
+	Failures  int64                   `json:"failures"`
+	TotalReqs uint64                  `json:"total_reqs"`
+	Latency   metrics.LatencySnapshot `json:"latency_us"`
+	Healthy   bool                    `json:"healthy"`
 }
 
 var (
@@ -177,14 +177,14 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 			for _, srv := range route.Backends.Servers {
 				statsKey := fmt.Sprintf("%s|%s", rKey, srv.Address)
 
-				var latSnap metrics2.LatencySnapshot
+				var latSnap metrics.LatencySnapshot
 				var failures, reqs, inFlight int64
 				healthy := false
 				alive := true
 
-				if stats := metrics2.DefaultRegistry.Get(statsKey); stats != nil {
+				if stats := metrics.DefaultRegistry.Get(statsKey); stats != nil {
 					snap := stats.Activity.Snapshot()
-					latSnap = snap["latency"].(metrics2.LatencySnapshot)
+					latSnap = snap["latency"].(metrics.LatencySnapshot)
 					failures = int64(snap["failures"].(uint64))
 					reqs = int64(snap["requests"].(uint64))
 					inFlight = snap["in_flight"].(int64)
@@ -244,7 +244,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 
 					return &BackendSnapshot{
 						URL:       b.Address,
-						Alive:     b.Alive.Load(),
+						Alive:     b.Alive(),
 						InFlight:  b.Activity.InFlight.Load(),
 						Failures:  int64(b.Activity.Failures.Load()),
 						TotalReqs: b.Activity.Requests.Load(),

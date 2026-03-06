@@ -2,9 +2,7 @@ package lb
 
 import (
 	"encoding/binary"
-	"math/rand/v2"
 	"net/http"
-	"sync"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"github.com/cespare/xxhash/v2"
@@ -17,6 +15,7 @@ type Activity interface {
 
 type Backend interface {
 	Activity
+	Status(v bool)
 	Alive() bool
 	Weight() int
 }
@@ -39,12 +38,6 @@ const (
 	StrategyPowerOfTwoChoices
 	StrategyConsistentHash
 )
-
-var rngPool = sync.Pool{
-	New: func() any {
-		return rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
-	},
-}
 
 func HashString(s string) uint64 {
 	return xxhash.Sum64String(s)

@@ -7,26 +7,24 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
 )
 
 type Balancer struct {
-	lb       lb.Balancer
-	adaptive *lb.Adaptive
-	timeout  time.Duration
-	strategy string
-	fallback http.Handler
+	lb        lb.Balancer
+	adaptive  *lb.Adaptive
+	timeout   time.Duration
+	fallback  http.Handler
+	ipManager *zulu.IPManager
+	keys      []string
 }
 
-// NewBalancer accepts a Config object and the list of backends.
-// The stripPrefix logic is removed from here as it is now handled by middleware.
-func NewBalancer(cfg Config, backends []*Backend) *Balancer {
+func NewBalancer(cfg ConfigBalancer, backends []*Backend, ipManager *zulu.IPManager) *Balancer {
 	wrapped := make([]lb.Backend, 0, len(backends))
 	for _, b := range backends {
 		if b != nil {
-			wrapped = append(wrapped, httpBackend{b})
+			wrapped = append(wrapped, b)
 		}
 	}
 
@@ -38,38 +36,23 @@ func NewBalancer(cfg Config, backends []*Backend) *Balancer {
 
 	s := strings.ToLower(cfg.Strategy)
 
-	if strings.Contains(s, alaye.StrategyAdaptive) {
+	if strings.Contains(s, alaye.StrategyAdaptive) || strings.Contains(s, alaye.StrategyLeastResponseTime) {
 		adaptiveRef = lb.NewAdaptive(root, 0.15)
 		root = adaptiveRef
 	}
 
 	if strings.Contains(s, alaye.StrategySticky) {
-		extractor := func(r *http.Request) string {
-			if c, err := r.Cookie(woos.SessionCookieName); err == nil {
-				return c.Value
-			}
-			return clientip.ClientIP(r)
-		}
-		root = lb.NewSticky(root, 30*time.Minute, extractor)
+		root = lb.NewSticky(root, 30*time.Minute, zulu.Extractor(cfg.Keys))
 	}
 
 	return &Balancer{
-		lb:       root,
-		adaptive: adaptiveRef,
-		timeout:  cfg.Timeout,
-		strategy: cfg.Strategy,
-		fallback: cfg.Fallback,
+		lb:        root,
+		adaptive:  adaptiveRef,
+		timeout:   cfg.Timeout,
+		fallback:  cfg.Fallback,
+		ipManager: ipManager,
+		keys:      cfg.Keys,
 	}
-}
-
-func (b *Balancer) Update(list []*Backend) {
-	wrapped := make([]lb.Backend, 0, len(list))
-	for _, backend := range list {
-		if backend != nil {
-			wrapped = append(wrapped, httpBackend{backend})
-		}
-	}
-	b.lb.Update(wrapped)
 }
 
 func (b *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -83,8 +66,10 @@ func (b *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isWebSocket := r.Header.Get("Upgrade") == "websocket"
+
 	ctx := r.Context()
-	if b.timeout > 0 {
+	if b.timeout > 0 && !isWebSocket {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, b.timeout)
 		defer cancel()
@@ -96,36 +81,75 @@ func (b *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if b.adaptive != nil {
 		latency := time.Since(start).Microseconds()
 		failed := false
-		if latency > b.timeout.Microseconds() && b.timeout > 0 {
+
+		if !isWebSocket && b.timeout > 0 && latency > b.timeout.Microseconds() {
 			failed = true
 		}
-		b.adaptive.RecordResult(httpBackend{be}, latency, failed)
+		b.adaptive.RecordResult(be, latency, failed)
 	}
 }
 
 func (b *Balancer) Pick(r *http.Request) *Backend {
-	pick := b.lb.Pick(r, func() uint64 { return b.hashKey(r) })
+	hashFunc := func() uint64 {
+		key := ""
+		if len(b.keys) == 0 {
+			if b.ipManager != nil {
+				key = b.ipManager.ClientIP(r)
+			} else {
+				key = r.RemoteAddr
+			}
+		} else {
+			for _, k := range b.keys {
+				val := ""
+				switch {
+				case strings.HasPrefix(k, "cookie:"):
+					name := k[7:]
+					if c, err := r.Cookie(name); err == nil {
+						val = c.Value
+					}
+				case strings.HasPrefix(k, "header:"):
+					name := k[7:]
+					val = r.Header.Get(name)
+				case strings.HasPrefix(k, "query:"):
+					name := k[6:]
+					val = r.URL.Query().Get(name)
+				case k == "ip":
+					if b.ipManager != nil {
+						val = b.ipManager.ClientIP(r)
+					} else {
+						val = r.RemoteAddr
+					}
+				}
+				if val != "" {
+					key = val
+					break
+				}
+			}
+		}
+
+		if key == "" {
+			return 0
+		}
+		return lb.HashString(key)
+	}
+
+	pick := b.lb.Pick(r, hashFunc)
 
 	if pick == nil {
 		return nil
 	}
-	if hb, ok := pick.(httpBackend); ok {
-		return hb.Backend
+	if be, ok := pick.(*Backend); ok {
+		return be
 	}
 	return nil
 }
 
-func (b *Balancer) hashKey(r *http.Request) uint64 {
-	if strings.Contains(b.strategy, alaye.StrategyIPHash) || strings.Contains(b.strategy, alaye.StrategyConsistentHash) {
-		ip := clientip.ClientIP(r)
-		return lb.HashString(ip)
-	}
-	if strings.Contains(b.strategy, alaye.StrategyURLHash) {
-		path := r.URL.Path
-		if path == "" {
-			path = "/"
+func (b *Balancer) Update(list []*Backend) {
+	wrapped := make([]lb.Backend, 0, len(list))
+	for _, backend := range list {
+		if backend != nil {
+			wrapped = append(wrapped, backend)
 		}
-		return lb.HashString(path)
 	}
-	return 0
+	b.lb.Update(wrapped)
 }

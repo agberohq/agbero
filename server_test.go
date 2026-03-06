@@ -233,7 +233,9 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 	woos.DefaultRoute(route)
 	key := route.Key()
 
-	handler := handlers.NewRoute(s.global, host, route, testLogger)
+	handler := handlers.NewRoute(handlers.Config{
+		Global: s.global, Host: host, Logger: testLogger,
+	}, route)
 
 	item := &mappo.Item{
 		Value: handler,
