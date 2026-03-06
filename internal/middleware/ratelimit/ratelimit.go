@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/mappo"
 	"golang.org/x/time/rate"
@@ -150,25 +151,21 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 }
 
 func (rl *RateLimiter) extractKey(r *http.Request, keySpec string) string {
-	if keySpec == "" || keySpec == "ip" {
+	if keySpec == "" || strings.EqualFold(keySpec, "ip") {
 		if rl.ipMgr != nil {
-			return rl.ipMgr.GetClientIP(r)
+			return rl.ipMgr.ClientIP(r)
 		}
 		return r.RemoteAddr
 	}
-	if strings.HasPrefix(keySpec, "header:") {
-		return r.Header.Get(keySpec[7:])
+
+	extract := lb.Extractor([]string{keySpec})
+	val := extract(r)
+	if val != "" {
+		return val
 	}
-	if strings.HasPrefix(keySpec, "cookie:") {
-		if c, err := r.Cookie(keySpec[7:]); err == nil {
-			return c.Value
-		}
-	}
-	if strings.HasPrefix(keySpec, "query:") {
-		return r.URL.Query().Get(keySpec[6:])
-	}
+
 	if rl.ipMgr != nil {
-		return rl.ipMgr.GetClientIP(r)
+		return rl.ipMgr.ClientIP(r)
 	}
 	return r.RemoteAddr
 }

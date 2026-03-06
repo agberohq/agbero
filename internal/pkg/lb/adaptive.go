@@ -1,10 +1,11 @@
 package lb
 
 import (
-	"math/rand/v2"
 	"net/http"
 	"sync"
 	"time"
+
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 )
 
 type Adaptive struct {
@@ -150,7 +151,7 @@ func (s *Adaptive) RecordResult(backend Backend, latencyMicros int64, failed boo
 }
 
 func randFloat() float64 {
-	rng := rngPool.Get().(*rand.Rand)
-	defer rngPool.Put(rng)
+	rng := zulu.Rand()
+	defer zulu.RandPut(rng)
 	return rng.Float64()
 }

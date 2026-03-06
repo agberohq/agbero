@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/mappo"
 )
@@ -29,7 +30,7 @@ func NewSticky(child Balancer, ttl time.Duration, extractor func(*http.Request) 
 	}
 
 	if extractor == nil {
-		extractor = ClientIP
+		extractor = zulu.IP.ClientIP
 	}
 
 	s := &Sticky{

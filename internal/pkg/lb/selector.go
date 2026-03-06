@@ -2,12 +2,12 @@ package lb
 
 import (
 	"math"
-	"math/rand/v2"
 	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"github.com/cespare/xxhash/v2"
 )
 
@@ -132,8 +132,8 @@ func (s *Selector) pickRandom() Backend {
 		return nil
 	}
 
-	rng := rngPool.Get().(*rand.Rand)
-	defer rngPool.Put(rng)
+	rng := zulu.Rand()
+	defer zulu.RandPut(rng)
 
 	start := rng.IntN(n)
 	for i := range n {
@@ -246,8 +246,8 @@ func (s *Selector) pickPowerOfTwoChoices() Backend {
 		return s.pickLeastConn()
 	}
 
-	rng := rngPool.Get().(*rand.Rand)
-	defer rngPool.Put(rng)
+	rng := zulu.Rand()
+	defer zulu.RandPut(rng)
 
 	idx1 := rng.IntN(n)
 	idx2 := rng.IntN(n - 1)

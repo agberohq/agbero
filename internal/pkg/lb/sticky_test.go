@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 )
 
 func TestNewStickySelector(t *testing.T) {
@@ -109,7 +111,7 @@ func TestStickyConcurrency(t *testing.T) {
 	b2 := newMockBackend(2, true, 1)
 	base := NewSelector([]Backend{b1, b2}, StrategyRoundRobin)
 
-	extractor := func(r *http.Request) string { return ClientIP(r) }
+	extractor := func(r *http.Request) string { return zulu.IP.ClientIP(r) }
 	s := NewSticky(base, time.Hour, extractor)
 	defer s.Stop()
 

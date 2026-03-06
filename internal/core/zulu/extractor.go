@@ -1,4 +1,4 @@
-package lb
+package zulu
 
 import (
 	"net/http"
@@ -8,7 +8,7 @@ import (
 // Extractor creates a composite extractor from multiple key configurations
 func Extractor(keys []string) func(*http.Request) string {
 	if len(keys) == 0 {
-		return ClientIP
+		return IP.ClientIP
 	}
 
 	// Build individual extractors
@@ -22,7 +22,7 @@ func Extractor(keys []string) func(*http.Request) string {
 
 		switch {
 		case strings.EqualFold(key, "ip"):
-			extractors = append(extractors, ClientIP)
+			extractors = append(extractors, IP.ClientIP)
 
 		case strings.HasPrefix(strings.ToLower(key), "cookie:"):
 			// Format: cookie:name
@@ -77,7 +77,7 @@ func Extractor(keys []string) func(*http.Request) string {
 	}
 
 	if len(extractors) == 0 {
-		return ClientIP
+		return IP.ClientIP
 	}
 
 	// Return composite extractor
