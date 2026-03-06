@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/mappo"
 	"golang.org/x/time/rate"
@@ -34,43 +33,51 @@ func (p RatePolicy) limiter() *rate.Limiter {
 	return rate.NewLimiter(limit, p.Burst)
 }
 
-// Bit layout: [32 bits reserved | 32 bits lastSeen timestamp]
-var packedBits = []uint8{32, 32}
-
-// atomicEntry holds the rate limiter and atomic packed state
-type atomicEntry struct {
-	state zulu.AtomicPacked
-	lim   *rate.Limiter // Immutable after creation
+type Config struct {
+	TTL             time.Duration
+	MaxEntries      int
+	Policy          func(r *http.Request) (bucket string, pol RatePolicy, ok bool)
+	IPManager       *zulu.IPManager
+	CleanupInterval time.Duration
 }
 
-// RateLimiter maintains backward compatible API
+var packedBits = []uint8{32, 32}
+
+type atomicEntry struct {
+	state zulu.AtomicPacked
+	lim   *rate.Limiter
+}
+
 type RateLimiter struct {
 	data       *mappo.Sharded[string, *atomicEntry]
 	policy     func(r *http.Request) (bucket string, pol RatePolicy, ok bool)
 	ttl        int64
 	maxEntries int
 	scheduler  *jack.Scheduler
+	ipMgr      *zulu.IPManager
 }
 
-// NewRateLimiter creates a new rate limiter (backward compatible)
-func NewRateLimiter(ttl time.Duration, maxEntries int64, policy func(r *http.Request) (bucket string, pol RatePolicy, ok bool)) *RateLimiter {
+func New(cfg Config) *RateLimiter {
+	if cfg.TTL <= 0 {
+		cfg.TTL = 30 * time.Minute
+	}
+	if cfg.MaxEntries <= 0 {
+		cfg.MaxEntries = 100_000
+	}
+	if cfg.CleanupInterval <= 0 {
+		cfg.CleanupInterval = 5 * time.Minute
+	}
+
 	rl := &RateLimiter{
 		data:       mappo.NewSharded[string, *atomicEntry](),
-		policy:     policy,
-		ttl:        ttl.Nanoseconds(),
-		maxEntries: int(maxEntries),
+		policy:     cfg.Policy,
+		ttl:        cfg.TTL.Nanoseconds(),
+		maxEntries: cfg.MaxEntries,
+		ipMgr:      cfg.IPManager,
 	}
 
-	if rl.ttl <= 0 {
-		rl.ttl = int64(30 * time.Minute)
-	}
-	if rl.maxEntries <= 0 {
-		rl.maxEntries = 100_000
-	}
-
-	// Start Janitor
 	sched, _ := jack.NewScheduler("ratelimit-gc", jack.NewPool(1), jack.Routine{
-		Interval: 5 * time.Minute,
+		Interval: cfg.CleanupInterval,
 	})
 	_ = sched.Do(jack.Do(rl.sweeper))
 	rl.scheduler = sched
@@ -85,39 +92,28 @@ func (rl *RateLimiter) Close() {
 	rl.data.Clear()
 }
 
-// allowInternal checks rate limit using atomic operations
 func (rl *RateLimiter) allowInternal(key string, pol RatePolicy) bool {
 	if pol.Requests <= 0 {
 		return true
 	}
-
 	now := time.Now().Unix()
 	allowed := true
-
-	// Use Compute for atomic get-or-create
 	rl.data.Compute(key, func(curr *atomicEntry, exists bool) (*atomicEntry, bool) {
 		if exists {
-			// Update last seen atomically using CAS loop
 			for {
 				oldPacked := curr.state.Load()
-				// Extract: values[0]=reserved, values[1]=lastSeen
 				newPacked := zulu.NewPacked(packedBits, 0, now)
 				if curr.state.CompareAndSwap(oldPacked, newPacked) {
 					break
 				}
 			}
-			// Check rate limit
 			allowed = curr.lim.Allow()
-			return curr, true // Keep entry
+			return curr, true
 		}
-
-		// Enforce max entries
 		if rl.data.Len() >= rl.maxEntries {
 			allowed = false
-			return nil, false // Don't create
+			return nil, false
 		}
-
-		// Create new entry
 		newEntry := &atomicEntry{
 			lim: pol.limiter(),
 		}
@@ -125,7 +121,6 @@ func (rl *RateLimiter) allowInternal(key string, pol RatePolicy) bool {
 		allowed = newEntry.lim.Allow()
 		return newEntry, true
 	})
-
 	return allowed
 }
 
@@ -133,52 +128,54 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 	if rl == nil || rl.policy == nil {
 		return next
 	}
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cleanPath := path.Clean(r.URL.Path)
-
 		if strings.HasPrefix(cleanPath, "/.well-known/acme-challenge/") {
 			next.ServeHTTP(w, r)
 			return
 		}
-
 		bucketName, pol, ok := rl.policy(r)
 		if !ok || pol.Requests <= 0 {
 			next.ServeHTTP(w, r)
 			return
 		}
-
 		key := rl.extractKey(r, pol.KeySpec)
 		fullKey := bucketName + ":" + key
-
 		if !rl.allowInternal(fullKey, pol) {
 			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			return
 		}
-
 		next.ServeHTTP(w, r)
 	})
 }
 
 func (rl *RateLimiter) extractKey(r *http.Request, keySpec string) string {
-	if keySpec == "" {
-		return clientip.ClientIP(r)
+	if keySpec == "" || keySpec == "ip" {
+		if rl.ipMgr != nil {
+			return rl.ipMgr.GetClientIP(r)
+		}
+		return r.RemoteAddr
 	}
-	if len(keySpec) > 7 && keySpec[:7] == "header:" {
+	if strings.HasPrefix(keySpec, "header:") {
 		return r.Header.Get(keySpec[7:])
 	}
-	if len(keySpec) > 7 && keySpec[:7] == "cookie:" {
+	if strings.HasPrefix(keySpec, "cookie:") {
 		if c, err := r.Cookie(keySpec[7:]); err == nil {
 			return c.Value
 		}
 	}
-	return clientip.ClientIP(r)
+	if strings.HasPrefix(keySpec, "query:") {
+		return r.URL.Query().Get(keySpec[6:])
+	}
+	if rl.ipMgr != nil {
+		return rl.ipMgr.GetClientIP(r)
+	}
+	return r.RemoteAddr
 }
 
 func (rl *RateLimiter) sweeper() {
 	now := time.Now().Unix()
 	cutoff := now - (rl.ttl / 1e9)
-
 	rl.data.ClearIf(func(key string, e *atomicEntry) bool {
 		values := e.state.Load().Extract(packedBits)
 		lastSeen := values[1]
