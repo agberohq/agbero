@@ -124,7 +124,11 @@ func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 	var backends []*xhttp.Backend
 	for i, backendCfg := range route.Backends.Servers {
 		b, err := xhttp.NewBackend(backendCfg, xhttp.ConfigBackend{
-			Route: route, Domains: cfg.Host.Domains, Logger: cfg.Logger, Registry: metrics.DefaultRegistry,
+			Route:    route,
+			Domains:  cfg.Host.Domains,
+			Logger:   cfg.Logger,
+			Registry: metrics.DefaultRegistry,
+			Fallback: nil, // Will be set below if applicable
 		})
 		if err != nil {
 			cfg.Logger.Fields("index", i, "backend", backendCfg.Address, "err", err).Error("failed to create backend")
@@ -144,6 +148,13 @@ func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 			return &Route{handler: fallbackHandler, Backends: nil, ipMgr: cfg.IPMgr}
 		}
 		return FallbackRoute("proxy route missing backends")
+	}
+
+	// Set fallback on each backend if defined
+	if fallbackHandler != nil {
+		for _, b := range backends {
+			b.Fallback = fallbackHandler
+		}
 	}
 
 	timeout := cfg.Global.Timeouts.Read

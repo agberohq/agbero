@@ -1,4 +1,3 @@
-// internal/handlers/xhttp/backend.go
 package xhttp
 
 import (
@@ -42,6 +41,7 @@ type Backend struct {
 
 	hcConfig     *alaye.HealthCheck
 	routeDomains []string
+	Fallback     http.Handler
 }
 
 func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
@@ -90,6 +90,7 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		lastRecovery: atomic.Int64{},
 		Health:       stats.Health,
 		Activity:     stats.Activity,
+		Fallback:     xhttpCfg.Fallback,
 	}
 	b.alive.Store(true)
 	b.lastRecovery.Store(now.UnixNano())
@@ -140,6 +141,10 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 			w.Header().Set("Grpc-Status", "14")
 			w.Header().Set("Grpc-Message", "upstream backend unavailable")
 			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if b.Fallback != nil {
+			b.Fallback.ServeHTTP(w, r)
 			return
 		}
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)

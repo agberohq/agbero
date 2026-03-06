@@ -38,6 +38,7 @@ type ConfigBackend struct {
 	Domains  []string
 	Logger   *ll.Logger
 	Registry *metrics.Registry
+	Fallback http.Handler
 }
 
 type ipRule struct {
