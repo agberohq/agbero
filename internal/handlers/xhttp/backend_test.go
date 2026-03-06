@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	testLogger = ll.New("backend").Disable()
+	testLogger = ll.New("backend").Enable()
 )
 
 func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb alaye.CircuitBreaker) (*Backend, *metrics.Registry) {

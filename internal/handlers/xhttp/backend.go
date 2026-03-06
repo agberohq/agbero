@@ -1,4 +1,4 @@
-// backend.go
+// internal/handlers/xhttp/backend.go
 package xhttp
 
 import (
@@ -94,7 +94,6 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 	b.alive.Store(true)
 	b.lastRecovery.Store(now.UnixNano())
 
-	// Circuit breaker threshold: 0 means disabled (use a sensible default)
 	cbThreshold := woos.DefaultCircuitBreakerThreshold
 	if cbThreshold == 0 {
 		cbThreshold = 5
@@ -108,9 +107,10 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		copy(b.routeDomains, xhttpCfg.Domains)
 	}
 
-	rp := httputil.NewSingleHostReverseProxy(u)
-	rp.BufferPool = sharedBufferPool
+	rp := &httputil.ReverseProxy{}
+
 	t := woos.Transport.Clone()
+	t.Proxy = nil // Explicitly disable proxy to prevent environment interference
 	t.ExpectContinueTimeout = 0
 	if cfg.Streaming.Enabled.Active() {
 		t.ResponseHeaderTimeout = 0
@@ -128,7 +128,7 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 			return
 		}
 		newFailures := b.Activity.Failures.Add(1)
-		// Only trip circuit breaker if threshold > 0 (enabled) and we exceed it
+
 		if cbThreshold > 0 && newFailures >= uint64(cbThreshold) && b.alive.Swap(false) {
 			b.logger.Fields("backend", u.Host, "failures", newFailures).Warn("circuit breaker tripped")
 		}
@@ -146,28 +146,43 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 	}
 
 	rp.Rewrite = func(pr *httputil.ProxyRequest) {
-		targetQuery := u.RawQuery
 		pr.Out.URL.Scheme = u.Scheme
 		pr.Out.URL.Host = u.Host
-		pr.Out.URL.Path = singleJoiningSlash(u.Path, pr.In.URL.Path)
-		if targetQuery == "" || pr.Out.URL.RawQuery == "" {
-			pr.Out.URL.RawQuery = targetQuery + pr.Out.URL.RawQuery
+		pr.Out.URL.User = u.User
+		apath := u.EscapedPath()
+		bpath := pr.In.URL.EscapedPath()
+		aslash := strings.HasSuffix(apath, "/")
+		bslash := strings.HasPrefix(bpath, "/")
+		switch {
+		case aslash && bslash:
+			pr.Out.URL.Path = u.Path + pr.In.URL.Path[1:]
+			pr.Out.URL.RawPath = apath + bpath[1:]
+		case !aslash && !bslash:
+			pr.Out.URL.Path = u.Path + "/" + pr.In.URL.Path
+			pr.Out.URL.RawPath = apath + "/" + bpath
+		default:
+			pr.Out.URL.Path = u.Path + pr.In.URL.Path
+			pr.Out.URL.RawPath = apath + bpath
+		}
+		targetQuery := u.RawQuery
+		inQuery := pr.In.URL.RawQuery
+		if targetQuery == "" || inQuery == "" {
+			pr.Out.URL.RawQuery = targetQuery + inQuery
 		} else {
-			pr.Out.URL.RawQuery = targetQuery + "&" + pr.Out.URL.RawQuery
+			pr.Out.URL.RawQuery = targetQuery + "&" + inQuery
 		}
 		if _, ok := pr.Out.Header["User-Agent"]; !ok {
 			pr.Out.Header.Set("User-Agent", "")
 		}
-		// Set Host header for backend (required by test)
+
 		pr.Out.Host = u.Host
 
-		// Existing header logic
 		pr.SetXForwarded()
 		for _, h := range hopHeaders {
 			pr.Out.Header.Del(h)
 		}
 		proto := woos.Http
-		// Use pr.In.TLS (client→proxy), not pr.Out.TLS (proxy→backend)
+
 		if pr.In.TLS != nil {
 			proto = woos.Https
 		}
@@ -335,7 +350,7 @@ func (b *Backend) healthCheckLoop(cbThreshold int) {
 				failures++
 				b.Health.RecordFailure()
 				newFailures := b.Activity.Failures.Add(1)
-				// Only trip circuit breaker if threshold > 0 (enabled)
+
 				if cbThreshold > 0 && (failures >= int64(threshold) || newFailures >= uint64(cbThreshold)) {
 					if b.alive.Swap(false) {
 						b.logger.Fields("backend", b.URL.Host, "failures", failures).Warn("circuit breaker tripped")
@@ -358,5 +373,4 @@ func (b *Backend) ResponseTime() int64 {
 	return snap.Avg
 }
 
-// Check
 var _ lb.Backend = (*Backend)(nil)
