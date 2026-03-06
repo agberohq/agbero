@@ -2,235 +2,21 @@ package xtcp
 
 import (
 	"bytes"
-	"context"
-	"crypto/rand"
-	"encoding/binary"
-	"errors"
 	"fmt"
-	mrand "math/rand"
-	"net"
-	"net/netip"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	metrics2 "git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 )
 
-var rngPool = sync.Pool{
-	New: func() any {
-		var seed int64
-		_ = binary.Read(rand.Reader, binary.LittleEndian, &seed)
-		return mrand.New(mrand.NewSource(seed))
-	},
-}
-
-type pooledConn struct {
-	net.Conn
-	lastUsed time.Time
-	inUse    atomic.Bool
-	failed   atomic.Bool
-}
-
-type connPool struct {
-	mu       sync.RWMutex
-	conns    []*pooledConn
-	maxSize  int
-	timeout  time.Duration
-	addr     string
-	resolved netip.AddrPort
-}
-
-func newConnPool(addr string, maxSize int, timeout time.Duration) *connPool {
-	return &connPool{
-		addr:    addr,
-		maxSize: maxSize,
-		timeout: timeout,
-	}
-}
-
-func (p *connPool) get() (*pooledConn, error) {
-	p.mu.RLock()
-	for _, c := range p.conns {
-		if c.inUse.CompareAndSwap(false, true) && !c.failed.Load() {
-			if p.isAlive(c.Conn) {
-				c.lastUsed = time.Now()
-				p.mu.RUnlock()
-				return c, nil
-			}
-			c.failed.Store(true)
-			c.inUse.Store(false)
-		}
-	}
-	p.mu.RUnlock()
-
-	conn, err := p.dial()
-	if err != nil {
-		return nil, err
-	}
-
-	pc := &pooledConn{
-		Conn:     conn,
-		lastUsed: time.Now(),
-	}
-	pc.inUse.Store(true)
-
-	p.mu.Lock()
-	if len(p.conns) < p.maxSize {
-		p.conns = append(p.conns, pc)
-	} else {
-		replaced := false
-		for i, c := range p.conns {
-			if c.failed.Load() || (!c.inUse.Load() && time.Since(c.lastUsed) > 5*time.Minute) {
-				_ = c.Conn.Close()
-				p.conns[i] = pc
-				replaced = true
-				break
-			}
-		}
-		if !replaced {
-			_ = pc.Conn.Close()
-			p.mu.Unlock()
-			return nil, fmt.Errorf("connection pool full")
-		}
-	}
-	p.mu.Unlock()
-
-	return pc, nil
-}
-
-func (p *connPool) dial() (net.Conn, error) {
-	if p.resolved.IsValid() {
-		conn, err := net.DialTimeout(woos.TCP, p.resolved.String(), p.timeout)
-		if err == nil {
-			return conn, nil
-		}
-		p.resolved = netip.AddrPort{}
-	}
-
-	host, port, err := net.SplitHostPort(p.addr)
-	if err != nil {
-		return nil, err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
-	defer cancel()
-
-	resolver := &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{Timeout: p.timeout}
-			return d.DialContext(ctx, network, address)
-		},
-	}
-
-	addrs, err := resolver.LookupNetIP(ctx, "ip4", host)
-	if err != nil || len(addrs) == 0 {
-		return net.DialTimeout(woos.TCP, p.addr, p.timeout)
-	}
-
-	var lastErr error
-	for _, addr := range addrs {
-		addrPort := netip.AddrPortFrom(addr, parsePort(port))
-		conn, err := net.DialTimeout(woos.TCP, addrPort.String(), p.timeout)
-		if err == nil {
-			p.mu.Lock()
-			p.resolved = addrPort
-			p.mu.Unlock()
-			return conn, nil
-		}
-		lastErr = err
-	}
-
-	return nil, lastErr
-}
-
-func (p *connPool) isAlive(conn net.Conn) bool {
-	sys, ok := conn.(syscall.Conn)
-	if !ok {
-		return true
-	}
-	raw, err := sys.SyscallConn()
-	if err != nil {
-		return false
-	}
-
-	var sysErr error
-	var n int
-
-	// Read raw file descriptor
-	err = raw.Read(func(fd uintptr) bool {
-		buf := make([]byte, 1)
-		// MSG_PEEK: Read without removing from queue
-		// MSG_DONTWAIT: Return immediately if no data
-		n, _, sysErr = syscall.Recvfrom(int(fd), buf, syscall.MSG_PEEK|syscall.MSG_DONTWAIT)
-		return true
-	})
-
-	if err != nil {
-		return false
-	}
-
-	if sysErr != nil {
-		// EWOULDBLOCK/EAGAIN means connection is open but no data is waiting
-		if errors.Is(sysErr, syscall.EAGAIN) || errors.Is(sysErr, syscall.EWOULDBLOCK) {
-			return true
-		}
-		return false
-	}
-
-	// n == 0 indicates EOF (peer closed connection)
-	return n > 0
-}
-
-func (p *connPool) put(pc *pooledConn) {
-	if pc == nil {
-		return
-	}
-	pc.inUse.Store(false)
-	pc.lastUsed = time.Now()
-}
-
-func (p *connPool) close() {
-	p.mu.Lock()
-	for _, c := range p.conns {
-		_ = c.Conn.Close()
-	}
-	p.conns = p.conns[:0]
-	p.mu.Unlock()
-}
-
-func parsePort(s string) uint16 {
-	var p uint16
-	fmt.Sscanf(s, "%d", &p)
-	return p
-}
-
-func isTimeout(err error) bool {
-	var netErr net.Error
-	return errors.As(err, &netErr) && netErr.Timeout()
-}
-
-type Snapshot struct {
-	Address     string
-	Alive       bool
-	ActiveConns int64
-	Failures    int64
-	MaxConns    int64
-	TotalReqs   uint64
-	Latency     metrics2.LatencySnapshot
-}
-
 type Backend struct {
-	Address string
-	Weight  int
-
-	Activity *metrics2.Activity
-	Health   *metrics2.Health
-	Alive    *atomic.Bool
+	Address  string
+	Activity *metrics.Activity
+	Health   *metrics.Health
 
 	MaxConns int64
 
@@ -239,6 +25,8 @@ type Backend struct {
 	hcSend     []byte
 	hcExpect   []byte
 	failThresh int64
+	weight     int
+	alive      *atomic.Bool
 
 	stop     chan struct{}
 	stopOnce sync.Once
@@ -263,8 +51,20 @@ func (b *Backend) OnDialFailure(_ error) {
 	if b.failThresh > 0 {
 		current := b.Activity.Failures.Load()
 		if int64(current) >= b.failThresh {
-			b.Alive.Store(false)
+			b.alive.Store(false)
 		}
+	}
+}
+
+func (b *Backend) Snapshot() *Snapshot {
+	return &Snapshot{
+		Address:     b.Address,
+		Alive:       b.alive.Load(),
+		ActiveConns: b.Activity.InFlight.Load(),
+		Failures:    int64(b.Activity.Failures.Load()),
+		MaxConns:    b.MaxConns,
+		TotalReqs:   b.Activity.Requests.Load(),
+		Latency:     b.Activity.Latency.Snapshot(),
 	}
 }
 
@@ -280,9 +80,9 @@ func (b *Backend) healthCheckLoop() {
 		b.pool = newConnPool(b.Address, 3, b.hcTimeout)
 	})
 
-	r := rngPool.Get().(*mrand.Rand)
-	jitter := time.Duration(r.Intn(1000)) * time.Millisecond
-	rngPool.Put(r)
+	r := zulu.Rand()
+	jitter := time.Duration(r.IntN(1000)) * time.Millisecond
+	zulu.RandPut(r)
 	time.Sleep(jitter)
 
 	ticker := time.NewTicker(b.hcInterval)
@@ -310,15 +110,15 @@ func (b *Backend) healthCheckLoop() {
 					ticker.Reset(currentInterval)
 				}
 
-				if !b.Alive.Load() {
-					b.Alive.Store(true)
+				if !b.alive.Load() {
+					b.alive.Store(true)
 				}
 			} else {
 				consecutiveFailures++
 				b.Health.RecordFailure()
 
 				if consecutiveFailures >= b.failThresh {
-					b.Alive.Store(false)
+					b.alive.Store(false)
 					currentInterval *= 2
 					if currentInterval > maxBackoff {
 						currentInterval = maxBackoff
@@ -373,29 +173,17 @@ func (b *Backend) check() bool {
 	return true
 }
 
-var checkBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, 1024)
-		return &b
-	},
-}
-
-func getCheckBuf() []byte {
-	return *(checkBufPool.Get().(*[]byte))
-}
-
-func putCheckBuf(b []byte) {
-	checkBufPool.Put(&b)
-}
-
-func (b *Backend) Snapshot() *Snapshot {
-	return &Snapshot{
-		Address:     b.Address,
-		Alive:       b.Alive.Load(),
-		ActiveConns: b.Activity.InFlight.Load(),
-		Failures:    int64(b.Activity.Failures.Load()),
-		MaxConns:    b.MaxConns,
-		TotalReqs:   b.Activity.Requests.Load(),
-		Latency:     b.Activity.Latency.Snapshot(),
+func (b *Backend) Status(v bool)   { b.alive.Store(v) }
+func (b *Backend) Alive() bool     { return b.alive.Load() }
+func (b *Backend) Weight() int     { return b.weight }
+func (b *Backend) InFlight() int64 { return b.Activity.InFlight.Load() }
+func (b *Backend) ResponseTime() int64 {
+	snap := b.Activity.Latency.Snapshot()
+	if snap.Count == 0 {
+		return 0
 	}
+	return snap.Avg
 }
+
+// Check
+var _ lb.Backend = (*Backend)(nil)

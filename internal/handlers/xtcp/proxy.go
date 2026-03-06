@@ -18,10 +18,6 @@ import (
 	"github.com/pires/go-proxyproto"
 )
 
-var noopBalancer = &Balancer{}
-
-var proxyBufPool = zulu.NewBufferPool()
-
 type Proxy struct {
 	Listen      string
 	IdleTimeout time.Duration
@@ -50,6 +46,8 @@ func NewProxy(listen string, logger *ll.Logger) *Proxy {
 }
 
 func (p *Proxy) BackendCount() int {
+	p.connsMu.Lock()
+	defer p.connsMu.Unlock()
 	return len(p.conns)
 }
 
@@ -161,18 +159,17 @@ func (p *Proxy) Stop() {
 	}
 	p.Mu.Unlock()
 
-	go func() {
-		time.Sleep(5 * time.Second)
-		p.connsMu.Lock()
-		count := len(p.conns)
-		for c := range p.conns {
-			_ = c.Close()
-		}
-		p.connsMu.Unlock()
-		if count > 0 {
-			p.Logger.Fields("count", count).Warn("forced closed active tcp connections")
-		}
-	}()
+	p.connsMu.Lock()
+	count := len(p.conns)
+	for c := range p.conns {
+		_ = c.Close()
+	}
+	p.conns = make(map[net.Conn]struct{})
+	p.connsMu.Unlock()
+
+	if count > 0 {
+		p.Logger.Fields("count", count).Warn("forced closed active tcp connections")
+	}
 
 	p.wg.Wait()
 }
@@ -479,8 +476,7 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 }
 
 func (p *Proxy) isTimeout(err error) bool {
-	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if netErr, ok := errors.AsType[net.Error](err); ok {
 		return netErr.Timeout()
 	}
 	return false

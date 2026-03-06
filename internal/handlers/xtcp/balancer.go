@@ -70,7 +70,7 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 
 		be := &Backend{
 			Address:    b.Address,
-			Weight:     w,
+			weight:     w,
 			MaxConns:   b.MaxConnections,
 			hcInterval: interval,
 			hcTimeout:  timeout,
@@ -80,12 +80,12 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 			stop:       make(chan struct{}),
 			Activity:   stats.Activity,
 			Health:     stats.Health,
-			Alive:      stats.Alive,
+			alive:      stats.Alive,
 		}
 
 		go be.healthCheckLoop()
 		backends = append(backends, be)
-		wrappedBackends = append(wrappedBackends, tcpBackend{be})
+		wrappedBackends = append(wrappedBackends, be)
 	}
 
 	strategy := lb.ParseStrategy(cfg.Strategy)
@@ -119,53 +119,42 @@ func (tb *Balancer) GetStrategyName() string {
 }
 
 // Pick selects a backend without re-allocating the selector.
+// Pick selects a backend without re-allocating the selector.
 func (tb *Balancer) Pick(exclude map[*Backend]struct{}) *Backend {
 	count := tb.BackendCount()
 	if count == 0 {
 		return nil
 	}
 
-	// 1. Fast Path: Try the selector strategy up to 'attempts' times.
-	// This respects weights and RR logic without rebuilding the world.
 	attempts := min(count, 5)
-
-	// Used for dummy hash keys since we don't have request context in TCP Pick
 	dummyKeyFunc := func() uint64 { return 0 }
 
 	for i := 0; i < attempts; i++ {
-		// Pass nil request as TCP selection here doesn't access HTTP headers
 		candidate := tb.selector.Pick(nil, dummyKeyFunc)
 		if candidate == nil {
 			continue
 		}
-
-		tbBackend, ok := candidate.(tcpBackend)
-		if !ok {
+		// Type assert once per candidate
+		be, ok := candidate.(*Backend)
+		if !ok || !tb.isUsable(be, exclude) {
 			continue
 		}
-
-		if tb.isUsable(tbBackend.Backend, exclude) {
-			return tbBackend.Backend
-		}
+		return be
 	}
 
-	// 2. Slow Path: Linear scan.
-	// If the intelligent picker kept hitting excluded nodes, just find *any* healthy one.
 	for _, b := range tb.selector.Backends() {
-		tbBackend, ok := b.(tcpBackend)
-		if !ok {
+		be, ok := b.(*Backend)
+		if !ok || !tb.isUsable(be, exclude) {
 			continue
 		}
-		if tb.isUsable(tbBackend.Backend, exclude) {
-			return tbBackend.Backend
-		}
+		return be
 	}
 
 	return nil
 }
 
 func (tb *Balancer) isUsable(b *Backend, exclude map[*Backend]struct{}) bool {
-	if b == nil || !b.Alive.Load() {
+	if b == nil || !b.alive.Load() {
 		return false
 	}
 	if b.MaxConns > 0 && b.Activity.InFlight.Load() >= b.MaxConns {
@@ -182,8 +171,8 @@ func (tb *Balancer) useProtocol() bool { return tb != nil && tb.proxyProtocol }
 func (tb *Balancer) Backends() []*Backend {
 	var result []*Backend
 	for _, b := range tb.selector.Backends() {
-		if tb, ok := b.(tcpBackend); ok {
-			result = append(result, tb.Backend)
+		if be, ok := b.(*Backend); ok {
+			result = append(result, be)
 		}
 	}
 	return result
