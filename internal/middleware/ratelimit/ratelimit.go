@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/mappo"
 	"golang.org/x/time/rate"
@@ -158,7 +157,7 @@ func (rl *RateLimiter) extractKey(r *http.Request, keySpec string) string {
 		return r.RemoteAddr
 	}
 
-	extract := lb.Extractor([]string{keySpec})
+	extract := zulu.Extractor([]string{keySpec})
 	val := extract(r)
 	if val != "" {
 		return val

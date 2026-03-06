@@ -15,7 +15,7 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/clientip"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"github.com/olekukonko/ll"
 	"github.com/yl2chen/cidranger"
 )
@@ -33,51 +33,60 @@ type readCloserWrapper struct {
 	io.Closer
 }
 
-type Engine struct {
-	cfg      *alaye.Firewall
-	store    *Store
-	counters *Counters
-	logger   *ll.Logger
-
-	whitelistRanger cidranger.Ranger
-	blacklistRanger cidranger.Ranger
-
-	bufPool sync.Pool
+type Config struct {
+	Firewall *alaye.Firewall
+	DataDir  woos.Folder
+	Logger   *ll.Logger
+	IPMgr    *zulu.IPManager
 }
 
-func New(cfg *alaye.Firewall, dataDir woos.Folder, logger *ll.Logger) (*Engine, error) {
-	if cfg == nil || cfg.Status.Inactive() {
+type Engine struct {
+	cfg             *alaye.Firewall
+	store           *Store
+	counters        *Counters
+	logger          *ll.Logger
+	whitelistRanger cidranger.Ranger
+	blacklistRanger cidranger.Ranger
+	bufPool         sync.Pool
+	ipMgr           *zulu.IPManager
+}
+
+func New(cfg Config) (*Engine, error) {
+	if cfg.Firewall == nil || cfg.Firewall.Status.Inactive() {
 		return nil, nil
 	}
-
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Firewall.Validate(); err != nil {
 		return nil, err
 	}
-
-	store, err := NewStore(dataDir, logger)
+	if !cfg.DataDir.IsSet() {
+		return nil, woos.ErrDataDirNotSet
+	}
+	store, err := NewStore(cfg.DataDir, cfg.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("firewall store init: %w", err)
 	}
-
+	ipMgr := cfg.IPMgr
+	if ipMgr == nil {
+		ipMgr = zulu.IP
+	}
 	e := &Engine{
-		cfg:             cfg,
+		cfg:             cfg.Firewall,
 		store:           store,
 		counters:        NewCounters(),
-		logger:          logger.Namespace("firewall"),
+		logger:          cfg.Logger.Namespace("firewall"),
 		whitelistRanger: cidranger.NewPCTrieRanger(),
 		blacklistRanger: cidranger.NewPCTrieRanger(),
+		ipMgr:           ipMgr,
 		bufPool: sync.Pool{
 			New: func() any {
-				return bytes.NewBuffer(make([]byte, 0, cfg.MaxInspectBytes))
+				return bytes.NewBuffer(make([]byte, 0, cfg.Firewall.MaxInspectBytes))
 			},
 		},
 	}
-
 	if err := e.loadStaticRules(); err != nil {
 		store.Close()
 		return nil, err
 	}
-
 	return e, nil
 }
 
@@ -93,25 +102,20 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 	if e == nil {
 		return next
 	}
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := clientip.ClientIP(r)
-
+		ip := e.ipMgr.ClientIP(r)
 		if ban, err := e.store.GetBan(ip); err == nil && !ban.IsExpired() {
 			e.blockRequest(w, r, "banned_ip", ban.Reason)
 			return
 		}
-
 		if e.checkRanger(e.whitelistRanger, ip) {
 			next.ServeHTTP(w, r)
 			return
 		}
-
 		if e.checkRanger(e.blacklistRanger, ip) {
 			e.handleAction(w, r, alaye.Rule{}, "static_blacklist", "blocked_ip")
 			return
 		}
-
 		var bodySample []byte
 		if e.shouldInspectBody(r) {
 			var err error
@@ -120,7 +124,6 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 				e.logger.Debug("failed to peek body", "err", err)
 			}
 		}
-
 		parsedIP := net.ParseIP(ip)
 		inspector := &Inspector{
 			Req:      r,
@@ -129,26 +132,22 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 			ParsedIP: parsedIP,
 			Logger:   e.logger,
 		}
-
 		runGlobal := true
 		if contextRoute != nil && contextRoute.IgnoreGlobal {
 			runGlobal = false
 		}
-
 		if runGlobal && e.cfg.Rules != nil {
 			if matched, rule := e.evaluateRules(e.cfg.Rules, inspector); matched {
 				e.handleAction(w, r, rule, rule.Name, "global_rule_match")
 				return
 			}
 		}
-
 		if contextRoute != nil && contextRoute.Status.Active() && contextRoute.Rules != nil {
 			if matched, rule := e.evaluateRules(contextRoute.Rules, inspector); matched {
 				e.handleAction(w, r, rule, rule.Name, "route_rule_match")
 				return
 			}
 		}
-
 		next.ServeHTTP(w, r)
 	})
 }
@@ -160,12 +159,10 @@ func (e *Engine) shouldInspectBody(r *http.Request) bool {
 	if r.ContentLength == 0 {
 		return false
 	}
-
 	ct := r.Header.Get("Content-Type")
 	if ct == "" && len(e.cfg.InspectContentTypes) > 0 {
 		return false
 	}
-
 	for _, allowed := range e.cfg.InspectContentTypes {
 		if strings.Contains(ct, allowed) {
 			return true
@@ -178,21 +175,17 @@ func (e *Engine) peekBody(r *http.Request) ([]byte, error) {
 	buf := e.bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
 	defer e.bufPool.Put(buf)
-
 	limitReader := io.LimitReader(r.Body, e.cfg.MaxInspectBytes)
 	n, err := buf.ReadFrom(limitReader)
 	if err != nil && err != io.EOF {
 		return nil, err
 	}
-
 	sample := make([]byte, n)
 	copy(sample, buf.Bytes())
-
 	r.Body = &readCloserWrapper{
 		Reader: io.MultiReader(bytes.NewReader(sample), r.Body),
 		Closer: r.Body,
 	}
-
 	return sample, nil
 }
 
@@ -230,6 +223,7 @@ func (e *Engine) checkRanger(ranger cidranger.Ranger, ip string) bool {
 }
 
 func (e *Engine) Unblock(ip string) error { return e.store.Remove(ip) }
+
 func (e *Engine) Block(ip, reason string, duration time.Duration) error {
 	return e.store.Add(Rule{
 		IP:        ip,
@@ -245,7 +239,6 @@ func (e *Engine) evaluateRules(rules []alaye.Rule, in *Inspector) (bool, alaye.R
 		if !rule.Match.Enabled.Active() {
 			continue
 		}
-
 		if e.checkMatch(rule.Match, in) {
 			if rule.Type == "dynamic" && rule.Match.Threshold != nil && rule.Match.Threshold.Enabled.Active() {
 				triggered := e.checkThreshold(rule, in)
@@ -280,7 +273,6 @@ func (e *Engine) checkMatch(m alaye.Match, in *Inspector) bool {
 			return false
 		}
 	}
-
 	if len(m.Methods) > 0 {
 		found := false
 		for _, method := range m.Methods {
@@ -293,7 +285,6 @@ func (e *Engine) checkMatch(m alaye.Match, in *Inspector) bool {
 			return false
 		}
 	}
-
 	if len(m.Path) > 0 {
 		found := false
 		for _, p := range m.Path {
@@ -306,7 +297,6 @@ func (e *Engine) checkMatch(m alaye.Match, in *Inspector) bool {
 			return false
 		}
 	}
-
 	if len(m.Any) > 0 {
 		matchAny := false
 		for _, c := range m.Any {
@@ -319,7 +309,6 @@ func (e *Engine) checkMatch(m alaye.Match, in *Inspector) bool {
 			return false
 		}
 	}
-
 	if len(m.All) > 0 {
 		for _, c := range m.All {
 			if !e.checkCondition(c, in) {
@@ -327,7 +316,6 @@ func (e *Engine) checkMatch(m alaye.Match, in *Inspector) bool {
 			}
 		}
 	}
-
 	if len(m.None) > 0 {
 		for _, c := range m.None {
 			if e.checkCondition(c, in) {
@@ -335,7 +323,6 @@ func (e *Engine) checkMatch(m alaye.Match, in *Inspector) bool {
 			}
 		}
 	}
-
 	return true
 }
 
@@ -343,7 +330,6 @@ func (e *Engine) checkCondition(c alaye.Condition, in *Inspector) bool {
 	if c.Enabled.NotActive() {
 		return false
 	}
-
 	var val string
 	switch c.Location {
 	case "ip":
@@ -361,13 +347,10 @@ func (e *Engine) checkCondition(c alaye.Condition, in *Inspector) bool {
 			val = string(in.Body)
 		}
 	}
-
 	if c.IgnoreCase {
 		val = strings.ToLower(val)
 	}
-
 	match := false
-
 	if c.Compiled != nil {
 		match = c.Compiled.MatchString(val)
 	} else if c.Pattern != "" {
@@ -382,7 +365,6 @@ func (e *Engine) checkCondition(c alaye.Condition, in *Inspector) bool {
 		if c.IgnoreCase {
 			target = strings.ToLower(target)
 		}
-
 		switch c.Operator {
 		case "contains":
 			match = strings.Contains(val, target)
@@ -398,7 +380,6 @@ func (e *Engine) checkCondition(c alaye.Condition, in *Inspector) bool {
 			match = val == target
 		}
 	}
-
 	if c.Negate {
 		return !match
 	}
@@ -410,7 +391,6 @@ func (e *Engine) checkThreshold(rule alaye.Rule, in *Inspector) bool {
 	if t == nil || t.Enabled.NotActive() {
 		return true
 	}
-
 	key := in.IP
 	if after, ok := strings.CutPrefix(t.TrackBy, "header:"); ok {
 		h := after
@@ -421,7 +401,6 @@ func (e *Engine) checkThreshold(rule alaye.Rule, in *Inspector) bool {
 			key = cookie.Value
 		}
 	}
-
 	if rule.Match.Extract != nil && rule.Match.Extract.Enabled.Active() && rule.Match.Extract.Regex != nil {
 		var src string
 		switch rule.Match.Extract.From {
@@ -436,11 +415,9 @@ func (e *Engine) checkThreshold(rule alaye.Rule, in *Inspector) bool {
 			key = key + ":" + hex.EncodeToString(hash[:8])
 		}
 	}
-
 	if key == "" {
 		return false
 	}
-
 	count := e.counters.Increment(rule.Name, key, t.Window)
 	return count >= int64(t.Count)
 }
