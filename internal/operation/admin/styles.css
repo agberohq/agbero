@@ -131,9 +131,21 @@ body {
     padding: 40px 20px;
 }
 
+.page.full-width-page {
+    max-width: 100%;
+    padding: 0;
+    height: 100%;
+    display: none; /* Default state */
+}
+
 .page.active {
     display: block;
     animation: fadeIn 0.3s ease;
+}
+
+.page.full-width-page.active {
+    display: flex;
+    flex-direction: column;
 }
 
 @keyframes fadeIn {
@@ -590,6 +602,12 @@ body {
 .dot.info {
     background: var(--info);
 }
+
+/* Graph Legend Dots */
+.dot.root { background: var(--fg); }
+.dot.host { background: var(--accent); }
+.dot.route { background: var(--success); }
+.dot.backend { background: var(--text-mute); }
 
 /* ========== FILTER CHIPS ========== */
 .filter-chips {
@@ -1311,6 +1329,38 @@ svg text {
     gap: 8px;
 }
 
+/* ========== GRAPH PAGE ========== */
+#graphContainer {
+    width: 100%;
+    flex: 1;
+    position: relative;
+    background: var(--panel-bg);
+    overflow: hidden;
+}
+
+.graph-toolbar {
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg);
+}
+
+.graph-legend {
+    display: flex;
+    gap: 15px;
+    font-size: 11px;
+    color: var(--text-mute);
+    font-family: monospace;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
 /* ========== MOBILE RESPONSIVE ========== */
 @media screen and (max-width: 768px) {
     .navbar {
@@ -1436,6 +1486,10 @@ svg text {
 
     .config-metrics-grid {
         grid-template-columns: repeat(2, 1fr);
+    }
+
+    .graph-legend {
+        display: none;
     }
 }
 

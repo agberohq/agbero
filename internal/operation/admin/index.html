@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <title>AGBERO</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
 </head>
 <body>
 
@@ -13,6 +14,7 @@
     <div class="menu">
         <a href="#" class="nav-link active" data-page="dashboard">dashboard</a>
         <a href="#" class="nav-link" data-page="hosts">hosts</a>
+        <a href="#" class="nav-link" data-page="map">map</a>
         <a href="#" class="nav-link" data-page="firewall">firewall</a>
         <a href="#" class="nav-link" data-page="logs">logs</a>
         <a href="#" class="nav-link" data-page="config">config</a>
@@ -58,6 +60,24 @@
             <button class="btn" id="refreshHostsBtn">Refresh</button>
         </div>
         <div id="hostsContainer"></div>
+    </div>
+
+    <!-- MAP (GRAPH) -->
+    <div id="mapPage" class="page full-width-page">
+        <div class="graph-toolbar">
+            <div class="graph-legend">
+                <span class="legend-item"><span class="dot root"></span> Agbero</span>
+                <span class="legend-item"><span class="dot host"></span> Host</span>
+                <span class="legend-item"><span class="dot route"></span> Route</span>
+                <span class="legend-item"><span class="dot backend"></span> Backend</span>
+                <span class="legend-item"><span class="dot down"></span> Error/Dead</span>
+            </div>
+            <div class="graph-actions">
+                <button class="btn small" id="mapPauseBtn">Pause Updates</button>
+                <button class="btn small" id="resetZoomBtn">Reset View</button>
+            </div>
+        </div>
+        <div id="graphContainer"></div>
     </div>
 
     <!-- FIREWALL -->
@@ -167,6 +187,11 @@
         </div>
 
         <div class="config-section">
+            <h3>🌩️ Cluster Status</h3>
+            <div class="config-details-grid" id="configClusterDetails"></div>
+        </div>
+
+        <div class="config-section">
             <div class="config-header">
                 <h3>📄 Raw Configuration</h3>
                 <div class="config-actions">
@@ -268,7 +293,7 @@
 
 <div class="modal-overlay" id="confirmModal">
     <div class="modal">
-        <h3 id="confirmTitle">Confirm</h3>
+        <h3>Confirm</h3>
         <p id="confirmText"></p>
         <div class="actions">
             <button id="confirmOk" class="danger">Yes</button>
@@ -299,6 +324,7 @@
     <div class="drawer-content" id="drawerBody"></div>
 </div>
 
+<script src="js/graph.js"></script>
 <script src="js/app.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/events.js"></script>

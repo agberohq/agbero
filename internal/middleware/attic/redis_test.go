@@ -26,11 +26,21 @@ func TestRedisCache(t *testing.T) {
 			"db":   "1",
 		},
 	}
-	handler := New(cfg, logger)
-	if handler == nil {
-		t.Skip("redis not available")
-	}
 	t.Run("Basic Cache Hit After Miss", func(t *testing.T) {
+		store, err := NewRedis(cfg, logger)
+		if err != nil {
+			t.Skip("redis not available")
+		}
+		defer store.Close()
+		store.Clear()
+		mw := &CacheMiddleware{
+			store:          store,
+			logger:         logger,
+			allowedMethods: map[string]bool{"GET": true},
+			enabled:        true,
+			defaultTTL:     time.Minute,
+		}
+		handler := mw.Handler
 		requests := []testRequest{
 			{method: "GET", path: "/test", body: "response1"},
 			{method: "GET", path: "/test", body: "response2"},
@@ -53,6 +63,20 @@ func TestRedisCache(t *testing.T) {
 		}
 	})
 	t.Run("Different Paths Different Cache", func(t *testing.T) {
+		store, err := NewRedis(cfg, logger)
+		if err != nil {
+			t.Skip("redis not available")
+		}
+		defer store.Close()
+		store.Clear()
+		mw := &CacheMiddleware{
+			store:          store,
+			logger:         logger,
+			allowedMethods: map[string]bool{"GET": true},
+			enabled:        true,
+			defaultTTL:     time.Minute,
+		}
+		handler := mw.Handler
 		requests := []testRequest{
 			{method: "GET", path: "/a", body: "a-response"},
 			{method: "GET", path: "/b", body: "b-response"},
@@ -72,9 +96,24 @@ func TestRedisCache(t *testing.T) {
 		}
 	})
 	t.Run("Query String Differentiation", func(t *testing.T) {
+		store, err := NewRedis(cfg, logger)
+		if err != nil {
+			t.Skip("redis not available")
+		}
+		defer store.Close()
+		store.Clear()
+		mw := &CacheMiddleware{
+			store:          store,
+			logger:         logger,
+			allowedMethods: map[string]bool{"GET": true},
+			enabled:        true,
+			defaultTTL:     time.Minute,
+		}
+		handler := mw.Handler
 		requests := []testRequest{
 			{method: "GET", path: "/search?q=foo", body: "foo results"},
 			{method: "GET", path: "/search?q=bar", body: "bar results"},
+			{method: "GET", path: "/search?q=foo", body: "foo results"},
 		}
 		for i, req := range requests {
 			r := httptest.NewRequest(req.method, req.path, nil)
@@ -85,22 +124,29 @@ func TestRedisCache(t *testing.T) {
 			})
 			wrapped := handler(handlerFunc)
 			wrapped.ServeHTTP(w, r)
+			if i < 2 && w.Header().Get("X-Cache") != "MISS" {
+				t.Errorf("expected MISS on request %d, got %s", i, w.Header().Get("X-Cache"))
+			}
 			if i == 2 && w.Header().Get("X-Cache") != "HIT" {
 				t.Errorf("expected HIT on second ?q=foo request, got %s", w.Header().Get("X-Cache"))
 			}
 		}
-		r3 := httptest.NewRequest("GET", "/search?q=foo", nil)
-		w3 := httptest.NewRecorder()
-		handlerFunc3 := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("foo results"))
-		})
-		wrapped3 := handler(handlerFunc3)
-		wrapped3.ServeHTTP(w3, r3)
-		if w3.Header().Get("X-Cache") != "HIT" {
-			t.Errorf("expected HIT on second ?q=foo request, got %s", w3.Header().Get("X-Cache"))
-		}
 	})
 	t.Run("Vary Header Respect", func(t *testing.T) {
+		store, err := NewRedis(cfg, logger)
+		if err != nil {
+			t.Skip("redis not available")
+		}
+		defer store.Close()
+		store.Clear()
+		mw := &CacheMiddleware{
+			store:          store,
+			logger:         logger,
+			allowedMethods: map[string]bool{"GET": true},
+			enabled:        true,
+			defaultTTL:     time.Minute,
+		}
+		handler := mw.Handler
 		requests := []testRequest{
 			{
 				method:      "GET",
@@ -139,6 +185,9 @@ func TestRedisCache(t *testing.T) {
 			})
 			wrapped := handler(handlerFunc)
 			wrapped.ServeHTTP(w, r)
+			if i < 2 && w.Header().Get("X-Cache") != "MISS" {
+				t.Errorf("expected MISS on request %d, got %s", i, w.Header().Get("X-Cache"))
+			}
 			if i == 2 && w.Header().Get("X-Cache") != "HIT" {
 				t.Errorf("expected HIT on second en request, got %s", w.Header().Get("X-Cache"))
 			}
@@ -157,10 +206,20 @@ func TestRedisCache(t *testing.T) {
 				"db":   "1",
 			},
 		}
-		handler := New(cfg, logger)
-		if handler == nil {
+		store, err := NewRedis(cfg, logger)
+		if err != nil {
 			t.Skip("redis not available")
 		}
+		defer store.Close()
+		store.Clear()
+		mw := &CacheMiddleware{
+			store:          store,
+			logger:         logger,
+			allowedMethods: map[string]bool{"GET": true},
+			enabled:        true,
+			defaultTTL:     shortTTL,
+		}
+		handler := mw.Handler
 		called := 0
 		wrapped := handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			called++
@@ -235,6 +294,7 @@ func TestRedisStoreOptions(t *testing.T) {
 				t.Skipf("redis not available: %v", err)
 			}
 			defer store.Close()
+			store.Clear()
 			key := "test-key"
 			entry := &Entry{
 				Body:      []byte("test"),

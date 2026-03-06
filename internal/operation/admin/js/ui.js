@@ -133,6 +133,37 @@ const UI = {
         `).join('');
     },
 
+    renderClusterSettings(cluster) {
+        const container = document.getElementById('configClusterDetails');
+        if (!container) return;
+
+        if (!cluster || !cluster.members || cluster.members.length === 0) {
+            container.innerHTML = '<div class="empty-state">Cluster not active</div>';
+            return;
+        }
+
+        let html = `
+            <div class="config-detail-item">
+                <div class="config-detail-label">Status</div>
+                <div class="config-detail-value"><span class="badge success">Active</span></div>
+            </div>
+            <div class="config-detail-item">
+                <div class="config-detail-label">Members</div>
+                <div class="config-detail-value">${cluster.members.length} nodes</div>
+            </div>
+        `;
+
+        cluster.members.forEach(member => {
+            html += `
+            <div class="config-detail-item">
+                <div class="config-detail-label">Node</div>
+                <div class="config-detail-value">${member}</div>
+            </div>`;
+        });
+
+        container.innerHTML = html;
+    },
+
     renderRawConfig(config) {
         const el = document.getElementById("configContent");
         if (el) {

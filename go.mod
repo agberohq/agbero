@@ -2,7 +2,6 @@ module git.imaxinacion.net/aibox/agbero
 
 go 1.26
 
-// replace github.com/olekukonko/mappo => /Users/oleku/gopath/src/github.com/olekukonko/mappo
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0

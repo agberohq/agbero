@@ -37,6 +37,23 @@ const EventHandler = {
             });
         }
 
+        // ================== MAP PAGE ==================
+        const mapPauseBtn = document.getElementById("mapPauseBtn");
+        if (mapPauseBtn) {
+            mapPauseBtn.addEventListener("click", () => {
+                app.mapPaused = !app.mapPaused;
+                mapPauseBtn.innerText = app.mapPaused ? "Resume Updates" : "Pause Updates";
+                if(!app.mapPaused) app.fetchHostsData();
+            });
+        }
+
+        const resetZoomBtn = document.getElementById("resetZoomBtn");
+        if (resetZoomBtn) {
+            resetZoomBtn.addEventListener("click", () => {
+                if (app.routeGraph) app.routeGraph.resetZoom();
+            });
+        }
+
         // ================== LOGIN MODAL ==================
         const loginForm = document.getElementById("loginForm");
         if (loginForm) loginForm.addEventListener("submit", e => app.doLogin(e));
@@ -193,32 +210,5 @@ const EventHandler = {
                 app.closeDrawer();
             }
         }, false);
-    }
-};
-
-// ================== MODAL CONTROLS ==================
-const Modal = {
-    open(id) {
-        const modal = document.getElementById(id);
-        if (modal) modal.classList.add("active");
-    },
-    closeAll() {
-        document.querySelectorAll(".modal-overlay").forEach(m => m.classList.remove("active"));
-    }
-};
-
-// ================== DRAWER CONTROLS ==================
-const Drawer = {
-    open() {
-        const backdrop = document.getElementById("drawerBackdrop");
-        const drawer = document.getElementById("routeDrawer");
-        if (backdrop) backdrop.classList.add("active");
-        if (drawer) drawer.classList.add("active");
-    },
-    close() {
-        const backdrop = document.getElementById("drawerBackdrop");
-        const drawer = document.getElementById("routeDrawer");
-        if (backdrop) backdrop.classList.remove("active");
-        if (drawer) drawer.classList.remove("active");
     }
 };

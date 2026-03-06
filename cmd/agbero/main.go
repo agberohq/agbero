@@ -70,22 +70,33 @@ func main() {
 
 	flaggy.String(&configPath, "c", "config", "Path to configuration file")
 
+	// Init
 	cmdInit := flaggy.NewSubcommand("init")
 	cmdInit.Description = "Scaffold configuration in current directory (no service)"
 
-	cmdInstall := flaggy.NewSubcommand("install")
-	cmdInstall.Description = "Install configuration (and system service if applicable)"
-	cmdInstall.Bool(&installHere, "", "here", "Install configuration in current directory (skip service install)")
+	// Service Commands Group
+	cmdService := flaggy.NewSubcommand("service")
+	cmdService.Description = "Manage system service (install, start, stop)"
 
-	cmdUninstall := flaggy.NewSubcommand("uninstall")
-	cmdUninstall.Description = "Uninstall system service"
+	cmdServiceInstall := flaggy.NewSubcommand("install")
+	cmdServiceInstall.Description = "Install configuration (and system service if applicable)"
+	cmdServiceInstall.Bool(&installHere, "", "here", "Install configuration in current directory (skip service install)")
 
-	cmdStart := flaggy.NewSubcommand("start")
-	cmdStart.Description = "Start system service"
+	cmdServiceUninstall := flaggy.NewSubcommand("uninstall")
+	cmdServiceUninstall.Description = "Uninstall system service"
 
-	cmdStop := flaggy.NewSubcommand("stop")
-	cmdStop.Description = "Stop system service"
+	cmdServiceStart := flaggy.NewSubcommand("start")
+	cmdServiceStart.Description = "Start system service"
 
+	cmdServiceStop := flaggy.NewSubcommand("stop")
+	cmdServiceStop.Description = "Stop system service"
+
+	cmdService.AttachSubcommand(cmdServiceInstall, 1)
+	cmdService.AttachSubcommand(cmdServiceUninstall, 1)
+	cmdService.AttachSubcommand(cmdServiceStart, 1)
+	cmdService.AttachSubcommand(cmdServiceStop, 1)
+
+	// Run
 	cmdRun := flaggy.NewSubcommand("run")
 	cmdRun.Description = "Run the application (requires existing config)"
 	cmdRun.Bool(&devMode, "d", "dev", "Enable development mode")
@@ -102,6 +113,7 @@ func main() {
 	cmdHelp := flaggy.NewSubcommand("help")
 	cmdHelp.Description = "Show help examples"
 
+	// Ephemeral
 	cmdServe := flaggy.NewSubcommand("serve")
 	cmdServe.Description = "Serve a static directory instantly"
 	cmdServe.AddPositionalValue(&servePath, "path", 1, false, "Path to serve (default: current)")
@@ -117,6 +129,7 @@ func main() {
 	cmdProxy.String(&proxyBind, "b", "bind", "Bind address (default: 0.0.0.0)")
 	cmdProxy.Bool(&proxyHTTPS, "s", "https", "Enable HTTPS (auto-generates certs)")
 
+	// Route
 	cmdRoute := flaggy.NewSubcommand("route")
 	cmdRoute.Description = "Manage persistent routes (Interactive)"
 	cmdRouteAdd := flaggy.NewSubcommand("add")
@@ -126,6 +139,7 @@ func main() {
 	cmdRoute.AttachSubcommand(cmdRouteAdd, 1)
 	cmdRoute.AttachSubcommand(cmdRouteRemove, 1)
 
+	// Utils
 	cmdHash := flaggy.NewSubcommand("hash")
 	cmdHash.Description = "Generate bcrypt hash for passwords"
 	cmdHash.String(&hashPassword, "p", "password", "Password to hash")
@@ -156,6 +170,7 @@ func main() {
 	cmdKey.AttachSubcommand(cmdKeyGen, 1)
 	cmdKey.AttachSubcommand(cmdKeyInit, 1)
 
+	// Cluster
 	cmdCluster := flaggy.NewSubcommand("cluster")
 	cmdCluster.Description = "Manage cluster settings"
 
@@ -175,10 +190,7 @@ func main() {
 	cmdCluster.AttachSubcommand(cmdClusterJoin, 1)
 
 	flaggy.AttachSubcommand(cmdInit, 1)
-	flaggy.AttachSubcommand(cmdInstall, 1)
-	flaggy.AttachSubcommand(cmdUninstall, 1)
-	flaggy.AttachSubcommand(cmdStart, 1)
-	flaggy.AttachSubcommand(cmdStop, 1)
+	flaggy.AttachSubcommand(cmdService, 1)
 	flaggy.AttachSubcommand(cmdRun, 1)
 	flaggy.AttachSubcommand(cmdReload, 1)
 	flaggy.AttachSubcommand(cmdValidate, 1)
@@ -241,7 +253,10 @@ func main() {
 
 	var resolvedPath string
 	var configExists bool
-	if cmdInstall.Used {
+
+	// Handle Service Install specifically here if using `agbero service install`
+	// but we also support `install` via helper logic inside the block below.
+	if cmdServiceInstall.Used {
 		path, err := hel.installConfiguration(installHere)
 		if err != nil {
 			logger.Fatal("Install failed: ", err)
@@ -252,13 +267,15 @@ func main() {
 		resolvedPath, configExists = hel.resolveConfigPath(configPath)
 	}
 
-	needsConfig := cmdRun.Used || cmdReload.Used || cmdValidate.Used || cmdHosts.Used || cmdStart.Used || cmdKey.Used || cmdClusterStart.Used || cmdClusterJoin.Used || (cmdCluster.Used && !cmdClusterSecret.Used)
+	needsConfig := cmdRun.Used || cmdReload.Used || cmdValidate.Used || cmdHosts.Used ||
+		cmdServiceStart.Used || cmdKey.Used || cmdClusterStart.Used || cmdClusterJoin.Used ||
+		(cmdCluster.Used && !cmdClusterSecret.Used)
 
 	if needsConfig && !configExists {
 		if strings.TrimSpace(configPath) != "" {
 			logger.Fatal("Config file not found at specific path: ", configPath)
 		} else {
-			logger.Fatal("Config file not found. Run 'agbero install' to generate one.")
+			logger.Fatal("Config file not found. Run 'agbero service install' to generate one.")
 		}
 	}
 
@@ -329,6 +346,7 @@ func main() {
 		}
 	}
 
+	// Service Configuration
 	svcConfig := &service.Config{
 		Name:        woos.Name,
 		DisplayName: woos.Display,
@@ -364,7 +382,8 @@ func main() {
 		logger.Fatal("Service init failed: ", err)
 	}
 
-	if cmdInstall.Used {
+	// Handle Service Actions
+	if cmdServiceInstall.Used {
 		if !installHere {
 			logger.Info("Installing system service...")
 			if err := s.Install(); err != nil {
@@ -382,7 +401,7 @@ func main() {
 		return
 	}
 
-	if cmdUninstall.Used {
+	if cmdServiceUninstall.Used {
 		logger.Info("Uninstalling system service...")
 		if err := s.Uninstall(); err != nil {
 			logger.Fatal(hel.handleServiceError(err, "uninstall", resolvedPath))
@@ -391,7 +410,7 @@ func main() {
 		return
 	}
 
-	if cmdStart.Used {
+	if cmdServiceStart.Used {
 		logger.Info("Starting system service...")
 		if err := s.Start(); err != nil {
 			logger.Fatal(hel.handleServiceError(err, "start", resolvedPath))
@@ -400,7 +419,7 @@ func main() {
 		return
 	}
 
-	if cmdStop.Used {
+	if cmdServiceStop.Used {
 		logger.Info("Stopping system service...")
 		if err := s.Stop(); err != nil {
 			logger.Fatal(hel.handleServiceError(err, "stop", resolvedPath))
@@ -409,6 +428,7 @@ func main() {
 		return
 	}
 
+	// Main Execution
 	if cmdRun.Used || cmdClusterStart.Used || cmdClusterJoin.Used {
 		global, err := hel.loadConfig(resolvedPath)
 		if err != nil {

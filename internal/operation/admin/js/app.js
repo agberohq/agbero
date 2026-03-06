@@ -26,12 +26,15 @@ class AgberoApp {
         this.certificates = [];
 
         this.logsPaused = false;
+        this.mapPaused = false;
         this.logFilter = "ALL";
 
         this.timers = { metrics: null, config: null, logs: null };
         this.page = sessionStorage.getItem("ag_page") || "dashboard";
         this.lastConfig = null;
         this._confirmFn = null;
+
+        this.routeGraph = new RouteGraph("graphContainer");
     }
 
     async api(path, method = "GET", body = null) {
@@ -173,10 +176,16 @@ class AgberoApp {
 
         this.hostsData.config = config.hosts;
         this.hostsData.stats = stats?.hosts || {};
+        this.lastConfig = config;
 
         this.parseCertificates();
         UI.renderHosts(this.hostsData, this.searchTerm, this.certificates);
         UI.updateHeroCounts(Object.keys(this.hostsData.config).length, this.getRouteCount());
+
+        // Render graph if on map page and not paused
+        if (this.page === 'map' && !this.mapPaused) {
+            this.routeGraph.render(this.lastConfig, this.hostsData.stats);
+        }
     }
 
     getRouteCount(config = this.hostsData.config) {
@@ -258,6 +267,7 @@ class AgberoApp {
 
             UI.renderConfigMetrics(metrics);
             UI.renderGlobalSettings(data.global);
+            UI.renderClusterSettings(data.cluster);
             UI.renderRawConfig(data);
 
             this.updateConfigTitle(metrics.version, metrics.build);
@@ -401,7 +411,8 @@ class AgberoApp {
         this.stopLoop();
         this.timers.metrics = setInterval(() => this.fetchMetrics(), 2000);
         this.timers.config = setInterval(() => {
-            if (this.page === 'hosts') this.fetchHostsData();
+            // Fetch if on hosts or map page to keep UI live
+            if (this.page === 'hosts' || this.page === 'map') this.fetchHostsData();
         }, 10000);
         this.timers.logs = setInterval(() => {
             if (this.page === 'logs' && !this.logsPaused) this.fetchLogs();
@@ -437,6 +448,10 @@ class AgberoApp {
         if (this.page === 'firewall') await this.fetchFirewall();
         if (this.page === 'config') await this.fetchConfig();
         if (this.page === 'logs') await this.fetchLogs();
+        if (this.page === 'map') {
+            await this.fetchHostsData();
+            // Data fetched, render is handled in fetchHostsData
+        }
     }
 
     fmtNum(n) {
