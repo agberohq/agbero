@@ -1,4 +1,3 @@
-// server.go
 package agbero
 
 import (
@@ -64,6 +63,45 @@ var logArgsPool = sync.Pool{
 	},
 }
 
+// ConnTracker tracks active connections to allow graceful draining
+type ConnTracker struct {
+	mu    sync.Mutex
+	conns map[net.Conn]struct{}
+	wg    sync.WaitGroup
+}
+
+func NewConnTracker() *ConnTracker {
+	return &ConnTracker{
+		conns: make(map[net.Conn]struct{}),
+	}
+}
+
+func (ct *ConnTracker) OnStateChange(conn net.Conn, state http.ConnState) {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+
+	switch state {
+	case http.StateNew:
+		ct.conns[conn] = struct{}{}
+		ct.wg.Add(1)
+	case http.StateClosed, http.StateHijacked:
+		if _, ok := ct.conns[conn]; ok {
+			delete(ct.conns, conn)
+			ct.wg.Done()
+		}
+	}
+}
+
+func (ct *ConnTracker) Wait() {
+	ct.wg.Wait()
+}
+
+func (ct *ConnTracker) Count() int {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	return len(ct.conns)
+}
+
 type Server struct {
 	configPath string
 	configSHA  string
@@ -79,6 +117,8 @@ type Server struct {
 	servers    map[string]*http.Server
 	h3Servers  map[string]*http3.Server
 	tcpProxies []*xtcp.Proxy
+
+	connTrackers map[string]*ConnTracker
 
 	activeBaseHandler http.Handler
 	activeAcmeHandler http.Handler
@@ -104,8 +144,9 @@ type Server struct {
 
 func NewServer(opts ...Option) *Server {
 	s := &Server{
-		servers:   make(map[string]*http.Server),
-		h3Servers: make(map[string]*http3.Server),
+		servers:      make(map[string]*http.Server),
+		h3Servers:    make(map[string]*http3.Server),
+		connTrackers: make(map[string]*ConnTracker),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -524,14 +565,12 @@ func (s *Server) Reload() {
 		}
 	}
 
-	// Rebuild IP Manager based on new config
 	var trustedProxies []string
 	if global.Security.Enabled.Active() {
 		trustedProxies = global.Security.TrustedProxies
 	}
 	newIPMgr := zulu.NewIPManager(trustedProxies)
 
-	// Rebuild Global Rate Limiter with new config and IP Manager
 	newRateLimiter := s.buildGlobalRateLimiter(global, newIPMgr)
 
 	s.mu.Lock()
@@ -540,7 +579,7 @@ func (s *Server) Reload() {
 	}
 	s.configSHA = sha
 	s.global = global
-	s.ipMgr = newIPMgr // Update the IP manager atomically under lock
+	s.ipMgr = newIPMgr
 
 	if s.rateLimiter != nil {
 		s.rateLimiter.Close()
@@ -583,7 +622,6 @@ func (s *Server) Reload() {
 		s.activeTlsConfig.GetConfigForClient = s.tlsManager.GetConfigForClient
 	}
 
-	// Invalidate route cache to ensure new routes pick up new IP manager and config
 	zulu.Route.Clear()
 
 	for _, addr := range global.Bind.HTTPS {
@@ -873,6 +911,12 @@ func (s *Server) createTCPServer(
 		handler.ServeHTTP(w, r.WithContext(ctx))
 	})
 
+	// Create ConnTracker
+	tracker := NewConnTracker()
+	s.mu.Lock()
+	s.connTrackers[addr] = tracker
+	s.mu.Unlock()
+
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           wrappedHandler,
@@ -882,6 +926,7 @@ func (s *Server) createTCPServer(
 		ReadHeaderTimeout: s.global.Timeouts.ReadHeader,
 		MaxHeaderBytes:    s.global.General.MaxHeaderBytes,
 		ErrorLog:          log.New(&llWriter{logger: s.logger}, "", 0),
+		ConnState:         tracker.OnStateChange,
 	}
 
 	if isTLS && tlsCfg != nil {

@@ -5,6 +5,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
@@ -77,10 +78,20 @@ func (h *Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Route) Close() {
-	for _, b := range h.Backends {
-		if b != nil {
-			b.Stop()
+	if len(h.Backends) > 0 {
+		var wg sync.WaitGroup
+		for _, b := range h.Backends {
+			if b != nil {
+				wg.Add(1)
+				go func(be *xhttp.Backend) {
+					defer wg.Done()
+					// 10s drain timeout before forced close
+					be.Drain(10 * time.Second)
+					be.Stop()
+				}(b)
+			}
 		}
+		wg.Wait()
 	}
 }
 
@@ -128,7 +139,7 @@ func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 			Domains:  cfg.Host.Domains,
 			Logger:   cfg.Logger,
 			Registry: metrics.DefaultRegistry,
-			Fallback: nil, // Will be set below if applicable
+			Fallback: nil,
 		})
 		if err != nil {
 			cfg.Logger.Fields("index", i, "backend", backendCfg.Address, "err", err).Error("failed to create backend")
@@ -150,7 +161,6 @@ func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 		return FallbackRoute("proxy route missing backends")
 	}
 
-	// Set fallback on each backend if defined
 	if fallbackHandler != nil {
 		for _, b := range backends {
 			b.Fallback = fallbackHandler

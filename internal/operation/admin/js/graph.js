@@ -42,19 +42,6 @@ class RouteGraph {
             .attr("d", "M0,-5L10,0L0,5")
             .attr("fill", "var(--text-mute)");
 
-        // Error Arrow (Red)
-        defs.append("marker")
-            .attr("id", "arrow-error")
-            .attr("viewBox", "0 -5 10 10")
-            .attr("refX", 18)
-            .attr("refY", 0)
-            .attr("markerWidth", 6)
-            .attr("markerHeight", 6)
-            .attr("orient", "auto")
-            .append("path")
-            .attr("d", "M0,-5L10,0L0,5")
-            .attr("fill", "var(--danger)");
-
         const g = this.svg.append("g");
 
         // Zoom behavior
@@ -79,10 +66,10 @@ class RouteGraph {
             .selectAll("line")
             .data(this.data.links)
             .join("line")
-            .attr("stroke", d => d.target.status === 'dead' ? "var(--danger)" : "var(--border)")
+            .attr("stroke", "var(--border)")
             .attr("stroke-opacity", 0.6)
             .attr("stroke-width", 1.5)
-            .attr("marker-end", d => d.target.status === 'dead' ? "url(#arrow-error)" : "url(#arrow)");
+            .attr("marker-end", "url(#arrow)");
 
         // Draw Nodes
         const node = g.append("g")

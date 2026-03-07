@@ -914,3 +914,30 @@ const UI = {
         return parseFloat((b / Math.pow(k, i)).toFixed(1)) + s[i];
     }
 };
+
+// ================== MODAL CONTROLS ==================
+const Modal = {
+    open(id) {
+        const modal = document.getElementById(id);
+        if (modal) modal.classList.add("active");
+    },
+    closeAll() {
+        document.querySelectorAll(".modal-overlay").forEach(m => m.classList.remove("active"));
+    }
+};
+
+// ================== DRAWER CONTROLS ==================
+const Drawer = {
+    open() {
+        const backdrop = document.getElementById("drawerBackdrop");
+        const drawer = document.getElementById("routeDrawer");
+        if (backdrop) backdrop.classList.add("active");
+        if (drawer) drawer.classList.add("active");
+    },
+    close() {
+        const backdrop = document.getElementById("drawerBackdrop");
+        const drawer = document.getElementById("routeDrawer");
+        if (backdrop) backdrop.classList.remove("active");
+        if (drawer) drawer.classList.remove("active");
+    }
+};

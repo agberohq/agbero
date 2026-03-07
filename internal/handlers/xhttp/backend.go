@@ -23,10 +23,24 @@ import (
 	"github.com/olekukonko/ll"
 )
 
+type BackendState int32
+
+const (
+	StateActive BackendState = iota
+	StateDraining
+	StateDead
+)
+
 type Backend struct {
-	URL          *url.URL
-	Proxy        *httputil.ReverseProxy
-	alive        atomic.Bool
+	URL   *url.URL
+	Proxy *httputil.ReverseProxy
+
+	// alive indicates health check status (Up/Down)
+	alive atomic.Bool
+
+	// state indicates lifecycle (Active/Draining/Dead)
+	state atomic.Int32
+
 	stop         chan struct{}
 	stopOnce     sync.Once
 	startTime    time.Time
@@ -93,6 +107,7 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		Fallback:     xhttpCfg.Fallback,
 	}
 	b.alive.Store(true)
+	b.state.Store(int32(StateActive))
 	b.lastRecovery.Store(now.UnixNano())
 
 	cbThreshold := woos.DefaultCircuitBreakerThreshold
@@ -213,6 +228,15 @@ func (b *Backend) Jitter(interval time.Duration) time.Duration {
 }
 
 func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// If backend is Dead, reject immediately
+	if BackendState(b.state.Load()) == StateDead {
+		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	// If Draining, we allow existing requests (handled by Balancer pick logic usually),
+	// but if it got here, we serve it to drain the queue.
+
 	if !b.alive.Load() {
 		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
 		return
@@ -228,9 +252,47 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b.Proxy.ServeHTTP(w, r)
 }
 
+// Drain marks the backend as draining and waits for in-flight requests to complete.
+func (b *Backend) Drain(timeout time.Duration) {
+	if !b.state.CompareAndSwap(int32(StateActive), int32(StateDraining)) {
+		return // Already draining or dead
+	}
+
+	b.logger.Fields("backend", b.URL.Host).Info("backend draining started")
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	deadline := time.Now().Add(timeout)
+
+	for {
+		if time.Now().After(deadline) {
+			b.logger.Fields("backend", b.URL.Host, "in_flight", b.Activity.InFlight.Load()).Warn("backend drain timeout, force closing")
+			break
+		}
+
+		if b.Activity.InFlight.Load() == 0 {
+			break
+		}
+
+		select {
+		case <-ticker.C:
+			continue
+		}
+	}
+
+	b.state.Store(int32(StateDead))
+}
+
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
+		b.state.Store(int32(StateDead))
+
+		// Close idle connections in transport
+		if tp, ok := b.Proxy.Transport.(*http.Transport); ok {
+			tp.CloseIdleConnections()
+		}
 	})
 }
 
@@ -301,6 +363,11 @@ func (b *Backend) healthCheckLoop(cbThreshold int) {
 		case <-b.stop:
 			return
 		case <-timer.C:
+			// If draining or dead, skip health checks
+			if BackendState(b.state.Load()) != StateActive {
+				return
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			req, err := http.NewRequestWithContext(ctx, method, targetURL, nil)
 
@@ -367,7 +434,7 @@ func (b *Backend) healthCheckLoop(cbThreshold int) {
 	}
 }
 func (b *Backend) Status(v bool)   { b.alive.Store(v) }
-func (b *Backend) Alive() bool     { return b.alive.Load() }
+func (b *Backend) Alive() bool     { return b.alive.Load() && BackendState(b.state.Load()) == StateActive }
 func (b *Backend) Weight() int     { return b.weight }
 func (b *Backend) InFlight() int64 { return b.Activity.InFlight.Load() }
 func (b *Backend) ResponseTime() int64 {
