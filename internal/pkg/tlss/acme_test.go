@@ -122,8 +122,11 @@ func (m *mockCluster) BroadcastChallenge(token, keyAuth string, deleted bool) {
 func TestManager_updateInternal_Notify(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -152,8 +155,11 @@ func TestManager_updateInternal_Notify(t *testing.T) {
 func TestManager_ApplyClusterCertificate(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -175,8 +181,11 @@ func TestManager_ApplyClusterCertificate(t *testing.T) {
 func TestManager_ApplyClusterChallenge(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -213,8 +222,11 @@ func generateACMETestCert(t *testing.T, domain string) ([]byte, []byte) {
 func TestManager_loadFromStorage(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -237,21 +249,37 @@ func TestManager_loadFromStorage(t *testing.T) {
 
 func TestManager_loadFromStorage_NilStorage(t *testing.T) {
 	tmpDir := t.TempDir()
+
+	// Create a file at the path to make it invalid for directory creation
+	badPath := filepath.Join(tmpDir, "not-a-dir")
+	_ = os.WriteFile(badPath, []byte("x"), 0644)
+
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: ""},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  badPath,
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
+
+	if mgr.storage != nil {
+		t.Error("expected storage to be nil with invalid DataDir")
+	}
+
 	mgr.loadFromStorage()
 }
 
 func TestManager_updateInternal_InvalidPEM(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -265,8 +293,11 @@ func TestManager_updateInternal_InvalidPEM(t *testing.T) {
 func TestManager_GetCertificate_Wildcard(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -288,8 +319,11 @@ func TestManager_GetCertificate_Wildcard(t *testing.T) {
 func TestManager_GetCertificate_NotFound(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -303,8 +337,11 @@ func TestManager_GetCertificate_NotFound(t *testing.T) {
 func TestManager_GetCertificate_EmptySNI(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -318,8 +355,11 @@ func TestManager_GetCertificate_EmptySNI(t *testing.T) {
 func TestManager_ACMEGetConfigForClient(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -336,8 +376,11 @@ func TestManager_ACMEGetConfigForClient(t *testing.T) {
 func TestManager_EnsureCertMagic(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -361,8 +404,11 @@ func TestManager_EnsureCertMagic(t *testing.T) {
 func TestManager_SetUpdateCallback(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -376,8 +422,11 @@ func TestManager_SetUpdateCallback(t *testing.T) {
 func TestManager_SetCluster(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -392,8 +441,11 @@ func TestManager_SetCluster(t *testing.T) {
 func TestManager_Close(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -409,8 +461,8 @@ func TestNewManager_StorageInitFail(t *testing.T) {
 
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: tmpDir,  // Use valid dir for CertsDir (used by installer, not storage)
-			DataDir:  badPath, // This is a file, not a directory - should fail storage init
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  badPath,
 		},
 		Gossip: alaye.Gossip{
 			Enabled:   alaye.Inactive,
@@ -429,8 +481,11 @@ func TestNewManager_StorageInitFail(t *testing.T) {
 func TestManager_updateInternal_StorageSaveFail(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -449,8 +504,11 @@ func TestManager_loadFromStorage_InvalidCert(t *testing.T) {
 	os.WriteFile(certPath, []byte("invalid cert"), 0644)
 	os.WriteFile(keyPath, []byte("invalid key"), 0600)
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -461,8 +519,11 @@ func TestManager_loadFromStorage_InvalidCert(t *testing.T) {
 func TestManager_loadFromStorage_ListFail(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global)
@@ -474,8 +535,11 @@ func TestManager_loadFromStorage_ListFail(t *testing.T) {
 func TestManager_EntryPoint_LocalhostVsPublic(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir, DataDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 		LetsEncrypt: alaye.LetsEncrypt{
 			Enabled: alaye.Active,
 			Email:   "test@example.com",
@@ -522,8 +586,11 @@ func TestACMEProvider_PebbleIntegration(t *testing.T) {
 		pebbleURL = "https://localhost:14000/dir"
 	}
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir, DataDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 		LetsEncrypt: alaye.LetsEncrypt{
 			Enabled: alaye.Active,
 			Email:   "test@pebble.local",

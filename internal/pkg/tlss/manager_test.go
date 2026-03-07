@@ -2,6 +2,7 @@ package tlss
 
 import (
 	"crypto/tls"
+	"path/filepath"
 	"testing"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
@@ -13,8 +14,11 @@ import (
 func setupManager(t *testing.T) (*Manager, string) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir, DataDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "secret-12345678"},
+		Storage: alaye.Storage{
+			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  filepath.Join(tmpDir, "data"),
+		},
+		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(ll.New("test").Disable(), hm, global)
@@ -29,6 +33,6 @@ func TestManager_GetConfigForClient(t *testing.T) {
 		t.Fatalf("GetConfigForClient failed: %v", err)
 	}
 	if cfg.MinVersion != tls.VersionTLS12 {
-		t.Error("Expected TLS 1.2 minimum")
+		t.Error("expected TLS 1.2 minimum")
 	}
 }
