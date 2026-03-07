@@ -54,15 +54,17 @@ var (
 )
 
 func main() {
-	shutdown := jack.NewShutdown(
-		jack.ShutdownWithTimeout(30*time.Second),
-		jack.ShutdownWithSignals(os.Interrupt, syscall.SIGTERM),
-	)
 
 	logger = ll.New(woos.Name,
 		ll.WithHandler(lh.NewColorizedHandler(os.Stdout)),
 		ll.WithFatalExits(true),
 	).Enable()
+
+	shutdown := jack.NewShutdown(
+		jack.ShutdownWithTimeout(30*time.Second),
+		jack.ShutdownWithSignals(os.Interrupt, syscall.SIGTERM),
+		jack.ShutdownWithLogger(logger),
+	)
 
 	flaggy.SetName(woos.Name)
 	flaggy.SetDescription(woos.Description)
