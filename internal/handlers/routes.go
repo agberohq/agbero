@@ -23,6 +23,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/rewrite"
 	"git.imaxinacion.net/aibox/agbero/internal/operation"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/ll"
 )
 
@@ -330,7 +331,7 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate, ipMgr *zu
 	}
 	policy := func(r *http.Request) (bucket string, pol ratelimit.RatePolicy, ok bool) {
 		path := r.URL.Path
-		if strings.HasPrefix(path, "/.well-known/acme-challenge/") {
+		if wellknown.IsACMEChallengePrefix(path) {
 			return "", ratelimit.RatePolicy{}, false
 		}
 		for _, rule := range rules {
