@@ -205,10 +205,10 @@ func writeCACert(t *testing.T, dir string) {
 	}), 0600)
 }
 
-func TestCertInstaller_validateCertificate_HostMatch(t *testing.T) {
+func TestCertLocal_validateCertificate_HostMatch(t *testing.T) {
 	tmp := t.TempDir()
 	logger := ll.New("test").Disable()
-	ci := NewInstaller(logger)
+	ci := NewLocal(logger)
 	ci.CertDir = woos.NewFolder(tmp)
 	certPath := filepath.Join(tmp, "localhost-443-cert.pem")
 	keyPath := filepath.Join(tmp, "localhost-443-key.pem")
@@ -227,10 +227,10 @@ func TestCertInstaller_validateCertificate_HostMatch(t *testing.T) {
 	}
 }
 
-func TestCertInstaller_validateCertificate_StripsPortAndBracketedIPv6(t *testing.T) {
+func TestCertLocal_validateCertificate_StripsPortAndBracketedIPv6(t *testing.T) {
 	tmp := t.TempDir()
 	logger := ll.New("test").Disable()
-	ci := NewInstaller(logger)
+	ci := NewLocal(logger)
 	ci.CertDir = woos.NewFolder(tmp)
 	certPath := filepath.Join(tmp, "mixed-443-cert.pem")
 	keyPath := filepath.Join(tmp, "mixed-443-key.pem")
@@ -245,10 +245,10 @@ func TestCertInstaller_validateCertificate_StripsPortAndBracketedIPv6(t *testing
 	}
 }
 
-func TestCertInstaller_validateCertificate_Wildcard_VerifiedByConcreteSubdomain(t *testing.T) {
+func TestCertLocal_validateCertificate_Wildcard_VerifiedByConcreteSubdomain(t *testing.T) {
 	tmp := t.TempDir()
 	logger := ll.New("test").Disable()
-	ci := NewInstaller(logger)
+	ci := NewLocal(logger)
 	ci.CertDir = woos.NewFolder(tmp)
 	certPath := filepath.Join(tmp, "wild-443-cert.pem")
 	keyPath := filepath.Join(tmp, "wild-443-key.pem")
@@ -263,10 +263,10 @@ func TestCertInstaller_validateCertificate_Wildcard_VerifiedByConcreteSubdomain(
 	}
 }
 
-func TestCertInstaller_findExistingCerts_UsesOnlyMatchingCert(t *testing.T) {
+func TestCertLocal_findExistingCerts_UsesOnlyMatchingCert(t *testing.T) {
 	tmp := t.TempDir()
 	logger := ll.New("test").Disable()
-	ci := NewInstaller(logger)
+	ci := NewLocal(logger)
 	ci.CertDir = woos.NewFolder(tmp)
 	hosts := []string{"app.localhost"}
 	port := 443
@@ -287,9 +287,9 @@ func TestCertInstaller_findExistingCerts_UsesOnlyMatchingCert(t *testing.T) {
 	}
 }
 
-func TestCertInstaller_certPrefix_NormalizesPortsAndIPv6(t *testing.T) {
+func TestCertLocal_certPrefix_NormalizesPortsAndIPv6(t *testing.T) {
 	logger := ll.New("test").Disable()
-	ci := NewInstaller(logger)
+	ci := NewLocal(logger)
 	ci.SetHosts([]string{"app.localhost:443"}, 443)
 	if got := ci.certPrefix(); got != "app" {
 		t.Fatalf("expected prefix 'app', got %q", got)
@@ -308,10 +308,10 @@ func TestCertInstaller_certPrefix_NormalizesPortsAndIPv6(t *testing.T) {
 	}
 }
 
-func TestCertInstaller_EnsureLocalhostCert_ReusesValidECDSA(t *testing.T) {
+func TestCertLocal_EnsureLocalhostCert_ReusesValidECDSA(t *testing.T) {
 	tmp := t.TempDir()
 	logger := ll.New("test").Disable()
-	ci := NewInstaller(logger)
+	ci := NewLocal(logger)
 	ci.CertDir = woos.NewFolder(tmp)
 	ci.SetHosts([]string{"localhost"}, 443)
 	ci.mockMode = true
@@ -340,14 +340,14 @@ func TestCertInstaller_EnsureLocalhostCert_ReusesValidECDSA(t *testing.T) {
 	}
 }
 
-func TestCertInstaller_InstallAndUninstallCARoot(t *testing.T) {
+func TestCertLocal_InstallAndUninstallCARoot(t *testing.T) {
 	if useMock {
 		t.Skip("Skipping real install test; useMock=true")
 	}
 	skipIfRealInstall(t)
 	tmp := t.TempDir()
 	logger := ll.New("test").Disable()
-	ci := NewInstaller(logger)
+	ci := NewLocal(logger)
 	ci.CertDir = woos.NewFolder(tmp)
 	caPath := ci.caCertPath()
 	if caPath == "" {
@@ -397,14 +397,14 @@ func TestCertInstaller_InstallAndUninstallCARoot(t *testing.T) {
 	}
 }
 
-func TestCertInstaller_generateAndInstallCA(t *testing.T) {
+func TestCertLocal_generateAndInstallCA(t *testing.T) {
 	if useMock {
 		t.Skip("Skipping real install test; useMock=true")
 	}
 	skipIfRealInstall(t)
 	tmp := t.TempDir()
 	logger := ll.New("test").Disable()
-	ci := NewInstaller(logger)
+	ci := NewLocal(logger)
 	ci.CertDir = woos.NewFolder(tmp)
 	caPath := ci.caCertPath()
 	if caPath == "" {
@@ -437,10 +437,10 @@ func TestCertInstaller_generateAndInstallCA(t *testing.T) {
 	}
 }
 
-func TestCertInstaller_purgeStaleLeafCerts(t *testing.T) {
+func TestCertLocal_purgeStaleLeafCerts(t *testing.T) {
 	tmp := t.TempDir()
 	logger := ll.New("test").Disable()
-	ci := NewInstaller(logger)
+	ci := NewLocal(logger)
 	ci.CertDir = woos.NewFolder(tmp)
 	certPath := filepath.Join(tmp, "stale-443-cert.pem")
 	keyPath := filepath.Join(tmp, "stale-443-key.pem")
@@ -454,10 +454,10 @@ func TestCertInstaller_purgeStaleLeafCerts(t *testing.T) {
 	}
 }
 
-func TestCertInstaller_ListCertificates(t *testing.T) {
+func TestCertLocal_ListCertificates(t *testing.T) {
 	tmp := t.TempDir()
 	logger := ll.New("test").Disable()
-	ci := NewInstaller(logger)
+	ci := NewLocal(logger)
 	ci.CertDir = woos.NewFolder(tmp)
 	certPath := filepath.Join(tmp, "test-cert.pem")
 	keyPath := filepath.Join(tmp, "test-key.pem")

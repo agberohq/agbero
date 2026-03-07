@@ -23,7 +23,7 @@ import (
 	"github.com/smallstep/truststore"
 )
 
-type Installer struct {
+type Local struct {
 	logger    *ll.Logger
 	CertDir   woos.Folder
 	certHosts []string
@@ -31,18 +31,18 @@ type Installer struct {
 	mockMode  bool
 }
 
-func NewInstaller(logger *ll.Logger, absoluteCertDir ...woos.Folder) *Installer {
+func NewLocal(logger *ll.Logger, absoluteCertDir ...woos.Folder) *Local {
 	certDir := woos.CertDir
 	if len(absoluteCertDir) > 0 {
 		certDir = absoluteCertDir[0]
 	}
-	return &Installer{
+	return &Local{
 		logger:  logger,
 		CertDir: certDir,
 	}
 }
 
-func (ci *Installer) SetStorageDir(dir woos.Folder) error {
+func (ci *Local) SetStorageDir(dir woos.Folder) error {
 	if !dir.IsSet() {
 		return nil
 	}
@@ -63,12 +63,12 @@ func (ci *Installer) SetStorageDir(dir woos.Folder) error {
 	return nil
 }
 
-func (ci *Installer) SetHosts(hosts []string, port int) {
+func (ci *Local) SetHosts(hosts []string, port int) {
 	ci.certHosts = hosts
 	ci.port = port
 }
 
-func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error) {
+func (ci *Local) EnsureLocalhostCert() (certFile, keyFile string, err error) {
 	prefix := ci.certPrefix()
 	seen := make(map[string]bool)
 	out := make([]string, 0, len(ci.certHosts)+8)
@@ -133,7 +133,7 @@ func (ci *Installer) EnsureLocalhostCert() (certFile, keyFile string, err error)
 	return certFile, keyFile, nil
 }
 
-func (ci *Installer) InstallCARootIfNeeded() error {
+func (ci *Local) InstallCARootIfNeeded() error {
 	_ = BootstrapEnv(ci.logger)
 	if ci.caExists() {
 		return nil
@@ -153,7 +153,7 @@ func (ci *Installer) InstallCARootIfNeeded() error {
 	return nil
 }
 
-func (ci *Installer) UninstallCARoot() error {
+func (ci *Local) UninstallCARoot() error {
 	caPath := ci.caCertPath()
 	if caPath == "" {
 		return errors.New("CA certificate path not set")
@@ -173,7 +173,7 @@ func (ci *Installer) UninstallCARoot() error {
 	return nil
 }
 
-func (ci *Installer) generateCAFilesOnly() error {
+func (ci *Local) generateCAFilesOnly() error {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return errors.Newf("generate CA key: %w", err)
@@ -237,7 +237,7 @@ func (ci *Installer) generateCAFilesOnly() error {
 	return nil
 }
 
-func (ci *Installer) generateAndInstallCA() error {
+func (ci *Local) generateAndInstallCA() error {
 	if err := ci.generateCAFilesOnly(); err != nil {
 		return err
 	}
@@ -251,7 +251,7 @@ func (ci *Installer) generateAndInstallCA() error {
 	return nil
 }
 
-func (ci *Installer) generateLeaf(certFile, keyFile string) (string, string, error) {
+func (ci *Local) generateLeaf(certFile, keyFile string) (string, string, error) {
 	caCert, caKey, err := ci.loadCA()
 	if err != nil {
 		return "", "", errors.Newf("load CA: %w", err)
@@ -335,7 +335,7 @@ func (ci *Installer) generateLeaf(certFile, keyFile string) (string, string, err
 	return certFile, keyFile, nil
 }
 
-func (ci *Installer) loadCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
+func (ci *Local) loadCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	certPath := ci.caCertPath()
 	keyPath := ci.caKeyPath()
 
@@ -378,7 +378,7 @@ func (ci *Installer) loadCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	return caCert, caKey, nil
 }
 
-func (ci *Installer) ListCertificates() ([]string, error) {
+func (ci *Local) ListCertificates() ([]string, error) {
 	names, err := ci.CertDir.ReadNames()
 	if err != nil {
 		return nil, errors.Newf("failed to read cert directory: %w", err)
@@ -394,7 +394,7 @@ func (ci *Installer) ListCertificates() ([]string, error) {
 	return certs, nil
 }
 
-func (ci *Installer) FindExistingCerts(prefix string, port int) (certFile, keyFile string, found bool) {
+func (ci *Local) FindExistingCerts(prefix string, port int) (certFile, keyFile string, found bool) {
 	originalPort := ci.port
 	ci.port = port
 	defer func() { ci.port = originalPort }()
@@ -417,7 +417,7 @@ func (ci *Installer) FindExistingCerts(prefix string, port int) (certFile, keyFi
 	return "", "", false
 }
 
-func (ci *Installer) validateCertificate(certFile, keyFile string) error {
+func (ci *Local) validateCertificate(certFile, keyFile string) error {
 	certData, err := os.ReadFile(certFile)
 	if err != nil {
 		return errors.Newf("read cert: %w", err)
@@ -472,7 +472,7 @@ func (ci *Installer) validateCertificate(certFile, keyFile string) error {
 	return nil
 }
 
-func (ci *Installer) certPrefix() string {
+func (ci *Local) certPrefix() string {
 	if len(ci.certHosts) == 0 {
 		return woos.Localhost
 	}
@@ -494,7 +494,7 @@ func (ci *Installer) certPrefix() string {
 	return woos.Localhost
 }
 
-func (ci *Installer) purgeStaleLeafCerts() {
+func (ci *Local) purgeStaleLeafCerts() {
 	names, err := ci.CertDir.ReadNames()
 	if err != nil {
 		return
@@ -511,7 +511,7 @@ func (ci *Installer) purgeStaleLeafCerts() {
 	}
 }
 
-func (ci *Installer) caExists() bool {
+func (ci *Local) caExists() bool {
 	m := ci.caCertPath()
 	if m == "" {
 		return false
@@ -520,14 +520,14 @@ func (ci *Installer) caExists() bool {
 	return err == nil
 }
 
-func (ci *Installer) caCertPath() string {
+func (ci *Local) caCertPath() string {
 	if !ci.CertDir.IsSet() {
 		return ""
 	}
 	return filepath.Join(ci.CertDir.Path(), "ca-cert.pem")
 }
 
-func (ci *Installer) caKeyPath() string {
+func (ci *Local) caKeyPath() string {
 	if !ci.CertDir.IsSet() {
 		return ""
 	}
