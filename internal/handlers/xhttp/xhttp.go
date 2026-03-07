@@ -26,7 +26,7 @@ var hopHeaders = []string{
 	woos.HeaderKeyUpgrade,
 }
 
-type ConfigBalancer struct {
+type ConfigProxy struct {
 	Strategy string
 	Keys     []string
 	Timeout  time.Duration

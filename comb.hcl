@@ -1,6 +1,6 @@
 recursive = true
 output_file = "all.txt"
-extensions = [".go",".hcl"]
+extensions = [".go"]
 exclude_dirs {
   items = ["pkg", "lab", "bin", "dist", "assets", "oppor", "docs"]
 }

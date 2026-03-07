@@ -19,6 +19,12 @@ type HealthCheck struct {
 	Headers        map[string]string `hcl:"headers,optional" json:"headers"`
 	ExpectedStatus []int             `hcl:"expected_status,optional" json:"expected_status"`
 	ExpectedBody   string            `hcl:"expected_body,optional" json:"expected_body"`
+
+	// Predictive health scoring settings
+	LatencyBaselineMs     int32   `hcl:"latency_baseline_ms,optional" json:"latency_baseline_ms"`
+	LatencyDegradedFactor float64 `hcl:"latency_degraded_factor,optional" json:"latency_degraded_factor"`
+	AcceleratedProbing    bool    `hcl:"accelerated_probing,optional" json:"accelerated_probing"`
+	SyntheticWhenIdle     bool    `hcl:"synthetic_when_idle,optional" json:"synthetic_when_idle"`
 }
 
 func (h *HealthCheck) Validate() error {

@@ -11,7 +11,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
 )
 
-type Balancer struct {
+type Proxy struct {
 	lb        lb.Balancer
 	adaptive  *lb.Adaptive
 	timeout   time.Duration
@@ -20,7 +20,7 @@ type Balancer struct {
 	keys      []string
 }
 
-func NewBalancer(cfg ConfigBalancer, backends []*Backend, ipManager *zulu.IPManager) *Balancer {
+func NewProxy(cfg ConfigProxy, backends []*Backend, ipManager *zulu.IPManager) *Proxy {
 	wrapped := make([]lb.Backend, 0, len(backends))
 	for _, b := range backends {
 		if b != nil {
@@ -45,7 +45,7 @@ func NewBalancer(cfg ConfigBalancer, backends []*Backend, ipManager *zulu.IPMana
 		root = lb.NewSticky(root, 30*time.Minute, zulu.Extractor(cfg.Keys))
 	}
 
-	return &Balancer{
+	return &Proxy{
 		lb:        root,
 		adaptive:  adaptiveRef,
 		timeout:   cfg.Timeout,
@@ -55,7 +55,7 @@ func NewBalancer(cfg ConfigBalancer, backends []*Backend, ipManager *zulu.IPMana
 	}
 }
 
-func (b *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (b *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	be := b.Pick(r)
 	if be == nil {
 		if b.fallback != nil {
@@ -89,51 +89,12 @@ func (b *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (b *Balancer) Pick(r *http.Request) *Backend {
-	hashFunc := func() uint64 {
-		key := ""
-		if len(b.keys) == 0 {
-			if b.ipManager != nil {
-				key = b.ipManager.ClientIP(r)
-			} else {
-				key = r.RemoteAddr
-			}
-		} else {
-			for _, k := range b.keys {
-				val := ""
-				switch {
-				case strings.HasPrefix(k, "cookie:"):
-					name := k[7:]
-					if c, err := r.Cookie(name); err == nil {
-						val = c.Value
-					}
-				case strings.HasPrefix(k, "header:"):
-					name := k[7:]
-					val = r.Header.Get(name)
-				case strings.HasPrefix(k, "query:"):
-					name := k[6:]
-					val = r.URL.Query().Get(name)
-				case k == "ip":
-					if b.ipManager != nil {
-						val = b.ipManager.ClientIP(r)
-					} else {
-						val = r.RemoteAddr
-					}
-				}
-				if val != "" {
-					key = val
-					break
-				}
-			}
-		}
-
-		if key == "" {
-			return 0
-		}
-		return lb.HashString(key)
-	}
-
-	pick := b.lb.Pick(r, hashFunc)
+func (b *Proxy) Pick(r *http.Request) *Backend {
+	// Let the load balancer handle everything - it already knows about:
+	// - Sticky sessions via Sticky wrapper
+	// - Hash strategies via Selector
+	// - Key extraction via zulu.Extractor
+	pick := b.lb.Pick(r, nil) // hashFunc not needed - sticky layer handles it
 
 	if pick == nil {
 		return nil
@@ -144,7 +105,7 @@ func (b *Balancer) Pick(r *http.Request) *Backend {
 	return nil
 }
 
-func (b *Balancer) Update(list []*Backend) {
+func (b *Proxy) Update(list []*Backend) {
 	wrapped := make([]lb.Backend, 0, len(list))
 	for _, backend := range list {
 		if backend != nil {

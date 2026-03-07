@@ -173,14 +173,14 @@ func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 		timeout = route.Timeouts.Request
 	}
 
-	balancerCfg := xhttp.ConfigBalancer{
+	balancerCfg := xhttp.ConfigProxy{
 		Strategy: route.Backends.Strategy,
 		Keys:     route.Backends.Keys,
 		Timeout:  timeout,
 		Fallback: fallbackHandler,
 	}
 
-	loadBalancer := xhttp.NewBalancer(balancerCfg, backends, cfg.IPMgr)
+	loadBalancer := xhttp.NewProxy(balancerCfg, backends, cfg.IPMgr)
 
 	var chain http.Handler = loadBalancer
 
@@ -261,15 +261,8 @@ func buildFallbackHandler(fallback *alaye.Fallback, logger *ll.Logger) http.Hand
 		proxy := httputil.NewSingleHostReverseProxy(proxyURL)
 		proxy.Rewrite = func(pr *httputil.ProxyRequest) {
 			pr.SetXForwarded()
-			pr.Out.Header.Del("Connection")
-			pr.Out.Header.Del("Keep-Alive")
-			pr.Out.Header.Del("Proxy-Authenticate")
-			pr.Out.Header.Del("Proxy-Authorization")
-			pr.Out.Header.Del("Te")
-			pr.Out.Header.Del("Trailers")
-			pr.Out.Header.Del("Transfer-Encoding")
-			pr.Out.Header.Del("Upgrade")
 			pr.Out.Host = proxyURL.Host
+			// Don't delete hop headers here - Backend will handle it
 		}
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 			logger.Fields("err", err, "fallback_proxy", fallback.ProxyURL).Error("fallback proxy failed")

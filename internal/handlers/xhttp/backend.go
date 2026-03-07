@@ -162,7 +162,7 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 			b.Fallback.ServeHTTP(w, r)
 			return
 		}
-		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		http.Error(w, "Bad Proxy", http.StatusBadGateway)
 	}
 
 	rp.Rewrite = func(pr *httputil.ProxyRequest) {
@@ -234,7 +234,7 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If Draining, we allow existing requests (handled by Balancer pick logic usually),
+	// If Draining, we allow existing requests (handled by Proxy pick logic usually),
 	// but if it got here, we serve it to drain the queue.
 
 	if !b.alive.Load() {
