@@ -350,7 +350,7 @@ func (h *helper) showCertInfo(configPath string) {
 	}
 	storageDir := woos.NewFolder(global.Storage.CertsDir)
 	fmt.Println("\nCERTIFICATE INFORMATION")
-	fmt.Printf("Storage Listing: %s\n", storageDir.Path())
+	fmt.Printf("Store Listing: %s\n", storageDir.Path())
 	if !storageDir.Exists("") {
 		fmt.Println("⚠  Listing does not exist")
 		return
@@ -377,7 +377,7 @@ func (h *helper) showCertInfo(configPath string) {
 }
 
 func (h *helper) handleCertCommands(install, uninstall, list, info bool, force bool, certDir string) {
-	installer := tlss.NewInstaller(h.logger)
+	installer := tlss.NewLocal(h.logger)
 
 	if global, err := h.loadConfig(configPath); err == nil && global.Storage.CertsDir != "" {
 		folder := woos.NewFolder(global.Storage.CertsDir)

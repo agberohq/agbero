@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/pprof"
-	"os"
 	"strings"
 	"time"
 
@@ -23,20 +21,29 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var (
-	dummyHash []byte
-)
+// =============================================================================
+// Constants and Initialization
+// =============================================================================
+
+var dummyHash []byte
 
 func init() {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("dummy-password-for-timing"), bcrypt.DefaultCost)
 	dummyHash = hash
 }
 
-// AdminClaims defines the JWT structure for Admin access
-type AdminClaims struct {
+// =============================================================================
+// JWT Claims
+// =============================================================================
+
+type adminClaims struct {
 	User string `json:"user"`
 	jwt.RegisteredClaims
 }
+
+// =============================================================================
+// Admin Server Lifecycle
+// =============================================================================
 
 func (s *Server) startAdminServer() {
 	if s.global.Admin.Enabled.NotActive() || s.global.Admin.Address == "" {
@@ -46,84 +53,23 @@ func (s *Server) startAdminServer() {
 	cfg := s.global.Admin
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
+	// 1. Register Routes
+	s.registerAdminHealthEndpoint(mux)
+	s.registerAdminLoginEndpoint(mux)
+	s.registerAdminAPI(mux)
+	s.registerAdminProtectedEndpoints(mux, cfg)
+	s.registerPprofEndpoints(mux, cfg)
 
-	mux.HandleFunc("/login", s.handleAdminLogin)
+	// Register UI last (catch-all "/")
+	s.registerAdminUI(mux)
 
-	uiHandler := operation.Admin()
-	mux.Handle("/", uiHandler)
-
-	// API Routes (Enabled)
-	if s.clusterManager != nil && s.securityManager != nil {
-		apiRouter := api.NewRouter(s.clusterManager, s.logger, auth.Internal(s.securityManager, s.logger))
-		mux.Handle("/api/v1/", http.StripPrefix("/api/v1", apiRouter))
-	} else if s.clusterManager == nil {
-		s.logger.Warn("admin api disabled: cluster manager not active")
-	} else if s.securityManager == nil {
-		s.logger.Warn("admin api disabled: security manager (internal_auth_key) not configured")
-	}
-
-	protect := func(h http.Handler) http.Handler {
-		if cfg.JWTAuth.Enabled.Active() {
-			return auth.JWT(&cfg.JWTAuth)(h)
-		}
-		if len(cfg.BasicAuth.Users) > 0 {
-			return auth.Basic(&cfg.BasicAuth)(h)
-		}
-		return h
-	}
-
-	protectBasic := func(h http.Handler) http.Handler {
-		if len(cfg.BasicAuth.Users) > 0 {
-			return auth.Basic(&cfg.BasicAuth)(h)
-		}
-		if cfg.JWTAuth.Enabled.Active() {
-			return auth.JWT(&cfg.JWTAuth)(h)
-		}
-		return h
-	}
-
-	mux.Handle("/uptime", protect(uptime.Uptime(s.hostManager, s.clusterManager)))
-	mux.Handle("/metrics", protect(promhttp.Handler()))
-	mux.Handle("/config", protect(http.HandlerFunc(s.handleAdminConfigDump)))
-	mux.Handle("/logs", protect(http.HandlerFunc(s.handleAdminLogs)))
-	mux.Handle("/firewall", protect(http.HandlerFunc(s.handleFirewallAPI)))
-
-	if cfg.Pprof.Active() {
-		s.logger.Warn("pprof debugging enabled on admin interface")
-
-		mux.Handle("/debug/pprof/", protectBasic(http.HandlerFunc(pprof.Index)))
-		mux.Handle("/debug/pprof/cmdline", protectBasic(http.HandlerFunc(pprof.Cmdline)))
-		mux.Handle("/debug/pprof/profile", protectBasic(http.HandlerFunc(pprof.Profile)))
-		mux.Handle("/debug/pprof/symbol", protectBasic(http.HandlerFunc(pprof.Symbol)))
-		mux.Handle("/debug/pprof/trace", protectBasic(http.HandlerFunc(pprof.Trace)))
-
-		mux.Handle("/debug/pprof/heap", protectBasic(pprof.Handler("heap")))
-		mux.Handle("/debug/pprof/goroutine", protectBasic(pprof.Handler("goroutine")))
-		mux.Handle("/debug/pprof/threadcreate", protectBasic(pprof.Handler("threadcreate")))
-		mux.Handle("/debug/pprof/block", protectBasic(pprof.Handler("block")))
-		mux.Handle("/debug/pprof/mutex", protectBasic(pprof.Handler("mutex")))
-		mux.Handle("/debug/pprof/allocs", protectBasic(pprof.Handler("allocs")))
-	}
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/admin") {
-			w.Header().Set("Content-Security-Policy",
-				"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
-					"img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'")
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			w.Header().Set("X-Frame-Options", "DENY")
-			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		}
-		mux.ServeHTTP(w, r)
-	})
+	// 2. Wrap Mux with Global Admin Middleware (Security Headers)
+	// This fixes the panic. We don't register on mux, we wrap the mux.
+	finalHandler := s.wrapAdminMiddleware(mux)
 
 	srv := &http.Server{
 		Addr:         cfg.Address,
-		Handler:      handler,
+		Handler:      finalHandler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -137,12 +83,110 @@ func (s *Server) startAdminServer() {
 	}()
 }
 
-// handleAdminLogin verifies credentials against agbero.hcl > admin > basic_auth > users
-func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
+func (s *Server) registerAdminHealthEndpoint(mux *http.ServeMux) {
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+}
+
+func (s *Server) registerAdminLoginEndpoint(mux *http.ServeMux) {
+	mux.HandleFunc("/login", s.handleLogin)
+}
+
+func (s *Server) registerAdminUI(mux *http.ServeMux) {
+	uiHandler := operation.Admin()
+	mux.Handle("/", uiHandler)
+}
+
+func (s *Server) registerAdminAPI(mux *http.ServeMux) {
+	if s.clusterManager != nil && s.securityManager != nil {
+		apiRouter := api.NewRouter(s.clusterManager, s.logger, auth.Internal(s.securityManager, s.logger))
+		mux.Handle("/api/v1/", http.StripPrefix("/api/v1", apiRouter))
+	} else if s.clusterManager == nil {
+		s.logger.Warn("admin api disabled: cluster manager not active")
+	} else if s.securityManager == nil {
+		s.logger.Warn("admin api disabled: security manager (internal_auth_key) not configured")
+	}
+}
+
+func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.Admin) {
+	protect := s.buildAuthMiddleware(cfg)
+
+	mux.Handle("/uptime", protect(uptime.Uptime(s.hostManager, s.clusterManager)))
+	mux.Handle("/metrics", protect(promhttp.Handler()))
+	mux.Handle("/config", protect(http.HandlerFunc(s.handleConfigDump)))
+	mux.Handle("/logs", protect(http.HandlerFunc(s.handleLogs)))
+	mux.Handle("/firewall", protect(http.HandlerFunc(s.handleFirewall)))
+}
+
+func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Handler {
+	return func(h http.Handler) http.Handler {
+		if cfg.JWTAuth.Enabled.Active() {
+			return auth.JWT(&cfg.JWTAuth)(h)
+		}
+		if len(cfg.BasicAuth.Users) > 0 {
+			return auth.Basic(&cfg.BasicAuth)(h)
+		}
+		return h
+	}
+}
+
+func (s *Server) registerPprofEndpoints(mux *http.ServeMux, cfg alaye.Admin) {
+	if !cfg.Pprof.Active() {
+		return
+	}
+
+	s.logger.Warn("pprof debugging enabled on admin interface")
+
+	// Create a basic auth protector just for pprof if global auth isn't applied to everything
+	protect := s.buildAuthMiddleware(cfg)
+
+	mux.Handle("/debug/pprof/", protect(http.HandlerFunc(pprof.Index)))
+	mux.Handle("/debug/pprof/cmdline", protect(http.HandlerFunc(pprof.Cmdline)))
+	mux.Handle("/debug/pprof/profile", protect(http.HandlerFunc(pprof.Profile)))
+	mux.Handle("/debug/pprof/symbol", protect(http.HandlerFunc(pprof.Symbol)))
+	mux.Handle("/debug/pprof/trace", protect(http.HandlerFunc(pprof.Trace)))
+
+	mux.Handle("/debug/pprof/heap", protect(pprof.Handler("heap")))
+	mux.Handle("/debug/pprof/goroutine", protect(pprof.Handler("goroutine")))
+	mux.Handle("/debug/pprof/threadcreate", protect(pprof.Handler("threadcreate")))
+	mux.Handle("/debug/pprof/block", protect(pprof.Handler("block")))
+	mux.Handle("/debug/pprof/mutex", protect(pprof.Handler("mutex")))
+	mux.Handle("/debug/pprof/allocs", protect(pprof.Handler("allocs")))
+}
+
+// wrapAdminMiddleware wraps the entire mux to apply security headers
+func (s *Server) wrapAdminMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only apply if it's an admin path or root
+		if strings.HasPrefix(r.URL.Path, "/") {
+			w.Header().Set("Content-Security-Policy",
+				"default-src 'self'; "+
+					"script-src 'self' https://d3js.org; "+
+					"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
+					"font-src 'self' https://fonts.gstatic.com; "+
+					"img-src 'self' data:; "+
+					"connect-src 'self'; "+
+					"frame-ancestors 'none'")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// =============================================================================
+// Request Handlers
+// =============================================================================
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	s.mu.RLock()
 	cfg := s.global.Admin
 	s.mu.RUnlock()
@@ -166,10 +210,32 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.verifyCredentials(cfg.BasicAuth.Users, creds.Username, creds.Password) {
+		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+		return
+	}
+
+	tokenString, expirationTime, err := s.generateAdminToken(creds.Username, cfg.JWTAuth.Secret.String())
+	if err != nil {
+		s.logger.Error("Failed to sign admin token: ", err)
+		http.Error(w, "Internal Signing Error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"token":   tokenString,
+		"expires": expirationTime.Format(time.RFC3339),
+		"user":    creds.Username,
+	})
+}
+
+func (s *Server) verifyCredentials(users []string, username, password string) bool {
 	var foundHash []byte
 	userFound := 0
-	inputUserHash := sha256.Sum256([]byte(creds.Username))
-	for _, u := range cfg.BasicAuth.Users {
+	inputUserHash := sha256.Sum256([]byte(username))
+
+	for _, u := range users {
 		parts := strings.SplitN(u, ":", 2)
 		if len(parts) == 2 {
 			storedUserHash := sha256.Sum256([]byte(parts[0]))
@@ -185,38 +251,25 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		targetHash = dummyHash
 	}
 
-	err := bcrypt.CompareHashAndPassword(targetHash, []byte(creds.Password))
-	if userFound == 0 || err != nil {
-		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
-		return
-	}
+	err := bcrypt.CompareHashAndPassword(targetHash, []byte(password))
+	return userFound == 1 && err == nil
+}
 
+func (s *Server) generateAdminToken(username, secret string) (string, time.Time, error) {
 	expirationTime := time.Now().Add(24 * time.Hour)
-	claims := &AdminClaims{
-		User: creds.Username,
+	claims := &adminClaims{
+		User: username,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			Issuer:    "agbero-admin",
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(cfg.JWTAuth.Secret.String()))
-	if err != nil {
-		s.logger.Error("Failed to sign admin token: ", err)
-		http.Error(w, "Internal Signing Error", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"token":   tokenString,
-		"expires": expirationTime.Format(time.RFC3339),
-		"user":    creds.Username,
-	})
+	tokenString, err := token.SignedString([]byte(secret))
+	return tokenString, expirationTime, err
 }
 
-// handleAdminConfigDump returns a sanitized JSON dump of the running configuration.
-func (s *Server) handleAdminConfigDump(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleConfigDump(w http.ResponseWriter, r *http.Request) {
 	hosts, _ := s.hostManager.LoadAll()
 
 	resp := struct {
@@ -224,8 +277,8 @@ func (s *Server) handleAdminConfigDump(w http.ResponseWriter, r *http.Request) {
 		Hosts   any `json:"hosts"`
 		Cluster any `json:"cluster,omitempty"`
 	}{
-		Global: sanitizeGlobal(s.global),
-		Hosts:  sanitizeHosts(hosts),
+		Global: sanitizeGlobalConfig(s.global),
+		Hosts:  sanitizeHostConfigs(hosts),
 	}
 
 	if s.clusterManager != nil {
@@ -238,94 +291,108 @@ func (s *Server) handleAdminConfigDump(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// handleFirewallAPI manages IP blocks via API
-func (s *Server) handleFirewallAPI(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleFirewall(w http.ResponseWriter, r *http.Request) {
 	if s.firewall == nil {
-		if r.Method == http.MethodGet {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
-				"enabled": false,
-				"rules":   []string{},
-			})
-			return
-		}
-		http.Error(w, "firewall is disabled in configuration", http.StatusNotImplemented)
+		s.handleFirewallDisabled(w, r)
 		return
 	}
 
 	switch r.Method {
 	case http.MethodGet:
-		rules, err := s.firewall.List()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"enabled": true,
-			"rules":   rules,
-		})
-
+		s.handleFirewallList(w)
 	case http.MethodPost:
-		var req struct {
-			IP          string `json:"ip"`
-			Reason      string `json:"reason"`
-			Host        string `json:"host"`
-			Path        string `json:"path"`
-			DurationSec int    `json:"duration_sec"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid JSON", http.StatusBadRequest)
-			return
-		}
-		if req.IP == "" {
-			http.Error(w, "IP required", http.StatusBadRequest)
-			return
-		}
-
-		dur := time.Duration(req.DurationSec) * time.Second
-
-		reason := req.Reason
-		var details []string
-		if req.Host != "" {
-			details = append(details, "host="+req.Host)
-		}
-		if req.Path != "" {
-			details = append(details, "path="+req.Path)
-		}
-		if len(details) > 0 {
-			reason = fmt.Sprintf("%s (%s)", reason, strings.Join(details, ", "))
-		}
-
-		if err := s.firewall.Block(req.IP, reason, dur); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		s.logger.Fields("ip", req.IP, "reason", reason, "duration", dur).Info("admin: blocked ip")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Blocked"))
-
+		s.handleFirewallBlock(w, r)
 	case http.MethodDelete:
-		ip := r.URL.Query().Get("ip")
-		if ip == "" {
-			http.Error(w, "IP query parameter required", http.StatusBadRequest)
-			return
-		}
-		if err := s.firewall.Unblock(ip); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		s.logger.Fields("ip", ip).Info("admin: unblocked ip")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Unblocked"))
-
+		s.handleFirewallUnblock(w, r)
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-// handleAdminLogs reads the log file backwards efficiently
-func (s *Server) handleAdminLogs(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleFirewallDisabled(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"enabled": false,
+			"rules":   []string{},
+		})
+		return
+	}
+	http.Error(w, "firewall is disabled in configuration", http.StatusNotImplemented)
+}
+
+func (s *Server) handleFirewallList(w http.ResponseWriter) {
+	rules, err := s.firewall.List()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"enabled": true,
+		"rules":   rules,
+	})
+}
+
+func (s *Server) handleFirewallBlock(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IP          string `json:"ip"`
+		Reason      string `json:"reason"`
+		Host        string `json:"host"`
+		Path        string `json:"path"`
+		DurationSec int    `json:"duration_sec"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.IP == "" {
+		http.Error(w, "IP required", http.StatusBadRequest)
+		return
+	}
+
+	dur := time.Duration(req.DurationSec) * time.Second
+	reason := s.buildBlockReason(req.Reason, req.Host, req.Path)
+
+	if err := s.firewall.Block(req.IP, reason, dur); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Fields("ip", req.IP, "reason", reason, "duration", dur).Info("admin: blocked ip")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Blocked"))
+}
+
+func (s *Server) buildBlockReason(reason, host, path string) string {
+	var details []string
+	if host != "" {
+		details = append(details, "host="+host)
+	}
+	if path != "" {
+		details = append(details, "path="+path)
+	}
+	if len(details) > 0 {
+		return fmt.Sprintf("%s (%s)", reason, strings.Join(details, ", "))
+	}
+	return reason
+}
+
+func (s *Server) handleFirewallUnblock(w http.ResponseWriter, r *http.Request) {
+	ip := r.URL.Query().Get("ip")
+	if ip == "" {
+		http.Error(w, "IP query parameter required", http.StatusBadRequest)
+		return
+	}
+	if err := s.firewall.Unblock(ip); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Fields("ip", ip).Info("admin: unblocked ip")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Unblocked"))
+}
+
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	var logPath string
 	if s.global.Logging.File.Enabled.Active() {
 		logPath = s.global.Logging.File.Path
@@ -337,11 +404,12 @@ func (s *Server) handleAdminLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	limit := 50
-	lines, err := readLastLines(logPath, limit)
+	lines, err := readLastLogLines(logPath, limit)
 	if err != nil {
 		http.Error(w, "Error reading logs: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 	var logs []map[string]any
 	for _, l := range lines {
 		if l == "" {
@@ -355,133 +423,4 @@ func (s *Server) handleAdminLogs(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(logs)
-}
-
-func sanitizeGlobal(g *alaye.Global) *alaye.Global {
-	b, _ := json.Marshal(g)
-	var clone alaye.Global
-	_ = json.Unmarshal(b, &clone)
-
-	if clone.Gossip.Enabled.Active() {
-		clone.Gossip.SecretKey = "***"
-	}
-
-	if clone.Admin.Enabled.Active() {
-		if clone.Admin.BasicAuth.Enabled.Active() {
-			for i := range clone.Admin.BasicAuth.Users {
-				clone.Admin.BasicAuth.Users[i] = "***"
-			}
-		}
-		if clone.Admin.JWTAuth.Enabled.Active() {
-			clone.Admin.JWTAuth.Secret = "***"
-		}
-		if clone.Admin.ForwardAuth.Enabled.Active() {
-			clone.Admin.ForwardAuth.URL = "***"
-		}
-		if clone.Admin.OAuth.Enabled.Active() {
-			clone.Admin.OAuth.ClientSecret = "***"
-			clone.Admin.OAuth.CookieSecret = "***"
-		}
-	}
-
-	if clone.Security.Enabled.Active() {
-		for i := range clone.Security.TrustedProxies {
-			clone.Security.TrustedProxies[i] = "***"
-		}
-	}
-
-	if clone.LetsEncrypt.Enabled.Active() {
-		clone.LetsEncrypt.Email = "***"
-	}
-
-	return &clone
-}
-
-func sanitizeHosts(hosts map[string]*alaye.Host) map[string]*alaye.Host {
-	out := make(map[string]*alaye.Host)
-	for k, v := range hosts {
-		b, _ := json.Marshal(v)
-		var clone alaye.Host
-		_ = json.Unmarshal(b, &clone)
-
-		for i := range clone.Routes {
-			if clone.Routes[i].BasicAuth.Enabled.Active() {
-				for j := range clone.Routes[i].BasicAuth.Users {
-					clone.Routes[i].BasicAuth.Users[j] = "***"
-				}
-			}
-			if clone.Routes[i].JWTAuth.Enabled.Active() {
-				clone.Routes[i].JWTAuth.Secret = "***"
-			}
-			if clone.Routes[i].OAuth.Enabled.Active() {
-				clone.Routes[i].OAuth.ClientSecret = "***"
-				clone.Routes[i].OAuth.CookieSecret = "***"
-			}
-			if clone.Routes[i].Wasm.Enabled.Active() && len(clone.Routes[i].Wasm.Config) > 0 {
-				clone.Routes[i].Wasm.Config = map[string]string{"***": "***"}
-			}
-			if clone.Routes[i].ForwardAuth.Enabled.Active() {
-				clone.Routes[i].ForwardAuth.URL = "***"
-			}
-		}
-		out[k] = &clone
-	}
-	return out
-}
-
-func readLastLines(filename string, n int) ([]string, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	stat, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-
-	fileSize := stat.Size()
-	var lines []string
-
-	const bufSize = 1024
-	buf := make([]byte, bufSize)
-
-	var offset int64 = fileSize
-	var leftover string
-
-	for offset > 0 && len(lines) < n {
-		readSize := min(offset, int64(bufSize))
-		offset -= readSize
-
-		_, err := file.Seek(offset, io.SeekStart)
-		if err != nil {
-			return nil, err
-		}
-
-		_, err = file.Read(buf[:readSize])
-		if err != nil {
-			return nil, err
-		}
-
-		chunk := string(buf[:readSize]) + leftover
-		parts := strings.Split(chunk, "\n")
-
-		if offset > 0 {
-			leftover = parts[0]
-			parts = parts[1:]
-		}
-
-		for i := len(parts) - 1; i >= 0; i-- {
-			line := strings.TrimSpace(parts[i])
-			if line != "" {
-				lines = append(lines, line)
-				if len(lines) >= n {
-					break
-				}
-			}
-		}
-	}
-
-	return lines, nil
 }

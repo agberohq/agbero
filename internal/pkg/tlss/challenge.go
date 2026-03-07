@@ -6,20 +6,15 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-type ChallengeProvider interface {
-	Present(domain, token, keyAuth string) error
-	CleanUp(domain, token, keyAuth string) error
+type ClusterBroadcaster interface {
+	BroadcastChallenge(token, keyAuth string, deleted bool)
 }
 
 type ChallengeStore struct {
 	mu      sync.RWMutex
-	tokens  map[string]string // token -> keyAuth
+	tokens  map[string]string
 	cluster ClusterBroadcaster
 	logger  *ll.Logger
-}
-
-type ClusterBroadcaster interface {
-	BroadcastChallenge(token, keyAuth string, deleted bool)
 }
 
 func NewChallengeStore(logger *ll.Logger) *ChallengeStore {
@@ -33,8 +28,6 @@ func (s *ChallengeStore) SetCluster(c ClusterBroadcaster) {
 	s.cluster = c
 }
 
-// Present implements the ACME Challenge Provider interface (for Lego).
-// It stores the token locally and broadcasts it to the cluster.
 func (s *ChallengeStore) Present(domain, token, keyAuth string) error {
 	s.mu.Lock()
 	s.tokens[token] = keyAuth
@@ -48,7 +41,6 @@ func (s *ChallengeStore) Present(domain, token, keyAuth string) error {
 	return nil
 }
 
-// CleanUp removes the token locally and broadcasts deletion.
 func (s *ChallengeStore) CleanUp(domain, token, keyAuth string) error {
 	s.mu.Lock()
 	delete(s.tokens, token)
@@ -60,8 +52,6 @@ func (s *ChallengeStore) CleanUp(domain, token, keyAuth string) error {
 	return nil
 }
 
-// GetKeyAuth retrieves the key authorization for a given token.
-// Used by the HTTP handler to respond to Let's Encrypt.
 func (s *ChallengeStore) GetKeyAuth(token string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -69,7 +59,6 @@ func (s *ChallengeStore) GetKeyAuth(token string) (string, bool) {
 	return val, ok
 }
 
-// SyncFromCluster is called when a peer adds/removes a challenge via Gossip.
 func (s *ChallengeStore) SyncFromCluster(token, keyAuth string, deleted bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

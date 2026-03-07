@@ -1,11 +1,14 @@
 package cluster
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/security"
 	"github.com/hashicorp/memberlist"
 	"github.com/olekukonko/ll"
 )
@@ -25,6 +28,9 @@ type Manager struct {
 	logger   *ll.Logger
 	metrics  Metrics
 	stopCh   chan struct{}
+	cipher   *security.Cipher
+
+	nodeName string
 }
 
 type eventDelegate struct {
@@ -54,9 +60,17 @@ func NewManager(cfg Config, handler UpdateHandler, logger *ll.Logger) (*Manager,
 
 	mConfig.Logger = log.New(io.Discard, "", 0)
 
-	metrics := NewMetrics()
+	var cipher *security.Cipher
+	if len(cfg.Secret) > 0 {
+		var err error
+		cipher, err = security.NewCipher(string(cfg.Secret))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create cluster payload cipher: %w", err)
+		}
+	}
 
-	del := newDelegate(handler, logger, metrics)
+	metrics := NewMetrics()
+	del := newDelegate(handler, logger, metrics, cipher)
 	events := &eventDelegate{logger: logger, metrics: metrics}
 
 	mConfig.Delegate = del
@@ -83,7 +97,11 @@ func NewManager(cfg Config, handler UpdateHandler, logger *ll.Logger) (*Manager,
 		logger:   logger,
 		metrics:  metrics,
 		stopCh:   make(chan struct{}),
+		cipher:   cipher,
+		nodeName: cfg.Name,
 	}
+
+	mgr.BroadcastStatus("active")
 
 	if len(cfg.Seeds) > 0 {
 		count, err := list.Join(cfg.Seeds)
@@ -100,7 +118,7 @@ func NewManager(cfg Config, handler UpdateHandler, logger *ll.Logger) (*Manager,
 }
 
 func (m *Manager) maintenanceLoop() {
-	ticker := time.NewTicker(1 * time.Hour)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -113,12 +131,82 @@ func (m *Manager) maintenanceLoop() {
 	}
 }
 
+func (m *Manager) TryAcquireLock(key string) bool {
+	lockKey := "lock:" + key
+	myID := m.nodeName
+	if myID == "" {
+		myID, _ = os.Hostname()
+	}
+
+	if env, ok := m.delegate.getEnvelope(lockKey); ok {
+		if env.Owner != myID && time.Since(time.Unix(0, env.Timestamp)) < lockTTL {
+			return false
+		}
+	}
+
+	m.delegate.broadcast(OpLock, lockKey, []byte("claimed"), myID)
+	time.Sleep(2 * time.Second)
+
+	if env, ok := m.delegate.getEnvelope(lockKey); ok {
+		if env.Owner == myID {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (m *Manager) BroadcastCert(domain string, certPEM, keyPEM []byte) error {
+	if m.cipher == nil {
+		return fmt.Errorf("cluster encryption not enabled, cannot broadcast certs")
+	}
+
+	encryptedKey, err := m.cipher.Encrypt(keyPEM)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt private key: %w", err)
+	}
+
+	payload := CertPayload{
+		Domain:  domain,
+		CertPEM: certPEM,
+		KeyPEM:  encryptedKey,
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	m.delegate.broadcast(OpCert, "cert:"+domain, data, m.nodeName)
+	return nil
+}
+
+// BroadcastChallenge shares an ACME challenge token with the cluster.
+// If deleted is true, it removes the challenge.
+func (m *Manager) BroadcastChallenge(token, keyAuth string, deleted bool) {
+	key := "acme:" + token
+	if deleted {
+		m.delegate.broadcast(OpDel, key, nil, m.nodeName)
+	} else {
+		m.delegate.broadcast(OpChallenge, key, []byte(keyAuth), m.nodeName)
+	}
+}
+
+func (m *Manager) BroadcastRoute(key string, value []byte) {
+	m.delegate.broadcast(OpRoute, key, value, m.nodeName)
+}
+
+func (m *Manager) BroadcastStatus(status string) {
+	key := "status:" + m.nodeName
+	m.delegate.broadcast(OpStatus, key, []byte(status), m.nodeName)
+}
+
 func (m *Manager) Set(key string, value []byte) {
-	m.delegate.set(key, value)
+	m.delegate.broadcast(OpSet, key, value, m.nodeName)
 }
 
 func (m *Manager) Delete(key string) {
-	m.delegate.delete(key)
+	m.delegate.broadcast(OpDel, key, nil, m.nodeName)
 }
 
 func (m *Manager) Get(key string) ([]byte, bool) {
@@ -140,6 +228,7 @@ func (m *Manager) Metrics() map[string]uint64 {
 
 func (m *Manager) Shutdown() error {
 	close(m.stopCh)
+	m.BroadcastStatus("offline")
 	if err := m.list.Leave(5 * time.Second); err != nil {
 		m.logger.Warn("cluster leave failed", "err", err)
 	}

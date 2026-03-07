@@ -70,22 +70,42 @@ func (l *LocalCert) Validate() error {
 	if l.Enabled.NotActive() {
 		return nil
 	}
-	// Cert file validation
 	if l.CertFile == "" {
 		return ErrCertFileRequired
 	}
 	if !strings.HasPrefix(l.CertFile, Slash) {
 		return ErrCertFileAbsolute
 	}
-
-	// Key file validation
 	if l.KeyFile == "" {
 		return ErrKeyFileRequired
 	}
 	if !strings.HasPrefix(l.KeyFile, Slash) {
 		return ErrKeyFileAbsolute
 	}
+	return nil
+}
 
+type Pebble struct {
+	Enabled    bool   `hcl:"enabled,optional" json:"enabled"`
+	URL        string `hcl:"url,optional" json:"url"`
+	Insecure   bool   `hcl:"insecure,optional" json:"insecure"`
+	ChallSrv   string `hcl:"chall_srv,optional" json:"chall_srv"`
+	MgmtServer string `hcl:"mgmt_server,optional" json:"mgmt_server"`
+}
+
+func (p *Pebble) Validate() error {
+	if !p.Enabled {
+		return nil
+	}
+	if p.URL == "" {
+		p.URL = "https://localhost:14000/dir"
+	}
+	if p.ChallSrv == "" {
+		p.ChallSrv = "http://localhost:8055"
+	}
+	if p.MgmtServer == "" {
+		p.MgmtServer = "http://localhost:8055"
+	}
 	return nil
 }
 
@@ -93,38 +113,37 @@ type LetsEncrypt struct {
 	Enabled    Enabled `hcl:"enabled,optional" json:"enabled"`
 	Email      string  `hcl:"email,optional" json:"email"`
 	Staging    bool    `hcl:"staging,optional" json:"staging"`
-	ShortLived bool    `hcl:"short_lived,optional" json:"short_lived"` // Enable 6-day certs
+	ShortLived bool    `hcl:"short_lived,optional" json:"short_lived"`
+	Pebble     Pebble  `hcl:"pebble,block" json:"pebble"`
 }
 
 func (l *LetsEncrypt) Validate() error {
 	if l.Enabled.NotActive() {
 		return nil
 	}
-	// Email validation (if provided)
+	if l.Pebble.Enabled {
+		return l.Pebble.Validate()
+	}
 	if l.Email != "" && !strings.Contains(l.Email, "@") {
 		return ErrInvalidEmail
 	}
-
-	// Staging and ShortLived are booleans, no validation needed
 	return nil
 }
 
 type CustomCA struct {
 	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
-	Root    string  `hcl:"root" json:"root"` // CA cert file path
+	Root    string  `hcl:"root" json:"root"`
 }
 
 func (c *CustomCA) Validate() error {
 	if c.Enabled.NotActive() {
 		return nil
 	}
-	// Root CA file validation
 	if c.Root == "" {
 		return ErrRootRequiredCustomCA
 	}
 	if !strings.HasPrefix(c.Root, Slash) {
 		return ErrRootAbsolute
 	}
-
 	return nil
 }

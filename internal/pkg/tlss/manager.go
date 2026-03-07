@@ -3,50 +3,31 @@ package tlss
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
-	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
-	"github.com/go-acme/lego/v4/certificate"
-	"github.com/olekukonko/jack"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/security"
 	"github.com/olekukonko/ll"
 )
-
-const (
-	renewalWindow = 30 * 24 * time.Hour // 30 days
-	checkInterval = 1 * time.Hour
-)
-
-type CertCache map[string]*tls.Certificate
-
-type OnUpdateFunc func(domain string, certPEM, keyPEM []byte)
-
-// ClusterInterface defines what TLS manager needs from the cluster
-type ClusterInterface interface {
-	TryAcquireLock(key string) bool
-	BroadcastChallenge(token, keyAuth string, deleted bool)
-}
 
 type Manager struct {
 	logger      *ll.Logger
 	hostManager *discovery.Host
 	global      *alaye.Global
-
-	storage     Storage
-	activeCerts atomic.Value
-	onUpdate    OnUpdateFunc
-	scheduler   *jack.Scheduler
-	cluster     ClusterInterface
-
-	Challenges *ChallengeStore
-
-	mu sync.Mutex
+	storage     Store
+	installer   *Local
+	acme        *ACMEProvider
+	Challenges  *ChallengeStore
+	cluster     ClusterBroadcaster
+	cacheMu     sync.RWMutex
+	cache       map[string]*tls.Certificate
+	onUpdate    func(domain string, certPEM, keyPEM []byte)
 }
 
 func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global) *Manager {
@@ -54,39 +35,119 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global) *Ma
 		logger:      logger.Namespace("tls"),
 		hostManager: hm,
 		global:      global,
+		cache:       make(map[string]*tls.Certificate),
 		Challenges:  NewChallengeStore(logger),
 	}
-
-	m.activeCerts.Store(&CertCache{})
-
-	secret := global.Gossip.SecretKey.String()
-	store, err := NewDiskStorage(woos.NewFolder(global.Storage.CertsDir), secret)
-	if err != nil {
-		m.logger.Fields("err", err).Error("failed to init disk storage")
-	} else {
-		m.storage = store
-		if err := m.loadFromStorage(); err != nil {
-			m.logger.Fields("err", err).Warn("failed to load initial certificates")
+	baseDir := woos.MakeFolder(global.Storage.DataDir, woos.DataDir)
+	var cipher *security.Cipher
+	if global.Gossip.Enabled.Active() && global.Gossip.SecretKey != "" {
+		var err error
+		cipher, err = security.NewCipher(string(global.Gossip.SecretKey))
+		if err != nil {
+			m.logger.Warn("invalid gossip secret key, storage will be plaintext")
 		}
 	}
-
-	m.startScheduler()
+	var err error
+	m.storage, err = NewDiskStorage(baseDir, cipher)
+	if err != nil {
+		m.logger.Error("failed to initialize TLS storage", "error", err)
+		m.storage = nil // <-- ADD THIS LINE
+	}
+	m.acme = NewACMEProvider(logger, &global.LetsEncrypt, m.storage, m.Challenges)
+	certDir := woos.MakeFolder(global.Storage.CertsDir, woos.CertDir)
+	m.installer = NewLocal(logger, certDir)
+	m.loadFromStorage()
 	return m
 }
 
-func (m *Manager) SetUpdateCallback(fn OnUpdateFunc) {
-	m.onUpdate = fn
+func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
+	return next, nil
 }
 
-func (m *Manager) SetCluster(c ClusterInterface) {
-	m.cluster = c
-	// Wire the ChallengeStore to the Cluster for broadcasting
-	m.Challenges.SetCluster(c)
+func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	name := chi.ServerName
+	if name == "" {
+		return nil, woos.ErrMissingSNI
+	}
+	m.cacheMu.RLock()
+	cert, hit := m.cache[name]
+	m.cacheMu.RUnlock()
+	if hit {
+		return cert, nil
+	}
+	host := m.hostManager.Get(name)
+	mode := alaye.ModeLetsEncrypt
+	if host != nil && host.TLS.Mode != "" {
+		mode = host.TLS.Mode
+	} else if woos.IsLocalhost(name) {
+		mode = alaye.ModeLocalAuto
+	}
+	switch mode {
+	case alaye.ModeLocalAuto:
+		return m.getCertificateLocal(name)
+	case alaye.ModeLocalCert:
+		if host != nil {
+			if c, err := tls.LoadX509KeyPair(host.TLS.Local.CertFile, host.TLS.Local.KeyFile); err == nil {
+				return &c, nil
+			}
+		}
+		return nil, fmt.Errorf("failed to load manual certs for %s", name)
+	case alaye.ModeLetsEncrypt:
+		return m.getCertificateACME(name)
+	}
+	return nil, fmt.Errorf("no certificate strategy found for %s", name)
 }
 
-func (m *Manager) Close() {
-	if m.scheduler != nil {
-		_ = m.scheduler.Stop()
+func (m *Manager) getCertificateLocal(host string) (*tls.Certificate, error) {
+	m.installer.SetHosts([]string{host}, 443)
+	certFile, keyFile, err := m.installer.EnsureLocalhostCert()
+	if err != nil {
+		return nil, err
+	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, err
+	}
+	m.cacheMu.Lock()
+	m.cache[host] = &cert
+	m.cacheMu.Unlock()
+	return &cert, nil
+}
+
+func (m *Manager) getCertificateACME(domain string) (*tls.Certificate, error) {
+	tlsCert, certPEM, keyPEM, err := m.acme.ObtainCert(domain)
+	if err != nil {
+		return nil, woos.ErrCertNotfound
+	}
+	m.cacheMu.Lock()
+	m.cache[domain] = tlsCert
+	m.cacheMu.Unlock()
+	if m.storage != nil {
+		m.storage.Save(domain, certPEM, keyPEM)
+	}
+	if m.onUpdate != nil {
+		go m.onUpdate(domain, certPEM, keyPEM)
+	}
+	return tlsCert, nil
+}
+
+func (m *Manager) loadFromStorage() {
+	if m.storage == nil {
+		return
+	}
+	list, _ := m.storage.List()
+	for _, domain := range list {
+		if domain == "acme_account" {
+			continue
+		}
+		certPEM, keyPEM, err := m.storage.Load(domain)
+		if err == nil {
+			if cert, err := tls.X509KeyPair(certPEM, keyPEM); err == nil {
+				m.cacheMu.Lock()
+				m.cache[domain] = &cert
+				m.cacheMu.Unlock()
+			}
+		}
 	}
 }
 
@@ -94,185 +155,78 @@ func (m *Manager) GetConfigForClient(chi *tls.ClientHelloInfo) (*tls.Config, err
 	cfg := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 	}
+	if chi.ServerName == "" {
+		return cfg, nil
+	}
+	host := m.hostManager.Get(chi.ServerName)
+	if host != nil && host.TLS.ClientAuth != "" {
+		switch strings.ToLower(host.TLS.ClientAuth) {
+		case alaye.TlsRequireAndVerify:
+			cfg.ClientAuth = tls.RequireAndVerifyClientCert
+		case alaye.TlsRequire:
+			cfg.ClientAuth = tls.RequireAnyClientCert
+		case alaye.TlsRequest:
+			cfg.ClientAuth = tls.RequestClientCert
+		default:
+			cfg.ClientAuth = tls.NoClientCert
+		}
+		if len(host.TLS.ClientCAs) > 0 {
+			pool := x509.NewCertPool()
+			for _, path := range host.TLS.ClientCAs {
+				if pem, err := os.ReadFile(path); err == nil {
+					pool.AppendCertsFromPEM(pem)
+				}
+			}
+			cfg.ClientCAs = pool
+		}
+	}
 	return cfg, nil
 }
 
-func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	name := zulu.NormalizeSubject(chi.ServerName)
-	if name == "" {
-		return nil, woos.ErrMissingSNI
-	}
+func (m *Manager) Close() {}
 
-	cache := *m.activeCerts.Load().(*CertCache)
-
-	if cert, ok := cache[name]; ok {
-		return cert, nil
-	}
-
-	if idx := strings.Index(name, "."); idx != -1 {
-		wildcard := "*" + name[idx:]
-		if cert, ok := cache[wildcard]; ok {
-			return cert, nil
-		}
-	}
-
-	return nil, woos.ErrCertNotfound
+func (m *Manager) SetUpdateCallback(fn func(domain string, certPEM, keyPEM []byte)) {
+	m.onUpdate = fn
 }
 
-func (m *Manager) UpdateCertificate(domain string, certPEM, keyPEM []byte) error {
-	return m.updateInternal(domain, certPEM, keyPEM, true)
+func (m *Manager) SetCluster(c ClusterBroadcaster) {
+	m.cluster = c
+	m.Challenges.SetCluster(c)
 }
 
 func (m *Manager) ApplyClusterCertificate(domain string, certPEM, keyPEM []byte) error {
-	return m.updateInternal(domain, certPEM, keyPEM, false)
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return err
+	}
+	m.cacheMu.Lock()
+	m.cache[domain] = &cert
+	m.cacheMu.Unlock()
+	if m.storage != nil {
+		m.storage.Save(domain, certPEM, keyPEM)
+	}
+	return nil
 }
 
-// ApplyClusterChallenge is called by the Server when gossip receives a challenge update
 func (m *Manager) ApplyClusterChallenge(token, keyAuth string, deleted bool) {
 	m.Challenges.SyncFromCluster(token, keyAuth, deleted)
 }
 
-func (m *Manager) updateInternal(domain string, certPEM, keyPEM []byte, notify bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	domain = zulu.NormalizeSubject(domain)
-
-	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
+func (m *Manager) UpdateCertificate(domain string, certPEM, keyPEM []byte) error {
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		return err
 	}
-
-	if len(tlsCert.Certificate) > 0 {
-		tlsCert.Leaf, _ = x509.ParseCertificate(tlsCert.Certificate[0])
-	}
-
+	m.cacheMu.Lock()
+	m.cache[domain] = &cert
+	m.cacheMu.Unlock()
 	if m.storage != nil {
 		if err := m.storage.Save(domain, certPEM, keyPEM); err != nil {
 			return err
 		}
 	}
-
-	current := m.activeCerts.Load().(*CertCache)
-	newCache := make(CertCache, len(*current)+1)
-	for k, v := range *current {
-		newCache[k] = v
-	}
-	newCache[domain] = &tlsCert
-
-	m.activeCerts.Store(&newCache)
-	m.logger.Fields("domain", domain).Info("certificate updated")
-
-	if notify && m.onUpdate != nil {
+	if m.onUpdate != nil {
 		go m.onUpdate(domain, certPEM, keyPEM)
 	}
-
 	return nil
-}
-
-func (m *Manager) loadFromStorage() error {
-	if m.storage == nil {
-		return nil
-	}
-
-	domains, err := m.storage.List()
-	if err != nil {
-		return err
-	}
-
-	newCache := make(CertCache)
-	count := 0
-
-	for _, domain := range domains {
-		certPEM, keyPEM, err := m.storage.Load(domain)
-		if err != nil {
-			continue
-		}
-
-		tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
-		if err != nil {
-			continue
-		}
-
-		if len(tlsCert.Certificate) > 0 {
-			tlsCert.Leaf, _ = x509.ParseCertificate(tlsCert.Certificate[0])
-		}
-
-		newCache[domain] = &tlsCert
-		count++
-	}
-
-	m.activeCerts.Store(&newCache)
-	return nil
-}
-
-func (m *Manager) startScheduler() {
-	sched, _ := jack.NewScheduler("tls-renewal", jack.NewPool(1), jack.Routine{
-		Interval: checkInterval,
-	})
-	_ = sched.Do(jack.Do(m.checkRenewals))
-	m.scheduler = sched
-}
-
-func (m *Manager) obtainCert(domain string) {
-	m.logger.Fields("domain", domain).Info("starting acme renewal")
-
-	client, err := m.setupLegoClient()
-	if err != nil {
-		m.logger.Fields("domain", domain, "err", err).Error("failed to setup acme client")
-		return
-	}
-
-	request := certificate.ObtainRequest{
-		Domains: []string{domain},
-		Bundle:  true,
-	}
-
-	certificates, err := client.Certificate.Obtain(request)
-	if err != nil {
-		m.logger.Fields("domain", domain, "err", err).Error("acme obtain failed")
-		return
-	}
-
-	// Success! Update local and broadcast.
-	err = m.UpdateCertificate(domain, certificates.Certificate, certificates.PrivateKey)
-	if err != nil {
-		m.logger.Fields("domain", domain, "err", err).Error("failed to save obtained certificate")
-	} else {
-		m.logger.Fields("domain", domain).Info("certificate renewed successfully")
-	}
-}
-
-func (m *Manager) checkRenewals() {
-	cache := *m.activeCerts.Load().(*CertCache)
-	now := time.Now()
-
-	for domain, cert := range cache {
-		if cert.Leaf == nil {
-			continue
-		}
-
-		remaining := cert.Leaf.NotAfter.Sub(now)
-
-		// If < 30 days
-		if remaining < renewalWindow {
-
-			// Distributed Lock Check
-			if m.cluster != nil {
-				if !m.cluster.TryAcquireLock("renew:" + domain) {
-					m.logger.Fields("domain", domain).Debug("skipping renewal, locked by another node")
-					continue
-				}
-			}
-
-			m.logger.Fields("domain", domain, "remaining", remaining).Info("acquired lock, triggering renewal")
-
-			// Execute renewal in background so loop continues
-			go m.obtainCert(domain)
-		}
-	}
-}
-
-func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
-	return next, nil
 }

@@ -1,6 +1,8 @@
 package tlss
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,98 +10,81 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/security"
-	"github.com/olekukonko/errors"
 )
 
-var (
-	ErrCertNotFound = errors.New("certificate not found")
-)
+var ErrCertNotFound = errors.New("certificate not found")
 
-// Storage defines how certificates are persisted.
-// This abstraction allows swapping Disk for Gossip/Memory in Phase 3.
-type Storage interface {
-	// Save persists a certificate and its private key.
+type Store interface {
 	Save(domain string, certPEM, keyPEM []byte) error
-
-	// Load retrieves a certificate and private key.
 	Load(domain string) (certPEM, keyPEM []byte, err error)
-
-	// List returns all domains currently stored.
 	List() ([]string, error)
-
-	// Delete removes a certificate.
 	Delete(domain string) error
 }
 
-// DiskStorage implements Storage using the local filesystem.
-// It supports encryption at rest for private keys.
-type DiskStorage struct {
-	baseDir string
-	cipher  *security.Cipher
-	mu      sync.RWMutex
+type Storage struct {
+	dir    string
+	cipher *security.Cipher
+	mu     sync.Mutex
 }
 
-func NewDiskStorage(dir woos.Folder, secretKey string) (*DiskStorage, error) {
-	if !dir.IsSet() {
-		return nil, woos.ErrDataDirNotSet
+func NewDiskStorage(dir woos.Folder, cipher *security.Cipher) (*Storage, error) {
+	// Check if path exists but is not a directory
+	if dir.IsSet() {
+		info, err := os.Stat(dir.Path())
+		if err == nil && !info.IsDir() {
+			return nil, fmt.Errorf("path exists but is not a directory: %s", dir.Path())
+		}
 	}
 
 	if err := dir.Ensure(woos.Folder(""), true); err != nil {
 		return nil, err
 	}
-
-	ds := &DiskStorage{
-		baseDir: dir.Path(),
-	}
-
-	if secretKey != "" {
-		c, err := security.NewCipher(secretKey)
-		if err != nil {
-			return nil, err
-		}
-		ds.cipher = c
-	}
-
-	return ds, nil
+	return &Storage{
+		dir:    dir.Path(),
+		cipher: cipher,
+	}, nil
 }
 
-func (s *DiskStorage) Save(domain string, certPEM, keyPEM []byte) error {
+func (s *Storage) safeName(domain string) string {
+	return strings.ReplaceAll(domain, "*", "_wildcard_")
+}
+
+func (s *Storage) filenameKey(base string) string {
+	if s.cipher != nil {
+		return base + ".key.enc"
+	}
+	return base + ".key"
+}
+
+func (s *Storage) Save(domain string, certPEM, keyPEM []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	safeDomain := safeFileName(domain)
-	certPath := filepath.Join(s.baseDir, safeDomain+".crt")
-	keyPath := filepath.Join(s.baseDir, safeDomain+".key")
+	base := filepath.Join(s.dir, s.safeName(domain))
 
-	// Encrypt key if cipher is available
+	if err := os.WriteFile(base+".crt", certPEM, 0644); err != nil {
+		return err
+	}
+
 	keyData := keyPEM
 	if s.cipher != nil {
 		var err error
 		keyData, err = s.cipher.Encrypt(keyPEM)
 		if err != nil {
-			return err
+			return fmt.Errorf("encryption failed: %w", err)
 		}
 	}
 
-	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(keyPath, keyData, 0600); err != nil {
-		return err
-	}
-
-	return nil
+	return os.WriteFile(s.filenameKey(base), keyData, 0600)
 }
 
-func (s *DiskStorage) Load(domain string) ([]byte, []byte, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (s *Storage) Load(domain string) ([]byte, []byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	safeDomain := safeFileName(domain)
-	certPath := filepath.Join(s.baseDir, safeDomain+".crt")
-	keyPath := filepath.Join(s.baseDir, safeDomain+".key")
+	base := filepath.Join(s.dir, s.safeName(domain))
 
-	certPEM, err := os.ReadFile(certPath)
+	certPEM, err := os.ReadFile(base + ".crt")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil, ErrCertNotFound
@@ -107,33 +92,38 @@ func (s *DiskStorage) Load(domain string) ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 
-	keyData, err := os.ReadFile(keyPath)
+	keyPath := s.filenameKey(base)
+
+	if s.cipher != nil {
+		if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+			plainKeyPath := base + ".key"
+			if _, err := os.Stat(plainKeyPath); err == nil {
+				keyPath = plainKeyPath
+			}
+		}
+	}
+
+	rawKey, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Decrypt if cipher is available
-	if s.cipher != nil {
-		decrypted, err := s.cipher.Decrypt(keyData)
+	keyPEM := rawKey
+	if s.cipher != nil && strings.HasSuffix(keyPath, ".enc") {
+		keyPEM, err = s.cipher.Decrypt(rawKey)
 		if err != nil {
-			// Fallback: try reading as plaintext in case encryption was enabled recently
-			// and this is an old legacy file (PEM usually starts with --)
-			if len(keyData) > 0 && keyData[0] == '-' {
-				return certPEM, keyData, nil
-			}
-			return nil, nil, errors.Newf("failed to decrypt key for %s: %w", domain, err)
+			return nil, nil, fmt.Errorf("decryption failed: %w", err)
 		}
-		keyData = decrypted
 	}
 
-	return certPEM, keyData, nil
+	return certPEM, keyPEM, nil
 }
 
-func (s *DiskStorage) List() ([]string, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (s *Storage) List() ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	entries, err := os.ReadDir(s.baseDir)
+	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		return nil, err
 	}
@@ -141,25 +131,21 @@ func (s *DiskStorage) List() ([]string, error) {
 	var domains []string
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasSuffix(e.Name(), ".crt") {
-			domain := strings.TrimSuffix(e.Name(), ".crt")
-			// Rudimentary un-safeFileName (mostly just for simple cases)
-			// In production, we might store metadata mapping file ID to Domain
-			domains = append(domains, domain)
+			name := strings.TrimSuffix(e.Name(), ".crt")
+			name = strings.ReplaceAll(name, "_wildcard_", "*")
+			domains = append(domains, name)
 		}
 	}
 	return domains, nil
 }
 
-func (s *DiskStorage) Delete(domain string) error {
+func (s *Storage) Delete(domain string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	safeDomain := safeFileName(domain)
-	_ = os.Remove(filepath.Join(s.baseDir, safeDomain+".crt"))
-	_ = os.Remove(filepath.Join(s.baseDir, safeDomain+".key"))
+	base := filepath.Join(s.dir, s.safeName(domain))
+	_ = os.Remove(base + ".crt")
+	_ = os.Remove(base + ".key")
+	_ = os.Remove(base + ".key.enc")
 	return nil
-}
-
-func safeFileName(domain string) string {
-	return strings.ReplaceAll(domain, "*", "_wildcard_")
 }

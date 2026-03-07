@@ -10,12 +10,15 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
+	"sync"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"github.com/go-acme/lego/v4/certcrypto"
+	"github.com/go-acme/lego/v4/certificate"
 	"github.com/go-acme/lego/v4/lego"
 	"github.com/go-acme/lego/v4/registration"
+	"github.com/olekukonko/ll"
 )
 
 type AcmeUser struct {
@@ -28,52 +31,76 @@ func (u *AcmeUser) GetEmail() string                        { return u.Email }
 func (u *AcmeUser) GetRegistration() *registration.Resource { return u.Registration }
 func (u *AcmeUser) GetPrivateKey() crypto.PrivateKey        { return u.key }
 
-type ClusterProvider struct {
-	store *ChallengeStore
+type ACMEProvider struct {
+	logger     *ll.Logger
+	config     *alaye.LetsEncrypt
+	storage    Store
+	challenges *ChallengeStore
+	user       *AcmeUser
+	mu         sync.Mutex
 }
 
-func (c *ClusterProvider) Present(domain, token, keyAuth string) error {
-	return c.store.Present(domain, token, keyAuth)
-}
-
-func (c *ClusterProvider) CleanUp(domain, token, keyAuth string) error {
-	return c.store.CleanUp(domain, token, keyAuth)
-}
-
-func (m *Manager) setupLegoClient() (*lego.Client, error) {
-	email := m.global.LetsEncrypt.Email
-	if email == "" {
-		return nil, fmt.Errorf("email is required for Let's Encrypt")
+func NewACMEProvider(logger *ll.Logger, config *alaye.LetsEncrypt, storage Store, challenges *ChallengeStore) *ACMEProvider {
+	return &ACMEProvider{
+		logger:     logger,
+		config:     config,
+		storage:    storage,
+		challenges: challenges,
 	}
+}
 
-	userKey, err := m.loadOrGenAccountKey()
+func (p *ACMEProvider) ObtainCert(domain string) (*tls.Certificate, []byte, []byte, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	client, err := p.setupLegoClient()
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
-	user := &AcmeUser{
-		Email: email,
-		key:   userKey,
+	request := certificate.ObtainRequest{
+		Domains: []string{domain},
+		Bundle:  true,
 	}
 
-	config := lego.NewConfig(user)
+	certs, err := client.Certificate.Obtain(request)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("acme: obtain error: %w", err)
+	}
 
-	if m.global.LetsEncrypt.Pebble.Enabled {
-		config.CADirURL = m.global.LetsEncrypt.Pebble.URL
+	tlsCert, err := tls.X509KeyPair(certs.Certificate, certs.PrivateKey)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return &tlsCert, certs.Certificate, certs.PrivateKey, nil
+}
+
+func (p *ACMEProvider) setupLegoClient() (*lego.Client, error) {
+	if p.user == nil {
+		if err := p.loadUser(); err != nil {
+			return nil, err
+		}
+	}
+
+	config := lego.NewConfig(p.user)
+
+	if p.config.Pebble.Enabled {
+		config.CADirURL = p.config.Pebble.URL
 		if config.CADirURL == "" {
 			config.CADirURL = "https://localhost:14000/dir"
 		}
-		if m.global.LetsEncrypt.Pebble.Insecure {
+		if p.config.Pebble.Insecure {
 			config.HTTPClient = &http.Client{
 				Transport: &http.Transport{
 					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 				},
 			}
 		}
-	} else if m.global.LetsEncrypt.Staging {
-		config.CADirURL = lego.LEDirectoryStaging
+	} else if p.config.Staging {
+		config.CADirURL = woos.LetsEncryptStagingDir
 	} else {
-		config.CADirURL = lego.LEDirectoryProduction
+		config.CADirURL = woos.LetsEncryptProdDir
 	}
 
 	config.Certificate.KeyType = certcrypto.RSA2048
@@ -83,55 +110,59 @@ func (m *Manager) setupLegoClient() (*lego.Client, error) {
 		return nil, err
 	}
 
-	reg, err := client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
+	err = client.Challenge.SetHTTP01Provider(p.challenges)
 	if err != nil {
-		m.logger.Fields("email", email).Debug("acme registration (existing or new)")
-	}
-	user.Registration = reg
-
-	provider := &ClusterProvider{store: m.Challenges}
-	if err := client.Challenge.SetHTTP01Provider(provider); err != nil {
 		return nil, err
+	}
+
+	if p.user.Registration == nil {
+		reg, err := client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
+		if err != nil {
+			reg, err = client.Registration.ResolveAccountByKey()
+			if err != nil {
+				return nil, err
+			}
+		}
+		p.user.Registration = reg
 	}
 
 	return client, nil
 }
 
-func (m *Manager) loadOrGenAccountKey() (crypto.PrivateKey, error) {
-	path := filepath.Join(m.global.Storage.CertsDir, "acme_account.key")
-
-	if _, err := os.Stat(path); err == nil {
-		pemBytes, err := os.ReadFile(path)
+// acme.go - only the fixed loadUser function shown
+func (p *ACMEProvider) loadUser() error {
+	email := p.config.Email
+	if email == "" {
+		return fmt.Errorf("email is required for Let's Encrypt")
+	}
+	var privateKey crypto.PrivateKey
+	_, keyBytes, keyErr := p.storage.Load("acme_account") // FIXED: 3 return values
+	if keyErr == nil {
+		block, _ := pem.Decode(keyBytes)
+		if block != nil {
+			var err error
+			privateKey, err = x509.ParseECPrivateKey(block.Bytes)
+			if err != nil {
+				// Try RSA if EC fails (legacy keys)
+				privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+				if err != nil {
+					p.logger.Warn("failed to parse existing account key, generating new one")
+				}
+			}
+		}
+	}
+	if privateKey == nil {
+		var err error
+		privateKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		block, _ := pem.Decode(pemBytes)
-		if block == nil {
-			return nil, fmt.Errorf("no PEM data found in account key")
-		}
-		return x509.ParseECPrivateKey(block.Bytes)
+		bytes, _ := x509.MarshalECPrivateKey(privateKey.(*ecdsa.PrivateKey))
+		_ = p.storage.Save("acme_account", nil, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: bytes}))
 	}
-
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, err
+	p.user = &AcmeUser{
+		Email: email,
+		key:   privateKey,
 	}
-
-	bytes, err := x509.MarshalECPrivateKey(privateKey)
-	if err != nil {
-		return nil, err
-	}
-	pemBlock := &pem.Block{Type: "EC PRIVATE KEY", Bytes: bytes}
-
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	if err := pem.Encode(f, pemBlock); err != nil {
-		return nil, err
-	}
-
-	return privateKey, nil
+	return nil
 }

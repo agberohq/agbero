@@ -34,8 +34,6 @@ func BootstrapEnv(logger *ll.Logger) error {
 	return nil
 }
 
-// IsCARootInstalled checks if our local CA certificate exists in the given directory.
-// If certDir is empty, returns false.
 func IsCARootInstalled(certDir string) bool {
 	if certDir == "" {
 		return false

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/mappo"
 	"golang.org/x/time/rate"
@@ -130,7 +131,7 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cleanPath := path.Clean(r.URL.Path)
-		if strings.HasPrefix(cleanPath, "/.well-known/acme-challenge/") {
+		if wellknown.IsACMEChallengePrefix(cleanPath) {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -2,18 +2,19 @@ package cluster
 
 import (
 	"fmt"
-	"net"
 	"sync"
 	"testing"
 	"time"
 
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"github.com/olekukonko/ll"
 )
 
-// mockHandler captures updates for assertions in TestClusterReplication
 type mockHandler struct {
-	mu      sync.RWMutex
-	updates map[string]string
+	mu         sync.RWMutex
+	updates    map[string]string
+	certs      map[string]bool
+	challenges map[string]string
 }
 
 func (m *mockHandler) OnClusterChange(key string, value []byte, deleted bool) {
@@ -25,8 +26,30 @@ func (m *mockHandler) OnClusterChange(key string, value []byte, deleted bool) {
 	if deleted {
 		delete(m.updates, key)
 	} else {
-		// Copy to avoid sharing underlying byte slice
 		m.updates[key] = string(append([]byte(nil), value...))
+	}
+}
+
+func (m *mockHandler) OnClusterCert(domain string, certPEM, keyPEM []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.certs == nil {
+		m.certs = make(map[string]bool)
+	}
+	m.certs[domain] = true
+	return nil
+}
+
+func (m *mockHandler) OnClusterChallenge(token, keyAuth string, deleted bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.challenges == nil {
+		m.challenges = make(map[string]string)
+	}
+	if deleted {
+		delete(m.challenges, token)
+	} else {
+		m.challenges[token] = keyAuth
 	}
 }
 
@@ -44,18 +67,11 @@ func (m *mockHandler) has(key string) bool {
 	return ok
 }
 
-func getFreePort() int {
-	addr, _ := net.ResolveTCPAddr("tcp", "localhost:0")
-	l, _ := net.ListenTCP("tcp", addr)
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
-}
-
 func TestClusterReplication(t *testing.T) {
-	logger := ll.New("test").Enable()
+	logger := ll.New("test").Disable()
 
-	port1 := getFreePort()
-	port2 := getFreePort()
+	port1 := zulu.PortFree()
+	port2 := zulu.PortFree()
 
 	h1 := &mockHandler{}
 	node1, err := NewManager(Config{
@@ -80,30 +96,26 @@ func TestClusterReplication(t *testing.T) {
 	}
 	defer node2.Shutdown()
 
-	// Wait for join
 	time.Sleep(2 * time.Second)
 	if len(node1.Members()) != 2 {
 		t.Fatalf("cluster failed to join, members: %v", node1.Members())
 	}
 
-	// Test 1: Node 1 sets data -> Node 2 receives
 	key := "route:test"
 	val := []byte("payload")
 	node1.Set(key, val)
 
-	time.Sleep(500 * time.Millisecond) // Allow gossip propagation
+	time.Sleep(500 * time.Millisecond)
 
 	got, ok := node2.Get(key)
 	if !ok || string(got) != string(val) {
 		t.Errorf("Node2 failed to receive update. Got %q, want %q", got, val)
 	}
 
-	// Test 2: Handler invocation check (thread-safe)
 	if got, ok := h2.get(key); !ok || got != string(val) {
 		t.Errorf("Node2 handler not triggered correctly")
 	}
 
-	// Test 3: Node 2 updates data (LWW) -> Node 1 receives
 	newVal := []byte("payload_updated")
 	node2.Set(key, newVal)
 
@@ -114,7 +126,6 @@ func TestClusterReplication(t *testing.T) {
 		t.Errorf("Node1 failed to receive update from Node2. Got %q, want %q", got1, newVal)
 	}
 
-	// Test 4: Deletion
 	node1.Delete(key)
 	time.Sleep(500 * time.Millisecond)
 
@@ -123,10 +134,11 @@ func TestClusterReplication(t *testing.T) {
 	}
 }
 
-// testHandler is used for TestClusterSync and TestDelegate_LWW_and_Tombstones
 type testHandler struct {
-	mu   sync.RWMutex
-	data map[string][]byte
+	mu         sync.RWMutex
+	data       map[string][]byte
+	certs      map[string]bool
+	challenges map[string]string
 }
 
 func (h *testHandler) OnClusterChange(key string, value []byte, deleted bool) {
@@ -138,8 +150,30 @@ func (h *testHandler) OnClusterChange(key string, value []byte, deleted bool) {
 	if deleted {
 		delete(h.data, key)
 	} else {
-		// Copy to avoid sharing underlying byte slice
 		h.data[key] = append([]byte(nil), value...)
+	}
+}
+
+func (h *testHandler) OnClusterCert(domain string, certPEM, keyPEM []byte) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.certs == nil {
+		h.certs = make(map[string]bool)
+	}
+	h.certs[domain] = true
+	return nil
+}
+
+func (h *testHandler) OnClusterChallenge(token, keyAuth string, deleted bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.challenges == nil {
+		h.challenges = make(map[string]string)
+	}
+	if deleted {
+		delete(h.challenges, token)
+	} else {
+		h.challenges[token] = keyAuth
 	}
 }
 
@@ -163,7 +197,6 @@ func (h *testHandler) has(key string) bool {
 func TestClusterSync(t *testing.T) {
 	logger := ll.New("test").Disable()
 
-	// Node 1
 	h1 := &testHandler{data: make(map[string][]byte)}
 	c1, err := NewManager(Config{
 		BindAddr: "127.0.0.1",
@@ -177,7 +210,6 @@ func TestClusterSync(t *testing.T) {
 
 	port1 := c1.list.LocalNode().Port
 
-	// Node 2 (Joins Node 1)
 	h2 := &testHandler{data: make(map[string][]byte)}
 	c2, err := NewManager(Config{
 		BindAddr: "127.0.0.1",
@@ -190,26 +222,21 @@ func TestClusterSync(t *testing.T) {
 	}
 	defer c2.Shutdown()
 
-	// Wait for join
 	time.Sleep(2 * time.Second)
 	if c1.list.NumMembers() != 2 || c2.list.NumMembers() != 2 {
 		t.Fatalf("nodes failed to join: n1=%d n2=%d", c1.list.NumMembers(), c2.list.NumMembers())
 	}
 
-	// Test Propagation: Node 1 sets value
 	key := "test-key"
 	val := []byte("hello-world")
 	c1.Set(key, val)
 
-	// Wait for sync
 	time.Sleep(1 * time.Second)
 
-	// Thread-safe assertion
 	if got, ok := h2.get(key); !ok || string(got) != string(val) {
 		t.Fatalf("node2 did not receive update. got %v, want %v", string(got), string(val))
 	}
 
-	// Test Deletion Propagation
 	c2.Delete(key)
 	time.Sleep(1 * time.Second)
 
@@ -224,9 +251,8 @@ func TestClusterSync(t *testing.T) {
 func TestDelegate_LWW_and_Tombstones(t *testing.T) {
 	logger := ll.New("test").Disable()
 	metrics := &RealMetrics{}
-	del := newDelegate(nil, logger, metrics)
+	del := newDelegate(nil, logger, metrics, nil)
 
-	// 1. Initial Set
 	ts1 := time.Now().UnixNano()
 	env1 := Envelope{Key: "foo", Op: OpSet, Value: []byte("v1"), Timestamp: ts1}
 	del.apply(env1, true)
@@ -236,7 +262,6 @@ func TestDelegate_LWW_and_Tombstones(t *testing.T) {
 		t.Fatalf("expected v1, got %v", string(val))
 	}
 
-	// 2. Out-of-order Set (Older timestamp)
 	envOld := Envelope{Key: "foo", Op: OpSet, Value: []byte("v0"), Timestamp: ts1 - 1000}
 	del.apply(envOld, false)
 
@@ -245,7 +270,6 @@ func TestDelegate_LWW_and_Tombstones(t *testing.T) {
 		t.Fatalf("LWW failed: expected v1 to persist over v0")
 	}
 
-	// 3. Newer Set
 	ts2 := ts1 + 1000
 	env2 := Envelope{Key: "foo", Op: OpSet, Value: []byte("v2"), Timestamp: ts2}
 	del.apply(env2, false)
@@ -255,17 +279,15 @@ func TestDelegate_LWW_and_Tombstones(t *testing.T) {
 		t.Fatalf("LWW failed: expected v2 to overwrite v1")
 	}
 
-	// 4. Delete (Tombstone)
 	ts3 := ts2 + 1000
 	envDel := Envelope{Key: "foo", Op: OpDel, Timestamp: ts3}
 	del.apply(envDel, false)
 
 	_, ok = del.get("foo")
 	if ok {
-		t.Fatalf("expected key to be deleted (hidden by getter)")
+		t.Fatalf("expected key to be deleted")
 	}
 
-	// Verify tombstone exists internally
 	del.mu.RLock()
 	internalEnv, exists := del.store["foo"]
 	del.mu.RUnlock()
@@ -280,7 +302,6 @@ func TestDelegate_LWW_and_Tombstones(t *testing.T) {
 		t.Fatalf("tombstone value should be nil")
 	}
 
-	// 5. Stale Set attempting to revive deleted key (Older than tombstone)
 	envStale := Envelope{Key: "foo", Op: OpSet, Value: []byte("v2"), Timestamp: ts2}
 	del.apply(envStale, false)
 

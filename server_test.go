@@ -139,7 +139,7 @@ func TestServer_buildTLS(t *testing.T) {
 	}
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
-	cfg, handler := s.buildTLS(next)
+	cfg, handler := s.tlsBuild(next)
 	if cfg == nil {
 		t.Error("TLS config not created")
 	}
@@ -161,7 +161,7 @@ func TestServer_buildTLS_NoEmail(t *testing.T) {
 	}
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
-	cfg, handler := s.buildTLS(next)
+	cfg, handler := s.tlsBuild(next)
 	if cfg == nil {
 		t.Error("TLS config should be created even if email is missing (for local dev)")
 	}
@@ -192,7 +192,7 @@ func TestServer_buildGlobalRateLimiter(t *testing.T) {
 	}}
 
 	ipMgr := zulu.NewIPManager(nil)
-	rl := s.buildGlobalRateLimiter(s.global, ipMgr)
+	rl := s.chainBuildRateLimiter(s.global, ipMgr)
 	if rl == nil {
 		t.Error("RateLimiter not created")
 	}
@@ -206,7 +206,7 @@ func TestServer_buildGlobalRateLimiter_Disabled(t *testing.T) {
 	}}
 
 	ipMgr := zulu.NewIPManager(nil)
-	rl := s.buildGlobalRateLimiter(s.global, ipMgr)
+	rl := s.chainBuildRateLimiter(s.global, ipMgr)
 	if rl != nil {
 		t.Error("RateLimiter should be nil when disabled")
 	}
@@ -246,7 +246,7 @@ func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
 
 	zulu.Route.Store(key, item)
 
-	h := s.getOrBuildRouteHandler(route, host)
+	h := s.routeBuilder(route, host)
 	if h != handler {
 		t.Error("Cache miss unexpectedly")
 	}
@@ -277,7 +277,7 @@ func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
 
 	zulu.Route.Delete(route.Key())
 
-	h := s.getOrBuildRouteHandler(route, host)
+	h := s.routeBuilder(route, host)
 	if h == nil {
 		t.Error("Handler should be created on cache miss")
 	}
@@ -473,7 +473,7 @@ func TestServer_mTLS_Apply_Table(t *testing.T) {
 			s := &Server{logger: testLogger}
 			tlsConfig := &tls.Config{}
 
-			s.applyMTLS(tlsConfig, host)
+			s.mtlsApply(tlsConfig, host)
 
 			if tlsConfig.ClientAuth != tt.expected {
 				t.Errorf("ClientAuth mismatch for mode %s: expected %v, got %v", tt.mode, tt.expected, tlsConfig.ClientAuth)
@@ -564,7 +564,7 @@ route "/" {
 	writeSyncedFile(t, hostFile, []byte(initialHostConfig))
 
 	configFile := filepath.Join(tmpDir, "agbero.hcl")
-	mainPort := getFreePort(t)
+	mainPort := zulu.PortFree()
 	time.Sleep(100 * time.Millisecond)
 
 	initialGlobalConfig := fmt.Sprintf(`version = 2
@@ -616,7 +616,7 @@ timeouts {
 
 	waitForPort(t, mainPort)
 
-	targetPort := getFreePort(t)
+	targetPort := zulu.PortFree()
 	if targetPort == mainPort {
 		t.Fatal("getFreePort returned the same port as mainPort")
 	}
@@ -679,8 +679,8 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	port1 := getFreePort(t)
-	port2 := getFreePort(t)
+	port1 := zulu.PortFree()
+	port2 := zulu.PortFree()
 
 	global1 := &alaye.Global{
 		Bind: alaye.Bind{HTTP: []string{":0"}},
@@ -872,8 +872,8 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	port1 := getFreePort(t)
-	port2 := getFreePort(t)
+	port1 := zulu.PortFree()
+	port2 := zulu.PortFree()
 
 	global1 := &alaye.Global{
 		Bind: alaye.Bind{HTTP: []string{":0"}},
@@ -1069,16 +1069,6 @@ func writeSyncedFile(t *testing.T, path string, data []byte) {
 	if err := f.Sync(); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func getFreePort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
 }
 
 func waitForPort(t *testing.T, port int) {

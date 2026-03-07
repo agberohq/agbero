@@ -13,7 +13,9 @@ import (
 )
 
 type mockHandler struct {
-	kv map[string][]byte
+	kv         map[string][]byte
+	certs      map[string]bool
+	challenges map[string]string
 }
 
 func (m *mockHandler) OnClusterChange(key string, value []byte, deleted bool) {
@@ -24,9 +26,32 @@ func (m *mockHandler) OnClusterChange(key string, value []byte, deleted bool) {
 	}
 }
 
+func (m *mockHandler) OnClusterCert(domain string, certPEM, keyPEM []byte) error {
+	if m.certs == nil {
+		m.certs = make(map[string]bool)
+	}
+	m.certs[domain] = true
+	return nil
+}
+
+func (m *mockHandler) OnClusterChallenge(token, keyAuth string, deleted bool) {
+	if m.challenges == nil {
+		m.challenges = make(map[string]string)
+	}
+	if deleted {
+		delete(m.challenges, token)
+	} else {
+		m.challenges[token] = keyAuth
+	}
+}
+
 func TestRouteAPI(t *testing.T) {
 	logger := ll.New("test").Disable()
-	handler := &mockHandler{kv: make(map[string][]byte)}
+	handler := &mockHandler{
+		kv:         make(map[string][]byte),
+		certs:      make(map[string]bool),
+		challenges: make(map[string]string),
+	}
 
 	cMgr, err := cluster.NewManager(cluster.Config{
 		BindAddr: "127.0.0.1",
@@ -68,20 +93,8 @@ func TestRouteAPI(t *testing.T) {
 	}
 
 	expectedKey := "route:example.com|/api"
-	// API operations on cluster are eventual, but local delegate is applied immediately in mock
-	// However, the Manager.Set is async. We might need a small wait in a real integration test,
-	// but here we are checking the mockHandler which relies on the Manager's delegate.
-	// Since Manager.Set calls delegate.set which locks and calls handler, it should be visible.
-
-	// Wait for async propagation if necessary (memberlist might be async internally)
-	// But local set usually applies directly.
-	// Let's verify against the handler's map.
-
 	_, exists := handler.kv[expectedKey]
 	if !exists {
-		// Manager.Set is async/gossip based in some implementations, but Set() calls delegate.set() directly in this implementation.
-		// Check implementation details: Manager.Set -> delegate.set -> apply -> handler.OnClusterChange.
-		// It should be synchronous for the local node.
 		t.Error("route not found in cluster state")
 	}
 

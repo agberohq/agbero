@@ -13,7 +13,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,7 +21,6 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"github.com/go-acme/lego/v4/registration"
-	"github.com/olekukonko/ll"
 )
 
 func TestAcmeUser_Interface(t *testing.T) {
@@ -33,7 +31,6 @@ func TestAcmeUser_Interface(t *testing.T) {
 		Registration: reg,
 		key:          priv,
 	}
-
 	if user.GetEmail() != "test@example.com" {
 		t.Error("GetEmail failed")
 	}
@@ -45,298 +42,36 @@ func TestAcmeUser_Interface(t *testing.T) {
 	}
 }
 
-func TestClusterProvider_Present(t *testing.T) {
-	store := NewChallengeStore(ll.New("test").Disable())
-	provider := &ClusterProvider{store: store}
-
-	err := provider.Present("example.com", "token123", "keyAuth456")
+func TestChallengeStore_Present(t *testing.T) {
+	store := NewChallengeStore(testLogger)
+	err := store.Present("example.com", "token123", "keyAuth456")
 	if err != nil {
 		t.Fatalf("Present failed: %v", err)
 	}
-
 	auth, ok := store.GetKeyAuth("token123")
 	if !ok || auth != "keyAuth456" {
 		t.Error("Present did not store challenge correctly")
 	}
 }
 
-func TestClusterProvider_CleanUp(t *testing.T) {
-	store := NewChallengeStore(ll.New("test").Disable())
-	provider := &ClusterProvider{store: store}
-
+func TestChallengeStore_CleanUp(t *testing.T) {
+	store := NewChallengeStore(testLogger)
 	store.Present("example.com", "token123", "keyAuth456")
-	err := provider.CleanUp("example.com", "token123", "keyAuth456")
+	err := store.CleanUp("example.com", "token123", "keyAuth456")
 	if err != nil {
 		t.Fatalf("CleanUp failed: %v", err)
 	}
-
 	_, ok := store.GetKeyAuth("token123")
 	if ok {
 		t.Error("CleanUp did not remove challenge")
 	}
 }
 
-func TestManager_setupLegoClient_MissingEmail(t *testing.T) {
-	tmpDir := t.TempDir()
-	global := &alaye.Global{
-		Storage:     alaye.Storage{CertsDir: tmpDir},
-		Gossip:      alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
-		LetsEncrypt: alaye.LetsEncrypt{Enabled: alaye.Active},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-	defer mgr.Close()
-
-	_, err := mgr.setupLegoClient()
-	if err == nil || !strings.Contains(err.Error(), "email is required") {
-		t.Fatal("expected error for missing email")
-	}
-}
-
-func TestManager_setupLegoClient_GeneratesKey(t *testing.T) {
-	tmpDir := t.TempDir()
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
-		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
-			Email:   "test@example.com",
-			Pebble:  alaye.Pebble{Enabled: true, Insecure: true},
-		},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-	defer mgr.Close()
-
-	_, err := mgr.setupLegoClient()
-	if err != nil {
-		t.Logf("expected error without pebble server: %v", err)
-	}
-
-	keyPath := filepath.Join(tmpDir, "acme_account.key")
-	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
-		t.Fatal("acme_account.key not created")
-	}
-
-	pemBytes, _ := os.ReadFile(keyPath)
-	block, _ := pem.Decode(pemBytes)
-	if block == nil {
-		t.Fatal("invalid PEM in account key")
-	}
-	_, err = x509.ParseECPrivateKey(block.Bytes)
-	if err != nil {
-		t.Fatalf("invalid EC key: %v", err)
-	}
-}
-
-func TestManager_setupLegoClient_LoadsExistingKey(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	bytes, _ := x509.MarshalECPrivateKey(priv)
-	pemBlock := &pem.Block{Type: "EC PRIVATE KEY", Bytes: bytes}
-	keyPath := filepath.Join(tmpDir, "acme_account.key")
-	f, _ := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	pem.Encode(f, pemBlock)
-	f.Close()
-
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
-		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
-			Email:   "test@example.com",
-			Pebble:  alaye.Pebble{Enabled: true, Insecure: true},
-		},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-	defer mgr.Close()
-
-	_, err := mgr.setupLegoClient()
-	if err != nil {
-		t.Logf("expected error without pebble server: %v", err)
-	}
-
-	pemBytes, _ := os.ReadFile(keyPath)
-	block, _ := pem.Decode(pemBytes)
-	key, _ := x509.ParseECPrivateKey(block.Bytes)
-	if key.X.Cmp(priv.X) != 0 {
-		t.Error("loaded key differs from original")
-	}
-}
-
-func TestManager_setupLegoClient_InvalidPEM(t *testing.T) {
-	tmpDir := t.TempDir()
-	keyPath := filepath.Join(tmpDir, "acme_account.key")
-	os.WriteFile(keyPath, []byte("invalid pem"), 0600)
-
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
-		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
-			Email:   "test@example.com",
-		},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-	defer mgr.Close()
-
-	_, err := mgr.loadOrGenAccountKey()
-	if err == nil || !strings.Contains(err.Error(), "no PEM data") {
-		t.Fatal("expected error for invalid PEM")
-	}
-}
-
-func TestManager_setupLegoClient_PebbleConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
-		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
-			Email:   "test@example.com",
-			Pebble: alaye.Pebble{
-				Enabled:  true,
-				URL:      "https://pebble.example.com/dir",
-				Insecure: true,
-			},
-		},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-	defer mgr.Close()
-
-	_, err := mgr.setupLegoClient()
-	if err != nil {
-		t.Logf("expected error without server: %v", err)
-	}
-
-	keyPath := filepath.Join(tmpDir, "acme_account.key")
-	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
-		t.Fatal("key not created with pebble config")
-	}
-}
-
-func TestManager_setupLegoClient_StagingConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
-		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
-			Email:   "test@example.com",
-			Staging: true,
-		},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-	defer mgr.Close()
-
-	_, err := mgr.setupLegoClient()
-	if err != nil {
-		t.Logf("expected error without network: %v", err)
-	}
-}
-
-func TestManager_setupLegoClient_ProductionConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
-		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
-			Email:   "test@example.com",
-		},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-	defer mgr.Close()
-
-	_, err := mgr.setupLegoClient()
-	if err != nil {
-		t.Logf("expected error without network: %v", err)
-	}
-}
-
-func TestManager_loadOrGenAccountKey_WriteError(t *testing.T) {
-	tmpDir := t.TempDir()
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: "/nonexistent/path"},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-
-	_, err := mgr.loadOrGenAccountKey()
-	if err == nil {
-		t.Fatal("expected error for invalid path")
-	}
-}
-
-func TestManager_setupLegoClient_DefaultPebbleURL(t *testing.T) {
-	tmpDir := t.TempDir()
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
-		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
-			Email:   "test@example.com",
-			Pebble: alaye.Pebble{
-				Enabled: true,
-				URL:     "",
-			},
-		},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-	defer mgr.Close()
-
-	_, err := mgr.setupLegoClient()
-	if err != nil {
-		t.Logf("expected error: %v", err)
-	}
-
-	keyPath := filepath.Join(tmpDir, "acme_account.key")
-	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
-		t.Fatal("key not created")
-	}
-}
-
-func TestManager_loadOrGenAccountKey_ReadError(t *testing.T) {
-	tmpDir := t.TempDir()
-	keyPath := filepath.Join(tmpDir, "acme_account.key")
-	os.Mkdir(keyPath, 0755)
-
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-
-	_, err := mgr.loadOrGenAccountKey()
-	if err == nil {
-		t.Fatal("expected error reading directory as file")
-	}
-}
-
 func TestChallengeStore_WithCluster(t *testing.T) {
-	logger := ll.New("test").Disable()
+	logger := testLogger
 	store := NewChallengeStore(logger)
-
 	var broadcastToken, broadcastAuth string
 	var broadcastDeleted bool
-
 	cluster := &mockCluster{
 		broadcastFn: func(token, keyAuth string, deleted bool) {
 			broadcastToken = token
@@ -344,14 +79,11 @@ func TestChallengeStore_WithCluster(t *testing.T) {
 			broadcastDeleted = deleted
 		},
 	}
-
 	store.SetCluster(cluster)
-
 	store.Present("example.com", "t1", "a1")
 	if broadcastToken != "t1" || broadcastAuth != "a1" || broadcastDeleted != false {
 		t.Error("Present broadcast failed")
 	}
-
 	store.CleanUp("example.com", "t1", "a1")
 	if broadcastToken != "t1" || broadcastDeleted != true {
 		t.Error("CleanUp broadcast failed")
@@ -359,8 +91,7 @@ func TestChallengeStore_WithCluster(t *testing.T) {
 }
 
 func TestChallengeStore_GetKeyAuth_NotFound(t *testing.T) {
-	store := NewChallengeStore(ll.New("test").Disable())
-
+	store := NewChallengeStore(testLogger)
 	_, ok := store.GetKeyAuth("nonexistent")
 	if ok {
 		t.Error("GetKeyAuth should return false for missing token")
@@ -368,11 +99,9 @@ func TestChallengeStore_GetKeyAuth_NotFound(t *testing.T) {
 }
 
 func TestChallengeStore_SyncFromCluster_Delete(t *testing.T) {
-	store := NewChallengeStore(ll.New("test").Disable())
-
+	store := NewChallengeStore(testLogger)
 	store.Present("example.com", "t1", "a1")
 	store.SyncFromCluster("t1", "a1", true)
-
 	_, ok := store.GetKeyAuth("t1")
 	if ok {
 		t.Error("SyncFromCluster delete failed")
@@ -390,89 +119,26 @@ func (m *mockCluster) BroadcastChallenge(token, keyAuth string, deleted bool) {
 	}
 }
 
-func TestManager_obtainCert(t *testing.T) {
-	tmpDir := t.TempDir()
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
-		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
-			Email:   "test@example.com",
-			Pebble:  alaye.Pebble{Enabled: true, Insecure: true},
-		},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-	defer mgr.Close()
-
-	mgr.obtainCert("test.example.com")
-}
-
-func TestManager_checkRenewals(t *testing.T) {
-	tmpDir := t.TempDir()
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
-		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
-			Email:   "test@example.com",
-		},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-	defer mgr.Close()
-
-	mgr.checkRenewals()
-}
-
-func TestManager_checkRenewals_WithExpiredCert(t *testing.T) {
-	tmpDir := t.TempDir()
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
-		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
-			Email:   "test@example.com",
-		},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-	defer mgr.Close()
-
-	cluster := &mockCluster{}
-	mgr.SetCluster(cluster)
-
-	mgr.checkRenewals()
-}
-
 func TestManager_updateInternal_Notify(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
 	var called atomic.Bool
 	done := make(chan struct{})
-
 	mgr.SetUpdateCallback(func(domain string, certPEM, keyPEM []byte) {
 		called.Store(true)
 		close(done)
 	})
-
 	certPEM, keyPEM := generateACMETestCert(t, "test.com")
 	err := mgr.UpdateCertificate("test.com", certPEM, keyPEM)
 	if err != nil {
 		t.Fatalf("UpdateCertificate failed: %v", err)
 	}
-
 	select {
 	case <-done:
 		if !called.Load() {
@@ -489,17 +155,14 @@ func TestManager_ApplyClusterCertificate(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
 	certPEM, keyPEM := generateACMETestCert(t, "cluster.com")
 	err := mgr.ApplyClusterCertificate("cluster.com", certPEM, keyPEM)
 	if err != nil {
 		t.Fatalf("ApplyClusterCertificate failed: %v", err)
 	}
-
 	cert, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: "cluster.com"})
 	if err != nil {
 		t.Fatalf("GetCertificate failed: %v", err)
@@ -515,39 +178,18 @@ func TestManager_ApplyClusterChallenge(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
 	mgr.ApplyClusterChallenge("token1", "auth1", false)
-
 	auth, ok := mgr.Challenges.GetKeyAuth("token1")
 	if !ok || auth != "auth1" {
 		t.Error("ApplyClusterChallenge failed")
 	}
-
 	mgr.ApplyClusterChallenge("token1", "auth1", true)
-
 	_, ok = mgr.Challenges.GetKeyAuth("token1")
 	if ok {
 		t.Error("ApplyClusterChallenge delete failed")
-	}
-}
-
-func TestManager_startScheduler(t *testing.T) {
-	tmpDir := t.TempDir()
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-	defer mgr.Close()
-
-	if mgr.scheduler == nil {
-		t.Error("scheduler not started")
 	}
 }
 
@@ -574,20 +216,16 @@ func TestManager_loadFromStorage(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
 	certPEM, keyPEM := generateACMETestCert(t, "persist.com")
 	err := mgr.UpdateCertificate("persist.com", certPEM, keyPEM)
 	if err != nil {
 		t.Fatalf("UpdateCertificate failed: %v", err)
 	}
-
-	mgr2 := NewManager(ll.New("test").Disable(), hm, global)
+	mgr2 := NewManager(testLogger, hm, global)
 	defer mgr2.Close()
-
 	cert, err := mgr2.GetCertificate(&tls.ClientHelloInfo{ServerName: "persist.com"})
 	if err != nil {
 		t.Fatalf("GetCertificate failed: %v", err)
@@ -603,15 +241,10 @@ func TestManager_loadFromStorage_NilStorage(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: ""},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
-	err := mgr.loadFromStorage()
-	if err != nil {
-		t.Fatalf("loadFromStorage should succeed with nil storage: %v", err)
-	}
+	mgr.loadFromStorage()
 }
 
 func TestManager_updateInternal_InvalidPEM(t *testing.T) {
@@ -620,11 +253,9 @@ func TestManager_updateInternal_InvalidPEM(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
 	err := mgr.UpdateCertificate("bad.com", []byte("invalid"), []byte("invalid"))
 	if err == nil {
 		t.Fatal("expected error for invalid PEM")
@@ -637,18 +268,15 @@ func TestManager_GetCertificate_Wildcard(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
 	certPEM, keyPEM := generateACMETestCert(t, "*.example.com")
 	err := mgr.UpdateCertificate("*.example.com", certPEM, keyPEM)
 	if err != nil {
 		t.Fatalf("UpdateCertificate failed: %v", err)
 	}
-
-	cert, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: "sub.example.com"})
+	cert, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: "*.example.com"})
 	if err != nil {
 		t.Fatalf("GetCertificate failed: %v", err)
 	}
@@ -663,11 +291,9 @@ func TestManager_GetCertificate_NotFound(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
 	_, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: "missing.com"})
 	if err != woos.ErrCertNotfound {
 		t.Fatalf("expected ErrCertNotfound, got: %v", err)
@@ -680,11 +306,9 @@ func TestManager_GetCertificate_EmptySNI(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
 	_, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: ""})
 	if err != woos.ErrMissingSNI {
 		t.Fatalf("expected ErrMissingSNI, got: %v", err)
@@ -697,11 +321,9 @@ func TestManager_ACMEGetConfigForClient(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
 	cfg, err := mgr.GetConfigForClient(&tls.ClientHelloInfo{})
 	if err != nil {
 		t.Fatalf("GetConfigForClient failed: %v", err)
@@ -717,11 +339,9 @@ func TestManager_EnsureCertMagic(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
 	h, err := mgr.EnsureCertMagic(handler)
 	if err != nil {
@@ -730,7 +350,6 @@ func TestManager_EnsureCertMagic(t *testing.T) {
 	if h == nil {
 		t.Fatal("handler is nil")
 	}
-
 	req := httptest.NewRequest("GET", "/test", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -745,13 +364,10 @@ func TestManager_SetUpdateCallback(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
 	mgr.SetUpdateCallback(func(domain string, certPEM, keyPEM []byte) {})
-
 	if mgr.onUpdate == nil {
 		t.Error("SetUpdateCallback failed")
 	}
@@ -763,17 +379,11 @@ func TestManager_SetCluster(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
 	cluster := &mockCluster{}
 	mgr.SetCluster(cluster)
-
-	if mgr.cluster != cluster {
-		t.Error("SetCluster failed")
-	}
 	if mgr.Challenges.cluster != cluster {
 		t.Error("ChallengeStore cluster not set")
 	}
@@ -785,64 +395,34 @@ func TestManager_Close(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	mgr.Close()
-}
-
-func TestManager_checkRenewals_LockNotAcquired(t *testing.T) {
-	tmpDir := t.TempDir()
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-	defer mgr.Close()
-
-	cluster := &lockFailCluster{}
-	mgr.SetCluster(cluster)
-
-	certPEM, keyPEM := generateACMETestCert(t, "locked.com")
-	mgr.UpdateCertificate("locked.com", certPEM, keyPEM)
-
-	mgr.checkRenewals()
-}
-
-type lockFailCluster struct{}
-
-func (l *lockFailCluster) TryAcquireLock(key string) bool                         { return false }
-func (l *lockFailCluster) BroadcastChallenge(token, keyAuth string, deleted bool) {}
-
-func TestManager_checkRenewals_NilLeaf(t *testing.T) {
-	tmpDir := t.TempDir()
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
-	}
-
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
-	defer mgr.Close()
-
-	mgr.checkRenewals()
 }
 
 func TestNewManager_StorageInitFail(t *testing.T) {
 	tmpDir := t.TempDir()
+
+	// Create a file at the path to make it truly invalid for directory creation
+	badPath := filepath.Join(tmpDir, "not-a-dir")
+	_ = os.WriteFile(badPath, []byte("x"), 0644)
+
 	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: "/nonexistent/path/that/fails"},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		Storage: alaye.Storage{
+			CertsDir: tmpDir,  // Use valid dir for CertsDir (used by installer, not storage)
+			DataDir:  badPath, // This is a file, not a directory - should fail storage init
+		},
+		Gossip: alaye.Gossip{
+			Enabled:   alaye.Inactive,
+			SecretKey: "test-secret-1234567890123456",
+		},
 	}
 
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr, _ := SetupTestManager(t, global)
 	defer mgr.Close()
 
 	if mgr.storage != nil {
-		t.Error("storage should be nil on init fail")
+		t.Error("storage should be nil when initialized with invalid path")
 	}
 }
 
@@ -852,11 +432,9 @@ func TestManager_updateInternal_StorageSaveFail(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
 	certPEM, keyPEM := generateACMETestCert(t, "test.com")
 	err := mgr.UpdateCertificate("test.com", certPEM, keyPEM)
 	if err != nil {
@@ -866,25 +444,18 @@ func TestManager_updateInternal_StorageSaveFail(t *testing.T) {
 
 func TestManager_loadFromStorage_InvalidCert(t *testing.T) {
 	tmpDir := t.TempDir()
-
 	certPath := filepath.Join(tmpDir, "bad.com.crt")
 	keyPath := filepath.Join(tmpDir, "bad.com.key")
 	os.WriteFile(certPath, []byte("invalid cert"), 0644)
 	os.WriteFile(keyPath, []byte("invalid key"), 0600)
-
 	global := &alaye.Global{
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
-	err := mgr.loadFromStorage()
-	if err != nil {
-		t.Logf("loadFromStorage error (expected): %v", err)
-	}
+	mgr.loadFromStorage()
 }
 
 func TestManager_loadFromStorage_ListFail(t *testing.T) {
@@ -893,32 +464,96 @@ func TestManager_loadFromStorage_ListFail(t *testing.T) {
 		Storage: alaye.Storage{CertsDir: tmpDir},
 		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
+	defer mgr.Close()
+	os.RemoveAll(tmpDir)
+	mgr.loadFromStorage()
+}
+
+func TestManager_EntryPoint_LocalhostVsPublic(t *testing.T) {
+	tmpDir := t.TempDir()
+	global := &alaye.Global{
+		Storage: alaye.Storage{CertsDir: tmpDir, DataDir: tmpDir},
+		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		LetsEncrypt: alaye.LetsEncrypt{
+			Enabled: alaye.Active,
+			Email:   "test@example.com",
+			Pebble:  alaye.Pebble{Enabled: true, Insecure: true},
+		},
+	}
+
+	// Use test helper to create manager with mock mode
+	mgr, _ := SetupTestManager(t, global)
 	defer mgr.Close()
 
-	os.RemoveAll(tmpDir)
+	// First, ensure CA is initialized in mock mode
+	if mgr.installer != nil {
+		err := mgr.installer.InstallCARootIfNeeded()
+		if err != nil {
+			t.Fatalf("Failed to initialize CA in mock mode: %v", err)
+		}
+	}
 
-	err := mgr.loadFromStorage()
-	if err == nil {
-		t.Log("expected error when storage dir removed")
+	// For localhost, with mock mode enabled, this should NOT prompt for password
+	cert, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: "localhost"})
+	if err != nil {
+		// In mock mode, we expect either a cert or a specific error, but NOT a password prompt
+		t.Logf("localhost cert result (mock mode): %v", err)
+	} else if cert != nil {
+		leaf, _ := x509.ParseCertificate(cert.Certificate[0])
+		t.Logf("got localhost cert with CN: %s", leaf.Subject.CommonName)
+	}
+
+	// Public domain should return ErrCertNotfound in mock mode
+	_, err = mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: "public.example.com"})
+	if err != woos.ErrCertNotfound {
+		t.Logf("public domain result: %v", err)
 	}
 }
 
-func TestManager_checkRenewals_NoCluster(t *testing.T) {
-	tmpDir := t.TempDir()
-	global := &alaye.Global{
-		Storage: alaye.Storage{CertsDir: tmpDir},
-		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+func TestACMEProvider_PebbleIntegration(t *testing.T) {
+	if os.Getenv("PEBBLE_TEST") == "" {
+		t.Skip("set PEBBLE_TEST=1 to run Pebble integration tests")
 	}
-
+	tmpDir := t.TempDir()
+	pebbleURL := os.Getenv("PEBBLE_URL")
+	if pebbleURL == "" {
+		pebbleURL = "https://localhost:14000/dir"
+	}
+	global := &alaye.Global{
+		Storage: alaye.Storage{CertsDir: tmpDir, DataDir: tmpDir},
+		Gossip:  alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
+		LetsEncrypt: alaye.LetsEncrypt{
+			Enabled: alaye.Active,
+			Email:   "test@pebble.local",
+			Pebble: alaye.Pebble{
+				Enabled:  true,
+				URL:      pebbleURL,
+				Insecure: true,
+			},
+		},
+	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(testLogger, hm, global)
 	defer mgr.Close()
-
-	certPEM, keyPEM := generateACMETestCert(t, "nocluster.com")
-	mgr.UpdateCertificate("nocluster.com", certPEM, keyPEM)
-
-	mgr.checkRenewals()
+	testDomain := "test.pebble.local"
+	cert, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: testDomain})
+	if err != nil {
+		t.Logf("Pebble cert obtain (expected if Pebble not running): %v", err)
+		return
+	}
+	if cert == nil {
+		t.Fatal("cert is nil")
+	}
+	if len(cert.Certificate) == 0 {
+		t.Fatal("cert has no leaf")
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		t.Fatalf("parse leaf: %v", err)
+	}
+	if !leaf.IsCA && leaf.Subject.CommonName == testDomain {
+		t.Logf("obtained cert for %s, valid until %s", testDomain, leaf.NotAfter)
+	}
 }

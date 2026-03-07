@@ -36,9 +36,14 @@ func NewLocal(logger *ll.Logger, absoluteCertDir ...woos.Folder) *Local {
 	if len(absoluteCertDir) > 0 {
 		certDir = absoluteCertDir[0]
 	}
+
+	// Auto-enable mock mode if in test environment
+	mockMode := os.Getenv("AGBERO_TEST_MODE") == "1" || os.Getenv("PEBBLE_TEST") != ""
+
 	return &Local{
-		logger:  logger,
-		CertDir: certDir,
+		logger:   logger,
+		CertDir:  certDir,
+		mockMode: mockMode,
 	}
 }
 
@@ -135,12 +140,21 @@ func (ci *Local) EnsureLocalhostCert() (certFile, keyFile string, err error) {
 
 func (ci *Local) InstallCARootIfNeeded() error {
 	_ = BootstrapEnv(ci.logger)
+
+	// Skip if CA already exists
 	if ci.caExists() {
 		return nil
 	}
+
+	// In mock mode, just generate files without installing to system trust store
 	if ci.mockMode {
+		if ci.logger != nil {
+			ci.logger.Debug("mock mode: generating CA files only (no system installation)")
+		}
 		return ci.generateCAFilesOnly()
 	}
+
+	// Normal mode: generate and install to system trust store
 	if ci.logger != nil {
 		ci.logger.Info("Generating and installing local CA root...")
 	}
@@ -154,6 +168,14 @@ func (ci *Local) InstallCARootIfNeeded() error {
 }
 
 func (ci *Local) UninstallCARoot() error {
+	// Skip in mock mode
+	if ci.mockMode {
+		if ci.logger != nil {
+			ci.logger.Debug("mock mode: skipping CA uninstall")
+		}
+		return nil
+	}
+
 	caPath := ci.caCertPath()
 	if caPath == "" {
 		return errors.New("CA certificate path not set")
@@ -174,6 +196,11 @@ func (ci *Local) UninstallCARoot() error {
 }
 
 func (ci *Local) generateCAFilesOnly() error {
+	// Ensure cert directory exists
+	if err := ci.CertDir.Ensure("", true); err != nil {
+		return errors.Newf("failed to ensure cert dir: %w", err)
+	}
+
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return errors.Newf("generate CA key: %w", err)
@@ -241,6 +268,15 @@ func (ci *Local) generateAndInstallCA() error {
 	if err := ci.generateCAFilesOnly(); err != nil {
 		return err
 	}
+
+	// Skip actual installation in mock mode
+	if ci.mockMode {
+		if ci.logger != nil {
+			ci.logger.Debug("mock mode: skipping system trust store installation")
+		}
+		return nil
+	}
+
 	certPath := ci.caCertPath()
 	if err := truststore.InstallFile(certPath, truststore.WithFirefox(), truststore.WithJava()); err != nil {
 		return errors.Newf("failed to install CA to system trust store: %w", err)
@@ -532,6 +568,13 @@ func (ci *Local) caKeyPath() string {
 		return ""
 	}
 	return filepath.Join(ci.CertDir.Path(), "ca-key.pem")
+}
+
+func (ci *Local) SetMockMode(mock bool) {
+	ci.mockMode = mock
+	if ci.logger != nil && mock {
+		ci.logger.Debug("local: mock mode enabled, CA installation disabled")
+	}
 }
 
 func ipStrings(ips []net.IP) []string {
