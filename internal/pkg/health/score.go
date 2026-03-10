@@ -14,13 +14,14 @@ const (
 	StateDegraded
 	StateUnhealthy
 	StateDead
+	StateUnknown
 )
 
 type ScoringWeights struct {
-	LatencyWeight float64 // default 0.40
-	SuccessWeight float64 // default 0.30
-	PassiveWeight float64 // default 0.20
-	ConnWeight    float64 // default 0.10
+	LatencyWeight float64
+	SuccessWeight float64
+	PassiveWeight float64
+	ConnWeight    float64
 }
 
 func DefaultScoringWeights() ScoringWeights {
@@ -33,9 +34,9 @@ func DefaultScoringWeights() ScoringWeights {
 }
 
 type LatencyThresholds struct {
-	BaselineMs     int32   // default 100
-	DegradedFactor float64 // default 3.0 (300ms)
-	UnhealthyMs    int32   // default 1000
+	BaselineMs     int32
+	DegradedFactor float64
+	UnhealthyMs    int32
 }
 
 func DefaultLatencyThresholds() LatencyThresholds {
@@ -80,11 +81,11 @@ type Score struct {
 	value      atomic.Int32
 	state      atomic.Int32
 	trend      atomic.Int32
-	lastUpdate atomic.Value // stores time.Time
+	lastUpdate atomic.Value
 
-	mu sync.RWMutex // protects snapshot updates
+	mu sync.RWMutex
 
-	snapshot atomic.Value // stores scoreSnapshot for atomic reads
+	snapshot atomic.Value
 
 	probeLatency    atomic.Int64
 	probeSuccess    atomic.Uint64
@@ -151,6 +152,11 @@ func (s *Score) Update(probeLatency time.Duration, probeSuccess bool, passiveErr
 	latencyScore := s.calculateLatencyScore(probeLatency)
 	successScore := s.calculateSuccessScore(probeSuccess)
 	passiveScore := int32((1.0 - passiveErrorRate) * 100)
+
+	if !probeSuccess {
+		latencyScore = 0
+		connHealth = 0
+	}
 
 	newScore := int32(
 		float64(latencyScore)*s.scoringWeights.LatencyWeight +

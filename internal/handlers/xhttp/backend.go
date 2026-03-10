@@ -1,15 +1,13 @@
+// internal/handlers/xhttp/backend.go
 package xhttp
 
 import (
 	"context"
 	"fmt"
-	"io"
 	"math/rand"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"runtime/debug"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,41 +15,35 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 )
 
-type BackendState int32
-
-const (
-	StateActive BackendState = iota
-	StateDraining
-	StateDead
-)
-
 type Backend struct {
 	URL   *url.URL
 	Proxy *httputil.ReverseProxy
 
-	// alive indicates health check status (Up/Down)
-	alive atomic.Bool
-
-	// state indicates lifecycle (Active/Draining/Dead)
-	state atomic.Int32
+	HealthScore *health.Score
+	Prober      *health.Prober
+	Weights     health.RoutingWeights
+	Abort       *health.EarlyAbortController
 
 	stop         chan struct{}
 	stopOnce     sync.Once
 	startTime    time.Time
 	lastRecovery atomic.Int64
 	weight       int
+	cbThreshold  int
+	hasProber    bool
 	Cond         *Conditions
 	rnd          *rand.Rand
 	logger       *ll.Logger
 
-	Health   *metrics.Health
 	Activity *metrics.Activity
+	Health   *metrics.Health
 
 	hcConfig     *alaye.HealthCheck
 	routeDomains []string
@@ -93,40 +85,127 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 	statsKey := fmt.Sprintf("%s|%s", route.Key(), cfg.Address)
 	stats := registry.GetOrRegister(statsKey)
 	now := time.Now()
+
+	cbThreshold := woos.DefaultCircuitBreakerThreshold
+	if route.CircuitBreaker.Threshold > 0 {
+		cbThreshold = route.CircuitBreaker.Threshold
+	}
+
 	b := &Backend{
 		URL:          u,
 		weight:       cfg.Weight,
+		cbThreshold:  cbThreshold,
 		Cond:         cond,
 		hcConfig:     &route.HealthCheck,
 		logger:       logger,
 		stop:         make(chan struct{}),
 		startTime:    now,
 		lastRecovery: atomic.Int64{},
-		Health:       stats.Health,
 		Activity:     stats.Activity,
+		Health:       stats.Health,
 		Fallback:     xhttpCfg.Fallback,
 	}
-	b.alive.Store(true)
-	b.state.Store(int32(StateActive))
 	b.lastRecovery.Store(now.UnixNano())
-
-	cbThreshold := woos.DefaultCircuitBreakerThreshold
-	if cbThreshold == 0 {
-		cbThreshold = 5
-	}
-	if route.CircuitBreaker.Threshold > 0 {
-		cbThreshold = route.CircuitBreaker.Threshold
-	}
 
 	if len(xhttpCfg.Domains) > 0 {
 		b.routeDomains = make([]string, len(xhttpCfg.Domains))
 		copy(b.routeDomains, xhttpCfg.Domains)
 	}
 
-	rp := &httputil.ReverseProxy{}
+	thresholds := health.DefaultThresholds()
+	b.Weights = health.DefaultRoutingWeights()
+	b.Abort = health.NewEarlyAbortController(b.Weights.EarlyAbortEnabled)
 
+	b.HealthScore = health.NewScore(thresholds, health.DefaultScoringWeights(), health.DefaultLatencyThresholds(),
+		func(oldState, newState health.State, score int32) {
+			b.logger.Fields(
+				"backend", u.Host,
+				"old_state", oldState,
+				"new_state", newState,
+				"score", score,
+			).Info("health state changed")
+		})
+
+	probeCfg := health.DefaultProbeConfig()
+	var expectedStatus []int
+	var expectedBody string
+	var method string
+
+	if b.hcConfig != nil {
+		if b.hcConfig.Path != "" {
+			probeCfg.Path = b.hcConfig.Path
+		}
+		if b.hcConfig.Interval > 0 {
+			probeCfg.StandardInterval = b.hcConfig.Interval
+			if probeCfg.AcceleratedInterval > probeCfg.StandardInterval {
+				probeCfg.AcceleratedInterval = probeCfg.StandardInterval
+			}
+		}
+		if b.hcConfig.Timeout > 0 {
+			probeCfg.Timeout = b.hcConfig.Timeout
+		}
+		if b.hcConfig.AcceleratedProbing {
+			probeCfg.AcceleratedProbing = true
+		}
+
+		expectedStatus = b.hcConfig.ExpectedStatus
+		expectedBody = b.hcConfig.ExpectedBody
+		method = b.hcConfig.Method
+
+		if b.hcConfig.Enabled.Active() || (b.hcConfig.Enabled == alaye.Unknown && b.hcConfig.Path != "") {
+			b.hasProber = true
+		}
+	}
+
+	targetURL := b.URL.ResolveReference(&url.URL{Path: probeCfg.Path}).String()
+	execClient := &http.Client{
+		Timeout: probeCfg.Timeout,
+		Transport: &http.Transport{
+			MaxIdleConnsPerHost: woos.DefaultMaxIdleConnsPerHost,
+			DisableKeepAlives:   true,
+		},
+	}
+
+	headers := http.Header{}
+	hostHeader := ""
+	if b.hcConfig != nil {
+		for k, v := range b.hcConfig.Headers {
+			if k == "Host" {
+				hostHeader = v
+			} else {
+				headers.Set(k, v)
+			}
+		}
+	}
+	if hostHeader == "" && len(b.routeDomains) > 0 {
+		hostHeader = b.routeDomains[0]
+	}
+
+	executor := &HTTPExecutor{
+		URL:            targetURL,
+		Method:         method,
+		Client:         execClient,
+		Header:         headers,
+		Host:           hostHeader,
+		ExpectedStatus: expectedStatus,
+		ExpectedBody:   expectedBody,
+	}
+
+	b.Prober = health.NewProber(probeCfg, executor, b.HealthScore, func(r health.ProbeResult) {
+		if r.Success {
+			b.Health.RecordSuccess()
+			b.Activity.Failures.Store(0)
+		} else {
+			b.Health.RecordFailure()
+			if b.HealthScore.State() == health.StateHealthy {
+				b.logger.Fields("backend", u.Host, "err", r.Error).Debug("health probe failed")
+			}
+		}
+	})
+
+	rp := &httputil.ReverseProxy{}
 	t := woos.Transport.Clone()
-	t.Proxy = nil // Explicitly disable proxy to prevent environment interference
+	t.Proxy = nil
 	t.ExpectContinueTimeout = 0
 	if cfg.Streaming.Enabled.Active() {
 		t.ResponseHeaderTimeout = 0
@@ -143,14 +222,19 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
+
+		b.HealthScore.RecordPassiveRequest(false)
 		newFailures := b.Activity.Failures.Add(1)
 
-		if cbThreshold > 0 && newFailures >= uint64(cbThreshold) && b.alive.Swap(false) {
+		if b.cbThreshold > 0 && newFailures >= uint64(b.cbThreshold) {
 			b.logger.Fields("backend", u.Host, "failures", newFailures).Warn("circuit breaker tripped")
 		}
-		if !b.alive.Load() && time.Since(b.LastRecovery()) > 5*time.Second {
+
+		if !b.hasProber && !b.Alive() && time.Since(b.LastRecovery()) > 5*time.Second {
 			b.Activity.Failures.Store(0)
+			b.lastRecovery.Store(time.Now().UnixNano())
 		}
+
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
 			w.Header().Set("Content-Type", "application/grpc")
 			w.Header().Set("Grpc-Status", "14")
@@ -217,9 +301,11 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 
 	b.Proxy = rp
 	b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
-	if b.hcConfig != nil && b.hcConfig.Path != "" {
-		go b.healthCheckLoop(cbThreshold)
+
+	if b.hasProber {
+		b.Prober.Start()
 	}
+
 	return b, nil
 }
 
@@ -228,38 +314,28 @@ func (b *Backend) Jitter(interval time.Duration) time.Duration {
 }
 
 func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// If backend is Dead, reject immediately
-	if BackendState(b.state.Load()) == StateDead {
-		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+	if b.Abort.ShouldAbort(b.URL.String(), b.HealthScore) {
+		http.Error(w, "Service Unavailable (Health)", http.StatusServiceUnavailable)
 		return
 	}
 
-	// If Draining, we allow existing requests (handled by Proxy pick logic usually),
-	// but if it got here, we serve it to drain the queue.
-
-	if !b.alive.Load() {
-		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
-		return
+	if b.hasProber {
+		b.Prober.RecordRequestActivity()
 	}
-
 	start := time.Now()
 	b.Activity.StartRequest()
+
 	defer func() {
 		dur := time.Since(start).Microseconds()
 		b.Activity.EndRequest(dur, false)
+		b.HealthScore.RecordPassiveRequest(true)
 	}()
 
 	b.Proxy.ServeHTTP(w, r)
 }
 
-// Drain marks the backend as draining and waits for in-flight requests to complete.
 func (b *Backend) Drain(timeout time.Duration) {
-	if !b.state.CompareAndSwap(int32(StateActive), int32(StateDraining)) {
-		return // Already draining or dead
-	}
-
 	b.logger.Fields("backend", b.URL.Host).Info("backend draining started")
-
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -280,16 +356,15 @@ func (b *Backend) Drain(timeout time.Duration) {
 			continue
 		}
 	}
-
-	b.state.Store(int32(StateDead))
 }
 
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
-		b.state.Store(int32(StateDead))
+		if b.hasProber {
+			b.Prober.Stop()
+		}
 
-		// Close idle connections in transport
 		if tp, ok := b.Proxy.Transport.(*http.Transport); ok {
 			tp.CloseIdleConnections()
 		}
@@ -304,139 +379,25 @@ func (b *Backend) LastRecovery() time.Time {
 	return time.Unix(0, b.lastRecovery.Load())
 }
 
-func (b *Backend) healthCheckLoop(cbThreshold int) {
-	defer func() {
-		if r := recover(); r != nil {
-			b.logger.Fields("panic", r, "stack", string(debug.Stack()), "backend", b.URL.Host).
-				Error("health check loop panicked (recovered)")
-		}
-	}()
-
-	if b.hcConfig == nil {
-		return
-	}
-
-	interval := woos.DefaultHealthCheckInterval
-	if b.hcConfig.Interval > 0 {
-		interval = b.hcConfig.Interval
-	}
-
-	timeout := woos.DefaultHealthCheckTimeout
-	if b.hcConfig.Timeout > 0 {
-		timeout = b.hcConfig.Timeout
-	}
-
-	threshold := woos.DefaultHealthCheckThreshold
-	if b.hcConfig.Threshold > 0 {
-		threshold = b.hcConfig.Threshold
-	}
-
-	client := &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			MaxIdleConnsPerHost: woos.DefaultMaxIdleConnsPerHost,
-			DisableKeepAlives:   true,
-		},
-	}
-
-	targetURL := b.URL.ResolveReference(&url.URL{Path: b.hcConfig.Path}).String()
-	failures := int64(0)
-	timer := time.NewTimer(b.Jitter(interval))
-	defer timer.Stop()
-
-	expectedStatus := b.hcConfig.ExpectedStatus
-	expectedBody := b.hcConfig.ExpectedBody
-	method := b.hcConfig.Method
-	if method == "" {
-		method = "GET"
-	}
-
-	hostHeader := ""
-	if v, ok := b.hcConfig.Headers["Host"]; ok {
-		hostHeader = v
-	} else if len(b.routeDomains) > 0 {
-		hostHeader = b.routeDomains[0]
-	}
-
-	for {
-		select {
-		case <-b.stop:
-			return
-		case <-timer.C:
-			// If draining or dead, skip health checks
-			if BackendState(b.state.Load()) != StateActive {
-				return
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), timeout)
-			req, err := http.NewRequestWithContext(ctx, method, targetURL, nil)
-
-			if err == nil {
-				if hostHeader != "" {
-					req.Host = hostHeader
-				}
-				for k, v := range b.hcConfig.Headers {
-					if k != "Host" {
-						req.Header.Set(k, v)
-					}
-				}
-			}
-
-			var resp *http.Response
-			if err == nil {
-				resp, err = client.Do(req)
-			}
-			cancel()
-
-			healthy := false
-			if err == nil && resp != nil {
-				if len(expectedStatus) > 0 {
-					if slices.Contains(expectedStatus, resp.StatusCode) {
-						healthy = true
-					}
-				} else {
-					healthy = resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest
-				}
-
-				if healthy && expectedBody != "" {
-					bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*10))
-					if !strings.Contains(string(bodyBytes), expectedBody) {
-						healthy = false
-					}
-				}
-
-				_, _ = io.Copy(io.Discard, resp.Body)
-				_ = resp.Body.Close()
-			}
-
-			if healthy {
-				failures = 0
-				b.Health.RecordSuccess()
-				b.Activity.Failures.Store(0)
-				if !b.alive.Load() {
-					b.alive.Store(true)
-					b.lastRecovery.Store(time.Now().UnixNano())
-					b.logger.Fields("backend", b.URL.Host).Info("backend recovered")
-				}
-			} else {
-				failures++
-				b.Health.RecordFailure()
-				newFailures := b.Activity.Failures.Add(1)
-
-				if cbThreshold > 0 && (failures >= int64(threshold) || newFailures >= uint64(cbThreshold)) {
-					if b.alive.Swap(false) {
-						b.logger.Fields("backend", b.URL.Host, "failures", failures).Warn("circuit breaker tripped")
-					}
-				}
-			}
-			timer.Reset(interval + b.Jitter(interval))
-		}
-	}
+func (b *Backend) Status(v bool) {
 }
-func (b *Backend) Status(v bool)   { b.alive.Store(v) }
-func (b *Backend) Alive() bool     { return b.alive.Load() && BackendState(b.state.Load()) == StateActive }
-func (b *Backend) Weight() int     { return b.weight }
+
+func (b *Backend) Alive() bool {
+	if b.cbThreshold > 0 && b.Activity.Failures.Load() >= uint64(b.cbThreshold) {
+		return false
+	}
+	if b.hcConfig != nil && b.hcConfig.Threshold > 0 && b.Health.ConsecutiveFailures() >= int64(b.hcConfig.Threshold) {
+		return false
+	}
+	return b.HealthScore.State() != health.StateDead
+}
+
+func (b *Backend) Weight() int {
+	return b.Weights.EffectiveWeight(b.weight, b.HealthScore)
+}
+
 func (b *Backend) InFlight() int64 { return b.Activity.InFlight.Load() }
+
 func (b *Backend) ResponseTime() int64 {
 	snap := b.Activity.Latency.Snapshot()
 	if snap.Count == 0 {

@@ -2,6 +2,8 @@ module git.imaxinacion.net/aibox/agbero
 
 go 1.26
 
+replace github.com/olekukonko/jack => /Users/oleku/gopath/src/github.com/olekukonko/jack
+
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
 	github.com/alecthomas/hcl v0.5.5

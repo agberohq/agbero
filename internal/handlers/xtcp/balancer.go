@@ -52,7 +52,6 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 		expectBytes = []byte(expect)
 	}
 
-	// Ensure registry is not nil (fallback to global default)
 	if registry == nil {
 		registry = metrics.DefaultRegistry
 	}
@@ -64,7 +63,6 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 			w = 1
 		}
 
-		// Persistent Stats Key: tcp|<listen>|<sni>|<addr>
 		statsKey := fmt.Sprintf("tcp|%s|%s|%s", cfg.Listen, cfg.SNI, b.Address)
 		stats := registry.GetOrRegister(statsKey)
 
@@ -80,10 +78,9 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 			stop:       make(chan struct{}),
 			Activity:   stats.Activity,
 			Health:     stats.Health,
-			alive:      stats.Alive,
 		}
 
-		go be.healthCheckLoop()
+		be.StartHealthCheck()
 		backends = append(backends, be)
 		wrappedBackends = append(wrappedBackends, be)
 	}
@@ -110,7 +107,6 @@ func (tb *Balancer) Stop() {
 }
 
 func (tb *Balancer) BackendCount() int {
-	// Safe to call, returns slice length
 	return len(tb.selector.Backends())
 }
 
@@ -118,8 +114,6 @@ func (tb *Balancer) GetStrategyName() string {
 	return tb.strategyName
 }
 
-// Pick selects a backend without re-allocating the selector.
-// Pick selects a backend without re-allocating the selector.
 func (tb *Balancer) Pick(exclude map[*Backend]struct{}) *Backend {
 	count := tb.BackendCount()
 	if count == 0 {
@@ -134,7 +128,6 @@ func (tb *Balancer) Pick(exclude map[*Backend]struct{}) *Backend {
 		if candidate == nil {
 			continue
 		}
-		// Type assert once per candidate
 		be, ok := candidate.(*Backend)
 		if !ok || !tb.isUsable(be, exclude) {
 			continue
@@ -154,7 +147,7 @@ func (tb *Balancer) Pick(exclude map[*Backend]struct{}) *Backend {
 }
 
 func (tb *Balancer) isUsable(b *Backend, exclude map[*Backend]struct{}) bool {
-	if b == nil || !b.alive.Load() {
+	if b == nil || !b.Alive() {
 		return false
 	}
 	if b.MaxConns > 0 && b.Activity.InFlight.Load() >= b.MaxConns {

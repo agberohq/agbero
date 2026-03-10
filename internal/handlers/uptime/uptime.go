@@ -11,7 +11,9 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/cluster"
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/xtcp"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
@@ -70,13 +72,16 @@ type ProxySnapshot struct {
 }
 
 type BackendSnapshot struct {
-	URL       string                  `json:"url"`
-	Alive     bool                    `json:"alive"`
-	InFlight  int64                   `json:"in_flight"`
-	Failures  int64                   `json:"failures"`
-	TotalReqs uint64                  `json:"total_reqs"`
-	Latency   metrics.LatencySnapshot `json:"latency_us"`
-	Healthy   bool                    `json:"healthy"`
+	URL         string                  `json:"url"`
+	Alive       bool                    `json:"alive"`
+	InFlight    int64                   `json:"in_flight"`
+	Failures    int64                   `json:"failures"`
+	TotalReqs   uint64                  `json:"total_reqs"`
+	Latency     metrics.LatencySnapshot `json:"latency_us"`
+	Healthy     bool                    `json:"healthy"`
+	HealthScore int                     `json:"health_score"`
+	HealthState string                  `json:"health_state"`
+	Trend       int                     `json:"trend"`
 }
 
 var (
@@ -103,6 +108,21 @@ func getCPUPercent() float64 {
 
 	lastCPUCheck = time.Now()
 	return lastCPUPercent
+}
+
+func stateToString(s health.State) string {
+	switch s {
+	case health.StateHealthy:
+		return "Healthy"
+	case health.StateDegraded:
+		return "Degraded"
+	case health.StateUnhealthy:
+		return "Unhealthy"
+	case health.StateDead:
+		return "Dead"
+	default:
+		return "Unknown"
+	}
 }
 
 func Uptime(hm *discovery.Host, cm *cluster.Manager) http.HandlerFunc {
@@ -174,13 +194,31 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 
 			rKey := route.Key()
 
-			for _, srv := range route.Backends.Servers {
+			var activeRoute *handlers.Route
+			if it, ok := zulu.Route.Load(rKey); ok {
+				activeRoute, _ = it.Value.(*handlers.Route)
+			}
+
+			for i, srv := range route.Backends.Servers {
 				statsKey := fmt.Sprintf("%s|%s", rKey, srv.Address)
 
 				var latSnap metrics.LatencySnapshot
 				var failures, reqs, inFlight int64
 				healthy := false
 				alive := true
+
+				scoreVal := 100
+				stateVal := "Unknown"
+				trendVal := 0
+
+				if activeRoute != nil && i < len(activeRoute.Backends) {
+					b := activeRoute.Backends[i]
+					if b != nil && b.HealthScore != nil {
+						scoreVal = int(b.HealthScore.Value())
+						stateVal = stateToString(b.HealthScore.State())
+						trendVal = int(b.HealthScore.Trend())
+					}
+				}
 
 				if stats := metrics.DefaultRegistry.Get(statsKey); stats != nil {
 					snap := stats.Activity.Snapshot()
@@ -189,7 +227,11 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 					reqs = int64(snap["requests"].(uint64))
 					inFlight = snap["in_flight"].(int64)
 					healthy = stats.Health.IsHealthy()
-					alive = stats.Alive.Load()
+					if activeRoute != nil && i < len(activeRoute.Backends) {
+						alive = activeRoute.Backends[i].Alive()
+					} else {
+						alive = stats.Alive.Load()
+					}
 
 					if latSnap.Count > 0 && latSnap.P99 > 0 {
 						val := float64(latSnap.P99)
@@ -201,13 +243,16 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 				}
 
 				bSnap := &BackendSnapshot{
-					URL:       srv.Address,
-					Alive:     alive,
-					InFlight:  inFlight,
-					Failures:  failures,
-					TotalReqs: uint64(reqs),
-					Latency:   latSnap,
-					Healthy:   healthy,
+					URL:         srv.Address,
+					Alive:       alive,
+					InFlight:    inFlight,
+					Failures:    failures,
+					TotalReqs:   uint64(reqs),
+					Latency:     latSnap,
+					Healthy:     healthy,
+					HealthScore: scoreVal,
+					HealthState: stateVal,
+					Trend:       trendVal,
 				}
 
 				rSnap.Backends = append(rSnap.Backends, bSnap)
@@ -242,14 +287,26 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 
 					totalReqs += b.Activity.Requests.Load()
 
+					scoreVal := 100
+					stateVal := "Unknown"
+					trendVal := 0
+					if b.HealthScore != nil {
+						scoreVal = int(b.HealthScore.Value())
+						stateVal = stateToString(b.HealthScore.State())
+						trendVal = int(b.HealthScore.Trend())
+					}
+
 					return &BackendSnapshot{
-						URL:       b.Address,
-						Alive:     b.Alive(),
-						InFlight:  b.Activity.InFlight.Load(),
-						Failures:  int64(b.Activity.Failures.Load()),
-						TotalReqs: b.Activity.Requests.Load(),
-						Latency:   latSnap,
-						Healthy:   b.Health.IsHealthy(),
+						URL:         b.Address,
+						Alive:       b.Alive(),
+						InFlight:    b.Activity.InFlight.Load(),
+						Failures:    int64(b.Activity.Failures.Load()),
+						TotalReqs:   b.Activity.Requests.Load(),
+						Latency:     latSnap,
+						Healthy:     b.Health.IsHealthy(),
+						HealthScore: scoreVal,
+						HealthState: stateVal,
+						Trend:       trendVal,
 					}
 				}
 

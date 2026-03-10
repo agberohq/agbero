@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	testLogger = ll.New("backend").Enable()
+	testLogger = ll.New("backend").Disable()
 )
 
 func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb alaye.CircuitBreaker) (*Backend, *metrics.Registry) {
@@ -212,8 +212,6 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 		b.Proxy.ErrorHandler(w, req, errors.New("test error"))
 	}
 
-	time.Sleep(50 * time.Millisecond)
-
 	if b.Alive() {
 		t.Error("Should trip after 2 failures")
 	}
@@ -261,14 +259,15 @@ func TestHealthCheck_Failure(t *testing.T) {
 
 	hc := alaye.HealthCheck{
 		Path:      "/health",
-		Interval:  100 * time.Millisecond,
+		Interval:  50 * time.Millisecond,
 		Threshold: 2,
-		Timeout:   50 * time.Millisecond,
+		Timeout:   20 * time.Millisecond,
 	}
 	b, _ := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 	defer b.Stop()
 
-	time.Sleep(500 * time.Millisecond)
+	// Wait enough time for 2 checks to fail
+	time.Sleep(300 * time.Millisecond)
 
 	if b.Alive() {
 		t.Error("Should mark down after health check failures")
@@ -291,21 +290,22 @@ func TestHealthCheck_Recovery(t *testing.T) {
 	hc := alaye.HealthCheck{
 		Enabled:   alaye.Active,
 		Path:      "/health",
-		Interval:  100 * time.Millisecond,
+		Interval:  50 * time.Millisecond,
 		Threshold: 2,
-		Timeout:   50 * time.Millisecond,
+		Timeout:   20 * time.Millisecond,
 	}
 	b, _ := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 	defer b.Stop()
 
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	if b.Alive() {
 		t.Error("Should be down initially")
 	}
 
 	healthy.store(true)
 
-	time.Sleep(300 * time.Millisecond)
+	// Wait enough time for recovery probe to succeed
+	time.Sleep(200 * time.Millisecond)
 
 	if !b.Alive() {
 		t.Error("Should recover when healthy")
@@ -339,13 +339,13 @@ func TestHealthCheck_Advanced(t *testing.T) {
 		ExpectedBody:   `"status": "OK"`,
 		Interval:       50 * time.Millisecond,
 		Threshold:      1,
-		Timeout:        50 * time.Millisecond,
+		Timeout:        20 * time.Millisecond,
 	}
 
 	b, _ := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 	defer b.Stop()
 
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 
 	if !b.Alive() {
 		t.Error("Backend should be healthy with correct advanced check")
@@ -365,13 +365,13 @@ func TestHealthCheck_Advanced_BodyMismatch(t *testing.T) {
 		ExpectedBody: `"status": "OK"`,
 		Interval:     50 * time.Millisecond,
 		Threshold:    1,
-		Timeout:      50 * time.Millisecond,
+		Timeout:      20 * time.Millisecond,
 	}
 
 	b, _ := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 	defer b.Stop()
 
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 
 	if b.Alive() {
 		t.Error("Backend should be down due to body mismatch")
@@ -392,7 +392,7 @@ func TestHealthCheck_HostHeader_From_Domains(t *testing.T) {
 		Enabled:  alaye.Active,
 		Path:     "/",
 		Interval: 50 * time.Millisecond,
-		Timeout:  50 * time.Millisecond,
+		Timeout:  20 * time.Millisecond,
 	}
 
 	route := &alaye.Route{
@@ -411,7 +411,7 @@ func TestHealthCheck_HostHeader_From_Domains(t *testing.T) {
 	}
 	defer b.Stop()
 
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 
 	if !b.Alive() {
 		t.Error("Backend should be alive with correct Host header from domains")
@@ -476,7 +476,7 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 	b.Stop()
 
 	hitsAtStop := hits.Load()
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	currentHits := hits.Load()
 	if currentHits > hitsAtStop+1 {
