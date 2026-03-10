@@ -71,17 +71,25 @@ type ProxySnapshot struct {
 	Backends []*BackendSnapshot `json:"backends"`
 }
 
+type HealthSnapshot struct {
+	Status              string     `json:"status"`
+	Score               int        `json:"score"`
+	Trend               int        `json:"trend"`
+	LastCheck           *time.Time `json:"last_check,omitempty"`
+	LastSuccess         *time.Time `json:"last_success,omitempty"`
+	LastFailure         *time.Time `json:"last_failure,omitempty"`
+	ConsecutiveFailures int64      `json:"consecutive_failures"`
+	Downtime            string     `json:"downtime,omitempty"`
+}
+
 type BackendSnapshot struct {
-	URL         string                  `json:"url"`
-	Alive       bool                    `json:"alive"`
-	InFlight    int64                   `json:"in_flight"`
-	Failures    int64                   `json:"failures"`
-	TotalReqs   uint64                  `json:"total_reqs"`
-	Latency     metrics.LatencySnapshot `json:"latency_us"`
-	Healthy     bool                    `json:"healthy"`
-	HealthScore int                     `json:"health_score"`
-	HealthState string                  `json:"health_state"`
-	Trend       int                     `json:"trend"`
+	URL       string                  `json:"url"`
+	Alive     bool                    `json:"alive"`
+	InFlight  int64                   `json:"in_flight"`
+	Failures  int64                   `json:"failures"`
+	TotalReqs uint64                  `json:"total_reqs"`
+	Latency   metrics.LatencySnapshot `json:"latency_us"`
+	Health    HealthSnapshot          `json:"health"`
 }
 
 var (
@@ -204,19 +212,26 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 
 				var latSnap metrics.LatencySnapshot
 				var failures, reqs, inFlight int64
-				healthy := false
 				alive := true
 
-				scoreVal := 100
-				stateVal := "Unknown"
-				trendVal := 0
+				hSnapStruct := HealthSnapshot{
+					Status: stateToString(health.StateUnknown),
+					Score:  100,
+				}
 
 				if activeRoute != nil && i < len(activeRoute.Backends) {
 					b := activeRoute.Backends[i]
 					if b != nil && b.HealthScore != nil {
-						scoreVal = int(b.HealthScore.Value())
-						stateVal = stateToString(b.HealthScore.State())
-						trendVal = int(b.HealthScore.Trend())
+						hSnapStruct.Score = int(b.HealthScore.Value())
+						hSnapStruct.Status = stateToString(b.HealthScore.State())
+						hSnapStruct.Trend = int(b.HealthScore.Trend())
+
+						if b.Prober != nil {
+							lc := b.Prober.LastProbeTime()
+							if !lc.IsZero() {
+								hSnapStruct.LastCheck = &lc
+							}
+						}
 					}
 				}
 
@@ -226,7 +241,17 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 					failures = int64(snap["failures"].(uint64))
 					reqs = int64(snap["requests"].(uint64))
 					inFlight = snap["in_flight"].(int64)
-					healthy = stats.Health.IsHealthy()
+
+					hSnapStruct.ConsecutiveFailures = stats.Health.ConsecutiveFailures()
+					ls := stats.Health.LastSuccess()
+					if !ls.IsZero() {
+						hSnapStruct.LastSuccess = &ls
+					}
+					lf := stats.Health.LastFailure()
+					if !lf.IsZero() {
+						hSnapStruct.LastFailure = &lf
+					}
+
 					if activeRoute != nil && i < len(activeRoute.Backends) {
 						alive = activeRoute.Backends[i].Alive()
 					} else {
@@ -242,17 +267,18 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 					}
 				}
 
+				if hSnapStruct.Status != "Healthy" && hSnapStruct.Status != "Unknown" && hSnapStruct.LastSuccess != nil {
+					hSnapStruct.Downtime = time.Since(*hSnapStruct.LastSuccess).Round(time.Second).String()
+				}
+
 				bSnap := &BackendSnapshot{
-					URL:         srv.Address,
-					Alive:       alive,
-					InFlight:    inFlight,
-					Failures:    failures,
-					TotalReqs:   uint64(reqs),
-					Latency:     latSnap,
-					Healthy:     healthy,
-					HealthScore: scoreVal,
-					HealthState: stateVal,
-					Trend:       trendVal,
+					URL:       srv.Address,
+					Alive:     alive,
+					InFlight:  inFlight,
+					Failures:  failures,
+					TotalReqs: uint64(reqs),
+					Latency:   latSnap,
+					Health:    hSnapStruct,
 				}
 
 				rSnap.Backends = append(rSnap.Backends, bSnap)
@@ -287,26 +313,48 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 
 					totalReqs += b.Activity.Requests.Load()
 
-					scoreVal := 100
-					stateVal := "Unknown"
-					trendVal := 0
+					hSnapStruct := HealthSnapshot{
+						Status: stateToString(health.StateUnknown),
+						Score:  100,
+					}
+
 					if b.HealthScore != nil {
-						scoreVal = int(b.HealthScore.Value())
-						stateVal = stateToString(b.HealthScore.State())
-						trendVal = int(b.HealthScore.Trend())
+						hSnapStruct.Score = int(b.HealthScore.Value())
+						hSnapStruct.Status = stateToString(b.HealthScore.State())
+						hSnapStruct.Trend = int(b.HealthScore.Trend())
+
+						if b.Prober != nil {
+							lc := b.Prober.LastProbeTime()
+							if !lc.IsZero() {
+								hSnapStruct.LastCheck = &lc
+							}
+						}
+					}
+
+					if b.Health != nil {
+						hSnapStruct.ConsecutiveFailures = b.Health.ConsecutiveFailures()
+						ls := b.Health.LastSuccess()
+						if !ls.IsZero() {
+							hSnapStruct.LastSuccess = &ls
+						}
+						lf := b.Health.LastFailure()
+						if !lf.IsZero() {
+							hSnapStruct.LastFailure = &lf
+						}
+					}
+
+					if hSnapStruct.Status != "Healthy" && hSnapStruct.Status != "Unknown" && hSnapStruct.LastSuccess != nil {
+						hSnapStruct.Downtime = time.Since(*hSnapStruct.LastSuccess).Round(time.Second).String()
 					}
 
 					return &BackendSnapshot{
-						URL:         b.Address,
-						Alive:       b.Alive(),
-						InFlight:    b.Activity.InFlight.Load(),
-						Failures:    int64(b.Activity.Failures.Load()),
-						TotalReqs:   b.Activity.Requests.Load(),
-						Latency:     latSnap,
-						Healthy:     b.Health.IsHealthy(),
-						HealthScore: scoreVal,
-						HealthState: stateVal,
-						Trend:       trendVal,
+						URL:       b.Address,
+						Alive:     b.Alive(),
+						InFlight:  b.Activity.InFlight.Load(),
+						Failures:  int64(b.Activity.Failures.Load()),
+						TotalReqs: b.Activity.Requests.Load(),
+						Latency:   latSnap,
+						Health:    hSnapStruct,
 					}
 				}
 
