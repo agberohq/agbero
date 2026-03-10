@@ -8,7 +8,7 @@ class AgberoApp {
         this.metricsHistory = {
             all: [],
             http: [],
-            tcp: []
+            tcp:[]
         };
         this.activeChart = 'all';
         this.lastReqTotal = 0;
@@ -23,11 +23,12 @@ class AgberoApp {
 
         this.hostsData = { config: {}, stats: {} };
         this.logs = [];
-        this.certificates = [];
+        this.certificates =[];
 
         this.logsPaused = false;
         this.mapPaused = false;
         this.logFilter = "ALL";
+        this.isOnline = true;
 
         this.timers = { metrics: null, config: null, logs: null };
         this.page = sessionStorage.getItem("ag_page") || "dashboard";
@@ -50,6 +51,8 @@ class AgberoApp {
 
         try {
             const res = await fetch(this.apiBase + path, opts);
+            this.setOnlineState(true);
+
             if (res.status === 401) {
                 this.handleSessionExpired();
                 return null;
@@ -63,8 +66,26 @@ class AgberoApp {
                 return text;
             }
         } catch (e) {
-            console.error("API Error", e);
+            this.setOnlineState(false);
             return null;
+        }
+    }
+
+    setOnlineState(online) {
+        if (this.isOnline === online) return;
+        this.isOnline = online;
+
+        const banner = document.getElementById("offlineBanner");
+        if (banner) {
+            if (online) {
+                banner.classList.remove("active");
+            } else {
+                banner.classList.add("active");
+            }
+        }
+
+        if (this.token || this.basic) {
+            this.startLoop();
         }
     }
 
@@ -126,8 +147,10 @@ class AgberoApp {
 
                         const isHTTP = b.url && b.url.startsWith('http');
                         if (isHTTP) {
-                            const healthy = b.healthy !== undefined ? b.healthy : (b.alive === true);
-                            if (healthy) active_backends++;
+                            const hStat = b.health?.status || 'Unknown';
+                            if (hStat === 'Healthy' || hStat === 'Degraded' || (hStat === 'Unknown' && b.alive)) {
+                                active_backends++;
+                            }
                         }
 
                         if (b.latency_us && b.latency_us.count > 0) {
@@ -144,8 +167,10 @@ class AgberoApp {
 
                         const isHTTP = b.url && b.url.startsWith('http');
                         if (isHTTP) {
-                            const healthy = b.healthy !== undefined ? b.healthy : (b.alive === true);
-                            if (healthy) active_backends++;
+                            const hStat = b.health?.status || 'Unknown';
+                            if (hStat === 'Healthy' || hStat === 'Degraded' || (hStat === 'Unknown' && b.alive)) {
+                                active_backends++;
+                            }
                         }
 
                         if (b.latency_us && b.latency_us.count > 0) {
@@ -171,7 +196,7 @@ class AgberoApp {
     }
 
     async fetchHostsData() {
-        const [config, stats] = await Promise.all([this.api("/config"), this.api("/uptime")]);
+        const[config, stats] = await Promise.all([this.api("/config"), this.api("/uptime")]);
         if (!config || !config.hosts) return;
 
         this.hostsData.config = config.hosts;
@@ -182,7 +207,6 @@ class AgberoApp {
         UI.renderHosts(this.hostsData, this.searchTerm, this.certificates);
         UI.updateHeroCounts(Object.keys(this.hostsData.config).length, this.getRouteCount());
 
-        // Render graph if on map page and not paused
         if (this.page === 'map' && !this.mapPaused) {
             this.routeGraph.render(this.lastConfig, this.hostsData.stats);
         }
@@ -199,7 +223,7 @@ class AgberoApp {
     }
 
     parseCertificates() {
-        const certs = [];
+        const certs =[];
         const hosts = this.hostsData.config || {};
 
         for (const [hostname, cfg] of Object.entries(hosts)) {
@@ -409,14 +433,15 @@ class AgberoApp {
 
     startLoop() {
         this.stopLoop();
-        this.timers.metrics = setInterval(() => this.fetchMetrics(), 2000);
+        const interval = this.isOnline ? 2000 : 10000;
+
+        this.timers.metrics = setInterval(() => this.fetchMetrics(), interval);
         this.timers.config = setInterval(() => {
-            // Fetch if on hosts or map page to keep UI live
             if (this.page === 'hosts' || this.page === 'map') this.fetchHostsData();
-        }, 10000);
+        }, this.isOnline ? 10000 : 30000);
         this.timers.logs = setInterval(() => {
             if (this.page === 'logs' && !this.logsPaused) this.fetchLogs();
-        }, 2000);
+        }, interval);
     }
 
     stopLoop() {
@@ -450,7 +475,6 @@ class AgberoApp {
         if (this.page === 'logs') await this.fetchLogs();
         if (this.page === 'map') {
             await this.fetchHostsData();
-            // Data fetched, render is handled in fetchHostsData
         }
     }
 
@@ -463,17 +487,9 @@ class AgberoApp {
 
     formatBytes(b) {
         if (b === 0 || !b) return "0";
-        const k = 1024, s = ["B", "KB", "MB", "GB"];
+        const k = 1024, s =["B", "KB", "MB", "GB"];
         const i = Math.floor(Math.log(b) / Math.log(k));
         return parseFloat((b / Math.pow(k, i)).toFixed(1)) + s[i];
-    }
-
-    timeAgo(timestamp) {
-        if (!timestamp) return 'never';
-        const seconds = Math.floor((Date.now() - timestamp) / 1000);
-        if (seconds < 10) return 'just now';
-        if (seconds < 60) return `${seconds}s ago`;
-        return `${Math.floor(seconds / 60)}m ago`;
     }
 
     copyToClipboard(text) {
@@ -498,24 +514,42 @@ class AgberoApp {
             const proxies = this.hostsData.config[hostname].proxies;
             if (proxies && proxies[idx]) {
                 cfg_item = proxies[idx];
-                itemStats = this.hostsData.stats[hostname]?.proxies?.[idx] || {};
+                itemStats = (this.hostsData.stats[hostname]?.proxies && this.hostsData.stats[hostname].proxies[idx]) || {};
             }
         } else {
             const routes = this.hostsData.config[hostname].routes;
             if (routes && routes[idx]) {
                 cfg_item = routes[idx];
-                itemStats = this.hostsData.stats[hostname]?.routes?.[idx] || {};
+                itemStats = (this.hostsData.stats[hostname]?.routes && this.hostsData.stats[hostname].routes[idx]) || {};
             }
         }
 
         if (cfg_item) {
-            UI.renderDrawer(hostname, cfg_item, itemStats, type, this.certificates);
-            Drawer.open();
+            UI.renderDrawer(hostname, cfg_item, itemStats, type, this.certificates, idx);
+            Drawer.open("routeDrawer");
         }
     }
 
-    closeDrawer() {
-        Drawer.close();
+    openBackendDrawer(hostname, routeIdx, backendIdx, type) {
+        let cfg_item;
+        let bStat = {};
+
+        if (type === 'proxy') {
+            cfg_item = this.hostsData.config[hostname]?.proxies?.[routeIdx]?.backends?.[backendIdx];
+            bStat = (this.hostsData.stats[hostname]?.proxies?.[routeIdx]?.backends && this.hostsData.stats[hostname].proxies[routeIdx].backends[backendIdx]) || {};
+        } else {
+            cfg_item = this.hostsData.config[hostname]?.routes?.[routeIdx]?.backends?.servers?.[backendIdx];
+            bStat = (this.hostsData.stats[hostname]?.routes?.[routeIdx]?.backends && this.hostsData.stats[hostname].routes[routeIdx].backends[backendIdx]) || {};
+        }
+
+        if (cfg_item || bStat.url) {
+            UI.renderBackendDrawer(hostname, cfg_item || {}, bStat, type);
+            Drawer.open("backendDrawer");
+        }
+    }
+
+    closeDrawer(id) {
+        Drawer.close(id);
     }
 
     setChartType(type) {

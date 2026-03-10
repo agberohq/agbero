@@ -1,11 +1,11 @@
 recursive = true
 output_file = "all.txt"
-extensions = [".go"]
+extensions = [".go",".css",".js",".html"]
 exclude_dirs {
-  items = ["pkg", "lab", "bin", "dist", "assets", "oppor", "docs"]
+  items = ["lab", "bin", "dist", "assets", "oppor", "docs"]
 }
 exclude_files {
-  items = ["server.log", "agbero"]
+  items = ["server.log", "agbero","all.txt"]
 }
 use_gitignore = true
 detailed = false

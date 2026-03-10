@@ -7,44 +7,25 @@ import (
 	"time"
 )
 
-type State int32
+type Record struct {
+	ProbeLatency time.Duration
+	ProbeSuccess bool
+	StatusCode   int
+	PassiveRate  float64
+	ConnHealth   int32
+}
 
-const (
-	StateHealthy State = iota
-	StateDegraded
-	StateUnhealthy
-	StateDead
-	StateUnknown
-)
-
-type ScoringWeights struct {
+type Weights struct {
 	LatencyWeight float64
 	SuccessWeight float64
 	PassiveWeight float64
 	ConnWeight    float64
 }
 
-func DefaultScoringWeights() ScoringWeights {
-	return ScoringWeights{
-		LatencyWeight: 0.40,
-		SuccessWeight: 0.30,
-		PassiveWeight: 0.20,
-		ConnWeight:    0.10,
-	}
-}
-
-type LatencyThresholds struct {
+type Latency struct {
 	BaselineMs     int32
 	DegradedFactor float64
 	UnhealthyMs    int32
-}
-
-func DefaultLatencyThresholds() LatencyThresholds {
-	return LatencyThresholds{
-		BaselineMs:     100,
-		DegradedFactor: 3.0,
-		UnhealthyMs:    1000,
-	}
 }
 
 type Thresholds struct {
@@ -56,18 +37,6 @@ type Thresholds struct {
 	DegradedExit  int32
 	UnhealthyExit int32
 	DeadExit      int32
-}
-
-func DefaultThresholds() Thresholds {
-	return Thresholds{
-		HealthyMin:    80,
-		DegradedMax:   79,
-		UnhealthyMax:  49,
-		DeadMax:       9,
-		DegradedExit:  85,
-		UnhealthyExit: 55,
-		DeadExit:      15,
-	}
 }
 
 type scoreSnapshot struct {
@@ -94,14 +63,18 @@ type Score struct {
 	passiveRequests atomic.Uint64
 	connHealth      atomic.Int32
 
+	consecFails atomic.Int64
+	lastSuccess atomic.Int64
+	lastFailure atomic.Int64
+
 	thresholds        Thresholds
-	scoringWeights    ScoringWeights
-	latencyThresholds LatencyThresholds
+	scoringWeights    Weights
+	latencyThresholds Latency
 
 	onStateChange func(oldState, newState State, score int32)
 }
 
-func NewScore(thresholds Thresholds, weights ScoringWeights, latThresholds LatencyThresholds, onChange func(State, State, int32)) *Score {
+func NewScore(thresholds Thresholds, weights Weights, latThresholds Latency, onChange func(State, State, int32)) *Score {
 	s := &Score{
 		thresholds:        thresholds,
 		scoringWeights:    weights,
@@ -109,7 +82,7 @@ func NewScore(thresholds Thresholds, weights ScoringWeights, latThresholds Laten
 		onStateChange:     onChange,
 	}
 	s.value.Store(100)
-	s.state.Store(int32(StateHealthy))
+	s.state.Store(int32(StateUnknown))
 	s.trend.Store(0)
 	s.connHealth.Store(100)
 	s.lastUpdate.Store(time.Now())
@@ -125,6 +98,10 @@ func (s *Score) State() State {
 	return State(s.state.Load())
 }
 
+func (s *Score) Status() Status {
+	return State(s.state.Load()).Status()
+}
+
 func (s *Score) Trend() int32 {
 	return s.trend.Load()
 }
@@ -136,6 +113,26 @@ func (s *Score) LastUpdate() time.Time {
 	return time.Time{}
 }
 
+func (s *Score) ConsecutiveFailures() int64 {
+	return s.consecFails.Load()
+}
+
+func (s *Score) LastSuccess() time.Time {
+	ts := s.lastSuccess.Load()
+	if ts == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ts)
+}
+
+func (s *Score) LastFailure() time.Time {
+	ts := s.lastFailure.Load()
+	if ts == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ts)
+}
+
 func (s *Score) Snapshot() scoreSnapshot {
 	if v := s.snapshot.Load(); v != nil {
 		return v.(scoreSnapshot)
@@ -143,26 +140,35 @@ func (s *Score) Snapshot() scoreSnapshot {
 	return scoreSnapshot{}
 }
 
-func (s *Score) Update(probeLatency time.Duration, probeSuccess bool, passiveErrorRate float64, connHealth int32) {
+func (s *Score) Update(r Record) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := time.Now()
 
-	latencyScore := s.calculateLatencyScore(probeLatency)
-	successScore := s.calculateSuccessScore(probeSuccess)
-	passiveScore := int32((1.0 - passiveErrorRate) * 100)
-
-	if !probeSuccess {
-		latencyScore = 0
-		connHealth = 0
+	if r.ProbeSuccess {
+		s.lastSuccess.Store(now.UnixNano())
+		s.consecFails.Store(0)
+	} else {
+		s.lastFailure.Store(now.UnixNano())
+		s.consecFails.Add(1)
 	}
+
+	latencyScore := s.calculateLatencyScore(r.ProbeLatency)
+	successScore := s.calculateSuccessScore(r.ProbeSuccess)
+
+	if !r.ProbeSuccess {
+		latencyScore = 0
+	}
+
+	passiveScore := int32((1.0 - r.PassiveRate) * 100)
+	connScore := clamp(r.ConnHealth, 0, 100)
 
 	newScore := int32(
 		float64(latencyScore)*s.scoringWeights.LatencyWeight +
 			float64(successScore)*s.scoringWeights.SuccessWeight +
 			float64(passiveScore)*s.scoringWeights.PassiveWeight +
-			float64(clamp(connHealth, 0, 100))*s.scoringWeights.ConnWeight,
+			float64(connScore)*s.scoringWeights.ConnWeight,
 	)
 
 	newScore = clamp(newScore, 0, 100)
@@ -205,6 +211,18 @@ func (s *Score) calculateState(currentState State, score int32) State {
 	t := s.thresholds
 
 	switch currentState {
+	case StateUnknown:
+		if score >= t.DegradedExit {
+			return StateHealthy
+		}
+		if score >= t.UnhealthyExit {
+			return StateDegraded
+		}
+		if score > t.DeadMax {
+			return StateUnhealthy
+		}
+		return StateDead
+
 	case StateHealthy:
 		if score <= t.DeadMax {
 			return StateDead

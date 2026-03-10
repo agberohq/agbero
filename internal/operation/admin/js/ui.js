@@ -1,3 +1,4 @@
+// internal/operation/admin/js/ui.js
 const UI = {
     updateVersionDisplay(version) {
         const el = document.getElementById("versionDisplay");
@@ -115,7 +116,7 @@ const UI = {
         }
 
         const trustedProxies = global.security?.trusted_proxies || [];
-        const settings = [
+        const settings =[
             {label: 'Environment', value: global.development ? 'development' : 'production'},
             {label: 'Admin Email', value: global.lets_encrypt?.email || '—'},
             {
@@ -223,7 +224,7 @@ const UI = {
         }
 
         for (const [hostname, cfg] of Object.entries(hosts)) {
-            const domainsStr = (cfg.domains || []).join(" ");
+            const domainsStr = (cfg.domains ||[]).join(" ");
             const matchesHost = hostname.toLowerCase().includes(filterTerm) || domainsStr.toLowerCase().includes(filterTerm);
 
             let hostHtml = "";
@@ -267,11 +268,11 @@ const UI = {
                 cfg.routes.forEach((route, idx) => {
                     routeCount++;
                     const pathMatches = route.path ? route.path.toLowerCase().includes(filterTerm) : false;
-                    const routeStats = rtStats.routes ? rtStats.routes[idx] : {};
+                    const routeStats = (rtStats.routes && rtStats.routes[idx]) || {};
 
                     let backendHtml = "";
-                    const configBackends = route.backends?.servers || [];
-                    const uptimeBackends = routeStats.backends || [];
+                    const configBackends = route.backends?.servers ||[];
+                    const uptimeBackends = routeStats.backends ||[];
 
                     if (configBackends.length > 0 || uptimeBackends.length > 0) {
                         const displayBackends = uptimeBackends.length > 0 ? uptimeBackends : configBackends;
@@ -282,23 +283,31 @@ const UI = {
                             const url = b.address || b.url || configBackend.address || configBackend.url || '';
                             const weight = configBackend.weight !== undefined ? configBackend.weight : (b.weight || '-');
 
-                            const hasStats = uptimeBackends[bIdx] !== undefined;
                             let healthStatus = 'unknown';
                             let dotColor = 'warn';
+                            let title = 'No data';
+                            const hasStats = uptimeBackends[bIdx] !== undefined;
 
                             if (hasStats) {
-                                if (b.healthy !== undefined) {
-                                    healthStatus = b.healthy ? 'ok' : 'down';
-                                    dotColor = b.healthy ? 'ok' : 'down';
-                                } else if (b.alive !== undefined) {
-                                    const isTCPBackend = url && !url.startsWith('http');
-                                    if (isTCPBackend) {
-                                        healthStatus = b.alive ? 'ok' : 'warn';
-                                        dotColor = b.alive ? 'ok' : 'warn';
-                                    } else {
-                                        healthStatus = b.alive ? 'ok' : 'down';
-                                        dotColor = b.alive ? 'ok' : 'down';
-                                    }
+                                const isAlive = b.alive;
+                                const hStat = b.health?.status || 'Unknown';
+
+                                if (isAlive === false || hStat === 'Dead' || hStat === 'Unhealthy') {
+                                    healthStatus = 'down';
+                                    dotColor = 'down';
+                                    title = hStat !== 'Unknown' ? hStat : 'Dead';
+                                } else if (hStat === 'Degraded') {
+                                    healthStatus = 'degraded';
+                                    dotColor = 'warn';
+                                    title = 'Degraded';
+                                } else if (hStat === 'Healthy') {
+                                    healthStatus = 'ok';
+                                    dotColor = 'ok';
+                                    title = 'Healthy';
+                                } else {
+                                    healthStatus = isAlive ? 'unverified' : 'down';
+                                    dotColor = isAlive ? 'info' : 'down';
+                                    title = isAlive ? 'Unverified (Active)' : 'Dead';
                                 }
                             }
 
@@ -310,8 +319,8 @@ const UI = {
 
                             backendHtml += `
                             <div class="backend-row ${hasStats && healthStatus === 'down' ? 'down' : ''}">
-                                <span class="dot ${dotColor}" title="${hasStats ? (healthStatus === 'ok' ? 'Healthy' : healthStatus === 'warn' ? 'Idle' : 'Unhealthy') : 'No data'}"></span>
-                                <span class="be-url" onclick="event.stopPropagation(); window.app.copyToClipboard('${url}')">${url} ${in_flight > 0 ? `<span class="badge warn">⚡${in_flight}</span>` : ''}</span>
+                                <span class="dot ${dotColor}" title="${title}"></span>
+                                <span class="be-url copyable" data-action="copy-url" data-url="${url}">${url} ${in_flight > 0 ? `<span class="badge warn">⚡${in_flight}</span>` : ''}</span>
                                 <span class="be-stat">W: ${weight}</span>
                                 <span class="be-stat">${p99}</span>
                                 <span class="be-stat">${this.fmtNum(reqs)}</span>
@@ -329,7 +338,7 @@ const UI = {
 
                     if (shouldShowRoute) {
                         hostHtml += `
-                        <div class="route-block" onclick="window.app.openRouteDrawer('${hostname}', ${idx})">
+                        <div class="route-block clickable" data-action="open-route" data-host="${hostname}" data-idx="${idx}" data-type="route">
                             <div class="route-header">
                                ${protocolBadge} <span class="route-path">${route.path || '/'}</span>
                                 <span class="badge info" style="margin-left:auto; font-size:9px;">DETAILS →</span>
@@ -345,11 +354,11 @@ const UI = {
                     routeCount++;
                     const path = proxy.name ? proxy.name.replace('*default*', '* (TCP)') : (proxy.path || proxy.protocol || "*");
                     const pathMatches = path.toLowerCase().includes(filterTerm);
-                    const proxyStats = rtStats.proxies ? rtStats.proxies[pidx] : {};
+                    const proxyStats = (rtStats.proxies && rtStats.proxies[pidx]) || {};
 
                     let backendHtml = "";
-                    const configBackends = proxy.backends || [];
-                    const uptimeBackends = proxyStats.backends || [];
+                    const configBackends = proxy.backends ||[];
+                    const uptimeBackends = proxyStats.backends ||[];
 
                     if (configBackends.length > 0 || uptimeBackends.length > 0) {
                         const displayBackends = uptimeBackends.length > 0 ? uptimeBackends : configBackends;
@@ -360,23 +369,31 @@ const UI = {
                             const url = b.address || b.url || configBackend.address || configBackend.url || '';
                             const weight = configBackend.weight !== undefined ? configBackend.weight : (b.weight || '-');
 
-                            const hasStats = uptimeBackends[bIdx] !== undefined;
                             let healthStatus = 'unknown';
                             let dotColor = 'warn';
+                            let title = 'No data';
+                            const hasStats = uptimeBackends[bIdx] !== undefined;
 
                             if (hasStats) {
-                                if (b.healthy !== undefined) {
-                                    healthStatus = b.healthy ? 'ok' : 'down';
-                                    dotColor = b.healthy ? 'ok' : 'down';
-                                } else if (b.alive !== undefined) {
-                                    const isTCPBackend = url && !url.startsWith('http');
-                                    if (isTCPBackend) {
-                                        healthStatus = b.alive ? 'ok' : 'warn';
-                                        dotColor = b.alive ? 'ok' : 'warn';
-                                    } else {
-                                        healthStatus = b.alive ? 'ok' : 'down';
-                                        dotColor = b.alive ? 'ok' : 'down';
-                                    }
+                                const isAlive = b.alive;
+                                const hStat = b.health?.status || 'Unknown';
+
+                                if (isAlive === false || hStat === 'Dead' || hStat === 'Unhealthy') {
+                                    healthStatus = 'down';
+                                    dotColor = 'down';
+                                    title = hStat !== 'Unknown' ? hStat : 'Dead';
+                                } else if (hStat === 'Degraded') {
+                                    healthStatus = 'degraded';
+                                    dotColor = 'warn';
+                                    title = 'Degraded';
+                                } else if (hStat === 'Healthy') {
+                                    healthStatus = 'ok';
+                                    dotColor = 'ok';
+                                    title = 'Healthy';
+                                } else {
+                                    healthStatus = isAlive ? 'unverified' : 'down';
+                                    dotColor = isAlive ? 'info' : 'down';
+                                    title = isAlive ? 'Unverified (Active)' : 'Dead';
                                 }
                             }
 
@@ -388,8 +405,8 @@ const UI = {
 
                             backendHtml += `
                             <div class="backend-row ${hasStats && healthStatus === 'down' ? 'down' : ''}">
-                                <span class="dot ${dotColor}" title="${hasStats ? (healthStatus === 'ok' ? 'Healthy' : healthStatus === 'warn' ? 'Idle' : 'Unhealthy') : 'No data'}"></span>
-                                <span class="be-url" onclick="event.stopPropagation(); window.app.copyToClipboard('${url}')">${url} ${in_flight > 0 ? `<span class="badge warn">⚡${in_flight}</span>` : ''}</span>
+                                <span class="dot ${dotColor}" title="${title}"></span>
+                                <span class="be-url copyable" data-action="copy-url" data-url="${url}">${url} ${in_flight > 0 ? `<span class="badge warn">⚡${in_flight}</span>` : ''}</span>
                                 <span class="be-stat">W: ${weight}</span>
                                 <span class="be-stat">${p99}</span>
                                 <span class="be-stat">${this.fmtNum(reqs)}</span>
@@ -404,7 +421,7 @@ const UI = {
 
                     if (shouldShowRoute) {
                         hostHtml += `
-                        <div class="route-block" onclick="window.app.openRouteDrawer('${hostname}', ${pidx}, 'proxy')">
+                        <div class="route-block clickable" data-action="open-route" data-host="${hostname}" data-idx="${pidx}" data-type="proxy">
                             <div class="route-header">
                                ${protocolBadge} <span class="route-path">${path}</span>
                                 <span class="badge info" style="margin-left:auto; font-size:9px;">DETAILS →</span>
@@ -447,7 +464,7 @@ const UI = {
             return;
         }
 
-        const rules = data.rules || [];
+        const rules = data.rules ||[];
         if (rules.length === 0) {
             tbody.innerHTML = `<tr><td colspan="5" style="padding:20px;"><div class="empty-state">
                 <span>✅ No blocked IPs</span>
@@ -465,7 +482,7 @@ const UI = {
                 <td>${r.reason || '-'}</td>
                 <td class="hide-mobile">${r.host || '*'} / ${r.path || '*'}</td>
                 <td class="hide-mobile">${createdStr}</td>
-                <td><button class="btn small error" onclick="window.app.confirmDeleteFw('${r.ip || ''}')">Unblock</button></td>
+                <td><button class="btn small error" data-action="unblock-ip" data-ip="${r.ip || ''}">Unblock</button></td>
             </tr>`;
         }).join("");
     },
@@ -511,7 +528,7 @@ const UI = {
                 msg = l.msg || l.message || "";
                 ts = l.ts || l.time || "";
                 if (ts) ts = ts.split('T')[1]?.split('.')[0] || ts;
-                if (l.fields) msg += ` [${l.fields.method || ''} ${l.fields.path || ''}]`;
+                if (l.fields) msg += `[${l.fields.method || ''} ${l.fields.path || ''}]`;
             }
             let color = "#aaa";
             if (lvl === "ERROR") color = "var(--danger)";
@@ -520,7 +537,7 @@ const UI = {
         }).join("");
     },
 
-    renderDrawer(hostname, cfg_item, itemStats, type, certificates) {
+    renderDrawer(hostname, cfg_item, itemStats, type, certificates, routeIdx) {
         const path = cfg_item.path || (cfg_item.name ? cfg_item.name.replace('*default*', '* (TCP)') : cfg_item.protocol || "*");
         document.getElementById("drawerRoutePath").innerText = path;
         document.getElementById("drawerHostName").innerText = hostname;
@@ -529,16 +546,11 @@ const UI = {
         if (!content) return;
         content.innerHTML = "";
 
-        // Determine protocol at the route level, not per backend
-        // TCP if: it's a proxy type, or protocol is explicitly tcp, or it has a listen address (TCP proxy)
         const isTCPRoute = type === 'proxy' || cfg_item.protocol === 'tcp' || (cfg_item.listen && !cfg_item.listen.includes('http'));
-
-        // Set protocol display once for the entire route
         const protocolType = isTCPRoute ? 'TCP' : 'HTTP';
         const protocolIcon = isTCPRoute ? '🔌' : '🌐';
         const protocolClass = isTCPRoute ? 'info' : 'success';
 
-        // Handler section - only for HTTP routes
         if (!isTCPRoute && cfg_item.web && cfg_item.web.root) {
             let webHtml = `
             <div class="detail-section">
@@ -570,36 +582,43 @@ const UI = {
             content.innerHTML += webHtml;
         }
 
-        const configBackends = cfg_item.backends?.servers || [];
-        const statBackends = (itemStats && itemStats.backends) || [];
+        const configBackends = cfg_item.backends?.servers || cfg_item.backends ||[];
+        const statBackends = (itemStats && itemStats.backends) ||[];
         const displayBackends = configBackends.length > 0 ? configBackends : statBackends;
 
         if (displayBackends.length > 0) {
             let backendsHtml = "";
 
-            displayBackends.forEach((b, i) => {
-                const backendStats = statBackends[i] || {};
+            displayBackends.forEach((b, bIdx) => {
+                const backendStats = statBackends[bIdx] || {};
                 const url = b.address || b.url || backendStats.address || backendStats.url || '';
                 const weight = (b.weight !== undefined) ? b.weight : (backendStats.weight || '-');
 
-                const hasStats = statBackends[i] !== undefined;
                 let healthStatus = 'unknown';
                 let dotColor = 'warn';
+                let title = 'No data';
+                const hasStats = statBackends[bIdx] !== undefined;
 
                 if (hasStats) {
-                    if (backendStats.healthy !== undefined) {
-                        healthStatus = backendStats.healthy ? 'ok' : 'down';
-                        dotColor = backendStats.healthy ? 'ok' : 'down';
-                    }
-                    else if (backendStats.alive !== undefined) {
-                        // For TCP backends, alive means connection works
-                        if (isTCPRoute) {
-                            healthStatus = backendStats.alive ? 'ok' : 'warn';
-                            dotColor = backendStats.alive ? 'ok' : 'warn';
-                        } else {
-                            healthStatus = backendStats.alive ? 'ok' : 'down';
-                            dotColor = backendStats.alive ? 'ok' : 'down';
-                        }
+                    const isAlive = backendStats.alive;
+                    const hStat = backendStats.health?.status || 'Unknown';
+
+                    if (isAlive === false || hStat === 'Dead' || hStat === 'Unhealthy') {
+                        healthStatus = 'down';
+                        dotColor = 'down';
+                        title = hStat !== 'Unknown' ? hStat : 'Dead';
+                    } else if (hStat === 'Degraded') {
+                        healthStatus = 'degraded';
+                        dotColor = 'warn';
+                        title = 'Degraded';
+                    } else if (hStat === 'Healthy') {
+                        healthStatus = 'ok';
+                        dotColor = 'ok';
+                        title = 'Healthy';
+                    } else {
+                        healthStatus = isAlive ? 'unverified' : 'down';
+                        dotColor = isAlive ? 'info' : 'down';
+                        title = isAlive ? 'Unverified (Active)' : 'Dead';
                     }
                 }
 
@@ -609,9 +628,9 @@ const UI = {
                 const total_reqs = backendStats.total_reqs || 0;
 
                 backendsHtml += `
-                <div class="drawer-row ${hasStats && healthStatus === 'down' ? 'down' : ''}">
+                <div class="drawer-row clickable" data-action="open-backend" data-host="${hostname}" data-route-idx="${routeIdx}" data-backend-idx="${bIdx}" data-type="${type}">
                     <div class="row-left">
-                        <span class="dot ${dotColor}" title="${hasStats ? (healthStatus === 'ok' ? 'Healthy' : healthStatus === 'warn' ? 'Idle/Healthy' : 'Unhealthy') : 'No health data yet'}"></span>
+                        <span class="dot ${dotColor}" title="${title}"></span>
                         <span class="mono">${url}</span>
                         ${in_flight > 0 ? `<span class="badge info">⚡ ${in_flight} in flight</span>` : ''}
                         ${failures > 0 ? `<span class="badge error">⚠️ ${failures} failures</span>` : ''}
@@ -624,34 +643,22 @@ const UI = {
                 </div>`;
             });
 
-            // Format strategy name
-            const lbStrategy = cfg_item.backends?.strategy || cfg_item.backends?.load_balancing?.strategy || "round_robin";
-            const strategyDisplay = lbStrategy.split('_').map(word =>
-                word.charAt(0).toUpperCase() + word.slice(1)
-            ).join(' ');
+            const lbStrategy = cfg_item.backends?.strategy || cfg_item.backends?.load_balancing?.strategy || cfg_item.strategy || "round_robin";
+            const strategyDisplay = lbStrategy.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 
-            // TCP Proxy specific details
             let tcpDetailsHtml = '';
             if (isTCPRoute) {
                 if (cfg_item.listen) {
-                    tcpDetailsHtml += `
-                    <div class="kv-item"><label>Listen</label><div><span class="badge info">${cfg_item.listen}</span></div></div>
-                `;
+                    tcpDetailsHtml += `<div class="kv-item"><label>Listen</label><div><span class="badge info">${cfg_item.listen}</span></div></div>`;
                 }
                 if (cfg_item.sni) {
-                    tcpDetailsHtml += `
-                    <div class="kv-item"><label>SNI</label><div><span class="badge info">${cfg_item.sni}</span></div></div>
-                `;
+                    tcpDetailsHtml += `<div class="kv-item"><label>SNI</label><div><span class="badge info">${cfg_item.sni}</span></div></div>`;
                 }
                 if (cfg_item.proxy_protocol) {
-                    tcpDetailsHtml += `
-                    <div class="kv-item"><label>Proxy Protocol</label><div><span class="badge success">Enabled</span></div></div>
-                `;
+                    tcpDetailsHtml += `<div class="kv-item"><label>Proxy Protocol</label><div><span class="badge success">Enabled</span></div></div>`;
                 }
                 if (cfg_item.max_connections > 0) {
-                    tcpDetailsHtml += `
-                    <div class="kv-item"><label>Max Connections</label><div><span class="badge info">${cfg_item.max_connections}</span></div></div>
-                `;
+                    tcpDetailsHtml += `<div class="kv-item"><label>Max Connections</label><div><span class="badge info">${cfg_item.max_connections}</span></div></div>`;
                 }
             }
 
@@ -659,16 +666,12 @@ const UI = {
             let healthCheckHtml = '<div class="kv-item"><label>Health Check</label><div><span class="badge error">Not Configured</span></div></div>';
             if (healthCheck && healthCheck.enabled && healthCheck.enabled === "on") {
                 if (isTCPRoute && healthCheck.send) {
-                    healthCheckHtml = `
-                    <div class="kv-item"><label>Health Check</label><div><span class="badge success">Send: ${healthCheck.send} | Expect: ${healthCheck.expect || 'connection'}</span></div></div>
-                `;
+                    healthCheckHtml = `<div class="kv-item"><label>Health Check</label><div><span class="badge success">Send: ${healthCheck.send} | Expect: ${healthCheck.expect || 'connection'}</span></div></div>`;
                 } else {
                     const hcPath = healthCheck.path || '/health';
                     const hcInterval = healthCheck.interval ? (healthCheck.interval/1000000000)+'s' : '30s';
                     const hcTimeout = healthCheck.timeout ? (healthCheck.timeout/1000000000)+'s' : '5s';
-                    healthCheckHtml = `
-                    <div class="kv-item"><label>Health Check</label><div><span class="badge success">${hcPath} | ${hcInterval} | ${hcTimeout}</span></div></div>
-                `;
+                    healthCheckHtml = `<div class="kv-item"><label>Health Check</label><div><span class="badge success">${hcPath} | ${hcInterval} | ${hcTimeout}</span></div></div>`;
                 }
             }
 
@@ -678,9 +681,7 @@ const UI = {
                 const firstBackendStats = statBackends[0] || {};
                 const cbStatus = firstBackendStats.circuit_breaker_state || 'closed';
                 const cbClass = cbStatus === 'closed' ? 'success' : (cbStatus === 'open' ? 'error' : 'warning');
-                cbHtml = `
-                <div class="kv-item"><label>Circuit Breaker</label><div><span class="badge ${cbClass}">${cbStatus} | ${cb.threshold || 5} fails</span></div></div>
-            `;
+                cbHtml = `<div class="kv-item"><label>Circuit Breaker</label><div><span class="badge ${cbClass}">${cbStatus} | ${cb.threshold || 5} fails</span></div></div>`;
             }
 
             const timeouts = cfg_item.timeouts || {};
@@ -688,7 +689,6 @@ const UI = {
             const writeTimeout = timeouts.write ? (timeouts.write/1000000000)+'s' : 'inherit';
             const idleTimeout = timeouts.idle ? (timeouts.idle/1000000000)+'s' : 'inherit';
 
-            // Single protocol badge at the section title level
             let upstreamsHtml = `
             <div class="detail-section">
                 <div class="detail-title">
@@ -711,7 +711,6 @@ const UI = {
 
             content.innerHTML += upstreamsHtml;
 
-            // HTTP-specific features only for HTTP routes
             if (!isTCPRoute) {
                 let httpFeaturesHtml = '';
 
@@ -719,27 +718,21 @@ const UI = {
                 if (compression.enabled && compression.enabled === "on") {
                     const algo = compression.type || 'gzip';
                     const level = compression.level || 'default';
-                    httpFeaturesHtml += `
-                    <div class="kv-item"><label>Compression</label><div><span class="badge info">${algo} (lvl ${level})</span></div></div>
-                `;
+                    httpFeaturesHtml += `<div class="kv-item"><label>Compression</label><div><span class="badge info">${algo} (lvl ${level})</span></div></div>`;
                 }
 
                 const rl = cfg_item.rate_limit;
                 if (rl && rl.enabled && rl.enabled === "on") {
                     const keyType = rl.key || 'ip';
                     const rule = rl.rule || {};
-                    httpFeaturesHtml += `
-                    <div class="kv-item"><label>Rate Limit</label><div><span class="badge warning">${rule.requests || rl.requests || 0} req / ${(rule.window || rl.window || 60)/1000000000}s (${keyType})</span></div></div>
-                `;
+                    httpFeaturesHtml += `<div class="kv-item"><label>Rate Limit</label><div><span class="badge warning">${rule.requests || rl.requests || 0} req / ${(rule.window || rl.window || 60)/1000000000}s (${keyType})</span></div></div>`;
                 }
 
                 const wasm = cfg_item.wasm;
                 if (wasm && wasm.enabled && wasm.enabled === "on") {
                     const moduleName = wasm.module ? wasm.module.split('/').pop() : 'filter.wasm';
                     const access = wasm.access ? wasm.access.join(', ') : 'none';
-                    httpFeaturesHtml += `
-                    <div class="kv-item"><label>WASM Filter</label><div><span class="badge info">${moduleName} (${access})</span></div></div>
-                `;
+                    httpFeaturesHtml += `<div class="kv-item"><label>WASM Filter</label><div><span class="badge info">${moduleName} (${access})</span></div></div>`;
                 }
 
                 if (httpFeaturesHtml) {
@@ -749,13 +742,11 @@ const UI = {
                         <div class="kv-grid">
                             ${httpFeaturesHtml}
                         </div>
-                    </div>
-                `;
+                    </div>`;
                 }
             }
         }
 
-        // Certificate section (works for both HTTP and TCP with TLS)
         const hostCerts = certificates.filter(c => c.host === hostname);
         if (hostCerts.length > 0) {
             let certHtml = '<div class="cert-grid">';
@@ -780,8 +771,7 @@ const UI = {
                     <div style="font-size:9px; color:var(--text-mute); margin-top:6px;">
                         ${new Date(cert.expiry).toLocaleDateString()}
                     </div>
-                </div>
-            `;
+                </div>`;
             });
             certHtml += '</div>';
 
@@ -792,7 +782,6 @@ const UI = {
             </div>`;
         }
 
-        // Auth section - only for HTTP routes
         if (!isTCPRoute) {
             let authHtml = '';
 
@@ -842,7 +831,6 @@ const UI = {
                 </div>`;
             }
 
-            // Headers section - only for HTTP routes
             if (cfg_item.headers && cfg_item.headers.enabled === "on") {
                 const reqHeaders = cfg_item.headers.request || {};
                 const resHeaders = cfg_item.headers.response || {};
@@ -869,11 +857,128 @@ const UI = {
             }
         }
 
-        // Source section
         content.innerHTML += `
         <div class="detail-section">
             <div class="detail-title">📜 Source (read-only)</div>
             <div class="code-box" style="max-height: 200px;">
+                <pre>${JSON.stringify(cfg_item, null, 2)}</pre>
+            </div>
+        </div>`;
+    },
+
+    renderBackendDrawer(hostname, cfg_item, bStat, type) {
+        const url = cfg_item.address || cfg_item.url || bStat.url || "Unknown";
+        document.getElementById("backendDrawerTitle").innerText = "Backend Activity";
+        document.getElementById("backendDrawerUrl").innerText = url;
+
+        const content = document.getElementById("backendDrawerBody");
+        if (!content) return;
+
+        let healthHtml = "";
+
+        const hasHealthData = bStat.health !== undefined && bStat.health !== null;
+        const isAlive = bStat.alive !== undefined ? bStat.alive : true;
+        let scoreColor = 'var(--info)'; // default unverified
+        let stateText = isAlive ? 'Unverified (Active)' : 'Dead';
+        let hScore = 100;
+        let consFails = 0;
+        let lastSuccessHtml = 'Never';
+        let lastFailHtml = 'None';
+        let downtimeHtml = '';
+
+        if (hasHealthData) {
+            const h = bStat.health;
+            hScore = h.score || 100;
+            consFails = h.consecutive_failures || 0;
+
+            if (h.status === 'Unknown') {
+                scoreColor = 'var(--info)';
+                stateText = isAlive ? 'Unverified (Active)' : 'Dead';
+            } else {
+                scoreColor = hScore > 80 ? 'var(--success)' : (hScore > 50 ? 'var(--warning)' : 'var(--danger)');
+                stateText = h.status;
+            }
+
+            lastSuccessHtml = h.last_success ? new Date(h.last_success).toLocaleString() : 'Never';
+            lastFailHtml = h.last_failure ? new Date(h.last_failure).toLocaleString() : 'None';
+            downtimeHtml = h.downtime ? `<div class="kv-item"><label>Downtime</label><div><span class="badge error">${h.downtime}</span></div></div>` : "";
+        }
+
+        healthHtml = `
+        <div class="detail-section">
+            <div class="detail-title">🏥 Predictive Health</div>
+            <div class="health-gauge">
+                <div class="gauge-circle" style="background: ${scoreColor}">${hScore}</div>
+                <div class="gauge-info">
+                    <div class="gauge-status">${stateText}</div>
+                    <div class="gauge-sub">Consecutive Fails: ${consFails}</div>
+                </div>
+            </div>
+            <div class="kv-grid">
+                <div class="kv-item"><label>Last Success</label><div>${lastSuccessHtml}</div></div>
+                <div class="kv-item"><label>Last Failure</label><div>${lastFailHtml}</div></div>
+                ${downtimeHtml}
+            </div>
+        </div>`;
+
+        let trafficHtml = "";
+        const reqs = bStat.total_reqs || 0;
+        const fails = bStat.failures || 0;
+        const in_flight = bStat.in_flight || 0;
+
+        let p50 = bStat.latency_us?.p50 ? (bStat.latency_us.p50 / 1000).toFixed(1) + "ms" : "-";
+        let p90 = bStat.latency_us?.p90 ? (bStat.latency_us.p90 / 1000).toFixed(1) + "ms" : "-";
+        let p99 = bStat.latency_us?.p99 ? (bStat.latency_us.p99 / 1000).toFixed(1) + "ms" : "-";
+        let avg = bStat.latency_us?.avg ? (bStat.latency_us.avg / 1000).toFixed(1) + "ms" : "-";
+
+        trafficHtml = `
+        <div class="detail-section">
+            <div class="detail-title">📊 Traffic & Latency</div>
+            <div class="kv-grid" style="margin-bottom: 15px;">
+                <div class="kv-item"><label>Total Requests</label><div>${this.fmtNum(reqs)}</div></div>
+                <div class="kv-item"><label>Active / In-Flight</label><div><span class="badge info">${in_flight}</span></div></div>
+                <div class="kv-item"><label>Total Failures</label><div>${fails > 0 ? `<span class="badge error">${fails}</span>` : '0'}</div></div>
+                <div class="kv-item"><label>Configured Weight</label><div>${cfg_item.weight || 1}</div></div>
+            </div>
+            
+            <div class="handler-card" style="padding: 10px 15px; display: grid; grid-template-columns: repeat(4, 1fr); text-align: center; gap: 5px;">
+                <div>
+                    <div style="font-size:9px; color:var(--text-mute); text-transform:uppercase;">Avg</div>
+                    <div style="font-size:12px; font-family:monospace; margin-top:2px; color:var(--fg);">${avg}</div>
+                </div>
+                <div>
+                    <div style="font-size:9px; color:var(--text-mute); text-transform:uppercase;">p50</div>
+                    <div style="font-size:12px; font-family:monospace; margin-top:2px; color:var(--fg);">${p50}</div>
+                </div>
+                <div>
+                    <div style="font-size:9px; color:var(--text-mute); text-transform:uppercase;">p90</div>
+                    <div style="font-size:12px; font-family:monospace; margin-top:2px; color:var(--warning);">${p90}</div>
+                </div>
+                <div>
+                    <div style="font-size:9px; color:var(--text-mute); text-transform:uppercase;">p99</div>
+                    <div style="font-size:12px; font-family:monospace; margin-top:2px; color:var(--danger);">${p99}</div>
+                </div>
+            </div>
+        </div>`;
+
+        let criteriaHtml = "";
+        if (cfg_item.criteria && (cfg_item.criteria.source_ips || cfg_item.criteria.headers)) {
+            const ips = cfg_item.criteria.source_ips ? cfg_item.criteria.source_ips.join(", ") : "Any";
+            const hdrs = cfg_item.criteria.headers ? JSON.stringify(cfg_item.criteria.headers) : "None";
+            criteriaHtml = `
+            <div class="detail-section">
+                <div class="detail-title">🎯 Routing Criteria</div>
+                <div class="kv-grid">
+                    <div class="kv-item"><label>Source IPs</label><div>${ips}</div></div>
+                    <div class="kv-item"><label>Required Headers</label><div>${hdrs}</div></div>
+                </div>
+            </div>`;
+        }
+
+        content.innerHTML = healthHtml + trafficHtml + criteriaHtml + `
+        <div class="detail-section">
+            <div class="detail-title">📜 Backend Config</div>
+            <div class="code-box" style="max-height: 150px;">
                 <pre>${JSON.stringify(cfg_item, null, 2)}</pre>
             </div>
         </div>`;
@@ -912,32 +1017,5 @@ const UI = {
         const k = 1024, s = ["B", "KB", "MB", "GB"];
         const i = Math.floor(Math.log(b) / Math.log(k));
         return parseFloat((b / Math.pow(k, i)).toFixed(1)) + s[i];
-    }
-};
-
-// ================== MODAL CONTROLS ==================
-const Modal = {
-    open(id) {
-        const modal = document.getElementById(id);
-        if (modal) modal.classList.add("active");
-    },
-    closeAll() {
-        document.querySelectorAll(".modal-overlay").forEach(m => m.classList.remove("active"));
-    }
-};
-
-// ================== DRAWER CONTROLS ==================
-const Drawer = {
-    open() {
-        const backdrop = document.getElementById("drawerBackdrop");
-        const drawer = document.getElementById("routeDrawer");
-        if (backdrop) backdrop.classList.add("active");
-        if (drawer) drawer.classList.add("active");
-    },
-    close() {
-        const backdrop = document.getElementById("drawerBackdrop");
-        const drawer = document.getElementById("routeDrawer");
-        if (backdrop) backdrop.classList.remove("active");
-        if (drawer) drawer.classList.remove("active");
     }
 };

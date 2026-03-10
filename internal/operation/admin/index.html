@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' https://d3js.org 'unsafe-inline'">
     <title>AGBERO</title>
     <link rel="stylesheet" href="styles.css">
     <script src="https://d3js.org/d3.v7.min.js"></script>
@@ -23,6 +24,11 @@
         <a href="#" id="loginBtn" class="nav-link" style="margin-left: 10px;">Login</a>
     </div>
 </nav>
+
+<!-- OFFLINE BANNER -->
+<div id="offlineBanner" class="offline-banner">
+    ⚠️ Connection lost. Attempting to reconnect...
+</div>
 
 <div class="main-content">
     <!-- DASHBOARD -->
@@ -195,8 +201,8 @@
             <div class="config-header">
                 <h3>📄 Raw Configuration</h3>
                 <div class="config-actions">
-                    <button class="btn small config-copy">📋 Copy</button>
-                    <button class="btn small config-expand">↕️ Expand</button>
+                    <button class="btn small config-copy" data-action="copy-config">📋 Copy</button>
+                    <button class="btn small config-expand" data-action="expand-config">↕️ Expand</button>
                 </div>
             </div>
             <div class="code-box" id="configContent"></div>
@@ -295,9 +301,9 @@
     <div class="modal">
         <h3>Confirm</h3>
         <p id="confirmText"></p>
-        <div class="actions">
-            <button id="confirmOk" class="danger">Yes</button>
-            <button id="confirmCancel">No</button>
+        <div class="actions" style="display:flex; gap:10px; margin-top:20px;">
+            <button id="confirmOk" class="btn error" style="flex:1;">Yes, Unblock</button>
+            <button id="confirmCancel" class="btn" style="flex:1;">Cancel</button>
         </div>
     </div>
 </div>
@@ -308,20 +314,35 @@
     <button id="refreshSessionBtn" class="btn small">Renew</button>
 </div>
 
-<!-- DRAWER -->
+<!-- LEVEL 1 DRAWER: ROUTE -->
 <div class="drawer-backdrop" id="drawerBackdrop"></div>
 <div class="drawer" id="routeDrawer">
     <div class="drawer-header">
         <div class="drawer-title">
             <div class="drawer-breadcrumb">
-                <span class="drawer-back-link" id="drawerBackToHosts">← All hosts</span>
+                <span class="drawer-back-link" data-action="close-drawer" data-target="routeDrawer">← All hosts</span>
             </div>
-            <h2 id="drawerRoutePath">/api/v1</h2>
-            <span id="drawerHostName" class="clickable-host">api.agbero.com</span>
+            <h2 id="drawerRoutePath">/</h2>
+            <span id="drawerHostName" class="clickable-host" data-action="filter-host">example.com</span>
         </div>
-        <button class="drawer-close" id="drawerCloseBtn">&times;</button>
+        <button class="drawer-close" data-action="close-drawer" data-target="routeDrawer">&times;</button>
     </div>
     <div class="drawer-content" id="drawerBody"></div>
+</div>
+
+<!-- LEVEL 2 DRAWER: BACKEND -->
+<div class="drawer level-2" id="backendDrawer">
+    <div class="drawer-header">
+        <div class="drawer-title">
+            <div class="drawer-breadcrumb">
+                <span class="drawer-back-link" data-action="close-drawer" data-target="backendDrawer">← Back to Route</span>
+            </div>
+            <h2 id="backendDrawerTitle">Backend Details</h2>
+            <span id="backendDrawerUrl" class="clickable-host mono"></span>
+        </div>
+        <button class="drawer-close" data-action="close-drawer" data-target="backendDrawer">&times;</button>
+    </div>
+    <div class="drawer-content" id="backendDrawerBody"></div>
 </div>
 
 <script src="js/graph.js"></script>

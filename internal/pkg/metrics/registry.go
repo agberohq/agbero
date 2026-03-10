@@ -2,15 +2,12 @@ package metrics
 
 import (
 	"sync"
-	"sync/atomic"
 )
 
 var DefaultRegistry = NewRegistry()
 
 type BackendStats struct {
 	Activity *Activity
-	Health   *Health
-	Alive    *atomic.Bool
 }
 
 func (s *BackendStats) Close() {
@@ -38,13 +35,8 @@ func (r *Registry) GetOrRegister(key string) *BackendStats {
 		return s
 	}
 
-	alive := &atomic.Bool{}
-	alive.Store(true)
-
 	s := &BackendStats{
 		Activity: NewActivity(),
-		Health:   NewHealth(),
-		Alive:    alive,
 	}
 	r.items[key] = s
 	return s

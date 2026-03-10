@@ -77,7 +77,6 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 			failThresh: 2,
 			stop:       make(chan struct{}),
 			Activity:   stats.Activity,
-			Health:     stats.Health,
 		}
 
 		be.StartHealthCheck()

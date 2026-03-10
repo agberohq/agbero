@@ -27,7 +27,6 @@ class RouteGraph {
         // Define arrowhead marker
         const defs = this.svg.append("defs");
 
-        // Normal Arrow
         defs.selectAll("marker")
             .data(["end"])
             .enter().append("marker")
@@ -79,13 +78,33 @@ class RouteGraph {
             .call(d3.drag()
                 .on("start", (event, d) => this.dragstarted(event, d))
                 .on("drag", (event, d) => this.dragged(event, d))
-                .on("end", (event, d) => this.dragended(event, d)));
+                .on("end", (event, d) => this.dragended(event, d)))
+            .on("click", (event, d) => {
+                if (event.defaultPrevented) return; // Prevent click if dragged
+
+                if (d.type === 'route' && d.meta) {
+                    window.app.openRouteDrawer(d.meta.hostname, d.meta.routeIdx, d.meta.routeType);
+                } else if (d.type === 'backend' && d.meta) {
+                    window.app.openBackendDrawer(d.meta.hostname, d.meta.routeIdx, d.meta.backendIdx, d.meta.routeType);
+                } else if (d.type === 'host' && d.meta) {
+                    const searchInput = document.getElementById("hostSearch");
+                    if (searchInput) {
+                        searchInput.value = d.meta.hostname;
+                        sessionStorage.setItem("ag_search", d.meta.hostname);
+                        window.app.searchTerm = d.meta.hostname;
+                        window.app.setPage("hosts");
+                    }
+                }
+            });
+
+        // Style node hover state for clickability
+        node.style("cursor", d => d.type === "root" ? "default" : "pointer");
 
         // Node Circles
         node.append("circle")
             .attr("r", d => this.getNodeRadius(d.type))
             .attr("fill", d => this.getNodeColor(d.type))
-            .attr("stroke", d => d.status === 'dead' ? "var(--danger)" : "#fff")
+            .attr("stroke", d => this.getNodeStroke(d.status))
             .attr("stroke-width", d => d.status === 'dead' ? 3 : 1.5);
 
         // Node Labels
@@ -126,12 +145,12 @@ class RouteGraph {
 
     processData(config, stats) {
         const nodes = [];
-        const links = [];
+        const links =[];
         const nodeSet = new Set();
 
-        const addNode = (id, label, type, status = 'ok') => {
+        const addNode = (id, label, type, status = 'ok', meta = null) => {
             if (!nodeSet.has(id)) {
-                nodes.push({ id, label, type, status });
+                nodes.push({ id, label, type, status, meta });
                 nodeSet.add(id);
             }
         };
@@ -144,22 +163,20 @@ class RouteGraph {
             Object.entries(config.hosts).forEach(([hostname, hostCfg]) => {
                 const hostStats = stats && stats[hostname] ? stats[hostname] : {};
 
-                addNode(hostname, hostname, "host");
+                addNode(hostname, hostname, "host", "ok", { hostname: hostname });
                 links.push({ source: rootId, target: hostname });
 
-                // Routes
+                // HTTP Routes
                 if (hostCfg.routes) {
                     hostCfg.routes.forEach((route, rIdx) => {
                         const path = route.path || "/";
                         const routeId = `${hostname}|${path}`;
-                        addNode(routeId, path, "route");
+                        addNode(routeId, path, "route", "ok", { hostname: hostname, routeIdx: rIdx, routeType: "route" });
                         links.push({ source: hostname, target: routeId });
 
-                        // Get Route Stats for backend status check
                         const routeStats = hostStats.routes ? hostStats.routes[rIdx] : {};
-                        const backendStats = routeStats.backends || [];
+                        const backendStats = routeStats.backends ||[];
 
-                        // Backends
                         if (route.backends && route.backends.servers) {
                             route.backends.servers.forEach((srv, bIdx) => {
                                 const beUrl = srv.address || srv.url;
@@ -167,16 +184,23 @@ class RouteGraph {
                                     const beId = `${routeId}|${beUrl}`;
                                     const displayUrl = beUrl.replace(/^https?:\/\//, '');
 
-                                    // Determine health status
-                                    let status = 'ok';
+                                    let status = 'unverified';
                                     if(backendStats[bIdx]) {
                                         const bStat = backendStats[bIdx];
-                                        if (bStat.healthy === false || bStat.alive === false) {
+                                        const hStat = bStat.health?.status || 'Unknown';
+
+                                        if (bStat.alive === false || hStat === 'Dead' || hStat === 'Unhealthy') {
                                             status = 'dead';
+                                        } else if (hStat === 'Degraded') {
+                                            status = 'degraded';
+                                        } else if (hStat === 'Healthy') {
+                                            status = 'ok';
+                                        } else {
+                                            status = bStat.alive ? 'unverified' : 'dead';
                                         }
                                     }
 
-                                    addNode(beId, displayUrl, "backend", status);
+                                    addNode(beId, displayUrl, "backend", status, { hostname: hostname, routeIdx: rIdx, backendIdx: bIdx, routeType: "route" });
                                     links.push({ source: routeId, target: beId });
                                 }
                             });
@@ -189,26 +213,34 @@ class RouteGraph {
                     hostCfg.proxies.forEach((proxy, pIdx) => {
                         const name = proxy.name || proxy.listen;
                         const proxyId = `${hostname}|tcp|${name}`;
-                        addNode(proxyId, `TCP:${name}`, "route");
+                        addNode(proxyId, `TCP:${name}`, "route", "ok", { hostname: hostname, routeIdx: pIdx, routeType: "proxy" });
                         links.push({ source: hostname, target: proxyId });
 
                         const proxyStats = hostStats.proxies ? hostStats.proxies[pIdx] : {};
-                        const backendStats = proxyStats.backends || [];
+                        const backendStats = proxyStats.backends ||[];
 
                         if(proxy.backends) {
                             proxy.backends.forEach((srv, bIdx) => {
                                 const beUrl = srv.address;
                                 const beId = `${proxyId}|${beUrl}`;
 
-                                let status = 'ok';
+                                let status = 'unverified';
                                 if(backendStats[bIdx]) {
                                     const bStat = backendStats[bIdx];
-                                    if (bStat.healthy === false || bStat.alive === false) {
+                                    const hStat = bStat.health?.status || 'Unknown';
+
+                                    if (bStat.alive === false || hStat === 'Dead' || hStat === 'Unhealthy') {
                                         status = 'dead';
+                                    } else if (hStat === 'Degraded') {
+                                        status = 'degraded';
+                                    } else if (hStat === 'Healthy') {
+                                        status = 'ok';
+                                    } else {
+                                        status = bStat.alive ? 'unverified' : 'dead';
                                     }
                                 }
 
-                                addNode(beId, beUrl, "backend", status);
+                                addNode(beId, beUrl, "backend", status, { hostname: hostname, routeIdx: pIdx, backendIdx: bIdx, routeType: "proxy" });
                                 links.push({ source: proxyId, target: beId });
                             });
                         }
@@ -227,6 +259,15 @@ class RouteGraph {
             case "route": return "var(--success)";
             case "backend": return "var(--text-mute)";
             default: return "#999";
+        }
+    }
+
+    getNodeStroke(status) {
+        switch(status) {
+            case "dead": return "var(--danger)";
+            case "degraded": return "var(--warning)";
+            case "unverified": return "var(--info)";
+            default: return "#fff";
         }
     }
 

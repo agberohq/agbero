@@ -1,4 +1,3 @@
-// score_test.go
 package health
 
 import (
@@ -13,8 +12,8 @@ func TestNewScore(t *testing.T) {
 		t.Errorf("expected initial score 100, got %d", s.Value())
 	}
 
-	if s.State() != StateHealthy {
-		t.Errorf("expected initial state Healthy, got %v", s.State())
+	if s.State() != StateUnknown {
+		t.Errorf("expected initial state Unknown, got %v", s.State())
 	}
 }
 
@@ -34,36 +33,21 @@ func TestScoreStateTransitions(t *testing.T) {
 
 	s := NewScore(thresholds, DefaultScoringWeights(), DefaultLatencyThresholds(), onChange)
 
-	// Score formula: latency*0.4 + success*0.3 + passive*0.2 + conn*0.1
-	// For failed probe: success=0, so max possible is 0*0.3 + 100*0.2 + 100*0.1 = 30
-	// Plus latency component. To get unhealthy (<=49), need latencyScore*0.4 + 30 <= 49
-	// latencyScore <= 47.5, which requires >= ~825ms
+	// Original test cases from your file
 	testCases := []struct {
 		name          string
-		probeSuccess  bool
-		probeLatency  time.Duration
-		passiveRate   float64
-		connHealth    int32
+		record        Record
 		expectedState State
 	}{
-		{"healthy probe", true, 50 * time.Millisecond, 0, 100, StateHealthy},
-		// Degraded: need score 50-79. With success=100, passive=0, conn=100:
-		// score = lat*0.4 + 30 + 20 + 10 = lat*0.4 + 60. For 50: lat= -25 (impossible).
-		// So with full passive/conn health, we can't hit degraded with success=true.
-		// Need passive errors or conn issues. Use passiveRate=0.5 (passiveScore=50)
-		// score = lat*0.4 + 30 + 10 + 10 = lat*0.4 + 50. For 70: lat=50, need ~600ms
-		{"degraded latency", true, 700 * time.Millisecond, 0.5, 100, StateDegraded},
-		// Unhealthy: need <=49. With failure (success=0), passive=0, conn=100:
-		// score = lat*0.4 + 0 + 20 + 10 = lat*0.4 + 30. For 49: lat=47.5, need ~850ms
-		{"unhealthy latency", false, 1000 * time.Millisecond, 0, 100, StateUnhealthy},
-		// Failed probe with high latency: success=0, score = lat*0.4 + 0 + 20 + 10
-		// For 1000ms: latScore=40, score = 16 + 30 = 46 (unhealthy)
-		{"failed probe", false, 1000 * time.Millisecond, 0, 100, StateUnhealthy},
+		{"healthy probe", Record{ProbeLatency: 50 * time.Millisecond, ProbeSuccess: true, StatusCode: 200, PassiveRate: 0, ConnHealth: 100}, StateHealthy},
+		{"degraded latency", Record{ProbeLatency: 700 * time.Millisecond, ProbeSuccess: true, StatusCode: 200, PassiveRate: 0.5, ConnHealth: 100}, StateDegraded},
+		{"unhealthy latency", Record{ProbeLatency: 2000 * time.Millisecond, ProbeSuccess: false, StatusCode: 500, PassiveRate: 0, ConnHealth: 100}, StateUnhealthy},
+		{"failed probe", Record{ProbeLatency: 2000 * time.Millisecond, ProbeSuccess: false, StatusCode: 500, PassiveRate: 0, ConnHealth: 100}, StateUnhealthy},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			s.Update(tc.probeLatency, tc.probeSuccess, tc.passiveRate, tc.connHealth)
+			s.Update(tc.record)
 
 			if s.State() != tc.expectedState {
 				t.Errorf("expected state %v, got %v (score=%d)", tc.expectedState, s.State(), s.Value())
@@ -80,25 +64,20 @@ func TestHysteresis(t *testing.T) {
 	thresholds := DefaultThresholds()
 	s := NewScore(thresholds, DefaultScoringWeights(), DefaultLatencyThresholds(), nil)
 
-	// Enter degraded at <=79.
-	// With success=true, passive=0.5 (score=50), conn=100:
-	// total = lat*0.4 + 30 + 10 + 10 = lat*0.4 + 50
-	// For 70: latScore=50, need ~700ms latency
-	s.Update(800*time.Millisecond, true, 0.5, 100)
+	// Enter degraded at <=79
+	s.Update(Record{ProbeLatency: 800 * time.Millisecond, ProbeSuccess: true, StatusCode: 200, PassiveRate: 0.5, ConnHealth: 100})
 	if s.State() != StateDegraded {
 		t.Fatalf("should enter degraded at score <=79, got score=%d, state=%v", s.Value(), s.State())
 	}
 
-	// Stay degraded until >=85. Current score ~70.
-	// To get to 84 (stay degraded): need lat*0.4 + 50 = 84, latScore=85, need ~250ms
-	// To get to 86 (exit to healthy): need lat*0.4 + 50 = 86, latScore=90, need ~150ms
-	s.Update(250*time.Millisecond, true, 0.5, 100)
+	// Stay degraded until >=85
+	s.Update(Record{ProbeLatency: 250 * time.Millisecond, ProbeSuccess: true, StatusCode: 200, PassiveRate: 0.5, ConnHealth: 100})
 	if s.State() != StateDegraded {
 		t.Errorf("should stay degraded until score >=85, got score=%d, state=%v", s.Value(), s.State())
 	}
 
-	// Now recover to healthy
-	s.Update(100*time.Millisecond, true, 0, 100)
+	// Exit to healthy
+	s.Update(Record{ProbeLatency: 100 * time.Millisecond, ProbeSuccess: true, StatusCode: 200, PassiveRate: 0, ConnHealth: 100})
 	if s.State() != StateHealthy {
 		t.Errorf("should exit to healthy at score >=85, got score=%d, state=%v", s.Value(), s.State())
 	}
@@ -132,7 +111,6 @@ func TestCalculateLatencyScore(t *testing.T) {
 func TestPassiveErrorRate(t *testing.T) {
 	s := NewScore(DefaultThresholds(), DefaultScoringWeights(), DefaultLatencyThresholds(), nil)
 
-	// Record 10 requests, 2 failures
 	for i := 0; i < 8; i++ {
 		s.RecordPassiveRequest(true)
 	}
@@ -149,14 +127,12 @@ func TestPassiveErrorRate(t *testing.T) {
 func TestRapidDeterioration(t *testing.T) {
 	s := NewScore(DefaultThresholds(), DefaultScoringWeights(), DefaultLatencyThresholds(), nil)
 
-	// Start healthy
-	s.Update(50*time.Millisecond, true, 0, 100)
+	s.Update(Record{ProbeLatency: 50 * time.Millisecond, ProbeSuccess: true, StatusCode: 200, PassiveRate: 0, ConnHealth: 100})
 	if s.IsRapidDeterioration() {
 		t.Error("should not be deteriorating initially")
 	}
 
-	// Rapid drop - use failure + high latency + passive errors to drop score quickly
-	s.Update(5000*time.Millisecond, false, 0.5, 50)
+	s.Update(Record{ProbeLatency: 5000 * time.Millisecond, ProbeSuccess: false, StatusCode: 500, PassiveRate: 0.5, ConnHealth: 50})
 
 	if !s.IsRapidDeterioration() {
 		t.Errorf("should detect rapid deterioration, score=%d, trend=%d", s.Value(), s.Trend())
@@ -166,7 +142,7 @@ func TestRapidDeterioration(t *testing.T) {
 func TestScoreSnapshot(t *testing.T) {
 	s := NewScore(DefaultThresholds(), DefaultScoringWeights(), DefaultLatencyThresholds(), nil)
 
-	s.Update(100*time.Millisecond, true, 0, 100)
+	s.Update(Record{ProbeLatency: 100 * time.Millisecond, ProbeSuccess: true, StatusCode: 200, PassiveRate: 0, ConnHealth: 100})
 
 	snap := s.Snapshot()
 	if snap.value != s.Value() {

@@ -129,7 +129,7 @@ func TestProberAcceleratedProbing(t *testing.T) {
 	prober.Start()
 	defer prober.Stop()
 
-	score.Update(2000*time.Millisecond, false, 0, 100)
+	score.Update(Record{ProbeLatency: 2000 * time.Millisecond, ProbeSuccess: false, StatusCode: 500, PassiveRate: 0, ConnHealth: 100})
 	time.Sleep(100 * time.Millisecond)
 
 	if score.State() != StateUnhealthy && score.State() != StateDegraded {
@@ -167,17 +167,17 @@ func TestProberAdjustInterval(t *testing.T) {
 		t.Errorf("expected standard interval %v, got %v", config.StandardInterval, prober.looper.CurrentInterval())
 	}
 
-	score.Update(2000*time.Millisecond, false, 0, 100)
+	score.Update(Record{ProbeLatency: 2000 * time.Millisecond, ProbeSuccess: false, StatusCode: 500, PassiveRate: 0, ConnHealth: 100})
 	prober.adjustInterval()
 
 	if prober.looper.CurrentInterval() != config.AcceleratedInterval {
 		t.Errorf("expected accelerated interval %v, got %v", config.AcceleratedInterval, prober.looper.CurrentInterval())
 	}
 
-	score.Update(100*time.Millisecond, true, 0, 100)
+	score.Update(Record{ProbeLatency: 100 * time.Millisecond, ProbeSuccess: true, StatusCode: 200, PassiveRate: 0, ConnHealth: 100})
 	prober.adjustInterval()
 
-	score.Update(100*time.Millisecond, true, 0, 100)
+	score.Update(Record{ProbeLatency: 100 * time.Millisecond, ProbeSuccess: true, StatusCode: 200, PassiveRate: 0, ConnHealth: 100})
 	prober.adjustInterval()
 
 	if prober.looper.CurrentInterval() != config.StandardInterval {

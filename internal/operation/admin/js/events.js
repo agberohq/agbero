@@ -2,6 +2,34 @@ const EventHandler = {
     bindAll(app) {
         if (!app) return;
 
+        // ================== GLOBAL EVENT DELEGATION (CSP SAFE) ==================
+        document.body.addEventListener('click', (e) => {
+            const openRouteBtn = e.target.closest('[data-action="open-route"]');
+            if (openRouteBtn) {
+                app.openRouteDrawer(openRouteBtn.dataset.host, parseInt(openRouteBtn.dataset.idx), openRouteBtn.dataset.type);
+                return;
+            }
+
+            const openBackendBtn = e.target.closest('[data-action="open-backend"]');
+            if (openBackendBtn) {
+                app.openBackendDrawer(openBackendBtn.dataset.host, parseInt(openBackendBtn.dataset.routeIdx), parseInt(openBackendBtn.dataset.backendIdx), openBackendBtn.dataset.type);
+                return;
+            }
+
+            const copyableBtn = e.target.closest('[data-action="copy-url"]');
+            if (copyableBtn) {
+                e.stopPropagation();
+                app.copyToClipboard(copyableBtn.dataset.url);
+                return;
+            }
+
+            const unblockBtn = e.target.closest('[data-action="unblock-ip"]');
+            if (unblockBtn) {
+                app.confirmDeleteFw(unblockBtn.dataset.ip);
+                return;
+            }
+        });
+
         // ================== NAVIGATION ==================
         document.querySelectorAll(".nav-link").forEach(l => {
             l.addEventListener("click", e => {
@@ -77,7 +105,7 @@ const EventHandler = {
         const logsClearBtn = document.getElementById("logsClearBtn");
         if (logsClearBtn) {
             logsClearBtn.addEventListener("click", () => {
-                app.logs = [];
+                app.logs =[];
                 UI.renderLogs(app.logs, app.logFilter);
             });
         }
@@ -145,21 +173,26 @@ const EventHandler = {
         }
 
         // ================== DRAWER CONTROLS ==================
-        const drawerCloseBtn = document.getElementById("drawerCloseBtn");
-        if (drawerCloseBtn) drawerCloseBtn.addEventListener("click", () => app.closeDrawer());
+        document.querySelectorAll(".drawer-close").forEach(btn => {
+            btn.addEventListener("click", (e) => {
+                const target = e.currentTarget.getAttribute("data-target");
+                app.closeDrawer(target);
+            });
+        });
+
+        document.querySelectorAll(".drawer-back-link").forEach(btn => {
+            btn.addEventListener("click", (e) => {
+                const target = e.currentTarget.getAttribute("data-target");
+                app.closeDrawer(target);
+                if (target === "routeDrawer") {
+                    app.setPage("hosts");
+                }
+            });
+        });
 
         const drawerBackdrop = document.getElementById("drawerBackdrop");
         if (drawerBackdrop) drawerBackdrop.addEventListener("click", () => app.closeDrawer());
 
-        const drawerBackToHosts = document.getElementById("drawerBackToHosts");
-        if (drawerBackToHosts) {
-            drawerBackToHosts.addEventListener("click", () => {
-                app.closeDrawer();
-                app.setPage("hosts");
-            });
-        }
-
-        // Clickable hostname in drawer
         const hostNameEl = document.getElementById("drawerHostName");
         if (hostNameEl) {
             hostNameEl.addEventListener("click", () => {
@@ -186,29 +219,73 @@ const EventHandler = {
 
         // ================== KEYBOARD SHORTCUTS ==================
         document.addEventListener("keydown", (e) => {
-            if (e.key === "Escape") app.closeDrawer();
+            if (e.key === "Escape") {
+                app.closeDrawer();
+            }
         });
 
-        // ================== TOUCH EVENTS FOR DRAWER ==================
         this.initTouchEvents(app);
     },
 
     initTouchEvents(app) {
-        const drawer = document.getElementById("routeDrawer");
-        if (!drawer) return;
+        ["routeDrawer", "backendDrawer"].forEach(id => {
+            const drawer = document.getElementById(id);
+            if (!drawer) return;
 
-        let touchStartX = 0;
-        drawer.addEventListener("touchstart", (e) => {
-            touchStartX = e.touches[0].clientX;
-        }, false);
+            let touchStartX = 0;
+            drawer.addEventListener("touchstart", (e) => {
+                touchStartX = e.touches[0].clientX;
+            }, {passive: true});
 
-        drawer.addEventListener("touchmove", (e) => {
-            if (!drawer.classList.contains("active")) return;
-            const touchX = e.touches[0].clientX;
-            const diff = touchX - touchStartX;
-            if (diff > 50) {
-                app.closeDrawer();
+            drawer.addEventListener("touchmove", (e) => {
+                if (!drawer.classList.contains("active")) return;
+                const touchX = e.touches[0].clientX;
+                const diff = touchX - touchStartX;
+                if (diff > 50) {
+                    app.closeDrawer(id);
+                }
+            }, {passive: true});
+        });
+    }
+};
+
+const Drawer = {
+    open(id) {
+        const backdrop = document.getElementById("drawerBackdrop");
+        const drawer = document.getElementById(id || "routeDrawer");
+        if (backdrop) backdrop.classList.add("active");
+        if (drawer) drawer.classList.add("active");
+    },
+    close(id) {
+        if (id) {
+            const drawer = document.getElementById(id);
+            if (drawer) drawer.classList.remove("active");
+            if (id === "routeDrawer") {
+                const backdrop = document.getElementById("drawerBackdrop");
+                if (backdrop) backdrop.classList.remove("active");
+                const beDrawer = document.getElementById("backendDrawer");
+                if (beDrawer) beDrawer.classList.remove("active");
             }
-        }, false);
+        } else {
+            const beDrawer = document.getElementById("backendDrawer");
+            if (beDrawer && beDrawer.classList.contains("active")) {
+                beDrawer.classList.remove("active");
+                return;
+            }
+            const rDrawer = document.getElementById("routeDrawer");
+            if (rDrawer) rDrawer.classList.remove("active");
+            const backdrop = document.getElementById("drawerBackdrop");
+            if (backdrop) backdrop.classList.remove("active");
+        }
+    }
+};
+
+const Modal = {
+    open(id) {
+        const modal = document.getElementById(id);
+        if (modal) modal.classList.add("active");
+    },
+    closeAll() {
+        document.querySelectorAll(".modal-overlay").forEach(m => m.classList.remove("active"));
     }
 };

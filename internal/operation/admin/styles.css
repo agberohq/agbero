@@ -59,6 +59,29 @@ body {
     flex-direction: column;
 }
 
+/* ========== OFFLINE BANNER ========== */
+.offline-banner {
+    display: none;
+    background: var(--danger);
+    color: #ffffff;
+    text-align: center;
+    padding: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    z-index: 1000;
+}
+
+.offline-banner.active {
+    display: block;
+    animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+    from { transform: translateY(-100%); }
+    to { transform: translateY(0); }
+}
+
 /* ========== NAVBAR & LAYOUT ========== */
 .navbar {
     padding: 25px 40px;
@@ -135,7 +158,7 @@ body {
     max-width: 100%;
     padding: 0;
     height: 100%;
-    display: none; /* Default state */
+    display: none;
 }
 
 .page.active {
@@ -283,6 +306,7 @@ body {
     border-color: var(--fg);
     font-weight: 600;
 }
+
 /* ========== SYSTEM STATS BAR ========== */
 .sys-bar {
     position: fixed;
@@ -326,7 +350,7 @@ body {
     color: var(--text-mute);
 }
 
-/* ========== STATS FOOTER - EXACT ORIGINAL ========== */
+/* ========== STATS FOOTER ========== */
 .stats-footer {
     position: fixed;
     bottom: 0;
@@ -452,18 +476,20 @@ body {
     padding: 20px;
     margin-top: 15px;
     border: 1px solid var(--border);
-    cursor: pointer;
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.route-block:hover {
+.route-block.clickable {
+    cursor: pointer;
+}
+
+.route-block.clickable:hover {
     border-color: var(--accent);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
 .route-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
     margin-bottom: 15px;
     padding-bottom: 10px;
@@ -495,7 +521,11 @@ body {
     border-radius: 4px;
 }
 
-.backend-row:hover {
+.backend-row.clickable {
+    cursor: pointer;
+}
+
+.backend-row.clickable:hover {
     background: var(--hover-bg);
 }
 
@@ -506,10 +536,9 @@ body {
 .be-url {
     color: var(--fg);
     word-break: break-all;
-    cursor: pointer;
 }
 
-.be-url:hover {
+.be-url.copyable:hover {
     text-decoration: underline;
     color: var(--accent);
 }
@@ -534,46 +563,28 @@ body {
     letter-spacing: 0.3px;
 }
 
-/* Success/OK */
-.badge.success, .badge.tls, .badge.ok {
+.badge.success, .badge.tls, .badge.ok, .badge.healthy {
     background: var(--badge-success);
     color: #000;
     border-color: var(--badge-success);
 }
 
-/* Warning/Expiring */
-.badge.warning, .badge.local, .badge.warn {
+.badge.warning, .badge.local, .badge.warn, .badge.degraded {
     background: var(--badge-warning);
     color: #000;
     border-color: var(--badge-warning);
 }
 
-/* Error/Down/Blocked */
-.badge.error, .badge.sec, .badge.danger {
+.badge.error, .badge.sec, .badge.danger, .badge.down, .badge.unhealthy, .badge.dead {
     background: var(--badge-danger);
     color: #fff;
     border-color: var(--badge-danger);
 }
 
-/* Info/Configured */
 .badge.info, .badge.transform, .badge.traffic {
     background: var(--badge-info);
     color: #fff;
     border-color: var(--badge-info);
-}
-
-/* Certificate badges */
-.badge.cert-valid {
-    background: var(--badge-success);
-    color: #000;
-}
-.badge.cert-expiring {
-    background: var(--badge-warning);
-    color: #000;
-}
-.badge.cert-expired {
-    background: var(--badge-danger);
-    color: #fff;
 }
 
 /* ========== STATUS DOTS ========== */
@@ -751,8 +762,8 @@ body {
 
 /* ========== LOGS CONSOLE ========== */
 .logs-console {
-    background: #111;
-    color: #ccc;
+    background: #111111;
+    color: #cccccc;
     font-family: monospace;
     font-size: 12px;
     padding: 20px;
@@ -769,7 +780,7 @@ body {
 }
 
 .log-ts {
-    color: #666;
+    color: #666666;
     font-family: monospace;
     white-space: nowrap;
 }
@@ -783,11 +794,6 @@ body {
 .log-msg {
     word-break: break-word;
     flex: 1;
-}
-
-.divider {
-    color: var(--border);
-    margin: 0 5px;
 }
 
 .divider-v {
@@ -873,7 +879,7 @@ body {
     cursor: pointer;
 }
 
-/* ========== DRAWER ========== */
+/* ========== DRAWERS (1st & 2nd Layer) ========== */
 .drawer-backdrop {
     position: fixed;
     top: 0;
@@ -912,6 +918,13 @@ body {
 
 .drawer.active {
     transform: translateX(0);
+}
+
+/* Layer 2 Drawer specifically for Backend details */
+.drawer.level-2 {
+    z-index: 502;
+    width: 400px;
+    box-shadow: -10px 0 40px rgba(0, 0, 0, 0.2);
 }
 
 .drawer-header {
@@ -1035,6 +1048,16 @@ body {
     gap: 8px;
 }
 
+.drawer-row.clickable {
+    cursor: pointer;
+    transition: border-color 0.2s ease;
+}
+
+.drawer-row.clickable:hover {
+    border-color: var(--accent);
+    background: var(--hover-bg);
+}
+
 .drawer-row.down {
     opacity: 0.6;
 }
@@ -1082,6 +1105,47 @@ body {
     font-size: 11px;
     font-family: monospace;
     word-break: break-word;
+}
+
+/* ========== HEALTH GAUGE (Backend Drawer) ========== */
+.health-gauge {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 20px;
+    background: var(--panel-bg);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    margin-bottom: 25px;
+}
+
+.gauge-circle {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: bold;
+    color: #ffffff;
+}
+
+.gauge-info {
+    flex: 1;
+}
+
+.gauge-status {
+    font-size: 16px;
+    font-weight: 500;
+    margin-bottom: 5px;
+    color: var(--fg);
+}
+
+.gauge-sub {
+    font-size: 11px;
+    color: var(--text-mute);
+    font-family: monospace;
 }
 
 /* ========== CERTIFICATE GRID ========== */
@@ -1480,7 +1544,7 @@ svg text {
         grid-template-columns: 1fr;
     }
 
-    .drawer {
+    .drawer, .drawer.level-2 {
         width: 100%;
     }
 
@@ -1550,7 +1614,7 @@ svg text {
         flex-direction: column;
         gap: 2px;
         padding-bottom: 10px;
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid var(--border);
     }
 
     .log-ts {

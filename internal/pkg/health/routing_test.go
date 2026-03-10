@@ -1,3 +1,4 @@
+// routing_test.go
 package health
 
 import (
@@ -6,11 +7,10 @@ import (
 )
 
 func TestEffectiveWeightHealthy(t *testing.T) {
-	rw := DefaultRoutingWeights()
+	rw := DefaultRoutingMultiplier()
 	score := NewScore(DefaultThresholds(), DefaultScoringWeights(), DefaultLatencyThresholds(), nil)
 
-	// Healthy at 90
-	score.Update(266*time.Millisecond, true, 0, 100)
+	score.Update(Record{ProbeLatency: 266 * time.Millisecond, ProbeSuccess: true, StatusCode: 200, PassiveRate: 0, ConnHealth: 100})
 
 	weight := rw.EffectiveWeight(100, score)
 	expected := int(float64(100) * 0.90)
@@ -21,15 +21,13 @@ func TestEffectiveWeightHealthy(t *testing.T) {
 }
 
 func TestEffectiveWeightDegraded(t *testing.T) {
-	rw := DefaultRoutingWeights()
+	rw := DefaultRoutingMultiplier()
 	score := NewScore(DefaultThresholds(), DefaultScoringWeights(), DefaultLatencyThresholds(), nil)
 
-	// Degraded at 75
-	score.Update(1129*time.Millisecond, true, 0, 100)
+	score.Update(Record{ProbeLatency: 1129 * time.Millisecond, ProbeSuccess: true, StatusCode: 200, PassiveRate: 0, ConnHealth: 100})
 
 	weight := rw.EffectiveWeight(100, score)
-	flo := float64(100) * 0.75 * 0.5
-	expected := int(flo)
+	expected := int(float64(100) * float64(score.Value()) / 100.0 * rw.DegradedMultiplier)
 
 	if weight != expected {
 		t.Errorf("expected weight %d for degraded backend, got %d", expected, weight)
@@ -37,14 +35,13 @@ func TestEffectiveWeightDegraded(t *testing.T) {
 }
 
 func TestEffectiveWeightUnhealthy(t *testing.T) {
-	rw := DefaultRoutingWeights()
+	rw := DefaultRoutingMultiplier()
 	score := NewScore(DefaultThresholds(), DefaultScoringWeights(), DefaultLatencyThresholds(), nil)
 
-	// Unhealthy at 30
-	score.Update(2000*time.Millisecond, false, 0, 100)
+	score.Update(Record{ProbeLatency: 2000 * time.Millisecond, ProbeSuccess: false, StatusCode: 500, PassiveRate: 0, ConnHealth: 100})
 
 	weight := rw.EffectiveWeight(100, score)
-	expected := int(float64(100) * 0.30 * 0.1)
+	expected := int(float64(100) * float64(score.Value()) / 100.0 * rw.UnhealthyMultiplier)
 
 	if weight != expected {
 		t.Errorf("expected weight %d for unhealthy backend, got %d", expected, weight)
@@ -52,11 +49,10 @@ func TestEffectiveWeightUnhealthy(t *testing.T) {
 }
 
 func TestEffectiveWeightDead(t *testing.T) {
-	rw := DefaultRoutingWeights()
+	rw := DefaultRoutingMultiplier()
 	score := NewScore(DefaultThresholds(), DefaultScoringWeights(), DefaultLatencyThresholds(), nil)
 
-	// Dead at 0
-	score.Update(10000*time.Millisecond, false, 1.0, 0)
+	score.Update(Record{ProbeLatency: 10000 * time.Millisecond, ProbeSuccess: false, StatusCode: 500, PassiveRate: 1.0, ConnHealth: 0})
 
 	weight := rw.EffectiveWeight(100, score)
 
@@ -87,11 +83,9 @@ func TestShouldAbortRapidDeterioration(t *testing.T) {
 	eac := NewEarlyAbortController(true)
 	score := NewScore(DefaultThresholds(), DefaultScoringWeights(), DefaultLatencyThresholds(), nil)
 
-	// Start healthy
-	score.Update(50*time.Millisecond, true, 0, 100)
+	score.Update(Record{ProbeLatency: 50 * time.Millisecond, ProbeSuccess: true, StatusCode: 200, PassiveRate: 0, ConnHealth: 100})
 
-	// Rapid drop
-	score.Update(5000*time.Millisecond, false, 0.5, 50)
+	score.Update(Record{ProbeLatency: 5000 * time.Millisecond, ProbeSuccess: false, StatusCode: 500, PassiveRate: 0.5, ConnHealth: 50})
 
 	shouldAbort := eac.ShouldAbort("backend-1", score)
 	if !shouldAbort {
@@ -112,11 +106,10 @@ func TestShouldAbortUnhealthy(t *testing.T) {
 	eac := NewEarlyAbortController(true)
 	score := NewScore(DefaultThresholds(), DefaultScoringWeights(), DefaultLatencyThresholds(), nil)
 
-	// Make unhealthy
-	score.Update(2000*time.Millisecond, false, 0, 100)
+	score.Update(Record{ProbeLatency: 2000 * time.Millisecond, ProbeSuccess: false, StatusCode: 500, PassiveRate: 0, ConnHealth: 100})
 
 	if score.State() != StateUnhealthy {
-		t.Fatalf("setup failed: expected unhealthy state")
+		t.Fatalf("setup failed: expected unhealthy state, got %v", score.State())
 	}
 
 	shouldAbort := eac.ShouldAbort("backend-2", score)
@@ -129,7 +122,7 @@ func TestShouldNotAbortWhenDisabled(t *testing.T) {
 	eac := NewEarlyAbortController(false)
 	score := NewScore(DefaultThresholds(), DefaultScoringWeights(), DefaultLatencyThresholds(), nil)
 
-	score.Update(5000*time.Millisecond, false, 0.5, 50)
+	score.Update(Record{ProbeLatency: 5000 * time.Millisecond, ProbeSuccess: false, StatusCode: 500, PassiveRate: 0.5, ConnHealth: 50})
 
 	shouldAbort := eac.ShouldAbort("backend-3", score)
 	if shouldAbort {
