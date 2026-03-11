@@ -112,7 +112,10 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		cbThreshold = route.CircuitBreaker.Threshold
 	}
 
-	hScore := health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
+	hScore := xhttpCfg.HealthScore
+	if hScore == nil {
+		hScore = health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
+	}
 
 	b := &Backend{
 		URL:          u,

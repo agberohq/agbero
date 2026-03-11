@@ -1,9 +1,9 @@
-// internal/handlers/xtcp/balancer.go
 package xtcp
 
 import (
 	"context"
 	"fmt"
+	mrand "math/rand/v2"
 	"strings"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
@@ -102,10 +102,13 @@ func (tb *Balancer) Pick(exclude map[*Backend]struct{}) *Backend {
 	}
 
 	attempts := min(count, 5)
-	dummyKeyFunc := func() uint64 { return 0 }
 
 	for i := 0; i < attempts; i++ {
-		candidate := tb.selector.Pick(nil, dummyKeyFunc)
+		keyFunc := func() uint64 {
+			return uint64(mrand.Uint32())<<32 | uint64(mrand.Uint32())
+		}
+
+		candidate := tb.selector.Pick(nil, keyFunc)
 		if candidate == nil {
 			continue
 		}

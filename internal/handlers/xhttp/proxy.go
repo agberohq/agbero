@@ -90,19 +90,15 @@ func (b *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Proxy) Pick(r *http.Request) *Backend {
-	// Let the load balancer handle everything - it already knows about:
-	// - Sticky sessions via Sticky wrapper
-	// - Hash strategies via Selector
-	// - Key extraction via zulu.Extractor
-	pick := b.lb.Pick(r, nil) // hashFunc not needed - sticky layer handles it
-
+	pick := b.lb.Pick(r, nil)
 	if pick == nil {
 		return nil
 	}
-	if be, ok := pick.(*Backend); ok {
-		return be
+	be, ok := pick.(*Backend)
+	if !ok {
+		return nil
 	}
-	return nil
+	return be
 }
 
 func (b *Proxy) Update(list []*Backend) {
