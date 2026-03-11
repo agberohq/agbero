@@ -178,6 +178,10 @@ func defaultLogging(l *alaye.Logging) {
 		return
 	}
 
+	if l.Deduplicate == alaye.Unknown {
+		l.Deduplicate = alaye.Active
+	}
+
 	hasConfig := l.File.Path != "" || l.Victoria.URL != ""
 	if l.Enabled == alaye.Unknown && hasConfig {
 		l.Enabled = alaye.Active
@@ -190,14 +194,19 @@ func defaultLogging(l *alaye.Logging) {
 	if l.File.Enabled == alaye.Unknown && l.File.Path != "" {
 		l.File.Enabled = alaye.Active
 	}
-	if l.File.BatchSize == 0 {
+
+	if l.File.BatchSize <= 0 {
 		l.File.BatchSize = DefaultVictoriaBatch
+	}
+
+	if l.File.RotateSize <= 0 {
+		l.File.RotateSize = DefaultLogRotateSize
 	}
 
 	if l.Victoria.Enabled == alaye.Unknown && l.Victoria.URL != "" {
 		l.Victoria.Enabled = alaye.Active
 	}
-	if l.Victoria.BatchSize == 0 {
+	if l.Victoria.BatchSize <= 0 {
 		l.Victoria.BatchSize = DefaultVictoriaBatch
 	}
 
@@ -618,6 +627,7 @@ func defaultCache(c *alaye.Cache) {
 		c.Driver = "memory"
 	}
 }
+
 func compileCondition(c *alaye.Condition) {
 	if c.Pattern != "" && c.Compiled == nil {
 		c.Compiled = regexp.MustCompile(c.Pattern)
