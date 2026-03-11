@@ -171,6 +171,8 @@ route "/api" {
 - [x] Gossip-based cluster state synchronization
 - [x] Git-based atomic deployments
 - [x] Admin Dashboard UI
+- [ ] Cluster Implementation
+- [ ] Better Test Coverage
 - [ ] Proper Documentation 
 
 ## Contributing
