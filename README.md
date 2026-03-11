@@ -2,13 +2,20 @@
   <img src="assets/agbero.2.png" width="300" alt="Agbero Logo">
 </p>
 
+> WARNING: This project is under active development.
+
 > **Agbero**: *noun* (Yoruba) - A tout or traffic controller at a bus stop.
+>
 > **In Context**: A high-performance, production-ready Reverse Proxy and Load Balancer written in Go.
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/agberohq/agbero)](https://goreportcard.com/report/github.com/agberohq/agbero)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Agbero is a modern reverse proxy that bridges local development and production deployments. It offers Zero-Config TLS for developers, Production-Grade Load Balancing, Git-based atomic deployments, and a Programmable WASM Data Plane.
+
+<p align="center">
+  <img src="assets/dash.1.png" width="500" alt="Agbero Dashboard">
+</p>
 
 ## Why Choose Agbero?
 
@@ -17,7 +24,13 @@ Agbero is a modern reverse proxy that bridges local development and production d
 - **Hot Reload**: Modify configurations, routes, and WASM plugins without restarting or dropping connections.
 - **Unified Config**: Use `${env.VAR}` syntax to make one configuration file work seamlessly across Dev, Staging, and Production.
 
-### For Production
+
+<p align="center">
+  <img src="assets/dash.2.png" width="500" alt="Agbero Dashboard">
+</p>
+
+
+### Scalable
 - **Atomic Git Deployments**: Serve static sites and Single Page Applications (SPAs) directly from a Git repository with zero-downtime updates via Webhooks or interval polling.
 - **Weighted Load Balancing**: Native support for canary deployments and A/B testing.
 - **Built-in Gossip Protocol**: Automatic service discovery across nodes without external dependencies like Consul or Zookeeper.
@@ -30,7 +43,7 @@ Agbero is a modern reverse proxy that bridges local development and production d
 - **Rate Limiting**: Identity-based limiting (API Key, IP, Cookie) with distributed sharding.
 
 <p align="center">
-  <img src="assets/dash.1.png" width="500" alt="Agbero Dashboard">
+  <img src="assets/dash.3.png" width="500" alt="Agbero Dashboard">
 </p>
 
 ## Quick Start
@@ -47,13 +60,31 @@ sudo mv agbero /usr/local/bin/
 go install github.com/agberohq/agbero/cmd/agbero@latest
 ```
 
+
 ### The Simplest Possible Start
 
+**1. Persistent Configuration** (Recommended for projects)
 ```bash
-# Serves the current directory on https://localhost:8000 with auto-generated TLS
+# crate a new configuration directory
+mkdir -p /etc/agbero
+cd /etc/agbero
+
+# Scaffold a new configuration workspace in the current directory
+agbero init
+
+# Run Agbero using the generated configuration
+agbero run
+
+# Or specify a custom configuration file
+agbero run -c /etc/agbero/agbero.hcl 
+```
+
+**2. Instant Ephemeral Mode** (No config required)
+```bash
+# Serve the current directory on https://localhost:8000 with auto-generated TLS
 agbero serve --https
 
-# Proxies localhost:3000 to https://app.localhost:8080
+# Proxy localhost:3000 to https://app.localhost:8080
 agbero proxy :3000 app.localhost --https
 ```
 
@@ -66,6 +97,7 @@ sudo agbero service install
 # Start the service
 sudo agbero service start
 ```
+
 
 ## Core Features
 
