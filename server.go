@@ -596,18 +596,30 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 // =============================================================================
 
 func (s *Server) initHealthDoctor(hosts map[string]*alaye.Host) {
+	httpPatientCount := 0
+	tcpPatientCount := 0
+
 	for domain, hostCfg := range hosts {
 		for _, r := range hostCfg.Routes {
-			xhttp.RegisterHTTPPatients(domain, &r, s.doctor, metrics.DefaultRegistry, s.logger)
+			count := xhttp.RegisterHTTPPatients(domain, &r, s.doctor, metrics.DefaultRegistry, s.logger)
+			httpPatientCount += count
 		}
 	}
 
 	tcpGroups := groupTCPRoutesByListen(hosts)
 	for listen, group := range tcpGroups {
 		for _, route := range group {
-			xtcp.RegisterTCPPatients(listen, route, s.doctor)
+			count := xtcp.RegisterTCPPatients(listen, route, s.doctor, s.logger)
+			tcpPatientCount += count
 		}
 	}
+
+	s.logger.Fields(
+		"hosts", len(hosts),
+		"httpPatients", httpPatientCount,
+		"tcpPatients", tcpPatientCount,
+		"totalPatients", httpPatientCount+tcpPatientCount,
+	).Infof("health doctor initialized")
 }
 
 // =============================================================================

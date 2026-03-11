@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
@@ -13,20 +14,24 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-func RegisterHTTPPatients(domain string, route *alaye.Route, doc *jack.Doctor, registry *metrics.Registry, logger *ll.Logger) {
+// sharedHTTPClient is used across all HTTP patients to avoid connection exhaustion.
+// Transport is configured for health checks (short timeouts, no keepalives).
+var sharedHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     30 * time.Second,
+		DisableKeepAlives:   false,
+	},
+}
+
+// RegisterHTTPPatients creates a Patient for each backend server in the route.
+// All backends get a patient - Doctor manages whether active probing runs.
+func RegisterHTTPPatients(domain string, route *alaye.Route, doc *jack.Doctor, registry *metrics.Registry, logger *ll.Logger) int {
 	if route.Backends.Enabled.NotActive() || len(route.Backends.Servers) == 0 {
-		return
-	}
-
-	hasProber := false
-	if route.HealthCheck.Enabled.Active() {
-		hasProber = true
-	} else if route.HealthCheck.Enabled == alaye.Unknown && route.HealthCheck.Path != "" {
-		hasProber = true
-	}
-
-	if !hasProber {
-		return
+		logger.Fields("domain", domain, "route", route.Path).Debug("http backends disabled or empty")
+		return 0
 	}
 
 	probeCfg := health.DefaultProbeConfig()
@@ -40,12 +45,14 @@ func RegisterHTTPPatients(domain string, route *alaye.Route, doc *jack.Doctor, r
 		probeCfg.Timeout = route.HealthCheck.Timeout
 	}
 
+	count := 0
 	for _, srv := range route.Backends.Servers {
 		statsKey := route.BackendKey(domain, srv.Address)
 		score := health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
 
 		u, err := url.Parse(srv.Address)
 		if err != nil {
+			logger.Fields("domain", domain, "server", srv.Address, "error", err).Warn("failed to parse backend url")
 			continue
 		}
 
@@ -64,18 +71,22 @@ func RegisterHTTPPatients(domain string, route *alaye.Route, doc *jack.Doctor, r
 			hostHeader = domain
 		}
 
-		execClient := &http.Client{
-			Timeout: probeCfg.Timeout,
-			Transport: &http.Transport{
-				MaxIdleConnsPerHost: 10,
-				DisableKeepAlives:   true,
-			},
+		// Clone shared client and apply route-specific timeout
+		client := sharedHTTPClient
+		if route.HealthCheck.Timeout > 0 {
+			client = &http.Client{
+				Timeout: probeCfg.Timeout,
+				Transport: &http.Transport{
+					MaxIdleConnsPerHost: 10,
+					DisableKeepAlives:   true,
+				},
+			}
 		}
 
 		executor := &HTTPExecutor{
 			URL:            targetURL,
 			Method:         route.HealthCheck.Method,
-			Client:         execClient,
+			Client:         client,
 			Header:         headers,
 			Host:           hostHeader,
 			ExpectedStatus: route.HealthCheck.ExpectedStatus,
@@ -103,6 +114,11 @@ func RegisterHTTPPatients(domain string, route *alaye.Route, doc *jack.Doctor, r
 				return nil
 			},
 		})
-		_ = doc.Add(patient)
+		if err := doc.Add(patient); err != nil {
+			logger.Fields("domain", domain, "server", srv.Address, "error", err).Warn("failed to add http health patient")
+		} else {
+			count++
+		}
 	}
+	return count
 }

@@ -8,11 +8,12 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
 	"github.com/olekukonko/jack"
+	"github.com/olekukonko/ll"
 )
 
-func RegisterTCPPatients(listen string, cfg alaye.TCPRoute, doc *jack.Doctor) {
+func RegisterTCPPatients(listen string, cfg alaye.TCPRoute, doc *jack.Doctor, logger *ll.Logger) int {
 	if len(cfg.Backends) == 0 {
-		return
+		return 0
 	}
 
 	probeCfg := health.DefaultProbeConfig()
@@ -21,17 +22,6 @@ func RegisterTCPPatients(listen string, cfg alaye.TCPRoute, doc *jack.Doctor) {
 	}
 	if cfg.HealthCheck.Timeout > 0 {
 		probeCfg.Timeout = cfg.HealthCheck.Timeout
-	}
-
-	hasProber := false
-	if cfg.HealthCheck.Enabled.Active() {
-		hasProber = true
-	} else if cfg.HealthCheck.Enabled == alaye.Unknown && (cfg.HealthCheck.Send != "" || cfg.HealthCheck.Expect != "") {
-		hasProber = true
-	}
-
-	if !hasProber {
-		return
 	}
 
 	send := cfg.HealthCheck.Send
@@ -47,6 +37,7 @@ func RegisterTCPPatients(listen string, cfg alaye.TCPRoute, doc *jack.Doctor) {
 		expectBytes = []byte(expect)
 	}
 
+	count := 0
 	for _, b := range cfg.Backends {
 		statsKey := cfg.BackendKey(b.Address)
 		score := health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
@@ -82,6 +73,11 @@ func RegisterTCPPatients(listen string, cfg alaye.TCPRoute, doc *jack.Doctor) {
 				pool.close()
 			},
 		})
-		_ = doc.Add(patient)
+		if err := doc.Add(patient); err != nil {
+			logger.Fields("listen", listen, "backend", b.Address, "error", err).Warnf("failed to add tcp health patient")
+		} else {
+			count++
+		}
 	}
+	return count
 }

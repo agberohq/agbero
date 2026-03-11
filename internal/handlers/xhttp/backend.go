@@ -39,6 +39,7 @@ func (b *basicStatusWriter) Flush() {
 	}
 }
 
+// Backend implements lb.Backend interface for HTTP proxying with Doctor-managed health checks.
 type Backend struct {
 	URL   *url.URL
 	Proxy *httputil.ReverseProxy
@@ -53,7 +54,6 @@ type Backend struct {
 	lastRecovery atomic.Int64
 	weight       int
 	cbThreshold  int
-	hasProber    bool
 	Cond         *Conditions
 	rnd          *rand.Rand
 	logger       *ll.Logger
@@ -140,16 +140,6 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 
 	b.Weights = health.DefaultRoutingMultiplier()
 	b.Abort = health.NewEarlyAbortController(b.Weights.EarlyAbortEnabled)
-
-	if b.hcConfig != nil {
-		if b.hcConfig.Enabled.Active() {
-			b.hasProber = true
-		} else if b.hcConfig.Enabled == alaye.Unknown && b.hcConfig.Path != "" {
-			b.hasProber = true
-		} else {
-			b.hasProber = false
-		}
-	}
 
 	rp := &httputil.ReverseProxy{}
 	t := woos.Transport.Clone()
@@ -246,10 +236,6 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 	return b, nil
 }
 
-func (b *Backend) HasProber() bool {
-	return b.hasProber
-}
-
 func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if b.Abort.ShouldAbort(b.URL.String(), b.HealthScore) {
 		if b.Fallback != nil {
@@ -293,12 +279,9 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if b.cbThreshold > 0 && b.Activity.Failures.Load() >= uint64(b.cbThreshold) {
 				b.logger.Fields("backend", b.URL.Host, "failures", b.Activity.Failures.Load()).Warn("circuit breaker tripped")
 			}
-			if !b.hasProber && !b.Alive() && time.Since(b.LastRecovery()) > 5*time.Second {
-				b.Activity.Failures.Store(0)
-				b.lastRecovery.Store(time.Now().UnixNano())
-			}
 		}
 
+		// Always update health score with passive result - Doctor handles the aggregation
 		b.HealthScore.Update(health.Record{
 			ProbeSuccess: !failed,
 			ConnHealth:   100,
@@ -369,11 +352,12 @@ func (b *Backend) Status(v bool) {
 	}
 }
 
+// Alive checks circuit breaker first, then Doctor-managed health score.
 func (b *Backend) Alive() bool {
 	if b.cbThreshold > 0 && b.Activity.Failures.Load() >= uint64(b.cbThreshold) {
 		return false
 	}
-	if !b.hasProber || b.HealthScore == nil {
+	if b.HealthScore == nil {
 		return true
 	}
 	state := b.HealthScore.State()
