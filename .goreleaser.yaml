@@ -1,11 +1,6 @@
-# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 version: 2
 
 project_name: agbero
-
-gitea_urls:
-  api: https://git.imaxinacion.net/api/v1/
-  download: https://git.imaxinacion.net/
 
 builds:
   - id: agbero
@@ -25,20 +20,17 @@ builds:
         goarch: arm64
     ldflags:
       - -s -w
-      - -X git.imaxinacion.net/aibox/agbero/internal/woos.Version={{.Version}}
-      - -X git.imaxinacion.net/aibox/agbero/internal/woos.Commit={{.Commit}}
-      - -X git.imaxinacion.net/aibox/agbero/internal/woos.Date={{.Date}}
+      - -X github.com/agberohq/agbero/internal/version.Version={{.Version}}
+      - -X github.com/agberohq/agbero/internal/version.Commit={{.Commit}}
+      - -X github.com/agberohq/agbero/internal/version.Date={{.Date}}
 
 archives:
   - id: default
-    # Use 'formats' (plural) - Default to tar.gz for Linux/Mac
     formats:
       - tar.gz
 
-    # Use 'format_overrides' to switch Windows to zip
     format_overrides:
       - goos: windows
-        # Use 'formats' (plural) here too
         formats:
           - zip
 
