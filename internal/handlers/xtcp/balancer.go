@@ -1,17 +1,13 @@
 package xtcp
 
 import (
-	"context"
-	"fmt"
 	mrand "math/rand/v2"
 	"strings"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
-	"github.com/olekukonko/jack"
 )
 
 type Balancer struct {
@@ -153,89 +149,4 @@ func (tb *Balancer) Backends() []*Backend {
 		}
 	}
 	return result
-}
-
-// RegisterPatients wires the eager TCP probing directly into the globally scoped jack.Doctor
-func RegisterPatients(listen string, cfg alaye.TCPRoute, doc *jack.Doctor) {
-	interval := woos.TCPHealthCheckInterval
-	timeout := woos.TCPHealthCheckTimeout
-	var send, expect string
-
-	hasProber := false
-	if cfg.HealthCheck.Enabled.Active() {
-		hasProber = true
-	} else if cfg.HealthCheck.Enabled == alaye.Unknown && (cfg.HealthCheck.Send != "" || cfg.HealthCheck.Expect != "") {
-		hasProber = true
-	} else {
-		for _, b := range cfg.Backends {
-			if strings.HasSuffix(b.Address, ":6379") {
-				send = "PING\r\n"
-				expect = "PONG"
-				hasProber = true
-				break
-			}
-		}
-	}
-
-	if !hasProber {
-		return
-	}
-
-	if cfg.HealthCheck.Interval > 0 {
-		interval = cfg.HealthCheck.Interval
-	}
-	if cfg.HealthCheck.Timeout > 0 {
-		timeout = cfg.HealthCheck.Timeout
-	}
-	if cfg.HealthCheck.Send != "" {
-		send = cfg.HealthCheck.Send
-	}
-	if cfg.HealthCheck.Expect != "" {
-		expect = cfg.HealthCheck.Expect
-	}
-
-	var sendBytes, expectBytes []byte
-	if send != "" {
-		send = strings.ReplaceAll(send, "\\r", "\r")
-		send = strings.ReplaceAll(send, "\\n", "\n")
-		sendBytes = []byte(send)
-	}
-	if expect != "" {
-		expectBytes = []byte(expect)
-	}
-
-	for _, b := range cfg.Backends {
-		statsKey := cfg.BackendKey(b.Address)
-		score := health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
-
-		pool := newConnPool(b.Address, 3, timeout)
-		executor := &TCPExecutor{
-			Pool:   pool,
-			Send:   sendBytes,
-			Expect: expectBytes,
-		}
-
-		patient := jack.NewPatient(jack.PatientConfig{
-			ID:       statsKey,
-			Interval: interval,
-			Timeout:  timeout,
-			Check: jack.FuncCtx(func(ctx context.Context) error {
-				success, latency, err := executor.Probe(ctx)
-				score.Update(health.Record{
-					ProbeLatency: latency,
-					ProbeSuccess: success,
-					ConnHealth:   100,
-					PassiveRate:  score.PassiveErrorRate(),
-				})
-				if !success {
-					if err != nil {
-						return err
-					}
-					return fmt.Errorf("tcp probe failed")
-				}
-				return nil
-			}),
-		})
-		_ = doc.Add(patient)
-	}
 }

@@ -42,13 +42,15 @@ func (p *connPool) get() (*pooledConn, error) {
 	p.mu.RLock()
 	for _, c := range p.conns {
 		if c.inUse.CompareAndSwap(false, true) && !c.failed.Load() {
+			p.mu.RUnlock()
 			if p.isAlive(c.Conn) {
 				c.lastUsed = time.Now()
-				p.mu.RUnlock()
 				return c, nil
 			}
 			c.failed.Store(true)
 			c.inUse.Store(false)
+			p.mu.RLock()
+			continue
 		}
 	}
 	p.mu.RUnlock()
