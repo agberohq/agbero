@@ -2,18 +2,15 @@ package uptime
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/cluster"
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/xtcp"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -186,15 +183,12 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 				Backends: make([]*BackendSnapshot, 0),
 			}
 
-			rKey := route.Key()
-
-			var activeRoute *handlers.Route
-			if it, ok := zulu.Route.Load(rKey); ok {
-				activeRoute, _ = it.Value.(*handlers.Route)
+			if rSnap.Strategy == "" {
+				rSnap.Strategy = alaye.StrategyRoundRobin
 			}
 
-			for i, srv := range route.Backends.Servers {
-				statsKey := fmt.Sprintf("%s|%s", rKey, srv.Address)
+			for _, srv := range route.Backends.Servers {
+				statsKey := route.BackendKey(domain, srv.Address)
 
 				var latSnap metrics.LatencySnapshot
 				var failures, reqs, inFlight int64
@@ -205,42 +199,27 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 					Score:  100,
 				}
 
-				hScore, hasScore := health.GlobalRegistry.Get(statsKey)
-				hasProber := false
+				hasProber := route.HealthCheck.Enabled.Active() || (route.HealthCheck.Enabled == alaye.Unknown && route.HealthCheck.Path != "")
 
-				if route.HealthCheck.Enabled.Active() || (route.HealthCheck.Enabled == alaye.Unknown && route.HealthCheck.Path != "") {
-					hasProber = true
-				}
-
-				if hasScore && hasProber {
+				if hScore, hasScore := health.GlobalRegistry.Get(statsKey); hasScore {
 					hSnapStruct.Score = int(hScore.Value())
-					hSnapStruct.Status = hScore.Status()
+					hSnapStruct.Status = hScore.Status() // Ungated so we always surface computed status
 					hSnapStruct.Trend = int(hScore.Trend())
 					hSnapStruct.ConsecutiveFailures = hScore.ConsecutiveFailures()
 
-					ls := hScore.LastSuccess()
-					if !ls.IsZero() {
+					if ls := hScore.LastSuccess(); !ls.IsZero() {
 						hSnapStruct.LastSuccess = &ls
 					}
-
-					lf := hScore.LastFailure()
-					if !lf.IsZero() {
+					if lf := hScore.LastFailure(); !lf.IsZero() {
 						hSnapStruct.LastFailure = &lf
 					}
-
-					lu := hScore.LastUpdate()
-					if !lu.IsZero() {
+					if lu := hScore.LastUpdate(); !lu.IsZero() {
 						hSnapStruct.LastCheck = &lu
 					}
 
-					alive = hScore.State() != health.StateDead && hScore.State() != health.StateUnhealthy
-				}
-
-				if activeRoute != nil && i < len(activeRoute.Backends) {
-					b := activeRoute.Backends[i]
-					if b != nil {
-						// Trust the active backend if it failed due to circuit breaking
-						alive = alive && b.Alive()
+					state := hScore.State()
+					if state == health.StateDead || state == health.StateUnhealthy {
+						alive = false
 					}
 				}
 
@@ -259,11 +238,8 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 						countHttp++
 					}
 
-					// Circuit breaker rules when prober is missing and route is idle
-					if activeRoute == nil && !hasProber {
-						if route.CircuitBreaker.Threshold > 0 && uint64(failures) >= uint64(route.CircuitBreaker.Threshold) {
-							alive = false
-						}
+					if !hasProber && route.CircuitBreaker.Threshold > 0 && uint64(failures) >= uint64(route.CircuitBreaker.Threshold) {
+						alive = false
 					}
 				}
 
@@ -287,22 +263,66 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 			hSnap.Routes = append(hSnap.Routes, rSnap)
 		}
 
-		if len(hcfg.Proxies) > 0 {
-			for _, tcpCfg := range hcfg.Proxies {
-				item, ok := zulu.TCP.Load(tcpCfg.Listen)
-				if !ok {
-					continue
+		for _, proxy := range hcfg.Proxies {
+			sni := proxy.SNI
+			if sni == "" {
+				sni = "*"
+			}
+
+			pSnap := &ProxySnapshot{
+				Protocol: "tcp",
+				Name:     proxy.Listen + " (" + sni + ")",
+				Strategy: proxy.Strategy,
+				Backends: make([]*BackendSnapshot, 0),
+			}
+
+			if pSnap.Strategy == "" {
+				pSnap.Strategy = alaye.StrategyRoundRobin
+			}
+
+			for _, srv := range proxy.Backends {
+				statsKey := proxy.BackendKey(srv.Address)
+
+				var latSnap metrics.LatencySnapshot
+				var failures, reqs, inFlight int64
+
+				alive := true
+				hSnapStruct := HealthSnapshot{
+					Status: health.StatusUnknown,
+					Score:  100,
 				}
 
-				rtProxy, ok := item.Value.(*xtcp.Proxy)
-				if !ok {
-					continue
+				hasProber := proxy.HealthCheck.Enabled.Active() || (proxy.HealthCheck.Enabled == alaye.Unknown && (proxy.HealthCheck.Send != "" || proxy.HealthCheck.Expect != "")) || strings.HasSuffix(srv.Address, ":6379")
+
+				if hScore, hasScore := health.GlobalRegistry.Get(statsKey); hasScore {
+					hSnapStruct.Score = int(hScore.Value())
+					hSnapStruct.Status = hScore.Status()
+					hSnapStruct.Trend = int(hScore.Trend())
+					hSnapStruct.ConsecutiveFailures = hScore.ConsecutiveFailures()
+
+					if ls := hScore.LastSuccess(); !ls.IsZero() {
+						hSnapStruct.LastSuccess = &ls
+					}
+					if lf := hScore.LastFailure(); !lf.IsZero() {
+						hSnapStruct.LastFailure = &lf
+					}
+					if lu := hScore.LastUpdate(); !lu.IsZero() {
+						hSnapStruct.LastCheck = &lu
+					}
+
+					state := hScore.State()
+					if state == health.StateDead || state == health.StateUnhealthy {
+						alive = false
+					}
 				}
 
-				rtProxy.Mu.RLock()
+				if stats := metrics.DefaultRegistry.Get(statsKey); stats != nil {
+					snap := stats.Activity.Snapshot()
+					latSnap = snap["latency"].(metrics.LatencySnapshot)
+					failures = int64(snap["failures"].(uint64))
+					reqs = int64(snap["requests"].(uint64))
+					inFlight = snap["in_flight"].(int64)
 
-				processBackend := func(b *xtcp.Backend) *BackendSnapshot {
-					latSnap := b.Activity.Latency.Snapshot()
 					if latSnap.Count > 0 && latSnap.P99 > 0 {
 						val := float64(latSnap.P99)
 						sumAll += val
@@ -311,82 +331,29 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 						countTcp++
 					}
 
-					totalReqs += b.Activity.Requests.Load()
-
-					hSnapStruct := HealthSnapshot{
-						Status: health.StatusUnknown,
-						Score:  100,
-					}
-
-					if b.HealthScore != nil {
-						hSnapStruct.Score = int(b.HealthScore.Value())
-						if b.HasProber() {
-							hSnapStruct.Status = b.HealthScore.Status()
-						}
-
-						hSnapStruct.Trend = int(b.HealthScore.Trend())
-						hSnapStruct.ConsecutiveFailures = b.HealthScore.ConsecutiveFailures()
-
-						ls := b.HealthScore.LastSuccess()
-						if !ls.IsZero() {
-							hSnapStruct.LastSuccess = &ls
-						}
-
-						lf := b.HealthScore.LastFailure()
-						if !lf.IsZero() {
-							hSnapStruct.LastFailure = &lf
-						}
-
-						lu := b.HealthScore.LastUpdate()
-						if !lu.IsZero() {
-							hSnapStruct.LastCheck = &lu
-						}
-					}
-
-					if hSnapStruct.Status != health.StatusHealthy && hSnapStruct.Status != health.StatusUnknown && hSnapStruct.LastSuccess != nil {
-						hSnapStruct.Downtime = time.Since(*hSnapStruct.LastSuccess).Round(time.Second).String()
-					}
-
-					return &BackendSnapshot{
-						URL:       b.Address,
-						Alive:     b.Alive(),
-						InFlight:  b.Activity.InFlight.Load(),
-						Failures:  int64(b.Activity.Failures.Load()),
-						TotalReqs: b.Activity.Requests.Load(),
-						Latency:   latSnap,
-						Health:    hSnapStruct,
+					if !hasProber && failures >= 2 {
+						alive = false
 					}
 				}
 
-				for sni, bal := range rtProxy.Routes {
-					pSnap := &ProxySnapshot{
-						Protocol: "tcp",
-						Name:     sni,
-						Strategy: bal.GetStrategyName(),
-						Backends: make([]*BackendSnapshot, 0),
-					}
-
-					for _, b := range bal.Backends() {
-						pSnap.Backends = append(pSnap.Backends, processBackend(b))
-					}
-					hSnap.Proxies = append(hSnap.Proxies, pSnap)
+				if hSnapStruct.Status != health.StatusHealthy && hSnapStruct.Status != health.StatusUnknown && hSnapStruct.LastSuccess != nil {
+					hSnapStruct.Downtime = time.Since(*hSnapStruct.LastSuccess).Round(time.Second).String()
 				}
 
-				if rtProxy.Default != nil {
-					pSnap := &ProxySnapshot{
-						Protocol: "tcp",
-						Name:     "*default*",
-						Strategy: rtProxy.Default.GetStrategyName(),
-						Backends: make([]*BackendSnapshot, 0),
-					}
-					for _, b := range rtProxy.Default.Backends() {
-						pSnap.Backends = append(pSnap.Backends, processBackend(b))
-					}
-					hSnap.Proxies = append(hSnap.Proxies, pSnap)
+				bSnap := &BackendSnapshot{
+					URL:       srv.Address,
+					Alive:     alive,
+					InFlight:  inFlight,
+					Failures:  failures,
+					TotalReqs: uint64(reqs),
+					Latency:   latSnap,
+					Health:    hSnapStruct,
 				}
 
-				rtProxy.Mu.RUnlock()
+				pSnap.Backends = append(pSnap.Backends, bSnap)
+				totalReqs += uint64(reqs)
 			}
+			hSnap.Proxies = append(hSnap.Proxies, pSnap)
 		}
 
 		hSnap.TotalReqs = totalReqs

@@ -16,6 +16,11 @@ func NewRegistry() *Registry {
 	}
 }
 
+// Set stores a health score at the given key, overwriting any existing value.
+func (r *Registry) Set(key string, score *Score) {
+	r.scores.Set(key, score)
+}
+
 // Get retrieves a health score by its key.
 func (r *Registry) Get(key string) (*Score, bool) {
 	return r.scores.Get(key)

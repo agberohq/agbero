@@ -1,3 +1,4 @@
+// internal/handlers/xtcp/balancer.go
 package xtcp
 
 import (
@@ -26,11 +27,6 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 		registry = metrics.DefaultRegistry
 	}
 
-	sni := cfg.SNI
-	if sni == "" {
-		sni = "*"
-	}
-
 	wrappedBackends := make([]lb.Backend, 0, len(cfg.Backends))
 	for _, b := range cfg.Backends {
 		w := b.Weight
@@ -38,7 +34,8 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 			w = 1
 		}
 
-		statsKey := fmt.Sprintf("tcp|%s|%s|%s", cfg.Listen, sni, b.Address)
+		// Deterministic human-readable key
+		statsKey := cfg.BackendKey(b.Address)
 		stats := registry.GetOrRegister(statsKey)
 
 		// Lookup or initialize the globally managed health score
@@ -204,13 +201,8 @@ func RegisterPatients(listen string, cfg alaye.TCPRoute, doc *jack.Doctor) {
 		expectBytes = []byte(expect)
 	}
 
-	sni := cfg.SNI
-	if sni == "" {
-		sni = "*"
-	}
-
 	for _, b := range cfg.Backends {
-		statsKey := fmt.Sprintf("tcp|%s|%s|%s", listen, sni, b.Address)
+		statsKey := cfg.BackendKey(b.Address)
 		score := health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
 
 		pool := newConnPool(b.Address, 3, timeout)

@@ -2,6 +2,7 @@ package xtcp
 
 import (
 	"sync"
+	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
@@ -60,6 +61,22 @@ func (b *Backend) Snapshot() *Snapshot {
 }
 
 func (b *Backend) Status(v bool) {
+	if !v {
+		b.HealthScore.Update(health.Record{
+			ProbeSuccess: false,
+			ConnHealth:   0,
+			PassiveRate:  1.0,
+		})
+		b.Activity.Failures.Store(uint64(b.failThresh + 1))
+	} else {
+		b.HealthScore.Update(health.Record{
+			ProbeLatency: 10 * time.Millisecond,
+			ProbeSuccess: true,
+			ConnHealth:   100,
+			PassiveRate:  0,
+		})
+		b.Activity.Failures.Store(0)
+	}
 }
 
 func (b *Backend) Alive() bool {

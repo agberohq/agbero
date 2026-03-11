@@ -1,7 +1,7 @@
 package metrics
 
 import (
-	"sync"
+	"github.com/olekukonko/mappo"
 )
 
 var DefaultRegistry = NewRegistry()
@@ -17,48 +17,42 @@ func (s *BackendStats) Close() {
 }
 
 type Registry struct {
-	mu    sync.RWMutex
-	items map[string]*BackendStats
+	items *mappo.Concurrent[string, *BackendStats]
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
-		items: make(map[string]*BackendStats),
+		items: mappo.NewConcurrent[string, *BackendStats](),
 	}
 }
 
 func (r *Registry) GetOrRegister(key string) *BackendStats {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if s, ok := r.items[key]; ok {
-		return s
-	}
-
-	s := &BackendStats{
-		Activity: NewActivity(),
-	}
-	r.items[key] = s
-	return s
+	stats := r.items.Compute(key, func(current *BackendStats, exists bool) (*BackendStats, bool) {
+		if exists {
+			return current, true
+		}
+		return &BackendStats{
+			Activity: NewActivity(),
+		}, true
+	})
+	return stats
 }
 
 func (r *Registry) Get(key string) *BackendStats {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.items[key]
+	stats, _ := r.items.Get(key)
+	return stats
 }
 
 func (r *Registry) Prune(keepKeys map[string]bool) {
 	var toClose []*BackendStats
 
-	r.mu.Lock()
-	for k, v := range r.items {
+	r.items.Range(func(k string, v *BackendStats) bool {
 		if !keepKeys[k] {
 			toClose = append(toClose, v)
-			delete(r.items, k)
+			r.items.Delete(k)
 		}
-	}
-	r.mu.Unlock()
+		return true
+	})
 
 	for _, v := range toClose {
 		v.Close()

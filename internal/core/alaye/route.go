@@ -357,3 +357,15 @@ func (r *Route) Key() string {
 
 	return fmt.Sprintf("%x", w.Sum64())
 }
+
+// BackendKey provides a deterministic, centralized identifier for routing observability
+func (r *Route) BackendKey(domain, backendAddr string) string {
+	if domain == "" {
+		domain = "*"
+	}
+	path := r.Path
+	if path == "" {
+		path = "/"
+	}
+	return "http|" + domain + "|" + path + "|" + backendAddr
+}

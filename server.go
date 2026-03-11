@@ -1,4 +1,3 @@
-// server.go
 package agbero
 
 import (
@@ -616,7 +615,7 @@ func (s *Server) initHealthDoctor(hosts map[string]*alaye.Host) {
 			}
 
 			for _, srv := range r.Backends.Servers {
-				statsKey := fmt.Sprintf("http|%s|%s|%s", domain, r.Path, srv.Address)
+				statsKey := r.BackendKey(domain, srv.Address)
 				score := health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
 
 				u, err := url.Parse(srv.Address)
@@ -1535,17 +1534,13 @@ func (s *Server) configBuildRoute(hosts map[string]*alaye.Host) map[string]bool 
 		for _, r := range h.Routes {
 			if r.Backends.Enabled.Active() {
 				for _, srv := range r.Backends.Servers {
-					validKeys[fmt.Sprintf("http|%s|%s|%s", domain, r.Path, srv.Address)] = true
+					validKeys[r.BackendKey(domain, srv.Address)] = true
 				}
 			}
 		}
 		for _, proxy := range h.Proxies {
-			sni := proxy.SNI
-			if sni == "" {
-				sni = "*"
-			}
 			for _, srv := range proxy.Backends {
-				validKeys[fmt.Sprintf("tcp|%s|%s|%s", proxy.Listen, sni, srv.Address)] = true
+				validKeys[proxy.BackendKey(srv.Address)] = true
 			}
 		}
 	}

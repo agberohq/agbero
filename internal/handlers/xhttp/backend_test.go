@@ -1,3 +1,4 @@
+// internal/handlers/xhttp/backend_test.go
 package xhttp
 
 import (
@@ -12,7 +13,9 @@ import (
 	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
+	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
 
@@ -20,23 +23,108 @@ var (
 	testLogger = ll.New("backend").Disable()
 )
 
-func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb alaye.CircuitBreaker) (*Backend, *metrics.Registry) {
+// setupBackend creates backend with optional Doctor for health checks
+func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb alaye.CircuitBreaker) (*Backend, *metrics.Registry, *jack.Doctor) {
 	route := &alaye.Route{
+		Path:           "/",
 		HealthCheck:    hc,
 		CircuitBreaker: cb,
 	}
 
 	registry := metrics.NewRegistry()
 
+	// Use human-readable key format matching production
+	domain := "example.com"
+	statsKey := route.BackendKey(domain, server.Address)
+
+	// Get or create HealthScore
+	hScore, _ := health.GlobalRegistry.Get(statsKey)
+	if hScore == nil {
+		hScore = health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil)
+		health.GlobalRegistry.Set(statsKey, hScore)
+	}
+
 	b, err := NewBackend(server, ConfigBackend{
-		Route:    route,
-		Logger:   testLogger,
-		Registry: registry,
+		Route:       route,
+		Domains:     []string{domain},
+		Logger:      testLogger,
+		Registry:    registry,
+		HealthScore: hScore,
 	})
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	return b, registry
+
+	// Create Doctor if health check is enabled
+	var doctor *jack.Doctor
+	if hc.Enabled.Active() || (hc.Enabled == alaye.Unknown && hc.Path != "") {
+		doctor = jack.NewDoctor(jack.DoctorWithLogger(testLogger))
+
+		// Build executor same as production does in server.go initHealthDoctor
+		u, _ := url.Parse(server.Address)
+		probePath := hc.Path
+		if probePath == "" {
+			probePath = "/"
+		}
+		targetURL := u.ResolveReference(&url.URL{Path: probePath}).String()
+
+		// Extract headers and host
+		headers := http.Header{}
+		hostHeader := ""
+		for k, v := range hc.Headers {
+			if k == "Host" {
+				hostHeader = v
+			} else {
+				headers.Set(k, v)
+			}
+		}
+		if hostHeader == "" {
+			hostHeader = domain
+		}
+
+		execClient := &http.Client{
+			Timeout: hc.Timeout,
+			Transport: &http.Transport{
+				MaxIdleConnsPerHost: 10,
+				DisableKeepAlives:   true,
+			},
+		}
+
+		executor := &HTTPExecutor{
+			URL:            targetURL,
+			Method:         hc.Method,
+			Client:         execClient,
+			Header:         headers,
+			Host:           hostHeader,
+			ExpectedStatus: hc.ExpectedStatus,
+			ExpectedBody:   hc.ExpectedBody,
+		}
+
+		patient := jack.NewPatient(jack.PatientConfig{
+			ID:       statsKey,
+			Interval: hc.Interval,
+			Timeout:  hc.Timeout,
+			Check: func(ctx context.Context) error {
+				success, latency, err := executor.Probe(ctx)
+				hScore.Update(health.Record{
+					ProbeLatency: latency,
+					ProbeSuccess: success,
+					ConnHealth:   100,
+					PassiveRate:  hScore.PassiveErrorRate(),
+				})
+				if !success {
+					if err != nil {
+						return err
+					}
+					return errors.New("probe failed")
+				}
+				return nil
+			},
+		})
+		_ = doctor.Add(patient)
+	}
+
+	return b, registry, doctor
 }
 
 func TestNewBackend_InvalidURL(t *testing.T) {
@@ -55,7 +143,7 @@ func TestNewBackend_NoHealthCheck(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
+	b, _, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	if b.Proxy == nil {
@@ -74,7 +162,7 @@ func TestServeHTTP_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
+	b, _, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -110,7 +198,7 @@ func TestServeHTTP_ContextCancel(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
+	b, _, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -149,7 +237,7 @@ func TestProxy_DirectorModifications(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
+	b, _, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	req := httptest.NewRequest("GET", "/test", nil)
@@ -187,30 +275,28 @@ func TestProxy_DirectorModifications(t *testing.T) {
 func TestCircuitBreaker_Trips(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("error"))
 	}))
 	defer server.Close()
 
-	route := &alaye.Route{
-		CircuitBreaker: alaye.CircuitBreaker{Threshold: 2},
-	}
-
-	registry := metrics.NewRegistry()
-	b, err := NewBackend(alaye.NewServer(server.URL), ConfigBackend{
-		Route:    route,
-		Logger:   testLogger,
-		Registry: registry,
-	})
-	if err != nil {
-		t.Fatalf("Failed to create backend: %v", err)
-	}
+	b, _, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{Threshold: 2})
 	defer b.Stop()
 
-	req := httptest.NewRequest("GET", "/", nil)
-	w := httptest.NewRecorder()
+	// Disable early abort to test circuit breaker in isolation
+	b.Abort.Disable()
 
-	for range 2 {
-		b.Proxy.ErrorHandler(w, req, errors.New("test error"))
+	req := httptest.NewRequest("GET", "/", nil)
+	for i := 0; i < 2; i++ {
+		w := httptest.NewRecorder()
+		b.ServeHTTP(w, req)
+
+		// Verify we get 500 from upstream, not 503 from early abort
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("Request %d: expected 500, got %d", i+1, w.Code)
+		}
 	}
+
+	time.Sleep(50 * time.Millisecond)
 
 	if b.Alive() {
 		t.Error("Should trip after 2 failures")
@@ -226,19 +312,7 @@ func TestCircuitBreaker_NoTripOnCancel(t *testing.T) {
 	}))
 	defer server.Close()
 
-	route := &alaye.Route{
-		CircuitBreaker: alaye.CircuitBreaker{Threshold: 1},
-	}
-
-	registry := metrics.NewRegistry()
-	b, err := NewBackend(alaye.NewServer(server.URL), ConfigBackend{
-		Route:    route,
-		Logger:   testLogger,
-		Registry: registry,
-	})
-	if err != nil {
-		t.Fatalf("Failed to create backend: %v", err)
-	}
+	b, _, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{Threshold: 1})
 	defer b.Stop()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -258,15 +332,20 @@ func TestHealthCheck_Failure(t *testing.T) {
 	defer server.Close()
 
 	hc := alaye.HealthCheck{
+		Enabled:   alaye.Active,
 		Path:      "/health",
 		Interval:  50 * time.Millisecond,
 		Threshold: 2,
-		Timeout:   20 * time.Millisecond,
+		Timeout:   100 * time.Millisecond,
 	}
-	b, _ := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
-	defer b.Stop()
 
-	// Wait enough time for 2 checks to fail
+	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
+	defer b.Stop()
+	if doctor != nil {
+		defer doctor.StopAll(1 * time.Second)
+	}
+
+	// Wait for health checks to run and fail
 	time.Sleep(300 * time.Millisecond)
 
 	if b.Alive() {
@@ -292,10 +371,14 @@ func TestHealthCheck_Recovery(t *testing.T) {
 		Path:      "/health",
 		Interval:  50 * time.Millisecond,
 		Threshold: 2,
-		Timeout:   20 * time.Millisecond,
+		Timeout:   100 * time.Millisecond,
 	}
-	b, _ := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
+
+	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 	defer b.Stop()
+	if doctor != nil {
+		defer doctor.StopAll(1 * time.Second)
+	}
 
 	time.Sleep(200 * time.Millisecond)
 	if b.Alive() {
@@ -304,8 +387,8 @@ func TestHealthCheck_Recovery(t *testing.T) {
 
 	healthy.store(true)
 
-	// Wait enough time for recovery probe to succeed
-	time.Sleep(200 * time.Millisecond)
+	// Wait for recovery probe to succeed
+	time.Sleep(300 * time.Millisecond)
 
 	if !b.Alive() {
 		t.Error("Should recover when healthy")
@@ -339,13 +422,16 @@ func TestHealthCheck_Advanced(t *testing.T) {
 		ExpectedBody:   `"status": "OK"`,
 		Interval:       50 * time.Millisecond,
 		Threshold:      1,
-		Timeout:        20 * time.Millisecond,
+		Timeout:        100 * time.Millisecond,
 	}
 
-	b, _ := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
+	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 	defer b.Stop()
+	if doctor != nil {
+		defer doctor.StopAll(1 * time.Second)
+	}
 
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	if !b.Alive() {
 		t.Error("Backend should be healthy with correct advanced check")
@@ -365,13 +451,16 @@ func TestHealthCheck_Advanced_BodyMismatch(t *testing.T) {
 		ExpectedBody: `"status": "OK"`,
 		Interval:     50 * time.Millisecond,
 		Threshold:    1,
-		Timeout:      20 * time.Millisecond,
+		Timeout:      100 * time.Millisecond,
 	}
 
-	b, _ := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
+	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 	defer b.Stop()
+	if doctor != nil {
+		defer doctor.StopAll(1 * time.Second)
+	}
 
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	if b.Alive() {
 		t.Error("Backend should be down due to body mismatch")
@@ -392,26 +481,68 @@ func TestHealthCheck_HostHeader_From_Domains(t *testing.T) {
 		Enabled:  alaye.Active,
 		Path:     "/",
 		Interval: 50 * time.Millisecond,
-		Timeout:  20 * time.Millisecond,
+		Timeout:  100 * time.Millisecond,
 	}
 
 	route := &alaye.Route{
+		Path:        "/",
 		HealthCheck: hc,
 	}
 
 	registry := metrics.NewRegistry()
+	domain := "api.example.com"
+	statsKey := route.BackendKey(domain, server.URL)
+	hScore := health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil)
+	health.GlobalRegistry.Set(statsKey, hScore)
+
 	b, err := NewBackend(alaye.NewServer(server.URL), ConfigBackend{
-		Route:    route,
-		Domains:  []string{"api.example.com"},
-		Logger:   testLogger,
-		Registry: registry,
+		Route:       route,
+		Domains:     []string{domain},
+		Logger:      testLogger,
+		Registry:    registry,
+		HealthScore: hScore,
 	})
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
 	defer b.Stop()
 
-	time.Sleep(150 * time.Millisecond)
+	// Create doctor with patient
+	doctor := jack.NewDoctor(jack.DoctorWithLogger(testLogger))
+	defer doctor.StopAll(1 * time.Second)
+
+	u, _ := url.Parse(server.URL)
+	executor := &HTTPExecutor{
+		URL:    u.String(),
+		Method: "GET",
+		Client: &http.Client{Timeout: hc.Timeout},
+		Host:   domain,
+	}
+
+	patient := jack.NewPatient(jack.PatientConfig{
+		ID:       statsKey,
+		Interval: hc.Interval,
+		Timeout:  hc.Timeout,
+		Check: func(ctx context.Context) error {
+			success, latency, err := executor.Probe(ctx)
+			hScore.Update(health.Record{
+				ProbeLatency: latency,
+				ProbeSuccess: success,
+				PassiveRate:  hScore.PassiveErrorRate(),
+				ConnHealth:   100,
+			})
+			if !success {
+				if err != nil {
+					return err
+				}
+				return errors.New("probe failed")
+			}
+			return nil
+		},
+	})
+	_ = doctor.Add(patient)
+
+	time.Sleep(200 * time.Millisecond)
 
 	if !b.Alive() {
 		t.Error("Backend should be alive with correct Host header from domains")
@@ -427,31 +558,23 @@ func TestHealthCheck_Jitter(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := alaye.Server{Address: ts.URL, Weight: 1}
-	route := &alaye.Route{
-		HealthCheck: alaye.HealthCheck{
-			Enabled:  alaye.Active,
-			Path:     "/",
-			Interval: 10 * time.Millisecond,
-			Timeout:  50 * time.Millisecond,
-		},
+	hc := alaye.HealthCheck{
+		Enabled:  alaye.Active,
+		Path:     "/",
+		Interval: 20 * time.Millisecond,
+		Timeout:  100 * time.Millisecond,
 	}
 
-	registry := metrics.NewRegistry()
-	b, err := NewBackend(cfg, ConfigBackend{
-		Route:    route,
-		Logger:   ll.New("test").Disable(),
-		Registry: registry,
-	})
-	if err != nil {
-		t.Fatalf("NewBackend error: %v", err)
-	}
+	b, _, doctor := setupBackend(t, alaye.NewServer(ts.URL), hc, alaye.CircuitBreaker{})
 	defer b.Stop()
+	if doctor != nil {
+		defer doctor.StopAll(1 * time.Second)
+	}
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 
 	if val := hits.Load(); val == 0 {
-		t.Error("Expected health check hits, got 0")
+		t.Errorf("Expected health check hits, got %d", val)
 	}
 }
 
@@ -468,11 +591,17 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 		Path:      "/health",
 		Interval:  50 * time.Millisecond,
 		Threshold: 1,
-		Timeout:   25 * time.Millisecond,
+		Timeout:   100 * time.Millisecond,
 	}
-	b, _ := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
 
-	time.Sleep(50 * time.Millisecond)
+	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
+
+	// Let some checks run
+	time.Sleep(100 * time.Millisecond)
+
+	if doctor != nil {
+		doctor.StopAll(1 * time.Second)
+	}
 	b.Stop()
 
 	hitsAtStop := hits.Load()
@@ -485,7 +614,7 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 }
 
 func TestUptime(t *testing.T) {
-	b, _ := setupBackend(t, alaye.NewServer("http://example.com"), alaye.HealthCheck{}, alaye.CircuitBreaker{})
+	b, _, _ := setupBackend(t, alaye.NewServer("http://example.com"), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	time.Sleep(100 * time.Millisecond)
@@ -496,7 +625,7 @@ func TestUptime(t *testing.T) {
 }
 
 func TestActivitySnapshot(t *testing.T) {
-	b, _ := setupBackend(t, alaye.NewServer("http://example.com"), alaye.HealthCheck{}, alaye.CircuitBreaker{})
+	b, _, _ := setupBackend(t, alaye.NewServer("http://example.com"), alaye.HealthCheck{}, alaye.CircuitBreaker{})
 	defer b.Stop()
 
 	b.Activity.StartRequest()

@@ -2,7 +2,6 @@ package xhttp
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"net/http"
 	"net/http/httputil"
@@ -14,6 +13,7 @@ import (
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
@@ -22,6 +22,22 @@ import (
 )
 
 type ctxKeyFailed struct{}
+
+type basicStatusWriter struct {
+	http.ResponseWriter
+	code int
+}
+
+func (b *basicStatusWriter) WriteHeader(code int) {
+	b.code = code
+	b.ResponseWriter.WriteHeader(code)
+}
+
+func (b *basicStatusWriter) Flush() {
+	if f, ok := b.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
 
 type Backend struct {
 	URL   *url.URL
@@ -63,7 +79,7 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 	switch u.Scheme {
 	case woos.Http, woos.Https:
 	default:
-		return nil, fmt.Errorf("%w: %q", woos.ErrBackendBadScheme, u.Scheme)
+		return nil, errors.Newf("%w: %q", woos.ErrBackendBadScheme, u.Scheme)
 	}
 	cond, err := NewConditions(cfg.Criteria)
 	if err != nil {
@@ -71,7 +87,7 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 	}
 	route := xhttpCfg.Route
 	if route == nil {
-		route = &alaye.Route{}
+		route = &alaye.Route{Path: "/"}
 	}
 	logger := xhttpCfg.Logger
 	if logger == nil {
@@ -81,7 +97,13 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 	if registry == nil {
 		registry = metrics.DefaultRegistry
 	}
-	statsKey := fmt.Sprintf("%s|%s", route.Key(), cfg.Address)
+
+	domain := "*"
+	if len(xhttpCfg.Domains) > 0 && xhttpCfg.Domains[0] != "" {
+		domain = xhttpCfg.Domains[0]
+	}
+
+	statsKey := route.BackendKey(domain, cfg.Address)
 	stats := registry.GetOrRegister(statsKey)
 	now := time.Now()
 
@@ -90,13 +112,7 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		cbThreshold = route.CircuitBreaker.Threshold
 	}
 
-	var hScore *health.Score
-	if xhttpCfg.HealthScore != nil {
-		hScore = xhttpCfg.HealthScore
-	} else {
-		// Use the global registry directly if it wasn't passed down
-		hScore = health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
-	}
+	hScore := health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
 
 	b := &Backend{
 		URL:          u,
@@ -112,7 +128,6 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		Fallback:     xhttpCfg.Fallback,
 		HealthScore:  hScore,
 	}
-
 	b.lastRecovery.Store(now.UnixNano())
 
 	if len(xhttpCfg.Domains) > 0 {
@@ -153,28 +168,11 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 			return
 		}
 
-		// Signal the ServeHTTP defer block that this request failed
 		if ptr, ok := r.Context().Value(ctxKeyFailed{}).(*bool); ok {
 			*ptr = true
 		}
 
-		b.HealthScore.RecordPassiveRequest(false)
-		b.HealthScore.Update(health.Record{
-			ProbeSuccess: false,
-			ConnHealth:   0,
-			PassiveRate:  b.HealthScore.PassiveErrorRate(),
-		})
-
-		newFailures := b.Activity.Failures.Add(1)
-
-		if b.cbThreshold > 0 && newFailures >= uint64(b.cbThreshold) {
-			b.logger.Fields("backend", u.Host, "failures", newFailures).Warn("circuit breaker tripped")
-		}
-
-		if !b.hasProber && !b.Alive() && time.Since(b.LastRecovery()) > 5*time.Second {
-			b.Activity.Failures.Store(0)
-			b.lastRecovery.Store(time.Now().UnixNano())
-		}
+		b.logger.Fields("backend", u.Host, "err", err).Error("proxy dial error")
 
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
 			w.Header().Set("Content-Type", "application/grpc")
@@ -237,7 +235,6 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		if port, ok := pr.Out.Context().Value(woos.CtxPort).(string); ok {
 			pr.Out.Header.Set("X-Forwarded-Port", port)
 		}
-		pr.Out.Header.Add(woos.HeaderVia, fmt.Sprintf("1.1 %s", woos.Name))
 	}
 
 	b.Proxy = rp
@@ -267,12 +264,37 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := context.WithValue(r.Context(), ctxKeyFailed{}, failedPtr)
 	req := r.WithContext(ctx)
 
+	var actualWriter http.ResponseWriter = w
+	if _, ok := w.(*zulu.ResponseWriter); !ok {
+		actualWriter = &basicStatusWriter{ResponseWriter: w, code: 200}
+	}
+
 	defer func() {
-		dur := time.Since(start).Microseconds()
+		dur := time.Since(start)
 		failed := *failedPtr
 
-		b.Activity.EndRequest(dur, failed)
+		if rw, ok := w.(*zulu.ResponseWriter); ok {
+			if rw.StatusCode >= 500 && rw.StatusCode <= 599 {
+				failed = true
+			}
+		} else if sw, ok := actualWriter.(*basicStatusWriter); ok {
+			if sw.code >= 500 && sw.code <= 599 {
+				failed = true
+			}
+		}
+
+		b.Activity.EndRequest(dur.Microseconds(), failed)
 		b.HealthScore.RecordPassiveRequest(!failed)
+
+		if failed {
+			if b.cbThreshold > 0 && b.Activity.Failures.Load() >= uint64(b.cbThreshold) {
+				b.logger.Fields("backend", b.URL.Host, "failures", b.Activity.Failures.Load()).Warn("circuit breaker tripped")
+			}
+			if !b.hasProber && !b.Alive() && time.Since(b.LastRecovery()) > 5*time.Second {
+				b.Activity.Failures.Store(0)
+				b.lastRecovery.Store(time.Now().UnixNano())
+			}
+		}
 
 		b.HealthScore.Update(health.Record{
 			ProbeSuccess: !failed,
@@ -281,7 +303,7 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	}()
 
-	b.Proxy.ServeHTTP(w, req)
+	b.Proxy.ServeHTTP(actualWriter, req)
 }
 
 func (b *Backend) Drain(timeout time.Duration) {
