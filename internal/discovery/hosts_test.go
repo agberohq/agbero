@@ -520,6 +520,7 @@ func TestHost_OnClusterChange_WithTTL(t *testing.T) {
 
 	logger := ll.New("test").Disable()
 	hm := NewHost(woos.NewFolder(hostsDir), WithLogger(logger))
+	defer hm.Close()
 
 	route := alaye.Route{
 		Enabled: alaye.Active,
@@ -529,13 +530,14 @@ func TestHost_OnClusterChange_WithTTL(t *testing.T) {
 			Servers: alaye.NewServers("http://localhost:9002"),
 		},
 	}
-	// Longer TTL to survive debounce + check
+
+	// TTL must be > debounce delay (500ms) + margin for rebuild
 	wrapper := struct {
 		Route     alaye.Route `json:"route"`
 		ExpiresAt time.Time   `json:"expires_at"`
 	}{
 		Route:     route,
-		ExpiresAt: time.Now().Add(2 * time.Second),
+		ExpiresAt: time.Now().Add(1500 * time.Millisecond),
 	}
 	val, err := json.Marshal(wrapper)
 	if err != nil {
@@ -544,23 +546,22 @@ func TestHost_OnClusterChange_WithTTL(t *testing.T) {
 
 	key := fmt.Sprintf("%s%s|%s", ClusterRoutePrefix, "ttl.example.com", "/ephemeral")
 	hm.OnClusterChange(key, val, false)
-	waitChanged(t, hm.Changed(), 3*time.Second)
 
-	host := hm.Get("ttl.example.com")
-	if host == nil {
-		t.Fatal("Host not created for TTL route")
+	// Wait for initial add
+	waitChanged(t, hm.Changed(), 2*time.Second)
+
+	if !hm.RouteExists("ttl.example.com", "/ephemeral") {
+		t.Fatal("Route should exist after add")
 	}
 
-	// Wait for expiration
-	time.Sleep(2200 * time.Millisecond)
-	waitChanged(t, hm.Changed(), 3*time.Second)
-
-	hostAfter := hm.Get("ttl.example.com")
-	if hostAfter != nil {
-		for _, r := range hostAfter.Routes {
-			if r.Path == "/ephemeral" {
-				t.Error("TTL route still present after expiration")
-			}
+	// Poll for expiration with timeout
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if !hm.RouteExists("ttl.example.com", "/ephemeral") {
+			return // Success - route expired
 		}
+		time.Sleep(50 * time.Millisecond)
 	}
+
+	t.Fatal("TTL route still present after expiration deadline")
 }
