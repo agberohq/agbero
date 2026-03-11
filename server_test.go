@@ -567,7 +567,7 @@ route "/" {
 	mainPort := zulu.PortFree()
 	time.Sleep(100 * time.Millisecond)
 
-	initialGlobalConfig := fmt.Sprintf(`version = 2
+	initialGlobalConfig := fmt.Sprintf(`version = 1
 bind {
   http = [":%d"]
 }
@@ -627,7 +627,7 @@ timeouts {
 		t.Fatalf("Port %d is still open (zombie listener?)", targetPort)
 	}
 
-	updatedGlobalConfig := fmt.Sprintf(`version = 2
+	updatedGlobalConfig := fmt.Sprintf(`version = 1
 bind {
   http = [":%d"]
 }

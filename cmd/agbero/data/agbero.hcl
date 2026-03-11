@@ -6,7 +6,7 @@
 # =============================================================================
 
 # Configuration schema version
-version = 2
+version = 1
 
 # Enable development mode: debug logging, verbose errors, relaxed TLS
 # WARNING: Disable for production
@@ -113,6 +113,7 @@ logging {
     enabled    = on
     path       = "{LOGS_DIR}/agbero.log"
     batch_size = 500
+    rotate_size = 1024
   }
 
   # ---------------------------------------------------------
