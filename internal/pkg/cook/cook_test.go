@@ -454,7 +454,13 @@ func TestManager_Register_And_Webhook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
-	defer mgr.Stop()
+
+	// Ensure cleanup happens before temp dir removal
+	t.Cleanup(func() {
+		mgr.Stop()
+		// Wait for git processes to fully terminate
+		time.Sleep(300 * time.Millisecond)
+	})
 
 	cfg := alaye.Git{
 		Enabled:  alaye.Active,
@@ -469,7 +475,7 @@ func TestManager_Register_And_Webhook(t *testing.T) {
 		t.Fatalf("Register failed: %v", err)
 	}
 
-	// Poll for clone completion instead of fixed sleep
+	// Poll for clone completion
 	deadline := time.Now().Add(5 * time.Second)
 	var path string
 	for time.Now().Before(deadline) {

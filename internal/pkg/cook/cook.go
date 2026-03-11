@@ -1,4 +1,3 @@
-// cook.go
 package cook
 
 import (
