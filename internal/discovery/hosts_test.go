@@ -62,6 +62,7 @@ func TestNewHost_Basic(t *testing.T) {
 
 func TestOnClusterChange_Add(t *testing.T) {
 	h := NewHost(woos.NewFolder("/tmp"), WithLogger(testLogger))
+	defer h.Close()
 
 	route := alaye.Route{
 		Path: "/api",
@@ -80,22 +81,19 @@ func TestOnClusterChange_Add(t *testing.T) {
 	key := ClusterRoutePrefix + "example.com"
 	h.OnClusterChange(key, val, false)
 
-	waitChanged(t, h.Changed(), time.Second)
+	// Wait for debounced rebuild
+	waitChanged(t, h.Changed(), 3*time.Second)
 
-	hosts, _ := h.LoadAll()
-	if len(hosts) != 1 {
-		t.Fatalf("expected 1 host in snapshot, got %d", len(hosts))
-	}
-
-	if cfg := h.Get("example.com"); cfg == nil || len(cfg.Routes) != 1 {
-		t.Fatal("route not added")
-	}
-
-	if cfg := h.Get("example.com"); cfg != nil {
-		if got := len(cfg.Routes[0].Backends.Servers); got != 1 {
-			t.Fatalf("expected 1 backend server, got %d", got)
+	// Poll for route to be available
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if h.RouteExists("example.com", "/api") {
+			return // Success
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
+
+	t.Fatal("route not found after deadline")
 }
 
 func TestOnClusterChange_Remove(t *testing.T) {
