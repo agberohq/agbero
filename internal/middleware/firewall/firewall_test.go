@@ -261,6 +261,9 @@ func TestPersistence(t *testing.T) {
 		IPMgr:    zulu.IP,
 	})
 	e1.Block("1.1.1.1", "manual", 1*time.Hour)
+	if err := e1.store.Sync(); err != nil {
+		t.Fatal(err)
+	}
 	e1.Close()
 	e2, _ := New(Config{
 		Firewall: cfg,

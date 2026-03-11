@@ -22,12 +22,14 @@ type opType int
 const (
 	opAdd opType = iota
 	opRemove
+	opSync
 )
 
 type operation struct {
 	Type opType
 	Key  string
 	Rule Rule
+	Done chan struct{}
 }
 
 type Store struct {
@@ -128,6 +130,18 @@ func (s *Store) Remove(ip string) error {
 	return nil
 }
 
+// Sync blocks until all pending write operations are persisted to disk.
+func (s *Store) Sync() error {
+	done := make(chan struct{})
+	select {
+	case s.writeCh <- operation{Type: opSync, Done: done}:
+	case <-s.quit:
+		return fmt.Errorf("store closed")
+	}
+	<-done
+	return nil
+}
+
 func (s *Store) GetBan(ip string) (*Rule, error) {
 	if r, ok := s.cache.Get(ip); ok {
 		return &r, nil
@@ -206,6 +220,10 @@ func (s *Store) persistLoop() {
 		if len(ops) == 0 {
 			return
 		}
+
+		// Separate data ops from sync ops
+		var syncOps []operation
+
 		err := s.db.Update(func(tx *bbolt.Tx) error {
 			b := tx.Bucket(bucketName)
 			for _, op := range ops {
@@ -219,13 +237,22 @@ func (s *Store) persistLoop() {
 					if err := b.Delete([]byte(op.Key)); err != nil {
 						return err
 					}
+				case opSync:
+					syncOps = append(syncOps, op)
 				}
 			}
 			return nil
 		})
+
 		if err != nil {
 			s.logger.Fields("err", err).Error("failed to flush firewall rules to db")
 		}
+
+		// Signal completion for all sync operations
+		for _, op := range syncOps {
+			close(op.Done)
+		}
+
 		ops = ops[:0]
 	}
 
@@ -233,11 +260,15 @@ func (s *Store) persistLoop() {
 		select {
 		case op := <-s.writeCh:
 			ops = append(ops, op)
-			if len(ops) >= 100 {
+
+			// Immediate flush on sync or batch size
+			if op.Type == opSync || len(ops) >= 100 {
 				flush()
 			}
+
 		case <-ticker.C:
 			flush()
+
 		case <-s.quit:
 			flush()
 			return
