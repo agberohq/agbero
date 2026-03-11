@@ -8,39 +8,38 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/agberohq/agbero)](https://goreportcard.com/report/github.com/agberohq/agbero)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Agbero is a modern reverse proxy that bridges local development and production deployments. It offers **Zero-Config TLS for developers**, **Production-Grade Load Balancing**, and a **Programmable WASM Data Plane**.
+Agbero is a modern reverse proxy that bridges local development and production deployments. It offers Zero-Config TLS for developers, Production-Grade Load Balancing, Git-based atomic deployments, and a Programmable WASM Data Plane.
 
-## ✨ Why Choose Agbero?
+## Why Choose Agbero?
 
-### 🚀 For Developers
+### For Developers
 - **Zero-Config Local HTTPS**: Run `agbero run` in any directory for instant HTTPS with auto-trusted certificates.
-- **Hot Reload**: Modify configurations and WASM plugins without restarting.
-- **Unified Config**: Use `${env.VAR}` syntax to make one config work for Dev and Prod.
+- **Hot Reload**: Modify configurations, routes, and WASM plugins without restarting or dropping connections.
+- **Unified Config**: Use `${env.VAR}` syntax to make one configuration file work seamlessly across Dev, Staging, and Production.
 
-### 🏭 For Production
+### For Production
+- **Atomic Git Deployments**: Serve static sites and Single Page Applications (SPAs) directly from a Git repository with zero-downtime updates via Webhooks or interval polling.
 - **Weighted Load Balancing**: Native support for canary deployments and A/B testing.
-- **Built-in Gossip Protocol**: Automatic service discovery without external dependencies (Consul/Zookeeper).
-- **Circuit Breaking & Health Checks**: Automatic failure detection and recovery.
-- **HDR Histogram Metrics**: Detailed latency tracking (P50/P90/P99) exposed via JSON.
+- **Built-in Gossip Protocol**: Automatic service discovery across nodes without external dependencies like Consul or Zookeeper.
+- **Circuit Breaking & Health Checks**: Automatic failure detection, predictive health scoring, and rapid recovery.
+- **HDR Histogram Metrics**: Detailed latency tracking (P50/P90/P99) exposed via JSON and the built-in Dashboard.
 
-### 🔌 Programmable & Extensible
+### Programmable & Extensible
 - **WASM Middleware**: Write custom logic in Go, Rust, or TinyGo and run it safely inside the proxy.
-- **Native Authentication**: Built-in JWT validation and Forward Auth.
-- **Rate Limiting**: Identity-based limiting (API Key/IP) with distributed sharding.
-
+- **Native Authentication**: Built-in support for JWT validation, OAuth (Google, GitHub, OIDC), Basic Auth, and Forward Auth.
+- **Rate Limiting**: Identity-based limiting (API Key, IP, Cookie) with distributed sharding.
 
 <p align="center">
-  <img src="assets/dash.1.png" width="500" alt="Agbero Logo">
+  <img src="assets/dash.1.png" width="500" alt="Agbero Dashboard">
 </p>
 
-## 🚀 Quick Start
-
+## Quick Start
 
 ### Installation
 
 ```bash
 # Download latest release
-curl -L https://github.com/your-org/agbero/releases/latest/download/agbero-linux-amd64 -o agbero
+curl -L https://github.com/agberohq/agbero/releases/latest/download/agbero-linux-amd64 -o agbero
 chmod +x agbero
 sudo mv agbero /usr/local/bin/
 
@@ -51,32 +50,54 @@ go install github.com/agberohq/agbero/cmd/agbero@latest
 ### The Simplest Possible Start
 
 ```bash
-# Serves current directory on https://localhost:8443 with auto-generated TLS
-agbero run
+# Serves the current directory on https://localhost:8000 with auto-generated TLS
+agbero serve --https
+
+# Proxies localhost:3000 to https://app.localhost:8080
+agbero proxy :3000 app.localhost --https
 ```
 
-### Production Setup
+### Service Setup
 
 ```bash
-# Interactive service installation (Systemd/Launchd/Windows Service)
-sudo agbero install
+# Interactive service installation (Systemd / Launchd / Windows Service)
+sudo agbero service install
 
 # Start the service
-sudo agbero start
+sudo agbero service start
 ```
 
-## 📋 Core Features
+## Core Features
 
-### 1. Smart TLS Management
-- **Development**: Auto-generates and trusts local CA certificates (mkcert style).
-- **Production**: Automatic Let's Encrypt with DNS challenge support.
+### 1. Git-Based Atomic Deployments
+Deploy static sites and SPAs directly from your Git provider. Agbero securely clones your repository and performs atomic directory swaps with zero downtime when a webhook is triggered.
+
+```hcl
+route "/app" {
+  strip_prefixes = ["/app"]
+  web {
+    spa = true
+    git {
+      enabled = true
+      id      = "frontend-app"
+      url     = "https://github.com/your-org/spa-builds.git"
+      branch  = "main"
+      secret  = "env.GITHUB_WEBHOOK_SECRET"
+    }
+  }
+}
+```
+
+### 2. Smart TLS Management
+- **Development**: Auto-generates and trusts local CA certificates.
+- **Production**: Automatic Let's Encrypt with HTTP-01 challenge and cluster-wide certificate replication.
 - **Custom CAs**: Bring your own certificate authority.
 
-### 2. Advanced Load Balancing & Routing
+### 3. Advanced Load Balancing & Routing
 ```hcl
 route "/api" {
   backend {
-    strategy = "weighted_round_robin"
+    strategy = "weighted_least_conn"
     
     # Canary deployment: 10% traffic to new version
     server {
@@ -93,88 +114,42 @@ route "/api" {
 }
 ```
 
-### 3. Programmable WASM Middleware
-Extend Agbero with custom logic written in any language that compiles to WASM.
+## Performance
 
-```hcl
-route "/secure" {
-  wasm {
-    module = "./plugins/auth.wasm"
-    access = ["headers"] # Security: Grant specific permissions
-    config = {
-      "role" = "admin"
-    }
-  }
-  
-  backend {
-    server { address = "http://app:8080" }
-  }
-}
-```
+- **Throughput**: 50k+ requests/second on 4 vCPU.
+- **Latency**: <1ms P99 for static file serving.
+- **Memory**: ~15MB idle, ~50MB under load.
+- **Connections**: 10k+ concurrent connections with HTTP/3 (QUIC) and TCP proxy support.
 
-### 4. Built-in Service Discovery (Gossip)
-Services can auto-discover each other using the SWIM gossip protocol.
-
-```bash
-# Initialize gossip cluster
-agbero gossip init
-
-# Generate token for services
-agbero gossip token --service payment-api --ttl 720h
-```
-
-### 5. Secure Configuration
-Agbero supports dynamic configuration values to keep secrets out of files.
-
-```hcl
-gossip {
-  # Load from environment variable
-  secret_key = "${env.GOSSIP_SECRET}" 
-}
-
-route "/protected" {
-  jwt_auth {
-    # Load from Base64 string
-    secret = "${b64.SGVsbG8gd29ybGQ=}" 
-  }
-}
-```
-
-## 📊 Performance
-
-- **Throughput**: 50k+ requests/second on 4 vCPU
-- **Latency**: <1ms P99 for static file serving
-- **Memory**: ~15MB idle, ~50MB under load
-- **Connections**: 10k+ concurrent connections with HTTP/3 (QUIC)
-
-## 📚 Documentation
+## Documentation
 
 - **[GUIDE.md](docs/GUIDE.md)**: Practical examples, use cases, and tutorials.
 - **[PLUGIN.md](docs/PLUGIN.md)**: Guide to writing WebAssembly middleware in Go and Rust.
 - **[CLI Reference](cmd/agbero/README.md)**: Command-line interface documentation.
 - **[Examples](examples/)**: Ready-to-run configuration examples.
 
-
-## 🛣 Roadmap
+## Roadmap
 
 - [x] Auto-TLS (Local & Let's Encrypt)
 - [x] HTTP/3 (QUIC) support
-- [x] Gossip-based service discovery
-- [x] Advanced rate limiting (Identity based)
+- [x] TCP & HTTP Reverse Proxying
 - [x] WebAssembly (WASM) middleware
-- [x] Native JWT Authentication
-- [ ] OpenTelemetry integration
-- [ ] Dashboard UI
+- [x] Native Authentication (JWT, Basic, OAuth, Forward Auth)
+- [x] Advanced rate limiting & Active Firewall
+- [x] Gossip-based cluster state synchronization
+- [x] Git-based atomic deployments
+- [x] Admin Dashboard UI
+- [ ] Proper Documentation 
 
-## 🤝 Contributing
+## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions! Please see our [Contributing Guide](docs/contributor.md) for details.
 
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for your changes
-4. Submit a pull request
+1. Fork the repository.
+2. Create a feature branch.
+3. Add tests for your changes.
+4. Submit a pull request.
 
-## 📄 License
+## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License - see[LICENSE](LICENSE) for details.
