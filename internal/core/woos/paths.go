@@ -13,6 +13,7 @@ type RuntimePaths struct {
 	CertsDir   Folder `json:"certs_dir"`
 	DataDir    Folder `json:"data_dir"`
 	LogsDir    Folder `json:"logs_dir"`
+	WorkDir    Folder `json:"work_dir"`
 }
 
 // GetUserDefaults returns defaults for the current user (~/.config/agbero)
@@ -31,6 +32,7 @@ func GetUserDefaults() (RuntimePaths, error) {
 		CertsDir:   base.Join(CertDir.Name()),
 		DataDir:    base.Join(DataDir.Name()),
 		LogsDir:    base.Join(LogDir.Name()),
+		WorkDir:    base.Join(WorkDir.Name()),
 	}, nil
 }
 
@@ -52,5 +54,6 @@ func DefaultPaths() RuntimePaths {
 		CertsDir:   baseFolder.Join(CertDir.Name()),
 		DataDir:    baseFolder.Join(DataDir.Name()),
 		LogsDir:    baseFolder.Join(LogDir.Name()),
+		WorkDir:    baseFolder.Join(WorkDir.Name()),
 	}
 }

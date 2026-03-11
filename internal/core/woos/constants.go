@@ -88,7 +88,8 @@ const (
 	HostDir Folder = "hosts.d"
 	CertDir Folder = "certs.d"
 	DataDir Folder = "data.d"
-	LogDir  Folder = "logs.d" // New log directory
+	LogDir  Folder = "logs.d"
+	WorkDir Folder = "work.d"
 
 	DefaultConfigName = "agbero.hcl"
 	DefaultLogName    = "agbero.log"
@@ -356,8 +357,6 @@ const (
 )
 
 // folder
-
-// Standardize permissions here
 const (
 	DirPerm         = 0755
 	FilePerm        = 0644
@@ -365,8 +364,7 @@ const (
 	SecurePerm      = 0700 // For keys/certs
 )
 
-//oauth
-
+// oauth
 const (
 	SessionCookieName = "agbero_sess"
 	GothSessionCookie = "agbero_oauth_state"

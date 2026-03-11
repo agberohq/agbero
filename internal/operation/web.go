@@ -17,6 +17,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/cook"
 	"github.com/dustin/go-humanize"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
@@ -27,63 +28,48 @@ import (
 var webHtml string
 
 var (
-	// tmpl parses the embedded directory listing template once at startup.
-	// Template execution is safe for concurrent use.
 	tmpl = template.Must(template.New("web").Parse(webHtml))
 
-	// gzExistsCache caches the existence of pre-compressed .gz files to reduce
-	// filesystem stat calls. Cache entries expire after gzCacheTTL.
 	gzExistsCache = mappo.NewCache(mappo.CacheOptions{
 		MaximumSize: woos.CacheMax,
 	})
 
-	// fingerprintRe matches common fingerprint patterns in filenames
-	// (e.g., styles.a1b2c3d4.css, main-8f9a0e1f.js) to enable aggressive caching.
 	fingerprintRe = regexp.MustCompile(`(?i)(?:[._-])[a-f0-9]{8,}(?:[._-])`)
 )
 
 const gzCacheTTL = 60 * time.Second
 
-// dirItem represents a single entry in a directory listing.
 type dirItem struct {
-	Name    string // display name
+	Name    string
 	IsDir   bool
-	Size    string // human-readable size
-	ModTime string // formatted modification time
-	URL     string // URL-encoded path component
+	Size    string
+	ModTime string
+	URL     string
 
-	Ext  string // file extension (lowercase)
-	MIME string // detected MIME type
+	Ext  string
+	MIME string
 }
 
-// crumb represents a breadcrumb navigation item.
 type crumb struct {
-	Name string // label shown to user
-	Href string // absolute path (ends with "/")
+	Name string
+	Href string
 }
 
-// web implements the HTTP handler for serving static files and directories.
-// It supports PHP-FPM, pre-compressed gzip files, directory listings,
-// and SPA fallback routing.
 type web struct {
-	route  *alaye.Route // route configuration
-	logger *ll.Logger
-
-	php http.Handler // nil if PHP is disabled
+	route            *alaye.Route
+	logger           *ll.Logger
+	cookMgr          *cook.Manager
+	phpClientFactory gofast.ClientFactory
 }
 
-// NewWeb creates a new web handler for the given route.
-// If PHP is enabled in the route configuration, it sets up a FastCGI client.
-func NewWeb(logger *ll.Logger, route *alaye.Route) *web {
+func NewWeb(logger *ll.Logger, route *alaye.Route, cookMgr *cook.Manager) *web {
 	h := &web{
-		route:  route,
-		logger: logger.Namespace("web"),
+		route:   route,
+		logger:  logger.Namespace("web"),
+		cookMgr: cookMgr,
 	}
 
-	// PHP FastCGI support using value-type config (no pointers).
 	if route != nil && route.Web.PHP.Status.Active() {
-		root := route.Web.Root.String()
-
 		network, address := "tcp", "127.0.0.1:9000"
 		if strings.TrimSpace(route.Web.PHP.Address) != "" {
 			addr := strings.TrimSpace(route.Web.PHP.Address)
@@ -97,36 +83,30 @@ func NewWeb(logger *ll.Logger, route *alaye.Route) *web {
 		}
 
 		connFactory := gofast.SimpleConnFactory(network, address)
-		clientFactory := gofast.SimpleClientFactory(connFactory)
+		h.phpClientFactory = gofast.SimpleClientFactory(connFactory)
 
-		sess := gofast.Chain(
-			gofast.BasicParamsMap,
-			gofast.MapHeader,
-			gofast.MapRemoteHost,
-		)(gofast.BasicSession)
-
-		h.php = gofast.NewHandler(
-			gofast.NewPHPFS(root)(sess),
-			clientFactory,
-		)
-
-		h.logger.Fields("route", route.Path, "php", true, "php_net", network, "php_addr", address, "root", root).Info("PHP")
+		h.logger.Fields("route", route.Path, "php", true, "php_net", network, "php_addr", address).Info("PHP configured")
 	}
 
 	return h
 }
 
-// ServeHTTP implements http.Handler for static file serving.
-// It handles security checks, PHP execution, gzip pre-compression,
-// directory listings, and SPA fallback routing.
+func (h *web) resolveRootPath() string {
+	if h.route.Web.Git.Enabled.Active() && h.cookMgr != nil {
+		return h.cookMgr.CurrentPath(h.route.Key())
+	}
+	if h.route.Web.Root.IsSet() {
+		return h.route.Web.Root.String()
+	}
+	return "."
+}
+
 func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Only GET and HEAD are supported. HEAD is handled automatically by http.ServeContent.
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Use the original path from context if available (e.g., after host routing).
 	browserPath := r.URL.Path
 	if v := r.Context().Value(woos.CtxOriginalPath); v != nil {
 		if s, ok := v.(string); ok {
@@ -134,14 +114,12 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Default to current directory if root is not explicitly set.
-	rootPath := "."
-	if h.route.Web.Root.IsSet() {
-		rootPath = h.route.Web.Root.String()
+	rootPath := h.resolveRootPath()
+	if rootPath == "" {
+		http.Error(w, "Deployment in progress...", http.StatusServiceUnavailable)
+		return
 	}
 
-	// os.OpenRoot (Go 1.21+) provides kernel-level path traversal protection.
-	// All subsequent file operations are automatically confined to this root.
 	root, err := os.OpenRoot(rootPath)
 	if err != nil {
 		h.logger.Fields("err", err, "root", rootPath).Error("failed to open web root")
@@ -150,20 +128,17 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer root.Close()
 
-	// Clean and validate the request path.
 	reqPath := strings.TrimPrefix(r.URL.Path, "/")
 	if reqPath == "" {
 		reqPath = "."
 	}
 	cleanedPath := filepath.Clean(reqPath)
 
-	// Defense-in-depth: explicit traversal check.
 	if strings.HasPrefix(cleanedPath, "..") || strings.HasPrefix(cleanedPath, string(filepath.Separator)+"..") {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
-	// Dotfile protection: hide .git, .env, etc., but allow .well-known.
 	pathParts := strings.SplitSeq(cleanedPath, string(filepath.Separator))
 	for part := range pathParts {
 		if part == "." || part == ".." || part == "" {
@@ -176,28 +151,32 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reqPath = cleanedPath
-	phpEnabled := h.php != nil
+	phpEnabled := h.phpClientFactory != nil
 
-	// PHP handling for .php files.
 	if strings.HasSuffix(strings.ToLower(reqPath), ".php") {
 		if !phpEnabled {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
-		// Verify file exists before passing to PHP-FPM.
 		ff, err := root.Open(reqPath)
 		if err == nil {
 			info, serr := ff.Stat()
 			_ = ff.Close()
 			if serr == nil && !info.IsDir() {
-				h.php.ServeHTTP(w, r)
+				sess := gofast.Chain(
+					gofast.BasicParamsMap,
+					gofast.MapHeader,
+					gofast.MapRemoteHost,
+					gofast.NewPHPFS(rootPath),
+				)(gofast.BasicSession)
+
+				handler := gofast.NewHandler(sess, h.phpClientFactory)
+				handler.ServeHTTP(w, r)
 				return
 			}
 		}
-		// If open failed, fall through to 404/Error below.
 	}
 
-	// Check for pre-compressed gzip version if client accepts it.
 	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 		gzPath, gzOrigPath := h.resolveGzipPath(reqPath)
 		if h.gzMayExist(gzPath) {
@@ -226,7 +205,6 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Open the requested file.
 	f, err := root.Open(reqPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -236,7 +214,6 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					indexName = h.route.Web.Index
 				}
 
-				// SPA fallback: serve the index file for any non-existent path.
 				indexFile, iErr := root.Open(indexName)
 				if iErr == nil {
 					defer indexFile.Close()
@@ -249,7 +226,6 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-
 			http.Error(w, "Not Found", http.StatusNotFound)
 		} else if errors.Is(err, fs.ErrPermission) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
@@ -267,9 +243,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Directory handling.
 	if info.IsDir() {
-		// Enforce trailing slash for directories.
 		if !strings.HasSuffix(browserPath, "/") {
 			http.Redirect(w, r, browserPath+"/", http.StatusMovedPermanently)
 			return
@@ -280,7 +254,6 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			indexName = h.route.Web.Index
 		}
 
-		// Check for index file.
 		indexPath := filepath.Join(reqPath, indexName)
 		indexFile, err := root.Open(indexPath)
 		if err == nil {
@@ -296,7 +269,6 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Directory listing if enabled.
 		if h.route.Web.Listing {
 			h.serveDirectoryListing(w, r, f, browserPath)
 			return
@@ -306,7 +278,6 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Serve static file.
 	if h.setCommonHeaders(w, r, reqPath, info.ModTime(), info.Size(), false) {
 		return
 	}
@@ -314,7 +285,6 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }
 
-// serveDirectoryListing renders an HTML directory listing.
 func (h *web) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *os.File, displayPath string) {
 	entries, err := f.ReadDir(-1)
 	if err != nil {
@@ -326,15 +296,14 @@ func (h *web) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *o
 	for _, entry := range entries {
 		name := entry.Name()
 
-		// Security filters for directory listings.
 		if strings.HasPrefix(name, ".") {
-			continue // Hide dotfiles
+			continue
 		}
 		if entry.IsDir() && strings.HasSuffix(name, ".d") {
-			continue // Hide security/config directories
+			continue
 		}
 		if name == woos.DefaultConfigName {
-			continue // Hide config file
+			continue
 		}
 
 		info, err := entry.Info()
@@ -365,7 +334,6 @@ func (h *web) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *o
 		})
 	}
 
-	// Sort directories first, then files alphabetically.
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].IsDir != items[j].IsDir {
 			return items[i].IsDir
@@ -395,7 +363,6 @@ func (h *web) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *o
 	}
 }
 
-// resolveGzipPath determines the gzip path and original path for a request.
 func (h *web) resolveGzipPath(reqPath string) (gzPath string, origPath string) {
 	origPath = reqPath
 	gzPath = reqPath + ".gz"
@@ -411,7 +378,6 @@ func (h *web) resolveGzipPath(reqPath string) (gzPath string, origPath string) {
 	return gzPath, origPath
 }
 
-// gzMayExist checks the cache for gzip file existence, defaulting to true if not cached.
 func (h *web) gzMayExist(gzPath string) bool {
 	it, ok := gzExistsCache.Load(gzPath)
 	if !ok {
@@ -424,13 +390,10 @@ func (h *web) gzMayExist(gzPath string) bool {
 	return v
 }
 
-// gzSetExists caches the existence of a gzip file.
 func (h *web) gzSetExists(gzPath string, exists bool) {
 	gzExistsCache.StoreTTL(gzPath, &mappo.Item{Value: exists}, gzCacheTTL)
 }
 
-// setCommonHeaders sets cache control, ETag, and handles conditional requests.
-// Returns true if the response was 304 Not Modified.
 func (h *web) setCommonHeaders(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -441,7 +404,6 @@ func (h *web) setCommonHeaders(
 ) (notModified bool) {
 	ext := strings.ToLower(filepath.Ext(reqPath))
 
-	// Different caching strategies based on file type.
 	cacheControl := "public, max-age=0, must-revalidate"
 	if ext == ".html" || ext == "" || strings.HasSuffix(r.URL.Path, "/") {
 		cacheControl = "public, max-age=0, must-revalidate"
@@ -472,7 +434,6 @@ func (h *web) setCommonHeaders(
 	return false
 }
 
-// buildBreadcrumbs creates a breadcrumb navigation trail from a path.
 func (h *web) buildBreadcrumbs(displayPath string) []crumb {
 	p := strings.Trim(displayPath, "/")
 	if p == "" {

@@ -2,9 +2,28 @@ package alaye
 
 import (
 	"strings"
+	"time"
 
 	"github.com/olekukonko/errors"
 )
+
+type Git struct {
+	Enabled  Enabled       `hcl:"enabled,optional" json:"enabled"`
+	URL      string        `hcl:"url" json:"url"`
+	Branch   string        `hcl:"branch,optional" json:"branch"`
+	Secret   Value         `hcl:"secret,optional" json:"secret"`     // Webhook HMAC secret
+	Interval time.Duration `hcl:"interval,optional" json:"interval"` // Polling interval
+}
+
+func (g *Git) Validate() error {
+	if g.Enabled.NotActive() {
+		return nil
+	}
+	if g.URL == "" {
+		return errors.New("git url is required when git is enabled")
+	}
+	return nil
+}
 
 type Web struct {
 	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
@@ -13,15 +32,19 @@ type Web struct {
 	Listing bool    `hcl:"listing,optional" json:"listing"`
 	SPA     bool    `hcl:"spa,optional" json:"spa"`
 	PHP     PHP     `hcl:"php,block" json:"php"`
+	Git     Git     `hcl:"git,block" json:"git"`
 }
 
 func (w *Web) Validate() error {
-
 	if w.Enabled.NotActive() {
 		return nil
 	}
 
-	if !w.Root.IsSet() {
+	if err := w.Git.Validate(); err != nil {
+		return errors.Newf("git: %w", err)
+	}
+
+	if w.Git.Enabled.NotActive() && !w.Root.IsSet() {
 		return ErrRootRequired
 	}
 

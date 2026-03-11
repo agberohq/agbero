@@ -95,6 +95,7 @@ type Storage struct {
 	HostsDir string `hcl:"hosts_dir,optional" json:"hosts_dir"`
 	CertsDir string `hcl:"certs_dir,optional" json:"certs_dir"`
 	DataDir  string `hcl:"data_dir,optional" json:"data_dir"`
+	WorkDir  string `hcl:"work_dir,optional" json:"work_dir"`
 }
 
 func (s Storage) Validate() error {

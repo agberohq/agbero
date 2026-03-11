@@ -34,6 +34,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/recovery"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/wasm"
 	"git.imaxinacion.net/aibox/agbero/internal/operation"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/cook"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/parser"
@@ -94,6 +95,9 @@ type Server struct {
 	ipMgr          *zulu.IPManager
 	rateLimiter    *ratelimit.RateLimiter
 	clusterManager *cluster.Manager
+
+	gitPool     *jack.Pool
+	cookManager *cook.Manager
 
 	wasmCache    sync.Map
 	skipLogPaths map[string]bool
@@ -244,6 +248,24 @@ func (s *Server) Start(configPath string) error {
 
 	hosts, _ := s.hostManager.LoadAll()
 	s.logHostStats(hosts)
+
+	// Initialize Git Pool and Cook Manager
+	s.gitPool = jack.NewPool(4)
+	cookMgr, err := cook.NewManager(s.global.Storage.WorkDir, s.gitPool, s.logger)
+	if err != nil {
+		s.logger.Fields("err", err).Error("failed to initialize cook manager")
+	} else {
+		s.cookManager = cookMgr
+		for _, hcfg := range hosts {
+			for _, r := range hcfg.Routes {
+				if r.Web.Git.Enabled.Active() {
+					if err := s.cookManager.Register(r.Key(), r.Web.Git); err != nil {
+						s.logger.Fields("route", r.Path, "err", err).Error("failed to register git route")
+					}
+				}
+			}
+		}
+	}
 
 	// Initialize the Doctor for Eager Global Health Probing
 	s.doctor = jack.NewDoctor(jack.DoctorWithLogger(s.logger))
@@ -544,7 +566,7 @@ func (s *Server) Reload() {
 	newRateLimiter := s.chainBuildRateLimiter(global, newIPMgr)
 
 	s.mu.Lock()
-	s.configApplyReload(global, sha, newIPMgr, newRateLimiter)
+	s.configApplyReload(global, sha, newIPMgr, newRateLimiter, newHosts)
 	s.startNewListeners(global, newHosts)
 	s.tcpUpdateProxy(tcpGroups)
 	s.mu.Unlock()
@@ -569,6 +591,13 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 		case <-time.After(1 * time.Second):
 		case <-ctx.Done():
 		}
+	}
+
+	if s.cookManager != nil {
+		s.cookManager.Stop()
+	}
+	if s.gitPool != nil {
+		_ = s.gitPool.Shutdown(1 * time.Second)
 	}
 
 	if s.doctor != nil {
@@ -969,6 +998,18 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.HasPrefix(r.URL.Path, "/.agbero/webhook/git/") {
+		routeKey := strings.TrimPrefix(r.URL.Path, "/.agbero/webhook/git/")
+		if s.cookManager != nil {
+			s.cookManager.HandleWebhook(w, r, routeKey)
+			s.logRequest("Webhook", r, start, http.StatusAccepted, 0)
+		} else {
+			http.Error(w, "Git manager disabled", http.StatusServiceUnavailable)
+			s.logRequest("Webhook", r, start, http.StatusServiceUnavailable, 0)
+		}
+		return
+	}
+
 	if info := wellknown.NewPathInfo(r.URL.Path); info != nil && info.IsACMEChallenge() {
 		if s.tlsManager != nil && s.tlsManager.Challenges != nil {
 			if token, ok := info.GetACMEToken(); ok {
@@ -1132,10 +1173,11 @@ func (s *Server) routeBuilder(route *alaye.Route, host *alaye.Host) *handlers.Ro
 	}
 
 	h := handlers.NewRoute(handlers.Config{
-		Global: s.global,
-		Host:   host,
-		Logger: s.logger,
-		IPMgr:  s.ipMgr,
+		Global:  s.global,
+		Host:    host,
+		Logger:  s.logger,
+		IPMgr:   s.ipMgr,
+		CookMgr: s.cookManager,
 	}, route)
 	newItem := &mappo.Item{
 		Value: h,
@@ -1388,7 +1430,7 @@ func (s *Server) tlsValidate() error {
 // Configuration Management Helpers
 // =============================================================================
 
-func (s *Server) configApplyReload(global *alaye.Global, sha string, newIPMgr *zulu.IPManager, newRateLimiter *ratelimit.RateLimiter) {
+func (s *Server) configApplyReload(global *alaye.Global, sha string, newIPMgr *zulu.IPManager, newRateLimiter *ratelimit.RateLimiter, newHosts map[string]*alaye.Host) {
 	if s.global.Logging.Level != global.Logging.Level {
 		s.logger.Infof("log_level: %s → %s", s.global.Logging.Level, global.Logging.Level)
 	}
@@ -1443,6 +1485,27 @@ func (s *Server) configApplyReload(global *alaye.Global, sha string, newIPMgr *z
 				s.logger.Fields("domain", domain, "err", err).Error("failed to broadcast certificate")
 			}
 		})
+	}
+
+	if s.cookManager != nil {
+		s.cookManager.Stop()
+	}
+
+	cookMgr, err := cook.NewManager(global.Storage.WorkDir, s.gitPool, s.logger)
+	if err != nil {
+		s.logger.Fields("err", err).Error("failed to init cook manager on reload")
+		s.cookManager = nil
+	} else {
+		s.cookManager = cookMgr
+		for _, hcfg := range newHosts {
+			for _, r := range hcfg.Routes {
+				if r.Web.Git.Enabled.Active() {
+					if err := s.cookManager.Register(r.Key(), r.Web.Git); err != nil {
+						s.logger.Fields("route", r.Path, "err", err).Error("failed to register git route on reload")
+					}
+				}
+			}
+		}
 	}
 
 	zulu.Route.Clear()

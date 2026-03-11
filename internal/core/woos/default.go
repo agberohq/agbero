@@ -56,7 +56,7 @@ func DefaultRoute(r *alaye.Route) {
 		r.Enabled = alaye.Active
 	}
 
-	hasWeb := r.Web.Root.IsSet()
+	hasWeb := r.Web.Root.IsSet() || r.Web.Git.Enabled.Active()
 	hasBackends := len(r.Backends.Servers) > 0
 
 	if hasWeb {
@@ -148,6 +148,12 @@ func defaultStorage(s *alaye.Storage, configPath string) {
 		s.DataDir = filepath.Join(configDir, DataDir.String())
 	} else if !filepath.IsAbs(s.DataDir) {
 		s.DataDir = filepath.Join(configDir, s.DataDir)
+	}
+
+	if s.WorkDir == "" {
+		s.WorkDir = filepath.Join(configDir, WorkDir.String())
+	} else if !filepath.IsAbs(s.WorkDir) {
+		s.WorkDir = filepath.Join(configDir, s.WorkDir)
 	}
 }
 
