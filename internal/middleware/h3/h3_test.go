@@ -1,4 +1,3 @@
-// internal/middleware/h3/h3_test.go
 package h3
 
 import (

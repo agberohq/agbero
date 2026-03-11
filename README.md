@@ -5,7 +5,7 @@
 > **Agbero**: *noun* (Yoruba) - A tout or traffic controller at a bus stop.
 > **In Context**: A high-performance, production-ready Reverse Proxy and Load Balancer written in Go.
 
-[![Go Report Card](https://goreportcard.com/badge/git.imaxinacion.net/aibox/agbero)](https://goreportcard.com/report/git.imaxinacion.net/aibox/agbero)
+[![Go Report Card](https://goreportcard.com/badge/github.com/agberohq/agbero)](https://goreportcard.com/report/github.com/agberohq/agbero)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Agbero is a modern reverse proxy that bridges local development and production deployments. It offers **Zero-Config TLS for developers**, **Production-Grade Load Balancing**, and a **Programmable WASM Data Plane**.
@@ -45,7 +45,7 @@ chmod +x agbero
 sudo mv agbero /usr/local/bin/
 
 # Or build from source
-go install git.imaxinacion.net/aibox/agbero/cmd/agbero@latest
+go install github.com/agberohq/agbero/cmd/agbero@latest
 ```
 
 ### The Simplest Possible Start

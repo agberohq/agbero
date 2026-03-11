@@ -10,7 +10,7 @@ PLAY_OS   ?= linux
 PLAY_ARCH ?= amd64
 
 ## UO
-REPO_URL = https://git.imaxinacion.net/aibox/agbero-ui
+REPO_URL = https://github.com/agberohq/agbero-ui
 TARGET_DIR = internal/admin/ui/web
 TEMP_DIR = tmp
 
@@ -54,9 +54,9 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # LDFLAGS for version injection
-LDFLAGS := -s -w -X "git.imaxinacion.net/aibox/agbero/internal/core/woos.Version=$(VERSION)" \
-           -X "git.imaxinacion.net/aibox/agbero/internal/core/woos.Commit=$(COMMIT)" \
-           -X "git.imaxinacion.net/aibox/agbero/internal/core/woos.Date=$(DATE)"
+LDFLAGS := -s -w -X "github.com/agberohq/agbero/internal/core/woos.Version=$(VERSION)" \
+           -X "github.com/agberohq/agbero/internal/core/woos.Commit=$(COMMIT)" \
+           -X "github.com/agberohq/agbero/internal/core/woos.Date=$(DATE)"
 
 .PHONY: all build clean run install build-all version help \
         deps test test-verbose fmt lint tidy snapshot goreleaser-check changelog dev update-deps \
@@ -263,9 +263,6 @@ play:
 	GOOS=linux GOARCH=amd64 \
 		go build -ldflags="$(LDFLAGS)" -trimpath \
 		-o $(BUILD_DIR)/$(APP_NAME) $(SRC_DIR)
-
-	# @echo "Killing existing process on remote (if any)..."
-	# ssh $(PLAY_USER)@$(PLAY_HOST) "pkill $(APP_NAME)" || true
 
 	@echo "Sending binary to $(PLAY_USER)@$(PLAY_HOST):$(PLAY_PATH)..."
 	scp $(BUILD_DIR)/$(APP_NAME) \

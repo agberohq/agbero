@@ -1,4 +1,3 @@
-// internal/handlers/routes_test.go
 package handlers
 
 import (

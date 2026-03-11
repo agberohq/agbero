@@ -1,4 +1,3 @@
-// agbero/admin.go
 package agbero
 
 import (

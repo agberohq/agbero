@@ -99,8 +99,6 @@ func (h *Histogram) StdDev() time.Duration {
 	return time.Duration(math.Sqrt(sum / float64(len(h.values))))
 }
 
-// ... rest of metrics.go stays the same
-
 type LoadMetrics struct {
 	Total       atomic.Uint64
 	Success     atomic.Uint64

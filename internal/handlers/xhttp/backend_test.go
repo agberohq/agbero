@@ -1,4 +1,3 @@
-// internal/handlers/xhttp/backend_test.go
 package xhttp
 
 import (

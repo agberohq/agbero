@@ -11,7 +11,7 @@ Download the latest release from the repository and install it manually.
 
 For Linux/macOS:
 ```bash
-curl -L https://git.imaxinacion.net/aibox/agbero/releases/latest/download/agbero-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m) -o agbero
+curl -L https://github.com/agberohq/agbero/releases/latest/download/agbero-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m) -o agbero
 chmod +x agbero
 sudo mv agbero /usr/local/bin/
 
@@ -24,7 +24,7 @@ Download the executable from the releases page and add it to your PATH.
 
 ### From Source
 ```bash
-go install git.imaxinacion.net/aibox/agbero/cmd/agbero@latest
+go install github.com/agberohq/agbero/cmd/agbero@latest
 ```
 
 ## Global Flags
