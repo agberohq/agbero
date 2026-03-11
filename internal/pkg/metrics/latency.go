@@ -5,8 +5,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"github.com/HdrHistogram/hdrhistogram-go"
+	"github.com/agberohq/agbero/internal/core/woos"
 )
 
 type Latency struct {

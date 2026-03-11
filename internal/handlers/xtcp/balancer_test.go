@@ -3,8 +3,8 @@ package xtcp
 import (
 	"testing"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/pkg/metrics"
 )
 
 func TestBalancer_Pick_RetryDistribution(t *testing.T) {

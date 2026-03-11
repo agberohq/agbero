@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/cespare/xxhash/v2"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/mappo"

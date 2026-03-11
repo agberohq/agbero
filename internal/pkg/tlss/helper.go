@@ -5,7 +5,7 @@ import (
 	"os/user"
 	"path/filepath"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/ll"
 )
 

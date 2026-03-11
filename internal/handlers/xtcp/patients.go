@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/pkg/health"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )

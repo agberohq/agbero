@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/template"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/charmbracelet/huh"
 	"github.com/olekukonko/ll"
 )

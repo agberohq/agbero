@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/pkg/metrics"
 )
 
 func TestProxy_Pick_ReturnsCorrectType(t *testing.T) {

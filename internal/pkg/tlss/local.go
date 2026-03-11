@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 	"github.com/smallstep/truststore"

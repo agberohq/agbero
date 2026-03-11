@@ -8,11 +8,12 @@ import (
 	"sync"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/cluster"
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/discovery"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
+	"github.com/agberohq/agbero/internal/cluster"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/pkg/cook"
+	"github.com/agberohq/agbero/internal/pkg/health"
+	"github.com/agberohq/agbero/internal/pkg/metrics"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 )
@@ -42,11 +43,12 @@ type ClusterStats struct {
 }
 
 type SystemSnapshot struct {
-	Timestamp time.Time                `json:"timestamp"`
-	System    SystemStats              `json:"system"`
-	Global    GlobalStats              `json:"global"`
-	Cluster   ClusterStats             `json:"cluster"`
-	Hosts     map[string]*HostSnapshot `json:"hosts"`
+	Timestamp time.Time                    `json:"timestamp"`
+	System    SystemStats                  `json:"system"`
+	Global    GlobalStats                  `json:"global"`
+	Cluster   ClusterStats                 `json:"cluster"`
+	Hosts     map[string]*HostSnapshot     `json:"hosts"`
+	Git       map[string]cook.HealthStatus `json:"git"`
 }
 
 type HostSnapshot struct {
@@ -116,9 +118,9 @@ func getCPUPercent() float64 {
 	return lastCPUPercent
 }
 
-func Uptime(hm *discovery.Host, cm *cluster.Manager) http.HandlerFunc {
+func Uptime(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		snapshot := collectMetrics(hm, cm)
+		snapshot := collectMetrics(hm, cm, cookMgr)
 
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
@@ -127,7 +129,7 @@ func Uptime(hm *discovery.Host, cm *cluster.Manager) http.HandlerFunc {
 	}
 }
 
-func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
+func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manager) *SystemSnapshot {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
@@ -159,6 +161,12 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager) *SystemSnapshot {
 		}
 	} else {
 		sysSnap.Cluster = ClusterStats{Enabled: false}
+	}
+
+	if cookMgr != nil {
+		sysSnap.Git = cookMgr.Health()
+	} else {
+		sysSnap.Git = make(map[string]cook.HealthStatus)
 	}
 
 	var (

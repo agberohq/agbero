@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"net/http"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/cespare/xxhash/v2"
 )
 

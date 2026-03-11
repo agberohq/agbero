@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"git.imaxinacion.net/aibox/agbero/internal/cluster"
+	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/olekukonko/ll"
 )
 

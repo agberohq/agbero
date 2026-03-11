@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/markbates/goth"
 	"golang.org/x/oauth2"
 )

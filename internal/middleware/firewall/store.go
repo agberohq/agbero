@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
 	"go.etcd.io/bbolt"

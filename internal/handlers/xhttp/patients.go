@@ -6,9 +6,9 @@ import (
 	"net/url"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/pkg/health"
+	"github.com/agberohq/agbero/internal/pkg/metrics"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"

@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/alaye"
 )
 
 func TestHeaders_RequestMods(t *testing.T) {

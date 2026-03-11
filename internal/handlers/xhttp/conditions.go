@@ -6,9 +6,9 @@ import (
 	"net/textproto"
 	"strings"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/olekukonko/errors"
 )
 

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/go-redis/redis/v8"
 	"github.com/olekukonko/ll"
 )

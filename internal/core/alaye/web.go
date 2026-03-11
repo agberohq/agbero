@@ -7,20 +7,48 @@ import (
 	"github.com/olekukonko/errors"
 )
 
+type GitAuth struct {
+	Type             string `hcl:"type,optional" json:"type"` // "basic", "ssh-key", "ssh-agent"
+	Username         string `hcl:"username,optional" json:"username"`
+	Password         Value  `hcl:"password,optional" json:"password"`
+	SSHKey           Value  `hcl:"ssh_key,optional" json:"ssh_key"`
+	SSHKeyPassphrase Value  `hcl:"ssh_key_passphrase,optional" json:"ssh_key_passphrase"`
+}
+
+func (a *GitAuth) Validate() error {
+	if a.Type != "" {
+		a.Type = strings.ToLower(a.Type)
+		switch a.Type {
+		case "basic", "ssh-key", "ssh-agent":
+		default:
+			return errors.New("git auth type must be 'basic', 'ssh-key', or 'ssh-agent'")
+		}
+	}
+	return nil
+}
+
 type Git struct {
 	Enabled  Enabled       `hcl:"enabled,optional" json:"enabled"`
+	ID       string        `hcl:"id" json:"id"` // Explicit identifier for storage and webhooks
 	URL      string        `hcl:"url" json:"url"`
 	Branch   string        `hcl:"branch,optional" json:"branch"`
-	Secret   Value         `hcl:"secret,optional" json:"secret"`     // Webhook HMAC secret
-	Interval time.Duration `hcl:"interval,optional" json:"interval"` // Polling interval
+	Secret   Value         `hcl:"secret,optional" json:"secret"` // Webhook HMAC secret
+	Interval time.Duration `hcl:"interval,optional" json:"interval"`
+	Auth     GitAuth       `hcl:"auth,block" json:"auth"`
 }
 
 func (g *Git) Validate() error {
 	if g.Enabled.NotActive() {
 		return nil
 	}
+	if g.ID == "" {
+		return errors.New("git id is required when git is enabled")
+	}
 	if g.URL == "" {
 		return errors.New("git url is required when git is enabled")
+	}
+	if err := g.Auth.Validate(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -65,7 +93,6 @@ func (w WebRoot) IsSet() bool {
 	return strings.TrimSpace(string(w)) != ""
 }
 
-// Display-only; do not use for presence.
 func (w WebRoot) String() string {
 	if !w.IsSet() {
 		return "."

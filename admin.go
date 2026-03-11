@@ -1,3 +1,4 @@
+// agbero/admin.go
 package agbero
 
 import (
@@ -11,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/uptime"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/auth"
-	"git.imaxinacion.net/aibox/agbero/internal/operation"
-	"git.imaxinacion.net/aibox/agbero/internal/operation/api"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/handlers/uptime"
+	"github.com/agberohq/agbero/internal/middleware/auth"
+	"github.com/agberohq/agbero/internal/operation"
+	"github.com/agberohq/agbero/internal/operation/api"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/crypto/bcrypt"
@@ -41,10 +42,6 @@ type adminClaims struct {
 	jwt.RegisteredClaims
 }
 
-// =============================================================================
-// Admin Server Lifecycle
-// =============================================================================
-
 func (s *Server) startAdminServer() {
 	if s.global.Admin.Enabled.NotActive() || s.global.Admin.Address == "" {
 		return
@@ -53,18 +50,14 @@ func (s *Server) startAdminServer() {
 	cfg := s.global.Admin
 	mux := http.NewServeMux()
 
-	// 1. Register Routes
 	s.registerAdminHealthEndpoint(mux)
 	s.registerAdminLoginEndpoint(mux)
 	s.registerAdminAPI(mux)
 	s.registerAdminProtectedEndpoints(mux, cfg)
 	s.registerPprofEndpoints(mux, cfg)
 
-	// Register UI last (catch-all "/")
 	s.registerAdminUI(mux)
 
-	// 2. Wrap Mux with Global Admin Middleware (Security Headers)
-	// This fixes the panic. We don't register on mux, we wrap the mux.
 	finalHandler := s.wrapAdminMiddleware(mux)
 
 	srv := &http.Server{
@@ -113,7 +106,7 @@ func (s *Server) registerAdminAPI(mux *http.ServeMux) {
 func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.Admin) {
 	protect := s.buildAuthMiddleware(cfg)
 
-	mux.Handle("/uptime", protect(uptime.Uptime(s.hostManager, s.clusterManager)))
+	mux.Handle("/uptime", protect(uptime.Uptime(s.hostManager, s.clusterManager, s.cookManager)))
 	mux.Handle("/metrics", protect(promhttp.Handler()))
 	mux.Handle("/config", protect(http.HandlerFunc(s.handleConfigDump)))
 	mux.Handle("/logs", protect(http.HandlerFunc(s.handleLogs)))
@@ -139,7 +132,6 @@ func (s *Server) registerPprofEndpoints(mux *http.ServeMux, cfg alaye.Admin) {
 
 	s.logger.Warn("pprof debugging enabled on admin interface")
 
-	// Create a basic auth protector just for pprof if global auth isn't applied to everything
 	protect := s.buildAuthMiddleware(cfg)
 
 	mux.Handle("/debug/pprof/", protect(http.HandlerFunc(pprof.Index)))
@@ -159,7 +151,6 @@ func (s *Server) registerPprofEndpoints(mux *http.ServeMux, cfg alaye.Admin) {
 // wrapAdminMiddleware wraps the entire mux to apply security headers
 func (s *Server) wrapAdminMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Only apply if it's an admin path or root
 		if strings.HasPrefix(r.URL.Path, "/") {
 			w.Header().Set("Content-Security-Policy",
 				"default-src 'self'; "+

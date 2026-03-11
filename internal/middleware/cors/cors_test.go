@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/alaye"
 )
 
 func TestCORS(t *testing.T) {

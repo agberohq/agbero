@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"git.imaxinacion.net/aibox/agbero"
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
-	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"github.com/agberohq/agbero"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )

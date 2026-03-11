@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -92,6 +92,13 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 		WorkDir:  m.workDir,
 		Logger:   m.logger,
 		KeepLast: 2,
+		Auth: AuthConfig{
+			Type:             cfg.Auth.Type,
+			Username:         cfg.Auth.Username,
+			Password:         cfg.Auth.Password.String(),
+			SSHKey:           cfg.Auth.SSHKey.String(),
+			SSHKeyPassphrase: cfg.Auth.SSHKeyPassphrase.String(),
+		},
 	}
 
 	c, err := New(cookCfg)

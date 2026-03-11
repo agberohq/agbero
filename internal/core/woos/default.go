@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/alaye"
 )
 
 func DefaultApply(g *alaye.Global, configPath string) {

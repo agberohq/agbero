@@ -1,4 +1,4 @@
-module git.imaxinacion.net/aibox/agbero
+module github.com/agberohq/agbero
 
 go 1.26
 

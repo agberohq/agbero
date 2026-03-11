@@ -4,10 +4,10 @@ import (
 	mrand "math/rand/v2"
 	"strings"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/pkg/health"
+	"github.com/agberohq/agbero/internal/pkg/lb"
+	"github.com/agberohq/agbero/internal/pkg/metrics"
 )
 
 type Balancer struct {

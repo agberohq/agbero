@@ -18,29 +18,29 @@ import (
 	"sync"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/cluster"
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
-	"git.imaxinacion.net/aibox/agbero/internal/discovery"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/xhttp"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/xtcp"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/firewall"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/h3"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/memory"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/observability"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/recovery"
-	"git.imaxinacion.net/aibox/agbero/internal/middleware/wasm"
-	"git.imaxinacion.net/aibox/agbero/internal/operation"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/cook"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/parser"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/security"
-	tlss2 "git.imaxinacion.net/aibox/agbero/internal/pkg/tlss"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/wellknown"
+	"github.com/agberohq/agbero/internal/cluster"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/handlers"
+	"github.com/agberohq/agbero/internal/handlers/xhttp"
+	"github.com/agberohq/agbero/internal/handlers/xtcp"
+	"github.com/agberohq/agbero/internal/middleware/firewall"
+	"github.com/agberohq/agbero/internal/middleware/h3"
+	"github.com/agberohq/agbero/internal/middleware/memory"
+	"github.com/agberohq/agbero/internal/middleware/observability"
+	"github.com/agberohq/agbero/internal/middleware/ratelimit"
+	"github.com/agberohq/agbero/internal/middleware/recovery"
+	"github.com/agberohq/agbero/internal/middleware/wasm"
+	"github.com/agberohq/agbero/internal/operation"
+	"github.com/agberohq/agbero/internal/pkg/cook"
+	"github.com/agberohq/agbero/internal/pkg/health"
+	"github.com/agberohq/agbero/internal/pkg/metrics"
+	"github.com/agberohq/agbero/internal/pkg/parser"
+	"github.com/agberohq/agbero/internal/pkg/security"
+	tlss2 "github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/agberohq/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -256,11 +256,18 @@ func (s *Server) Start(configPath string) error {
 		s.logger.Fields("err", err).Error("failed to initialize cook manager")
 	} else {
 		s.cookManager = cookMgr
+		seenGitIDs := make(map[string]bool)
 		for _, hcfg := range hosts {
 			for _, r := range hcfg.Routes {
 				if r.Web.Git.Enabled.Active() {
-					if err := s.cookManager.Register(r.Key(), r.Web.Git); err != nil {
-						s.logger.Fields("route", r.Path, "err", err).Error("failed to register git route")
+					gitID := r.Web.Git.ID
+					if seenGitIDs[gitID] {
+						s.logger.Fields("route", r.Path, "id", gitID).Error("duplicate git id detected across routes, skipping duplicate registration")
+						continue
+					}
+					seenGitIDs[gitID] = true
+					if err := s.cookManager.Register(gitID, r.Web.Git); err != nil {
+						s.logger.Fields("route", r.Path, "id", gitID, "err", err).Error("failed to register git route")
 					}
 				}
 			}
@@ -1497,11 +1504,18 @@ func (s *Server) configApplyReload(global *alaye.Global, sha string, newIPMgr *z
 		s.cookManager = nil
 	} else {
 		s.cookManager = cookMgr
+		seenGitIDs := make(map[string]bool)
 		for _, hcfg := range newHosts {
 			for _, r := range hcfg.Routes {
 				if r.Web.Git.Enabled.Active() {
-					if err := s.cookManager.Register(r.Key(), r.Web.Git); err != nil {
-						s.logger.Fields("route", r.Path, "err", err).Error("failed to register git route on reload")
+					gitID := r.Web.Git.ID
+					if seenGitIDs[gitID] {
+						s.logger.Fields("route", r.Path, "id", gitID).Error("duplicate git id detected across routes, skipping duplicate registration")
+						continue
+					}
+					seenGitIDs[gitID] = true
+					if err := s.cookManager.Register(gitID, r.Web.Git); err != nil {
+						s.logger.Fields("route", r.Path, "id", gitID, "err", err).Error("failed to register git route on reload")
 					}
 				}
 			}

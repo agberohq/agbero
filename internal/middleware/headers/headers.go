@@ -3,7 +3,7 @@ package headers
 import (
 	"net/http"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/alaye"
 )
 
 func Headers(cfg *alaye.Headers) func(http.Handler) http.Handler {

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/core/zulu"
 )
 
 type Adaptive struct {

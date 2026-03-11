@@ -1,8 +1,8 @@
 package agbero
 
 import (
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )

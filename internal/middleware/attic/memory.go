@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/cespare/xxhash/v2"
 	"github.com/olekukonko/mappo"
 )

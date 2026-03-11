@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/ll"
 )
 

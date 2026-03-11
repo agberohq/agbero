@@ -4,7 +4,7 @@ package zulu
 import (
 	"sync"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/woos"
 )
 
 type BufferPool struct {

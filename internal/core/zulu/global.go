@@ -4,7 +4,7 @@ import (
 	mrand "math/rand/v2"
 	"sync"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/mappo"
 )
 

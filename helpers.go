@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/handlers/xtcp"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/handlers/xtcp"
 	"github.com/olekukonko/ll"
 )
 

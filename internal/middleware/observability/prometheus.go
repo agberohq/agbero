@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
-	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

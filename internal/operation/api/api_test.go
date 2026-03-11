@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"git.imaxinacion.net/aibox/agbero/internal/cluster"
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/cluster"
+	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/olekukonko/ll"
 )
 

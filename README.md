@@ -147,32 +147,6 @@ route "/protected" {
 - **Memory**: ~15MB idle, ~50MB under load
 - **Connections**: 10k+ concurrent connections with HTTP/3 (QUIC)
 
-## 🏗 Architecture
-
-```mermaid
-graph TB
-    Client[Client] -->|HTTP/1.1/2/3| LB[Agbero Load Balancer]
-    
-    subgraph "Agbero Node"
-        LB --> Wasm[WASM VM Pool]
-        Wasm --> Auth[Auth Middleware]
-        Auth --> RateLimit[Rate Limiting]
-        RateLimit --> Router[Path Router]
-        Router --> BackendSelector[Backend Selector]
-        
-        BackendSelector -->|Weighted| Backend1[Service A]
-        BackendSelector -->|Weighted| Backend2[Service B]
-    end
-    
-    subgraph "Gossip Cluster"
-        Node1[Node 1] <--> Node2[Node 2]
-        Node2 <--> Node3[Node 3]
-        Node3 <--> Node1
-    end
-    
-    GossipCluster -.->|Service Updates| BackendSelector
-```
-
 ## 📚 Documentation
 
 - **[GUIDE.md](docs/GUIDE.md)**: Practical examples, use cases, and tutorials.
@@ -180,10 +154,6 @@ graph TB
 - **[CLI Reference](cmd/agbero/README.md)**: Command-line interface documentation.
 - **[Examples](examples/)**: Ready-to-run configuration examples.
 
-
-## ⚠️ Caution 
-
- > Security Warning: When configuring forward_auth, ensure the URL is trusted. Do not allow end-users to control this URL. If running in cloud environments (AWS/GCP), ensure the proxy cannot access instance metadata services (e.g., 169.254.169.254) via network policies.
 
 ## 🛣 Roadmap
 

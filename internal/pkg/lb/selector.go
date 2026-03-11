@@ -7,7 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/cespare/xxhash/v2"
 )
 

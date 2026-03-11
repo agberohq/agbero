@@ -1,4 +1,3 @@
-// internal/operation/admin/js/ui.js
 const UI = {
     updateVersionDisplay(version) {
         const el = document.getElementById("versionDisplay");
@@ -115,7 +114,7 @@ const UI = {
             return;
         }
 
-        const trustedProxies = global.security?.trusted_proxies || [];
+        const trustedProxies = global.security?.trusted_proxies ||[];
         const settings =[
             {label: 'Environment', value: global.development ? 'development' : 'production'},
             {label: 'Admin Email', value: global.lets_encrypt?.email || '—'},
@@ -327,9 +326,17 @@ const UI = {
                             </div>`;
                         });
                         backendHtml += `</div>`;
-                    } else if (route.web && route.web.root) {
-                        backendHtml = `<div class="backend-row"><span class="dot ok"></span> <span>📂 ${route.web.root}</span></div>`;
-                        if (route.web.root && route.web.root.toLowerCase().includes(filterTerm)) hostHasMatch = true;
+                    } else if (route.web && (route.web.root || (route.web.git && route.web.git.enabled === "on"))) {
+                        if (route.web.git && route.web.git.enabled === "on") {
+                            const gitId = route.web.git.id || "unknown";
+                            const gitStat = window.app.gitStats[gitId] || {};
+                            const stateClass = gitStat.state === 'healthy' ? 'ok' : (gitStat.state === 'unavailable' ? 'warn' : 'down');
+                            backendHtml = `<div class="backend-row"><span class="dot ${stateClass}"></span> <span>🐙 Git: ${gitId}</span></div>`;
+                            if (gitId.toLowerCase().includes(filterTerm)) hostHasMatch = true;
+                        } else {
+                            backendHtml = `<div class="backend-row"><span class="dot ok"></span> <span>📂 ${route.web.root}</span></div>`;
+                            if (route.web.root && route.web.root.toLowerCase().includes(filterTerm)) hostHasMatch = true;
+                        }
                     }
 
                     const shouldShowRoute = filterTerm === "" || hostHasMatch || pathMatches;
@@ -551,35 +558,71 @@ const UI = {
         const protocolIcon = isTCPRoute ? '🔌' : '🌐';
         const protocolClass = isTCPRoute ? 'info' : 'success';
 
-        if (!isTCPRoute && cfg_item.web && cfg_item.web.root) {
-            let webHtml = `
-            <div class="detail-section">
-                <div class="detail-title">📂 Static File Handler</div>
-                <div class="handler-card">
-                    <span class="handler-icon">📁</span>
-                    <div class="handler-info">
-                        <strong>File Server</strong>
-                        <span>Root: ${cfg_item.web.root}</span>
-                        <span>Listing: ${cfg_item.web.listing ? 'Enabled' : 'Disabled'}</span>
-                    </div>
-                </div>
-            </div>`;
+        if (!isTCPRoute && cfg_item.web) {
+            if (cfg_item.web.git && (cfg_item.web.git.enabled === "on" || cfg_item.web.git.enabled === true)) {
+                const gitCfg = cfg_item.web.git;
+                const gStat = window.app.gitStats[gitCfg.id] || {};
+                const state = gStat.state || 'unknown';
+                const commit = gStat.commit ? gStat.commit.substring(0, 8) : 'none';
+                const whUrl = `${window.location.origin}/.agbero/webhook/git/${gitCfg.id}`;
 
-            if (cfg_item.web.php && cfg_item.web.php.enabled && cfg_item.web.php.enabled === "on") {
-                webHtml += `
+                let stateClass = state === 'healthy' ? 'success' : (state === 'unavailable' ? 'warning' : 'error');
+
+                content.innerHTML += `
                 <div class="detail-section">
-                    <div class="detail-title">🐘 PHP Handler</div>
+                    <div class="detail-title">🐙 Git Deployment</div>
                     <div class="handler-card">
-                        <span class="handler-icon">⚙️</span>
-                        <div class="handler-info">
-                            <strong>FastCGI Proxy</strong>
-                            <span>Address: ${cfg_item.web.php.address || '127.0.0.1:9000'}</span>
-                            <span>Index: ${cfg_item.web.php.index || 'index.php'}</span>
+                        <span class="handler-icon">📦</span>
+                        <div class="handler-info" style="flex:1;">
+                            <strong>${gitCfg.id}</strong>
+                            <span>Branch: ${gitCfg.branch || 'main'}</span>
+                            <div style="margin-top:8px; display:flex; gap:10px; align-items:center;">
+                                <span class="badge ${stateClass}">State: ${state}</span>
+                                <span class="badge info">Commit: ${commit}</span>
+                                <span class="badge">Deploys: ${gStat.deployments || 0}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="kv-grid" style="margin-top:10px;">
+                        <div class="kv-item" style="grid-column: span 2;">
+                            <label>Webhook URL</label>
+                            <div style="display:flex; gap:10px; align-items:center;">
+                                <span class="mono" style="font-size:10px; padding:6px; background:var(--bg); border:1px solid var(--border); border-radius:4px; flex:1; overflow-x:auto;">${whUrl}</span>
+                                <button class="btn small" data-action="copy-url" data-url="${whUrl}">Copy</button>
+                            </div>
                         </div>
                     </div>
                 </div>`;
+            } else if (cfg_item.web.root) {
+                let webHtml = `
+                <div class="detail-section">
+                    <div class="detail-title">📂 Static File Handler</div>
+                    <div class="handler-card">
+                        <span class="handler-icon">📁</span>
+                        <div class="handler-info">
+                            <strong>File Server</strong>
+                            <span>Root: ${cfg_item.web.root}</span>
+                            <span>Listing: ${cfg_item.web.listing ? 'Enabled' : 'Disabled'}</span>
+                        </div>
+                    </div>
+                </div>`;
+
+                if (cfg_item.web.php && cfg_item.web.php.enabled && cfg_item.web.php.enabled === "on") {
+                    webHtml += `
+                    <div class="detail-section">
+                        <div class="detail-title">🐘 PHP Handler</div>
+                        <div class="handler-card">
+                            <span class="handler-icon">⚙️</span>
+                            <div class="handler-info">
+                                <strong>FastCGI Proxy</strong>
+                                <span>Address: ${cfg_item.web.php.address || '127.0.0.1:9000'}</span>
+                                <span>Index: ${cfg_item.web.php.index || 'index.php'}</span>
+                            </div>
+                        </div>
+                    </div>`;
+                }
+                content.innerHTML += webHtml;
             }
-            content.innerHTML += webHtml;
         }
 
         const configBackends = cfg_item.backends?.servers || cfg_item.backends ||[];
@@ -878,7 +921,7 @@ const UI = {
 
         const hasHealthData = bStat.health !== undefined && bStat.health !== null;
         const isAlive = bStat.alive !== undefined ? bStat.alive : true;
-        let scoreColor = 'var(--info)'; // default unverified
+        let scoreColor = 'var(--info)';
         let stateText = isAlive ? 'Unverified (Active)' : 'Dead';
         let hScore = 100;
         let consFails = 0;

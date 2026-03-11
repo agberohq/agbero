@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/olekukonko/ll"
 )
 

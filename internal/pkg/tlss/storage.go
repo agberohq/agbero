@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/security"
+	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/pkg/security"
 )
 
 var ErrCertNotFound = errors.New("certificate not found")

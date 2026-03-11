@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sync"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
+	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/pkg/metrics"
 )
 
 var noopBalancer = &Balancer{}

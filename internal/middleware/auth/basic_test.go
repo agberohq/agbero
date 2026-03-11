@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/alaye"
 	"golang.org/x/crypto/bcrypt"
 )
 

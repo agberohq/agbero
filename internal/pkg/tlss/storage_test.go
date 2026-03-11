@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/security"
+	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/pkg/security"
 )
 
 func TestDiskStorage_Plaintext(t *testing.T) {

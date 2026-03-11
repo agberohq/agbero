@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/ll/l3rd/victoria"

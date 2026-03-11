@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/olekukonko/ll"
 )
 

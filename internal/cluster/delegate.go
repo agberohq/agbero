@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/security"
+	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/hashicorp/memberlist"
 	"github.com/olekukonko/ll"
 )

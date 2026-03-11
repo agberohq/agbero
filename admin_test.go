@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/discovery"
 )
 
 func mockHostManager(t *testing.T) *discovery.Host {

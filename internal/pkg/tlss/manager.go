@@ -9,10 +9,10 @@ import (
 	"strings"
 	"sync"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/discovery"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/security"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/olekukonko/ll"
 )
 

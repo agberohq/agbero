@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/woos"
 )
 
 type pooledConn struct {

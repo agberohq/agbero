@@ -7,7 +7,7 @@ class AgberoApp {
         this.page = "dashboard";
         this.metricsHistory = {
             all: [],
-            http: [],
+            http:[],
             tcp:[]
         };
         this.activeChart = 'all';
@@ -22,7 +22,8 @@ class AgberoApp {
         this.build = null;
 
         this.hostsData = { config: {}, stats: {} };
-        this.logs = [];
+        this.gitStats = {};
+        this.logs =[];
         this.certificates =[];
 
         this.logsPaused = false;
@@ -111,6 +112,7 @@ class AgberoApp {
         if (!data) return;
 
         this.lastUpdateTime = Date.now();
+        this.gitStats = data.git || {};
 
         const stats = this.parseMetricsJSON(data);
         const metrics = {
@@ -201,6 +203,7 @@ class AgberoApp {
 
         this.hostsData.config = config.hosts;
         this.hostsData.stats = stats?.hosts || {};
+        this.gitStats = stats?.git || {};
         this.lastConfig = config;
 
         this.parseCertificates();
@@ -494,7 +497,14 @@ class AgberoApp {
 
     copyToClipboard(text) {
         if (navigator.clipboard) {
-            navigator.clipboard.writeText(text).then(() => {}).catch(() => {});
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                if(btn && btn.innerText) {
+                    const oldText = btn.innerText;
+                    btn.innerText = "Copied!";
+                    setTimeout(() => btn.innerText = oldText, 2000);
+                }
+            }).catch(() => {});
         }
     }
 

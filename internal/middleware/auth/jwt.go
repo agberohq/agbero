@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/olekukonko/errors"
 )

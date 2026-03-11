@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/security"
+	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/olekukonko/ll"
 )
 

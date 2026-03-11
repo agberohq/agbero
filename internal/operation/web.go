@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/cook"
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/pkg/cook"
 	"github.com/dustin/go-humanize"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
@@ -93,7 +93,7 @@ func NewWeb(logger *ll.Logger, route *alaye.Route, cookMgr *cook.Manager) *web {
 
 func (h *web) resolveRootPath() string {
 	if h.route.Web.Git.Enabled.Active() && h.cookMgr != nil {
-		return h.cookMgr.CurrentPath(h.route.Key())
+		return h.cookMgr.CurrentPath(h.route.Web.Git.ID)
 	}
 	if h.route.Web.Root.IsSet() {
 		return h.route.Web.Root.String()

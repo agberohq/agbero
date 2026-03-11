@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/wellknown"
+	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/mappo"
 	"golang.org/x/time/rate"

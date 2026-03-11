@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
-	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
-	"git.imaxinacion.net/aibox/agbero/internal/pkg/tlss"
+	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/jack"
