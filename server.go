@@ -11,7 +11,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -599,105 +598,14 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 func (s *Server) initHealthDoctor(hosts map[string]*alaye.Host) {
 	for domain, hostCfg := range hosts {
 		for _, r := range hostCfg.Routes {
-			if r.Backends.Enabled.NotActive() || len(r.Backends.Servers) == 0 {
-				continue
-			}
-
-			hasProber := false
-			if r.HealthCheck.Enabled.Active() {
-				hasProber = true
-			} else if r.HealthCheck.Enabled == alaye.Unknown && r.HealthCheck.Path != "" {
-				hasProber = true
-			}
-
-			if !hasProber {
-				continue
-			}
-
-			for _, srv := range r.Backends.Servers {
-				statsKey := r.BackendKey(domain, srv.Address)
-				score := health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
-
-				u, err := url.Parse(srv.Address)
-				if err != nil {
-					continue
-				}
-
-				probeCfg := health.DefaultProbeConfig()
-				if r.HealthCheck.Path != "" {
-					probeCfg.Path = r.HealthCheck.Path
-				}
-				if r.HealthCheck.Interval > 0 {
-					probeCfg.StandardInterval = r.HealthCheck.Interval
-				}
-				if r.HealthCheck.Timeout > 0 {
-					probeCfg.Timeout = r.HealthCheck.Timeout
-				}
-
-				targetURL := u.ResolveReference(&url.URL{Path: probeCfg.Path}).String()
-
-				headers := http.Header{}
-				hostHeader := ""
-				for k, v := range r.HealthCheck.Headers {
-					if k == woos.HeaderHost {
-						hostHeader = v
-					} else {
-						headers.Set(k, v)
-					}
-				}
-				if hostHeader == "" && len(hostCfg.Domains) > 0 {
-					hostHeader = hostCfg.Domains[0]
-				}
-
-				execClient := &http.Client{
-					Timeout: probeCfg.Timeout,
-					Transport: &http.Transport{
-						MaxIdleConnsPerHost: woos.DefaultMaxIdleConnsPerHost,
-						DisableKeepAlives:   true,
-					},
-				}
-
-				executor := &xhttp.HTTPExecutor{
-					URL:            targetURL,
-					Method:         r.HealthCheck.Method,
-					Client:         execClient,
-					Header:         headers,
-					Host:           hostHeader,
-					ExpectedStatus: r.HealthCheck.ExpectedStatus,
-					ExpectedBody:   r.HealthCheck.ExpectedBody,
-				}
-
-				patient := jack.NewPatient(jack.PatientConfig{
-					ID:       statsKey,
-					Interval: probeCfg.StandardInterval,
-					Timeout:  probeCfg.Timeout,
-					Check: func(ctx context.Context) error {
-						success, latency, err := executor.Probe(ctx)
-						score.Update(health.Record{
-							ProbeLatency: latency,
-							ProbeSuccess: success,
-							PassiveRate:  score.PassiveErrorRate(),
-							ConnHealth:   100,
-						})
-						if !success {
-							if err != nil {
-								return err
-							}
-							return errors.New("http probe failed")
-						}
-						return nil
-					},
-				})
-
-				_ = s.doctor.Add(patient)
-			}
+			xhttp.RegisterHTTPPatients(domain, &r, s.doctor, metrics.DefaultRegistry, s.logger)
 		}
 	}
 
 	tcpGroups := groupTCPRoutesByListen(hosts)
 	for listen, group := range tcpGroups {
 		for _, route := range group {
-			xtcp.RegisterPatients(listen, route, s.doctor)
+			xtcp.RegisterTCPPatients(listen, route, s.doctor)
 		}
 	}
 }
