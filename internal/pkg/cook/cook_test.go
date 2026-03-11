@@ -469,11 +469,18 @@ func TestManager_Register_And_Webhook(t *testing.T) {
 		t.Fatalf("Register failed: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
-
-	path := mgr.CurrentPath("test_route")
+	// Poll for clone completion instead of fixed sleep
+	deadline := time.Now().Add(5 * time.Second)
+	var path string
+	for time.Now().Before(deadline) {
+		path = mgr.CurrentPath("test_route")
+		if path != "" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if path == "" {
-		t.Fatal("expected current path to be set after register")
+		t.Fatal("expected current path to be set after register, timed out waiting for clone")
 	}
 
 	// Test Valid Webhook
