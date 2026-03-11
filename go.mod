@@ -21,7 +21,7 @@ require (
 	github.com/klauspost/compress v1.18.4
 	github.com/markbates/goth v1.82.0
 	github.com/olekukonko/errors v1.2.0
-	github.com/olekukonko/jack v0.0.0-20260304221010-b11e7daa6b78
+	github.com/olekukonko/jack v0.0.0-20260311210511-263b7cb27462
 	github.com/olekukonko/ll v0.1.8-0.20260304195808-a35061d98ce9
 	github.com/olekukonko/mappo v0.0.0-20260305135522-3435c72de434
 	github.com/pires/go-proxyproto v0.11.0
@@ -36,8 +36,8 @@ require (
 	go.etcd.io/bbolt v1.4.3
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.48.0
-	golang.org/x/oauth2 v0.35.0
-	golang.org/x/time v0.14.0
+	golang.org/x/oauth2 v0.36.0
+	golang.org/x/time v0.15.0
 )
 
 require (
