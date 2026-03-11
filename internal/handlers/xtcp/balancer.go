@@ -1,13 +1,16 @@
 package xtcp
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
+	"github.com/olekukonko/jack"
 )
 
 type Balancer struct {
@@ -19,41 +22,13 @@ type Balancer struct {
 func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 	var backends []*Backend
 
-	interval := woos.TCPHealthCheckInterval
-	timeout := woos.TCPHealthCheckTimeout
-	var send, expect string
-
-	if cfg.HealthCheck.Enabled.Active() {
-		if cfg.HealthCheck.Interval > 0 {
-			interval = cfg.HealthCheck.Interval
-		}
-		if cfg.HealthCheck.Timeout > 0 {
-			timeout = cfg.HealthCheck.Timeout
-		}
-		send = cfg.HealthCheck.Send
-		expect = cfg.HealthCheck.Expect
-	} else {
-		for _, b := range cfg.Backends {
-			if strings.HasSuffix(b.Address, ":6379") {
-				send = "PING\r\n"
-				expect = "PONG"
-				break
-			}
-		}
-	}
-
-	var sendBytes, expectBytes []byte
-	if send != "" {
-		send = strings.ReplaceAll(send, "\\r", "\r")
-		send = strings.ReplaceAll(send, "\\n", "\n")
-		sendBytes = []byte(send)
-	}
-	if expect != "" {
-		expectBytes = []byte(expect)
-	}
-
 	if registry == nil {
 		registry = metrics.DefaultRegistry
+	}
+
+	sni := cfg.SNI
+	if sni == "" {
+		sni = "*"
 	}
 
 	wrappedBackends := make([]lb.Backend, 0, len(cfg.Backends))
@@ -63,23 +38,33 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 			w = 1
 		}
 
-		statsKey := fmt.Sprintf("tcp|%s|%s|%s", cfg.Listen, cfg.SNI, b.Address)
+		statsKey := fmt.Sprintf("tcp|%s|%s|%s", cfg.Listen, sni, b.Address)
 		stats := registry.GetOrRegister(statsKey)
 
-		be := &Backend{
-			Address:    b.Address,
-			weight:     w,
-			MaxConns:   b.MaxConnections,
-			hcInterval: interval,
-			hcTimeout:  timeout,
-			hcSend:     sendBytes,
-			hcExpect:   expectBytes,
-			failThresh: 2,
-			stop:       make(chan struct{}),
-			Activity:   stats.Activity,
+		// Lookup or initialize the globally managed health score
+		hScore := health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
+
+		hasProber := false
+		if cfg.HealthCheck.Enabled.Active() {
+			hasProber = true
+		} else if cfg.HealthCheck.Enabled == alaye.Unknown && (cfg.HealthCheck.Send != "" || cfg.HealthCheck.Expect != "") {
+			hasProber = true
+		} else if strings.HasSuffix(b.Address, ":6379") { // Auto-redis ping detection
+			hasProber = true
 		}
 
-		be.StartHealthCheck()
+		be := &Backend{
+			Address:     b.Address,
+			weight:      w,
+			MaxConns:    b.MaxConnections,
+			failThresh:  2,
+			Activity:    stats.Activity,
+			HealthScore: hScore,
+			Weights:     health.DefaultRoutingMultiplier(),
+			hasProber:   hasProber,
+			stop:        make(chan struct{}),
+		}
+
 		backends = append(backends, be)
 		wrappedBackends = append(wrappedBackends, be)
 	}
@@ -168,4 +153,94 @@ func (tb *Balancer) Backends() []*Backend {
 		}
 	}
 	return result
+}
+
+// RegisterPatients wires the eager TCP probing directly into the globally scoped jack.Doctor
+func RegisterPatients(listen string, cfg alaye.TCPRoute, doc *jack.Doctor) {
+	interval := woos.TCPHealthCheckInterval
+	timeout := woos.TCPHealthCheckTimeout
+	var send, expect string
+
+	hasProber := false
+	if cfg.HealthCheck.Enabled.Active() {
+		hasProber = true
+	} else if cfg.HealthCheck.Enabled == alaye.Unknown && (cfg.HealthCheck.Send != "" || cfg.HealthCheck.Expect != "") {
+		hasProber = true
+	} else {
+		for _, b := range cfg.Backends {
+			if strings.HasSuffix(b.Address, ":6379") {
+				send = "PING\r\n"
+				expect = "PONG"
+				hasProber = true
+				break
+			}
+		}
+	}
+
+	if !hasProber {
+		return
+	}
+
+	if cfg.HealthCheck.Interval > 0 {
+		interval = cfg.HealthCheck.Interval
+	}
+	if cfg.HealthCheck.Timeout > 0 {
+		timeout = cfg.HealthCheck.Timeout
+	}
+	if cfg.HealthCheck.Send != "" {
+		send = cfg.HealthCheck.Send
+	}
+	if cfg.HealthCheck.Expect != "" {
+		expect = cfg.HealthCheck.Expect
+	}
+
+	var sendBytes, expectBytes []byte
+	if send != "" {
+		send = strings.ReplaceAll(send, "\\r", "\r")
+		send = strings.ReplaceAll(send, "\\n", "\n")
+		sendBytes = []byte(send)
+	}
+	if expect != "" {
+		expectBytes = []byte(expect)
+	}
+
+	sni := cfg.SNI
+	if sni == "" {
+		sni = "*"
+	}
+
+	for _, b := range cfg.Backends {
+		statsKey := fmt.Sprintf("tcp|%s|%s|%s", listen, sni, b.Address)
+		score := health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
+
+		pool := newConnPool(b.Address, 3, timeout)
+		executor := &TCPExecutor{
+			Pool:   pool,
+			Send:   sendBytes,
+			Expect: expectBytes,
+		}
+
+		patient := jack.NewPatient(jack.PatientConfig{
+			ID:       statsKey,
+			Interval: interval,
+			Timeout:  timeout,
+			Check: jack.FuncCtx(func(ctx context.Context) error {
+				success, latency, err := executor.Probe(ctx)
+				score.Update(health.Record{
+					ProbeLatency: latency,
+					ProbeSuccess: success,
+					ConnHealth:   100,
+					PassiveRate:  score.PassiveErrorRate(),
+				})
+				if !success {
+					if err != nil {
+						return err
+					}
+					return fmt.Errorf("tcp probe failed")
+				}
+				return nil
+			}),
+		})
+		_ = doc.Add(patient)
+	}
 }

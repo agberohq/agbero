@@ -49,6 +49,7 @@ const (
 	HeaderXForwardedProto  = "X-Forwarded-Proto"
 	HeaderXForwardedServer = "X-Forwarded-Server"
 	HeaderVia              = "Via"
+	HeaderHost             = "Host"
 
 	// Hop-by-hop Headers (RFC 7230 §6.1)
 	HeaderKeepAlive          = "Keep-alive"

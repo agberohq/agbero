@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -22,6 +23,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/ratelimit"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/rewrite"
 	"git.imaxinacion.net/aibox/agbero/internal/operation"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/ll"
@@ -135,12 +137,16 @@ func newWebRoute(cfg Config, route *alaye.Route) *Route {
 func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 	var backends []*xhttp.Backend
 	for i, backendCfg := range route.Backends.Servers {
+		statsKey := fmt.Sprintf("%s|%s", route.Key(), backendCfg.Address)
+		hScore, _ := health.GlobalRegistry.Get(statsKey)
+
 		b, err := xhttp.NewBackend(backendCfg, xhttp.ConfigBackend{
-			Route:    route,
-			Domains:  cfg.Host.Domains,
-			Logger:   cfg.Logger,
-			Registry: metrics.DefaultRegistry,
-			Fallback: nil,
+			Route:       route,
+			Domains:     cfg.Host.Domains,
+			Logger:      cfg.Logger,
+			Registry:    metrics.DefaultRegistry,
+			Fallback:    nil,
+			HealthScore: hScore,
 		})
 		if err != nil {
 			cfg.Logger.Fields("index", i, "backend", backendCfg.Address, "err", err).Error("failed to create backend")

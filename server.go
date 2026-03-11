@@ -1,3 +1,4 @@
+// server.go
 package agbero
 
 import (
@@ -11,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,6 +26,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
 	"git.imaxinacion.net/aibox/agbero/internal/discovery"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers"
+	"git.imaxinacion.net/aibox/agbero/internal/handlers/xhttp"
 	"git.imaxinacion.net/aibox/agbero/internal/handlers/xtcp"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/firewall"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/h3"
@@ -33,6 +36,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/recovery"
 	"git.imaxinacion.net/aibox/agbero/internal/middleware/wasm"
 	"git.imaxinacion.net/aibox/agbero/internal/operation"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/parser"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/security"
@@ -74,6 +78,7 @@ type Server struct {
 	securityManager *security.Manager
 
 	firewall *firewall.Engine
+	doctor   *jack.Doctor
 
 	mu         sync.RWMutex
 	servers    map[string]*http.Server
@@ -241,6 +246,10 @@ func (s *Server) Start(configPath string) error {
 
 	hosts, _ := s.hostManager.LoadAll()
 	s.logHostStats(hosts)
+
+	// Initialize the Doctor for Eager Global Health Probing
+	s.doctor = jack.NewDoctor(jack.DoctorWithLogger(s.logger))
+	s.initHealthDoctor(hosts)
 
 	if s.global.Gossip.Enabled.Active() {
 		cfg := cluster.Config{
@@ -518,6 +527,14 @@ func (s *Server) Reload() {
 	newHosts, _ := s.hostManager.LoadAll()
 	currentCount := len(newHosts)
 
+	// Reset Health Doctor on Reload
+	if s.doctor != nil {
+		s.doctor.StopAll(2 * time.Second)
+	}
+	health.GlobalRegistry.Clear()
+	s.doctor = jack.NewDoctor(jack.DoctorWithLogger(s.logger))
+	s.initHealthDoctor(newHosts)
+
 	validKeys := s.configBuildRoute(newHosts)
 	tcpGroups := groupTCPRoutesByListen(newHosts)
 
@@ -556,6 +573,10 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 		}
 	}
 
+	if s.doctor != nil {
+		s.doctor.StopAll(2 * time.Second)
+	}
+
 	if s.rateLimiter != nil {
 		s.rateLimiter.Close()
 	}
@@ -570,6 +591,116 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 	s.shutdownHTTPServers(ctx)
 
 	return nil
+}
+
+// =============================================================================
+// Global Health Probing Initialization
+// =============================================================================
+
+func (s *Server) initHealthDoctor(hosts map[string]*alaye.Host) {
+	for domain, hostCfg := range hosts {
+		for _, r := range hostCfg.Routes {
+			if r.Backends.Enabled.NotActive() || len(r.Backends.Servers) == 0 {
+				continue
+			}
+
+			hasProber := false
+			if r.HealthCheck.Enabled.Active() {
+				hasProber = true
+			} else if r.HealthCheck.Enabled == alaye.Unknown && r.HealthCheck.Path != "" {
+				hasProber = true
+			}
+
+			if !hasProber {
+				continue
+			}
+
+			for _, srv := range r.Backends.Servers {
+				statsKey := fmt.Sprintf("http|%s|%s|%s", domain, r.Path, srv.Address)
+				score := health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
+
+				u, err := url.Parse(srv.Address)
+				if err != nil {
+					continue
+				}
+
+				probeCfg := health.DefaultProbeConfig()
+				if r.HealthCheck.Path != "" {
+					probeCfg.Path = r.HealthCheck.Path
+				}
+				if r.HealthCheck.Interval > 0 {
+					probeCfg.StandardInterval = r.HealthCheck.Interval
+				}
+				if r.HealthCheck.Timeout > 0 {
+					probeCfg.Timeout = r.HealthCheck.Timeout
+				}
+
+				targetURL := u.ResolveReference(&url.URL{Path: probeCfg.Path}).String()
+
+				headers := http.Header{}
+				hostHeader := ""
+				for k, v := range r.HealthCheck.Headers {
+					if k == woos.HeaderHost {
+						hostHeader = v
+					} else {
+						headers.Set(k, v)
+					}
+				}
+				if hostHeader == "" && len(hostCfg.Domains) > 0 {
+					hostHeader = hostCfg.Domains[0]
+				}
+
+				execClient := &http.Client{
+					Timeout: probeCfg.Timeout,
+					Transport: &http.Transport{
+						MaxIdleConnsPerHost: woos.DefaultMaxIdleConnsPerHost,
+						DisableKeepAlives:   true,
+					},
+				}
+
+				executor := &xhttp.HTTPExecutor{
+					URL:            targetURL,
+					Method:         r.HealthCheck.Method,
+					Client:         execClient,
+					Header:         headers,
+					Host:           hostHeader,
+					ExpectedStatus: r.HealthCheck.ExpectedStatus,
+					ExpectedBody:   r.HealthCheck.ExpectedBody,
+				}
+
+				patient := jack.NewPatient(jack.PatientConfig{
+					ID:       statsKey,
+					Interval: probeCfg.StandardInterval,
+					Timeout:  probeCfg.Timeout,
+					Check: func(ctx context.Context) error {
+						success, latency, err := executor.Probe(ctx)
+						score.Update(health.Record{
+							ProbeLatency: latency,
+							ProbeSuccess: success,
+							PassiveRate:  score.PassiveErrorRate(),
+							ConnHealth:   100,
+						})
+						if !success {
+							if err != nil {
+								return err
+							}
+							return errors.New("http probe failed")
+						}
+						return nil
+					},
+				})
+
+				_ = s.doctor.Add(patient)
+			}
+		}
+	}
+
+	tcpGroups := groupTCPRoutesByListen(hosts)
+	for listen, group := range tcpGroups {
+		for _, route := range group {
+			xtcp.RegisterPatients(listen, route, s.doctor)
+		}
+	}
 }
 
 // =============================================================================
@@ -1400,17 +1531,19 @@ func (s *Server) configApplyReload(global *alaye.Global, sha string, newIPMgr *z
 
 func (s *Server) configBuildRoute(hosts map[string]*alaye.Host) map[string]bool {
 	validKeys := make(map[string]bool)
-	for _, h := range hosts {
+	for domain, h := range hosts {
 		for _, r := range h.Routes {
-			rKey := r.Key()
 			if r.Backends.Enabled.Active() {
 				for _, srv := range r.Backends.Servers {
-					validKeys[fmt.Sprintf("%s|%s", rKey, srv.Address)] = true
+					validKeys[fmt.Sprintf("http|%s|%s|%s", domain, r.Path, srv.Address)] = true
 				}
 			}
 		}
 		for _, proxy := range h.Proxies {
 			sni := proxy.SNI
+			if sni == "" {
+				sni = "*"
+			}
 			for _, srv := range proxy.Backends {
 				validKeys[fmt.Sprintf("tcp|%s|%s|%s", proxy.Listen, sni, srv.Address)] = true
 			}

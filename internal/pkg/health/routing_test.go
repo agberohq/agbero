@@ -1,4 +1,3 @@
-// routing_test.go
 package health
 
 import (

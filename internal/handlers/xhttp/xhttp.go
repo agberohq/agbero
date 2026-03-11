@@ -9,6 +9,7 @@ import (
 	"git.imaxinacion.net/aibox/agbero/internal/core/alaye"
 	"git.imaxinacion.net/aibox/agbero/internal/core/woos"
 	"git.imaxinacion.net/aibox/agbero/internal/core/zulu"
+	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/metrics"
 	"github.com/olekukonko/ll"
 )
@@ -34,11 +35,12 @@ type ConfigProxy struct {
 }
 
 type ConfigBackend struct {
-	Route    *alaye.Route
-	Domains  []string
-	Logger   *ll.Logger
-	Registry *metrics.Registry
-	Fallback http.Handler
+	Route       *alaye.Route
+	Domains     []string
+	Logger      *ll.Logger
+	Registry    *metrics.Registry
+	Fallback    http.Handler
+	HealthScore *health.Score
 }
 
 type ipRule struct {

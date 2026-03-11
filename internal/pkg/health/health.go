@@ -31,6 +31,17 @@ func DefaultThresholds() Thresholds {
 	}
 }
 
+type ProbeConfig struct {
+	Path                 string
+	StandardInterval     time.Duration
+	AcceleratedInterval  time.Duration
+	SyntheticIdleTimeout time.Duration
+	Timeout              time.Duration
+	LatencyThresholds    Latency
+	AcceleratedProbing   bool
+	SyntheticWhenIdle    bool
+}
+
 func DefaultProbeConfig() ProbeConfig {
 	return ProbeConfig{
 		Path:                 "/health",

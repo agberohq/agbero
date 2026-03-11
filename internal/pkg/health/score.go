@@ -56,9 +56,6 @@ type Score struct {
 
 	snapshot atomic.Value
 
-	probeLatency    atomic.Int64
-	probeSuccess    atomic.Uint64
-	probeFailures   atomic.Uint64
 	passiveErrors   atomic.Uint64
 	passiveRequests atomic.Uint64
 	connHealth      atomic.Int32
@@ -292,10 +289,8 @@ func (s *Score) calculateLatencyScore(latency time.Duration) int32 {
 
 func (s *Score) calculateSuccessScore(success bool) int32 {
 	if success {
-		s.probeSuccess.Add(1)
 		return 100
 	}
-	s.probeFailures.Add(1)
 	return 0
 }
 
