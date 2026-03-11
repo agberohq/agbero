@@ -1,4 +1,3 @@
-// internal/handlers/xhttp/backend.go
 package xhttp
 
 import (
@@ -22,13 +21,14 @@ import (
 	"github.com/olekukonko/ll"
 )
 
+type ctxKeyFailed struct{}
+
 type Backend struct {
 	URL   *url.URL
 	Proxy *httputil.ReverseProxy
 
 	HealthScore *health.Score
-	Prober      *health.Prober
-	Weights     health.RoutingWeights
+	Weights     health.Multiplier
 	Abort       *health.EarlyAbortController
 
 	stop         chan struct{}
@@ -43,7 +43,6 @@ type Backend struct {
 	logger       *ll.Logger
 
 	Activity *metrics.Activity
-	Health   *metrics.Health
 
 	hcConfig     *alaye.HealthCheck
 	routeDomains []string
@@ -91,6 +90,14 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		cbThreshold = route.CircuitBreaker.Threshold
 	}
 
+	var hScore *health.Score
+	if xhttpCfg.HealthScore != nil {
+		hScore = xhttpCfg.HealthScore
+	} else {
+		// Use the global registry directly if it wasn't passed down
+		hScore = health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
+	}
+
 	b := &Backend{
 		URL:          u,
 		weight:       cfg.Weight,
@@ -102,9 +109,10 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		startTime:    now,
 		lastRecovery: atomic.Int64{},
 		Activity:     stats.Activity,
-		Health:       stats.Health,
 		Fallback:     xhttpCfg.Fallback,
+		HealthScore:  hScore,
 	}
+
 	b.lastRecovery.Store(now.UnixNano())
 
 	if len(xhttpCfg.Domains) > 0 {
@@ -112,96 +120,18 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		copy(b.routeDomains, xhttpCfg.Domains)
 	}
 
-	thresholds := health.DefaultThresholds()
-	b.Weights = health.DefaultRoutingWeights()
+	b.Weights = health.DefaultRoutingMultiplier()
 	b.Abort = health.NewEarlyAbortController(b.Weights.EarlyAbortEnabled)
 
-	b.HealthScore = health.NewScore(thresholds, health.DefaultScoringWeights(), health.DefaultLatencyThresholds(),
-		func(oldState, newState health.State, score int32) {
-			b.logger.Fields(
-				"backend", u.Host,
-				"old_state", oldState,
-				"new_state", newState,
-				"score", score,
-			).Info("health state changed")
-		})
-
-	probeCfg := health.DefaultProbeConfig()
-	var expectedStatus []int
-	var expectedBody string
-	var method string
-
 	if b.hcConfig != nil {
-		if b.hcConfig.Path != "" {
-			probeCfg.Path = b.hcConfig.Path
-		}
-		if b.hcConfig.Interval > 0 {
-			probeCfg.StandardInterval = b.hcConfig.Interval
-			if probeCfg.AcceleratedInterval > probeCfg.StandardInterval {
-				probeCfg.AcceleratedInterval = probeCfg.StandardInterval
-			}
-		}
-		if b.hcConfig.Timeout > 0 {
-			probeCfg.Timeout = b.hcConfig.Timeout
-		}
-		if b.hcConfig.AcceleratedProbing {
-			probeCfg.AcceleratedProbing = true
-		}
-
-		expectedStatus = b.hcConfig.ExpectedStatus
-		expectedBody = b.hcConfig.ExpectedBody
-		method = b.hcConfig.Method
-
-		if b.hcConfig.Enabled.Active() || (b.hcConfig.Enabled == alaye.Unknown && b.hcConfig.Path != "") {
+		if b.hcConfig.Enabled.Active() {
 			b.hasProber = true
-		}
-	}
-
-	targetURL := b.URL.ResolveReference(&url.URL{Path: probeCfg.Path}).String()
-	execClient := &http.Client{
-		Timeout: probeCfg.Timeout,
-		Transport: &http.Transport{
-			MaxIdleConnsPerHost: woos.DefaultMaxIdleConnsPerHost,
-			DisableKeepAlives:   true,
-		},
-	}
-
-	headers := http.Header{}
-	hostHeader := ""
-	if b.hcConfig != nil {
-		for k, v := range b.hcConfig.Headers {
-			if k == "Host" {
-				hostHeader = v
-			} else {
-				headers.Set(k, v)
-			}
-		}
-	}
-	if hostHeader == "" && len(b.routeDomains) > 0 {
-		hostHeader = b.routeDomains[0]
-	}
-
-	executor := &HTTPExecutor{
-		URL:            targetURL,
-		Method:         method,
-		Client:         execClient,
-		Header:         headers,
-		Host:           hostHeader,
-		ExpectedStatus: expectedStatus,
-		ExpectedBody:   expectedBody,
-	}
-
-	b.Prober = health.NewProber(probeCfg, executor, b.HealthScore, func(r health.ProbeResult) {
-		if r.Success {
-			b.Health.RecordSuccess()
-			b.Activity.Failures.Store(0)
+		} else if b.hcConfig.Enabled == alaye.Unknown && b.hcConfig.Path != "" {
+			b.hasProber = true
 		} else {
-			b.Health.RecordFailure()
-			if b.HealthScore.State() == health.StateHealthy {
-				b.logger.Fields("backend", u.Host, "err", r.Error).Debug("health probe failed")
-			}
+			b.hasProber = false
 		}
-	})
+	}
 
 	rp := &httputil.ReverseProxy{}
 	t := woos.Transport.Clone()
@@ -223,7 +153,18 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 			return
 		}
 
+		// Signal the ServeHTTP defer block that this request failed
+		if ptr, ok := r.Context().Value(ctxKeyFailed{}).(*bool); ok {
+			*ptr = true
+		}
+
 		b.HealthScore.RecordPassiveRequest(false)
+		b.HealthScore.Update(health.Record{
+			ProbeSuccess: false,
+			ConnHealth:   0,
+			PassiveRate:  b.HealthScore.PassiveErrorRate(),
+		})
+
 		newFailures := b.Activity.Failures.Add(1)
 
 		if b.cbThreshold > 0 && newFailures >= uint64(b.cbThreshold) {
@@ -302,36 +243,45 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 	b.Proxy = rp
 	b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	if b.hasProber {
-		b.Prober.Start()
-	}
-
 	return b, nil
 }
 
-func (b *Backend) Jitter(interval time.Duration) time.Duration {
-	return time.Duration(b.rnd.Int63n(int64(interval / woos.HealthCheckJitterFraction)))
+func (b *Backend) HasProber() bool {
+	return b.hasProber
 }
 
 func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if b.Abort.ShouldAbort(b.URL.String(), b.HealthScore) {
-		http.Error(w, "Service Unavailable (Health)", http.StatusServiceUnavailable)
+		if b.Fallback != nil {
+			b.Fallback.ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Service Unavailable (Health)", http.StatusServiceUnavailable)
+		}
 		return
 	}
 
-	if b.hasProber {
-		b.Prober.RecordRequestActivity()
-	}
 	start := time.Now()
 	b.Activity.StartRequest()
 
+	failedPtr := new(bool)
+	ctx := context.WithValue(r.Context(), ctxKeyFailed{}, failedPtr)
+	req := r.WithContext(ctx)
+
 	defer func() {
 		dur := time.Since(start).Microseconds()
-		b.Activity.EndRequest(dur, false)
-		b.HealthScore.RecordPassiveRequest(true)
+		failed := *failedPtr
+
+		b.Activity.EndRequest(dur, failed)
+		b.HealthScore.RecordPassiveRequest(!failed)
+
+		b.HealthScore.Update(health.Record{
+			ProbeSuccess: !failed,
+			ConnHealth:   100,
+			PassiveRate:  b.HealthScore.PassiveErrorRate(),
+		})
 	}()
 
-	b.Proxy.ServeHTTP(w, r)
+	b.Proxy.ServeHTTP(w, req)
 }
 
 func (b *Backend) Drain(timeout time.Duration) {
@@ -361,10 +311,6 @@ func (b *Backend) Drain(timeout time.Duration) {
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
-		if b.hasProber {
-			b.Prober.Stop()
-		}
-
 		if tp, ok := b.Proxy.Transport.(*http.Transport); ok {
 			tp.CloseIdleConnections()
 		}
@@ -380,19 +326,39 @@ func (b *Backend) LastRecovery() time.Time {
 }
 
 func (b *Backend) Status(v bool) {
+	if !v {
+		b.HealthScore.Update(health.Record{
+			ProbeSuccess: false,
+			ConnHealth:   0,
+			PassiveRate:  1.0,
+		})
+		b.Activity.Failures.Store(uint64(b.cbThreshold + 1))
+	} else {
+		b.HealthScore.Update(health.Record{
+			ProbeLatency: 10 * time.Millisecond,
+			ProbeSuccess: true,
+			ConnHealth:   100,
+			PassiveRate:  0,
+		})
+		b.Activity.Failures.Store(0)
+	}
 }
 
 func (b *Backend) Alive() bool {
 	if b.cbThreshold > 0 && b.Activity.Failures.Load() >= uint64(b.cbThreshold) {
 		return false
 	}
-	if b.hcConfig != nil && b.hcConfig.Threshold > 0 && b.Health.ConsecutiveFailures() >= int64(b.hcConfig.Threshold) {
-		return false
+	if !b.hasProber || b.HealthScore == nil {
+		return true
 	}
-	return b.HealthScore.State() != health.StateDead
+	state := b.HealthScore.State()
+	return state != health.StateDead && state != health.StateUnhealthy
 }
 
 func (b *Backend) Weight() int {
+	if b.HealthScore == nil {
+		return b.weight
+	}
 	return b.Weights.EffectiveWeight(b.weight, b.HealthScore)
 }
 

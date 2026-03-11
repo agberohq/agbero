@@ -61,9 +61,10 @@ func main() {
 	).Enable()
 
 	shutdown := jack.NewShutdown(
-		jack.ShutdownWithTimeout(30*time.Second),
+		jack.ShutdownWithTimeout(10*time.Second),
 		jack.ShutdownWithSignals(os.Interrupt, syscall.SIGTERM),
 		jack.ShutdownWithLogger(logger),
+		jack.ShutdownConcurrent(),
 	)
 
 	flaggy.SetName(woos.Name)

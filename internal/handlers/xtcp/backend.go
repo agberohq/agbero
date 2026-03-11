@@ -1,10 +1,7 @@
 package xtcp
 
 import (
-	"fmt"
-	"runtime/debug"
 	"sync"
-	"time"
 
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/health"
 	"git.imaxinacion.net/aibox/agbero/internal/pkg/lb"
@@ -14,45 +11,40 @@ import (
 type Backend struct {
 	Address  string
 	Activity *metrics.Activity
-	Health   *metrics.Health // Legacy
 
 	MaxConns int64
 
-	// New Health Components
 	HealthScore *health.Score
-	Prober      *health.Prober
-	Weights     health.RoutingWeights
+	Weights     health.Multiplier
 
-	hcInterval time.Duration
-	hcTimeout  time.Duration
-	hcSend     []byte
-	hcExpect   []byte
+	hasProber  bool
 	weight     int
 	failThresh int64
 
 	stop     chan struct{}
 	stopOnce sync.Once
-	pool     *connPool
-	poolOnce sync.Once
+}
+
+func (b *Backend) HasProber() bool {
+	return b.hasProber
 }
 
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
-		if b.Prober != nil {
-			b.Prober.Stop()
-		}
-		b.poolOnce.Do(func() {
-			if b.pool != nil {
-				b.pool.close()
-			}
-		})
 	})
 }
 
 func (b *Backend) OnDialFailure(_ error) {
 	b.Activity.Failures.Add(1)
-	b.HealthScore.RecordPassiveRequest(false)
+	if b.HealthScore != nil {
+		b.HealthScore.RecordPassiveRequest(false)
+		b.HealthScore.Update(health.Record{
+			ProbeSuccess: false,
+			ConnHealth:   0,
+			PassiveRate:  b.HealthScore.PassiveErrorRate(),
+		})
+	}
 }
 
 func (b *Backend) Snapshot() *Snapshot {
@@ -67,67 +59,24 @@ func (b *Backend) Snapshot() *Snapshot {
 	}
 }
 
-func (b *Backend) StartHealthCheck() {
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Printf("[CRITICAL] TCP health check panic for %s: %v\nStack: %s\n", b.Address, r, debug.Stack())
-		}
-	}()
-
-	b.poolOnce.Do(func() {
-		b.pool = newConnPool(b.Address, 3, b.hcTimeout)
-	})
-
-	probeCfg := health.DefaultProbeConfig()
-	if b.hcInterval > 0 {
-		probeCfg.StandardInterval = b.hcInterval
-		// Ensure acceleration doesn't accidentally slow down fast checks
-		if probeCfg.AcceleratedInterval > probeCfg.StandardInterval {
-			probeCfg.AcceleratedInterval = probeCfg.StandardInterval
-		}
-	}
-	if b.hcTimeout > 0 {
-		probeCfg.Timeout = b.hcTimeout
-	}
-
-	executor := &TCPExecutor{
-		Pool:   b.pool,
-		Send:   b.hcSend,
-		Expect: b.hcExpect,
-	}
-
-	b.HealthScore = health.NewScore(
-		health.DefaultThresholds(),
-		health.DefaultScoringWeights(),
-		health.DefaultLatencyThresholds(),
-		nil,
-	)
-	b.Weights = health.DefaultRoutingWeights()
-
-	b.Prober = health.NewProber(probeCfg, executor, b.HealthScore, func(r health.ProbeResult) {
-		if r.Success {
-			b.Health.RecordSuccess()
-			b.Activity.Failures.Store(0)
-		} else {
-			b.Health.RecordFailure()
-		}
-	})
-
-	b.Prober.Start()
-}
-
 func (b *Backend) Status(v bool) {
-	// No-op
 }
 
 func (b *Backend) Alive() bool {
 	if b.failThresh > 0 && b.Activity.Failures.Load() >= uint64(b.failThresh) {
 		return false
 	}
-	return b.HealthScore.State() != health.StateDead
+	if !b.hasProber || b.HealthScore == nil {
+		return true
+	}
+	state := b.HealthScore.State()
+	return state != health.StateDead && state != health.StateUnhealthy
 }
 
 func (b *Backend) Weight() int {
+	if b.HealthScore == nil {
+		return b.weight
+	}
 	return b.Weights.EffectiveWeight(b.weight, b.HealthScore)
 }
 
