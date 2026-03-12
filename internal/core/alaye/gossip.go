@@ -1,6 +1,7 @@
 package alaye
 
 import (
+	"fmt"
 	"net"
 
 	"github.com/olekukonko/errors"
@@ -43,7 +44,7 @@ func (g *Gossip) Validate() error {
 		// Basic host:port validation
 		if _, _, err := net.SplitHostPort(seed); err != nil {
 			// Try adding default port
-			if _, _, err := net.SplitHostPort(seed + ":" + DefaultGossipPortStr); err != nil {
+			if _, _, err := net.SplitHostPort(fmt.Sprintf("%s:%d", seed, DefaultGossipPort)); err != nil {
 				return errors.Newf("%w: seeds[%d]: %q is not a valid host:port", ErrInvalidSeedFormat, i, seed)
 			}
 		}

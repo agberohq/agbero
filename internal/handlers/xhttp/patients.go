@@ -2,6 +2,7 @@ package xhttp
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -15,19 +16,27 @@ import (
 )
 
 // sharedHTTPClient is used across all HTTP patients to avoid connection exhaustion.
-// Transport is configured for health checks (short timeouts, no keepalives).
+// Transport is configured for high-throughput health checks with connection reuse.
 var sharedHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
+	Timeout: 5 * time.Second,
 	Transport: &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     30 * time.Second,
-		DisableKeepAlives:   false,
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   2 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          1000,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   3 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
 	},
 }
 
 // RegisterHTTPPatients creates a Patient for each backend server in the route.
-// All backends get a patient - Doctor manages whether active probing runs.
+// Configured for high-throughput scenarios with fast failure detection and recovery.
 func RegisterHTTPPatients(domain string, route *alaye.Route, doc *jack.Doctor, registry *metrics.Registry, logger *ll.Logger) int {
 	if route.Backends.Enabled.NotActive() || len(route.Backends.Servers) == 0 {
 		logger.Fields("domain", domain, "route", route.Path).Debug("http backends disabled or empty")
@@ -71,22 +80,10 @@ func RegisterHTTPPatients(domain string, route *alaye.Route, doc *jack.Doctor, r
 			hostHeader = domain
 		}
 
-		// Clone shared client and apply route-specific timeout
-		client := sharedHTTPClient
-		if route.HealthCheck.Timeout > 0 {
-			client = &http.Client{
-				Timeout: probeCfg.Timeout,
-				Transport: &http.Transport{
-					MaxIdleConnsPerHost: 10,
-					DisableKeepAlives:   true,
-				},
-			}
-		}
-
 		executor := &HTTPExecutor{
 			URL:            targetURL,
 			Method:         route.HealthCheck.Method,
-			Client:         client,
+			Client:         sharedHTTPClient,
 			Header:         headers,
 			Host:           hostHeader,
 			ExpectedStatus: route.HealthCheck.ExpectedStatus,
@@ -114,6 +111,7 @@ func RegisterHTTPPatients(domain string, route *alaye.Route, doc *jack.Doctor, r
 				return nil
 			},
 		})
+
 		if err := doc.Add(patient); err != nil {
 			logger.Fields("domain", domain, "server", srv.Address, "error", err).Warn("failed to add http health patient")
 		} else {

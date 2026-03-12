@@ -1,8 +1,9 @@
 package installer
 
 import (
-	"fmt"
+	"bytes"
 
+	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
@@ -36,7 +37,7 @@ func (c *CA) Uninstall() error {
 
 func (c *CA) PromptAndInstall() error {
 	if c.IsInstalled() {
-		fmt.Println("✓ Local CA is already installed")
+		c.ctx.Logger.Println("✓ Local CA is already installed")
 		return nil
 	}
 
@@ -45,14 +46,14 @@ func (c *CA) PromptAndInstall() error {
 		return nil
 	}
 
-	// Simple ASCII box
-	fmt.Println("╭─────────────────────────────────────────────────────╮")
-	fmt.Println("│                                                     │")
-	fmt.Println("│  Warning: HTTPS certificates will show browser      │")
-	fmt.Println("│  warnings without a local CA installed.             │")
-	fmt.Println("│                                                     │")
-	fmt.Println("╰─────────────────────────────────────────────────────╯")
-	fmt.Println()
+	var output bytes.Buffer
+	table := zulu.Table(&output)
+	table.Append([]string{""})
+	table.Append([]string{"Warning: HTTPS certificates will show browser"})
+	table.Append([]string{"warnings without a local CA installed"})
+	table.Append([]string{""})
+	table.Render()
+	c.ctx.Logger.Println(output.String())
 
 	var confirm bool
 	err := huh.NewConfirm().
@@ -67,12 +68,12 @@ func (c *CA) PromptAndInstall() error {
 	}
 
 	if confirm {
-		fmt.Println("Installing local Certificate Authority...")
+		c.ctx.Logger.Println("Installing local Certificate Authority...")
 		if err := c.Install(); err != nil {
 			c.ctx.Logger.Error("Failed to install CA", "err", err)
 			return err
 		}
-		fmt.Println("✓ Local CA installed successfully!")
+		c.ctx.Logger.Println("✓ Local CA installed successfully!")
 	} else {
 		c.ctx.Logger.Warn("Skipped CA installation. Local HTTPS connections may show browser warnings.")
 	}

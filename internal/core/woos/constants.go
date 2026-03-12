@@ -340,6 +340,12 @@ const (
 	DefaultTransportTLSHandshakeTimeout   = 5 * time.Second
 	DefaultTransportResponseHeaderTimeout = 5 * time.Second
 	DefaultTransportExpectContinueTimeout = 1 * time.Second
+	DefaultTransportDrainTimeout          = 30 * time.Second
+)
+
+const (
+	DefaultRateTTL        = 30 * time.Minute
+	DefaultRateMaxEntries = 100_000
 )
 
 // middleware

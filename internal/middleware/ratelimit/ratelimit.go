@@ -80,6 +80,7 @@ func New(cfg Config) *RateLimiter {
 	sched, _ := jack.NewScheduler("ratelimit-gc", jack.NewPool(1), jack.Routine{
 		Interval: cfg.CleanupInterval,
 	})
+
 	_ = sched.Do(jack.Do(rl.sweeper))
 	rl.scheduler = sched
 

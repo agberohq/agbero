@@ -41,6 +41,7 @@ type Route struct {
 	handler  http.Handler
 	Backends []*xhttp.Backend
 	ipMgr    *zulu.IPManager
+	global   *alaye.Global
 }
 
 func NewRoute(cfg Config, route *alaye.Route) *Route {
@@ -84,14 +85,23 @@ func (h *Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Route) Close() {
 	if len(h.Backends) > 0 {
 		var wg sync.WaitGroup
+
+		drainTimeout := woos.DefaultTransportDrainTimeout
+		if h.global != nil && h.global.Timeouts.Read > 0 {
+			drainTimeout = h.global.Timeouts.Read + woos.DefaultTransportResponseHeaderTimeout
+			if drainTimeout < woos.DefaultTransportDrainTimeout {
+				drainTimeout = woos.DefaultTransportDrainTimeout
+			}
+		}
+
 		for _, b := range h.Backends {
 			if b != nil {
 				wg.Add(1)
-				go func(be *xhttp.Backend) {
+				go func(be *xhttp.Backend, timeout time.Duration) {
 					defer wg.Done()
-					be.Drain(10 * time.Second)
+					be.Drain(timeout)
 					be.Stop()
-				}(b)
+				}(b, drainTimeout)
 			}
 		}
 		wg.Wait()
@@ -131,7 +141,12 @@ func newWebRoute(cfg Config, route *alaye.Route) *Route {
 	chain = cors.New(&route.CORS)(chain)
 	chain = rewrite.New(cfg.Logger, route.StripPrefixes, route.Rewrites)(chain)
 
-	return &Route{handler: chain, Backends: nil, ipMgr: ipMgr}
+	return &Route{
+		handler:  chain,
+		Backends: nil,
+		ipMgr:    ipMgr,
+		global:   cfg.Global,
+	}
 }
 
 func newProxyRoute(cfg Config, route *alaye.Route) *Route {
@@ -168,7 +183,12 @@ func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 
 	if len(backends) == 0 {
 		if fallbackHandler != nil {
-			return &Route{handler: fallbackHandler, Backends: nil, ipMgr: cfg.IPMgr}
+			return &Route{
+				handler:  fallbackHandler,
+				Backends: nil,
+				ipMgr:    cfg.IPMgr,
+				global:   cfg.Global,
+			}
 		}
 		return FallbackRoute("proxy route missing backends")
 	}
@@ -223,7 +243,12 @@ func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 	chain = cors.New(&route.CORS)(chain)
 	chain = rewrite.New(cfg.Logger, route.StripPrefixes, route.Rewrites)(chain)
 
-	return &Route{handler: chain, Backends: backends, ipMgr: cfg.IPMgr}
+	return &Route{
+		handler:  chain,
+		Backends: backends,
+		ipMgr:    cfg.IPMgr,
+		global:   cfg.Global,
+	}
 }
 
 func resolveFallback(routeFallback, globalFallback *alaye.Fallback) *alaye.Fallback {
@@ -301,8 +326,9 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate, ipMgr *zu
 	if !rlc.Enabled.Active() && rlc.UsePolicy == "" {
 		return nil
 	}
-	ttl := 30 * time.Minute
-	maxEntries := 100_000
+	ttl := woos.DefaultRateTTL
+	maxEntries := woos.DefaultRateMaxEntries
+
 	if global != nil {
 		if global.TTL > 0 {
 			ttl = global.TTL
@@ -373,7 +399,7 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate, ipMgr *zu
 	}
 	return ratelimit.New(ratelimit.Config{
 		TTL:        ttl,
-		MaxEntries: int(maxEntries),
+		MaxEntries: maxEntries,
 		Policy:     policy,
 		IPManager:  ipMgr,
 	})

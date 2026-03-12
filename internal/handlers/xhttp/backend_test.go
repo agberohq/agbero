@@ -273,7 +273,7 @@ func TestProxy_DirectorModifications(t *testing.T) {
 
 func TestCircuitBreaker_Trips(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadGateway) // Use 502 instead of 500
 		w.Write([]byte("error"))
 	}))
 	defer server.Close()
@@ -281,7 +281,6 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 	b, _, _ := setupBackend(t, alaye.NewServer(server.URL), alaye.HealthCheck{}, alaye.CircuitBreaker{Threshold: 2})
 	defer b.Stop()
 
-	// Disable early abort to test circuit breaker in isolation
 	b.Abort.Disable()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -289,9 +288,8 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 		w := httptest.NewRecorder()
 		b.ServeHTTP(w, req)
 
-		// Verify we get 500 from upstream, not 503 from early abort
-		if w.Code != http.StatusInternalServerError {
-			t.Errorf("Request %d: expected 500, got %d", i+1, w.Code)
+		if w.Code != http.StatusBadGateway {
+			t.Errorf("Request %d: expected 502, got %d", i+1, w.Code)
 		}
 	}
 

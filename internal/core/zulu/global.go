@@ -1,11 +1,14 @@
 package zulu
 
 import (
+	"io"
 	mrand "math/rand/v2"
 	"sync"
 
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/mappo"
+	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/tw"
 )
 
 // Route is a globally shared map that provides lifecycle-managed access to route configurations and their handlers.
@@ -45,4 +48,18 @@ func Rand() *mrand.Rand {
 
 func RandPut(r *mrand.Rand) {
 	rngPool.Put(r)
+}
+
+func Table(output io.Writer) *tablewriter.Table {
+	table := tablewriter.NewTable(
+		output,
+		tablewriter.WithRendition(tw.Rendition{
+			Settings: tw.Settings{
+				Separators: tw.Separators{BetweenColumns: tw.Off},
+			},
+		}),
+		tablewriter.WithSymbols(tw.NewSymbols(tw.StyleRounded)),
+	)
+
+	return table
 }

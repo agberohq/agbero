@@ -33,23 +33,23 @@ func (h *Home) Run() error {
 	var leEmail = ""
 
 	if h.ctx.Interactive {
-		fmt.Println(BannerTmpl)
-		fmt.Printf("%s - %s\n", woos.Name, woos.Description)
-		fmt.Printf("Version: %s\n", woos.Version) // You might want to get this from build info
-		fmt.Printf("Date: %s\n", time.Now().Format("2006-01-02T15:04:05Z"))
-		fmt.Println()
+		h.ctx.Logger.Println(BannerTmpl)
+		h.ctx.Logger.Printf("%s - %s\n", woos.Name, woos.Description)
+		h.ctx.Logger.Printf("Version: %s\n", woos.Version) // You might want to get this from build info
+		h.ctx.Logger.Printf("Date: %s\n", time.Now().Format("2006-01-02T15:04:05Z"))
+		h.ctx.Logger.Println()
 
-		fmt.Println("Environment Selection:")
-		fmt.Println("  [local]  Local Development")
-		fmt.Println("           • Serve local projects")
-		fmt.Println("           • Proxy local ports")
-		fmt.Println("           • Development domains with HTTPS")
-		fmt.Println()
-		fmt.Println("  [prod]   Production Server")
-		fmt.Println("           • Deploy on VPS/Cloud servers")
-		fmt.Println("           • Let's Encrypt SSL certificates")
-		fmt.Println("           • High availability setup")
-		fmt.Println()
+		h.ctx.Logger.Println("Environment Selection:")
+		h.ctx.Logger.Println("  [local]  Local Development")
+		h.ctx.Logger.Println("           • Serve local projects")
+		h.ctx.Logger.Println("           • Proxy local ports")
+		h.ctx.Logger.Println("           • Development domains with HTTPS")
+		h.ctx.Logger.Println()
+		h.ctx.Logger.Println("  [prod]   Production Server")
+		h.ctx.Logger.Println("           • Deploy on VPS/Cloud servers")
+		h.ctx.Logger.Println("           • Let's Encrypt SSL certificates")
+		h.ctx.Logger.Println("           • High availability setup")
+		h.ctx.Logger.Println()
 
 		err := huh.NewSelect[string]().
 			Title("How are you planning to use Agbero?").
@@ -65,19 +65,19 @@ func (h *Home) Run() error {
 		}
 
 		h.ctx.Env = environment
-		fmt.Println()
+		h.ctx.Logger.Println()
 
 		if environment == "local" {
-			fmt.Println("Setting up local development environment...")
-			fmt.Println()
+			h.ctx.Logger.Println("Setting up local development environment...")
+			h.ctx.Logger.Println()
 
 			ca := NewCA(h.ctx)
 			if err := ca.PromptAndInstall(); err != nil {
 				h.ctx.Logger.Warn("CA prompt interrupted", "err", err)
 			}
 		} else {
-			fmt.Println("Setting up production environment...")
-			fmt.Println()
+			h.ctx.Logger.Println("Setting up production environment...")
+			h.ctx.Logger.Println()
 
 			err := huh.NewInput().
 				Title("Let's Encrypt Email").
@@ -166,25 +166,25 @@ func (h *Home) Run() error {
 	}
 
 	// Professional summary with ASCII only
-	fmt.Println("\n===============================================================")
-	fmt.Println("CONFIGURATION INITIALIZED")
-	fmt.Println("===============================================================")
-	fmt.Printf("Environment:    %s\n", strings.ToUpper(environment))
-	fmt.Printf("Config File:    %s\n", h.ctx.Paths.ConfigFile)
-	fmt.Printf("Admin User:     admin\n")
-	fmt.Printf("Admin Password: %s\n", adminPassword)
-	fmt.Println("===============================================================")
-	fmt.Println("Note: Save this password - it will not be shown again.")
-	fmt.Println("")
-	fmt.Println("Next steps:")
-	fmt.Printf("  • Start Agbero:   sudo %s start\n", filepath.Base(os.Args[0]))
-	fmt.Printf("  • Check status:   sudo %s status\n", filepath.Base(os.Args[0]))
-	fmt.Printf("  • View logs:      sudo %s logs\n", filepath.Base(os.Args[0]))
-	fmt.Printf("  • Admin UI:       http://admin.localhost:9090\n")
-	fmt.Printf("  • Web UI:         http://localhost\n")
-	fmt.Println("")
-	fmt.Println("For more information, visit https://agbero.io/docs")
-	fmt.Println()
+	h.ctx.Logger.Println("\n===============================================================")
+	h.ctx.Logger.Println("CONFIGURATION INITIALIZED")
+	h.ctx.Logger.Println("===============================================================")
+	h.ctx.Logger.Printf("Environment:    %s\n", strings.ToUpper(environment))
+	h.ctx.Logger.Printf("Config File:    %s\n", h.ctx.Paths.ConfigFile)
+	h.ctx.Logger.Printf("Admin User:     admin\n")
+	h.ctx.Logger.Printf("Admin Password: %s\n", adminPassword)
+	h.ctx.Logger.Println("===============================================================")
+	h.ctx.Logger.Println("Note: Save this password - it will not be shown again.")
+	h.ctx.Logger.Println("")
+	h.ctx.Logger.Println("Next steps:")
+	h.ctx.Logger.Printf("  • Start Agbero:   sudo %s start\n", filepath.Base(os.Args[0]))
+	h.ctx.Logger.Printf("  • Check status:   sudo %s status\n", filepath.Base(os.Args[0]))
+	h.ctx.Logger.Printf("  • View logs:      sudo %s logs\n", filepath.Base(os.Args[0]))
+	h.ctx.Logger.Printf("  • Admin UI:       http://admin.localhost:9090\n")
+	h.ctx.Logger.Printf("  • Web UI:         http://localhost\n")
+	h.ctx.Logger.Println("")
+	//h.ctx.Logger.Println("For more information, visit https://agbero.io/docs")
+	h.ctx.Logger.Println()
 
 	return nil
 }

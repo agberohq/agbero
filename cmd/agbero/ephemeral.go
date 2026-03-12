@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"net"
 	"os"
@@ -92,19 +93,19 @@ func (e *ephemeral) handleServe() {
 
 	absPath, err := filepath.Abs(e.path)
 	if err != nil {
-		fmt.Printf("Error resolving path: %v\n", err)
+		e.logger.Errorf("Error resolving path: %v\n", err)
 		os.Exit(1)
 	}
 
 	stat, err := os.Stat(absPath)
 	if err != nil || !stat.IsDir() {
-		fmt.Printf("Path must be a valid directory: %s\n", absPath)
+		e.logger.Errorf("Path must be a valid directory: %s\n", absPath)
 		os.Exit(1)
 	}
 
 	finalPort, err := zulu.PortScan(e.bindHost, e.port, woos.MaxPortRetries)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		e.logger.Errorf("Error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -134,15 +135,23 @@ func (e *ephemeral) handleServe() {
 		displayURL = fmt.Sprintf("%s:%d", displayURL, finalPort)
 	}
 
-	logger.Infof("Serving Directory: %s", absPath)
-	logger.Infof("Available at:    %s", displayURL)
+	var output bytes.Buffer
+
+	table := zulu.Table(&output)
+	table.Append([]string{""})
+	table.Append([]string{"Serving Directory:", absPath})
+	table.Append([]string{"Available at:", displayURL})
+	table.Append([]string{""})
+	table.Render()
+
+	logger.Print(output.String())
 	logger.Line(2)
 	runEphemeral(e, global, hosts)
 }
 
 func (e *ephemeral) handleProxy() {
 	if e.target == "" {
-		fmt.Println("Error: target required (e.g., :3000 or http://127.0.0.1:3000)")
+		e.logger.Println("Error: target required (e.g., :3000 or http://127.0.0.1:3000)")
 		os.Exit(1)
 	}
 
@@ -170,7 +179,7 @@ func (e *ephemeral) handleProxy() {
 
 	finalPort, err := zulu.PortScan(e.bindHost, e.port, woos.MaxPortRetries)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		e.logger.Error("Error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -195,8 +204,15 @@ func (e *ephemeral) handleProxy() {
 		displayURL = fmt.Sprintf("%s:%d", displayURL, finalPort)
 	}
 
-	logger.Infof("Proxying traffic: %s → %s", e.domain, e.target)
-	logger.Infof("Available at:     %s", displayURL)
+	var output bytes.Buffer
+	table := zulu.Table(&output)
+	table.Append([]string{""})
+	table.Append([]string{"Proxying traffic:", fmt.Sprintf("%s → %s", e.domain, e.target)})
+	table.Append([]string{"Available at:", displayURL})
+	table.Append([]string{""})
+	table.Render()
+
+	logger.Print(output.String())
 	logger.Line(2)
 	runEphemeral(e, global, hosts)
 }

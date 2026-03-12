@@ -1,6 +1,7 @@
 recursive = true
 output_file = "all.txt"
-extensions = [".go",".css",".js",".html"]
+#extensions = [".go",".css",".js",".html"]
+extensions = [".go"]
 exclude_dirs {
   items = ["lab", "bin", "dist", "assets", "oppor", "docs"]
 }

@@ -85,8 +85,7 @@ const (
 
 // gossip
 const (
-	DefaultGossipPort    = 7946
-	DefaultGossipPortStr = "7946"
+	DefaultGossipPort = 7946
 
 	MinPort = 0
 	MaxPort = 65535
