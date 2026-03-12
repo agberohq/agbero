@@ -43,10 +43,14 @@ func (p *Parser) Unmarshal(output any) error {
 
 // LoadGlobal loads global configuration
 func LoadGlobal(path string) (*alaye.Global, error) {
+	if path == "" {
+		return nil, fmt.Errorf("config path cannot be empty")
+	}
+
 	var global alaye.Global
 	parser := NewParser(path)
 	if err := parser.Unmarshal(&global); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to load config from %s: %w", path, err)
 	}
 
 	if global.Version != woos.ConfigFormatVersion {
@@ -61,6 +65,7 @@ func LoadGlobal(path string) (*alaye.Global, error) {
 			global.Version, woos.ConfigFormatVersion,
 		)
 	}
+
 	return &global, nil
 }
 

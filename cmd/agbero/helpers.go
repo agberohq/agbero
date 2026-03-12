@@ -1,11 +1,10 @@
+// cmd/agbero/helpers.go
 package main
 
 import (
 	"crypto/rand"
-	_ "embed"
 	"encoding/base64"
 	"fmt"
-	"math/big"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,28 +16,14 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/pkg/installer"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/dustin/go-humanize"
 	"github.com/integrii/flaggy"
 	"github.com/olekukonko/ll"
-	"golang.org/x/crypto/bcrypt"
 )
-
-// Embedded Assets
-//
-//go:embed data/agbero.hcl
-var configTmpl string
-
-//go:embed data/banner.txt
-var bannerTmpl string
-
-//go:embed data/hosts.d/web.hcl
-var tplWebHcl []byte
-
-//go:embed data/hosts.d/admin.hcl
-var tplAdminHcl []byte
 
 type helper struct {
 	logger *ll.Logger
@@ -49,7 +34,7 @@ func newHelper(logger *ll.Logger) *helper {
 }
 
 func (h *helper) welcome() {
-	fmt.Println(bannerTmpl)
+	fmt.Println(installer.BannerTmpl)
 	fmt.Printf("\033[1;34m%s\033[0m - %s\n", woos.Name, woos.Description)
 	fmt.Printf("\033[90mVersion: %s\033[0m\n", woos.Version)
 	fmt.Printf("\033[90mDate: %s\033[0m\n\n", woos.Date)
@@ -73,108 +58,30 @@ func (h *helper) resolveConfigPath(flagPath string) (string, bool) {
 		return cwdPath, true
 	}
 
-	if userPaths, err := woos.GetUserDefaults(); err == nil {
-		if _, err := os.Stat(userPaths.ConfigFile); err == nil {
-			return userPaths.ConfigFile, true
-		}
-	}
-
-	sysPaths := woos.DefaultPaths()
-	if _, err := os.Stat(sysPaths.ConfigFile); err == nil {
-		return sysPaths.ConfigFile, true
+	ctx := installer.NewContext(h.logger, "")
+	if _, err := os.Stat(ctx.Paths.ConfigFile); err == nil {
+		return ctx.Paths.ConfigFile, true
 	}
 
 	return "", false
 }
 
-func (h *helper) generateRandomPassword(length int) (string, error) {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
-	b := make([]byte, length)
-	for i := range b {
-		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
-		if err != nil {
-			return "", err
-		}
-		b[i] = charset[num.Int64()]
-	}
-	return string(b), nil
-}
-
 func (h *helper) initConfiguration(targetDir string) (string, error) {
-	if targetDir == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return "", err
-		}
-		targetDir = cwd
+	ctx := installer.NewContext(h.logger, "")
+
+	if targetDir != "" {
+		base := woos.NewFolder(targetDir)
+		ctx.Paths.BaseDir = base
+		ctx.Paths.ConfigFile = filepath.Join(base.Path(), woos.DefaultConfigName)
+		ctx.Paths.HostsDir = base.Join(woos.HostDir.Name())
+		ctx.Paths.CertsDir = base.Join(woos.CertDir.Name())
+		ctx.Paths.DataDir = base.Join(woos.DataDir.Name())
+		ctx.Paths.LogsDir = base.Join(woos.LogDir.Name())
+		ctx.Paths.WorkDir = base.Join(woos.WorkDir.Name())
 	}
 
-	if err := os.MkdirAll(targetDir, woos.DirPerm); err != nil {
-		return "", err
-	}
-
-	configFile := filepath.Join(targetDir, woos.DefaultConfigName)
-
-	if _, err := os.Stat(configFile); err == nil {
-		return "", fmt.Errorf("configuration already exists at %s", configFile)
-	}
-
-	for _, d := range []string{
-		woos.HostDir.String(),
-		woos.CertDir.String(),
-		woos.DataDir.String(),
-		woos.LogDir.String(),
-	} {
-		if err := os.MkdirAll(filepath.Join(targetDir, d), woos.DirPerm); err != nil {
-			return "", err
-		}
-	}
-
-	content := strings.ReplaceAll(configTmpl, "{HOST_DIR}", woos.HostDir.String())
-	content = strings.ReplaceAll(content, "{CERTS_DIR}", woos.CertDir.String())
-	content = strings.ReplaceAll(content, "{DATA_DIR}", woos.DataDir.String())
-	content = strings.ReplaceAll(content, "{LOGS_DIR}", woos.LogDir.String())
-
-	secret, _ := h.generateSecureKey(128)
-
-	password, err := h.generateRandomPassword(16)
-	if err != nil {
-		return "", fmt.Errorf("failed to generate password: %w", err)
-	}
-
-	hash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-
-	content = strings.ReplaceAll(content, "{ADMIN_PASSWORD}", string(hash))
-	content = strings.ReplaceAll(content, "{ADMIN_SECRET}", secret)
-
-	if err := os.WriteFile(configFile, []byte(content), woos.FilePermSecured); err != nil {
-		return "", err
-	}
-
-	hostsDir := filepath.Join(targetDir, woos.HostDir.String())
-
-	adminFile := filepath.Join(hostsDir, "admin.hcl")
-	if err := os.WriteFile(adminFile, tplAdminHcl, woos.FilePerm); err != nil {
-		return "", err
-	}
-
-	webFile := filepath.Join(hostsDir, "web.hcl")
-	if err := os.WriteFile(webFile, tplWebHcl, woos.FilePerm); err != nil {
-		return "", err
-	}
-
-	fmt.Println("")
-	fmt.Println("===============================================================")
-	fmt.Println("CONFIGURATION INITIALIZED")
-	fmt.Println("===============================================================")
-	fmt.Printf("Config File:    %s\n", configFile)
-	fmt.Printf("Admin User:     admin\n")
-	fmt.Printf("Admin Password: %s\n", password)
-	fmt.Println("===============================================================")
-	fmt.Println("Note: This password is now hashed in your config file.")
-	fmt.Println("")
-
-	return configFile, nil
+	err := installer.NewHome(ctx).Run()
+	return ctx.Paths.ConfigFile, err
 }
 
 func (h *helper) installConfiguration(here bool) (string, error) {
@@ -187,17 +94,8 @@ func (h *helper) installConfiguration(here bool) (string, error) {
 		}
 		targetDir = cwd
 	} else {
-		sysPaths := woos.DefaultPaths()
-
-		if os.Geteuid() == 0 {
-			targetDir = sysPaths.BaseDir.Path()
-		} else {
-			userPaths, err := woos.GetUserDefaults()
-			if err != nil {
-				return "", err
-			}
-			targetDir = userPaths.BaseDir.Path()
-		}
+		ctx := installer.NewContext(h.logger, "")
+		targetDir = ctx.Paths.BaseDir.Path()
 	}
 
 	return h.initConfiguration(targetDir)
@@ -288,21 +186,9 @@ func (h *helper) listHosts(configFile string) error {
 }
 
 func (h *helper) handleServiceError(err error, cmd string, configPath string) error {
-	if err == nil {
-		return nil
-	}
-	errStr := err.Error()
-	exeName := h.getExecutableName()
-
-	if runtime.GOOS == woos.Darwin && strings.Contains(errStr, "launchctl") {
-		if strings.Contains(errStr, "Expecting a LaunchAgents path") {
-			return fmt.Errorf("requires root: sudo %s service install", exeName)
-		}
-	}
-	if runtime.GOOS == woos.Linux && strings.Contains(errStr, "systemctl") {
-		return fmt.Errorf("requires root: sudo %s service %s", exeName, cmd)
-	}
-	return fmt.Errorf("failed to %s service: %v", cmd, err)
+	ctx := installer.NewContext(h.logger, "")
+	svc := installer.NewService(ctx)
+	return svc.MapError(err, cmd)
 }
 
 func (h *helper) getExecutableName() string {
@@ -320,12 +206,12 @@ func (h *helper) showHelpExamples(configPath string) {
 	fmt.Println("===============================================================")
 	fmt.Println("")
 	fmt.Println("SCAFFOLDING:")
-	fmt.Printf("  %s init             # Create config in current folder\n", exeName)
-	fmt.Printf("  %s install          # Create config in system folder & install service (requires root)\n", exeName)
+	fmt.Printf("  %s init             # Create config interactively in current folder\n", exeName)
+	fmt.Printf("  %s install          # Create config in system folder & install service\n", exeName)
 	fmt.Println("")
 	fmt.Println("EXECUTION:")
 	fmt.Printf("  %s run              # Run using discovered config\n", exeName)
-	fmt.Printf("  %s run --dev        # Run with debug logging\n", exeName)
+	fmt.Printf("  %s serve .          # Serve current directory securely on the fly\n", exeName)
 	fmt.Printf("  %s reload           # Hot reload running instance\n", exeName)
 	fmt.Println("")
 	fmt.Println("API MANAGEMENT:")
@@ -377,24 +263,24 @@ func (h *helper) showCertInfo(configPath string) {
 }
 
 func (h *helper) handleCertCommands(install, uninstall, list, info bool, force bool, certDir string) {
-	installer := tlss.NewLocal(h.logger)
+	installerLoc := tlss.NewLocal(h.logger)
 
 	if global, err := h.loadConfig(configPath); err == nil && global.Storage.CertsDir != "" {
 		folder := woos.NewFolder(global.Storage.CertsDir)
-		_ = installer.SetStorageDir(folder)
+		_ = installerLoc.SetStorageDir(folder)
 		h.logger.Fields("dir", folder.Path()).Info("storage directory")
 	}
 
 	if uninstall {
 		h.logger.Info("Uninstalling CA...")
 
-		if err := installer.UninstallCARoot(); err != nil {
+		if err := installerLoc.UninstallCARoot(); err != nil {
 			h.logger.Warnf("System trust store cleanup: %v (might already be removed)", err)
 		} else {
 			h.logger.Info("Removed CA from system trust store")
 		}
 
-		dir := installer.CertDir.Path()
+		dir := installerLoc.CertDir.Path()
 		files, err := os.ReadDir(dir)
 		if err != nil {
 			h.logger.Warnf("Could not read dir: %v", err)
@@ -425,11 +311,11 @@ func (h *helper) handleCertCommands(install, uninstall, list, info bool, force b
 	}
 
 	if install {
-		if tlss.IsCARootInstalled(installer.CertDir.Path()) && !force {
+		if tlss.IsCARootInstalled(installerLoc.CertDir.Path()) && !force {
 			h.logger.Info("CA root is already installed. Use --force to reinstall.")
 			return
 		}
-		if err := installer.InstallCARootIfNeeded(); err != nil {
+		if err := installerLoc.InstallCARootIfNeeded(); err != nil {
 			h.logger.Fatal("Failed to install CA: ", err)
 		}
 		h.logger.Info("CA root installed successfully.")
@@ -437,7 +323,7 @@ func (h *helper) handleCertCommands(install, uninstall, list, info bool, force b
 	}
 
 	if list {
-		certs, err := installer.ListCertificates()
+		certs, err := installerLoc.ListCertificates()
 		if err != nil {
 			h.logger.Fatal("Failed to list certificates: ", err)
 		}
@@ -478,12 +364,11 @@ func (h *helper) handleKeyInit() {
 	global, err := h.loadConfig(configPath)
 	var targetPath string
 
-	// Use config value if set, otherwise default to certs dir
 	if err == nil && global.Security.InternalAuthKey != "" {
 		targetPath = global.Security.InternalAuthKey
 	} else {
-		sysPaths := woos.DefaultPaths()
-		targetPath = filepath.Join(sysPaths.CertsDir.Path(), "internal_auth.key")
+		ctx := installer.NewContext(h.logger, "")
+		targetPath = filepath.Join(ctx.Paths.CertsDir.Path(), "internal_auth.key")
 	}
 
 	if _, err := os.Stat(targetPath); err == nil {
@@ -491,7 +376,6 @@ func (h *helper) handleKeyInit() {
 		return
 	}
 
-	// Ensure dir exists
 	dir := filepath.Dir(targetPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		h.logger.Fatal("failed to create directory: ", err)
@@ -524,9 +408,8 @@ func (h *helper) handleKeyGen(service string, ttl time.Duration) {
 
 	keyPath := global.Security.InternalAuthKey
 	if keyPath == "" {
-		// Fallback to default if not in config
-		sysPaths := woos.DefaultPaths()
-		defaultPath := filepath.Join(sysPaths.CertsDir.Path(), "internal_auth.key")
+		ctx := installer.NewContext(h.logger, "")
+		defaultPath := filepath.Join(ctx.Paths.CertsDir.Path(), "internal_auth.key")
 		if _, err := os.Stat(defaultPath); err == nil {
 			keyPath = defaultPath
 		}
@@ -542,7 +425,7 @@ func (h *helper) handleKeyGen(service string, ttl time.Duration) {
 	}
 
 	if ttl == 0 {
-		ttl = 365 * 24 * time.Hour // Default 1 year
+		ttl = 365 * 24 * time.Hour
 	}
 
 	token, err := tm.Mint(service, ttl)

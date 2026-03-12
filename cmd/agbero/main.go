@@ -12,7 +12,9 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/pkg/installer"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/charmbracelet/huh"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/jack"
@@ -257,8 +259,6 @@ func main() {
 	var resolvedPath string
 	var configExists bool
 
-	// Handle Service Install specifically here if using `agbero service install`
-	// but we also support `install` via helper logic inside the block below.
 	if cmdServiceInstall.Used {
 		path, err := hel.installConfiguration(installHere)
 		if err != nil {
@@ -274,11 +274,33 @@ func main() {
 		cmdServiceStart.Used || cmdKey.Used || cmdClusterStart.Used || cmdClusterJoin.Used ||
 		(cmdCluster.Used && !cmdClusterSecret.Used)
 
+	// UI INTERCEPTION LOGIC: Catch missing config gracefully
 	if needsConfig && !configExists {
 		if strings.TrimSpace(configPath) != "" {
 			logger.Fatal("Config file not found at specific path: ", configPath)
 		} else {
-			logger.Fatal("Config file not found. Run 'agbero service install' to generate one.")
+			ctx := installer.NewContext(logger, "")
+			if ctx.Interactive {
+				var doInit bool
+				err := huh.NewConfirm().
+					Title("Configuration Not Found").
+					Description("We couldn't find an agbero.hcl file here. Would you like to initialize a new configuration?").
+					Value(&doInit).
+					Run()
+
+				if err == nil && doInit {
+					path, err := hel.initConfiguration("")
+					if err != nil {
+						logger.Fatal("Init failed: ", err)
+					}
+					resolvedPath = path
+					configExists = true
+				} else {
+					logger.Fatal("Config file required to proceed. Run 'agbero init' later.")
+				}
+			} else {
+				logger.Fatal("Config file not found. Run 'agbero service install' to generate one.")
+			}
 		}
 	}
 
@@ -349,7 +371,6 @@ func main() {
 		}
 	}
 
-	// Service Configuration
 	svcConfig := &service.Config{
 		Name:        woos.Name,
 		DisplayName: woos.Display,
@@ -385,7 +406,6 @@ func main() {
 		logger.Fatal("Service init failed: ", err)
 	}
 
-	// Handle Service Actions
 	if cmdServiceInstall.Used {
 		if !installHere {
 			logger.Info("Installing system service...")
@@ -431,7 +451,6 @@ func main() {
 		return
 	}
 
-	// Main Execution
 	if cmdRun.Used || cmdClusterStart.Used || cmdClusterJoin.Used {
 		global, err := hel.loadConfig(resolvedPath)
 		if err != nil {

@@ -11,6 +11,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/pkg/installer"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
@@ -39,7 +40,6 @@ func runEphemeral(e *ephemeral, global *alaye.Global, hosts map[string]*alaye.Ho
 		agbero.WithShutdownManager(e.shutdown),
 	)
 
-	// Start server (blocks until error or shutdown)
 	go func() {
 		if err := srv.Start(""); err != nil {
 			logger.Error(err)
@@ -54,11 +54,11 @@ func runEphemeral(e *ephemeral, global *alaye.Global, hosts map[string]*alaye.Ho
 		"tasks_total", stats.TotalEvents,
 		"tasks_failed", stats.FailedEvents,
 	).Info("agbero stopped gracefully")
-
 }
 
-func (e *ephemeral) createGlobal(port int) *alaye.Global {
+func (e *ephemeral) createGlobal(port int, ctx *installer.Context) *alaye.Global {
 	global := alaye.NewEphemeralGlobal(port, e.useHTTPS)
+
 	if e.bindHost != "" {
 		addr := fmt.Sprintf("%s:%d", e.bindHost, port)
 		if e.useHTTPS {
@@ -67,6 +67,13 @@ func (e *ephemeral) createGlobal(port int) *alaye.Global {
 			global.Bind.HTTP = []string{addr}
 		}
 	}
+
+	if ctx != nil {
+		global.Storage.CertsDir = ctx.Paths.CertsDir.Path()
+		global.Storage.DataDir = ctx.Paths.DataDir.Path()
+		global.Storage.WorkDir = ctx.Paths.WorkDir.Path()
+	}
+
 	return global
 }
 
@@ -98,7 +105,16 @@ func (e *ephemeral) handleServe() {
 		os.Exit(1)
 	}
 
-	global := e.createGlobal(finalPort)
+	ctx := installer.NewContext(e.logger, "local")
+	if e.useHTTPS {
+		ca := installer.NewCA(ctx)
+		if err := ca.PromptAndInstall(); err != nil {
+			e.logger.Warn("CA installation prompt interrupted: ", err)
+		}
+		logger.Println()
+	}
+
+	global := e.createGlobal(finalPort, ctx)
 	hostConfig := alaye.NewStaticHost("localhost", absPath, false)
 
 	hosts := map[string]*alaye.Host{
@@ -136,7 +152,15 @@ func (e *ephemeral) handleProxy() {
 		os.Exit(1)
 	}
 
-	global := e.createGlobal(finalPort)
+	ctx := installer.NewContext(e.logger, "local")
+	if e.useHTTPS {
+		ca := installer.NewCA(ctx)
+		if err := ca.PromptAndInstall(); err != nil {
+			e.logger.Warn("CA installation prompt interrupted: ", err)
+		}
+	}
+
+	global := e.createGlobal(finalPort, ctx)
 	hostConfig := alaye.NewStaticHost(e.domain, e.target, true)
 
 	hosts := map[string]*alaye.Host{
