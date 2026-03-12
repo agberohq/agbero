@@ -59,12 +59,7 @@ type RateLimiter struct {
 }
 
 func New(cfg Config) *RateLimiter {
-	if cfg.TTL <= 0 {
-		cfg.TTL = 30 * time.Minute
-	}
-	if cfg.MaxEntries <= 0 {
-		cfg.MaxEntries = 100_000
-	}
+	// Internal garbage collection interval (not part of alaye configuration schema)
 	if cfg.CleanupInterval <= 0 {
 		cfg.CleanupInterval = 5 * time.Minute
 	}
@@ -72,8 +67,8 @@ func New(cfg Config) *RateLimiter {
 	rl := &RateLimiter{
 		data:       mappo.NewSharded[string, *atomicEntry](),
 		policy:     cfg.Policy,
-		ttl:        cfg.TTL.Nanoseconds(),
-		maxEntries: cfg.MaxEntries,
+		ttl:        cfg.TTL.Nanoseconds(), // Trust the pipeline
+		maxEntries: cfg.MaxEntries,        // Trust the pipeline
 		ipMgr:      cfg.IPManager,
 	}
 

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -47,7 +46,6 @@ type Engine struct {
 	logger          *ll.Logger
 	whitelistRanger cidranger.Ranger
 	blacklistRanger cidranger.Ranger
-	bufPool         sync.Pool
 	ipMgr           *zulu.IPManager
 }
 
@@ -77,11 +75,6 @@ func New(cfg Config) (*Engine, error) {
 		whitelistRanger: cidranger.NewPCTrieRanger(),
 		blacklistRanger: cidranger.NewPCTrieRanger(),
 		ipMgr:           ipMgr,
-		bufPool: sync.Pool{
-			New: func() any {
-				return bytes.NewBuffer(make([]byte, 0, cfg.Firewall.MaxInspectBytes))
-			},
-		},
 	}
 	if err := e.loadStaticRules(); err != nil {
 		store.Close()
@@ -172,16 +165,18 @@ func (e *Engine) shouldInspectBody(r *http.Request) bool {
 }
 
 func (e *Engine) peekBody(r *http.Request) ([]byte, error) {
-	buf := e.bufPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer e.bufPool.Put(buf)
-	limitReader := io.LimitReader(r.Body, e.cfg.MaxInspectBytes)
-	n, err := buf.ReadFrom(limitReader)
-	if err != nil && err != io.EOF {
+	limit := e.cfg.MaxInspectBytes
+	if r.ContentLength > 0 && r.ContentLength < limit {
+		limit = r.ContentLength
+	}
+
+	sample := make([]byte, limit)
+	n, err := io.ReadFull(r.Body, sample)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return nil, err
 	}
-	sample := make([]byte, n)
-	copy(sample, buf.Bytes())
+	sample = sample[:n]
+
 	r.Body = &readCloserWrapper{
 		Reader: io.MultiReader(bytes.NewReader(sample), r.Body),
 		Closer: r.Body,

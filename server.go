@@ -689,9 +689,6 @@ func (s *Server) waitForHTTPConnections(ctx context.Context) {
 }
 
 func (s *Server) waitForH3Connections(ctx context.Context) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	h3Done := make(chan struct{})
 	go func() {
 		s.h3Wg.Wait()
@@ -707,7 +704,14 @@ func (s *Server) waitForH3Connections(ctx context.Context) {
 }
 
 func (s *Server) shutdownH3Servers(ctx context.Context) {
-	for key, srv := range s.h3Servers {
+	s.mu.RLock()
+	servers := make(map[string]*http3.Server, len(s.h3Servers))
+	for k, v := range s.h3Servers {
+		servers[k] = v
+	}
+	s.mu.RUnlock()
+
+	for key, srv := range servers {
 		if err := srv.Shutdown(ctx); err != nil {
 			s.logger.Fields("key", key, "err", err).Warn("h3 graceful shutdown failed")
 			_ = srv.Close()
@@ -716,8 +720,15 @@ func (s *Server) shutdownH3Servers(ctx context.Context) {
 }
 
 func (s *Server) shutdownHTTPServers(ctx context.Context) {
+	s.mu.RLock()
+	servers := make(map[string]*http.Server, len(s.servers))
+	for k, v := range s.servers {
+		servers[k] = v
+	}
+	s.mu.RUnlock()
+
 	var wg sync.WaitGroup
-	for key, srv := range s.servers {
+	for key, srv := range servers {
 		wg.Add(1)
 		go func(k string, server *http.Server) {
 			defer wg.Done()

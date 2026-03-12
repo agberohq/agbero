@@ -40,28 +40,23 @@ var logArgsPool = sync.Pool{
 // =============================================================================
 
 type connTracker struct {
-	mu    sync.Mutex
-	conns map[net.Conn]struct{}
+	conns sync.Map
 	wg    sync.WaitGroup
 }
 
 func newConnTracker() *connTracker {
-	return &connTracker{
-		conns: make(map[net.Conn]struct{}),
-	}
+	return &connTracker{}
 }
 
 func (ct *connTracker) track(conn net.Conn, state http.ConnState) {
-	ct.mu.Lock()
-	defer ct.mu.Unlock()
-
+	// Only interact with the map and waitgroup on creation and destruction.
+	// Ignore StateActive and StateIdle entirely to avoid bottlenecking Keep-Alive requests.
 	switch state {
 	case http.StateNew:
-		ct.conns[conn] = struct{}{}
+		ct.conns.Store(conn, struct{}{})
 		ct.wg.Add(1)
 	case http.StateClosed, http.StateHijacked:
-		if _, ok := ct.conns[conn]; ok {
-			delete(ct.conns, conn)
+		if _, loaded := ct.conns.LoadAndDelete(conn); loaded {
 			ct.wg.Done()
 		}
 	}
@@ -72,9 +67,12 @@ func (ct *connTracker) wait() {
 }
 
 func (ct *connTracker) count() int {
-	ct.mu.Lock()
-	defer ct.mu.Unlock()
-	return len(ct.conns)
+	count := 0
+	ct.conns.Range(func(key, value any) bool {
+		count++
+		return true
+	})
+	return count
 }
 
 func anyStreamingEnabled(hosts map[string]*alaye.Host) bool {
