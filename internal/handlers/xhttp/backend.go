@@ -39,7 +39,6 @@ func (b *basicStatusWriter) Flush() {
 	}
 }
 
-// Backend implements lb.Backend interface for HTTP proxying with Doctor-managed health checks.
 type Backend struct {
 	URL   *url.URL
 	Proxy *httputil.ReverseProxy
@@ -262,12 +261,18 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dur := time.Since(start)
 		failed := *failedPtr
 
+		// Only treat Gateway/Network errors as circuit-breaker-tripping failures.
+		// Standard 500/501 errors mean the app code failed, but the node is still alive.
 		if rw, ok := w.(*zulu.ResponseWriter); ok {
-			if rw.StatusCode >= 500 && rw.StatusCode <= 599 {
+			if rw.StatusCode == http.StatusBadGateway ||
+				rw.StatusCode == http.StatusServiceUnavailable ||
+				rw.StatusCode == http.StatusGatewayTimeout {
 				failed = true
 			}
 		} else if sw, ok := actualWriter.(*basicStatusWriter); ok {
-			if sw.code >= 500 && sw.code <= 599 {
+			if sw.code == http.StatusBadGateway ||
+				sw.code == http.StatusServiceUnavailable ||
+				sw.code == http.StatusGatewayTimeout {
 				failed = true
 			}
 		}
@@ -280,20 +285,12 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				b.logger.Fields("backend", b.URL.Host, "failures", b.Activity.Failures.Load()).Warn("circuit breaker tripped")
 			}
 		}
-
-		// Always update health score with passive result - Doctor handles the aggregation
-		b.HealthScore.Update(health.Record{
-			ProbeSuccess: !failed,
-			ConnHealth:   100,
-			PassiveRate:  b.HealthScore.PassiveErrorRate(),
-		})
 	}()
 
 	b.Proxy.ServeHTTP(actualWriter, req)
 }
 
 func (b *Backend) Drain(timeout time.Duration) {
-	b.logger.Fields("backend", b.URL.Host).Info("backend draining started")
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -352,7 +349,6 @@ func (b *Backend) Status(v bool) {
 	}
 }
 
-// Alive checks circuit breaker first, then Doctor-managed health score.
 func (b *Backend) Alive() bool {
 	if b.cbThreshold > 0 && b.Activity.Failures.Load() >= uint64(b.cbThreshold) {
 		return false

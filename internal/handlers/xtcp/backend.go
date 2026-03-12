@@ -40,11 +40,6 @@ func (b *Backend) OnDialFailure(_ error) {
 	b.Activity.Failures.Add(1)
 	if b.HealthScore != nil {
 		b.HealthScore.RecordPassiveRequest(false)
-		b.HealthScore.Update(health.Record{
-			ProbeSuccess: false,
-			ConnHealth:   0,
-			PassiveRate:  b.HealthScore.PassiveErrorRate(),
-		})
 	}
 }
 
