@@ -23,6 +23,11 @@ import (
 	"github.com/smallstep/truststore"
 )
 
+const (
+	caCert = "ca-cert.pem"
+	caKey  = "ca-key.pem"
+)
+
 type Local struct {
 	logger    *ll.Logger
 	CertDir   woos.Folder
@@ -178,6 +183,11 @@ func (ci *Local) UninstallCARoot() error {
 
 	ci.logger.Fields("cert", caPath).Info("CA root uninstalled from system trust store")
 	return nil
+}
+
+func (ci *Local) RemoveCA() {
+	_ = os.Remove(ci.caCertPath())
+	_ = os.Remove(ci.caKeyPath())
 }
 
 func (ci *Local) generateCAFilesOnly() error {
@@ -541,14 +551,14 @@ func (ci *Local) caCertPath() string {
 	if !ci.CertDir.IsSet() {
 		return ""
 	}
-	return filepath.Join(ci.CertDir.Path(), "ca-cert.pem")
+	return filepath.Join(ci.CertDir.Path(), caCert)
 }
 
 func (ci *Local) caKeyPath() string {
 	if !ci.CertDir.IsSet() {
 		return ""
 	}
-	return filepath.Join(ci.CertDir.Path(), "ca-key.pem")
+	return filepath.Join(ci.CertDir.Path(), caKey)
 }
 
 func (ci *Local) SetMockMode(mock bool) {

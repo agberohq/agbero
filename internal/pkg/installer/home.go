@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/pkg/security"
@@ -33,12 +34,28 @@ func (h *Home) Run() error {
 
 	if h.ctx.Interactive {
 		fmt.Println(BannerTmpl)
+		fmt.Printf("%s - %s\n", woos.Name, woos.Description)
+		fmt.Printf("Version: %s\n", woos.Version) // You might want to get this from build info
+		fmt.Printf("Date: %s\n", time.Now().Format("2006-01-02T15:04:05Z"))
+		fmt.Println()
+
+		fmt.Println("Environment Selection:")
+		fmt.Println("  [local]  Local Development")
+		fmt.Println("           • Serve local projects")
+		fmt.Println("           • Proxy local ports")
+		fmt.Println("           • Development domains with HTTPS")
+		fmt.Println()
+		fmt.Println("  [prod]   Production Server")
+		fmt.Println("           • Deploy on VPS/Cloud servers")
+		fmt.Println("           • Let's Encrypt SSL certificates")
+		fmt.Println("           • High availability setup")
+		fmt.Println()
 
 		err := huh.NewSelect[string]().
 			Title("How are you planning to use Agbero?").
 			Options(
-				huh.NewOption("Local Development (Serve local projects / proxy local ports)", "local"),
-				huh.NewOption("Production Server (Deploying on a VPS / Cloud server)", "prod"),
+				huh.NewOption("Local Development", "local"),
+				huh.NewOption("Production Server", "prod"),
 			).
 			Value(&environment).
 			Run()
@@ -48,19 +65,30 @@ func (h *Home) Run() error {
 		}
 
 		h.ctx.Env = environment
+		fmt.Println()
 
 		if environment == "local" {
+			fmt.Println("Setting up local development environment...")
+			fmt.Println()
+
 			ca := NewCA(h.ctx)
 			if err := ca.PromptAndInstall(); err != nil {
 				h.ctx.Logger.Warn("CA prompt interrupted", "err", err)
 			}
 		} else {
-			_ = huh.NewInput().
+			fmt.Println("Setting up production environment...")
+			fmt.Println()
+
+			err := huh.NewInput().
 				Title("Let's Encrypt Email").
 				Description("Enter your email for automatic public certificates (Optional but recommended):").
 				Placeholder("admin@example.com").
 				Value(&leEmail).
 				Run()
+
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -80,7 +108,11 @@ func (h *Home) Run() error {
 		}
 	}
 
-	adminSecret, _ := h.generateSecureKey(128)
+	adminSecret, err := h.generateSecureKey(128)
+	if err != nil {
+		return fmt.Errorf("failed to generate admin secret: %w", err)
+	}
+
 	internalAuthKeyPath := filepath.Join(h.ctx.Paths.CertsDir.Path(), "internal_auth.key")
 	if err := security.GenerateNewKeyFile(internalAuthKeyPath); err != nil {
 		return fmt.Errorf("failed to generate internal auth key: %w", err)
@@ -91,7 +123,10 @@ func (h *Home) Run() error {
 		return fmt.Errorf("failed to generate admin password: %w", err)
 	}
 
-	hash, _ := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash admin password: %w", err)
+	}
 
 	devMode := "true"
 	leEnabled := "false"
@@ -130,6 +165,7 @@ func (h *Home) Run() error {
 		return err
 	}
 
+	// Professional summary with ASCII only
 	fmt.Println("\n===============================================================")
 	fmt.Println("CONFIGURATION INITIALIZED")
 	fmt.Println("===============================================================")
@@ -138,8 +174,17 @@ func (h *Home) Run() error {
 	fmt.Printf("Admin User:     admin\n")
 	fmt.Printf("Admin Password: %s\n", adminPassword)
 	fmt.Println("===============================================================")
-	fmt.Println("Note: This password is now hashed in your config file.")
+	fmt.Println("Note: Save this password - it will not be shown again.")
 	fmt.Println("")
+	fmt.Println("Next steps:")
+	fmt.Printf("  • Start Agbero:   sudo %s start\n", filepath.Base(os.Args[0]))
+	fmt.Printf("  • Check status:   sudo %s status\n", filepath.Base(os.Args[0]))
+	fmt.Printf("  • View logs:      sudo %s logs\n", filepath.Base(os.Args[0]))
+	fmt.Printf("  • Admin UI:       http://admin.localhost:9090\n")
+	fmt.Printf("  • Web UI:         http://localhost\n")
+	fmt.Println("")
+	fmt.Println("For more information, visit https://agbero.io/docs")
+	fmt.Println()
 
 	return nil
 }

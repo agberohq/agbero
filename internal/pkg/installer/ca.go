@@ -1,8 +1,11 @@
 package installer
 
 import (
+	"fmt"
+
 	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type CA struct {
@@ -20,6 +23,7 @@ func (c *CA) IsInstalled() bool {
 func (c *CA) Install() error {
 	installer := tlss.NewLocal(c.ctx.Logger, c.ctx.Paths.CertsDir)
 	if err := installer.InstallCARootIfNeeded(); err != nil {
+		installer.RemoveCA()
 		return err
 	}
 	return nil
@@ -32,6 +36,7 @@ func (c *CA) Uninstall() error {
 
 func (c *CA) PromptAndInstall() error {
 	if c.IsInstalled() {
+		fmt.Println("✓ Local CA is already installed")
 		return nil
 	}
 
@@ -40,10 +45,20 @@ func (c *CA) PromptAndInstall() error {
 		return nil
 	}
 
+	// Simple ASCII box
+	fmt.Println("╭─────────────────────────────────────────────────────╮")
+	fmt.Println("│                                                     │")
+	fmt.Println("│  Warning: HTTPS certificates will show browser      │")
+	fmt.Println("│  warnings without a local CA installed.             │")
+	fmt.Println("│                                                     │")
+	fmt.Println("╰─────────────────────────────────────────────────────╯")
+	fmt.Println()
+
 	var confirm bool
 	err := huh.NewConfirm().
 		Title("Local Certificate Authority").
-		Description("It looks like you don't have a local CA installed.\nAgbero needs this to provide secure HTTPS (no browser warnings) for local development.\n\nWould you like to install it now? (Requires admin/sudo password)").
+		Description("Would you like to install it now? (Requires admin/sudo password)").
+		WithButtonAlignment(lipgloss.Left).
 		Value(&confirm).
 		Run()
 
@@ -52,12 +67,12 @@ func (c *CA) PromptAndInstall() error {
 	}
 
 	if confirm {
-		c.ctx.Logger.Info("Installing local Certificate Authority...")
+		fmt.Println("Installing local Certificate Authority...")
 		if err := c.Install(); err != nil {
 			c.ctx.Logger.Error("Failed to install CA", "err", err)
 			return err
 		}
-		c.ctx.Logger.Info("Local CA installed successfully!")
+		fmt.Println("✓ Local CA installed successfully!")
 	} else {
 		c.ctx.Logger.Warn("Skipped CA installation. Local HTTPS connections may show browser warnings.")
 	}
