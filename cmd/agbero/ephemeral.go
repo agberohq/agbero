@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/agberohq/agbero"
@@ -40,6 +42,7 @@ func runEphemeral(e *ephemeral, global *alaye.Global, hosts map[string]*alaye.Ho
 		agbero.WithShutdownManager(e.shutdown),
 	)
 
+	// Start server (blocks until error or shutdown)
 	go func() {
 		if err := srv.Start(""); err != nil {
 			logger.Error(err)
@@ -111,7 +114,6 @@ func (e *ephemeral) handleServe() {
 		if err := ca.PromptAndInstall(); err != nil {
 			e.logger.Warn("CA installation prompt interrupted: ", err)
 		}
-		logger.Println()
 	}
 
 	global := e.createGlobal(finalPort, ctx)
@@ -120,11 +122,20 @@ func (e *ephemeral) handleServe() {
 	hosts := map[string]*alaye.Host{
 		"localhost": hostConfig,
 	}
-	scheme := e.getScheme()
-	host := fmt.Sprintf("%s://%s:%d", scheme, zulu.Or(e.bindHost, "localhost"), finalPort)
 
-	logger.Fields("path", absPath).Infof("Serving Web Server")
-	logger.Infof("web → %s", host)
+	scheme := e.getScheme()
+	domain := zulu.Or(e.bindHost, "localhost")
+	if domain == "0.0.0.0" {
+		domain = "localhost"
+	}
+
+	displayURL := fmt.Sprintf("%s://%s", scheme, domain)
+	if finalPort != 80 && finalPort != 443 {
+		displayURL = fmt.Sprintf("%s:%d", displayURL, finalPort)
+	}
+
+	logger.Infof("Serving Directory: %s", absPath)
+	logger.Infof("Available at:    %s", displayURL)
 	logger.Line(2)
 	runEphemeral(e, global, hosts)
 }
@@ -144,6 +155,17 @@ func (e *ephemeral) handleProxy() {
 
 	if e.domain == "" {
 		e.domain = "localhost"
+	}
+
+	// Support for typing `hello.localhost:80`
+	if strings.Contains(e.domain, ":") {
+		host, portStr, err := net.SplitHostPort(e.domain)
+		if err == nil {
+			e.domain = host
+			if p, err := strconv.Atoi(portStr); err == nil {
+				e.port = p
+			}
+		}
 	}
 
 	finalPort, err := zulu.PortScan(e.bindHost, e.port, woos.MaxPortRetries)
@@ -168,8 +190,13 @@ func (e *ephemeral) handleProxy() {
 	}
 
 	scheme := e.getScheme()
-	logger.Infof("Proxying %s → %s\n", e.domain, e.target)
-	logger.Infof("Listening on %s://%s:%d", scheme, zulu.Or(e.bindHost, "localhost"), finalPort)
+	displayURL := fmt.Sprintf("%s://%s", scheme, e.domain)
+	if finalPort != 80 && finalPort != 443 {
+		displayURL = fmt.Sprintf("%s:%d", displayURL, finalPort)
+	}
+
+	logger.Infof("Proxying traffic: %s → %s", e.domain, e.target)
+	logger.Infof("Available at:     %s", displayURL)
 	logger.Line(2)
 	runEphemeral(e, global, hosts)
 }

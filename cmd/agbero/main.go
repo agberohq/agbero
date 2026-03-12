@@ -274,7 +274,6 @@ func main() {
 		cmdServiceStart.Used || cmdKey.Used || cmdClusterStart.Used || cmdClusterJoin.Used ||
 		(cmdCluster.Used && !cmdClusterSecret.Used)
 
-	// UI INTERCEPTION LOGIC: Catch missing config gracefully
 	if needsConfig && !configExists {
 		if strings.TrimSpace(configPath) != "" {
 			logger.Fatal("Config file not found at specific path: ", configPath)
