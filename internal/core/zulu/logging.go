@@ -23,8 +23,6 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 
 	handlers = append(handlers, lh.NewColorizedHandler(os.Stdout))
 
-	ll.Dbg(cfg.File)
-
 	if cfg.File.Enabled.Active() && cfg.File.Path != "" {
 		logPath := cfg.File.Path
 		logDir := filepath.Dir(logPath)
