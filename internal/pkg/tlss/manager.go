@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/mappo"
 )
 
 type Manager struct {
@@ -25,8 +25,7 @@ type Manager struct {
 	acme        *ACMEProvider
 	Challenges  *ChallengeStore
 	cluster     ClusterBroadcaster
-	cacheMu     sync.RWMutex
-	cache       map[string]*tls.Certificate
+	cache       *mappo.LRU[string, *tls.Certificate]
 	onUpdate    func(domain string, certPEM, keyPEM []byte)
 }
 
@@ -35,7 +34,7 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global) *Ma
 		logger:      logger.Namespace("tls"),
 		hostManager: hm,
 		global:      global,
-		cache:       make(map[string]*tls.Certificate),
+		cache:       mappo.NewLRU[string, *tls.Certificate](10000),
 		Challenges:  NewChallengeStore(logger),
 	}
 	baseDir := woos.MakeFolder(global.Storage.DataDir, woos.DataDir)
@@ -51,7 +50,7 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global) *Ma
 	m.storage, err = NewDiskStorage(baseDir, cipher)
 	if err != nil {
 		m.logger.Error("failed to initialize TLS storage", "error", err)
-		m.storage = nil // <-- ADD THIS LINE
+		m.storage = nil
 	}
 	m.acme = NewACMEProvider(logger, &global.LetsEncrypt, m.storage, m.Challenges)
 	certDir := woos.MakeFolder(global.Storage.CertsDir, woos.CertDir)
@@ -69,12 +68,11 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 	if name == "" {
 		return nil, woos.ErrMissingSNI
 	}
-	m.cacheMu.RLock()
-	cert, hit := m.cache[name]
-	m.cacheMu.RUnlock()
-	if hit {
+
+	if cert, hit := m.cache.Get(name); hit {
 		return cert, nil
 	}
+
 	host := m.hostManager.Get(name)
 	mode := alaye.ModeLetsEncrypt
 	if host != nil && host.TLS.Mode != "" {
@@ -108,9 +106,8 @@ func (m *Manager) getCertificateLocal(host string) (*tls.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	m.cacheMu.Lock()
-	m.cache[host] = &cert
-	m.cacheMu.Unlock()
+
+	m.cache.Set(host, &cert)
 	return &cert, nil
 }
 
@@ -119,9 +116,9 @@ func (m *Manager) getCertificateACME(domain string) (*tls.Certificate, error) {
 	if err != nil {
 		return nil, woos.ErrCertNotfound
 	}
-	m.cacheMu.Lock()
-	m.cache[domain] = tlsCert
-	m.cacheMu.Unlock()
+
+	m.cache.Set(domain, tlsCert)
+
 	if m.storage != nil {
 		m.storage.Save(domain, certPEM, keyPEM)
 	}
@@ -143,9 +140,7 @@ func (m *Manager) loadFromStorage() {
 		certPEM, keyPEM, err := m.storage.Load(domain)
 		if err == nil {
 			if cert, err := tls.X509KeyPair(certPEM, keyPEM); err == nil {
-				m.cacheMu.Lock()
-				m.cache[domain] = &cert
-				m.cacheMu.Unlock()
+				m.cache.Set(domain, &cert)
 			}
 		}
 	}
@@ -183,7 +178,9 @@ func (m *Manager) GetConfigForClient(chi *tls.ClientHelloInfo) (*tls.Config, err
 	return cfg, nil
 }
 
-func (m *Manager) Close() {}
+func (m *Manager) Close() {
+	m.cache.Clear()
+}
 
 func (m *Manager) SetUpdateCallback(fn func(domain string, certPEM, keyPEM []byte)) {
 	m.onUpdate = fn
@@ -199,9 +196,9 @@ func (m *Manager) ApplyClusterCertificate(domain string, certPEM, keyPEM []byte)
 	if err != nil {
 		return err
 	}
-	m.cacheMu.Lock()
-	m.cache[domain] = &cert
-	m.cacheMu.Unlock()
+
+	m.cache.Set(domain, &cert)
+
 	if m.storage != nil {
 		m.storage.Save(domain, certPEM, keyPEM)
 	}
@@ -217,9 +214,9 @@ func (m *Manager) UpdateCertificate(domain string, certPEM, keyPEM []byte) error
 	if err != nil {
 		return err
 	}
-	m.cacheMu.Lock()
-	m.cache[domain] = &cert
-	m.cacheMu.Unlock()
+
+	m.cache.Set(domain, &cert)
+
 	if m.storage != nil {
 		if err := m.storage.Save(domain, certPEM, keyPEM); err != nil {
 			return err
