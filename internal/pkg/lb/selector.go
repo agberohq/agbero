@@ -295,3 +295,7 @@ func (s *Selector) pickConsistentHash(key uint64) Backend {
 	}
 	return nil
 }
+
+func (s *Selector) Stop() {
+	// Base selector has no background goroutines to stop
+}

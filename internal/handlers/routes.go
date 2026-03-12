@@ -40,6 +40,7 @@ type Config struct {
 type Route struct {
 	handler  http.Handler
 	Backends []*xhttp.Backend
+	Proxy    *xhttp.Proxy
 	ipMgr    *zulu.IPManager
 	global   *alaye.Global
 }
@@ -83,6 +84,10 @@ func (h *Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Route) Close() {
+	if h.Proxy != nil {
+		h.Proxy.Stop()
+	}
+
 	if len(h.Backends) > 0 {
 		var wg sync.WaitGroup
 
@@ -246,6 +251,7 @@ func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 	return &Route{
 		handler:  chain,
 		Backends: backends,
+		Proxy:    loadBalancer,
 		ipMgr:    cfg.IPMgr,
 		global:   cfg.Global,
 	}

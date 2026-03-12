@@ -15,6 +15,8 @@ type Adaptive struct {
 	allBackends     []Backend
 	learningRate    float64
 	decayFactor     float64
+	stopCh          chan struct{}
+	stopOnce        sync.Once
 }
 
 type backendMetrics struct {
@@ -35,6 +37,7 @@ func NewAdaptive(child Balancer, learningRate float64) *Adaptive {
 		performanceData: make(map[Backend]*backendMetrics),
 		learningRate:    learningRate,
 		decayFactor:     0.95,
+		stopCh:          make(chan struct{}),
 	}
 	go a.cleanupLoop()
 	return a
@@ -43,8 +46,13 @@ func NewAdaptive(child Balancer, learningRate float64) *Adaptive {
 func (s *Adaptive) cleanupLoop() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		s.Cleanup()
+	for {
+		select {
+		case <-ticker.C:
+			s.Cleanup()
+		case <-s.stopCh:
+			return
+		}
 	}
 }
 
@@ -148,6 +156,15 @@ func (s *Adaptive) RecordResult(backend Backend, latencyMicros int64, failed boo
 		m.avgLatency = m.avgLatency*(1.0-alpha) + float64(latencyMicros)*alpha
 	}
 	m.lastUpdated = time.Now()
+}
+
+func (s *Adaptive) Stop() {
+	s.stopOnce.Do(func() {
+		close(s.stopCh)
+		if s.balancer != nil {
+			s.balancer.Stop()
+		}
+	})
 }
 
 func randFloat() float64 {

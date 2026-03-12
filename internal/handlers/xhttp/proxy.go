@@ -110,3 +110,9 @@ func (b *Proxy) Update(list []*Backend) {
 	}
 	b.lb.Update(wrapped)
 }
+
+func (b *Proxy) Stop() {
+	if b.lb != nil {
+		b.lb.Stop()
+	}
+}

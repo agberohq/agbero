@@ -23,6 +23,7 @@ type Backend interface {
 type Balancer interface {
 	Pick(r *http.Request, keyFunc func() uint64) Backend
 	Update(backends []Backend)
+	Stop()
 }
 
 type Strategy uint8

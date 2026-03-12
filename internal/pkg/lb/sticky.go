@@ -60,7 +60,6 @@ func (s *Sticky) Update(backends []Backend) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Collect keys to delete first (avoid modifying cache during Range)
 	var toDelete []string
 	s.cache.Range(func(key string, value Backend) bool {
 		if _, ok := valid[value]; !ok {
@@ -75,10 +74,13 @@ func (s *Sticky) Update(backends []Backend) {
 	}
 }
 
-// Stop gracefully shuts down the reaper.
+// Stop gracefully shuts down the reaper and child balancer.
 func (s *Sticky) Stop() {
 	s.stopOnce.Do(func() {
 		s.reaper.Stop()
+		if s.balancer != nil {
+			s.balancer.Stop()
+		}
 	})
 }
 
