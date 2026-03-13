@@ -1536,8 +1536,8 @@ func (s *Server) configApplyReload(global *alaye.Global, sha string, newIPMgr *z
 	zulu.Route.Clear()
 }
 
-func (s *Server) configBuildRoute(hosts map[string]*alaye.Host) map[string]bool {
-	validKeys := make(map[string]bool)
+func (s *Server) configBuildRoute(hosts map[string]*alaye.Host) map[alaye.BackendKey]bool {
+	validKeys := make(map[alaye.BackendKey]bool)
 	for domain, h := range hosts {
 		for _, r := range h.Routes {
 			if r.Backends.Enabled.Active() {

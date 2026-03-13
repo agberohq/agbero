@@ -50,7 +50,7 @@ func RegisterTCPPatients(listen string, cfg alaye.TCPRoute, doc *jack.Doctor, lo
 		}
 
 		patient := jack.NewPatient(jack.PatientConfig{
-			ID:       statsKey,
+			ID:       statsKey.String(),
 			Interval: probeCfg.StandardInterval,
 			Timeout:  probeCfg.Timeout,
 			Check: func(ctx context.Context) error {

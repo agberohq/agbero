@@ -98,10 +98,15 @@ func (t *TCPHealthCheck) Validate() error {
 }
 
 // BackendKey provides a deterministic, centralized identifier for routing observability
-func (t *TCPRoute) BackendKey(backendAddr string) string {
+func (t *TCPRoute) BackendKey(backendAddr string) BackendKey {
 	sni := t.SNI
 	if sni == "" {
 		sni = "*"
 	}
-	return "tcp|" + t.Listen + "|" + sni + "|" + backendAddr
+	return BackendKey{
+		Protocol: "tcp",
+		Domain:   t.Listen,
+		Path:     sni,
+		Addr:     backendAddr,
+	}
 }

@@ -62,6 +62,7 @@ type Backend struct {
 	hcConfig     *alaye.HealthCheck
 	routeDomains []string
 	Fallback     http.Handler
+	statsKey     alaye.BackendKey
 }
 
 func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
@@ -129,6 +130,7 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		Activity:     stats.Activity,
 		Fallback:     xhttpCfg.Fallback,
 		HealthScore:  hScore,
+		statsKey:     statsKey,
 	}
 	b.lastRecovery.Store(now.UnixNano())
 
@@ -236,7 +238,7 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 }
 
 func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if b.Abort.ShouldAbort(b.URL.String(), b.HealthScore) {
+	if b.Abort.ShouldAbort(b.statsKey, b.HealthScore) {
 		if b.Fallback != nil {
 			b.Fallback.ServeHTTP(w, r)
 		} else {
@@ -261,8 +263,6 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dur := time.Since(start)
 		failed := *failedPtr
 
-		// Only treat Gateway/Network errors as circuit-breaker-tripping failures.
-		// Standard 500/501 errors mean the app code failed, but the node is still alive.
 		if rw, ok := w.(*zulu.ResponseWriter); ok {
 			if rw.StatusCode == http.StatusBadGateway ||
 				rw.StatusCode == http.StatusServiceUnavailable ||

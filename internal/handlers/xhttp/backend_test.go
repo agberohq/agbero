@@ -100,7 +100,7 @@ func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb al
 		}
 
 		patient := jack.NewPatient(jack.PatientConfig{
-			ID:       statsKey,
+			ID:       statsKey.String(),
 			Interval: hc.Interval,
 			Timeout:  hc.Timeout,
 			Check: func(ctx context.Context) error {
@@ -517,7 +517,7 @@ func TestHealthCheck_HostHeader_From_Domains(t *testing.T) {
 	}
 
 	patient := jack.NewPatient(jack.PatientConfig{
-		ID:       statsKey,
+		ID:       statsKey.String(),
 		Interval: hc.Interval,
 		Timeout:  hc.Timeout,
 		Check: func(ctx context.Context) error {

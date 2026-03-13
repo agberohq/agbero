@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/olekukonko/mappo"
 )
 
@@ -17,16 +18,16 @@ func (s *BackendStats) Close() {
 }
 
 type Registry struct {
-	items *mappo.Concurrent[string, *BackendStats]
+	items *mappo.Concurrent[alaye.BackendKey, *BackendStats]
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
-		items: mappo.NewConcurrent[string, *BackendStats](),
+		items: mappo.NewConcurrent[alaye.BackendKey, *BackendStats](),
 	}
 }
 
-func (r *Registry) GetOrRegister(key string) *BackendStats {
+func (r *Registry) GetOrRegister(key alaye.BackendKey) *BackendStats {
 	stats := r.items.Compute(key, func(current *BackendStats, exists bool) (*BackendStats, bool) {
 		if exists {
 			return current, true
@@ -38,15 +39,15 @@ func (r *Registry) GetOrRegister(key string) *BackendStats {
 	return stats
 }
 
-func (r *Registry) Get(key string) *BackendStats {
+func (r *Registry) Get(key alaye.BackendKey) *BackendStats {
 	stats, _ := r.items.Get(key)
 	return stats
 }
 
-func (r *Registry) Prune(keepKeys map[string]bool) {
+func (r *Registry) Prune(keepKeys map[alaye.BackendKey]bool) {
 	var toClose []*BackendStats
 
-	r.items.Range(func(k string, v *BackendStats) bool {
+	r.items.Range(func(k alaye.BackendKey, v *BackendStats) bool {
 		if !keepKeys[k] {
 			toClose = append(toClose, v)
 			r.items.Delete(k)

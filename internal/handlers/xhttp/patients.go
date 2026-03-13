@@ -91,7 +91,7 @@ func RegisterHTTPPatients(domain string, route *alaye.Route, doc *jack.Doctor, r
 		}
 
 		patient := jack.NewPatient(jack.PatientConfig{
-			ID:       statsKey,
+			ID:       statsKey.String(),
 			Interval: probeCfg.StandardInterval,
 			Timeout:  probeCfg.Timeout,
 			Check: func(ctx context.Context) error {
