@@ -26,6 +26,7 @@ var (
 	ErrWorkDirNotSet    = errors.New("work directory not set")
 	ErrRepositoryNotSet = errors.New("repository URL not set")
 	ErrAuthFailed       = errors.New("authentication failed")
+	ErrCookIDRequired   = errors.New("cook ID is required")
 )
 
 // Config defines the configuration for a Cook instance.
@@ -70,24 +71,24 @@ type Cook struct {
 
 // New creates a Cook instance with the provided configuration.
 func New(cfg Config) (*Cook, error) {
-	if cfg.ID == "" {
-		return nil, errors.New("cook ID is required")
+	if cfg.ID == EmptyString {
+		return nil, ErrCookIDRequired
 	}
-	if cfg.URL == "" {
+	if cfg.URL == EmptyString {
 		return nil, ErrRepositoryNotSet
 	}
-	if cfg.WorkDir == "" {
+	if cfg.WorkDir == EmptyString {
 		return nil, ErrWorkDirNotSet
 	}
 
 	// Set defaults
 	if cfg.KeepLast <= 0 {
-		cfg.KeepLast = 2
+		cfg.KeepLast = DefaultLastKeep
 	}
 
 	// Ensure work directory exists
 	workDir := filepath.Join(cfg.WorkDir, cfg.ID)
-	if err := os.MkdirAll(workDir, 0750); err != nil {
+	if err := os.MkdirAll(workDir, DirPermOwnerGroup); err != nil {
 		return nil, fmt.Errorf("failed to create work directory: %w", err)
 	}
 
@@ -109,7 +110,7 @@ func (c *Cook) CurrentPath() string {
 	current := c.current
 	c.mu.RUnlock()
 
-	if current != "" {
+	if current != EmptyString {
 		path := c.deployPath(current)
 		if _, err := os.Stat(path); err == nil {
 			return path
@@ -117,17 +118,17 @@ func (c *Cook) CurrentPath() string {
 	}
 
 	// Fallback: read from symlink
-	linkPath := filepath.Join(c.workDir(), "current")
+	linkPath := filepath.Join(c.workDir(), CurrentLink)
 	target, err := os.Readlink(linkPath)
 	if err != nil {
-		return ""
+		return EmptyString
 	}
 
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(c.workDir(), target)
 	}
 	if _, err := os.Stat(target); err != nil {
-		return ""
+		return EmptyString
 	}
 
 	return target
@@ -159,19 +160,19 @@ func (c *Cook) Make(ctx context.Context) error {
 	}
 
 	deployBase := c.deployBase()
-	if err := os.MkdirAll(deployBase, 0750); err != nil {
+	if err := os.MkdirAll(deployBase, DirPermOwnerGroup); err != nil {
 		deployErr = fmt.Errorf("failed to create deploy base: %w", err)
 		return deployErr
 	}
 
 	// Create temp directory for clone
-	tmpDir, err := os.MkdirTemp(deployBase, "tmp_")
+	tmpDir, err := os.MkdirTemp(deployBase, TempLink)
 	if err != nil {
 		deployErr = fmt.Errorf("failed to create temp directory: %w", err)
 		return deployErr
 	}
 	defer func() {
-		if tmpDir != "" {
+		if tmpDir != EmptyString {
 			_ = os.RemoveAll(tmpDir)
 		}
 	}()
@@ -181,12 +182,12 @@ func (c *Cook) Make(ctx context.Context) error {
 	cloneOpts := &git.CloneOptions{
 		URL:          c.config.URL,
 		SingleBranch: true,
-		Depth:        1,
+		Depth:        GitDefaultDepth,
 		Progress:     io.Discard,
 		Auth:         c.getAuth(),
 	}
 
-	if c.config.Branch != "" {
+	if c.config.Branch != EmptyString {
 		cloneOpts.ReferenceName = plumbing.NewBranchReferenceName(c.config.Branch)
 	}
 
@@ -203,7 +204,7 @@ func (c *Cook) Make(ctx context.Context) error {
 	}
 
 	commitHash := ref.Hash().String()
-	if len(commitHash) < 8 {
+	if len(commitHash) < DefaultCommitHashLen {
 		deployErr = ErrInvalidCommit
 		return deployErr
 	}
@@ -214,10 +215,10 @@ func (c *Cook) Make(ctx context.Context) error {
 	if _, err := os.Stat(deployDir); err == nil {
 		c.logger.Infof("commit %s already deployed, switching", commitHash[:8])
 		_ = os.RemoveAll(tmpDir)
-		tmpDir = ""
+		tmpDir = EmptyString
 	} else {
 		// Remove .git to save space
-		gitDir := filepath.Join(tmpDir, ".git")
+		gitDir := filepath.Join(tmpDir, GitDirectory)
 		if err := os.RemoveAll(gitDir); err != nil {
 			c.logger.Warnf("failed to remove .git directory: %v", err)
 		}
@@ -227,7 +228,7 @@ func (c *Cook) Make(ctx context.Context) error {
 			deployErr = fmt.Errorf("failed to finalize deployment: %w", err)
 			return deployErr
 		}
-		tmpDir = ""
+		tmpDir = EmptyString
 	}
 
 	// Atomic symlink switch for zero-downtime deployment
@@ -291,7 +292,7 @@ func (c *Cook) ListDeployments() ([]Deployment, error) {
 
 	var deps []Deployment
 	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), "tmp_") {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), TempLink) {
 			continue
 		}
 
@@ -337,7 +338,7 @@ func (c *Cook) Cleanup(keep int) error {
 
 	var items []deployInfo
 	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), "tmp_") {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), TempLink) {
 			continue
 		}
 		if e.Name() == current {
@@ -394,10 +395,10 @@ func (c *Cook) Metrics() Metrics {
 
 // validate checks configuration.
 func (c *Cook) validate() error {
-	if c.config.URL == "" {
+	if c.config.URL == EmptyString {
 		return ErrRepositoryNotSet
 	}
-	if c.config.WorkDir == "" {
+	if c.config.WorkDir == EmptyString {
 		return ErrWorkDirNotSet
 	}
 	return nil
@@ -410,7 +411,7 @@ func (c *Cook) workDir() string {
 
 // deployBase returns the base directory for all deployments.
 func (c *Cook) deployBase() string {
-	return filepath.Join(c.workDir(), "deploy")
+	return filepath.Join(c.workDir(), DeployDirName)
 }
 
 // deployPath returns the path for a specific commit deployment.
@@ -420,8 +421,8 @@ func (c *Cook) deployPath(commit string) string {
 
 // atomicSwitch performs an atomic symlink switch.
 func (c *Cook) atomicSwitch(deployDir, commitHash string) error {
-	linkPath := filepath.Join(c.workDir(), "current")
-	tmpLink := linkPath + ".tmp"
+	linkPath := filepath.Join(c.workDir(), CurrentLink)
+	tmpLink := linkPath + TempDir
 
 	_ = os.Remove(tmpLink)
 
@@ -452,25 +453,25 @@ func (c *Cook) getAuth() transport.AuthMethod {
 	auth := c.config.Auth
 
 	switch auth.Type {
-	case "basic":
-		if auth.Username != "" {
+	case AuthTypeBasic:
+		if auth.Username != EmptyString {
 			return &http.BasicAuth{
 				Username: auth.Username,
 				Password: auth.Password,
 			}
 		}
-	case "ssh-key":
-		if auth.SSHKey != "" {
-			publicKey, err := ssh.NewPublicKeys("git", []byte(auth.SSHKey), auth.SSHKeyPassphrase)
+	case AuthTypeSSHKey:
+		if auth.SSHKey != EmptyString {
+			publicKey, err := ssh.NewPublicKeys(GitConst, []byte(auth.SSHKey), auth.SSHKeyPassphrase)
 			if err != nil {
 				c.logger.Warnf("failed to parse SSH key: %v", err)
 				return nil
 			}
 			return publicKey
 		}
-	case "ssh-agent":
+	case AuthTypeSSHAgent:
 		// Use SSH agent authentication
-		authMethod, err := ssh.NewSSHAgentAuth("git")
+		authMethod, err := ssh.NewSSHAgentAuth(GitConst)
 		if err != nil {
 			c.logger.Warnf("failed to connect to SSH agent: %v", err)
 			return nil
