@@ -1016,32 +1016,33 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.HasPrefix(r.URL.Path, "/.agbero/webhook/git/") {
-		routeKey := strings.TrimPrefix(r.URL.Path, "/.agbero/webhook/git/")
-		if s.cookManager != nil {
-			s.cookManager.HandleWebhook(w, r, routeKey)
-			s.logRequest("Webhook", r, start, http.StatusAccepted, 0)
-		} else {
-			http.Error(w, "Git manager disabled", http.StatusServiceUnavailable)
-			s.logRequest("Webhook", r, start, http.StatusServiceUnavailable, 0)
-		}
-		return
-	}
-
-	if info := wellknown.NewPathInfo(r.URL.Path); info != nil && info.IsACMEChallenge() {
-		if s.tlsManager != nil && s.tlsManager.Challenges != nil {
-			if token, ok := info.GetACMEToken(); ok {
-				if keyAuth, ok := s.tlsManager.Challenges.GetKeyAuth(token); ok {
-					w.Header().Set("Content-Type", "text/plain")
-					w.WriteHeader(http.StatusOK)
-					w.Write([]byte(keyAuth))
-					s.logRequest("ACME", r, start, http.StatusOK, int64(len(keyAuth)))
-					return
+	if info := wellknown.NewPathInfo(r.URL.Path); info != nil {
+		if info.IsACMEChallenge() {
+			if s.tlsManager != nil && s.tlsManager.Challenges != nil {
+				if token, ok := info.GetACMEToken(); ok {
+					if keyAuth, ok := s.tlsManager.Challenges.GetKeyAuth(token); ok {
+						w.Header().Set("Content-Type", "text/plain")
+						w.WriteHeader(http.StatusOK)
+						w.Write([]byte(keyAuth))
+						s.logRequest("ACME", r, start, http.StatusOK, int64(len(keyAuth)))
+						return
+					}
 				}
 			}
+			http.Error(w, "Challenge not found", http.StatusNotFound)
+			return
 		}
-		http.Error(w, "Challenge not found", http.StatusNotFound)
-		return
+
+		if routeKey, ok := info.GetWebhookRouteKey(); ok {
+			if s.cookManager != nil {
+				s.cookManager.HandleWebhook(w, r, routeKey)
+				s.logRequest("Webhook", r, start, http.StatusAccepted, 0)
+			} else {
+				http.Error(w, "Git manager disabled", http.StatusServiceUnavailable)
+				s.logRequest("Webhook", r, start, http.StatusServiceUnavailable, 0)
+			}
+			return
+		}
 	}
 
 	var host string

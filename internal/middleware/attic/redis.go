@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
-	"strconv"
+	"fmt"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -27,26 +27,23 @@ func NewRedis(cfg *alaye.Cache, logger *ll.Logger) (*Redis, error) {
 	db := 0
 	prefix := "agbero:cache:"
 
-	if host, ok := cfg.Options["host"]; ok {
-		if port, ok := cfg.Options["port"]; ok {
-			addr = host + ":" + port
-		} else {
-			addr = host + ":6379"
+	if cfg.Redis != nil {
+		if cfg.Redis.Host != "" {
+			port := 6379
+			if cfg.Redis.Port > 0 {
+				port = cfg.Redis.Port
+			}
+			addr = fmt.Sprintf("%s:%d", cfg.Redis.Host, port)
 		}
-	}
-
-	if pwd, ok := cfg.Options["password"]; ok {
-		password = pwd
-	}
-
-	if d, ok := cfg.Options["db"]; ok {
-		if n, err := strconv.Atoi(d); err == nil {
-			db = n
+		if cfg.Redis.Password != "" {
+			password = cfg.Redis.Password
 		}
-	}
-
-	if p, ok := cfg.Options["key_prefix"]; ok {
-		prefix = p
+		if cfg.Redis.DB >= 0 {
+			db = cfg.Redis.DB
+		}
+		if cfg.Redis.KeyPrefix != "" {
+			prefix = cfg.Redis.KeyPrefix
+		}
 	}
 
 	client := redis.NewClient(&redis.Options{

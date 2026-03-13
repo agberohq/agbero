@@ -18,6 +18,7 @@ const (
 	OpenIDConfiguration Type = "openid-configuration"
 	HostMeta            Type = "host-meta"
 	NodeInfo            Type = "nodeinfo"
+	Agbero              Type = "agbero"
 )
 
 // Path represents a parsed .well-known path
@@ -90,6 +91,19 @@ func (p *Path) IsACMEChallenge() bool {
 func (p *Path) GetACMEToken() (string, bool) {
 	if p.IsACMEChallenge() && p.SubPath != "" {
 		return p.SubPath, true
+	}
+	return "", false
+}
+
+// IsAgberoWebhook checks whether the path is an Agbero git webhook.
+func (p *Path) IsAgberoWebhook() bool {
+	return p.Type == Agbero && strings.HasPrefix(p.SubPath, "webhook/git/")
+}
+
+// GetWebhookRouteKey extracts the route key from a webhook path.
+func (p *Path) GetWebhookRouteKey() (string, bool) {
+	if p.IsAgberoWebhook() {
+		return strings.TrimPrefix(p.SubPath, "webhook/git/"), true
 	}
 	return "", false
 }

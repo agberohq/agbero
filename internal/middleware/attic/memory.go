@@ -16,15 +16,15 @@ type MemoryStore struct {
 }
 
 func NewMemoryStore(cfg *alaye.Cache) (*MemoryStore, error) {
-	maxSize := 50_000
-	if sizeStr, ok := cfg.Options["max_size_mb"]; ok {
-		if size, err := strconv.Atoi(sizeStr); err == nil && size > 0 {
-			maxSize = size * 1024 * 1024
-		}
+	maxItems := 10_000 // Safe default
+
+	if cfg.Memory != nil && cfg.Memory.MaxItems > 0 {
+		maxItems = cfg.Memory.MaxItems
 	}
+
 	return &MemoryStore{
 		cache: mappo.NewCache(mappo.CacheOptions{
-			MaximumSize: maxSize,
+			MaximumSize: maxItems,
 			OnDelete:    mappo.CloserDelete,
 		}),
 		maxTTL: cfg.TTL,

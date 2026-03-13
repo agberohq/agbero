@@ -626,6 +626,12 @@ func defaultCache(c *alaye.Cache) {
 	if c.Driver == "" {
 		c.Driver = "memory"
 	}
+	if c.Driver == "memory" && c.Memory == nil {
+		c.Memory = &alaye.MemoryCache{MaxItems: 10_000}
+	}
+	if c.Driver == "redis" && c.Redis == nil {
+		c.Redis = &alaye.RedisCache{Host: "localhost", Port: 6379}
+	}
 }
 
 func compileCondition(c *alaye.Condition) {

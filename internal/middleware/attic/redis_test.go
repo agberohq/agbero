@@ -20,10 +20,12 @@ func TestRedisCache(t *testing.T) {
 		Driver:  "redis",
 		Methods: []string{"GET"},
 		TTL:     time.Minute,
-		Options: map[string]string{
-			"host": "localhost",
-			"port": "6379",
-			"db":   "1",
+		Redis: &alaye.RedisCache{
+			Host:      "localhost",
+			Port:      6379,
+			Password:  "",
+			DB:        1,
+			KeyPrefix: "",
 		},
 	}
 	t.Run("Basic Cache Hit After Miss", func(t *testing.T) {
@@ -200,10 +202,12 @@ func TestRedisCache(t *testing.T) {
 			Driver:  "redis",
 			Methods: []string{"GET"},
 			TTL:     shortTTL,
-			Options: map[string]string{
-				"host": "localhost",
-				"port": "6379",
-				"db":   "1",
+			Redis: &alaye.RedisCache{
+				Host:      "localhost",
+				Port:      6379,
+				Password:  "",
+				DB:        1,
+				KeyPrefix: "",
 			},
 		}
 		store, err := NewRedis(cfg, logger)
@@ -254,29 +258,29 @@ func TestRedisStoreOptions(t *testing.T) {
 	logger := ll.New("").Disable()
 	tests := []struct {
 		name    string
-		options map[string]string
+		options alaye.RedisCache
 	}{
 		{
 			name:    "Default options",
-			options: map[string]string{},
+			options: alaye.RedisCache{},
 		},
 		{
 			name: "Custom host and port",
-			options: map[string]string{
-				"host": "localhost",
-				"port": "6379",
+			options: alaye.RedisCache{
+				Host: "localhost",
+				Port: 6379,
 			},
 		},
 		{
 			name: "Custom DB",
-			options: map[string]string{
-				"db": "2",
+			options: alaye.RedisCache{
+				DB: 2,
 			},
 		},
 		{
 			name: "Custom key prefix",
-			options: map[string]string{
-				"key_prefix": "test:cache:",
+			options: alaye.RedisCache{
+				KeyPrefix: "test:cache:",
 			},
 		},
 	}
@@ -287,7 +291,7 @@ func TestRedisStoreOptions(t *testing.T) {
 				Driver:  "redis",
 				Methods: []string{"GET"},
 				TTL:     time.Minute,
-				Options: tt.options,
+				Redis:   &tt.options,
 			}
 			store, err := NewRedis(cfg, logger)
 			if err != nil {

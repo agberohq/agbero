@@ -114,7 +114,7 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 	}
 	m.entries[routeKey] = entry
 
-	m.logger.Fields("route_key", routeKey, "webhook", "/.agbero/webhook/git/"+routeKey).Info("git integration configured")
+	m.logger.Fields("route_key", routeKey, "webhook", "/.well-known/agbero/webhook/git/"+routeKey).Info("git integration configured")
 
 	// Initial async deployment via pool
 	m.wg.Add(1)
