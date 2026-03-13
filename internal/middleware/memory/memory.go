@@ -5,16 +5,30 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"strconv"
+	"sync/atomic"
 )
 
 type ctxKey struct{}
 
 var requestIDKey = &ctxKey{}
 
+var (
+	// serverPrefix is generated once on startup to ensure globally unique IDs across restarts/nodes
+	serverPrefix   string
+	requestCounter atomic.Uint64
+)
+
+func init() {
+	b := make([]byte, 6)
+	_, _ = rand.Read(b)
+	serverPrefix = hex.EncodeToString(b) + "-"
+}
+
+// Generate creates a highly performant, lock-free unique request ID.
+// It avoids making syscalls to /dev/urandom on the hot path.
 func Generate() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	return serverPrefix + strconv.FormatUint(requestCounter.Add(1), 36)
 }
 
 func FromContext(ctx context.Context) string {
