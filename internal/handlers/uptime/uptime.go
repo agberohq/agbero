@@ -197,7 +197,8 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 			}
 
 			for _, srv := range route.Backends.Servers {
-				statsKey := route.BackendKey(domain, srv.Address)
+				addressStr := srv.Address.String() // Upgraded to alaye.Address
+				statsKey := route.BackendKey(domain, addressStr)
 
 				var latSnap metrics.LatencySnapshot
 				var failures, reqs, inFlight int64
@@ -257,7 +258,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 				}
 
 				bSnap := &BackendSnapshot{
-					URL:       srv.Address,
+					URL:       addressStr,
 					Alive:     alive,
 					InFlight:  inFlight,
 					Failures:  failures,
@@ -290,7 +291,8 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 			}
 
 			for _, srv := range proxy.Backends {
-				statsKey := proxy.BackendKey(srv.Address)
+				addressStr := srv.Address.String() // Upgraded to alaye.Address
+				statsKey := proxy.BackendKey(addressStr)
 
 				var latSnap metrics.LatencySnapshot
 				var failures, reqs, inFlight int64
@@ -301,7 +303,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 					Score:  100,
 				}
 
-				hasProber := proxy.HealthCheck.Enabled.Active() || (proxy.HealthCheck.Enabled == alaye.Unknown && (proxy.HealthCheck.Send != "" || proxy.HealthCheck.Expect != "")) || strings.HasSuffix(srv.Address, ":6379")
+				hasProber := proxy.HealthCheck.Enabled.Active() || (proxy.HealthCheck.Enabled == alaye.Unknown && (proxy.HealthCheck.Send != "" || proxy.HealthCheck.Expect != "")) || strings.HasSuffix(addressStr, ":6379")
 
 				if hScore, hasScore := res.Health.Get(statsKey); hasScore {
 					hSnapStruct.Score = int(hScore.Value())
@@ -350,7 +352,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 				}
 
 				bSnap := &BackendSnapshot{
-					URL:       srv.Address,
+					URL:       addressStr,
 					Alive:     alive,
 					InFlight:  inFlight,
 					Failures:  failures,

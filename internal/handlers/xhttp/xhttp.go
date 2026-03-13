@@ -58,7 +58,7 @@ func (c ConfigBackend) Validate() error {
 		return errors.New("metrics registry required")
 	}
 	if c.Resource.Health == nil {
-		return errors.New("health store required")
+		return errors.New("health registry required")
 	}
 	return nil
 }

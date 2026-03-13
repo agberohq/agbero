@@ -75,7 +75,7 @@ func (s *Selector) Pick(r *http.Request, keyFunc func() uint64) Backend {
 		return nil
 	}
 	if len(s.backends) == 1 {
-		if s.backends[0].Alive() {
+		if s.backends[0].IsUsable() {
 			return s.backends[0]
 		}
 		return nil
@@ -119,7 +119,7 @@ func (s *Selector) pickRoundRobin() Backend {
 			idx = int(counter % uint64(n))
 		}
 
-		if idx < n && s.backends[idx].Alive() {
+		if idx < n && s.backends[idx].IsUsable() {
 			return s.backends[idx]
 		}
 	}
@@ -138,7 +138,7 @@ func (s *Selector) pickRandom() Backend {
 	start := rng.IntN(n)
 	for i := range n {
 		idx := (start + i) % n
-		if s.backends[idx].Alive() {
+		if s.backends[idx].IsUsable() {
 			return s.backends[idx]
 		}
 	}
@@ -150,7 +150,7 @@ func (s *Selector) pickLeastConn() Backend {
 	min := int64(math.MaxInt64)
 
 	for _, b := range s.backends {
-		if !b.Alive() {
+		if !b.IsUsable() {
 			continue
 		}
 		if c := b.InFlight(); c < min {
@@ -166,7 +166,7 @@ func (s *Selector) pickWeightedLeastConn() Backend {
 	bestRatio := -1.0
 
 	for _, b := range s.backends {
-		if !b.Alive() {
+		if !b.IsUsable() {
 			continue
 		}
 
@@ -206,7 +206,7 @@ func (s *Selector) pickHash(key uint64) Backend {
 	}
 
 	idx := s.wheel.search(key % s.wheel.total)
-	if idx >= 0 && idx < len(s.backends) && s.backends[idx].Alive() {
+	if idx >= 0 && idx < len(s.backends) && s.backends[idx].IsUsable() {
 		return s.backends[idx]
 	}
 	return s.pickRandom()
@@ -217,7 +217,7 @@ func (s *Selector) pickLeastResponseTime() Backend {
 	bestScore := float64(math.MaxFloat64)
 
 	for _, b := range s.backends {
-		if !b.Alive() {
+		if !b.IsUsable() {
 			continue
 		}
 
@@ -256,10 +256,10 @@ func (s *Selector) pickPowerOfTwoChoices() Backend {
 	}
 
 	var candidates []int
-	if idx1 < n && s.backends[idx1].Alive() {
+	if idx1 < n && s.backends[idx1].IsUsable() {
 		candidates = append(candidates, idx1)
 	}
-	if idx2 < n && s.backends[idx2].Alive() {
+	if idx2 < n && s.backends[idx2].IsUsable() {
 		candidates = append(candidates, idx2)
 	}
 
@@ -289,7 +289,7 @@ func (s *Selector) pickConsistentHash(key uint64) Backend {
 
 	for i := 0; i < len(s.backends); i++ {
 		checkIdx := (idx + i) % len(s.backends)
-		if s.backends[checkIdx].Alive() {
+		if s.backends[checkIdx].IsUsable() {
 			return s.backends[checkIdx]
 		}
 	}
@@ -297,5 +297,7 @@ func (s *Selector) pickConsistentHash(key uint64) Backend {
 }
 
 func (s *Selector) Stop() {
-	// Base selector has no background goroutines to stop
+	s.mu.Lock()
+	s.backends = nil
+	s.mu.Unlock()
 }

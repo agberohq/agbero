@@ -322,6 +322,23 @@ func (s *Score) IsRapidDeterioration() bool {
 	return s.trend.Load() == -1 && s.value.Load() < 50
 }
 
+// ForceState directly sets the health state, bypassing score calculation.
+// Use sparingly - only when external logic determines state definitively.
+// Thread-safe: uses atomic operations, no mutex required.
+func (s *Score) ForceState(newState State) {
+	oldState := State(s.state.Swap(int32(newState)))
+	if oldState != newState && s.onStateChange != nil {
+		// Callback outside atomic swap to avoid holding lock during user code
+		s.onStateChange(oldState, newState, s.value.Load())
+	}
+	s.updateSnapshot()
+}
+
+// ForceHealthy is a convenience wrapper for ForceState(StateHealthy)
+func (s *Score) ForceHealthy() {
+	s.ForceState(StateHealthy)
+}
+
 func clamp(v, min, max int32) int32 {
 	if v < min {
 		return min

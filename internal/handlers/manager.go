@@ -1,0 +1,411 @@
+package handlers
+
+import (
+	"context"
+	"crypto/tls"
+	"log"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
+	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/handlers/xtcp"
+	"github.com/agberohq/agbero/internal/middleware/firewall"
+	"github.com/agberohq/agbero/internal/middleware/ratelimit"
+	"github.com/agberohq/agbero/internal/middleware/wasm"
+	"github.com/agberohq/agbero/internal/pkg/cook"
+	"github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/olekukonko/errors"
+	"github.com/quic-go/quic-go/http3"
+)
+
+type ManagerConfig struct {
+	Global      *alaye.Global
+	HostManager *discovery.Host
+	Resource    *resource.Manager
+	IPMgr       *zulu.IPManager
+	CookManager *cook.Manager
+	TLSManager  *tlss.Manager
+}
+
+type Manager struct {
+	cfg          ManagerConfig
+	wasmCache    sync.Map
+	skipLogPaths map[string]bool
+
+	baseHandler http.Handler
+	acmeHandler http.Handler
+	tlsConfig   *tls.Config
+
+	firewall    *firewall.Engine
+	rateLimiter *ratelimit.RateLimiter
+
+	logArgsPool sync.Pool
+}
+
+type llWriter struct {
+	logger interface{ Error(args ...interface{}) }
+}
+
+func (w *llWriter) Write(p []byte) (n int, err error) {
+	msg := strings.TrimSpace(string(p))
+	w.logger.Error("source", "std_http", "msg", msg)
+	return len(p), nil
+}
+
+func NewManager(cfg ManagerConfig) (*Manager, error) {
+	if cfg.Global == nil {
+		return nil, errors.New("global config required")
+	}
+	if cfg.HostManager == nil {
+		return nil, errors.New("host manager required")
+	}
+	if cfg.Resource == nil {
+		return nil, errors.New("resource manager required")
+	}
+	m := &Manager{
+		cfg:          cfg,
+		skipLogPaths: make(map[string]bool),
+		logArgsPool: sync.Pool{
+			New: func() any {
+				s := make([]any, 0, 16)
+				return &s
+			},
+		},
+	}
+	if cfg.Global.Logging.Enabled.Active() && len(cfg.Global.Logging.Skip) > 0 {
+		for _, p := range cfg.Global.Logging.Skip {
+			m.skipLogPaths[p] = true
+		}
+	}
+	m.rateLimiter = buildGlobalRateLimiter(cfg.Global, cfg.IPMgr)
+	if cfg.Global.Security.Enabled.Active() {
+		fwConfig := cfg.Global.Security.Firewall
+		if fwConfig.Status.Active() {
+			dataDir := woos.NewFolder(cfg.Global.Storage.DataDir)
+			fw, err := firewall.New(firewall.Config{
+				Firewall: &fwConfig, DataDir: dataDir, Logger: cfg.Resource.Logger, IPMgr: cfg.IPMgr,
+			})
+			if err != nil {
+				return nil, errors.Newf("firewall init: %w", err)
+			}
+			m.firewall = fw
+		}
+	}
+	m.baseHandler = http.HandlerFunc(m.handleRequest)
+	m.acmeHandler = m.baseHandler
+	if len(cfg.Global.Bind.HTTPS) > 0 {
+		m.acmeHandler = http.HandlerFunc(m.redirectToHTTPS)
+	}
+	if cfg.TLSManager != nil {
+		handler, err := cfg.TLSManager.EnsureCertMagic(m.acmeHandler)
+		if err == nil {
+			m.acmeHandler = handler
+		} else {
+			cfg.Resource.Logger.Fields("err", err.Error()).Warn("certmagic not enabled; using HTTP handler without ACME")
+		}
+		m.tlsConfig = &tls.Config{
+			MinVersion:         tls.VersionTLS12,
+			MaxVersion:         tls.VersionTLS13,
+			NextProtos:         []string{woos.AlpnTls, woos.AlpnH3, woos.AlpnH2, woos.AlpnH11},
+			GetConfigForClient: cfg.TLSManager.GetConfigForClient,
+		}
+	}
+	return m, nil
+}
+
+func (m *Manager) Close() {
+	if m.firewall != nil {
+		_ = m.firewall.Close()
+	}
+	if m.rateLimiter != nil {
+		m.rateLimiter.Close()
+	}
+	m.wasmCleanup()
+}
+
+func (m *Manager) Firewall() *firewall.Engine {
+	return m.firewall
+}
+
+func (m *Manager) BuildListeners() []Listener {
+	var listeners []Listener
+	hosts, _ := m.cfg.HostManager.LoadAll()
+	usedPorts := make(map[string]bool)
+
+	// Pre-warm HTTP routes to trigger health checks immediately
+	for _, h := range hosts {
+		for i := range h.Routes {
+			_ = m.routeBuilder(&h.Routes[i], h)
+		}
+	}
+
+	// 1. Build Global HTTP Listeners
+	for _, addr := range m.cfg.Global.Bind.HTTP {
+		if !strings.Contains(addr, ":") {
+			addr = ":" + addr
+		}
+		_, port, _ := net.SplitHostPort(addr)
+		usedPorts[port] = true
+		listeners = append(listeners, m.createHTTPListener(addr, port, false))
+	}
+
+	// 2. Build Global HTTPS + QUIC Listeners
+	for _, addr := range m.cfg.Global.Bind.HTTPS {
+		if !strings.Contains(addr, ":") {
+			addr = ":" + addr
+		}
+		_, port, _ := net.SplitHostPort(addr)
+		usedPorts[port] = true
+
+		listeners = append(listeners, m.createHTTPListener(addr, port, true))
+		if h3 := m.createH3Listener(addr, port); h3 != nil {
+			listeners = append(listeners, h3)
+		}
+	}
+
+	// 3. Build Host-specific Listeners
+	for _, h := range hosts {
+		for _, port := range h.Bind {
+			if usedPorts[port] {
+				continue
+			}
+			usedPorts[port] = true
+
+			addr := port
+			if !strings.Contains(port, ":") {
+				addr = ":" + port
+			}
+
+			isTLS := h.TLS.Mode != alaye.ModeLocalNone
+
+			listeners = append(listeners, m.createHTTPListener(addr, port, isTLS))
+			if isTLS {
+				if h3 := m.createH3Listener(addr, port); h3 != nil {
+					listeners = append(listeners, h3)
+				}
+			}
+		}
+	}
+
+	// 4. Build TCP Proxy Listeners
+	tcpGroups := groupTCPRoutesByListen(hosts)
+	for listen, routes := range tcpGroups {
+		tp := xtcp.NewProxy(m.cfg.Resource, m.cfg.Resource.Logger, listen)
+		for _, r := range routes {
+			pattern := r.SNI
+			if pattern == "" {
+				pattern = "*"
+			}
+			tp.AddRoute(pattern, r)
+		}
+		listeners = append(listeners, &TCPListener{Proxy: tp})
+	}
+
+	return listeners
+}
+
+func (m *Manager) createHTTPListener(addr, port string, isTLS bool) Listener {
+	var handler http.Handler
+	if isTLS {
+		handler = m.chainBuild(m.baseHandler, true, port)
+	} else {
+		handler = m.chainBuild(m.acmeHandler, false, "")
+	}
+
+	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), woos.CtxPort, port)
+		if owner := m.cfg.HostManager.GetByPort(port); owner != nil {
+			ctx = context.WithValue(ctx, woos.OwnerKey, owner)
+		}
+		handler.ServeHTTP(w, r.WithContext(ctx))
+	})
+
+	tracker := NewConnTracker()
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           wrappedHandler,
+		ReadTimeout:       m.cfg.Global.Timeouts.Read,
+		WriteTimeout:      m.cfg.Global.Timeouts.Write,
+		IdleTimeout:       m.cfg.Global.Timeouts.Idle,
+		ReadHeaderTimeout: m.cfg.Global.Timeouts.ReadHeader,
+		MaxHeaderBytes:    m.cfg.Global.General.MaxHeaderBytes,
+		ErrorLog:          log.New(&llWriter{logger: m.cfg.Resource.Logger}, "", 0),
+		ConnState:         tracker.Track,
+	}
+
+	if isTLS && m.tlsConfig != nil {
+		localCfg := m.tlsConfig.Clone()
+		localCfg.GetConfigForClient = nil
+		localCfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			if chi.ServerName != "" {
+				if cert, err := m.cfg.TLSManager.GetCertificate(chi); err == nil {
+					return cert, nil
+				}
+			}
+			if owner := m.cfg.HostManager.GetByPort(port); owner != nil && len(owner.Domains) > 0 {
+				fallbackChi := *chi
+				fallbackChi.ServerName = owner.Domains[0]
+				if cert, err := m.cfg.TLSManager.GetCertificate(&fallbackChi); err == nil {
+					return cert, nil
+				}
+			}
+			return nil, errors.New("no certificate found")
+		}
+		srv.TLSConfig = localCfg
+	}
+
+	return &HTTPListener{Srv: srv, Tracker: tracker, IsTLS: isTLS}
+}
+
+func (m *Manager) createH3Listener(addr, port string) Listener {
+	if m.tlsConfig == nil {
+		return nil
+	}
+
+	handler := m.chainBuild(m.baseHandler, false, "")
+	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), woos.CtxPort, port)
+		if owner := m.cfg.HostManager.GetByPort(port); owner != nil {
+			ctx = context.WithValue(ctx, woos.OwnerKey, owner)
+		}
+		handler.ServeHTTP(w, r.WithContext(ctx))
+	})
+
+	serverTLSCfg := m.tlsConfig.Clone()
+	serverTLSCfg.GetConfigForClient = nil
+	serverTLSCfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		if chi.ServerName != "" {
+			if cert, err := m.cfg.TLSManager.GetCertificate(chi); err == nil {
+				return cert, nil
+			}
+		}
+		if owner := m.cfg.HostManager.GetByPort(port); owner != nil && len(owner.Domains) > 0 {
+			fallbackChi := *chi
+			fallbackChi.ServerName = owner.Domains[0]
+			if cert, err := m.cfg.TLSManager.GetCertificate(&fallbackChi); err == nil {
+				return cert, nil
+			}
+		}
+		return nil, errors.New("no certificate found")
+	}
+
+	srv := &http3.Server{
+		Addr:      addr,
+		Handler:   wrappedHandler,
+		TLSConfig: serverTLSCfg,
+	}
+
+	return &H3Listener{Srv: srv}
+}
+
+func (m *Manager) wasmManager(cfg *alaye.Wasm, key string) (*wasm.Manager, error) {
+	if v, ok := m.wasmCache.Load(key); ok {
+		return v.(*wasm.Manager), nil
+	}
+
+	mgr, err := wasm.NewManager(context.Background(), m.cfg.Resource.Logger, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if actual, loaded := m.wasmCache.LoadOrStore(key, mgr); loaded {
+		mgr.Close(context.Background())
+		return actual.(*wasm.Manager), nil
+	}
+
+	return mgr, nil
+}
+
+func (m *Manager) wasmCleanup() {
+	m.wasmCache.Range(func(key, value any) bool {
+		if mgr, ok := value.(*wasm.Manager); ok {
+			mgr.Close(context.Background())
+		}
+		m.wasmCache.Delete(key)
+		return true
+	})
+}
+
+// -----------------------------------------------------------------------------
+// Utilities
+// -----------------------------------------------------------------------------
+
+func groupTCPRoutesByListen(hosts map[string]*alaye.Host) map[string][]alaye.Proxy {
+	tcpGroups := make(map[string][]alaye.Proxy)
+	for _, host := range hosts {
+		for i := range host.Proxies {
+			p := host.Proxies[i]
+			tcpGroups[p.Listen] = append(tcpGroups[p.Listen], p)
+		}
+	}
+	return tcpGroups
+}
+
+func buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager) *ratelimit.RateLimiter {
+	if global == nil || !global.RateLimits.Enabled.Active() || len(global.RateLimits.Rules) == 0 {
+		return nil
+	}
+
+	rlc := global.RateLimits
+	policy := func(r *http.Request) (bucket string, pol ratelimit.RatePolicy, ok bool) {
+		p := r.URL.Path
+		if strings.HasPrefix(p, "/.well-known/acme-challenge/") {
+			return woos.BucketACME, ratelimit.RatePolicy{}, false
+		}
+
+		for _, rule := range rlc.Rules {
+			if len(rule.Methods) > 0 {
+				methodMatch := false
+				for _, m := range rule.Methods {
+					if strings.EqualFold(m, r.Method) {
+						methodMatch = true
+						break
+					}
+				}
+				if !methodMatch {
+					continue
+				}
+			}
+
+			if len(rule.Prefixes) > 0 {
+				prefixMatch := false
+				for _, pref := range rule.Prefixes {
+					if strings.HasPrefix(p, pref) {
+						prefixMatch = true
+						break
+					}
+				}
+				if !prefixMatch {
+					continue
+				}
+			}
+
+			ruleName := rule.Name
+			if ruleName == "" {
+				ruleName = "global_default"
+			}
+
+			return ruleName, ratelimit.RatePolicy{
+				Requests: rule.Requests,
+				Window:   rule.Window,
+				Burst:    rule.Burst,
+				KeySpec:  rule.Key,
+			}, true
+		}
+
+		return "", ratelimit.RatePolicy{}, false
+	}
+
+	return ratelimit.New(ratelimit.Config{
+		TTL:        rlc.TTL,
+		MaxEntries: rlc.MaxEntries,
+		Policy:     policy,
+		IPManager:  ipMgr,
+	})
+}

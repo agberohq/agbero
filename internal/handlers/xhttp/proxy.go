@@ -27,24 +27,20 @@ func NewProxy(cfg ConfigProxy, backends []*Backend, ipManager *zulu.IPManager) *
 			wrapped = append(wrapped, b)
 		}
 	}
-
 	baseStrat := lb.ParseStrategy(cfg.Strategy)
 	baseSelector := lb.NewSelector(wrapped, baseStrat)
-
 	var root lb.Balancer = baseSelector
 	var adaptiveRef *lb.Adaptive
-
 	s := strings.ToLower(cfg.Strategy)
-
 	if strings.Contains(s, alaye.StrategyAdaptive) || strings.Contains(s, alaye.StrategyLeastResponseTime) {
 		adaptiveRef = lb.NewAdaptive(root, 0.15)
 		root = adaptiveRef
 	}
-
 	if strings.Contains(s, alaye.StrategySticky) {
 		root = lb.NewSticky(root, 30*time.Minute, zulu.Extractor(cfg.Keys))
 	}
-
+	// Initialize the balancer with backends so Adaptive has allBackends populated
+	root.Update(wrapped)
 	return &Proxy{
 		lb:        root,
 		adaptive:  adaptiveRef,
@@ -65,23 +61,18 @@ func (b *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no healthy backends", http.StatusBadGateway)
 		return
 	}
-
 	isWebSocket := r.Header.Get("Upgrade") == "websocket"
-
 	ctx := r.Context()
 	if b.timeout > 0 && !isWebSocket {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, b.timeout)
 		defer cancel()
 	}
-
 	start := time.Now()
 	be.ServeHTTP(w, r.WithContext(ctx))
-
 	if b.adaptive != nil {
 		latency := time.Since(start).Microseconds()
 		failed := false
-
 		if !isWebSocket && b.timeout > 0 && latency > b.timeout.Microseconds() {
 			failed = true
 		}
@@ -114,5 +105,8 @@ func (b *Proxy) Update(list []*Backend) {
 func (b *Proxy) Stop() {
 	if b.lb != nil {
 		b.lb.Stop()
+	}
+	if b.adaptive != nil {
+		b.adaptive.Stop()
 	}
 }

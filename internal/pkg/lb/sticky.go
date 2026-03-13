@@ -74,6 +74,10 @@ func (s *Sticky) Update(backends []Backend) {
 	}
 }
 
+func (s *Sticky) Backends() []Backend {
+	return s.balancer.Backends()
+}
+
 // Stop gracefully shuts down the reaper and child balancer.
 func (s *Sticky) Stop() {
 	s.stopOnce.Do(func() {
@@ -92,7 +96,7 @@ func (s *Sticky) Pick(r *http.Request, keyFunc func() uint64) Backend {
 	}
 
 	s.mu.RLock()
-	if backend, ok := s.cache.Get(sessionID); ok && backend.Alive() {
+	if backend, ok := s.cache.Get(sessionID); ok && backend.IsUsable() {
 		s.mu.RUnlock()
 		s.reaper.Touch(sessionID)
 		return backend

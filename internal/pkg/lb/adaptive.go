@@ -77,6 +77,10 @@ func (s *Adaptive) Update(backends []Backend) {
 	}
 }
 
+func (s *Adaptive) Backends() []Backend {
+	return s.balancer.Backends()
+}
+
 func (s *Adaptive) Cleanup() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -92,38 +96,29 @@ func (s *Adaptive) Pick(r *http.Request, keyFunc func() uint64) Backend {
 	if randFloat() < s.learningRate {
 		return s.balancer.Pick(r, keyFunc)
 	}
-
 	s.mu.RLock()
-
 	if len(s.performanceData) < len(s.allBackends) {
 		s.mu.RUnlock()
 		return s.balancer.Pick(r, keyFunc)
 	}
-
 	var best Backend
 	bestScore := -1.0
-
 	for b, m := range s.performanceData {
-		if !b.Alive() {
+		if !b.IsUsable() {
 			continue
 		}
-
 		latencyScore := 1.0 / (1.0 + m.avgLatency/1000.0)
 		inflightScore := 1.0 / (1.0 + float64(b.InFlight())/10.0)
-
 		score := m.successRate*0.6 + latencyScore*0.25 + inflightScore*0.15
-
 		if score > bestScore {
 			bestScore = score
 			best = b
 		}
 	}
 	s.mu.RUnlock()
-
 	if best != nil {
 		return best
 	}
-
 	return s.balancer.Pick(r, keyFunc)
 }
 

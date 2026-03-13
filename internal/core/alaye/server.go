@@ -1,8 +1,8 @@
+// internal/core/alaye/server.go
 package alaye
 
 import (
 	"net"
-	"strings"
 	"time"
 
 	"github.com/olekukonko/errors"
@@ -15,10 +15,10 @@ type Criteria struct {
 
 // Server represents an upstream server configuration
 type Server struct {
-	Address        string    `hcl:"address" json:"address"`
+	Address        Address   `hcl:"address" json:"address"` // Upgraded to alaye.Address
 	Weight         int       `hcl:"weight,optional" json:"weight"`
 	Criteria       Criteria  `hcl:"criteria,block" json:"criteria"`
-	Streaming      Streaming `hcl:"streaming,block" json:"streaming"` // optional by nature when pointer
+	Streaming      Streaming `hcl:"streaming,block" json:"streaming"`
 	MaxConnections int64     `hcl:"max_connections,optional" json:"max_connections"`
 }
 
@@ -38,48 +38,42 @@ func (s *Streaming) EffectiveFlushInterval() time.Duration {
 }
 
 func NewServer(address string) Server {
-	return Server{Address: address}
+	return Server{Address: Address(address)}
 }
 
 func NewServers(address ...string) []Server {
 	servers := make([]Server, len(address))
 	for i, addr := range address {
-		servers[i] = Server{Address: addr}
+		servers[i] = Server{Address: Address(addr)}
 	}
 	return servers
 }
 
 func (b Server) IsHTTP() bool {
-	return strings.HasPrefix(b.Address, HTTPPrefix)
+	return b.Address.Scheme() == "http" || b.Address.Scheme() == ""
 }
 
 func (b Server) IsHTTPS() bool {
-	return strings.HasPrefix(b.Address, HTTPSPrefix)
+	return b.Address.Scheme() == "https"
 }
 
 func (b Server) IsTCP() bool {
-	return strings.HasPrefix(b.Address, TCPPrefix)
+	return b.Address.Scheme() == "tcp"
 }
 
 func (b Server) String() string {
-	return b.Address
+	return b.Address.String()
 }
 
 func (b *Server) Validate() error {
-	if b.Address == "" {
+	if err := b.Address.Validate(); err != nil {
 		return ErrBackendAddressRequired
-	}
-
-	if !b.IsHTTP() && !b.IsHTTPS() {
-		// We can allow TCP later, but strictly speaking httputil needs http/s
-		return errors.Newf("%w: backend %q must start with http:// or https://", ErrBackendInvalidScheme, b.Address)
 	}
 
 	if b.Weight < 0 {
 		return ErrBackendNegativeWeight
 	}
 
-	// Default weight
 	if b.Weight == 0 {
 		b.Weight = 1
 	}

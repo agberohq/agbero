@@ -22,6 +22,9 @@ func newMockBackend(id int, alive bool, weight int) *mockBackend {
 	return m
 }
 
+func (m *mockBackend) IsUsable() bool {
+	return m.alive.Load()
+}
 func (m *mockBackend) Status(v bool)       { m.alive.Store(v) }
 func (m *mockBackend) Alive() bool         { return m.alive.Load() }
 func (m *mockBackend) Weight() int         { return m.weight }

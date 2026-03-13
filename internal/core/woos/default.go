@@ -530,7 +530,7 @@ func defaultFirewallRoute(fr *alaye.FirewallRoute) {
 	}
 }
 
-func defaultTCPRoute(t *alaye.TCPRoute) {
+func defaultTCPRoute(t *alaye.Proxy) {
 	if t.Enabled == alaye.Unknown && t.Listen != "" {
 		t.Enabled = alaye.Active
 	}

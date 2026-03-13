@@ -118,7 +118,7 @@ func (e *ephemeral) handleServe() {
 	}
 
 	global := e.createGlobal(finalPort, ctx)
-	hostConfig := alaye.NewStaticHost("localhost", absPath, false)
+	hostConfig := alaye.NewStaticHost("localhost", alaye.Address(absPath), false)
 
 	hosts := map[string]*alaye.Host{
 		"localhost": hostConfig,
@@ -192,7 +192,7 @@ func (e *ephemeral) handleProxy() {
 	}
 
 	global := e.createGlobal(finalPort, ctx)
-	hostConfig := alaye.NewStaticHost(e.domain, e.target, true)
+	hostConfig := alaye.NewStaticHost(e.domain, alaye.Address(e.target), true)
 
 	hosts := map[string]*alaye.Host{
 		e.domain: hostConfig,

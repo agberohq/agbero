@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -33,12 +34,69 @@ func (p *Parser) Unmarshal(output any) error {
 		return fmt.Errorf("read config file: %w", err)
 	}
 
-	// alecthomas/hcl uses simple Unmarshal
 	if err := hcl.Unmarshal(data, output); err != nil {
 		return fmt.Errorf("decode error in %s: %w", filepath.Base(p.path), err)
 	}
 
 	return nil
+}
+
+// MarshalBytes encodes the value to HCL and returns the raw bytes.
+// No file I/O — caller decides what to do with the bytes.
+func MarshalBytes(input any) ([]byte, error) {
+	return hcl.Marshal(input)
+}
+
+// Marshal writes the encoded HCL directly to the provided io.Writer.
+// No atomic writes, no temp files — pure encoding + streaming.
+func Marshal(writer io.Writer, input any) error {
+	data, err := hcl.Marshal(input)
+	if err != nil {
+		return fmt.Errorf("encode HCL: %w", err)
+	}
+	_, err = writer.Write(data)
+	return err
+}
+
+// MarshalFile encodes and writes atomically to a file path using temp+rename.
+// Use this when you need crash-safe persistence.
+func MarshalFile(path string, input any) error {
+	if path == "" {
+		return woos.ErrEmptyConfigPath
+	}
+
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve config path: %w", err)
+	}
+
+	data, err := hcl.Marshal(input)
+	if err != nil {
+		return fmt.Errorf("encode HCL: %w", err)
+	}
+
+	dir := filepath.Dir(abs)
+	if err := os.MkdirAll(dir, woos.DirPerm); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
+
+	tmpPath := abs + ".tmp"
+	if err := os.WriteFile(tmpPath, data, woos.FilePerm); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("write temp config: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, abs); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename temp config: %w", err)
+	}
+
+	return nil
+}
+
+// Parser.MarshalFile is a convenience method that uses the parser's path.
+func (p *Parser) MarshalFile(input any) error {
+	return MarshalFile(p.path, input)
 }
 
 // LoadGlobal loads global configuration

@@ -15,13 +15,11 @@ func TestHTTPExecutor_Probe_Success(t *testing.T) {
 		w.Write([]byte("healthy"))
 	}))
 	defer server.Close()
-
 	executor := &HTTPExecutor{
 		URL:    server.URL,
 		Method: "GET",
 		Client: &http.Client{Timeout: 5 * time.Second},
 	}
-
 	success, latency, err := executor.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -40,13 +38,11 @@ func TestHTTPExecutor_Probe_NotFound(t *testing.T) {
 		w.Write([]byte("not found"))
 	}))
 	defer server.Close()
-
 	executor := &HTTPExecutor{
 		URL:    server.URL + "/nonexistent",
 		Method: "GET",
 		Client: &http.Client{Timeout: 5 * time.Second},
 	}
-
 	success, _, err := executor.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -62,13 +58,11 @@ func TestHTTPExecutor_Probe_ServerError(t *testing.T) {
 		w.Write([]byte("error"))
 	}))
 	defer server.Close()
-
 	executor := &HTTPExecutor{
 		URL:    server.URL,
 		Method: "GET",
 		Client: &http.Client{Timeout: 5 * time.Second},
 	}
-
 	success, _, err := executor.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -83,14 +77,12 @@ func TestHTTPExecutor_Probe_ExpectedStatus(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer server.Close()
-
 	executor := &HTTPExecutor{
 		URL:            server.URL,
 		Method:         "GET",
 		Client:         &http.Client{Timeout: 5 * time.Second},
 		ExpectedStatus: []int{201},
 	}
-
 	success, _, err := executor.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -105,14 +97,12 @@ func TestHTTPExecutor_Probe_ExpectedStatusMismatch(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-
 	executor := &HTTPExecutor{
 		URL:            server.URL,
 		Method:         "GET",
 		Client:         &http.Client{Timeout: 5 * time.Second},
 		ExpectedStatus: []int{201},
 	}
-
 	success, _, err := executor.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -128,14 +118,12 @@ func TestHTTPExecutor_Probe_ExpectedBody(t *testing.T) {
 		w.Write([]byte(`{"status": "healthy"}`))
 	}))
 	defer server.Close()
-
 	executor := &HTTPExecutor{
 		URL:          server.URL,
 		Method:       "GET",
 		Client:       &http.Client{Timeout: 5 * time.Second},
 		ExpectedBody: `"status": "healthy"`,
 	}
-
 	success, _, err := executor.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -151,14 +139,12 @@ func TestHTTPExecutor_Probe_ExpectedBodyMismatch(t *testing.T) {
 		w.Write([]byte(`{"status": "unhealthy"}`))
 	}))
 	defer server.Close()
-
 	executor := &HTTPExecutor{
 		URL:          server.URL,
 		Method:       "GET",
 		Client:       &http.Client{Timeout: 5 * time.Second},
 		ExpectedBody: `"status": "healthy"`,
 	}
-
 	success, _, err := executor.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -174,14 +160,12 @@ func TestHTTPExecutor_Probe_ExpectedBodyNotCheckedOnErrorStatus(t *testing.T) {
 		w.Write([]byte(`{"status": "healthy"}`))
 	}))
 	defer server.Close()
-
 	executor := &HTTPExecutor{
 		URL:          server.URL,
 		Method:       "GET",
 		Client:       &http.Client{Timeout: 5 * time.Second},
 		ExpectedBody: `"status": "healthy"`,
 	}
-
 	success, _, err := executor.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -199,20 +183,17 @@ func TestHTTPExecutor_Probe_ConnectionReuse(t *testing.T) {
 		w.Write([]byte("ok"))
 	}))
 	defer server.Close()
-
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 		Transport: &http.Transport{
 			MaxIdleConnsPerHost: 1,
 		},
 	}
-
 	executor := &HTTPExecutor{
 		URL:    server.URL,
 		Method: "GET",
 		Client: client,
 	}
-
 	for i := 0; i < 3; i++ {
 		success, _, err := executor.Probe(context.Background())
 		if err != nil {
@@ -222,7 +203,6 @@ func TestHTTPExecutor_Probe_ConnectionReuse(t *testing.T) {
 			t.Errorf("request %d: expected success", i+1)
 		}
 	}
-
 	if requestCount != 3 {
 		t.Errorf("expected 3 requests, got %d", requestCount)
 	}
@@ -234,7 +214,6 @@ func TestHTTPExecutor_Probe_BodyDrainedOnFailure(t *testing.T) {
 		w.Write([]byte("error body content here"))
 	}))
 	defer server.Close()
-
 	executor := &HTTPExecutor{
 		URL:    server.URL,
 		Method: "GET",
@@ -245,8 +224,6 @@ func TestHTTPExecutor_Probe_BodyDrainedOnFailure(t *testing.T) {
 			},
 		},
 	}
-
-	// First probe: server returns 500, should fail but not error (connection reused)
 	success, _, err := executor.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error on first probe: %v", err)
@@ -254,9 +231,6 @@ func TestHTTPExecutor_Probe_BodyDrainedOnFailure(t *testing.T) {
 	if success {
 		t.Error("expected failure for 500 status")
 	}
-
-	// Second probe: verifies body was drained and connection reused.
-	// Server still returns 500, so success must be false, but err must be nil.
 	success2, _, err := executor.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("second request error (connection reuse failed): %v", err)
@@ -264,7 +238,6 @@ func TestHTTPExecutor_Probe_BodyDrainedOnFailure(t *testing.T) {
 	if success2 {
 		t.Error("expected second request to also fail for 500 status")
 	}
-	// Key verification: err == nil proves body was drained and connection reused
 }
 
 func TestHTTPExecutor_Probe_DefaultMethod(t *testing.T) {
@@ -274,12 +247,10 @@ func TestHTTPExecutor_Probe_DefaultMethod(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-
 	executor := &HTTPExecutor{
 		URL:    server.URL,
 		Client: &http.Client{Timeout: 5 * time.Second},
 	}
-
 	_, _, _ = executor.Probe(context.Background())
 	if methodReceived != "GET" {
 		t.Errorf("expected default method GET, got %s", methodReceived)
@@ -293,14 +264,12 @@ func TestHTTPExecutor_Probe_HostHeader(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-
 	executor := &HTTPExecutor{
 		URL:    server.URL,
 		Method: "GET",
 		Client: &http.Client{Timeout: 5 * time.Second},
 		Host:   "custom.host.com",
 	}
-
 	_, _, _ = executor.Probe(context.Background())
 	if hostReceived != "custom.host.com" {
 		t.Errorf("expected Host header custom.host.com, got %s", hostReceived)
@@ -313,16 +282,13 @@ func TestHTTPExecutor_Probe_ContextTimeout(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-
 	executor := &HTTPExecutor{
 		URL:    server.URL,
 		Method: "GET",
 		Client: &http.Client{},
 	}
-
 	_, _, err := executor.Probe(ctx)
 	if err == nil {
 		t.Error("expected timeout error")
@@ -336,13 +302,11 @@ func TestHTTPExecutor_Probe_LargeBody(t *testing.T) {
 		w.Write([]byte(largeBody))
 	}))
 	defer server.Close()
-
 	executor := &HTTPExecutor{
 		URL:    server.URL,
 		Method: "GET",
 		Client: &http.Client{Timeout: 5 * time.Second},
 	}
-
 	success, _, err := executor.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -357,13 +321,11 @@ func TestHTTPExecutor_Probe_EmptyBody(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-
 	executor := &HTTPExecutor{
 		URL:    server.URL,
 		Method: "GET",
 		Client: &http.Client{Timeout: 5 * time.Second},
 	}
-
 	success, _, err := executor.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -380,7 +342,6 @@ func TestHTTPExecutor_Probe_CustomHeaders(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-
 	executor := &HTTPExecutor{
 		URL:    server.URL,
 		Method: "GET",
@@ -389,7 +350,6 @@ func TestHTTPExecutor_Probe_CustomHeaders(t *testing.T) {
 			"X-Custom-Header": []string{"test-value"},
 		},
 	}
-
 	_, _, _ = executor.Probe(context.Background())
 	if headerValue != "test-value" {
 		t.Errorf("expected header value test-value, got %s", headerValue)

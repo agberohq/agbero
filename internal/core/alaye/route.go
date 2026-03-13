@@ -225,7 +225,7 @@ func (r *Route) Key() string {
 	if r.Backends.Enabled.Active() {
 		w.WriteString(strings.ToLower(strings.TrimSpace(r.Backends.Strategy)))
 		for _, b := range r.Backends.Servers {
-			w.WriteString(b.Address)
+			w.WriteString(b.Address.String())
 			w.WriteString(fmt.Sprint(b.Weight))
 		}
 	}

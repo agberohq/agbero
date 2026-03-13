@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,15 +49,15 @@ func (c Config) Validate() error {
 	if len(c.Host.Domains) == 0 {
 		return errors.New("host.domains cannot be empty")
 	}
-	// Logger is optional but recommended; auto-create disabled logger if nil
 	if c.Logger == nil {
 		c.Logger = ll.New("handlers").Disable()
 	}
-	// IPMgr optional; create default if nil (uses direct client IP)
 	if c.IPMgr == nil {
 		c.IPMgr = zulu.NewIPManager(c.Global.Security.TrustedProxies)
 	}
-	// CookMgr optional; cookie features disabled if nil
+	if c.Resource == nil {
+		return errors.New("resource manager required")
+	}
 	return c.Resource.Validate()
 }
 
@@ -75,30 +76,146 @@ func NewRoute(cfg Config, route *alaye.Route) *Route {
 	if err := cfg.Validate(); err != nil {
 		return FallbackRoute("invalid config: " + err.Error())
 	}
-
 	woos.DefaultRoute(route)
-
 	cfg.Logger.Fields("path", route.Path, "enabled", route.Enabled).Debug("creating route")
 	if err := route.Validate(); err != nil {
 		cfg.Logger.Fields("path", route.Path, "err", err).Error("invalid route config")
 		return FallbackRoute("invalid route config: " + err.Error())
 	}
-
 	isWebRoute := route.Web.Root.IsSet() || route.Web.Git.Enabled.Active()
 	hasBackends := len(route.Backends.Servers) > 0
-
 	if isWebRoute && hasBackends {
 		return FallbackRoute("route cannot have both web and proxy config")
 	}
-
 	if isWebRoute {
 		return newWebRoute(cfg, route)
 	}
 	if hasBackends {
 		return newProxyRoute(cfg, route)
 	}
-
 	return FallbackRoute("route has no handler configuration")
+}
+
+func newWebRoute(cfg Config, route *alaye.Route) *Route {
+	chain := http.Handler(operation.NewWeb(cfg.Resource, cfg.Logger, route, cfg.CookMgr))
+	ipMgr := zulu.NewIPManager(cfg.Global.Security.TrustedProxies)
+	if len(route.AllowedIPs) > 0 {
+		chain = ipallow.New(route.AllowedIPs, cfg.Logger, ipMgr)(chain)
+	}
+	chain = auth.JWT(&route.JWTAuth)(chain)
+	chain = auth.Basic(&route.BasicAuth)(chain)
+	chain = auth.Forward(cfg.Resource, &route.ForwardAuth)(chain)
+	chain = auth.OAuth(&route.OAuth)(chain)
+	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, ipMgr); rl != nil {
+		chain = rl.Handler(chain)
+	}
+	maxBody := int64(alaye.DefaultMaxBodySize)
+	if cfg.Host.Limits.MaxBodySize > 0 {
+		maxBody = cfg.Host.Limits.MaxBodySize
+	}
+	chain = http.MaxBytesHandler(chain, maxBody)
+	chain = headers.Headers(&route.Headers)(chain)
+	chain = compress.Compress(route)(chain)
+	chain = attic.New(&route.Cache, cfg.Logger)(chain)
+	errCfg := errorpages.Config{
+		RoutePages:  route.ErrorPages,
+		HostPages:   cfg.Host.ErrorPages,
+		GlobalPages: cfg.Global.ErrorPages,
+	}
+	chain = errorpages.New(errCfg)(chain)
+	chain = cors.New(&route.CORS)(chain)
+	chain = rewrite.New(cfg.Logger, route.StripPrefixes, route.Rewrites)(chain)
+	return &Route{
+		handler:  chain,
+		Backends: nil,
+		ipMgr:    ipMgr,
+		global:   cfg.Global,
+	}
+}
+
+func newProxyRoute(cfg Config, route *alaye.Route) *Route {
+	var backends []*xhttp.Backend
+	for i, backendCfg := range route.Backends.Servers {
+		b, err := xhttp.NewBackend(xhttp.ConfigBackend{
+			Server:   backendCfg,
+			Route:    route,
+			Domains:  cfg.Host.Domains,
+			Logger:   cfg.Logger,
+			Fallback: nil,
+			Resource: cfg.Resource,
+		})
+		if err != nil {
+			cfg.Logger.Fields("index", i, "backend", backendCfg.Address.String(), "err", err).Error("failed to create backend")
+			continue
+		}
+		backends = append(backends, b)
+	}
+	fallbackCfg := resolveFallback(&route.Fallback, &cfg.Global.Fallback)
+	var fallbackHandler http.Handler
+	if fallbackCfg.IsActive() {
+		fallbackHandler = buildFallbackHandler(fallbackCfg, cfg.Logger)
+	}
+	if len(backends) == 0 {
+		if fallbackHandler != nil {
+			return &Route{
+				handler:  fallbackHandler,
+				Backends: nil,
+				ipMgr:    cfg.IPMgr,
+				global:   cfg.Global,
+			}
+		}
+		return FallbackRoute("proxy route missing backends")
+	}
+	if fallbackHandler != nil {
+		for _, b := range backends {
+			b.Fallback = fallbackHandler
+		}
+	}
+	timeout := cfg.Global.Timeouts.Read
+	if route.Timeouts.Request != 0 {
+		timeout = route.Timeouts.Request
+	}
+	balancerCfg := xhttp.ConfigProxy{
+		Strategy: route.Backends.Strategy,
+		Keys:     route.Backends.Keys,
+		Timeout:  timeout,
+		Fallback: fallbackHandler,
+	}
+	loadBalancer := xhttp.NewProxy(balancerCfg, backends, cfg.IPMgr)
+	var chain http.Handler = loadBalancer
+	if len(route.AllowedIPs) > 0 {
+		chain = ipallow.New(route.AllowedIPs, cfg.Logger, cfg.IPMgr)(chain)
+	}
+	chain = auth.JWT(&route.JWTAuth)(chain)
+	chain = auth.Basic(&route.BasicAuth)(chain)
+	chain = auth.Forward(cfg.Resource, &route.ForwardAuth)(chain)
+	chain = auth.OAuth(&route.OAuth)(chain)
+	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, cfg.IPMgr); rl != nil {
+		chain = rl.Handler(chain)
+	}
+	maxBody := int64(alaye.DefaultMaxBodySize)
+	if cfg.Host.Limits.MaxBodySize > 0 {
+		maxBody = cfg.Host.Limits.MaxBodySize
+	}
+	chain = http.MaxBytesHandler(chain, maxBody)
+	chain = headers.Headers(&route.Headers)(chain)
+	chain = compress.Compress(route)(chain)
+	chain = attic.New(&route.Cache, cfg.Logger)(chain)
+	errCfg := errorpages.Config{
+		RoutePages:  route.ErrorPages,
+		HostPages:   cfg.Host.ErrorPages,
+		GlobalPages: cfg.Global.ErrorPages,
+	}
+	chain = errorpages.New(errCfg)(chain)
+	chain = cors.New(&route.CORS)(chain)
+	chain = rewrite.New(cfg.Logger, route.StripPrefixes, route.Rewrites)(chain)
+	return &Route{
+		handler:  chain,
+		Backends: backends,
+		Proxy:    loadBalancer,
+		ipMgr:    cfg.IPMgr,
+		global:   cfg.Global,
+	}
 }
 
 func (h *Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -113,10 +230,8 @@ func (h *Route) Close() {
 	if h.Proxy != nil {
 		h.Proxy.Stop()
 	}
-
 	if len(h.Backends) > 0 {
 		var wg sync.WaitGroup
-
 		drainTimeout := woos.DefaultTransportDrainTimeout
 		if h.global != nil && h.global.Timeouts.Read > 0 {
 			drainTimeout = h.global.Timeouts.Read + woos.DefaultTransportResponseHeaderTimeout
@@ -124,7 +239,6 @@ func (h *Route) Close() {
 				drainTimeout = woos.DefaultTransportDrainTimeout
 			}
 		}
-
 		for _, b := range h.Backends {
 			if b != nil {
 				wg.Add(1)
@@ -136,143 +250,6 @@ func (h *Route) Close() {
 			}
 		}
 		wg.Wait()
-	}
-}
-
-func newWebRoute(cfg Config, route *alaye.Route) *Route {
-	chain := http.Handler(operation.NewWeb(cfg.Resource, cfg.Logger, route, cfg.CookMgr))
-
-	ipMgr := zulu.NewIPManager(cfg.Global.Security.TrustedProxies)
-
-	if len(route.AllowedIPs) > 0 {
-		chain = ipallow.New(route.AllowedIPs, cfg.Logger, ipMgr)(chain)
-	}
-
-	chain = auth.JWT(&route.JWTAuth)(chain)
-	chain = auth.Basic(&route.BasicAuth)(chain)
-	chain = auth.Forward(cfg.Resource, &route.ForwardAuth)(chain)
-	chain = auth.OAuth(&route.OAuth)(chain)
-
-	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, ipMgr); rl != nil {
-		chain = rl.Handler(chain)
-	}
-
-	chain = headers.Headers(&route.Headers)(chain)
-	chain = compress.Compress(route)(chain)
-
-	chain = attic.New(&route.Cache, cfg.Logger)(chain)
-
-	errCfg := errorpages.Config{
-		RoutePages:  route.ErrorPages,
-		HostPages:   cfg.Host.ErrorPages,
-		GlobalPages: cfg.Global.ErrorPages,
-	}
-	chain = errorpages.New(errCfg)(chain)
-
-	chain = cors.New(&route.CORS)(chain)
-	chain = rewrite.New(cfg.Logger, route.StripPrefixes, route.Rewrites)(chain)
-
-	return &Route{
-		handler:  chain,
-		Backends: nil,
-		ipMgr:    ipMgr,
-		global:   cfg.Global,
-	}
-}
-
-func newProxyRoute(cfg Config, route *alaye.Route) *Route {
-	var backends []*xhttp.Backend
-	for i, backendCfg := range route.Backends.Servers {
-		// Cleaned up the redundant domain and registry logic here
-		b, err := xhttp.NewBackend(xhttp.ConfigBackend{
-			Server:   backendCfg,
-			Route:    route,
-			Domains:  cfg.Host.Domains,
-			Logger:   cfg.Logger,
-			Fallback: nil,
-			Resource: cfg.Resource, // Resource now internally configures the backend's metrics and health
-		})
-		if err != nil {
-			cfg.Logger.Fields("index", i, "backend", backendCfg.Address, "err", err).Error("failed to create backend")
-			continue
-		}
-		backends = append(backends, b)
-	}
-
-	fallbackCfg := resolveFallback(&route.Fallback, &cfg.Global.Fallback)
-	var fallbackHandler http.Handler
-	if fallbackCfg.IsActive() {
-		fallbackHandler = buildFallbackHandler(fallbackCfg, cfg.Logger)
-	}
-
-	if len(backends) == 0 {
-		if fallbackHandler != nil {
-			return &Route{
-				handler:  fallbackHandler,
-				Backends: nil,
-				ipMgr:    cfg.IPMgr,
-				global:   cfg.Global,
-			}
-		}
-		return FallbackRoute("proxy route missing backends")
-	}
-
-	if fallbackHandler != nil {
-		for _, b := range backends {
-			b.Fallback = fallbackHandler
-		}
-	}
-
-	timeout := cfg.Global.Timeouts.Read
-	if route.Timeouts.Request != 0 {
-		timeout = route.Timeouts.Request
-	}
-
-	balancerCfg := xhttp.ConfigProxy{
-		Strategy: route.Backends.Strategy,
-		Keys:     route.Backends.Keys,
-		Timeout:  timeout,
-		Fallback: fallbackHandler,
-	}
-
-	loadBalancer := xhttp.NewProxy(balancerCfg, backends, cfg.IPMgr)
-
-	var chain http.Handler = loadBalancer
-
-	if len(route.AllowedIPs) > 0 {
-		chain = ipallow.New(route.AllowedIPs, cfg.Logger, cfg.IPMgr)(chain)
-	}
-
-	chain = auth.JWT(&route.JWTAuth)(chain)
-	chain = auth.Basic(&route.BasicAuth)(chain)
-	chain = auth.Forward(cfg.Resource, &route.ForwardAuth)(chain)
-	chain = auth.OAuth(&route.OAuth)(chain)
-
-	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, cfg.IPMgr); rl != nil {
-		chain = rl.Handler(chain)
-	}
-
-	chain = headers.Headers(&route.Headers)(chain)
-	chain = compress.Compress(route)(chain)
-
-	chain = attic.New(&route.Cache, cfg.Logger)(chain)
-
-	errCfg := errorpages.Config{
-		RoutePages:  route.ErrorPages,
-		HostPages:   cfg.Host.ErrorPages,
-		GlobalPages: cfg.Global.ErrorPages,
-	}
-	chain = errorpages.New(errCfg)(chain)
-
-	chain = cors.New(&route.CORS)(chain)
-	chain = rewrite.New(cfg.Logger, route.StripPrefixes, route.Rewrites)(chain)
-
-	return &Route{
-		handler:  chain,
-		Backends: backends,
-		Proxy:    loadBalancer,
-		ipMgr:    cfg.IPMgr,
-		global:   cfg.Global,
 	}
 }
 
@@ -298,7 +275,7 @@ func buildFallbackHandler(fallback *alaye.Fallback, logger *ll.Logger) http.Hand
 				w.Header().Set("Content-Type", contentType)
 			}
 			if cacheTTL > 0 {
-				w.Header().Set("Cache-Control", "public, max-age="+string(rune(cacheTTL)))
+				w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(cacheTTL))
 			}
 			w.WriteHeader(statusCode)
 			if len(body) > 0 {
@@ -319,10 +296,12 @@ func buildFallbackHandler(fallback *alaye.Fallback, logger *ll.Logger) http.Hand
 				http.Error(w, "Fallback configuration error", http.StatusInternalServerError)
 			})
 		}
-		proxy := httputil.NewSingleHostReverseProxy(proxyURL)
-		proxy.Rewrite = func(pr *httputil.ProxyRequest) {
-			pr.SetXForwarded()
-			pr.Out.Host = proxyURL.Host
+
+		proxy := &httputil.ReverseProxy{
+			Rewrite: func(pr *httputil.ProxyRequest) {
+				pr.SetXForwarded()
+				pr.SetURL(proxyURL)
+			},
 		}
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 			logger.Fields("err", err, "fallback_proxy", fallback.ProxyURL).Error("fallback proxy failed")
@@ -353,7 +332,6 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate, ipMgr *zu
 	}
 	ttl := woos.DefaultRateTTL
 	maxEntries := woos.DefaultRateMaxEntries
-
 	if global != nil {
 		if global.TTL > 0 {
 			ttl = global.TTL

@@ -147,7 +147,10 @@ const (
 )
 
 // Cache
-const CacheMax = 10_000
+const (
+	CacheMax    = 10_000
+	CacheMaxBig = 100_000
+)
 
 // Route Segment Kinds
 type Kind uint8

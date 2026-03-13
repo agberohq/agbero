@@ -8,7 +8,6 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/metrics"
 )
 
-var noopBalancer = &Balancer{}
 var proxyBufPool = zulu.NewBufferPool()
 
 var checkBufPool = sync.Pool{

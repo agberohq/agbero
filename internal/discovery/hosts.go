@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -572,6 +573,24 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 	}
 
 	hm.rebuildLookupLocked()
+}
+
+func (hm *Host) Save(domain string) error {
+	hm.mu.RLock()
+	defer hm.mu.RUnlock()
+
+	cfg, ok := hm.hosts[domain]
+	if !ok || cfg == nil {
+		return fmt.Errorf("host %q not found", domain)
+	}
+
+	// Construct file path: hostsDir/{normalized-domain}.hcl
+	filename := zulu.NormalizeHost(domain) + woos.HCLSuffix
+	filePath := filepath.Join(hm.hostsDir.Path(), filename)
+
+	// Marshal and write atomically using parser package
+	p := parser.NewParser(filePath)
+	return p.MarshalFile(cfg)
 }
 
 func normalizeHostPath(host, path string) (string, string) {
