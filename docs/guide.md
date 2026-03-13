@@ -2,6 +2,266 @@
 
 This guide provides practical examples, use cases, and deep dives into Agbero's capabilities.
 
+
+## What is Agbero?
+
+Agbero is a modern reverse proxy and service gateway designed for both **local development and production microservice environments**.
+
+At a high level, Agbero sits between incoming requests and your services and automatically handles:
+
+- TLS termination
+- request routing
+- load balancing
+- authentication middleware
+- service discovery
+- cluster coordination via gossip
+
+### Mental Model
+
+```
+User Request
+     ↓
+   Agbero
+     ↓
+Route Matching
+     ↓
+Middleware (Auth / Rate limit / etc)
+     ↓
+Load Balancer
+     ↓
+Backend Service
+```
+
+Instead of configuring each service individually, Agbero provides a **central gateway** that manages routing, security, and discovery.
+
+---
+
+## Architecture Overview
+
+Agbero consists of several internal components that work together to manage traffic and service discovery.
+
+Agbero acts as an intelligent **edge traffic controller** that manages incoming requests and routes them to the appropriate backend services. It handles TLS termination, routing logic, middleware execution, and load balancing before forwarding requests to application servers.
+
+The architecture is built around a **high-performance Go runtime**, a **programmable WebAssembly middleware layer**, and a **distributed cluster model powered by a gossip protocol**.
+
+```mermaid
+flowchart TD
+
+    A[Client / Browser] --> B[Agbero Edge Listener]
+
+    B --> C[TLS Manager]
+    C --> D[Routing Engine]
+
+    D --> E[Middleware Pipeline]
+
+    E --> F[WASM Plugins]
+    E --> G[Authentication]
+    E --> H[Rate Limiting]
+
+    D --> I[Load Balancer]
+
+    I --> J[Backend Services]
+
+    J --> J1[API Services]
+    J --> J2[Static Sites from Git]
+    J --> J3[Microservices]
+
+    B --> K[Cluster Layer]
+
+    K --> L[Gossip Protocol]
+    L --> M[Service Discovery]
+    L --> N[State Replication]
+
+### Core Components
+
+**Proxy Engine**  
+Handles incoming HTTP, HTTPS, and TCP traffic and routes requests to backend services.
+
+**Configuration Engine**  
+Watches configuration files and applies updates without requiring restarts.
+
+**Service Discovery**  
+Allows services to automatically register themselves with the gateway.
+
+Supported discovery methods:
+- HTTP discovery (`/.well-known/agbero`)
+- Gossip-based discovery
+
+**Gossip Cluster**  
+Agbero nodes form a decentralized cluster using gossip for node membership and service announcements.
+
+**TLS Engine**  
+Automatically manages certificates for local development, production domains, and internal communication.
+
+---
+
+## Request Lifecycle
+
+When a request reaches Agbero the following steps occur:
+
+1. Connection accepted  
+2. TLS termination  
+3. Route matching  
+4. Middleware execution  
+5. Backend selection via load balancer  
+6. Request forwarded to backend  
+7. Response returned to the client
+
+```
+Client
+  ↓
+TLS Termination
+  ↓
+Route Matching
+  ↓
+Middleware
+  ↓
+Load Balancer
+  ↓
+Backend Service
+```
+
+---
+
+## Configuration Structure
+
+Agbero typically uses a two-level configuration structure.
+
+```
+config.hcl
+hosts.d/
+   api.hcl
+   frontend.hcl
+   admin.hcl
+```
+
+### config.hcl
+Global configuration such as:
+
+- gossip cluster settings
+- discovery configuration
+- TLS settings
+- global limits
+
+### hosts.d/
+Per-service routing configurations where each file defines:
+
+- domains
+- routes
+- backends
+- middleware
+
+---
+
+## Quick Start (5 Minute Setup)
+
+### Step 1 — Start Agbero
+
+```bash
+agbero run
+```
+
+Agbero will automatically:
+
+1. generate a `config.hcl` file if missing
+2. create a local certificate authority
+3. generate TLS certificates
+4. start serving traffic
+
+### Step 2 — Add a route
+
+Create:
+
+```
+hosts.d/app.hcl
+```
+
+Example:
+
+```
+domains = ["app.localhost"]
+
+route "/" {
+  web {
+    root = "./public"
+  }
+}
+```
+
+### Step 3 — Open
+
+```
+https://app.localhost
+```
+
+---
+
+## Observability
+
+Agbero exposes monitoring endpoints.
+
+### Metrics
+
+```
+http://localhost:9090/metrics
+```
+
+Includes:
+
+- request latency histograms
+- backend health status
+- service discovery metrics
+
+### Health Endpoint
+
+```
+http://localhost:9090/health
+```
+
+### Gossip Status
+
+```
+agbero gossip status
+```
+
+---
+
+## Deployment Patterns
+
+### Single Node Gateway
+
+```
+Internet
+   ↓
+ Agbero
+   ↓
+Services
+```
+
+### Edge Gateway Cluster
+
+```
+Internet
+   ↓
+Agbero Node 1
+Agbero Node 2
+Agbero Node 3
+   ↓
+Internal Services
+```
+
+---
+
+## When Not to Use Agbero
+
+Agbero may not be ideal when:
+
+- you only serve static sites
+- no service discovery is required
+- extremely minimal infrastructure is needed
+
+---
+
 ## Why Agbero? Solving Real Problems
 
 ### The Problem with Traditional Proxies

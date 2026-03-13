@@ -175,6 +175,40 @@ route "/api" {
 - [ ] Better Test Coverage
 - [ ] Proper Documentation 
 
+## Architecture
+
+Agbero acts as an intelligent **edge traffic controller** that manages incoming requests and routes them to the appropriate backend services. It handles TLS termination, routing logic, middleware execution, and load balancing before forwarding requests to application servers.
+
+The architecture is built around a **high-performance Go runtime**, a **programmable WebAssembly middleware layer**, and a **distributed cluster model powered by a gossip protocol**.
+
+```mermaid
+flowchart TD
+
+    A[Client / Browser] --> B[Agbero Edge Listener]
+
+    B --> C[TLS Manager]
+    C --> D[Routing Engine]
+
+    D --> E[Middleware Pipeline]
+
+    E --> F[WASM Plugins]
+    E --> G[Authentication]
+    E --> H[Rate Limiting]
+
+    D --> I[Load Balancer]
+
+    I --> J[Backend Services]
+
+    J --> J1[API Services]
+    J --> J2[Static Sites from Git]
+    J --> J3[Microservices]
+
+    B --> K[Cluster Layer]
+
+    K --> L[Gossip Protocol]
+    L --> M[Service Discovery]
+    L --> N[State Replication]
+
 ## Contributing
 
 We welcome contributions! Please see our [Contributing Guide](docs/contributor.md) for details.
