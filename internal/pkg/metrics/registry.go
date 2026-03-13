@@ -5,8 +5,6 @@ import (
 	"github.com/olekukonko/mappo"
 )
 
-var DefaultRegistry = NewRegistry()
-
 type BackendStats struct {
 	Activity *Activity
 }

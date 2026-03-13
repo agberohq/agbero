@@ -2,6 +2,7 @@ package agbero
 
 import (
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -30,5 +31,11 @@ func WithLogger(logger *ll.Logger) Option {
 func WithShutdownManager(sm *jack.Shutdown) Option {
 	return func(server *Server) {
 		server.shutdown = sm
+	}
+}
+
+func WithResource(res *resource.Manager) Option {
+	return func(server *Server) {
+		server.resource = res
 	}
 }

@@ -47,6 +47,3 @@ func (r *Registry) Delete(key alaye.BackendKey) {
 func (r *Registry) Clear() {
 	r.scores.Clear()
 }
-
-// GlobalRegistry is the default global health registry instance.
-var GlobalRegistry = NewRegistry()

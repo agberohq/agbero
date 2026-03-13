@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/cook"
@@ -60,13 +61,15 @@ type web struct {
 	logger           *ll.Logger
 	cookMgr          *cook.Manager
 	phpClientFactory gofast.ClientFactory
+	res              *resource.Manager
 }
 
-func NewWeb(logger *ll.Logger, route *alaye.Route, cookMgr *cook.Manager) *web {
+func NewWeb(res *resource.Manager, logger *ll.Logger, route *alaye.Route, cookMgr *cook.Manager) *web {
 	h := &web{
 		route:   route,
 		logger:  logger.Namespace("web"),
 		cookMgr: cookMgr,
+		res:     res,
 	}
 
 	if route != nil && route.Web.PHP.Status.Active() {

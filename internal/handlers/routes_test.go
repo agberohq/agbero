@@ -10,10 +10,9 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/pkg/health"
-	"github.com/agberohq/agbero/internal/pkg/metrics"
 	"github.com/olekukonko/ll"
 )
 
@@ -23,13 +22,8 @@ var testHost = &alaye.Host{
 	Domains: []string{"example.com", "test.local"},
 }
 
-func initTestEnv() {
-	health.GlobalRegistry.Clear()
-	metrics.DefaultRegistry.Prune(nil)
-}
-
 func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
-	initTestEnv()
+
 	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("backend1"))
 	}))
@@ -51,10 +45,11 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -76,7 +71,7 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 }
 
 func TestRouteHandler_Proxy_RateLimit(t *testing.T) {
-	initTestEnv()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	}))
@@ -101,10 +96,11 @@ func TestRouteHandler_Proxy_RateLimit(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -124,7 +120,7 @@ func TestRouteHandler_Proxy_RateLimit(t *testing.T) {
 }
 
 func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
-	initTestEnv()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Test") != "Added" {
 			w.WriteHeader(http.StatusBadRequest)
@@ -151,10 +147,11 @@ func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -169,7 +166,7 @@ func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
 }
 
 func TestRouteHandler_Proxy_NoHealthyBackends(t *testing.T) {
-	initTestEnv()
+
 	route := &alaye.Route{
 		Enabled: alaye.Active,
 		Path:    "/",
@@ -180,10 +177,11 @@ func TestRouteHandler_Proxy_NoHealthyBackends(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -202,7 +200,7 @@ func TestRouteHandler_Proxy_NoHealthyBackends(t *testing.T) {
 }
 
 func TestRouteHandler_Proxy_Timeout(t *testing.T) {
-	initTestEnv()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)
 		w.Write([]byte("slow"))
@@ -223,10 +221,11 @@ func TestRouteHandler_Proxy_Timeout(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -241,7 +240,7 @@ func TestRouteHandler_Proxy_Timeout(t *testing.T) {
 }
 
 func TestRouteHandler_Proxy_StripPrefix(t *testing.T) {
-	initTestEnv()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/users" {
 			t.Errorf("Expected path /users, got %s", r.URL.Path)
@@ -261,10 +260,11 @@ func TestRouteHandler_Proxy_StripPrefix(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -279,7 +279,7 @@ func TestRouteHandler_Proxy_StripPrefix(t *testing.T) {
 }
 
 func TestRouteHandler_Proxy_WithFallback(t *testing.T) {
-	initTestEnv()
+
 	route := &alaye.Route{
 		Enabled: alaye.Active,
 		Path:    "/",
@@ -297,10 +297,11 @@ func TestRouteHandler_Proxy_WithFallback(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -321,7 +322,7 @@ func TestRouteHandler_Proxy_WithFallback(t *testing.T) {
 }
 
 func TestRouteHandler_Web_BasicFileServing(t *testing.T) {
-	initTestEnv()
+
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("INDEX"), woos.FilePerm); err != nil {
 		t.Fatal(err)
@@ -341,10 +342,11 @@ func TestRouteHandler_Web_BasicFileServing(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -376,7 +378,7 @@ func TestRouteHandler_Web_BasicFileServing(t *testing.T) {
 }
 
 func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
-	initTestEnv()
+
 	root := t.TempDir()
 
 	if err := os.WriteFile(filepath.Join(root, "style.css"), []byte("/* regular */"), woos.FilePerm); err != nil {
@@ -401,10 +403,11 @@ func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -430,7 +433,7 @@ func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
 }
 
 func TestRouteHandler_Web_CustomIndex(t *testing.T) {
-	initTestEnv()
+
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "home.htm"), []byte("HOME"), woos.FilePerm); err != nil {
 		t.Fatal(err)
@@ -447,10 +450,11 @@ func TestRouteHandler_Web_CustomIndex(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -471,7 +475,7 @@ func TestRouteHandler_Web_CustomIndex(t *testing.T) {
 }
 
 func TestRouteHandler_Web_MethodNotAllowed(t *testing.T) {
-	initTestEnv()
+
 	root := t.TempDir()
 	route := &alaye.Route{
 		Enabled: alaye.Active,
@@ -483,10 +487,11 @@ func TestRouteHandler_Web_MethodNotAllowed(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -501,7 +506,7 @@ func TestRouteHandler_Web_MethodNotAllowed(t *testing.T) {
 }
 
 func TestRouteHandler_Web_DirectoryWithoutIndex(t *testing.T) {
-	initTestEnv()
+
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "subdir"), 0755); err != nil {
 		t.Fatal(err)
@@ -518,10 +523,11 @@ func TestRouteHandler_Web_DirectoryWithoutIndex(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -536,7 +542,7 @@ func TestRouteHandler_Web_DirectoryWithoutIndex(t *testing.T) {
 }
 
 func TestRouteHandler_Web_PathTraversalPrevented(t *testing.T) {
-	initTestEnv()
+
 	root := t.TempDir()
 
 	outsideFile := filepath.Join(t.TempDir(), "secret.txt")
@@ -554,10 +560,11 @@ func TestRouteHandler_Web_PathTraversalPrevented(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -572,7 +579,7 @@ func TestRouteHandler_Web_PathTraversalPrevented(t *testing.T) {
 }
 
 func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
-	initTestEnv()
+
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "test.txt"), []byte("test"), woos.FilePerm); err != nil {
 		t.Fatal(err)
@@ -603,10 +610,11 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -631,7 +639,7 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 }
 
 func TestRouteHandler_Validation(t *testing.T) {
-	initTestEnv()
+
 	type tc struct {
 		name       string
 		route      *alaye.Route
@@ -716,16 +724,17 @@ func TestRouteHandler_Validation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			initTestEnv()
+
 			if tt.prepare != nil {
 				tt.prepare(t, tt.route)
 			}
 
 			cfg := Config{
-				Global: global,
-				Host:   testHost,
-				Logger: testLogger,
-				IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+				Global:   global,
+				Host:     testHost,
+				Logger:   testLogger,
+				IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+				Resource: resource.New(),
 			}
 			h := NewRoute(cfg, tt.route)
 			if h == nil {
@@ -746,7 +755,7 @@ func TestRouteHandler_Validation(t *testing.T) {
 }
 
 func TestRouteHandler_WithJWTAuth(t *testing.T) {
-	initTestEnv()
+
 	route := &alaye.Route{
 		Enabled: alaye.Active,
 		Path:    "/",
@@ -761,10 +770,11 @@ func TestRouteHandler_WithJWTAuth(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -779,7 +789,7 @@ func TestRouteHandler_WithJWTAuth(t *testing.T) {
 }
 
 func TestRouteHandler_WithBasicAuth(t *testing.T) {
-	initTestEnv()
+
 	route := &alaye.Route{
 		Enabled: alaye.Active,
 		Path:    "/",
@@ -795,10 +805,11 @@ func TestRouteHandler_WithBasicAuth(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -813,7 +824,7 @@ func TestRouteHandler_WithBasicAuth(t *testing.T) {
 }
 
 func TestRouteHandler_WithCache(t *testing.T) {
-	initTestEnv()
+
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "test.txt"), []byte("cached content"), woos.FilePerm); err != nil {
 		t.Fatal(err)
@@ -833,10 +844,11 @@ func TestRouteHandler_WithCache(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -855,7 +867,7 @@ func TestRouteHandler_WithCache(t *testing.T) {
 }
 
 func TestRouteHandler_WithCORS(t *testing.T) {
-	initTestEnv()
+
 	route := &alaye.Route{
 		Enabled: alaye.Active,
 		Path:    "/",
@@ -871,10 +883,11 @@ func TestRouteHandler_WithCORS(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -895,7 +908,7 @@ func TestRouteHandler_WithCORS(t *testing.T) {
 }
 
 func TestRouteHandler_WithOAuth(t *testing.T) {
-	initTestEnv()
+
 	route := &alaye.Route{
 		Enabled: alaye.Active,
 		Path:    "/",
@@ -914,10 +927,11 @@ func TestRouteHandler_WithOAuth(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()
@@ -958,10 +972,11 @@ func TestRouteHandler_WithForwardAuth(t *testing.T) {
 	}
 
 	cfg := Config{
-		Global: global,
-		Host:   testHost,
-		Logger: testLogger,
-		IPMgr:  zulu.NewIPManager(global.Security.TrustedProxies),
+		Global:   global,
+		Host:     testHost,
+		Logger:   testLogger,
+		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		Resource: resource.New(),
 	}
 	h := NewRoute(cfg, route)
 	defer h.Close()

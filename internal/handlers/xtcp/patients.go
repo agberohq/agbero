@@ -6,12 +6,13 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/pkg/health"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
 
-func RegisterTCPPatients(listen string, cfg alaye.TCPRoute, doc *jack.Doctor, logger *ll.Logger) int {
+func RegisterTCPPatients(res *resource.Manager, doc *jack.Doctor, logger *ll.Logger, cfg alaye.TCPRoute, listen string) int {
 	if len(cfg.Backends) == 0 {
 		return 0
 	}
@@ -40,7 +41,7 @@ func RegisterTCPPatients(listen string, cfg alaye.TCPRoute, doc *jack.Doctor, lo
 	count := 0
 	for _, b := range cfg.Backends {
 		statsKey := cfg.BackendKey(b.Address)
-		score := health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
+		score := res.Health.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
 
 		pool := newConnPool(b.Address, 3, probeCfg.Timeout)
 		executor := &TCPExecutor{

@@ -2,42 +2,19 @@ package xhttp
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"net/url"
-	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/pkg/health"
-	"github.com/agberohq/agbero/internal/pkg/metrics"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
 
-// sharedHTTPClient is used across all HTTP patients to avoid connection exhaustion.
-// Transport is configured for high-throughput health checks with connection reuse.
-var sharedHTTPClient = &http.Client{
-	Timeout: 5 * time.Second,
-	Transport: &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   2 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          1000,
-		MaxIdleConnsPerHost:   100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   3 * time.Second,
-		ResponseHeaderTimeout: 5 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	},
-}
-
-// RegisterHTTPPatients creates a Patient for each backend server in the route.
-// Configured for high-throughput scenarios with fast failure detection and recovery.
-func RegisterHTTPPatients(domain string, route *alaye.Route, doc *jack.Doctor, registry *metrics.Registry, logger *ll.Logger) int {
+// RegisterHTTPPatients creates a Patient for each backend server in the route..
+func RegisterHTTPPatients(res *resource.Manager, doc *jack.Doctor, logger *ll.Logger, route *alaye.Route, domain string) int {
 	if route.Backends.Enabled.NotActive() || len(route.Backends.Servers) == 0 {
 		logger.Fields("domain", domain, "route", route.Path).Debug("http backends disabled or empty")
 		return 0
@@ -57,7 +34,7 @@ func RegisterHTTPPatients(domain string, route *alaye.Route, doc *jack.Doctor, r
 	count := 0
 	for _, srv := range route.Backends.Servers {
 		statsKey := route.BackendKey(domain, srv.Address)
-		score := health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
+		score := res.Health.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
 
 		u, err := url.Parse(srv.Address)
 		if err != nil {
@@ -83,7 +60,7 @@ func RegisterHTTPPatients(domain string, route *alaye.Route, doc *jack.Doctor, r
 		executor := &HTTPExecutor{
 			URL:            targetURL,
 			Method:         route.HealthCheck.Method,
-			Client:         sharedHTTPClient,
+			Client:         res.HTTPClient,
 			Header:         headers,
 			Host:           hostHeader,
 			ExpectedStatus: route.HealthCheck.ExpectedStatus,

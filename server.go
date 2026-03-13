@@ -20,6 +20,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/discovery"
@@ -35,11 +36,9 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/wasm"
 	"github.com/agberohq/agbero/internal/operation"
 	"github.com/agberohq/agbero/internal/pkg/cook"
-	"github.com/agberohq/agbero/internal/pkg/health"
-	"github.com/agberohq/agbero/internal/pkg/metrics"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/agberohq/agbero/internal/pkg/security"
-	tlss2 "github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/agberohq/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
@@ -73,8 +72,9 @@ type Server struct {
 
 	hostManager     *discovery.Host
 	global          *alaye.Global
-	tlsManager      *tlss2.Manager
+	tlsManager      *tlss.Manager
 	securityManager *security.Manager
+	resource        *resource.Manager
 
 	firewall *firewall.Engine
 	doctor   *jack.Doctor
@@ -164,6 +164,9 @@ func (s *Server) Start(configPath string) error {
 	if s.logger == nil {
 		s.logger = ll.New(woos.Name).Enable()
 	}
+	if s.resource == nil {
+		s.resource = resource.New()
+	}
 
 	if configPath != "" {
 		absConfigPath, err := filepath.Abs(configPath)
@@ -224,12 +227,12 @@ func (s *Server) Start(configPath string) error {
 		woos.RouteCacheTTL,
 		jack.ReaperWithLogger(s.logger),
 		jack.ReaperWithHandler(func(ctx context.Context, id string) {
-			if it, ok := zulu.Route.Load(id); ok {
+			if it, ok := s.resource.RouteCache.Load(id); ok {
 				if h, ok := it.Value.(*handlers.Route); ok {
 					h.Close()
 				}
 			}
-			zulu.Route.Delete(id)
+			s.resource.RouteCache.Delete(id)
 			s.logger.Fields("route_key", id).Debug("reaped idle route handler")
 		}),
 	)
@@ -237,6 +240,7 @@ func (s *Server) Start(configPath string) error {
 
 	if s.shutdown != nil {
 		s.shutdown.RegisterFunc("RouteReaper", s.reaper.Stop)
+		s.shutdown.RegisterFunc("Resource", s.resource.Close)
 	}
 
 	if configPath != "" {
@@ -249,7 +253,6 @@ func (s *Server) Start(configPath string) error {
 	hosts, _ := s.hostManager.LoadAll()
 	s.logHostStats(hosts)
 
-	// Initialize Git Pool and Cook Manager
 	s.gitPool = jack.NewPool(4)
 	cookMgr, err := cook.NewManager(s.global.Storage.WorkDir, s.gitPool, s.logger)
 	if err != nil {
@@ -274,7 +277,6 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	// Initialize the Doctor for Eager Global Health Probing
 	s.doctor = jack.NewDoctor(jack.DoctorWithLogger(s.logger))
 	s.initHealthDoctor(hosts)
 
@@ -554,11 +556,10 @@ func (s *Server) Reload() {
 	newHosts, _ := s.hostManager.LoadAll()
 	currentCount := len(newHosts)
 
-	// Reset Health Doctor on Reload
 	if s.doctor != nil {
 		s.doctor.StopAll(2 * time.Second)
 	}
-	health.GlobalRegistry.Clear()
+	s.resource.Health.Clear()
 	s.doctor = jack.NewDoctor(jack.DoctorWithLogger(s.logger))
 	s.initHealthDoctor(newHosts)
 
@@ -578,7 +579,7 @@ func (s *Server) Reload() {
 	s.tcpUpdateProxy(tcpGroups)
 	s.mu.Unlock()
 
-	metrics.DefaultRegistry.Prune(validKeys)
+	s.resource.Metrics.Prune(validKeys)
 
 	s.logger.Fields(
 		"previous_hosts", previousCount,
@@ -637,7 +638,7 @@ func (s *Server) initHealthDoctor(hosts map[string]*alaye.Host) {
 
 	for domain, hostCfg := range hosts {
 		for _, r := range hostCfg.Routes {
-			count := xhttp.RegisterHTTPPatients(domain, &r, s.doctor, metrics.DefaultRegistry, s.logger)
+			count := xhttp.RegisterHTTPPatients(s.resource, s.doctor, s.logger, &r, domain)
 			httpPatientCount += count
 		}
 	}
@@ -645,7 +646,7 @@ func (s *Server) initHealthDoctor(hosts map[string]*alaye.Host) {
 	tcpGroups := groupTCPRoutesByListen(hosts)
 	for listen, group := range tcpGroups {
 		for _, route := range group {
-			count := xtcp.RegisterTCPPatients(listen, route, s.doctor, s.logger)
+			count := xtcp.RegisterTCPPatients(s.resource, s.doctor, s.logger, route, listen)
 			tcpPatientCount += count
 		}
 	}
@@ -750,7 +751,7 @@ func (s *Server) tcpStartProxy(hosts map[string]*alaye.Host) {
 	tcpGroups := groupTCPRoutesByListen(hosts)
 
 	for listen, routes := range tcpGroups {
-		tp := xtcp.NewProxy(listen, s.logger)
+		tp := xtcp.NewProxy(s.resource, s.logger, listen)
 		for _, r := range routes {
 			pattern := r.SNI
 			if pattern == "" {
@@ -778,7 +779,7 @@ func (s *Server) tcpUpdateProxy(tcpGroups map[string][]alaye.TCPRoute) {
 		var newDefault *xtcp.Balancer
 
 		for _, route := range group {
-			bal := xtcp.NewBalancer(route, metrics.DefaultRegistry)
+			bal := xtcp.NewBalancer(route, s.resource)
 			if route.SNI != "" {
 				newRoutes[strings.ToLower(route.SNI)] = bal
 			} else {
@@ -798,12 +799,12 @@ func (s *Server) tcpUpdateProxy(tcpGroups map[string][]alaye.TCPRoute) {
 		}
 
 		if !exists {
-			tp := xtcp.NewProxy(listen, s.logger)
+			tp := xtcp.NewProxy(s.resource, s.logger, listen)
 			newRoutes := make(map[string]*xtcp.Balancer)
 			var newDefault *xtcp.Balancer
 
 			for _, route := range group {
-				bal := xtcp.NewBalancer(route, metrics.DefaultRegistry)
+				bal := xtcp.NewBalancer(route, s.resource)
 				if route.SNI != "" {
 					newRoutes[strings.ToLower(route.SNI)] = bal
 				} else {
@@ -1184,7 +1185,7 @@ func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) routeBuilder(route *alaye.Route, host *alaye.Host) *handlers.Route {
 	key := route.Key()
-	if it, ok := zulu.Route.Load(key); ok {
+	if it, ok := s.resource.RouteCache.Load(key); ok {
 		if h, ok := it.Value.(*handlers.Route); ok {
 			s.reaper.Touch(key)
 			return h
@@ -1192,17 +1193,18 @@ func (s *Server) routeBuilder(route *alaye.Route, host *alaye.Host) *handlers.Ro
 	}
 
 	h := handlers.NewRoute(handlers.Config{
-		Global:  s.global,
-		Host:    host,
-		Logger:  s.logger,
-		IPMgr:   s.ipMgr,
-		CookMgr: s.cookManager,
+		Global:   s.global,
+		Host:     host,
+		Logger:   s.logger,
+		IPMgr:    s.ipMgr,
+		CookMgr:  s.cookManager,
+		Resource: s.resource,
 	}, route)
 	newItem := &mappo.Item{
 		Value: h,
 	}
 
-	if it, loaded := zulu.Route.LoadOrStore(key, newItem); loaded {
+	if it, loaded := s.resource.RouteCache.LoadOrStore(key, newItem); loaded {
 		h.Close()
 		if existing, ok := it.Value.(*handlers.Route); ok {
 			s.reaper.Touch(key)
@@ -1360,7 +1362,7 @@ func (s *Server) tlsBuild(next http.Handler) (*tls.Config, http.Handler) {
 		return &tls.Config{}, next
 	}
 
-	s.tlsManager = tlss2.NewManager(s.logger, s.hostManager, s.global)
+	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global)
 
 	httpHandler, err := s.tlsManager.EnsureCertMagic(next)
 	if err != nil {
@@ -1430,7 +1432,7 @@ func (s *Server) tlsValidate() error {
 					switch h.TLS.Mode {
 					case alaye.ModeLocalAuto, alaye.ModeLocalCert:
 						certDir := woos.MakeFolder(s.global.Storage.CertsDir, woos.CertDir)
-						if !tlss2.IsCARootInstalled(certDir.Path()) {
+						if !tlss.IsCARootInstalled(certDir.Path()) {
 							return errors.Newf(
 								"HTTPS binding on %s requires local CA. Run: agbero cert install",
 								addr,
@@ -1493,7 +1495,7 @@ func (s *Server) configApplyReload(global *alaye.Global, sha string, newIPMgr *z
 	if s.tlsManager != nil {
 		s.tlsManager.Close()
 	}
-	s.tlsManager = tlss2.NewManager(s.logger, s.hostManager, s.global)
+	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global)
 	if s.activeTlsConfig != nil {
 		s.activeTlsConfig.GetConfigForClient = s.tlsManager.GetConfigForClient
 	}
@@ -1534,7 +1536,7 @@ func (s *Server) configApplyReload(global *alaye.Global, sha string, newIPMgr *z
 		}
 	}
 
-	zulu.Route.Clear()
+	s.resource.RouteCache.Clear()
 }
 
 func (s *Server) configBuildRoute(hosts map[string]*alaye.Host) map[alaye.BackendKey]bool {

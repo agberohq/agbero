@@ -183,7 +183,7 @@ func (h *Home) Run() error {
 	h.ctx.Logger.Printf("  • Admin UI:       http://admin.localhost:9090\n")
 	h.ctx.Logger.Printf("  • Web UI:         http://localhost\n")
 	h.ctx.Logger.Println("")
-	//h.ctx.Logger.Println("For more information, visit https://agbero.io/docs")
+	//h.ctx.logger.Println("For more information, visit https://agbero.io/docs")
 	h.ctx.Logger.Println()
 
 	return nil

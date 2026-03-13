@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/pkg/health"
 	"github.com/agberohq/agbero/internal/pkg/metrics"
 	"github.com/olekukonko/jack"
@@ -20,6 +21,7 @@ import (
 
 var (
 	testLogger = ll.New("backend").Disable()
+	res        = resource.New()
 )
 
 // setupBackend creates backend with optional Doctor for health checks
@@ -37,18 +39,18 @@ func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb al
 	statsKey := route.BackendKey(domain, server.Address)
 
 	// Get or create HealthScore
-	hScore, _ := health.GlobalRegistry.Get(statsKey)
+	hScore, _ := res.Health.Get(statsKey)
 	if hScore == nil {
 		hScore = health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil)
-		health.GlobalRegistry.Set(statsKey, hScore)
+		res.Health.Set(statsKey, hScore)
 	}
 
-	b, err := NewBackend(server, ConfigBackend{
-		Route:       route,
-		Domains:     []string{domain},
-		Logger:      testLogger,
-		Registry:    registry,
-		HealthScore: hScore,
+	b, err := NewBackend(ConfigBackend{
+		Server:   server,
+		Route:    route,
+		Domains:  []string{domain},
+		Logger:   testLogger,
+		Resource: res,
 	})
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
@@ -127,9 +129,10 @@ func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb al
 }
 
 func TestNewBackend_InvalidURL(t *testing.T) {
-	_, err := NewBackend(alaye.NewServer("://invalid-url"), ConfigBackend{
+	_, err := NewBackend(ConfigBackend{
+		Server:   alaye.NewServer("://invalid-url"),
 		Logger:   testLogger,
-		Registry: metrics.NewRegistry(),
+		Resource: res,
 	})
 	if err == nil {
 		t.Error("Expected error for invalid URL, got nil")
@@ -486,18 +489,17 @@ func TestHealthCheck_HostHeader_From_Domains(t *testing.T) {
 		HealthCheck: hc,
 	}
 
-	registry := metrics.NewRegistry()
 	domain := "api.example.com"
 	statsKey := route.BackendKey(domain, server.URL)
 	hScore := health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil)
-	health.GlobalRegistry.Set(statsKey, hScore)
+	res.Health.Set(statsKey, hScore)
 
-	b, err := NewBackend(alaye.NewServer(server.URL), ConfigBackend{
-		Route:       route,
-		Domains:     []string{domain},
-		Logger:      testLogger,
-		Registry:    registry,
-		HealthScore: hScore,
+	b, err := NewBackend(ConfigBackend{
+		Server:   alaye.NewServer(server.URL),
+		Route:    route,
+		Domains:  []string{domain},
+		Logger:   testLogger,
+		Resource: res,
 	})
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
@@ -622,7 +624,22 @@ func TestUptime(t *testing.T) {
 }
 
 func TestActivitySnapshot(t *testing.T) {
-	b, _, _ := setupBackend(t, alaye.NewServer("http://example.com"), alaye.HealthCheck{}, alaye.CircuitBreaker{})
+	testRes := resource.New()
+	route := &alaye.Route{Path: "/"}
+	statsKey := route.BackendKey("example.com", "http://example.com")
+	hScore := health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil)
+	testRes.Health.Set(statsKey, hScore)
+
+	b, err := NewBackend(ConfigBackend{
+		Server:   alaye.NewServer("http://example.com"),
+		Route:    route,
+		Domains:  []string{"example.com"},
+		Logger:   testLogger,
+		Resource: testRes,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
 	defer b.Stop()
 
 	b.Activity.StartRequest()

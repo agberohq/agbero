@@ -13,7 +13,7 @@ import (
 var ipMgr = zulu.NewIP()
 
 func TestNew(t *testing.T) {
-	// Mock Logger (discard output)
+	// Mock logger (discard output)
 	logger := ll.New("test").Disable()
 
 	tests := []struct {

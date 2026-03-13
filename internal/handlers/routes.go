@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/handlers/xhttp"
@@ -23,18 +24,40 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/rewrite"
 	"github.com/agberohq/agbero/internal/operation"
 	"github.com/agberohq/agbero/internal/pkg/cook"
-	"github.com/agberohq/agbero/internal/pkg/health"
-	"github.com/agberohq/agbero/internal/pkg/metrics"
 	"github.com/agberohq/agbero/internal/pkg/wellknown"
+	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 )
 
 type Config struct {
-	Global  *alaye.Global
-	Host    *alaye.Host
-	Logger  *ll.Logger
-	IPMgr   *zulu.IPManager
-	CookMgr *cook.Manager
+	Global   *alaye.Global
+	Host     *alaye.Host
+	Logger   *ll.Logger
+	IPMgr    *zulu.IPManager
+	CookMgr  *cook.Manager
+	Resource *resource.Manager
+}
+
+func (c Config) Validate() error {
+	if c.Global == nil {
+		return errors.New("global config required")
+	}
+	if c.Host == nil {
+		return errors.New("host config required")
+	}
+	if len(c.Host.Domains) == 0 {
+		return errors.New("host.domains cannot be empty")
+	}
+	// Logger is optional but recommended; auto-create disabled logger if nil
+	if c.Logger == nil {
+		c.Logger = ll.New("handlers").Disable()
+	}
+	// IPMgr optional; create default if nil (uses direct client IP)
+	if c.IPMgr == nil {
+		c.IPMgr = zulu.NewIPManager(c.Global.Security.TrustedProxies)
+	}
+	// CookMgr optional; cookie features disabled if nil
+	return c.Resource.Validate()
 }
 
 type Route struct {
@@ -48,6 +71,9 @@ type Route struct {
 func NewRoute(cfg Config, route *alaye.Route) *Route {
 	if route == nil {
 		return FallbackRoute("nil route")
+	}
+	if err := cfg.Validate(); err != nil {
+		return FallbackRoute("invalid config: " + err.Error())
 	}
 
 	woos.DefaultRoute(route)
@@ -114,7 +140,7 @@ func (h *Route) Close() {
 }
 
 func newWebRoute(cfg Config, route *alaye.Route) *Route {
-	chain := http.Handler(operation.NewWeb(cfg.Logger, route, cfg.CookMgr))
+	chain := http.Handler(operation.NewWeb(cfg.Resource, cfg.Logger, route, cfg.CookMgr))
 
 	ipMgr := zulu.NewIPManager(cfg.Global.Security.TrustedProxies)
 
@@ -124,7 +150,7 @@ func newWebRoute(cfg Config, route *alaye.Route) *Route {
 
 	chain = auth.JWT(&route.JWTAuth)(chain)
 	chain = auth.Basic(&route.BasicAuth)(chain)
-	chain = auth.Forward(&route.ForwardAuth)(chain)
+	chain = auth.Forward(cfg.Resource, &route.ForwardAuth)(chain)
 	chain = auth.OAuth(&route.OAuth)(chain)
 
 	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, ipMgr); rl != nil {
@@ -157,21 +183,14 @@ func newWebRoute(cfg Config, route *alaye.Route) *Route {
 func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 	var backends []*xhttp.Backend
 	for i, backendCfg := range route.Backends.Servers {
-		domain := "*"
-		if len(cfg.Host.Domains) > 0 && cfg.Host.Domains[0] != "" {
-			domain = cfg.Host.Domains[0]
-		}
-
-		statsKey := route.BackendKey(domain, backendCfg.Address)
-		hScore, _ := health.GlobalRegistry.Get(statsKey)
-
-		b, err := xhttp.NewBackend(backendCfg, xhttp.ConfigBackend{
-			Route:       route,
-			Domains:     cfg.Host.Domains,
-			Logger:      cfg.Logger,
-			Registry:    metrics.DefaultRegistry,
-			Fallback:    nil,
-			HealthScore: hScore,
+		// Cleaned up the redundant domain and registry logic here
+		b, err := xhttp.NewBackend(xhttp.ConfigBackend{
+			Server:   backendCfg,
+			Route:    route,
+			Domains:  cfg.Host.Domains,
+			Logger:   cfg.Logger,
+			Fallback: nil,
+			Resource: cfg.Resource, // Resource now internally configures the backend's metrics and health
 		})
 		if err != nil {
 			cfg.Logger.Fields("index", i, "backend", backendCfg.Address, "err", err).Error("failed to create backend")
@@ -226,7 +245,7 @@ func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 
 	chain = auth.JWT(&route.JWTAuth)(chain)
 	chain = auth.Basic(&route.BasicAuth)(chain)
-	chain = auth.Forward(&route.ForwardAuth)(chain)
+	chain = auth.Forward(cfg.Resource, &route.ForwardAuth)(chain)
 	chain = auth.OAuth(&route.OAuth)(chain)
 
 	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, cfg.IPMgr); rl != nil {

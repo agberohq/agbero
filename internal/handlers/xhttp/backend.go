@@ -65,8 +65,8 @@ type Backend struct {
 	statsKey     alaye.BackendKey
 }
 
-func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
-	u, err := url.Parse(cfg.Address)
+func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
+	u, err := url.Parse(xhttpCfg.Server.Address)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 	default:
 		return nil, errors.Newf("%w: %q", woos.ErrBackendBadScheme, u.Scheme)
 	}
-	cond, err := NewConditions(cfg.Criteria)
+	cond, err := NewConditions(xhttpCfg.Server.Criteria)
 	if err != nil {
 		return nil, err
 	}
@@ -93,18 +93,14 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 	if logger == nil {
 		logger = ll.New("backend").Disable()
 	}
-	registry := xhttpCfg.Registry
-	if registry == nil {
-		registry = metrics.DefaultRegistry
-	}
 
 	domain := "*"
 	if len(xhttpCfg.Domains) > 0 && xhttpCfg.Domains[0] != "" {
 		domain = xhttpCfg.Domains[0]
 	}
 
-	statsKey := route.BackendKey(domain, cfg.Address)
-	stats := registry.GetOrRegister(statsKey)
+	statsKey := route.BackendKey(domain, xhttpCfg.Server.Address)
+	stats := xhttpCfg.Resource.Metrics.GetOrRegister(statsKey)
 	now := time.Now()
 
 	cbThreshold := woos.DefaultCircuitBreakerThreshold
@@ -112,14 +108,11 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		cbThreshold = route.CircuitBreaker.Threshold
 	}
 
-	hScore := xhttpCfg.HealthScore
-	if hScore == nil {
-		hScore = health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
-	}
+	hScore := xhttpCfg.Resource.Health.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
 
 	b := &Backend{
 		URL:          u,
-		weight:       cfg.Weight,
+		weight:       xhttpCfg.Server.Weight,
 		cbThreshold:  cbThreshold,
 		Cond:         cond,
 		hcConfig:     &route.HealthCheck,
@@ -143,12 +136,12 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 	b.Abort = health.NewEarlyAbortController(b.Weights.EarlyAbortEnabled)
 
 	rp := &httputil.ReverseProxy{}
-	t := woos.Transport.Clone()
+	t := xhttpCfg.Resource.Transport.Clone()
 	t.Proxy = nil
 	t.ExpectContinueTimeout = 0
-	if cfg.Streaming.Enabled.Active() {
+	if xhttpCfg.Server.Streaming.Enabled.Active() {
 		t.ResponseHeaderTimeout = 0
-		rp.FlushInterval = cfg.Streaming.EffectiveFlushInterval()
+		rp.FlushInterval = xhttpCfg.Server.Streaming.EffectiveFlushInterval()
 		if rp.FlushInterval <= 0 {
 			rp.FlushInterval = -1
 		}

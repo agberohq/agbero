@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/olekukonko/ll"
 )
 
@@ -206,7 +207,7 @@ func TestProxy_SNIRouting_Exact_Wildcard_Default(t *testing.T) {
 	defer stopD()
 
 	proxyAddr := getFreePort(t)
-	p := NewProxy(proxyAddr, newTestLogger())
+	p := NewProxy(resource.New(), newTestLogger(), proxyAddr)
 
 	// Exact
 	p.AddRoute("a.com", alaye.TCPRoute{
@@ -264,7 +265,7 @@ func TestProxy_DefaultRoute_NoClientData_StillConnects(t *testing.T) {
 	defer stopD()
 
 	proxyAddr := getFreePort(t)
-	p := NewProxy(proxyAddr, newTestLogger())
+	p := NewProxy(resource.New(), newTestLogger(), proxyAddr)
 
 	p.AddRoute("*", alaye.TCPRoute{
 		Backends: []alaye.Server{{Address: sD}},
@@ -298,7 +299,7 @@ func TestProxy_DialRetry_SkipsDeadBackend(t *testing.T) {
 	deadAddr := getFreePort(t) // nobody listening on it
 
 	proxyAddr := getFreePort(t)
-	p := NewProxy(proxyAddr, newTestLogger())
+	p := NewProxy(resource.New(), newTestLogger(), proxyAddr)
 	p.AddRoute("*", alaye.TCPRoute{
 		Backends: []alaye.Server{
 			{Address: deadAddr},
@@ -331,7 +332,7 @@ func TestProxy_HalfClose_PropagatesEOF(t *testing.T) {
 	defer stop()
 
 	proxyAddr := getFreePort(t)
-	p := NewProxy(proxyAddr, newTestLogger())
+	p := NewProxy(resource.New(), newTestLogger(), proxyAddr)
 	p.SetIdleTimeout(5 * time.Second)
 	p.AddRoute("*", alaye.TCPRoute{
 		Backends: []alaye.Server{{Address: up}},

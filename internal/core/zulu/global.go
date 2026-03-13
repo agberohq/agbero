@@ -5,22 +5,10 @@ import (
 	mrand "math/rand/v2"
 	"sync"
 
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/mappo"
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
 )
-
-// Route is a globally shared map that provides lifecycle-managed access to route configurations and their handlers.
-var Route = mappo.NewCache(mappo.CacheOptions{
-	MaximumSize: woos.CacheMax,
-	OnDelete:    mappo.CloserDelete,
-})
-
-var TCP = mappo.NewCache(mappo.CacheOptions{
-	MaximumSize: woos.CacheMax,
-	OnDelete:    mappo.CloserDelete,
-})
 
 func GetCache[T any](it *mappo.Item) (T, bool) {
 	var zero T

@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/pkg/metrics"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
 	"github.com/pires/go-proxyproto"
@@ -26,7 +26,8 @@ type Proxy struct {
 	Routes  map[string]*Balancer
 	Default *Balancer
 
-	Logger *ll.Logger
+	logger *ll.Logger
+	res    *resource.Manager
 
 	connsMu sync.Mutex
 	conns   map[net.Conn]struct{}
@@ -35,11 +36,12 @@ type Proxy struct {
 	wg   sync.WaitGroup
 }
 
-func NewProxy(listen string, logger *ll.Logger) *Proxy {
+func NewProxy(res *resource.Manager, logger *ll.Logger, listen string) *Proxy {
 	return &Proxy{
 		Listen: listen,
 		Routes: make(map[string]*Balancer),
-		Logger: logger.Namespace("proxy"),
+		logger: logger.Namespace("proxy"),
+		res:    res,
 		conns:  make(map[net.Conn]struct{}),
 		quit:   make(chan struct{}),
 	}
@@ -59,7 +61,7 @@ func (p *Proxy) AddRoute(hostname string, cfg alaye.TCPRoute) {
 	p.Mu.Lock()
 	defer p.Mu.Unlock()
 
-	bal := NewBalancer(cfg, metrics.DefaultRegistry)
+	bal := NewBalancer(cfg, p.res)
 	hostname = strings.ToLower(strings.TrimSpace(hostname))
 
 	if hostname == "" || hostname == "*" {
@@ -85,7 +87,7 @@ func (p *Proxy) UpdateRoutes(newRoutes map[string]*Balancer, newDefault *Balance
 		r.Stop()
 	}
 
-	p.Logger.Fields("listen", p.Listen).Info("tcp proxy routes updated")
+	p.logger.Fields("listen", p.Listen).Info("tcp proxy routes updated")
 }
 
 func (p *Proxy) Start() error {
@@ -94,11 +96,11 @@ func (p *Proxy) Start() error {
 		return err
 	}
 
-	zulu.TCP.Store(p.Listen, &mappo.Item{Value: p})
+	p.res.TCPCache.Store(p.Listen, &mappo.Item{Value: p})
 
 	p.wg.Go(func() {
 		defer l.Close()
-		defer zulu.TCP.Delete(p.Listen)
+		defer p.res.TCPCache.Delete(p.Listen)
 
 		bo := zulu.NewInfinite()
 
@@ -121,7 +123,7 @@ func (p *Proxy) Start() error {
 				}
 
 				sleepDuration := bo.NextBackOff()
-				p.Logger.Fields("err", err, "retry_in", sleepDuration).Warn("tcp accept error, backing off")
+				p.logger.Fields("err", err, "retry_in", sleepDuration).Warn("tcp accept error, backing off")
 
 				select {
 				case <-time.After(sleepDuration):
@@ -138,7 +140,7 @@ func (p *Proxy) Start() error {
 		}
 	})
 
-	p.Logger.Fields("bind", p.Listen).Info("tcp proxy started")
+	p.logger.Fields("bind", p.Listen).Info("tcp proxy started")
 	return nil
 }
 
@@ -168,7 +170,7 @@ func (p *Proxy) Stop() {
 	p.connsMu.Unlock()
 
 	if count > 0 {
-		p.Logger.Fields("count", count).Warn("forced closed active tcp connections")
+		p.logger.Fields("count", count).Warn("forced closed active tcp connections")
 	}
 
 	p.wg.Wait()
@@ -220,12 +222,12 @@ func (p *Proxy) handle(src net.Conn) {
 				p.Mu.RUnlock()
 
 				if !hasDefault {
-					p.Logger.Fields("remote", remoteAddr).Debug("tcp peek timeout, no default route")
+					p.logger.Fields("remote", remoteAddr).Debug("tcp peek timeout, no default route")
 					_ = src.Close()
 					return
 				}
 			} else if err != io.EOF && err != io.ErrUnexpectedEOF {
-				p.Logger.Fields("remote", remoteAddr, "err", err).Debug("tcp peek error")
+				p.logger.Fields("remote", remoteAddr, "err", err).Debug("tcp peek error")
 				_ = src.Close()
 				return
 			}
@@ -240,7 +242,7 @@ func (p *Proxy) handle(src net.Conn) {
 
 	balancer := p.pickBalancer(sni)
 	if balancer == nil {
-		p.Logger.Fields("remote", remoteAddr, "sni", sni).Debug("no tcp route found")
+		p.logger.Fields("remote", remoteAddr, "sni", sni).Debug("no tcp route found")
 		_ = src.Close()
 		return
 	}
@@ -276,11 +278,11 @@ func (p *Proxy) handle(src net.Conn) {
 		}
 
 		backend.OnDialFailure(err)
-		p.Logger.Fields("backend", backend.Address, "err", err).Warn("tcp dial failed")
+		p.logger.Fields("backend", backend.Address, "err", err).Warn("tcp dial failed")
 	}
 
 	if dst == nil {
-		p.Logger.Fields("remote", remoteAddr, "sni", sni).Warnf("tcp proxy: upstream (%s) unavailable", backend.Address)
+		p.logger.Fields("remote", remoteAddr, "sni", sni).Warnf("tcp proxy: upstream (%s) unavailable", backend.Address)
 		_ = client.Close()
 		return
 	}
@@ -300,7 +302,7 @@ func (p *Proxy) handle(src net.Conn) {
 			client.LocalAddr(),
 		)
 		if _, err := header.WriteTo(dst); err != nil {
-			p.Logger.Fields("err", err).Error("failed to write proxy protocol header")
+			p.logger.Fields("err", err).Error("failed to write proxy protocol header")
 			_ = client.Close()
 			_ = dst.Close()
 			requestFailed = true

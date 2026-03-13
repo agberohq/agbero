@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/pkg/metrics"
+	"github.com/agberohq/agbero/internal/core/resource"
 )
 
 func TestBalancer_Pick_RetryDistribution(t *testing.T) {
@@ -19,7 +19,7 @@ func TestBalancer_Pick_RetryDistribution(t *testing.T) {
 		Backends: backends,
 	}
 
-	bal := NewBalancer(route, metrics.NewRegistry())
+	bal := NewBalancer(route, resource.New())
 
 	selections := make(map[string]int)
 	for i := 0; i < 100; i++ {
@@ -51,7 +51,7 @@ func TestBalancer_Pick_ExcludesDeadBackends(t *testing.T) {
 		Backends: backends,
 	}
 
-	bal := NewBalancer(route, metrics.NewRegistry())
+	bal := NewBalancer(route, resource.New())
 
 	be := bal.Backends()[0]
 	be.Status(false)

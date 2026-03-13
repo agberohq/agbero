@@ -7,12 +7,12 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/pkg/metrics"
 )
 
 func TestProxy_Pick_ReturnsCorrectType(t *testing.T) {
-	backends := []*Backend{}
+	var backends []*Backend
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -28,13 +28,14 @@ func TestProxy_Pick_ReturnsCorrectType(t *testing.T) {
 	}
 
 	cfg := ConfigBackend{
+		Server:   alaye.NewServer(server.URL),
 		Route:    route,
 		Domains:  []string{"example.com"},
 		Logger:   testLogger,
-		Registry: metrics.NewRegistry(),
+		Resource: resource.New(),
 	}
 
-	b1, err := NewBackend(alaye.NewServer(server.URL), cfg)
+	b1, err := NewBackend(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}

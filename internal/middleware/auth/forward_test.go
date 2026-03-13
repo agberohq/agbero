@@ -12,22 +12,15 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/olekukonko/mappo"
 )
 
-// Clear caches between tests
-func clearTestCaches() {
-	globalAuthCache = mappo.NewCache(mappo.CacheOptions{
-		MaximumSize: 100_000,
-		OnDelete:    mappo.CloserDelete,
-	})
-}
+var res = resource.New()
 
 func TestForward_Disabled(t *testing.T) {
-	clearTestCaches()
 	cfg := &alaye.ForwardAuth{Enabled: alaye.Inactive}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("next-handler"))
 	}))
@@ -46,9 +39,8 @@ func TestForward_Disabled(t *testing.T) {
 }
 
 func TestForward_EmptyURL(t *testing.T) {
-	clearTestCaches()
 	cfg := &alaye.ForwardAuth{Enabled: alaye.Active, URL: ""}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -62,7 +54,6 @@ func TestForward_EmptyURL(t *testing.T) {
 }
 
 func TestForward_Success_AllowsRequest(t *testing.T) {
-	clearTestCaches()
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			t.Error("Authorization header not forwarded")
@@ -82,7 +73,7 @@ func TestForward_Success_AllowsRequest(t *testing.T) {
 	}
 
 	called := false
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("protected-resource"))
@@ -106,7 +97,6 @@ func TestForward_Success_AllowsRequest(t *testing.T) {
 }
 
 func TestForward_Forbidden_BlocksRequest(t *testing.T) {
-	clearTestCaches()
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
@@ -121,7 +111,7 @@ func TestForward_Forbidden_BlocksRequest(t *testing.T) {
 	}
 
 	nextCalled := false
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nextCalled = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -146,7 +136,6 @@ func TestForward_Forbidden_BlocksRequest(t *testing.T) {
 }
 
 func TestForward_Unauthorized(t *testing.T) {
-	clearTestCaches()
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="api", error="invalid_token"`)
 		w.WriteHeader(http.StatusUnauthorized)
@@ -159,7 +148,7 @@ func TestForward_Unauthorized(t *testing.T) {
 		Name:    "test_unauthorized", // Unique name
 		URL:     authServer.URL,
 	}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Next handler should not be called")
 	}))
 
@@ -177,7 +166,6 @@ func TestForward_Unauthorized(t *testing.T) {
 }
 
 func TestForward_DefaultHeaders(t *testing.T) {
-	clearTestCaches()
 	receivedHeaders := make(http.Header)
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedHeaders = r.Header
@@ -190,7 +178,7 @@ func TestForward_DefaultHeaders(t *testing.T) {
 		Name:    "test_default_headers", // Unique name
 		URL:     authServer.URL,
 	}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Authorization", "Bearer token123")
@@ -212,7 +200,6 @@ func TestForward_DefaultHeaders(t *testing.T) {
 }
 
 func TestForward_CustomHeaders(t *testing.T) {
-	clearTestCaches()
 	receivedHeaders := make(http.Header)
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedHeaders = r.Header
@@ -229,7 +216,7 @@ func TestForward_CustomHeaders(t *testing.T) {
 			Headers: []string{"X-API-Key", "X-Tenant-ID"},
 		},
 	}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("X-API-Key", "secret-key")
@@ -251,7 +238,7 @@ func TestForward_CustomHeaders(t *testing.T) {
 }
 
 func TestForward_MetadataHeaders(t *testing.T) {
-	clearTestCaches()
+
 	receivedHeaders := make(http.Header)
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedHeaders = r.Header
@@ -270,7 +257,7 @@ func TestForward_MetadataHeaders(t *testing.T) {
 			ForwardIP:     true,
 		},
 	}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
 	req := httptest.NewRequest("POST", "/api/v1/users?page=2", nil)
 	req.RemoteAddr = "192.168.1.100:12345"
@@ -290,7 +277,7 @@ func TestForward_MetadataHeaders(t *testing.T) {
 }
 
 func TestForward_CopyHeadersToBackend(t *testing.T) {
-	clearTestCaches()
+
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-User-ID", "user-123")
 		w.Header().Set("X-User-Email", "alice@example.com")
@@ -310,7 +297,7 @@ func TestForward_CopyHeadersToBackend(t *testing.T) {
 			CopyHeaders: []string{"X-User-ID", "X-User-Email", "X-User-Scopes"},
 		},
 	}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedUserID = r.Header.Get("X-User-ID")
 		receivedEmail = r.Header.Get("X-User-Email")
 		receivedScopes = r.Header.Get("X-User-Scopes")
@@ -333,7 +320,7 @@ func TestForward_CopyHeadersToBackend(t *testing.T) {
 }
 
 func TestForward_BodyMode_None(t *testing.T) {
-	clearTestCaches()
+
 	bodyReceived := false
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
@@ -355,7 +342,7 @@ func TestForward_BodyMode_None(t *testing.T) {
 			BodyMode: "none",
 		},
 	}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		if string(body) != `{"data":"sensitive"}` {
 			t.Errorf("Backend should receive original body, got %s", string(body))
@@ -375,7 +362,7 @@ func TestForward_BodyMode_None(t *testing.T) {
 }
 
 func TestForward_BodyMode_Metadata(t *testing.T) {
-	clearTestCaches()
+
 	receivedHeaders := make(http.Header)
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedHeaders = r.Header
@@ -399,7 +386,7 @@ func TestForward_BodyMode_Metadata(t *testing.T) {
 			Method:   http.MethodPost,
 		},
 	}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		if string(body) != "large-file-content" {
 			t.Errorf("Backend should receive original body, got %q", string(body))
@@ -423,7 +410,7 @@ func TestForward_BodyMode_Metadata(t *testing.T) {
 }
 
 func TestForward_BodyMode_Limited(t *testing.T) {
-	clearTestCaches()
+
 	authBody := ""
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
@@ -446,7 +433,7 @@ func TestForward_BodyMode_Limited(t *testing.T) {
 	}
 
 	backendBody := ""
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		backendBody = string(body)
 		w.WriteHeader(http.StatusOK)
@@ -482,7 +469,7 @@ func TestForward_BodyMode_Limited(t *testing.T) {
 }
 
 func TestForward_OnFailure_Allow(t *testing.T) {
-	clearTestCaches()
+
 	cfg := &alaye.ForwardAuth{
 		Enabled:   alaye.Active,
 		Name:      "test_failure_allow", // Unique name
@@ -492,7 +479,7 @@ func TestForward_OnFailure_Allow(t *testing.T) {
 	}
 
 	called := false
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("fail-open"))
@@ -511,7 +498,7 @@ func TestForward_OnFailure_Allow(t *testing.T) {
 }
 
 func TestForward_OnFailure_Deny(t *testing.T) {
-	clearTestCaches()
+
 	cfg := &alaye.ForwardAuth{
 		Enabled:   alaye.Active,
 		Name:      "test_failure_deny", // Unique name
@@ -520,7 +507,7 @@ func TestForward_OnFailure_Deny(t *testing.T) {
 		Timeout:   100 * time.Millisecond,
 	}
 
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Next handler should NOT be called when on_failure=deny")
 	}))
 
@@ -537,7 +524,7 @@ func TestForward_OnFailure_Deny(t *testing.T) {
 }
 
 func TestForward_Timeout(t *testing.T) {
-	clearTestCaches()
+
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
@@ -551,7 +538,7 @@ func TestForward_Timeout(t *testing.T) {
 		Timeout:   50 * time.Millisecond,
 		OnFailure: "deny",
 	}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Should not reach next handler on timeout")
 	}))
 
@@ -565,7 +552,7 @@ func TestForward_Timeout(t *testing.T) {
 }
 
 func TestForward_TLS_InsecureSkipVerify(t *testing.T) {
-	clearTestCaches()
+
 	authServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -580,7 +567,7 @@ func TestForward_TLS_InsecureSkipVerify(t *testing.T) {
 			InsecureSkipVerify: true,
 		},
 	}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -594,7 +581,7 @@ func TestForward_TLS_InsecureSkipVerify(t *testing.T) {
 }
 
 func TestForward_EmptyAuthorization(t *testing.T) {
-	clearTestCaches()
+
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") == "" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -609,7 +596,7 @@ func TestForward_EmptyAuthorization(t *testing.T) {
 		Name:    "test_empty_auth", // Unique name
 		URL:     authServer.URL,
 	}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Should not reach next handler without auth")
 	}))
 
@@ -623,7 +610,7 @@ func TestForward_EmptyAuthorization(t *testing.T) {
 }
 
 func TestForward_AuthService5xx(t *testing.T) {
-	clearTestCaches()
+
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte(`{"error":"auth_service_overloaded"}`))
@@ -636,7 +623,7 @@ func TestForward_AuthService5xx(t *testing.T) {
 		URL:       authServer.URL,
 		OnFailure: "deny",
 	}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Should not reach next handler on 503")
 	}))
 
@@ -650,7 +637,7 @@ func TestForward_AuthService5xx(t *testing.T) {
 }
 
 func TestForward_ConcurrentRequests(t *testing.T) {
-	clearTestCaches()
+
 	var authCalls int64
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(&authCalls, 1)
@@ -672,7 +659,7 @@ func TestForward_ConcurrentRequests(t *testing.T) {
 			CacheTTL: 1 * time.Minute,
 		},
 	}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -697,7 +684,7 @@ func TestForward_ConcurrentRequests(t *testing.T) {
 }
 
 func TestForward_LargeResponseHeaders(t *testing.T) {
-	clearTestCaches()
+
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		largeToken := "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9." + strings.Repeat("x", 2000) + ".signature"
 		w.Header().Set("X-User-Token", largeToken)
@@ -717,7 +704,7 @@ func TestForward_LargeResponseHeaders(t *testing.T) {
 	}
 
 	var receivedToken string
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedToken = r.Header.Get("X-User-Token")
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -732,7 +719,7 @@ func TestForward_LargeResponseHeaders(t *testing.T) {
 }
 
 func TestForward_SpecialCharactersInURI(t *testing.T) {
-	clearTestCaches()
+
 	receivedURI := ""
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedURI = r.Header.Get(woos.HeaderXOriginalURI)
@@ -749,7 +736,7 @@ func TestForward_SpecialCharactersInURI(t *testing.T) {
 			ForwardURI: true,
 		},
 	}
-	handler := Forward(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

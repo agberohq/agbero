@@ -1,13 +1,14 @@
 package xtcp
 
 import (
-	mrand "math/rand/v2"
 	"strings"
 
+	mrand "math/rand/v2"
+
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/pkg/health"
 	"github.com/agberohq/agbero/internal/pkg/lb"
-	"github.com/agberohq/agbero/internal/pkg/metrics"
 )
 
 type Balancer struct {
@@ -16,12 +17,8 @@ type Balancer struct {
 	proxyProtocol bool
 }
 
-func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
+func NewBalancer(cfg alaye.TCPRoute, res *resource.Manager) *Balancer {
 	var backends []*Backend
-
-	if registry == nil {
-		registry = metrics.DefaultRegistry
-	}
 
 	wrappedBackends := make([]lb.Backend, 0, len(cfg.Backends))
 	for _, b := range cfg.Backends {
@@ -30,19 +27,16 @@ func NewBalancer(cfg alaye.TCPRoute, registry *metrics.Registry) *Balancer {
 			w = 1
 		}
 
-		// Deterministic human-readable key
 		statsKey := cfg.BackendKey(b.Address)
-		stats := registry.GetOrRegister(statsKey)
-
-		// Lookup or initialize the globally managed health score
-		hScore := health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
+		stats := res.Metrics.GetOrRegister(statsKey)
+		hScore := res.Health.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
 
 		hasProber := false
 		if cfg.HealthCheck.Enabled.Active() {
 			hasProber = true
 		} else if cfg.HealthCheck.Enabled == alaye.Unknown && (cfg.HealthCheck.Send != "" || cfg.HealthCheck.Expect != "") {
 			hasProber = true
-		} else if strings.HasSuffix(b.Address, ":6379") { // Auto-redis ping detection
+		} else if strings.HasSuffix(b.Address, ":6379") {
 			hasProber = true
 		}
 
