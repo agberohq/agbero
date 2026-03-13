@@ -62,7 +62,7 @@ func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 		opt(h)
 	}
 	if h.logger == nil {
-		h.logger = ll.New(woos.Name).Enable()
+		h.logger = ll.New(woos.Name).Disable()
 	}
 
 	h.lifetimes = jack.NewLifetimeManager(

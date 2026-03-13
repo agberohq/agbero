@@ -34,10 +34,7 @@ func setupBackends(count int) ([]*httptest.Server, []alaye.Server) {
 	for i := 0; i < count; i++ {
 		ts := httptest.NewServer(handler)
 		tsList = append(tsList, ts)
-		srvList = append(srvList, alaye.Server{
-			Address: ts.URL,
-			Weight:  1,
-		})
+		srvList = append(srvList, alaye.NewServer(ts.URL))
 	}
 	return tsList, srvList
 }
@@ -48,17 +45,34 @@ func setupProxy(b *testing.B, strategy string, backends []alaye.Server) (*Server
 	bindAddr := fmt.Sprintf("127.0.0.1:%d", port)
 
 	// 1. Setup Global Config (Disable heavy features like logging/WAF for pure proxy bench)
-	global := alaye.NewEphemeralGlobal(port, false)
-	global.Logging.Enabled = alaye.Inactive
-	global.Security.Enabled = alaye.Inactive
-	global.Bind.HTTP = []string{bindAddr}
-	global.Bind.HTTPS = []string{} // Plaintext for benchmark speed
+	global := &alaye.Global{
+		Bind: alaye.Bind{
+			HTTP: []string{bindAddr},
+		},
+		Timeouts: alaye.Timeout{
+			Enabled:    alaye.Active,
+			Read:       30 * time.Second,
+			Write:      30 * time.Second,
+			Idle:       120 * time.Second,
+			ReadHeader: 5 * time.Second,
+		},
+		General: alaye.General{
+			MaxHeaderBytes: 1 << 20,
+		},
+		Storage: alaye.Storage{
+			HostsDir: b.TempDir(),
+			DataDir:  b.TempDir(),
+			CertsDir: b.TempDir(),
+		},
+	}
 
 	// 2. Setup Host Config
 	hostCfg := &alaye.Host{
 		Domains: []string{"bench.localhost"},
 		Bind:    []string{fmt.Sprintf("%d", port)},
-		TLS:     alaye.TLS{Mode: alaye.ModeLocalNone},
+		TLS: alaye.TLS{
+			Mode: alaye.ModeLocalNone,
+		},
 		Routes: []alaye.Route{
 			{
 				Enabled: alaye.Active,
@@ -143,15 +157,17 @@ func BenchmarkStrategies(b *testing.B) {
 				req.Host = "bench.localhost"
 				resp, err := client.Do(req)
 				if err == nil {
-					io.Copy(io.Discard, resp.Body)
+					_, _ = io.Copy(io.Discard, resp.Body)
 					resp.Body.Close()
 					break
 				}
 				time.Sleep(10 * time.Millisecond)
 			}
 
-			// Clear metrics that might have been recorded during the readiness loop
-			res.Metrics.Clear()
+			// Prune metrics to clear any recorded during readiness loop
+			if res.Metrics != nil {
+				res.Metrics.Prune(map[alaye.BackendKey]bool{})
+			}
 
 			var successes atomic.Uint64
 			var httpErrs atomic.Uint64
@@ -209,11 +225,20 @@ func printMetricsSummary(b *testing.B, strategy string, backends []alaye.Server,
 	var activeBackends int
 
 	for i, srv := range backends {
-		key := alaye.BackendKey{Protocol: "http", Domain: "bench.localhost", Path: "/", Addr: srv.Address}
+		// Use the correct BackendKey format from the refactored code
+		key := alaye.BackendKey{
+			Protocol: "http",
+			Domain:   "bench.localhost",
+			Path:     "/",
+			Addr:     srv.Address.String(),
+		}
 
 		if stats := res.Metrics.Get(key); stats != nil {
 			snap := stats.Activity.Snapshot()
-			lat := snap["latency"].(metrics.LatencySnapshot)
+			lat, ok := snap["latency"].(metrics.LatencySnapshot)
+			if !ok {
+				continue
+			}
 
 			// We pull directly from the atomic uint64 to ensure absolute accuracy of requests served
 			reqs := stats.Activity.Requests.Load()

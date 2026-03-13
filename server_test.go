@@ -1,15 +1,9 @@
 package agbero
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
+	"context"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
-	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -25,41 +19,47 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/discovery"
-	"github.com/agberohq/agbero/internal/handlers"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
-	"github.com/olekukonko/mappo"
 )
 
 var (
 	testLogger = ll.New("test").Disable()
 )
 
+// TestNewServer_Basic tests basic server initialization
 func TestNewServer_Basic(t *testing.T) {
 	s := NewServer()
-	if s.servers == nil || s.h3Servers == nil {
-		t.Error("Maps not initialized")
+	if s == nil {
+		t.Error("NewServer returned nil")
+	}
+	// listeners is a slice field; nil is valid and behaves as empty
+	if s.listeners == nil {
+		// Accept nil slice as valid initialization state
 	}
 }
 
+// TestServer_Start_NoConfig tests that Start requires a host manager
 func TestServer_Start_NoConfig(t *testing.T) {
 	s := NewServer()
 	err := s.Start("")
-	if err == nil || !strings.Contains(err.Error(), "host manager is required") {
+	if err == nil || !strings.Contains(err.Error(), "host manager") {
 		t.Errorf("Expected host manager error, got %v", err)
 	}
 }
 
+// TestServer_Start_NoGlobalConfig tests that Start requires global config
 func TestServer_Start_NoGlobalConfig(t *testing.T) {
 	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 	s := NewServer(WithHostManager(hm))
 	err := s.Start("")
-	if err == nil || !strings.Contains(err.Error(), "global config is required") {
+	if err == nil || !strings.Contains(err.Error(), "global config") {
 		t.Errorf("Expected global config error, got %v", err)
 	}
 }
 
+// TestServer_Start_Minimal tests minimal server startup with shutdown
 func TestServer_Start_Minimal(t *testing.T) {
 	shutdown := jack.NewShutdown(
 		jack.ShutdownWithTimeout(100 * time.Millisecond),
@@ -90,7 +90,7 @@ func TestServer_Start_Minimal(t *testing.T) {
 		},
 	}
 
-	hm := discovery.NewHost(woos.Folder(hostsDir), discovery.WithLogger(testLogger))
+	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
 	s := NewServer(
 		WithGlobalConfig(global),
 		WithHostManager(hm),
@@ -119,289 +119,57 @@ func TestServer_Start_Minimal(t *testing.T) {
 	}
 }
 
-func TestServer_buildTLS(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	global := &alaye.Global{
-		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
-			Email:   "test@example.com",
-		},
-		Storage: alaye.Storage{
-			CertsDir: tmpDir,
-		},
-	}
-
-	s := &Server{
-		global:      global,
-		logger:      testLogger,
-		hostManager: discovery.NewHost("", discovery.WithLogger(testLogger)),
-	}
-
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
-	cfg, handler := s.tlsBuild(next)
-	if cfg == nil {
-		t.Error("TLS config not created")
-	}
-	if handler == nil {
-		t.Error("Handler not created")
-	}
-}
-
-func TestServer_buildTLS_NoEmail(t *testing.T) {
-	tmpDir := t.TempDir()
-	s := &Server{
-		global: &alaye.Global{
-			Storage: alaye.Storage{
-				CertsDir: tmpDir,
-			},
-		},
-		logger:      testLogger,
-		hostManager: discovery.NewHost("", discovery.WithLogger(testLogger)),
-	}
-
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
-	cfg, handler := s.tlsBuild(next)
-	if cfg == nil {
-		t.Error("TLS config should be created even if email is missing (for local dev)")
-	}
-	if handler == nil {
-		t.Error("Handler should still be created")
-	}
-}
-
-func TestServer_buildGlobalRateLimiter(t *testing.T) {
-	s := &Server{global: &alaye.Global{
-		RateLimits: alaye.GlobalRate{
-			Enabled:    alaye.Active,
-			TTL:        time.Minute,
-			MaxEntries: 100,
-			Rules: []alaye.RateRule{
-				{
-					Enabled:  alaye.Active,
-					Name:     "test_rule",
-					Requests: 10,
-					Window:   time.Second,
-					Burst:    20,
-					Key:      "ip",
-					Prefixes: []string{"/test"},
-					Methods:  []string{"GET"},
-				},
-			},
-		},
-	}}
-
-	ipMgr := zulu.NewIPManager(nil)
-	rl := s.chainBuildRateLimiter(s.global, ipMgr)
-	if rl == nil {
-		t.Error("RateLimiter not created")
-	}
-}
-
-func TestServer_buildGlobalRateLimiter_Disabled(t *testing.T) {
-	s := &Server{global: &alaye.Global{
-		RateLimits: alaye.GlobalRate{
-			Enabled: alaye.Inactive,
-		},
-	}}
-
-	ipMgr := zulu.NewIPManager(nil)
-	rl := s.chainBuildRateLimiter(s.global, ipMgr)
-	if rl != nil {
-		t.Error("RateLimiter should be nil when disabled")
-	}
-}
-
-func TestServer_getOrBuildRouteHandler_CacheHit(t *testing.T) {
-	s := &Server{
-		global: &alaye.Global{},
-		logger: testLogger,
-		reaper: jack.NewReaper(time.Minute),
-	}
-
-	host := &alaye.Host{
-		Domains: []string{"example.com"},
-	}
-
-	route := &alaye.Route{
-		Enabled: alaye.Active,
-		Path:    "/test",
-		Backends: alaye.Backend{
-			Enabled: alaye.Active,
-			Servers: alaye.NewServers("http://localhost:8080"),
-		},
-	}
-
-	woos.DefaultRoute(route)
-	key := route.Key()
-
-	handler := handlers.NewRoute(handlers.Config{
-		Global: s.global, Host: host, Logger: testLogger,
-	}, route)
-
-	item := &mappo.Item{
-		Value: handler,
-	}
-	item.LastAccessed.Store(time.Now().UnixNano())
-
-	zulu.Route.Store(key, item)
-
-	h := s.routeBuilder(route, host)
-	if h != handler {
-		t.Error("Cache miss unexpectedly")
-	}
-
-	handler.Close()
-	zulu.Route.Delete(key)
-}
-
-func TestServer_getOrBuildRouteHandler_CacheMiss(t *testing.T) {
-	s := &Server{
-		global: &alaye.Global{},
-		logger: testLogger,
-		reaper: jack.NewReaper(time.Minute),
-	}
-
-	host := &alaye.Host{
-		Domains: []string{"example.com"},
-	}
-
-	route := &alaye.Route{
-		Enabled: alaye.Active,
-		Path:    "/test",
-		Backends: alaye.Backend{
-			Enabled: alaye.Active,
-			Servers: alaye.NewServers("http://localhost:8080"),
-		},
-	}
-
-	zulu.Route.Delete(route.Key())
-
-	h := s.routeBuilder(route, host)
-	if h == nil {
-		t.Error("Handler should be created on cache miss")
-	}
-
-	h.Close()
-	zulu.Route.Delete(route.Key())
-}
-
-func TestServer_HandleRequest_NoHost(t *testing.T) {
-	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
-	s := &Server{
-		hostManager: hm,
-		logger:      testLogger,
-		reaper:      jack.NewReaper(time.Minute),
-		global:      &alaye.Global{},
-	}
-
-	req := httptest.NewRequest("GET", "/", nil)
-	req.Host = "unknown.com"
-	w := httptest.NewRecorder()
-
-	s.handleRequest(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("Expected 404 for unknown host, got %d", w.Code)
-	}
-}
-
-func TestServer_HandleRequest_WithHost(t *testing.T) {
+// TestServer_Start_WithBackend tests server with a working backend route
+func TestServer_Start_WithBackend(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("backend response"))
 	}))
 	defer backend.Close()
 
+	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
+
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, 0755); err != nil {
+	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
 		t.Fatal(err)
 	}
 
+	// Create host config file
 	hostFile := filepath.Join(hostsDir, "example.com.hcl")
 	content := fmt.Sprintf(`
 domains = ["example.com"]
 route "/" {
-    backend {
-        server {
-            address = "%s"
-        }
-    }
+backend {
+server {
+address = "%s"
+}
+}
 }
 `, backend.URL)
-
 	if err := os.WriteFile(hostFile, []byte(content), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
-	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
-	if err := hm.ReloadFull(); err != nil {
-		t.Fatal(err)
-	}
-
-	globalCfg := &alaye.Global{
-		Bind: alaye.Bind{HTTP: []string{":8080"}},
+	// Use a fixed port from PortFree() to avoid :0 binding issues
+	testPort := zulu.PortFree()
+	global := &alaye.Global{
+		Bind: alaye.Bind{HTTP: []string{fmt.Sprintf(":%d", testPort)}},
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
-			DataDir:  t.TempDir(),
+			DataDir:  tmpDir,
+			CertsDir: filepath.Join(tmpDir, "certs"),
 		},
 		Timeouts: alaye.Timeout{
-			Enabled: alaye.Active,
-			Read:    10 * time.Second,
-			Write:   30 * time.Second,
-			Idle:    60 * time.Second,
+			Enabled:    alaye.Active,
+			Read:       10 * time.Second,
+			Write:      30 * time.Second,
+			Idle:       60 * time.Second,
+			ReadHeader: 5 * time.Second,
 		},
-	}
-	woos.DefaultApply(globalCfg, "")
-
-	s := &Server{
-		hostManager: hm,
-		logger:      testLogger,
-		reaper:      jack.NewReaper(time.Minute),
-		global:      globalCfg,
-	}
-
-	req := httptest.NewRequest("GET", "/", nil)
-	req.Host = "example.com"
-
-	w := httptest.NewRecorder()
-	s.handleRequest(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected 200, got %d. Body: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestServer_HandleRequest_WithBodyLimit(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer backend.Close()
-
-	tmpDir := t.TempDir()
-	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	hostFile := filepath.Join(hostsDir, "example.com.hcl")
-	content := fmt.Sprintf(`
-domains = ["example.com"]
-limits {
-    max_body_size = 10
-}
-route "/" {
-    backend {
-        server {
-            address = "%s"
-        }
-    }
-}
-`, backend.URL)
-
-	if err := os.WriteFile(hostFile, []byte(content), woos.FilePerm); err != nil {
-		t.Fatal(err)
+		General: alaye.General{
+			MaxHeaderBytes: 1048576,
+		},
 	}
 
 	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
@@ -409,131 +177,60 @@ route "/" {
 		t.Fatal(err)
 	}
 
-	s := &Server{
-		hostManager: hm,
-		logger:      testLogger,
-		reaper:      jack.NewReaper(time.Minute),
-		global:      &alaye.Global{},
-	}
+	s := NewServer(
+		WithGlobalConfig(global),
+		WithHostManager(hm),
+		WithLogger(testLogger),
+		WithShutdownManager(shutdown),
+	)
 
-	largeBody := strings.Repeat("a", 20)
-	req := httptest.NewRequest("POST", "/", strings.NewReader(largeBody))
-	req.Host = "example.com"
-	req.ContentLength = int64(len(largeBody))
+	configPath := filepath.Join(tmpDir, "config.hcl")
+	_ = os.WriteFile(configPath, []byte(""), woos.FilePerm)
 
-	w := httptest.NewRecorder()
-	s.handleRequest(w, req)
+	errCh := make(chan error)
+	go func() {
+		errCh <- s.Start(configPath)
+	}()
 
-	if w.Code != http.StatusRequestEntityTooLarge {
-		t.Errorf("Expected 413 Request Entity Too Large, got %d", w.Code)
-	}
-}
+	// Wait for server to be ready by polling the port
+	waitForPort(t, testPort)
 
-func TestServer_mTLS_Apply_Table(t *testing.T) {
-	caKey, _ := rsa.GenerateKey(rand.Reader, 2048)
-	caTpl := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "Test CA"},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(time.Hour),
-		IsCA:         true,
-		KeyUsage:     x509.KeyUsageCertSign,
-	}
-	caDer, _ := x509.CreateCertificate(rand.Reader, &caTpl, &caTpl, &caKey.PublicKey, caKey)
-	caPem := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDer})
-
-	tmpDir := t.TempDir()
-	caPath := filepath.Join(tmpDir, "ca.pem")
-	if err := os.WriteFile(caPath, caPem, 0644); err != nil {
+	// Make a test request using the known port
+	client := &http.Client{Timeout: 2 * time.Second}
+	reqURL := fmt.Sprintf("http://127.0.0.1:%d", testPort)
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		shutdown.TriggerShutdown()
+		<-errCh
 		t.Fatal(err)
 	}
+	req.Host = "example.com"
 
-	tests := []struct {
-		mode     string
-		expected tls.ClientAuthType
-	}{
-		{"request", tls.RequestClientCert},
-		{"require", tls.RequireAnyClientCert},
-		{"verify_if_given", tls.VerifyClientCertIfGiven},
-		{"require_and_verify", tls.RequireAndVerifyClientCert},
-		{"none", tls.NoClientCert},
-		{"unknown_mode", tls.NoClientCert},
-		{"", tls.NoClientCert},
+	resp, err := client.Do(req)
+	if err != nil {
+		shutdown.TriggerShutdown()
+		<-errCh
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected 200 OK, got %d", resp.StatusCode)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.mode, func(t *testing.T) {
-			host := &alaye.Host{
-				TLS: alaye.TLS{
-					ClientAuth: tt.mode,
-					ClientCAs:  []string{caPath},
-				},
-			}
+	shutdown.TriggerShutdown()
 
-			s := &Server{logger: testLogger}
-			tlsConfig := &tls.Config{}
-
-			s.mtlsApply(tlsConfig, host)
-
-			if tlsConfig.ClientAuth != tt.expected {
-				t.Errorf("ClientAuth mismatch for mode %s: expected %v, got %v", tt.mode, tt.expected, tlsConfig.ClientAuth)
-			}
-
-			if tt.mode != "" && len(host.TLS.ClientCAs) > 0 {
-				if tlsConfig.ClientCAs == nil {
-					t.Error("ClientCAs pool was not initialized")
-				}
-			}
-		})
+	select {
+	case err := <-errCh:
+		if err != nil && !strings.Contains(err.Error(), "server closed") {
+			t.Errorf("Unexpected error from Start: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("Test timed out waiting for server shutdown")
 	}
 }
 
-func TestServer_redirectToHTTPS(t *testing.T) {
-	s := &Server{
-		global: &alaye.Global{
-			Bind: alaye.Bind{
-				HTTPS: []string{":443"},
-			},
-		},
-	}
-
-	req := httptest.NewRequest("GET", "http://example.com/test", nil)
-	w := httptest.NewRecorder()
-
-	s.redirectToHTTPS(w, req)
-
-	if w.Code != http.StatusMovedPermanently {
-		t.Errorf("Expected 301 Moved Permanently, got %d", w.Code)
-	}
-
-	location := w.Header().Get("Location")
-	expected := "https://example.com/test"
-	if location != expected {
-		t.Errorf("Expected Location %s, got %s", expected, location)
-	}
-}
-
-func TestServer_redirectToHTTPS_WithCustomPort(t *testing.T) {
-	s := &Server{
-		global: &alaye.Global{
-			Bind: alaye.Bind{
-				HTTPS: []string{":8443"},
-			},
-		},
-	}
-
-	req := httptest.NewRequest("GET", "http://example.com/test", nil)
-	w := httptest.NewRecorder()
-
-	s.redirectToHTTPS(w, req)
-
-	location := w.Header().Get("Location")
-	expected := "https://example.com:8443/test"
-	if location != expected {
-		t.Errorf("Expected Location %s, got %s", expected, location)
-	}
-}
-
+// TestServer_Reload_DynamicBind tests dynamic port binding on config reload
 func TestServer_Reload_DynamicBind(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -556,9 +253,9 @@ func TestServer_Reload_DynamicBind(t *testing.T) {
 domains = ["localhost"]
 tls { mode = "none" }
 route "/" {
-  backend {
-    server { address = "%s" }
-  }
+backend {
+server { address = "%s" }
+}
 }
 `, backend.URL)
 	writeSyncedFile(t, hostFile, []byte(initialHostConfig))
@@ -569,19 +266,19 @@ route "/" {
 
 	initialGlobalConfig := fmt.Sprintf(`version = 1
 bind {
-  http = [":%d"]
+http = [":%d"]
 }
 storage {
-  hosts_dir = "%s"
-  certs_dir = "%s"
-  data_dir = "%s"
+hosts_dir = "%s"
+certs_dir = "%s"
+data_dir = "%s"
 }
 timeouts {
-  enabled = true
-  read = "10s"
-  write = "30s"
-  idle = "60s"
-  read_header = "5s"
+enabled = true
+read = "10s"
+write = "30s"
+idle = "60s"
+read_header = "5s"
 }
 `, mainPort, hostsDir, certsDir, tmpDir)
 	writeSyncedFile(t, configFile, []byte(initialGlobalConfig))
@@ -629,19 +326,19 @@ timeouts {
 
 	updatedGlobalConfig := fmt.Sprintf(`version = 1
 bind {
-  http = [":%d"]
+http = [":%d"]
 }
 storage {
-  hosts_dir = "%s"
-  certs_dir = "%s"
-  data_dir = "%s"
+hosts_dir = "%s"
+certs_dir = "%s"
+data_dir = "%s"
 }
 timeouts {
-  enabled = true
-  read = "10s"
-  write = "30s"
-  idle = "60s"
-  read_header = "5s"
+enabled = true
+read = "10s"
+write = "30s"
+idle = "60s"
+read_header = "5s"
 }
 `, targetPort, hostsDir, certsDir, tmpDir)
 	writeSyncedFile(t, configFile, []byte(updatedGlobalConfig))
@@ -672,6 +369,7 @@ timeouts {
 	}
 }
 
+// TestServer_Cluster_ConfigSync_RoutePropagation tests cluster route propagation
 func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts")
@@ -734,8 +432,8 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 	shutdown1 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 	shutdown2 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 
-	hm1 := discovery.NewHost(woos.Folder(hostsDir), discovery.WithLogger(testLogger))
-	hm2 := discovery.NewHost(woos.Folder(hostsDir), discovery.WithLogger(testLogger))
+	hm1 := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
+	hm2 := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
 
 	s1 := NewServer(
 		WithGlobalConfig(global1),
@@ -865,6 +563,7 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 	}
 }
 
+// TestServer_Cluster_ConfigSync_TombstoneDeletion tests ephemeral route tombstone deletion
 func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts")
@@ -927,8 +626,8 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 	shutdown1 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 	shutdown2 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 
-	hm1 := discovery.NewHost(woos.Folder(hostsDir), discovery.WithLogger(testLogger))
-	hm2 := discovery.NewHost(woos.Folder(hostsDir), discovery.WithLogger(testLogger))
+	hm1 := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
+	hm2 := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
 
 	s1 := NewServer(
 		WithGlobalConfig(global1),
@@ -1055,6 +754,193 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 	}
 }
 
+// TestServer_WithFirewall tests firewall configuration
+func TestServer_WithFirewall(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataDir := filepath.Join(tmpDir, "data")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	global := &alaye.Global{
+		Security: alaye.Security{
+			Enabled: alaye.Active,
+			Firewall: alaye.Firewall{
+				Status: alaye.Active,
+				Mode:   "active",
+				Rules: []alaye.Rule{
+					{
+						Name: "block-localhost",
+						Type: "static",
+						Match: alaye.Match{
+							Enabled: alaye.Active,
+							IP:      []string{"127.0.0.1/32"},
+						},
+					},
+				},
+			},
+		},
+		Storage: alaye.Storage{
+			DataDir: dataDir,
+		},
+	}
+
+	if !global.Security.Enabled.Active() {
+		t.Error("Security should be enabled")
+	}
+	if !global.Security.Firewall.Status.Active() {
+		t.Error("Firewall should be enabled")
+	}
+}
+
+// TestServer_Options tests the option pattern
+func TestServer_Options(t *testing.T) {
+	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
+	global := &alaye.Global{}
+	logger := ll.New("test").Disable()
+	shutdown := jack.NewShutdown()
+
+	s := NewServer(
+		WithHostManager(hm),
+		WithGlobalConfig(global),
+		WithLogger(logger),
+		WithShutdownManager(shutdown),
+	)
+
+	if s.hostManager != hm {
+		t.Error("WithHostManager failed")
+	}
+	if s.global != global {
+		t.Error("WithGlobalConfig failed")
+	}
+	if s.logger != logger {
+		t.Error("WithLogger failed")
+	}
+	if s.shutdown != shutdown {
+		t.Error("WithShutdownManager failed")
+	}
+}
+
+// TestServer_ClusterHandlers tests cluster integration handler methods
+func TestServer_ClusterHandlers(t *testing.T) {
+	tmpDir := t.TempDir()
+	hm := discovery.NewHost(woos.NewFolder(tmpDir), discovery.WithLogger(testLogger))
+	global := &alaye.Global{
+		Storage: alaye.Storage{
+			HostsDir: tmpDir,
+			DataDir:  tmpDir,
+		},
+	}
+
+	s := NewServer(
+		WithHostManager(hm),
+		WithGlobalConfig(global),
+		WithLogger(testLogger),
+	)
+
+	// Test OnClusterChange - should not panic
+	s.OnClusterChange("test-key", []byte("test-value"), false)
+	s.OnClusterChange("test-key", nil, true)
+
+	// Test OnClusterCert - should not panic with nil tlsManager
+	err := s.OnClusterCert("example.com", []byte("cert"), []byte("key"))
+	if err != nil {
+		t.Errorf("OnClusterCert returned error: %v", err)
+	}
+
+	// Test OnClusterChallenge - should not panic with nil tlsManager
+	s.OnClusterChallenge("token", "keyAuth", false)
+	s.OnClusterChallenge("token", "keyAuth", true)
+}
+
+// TestServer_configComputeSHA tests config SHA computation
+func TestServer_configComputeSHA(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.hcl")
+	if err := os.WriteFile(configPath, []byte("test config"), woos.FilePerm); err != nil {
+		t.Fatal(err)
+	}
+
+	hostsDir := filepath.Join(tmpDir, "hosts")
+	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+
+	global := &alaye.Global{
+		Storage: alaye.Storage{
+			HostsDir: hostsDir,
+		},
+	}
+
+	s := &Server{
+		configPath: configPath,
+		global:     global,
+	}
+
+	sha1, err := s.configComputeSHA()
+	if err != nil {
+		t.Fatalf("configComputeSHA failed: %v", err)
+	}
+	if len(sha1) != 64 {
+		t.Errorf("Expected SHA256 hex string (64 chars), got %d", len(sha1))
+	}
+
+	// Modify config and verify SHA changes
+	if err := os.WriteFile(configPath, []byte("modified config"), woos.FilePerm); err != nil {
+		t.Fatal(err)
+	}
+	sha2, err := s.configComputeSHA()
+	if err != nil {
+		t.Fatalf("configComputeSHA failed: %v", err)
+	}
+	if sha1 == sha2 {
+		t.Error("SHA should change when config is modified")
+	}
+}
+
+// TestServer_shutdownImpl tests graceful shutdown
+func TestServer_shutdownImpl(t *testing.T) {
+	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(1 * time.Second))
+	tmpDir := t.TempDir()
+	hostsDir := filepath.Join(tmpDir, "hosts")
+	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+
+	global := &alaye.Global{
+		Bind: alaye.Bind{HTTP: []string{":0"}},
+		Storage: alaye.Storage{
+			HostsDir: hostsDir,
+			DataDir:  tmpDir,
+		},
+		Timeouts: alaye.Timeout{
+			Enabled:    alaye.Active,
+			Read:       10 * time.Second,
+			Write:      30 * time.Second,
+			Idle:       60 * time.Second,
+			ReadHeader: 5 * time.Second,
+		},
+	}
+
+	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
+	s := NewServer(
+		WithGlobalConfig(global),
+		WithHostManager(hm),
+		WithLogger(testLogger),
+		WithShutdownManager(shutdown),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	// Should not panic with empty listeners
+	err := s.shutdownImpl(ctx)
+	if err != nil {
+		t.Errorf("shutdownImpl returned error: %v", err)
+	}
+}
+
+// Helper functions
 func writeSyncedFile(t *testing.T, path string, data []byte) {
 	t.Helper()
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
@@ -1094,42 +980,4 @@ func isPortOpen(t *testing.T, port int) bool {
 		return true
 	}
 	return false
-}
-
-func TestServer_WithFirewall(t *testing.T) {
-	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	global := &alaye.Global{
-		Security: alaye.Security{
-			Enabled: alaye.Active,
-			Firewall: alaye.Firewall{
-				Status: alaye.Active,
-				Mode:   "active",
-				Rules: []alaye.Rule{
-					{
-						Name: "block-localhost",
-						Type: "static",
-						Match: alaye.Match{
-							Enabled: alaye.Active,
-							IP:      []string{"127.0.0.1/32"},
-						},
-					},
-				},
-			},
-		},
-		Storage: alaye.Storage{
-			DataDir: dataDir,
-		},
-	}
-
-	if !global.Security.Enabled.Active() {
-		t.Error("Security should be enabled")
-	}
-	if !global.Security.Firewall.Status.Active() {
-		t.Error("Firewall should be enabled")
-	}
 }

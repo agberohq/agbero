@@ -125,15 +125,18 @@ func (s *Server) Start(configPath string) error {
 	}
 
 	if s.resource == nil {
-		s.resource = resource.New(s.logger, s.shutdown, func(ctx context.Context, id string) {
-			if it, ok := s.resource.RouteCache.Load(id); ok {
-				if h, ok := it.Value.(*handlers.Route); ok {
-					h.Close()
+		s.resource = resource.New(
+			resource.WithLogger(s.logger),
+			resource.WithShutdown(s.shutdown),
+			resource.WithReaper(func(ctx context.Context, id string) {
+				if s.resource != nil {
+					if it, ok := s.resource.RouteCache.Load(id); ok {
+						if h, ok := it.Value.(*handlers.Route); ok {
+							h.Close()
+						}
+					}
 				}
-			}
-			s.resource.RouteCache.Delete(id)
-			s.logger.Fields("route_key", id).Debug("reaped idle route handler")
-		})
+			}))
 	}
 
 	if s.shutdown != nil {
