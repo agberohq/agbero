@@ -59,3 +59,14 @@ func (r *Registry) Prune(keepKeys map[alaye.BackendKey]bool) {
 		v.Close()
 	}
 }
+
+func (r *Registry) Close() {
+	r.items.Range(func(k alaye.BackendKey, v *BackendStats) bool {
+		v.Close()
+		return true
+	})
+}
+
+func (r *Registry) Clear() {
+	r.items.Clear()
+}
