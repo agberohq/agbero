@@ -15,10 +15,10 @@ const (
 	OpCert      OpType = 4
 	OpLock      OpType = 5
 	OpStatus    OpType = 6
-	OpChallenge OpType = 7 // ACME HTTP-01 Challenge Token
+	OpChallenge OpType = 7
+	OpConfig    OpType = 8
 )
 
-// Envelope is the generic container for gossip messages
 type Envelope struct {
 	Op        OpType `json:"op"`
 	Key       string `json:"k"`
@@ -27,14 +27,21 @@ type Envelope struct {
 	Owner     string `json:"owner,omitempty"`
 }
 
-// CertPayload is the specific payload for certificate updates.
 type CertPayload struct {
 	Domain  string `json:"domain"`
 	CertPEM []byte `json:"cert"`
-	KeyPEM  []byte `json:"key"` // Encrypted
+	KeyPEM  []byte `json:"key"`
 }
 
-// UpdateHandler defines how the cluster notifies other components
+type ConfigPayload struct {
+	Domain    string `json:"domain"`
+	RawHCL    []byte `json:"raw_hcl,omitempty"`
+	Checksum  string `json:"checksum"`
+	Timestamp int64  `json:"timestamp"`
+	NodeID    string `json:"node_id"`
+	Deleted   bool   `json:"deleted"`
+}
+
 type UpdateHandler interface {
 	OnClusterChange(key string, value []byte, deleted bool)
 	OnClusterCert(domain string, certPEM, keyPEM []byte) error

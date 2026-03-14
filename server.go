@@ -30,10 +30,6 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-// =============================================================================
-// Server Structure
-// =============================================================================
-
 type Server struct {
 	configPath string
 	configSHA  string
@@ -56,9 +52,12 @@ type Server struct {
 
 	shutdown *jack.Shutdown
 
-	firewall *firewall.Engine // Pointer reference for admin backwards compatibility
+	firewall    *firewall.Engine
+	sharedState cluster.SharedState
 }
 
+// NewServer configures and injects dependencies required for core proxy execution.
+// Prepares logic components before starting up listeners.
 func NewServer(opts ...Option) *Server {
 	s := &Server{}
 	for _, opt := range opts {
@@ -67,16 +66,16 @@ func NewServer(opts ...Option) *Server {
 	return s
 }
 
-// =============================================================================
-// Cluster Integration Handlers
-// =============================================================================
-
+// OnClusterChange implements cluster.UpdateHandler to update routes from gossip network.
+// Informs hostManager on updates retrieved from other peers dynamically.
 func (s *Server) OnClusterChange(key string, value []byte, deleted bool) {
 	if s.hostManager != nil {
 		s.hostManager.OnClusterChange(key, value, deleted)
 	}
 }
 
+// OnClusterCert updates local TLS certificates safely across the cluster map.
+// Resolves missing files whenever a peer resolves LetsEncrypt successfully.
 func (s *Server) OnClusterCert(domain string, certPEM, keyPEM []byte) error {
 	if s.tlsManager != nil {
 		return s.tlsManager.ApplyClusterCertificate(domain, certPEM, keyPEM)
@@ -84,15 +83,13 @@ func (s *Server) OnClusterCert(domain string, certPEM, keyPEM []byte) error {
 	return nil
 }
 
+// OnClusterChallenge syncs an ACME domain challenge across the mesh.
+// Provides global resolution regardless of which node Let's Encrypt contacts.
 func (s *Server) OnClusterChallenge(token, keyAuth string, deleted bool) {
 	if s.tlsManager != nil {
 		s.tlsManager.ApplyClusterChallenge(token, keyAuth, deleted)
 	}
 }
-
-// =============================================================================
-// Server Lifecycle: Start
-// =============================================================================
 
 func (s *Server) Start(configPath string) error {
 	s.mu.Lock()
@@ -176,12 +173,28 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
+	if s.global.Gossip.SharedState.Enabled.Active() {
+		if s.global.Gossip.SharedState.Driver == "redis" {
+			ss, err := cluster.NewRedisSharedState(s.global.Gossip.SharedState.Redis)
+			if err != nil {
+				s.logger.Error("failed to initialize redis shared state", "err", err)
+			} else {
+				s.sharedState = ss
+				if s.shutdown != nil {
+					s.shutdown.RegisterFunc("SharedState", func() { _ = ss.Close() })
+				}
+				s.logger.Info("redis shared state initialized for cluster")
+			}
+		}
+	}
+
 	if s.global.Gossip.Enabled.Active() {
 		cfg := cluster.Config{
 			Name:     s.global.Admin.Address,
 			BindPort: s.global.Gossip.Port,
 			Secret:   []byte(s.global.Gossip.SecretKey),
 			Seeds:    s.global.Gossip.Seeds,
+			HostsDir: s.global.Storage.HostsDir,
 		}
 		if cfg.Name == "" || strings.HasPrefix(cfg.Name, ":") {
 			hostname, _ := os.Hostname()
@@ -221,6 +234,7 @@ func (s *Server) Start(configPath string) error {
 		IPMgr:       ipMgr,
 		CookManager: s.cookManager,
 		TLSManager:  s.tlsManager,
+		SharedState: s.sharedState,
 	}
 
 	tm, err := handlers.NewManager(tmCfg)
@@ -228,7 +242,7 @@ func (s *Server) Start(configPath string) error {
 		return errors.Newf("traffic manager init: %w", err)
 	}
 	s.trafficManager = tm
-	s.firewall = tm.Firewall() // Ensure backward compat for Admin API
+	s.firewall = tm.Firewall()
 
 	if s.shutdown != nil {
 		s.shutdown.RegisterFunc("TrafficManager", tm.Close)
@@ -264,10 +278,6 @@ func (s *Server) Start(configPath string) error {
 	return nil
 }
 
-// =============================================================================
-// Server Lifecycle: Reload
-// =============================================================================
-
 func (s *Server) Reload() {
 	s.mu.RLock()
 	configPath := s.configPath
@@ -295,6 +305,12 @@ func (s *Server) Reload() {
 		return
 	}
 
+	if s.global.Logging.Diff.Active() {
+		for _, v := range zulu.Diff(s.global, global) {
+			s.logger.Debug(v)
+		}
+	}
+
 	absConfigPath, _ := filepath.Abs(configPath)
 	woos.DefaultApply(global, absConfigPath)
 
@@ -315,6 +331,20 @@ func (s *Server) Reload() {
 	s.global = global
 	s.configSHA = sha
 
+	if s.sharedState != nil {
+		_ = s.sharedState.Close()
+		s.sharedState = nil
+	}
+	if global.Gossip.SharedState.Enabled.Active() && global.Gossip.SharedState.Driver == "redis" {
+		ss, err := cluster.NewRedisSharedState(global.Gossip.SharedState.Redis)
+		if err == nil {
+			s.sharedState = ss
+			s.logger.Info("redis shared state reloaded")
+		} else {
+			s.logger.Error("failed to reload redis shared state", "err", err)
+		}
+	}
+
 	s.tlsManager.Close()
 	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, global)
 	if s.clusterManager != nil {
@@ -331,6 +361,7 @@ func (s *Server) Reload() {
 		IPMgr:       ipMgr,
 		CookManager: s.cookManager,
 		TLSManager:  s.tlsManager,
+		SharedState: s.sharedState,
 	}
 
 	tm, _ := handlers.NewManager(tmCfg)
@@ -369,11 +400,9 @@ func (s *Server) Reload() {
 	for _, l := range newListeners {
 		go l.Start()
 	}
-}
 
-// =============================================================================
-// Server Lifecycle: Shutdown
-// =============================================================================
+	s.logger.Info("configuration reloaded successfully")
+}
 
 func (s *Server) shutdownImpl(ctx context.Context) error {
 	if s.clusterManager != nil {
@@ -437,7 +466,7 @@ func (s *Server) configComputeSHA() (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-func (s *Server) tlsValidate() error { return nil } // Stub maintained for flow
+func (s *Server) tlsValidate() error { return nil }
 func (s *Server) serverWatchConfig() {
 	for {
 		select {

@@ -1,12 +1,15 @@
 package zulu
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/cespare/xxhash/v2"
 	"github.com/r3labs/diff/v3"
 )
 
@@ -120,4 +123,13 @@ func PortScan(bindHost string, port, maxPortRetries int) (int, error) {
 	}
 
 	return 0, fmt.Errorf("failed to find a free port on %s after %d attempts", bindHost, maxPortRetries)
+}
+
+func XXHash(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(
+		(*[8]byte)(unsafe.Pointer(&[1]uint64{xxhash.Sum64(data)}))[:],
+	)
 }

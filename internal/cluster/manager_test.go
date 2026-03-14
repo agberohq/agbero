@@ -2,11 +2,13 @@ package cluster
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/olekukonko/ll"
 )
 
@@ -251,7 +253,9 @@ func TestClusterSync(t *testing.T) {
 func TestDelegate_LWW_and_Tombstones(t *testing.T) {
 	logger := ll.New("test").Disable()
 	metrics := &RealMetrics{}
-	del := newDelegate(nil, logger, metrics, nil)
+	cipher, _ := security.NewCipher("test-secret-key-1234567890123456")
+	configMgr := NewConfigManager("", logger)
+	del := newDelegate(nil, logger, metrics, cipher, configMgr)
 
 	ts1 := time.Now().UnixNano()
 	env1 := Envelope{Key: "foo", Op: OpSet, Value: []byte("v1"), Timestamp: ts1}
@@ -308,5 +312,132 @@ func TestDelegate_LWW_and_Tombstones(t *testing.T) {
 	_, ok = del.get("foo")
 	if ok {
 		t.Fatalf("stale update revived deleted key")
+	}
+}
+
+func TestConfigManager_ChecksumEchoPrevention(t *testing.T) {
+	logger := ll.New("test").Disable()
+	tmpDir := t.TempDir()
+	cm := NewConfigManager(tmpDir, logger)
+
+	domain := "test"
+	content := []byte("route / { backend { address \"http://localhost:8080\" } }")
+
+	if cm.ShouldBroadcast(domain, content) {
+		t.Error("ShouldBroadcast should return false for first-time content")
+	}
+
+	if cm.ShouldBroadcast(domain, content) {
+		t.Error("ShouldBroadcast should return false for identical content")
+	}
+
+	different := []byte("route /different { backend { address \"http://localhost:9090\" } }")
+	if !cm.ShouldBroadcast(domain, different) {
+		t.Error("ShouldBroadcast should return true for different content")
+	}
+}
+
+func TestConfigManager_ValidationRejectsBadHCL(t *testing.T) {
+	logger := ll.New("test").Disable()
+	tmpDir := t.TempDir()
+	cm := NewConfigManager(tmpDir, logger)
+
+	badHCL := []byte("invalid {{{ hcl syntax")
+	if cm.validateHCL(tmpDir+"/test.hcl", badHCL) {
+		t.Error("validateHCL should reject invalid HCL")
+	}
+
+	goodHCL := []byte(`route "/" { backend { address "http://localhost:8080" } }`)
+	if !cm.validateHCL(tmpDir+"/test.hcl", goodHCL) {
+		t.Error("validateHCL should accept valid HCL")
+	}
+}
+
+func TestConfigManager_DeletionHandling(t *testing.T) {
+	logger := ll.New("test").Disable()
+	tmpDir := t.TempDir()
+	cm := NewConfigManager(tmpDir, logger)
+
+	domain := "delete-test"
+	configPath := tmpDir + "/" + domain + ".hcl"
+
+	if err := cm.writeAtomic(configPath, []byte("test")); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	payload := ConfigPayload{
+		Domain:    domain,
+		Deleted:   true,
+		Checksum:  cm.calculateChecksum(nil),
+		Timestamp: time.Now().UnixNano(),
+		NodeID:    "test-node",
+	}
+	cm.Apply(payload)
+
+	if _, err := os.Stat(configPath); err == nil {
+		t.Error("file should be deleted after Apply with Deleted=true")
+	}
+}
+
+func TestConfigManager_CompressionRoundTrip(t *testing.T) {
+	logger := ll.New("test").Disable()
+	cm := NewConfigManager("", logger)
+
+	original := []byte(`route "/" { backend { address "http://localhost:8080" } }`)
+
+	compressed, err := cm.compress(original)
+	if err != nil {
+		t.Fatalf("compress failed: %v", err)
+	}
+
+	decompressed, err := cm.decompress(compressed)
+	if err != nil {
+		t.Fatalf("decompress failed: %v", err)
+	}
+
+	if string(decompressed) != string(original) {
+		t.Errorf("round-trip mismatch: got %q, want %q", decompressed, original)
+	}
+}
+
+func TestManager_FullSyncUsesExportedAPI(t *testing.T) {
+	logger := ll.New("test").Disable()
+
+	port1 := zulu.PortFree()
+	port2 := zulu.PortFree()
+
+	h1 := &mockHandler{}
+	m1, err := NewManager(Config{
+		Name:     "sync-node1",
+		BindAddr: "127.0.0.1",
+		BindPort: port1,
+	}, h1, logger)
+	if err != nil {
+		t.Fatalf("failed to start m1: %v", err)
+	}
+	defer m1.Shutdown()
+
+	h2 := &mockHandler{}
+	m2, err := NewManager(Config{
+		Name:     "sync-node2",
+		BindAddr: "127.0.0.1",
+		BindPort: port2,
+		Seeds:    []string{fmt.Sprintf("127.0.0.1:%d", port1)},
+	}, h2, logger)
+	if err != nil {
+		t.Fatalf("failed to start m2: %v", err)
+	}
+	defer m2.Shutdown()
+
+	time.Sleep(2 * time.Second)
+
+	key := "sync:test"
+	val := []byte("sync-payload")
+	m1.Set(key, val)
+
+	time.Sleep(1 * time.Second)
+
+	if got, ok := h2.get(key); !ok || got != string(val) {
+		t.Errorf("sync failed: node2 got %q, want %q", got, val)
 	}
 }

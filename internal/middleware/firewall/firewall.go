@@ -1,3 +1,4 @@
+// internal/middleware/firewall/firewall.go
 package firewall
 
 import (
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -33,10 +35,11 @@ type readCloserWrapper struct {
 }
 
 type Config struct {
-	Firewall *alaye.Firewall
-	DataDir  woos.Folder
-	Logger   *ll.Logger
-	IPMgr    *zulu.IPManager
+	Firewall    *alaye.Firewall
+	DataDir     woos.Folder
+	Logger      *ll.Logger
+	IPMgr       *zulu.IPManager
+	SharedState cluster.SharedState
 }
 
 type Engine struct {
@@ -47,8 +50,11 @@ type Engine struct {
 	whitelistRanger cidranger.Ranger
 	blacklistRanger cidranger.Ranger
 	ipMgr           *zulu.IPManager
+	sharedState     cluster.SharedState
 }
 
+// New establishes deep packet inspection rules for perimeter security.
+// It orchestrates whitelists, persistent local bans, and distributed dynamic thresholds.
 func New(cfg Config) (*Engine, error) {
 	if cfg.Firewall == nil || cfg.Firewall.Status.Inactive() {
 		return nil, nil
@@ -75,6 +81,7 @@ func New(cfg Config) (*Engine, error) {
 		whitelistRanger: cidranger.NewPCTrieRanger(),
 		blacklistRanger: cidranger.NewPCTrieRanger(),
 		ipMgr:           ipMgr,
+		sharedState:     cfg.SharedState,
 	}
 	if err := e.loadStaticRules(); err != nil {
 		store.Close()
@@ -91,6 +98,8 @@ func (e *Engine) Close() error {
 	return e.store.Close()
 }
 
+// Handler actively checks every packet traversing the mesh configuration boundaries.
+// Applies immediate dropping or payload capturing dependent on rule expressions.
 func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) http.Handler {
 	if e == nil {
 		return next
@@ -413,7 +422,19 @@ func (e *Engine) checkThreshold(rule alaye.Rule, in *Inspector) bool {
 	if key == "" {
 		return false
 	}
-	count := e.counters.Increment(rule.Name, key, t.Window)
+
+	var count int64
+	var err error
+	if e.sharedState != nil {
+		count, err = e.sharedState.Increment(in.Req.Context(), "fw:"+rule.Name+":"+key, t.Window)
+		if err != nil {
+			e.logger.Debug("redis shared state increment failed, failing open", "err", err)
+			return false
+		}
+	} else {
+		count = e.counters.Increment(rule.Name, key, t.Window)
+	}
+
 	return count >= int64(t.Count)
 }
 

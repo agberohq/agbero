@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
@@ -31,12 +32,13 @@ import (
 )
 
 type Config struct {
-	Global   *alaye.Global
-	Host     *alaye.Host
-	Logger   *ll.Logger
-	IPMgr    *zulu.IPManager
-	CookMgr  *cook.Manager
-	Resource *resource.Manager
+	Global      *alaye.Global
+	Host        *alaye.Host
+	Logger      *ll.Logger
+	IPMgr       *zulu.IPManager
+	CookMgr     *cook.Manager
+	Resource    *resource.Manager
+	SharedState cluster.SharedState
 }
 
 func (c Config) Validate() error {
@@ -71,6 +73,8 @@ type Route struct {
 	lastTouch atomic.Int64
 }
 
+// NewRoute constructs the appropriate request handling chain for a specific endpoint.
+// Isolates routing definitions into self-contained executable pathways.
 func NewRoute(cfg Config, route *alaye.Route) *Route {
 	if route == nil {
 		return FallbackRoute("nil route")
@@ -108,7 +112,7 @@ func newWebRoute(cfg Config, route *alaye.Route) *Route {
 	chain = auth.Basic(&route.BasicAuth)(chain)
 	chain = auth.Forward(cfg.Resource, &route.ForwardAuth)(chain)
 	chain = auth.OAuth(&route.OAuth)(chain)
-	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, ipMgr); rl != nil {
+	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, ipMgr, cfg.SharedState); rl != nil {
 		chain = rl.Handler(chain)
 	}
 	maxBody := int64(alaye.DefaultMaxBodySize)
@@ -194,7 +198,7 @@ func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 	chain = auth.Basic(&route.BasicAuth)(chain)
 	chain = auth.Forward(cfg.Resource, &route.ForwardAuth)(chain)
 	chain = auth.OAuth(&route.OAuth)(chain)
-	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, cfg.IPMgr); rl != nil {
+	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, cfg.IPMgr, cfg.SharedState); rl != nil {
 		chain = rl.Handler(chain)
 	}
 	maxBody := int64(alaye.DefaultMaxBodySize)
@@ -336,7 +340,7 @@ func FallbackRoute(msg string) *Route {
 	}
 }
 
-func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate, ipMgr *zulu.IPManager) *ratelimit.RateLimiter {
+func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate, ipMgr *zulu.IPManager, sharedState cluster.SharedState) *ratelimit.RateLimiter {
 	if rlc == nil {
 		return nil
 	}
@@ -414,9 +418,10 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate, ipMgr *zu
 		return "", ratelimit.RatePolicy{}, false
 	}
 	return ratelimit.New(ratelimit.Config{
-		TTL:        ttl,
-		MaxEntries: maxEntries,
-		Policy:     policy,
-		IPManager:  ipMgr,
+		TTL:         ttl,
+		MaxEntries:  maxEntries,
+		Policy:      policy,
+		IPManager:   ipMgr,
+		SharedState: sharedState,
 	})
 }

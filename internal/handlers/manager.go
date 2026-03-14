@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
@@ -31,6 +32,7 @@ type ManagerConfig struct {
 	IPMgr       *zulu.IPManager
 	CookManager *cook.Manager
 	TLSManager  *tlss.Manager
+	SharedState cluster.SharedState
 }
 
 type Manager struct {
@@ -58,6 +60,8 @@ func (w *llWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
+// NewManager ties together routes, firewalls, and proxy states.
+// Injects the shared distributed state to limiters.
 func NewManager(cfg ManagerConfig) (*Manager, error) {
 	if cfg.Global == nil {
 		return nil, errors.New("global config required")
@@ -83,13 +87,17 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 			m.skipLogPaths[p] = true
 		}
 	}
-	m.rateLimiter = buildGlobalRateLimiter(cfg.Global, cfg.IPMgr)
+	m.rateLimiter = buildGlobalRateLimiter(cfg.Global, cfg.IPMgr, cfg.SharedState)
 	if cfg.Global.Security.Enabled.Active() {
 		fwConfig := cfg.Global.Security.Firewall
 		if fwConfig.Status.Active() {
 			dataDir := woos.NewFolder(cfg.Global.Storage.DataDir)
 			fw, err := firewall.New(firewall.Config{
-				Firewall: &fwConfig, DataDir: dataDir, Logger: cfg.Resource.Logger, IPMgr: cfg.IPMgr,
+				Firewall:    &fwConfig,
+				DataDir:     dataDir,
+				Logger:      cfg.Resource.Logger,
+				IPMgr:       cfg.IPMgr,
+				SharedState: cfg.SharedState,
 			})
 			if err != nil {
 				return nil, errors.Newf("firewall init: %w", err)
@@ -138,14 +146,12 @@ func (m *Manager) BuildListeners() []Listener {
 	hosts, _ := m.cfg.HostManager.LoadAll()
 	usedPorts := make(map[string]bool)
 
-	// Pre-warm HTTP routes to trigger health checks immediately
 	for _, h := range hosts {
 		for i := range h.Routes {
 			_ = m.routeBuilder(&h.Routes[i], h)
 		}
 	}
 
-	// 1. Build Global HTTP Listeners
 	for _, addr := range m.cfg.Global.Bind.HTTP {
 		if !strings.Contains(addr, ":") {
 			addr = ":" + addr
@@ -155,7 +161,6 @@ func (m *Manager) BuildListeners() []Listener {
 		listeners = append(listeners, m.createHTTPListener(addr, port, false))
 	}
 
-	// 2. Build Global HTTPS + QUIC Listeners
 	for _, addr := range m.cfg.Global.Bind.HTTPS {
 		if !strings.Contains(addr, ":") {
 			addr = ":" + addr
@@ -169,7 +174,6 @@ func (m *Manager) BuildListeners() []Listener {
 		}
 	}
 
-	// 3. Build Host-specific Listeners
 	for _, h := range hosts {
 		for _, port := range h.Bind {
 			if usedPorts[port] {
@@ -193,7 +197,6 @@ func (m *Manager) BuildListeners() []Listener {
 		}
 	}
 
-	// 4. Build TCP Proxy Listeners
 	tcpGroups := groupTCPRoutesByListen(hosts)
 	for listen, routes := range tcpGroups {
 		tp := xtcp.NewProxy(m.cfg.Resource, m.cfg.Resource.Logger, listen)
@@ -332,10 +335,6 @@ func (m *Manager) wasmCleanup() {
 	})
 }
 
-// -----------------------------------------------------------------------------
-// Utilities
-// -----------------------------------------------------------------------------
-
 func groupTCPRoutesByListen(hosts map[string]*alaye.Host) map[string][]alaye.Proxy {
 	tcpGroups := make(map[string][]alaye.Proxy)
 	for _, host := range hosts {
@@ -347,7 +346,7 @@ func groupTCPRoutesByListen(hosts map[string]*alaye.Host) map[string][]alaye.Pro
 	return tcpGroups
 }
 
-func buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager) *ratelimit.RateLimiter {
+func buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedState cluster.SharedState) *ratelimit.RateLimiter {
 	if global == nil || !global.RateLimits.Enabled.Active() || len(global.RateLimits.Rules) == 0 {
 		return nil
 	}
@@ -403,9 +402,10 @@ func buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager) *rateli
 	}
 
 	return ratelimit.New(ratelimit.Config{
-		TTL:        rlc.TTL,
-		MaxEntries: rlc.MaxEntries,
-		Policy:     policy,
-		IPManager:  ipMgr,
+		TTL:         rlc.TTL,
+		MaxEntries:  rlc.MaxEntries,
+		Policy:      policy,
+		IPManager:   ipMgr,
+		SharedState: sharedState,
 	})
 }

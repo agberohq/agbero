@@ -1,29 +1,31 @@
+> WARNING: This project is under active development.
+
 <p align="center">
   <img src="assets/agbero.2.png" width="300" alt="Agbero Logo">
 </p>
 
-> WARNING: This project is under active development.
-
-> **Agbero**: *noun* (Yoruba) - A tout or traffic controller at a bus stop.
->
-> **In Context**: A high-performance, production-ready Reverse Proxy and Load Balancer written in Go.
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/agberohq/agbero)](https://goreportcard.com/report/github.com/agberohq/agbero)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+
+### **Agbero**: *noun* [`Yoruba` ,`English`] - a motor-park tout or conductor who directs traffic, loads buses, checks tickets, and collects tolls.
+##### **In Context**: This is exactly what a modern API Gateway does. it sits at the edge of your network, directs incoming API traffic to the right microservices, checks authentication ("tickets"), and enforces rate limits ("tolls").
+
+
 Agbero is a modern reverse proxy that bridges local development and production deployments. It offers Zero-Config TLS for developers, Production-Grade Load Balancing, Git-based atomic deployments, and a Programmable WASM Data Plane.
+
+## Why Choose Agbero?
 
 <p align="center">
   <img src="assets/dash.1.png" width="500" alt="Agbero Dashboard">
 </p>
 
-## Why Choose Agbero?
 
 ### For Developers
 - **Zero-Config Local HTTPS**: Run `agbero run` in any directory for instant HTTPS with auto-trusted certificates.
 - **Hot Reload**: Modify configurations, routes, and WASM plugins without restarting or dropping connections.
 - **Unified Config**: Use `${env.VAR}` syntax to make one configuration file work seamlessly across Dev, Staging, and Production.
-
 
 <p align="center">
   <img src="assets/dash.2.png" width="500" alt="Agbero Dashboard">
@@ -37,14 +39,15 @@ Agbero is a modern reverse proxy that bridges local development and production d
 - **Circuit Breaking & Health Checks**: Automatic failure detection, predictive health scoring, and rapid recovery.
 - **HDR Histogram Metrics**: Detailed latency tracking (P50/P90/P99) exposed via JSON and the built-in Dashboard.
 
+<p align="center">
+  <img src="assets/dash.3.png" width="500" alt="Agbero Dashboard">
+</p>
+
+
 ### Programmable & Extensible
 - **WASM Middleware**: Write custom logic in Go, Rust, or TinyGo and run it safely inside the proxy.
 - **Native Authentication**: Built-in support for JWT validation, OAuth (Google, GitHub, OIDC), Basic Auth, and Forward Auth.
 - **Rate Limiting**: Identity-based limiting (API Key, IP, Cookie) with distributed sharding.
-
-<p align="center">
-  <img src="assets/dash.3.png" width="500" alt="Agbero Dashboard">
-</p>
 
 ## Quick Start
 
@@ -82,7 +85,7 @@ agbero run -c /etc/agbero/agbero.hcl
 **2. Instant Ephemeral Mode** (No config required)
 ```bash
 # Serve the current directory on https://localhost:8000 with auto-generated TLS
-agbero serve --https
+agbero serve . --https
 
 # Proxy localhost:3000 to https://app.localhost:8080
 agbero proxy :3000 app.localhost --https

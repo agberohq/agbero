@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -24,6 +25,15 @@ import (
 )
 
 const ClusterRoutePrefix = "route:"
+
+const (
+	configSyncNamespace = "config_sync"
+	debounceDelay       = 500 * time.Millisecond
+	debounceMaxWait     = 2 * time.Second
+	notifyChanBuffer    = 1
+	zeroValue           = 0
+	emptyString         = ""
+)
 
 type routeWrapper struct {
 	Route     alaye.Route `json:"route"`
@@ -46,8 +56,70 @@ type Host struct {
 	changed chan struct{}
 
 	debouncer *jack.Debouncer
-	lifetimes *jack.LifetimeManager
+	lifetimes *jack.Lifetime
 	loaded    bool
+
+	configSync *ConfigSync
+	clusterMgr *cluster.Manager
+}
+
+type ConfigSync struct {
+	checksums map[string]string
+	mu        sync.RWMutex
+	hostsDir  woos.Folder
+	logger    *ll.Logger
+	cluster   *cluster.Manager
+}
+
+func NewConfigSync(hostsDir woos.Folder, logger *ll.Logger, cluster *cluster.Manager) *ConfigSync {
+	return &ConfigSync{
+		checksums: make(map[string]string),
+		hostsDir:  hostsDir,
+		logger:    logger.Namespace(configSyncNamespace),
+		cluster:   cluster,
+	}
+}
+
+func (c *ConfigSync) ShouldBroadcast(domain string, content []byte) bool {
+	checksum := c.calculateChecksum(content)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if existing := c.checksums[domain]; existing == checksum {
+		return false
+	}
+
+	c.checksums[domain] = checksum
+	return true
+}
+
+func (c *ConfigSync) ApplyClusterConfig(domain string, rawHCL []byte, deleted bool) error {
+	checksum := c.calculateChecksum(rawHCL)
+
+	c.mu.Lock()
+	c.checksums[domain] = checksum
+	c.mu.Unlock()
+
+	path := filepath.Join(c.hostsDir.Path(), domain+woos.HCLSuffix)
+
+	if deleted {
+		return os.Remove(path)
+	}
+
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, rawHCL, woos.FilePerm); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func (c *ConfigSync) calculateChecksum(data []byte) string {
+	if len(data) == zeroValue {
+		return emptyString
+	}
+	hash := zulu.XXHash(data)
+	return hash
 }
 
 func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
@@ -55,7 +127,7 @@ func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 		hostsDir:      hostsDir,
 		hosts:         make(map[string]*alaye.Host),
 		clusterRoutes: make(map[string]alaye.Route),
-		changed:       make(chan struct{}, 1),
+		changed:       make(chan struct{}, notifyChanBuffer),
 		loaded:        false,
 	}
 	for _, opt := range opts {
@@ -65,9 +137,9 @@ func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 		h.logger = ll.New(woos.Name).Disable()
 	}
 
-	h.lifetimes = jack.NewLifetimeManager(
-		jack.LifetimeManagerWithLogger(h.logger),
-		jack.LifetimeManagerWithShards(32),
+	h.lifetimes = jack.NewLifetime(
+		jack.LifetimeWithLogger(h.logger),
+		jack.LifetimeWithShards(woos.LifetimeShards),
 	)
 
 	h.lookupMap.Store(make(map[string]*alaye.Host))
@@ -75,11 +147,33 @@ func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 	h.routers.Store(make(map[string]*matcher.Tree))
 
 	h.debouncer = jack.NewDebouncer(
-		jack.WithDebounceDelay(500*time.Millisecond),
-		jack.WithDebounceMaxWait(2*time.Second),
+		jack.WithDebounceDelay(debounceDelay),
+		jack.WithDebounceMaxWait(debounceMaxWait),
 	)
 
 	return h
+}
+
+func WithClusterManager(cm *cluster.Manager) Option {
+	return func(h *Host) {
+		h.clusterMgr = cm
+		if cm != nil {
+			h.configSync = NewConfigSync(h.hostsDir, h.logger, cm)
+		}
+	}
+}
+
+func (hm *Host) OnClusterConfigChange(domain string, rawHCL []byte, deleted bool) {
+	if hm.configSync == nil {
+		return
+	}
+
+	if err := hm.configSync.ApplyClusterConfig(domain, rawHCL, deleted); err != nil {
+		hm.logger.Fields("domain", domain, "err", err).Error("failed to apply cluster config")
+		return
+	}
+
+	hm.logger.Fields("domain", domain, "deleted", deleted).Info("cluster config applied")
 }
 
 func (hm *Host) OnClusterChange(key string, value []byte, deleted bool) {
@@ -110,11 +204,9 @@ func (hm *Host) handleRouteDeletion(key string) {
 func (hm *Host) handleRouteUpdate(originalKey, trimmedKey string, value []byte) {
 	var wrapper routeWrapper
 	if err := json.Unmarshal(value, &wrapper); err != nil {
-		// Fallback for backward compatibility mapping
 		var simpleRoute alaye.Route
 		if err2 := json.Unmarshal(value, &simpleRoute); err2 == nil {
 			wrapper.Route = simpleRoute
-			// Reset expiration in fallback since it wasn't provided
 			wrapper.ExpiresAt = time.Time{}
 		} else {
 			hm.logger.Fields("key", originalKey, "err", err).Error("failed to unmarshal cluster route")
@@ -124,7 +216,7 @@ func (hm *Host) handleRouteUpdate(originalKey, trimmedKey string, value []byte) 
 
 	if !wrapper.ExpiresAt.IsZero() {
 		timeLeft := time.Until(wrapper.ExpiresAt)
-		if timeLeft <= 0 {
+		if timeLeft <= zeroValue {
 			hm.handleRouteDeletion(trimmedKey)
 			return
 		}
@@ -173,7 +265,7 @@ func (hm *Host) rebuildAndNotify() {
 
 func (hm *Host) RouteExists(host, path string) bool {
 	host, path = normalizeHostPath(host, path)
-	if host == "" {
+	if host == emptyString {
 		return false
 	}
 
@@ -184,7 +276,7 @@ func (hm *Host) RouteExists(host, path string) bool {
 	}
 	for _, r := range cfg.Routes {
 		p := r.Path
-		if p == "" {
+		if p == emptyString {
 			p = woos.Slash
 		}
 		if p == path {
@@ -233,7 +325,7 @@ func (hm *Host) addWatchRecursive(root string) error {
 }
 
 func (hm *Host) watchLoop() {
-	debouncedReload := zulu.Debounce(500*time.Millisecond, func() {
+	debouncedReload := zulu.Debounce(debounceDelay, func() {
 		_ = hm.ReloadFull()
 	})
 
@@ -269,6 +361,16 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 	name := strings.ToLower(event.Name)
 	if !strings.HasSuffix(name, woos.HCLSuffix) {
 		return
+	}
+
+	if hm.clusterMgr != nil && event.Has(fsnotify.Write) {
+		content, err := os.ReadFile(event.Name)
+		if err == nil {
+			domain := strings.TrimSuffix(filepath.Base(event.Name), woos.HCLSuffix)
+			if hm.configSync.ShouldBroadcast(domain, content) {
+				go hm.clusterMgr.BroadcastConfig(domain, content, false)
+			}
+		}
 	}
 
 	hm.logger.Fields(
@@ -339,7 +441,7 @@ func (hm *Host) scanFromDisk() (map[string]*alaye.Host, struct{ TotalFiles int }
 			return nil
 		}
 
-		if len(cfg.Domains) == 0 {
+		if len(cfg.Domains) == zeroValue {
 			hm.logger.Fields("file", name).Warn("host file has no domains, ignoring")
 			return nil
 		}
@@ -360,13 +462,13 @@ func (hm *Host) scanFromDisk() (map[string]*alaye.Host, struct{ TotalFiles int }
 
 func (hm *Host) Get(hostname string) *alaye.Host {
 	hostname = zulu.NormalizeHost(hostname)
-	if hostname == "" {
+	if hostname == emptyString {
 		return nil
 	}
 
 	m := hm.lookupMap.Load().(map[string]*alaye.Host)
 	key := hm.resolveDomain(m, hostname)
-	if key == "" {
+	if key == emptyString {
 		return nil
 	}
 	return m[key]
@@ -374,13 +476,13 @@ func (hm *Host) Get(hostname string) *alaye.Host {
 
 func (hm *Host) GetRouter(hostname string) *matcher.Tree {
 	hostname = zulu.NormalizeHost(hostname)
-	if hostname == "" {
+	if hostname == emptyString {
 		return nil
 	}
 
 	m := hm.lookupMap.Load().(map[string]*alaye.Host)
 	key := hm.resolveDomain(m, hostname)
-	if key == "" {
+	if key == emptyString {
 		return nil
 	}
 
@@ -454,7 +556,7 @@ func (hm *Host) rebuildLookupLocked() {
 		}
 		for _, domain := range cfg.Domains {
 			domain = strings.ToLower(strings.TrimSpace(domain))
-			if domain == "" {
+			if domain == emptyString {
 				continue
 			}
 			if _, exists := domainToConfig[domain]; !exists {
@@ -466,19 +568,19 @@ func (hm *Host) rebuildLookupLocked() {
 
 	for key, route := range hm.clusterRoutes {
 		parts := strings.SplitN(key, "|", 2)
-		host := parts[0]
+		host := parts[zeroValue]
 
-		if len(parts) > 1 && route.Path == "" {
+		if len(parts) > 1 && route.Path == emptyString {
 			route.Path = parts[1]
 		}
-		if route.Path == "" {
-			route.Path = "/"
+		if route.Path == emptyString {
+			route.Path = woos.Slash
 		}
 
 		domainToRoutes[host] = append(domainToRoutes[host], route)
 
 		if _, exists := domainToConfig[host]; !exists {
-			defaultHost := alaye.NewStaticHost(host, "", true)
+			defaultHost := alaye.NewStaticHost(host, emptyString, true)
 			defaultHost.Routes = nil
 			domainToConfig[host] = defaultHost
 		}
@@ -562,7 +664,7 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 	defer hm.mu.Unlock()
 
 	domain = zulu.NormalizeHost(domain)
-	if domain == "" {
+	if domain == emptyString {
 		return
 	}
 
@@ -584,18 +686,16 @@ func (hm *Host) Save(domain string) error {
 		return fmt.Errorf("host %q not found", domain)
 	}
 
-	// Construct file path: hostsDir/{normalized-domain}.hcl
 	filename := zulu.NormalizeHost(domain) + woos.HCLSuffix
 	filePath := filepath.Join(hm.hostsDir.Path(), filename)
 
-	// Marshal and write atomically using parser package
 	p := parser.NewParser(filePath)
 	return p.MarshalFile(cfg)
 }
 
 func normalizeHostPath(host, path string) (string, string) {
 	host = strings.ToLower(strings.TrimSpace(host))
-	if path == "" {
+	if path == emptyString {
 		path = woos.Slash
 	}
 	if !strings.HasPrefix(path, woos.Slash) {

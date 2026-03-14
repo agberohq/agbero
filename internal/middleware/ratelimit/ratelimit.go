@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/jack"
@@ -40,6 +41,7 @@ type Config struct {
 	Policy          func(r *http.Request) (bucket string, pol RatePolicy, ok bool)
 	IPManager       *zulu.IPManager
 	CleanupInterval time.Duration
+	SharedState     cluster.SharedState
 }
 
 var packedBits = []uint8{32, 32}
@@ -50,25 +52,29 @@ type atomicEntry struct {
 }
 
 type RateLimiter struct {
-	data       *mappo.Sharded[string, *atomicEntry]
-	policy     func(r *http.Request) (bucket string, pol RatePolicy, ok bool)
-	ttl        int64
-	maxEntries int
-	scheduler  *jack.Scheduler
-	ipMgr      *zulu.IPManager
+	data        *mappo.Sharded[string, *atomicEntry]
+	policy      func(r *http.Request) (bucket string, pol RatePolicy, ok bool)
+	ttl         int64
+	maxEntries  int
+	scheduler   *jack.Scheduler
+	ipMgr       *zulu.IPManager
+	sharedState cluster.SharedState
 }
 
+// New instantiates a dynamic request throttling layer.
+// Handles both local token buckets and shared cluster constraints automatically.
 func New(cfg Config) *RateLimiter {
 	if cfg.CleanupInterval <= 0 {
 		cfg.CleanupInterval = 5 * time.Minute
 	}
 
 	rl := &RateLimiter{
-		data:       mappo.NewSharded[string, *atomicEntry](),
-		policy:     cfg.Policy,
-		ttl:        cfg.TTL.Nanoseconds(),
-		maxEntries: cfg.MaxEntries,
-		ipMgr:      cfg.IPManager,
+		data:        mappo.NewSharded[string, *atomicEntry](),
+		policy:      cfg.Policy,
+		ttl:         cfg.TTL.Nanoseconds(),
+		maxEntries:  cfg.MaxEntries,
+		ipMgr:       cfg.IPManager,
+		sharedState: cfg.SharedState,
 	}
 
 	sched, _ := jack.NewScheduler("ratelimit-gc", jack.NewPool(1), jack.Routine{
@@ -88,13 +94,21 @@ func (rl *RateLimiter) Close() {
 	rl.data.Clear()
 }
 
-func (rl *RateLimiter) allowInternal(key string, pol RatePolicy) bool {
+func (rl *RateLimiter) allowInternal(r *http.Request, key string, pol RatePolicy) bool {
 	if pol.Requests <= 0 {
 		return true
 	}
+
+	if rl.sharedState != nil {
+		allowed, err := rl.sharedState.AllowRateLimit(r.Context(), key, pol.Requests, pol.Window, pol.Burst)
+		if err != nil {
+			return true
+		}
+		return allowed
+	}
+
 	now := time.Now().Unix()
 
-	// FAST PATH: Lock-free get bypasses shard mutex
 	if curr, ok := rl.data.Get(key); ok {
 		for {
 			oldPacked := curr.state.Load()
@@ -106,7 +120,6 @@ func (rl *RateLimiter) allowInternal(key string, pol RatePolicy) bool {
 		return curr.lim.Allow()
 	}
 
-	// SLOW PATH: First time creation
 	var allowed bool
 	rl.data.Compute(key, func(curr *atomicEntry, exists bool) (*atomicEntry, bool) {
 		if exists {
@@ -134,6 +147,8 @@ func (rl *RateLimiter) allowInternal(key string, pol RatePolicy) bool {
 	return allowed
 }
 
+// Handler enforces endpoint request ceilings across incoming connections.
+// Responds with 429 Too Many Requests instantly upon limit saturation.
 func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 	if rl == nil || rl.policy == nil {
 		return next
@@ -151,7 +166,7 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 		}
 		key := rl.extractKey(r, pol.KeySpec)
 		fullKey := bucketName + ":" + key
-		if !rl.allowInternal(fullKey, pol) {
+		if !rl.allowInternal(r, fullKey, pol) {
 			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			return
 		}

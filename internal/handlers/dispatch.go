@@ -144,7 +144,6 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	res := router.Find(r.URL.Path)
 	if res.Route != nil {
-		// Allocate on stack, safely garbage collected. Zero pooled panics.
 		rw := &zulu.ResponseWriter{
 			ResponseWriter: w,
 			StatusCode:     200,
@@ -222,12 +221,13 @@ func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 	}
 
 	h := NewRoute(Config{
-		Global:   m.cfg.Global,
-		Host:     host,
-		Logger:   m.cfg.Resource.Logger,
-		IPMgr:    m.cfg.IPMgr,
-		CookMgr:  m.cfg.CookManager,
-		Resource: m.cfg.Resource,
+		Global:      m.cfg.Global,
+		Host:        host,
+		Logger:      m.cfg.Resource.Logger,
+		IPMgr:       m.cfg.IPMgr,
+		CookMgr:     m.cfg.CookManager,
+		Resource:    m.cfg.Resource,
+		SharedState: m.cfg.SharedState,
 	}, route)
 
 	newItem := &mappo.Item{Value: h}

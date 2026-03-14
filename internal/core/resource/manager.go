@@ -70,7 +70,7 @@ func WithDoctor(doctor *jack.Doctor) Option {
 	}
 }
 
-func WithLifetimeManager(lm *jack.LifetimeManager) Option {
+func WithLifetimeManager(lm *jack.Lifetime) Option {
 	return func(m *Manager) {
 		if m.Lifetime != nil {
 			m.Lifetime.Stop()
@@ -187,7 +187,7 @@ type Manager struct {
 	Doctor   *jack.Doctor
 	Reaper   *jack.Reaper
 	Shutdown *jack.Shutdown
-	Lifetime *jack.LifetimeManager
+	Lifetime *jack.Lifetime
 	Janitor  *jack.Pool
 }
 
@@ -249,9 +249,9 @@ func (m *Manager) setDefaults() {
 	}
 
 	if m.Lifetime == nil {
-		m.Lifetime = jack.NewLifetimeManager(
-			jack.LifetimeManagerWithLogger(m.Logger),
-			jack.LifetimeManagerWithShards(32),
+		m.Lifetime = jack.NewLifetime(
+			jack.LifetimeWithLogger(m.Logger),
+			jack.LifetimeWithShards(32),
 		)
 	}
 

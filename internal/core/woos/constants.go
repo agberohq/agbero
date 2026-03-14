@@ -404,3 +404,7 @@ const (
 	CompressionBrotli   = "brotli"
 	BrotliEncodingType  = "br"
 )
+
+const (
+	LifetimeShards = 32
+)
