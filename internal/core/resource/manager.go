@@ -277,24 +277,30 @@ func (m *Manager) Validate() error {
 }
 
 func (m *Manager) Close() {
+	// Step 1: Shutdown the janitor pool first - this prevents new submissions
+	if m.Janitor != nil {
+		_ = m.Janitor.Shutdown(2 * time.Second)
+	}
+
+	// Step 2: Now stop other components that might submit to the pool
+	if m.Lifetime != nil {
+		m.Lifetime.Stop()
+	}
+	if m.Reaper != nil {
+		m.Reaper.Stop()
+	}
+	if m.Doctor != nil {
+		m.Doctor.StopAll(2 * time.Second)
+	}
+
+	// Step 3: Clear caches - these may trigger callbacks but the pool is already shut down
 	m.Metrics.Clear()
 	m.Health.Clear()
 	m.RouteCache.Clear()
 	m.TCPCache.Clear()
 	m.AuthCache.Clear()
 	m.GzCache.Clear()
-	m.Transport.CloseIdleConnections()
 
-	if m.Doctor != nil {
-		m.Doctor.StopAll(2 * time.Second)
-	}
-	if m.Reaper != nil {
-		m.Reaper.Stop()
-	}
-	if m.Lifetime != nil {
-		m.Lifetime.Stop()
-	}
-	if m.Janitor != nil {
-		_ = m.Janitor.Shutdown(2 * time.Second)
-	}
+	// Step 4: Clean up remaining resources
+	m.Transport.CloseIdleConnections()
 }

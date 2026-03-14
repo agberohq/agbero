@@ -40,10 +40,6 @@ func (b *basicStatusWriter) Flush() {
 	}
 }
 
-var statusWriterPool = sync.Pool{
-	New: func() any { return &basicStatusWriter{} },
-}
-
 type Backend struct {
 	upstream.Base
 
@@ -344,9 +340,8 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var sw *basicStatusWriter
 
 	if _, ok := w.(*zulu.ResponseWriter); !ok {
-		sw = statusWriterPool.Get().(*basicStatusWriter)
-		sw.ResponseWriter = w
-		sw.code = 200
+		// Stack allocation: safer than Pool for async proxy logic
+		sw = &basicStatusWriter{ResponseWriter: w, code: 200}
 		actualWriter = sw
 	}
 
@@ -374,11 +369,6 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		if justTripped := b.RecordResult(!failed); justTripped {
 			b.logger.Fields("backend", b.Address, "failures", b.CBThreshold).Warn("circuit breaker tripped")
-		}
-
-		if sw != nil {
-			sw.ResponseWriter = nil // Prevent memory leak
-			statusWriterPool.Put(sw)
 		}
 	}()
 

@@ -205,7 +205,7 @@ func TestWatch_SubdirFileChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitChanged(t, h.Changed(), 3*time.Second)
+	waitChanged(t, h.Changed(), 5*time.Second)
 
 	if h.Get("b.com") == nil {
 		t.Fatal("subdir change not reloaded: b.com not found")

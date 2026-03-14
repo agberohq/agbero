@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/resource"
@@ -61,12 +62,13 @@ func (c Config) Validate() error {
 }
 
 type Route struct {
-	handler  http.Handler
-	Backends []*xhttp.Backend
-	Proxy    *xhttp.Proxy
-	ipMgr    *zulu.IPManager
-	global   *alaye.Global
-	resource *resource.Manager
+	handler   http.Handler
+	Backends  []*xhttp.Backend
+	Proxy     *xhttp.Proxy
+	ipMgr     *zulu.IPManager
+	global    *alaye.Global
+	resource  *resource.Manager
+	lastTouch atomic.Int64
 }
 
 func NewRoute(cfg Config, route *alaye.Route) *Route {

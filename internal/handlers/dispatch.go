@@ -144,7 +144,12 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	res := router.Find(r.URL.Path)
 	if res.Route != nil {
-		rw := &zulu.ResponseWriter{ResponseWriter: w, StatusCode: 200}
+		// Allocate on stack, safely garbage collected. Zero pooled panics.
+		rw := &zulu.ResponseWriter{
+			ResponseWriter: w,
+			StatusCode:     200,
+		}
+
 		m.handleRoute(rw, r, res.Route, hcfg)
 		m.logRequest(host, r, start, rw.StatusCode, rw.BytesWritten)
 		return
@@ -205,8 +210,12 @@ func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 	key := route.Key()
 	if it, ok := m.cfg.Resource.RouteCache.Load(key); ok {
 		if h, ok := it.Value.(*Route); ok {
-			if m.cfg.Resource.Reaper != nil {
-				m.cfg.Resource.Reaper.Touch(key)
+			now := time.Now().Unix()
+			if now-h.lastTouch.Load() > 10 {
+				h.lastTouch.Store(now)
+				if m.cfg.Resource.Reaper != nil {
+					m.cfg.Resource.Reaper.Touch(key)
+				}
 			}
 			return h
 		}
@@ -224,15 +233,20 @@ func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 	newItem := &mappo.Item{Value: h}
 
 	if it, loaded := m.cfg.Resource.RouteCache.LoadOrStore(key, newItem); loaded {
-		h.Close()
+		_ = h.Close()
 		if existing, ok := it.Value.(*Route); ok {
-			if m.cfg.Resource.Reaper != nil {
-				m.cfg.Resource.Reaper.Touch(key)
+			now := time.Now().Unix()
+			if now-existing.lastTouch.Load() > 10 {
+				existing.lastTouch.Store(now)
+				if m.cfg.Resource.Reaper != nil {
+					m.cfg.Resource.Reaper.Touch(key)
+				}
 			}
 			return existing
 		}
 	}
 
+	h.lastTouch.Store(time.Now().Unix())
 	if m.cfg.Resource.Reaper != nil {
 		m.cfg.Resource.Reaper.Touch(key)
 	}
