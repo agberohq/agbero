@@ -49,7 +49,8 @@ func (m *MockHandler) OnClusterChallenge(token, keyAuth string, deleted bool) {
 
 func TestDelegate_Apply_LWW(t *testing.T) {
 	h := NewMockHandler()
-	d := newDelegate(h, ll.New("test").Disable(), nil, nil)
+	configMgr := NewConfigManager("", ll.New("test").Disable())
+	d := newDelegate(h, ll.New("test").Disable(), nil, nil, configMgr)
 
 	d.apply(Envelope{Op: OpSet, Key: "foo", Value: []byte("old"), Timestamp: 100}, true)
 	if string(h.Changes["foo"]) != "old" {
@@ -71,7 +72,8 @@ func TestDelegate_CertEncryption(t *testing.T) {
 	secret := "cluster-secret-key-1234567890123"
 	cipher, _ := security.NewCipher(secret)
 	h := NewMockHandler()
-	d := newDelegate(h, ll.New("test").Disable(), nil, cipher)
+	configMgr := NewConfigManager("", ll.New("test").Disable())
+	d := newDelegate(h, ll.New("test").Disable(), nil, cipher, configMgr)
 
 	domain := "test.com"
 	keyData := []byte("private-key-data")
@@ -96,7 +98,8 @@ func TestManager_BroadcastCert(t *testing.T) {
 	secret := []byte("cluster-secret-key-1234567890123")
 	h := NewMockHandler()
 	cipher, _ := security.NewCipher(string(secret))
-	del := newDelegate(h, ll.New("test").Disable(), nil, cipher)
+	configMgr := NewConfigManager("", ll.New("test").Disable())
+	del := newDelegate(h, ll.New("test").Disable(), nil, cipher, configMgr)
 
 	m := &Manager{
 		delegate: del,

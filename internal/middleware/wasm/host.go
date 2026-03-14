@@ -20,7 +20,6 @@ func (m *Manager) ExportHostFunctions() {
 
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
-			// FIX: Get RequestContext, then extract *http.Request from it
 			rcRaw := ctx.Value(CtxKeyRequest)
 			if rcRaw == nil {
 				stack[0] = 0
@@ -73,7 +72,6 @@ func (m *Manager) ExportHostFunctions() {
 
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
-			// FIX: Use typed context key CtxKeyResponseWriter
 			wRaw := ctx.Value(CtxKeyResponseWriter)
 			if wRaw == nil {
 				return
@@ -131,7 +129,6 @@ func (m *Manager) ExportHostFunctions() {
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
 			status := uint32(stack[0])
-			// FIX: Use typed context key CtxKeyRequest
 			rcRaw := ctx.Value(CtxKeyRequest)
 			if rcRaw == nil {
 				return

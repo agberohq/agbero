@@ -164,10 +164,10 @@ type web struct {
 	mdHighlight bool
 }
 
-func NewWeb(res *resource.Manager, logger *ll.Logger, route *alaye.Route, cookMgr *cook.Manager) *web {
+func NewWeb(res *resource.Manager, route *alaye.Route, cookMgr *cook.Manager) *web {
 	h := &web{
 		route:   route,
-		logger:  logger.Namespace("web"),
+		logger:  res.Logger.Namespace("web"),
 		cookMgr: cookMgr,
 		res:     res,
 	}
@@ -240,7 +240,7 @@ func NewWeb(res *resource.Manager, logger *ll.Logger, route *alaye.Route, cookMg
 			"toc", route.Web.Markdown.TableOfContents.Active(),
 			"highlight", route.Web.Markdown.SyntaxHighlight.Enabled.Active(),
 			"theme", route.Web.Markdown.SyntaxHighlight.Theme,
-			"unsafe_html", route.Web.Markdown.UnsafeHTML.Active()).Info("Markdown renderer configured")
+			"unsafe_html", route.Web.Markdown.UnsafeHTML.Active()).Info("markdown renderer configured")
 	}
 
 	return h
@@ -825,7 +825,7 @@ func (h *web) handleOpenError(w http.ResponseWriter, r *http.Request, root *os.R
 			}
 		}
 
-		h.logger.Fields("path", reqPath).Stack("file not found (404)")
+		//h.logger.Fields("path", reqPath).Stack("file not found (404)")
 		http.Error(w, "Not Found", http.StatusNotFound)
 
 	case errors.Is(err, fs.ErrPermission):

@@ -136,7 +136,7 @@ func (p *ACMEProvider) loadUser() error {
 		return fmt.Errorf("email is required for Let's Encrypt")
 	}
 	var privateKey crypto.PrivateKey
-	_, keyBytes, keyErr := p.storage.Load("acme_account") // FIXED: 3 return values
+	_, keyBytes, keyErr := p.storage.Load("acme_account")
 	if keyErr == nil {
 		block, _ := pem.Decode(keyBytes)
 		if block != nil {

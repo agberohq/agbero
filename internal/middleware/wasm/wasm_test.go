@@ -124,7 +124,7 @@ func main() {}
 		if w.Code != 200 {
 			t.Errorf("Expected 200, got %d", w.Code)
 		}
-		// FIX: Check X-Active (what WASM sets), not X-Status
+
 		if w.Header().Get("X-Active") != "Allowed" {
 			t.Errorf("Expected header X-Active=Allowed, got %q", w.Header().Get("X-Active"))
 		}

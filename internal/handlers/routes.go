@@ -103,7 +103,7 @@ func NewRoute(cfg Config, route *alaye.Route) *Route {
 }
 
 func newWebRoute(cfg Config, route *alaye.Route) *Route {
-	chain := http.Handler(operation.NewWeb(cfg.Resource, cfg.Logger, route, cfg.CookMgr))
+	chain := http.Handler(operation.NewWeb(cfg.Resource, route, cfg.CookMgr))
 	ipMgr := zulu.NewIPManager(cfg.Global.Security.TrustedProxies)
 	if len(route.AllowedIPs) > 0 {
 		chain = ipallow.New(route.AllowedIPs, cfg.Logger, ipMgr)(chain)

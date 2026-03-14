@@ -136,3 +136,10 @@ func ParseHostConfig(path string) (*alaye.Host, error) {
 	}
 	return &host, nil
 }
+
+// ValidateHCL performs syntax-only validation of HCL content without requiring
+// specific structure. Returns nil if HCL is valid, error otherwise.
+func ValidateHCL(data []byte) error {
+	_, err := hcl.ParseBytes(data)
+	return err
+}

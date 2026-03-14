@@ -1,3 +1,4 @@
+// internal/discovery/hosts.go
 package discovery
 
 import (
@@ -64,64 +65,39 @@ type Host struct {
 }
 
 type ConfigSync struct {
-	checksums map[string]string
-	mu        sync.RWMutex
-	hostsDir  woos.Folder
-	logger    *ll.Logger
-	cluster   *cluster.Manager
+	logger  *ll.Logger
+	cluster *cluster.Manager
 }
 
+// NewConfigSync initializes the bridge between discovery and cluster configurations.
+// It relies completely on the cluster's ConfigManager for state tracking.
 func NewConfigSync(hostsDir woos.Folder, logger *ll.Logger, cluster *cluster.Manager) *ConfigSync {
 	return &ConfigSync{
-		checksums: make(map[string]string),
-		hostsDir:  hostsDir,
-		logger:    logger.Namespace(configSyncNamespace),
-		cluster:   cluster,
+		logger:  logger.Namespace(configSyncNamespace),
+		cluster: cluster,
 	}
 }
 
+// ShouldBroadcast delegates checksum validation to the central cluster manager.
+// It prevents fsnotify echo loops by ensuring only genuinely new files trigger broadcasts.
 func (c *ConfigSync) ShouldBroadcast(domain string, content []byte) bool {
-	checksum := c.calculateChecksum(content)
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if existing := c.checksums[domain]; existing == checksum {
+	if c.cluster == nil || c.cluster.ConfigManager() == nil {
 		return false
 	}
-
-	c.checksums[domain] = checksum
-	return true
+	return c.cluster.ConfigManager().ShouldBroadcast(domain, content)
 }
 
-func (c *ConfigSync) ApplyClusterConfig(domain string, rawHCL []byte, deleted bool) error {
-	checksum := c.calculateChecksum(rawHCL)
-
-	c.mu.Lock()
-	c.checksums[domain] = checksum
-	c.mu.Unlock()
-
-	path := filepath.Join(c.hostsDir.Path(), domain+woos.HCLSuffix)
-
-	if deleted {
-		return os.Remove(path)
+// ShouldBroadcastDeletion delegates deletion validation to the central cluster manager.
+// It verifies if the file was previously known before broadcasting its removal.
+func (c *ConfigSync) ShouldBroadcastDeletion(domain string) bool {
+	if c.cluster == nil || c.cluster.ConfigManager() == nil {
+		return false
 	}
-
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, rawHCL, woos.FilePerm); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return c.cluster.ConfigManager().ShouldBroadcastDeletion(domain)
 }
 
-func (c *ConfigSync) calculateChecksum(data []byte) string {
-	if len(data) == zeroValue {
-		return emptyString
-	}
-	hash := zulu.XXHash(data)
-	return hash
-}
-
+// NewHost allocates a new Host discovery engine and prepares caching structures.
+// It initializes debouncers and lock-free router maps for instantaneous traffic updates.
 func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 	h := &Host{
 		hostsDir:      hostsDir,
@@ -154,6 +130,8 @@ func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 	return h
 }
 
+// WithClusterManager configures cluster support for the host discovery module.
+// Enables automatic synchronization of local file changes with the broader network.
 func WithClusterManager(cm *cluster.Manager) Option {
 	return func(h *Host) {
 		h.clusterMgr = cm
@@ -163,19 +141,55 @@ func WithClusterManager(cm *cluster.Manager) Option {
 	}
 }
 
-func (hm *Host) OnClusterConfigChange(domain string, rawHCL []byte, deleted bool) {
-	if hm.configSync == nil {
-		return
+// OnClusterCert handles certificate updates from the cluster.
+// Writes the certificate and key to the certs directory for the domain.
+func (hm *Host) OnClusterCert(domain string, certPEM, keyPEM []byte) error {
+	certDir := filepath.Join(hm.hostsDir.Path(), "..", "certs")
+	if err := os.MkdirAll(certDir, 0755); err != nil {
+		return fmt.Errorf("create certs dir: %w", err)
 	}
 
-	if err := hm.configSync.ApplyClusterConfig(domain, rawHCL, deleted); err != nil {
-		hm.logger.Fields("domain", domain, "err", err).Error("failed to apply cluster config")
-		return
+	certPath := filepath.Join(certDir, domain+".crt")
+	keyPath := filepath.Join(certDir, domain+".key")
+
+	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
+		return fmt.Errorf("write cert: %w", err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
+		return fmt.Errorf("write key: %w", err)
 	}
 
-	hm.logger.Fields("domain", domain, "deleted", deleted).Info("cluster config applied")
+	hm.logger.Fields("domain", domain).Info("cluster certificate applied")
+	return nil
 }
 
+// OnClusterChallenge handles ACME challenge updates from the cluster.
+// Stores or removes the challenge token for Let's Encrypt validation.
+func (hm *Host) OnClusterChallenge(token, keyAuth string, deleted bool) {
+	challengeDir := filepath.Join(hm.hostsDir.Path(), ".well-known", "acme-challenge")
+
+	if deleted {
+		_ = os.Remove(filepath.Join(challengeDir, token))
+		hm.logger.Fields("token", token).Debug("cluster challenge removed")
+		return
+	}
+
+	if err := os.MkdirAll(challengeDir, 0755); err != nil {
+		hm.logger.Fields("token", token, "err", err).Error("failed to create challenge dir")
+		return
+	}
+
+	challengePath := filepath.Join(challengeDir, token)
+	if err := os.WriteFile(challengePath, []byte(keyAuth), 0644); err != nil {
+		hm.logger.Fields("token", token, "err", err).Error("failed to write cluster challenge")
+		return
+	}
+
+	hm.logger.Fields("token", token).Debug("cluster challenge applied")
+}
+
+// OnClusterChange processes incoming routing updates from the gossip network.
+// Segregates cluster-specific routes and signals the router to rebuild.
 func (hm *Host) OnClusterChange(key string, value []byte, deleted bool) {
 	if !strings.HasPrefix(key, ClusterRoutePrefix) {
 		return
@@ -190,6 +204,8 @@ func (hm *Host) OnClusterChange(key string, value []byte, deleted bool) {
 	}
 }
 
+// handleRouteDeletion removes an ephemeral route and triggers a routing rebuild.
+// Clears associated lifetime schedules to prevent memory leaks.
 func (hm *Host) handleRouteDeletion(key string) {
 	hm.mu.Lock()
 	delete(hm.clusterRoutes, key)
@@ -201,6 +217,8 @@ func (hm *Host) handleRouteDeletion(key string) {
 	hm.debouncer.Do(hm.rebuildAndNotify)
 }
 
+// handleRouteUpdate merges an incoming cluster route into local memory.
+// Establishes a TTL schedule if the route configuration defines an expiration time.
 func (hm *Host) handleRouteUpdate(originalKey, trimmedKey string, value []byte) {
 	var wrapper routeWrapper
 	if err := json.Unmarshal(value, &wrapper); err != nil {
@@ -239,6 +257,8 @@ func (hm *Host) handleRouteUpdate(originalKey, trimmedKey string, value []byte) 
 	hm.debouncer.Do(hm.rebuildAndNotify)
 }
 
+// LoadStatic injects predefined configurations directly into memory.
+// Utilized heavily in ephemeral modes where disk persistence isn't required.
 func (hm *Host) LoadStatic(staticHosts map[string]*alaye.Host) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
@@ -255,6 +275,8 @@ func (hm *Host) LoadStatic(staticHosts map[string]*alaye.Host) {
 	hm.logger.Fields("count", len(staticHosts)).Info("static hosts loaded from memory")
 }
 
+// rebuildAndNotify computes lock-free lookup maps and dispatches an update signal.
+// Allows the core server to transition active configurations without dropping traffic.
 func (hm *Host) rebuildAndNotify() {
 	hm.mu.Lock()
 	hm.rebuildLookupLocked()
@@ -263,6 +285,8 @@ func (hm *Host) rebuildAndNotify() {
 	hm.notifyChanged()
 }
 
+// RouteExists checks if a specific path is mapped under the given hostname.
+// Exclusively queries the active lock-free map to avoid bottlenecking.
 func (hm *Host) RouteExists(host, path string) bool {
 	host, path = normalizeHostPath(host, path)
 	if host == emptyString {
@@ -286,6 +310,8 @@ func (hm *Host) RouteExists(host, path string) bool {
 	return false
 }
 
+// Watch initializes the file system observer over the hosts directory.
+// Establishes recursive monitoring to capture sub-directory changes immediately.
 func (hm *Host) Watch() error {
 	var err error
 	hm.watcher, err = fsnotify.NewWatcher()
@@ -312,6 +338,8 @@ func (hm *Host) Watch() error {
 	return nil
 }
 
+// addWatchRecursive registers all subdirectories for fsnotify events.
+// Crucial for recognizing nested host configuration topologies.
 func (hm *Host) addWatchRecursive(root string) error {
 	return filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -324,6 +352,8 @@ func (hm *Host) addWatchRecursive(root string) error {
 	})
 }
 
+// watchLoop continuously intercepts fsnotify events until shutdown.
+// Filters out noise and executes debounced reloads on legitimate changes.
 func (hm *Host) watchLoop() {
 	debouncedReload := zulu.Debounce(debounceDelay, func() {
 		_ = hm.ReloadFull()
@@ -346,6 +376,8 @@ func (hm *Host) watchLoop() {
 	}
 }
 
+// handleEvent processes filesystem notifications and triggers reloads.
+// It intercepts file creations, modifications, and deletions to synchronize state across the cluster.
 func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 	if event.Has(fsnotify.Chmod) {
 		return
@@ -363,12 +395,22 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 		return
 	}
 
-	if hm.clusterMgr != nil && event.Has(fsnotify.Write) {
-		content, err := os.ReadFile(event.Name)
-		if err == nil {
-			domain := strings.TrimSuffix(filepath.Base(event.Name), woos.HCLSuffix)
-			if hm.configSync.ShouldBroadcast(domain, content) {
-				go hm.clusterMgr.BroadcastConfig(domain, content, false)
+	if hm.clusterMgr != nil {
+		domain := strings.TrimSuffix(filepath.Base(event.Name), woos.HCLSuffix)
+
+		isRemove := event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)
+		isWrite := event.Has(fsnotify.Write) || event.Has(fsnotify.Create)
+
+		if isRemove {
+			if hm.configSync.ShouldBroadcastDeletion(domain) {
+				go hm.clusterMgr.BroadcastConfig(domain, nil, true)
+			}
+		} else if isWrite {
+			content, err := os.ReadFile(event.Name)
+			if err == nil {
+				if hm.configSync.ShouldBroadcast(domain, content) {
+					go hm.clusterMgr.BroadcastConfig(domain, content, false)
+				}
 			}
 		}
 	}
@@ -381,6 +423,8 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 	debouncedReload()
 }
 
+// ReloadFull forcibly clears the active lookup maps and scans the disk anew.
+// Triggers the changed channel to notify core processing modules.
 func (hm *Host) ReloadFull() error {
 	if err := hm.loadInternal(); err != nil {
 		return err
@@ -389,6 +433,8 @@ func (hm *Host) ReloadFull() error {
 	return nil
 }
 
+// loadInternal safely swaps out the configuration states from scanned files.
+// Protects the underlying mappings with a brief write lock.
 func (hm *Host) loadInternal() error {
 	newHosts, stats, err := hm.scanFromDisk()
 	if err != nil {
@@ -411,6 +457,8 @@ func (hm *Host) loadInternal() error {
 	return nil
 }
 
+// scanFromDisk parses all valid HCL configuration files in the directory tree.
+// Filters broken definitions and returns the verified mappings.
 func (hm *Host) scanFromDisk() (map[string]*alaye.Host, struct{ TotalFiles int }, error) {
 	out := make(map[string]*alaye.Host)
 	stats := struct{ TotalFiles int }{}
@@ -460,6 +508,8 @@ func (hm *Host) scanFromDisk() (map[string]*alaye.Host, struct{ TotalFiles int }
 	return out, stats, err
 }
 
+// Get queries the active lock-free map for a specific host configuration.
+// Utilizes prefix matching to securely resolve wildcard configurations.
 func (hm *Host) Get(hostname string) *alaye.Host {
 	hostname = zulu.NormalizeHost(hostname)
 	if hostname == emptyString {
@@ -474,6 +524,8 @@ func (hm *Host) Get(hostname string) *alaye.Host {
 	return m[key]
 }
 
+// GetRouter returns the compiled fast-matching radix tree for the given host.
+// Rejects unknown domains without establishing an expensive lock attempt.
 func (hm *Host) GetRouter(hostname string) *matcher.Tree {
 	hostname = zulu.NormalizeHost(hostname)
 	if hostname == emptyString {
@@ -490,11 +542,15 @@ func (hm *Host) GetRouter(hostname string) *matcher.Tree {
 	return r[key]
 }
 
+// GetByPort searches the configuration explicitly for binding targets.
+// Utilized when standard domain resolution falls back to port-based binding.
 func (hm *Host) GetByPort(port string) *alaye.Host {
 	m := hm.portLookup.Load().(map[string]*alaye.Host)
 	return m[port]
 }
 
+// LoadAll returns a safe snapshot of the entire host configuration map.
+// Copies pointers to prevent external mutation of internal maps.
 func (hm *Host) LoadAll() (map[string]*alaye.Host, error) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
@@ -515,6 +571,8 @@ func (hm *Host) LoadAll() (map[string]*alaye.Host, error) {
 	return out, nil
 }
 
+// Close gracefully ceases file watching operations and background debouncers.
+// Must be called on application shutdown to prevent routine leaks.
 func (hm *Host) Close() error {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
@@ -533,10 +591,14 @@ func (hm *Host) Close() error {
 	return nil
 }
 
+// Changed provides a read-only channel to observe reload events.
+// The core server listens to this channel to trigger global reloads.
 func (hm *Host) Changed() <-chan struct{} {
 	return hm.changed
 }
 
+// notifyChanged signals the system that internal routing maps have transformed.
+// Drops consecutive triggers if the channel buffer is already saturated.
 func (hm *Host) notifyChanged() {
 	select {
 	case hm.changed <- struct{}{}:
@@ -544,6 +606,8 @@ func (hm *Host) notifyChanged() {
 	}
 }
 
+// rebuildLookupLocked constructs flattened routing structures for lightning-fast lookups.
+// Instantiates precompiled matchers and isolates cluster routes organically.
 func (hm *Host) rebuildLookupLocked() {
 	newLookup := make(map[string]*alaye.Host)
 	newPortLookup := make(map[string]*alaye.Host)
@@ -612,6 +676,8 @@ func (hm *Host) rebuildLookupLocked() {
 	hm.routers.Store(newRouters)
 }
 
+// loadOne extracts structure definitions directly from raw HCL representations.
+// Performs default value injection immediately post-parsing.
 func (hm *Host) loadOne(path string) (*alaye.Host, error) {
 	var hostConfig alaye.Host
 	parser := parser.NewParser(path)
@@ -625,18 +691,24 @@ func (hm *Host) loadOne(path string) (*alaye.Host, error) {
 	return &hostConfig, nil
 }
 
+// hostsDirExists asserts the validity of the fundamental discovery path.
+// Prevents panic states during recursive tree traversals.
 func (hm *Host) hostsDirExists() bool {
 	p := hm.hostsDir.Path()
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
 }
 
+// sortRoutes re-orders pathways from longest to shortest.
+// Ensures specific paths take precedence over generalized matching logic.
 func (hm *Host) sortRoutes(routes []alaye.Route) {
 	sort.SliceStable(routes, func(i, j int) bool {
 		return len(routes[i].Path) > len(routes[j].Path)
 	})
 }
 
+// resolveDomain matches an exact domain or falls back to wildcard expressions.
+// Assures requests are directed accurately within complex wildcard domains.
 func (hm *Host) resolveDomain(lookup map[string]*alaye.Host, hostname string) string {
 	if _, ok := lookup[hostname]; ok {
 		return hostname
@@ -659,6 +731,8 @@ func (hm *Host) resolveDomain(lookup map[string]*alaye.Host, hostname string) st
 	return bestMatch
 }
 
+// Set mutates a configuration dynamically into memory without disk IO.
+// Exclusively updates the active routing maps and locks correctly.
 func (hm *Host) Set(domain string, cfg *alaye.Host) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
@@ -677,6 +751,8 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 	hm.rebuildLookupLocked()
 }
 
+// Save attempts to serialize the current memory host layout down to disk.
+// Commits state effectively resolving synchronization boundaries manually.
 func (hm *Host) Save(domain string) error {
 	hm.mu.RLock()
 	defer hm.mu.RUnlock()
@@ -693,6 +769,8 @@ func (hm *Host) Save(domain string) error {
 	return p.MarshalFile(cfg)
 }
 
+// normalizeHostPath coerces routing constraints into predictable lowercase formats.
+// Safeguards against user-induced path definition abnormalities.
 func normalizeHostPath(host, path string) (string, string) {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if path == emptyString {

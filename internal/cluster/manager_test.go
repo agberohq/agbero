@@ -343,13 +343,24 @@ func TestConfigManager_ValidationRejectsBadHCL(t *testing.T) {
 	cm := NewConfigManager(tmpDir, logger)
 
 	badHCL := []byte("invalid {{{ hcl syntax")
-	if cm.validateHCL(tmpDir+"/test.hcl", badHCL) {
+	if err := cm.validateHCL(tmpDir+"/test.hcl", badHCL); err == nil {
 		t.Error("validateHCL should reject invalid HCL")
+	} else {
+		t.Logf("Bad HCL correctly rejected: %v", err)
 	}
 
-	goodHCL := []byte(`route "/" { backend { address "http://localhost:8080" } }`)
-	if !cm.validateHCL(tmpDir+"/test.hcl", goodHCL) {
-		t.Error("validateHCL should accept valid HCL")
+	// Valid host HCL with required fields (domains and route with backend)
+	goodHCL := []byte(`domains = ["test.com"]
+
+route "/" {
+  backend {
+    server {
+      address = "http://localhost:8080"
+    }
+  }
+}`)
+	if err := cm.validateHCL(tmpDir+"/test.hcl", goodHCL); err != nil {
+		t.Errorf("validateHCL should accept valid HCL: %v", err)
 	}
 }
 

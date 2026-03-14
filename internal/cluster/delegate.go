@@ -27,6 +27,8 @@ type delegate struct {
 	configMgr *ConfigManager
 }
 
+// newDelegate initializes the state manager for gossip events.
+// It handles conflict resolution, payload decryption, and local application.
 func newDelegate(handler UpdateHandler, logger *ll.Logger, metrics Metrics, cipher *security.Cipher, configMgr *ConfigManager) *delegate {
 	if metrics == nil {
 		metrics = &RealMetrics{}
@@ -41,10 +43,14 @@ func newDelegate(handler UpdateHandler, logger *ll.Logger, metrics Metrics, ciph
 	}
 }
 
+// NodeMeta is required by memberlist to share node metadata.
+// Currently returns an empty JSON object.
 func (d *delegate) NodeMeta(limit int) []byte {
 	return []byte("{}")
 }
 
+// NotifyMsg triggers when a cluster message is received.
+// Unmarshals the envelope and routes it to the application logic.
 func (d *delegate) NotifyMsg(b []byte) {
 	if len(b) == 0 {
 		return
@@ -57,6 +63,8 @@ func (d *delegate) NotifyMsg(b []byte) {
 	d.apply(env, false)
 }
 
+// GetBroadcasts pulls pending updates for gossip dissemination.
+// memberlist calls this during background gossip rounds.
 func (d *delegate) GetBroadcasts(overhead, limit int) [][]byte {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -66,6 +74,8 @@ func (d *delegate) GetBroadcasts(overhead, limit int) [][]byte {
 	return d.queue.GetBroadcasts(overhead, limit)
 }
 
+// LocalState generates a complete snapshot of local state.
+// Triggered when a new node attempts a full sync during join.
 func (d *delegate) LocalState(join bool) []byte {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -77,6 +87,8 @@ func (d *delegate) LocalState(join bool) []byte {
 	return b
 }
 
+// MergeRemoteState reconciles incoming state snapshots with local data.
+// Safely integrates historical updates observed from peers.
 func (d *delegate) MergeRemoteState(buf []byte, join bool) {
 	if len(buf) == 0 {
 		return
@@ -91,6 +103,8 @@ func (d *delegate) MergeRemoteState(buf []byte, join bool) {
 	}
 }
 
+// apply processes an incoming envelope and mutates the local state.
+// It ensures reliable operations (Configs, Certs) bypass the unreliable UDP queue.
 func (d *delegate) apply(env Envelope, local bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -138,10 +152,14 @@ func (d *delegate) apply(env Envelope, local bool) {
 		}
 	}
 	if local && d.queue != nil {
-		d.queue.QueueBroadcast(&peerUpdate{env: env})
+		if env.Op != OpConfig && env.Op != OpCert {
+			d.queue.QueueBroadcast(&peerUpdate{env: env})
+		}
 	}
 }
 
+// handleCertUpdate processes a certificate payload.
+// Decrypts the private key and delegates the certificate installation.
 func (d *delegate) handleCertUpdate(env Envelope) {
 	var payload CertPayload
 	if err := json.Unmarshal(env.Value, &payload); err != nil {
@@ -164,6 +182,8 @@ func (d *delegate) handleCertUpdate(env Envelope) {
 	}
 }
 
+// handleConfigUpdate processes configuration file syncs.
+// Defers to the dedicated config manager for disk operations and validation.
 func (d *delegate) handleConfigUpdate(env Envelope) {
 	if d.configMgr != nil {
 		var payload ConfigPayload
@@ -190,17 +210,8 @@ func (d *delegate) handleConfigUpdate(env Envelope) {
 	}
 }
 
-func (d *delegate) broadcast(op OpType, key string, value []byte, owner string) {
-	env := Envelope{
-		Op:        op,
-		Key:       key,
-		Value:     value,
-		Owner:     owner,
-		Timestamp: time.Now().UnixNano(),
-	}
-	d.apply(env, true)
-}
-
+// pruneTombstones clears expired state records from memory.
+// Prevents indefinitely growing state trees from removed or temporary data.
 func (d *delegate) pruneTombstones() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -223,6 +234,8 @@ func (d *delegate) pruneTombstones() {
 	}
 }
 
+// get securely reads a value from the local state tree.
+// Filters out logically deleted or expired entries.
 func (d *delegate) get(key string) ([]byte, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -239,6 +252,8 @@ func (d *delegate) get(key string) ([]byte, bool) {
 	return env.Value, true
 }
 
+// getEnvelope extracts the full data wrapper for inspection.
+// Used for internal lock validation and timestamp checks.
 func (d *delegate) getEnvelope(key string) (Envelope, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()

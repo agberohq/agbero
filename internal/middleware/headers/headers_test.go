@@ -24,7 +24,6 @@ func TestHeaders_RequestMods(t *testing.T) {
 			t.Error("Set header not applied")
 		}
 
-		// Fix: Check if "add1" exists in the slice of values
 		found := slices.Contains(r.Header.Values("X-Multi"), "add1")
 		if !found {
 			t.Errorf("Add header not applied. Got: %v", r.Header["X-Multi"])
@@ -71,7 +70,6 @@ func TestHeaders_ResponseMods(t *testing.T) {
 		t.Error("Response set not applied")
 	}
 
-	// Fix: httptest.ResponseRecorder stores headers as a map.
 	// We check if values contain both.
 	vals := w.Header().Values("X-Resp-Multi")
 	foundPre, foundAdd := false, false
