@@ -7,6 +7,41 @@ import (
 	"github.com/olekukonko/errors"
 )
 
+type Web struct {
+	Enabled  Enabled  `hcl:"enabled,optional" json:"enabled"`
+	Root     WebRoot  `hcl:"root,optional" json:"root"`
+	Index    string   `hcl:"index,optional" json:"index"`
+	Listing  bool     `hcl:"listing,optional" json:"listing"`
+	SPA      bool     `hcl:"spa,optional" json:"spa"`
+	PHP      PHP      `hcl:"php,block" json:"php"`
+	Git      Git      `hcl:"git,block" json:"git"`
+	Markdown Markdown `hcl:"markdown,block" json:"markdown"`
+}
+
+func (w *Web) Validate() error {
+	if w.Enabled.NotActive() {
+		return nil
+	}
+
+	if err := w.Git.Validate(); err != nil {
+		return errors.Newf("git: %w", err)
+	}
+
+	if w.Git.Enabled.NotActive() && !w.Root.IsSet() {
+		return ErrRootRequired
+	}
+
+	if w.Index != "" && strings.Contains(w.Index, Slash) {
+		return ErrIndexPath
+	}
+
+	if err := w.PHP.Validate(); err != nil {
+		return errors.Newf("php: %w", err)
+	}
+
+	return nil
+}
+
 type GitAuth struct {
 	Type             string `hcl:"type,optional" json:"type"` // "basic", "ssh-key", "ssh-agent"
 	Username         string `hcl:"username,optional" json:"username"`
@@ -53,40 +88,6 @@ func (g *Git) Validate() error {
 	return nil
 }
 
-type Web struct {
-	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
-	Root    WebRoot `hcl:"root,optional" json:"root"`
-	Index   string  `hcl:"index,optional" json:"index"`
-	Listing bool    `hcl:"listing,optional" json:"listing"`
-	SPA     bool    `hcl:"spa,optional" json:"spa"`
-	PHP     PHP     `hcl:"php,block" json:"php"`
-	Git     Git     `hcl:"git,block" json:"git"`
-}
-
-func (w *Web) Validate() error {
-	if w.Enabled.NotActive() {
-		return nil
-	}
-
-	if err := w.Git.Validate(); err != nil {
-		return errors.Newf("git: %w", err)
-	}
-
-	if w.Git.Enabled.NotActive() && !w.Root.IsSet() {
-		return ErrRootRequired
-	}
-
-	if w.Index != "" && strings.Contains(w.Index, Slash) {
-		return ErrIndexPath
-	}
-
-	if err := w.PHP.Validate(); err != nil {
-		return errors.Newf("php: %w", err)
-	}
-
-	return nil
-}
-
 type WebRoot string
 
 func (w WebRoot) IsSet() bool {
@@ -98,4 +99,19 @@ func (w WebRoot) String() string {
 		return "."
 	}
 	return string(w)
+}
+
+type Markdown struct {
+	Enabled         Enabled   `hcl:"enabled,optional"   json:"enabled"`
+	UnsafeHTML      Enabled   `hcl:"unsafe,optional"    json:"unsafe"`
+	TableOfContents Enabled   `hcl:"toc,optional"       json:"toc,omitempty"`
+	SyntaxHighlight Highlight `hcl:"highlight,block"  json:"highlight,omitempty"`
+	Extensions      []string  `hcl:"extensions,optional" json:"extensions,omitempty"`
+	Template        string    `hcl:"template,optional"  json:"template,omitempty"`
+	View            string    `hcl:"view,optional"      json:"view,omitempty"`
+}
+
+type Highlight struct {
+	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
+	Theme   string  `hcl:"theme,optional"   json:"theme,omitempty"`
 }

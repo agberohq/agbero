@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{.Title}}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #ffffff;
+            --fg: #1a1a1a;
+            --text-main: #333333;
+            --text-mute: #888888;
+            --border: #eeeeee;
+            --accent: #a855f7;
+            --hover-bg: #f9fafb;
+            --code-bg: #f5f5f5;
+            --code-border: #e8e8e8;
+            --blockquote-bar: #d8b4fe;
+        }
+
+        .dark-mode {
+            --bg: #111111;
+            --fg: #ffffff;
+            --text-main: #e0e0e0;
+            --text-mute: #666666;
+            --border: #222222;
+            --hover-bg: #1a1a1a;
+            --code-bg: #1a1a1a;
+            --code-border: #2a2a2a;
+            --blockquote-bar: #7c3aed;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; }
+
+        body {
+            font-family: 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+            line-height: 1.7;
+            color: var(--text-main);
+            background-color: var(--bg);
+            margin: 0;
+            padding: 40px;
+            transition: background-color 0.2s, color 0.2s;
+        }
+
+        .container { max-width: 800px; margin: 0 auto; }
+
+        /* ── Prose ──────────────────────────────────────────────────── */
+        .prose { font-size: 0.95rem; }
+
+        .prose h1 {
+            font-size: 1.8rem;
+            font-weight: 500;
+            color: var(--fg);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.4rem;
+            margin: 0 0 1.2rem;
+        }
+        .prose h2 {
+            font-size: 1.4rem;
+            font-weight: 500;
+            color: var(--fg);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.3rem;
+            margin: 2rem 0 0.8rem;
+        }
+        .prose h3 {
+            font-size: 1.1rem;
+            font-weight: 500;
+            color: var(--fg);
+            margin: 1.8rem 0 0.6rem;
+        }
+        .prose h4, .prose h5, .prose h6 {
+            font-size: 0.95rem;
+            font-weight: 500;
+            color: var(--fg);
+            margin: 1.5rem 0 0.4rem;
+        }
+
+        .prose p { margin: 0.8rem 0; color: var(--text-main); }
+
+        .prose a { color: var(--accent); text-decoration: none; transition: opacity 0.2s; }
+        .prose a:hover { opacity: 0.75; text-decoration: underline; }
+
+        .prose strong { font-weight: 500; color: var(--fg); }
+        .prose em     { font-style: italic; }
+
+        .prose code {
+            font-family: monospace;
+            font-size: 0.85em;
+            background: var(--code-bg);
+            border: 1px solid var(--code-border);
+            border-radius: 3px;
+            padding: 0.15em 0.4em;
+            color: var(--text-main);
+        }
+        .prose pre {
+            background: var(--code-bg);
+            border: 1px solid var(--code-border);
+            border-radius: 6px;
+            padding: 1rem 1.25rem;
+            overflow-x: auto;
+            margin: 1.2rem 0;
+        }
+        .prose pre code {
+            background: none;
+            border: none;
+            padding: 0;
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: var(--text-main);
+        }
+
+        .prose blockquote {
+            margin: 1.2rem 0;
+            padding: 0.6rem 1rem;
+            border-left: 3px solid var(--blockquote-bar);
+            background: var(--hover-bg);
+            border-radius: 0 4px 4px 0;
+        }
+        .prose blockquote p { margin: 0; color: var(--text-mute); font-style: italic; }
+
+        .prose ul, .prose ol { padding-left: 1.8rem; margin: 0.6rem 0; }
+        .prose li { margin: 0.3rem 0; color: var(--text-main); }
+        .prose li input[type="checkbox"] { margin-right: 0.4em; accent-color: var(--accent); }
+
+        .prose img { max-width: 100%; height: auto; border-radius: 4px; border: 1px solid var(--border); }
+
+        .prose hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+
+        .prose table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin: 1.2rem 0; }
+        .prose thead th {
+            text-align: left;
+            font-weight: 500;
+            color: var(--text-mute);
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 1px;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .prose tbody td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+        .prose tbody tr:hover { background: var(--hover-bg); }
+
+        @media (max-width: 600px) { body { padding: 20px; } }
+
+        /* pre.chroma background:
+           - No syntax highlight: follow --code-bg so dark-mode toggle works.
+           - Syntax highlight active: leave Chroma's own inline background alone;
+             overriding it would break the chosen theme in dark mode. */
+        {{if not .SyntaxHighlight}}pre.chroma { background: var(--code-bg) !important; }{{end}}
+    </style>
+</head>
+<body>
+<div class="container">
+    <article class="prose">
+        {{.Content}}
+    </article>
+</div>
+<script>
+    (function initTheme() {
+        const saved = localStorage.getItem('theme');
+        const prefDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (saved === 'dark' || (!saved && prefDark)) {
+            document.body.classList.add('dark-mode');
+        }
+    })();
+</script>
+</body>
+</html>
