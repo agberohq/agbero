@@ -68,16 +68,7 @@ func (b *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel = context.WithTimeout(ctx, b.timeout)
 		defer cancel()
 	}
-	start := time.Now()
 	be.ServeHTTP(w, r.WithContext(ctx))
-	if b.adaptive != nil {
-		latency := time.Since(start).Microseconds()
-		failed := false
-		if !isWebSocket && b.timeout > 0 && latency > b.timeout.Microseconds() {
-			failed = true
-		}
-		b.adaptive.RecordResult(be, latency, failed)
-	}
 }
 
 func (b *Proxy) Pick(r *http.Request) *Backend {
