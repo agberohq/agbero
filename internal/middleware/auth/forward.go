@@ -84,8 +84,6 @@ func Forward(res *resource.Manager, cfg *alaye.ForwardAuth) func(http.Handler) h
 					next.ServeHTTP(w, r)
 					return
 				}
-				http.Error(w, "Forbidden (Cached)", http.StatusForbidden)
-				return
 			}
 
 			ctx, cancel := context.WithTimeout(r.Context(), timeout)
@@ -180,9 +178,6 @@ func Forward(res *resource.Manager, cfg *alaye.ForwardAuth) func(http.Handler) h
 				return
 			}
 
-			denyItem := &mappo.Item{Value: false}
-			res.AuthCache.StoreTTL(cacheKey, denyItem, 10*time.Second)
-
 			for k, vv := range resp.Header {
 				for _, v := range vv {
 					w.Header().Add(k, v)
@@ -230,7 +225,6 @@ func buildCacheKey(r *http.Request, cacheKeyHeaders []string, prefix string) str
 		h.WriteString("|")
 	}
 
-	// Default header
 	if len(cacheKeyHeaders) == 0 {
 		cacheKeyHeaders = []string{"Authorization"}
 	}

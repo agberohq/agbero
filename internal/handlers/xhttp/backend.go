@@ -40,6 +40,10 @@ func (b *basicStatusWriter) Flush() {
 	}
 }
 
+var statusWriterPool = sync.Pool{
+	New: func() any { return &basicStatusWriter{} },
+}
+
 type Backend struct {
 	upstream.Base
 
@@ -155,14 +159,12 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 			return
 		}
 
-		// Check for timeout errors including context deadline exceeded
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Timeout() {
 			http.Error(w, "Gateway Timeout", http.StatusGatewayTimeout)
 			return
 		}
 
-		// Handle context deadline exceeded as timeout
 		if errors.Is(err, context.DeadlineExceeded) {
 			http.Error(w, "Gateway Timeout", http.StatusGatewayTimeout)
 			return
@@ -221,7 +223,6 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 		}
 		pr.Out.Host = u.Host
 		pr.SetXForwarded()
-		// Preserve WebSocket upgrade headers
 		isWebSocket := pr.In.Header.Get("Upgrade") == "websocket"
 		if isWebSocket {
 			pr.Out.Header.Set("Upgrade", "websocket")
@@ -315,8 +316,7 @@ func (b *Backend) initHealth(res *resource.Manager, targetURL string) error {
 }
 
 func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Check circuit breaker by raw failure count FIRST
-	if b.CBThreshold > 0 && b.Activity.Failures.Load() >= uint64(b.CBThreshold) {
+	if !b.AcquireCircuit() {
 		if b.Fallback != nil {
 			b.Fallback.ServeHTTP(w, r)
 		} else {
@@ -324,7 +324,7 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	// Then check health-based early abort
+
 	if b.Abort.ShouldAbort(b.StatsKey, b.HealthScore) {
 		if b.Fallback != nil {
 			b.Fallback.ServeHTTP(w, r)
@@ -333,15 +333,23 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
 	start := time.Now()
 	b.Activity.StartRequest()
 	failedPtr := new(bool)
 	ctx := context.WithValue(r.Context(), ctxKeyFailed{}, failedPtr)
 	req := r.WithContext(ctx)
+
 	var actualWriter http.ResponseWriter = w
+	var sw *basicStatusWriter
+
 	if _, ok := w.(*zulu.ResponseWriter); !ok {
-		actualWriter = &basicStatusWriter{ResponseWriter: w, code: 200}
+		sw = statusWriterPool.Get().(*basicStatusWriter)
+		sw.ResponseWriter = w
+		sw.code = 200
+		actualWriter = sw
 	}
+
 	defer func() {
 		dur := time.Since(start)
 		failed := *failedPtr
@@ -351,21 +359,29 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				rw.StatusCode == http.StatusGatewayTimeout {
 				failed = true
 			}
-		} else if sw, ok := actualWriter.(*basicStatusWriter); ok {
+		} else if sw != nil {
 			if sw.code == http.StatusBadGateway ||
 				sw.code == http.StatusServiceUnavailable ||
 				sw.code == http.StatusGatewayTimeout {
 				failed = true
 			}
 		}
+
 		b.Activity.EndRequest(dur.Microseconds(), failed)
-		b.HealthScore.RecordPassiveRequest(!failed)
-		if failed {
-			if b.CBThreshold > 0 && b.Activity.Failures.Load() >= uint64(b.CBThreshold) {
-				b.logger.Fields("backend", b.Address, "failures", b.Activity.Failures.Load()).Warn("circuit breaker tripped")
-			}
+		if b.HealthScore != nil {
+			b.HealthScore.RecordPassiveRequest(!failed)
+		}
+
+		if justTripped := b.RecordResult(!failed); justTripped {
+			b.logger.Fields("backend", b.Address, "failures", b.CBThreshold).Warn("circuit breaker tripped")
+		}
+
+		if sw != nil {
+			sw.ResponseWriter = nil // Prevent memory leak
+			statusWriterPool.Put(sw)
 		}
 	}()
+
 	b.Proxy.ServeHTTP(actualWriter, req)
 }
 
@@ -376,26 +392,20 @@ func (b *Backend) Drain(timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 
 	for {
+		if b.Activity.InFlight.Load() <= 0 {
+			break
+		}
 		if time.Now().After(deadline) {
 			b.logger.Fields("backend", b.Address, "in_flight", b.Activity.InFlight.Load()).Warn("backend drain timeout, force closing")
 			break
 		}
-
-		if b.Activity.InFlight.Load() == 0 {
-			break
-		}
-
-		select {
-		case <-ticker.C:
-			continue
-		}
+		<-ticker.C
 	}
 }
 
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
-		// Stop health check if prober was registered
 		if b.HasProber {
 			if doc, ok := b.Doctor().(*jack.Doctor); ok && doc != nil {
 				doc.Stop(b.StatsKey.String())

@@ -6,8 +6,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/resource"
@@ -27,6 +25,7 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/cook"
 	"github.com/agberohq/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/errors"
+	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
 
@@ -67,6 +66,7 @@ type Route struct {
 	Proxy    *xhttp.Proxy
 	ipMgr    *zulu.IPManager
 	global   *alaye.Global
+	resource *resource.Manager
 }
 
 func NewRoute(cfg Config, route *alaye.Route) *Route {
@@ -130,6 +130,7 @@ func newWebRoute(cfg Config, route *alaye.Route) *Route {
 		Backends: nil,
 		ipMgr:    ipMgr,
 		global:   cfg.Global,
+		resource: cfg.Resource,
 	}
 }
 
@@ -162,6 +163,7 @@ func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 				Backends: nil,
 				ipMgr:    cfg.IPMgr,
 				global:   cfg.Global,
+				resource: cfg.Resource,
 			}
 		}
 		return FallbackRoute("proxy route missing backends")
@@ -215,6 +217,7 @@ func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 		Proxy:    loadBalancer,
 		ipMgr:    cfg.IPMgr,
 		global:   cfg.Global,
+		resource: cfg.Resource,
 	}
 }
 
@@ -226,12 +229,12 @@ func (h *Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.handler.ServeHTTP(w, r)
 }
 
-func (h *Route) Close() {
+func (h *Route) Close() error {
 	if h.Proxy != nil {
 		h.Proxy.Stop()
 	}
+
 	if len(h.Backends) > 0 {
-		var wg sync.WaitGroup
 		drainTimeout := woos.DefaultTransportDrainTimeout
 		if h.global != nil && h.global.Timeouts.Read > 0 {
 			drainTimeout = h.global.Timeouts.Read + woos.DefaultTransportResponseHeaderTimeout
@@ -239,18 +242,26 @@ func (h *Route) Close() {
 				drainTimeout = woos.DefaultTransportDrainTimeout
 			}
 		}
+
 		for _, b := range h.Backends {
 			if b != nil {
-				wg.Add(1)
-				go func(be *xhttp.Backend, timeout time.Duration) {
-					defer wg.Done()
-					be.Drain(timeout)
-					be.Stop()
-				}(b, drainTimeout)
+				be := b
+				if h.resource != nil && h.resource.Janitor != nil {
+					_ = h.resource.Janitor.Submit(jack.Func(func() error {
+						be.Drain(drainTimeout)
+						be.Stop()
+						return nil
+					}))
+				} else {
+					go func() {
+						be.Drain(drainTimeout)
+						be.Stop()
+					}()
+				}
 			}
 		}
-		wg.Wait()
 	}
+	return nil
 }
 
 func resolveFallback(routeFallback, globalFallback *alaye.Fallback) *alaye.Fallback {

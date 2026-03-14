@@ -13,6 +13,8 @@ import (
 	"github.com/olekukonko/jack"
 )
 
+const DefaultHalfOpenCooldown = int64(5 * time.Second)
+
 type Config struct {
 	Address        string
 	Weight         int
@@ -87,7 +89,6 @@ func NewBase(c Config) (Base, error) {
 
 func (b *Base) Status(v bool) {
 	if !v {
-		// Unhealthy: single Update is sufficient (StateUnknown/Degraded -> Unhealthy)
 		b.HealthScore.Update(health.Record{
 			ProbeSuccess: false,
 			ConnHealth:   30,
@@ -97,23 +98,28 @@ func (b *Base) Status(v bool) {
 			b.Activity.Failures.Store(uint64(b.CBThreshold + 1))
 		}
 	} else {
-		// Healthy: bypass state machine hysteresis with direct state set
 		b.HealthScore.Update(health.Record{
 			ProbeLatency: 10 * time.Millisecond,
 			ProbeSuccess: true,
 			ConnHealth:   100,
 			PassiveRate:  0,
 		})
-		b.HealthScore.ForceHealthy() // ← Direct state set, no second Update()
+		b.HealthScore.ForceHealthy()
 		b.Activity.Failures.Store(0)
 	}
 }
 
 func (b *Base) Alive() bool {
-	if b.CBThreshold > 0 && b.Activity.Failures.Load() >= uint64(b.CBThreshold) {
-		return false
+	if b.CBThreshold > 0 {
+		if b.Activity.Failures.Load() >= uint64(b.CBThreshold) {
+			lastRecov := b.LastRecov.Load()
+			now := time.Now().UnixNano()
+			if now-lastRecov > DefaultHalfOpenCooldown {
+				return true
+			}
+			return false
+		}
 	}
-	// Always check health score if present, regardless of HasProber
 	if b.HealthScore != nil {
 		state := b.HealthScore.State()
 		if state == health.StateDead || state == health.StateUnhealthy {
@@ -121,6 +127,36 @@ func (b *Base) Alive() bool {
 		}
 	}
 	return true
+}
+
+func (b *Base) AcquireCircuit() bool {
+	if b.CBThreshold <= 0 {
+		return true
+	}
+	if b.Activity.Failures.Load() < uint64(b.CBThreshold) {
+		return true
+	}
+
+	lastRecov := b.LastRecov.Load()
+	now := time.Now().UnixNano()
+	if now-lastRecov > DefaultHalfOpenCooldown {
+		if b.LastRecov.CompareAndSwap(lastRecov, now) {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *Base) RecordResult(success bool) bool {
+	if success {
+		b.Activity.Failures.Store(0)
+		return false
+	}
+
+	failures := b.Activity.Failures.Load()
+	b.LastRecov.Store(time.Now().UnixNano())
+
+	return b.CBThreshold > 0 && failures == uint64(b.CBThreshold)
 }
 
 func (b *Base) IsUsable() bool {
@@ -154,6 +190,7 @@ func (b *Base) ResponseTime() int64 {
 
 func (b *Base) OnDialFailure(err error) {
 	b.Activity.Failures.Add(1)
+	b.RecordResult(false)
 	if b.HealthScore != nil {
 		b.HealthScore.RecordPassiveRequest(false)
 	}
@@ -186,8 +223,6 @@ func (b *Base) RegisterHealth(probeCfg health.ProbeConfig, checkFn func(ctx cont
 	return b.resource.Doctor.Add(patient)
 }
 
-// Doctor returns the resource's Doctor, or nil if not set.
-// Safe to call from other packages.
 func (b *Base) Doctor() interface{} {
 	if b.resource == nil {
 		return nil

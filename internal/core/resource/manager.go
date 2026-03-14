@@ -17,24 +17,20 @@ import (
 
 type Option func(*Manager)
 
-// WithLogger sets the logger
 func WithLogger(logger *ll.Logger) Option {
 	return func(m *Manager) {
 		m.Logger = logger
 	}
 }
 
-// WithShutdown sets the shutdown handler
 func WithShutdown(shutdown *jack.Shutdown) Option {
 	return func(m *Manager) {
 		m.Shutdown = shutdown
 	}
 }
 
-// WithReaper sets up a reaper with the provided handler
 func WithReaper(reapHandler func(context.Context, string)) Option {
 	return func(m *Manager) {
-		// Stop existing reaper if any
 		if m.Reaper != nil {
 			m.Reaper.Stop()
 		}
@@ -50,28 +46,23 @@ func WithReaper(reapHandler func(context.Context, string)) Option {
 	}
 }
 
-// WithCustomTransport allows overriding the default HTTP transport
 func WithCustomTransport(transport *http.Transport) Option {
 	return func(m *Manager) {
 		m.Transport = transport
-		// Update HTTP client if it exists and uses the default transport
 		if m.HTTPClient != nil && m.HTTPClient.Transport == m.Transport {
 			m.HTTPClient.Transport = transport
 		}
 	}
 }
 
-// WithCustomHTTPClient allows overriding the default HTTP client
 func WithCustomHTTPClient(client *http.Client) Option {
 	return func(m *Manager) {
 		m.HTTPClient = client
 	}
 }
 
-// WithDoctor allows overriding the default doctor
 func WithDoctor(doctor *jack.Doctor) Option {
 	return func(m *Manager) {
-		// Stop existing doctor if any
 		if m.Doctor != nil {
 			m.Doctor.StopAll(2 * time.Second)
 		}
@@ -79,10 +70,8 @@ func WithDoctor(doctor *jack.Doctor) Option {
 	}
 }
 
-// WithLifetimeManager allows overriding the default lifetime manager
 func WithLifetimeManager(lm *jack.LifetimeManager) Option {
 	return func(m *Manager) {
-		// Stop existing lifetime manager if any
 		if m.Lifetime != nil {
 			m.Lifetime.Stop()
 		}
@@ -90,7 +79,6 @@ func WithLifetimeManager(lm *jack.LifetimeManager) Option {
 	}
 }
 
-// WithCacheSizes allows customizing cache sizes
 func WithCacheSizes(routeMax, tcpMax, authMax, gzMax int) Option {
 	return func(m *Manager) {
 		if routeMax > 0 {
@@ -124,7 +112,6 @@ func WithCacheSizes(routeMax, tcpMax, authMax, gzMax int) Option {
 	}
 }
 
-// WithMetrics allows overriding the metrics registry
 func WithMetrics(registry *metrics.Registry) Option {
 	return func(m *Manager) {
 		oldMetrics := m.Metrics
@@ -135,7 +122,6 @@ func WithMetrics(registry *metrics.Registry) Option {
 	}
 }
 
-// WithHealth allows overriding the health registry
 func WithHealth(registry *health.Registry) Option {
 	return func(m *Manager) {
 		oldHealth := m.Health
@@ -146,7 +132,6 @@ func WithHealth(registry *health.Registry) Option {
 	}
 }
 
-// WithRouteCache allows setting a custom route cache
 func WithRouteCache(cache *mappo.Cache) Option {
 	return func(m *Manager) {
 		oldCache := m.RouteCache
@@ -157,7 +142,6 @@ func WithRouteCache(cache *mappo.Cache) Option {
 	}
 }
 
-// WithTCPCache allows setting a custom TCP cache
 func WithTCPCache(cache *mappo.Cache) Option {
 	return func(m *Manager) {
 		oldCache := m.TCPCache
@@ -168,7 +152,6 @@ func WithTCPCache(cache *mappo.Cache) Option {
 	}
 }
 
-// WithAuthCache allows setting a custom auth cache
 func WithAuthCache(cache *mappo.Cache) Option {
 	return func(m *Manager) {
 		oldCache := m.AuthCache
@@ -179,7 +162,6 @@ func WithAuthCache(cache *mappo.Cache) Option {
 	}
 }
 
-// WithGzCache allows setting a custom gzip cache
 func WithGzCache(cache *mappo.Cache) Option {
 	return func(m *Manager) {
 		oldCache := m.GzCache
@@ -206,11 +188,10 @@ type Manager struct {
 	Reaper   *jack.Reaper
 	Shutdown *jack.Shutdown
 	Lifetime *jack.LifetimeManager
+	Janitor  *jack.Pool
 }
 
-// New creates a new Manager with the provided options
 func New(opts ...Option) *Manager {
-	// Create manager with defaults
 	m := &Manager{
 		Metrics:    metrics.NewRegistry(),
 		Health:     health.NewRegistry(),
@@ -220,16 +201,12 @@ func New(opts ...Option) *Manager {
 		GzCache:    mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMax}),
 	}
 
-	// Set defaults before applying options
 	m.setDefaults()
-
-	// Apply all options
 	m.Apply(opts...)
 
 	return m
 }
 
-// Apply applies the provided options to the Manager
 func (m *Manager) Apply(opts ...Option) {
 	for _, opt := range opts {
 		if opt != nil {
@@ -238,7 +215,6 @@ func (m *Manager) Apply(opts ...Option) {
 	}
 }
 
-// setDefaults initializes default values for nil fields
 func (m *Manager) setDefaults() {
 	if m.Logger == nil {
 		m.Logger = ll.New("agbero").Disable()
@@ -278,6 +254,10 @@ func (m *Manager) setDefaults() {
 			jack.LifetimeManagerWithShards(32),
 		)
 	}
+
+	if m.Janitor == nil {
+		m.Janitor = jack.NewPool(2, jack.PoolingWithQueueSize(10000))
+	}
 }
 
 func (m *Manager) Validate() error {
@@ -313,5 +293,8 @@ func (m *Manager) Close() {
 	}
 	if m.Lifetime != nil {
 		m.Lifetime.Stop()
+	}
+	if m.Janitor != nil {
+		_ = m.Janitor.Shutdown(2 * time.Second)
 	}
 }

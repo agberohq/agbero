@@ -59,7 +59,6 @@ type RateLimiter struct {
 }
 
 func New(cfg Config) *RateLimiter {
-	// Internal garbage collection interval (not part of alaye configuration schema)
 	if cfg.CleanupInterval <= 0 {
 		cfg.CleanupInterval = 5 * time.Minute
 	}
@@ -67,8 +66,8 @@ func New(cfg Config) *RateLimiter {
 	rl := &RateLimiter{
 		data:       mappo.NewSharded[string, *atomicEntry](),
 		policy:     cfg.Policy,
-		ttl:        cfg.TTL.Nanoseconds(), // Trust the pipeline
-		maxEntries: cfg.MaxEntries,        // Trust the pipeline
+		ttl:        cfg.TTL.Nanoseconds(),
+		maxEntries: cfg.MaxEntries,
 		ipMgr:      cfg.IPManager,
 	}
 
@@ -94,7 +93,21 @@ func (rl *RateLimiter) allowInternal(key string, pol RatePolicy) bool {
 		return true
 	}
 	now := time.Now().Unix()
-	allowed := true
+
+	// FAST PATH: Lock-free get bypasses shard mutex
+	if curr, ok := rl.data.Get(key); ok {
+		for {
+			oldPacked := curr.state.Load()
+			newPacked := zulu.NewPacked(packedBits, 0, now)
+			if curr.state.CompareAndSwap(oldPacked, newPacked) {
+				break
+			}
+		}
+		return curr.lim.Allow()
+	}
+
+	// SLOW PATH: First time creation
+	var allowed bool
 	rl.data.Compute(key, func(curr *atomicEntry, exists bool) (*atomicEntry, bool) {
 		if exists {
 			for {

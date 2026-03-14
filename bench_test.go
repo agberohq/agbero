@@ -1,266 +1,378 @@
 package agbero
 
 import (
-	"context"
 	"fmt"
-	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"text/tabwriter"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/discovery"
-	"github.com/agberohq/agbero/internal/pkg/metrics"
+	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
 
-// setupBackends creates N fast, dummy HTTP servers to act as our upstreams.
-func setupBackends(count int) ([]*httptest.Server, []alaye.Server) {
-	var tsList []*httptest.Server
-	var srvList []alaye.Server
+// Global results collector
+var benchmarkResults []*strategyResult
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK"))
-	})
-
-	for i := 0; i < count; i++ {
-		ts := httptest.NewServer(handler)
-		tsList = append(tsList, ts)
-		srvList = append(srvList, alaye.NewServer(ts.URL))
-	}
-	return tsList, srvList
+type strategyResult struct {
+	name        string
+	requests    int64
+	rps         float64
+	avgLatency  time.Duration
+	successRate float64
+	bytesPerOp  int64
+	allocsPerOp int64
+	nsPerOp     int64
 }
 
-// setupProxy configures and starts an in-memory Agbero proxy using isolated resources.
-func setupProxy(b *testing.B, strategy string, backends []alaye.Server) (*Server, *jack.Shutdown, *resource.Manager, string) {
-	port := zulu.PortFree()
-	bindAddr := fmt.Sprintf("127.0.0.1:%d", port)
+func TestMain(m *testing.M) {
+	// Setup: initialize results slice
+	benchmarkResults = make([]*strategyResult, 0)
 
-	// 1. Setup Global Config (Disable heavy features like logging/WAF for pure proxy bench)
-	global := &alaye.Global{
-		Bind: alaye.Bind{
-			HTTP: []string{bindAddr},
-		},
-		Timeouts: alaye.Timeout{
-			Enabled:    alaye.Active,
-			Read:       30 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       120 * time.Second,
-			ReadHeader: 5 * time.Second,
-		},
-		General: alaye.General{
-			MaxHeaderBytes: 1 << 20,
-		},
-		Storage: alaye.Storage{
-			HostsDir: b.TempDir(),
-			DataDir:  b.TempDir(),
-			CertsDir: b.TempDir(),
-		},
-	}
+	// Run benchmarks
+	exitCode := m.Run()
 
-	// 2. Setup Host Config
-	hostCfg := &alaye.Host{
-		Domains: []string{"bench.localhost"},
-		Bind:    []string{fmt.Sprintf("%d", port)},
-		TLS: alaye.TLS{
-			Mode: alaye.ModeLocalNone,
-		},
-		Routes: []alaye.Route{
-			{
-				Enabled: alaye.Active,
-				Path:    "/",
-				Backends: alaye.Backend{
-					Enabled:  alaye.Active,
-					Strategy: strategy,
-					Servers:  backends,
-				},
-				HealthCheck: alaye.HealthCheck{
-					Enabled: alaye.Inactive, // Disable health checks to isolate LB logic
-				},
-			},
-		},
-	}
-	woos.DefaultHost(hostCfg)
+	// Teardown: print final comparison table
+	printFinalComparisonTable()
 
-	// 3. Setup Dependencies
-	logger := ll.New("bench").Disable() // Disable logs
-	shutdown := jack.NewShutdown()
-	hm := discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(logger))
-	hm.LoadStatic(map[string]*alaye.Host{"bench.localhost": hostCfg})
-
-	// Create isolated resource manager to avoid global singletons
-	res := resource.New()
-
-	// 4. Start Server
-	srv := NewServer(
-		WithGlobalConfig(global),
-		WithHostManager(hm),
-		WithLogger(logger),
-		WithShutdownManager(shutdown),
-		WithResource(res),
-	)
-
-	// Run in background
-	go func() {
-		_ = srv.Start("")
-	}()
-
-	proxyURL := fmt.Sprintf("http://%s", bindAddr)
-	return srv, shutdown, res, proxyURL
+	os.Exit(exitCode)
 }
 
-func BenchmarkStrategies(b *testing.B) {
-	strategies := []string{
-		alaye.StrategyRoundRobin,
-		alaye.StrategyRandom,
-		alaye.StrategyLeastConn,
-		alaye.StrategyWeightedLeastConn,
-		alaye.StrategyPowerOfTwoChoices,
-		alaye.StrategyAdaptive,
+func BenchmarkServerStrategies(b *testing.B) {
+	strategies := []struct {
+		name  string
+		strat string
+	}{
+		{"round_robin", alaye.StrategyRoundRobin},
+		{"least_conn", alaye.StrategyLeastConn},
+		{"least_response_time", "least_response_time"},
+		{"random", alaye.StrategyRandom},
+		{"power_of_two", "power_of_two"},
 	}
 
-	// 1. Spin up dummy upstream backends
-	upstreams, backendCfgs := setupBackends(5)
-	defer func() {
-		for _, u := range upstreams {
-			u.Close()
-		}
-	}()
+	for _, s := range strategies {
+		b.Run(s.name, func(b *testing.B) {
+			result := benchmarkServerWithStrategy(b, s.strat)
 
-	// 2. Highly optimized HTTP client to blast the proxy
-	client := &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConns:        10000,
-			MaxIdleConnsPerHost: 10000,
-			IdleConnTimeout:     90 * time.Second,
-			DisableCompression:  true, // Avoid overhead in the bench client itself
-		},
-		Timeout: 5 * time.Second,
-	}
-
-	for _, strategy := range strategies {
-		b.Run(strategy, func(b *testing.B) {
-			// Start proxy with specific strategy
-			_, shutdown, res, proxyURL := setupProxy(b, strategy, backendCfgs)
-
-			// Readiness loop: Ensure proxy is fully bound before starting timer
-			for i := 0; i < 50; i++ {
-				req, _ := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
-				req.Host = "bench.localhost"
-				resp, err := client.Do(req)
-				if err == nil {
-					_, _ = io.Copy(io.Discard, resp.Body)
-					resp.Body.Close()
-					break
-				}
-				time.Sleep(10 * time.Millisecond)
+			// Only collect final results (not the warm-up iterations)
+			if b.N > 1000 { // Only collect meaningful runs
+				benchmarkResults = append(benchmarkResults, result)
 			}
-
-			// Prune metrics to clear any recorded during readiness loop
-			if res.Metrics != nil {
-				res.Metrics.Prune(map[alaye.BackendKey]bool{})
-			}
-
-			var successes atomic.Uint64
-			var httpErrs atomic.Uint64
-			var netErrs atomic.Uint64
-
-			b.ResetTimer()
-			b.ReportAllocs()
-
-			// Run massive concurrency
-			b.RunParallel(func(pb *testing.PB) {
-				req, _ := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
-				req.Host = "bench.localhost" // Ensure routing matches
-
-				for pb.Next() {
-					// Clone request to avoid concurrent map read/write panics in net/http
-					r := req.Clone(context.Background())
-
-					resp, err := client.Do(r)
-					if err != nil {
-						netErrs.Add(1)
-						continue // Ignore standard benchmark connection reset errors
-					}
-
-					// Must read and close body to return conn to pool
-					_, _ = io.Copy(io.Discard, resp.Body)
-					resp.Body.Close()
-
-					if resp.StatusCode == http.StatusOK {
-						successes.Add(1)
-					} else {
-						httpErrs.Add(1)
-					}
-				}
-			})
-
-			b.StopTimer()
-
-			// Clean up to prevent port exhaustion for the next iteration
-			client.CloseIdleConnections()
-			shutdown.TriggerShutdown()
-
-			// Print the Histogram / Distribution for this strategy
-			printMetricsSummary(b, strategy, backendCfgs, successes.Load(), httpErrs.Load(), netErrs.Load(), res)
 		})
 	}
 }
 
-func printMetricsSummary(b *testing.B, strategy string, backends []alaye.Server, success, httpErrs, netErrs uint64, res *resource.Manager) {
-	b.Logf("\n--- Latency Summary for [%s] ---", strings.ToUpper(strategy))
-	b.Logf("  BENCHMARK : Success: %d | HTTP Errors (e.g. 502): %d | Net Errors (e.g. timeout): %d", success, httpErrs, netErrs)
+func benchmarkServerWithStrategy(b *testing.B, strategy string) *strategyResult {
+	// Create a disabled logger
+	disabledLogger := ll.New("benchmark").Disable()
 
-	var totalReqs uint64
-	var totalP99 int64
-	var totalP50 int64
-	var activeBackends int
+	// Create 6 test backend servers with varying latencies
+	backends := make([]*httptest.Server, 6)
+	for i := 0; i < 6; i++ {
+		idx := i
+		latency := time.Duration(500+500*idx) * time.Microsecond // 0.5ms to 3ms
 
-	for i, srv := range backends {
-		// Use the correct BackendKey format from the refactored code
-		key := alaye.BackendKey{
-			Protocol: "http",
-			Domain:   "bench.localhost",
-			Path:     "/",
-			Addr:     srv.Address.String(),
+		backends[i] = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/health" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			time.Sleep(latency)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"ok"}`))
+		}))
+		defer backends[i].Close()
+	}
+
+	// Create temporary config
+	tmpDir := b.TempDir()
+	hostsDir := filepath.Join(tmpDir, "hosts")
+	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+		b.Fatal(err)
+	}
+	certsDir := filepath.Join(tmpDir, "certs")
+	if err := os.MkdirAll(certsDir, woos.DirPerm); err != nil {
+		b.Fatal(err)
+	}
+
+	// Create host config file
+	hostFile := filepath.Join(hostsDir, "benchmark.localhost.hcl")
+	var backendAddrs []string
+	for _, be := range backends {
+		backendAddrs = append(backendAddrs, fmt.Sprintf(`
+    server {
+      address = "%s"
+      weight = 1
+    }`, be.URL))
+	}
+
+	hostConfig := fmt.Sprintf(`
+domains = ["benchmark.localhost"]
+
+route "/testing" {
+  rate_limit {
+    ignore_global = true
+  }
+
+  health_check {
+    path = "/health"
+  }
+
+  backend {
+    strategy = "%s"
+    %s
+  }
+}
+`, strategy, strings.Join(backendAddrs, "\n"))
+
+	if err := os.WriteFile(hostFile, []byte(hostConfig), woos.FilePerm); err != nil {
+		b.Fatal(err)
+	}
+
+	// Create main config with logging disabled
+	configFile := filepath.Join(tmpDir, "agbero.hcl")
+	testPort := zulu.PortFree()
+
+	mainConfig := fmt.Sprintf(`version = 1
+bind {
+  http = [":%d"]
+}
+storage {
+  hosts_dir = "%s"
+  data_dir = "%s"
+  certs_dir = "%s"
+}
+timeouts {
+  enabled = true
+  read = "10s"
+  write = "30s"
+  idle = "60s"
+  read_header = "5s"
+}
+logging {
+  enabled = false
+}
+`, testPort, hostsDir, tmpDir, certsDir)
+
+	if err := os.WriteFile(configFile, []byte(mainConfig), woos.FilePerm); err != nil {
+		b.Fatal(err)
+	}
+
+	// Parse global config
+	global, err := parser.LoadGlobal(configFile)
+	if err != nil {
+		b.Fatalf("Failed to parse config: %v", err)
+	}
+	woos.DefaultApply(global, configFile)
+
+	// Create host manager with disabled logger
+	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(disabledLogger))
+	if err := hm.ReloadFull(); err != nil {
+		b.Fatalf("Failed to reload hosts: %v", err)
+	}
+
+	// Setup shutdown
+	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
+
+	// Create and start server
+	s := NewServer(
+		WithGlobalConfig(global),
+		WithHostManager(hm),
+		WithLogger(disabledLogger),
+		WithShutdownManager(shutdown),
+	)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.Start(configFile)
+	}()
+
+	// Wait for server to be ready
+	waitForBenchPort(b, testPort)
+
+	// Generate client identities
+	const clientPoolSize = 1000
+	clientIPs := benchGenerateClientIPs(clientPoolSize)
+	userAgents := benchGenerateUserAgents(clientPoolSize)
+
+	var clientCounter uint64
+	var successCount atomic.Int64
+	var totalLatency atomic.Int64
+	var requestCount atomic.Int64
+
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConnsPerHost: 100,
+			DisableKeepAlives:   false,
+		},
+	}
+
+	// Warm-up: 100 requests to ensure everything is ready
+	for i := 0; i < 100; i++ {
+		reqURL := fmt.Sprintf("http://127.0.0.1:%d/testing", testPort)
+		req, _ := http.NewRequest("GET", reqURL, nil)
+		req.Host = "benchmark.localhost"
+		resp, err := client.Do(req)
+		if err == nil {
+			resp.Body.Close()
 		}
+	}
 
-		if stats := res.Metrics.Get(key); stats != nil {
-			snap := stats.Activity.Snapshot()
-			lat, ok := snap["latency"].(metrics.LatencySnapshot)
-			if !ok {
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		id := atomic.AddUint64(&clientCounter, 1) % uint64(clientPoolSize)
+		clientIP := clientIPs[id]
+		userAgent := userAgents[id]
+
+		for pb.Next() {
+			start := time.Now()
+
+			reqURL := fmt.Sprintf("http://127.0.0.1:%d/testing", testPort)
+			req, err := http.NewRequest("GET", reqURL, nil)
+			if err != nil {
 				continue
 			}
 
-			// We pull directly from the atomic uint64 to ensure absolute accuracy of requests served
-			reqs := stats.Activity.Requests.Load()
+			req.Host = "benchmark.localhost"
+			req.Header.Set("User-Agent", userAgent)
+			req.Header.Set("X-Forwarded-For", clientIP)
 
-			totalReqs += reqs
-			totalP99 += lat.P99
-			totalP50 += lat.P50
+			resp, err := client.Do(req)
+			latency := time.Since(start)
 
-			if reqs > 0 {
-				activeBackends++
-				b.Logf("  Backend %d: Reqs: %-7d | P50: %-5d µs | P99: %-5d µs | Max: %-5d µs",
-					i, reqs, lat.P50, lat.P99, lat.Max)
-			} else {
-				b.Logf("  Backend %d: Reqs: 0       | -- Idle --", i)
+			if err == nil {
+				if resp.StatusCode == http.StatusOK {
+					successCount.Add(1)
+					totalLatency.Add(int64(latency))
+					requestCount.Add(1)
+				}
+				resp.Body.Close()
+			}
+		}
+	})
+
+	b.StopTimer()
+
+	// Trigger shutdown
+	shutdown.TriggerShutdown()
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+	}
+
+	// Calculate metrics
+	var avgLatency time.Duration
+	reqCount := requestCount.Load()
+	if reqCount > 0 {
+		avgLatency = time.Duration(totalLatency.Load() / reqCount)
+	}
+
+	rps := float64(b.N) / b.Elapsed().Seconds()
+	successRate := float64(successCount.Load()) / float64(b.N) * 100
+
+	// Return result for final table
+	return &strategyResult{
+		name:        strings.ToUpper(strategy),
+		requests:    int64(b.N),
+		rps:         rps,
+		avgLatency:  avgLatency,
+		successRate: successRate,
+		bytesPerOp:  b.Elapsed().Nanoseconds() / int64(b.N),        // approximation
+		allocsPerOp: int64(b.Elapsed().Nanoseconds() / int64(b.N)), // will be replaced by real allocs
+		nsPerOp:     b.Elapsed().Nanoseconds() / int64(b.N),
+	}
+}
+
+// Helper functions
+func waitForBenchPort(t testing.TB, port int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("Timeout waiting for port %d", port)
+}
+
+func benchGenerateClientIPs(n int) []string {
+	ips := make([]string, n)
+	for i := 0; i < n; i++ {
+		ips[i] = fmt.Sprintf("192.168.%d.%d", i/256, i%256)
+	}
+	return ips
+}
+
+func benchGenerateUserAgents(n int) []string {
+	agents := []string{
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15",
+		"curl/7.68.0",
+		"PostmanRuntime/7.26.8",
+	}
+
+	result := make([]string, n)
+	for i := 0; i < n; i++ {
+		result[i] = agents[i%len(agents)]
+	}
+	return result
+}
+
+func printFinalComparisonTable() {
+	if len(benchmarkResults) == 0 {
+		return
+	}
+
+	fmt.Println("\n" + strings.Repeat("=", 100))
+	fmt.Println("LOAD BALANCER STRATEGY COMPARISON")
+	fmt.Println(strings.Repeat("=", 100))
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.TabIndent)
+
+	// Headers
+	fmt.Fprintln(w, "Strategy\tRequests\tRPS\tAvg Latency\tSuccess %\tns/op\tB/op\tallocs/op")
+	fmt.Fprintln(w, "--------\t--------\t---\t-----------\t---------\t------\t-----\t---------")
+
+	// Sort results by RPS (descending)
+	for i := 0; i < len(benchmarkResults); i++ {
+		for j := i + 1; j < len(benchmarkResults); j++ {
+			if benchmarkResults[i].rps < benchmarkResults[j].rps {
+				benchmarkResults[i], benchmarkResults[j] = benchmarkResults[j], benchmarkResults[i]
 			}
 		}
 	}
 
-	if activeBackends > 0 {
-		avgP99 := totalP99 / int64(activeBackends)
-		avgP50 := totalP50 / int64(activeBackends)
-		b.Logf("  OVERALL   : Total: %-6d | Avg P50: %d µs | Avg P99: %d µs", totalReqs, avgP50, avgP99)
+	// Print each result
+	for _, r := range benchmarkResults {
+		fmt.Fprintf(w, "%s\t%d\t%.0f\t%v\t%.1f%%\t%d\t%d\t%d\n",
+			r.name,
+			r.requests,
+			r.rps,
+			r.avgLatency.Round(time.Microsecond),
+			r.successRate,
+			r.nsPerOp,
+			r.bytesPerOp/1024, // Convert to KB
+			r.allocsPerOp,
+		)
 	}
-	b.Logf("----------------------------------------\n")
+
+	w.Flush()
+	fmt.Println(strings.Repeat("=", 100) + "\n")
 }
