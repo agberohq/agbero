@@ -49,12 +49,17 @@ var (
 	proxyPort   int = 8080
 	proxyBind   string
 	proxyHTTPS  bool
+
+	serviceRestart bool
+	serviceStatus  bool
 )
 
 var (
 	hashPassword = "admin"
 )
 
+// main orchestrates CLI flags and delegates execution to respective subsystems.
+// It sets up the core interrupt handlers for graceful shutdowns.
 func main() {
 
 	logger = ll.New(woos.Name,
@@ -75,11 +80,9 @@ func main() {
 
 	flaggy.String(&configPath, "c", "config", "Path to configuration file")
 
-	// Init
 	cmdInit := flaggy.NewSubcommand("init")
 	cmdInit.Description = "Scaffold configuration in current directory (no service)"
 
-	// Service Commands Group
 	cmdService := flaggy.NewSubcommand("service")
 	cmdService.Description = "Manage system service (install, start, stop)"
 
@@ -96,12 +99,19 @@ func main() {
 	cmdServiceStop := flaggy.NewSubcommand("stop")
 	cmdServiceStop.Description = "Stop system service"
 
+	cmdServiceRestart := flaggy.NewSubcommand("restart")
+	cmdServiceRestart.Description = "Restart system service"
+
+	cmdServiceStatus := flaggy.NewSubcommand("status")
+	cmdServiceStatus.Description = "Check system service status"
+
+	cmdService.AttachSubcommand(cmdServiceRestart, 1)
+	cmdService.AttachSubcommand(cmdServiceStatus, 1)
 	cmdService.AttachSubcommand(cmdServiceInstall, 1)
 	cmdService.AttachSubcommand(cmdServiceUninstall, 1)
 	cmdService.AttachSubcommand(cmdServiceStart, 1)
 	cmdService.AttachSubcommand(cmdServiceStop, 1)
 
-	// Run
 	cmdRun := flaggy.NewSubcommand("run")
 	cmdRun.Description = "Run the application (requires existing config)"
 	cmdRun.Bool(&devMode, "d", "dev", "Enable development mode")
@@ -118,7 +128,13 @@ func main() {
 	cmdHelp := flaggy.NewSubcommand("help")
 	cmdHelp.Description = "Show help examples"
 
-	// Ephemeral
+	cmdHome := flaggy.NewSubcommand("home")
+	cmdHome.Description = "Print or navigate to the Agbero configuration directory"
+	var homeTarget string
+	var homeAction string
+	cmdHome.AddPositionalValue(&homeTarget, "target", 1, false, "Directory to locate (hosts, certs, data, logs, work, config, or @ to open shell)")
+	cmdHome.AddPositionalValue(&homeAction, "action", 2, false, "Use '@' to open a shell in the target directory")
+
 	cmdServe := flaggy.NewSubcommand("serve")
 	cmdServe.Description = "Serve a static directory instantly"
 	cmdServe.AddPositionalValue(&servePath, "path", 1, false, "Path to serve (default: current)")
@@ -134,7 +150,6 @@ func main() {
 	cmdProxy.String(&proxyBind, "b", "bind", "Bind address (default: 0.0.0.0)")
 	cmdProxy.Bool(&proxyHTTPS, "s", "https", "Enable HTTPS (auto-generates certs)")
 
-	// Route
 	cmdRoute := flaggy.NewSubcommand("route")
 	cmdRoute.Description = "Manage persistent routes (Interactive)"
 	cmdRouteAdd := flaggy.NewSubcommand("add")
@@ -144,7 +159,6 @@ func main() {
 	cmdRoute.AttachSubcommand(cmdRouteAdd, 1)
 	cmdRoute.AttachSubcommand(cmdRouteRemove, 1)
 
-	// Utils
 	cmdHash := flaggy.NewSubcommand("hash")
 	cmdHash.Description = "Generate bcrypt hash for passwords"
 	cmdHash.String(&hashPassword, "p", "password", "Password to hash")
@@ -175,7 +189,6 @@ func main() {
 	cmdKey.AttachSubcommand(cmdKeyGen, 1)
 	cmdKey.AttachSubcommand(cmdKeyInit, 1)
 
-	// Cluster
 	cmdCluster := flaggy.NewSubcommand("cluster")
 	cmdCluster.Description = "Manage cluster settings"
 
@@ -200,6 +213,7 @@ func main() {
 	flaggy.AttachSubcommand(cmdReload, 1)
 	flaggy.AttachSubcommand(cmdValidate, 1)
 	flaggy.AttachSubcommand(cmdHosts, 1)
+	flaggy.AttachSubcommand(cmdHome, 1)
 	flaggy.AttachSubcommand(cmdHash, 1)
 	flaggy.AttachSubcommand(cmdCert, 1)
 	flaggy.AttachSubcommand(cmdKey, 1)
@@ -210,8 +224,13 @@ func main() {
 	flaggy.AttachSubcommand(cmdRoute, 1)
 
 	flaggy.Parse()
-
 	hel := newHelper(logger)
+
+	if cmdHome.Used {
+		hel.home(homeTarget, homeAction)
+		return
+	}
+
 	hel.welcome()
 
 	if cmdServe.Used {
@@ -447,6 +466,61 @@ func main() {
 			logger.Fatal(hel.handleServiceError(err, "stop", resolvedPath))
 		}
 		logger.Info("Service stopped.")
+		return
+	}
+
+	// After cmdServiceStop.Used check, add:
+
+	if cmdServiceRestart.Used {
+		logger.Info("Restarting system service...")
+
+		// Stop the service
+		if err := s.Stop(); err != nil {
+			logger.Fatal(hel.handleServiceError(err, "stop", resolvedPath))
+		}
+
+		// Small delay to ensure clean shutdown
+		time.Sleep(2 * time.Second)
+
+		// Start the service
+		if err := s.Start(); err != nil {
+			logger.Fatal(hel.handleServiceError(err, "start", resolvedPath))
+		}
+
+		logger.Info("Service restarted successfully.")
+		return
+	}
+
+	if cmdServiceStatus.Used {
+		logger.Info("Checking service status...")
+
+		status, err := s.Status()
+		if err != nil {
+			logger.Fatal(hel.handleServiceError(err, "status", resolvedPath))
+		}
+
+		statusStr := "unknown"
+		switch status {
+		case service.StatusRunning:
+			statusStr = "running"
+		case service.StatusStopped:
+			statusStr = "stopped"
+		case service.StatusUnknown:
+			statusStr = "unknown (not installed?)"
+		}
+
+		logger.Infof("Service status: %s", statusStr)
+
+		// Optional: Show more details like PID, uptime?
+		if status == service.StatusRunning {
+			// Try to read PID file for more info
+			if global, err := hel.loadConfig(resolvedPath); err == nil && global.Storage.DataDir != "" {
+				pidFile := filepath.Join(global.Storage.DataDir, "agbero.pid")
+				if data, err := os.ReadFile(pidFile); err == nil {
+					logger.Infof("Process ID: %s", strings.TrimSpace(string(data)))
+				}
+			}
+		}
 		return
 	}
 

@@ -43,7 +43,7 @@ func (w *Web) Validate() error {
 }
 
 type GitAuth struct {
-	Type             string `hcl:"type,optional" json:"type"` // "basic", "ssh-key", "ssh-agent"
+	Type             string `hcl:"type,optional" json:"type"`
 	Username         string `hcl:"username,optional" json:"username"`
 	Password         Value  `hcl:"password,optional" json:"password"`
 	SSHKey           Value  `hcl:"ssh_key,optional" json:"ssh_key"`
@@ -64,11 +64,12 @@ func (a *GitAuth) Validate() error {
 
 type Git struct {
 	Enabled  Enabled       `hcl:"enabled,optional" json:"enabled"`
-	ID       string        `hcl:"id" json:"id"` // Explicit identifier for storage and webhooks
+	ID       string        `hcl:"id" json:"id"`
 	URL      string        `hcl:"url" json:"url"`
 	Branch   string        `hcl:"branch,optional" json:"branch"`
-	Secret   Value         `hcl:"secret,optional" json:"secret"` // Webhook HMAC secret
+	Secret   Value         `hcl:"secret,optional" json:"secret"`
 	Interval time.Duration `hcl:"interval,optional" json:"interval"`
+	SubDir   string        `hcl:"sub_dir,optional" json:"sub_dir"`
 	Auth     GitAuth       `hcl:"auth,block" json:"auth"`
 }
 

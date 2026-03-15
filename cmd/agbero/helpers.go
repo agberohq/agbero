@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -38,6 +39,138 @@ func (h *helper) welcome() {
 	fmt.Printf("\033[1;34m%s\033[0m - %s\n", woos.Name, woos.Description)
 	fmt.Printf("\033[90mVersion: %s\033[0m\n", woos.Version)
 	fmt.Printf("\033[90mDate: %s\033[0m\n\n", woos.Date)
+}
+
+func (h *helper) home(homeTarget, homeAction string) {
+	ctx := installer.NewContext(logger, "")
+	target := homeTarget
+	openShell := false
+	showContent := false
+	editorCmd := ""
+
+	// Parse action: could be "@", "@vim", "@cat", etc.
+	if strings.HasPrefix(homeAction, "@") {
+		if homeAction == "@" {
+			openShell = true
+		} else {
+			showContent = true
+			editorCmd = strings.TrimPrefix(homeAction, "@")
+		}
+	} else if homeTarget == "@" {
+		target = "base"
+		openShell = true
+	}
+
+	var dir string
+	var filePath string
+
+	switch strings.ToLower(target) {
+	case "hosts":
+		dir = ctx.Paths.HostsDir.Path()
+	case "certs":
+		dir = ctx.Paths.CertsDir.Path()
+	case "data":
+		dir = ctx.Paths.DataDir.Path()
+	case "logs":
+		dir = ctx.Paths.LogsDir.Path()
+	case "work":
+		dir = ctx.Paths.WorkDir.Path()
+	case "config":
+		filePath = ctx.Paths.ConfigFile
+		dir = filepath.Dir(ctx.Paths.ConfigFile)
+	default:
+		dir = ctx.Paths.BaseDir.Path()
+	}
+
+	// Handle showing/editing files
+	if showContent && filePath != "" {
+		h.openWithEditor(filePath, editorCmd)
+		return
+	}
+
+	// Handle shell navigation
+	if openShell {
+		if err := os.Chdir(dir); err != nil {
+			fmt.Printf("Failed to enter directory: %v\n", err)
+			return
+		}
+
+		fmt.Printf("\033[1;34mAgbero Workspace\033[0m: %s\n\n", dir)
+
+		lsCmd := "ls"
+		if runtime.GOOS == woos.Windows {
+			lsCmd = "dir"
+		}
+		ls := exec.Command(lsCmd)
+		ls.Stdout = os.Stdout
+		ls.Stderr = os.Stderr
+		_ = ls.Run()
+
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			if runtime.GOOS == woos.Windows {
+				shell = "cmd.exe"
+			} else {
+				shell = "/bin/sh"
+			}
+		}
+
+		cmd := exec.Command(shell)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		_ = cmd.Run()
+	} else {
+		if filePath != "" {
+			fmt.Println(filePath)
+		} else {
+			fmt.Println(dir)
+		}
+	}
+}
+
+func (h *helper) openWithEditor(filePath string, editor string) {
+	// Map of editors to commands
+	editors := map[string][]string{
+		"vim":   {"vim", filePath},
+		"vi":    {"vi", filePath},
+		"nano":  {"nano", filePath},
+		"micro": {"micro", filePath},
+		"code":  {"code", filePath},
+		"cat":   {"cat", filePath},
+		"less":  {"less", filePath},
+		"more":  {"more", filePath},
+	}
+
+	// If specific editor requested
+	if editor != "" {
+		if cmd, ok := editors[editor]; ok {
+			h.runEditor(cmd)
+			return
+		}
+		// Try as direct command (for custom editors)
+		h.runEditor([]string{editor, filePath})
+		return
+	}
+
+	// No editor specified - show content with cat
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		fmt.Printf("Failed to read file: %v\n", err)
+		return
+	}
+	fmt.Printf("\033[1;34m%s\033[0m\n\n", filePath)
+	fmt.Println(string(content))
+}
+
+func (h *helper) runEditor(cmdArgs []string) {
+	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Failed to open editor: %v\n", err)
+	}
 }
 
 func (h *helper) resolveConfigPath(flagPath string) (string, bool) {
@@ -188,6 +321,20 @@ func (h *helper) listHosts(configFile string) error {
 func (h *helper) handleServiceError(err error, cmd string, configPath string) error {
 	ctx := installer.NewContext(h.logger, "")
 	svc := installer.NewService(ctx)
+
+	errMsg := err.Error()
+
+	switch cmd {
+	case "status":
+		if strings.Contains(errMsg, "not installed") {
+			return fmt.Errorf("service not installed. Run 'sudo agbero service install' first")
+		}
+	case "restart":
+		if strings.Contains(errMsg, "not running") {
+			return fmt.Errorf("service not running. Try 'sudo agbero service start'")
+		}
+	}
+
 	return svc.MapError(err, cmd)
 }
 
@@ -222,9 +369,17 @@ func (h *helper) showHelpExamples(configPath string) {
 	if runtime.GOOS == woos.Windows {
 		fmt.Printf("  %s install\n", exeName)
 		fmt.Printf("  %s start\n", exeName)
+		fmt.Printf("  %s stop\n", exeName)
+		fmt.Printf("  %s restart\n", exeName)
+		fmt.Printf("  %s status\n", exeName)
+		fmt.Printf("  %s uninstall\n", exeName)
 	} else {
 		fmt.Printf("  sudo %s install\n", exeName)
 		fmt.Printf("  sudo %s start\n", exeName)
+		fmt.Printf("  sudo %s stop\n", exeName)
+		fmt.Printf("  sudo %s restart\n", exeName)
+		fmt.Printf("  sudo %s status\n", exeName)
+		fmt.Printf("  sudo %s uninstall\n", exeName)
 	}
 }
 

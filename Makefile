@@ -11,7 +11,7 @@ PLAY_ARCH ?= amd64
 
 ## UO
 REPO_URL = https://github.com/agberohq/agbero-ui
-TARGET_DIR = internal/admin/ui/web
+TARGET_DIR = internal/operation/admin
 TEMP_DIR = tmp
 
 

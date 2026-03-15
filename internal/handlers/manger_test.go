@@ -17,8 +17,72 @@ import (
 	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/agberohq/agbero/internal/pkg/cook"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
+
+var (
+	testLogger    = ll.New("test").Disable()
+	testIPManager = zulu.NewIPManager(nil)
+	testResource  = resource.New()
+)
+
+// testCookManager creates a cook manager for testing with proper config
+func testCookManager(t *testing.T) *cook.Manager {
+	t.Helper()
+
+	pool := jack.NewPool(2)
+	cfg := cook.ManagerConfig{
+		WorkDir: t.TempDir(),
+		Pool:    pool,
+		Logger:  testLogger,
+	}
+
+	m, err := cook.NewManager(cfg)
+	if err != nil {
+		t.Fatalf("failed to create cook manager: %v", err)
+	}
+	return m
+}
+
+// testTLSManager creates a TLS manager for testing
+func testTLSManager(t *testing.T) *tlss.Manager {
+	t.Helper()
+	return tlss.NewManager(testLogger, nil, &alaye.Global{})
+}
+
+// testHostManagerWithHosts creates a host manager with pre-loaded hosts
+func testHostManagerWithHosts(t *testing.T, hosts map[string]*alaye.Host) *discovery.Host {
+	t.Helper()
+
+	hm := discovery.NewHost(
+		woos.NewFolder(t.TempDir()),
+		discovery.WithLogger(testLogger),
+	)
+
+	// Use LoadStatic to load multiple hosts at once (matches old code)
+	hm.LoadStatic(hosts)
+
+	return hm
+}
+
+// testManagerConfig creates a minimal ManagerConfig for testing
+func testManagerConfig(t *testing.T) ManagerConfig {
+	t.Helper()
+
+	return ManagerConfig{
+		Global:      &alaye.Global{},
+		HostManager: discovery.NewHost(woos.NewFolder(t.TempDir()), discovery.WithLogger(testLogger)),
+		Resource:    testResource,
+		IPMgr:       testIPManager,
+		CookManager: testCookManager(t),
+		TLSManager:  testTLSManager(t),
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Tests
+// -----------------------------------------------------------------------------
 
 func TestNewManager_NilConfig(t *testing.T) {
 	_, err := NewManager(ManagerConfig{})
@@ -28,17 +92,7 @@ func TestNewManager_NilConfig(t *testing.T) {
 }
 
 func TestNewManager_MinimalConfig(t *testing.T) {
-	cfg := ManagerConfig{
-		Global:      &alaye.Global{},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
@@ -50,37 +104,19 @@ func TestNewManager_MinimalConfig(t *testing.T) {
 }
 
 func TestManager_Close(t *testing.T) {
-	cfg := ManagerConfig{
-		Global: &alaye.Global{
-			Security: alaye.Security{
-				Enabled: alaye.Active,
-				Firewall: alaye.Firewall{
-					Status: alaye.Active,
-				},
-			},
-			RateLimits: alaye.GlobalRate{
-				Enabled: alaye.Active,
-				Rules: []alaye.RateRule{
-					{
-						Enabled:  alaye.Active,
-						Requests: 100,
-						Window:   time.Minute,
-					},
-				},
-			},
-			Storage: alaye.Storage{
-				DataDir: t.TempDir(),
-			},
+	cfg := testManagerConfig(t)
+	cfg.Global.Security.Enabled = alaye.Active
+	cfg.Global.Security.Firewall.Status = alaye.Active
+	cfg.Global.Storage.DataDir = t.TempDir()
+	cfg.Global.RateLimits.Enabled = alaye.Active
+	cfg.Global.RateLimits.Rules = []alaye.RateRule{
+		{
+			Enabled:  alaye.Active,
+			Requests: 100,
+			Window:   time.Minute,
 		},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
 	}
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
@@ -89,32 +125,17 @@ func TestManager_Close(t *testing.T) {
 }
 
 func TestManager_Firewall(t *testing.T) {
-	cfg := ManagerConfig{
-		Global: &alaye.Global{
-			Security: alaye.Security{
-				Enabled: alaye.Active,
-				Firewall: alaye.Firewall{
-					Status: alaye.Active,
-				},
-			},
-			Storage: alaye.Storage{
-				DataDir: t.TempDir(),
-			},
-		},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
+	cfg.Global.Security.Enabled = alaye.Active
+	cfg.Global.Security.Firewall.Status = alaye.Active
+	cfg.Global.Storage.DataDir = t.TempDir()
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	fw := m.Firewall()
 	if fw == nil {
 		t.Error("Expected non-nil firewall")
@@ -122,24 +143,13 @@ func TestManager_Firewall(t *testing.T) {
 }
 
 func TestManager_BuildListeners_NoGlobalBind(t *testing.T) {
-	cfg := ManagerConfig{
-		Global: &alaye.Global{
-			Bind: alaye.Bind{},
-		},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	listeners := m.BuildListeners()
 	if len(listeners) != 0 {
 		t.Errorf("Expected 0 listeners, got %d", len(listeners))
@@ -147,30 +157,20 @@ func TestManager_BuildListeners_NoGlobalBind(t *testing.T) {
 }
 
 func TestManager_BuildListeners_HTTP(t *testing.T) {
-	cfg := ManagerConfig{
-		Global: &alaye.Global{
-			Bind: alaye.Bind{
-				HTTP: []string{":8080"},
-			},
-		},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
+	cfg.Global.Bind.HTTP = []string{":8080"}
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	listeners := m.BuildListeners()
 	if len(listeners) == 0 {
 		t.Error("Expected at least 1 listener")
 	}
+
 	var httpFound bool
 	for _, l := range listeners {
 		if l.Kind() == "http" {
@@ -184,26 +184,15 @@ func TestManager_BuildListeners_HTTP(t *testing.T) {
 }
 
 func TestManager_BuildListeners_HTTPS(t *testing.T) {
-	cfg := ManagerConfig{
-		Global: &alaye.Global{
-			Bind: alaye.Bind{
-				HTTPS: []string{":8443"},
-			},
-		},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
+	cfg.Global.Bind.HTTPS = []string{":8443"}
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	listeners := m.BuildListeners()
 	var httpsFound, h3Found bool
 	for _, l := range listeners {
@@ -230,27 +219,23 @@ func TestManager_BuildListeners_HostBind(t *testing.T) {
 			Mode: alaye.ModeLocalNone,
 		},
 	}
+
+	// Create host manager with the host pre-loaded
 	cfg := ManagerConfig{
-		Global: &alaye.Global{Bind: alaye.Bind{}},
-		HostManager: func() *discovery.Host {
-			h := discovery.NewHost(woos.NewFolder(t.TempDir()), discovery.WithLogger(ll.New("test").Disable()))
-			// Use LoadStatic to avoid HCL marshaling of custom types like alaye.TlsMode
-			h.LoadStatic(map[string]*alaye.Host{"example.com": host})
-			return h
-		}(),
-		Resource: resource.New(),
-		IPMgr:    zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
+		Global:      &alaye.Global{Bind: alaye.Bind{}},
+		HostManager: testHostManagerWithHosts(t, map[string]*alaye.Host{"example.com": host}),
+		Resource:    testResource,
+		IPMgr:       testIPManager,
+		CookManager: testCookManager(t),
+		TLSManager:  testTLSManager(t),
 	}
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	listeners := m.BuildListeners()
 	if len(listeners) == 0 {
 		t.Error("Expected at least 1 listener for host bind")
@@ -266,32 +251,28 @@ func TestManager_BuildListeners_TCPProxy(t *testing.T) {
 				Name:    "test-tcp",
 				Listen:  ":9999",
 				Backends: []alaye.Server{
-					{Address: "tcp://127.0.0.1:6379"},
+					{Address: alaye.Address("tcp://127.0.0.1:6379")},
 				},
 			},
 		},
 	}
+
+	// Create host manager with the host pre-loaded
 	cfg := ManagerConfig{
-		Global: &alaye.Global{Bind: alaye.Bind{}},
-		HostManager: func() *discovery.Host {
-			h := discovery.NewHost(woos.NewFolder(t.TempDir()), discovery.WithLogger(ll.New("test").Disable()))
-			// Use LoadStatic to avoid HCL marshaling of custom types
-			h.LoadStatic(map[string]*alaye.Host{"example.com": host})
-			return h
-		}(),
-		Resource: resource.New(),
-		IPMgr:    zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
+		Global:      &alaye.Global{Bind: alaye.Bind{}},
+		HostManager: testHostManagerWithHosts(t, map[string]*alaye.Host{"example.com": host}),
+		Resource:    testResource,
+		IPMgr:       testIPManager,
+		CookManager: testCookManager(t),
+		TLSManager:  testTLSManager(t),
 	}
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	listeners := m.BuildListeners()
 	var tcpFound bool
 	for _, l := range listeners {
@@ -306,163 +287,113 @@ func TestManager_BuildListeners_TCPProxy(t *testing.T) {
 }
 
 func TestManager_chainBuild(t *testing.T) {
-	cfg := ManagerConfig{
-		Global: &alaye.Global{
-			Logging: alaye.Logging{
-				Prometheus: alaye.Prometheus{
-					Enabled: alaye.Active,
-				},
-			},
-		},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
+	cfg.Global.Logging.Prometheus.Enabled = alaye.Active
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	baseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+
 	handler := m.chainBuild(baseHandler, true, "8080")
 	if handler == nil {
 		t.Fatal("chainBuild returned nil")
 	}
+
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
+
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected 200, got %d", w.Code)
 	}
 }
 
 func TestManager_chainBuildFirewall_Nil(t *testing.T) {
-	cfg := ManagerConfig{
-		Global:      &alaye.Global{},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	baseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+
 	handler := m.chainBuildFirewall(baseHandler)
 	if handler == nil {
 		t.Fatal("chainBuildFirewall returned nil")
 	}
+
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
+
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected 200, got %d", w.Code)
 	}
 }
 
 func TestManager_handleRequest_Favicon(t *testing.T) {
-	cfg := ManagerConfig{
-		Global:      &alaye.Global{},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	req := httptest.NewRequest("GET", "/favicon.ico", nil)
 	w := httptest.NewRecorder()
 	m.handleRequest(w, req)
+
 	if w.Code != http.StatusOK && w.Code != http.StatusNotFound {
 		t.Errorf("Expected 200 or 404 for favicon, got %d", w.Code)
 	}
 }
 
 func TestManager_handleRequest_ACMEChallenge(t *testing.T) {
-	cfg := ManagerConfig{
-		Global:      &alaye.Global{},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	req := httptest.NewRequest("GET", "/.well-known/acme-challenge/token", nil)
 	w := httptest.NewRecorder()
 	m.handleRequest(w, req)
+
 	if w.Code != http.StatusNotFound {
 		t.Errorf("Expected 404 for missing ACME challenge, got %d", w.Code)
 	}
 }
 
 func TestManager_handleRequest_Webhook(t *testing.T) {
-	cfg := ManagerConfig{
-		Global:      &alaye.Global{},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	req := httptest.NewRequest("POST", "/.well-known/agbero/webhook/route-key", nil)
 	m.handleRequest(httptest.NewRecorder(), req)
 }
 
 func TestManager_handleRequest_HostNotFound(t *testing.T) {
-	cfg := ManagerConfig{
-		Global:      &alaye.Global{},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Host = "nonexistent.com"
 	m.handleRequest(httptest.NewRecorder(), req)
@@ -475,32 +406,30 @@ func TestManager_handleRequest_MaxBodySize(t *testing.T) {
 			MaxBodySize: 100,
 		},
 	}
+
 	cfg := ManagerConfig{
-		Global: &alaye.Global{},
-		HostManager: func() *discovery.Host {
-			h := discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable()))
-			h.Set("example.com", host)
-			return h
-		}(),
-		Resource: resource.New(),
-		IPMgr:    zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
+		Global:      &alaye.Global{},
+		HostManager: testHostManagerWithHosts(t, map[string]*alaye.Host{"example.com": host}),
+		Resource:    testResource,
+		IPMgr:       testIPManager,
+		CookManager: testCookManager(t),
+		TLSManager:  testTLSManager(t),
 	}
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	body := bytes.Repeat([]byte("x"), 200)
 	req := httptest.NewRequest("POST", "/", io.NopCloser(bytes.NewReader(body)))
 	req.ContentLength = int64(len(body))
 	req.Host = "example.com"
+
 	w := httptest.NewRecorder()
 	m.handleRequest(w, req)
+
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("Expected 413, got %d", w.Code)
 	}
@@ -510,30 +439,28 @@ func TestManager_handleRequest_RouterNotFound(t *testing.T) {
 	host := &alaye.Host{
 		Domains: []string{"example.com"},
 	}
+
 	cfg := ManagerConfig{
-		Global: &alaye.Global{},
-		HostManager: func() *discovery.Host {
-			h := discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable()))
-			h.Set("example.com", host)
-			return h
-		}(),
-		Resource: resource.New(),
-		IPMgr:    zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
+		Global:      &alaye.Global{},
+		HostManager: testHostManagerWithHosts(t, map[string]*alaye.Host{"example.com": host}),
+		Resource:    testResource,
+		IPMgr:       testIPManager,
+		CookManager: testCookManager(t),
+		TLSManager:  testTLSManager(t),
 	}
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Host = "example.com"
+
 	w := httptest.NewRecorder()
 	m.handleRequest(w, req)
+
 	if w.Code != http.StatusNotFound {
 		t.Errorf("Expected 404 for missing router, got %d", w.Code)
 	}
@@ -543,17 +470,20 @@ func TestManager_handleRoute_WASM_InvalidModule(t *testing.T) {
 	host := &alaye.Host{
 		Domains: []string{"example.com"},
 	}
+
+	root := t.TempDir()
 	route := &alaye.Route{
 		Path: "/",
 		Web: alaye.Web{
 			Enabled: alaye.Active,
-			Root:    alaye.WebRoot(t.TempDir()),
+			Root:    alaye.WebRoot(root),
 		},
 		Wasm: alaye.Wasm{
 			Enabled: alaye.Active,
 			Module:  "/nonexistent.wasm",
 		},
 	}
+
 	cfg := ManagerConfig{
 		Global: &alaye.Global{
 			Timeouts: alaye.Timeout{
@@ -577,28 +507,25 @@ func TestManager_handleRoute_WASM_InvalidModule(t *testing.T) {
 			},
 			Bind: alaye.Bind{},
 		},
-		HostManager: func() *discovery.Host {
-			h := discovery.NewHost(woos.NewFolder(t.TempDir()), discovery.WithLogger(ll.New("test").Disable()))
-			h.Set("example.com", host)
-			return h
-		}(),
-		Resource: resource.New(),
-		IPMgr:    zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
+		HostManager: testHostManagerWithHosts(t, map[string]*alaye.Host{"example.com": host}),
+		Resource:    testResource,
+		IPMgr:       testIPManager,
+		CookManager: testCookManager(t),
+		TLSManager:  testTLSManager(t),
 	}
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Host = "example.com"
+
 	m.handleRoute(w, req, route, host)
+
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("Expected 500 for invalid WASM, got %d", w.Code)
 	}
@@ -608,10 +535,12 @@ func TestManager_handleRoute_RateLimit_IgnoreGlobal(t *testing.T) {
 	host := &alaye.Host{
 		Domains: []string{"example.com"},
 	}
+
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("OK"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
+
 	route := &alaye.Route{
 		Path: "/",
 		Web: alaye.Web{
@@ -623,6 +552,7 @@ func TestManager_handleRoute_RateLimit_IgnoreGlobal(t *testing.T) {
 			IgnoreGlobal: true,
 		},
 	}
+
 	cfg := ManagerConfig{
 		Global: &alaye.Global{
 			RateLimits: alaye.GlobalRate{
@@ -636,58 +566,46 @@ func TestManager_handleRoute_RateLimit_IgnoreGlobal(t *testing.T) {
 				},
 			},
 		},
-		HostManager: func() *discovery.Host {
-			h := discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable()))
-			h.Set("example.com", host)
-			return h
-		}(),
-		Resource: resource.New(),
-		IPMgr:    zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
+		HostManager: testHostManagerWithHosts(t, map[string]*alaye.Host{"example.com": host}),
+		Resource:    testResource,
+		IPMgr:       testIPManager,
+		CookManager: testCookManager(t),
+		TLSManager:  testTLSManager(t),
 	}
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Host = "example.com"
+
 	m.handleRoute(w, req, route, host)
+
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected 200 when ignoring global rate limit, got %d", w.Code)
 	}
 }
 
 func TestManager_redirectToHTTPS(t *testing.T) {
-	cfg := ManagerConfig{
-		Global: &alaye.Global{
-			Bind: alaye.Bind{
-				HTTPS: []string{":443"},
-			},
-		},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
+	cfg.Global.Bind.HTTPS = []string{":443"}
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	req := httptest.NewRequest("GET", "/path?query=1", nil)
 	req.Host = "example.com:80"
+
 	w := httptest.NewRecorder()
 	m.redirectToHTTPS(w, req)
+
 	if w.Code != http.StatusMovedPermanently {
 		t.Errorf("Expected 301 redirect, got %d", w.Code)
 	}
@@ -697,82 +615,53 @@ func TestManager_redirectToHTTPS(t *testing.T) {
 }
 
 func TestManager_logRequest_SkipPath(t *testing.T) {
-	cfg := ManagerConfig{
-		Global: &alaye.Global{
-			Logging: alaye.Logging{
-				Enabled: alaye.Active,
-				Skip:    []string{"/health"},
-			},
-		},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
+	cfg.Global.Logging.Enabled = alaye.Active
+	cfg.Global.Logging.Skip = []string{"/health"}
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	req := httptest.NewRequest("GET", "/health", nil)
 	m.logRequest("example.com", req, time.Now(), 200, 100)
 }
 
 func TestManager_logRequest_WithUserAgent(t *testing.T) {
-	cfg := ManagerConfig{
-		Global: &alaye.Global{
-			Logging: alaye.Logging{
-				Enabled: alaye.Active,
-			},
-		},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
+	cfg.Global.Logging.Enabled = alaye.Active
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("User-Agent", "Googlebot/2.1")
 	m.logRequest("example.com", req, time.Now(), 200, 100)
 }
 
 func TestManager_wasmManager_Cache(t *testing.T) {
-	cfg := ManagerConfig{
-		Global:      &alaye.Global{},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	wasmCfg := &alaye.Wasm{
 		Enabled: alaye.Active,
 		Module:  "/nonexistent.wasm",
 	}
+
 	mgr1, err := m.wasmManager(wasmCfg, "key1")
 	if err == nil {
 		t.Error("Expected error for nonexistent WASM module")
 	}
+
 	mgr2, err := m.wasmManager(wasmCfg, "key1")
 	if mgr1 != mgr2 {
 		t.Error("Expected cached manager to be returned")
@@ -780,22 +669,13 @@ func TestManager_wasmManager_Cache(t *testing.T) {
 }
 
 func TestManager_wasmCleanup(t *testing.T) {
-	cfg := ManagerConfig{
-		Global:      &alaye.Global{},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	wasmCfg := &alaye.Wasm{
 		Enabled: alaye.Active,
 		Module:  "/nonexistent.wasm",
@@ -824,6 +704,7 @@ func TestManager_groupTCPRoutesByListen(t *testing.T) {
 			},
 		},
 	}
+
 	groups := groupTCPRoutesByListen(hosts)
 	if len(groups) != 2 {
 		t.Errorf("Expected 2 groups, got %d", len(groups))
@@ -868,52 +749,40 @@ func TestManager_buildGlobalRateLimiter_ACMEExcluded(t *testing.T) {
 			},
 		},
 	}
-	ipMgr := zulu.NewIPManager(nil)
-	result := buildGlobalRateLimiter(global, ipMgr, nil)
+
+	result := buildGlobalRateLimiter(global, testIPManager, nil)
 	if result == nil {
 		t.Error("Expected non-nil limiter")
 	}
-	// Verify ACME exclusion through Handler behavior, not internal policy
+
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+
 	wrapped := result.Handler(handler)
 	req := httptest.NewRequest("GET", "/.well-known/acme-challenge/token", nil)
 	w := httptest.NewRecorder()
 	wrapped.ServeHTTP(w, req)
-	// ACME should bypass rate limit and reach handler (200 OK)
+
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected ACME to bypass rate limit, got %d", w.Code)
 	}
 }
 
 func TestManager_createHTTPListener_TLSConfig(t *testing.T) {
-	cfg := ManagerConfig{
-		Global: &alaye.Global{
-			Timeouts: alaye.Timeout{
-				Read:       10 * time.Second,
-				Write:      30 * time.Second,
-				Idle:       120 * time.Second,
-				ReadHeader: 5 * time.Second,
-			},
-			General: alaye.General{
-				MaxHeaderBytes: 1 << 20,
-			},
-		},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
+	cfg.Global.Timeouts.Read = 10 * time.Second
+	cfg.Global.Timeouts.Write = 30 * time.Second
+	cfg.Global.Timeouts.Idle = 120 * time.Second
+	cfg.Global.Timeouts.ReadHeader = 5 * time.Second
+	cfg.Global.General.MaxHeaderBytes = 1 << 20
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	listener := m.createHTTPListener(":8443", "8443", true)
 	if listener == nil {
 		t.Fatal("createHTTPListener returned nil")
@@ -927,22 +796,15 @@ func TestManager_createHTTPListener_TLSConfig(t *testing.T) {
 }
 
 func TestManager_createH3Listener_NilTLS(t *testing.T) {
-	cfg := ManagerConfig{
-		Global:      &alaye.Global{},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: nil,
-	}
+	cfg := testManagerConfig(t)
+	cfg.TLSManager = nil
+
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	listener := m.createH3Listener(":443", "443")
 	if listener != nil {
 		t.Error("Expected nil H3 listener for nil TLS config")
@@ -950,22 +812,13 @@ func TestManager_createH3Listener_NilTLS(t *testing.T) {
 }
 
 func TestManager_createH3Listener_Success(t *testing.T) {
-	cfg := ManagerConfig{
-		Global:      &alaye.Global{},
-		HostManager: discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(ll.New("test").Disable())),
-		Resource:    resource.New(),
-		IPMgr:       zulu.NewIPManager(nil),
-		CookManager: func() *cook.Manager {
-			m, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
-			return m
-		}(),
-		TLSManager: tlss.NewManager(ll.New("test").Disable(), nil, &alaye.Global{}),
-	}
+	cfg := testManagerConfig(t)
 	m, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer m.Close()
+
 	listener := m.createH3Listener(":443", "443")
 	if listener == nil {
 		t.Fatal("createH3Listener returned nil")

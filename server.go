@@ -92,6 +92,8 @@ func (s *Server) OnClusterChallenge(token, keyAuth string, deleted bool) {
 	}
 }
 
+// Start initializes systems, hooks watchers, and activates configured listeners.
+// Spawns necessary daemon modules, cluster meshes, and HTTP/TCP frontends.
 func (s *Server) Start(configPath string) error {
 	s.mu.Lock()
 	s.configPath = configPath
@@ -162,13 +164,23 @@ func (s *Server) Start(configPath string) error {
 	hosts, _ := s.hostManager.LoadAll()
 
 	s.gitPool = jack.NewPool(4)
-	cookMgr, err := cook.NewManager(s.global.Storage.WorkDir, s.gitPool, s.logger)
+	cookCfg := cook.ManagerConfig{
+		WorkDir: s.global.Storage.WorkDir,
+		Pool:    s.gitPool,
+		Logger:  s.logger,
+	}
+
+	cookMgr, err := cook.NewManager(cookCfg)
 	if err == nil {
 		s.cookManager = cookMgr
 		for _, hcfg := range hosts {
 			for _, r := range hcfg.Routes {
 				if r.Web.Git.Enabled.Active() {
-					_ = s.cookManager.Register(r.Web.Git.ID, r.Web.Git)
+					customRoot := ""
+					if r.Web.Root.IsSet() {
+						customRoot = r.Web.Root.String()
+					}
+					_ = s.cookManager.Register(r.Web.Git.ID, r.Web.Git, customRoot)
 				}
 			}
 		}

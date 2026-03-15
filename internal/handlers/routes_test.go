@@ -46,7 +46,10 @@ func NewTestConfig(t *testing.T) Config {
 		Domains: []string{"example.com", "test.local"},
 	}
 	res := resource.New()
-	cm, _ := cook.NewManager(t.TempDir(), nil, ll.New("test").Disable())
+	cm, _ := cook.NewManager(cook.ManagerConfig{
+		WorkDir: t.TempDir(),
+		Logger:  ll.New("test").Disable(),
+	})
 	return Config{
 		Global:   global,
 		Host:     host,
