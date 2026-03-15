@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/handlers/uptime"
 	"github.com/agberohq/agbero/internal/middleware/auth"
+	"github.com/agberohq/agbero/internal/middleware/ipallow"
 	"github.com/agberohq/agbero/internal/operation"
 	"github.com/agberohq/agbero/internal/operation/api"
 	"github.com/golang-jwt/jwt/v5"
@@ -114,6 +116,12 @@ func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.A
 
 func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Handler {
 	return func(h http.Handler) http.Handler {
+
+		if len(cfg.AllowedIPs) > 0 {
+			ipMgr := zulu.NewIPManager(nil) // Admin doesn't strictly need trusted proxies
+			h = ipallow.New(cfg.AllowedIPs, s.logger, ipMgr)(h)
+		}
+
 		if cfg.JWTAuth.Enabled.Active() {
 			return auth.JWT(&cfg.JWTAuth)(h)
 		}

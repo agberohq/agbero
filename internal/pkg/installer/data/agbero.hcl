@@ -230,3 +230,21 @@ letsencrypt {
   # Request short-lived certificates (for testing/ephemeral envs)
   short_lived = false
 }
+
+
+# -------------------------------------------------------------
+# RATE LIMITS
+# -------------------------------------------------------------
+rate_limits {
+  enabled = on
+
+  # Protect the admin login endpoint from brute force
+  rule "protect_admin_login" {
+    prefixes = ["/login"]
+    methods  = ["POST"]
+    requests = 5
+    window   = "1m"
+    burst    = 5
+    key      = "ip"
+  }
+}
