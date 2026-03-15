@@ -97,7 +97,7 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git, customRoot string) er
 		delete(m.entries, routeKey)
 	}
 
-	targetWorkDir := m.workDir
+	targetWorkDir := filepath.Join(m.workDir, routeKey)
 	if customRoot != "" {
 		targetWorkDir = customRoot
 	}

@@ -1,7 +1,6 @@
-package main
+package helper
 
 import (
-	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,8 +8,8 @@ import (
 	"text/template"
 
 	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/charmbracelet/huh"
-	"github.com/olekukonko/ll"
 )
 
 const (
@@ -19,53 +18,47 @@ const (
 	RouteTypeTCP    = "TCP Proxy"
 )
 
-//go:embed template/proxy.hcl
-var proxyTpl string
-
-//go:embed template/static.hcl
-var staticTpl string
-
-//go:embed template/tcp.hcl
-var tcpTpl string
-
 type routeData struct {
 	Domain string
 	Target string
 	Port   string
 }
 
-type routeManager struct {
-	logger *ll.Logger
+type HostHelper struct {
+	p         *Helper
+	ProxyTpl  string
+	StaticTpl string
+	TCPTpl    string
 }
 
-func newRouteManager(logger *ll.Logger) *routeManager {
-	return &routeManager{logger: logger}
+func (h *HostHelper) List(configPath string) error {
+	global, err := loadGlobal(configPath)
+	if err != nil {
+		return err
+	}
+	hostsFolder := woos.NewFolder(global.Storage.HostsDir)
+	hm := discovery.NewHost(hostsFolder, discovery.WithLogger(h.p.Logger))
+	hosts, err := hm.LoadAll()
+	if err != nil {
+		return err
+	}
+	if len(hosts) == 0 {
+		h.p.Logger.Warn("no hosts found")
+		return nil
+	}
+	for name, c := range hosts {
+		h.p.Logger.Fields(
+			"host_id", name,
+			"domains", c.Domains,
+			"routes", len(c.Routes),
+		).Info("configured host")
+	}
+	return nil
 }
 
-func (r *routeManager) handleRouteCommands(add, remove bool, configPath string) {
-	hel := newHelper(r.logger)
-	resolvedPath, exists := hel.resolveConfigPath(configPath)
-	if !exists {
-		r.logger.Fatal("Config file not found. Run 'agbero install' first.")
-	}
+func (h *HostHelper) Add(configPath string) {
+	hostsDir := h.resolveHostsDir(configPath)
 
-	configDir := filepath.Dir(resolvedPath)
-	hostsDir := filepath.Join(configDir, woos.HostDir.String())
-
-	if _, err := os.Stat(hostsDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
-			r.logger.Fatal("Failed to create hosts directory: ", err)
-		}
-	}
-
-	if add {
-		r.handleRouteAdd(hostsDir)
-	} else if remove {
-		r.handleRouteRemove(hostsDir)
-	}
-}
-
-func (r *routeManager) handleRouteAdd(hostsDir string) {
 	var (
 		rType  string
 		domain string
@@ -73,8 +66,7 @@ func (r *routeManager) handleRouteAdd(hostsDir string) {
 		port   string
 	)
 
-	// Step 1: Select Type
-	err := huh.NewSelect[string]().
+	if err := huh.NewSelect[string]().
 		Title("Route Type").
 		Options(
 			huh.NewOption(RouteTypeProxy, RouteTypeProxy),
@@ -82,14 +74,11 @@ func (r *routeManager) handleRouteAdd(hostsDir string) {
 			huh.NewOption(RouteTypeTCP, RouteTypeTCP),
 		).
 		Value(&rType).
-		Run()
-
-	if err != nil {
+		Run(); err != nil {
 		fmt.Println("Cancelled")
 		return
 	}
 
-	// Step 2: Configure
 	group := []*huh.Input{
 		huh.NewInput().
 			Title("Domain Name").
@@ -116,16 +105,12 @@ func (r *routeManager) handleRouteAdd(hostsDir string) {
 			}))
 	}
 
-	targetTitle := "Target Address"
-	targetPlaceholder := "http://localhost:3000"
-
+	targetTitle, targetPlaceholder := "Target Address", "http://localhost:3000"
 	switch rType {
 	case RouteTypeStatic:
-		targetTitle = "Directory Path"
-		targetPlaceholder = "."
+		targetTitle, targetPlaceholder = "Directory Path", "."
 	case RouteTypeTCP:
-		targetTitle = "Backend Address"
-		targetPlaceholder = "127.0.0.1:5432"
+		targetTitle, targetPlaceholder = "Backend Address", "127.0.0.1:5432"
 	}
 
 	group = append(group, huh.NewInput().
@@ -139,14 +124,11 @@ func (r *routeManager) handleRouteAdd(hostsDir string) {
 			return nil
 		}))
 
-	// Convert []*Input to []Field explicitly for NewGroup
 	fields := make([]huh.Field, len(group))
 	for i, v := range group {
 		fields[i] = v
 	}
-
-	err = huh.NewForm(huh.NewGroup(fields...)).Run()
-	if err != nil {
+	if err := huh.NewForm(huh.NewGroup(fields...)).Run(); err != nil {
 		fmt.Println("Cancelled")
 		return
 	}
@@ -155,62 +137,53 @@ func (r *routeManager) handleRouteAdd(hostsDir string) {
 	target = strings.TrimSpace(target)
 
 	if rType == RouteTypeStatic {
-		abs, err := filepath.Abs(target)
-		if err == nil {
+		if abs, err := filepath.Abs(target); err == nil {
 			target = abs
 		}
 	}
-
-	if rType == RouteTypeProxy {
-		if !strings.HasPrefix(target, "http") {
-			target = "http://" + target
-		}
-	}
-
-	data := routeData{
-		Domain: domain,
-		Target: target,
-		Port:   port,
+	if rType == RouteTypeProxy && !strings.HasPrefix(target, "http") {
+		target = "http://" + target
 	}
 
 	var tplString string
 	switch rType {
 	case RouteTypeProxy:
-		tplString = proxyTpl
+		tplString = h.ProxyTpl
 	case RouteTypeStatic:
-		tplString = staticTpl
+		tplString = h.StaticTpl
 	case RouteTypeTCP:
-		tplString = tcpTpl
+		tplString = h.TCPTpl
 	}
 
 	t, err := template.New("route").Parse(tplString)
 	if err != nil {
-		r.logger.Fatal("Template error: ", err)
+		h.p.Logger.Fatal("template error: ", err)
 	}
 
-	filename := fmt.Sprintf("%s.hcl", domain)
-	filename = strings.ReplaceAll(filename, "*", "wildcard")
+	filename := strings.ReplaceAll(fmt.Sprintf("%s.hcl", domain), "*", "wildcard")
 	filename = strings.ReplaceAll(filename, ":", "-")
 	filePath := filepath.Join(hostsDir, filename)
 
 	f, err := os.Create(filePath)
 	if err != nil {
-		r.logger.Fatal("Failed to create file: ", err)
+		h.p.Logger.Fatal("failed to create file: ", err)
 	}
 	defer f.Close()
 
-	if err := t.Execute(f, data); err != nil {
-		r.logger.Fatal("Failed to write config: ", err)
+	if err := t.Execute(f, routeData{Domain: domain, Target: target, Port: port}); err != nil {
+		h.p.Logger.Fatal("failed to write config: ", err)
 	}
 
-	r.logger.Infof("Route created: %s", filePath)
+	h.p.Logger.Infof("host created: %s", filePath)
 	fmt.Println("Agbero daemon will pick up changes automatically.")
 }
 
-func (r *routeManager) handleRouteRemove(hostsDir string) {
+func (h *HostHelper) Remove(configPath string) {
+	hostsDir := h.resolveHostsDir(configPath)
+
 	entries, err := os.ReadDir(hostsDir)
 	if err != nil {
-		r.logger.Fatal("Failed to read hosts dir: ", err)
+		h.p.Logger.Fatal("failed to read hosts dir: ", err)
 	}
 
 	var files []string
@@ -219,36 +192,41 @@ func (r *routeManager) handleRouteRemove(hostsDir string) {
 			files = append(files, e.Name())
 		}
 	}
-
 	if len(files) == 0 {
-		fmt.Println("No route files found in", hostsDir)
+		fmt.Println("no host files found in", hostsDir)
 		return
 	}
 
 	var selected string
-
-	err = huh.NewForm(
+	if err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Select Route to Remove").
+				Title("Select Host to Remove").
 				Options(huh.NewOptions(files...)...).
 				Value(&selected),
 		),
-	).Run()
-
-	if err != nil {
+	).Run(); err != nil {
 		fmt.Println("Cancelled")
 		return
 	}
-
 	if selected == "" {
 		return
 	}
 
-	targetPath := filepath.Join(hostsDir, selected)
-	if err := os.Remove(targetPath); err != nil {
-		r.logger.Fatal("Failed to delete file: ", err)
+	if err := os.Remove(filepath.Join(hostsDir, selected)); err != nil {
+		h.p.Logger.Fatal("failed to delete file: ", err)
 	}
+	h.p.Logger.Infof("removed host: %s", selected)
+}
 
-	r.logger.Infof("Removed route: %s", selected)
+func (h *HostHelper) resolveHostsDir(configPath string) string {
+	global, err := loadGlobal(configPath)
+	if err == nil && global.Storage.HostsDir != "" {
+		return global.Storage.HostsDir
+	}
+	hostsDir := filepath.Join(filepath.Dir(configPath), woos.HostDir.String())
+	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+		h.p.Logger.Fatal("failed to create hosts directory: ", err)
+	}
+	return hostsDir
 }

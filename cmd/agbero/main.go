@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/agberohq/agbero/cmd/agbero/helper"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/installer"
@@ -21,47 +22,11 @@ import (
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/ll/lh"
 	"github.com/olekukonko/ll/lx"
-	"golang.org/x/crypto/bcrypt"
 )
 
-var (
-	logger *ll.Logger
-)
+var logger *ll.Logger
 
-var (
-	configPath     string
-	devMode        bool
-	installHere    bool
-	keyService     string
-	keyTTL         time.Duration
-	forceCAInstall bool
-	certDir        string
-
-	clusterJoinIP string
-	clusterSecret string
-
-	servePath   string = "."
-	servePort   int    = 8000
-	serveBind   string
-	serveHTTPS  bool
-	proxyTarget string
-	proxyDomain string
-	proxyPort   int = 8080
-	proxyBind   string
-	proxyHTTPS  bool
-
-	serviceRestart bool
-	serviceStatus  bool
-)
-
-var (
-	hashPassword = "admin"
-)
-
-// main orchestrates CLI flags and delegates execution to respective subsystems.
-// It sets up the core interrupt handlers for graceful shutdowns.
 func main() {
-
 	logger = ll.New(woos.Name,
 		ll.WithHandler(lh.NewColorizedHandler(os.Stdout)),
 		ll.WithFatalExits(true),
@@ -78,17 +43,124 @@ func main() {
 	flaggy.SetDescription(woos.Description)
 	flaggy.SetVersion(woos.Version)
 
-	flaggy.String(&configPath, "c", "config", "Path to configuration file")
+	cfg := &helper.Config{
+		ServePath: ".",
+		ServePort: 8000,
+		ProxyPort: 8080,
+	}
 
+	flaggy.String(&cfg.ConfigPath, "c", "config", "Path to configuration file")
+
+	// ---- init ---------------------------------------------------------------
 	cmdInit := flaggy.NewSubcommand("init")
-	cmdInit.Description = "Scaffold configuration in current directory (no service)"
+	cmdInit.Description = "Scaffold configuration in current directory"
 
+	// ---- config -------------------------------------------------------------
+	cmdConfig := flaggy.NewSubcommand("config")
+	cmdConfig.Description = "Configuration management"
+
+	cmdConfigValidate := flaggy.NewSubcommand("validate")
+	cmdConfigValidate.Description = "Validate configuration file"
+
+	cmdConfigReload := flaggy.NewSubcommand("reload")
+	cmdConfigReload.Description = "Hot-reload the running agbero instance (SIGHUP)"
+
+	cmdConfigView := flaggy.NewSubcommand("view")
+	cmdConfigView.Description = "Print the configuration file"
+	var configViewEditor string
+	cmdConfigView.String(&configViewEditor, "e", "editor", "Open in a specific editor (vim, nano, cat …)")
+
+	cmdConfigPath := flaggy.NewSubcommand("path")
+	cmdConfigPath.Description = "Show the resolved config file path"
+
+	cmdConfigEdit := flaggy.NewSubcommand("edit")
+	cmdConfigEdit.Description = "Open the configuration file in $EDITOR"
+
+	cmdConfig.AttachSubcommand(cmdConfigValidate, 1)
+	cmdConfig.AttachSubcommand(cmdConfigReload, 1)
+	cmdConfig.AttachSubcommand(cmdConfigView, 1)
+	cmdConfig.AttachSubcommand(cmdConfigPath, 1)
+	cmdConfig.AttachSubcommand(cmdConfigEdit, 1)
+
+	// ---- secret -------------------------------------------------------------
+	cmdSecret := flaggy.NewSubcommand("secret")
+	cmdSecret.Description = "Generate secrets, keys, and tokens"
+
+	cmdSecretCluster := flaggy.NewSubcommand("cluster")
+	cmdSecretCluster.Description = "Generate AES-256 gossip secret key"
+
+	cmdSecretKey := flaggy.NewSubcommand("key")
+	cmdSecretKey.Description = "Manage internal auth keys"
+
+	cmdSecretKeyInit := flaggy.NewSubcommand("init")
+	cmdSecretKeyInit.Description = "Generate the master private key for internal auth"
+	cmdSecretKey.AttachSubcommand(cmdSecretKeyInit, 1)
+
+	cmdSecretToken := flaggy.NewSubcommand("token")
+	cmdSecretToken.Description = "Generate a signed API token for a service"
+	cmdSecretToken.String(&cfg.KeyService, "s", "service", "Service identifier")
+	cmdSecretToken.Duration(&cfg.KeyTTL, "t", "ttl", "Token validity duration (default 1y)")
+
+	cmdSecretHash := flaggy.NewSubcommand("hash")
+	cmdSecretHash.Description = "Generate a bcrypt hash of a password"
+	cmdSecretHash.String(&cfg.HashPassword, "p", "password", "Password to hash")
+
+	cmdSecretPassword := flaggy.NewSubcommand("password")
+	cmdSecretPassword.Description = "Generate a random password and its bcrypt hash"
+
+	cmdSecret.AttachSubcommand(cmdSecretCluster, 1)
+	cmdSecret.AttachSubcommand(cmdSecretKey, 1)
+	cmdSecret.AttachSubcommand(cmdSecretToken, 1)
+	cmdSecret.AttachSubcommand(cmdSecretHash, 1)
+	cmdSecret.AttachSubcommand(cmdSecretPassword, 1)
+
+	// ---- host ---------------------------------------------------------------
+	cmdHost := flaggy.NewSubcommand("host")
+	cmdHost.Description = "Manage hosts and routes"
+
+	cmdHostList := flaggy.NewSubcommand("list")
+	cmdHostList.Description = "List all configured hosts"
+
+	cmdHostAdd := flaggy.NewSubcommand("add")
+	cmdHostAdd.Description = "Add a new host/route (interactive)"
+
+	cmdHostRemove := flaggy.NewSubcommand("remove")
+	cmdHostRemove.Description = "Remove a host/route (interactive)"
+
+	cmdHost.AttachSubcommand(cmdHostList, 1)
+	cmdHost.AttachSubcommand(cmdHostAdd, 1)
+	cmdHost.AttachSubcommand(cmdHostRemove, 1)
+
+	// ---- cert ---------------------------------------------------------------
+	cmdCert := flaggy.NewSubcommand("cert")
+	cmdCert.Description = "Manage TLS certificates"
+
+	cmdCertInstall := flaggy.NewSubcommand("install")
+	cmdCertInstall.Description = "Install CA certificate"
+	cmdCertInstall.Bool(&cfg.ForceCAInstall, "f", "force", "Force reinstall")
+
+	cmdCertUninstall := flaggy.NewSubcommand("uninstall")
+	cmdCertUninstall.Description = "Uninstall CA certificate"
+
+	cmdCertList := flaggy.NewSubcommand("list")
+	cmdCertList.Description = "List managed certificates"
+
+	cmdCertInfo := flaggy.NewSubcommand("info")
+	cmdCertInfo.Description = "Show certificate store information"
+	cmdCertInfo.String(&cfg.CertDir, "d", "dir", "Cert directory")
+
+	cmdCert.AttachSubcommand(cmdCertInstall, 1)
+	cmdCert.AttachSubcommand(cmdCertUninstall, 1)
+	cmdCert.AttachSubcommand(cmdCertList, 1)
+	cmdCert.AttachSubcommand(cmdCertInfo, 1)
+
+	// ---- service ------------------------------------------------------------
 	cmdService := flaggy.NewSubcommand("service")
-	cmdService.Description = "Manage system service (install, start, stop)"
+	cmdService.Description = "Manage the system service"
 
 	cmdServiceInstall := flaggy.NewSubcommand("install")
-	cmdServiceInstall.Description = "Install configuration (and system service if applicable)"
-	cmdServiceInstall.Bool(&installHere, "", "here", "Install configuration in current directory (skip service install)")
+	cmdServiceInstall.Description = "Install configuration and system service"
+	cmdServiceInstall.Bool(&cfg.InstallHere, "", "here", "Install config in current directory only")
 
 	cmdServiceUninstall := flaggy.NewSubcommand("uninstall")
 	cmdServiceUninstall.Description = "Uninstall system service"
@@ -105,173 +177,121 @@ func main() {
 	cmdServiceStatus := flaggy.NewSubcommand("status")
 	cmdServiceStatus.Description = "Check system service status"
 
-	cmdService.AttachSubcommand(cmdServiceRestart, 1)
-	cmdService.AttachSubcommand(cmdServiceStatus, 1)
 	cmdService.AttachSubcommand(cmdServiceInstall, 1)
 	cmdService.AttachSubcommand(cmdServiceUninstall, 1)
 	cmdService.AttachSubcommand(cmdServiceStart, 1)
 	cmdService.AttachSubcommand(cmdServiceStop, 1)
+	cmdService.AttachSubcommand(cmdServiceRestart, 1)
+	cmdService.AttachSubcommand(cmdServiceStatus, 1)
 
-	cmdRun := flaggy.NewSubcommand("run")
-	cmdRun.Description = "Run the application (requires existing config)"
-	cmdRun.Bool(&devMode, "d", "dev", "Enable development mode")
-
-	cmdReload := flaggy.NewSubcommand("reload")
-	cmdReload.Description = "Reload configuration of the running service (SIGHUP)"
-
-	cmdValidate := flaggy.NewSubcommand("validate")
-	cmdValidate.Description = "Validate configuration file"
-
-	cmdHosts := flaggy.NewSubcommand("hosts")
-	cmdHosts.Description = "List configured hosts"
-
-	cmdHelp := flaggy.NewSubcommand("help")
-	cmdHelp.Description = "Show help examples"
-
-	cmdHome := flaggy.NewSubcommand("home")
-	cmdHome.Description = "Print or navigate to the Agbero configuration directory"
-	var homeTarget string
-	var homeAction string
-	cmdHome.AddPositionalValue(&homeTarget, "target", 1, false, "Directory to locate (hosts, certs, data, logs, work, config, or @ to open shell)")
-	cmdHome.AddPositionalValue(&homeAction, "action", 2, false, "Use '@' to open a shell in the target directory")
-
-	cmdServe := flaggy.NewSubcommand("serve")
-	cmdServe.Description = "Serve a static directory instantly"
-	cmdServe.AddPositionalValue(&servePath, "path", 1, false, "Path to serve (default: current)")
-	cmdServe.Int(&servePort, "p", "port", "Port to listen on (default: 8000)")
-	cmdServe.String(&serveBind, "b", "bind", "Bind address (default: 0.0.0.0)")
-	cmdServe.Bool(&serveHTTPS, "s", "https", "Enable HTTPS (auto-generates certs)")
-
-	cmdProxy := flaggy.NewSubcommand("proxy")
-	cmdProxy.Description = "Reverse proxy a local target instantly"
-	cmdProxy.AddPositionalValue(&proxyTarget, "target", 1, true, "Target address (e.g. :3000)")
-	cmdProxy.AddPositionalValue(&proxyDomain, "domain", 2, false, "Domain name (default: localhost)")
-	cmdProxy.Int(&proxyPort, "p", "port", "Port to listen on (default: 8080)")
-	cmdProxy.String(&proxyBind, "b", "bind", "Bind address (default: 0.0.0.0)")
-	cmdProxy.Bool(&proxyHTTPS, "s", "https", "Enable HTTPS (auto-generates certs)")
-
-	cmdRoute := flaggy.NewSubcommand("route")
-	cmdRoute.Description = "Manage persistent routes (Interactive)"
-	cmdRouteAdd := flaggy.NewSubcommand("add")
-	cmdRouteAdd.Description = "Add a new route"
-	cmdRouteRemove := flaggy.NewSubcommand("remove")
-	cmdRouteRemove.Description = "Remove an existing route"
-	cmdRoute.AttachSubcommand(cmdRouteAdd, 1)
-	cmdRoute.AttachSubcommand(cmdRouteRemove, 1)
-
-	cmdHash := flaggy.NewSubcommand("hash")
-	cmdHash.Description = "Generate bcrypt hash for passwords"
-	cmdHash.String(&hashPassword, "p", "password", "Password to hash")
-
-	cmdCert := flaggy.NewSubcommand("cert")
-	cmdCert.Description = "Manage TLS certificates"
-	cmdInstallCA := flaggy.NewSubcommand("install")
-	cmdInstallCA.Description = "Install CA certificate"
-	cmdInstallCA.Bool(&forceCAInstall, "f", "force", "Force reinstall")
-	cmdUninstallCA := flaggy.NewSubcommand("uninstall")
-	cmdUninstallCA.Description = "Uninstall CA certificate"
-	cmdListCerts := flaggy.NewSubcommand("list")
-	cmdCertInfo := flaggy.NewSubcommand("info")
-	cmdCertInfo.String(&certDir, "d", "dir", "Cert directory")
-	cmdCert.AttachSubcommand(cmdInstallCA, 1)
-	cmdCert.AttachSubcommand(cmdUninstallCA, 1)
-	cmdCert.AttachSubcommand(cmdListCerts, 1)
-	cmdCert.AttachSubcommand(cmdCertInfo, 1)
-
-	cmdKey := flaggy.NewSubcommand("key")
-	cmdKey.Description = "Manage API authentication keys"
-	cmdKeyGen := flaggy.NewSubcommand("gen")
-	cmdKeyGen.Description = "Generate an auth token for an application"
-	cmdKeyGen.String(&keyService, "s", "service", "Service identifier")
-	cmdKeyGen.Duration(&keyTTL, "t", "ttl", "Token validity duration (default 1y)")
-	cmdKeyInit := flaggy.NewSubcommand("init")
-	cmdKeyInit.Description = "Generate the master private key for the API"
-	cmdKey.AttachSubcommand(cmdKeyGen, 1)
-	cmdKey.AttachSubcommand(cmdKeyInit, 1)
-
+	// ---- cluster ------------------------------------------------------------
 	cmdCluster := flaggy.NewSubcommand("cluster")
 	cmdCluster.Description = "Manage cluster settings"
-
-	cmdClusterSecret := flaggy.NewSubcommand("secret")
-	cmdClusterSecret.Description = "Generate encryption secret for cluster config"
 
 	cmdClusterStart := flaggy.NewSubcommand("start")
 	cmdClusterStart.Description = "Start agbero as a cluster seed node"
 
 	cmdClusterJoin := flaggy.NewSubcommand("join")
 	cmdClusterJoin.Description = "Join an existing agbero cluster"
-	cmdClusterJoin.AddPositionalValue(&clusterJoinIP, "ip", 1, true, "IP address of the cluster seed")
-	cmdClusterJoin.String(&clusterSecret, "s", "secret", "Cluster secret key")
+	cmdClusterJoin.AddPositionalValue(&cfg.ClusterJoinIP, "ip", 1, true, "IP address of the cluster seed")
+	cmdClusterJoin.String(&cfg.ClusterSecret, "s", "secret", "Cluster secret key")
 
-	cmdCluster.AttachSubcommand(cmdClusterSecret, 1)
 	cmdCluster.AttachSubcommand(cmdClusterStart, 1)
 	cmdCluster.AttachSubcommand(cmdClusterJoin, 1)
 
+	// ---- run ----------------------------------------------------------------
+	cmdRun := flaggy.NewSubcommand("run")
+	cmdRun.Description = "Run agbero using the discovered config"
+	cmdRun.Bool(&cfg.DevMode, "d", "dev", "Enable development mode")
+
+	// ---- home ---------------------------------------------------------------
+	cmdHome := flaggy.NewSubcommand("home")
+	cmdHome.Description = "Print or navigate to the agbero configuration directory"
+	var homeTarget, homeAction string
+	cmdHome.AddPositionalValue(&homeTarget, "target", 1, false, "hosts, certs, data, logs, work, config, or @ to open shell")
+	cmdHome.AddPositionalValue(&homeAction, "action", 2, false, "Use '@' to open a shell in the target directory")
+
+	// ---- serve / proxy ------------------------------------------------------
+	cmdServe := flaggy.NewSubcommand("serve")
+	cmdServe.Description = "Serve a static directory instantly"
+	cmdServe.AddPositionalValue(&cfg.ServePath, "path", 1, false, "Path to serve (default: .)")
+	cmdServe.Int(&cfg.ServePort, "p", "port", "Port (default: 8000)")
+	cmdServe.String(&cfg.ServeBind, "b", "bind", "Bind address")
+	cmdServe.Bool(&cfg.ServeHTTPS, "s", "https", "Enable HTTPS")
+
+	cmdProxy := flaggy.NewSubcommand("proxy")
+	cmdProxy.Description = "Reverse-proxy a local target instantly"
+	cmdProxy.AddPositionalValue(&cfg.ProxyTarget, "target", 1, true, "Target address (e.g. :3000)")
+	cmdProxy.AddPositionalValue(&cfg.ProxyDomain, "domain", 2, false, "Domain name (default: localhost)")
+	cmdProxy.Int(&cfg.ProxyPort, "p", "port", "Port (default: 8080)")
+	cmdProxy.String(&cfg.ProxyBind, "b", "bind", "Bind address")
+	cmdProxy.Bool(&cfg.ProxyHTTPS, "s", "https", "Enable HTTPS")
+
+	// ---- help ---------------------------------------------------------------
+	cmdHelp := flaggy.NewSubcommand("help")
+	cmdHelp.Description = "Show usage examples"
+
 	flaggy.AttachSubcommand(cmdInit, 1)
-	flaggy.AttachSubcommand(cmdService, 1)
-	flaggy.AttachSubcommand(cmdRun, 1)
-	flaggy.AttachSubcommand(cmdReload, 1)
-	flaggy.AttachSubcommand(cmdValidate, 1)
-	flaggy.AttachSubcommand(cmdHosts, 1)
-	flaggy.AttachSubcommand(cmdHome, 1)
-	flaggy.AttachSubcommand(cmdHash, 1)
+	flaggy.AttachSubcommand(cmdConfig, 1)
+	flaggy.AttachSubcommand(cmdSecret, 1)
+	flaggy.AttachSubcommand(cmdHost, 1)
 	flaggy.AttachSubcommand(cmdCert, 1)
-	flaggy.AttachSubcommand(cmdKey, 1)
+	flaggy.AttachSubcommand(cmdService, 1)
 	flaggy.AttachSubcommand(cmdCluster, 1)
-	flaggy.AttachSubcommand(cmdHelp, 1)
+	flaggy.AttachSubcommand(cmdRun, 1)
+	flaggy.AttachSubcommand(cmdHome, 1)
 	flaggy.AttachSubcommand(cmdServe, 1)
 	flaggy.AttachSubcommand(cmdProxy, 1)
-	flaggy.AttachSubcommand(cmdRoute, 1)
+	flaggy.AttachSubcommand(cmdHelp, 1)
 
 	flaggy.Parse()
-	hel := newHelper(logger)
+
+	hel := helper.New(logger, shutdown, cfg)
 
 	if cmdHome.Used {
-		hel.home(homeTarget, homeAction)
+		hel.Home().Navigate(homeTarget, homeAction)
 		return
 	}
 
-	hel.welcome()
+	welcome()
 
 	if cmdServe.Used {
-		e := &ephemeral{
-			logger:   logger,
-			shutdown: shutdown,
-			path:     servePath,
-			bindHost: serveBind,
-			port:     servePort,
-			useHTTPS: serveHTTPS,
-		}
-		e.handleServe()
+		hel.Ephemeral().Serve()
 		return
 	}
 
 	if cmdProxy.Used {
-		e := &ephemeral{
-			logger:   logger,
-			shutdown: shutdown,
-			target:   proxyTarget,
-			domain:   proxyDomain,
-			bindHost: proxyBind,
-			port:     proxyPort,
-			useHTTPS: proxyHTTPS,
-		}
-		e.handleProxy()
+		hel.Ephemeral().Proxy()
 		return
 	}
 
-	if cmdRoute.Used {
-		rm := newRouteManager(logger)
-		rm.handleRouteCommands(cmdRouteAdd.Used, cmdRouteRemove.Used, configPath)
+	if cmdSecret.Used {
+		s := hel.Secret()
+		switch {
+		case cmdSecretCluster.Used:
+			s.Cluster()
+		case cmdSecretKey.Used && cmdSecretKeyInit.Used:
+			resolvedPath, _ := helper.ResolveConfigPath(cfg.ConfigPath)
+			s.KeyInit(resolvedPath)
+		case cmdSecretToken.Used:
+			resolvedPath, _ := helper.ResolveConfigPath(cfg.ConfigPath)
+			s.Token(resolvedPath, cfg.KeyService, cfg.KeyTTL)
+		case cmdSecretHash.Used:
+			s.Hash(cfg.HashPassword)
+		case cmdSecretPassword.Used:
+			s.Password(0)
+		default:
+			flaggy.ShowHelpAndExit("secret")
+		}
 		return
 	}
 
 	if cmdInit.Used {
-		path, err := hel.initConfiguration("")
+		path, err := helper.InitConfiguration("")
 		if err != nil {
-			logger.Fatal("Init failed: ", err)
+			logger.Fatal("init failed: ", err)
 		}
-		logger.Info("Initialized configuration at: ", path)
+		logger.Info("initialized configuration at: ", path)
 		return
 	}
 
@@ -279,45 +299,43 @@ func main() {
 	var configExists bool
 
 	if cmdServiceInstall.Used {
-		path, err := hel.installConfiguration(installHere)
+		path, err := helper.InstallConfiguration(cfg.InstallHere)
 		if err != nil {
-			logger.Fatal("Install failed: ", err)
+			logger.Fatal("install failed: ", err)
 		}
 		resolvedPath = path
 		configExists = true
 	} else {
-		resolvedPath, configExists = hel.resolveConfigPath(configPath)
+		resolvedPath, configExists = helper.ResolveConfigPath(cfg.ConfigPath)
 	}
 
-	needsConfig := cmdRun.Used || cmdReload.Used || cmdValidate.Used || cmdHosts.Used ||
-		cmdServiceStart.Used || cmdKey.Used || cmdClusterStart.Used || cmdClusterJoin.Used ||
-		(cmdCluster.Used && !cmdClusterSecret.Used)
+	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used ||
+		cmdServiceStart.Used || cmdClusterStart.Used || cmdClusterJoin.Used
 
 	if needsConfig && !configExists {
-		if strings.TrimSpace(configPath) != "" {
-			logger.Fatal("Config file not found at specific path: ", configPath)
+		if strings.TrimSpace(cfg.ConfigPath) != "" {
+			logger.Fatal("config file not found at: ", cfg.ConfigPath)
 		} else {
 			ctx := installer.NewContext(logger, "")
 			if ctx.Interactive {
 				var doInit bool
 				err := huh.NewConfirm().
 					Title("Configuration Not Found").
-					Description("We couldn't find an agbero.hcl file here. Would you like to initialize a new configuration?").
+					Description("No agbero.hcl found. Would you like to initialize one?").
 					Value(&doInit).
 					Run()
-
 				if err == nil && doInit {
-					path, err := hel.initConfiguration("")
+					path, err := helper.InitConfiguration("")
 					if err != nil {
-						logger.Fatal("Init failed: ", err)
+						logger.Fatal("init failed: ", err)
 					}
 					resolvedPath = path
 					configExists = true
 				} else {
-					logger.Fatal("Config file required to proceed. Run 'agbero init' later.")
+					logger.Fatal("config file required. Run 'agbero init' first.")
 				}
 			} else {
-				logger.Fatal("Config file not found. Run 'agbero service install' to generate one.")
+				logger.Fatal("config file not found. Run 'agbero service install' to generate one.")
 			}
 		}
 	}
@@ -326,67 +344,67 @@ func main() {
 		logger.Warnf("TLS env bootstrap: %v", err)
 	}
 
-	if cmdHelp.Used {
-		hel.showHelpExamples(resolvedPath)
+	if cmdConfig.Used {
+		ch := hel.Config()
+		switch {
+		case cmdConfigValidate.Used:
+			logger.Info("validating configuration...")
+			if err := ch.Validate(resolvedPath); err != nil {
+				logger.Fatal("invalid config: ", err)
+			}
+			logger.Info("configuration OK")
+		case cmdConfigReload.Used:
+			if err := ch.Reload(resolvedPath); err != nil {
+				logger.Fatal("reload failed: ", err)
+			}
+			logger.Info("signal sent. Check logs for reload status.")
+		case cmdConfigView.Used:
+			ch.View(resolvedPath, configViewEditor)
+		case cmdConfigPath.Used:
+			ch.Path(resolvedPath)
+		case cmdConfigEdit.Used:
+			ch.Edit(resolvedPath)
+		default:
+			flaggy.ShowHelpAndExit("config")
+		}
 		return
 	}
 
-	if cmdReload.Used {
-		if err := hel.reloadService(resolvedPath); err != nil {
-			logger.Fatal("Reload failed: ", err)
-		}
-		logger.Info("Signal sent to process. Check logs for reload status.")
-		return
-	}
-
-	if cmdHash.Used {
-		if hashPassword == "" {
-			fmt.Print("Enter password: ")
-			fmt.Scanln(&hashPassword)
-		}
-		hash, err := bcrypt.GenerateFromPassword([]byte(hashPassword), bcrypt.DefaultCost)
-		if err != nil {
-			logger.Fatal(err)
-		}
-		fmt.Printf("\n%s\n", string(hash))
-		return
-	}
-
-	if cmdValidate.Used {
-		logger.Info("Validating configuration...")
-		if err := hel.validateConfig(resolvedPath); err != nil {
-			logger.Fatal("Invalid config: ", err)
-		}
-		logger.Info("Configuration OK")
-		return
-	}
-
-	if cmdHosts.Used {
-		if err := hel.listHosts(resolvedPath); err != nil {
-			logger.Fatal(err)
+	if cmdHost.Used {
+		hh := hel.Host()
+		hh.ProxyTpl = proxyTpl
+		hh.StaticTpl = staticTpl
+		hh.TCPTpl = tcpTpl
+		switch {
+		case cmdHostList.Used:
+			if err := hh.List(resolvedPath); err != nil {
+				logger.Fatal(err)
+			}
+		case cmdHostAdd.Used:
+			hh.Add(resolvedPath)
+		case cmdHostRemove.Used:
+			hh.Remove(resolvedPath)
+		default:
+			flaggy.ShowHelpAndExit("host")
 		}
 		return
 	}
 
 	if cmdCert.Used {
-		hel.handleCertCommands(cmdInstallCA.Used, cmdUninstallCA.Used, cmdListCerts.Used, cmdCertInfo.Used, forceCAInstall, certDir)
-		return
-	}
-
-	if cmdKey.Used {
-		hel.handleKeyCommands(cmdKeyInit.Used, cmdKeyGen.Used, keyService, keyTTL)
-		return
-	}
-
-	if cmdCluster.Used {
-		if cmdClusterSecret.Used {
-			hel.handleClusterSecret()
-			return
+		ch := hel.Cert()
+		switch {
+		case cmdCertInstall.Used:
+			ch.Install(resolvedPath, cfg.ForceCAInstall)
+		case cmdCertUninstall.Used:
+			ch.Uninstall(resolvedPath)
+		case cmdCertList.Used:
+			ch.List(resolvedPath)
+		case cmdCertInfo.Used:
+			ch.Info(resolvedPath)
+		default:
+			flaggy.ShowHelpAndExit("cert")
 		}
-		if !cmdClusterStart.Used && !cmdClusterJoin.Used {
-			flaggy.ShowHelpAndExit("cluster")
-			return
-		}
+		return
 	}
 
 	svcConfig := &service.Config{
@@ -395,7 +413,7 @@ func main() {
 		Description: woos.Description,
 		Arguments:   []string{"run", "-c", resolvedPath},
 	}
-	if devMode {
+	if cfg.DevMode {
 		svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
 	}
 	if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
@@ -412,126 +430,47 @@ func main() {
 
 	prg := &program{
 		configPath:    resolvedPath,
-		devMode:       devMode,
+		devMode:       cfg.DevMode,
 		shutdown:      shutdown,
 		clusterStart:  cmdClusterStart.Used,
-		clusterJoinIP: clusterJoinIP,
-		clusterSecret: clusterSecret,
+		clusterJoinIP: cfg.ClusterJoinIP,
+		clusterSecret: cfg.ClusterSecret,
 	}
 
-	s, err := service.New(prg, svcConfig)
+	svc, err := service.New(prg, svcConfig)
 	if err != nil {
-		logger.Fatal("Service init failed: ", err)
+		logger.Fatal("service init failed: ", err)
 	}
 
-	if cmdServiceInstall.Used {
-		if !installHere {
-			logger.Info("Installing system service...")
-			if err := s.Install(); err != nil {
-				if strings.Contains(strings.ToLower(err.Error()), "already exists") {
-					logger.Warn("Service already exists.")
-				} else {
-					logger.Fatal(hel.handleServiceError(err, "install", resolvedPath))
-				}
-			} else {
-				logger.Info("Service installed.")
-			}
-		} else {
-			logger.Info("Local mode: Service registration skipped.")
-		}
-		return
-	}
-
-	if cmdServiceUninstall.Used {
-		logger.Info("Uninstalling system service...")
-		if err := s.Uninstall(); err != nil {
-			logger.Fatal(hel.handleServiceError(err, "uninstall", resolvedPath))
-		}
-		logger.Info("Service uninstalled.")
-		return
-	}
-
-	if cmdServiceStart.Used {
-		logger.Info("Starting system service...")
-		if err := s.Start(); err != nil {
-			logger.Fatal(hel.handleServiceError(err, "start", resolvedPath))
-		}
-		logger.Info("Service started.")
-		return
-	}
-
-	if cmdServiceStop.Used {
-		logger.Info("Stopping system service...")
-		if err := s.Stop(); err != nil {
-			logger.Fatal(hel.handleServiceError(err, "stop", resolvedPath))
-		}
-		logger.Info("Service stopped.")
-		return
-	}
-
-	// After cmdServiceStop.Used check, add:
-
-	if cmdServiceRestart.Used {
-		logger.Info("Restarting system service...")
-
-		// Stop the service
-		if err := s.Stop(); err != nil {
-			logger.Fatal(hel.handleServiceError(err, "stop", resolvedPath))
-		}
-
-		// Small delay to ensure clean shutdown
-		time.Sleep(2 * time.Second)
-
-		// Start the service
-		if err := s.Start(); err != nil {
-			logger.Fatal(hel.handleServiceError(err, "start", resolvedPath))
-		}
-
-		logger.Info("Service restarted successfully.")
-		return
-	}
-
-	if cmdServiceStatus.Used {
-		logger.Info("Checking service status...")
-
-		status, err := s.Status()
-		if err != nil {
-			logger.Fatal(hel.handleServiceError(err, "status", resolvedPath))
-		}
-
-		statusStr := "unknown"
-		switch status {
-		case service.StatusRunning:
-			statusStr = "running"
-		case service.StatusStopped:
-			statusStr = "stopped"
-		case service.StatusUnknown:
-			statusStr = "unknown (not installed?)"
-		}
-
-		logger.Infof("Service status: %s", statusStr)
-
-		// Optional: Show more details like PID, uptime?
-		if status == service.StatusRunning {
-			// Try to read PID file for more info
-			if global, err := hel.loadConfig(resolvedPath); err == nil && global.Storage.DataDir != "" {
-				pidFile := filepath.Join(global.Storage.DataDir, "agbero.pid")
-				if data, err := os.ReadFile(pidFile); err == nil {
-					logger.Infof("Process ID: %s", strings.TrimSpace(string(data)))
-				}
-			}
+	if cmdService.Used {
+		sh := hel.Service()
+		switch {
+		case cmdServiceInstall.Used:
+			sh.Install(svc, cfg.InstallHere)
+		case cmdServiceUninstall.Used:
+			sh.Uninstall(svc)
+		case cmdServiceStart.Used:
+			sh.Start(svc)
+		case cmdServiceStop.Used:
+			sh.Stop(svc)
+		case cmdServiceRestart.Used:
+			sh.Restart(svc)
+		case cmdServiceStatus.Used:
+			sh.Status(svc, resolvedPath)
+		default:
+			flaggy.ShowHelpAndExit("service")
 		}
 		return
 	}
 
 	if cmdRun.Used || cmdClusterStart.Used || cmdClusterJoin.Used {
-		global, err := hel.loadConfig(resolvedPath)
+		global, err := loadConfig(resolvedPath)
 		if err != nil {
-			logger.Fatal("Failed to load config: ", err)
+			logger.Fatal("failed to load config: ", err)
 		}
-		newLogger, err := zulu.Logging(&global.Logging, devMode, shutdown)
+		newLogger, err := zulu.Logging(&global.Logging, cfg.DevMode, shutdown)
 		if err != nil {
-			logger.Warn("Failed to setup advanced logging: ", err)
+			logger.Warn("failed to setup advanced logging: ", err)
 		} else {
 			logger = newLogger
 		}
@@ -540,36 +479,91 @@ func main() {
 		signal.Notify(sighupCh, syscall.SIGHUP)
 		go func() {
 			for range sighupCh {
-				logger.Info("Received SIGHUP, initiating hot reload...")
+				logger.Info("received SIGHUP, initiating hot reload...")
 				if prg.server != nil {
 					prg.server.Reload()
 				}
 			}
 		}()
 
-		logger.Info("Starting agbero...")
-		if devMode {
+		if cfg.DevMode {
 			logger.Level(lx.LevelDebug)
-			logger.Warn("Development mode enabled")
+			logger.Warn("development mode enabled")
 		}
 
 		isContainer := os.Getenv("AGBERO_CONTAINER") == "true" || os.Getenv("KUBERNETES_SERVICE_HOST") != ""
 		if !service.Interactive() && !isContainer {
 			errs := make(chan error, 5)
-			_, _ = s.Logger(errs)
+			_, _ = svc.Logger(errs)
 			go func() {
-				for err := range errs {
-					logger.Errorf("Service internal error: %v", err)
+				for e := range errs {
+					logger.Errorf("service internal error: %v", e)
 				}
 			}()
 		}
 
-		if err := s.Run(); err != nil {
-			logger.Error("Service exited with error: ", err)
+		if err := svc.Run(); err != nil {
+			logger.Error("service exited with error: ", err)
 			os.Exit(1)
 		}
 		return
 	}
 
-	hel.showHelpExamples(resolvedPath)
+	if cmdHelp.Used {
+		showHelpExamples()
+		return
+	}
+
+	showHelpExamples()
+}
+
+func welcome() {
+	fmt.Println(installer.BannerTmpl)
+	fmt.Printf("\033[1;34m%s\033[0m - %s\n", woos.Name, woos.Description)
+	fmt.Printf("\033[90mVersion: %s\033[0m\n", woos.Version)
+	fmt.Printf("\033[90mDate: %s\033[0m\n\n", woos.Date)
+}
+
+func showHelpExamples() {
+	exeName := woos.Name
+	if len(os.Args) > 0 {
+		exeName = filepath.Base(os.Args[0])
+	}
+	prefix := "sudo "
+	if runtime.GOOS == woos.Windows {
+		prefix = ""
+	}
+	fmt.Printf("\n%s - %s v%s\n", woos.Name, woos.Description, woos.Version)
+	fmt.Println("\n===============================================================")
+	fmt.Println("USAGE EXAMPLES")
+	fmt.Println("===============================================================")
+	fmt.Printf("\nSCAFFOLDING:\n")
+	fmt.Printf("  %s init                        # scaffold config in current folder\n", exeName)
+	fmt.Printf("  %s service install             # install config + system service\n", exeName)
+	fmt.Printf("\nEXECUTION:\n")
+	fmt.Printf("  %s run                         # run using discovered config\n", exeName)
+	fmt.Printf("  %s serve .                     # serve current directory on the fly\n", exeName)
+	fmt.Printf("  %s config reload               # hot reload running instance\n", exeName)
+	fmt.Printf("\nCONFIGURATION:\n")
+	fmt.Printf("  %s config validate             # validate config file\n", exeName)
+	fmt.Printf("  %s config view                 # print config file\n", exeName)
+	fmt.Printf("  %s config edit                 # edit config in $EDITOR\n", exeName)
+	fmt.Printf("  %s config path                 # show config file path\n", exeName)
+	fmt.Printf("\nSECRETS & KEYS:\n")
+	fmt.Printf("  %s secret cluster              # generate gossip secret key\n", exeName)
+	fmt.Printf("  %s secret key init             # generate internal auth key\n", exeName)
+	fmt.Printf("  %s secret token -s myapp       # generate API token for 'myapp'\n", exeName)
+	fmt.Printf("  %s secret hash -p mypass       # bcrypt hash a password\n", exeName)
+	fmt.Printf("  %s secret password             # generate random password + hash\n", exeName)
+	fmt.Printf("\nHOSTS:\n")
+	fmt.Printf("  %s host list                   # list configured hosts\n", exeName)
+	fmt.Printf("  %s host add                    # add host/route (interactive)\n", exeName)
+	fmt.Printf("  %s host remove                 # remove host/route (interactive)\n", exeName)
+	fmt.Printf("\nSERVICE MANAGEMENT:\n")
+	fmt.Printf("  %s%s service install\n", prefix, exeName)
+	fmt.Printf("  %s%s service start\n", prefix, exeName)
+	fmt.Printf("  %s%s service stop\n", prefix, exeName)
+	fmt.Printf("  %s%s service restart\n", prefix, exeName)
+	fmt.Printf("  %s%s service status\n", prefix, exeName)
+	fmt.Printf("  %s%s service uninstall\n", prefix, exeName)
 }
