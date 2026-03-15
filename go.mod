@@ -2,7 +2,7 @@ module github.com/agberohq/agbero
 
 go 1.26
 
-replace github.com/olekukonko/jack => /Users/oleku/gopath/src/github.com/olekukonko/jack
+//replace github.com/olekukonko/jack => /Users/oleku/gopath/src/github.com/olekukonko/jack
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
@@ -15,7 +15,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-acme/lego/v4 v4.32.0
-	github.com/go-git/go-git/v6 v6.0.0-20260312103649-3b3581068cee
+	github.com/go-git/go-git/v6 v6.0.0-20260313081548-799bb393a8ed
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/memberlist v0.5.4
@@ -24,7 +24,7 @@ require (
 	github.com/klauspost/compress v1.18.4
 	github.com/markbates/goth v1.82.0
 	github.com/olekukonko/errors v1.2.0
-	github.com/olekukonko/jack v0.0.0-20260311210511-263b7cb27462
+	github.com/olekukonko/jack v0.0.0-20260315063850-82b24943796a
 	github.com/olekukonko/ll v0.1.8-0.20260304195808-a35061d98ce9
 	github.com/olekukonko/mappo v0.0.0-20260305135522-3435c72de434
 	github.com/olekukonko/tablewriter v1.1.4
@@ -37,6 +37,9 @@ require (
 	github.com/tetratelabs/wazero v1.11.0
 	github.com/yl2chen/cidranger v1.0.2
 	github.com/yookoala/gofast v0.8.0
+	github.com/yuin/goldmark v1.7.16
+	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
+	go.abhg.dev/goldmark/toc v0.12.0
 	go.etcd.io/bbolt v1.4.3
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.49.0
@@ -124,10 +127,7 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	github.com/yuin/goldmark v1.7.16 // indirect
-	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	go.abhg.dev/goldmark/toc v0.12.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/mod v0.33.0 // indirect

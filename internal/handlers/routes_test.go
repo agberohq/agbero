@@ -1486,7 +1486,7 @@ func TestBuildFallbackHandler_UnknownType(t *testing.T) {
 }
 
 func TestBuildRouteLimiter_Nil(t *testing.T) {
-	result := buildRouteLimiter(nil, nil, nil)
+	result := buildRouteLimiter(nil, nil, nil, nil)
 	if result != nil {
 		t.Error("Expected nil limiter for nil config")
 	}
@@ -1496,7 +1496,7 @@ func TestBuildRouteLimiter_Disabled(t *testing.T) {
 	rlc := &alaye.RouteRate{
 		Enabled: alaye.Inactive,
 	}
-	result := buildRouteLimiter(rlc, nil, nil)
+	result := buildRouteLimiter(rlc, nil, nil, nil)
 	if result != nil {
 		t.Error("Expected nil limiter for disabled config")
 	}
@@ -1523,7 +1523,7 @@ func TestBuildRouteLimiter_ACMEChallenge(t *testing.T) {
 		},
 	}
 	ipMgr := zulu.NewIPManager(nil)
-	result := buildRouteLimiter(rlc, global, ipMgr)
+	result := buildRouteLimiter(rlc, global, ipMgr, nil)
 	if result == nil {
 		t.Error("Expected non-nil limiter")
 	}
@@ -1552,7 +1552,7 @@ func TestBuildRouteLimiter_MethodMatch(t *testing.T) {
 		},
 	}
 	ipMgr := zulu.NewIPManager(nil)
-	result := buildRouteLimiter(rlc, nil, ipMgr)
+	result := buildRouteLimiter(rlc, nil, ipMgr, nil)
 	if result == nil {
 		t.Error("Expected non-nil limiter")
 	}
@@ -1585,7 +1585,7 @@ func TestBuildRouteLimiter_PrefixMatch(t *testing.T) {
 		},
 	}
 	ipMgr := zulu.NewIPManager(nil)
-	result := buildRouteLimiter(rlc, nil, ipMgr)
+	result := buildRouteLimiter(rlc, nil, ipMgr, nil)
 	if result == nil {
 		t.Error("Expected non-nil limiter")
 	}
@@ -1625,7 +1625,7 @@ func TestBuildRouteLimiter_GlobalPolicy(t *testing.T) {
 		},
 	}
 	ipMgr := zulu.NewIPManager(nil)
-	result := buildRouteLimiter(rlc, global, ipMgr)
+	result := buildRouteLimiter(rlc, global, ipMgr, nil)
 	if result == nil {
 		t.Error("Expected non-nil limiter")
 	}

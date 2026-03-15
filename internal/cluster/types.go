@@ -6,6 +6,22 @@ import (
 	"github.com/hashicorp/memberlist"
 )
 
+// Cluster defines the distributed backend contract for cloud-native readiness.
+// Implementations (Memberlist, ETCD, Consul) must satisfy these coordination primitives.
+type Cluster interface {
+	Members() []string
+	Get(key string) ([]byte, bool)
+	Set(key string, value []byte)
+	Delete(key string)
+	TryAcquireLock(key string) bool
+
+	BroadcastCert(domain string, certPEM, keyPEM []byte) error
+	BroadcastConfig(domain string, rawHCL []byte, deleted bool) error
+	BroadcastChallenge(token, keyAuth string, deleted bool)
+
+	Shutdown() error
+}
+
 type OpType uint8
 
 const (

@@ -28,6 +28,7 @@ import (
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/mappo"
 )
 
 type Server struct {
@@ -278,6 +279,8 @@ func (s *Server) Start(configPath string) error {
 	return nil
 }
 
+// Reload applies updated configurations to the server without downtime.
+// Retains valid routes while properly pruning stale entries across all layers.
 func (s *Server) Reload() {
 	s.mu.RLock()
 	configPath := s.configPath
@@ -318,9 +321,8 @@ func (s *Server) Reload() {
 
 	s.mu.Lock()
 	oldListeners := s.listeners
-	if s.trafficManager != nil {
-		s.trafficManager.Close()
-	}
+	oldTrafficManager := s.trafficManager
+	oldSharedState := s.sharedState
 
 	var trustedProxies []string
 	if global.Security.Enabled.Active() {
@@ -331,19 +333,17 @@ func (s *Server) Reload() {
 	s.global = global
 	s.configSHA = sha
 
-	if s.sharedState != nil {
-		_ = s.sharedState.Close()
-		s.sharedState = nil
-	}
+	var newSharedState cluster.SharedState
 	if global.Gossip.SharedState.Enabled.Active() && global.Gossip.SharedState.Driver == "redis" {
 		ss, err := cluster.NewRedisSharedState(global.Gossip.SharedState.Redis)
 		if err == nil {
-			s.sharedState = ss
+			newSharedState = ss
 			s.logger.Info("redis shared state reloaded")
 		} else {
 			s.logger.Error("failed to reload redis shared state", "err", err)
 		}
 	}
+	s.sharedState = newSharedState
 
 	s.tlsManager.Close()
 	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, global)
@@ -374,8 +374,11 @@ func (s *Server) Reload() {
 
 	hosts, _ := s.hostManager.LoadAll()
 	validKeys := make(map[alaye.BackendKey]bool)
+	validRouteKeys := make(map[string]bool)
+
 	for domain, h := range hosts {
 		for _, r := range h.Routes {
+			validRouteKeys[r.Key()] = true
 			if r.Backends.Enabled.Active() {
 				for _, srv := range r.Backends.Servers {
 					validKeys[r.BackendKey(domain, srv.Address.String())] = true
@@ -388,13 +391,37 @@ func (s *Server) Reload() {
 			}
 		}
 	}
+
 	s.resource.Metrics.Prune(validKeys)
+
+	var staleRoutes []string
+	s.resource.RouteCache.Range(func(k string, it *mappo.Item) bool {
+		if !validRouteKeys[k] {
+			staleRoutes = append(staleRoutes, k)
+		}
+		return true
+	})
+
+	for _, k := range staleRoutes {
+		s.resource.RouteCache.Delete(k)
+		if s.resource.Reaper != nil {
+			s.resource.Reaper.Remove(k)
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	for _, l := range oldListeners {
 		_ = l.Stop(ctx)
+	}
+
+	if oldTrafficManager != nil {
+		oldTrafficManager.Close()
+	}
+
+	if oldSharedState != nil {
+		_ = oldSharedState.Close()
 	}
 
 	for _, l := range newListeners {

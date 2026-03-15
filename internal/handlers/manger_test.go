@@ -837,7 +837,7 @@ func TestManager_groupTCPRoutesByListen(t *testing.T) {
 }
 
 func TestManager_buildGlobalRateLimiter_Nil(t *testing.T) {
-	result := buildGlobalRateLimiter(nil, nil)
+	result := buildGlobalRateLimiter(nil, nil, nil)
 	if result != nil {
 		t.Error("Expected nil limiter for nil config")
 	}
@@ -849,7 +849,7 @@ func TestManager_buildGlobalRateLimiter_Disabled(t *testing.T) {
 			Enabled: alaye.Inactive,
 		},
 	}
-	result := buildGlobalRateLimiter(global, nil)
+	result := buildGlobalRateLimiter(global, nil, nil)
 	if result != nil {
 		t.Error("Expected nil limiter for disabled config")
 	}
@@ -869,7 +869,7 @@ func TestManager_buildGlobalRateLimiter_ACMEExcluded(t *testing.T) {
 		},
 	}
 	ipMgr := zulu.NewIPManager(nil)
-	result := buildGlobalRateLimiter(global, ipMgr)
+	result := buildGlobalRateLimiter(global, ipMgr, nil)
 	if result == nil {
 		t.Error("Expected non-nil limiter")
 	}

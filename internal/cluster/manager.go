@@ -156,6 +156,10 @@ func (m *Manager) BroadcastReliable(op OpType, key string, value []byte) error {
 	if err != nil {
 		return err
 	}
+	// Defensive check for unit tests where memberlist isn't initialized
+	if m.list == nil {
+		return nil
+	}
 	for _, node := range m.list.Members() {
 		if node.Name != m.nodeName {
 			_ = m.list.SendReliable(node, data)

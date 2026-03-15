@@ -6,15 +6,25 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/agberohq/agbero/internal/pkg/security"
+	"github.com/fsnotify/fsnotify"
+	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
 )
+
+// ClusterBroadcaster defines requirements for distributing PKI material.
+type ClusterBroadcaster interface {
+	BroadcastChallenge(token, keyAuth string, deleted bool)
+	BroadcastCert(domain string, certPEM, keyPEM []byte) error
+}
 
 type Manager struct {
 	logger      *ll.Logger
@@ -27,17 +37,33 @@ type Manager struct {
 	cluster     ClusterBroadcaster
 	cache       *mappo.LRU[string, *tls.Certificate]
 	onUpdate    func(domain string, certPEM, keyPEM []byte)
+
+	watcher        *fsnotify.Watcher
+	quit           chan struct{}
+	debouncer      *jack.Debouncer
+	pendingDomains *mappo.Concurrent[string, bool]
 }
 
+// NewManager builds the cryptography orchestration layer.
+// Links local CA issuing, Let's Encrypt automation, and secure cluster distribution.
 func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global) *Manager {
 	m := &Manager{
-		logger:      logger.Namespace("tls"),
-		hostManager: hm,
-		global:      global,
-		cache:       mappo.NewLRU[string, *tls.Certificate](10000),
-		Challenges:  NewChallengeStore(logger),
+		logger:         logger.Namespace("tls"),
+		hostManager:    hm,
+		global:         global,
+		cache:          mappo.NewLRU[string, *tls.Certificate](10000),
+		Challenges:     NewChallengeStore(logger),
+		quit:           make(chan struct{}),
+		pendingDomains: mappo.NewConcurrent[string, bool](),
 	}
+
+	m.debouncer = jack.NewDebouncer(
+		jack.WithDebounceDelay(500*time.Millisecond),
+		jack.WithDebounceMaxWait(2*time.Second),
+	)
+
 	baseDir := woos.MakeFolder(global.Storage.DataDir, woos.DataDir)
+
 	var cipher *security.Cipher
 	if global.Gossip.Enabled.Active() && global.Gossip.SecretKey != "" {
 		var err error
@@ -46,23 +72,155 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global) *Ma
 			m.logger.Warn("invalid gossip secret key, storage will be plaintext")
 		}
 	}
+
 	var err error
 	m.storage, err = NewDiskStorage(baseDir, cipher)
 	if err != nil {
 		m.logger.Error("failed to initialize TLS storage", "error", err)
 		m.storage = nil
 	}
+
 	m.acme = NewACMEProvider(logger, &global.LetsEncrypt, m.storage, m.Challenges)
 	certDir := woos.MakeFolder(global.Storage.CertsDir, woos.CertDir)
 	m.installer = NewLocal(logger, certDir)
+
 	m.loadFromStorage()
+
+	if err := m.startWatcher(certDir.Path()); err != nil {
+		m.logger.Fields("err", err).Warn("failed to start certificate watcher")
+	}
+
 	return m
+}
+
+// startWatcher initializes the filesystem observer for custom certificates.
+func (m *Manager) startWatcher(dir string) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+	m.watcher = watcher
+
+	if err := m.watcher.Add(dir); err != nil {
+		m.watcher.Close()
+		return err
+	}
+
+	go m.watchLoop()
+	m.logger.Fields("dir", dir).Info("certificate directory watcher started")
+	return nil
+}
+
+// watchLoop parses incoming events, capturing drops of external wildcard or standard certs.
+func (m *Manager) watchLoop() {
+	for {
+		select {
+		case event, ok := <-m.watcher.Events:
+			if !ok {
+				return
+			}
+			if event.Has(fsnotify.Chmod) {
+				continue
+			}
+
+			name := filepath.Base(event.Name)
+			if !strings.HasSuffix(name, ".crt") && !strings.HasSuffix(name, ".key") && !strings.HasSuffix(name, ".enc") {
+				continue
+			}
+
+			domain := strings.TrimSuffix(name, ".crt")
+			domain = strings.TrimSuffix(domain, ".key")
+			domain = strings.TrimSuffix(domain, ".enc")
+			domain = strings.ReplaceAll(domain, "_wildcard_", "*")
+
+			m.scheduleCheck(domain)
+
+		case err, ok := <-m.watcher.Errors:
+			if !ok {
+				return
+			}
+			m.logger.Fields("err", err).Error("cert watcher error")
+		case <-m.quit:
+			return
+		}
+	}
+}
+
+// scheduleCheck queues a domain for certificate parsing and broadcast.
+// Uses a debouncer to gracefully combine matching key/cert file saves into one processing event.
+func (m *Manager) scheduleCheck(domain string) {
+	m.pendingDomains.Set(domain, true)
+	m.debouncer.Do(m.processPending)
+}
+
+// processPending extracts all pending certificate files and initiates cluster distribution.
+// It clears the concurrent map safely, avoiding processing the same domain multiple times.
+func (m *Manager) processPending() {
+	var domains []string
+	m.pendingDomains.Range(func(k string, v bool) bool {
+		domains = append(domains, k)
+		m.pendingDomains.Delete(k)
+		return true
+	})
+
+	for _, domain := range domains {
+		m.checkAndBroadcastCert(domain)
+	}
+}
+
+// checkAndBroadcastCert validates manually placed certificates, ignores local CAs, and delegates to the cluster.
+func (m *Manager) checkAndBroadcastCert(domain string) {
+	if domain == "ca-cert" || domain == "ca-key" || domain == "acme_account" {
+		return
+	}
+
+	certPEM, keyPEM, err := m.storage.Load(domain)
+	if err != nil {
+		return
+	}
+
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return
+	}
+
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return
+	}
+
+	for _, ou := range leaf.Issuer.OrganizationalUnit {
+		if strings.Contains(ou, "Development") {
+			return
+		}
+	}
+
+	if cached, hit := m.cache.Get(domain); hit {
+		cachedLeaf, err := x509.ParseCertificate(cached.Certificate[0])
+		if err == nil && cachedLeaf.SerialNumber.Cmp(leaf.SerialNumber) == 0 {
+			return
+		}
+	}
+
+	m.cache.Set(domain, &cert)
+
+	if m.cluster != nil {
+		if err := m.cluster.BroadcastCert(domain, certPEM, keyPEM); err != nil {
+			m.logger.Fields("domain", domain, "err", err).Error("failed to broadcast certificate")
+		} else {
+			m.logger.Fields("domain", domain).Info("certificate broadcasted to cluster")
+		}
+	}
 }
 
 func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 	return next, nil
 }
 
+// GetCertificate evaluates the request SNI and supplies the correct TLS material.
 func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	name := chi.ServerName
 	if name == "" {
@@ -179,6 +337,15 @@ func (m *Manager) GetConfigForClient(chi *tls.ClientHelloInfo) (*tls.Config, err
 }
 
 func (m *Manager) Close() {
+	if m.quit != nil {
+		close(m.quit)
+	}
+	if m.watcher != nil {
+		_ = m.watcher.Close()
+	}
+	if m.debouncer != nil {
+		m.debouncer.Cancel()
+	}
 	m.cache.Clear()
 }
 

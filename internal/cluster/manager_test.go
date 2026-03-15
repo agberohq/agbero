@@ -323,12 +323,14 @@ func TestConfigManager_ChecksumEchoPrevention(t *testing.T) {
 	domain := "test"
 	content := []byte("route / { backend { address \"http://localhost:8080\" } }")
 
-	if cm.ShouldBroadcast(domain, content) {
-		t.Error("ShouldBroadcast should return false for first-time content")
+	if !cm.ShouldBroadcast(domain, content) {
+		t.Error("ShouldBroadcast should return true for genuinely new content")
 	}
 
+	_, _ = cm.PreparePayload(domain, content, false, "node1")
+
 	if cm.ShouldBroadcast(domain, content) {
-		t.Error("ShouldBroadcast should return false for identical content")
+		t.Error("ShouldBroadcast should return false for identical content to prevent echo loops")
 	}
 
 	different := []byte("route /different { backend { address \"http://localhost:9090\" } }")

@@ -1,4 +1,3 @@
-// internal/cluster/config.go
 package cluster
 
 import (
@@ -108,7 +107,7 @@ func (c *ConfigManager) Apply(payload ConfigPayload) {
 }
 
 // PreparePayload creates a compressed configuration payload for cluster distribution.
-// It updates the local checksum and returns nil if the configuration is unchanged.
+// It mutates the local checksum cache ensuring subsequent fsnotify events are ignored.
 func (c *ConfigManager) PreparePayload(domain string, rawHCL []byte, deleted bool, nodeID string) (*ConfigPayload, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -152,21 +151,17 @@ func (c *ConfigManager) PreparePayload(domain string, rawHCL []byte, deleted boo
 }
 
 // ShouldBroadcast determines if the file content has changed locally.
-// It prevents fsnotify echo chambers by comparing against the known cache.
+// It is strictly a read-only check authorizing fsnotify to trigger PreparePayload.
 func (c *ConfigManager) ShouldBroadcast(domain string, content []byte) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
 	checksum := c.calculateChecksum(content)
 	existing, exists := c.checksums[domain]
 	if !exists {
-		c.checksums[domain] = checksum
-		return false
+		return true
 	}
-	if existing == checksum {
-		return false
-	}
-	c.checksums[domain] = checksum
-	return true
+	return existing != checksum
 }
 
 // ShouldBroadcastDeletion determines if a deleted file was previously tracked.
@@ -174,6 +169,7 @@ func (c *ConfigManager) ShouldBroadcast(domain string, content []byte) bool {
 func (c *ConfigManager) ShouldBroadcastDeletion(domain string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	_, exists := c.checksums[domain]
 	return exists
 }

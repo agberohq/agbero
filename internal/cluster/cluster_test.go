@@ -104,6 +104,8 @@ func TestManager_BroadcastCert(t *testing.T) {
 	m := &Manager{
 		delegate: del,
 		cipher:   cipher,
+		nodeName: "test-node", // Required for env.Owner and self-filtering
+		// list intentionally nil for unit test isolation
 	}
 
 	err := m.BroadcastCert("secure.com", []byte("cert"), []byte("key"))
@@ -121,7 +123,6 @@ func TestManager_BroadcastCert(t *testing.T) {
 	if string(p.KeyPEM) == "key" {
 		t.Error("Private key was stored in plaintext!")
 	}
-
 	if !h.Certs["secure.com"] {
 		t.Error("Handler did not receive decrypted cert")
 	}

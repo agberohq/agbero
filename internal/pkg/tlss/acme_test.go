@@ -109,14 +109,23 @@ func TestChallengeStore_SyncFromCluster_Delete(t *testing.T) {
 }
 
 type mockCluster struct {
-	broadcastFn func(token, keyAuth string, deleted bool)
+	broadcastFn     func(token, keyAuth string, deleted bool)
+	broadcastCertFn func(domain string, certPEM, keyPEM []byte) error
 }
 
 func (m *mockCluster) TryAcquireLock(key string) bool { return true }
+
 func (m *mockCluster) BroadcastChallenge(token, keyAuth string, deleted bool) {
 	if m.broadcastFn != nil {
 		m.broadcastFn(token, keyAuth, deleted)
 	}
+}
+
+func (m *mockCluster) BroadcastCert(domain string, certPEM, keyPEM []byte) error {
+	if m.broadcastCertFn != nil {
+		return m.broadcastCertFn(domain, certPEM, keyPEM)
+	}
+	return nil
 }
 
 func TestManager_updateInternal_Notify(t *testing.T) {
