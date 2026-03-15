@@ -67,6 +67,7 @@ func (s *MemoryStore) Close() error {
 
 func generateKey(r *http.Request) string {
 	h := xxhash.New()
+	h.WriteString(r.Host)
 	h.WriteString(r.Method)
 	h.WriteString(r.URL.Path)
 	h.WriteString(r.URL.RawQuery)

@@ -205,6 +205,7 @@ func New(opts ...Option) *Manager {
 		GzCache:    mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMax}),
 	}
 
+	m.counter.Add(1)
 	m.setDefaults()
 	m.Apply(opts...)
 
