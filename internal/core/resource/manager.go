@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/woos"
@@ -189,6 +190,9 @@ type Manager struct {
 	Shutdown *jack.Shutdown
 	Lifetime *jack.Lifetime
 	Janitor  *jack.Pool
+
+	// internal
+	counter *atomic.Uint64
 }
 
 func New(opts ...Option) *Manager {
@@ -303,4 +307,16 @@ func (m *Manager) Close() {
 
 	// Step 4: Clean up remaining resources
 	m.Transport.CloseIdleConnections()
+}
+
+// Counter returns the current value without incrementing (if needed)
+func (m *Manager) Counter() uint64 {
+	return m.counter.Load()
+}
+
+// NextID increments and returns the next ID - HOT PATH
+//
+//go:nosplit
+func (m *Manager) NextID() uint64 {
+	return m.counter.Add(1)
 }

@@ -1,6 +1,9 @@
 package alaye
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 type Backend struct {
 	Enabled  Enabled `hcl:"enabled,optional" json:"enabled"`
@@ -25,4 +28,16 @@ type BackendKey struct {
 // String is used for logging and patient identification, but NEVER called on the hot path.
 func (k BackendKey) String() string {
 	return strings.Join([]string{k.Protocol, k.Domain, k.Path, k.Addr}, "|")
+}
+
+// ID is used for logging and patient identification, but NEVER called on the hot path.
+func (k BackendKey) ID(counter uint64) string {
+
+	return strings.Join([]string{
+		k.Protocol,
+		k.Domain,
+		k.Path,
+		k.Addr,
+		strconv.FormatUint(counter, 10),
+	}, "|")
 }

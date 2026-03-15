@@ -218,7 +218,7 @@ func (b *Base) RegisterHealth(probeCfg health.ProbeConfig, checkFn func(ctx cont
 	}
 
 	patient := jack.NewPatient(jack.PatientConfig{
-		ID:       b.StatsKey.String(),
+		ID:       b.StatsKey.ID(b.resource.NextID()),
 		Interval: probeCfg.StandardInterval,
 		Timeout:  probeCfg.Timeout,
 		Check:    checkFn,
