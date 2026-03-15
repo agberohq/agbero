@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net"
+	"sync/atomic"
 	"time"
 )
 
@@ -106,13 +107,12 @@ func (c *peekedConn) WriteTo(w io.Writer) (int64, error) {
 
 type deadlineConn struct {
 	net.Conn
-	timeout time.Duration
+	timeout      time.Duration
+	lastActivity atomic.Int64
 }
 
 func (c *deadlineConn) Read(b []byte) (int, error) {
-	if c.timeout > 0 {
-		_ = c.SetReadDeadline(time.Now().Add(c.timeout))
-	}
+	c.lastActivity.Store(time.Now().UnixNano())
 	return c.Conn.Read(b)
 }
 

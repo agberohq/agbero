@@ -653,7 +653,7 @@ func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath s
 	}
 
 	if entry == nil {
-		raw, err := os.ReadFile(f.Name())
+		raw, err := io.ReadAll(f)
 		if err != nil {
 			h.logger().Fields("err", err, "path", reqPath).Warn("dynamic gzip: read failed")
 			return false

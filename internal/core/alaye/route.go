@@ -2,6 +2,7 @@ package alaye
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/cespare/xxhash/v2"
@@ -296,9 +297,16 @@ func (r *Route) Key() string {
 
 	if r.Wasm.Enabled.Active() {
 		w.WriteString(r.Wasm.Module)
-		for k, v := range r.Wasm.Config {
+
+		keys := make([]string, 0, len(r.Wasm.Config))
+		for k := range r.Wasm.Config {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		for _, k := range keys {
 			w.WriteString(k)
-			w.WriteString(v)
+			w.WriteString(r.Wasm.Config[k])
 		}
 	}
 

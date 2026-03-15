@@ -44,6 +44,7 @@ type connEntry struct {
 type Proxy struct {
 	Listen      string
 	IdleTimeout time.Duration
+	MaxConns    int64
 
 	mu     sync.RWMutex // Protects routes (infrequently modified)
 	routes map[string]*tcpRoute
@@ -169,6 +170,12 @@ func (p *Proxy) Start() error {
 			if err != nil {
 				var opErr *net.OpError
 				if errors.As(err, &opErr) && opErr.Timeout() {
+					continue
+				}
+
+				if p.MaxConns > 0 && p.connCnt.Load() >= p.MaxConns {
+					p.logger.Fields("remote", conn.RemoteAddr().String(), "limit", p.MaxConns).Warn("tcp max connections reached, dropping")
+					conn.Close()
 					continue
 				}
 

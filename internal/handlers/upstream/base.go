@@ -53,7 +53,8 @@ type Base struct {
 	StartTime time.Time
 	LastRecov atomic.Int64
 
-	resource *resource.Manager
+	resource  *resource.Manager
+	PatientID string
 }
 
 func NewBase(c Config) (Base, error) {
@@ -217,8 +218,9 @@ func (b *Base) RegisterHealth(probeCfg health.ProbeConfig, checkFn func(ctx cont
 		return errors.New("doctor is nil")
 	}
 
+	b.PatientID = b.StatsKey.ID(b.resource.NextID())
 	patient := jack.NewPatient(jack.PatientConfig{
-		ID:       b.StatsKey.String(),
+		ID:       b.PatientID,
 		Interval: probeCfg.StandardInterval,
 		Timeout:  probeCfg.Timeout,
 		Check:    checkFn,
