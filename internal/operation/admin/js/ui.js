@@ -164,6 +164,59 @@ const UI = {
         container.innerHTML = html;
     },
 
+    renderClusterPage(config, stats) {
+        const grid = document.getElementById('clusterMetricsGrid');
+        const table = document.getElementById('clusterNodesTable');
+        if (!grid || !table) return;
+
+        if (!stats || !stats.enabled) {
+            grid.innerHTML = '<div class="empty-state" style="grid-column: 1 / -1;">Cluster mode is disabled</div>';
+            table.innerHTML = '';
+            return;
+        }
+
+        const members = stats.members ||[];
+        const metrics = stats.metrics || {};
+
+        grid.innerHTML = `
+            <div class="metric-card">
+                <div class="metric-content">
+                    <div class="metric-label">Active Nodes</div>
+                    <div class="metric-value">${members.length}</div>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-content">
+                    <div class="metric-label">Updates Received</div>
+                    <div class="metric-value">${this.fmtNum(metrics.updates_received || 0)}</div>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-content">
+                    <div class="metric-label">Total Deletes</div>
+                    <div class="metric-value">${this.fmtNum(metrics.deletes || 0)}</div>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-content">
+                    <div class="metric-label">Ignored Updates</div>
+                    <div class="metric-value">${this.fmtNum(metrics.updates_ignored || 0)}</div>
+                </div>
+            </div>
+        `;
+
+        if (members.length === 0) {
+            table.innerHTML = `<tr><td colspan="2"><div class="empty-state">No active nodes found</div></td></tr>`;
+        } else {
+            table.innerHTML = members.map(m => `
+                <tr>
+                    <td class="mono">${m}</td>
+                    <td><span class="badge success">Active</span></td>
+                </tr>
+            `).join("");
+        }
+    },
+
     renderRawConfig(config) {
         const el = document.getElementById("configContent");
         if (el) {
@@ -222,7 +275,7 @@ const UI = {
             return;
         }
 
-        for (const [hostname, cfg] of Object.entries(hosts)) {
+        for (const[hostname, cfg] of Object.entries(hosts)) {
             const domainsStr = (cfg.domains ||[]).join(" ");
             const matchesHost = hostname.toLowerCase().includes(filterTerm) || domainsStr.toLowerCase().includes(filterTerm);
 
@@ -326,8 +379,8 @@ const UI = {
                             </div>`;
                         });
                         backendHtml += `</div>`;
-                    } else if (route.web && (route.web.root || (route.web.git && route.web.git.enabled === "on"))) {
-                        if (route.web.git && route.web.git.enabled === "on") {
+                    } else if (route.web && (route.web.root || (route.web.git && route.web.git.enabled === "on" || route.web.git.enabled === true))) {
+                        if (route.web.git && (route.web.git.enabled === "on" || route.web.git.enabled === true)) {
                             const gitId = route.web.git.id || "unknown";
                             const gitStat = window.app.gitStats[gitId] || {};
                             const stateClass = gitStat.state === 'healthy' ? 'ok' : (gitStat.state === 'unavailable' ? 'warn' : 'down');
@@ -364,7 +417,7 @@ const UI = {
                     const proxyStats = (rtStats.proxies && rtStats.proxies[pidx]) || {};
 
                     let backendHtml = "";
-                    const configBackends = proxy.backends ||[];
+                    const configBackends = proxy.backends || [];
                     const uptimeBackends = proxyStats.backends ||[];
 
                     if (configBackends.length > 0 || uptimeBackends.length > 0) {
@@ -564,7 +617,7 @@ const UI = {
                 const gStat = window.app.gitStats[gitCfg.id] || {};
                 const state = gStat.state || 'unknown';
                 const commit = gStat.commit ? gStat.commit.substring(0, 8) : 'none';
-                const whUrl = `${window.location.origin}/.agbero/webhook/git/${gitCfg.id}`;
+                const whUrl = `${window.location.origin}/.well-known/agbero/webhook/git/${gitCfg.id}`;
 
                 let stateClass = state === 'healthy' ? 'success' : (state === 'unavailable' ? 'warning' : 'error');
 
@@ -625,7 +678,7 @@ const UI = {
             }
         }
 
-        const configBackends = cfg_item.backends?.servers || cfg_item.backends ||[];
+        const configBackends = cfg_item.backends?.servers || cfg_item.backends || [];
         const statBackends = (itemStats && itemStats.backends) ||[];
         const displayBackends = configBackends.length > 0 ? configBackends : statBackends;
 

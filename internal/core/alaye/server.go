@@ -1,4 +1,3 @@
-// internal/core/alaye/server.go
 package alaye
 
 import (

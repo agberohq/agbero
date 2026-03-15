@@ -1,3 +1,4 @@
+// cmd/agbero/main.go
 package main
 
 import (
@@ -51,11 +52,9 @@ func main() {
 
 	flaggy.String(&cfg.ConfigPath, "c", "config", "Path to configuration file")
 
-	// ---- init ---------------------------------------------------------------
 	cmdInit := flaggy.NewSubcommand("init")
 	cmdInit.Description = "Scaffold configuration in current directory"
 
-	// ---- config -------------------------------------------------------------
 	cmdConfig := flaggy.NewSubcommand("config")
 	cmdConfig.Description = "Configuration management"
 
@@ -82,7 +81,6 @@ func main() {
 	cmdConfig.AttachSubcommand(cmdConfigPath, 1)
 	cmdConfig.AttachSubcommand(cmdConfigEdit, 1)
 
-	// ---- secret -------------------------------------------------------------
 	cmdSecret := flaggy.NewSubcommand("secret")
 	cmdSecret.Description = "Generate secrets, keys, and tokens"
 
@@ -114,7 +112,6 @@ func main() {
 	cmdSecret.AttachSubcommand(cmdSecretHash, 1)
 	cmdSecret.AttachSubcommand(cmdSecretPassword, 1)
 
-	// ---- host ---------------------------------------------------------------
 	cmdHost := flaggy.NewSubcommand("host")
 	cmdHost.Description = "Manage hosts and routes"
 
@@ -131,7 +128,6 @@ func main() {
 	cmdHost.AttachSubcommand(cmdHostAdd, 1)
 	cmdHost.AttachSubcommand(cmdHostRemove, 1)
 
-	// ---- cert ---------------------------------------------------------------
 	cmdCert := flaggy.NewSubcommand("cert")
 	cmdCert.Description = "Manage TLS certificates"
 
@@ -154,7 +150,6 @@ func main() {
 	cmdCert.AttachSubcommand(cmdCertList, 1)
 	cmdCert.AttachSubcommand(cmdCertInfo, 1)
 
-	// ---- service ------------------------------------------------------------
 	cmdService := flaggy.NewSubcommand("service")
 	cmdService.Description = "Manage the system service"
 
@@ -184,7 +179,6 @@ func main() {
 	cmdService.AttachSubcommand(cmdServiceRestart, 1)
 	cmdService.AttachSubcommand(cmdServiceStatus, 1)
 
-	// ---- cluster ------------------------------------------------------------
 	cmdCluster := flaggy.NewSubcommand("cluster")
 	cmdCluster.Description = "Manage cluster settings"
 
@@ -199,19 +193,16 @@ func main() {
 	cmdCluster.AttachSubcommand(cmdClusterStart, 1)
 	cmdCluster.AttachSubcommand(cmdClusterJoin, 1)
 
-	// ---- run ----------------------------------------------------------------
 	cmdRun := flaggy.NewSubcommand("run")
 	cmdRun.Description = "Run agbero using the discovered config"
 	cmdRun.Bool(&cfg.DevMode, "d", "dev", "Enable development mode")
 
-	// ---- home ---------------------------------------------------------------
 	cmdHome := flaggy.NewSubcommand("home")
 	cmdHome.Description = "Print or navigate to the agbero configuration directory"
 	var homeTarget, homeAction string
 	cmdHome.AddPositionalValue(&homeTarget, "target", 1, false, "hosts, certs, data, logs, work, config, or @ to open shell")
 	cmdHome.AddPositionalValue(&homeAction, "action", 2, false, "Use '@' to open a shell in the target directory")
 
-	// ---- serve / proxy ------------------------------------------------------
 	cmdServe := flaggy.NewSubcommand("serve")
 	cmdServe.Description = "Serve a static directory instantly"
 	cmdServe.AddPositionalValue(&cfg.ServePath, "path", 1, false, "Path to serve (default: .)")
@@ -227,7 +218,6 @@ func main() {
 	cmdProxy.String(&cfg.ProxyBind, "b", "bind", "Bind address")
 	cmdProxy.Bool(&cfg.ProxyHTTPS, "s", "https", "Enable HTTPS")
 
-	// ---- help ---------------------------------------------------------------
 	cmdHelp := flaggy.NewSubcommand("help")
 	cmdHelp.Description = "Show usage examples"
 
@@ -543,12 +533,13 @@ func showHelpExamples() {
 	fmt.Printf("\nEXECUTION:\n")
 	fmt.Printf("  %s run                         # run using discovered config\n", exeName)
 	fmt.Printf("  %s serve .                     # serve current directory on the fly\n", exeName)
-	fmt.Printf("  %s config reload               # hot reload running instance\n", exeName)
+	fmt.Printf("  %s proxy :3000                 # proxy local port 3000\n", exeName)
 	fmt.Printf("\nCONFIGURATION:\n")
 	fmt.Printf("  %s config validate             # validate config file\n", exeName)
 	fmt.Printf("  %s config view                 # print config file\n", exeName)
 	fmt.Printf("  %s config edit                 # edit config in $EDITOR\n", exeName)
 	fmt.Printf("  %s config path                 # show config file path\n", exeName)
+	fmt.Printf("  %s config reload               # hot reload running instance\n", exeName)
 	fmt.Printf("\nSECRETS & KEYS:\n")
 	fmt.Printf("  %s secret cluster              # generate gossip secret key\n", exeName)
 	fmt.Printf("  %s secret key init             # generate internal auth key\n", exeName)
@@ -559,6 +550,10 @@ func showHelpExamples() {
 	fmt.Printf("  %s host list                   # list configured hosts\n", exeName)
 	fmt.Printf("  %s host add                    # add host/route (interactive)\n", exeName)
 	fmt.Printf("  %s host remove                 # remove host/route (interactive)\n", exeName)
+	fmt.Printf("\nNAVIGATION:\n")
+	fmt.Printf("  %s home                        # print Agbero home directory\n", exeName)
+	fmt.Printf("  %s home @                      # open shell in home directory\n", exeName)
+	fmt.Printf("  %s home hosts @                # open shell in hosts.d\n", exeName)
 	fmt.Printf("\nSERVICE MANAGEMENT:\n")
 	fmt.Printf("  %s%s service install\n", prefix, exeName)
 	fmt.Printf("  %s%s service start\n", prefix, exeName)

@@ -69,6 +69,7 @@ type Git struct {
 	Branch   string        `hcl:"branch,optional" json:"branch"`
 	Secret   Value         `hcl:"secret,optional" json:"secret"`
 	Interval time.Duration `hcl:"interval,optional" json:"interval"`
+	WorkDir  string        `hcl:"work_dir,optional" json:"work_dir"`
 	SubDir   string        `hcl:"sub_dir,optional" json:"sub_dir"`
 	Auth     GitAuth       `hcl:"auth,block" json:"auth"`
 }
@@ -106,7 +107,7 @@ type Markdown struct {
 	Enabled         Enabled   `hcl:"enabled,optional"   json:"enabled"`
 	UnsafeHTML      Enabled   `hcl:"unsafe,optional"    json:"unsafe"`
 	TableOfContents Enabled   `hcl:"toc,optional"       json:"toc,omitempty"`
-	SyntaxHighlight Highlight `hcl:"highlight,block"  json:"highlight,omitempty"`
+	SyntaxHighlight Highlight `hcl:"highlight,block"    json:"highlight,omitempty"`
 	Extensions      []string  `hcl:"extensions,optional" json:"extensions,omitempty"`
 	Template        string    `hcl:"template,optional"  json:"template,omitempty"`
 	View            string    `hcl:"view,optional"      json:"view,omitempty"`

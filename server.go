@@ -176,11 +176,10 @@ func (s *Server) Start(configPath string) error {
 		for _, hcfg := range hosts {
 			for _, r := range hcfg.Routes {
 				if r.Web.Git.Enabled.Active() {
-					customRoot := ""
-					if r.Web.Root.IsSet() {
-						customRoot = r.Web.Root.String()
+					err = s.cookManager.Register(r.Web.Git.ID, r.Web.Git)
+					if err != nil {
+						s.logger.Error("failed to register cook", "id", r.Web.Git.ID, "err", err)
 					}
-					_ = s.cookManager.Register(r.Web.Git.ID, r.Web.Git, customRoot)
 				}
 			}
 		}

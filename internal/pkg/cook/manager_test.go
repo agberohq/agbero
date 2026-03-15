@@ -79,7 +79,7 @@ func TestManager_Register_And_Webhook(t *testing.T) {
 		Secret:   alaye.Value("my_super_secret"),
 		Interval: 0,
 	}
-	err = mgr.Register("test_route", cfg, "")
+	err = mgr.Register("test_route", cfg)
 	if err != nil {
 		t.Fatalf("Register failed: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestManager_Health(t *testing.T) {
 		URL:     upstream,
 		Branch:  "master",
 	}
-	mgr.Register("healthy_route", cfg, "")
+	mgr.Register("healthy_route", cfg)
 	time.Sleep(100 * time.Millisecond)
 	health := mgr.Health()
 	if len(health) != 1 {

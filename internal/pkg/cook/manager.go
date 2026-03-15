@@ -81,8 +81,8 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 }
 
 // Register mounts a Git configuration into the manager's active deployment pool.
-// It accepts an optional custom root path to override the global working directory.
-func (m *Manager) Register(routeKey string, cfg alaye.Git, customRoot string) error {
+// Uses the specific Git work_dir if provided, falling back to the global storage path.
+func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 	if cfg.URL == "" {
 		return errors.New("git URL is required")
 	}
@@ -98,8 +98,8 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git, customRoot string) er
 	}
 
 	targetWorkDir := filepath.Join(m.workDir, routeKey)
-	if customRoot != "" {
-		targetWorkDir = customRoot
+	if cfg.WorkDir != "" {
+		targetWorkDir = cfg.WorkDir
 	}
 
 	cookCfg := Config{

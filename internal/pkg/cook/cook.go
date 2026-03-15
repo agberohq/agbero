@@ -174,7 +174,7 @@ func (c *Cook) Make(ctx context.Context) error {
 		}
 	}()
 
-	c.logger.Infof("cloning repository %s (branch: %s)", c.config.URL, c.config.Branch)
+	c.logger.Fields("branch", c.config.Branch).Infof("cloning repository %s", c.config.URL)
 
 	cloneOpts := &git.CloneOptions{
 		URL:          c.config.URL,
@@ -210,7 +210,7 @@ func (c *Cook) Make(ctx context.Context) error {
 
 	// Check if this commit is already deployed
 	if _, err := os.Stat(deployDir); err == nil {
-		c.logger.Infof("commit %s already deployed, switching", commitHash[:8])
+		c.logger.Fields("hash", commitHash).Infof("commit %s already deployed, switching", commitHash[:8])
 		_ = os.RemoveAll(tmpDir)
 		tmpDir = ""
 	} else {
