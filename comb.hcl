@@ -1,7 +1,7 @@
 recursive = true
 output_file = "all.txt"
-extensions = [".go",".css",".js",".html",".md",".hcl"]
-#extensions = [".go"]
+#extensions = [".go",".css",".js",".html",".md",".hcl"]
+extensions = [".go"]
 exclude_dirs {
   items = ["lab", "bin", "dist", "assets", "oppor", "docs"]
 }
@@ -10,5 +10,5 @@ exclude_files {
 }
 use_gitignore = true
 detailed = false
-go_mode = "all"
+go_mode = "code"
 minify = false
