@@ -1,4 +1,3 @@
-// wellknown_test.go
 package wellknown
 
 import (

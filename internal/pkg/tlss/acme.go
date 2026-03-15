@@ -129,7 +129,6 @@ func (p *ACMEProvider) setupLegoClient() (*lego.Client, error) {
 	return client, nil
 }
 
-// acme.go - only the fixed loadUser function shown
 func (p *ACMEProvider) loadUser() error {
 	email := p.config.Email
 	if email == "" {

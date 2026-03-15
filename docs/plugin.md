@@ -1,42 +1,51 @@
-# Agbero Plugin Guide: WebAssembly Middleware
+# Agbero WebAssembly Plugin Guide
 
-Agbero supports a powerful plugin system powered by **WebAssembly (WASM)** via the `wazero` runtime. This allows you to write custom middleware in any language that compiles to WASM (Go, Rust, C++, Zig) and execute it safely inside the proxy with near-native performance.
+Agbero supports WebAssembly (WASM) middleware plugins that run inside the request pipeline. Plugins can inspect and modify request headers, read route configuration, and short-circuit requests — all without modifying Agbero's source code.
 
-## Why use WASM Plugins?
+## How It Works
 
-1.  **Custom Logic:** Implement specific business rules (e.g., inspecting specific headers or JWT tokens) without maintaining a custom fork of Agbero.
-2.  **Memory Safety:** Plugins execute in an isolated sandbox. Memory leaks or panics inside the plugin will never crash the core Agbero proxy.
-3.  **Hot Reloading:** Modify your `.wasm` binary and execute an `agbero reload` to seamlessly swap out the logic with zero dropped connections.
-4.  **Language Agnostic:** Write middleware in Rust or Go depending on your team's expertise.
+```
+Client Request
+     │
+     ▼
+┌─────────────┐
+│   Agbero    │
+│  Pipeline   │
+│             │
+│ ┌─────────┐ │
+│ │  WASM   │ │  ← Your plugin runs here
+│ │ Plugin  │ │
+│ └────┬────┘ │
+│      │      │
+│  continue   │
+│   or stop   │
+└─────┬───────┘
+      │
+      ▼
+  Backend
+```
 
-## 1. How It Works
+Each request passes through your plugin before reaching the backend. The plugin can:
+- Read any request header
+- Set new headers (forwarded to the backend)
+- Stop the request with any HTTP status code
+- Read its own configuration from the HCL file
 
-When a request matches a route containing a `wasm` block:
-
-1.  Agbero checks its sync pool for a warm WASM instance.
-2.  Agbero invokes the exported `handle_request()` function within your module.
-3.  Your module executes, calling **Host Functions** (Agbero's API) to read request data or mutate response headers.
-4.  Your module calls `agbero_done(status)`. A status of `0` tells Agbero to continue the proxy chain. Any status `> 0` tells Agbero to abort the chain and respond immediately with that HTTP status code.
-
-## 2. Configuration
-
-Enable the plugin directly within your routing definitions.
+## Configuration
 
 ```hcl
-# hosts.d/api.hcl
-route "/secure/api" {
+# hosts.d/example.hcl
+domains = ["api.example.com"]
+
+route "/api" {
   wasm {
     enabled = true
-    module  = "./plugins/auth.wasm"
-    
-    # Security: Explicitly grant permissions. 
-    # Plugins attempting to access ungranted capabilities will receive empty data.
-    access =["headers", "config"]
-    
-    # Configuration passed to the plugin (retrieved via agbero_get_config)
+    module  = "/etc/agbero/plugins/auth.wasm"
+    access  = ["headers", "config"]
     config = {
-      "required_role" = "super-admin"
-      "debug_mode"    = "true"
+      "required_role" = "admin"
+      "debug"         = "false"
+      "api_keys"      = "key1,key2,key3"
     }
   }
 
@@ -46,53 +55,211 @@ route "/secure/api" {
 }
 ```
 
-### Access Control (`access` list)
+### WASM Block Fields
 
-Agbero enforces strict memory isolation.
+| Field    | Description                                  | Default  |
+|----------|----------------------------------------------|----------|
+| `enabled`  | Enable/disable this plugin                 | `false`  |
+| `module`   | Path to the `.wasm` file                   | Required |
+| `access`   | Permissions: `headers`, `config`           | `[]`     |
+| `config`   | Key-value map passed to the plugin         | `{}`     |
+
+### Access Permissions
 
 | Permission | Description |
-| :--- | :--- |
-| `headers` | Read (`agbero_get_header`) and Write (`agbero_set_header`) HTTP headers. |
-| `config` | Read the JSON-serialized `config` map provided in the HCL file. |
+|------------|-------------|
+| `headers`  | Read and write HTTP headers |
+| `config`   | Read the `config` map from HCL |
 
-## 3. Host Function API Reference
+---
 
-These functions are mounted in the `env` namespace within the WASM runtime.
+## Host Functions API
 
-### `agbero_get_header(key_ptr, key_len, buf_ptr, buf_len) -> val_len`
-*   **Input**: Memory pointer and length indicating the header key to look up. Memory pointer and length representing your allocated output buffer.
-*   **Output**: Returns the **actual length** of the header value.
-*   **Behavior**: Copies the header value into your buffer. Truncates silently if your provided buffer is too small.
+Your plugin communicates with Agbero through a small set of imported host functions.
 
-### `agbero_set_header(key_ptr, key_len, val_ptr, val_len)`
-*   **Input**: Pointers and lengths for the Key and Value strings.
-*   **Behavior**: Sets a header. If the plugin allows the request, this header is attached to the request sent to the backend. If the plugin blocks the request, this header is attached to the immediate HTTP response sent to the client.
+### `agbero_get_header` - Read Request Header
 
-### `agbero_get_config(buf_ptr, buf_len) -> json_len`
-*   **Input**: Pointer and length representing your allocated output buffer.
-*   **Output**: Length of the JSON string.
-*   **Behavior**: Copies the JSON-serialized `config` map from your HCL file into the buffer.
+```rust
+fn agbero_get_header(key_ptr: *const u8, key_len: usize,
+                     val_ptr: *mut u8,  max_len: usize) -> usize;
+```
 
-### `agbero_done(status_code)`
-*   **Input**: HTTP Status Code (uint32).
-*   **Behavior**:
-    *   `0`: **Success/Continue**. Agbero proceeds to the next middleware or routes to the backend.
-    *   `200-599`: **Stop/Abort**. Agbero halts processing and responds to the client with the provided HTTP status code.
+**Parameters:**
+- `key_ptr`, `key_len`: Header name (e.g. `"Authorization"`)
+- `val_ptr`, `max_len`: Output buffer
 
-## 4. Writing a Plugin (Go / TinyGo)
+**Returns:** Number of bytes written. `0` means the header was not present.
 
-We strongly recommend **TinyGo** as it produces highly optimized, small WASM binaries suitable for high-throughput edge proxies.
+### `agbero_set_header` - Set Request Header
 
-### Create `main.go`
+```rust
+fn agbero_set_header(key_ptr: *const u8, key_len: usize,
+                     val_ptr: *const u8, val_len: usize);
+```
 
+Sets a header on the outbound request (forwarded to the backend). Requires `headers` in `access`.
+
+### `agbero_get_config` - Read Plugin Configuration
+
+```rust
+fn agbero_get_config(buf_ptr: *mut u8, buf_len: usize) -> usize;
+```
+
+**Parameters:**
+- `buf_ptr`, `buf_len`: Output buffer for JSON configuration
+
+**Returns:** Actual length of configuration JSON
+
+**Behavior:** Copies JSON-serialized `config` map from HCL into buffer.
+
+### `agbero_done` - Complete Request
+
+```rust
+fn agbero_done(status_code: u32)
+```
+
+**Parameters:**
+- `status_code`: HTTP status code
+
+**Behavior:**
+- `0`: Continue to next middleware or backend
+- `200-599`: Stop processing and respond with this status code
+
+---
+
+## Writing Plugins
+
+### Option 1: Rust (Recommended)
+
+Rust offers excellent memory safety and produces highly optimized WASM binaries.
+
+**Cargo.toml:**
+```toml
+[package]
+name = "agbero-auth"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+```
+
+**src/lib.rs:**
+```rust
+use serde::Deserialize;
+use std::slice;
+
+#[link(wasm_import_module = "env")]
+extern "C" {
+    fn agbero_get_header(k: *const u8, kl: usize, v: *mut u8, ml: usize) -> usize;
+    fn agbero_set_header(k: *const u8, kl: usize, v: *const u8, vl: usize);
+    fn agbero_get_config(buf: *mut u8, len: usize) -> usize;
+    fn agbero_done(status: u32);
+}
+
+#[derive(Deserialize, Debug)]
+struct Config {
+    required_role: String,
+    debug: bool,
+    api_keys: Vec<String>,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn handle_request() {
+    // 1. Get configuration
+    let mut config_buf = [0u8; 4096];
+    let config_len = agbero_get_config(config_buf.as_mut_ptr(), 4096);
+
+    if config_len == 0 {
+        agbero_done(500);
+        return;
+    }
+
+    let config_json = String::from_utf8_lossy(&config_buf[..config_len]);
+    let config: Config = match serde_json::from_str(&config_json) {
+        Ok(c) => c,
+        Err(_) => {
+            agbero_done(500);
+            return;
+        }
+    };
+
+    if config.debug {
+        // Debug output (visible in logs via response headers)
+    }
+
+    // 2. Get Authorization header
+    let auth_key = "Authorization";
+    let mut auth_buf = [0u8; 512];
+    let auth_len = agbero_get_header(
+        auth_key.as_ptr(),
+        auth_key.len(),
+        auth_buf.as_mut_ptr(),
+        512,
+    );
+
+    if auth_len == 0 {
+        agbero_done(401);
+        return;
+    }
+
+    let auth_value = String::from_utf8_lossy(&auth_buf[..auth_len]);
+
+    // 3. Validate against API keys
+    let token = auth_value.strip_prefix("Bearer ").unwrap_or(&auth_value);
+
+    if config.api_keys.iter().any(|key| key == token) {
+        // Set user header for backend
+        let user_header = "X-Authenticated-User";
+        let user_value = "api-user";
+        agbero_set_header(
+            user_header.as_ptr(),
+            user_header.len(),
+            user_value.as_ptr(),
+            user_value.len(),
+        );
+
+        agbero_done(0); // Continue to backend
+    } else {
+        agbero_done(403); // Forbidden
+    }
+}
+```
+
+**Compile:**
+```bash
+# Rust 1.78+ (preferred)
+rustup target add wasm32-wasip1
+cargo build --target wasm32-wasip1 --release
+cp target/wasm32-wasip1/release/agbero_auth.wasm ./auth.wasm
+
+# Older Rust (still works)
+rustup target add wasm32-wasi
+cargo build --target wasm32-wasi --release
+cp target/wasm32-wasi/release/agbero_auth.wasm ./auth.wasm
+```
+
+### Option 2: TinyGo
+
+Go developers can use TinyGo to compile to WASM.
+
+**main.go:**
 ```go
 package main
 
 import (
+	"encoding/json"
 	"unsafe"
 )
 
-// --- Host Function API ---
+type Config struct {
+	BlockCountries []string `json:"block_countries"`
+	Debug          bool     `json:"debug_mode"`
+}
 
 //export agbero_get_header
 func agbero_get_header(keyPtr, keyLen, valPtr, maxLen uint32) uint32
@@ -106,45 +273,40 @@ func agbero_get_config(bufPtr, maxLen uint32) uint32
 //export agbero_done
 func agbero_done(status uint32)
 
-// --- Core Logic ---
-
 //export handle_request
 func handle_request() {
-	key := "Authorization"
-	buf := make([]byte, 256)
-	
-	valLen := agbero_get_header(
-		ptr(key), len32(key),
-		ptr(buf), 256,
-	)
-	
-	// Block if header is missing or empty
-	if valLen == 0 {
-		agbero_done(401)
+	// Get configuration
+	configJSON := getConfig()
+
+	var cfg Config
+	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+		agbero_done(500)
 		return
 	}
 
-	token := string(buf[:valLen])
+	// Get Cloudflare country header
+	cfKey := "CF-IPCountry"
+	cfBuf := make([]byte, 8)
+	cfLen := agbero_get_header(ptr(cfKey), len32(cfKey), ptr(cfBuf), 8)
 
-	// Validate token
-	if token == "Bearer secret-admin-key" {
-		// Set a header for the backend to consume
-		setKey := "X-Role"
-		setVal := "Admin"
-		agbero_set_header(
-			ptr(setKey), len32(setKey),
-			ptr(setVal), len32(setVal),
-		)
-		
-		agbero_done(0) // Proceed to backend
-	} else {
-		agbero_done(403) // Forbidden
+	if cfLen > 0 {
+		country := string(cfBuf[:cfLen])
+		for _, blocked := range cfg.BlockCountries {
+			if country == blocked {
+				agbero_done(403)
+				return
+			}
+		}
 	}
+
+	agbero_done(0) // Continue
 }
 
-func main() {}
-
-// --- Memory Helpers ---
+func getConfig() string {
+	buf := make([]byte, 4096)
+	n := agbero_get_config(ptr(buf), 4096)
+	return string(buf[:n])
+}
 
 func ptr(s interface{}) uint32 {
 	switch v := s.(type) {
@@ -156,57 +318,150 @@ func ptr(s interface{}) uint32 {
 	return 0
 }
 
-func len32(s string) uint32 { 
-    return uint32(len(s)) 
-}
+func len32(s string) uint32 { return uint32(len(s)) }
+
+func main() {}
 ```
 
-### Compile the Plugin
-
+**Compile:**
 ```bash
-tinygo build -o auth.wasm -target=wasi -no-debug main.go
+tinygo build -o geo-block.wasm -target=wasi -no-debug main.go
 ```
 
-## 5. Writing a Plugin (Rust)
+### Option 3: C/C++
 
-Rust offers excellent memory control and produces highly efficient WASM artifacts.
+**example.c:**
+```c
+#include <string.h>
 
-### Create `lib.rs`
+extern unsigned int agbero_get_header(const char* key, unsigned int key_len,
+                                      char* buf, unsigned int buf_len);
+extern void agbero_set_header(const char* key, unsigned int key_len,
+                              const char* val, unsigned int val_len);
+extern unsigned int agbero_get_config(char* buf, unsigned int buf_len);
+extern void agbero_done(unsigned int status);
 
-```rust
-#[link(wasm_import_module = "env")]
-extern "C" {
-    fn agbero_get_header(k: *const u8, kl: usize, v: *mut u8, ml: usize) -> usize;
-    fn agbero_done(status: u32);
-}
+void handle_request() {
+    char config_buf[4096];
+    unsigned int config_len = agbero_get_config(config_buf, 4096);
 
-#[no_mangle]
-pub extern "C" fn handle_request() {
-    let key = "User-Agent";
-    let mut buf =[0u8; 128];
-    
-    unsafe {
-        let len = agbero_get_header(key.as_ptr(), key.len(), buf.as_mut_ptr(), 128);
-        
-        // Block simple curl bots
-        if len >= 4 && &buf[0..4] == b"curl" {
-             agbero_done(403);
-             return;
-        }
-        
+    // Simple check for API key
+    char auth_buf[256];
+    unsigned int auth_len = agbero_get_header("Authorization", 13, auth_buf, 256);
+
+    if (auth_len > 0 && strncmp(auth_buf, "Bearer secret", 13) == 0) {
+        agbero_set_header("X-Auth", 6, "true", 4);
         agbero_done(0);
+    } else {
+        agbero_done(401);
     }
 }
 ```
 
-### Compile the Plugin
-
+**Compile with WASI SDK:**
 ```bash
-cargo build --target wasm32-wasi --release
+clang --target=wasm32-wasi -nostdlib -Wl,--no-entry \
+      -Wl,--export=handle_request -o example.wasm example.c
 ```
 
-## 6. Performance Best Practices
+---
 
-*   **Avoid Allocations:** Pre-allocate buffers and reuse them within your WASM code. Heap allocations inside WASM can create minor latency spikes.
-*   **Cache Configuration:** If you need to parse JSON from `agbero_get_config`, do it lazily the first time the module executes and cache the result. The `wazero` instance persists in memory between requests.
-*   **Target Scope:** Only request the capabilities (`access` list) you strictly require. This allows Agbero to skip memory context preparations for unused features.
+## Testing Plugins Locally
+
+1. **Create a test configuration:**
+
+```hcl
+# hosts.d/test.hcl
+domains = ["test.localhost"]
+
+route "/" {
+  wasm {
+    enabled = true
+    module  = "./auth.wasm"
+    access  = ["headers", "config"]
+    config = {
+      "debug" = "true"
+    }
+  }
+
+  web {
+    root    = "./www"
+    listing = true
+  }
+}
+```
+
+2. **Run Agbero in development mode:**
+```bash
+agbero run --dev
+```
+
+3. **Test with curl:**
+```bash
+# Should pass
+curl -H "Authorization: Bearer secret" http://test.localhost/
+
+# Should return 401
+curl http://test.localhost/
+```
+
+---
+
+## Performance Best Practices
+
+1. **Minimize allocations** — pre-allocate buffers and reuse them
+2. **Cache configuration** — parse JSON once and store in a static variable
+3. **Request only needed permissions** — smaller `access` list means faster execution
+4. **Keep plugins focused** — one plugin, one responsibility
+5. **Use release builds** — always compile with optimizations enabled
+
+---
+
+## Debugging Plugins
+
+### Enable Debug Mode
+
+```hcl
+wasm {
+  config = {
+    "debug" = "true"  # Plugin-specific debug flag
+  }
+}
+```
+
+### Logging from Plugins
+
+Use response headers to surface debug values during development:
+
+```rust
+agbero_set_header(
+    "X-WASM-Debug".as_ptr(), 12,
+    "auth-check".as_ptr(), 10,
+);
+```
+
+### Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| Plugin not loading | Check file permissions and path |
+| Memory access violation | Verify buffer sizes and bounds |
+| Function not found | Ensure correct export name (`handle_request`) |
+| Slow performance | Reduce allocations, check access list |
+
+---
+
+## Limitations
+
+- **No filesystem access** — plugins cannot read or write files
+- **No network access** — all I/O must go through host functions
+- **Limited memory** — 1MB default per instance
+- **No threads** — WASM is single-threaded
+
+---
+
+## Next Steps
+
+- **Example Plugins** — check GitHub for ready-to-use plugins
+- **Advanced Topics** — see [Advanced Guide](./advance.md) for clustering
+- **API Reference** — see [API Guide](./api.md) for programmatic control

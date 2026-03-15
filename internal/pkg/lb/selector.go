@@ -1,4 +1,3 @@
-// selector.go
 package lb
 
 import (

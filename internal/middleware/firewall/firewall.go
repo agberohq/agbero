@@ -1,4 +1,3 @@
-// internal/middleware/firewall/firewall.go
 package firewall
 
 import (
