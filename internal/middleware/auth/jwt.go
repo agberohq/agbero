@@ -55,6 +55,11 @@ func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
 				}
 			}
 
+			// Avoid Spoofing
+			for _, headerName := range cfg.ClaimMap {
+				r.Header.Del(headerName)
+			}
+
 			for claimKey, headerName := range cfg.ClaimMap {
 				if val, ok := claims[claimKey]; ok {
 					r.Header.Set(headerName, fmt.Sprintf("%v", val))
