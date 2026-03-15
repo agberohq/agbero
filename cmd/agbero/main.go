@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -104,6 +105,7 @@ func main() {
 
 	cmdSecretPassword := flaggy.NewSubcommand("password")
 	cmdSecretPassword.Description = "Generate a random password and its bcrypt hash"
+	cmdSecretPassword.AddPositionalValue(&cfg.PasswordLength, "length", 1, false, "Password length (default: 32)")
 
 	cmdSecret.AttachSubcommand(cmdSecretCluster, 1)
 	cmdSecret.AttachSubcommand(cmdSecretKey, 1)
@@ -268,7 +270,15 @@ func main() {
 		case cmdSecretHash.Used:
 			s.Hash(cfg.HashPassword)
 		case cmdSecretPassword.Used:
-			s.Password(0)
+			length := 0
+			if cfg.PasswordLength != "" {
+				if n, err := strconv.Atoi(cfg.PasswordLength); err == nil {
+					length = n
+				} else {
+					logger.Fatal("invalid length: must be a number")
+				}
+			}
+			s.Password(length)
 		default:
 			flaggy.ShowHelpAndExit("secret")
 		}

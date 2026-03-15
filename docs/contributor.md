@@ -50,7 +50,7 @@ Understanding the project structure will help you navigate the codebase:
 1. **Discuss Major Changes:** If you plan to add a large feature (e.g., a new  driver for shared state, or a new OAuth provider), please open an Issue first to discuss the architecture.
 2. **Branching:** Fork the repository and create a feature branch (`feature/your-feature-name` or `fix/issue-description`).
 3. **Testing:** Ensure unit tests cover your new logic. Run the race detector.
-4. **Documentation:** If your change modifies the HCL configuration, update `docs/guide.md` and `docs/advance.md`.
+4. **Documentation:** If your change modifies the HCL configuration, update `docs/global.md`, `docs/host.md` and `docs/advance.md`.
 5. **Submit:** Open a PR against the `main` branch. Ensure your commit messages are descriptive.
 
 ## Code Style Guidelines

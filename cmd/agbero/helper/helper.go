@@ -32,7 +32,8 @@ type Config struct {
 	ProxyBind   string
 	ProxyHTTPS  bool
 
-	HashPassword string
+	HashPassword   string
+	PasswordLength string
 }
 
 type Helper struct {
