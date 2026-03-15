@@ -52,7 +52,7 @@ func TestMain(m *testing.M) {
 func BenchmarkServerStrategies(b *testing.B) {
 	strategies := []struct {
 		name  string
-		strat string
+		start string
 	}{
 		{"round_robin", alaye.StrategyRoundRobin},
 		{"least_conn", alaye.StrategyLeastConn},
@@ -63,7 +63,7 @@ func BenchmarkServerStrategies(b *testing.B) {
 
 	for _, s := range strategies {
 		b.Run(s.name, func(b *testing.B) {
-			result := benchmarkServerWithStrategy(b, s.strat)
+			result := benchmarkServerWithStrategy(b, s.start)
 
 			// Only collect final results (not the warm-up iterations)
 			if b.N > 1000 { // Only collect meaningful runs
