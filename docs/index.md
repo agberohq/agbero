@@ -1,28 +1,50 @@
-## Welcome to the documentation!
+# Agbero
 
-## Why Agbero? Solving Real Problems
+**The Cloud-Native Reverse Proxy & Load Balancer for Modern Infrastructure**
 
-### The Problem with Traditional Proxies
+Agbero is a high-performance, single-binary reverse proxy and API gateway designed to bridge the gap between the simplicity of traditional proxies (like Nginx or Caddy) and the advanced distributed capabilities of service meshes (like Istio or Envoy).
 
-Traditional proxies like Nginx and Caddy often fall short in modern microservices environments:
+Whether you are running a single homelab server, deploying a globally distributed API, or serving static frontends directly from Git, Agbero provides a unified, zero-dependency control plane and data plane.
 
-1. **Static Configuration**: Most require manual reloads and restarts for service discovery
-2. **Complex Service Discovery**: Integrating with service meshes requires plugins and extra tooling
-3. **Poor Developer Experience**: Local development TLS setup is cumbersome
-4. **Limited Observability**: Basic metrics without detailed latency histograms
-5. **No Built-in Gossip**: Manual coordination for multi-node setups
+## Why Agbero?
 
-### How Agbero Solves These Issues
+Traditional proxies often rely on static IP-based rules and manual configuration reloads, which break down in modern, dynamic environments. Complex service meshes solve this but introduce massive operational overhead, sidecar injections, and steep learning curves.
 
-> *As referenced in [this Twitter thread](https://x.com/ayushagarwal/status/2016439436192751948?s=46), developers need tools that bridge local development and production seamlessly.*
+Agbero solves these challenges natively:
 
-**Agbero provides**:  
-✅ Zero-config local development with auto-TLS  
-✅ Production-grade load balancing with zero-downtime updates  
-✅ Built-in gossip for automatic service discovery  
-✅ Unified configuration from development to production
+*   **Identity-Based Rate Limiting:** Stop punishing legitimate users behind corporate NATs. Agbero supports distributed rate limiting and firewalling based on JWT claims, headers, or cookies, synchronized across your cluster via Redis or Gossip.
+*   **Centralized Edge Authentication:** Eliminate authentication sprawl. Agbero validates JWTs, handles full OAuth flows (Google, GitHub, OIDC), and integrates with external Forward Auth services directly at the edge.
+*   **Zero-Downtime GitOps (Cook):** Deploy static sites and Single Page Applications directly from Git repositories. Agbero pulls, builds isolated deployments, and performs atomic symlink swaps without dropping a single request.
+*   **Distributed Cluster Mesh:** No external dependencies required. Agbero nodes automatically discover each other via UDP Gossip and synchronize routing configurations and ACME certificates over reliable TCP streams.
+*   **Deep Observability:** Built-in Prometheus and VictoriaMetrics integration provides high-resolution latency histograms and circuit-breaker telemetry without requiring complex log-parsing pipelines.
 
+## Core Capabilities
 
-- [API Reference](./guide.md) - Complete configuration reference
-- [Examples](./install.md) - More real-world scenarios
-- [Contributing](./plugin.md) - How to extend Agbero
+### Traffic Management (L4 & L7)
+*   HTTP/1.1, HTTP/2, and HTTP/3 (QUIC) support.
+*   TCP Proxying with SNI routing and PROXY Protocol support.
+*   Advanced load balancing strategies (Round Robin, Least Conn, Consistent Hash, Adaptive).
+*   Automatic Circuit Breaking and Active/Passive Health Probes.
+*   Graceful connection draining and hot-reloading.
+
+### Security & WAF
+*   Automated Let's Encrypt (HTTP-01) and local development CA (`mkcert`) provisioning.
+*   Dynamic Web Application Firewall (WAF) with regex matching, threshold tracking, and auto-banning.
+*   Cross-Origin Resource Sharing (CORS) and security header injection.
+*   WebAssembly (WASM) middleware support for custom, highly-performant request filtering.
+
+### Content Serving
+*   High-performance static file serving with on-the-fly Brotli and Gzip compression.
+*   FastCGI support for PHP applications.
+*   On-the-fly Markdown to HTML rendering with syntax highlighting.
+
+## Documentation Guide
+
+Navigate through the documentation to master Agbero:
+
+- [**Installation Guide**](./install.md) - Get Agbero running on Linux, macOS, or Windows.
+- [**Command Line**](./command.md) - Using Agbero from the command line.
+- [**User Guide & Examples**](./guide.md) - Practical configuration examples for APIs, WebSockets, and Auth.
+- [**Advanced Guide**](./advance.md) - Deep dive into Clustering, Git Deployments, and Firewall tuning.
+- [**Plugin Guide**](./plugin.md) - Write custom high-performance middleware using WebAssembly.
+- [**Contributor Guide**](./contributor.md) - Architecture overview and guidelines for contributing to Agbero.

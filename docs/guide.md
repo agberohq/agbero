@@ -1,368 +1,273 @@
 # Agbero Guide: Practical Examples & Use Cases
 
-## Understanding Configuration
+Agbero uses HCL (HashiCorp Configuration Language) distributed across a global configuration file and individual host files. This guide walks you through common scenarios, from local development to production gateways.
 
-Agbero uses HCL (HashiCorp Configuration Language) with a hierarchical structure:
+## 1. Administration Basics
 
-```
-agbero.hcl (global)
-└── hosts.d/*.hcl (host definitions)
-└── route {} / proxy {} (routes)
-```
+By default, the admin dashboard is available on port `9090`. It provides a visual overview of cluster health, routes, and active firewall bans.
 
-### Global Configuration (`agbero.hcl`)
+### Enabling the Admin Dashboard
 
 ```hcl
-version = 1
-
-bind {
-  http  = [":80"]          # HTTP listeners
-  https = [":443"]         # HTTPS listeners
-  redirect = true          # Auto HTTP→HTTPS
-}
-
-storage {
-  hosts_dir = "./hosts.d"  # Where host configs live
-  certs_dir = "./certs.d"  # TLS certificates
-  data_dir  = "./data.d"   # Runtime data
-  logs_dir  = "./logs.d"   # Log files
-  work_dir  = "./work.d"    # Git deployment workspace
-}
-
-timeouts {
-  enabled    = true
-  read       = "30s"       # Global read timeout
-  write      = "30s"       # Global write timeout
-  idle       = "120s"      # Keep-alive timeout
-  read_header = "5s"       # Header read timeout
-}
-```
-
-### Host Configuration (`hosts.d/example.hcl`)
-
-```hcl
-domains = ["app.example.com", "api.example.com"]
-
-# TLS configuration
-tls {
-  mode = "letsencrypt"  # or "local", "local_auto", "custom_ca"
-  email = "admin@example.com"  # for Let's Encrypt
-}
-
-# Routes
-route "/" {
-  web {
-    root = "/var/www/html"
-    index = "index.html"
-  }
-}
-
-route "/api" {
-  backend {
-    strategy = "round_robin"
-    server { address = "http://localhost:3000" }
-    server { address = "http://localhost:3001" }
-  }
+# agbero.hcl
+admin {
+  enabled = true
+  address = ":9090"
   
-  health_check {
-    path = "/health"
-    interval = "10s"
+  basic_auth {
+    enabled = true
+    users   = ["admin:$2a$10$YourHashedPasswordHere"]
   }
 }
 ```
 
-## Common Use Cases
+### Changing the Admin Password
 
-### 1. Static Website with HTTPS
+Agbero uses standard `bcrypt` hashing for passwords. You can generate a new hash using the built-in CLI tool:
+
+```bash
+agbero hash -p mynewpassword
+# Output: $2a$10$wT0E.K...
+
+# Update your agbero.hcl with the new hash and reload the server
+agbero reload
+```
+
+## 2. Serving Local Files & PHP (The Basics)
+
+Setting up a local web server with directory listings is incredibly simple. This is perfect for local development or serving static documentation.
 
 ```hcl
-# hosts.d/mysite.hcl
-domains = ["mysite.example.com"]
-
-tls {
-  mode = "letsencrypt"
-  email = "me@example.com"
-}
+# hosts.d/local.hcl
+domains = ["localhost"]
 
 route "/" {
   web {
-    root = "/var/www/mysite"
-    index = "index.html"
-    spa = true  # For React/Vue apps
+    root    = "~/"      # Serve from your home directory
+    listing = true      # Enable directory browsing
+    
+    # Uncomment to enable PHP support (requires php-fpm running locally)
+    # php {
+    #   enabled = true
+    #   address = "127.0.0.1:9000"
+    #   index   = "index.php"
+    # }
   }
 }
-
-# Optional: Compress assets
-compression = true
 ```
 
-### 2. Reverse Proxy with Load Balancing
+## 3. Reverse Proxy & Path Rewriting
+
+When fronting backend applications, you often need to manipulate the URL path before it reaches the upstream server. Agbero provides `strip_prefixes` and regex `rewrite` blocks.
 
 ```hcl
 # hosts.d/api.hcl
 domains = ["api.example.com"]
 
-route "/v1" {
-  backend {
-    strategy = "least_conn"  # Best for long-lived connections
-    
-    server {
-      address = "http://10.0.0.10:8080"
-      weight = 2  # Twice the capacity
-    }
-    
-    server {
-      address = "http://10.0.0.11:8080"
-      weight = 1
-    }
-    
-    server {
-      address = "http://10.0.0.12:8080"
-      weight = 1
-      criteria {  # Only for internal IPs
-        source_ips = ["10.0.0.0/8"]
-      }
-    }
-  }
-  
-  # Health checks
-  health_check {
-    path = "/health"
-    interval = "5s"
-    timeout = "2s"
-    expected_status = [200, 204]
-  }
-  
-  # Circuit breaker
-  circuit_breaker {
-    threshold = 5   # Trip after 5 failures
-    duration = "30s"  # Try recovery after 30s
-  }
-}
-```
-
-### 3. WebSocket Support
-
-```hcl
-# hosts.d/ws.hcl
-domains = ["ws.example.com"]
-
-route "/" {
-  backend {
-    server {
-      address = "http://localhost:8080"
-      streaming {  # Enable WebSocket support
-        enabled = true
-        flush_interval = "100ms"
-      }
-    }
-  }
-  
-  # No timeout for WebSockets
-  timeouts {
-    enabled = false
-  }
-}
-```
-
-### 4. JWT Authentication Gateway
-
-```hcl
-# hosts.d/secure.hcl
-domains = ["secure.example.com"]
-
 route "/api" {
-  # Validate JWT before forwarding
-  jwt_auth {
-    secret = "${env.JWT_SECRET}"  # HMAC secret
-    issuer = "auth.example.com"
-    
-    # Map claims to headers
-    claim_map = {
-      "sub" = "X-User-ID"
-      "email" = "X-User-Email"
-      "role" = "X-User-Role"
-    }
+  # 1. Remove '/api' from the path before forwarding
+  strip_prefixes = ["/api"]
+  
+  # 2. Rewrite old v1 endpoints to a new internal structure
+  rewrite {
+    pattern = "^/v1/users/(.*)$"
+    target  = "/users/$1?version=v1"
   }
   
   backend {
-    server { address = "http://api:8080" }
+    strategy = "round_robin"
+    server { address = "http://127.0.0.1:8081" }
+    server { address = "http://127.0.0.1:8082" }
   }
 }
 ```
 
-### 5. Rate Limiting
+## 4. Authentication Gateway
+
+Agbero natively supports four authentication mechanisms at the edge. You can mix and match these to protect your internal services.
+
+### Method A: Basic Authentication
 
 ```hcl
-# hosts.d/rate-limited.hcl
-domains = ["api.example.com"]
-
-route "/public" {
-  rate_limit {
-    # Global policy reference
-    use_policy = "public-api"
-    
-    # Or inline definition
-    rule {
-      requests = 100
-      window = "1m"
-      burst = 20
-      key = "ip"  # Rate limit by IP
-    }
-  }
-  
-  backend {
-    server { address = "http://api:8080" }
-  }
-}
-
-# Global rate limit policies (in agbero.hcl)
-rate_limits {
-  policy "public-api" {
-    requests = 1000
-    window = "1h"
-    burst = 100
-    key = "header:X-API-Key"
-  }
-}
-```
-
-### 6. Basic Authentication
-
-```hcl
-# hosts.d/admin.hcl
-domains = ["admin.example.com"]
-
-route "/" {
+route "/private" {
   basic_auth {
     enabled = true
-    realm = "Admin Area"
-    users = [
-      "admin:$2a$10$N9qo8uLOickgx2ZMRZoMye...",  # bcrypt hash
-      "viewer:${env.VIEWER_PASSWORD}"  # from env var
+    realm   = "Restricted Area"
+    users   =[
+      "john:$2a$10$...",
+      "jane:${env.JANE_HASH}"
     ]
   }
-  
-  backend {
-    server { address = "http://admin-dashboard:8080" }
-  }
+  backend { server { address = "http://localhost:3000" } }
 }
 ```
 
-### 7. Forward Authentication
+### Method B: JWT Authentication
+
+Validate a JSON Web Token, verify the issuer, and map claims into HTTP headers for your backend to consume.
 
 ```hcl
-# hosts.d/auth-proxy.hcl
-domains = ["app.example.com"]
+route "/dashboard" {
+  jwt_auth {
+    enabled = true
+    secret  = "${env.JWT_SECRET}"
+    issuer  = "auth.example.com"
+    
+    claim_map = {
+      "sub"   = "X-User-ID"
+      "email" = "X-User-Email"
+    }
+  }
+  backend { server { address = "http://localhost:3000" } }
+}
+```
 
+### Method C: OAuth2 / OIDC
+
+Agbero handles the entire OAuth2 flow natively.
+
+```hcl
 route "/" {
+  o_auth {
+    enabled       = true
+    provider      = "github"
+    client_id     = "${env.GITHUB_CLIENT_ID}"
+    client_secret = "${env.GITHUB_CLIENT_SECRET}"
+    redirect_url  = "https://app.example.com/auth/callback"
+    cookie_secret = "${env.OAUTH_COOKIE_SECRET}"
+    email_domains = ["yourcompany.com"]
+  }
+  backend { server { address = "http://localhost:3000" } }
+}
+```
+
+### Method D: Forward Authentication
+
+Delegate authentication logic to an external service. Agbero pauses the request, calls your auth service, and either allows or blocks the request based on the HTTP status code.
+
+```hcl
+# hosts.d/forward.hcl
+route "/secure" {
   forward_auth {
-    url = "http://auth-service:9000/verify"
-    timeout = "5s"
-    on_failure = "deny"  # or "allow" for fail-open
+    enabled    = true
+    url        = "http://auth-service:9000/verify"
+    timeout    = "2s"
+    on_failure = "deny"
     
     request {
-      headers = ["Authorization", "Cookie"]
+      headers        = ["Authorization", "Cookie"]
       forward_method = true
-      forward_uri = true
-      forward_ip = true
+      forward_uri    = true
+      forward_ip     = true
     }
     
     response {
-      copy_headers = ["X-User-Email", "X-User-Roles"]
-      cache_ttl = "5m"  # Cache successful auth
+      # Pass these headers from the auth service down to your backend
+      copy_headers =["X-User-Email", "X-User-Id"]
+      cache_ttl    = "1m"
     }
   }
-  
-  backend {
-    server { address = "http://app:8080" }
-  }
+  backend { server { address = "http://localhost:3000" } }
 }
 ```
 
-### 8. TCP Proxy (Database/Redis)
+#### Example: Writing a Forward Auth Server in Go
 
-```hcl
-# hosts.d/db.hcl (note: at host level, not route)
-domains = ["db.internal"]  # For SNI routing
+Here is a lightweight Go server that acts as the `auth-service` configured above.
 
-proxy "postgres" {
-  enabled = true
-  listen = ":5432"
-  sni = "*.db.internal"  # Route by SNI
-  strategy = "least_conn"
-  
-  # Enable PROXY protocol for real IPs
-  proxy_protocol = true
-  
-  backend {
-    address = "postgres-1:5432"
-    weight = 2
-  }
-  
-  backend {
-    address = "postgres-2:5432"
-    weight = 1
-  }
-  
-  health_check {
-    enabled = true
-    interval = "5s"
-    # PostgreSQL startup message
-    send = "Q\0\0\0\x1f\0\0\0\x03\0\0user\0user\0\0"
-    expect = "R"  # Authentication request
-  }
+```go
+package main
+
+import (
+	"net/http"
+	"strings"
+)
+
+// main initializes a simple forward authentication endpoint.
+// It validates Bearer tokens and rejects unauthorized requests.
+func main() {
+	http.HandleFunc("/verify", func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		token := strings.TrimPrefix(auth, "Bearer ")
+
+		if token == "super-secret-token" {
+			// Success: Attach headers for Agbero to forward to the backend
+			w.Header().Set("X-User-Email", "admin@example.com")
+			w.Header().Set("X-User-Id", "101")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Failure: Agbero will block the client request
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	})
+
+	http.ListenAndServe(":9000", nil)
 }
 ```
 
-### 9. PHP Application
+## 5. Static Website with GitOps (Cook)
+
+Agbero can directly pull your **pre-built** static site from Git and serve it with zero-downtime symlink swaps.
+
+*Note: Agbero does not run Node.js or build tools. Configure your CI/CD pipeline to compile the app and push the `dist` folder to a dedicated deployment branch. Agbero will then pull that branch instantly.*
 
 ```hcl
-# hosts.d/php.hcl
-domains = ["php.example.com"]
+# hosts.d/mysite.hcl
+domains =["mysite.example.com"]
+
+tls {
+  mode  = "letsencrypt"
+  email = "admin@example.com"
+}
 
 route "/" {
   web {
-    root = "/var/www/php-app"
-    index = "index.php"
+    index = "index.html"
+    spa   = true
     
-    php {
-      enabled = true
-      address = "unix:/var/run/php/php8.2-fpm.sock"
-      # or: address = "127.0.0.1:9000"
+    git {
+      enabled  = true
+      id       = "mysite_frontend"
+      url      = "https://github.com/org/repo.git"
+      branch   = "deploy-branch" 
+      sub_dir  = "dist"          
+      interval = "5m"
     }
   }
 }
 ```
 
-### 10. A/B Testing with Traffic Splitting
+## 6. Rate Limiting & Web Application Firewall
+
+Protect your endpoints using global rate limit policies and Web Application Firewall (WAF) rules.
 
 ```hcl
-# hosts.d/abtest.hcl
-domains = ["app.example.com"]
+# agbero.hcl (Global definitions)
+rate_limits {
+  enabled = true
+  
+  policy "api-tier" {
+    requests = 100
+    window   = "1m"
+    burst    = 20
+    key      = "ip"
+  }
+}
 
-route "/" {
-  backend {
-    strategy = "round_robin"
+security {
+  enabled = true
+  firewall {
+    enabled = true
+    mode    = "active"
     
-    # Version A - 80% of traffic
-    server {
-      address = "http://app-v1:8080"
-      weight = 8
-    }
-    
-    # Version B - 20% of traffic
-    server {
-      address = "http://app-v2:8080"
-      weight = 2
-    }
-    
-    # Internal users always get version B
-    server {
-      address = "http://app-v2:8080"
-      criteria {
-        headers = {
-          "X-Internal" = "true"
+    rule "block-scanners" {
+      type   = "static"
+      action = "deny"
+      match {
+        any {
+          location = "path"
+          pattern  = "\\.env|wp-admin"
         }
       }
     }
@@ -370,46 +275,52 @@ route "/" {
 }
 ```
 
-## Monitoring & Debugging
+```hcl
+# hosts.d/api.hcl (Applying the policy)
+domains = ["api.example.com"]
 
-### Health Checks
-
-```bash
-# Check system health
-curl http://localhost:9090/uptime | jq
-
-# Prometheus metrics
-curl http://localhost:9090/metrics
-
-# Live log tail
-agbero logs -f
-```
-
-### Hot Reload
-
-```bash
-# Reload configuration without restart
-agbero reload
-
-# Or send SIGHUP manually
-kill -SIGHUP $(pgrep agbero)
-```
-
-### Debug Mode
-
-```bash
-# Run with debug logging
-agbero run --dev
-
-# Or in config:
-logging {
-  level = "debug"
+route "/public" {
+  rate_limit {
+    enabled    = true
+    use_policy = "api-tier"
+  }
+  
+  backend {
+    server { address = "http://api:8080" }
+  }
 }
 ```
 
-## Next Steps
+## 7. TCP Proxy (Databases & Raw Sockets)
 
-- [Advanced Guide](./advanced.md) for clustering, Git deployments, WASM, and custom health scoring
-- [API Reference](./api.md) for complete configuration options
+Agbero routes raw TCP traffic using SNI (Server Name Indication), allowing you to multiplex databases over a single port.
 
+```hcl
+# hosts.d/db.hcl
+domains = ["db.internal"]
 
+proxy "postgres" {
+  enabled  = true
+  listen   = ":5432"
+  sni      = "*.db.internal"
+  strategy = "least_conn"
+  
+  proxy_protocol = true
+  
+  backend {
+    address = "tcp://postgres-1:5432"
+    weight  = 1
+  }
+  
+  backend {
+    address = "tcp://postgres-2:5432"
+    weight  = 1
+  }
+  
+  health_check {
+    enabled  = true
+    interval = "10s"
+    timeout  = "2s"
+  }
+}
+```
