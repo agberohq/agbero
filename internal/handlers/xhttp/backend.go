@@ -152,6 +152,12 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		if errors.Is(err, context.Canceled) {
+			b.logger.Fields("backend", u.Host, "remote", r.RemoteAddr).Debug("client disconnected early")
+
+			// 499 Client Closed Request (Standardized by Nginx)
+			// This prevents it from being logged as a false 200 OK, but ensures
+			// it DOES NOT trip your circuit breaker (since it's not a 50x error).
+			w.WriteHeader(499)
 			return
 		}
 
@@ -398,7 +404,7 @@ func (b *Backend) Stop() {
 		close(b.stop)
 		if b.HasProber {
 			if doc, ok := b.Doctor().(*jack.Doctor); ok && doc != nil {
-				doc.Stop(b.StatsKey.String())
+				doc.Stop(b.PatientID)
 			}
 		}
 		if tp, ok := b.Proxy.Transport.(*http.Transport); ok {
