@@ -423,7 +423,7 @@ class AgberoApp {
 
         const tempBasic = btoa(u + ":" + p);
         this.basic = tempBasic;
-        const check = await this.api("/healthz"); // Changed to public healthz endpoint to avoid looping
+        const check = await this.api("/uptime");
         if (check) {
             sessionStorage.setItem("ag_bas", this.basic);
             this.finishLoginSuccess();
