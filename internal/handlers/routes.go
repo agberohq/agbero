@@ -13,6 +13,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/handlers/web"
 	"github.com/agberohq/agbero/internal/handlers/xhttp"
 	"github.com/agberohq/agbero/internal/middleware/attic"
 	"github.com/agberohq/agbero/internal/middleware/auth"
@@ -23,7 +24,6 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/ipallow"
 	"github.com/agberohq/agbero/internal/middleware/ratelimit"
 	"github.com/agberohq/agbero/internal/middleware/rewrite"
-	"github.com/agberohq/agbero/internal/operation"
 	"github.com/agberohq/agbero/internal/pkg/cook"
 	"github.com/agberohq/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/errors"
@@ -103,7 +103,7 @@ func NewRoute(cfg Config, route *alaye.Route) *Route {
 }
 
 func newWebRoute(cfg Config, route *alaye.Route) *Route {
-	chain := http.Handler(operation.NewWeb(cfg.Resource, route, cfg.CookMgr))
+	chain := http.Handler(web.NewWeb(cfg.Resource, route, cfg.CookMgr))
 	ipMgr := zulu.NewIPManager(cfg.Global.Security.TrustedProxies)
 	if len(route.AllowedIPs) > 0 {
 		chain = ipallow.New(route.AllowedIPs, cfg.Logger, ipMgr)(chain)

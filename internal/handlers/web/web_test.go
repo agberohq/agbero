@@ -1,4 +1,4 @@
-package operation
+package web
 
 import (
 	"bytes"
@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/olekukonko/ll"
+	"github.com/agberohq/agbero/internal/core/resource"
 )
 
 // -----------------------------------------------------------------------------
@@ -54,17 +54,12 @@ func writeGzip(t *testing.T, root, path, content string) {
 	_ = f.Close()
 }
 
-// nopLogger returns a disabled ll.Logger that swallows all output.
-func nopLogger() *ll.Logger {
-	return ll.New("").Disable()
-}
-
 // routeOpt is a functional option for newHandler.
 type routeOpt func(*alaye.Route)
 
 // newHandler builds a *web handler pointing at rootPath with optional route tweaks.
-// It calls NewWeb so that all derived state (mdConverter, phpClientFactory, etc.)
-// is properly initialised — exactly as in production.
+// It calls NewWeb so all derived state (mdConverter, phpClientFactory, etc.) is
+// properly initialised — exactly as in production.
 func newHandler(t *testing.T, rootPath string, opts ...routeOpt) *web {
 	t.Helper()
 	route := &alaye.Route{
@@ -76,7 +71,8 @@ func newHandler(t *testing.T, rootPath string, opts ...routeOpt) *web {
 	for _, o := range opts {
 		o(route)
 	}
-	return NewWeb(nil, nopLogger(), route, nil)
+	res := resource.New()
+	return NewWeb(res, route, nil)
 }
 
 func withListing() routeOpt  { return func(r *alaye.Route) { r.Web.Listing = true } }
@@ -670,11 +666,17 @@ func TestServeHTTP_Markdown_SyntaxHighlight(t *testing.T) {
 	if !strings.Contains(body, "<span") {
 		t.Error("syntax highlight: expected Chroma <span> elements in output")
 	}
-	// When highlight is active, the template must NOT override pre.chroma background
-	// with --code-bg, so the chosen theme's own background is preserved across
-	// light/dark mode toggles.
-	if strings.Contains(body, "pre.chroma { background") {
-		t.Error("syntax highlight: pre.chroma background must not be overridden when theme is active")
+	// chromaPreWrapper emits <pre class="chroma"> with no inline style.
+	// Extract only the opening <pre...> tag and verify it carries no style attribute.
+	preStart := strings.Index(body, "<pre")
+	if preStart != -1 {
+		preEnd := strings.Index(body[preStart:], ">")
+		if preEnd != -1 {
+			preTag := body[preStart : preStart+preEnd+1]
+			if strings.Contains(preTag, `style="`) {
+				t.Errorf("syntax highlight: <pre> must have no inline style, got: %s", preTag)
+			}
+		}
 	}
 }
 
@@ -693,10 +695,6 @@ func TestServeHTTP_Markdown_SyntaxHighlight_Disabled_NoSpans(t *testing.T) {
 	}
 	if strings.Contains(body, `class="chroma"`) || strings.Contains(body, `style="color`) {
 		t.Error("highlight disabled: must not contain Chroma output")
-	}
-	// When highlight is off, pre.chroma must follow --code-bg so dark mode works.
-	if !strings.Contains(body, "pre.chroma { background") {
-		t.Error("highlight disabled: pre.chroma must use --code-bg for dark mode support")
 	}
 }
 

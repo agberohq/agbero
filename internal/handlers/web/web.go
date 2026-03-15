@@ -1,4 +1,4 @@
-package operation
+package web
 
 import (
 	"bytes"
@@ -26,6 +26,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/cook"
+	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
 	"github.com/dustin/go-humanize"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
@@ -38,19 +39,13 @@ import (
 	goldtoc "go.abhg.dev/goldmark/toc"
 )
 
-//go:embed web/dir.html
+//go:embed html/dir.html
 var webDirHTML string
 
-// mdPageHTML is the built-in HTML wrapper for rendered Markdown in normal view.
-// Embedding lets UI developers edit web/md.html without touching Go code.
-//
-//go:embed web/md.html
+//go:embed html/md.html
 var mdPageHTML string
 
-// mdBrowseHTML is the browse-mode wrapper: breadcrumbs, raw link, theme toggle.
-// Used when route.Web.Markdown.View == "browse".
-//
-//go:embed web/md_browse.html
+//go:embed html/md_browse.html
 var mdBrowseHTML string
 
 var (
@@ -62,14 +57,10 @@ var (
 		MaximumSize: woos.CacheMax,
 	})
 
-	// dynamicGzCache holds in-memory gzip-compressed content for hot assets.
-	// mappo is lock-free; no mutex required.
-	// key: reqPath, value: *dynamicGzEntry
 	dynamicGzCache = mappo.NewCache(mappo.CacheOptions{MaximumSize: 256})
 
 	fingerprintRe = regexp.MustCompile(`(?i)(?:[._-])[a-f0-9]{8,}(?:[._-])`)
 
-	// gzWriterPool reduces allocations for on-the-fly gzip compression.
 	gzWriterPool = sync.Pool{
 		New: func() any {
 			w, _ := gzip.NewWriterLevel(nil, gzip.BestSpeed)
@@ -79,22 +70,13 @@ var (
 )
 
 const (
-	gzCacheTTL = 60 * time.Second
-
-	// phpTimeout is the maximum duration to wait for a PHP-FPM response.
-	phpTimeout = 30 * time.Second
-
-	// dynamicGzMinSize is the minimum file size (bytes) eligible for on-the-fly gzip.
-	dynamicGzMinSize = 1024
-
-	// dynamicGzMaxCacheSize is the largest compressed body kept in memory.
+	gzCacheTTL            = 60 * time.Second
+	phpTimeout            = 30 * time.Second
+	dynamicGzMinSize      = 1024
 	dynamicGzMaxCacheSize = 512 * 1024
-
-	// dynamicGzTTL is how long a dynamic gz entry lives in the memory cache.
-	dynamicGzTTL = 60 * time.Second
+	dynamicGzTTL          = 60 * time.Second
 )
 
-// compressibleMIME lists MIME type prefixes eligible for on-the-fly gzip.
 var compressibleMIME = []string{
 	"text/",
 	"application/javascript",
@@ -105,17 +87,12 @@ var compressibleMIME = []string{
 	"image/svg+xml",
 }
 
-// markdownExts is the set of extensions that trigger Markdown rendering.
 var markdownExts = map[string]bool{
 	".md":       true,
 	".markdown": true,
 	".mdown":    true,
 	".mkd":      true,
 }
-
-// -----------------------------------------------------------------------------
-// Types
-// -----------------------------------------------------------------------------
 
 type dirItem struct {
 	Name    string
@@ -132,47 +109,32 @@ type crumb struct {
 	Href string
 }
 
-// dynamicGzEntry holds a dynamically compressed response body and its metadata.
 type dynamicGzEntry struct {
 	data    []byte
 	modTime time.Time
-	size    int64 // original uncompressed size, used for ETag
+	size    int64
 }
-
-// -----------------------------------------------------------------------------
-// Handler
-// -----------------------------------------------------------------------------
 
 type web struct {
 	route            *alaye.Route
-	logger           *ll.Logger
+	res              *resource.Manager
 	cookMgr          *cook.Manager
 	phpClientFactory gofast.ClientFactory
-	res              *resource.Manager
-
-	// mdConverter is non-nil when Markdown rendering is enabled for this route.
-	mdConverter goldmark.Markdown
-
-	// mdBrowse is true when the route sets view = "browse" for Markdown.
-	// It selects the shell template (breadcrumbs, raw link, theme toggle)
-	// instead of the clean content-only template.
-	mdBrowse bool
-
-	// mdHighlight is true when SyntaxHighlight is active. Passed to templates
-	// so they can suppress the --code-bg CSS variable override on pre.chroma:
-	// Chroma's own inline background must win when a theme is in use.
-	mdHighlight bool
+	mdConverter      goldmark.Markdown
+	mdBrowse         bool
 }
 
+// NewWeb constructs a web handler for the given route.
+// Logger is sourced from res.Logger; no separate logger parameter is needed.
 func NewWeb(res *resource.Manager, route *alaye.Route, cookMgr *cook.Manager) *web {
 	h := &web{
 		route:   route,
-		logger:  res.Logger.Namespace("web"),
-		cookMgr: cookMgr,
 		res:     res,
+		cookMgr: cookMgr,
 	}
 
-	// --- PHP setup ---
+	logger := res.Logger.Namespace("web")
+
 	if route != nil && route.Web.PHP.Status.Active() {
 		network, address := "tcp", "127.0.0.1:9000"
 		if strings.TrimSpace(route.Web.PHP.Address) != "" {
@@ -187,36 +149,34 @@ func NewWeb(res *resource.Manager, route *alaye.Route, cookMgr *cook.Manager) *w
 		}
 		connFactory := gofast.SimpleConnFactory(network, address)
 		h.phpClientFactory = gofast.SimpleClientFactory(connFactory)
-		h.logger.Fields("route", route.Path, "php", true, "php_net", network, "php_addr", address).Info("PHP configured")
+		logger.Fields("route", route.Path, "php", true, "php_net", network, "php_addr", address).Info("PHP configured")
 	}
 
-	// --- Markdown renderer setup ---
 	if route != nil && route.Web.Markdown.Enabled.Active() {
 		exts := []goldmark.Extender{
-			extension.GFM,         // tables, strikethrough, task lists
-			extension.Footnote,    // [^1] footnotes
-			extension.Typographer, // smart quotes / em-dashes
+			extension.GFM,
+			extension.Footnote,
+			extension.Typographer,
 		}
 
-		// SyntaxHighlight: wrap fenced code blocks with Chroma inline styles.
-		// The operator chooses a theme via SyntaxHighlight.Theme (e.g. "github",
-		// "dracula", "monokai"). Chroma emits <span style="color:#..."> directly
-		// so the chosen theme is self-contained — no template CSS needed.
-		// Full theme list: https://xyproto.github.io/splash/docs/
 		if route.Web.Markdown.SyntaxHighlight.Enabled.Active() {
 			theme := strings.TrimSpace(route.Web.Markdown.SyntaxHighlight.Theme)
 			if theme == "" {
-				theme = "github" // sensible default for light backgrounds
+				theme = "github"
 			}
 			exts = append(exts, highlighting.NewHighlighting(
 				highlighting.WithStyle(theme),
 				highlighting.WithGuessLanguage(true),
+				// WithPreWrapper intercepts Chroma's <pre> at the formatter level.
+				// Chroma passes the inline styleAttr it would have written to Start();
+				// chromaPreWrapper discards it and emits a plain class-only element,
+				// so background and color are fully owned by the template CSS variables.
+				highlighting.WithFormatOptions(
+					chromahtml.WithPreWrapper(chromaPreWrapper{}),
+				),
 			))
 		}
 
-		// TableOfContents: inject a <nav> list before the first heading.
-		// goldmark-toc walks the AST after parsing; WithAutoHeadingID is required
-		// so the generated anchor hrefs resolve to real heading IDs.
 		if route.Web.Markdown.TableOfContents.Active() {
 			exts = append(exts, &goldtoc.Extender{})
 		}
@@ -224,31 +184,31 @@ func NewWeb(res *resource.Manager, route *alaye.Route, cookMgr *cook.Manager) *w
 		opts := []goldmark.Option{
 			goldmark.WithExtensions(exts...),
 			goldmark.WithParserOptions(
-				parser.WithAutoHeadingID(), // anchor IDs on every heading
+				parser.WithAutoHeadingID(),
 			),
 		}
 		if route.Web.Markdown.UnsafeHTML.Active() {
-			// Explicit operator opt-in: pass raw HTML in Markdown source through
-			// unescaped. Only enable when the Markdown source is fully trusted.
 			opts = append(opts, goldmark.WithRendererOptions(goldhtml.WithUnsafe()))
 		}
+
 		h.mdConverter = goldmark.New(opts...)
 		h.mdBrowse = strings.EqualFold(strings.TrimSpace(route.Web.Markdown.View), "browse")
-		h.mdHighlight = route.Web.Markdown.SyntaxHighlight.Enabled.Active()
-		h.logger.Fields("route", route.Path, "markdown", true,
+		logger.Fields(
+			"route", route.Path,
 			"view", route.Web.Markdown.View,
 			"toc", route.Web.Markdown.TableOfContents.Active(),
 			"highlight", route.Web.Markdown.SyntaxHighlight.Enabled.Active(),
 			"theme", route.Web.Markdown.SyntaxHighlight.Theme,
-			"unsafe_html", route.Web.Markdown.UnsafeHTML.Active()).Info("markdown renderer configured")
+			"unsafe_html", route.Web.Markdown.UnsafeHTML.Active(),
+		).Info("Markdown renderer configured")
 	}
 
 	return h
 }
 
-// -----------------------------------------------------------------------------
-// ServeHTTP
-// -----------------------------------------------------------------------------
+func (h *web) logger() *ll.Logger {
+	return h.res.Logger.Namespace("web")
+}
 
 func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -271,7 +231,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	root, err := os.OpenRoot(rootPath)
 	if err != nil {
-		h.logger.Fields("err", err, "root", rootPath).Error("failed to open web root")
+		h.logger().Fields("err", err, "root", rootPath).Error("failed to open web root")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -300,24 +260,12 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reqPath = cleanedPath
-
-	// --- ?download: force raw download for any file, bypassing Markdown rendering ---
-	// e.g. GET /README.md?download  →  serves the raw .md source as a download
 	wantsDownload := r.URL.Query().Has("download")
 
-	// --- ?refresh: bust the HTTP cache and evict any in-memory gz entry ---
-	// Useful after a config change (e.g. switching view = "normal" → "browse")
-	// where the handler has been reloaded by the LB but the browser holds a
-	// cached response. ?refresh forces a clean re-fetch with no 304.
-	// Works on any path: /README.md?refresh, /docs/?refresh, /app.js?refresh.
-	wantsRefresh := r.URL.Query().Has("refresh")
-	if wantsRefresh {
-		// Evict any cached dynamic gz entry so the freshly rebuilt response
-		// is also re-compressed, not served from stale memory.
+	if r.URL.Query().Has("refresh") {
 		dynamicGzCache.Delete(reqPath)
 	}
 
-	// --- PHP (Fix #1: context timeout so disconnected clients release FPM workers) ---
 	if strings.HasSuffix(strings.ToLower(reqPath), ".php") {
 		if h.phpClientFactory == nil {
 			http.Error(w, "Not Found", http.StatusNotFound)
@@ -342,7 +290,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				gofast.NewHandler(sess, h.phpClientFactory).ServeHTTP(w, rWithCtx)
 
 				if ctxErr := ctx.Err(); ctxErr != nil {
-					h.logger.Fields("path", reqPath, "err", ctxErr,
+					h.logger().Fields("path", reqPath, "err", ctxErr,
 						"method", r.Method, "ua", r.UserAgent()).Warn("PHP request context expired or cancelled")
 				}
 				return
@@ -350,7 +298,6 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// --- Pre-compressed .gz sidecar (Fix #2: open first; cache is hint only) ---
 	if !wantsDownload && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 		gzPath, gzOrigPath := h.resolveGzipPath(reqPath)
 		if h.gzMayExist(gzPath) {
@@ -380,7 +327,6 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// --- Open requested path ---
 	f, err := root.Open(reqPath)
 	if err != nil {
 		h.handleOpenError(w, r, root, reqPath, err)
@@ -390,41 +336,34 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	info, err := f.Stat()
 	if err != nil {
-		h.logger.Fields("err", err, "path", reqPath).Error("stat failed after open")
+		h.logger().Fields("err", err, "path", reqPath).Error("stat failed after open")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	// --- Directory ---
 	if info.IsDir() {
 		h.serveDir(w, r, root, f, reqPath, browserPath)
 		return
 	}
 
-	// --- Markdown renderer ---
-	// Skip rendering when ?download is present: serve the raw source file instead.
 	if !wantsDownload && h.mdConverter != nil && isMarkdownPath(reqPath) {
 		h.serveMarkdown(w, r, root, reqPath, browserPath, info)
 		return
 	}
 
-	// When ?download is present, force Content-Disposition: attachment so the
-	// browser downloads the file rather than displaying it.
 	if wantsDownload {
 		w.Header().Set("Content-Disposition", "attachment; filename="+url.PathEscape(filepath.Base(reqPath)))
 	}
 
-	// --- On-the-fly gzip for compressible assets with no .gz sidecar (Fix #5) ---
 	if !wantsDownload && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && info.Size() >= dynamicGzMinSize {
 		if mt := getMimeType(reqPath); isCompressibleMIME(mt) {
 			if h.serveDynamicGzip(w, r, reqPath, f, info, mt) {
 				return
 			}
-			// Dynamic gzip failed — re-open file (f was consumed) and fall through.
 			f.Close()
 			f, err = root.Open(reqPath)
 			if err != nil {
-				h.logger.Fields("err", err, "path", reqPath).Error("re-open after dynamic gz failed")
+				h.logger().Fields("err", err, "path", reqPath).Error("re-open after dynamic gz failed")
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
 			}
@@ -432,35 +371,29 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// --- Static file ---
 	if h.setCommonHeaders(w, r, reqPath, info.ModTime(), info.Size(), false) {
 		return
 	}
 	mt := getMimeType(reqPath)
 	if mt == "" {
-		mt = detectContentType(f) // Fix #6: sniff from content bytes
+		mt = detectContentType(f)
 	}
 	w.Header().Set("Content-Type", mt)
-	w.Header().Set("X-Content-Type-Options", "nosniff") // Fix #6: block browser sniffing
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }
 
-// -----------------------------------------------------------------------------
-// Markdown rendering
-// -----------------------------------------------------------------------------
-
-// isMarkdownPath reports whether path carries a recognised Markdown extension.
+// isMarkdownPath reports whether the file extension is a recognised Markdown type.
 func isMarkdownPath(path string) bool {
 	return markdownExts[strings.ToLower(filepath.Ext(path))]
 }
 
-// serveMarkdown reads, converts, and writes a Markdown file as HTML.
-// The full output is always buffered before the first byte is sent so that
-// a conversion or template error can still return a clean HTTP 500.
+// serveMarkdown converts a Markdown file to HTML and writes the response.
+// Output is fully buffered before writing so template failures return a clean 500.
 func (h *web) serveMarkdown(w http.ResponseWriter, r *http.Request, root *os.Root, reqPath, browserPath string, info fs.FileInfo) {
 	f, err := root.Open(reqPath)
 	if err != nil {
-		h.logger.Fields("err", err, "path", reqPath).Error("markdown: open failed")
+		h.logger().Fields("err", err, "path", reqPath).Error("markdown: open failed")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -468,40 +401,36 @@ func (h *web) serveMarkdown(w http.ResponseWriter, r *http.Request, root *os.Roo
 
 	src, err := io.ReadAll(f)
 	if err != nil {
-		h.logger.Fields("err", err, "path", reqPath).Error("markdown: read failed")
+		h.logger().Fields("err", err, "path", reqPath).Error("markdown: read failed")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
 	var mdBuf bytes.Buffer
 	if err := h.mdConverter.Convert(src, &mdBuf); err != nil {
-		h.logger.Fields("err", err, "path", reqPath).Error("markdown: conversion failed")
+		h.logger().Fields("err", err, "path", reqPath).Error("markdown: conversion failed")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	// Try operator-supplied custom template first.
 	if h.route.Web.Markdown.Template != "" {
 		if ok := h.serveMarkdownWithTemplate(w, root, reqPath, info, mdBuf.String()); ok {
 			return
 		}
-		// Custom template failed — fall through to built-in wrapper.
-		h.logger.Fields("path", reqPath, "template", h.route.Web.Markdown.Template).
+		h.logger().Fields("path", reqPath, "template", h.route.Web.Markdown.Template).
 			Warn("markdown: custom template failed, using built-in")
 	}
 
 	data := struct {
-		Title           string
-		Content         template.HTML
-		ModTime         string
-		Breadcrumb      []crumb
-		SyntaxHighlight bool
+		Title      string
+		Content    template.HTML
+		ModTime    string
+		Breadcrumb []crumb
 	}{
-		Title:           filepath.Base(reqPath),
-		Content:         template.HTML(mdBuf.String()), //nolint:gosec // goldmark output is the intended HTML
-		ModTime:         info.ModTime().Format("2006-01-02 15:04:05"),
-		Breadcrumb:      h.buildBreadcrumbs(browserPath),
-		SyntaxHighlight: h.mdHighlight,
+		Title:      filepath.Base(reqPath),
+		Content:    template.HTML(mdBuf.String()), //nolint:gosec
+		ModTime:    info.ModTime().Format("2006-01-02 15:04:05"),
+		Breadcrumb: h.buildBreadcrumbs(browserPath),
 	}
 
 	tmpl := mdPageTmpl
@@ -511,7 +440,7 @@ func (h *web) serveMarkdown(w http.ResponseWriter, r *http.Request, root *os.Roo
 
 	var out bytes.Buffer
 	if err := tmpl.Execute(&out, data); err != nil {
-		h.logger.Fields("err", err, "path", reqPath).Error("markdown: built-in template execute failed")
+		h.logger().Fields("err", err, "path", reqPath).Error("markdown: template execute failed")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -527,19 +456,12 @@ func (h *web) serveMarkdown(w http.ResponseWriter, r *http.Request, root *os.Roo
 	_, _ = w.Write(out.Bytes())
 }
 
-// serveMarkdownWithTemplate renders converted Markdown through the operator-
-// supplied HTML template stored at h.route.Web.Markdown.Template.
-// Returns true only if the response was written successfully.
-func (h *web) serveMarkdownWithTemplate(
-	w http.ResponseWriter,
-	root *os.Root,
-	reqPath string,
-	info fs.FileInfo,
-	htmlContent string,
-) bool {
+// serveMarkdownWithTemplate renders converted Markdown using an operator-supplied template.
+// Returns true only when the response was written successfully.
+func (h *web) serveMarkdownWithTemplate(w http.ResponseWriter, root *os.Root, reqPath string, info fs.FileInfo, htmlContent string) bool {
 	tf, err := root.Open(h.route.Web.Markdown.Template)
 	if err != nil {
-		h.logger.Fields("err", err, "template", h.route.Web.Markdown.Template).
+		h.logger().Fields("err", err, "template", h.route.Web.Markdown.Template).
 			Warn("markdown: cannot open custom template")
 		return false
 	}
@@ -547,14 +469,14 @@ func (h *web) serveMarkdownWithTemplate(
 
 	tmplSrc, err := io.ReadAll(tf)
 	if err != nil {
-		h.logger.Fields("err", err, "template", h.route.Web.Markdown.Template).
+		h.logger().Fields("err", err, "template", h.route.Web.Markdown.Template).
 			Warn("markdown: cannot read custom template")
 		return false
 	}
 
 	tmpl, err := template.New("md-custom").Parse(string(tmplSrc))
 	if err != nil {
-		h.logger.Fields("err", err, "template", h.route.Web.Markdown.Template).
+		h.logger().Fields("err", err, "template", h.route.Web.Markdown.Template).
 			Warn("markdown: cannot parse custom template")
 		return false
 	}
@@ -573,7 +495,7 @@ func (h *web) serveMarkdownWithTemplate(
 
 	var out bytes.Buffer
 	if err := tmpl.Execute(&out, data); err != nil {
-		h.logger.Fields("err", err, "template", h.route.Web.Markdown.Template).
+		h.logger().Fields("err", err, "template", h.route.Web.Markdown.Template).
 			Warn("markdown: custom template execute failed")
 		return false
 	}
@@ -586,10 +508,7 @@ func (h *web) serveMarkdownWithTemplate(
 	return true
 }
 
-// -----------------------------------------------------------------------------
-// Directory handling
-// -----------------------------------------------------------------------------
-
+// serveDir handles directory requests: redirect, index file, listing, or 403.
 func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, f *os.File, reqPath, browserPath string) {
 	if !strings.HasSuffix(browserPath, "/") {
 		http.Redirect(w, r, browserPath+"/", http.StatusMovedPermanently)
@@ -607,9 +526,6 @@ func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, f 
 		defer indexFile.Close()
 		indexInfo, err := indexFile.Stat()
 		if err == nil && !indexInfo.IsDir() {
-			// If the configured index file is a Markdown file and the renderer
-			// is active, hand it to serveMarkdown exactly as a direct file request
-			// would. ?download bypasses rendering the same way it does elsewhere.
 			wantsDownload := r.URL.Query().Has("download")
 			if !wantsDownload && h.mdConverter != nil && isMarkdownPath(indexName) {
 				h.serveMarkdown(w, r, root, indexPath, browserPath, indexInfo)
@@ -637,12 +553,12 @@ func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, f 
 	http.Error(w, "Forbidden", http.StatusForbidden)
 }
 
-// serveDirectoryListing renders a directory index into a buffer before writing
-// (Fix #8) so that a template failure can still return a clean HTTP 500.
+// serveDirectoryListing renders the directory index into a buffer before writing,
+// ensuring a template failure can still return a clean HTTP 500.
 func (h *web) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *os.File, displayPath string) {
 	entries, err := f.ReadDir(-1)
 	if err != nil {
-		h.logger.Fields("err", err, "path", displayPath).Error("failed to read directory")
+		h.logger().Fields("err", err, "path", displayPath).Error("failed to read directory")
 		http.Error(w, "Error reading directory", http.StatusInternalServerError)
 		return
 	}
@@ -710,10 +626,9 @@ func (h *web) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *o
 		Breadcrumb: h.buildBreadcrumbs(displayPath),
 	}
 
-	// Buffer first — if Execute fails we can still write a 500 (Fix #8).
 	var buf bytes.Buffer
 	if err := dirTmpl.Execute(&buf, data); err != nil {
-		h.logger.Fields("err", err, "path", displayPath).Error("directory listing template execute failed")
+		h.logger().Fields("err", err, "path", displayPath).Error("directory listing template execute failed")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -725,22 +640,9 @@ func (h *web) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *o
 	_, _ = w.Write(buf.Bytes())
 }
 
-// -----------------------------------------------------------------------------
-// Dynamic gzip (Fix #5)
-// -----------------------------------------------------------------------------
-
-// serveDynamicGzip compresses f on the fly and writes the gzip response.
-// The compressed body is cached in memory (mappo is lock-free; no mutex needed).
-// Returns true if the response was fully written; false to fall back to plain.
-func (h *web) serveDynamicGzip(
-	w http.ResponseWriter,
-	r *http.Request,
-	reqPath string,
-	f *os.File,
-	info fs.FileInfo,
-	mimeType string,
-) bool {
-	// mappo is lock-free — direct Load/Store with no external mutex.
+// serveDynamicGzip compresses the file on the fly and writes the gzip response.
+// Results are cached in memory; mappo is lock-free so no mutex is needed.
+func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath string, f *os.File, info fs.FileInfo, mimeType string) bool {
 	cached, ok := dynamicGzCache.Load(reqPath)
 
 	var entry *dynamicGzEntry
@@ -753,7 +655,7 @@ func (h *web) serveDynamicGzip(
 	if entry == nil {
 		raw, err := os.ReadFile(f.Name())
 		if err != nil {
-			h.logger.Fields("err", err, "path", reqPath).Warn("dynamic gzip: read failed")
+			h.logger().Fields("err", err, "path", reqPath).Warn("dynamic gzip: read failed")
 			return false
 		}
 
@@ -763,12 +665,12 @@ func (h *web) serveDynamicGzip(
 		if _, err := gz.Write(raw); err != nil {
 			gz.Close()
 			gzWriterPool.Put(gz)
-			h.logger.Fields("err", err, "path", reqPath).Warn("dynamic gzip: compress failed")
+			h.logger().Fields("err", err, "path", reqPath).Warn("dynamic gzip: compress failed")
 			return false
 		}
 		if err := gz.Close(); err != nil {
 			gzWriterPool.Put(gz)
-			h.logger.Fields("err", err, "path", reqPath).Warn("dynamic gzip: flush failed")
+			h.logger().Fields("err", err, "path", reqPath).Warn("dynamic gzip: flush failed")
 			return false
 		}
 		gzWriterPool.Put(gz)
@@ -785,7 +687,7 @@ func (h *web) serveDynamicGzip(
 	}
 
 	if h.setCommonHeaders(w, r, reqPath, entry.modTime, entry.size, true) {
-		return true // 304 Not Modified
+		return true
 	}
 
 	if mimeType == "" {
@@ -799,16 +701,10 @@ func (h *web) serveDynamicGzip(
 	return true
 }
 
-// -----------------------------------------------------------------------------
-// Error handling
-// -----------------------------------------------------------------------------
-
-// handleOpenError translates an os.Root.Open failure into the appropriate
-// HTTP response and log entry (Fix #7: tiered logging by error type).
+// handleOpenError maps os.Root.Open failures to HTTP responses with tiered logging.
 func (h *web) handleOpenError(w http.ResponseWriter, r *http.Request, root *os.Root, reqPath string, err error) {
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		// SPA fallback: serve the index for any unknown path.
 		if h.route.Web.SPA {
 			indexName := "index.html"
 			if h.route.Web.Index != "" {
@@ -824,33 +720,26 @@ func (h *web) handleOpenError(w http.ResponseWriter, r *http.Request, root *os.R
 				}
 			}
 		}
-
-		//h.logger.Fields("path", reqPath).Stack("file not found (404)")
+		//h.logger().Fields("path", reqPath).Stack("file not found (404)")
 		http.Error(w, "Not Found", http.StatusNotFound)
 
 	case errors.Is(err, fs.ErrPermission):
-
-		h.logger.Fields("path", reqPath, "method", r.Method, "ua", r.UserAgent()).
+		h.logger().Fields("path", reqPath, "method", r.Method, "ua", r.UserAgent()).
 			Warn("permission denied serving file")
 		http.Error(w, "Forbidden", http.StatusForbidden)
 
 	default:
-
-		h.logger.Fields("err", err, "path", reqPath, "method", r.Method).
+		h.logger().Fields("err", err, "path", reqPath, "method", r.Method).
 			Error("unexpected error opening file")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
 }
 
-// -----------------------------------------------------------------------------
-// Shared helpers
-// -----------------------------------------------------------------------------
-
 func (h *web) resolveRootPath() string {
 	if h.route.Web.Git.Enabled.Active() && h.cookMgr != nil {
 		return h.cookMgr.CurrentPath(h.route.Web.Git.ID)
 	}
-	return h.route.Web.Root.String() // WebRoot.String() returns "." when unset
+	return h.route.Web.Root.String()
 }
 
 func (h *web) resolveGzipPath(reqPath string) (gzPath, origPath string) {
@@ -868,7 +757,7 @@ func (h *web) resolveGzipPath(reqPath string) (gzPath, origPath string) {
 }
 
 // gzMayExist returns true when the cache holds no confirmed-negative entry.
-// Unknown keys default to true (optimistic — attempt the open).
+// Unknown keys default to true so the file open is always attempted first.
 func (h *web) gzMayExist(gzPath string) bool {
 	it, ok := gzExistsCache.Load(gzPath)
 	if !ok {
@@ -881,7 +770,7 @@ func (h *web) gzMayExist(gzPath string) bool {
 	return v
 }
 
-// gzSetExists records a confirmed existence state for a .gz sidecar.
+// gzSetExists records the confirmed existence state for a pre-compressed sidecar.
 // TTL is jittered ±2.5 s to prevent thundering-herd on cache expiry.
 func (h *web) gzSetExists(gzPath string, exists bool) {
 	jitter := time.Duration(time.Now().UnixNano()%int64(5*time.Second)) - 2500*time.Millisecond
@@ -892,18 +781,9 @@ func (h *web) gzSetExists(gzPath string, exists bool) {
 	gzExistsCache.StoreTTL(gzPath, &mappo.Item{Value: exists}, ttl)
 }
 
-// setCommonHeaders writes Cache-Control, ETag, and Vary, then evaluates
-// If-None-Match. Returns true (writing 304) when the client is current.
-func (h *web) setCommonHeaders(
-	w http.ResponseWriter,
-	r *http.Request,
-	reqPath string,
-	modTime time.Time,
-	size int64,
-	isGzipVariant bool,
-) (notModified bool) {
-	// ?refresh forces a clean response: no-store so the browser does not cache
-	// this response, and skip the 304 check so we always send the full body.
+// setCommonHeaders writes Cache-Control, ETag, and Vary and evaluates If-None-Match.
+// Returns true and writes 304 when the client already holds a current copy.
+func (h *web) setCommonHeaders(w http.ResponseWriter, r *http.Request, reqPath string, modTime time.Time, size int64, isGzipVariant bool) (notModified bool) {
 	if r.URL.Query().Has("refresh") {
 		w.Header().Set("Cache-Control", "no-store")
 		if isGzipVariant {
@@ -958,7 +838,27 @@ func (h *web) buildBreadcrumbs(displayPath string) []crumb {
 	return out
 }
 
-// isCompressibleMIME reports whether mt is worth gzip-compressing on the fly.
+// chromaPreWrapper implements chromahtml.PreWrapper, replacing Chroma's default
+// <pre style="color:...;background-color:..."> with a plain class-only element.
+// Inline styles on <pre> cannot be overridden by CSS variables even with !important,
+// so discarding styleAttr gives the template's pre.chroma rule full control.
+type chromaPreWrapper struct{}
+
+func (chromaPreWrapper) Start(code bool, _ string) string {
+	if code {
+		return `<pre class="chroma"><code>`
+	}
+	return `<pre class="chroma">`
+}
+
+func (chromaPreWrapper) End(code bool) string {
+	if code {
+		return `</code></pre>`
+	}
+	return `</pre>`
+}
+
+// isCompressibleMIME reports whether the MIME type benefits from on-the-fly gzip.
 func isCompressibleMIME(mt string) bool {
 	for _, prefix := range compressibleMIME {
 		if strings.HasPrefix(mt, prefix) {
@@ -968,8 +868,8 @@ func isCompressibleMIME(mt string) bool {
 	return false
 }
 
-// detectContentType reads up to 512 bytes from f to sniff the MIME type,
-// then seeks back to the start. Falls back to "application/octet-stream".
+// detectContentType reads up to 512 bytes from f to sniff the MIME type
+// and seeks back to the start. Falls back to application/octet-stream.
 func detectContentType(f *os.File) string {
 	buf := make([]byte, 512)
 	n, _ := f.Read(buf)
@@ -980,8 +880,8 @@ func detectContentType(f *os.File) string {
 	return "application/octet-stream"
 }
 
-// strongETag builds a weak ETag incorporating file size, modification time,
-// and inode (Fix #9). Falls back to 0 on platforms without inode support.
+// strongETag builds a weak ETag from size, modtime, and inode number.
+// Falls back to inode 0 on platforms without inode support.
 func strongETag(path string, size int64, modTime time.Time) string {
 	raw := fmt.Sprintf("%d-%d-%d", size, modTime.UnixNano(), inodeOf(path))
 	return fmt.Sprintf(`W/"%x"`, fnv64a(raw))

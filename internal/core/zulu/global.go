@@ -4,6 +4,7 @@ import (
 	"io"
 	mrand "math/rand/v2"
 	"sync"
+	"time"
 
 	"github.com/olekukonko/mappo"
 	"github.com/olekukonko/tablewriter"
@@ -51,3 +52,5 @@ func Table(output io.Writer) *tablewriter.Table {
 
 	return table
 }
+
+var ModTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

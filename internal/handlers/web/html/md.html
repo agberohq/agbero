@@ -144,11 +144,10 @@
 
         @media (max-width: 600px) { body { padding: 20px; } }
 
-        /* pre.chroma background:
-           - No syntax highlight: follow --code-bg so dark-mode toggle works.
-           - Syntax highlight active: leave Chroma's own inline background alone;
-             overriding it would break the chosen theme in dark mode. */
-        {{if not .SyntaxHighlight}}pre.chroma { background: var(--code-bg) !important; }{{end}}
+        /* pre.chroma: always follows --code-bg and --text-main.
+           chromaPreWrapper in web.go emits <pre class="chroma"> with no inline
+           style attribute, so CSS variables win without needing !important. */
+        pre.chroma { background: var(--code-bg); color: var(--text-main); }
     </style>
 </head>
 <body>

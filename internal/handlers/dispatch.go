@@ -257,7 +257,7 @@ func (m *Manager) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/x-icon")
 	w.Header().Set("Cache-Control", "public, max-age=31536000")
 	if len(operation.Favicon) > 0 {
-		http.ServeContent(w, r, "favicon.ico", operation.ModTime, bytes.NewReader(operation.Favicon))
+		http.ServeContent(w, r, "favicon.ico", zulu.ModTime, bytes.NewReader(operation.Favicon))
 	} else {
 		w.WriteHeader(http.StatusNotFound)
 	}
