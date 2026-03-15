@@ -338,8 +338,7 @@ func (m *Manager) triggerRenewal(domain string) {
 }
 
 func (m *Manager) getCertificateLocal(host string) (*tls.Certificate, error) {
-	m.installer.SetHosts([]string{host}, 443)
-	certFile, keyFile, err := m.installer.EnsureLocalhostCert()
+	certFile, keyFile, err := m.installer.EnsureForHost(host, 443)
 	if err != nil {
 		return nil, err
 	}

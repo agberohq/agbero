@@ -192,6 +192,11 @@ func (s *Score) Update(r Record) {
 		}
 	}
 
+	// Reset the passive window so historical traffic from a spike does not
+	// permanently anchor the score. Each probe cycle now measures only the
+	// errors observed since the previous probe.
+	s.passiveErrors.Swap(0)
+	s.passiveRequests.Swap(0)
 	s.updateSnapshot()
 }
 

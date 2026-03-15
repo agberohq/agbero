@@ -22,7 +22,7 @@ func defaultGlobal(g *alaye.Global, configPath string) {
 		g.General.MaxHeaderBytes = alaye.DefaultMaxHeaderBytes
 	}
 
-	if g.Bind.Redirect == alaye.Unknown {
+	if g.Bind.Redirect == alaye.Unknown && len(g.Bind.HTTPS) > 0 {
 		g.Bind.Redirect = alaye.Active
 	}
 

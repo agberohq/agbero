@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/woos"
@@ -29,6 +30,7 @@ const (
 )
 
 type Local struct {
+	mu        sync.Mutex
 	logger    *ll.Logger
 	CertDir   woos.Folder
 	certHosts []string
@@ -566,6 +568,14 @@ func (ci *Local) SetMockMode(mock bool) {
 	if mock {
 		ci.logger.Debug("local: mock mode enabled, CA installation disabled")
 	}
+}
+
+func (ci *Local) EnsureForHost(host string, port int) (certFile, keyFile string, err error) {
+	ci.mu.Lock()
+	defer ci.mu.Unlock()
+	ci.certHosts = []string{host}
+	ci.port = port
+	return ci.EnsureLocalhostCert()
 }
 
 func ipStrings(ips []net.IP) []string {

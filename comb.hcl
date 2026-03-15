@@ -6,7 +6,7 @@ exclude_dirs {
   items = ["lab", "bin", "dist", "assets", "oppor", "docs"]
 }
 exclude_files {
-  items = ["server.log", "agbero","all.txt"]
+  items = ["*.log","*.txt","agbero"]
 }
 use_gitignore = true
 detailed = false

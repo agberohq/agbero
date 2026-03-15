@@ -107,7 +107,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	}
 	m.baseHandler = http.HandlerFunc(m.handleRequest)
 	m.acmeHandler = m.baseHandler
-	if len(cfg.Global.Bind.HTTPS) > 0 {
+	if len(cfg.Global.Bind.HTTPS) > 0 && cfg.Global.Bind.Redirect.Active() {
 		m.acmeHandler = http.HandlerFunc(m.redirectToHTTPS)
 	}
 	if cfg.TLSManager != nil {

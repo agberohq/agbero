@@ -18,10 +18,6 @@ func (b *Bind) Validate() error {
 		return ErrNoBindAddresses
 	}
 
-	if b.Redirect == Unknown {
-		b.Redirect = Active
-	}
-
 	for i, addr := range b.HTTP {
 		if err := b.validateAddress(addr); err != nil {
 			return errors.Newf("http[%d]: %w", i, err)

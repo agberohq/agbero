@@ -154,9 +154,14 @@ func (b *Base) RecordResult(success bool) bool {
 	}
 
 	failures := b.Activity.Failures.Load()
-	b.LastRecov.Store(time.Now().UnixNano())
 
-	return b.CBThreshold > 0 && failures == uint64(b.CBThreshold)
+	// Only stamp LastRecov when the circuit first trips.
+	// Do NOT update it on subsequent failures — that is the stun-lock bug.
+	if b.CBThreshold > 0 && failures == uint64(b.CBThreshold) {
+		b.LastRecov.Store(time.Now().UnixNano())
+	}
+
+	return b.CBThreshold > 0 && failures >= uint64(b.CBThreshold)
 }
 
 func (b *Base) IsUsable() bool {
@@ -181,11 +186,11 @@ func (b *Base) InFlight() int64 {
 }
 
 func (b *Base) ResponseTime() int64 {
-	snap := b.Activity.Latency.Snapshot()
-	if snap.Count == 0 {
+	v := b.Activity.EWMA()
+	if v == 0 {
 		return 0
 	}
-	return snap.Avg
+	return v
 }
 
 func (b *Base) OnDialFailure(err error) {

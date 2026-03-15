@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -9,20 +10,45 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 )
 
-type Latency struct {
+var snapshotHistogramPool = sync.Pool{
+	New: func() any {
+		return hdrhistogram.New(woos.MinUS, woos.MaxUS, 3)
+	},
+}
+
+type shard struct {
 	mu           sync.Mutex
 	histogram    *hdrhistogram.Histogram
-	lastRotation atomic.Int64
-	sum          atomic.Int64
-	dropped      atomic.Uint64
-	closed       atomic.Bool
+	count        uint64
+	sum          int64
+	lastRotation int64    // guarded by mu — no global atomic needed
+	_            [40]byte // prevent false sharing
+}
+
+type Latency struct {
+	shards    []shard
+	numShards uint64
+	nextShard atomic.Uint64
+	closed    atomic.Bool
 }
 
 func NewLatency() *Latency {
-	lt := &Latency{
-		histogram: hdrhistogram.New(woos.MinUS, woos.MaxUS, 3),
+	n := runtime.GOMAXPROCS(0) * 2
+	if n < 16 {
+		n = 16
 	}
-	lt.lastRotation.Store(time.Now().UnixNano())
+
+	now := time.Now().UnixNano()
+	lt := &Latency{
+		shards:    make([]shard, n),
+		numShards: uint64(n),
+	}
+
+	for i := range lt.shards {
+		lt.shards[i].histogram = hdrhistogram.New(woos.MinUS, woos.MaxUS, 3)
+		lt.shards[i].lastRotation = now
+	}
+
 	return lt
 }
 
@@ -36,55 +62,63 @@ func (lt *Latency) Record(microseconds int64) {
 	}
 
 	v := microseconds
-	// Defensive clamping: invalid values penalized as worst case
 	if v < woos.MinUS || v > woos.MaxUS {
 		v = woos.MaxUS
 	}
 
-	now := time.Now()
+	s := &lt.shards[lt.nextShard.Add(1)%lt.numShards]
 
-	lt.mu.Lock()
-	defer lt.mu.Unlock()
-
-	// Check rotation
-	last := time.Unix(0, lt.lastRotation.Load())
-	if now.Sub(last) > woos.HistogramWindow {
-		lt.histogram.Reset()
-		lt.lastRotation.Store(now.UnixNano())
-		lt.sum.Store(0)
+	s.mu.Lock()
+	now := time.Now().UnixNano()
+	if now-s.lastRotation > int64(woos.HistogramWindow) {
+		s.histogram.Reset()
+		s.count = 0
+		s.sum = 0
+		s.lastRotation = now
 	}
-
-	lt.histogram.RecordValue(v)
-	lt.sum.Add(v)
+	s.histogram.RecordValue(v)
+	s.count++
+	s.sum += v
+	s.mu.Unlock()
 }
 
 type LatencySnapshot struct {
-	P50     int64  `json:"p50"`
-	P90     int64  `json:"p90"`
-	P99     int64  `json:"p99"`
-	Max     int64  `json:"max"`
-	Count   uint64 `json:"count"`
-	Sum     int64  `json:"sum_us"`
-	Avg     int64  `json:"avg_us"`
-	Dropped uint64 `json:"dropped,omitempty"`
+	P50   int64  `json:"p50"`
+	P90   int64  `json:"p90"`
+	P99   int64  `json:"p99"`
+	Max   int64  `json:"max"`
+	Count uint64 `json:"count"`
+	Sum   int64  `json:"sum_us"`
+	Avg   int64  `json:"avg_us"`
 }
 
 func (lt *Latency) Snapshot() LatencySnapshot {
-	lt.mu.Lock()
-	defer lt.mu.Unlock()
+	merged := snapshotHistogramPool.Get().(*hdrhistogram.Histogram)
+	merged.Reset()
+	defer snapshotHistogramPool.Put(merged)
 
-	snap := LatencySnapshot{
-		P50:   lt.histogram.ValueAtQuantile(50),
-		P90:   lt.histogram.ValueAtQuantile(90),
-		P99:   lt.histogram.ValueAtQuantile(99),
-		Max:   lt.histogram.Max(),
-		Count: uint64(lt.histogram.TotalCount()),
+	var totalCount uint64
+	var totalSum int64
+
+	for i := range lt.shards {
+		s := &lt.shards[i]
+		s.mu.Lock()
+		merged.Merge(s.histogram)
+		totalCount += s.count
+		totalSum += s.sum
+		s.mu.Unlock()
 	}
 
-	snap.Sum = lt.sum.Load()
-	snap.Dropped = lt.dropped.Load()
-	if snap.Count > 0 {
-		snap.Avg = snap.Sum / int64(snap.Count)
+	snap := LatencySnapshot{
+		P50:   merged.ValueAtQuantile(50),
+		P90:   merged.ValueAtQuantile(90),
+		P99:   merged.ValueAtQuantile(99),
+		Max:   merged.Max(),
+		Count: totalCount,
+		Sum:   totalSum,
+	}
+	if totalCount > 0 {
+		snap.Avg = totalSum / int64(totalCount)
 	}
 
 	return snap
