@@ -225,7 +225,7 @@ func (r *Route) Key() string {
 	if r.Backends.Enabled.Active() {
 		w.WriteString(strings.ToLower(strings.TrimSpace(r.Backends.Strategy)))
 		for _, b := range r.Backends.Servers {
-			w.WriteString(b.Address)
+			w.WriteString(b.Address.String())
 			w.WriteString(fmt.Sprint(b.Weight))
 		}
 	}
@@ -359,7 +359,7 @@ func (r *Route) Key() string {
 }
 
 // BackendKey provides a deterministic, centralized identifier for routing observability
-func (r *Route) BackendKey(domain, backendAddr string) string {
+func (r *Route) BackendKey(domain, backendAddr string) BackendKey {
 	if domain == "" {
 		domain = "*"
 	}
@@ -367,5 +367,10 @@ func (r *Route) BackendKey(domain, backendAddr string) string {
 	if path == "" {
 		path = "/"
 	}
-	return "http|" + domain + "|" + path + "|" + backendAddr
+	return BackendKey{
+		Protocol: "http",
+		Domain:   domain,
+		Path:     path,
+		Addr:     backendAddr,
+	}
 }

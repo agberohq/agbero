@@ -8,7 +8,7 @@ import (
 	"github.com/olekukonko/errors"
 )
 
-type TCPRoute struct {
+type Proxy struct {
 	Enabled  Enabled  `hcl:"enabled,optional" json:"enabled"`
 	Name     string   `hcl:"name,label" json:"name"`
 	Listen   string   `hcl:"listen" json:"listen"`
@@ -21,7 +21,7 @@ type TCPRoute struct {
 	HealthCheck    TCPHealthCheck `hcl:"health_check,block" json:"health_check"`
 }
 
-func (t *TCPRoute) Validate() error {
+func (t *Proxy) Validate() error {
 	if t.Enabled.NotActive() {
 		return nil
 	}
@@ -98,10 +98,15 @@ func (t *TCPHealthCheck) Validate() error {
 }
 
 // BackendKey provides a deterministic, centralized identifier for routing observability
-func (t *TCPRoute) BackendKey(backendAddr string) string {
+func (t *Proxy) BackendKey(backendAddr string) BackendKey {
 	sni := t.SNI
 	if sni == "" {
 		sni = "*"
 	}
-	return "tcp|" + t.Listen + "|" + sni + "|" + backendAddr
+	return BackendKey{
+		Protocol: "tcp",
+		Domain:   t.Listen,
+		Path:     sni,
+		Addr:     backendAddr,
+	}
 }

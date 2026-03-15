@@ -37,9 +37,8 @@ type Node struct {
 type Tree struct {
 	root atomic.Pointer[Node]
 
-	// Use mappo.Cache instead of sync.Map for better performance
-	cache     *mappo.Cache
-	cacheSize atomic.Int64
+	// Use typed LRU cache to eliminate heap escapes and type assertions
+	cache *mappo.LRU[string, Result]
 
 	// Use Sharded map for fast paths to avoid copy-on-write
 	fastPaths *mappo.Sharded[string, *Node]
@@ -50,7 +49,7 @@ type Tree struct {
 // NewTree returns an empty Tree
 func NewTree() *Tree {
 	t := &Tree{
-		cache:     mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMax}),
+		cache:     mappo.NewLRU[string, Result](woos.CacheMax),
 		fastPaths: mappo.NewShardedWithConfig[string, *Node](mappo.ShardedConfig{ShardCount: 16}),
 	}
 
@@ -75,7 +74,6 @@ func (t *Tree) Insert(pattern string, route *alaye.Route) error {
 
 	pattern = cleanPattern(pattern)
 
-	// Only clear cache entries that might match this pattern
 	t.clearCacheForPattern(pattern)
 
 	if t.isFastPath(pattern) {
@@ -100,9 +98,9 @@ func (t *Tree) Find(path string) Result {
 		return Result{Route: node.route, Params: nil}
 	}
 
-	// 3. Cache - use mappo.Cache
-	if it, ok := t.cache.Load(path); ok {
-		return it.Value.(Result)
+	// 3. Cache - strictly typed, no allocations
+	if val, ok := t.cache.Get(path); ok {
+		return val
 	}
 
 	// 4. Tree traversal (read-only, RLock sufficient)
@@ -111,9 +109,7 @@ func (t *Tree) Find(path string) Result {
 	t.mu.RUnlock()
 
 	if result.Route != nil {
-		// Store in cache
-		t.cache.Store(path, &mappo.Item{Value: result})
-		t.cacheSize.Add(1)
+		t.cache.Set(path, result)
 	}
 
 	return result
@@ -125,7 +121,6 @@ func (t *Tree) ClearCache() {
 	defer t.mu.Unlock()
 
 	t.cache.Clear()
-	t.cacheSize.Store(0)
 	t.fastPaths.Clear()
 }
 
@@ -137,7 +132,7 @@ func (t *Tree) Stats() map[string]any {
 	stats := make(map[string]any)
 	root := t.root.Load()
 	stats["fast_paths"] = t.fastPaths.Len()
-	stats["cache_size"] = t.cacheSize.Load()
+	stats["cache_size"] = t.cache.Len()
 	stats["node_count"] = t.countNodes(root)
 	stats["route_count"] = t.countRoutes(root)
 	return stats
@@ -174,7 +169,6 @@ func (t *Tree) Rebuild(routes []alaye.Route) {
 
 	t.fastPaths.Clear()
 	t.cache.Clear()
-	t.cacheSize.Store(0)
 
 	for i := range routes {
 		r := &routes[i]
@@ -242,7 +236,6 @@ func (t *Tree) insertRecursive(parent *Node, path string, route *alaye.Route) er
 	return t.insertRecursive(child, rest, route)
 }
 
-// findWithBacktrack - optimized to reuse param maps via sync.Pool
 func (t *Tree) findWithBacktrack(node *Node, remaining string, params map[string]string) Result {
 	best := Result{Route: node.route, Params: params}
 	if remaining == woos.Empty {
@@ -255,13 +248,11 @@ func (t *Tree) findWithBacktrack(node *Node, remaining string, params map[string
 			continue
 		}
 
-		// Reuse params map if possible, only allocate when needed
 		var nextParams map[string]string
 		if len(captured) > 0 {
 			if params == nil {
 				nextParams = captured
 			} else {
-				// Merge into new map only when both exist
 				nextParams = make(map[string]string, len(params)+len(captured))
 				maps.Copy(nextParams, params)
 				maps.Copy(nextParams, captured)
@@ -279,7 +270,6 @@ func (t *Tree) findWithBacktrack(node *Node, remaining string, params map[string
 	if node.hasCatchAll {
 		for _, child := range node.children {
 			if child.kind == woos.KindCatchAll && child.route != nil {
-				// Optimize catch-all param handling
 				var out map[string]string
 				if params == nil {
 					out = map[string]string{woos.TemplateWildcardKey: remaining}
@@ -296,15 +286,9 @@ func (t *Tree) findWithBacktrack(node *Node, remaining string, params map[string
 	return best
 }
 
-// clearCacheForPattern - only clear entries that might match this pattern
 func (t *Tree) clearCacheForPattern(pattern string) {
-	// For fast paths, just delete the specific entry
 	t.fastPaths.Delete(pattern)
-
-	// For cache, we could be smarter, but for now clear all
-	// (could use prefix matching if cache keys are paths)
 	t.cache.Clear()
-	t.cacheSize.Store(0)
 }
 
 func (t *Tree) createNode(seg string, k woos.Kind) (*Node, error) {
@@ -345,8 +329,6 @@ func (t *Tree) createNode(seg string, k woos.Kind) (*Node, error) {
 	}
 	return n, nil
 }
-
-// ---------------- Node Methods ----------------
 
 func (n *Node) match(path string) (bool, int, map[string]string) {
 	if path == woos.Empty || path[0] != woos.SlashByte {
@@ -398,8 +380,6 @@ func (n *Node) findChild(seg string, k woos.Kind) *Node {
 	}
 	return nil
 }
-
-// ---------------- Tree Utilities ----------------
 
 func (t *Tree) countNodes(n *Node) int {
 	count := 1
@@ -456,8 +436,6 @@ func (t *Tree) parseSegment(path string) (seg, rest string, k woos.Kind, err err
 	return
 }
 
-// ---------------- Validation ----------------
-
 func (t *Tree) validatePattern(pattern string) error {
 	if pattern == woos.Empty {
 		return woos.ErrEmptyPattern
@@ -513,8 +491,6 @@ func (t *Tree) isFastPath(pattern string) bool {
 		!strings.Contains(pattern, woos.RegexPrefix) &&
 		!strings.Contains(pattern, woos.Star)
 }
-
-// ---------------- Utility ----------------
 
 func cleanPattern(p string) string {
 	p = strings.TrimSpace(p)

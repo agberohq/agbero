@@ -105,7 +105,7 @@ func (s *Server) registerAdminAPI(mux *http.ServeMux) {
 func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.Admin) {
 	protect := s.buildAuthMiddleware(cfg)
 
-	mux.Handle("/uptime", protect(uptime.Uptime(s.hostManager, s.clusterManager, s.cookManager)))
+	mux.Handle("/uptime", protect(uptime.Uptime(s.resource, s.hostManager, s.clusterManager, s.cookManager)))
 	mux.Handle("/metrics", protect(promhttp.Handler()))
 	mux.Handle("/config", protect(http.HandlerFunc(s.handleConfigDump)))
 	mux.Handle("/logs", protect(http.HandlerFunc(s.handleLogs)))

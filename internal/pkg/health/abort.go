@@ -2,18 +2,20 @@ package health
 
 import (
 	"sync/atomic"
+
+	"github.com/agberohq/agbero/internal/core/alaye"
 )
 
 type EarlyAbortController struct {
 	enabled    atomic.Bool
-	abortCh    chan string // backend ID to abort
-	threshold  int32       // score drop threshold
+	abortCh    chan alaye.BackendKey // backend ID to abort
+	threshold  int32                 // score drop threshold
 	windowSecs int32
 }
 
 func NewEarlyAbortController(enabled bool) *EarlyAbortController {
 	eac := &EarlyAbortController{
-		abortCh:    make(chan string, 100),
+		abortCh:    make(chan alaye.BackendKey, 100),
 		threshold:  30,
 		windowSecs: 5,
 	}
@@ -29,7 +31,7 @@ func (eac *EarlyAbortController) Disable() {
 	eac.enabled.Store(false)
 }
 
-func (eac *EarlyAbortController) ShouldAbort(backendID string, score *Score) bool {
+func (eac *EarlyAbortController) ShouldAbort(backendKey alaye.BackendKey, score *Score) bool {
 	if !eac.enabled.Load() {
 		return false
 	}
@@ -37,7 +39,7 @@ func (eac *EarlyAbortController) ShouldAbort(backendID string, score *Score) boo
 	// Check rapid deterioration
 	if score.IsRapidDeterioration() {
 		select {
-		case eac.abortCh <- backendID:
+		case eac.abortCh <- backendKey:
 		default:
 		}
 		return true
@@ -51,6 +53,6 @@ func (eac *EarlyAbortController) ShouldAbort(backendID string, score *Score) boo
 	return false
 }
 
-func (eac *EarlyAbortController) AbortChannel() <-chan string {
+func (eac *EarlyAbortController) AbortChannel() <-chan alaye.BackendKey {
 	return eac.abortCh
 }

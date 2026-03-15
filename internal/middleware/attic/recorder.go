@@ -6,6 +6,9 @@ import (
 	"sync"
 )
 
+// 5MB limit for caching responses to prevent OOM
+const maxCacheableBodySize = 5 * 1024 * 1024
+
 // recorder captures HTTP response for caching
 type recorder struct {
 	http.ResponseWriter
@@ -13,6 +16,7 @@ type recorder struct {
 	buf         *bytes.Buffer
 	status      int
 	wroteHeader bool
+	cacheable   bool
 	mu          sync.RWMutex
 }
 
@@ -22,6 +26,7 @@ func newRecorder(w http.ResponseWriter) *recorder {
 		headers:        make(http.Header),
 		buf:            bytes.NewBuffer(make([]byte, 0, 4096)),
 		status:         http.StatusOK,
+		cacheable:      true,
 	}
 }
 
@@ -52,15 +57,26 @@ func (r *recorder) WriteHeader(code int) {
 func (r *recorder) Write(b []byte) (int, error) {
 	r.mu.RLock()
 	wh := r.wroteHeader
+	cacheable := r.cacheable
 	r.mu.RUnlock()
 
 	if !wh {
 		r.WriteHeader(http.StatusOK)
 	}
 
-	r.mu.Lock()
-	r.buf.Write(b)
-	r.mu.Unlock()
+	if cacheable {
+		r.mu.Lock()
+		if r.cacheable {
+			if r.buf.Len()+len(b) > maxCacheableBodySize {
+				// Response too large: stop buffering and free memory
+				r.cacheable = false
+				r.buf = nil
+			} else {
+				r.buf.Write(b)
+			}
+		}
+		r.mu.Unlock()
+	}
 
 	return r.ResponseWriter.Write(b)
 }
@@ -68,6 +84,9 @@ func (r *recorder) Write(b []byte) (int, error) {
 func (r *recorder) Body() []byte {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	if !r.cacheable || r.buf == nil {
+		return nil
+	}
 	return r.buf.Bytes()
 }
 
@@ -81,4 +100,10 @@ func (r *recorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+func (r *recorder) Cacheable() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cacheable
 }

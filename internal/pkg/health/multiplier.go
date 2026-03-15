@@ -22,25 +22,19 @@ func (rw *Multiplier) EffectiveWeight(configuredWeight int, score *Score) int {
 	if configuredWeight <= 0 {
 		configuredWeight = 1
 	}
-
 	state := score.State()
 	baseScore := float64(score.Value()) / 100.0
-
 	switch state {
-	case StateHealthy:
+	case StateHealthy, StateUnknown: // ← Treat Unknown as Healthy (no data yet)
 		return int(float64(configuredWeight) * baseScore)
-
 	case StateDegraded:
 		healthWeight := float64(configuredWeight) * baseScore
 		return int(healthWeight * rw.DegradedMultiplier)
-
 	case StateUnhealthy:
 		healthWeight := float64(configuredWeight) * baseScore
 		return int(healthWeight * rw.UnhealthyMultiplier)
-
 	case StateDead:
 		return 0
 	}
-
-	return 0
+	return configuredWeight
 }

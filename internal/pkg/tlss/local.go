@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/woos"
@@ -23,7 +24,13 @@ import (
 	"github.com/smallstep/truststore"
 )
 
+const (
+	caCert = "ca-cert.pem"
+	caKey  = "ca-key.pem"
+)
+
 type Local struct {
+	mu        sync.Mutex
 	logger    *ll.Logger
 	CertDir   woos.Folder
 	certHosts []string
@@ -61,10 +68,10 @@ func (ci *Local) SetStorageDir(dir woos.Folder) error {
 	if err := dir.Ensure("", false); err != nil {
 		return errors.Newf("failed to create storage directory: %w", err)
 	}
+
 	ci.CertDir = dir
-	if ci.logger != nil {
-		ci.logger.Fields("dir", dir).Info("storage directory")
-	}
+	ci.logger.Fields("dir", dir).Info("storage directory")
+
 	return nil
 }
 
@@ -111,20 +118,16 @@ func (ci *Local) EnsureLocalhostCert() (certFile, keyFile string, err error) {
 	keyFile = filepath.Join(ci.CertDir.Path(), fmt.Sprintf("%s-%d-key.pem", prefix, ci.port))
 
 	if err := ci.validateCertificate(certFile, keyFile); err == nil {
-		if ci.logger != nil {
-			ci.logger.Fields("cert", certFile, "key", keyFile).Info("Using existing certificates")
-		}
+		ci.logger.Fields("cert", certFile, "key", keyFile).Info("Using existing certificates")
+
 		return certFile, keyFile, nil
 	}
 
-	if ci.logger != nil {
-		ci.logger.Fields("hosts", ci.certHosts, "cert", certFile).Info("Generating localhost certificates with ECDSA")
-	}
+	ci.logger.Fields("hosts", ci.certHosts, "cert", certFile).Info("Generating localhost certificates with ECDSA")
 
 	if !ci.caExists() {
-		if ci.logger != nil {
-			ci.logger.Info("CA root not found. Generating and installing local CA...")
-		}
+
+		ci.logger.Info("CA root not found. Generating and installing local CA...")
 		if err := ci.generateAndInstallCA(); err != nil {
 			return "", "", err
 		}
@@ -148,31 +151,23 @@ func (ci *Local) InstallCARootIfNeeded() error {
 
 	// In mock mode, just generate files without installing to system trust store
 	if ci.mockMode {
-		if ci.logger != nil {
-			ci.logger.Debug("mock mode: generating CA files only (no system installation)")
-		}
+		ci.logger.Debug("mock mode: generating CA files only (no system installation)")
 		return ci.generateCAFilesOnly()
 	}
 
-	// Normal mode: generate and install to system trust store
-	if ci.logger != nil {
-		ci.logger.Info("Generating and installing local CA root...")
-	}
+	ci.logger.Info("Generating and installing local CA root...")
 	if err := ci.generateAndInstallCA(); err != nil {
 		return err
 	}
-	if ci.logger != nil {
-		ci.logger.Info("CA root installed successfully")
-	}
+
+	ci.logger.Info("CA root installed successfully")
 	return nil
 }
 
 func (ci *Local) UninstallCARoot() error {
 	// Skip in mock mode
 	if ci.mockMode {
-		if ci.logger != nil {
-			ci.logger.Debug("mock mode: skipping CA uninstall")
-		}
+		ci.logger.Debug("mock mode: skipping CA uninstall")
 		return nil
 	}
 
@@ -181,18 +176,20 @@ func (ci *Local) UninstallCARoot() error {
 		return errors.New("CA certificate path not set")
 	}
 	if _, err := os.Stat(caPath); os.IsNotExist(err) {
-		if ci.logger != nil {
-			ci.logger.Info("CA certificate not found, nothing to uninstall")
-		}
+		ci.logger.Info("CA certificate not found, nothing to uninstall")
 		return nil
 	}
 	if err := truststore.UninstallFile(caPath, truststore.WithFirefox(), truststore.WithJava()); err != nil {
 		return errors.Newf("failed to uninstall CA from system trust store: %w", err)
 	}
-	if ci.logger != nil {
-		ci.logger.Fields("cert", caPath).Info("CA root uninstalled from system trust store")
-	}
+
+	ci.logger.Fields("cert", caPath).Info("CA root uninstalled from system trust store")
 	return nil
+}
+
+func (ci *Local) RemoveCA() {
+	_ = os.Remove(ci.caCertPath())
+	_ = os.Remove(ci.caKeyPath())
 }
 
 func (ci *Local) generateCAFilesOnly() error {
@@ -211,12 +208,13 @@ func (ci *Local) generateCAFilesOnly() error {
 		return errors.Newf("generate serial: %w", err)
 	}
 
+	commonName := fmt.Sprintf("%s  Development CA", woos.Name)
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			Organization:       []string{woos.Organization},
 			OrganizationalUnit: []string{fmt.Sprintf("%s Development", woos.Name)},
-			CommonName:         fmt.Sprintf("%s %s Development CA", woos.Name, woos.Organization),
+			CommonName:         commonName,
 			Country:            []string{"NG"},
 		},
 		NotBefore:             time.Now(),
@@ -261,6 +259,7 @@ func (ci *Local) generateCAFilesOnly() error {
 	}
 	keyOut.Close()
 
+	ci.logger.Fields("cert", keyPath, "cn", commonName, "algo", "ECDSA").Info("Successfully generated certificates")
 	return nil
 }
 
@@ -271,9 +270,7 @@ func (ci *Local) generateAndInstallCA() error {
 
 	// Skip actual installation in mock mode
 	if ci.mockMode {
-		if ci.logger != nil {
-			ci.logger.Debug("mock mode: skipping system trust store installation")
-		}
+		ci.logger.Debug("mock mode: skipping system trust store installation")
 		return nil
 	}
 
@@ -281,9 +278,7 @@ func (ci *Local) generateAndInstallCA() error {
 	if err := truststore.InstallFile(certPath, truststore.WithFirefox(), truststore.WithJava()); err != nil {
 		return errors.Newf("failed to install CA to system trust store: %w", err)
 	}
-	if ci.logger != nil {
-		ci.logger.Fields("cert", certPath).Info("CA root installed to system trust store")
-	}
+	ci.logger.Fields("cert", certPath).Info("CA root installed to system trust store")
 	return nil
 }
 
@@ -314,16 +309,16 @@ func (ci *Local) generateLeaf(certFile, keyFile string) (string, string, error) 
 		}
 	}
 
-	// CN for load balancer - not dynamic
-	commonName := fmt.Sprintf("%s Load Balancer - %s", woos.Name, woos.Organization)
-
+	commonName := fmt.Sprintf("%s  Development CA", woos.Name)
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			Organization:       []string{woos.Organization},
 			OrganizationalUnit: []string{fmt.Sprintf("%s Development", woos.Name)},
 			CommonName:         commonName,
+			Country:            []string{"NG"},
 		},
+
 		DNSNames:    dnsNames,
 		IPAddresses: ipAddresses,
 		NotBefore:   time.Now(),
@@ -365,9 +360,7 @@ func (ci *Local) generateLeaf(certFile, keyFile string) (string, string, error) 
 		return "", "", errors.Newf("generated cert does not validate: %w", err)
 	}
 
-	if ci.logger != nil {
-		ci.logger.Fields("cert", certFile, "cn", commonName, "algo", "ECDSA").Info("Successfully generated certificates")
-	}
+	ci.logger.Fields("cert", certFile, "cn", commonName, "algo", "ECDSA").Info("Successfully generated certificates")
 	return certFile, keyFile, nil
 }
 
@@ -480,15 +473,15 @@ func (ci *Local) validateCertificate(certFile, keyFile string) error {
 	if now.Before(leaf.NotBefore.Add(-2 * time.Minute)) {
 		return errors.Newf("%s: notBefore=%s", woos.ErrNotYetValid, leaf.NotBefore)
 	}
-	if ci.logger != nil {
-		ci.logger.Fields(
-			"subject", leaf.Subject.String(),
-			"dns", leaf.DNSNames,
-			"ips", ipStrings(leaf.IPAddresses),
-			"not_after", leaf.NotAfter,
-			"algo", leaf.PublicKeyAlgorithm.String(),
-		).Debug("tls: cert details")
-	}
+
+	ci.logger.Fields(
+		"subject", leaf.Subject.String(),
+		"dns", leaf.DNSNames,
+		"ips", ipStrings(leaf.IPAddresses),
+		"not_after", leaf.NotAfter,
+		"algo", leaf.PublicKeyAlgorithm.String(),
+	).Debug("tls: cert details")
+
 	for _, raw := range ci.certHosts {
 		target, ok := normalizeHostForVerify(raw)
 		if !ok {
@@ -542,7 +535,7 @@ func (ci *Local) purgeStaleLeafCerts() {
 			removed++
 		}
 	}
-	if ci.logger != nil && removed > 0 {
+	if removed > 0 {
 		ci.logger.Fields("removed", removed, "dir", ci.CertDir.Path()).Info("purged stale leaf certs after CA install")
 	}
 }
@@ -560,21 +553,29 @@ func (ci *Local) caCertPath() string {
 	if !ci.CertDir.IsSet() {
 		return ""
 	}
-	return filepath.Join(ci.CertDir.Path(), "ca-cert.pem")
+	return filepath.Join(ci.CertDir.Path(), caCert)
 }
 
 func (ci *Local) caKeyPath() string {
 	if !ci.CertDir.IsSet() {
 		return ""
 	}
-	return filepath.Join(ci.CertDir.Path(), "ca-key.pem")
+	return filepath.Join(ci.CertDir.Path(), caKey)
 }
 
 func (ci *Local) SetMockMode(mock bool) {
 	ci.mockMode = mock
-	if ci.logger != nil && mock {
+	if mock {
 		ci.logger.Debug("local: mock mode enabled, CA installation disabled")
 	}
+}
+
+func (ci *Local) EnsureForHost(host string, port int) (certFile, keyFile string, err error) {
+	ci.mu.Lock()
+	defer ci.mu.Unlock()
+	ci.certHosts = []string{host}
+	ci.port = port
+	return ci.EnsureLocalhostCert()
 }
 
 func ipStrings(ips []net.IP) []string {

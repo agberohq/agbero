@@ -10,7 +10,6 @@ var (
 	IP = NewIP()
 )
 
-// IPManager handles trusted proxy logic efficiently.
 type IPManager struct {
 	trusted []*net.IPNet
 }
@@ -41,13 +40,21 @@ func NewIPManager(trustedCIDRs []string) *IPManager {
 	return &IPManager{trusted: cidrs}
 }
 
-func (m *IPManager) ClientIP(r *http.Request) string {
-	remoteIP, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		remoteIP = r.RemoteAddr
+func extractIP(addr string) string {
+	idx := strings.LastIndexByte(addr, ':')
+	if idx == -1 {
+		return addr
 	}
+	ip := addr[:idx]
+	if len(ip) > 0 && ip[0] == '[' && ip[len(ip)-1] == ']' {
+		return ip[1 : len(ip)-1]
+	}
+	return ip
+}
 
-	// If no trusted proxies are configured, return the direct peer
+func (m *IPManager) ClientIP(r *http.Request) string {
+	remoteIP := extractIP(r.RemoteAddr)
+
 	if len(m.trusted) == 0 {
 		return remoteIP
 	}
@@ -57,7 +64,6 @@ func (m *IPManager) ClientIP(r *http.Request) string {
 		return remoteIP
 	}
 
-	// Check if immediate peer is trusted
 	isTrusted := false
 	for _, cidr := range m.trusted {
 		if cidr.Contains(ip) {
@@ -67,9 +73,7 @@ func (m *IPManager) ClientIP(r *http.Request) string {
 	}
 
 	if isTrusted {
-		// Parse X-Forwarded-For
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// Work backwards through the list
 			parts := strings.Split(xff, ",")
 			for i := len(parts) - 1; i >= 0; i-- {
 				p := strings.TrimSpace(parts[i])
@@ -81,8 +85,6 @@ func (m *IPManager) ClientIP(r *http.Request) string {
 					continue
 				}
 
-				// If this IP is ALSO trusted, keep going back.
-				// The first NON-trusted IP is the real client.
 				isHopTrusted := false
 				for _, cidr := range m.trusted {
 					if cidr.Contains(parsed) {

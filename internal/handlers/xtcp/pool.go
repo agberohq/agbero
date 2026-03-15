@@ -20,7 +20,6 @@ type pooledConn struct {
 	inUse    atomic.Bool
 	failed   atomic.Bool
 }
-
 type connPool struct {
 	mu       sync.RWMutex
 	conns    []*pooledConn
@@ -37,14 +36,15 @@ func newConnPool(addr string, maxSize int, timeout time.Duration) *connPool {
 		timeout: timeout,
 	}
 }
-
 func (p *connPool) get() (*pooledConn, error) {
 	p.mu.RLock()
 	for _, c := range p.conns {
 		if c.inUse.CompareAndSwap(false, true) && !c.failed.Load() {
 			p.mu.RUnlock()
 			if p.isAlive(c.Conn) {
+				p.mu.Lock()
 				c.lastUsed = time.Now()
+				p.mu.Unlock()
 				return c, nil
 			}
 			c.failed.Store(true)
@@ -54,18 +54,15 @@ func (p *connPool) get() (*pooledConn, error) {
 		}
 	}
 	p.mu.RUnlock()
-
 	conn, err := p.dial()
 	if err != nil {
 		return nil, err
 	}
-
 	pc := &pooledConn{
 		Conn:     conn,
 		lastUsed: time.Now(),
 	}
 	pc.inUse.Store(true)
-
 	p.mu.Lock()
 	if len(p.conns) < p.maxSize {
 		p.conns = append(p.conns, pc)
@@ -86,27 +83,27 @@ func (p *connPool) get() (*pooledConn, error) {
 		}
 	}
 	p.mu.Unlock()
-
 	return pc, nil
 }
-
 func (p *connPool) dial() (net.Conn, error) {
-	if p.resolved.IsValid() {
-		conn, err := net.DialTimeout(woos.TCP, p.resolved.String(), p.timeout)
+	p.mu.RLock()
+	resolved := p.resolved
+	p.mu.RUnlock()
+	if resolved.IsValid() {
+		conn, err := net.DialTimeout(woos.TCP, resolved.String(), p.timeout)
 		if err == nil {
 			return conn, nil
 		}
+		p.mu.Lock()
 		p.resolved = netip.AddrPort{}
+		p.mu.Unlock()
 	}
-
 	host, port, err := net.SplitHostPort(p.addr)
 	if err != nil {
 		return nil, err
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()
-
 	resolver := &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -114,12 +111,10 @@ func (p *connPool) dial() (net.Conn, error) {
 			return d.DialContext(ctx, network, address)
 		},
 	}
-
 	addrs, err := resolver.LookupNetIP(ctx, "ip4", host)
 	if err != nil || len(addrs) == 0 {
 		return net.DialTimeout(woos.TCP, p.addr, p.timeout)
 	}
-
 	var lastErr error
 	for _, addr := range addrs {
 		addrPort := netip.AddrPortFrom(addr, parsePort(port))
@@ -132,10 +127,8 @@ func (p *connPool) dial() (net.Conn, error) {
 		}
 		lastErr = err
 	}
-
 	return nil, lastErr
 }
-
 func (p *connPool) isAlive(conn net.Conn) bool {
 	sys, ok := conn.(syscall.Conn)
 	if !ok {
@@ -145,43 +138,33 @@ func (p *connPool) isAlive(conn net.Conn) bool {
 	if err != nil {
 		return false
 	}
-
 	var sysErr error
 	var n int
-
-	// Read raw file descriptor
 	err = raw.Read(func(fd uintptr) bool {
 		buf := make([]byte, 1)
-		// MSG_PEEK: Read without removing from queue
-		// MSG_DONTWAIT: Return immediately if no data
 		n, _, sysErr = syscall.Recvfrom(int(fd), buf, syscall.MSG_PEEK|syscall.MSG_DONTWAIT)
 		return true
 	})
-
 	if err != nil {
 		return false
 	}
-
 	if sysErr != nil {
-		// EWOULDBLOCK/EAGAIN means connection is open but no data is waiting
 		if errors.Is(sysErr, syscall.EAGAIN) || errors.Is(sysErr, syscall.EWOULDBLOCK) {
 			return true
 		}
 		return false
 	}
-
-	// n == 0 indicates EOF (peer closed connection)
 	return n > 0
 }
-
 func (p *connPool) put(pc *pooledConn) {
 	if pc == nil {
 		return
 	}
 	pc.inUse.Store(false)
+	p.mu.Lock()
 	pc.lastUsed = time.Now()
+	p.mu.Unlock()
 }
-
 func (p *connPool) close() {
 	p.mu.Lock()
 	for _, c := range p.conns {

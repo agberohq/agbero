@@ -3,126 +3,18 @@ package agbero
 import (
 	"encoding/json"
 	"io"
-	"net"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/handlers/xtcp"
-	"github.com/olekukonko/ll"
 )
-
-// =============================================================================
-// Logging Helpers
-// =============================================================================
-
-type llWriter struct {
-	logger *ll.Logger
-}
-
-func (w *llWriter) Write(p []byte) (n int, err error) {
-	msg := strings.TrimSpace(string(p))
-	w.logger.Fields("source", "std_http").Error(msg)
-	return len(p), nil
-}
 
 var logArgsPool = sync.Pool{
 	New: func() any {
 		s := make([]any, 0, 16)
 		return &s
 	},
-}
-
-// =============================================================================
-// Connection Tracking
-// =============================================================================
-
-type connTracker struct {
-	mu    sync.Mutex
-	conns map[net.Conn]struct{}
-	wg    sync.WaitGroup
-}
-
-func newConnTracker() *connTracker {
-	return &connTracker{
-		conns: make(map[net.Conn]struct{}),
-	}
-}
-
-func (ct *connTracker) track(conn net.Conn, state http.ConnState) {
-	ct.mu.Lock()
-	defer ct.mu.Unlock()
-
-	switch state {
-	case http.StateNew:
-		ct.conns[conn] = struct{}{}
-		ct.wg.Add(1)
-	case http.StateClosed, http.StateHijacked:
-		if _, ok := ct.conns[conn]; ok {
-			delete(ct.conns, conn)
-			ct.wg.Done()
-		}
-	}
-}
-
-func (ct *connTracker) wait() {
-	ct.wg.Wait()
-}
-
-func (ct *connTracker) count() int {
-	ct.mu.Lock()
-	defer ct.mu.Unlock()
-	return len(ct.conns)
-}
-
-func anyStreamingEnabled(hosts map[string]*alaye.Host) bool {
-	for _, host := range hosts {
-		for _, rt := range host.Routes {
-			if rt.Backends.Enabled.Active() {
-				for _, srv := range rt.Backends.Servers {
-					if srv.Streaming.Enabled.Active() {
-						return true
-					}
-				}
-			}
-		}
-	}
-	return false
-}
-
-func groupTCPRoutesByListen(hosts map[string]*alaye.Host) map[string][]alaye.TCPRoute {
-	tcpGroups := make(map[string][]alaye.TCPRoute)
-	for _, host := range hosts {
-		for i := range host.Proxies {
-			p := host.Proxies[i]
-			tcpGroups[p.Listen] = append(tcpGroups[p.Listen], p)
-		}
-	}
-	return tcpGroups
-}
-
-func findTCPGroupForProxy(tp *xtcp.Proxy, tcpGroups map[string][]alaye.TCPRoute) []alaye.TCPRoute {
-	_, port, _ := net.SplitHostPort(tp.Listen)
-	if port == "" {
-		if strings.HasPrefix(tp.Listen, ":") {
-			port = tp.Listen[1:]
-		} else {
-			return nil
-		}
-	}
-
-	if group, ok := tcpGroups[tp.Listen]; ok {
-		return group
-	}
-
-	for l, g := range tcpGroups {
-		if strings.HasSuffix(l, ":"+port) {
-			return g
-		}
-	}
-	return nil
 }
 
 // =============================================================================

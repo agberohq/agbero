@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -20,7 +21,6 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-// WebhookPayload represents a GitHub-style push webhook payload.
 type WebhookPayload struct {
 	Ref        string `json:"ref"`
 	Before     string `json:"before"`
@@ -30,7 +30,12 @@ type WebhookPayload struct {
 	} `json:"repository"`
 }
 
-// Manager orchestrates multiple Cook instances for different routes.
+type ManagerConfig struct {
+	WorkDir string
+	Pool    *jack.Pool
+	Logger  *ll.Logger
+}
+
 type Manager struct {
 	mu      sync.RWMutex
 	entries map[string]*Entry
@@ -40,35 +45,43 @@ type Manager struct {
 	wg      sync.WaitGroup
 }
 
-// Entry represents a managed deployment configuration.
 type Entry struct {
 	Cook   *Cook
 	Config alaye.Git
 	cancel context.CancelFunc
 }
 
-// NewManager creates a deployment manager.
-func NewManager(workDir string, pool *jack.Pool, logger *ll.Logger) (*Manager, error) {
-	if workDir == "" {
+// NewManager initializes the Git deployment manager with a shared worker pool.
+// It guarantees that the global working directory is established securely on disk.
+func NewManager(cfg ManagerConfig) (*Manager, error) {
+	if cfg.WorkDir == "" {
 		return nil, errors.New("work directory is required")
 	}
-	if pool == nil {
+	if cfg.Pool == nil {
 		return nil, errors.New("worker pool is required")
 	}
 
-	if err := os.MkdirAll(workDir, 0750); err != nil {
+	if err := os.MkdirAll(cfg.WorkDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create manager workdir: %w", err)
+	}
+
+	logger := cfg.Logger
+	if logger == nil {
+		logger = ll.New("cookmgr").Disable()
+	} else {
+		logger = logger.Namespace("cookmgr")
 	}
 
 	return &Manager{
 		entries: make(map[string]*Entry),
-		logger:  logger.Namespace("cookmgr"),
-		workDir: workDir,
-		pool:    pool,
+		logger:  logger,
+		workDir: cfg.WorkDir,
+		pool:    cfg.Pool,
 	}, nil
 }
 
-// Register adds a new deployment target and starts polling if configured.
+// Register mounts a Git configuration into the manager's active deployment pool.
+// Uses the specific Git work_dir if provided, falling back to the global storage path.
 func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 	if cfg.URL == "" {
 		return errors.New("git URL is required")
@@ -77,7 +90,6 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Stop existing if present
 	if existing, ok := m.entries[routeKey]; ok {
 		if existing.cancel != nil {
 			existing.cancel()
@@ -85,11 +97,16 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 		delete(m.entries, routeKey)
 	}
 
+	targetWorkDir := filepath.Join(m.workDir, routeKey)
+	if cfg.WorkDir != "" {
+		targetWorkDir = cfg.WorkDir
+	}
+
 	cookCfg := Config{
 		ID:       routeKey,
 		URL:      cfg.URL,
 		Branch:   cfg.Branch,
-		WorkDir:  m.workDir,
+		WorkDir:  targetWorkDir,
 		Logger:   m.logger,
 		KeepLast: 2,
 		Auth: AuthConfig{
@@ -114,24 +131,19 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 	}
 	m.entries[routeKey] = entry
 
-	m.logger.Fields("route_key", routeKey, "webhook", "/.agbero/webhook/git/"+routeKey).Info("git integration configured")
+	m.logger.Fields("route_key", routeKey, "webhook", "/.well-known/agbero/webhook/git/"+routeKey).Info("git integration configured")
 
-	// Initial async deployment via pool
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
-		err := m.pool.SubmitCtx(ctx, jack.FuncCtx(func(pCtx context.Context) error {
-			if err := c.Make(pCtx); err != nil {
-				m.logger.Fields("route", routeKey, "err", err).Error("initial git pull failed")
-			}
-			return nil
-		}))
-		if err != nil {
-			m.logger.Fields("route", routeKey, "err", err).Warn("failed to queue initial deployment")
+	err = m.pool.Submit(jack.Func(func() error {
+		if err := c.Make(ctx); err != nil {
+			m.logger.Fields("route", routeKey, "err", err).Error("initial git pull failed")
 		}
-	}()
+		return nil
+	}))
 
-	// Start polling if interval configured
+	if err != nil {
+		m.logger.Fields("route", routeKey, "err", err).Warn("failed to queue initial deployment")
+	}
+
 	if cfg.Interval > 0 {
 		m.wg.Add(1)
 		go m.poll(ctx, routeKey, c, cfg.Interval)
@@ -140,7 +152,8 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 	return nil
 }
 
-// Unregister stops and removes a deployment target.
+// Unregister halts automated pulls and evicts a specific route from the manager.
+// Ongoing tasks are cancelled gracefully through context termination.
 func (m *Manager) Unregister(routeKey string) {
 	m.mu.Lock()
 	entry, ok := m.entries[routeKey]
@@ -152,7 +165,8 @@ func (m *Manager) Unregister(routeKey string) {
 	}
 }
 
-// CurrentPath returns the active deployment path for a route.
+// CurrentPath computes the physical path to the active deployment payload.
+// It seamlessly appends the configured SubDir to target isolated build outputs.
 func (m *Manager) CurrentPath(routeKey string) string {
 	m.mu.RLock()
 	entry, ok := m.entries[routeKey]
@@ -161,10 +175,20 @@ func (m *Manager) CurrentPath(routeKey string) string {
 	if !ok {
 		return ""
 	}
-	return entry.Cook.CurrentPath()
+
+	basePath := entry.Cook.CurrentPath()
+	if basePath == "" {
+		return ""
+	}
+
+	if entry.Config.SubDir != "" {
+		return filepath.Join(basePath, entry.Config.SubDir)
+	}
+	return basePath
 }
 
-// GetCook returns the Cook instance for a route.
+// GetCook extracts the underlying deployment engine for an active route.
+// Used internally for diagnostics and localized atomic rollbacks.
 func (m *Manager) GetCook(routeKey string) (*Cook, bool) {
 	m.mu.RLock()
 	entry, ok := m.entries[routeKey]
@@ -176,7 +200,8 @@ func (m *Manager) GetCook(routeKey string) (*Cook, bool) {
 	return entry.Cook, true
 }
 
-// Stop halts all polling and waits for in-flight operations.
+// Stop initiates a global teardown sequence across all active polling workers.
+// Guarantees clean state eviction before server shutdown limits are reached.
 func (m *Manager) Stop() {
 	m.mu.Lock()
 	for _, entry := range m.entries {
@@ -200,7 +225,8 @@ func (m *Manager) Stop() {
 	}
 }
 
-// poll runs the polling loop for a deployment.
+// poll schedules periodic background pulls on a specified interval.
+// Drops execution loops cleanly when the parent context is cancelled.
 func (m *Manager) poll(ctx context.Context, routeKey string, c *Cook, interval time.Duration) {
 	defer m.wg.Done()
 
@@ -210,8 +236,8 @@ func (m *Manager) poll(ctx context.Context, routeKey string, c *Cook, interval t
 	for {
 		select {
 		case <-ticker.C:
-			err := m.pool.SubmitCtx(ctx, jack.FuncCtx(func(pCtx context.Context) error {
-				if err := c.Make(pCtx); err != nil {
+			err := m.pool.Submit(jack.Func(func() error {
+				if err := c.Make(ctx); err != nil {
 					m.logger.Fields("route", routeKey, "err", err).Error("scheduled git pull failed")
 				}
 				return nil
@@ -225,7 +251,8 @@ func (m *Manager) poll(ctx context.Context, routeKey string, c *Cook, interval t
 	}
 }
 
-// HandleWebhook processes GitHub-style webhook requests.
+// HandleWebhook validates structural signatures and conditionally fires a deployment.
+// Rejects branch mismatches and unauthorized triggers rapidly without queuing.
 func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey string) {
 	m.mu.RLock()
 	entry, ok := m.entries[routeKey]
@@ -236,7 +263,6 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		return
 	}
 
-	// Limit body size to prevent DoS
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -245,7 +271,6 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		return
 	}
 
-	// Verify signature if secret configured
 	if entry.Config.Secret != "" {
 		signature := r.Header.Get("X-Hub-Signature-256")
 		if signature == "" {
@@ -263,7 +288,6 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		}
 	}
 
-	// Parse payload for branch filtering
 	var payload WebhookPayload
 	if err := json.Unmarshal(body, &payload); err == nil {
 		if entry.Config.Branch != "" && payload.Ref != "" {
@@ -277,16 +301,15 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		}
 	}
 
-	// Queue deployment asynchronously with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	err = m.pool.SubmitCtx(ctx, jack.FuncCtx(func(pCtx context.Context) error {
-		if err := entry.Cook.Make(pCtx); err != nil {
+	err = m.pool.Submit(jack.Func(func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := entry.Cook.Make(ctx); err != nil {
 			m.logger.Fields("route", routeKey, "err", err).Error("webhook deployment failed")
 		}
 		return nil
 	}))
+
 	if err != nil {
 		m.logger.Fields("route", routeKey, "err", err).Warn("failed to queue webhook deployment")
 		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
@@ -297,7 +320,8 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 	_, _ = w.Write([]byte("Deployment Triggered"))
 }
 
-// WebhookHandler returns an http.Handler for use with standard Go HTTP servers.
+// WebhookHandler wraps the internal handler logic inside a strict HTTP verification shell.
+// Drops all non-POST requests immediately.
 func (m *Manager) WebhookHandler(routeKey string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -308,7 +332,8 @@ func (m *Manager) WebhookHandler(routeKey string) http.HandlerFunc {
 	}
 }
 
-// Health returns the health status of all managed deployments.
+// Health aggregates the diagnostic status of all registered deployment blocks.
+// Reflects available commits and overall deployment availability across the system.
 func (m *Manager) Health() map[string]HealthStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -333,7 +358,6 @@ func (m *Manager) Health() map[string]HealthStatus {
 	return status
 }
 
-// HealthStatus represents the health of a single deployment target.
 type HealthStatus struct {
 	State       string `json:"state"`
 	CurrentPath string `json:"current_path"`

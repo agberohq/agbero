@@ -1,23 +1,15 @@
 package zulu
 
 import (
+	"io"
 	mrand "math/rand/v2"
 	"sync"
+	"time"
 
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/mappo"
+	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/tw"
 )
-
-// Route is a globally shared map that provides lifecycle-managed access to route configurations and their handlers.
-var Route = mappo.NewCache(mappo.CacheOptions{
-	MaximumSize: woos.CacheMax,
-	OnDelete:    mappo.CloserDelete,
-})
-
-var TCP = mappo.NewCache(mappo.CacheOptions{
-	MaximumSize: woos.CacheMax,
-	OnDelete:    mappo.CloserDelete,
-})
 
 func GetCache[T any](it *mappo.Item) (T, bool) {
 	var zero T
@@ -46,3 +38,19 @@ func Rand() *mrand.Rand {
 func RandPut(r *mrand.Rand) {
 	rngPool.Put(r)
 }
+
+func Table(output io.Writer) *tablewriter.Table {
+	table := tablewriter.NewTable(
+		output,
+		tablewriter.WithRendition(tw.Rendition{
+			Settings: tw.Settings{
+				Separators: tw.Separators{BetweenColumns: tw.Off},
+			},
+		}),
+		tablewriter.WithSymbols(tw.NewSymbols(tw.StyleRounded)),
+	)
+
+	return table
+}
+
+var ModTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

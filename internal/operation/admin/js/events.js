@@ -65,6 +65,17 @@ const EventHandler = {
             });
         }
 
+        // ================== CLUSTER PAGE ==================
+        const addClusterRouteBtn = document.getElementById("addClusterRouteBtn");
+        if (addClusterRouteBtn) {
+            addClusterRouteBtn.addEventListener("click", () => Modal.open("clusterRouteModal"));
+        }
+
+        const clusterRouteForm = document.getElementById("clusterRouteForm");
+        if (clusterRouteForm) {
+            clusterRouteForm.addEventListener("submit", (e) => app.addClusterRoute(e));
+        }
+
         // ================== MAP PAGE ==================
         const mapPauseBtn = document.getElementById("mapPauseBtn");
         if (mapPauseBtn) {

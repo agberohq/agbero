@@ -69,6 +69,7 @@ type Cook struct {
 }
 
 // New creates a Cook instance with the provided configuration.
+// It establishes the precise working directory required for the deployment lifecycle.
 func New(cfg Config) (*Cook, error) {
 	if cfg.ID == "" {
 		return nil, errors.New("cook ID is required")
@@ -80,14 +81,11 @@ func New(cfg Config) (*Cook, error) {
 		return nil, ErrWorkDirNotSet
 	}
 
-	// Set defaults
 	if cfg.KeepLast <= 0 {
 		cfg.KeepLast = 2
 	}
 
-	// Ensure work directory exists
-	workDir := filepath.Join(cfg.WorkDir, cfg.ID)
-	if err := os.MkdirAll(workDir, 0750); err != nil {
+	if err := os.MkdirAll(cfg.WorkDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create work directory: %w", err)
 	}
 
@@ -176,7 +174,7 @@ func (c *Cook) Make(ctx context.Context) error {
 		}
 	}()
 
-	c.logger.Infof("cloning repository %s (branch: %s)", c.config.URL, c.config.Branch)
+	c.logger.Fields("branch", c.config.Branch).Infof("cloning repository %s", c.config.URL)
 
 	cloneOpts := &git.CloneOptions{
 		URL:          c.config.URL,
@@ -212,7 +210,7 @@ func (c *Cook) Make(ctx context.Context) error {
 
 	// Check if this commit is already deployed
 	if _, err := os.Stat(deployDir); err == nil {
-		c.logger.Infof("commit %s already deployed, switching", commitHash[:8])
+		c.logger.Fields("hash", commitHash).Infof("commit %s already deployed, switching", commitHash[:8])
 		_ = os.RemoveAll(tmpDir)
 		tmpDir = ""
 	} else {
@@ -403,9 +401,10 @@ func (c *Cook) validate() error {
 	return nil
 }
 
-// workDir returns the full work directory path.
+// workDir returns the exact absolute path to the active workspace.
+// It returns the configuration value directly without modification.
 func (c *Cook) workDir() string {
-	return filepath.Join(c.config.WorkDir, c.config.ID)
+	return c.config.WorkDir
 }
 
 // deployBase returns the base directory for all deployments.

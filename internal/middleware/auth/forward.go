@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/cespare/xxhash/v2"
@@ -19,23 +20,7 @@ import (
 	"github.com/olekukonko/mappo"
 )
 
-// Use a single global cache to prevent memory leaks from constantly created caches
-var globalAuthCache = mappo.NewCache(mappo.CacheOptions{
-	MaximumSize: 100_000,
-	OnDelete:    mappo.CloserDelete,
-})
-
-var defaultHTTPClient = &http.Client{
-	Timeout: 5 * time.Second,
-	Transport: &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 100,
-		IdleConnTimeout:     90 * time.Second,
-		DisableCompression:  true,
-	},
-}
-
-func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
+func Forward(res *resource.Manager, cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 	if cfg.Enabled.NotActive() {
 		return func(next http.Handler) http.Handler { return next }
 	}
@@ -80,17 +65,17 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 			},
 		}
 	} else {
-		client = defaultHTTPClient
+		client = res.HTTPClient
 	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			cacheKey := buildCacheKey(r, cfg.Request.CacheKey, cachePrefix)
 
-			if cached, ok := globalAuthCache.Load(cacheKey); ok {
+			if cached, ok := res.AuthCache.Load(cacheKey); ok {
 				if allowed, ok := mappo.GetTyped[bool](cached); ok && allowed {
 					if cfg.Response.Enabled.Active() {
-						if headersItem, ok := globalAuthCache.Load(cacheKey + "_headers"); ok {
+						if headersItem, ok := res.AuthCache.Load(cacheKey + "_headers"); ok {
 							if headers, ok := mappo.GetTyped[http.Header](headersItem); ok {
 								copyHeadersToRequest(headers, r, cfg.Response.CopyHeaders)
 							}
@@ -99,8 +84,6 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 					next.ServeHTTP(w, r)
 					return
 				}
-				http.Error(w, "Forbidden (Cached)", http.StatusForbidden)
-				return
 			}
 
 			ctx, cancel := context.WithTimeout(r.Context(), timeout)
@@ -183,20 +166,17 @@ func Forward(cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 					if cfg.Response.CacheTTL > 0 {
 						allowItem := &mappo.Item{Value: true}
 						headersItem := &mappo.Item{Value: headersToCopy}
-						globalAuthCache.StoreTTL(cacheKey, allowItem, cfg.Response.CacheTTL)
-						globalAuthCache.StoreTTL(cacheKey+"_headers", headersItem, cfg.Response.CacheTTL)
+						res.AuthCache.StoreTTL(cacheKey, allowItem, cfg.Response.CacheTTL)
+						res.AuthCache.StoreTTL(cacheKey+"_headers", headersItem, cfg.Response.CacheTTL)
 					}
 				} else if cfg.Response.CacheTTL > 0 {
 					allowItem := &mappo.Item{Value: true}
-					globalAuthCache.StoreTTL(cacheKey, allowItem, cfg.Response.CacheTTL)
+					res.AuthCache.StoreTTL(cacheKey, allowItem, cfg.Response.CacheTTL)
 				}
 
 				next.ServeHTTP(w, r)
 				return
 			}
-
-			denyItem := &mappo.Item{Value: false}
-			globalAuthCache.StoreTTL(cacheKey, denyItem, 10*time.Second)
 
 			for k, vv := range resp.Header {
 				for _, v := range vv {
@@ -245,7 +225,6 @@ func buildCacheKey(r *http.Request, cacheKeyHeaders []string, prefix string) str
 		h.WriteString("|")
 	}
 
-	// Default header
 	if len(cacheKeyHeaders) == 0 {
 		cacheKeyHeaders = []string{"Authorization"}
 	}

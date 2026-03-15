@@ -60,7 +60,6 @@ func (s *Sticky) Update(backends []Backend) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Collect keys to delete first (avoid modifying cache during Range)
 	var toDelete []string
 	s.cache.Range(func(key string, value Backend) bool {
 		if _, ok := valid[value]; !ok {
@@ -75,10 +74,17 @@ func (s *Sticky) Update(backends []Backend) {
 	}
 }
 
-// Stop gracefully shuts down the reaper.
+func (s *Sticky) Backends() []Backend {
+	return s.balancer.Backends()
+}
+
+// Stop gracefully shuts down the reaper and child balancer.
 func (s *Sticky) Stop() {
 	s.stopOnce.Do(func() {
 		s.reaper.Stop()
+		if s.balancer != nil {
+			s.balancer.Stop()
+		}
 	})
 }
 
@@ -90,7 +96,7 @@ func (s *Sticky) Pick(r *http.Request, keyFunc func() uint64) Backend {
 	}
 
 	s.mu.RLock()
-	if backend, ok := s.cache.Get(sessionID); ok && backend.Alive() {
+	if backend, ok := s.cache.Get(sessionID); ok && backend.IsUsable() {
 		s.mu.RUnlock()
 		s.reaper.Touch(sessionID)
 		return backend

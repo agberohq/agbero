@@ -124,8 +124,9 @@ func main() {}
 		if w.Code != 200 {
 			t.Errorf("Expected 200, got %d", w.Code)
 		}
-		if w.Header().Get("X-Status") != "Allowed" {
-			t.Errorf("Expected header X-Active=Allowed, got %q", w.Header().Get("X-Status"))
+
+		if w.Header().Get("X-Active") != "Allowed" {
+			t.Errorf("Expected header X-Active=Allowed, got %q", w.Header().Get("X-Active"))
 		}
 		if w.Body.String() != "Active" {
 			t.Errorf("Expected body 'Active', got %q", w.Body.String())

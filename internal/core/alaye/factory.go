@@ -40,7 +40,7 @@ func NewEphemeralGlobal(port int, https bool) *Global {
 	return g
 }
 
-func NewStaticHost(domain string, target string, isProxy bool) *Host {
+func NewStaticHost(domain string, target Address, isProxy bool) *Host {
 	h := &Host{
 		Domains: []string{domain},
 		Routes:  make([]Route, 1),

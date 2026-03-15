@@ -38,14 +38,12 @@ func (p *program) Stop(s service.Service) error {
 func (p *program) run() {
 	logger.Info("starting agbero proxy service")
 
-	hel := newHelper(logger)
-	global, err := hel.loadConfig(p.configPath)
+	global, err := loadConfig(p.configPath)
 	if err != nil {
 		logger.Fields("file", p.configPath, "err", err).Fatal("failed to load config")
 		return
 	}
 
-	// Inject cluster overrides if started via cluster commands
 	if p.clusterStart || p.clusterJoinIP != "" {
 		global.Gossip.Enabled = alaye.Active
 		if p.clusterJoinIP != "" {
@@ -56,13 +54,10 @@ func (p *program) run() {
 		}
 	}
 
-	// Write PID file for reload command
-	// We use the data directory defined in the config
 	if global.Storage.DataDir != "" {
 		if err := os.MkdirAll(global.Storage.DataDir, woos.DirPerm); err == nil {
 			pidFile := filepath.Join(global.Storage.DataDir, "agbero.pid")
 			_ = os.WriteFile(pidFile, fmt.Appendf(nil, "%d", os.Getpid()), 0644)
-			// Remove on shutdown
 			p.shutdown.RegisterFunc("PIDFile", func() { _ = os.Remove(pidFile) })
 		}
 	}
@@ -87,12 +82,8 @@ func (p *program) run() {
 		return
 	}
 
-	logger.Fields(
-		"os", runtime.GOOS,
-		"euid", os.Geteuid(),
-	).Info("service starting")
+	logger.Fields("os", runtime.GOOS, "euid", os.Geteuid()).Info("service starting")
 
-	// Store server in struct for Reload access
 	p.server = agbero.NewServer(
 		agbero.WithHostManager(hm),
 		agbero.WithGlobalConfig(global),
@@ -111,7 +102,6 @@ func (p *program) run() {
 	logger.Fields("hosts_count", len(hosts)).Info("service running")
 
 	stats := p.shutdown.Wait()
-
 	logger.Fields(
 		"duration", stats.EndTime.Sub(stats.StartTime),
 		"tasks_total", stats.TotalEvents,

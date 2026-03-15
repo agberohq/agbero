@@ -34,6 +34,7 @@ class AgberoApp {
         this.timers = { metrics: null, config: null, logs: null };
         this.page = sessionStorage.getItem("ag_page") || "dashboard";
         this.lastConfig = null;
+        this.lastStatsData = null; // Store stats for cluster page
         this._confirmFn = null;
 
         this.routeGraph = new RouteGraph("graphContainer");
@@ -112,6 +113,7 @@ class AgberoApp {
         if (!data) return;
 
         this.lastUpdateTime = Date.now();
+        this.lastStatsData = data;
         this.gitStats = data.git || {};
 
         const stats = this.parseMetricsJSON(data);
@@ -134,6 +136,11 @@ class AgberoApp {
         });
 
         UI.updateMetrics(metrics, this.metricsHistory[this.activeChart]);
+
+        // Refresh Cluster page if active
+        if (this.page === 'cluster') {
+            UI.renderClusterPage(this.lastConfig?.cluster, data.cluster);
+        }
     }
 
     parseMetricsJSON(obj) {
@@ -205,6 +212,7 @@ class AgberoApp {
         this.hostsData.stats = stats?.hosts || {};
         this.gitStats = stats?.git || {};
         this.lastConfig = config;
+        this.lastStatsData = stats;
 
         this.parseCertificates();
         UI.renderHosts(this.hostsData, this.searchTerm, this.certificates);
@@ -212,6 +220,9 @@ class AgberoApp {
 
         if (this.page === 'map' && !this.mapPaused) {
             this.routeGraph.render(this.lastConfig, this.hostsData.stats);
+        }
+        if (this.page === 'cluster') {
+            UI.renderClusterPage(config.cluster, stats?.cluster);
         }
     }
 
@@ -273,6 +284,33 @@ class AgberoApp {
         this.fetchFirewall();
     }
 
+    async addClusterRoute(e) {
+        e.preventDefault();
+        const host = document.getElementById("crHost").value;
+        const path = document.getElementById("crPath").value;
+        const target = document.getElementById("crTarget").value;
+        const ttl = parseInt(document.getElementById("crTTL").value) || 0;
+
+        const body = {
+            host: host,
+            ttl_seconds: ttl,
+            route: {
+                path: path,
+                backends: {
+                    servers: [{ address: target }]
+                }
+            }
+        };
+
+        const res = await this.api("/api/v1/routes", "POST", body);
+        if (res && res.error) {
+            alert("Error: " + res.error);
+        } else {
+            Modal.closeAll();
+            this.fetchHostsData();
+        }
+    }
+
     async fetchConfig() {
         const data = await this.api("/config");
         this.lastConfig = data;
@@ -296,7 +334,6 @@ class AgberoApp {
             UI.renderGlobalSettings(data.global);
             UI.renderClusterSettings(data.cluster);
             UI.renderRawConfig(data);
-
             this.updateConfigTitle(metrics.version, metrics.build);
         }
     }
@@ -386,7 +423,7 @@ class AgberoApp {
 
         const tempBasic = btoa(u + ":" + p);
         this.basic = tempBasic;
-        const check = await this.api("/health");
+        const check = await this.api("/healthz"); // Changed to public healthz endpoint to avoid looping
         if (check) {
             sessionStorage.setItem("ag_bas", this.basic);
             this.finishLoginSuccess();
@@ -440,7 +477,7 @@ class AgberoApp {
 
         this.timers.metrics = setInterval(() => this.fetchMetrics(), interval);
         this.timers.config = setInterval(() => {
-            if (this.page === 'hosts' || this.page === 'map') this.fetchHostsData();
+            if (this.page === 'hosts' || this.page === 'map' || this.page === 'cluster') this.fetchHostsData();
         }, this.isOnline ? 10000 : 30000);
         this.timers.logs = setInterval(() => {
             if (this.page === 'logs' && !this.logsPaused) this.fetchLogs();
@@ -476,8 +513,10 @@ class AgberoApp {
         if (this.page === 'firewall') await this.fetchFirewall();
         if (this.page === 'config') await this.fetchConfig();
         if (this.page === 'logs') await this.fetchLogs();
-        if (this.page === 'map') {
-            await this.fetchHostsData();
+        if (this.page === 'map') await this.fetchHostsData();
+        if (this.page === 'cluster') {
+            await this.fetchConfig();
+            await this.fetchMetrics();
         }
     }
 

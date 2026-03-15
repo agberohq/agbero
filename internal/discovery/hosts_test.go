@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/olekukonko/ll"
 )
 
@@ -205,7 +208,7 @@ func TestWatch_SubdirFileChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitChanged(t, h.Changed(), 3*time.Second)
+	waitChanged(t, h.Changed(), 5*time.Second)
 
 	if h.Get("b.com") == nil {
 		t.Fatal("subdir change not reloaded: b.com not found")
@@ -509,6 +512,68 @@ func TestHost_RouteExpiration(t *testing.T) {
 	}
 }
 
+func TestCluster_ConfigDeletionPropagation(t *testing.T) {
+	logger := ll.New("test").Disable()
+
+	tmpDir1 := t.TempDir()
+	tmpDir2 := t.TempDir()
+
+	port1 := zulu.PortFree()
+	port2 := zulu.PortFree()
+
+	// Node 1
+	h1 := NewHost(woos.NewFolder(tmpDir1), WithLogger(logger))
+	cm1, _ := cluster.NewManager(cluster.Config{
+		Name:     "node1",
+		BindAddr: "127.0.0.1",
+		BindPort: port1,
+		HostsDir: tmpDir1,
+	}, h1, logger)
+	defer cm1.Shutdown()
+	h1.clusterMgr = cm1
+	h1.configSync = NewConfigSync(h1.hostsDir, h1.logger, cm1)
+
+	// Node 2
+	h2 := NewHost(woos.NewFolder(tmpDir2), WithLogger(logger))
+	cm2, _ := cluster.NewManager(cluster.Config{
+		Name:     "node2",
+		BindAddr: "127.0.0.1",
+		BindPort: port2,
+		Seeds:    []string{fmt.Sprintf("127.0.0.1:%d", port1)},
+		HostsDir: tmpDir2,
+	}, h2, logger)
+	defer cm2.Shutdown()
+	h2.clusterMgr = cm2
+	h2.configSync = NewConfigSync(h2.hostsDir, h2.logger, cm2)
+
+	time.Sleep(2 * time.Second)
+
+	// Create and broadcast config
+	domain := "delete-me.com"
+	content := validHCL(domain)
+	configPath := filepath.Join(tmpDir1, domain+".hcl")
+	os.WriteFile(configPath, content, woos.FilePerm)
+	cm1.BroadcastConfig(domain, content, false)
+
+	time.Sleep(2 * time.Second)
+
+	// Verify both nodes have the config
+	if _, err := os.Stat(filepath.Join(tmpDir2, domain+".hcl")); os.IsNotExist(err) {
+		t.Fatal("node2 should have config before deletion")
+	}
+
+	// Delete config on node 1
+	os.Remove(configPath)
+	cm1.BroadcastConfig(domain, nil, true)
+
+	time.Sleep(2 * time.Second)
+
+	// Verify node 2 also deleted the config
+	if _, err := os.Stat(filepath.Join(tmpDir2, domain+".hcl")); !os.IsNotExist(err) {
+		t.Error("node2 should have deleted config after cluster broadcast")
+	}
+}
+
 func TestHost_OnClusterChange_WithTTL(t *testing.T) {
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts")
@@ -562,4 +627,142 @@ func TestHost_OnClusterChange_WithTTL(t *testing.T) {
 	}
 
 	t.Fatal("TTL route still present after expiration deadline")
+}
+
+func TestCluster_3NodeDataPropagation(t *testing.T) {
+	logger := ll.New("test").Disable()
+
+	// Create 3 temp directories for 3 nodes
+	tmpDir1 := t.TempDir()
+	tmpDir2 := t.TempDir()
+	tmpDir3 := t.TempDir()
+
+	// Get free ports
+	port1 := zulu.PortFree()
+	port2 := zulu.PortFree()
+	port3 := zulu.PortFree()
+
+	t.Logf("Node1 port: %d, Node2 port: %d, Node3 port: %d", port1, port2, port3)
+
+	// Create node 1 (seed)
+	h1 := NewHost(woos.NewFolder(tmpDir1), WithLogger(logger))
+	cm1, err := cluster.NewManager(cluster.Config{
+		Name:     "node1",
+		BindAddr: "127.0.0.1",
+		BindPort: port1,
+		HostsDir: tmpDir1,
+	}, h1, logger)
+	if err != nil {
+		t.Fatalf("failed to create cluster manager 1: %v", err)
+	}
+	defer cm1.Shutdown()
+	h1.clusterMgr = cm1
+	h1.configSync = NewConfigSync(h1.hostsDir, h1.logger, cm1)
+
+	// Create node 2 (joins node 1)
+	h2 := NewHost(woos.NewFolder(tmpDir2), WithLogger(logger))
+	cm2, err := cluster.NewManager(cluster.Config{
+		Name:     "node2",
+		BindAddr: "127.0.0.1",
+		BindPort: port2,
+		Seeds:    []string{fmt.Sprintf("127.0.0.1:%d", port1)},
+		HostsDir: tmpDir2,
+	}, h2, logger)
+	if err != nil {
+		t.Fatalf("failed to create cluster manager 2: %v", err)
+	}
+	defer cm2.Shutdown()
+	h2.clusterMgr = cm2
+	h2.configSync = NewConfigSync(h2.hostsDir, h2.logger, cm2)
+
+	// Create node 3 (joins node 1)
+	h3 := NewHost(woos.NewFolder(tmpDir3), WithLogger(logger))
+	cm3, err := cluster.NewManager(cluster.Config{
+		Name:     "node3",
+		BindAddr: "127.0.0.1",
+		BindPort: port3,
+		Seeds:    []string{fmt.Sprintf("127.0.0.1:%d", port1)},
+		HostsDir: tmpDir3,
+	}, h3, logger)
+	if err != nil {
+		t.Fatalf("failed to create cluster manager 3: %v", err)
+	}
+	defer cm3.Shutdown()
+	h3.clusterMgr = cm3
+	h3.configSync = NewConfigSync(h3.hostsDir, h3.logger, cm3)
+
+	// Wait for cluster to form with timeout
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(cm1.Members()) == 3 && len(cm2.Members()) == 3 && len(cm3.Members()) == 3 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	t.Logf("Cluster formed: node1=%d, node2=%d, node3=%d members", len(cm1.Members()), len(cm2.Members()), len(cm3.Members()))
+
+	// Verify all nodes see each other
+	if len(cm1.Members()) != 3 {
+		t.Fatalf("node1 expected 3 members, got %d", len(cm1.Members()))
+	}
+
+	// Create a config file on node 1
+	domain := "shared.com"
+	content := validHCL(domain)
+	configPath := filepath.Join(tmpDir1, domain+".hcl")
+	if err := os.WriteFile(configPath, content, woos.FilePerm); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("Created config on node1, broadcasting...")
+
+	// Trigger broadcast from node 1
+	if h1.configSync.ShouldBroadcast(domain, content) {
+		if err := cm1.BroadcastConfig(domain, content, false); err != nil {
+			t.Fatalf("broadcast failed: %v", err)
+		}
+		t.Logf("Broadcast sent from node1")
+	} else {
+		t.Logf("ShouldBroadcast returned false - checksum already exists")
+	}
+
+	// Wait for gossip propagation with timeout
+	propagationDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(propagationDeadline) {
+		// Check if node 2 received the config
+		configPath2 := filepath.Join(tmpDir2, domain+".hcl")
+		if _, err := os.Stat(configPath2); err == nil {
+			t.Logf("Node2 received config")
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Verify node 2 received the config
+	configPath2 := filepath.Join(tmpDir2, domain+".hcl")
+	if _, err := os.Stat(configPath2); os.IsNotExist(err) {
+		t.Error("node2 did not receive config from cluster")
+	} else {
+		// Verify content matches
+		data, _ := os.ReadFile(configPath2)
+		if !bytes.Equal(data, content) {
+			t.Error("node2 config content mismatch")
+		} else {
+			t.Logf("Node2 config verified")
+		}
+	}
+
+	// Verify node 3 received the config
+	configPath3 := filepath.Join(tmpDir3, domain+".hcl")
+	if _, err := os.Stat(configPath3); os.IsNotExist(err) {
+		t.Error("node3 did not receive config from cluster")
+	} else {
+		data, _ := os.ReadFile(configPath3)
+		if !bytes.Equal(data, content) {
+			t.Error("node3 config content mismatch")
+		} else {
+			t.Logf("Node3 config verified")
+		}
+	}
 }

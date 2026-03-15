@@ -1,29 +1,31 @@
+> WARNING: This project is under active development.
+
 <p align="center">
   <img src="assets/agbero.2.png" width="300" alt="Agbero Logo">
 </p>
 
-> WARNING: This project is under active development.
-
-> **Agbero**: *noun* (Yoruba) - A tout or traffic controller at a bus stop.
->
-> **In Context**: A high-performance, production-ready Reverse Proxy and Load Balancer written in Go.
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/agberohq/agbero)](https://goreportcard.com/report/github.com/agberohq/agbero)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+
+### **Agbero**: *noun* [`Yoruba` ,`English`] - a motor-park tout or conductor who directs traffic, loads buses, checks tickets, and collects tolls.
+##### **In Context**: This is exactly what a modern API Gateway does. It sits at the edge of your network, directs incoming API traffic to the right microservices, checks authentication ("tickets"), and enforces rate limits ("tolls").
+
+
 Agbero is a modern reverse proxy that bridges local development and production deployments. It offers Zero-Config TLS for developers, Production-Grade Load Balancing, Git-based atomic deployments, and a Programmable WASM Data Plane.
+
+## Why Choose Agbero?
 
 <p align="center">
   <img src="assets/dash.1.png" width="500" alt="Agbero Dashboard">
 </p>
 
-## Why Choose Agbero?
 
 ### For Developers
 - **Zero-Config Local HTTPS**: Run `agbero run` in any directory for instant HTTPS with auto-trusted certificates.
 - **Hot Reload**: Modify configurations, routes, and WASM plugins without restarting or dropping connections.
 - **Unified Config**: Use `${env.VAR}` syntax to make one configuration file work seamlessly across Dev, Staging, and Production.
-
 
 <p align="center">
   <img src="assets/dash.2.png" width="500" alt="Agbero Dashboard">
@@ -37,14 +39,15 @@ Agbero is a modern reverse proxy that bridges local development and production d
 - **Circuit Breaking & Health Checks**: Automatic failure detection, predictive health scoring, and rapid recovery.
 - **HDR Histogram Metrics**: Detailed latency tracking (P50/P90/P99) exposed via JSON and the built-in Dashboard.
 
+<p align="center">
+  <img src="assets/dash.3.png" width="500" alt="Agbero Dashboard">
+</p>
+
+
 ### Programmable & Extensible
 - **WASM Middleware**: Write custom logic in Go, Rust, or TinyGo and run it safely inside the proxy.
 - **Native Authentication**: Built-in support for JWT validation, OAuth (Google, GitHub, OIDC), Basic Auth, and Forward Auth.
 - **Rate Limiting**: Identity-based limiting (API Key, IP, Cookie) with distributed sharding.
-
-<p align="center">
-  <img src="assets/dash.3.png" width="500" alt="Agbero Dashboard">
-</p>
 
 ## Quick Start
 
@@ -52,12 +55,7 @@ Agbero is a modern reverse proxy that bridges local development and production d
 
 ```bash
 # Download latest release
-curl -L https://github.com/agberohq/agbero/releases/latest/download/agbero-linux-amd64 -o agbero
-chmod +x agbero
-sudo mv agbero /usr/local/bin/
-
-# Or build from source
-go install github.com/agberohq/agbero/cmd/agbero@latest
+curl -fsSL https://github.com/agberohq/agbero/releases/latest/download/install.sh | bash
 ```
 
 
@@ -65,24 +63,23 @@ go install github.com/agberohq/agbero/cmd/agbero@latest
 
 **1. Persistent Configuration** (Recommended for projects)
 ```bash
-# crate a new configuration directory
-mkdir -p /etc/agbero
-cd /etc/agbero
-
-# Scaffold a new configuration workspace in the current directory
+# Init in default location
 agbero init
+
+# Init in a specific directory
+AGBERO_HOME=/etc/agbero agbero init
 
 # Run Agbero using the generated configuration
 agbero run
 
 # Or specify a custom configuration file
-agbero run -c /etc/agbero/agbero.hcl 
+agbero run -c /etc/agbero/agbero.hcl
 ```
 
 **2. Instant Ephemeral Mode** (No config required)
 ```bash
 # Serve the current directory on https://localhost:8000 with auto-generated TLS
-agbero serve --https
+agbero serve . --https
 
 # Proxy localhost:3000 to https://app.localhost:8080
 agbero proxy :3000 app.localhost --https
@@ -114,7 +111,7 @@ route "/app" {
       id      = "frontend-app"
       url     = "https://github.com/your-org/spa-builds.git"
       branch  = "main"
-      secret  = "env.GITHUB_WEBHOOK_SECRET"
+      secret  = "${env.GITHUB_WEBHOOK_SECRET}"
     }
   }
 }
@@ -129,14 +126,14 @@ route "/app" {
 ```hcl
 route "/api" {
   backend {
-    strategy = "weighted_least_conn"
-    
+    strategy = "weighted_round_robin"
+
     # Canary deployment: 10% traffic to new version
     server {
       address = "http://v2-service:8080"
       weight  = 10
     }
-    
+
     # Stable version: 90% traffic
     server {
       address = "http://v1-service:8080"
@@ -148,17 +145,18 @@ route "/api" {
 
 ## Performance
 
-- **Throughput**: 50k+ requests/second on 4 vCPU.
 - **Latency**: <1ms P99 for static file serving.
 - **Memory**: ~15MB idle, ~50MB under load.
 - **Connections**: 10k+ concurrent connections with HTTP/3 (QUIC) and TCP proxy support.
 
 ## Documentation
 
-- **[GUIDE.md](docs/GUIDE.md)**: Practical examples, use cases, and tutorials.
-- **[PLUGIN.md](docs/PLUGIN.md)**: Guide to writing WebAssembly middleware in Go and Rust.
-- **[CLI Reference](cmd/agbero/README.md)**: Command-line interface documentation.
-- **[Examples](examples/)**: Ready-to-run configuration examples.
+- **[Global Configuration](docs/global.md)**: Main config reference (`agbero.hcl`).
+- **[Host Configuration](docs/host.md)**: Routes, backends, and TLS.
+- **[Advanced Guide](docs/advance.md)**: Clustering, Git deployments, health scoring.
+- **[Plugin Guide](docs/plugin.md)**: Writing WebAssembly middleware in Go and Rust.
+- **[CLI Reference](docs/command.md)**: Command-line interface documentation.
+- **[API Reference](docs/api.md)**: Dynamic route management API.
 
 ## Roadmap
 
@@ -171,9 +169,44 @@ route "/api" {
 - [x] Gossip-based cluster state synchronization
 - [x] Git-based atomic deployments
 - [x] Admin Dashboard UI
-- [ ] Cluster Implementation
+- [x] Cluster Implementation
 - [ ] Better Test Coverage
-- [ ] Proper Documentation 
+- [ ] Proper Documentation
+
+## Architecture
+
+Agbero acts as an intelligent **edge traffic controller** that manages incoming requests and routes them to the appropriate backend services. It handles TLS termination, routing logic, middleware execution, and load balancing before forwarding requests to application servers.
+
+The architecture is built around a **high-performance Go runtime**, a **programmable WebAssembly middleware layer**, and a **distributed cluster model powered by a gossip protocol**.
+
+```mermaid
+flowchart TD
+
+    A[Client / Browser] --> B[Agbero Edge Listener]
+
+    B --> C[TLS Manager]
+    C --> D[Routing Engine]
+
+    D --> E[Middleware Pipeline]
+
+    E --> F[WASM Plugins]
+    E --> G[Authentication]
+    E --> H[Rate Limiting]
+
+    D --> I[Load Balancer]
+
+    I --> J[Backend Services]
+
+    J --> J1[API Services]
+    J --> J2[Static Sites from Git]
+    J --> J3[Microservices]
+
+    B --> K[Cluster Layer]
+
+    K --> L[Gossip Protocol]
+    L --> M[Service Discovery]
+    L --> N[State Replication]
+```
 
 ## Architecture
 
@@ -220,4 +253,4 @@ We welcome contributions! Please see our [Contributing Guide](docs/contributor.m
 
 ## License
 
-MIT License - see[LICENSE](LICENSE) for details.
+MIT License - see [LICENSE](LICENSE) for details.

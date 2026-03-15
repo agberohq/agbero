@@ -32,49 +32,54 @@ jobs:
         run: |
           # Create dist directory
           mkdir -p dist
-          
+
           # Version from tag
           VERSION=${GITHUB_REF_NAME#v}
-          
+
           # Common ldflags
           LDFLAGS="-s -w -X github.com/agberohq/agbero/internal/version.Version=$VERSION -X github.com/agberohq/agbero/internal/version.Commit=$(git rev-parse --short HEAD) -X github.com/agberohq/agbero/internal/version.Date=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-          
+
           # Create temporary build directory
           mkdir -p build
-          
+
           # Windows
           GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o build/agbero.exe ./cmd/agbero
           cd build && zip ../dist/agbero-windows-amd64.zip agbero.exe && cd ..
           rm build/agbero.exe
-          
+
           GOOS=windows GOARCH=arm64 go build -ldflags="$LDFLAGS" -o build/agbero.exe ./cmd/agbero
           cd build && zip ../dist/agbero-windows-arm64.zip agbero.exe && cd ..
           rm build/agbero.exe
-          
+
           # Linux
           GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o build/agbero ./cmd/agbero
           cd build && tar -czf ../dist/agbero-linux-amd64.tar.gz agbero && cd ..
           rm build/agbero
-          
+
           GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o build/agbero ./cmd/agbero
           cd build && tar -czf ../dist/agbero-linux-arm64.tar.gz agbero && cd ..
           rm build/agbero
-          
+
           # macOS
           GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -o build/agbero ./cmd/agbero
           cd build && tar -czf ../dist/agbero-darwin-amd64.tar.gz agbero && cd ..
           rm build/agbero
-          
+
           GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o build/agbero ./cmd/agbero
           cd build && tar -czf ../dist/agbero-darwin-arm64.tar.gz agbero && cd ..
-          
+
           # Clean up
           rm -rf build
-          
+
           # Generate checksums
           cd dist
           sha256sum *.tar.gz *.zip > checksums.txt
           cd ..
+
+      - name: Upload install script
+        run: |
+          cp scripts/install.sh dist/install.sh
+          chmod +x dist/install.sh
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -88,6 +93,7 @@ jobs:
             dist/agbero-windows-amd64.zip
             dist/agbero-windows-arm64.zip
             dist/checksums.txt
+            dist/install.sh
           generate_release_notes: true
           draft: false
           prerelease: false

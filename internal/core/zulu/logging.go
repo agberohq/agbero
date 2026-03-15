@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -22,12 +23,17 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 
 	handlers = append(handlers, lh.NewColorizedHandler(os.Stdout))
 
-	// Updated to use nested File struct
 	if cfg.File.Enabled.Active() && cfg.File.Path != "" {
 		logPath := cfg.File.Path
 		logDir := filepath.Dir(logPath)
 		if err := os.MkdirAll(logDir, woos.DefaultFilePermDir); err != nil {
 			return nil, fmt.Errorf("failed to create log dir %s: %w", logDir, err)
+		}
+
+		// Use configured rotation size or default
+		rotateSize := cfg.File.RotateSize
+		if rotateSize <= 0 {
+			rotateSize = woos.DefaultLogRotateSize
 		}
 
 		src := lh.RotateSource{
@@ -47,16 +53,23 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 			Rotate: func() error {
 				timestamp := time.Now().Format("20060102-150405.000000")
 				backupName := logPath + "." + timestamp
-				if err := os.Rename(logPath, backupName); err != nil {
-					return err
+
+				if runtime.GOOS == "windows" {
+					time.Sleep(50 * time.Millisecond)
 				}
+
+				if err := os.Rename(logPath, backupName); err != nil {
+					return fmt.Errorf("rename failed: %w", err)
+				}
+
 				go compressLogFile(backupName)
+
 				return nil
 			},
 		}
 
 		baseHandler := lh.NewJSONHandler(nil)
-		rotator, err := lh.NewRotating(baseHandler, woos.DefaultLogRotateSize, src)
+		rotator, err := lh.NewRotating(baseHandler, rotateSize, src)
 		if err != nil {
 			return nil, fmt.Errorf("failed to init log rotation: %w", err)
 		}
@@ -94,9 +107,14 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 	}
 
 	multi := lh.NewMultiHandler(handlers...)
-	final := lh.NewDedup(multi, 5*time.Second, lh.WithDedupIgnore("duration"))
-	_ = sm.Register(final)
+	var final lx.Handler
+	if cfg.Deduplicate.Active() {
+		final = lh.NewDedup(multi, 5*time.Second, lh.WithDedupIgnore("duration", "interval", "delay"))
 
+	} else {
+		final = multi
+	}
+	_ = sm.Register(final)
 	l := ll.New(woos.Name, ll.WithHandler(final), ll.WithFatalExits(true))
 
 	switch cfg.Level {
@@ -125,20 +143,36 @@ func compressLogFile(srcPath string) {
 	}
 	defer in.Close()
 
-	out, err := os.Create(dstPath)
+	tmpPath := dstPath + ".tmp"
+	out, err := os.Create(tmpPath)
 	if err != nil {
 		return
 	}
-	defer out.Close()
 
 	gw := gzip.NewWriter(out)
-	defer gw.Close()
 
 	if _, err := io.Copy(gw, in); err != nil {
+		gw.Close()
+		out.Close()
+		os.Remove(tmpPath)
 		return
 	}
 
-	gw.Close()
-	in.Close()
-	_ = os.Remove(srcPath)
+	if err := gw.Close(); err != nil {
+		out.Close()
+		os.Remove(tmpPath)
+		return
+	}
+
+	if err := out.Close(); err != nil {
+		os.Remove(tmpPath)
+		return
+	}
+
+	if err := os.Rename(tmpPath, dstPath); err != nil {
+		os.Remove(tmpPath)
+		return
+	}
+
+	os.Remove(srcPath)
 }

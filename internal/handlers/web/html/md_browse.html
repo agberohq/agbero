@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{.Title}}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* Light Mode - Agbero Style */
+            --bg: #ffffff;
+            --fg: #1a1a1a;
+            --text-main: #333333;
+            --text-mute: #888888;
+            --border: #eeeeee;
+            --accent: #a855f7;
+            --hover-bg: #f9fafb;
+            --code-bg: #f5f5f5;
+            --code-border: #e8e8e8;
+            --blockquote-bar: #d8b4fe;
+        }
+
+        .dark-mode {
+            /* Dark Mode - Agbero Style */
+            --bg: #111111;
+            --fg: #ffffff;
+            --text-main: #e0e0e0;
+            --text-mute: #666666;
+            --border: #222222;
+            --hover-bg: #1a1a1a;
+            --code-bg: #1a1a1a;
+            --code-border: #2a2a2a;
+            --blockquote-bar: #7c3aed;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; }
+
+        body {
+            font-family: 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+            line-height: 1.7;
+            color: var(--text-main);
+            background-color: var(--bg);
+            margin: 0;
+            padding: 40px;
+            transition: background-color 0.2s, color 0.2s;
+        }
+
+        .container { max-width: 800px; margin: 0 auto; }
+
+        /* ── Header (matches dir.html exactly) ─────────────────────── */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 1rem;
+        }
+
+        h1.breadcrumb {
+            font-size: 1.1rem;
+            font-weight: 400;
+            color: var(--fg);
+            margin: 0;
+            font-family: monospace;
+        }
+        .breadcrumb a { color: var(--text-mute); text-decoration: none; transition: color 0.2s ease; }
+        .breadcrumb a:hover { color: var(--fg); }
+        .breadcrumb span { color: var(--border); margin: 0 5px; }
+
+        .header-actions { display: flex; align-items: center; gap: 10px; }
+
+        .download-link {
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: var(--text-mute);
+            text-decoration: none;
+            border: 1px solid var(--border);
+            padding: 6px 12px;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+        .download-link:hover { color: var(--fg); border-color: var(--text-mute); }
+
+        .theme-toggle {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-mute);
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.2s ease;
+        }
+        .theme-toggle:hover { border-color: var(--text-mute); color: var(--fg); }
+
+        /* ── Prose ──────────────────────────────────────────────────── */
+        .prose { font-size: 0.95rem; }
+
+        .prose h1 {
+            font-size: 1.8rem;
+            font-weight: 500;
+            color: var(--fg);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.4rem;
+            margin: 0 0 1.2rem;
+        }
+        .prose h2 {
+            font-size: 1.4rem;
+            font-weight: 500;
+            color: var(--fg);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.3rem;
+            margin: 2rem 0 0.8rem;
+        }
+        .prose h3 {
+            font-size: 1.1rem;
+            font-weight: 500;
+            color: var(--fg);
+            margin: 1.8rem 0 0.6rem;
+        }
+        .prose h4, .prose h5, .prose h6 {
+            font-size: 0.95rem;
+            font-weight: 500;
+            color: var(--fg);
+            margin: 1.5rem 0 0.4rem;
+        }
+
+        .prose p { margin: 0.8rem 0; color: var(--text-main); }
+
+        .prose a { color: var(--accent); text-decoration: none; transition: opacity 0.2s; }
+        .prose a:hover { opacity: 0.75; text-decoration: underline; }
+
+        .prose strong { font-weight: 500; color: var(--fg); }
+        .prose em     { font-style: italic; }
+
+        .prose code {
+            font-family: monospace;
+            font-size: 0.85em;
+            background: var(--code-bg);
+            border: 1px solid var(--code-border);
+            border-radius: 3px;
+            padding: 0.15em 0.4em;
+            color: var(--text-main);
+        }
+        .prose pre {
+            background: var(--code-bg);
+            border: 1px solid var(--code-border);
+            border-radius: 6px;
+            padding: 1rem 1.25rem;
+            overflow-x: auto;
+            margin: 1.2rem 0;
+        }
+        .prose pre code {
+            background: none;
+            border: none;
+            padding: 0;
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: var(--text-main);
+        }
+
+        .prose blockquote {
+            margin: 1.2rem 0;
+            padding: 0.6rem 1rem;
+            border-left: 3px solid var(--blockquote-bar);
+            background: var(--hover-bg);
+            border-radius: 0 4px 4px 0;
+        }
+        .prose blockquote p { margin: 0; color: var(--text-mute); font-style: italic; }
+
+        .prose ul, .prose ol { padding-left: 1.8rem; margin: 0.6rem 0; }
+        .prose li { margin: 0.3rem 0; color: var(--text-main); }
+        .prose li input[type="checkbox"] { margin-right: 0.4em; accent-color: var(--accent); }
+
+        .prose img { max-width: 100%; height: auto; border-radius: 4px; border: 1px solid var(--border); }
+
+        .prose hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+
+        /* Tables — same header style as dir.html */
+        .prose table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin: 1.2rem 0; }
+        .prose thead th {
+            text-align: left;
+            font-weight: 500;
+            color: var(--text-mute);
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 1px;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .prose tbody td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+        .prose tbody tr:hover { background: var(--hover-bg); }
+
+        /* ── Footer (matches dir.html exactly) ─────────────────────── */
+        footer {
+            margin-top: 3rem;
+            text-align: center;
+            font-size: 0.75rem;
+            color: var(--text-mute);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            border-top: 1px solid var(--border);
+            padding-top: 1.5rem;
+        }
+
+        @media (max-width: 600px) {
+            body { padding: 20px; }
+        }
+
+        /* pre.chroma: always follows --code-bg and --text-main.
+           chromaPreWrapper in web.go emits <pre class="chroma"> with no inline
+           style attribute, so CSS variables win without needing !important. */
+        pre.chroma { background: var(--code-bg); color: var(--text-main); }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1 class="breadcrumb">
+            {{range $i, $c := .Breadcrumb}}
+            {{if $i}}<span>/</span>{{end}}
+            <a href="{{$c.Href}}">{{$c.Name}}</a>
+            {{end}}
+        </h1>
+        <div class="header-actions">
+            <a href="?download" class="download-link">⬇ raw</a>
+            <button type="button" class="theme-toggle" onclick="toggleTheme()">◑ Theme</button>
+        </div>
+    </header>
+
+    <article class="prose">
+        {{.Content}}
+    </article>
+
+    <footer>
+        Last modified: {{.ModTime}} &nbsp;·&nbsp; <b>agbero</b>
+    </footer>
+</div>
+
+<script>
+    function toggleTheme() {
+        const isDark = document.body.classList.toggle('dark-mode');
+        localStorage.setItem('theme', isDark ? 'dark' : 'light');
+    }
+
+    (function initTheme() {
+        const saved = localStorage.getItem('theme');
+        const prefDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (saved === 'dark' || (!saved && prefDark)) {
+            document.body.classList.add('dark-mode');
+        }
+    })();
+</script>
+</body>
+</html>

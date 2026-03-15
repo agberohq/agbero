@@ -1,33 +1,121 @@
 package xtcp
 
 import (
+	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
+	"github.com/agberohq/agbero/internal/handlers/upstream"
 	"github.com/agberohq/agbero/internal/pkg/health"
-	"github.com/agberohq/agbero/internal/pkg/lb"
-	"github.com/agberohq/agbero/internal/pkg/metrics"
+	"github.com/olekukonko/ll"
 )
 
+type BackendConfig struct {
+	Server   alaye.Server
+	Proxy    alaye.Proxy
+	Resource *resource.Manager
+	Logger   *ll.Logger
+}
+
 type Backend struct {
-	Address  string
-	Activity *metrics.Activity
-
-	MaxConns int64
-
-	HealthScore *health.Score
-	Weights     health.Multiplier
-
-	hasProber  bool
-	weight     int
-	failThresh int64
+	upstream.Base
 
 	stop     chan struct{}
 	stopOnce sync.Once
 }
 
-func (b *Backend) HasProber() bool {
-	return b.hasProber
+func NewBackend(cfg BackendConfig) (*Backend, error) {
+	addressStr := cfg.Server.Address.String()
+	statsKey := cfg.Proxy.BackendKey(addressStr)
+
+	hasProber := cfg.Proxy.HealthCheck.Enabled.Active() ||
+		(cfg.Proxy.HealthCheck.Enabled == alaye.Unknown && (cfg.Proxy.HealthCheck.Send != "" || cfg.Proxy.HealthCheck.Expect != "")) ||
+		strings.HasSuffix(addressStr, ":6379")
+
+	baseCfg := upstream.Config{
+		Address:        addressStr,
+		Weight:         cfg.Server.Weight,
+		MaxConnections: cfg.Server.MaxConnections,
+		CBThreshold:    2,
+		HasProber:      hasProber,
+		StatsKey:       statsKey,
+		Resource:       cfg.Resource,
+	}
+
+	base, err := upstream.NewBase(baseCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	b := &Backend{
+		Base: base,
+		stop: make(chan struct{}),
+	}
+
+	if !hasProber {
+		b.HealthScore.Update(health.Record{
+			ProbeLatency: 10 * time.Millisecond,
+			ProbeSuccess: true,
+			ConnHealth:   100,
+			PassiveRate:  0,
+		})
+	}
+
+	if hasProber {
+		if err := b.initHealth(cfg); err != nil {
+			cfg.Logger.Fields("backend", b.Address, "err", err).Warn("failed to initialize health check")
+		}
+	}
+
+	return b, nil
+}
+
+func (b *Backend) initHealth(cfg BackendConfig) error {
+	probeCfg := health.DefaultProbeConfig()
+	if cfg.Proxy.HealthCheck.Interval > 0 {
+		probeCfg.StandardInterval = cfg.Proxy.HealthCheck.Interval
+	}
+	if cfg.Proxy.HealthCheck.Timeout > 0 {
+		probeCfg.Timeout = cfg.Proxy.HealthCheck.Timeout
+	}
+	var sendBytes, expectBytes []byte
+	if cfg.Proxy.HealthCheck.Send != "" {
+		s := strings.ReplaceAll(cfg.Proxy.HealthCheck.Send, "\\r", "\r")
+		s = strings.ReplaceAll(s, "\\n", "\n")
+		sendBytes = []byte(s)
+	}
+	if cfg.Proxy.HealthCheck.Expect != "" {
+		expectBytes = []byte(cfg.Proxy.HealthCheck.Expect)
+	}
+	// Use HostPort() helper to strip scheme (e.g., "tcp://host:port" -> "host:port")
+	pool := newConnPool(cfg.Server.Address.HostPort(), 3, probeCfg.Timeout)
+	executor := &TCPExecutor{
+		Pool:   pool,
+		Send:   sendBytes,
+		Expect: expectBytes,
+	}
+	return b.RegisterHealth(probeCfg, func(ctx context.Context) error {
+		success, latency, err := executor.Probe(ctx)
+		b.HealthScore.Update(health.Record{
+			ProbeLatency: latency,
+			ProbeSuccess: success,
+			ConnHealth:   100,
+			PassiveRate:  b.HealthScore.PassiveErrorRate(),
+		})
+		if !success {
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("tcp probe failed")
+		}
+		return nil
+	}, func() {
+		pool.close()
+	})
 }
 
 func (b *Backend) Stop() {
@@ -36,75 +124,30 @@ func (b *Backend) Stop() {
 	})
 }
 
-func (b *Backend) OnDialFailure(_ error) {
-	b.Activity.Failures.Add(1)
-	if b.HealthScore != nil {
-		b.HealthScore.RecordPassiveRequest(false)
-		b.HealthScore.Update(health.Record{
-			ProbeSuccess: false,
-			ConnHealth:   0,
-			PassiveRate:  b.HealthScore.PassiveErrorRate(),
-		})
+func (b *Backend) Alive() bool {
+	return b.Base.Alive()
+}
+
+func (b *Backend) Weight() int {
+	w := b.Base.Weight()
+	if w <= 0 {
+		return 1
 	}
+	return w
+}
+
+func (b *Backend) Status(up bool) {
+	b.Base.Status(up)
 }
 
 func (b *Backend) Snapshot() *Snapshot {
 	return &Snapshot{
 		Address:     b.Address,
 		Alive:       b.Alive(),
-		ActiveConns: b.Activity.InFlight.Load(),
+		ActiveConns: b.InFlight(),
 		Failures:    int64(b.Activity.Failures.Load()),
 		MaxConns:    b.MaxConns,
 		TotalReqs:   b.Activity.Requests.Load(),
 		Latency:     b.Activity.Latency.Snapshot(),
 	}
 }
-
-func (b *Backend) Status(v bool) {
-	if !v {
-		b.HealthScore.Update(health.Record{
-			ProbeSuccess: false,
-			ConnHealth:   0,
-			PassiveRate:  1.0,
-		})
-		b.Activity.Failures.Store(uint64(b.failThresh + 1))
-	} else {
-		b.HealthScore.Update(health.Record{
-			ProbeLatency: 10 * time.Millisecond,
-			ProbeSuccess: true,
-			ConnHealth:   100,
-			PassiveRate:  0,
-		})
-		b.Activity.Failures.Store(0)
-	}
-}
-
-func (b *Backend) Alive() bool {
-	if b.failThresh > 0 && b.Activity.Failures.Load() >= uint64(b.failThresh) {
-		return false
-	}
-	if !b.hasProber || b.HealthScore == nil {
-		return true
-	}
-	state := b.HealthScore.State()
-	return state != health.StateDead && state != health.StateUnhealthy
-}
-
-func (b *Backend) Weight() int {
-	if b.HealthScore == nil {
-		return b.weight
-	}
-	return b.Weights.EffectiveWeight(b.weight, b.HealthScore)
-}
-
-func (b *Backend) InFlight() int64 { return b.Activity.InFlight.Load() }
-
-func (b *Backend) ResponseTime() int64 {
-	snap := b.Activity.Latency.Snapshot()
-	if snap.Count == 0 {
-		return 0
-	}
-	return snap.Avg
-}
-
-var _ lb.Backend = (*Backend)(nil)

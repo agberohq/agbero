@@ -104,9 +104,11 @@ func (c *Conditions) Match(r *http.Request) bool {
 	}
 
 	// Header checks
+	// Keys in c.headers are pre-canonicalized, so we avoid r.Header.Get to prevent
+	// re-running textproto.CanonicalMIMEHeaderKey allocations on the hot path.
 	if len(c.headers) > 0 {
 		for k, want := range c.headers {
-			if r.Header.Get(k) != want {
+			if vals, ok := r.Header[k]; !ok || len(vals) == 0 || vals[0] != want {
 				return false
 			}
 		}

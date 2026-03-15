@@ -3,6 +3,8 @@ package health
 import (
 	"testing"
 	"time"
+
+	"github.com/agberohq/agbero/internal/core/alaye"
 )
 
 func TestEffectiveWeightHealthy(t *testing.T) {
@@ -86,14 +88,14 @@ func TestShouldAbortRapidDeterioration(t *testing.T) {
 
 	score.Update(Record{ProbeLatency: 5000 * time.Millisecond, ProbeSuccess: false, StatusCode: 500, PassiveRate: 0.5, ConnHealth: 50})
 
-	shouldAbort := eac.ShouldAbort("backend-1", score)
+	shouldAbort := eac.ShouldAbort(backendKey("backend-1"), score)
 	if !shouldAbort {
 		t.Error("should abort on rapid deterioration")
 	}
 
 	select {
 	case id := <-eac.AbortChannel():
-		if id != "backend-1" {
+		if id != backendKey("backend-1") {
 			t.Errorf("expected backend-1 in abort channel, got %s", id)
 		}
 	default:
@@ -111,7 +113,7 @@ func TestShouldAbortUnhealthy(t *testing.T) {
 		t.Fatalf("setup failed: expected unhealthy state, got %v", score.State())
 	}
 
-	shouldAbort := eac.ShouldAbort("backend-2", score)
+	shouldAbort := eac.ShouldAbort(backendKey("backend-2"), score)
 	if !shouldAbort {
 		t.Error("should abort when unhealthy")
 	}
@@ -123,8 +125,18 @@ func TestShouldNotAbortWhenDisabled(t *testing.T) {
 
 	score.Update(Record{ProbeLatency: 5000 * time.Millisecond, ProbeSuccess: false, StatusCode: 500, PassiveRate: 0.5, ConnHealth: 50})
 
-	shouldAbort := eac.ShouldAbort("backend-3", score)
+	shouldAbort := eac.ShouldAbort(backendKey("backend-3"), score)
 	if shouldAbort {
 		t.Error("should not abort when disabled")
+	}
+}
+
+func backendKey(name string) alaye.BackendKey {
+
+	return alaye.BackendKey{
+		Protocol: "test",
+		Domain:   name,
+		Path:     "/",
+		Addr:     ":1111",
 	}
 }

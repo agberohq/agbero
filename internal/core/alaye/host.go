@@ -18,8 +18,8 @@ type Host struct {
 	Headers    Headers    `hcl:"headers,block" json:"headers"`
 	ErrorPages ErrorPages `hcl:"error_pages,block" json:"error_pages"`
 
-	Routes  []Route    `hcl:"route,block" json:"routes"`
-	Proxies []TCPRoute `hcl:"proxy,block" json:"proxies"`
+	Routes  []Route `hcl:"route,block" json:"routes"`
+	Proxies []Proxy `hcl:"proxy,block" json:"proxies"`
 }
 
 func (h *Host) Validate() error {

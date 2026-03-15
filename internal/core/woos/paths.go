@@ -17,13 +17,21 @@ type RuntimePaths struct {
 }
 
 // GetUserDefaults returns defaults for the current user (~/.config/agbero)
+// It respects the AGBERO_HOME environment variable if set.
 func GetUserDefaults() (RuntimePaths, error) {
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		return RuntimePaths{}, err
+	var baseDir string
+
+	if custom := os.Getenv("AGBERO_HOME"); custom != "" {
+		baseDir = custom
+	} else {
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			return RuntimePaths{}, err
+		}
+		baseDir = filepath.Join(configDir, Name)
 	}
 
-	base := NewFolder(filepath.Join(configDir, Name))
+	base := NewFolder(baseDir)
 
 	return RuntimePaths{
 		BaseDir:    base,
@@ -36,13 +44,19 @@ func GetUserDefaults() (RuntimePaths, error) {
 	}, nil
 }
 
-// DefaultPaths returns the OS-specific default paths.
+// DefaultPaths returns the OS-specific default paths for system-wide installation.
+// It respects the AGBERO_HOME environment variable if set.
 func DefaultPaths() RuntimePaths {
 	var base string
-	if runtime.GOOS == Windows || os.PathSeparator == WindowBackSlash {
-		base = filepath.Join(os.Getenv(ENVProgramData), Name)
+
+	if custom := os.Getenv("AGBERO_HOME"); custom != "" {
+		base = custom
 	} else {
-		base = filepath.Join(ETCPath, Name)
+		if runtime.GOOS == Windows || os.PathSeparator == WindowBackSlash {
+			base = filepath.Join(os.Getenv(ENVProgramData), Name)
+		} else {
+			base = filepath.Join(ETCPath, Name)
+		}
 	}
 
 	baseFolder := NewFolder(base)

@@ -3,21 +3,22 @@ package xhttp
 import (
 	"context"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/handlers/upstream"
 	"github.com/agberohq/agbero/internal/pkg/health"
-	"github.com/agberohq/agbero/internal/pkg/lb"
-	"github.com/agberohq/agbero/internal/pkg/metrics"
 	"github.com/olekukonko/errors"
+	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
 
@@ -39,37 +40,29 @@ func (b *basicStatusWriter) Flush() {
 	}
 }
 
-// Backend implements lb.Backend interface for HTTP proxying with Doctor-managed health checks.
 type Backend struct {
-	URL   *url.URL
+	upstream.Base
+
 	Proxy *httputil.ReverseProxy
+	Abort *health.EarlyAbortController
 
-	HealthScore *health.Score
-	Weights     health.Multiplier
-	Abort       *health.EarlyAbortController
-
-	stop         chan struct{}
-	stopOnce     sync.Once
-	startTime    time.Time
-	lastRecovery atomic.Int64
-	weight       int
-	cbThreshold  int
-	Cond         *Conditions
-	rnd          *rand.Rand
-	logger       *ll.Logger
-
-	Activity *metrics.Activity
+	stop     chan struct{}
+	stopOnce sync.Once
+	Cond     *Conditions
+	rnd      *rand.Rand
+	logger   *ll.Logger
 
 	hcConfig     *alaye.HealthCheck
 	routeDomains []string
 	Fallback     http.Handler
 }
 
-func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
-	u, err := url.Parse(cfg.Address)
+func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
+	u, err := xhttpCfg.Server.Address.URL()
 	if err != nil {
 		return nil, err
 	}
+
 	if u.Scheme == "" {
 		return nil, errors.Newf("%w :(http or https)", woos.ErrBackendMissingScheme)
 	}
@@ -81,21 +74,20 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 	default:
 		return nil, errors.Newf("%w: %q", woos.ErrBackendBadScheme, u.Scheme)
 	}
-	cond, err := NewConditions(cfg.Criteria)
+
+	cond, err := NewConditions(xhttpCfg.Server.Criteria)
 	if err != nil {
 		return nil, err
 	}
+
 	route := xhttpCfg.Route
 	if route == nil {
 		route = &alaye.Route{Path: "/"}
 	}
+
 	logger := xhttpCfg.Logger
 	if logger == nil {
 		logger = ll.New("backend").Disable()
-	}
-	registry := xhttpCfg.Registry
-	if registry == nil {
-		registry = metrics.DefaultRegistry
 	}
 
 	domain := "*"
@@ -103,51 +95,53 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		domain = xhttpCfg.Domains[0]
 	}
 
-	statsKey := route.BackendKey(domain, cfg.Address)
-	stats := registry.GetOrRegister(statsKey)
-	now := time.Now()
+	statsKey := route.BackendKey(domain, xhttpCfg.Server.Address.String())
 
-	cbThreshold := woos.DefaultCircuitBreakerThreshold
+	cbThreshold := int64(woos.DefaultCircuitBreakerThreshold)
 	if route.CircuitBreaker.Threshold > 0 {
-		cbThreshold = route.CircuitBreaker.Threshold
+		cbThreshold = int64(route.CircuitBreaker.Threshold)
 	}
 
-	hScore := xhttpCfg.HealthScore
-	if hScore == nil {
-		hScore = health.GlobalRegistry.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
+	hasProber := route.HealthCheck.Enabled.Active() || (route.HealthCheck.Enabled == alaye.Unknown && route.HealthCheck.Path != "")
+
+	baseCfg := upstream.Config{
+		Address:        xhttpCfg.Server.Address.String(),
+		Weight:         xhttpCfg.Server.Weight,
+		MaxConnections: xhttpCfg.Server.MaxConnections,
+		CBThreshold:    cbThreshold,
+		HasProber:      hasProber,
+		StatsKey:       statsKey,
+		Resource:       xhttpCfg.Resource,
+	}
+
+	base, err := upstream.NewBase(baseCfg)
+	if err != nil {
+		return nil, err
 	}
 
 	b := &Backend{
-		URL:          u,
-		weight:       cfg.Weight,
-		cbThreshold:  cbThreshold,
-		Cond:         cond,
-		hcConfig:     &route.HealthCheck,
-		logger:       logger,
-		stop:         make(chan struct{}),
-		startTime:    now,
-		lastRecovery: atomic.Int64{},
-		Activity:     stats.Activity,
-		Fallback:     xhttpCfg.Fallback,
-		HealthScore:  hScore,
+		Base:     base,
+		Cond:     cond,
+		hcConfig: &route.HealthCheck,
+		logger:   logger,
+		stop:     make(chan struct{}),
+		Fallback: xhttpCfg.Fallback,
 	}
-	b.lastRecovery.Store(now.UnixNano())
 
 	if len(xhttpCfg.Domains) > 0 {
 		b.routeDomains = make([]string, len(xhttpCfg.Domains))
 		copy(b.routeDomains, xhttpCfg.Domains)
 	}
 
-	b.Weights = health.DefaultRoutingMultiplier()
 	b.Abort = health.NewEarlyAbortController(b.Weights.EarlyAbortEnabled)
 
 	rp := &httputil.ReverseProxy{}
-	t := woos.Transport.Clone()
+	t := xhttpCfg.Resource.Transport.Clone()
 	t.Proxy = nil
 	t.ExpectContinueTimeout = 0
-	if cfg.Streaming.Enabled.Active() {
+	if xhttpCfg.Server.Streaming.Enabled.Active() {
 		t.ResponseHeaderTimeout = 0
-		rp.FlushInterval = cfg.Streaming.EffectiveFlushInterval()
+		rp.FlushInterval = xhttpCfg.Server.Streaming.EffectiveFlushInterval()
 		if rp.FlushInterval <= 0 {
 			rp.FlushInterval = -1
 		}
@@ -161,12 +155,25 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 			return
 		}
 
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			http.Error(w, "Gateway Timeout", http.StatusGatewayTimeout)
+			return
+		}
+
+		if errors.Is(err, context.DeadlineExceeded) {
+			http.Error(w, "Gateway Timeout", http.StatusGatewayTimeout)
+			return
+		}
+
+		if err != nil && strings.Contains(err.Error(), "request body too large") {
+			http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		if ptr, ok := r.Context().Value(ctxKeyFailed{}).(*bool); ok {
 			*ptr = true
 		}
-
 		b.logger.Fields("backend", u.Host, "err", err).Error("proxy dial error")
-
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
 			w.Header().Set("Content-Type", "application/grpc")
 			w.Header().Set("Grpc-Status", "14")
@@ -210,15 +217,23 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 		if _, ok := pr.Out.Header["User-Agent"]; !ok {
 			pr.Out.Header.Set("User-Agent", "")
 		}
-
 		pr.Out.Host = u.Host
-
 		pr.SetXForwarded()
-		for _, h := range hopHeaders {
-			pr.Out.Header.Del(h)
+		isWebSocket := pr.In.Header.Get("Upgrade") == "websocket"
+		if isWebSocket {
+			pr.Out.Header.Set("Upgrade", "websocket")
+			pr.Out.Header.Set("Connection", "Upgrade")
+			for _, h := range hopHeaders {
+				if h != woos.HeaderKeyUpgrade && h != woos.HeaderKeyConnection {
+					pr.Out.Header.Del(h)
+				}
+			}
+		} else {
+			for _, h := range hopHeaders {
+				pr.Out.Header.Del(h)
+			}
 		}
 		proto := woos.Http
-
 		if pr.In.TLS != nil {
 			proto = woos.Https
 		}
@@ -233,11 +248,80 @@ func NewBackend(cfg alaye.Server, xhttpCfg ConfigBackend) (*Backend, error) {
 	b.Proxy = rp
 	b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 
+	if err := b.initHealth(xhttpCfg.Resource, u.ResolveReference(&url.URL{Path: b.hcConfig.Path}).String()); err != nil {
+		b.logger.Fields("backend", b.Address, "err", err).Warn("failed to initialize health check")
+	}
+
 	return b, nil
 }
 
+func (b *Backend) initHealth(res *resource.Manager, targetURL string) error {
+	if !b.HasProber {
+		return nil
+	}
+	if res.Doctor == nil {
+		return errors.New("doctor is nil")
+	}
+	probeCfg := health.DefaultProbeConfig()
+	if b.hcConfig.Path != "" {
+		probeCfg.Path = b.hcConfig.Path
+	}
+	if b.hcConfig.Interval > 0 {
+		probeCfg.StandardInterval = b.hcConfig.Interval
+	}
+	if b.hcConfig.Timeout > 0 {
+		probeCfg.Timeout = b.hcConfig.Timeout
+	}
+	headers := http.Header{}
+	hostHeader := ""
+	for k, v := range b.hcConfig.Headers {
+		if k == "Host" {
+			hostHeader = v
+		} else {
+			headers.Set(k, v)
+		}
+	}
+	if hostHeader == "" && len(b.routeDomains) > 0 && b.routeDomains[0] != "*" {
+		hostHeader = b.routeDomains[0]
+	}
+	executor := &HTTPExecutor{
+		URL:            targetURL,
+		Method:         b.hcConfig.Method,
+		Client:         res.HTTPClient,
+		Header:         headers,
+		Host:           hostHeader,
+		ExpectedStatus: b.hcConfig.ExpectedStatus,
+		ExpectedBody:   b.hcConfig.ExpectedBody,
+	}
+	return b.RegisterHealth(probeCfg, func(ctx context.Context) error {
+		success, latency, err := executor.Probe(ctx)
+		b.HealthScore.Update(health.Record{
+			ProbeLatency: latency,
+			ProbeSuccess: success,
+			ConnHealth:   100,
+			PassiveRate:  b.HealthScore.PassiveErrorRate(),
+		})
+		if !success {
+			if err != nil {
+				return err
+			}
+			return errors.New("http probe failed")
+		}
+		return nil
+	}, nil)
+}
+
 func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if b.Abort.ShouldAbort(b.URL.String(), b.HealthScore) {
+	if !b.AcquireCircuit() {
+		if b.Fallback != nil {
+			b.Fallback.ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Service Unavailable (Circuit Breaker)", http.StatusServiceUnavailable)
+		}
+		return
+	}
+
+	if b.Abort.ShouldAbort(b.StatsKey, b.HealthScore) {
 		if b.Fallback != nil {
 			b.Fallback.ServeHTTP(w, r)
 		} else {
@@ -248,137 +332,81 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	b.Activity.StartRequest()
-
 	failedPtr := new(bool)
 	ctx := context.WithValue(r.Context(), ctxKeyFailed{}, failedPtr)
 	req := r.WithContext(ctx)
 
 	var actualWriter http.ResponseWriter = w
+	var sw *basicStatusWriter
+
 	if _, ok := w.(*zulu.ResponseWriter); !ok {
-		actualWriter = &basicStatusWriter{ResponseWriter: w, code: 200}
+		// Stack allocation: safer than Pool for async proxy logic
+		sw = &basicStatusWriter{ResponseWriter: w, code: 200}
+		actualWriter = sw
 	}
 
 	defer func() {
 		dur := time.Since(start)
 		failed := *failedPtr
-
 		if rw, ok := w.(*zulu.ResponseWriter); ok {
-			if rw.StatusCode >= 500 && rw.StatusCode <= 599 {
+			if rw.StatusCode == http.StatusBadGateway ||
+				rw.StatusCode == http.StatusServiceUnavailable ||
+				rw.StatusCode == http.StatusGatewayTimeout {
 				failed = true
 			}
-		} else if sw, ok := actualWriter.(*basicStatusWriter); ok {
-			if sw.code >= 500 && sw.code <= 599 {
+		} else if sw != nil {
+			if sw.code == http.StatusBadGateway ||
+				sw.code == http.StatusServiceUnavailable ||
+				sw.code == http.StatusGatewayTimeout {
 				failed = true
 			}
 		}
 
 		b.Activity.EndRequest(dur.Microseconds(), failed)
-		b.HealthScore.RecordPassiveRequest(!failed)
-
-		if failed {
-			if b.cbThreshold > 0 && b.Activity.Failures.Load() >= uint64(b.cbThreshold) {
-				b.logger.Fields("backend", b.URL.Host, "failures", b.Activity.Failures.Load()).Warn("circuit breaker tripped")
-			}
+		if b.HealthScore != nil {
+			b.HealthScore.RecordPassiveRequest(!failed)
 		}
 
-		// Always update health score with passive result - Doctor handles the aggregation
-		b.HealthScore.Update(health.Record{
-			ProbeSuccess: !failed,
-			ConnHealth:   100,
-			PassiveRate:  b.HealthScore.PassiveErrorRate(),
-		})
+		if justTripped := b.RecordResult(!failed); justTripped {
+			b.logger.Fields("backend", b.Address, "failures", b.CBThreshold).Warn("circuit breaker tripped")
+		}
 	}()
 
 	b.Proxy.ServeHTTP(actualWriter, req)
 }
 
 func (b *Backend) Drain(timeout time.Duration) {
-	b.logger.Fields("backend", b.URL.Host).Info("backend draining started")
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
 	deadline := time.Now().Add(timeout)
 
 	for {
+		if b.Activity.InFlight.Load() <= 0 {
+			break
+		}
 		if time.Now().After(deadline) {
-			b.logger.Fields("backend", b.URL.Host, "in_flight", b.Activity.InFlight.Load()).Warn("backend drain timeout, force closing")
+			b.logger.Fields("backend", b.Address, "in_flight", b.Activity.InFlight.Load()).Warn("backend drain timeout, force closing")
 			break
 		}
-
-		if b.Activity.InFlight.Load() == 0 {
-			break
-		}
-
-		select {
-		case <-ticker.C:
-			continue
-		}
+		<-ticker.C
 	}
 }
 
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
+		if b.HasProber {
+			if doc, ok := b.Doctor().(*jack.Doctor); ok && doc != nil {
+				doc.Stop(b.StatsKey.String())
+			}
+		}
 		if tp, ok := b.Proxy.Transport.(*http.Transport); ok {
 			tp.CloseIdleConnections()
 		}
 	})
 }
 
-func (b *Backend) Uptime() time.Duration {
-	return time.Since(b.startTime)
+func (b *Backend) RouteDomains() []string {
+	return b.routeDomains
 }
-
-func (b *Backend) LastRecovery() time.Time {
-	return time.Unix(0, b.lastRecovery.Load())
-}
-
-func (b *Backend) Status(v bool) {
-	if !v {
-		b.HealthScore.Update(health.Record{
-			ProbeSuccess: false,
-			ConnHealth:   0,
-			PassiveRate:  1.0,
-		})
-		b.Activity.Failures.Store(uint64(b.cbThreshold + 1))
-	} else {
-		b.HealthScore.Update(health.Record{
-			ProbeLatency: 10 * time.Millisecond,
-			ProbeSuccess: true,
-			ConnHealth:   100,
-			PassiveRate:  0,
-		})
-		b.Activity.Failures.Store(0)
-	}
-}
-
-// Alive checks circuit breaker first, then Doctor-managed health score.
-func (b *Backend) Alive() bool {
-	if b.cbThreshold > 0 && b.Activity.Failures.Load() >= uint64(b.cbThreshold) {
-		return false
-	}
-	if b.HealthScore == nil {
-		return true
-	}
-	state := b.HealthScore.State()
-	return state != health.StateDead && state != health.StateUnhealthy
-}
-
-func (b *Backend) Weight() int {
-	if b.HealthScore == nil {
-		return b.weight
-	}
-	return b.Weights.EffectiveWeight(b.weight, b.HealthScore)
-}
-
-func (b *Backend) InFlight() int64 { return b.Activity.InFlight.Load() }
-
-func (b *Backend) ResponseTime() int64 {
-	snap := b.Activity.Latency.Snapshot()
-	if snap.Count == 0 {
-		return 0
-	}
-	return snap.Avg
-}
-
-var _ lb.Backend = (*Backend)(nil)

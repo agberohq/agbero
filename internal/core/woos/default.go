@@ -22,7 +22,7 @@ func defaultGlobal(g *alaye.Global, configPath string) {
 		g.General.MaxHeaderBytes = alaye.DefaultMaxHeaderBytes
 	}
 
-	if g.Bind.Redirect == alaye.Unknown {
+	if g.Bind.Redirect == alaye.Unknown && len(g.Bind.HTTPS) > 0 {
 		g.Bind.Redirect = alaye.Active
 	}
 
@@ -178,6 +178,10 @@ func defaultLogging(l *alaye.Logging) {
 		return
 	}
 
+	if l.Deduplicate == alaye.Unknown {
+		l.Deduplicate = alaye.Active
+	}
+
 	hasConfig := l.File.Path != "" || l.Victoria.URL != ""
 	if l.Enabled == alaye.Unknown && hasConfig {
 		l.Enabled = alaye.Active
@@ -190,14 +194,19 @@ func defaultLogging(l *alaye.Logging) {
 	if l.File.Enabled == alaye.Unknown && l.File.Path != "" {
 		l.File.Enabled = alaye.Active
 	}
-	if l.File.BatchSize == 0 {
+
+	if l.File.BatchSize <= 0 {
 		l.File.BatchSize = DefaultVictoriaBatch
+	}
+
+	if l.File.RotateSize <= 0 {
+		l.File.RotateSize = DefaultLogRotateSize
 	}
 
 	if l.Victoria.Enabled == alaye.Unknown && l.Victoria.URL != "" {
 		l.Victoria.Enabled = alaye.Active
 	}
-	if l.Victoria.BatchSize == 0 {
+	if l.Victoria.BatchSize <= 0 {
 		l.Victoria.BatchSize = DefaultVictoriaBatch
 	}
 
@@ -521,7 +530,7 @@ func defaultFirewallRoute(fr *alaye.FirewallRoute) {
 	}
 }
 
-func defaultTCPRoute(t *alaye.TCPRoute) {
+func defaultTCPRoute(t *alaye.Proxy) {
 	if t.Enabled == alaye.Unknown && t.Listen != "" {
 		t.Enabled = alaye.Active
 	}
@@ -617,7 +626,14 @@ func defaultCache(c *alaye.Cache) {
 	if c.Driver == "" {
 		c.Driver = "memory"
 	}
+	if c.Driver == "memory" && c.Memory == nil {
+		c.Memory = &alaye.MemoryCache{MaxItems: 10_000}
+	}
+	if c.Driver == "redis" && c.Redis == nil {
+		c.Redis = &alaye.RedisCache{Host: "localhost", Port: 6379}
+	}
 }
+
 func compileCondition(c *alaye.Condition) {
 	if c.Pattern != "" && c.Compiled == nil {
 		c.Compiled = regexp.MustCompile(c.Pattern)

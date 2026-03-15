@@ -20,13 +20,19 @@ func (m *Manager) ExportHostFunctions() {
 
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
-			reqRaw := ctx.Value(CtxKeyRequest)
-			if reqRaw == nil {
+			rcRaw := ctx.Value(CtxKeyRequest)
+			if rcRaw == nil {
 				stack[0] = 0
 				return
 			}
+			rc, ok := rcRaw.(*RequestContext)
+			if !ok || rc == nil || rc.R == nil {
+				stack[0] = 0
+				return
+			}
+			req := rc.R
 
-			req := reqRaw.(*http.Request)
+			// Permission check
 			if !m.config.HasAccess("headers") {
 				stack[0] = 0
 				return
@@ -37,7 +43,13 @@ func (m *Manager) ExportHostFunctions() {
 			bufPtr := uint32(stack[2])
 			bufLen := uint32(stack[3])
 
-			keyBytes, _ := mod.Memory().Read(keyPtr, keyLen)
+			// Bounds check for key read
+			keyBytes, ok := mod.Memory().Read(keyPtr, keyLen)
+			if !ok {
+				stack[0] = 0
+				return
+			}
+
 			val := req.Header.Get(string(keyBytes))
 			valBytes := []byte(val)
 			totalLen := uint64(len(valBytes))
@@ -45,7 +57,11 @@ func (m *Manager) ExportHostFunctions() {
 			writeLen := min(uint32(totalLen), bufLen)
 
 			if writeLen > 0 {
-				mod.Memory().Write(bufPtr, valBytes[:writeLen])
+				// Bounds check for value write
+				if !mod.Memory().Write(bufPtr, valBytes[:writeLen]) {
+					stack[0] = 0
+					return
+				}
 			}
 
 			stack[0] = totalLen
@@ -56,7 +72,14 @@ func (m *Manager) ExportHostFunctions() {
 
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
-			w := ctx.Value("w").(http.ResponseWriter)
+			wRaw := ctx.Value(CtxKeyResponseWriter)
+			if wRaw == nil {
+				return
+			}
+			w, ok := wRaw.(http.ResponseWriter)
+			if !ok {
+				return
+			}
 
 			if !m.config.HasAccess("headers") {
 				return
@@ -67,8 +90,14 @@ func (m *Manager) ExportHostFunctions() {
 			valPtr := uint32(stack[2])
 			valLen := uint32(stack[3])
 
-			keyBytes, _ := mod.Memory().Read(keyPtr, keyLen)
-			valBytes, _ := mod.Memory().Read(valPtr, valLen)
+			keyBytes, ok := mod.Memory().Read(keyPtr, keyLen)
+			if !ok {
+				return
+			}
+			valBytes, ok := mod.Memory().Read(valPtr, valLen)
+			if !ok {
+				return
+			}
 
 			w.Header().Set(string(keyBytes), string(valBytes))
 		}),
@@ -85,7 +114,10 @@ func (m *Manager) ExportHostFunctions() {
 			writeLen := min(uint32(totalLen), bufLen)
 
 			if writeLen > 0 {
-				mod.Memory().Write(bufPtr, m.configJSON[:writeLen])
+				if !mod.Memory().Write(bufPtr, m.configJSON[:writeLen]) {
+					stack[0] = 0
+					return
+				}
 			}
 
 			stack[0] = totalLen
@@ -97,7 +129,14 @@ func (m *Manager) ExportHostFunctions() {
 	builder.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
 			status := uint32(stack[0])
-			rc := ctx.Value("rc").(*RequestContext)
+			rcRaw := ctx.Value(CtxKeyRequest)
+			if rcRaw == nil {
+				return
+			}
+			rc, ok := rcRaw.(*RequestContext)
+			if !ok || rc == nil {
+				return
+			}
 
 			if status != 0 {
 				rc.W.WriteHeader(int(status))

@@ -12,7 +12,7 @@ const (
 
 // Hosts & Network
 const (
-	ConfigFormatVersion = 2
+	ConfigFormatVersion = 1
 	MaxPortRetries      = 10
 )
 
@@ -147,7 +147,10 @@ const (
 )
 
 // Cache
-const CacheMax = 10_000
+const (
+	CacheMax    = 10_000
+	CacheMaxBig = 100_000
+)
 
 // Route Segment Kinds
 type Kind uint8
@@ -277,7 +280,6 @@ const (
 // backend
 const (
 	DefaultCircuitBreakerThreshold = 5
-	DefaultMaxIdleConnsPerHost     = 2
 	HealthCheckJitterFraction      = 2
 
 	DefaultHealthCheckInterval  = 10 * time.Second
@@ -331,15 +333,22 @@ const (
 	ETCPath         = "/etc"
 )
 
+// High-throughput Transport configuration
 const (
 	DefaultTransportDialTimeout           = 3 * time.Second
 	DefaultTransportKeepAlive             = 30 * time.Second
-	DefaultTransportMaxIdleConns          = 1000
-	DefaultTransportMaxIdleConnsPerHost   = 100
+	DefaultTransportMaxIdleConns          = 10000
+	DefaultTransportMaxIdleConnsPerHost   = 10000
 	DefaultTransportIdleConnTimeout       = 90 * time.Second
 	DefaultTransportTLSHandshakeTimeout   = 5 * time.Second
 	DefaultTransportResponseHeaderTimeout = 5 * time.Second
 	DefaultTransportExpectContinueTimeout = 1 * time.Second
+	DefaultTransportDrainTimeout          = 30 * time.Second
+)
+
+const (
+	DefaultRateTTL        = 30 * time.Minute
+	DefaultRateMaxEntries = 100_000
 )
 
 // middleware
@@ -394,4 +403,8 @@ const (
 	GzipEncodingType    = "gzip"
 	CompressionBrotli   = "brotli"
 	BrotliEncodingType  = "br"
+)
+
+const (
+	LifetimeShards = 32
 )

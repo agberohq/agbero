@@ -17,12 +17,15 @@ type Backend interface {
 	Activity
 	Status(v bool)
 	Alive() bool
+	IsUsable() bool
 	Weight() int
 }
 
 type Balancer interface {
 	Pick(r *http.Request, keyFunc func() uint64) Backend
 	Update(backends []Backend)
+	Backends() []Backend
+	Stop()
 }
 
 type Strategy uint8

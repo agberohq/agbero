@@ -1,3 +1,4 @@
+<!-- index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -15,6 +16,7 @@
     <div class="menu">
         <a href="#" class="nav-link active" data-page="dashboard">dashboard</a>
         <a href="#" class="nav-link" data-page="hosts">hosts</a>
+        <a href="#" class="nav-link" data-page="cluster">cluster</a>
         <a href="#" class="nav-link" data-page="map">map</a>
         <a href="#" class="nav-link" data-page="firewall">firewall</a>
         <a href="#" class="nav-link" data-page="logs">logs</a>
@@ -66,6 +68,33 @@
             <button class="btn" id="refreshHostsBtn">Refresh</button>
         </div>
         <div id="hostsContainer"></div>
+    </div>
+
+    <!-- CLUSTER PAGE -->
+    <div id="clusterPage" class="page">
+        <div class="config-header">
+            <h2>Cluster Management</h2>
+            <button class="btn primary" id="addClusterRouteBtn">Broadcast Route</button>
+        </div>
+
+        <div class="config-metrics-grid" id="clusterMetricsGrid">
+            <!-- Populated by ui.js -->
+        </div>
+
+        <div class="detail-section">
+            <div class="detail-title">Active Nodes</div>
+            <div class="table-responsive">
+                <table class="simple-table">
+                    <thead>
+                    <tr>
+                        <th>NODE NAME</th>
+                        <th>STATUS</th>
+                    </tr>
+                    </thead>
+                    <tbody id="clusterNodesTable"></tbody>
+                </table>
+            </div>
+        </div>
     </div>
 
     <!-- MAP (GRAPH) -->
@@ -193,11 +222,6 @@
         </div>
 
         <div class="config-section">
-            <h3>🌩️ Cluster Status</h3>
-            <div class="config-details-grid" id="configClusterDetails"></div>
-        </div>
-
-        <div class="config-section">
             <div class="config-header">
                 <h3>📄 Raw Configuration</h3>
                 <div class="config-actions">
@@ -305,6 +329,22 @@
             <button id="confirmOk" class="btn error" style="flex:1;">Yes, Unblock</button>
             <button id="confirmCancel" class="btn" style="flex:1;">Cancel</button>
         </div>
+    </div>
+</div>
+
+<!-- CLUSTER ROUTE MODAL -->
+<div class="modal-overlay" id="clusterRouteModal">
+    <div class="modal">
+        <h3>Broadcast Dynamic Route</h3>
+        <p style="font-size:11px; color:var(--text-mute); margin-bottom:15px;">Inject an ephemeral routing rule into the cluster gossip mesh.</p>
+        <form id="clusterRouteForm">
+            <input type="text" id="crHost" placeholder="Hostname (e.g. api.example.com)" required>
+            <input type="text" id="crPath" placeholder="Path (e.g. /v1/temp)" required>
+            <input type="text" id="crTarget" placeholder="Target URL (e.g. http://10.0.0.5:8080)" required>
+            <input type="number" id="crTTL" placeholder="TTL in seconds (0 = permanent)" value="3600">
+            <button type="submit" class="primary">Broadcast</button>
+            <button type="button" class="btn close-modal" style="margin-top:5px;">Cancel</button>
+        </form>
     </div>
 </div>
 
