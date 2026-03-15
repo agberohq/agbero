@@ -870,11 +870,14 @@ Agbero responds to the following signals:
 
 ### Development Setup
 ```bash
-# Initialize local config
+# Init in default location
 agbero init
 
-# Add a route
-agbero host add
+# Init in a specific directory
+AGBERO_HOME=/etc/agbero agbero init
+
+# Run
+agbero run
 
 # Run in foreground
 agbero run --dev

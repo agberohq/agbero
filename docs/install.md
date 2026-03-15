@@ -1,287 +1,408 @@
-# Agbero Installation Guide
+# Agbero CLI Reference
 
-This guide covers installing Agbero on Linux, macOS, and Windows.
+Agbero is a modern reverse proxy, load balancer, and API gateway written in Go. It supports HTTP/HTTPS proxying, TCP proxying, static file serving, firewall rules, rate limiting, Let's Encrypt integration, clustering via gossip protocol, and more. Configurations are written in HCL format for simplicity and readability.
 
-## Installation Methods
+This document provides complete documentation for the Agbero command-line interface (CLI).
 
-Agbero can be installed in several ways:
+> **Installation Guide**  
+> For installation instructions, see the [Installation Guide](./install.md).
 
-1. **Install Script** (Linux/macOS) - Quickest method
-2. **Direct Download** - Download binaries from GitHub Releases
-3. **Build from Source** - For development or custom builds
+## Global Flags
 
-## Method 1: Install Script (Linux/macOS)
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-c, --config` | Path to configuration file (`.hcl`) | Auto-detected (see Configuration Discovery Order) |
+| `-d, --dev` | Enable development mode (detailed logs, staging certificates) | `false` |
+| `--version` | Show version information | N/A |
+| `--help` | Show help | N/A |
 
-The fastest way to install Agbero is using the install script from GitHub:
+## Commands
 
+### `home` - Navigate configuration directories
+Print or navigate to Agbero configuration directories.
+
+**Usage:**
 ```bash
-curl -fsSL https://github.com/agberohq/agbero/releases/latest/download/install.sh | bash
+agbero home [target] [action]
 ```
 
-To install a specific version:
+**Arguments:**
+- `target`: Directory to locate (`hosts`, `certs`, `data`, `logs`, `work`, `config`, or omit for root)
+- `action`: `@` to open shell, `@cat` to view file, `@vim`/`@nano`/`@code` to edit
 
+**Examples:**
 ```bash
-curl -fsSL https://github.com/agberohq/agbero/releases/download/v1.0.0/install.sh | bash -s -- --version v1.0.0
+# Show root directory path
+agbero home
+
+# Open shell in root directory
+agbero home @
+
+# Show config file path
+agbero home config
+
+# View config file contents
+agbero home config @cat
+
+# Edit config with vim
+agbero home config @vim
+
+# Navigate to hosts directory
+cd $(agbero home hosts)
+agbero home hosts @
 ```
 
-To install to a custom directory:
+**Available targets:** `hosts`, `certs`, `data`, `logs`, `work`, `config`
 
+### `run` - Run in foreground
+Run Agbero interactively, ideal for development or testing.
+
+**Usage:**
 ```bash
-curl -fsSL https://github.com/agberohq/agbero/releases/latest/download/install.sh | bash -s -- --dir ~/.local/bin
+agbero run [flags]
 ```
 
-### What the Install Script Does
+**Flags:**
+- `--dev`: Enable development mode
 
-- Detects your OS and architecture (Linux/macOS, amd64/arm64)
-- Downloads the appropriate binary from GitHub Releases
-- Extracts and installs it to `/usr/local/bin` (or your specified directory)
-- Makes the binary executable
-- Provides post-installation instructions
-
-### Install Script Options
-
-| Option | Description |
-|--------|-------------|
-| `--version VERSION` | Install specific version (e.g., `v1.0.0`) |
-| `--dir DIRECTORY` | Installation directory (default: `/usr/local/bin`) |
-| `--help` | Show help |
-
-## Method 2: Direct Download from GitHub Releases
-
-Download the appropriate binary for your system from the [releases page](https://github.com/agberohq/agbero/releases/latest).
-
-### Linux
-
+**Examples:**
 ```bash
-# x86_64 (AMD64)
-curl -LO https://github.com/agberohq/agbero/releases/latest/download/agbero-linux-amd64.tar.gz
-tar xzf agbero-linux-amd64.tar.gz
-sudo mv agbero /usr/local/bin/
+# Run with auto-detected config
+agbero run
 
-# ARM64
-curl -LO https://github.com/agberohq/agbero/releases/latest/download/agbero-linux-arm64.tar.gz
-tar xzf agbero-linux-arm64.tar.gz
-sudo mv agbero /usr/local/bin/
+# Run with custom config and dev mode
+agbero run --config ./agbero.hcl --dev
 ```
 
-### macOS
+**Behavior:**
+- Loads and validates configuration.
+- Starts HTTP/HTTPS listeners based on `bind` settings.
+- Watches for host configuration changes in `hosts_dir`.
+- Supports hot reload via SIGHUP signal.
 
+### `service` - Service management
+Manage Agbero as a system service.
+
+**Subcommands:**
+- `install` - Install configuration and system service
+- `uninstall` - Uninstall system service
+- `start` - Start system service
+- `stop` - Stop system service
+- `restart` - Restart system service
+- `status` - Show service status
+
+**Usage:**
 ```bash
-# Intel (AMD64)
-curl -LO https://github.com/agberohq/agbero/releases/latest/download/agbero-darwin-amd64.tar.gz
-tar xzf agbero-darwin-amd64.tar.gz
-sudo mv agbero /usr/local/bin/
-
-# Apple Silicon (ARM64)
-curl -LO https://github.com/agberohq/agbero/releases/latest/download/agbero-darwin-arm64.tar.gz
-tar xzf agbero-darwin-arm64.tar.gz
-sudo mv agbero /usr/local/bin/
+agbero service <subcommand> [flags]
 ```
 
-### Windows
+**Flags for install:**
+- `--here`: Install configuration in current directory (skip service install)
 
-1. Download the appropriate ZIP file:
-    - [agbero-windows-amd64.zip](https://github.com/agberohq/agbero/releases/latest/download/agbero-windows-amd64.zip) (64-bit)
-    - [agbero-windows-arm64.zip](https://github.com/agberohq/agbero/releases/latest/download/agbero-windows-arm64.zip) (ARM64)
-
-2. Extract the ZIP file
-
-3. Move `agbero.exe` to a directory in your `PATH` (e.g., `C:\Windows\System32` or `C:\Program Files\agbero`)
-
-### Verify Downloads
-
-After downloading, verify the integrity of your download using the checksums:
-
+**Examples:**
 ```bash
-# Download checksums
-curl -LO https://github.com/agberohq/agbero/releases/latest/download/checksums.txt
+# Install system-wide
+sudo agbero service install
 
-# Verify (Linux/macOS)
-sha256sum -c checksums.txt --ignore-missing
+# Install locally (no service)
+agbero service install --here
 
-# Verify (Windows - PowerShell)
-Get-FileHash agbero-windows-amd64.zip -Algorithm SHA256
+# Start service
+sudo agbero service start
+
+# Stop service
+sudo agbero service stop
+
+# Restart service
+sudo agbero service restart
+
+# Check service status
+sudo agbero service status
+
+# Uninstall service
+sudo agbero service uninstall
 ```
 
-## Method 3: Build from Source
+**Status Output Example:**
+```
+╔════════════════════════════════════════╗
+║         AGBERO SERVICE STATUS          ║
+╚════════════════════════════════════════╝
+Status:  ● Running
+Config:  /etc/agbero/agbero.hcl
+PID:     12345
+Type:    System-wide (root)
+```
 
-### Prerequisites
+### `reload` - Hot reload configuration
+Sends SIGHUP to the running process to reload hosts without restart.
 
-- Go 1.22 or higher
-- Git
-- Make (optional)
-
-### Build Steps
-
+**Usage:**
 ```bash
-# Clone the repository
-git clone https://github.com/agberohq/agbero.git
-cd agbero
-
-# Build the binary
-go build -o agbero ./cmd/agbero
-
-# Or use make (if available)
-make build
-
-# The binary will be in the current directory
-# Optionally move to a directory in your PATH
-sudo mv agbero /usr/local/bin/
+agbero reload [flags]
 ```
 
-## Post-Installation Setup
-
-### 1. Verify Installation
-
+**Examples:**
 ```bash
-agbero --version
+# Reload system service
+sudo agbero reload
 ```
 
-You should see output similar to:
+### `validate` - Validate configuration
+Checks the main config and all host files for syntax and validity.
+
+**Usage:**
+```bash
+agbero validate [flags]
 ```
-agbero version v1.0.0
+
+**Examples:**
+```bash
+agbero validate --config ./agbero.hcl
 ```
 
-### 2. Initialize Configuration
+### `hosts` - List configured hosts
+Lists all loaded host configurations from `hosts_dir`.
 
-Run the interactive setup to create your first configuration:
+**Usage:**
+```bash
+agbero hosts [flags]
+```
 
+**Examples:**
+```bash
+agbero hosts --config ./agbero.hcl
+```
+
+### `init` - Interactive setup
+Run the interactive setup wizard to create configuration.
+
+**Usage:**
 ```bash
 agbero init
 ```
 
-This will:
-- Create the configuration directory structure
-- Generate a secure admin password
-- Create a default `agbero.hcl` configuration file
-- Set up a local Certificate Authority (for development)
+### `hash` - Generate bcrypt hash
+Generates a bcrypt hash for passwords (used in `basic_auth`).
 
-### 3. (Optional) Install CA Support for Firefox
-
-Agbero uses `github.com/smallstep/truststore` for CA management. For Firefox to trust the local CA, you may need to install `nss-tools`:
-
-**Linux (Debian/Ubuntu):**
+**Usage:**
 ```bash
-sudo apt install libnss3-tools
+agbero hash [flags]
 ```
 
-**Linux (RHEL/CentOS/Fedora):**
+**Flags:**
+- `-p, --password`: Password to hash (interactive if omitted)
+
+**Examples:**
 ```bash
-sudo yum install nss-tools
-# or
-sudo dnf install nss-tools
+agbero hash --password "mysecret"
 ```
 
-**macOS:**
+### `serve` - Ephemeral static file server
+Serve a directory instantly (no persistent config).
+
+**Usage:**
 ```bash
-brew install nss
+agbero serve [path] [flags]
 ```
 
-**Windows:**
-No additional tools needed - Firefox uses the Windows certificate store.
+**Flags:**
+- `-p, --port`: Listen port (default: 8000)
+- `-b, --bind`: Bind address (default: localhost)
+- `-s, --https`: Enable HTTPS (auto-generates certs)
 
-This is only required if:
-- You're using Firefox for local development
-- You want Firefox to trust Agbero's locally generated certificates
-
-### 4. Test Your Installation
-
-Run Agbero in development mode:
-
+**Examples:**
 ```bash
+# Serve current directory
+agbero serve
+
+# Serve with HTTPS
+agbero serve /var/www --https
+```
+
+### `proxy` - Ephemeral reverse proxy
+Proxy a local target instantly (no persistent config).
+
+**Usage:**
+```bash
+agbero proxy <target> [domain] [flags]
+```
+
+**Flags:**
+- `-p, --port`: Listen port (default: 8080)
+- `-b, --bind`: Bind address (default: localhost)
+- `-s, --https`: Enable HTTPS
+
+**Examples:**
+```bash
+# Proxy localhost:3000
+agbero proxy :3000
+
+# Proxy with domain and HTTPS
+agbero proxy http://127.0.0.1:3000 app.localhost --https
+```
+
+### `route` - Manage routes interactively
+Add or remove host configurations using interactive prompts.
+
+**Subcommands:**
+- `add` - Add a new route
+- `remove` - Remove an existing route
+
+**Usage:**
+```bash
+agbero route add [flags]
+agbero route remove [flags]
+```
+
+**Examples:**
+```bash
+# Add a new route
+agbero route add
+
+# Remove a route
+agbero route remove
+```
+
+### `cert` - Certificate management
+Manage TLS certificates.
+
+**Subcommands:**
+- `install` - Install CA certificate
+- `uninstall` - Uninstall CA certificate
+- `list` - List certificates
+- `info` - Show certificate info
+
+**Usage:**
+```bash
+agbero cert <subcommand> [flags]
+```
+
+**Flags:**
+- `-f, --force`: Force reinstall (for install)
+- `-d, --dir`: Override directory (for info)
+
+**Examples:**
+```bash
+# Install CA
+agbero cert install
+
+# List certificates
+agbero cert list
+
+# Show certificate info
+agbero cert info
+```
+
+### `key` - Key management
+Manage API authentication keys.
+
+**Subcommands:**
+- `init` - Generate master private key
+- `gen` - Generate auth token for service
+
+**Usage:**
+```bash
+agbero key <subcommand> [flags]
+```
+
+**Flags for gen:**
+- `-s, --service`: Service name (required)
+- `-t, --ttl`: Token validity duration
+
+**Examples:**
+```bash
+# Initialize master key
+agbero key init
+
+# Generate token for service
+agbero key gen --service myapp --ttl 24h
+```
+
+### `cluster` - Cluster management
+Manage cluster settings.
+
+**Subcommands:**
+- `secret` - Generate encryption secret
+- `start` - Start as cluster seed node
+- `join` - Join existing cluster
+
+**Usage:**
+```bash
+agbero cluster <subcommand> [flags]
+```
+
+**Examples:**
+```bash
+# Generate cluster secret
+agbero cluster secret
+
+# Join cluster
+agbero cluster join 192.168.1.10 --secret b64.abc123
+```
+
+### `help` - Show help examples
+Display usage examples.
+
+**Usage:**
+```bash
+agbero help
+```
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `AGBERO_CONTAINER` | Detect container environment |
+| `KUBERNETES_SERVICE_HOST` | Kubernetes detection |
+
+## Configuration Discovery Order
+Without `--config`:
+
+1. Current directory `./agbero.hcl`
+2. User directory `~/.config/agbero/agbero.hcl`
+3. System directory `/etc/agbero/agbero.hcl`
+
+## Examples
+
+### Development Setup
+```bash
+# Install config locally
+agbero service install --here
+
+# Run in foreground
 agbero run --dev
+
+# Add a route
+agbero route add
 ```
 
-You should see output indicating the server is starting. Press `Ctrl+C` to stop.
+### Production Setup
+```bash
+# Install system-wide
+sudo agbero service install
 
-## Next Steps
+# Start service
+sudo agbero service start
 
-- [**Quick Start**](./index.md) - Learn Agbero basics
-- [**CLI Reference**](./command.md) - Complete command documentation
-- [**Global Configuration**](./global.md) - Configure the main `agbero.hcl`
-- [**Host Configuration**](./host.md) - Define routes and backends
+# Check status
+sudo agbero service status
+
+# Restart after config changes
+sudo agbero service restart
+
+# Generate cluster secret
+agbero cluster secret
+
+# Generate API token
+agbero key gen --service app1
+```
 
 ## Troubleshooting
 
-### "agbero: command not found"
-
-The installation directory is not in your `PATH`:
-
-```bash
-# Add to PATH temporarily
-export PATH=$PATH:/usr/local/bin
-
-# Add to PATH permanently (add to ~/.bashrc, ~/.zshrc, etc.)
-echo 'export PATH=$PATH:/usr/local/bin' >> ~/.bashrc
-```
-
-### Permission Denied
-
-If you don't have sudo access, install to a user directory:
-
-```bash
-# Create a local bin directory
-mkdir -p ~/.local/bin
-
-# Install using the script
-curl -fsSL https://github.com/agberohq/agbero/releases/latest/download/install.sh | bash -s -- --dir ~/.local/bin
-
-# Add to PATH
-export PATH=$PATH:~/.local/bin
-```
-
-### Port Conflicts
-
-If ports 80 or 443 are already in use, Agbero will automatically try the next available port. Check what's using the ports:
-
-```bash
-# Linux/macOS
-sudo lsof -i :80
-sudo lsof -i :443
-
-# Windows (PowerShell as Admin)
-netstat -ano | findstr :80
-netstat -ano | findstr :443
-```
-
-### CA Installation Fails
-
-If CA installation fails during `agbero init`:
-
-1. Install the required tools (see "Install CA Support for Firefox" above)
-2. Run `agbero init` again
-
-The CA is only needed for local development with HTTPS and does not affect production operation.
-
-### Checksum Verification Failed
-
-If checksum verification fails, the download may be corrupted. Try:
-
-```bash
-# Re-download the binary
-rm agbero-*.tar.gz
-curl -LO https://github.com/agberohq/agbero/releases/latest/download/agbero-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz
-```
-
-## Uninstalling Agbero
-
-To remove Agbero:
-
-```bash
-# Remove the binary
-sudo rm /usr/local/bin/agbero
-
-# Remove configuration (optional)
-rm -rf ~/.config/agbero
-sudo rm -rf /etc/agbero
-
-# Remove data (optional)
-rm -rf ~/.local/share/agbero
-sudo rm -rf /var/lib/agbero
-```
-
-## Getting Help
-
-- **GitHub Issues**: [https://github.com/agberohq/agbero/issues](https://github.com/agberohq/agbero/issues)
-- **Documentation**: [https://github.com/agberohq/agbero/tree/main/docs](https://github.com/agberohq/agbero/tree/main/docs)
-```
+- **Config not found:** Use `--config` or run `service install --here`
+- **Service errors:** Check logs in `logs_dir/agbero.log`
+- **Service won't start:** Run `sudo agbero service status` for details
+- **Reload not working:** Ensure `data_dir` is set and PID file exists
+- **Port conflicts:** Use `netstat` or `lsof` to check ports
+- **CA install fails:** Run with sudo; check system trust store

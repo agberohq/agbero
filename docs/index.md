@@ -44,8 +44,8 @@ Navigate through the documentation to master Agbero:
 
 - [**Installation Guide**](./install.md) - Get Agbero running on Linux, macOS, or Windows.
 - [**Command Line**](./command.md) - Using Agbero from the command line.
-- [**Global Config**](./global.md) - Practical configuration examples for APIs, WebSockets, and Auth.
-- [**Host Config**](./host.md) - Practical configuration examples for APIs, WebSockets, and Auth.
+- [**Global Config**](./guide_global.md) - Practical configuration examples for APIs, WebSockets, and Auth.
+- [**Host Config**](./guide_host.md) - Practical configuration examples for APIs, WebSockets, and Auth.
 - [**Advanced Guide**](./advance.md) - Deep dive into Clustering, Git Deployments, and Firewall tuning.
 - [**Plugin Guide**](./plugin.md) - Write custom high-performance middleware using WebAssembly.
 - [**Contributor Guide**](./contributor.md) - Architecture overview and guidelines for contributing to Agbero.
