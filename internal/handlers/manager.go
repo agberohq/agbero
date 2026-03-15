@@ -200,13 +200,18 @@ func (m *Manager) BuildListeners() []Listener {
 	tcpGroups := groupTCPRoutesByListen(hosts)
 	for listen, routes := range tcpGroups {
 		tp := xtcp.NewProxy(m.cfg.Resource, m.cfg.Resource.Logger, listen)
+		var maxC int64
 		for _, r := range routes {
 			pattern := r.SNI
 			if pattern == "" {
 				pattern = "*"
 			}
 			tp.AddRoute(pattern, r)
+			if r.MaxConnections > maxC {
+				maxC = r.MaxConnections
+			}
 		}
+		tp.MaxConns = maxC
 		listeners = append(listeners, &TCPListener{Proxy: tp})
 	}
 

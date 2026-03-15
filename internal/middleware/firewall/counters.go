@@ -8,8 +8,10 @@ import (
 	"github.com/olekukonko/mappo"
 )
 
-// Bit layout: [32 bits count | 32 bits expire timestamp]
-var counterBits = []uint8{32, 32}
+// Bit layout: [40 bits expire timestamp | 24 bits count]
+// 40 bits timestamp = Year 36,812.
+// 24 bits count = 16.7 million requests allowed per window.
+var counterBits = []uint8{40, 24}
 
 type atomicCounter struct {
 	state zulu.AtomicPacked

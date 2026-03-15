@@ -18,6 +18,7 @@ import (
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
+	"golang.org/x/sync/singleflight"
 )
 
 // ClusterBroadcaster defines requirements for distributing PKI material.
@@ -46,6 +47,7 @@ type Manager struct {
 
 	// Tracks domains currently being renewed to prevent thundering herd
 	renewingDomains *mappo.Concurrent[string, bool]
+	acmeFlight      singleflight.Group
 }
 
 // NewManager builds the cryptography orchestration layer.
@@ -356,24 +358,32 @@ func (m *Manager) getCertificateLocal(host string) (*tls.Certificate, error) {
 }
 
 func (m *Manager) getCertificateACME(domain string) (*tls.Certificate, error) {
-	tlsCert, certPEM, keyPEM, err := m.acme.ObtainCert(domain)
+
+	v, err, _ := m.acmeFlight.Do(domain, func() (interface{}, error) {
+		tlsCert, certPEM, keyPEM, err := m.acme.ObtainCert(domain)
+		if err != nil {
+			return nil, woos.ErrCertNotfound
+		}
+
+		if len(tlsCert.Certificate) > 0 {
+			tlsCert.Leaf, _ = x509.ParseCertificate(tlsCert.Certificate[0])
+		}
+
+		m.cache.Set(domain, tlsCert)
+
+		if m.storage != nil {
+			m.storage.Save(domain, certPEM, keyPEM)
+		}
+		if m.onUpdate != nil {
+			go m.onUpdate(domain, certPEM, keyPEM)
+		}
+		return tlsCert, nil
+	})
+
 	if err != nil {
 		return nil, woos.ErrCertNotfound
 	}
-
-	if len(tlsCert.Certificate) > 0 {
-		tlsCert.Leaf, _ = x509.ParseCertificate(tlsCert.Certificate[0])
-	}
-
-	m.cache.Set(domain, tlsCert)
-
-	if m.storage != nil {
-		m.storage.Save(domain, certPEM, keyPEM)
-	}
-	if m.onUpdate != nil {
-		go m.onUpdate(domain, certPEM, keyPEM)
-	}
-	return tlsCert, nil
+	return v.(*tls.Certificate), nil
 }
 
 func (m *Manager) loadFromStorage() {

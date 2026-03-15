@@ -241,6 +241,7 @@ flowchart TD
     K --> L[Gossip Protocol]
     L --> M[Service Discovery]
     L --> N[State Replication]
+```
 
 ## Contributing
 
