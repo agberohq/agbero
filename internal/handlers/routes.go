@@ -109,7 +109,7 @@ func newWebRoute(cfg Config, route *alaye.Route) *Route {
 		chain = ipallow.New(route.AllowedIPs, cfg.Logger, ipMgr)(chain)
 	}
 	chain = auth.JWT(&route.JWTAuth)(chain)
-	chain = auth.Basic(&route.BasicAuth)(chain)
+	chain = auth.Basic(&route.BasicAuth, cfg.Logger)(chain)
 	chain = auth.Forward(cfg.Resource, &route.ForwardAuth)(chain)
 	chain = auth.OAuth(&route.OAuth)(chain)
 	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, ipMgr, cfg.SharedState); rl != nil {
@@ -195,7 +195,7 @@ func newProxyRoute(cfg Config, route *alaye.Route) *Route {
 		chain = ipallow.New(route.AllowedIPs, cfg.Logger, cfg.IPMgr)(chain)
 	}
 	chain = auth.JWT(&route.JWTAuth)(chain)
-	chain = auth.Basic(&route.BasicAuth)(chain)
+	chain = auth.Basic(&route.BasicAuth, cfg.Logger)(chain)
 	chain = auth.Forward(cfg.Resource, &route.ForwardAuth)(chain)
 	chain = auth.OAuth(&route.OAuth)(chain)
 	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, cfg.IPMgr, cfg.SharedState); rl != nil {

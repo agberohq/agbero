@@ -17,10 +17,11 @@ import (
 )
 
 const (
-	configFilePerm         = 0644
-	configTempSuffix       = ".tmp"
-	configHCLExtension     = ".hcl"
-	MaxReliablePayloadSize = 5 * 1024 * 1024
+	configFilePerm            = 0644
+	configTempSuffix          = ".tmp"
+	configHCLExtension        = ".hcl"
+	MaxReliablePayloadSize    = 5 * 1024 * 1024
+	maxDecompressedConfigSize = 10 * 1024 * 1024
 )
 
 type ConfigManager struct {
@@ -66,10 +67,15 @@ func (c *ConfigManager) LoadExistingChecksums() {
 }
 
 // Apply writes or deletes a configuration file based on a cluster payload.
-// It validates the incoming HCL before committing to disk to prevent cluster-wide corruption.
+// Domain values are validated to prevent path traversal before any file operation.
 func (c *ConfigManager) Apply(payload ConfigPayload) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if err := validateDomain(payload.Domain, c.localDir); err != nil {
+		c.logger.Fields("domain", payload.Domain, "sender", payload.NodeID, "err", err).Error("cluster config rejected: invalid domain")
+		return
+	}
 
 	if payload.Deleted {
 		configPath := filepath.Join(c.localDir, payload.Domain+configHCLExtension)
@@ -250,7 +256,7 @@ func (c *ConfigManager) compress(data []byte) ([]byte, error) {
 }
 
 // decompress inflates configuration data received from the cluster.
-// Must be paired with the local compressor implementation.
+// Decompressed output is capped at maxDecompressedConfigSize to prevent memory exhaustion.
 func (c *ConfigManager) decompress(data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, nil
@@ -260,5 +266,35 @@ func (c *ConfigManager) decompress(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer reader.Close()
-	return io.ReadAll(reader)
+
+	result, err := io.ReadAll(io.LimitReader(reader, maxDecompressedConfigSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(result) > maxDecompressedConfigSize {
+		return nil, fmt.Errorf("decompressed config exceeds maximum allowed size of %d bytes", maxDecompressedConfigSize)
+	}
+	return result, nil
+}
+
+// validateDomain rejects domain values that could escape the localDir via path traversal.
+// A domain must contain no path separators, no ".." sequences, and the resolved path
+// must remain within localDir.
+func validateDomain(domain, localDir string) error {
+	if domain == "" {
+		return fmt.Errorf("domain cannot be empty")
+	}
+	if strings.ContainsAny(domain, "/\\") {
+		return fmt.Errorf("domain contains illegal path separator characters")
+	}
+	if strings.Contains(domain, "..") {
+		return fmt.Errorf("domain contains illegal path traversal sequence")
+	}
+
+	resolved := filepath.Join(localDir, domain+configHCLExtension)
+	rel, err := filepath.Rel(localDir, resolved)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("domain resolves outside the configured hosts directory")
+	}
+	return nil
 }

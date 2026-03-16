@@ -1,18 +1,18 @@
 package auth
 
 import (
-	"crypto/subtle"
 	"net/http"
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/olekukonko/errors"
+	"github.com/olekukonko/ll"
 	"golang.org/x/crypto/bcrypt"
 )
 
-func Basic(cfg *alaye.BasicAuth) func(http.Handler) http.Handler {
-	// Return passthrough if disabled
+// Basic returns middleware that enforces HTTP Basic authentication against bcrypt-hashed credentials.
+// Plaintext passwords are rejected with an error log; only bcrypt hashes are accepted.
+func Basic(cfg *alaye.BasicAuth, logger *ll.Logger) func(http.Handler) http.Handler {
 	if cfg.Enabled.NotActive() {
 		return func(next http.Handler) http.Handler { return next }
 	}
@@ -44,18 +44,17 @@ func Basic(cfg *alaye.BasicAuth) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Try bcrypt compare first
-			if err := bcrypt.CompareHashAndPassword(validHash, []byte(pass)); err == nil {
+			err := bcrypt.CompareHashAndPassword(validHash, []byte(pass))
+			if err == nil {
 				next.ServeHTTP(w, r)
 				return
-			} else if !errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
-				// Log non-mismatch errors
 			}
 
-			// Fallback to plaintext comparison
-			if subtle.ConstantTimeCompare([]byte(pass), validHash) == 1 {
-				next.ServeHTTP(w, r)
-				return
+			if err != bcrypt.ErrMismatchedHashAndPassword {
+				logger.Fields(
+					"user", user,
+					"err", err.Error(),
+				).Error("basic_auth: non-bcrypt password hash detected for user — only bcrypt hashes are accepted")
 			}
 
 			unauthorized(w, realm)
@@ -63,6 +62,7 @@ func Basic(cfg *alaye.BasicAuth) func(http.Handler) http.Handler {
 	}
 }
 
+// unauthorized writes a 401 response with the WWW-Authenticate challenge header.
 func unauthorized(w http.ResponseWriter, realm string) {
 	w.Header().Set(woos.HeaderWWWAuthenticate, `Basic realm="`+realm+`"`)
 	http.Error(w, "Unauthorized", http.StatusUnauthorized)

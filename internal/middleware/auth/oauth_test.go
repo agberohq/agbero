@@ -1,10 +1,13 @@
 package auth
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,12 +55,21 @@ func (s *MockSession) Authorize(provider goth.Provider, params goth.Params) (str
 	return "mock_token_123", nil
 }
 
+// Helper to create a signed session cookie value matching signSessionCookie logic
+func createSignedSessionCookie(token string, secret []byte) string {
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(token))
+	h := hmac.New(sha256.New, secret)
+	h.Write([]byte(encoded))
+	mac := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+	return encoded + cookieValueSeparator + mac
+}
+
 func TestOAuthMiddleware_Goth(t *testing.T) {
 	mockProv := &MockProvider{
 		Session: &MockSession{AuthURL: "http://provider.com/auth"},
 	}
 
-	// Calculate expected Base64 value for "valid_session_data"
+	secret := []byte("test-secret-key-for-testing-only")
 	validSessionB64 := base64.StdEncoding.EncodeToString([]byte("valid_session_data"))
 
 	t.Run("Start Goth Flow", func(t *testing.T) {
@@ -73,7 +85,6 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 		cookies := rec.Result().Cookies()
 		found := false
 		for _, c := range cookies {
-			// Check for the Base64 encoded value
 			if c.Name == woos.GothSessionCookie && c.Value == validSessionB64 {
 				found = true
 				break
@@ -89,15 +100,15 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 			Enabled:      alaye.Active,
 			Provider:     "mock",
 			EmailDomains: []string{"example.com"},
+			RedirectURL:  "/callback",
 		}
 
 		req := httptest.NewRequest("GET", "/callback?code=123&state=xyz", nil)
-		// Inject the Base64 encoded cookie
 		req.AddCookie(&http.Cookie{Name: woos.GothSessionCookie, Value: validSessionB64})
 
 		rec := httptest.NewRecorder()
 
-		handleGothCallback(rec, req, mockProv, cfg)
+		handleGothCallback(rec, req, mockProv, cfg, secret)
 
 		if rec.Code != http.StatusFound {
 			t.Errorf("Expected 302 redirect, got %d. Body: %s", rec.Code, rec.Body.String())
@@ -106,13 +117,21 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 		cookies := rec.Result().Cookies()
 		found := false
 		for _, c := range cookies {
-			if c.Name == woos.SessionCookieName && c.Value == "mock_token_123" {
-				found = true
+			if c.Name == woos.SessionCookieName {
+				// Verify the cookie value is properly signed: <base64(token)>.<base64(hmac)>
+				parts := strings.Split(c.Value, cookieValueSeparator)
+				if len(parts) == 2 {
+					// Decode the token part and verify it matches
+					decoded, err := base64.RawURLEncoding.DecodeString(parts[0])
+					if err == nil && string(decoded) == "mock_token_123" {
+						found = true
+					}
+				}
 				break
 			}
 		}
 		if !found {
-			t.Error("Application session cookie not set")
+			t.Error("Application session cookie not set with valid signed value")
 		}
 	})
 
@@ -121,15 +140,15 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 			Enabled:      alaye.Active,
 			Provider:     "mock",
 			EmailDomains: []string{"corp.com"},
+			RedirectURL:  "/callback",
 		}
 
-		req := httptest.NewRequest("GET", "/callback?code=123", nil)
-		// Inject the Base64 encoded cookie
+		req := httptest.NewRequest("GET", "/callback?code=123&state=xyz", nil)
 		req.AddCookie(&http.Cookie{Name: woos.GothSessionCookie, Value: validSessionB64})
 
 		rec := httptest.NewRecorder()
 
-		handleGothCallback(rec, req, mockProv, cfg)
+		handleGothCallback(rec, req, mockProv, cfg, secret)
 
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("Expected 403 Forbidden, got %d", rec.Code)
