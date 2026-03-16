@@ -10,12 +10,15 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/agberohq/agbero/internal/pkg/installer"
+	"github.com/olekukonko/ll"
 )
 
 type Configuration struct {
 	p *Helper
 }
 
+// Validates the provided configuration file path for structural correctness
+// Checks the cluster hosts folder and logs the outcome
 func (c *Configuration) Validate(configFile string) error {
 	global, err := loadGlobal(configFile)
 	if err != nil {
@@ -34,6 +37,8 @@ func (c *Configuration) Validate(configFile string) error {
 	return nil
 }
 
+// Reloads the active configuration by sending a SIGHUP signal to the daemon
+// Requires a valid data directory holding the process identifier file
 func (c *Configuration) Reload(configFile string) error {
 	global, err := loadGlobal(configFile)
 	if err != nil {
@@ -64,10 +69,14 @@ func (c *Configuration) Reload(configFile string) error {
 	return nil
 }
 
+// Outputs the configuration file path to the standard output
+// Used primarily for debugging and internal scripting orchestration
 func (c *Configuration) Path(configFile string) {
 	fmt.Println(configFile)
 }
 
+// Displays the configuration file contents directly on the screen
+// Opens the file using an external editor if a specific editor is provided
 func (c *Configuration) View(configFile, editor string) {
 	if editor != "" {
 		runEditor(editor, configFile)
@@ -82,6 +91,8 @@ func (c *Configuration) View(configFile, editor string) {
 	fmt.Println(string(content))
 }
 
+// Opens the specified configuration file inside the system editor
+// Defaults to the vi editor if the EDITOR environment variable is absent
 func (c *Configuration) Edit(configFile string) {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
@@ -90,7 +101,9 @@ func (c *Configuration) Edit(configFile string) {
 	runEditor(editor, configFile)
 }
 
-func ResolveConfigPath(flagPath string) (string, bool) {
+// Resolves the configuration file path by checking user flags and defaults
+// Inspects the current directory and the standard installation paths
+func ResolveConfigPath(logger *ll.Logger, flagPath string) (string, bool) {
 	if strings.TrimSpace(flagPath) != "" {
 		p := flagPath
 		if abs, err := filepath.Abs(flagPath); err == nil {
@@ -108,7 +121,7 @@ func ResolveConfigPath(flagPath string) (string, bool) {
 		return cwdPath, true
 	}
 
-	ctx := installer.NewContext(nil, "")
+	ctx := installer.NewContext(logger, "")
 	if _, err := os.Stat(ctx.Paths.ConfigFile); err == nil {
 		return ctx.Paths.ConfigFile, true
 	}
@@ -116,8 +129,10 @@ func ResolveConfigPath(flagPath string) (string, bool) {
 	return "", false
 }
 
-func InitConfiguration(targetDir string) (string, error) {
-	ctx := installer.NewContext(nil, "")
+// Initializes the base directory and standard configuration files
+// Generates the required folder structure and scaffold settings
+func InitConfiguration(logger *ll.Logger, targetDir string) (string, error) {
+	ctx := installer.NewContext(logger, "")
 	if targetDir != "" {
 		base := woos.NewFolder(targetDir)
 		ctx.Paths.BaseDir = base
@@ -132,14 +147,16 @@ func InitConfiguration(targetDir string) (string, error) {
 	return ctx.Paths.ConfigFile, err
 }
 
-func InstallConfiguration(here bool) (string, error) {
+// Installs the configuration to the selected deployment location
+// Uses the current working directory if requested by the user
+func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 	if here {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return "", err
 		}
-		return InitConfiguration(cwd)
+		return InitConfiguration(logger, cwd)
 	}
-	ctx := installer.NewContext(nil, "")
-	return InitConfiguration(ctx.Paths.BaseDir.Path())
+	ctx := installer.NewContext(logger, "")
+	return InitConfiguration(logger, ctx.Paths.BaseDir.Path())
 }

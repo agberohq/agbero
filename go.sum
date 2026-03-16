@@ -266,8 +266,6 @@ github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 h1:zrbMGy9YXpIeTnGj
 github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6/go.mod h1:rEKTHC9roVVicUIfZK7DYrdIoM0EOr8mK1Hj5s3JjH0=
 github.com/olekukonko/errors v1.2.0 h1:10Zcn4GeV59t/EGqJc8fUjtFT/FuUh5bTMzZ1XwmCRo=
 github.com/olekukonko/errors v1.2.0/go.mod h1:ppzxA5jBKcO1vIpCXQ9ZqgDh8iwODz6OXIGKU8r5m4Y=
-github.com/olekukonko/jack v0.0.0-20260314133026-c07044fb530f h1:Kxu0RZE7/KE8h8x5lUHTIgGGXegtEDRRZCcFyBqA6lY=
-github.com/olekukonko/jack v0.0.0-20260314133026-c07044fb530f/go.mod h1:DO5wvYWCkIkvvqssDZv8f2x6aMBAu9lIjMXBDQW8R3c=
 github.com/olekukonko/jack v0.0.0-20260315063850-82b24943796a h1:DqC2t+hBhPncUgU8CkYKlmA6R/5qWl4v/8WBNdLto6k=
 github.com/olekukonko/jack v0.0.0-20260315063850-82b24943796a/go.mod h1:DO5wvYWCkIkvvqssDZv8f2x6aMBAu9lIjMXBDQW8R3c=
 github.com/olekukonko/ll v0.1.8-0.20260304195808-a35061d98ce9 h1:6KPqLKXS7F9kQnbDSxvjfT1blI+EwIWrRW/qXKTm0Is=

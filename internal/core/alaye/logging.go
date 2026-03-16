@@ -4,6 +4,8 @@ type Logging struct {
 	Enabled     Enabled  `hcl:"enabled,optional" json:"enabled"`
 	Diff        Enabled  `hcl:"diff,optional" json:"diff"`
 	Deduplicate Enabled  `hcl:"deduplicate,optional" json:"deduplicate"`
+	Truncate    Enabled  `hcl:"truncate,optional" json:"truncate"`
+	BotChecker  Enabled  `hcl:"bot_checker,optional" json:"bot_checker"`
 	Level       string   `hcl:"level,optional" json:"level"`
 	Skip        []string `hcl:"skip,optional"`
 

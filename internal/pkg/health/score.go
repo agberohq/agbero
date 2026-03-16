@@ -47,10 +47,11 @@ type scoreSnapshot struct {
 }
 
 type Score struct {
-	value      atomic.Int32
-	state      atomic.Int32
-	trend      atomic.Int32
-	lastUpdate atomic.Value
+	value            atomic.Int32
+	state            atomic.Int32
+	trend            atomic.Int32
+	lastUpdate       atomic.Value
+	lastPassiveReset atomic.Int64
 
 	mu sync.RWMutex
 
@@ -83,6 +84,7 @@ func NewScore(thresholds Thresholds, weights Weights, latThresholds Latency, onC
 	s.trend.Store(0)
 	s.connHealth.Store(100)
 	s.lastUpdate.Store(time.Now())
+	s.lastPassiveReset.Store(time.Now().UnixNano())
 	s.updateSnapshot()
 	return s
 }
@@ -307,6 +309,18 @@ func (s *Score) RecordPassiveRequest(success bool) {
 }
 
 func (s *Score) PassiveErrorRate() float64 {
+	const passiveWindowNs = int64(60 * time.Second)
+
+	now := time.Now().UnixNano()
+	last := s.lastPassiveReset.Load()
+	if now-last > passiveWindowNs {
+		if s.lastPassiveReset.CompareAndSwap(last, now) {
+			s.passiveErrors.Store(0)
+			s.passiveRequests.Store(0)
+			return 0
+		}
+	}
+
 	reqs := s.passiveRequests.Load()
 	if reqs == 0 {
 		return 0

@@ -27,6 +27,8 @@ import (
 
 var logger *ll.Logger
 
+// Entry point for the application lifecycle
+// Parses command line arguments and orchestrates core services
 func main() {
 	logger = ll.New(woos.Name,
 		ll.WithHandler(lh.NewColorizedHandler(os.Stdout)),
@@ -163,6 +165,10 @@ func main() {
 	cmdServiceUninstall.Bool(&cfg.UninstallAll, "", "all", "Remove service, CA, all data, and binary")
 	cmdServiceUninstall.Bool(&cfg.UninstallForce, "", "force", "Skip confirmation prompt")
 
+	cmdUninstall := flaggy.NewSubcommand("uninstall")
+	cmdUninstall.Description = "Uninstall everything (service, CA, configurations, data, and binary)"
+	cmdUninstall.Bool(&cfg.UninstallForce, "", "force", "Skip confirmation prompt")
+
 	cmdServiceStart := flaggy.NewSubcommand("start")
 	cmdServiceStart.Description = "Start system service"
 
@@ -230,6 +236,7 @@ func main() {
 	flaggy.AttachSubcommand(cmdHost, 1)
 	flaggy.AttachSubcommand(cmdCert, 1)
 	flaggy.AttachSubcommand(cmdService, 1)
+	flaggy.AttachSubcommand(cmdUninstall, 1)
 	flaggy.AttachSubcommand(cmdCluster, 1)
 	flaggy.AttachSubcommand(cmdRun, 1)
 	flaggy.AttachSubcommand(cmdHome, 1)
@@ -264,10 +271,10 @@ func main() {
 		case cmdSecretCluster.Used:
 			s.Cluster()
 		case cmdSecretKey.Used && cmdSecretKeyInit.Used:
-			resolvedPath, _ := helper.ResolveConfigPath(cfg.ConfigPath)
+			resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
 			s.KeyInit(resolvedPath)
 		case cmdSecretToken.Used:
-			resolvedPath, _ := helper.ResolveConfigPath(cfg.ConfigPath)
+			resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
 			s.Token(resolvedPath, cfg.KeyService, cfg.KeyTTL)
 		case cmdSecretHash.Used:
 			s.Hash(cfg.HashPassword)
@@ -288,7 +295,7 @@ func main() {
 	}
 
 	if cmdInit.Used {
-		path, err := helper.InitConfiguration("")
+		path, err := helper.InitConfiguration(logger, "")
 		if err != nil {
 			logger.Fatal("init failed: ", err)
 		}
@@ -300,14 +307,25 @@ func main() {
 	var configExists bool
 
 	if cmdServiceInstall.Used {
-		path, err := helper.InstallConfiguration(cfg.InstallHere)
+		path, err := helper.InstallConfiguration(logger, cfg.InstallHere)
 		if err != nil {
 			logger.Fatal("install failed: ", err)
 		}
 		resolvedPath = path
 		configExists = true
 	} else {
-		resolvedPath, configExists = helper.ResolveConfigPath(cfg.ConfigPath)
+		resolvedPath, configExists = helper.ResolveConfigPath(logger, cfg.ConfigPath)
+	}
+
+	if cmdUninstall.Used {
+		svcConfig := &service.Config{
+			Name:        woos.Name,
+			DisplayName: woos.Display,
+			Description: woos.Description,
+		}
+		svc, _ := service.New(nil, svcConfig)
+		hel.Home().UninstallEverything(svc, resolvedPath, cfg.UninstallForce)
+		return
 	}
 
 	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used ||
@@ -326,7 +344,7 @@ func main() {
 					Value(&doInit).
 					Run()
 				if err == nil && doInit {
-					path, err := helper.InitConfiguration("")
+					path, err := helper.InitConfiguration(logger, "")
 					if err != nil {
 						logger.Fatal("init failed: ", err)
 					}
@@ -420,9 +438,9 @@ func main() {
 	if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
 		cwd, _ := os.Getwd()
 		if filepath.Dir(resolvedPath) == cwd {
-			svcConfig.Name = "net.imaxinacion.agbero.dev"
+			svcConfig.Name = "net.agbero.dev"
 		} else {
-			svcConfig.Name = "net.imaxinacion.agbero"
+			svcConfig.Name = "net.agbero"
 		}
 		svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
 	} else if runtime.GOOS == woos.Linux && os.Geteuid() != 0 {
@@ -522,6 +540,8 @@ func main() {
 	showHelpExamples()
 }
 
+// Prints the banner and application summary to the terminal
+// Highlights the current version and build date automatically
 func welcome() {
 	fmt.Println(installer.BannerTmpl)
 	fmt.Printf("\033[1;34m%s\033[0m - %s\n", woos.Name, woos.Description)
@@ -529,6 +549,8 @@ func welcome() {
 	fmt.Printf("\033[90mDate: %s\033[0m\n\n", woos.Date)
 }
 
+// Displays standard usage instructions and execution examples
+// Formats output automatically for the host operating system platform
 func showHelpExamples() {
 	exeName := woos.Name
 	if len(os.Args) > 0 {
@@ -578,4 +600,5 @@ func showHelpExamples() {
 	fmt.Printf("  %s%s service uninstall\n", prefix, exeName)
 	fmt.Printf("  %s%s service uninstall --all   # remove everything agbero installed\n", prefix, exeName)
 	fmt.Printf("  %s%s service uninstall --all --force  # skip confirmation prompt\n", prefix, exeName)
+	fmt.Printf("  %s%s uninstall                 # alias to remove everything agbero installed\n", prefix, exeName)
 }

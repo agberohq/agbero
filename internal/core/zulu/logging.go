@@ -110,7 +110,6 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 	var final lx.Handler
 	if cfg.Deduplicate.Active() {
 		final = lh.NewDedup(multi, 5*time.Second, lh.WithDedupIgnore("duration", "interval", "delay"))
-
 	} else {
 		final = multi
 	}

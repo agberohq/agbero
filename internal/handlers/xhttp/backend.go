@@ -290,10 +290,15 @@ func (b *Backend) initHealth(res *resource.Manager, targetURL string) error {
 	if hostHeader == "" && len(b.routeDomains) > 0 && b.routeDomains[0] != "*" {
 		hostHeader = b.routeDomains[0]
 	}
+
+	probeClient := &http.Client{
+		Timeout:   probeCfg.Timeout,
+		Transport: b.Proxy.Transport,
+	}
 	executor := &HTTPExecutor{
 		URL:            targetURL,
 		Method:         b.hcConfig.Method,
-		Client:         res.HTTPClient,
+		Client:         probeClient,
 		Header:         headers,
 		Host:           hostHeader,
 		ExpectedStatus: b.hcConfig.ExpectedStatus,
