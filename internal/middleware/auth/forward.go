@@ -20,6 +20,25 @@ import (
 	"github.com/olekukonko/mappo"
 )
 
+// forwardAuthAllowedDenyHeaders is the explicit allowlist of auth backend headers
+// forwarded to the client on a non-2xx response. Functional headers (Content-Type,
+// WWW-Authenticate, Retry-After) are included so the client can parse the denial
+// body correctly. Security-policy headers (Set-Cookie, Content-Security-Policy,
+// Access-Control-Allow-Origin, Location, Strict-Transport-Security, X-Frame-Options)
+// are intentionally excluded to prevent the auth backend from overriding the
+// application's security posture or injecting cookies.
+var forwardAuthAllowedDenyHeaders = map[string]bool{
+	"Content-Type":     true,
+	"Content-Length":   true,
+	"Www-Authenticate": true,
+	"Retry-After":      true,
+	"Cache-Control":    true,
+	"X-Auth-Error":     true,
+	"X-Auth-Message":   true,
+}
+
+// Forward returns middleware that delegates authentication to an external service.
+// On non-2xx responses only a safe allowlist of headers is forwarded to the client.
 func Forward(res *resource.Manager, cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 	if cfg.Enabled.NotActive() {
 		return func(next http.Handler) http.Handler { return next }
@@ -179,6 +198,9 @@ func Forward(res *resource.Manager, cfg *alaye.ForwardAuth) func(http.Handler) h
 			}
 
 			for k, vv := range resp.Header {
+				if !forwardAuthAllowedDenyHeaders[k] {
+					continue
+				}
 				for _, v := range vv {
 					w.Header().Add(k, v)
 				}
@@ -189,6 +211,7 @@ func Forward(res *resource.Manager, cfg *alaye.ForwardAuth) func(http.Handler) h
 	}
 }
 
+// createTLSConfig builds a tls.Config from the forward auth TLS block.
 func createTLSConfig(cfg *alaye.ForwardTLS) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12,
@@ -217,6 +240,7 @@ func createTLSConfig(cfg *alaye.ForwardTLS) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
+// buildCacheKey produces a stable hash key for caching forward auth decisions.
 func buildCacheKey(r *http.Request, cacheKeyHeaders []string, prefix string) string {
 	h := xxhash.New()
 
@@ -243,6 +267,8 @@ func buildCacheKey(r *http.Request, cacheKeyHeaders []string, prefix string) str
 	return strconv.FormatUint(h.Sum64(), 16)
 }
 
+// copyHeaders copies specific request headers from src to dst.
+// When keys is empty, only Authorization and Cookie are forwarded.
 func copyHeaders(src http.Header, dst http.Header, keys []string) {
 	if len(keys) == 0 {
 		for _, key := range []string{"Authorization", "Cookie"} {
@@ -260,6 +286,7 @@ func copyHeaders(src http.Header, dst http.Header, keys []string) {
 	}
 }
 
+// copyHeadersToRequest copies specific headers from src into the outbound request.
 func copyHeadersToRequest(src http.Header, r *http.Request, keys []string) {
 	for _, k := range keys {
 		if v := src.Get(k); v != "" {
@@ -268,6 +295,7 @@ func copyHeadersToRequest(src http.Header, r *http.Request, keys []string) {
 	}
 }
 
+// handleFailure either passes through to next or returns 403 depending on on_failure config.
 func handleFailure(w http.ResponseWriter, r *http.Request, onFailure string, next http.Handler, msg string) {
 	if onFailure == woos.Allow {
 		next.ServeHTTP(w, r)

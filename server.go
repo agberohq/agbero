@@ -291,7 +291,7 @@ func (s *Server) Start(configPath string) error {
 }
 
 // Reload applies updated configurations to the server without downtime.
-// Retains valid routes while properly pruning stale entries across all layers.
+// On traffic manager init failure the reload is aborted and the existing config remains active.
 func (s *Server) Reload() {
 	s.mu.RLock()
 	configPath := s.configPath
@@ -331,6 +331,7 @@ func (s *Server) Reload() {
 	_ = s.hostManager.ReloadFull()
 
 	s.mu.Lock()
+
 	oldListeners := s.listeners
 	oldTrafficManager := s.trafficManager
 	oldSharedState := s.sharedState
@@ -375,7 +376,13 @@ func (s *Server) Reload() {
 		SharedState: s.sharedState,
 	}
 
-	tm, _ := handlers.NewManager(tmCfg)
+	tm, err := handlers.NewManager(tmCfg)
+	if err != nil {
+		s.logger.Fields("err", err).Error("reload: failed to create traffic manager, keeping existing config")
+		s.mu.Unlock()
+		return
+	}
+
 	s.trafficManager = tm
 	s.firewall = tm.Firewall()
 
@@ -469,10 +476,14 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 	return nil
 }
 
+// configComputeSHA hashes the main config file and all host files to detect changes.
+// Both configPath and hostDir are read under the same RLock to prevent data races with Reload.
 func (s *Server) configComputeSHA() (string, error) {
 	hasher := sha256.New()
+
 	s.mu.RLock()
 	configPath := s.configPath
+	hostDir := s.global.Storage.HostsDir
 	s.mu.RUnlock()
 
 	mainData, err := os.ReadFile(configPath)
@@ -481,7 +492,6 @@ func (s *Server) configComputeSHA() (string, error) {
 	}
 	hasher.Write(mainData)
 
-	hostDir := s.global.Storage.HostsDir
 	entries, err := os.ReadDir(hostDir)
 	if err != nil {
 		return hex.EncodeToString(hasher.Sum(nil)), nil

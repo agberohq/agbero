@@ -4,8 +4,8 @@ Agbero is a modern reverse proxy, load balancer, and API gateway written in Go. 
 
 This document provides complete documentation for the Agbero command-line interface (CLI).
 
-> **Installation Guide**  
-> For installation instructions, see the [Installation Guide](./install.md).
+> **Command Line Guide**  
+> For Command Lines, see the [Command Guide](./command.md).
 
 ## Global Flags
 
