@@ -23,6 +23,28 @@ When `--config` is not specified, Agbero looks for `agbero.hcl` in this order:
 
 ## Core Commands
 
+### `init` - Interactive Setup
+
+Run the interactive setup wizard to create a new configuration.
+
+**Usage:**
+```bash
+agbero init
+```
+
+**What it does:**
+- Prompts for environment type (local/production)
+- Creates directory structure (`hosts.d`, `certs.d`, `data.d`, `logs.d`, `work.d`)
+- Generates secure admin password
+- Creates internal auth key
+- Sets up local CA (development mode)
+- Writes default `agbero.hcl` configuration
+
+**Example:**
+```bash
+agbero init
+```
+
 ### `run` - Run Agbero in foreground
 
 Start Agbero interactively. Ideal for development, testing, or container environments.
@@ -52,28 +74,6 @@ agbero run --config ./config/agbero.hcl --dev
 - Watches for host configuration changes in `hosts_dir`
 - Supports hot reload via SIGHUP signal
 - Blocks until SIGTERM or SIGINT is received
-
-### `init` - Interactive Setup
-
-Run the interactive setup wizard to create a new configuration.
-
-**Usage:**
-```bash
-agbero init
-```
-
-**What it does:**
-- Prompts for environment type (local/production)
-- Creates directory structure (`hosts.d`, `certs.d`, `data.d`, `logs.d`, `work.d`)
-- Generates secure admin password
-- Creates internal auth key
-- Sets up local CA (development mode)
-- Writes default `agbero.hcl` configuration
-
-**Example:**
-```bash
-agbero init
-```
 
 ## Configuration Management
 
