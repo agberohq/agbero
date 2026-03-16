@@ -373,7 +373,7 @@ func TestTCPExecutor_Probe_ConnectionReuse(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		success, _, err := executor.Probe(ctx)
 		if err != nil {
 			t.Fatalf("probe %d: unexpected error: %v", i+1, err)
@@ -552,10 +552,8 @@ func TestTCPExecutor_Probe_Concurrent(t *testing.T) {
 	successes := 0
 	var mu sync.Mutex
 
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			success, _, err := executor.Probe(ctx)
@@ -564,7 +562,7 @@ func TestTCPExecutor_Probe_Concurrent(t *testing.T) {
 				successes++
 				mu.Unlock()
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -656,7 +654,7 @@ func TestTCPExecutor_Probe_BufferPool(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		success, _, err := executor.Probe(ctx)
 		if err != nil {
 			t.Fatalf("probe %d: unexpected error: %v", i+1, err)

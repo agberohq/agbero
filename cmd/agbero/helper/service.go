@@ -11,11 +11,11 @@ import (
 	"github.com/kardianos/service"
 )
 
-type ServiceHelper struct {
+type Service struct {
 	p *Helper
 }
 
-func (s *ServiceHelper) Install(svc service.Service, installHere bool) {
+func (s *Service) Install(svc service.Service, installHere bool) {
 	if installHere {
 		s.p.Logger.Info("local mode: service registration skipped.")
 		return
@@ -32,7 +32,7 @@ func (s *ServiceHelper) Install(svc service.Service, installHere bool) {
 	s.p.Logger.Info("service installed.")
 }
 
-func (s *ServiceHelper) Uninstall(svc service.Service) {
+func (s *Service) Uninstall(svc service.Service) {
 	s.p.Logger.Info("uninstalling system service...")
 	if err := svc.Uninstall(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "uninstall"))
@@ -40,7 +40,7 @@ func (s *ServiceHelper) Uninstall(svc service.Service) {
 	s.p.Logger.Info("service uninstalled.")
 }
 
-func (s *ServiceHelper) Start(svc service.Service) {
+func (s *Service) Start(svc service.Service) {
 	s.p.Logger.Info("starting system service...")
 	if err := svc.Start(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "start"))
@@ -48,7 +48,7 @@ func (s *ServiceHelper) Start(svc service.Service) {
 	s.p.Logger.Info("service started.")
 }
 
-func (s *ServiceHelper) Stop(svc service.Service) {
+func (s *Service) Stop(svc service.Service) {
 	s.p.Logger.Info("stopping system service...")
 	if err := svc.Stop(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "stop"))
@@ -56,7 +56,7 @@ func (s *ServiceHelper) Stop(svc service.Service) {
 	s.p.Logger.Info("service stopped.")
 }
 
-func (s *ServiceHelper) Restart(svc service.Service) {
+func (s *Service) Restart(svc service.Service) {
 	s.p.Logger.Info("restarting system service...")
 	if err := svc.Stop(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "stop"))
@@ -68,7 +68,7 @@ func (s *ServiceHelper) Restart(svc service.Service) {
 	s.p.Logger.Info("service restarted.")
 }
 
-func (s *ServiceHelper) Status(svc service.Service, configPath string) {
+func (s *Service) Status(svc service.Service, configPath string) {
 	s.p.Logger.Info("checking service status...")
 	status, err := svc.Status()
 	if err != nil {
@@ -96,7 +96,7 @@ func (s *ServiceHelper) Status(svc service.Service, configPath string) {
 	}
 }
 
-func (s *ServiceHelper) mapError(err error, cmd string) error {
+func (s *Service) mapError(err error, cmd string) error {
 	ctx := installer.NewContext(s.p.Logger, "")
 	svc := installer.NewService(ctx)
 	errMsg := err.Error()

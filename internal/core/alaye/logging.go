@@ -7,7 +7,7 @@ type Logging struct {
 	Level       string   `hcl:"level,optional" json:"level"`
 	Skip        []string `hcl:"skip,optional"`
 
-	File       FileLog    `hcl:"file,block" json:"file,omitempty"`
+	File       FileLog    `hcl:"file,block" json:"file"`
 	Victoria   Victoria   `hcl:"victoria,block" json:"victoria"`
 	Include    []string   `hcl:"include,optional" json:"include"`
 	Prometheus Prometheus `hcl:"prometheus,block" json:"prometheus"`

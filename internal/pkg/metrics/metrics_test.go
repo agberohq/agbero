@@ -46,7 +46,7 @@ func BenchmarkLatencySnapshot(b *testing.B) {
 	lt := NewLatency()
 	defer lt.Close()
 
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		lt.Record(int64(100 + i%900))
 	}
 
@@ -64,10 +64,8 @@ func BenchmarkMixedLoad(b *testing.B) {
 	var wg sync.WaitGroup
 	done := make(chan struct{})
 
-	for i := 0; i < 16; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 16 {
+		wg.Go(func() {
 			j := 0
 			for {
 				select {
@@ -78,7 +76,7 @@ func BenchmarkMixedLoad(b *testing.B) {
 					j++
 				}
 			}
-		}()
+		})
 	}
 
 	b.ResetTimer()
@@ -142,14 +140,12 @@ func BenchmarkContentionLevels(b *testing.B) {
 			var wg sync.WaitGroup
 			recordsPerWorker := b.N / workers
 
-			for w := 0; w < workers; w++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					for i := 0; i < recordsPerWorker; i++ {
+			for range workers {
+				wg.Go(func() {
+					for i := range recordsPerWorker {
 						lt.Record(int64(100 + i%900))
 					}
-				}()
+				})
 			}
 			wg.Wait()
 		})
@@ -166,7 +162,7 @@ func BenchmarkRealisticLoad(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		var wg sync.WaitGroup
 		// Simulate 100 concurrent requests
-		for j := 0; j < 100; j++ {
+		for range 100 {
 			wg.Add(1)
 			go func(latency int64) {
 				defer wg.Done()
@@ -208,12 +204,10 @@ func BenchmarkBurstPattern(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		// Burst of 1000 records
 		var wg sync.WaitGroup
-		for j := 0; j < 1000; j++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for j := range 1000 {
+			wg.Go(func() {
 				lt.Record(int64(100 + j%900))
-			}()
+			})
 		}
 		wg.Wait()
 	}
@@ -227,7 +221,7 @@ func BenchmarkWithWork(b *testing.B) {
 	work := func() {
 		// Simulate some CPU work
 		sum := 0
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			sum += i
 		}
 		_ = sum

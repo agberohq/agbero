@@ -79,7 +79,7 @@ func benchmarkServerWithStrategy(b *testing.B, strategy string) *strategyResult 
 
 	// Create 6 test backend servers with varying latencies
 	backends := make([]*httptest.Server, 6)
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		idx := i
 		latency := time.Duration(500+500*idx) * time.Microsecond // 0.5ms to 3ms
 
@@ -220,7 +220,7 @@ logging {
 	}
 
 	// Warm-up: 100 requests to ensure everything is ready
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		reqURL := fmt.Sprintf("http://127.0.0.1:%d/testing", testPort)
 		req, _ := http.NewRequest("GET", reqURL, nil)
 		req.Host = "benchmark.localhost"
@@ -313,7 +313,7 @@ func waitForBenchPort(t testing.TB, port int) {
 
 func benchGenerateClientIPs(n int) []string {
 	ips := make([]string, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		ips[i] = fmt.Sprintf("192.168.%d.%d", i/256, i%256)
 	}
 	return ips
@@ -329,7 +329,7 @@ func benchGenerateUserAgents(n int) []string {
 	}
 
 	result := make([]string, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		result[i] = agents[i%len(agents)]
 	}
 	return result

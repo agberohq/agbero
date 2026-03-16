@@ -115,8 +115,8 @@ func (s *Sticky) Pick(r *http.Request, keyFunc func() uint64) Backend {
 }
 
 // GetStats returns statistics about the sticky table.
-func (s *Sticky) GetStats() map[string]interface{} {
-	return map[string]interface{}{
+func (s *Sticky) GetStats() map[string]any {
+	return map[string]any{
 		"cached_entries": s.cache.Len(),
 		"reaper_tasks":   s.reaper.Count(),
 	}

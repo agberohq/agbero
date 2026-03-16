@@ -17,10 +17,8 @@ var logArgsPool = sync.Pool{
 	},
 }
 
-// =============================================================================
-// Configuration Sanitization Helpers
-// =============================================================================
-
+// sanitizeGlobalConfig returns a deep clone of the global config with all secrets
+// and sensitive paths replaced with "***" before serving it over the admin API.
 func sanitizeGlobalConfig(g *alaye.Global) *alaye.Global {
 	b, _ := json.Marshal(g)
 	var clone alaye.Global
@@ -35,6 +33,7 @@ func sanitizeGlobalConfig(g *alaye.Global) *alaye.Global {
 	}
 
 	if clone.Security.Enabled.Active() {
+		clone.Security.InternalAuthKey = "***"
 		for i := range clone.Security.TrustedProxies {
 			clone.Security.TrustedProxies[i] = "***"
 		}
@@ -47,6 +46,7 @@ func sanitizeGlobalConfig(g *alaye.Global) *alaye.Global {
 	return &clone
 }
 
+// sanitizeAdminConfig redacts all credential and secret fields in the admin config block.
 func sanitizeAdminConfig(cfg *alaye.Admin) {
 	if cfg.BasicAuth.Enabled.Active() {
 		for i := range cfg.BasicAuth.Users {
@@ -65,6 +65,7 @@ func sanitizeAdminConfig(cfg *alaye.Admin) {
 	}
 }
 
+// sanitizeHostConfigs returns deep clones of all host configs with secrets redacted.
 func sanitizeHostConfigs(hosts map[string]*alaye.Host) map[string]*alaye.Host {
 	out := make(map[string]*alaye.Host)
 	for k, v := range hosts {
@@ -80,6 +81,7 @@ func sanitizeHostConfigs(hosts map[string]*alaye.Host) map[string]*alaye.Host {
 	return out
 }
 
+// sanitizeRouteConfig redacts all per-route credential and secret fields.
 func sanitizeRouteConfig(route *alaye.Route) {
 	if route.BasicAuth.Enabled.Active() {
 		for j := range route.BasicAuth.Users {
@@ -101,10 +103,8 @@ func sanitizeRouteConfig(route *alaye.Route) {
 	}
 }
 
-// =============================================================================
-// File Reading Helpers
-// =============================================================================
-
+// readLastLogLines reads the last n lines from filename by scanning backwards in
+// fixed-size byte chunks, preserving correct line boundaries across chunk edges.
 func readLastLogLines(filename string, n int) ([]string, error) {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -127,7 +127,7 @@ func readLastLogLines(filename string, n int) ([]string, error) {
 	var leftover string
 
 	for offset > 0 && len(lines) < n {
-		readSize := min(offset, int64(bufSize))
+		readSize := min(offset, bufSize)
 		offset -= readSize
 
 		_, err := file.Seek(offset, io.SeekStart)
@@ -160,11 +160,4 @@ func readLastLogLines(filename string, n int) ([]string, error) {
 	}
 
 	return lines, nil
-}
-
-func min(a, b int64) int64 {
-	if a < b {
-		return a
-	}
-	return b
 }

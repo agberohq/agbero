@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -383,13 +384,7 @@ func TestCertLocal_EnsureLocalhostCert_GeneratesNewWhenMissing(t *testing.T) {
 	}
 
 	// Check SANs include our hosts
-	found := false
-	for _, dns := range leaf.DNSNames {
-		if dns == "test.local" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(leaf.DNSNames, "test.local")
 	if !found {
 		t.Error("generated cert missing expected DNS name 'test.local'")
 	}

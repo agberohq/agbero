@@ -3,7 +3,6 @@ package wellknown
 import (
 	"path/filepath"
 	"strings"
-	"unsafe"
 
 	"github.com/olekukonko/mappo"
 )
@@ -203,10 +202,4 @@ func GetACMETokenRaw(path string) (string, bool) {
 // IsACMEChallengePrefix checks if the path begins with the ACME challenge prefix.
 func IsACMEChallengePrefix(path string) bool {
 	return strings.HasPrefix(strings.TrimPrefix(path, "/"), ".well-known/acme-challenge")
-}
-
-// fastString converts a byte slice to string without allocation using unsafe.
-// This avoids copying but should be used carefully.
-func fastString(b []byte) string {
-	return *(*string)(unsafe.Pointer(&b))
 }

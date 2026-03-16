@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -50,11 +51,8 @@ func (h *HTTPExecutor) Probe(ctx context.Context) (bool, time.Duration, error) {
 	success := false
 	if len(h.ExpectedStatus) > 0 {
 		// If ExpectedStatus is configured, only those codes are success
-		for _, s := range h.ExpectedStatus {
-			if resp.StatusCode == s {
-				success = true
-				break
-			}
+		if slices.Contains(h.ExpectedStatus, resp.StatusCode) {
+			success = true
 		}
 	} else {
 		// Default: 2xx-4xx = healthy (server responded); 5xx = unhealthy

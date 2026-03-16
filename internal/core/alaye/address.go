@@ -17,8 +17,8 @@ func (a Address) String() string {
 // Scheme extracts the protocol scheme if present (e.g., "http", "https", "tcp", "unix").
 func (a Address) Scheme() string {
 	s := string(a)
-	if idx := strings.Index(s, "://"); idx != -1 {
-		return strings.ToLower(s[:idx])
+	if before, _, ok := strings.Cut(s, "://"); ok {
+		return strings.ToLower(before)
 	}
 	if strings.HasPrefix(s, "unix:") {
 		return "unix"

@@ -18,6 +18,10 @@ Agbero solves these challenges natively:
 *   **Distributed Cluster Mesh:** No external dependencies required. Agbero nodes automatically discover each other via UDP Gossip and synchronize routing configurations and ACME certificates over reliable TCP streams.
 *   **Deep Observability:** Built-in Prometheus and VictoriaMetrics integration provides high-resolution latency histograms and circuit-breaker telemetry without requiring complex log-parsing pipelines.
 
+> **Installation Guide**  
+> For Installation, see the [Installation Guide](./install.md).
+
+
 ## Core Capabilities
 
 ### Traffic Management (L4 & L7)

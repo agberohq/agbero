@@ -9,6 +9,10 @@ import (
 	"github.com/olekukonko/ll"
 )
 
+var (
+	testLoogerCluster = ll.New("test").Disable()
+)
+
 type MockHandler struct {
 	Changes    map[string][]byte
 	Certs      map[string]bool
@@ -49,7 +53,7 @@ func (m *MockHandler) OnClusterChallenge(token, keyAuth string, deleted bool) {
 
 func TestDelegate_Apply_LWW(t *testing.T) {
 	h := NewMockHandler()
-	configMgr := NewConfigManager("", ll.New("test").Disable())
+	configMgr := NewDistributor(testLoogerCluster, "")
 	d := newDelegate(h, ll.New("test").Disable(), nil, nil, configMgr)
 
 	d.apply(Envelope{Op: OpSet, Key: "foo", Value: []byte("old"), Timestamp: 100}, true)
@@ -72,7 +76,7 @@ func TestDelegate_CertEncryption(t *testing.T) {
 	secret := "cluster-secret-key-1234567890123"
 	cipher, _ := security.NewCipher(secret)
 	h := NewMockHandler()
-	configMgr := NewConfigManager("", ll.New("test").Disable())
+	configMgr := NewDistributor(testLoogerCluster, "")
 	d := newDelegate(h, ll.New("test").Disable(), nil, cipher, configMgr)
 
 	domain := "test.com"
@@ -98,7 +102,7 @@ func TestManager_BroadcastCert(t *testing.T) {
 	secret := []byte("cluster-secret-key-1234567890123")
 	h := NewMockHandler()
 	cipher, _ := security.NewCipher(string(secret))
-	configMgr := NewConfigManager("", ll.New("test").Disable())
+	configMgr := NewDistributor(testLoogerCluster, "")
 	del := newDelegate(h, ll.New("test").Disable(), nil, cipher, configMgr)
 
 	m := &Manager{

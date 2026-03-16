@@ -69,8 +69,8 @@ type ConfigSync struct {
 }
 
 // NewConfigSync initializes the bridge between discovery and cluster configurations.
-// It relies completely on the cluster's ConfigManager for state tracking.
-func NewConfigSync(hostsDir woos.Folder, logger *ll.Logger, cluster *cluster.Manager) *ConfigSync {
+// It relies completely on the cluster's Distributor for state tracking.
+func NewConfigSync(logger *ll.Logger, cluster *cluster.Manager) *ConfigSync {
 	return &ConfigSync{
 		logger:  logger.Namespace(configSyncNamespace),
 		cluster: cluster,
@@ -129,33 +129,38 @@ func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 	return h
 }
 
-// WithClusterManager configures cluster support for the host discovery module.
-// Enables automatic synchronization of local file changes with the broader network.
-func WithClusterManager(cm *cluster.Manager) Option {
-	return func(h *Host) {
-		h.clusterMgr = cm
-		if cm != nil {
-			h.configSync = NewConfigSync(h.hostsDir, h.logger, cm)
-		}
-	}
-}
-
 // OnClusterCert handles certificate updates from the cluster.
-// Writes the certificate and key to the certs directory for the domain.
+// Domain is validated to prevent path traversal before writing any file.
 func (hm *Host) OnClusterCert(domain string, certPEM, keyPEM []byte) error {
+	if err := validatePathSegment(domain); err != nil {
+		return fmt.Errorf("cluster cert rejected: %w", err)
+	}
+
 	certDir := filepath.Join(hm.hostsDir.Path(), "..", "certs")
 	if err := os.MkdirAll(certDir, 0755); err != nil {
 		return fmt.Errorf("create certs dir: %w", err)
 	}
 
+	certTmp := filepath.Join(certDir, domain+".crt.tmp")
+	keyTmp := filepath.Join(certDir, domain+".key.tmp")
 	certPath := filepath.Join(certDir, domain+".crt")
 	keyPath := filepath.Join(certDir, domain+".key")
 
-	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
-		return fmt.Errorf("write cert: %w", err)
+	if err := os.WriteFile(certTmp, certPEM, 0644); err != nil {
+		return fmt.Errorf("write cert tmp: %w", err)
 	}
-	if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
-		return fmt.Errorf("write key: %w", err)
+	if err := os.WriteFile(keyTmp, keyPEM, 0600); err != nil {
+		_ = os.Remove(certTmp)
+		return fmt.Errorf("write key tmp: %w", err)
+	}
+	if err := os.Rename(certTmp, certPath); err != nil {
+		_ = os.Remove(certTmp)
+		_ = os.Remove(keyTmp)
+		return fmt.Errorf("rename cert: %w", err)
+	}
+	if err := os.Rename(keyTmp, keyPath); err != nil {
+		_ = os.Remove(keyTmp)
+		return fmt.Errorf("rename key: %w", err)
 	}
 
 	hm.logger.Fields("domain", domain).Info("cluster certificate applied")
@@ -163,8 +168,13 @@ func (hm *Host) OnClusterCert(domain string, certPEM, keyPEM []byte) error {
 }
 
 // OnClusterChallenge handles ACME challenge updates from the cluster.
-// Stores or removes the challenge token for Let's Encrypt validation.
+// Token is validated against RFC 8555 format before any file operation.
 func (hm *Host) OnClusterChallenge(token, keyAuth string, deleted bool) {
+	if err := validateACMEToken(token); err != nil {
+		hm.logger.Fields("token", token, "err", err).Error("cluster challenge rejected: invalid token")
+		return
+	}
+
 	challengeDir := filepath.Join(hm.hostsDir.Path(), ".well-known", "acme-challenge")
 
 	if deleted {
@@ -766,6 +776,36 @@ func (hm *Host) Save(domain string) error {
 
 	p := parser.NewParser(filePath)
 	return p.MarshalFile(cfg)
+}
+
+// validatePathSegment rejects values that could escape a base directory via path traversal.
+// Segments must contain no path separators, no ".." sequences, and must not be empty.
+func validatePathSegment(segment string) error {
+	if segment == "" {
+		return fmt.Errorf("segment cannot be empty")
+	}
+	if strings.ContainsAny(segment, "/\\") {
+		return fmt.Errorf("segment %q contains illegal path separator", segment)
+	}
+	if strings.Contains(segment, "..") {
+		return fmt.Errorf("segment %q contains illegal path traversal sequence", segment)
+	}
+	return nil
+}
+
+// validateACMEToken rejects token values that do not conform to the RFC 8555 token format.
+// Valid tokens contain only URL-safe base64 characters: [A-Za-z0-9_-].
+func validateACMEToken(token string) error {
+	if err := validatePathSegment(token); err != nil {
+		return err
+	}
+	for _, c := range token {
+		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+			(c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return fmt.Errorf("token %q contains invalid character %q", token, c)
+		}
+	}
+	return nil
 }
 
 // normalizeHostPath coerces routing constraints into predictable lowercase formats.

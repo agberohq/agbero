@@ -161,7 +161,7 @@ func TestPeekedConn_ImplementsReaderFrom(t *testing.T) {
 	mock := &mockConn{}
 	pc := newPeekedConn(mock, []byte("test"))
 
-	rf, ok := interface{}(pc).(io.ReaderFrom)
+	rf, ok := any(pc).(io.ReaderFrom)
 	if !ok {
 		t.Fatal("peekedConn does not implement io.ReaderFrom - splice disabled!")
 	}
@@ -229,7 +229,7 @@ func TestPeekedConn_ImplementsWriterTo(t *testing.T) {
 	mock := &mockConn{readData: []byte("connection data")}
 	pc := newPeekedConn(mock, []byte("peek "))
 
-	wt, ok := interface{}(pc).(io.WriterTo)
+	wt, ok := any(pc).(io.WriterTo)
 	if !ok {
 		t.Fatal("peekedConn does not implement io.WriterTo")
 	}

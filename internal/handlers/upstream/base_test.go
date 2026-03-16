@@ -453,7 +453,7 @@ func TestBase_ConcurrentOperations(t *testing.T) {
 		t.Fatalf("NewBase() error = %v", err)
 	}
 	done := make(chan bool, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			base.Status(true)
 			base.Status(false)
@@ -463,7 +463,7 @@ func TestBase_ConcurrentOperations(t *testing.T) {
 			done <- true
 		}()
 	}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 }

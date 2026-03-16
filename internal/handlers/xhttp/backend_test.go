@@ -564,7 +564,7 @@ func TestCircuitBreaker_Trips(t *testing.T) {
 
 	b.Abort.Disable()
 	req := httptest.NewRequest("GET", "/", nil)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		w := httptest.NewRecorder()
 		b.ServeHTTP(w, req)
 		if w.Code != http.StatusBadGateway {
@@ -1075,7 +1075,7 @@ func TestBackend_ConcurrentOperations(t *testing.T) {
 	defer b.Stop()
 
 	done := make(chan bool, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			b.Status(true)
 			b.Status(false)
@@ -1086,7 +1086,7 @@ func TestBackend_ConcurrentOperations(t *testing.T) {
 		}()
 	}
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 }

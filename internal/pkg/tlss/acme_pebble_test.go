@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -144,13 +145,7 @@ func TestPebbleIntegration(t *testing.T) {
 	t.Logf("  Not After: %s", leaf.NotAfter)
 
 	// Verify the certificate is for our domain
-	found := false
-	for _, dns := range leaf.DNSNames {
-		if dns == testDomain {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(leaf.DNSNames, testDomain)
 	if !found {
 		t.Errorf("Certificate missing DNS name %s", testDomain)
 	}

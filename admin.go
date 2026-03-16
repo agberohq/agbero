@@ -6,16 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"strings"
 	"time"
 
+	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/handlers/uptime"
 	"github.com/agberohq/agbero/internal/middleware/auth"
 	"github.com/agberohq/agbero/internal/middleware/ipallow"
+	"github.com/agberohq/agbero/internal/middleware/ratelimit"
 	"github.com/agberohq/agbero/internal/operation"
 	"github.com/agberohq/agbero/internal/operation/api"
 	"github.com/golang-jwt/jwt/v5"
@@ -23,9 +27,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// =============================================================================
-// Constants and Initialization
-// =============================================================================
+const (
+	adminTokenTTL    = 24 * time.Hour
+	adminTokenIssuer = "agbero-admin"
+)
 
 var dummyHash []byte
 
@@ -34,15 +39,13 @@ func init() {
 	dummyHash = hash
 }
 
-// =============================================================================
-// JWT Claims
-// =============================================================================
-
 type adminClaims struct {
 	User string `json:"user"`
 	jwt.RegisteredClaims
 }
 
+// startAdminServer binds and starts the admin HTTP server when enabled.
+// Rate limiting is applied from global rate_limits rules; IP allowlists and auth wrap protected endpoints.
 func (s *Server) startAdminServer() {
 	if s.global.Admin.Enabled.NotActive() || s.global.Admin.Address == "" {
 		return
@@ -56,10 +59,11 @@ func (s *Server) startAdminServer() {
 	s.registerAdminAPI(mux)
 	s.registerAdminProtectedEndpoints(mux, cfg)
 	s.registerPprofEndpoints(mux, cfg)
-
 	s.registerAdminUI(mux)
 
-	finalHandler := s.wrapAdminMiddleware(mux)
+	ipMgr := zulu.NewIPManager(nil)
+	adminRL := buildAdminRateLimiter(s.global, ipMgr, s.sharedState)
+	finalHandler := s.wrapAdminMiddleware(mux, adminRL)
 
 	srv := &http.Server{
 		Addr:         cfg.Address,
@@ -100,7 +104,7 @@ func (s *Server) registerAdminAPI(mux *http.ServeMux) {
 	} else if s.clusterManager == nil {
 		s.logger.Warn("admin api disabled: cluster manager not active")
 	} else if s.securityManager == nil {
-		s.logger.Warn("admin api disabled: security manager (internal_auth_key) not configured")
+		s.logger.Error("admin api disabled: security manager (internal_auth_key) not configured")
 	}
 }
 
@@ -114,19 +118,19 @@ func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.A
 	mux.Handle("/firewall", protect(http.HandlerFunc(s.handleFirewall)))
 }
 
+// buildAuthMiddleware constructs an IP allowlist + auth chain for admin endpoints.
+// IP filtering is applied first and unconditionally when AllowedIPs is non-empty.
 func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Handler {
+	ipMgr := zulu.NewIPManager(nil)
 	return func(h http.Handler) http.Handler {
-
 		if len(cfg.AllowedIPs) > 0 {
-			ipMgr := zulu.NewIPManager(nil) // Admin doesn't strictly need trusted proxies
 			h = ipallow.New(cfg.AllowedIPs, s.logger, ipMgr)(h)
 		}
-
 		if cfg.JWTAuth.Enabled.Active() {
 			return auth.JWT(&cfg.JWTAuth)(h)
 		}
 		if len(cfg.BasicAuth.Users) > 0 {
-			return auth.Basic(&cfg.BasicAuth)(h)
+			return auth.Basic(&cfg.BasicAuth, s.logger)(h)
 		}
 		return h
 	}
@@ -155,30 +159,32 @@ func (s *Server) registerPprofEndpoints(mux *http.ServeMux, cfg alaye.Admin) {
 	mux.Handle("/debug/pprof/allocs", protect(pprof.Handler("allocs")))
 }
 
-// wrapAdminMiddleware wraps the entire mux to apply security headers
-func (s *Server) wrapAdminMiddleware(next http.Handler) http.Handler {
+// wrapAdminMiddleware applies security headers and rate limiting to every admin response.
+// The rate limiter is nil-safe; when no rules are configured it is skipped transparently.
+func (s *Server) wrapAdminMiddleware(next http.Handler, rl *ratelimit.RateLimiter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/") {
-			w.Header().Set("Content-Security-Policy",
-				"default-src 'self'; "+
-					"script-src 'self' https://d3js.org; "+
-					"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
-					"font-src 'self' https://fonts.gstatic.com; "+
-					"img-src 'self' data:; "+
-					"connect-src 'self'; "+
-					"frame-ancestors 'none'")
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			w.Header().Set("X-Frame-Options", "DENY")
-			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self' https://d3js.org; "+
+				"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
+				"font-src 'self' https://fonts.gstatic.com; "+
+				"img-src 'self' data:; "+
+				"connect-src 'self'; "+
+				"frame-ancestors 'none'")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+
+		if rl != nil {
+			rl.Handler(next).ServeHTTP(w, r)
+			return
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-// =============================================================================
-// Request Handlers
-// =============================================================================
-
+// handleLogin authenticates an admin user and issues a signed JWT.
+// Rate limiting for this endpoint is driven by global rate_limits rules applied in wrapAdminMiddleware.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -224,10 +230,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"token":   tokenString,
 		"expires": expirationTime.Format(time.RFC3339),
-		"user":    creds.Username,
 	})
 }
 
+// verifyCredentials performs constant-time username lookup and bcrypt password comparison.
+// A dummy bcrypt comparison runs when the username is not found to prevent timing attacks.
 func (s *Server) verifyCredentials(users []string, username, password string) bool {
 	var foundHash []byte
 	userFound := 0
@@ -240,6 +247,7 @@ func (s *Server) verifyCredentials(users []string, username, password string) bo
 			if subtle.ConstantTimeCompare(inputUserHash[:], storedUserHash[:]) == 1 {
 				foundHash = []byte(parts[1])
 				userFound = 1
+				break
 			}
 		}
 	}
@@ -253,13 +261,18 @@ func (s *Server) verifyCredentials(users []string, username, password string) bo
 	return userFound == 1 && err == nil
 }
 
+// generateAdminToken creates a signed JWT with IssuedAt and NotBefore claims set.
+// Tokens are valid for adminTokenTTL from the time of issuance.
 func (s *Server) generateAdminToken(username, secret string) (string, time.Time, error) {
-	expirationTime := time.Now().Add(24 * time.Hour)
+	now := time.Now()
+	expirationTime := now.Add(adminTokenTTL)
 	claims := &adminClaims{
 		User: username,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
-			Issuer:    "agbero-admin",
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+			Issuer:    adminTokenIssuer,
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -280,7 +293,7 @@ func (s *Server) handleConfigDump(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.clusterManager != nil {
-		resp.Cluster = map[string]interface{}{
+		resp.Cluster = map[string]any{
 			"members": s.clusterManager.Members(),
 		}
 	}
@@ -332,6 +345,8 @@ func (s *Server) handleFirewallList(w http.ResponseWriter) {
 	})
 }
 
+// handleFirewallBlock validates the supplied IP/CIDR before blocking it.
+// The ip field must parse as a valid IP address or CIDR notation.
 func (s *Server) handleFirewallBlock(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IP          string `json:"ip"`
@@ -346,6 +361,10 @@ func (s *Server) handleFirewallBlock(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.IP == "" {
 		http.Error(w, "IP required", http.StatusBadRequest)
+		return
+	}
+	if !isValidIPOrCIDR(req.IP) {
+		http.Error(w, "Invalid IP address or CIDR", http.StatusBadRequest)
 		return
 	}
 
@@ -375,10 +394,16 @@ func (s *Server) buildBlockReason(reason, host, path string) string {
 	return reason
 }
 
+// handleFirewallUnblock validates the supplied IP before removing it from the blocklist.
+// The ip query parameter must be a valid IP address or CIDR.
 func (s *Server) handleFirewallUnblock(w http.ResponseWriter, r *http.Request) {
 	ip := r.URL.Query().Get("ip")
 	if ip == "" {
 		http.Error(w, "IP query parameter required", http.StatusBadRequest)
+		return
+	}
+	if !isValidIPOrCIDR(ip) {
+		http.Error(w, "Invalid IP address or CIDR", http.StatusBadRequest)
 		return
 	}
 	if err := s.firewall.Unblock(ip); err != nil {
@@ -390,6 +415,8 @@ func (s *Server) handleFirewallUnblock(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Unblocked"))
 }
 
+// handleLogs returns the last N log lines as a JSON array of raw strings.
+// Lines are not re-parsed as JSON to prevent log injection into the admin UI.
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	var logPath string
 	if s.global.Logging.File.Enabled.Active() {
@@ -401,24 +428,100 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 50
+	const limit = 50
 	lines, err := readLastLogLines(logPath, limit)
 	if err != nil {
 		http.Error(w, "Error reading logs: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	var logs []map[string]any
+	out := make([]string, 0, len(lines))
 	for _, l := range lines {
-		if l == "" {
-			continue
-		}
-		var entry map[string]any
-		if err := json.Unmarshal([]byte(l), &entry); err == nil {
-			logs = append(logs, entry)
+		if l != "" {
+			out = append(out, l)
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(logs)
+	json.NewEncoder(w).Encode(out)
+}
+
+// isValidIPOrCIDR returns true when s parses as a valid IP address or CIDR block.
+func isValidIPOrCIDR(s string) bool {
+	if net.ParseIP(s) != nil {
+		return true
+	}
+	_, _, err := net.ParseCIDR(s)
+	return err == nil
+}
+
+// buildAdminRateLimiter constructs a rate limiter for the admin server from the global
+// rate_limits rules. Returns nil when no matching rules exist, leaving the admin server
+// unthrottled; operators add protection via the rate_limits block in the global config.
+func buildAdminRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedState cluster.SharedState) *ratelimit.RateLimiter {
+	if global == nil || !global.RateLimits.Enabled.Active() || len(global.RateLimits.Rules) == 0 {
+		return nil
+	}
+
+	rlc := global.RateLimits
+	policy := func(r *http.Request) (bucket string, pol ratelimit.RatePolicy, ok bool) {
+		p := r.URL.Path
+		for _, rule := range rlc.Rules {
+			if len(rule.Methods) > 0 {
+				methodMatch := false
+				for _, m := range rule.Methods {
+					if strings.EqualFold(m, r.Method) {
+						methodMatch = true
+						break
+					}
+				}
+				if !methodMatch {
+					continue
+				}
+			}
+
+			if len(rule.Prefixes) > 0 {
+				prefixMatch := false
+				for _, pref := range rule.Prefixes {
+					if strings.HasPrefix(p, pref) {
+						prefixMatch = true
+						break
+					}
+				}
+				if !prefixMatch {
+					continue
+				}
+			}
+
+			ruleName := rule.Name
+			if ruleName == "" {
+				ruleName = "admin_default"
+			}
+
+			return ruleName, ratelimit.RatePolicy{
+				Requests: rule.Requests,
+				Window:   rule.Window,
+				Burst:    rule.Burst,
+				KeySpec:  rule.Key,
+			}, true
+		}
+		return "", ratelimit.RatePolicy{}, false
+	}
+
+	ttl := woos.DefaultRateTTL
+	maxEntries := woos.DefaultRateMaxEntries
+	if rlc.TTL > 0 {
+		ttl = rlc.TTL
+	}
+	if rlc.MaxEntries > 0 {
+		maxEntries = rlc.MaxEntries
+	}
+
+	return ratelimit.New(ratelimit.Config{
+		TTL:         ttl,
+		MaxEntries:  maxEntries,
+		Policy:      policy,
+		IPManager:   ipMgr,
+		SharedState: sharedState,
+	})
 }

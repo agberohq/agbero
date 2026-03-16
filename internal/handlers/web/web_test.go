@@ -186,7 +186,7 @@ func TestIsCompressibleMIME(t *testing.T) {
 }
 
 func TestFnv64a_Deterministic(t *testing.T) {
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if fnv64a("hello") != fnv64a("hello") {
 			t.Fatal("fnv64a is not deterministic")
 		}
@@ -205,7 +205,7 @@ func TestFnv64a_Distinct(t *testing.T) {
 }
 
 func TestStrongETag_Format(t *testing.T) {
-	tag := strongETag("/tmp/test.css", 1234, time.Unix(1700000000, 0))
+	tag := weakETag("/tmp/test.css", 1234, time.Unix(1700000000, 0))
 	if !strings.HasPrefix(tag, `W/"`) || !strings.HasSuffix(tag, `"`) {
 		t.Errorf("ETag format wrong: %s", tag)
 	}
@@ -213,13 +213,13 @@ func TestStrongETag_Format(t *testing.T) {
 
 func TestStrongETag_DifferentSizes(t *testing.T) {
 	mt := time.Unix(1700000000, 0)
-	if strongETag("/a", 100, mt) == strongETag("/a", 200, mt) {
+	if weakETag("/a", 100, mt) == weakETag("/a", 200, mt) {
 		t.Error("ETags must differ when size differs")
 	}
 }
 
 func TestStrongETag_DifferentModTimes(t *testing.T) {
-	if strongETag("/a", 100, time.Unix(1, 0)) == strongETag("/a", 100, time.Unix(2, 0)) {
+	if weakETag("/a", 100, time.Unix(1, 0)) == weakETag("/a", 100, time.Unix(2, 0)) {
 		t.Error("ETags must differ when modtime differs")
 	}
 }

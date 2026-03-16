@@ -6,7 +6,6 @@ import (
 	"context"
 	_ "embed"
 	"errors"
-	"fmt"
 	"html/template"
 	"io"
 	"io/fs"
@@ -18,7 +17,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -200,7 +198,7 @@ func NewWeb(res *resource.Manager, route *alaye.Route, cookMgr *cook.Manager) *w
 			"highlight", route.Web.Markdown.SyntaxHighlight.Enabled.Active(),
 			"theme", route.Web.Markdown.SyntaxHighlight.Theme,
 			"unsafe_html", route.Web.Markdown.UnsafeHTML.Active(),
-		).Info("Markdown renderer configured")
+		).Info("markdown renderer configured")
 	}
 
 	return h
@@ -381,11 +379,6 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", mt)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
-}
-
-// isMarkdownPath reports whether the file extension is a recognised Markdown type.
-func isMarkdownPath(path string) bool {
-	return markdownExts[strings.ToLower(filepath.Ext(path))]
 }
 
 // serveMarkdown converts a Markdown file to HTML and writes the response.
@@ -774,10 +767,7 @@ func (h *web) gzMayExist(gzPath string) bool {
 // TTL is jittered ±2.5 s to prevent thundering-herd on cache expiry.
 func (h *web) gzSetExists(gzPath string, exists bool) {
 	jitter := time.Duration(time.Now().UnixNano()%int64(5*time.Second)) - 2500*time.Millisecond
-	ttl := gzCacheTTL + jitter
-	if ttl < time.Second {
-		ttl = time.Second
-	}
+	ttl := max(gzCacheTTL+jitter, time.Second)
 	gzExistsCache.StoreTTL(gzPath, &mappo.Item{Value: exists}, ttl)
 }
 
@@ -809,7 +799,7 @@ func (h *web) setCommonHeaders(w http.ResponseWriter, r *http.Request, reqPath s
 		w.Header().Add("Vary", "Accept-Encoding")
 	}
 
-	etag := strongETag(reqPath, size, modTime)
+	etag := weakETag(reqPath, size, modTime)
 	w.Header().Set("ETag", etag)
 
 	if inm := r.Header.Get("If-None-Match"); inm != "" && ifNoneMatchHas(inm, etag) {
@@ -856,56 +846,4 @@ func (chromaPreWrapper) End(code bool) string {
 		return `</code></pre>`
 	}
 	return `</pre>`
-}
-
-// isCompressibleMIME reports whether the MIME type benefits from on-the-fly gzip.
-func isCompressibleMIME(mt string) bool {
-	for _, prefix := range compressibleMIME {
-		if strings.HasPrefix(mt, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// detectContentType reads up to 512 bytes from f to sniff the MIME type
-// and seeks back to the start. Falls back to application/octet-stream.
-func detectContentType(f *os.File) string {
-	buf := make([]byte, 512)
-	n, _ := f.Read(buf)
-	_, _ = f.Seek(0, 0)
-	if n > 0 {
-		return http.DetectContentType(buf[:n])
-	}
-	return "application/octet-stream"
-}
-
-// strongETag builds a weak ETag from size, modtime, and inode number.
-// Falls back to inode 0 on platforms without inode support.
-func strongETag(path string, size int64, modTime time.Time) string {
-	raw := fmt.Sprintf("%d-%d-%d", size, modTime.UnixNano(), inodeOf(path))
-	return fmt.Sprintf(`W/"%x"`, fnv64a(raw))
-}
-
-// fnv64a is a non-cryptographic FNV-1a 64-bit hash used for ETag generation.
-func fnv64a(s string) uint64 {
-	const (
-		offset64 uint64 = 14695981039346656037
-		prime64  uint64 = 1099511628211
-	)
-	h := offset64
-	for i := 0; i < len(s); i++ {
-		h ^= uint64(s[i])
-		h *= prime64
-	}
-	return h
-}
-
-// inodeOf returns the inode number for path, or 0 if unavailable.
-func inodeOf(path string) uint64 {
-	var st syscall.Stat_t
-	if err := syscall.Stat(path, &st); err != nil {
-		return 0
-	}
-	return st.Ino
 }

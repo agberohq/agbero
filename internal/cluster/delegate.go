@@ -24,12 +24,12 @@ type delegate struct {
 	logger    *ll.Logger
 	metrics   Metrics
 	cipher    *security.Cipher
-	configMgr *ConfigManager
+	configMgr *Distributor
 }
 
 // newDelegate initializes the state manager for gossip events.
 // It handles conflict resolution, payload decryption, and local application.
-func newDelegate(handler UpdateHandler, logger *ll.Logger, metrics Metrics, cipher *security.Cipher, configMgr *ConfigManager) *delegate {
+func newDelegate(handler UpdateHandler, logger *ll.Logger, metrics Metrics, cipher *security.Cipher, configMgr *Distributor) *delegate {
 	if metrics == nil {
 		metrics = &RealMetrics{}
 	}

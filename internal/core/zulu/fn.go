@@ -2,11 +2,11 @@ package zulu
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"strings"
 	"time"
-	"unsafe"
 
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/cespare/xxhash/v2"
@@ -125,11 +125,12 @@ func PortScan(bindHost string, port, maxPortRetries int) (int, error) {
 	return 0, fmt.Errorf("failed to find a free port on %s after %d attempts", bindHost, maxPortRetries)
 }
 
+// XXHash returns a base64url-encoded 8-byte hash of data using xxhash.
 func XXHash(data []byte) string {
 	if len(data) == 0 {
 		return ""
 	}
-	return base64.RawURLEncoding.EncodeToString(
-		(*[8]byte)(unsafe.Pointer(&[1]uint64{xxhash.Sum64(data)}))[:],
-	)
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], xxhash.Sum64(data))
+	return base64.RawURLEncoding.EncodeToString(buf[:])
 }

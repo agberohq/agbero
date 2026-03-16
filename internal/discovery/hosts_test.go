@@ -531,7 +531,7 @@ func TestCluster_ConfigDeletionPropagation(t *testing.T) {
 	}, h1, logger)
 	defer cm1.Shutdown()
 	h1.clusterMgr = cm1
-	h1.configSync = NewConfigSync(h1.hostsDir, h1.logger, cm1)
+	h1.configSync = NewConfigSync(h1.logger, cm1)
 
 	// Node 2
 	h2 := NewHost(woos.NewFolder(tmpDir2), WithLogger(logger))
@@ -544,7 +544,7 @@ func TestCluster_ConfigDeletionPropagation(t *testing.T) {
 	}, h2, logger)
 	defer cm2.Shutdown()
 	h2.clusterMgr = cm2
-	h2.configSync = NewConfigSync(h2.hostsDir, h2.logger, cm2)
+	h2.configSync = NewConfigSync(h2.logger, cm2)
 
 	time.Sleep(2 * time.Second)
 
@@ -657,7 +657,7 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 	}
 	defer cm1.Shutdown()
 	h1.clusterMgr = cm1
-	h1.configSync = NewConfigSync(h1.hostsDir, h1.logger, cm1)
+	h1.configSync = NewConfigSync(h1.logger, cm1)
 
 	// Create node 2 (joins node 1)
 	h2 := NewHost(woos.NewFolder(tmpDir2), WithLogger(logger))
@@ -673,7 +673,7 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 	}
 	defer cm2.Shutdown()
 	h2.clusterMgr = cm2
-	h2.configSync = NewConfigSync(h2.hostsDir, h2.logger, cm2)
+	h2.configSync = NewConfigSync(h2.logger, cm2)
 
 	// Create node 3 (joins node 1)
 	h3 := NewHost(woos.NewFolder(tmpDir3), WithLogger(logger))
@@ -689,7 +689,7 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 	}
 	defer cm3.Shutdown()
 	h3.clusterMgr = cm3
-	h3.configSync = NewConfigSync(h3.hostsDir, h3.logger, cm3)
+	h3.configSync = NewConfigSync(h3.logger, cm3)
 
 	// Wait for cluster to form with timeout
 	deadline := time.Now().Add(10 * time.Second)
