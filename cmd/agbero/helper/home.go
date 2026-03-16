@@ -20,10 +20,8 @@ type Home struct {
 	viewer *zulu.Viewer
 }
 
-// Navigate changes to the target directory and optionally opens a shell.
-// When action is "@", it changes to the directory, displays its contents,
-// and starts an interactive shell. When action is "@editor", it opens the
-// configuration file in the specified editor.
+// Navigates to the specified target directory and opens an interactive shell
+// Supports viewing or editing the configuration file based on the selected action
 func (h *Home) Navigate(target, action string) {
 	ctx := installer.NewContext(h.p.Logger, "")
 
@@ -103,9 +101,8 @@ func (h *Home) Navigate(target, action string) {
 	}
 }
 
-// UninstallEverything removes all agbero-managed state including service,
-// certificates, data directories, and the binary. When force is false,
-// it prompts for confirmation before proceeding.
+// Removes all state managed by the application from the operating system
+// Requires explicit interactive confirmation unless the force flag is provided
 func (h *Home) UninstallEverything(svc service.Service, configPath string, force bool) {
 	if !force {
 		var confirm bool
@@ -136,7 +133,12 @@ func (h *Home) UninstallEverything(svc service.Service, configPath string, force
 	h.deleteBinary()
 }
 
+// Stops and uninstalls the system service if it currently exists
+// Prevents panics by safely handling a nil service reference before stopping
 func (h *Home) uninstallService(svc service.Service) {
+	if svc == nil {
+		return
+	}
 	h.p.Logger.Info("stopping and removing system service")
 	if err := svc.Stop(); err != nil {
 		h.p.Logger.Warnf("service stop: %v (may already be stopped)", err)
@@ -146,12 +148,16 @@ func (h *Home) uninstallService(svc service.Service) {
 	}
 }
 
+// Removes the local certificate authority from the operating system trust store
+// Defers to the dedicated certificate helper logic for safe environment cleanup
 func (h *Home) uninstallCA(configPath string) {
 	h.p.Logger.Info("removing local Certificate Authority")
 	certHelper := &Cert{p: h.p}
 	certHelper.Uninstall(configPath)
 }
 
+// Deletes the base directory containing all application data and configuration
+// Exits early and skips processing if the target directory does not exist
 func (h *Home) deleteDataDirectories() {
 	ctx := installer.NewContext(h.p.Logger, "")
 	baseDir := ctx.Paths.BaseDir.Path()
@@ -170,6 +176,8 @@ func (h *Home) deleteDataDirectories() {
 	}
 }
 
+// Attempts to securely remove the running application executable from disk
+// Resolves symbolic links prior to issuing the binary deletion command
 func (h *Home) deleteBinary() {
 	h.p.Logger.Info("removing agbero binary")
 
