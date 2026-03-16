@@ -438,9 +438,9 @@ func main() {
 	if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
 		cwd, _ := os.Getwd()
 		if filepath.Dir(resolvedPath) == cwd {
-			svcConfig.Name = "net.imaxinacion.agbero.dev"
+			svcConfig.Name = "net.agbero.dev"
 		} else {
-			svcConfig.Name = "net.imaxinacion.agbero"
+			svcConfig.Name = "net.agbero"
 		}
 		svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
 	} else if runtime.GOOS == woos.Linux && os.Geteuid() != 0 {
