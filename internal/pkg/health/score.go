@@ -7,6 +7,20 @@ import (
 	"time"
 )
 
+const (
+	scoreMax          = 100
+	scoreMin          = 0
+	scoreTrendUp      = 1
+	scoreTrendDown    = -1
+	scoreTrendFlat    = 0
+	scoreSignificant  = 5
+	latencyPerfect    = 100
+	latencyBaseFactor = 30
+	latencyMidFactor  = 70
+	latencyExpBase    = 40
+	latencyExpDiv     = 2000
+)
+
 type Record struct {
 	ProbeLatency time.Duration
 	ProbeSuccess bool
@@ -72,6 +86,8 @@ type Score struct {
 	onStateChange func(oldState, newState State, score int32)
 }
 
+// NewScore provisions a backend diagnostic tracker combining active and passive telemetry
+// Automatically assigns perfect baseline ratings ensuring immediate availability
 func NewScore(thresholds Thresholds, weights Weights, latThresholds Latency, onChange func(State, State, int32)) *Score {
 	s := &Score{
 		thresholds:        thresholds,
@@ -79,32 +95,42 @@ func NewScore(thresholds Thresholds, weights Weights, latThresholds Latency, onC
 		latencyThresholds: latThresholds,
 		onStateChange:     onChange,
 	}
-	s.value.Store(100)
+	s.value.Store(scoreMax)
 	s.state.Store(int32(StateUnknown))
-	s.trend.Store(0)
-	s.connHealth.Store(100)
+	s.trend.Store(scoreTrendFlat)
+	s.connHealth.Store(scoreMax)
 	s.lastUpdate.Store(time.Now())
 	s.lastPassiveReset.Store(time.Now().UnixNano())
 	s.updateSnapshot()
 	return s
 }
 
+// Value fetches the numeric index evaluating overall backend health
+// Accessible instantaneously without mutex intervention
 func (s *Score) Value() int32 {
 	return s.value.Load()
 }
 
+// State returns the enumerated tier determining backend survivability
+// Classifies numbers into easily readable systemic bands
 func (s *Score) State() State {
 	return State(s.state.Load())
 }
 
+// Status returns a human-readable string interpreting the current state
+// Designed for operational dashboards and debugging outputs
 func (s *Score) Status() Status {
 	return State(s.state.Load()).Status()
 }
 
+// Trend assesses recent score movements indicating backend recovery or decay
+// Retains positive, negative, or flat momentum indicators
 func (s *Score) Trend() int32 {
 	return s.trend.Load()
 }
 
+// LastUpdate records the chronologic moment when data was last synthesized
+// Yields the most recent health check execution time safely
 func (s *Score) LastUpdate() time.Time {
 	if v := s.lastUpdate.Load(); v != nil {
 		return v.(time.Time)
@@ -112,10 +138,14 @@ func (s *Score) LastUpdate() time.Time {
 	return time.Time{}
 }
 
+// ConsecutiveFailures tracks consecutive diagnostic interruptions sequentially
+// Empowers early abort mechanisms recognizing repeated outages
 func (s *Score) ConsecutiveFailures() int64 {
 	return s.consecFails.Load()
 }
 
+// LastSuccess extracts the prior successful reachability timestamp
+// Utilized calculating total accrued downtime sequences safely
 func (s *Score) LastSuccess() time.Time {
 	ts := s.lastSuccess.Load()
 	if ts == 0 {
@@ -124,6 +154,8 @@ func (s *Score) LastSuccess() time.Time {
 	return time.Unix(0, ts)
 }
 
+// LastFailure notes the most recent outage connection loss
+// Defines periods of instability internally
 func (s *Score) LastFailure() time.Time {
 	ts := s.lastFailure.Load()
 	if ts == 0 {
@@ -132,6 +164,8 @@ func (s *Score) LastFailure() time.Time {
 	return time.Unix(0, ts)
 }
 
+// Snapshot acquires a frozen state block combining all immediate metrics
+// Eliminates race conditions parsing diverse atomic characteristics simultaneously
 func (s *Score) Snapshot() scoreSnapshot {
 	if v := s.snapshot.Load(); v != nil {
 		return v.(scoreSnapshot)
@@ -139,6 +173,8 @@ func (s *Score) Snapshot() scoreSnapshot {
 	return scoreSnapshot{}
 }
 
+// Update digests a new measurement modifying systemic trajectories appropriately
+// Safely calculates combined scores adjusting thresholds seamlessly
 func (s *Score) Update(r Record) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -157,11 +193,11 @@ func (s *Score) Update(r Record) {
 	successScore := s.calculateSuccessScore(r.ProbeSuccess)
 
 	if !r.ProbeSuccess {
-		latencyScore = 0
+		latencyScore = scoreMin
 	}
 
-	passiveScore := int32((1.0 - r.PassiveRate) * 100)
-	connScore := clamp(r.ConnHealth, 0, 100)
+	passiveScore := int32((1.0 - r.PassiveRate) * scoreMax)
+	connScore := clamp(r.ConnHealth, scoreMin, scoreMax)
 
 	newScore := int32(
 		float64(latencyScore)*s.scoringWeights.LatencyWeight +
@@ -170,17 +206,17 @@ func (s *Score) Update(r Record) {
 			float64(connScore)*s.scoringWeights.ConnWeight,
 	)
 
-	newScore = clamp(newScore, 0, 100)
+	newScore = clamp(newScore, scoreMin, scoreMax)
 
 	oldScore := s.value.Load()
 	oldState := s.State()
 
-	if newScore > oldScore+5 {
-		s.trend.Store(1)
-	} else if newScore < oldScore-5 {
-		s.trend.Store(-1)
+	if newScore > oldScore+scoreSignificant {
+		s.trend.Store(scoreTrendUp)
+	} else if newScore < oldScore-scoreSignificant {
+		s.trend.Store(scoreTrendDown)
 	} else {
-		s.trend.Store(0)
+		s.trend.Store(scoreTrendFlat)
 	}
 
 	s.value.Store(newScore)
@@ -194,14 +230,13 @@ func (s *Score) Update(r Record) {
 		}
 	}
 
-	// Reset the passive window so historical traffic from a spike does not
-	// permanently anchor the score. Each probe cycle now measures only the
-	// errors observed since the previous probe.
 	s.passiveErrors.Swap(0)
 	s.passiveRequests.Swap(0)
 	s.updateSnapshot()
 }
 
+// updateSnapshot rewrites the structural grouping exposing safe telemetry values
+// Guards memory against fragmented retrieval queries
 func (s *Score) updateSnapshot() {
 	s.snapshot.Store(scoreSnapshot{
 		value:      s.value.Load(),
@@ -211,6 +246,8 @@ func (s *Score) updateSnapshot() {
 	})
 }
 
+// calculateState defines transition thresholds based on configured boundaries
+// Stabilizes transitions avoiding flapping between degraded and healthy constantly
 func (s *Score) calculateState(currentState State, score int32) State {
 	t := s.thresholds
 
@@ -270,9 +307,11 @@ func (s *Score) calculateState(currentState State, score int32) State {
 	return StateDead
 }
 
+// calculateLatencyScore creates performance bands matching request intervals
+// Punishes high responses exponentially avoiding hardline cutoffs abruptly
 func (s *Score) calculateLatencyScore(latency time.Duration) int32 {
 	if latency <= 0 {
-		return 100
+		return latencyPerfect
 	}
 
 	baseline := float64(s.latencyThresholds.BaselineMs)
@@ -282,25 +321,29 @@ func (s *Score) calculateLatencyScore(latency time.Duration) int32 {
 
 	switch {
 	case ms <= baseline:
-		return 100
+		return latencyPerfect
 	case ms <= degraded:
 		ratio := (ms - baseline) / (degraded - baseline)
-		return int32(100 - ratio*30)
+		return int32(latencyPerfect - ratio*latencyBaseFactor)
 	case ms <= unhealthy:
 		ratio := (ms - degraded) / (unhealthy - degraded)
-		return int32(70 - ratio*30)
+		return int32(latencyMidFactor - ratio*latencyBaseFactor)
 	default:
-		return int32(40 * math.Exp(-(ms-unhealthy)/2000))
+		return int32(latencyExpBase * math.Exp(-(ms-unhealthy)/latencyExpDiv))
 	}
 }
 
+// calculateSuccessScore provides baseline numbers for availability boolean states
+// Translates simple pass or fail conditions into weighted metric allocations
 func (s *Score) calculateSuccessScore(success bool) int32 {
 	if success {
-		return 100
+		return scoreMax
 	}
-	return 0
+	return scoreMin
 }
 
+// RecordPassiveRequest tracks internal data for responses between active polls
+// Supplies accurate network viability independent of artificial diagnostics
 func (s *Score) RecordPassiveRequest(success bool) {
 	s.passiveRequests.Add(1)
 	if !success {
@@ -308,6 +351,8 @@ func (s *Score) RecordPassiveRequest(success bool) {
 	}
 }
 
+// PassiveErrorRate generates failure ratios tracking mid-interval instability
+// Resets periodically mitigating long term metric staleness issues
 func (s *Score) PassiveErrorRate() float64 {
 	const passiveWindowNs = int64(60 * time.Second)
 
@@ -328,42 +373,47 @@ func (s *Score) PassiveErrorRate() float64 {
 	return float64(s.passiveErrors.Load()) / float64(reqs)
 }
 
+// SetConnHealth allows auxiliary systems to manipulate connection ratings directly
+// Enforces bounds preserving functional thresholds implicitly
 func (s *Score) SetConnHealth(health int32) {
-	s.connHealth.Store(clamp(health, 0, 100))
+	s.connHealth.Store(clamp(health, scoreMin, scoreMax))
 }
 
+// IsRapidDeterioration alerts subsystems regarding abrupt performance dropoffs
+// Facilitates accelerated routing evacuations dodging cascading downtime
 func (s *Score) IsRapidDeterioration() bool {
 	lastUpdate := s.LastUpdate()
 	if time.Since(lastUpdate) > 5*time.Second {
 		return false
 	}
 
-	return s.trend.Load() == -1 && s.value.Load() < 50
+	return s.trend.Load() == scoreTrendDown && s.value.Load() < 50
 }
 
-// ForceState directly sets the health state, bypassing score calculation.
-// Use sparingly - only when external logic determines state definitively.
-// Thread-safe: uses atomic operations, no mutex required.
+// ForceState overrides standard scoring bands forcing strict diagnostic evaluations
+// Transmits notification callbacks informing external systems instantaneously
 func (s *Score) ForceState(newState State) {
 	oldState := State(s.state.Swap(int32(newState)))
 	if oldState != newState && s.onStateChange != nil {
-		// Callback outside atomic swap to avoid holding lock during user code
 		s.onStateChange(oldState, newState, s.value.Load())
 	}
 	s.updateSnapshot()
 }
 
-// ForceHealthy is a convenience wrapper for ForceState(StateHealthy)
+// ForceHealthy dictates immediate system revival skipping graded ascensions
+// Simplifies node restorations rapidly bridging artificial blockades
 func (s *Score) ForceHealthy() {
 	s.ForceState(StateHealthy)
 }
 
-func clamp(v, min, max int32) int32 {
-	if v < min {
-		return min
+// clamp restricts a value to be within the specified lower and upper bounds
+// Prevents health scores from dropping below zero or exceeding one hundred
+func clamp(v, lo, hi int32) int32 {
+	if v < lo {
+		return lo
 	}
-	if v > max {
-		return max
+	if v > hi {
+		return hi
 	}
 	return v
 }

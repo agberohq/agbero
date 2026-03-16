@@ -4,6 +4,14 @@ import (
 	"sync/atomic"
 )
 
+const (
+	maxCASRetries = 3
+	ewmaWeight    = 9
+	ewmaDivisor   = 10
+	incrementUnit = 1
+	emptyValue    = 0
+)
+
 type Activity struct {
 	InFlight atomic.Int64
 	Requests atomic.Uint64
@@ -12,34 +20,52 @@ type Activity struct {
 	ewmaUs   atomic.Int64
 }
 
+// NewActivity instantiates operational tracking telemetry
+// Manages concurrency inflight counters and throughput latency
 func NewActivity() *Activity {
 	return &Activity{
 		Latency: NewLatency(),
 	}
 }
 
+// StartRequest increases the active connection count
+// Operates automatically and block-free for inbound traffic tracking
 func (at *Activity) StartRequest() {
-	at.InFlight.Add(1)
+	at.InFlight.Add(incrementUnit)
 }
 
+// EndRequest decreases active counts and archives the outcome performance
+// Decrements immediately while asynchronously evaluating moving averages
 func (at *Activity) EndRequest(duration int64, isFailure bool) {
-	at.Requests.Add(1)
+	at.Requests.Add(incrementUnit)
 	if isFailure {
-		at.Failures.Add(1)
+		at.Failures.Add(incrementUnit)
 	}
 	at.Latency.Record(duration)
-	at.InFlight.Add(-1)
+	at.InFlight.Add(-incrementUnit)
 
-	// Simplified EWMA - atomic store instead of CAS loop
-	// EWMA is approximate anyway, strict CAS not worth the contention cost
-	old := at.ewmaUs.Load()
-	if old == 0 {
-		at.ewmaUs.Store(duration)
-	} else {
-		at.ewmaUs.Store((duration + 9*old) / 10)
+	at.updateEWMA(duration)
+}
+
+// updateEWMA recalculates the exponential weighted moving average of response times
+// Uses a bounded compare-and-swap loop to heavily reduce silent drops under load
+func (at *Activity) updateEWMA(duration int64) {
+	for i := 0; i < maxCASRetries; i++ {
+		old := at.ewmaUs.Load()
+		var next int64
+		if old == emptyValue {
+			next = duration
+		} else {
+			next = (duration + ewmaWeight*old) / ewmaDivisor
+		}
+		if at.ewmaUs.CompareAndSwap(old, next) {
+			break
+		}
 	}
 }
 
+// Snapshot freezes ongoing values into a secure map extraction
+// Yields current telemetry structures for reporting components
 func (at *Activity) Snapshot() map[string]any {
 	lat := at.Latency.Snapshot()
 	return map[string]any{
@@ -51,6 +77,8 @@ func (at *Activity) Snapshot() map[string]any {
 	}
 }
 
+// EWMA delivers the latest known exponential weight average output
+// Provides lock-free access to traffic speed approximations
 func (at *Activity) EWMA() int64 {
 	return at.ewmaUs.Load()
 }
