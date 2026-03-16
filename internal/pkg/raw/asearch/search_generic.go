@@ -1,6 +1,6 @@
 //go:build (!amd64 && !arm64) || noasm
 
-package dependency
+package asearch
 
 // linearSearch delegates the execution directly to the pure Go implementation.
 // Invoked exclusively on platforms lacking specific assembly optimizations.

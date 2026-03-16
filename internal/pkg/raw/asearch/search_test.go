@@ -1,4 +1,4 @@
-package dependency
+package asearch
 
 import (
 	"math/rand"

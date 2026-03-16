@@ -1,4 +1,4 @@
-package dependency
+package ahash
 
 import "golang.org/x/sys/cpu"
 

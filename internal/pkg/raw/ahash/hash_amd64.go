@@ -1,6 +1,6 @@
 //go:build amd64 && !noasm
 
-package dependency
+package ahash
 
 import "unsafe"
 

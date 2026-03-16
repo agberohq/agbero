@@ -1,6 +1,6 @@
 //go:build !windows
 
-package dependency
+package afs
 
 import (
 	"net"

@@ -14,7 +14,7 @@
 // This mirrors the approach used for the cluster.Cluster interface: the
 // abstraction costs nothing today and avoids a painful refactor when
 // platform-specific optimisations (e.g. io_uring, kqueue, IOCP) are added.
-package dependency
+package afs
 
 import "net"
 

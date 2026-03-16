@@ -1,6 +1,6 @@
 //go:build (!amd64 && !arm64) || noasm
 
-package dependency
+package ahash
 
 // crc32Hash delegates to the pure Go implementation safely.
 // Invoked on architectures without explicit assembly routines.

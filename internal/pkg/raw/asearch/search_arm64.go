@@ -1,6 +1,6 @@
 //go:build arm64 && !noasm
 
-package dependency
+package asearch
 
 import "unsafe"
 

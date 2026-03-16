@@ -1,4 +1,4 @@
-package dependency
+package asearch
 
 const (
 	emptyIndex = 0

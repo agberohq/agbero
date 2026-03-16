@@ -1,4 +1,4 @@
-package dependency
+package ahash
 
 // CRC32Hash computes a 64-bit CRC32C hash of a string natively.
 // Utilizes hardware acceleration on amd64/arm64 when available.
