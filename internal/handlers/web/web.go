@@ -18,13 +18,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/dependency"
 	"github.com/agberohq/agbero/internal/pkg/cook"
 	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
 	"github.com/dustin/go-humanize"
@@ -883,7 +883,7 @@ func detectContentType(f *os.File) string {
 // strongETag builds a weak ETag from size, modtime, and inode number.
 // Falls back to inode 0 on platforms without inode support.
 func strongETag(path string, size int64, modTime time.Time) string {
-	raw := fmt.Sprintf("%d-%d-%d", size, modTime.UnixNano(), inodeOf(path))
+	raw := fmt.Sprintf("%d-%d-%d", size, modTime.UnixNano(), dependency.InodeOf(path))
 	return fmt.Sprintf(`W/"%x"`, fnv64a(raw))
 }
 
@@ -899,13 +899,4 @@ func fnv64a(s string) uint64 {
 		h *= prime64
 	}
 	return h
-}
-
-// inodeOf returns the inode number for path, or 0 if unavailable.
-func inodeOf(path string) uint64 {
-	var st syscall.Stat_t
-	if err := syscall.Stat(path, &st); err != nil {
-		return 0
-	}
-	return st.Ino
 }
