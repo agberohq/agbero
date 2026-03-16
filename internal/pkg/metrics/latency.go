@@ -10,9 +10,21 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 )
 
+const (
+	minLatencyShards = 16
+	cpuMultiplier    = 2
+	percentile50     = 50
+	percentile90     = 90
+	percentile99     = 99
+	emptyCount       = 0
+	emptySum         = 0
+	cacheLinePadding = 40
+	sigFigPrecision  = 3
+)
+
 var snapshotHistogramPool = sync.Pool{
 	New: func() any {
-		return hdrhistogram.New(woos.MinUS, woos.MaxUS, 3)
+		return hdrhistogram.New(woos.MinUS, woos.MaxUS, sigFigPrecision)
 	},
 }
 
@@ -21,8 +33,8 @@ type shard struct {
 	histogram    *hdrhistogram.Histogram
 	count        uint64
 	sum          int64
-	lastRotation int64    // guarded by mu — no global atomic needed
-	_            [40]byte // prevent false sharing
+	lastRotation int64
+	_            [cacheLinePadding]byte
 }
 
 type Latency struct {
@@ -32,27 +44,49 @@ type Latency struct {
 	closed    atomic.Bool
 }
 
+// nextPowerOfTwo calculates the nearest power of two for an integer
+// Enables rapid bitwise modulo operations on hot paths
+func nextPowerOfTwo(v uint64) uint64 {
+	v--
+	v |= v >> 1
+	v |= v >> 2
+	v |= v >> 4
+	v |= v >> 8
+	v |= v >> 16
+	v |= v >> 32
+	v++
+	return v
+}
+
+// NewLatency initializes a sharded histogram structure for metric tracking
+// Rounds the number of shards to a power of two to optimize indexing math
 func NewLatency() *Latency {
-	n := max(runtime.GOMAXPROCS(0)*2, 16)
+	cpuCores := uint64(runtime.GOMAXPROCS(0) * cpuMultiplier)
+	n := max(cpuCores, minLatencyShards)
+	optimalShards := nextPowerOfTwo(n)
 
 	now := time.Now().UnixNano()
 	lt := &Latency{
-		shards:    make([]shard, n),
-		numShards: uint64(n),
+		shards:    make([]shard, optimalShards),
+		numShards: optimalShards,
 	}
 
 	for i := range lt.shards {
-		lt.shards[i].histogram = hdrhistogram.New(woos.MinUS, woos.MaxUS, 3)
+		lt.shards[i].histogram = hdrhistogram.New(woos.MinUS, woos.MaxUS, sigFigPrecision)
 		lt.shards[i].lastRotation = now
 	}
 
 	return lt
 }
 
+// Close permanently stops new latency metrics from being recorded
+// Flips the atomic closed flag to bypass incoming telemetry payloads
 func (lt *Latency) Close() {
 	lt.closed.Store(true)
 }
 
+// Record injects a single latency measurement into the partitioned histogram
+// Uses bitwise AND against a power-of-two mask instead of expensive division
 func (lt *Latency) Record(microseconds int64) {
 	if lt.closed.Load() {
 		return
@@ -63,14 +97,16 @@ func (lt *Latency) Record(microseconds int64) {
 		v = woos.MaxUS
 	}
 
-	s := &lt.shards[lt.nextShard.Add(1)%lt.numShards]
+	shardMask := lt.numShards - 1
+	shardIndex := lt.nextShard.Add(1) & shardMask
+	s := &lt.shards[shardIndex]
 
 	s.mu.Lock()
 	now := time.Now().UnixNano()
 	if now-s.lastRotation > int64(woos.HistogramWindow) {
 		s.histogram.Reset()
-		s.count = 0
-		s.sum = 0
+		s.count = emptyCount
+		s.sum = emptySum
 		s.lastRotation = now
 	}
 	s.histogram.RecordValue(v)
@@ -89,6 +125,8 @@ type LatencySnapshot struct {
 	Avg   int64  `json:"avg_us"`
 }
 
+// Snapshot generates a unified representation of all distributed latency shards
+// Retrieves an empty histogram from the sync pool to reduce garbage collection load
 func (lt *Latency) Snapshot() LatencySnapshot {
 	merged := snapshotHistogramPool.Get().(*hdrhistogram.Histogram)
 	merged.Reset()
@@ -107,14 +145,14 @@ func (lt *Latency) Snapshot() LatencySnapshot {
 	}
 
 	snap := LatencySnapshot{
-		P50:   merged.ValueAtQuantile(50),
-		P90:   merged.ValueAtQuantile(90),
-		P99:   merged.ValueAtQuantile(99),
+		P50:   merged.ValueAtQuantile(percentile50),
+		P90:   merged.ValueAtQuantile(percentile90),
+		P99:   merged.ValueAtQuantile(percentile99),
 		Max:   merged.Max(),
 		Count: totalCount,
 		Sum:   totalSum,
 	}
-	if totalCount > 0 {
+	if totalCount > emptyCount {
 		snap.Avg = totalSum / int64(totalCount)
 	}
 
