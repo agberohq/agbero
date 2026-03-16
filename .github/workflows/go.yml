@@ -1,6 +1,3 @@
-# This workflow will build a golang project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
-
 name: Go
 
 on:
@@ -14,15 +11,32 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.26'
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          check-latest: true
 
-    - name: Build
-      run: go build -v ./...
+      - name: Set LDFLAGS
+        run: |
+          echo "LDFLAGS=-s -w -X github.com/agberohq/agbero/internal/core/woos.Version=$(git describe --tags --always --dirty 2>/dev/null || echo dev) -X github.com/agberohq/agbero/internal/core/woos.Commit=$(git rev-parse --short HEAD) -X github.com/agberohq/agbero/internal/core/woos.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
 
-    - name: Test
-      run: go test -v ./...
+      - name: Build Linux (native)
+        run: go build -ldflags="$LDFLAGS" -v ./...
+
+      - name: Build Windows amd64
+        run: GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -v ./...
+
+      - name: Build Windows arm64
+        run: GOOS=windows GOARCH=arm64 go build -ldflags="$LDFLAGS" -v ./...
+
+      - name: Build macOS amd64
+        run: GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -v ./...
+
+      - name: Build macOS arm64
+        run: GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -v ./...
+
+      - name: Test
+        run: go test -v ./...
