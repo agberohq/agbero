@@ -524,13 +524,11 @@ func TestConcurrency(t *testing.T) {
 	s := NewSelector([]Backend{b1, b2}, StrategyRoundRobin)
 	var wg sync.WaitGroup
 	for range 100 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 100 {
 				s.Pick(nil, nil)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

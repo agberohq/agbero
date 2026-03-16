@@ -49,7 +49,7 @@ func TestPickWithSticky(t *testing.T) {
 		if first == nil {
 			t.Fatal("expected backend")
 		}
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			if b := s.Pick(req, nil); b != first {
 				t.Error("should stick to same backend")
 			}
@@ -116,9 +116,9 @@ func TestStickyConcurrency(t *testing.T) {
 	defer s.Stop()
 
 	done := make(chan bool, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		go func(id int) {
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				req := httptest.NewRequest("GET", "/", nil)
 				req.RemoteAddr = "192.168.1.1:12345"
 				s.Pick(req, nil)
@@ -126,7 +126,7 @@ func TestStickyConcurrency(t *testing.T) {
 			done <- true
 		}(i)
 	}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 }

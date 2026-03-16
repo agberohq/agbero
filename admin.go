@@ -293,7 +293,7 @@ func (s *Server) handleConfigDump(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.clusterManager != nil {
-		resp.Cluster = map[string]interface{}{
+		resp.Cluster = map[string]any{
 			"members": s.clusterManager.Members(),
 		}
 	}

@@ -24,17 +24,17 @@ const (
 	maxDecompressedConfigSize = 10 * 1024 * 1024
 )
 
-type ConfigManager struct {
+type Distributor struct {
 	localDir  string
 	logger    *ll.Logger
 	checksums map[string]string
 	mu        sync.RWMutex
 }
 
-// NewConfigManager initializes the configuration synchronizer.
+// NewDistributor initializes the configuration synchronizer.
 // It populates the initial checksum cache from existing files on disk.
-func NewConfigManager(localDir string, logger *ll.Logger) *ConfigManager {
-	cm := &ConfigManager{
+func NewDistributor(logger *ll.Logger, localDir string) *Distributor {
+	cm := &Distributor{
 		localDir:  localDir,
 		logger:    logger.Namespace("config_sync"),
 		checksums: make(map[string]string),
@@ -45,7 +45,7 @@ func NewConfigManager(localDir string, logger *ll.Logger) *ConfigManager {
 
 // LoadExistingChecksums scans the local directory for configuration files.
 // It caches the checksums to prevent unnecessary synchronization loops on startup.
-func (c *ConfigManager) LoadExistingChecksums() {
+func (c *Distributor) LoadExistingChecksums() {
 	entries, err := os.ReadDir(c.localDir)
 	if err != nil {
 		c.logger.Fields("err", err).Debug("config_sync: failed to read local dir for checksums")
@@ -68,7 +68,7 @@ func (c *ConfigManager) LoadExistingChecksums() {
 
 // Apply writes or deletes a configuration file based on a cluster payload.
 // Domain values are validated to prevent path traversal before any file operation.
-func (c *ConfigManager) Apply(payload ConfigPayload) {
+func (c *Distributor) Apply(payload ConfigPayload) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -114,7 +114,7 @@ func (c *ConfigManager) Apply(payload ConfigPayload) {
 
 // PreparePayload creates a compressed configuration payload for cluster distribution.
 // It mutates the local checksum cache ensuring subsequent fsnotify events are ignored.
-func (c *ConfigManager) PreparePayload(domain string, rawHCL []byte, deleted bool, nodeID string) (*ConfigPayload, error) {
+func (c *Distributor) PreparePayload(domain string, rawHCL []byte, deleted bool, nodeID string) (*ConfigPayload, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -158,7 +158,7 @@ func (c *ConfigManager) PreparePayload(domain string, rawHCL []byte, deleted boo
 
 // ShouldBroadcast determines if the file content has changed locally.
 // It is strictly a read-only check authorizing fsnotify to trigger PreparePayload.
-func (c *ConfigManager) ShouldBroadcast(domain string, content []byte) bool {
+func (c *Distributor) ShouldBroadcast(domain string, content []byte) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -172,7 +172,7 @@ func (c *ConfigManager) ShouldBroadcast(domain string, content []byte) bool {
 
 // ShouldBroadcastDeletion determines if a deleted file was previously tracked.
 // It returns true to authorize a cluster-wide deletion broadcast without modifying state.
-func (c *ConfigManager) ShouldBroadcastDeletion(domain string) bool {
+func (c *Distributor) ShouldBroadcastDeletion(domain string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -182,7 +182,7 @@ func (c *ConfigManager) ShouldBroadcastDeletion(domain string) bool {
 
 // UpdateChecksum manually forces a checksum update for a domain.
 // Used when local changes need to bypass immediate broadcasting.
-func (c *ConfigManager) UpdateChecksum(domain string, content []byte) {
+func (c *Distributor) UpdateChecksum(domain string, content []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.checksums[domain] = c.calculateChecksum(content)
@@ -190,7 +190,7 @@ func (c *ConfigManager) UpdateChecksum(domain string, content []byte) {
 
 // validateHCL performs a dry-run parsing to ensure syntax correctness.
 // Drops bad gossip payloads before they overwrite functional configurations.
-func (c *ConfigManager) validateHCL(targetPath string, rawHCL []byte) error {
+func (c *Distributor) validateHCL(targetPath string, rawHCL []byte) error {
 	dir := filepath.Dir(targetPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
@@ -215,7 +215,7 @@ func (c *ConfigManager) validateHCL(targetPath string, rawHCL []byte) error {
 
 // writeAtomic writes configuration data safely to disk.
 // Uses temp files and renaming to avoid partial writes during crashes.
-func (c *ConfigManager) writeAtomic(targetPath string, data []byte) error {
+func (c *Distributor) writeAtomic(targetPath string, data []byte) error {
 	dir := filepath.Dir(targetPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -230,7 +230,7 @@ func (c *ConfigManager) writeAtomic(targetPath string, data []byte) error {
 
 // calculateChecksum returns the SHA256 string for the provided content.
 // Used to compare configurations and detect state drifts.
-func (c *ConfigManager) calculateChecksum(data []byte) string {
+func (c *Distributor) calculateChecksum(data []byte) string {
 	if len(data) == 0 {
 		return ""
 	}
@@ -240,7 +240,7 @@ func (c *ConfigManager) calculateChecksum(data []byte) string {
 
 // compress shrinks configuration data for efficient network transit.
 // Maximizes payload capacity while remaining compatible with reliable transport.
-func (c *ConfigManager) compress(data []byte) ([]byte, error) {
+func (c *Distributor) compress(data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
@@ -257,7 +257,7 @@ func (c *ConfigManager) compress(data []byte) ([]byte, error) {
 
 // decompress inflates configuration data received from the cluster.
 // Decompressed output is capped at maxDecompressedConfigSize to prevent memory exhaustion.
-func (c *ConfigManager) decompress(data []byte) ([]byte, error) {
+func (c *Distributor) decompress(data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}

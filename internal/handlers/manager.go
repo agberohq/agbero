@@ -51,7 +51,7 @@ type Manager struct {
 }
 
 type llWriter struct {
-	logger interface{ Error(args ...interface{}) }
+	logger interface{ Error(args ...any) }
 }
 
 func (w *llWriter) Write(p []byte) (n int, err error) {

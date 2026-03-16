@@ -243,10 +243,7 @@ func (h *Route) Close() error {
 	if len(h.Backends) > 0 {
 		drainTimeout := woos.DefaultTransportDrainTimeout
 		if h.global != nil && h.global.Timeouts.Read > 0 {
-			drainTimeout = h.global.Timeouts.Read + woos.DefaultTransportResponseHeaderTimeout
-			if drainTimeout < woos.DefaultTransportDrainTimeout {
-				drainTimeout = woos.DefaultTransportDrainTimeout
-			}
+			drainTimeout = max(h.global.Timeouts.Read+woos.DefaultTransportResponseHeaderTimeout, woos.DefaultTransportDrainTimeout)
 		}
 
 		for _, b := range h.Backends {

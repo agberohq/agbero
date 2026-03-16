@@ -64,7 +64,7 @@ func tripCircuit(b *Backend) {
 
 // hammer sends n GET requests through b.ServeHTTP and returns the 5xx count.
 func hammer(b *Backend, n int) (failures int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		w := httptest.NewRecorder()
 		b.ServeHTTP(w, req)
@@ -124,9 +124,7 @@ func TestCircuitBreaker_StunLock(t *testing.T) {
 	// Phase 2: keep firing dial failures for 3 s — this is the stun-lock.
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stop:
@@ -136,7 +134,7 @@ func TestCircuitBreaker_StunLock(t *testing.T) {
 				time.Sleep(10 * time.Millisecond)
 			}
 		}
-	}()
+	})
 	time.Sleep(3 * time.Second)
 	close(stop)
 	wg.Wait()
@@ -204,7 +202,7 @@ func TestRecordResult_DoesNotResetLastRecovOnFailure(t *testing.T) {
 	tripTime := time.Unix(0, b.LastRecov.Load())
 
 	// Subsequent RecordResult(false) calls must not move LastRecov.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		b.RecordResult(false)
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -242,7 +240,7 @@ func TestPassiveRate_LifetimePoisoning(t *testing.T) {
 	const errorRate = 0.083
 	errCount := int(total * errorRate)
 
-	for i := 0; i < errCount; i++ {
+	for range errCount {
 		score.RecordPassiveRequest(false)
 	}
 	for i := 0; i < total-errCount; i++ {
@@ -286,7 +284,7 @@ func TestPassiveRate_ResetsEachProbeCycle(t *testing.T) {
 	)
 
 	// Window 1: 50% error rate.
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		score.RecordPassiveRequest(i%2 == 0)
 	}
 	score.Update(health.Record{
@@ -296,7 +294,7 @@ func TestPassiveRate_ResetsEachProbeCycle(t *testing.T) {
 	})
 
 	// Window 2: 0% error rate.
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		score.RecordPassiveRequest(true)
 	}
 

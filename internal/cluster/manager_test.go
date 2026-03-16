@@ -254,7 +254,7 @@ func TestDelegate_LWW_and_Tombstones(t *testing.T) {
 	logger := ll.New("test").Disable()
 	metrics := &RealMetrics{}
 	cipher, _ := security.NewCipher("test-secret-key-1234567890123456")
-	configMgr := NewConfigManager("", logger)
+	configMgr := NewDistributor(logger, "")
 	del := newDelegate(nil, logger, metrics, cipher, configMgr)
 
 	ts1 := time.Now().UnixNano()
@@ -318,7 +318,7 @@ func TestDelegate_LWW_and_Tombstones(t *testing.T) {
 func TestConfigManager_ChecksumEchoPrevention(t *testing.T) {
 	logger := ll.New("test").Disable()
 	tmpDir := t.TempDir()
-	cm := NewConfigManager(tmpDir, logger)
+	cm := NewDistributor(logger, tmpDir)
 
 	domain := "test"
 	content := []byte("route / { backend { address \"http://localhost:8080\" } }")
@@ -342,7 +342,7 @@ func TestConfigManager_ChecksumEchoPrevention(t *testing.T) {
 func TestConfigManager_ValidationRejectsBadHCL(t *testing.T) {
 	logger := ll.New("test").Disable()
 	tmpDir := t.TempDir()
-	cm := NewConfigManager(tmpDir, logger)
+	cm := NewDistributor(logger, tmpDir)
 
 	badHCL := []byte("invalid {{{ hcl syntax")
 	if err := cm.validateHCL(tmpDir+"/test.hcl", badHCL); err == nil {
@@ -369,7 +369,7 @@ route "/" {
 func TestConfigManager_DeletionHandling(t *testing.T) {
 	logger := ll.New("test").Disable()
 	tmpDir := t.TempDir()
-	cm := NewConfigManager(tmpDir, logger)
+	cm := NewDistributor(logger, tmpDir)
 
 	domain := "delete-test"
 	configPath := tmpDir + "/" + domain + ".hcl"
@@ -394,7 +394,7 @@ func TestConfigManager_DeletionHandling(t *testing.T) {
 
 func TestConfigManager_CompressionRoundTrip(t *testing.T) {
 	logger := ll.New("test").Disable()
-	cm := NewConfigManager("", logger)
+	cm := NewDistributor(logger, "")
 
 	original := []byte(`route "/" { backend { address "http://localhost:8080" } }`)
 

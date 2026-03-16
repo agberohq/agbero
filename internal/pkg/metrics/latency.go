@@ -33,10 +33,7 @@ type Latency struct {
 }
 
 func NewLatency() *Latency {
-	n := runtime.GOMAXPROCS(0) * 2
-	if n < 16 {
-		n = 16
-	}
+	n := max(runtime.GOMAXPROCS(0)*2, 16)
 
 	now := time.Now().UnixNano()
 	lt := &Latency{

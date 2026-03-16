@@ -37,7 +37,7 @@ type Manager struct {
 	metrics   Metrics
 	stopCh    chan struct{}
 	cipher    *security.Cipher
-	configMgr *ConfigManager
+	configMgr *Distributor
 	nodeName  string
 }
 
@@ -79,7 +79,7 @@ func NewManager(cfg Config, handler UpdateHandler, logger *ll.Logger) (*Manager,
 		}
 	}
 
-	configMgr := NewConfigManager(cfg.HostsDir, logger)
+	configMgr := NewDistributor(logger, cfg.HostsDir)
 	metrics := NewMetrics()
 	del := newDelegate(handler, logger, metrics, cipher, configMgr)
 	events := &eventDelegate{logger: logger, metrics: metrics}
@@ -295,8 +295,8 @@ func (m *Manager) Metrics() map[string]uint64 {
 	return m.metrics.Snapshot()
 }
 
-// ConfigManager returns the underlying sync controller for local integration.
-func (m *Manager) ConfigManager() *ConfigManager {
+// Distributor returns the underlying sync controller for local integration.
+func (m *Manager) ConfigManager() *Distributor {
 	return m.configMgr
 }
 

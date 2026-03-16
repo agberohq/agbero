@@ -18,7 +18,7 @@ import (
 // testingTB is a common interface for testing.T and testing.B
 type testingTB interface {
 	Helper()
-	Fatalf(format string, args ...interface{})
+	Fatalf(format string, args ...any)
 	TempDir() string
 }
 
@@ -331,7 +331,7 @@ func TestCook_ConcurrentDeployments(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, 10)
 	// Trigger multiple concurrent deployments
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		wg.Add(1)
 		go func(iteration int) {
 			defer wg.Done()

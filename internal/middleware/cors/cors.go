@@ -2,6 +2,7 @@ package cors
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -15,13 +16,7 @@ func New(cfg *alaye.CORS) func(http.Handler) http.Handler {
 		return func(next http.Handler) http.Handler { return next }
 	}
 
-	allowAllOrigins := false
-	for _, o := range cfg.AllowedOrigins {
-		if o == "*" {
-			allowAllOrigins = true
-			break
-		}
-	}
+	allowAllOrigins := slices.Contains(cfg.AllowedOrigins, "*")
 
 	allowMethods := strings.Join(cfg.AllowedMethods, ", ")
 	allowHeaders := strings.Join(cfg.AllowedHeaders, ", ")

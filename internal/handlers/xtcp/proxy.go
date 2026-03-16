@@ -350,7 +350,7 @@ func (p *Proxy) handle(src net.Conn) {
 
 	for i := 0; i < maxAttempts; i++ {
 		var picked lb.Backend
-		for j := 0; j < 5; j++ {
+		for range 5 {
 			picked = route.selector.Pick(nil, keyFunc)
 			if picked != nil && !tried[picked] {
 				break

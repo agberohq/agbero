@@ -69,8 +69,8 @@ type ConfigSync struct {
 }
 
 // NewConfigSync initializes the bridge between discovery and cluster configurations.
-// It relies completely on the cluster's ConfigManager for state tracking.
-func NewConfigSync(hostsDir woos.Folder, logger *ll.Logger, cluster *cluster.Manager) *ConfigSync {
+// It relies completely on the cluster's Distributor for state tracking.
+func NewConfigSync(logger *ll.Logger, cluster *cluster.Manager) *ConfigSync {
 	return &ConfigSync{
 		logger:  logger.Namespace(configSyncNamespace),
 		cluster: cluster,

@@ -435,7 +435,7 @@ func TestBackend_ConcurrentOperations(t *testing.T) {
 	}
 	defer b.Stop()
 	done := make(chan bool, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			b.Status(true)
 			b.Status(false)
@@ -445,7 +445,7 @@ func TestBackend_ConcurrentOperations(t *testing.T) {
 			done <- true
 		}()
 	}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 }

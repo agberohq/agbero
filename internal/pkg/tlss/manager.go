@@ -359,7 +359,7 @@ func (m *Manager) getCertificateLocal(host string) (*tls.Certificate, error) {
 
 func (m *Manager) getCertificateACME(domain string) (*tls.Certificate, error) {
 
-	v, err, _ := m.acmeFlight.Do(domain, func() (interface{}, error) {
+	v, err, _ := m.acmeFlight.Do(domain, func() (any, error) {
 		tlsCert, certPEM, keyPEM, err := m.acme.ObtainCert(domain)
 		if err != nil {
 			return nil, woos.ErrCertNotfound

@@ -26,7 +26,7 @@ func WithClusterManager(cm *cluster.Manager) Option {
 	return func(h *Host) {
 		h.clusterMgr = cm
 		if cm != nil {
-			h.configSync = NewConfigSync(h.hostsDir, h.logger, cm)
+			h.configSync = NewConfigSync(h.logger, cm)
 		}
 	}
 }

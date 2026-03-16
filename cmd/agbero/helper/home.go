@@ -27,12 +27,12 @@ func (h *Home) Navigate(target, action string) {
 	showContent := false
 	editorCmd := ""
 
-	if strings.HasPrefix(action, "@") {
+	if after, ok := strings.CutPrefix(action, "@"); ok {
 		if action == "@" {
 			openShell = true
 		} else {
 			showContent = true
-			editorCmd = strings.TrimPrefix(action, "@")
+			editorCmd = after
 		}
 	} else if target == "@" {
 		target = "base"

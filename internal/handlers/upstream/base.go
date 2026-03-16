@@ -230,7 +230,7 @@ func (b *Base) RegisterHealth(probeCfg health.ProbeConfig, checkFn func(ctx cont
 	return b.resource.Doctor.Add(patient)
 }
 
-func (b *Base) Doctor() interface{} {
+func (b *Base) Doctor() any {
 	if b.resource == nil {
 		return nil
 	}

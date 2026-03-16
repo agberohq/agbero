@@ -43,7 +43,7 @@ func TestAdminConfigDumpStructure(t *testing.T) {
 		t.Errorf("Expected status 200, got %d", resp.StatusCode)
 	}
 
-	var data map[string]interface{}
+	var data map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestAdminConfigDumpStructure(t *testing.T) {
 		t.Fatal("Missing 'hosts' key in config dump")
 	}
 
-	hosts, ok := hostsRaw.(map[string]interface{})
+	hosts, ok := hostsRaw.(map[string]any)
 	if !ok {
 		t.Fatal("'hosts' is not a map")
 	}
@@ -67,7 +67,7 @@ func TestAdminConfigDumpStructure(t *testing.T) {
 		t.Fatal("Expected host 'test.local' missing")
 	}
 
-	hostMap, ok := testHost.(map[string]interface{})
+	hostMap, ok := testHost.(map[string]any)
 	if !ok {
 		t.Fatal("Host entry is not a map")
 	}
@@ -77,7 +77,7 @@ func TestAdminConfigDumpStructure(t *testing.T) {
 		t.Fatal("Host missing 'routes' array")
 	}
 
-	routes, ok := routesRaw.([]interface{})
+	routes, ok := routesRaw.([]any)
 	if !ok {
 		t.Fatal("'routes' is not an array")
 	}
@@ -86,7 +86,7 @@ func TestAdminConfigDumpStructure(t *testing.T) {
 		t.Fatal("Expected at least one route")
 	}
 
-	routeMap := routes[0].(map[string]interface{})
+	routeMap := routes[0].(map[string]any)
 	if path, ok := routeMap["path"]; !ok || path != "/api" {
 		t.Errorf("Expected route path '/api', got %v", path)
 	}
@@ -106,14 +106,14 @@ func TestClusterInfoExposure(t *testing.T) {
 
 	srv.handleConfigDump(w, req)
 
-	var data map[string]interface{}
+	var data map[string]any
 	if err := json.NewDecoder(w.Body).Decode(&data); err != nil {
 		t.Fatalf("Failed to decode: %v", err)
 	}
 
 	if cluster, ok := data["cluster"]; ok {
 		if cluster != nil {
-			cMap, ok := cluster.(map[string]interface{})
+			cMap, ok := cluster.(map[string]any)
 			if !ok {
 				t.Error("Cluster info is not a map")
 			}

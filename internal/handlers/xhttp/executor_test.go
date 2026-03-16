@@ -194,7 +194,7 @@ func TestHTTPExecutor_Probe_ConnectionReuse(t *testing.T) {
 		Method: "GET",
 		Client: client,
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		success, _, err := executor.Probe(context.Background())
 		if err != nil {
 			t.Fatalf("request %d: unexpected error: %v", i+1, err)

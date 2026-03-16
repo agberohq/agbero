@@ -338,7 +338,7 @@ func TestProxy_ServeHTTP_Adaptive(t *testing.T) {
 	}
 	proxy := NewProxy(proxyCfg, []*Backend{b1, b2}, zulu.NewIPManager(nil))
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		req := httptest.NewRequest("GET", "/", nil)
 		w := httptest.NewRecorder()
 		proxy.ServeHTTP(w, req)
@@ -347,7 +347,7 @@ func TestProxy_ServeHTTP_Adaptive(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	fasterPicked := 0
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		picked := proxy.Pick(httptest.NewRequest("GET", "/", nil))
 		if picked == b1 {
 			fasterPicked++

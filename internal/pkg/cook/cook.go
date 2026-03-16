@@ -367,7 +367,7 @@ func (c *Cook) Cleanup(keep int) error {
 	}
 
 	toDelete := len(items) - keep
-	for i := 0; i < toDelete; i++ {
+	for i := range toDelete {
 		c.logger.Infof("cleaning up old deployment %s", items[i].commit[:8])
 		if err := os.RemoveAll(items[i].path); err != nil {
 			c.logger.Warnf("failed to remove %s: %v", items[i].commit[:8], err)

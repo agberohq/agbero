@@ -111,10 +111,10 @@ func TestCalculateLatencyScore(t *testing.T) {
 func TestPassiveErrorRate(t *testing.T) {
 	s := NewScore(DefaultThresholds(), DefaultScoringWeights(), DefaultLatencyThresholds(), nil)
 
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		s.RecordPassiveRequest(true)
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		s.RecordPassiveRequest(false)
 	}
 

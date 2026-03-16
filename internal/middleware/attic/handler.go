@@ -93,7 +93,7 @@ func (m *CacheMiddleware) Handler(next http.Handler) http.Handler {
 
 		varyHeaders := make(map[string]string)
 		if vary := rec.Header().Get("Vary"); vary != "" {
-			for _, field := range strings.Split(vary, ",") {
+			for field := range strings.SplitSeq(vary, ",") {
 				field = strings.TrimSpace(field)
 				if field != "*" && field != "" {
 					varyHeaders[field] = r.Header.Get(field)
@@ -184,7 +184,7 @@ func isResponseCacheable(status int, hdr http.Header) bool {
 
 func isResponseValidForRequest(e *Entry, r *http.Request) bool {
 	if v := e.Headers.Get("Vary"); v != "" {
-		for _, f := range strings.Split(v, ",") {
+		for f := range strings.SplitSeq(v, ",") {
 			f = strings.TrimSpace(f)
 			if f == "*" {
 				return false
@@ -214,7 +214,7 @@ func matchConditionalRequest(r *http.Request, e *Entry) bool {
 }
 
 func parseMaxAge(cc string) time.Duration {
-	for _, p := range strings.Split(cc, ",") {
+	for p := range strings.SplitSeq(cc, ",") {
 		p = strings.TrimSpace(p)
 		if strings.HasPrefix(p, "max-age=") {
 			if s, err := strconv.Atoi(p[8:]); err == nil {

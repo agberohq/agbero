@@ -43,9 +43,9 @@ func Extractor(keys []string) func(*http.Request) string {
 			headerPart = strings.TrimSpace(headerPart)
 
 			var headerName, prefix string
-			if colonIdx := strings.Index(headerPart, ":"); colonIdx != -1 {
-				headerName = strings.TrimSpace(headerPart[:colonIdx])
-				prefix = strings.TrimSpace(headerPart[colonIdx+1:])
+			if before, after, ok := strings.Cut(headerPart, ":"); ok {
+				headerName = strings.TrimSpace(before)
+				prefix = strings.TrimSpace(after)
 			} else {
 				headerName = headerPart
 			}
