@@ -7,14 +7,20 @@ import (
 	"github.com/tetratelabs/wazero/api"
 )
 
-// RequestContext holds the state for a single HTTP request
+const (
+	maxHeaderKeySize = 1024
+	maxHeaderValSize = 4096
+	emptyReturnVal   = 0
+)
+
 type RequestContext struct {
 	W    http.ResponseWriter
 	R    *http.Request
-	Next bool // Should we proceed?
+	Next bool
 }
 
-// ExportHostFunctions registers Agbero's API into the WASM runtime
+// ExportHostFunctions registers internal proxy API hooks into the WASM runtime.
+// Securely binds host methods while enforcing strict memory access limits to prevent OOMs.
 func (m *Manager) ExportHostFunctions() {
 	builder := m.runtime.NewHostModuleBuilder("env")
 
@@ -22,19 +28,18 @@ func (m *Manager) ExportHostFunctions() {
 		WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
 			rcRaw := ctx.Value(CtxKeyRequest)
 			if rcRaw == nil {
-				stack[0] = 0
+				stack[0] = emptyReturnVal
 				return
 			}
 			rc, ok := rcRaw.(*RequestContext)
 			if !ok || rc == nil || rc.R == nil {
-				stack[0] = 0
+				stack[0] = emptyReturnVal
 				return
 			}
 			req := rc.R
 
-			// Permission check
 			if !m.config.HasAccess("headers") {
-				stack[0] = 0
+				stack[0] = emptyReturnVal
 				return
 			}
 
@@ -43,10 +48,14 @@ func (m *Manager) ExportHostFunctions() {
 			bufPtr := uint32(stack[2])
 			bufLen := uint32(stack[3])
 
-			// Bounds check for key read
+			if keyLen > maxHeaderKeySize {
+				stack[0] = emptyReturnVal
+				return
+			}
+
 			keyBytes, ok := mod.Memory().Read(keyPtr, keyLen)
 			if !ok {
-				stack[0] = 0
+				stack[0] = emptyReturnVal
 				return
 			}
 
@@ -57,17 +66,14 @@ func (m *Manager) ExportHostFunctions() {
 			writeLen := min(uint32(totalLen), bufLen)
 
 			if writeLen > 0 {
-				// Bounds check for value write
 				if !mod.Memory().Write(bufPtr, valBytes[:writeLen]) {
-					stack[0] = 0
+					stack[0] = emptyReturnVal
 					return
 				}
 			}
 
 			stack[0] = totalLen
-		}),
-			[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
-			[]api.ValueType{api.ValueTypeI32}).
+		}), []api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32}, []api.ValueType{api.ValueTypeI32}).
 		Export("agbero_get_header")
 
 	builder.NewFunctionBuilder().
@@ -90,6 +96,10 @@ func (m *Manager) ExportHostFunctions() {
 			valPtr := uint32(stack[2])
 			valLen := uint32(stack[3])
 
+			if keyLen > maxHeaderKeySize || valLen > maxHeaderValSize {
+				return
+			}
+
 			keyBytes, ok := mod.Memory().Read(keyPtr, keyLen)
 			if !ok {
 				return
@@ -100,9 +110,7 @@ func (m *Manager) ExportHostFunctions() {
 			}
 
 			w.Header().Set(string(keyBytes), string(valBytes))
-		}),
-			[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
-			[]api.ValueType{}).
+		}), []api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32}, []api.ValueType{}).
 		Export("agbero_set_header")
 
 	builder.NewFunctionBuilder().
@@ -115,15 +123,13 @@ func (m *Manager) ExportHostFunctions() {
 
 			if writeLen > 0 {
 				if !mod.Memory().Write(bufPtr, m.configJSON[:writeLen]) {
-					stack[0] = 0
+					stack[0] = emptyReturnVal
 					return
 				}
 			}
 
 			stack[0] = totalLen
-		}),
-			[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32},
-			[]api.ValueType{api.ValueTypeI32}).
+		}), []api.ValueType{api.ValueTypeI32, api.ValueTypeI32}, []api.ValueType{api.ValueTypeI32}).
 		Export("agbero_get_config")
 
 	builder.NewFunctionBuilder().
@@ -138,15 +144,13 @@ func (m *Manager) ExportHostFunctions() {
 				return
 			}
 
-			if status != 0 {
+			if status != emptyReturnVal {
 				rc.W.WriteHeader(int(status))
 				rc.Next = false
 			} else {
 				rc.Next = true
 			}
-		}),
-			[]api.ValueType{api.ValueTypeI32},
-			[]api.ValueType{}).
+		}), []api.ValueType{api.ValueTypeI32}, []api.ValueType{}).
 		Export("agbero_done")
 
 	_, _ = builder.Instantiate(context.Background())

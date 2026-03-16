@@ -13,12 +13,20 @@ import (
 	"github.com/agberohq/agbero/internal/dependency"
 )
 
+const (
+	idleTimeoutLimit = 5 * time.Minute
+	networkTypeIPv4  = "ip4"
+)
+
+var errPoolFull = fmt.Errorf("connection pool full")
+
 type pooledConn struct {
 	net.Conn
 	lastUsed time.Time
 	inUse    atomic.Bool
 	failed   atomic.Bool
 }
+
 type connPool struct {
 	mu       sync.RWMutex
 	conns    []*pooledConn
@@ -28,6 +36,8 @@ type connPool struct {
 	resolved netip.AddrPort
 }
 
+// newConnPool creates a managed pool for reusing TCP connections
+// Configures bounds and timeouts to prevent socket exhaustion
 func newConnPool(addr string, maxSize int, timeout time.Duration) *connPool {
 	return &connPool{
 		addr:    addr,
@@ -35,7 +45,10 @@ func newConnPool(addr string, maxSize int, timeout time.Duration) *connPool {
 		timeout: timeout,
 	}
 }
-func (p *connPool) get() (*pooledConn, error) {
+
+// get acquires a healthy connection from the pool or establishes a new one
+// Relies on the provided context to safely abort dialing attempts
+func (p *connPool) get(ctx context.Context) (*pooledConn, error) {
 	p.mu.RLock()
 	for _, c := range p.conns {
 		if c.inUse.CompareAndSwap(false, true) && !c.failed.Load() {
@@ -53,7 +66,7 @@ func (p *connPool) get() (*pooledConn, error) {
 		}
 	}
 	p.mu.RUnlock()
-	conn, err := p.dial()
+	conn, err := p.dial(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +81,7 @@ func (p *connPool) get() (*pooledConn, error) {
 	} else {
 		replaced := false
 		for i, c := range p.conns {
-			if c.failed.Load() || (!c.inUse.Load() && time.Since(c.lastUsed) > 5*time.Minute) {
+			if c.failed.Load() || (!c.inUse.Load() && time.Since(c.lastUsed) > idleTimeoutLimit) {
 				_ = c.Conn.Close()
 				p.conns[i] = pc
 				replaced = true
@@ -78,18 +91,24 @@ func (p *connPool) get() (*pooledConn, error) {
 		if !replaced {
 			_ = pc.Conn.Close()
 			p.mu.Unlock()
-			return nil, fmt.Errorf("connection pool full")
+			return nil, errPoolFull
 		}
 	}
 	p.mu.Unlock()
 	return pc, nil
 }
-func (p *connPool) dial() (net.Conn, error) {
+
+// dial negotiates a new network connection to the target backend
+// Uses the parent context to securely terminate hanging DNS resolutions
+func (p *connPool) dial(ctx context.Context) (net.Conn, error) {
 	p.mu.RLock()
 	resolved := p.resolved
 	p.mu.RUnlock()
+
+	dialer := net.Dialer{Timeout: p.timeout}
+
 	if resolved.IsValid() {
-		conn, err := net.DialTimeout(woos.TCP, resolved.String(), p.timeout)
+		conn, err := dialer.DialContext(ctx, woos.TCP, resolved.String())
 		if err == nil {
 			return conn, nil
 		}
@@ -101,23 +120,21 @@ func (p *connPool) dial() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
-	defer cancel()
+
 	resolver := &net.Resolver{
 		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{Timeout: p.timeout}
-			return d.DialContext(ctx, network, address)
+		Dial: func(resCtx context.Context, network, address string) (net.Conn, error) {
+			return dialer.DialContext(resCtx, network, address)
 		},
 	}
-	addrs, err := resolver.LookupNetIP(ctx, "ip4", host)
+	addrs, err := resolver.LookupNetIP(ctx, networkTypeIPv4, host)
 	if err != nil || len(addrs) == 0 {
-		return net.DialTimeout(woos.TCP, p.addr, p.timeout)
+		return dialer.DialContext(ctx, woos.TCP, p.addr)
 	}
 	var lastErr error
 	for _, addr := range addrs {
 		addrPort := netip.AddrPortFrom(addr, parsePort(port))
-		conn, err := net.DialTimeout(woos.TCP, addrPort.String(), p.timeout)
+		conn, err := dialer.DialContext(ctx, woos.TCP, addrPort.String())
 		if err == nil {
 			p.mu.Lock()
 			p.resolved = addrPort
@@ -128,6 +145,9 @@ func (p *connPool) dial() (net.Conn, error) {
 	}
 	return nil, lastErr
 }
+
+// put returns an active connection to the reusable pool
+// Flags the object as available and refreshes its tracking timestamp
 func (p *connPool) put(pc *pooledConn) {
 	if pc == nil {
 		return
@@ -137,6 +157,9 @@ func (p *connPool) put(pc *pooledConn) {
 	pc.lastUsed = time.Now()
 	p.mu.Unlock()
 }
+
+// close terminates all active sockets within the pool
+// Executed during graceful shutdown sweeps
 func (p *connPool) close() {
 	p.mu.Lock()
 	for _, c := range p.conns {
@@ -146,9 +169,8 @@ func (p *connPool) close() {
 	p.mu.Unlock()
 }
 
-// isAlive delegates to the platform-specific liveness check in internal/dependency.
-// On non-Windows it uses a non-blocking MSG_PEEK to detect closed connections.
-// On Windows it returns true conservatively.
+// isAlive checks the platform-specific socket status to ensure usability
+// Filters out connections dropped silently by the remote peer
 func (p *connPool) isAlive(conn net.Conn) bool {
 	return dependency.ConnAlive(conn)
 }

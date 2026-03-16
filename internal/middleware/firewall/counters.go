@@ -8,9 +8,14 @@ import (
 	"github.com/olekukonko/mappo"
 )
 
-// Bit layout: [40 bits expire timestamp | 24 bits count]
-// 40 bits timestamp = Year 36,812.
-// 24 bits count = 16.7 million requests allowed per window.
+const (
+	counterShardCount = 64
+	counterCleanupInt = 1 * time.Minute
+	counterGCRoutine  = "fw-counters-gc"
+	counterGCPool     = 1
+	counterIncrement  = 1
+)
+
 var counterBits = []uint8{40, 24}
 
 type atomicCounter struct {
@@ -22,13 +27,15 @@ type Counters struct {
 	scheduler *jack.Scheduler
 }
 
+// NewCounters initializes the rate limit tracking map and garbage collector
+// Ensures bounded memory usage by sweeping expired records periodically
 func NewCounters() *Counters {
 	c := &Counters{
-		data: mappo.NewShardedWithConfig[string, *atomicCounter](mappo.ShardedConfig{ShardCount: 64}),
+		data: mappo.NewShardedWithConfig[string, *atomicCounter](mappo.ShardedConfig{ShardCount: counterShardCount}),
 	}
 
-	sched, _ := jack.NewScheduler("fw-counters-gc", jack.NewPool(1), jack.Routine{
-		Interval: 1 * time.Minute,
+	sched, _ := jack.NewScheduler(counterGCRoutine, jack.NewPool(counterGCPool), jack.Routine{
+		Interval: counterCleanupInt,
 	})
 	_ = sched.Do(jack.Do(c.cleanup))
 	c.scheduler = sched
@@ -36,6 +43,8 @@ func NewCounters() *Counters {
 	return c
 }
 
+// Stop terminates the background cleanup scheduler safely
+// Clears all map data to prevent memory leaks during hot reloads
 func (c *Counters) Stop() {
 	if c.scheduler != nil {
 		_ = c.scheduler.Stop()
@@ -43,6 +52,8 @@ func (c *Counters) Stop() {
 	c.data.Clear()
 }
 
+// Increment safely adds to the key counter using a lock-free compare-and-swap loop
+// Automatically evicts expired timestamps and begins a new rate-limit window
 func (c *Counters) Increment(ruleID, key string, window time.Duration) int64 {
 	fullKey := ruleID + "|" + key
 	nowSec := time.Now().Unix()
@@ -53,31 +64,28 @@ func (c *Counters) Increment(ruleID, key string, window time.Duration) int64 {
 	c.data.Compute(fullKey, func(curr *atomicCounter, exists bool) (*atomicCounter, bool) {
 		if !exists {
 			newCounter := &atomicCounter{}
-			newCounter.state.Store(zulu.NewPacked(counterBits, expireSec, 1))
-			result = 1
+			newCounter.state.Store(zulu.NewPacked(counterBits, expireSec, counterIncrement))
+			result = counterIncrement
 			return newCounter, true
 		}
 
-		// CAS loop for atomic update
 		for {
 			oldPacked := curr.state.Load()
 			values := oldPacked.Extract(counterBits)
 			oldExpire, oldCount := values[0], values[1]
 
-			// Check expiration
 			if nowSec > oldExpire {
-				newPacked := zulu.NewPacked(counterBits, expireSec, 1)
+				newPacked := zulu.NewPacked(counterBits, expireSec, counterIncrement)
 				if curr.state.CompareAndSwap(oldPacked, newPacked) {
-					result = 1
+					result = counterIncrement
 					return curr, true
 				}
 				continue
 			}
 
-			// Increment
-			newPacked := zulu.NewPacked(counterBits, oldExpire, oldCount+1)
+			newPacked := zulu.NewPacked(counterBits, oldExpire, oldCount+counterIncrement)
 			if curr.state.CompareAndSwap(oldPacked, newPacked) {
-				result = oldCount + 1
+				result = oldCount + counterIncrement
 				return curr, true
 			}
 		}
@@ -86,6 +94,8 @@ func (c *Counters) Increment(ruleID, key string, window time.Duration) int64 {
 	return result
 }
 
+// cleanup removes stale entries from the tracking map
+// Executed by the background scheduler to maintain optimal memory consumption
 func (c *Counters) cleanup() {
 	now := time.Now().Unix()
 	c.data.ClearIf(func(k string, v *atomicCounter) bool {

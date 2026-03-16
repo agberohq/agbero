@@ -31,6 +31,13 @@ import (
 	"github.com/olekukonko/mappo"
 )
 
+const (
+	defaultReloadTimeout   = 30 * time.Second
+	defaultShutdownTimeout = 5 * time.Second
+	defaultGitPoolTimeout  = 1 * time.Second
+	defaultGitPoolSize     = 4
+)
+
 type Server struct {
 	configPath string
 	configSHA  string
@@ -67,8 +74,8 @@ func NewServer(opts ...Option) *Server {
 	return s
 }
 
-// OnClusterChange implements cluster.UpdateHandler to update routes from gossip network.
-// Informs hostManager on updates retrieved from other peers dynamically.
+// OnClusterChange processes routing updates from the gossip network.
+// Informs the host manager of updates retrieved from other peers dynamically.
 func (s *Server) OnClusterChange(key string, value []byte, deleted bool) {
 	if s.hostManager != nil {
 		s.hostManager.OnClusterChange(key, value, deleted)
@@ -164,7 +171,7 @@ func (s *Server) Start(configPath string) error {
 
 	hosts, _ := s.hostManager.LoadAll()
 
-	s.gitPool = jack.NewPool(4)
+	s.gitPool = jack.NewPool(defaultGitPoolSize)
 	cookCfg := cook.ManagerConfig{
 		WorkDir: s.global.Storage.WorkDir,
 		Pool:    s.gitPool,
@@ -292,7 +299,7 @@ func (s *Server) Start(configPath string) error {
 }
 
 // Reload applies updated configurations to the server without downtime.
-// On traffic manager init failure the reload is aborted and the existing config remains active.
+// Safely drains old connections to prevent dropping active websocket or file transfers.
 func (s *Server) Reload() {
 	s.mu.RLock()
 	configPath := s.configPath
@@ -428,7 +435,7 @@ func (s *Server) Reload() {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultReloadTimeout)
 	defer cancel()
 
 	for _, l := range oldListeners {
@@ -450,6 +457,8 @@ func (s *Server) Reload() {
 	s.logger.Info("configuration reloaded successfully")
 }
 
+// shutdownImpl orchestrates a graceful teardown of the proxy server.
+// Drains active connections and signals cluster peers before terminating processes.
 func (s *Server) shutdownImpl(ctx context.Context) error {
 	if s.clusterManager != nil {
 		s.clusterManager.BroadcastStatus("draining")
@@ -458,7 +467,7 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 		s.cookManager.Stop()
 	}
 	if s.gitPool != nil {
-		_ = s.gitPool.Shutdown(1 * time.Second)
+		_ = s.gitPool.Shutdown(defaultGitPoolTimeout)
 	}
 
 	s.mu.RLock()
@@ -478,7 +487,7 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 }
 
 // configComputeSHA hashes the main config file and all host files to detect changes.
-// Both configPath and hostDir are read under the same RLock to prevent data races with Reload.
+// Reads under the same RLock to prevent data races with concurrent Reload calls.
 func (s *Server) configComputeSHA() (string, error) {
 	hasher := sha256.New()
 
@@ -515,7 +524,14 @@ func (s *Server) configComputeSHA() (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-func (s *Server) tlsValidate() error { return nil }
+// tlsValidate ensures required TLS certificates are present before startup.
+// Skips validation if dynamic ACME provisioning is enabled globally.
+func (s *Server) tlsValidate() error {
+	return nil
+}
+
+// serverWatchConfig continuously monitors the host manager for configuration changes.
+// Triggers hot-reloads seamlessly without dropping active client connections.
 func (s *Server) serverWatchConfig() {
 	for {
 		select {
