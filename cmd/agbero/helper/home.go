@@ -20,40 +20,47 @@ type Home struct {
 	viewer *zulu.Viewer
 }
 
-// Navigates to the specified target directory and opens an interactive shell
+// Navigate to the specified target directory and opens an interactive shell
 // Supports viewing or editing the configuration file based on the selected action
 func (h *Home) Navigate(target, action string) {
 	ctx := installer.NewContext(h.p.Logger, "")
 
 	openShell := false
 	showContent := false
+	openInExplorer := false
 	editorCmd := ""
 
-	if after, ok := strings.CutPrefix(action, "@"); ok {
-		if action == "@" {
-			openShell = true
-		} else {
-			showContent = true
-			editorCmd = after
-		}
-	} else if target == "@" {
-		target = "base"
+	// Handle special commands
+	switch {
+	case action == "@" || target == "@":
 		openShell = true
+		if target == "@" {
+			target = "base"
+		}
+	case action == "." || action == "open" || target == "." || target == "open":
+		openInExplorer = true
+		if target == "." || target == "open" {
+			target = "base"
+		}
+	case strings.HasPrefix(action, "@"):
+		// Handle @editor commands (existing)
+		showContent = true
+		editorCmd = strings.TrimPrefix(action, "@")
 	}
 
 	var dir, filePath string
 	switch strings.ToLower(target) {
-	case "hosts":
+	case "hosts", "host":
 		dir = ctx.Paths.HostsDir.Path()
-	case "certs":
+	case "certs", "cert":
 		dir = ctx.Paths.CertsDir.Path()
-	case "data":
+	case "data", "datas":
 		dir = ctx.Paths.DataDir.Path()
-	case "logs":
+	case "logs", "log":
 		dir = ctx.Paths.LogsDir.Path()
-	case "work":
+	case "work", "works":
 		dir = ctx.Paths.WorkDir.Path()
-	case "config":
+	case "config", "configs":
 		filePath = ctx.Paths.ConfigFile
 		dir = filepath.Dir(ctx.Paths.ConfigFile)
 	default:
@@ -62,6 +69,13 @@ func (h *Home) Navigate(target, action string) {
 
 	if showContent && filePath != "" {
 		runEditor(editorCmd, filePath)
+		return
+	}
+
+	if openInExplorer {
+		if err := h.open(dir); err != nil {
+			fmt.Printf("failed to open directory in explorer: %v\n", err)
+		}
 		return
 	}
 
@@ -101,9 +115,9 @@ func (h *Home) Navigate(target, action string) {
 	}
 }
 
-// Removes all state managed by the application from the operating system
+// Uninstall all state managed by the application from the operating system
 // Requires explicit interactive confirmation unless the force flag is provided
-func (h *Home) UninstallEverything(svc service.Service, configPath string, force bool) {
+func (h *Home) Uninstall(svc service.Service, configPath string, force bool) {
 	if !force {
 		var confirm bool
 		err := huh.NewConfirm().
@@ -200,4 +214,30 @@ func (h *Home) deleteBinary() {
 
 	h.p.Logger.Infof("removed binary at %s", resolved)
 	fmt.Println("\nagbero has been completely uninstalled.")
+}
+
+func (h *Home) open(dir string) error {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve path: %w", err)
+	}
+
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("explorer", dir)
+
+	case "darwin":
+		cmd = exec.Command("open", dir)
+
+	default: // linux, bsd
+		cmd = exec.Command("xdg-open", dir)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to open directory: %w", err)
+	}
+
+	return nil
 }

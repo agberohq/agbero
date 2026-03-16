@@ -324,7 +324,7 @@ func main() {
 			Description: woos.Description,
 		}
 		svc, _ := service.New(nil, svcConfig)
-		hel.Home().UninstallEverything(svc, resolvedPath, cfg.UninstallForce)
+		hel.Home().Uninstall(svc, resolvedPath, cfg.UninstallForce)
 		return
 	}
 
@@ -468,7 +468,7 @@ func main() {
 			sh.Install(svc, cfg.InstallHere)
 		case cmdServiceUninstall.Used:
 			if cfg.UninstallAll {
-				hel.Home().UninstallEverything(svc, resolvedPath, cfg.UninstallForce)
+				hel.Home().Uninstall(svc, resolvedPath, cfg.UninstallForce)
 			} else {
 				sh.Uninstall(svc)
 			}
