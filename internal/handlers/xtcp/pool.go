@@ -2,16 +2,15 @@ package xtcp
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/dependency"
 )
 
 type pooledConn struct {
@@ -129,33 +128,6 @@ func (p *connPool) dial() (net.Conn, error) {
 	}
 	return nil, lastErr
 }
-func (p *connPool) isAlive(conn net.Conn) bool {
-	sys, ok := conn.(syscall.Conn)
-	if !ok {
-		return true
-	}
-	raw, err := sys.SyscallConn()
-	if err != nil {
-		return false
-	}
-	var sysErr error
-	var n int
-	err = raw.Read(func(fd uintptr) bool {
-		buf := make([]byte, 1)
-		n, _, sysErr = syscall.Recvfrom(int(fd), buf, syscall.MSG_PEEK|syscall.MSG_DONTWAIT)
-		return true
-	})
-	if err != nil {
-		return false
-	}
-	if sysErr != nil {
-		if errors.Is(sysErr, syscall.EAGAIN) || errors.Is(sysErr, syscall.EWOULDBLOCK) {
-			return true
-		}
-		return false
-	}
-	return n > 0
-}
 func (p *connPool) put(pc *pooledConn) {
 	if pc == nil {
 		return
@@ -172,4 +144,11 @@ func (p *connPool) close() {
 	}
 	p.conns = p.conns[:0]
 	p.mu.Unlock()
+}
+
+// isAlive delegates to the platform-specific liveness check in internal/dependency.
+// On non-Windows it uses a non-blocking MSG_PEEK to detect closed connections.
+// On Windows it returns true conservatively.
+func (p *connPool) isAlive(conn net.Conn) bool {
+	return dependency.ConnAlive(conn)
 }
