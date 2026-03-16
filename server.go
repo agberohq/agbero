@@ -135,6 +135,7 @@ func (s *Server) Start(configPath string) error {
 							h.Close()
 						}
 					}
+					s.resource.RouteCache.Delete(id)
 				}
 			}))
 	}

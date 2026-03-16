@@ -6,6 +6,7 @@ go 1.26
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
+	github.com/alecthomas/chroma/v2 v2.2.0
 	github.com/alecthomas/hcl v0.5.5
 	github.com/andybalholm/brotli v1.2.0
 	github.com/cenkalti/backoff/v4 v4.3.0
@@ -44,6 +45,8 @@ require (
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.49.0
 	golang.org/x/oauth2 v0.36.0
+	golang.org/x/sync v0.20.0
+	golang.org/x/term v0.41.0
 	golang.org/x/time v0.15.0
 )
 
@@ -51,7 +54,6 @@ require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.4.0 // indirect
-	github.com/alecthomas/chroma/v2 v2.2.0 // indirect
 	github.com/alecthomas/participle/v2 v2.0.0-beta.5 // indirect
 	github.com/alecthomas/repr v0.4.0 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
@@ -132,7 +134,6 @@ require (
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/net v0.52.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect

@@ -325,13 +325,20 @@ func (m *Manager) logRequest(host string, r *http.Request, start time.Time, stat
 		args = append(args, "port", port)
 	}
 
-	ua := r.UserAgent()
-	if m.cfg.Global != nil && (strings.Contains(ua, "bot") || strings.Contains(ua, "crawl") || strings.Contains(ua, "spider") || len(ua) > 100) {
-		args = append(args, "ua", zulu.Truncate(ua, 50))
+	if m.cfg.Global != nil {
+		ua := r.UserAgent()
+		if m.cfg.Global.Logging.Truncate.Active() {
+			args = append(args, "ua", zulu.Truncate(ua, 50))
+		} else {
+			args = append(args, "ua", zulu.Truncate(ua, 50))
+		}
+		// Add bot detection if checker exists
+		if m.cfg.Global.Logging.BotChecker.Active() {
+			args = append(args, "is_bot", m.botChecker.IsBot(ua))
+		}
 	}
 
 	m.cfg.Resource.Logger.Fields(args...).Info(r.Method)
-
 	*argsPtr = args
 	m.logArgsPool.Put(argsPtr)
 }

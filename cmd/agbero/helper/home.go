@@ -9,17 +9,21 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/installer"
 	"github.com/charmbracelet/huh"
 	"github.com/kardianos/service"
 )
 
 type Home struct {
-	p *Helper
+	p      *Helper
+	viewer *zulu.Viewer
 }
 
-// Navigate prints or opens the requested agbero directory target.
-// Passing "@" as action opens an interactive shell in the target directory.
+// Navigate changes to the target directory and optionally opens a shell.
+// When action is "@", it changes to the directory, displays its contents,
+// and starts an interactive shell. When action is "@editor", it opens the
+// configuration file in the specified editor.
 func (h *Home) Navigate(target, action string) {
 	ctx := installer.NewContext(h.p.Logger, "")
 
@@ -68,16 +72,12 @@ func (h *Home) Navigate(target, action string) {
 			fmt.Printf("failed to enter directory: %v\n", err)
 			return
 		}
-		fmt.Printf("\033[1;34mAgbero Workspace\033[0m: %s\n\n", dir)
 
-		lsCmd := "ls"
-		if runtime.GOOS == woos.Windows {
-			lsCmd = "dir"
+		if h.viewer == nil {
+			h.viewer = zulu.NewViewer()
 		}
-		ls := exec.Command(lsCmd)
-		ls.Stdout = os.Stdout
-		ls.Stderr = os.Stderr
-		_ = ls.Run()
+
+		h.viewer.Show(dir, true)
 
 		shell := os.Getenv("SHELL")
 		if shell == "" {
@@ -87,6 +87,7 @@ func (h *Home) Navigate(target, action string) {
 				shell = "/bin/sh"
 			}
 		}
+
 		cmd := exec.Command(shell)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
@@ -102,10 +103,9 @@ func (h *Home) Navigate(target, action string) {
 	}
 }
 
-// UninstallEverything performs a complete removal of all agbero-managed state.
-// It stops the service, removes the local CA, deletes all data directories,
-// and optionally removes the binary. When force is false an interactive
-// confirmation prompt is shown before any destructive action is taken.
+// UninstallEverything removes all agbero-managed state including service,
+// certificates, data directories, and the binary. When force is false,
+// it prompts for confirmation before proceeding.
 func (h *Home) UninstallEverything(svc service.Service, configPath string, force bool) {
 	if !force {
 		var confirm bool
@@ -136,8 +136,6 @@ func (h *Home) UninstallEverything(svc service.Service, configPath string, force
 	h.deleteBinary()
 }
 
-// uninstallService stops and removes the system service registration.
-// Errors are logged as warnings since the service may already be stopped or unregistered.
 func (h *Home) uninstallService(svc service.Service) {
 	h.p.Logger.Info("stopping and removing system service")
 	if err := svc.Stop(); err != nil {
@@ -148,16 +146,12 @@ func (h *Home) uninstallService(svc service.Service) {
 	}
 }
 
-// uninstallCA removes the local Certificate Authority from the system trust store
-// and deletes all certificate files managed by agbero.
 func (h *Home) uninstallCA(configPath string) {
 	h.p.Logger.Info("removing local Certificate Authority")
 	certHelper := &Cert{p: h.p}
 	certHelper.Uninstall(configPath)
 }
 
-// deleteDataDirectories removes the entire agbero home directory tree including
-// all host configs, certificates, logs, work files, and the main config file.
 func (h *Home) deleteDataDirectories() {
 	ctx := installer.NewContext(h.p.Logger, "")
 	baseDir := ctx.Paths.BaseDir.Path()
@@ -176,10 +170,6 @@ func (h *Home) deleteDataDirectories() {
 	}
 }
 
-// deleteBinary removes the running agbero executable from disk.
-// On Unix systems the binary can be deleted while running; the inode remains
-// until the process exits. On Windows this will fail if the process is still
-// active — a warning is printed with the path for manual removal.
 func (h *Home) deleteBinary() {
 	h.p.Logger.Info("removing agbero binary")
 

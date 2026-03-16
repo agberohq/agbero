@@ -19,6 +19,7 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/firewall"
 	"github.com/agberohq/agbero/internal/middleware/ratelimit"
 	"github.com/agberohq/agbero/internal/middleware/wasm"
+	"github.com/agberohq/agbero/internal/pkg/bot"
 	"github.com/agberohq/agbero/internal/pkg/cook"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/olekukonko/errors"
@@ -48,6 +49,7 @@ type Manager struct {
 	rateLimiter *ratelimit.RateLimiter
 
 	logArgsPool sync.Pool
+	botChecker  *bot.Checker
 }
 
 type llWriter struct {
@@ -81,6 +83,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 				return &s
 			},
 		},
+		botChecker: bot.NewChecker(),
 	}
 	if cfg.Global.Logging.Enabled.Active() && len(cfg.Global.Logging.Skip) > 0 {
 		for _, p := range cfg.Global.Logging.Skip {

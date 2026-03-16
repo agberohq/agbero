@@ -182,6 +182,14 @@ func defaultLogging(l *alaye.Logging) {
 		l.Deduplicate = alaye.Active
 	}
 
+	if l.Truncate == alaye.Unknown {
+		l.Truncate = alaye.Active
+	}
+
+	if l.BotChecker == alaye.Unknown {
+		l.BotChecker = alaye.Active
+	}
+
 	hasConfig := l.File.Path != "" || l.Victoria.URL != ""
 	if l.Enabled == alaye.Unknown && hasConfig {
 		l.Enabled = alaye.Active
