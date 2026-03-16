@@ -17,11 +17,11 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/installer"
 )
 
-type EphemeralHelper struct {
+type Ephemeral struct {
 	p *Helper
 }
 
-func (e *EphemeralHelper) Serve() {
+func (e *Ephemeral) Serve() {
 	cfg := e.p.Cfg
 	path := cfg.ServePath
 	if path == "" {
@@ -76,7 +76,7 @@ func (e *EphemeralHelper) Serve() {
 	e.run(global, hosts)
 }
 
-func (e *EphemeralHelper) Proxy() {
+func (e *Ephemeral) Proxy() {
 	cfg := e.p.Cfg
 	if cfg.ProxyTarget == "" {
 		e.p.Logger.Println("error: target required (e.g., :3000 or http://127.0.0.1:3000)")
@@ -140,7 +140,7 @@ func (e *EphemeralHelper) Proxy() {
 	e.run(global, hosts)
 }
 
-func (e *EphemeralHelper) createGlobal(bindHost string, port int, useHTTPS bool, ctx *installer.Context) *alaye.Global {
+func (e *Ephemeral) createGlobal(bindHost string, port int, useHTTPS bool, ctx *installer.Context) *alaye.Global {
 	global := alaye.NewEphemeralGlobal(port, useHTTPS)
 	if bindHost != "" {
 		addr := fmt.Sprintf("%s:%d", bindHost, port)
@@ -158,7 +158,7 @@ func (e *EphemeralHelper) createGlobal(bindHost string, port int, useHTTPS bool,
 	return global
 }
 
-func (e *EphemeralHelper) run(global *alaye.Global, hosts map[string]*alaye.Host) {
+func (e *Ephemeral) run(global *alaye.Global, hosts map[string]*alaye.Host) {
 	hm := discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(e.p.Logger))
 	hm.LoadStatic(hosts)
 

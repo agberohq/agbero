@@ -24,14 +24,14 @@ type routeData struct {
 	Port   string
 }
 
-type HostHelper struct {
+type Host struct {
 	p         *Helper
 	ProxyTpl  string
 	StaticTpl string
 	TCPTpl    string
 }
 
-func (h *HostHelper) List(configPath string) error {
+func (h *Host) List(configPath string) error {
 	global, err := loadGlobal(configPath)
 	if err != nil {
 		return err
@@ -56,7 +56,7 @@ func (h *HostHelper) List(configPath string) error {
 	return nil
 }
 
-func (h *HostHelper) Add(configPath string) {
+func (h *Host) Add(configPath string) {
 	hostsDir := h.resolveHostsDir(configPath)
 
 	var (
@@ -178,7 +178,7 @@ func (h *HostHelper) Add(configPath string) {
 	fmt.Println("Agbero daemon will pick up changes automatically.")
 }
 
-func (h *HostHelper) Remove(configPath string) {
+func (h *Host) Remove(configPath string) {
 	hostsDir := h.resolveHostsDir(configPath)
 
 	entries, err := os.ReadDir(hostsDir)
@@ -219,7 +219,7 @@ func (h *HostHelper) Remove(configPath string) {
 	h.p.Logger.Infof("removed host: %s", selected)
 }
 
-func (h *HostHelper) resolveHostsDir(configPath string) string {
+func (h *Host) resolveHostsDir(configPath string) string {
 	global, err := loadGlobal(configPath)
 	if err == nil && global.Storage.HostsDir != "" {
 		return global.Storage.HostsDir

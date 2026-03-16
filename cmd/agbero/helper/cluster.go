@@ -1,13 +1,13 @@
 package helper
 
-type ClusterHelper struct {
+type Cluster struct {
 	p *Helper
 }
 
-func (c *ClusterHelper) StartArgs() (joinIP, secret string) {
+func (c *Cluster) StartArgs() (joinIP, secret string) {
 	return "", c.p.Cfg.ClusterSecret
 }
 
-func (c *ClusterHelper) JoinArgs() (joinIP, secret string) {
+func (c *Cluster) JoinArgs() (joinIP, secret string) {
 	return c.p.Cfg.ClusterJoinIP, c.p.Cfg.ClusterSecret
 }

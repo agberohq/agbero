@@ -13,11 +13,11 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type SecretHelper struct {
+type Secret struct {
 	p *Helper
 }
 
-func (s *SecretHelper) Cluster() {
+func (s *Secret) Cluster() {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		s.p.Logger.Fatal("random generation failed: ", err)
@@ -33,7 +33,7 @@ func (s *SecretHelper) Cluster() {
 	fmt.Println("}")
 }
 
-func (s *SecretHelper) KeyInit(configPath string) {
+func (s *Secret) KeyInit(configPath string) {
 	global, err := loadGlobal(configPath)
 	var targetPath string
 	if err == nil && global.Security.InternalAuthKey != "" {
@@ -59,7 +59,7 @@ func (s *SecretHelper) KeyInit(configPath string) {
 	fmt.Printf("\nsecurity {\n  enabled = true\n  internal_auth_key = \"%s\"\n}\n", targetPath)
 }
 
-func (s *SecretHelper) Token(configPath, svcName string, ttl time.Duration) {
+func (s *Secret) Token(configPath, svcName string, ttl time.Duration) {
 	if svcName == "" {
 		s.p.Logger.Fatal("--service name is required")
 	}
@@ -102,7 +102,7 @@ func (s *SecretHelper) Token(configPath, svcName string, ttl time.Duration) {
 	fmt.Println("------------------------------------------------------------")
 }
 
-func (s *SecretHelper) Hash(password string) {
+func (s *Secret) Hash(password string) {
 	if password == "" {
 		fmt.Print("Enter password: ")
 		fmt.Scanln(&password)
@@ -114,7 +114,7 @@ func (s *SecretHelper) Hash(password string) {
 	fmt.Printf("\n%s\n", string(hash))
 }
 
-func (s *SecretHelper) Password(length int) {
+func (s *Secret) Password(length int) {
 	if length <= 0 {
 		length = 32
 	}

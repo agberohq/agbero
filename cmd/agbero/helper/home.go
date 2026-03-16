@@ -14,13 +14,13 @@ import (
 	"github.com/kardianos/service"
 )
 
-type HomeHelper struct {
+type Home struct {
 	p *Helper
 }
 
 // Navigate prints or opens the requested agbero directory target.
 // Passing "@" as action opens an interactive shell in the target directory.
-func (h *HomeHelper) Navigate(target, action string) {
+func (h *Home) Navigate(target, action string) {
 	ctx := installer.NewContext(h.p.Logger, "")
 
 	openShell := false
@@ -106,7 +106,7 @@ func (h *HomeHelper) Navigate(target, action string) {
 // It stops the service, removes the local CA, deletes all data directories,
 // and optionally removes the binary. When force is false an interactive
 // confirmation prompt is shown before any destructive action is taken.
-func (h *HomeHelper) UninstallEverything(svc service.Service, configPath string, force bool) {
+func (h *Home) UninstallEverything(svc service.Service, configPath string, force bool) {
 	if !force {
 		var confirm bool
 		err := huh.NewConfirm().
@@ -138,7 +138,7 @@ func (h *HomeHelper) UninstallEverything(svc service.Service, configPath string,
 
 // uninstallService stops and removes the system service registration.
 // Errors are logged as warnings since the service may already be stopped or unregistered.
-func (h *HomeHelper) uninstallService(svc service.Service) {
+func (h *Home) uninstallService(svc service.Service) {
 	h.p.Logger.Info("stopping and removing system service")
 	if err := svc.Stop(); err != nil {
 		h.p.Logger.Warnf("service stop: %v (may already be stopped)", err)
@@ -150,15 +150,15 @@ func (h *HomeHelper) uninstallService(svc service.Service) {
 
 // uninstallCA removes the local Certificate Authority from the system trust store
 // and deletes all certificate files managed by agbero.
-func (h *HomeHelper) uninstallCA(configPath string) {
+func (h *Home) uninstallCA(configPath string) {
 	h.p.Logger.Info("removing local Certificate Authority")
-	certHelper := &CertHelper{p: h.p}
+	certHelper := &Cert{p: h.p}
 	certHelper.Uninstall(configPath)
 }
 
 // deleteDataDirectories removes the entire agbero home directory tree including
 // all host configs, certificates, logs, work files, and the main config file.
-func (h *HomeHelper) deleteDataDirectories() {
+func (h *Home) deleteDataDirectories() {
 	ctx := installer.NewContext(h.p.Logger, "")
 	baseDir := ctx.Paths.BaseDir.Path()
 
@@ -180,7 +180,7 @@ func (h *HomeHelper) deleteDataDirectories() {
 // On Unix systems the binary can be deleted while running; the inode remains
 // until the process exits. On Windows this will fail if the process is still
 // active — a warning is printed with the path for manual removal.
-func (h *HomeHelper) deleteBinary() {
+func (h *Home) deleteBinary() {
 	h.p.Logger.Info("removing agbero binary")
 
 	execPath, err := os.Executable()

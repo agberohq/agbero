@@ -18,6 +18,6 @@ func inodeOf(_ string) uint64 {
 // Callers must not treat a true return as a guarantee — the connection may
 // close between this check and the next use. The function is intended as a
 // fast pre-filter to avoid handing out connections that are definitely dead.
-func ConnAlive(conn net.Conn) bool {
-	return connAlive(conn)
+func connAlive(_ net.Conn) bool {
+	return true
 }

@@ -11,11 +11,11 @@ import (
 	"github.com/dustin/go-humanize"
 )
 
-type CertHelper struct {
+type Cert struct {
 	p *Helper
 }
 
-func (c *CertHelper) Install(configPath string, force bool) {
+func (c *Cert) Install(configPath string, force bool) {
 	loc := c.newLocal(configPath)
 	if tlss.IsCARootInstalled(loc.CertDir.Path()) && !force {
 		c.p.Logger.Info("CA root is already installed. Use --force to reinstall.")
@@ -27,7 +27,7 @@ func (c *CertHelper) Install(configPath string, force bool) {
 	c.p.Logger.Info("CA root installed successfully.")
 }
 
-func (c *CertHelper) Uninstall(configPath string) {
+func (c *Cert) Uninstall(configPath string) {
 	loc := c.newLocal(configPath)
 	c.p.Logger.Info("uninstalling CA...")
 	if err := loc.UninstallCARoot(); err != nil {
@@ -60,7 +60,7 @@ func (c *CertHelper) Uninstall(configPath string) {
 	c.p.Logger.Info("uninstall complete")
 }
 
-func (c *CertHelper) List(configPath string) {
+func (c *Cert) List(configPath string) {
 	loc := c.newLocal(configPath)
 	certs, err := loc.ListCertificates()
 	if err != nil {
@@ -76,7 +76,7 @@ func (c *CertHelper) List(configPath string) {
 	}
 }
 
-func (c *CertHelper) Info(configPath string) {
+func (c *Cert) Info(configPath string) {
 	global, err := loadGlobal(configPath)
 	if err != nil {
 		c.p.Logger.Warnf("could not load config: %v", err)
@@ -110,7 +110,7 @@ func (c *CertHelper) Info(configPath string) {
 	}
 }
 
-func (c *CertHelper) newLocal(configPath string) *tlss.Local {
+func (c *Cert) newLocal(configPath string) *tlss.Local {
 	loc := tlss.NewLocal(c.p.Logger)
 	if global, err := loadGlobal(configPath); err == nil && global.Storage.CertsDir != "" {
 		_ = loc.SetStorageDir(woos.NewFolder(global.Storage.CertsDir))
