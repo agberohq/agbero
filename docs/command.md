@@ -829,6 +829,10 @@ NAVIGATION:
   agbero home                        # print Agbero home directory
   agbero home @                      # open shell in home directory
   agbero home hosts @                # open shell in hosts.d
+  
+  agbero home .                      # open home directory
+  agbero home hosts .                # open hosts.d 
+  
 
 SERVICE MANAGEMENT:
   sudo agbero service install

@@ -591,6 +591,8 @@ func showHelpExamples() {
 	fmt.Printf("  %s home                        # print Agbero home directory\n", exeName)
 	fmt.Printf("  %s home @                      # open shell in home directory\n", exeName)
 	fmt.Printf("  %s home hosts @                # open shell in hosts.d\n", exeName)
+	fmt.Printf("  %s home .                      # open home directory\n", exeName)
+	fmt.Printf("  %s home hosts .                # open hosts.d\n", exeName)
 	fmt.Printf("\nSERVICE MANAGEMENT:\n")
 	fmt.Printf("  %s%s service install\n", prefix, exeName)
 	fmt.Printf("  %s%s service start\n", prefix, exeName)

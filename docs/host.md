@@ -37,7 +37,7 @@ route "/" {
 }
 ```
 
-## 2. Serving Local Files & PHP
+## 2. Serving Local Files, Markdown & PHP
 
 Serve static files or PHP applications from the local filesystem.
 
@@ -60,6 +60,28 @@ route "/" {
   }
 }
 ```
+
+or 
+
+```hcl
+# hosts.d/local.hcl
+domains = ["localhost"]
+
+route "/" {
+  web {
+    root    = "/var/www/html"  # Directory to serve
+    listing = true              # Enable directory browsing
+    index   = "index.md"      # Default index file
+    
+    # Enable markdown support
+    markdown {
+      enabled = true
+    }
+  }
+}
+```
+
+
 
 ## 3. Reverse Proxy & Path Rewriting
 
