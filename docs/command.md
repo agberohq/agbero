@@ -65,7 +65,7 @@ agbero run [flags]
 agbero run
 
 # Run with custom config in development mode
-agbero run --config ./config/agbero.hcl --dev
+agbero run --config "./config/agbero.hcl" --dev
 ```
 
 **Behavior:**
