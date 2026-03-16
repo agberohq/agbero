@@ -730,10 +730,12 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 	// Wait for gossip propagation with timeout
 	propagationDeadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(propagationDeadline) {
-		// Check if node 2 received the config
 		configPath2 := filepath.Join(tmpDir2, domain+".hcl")
-		if _, err := os.Stat(configPath2); err == nil {
-			t.Logf("Node2 received config")
+		configPath3 := filepath.Join(tmpDir3, domain+".hcl")
+		_, err2 := os.Stat(configPath2)
+		_, err3 := os.Stat(configPath3)
+		if err2 == nil && err3 == nil {
+			t.Logf("Both Node2 and Node3 received config")
 			break
 		}
 		time.Sleep(100 * time.Millisecond)

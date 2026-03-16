@@ -13,7 +13,7 @@ route "/*" {
     # Testing url
     rule "testing" {
       prefixes = ["/testing"]
-      requests = 1000000
+      requests = 10000000
       window   = "1m"
       key      = "ip"
     }
@@ -25,9 +25,10 @@ route "/*" {
   }
 
   backend {
+    strategy = "round_robin"
     server {
       address = "http://localhost:6060"
-      weight = 2
+      weight = 1
     }
     server {
       address = "http://localhost:6061"

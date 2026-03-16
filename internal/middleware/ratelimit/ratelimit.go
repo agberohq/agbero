@@ -14,6 +14,15 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const (
+	defaultCleanupInterval = 5 * time.Minute
+	emptyRequestsAllowed   = 0
+	gcRoutineName          = "ratelimit-gc"
+	gcRoutinePoolSize      = 1
+)
+
+var packedBits = []uint8{16, 48}
+
 type RatePolicy struct {
 	Requests int
 	Window   time.Duration
@@ -21,9 +30,11 @@ type RatePolicy struct {
 	KeySpec  string
 }
 
+// limiter constructs a standard rate limiter from the defined policy
+// Reverts to an infinite limiter if the request quota is missing or invalid
 func (p RatePolicy) limiter() *rate.Limiter {
-	if p.Requests <= 0 {
-		return rate.NewLimiter(rate.Inf, 0)
+	if p.Requests <= emptyRequestsAllowed {
+		return rate.NewLimiter(rate.Inf, emptyRequestsAllowed)
 	}
 	if p.Window <= 0 {
 		p.Window = time.Second
@@ -44,8 +55,6 @@ type Config struct {
 	SharedState     cluster.SharedState
 }
 
-var packedBits = []uint8{32, 32}
-
 type atomicEntry struct {
 	state zulu.AtomicPacked
 	lim   *rate.Limiter
@@ -61,11 +70,11 @@ type RateLimiter struct {
 	sharedState cluster.SharedState
 }
 
-// New instantiates a dynamic request throttling layer.
-// Handles both local token buckets and shared cluster constraints automatically.
+// New instantiates a dynamic request throttling layer
+// Handles both local token buckets and shared cluster constraints automatically
 func New(cfg Config) *RateLimiter {
 	if cfg.CleanupInterval <= 0 {
-		cfg.CleanupInterval = 5 * time.Minute
+		cfg.CleanupInterval = defaultCleanupInterval
 	}
 
 	rl := &RateLimiter{
@@ -77,7 +86,7 @@ func New(cfg Config) *RateLimiter {
 		sharedState: cfg.SharedState,
 	}
 
-	sched, _ := jack.NewScheduler("ratelimit-gc", jack.NewPool(1), jack.Routine{
+	sched, _ := jack.NewScheduler(gcRoutineName, jack.NewPool(gcRoutinePoolSize), jack.Routine{
 		Interval: cfg.CleanupInterval,
 	})
 
@@ -87,6 +96,8 @@ func New(cfg Config) *RateLimiter {
 	return rl
 }
 
+// Close terminates the background cleanup scheduler and flushes map data
+// Prevents memory leaks during proxy hot-reloads and shutdowns
 func (rl *RateLimiter) Close() {
 	if rl.scheduler != nil {
 		_ = rl.scheduler.Stop()
@@ -94,8 +105,10 @@ func (rl *RateLimiter) Close() {
 	rl.data.Clear()
 }
 
+// allowInternal evaluates the request against the shared or local token bucket
+// Utilizes 48-bit packed timestamps to avoid Y2K38 overflow panics
 func (rl *RateLimiter) allowInternal(r *http.Request, key string, pol RatePolicy) bool {
-	if pol.Requests <= 0 {
+	if pol.Requests <= emptyRequestsAllowed {
 		return true
 	}
 
@@ -147,8 +160,8 @@ func (rl *RateLimiter) allowInternal(r *http.Request, key string, pol RatePolicy
 	return allowed
 }
 
-// Handler enforces endpoint request ceilings across incoming connections.
-// Responds with 429 Too Many Requests instantly upon limit saturation.
+// Handler enforces endpoint request ceilings across incoming connections
+// Responds with 429 Too Many Requests instantly upon limit saturation
 func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 	if rl == nil || rl.policy == nil {
 		return next
@@ -160,7 +173,7 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 			return
 		}
 		bucketName, pol, ok := rl.policy(r)
-		if !ok || pol.Requests <= 0 {
+		if !ok || pol.Requests <= emptyRequestsAllowed {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -174,6 +187,8 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 	})
 }
 
+// extractKey identifies the unique client signature for the bucket
+// Defaults to the IP address if the specified extractor yields no data
 func (rl *RateLimiter) extractKey(r *http.Request, keySpec string) string {
 	if keySpec == "" || strings.EqualFold(keySpec, "ip") {
 		if rl.ipMgr != nil {
@@ -194,9 +209,11 @@ func (rl *RateLimiter) extractKey(r *http.Request, keySpec string) string {
 	return r.RemoteAddr
 }
 
+// sweeper removes stale rate limit entries from the memory cache
+// Runs periodically via the scheduler to maintain bounded map sizes
 func (rl *RateLimiter) sweeper() {
 	now := time.Now().Unix()
-	cutoff := now - (rl.ttl / 1e9)
+	cutoff := now - (rl.ttl / time.Second.Nanoseconds())
 	rl.data.ClearIf(func(key string, e *atomicEntry) bool {
 		values := e.state.Load().Extract(packedBits)
 		lastSeen := values[1]

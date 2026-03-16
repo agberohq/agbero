@@ -23,36 +23,6 @@ When `--config` is not specified, Agbero looks for `agbero.hcl` in this order:
 
 ## Core Commands
 
-### `run` - Run Agbero in foreground
-
-Start Agbero interactively. Ideal for development, testing, or container environments.
-
-**Usage:**
-```bash
-agbero run [flags]
-```
-
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-d, --dev` | Enable development mode |
-
-**Examples:**
-```bash
-# Run with auto-detected config
-agbero run
-
-# Run with custom config in development mode
-agbero run --config ./config/agbero.hcl --dev
-```
-
-**Behavior:**
-- Loads and validates configuration
-- Starts HTTP/HTTPS listeners based on `bind` settings
-- Watches for host configuration changes in `hosts_dir`
-- Supports hot reload via SIGHUP signal
-- Blocks until SIGTERM or SIGINT is received
-
 ### `init` - Interactive Setup
 
 Run the interactive setup wizard to create a new configuration.
@@ -74,6 +44,36 @@ agbero init
 ```bash
 agbero init
 ```
+
+### `run` - Run Agbero in foreground
+
+Start Agbero interactively. Ideal for development, testing, or container environments.
+
+**Usage:**
+```bash
+agbero run [flags]
+```
+
+**Flags:**
+| Flag | Description |
+|------|-------------|
+| `-d, --dev` | Enable development mode |
+
+**Examples:**
+```bash
+# Run with auto-detected config
+agbero run
+
+# Run with custom config in development mode
+agbero run --config "./config/agbero.hcl" --dev
+```
+
+**Behavior:**
+- Loads and validates configuration
+- Starts HTTP/HTTPS listeners based on `bind` settings
+- Watches for host configuration changes in `hosts_dir`
+- Supports hot reload via SIGHUP signal
+- Blocks until SIGTERM or SIGINT is received
 
 ## Configuration Management
 
@@ -829,6 +829,10 @@ NAVIGATION:
   agbero home                        # print Agbero home directory
   agbero home @                      # open shell in home directory
   agbero home hosts @                # open shell in hosts.d
+  
+  agbero home .                      # open home directory
+  agbero home hosts .                # open hosts.d 
+  
 
 SERVICE MANAGEMENT:
   sudo agbero service install

@@ -14,7 +14,7 @@ type TCPExecutor struct {
 
 func (t *TCPExecutor) Probe(ctx context.Context) (bool, time.Duration, error) {
 	start := time.Now()
-	pc, err := t.Pool.get()
+	pc, err := t.Pool.get(ctx)
 	if err != nil {
 		return false, time.Since(start), err
 	}

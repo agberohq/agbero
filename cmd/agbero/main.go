@@ -324,7 +324,7 @@ func main() {
 			Description: woos.Description,
 		}
 		svc, _ := service.New(nil, svcConfig)
-		hel.Home().UninstallEverything(svc, resolvedPath, cfg.UninstallForce)
+		hel.Home().Uninstall(svc, resolvedPath, cfg.UninstallForce)
 		return
 	}
 
@@ -468,7 +468,7 @@ func main() {
 			sh.Install(svc, cfg.InstallHere)
 		case cmdServiceUninstall.Used:
 			if cfg.UninstallAll {
-				hel.Home().UninstallEverything(svc, resolvedPath, cfg.UninstallForce)
+				hel.Home().Uninstall(svc, resolvedPath, cfg.UninstallForce)
 			} else {
 				sh.Uninstall(svc)
 			}
@@ -591,6 +591,8 @@ func showHelpExamples() {
 	fmt.Printf("  %s home                        # print Agbero home directory\n", exeName)
 	fmt.Printf("  %s home @                      # open shell in home directory\n", exeName)
 	fmt.Printf("  %s home hosts @                # open shell in hosts.d\n", exeName)
+	fmt.Printf("  %s home .                      # open home directory\n", exeName)
+	fmt.Printf("  %s home hosts .                # open hosts.d\n", exeName)
 	fmt.Printf("\nSERVICE MANAGEMENT:\n")
 	fmt.Printf("  %s%s service install\n", prefix, exeName)
 	fmt.Printf("  %s%s service start\n", prefix, exeName)
