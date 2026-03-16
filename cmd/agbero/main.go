@@ -159,7 +159,9 @@ func main() {
 	cmdServiceInstall.Bool(&cfg.InstallHere, "", "here", "Install config in current directory only")
 
 	cmdServiceUninstall := flaggy.NewSubcommand("uninstall")
-	cmdServiceUninstall.Description = "Uninstall system service"
+	cmdServiceUninstall.Description = "Uninstall system service (use --all to remove everything)"
+	cmdServiceUninstall.Bool(&cfg.UninstallAll, "", "all", "Remove service, CA, all data, and binary")
+	cmdServiceUninstall.Bool(&cfg.UninstallForce, "", "force", "Skip confirmation prompt")
 
 	cmdServiceStart := flaggy.NewSubcommand("start")
 	cmdServiceStart.Description = "Start system service"
@@ -447,7 +449,11 @@ func main() {
 		case cmdServiceInstall.Used:
 			sh.Install(svc, cfg.InstallHere)
 		case cmdServiceUninstall.Used:
-			sh.Uninstall(svc)
+			if cfg.UninstallAll {
+				hel.Home().UninstallEverything(svc, resolvedPath, cfg.UninstallForce)
+			} else {
+				sh.Uninstall(svc)
+			}
 		case cmdServiceStart.Used:
 			sh.Start(svc)
 		case cmdServiceStop.Used:
@@ -570,4 +576,6 @@ func showHelpExamples() {
 	fmt.Printf("  %s%s service restart\n", prefix, exeName)
 	fmt.Printf("  %s%s service status\n", prefix, exeName)
 	fmt.Printf("  %s%s service uninstall\n", prefix, exeName)
+	fmt.Printf("  %s%s service uninstall --all   # remove everything agbero installed\n", prefix, exeName)
+	fmt.Printf("  %s%s service uninstall --all --force  # skip confirmation prompt\n", prefix, exeName)
 }

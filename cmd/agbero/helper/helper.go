@@ -12,6 +12,9 @@ type Config struct {
 	DevMode     bool
 	InstallHere bool
 
+	UninstallAll   bool
+	UninstallForce bool
+
 	KeyService string
 	KeyTTL     time.Duration
 
@@ -42,6 +45,7 @@ type Helper struct {
 	Cfg      *Config
 }
 
+// New constructs a Helper with shared logger, shutdown manager, and config.
 func New(logger *ll.Logger, shutdown *jack.Shutdown, cfg *Config) *Helper {
 	return &Helper{
 		Logger:   logger,
@@ -50,13 +54,11 @@ func New(logger *ll.Logger, shutdown *jack.Shutdown, cfg *Config) *Helper {
 	}
 }
 
-func (h *Helper) Config() *ConfigHelper   { return &ConfigHelper{p: h} }
-func (h *Helper) Secret() *SecretHelper   { return &SecretHelper{p: h} }
-func (h *Helper) Host() *HostHelper       { return &HostHelper{p: h} }
-func (h *Helper) Cert() *CertHelper       { return &CertHelper{p: h} }
-func (h *Helper) Service() *ServiceHelper { return &ServiceHelper{p: h} }
-func (h *Helper) Cluster() *ClusterHelper { return &ClusterHelper{p: h} }
-func (h *Helper) Home() *HomeHelper       { return &HomeHelper{p: h} }
-func (h *Helper) Ephemeral() *EphemeralHelper {
-	return &EphemeralHelper{p: h}
-}
+func (h *Helper) Config() *ConfigHelper       { return &ConfigHelper{p: h} }
+func (h *Helper) Secret() *SecretHelper       { return &SecretHelper{p: h} }
+func (h *Helper) Host() *HostHelper           { return &HostHelper{p: h} }
+func (h *Helper) Cert() *CertHelper           { return &CertHelper{p: h} }
+func (h *Helper) Service() *ServiceHelper     { return &ServiceHelper{p: h} }
+func (h *Helper) Cluster() *ClusterHelper     { return &ClusterHelper{p: h} }
+func (h *Helper) Home() *HomeHelper           { return &HomeHelper{p: h} }
+func (h *Helper) Ephemeral() *EphemeralHelper { return &EphemeralHelper{p: h} }
