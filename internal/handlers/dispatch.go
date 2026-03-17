@@ -350,7 +350,7 @@ func (m *Manager) logRequest(host string, r *http.Request, start time.Time, stat
 		}
 		// Add bot detection if checker exists
 		if m.cfg.Global.Logging.BotChecker.Active() {
-			args = append(args, "is_bot", m.botChecker.IsBot(ua))
+			args = append(args, "bot", m.botChecker.IsBot(ua))
 		}
 	}
 

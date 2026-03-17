@@ -437,24 +437,39 @@ func (s *Server) Reload() {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultReloadTimeout)
-	defer cancel()
-
-	for _, l := range oldListeners {
-		_ = l.Stop(ctx)
-	}
-
-	if oldTrafficManager != nil {
-		oldTrafficManager.Close()
-	}
-
-	if oldSharedState != nil {
-		_ = oldSharedState.Close()
-	}
-
+	// Start the new listeners first to ensure zero downtime
 	for _, l := range newListeners {
-		go l.Start()
+		go func(listener handlers.Listener) {
+			s.logger.Fields("bind", listener.Addr(), "proto", listener.Kind()).Info("reloaded listener starting")
+			if err := listener.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				s.logger.Fields("err", err, "bind", listener.Addr()).Error("reloaded listener failed")
+			}
+		}(l)
 	}
+
+	// Drain the old listeners asynchronously so Reload() returns immediately
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), defaultReloadTimeout)
+		defer cancel()
+
+		var wg sync.WaitGroup
+		for _, l := range oldListeners {
+			wg.Add(1)
+			go func(oldListener handlers.Listener) {
+				defer wg.Done()
+				_ = oldListener.Stop(ctx)
+			}(l)
+		}
+		wg.Wait()
+
+		if oldTrafficManager != nil {
+			oldTrafficManager.Close()
+		}
+
+		if oldSharedState != nil {
+			_ = oldSharedState.Close()
+		}
+	}()
 
 	s.logger.Info("configuration reloaded successfully")
 }

@@ -204,6 +204,15 @@ func TestWatch_SubdirFileChange(t *testing.T) {
 		t.Fatal("initial subdir load failed")
 	}
 
+	// Give the OS-level watcher a few milliseconds to fully register the directory
+	time.Sleep(150 * time.Millisecond)
+
+	// Drain any delayed initial reload events to prevent the test from jumping the gun
+	select {
+	case <-h.Changed():
+	default:
+	}
+
 	if err := os.WriteFile(hclFile, validHCL("b.com"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
