@@ -24,7 +24,6 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/ratelimit"
 	"github.com/agberohq/agbero/internal/middleware/rewrite"
 	"github.com/agberohq/agbero/internal/pkg/wellknown"
-	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
 
@@ -201,7 +200,7 @@ func (h *Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // Close drains and stops all backends associated with this route.
-// Backends are drained via the janitor pool when available to avoid blocking.
+// Draining executes in isolated goroutines avoiding shared pool deadlocks.
 func (h *Route) Close() error {
 	if h.Proxy != nil {
 		h.Proxy.Stop()
@@ -217,18 +216,10 @@ func (h *Route) Close() error {
 		for _, b := range h.Backends {
 			if b != nil {
 				be := b
-				if h.resource != nil && h.resource.Janitor != nil {
-					_ = h.resource.Janitor.Submit(jack.Func(func() error {
-						be.Drain(drainTimeout)
-						be.Stop()
-						return nil
-					}))
-				} else {
-					go func() {
-						be.Drain(drainTimeout)
-						be.Stop()
-					}()
-				}
+				go func() {
+					be.Drain(drainTimeout)
+					be.Stop()
+				}()
 			}
 		}
 	}

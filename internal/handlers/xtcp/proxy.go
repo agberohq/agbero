@@ -1,3 +1,4 @@
+// internal/handlers/xtcp/proxy.go
 package xtcp
 
 import (
@@ -291,8 +292,10 @@ func (p *Proxy) handle(src net.Conn) {
 					_ = src.Close()
 					return
 				}
-			} else if err != io.EOF && err != io.ErrUnexpectedEOF {
-				p.res.Logger.Fields("remote", remoteAddr, "err", err).Debug("tcp peek error")
+			} else {
+				if err != io.EOF && err != io.ErrUnexpectedEOF {
+					p.res.Logger.Fields("remote", remoteAddr, "err", err).Debug("tcp peek error")
+				}
 				_ = src.Close()
 				return
 			}
@@ -534,24 +537,40 @@ func (p *Proxy) isTimeout(err error) bool {
 	return false
 }
 
-// SnapBackends returns all currently registered backend instances for monitoring.
+// SnapBackends returns all backend instances by unwrapping the balancer chain.
+// Traverses Adaptive/Sticky wrappers to reach the leaf Selector and extract raw *Backend.
 func (p *Proxy) SnapBackends() []*Backend {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+
 	var all []*Backend
-	for _, route := range p.routes {
-		for _, b := range route.selector.Backends() {
+	extract := func(sel *lb.Selector) {
+		for _, b := range sel.Backends() {
 			if be, ok := b.(*Backend); ok {
 				all = append(all, be)
 			}
 		}
 	}
-	if p.def != nil {
-		for _, b := range p.def.selector.Backends() {
-			if be, ok := b.(*Backend); ok {
-				all = append(all, be)
+
+	unwrap := func(bal lb.Balancer) {
+		for bal != nil {
+			if sel, ok := bal.(*lb.Selector); ok {
+				extract(sel)
+				return
+			}
+			if u, ok := bal.(interface{ Unwrap() lb.Balancer }); ok {
+				bal = u.Unwrap()
+			} else {
+				return
 			}
 		}
+	}
+
+	for _, route := range p.routes {
+		unwrap(route.selector)
+	}
+	if p.def != nil {
+		unwrap(p.def.selector)
 	}
 	return all
 }
