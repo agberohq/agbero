@@ -36,8 +36,8 @@ func connAlive(conn net.Conn) bool {
 	var n int
 
 	err = raw.Read(func(fd uintptr) bool {
-		buf := make([]byte, 1)
-		n, _, sysErr = syscall.Recvfrom(int(fd), buf, syscall.MSG_PEEK|syscall.MSG_DONTWAIT)
+		var buf [1]byte
+		n, _, sysErr = syscall.Recvfrom(int(fd), buf[:], syscall.MSG_PEEK|syscall.MSG_DONTWAIT)
 		return true
 	})
 
