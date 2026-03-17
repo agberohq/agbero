@@ -53,3 +53,4 @@ bin_done:
 bin_exit:
     MOVD R3, ret+24(FP)
     RET
+

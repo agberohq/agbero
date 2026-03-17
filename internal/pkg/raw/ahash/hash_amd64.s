@@ -43,3 +43,5 @@ done:
     ORQ DX, AX
     MOVQ AX, ret+16(FP)
     RET
+
+    
