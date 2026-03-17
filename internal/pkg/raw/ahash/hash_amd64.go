@@ -13,8 +13,6 @@ func crc32HashAsm(p unsafe.Pointer, length int) uint64
 func crc32Hash(s string) uint64 {
 	if hasCRC32 && len(s) > 0 {
 		return crc32HashAsm(unsafe.Pointer(unsafe.StringData(s)), len(s))
-	} else if hasCRC32 {
-		return 0
 	}
 	return crc32HashFallback(s)
 }
@@ -24,8 +22,6 @@ func crc32Hash(s string) uint64 {
 func crc32HashBytes(b []byte) uint64 {
 	if hasCRC32 && len(b) > 0 {
 		return crc32HashAsm(unsafe.Pointer(unsafe.SliceData(b)), len(b))
-	} else if hasCRC32 {
-		return 0
 	}
 	return crc32HashBytesFallback(b)
 }
