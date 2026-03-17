@@ -100,6 +100,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 				Logger:      cfg.Resource.Logger,
 				IPMgr:       cfg.IPMgr,
 				SharedState: cfg.SharedState,
+				BotChecker:  m.botChecker,
 			})
 			if err != nil {
 				return nil, errors.Newf("firewall init: %w", err)
