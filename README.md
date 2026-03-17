@@ -79,6 +79,9 @@ agbero run --dev
 agbero run -c /etc/agbero/agbero.hcl
 ```
 
+now visit `https://admin.localhost` in your browser.
+
+
 **2. Instant Ephemeral Mode** (No config required)
 ```bash
 # Serve the current directory on https://localhost:8000 with auto-generated TLS
