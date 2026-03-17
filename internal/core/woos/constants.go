@@ -51,7 +51,6 @@ const (
 	HeaderVia              = "Via"
 	HeaderHost             = "Host"
 
-	// Hop-by-hop Headers (RFC 7230 §6.1)
 	HeaderKeepAlive          = "Keep-alive"
 	HeaderProxyAuthenticate  = "Proxy-Authenticate"
 	HeaderProxyAuthorization = "Proxy-Authorization"
@@ -117,14 +116,12 @@ const (
 
 	PrivateBindingHost = "private-binding"
 
-	// Buckets
 	BucketACME           = "acme"
 	BucketAuth           = "auth"
 	BucketAuthDisabled   = "auth_disabled"
 	BucketGlobal         = "global"
 	BucketGlobalDisabled = "global_disabled"
 
-	// ALPN Protocols
 	AlpnH3  = "h3"
 	AlpnH2  = "h2"
 	AlpnH11 = "http/1.1"
@@ -148,8 +145,9 @@ const (
 
 // Cache
 const (
-	CacheMax    = 10_000
-	CacheMaxBig = 100_000
+	CacheMax         = 10_000
+	CacheMaxBig      = 100_000
+	CacheMaxBodySize = 5 * 1024 * 1024
 )
 
 // Route Segment Kinds
@@ -185,7 +183,6 @@ const (
 	DefaultMaxBuffer     = 12_000
 	DefaultVictoriaBatch = 500
 
-	// Rotate logs at 50MB by default
 	DefaultLogRotateSize = 50 * 1024 * 1024
 
 	BufferSize = 32 * 1024
@@ -264,6 +261,7 @@ const (
 // gossip
 const (
 	DefaultGossipPort       = 7946
+	DefaultGossipTTL        = 30
 	DefaultPushPullInterval = 60 * time.Second
 	DefaultAuthTimeout      = 2 * time.Second
 
@@ -370,7 +368,7 @@ const (
 	DirPerm         = 0755
 	FilePerm        = 0644
 	FilePermSecured = 0600
-	SecurePerm      = 0700 // For keys/certs
+	SecurePerm      = 0700
 )
 
 // oauth
@@ -403,8 +401,57 @@ const (
 	GzipEncodingType    = "gzip"
 	CompressionBrotli   = "brotli"
 	BrotliEncodingType  = "br"
+	DynamicGzMaxSize    = 10 * 1024 * 1024
 )
+
+const ()
 
 const (
 	LifetimeShards = 32
+)
+
+// server lifecycle — used by server.go and admin.go
+const (
+	DefaultReloadTimeout   = 30 * time.Second
+	DefaultShutdownTimeout = 5 * time.Second
+	DefaultGitPoolTimeout  = 1 * time.Second
+	DefaultGitPoolSize     = 4
+
+	AdminTokenTTL            = 24 * time.Hour
+	DefaultAdminReadTimeout  = 10 * time.Second
+	DefaultAdminWriteTimeout = 60 * time.Second
+	DefaultAdminIdleTimeout  = 120 * time.Second
+)
+
+// defaults used by woos/default.go — single source of truth for all config defaults
+const (
+	DefaultForwardAuthTimeout      = 5 * time.Second
+	DefaultFirewallMaxInspectBytes = int64(8192)
+	DefaultCompressionLevel        = 5
+	DefaultFallbackRedirectCode    = 307
+	DefaultFallbackProxyCode       = 200
+	DefaultFallbackStaticCode      = 503
+	DefaultCORSMaxAge              = 86400
+	DefaultCacheTTL                = 5 * time.Minute
+	DefaultCacheMaxItems           = 10_000
+	DefaultRedisPort               = 6379
+	ForwardAuthMaxBodyDefault      = int64(64 * 1024)
+)
+
+// NSS / certutil — used by tlss and installer for Firefox/Chrome trust store detection
+const (
+	CertutilBinary = "certutil"
+
+	NSSPathLinuxUsrBin      = "/usr/bin/certutil"
+	NSSPathLinuxUsrLocalBin = "/usr/local/bin/certutil"
+	NSSPathLinuxSnapBin     = "/snap/bin/certutil"
+
+	NSSPathDarwinHomebrewBin   = "/opt/homebrew/bin/certutil"
+	NSSPathDarwinUsrLocalBin   = "/usr/local/bin/certutil"
+	NSSPathDarwinMozillaNSS    = "/opt/homebrew/opt/nss/bin/certutil"
+	NSSPathDarwinMozillaNSSAlt = "/usr/local/opt/nss/bin/certutil"
+
+	NSSInstallHintLinux  = "NSS certutil not found. Firefox trust store will not be updated. Install with: sudo apt-get install libnss3-tools  (Debian/Ubuntu)  or  sudo dnf install nss-tools  (Fedora/RHEL)"
+	NSSInstallHintDarwin = "NSS certutil not found. Firefox trust store will not be updated. Install with: brew install nss"
+	NSSInstallHintOther  = "NSS certutil not found. Firefox trust store may not be updated automatically."
 )

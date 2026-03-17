@@ -45,7 +45,7 @@ func (e *Ephemeral) Serve() {
 		os.Exit(1)
 	}
 
-	ctx := installer.NewContext(e.p.Logger, "local")
+	ctx := installer.NewContext(e.p.Logger)
 	if cfg.ServeHTTPS {
 		if err := installer.NewCA(ctx).PromptAndInstall(); err != nil {
 			e.p.Logger.Warn("CA installation prompt interrupted: ", err)
@@ -113,7 +113,7 @@ func (e *Ephemeral) Proxy() {
 		os.Exit(1)
 	}
 
-	ctx := installer.NewContext(e.p.Logger, "local")
+	ctx := installer.NewContext(e.p.Logger)
 	if cfg.ProxyHTTPS {
 		if err := installer.NewCA(ctx).PromptAndInstall(); err != nil {
 			e.p.Logger.Warn("CA installation prompt interrupted: ", err)

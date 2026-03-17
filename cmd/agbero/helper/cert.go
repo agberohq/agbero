@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/woos"
@@ -15,6 +16,8 @@ type Cert struct {
 	p *Helper
 }
 
+// Install installs the local CA root, then prints an NSS hint when certutil is absent.
+// Firefox and Chrome require certutil to trust the CA; we surface the install command per OS.
 func (c *Cert) Install(configPath string, force bool) {
 	loc := c.newLocal(configPath)
 	if tlss.IsCARootInstalled(loc.CertDir.Path()) && !force {
@@ -25,6 +28,23 @@ func (c *Cert) Install(configPath string, force bool) {
 		c.p.Logger.Fatal("failed to install CA: ", err)
 	}
 	c.p.Logger.Info("CA root installed successfully.")
+	c.printNSSHint(loc)
+}
+
+// printNSSHint warns the user when NSS certutil is missing and provides
+// the OS-specific install command so Firefox/Chrome trust store is updated.
+func (c *Cert) printNSSHint(loc *tlss.Local) {
+	if loc.HasCertutil() {
+		return
+	}
+	switch runtime.GOOS {
+	case woos.Darwin:
+		c.p.Logger.Warn(woos.NSSInstallHintDarwin)
+	case woos.Linux:
+		c.p.Logger.Warn(woos.NSSInstallHintLinux)
+	default:
+		c.p.Logger.Warn(woos.NSSInstallHintOther)
+	}
 }
 
 func (c *Cert) Uninstall(configPath string) {

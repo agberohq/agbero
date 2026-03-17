@@ -23,7 +23,7 @@ type Home struct {
 // Navigate to the specified target directory and opens an interactive shell
 // Supports viewing or editing the configuration file based on the selected action
 func (h *Home) Navigate(target, action string) {
-	ctx := installer.NewContext(h.p.Logger, "")
+	ctx := installer.NewContext(h.p.Logger)
 
 	openShell := false
 	showContent := false
@@ -173,7 +173,7 @@ func (h *Home) uninstallCA(configPath string) {
 // Deletes the base directory containing all application data and configuration
 // Exits early and skips processing if the target directory does not exist
 func (h *Home) deleteDataDirectories() {
-	ctx := installer.NewContext(h.p.Logger, "")
+	ctx := installer.NewContext(h.p.Logger)
 	baseDir := ctx.Paths.BaseDir.Path()
 
 	h.p.Logger.Infof("deleting all agbero data in %s", baseDir)

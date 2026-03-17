@@ -93,3 +93,8 @@ func (s *Adaptive) Pick(r *http.Request, keyFunc func() uint64) Backend {
 
 	return s.balancer.Pick(r, keyFunc)
 }
+
+// Unwrap returns the underlying balancer for chain inspection.
+func (s *Adaptive) Unwrap() Balancer {
+	return s.balancer
+}

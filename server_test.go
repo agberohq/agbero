@@ -80,10 +80,10 @@ func TestServer_Start_Minimal(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       alaye.Duration(10 * time.Second),
+			Write:      alaye.Duration(30 * time.Second),
+			Idle:       alaye.Duration(60 * time.Second),
+			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -162,10 +162,10 @@ address = "%s"
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       alaye.Duration(10 * time.Second),
+			Write:      alaye.Duration(30 * time.Second),
+			Idle:       alaye.Duration(60 * time.Second),
+			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -394,10 +394,10 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       alaye.Duration(10 * time.Second),
+			Write:      alaye.Duration(30 * time.Second),
+			Idle:       alaye.Duration(60 * time.Second),
+			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -419,10 +419,10 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       alaye.Duration(10 * time.Second),
+			Write:      alaye.Duration(30 * time.Second),
+			Idle:       alaye.Duration(60 * time.Second),
+			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -588,10 +588,10 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       alaye.Duration(10 * time.Second),
+			Write:      alaye.Duration(30 * time.Second),
+			Idle:       alaye.Duration(60 * time.Second),
+			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -613,10 +613,10 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       alaye.Duration(10 * time.Second),
+			Write:      alaye.Duration(30 * time.Second),
+			Idle:       alaye.Duration(60 * time.Second),
+			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -915,10 +915,10 @@ func TestServer_shutdownImpl(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       alaye.Duration(10 * time.Second),
+			Write:      alaye.Duration(30 * time.Second),
+			Idle:       alaye.Duration(60 * time.Second),
+			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 	}
 
@@ -938,6 +938,198 @@ func TestServer_shutdownImpl(t *testing.T) {
 	if err != nil {
 		t.Errorf("shutdownImpl returned error: %v", err)
 	}
+}
+
+// TestServer_Reload_ZeroDowntime_And_NoRace verifies that Reload() gracefully drains
+// old connections asynchronously without blocking the launch of new listeners.
+func TestServer_Reload_ZeroDowntime_And_NoRace(t *testing.T) {
+	slowBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("slow-backend"))
+	}))
+	defer slowBackend.Close()
+
+	fastBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("fast-backend"))
+	}))
+	defer fastBackend.Close()
+
+	tmpDir := t.TempDir()
+	hostsDir := filepath.Join(tmpDir, "hosts")
+	if err := os.MkdirAll(hostsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(tmpDir, "config.hcl")
+	hostPath := filepath.Join(hostsDir, "domain.hcl")
+
+	proxyPort := zulu.PortFree()
+
+	// Helper to write both configs to disk
+	writeConfigs := func(port int, backendURL string) {
+		globalCfg := fmt.Sprintf(`version = 1
+bind {
+    http = [":%d"]
+}
+storage {
+    hosts_dir = "%s"
+    data_dir = "%s"
+}
+timeouts {
+    enabled = true
+    read = "10s"
+    write = "30s"
+    idle = "60s"
+}
+`, port, hostsDir, tmpDir)
+		writeSyncedFile(t, configPath, []byte(globalCfg))
+
+		hostCfg := fmt.Sprintf(`domains = ["localhost"]
+tls {
+    mode = "none"
+}
+route "/" {
+    backend {
+        server {
+            address = "%s"
+        }
+    }
+}
+`, backendURL)
+		writeSyncedFile(t, hostPath, []byte(hostCfg))
+	}
+
+	// Start with the slow backend
+	writeConfigs(proxyPort, slowBackend.URL)
+
+	global, err := parser.LoadGlobal(configPath)
+	if err != nil {
+		t.Fatalf("Failed to parse initial config: %v", err)
+	}
+	woos.DefaultApply(global, configPath)
+
+	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(10 * time.Second))
+	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
+
+	if err := hm.Watch(); err != nil {
+		t.Fatalf("Failed to start watcher: %v", err)
+	}
+	defer hm.Close()
+
+	s := NewServer(
+		WithGlobalConfig(global),
+		WithHostManager(hm),
+		WithLogger(testLogger),
+		WithShutdownManager(shutdown),
+	)
+
+	errCh := make(chan error, 1)
+	go func() {
+		if err := s.Start(configPath); err != nil && !strings.Contains(err.Error(), "server closed") {
+			errCh <- err
+		}
+	}()
+	defer shutdown.TriggerShutdown()
+
+	waitForPort(t, proxyPort)
+
+	// Fire an asynchronous request to the slow backend
+	slowReqCtx, slowReqCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer slowReqCancel()
+
+	slowReq, err := http.NewRequestWithContext(slowReqCtx, "GET", fmt.Sprintf("http://127.0.0.1:%d", proxyPort), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slowReq.Host = "localhost"
+
+	slowRespCh := make(chan *http.Response, 1)
+	slowErrCh := make(chan error, 1)
+
+	go func() {
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(slowReq)
+		if err != nil {
+			slowErrCh <- err
+			return
+		}
+		slowRespCh <- resp
+	}()
+
+	// Wait briefly to ensure the slow request is properly inflight
+	time.Sleep(500 * time.Millisecond)
+
+	// Update configs to the fast backend and EXPLICITLY reload
+	// (Explicit reload removes the test's dependency on fsnotify flakiness)
+	writeConfigs(proxyPort, fastBackend.URL)
+	s.Reload()
+
+	// Poll the proxy until it routes to the new fast backend
+	fastReqCtx, fastReqCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer fastReqCancel()
+
+	fastClient := &http.Client{Timeout: 5 * time.Second}
+	var fastResponse string
+
+	pollStart := time.Now()
+	pollDeadline := pollStart.Add(3 * time.Second)
+
+	for time.Now().Before(pollDeadline) {
+		fastReq, err := http.NewRequestWithContext(fastReqCtx, "GET", fmt.Sprintf("http://127.0.0.1:%d", proxyPort), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fastReq.Host = "localhost"
+
+		fastResp, err := fastClient.Do(fastReq)
+		if err != nil {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		fastBody := make([]byte, 1024)
+		n, _ := fastResp.Body.Read(fastBody)
+		fastBodyResp := string(fastBody[:n])
+		fastResp.Body.Close()
+
+		if strings.Contains(fastBodyResp, "fast-backend") {
+			fastResponse = fastBodyResp
+			break
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if fastResponse == "" {
+		t.Fatalf("Timed out waiting for fast backend response after reload")
+	}
+
+	if !strings.Contains(fastResponse, "fast-backend") {
+		t.Errorf("Fast backend returned wrong response: %s", fastResponse)
+	}
+
+	// Assert the inflight slow request completed safely despite the reload
+	select {
+	case resp := <-slowRespCh:
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Slow backend returned non-200: %d", resp.StatusCode)
+		}
+		slowBody := make([]byte, 1024)
+		n, _ := resp.Body.Read(slowBody)
+		slowResponse := string(slowBody[:n])
+		if !strings.Contains(slowResponse, "slow-backend") {
+			t.Errorf("Slow backend returned wrong response: %s", slowResponse)
+		}
+		t.Log("Slow request completed successfully after reload")
+	case err := <-slowErrCh:
+		t.Errorf("Slow request failed: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Error("Slow request timed out - connection may have been terminated prematurely")
+	}
+
+	t.Log("Zero-downtime reload test completed successfully")
 }
 
 // Helper functions

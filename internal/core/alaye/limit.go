@@ -1,11 +1,11 @@
 package alaye
 
 type Limit struct {
-	MaxBodySize int64 `hcl:"max_body_size,optional" json:"max_body_size"`
+	MaxBodySize int64 `hcl:"max_body_size,attr" json:"max_body_size"`
 }
 
+// Validate checks that max_body_size is not negative.
 func (l *Limit) Validate() error {
-	// MaxBodySize is optional, but if set must be positive
 	if l.MaxBodySize < 0 {
 		return ErrNegativeMacBodySize
 	}

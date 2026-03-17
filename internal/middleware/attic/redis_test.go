@@ -19,7 +19,7 @@ func TestRedisCache(t *testing.T) {
 		Enabled: alaye.Active,
 		Driver:  "redis",
 		Methods: []string{"GET"},
-		TTL:     time.Minute,
+		TTL:     alaye.Duration(time.Minute),
 		Redis: &alaye.RedisCache{
 			Host:      "localhost",
 			Port:      6379,
@@ -201,7 +201,7 @@ func TestRedisCache(t *testing.T) {
 			Enabled: alaye.Active,
 			Driver:  "redis",
 			Methods: []string{"GET"},
-			TTL:     shortTTL,
+			TTL:     alaye.Duration(shortTTL),
 			Redis: &alaye.RedisCache{
 				Host:      "localhost",
 				Port:      6379,
@@ -290,7 +290,7 @@ func TestRedisStoreOptions(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "redis",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 				Redis:   &tt.options,
 			}
 			store, err := NewRedis(cfg, logger)

@@ -34,7 +34,7 @@ func WithShutdownManager(sm *jack.Shutdown) Option {
 	}
 }
 
-func WithResource(res *resource.Manager) Option {
+func WithResource(res *resource.Resource) Option {
 	return func(server *Server) {
 		server.resource = res
 	}

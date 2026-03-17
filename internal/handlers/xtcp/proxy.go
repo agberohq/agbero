@@ -1,3 +1,4 @@
+// internal/handlers/xtcp/proxy.go
 package xtcp
 
 import (
@@ -16,7 +17,6 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/lb"
-	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
 	"github.com/pires/go-proxyproto"
 )
@@ -35,7 +35,6 @@ func (r *tcpRoute) Stop() {
 	}
 }
 
-// connEntry is stored in sync.Map for lock-free operations
 type connEntry struct {
 	conn   net.Conn
 	closed atomic.Bool
@@ -46,35 +45,36 @@ type Proxy struct {
 	IdleTimeout time.Duration
 	MaxConns    int64
 
-	mu     sync.RWMutex // Protects routes (infrequently modified)
+	mu     sync.RWMutex
 	routes map[string]*tcpRoute
 	def    *tcpRoute
 
-	conns   sync.Map     // Lock-free: map[net.Conn]*connEntry
-	closing atomic.Bool  // Lock-free shutdown flag
-	connCnt atomic.Int64 // Lock-free connection counter
+	conns   sync.Map
+	closing atomic.Bool
+	connCnt atomic.Int64
 
-	logger *ll.Logger
-	res    *resource.Manager
-
+	res  *resource.Resource
 	quit chan struct{}
 	wg   sync.WaitGroup
 }
 
-func NewProxy(res *resource.Manager, logger *ll.Logger, listen string) *Proxy {
+// NewProxy constructs a TCP proxy using the process resource manager for logging and caching.
+// The logger is sourced from res.Logger — no separate logger parameter is needed.
+func NewProxy(res *resource.Resource, listen string) *Proxy {
 	return &Proxy{
 		Listen: listen,
 		routes: make(map[string]*tcpRoute),
-		logger: logger.Namespace("proxy"),
 		res:    res,
 		quit:   make(chan struct{}),
 	}
 }
 
+// BackendCount returns the current number of active connections.
 func (p *Proxy) BackendCount() int {
 	return int(p.connCnt.Load())
 }
 
+// SetIdleTimeout configures the idle connection timeout for this proxy.
 func (p *Proxy) SetIdleTimeout(timeout time.Duration) {
 	p.IdleTimeout = timeout
 }
@@ -86,21 +86,18 @@ func (p *Proxy) buildRoute(cfg alaye.Proxy) *tcpRoute {
 			Server:   srv,
 			Proxy:    cfg,
 			Resource: p.res,
-			Logger:   p.logger,
+			Logger:   p.res.Logger,
 		})
 		if err == nil {
 			backends = append(backends, be)
 		}
 	}
-
 	strategy := lb.ParseStrategy(cfg.Strategy)
 	stratName := cfg.Strategy
 	if stratName == "" {
 		stratName = alaye.StrategyRoundRobin
 	}
-
 	selector := lb.NewSelector(backends, strategy)
-
 	return &tcpRoute{
 		selector:      selector,
 		strategyName:  stratName,
@@ -108,13 +105,13 @@ func (p *Proxy) buildRoute(cfg alaye.Proxy) *tcpRoute {
 	}
 }
 
+// AddRoute registers a hostname pattern with its backend configuration.
+// An empty or wildcard hostname sets the default route.
 func (p *Proxy) AddRoute(hostname string, cfg alaye.Proxy) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
 	route := p.buildRoute(cfg)
 	hostname = strings.ToLower(strings.TrimSpace(hostname))
-
 	if hostname == "" || hostname == "*" {
 		p.def = route
 	} else {
@@ -122,11 +119,12 @@ func (p *Proxy) AddRoute(hostname string, cfg alaye.Proxy) {
 	}
 }
 
+// UpdateRoutes atomically replaces all routes and stops the old ones.
+// Used during hot reload to swap routing tables without dropping connections.
 func (p *Proxy) UpdateRoutes(newRoutes map[string]*tcpRoute, newDefault *tcpRoute) {
 	p.mu.Lock()
 	oldDef := p.def
 	oldRoutes := p.routes
-
 	p.routes = newRoutes
 	p.def = newDefault
 	p.mu.Unlock()
@@ -137,10 +135,11 @@ func (p *Proxy) UpdateRoutes(newRoutes map[string]*tcpRoute, newDefault *tcpRout
 	for _, r := range oldRoutes {
 		r.Stop()
 	}
-
-	p.logger.Fields("listen", p.Listen).Info("tcp proxy routes updated")
+	p.res.Logger.Fields("listen", p.Listen).Info("tcp proxy routes updated")
 }
 
+// Start begins accepting TCP connections on the configured listen address.
+// Blocks until the proxy is stopped via Stop().
 func (p *Proxy) Start() error {
 	l, err := net.Listen(woos.TCP, p.Listen)
 	if err != nil {
@@ -151,7 +150,11 @@ func (p *Proxy) Start() error {
 
 	p.wg.Go(func() {
 		defer l.Close()
-		defer p.res.TCPCache.Delete(p.Listen)
+		defer func() {
+			if it, ok := p.res.TCPCache.Load(p.Listen); ok && it.Value == p {
+				p.res.TCPCache.Delete(p.Listen)
+			}
+		}()
 
 		bo := zulu.NewInfinite()
 
@@ -172,20 +175,16 @@ func (p *Proxy) Start() error {
 				if errors.As(err, &opErr) && opErr.Timeout() {
 					continue
 				}
-
 				if p.MaxConns > 0 && p.connCnt.Load() >= p.MaxConns {
-					p.logger.Fields("remote", conn.RemoteAddr().String(), "limit", p.MaxConns).Warn("tcp max connections reached, dropping")
+					p.res.Logger.Fields("remote", conn.RemoteAddr().String(), "limit", p.MaxConns).Warn("tcp max connections reached, dropping")
 					conn.Close()
 					continue
 				}
-
 				if p.closing.Load() {
 					return
 				}
-
 				sleepDuration := bo.NextBackOff()
-				p.logger.Fields("err", err, "retry_in", sleepDuration).Warn("tcp accept error, backing off")
-
+				p.res.Logger.Fields("err", err, "retry_in", sleepDuration).Warn("tcp accept error, backing off")
 				select {
 				case <-time.After(sleepDuration):
 					continue
@@ -193,27 +192,23 @@ func (p *Proxy) Start() error {
 					return
 				}
 			}
-
 			bo.Reset()
-
 			p.wg.Add(1)
 			go p.handle(conn)
 		}
 	})
 
-	p.logger.Fields("bind", p.Listen).Info("tcp proxy started")
+	p.res.Logger.Fields("bind", p.Listen).Info("tcp proxy started")
 	return nil
 }
 
+// Stop gracefully shuts down the proxy, closing all active connections.
 func (p *Proxy) Stop() {
-	// Lock-free CAS to ensure single shutdown
 	if !p.closing.CompareAndSwap(false, true) {
 		return
 	}
-
 	close(p.quit)
 
-	// Close all tracked connections using lock-free Range
 	var wg sync.WaitGroup
 	p.conns.Range(func(key, value any) bool {
 		wg.Add(1)
@@ -229,7 +224,6 @@ func (p *Proxy) Stop() {
 	p.conns.Clear()
 	p.connCnt.Store(0)
 
-	// Stop backends
 	p.mu.RLock()
 	def := p.def
 	routes := p.routes
@@ -241,14 +235,11 @@ func (p *Proxy) Stop() {
 	for _, r := range routes {
 		r.Stop()
 	}
-
 	p.wg.Wait()
 }
 
-// trackConn adds or removes connection using lock-free sync.Map
 func (p *Proxy) trackConn(c net.Conn, add bool) {
 	if add {
-		// Fast path: check closing flag without lock
 		if p.closing.Load() {
 			_ = c.Close()
 			return
@@ -300,14 +291,15 @@ func (p *Proxy) handle(src net.Conn) {
 				p.mu.RLock()
 				hasDefault := p.def != nil
 				p.mu.RUnlock()
-
 				if !hasDefault {
-					p.logger.Fields("remote", remoteAddr).Debug("tcp peek timeout, no default route")
+					p.res.Logger.Fields("remote", remoteAddr).Debug("tcp peek timeout, no default route")
 					_ = src.Close()
 					return
 				}
-			} else if err != io.EOF && err != io.ErrUnexpectedEOF {
-				p.logger.Fields("remote", remoteAddr, "err", err).Debug("tcp peek error")
+			} else {
+				if err != io.EOF && err != io.ErrUnexpectedEOF {
+					p.res.Logger.Fields("remote", remoteAddr, "err", err).Debug("tcp peek error")
+				}
 				_ = src.Close()
 				return
 			}
@@ -322,7 +314,7 @@ func (p *Proxy) handle(src net.Conn) {
 
 	route := p.pickRoute(sni)
 	if route == nil || len(route.selector.Backends()) == 0 {
-		p.logger.Fields("remote", remoteAddr, "sni", sni).Debug("no tcp route found")
+		p.res.Logger.Fields("remote", remoteAddr, "sni", sni).Debug("no tcp route found")
 		_ = src.Close()
 		return
 	}
@@ -356,29 +348,24 @@ func (p *Proxy) handle(src net.Conn) {
 				break
 			}
 		}
-
 		if picked == nil || tried[picked] {
 			picked = route.selector.Pick(nil, keyFunc)
 		}
-
 		if picked == nil {
 			break
 		}
-
 		tried[picked] = true
 		backend = picked.(*Backend)
-
 		dst, err = net.DialTimeout(woos.TCP, backend.Address, woos.BackendDialTimeout)
 		if err == nil {
 			break
 		}
-
 		backend.OnDialFailure(err)
-		p.logger.Fields("backend", backend.Address, "err", err).Warn("tcp dial failed")
+		p.res.Logger.Fields("backend", backend.Address, "err", err).Warn("tcp dial failed")
 	}
 
 	if dst == nil {
-		p.logger.Fields("remote", remoteAddr, "sni", sni).Warn("tcp proxy: upstream unavailable")
+		p.res.Logger.Fields("remote", remoteAddr, "sni", sni).Warn("tcp proxy: upstream unavailable")
 		_ = client.Close()
 		return
 	}
@@ -398,7 +385,7 @@ func (p *Proxy) handle(src net.Conn) {
 			client.LocalAddr(),
 		)
 		if _, err := header.WriteTo(dst); err != nil {
-			p.logger.Fields("err", err).Error("failed to write proxy protocol header")
+			p.res.Logger.Fields("err", err).Error("failed to write proxy protocol header")
 			_ = client.Close()
 			_ = dst.Close()
 			requestFailed = true
@@ -417,7 +404,6 @@ func (p *Proxy) handle(src net.Conn) {
 func (p *Proxy) pickRoute(sni string) *tcpRoute {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-
 	if sni != "" {
 		sni = strings.ToLower(strings.TrimSpace(sni))
 		if sni != "" {
@@ -434,7 +420,6 @@ func (p *Proxy) pickRoute(sni string) *tcpRoute {
 			}
 		}
 	}
-
 	return p.def
 }
 
@@ -448,7 +433,6 @@ func (p *Proxy) pipe(client, backend net.Conn) {
 	bWrapped := &deadlineConn{Conn: backend, timeout: timeout}
 
 	errc := make(chan error, 1)
-
 	copyAndClose := func(dst, src net.Conn) {
 		buf := proxyBufPool.Get()
 		defer proxyBufPool.Put(buf)
@@ -467,17 +451,8 @@ func (p *Proxy) pipe(client, backend net.Conn) {
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		copyAndClose(bWrapped, cWrapped)
-	}()
-
-	go func() {
-		defer wg.Done()
-		copyAndClose(cWrapped, bWrapped)
-	}()
-
+	go func() { defer wg.Done(); copyAndClose(bWrapped, cWrapped) }()
+	go func() { defer wg.Done(); copyAndClose(cWrapped, bWrapped) }()
 	wg.Wait()
 
 	_ = client.Close()
@@ -488,11 +463,9 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 	if len(data) < woos.MinClientHelloLen {
 		return "", woos.ErrShortData
 	}
-
 	if data[0] != woos.RecordTypeHandshake {
 		return "", woos.ErrNotTLS
 	}
-
 	pos := 5
 	if pos >= len(data) {
 		return "", woos.ErrShort
@@ -500,46 +473,38 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 	if data[pos] != woos.HandshakeTypeClientHello {
 		return "", woos.ErrNotClientHello
 	}
-
 	pos += 38
 	if pos >= len(data) {
 		return "", woos.ErrShort
 	}
-
 	sessionIdLen := int(data[pos])
 	pos += 1 + sessionIdLen
 	if pos+2 > len(data) {
 		return "", woos.ErrShort
 	}
-
 	cipherLen := int(binary.BigEndian.Uint16(data[pos:]))
 	pos += 2 + cipherLen
 	if pos+1 > len(data) {
 		return "", woos.ErrShort
 	}
-
 	compLen := int(data[pos])
 	pos += 1 + compLen
 	if pos+2 > len(data) {
 		return "", woos.ErrShort
 	}
-
 	extLen := int(binary.BigEndian.Uint16(data[pos:]))
 	pos += 2
 	if pos+extLen > len(data) {
 		return "", woos.ErrShortExt
 	}
 	end := pos + extLen
-
 	for pos+4 <= end {
 		extType := binary.BigEndian.Uint16(data[pos:])
 		extSize := int(binary.BigEndian.Uint16(data[pos+2:]))
 		pos += 4
-
 		if pos+extSize > end {
 			return "", woos.ErrShortExt
 		}
-
 		if extType == woos.ExtTypeServerName {
 			if extSize < 2 {
 				return "", woos.ErrShortSNI
@@ -576,24 +541,40 @@ func (p *Proxy) isTimeout(err error) bool {
 	return false
 }
 
+// SnapBackends returns all backend instances by unwrapping the balancer chain.
+// Traverses Adaptive/Sticky wrappers to reach the leaf Selector and extract raw *Backend.
 func (p *Proxy) SnapBackends() []*Backend {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
 	var all []*Backend
-	for _, route := range p.routes {
-		for _, b := range route.selector.Backends() {
+	extract := func(sel *lb.Selector) {
+		for _, b := range sel.Backends() {
 			if be, ok := b.(*Backend); ok {
 				all = append(all, be)
 			}
 		}
 	}
-	if p.def != nil {
-		for _, b := range p.def.selector.Backends() {
-			if be, ok := b.(*Backend); ok {
-				all = append(all, be)
+
+	unwrap := func(bal lb.Balancer) {
+		for bal != nil {
+			if sel, ok := bal.(*lb.Selector); ok {
+				extract(sel)
+				return
+			}
+			if u, ok := bal.(interface{ Unwrap() lb.Balancer }); ok {
+				bal = u.Unwrap()
+			} else {
+				return
 			}
 		}
+	}
+
+	for _, route := range p.routes {
+		unwrap(route.selector)
+	}
+	if p.def != nil {
+		unwrap(p.def.selector)
 	}
 	return all
 }

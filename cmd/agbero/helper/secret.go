@@ -39,7 +39,7 @@ func (s *Secret) KeyInit(configPath string) {
 	if err == nil && global.Security.InternalAuthKey != "" {
 		targetPath = global.Security.InternalAuthKey
 	} else {
-		ctx := installer.NewContext(s.p.Logger, "")
+		ctx := installer.NewContext(s.p.Logger)
 		targetPath = filepath.Join(ctx.Paths.CertsDir.Path(), "internal_auth.key")
 	}
 
@@ -71,7 +71,7 @@ func (s *Secret) Token(configPath, svcName string, ttl time.Duration) {
 
 	keyPath := global.Security.InternalAuthKey
 	if keyPath == "" {
-		ctx := installer.NewContext(s.p.Logger, "")
+		ctx := installer.NewContext(s.p.Logger)
 		defaultPath := filepath.Join(ctx.Paths.CertsDir.Path(), "internal_auth.key")
 		if _, err := os.Stat(defaultPath); err == nil {
 			keyPath = defaultPath

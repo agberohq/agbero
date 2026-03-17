@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agberohq/agbero/internal/cluster"
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/jack"
@@ -30,8 +30,8 @@ type RatePolicy struct {
 	KeySpec  string
 }
 
-// limiter constructs a standard rate limiter from the defined policy
-// Reverts to an infinite limiter if the request quota is missing or invalid
+// limiter constructs a standard rate limiter from the defined policy.
+// Reverts to an infinite limiter if the request quota is missing or invalid.
 func (p RatePolicy) limiter() *rate.Limiter {
 	if p.Requests <= emptyRequestsAllowed {
 		return rate.NewLimiter(rate.Inf, emptyRequestsAllowed)
@@ -52,7 +52,7 @@ type Config struct {
 	Policy          func(r *http.Request) (bucket string, pol RatePolicy, ok bool)
 	IPManager       *zulu.IPManager
 	CleanupInterval time.Duration
-	SharedState     cluster.SharedState
+	SharedState     woos.SharedState
 }
 
 type atomicEntry struct {
@@ -67,11 +67,11 @@ type RateLimiter struct {
 	maxEntries  int
 	scheduler   *jack.Scheduler
 	ipMgr       *zulu.IPManager
-	sharedState cluster.SharedState
+	sharedState woos.SharedState
 }
 
-// New instantiates a dynamic request throttling layer
-// Handles both local token buckets and shared cluster constraints automatically
+// New instantiates a dynamic request throttling layer.
+// Handles both local token buckets and shared cluster constraints automatically.
 func New(cfg Config) *RateLimiter {
 	if cfg.CleanupInterval <= 0 {
 		cfg.CleanupInterval = defaultCleanupInterval
@@ -89,15 +89,14 @@ func New(cfg Config) *RateLimiter {
 	sched, _ := jack.NewScheduler(gcRoutineName, jack.NewPool(gcRoutinePoolSize), jack.Routine{
 		Interval: cfg.CleanupInterval,
 	})
-
 	_ = sched.Do(jack.Do(rl.sweeper))
 	rl.scheduler = sched
 
 	return rl
 }
 
-// Close terminates the background cleanup scheduler and flushes map data
-// Prevents memory leaks during proxy hot-reloads and shutdowns
+// Close terminates the background cleanup scheduler and flushes map data.
+// Prevents memory leaks during proxy hot-reloads and shutdowns.
 func (rl *RateLimiter) Close() {
 	if rl.scheduler != nil {
 		_ = rl.scheduler.Stop()
@@ -105,13 +104,12 @@ func (rl *RateLimiter) Close() {
 	rl.data.Clear()
 }
 
-// allowInternal evaluates the request against the shared or local token bucket
-// Utilizes 48-bit packed timestamps to avoid Y2K38 overflow panics
+// allowInternal evaluates the request against the shared or local token bucket.
+// Utilizes 48-bit packed timestamps to avoid Y2K38 overflow panics.
 func (rl *RateLimiter) allowInternal(r *http.Request, key string, pol RatePolicy) bool {
 	if pol.Requests <= emptyRequestsAllowed {
 		return true
 	}
-
 	if rl.sharedState != nil {
 		allowed, err := rl.sharedState.AllowRateLimit(r.Context(), key, pol.Requests, pol.Window, pol.Burst)
 		if err != nil {
@@ -119,9 +117,7 @@ func (rl *RateLimiter) allowInternal(r *http.Request, key string, pol RatePolicy
 		}
 		return allowed
 	}
-
 	now := time.Now().Unix()
-
 	if curr, ok := rl.data.Get(key); ok {
 		for {
 			oldPacked := curr.state.Load()
@@ -132,7 +128,6 @@ func (rl *RateLimiter) allowInternal(r *http.Request, key string, pol RatePolicy
 		}
 		return curr.lim.Allow()
 	}
-
 	var allowed bool
 	rl.data.Compute(key, func(curr *atomicEntry, exists bool) (*atomicEntry, bool) {
 		if exists {
@@ -150,9 +145,7 @@ func (rl *RateLimiter) allowInternal(r *http.Request, key string, pol RatePolicy
 			allowed = false
 			return nil, false
 		}
-		newEntry := &atomicEntry{
-			lim: pol.limiter(),
-		}
+		newEntry := &atomicEntry{lim: pol.limiter()}
 		newEntry.state.Store(zulu.NewPacked(packedBits, 0, now))
 		allowed = newEntry.lim.Allow()
 		return newEntry, true
@@ -160,8 +153,8 @@ func (rl *RateLimiter) allowInternal(r *http.Request, key string, pol RatePolicy
 	return allowed
 }
 
-// Handler enforces endpoint request ceilings across incoming connections
-// Responds with 429 Too Many Requests instantly upon limit saturation
+// Handler enforces endpoint request ceilings across incoming connections.
+// Responds with 429 Too Many Requests instantly upon limit saturation.
 func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 	if rl == nil || rl.policy == nil {
 		return next
@@ -187,8 +180,8 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 	})
 }
 
-// extractKey identifies the unique client signature for the bucket
-// Defaults to the IP address if the specified extractor yields no data
+// extractKey identifies the unique client signature for the bucket.
+// Defaults to the IP address if the specified extractor yields no data.
 func (rl *RateLimiter) extractKey(r *http.Request, keySpec string) string {
 	if keySpec == "" || strings.EqualFold(keySpec, "ip") {
 		if rl.ipMgr != nil {
@@ -196,21 +189,19 @@ func (rl *RateLimiter) extractKey(r *http.Request, keySpec string) string {
 		}
 		return r.RemoteAddr
 	}
-
 	extract := zulu.Extractor([]string{keySpec})
 	val := extract(r)
 	if val != "" {
 		return val
 	}
-
 	if rl.ipMgr != nil {
 		return rl.ipMgr.ClientIP(r)
 	}
 	return r.RemoteAddr
 }
 
-// sweeper removes stale rate limit entries from the memory cache
-// Runs periodically via the scheduler to maintain bounded map sizes
+// sweeper removes stale rate limit entries from the memory cache.
+// Runs periodically via the scheduler to maintain bounded map sizes.
 func (rl *RateLimiter) sweeper() {
 	now := time.Now().Unix()
 	cutoff := now - (rl.ttl / time.Second.Nanoseconds())

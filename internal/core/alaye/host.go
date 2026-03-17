@@ -8,10 +8,10 @@ import (
 )
 
 type Host struct {
-	Domains      []string `hcl:"domains" json:"domains"`
-	Bind         []string `hcl:"bind,optional" json:"bind"`
-	NotFoundPage string   `hcl:"not_found_page,optional" json:"not_found_page"`
-	Compression  bool     `hcl:"compression,optional" json:"compression"`
+	Domains      []string `hcl:"domains,attr" json:"domains"`
+	Bind         []string `hcl:"bind,attr" json:"bind"`
+	NotFoundPage string   `hcl:"not_found_page,attr" json:"not_found_page"`
+	Compression  bool     `hcl:"compression,attr" json:"compression"`
 
 	TLS        TLS        `hcl:"tls,block" json:"tls"`
 	Limits     Limit      `hcl:"limits,block" json:"limits"`
@@ -22,6 +22,8 @@ type Host struct {
 	Proxies []Proxy `hcl:"proxy,block" json:"proxies"`
 }
 
+// Validate checks domains, bind ports, routes, and all nested blocks.
+// It does not set defaults — call woos.DefaultHost before Validate.
 func (h *Host) Validate() error {
 	if len(h.Domains) == 0 {
 		return ErrNoDomains
@@ -63,15 +65,12 @@ func (h *Host) Validate() error {
 	if err := h.TLS.Validate(); err != nil {
 		return errors.Newf("tls: %w", err)
 	}
-
 	if err := h.Limits.Validate(); err != nil {
 		return errors.Newf("limits: %w", err)
 	}
-
 	if err := h.Headers.Validate(); err != nil {
 		return errors.Newf("headers: %w", err)
 	}
-
 	if err := h.ErrorPages.Validate(); err != nil {
 		return errors.Newf("host error_pages: %w", err)
 	}

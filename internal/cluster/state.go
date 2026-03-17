@@ -6,17 +6,12 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/go-redis/redis/v8"
 )
 
-// SharedState defines a distributed state backend used across cluster nodes.
-// Used for firewall counters and rate limit token buckets.
-type SharedState interface {
-	Increment(ctx context.Context, key string, window time.Duration) (int64, error)
-	AllowRateLimit(ctx context.Context, key string, limit int, window time.Duration, burst int) (bool, error)
-	Close() error
-}
-
+// RedisSharedState implements woos.SharedState using Redis as the distributed backend.
+// Provides atomic counters and token bucket rate limiting across cluster nodes.
 type RedisSharedState struct {
 	client *redis.Client
 	prefix string
@@ -25,14 +20,14 @@ type RedisSharedState struct {
 // NewRedisSharedState connects to Redis to provide distributed consistency.
 // Exposes atomic scripts for precise limits across independent proxies.
 func NewRedisSharedState(cfg *alaye.RedisState) (*RedisSharedState, error) {
-	addr := "localhost:6379"
+	addr := fmt.Sprintf("%s:%d", woos.LocalhostIPv4, woos.DefaultRedisPort)
 	password := ""
 	db := 0
 	prefix := "agbero:state:"
 
 	if cfg != nil {
 		if cfg.Host != "" {
-			port := 6379
+			port := woos.DefaultRedisPort
 			if cfg.Port > 0 {
 				port = cfg.Port
 			}
@@ -55,7 +50,7 @@ func NewRedisSharedState(cfg *alaye.RedisState) (*RedisSharedState, error) {
 		DB:       db,
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), woos.DefaultAuthTimeout)
 	defer cancel()
 
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -84,7 +79,7 @@ func (r *RedisSharedState) Increment(ctx context.Context, key string, window tim
 	return res, err
 }
 
-// AllowRateLimit acts as a distributed Token Bucket evaluation over Redis.
+// AllowRateLimit acts as a distributed token bucket evaluation over Redis.
 // Enforces quotas and updates capacities entirely within the database safely.
 func (r *RedisSharedState) AllowRateLimit(ctx context.Context, key string, limit int, window time.Duration, burst int) (bool, error) {
 	fullKey := r.prefix + "rl:" + key
@@ -140,3 +135,6 @@ func (r *RedisSharedState) AllowRateLimit(ctx context.Context, key string, limit
 func (r *RedisSharedState) Close() error {
 	return r.client.Close()
 }
+
+// compile-time assertion that RedisSharedState satisfies woos.SharedState
+var _ woos.SharedState = (*RedisSharedState)(nil)

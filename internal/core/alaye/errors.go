@@ -182,6 +182,11 @@ var (
 	ErrAdminAddressRequired = errors.New("admin address is required")
 )
 
+// pprof
+var (
+	ErrPprofPortRequired = errors.New("pprof port is required when pprof is enabled")
+)
+
 var (
 	ErrFallbackRedirectURLRequired = errors.New("fallback: redirect_url required for type=redirect")
 	ErrFallbackProxyURLRequired    = errors.New("fallback: proxy_url required for type=proxy")

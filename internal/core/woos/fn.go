@@ -40,3 +40,13 @@ func IsLocalArea(host string) bool {
 	}
 	return ip.IsPrivate() && !ip.IsLoopback()
 }
+
+// Port extracts the port cleanly from a network address.
+// Safely handles IPv6 brackets and falls back to the default HTTPS port.
+func Port(addr string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return DefaultHTTPSPortInt
+	}
+	return port
+}

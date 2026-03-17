@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// NewEphemeralGlobal creates a minimal in-memory Global config for ephemeral/CLI use.
+// It sets sensible defaults without requiring a config file on disk.
 func NewEphemeralGlobal(port int, https bool) *Global {
 	bindAddr := fmt.Sprintf(":%d", port)
 
@@ -13,17 +15,17 @@ func NewEphemeralGlobal(port int, https bool) *Global {
 		Development: true,
 		Timeouts: Timeout{
 			Enabled:    Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       Duration(10 * time.Second),
+			Write:      Duration(30 * time.Second),
+			Idle:       Duration(60 * time.Second),
+			ReadHeader: Duration(5 * time.Second),
 		},
 		Logging: Logging{
 			Enabled: Active,
 			Level:   "info",
 		},
 		General: General{
-			MaxHeaderBytes: 1048576,
+			MaxHeaderBytes: DefaultMaxHeaderBytes,
 		},
 		Admin:    Admin{Enabled: Inactive},
 		Gossip:   Gossip{Enabled: Inactive},
@@ -40,6 +42,8 @@ func NewEphemeralGlobal(port int, https bool) *Global {
 	return g
 }
 
+// NewStaticHost creates a Host config for a single domain pointing to a static
+// target — either a proxy backend address or a local filesystem root.
 func NewStaticHost(domain string, target Address, isProxy bool) *Host {
 	h := &Host{
 		Domains: []string{domain},

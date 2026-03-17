@@ -2,7 +2,9 @@ package installer
 
 import (
 	"bytes"
+	"runtime"
 
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/charmbracelet/huh"
@@ -27,12 +29,29 @@ func (c *CA) Install() error {
 		installer.RemoveCA()
 		return err
 	}
+	c.printNSSHint(installer)
 	return nil
 }
 
 func (c *CA) Uninstall() error {
 	installer := tlss.NewLocal(c.ctx.Logger, c.ctx.Paths.CertsDir)
 	return installer.UninstallCARoot()
+}
+
+// printNSSHint logs the OS-appropriate certutil install command when NSS is absent.
+// Firefox and Chrome on Linux/macOS require certutil to register the local CA.
+func (c *CA) printNSSHint(loc *tlss.Local) {
+	if loc.HasCertutil() {
+		return
+	}
+	switch runtime.GOOS {
+	case woos.Darwin:
+		c.ctx.Logger.Warn(woos.NSSInstallHintDarwin)
+	case woos.Linux:
+		c.ctx.Logger.Warn(woos.NSSInstallHintLinux)
+	default:
+		c.ctx.Logger.Warn(woos.NSSInstallHintOther)
+	}
 }
 
 func (c *CA) PromptAndInstall() error {

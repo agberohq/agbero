@@ -4,10 +4,9 @@ import (
 	"bytes"
 	"net/http"
 	"sync"
-)
 
-// 5MB limit for caching responses to prevent OOM
-const maxCacheableBodySize = 5 * 1024 * 1024
+	"github.com/agberohq/agbero/internal/core/woos"
+)
 
 // recorder captures HTTP response for caching
 type recorder struct {
@@ -67,7 +66,7 @@ func (r *recorder) Write(b []byte) (int, error) {
 	if cacheable {
 		r.mu.Lock()
 		if r.cacheable {
-			if r.buf.Len()+len(b) > maxCacheableBodySize {
+			if r.buf.Len()+len(b) > woos.CacheMaxBodySize {
 				// Response too large: stop buffering and free memory
 				r.cacheable = false
 				r.buf = nil

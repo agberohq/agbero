@@ -17,7 +17,7 @@ import (
 type BackendConfig struct {
 	Server   alaye.Server
 	Proxy    alaye.Proxy
-	Resource *resource.Manager
+	Resource *resource.Resource
 	Logger   *ll.Logger
 }
 
@@ -28,6 +28,7 @@ type Backend struct {
 	stopOnce sync.Once
 }
 
+// NewBackend constructs a TCP proxy backend from the given config.
 func NewBackend(cfg BackendConfig) (*Backend, error) {
 	addressStr := cfg.Server.Address.String()
 	statsKey := cfg.Proxy.BackendKey(addressStr)
@@ -77,10 +78,10 @@ func NewBackend(cfg BackendConfig) (*Backend, error) {
 func (b *Backend) initHealth(cfg BackendConfig) error {
 	probeCfg := health.DefaultProbeConfig()
 	if cfg.Proxy.HealthCheck.Interval > 0 {
-		probeCfg.StandardInterval = cfg.Proxy.HealthCheck.Interval
+		probeCfg.StandardInterval = cfg.Proxy.HealthCheck.Interval.StdDuration()
 	}
 	if cfg.Proxy.HealthCheck.Timeout > 0 {
-		probeCfg.Timeout = cfg.Proxy.HealthCheck.Timeout
+		probeCfg.Timeout = cfg.Proxy.HealthCheck.Timeout.StdDuration()
 	}
 	var sendBytes, expectBytes []byte
 	if cfg.Proxy.HealthCheck.Send != "" {
@@ -91,7 +92,6 @@ func (b *Backend) initHealth(cfg BackendConfig) error {
 	if cfg.Proxy.HealthCheck.Expect != "" {
 		expectBytes = []byte(cfg.Proxy.HealthCheck.Expect)
 	}
-	// Use HostPort() helper to strip scheme (e.g., "tcp://host:port" -> "host:port")
 	pool := newConnPool(cfg.Server.Address.HostPort(), 3, probeCfg.Timeout)
 	executor := &TCPExecutor{
 		Pool:   pool,
@@ -118,16 +118,19 @@ func (b *Backend) initHealth(cfg BackendConfig) error {
 	})
 }
 
+// Stop closes the backend stop channel.
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
 	})
 }
 
+// Alive delegates to the upstream base liveness check.
 func (b *Backend) Alive() bool {
 	return b.Base.Alive()
 }
 
+// Weight returns the backend weight, defaulting to 1 when unset.
 func (b *Backend) Weight() int {
 	w := b.Base.Weight()
 	if w <= 0 {
@@ -136,10 +139,12 @@ func (b *Backend) Weight() int {
 	return w
 }
 
+// Status updates the backend liveness state.
 func (b *Backend) Status(up bool) {
 	b.Base.Status(up)
 }
 
+// Snapshot returns a point-in-time view of backend health and activity metrics.
 func (b *Backend) Snapshot() *Snapshot {
 	return &Snapshot{
 		Address:     b.Address,

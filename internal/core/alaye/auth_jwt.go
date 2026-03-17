@@ -1,21 +1,16 @@
 package alaye
 
-import (
-	"github.com/olekukonko/errors"
-)
+import "github.com/olekukonko/errors"
 
 type JWTAuth struct {
-	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
-
-	// Secret for HMAC (HS256) or Path to Public Key (RS256/ES256)
-	Secret Value `hcl:"secret" json:"secret"`
-	// Map claims to headers: e.g. "sub" = "X-User-ID"
-	ClaimMap map[string]string `hcl:"claims_to_headers,optional" json:"claim_map"`
-	// Optional: Validate 'iss' or 'aud'
-	Issuer   string `hcl:"issuer,optional" json:"issuer"`
-	Audience string `hcl:"audience,optional" json:"audience"`
+	Enabled  Enabled           `hcl:"enabled,attr" json:"enabled"`
+	Secret   Value             `hcl:"secret,attr" json:"secret"`
+	ClaimMap map[string]string `hcl:"claims_to_headers,attr" json:"claim_map"`
+	Issuer   string            `hcl:"issuer,attr" json:"issuer"`
+	Audience string            `hcl:"audience,attr" json:"audience"`
 }
 
+// Validate checks that a secret is present when JWT auth is enabled.
 func (j *JWTAuth) Validate() error {
 	if j.Enabled.NotActive() {
 		return nil

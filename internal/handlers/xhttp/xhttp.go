@@ -9,7 +9,6 @@ import (
 	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/errors"
-	"github.com/olekukonko/ll"
 )
 
 var hopHeaders = []string{
@@ -30,11 +29,11 @@ type ConfigProxy struct {
 	Fallback http.Handler
 }
 
+// Validate checks that ConfigProxy fields are within acceptable bounds.
 func (c ConfigProxy) Validate() error {
 	if c.Timeout < 0 {
 		return errors.New("timeout cannot be negative")
 	}
-	// Strategy and Keys are optional; no validation needed
 	return nil
 }
 
@@ -42,11 +41,11 @@ type ConfigBackend struct {
 	Server   alaye.Server
 	Route    *alaye.Route
 	Domains  []string
-	Logger   *ll.Logger
 	Fallback http.Handler
-	Resource *resource.Manager
+	Resource *resource.Resource
 }
 
+// Validate checks that the backend address and resource manager are present.
 func (c ConfigBackend) Validate() error {
 	if c.Server.Address == "" {
 		return errors.New("server address required")

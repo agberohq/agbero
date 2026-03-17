@@ -16,7 +16,7 @@ type MemoryStore struct {
 }
 
 func NewMemoryStore(cfg *alaye.Cache) (*MemoryStore, error) {
-	maxItems := 10_000 // Safe default
+	maxItems := 10_000
 
 	if cfg.Memory != nil && cfg.Memory.MaxItems > 0 {
 		maxItems = cfg.Memory.MaxItems
@@ -27,7 +27,7 @@ func NewMemoryStore(cfg *alaye.Cache) (*MemoryStore, error) {
 			MaximumSize: maxItems,
 			OnDelete:    mappo.CloserDelete,
 		}),
-		maxTTL: cfg.TTL,
+		maxTTL: cfg.TTL.StdDuration(),
 	}, nil
 }
 

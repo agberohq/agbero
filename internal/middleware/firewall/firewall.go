@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/pkg/bot"
 	"github.com/olekukonko/ll"
 	"github.com/yl2chen/cidranger"
 )
@@ -25,6 +25,7 @@ type Inspector struct {
 	Body     []byte
 	IP       string
 	ParsedIP net.IP
+	IsBot    bool
 	Logger   *ll.Logger
 }
 
@@ -34,11 +35,13 @@ type readCloserWrapper struct {
 }
 
 type Config struct {
-	Firewall    *alaye.Firewall
-	DataDir     woos.Folder
-	Logger      *ll.Logger
-	IPMgr       *zulu.IPManager
-	SharedState cluster.SharedState
+	Firewall       *alaye.Firewall
+	TrustedProxies []string
+	DataDir        woos.Folder
+	Logger         *ll.Logger
+	IPMgr          *zulu.IPManager
+	SharedState    woos.SharedState
+	BotChecker     *bot.Checker
 }
 
 type Engine struct {
@@ -48,8 +51,10 @@ type Engine struct {
 	logger          *ll.Logger
 	whitelistRanger cidranger.Ranger
 	blacklistRanger cidranger.Ranger
+	trustedRanger   cidranger.Ranger
 	ipMgr           *zulu.IPManager
-	sharedState     cluster.SharedState
+	sharedState     woos.SharedState
+	botChecker      *bot.Checker
 }
 
 // New establishes deep packet inspection rules for perimeter security.
@@ -72,6 +77,10 @@ func New(cfg Config) (*Engine, error) {
 	if ipMgr == nil {
 		ipMgr = zulu.IP
 	}
+	botChecker := cfg.BotChecker
+	if botChecker == nil {
+		botChecker = bot.NewChecker()
+	}
 	e := &Engine{
 		cfg:             cfg.Firewall,
 		store:           store,
@@ -79,10 +88,16 @@ func New(cfg Config) (*Engine, error) {
 		logger:          cfg.Logger.Namespace("firewall"),
 		whitelistRanger: cidranger.NewPCTrieRanger(),
 		blacklistRanger: cidranger.NewPCTrieRanger(),
+		trustedRanger:   cidranger.NewPCTrieRanger(),
 		ipMgr:           ipMgr,
 		sharedState:     cfg.SharedState,
+		botChecker:      botChecker,
 	}
 	if err := e.loadStaticRules(); err != nil {
+		store.Close()
+		return nil, err
+	}
+	if err := e.loadTrustedProxies(cfg.TrustedProxies); err != nil {
 		store.Close()
 		return nil, err
 	}
@@ -105,6 +120,11 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := e.ipMgr.ClientIP(r)
+
+		if e.checkRanger(e.trustedRanger, ip) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if ban, err := e.store.GetBan(ip); err == nil && !ban.IsExpired() {
 			e.blockRequest(w, r, "banned_ip", ban.Reason)
 			return
@@ -131,6 +151,7 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 			Body:     bodySample,
 			IP:       ip,
 			ParsedIP: parsedIP,
+			IsBot:    e.botChecker.IsBot(r.UserAgent()),
 			Logger:   e.logger,
 		}
 		runGlobal := true
@@ -151,6 +172,24 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// loadTrustedProxies populates the trusted ranger from Security.TrustedProxies.
+// Any IP in this set bypasses all WAF checks entirely.
+func (e *Engine) loadTrustedProxies(proxies []string) error {
+	for _, cidr := range proxies {
+		if !strings.Contains(cidr, "/") {
+			cidr += "/32"
+		}
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			return fmt.Errorf("firewall: invalid trusted proxy CIDR %q: %w", cidr, err)
+		}
+		if err := e.trustedRanger.Insert(cidranger.NewBasicRangerEntry(*network)); err != nil {
+			return fmt.Errorf("firewall: failed to insert trusted proxy %q: %w", cidr, err)
+		}
+	}
+	return nil
 }
 
 func (e *Engine) shouldInspectBody(r *http.Request) bool {
@@ -177,14 +216,12 @@ func (e *Engine) peekBody(r *http.Request) ([]byte, error) {
 	if r.ContentLength > 0 && r.ContentLength < limit {
 		limit = r.ContentLength
 	}
-
 	sample := make([]byte, limit)
 	n, err := io.ReadFull(r.Body, sample)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return nil, err
 	}
 	sample = sample[:n]
-
 	r.Body = &readCloserWrapper{
 		Reader: io.MultiReader(bytes.NewReader(sample), r.Body),
 		Closer: r.Body,
@@ -225,8 +262,10 @@ func (e *Engine) checkRanger(ranger cidranger.Ranger, ip string) bool {
 	return contains
 }
 
+// Unblock removes an IP from the persistent ban store.
 func (e *Engine) Unblock(ip string) error { return e.store.Remove(ip) }
 
+// Block adds an IP to the persistent ban store with a reason and expiry duration.
 func (e *Engine) Block(ip, reason string, duration time.Duration) error {
 	return e.store.Add(Rule{
 		IP:        ip,
@@ -349,6 +388,12 @@ func (e *Engine) checkCondition(c alaye.Condition, in *Inspector) bool {
 		if len(in.Body) > 0 {
 			val = string(in.Body)
 		}
+	case "bot":
+		if in.IsBot {
+			val = "true"
+		} else {
+			val = "false"
+		}
 	}
 	if c.IgnoreCase {
 		val = strings.ToLower(val)
@@ -396,11 +441,9 @@ func (e *Engine) checkThreshold(rule alaye.Rule, in *Inspector) bool {
 	}
 	key := in.IP
 	if after, ok := strings.CutPrefix(t.TrackBy, "header:"); ok {
-		h := after
-		key = in.Req.Header.Get(h)
+		key = in.Req.Header.Get(after)
 	} else if after, ok := strings.CutPrefix(t.TrackBy, "cookie:"); ok {
-		c := after
-		if cookie, err := in.Req.Cookie(c); err == nil {
+		if cookie, err := in.Req.Cookie(after); err == nil {
 			key = cookie.Value
 		}
 	}
@@ -421,22 +464,21 @@ func (e *Engine) checkThreshold(rule alaye.Rule, in *Inspector) bool {
 	if key == "" {
 		return false
 	}
-
 	var count int64
 	var err error
 	if e.sharedState != nil {
-		count, err = e.sharedState.Increment(in.Req.Context(), "fw:"+rule.Name+":"+key, t.Window)
+		count, err = e.sharedState.Increment(in.Req.Context(), "fw:"+rule.Name+":"+key, t.Window.StdDuration())
 		if err != nil {
 			e.logger.Debug("redis shared state increment failed, failing open", "err", err)
 			return false
 		}
 	} else {
-		count = e.counters.Increment(rule.Name, key, t.Window)
+		count = e.counters.Increment(rule.Name, key, t.Window.StdDuration())
 	}
-
 	return count >= int64(t.Count)
 }
 
+// List returns all active ban rules from the persistent store.
 func (e *Engine) List() ([]Rule, error) {
 	if e == nil || e.store == nil {
 		return nil, nil
@@ -444,6 +486,7 @@ func (e *Engine) List() ([]Rule, error) {
 	return e.store.LoadAll()
 }
 
+// ClearStore removes all ban rules from the persistent store.
 func (e *Engine) ClearStore() error {
 	if e == nil || e.store == nil {
 		return nil
@@ -451,6 +494,7 @@ func (e *Engine) ClearStore() error {
 	return e.store.Clear()
 }
 
+// PruneStore removes expired ban rules from the persistent store.
 func (e *Engine) PruneStore() (int, error) {
 	if e == nil || e.store == nil {
 		return 0, nil

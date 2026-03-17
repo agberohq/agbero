@@ -21,13 +21,13 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-func NewTestConfig(t *testing.T) Config {
+func NewTestConfig(t *testing.T) resource.Proxy {
 	t.Helper()
 	global := &alaye.Global{
 		Timeouts: alaye.Timeout{
-			Read:  30 * time.Second,
-			Write: 30 * time.Second,
-			Idle:  120 * time.Second,
+			Read:  alaye.Duration(30 * time.Second),
+			Write: alaye.Duration(30 * time.Second),
+			Idle:  alaye.Duration(120 * time.Second),
 		},
 		Security: alaye.Security{
 			Enabled:        alaye.Inactive,
@@ -35,7 +35,7 @@ func NewTestConfig(t *testing.T) Config {
 		},
 		RateLimits: alaye.GlobalRate{
 			Enabled:    alaye.Inactive,
-			TTL:        10 * time.Minute,
+			TTL:        alaye.Duration(10 * time.Minute),
 			MaxEntries: 10000,
 		},
 		Storage: alaye.Storage{
@@ -50,10 +50,9 @@ func NewTestConfig(t *testing.T) Config {
 		WorkDir: t.TempDir(),
 		Logger:  ll.New("test").Disable(),
 	})
-	return Config{
+	return resource.Proxy{
 		Global:   global,
 		Host:     host,
-		Logger:   ll.New("test").Disable(),
 		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
 		CookMgr:  cm,
 		Resource: res,
@@ -63,12 +62,12 @@ func NewTestConfig(t *testing.T) Config {
 func TestConfig_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
-		cfg     Config
+		cfg     resource.Proxy
 		wantErr bool
 	}{
 		{
 			name: "valid config",
-			cfg: Config{
+			cfg: resource.Proxy{
 				Global:   &alaye.Global{},
 				Host:     &alaye.Host{Domains: []string{"example.com"}},
 				Resource: resource.New(),
@@ -77,7 +76,7 @@ func TestConfig_Validate(t *testing.T) {
 		},
 		{
 			name: "nil resource",
-			cfg: Config{
+			cfg: resource.Proxy{
 				Global: &alaye.Global{},
 				Host:   &alaye.Host{Domains: []string{"example.com"}},
 			},
@@ -85,7 +84,7 @@ func TestConfig_Validate(t *testing.T) {
 		},
 		{
 			name: "nil global",
-			cfg: Config{
+			cfg: resource.Proxy{
 				Host:     &alaye.Host{Domains: []string{"example.com"}},
 				Resource: resource.New(),
 			},
@@ -93,7 +92,7 @@ func TestConfig_Validate(t *testing.T) {
 		},
 		{
 			name: "nil host",
-			cfg: Config{
+			cfg: resource.Proxy{
 				Global:   &alaye.Global{},
 				Resource: resource.New(),
 			},
@@ -101,7 +100,7 @@ func TestConfig_Validate(t *testing.T) {
 		},
 		{
 			name: "empty host domains",
-			cfg: Config{
+			cfg: resource.Proxy{
 				Global:   &alaye.Global{},
 				Host:     &alaye.Host{Domains: []string{}},
 				Resource: resource.New(),
@@ -137,7 +136,7 @@ func TestNewRoute_NilRoute(t *testing.T) {
 }
 
 func TestNewRoute_InvalidConfig(t *testing.T) {
-	cfg := Config{}
+	cfg := resource.Proxy{}
 	route := NewRoute(cfg, &alaye.Route{Path: "/"})
 	if route == nil {
 		t.Fatal("NewRoute should return fallback route, not nil")
@@ -316,8 +315,8 @@ func TestRoute_RegisterPatients_Success(t *testing.T) {
 		HealthCheck: alaye.HealthCheck{
 			Enabled:  alaye.Active,
 			Path:     "/health",
-			Interval: 50 * time.Millisecond,
-			Timeout:  100 * time.Millisecond,
+			Interval: alaye.Duration(50 * time.Millisecond),
+			Timeout:  alaye.Duration(100 * time.Millisecond),
 		},
 	})
 	if route == nil {
@@ -407,7 +406,7 @@ func TestRouteHandler_Proxy_RateLimit(t *testing.T) {
 			Rule: alaye.RateRule{
 				Enabled:  alaye.Active,
 				Requests: 1,
-				Window:   time.Minute,
+				Window:   alaye.Duration(time.Minute),
 				Key:      "ip",
 			},
 		},
@@ -527,7 +526,7 @@ func TestRouteHandler_Proxy_Timeout(t *testing.T) {
 		},
 		Timeouts: alaye.TimeoutRoute{
 			Enabled: alaye.Active,
-			Request: 10 * time.Millisecond,
+			Request: alaye.Duration(10 * time.Millisecond),
 		},
 	}
 
@@ -1101,7 +1100,7 @@ func TestRouteHandler_WithCache(t *testing.T) {
 		Path:    "/",
 		Cache: alaye.Cache{
 			Enabled: alaye.Active,
-			TTL:     5 * time.Minute,
+			TTL:     alaye.Duration(5 * time.Minute),
 		},
 		Web: alaye.Web{
 			Enabled: alaye.Active,
@@ -1245,7 +1244,7 @@ func TestRouteHandler_WithForwardAuth(t *testing.T) {
 }
 
 func TestRouteHandler_WithWASM(t *testing.T) {
-	// Note: WASM loading occurs in Manager.handleRoute(), not in NewRoute().
+	// Note: WASM loading occurs in Resource.handleRoute(), not in NewRoute().
 	// This test validates that NewRoute() doesn't crash on invalid WASM config.
 	// Actual WASM error handling is tested at the manager level.
 
@@ -1274,7 +1273,7 @@ func TestRouteHandler_WithWASM(t *testing.T) {
 	defer h.Close()
 
 	// Since WASM isn't loaded in NewRoute(), the web handler serves the file successfully.
-	// WASM errors would only occur if the request went through Manager.handleRoute().
+	// WASM errors would only occur if the request went through Resource.handleRoute().
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -1511,7 +1510,7 @@ func TestBuildRouteLimiter_ACMEChallenge(t *testing.T) {
 		Rule: alaye.RateRule{
 			Enabled:  alaye.Active,
 			Requests: 100,
-			Window:   time.Minute,
+			Window:   alaye.Duration(time.Minute),
 		},
 	}
 	global := &alaye.GlobalRate{
@@ -1521,7 +1520,7 @@ func TestBuildRouteLimiter_ACMEChallenge(t *testing.T) {
 				Enabled:  alaye.Active,
 				Prefixes: []string{"/.well-known/acme-challenge/"},
 				Requests: 1000,
-				Window:   time.Minute,
+				Window:   alaye.Duration(time.Minute),
 			},
 		},
 	}
@@ -1551,7 +1550,7 @@ func TestBuildRouteLimiter_MethodMatch(t *testing.T) {
 			Enabled:  alaye.Active,
 			Methods:  []string{"POST"},
 			Requests: 10,
-			Window:   time.Minute,
+			Window:   alaye.Duration(time.Minute),
 		},
 	}
 	ipMgr := zulu.NewIPManager(nil)
@@ -1584,7 +1583,7 @@ func TestBuildRouteLimiter_PrefixMatch(t *testing.T) {
 			Enabled:  alaye.Active,
 			Prefixes: []string{"/api/"},
 			Requests: 100,
-			Window:   time.Minute,
+			Window:   alaye.Duration(time.Minute),
 		},
 	}
 	ipMgr := zulu.NewIPManager(nil)
@@ -1621,7 +1620,7 @@ func TestBuildRouteLimiter_GlobalPolicy(t *testing.T) {
 			{
 				Name:     "api-policy",
 				Requests: 50,
-				Window:   time.Minute,
+				Window:   alaye.Duration(time.Minute),
 				Burst:    10,
 				Key:      "header:X-API-Key",
 			},

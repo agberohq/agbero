@@ -23,7 +23,7 @@ bind {
   https = [":443"]
 
   # Automatically redirect HTTP -> HTTPS
-  redirect = on
+  redirect = "on"
 }
 
 # -------------------------------------------------------------
@@ -31,7 +31,7 @@ bind {
 # -------------------------------------------------------------
 admin {
   # Enable admin UI and API endpoints
-  enabled = on
+  enabled = "on"
 
   # Admin interface bind address
   address = ":9090"
@@ -40,13 +40,16 @@ admin {
   allowed_ips = ["127.0.0.1", "::1"]
 
   # Enable pprof debugging endpoints (security risk in prod)
-  pprof = off
+  # pprof {
+  #   enabled = "off"
+  #   bind = "6061"
+  # }
 
   # ---------------------------------------------------------
   # BASIC AUTH (for /login endpoint)
   # ---------------------------------------------------------
   basic_auth {
-    enabled = on
+    enabled = "on"
     # Format: "username:bcrypt_hash"
     users = [
       "admin:{ADMIN_PASSWORD}"
@@ -57,7 +60,7 @@ admin {
   # JWT AUTH (for API/programmatic access)
   # ---------------------------------------------------------
   jwt_auth {
-    enabled = on
+    enabled = "on"
     # Secret for signing JWTs (base64, 16/24/32 bytes)
     secret = "{ADMIN_SECRET}"
   }
@@ -66,10 +69,10 @@ admin {
   # OAUTH / FORWARD AUTH (Examples)
   # ---------------------------------------------------------
   # forward_auth {
-  #   enabled = off
+  #   enabled = "off"
   #   url     = "http://auth-service:8080/verify"
-  #   request { enabled = on }
-  #   response { enabled = on }
+  #   request { enabled = "on" }
+  #   response { enabled = "on" }
   # }
 }
 
@@ -86,10 +89,10 @@ storage {
 # LOGGING
 # -------------------------------------------------------------
 logging {
-  enabled = on
+  enabled = "on"
 
   # Log configuration changes on reload
-  diff = off
+  diff = "off"
 
   # Log level: debug, info, warn, error
   level = "info"
@@ -110,7 +113,7 @@ logging {
   # FILE LOGGING
   # ---------------------------------------------------------
   file {
-    enabled    = on
+    enabled    = "on"
     path       = "{LOGS_DIR}/agbero.log"
     batch_size = 500
     rotate_size = 1024
@@ -120,7 +123,7 @@ logging {
   # VICTORIALOGS INTEGRATION
   # ---------------------------------------------------------
   # victoria {
-  #   enabled = off
+  #   enabled = "off"
   #   url = "http://localhost:9428/insert/0/prometheus/api/v1/write"
   #   batch_size = 500
   # }
@@ -129,7 +132,7 @@ logging {
   # PROMETHEUS METRICS ENDPOINT
   # ---------------------------------------------------------
   # prometheus {
-  #   enabled = off
+  #   enabled = "off"
   #   path    = "/metrics"
   # }
 }
@@ -138,7 +141,7 @@ logging {
 # SECURITY & FIREWALL
 # -------------------------------------------------------------
 security {
-  enabled = on
+  enabled = "on"
 
   # Trusted proxy CIDRs for X-Forwarded-For resolution
   trusted_proxies = [
@@ -157,7 +160,7 @@ security {
   # APPLICATION FIREWALL / WAF
   # ---------------------------------------------------------
   firewall {
-    enabled = on
+    enabled = "on"
     mode    = "active" # active, verbose, monitor
 
     defaults {
@@ -199,7 +202,7 @@ general {
 # CLUSTERING (Gossip)
 # -------------------------------------------------------------
 gossip {
-  enabled = off
+  enabled = "off"
 
   # Gossip protocol port (default: 7946)
   port = 7946
@@ -219,7 +222,7 @@ gossip {
 # ACME / LET'S ENCRYPT
 # -------------------------------------------------------------
 letsencrypt {
-  enabled = on
+  enabled = "on"
 
   # Email for registration and expiry notifications
   email = "admin@example.com"
@@ -235,7 +238,7 @@ letsencrypt {
 # RATE LIMITS
 # -------------------------------------------------------------
 rate_limits {
-  enabled = on
+  enabled = "on"
 
   # Protect the admin login endpoint from brute force
   rule "protect_admin_login" {

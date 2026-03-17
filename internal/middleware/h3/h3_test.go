@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/agberohq/agbero/internal/core/woos"
 )
 
 func TestH3Middleware_HeaderAdded(t *testing.T) {
@@ -33,7 +35,7 @@ func TestExtractPort_Various(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		port := Port(tt.addr)
+		port := woos.Port(tt.addr)
 		if port != tt.expected {
 			t.Errorf("For %q, expected %q, got %q", tt.addr, tt.expected, port)
 		}

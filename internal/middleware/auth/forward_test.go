@@ -475,7 +475,7 @@ func TestForward_OnFailure_Allow(t *testing.T) {
 		Name:      "test_failure_allow", // Unique name
 		URL:       "http://127.0.0.1:1",
 		OnFailure: "allow",
-		Timeout:   100 * time.Millisecond,
+		Timeout:   alaye.Duration(100 * time.Millisecond),
 	}
 
 	called := false
@@ -504,7 +504,7 @@ func TestForward_OnFailure_Deny(t *testing.T) {
 		Name:      "test_failure_deny", // Unique name
 		URL:       "http://127.0.0.1:1",
 		OnFailure: "deny",
-		Timeout:   100 * time.Millisecond,
+		Timeout:   alaye.Duration(100 * time.Millisecond),
 	}
 
 	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -535,7 +535,7 @@ func TestForward_Timeout(t *testing.T) {
 		Enabled:   alaye.Active,
 		Name:      "test_timeout", // Unique name
 		URL:       authServer.URL,
-		Timeout:   50 * time.Millisecond,
+		Timeout:   alaye.Duration(50 * time.Millisecond),
 		OnFailure: "deny",
 	}
 	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -562,7 +562,7 @@ func TestForward_TLS_InsecureSkipVerify(t *testing.T) {
 		Enabled: alaye.Active,
 		Name:    "test_tls_skip_verify", // Unique name
 		URL:     authServer.URL,
-		TLS: &alaye.ForwardTLS{
+		TLS: alaye.ForwardTLS{
 			Enabled:            alaye.Active,
 			InsecureSkipVerify: true,
 		},
@@ -656,7 +656,7 @@ func TestForward_ConcurrentRequests(t *testing.T) {
 		},
 		Response: alaye.ForwardAuthResponse{
 			Enabled:  alaye.Active,
-			CacheTTL: 1 * time.Minute,
+			CacheTTL: alaye.Duration(1 * time.Minute),
 		},
 	}
 	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

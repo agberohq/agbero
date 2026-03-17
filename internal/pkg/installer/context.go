@@ -12,13 +12,12 @@ type Context struct {
 	Logger      *ll.Logger
 	Interactive bool
 	Paths       woos.RuntimePaths
-	Env         string // "local" or "prod"
 	IsRoot      bool
 }
 
-// NewContext creates a shared state for all installers. It determines if
-// the current execution is interactive (TTY) or headless (CI/CD/Scripts).
-func NewContext(logger *ll.Logger, forceEnv string) *Context {
+// NewContext creates a shared state for all installers.
+// Detects whether the current execution is interactive (TTY) or headless (CI/CD/scripts).
+func NewContext(logger *ll.Logger) *Context {
 	interactive := false
 	if fileInfo, err := os.Stdin.Stat(); err == nil {
 		if (fileInfo.Mode() & os.ModeCharDevice) != 0 {
@@ -44,26 +43,17 @@ func NewContext(logger *ll.Logger, forceEnv string) *Context {
 		}
 	}
 
-	env := "local"
-	if forceEnv != "" {
-		env = forceEnv
-	} else if isRoot && interactive {
-		env = "prod"
-	}
-
 	return &Context{
 		Logger:      logger,
 		Interactive: interactive,
 		Paths:       paths,
-		Env:         env,
 		IsRoot:      isRoot,
 	}
 }
 
+// checkIsRoot reports whether the current process has root/administrator privileges.
 func checkIsRoot() bool {
 	if runtime.GOOS == woos.Windows {
-		// Windows root detection requires specialized API calls.
-		// For CLI purposes, we assume standard privileges unless overridden.
 		return false
 	}
 	return os.Geteuid() == 0

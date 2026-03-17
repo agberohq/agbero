@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"regexp"
 	"testing"
 	"time"
 
@@ -30,17 +29,7 @@ func createTestEngine(t *testing.T, cfg *alaye.Firewall) *Engine {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	for i := range cfg.Rules {
-		r := &cfg.Rules[i]
-		if r.Match.Enabled.Active() {
-			compileConditions(r.Match.Any)
-			compileConditions(r.Match.All)
-			compileConditions(r.Match.None)
-			if r.Match.Extract != nil && r.Match.Extract.Enabled.Active() && r.Match.Extract.Regex == nil && r.Match.Extract.Pattern != "" {
-				r.Match.Extract.Regex = regexp.MustCompile(r.Match.Extract.Pattern)
-			}
-		}
-	}
+	woos.D.Firewall(cfg)
 	e, err := New(Config{
 		Firewall: cfg,
 		DataDir:  woos.NewFolder(dir),
@@ -51,15 +40,6 @@ func createTestEngine(t *testing.T, cfg *alaye.Firewall) *Engine {
 		t.Fatal(err)
 	}
 	return e
-}
-
-func compileConditions(conds []alaye.Condition) {
-	for i := range conds {
-		c := &conds[i]
-		if c.Pattern != "" && c.Compiled == nil {
-			c.Compiled = regexp.MustCompile(c.Pattern)
-		}
-	}
 }
 
 func TestStaticRules(t *testing.T) {
@@ -215,7 +195,7 @@ func TestThresholds(t *testing.T) {
 					Threshold: &alaye.Threshold{
 						Enabled: alaye.Active,
 						Count:   3,
-						Window:  1 * time.Minute,
+						Window:  alaye.Duration(1 * time.Minute),
 						TrackBy: "ip",
 					},
 				},
@@ -254,12 +234,24 @@ func TestPersistence(t *testing.T) {
 	dir, _ := os.MkdirTemp("", "persist")
 	defer os.RemoveAll(dir)
 	cfg := &alaye.Firewall{Status: alaye.Active}
-	e1, _ := New(Config{
+	woos.D.Firewall(cfg)
+	e1, err := New(Config{
 		Firewall: cfg,
 		DataDir:  woos.NewFolder(dir),
 		Logger:   ll.New("test").Disable(),
 		IPMgr:    zulu.IP,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "1.2.3.1:123"
+	rec := httptest.NewRecorder()
+	e1.Handler(mockHandler, nil).ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Error("Persistence failed: IP not blocked")
+	}
+
 	e1.Block("1.1.1.1", "manual", 1*time.Hour)
 	if err := e1.store.Sync(); err != nil {
 		t.Fatal(err)
@@ -272,9 +264,9 @@ func TestPersistence(t *testing.T) {
 		IPMgr:    zulu.IP,
 	})
 	defer e2.Close()
-	req := httptest.NewRequest("GET", "/", nil)
+	req = httptest.NewRequest("GET", "/", nil)
 	req.RemoteAddr = "1.1.1.1:123"
-	rec := httptest.NewRecorder()
+	rec = httptest.NewRecorder()
 	e2.Handler(mockHandler, nil).ServeHTTP(rec, req)
 	if rec.Code != 403 {
 		t.Error("Persistence failed: IP not blocked after restart")

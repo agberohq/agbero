@@ -95,8 +95,8 @@ func TestNewBackend_WithHealthCheck(t *testing.T) {
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
 			Enabled:  alaye.Active,
-			Interval: 50 * time.Millisecond,
-			Timeout:  100 * time.Millisecond,
+			Interval: alaye.Duration(50 * time.Millisecond),
+			Timeout:  alaye.Duration(100 * time.Millisecond),
 			Send:     "PING\r\n",
 			Expect:   "PONG",
 		},
@@ -125,8 +125,8 @@ func TestNewBackend_HealthCheckFailure(t *testing.T) {
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
 			Enabled:  alaye.Active,
-			Interval: 20 * time.Millisecond,
-			Timeout:  50 * time.Millisecond,
+			Interval: alaye.Duration(20 * time.Millisecond),
+			Timeout:  alaye.Duration(50 * time.Millisecond),
 			Send:     "PING\r\n",
 			Expect:   "PONG",
 		},

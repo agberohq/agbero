@@ -19,6 +19,14 @@ import (
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/mappo"
+)
+
+const (
+	defaultWebhookTimeout = 5 * time.Minute
+	maxWebhookBodySize    = 1 << 20
+	defaultWorkDirPerm    = 0750
+	defaultStopTimeout    = 30 * time.Second
 )
 
 type WebhookPayload struct {
@@ -37,8 +45,7 @@ type ManagerConfig struct {
 }
 
 type Manager struct {
-	mu      sync.RWMutex
-	entries map[string]*Entry
+	entries *mappo.Concurrent[string, *Entry]
 	logger  *ll.Logger
 	workDir string
 	pool    *jack.Pool
@@ -60,20 +67,17 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	if cfg.Pool == nil {
 		return nil, errors.New("worker pool is required")
 	}
-
-	if err := os.MkdirAll(cfg.WorkDir, 0750); err != nil {
+	if err := os.MkdirAll(cfg.WorkDir, defaultWorkDirPerm); err != nil {
 		return nil, fmt.Errorf("failed to create manager workdir: %w", err)
 	}
-
 	logger := cfg.Logger
 	if logger == nil {
 		logger = ll.New("cookmgr").Disable()
 	} else {
 		logger = logger.Namespace("cookmgr")
 	}
-
 	return &Manager{
-		entries: make(map[string]*Entry),
+		entries: mappo.NewConcurrent[string, *Entry](),
 		logger:  logger,
 		workDir: cfg.WorkDir,
 		pool:    cfg.Pool,
@@ -87,14 +91,10 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 		return errors.New("git URL is required")
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if existing, ok := m.entries[routeKey]; ok {
+	if existing, ok := m.entries.Get(routeKey); ok {
 		if existing.cancel != nil {
 			existing.cancel()
 		}
-		delete(m.entries, routeKey)
 	}
 
 	targetWorkDir := filepath.Join(m.workDir, routeKey)
@@ -129,7 +129,8 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 		Config: cfg,
 		cancel: cancel,
 	}
-	m.entries[routeKey] = entry
+
+	m.entries.Set(routeKey, entry)
 
 	m.logger.Fields("route_key", routeKey, "webhook", "/.well-known/agbero/webhook/git/"+routeKey).Info("git integration configured")
 
@@ -146,7 +147,7 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 
 	if cfg.Interval > 0 {
 		m.wg.Add(1)
-		go m.poll(ctx, routeKey, c, cfg.Interval)
+		go m.poll(ctx, routeKey, c, cfg.Interval.StdDuration())
 	}
 
 	return nil
@@ -155,32 +156,25 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 // Unregister halts automated pulls and evicts a specific route from the manager.
 // Ongoing tasks are cancelled gracefully through context termination.
 func (m *Manager) Unregister(routeKey string) {
-	m.mu.Lock()
-	entry, ok := m.entries[routeKey]
-	delete(m.entries, routeKey)
-	m.mu.Unlock()
-
-	if ok && entry.cancel != nil {
-		entry.cancel()
+	if entry, ok := m.entries.Get(routeKey); ok {
+		m.entries.Delete(routeKey)
+		if entry.cancel != nil {
+			entry.cancel()
+		}
 	}
 }
 
 // CurrentPath computes the physical path to the active deployment payload.
 // It seamlessly appends the configured SubDir to target isolated build outputs.
 func (m *Manager) CurrentPath(routeKey string) string {
-	m.mu.RLock()
-	entry, ok := m.entries[routeKey]
-	m.mu.RUnlock()
-
+	entry, ok := m.entries.Get(routeKey)
 	if !ok {
 		return ""
 	}
-
 	basePath := entry.Cook.CurrentPath()
 	if basePath == "" {
 		return ""
 	}
-
 	if entry.Config.SubDir != "" {
 		return filepath.Join(basePath, entry.Config.SubDir)
 	}
@@ -190,10 +184,7 @@ func (m *Manager) CurrentPath(routeKey string) string {
 // GetCook extracts the underlying deployment engine for an active route.
 // Used internally for diagnostics and localized atomic rollbacks.
 func (m *Manager) GetCook(routeKey string) (*Cook, bool) {
-	m.mu.RLock()
-	entry, ok := m.entries[routeKey]
-	m.mu.RUnlock()
-
+	entry, ok := m.entries.Get(routeKey)
 	if !ok {
 		return nil, false
 	}
@@ -203,14 +194,13 @@ func (m *Manager) GetCook(routeKey string) (*Cook, bool) {
 // Stop initiates a global teardown sequence across all active polling workers.
 // Guarantees clean state eviction before server shutdown limits are reached.
 func (m *Manager) Stop() {
-	m.mu.Lock()
-	for _, entry := range m.entries {
+	m.entries.Range(func(key string, entry *Entry) bool {
 		if entry.cancel != nil {
 			entry.cancel()
 		}
-	}
-	m.entries = make(map[string]*Entry)
-	m.mu.Unlock()
+		return true
+	})
+	m.entries.Clear()
 
 	done := make(chan struct{})
 	go func() {
@@ -220,7 +210,7 @@ func (m *Manager) Stop() {
 
 	select {
 	case <-done:
-	case <-time.After(30 * time.Second):
+	case <-time.After(defaultStopTimeout):
 		m.logger.Warn("timeout waiting for cook operations to complete")
 	}
 }
@@ -237,6 +227,10 @@ func (m *Manager) poll(ctx context.Context, routeKey string, c *Cook, interval t
 		select {
 		case <-ticker.C:
 			err := m.pool.Submit(jack.Func(func() error {
+				if _, exists := m.entries.Get(routeKey); !exists {
+					return nil
+				}
+
 				if err := c.Make(ctx); err != nil {
 					m.logger.Fields("route", routeKey, "err", err).Error("scheduled git pull failed")
 				}
@@ -254,16 +248,13 @@ func (m *Manager) poll(ctx context.Context, routeKey string, c *Cook, interval t
 // HandleWebhook validates structural signatures and conditionally fires a deployment.
 // Rejects branch mismatches and unauthorized triggers rapidly without queuing.
 func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey string) {
-	m.mu.RLock()
-	entry, ok := m.entries[routeKey]
-	m.mu.RUnlock()
-
+	entry, ok := m.entries.Get(routeKey)
 	if !ok {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBodySize)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		m.logger.Fields("route", routeKey, "err", err).Warn("failed to read webhook body")
@@ -276,11 +267,9 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		if signature == "" {
 			signature = r.Header.Get("X-Hub-Signature")
 		}
-
 		mac := hmac.New(sha256.New, []byte(entry.Config.Secret.String()))
 		mac.Write(body)
 		expectedMAC := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
 		if subtle.ConstantTimeCompare([]byte(signature), []byte(expectedMAC)) != 1 {
 			m.logger.Fields("route", routeKey).Warn("invalid webhook signature")
 			http.Error(w, "Invalid signature", http.StatusForbidden)
@@ -302,7 +291,12 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 	}
 
 	err = m.pool.Submit(jack.Func(func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		if _, exists := m.entries.Get(routeKey); !exists {
+			m.logger.Fields("route", routeKey).Info("ghost deployment prevented: route unregistered")
+			return nil
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), defaultWebhookTimeout)
 		defer cancel()
 		if err := entry.Cook.Make(ctx); err != nil {
 			m.logger.Fields("route", routeKey, "err", err).Error("webhook deployment failed")
@@ -335,17 +329,13 @@ func (m *Manager) WebhookHandler(routeKey string) http.HandlerFunc {
 // Health aggregates the diagnostic status of all registered deployment blocks.
 // Reflects available commits and overall deployment availability across the system.
 func (m *Manager) Health() map[string]HealthStatus {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	status := make(map[string]HealthStatus)
-	for key, entry := range m.entries {
+	m.entries.Range(func(key string, entry *Entry) bool {
 		path := entry.Cook.CurrentPath()
 		state := "healthy"
 		if path == "" {
 			state = "unavailable"
 		}
-
 		deps, _ := entry.Cook.ListDeployments()
 		status[key] = HealthStatus{
 			State:       state,
@@ -353,8 +343,8 @@ func (m *Manager) Health() map[string]HealthStatus {
 			Commit:      entry.Cook.CurrentCommit(),
 			Deployments: len(deps),
 		}
-	}
-
+		return true
+	})
 	return status
 }
 

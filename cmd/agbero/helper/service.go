@@ -97,7 +97,7 @@ func (s *Service) Status(svc service.Service, configPath string) {
 }
 
 func (s *Service) mapError(err error, cmd string) error {
-	ctx := installer.NewContext(s.p.Logger, "")
+	ctx := installer.NewContext(s.p.Logger)
 	svc := installer.NewService(ctx)
 	errMsg := err.Error()
 	switch cmd {

@@ -30,7 +30,6 @@ func TestProxy_Pick_ReturnsCorrectType(t *testing.T) {
 		Server:   alaye.NewServer(server.URL),
 		Route:    route,
 		Domains:  []string{"example.com"},
-		Logger:   testLogger,
 		Resource: resource.New(),
 	}
 	b1, err := NewBackend(cfg)
@@ -74,10 +73,10 @@ func TestProxy_Pick_NoHealthyBackends(t *testing.T) {
 	}
 
 	cfg := ConfigBackend{
-		Server:   alaye.NewServer(server.URL),
-		Route:    route,
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server.URL),
+		Route:   route,
+		Domains: []string{"example.com"},
+
 		Resource: resource.New(),
 	}
 	b1, err := NewBackend(cfg)
@@ -119,10 +118,10 @@ func TestProxy_ServeHTTP_NoHealthyBackends(t *testing.T) {
 	}
 
 	cfg := ConfigBackend{
-		Server:   alaye.NewServer(server.URL),
-		Route:    route,
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server.URL),
+		Route:   route,
+		Domains: []string{"example.com"},
+
 		Resource: resource.New(),
 	}
 	b1, err := NewBackend(cfg)
@@ -169,10 +168,10 @@ func TestProxy_ServeHTTP_NoHealthyBackends_WithFallback(t *testing.T) {
 		},
 	}
 	cfg := ConfigBackend{
-		Server:   alaye.NewServer(server.URL),
-		Route:    route,
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server.URL),
+		Route:   route,
+		Domains: []string{"example.com"},
+
 		Resource: resource.New(),
 	}
 	b1, err := NewBackend(cfg)
@@ -214,10 +213,10 @@ func TestProxy_ServeHTTP_WebSocket(t *testing.T) {
 	}
 
 	cfg := ConfigBackend{
-		Server:   alaye.NewServer(server.URL),
-		Route:    route,
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server.URL),
+		Route:   route,
+		Domains: []string{"example.com"},
+
 		Resource: resource.New(),
 	}
 	b1, err := NewBackend(cfg)
@@ -258,10 +257,10 @@ func TestProxy_ServeHTTP_Timeout(t *testing.T) {
 	}
 
 	cfg := ConfigBackend{
-		Server:   alaye.NewServer(server.URL),
-		Route:    route,
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server.URL),
+		Route:   route,
+		Domains: []string{"example.com"},
+
 		Resource: resource.New(),
 	}
 	b1, err := NewBackend(cfg)
@@ -307,10 +306,10 @@ func TestProxy_ServeHTTP_Adaptive(t *testing.T) {
 	}
 
 	cfg1 := ConfigBackend{
-		Server:   alaye.NewServer(server1.URL),
-		Route:    route,
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server1.URL),
+		Route:   route,
+		Domains: []string{"example.com"},
+
 		Resource: resource.New(),
 	}
 	b1, err := NewBackend(cfg1)
@@ -320,10 +319,10 @@ func TestProxy_ServeHTTP_Adaptive(t *testing.T) {
 	defer b1.Stop()
 
 	cfg2 := ConfigBackend{
-		Server:   alaye.NewServer(server2.URL),
-		Route:    route,
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server2.URL),
+		Route:   route,
+		Domains: []string{"example.com"},
+
 		Resource: resource.New(),
 	}
 	b2, err := NewBackend(cfg2)
@@ -374,10 +373,10 @@ func TestProxy_ServeHTTP_Sticky(t *testing.T) {
 	}
 
 	cfg := ConfigBackend{
-		Server:   alaye.NewServer(server.URL),
-		Route:    route,
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server.URL),
+		Route:   route,
+		Domains: []string{"example.com"},
+
 		Resource: resource.New(),
 	}
 	b1, err := NewBackend(cfg)
@@ -423,10 +422,10 @@ func TestProxy_Update(t *testing.T) {
 	}
 
 	cfg1 := ConfigBackend{
-		Server:   alaye.NewServer(server1.URL),
-		Route:    route,
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server1.URL),
+		Route:   route,
+		Domains: []string{"example.com"},
+
 		Resource: resource.New(),
 	}
 	b1, err := NewBackend(cfg1)
@@ -436,10 +435,10 @@ func TestProxy_Update(t *testing.T) {
 	defer b1.Stop()
 
 	cfg2 := ConfigBackend{
-		Server:   alaye.NewServer(server2.URL),
-		Route:    route,
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server2.URL),
+		Route:   route,
+		Domains: []string{"example.com"},
+
 		Resource: resource.New(),
 	}
 	b2, err := NewBackend(cfg2)
@@ -478,10 +477,10 @@ func TestProxy_Stop(t *testing.T) {
 	}
 
 	cfg := ConfigBackend{
-		Server:   alaye.NewServer(server.URL),
-		Route:    route,
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server.URL),
+		Route:   route,
+		Domains: []string{"example.com"},
+
 		Resource: resource.New(),
 	}
 	b1, err := NewBackend(cfg)

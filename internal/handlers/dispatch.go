@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/middleware/h3"
@@ -21,6 +22,8 @@ import (
 	"github.com/olekukonko/mappo"
 )
 
+// chainBuild assembles the HTTP middleware stack with optional HTTP/3 advertisement support.
+// It composes memory, firewall, Prometheus metrics, and panic recovery middleware around the base handler.
 func (m *Manager) chainBuild(next http.Handler, advertiseH3 bool, port string) http.Handler {
 	h := memory.Middleware(next)
 	if advertiseH3 {
@@ -34,17 +37,21 @@ func (m *Manager) chainBuild(next http.Handler, advertiseH3 bool, port string) h
 	return h
 }
 
+// chainBuildFirewall conditionally wraps the handler with firewall rule enforcement.
+// The firewall handler is constructed once at chain build time, not per request.
 func (m *Manager) chainBuildFirewall(next http.Handler) http.Handler {
+	fw := m.firewall
+	if fw == nil {
+		return next
+	}
+	fwHandler := fw.Handler(next, nil)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fw := m.firewall
-		if fw != nil {
-			fw.Handler(next, nil).ServeHTTP(w, r)
-		} else {
-			next.ServeHTTP(w, r)
-		}
+		fwHandler.ServeHTTP(w, r)
 	})
 }
 
+// handleRequest is the primary HTTP request dispatcher that resolves host configuration and routes incoming traffic.
+// It handles special paths like favicon and ACME challenges, validates request size, and delegates to the appropriate router.
 func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
@@ -85,8 +92,10 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 	var host string
 	var hcfg *alaye.Host
 
-	if owner, ok := r.Context().Value(woos.OwnerKey).(*alaye.Host); ok && owner != nil {
-		hcfg = owner
+	lctx, hasLctx := r.Context().Value(woos.ListenerCtxKey).(woos.ListenerCtx)
+
+	if hasLctx && lctx.Owner != nil {
+		hcfg = lctx.Owner
 		if len(hcfg.Domains) > 0 {
 			host = hcfg.Domains[0]
 		} else {
@@ -96,11 +105,9 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 		host = zulu.NormalizeHost(r.Host)
 		hcfg = m.cfg.HostManager.Get(host)
 
-		if hcfg == nil {
-			if port, ok := r.Context().Value(woos.CtxPort).(string); ok && port != "" {
-				if portMatch := m.cfg.HostManager.GetByPort(port); portMatch != nil {
-					hcfg = portMatch
-				}
+		if hcfg == nil && hasLctx && lctx.Port != "" {
+			if portMatch := m.cfg.HostManager.GetByPort(lctx.Port); portMatch != nil {
+				hcfg = portMatch
 			}
 		}
 	}
@@ -158,6 +165,8 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 	m.logRequest(host, r, start, http.StatusNotFound, 0)
 }
 
+// handleRoute prepares the request context and applies route-specific middleware before delegation.
+// It handles path prefix stripping, optional WASM middleware injection, rate limiting, and invokes the route handler.
 func (m *Manager) handleRoute(w http.ResponseWriter, r *http.Request, route *alaye.Route, host *alaye.Host) {
 	ctx := context.WithValue(r.Context(), woos.CtxOriginalPath, r.URL.Path)
 	reqOut := r.WithContext(ctx)
@@ -205,6 +214,8 @@ func (m *Manager) handleRoute(w http.ResponseWriter, r *http.Request, route *ala
 	handler.ServeHTTP(w, reqOut)
 }
 
+// routeBuilder constructs or retrieves a cached Route handler for the given route configuration.
+// It manages cache lifecycle with touch timestamps and ensures efficient reuse of route handler instances.
 func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 	key := route.Key()
 	if it, ok := m.cfg.Resource.RouteCache.Load(key); ok {
@@ -220,10 +231,9 @@ func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 		}
 	}
 
-	h := NewRoute(Config{
+	h := NewRoute(resource.Proxy{
 		Global:      m.cfg.Global,
 		Host:        host,
-		Logger:      m.cfg.Resource.Logger,
 		IPMgr:       m.cfg.IPMgr,
 		CookMgr:     m.cfg.CookManager,
 		Resource:    m.cfg.Resource,
@@ -253,6 +263,8 @@ func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 	return h
 }
 
+// handleFavicon serves the embedded favicon.ico with long-term caching headers for browser efficiency.
+// It returns a 404 status if no favicon data is available in the operation package.
 func (m *Manager) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/x-icon")
 	w.Header().Set("Cache-Control", "public, max-age=31536000")
@@ -263,14 +275,16 @@ func (m *Manager) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// redirectToHTTPS constructs and issues a permanent redirect to the HTTPS equivalent of the current request.
+// It respects host-specific bind ports and falls back to global HTTPS configuration for the target URL.
 func (m *Manager) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 	host, _, err := net.SplitHostPort(r.Host)
 	if err != nil {
 		host = r.Host
 	}
 
-	if owner, ok := r.Context().Value(woos.OwnerKey).(*alaye.Host); ok && owner != nil {
-		for _, bindPort := range owner.Bind {
+	if lctx, ok := r.Context().Value(woos.ListenerCtxKey).(woos.ListenerCtx); ok && lctx.Owner != nil {
+		for _, bindPort := range lctx.Owner.Bind {
 			if bindPort != "" {
 				target := fmt.Sprintf("https://%s:%s%s", host, bindPort, r.URL.RequestURI())
 				http.Redirect(w, r, target, http.StatusMovedPermanently)
@@ -295,6 +309,8 @@ func (m *Manager) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
 }
 
+// logRequest records structured access log entries for HTTP requests with timing and metadata.
+// It pools argument slices for efficiency and includes host, path, duration, status, and optional bot detection data.
 func (m *Manager) logRequest(host string, r *http.Request, start time.Time, status int, bytes int64) {
 	if m.cfg.Resource.Logger == nil {
 		return
@@ -321,8 +337,8 @@ func (m *Manager) logRequest(host string, r *http.Request, start time.Time, stat
 	args = append(args, "status", status)
 	args = append(args, "bytes", bytes)
 
-	if port, ok := r.Context().Value(woos.CtxPort).(string); ok && port != "" {
-		args = append(args, "port", port)
+	if lctx, ok := r.Context().Value(woos.ListenerCtxKey).(woos.ListenerCtx); ok && lctx.Port != "" {
+		args = append(args, "port", lctx.Port)
 	}
 
 	if m.cfg.Global != nil {
@@ -332,9 +348,8 @@ func (m *Manager) logRequest(host string, r *http.Request, start time.Time, stat
 		} else {
 			args = append(args, "ua", zulu.Truncate(ua, 50))
 		}
-		// Add bot detection if checker exists
 		if m.cfg.Global.Logging.BotChecker.Active() {
-			args = append(args, "is_bot", m.botChecker.IsBot(ua))
+			args = append(args, "bot", m.botChecker.IsBot(ua))
 		}
 	}
 

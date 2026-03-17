@@ -28,10 +28,10 @@ Agbero uses a flexible `Enabled` type that accepts multiple formats:
 
 **Examples:**
 ```hcl
-enabled = on           # Active
+enabled = "on"           # Active
 enabled = true         # Active
 enabled = 1            # Active
-enabled = off          # Inactive
+enabled = "off"          # Inactive
 enabled = false        # Inactive
 enabled = -1           # Inactive
 enabled = unknown      # Use default behavior
@@ -52,7 +52,7 @@ bind {
   https = [":443", ":8443"]
 
   # Automatically redirect HTTP -> HTTPS
-  redirect = on   # on, off, true, false, 1, -1
+  redirect = "on"   # on, off, true, false, 1, -1
 }
 ```
 
@@ -67,7 +67,7 @@ The administrative dashboard and API for monitoring and managing Agbero.
 ```hcl
 admin {
   # Enable admin UI and API endpoints
-  enabled = on
+  enabled = "on"
 
   # Admin interface bind address
   address = ":9090"
@@ -76,11 +76,11 @@ admin {
   allowed_ips = ["127.0.0.1", "::1", "192.168.1.0/24"]
 
   # Enable pprof debugging endpoints (security risk in production)
-  pprof = off
+  pprof = "off"
 
   # Basic authentication for the /login endpoint
   basic_auth {
-    enabled = on
+    enabled = "on"
     # Format: "username:bcrypt_hash"
     users = [
       "admin:$2a$10$K2ul0gaUotcRRqTWnq4TRu06nxRo0yyO.ky8k..vpu2MgedAFLX4K"
@@ -89,7 +89,7 @@ admin {
 
   # JWT authentication for API/programmatic access
   jwt_auth {
-    enabled = on
+    enabled = "on"
     # Secret for signing JWTs (base64, 16/24/32 bytes)
     secret = "7JQ7Ax_xJJVJa3f_xPnslXNlQHP6NBIlq7O-_jQbhxd5qiO02bcjOzeMN9eBPjaKLQSVs79myb262-JX2_QTzxxoUAbwk4HHchKbPLrhBwE3z9C1yt3Lq-GHu2_PiU6Pgopn9bJFN9su5dHS7s0SG9r1g-gqvIWOUrXc-GQHXZM="
   }
@@ -106,10 +106,10 @@ admin {
 ### Forward Auth (Optional)
 ```hcl
 forward_auth {
-  enabled = off
+  enabled = "off"
   url     = "http://auth-service:8080/verify"
-  request { enabled = on }
-  response { enabled = on }
+  request { enabled = "on" }
+  response { enabled = "on" }
 }
 ```
 Delegates authentication to an external service.
@@ -138,10 +138,10 @@ Controls logging behavior and destinations.
 
 ```hcl
 logging {
-  enabled = on
+  enabled = "on"
 
   # Log configuration changes on reload
-  diff = off
+  diff = "off"
 
   # Log level: debug, info, warn, error
   level = "info"
@@ -160,7 +160,7 @@ logging {
 
   # File logging (local disk)
   file {
-    enabled     = on
+    enabled     = "on"
     path        = "/Users/oleku/Library/Application Support/agbero/logs.d/agbero.log"
     batch_size  = 500      # Number of log entries to batch
     rotate_size = 1024     # Rotate after 50MB (1024 = 50MB)
@@ -168,14 +168,14 @@ logging {
 
   # VictoriaMetrics integration (for centralized logging)
   # victoria {
-  #   enabled = off
+  #   enabled = "off"
   #   url = "http://localhost:9428/insert/0/prometheus/api/v1/write"
   #   batch_size = 500
   # }
 
   # Prometheus metrics endpoint
   # prometheus {
-  #   enabled = off
+  #   enabled = "off"
   #   path    = "/metrics"
   # }
 }
@@ -196,7 +196,7 @@ Global security settings and Web Application Firewall (WAF) configuration.
 
 ```hcl
 security {
-  enabled = on
+  enabled = "on"
 
   # Trusted proxy CIDRs for X-Forwarded-For resolution
   trusted_proxies = [
@@ -213,7 +213,7 @@ security {
 
   # Web Application Firewall
   firewall {
-    enabled = on
+    enabled = "on"
     mode    = "active"   # active, verbose, monitor
 
     defaults {
@@ -269,7 +269,7 @@ Configuration for cluster communication and distributed operation.
 
 ```hcl
 gossip {
-  enabled = off
+  enabled = "off"
 
   # Gossip protocol port (UDP and TCP)
   port = 7946
@@ -301,7 +301,7 @@ Automatic TLS certificate provisioning.
 
 ```hcl
 letsencrypt {
-  enabled = on
+  enabled = "on"
 
   # Email for registration and expiry notifications
   email = "admin@example.com"

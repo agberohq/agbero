@@ -10,14 +10,12 @@ import (
 )
 
 type Route struct {
-	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
+	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
 	Path    string  `hcl:"path,label" json:"path"`
 
-	// Path Manipulation
-	StripPrefixes []string  `hcl:"strip_prefixes,optional" json:"strip_prefixes"`
+	StripPrefixes []string  `hcl:"strip_prefixes,attr" json:"strip_prefixes"`
+	AllowedIPs    []string  `hcl:"allowed_ips,attr" json:"allowed_ips"`
 	Rewrites      []Rewrite `hcl:"rewrite,block" json:"rewrites"`
-
-	AllowedIPs []string `hcl:"allowed_ips,optional" json:"allowed_ips"`
 
 	Web      Web     `hcl:"web,block" json:"web"`
 	Backends Backend `hcl:"backend,block" json:"backends"`
@@ -42,6 +40,8 @@ type Route struct {
 	Fallback          Fallback      `hcl:"fallback,block" json:"fallback"`
 }
 
+// Validate checks the route path, backend/web exclusivity, and all nested blocks.
+// It does not set defaults — call woos.DefaultRoute before Validate.
 func (r *Route) Validate() error {
 	if r.Path == "" {
 		return ErrRoutePathRequired
@@ -63,27 +63,21 @@ func (r *Route) Validate() error {
 	if err := r.RateLimit.Validate(); err != nil {
 		return errors.Newf("rate_limit: %w", err)
 	}
-
 	if err := r.CORS.Validate(); err != nil {
 		return errors.Newf("cors: %w", err)
 	}
-
 	if err := r.Cache.Validate(); err != nil {
 		return errors.Newf("cache: %w", err)
 	}
-
 	if err := r.ErrorPages.Validate(); err != nil {
 		return errors.Newf("route error_pages: %w", err)
 	}
-
 	for i, rw := range r.Rewrites {
 		if err := rw.Validate(); err != nil {
 			return errors.Newf("rewrite[%d]: %w", i, err)
 		}
 	}
-
 	if r.Firewall.Status.Active() {
-		// Validate ad-hoc rules
 		for i, rule := range r.Firewall.Rules {
 			if rule.Name == "" {
 				rule.Name = "route_adhoc_" + r.Path
@@ -138,50 +132,38 @@ func (r *Route) validateWebRoute() error {
 	if !r.Web.Root.IsSet() {
 		return ErrWebRouteRootRequired
 	}
-
 	if err := r.Web.Validate(); err != nil {
 		return errors.Newf("web: %w", err)
 	}
-
 	if r.Backends.Strategy != "" && r.Backends.Strategy != StrategyRoundRobin {
 		return ErrWebRouteUnsupportedLB
 	}
-
 	if r.HealthCheck.Enabled.Active() {
 		return ErrWebRouteHealthCheck
 	}
 	if r.CircuitBreaker.Enabled.Active() {
 		return ErrWebRouteCircuitBreaker
 	}
-
 	if r.Timeouts.Enabled.Active() {
 		if err := r.Timeouts.Validate(); err != nil {
 			return errors.Newf("timeouts: %w", err)
 		}
 	}
-
 	if err := r.validateAuth(); err != nil {
 		return err
 	}
-
-	if err := r.validatePlugins(); err != nil {
-		return err
-	}
-
-	return nil
+	return r.validatePlugins()
 }
 
 func (r *Route) validateProxyRoute() error {
 	if len(r.Backends.Servers) == 0 {
 		return ErrProxyRouteNoBackends
 	}
-
 	for i, b := range r.Backends.Servers {
 		if err := b.Validate(); err != nil {
 			return errors.Newf("backend[%d]: %w", i, err)
 		}
 	}
-
 	for i, prefix := range r.StripPrefixes {
 		if prefix == "" {
 			return errors.Newf("%w [%d]: cannot be empty", ErrProxyRouteInvalidStrip, i)
@@ -190,34 +172,25 @@ func (r *Route) validateProxyRoute() error {
 			return errors.Newf("%w [%d]: %q must start with '/'", ErrProxyRouteInvalidStrip, i, prefix)
 		}
 	}
-
 	if r.Backends.Strategy != "" && !ValidateStrategy(r.Backends.Strategy) {
 		return errors.Newf("invalid strategy %q", r.Backends.Strategy)
 	}
-
 	if err := r.HealthCheck.Validate(); err != nil {
 		return errors.Newf("health_check: %w", err)
 	}
-
 	if err := r.CircuitBreaker.Validate(); err != nil {
 		return errors.Newf("circuit_breaker: %w", err)
 	}
-
 	if err := r.Timeouts.Validate(); err != nil {
 		return errors.Newf("timeouts: %w", err)
 	}
-
 	if err := r.validateAuth(); err != nil {
 		return err
 	}
-
-	if err := r.validatePlugins(); err != nil {
-		return err
-	}
-
-	return nil
+	return r.validatePlugins()
 }
 
+// Key produces a stable hash of the route's configuration for change detection.
 func (r *Route) Key() string {
 	w := xxhash.New()
 
@@ -234,7 +207,6 @@ func (r *Route) Key() string {
 	for _, p := range r.StripPrefixes {
 		w.WriteString(p)
 	}
-
 	for _, ip := range r.AllowedIPs {
 		w.WriteString(ip)
 	}
@@ -297,13 +269,11 @@ func (r *Route) Key() string {
 
 	if r.Wasm.Enabled.Active() {
 		w.WriteString(r.Wasm.Module)
-
 		keys := make([]string, 0, len(r.Wasm.Config))
 		for k := range r.Wasm.Config {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
-
 		for _, k := range keys {
 			w.WriteString(k)
 			w.WriteString(r.Wasm.Config[k])
@@ -366,7 +336,7 @@ func (r *Route) Key() string {
 	return fmt.Sprintf("%x", w.Sum64())
 }
 
-// BackendKey provides a deterministic, centralized identifier for routing observability
+// BackendKey provides a deterministic identifier for routing observability.
 func (r *Route) BackendKey(domain, backendAddr string) BackendKey {
 	if domain == "" {
 		domain = "*"

@@ -8,11 +8,13 @@ import (
 )
 
 type API struct {
-	Enabled    Enabled  `hcl:"enabled,optional" json:"enabled"`
-	Address    string   `hcl:"address,optional" json:"address"` // e.g. ":9091"
-	AllowedIPs []string `hcl:"allowed_ips,optional" json:"allowed_ips"`
+	Enabled    Enabled  `hcl:"enabled,attr" json:"enabled"`
+	Address    string   `hcl:"address,attr" json:"address"`
+	AllowedIPs []string `hcl:"allowed_ips,attr" json:"allowed_ips"`
 }
 
+// Validate checks that the API block address is well-formed when enabled.
+// Port-only addresses starting with ':' are accepted as valid.
 func (a *API) Validate() error {
 	if a.Enabled.NotActive() {
 		return nil

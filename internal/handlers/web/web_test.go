@@ -185,25 +185,6 @@ func TestIsCompressibleMIME(t *testing.T) {
 	}
 }
 
-func TestFnv64a_Deterministic(t *testing.T) {
-	for range 100 {
-		if fnv64a("hello") != fnv64a("hello") {
-			t.Fatal("fnv64a is not deterministic")
-		}
-	}
-}
-
-func TestFnv64a_Distinct(t *testing.T) {
-	pairs := [][2]string{
-		{"a", "b"}, {"foo", "bar"}, {"100-0-0", "100-1-0"}, {"", "x"},
-	}
-	for _, p := range pairs {
-		if fnv64a(p[0]) == fnv64a(p[1]) {
-			t.Errorf("fnv64a(%q) == fnv64a(%q), want distinct", p[0], p[1])
-		}
-	}
-}
-
 func TestStrongETag_Format(t *testing.T) {
 	tag := weakETag("/tmp/test.css", 1234, time.Unix(1700000000, 0))
 	if !strings.HasPrefix(tag, `W/"`) || !strings.HasSuffix(tag, `"`) {

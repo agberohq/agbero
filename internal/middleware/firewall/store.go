@@ -36,6 +36,7 @@ type Store struct {
 	db     *bbolt.DB
 	logger *ll.Logger
 	wg     sync.WaitGroup
+	once   sync.Once
 
 	cache *mappo.Sharded[string, Rule]
 
@@ -104,8 +105,10 @@ func (s *Store) loadToMemory() error {
 	})
 }
 
+// Close shuts down the persist loop and closes the database.
+// Safe to call multiple times; subsequent calls are no-ops.
 func (s *Store) Close() error {
-	close(s.quit)
+	s.once.Do(func() { close(s.quit) })
 	s.wg.Wait()
 	return s.db.Close()
 }
@@ -221,8 +224,14 @@ func (s *Store) persistLoop() {
 			return
 		}
 
-		// Separate data ops from sync ops
 		var syncOps []operation
+
+		// Always close sync operation channels regardless of transaction success/failure
+		defer func() {
+			for _, op := range syncOps {
+				close(op.Done)
+			}
+		}()
 
 		err := s.db.Update(func(tx *bbolt.Tx) error {
 			b := tx.Bucket(bucketName)
@@ -248,11 +257,6 @@ func (s *Store) persistLoop() {
 			s.logger.Fields("err", err).Error("failed to flush firewall rules to db")
 		}
 
-		// Signal completion for all sync operations
-		for _, op := range syncOps {
-			close(op.Done)
-		}
-
 		ops = ops[:0]
 	}
 
@@ -260,15 +264,11 @@ func (s *Store) persistLoop() {
 		select {
 		case op := <-s.writeCh:
 			ops = append(ops, op)
-
-			// Immediate flush on sync or batch size
 			if op.Type == opSync || len(ops) >= 100 {
 				flush()
 			}
-
 		case <-ticker.C:
 			flush()
-
 		case <-s.quit:
 			flush()
 			return
@@ -291,6 +291,8 @@ type Rule struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
+// IsExpired reports whether the ban rule has passed its expiry time.
+// Rules with a zero ExpiresAt never expire.
 func (r *Rule) IsExpired() bool {
 	if r.ExpiresAt.IsZero() {
 		return false

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/pkg/raw/ahash"
 	"github.com/cespare/xxhash/v2"
 )
 
@@ -42,20 +43,28 @@ const (
 	StrategyConsistentHash
 )
 
+// HashString processes the payload rapidly targeting the underlying architecture.
+// Uses hardware-accelerated CRC32 instructions for routing resolutions.
 func HashString(s string) uint64 {
-	return xxhash.Sum64String(s)
+	return ahash.CRC32Hash(s)
 }
 
+// HashBytes processes the payload rapidly targeting the underlying architecture.
+// Uses hardware-accelerated CRC32 instructions for routing resolutions.
 func HashBytes(b []byte) uint64 {
-	return xxhash.Sum64(b)
+	return ahash.CRC32HashBytes(b)
 }
 
+// HashUint64 retains xxhash purely to satisfy distribution qualities required by consistent hashing.
+// Evaluates integer placements uniformly avoiding clustered collisions heavily.
 func HashUint64(x uint64) uint64 {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], x)
 	return xxhash.Sum64(buf[:])
 }
 
+// ParseStrategy translates string definitions into load balancing enumerators securely.
+// Assigns the standard RoundRobin approach if matching configurations fail.
 func ParseStrategy(s string) Strategy {
 	switch s {
 	case alaye.StrategyLeastConn:

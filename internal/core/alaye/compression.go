@@ -1,34 +1,24 @@
 package alaye
 
-import (
-	"strings"
-)
+import "github.com/olekukonko/errors"
 
 type Compression struct {
-	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
-	Level   int     `hcl:"level,optional" json:"level"` // 1-11, default 5
-	Type    string  `hcl:"type,optional" json:"type"`   // "gzip" (default) or "brotli"
+	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
+	Level   int     `hcl:"level,attr" json:"level"`
+	Type    string  `hcl:"type,attr" json:"type"`
 }
 
+// Validate checks compression level bounds and type value.
+// It does not set defaults — all defaults are applied by woos.defaultCompression.
 func (c *Compression) Validate() error {
 	if c.Enabled.NotActive() {
-		return nil // Unknown validation needed if compression is disabled
+		return nil
 	}
-
-	// Level validation
 	if c.Level < MinCompressionLevel || c.Level > MaxCompressionLevel {
 		return ErrInvalidCompressionLevel
 	}
-
-	// Type validation (if provided)
-	if c.Type != "" {
-		c.Type = strings.ToLower(c.Type)
-		if c.Type != CompressionGzip && c.Type != CompressionBrotli {
-			return ErrInvalidCompressionType
-		}
-	} else {
-		c.Type = DefaultCompressionType // Default
+	if c.Type != CompressionGzip && c.Type != CompressionBrotli {
+		return errors.Newf("compression: unsupported type %q", c.Type)
 	}
-
 	return nil
 }

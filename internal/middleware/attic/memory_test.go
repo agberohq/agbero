@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 )
 
 func TestCacheMiddleware(t *testing.T) {
-	logger := ll.New("").Disable()
+	logger := ll.New(" ").Disable()
 	tests := []struct {
 		name           string
 		config         *alaye.Cache
@@ -26,7 +27,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{method: "GET", path: "/test", body: "response1"},
@@ -41,7 +42,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{method: "GET", path: "/a", body: "a-response"},
@@ -56,7 +57,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{method: "GET", path: "/search?q=foo", body: "foo results"},
@@ -71,7 +72,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{method: "POST", path: "/test", body: "post1"},
@@ -86,7 +87,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{
@@ -110,7 +111,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{
@@ -144,7 +145,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{
@@ -169,7 +170,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Hour,
+				TTL:     alaye.Duration(time.Hour),
 			},
 			requests: []testRequest{
 				{
@@ -181,6 +182,21 @@ func TestCacheMiddleware(t *testing.T) {
 			},
 			expectedHits:   []bool{false},
 			expectedBodies: []string{"short-lived"},
+		},
+		{
+			name: "Large Response Not Cached",
+			config: &alaye.Cache{
+				Enabled: alaye.Active,
+				Driver:  "memory",
+				Methods: []string{"GET"},
+				TTL:     alaye.Duration(time.Minute),
+			},
+			requests: []testRequest{
+				{method: "GET", path: "/large", body: strings.Repeat("x", 6*1024*1024)},
+				{method: "GET", path: "/large", body: strings.Repeat("x", 6*1024*1024)},
+			},
+			expectedHits:   []bool{false, false},
+			expectedBodies: []string{strings.Repeat("x", 6*1024*1024), strings.Repeat("x", 6*1024*1024)},
 		},
 	}
 	for _, tt := range tests {
@@ -234,7 +250,7 @@ func TestCacheMiddleware(t *testing.T) {
 }
 
 func TestCacheDisabled(t *testing.T) {
-	logger := ll.New("").Disable()
+	logger := ll.New(" ").Disable()
 	cfg := &alaye.Cache{
 		Enabled: alaye.Inactive,
 	}

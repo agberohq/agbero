@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -24,6 +23,7 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/cook"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/agberohq/agbero/internal/pkg/security"
+	"github.com/agberohq/agbero/internal/pkg/telemetry"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
@@ -32,10 +32,10 @@ import (
 )
 
 const (
-	defaultReloadTimeout   = 30 * time.Second
-	defaultShutdownTimeout = 5 * time.Second
-	defaultGitPoolTimeout  = 1 * time.Second
-	defaultGitPoolSize     = 4
+	defaultReloadTimeout   = woos.DefaultReloadTimeout
+	defaultShutdownTimeout = woos.DefaultShutdownTimeout
+	defaultGitPoolTimeout  = woos.DefaultGitPoolTimeout
+	defaultGitPoolSize     = woos.DefaultGitPoolSize
 )
 
 type Server struct {
@@ -46,7 +46,7 @@ type Server struct {
 	global          *alaye.Global
 	tlsManager      *tlss.Manager
 	securityManager *security.Manager
-	resource        *resource.Manager
+	resource        *resource.Resource
 
 	mu        sync.RWMutex
 	listeners []handlers.Listener
@@ -61,7 +61,10 @@ type Server struct {
 	shutdown *jack.Shutdown
 
 	firewall    *firewall.Engine
-	sharedState cluster.SharedState
+	sharedState woos.SharedState
+
+	telemetryStore     *telemetry.Store
+	telemetryCollector *telemetry.Collector
 }
 
 // NewServer configures and injects dependencies required for core proxy execution.
@@ -228,7 +231,26 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
+	if s.global.Storage.DataDir != "" {
+		ts, err := telemetry.NewStore(s.global.Storage.DataDir)
+		if err != nil {
+			s.logger.Fields("err", err).Warn("telemetry store unavailable, history disabled")
+		} else {
+			s.telemetryStore = ts
+			col := telemetry.NewCollector(ts, s.hostManager, s.resource, s.logger)
+			col.Start()
+			s.telemetryCollector = col
+			if s.shutdown != nil {
+				s.shutdown.RegisterFunc("Telemetry", func() {
+					col.Stop()
+					_ = ts.Close()
+				})
+			}
+		}
+	}
+
 	s.startAdminServer()
+	s.startPprofServer()
 
 	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global)
 	if s.shutdown != nil {
@@ -353,7 +375,7 @@ func (s *Server) Reload() {
 	s.global = global
 	s.configSHA = sha
 
-	var newSharedState cluster.SharedState
+	var newSharedState woos.SharedState
 	if global.Gossip.SharedState.Enabled.Active() && global.Gossip.SharedState.Driver == "redis" {
 		ss, err := cluster.NewRedisSharedState(global.Gossip.SharedState.Redis)
 		if err == nil {
@@ -372,6 +394,10 @@ func (s *Server) Reload() {
 			_ = s.clusterManager.BroadcastCert(domain, certPEM, keyPEM)
 		})
 		s.tlsManager.SetCluster(s.clusterManager)
+	}
+
+	if oldTrafficManager != nil {
+		oldTrafficManager.CloseFirewall()
 	}
 
 	tmCfg := handlers.ManagerConfig{
@@ -427,7 +453,6 @@ func (s *Server) Reload() {
 		}
 		return true
 	})
-
 	for _, k := range staleRoutes {
 		s.resource.RouteCache.Delete(k)
 		if s.resource.Reaper != nil {
@@ -435,30 +460,45 @@ func (s *Server) Reload() {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultReloadTimeout)
-	defer cancel()
-
-	for _, l := range oldListeners {
-		_ = l.Stop(ctx)
-	}
-
-	if oldTrafficManager != nil {
-		oldTrafficManager.Close()
-	}
-
-	if oldSharedState != nil {
-		_ = oldSharedState.Close()
-	}
-
+	// Start the new listeners first to ensure zero downtime
 	for _, l := range newListeners {
-		go l.Start()
+		go func(listener handlers.Listener) {
+			s.logger.Fields("bind", listener.Addr(), "proto", listener.Kind()).Info("reloaded listener starting")
+			if err := listener.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				s.logger.Fields("err", err, "bind", listener.Addr()).Error("reloaded listener failed")
+			}
+		}(l)
 	}
+
+	// Drain the old listeners asynchronously so Reload() returns immediately
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), defaultReloadTimeout)
+		defer cancel()
+
+		var wg sync.WaitGroup
+		for _, l := range oldListeners {
+			wg.Add(1)
+			go func(oldListener handlers.Listener) {
+				defer wg.Done()
+				_ = oldListener.Stop(ctx)
+			}(l)
+		}
+		wg.Wait()
+
+		if oldTrafficManager != nil {
+			oldTrafficManager.Close()
+		}
+
+		if oldSharedState != nil {
+			_ = oldSharedState.Close()
+		}
+	}()
 
 	s.logger.Info("configuration reloaded successfully")
 }
 
 // shutdownImpl orchestrates a graceful teardown of the proxy server.
-// Drains active connections and signals cluster peers before terminating processes.
+// Drains active connections and signals cluster peers before terminating.
 func (s *Server) shutdownImpl(ctx context.Context) error {
 	if s.clusterManager != nil {
 		s.clusterManager.BroadcastStatus("draining")
@@ -487,7 +527,7 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 }
 
 // configComputeSHA hashes the main config file and all host files to detect changes.
-// Reads under the same RLock to prevent data races with concurrent Reload calls.
+// Reads under RLock to prevent data races with concurrent Reload calls.
 func (s *Server) configComputeSHA() (string, error) {
 	hasher := sha256.New()
 
@@ -525,7 +565,6 @@ func (s *Server) configComputeSHA() (string, error) {
 }
 
 // tlsValidate ensures required TLS certificates are present before startup.
-// Skips validation if dynamic ACME provisioning is enabled globally.
 func (s *Server) tlsValidate() error {
 	return nil
 }

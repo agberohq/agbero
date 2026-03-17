@@ -121,3 +121,8 @@ func (s *Sticky) GetStats() map[string]any {
 		"reaper_tasks":   s.reaper.Count(),
 	}
 }
+
+// Unwrap returns the underlying balancer for chain inspection.
+func (s *Sticky) Unwrap() Balancer {
+	return s.balancer
+}

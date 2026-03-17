@@ -11,12 +11,8 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/resource"
-	"github.com/olekukonko/ll"
 )
 
-func newTestLogger() *ll.Logger {
-	return ll.New("test").Disable()
-}
 func waitTCPReady(t *testing.T, addr string, d time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(d)
@@ -162,7 +158,7 @@ func TestProxy_SNIRouting_Exact_Wildcard_Default(t *testing.T) {
 	sD, stopD := startIDServer(t, "BackendD")
 	defer stopD()
 	proxyAddr := getFreePort(t)
-	p := NewProxy(resource.New(), newTestLogger(), proxyAddr)
+	p := NewProxy(resource.New(), proxyAddr)
 	p.AddRoute("a.com", alaye.Proxy{
 		Backends: []alaye.Server{alaye.NewServer(sA)},
 	})
@@ -205,7 +201,7 @@ func TestProxy_DefaultRoute_NoClientData_StillConnects(t *testing.T) {
 	sD, stopD := startIDServer(t, "BackendD")
 	defer stopD()
 	proxyAddr := getFreePort(t)
-	p := NewProxy(resource.New(), newTestLogger(), proxyAddr)
+	p := NewProxy(resource.New(), proxyAddr)
 	p.AddRoute("*", alaye.Proxy{
 		Backends: []alaye.Server{alaye.NewServer(sD)},
 	})
@@ -229,7 +225,7 @@ func TestProxy_DialRetry_SkipsDeadBackend(t *testing.T) {
 	defer stopLive()
 	deadAddr := getFreePort(t)
 	proxyAddr := getFreePort(t)
-	p := NewProxy(resource.New(), newTestLogger(), proxyAddr)
+	p := NewProxy(resource.New(), proxyAddr)
 	p.AddRoute("*", alaye.Proxy{
 		Backends: []alaye.Server{
 			alaye.NewServer(deadAddr),
@@ -256,7 +252,7 @@ func TestProxy_HalfClose_PropagatesEOF(t *testing.T) {
 	up, stop := startHalfCloseServer(t)
 	defer stop()
 	proxyAddr := getFreePort(t)
-	p := NewProxy(resource.New(), newTestLogger(), proxyAddr)
+	p := NewProxy(resource.New(), proxyAddr)
 	p.SetIdleTimeout(5 * time.Second)
 	p.AddRoute("*", alaye.Proxy{
 		Backends: []alaye.Server{alaye.NewServer(up)},
@@ -288,7 +284,7 @@ func TestProxy_UpdateRoutes(t *testing.T) {
 	s2, stop2 := startIDServer(t, "Backend2")
 	defer stop2()
 	proxyAddr := getFreePort(t)
-	p := NewProxy(resource.New(), newTestLogger(), proxyAddr)
+	p := NewProxy(resource.New(), proxyAddr)
 	p.AddRoute("*", alaye.Proxy{
 		Backends: []alaye.Server{alaye.NewServer(s1)},
 	})
@@ -316,7 +312,7 @@ func TestProxy_Stop_ClosesConnections(t *testing.T) {
 	s1, stop1 := startIDServer(t, "Backend1")
 	defer stop1()
 	proxyAddr := getFreePort(t)
-	p := NewProxy(resource.New(), newTestLogger(), proxyAddr)
+	p := NewProxy(resource.New(), proxyAddr)
 	p.AddRoute("*", alaye.Proxy{
 		Backends: []alaye.Server{alaye.NewServer(s1)},
 	})
@@ -339,7 +335,7 @@ func TestProxy_Stop_ClosesConnections(t *testing.T) {
 }
 func TestProxy_BackendCount(t *testing.T) {
 	proxyAddr := getFreePort(t)
-	p := NewProxy(resource.New(), newTestLogger(), proxyAddr)
+	p := NewProxy(resource.New(), proxyAddr)
 	count := p.BackendCount()
 	if count != 0 {
 		t.Errorf("expected 0 backends, got %d", count)
@@ -347,7 +343,7 @@ func TestProxy_BackendCount(t *testing.T) {
 }
 func TestProxy_NoRoute_NoDefault(t *testing.T) {
 	proxyAddr := getFreePort(t)
-	p := NewProxy(resource.New(), newTestLogger(), proxyAddr)
+	p := NewProxy(resource.New(), proxyAddr)
 	if err := p.Start(); err != nil {
 		t.Fatalf("failed to start: %v", err)
 	}
@@ -370,7 +366,7 @@ func TestProxy_WildcardSubdomain(t *testing.T) {
 	sW, stopW := startIDServer(t, "WildcardBackend")
 	defer stopW()
 	proxyAddr := getFreePort(t)
-	p := NewProxy(resource.New(), newTestLogger(), proxyAddr)
+	p := NewProxy(resource.New(), proxyAddr)
 	p.AddRoute("*.example.com", alaye.Proxy{
 		Backends: []alaye.Server{alaye.NewServer(sW)},
 	})
@@ -404,11 +400,12 @@ func TestProxy_WildcardSubdomain(t *testing.T) {
 		})
 	}
 }
+
 func TestProxy_ProxyProtocol(t *testing.T) {
 	s1, stop1 := startIDServer(t, "Backend1")
 	defer stop1()
 	proxyAddr := getFreePort(t)
-	p := NewProxy(resource.New(), newTestLogger(), proxyAddr)
+	p := NewProxy(resource.New(), proxyAddr)
 	p.AddRoute("*", alaye.Proxy{
 		Backends:      []alaye.Server{alaye.NewServer(s1)},
 		ProxyProtocol: true,
@@ -423,7 +420,6 @@ func TestProxy_ProxyProtocol(t *testing.T) {
 		t.Fatalf("dial failed: %v", err)
 	}
 	defer conn.Close()
-	_, _ = conn.Write(makeSNIClientHello("test.com"))
 	got := readOne(t, conn)
 	if !bytes.Contains([]byte(got), []byte("Backend1")) {
 		t.Fatalf("got %q, want containing %q", got, "Backend1")
