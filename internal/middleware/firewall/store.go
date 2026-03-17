@@ -226,6 +226,13 @@ func (s *Store) persistLoop() {
 
 		var syncOps []operation
 
+		// Always close sync operation channels regardless of transaction success/failure
+		defer func() {
+			for _, op := range syncOps {
+				close(op.Done)
+			}
+		}()
+
 		err := s.db.Update(func(tx *bbolt.Tx) error {
 			b := tx.Bucket(bucketName)
 			for _, op := range ops {
@@ -248,10 +255,6 @@ func (s *Store) persistLoop() {
 
 		if err != nil {
 			s.logger.Fields("err", err).Error("failed to flush firewall rules to db")
-		}
-
-		for _, op := range syncOps {
-			close(op.Done)
 		}
 
 		ops = ops[:0]
