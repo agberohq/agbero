@@ -134,7 +134,7 @@ func (c *Condition) Validate() error {
 		return nil
 	}
 	switch strings.ToLower(c.Location) {
-	case "ip", "path", "method", "header", "headers", "query", "body", "uri", "":
+	case "ip", "path", "method", "header", "headers", "query", "body", "uri", "bot", "":
 	default:
 		return errors.Newf("unknown location %q", c.Location)
 	}
@@ -233,7 +233,7 @@ func (f *Firewall) Validate() error {
 	switch f.Mode {
 	case "active", "verbose", "monitor":
 	default:
-		return errors.Newf("firewall: mode must be 'active', 'verbose', or 'monitor' got '%s", f.Mode)
+		return errors.New("firewall: mode must be 'active', 'verbose', or 'monitor'")
 	}
 	for i, a := range f.Actions {
 		if a.Name == "" {

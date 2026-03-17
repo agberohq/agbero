@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -570,6 +571,12 @@ func (ci *Local) SetMockMode(mock bool) {
 	}
 }
 
+// HasCertutil reports whether the NSS certutil binary is present on this system.
+// Probes known OS-specific installation paths rather than relying on PATH.
+func (ci *Local) HasCertutil() bool {
+	return hasCertutil()
+}
+
 func (ci *Local) EnsureForHost(host string, port int) (certFile, keyFile string, err error) {
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
@@ -621,6 +628,40 @@ func getLocalLANIPs() []string {
 		}
 	}
 	return ips
+}
+
+// hasCertutil probes well-known certutil installation paths per OS.
+// Returns true when any known path resolves to an existing executable.
+func hasCertutil() bool {
+	paths := certutilPaths()
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// certutilPaths returns the ordered list of certutil binary locations for the current OS.
+// Covers Homebrew, system package managers, and snap on Linux.
+func certutilPaths() []string {
+	switch runtime.GOOS {
+	case woos.Darwin:
+		return []string{
+			woos.NSSPathDarwinHomebrewBin,
+			woos.NSSPathDarwinUsrLocalBin,
+			woos.NSSPathDarwinMozillaNSS,
+			woos.NSSPathDarwinMozillaNSSAlt,
+		}
+	case woos.Linux:
+		return []string{
+			woos.NSSPathLinuxUsrBin,
+			woos.NSSPathLinuxUsrLocalBin,
+			woos.NSSPathLinuxSnapBin,
+		}
+	default:
+		return nil
+	}
 }
 
 func parsePrivateKey(der []byte) (crypto.PrivateKey, error) {

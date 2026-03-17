@@ -15,6 +15,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/pkg/bot"
 	"github.com/olekukonko/ll"
 	"github.com/yl2chen/cidranger"
 )
@@ -24,6 +25,7 @@ type Inspector struct {
 	Body     []byte
 	IP       string
 	ParsedIP net.IP
+	IsBot    bool
 	Logger   *ll.Logger
 }
 
@@ -38,6 +40,7 @@ type Config struct {
 	Logger      *ll.Logger
 	IPMgr       *zulu.IPManager
 	SharedState woos.SharedState
+	BotChecker  *bot.Checker
 }
 
 type Engine struct {
@@ -49,6 +52,7 @@ type Engine struct {
 	blacklistRanger cidranger.Ranger
 	ipMgr           *zulu.IPManager
 	sharedState     woos.SharedState
+	botChecker      *bot.Checker
 }
 
 // New establishes deep packet inspection rules for perimeter security.
@@ -71,6 +75,10 @@ func New(cfg Config) (*Engine, error) {
 	if ipMgr == nil {
 		ipMgr = zulu.IP
 	}
+	botChecker := cfg.BotChecker
+	if botChecker == nil {
+		botChecker = bot.NewChecker()
+	}
 	e := &Engine{
 		cfg:             cfg.Firewall,
 		store:           store,
@@ -80,6 +88,7 @@ func New(cfg Config) (*Engine, error) {
 		blacklistRanger: cidranger.NewPCTrieRanger(),
 		ipMgr:           ipMgr,
 		sharedState:     cfg.SharedState,
+		botChecker:      botChecker,
 	}
 	if err := e.loadStaticRules(); err != nil {
 		store.Close()
@@ -130,6 +139,7 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 			Body:     bodySample,
 			IP:       ip,
 			ParsedIP: parsedIP,
+			IsBot:    e.botChecker.IsBot(r.UserAgent()),
 			Logger:   e.logger,
 		}
 		runGlobal := true
@@ -347,6 +357,12 @@ func (e *Engine) checkCondition(c alaye.Condition, in *Inspector) bool {
 	case "body":
 		if len(in.Body) > 0 {
 			val = string(in.Body)
+		}
+	case "bot":
+		if in.IsBot {
+			val = "true"
+		} else {
+			val = "false"
 		}
 	}
 	if c.IgnoreCase {

@@ -129,6 +129,16 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	return m, nil
 }
 
+// CloseFirewall releases the firewall store's file lock without stopping
+// the rate limiter or wasm instances. Called during reload before creating
+// the new manager so the bbolt database file can be re-opened immediately.
+func (m *Manager) CloseFirewall() {
+	if m != nil && m.firewall != nil {
+		_ = m.firewall.Close()
+		m.firewall = nil
+	}
+}
+
 // Close shuts down firewall, rate limiter, and wasm instances cleanly.
 func (m *Manager) Close() {
 	if m.firewall != nil {

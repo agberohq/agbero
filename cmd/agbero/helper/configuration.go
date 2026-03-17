@@ -121,7 +121,7 @@ func ResolveConfigPath(logger *ll.Logger, flagPath string) (string, bool) {
 		return cwdPath, true
 	}
 
-	ctx := installer.NewContext(logger, "")
+	ctx := installer.NewContext(logger)
 	if _, err := os.Stat(ctx.Paths.ConfigFile); err == nil {
 		return ctx.Paths.ConfigFile, true
 	}
@@ -132,7 +132,7 @@ func ResolveConfigPath(logger *ll.Logger, flagPath string) (string, bool) {
 // Initializes the base directory and standard configuration files
 // Generates the required folder structure and scaffold settings
 func InitConfiguration(logger *ll.Logger, targetDir string) (string, error) {
-	ctx := installer.NewContext(logger, "")
+	ctx := installer.NewContext(logger)
 	if targetDir != "" {
 		base := woos.NewFolder(targetDir)
 		ctx.Paths.BaseDir = base
@@ -157,6 +157,6 @@ func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 		}
 		return InitConfiguration(logger, cwd)
 	}
-	ctx := installer.NewContext(logger, "")
+	ctx := installer.NewContext(logger)
 	return InitConfiguration(logger, ctx.Paths.BaseDir.Path())
 }

@@ -24,71 +24,38 @@ func NewHome(ctx *Context) *Home {
 	return &Home{ctx: ctx}
 }
 
+// Run initializes the configuration directory structure and scaffold files.
+// Always prompts to install the local CA and optionally collects a Let's Encrypt email.
 func (h *Home) Run() error {
 	if _, err := os.Stat(h.ctx.Paths.ConfigFile); err == nil {
 		return fmt.Errorf("configuration already exists at %s", h.ctx.Paths.ConfigFile)
 	}
 
-	var environment = h.ctx.Env
 	var leEmail = ""
 
 	if h.ctx.Interactive {
 		h.ctx.Logger.Println(BannerTmpl)
 		h.ctx.Logger.Printf("%s - %s\n", woos.Name, woos.Description)
-		h.ctx.Logger.Printf("Version: %s\n", woos.Version) // You might want to get this from build info
+		h.ctx.Logger.Printf("Version: %s\n", woos.Version)
 		h.ctx.Logger.Printf("Date: %s\n", time.Now().Format("2006-01-02T15:04:05Z"))
 		h.ctx.Logger.Println()
 
-		h.ctx.Logger.Println("Environment Selection:")
-		h.ctx.Logger.Println("  [local]  Local Development")
-		h.ctx.Logger.Println("           • Serve local projects")
-		h.ctx.Logger.Println("           • Proxy local ports")
-		h.ctx.Logger.Println("           • Development domains with HTTPS")
-		h.ctx.Logger.Println()
-		h.ctx.Logger.Println("  [prod]   Production Server")
-		h.ctx.Logger.Println("           • Deploy on VPS/Cloud servers")
-		h.ctx.Logger.Println("           • Let's Encrypt SSL certificates")
-		h.ctx.Logger.Println("           • High availability setup")
+		ca := NewCA(h.ctx)
+		if err := ca.PromptAndInstall(); err != nil {
+			h.ctx.Logger.Warn("CA prompt interrupted", "err", err)
+		}
+
 		h.ctx.Logger.Println()
 
-		err := huh.NewSelect[string]().
-			Title("How are you planning to use Agbero?").
-			Options(
-				huh.NewOption("Local Development", "local"),
-				huh.NewOption("Production Server", "prod"),
-			).
-			Value(&environment).
+		err := huh.NewInput().
+			Title("Let's Encrypt Email (optional)").
+			Description("Enter your email for automatic public certificates. Leave blank to skip:").
+			Placeholder("admin@example.com").
+			Value(&leEmail).
 			Run()
 
 		if err != nil {
 			return err
-		}
-
-		h.ctx.Env = environment
-		h.ctx.Logger.Println()
-
-		if environment == "local" {
-			h.ctx.Logger.Println("Setting up local development environment...")
-			h.ctx.Logger.Println()
-
-			ca := NewCA(h.ctx)
-			if err := ca.PromptAndInstall(); err != nil {
-				h.ctx.Logger.Warn("CA prompt interrupted", "err", err)
-			}
-		} else {
-			h.ctx.Logger.Println("Setting up production environment...")
-			h.ctx.Logger.Println()
-
-			err := huh.NewInput().
-				Title("Let's Encrypt Email").
-				Description("Enter your email for automatic public certificates (Optional but recommended):").
-				Placeholder("admin@example.com").
-				Value(&leEmail).
-				Run()
-
-			if err != nil {
-				return err
-			}
 		}
 	}
 
@@ -128,18 +95,12 @@ func (h *Home) Run() error {
 		return fmt.Errorf("failed to hash admin password: %w", err)
 	}
 
-	devMode := "true"
 	leEnabled := "false"
-
-	if environment == "prod" {
-		devMode = "false"
-		if leEmail != "" {
-			leEnabled = "true"
-		}
+	if leEmail != "" {
+		leEnabled = "true"
 	}
 
 	content := ConfigTmpl
-	content = strings.ReplaceAll(content, "{DEV_MODE}", devMode)
 	content = strings.ReplaceAll(content, "{HOST_DIR}", h.ctx.Paths.HostsDir.Path())
 	content = strings.ReplaceAll(content, "{CERTS_DIR}", h.ctx.Paths.CertsDir.Path())
 	content = strings.ReplaceAll(content, "{DATA_DIR}", h.ctx.Paths.DataDir.Path())
@@ -165,11 +126,9 @@ func (h *Home) Run() error {
 		return err
 	}
 
-	// Professional summary with ASCII only
 	h.ctx.Logger.Println("\n===============================================================")
 	h.ctx.Logger.Println("CONFIGURATION INITIALIZED")
 	h.ctx.Logger.Println("===============================================================")
-	h.ctx.Logger.Printf("Environment:    %s\n", strings.ToUpper(environment))
 	h.ctx.Logger.Printf("Config File:    %s\n", h.ctx.Paths.ConfigFile)
 	h.ctx.Logger.Printf("Admin User:     admin\n")
 	h.ctx.Logger.Printf("Admin Password: %s\n", adminPassword)
@@ -182,8 +141,6 @@ func (h *Home) Run() error {
 	h.ctx.Logger.Printf("  • View logs:      sudo %s logs\n", filepath.Base(os.Args[0]))
 	h.ctx.Logger.Printf("  • Admin UI:       http://admin.localhost:9090\n")
 	h.ctx.Logger.Printf("  • Web UI:         http://localhost\n")
-	h.ctx.Logger.Println("")
-	//h.ctx.logger.Println("For more information, visit https://agbero.io/docs")
 	h.ctx.Logger.Println()
 
 	return nil

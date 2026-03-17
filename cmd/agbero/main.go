@@ -335,7 +335,7 @@ func main() {
 		if strings.TrimSpace(cfg.ConfigPath) != "" {
 			logger.Fatal("config file not found at: ", cfg.ConfigPath)
 		} else {
-			ctx := installer.NewContext(logger, "")
+			ctx := installer.NewContext(logger)
 			if ctx.Interactive {
 				var doInit bool
 				err := huh.NewConfirm().

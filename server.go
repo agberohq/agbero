@@ -373,6 +373,10 @@ func (s *Server) Reload() {
 		s.tlsManager.SetCluster(s.clusterManager)
 	}
 
+	if oldTrafficManager != nil {
+		oldTrafficManager.CloseFirewall()
+	}
+
 	tmCfg := handlers.ManagerConfig{
 		Global:      s.global,
 		HostManager: s.hostManager,
