@@ -145,8 +145,9 @@ const (
 
 // Cache
 const (
-	CacheMax    = 10_000
-	CacheMaxBig = 100_000
+	CacheMax         = 10_000
+	CacheMaxBig      = 100_000
+	CacheMaxBodySize = 5 * 1024 * 1024
 )
 
 // Route Segment Kinds
@@ -402,6 +403,8 @@ const (
 	BrotliEncodingType  = "br"
 	DynamicGzMaxSize    = 10 * 1024 * 1024
 )
+
+const ()
 
 const (
 	LifetimeShards = 32

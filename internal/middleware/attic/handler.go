@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/ll"
 )
 
@@ -88,6 +89,12 @@ func (m *CacheMiddleware) Handler(next http.Handler) http.Handler {
 		next.ServeHTTP(rec, r)
 
 		if !isResponseCacheable(rec.StatusCode(), rec.Header()) {
+			return
+		}
+
+		// Check if recorder successfully buffered the body (not truncated)
+		if !rec.Cacheable() {
+			m.logger.Debug("response body too large, skipping cache", "size_limit", woos.CacheMaxBodySize)
 			return
 		}
 
