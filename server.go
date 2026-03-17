@@ -1,3 +1,4 @@
+// server.go
 package agbero
 
 import (
@@ -228,6 +229,7 @@ func (s *Server) Start(configPath string) error {
 	}
 
 	s.startAdminServer()
+	s.startPprofServer()
 
 	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global)
 	if s.shutdown != nil {

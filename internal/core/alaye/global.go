@@ -13,6 +13,7 @@ type Global struct {
 	General  General `hcl:"general,block" json:"general"`
 
 	Admin       Admin       `hcl:"admin,block" json:"admin"`
+	Pprof       Pprof       `hcl:"pprof,block" json:"pprof"`
 	API         API         `hcl:"api,block" json:"api"`
 	Logging     Logging     `hcl:"logging,block" json:"logging"`
 	Security    Security    `hcl:"security,block" json:"security"`
@@ -31,6 +32,9 @@ func (g *Global) Validate() error {
 	}
 	if err := g.Admin.Validate(); err != nil {
 		return errors.Newf("admin: %w", err)
+	}
+	if err := g.Pprof.Validate(); err != nil {
+		return errors.Newf("pprof: %w", err)
 	}
 	if err := g.API.Validate(); err != nil {
 		return errors.Newf("api: %w", err)
@@ -86,5 +90,23 @@ type Storage struct {
 
 // Validate is a no-op — storage paths are resolved and defaulted by woos.defaultStorage.
 func (s Storage) Validate() error {
+	return nil
+}
+
+// Pprof configures the standalone pprof listener. It binds a raw net/http/pprof
+// server with no middleware so profiles reflect the proxy hot path, not admin overhead.
+type Pprof struct {
+	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
+	Bind    string  `hcl:"bind,attr" json:"bind"`
+}
+
+// Validate checks that port is non-empty when the pprof block is enabled.
+func (p *Pprof) Validate() error {
+	if p.Enabled.NotActive() {
+		return nil
+	}
+	if p.Bind == "" {
+		return ErrPprofPortRequired
+	}
 	return nil
 }

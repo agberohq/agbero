@@ -40,7 +40,10 @@ admin {
   allowed_ips = ["127.0.0.1", "::1"]
 
   # Enable pprof debugging endpoints (security risk in prod)
-  pprof = "off"
+  # pprof {
+  #   enabled = "off"
+  #   bind = "6061"
+  # }
 
   # ---------------------------------------------------------
   # BASIC AUTH (for /login endpoint)

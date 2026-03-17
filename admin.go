@@ -1,3 +1,4 @@
+// admin.go
 package agbero
 
 import (
@@ -76,6 +77,47 @@ func (s *Server) startAdminServer() {
 		s.logger.Fields("bind", cfg.Address).Info("listener admin")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.logger.Fields("err", err).Error("admin server failed")
+		}
+	}()
+}
+
+// startPprofServer binds a dedicated pprof listener with no middleware.
+// Zero auth, zero rate limiting, zero CSP headers — profiles reflect the proxy
+// hot path directly. Bind to a loopback address in production.
+func (s *Server) startPprofServer() {
+	if s.global.Pprof.Enabled.NotActive() || s.global.Pprof.Bind == "" {
+		return
+	}
+	addr := s.global.Pprof.Bind
+	if !strings.Contains(addr, ":") {
+		addr = ":" + addr
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	mux.Handle("/debug/pprof/heap", pprof.Handler("heap"))
+	mux.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+	mux.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
+	mux.Handle("/debug/pprof/block", pprof.Handler("block"))
+	mux.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
+	mux.Handle("/debug/pprof/allocs", pprof.Handler("allocs"))
+
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      mux,
+		ReadTimeout:  woos.DefaultAdminReadTimeout,
+		WriteTimeout: woos.DefaultAdminWriteTimeout,
+		IdleTimeout:  woos.DefaultAdminIdleTimeout,
+	}
+
+	go func() {
+		s.logger.Fields("bind", addr).Warn("pprof listener started — do not expose publicly")
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.logger.Fields("err", err).Error("pprof server failed")
 		}
 	}()
 }

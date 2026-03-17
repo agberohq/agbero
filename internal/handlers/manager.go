@@ -240,12 +240,10 @@ func (m *Manager) createHTTPListener(addr, port string, isTLS bool) Listener {
 		handler = m.chainBuild(m.acmeHandler, false, "")
 	}
 
+	owner := m.cfg.HostManager.GetByPort(port)
 	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := context.WithValue(r.Context(), woos.CtxPort, port)
-		if owner := m.cfg.HostManager.GetByPort(port); owner != nil {
-			ctx = context.WithValue(ctx, woos.OwnerKey, owner)
-		}
-		handler.ServeHTTP(w, r.WithContext(ctx))
+		lctx := woos.ListenerCtx{Port: port, Owner: owner}
+		handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), woos.ListenerCtxKey, lctx)))
 	})
 
 	tracker := NewConnTracker()
@@ -290,12 +288,10 @@ func (m *Manager) createH3Listener(addr, port string) Listener {
 		return nil
 	}
 	handler := m.chainBuild(m.baseHandler, false, "")
+	owner := m.cfg.HostManager.GetByPort(port)
 	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := context.WithValue(r.Context(), woos.CtxPort, port)
-		if owner := m.cfg.HostManager.GetByPort(port); owner != nil {
-			ctx = context.WithValue(ctx, woos.OwnerKey, owner)
-		}
-		handler.ServeHTTP(w, r.WithContext(ctx))
+		lctx := woos.ListenerCtx{Port: port, Owner: owner}
+		handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), woos.ListenerCtxKey, lctx)))
 	})
 	serverTLSCfg := m.tlsConfig.Clone()
 	serverTLSCfg.GetConfigForClient = nil

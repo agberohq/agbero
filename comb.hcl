@@ -9,6 +9,6 @@ exclude_files {
   items = ["*.log","*.txt","agbero"]
 }
 use_gitignore = true
-detailed = false
+detailed = true
 go_mode = "code"
 minify = false

@@ -38,15 +38,15 @@ func (m *Manager) chainBuild(next http.Handler, advertiseH3 bool, port string) h
 }
 
 // chainBuildFirewall conditionally wraps the handler with firewall rule enforcement.
-// If a firewall is configured it delegates to the firewall middleware; otherwise it passes requests through unchanged.
+// The firewall handler is constructed once at chain build time, not per request.
 func (m *Manager) chainBuildFirewall(next http.Handler) http.Handler {
+	fw := m.firewall
+	if fw == nil {
+		return next
+	}
+	fwHandler := fw.Handler(next, nil)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fw := m.firewall
-		if fw != nil {
-			fw.Handler(next, nil).ServeHTTP(w, r)
-		} else {
-			next.ServeHTTP(w, r)
-		}
+		fwHandler.ServeHTTP(w, r)
 	})
 }
 
@@ -92,8 +92,10 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 	var host string
 	var hcfg *alaye.Host
 
-	if owner, ok := r.Context().Value(woos.OwnerKey).(*alaye.Host); ok && owner != nil {
-		hcfg = owner
+	lctx, hasLctx := r.Context().Value(woos.ListenerCtxKey).(woos.ListenerCtx)
+
+	if hasLctx && lctx.Owner != nil {
+		hcfg = lctx.Owner
 		if len(hcfg.Domains) > 0 {
 			host = hcfg.Domains[0]
 		} else {
@@ -103,11 +105,9 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 		host = zulu.NormalizeHost(r.Host)
 		hcfg = m.cfg.HostManager.Get(host)
 
-		if hcfg == nil {
-			if port, ok := r.Context().Value(woos.CtxPort).(string); ok && port != "" {
-				if portMatch := m.cfg.HostManager.GetByPort(port); portMatch != nil {
-					hcfg = portMatch
-				}
+		if hcfg == nil && hasLctx && lctx.Port != "" {
+			if portMatch := m.cfg.HostManager.GetByPort(lctx.Port); portMatch != nil {
+				hcfg = portMatch
 			}
 		}
 	}
@@ -283,8 +283,8 @@ func (m *Manager) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 		host = r.Host
 	}
 
-	if owner, ok := r.Context().Value(woos.OwnerKey).(*alaye.Host); ok && owner != nil {
-		for _, bindPort := range owner.Bind {
+	if lctx, ok := r.Context().Value(woos.ListenerCtxKey).(woos.ListenerCtx); ok && lctx.Owner != nil {
+		for _, bindPort := range lctx.Owner.Bind {
 			if bindPort != "" {
 				target := fmt.Sprintf("https://%s:%s%s", host, bindPort, r.URL.RequestURI())
 				http.Redirect(w, r, target, http.StatusMovedPermanently)
@@ -337,8 +337,8 @@ func (m *Manager) logRequest(host string, r *http.Request, start time.Time, stat
 	args = append(args, "status", status)
 	args = append(args, "bytes", bytes)
 
-	if port, ok := r.Context().Value(woos.CtxPort).(string); ok && port != "" {
-		args = append(args, "port", port)
+	if lctx, ok := r.Context().Value(woos.ListenerCtxKey).(woos.ListenerCtx); ok && lctx.Port != "" {
+		args = append(args, "port", lctx.Port)
 	}
 
 	if m.cfg.Global != nil {
@@ -348,7 +348,6 @@ func (m *Manager) logRequest(host string, r *http.Request, start time.Time, stat
 		} else {
 			args = append(args, "ua", zulu.Truncate(ua, 50))
 		}
-		// Add bot detection if checker exists
 		if m.cfg.Global.Logging.BotChecker.Active() {
 			args = append(args, "bot", m.botChecker.IsBot(ua))
 		}

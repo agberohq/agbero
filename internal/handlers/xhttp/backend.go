@@ -24,7 +24,17 @@ import (
 
 var proxyBufPool = zulu.NewBufferPool()
 
-type ctxKeyFailed struct{}
+type backendCtxKey struct{}
+
+// backendState holds per-request failure state. Pooled to eliminate the
+// new(bool) heap allocation per proxied request. Stored in context under
+// the comparable backendCtxKey so the fixed ErrorHandler closure can
+// signal failure back to ServeHTTP's defer.
+type backendState struct {
+	failed bool
+}
+
+var backendStatePool = sync.Pool{New: func() any { return &backendState{} }}
 
 type basicStatusWriter struct {
 	http.ResponseWriter
@@ -174,8 +184,8 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 			http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
 			return
 		}
-		if ptr, ok := r.Context().Value(ctxKeyFailed{}).(*bool); ok {
-			*ptr = true
+		if state, ok := r.Context().Value(backendCtxKey{}).(*backendState); ok {
+			state.failed = true
 		}
 		b.logger.Fields("backend", u.Host, "err", err).Error("proxy dial error")
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
@@ -244,8 +254,8 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 		pr.Out.Header.Set(woos.HeaderXForwardedHost, pr.In.Host)
 		pr.Out.Header.Set(woos.HeaderXForwardedProto, proto)
 		pr.Out.Header.Set(woos.HeaderXForwardedServer, woos.Name)
-		if port, ok := pr.Out.Context().Value(woos.CtxPort).(string); ok {
-			pr.Out.Header.Set("X-Forwarded-Port", port)
+		if lctx, ok := pr.Out.Context().Value(woos.ListenerCtxKey).(woos.ListenerCtx); ok && lctx.Port != "" {
+			pr.Out.Header.Set("X-Forwarded-Port", lctx.Port)
 		}
 	}
 
@@ -342,8 +352,10 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	b.Activity.StartRequest()
-	failedPtr := new(bool)
-	ctx := context.WithValue(r.Context(), ctxKeyFailed{}, failedPtr)
+
+	state := backendStatePool.Get().(*backendState)
+	state.failed = false
+	ctx := context.WithValue(r.Context(), backendCtxKey{}, state)
 	req := r.WithContext(ctx)
 
 	var actualWriter http.ResponseWriter = w
@@ -356,7 +368,8 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	defer func() {
 		dur := time.Since(start)
-		failed := *failedPtr
+		failed := state.failed
+		backendStatePool.Put(state)
 		if rw, ok := w.(*zulu.ResponseWriter); ok {
 			if rw.StatusCode == http.StatusBadGateway ||
 				rw.StatusCode == http.StatusServiceUnavailable ||
