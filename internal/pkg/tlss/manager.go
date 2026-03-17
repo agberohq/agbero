@@ -301,11 +301,10 @@ func (m *Manager) needsRenewal(cert *tls.Certificate) bool {
 // triggerRenewal spawns a background worker to fetch a new certificate.
 // Safely dedupes local concurrent requests and utilizes cluster locks.
 func (m *Manager) triggerRenewal(domain string) {
-	if _, exists := m.renewingDomains.Get(domain); exists {
+	// Atomic check-and-set: returns true if key already existed (another goroutine renewing)
+	if _, loaded := m.renewingDomains.SetIfAbsent(domain, true); loaded {
 		return
 	}
-
-	m.renewingDomains.Set(domain, true)
 
 	go func() {
 		defer m.renewingDomains.Delete(domain)
