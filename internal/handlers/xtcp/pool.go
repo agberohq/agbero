@@ -47,13 +47,13 @@ func newConnPool(addr string, maxSize int, timeout time.Duration) *connPool {
 }
 
 // get acquires a healthy connection from the pool or establishes a new one
-// Relies on the provided context to safely abort dialing attempts
+// Safe from data races by maintaining read locks during slice traversal
 func (p *connPool) get(ctx context.Context) (*pooledConn, error) {
 	p.mu.RLock()
 	for _, c := range p.conns {
 		if c.inUse.CompareAndSwap(false, true) && !c.failed.Load() {
-			p.mu.RUnlock()
 			if p.isAlive(c.Conn) {
+				p.mu.RUnlock()
 				p.mu.Lock()
 				c.lastUsed = time.Now()
 				p.mu.Unlock()
@@ -61,8 +61,6 @@ func (p *connPool) get(ctx context.Context) (*pooledConn, error) {
 			}
 			c.failed.Store(true)
 			c.inUse.Store(false)
-			p.mu.RLock()
-			continue
 		}
 	}
 	p.mu.RUnlock()
