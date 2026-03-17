@@ -3,7 +3,6 @@ package h3
 import (
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/agberohq/agbero/internal/core/woos"
 )
@@ -22,14 +21,4 @@ func AdvertiseHTTP3(port string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// Port Helper to extract port cleanly
-func Port(addr string) string {
-	// Handle ":443" or "0.0.0.0:443" or "[::]:443"
-	if idx := strings.LastIndex(addr, woos.Colon); idx != -1 {
-		return addr[idx+1:]
-	}
-	// Default fallback for addresses without port (e.g., "example.com")
-	return woos.DefaultHTTPSPortInt
 }
