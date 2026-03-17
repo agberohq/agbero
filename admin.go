@@ -148,14 +148,6 @@ func (s *Server) registerAdminAPI(mux *http.ServeMux) {
 	}
 }
 
-// registerAdminProtectedEndpoints mounts all auth-protected admin routes.
-//
-// Telemetry is only mounted when s.telemetryStore != nil, which requires both:
-//   - telemetry { enabled = true } in the global config
-//   - storage { data_dir = "..." } to be set (where the bbolt db lives)
-//
-// When telemetry is disabled (the default), /telemetry/ simply does not exist —
-// no handler registered, no 404, no feature leak.
 func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.Admin) {
 	protect := s.buildAuthMiddleware(cfg)
 	mux.Handle("/uptime", protect(uptime.Uptime(s.resource, s.hostManager, s.clusterManager, s.cookManager)))
@@ -169,6 +161,7 @@ func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.A
 	// StripPrefix removes the prefix before handing off to telemetry.Handler,
 	// which owns /history and /hosts internally.
 	if s.global.Admin.Telemetry.Enabled.Active() && s.telemetryStore != nil {
+		s.logger.Info("telemetry history enabled")
 		mux.Handle("/telemetry/", protect(
 			http.StripPrefix("/telemetry", telemetry.Handler(s.telemetryStore)),
 		))

@@ -117,7 +117,7 @@ logging {
     enabled    = "on"
     path       = "{LOGS_DIR}/agbero.log"
     batch_size = 500
-    rotate_size = 1024
+    rotate_size = 52428800
   }
 
   # ---------------------------------------------------------

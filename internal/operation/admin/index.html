@@ -163,9 +163,36 @@
     <div id="configPage" class="page">
         <div class="config-header">
             <h2>Configuration Overview</h2>
-            <button class="btn config-refresh">⟳ Refresh</button>
+            <div class="config-actions">
+                <button class="btn config-refresh">⟳ Refresh</button>
+                <button class="btn config-diff" id="configDiffBtn" title="Compare with previous">↔️ Diff</button>
+            </div>
         </div>
 
+        <!-- Server Identity -->
+        <div class="config-section">
+            <h3>🆔 Server Identity</h3>
+            <div class="config-details-grid">
+                <div class="config-detail-item">
+                    <div class="config-detail-label">Node ID</div>
+                    <div class="config-detail-value" id="configNodeId">—</div>
+                </div>
+                <div class="config-detail-item">
+                    <div class="config-detail-label">Hostname</div>
+                    <div class="config-detail-value" id="configHostname">—</div>
+                </div>
+                <div class="config-detail-item">
+                    <div class="config-detail-label">PID</div>
+                    <div class="config-detail-value" id="configPid">—</div>
+                </div>
+                <div class="config-detail-item">
+                    <div class="config-detail-label">Start Time</div>
+                    <div class="config-detail-value" id="configStartTime">—</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Core Metrics Grid (enhanced) -->
         <div class="config-metrics-grid">
             <div class="metric-card">
                 <div class="metric-content">
@@ -173,42 +200,42 @@
                     <div class="metric-value" id="configHttpPort">—</div>
                 </div>
             </div>
-
             <div class="metric-card">
                 <div class="metric-content">
                     <div class="metric-label">HTTPS Port</div>
                     <div class="metric-value" id="configHttpsPort">—</div>
                 </div>
             </div>
-
             <div class="metric-card">
                 <div class="metric-content">
                     <div class="metric-label">Version</div>
                     <div class="metric-value" id="configVersion">—</div>
                 </div>
             </div>
-
+            <div class="metric-card">
+                <div class="metric-content">
+                    <div class="metric-label">Build</div>
+                    <div class="metric-value" id="configBuild">—</div>
+                </div>
+            </div>
             <div class="metric-card">
                 <div class="metric-content">
                     <div class="metric-label">Hosts</div>
                     <div class="metric-value" id="configHostCount">0</div>
                 </div>
             </div>
-
             <div class="metric-card">
                 <div class="metric-content">
                     <div class="metric-label">Routes</div>
                     <div class="metric-value" id="configRouteCount">0</div>
                 </div>
             </div>
-
             <div class="metric-card">
                 <div class="metric-content">
                     <div class="metric-label">TLS Domains</div>
                     <div class="metric-value" id="configTlsCount">0</div>
                 </div>
             </div>
-
             <div class="metric-card">
                 <div class="metric-content">
                     <div class="metric-label">Log Level</div>
@@ -217,11 +244,51 @@
             </div>
         </div>
 
+        <!-- Global Settings (enhanced) -->
         <div class="config-section">
             <h3>⚙️ Global Settings</h3>
             <div class="config-details-grid" id="configGlobalDetails"></div>
         </div>
 
+        <!-- TLS/Certificate Summary -->
+        <div class="config-section">
+            <h3>🔐 TLS Certificates Summary</h3>
+            <div class="config-details-grid" id="configTlsSummary"></div>
+            <div class="config-note" id="configTlsNote"></div>
+        </div>
+
+        <!-- Runtime Configuration (from /uptime) -->
+        <div class="config-section">
+            <h3>⏱️ Runtime Configuration</h3>
+            <div class="config-details-grid" id="configRuntimeDetails"></div>
+        </div>
+
+        <!-- Feature Flags & Middleware -->
+        <div class="config-section">
+            <h3>🚩 Enabled Features</h3>
+            <div class="feature-grid" id="configFeatures"></div>
+        </div>
+
+        <!-- Hosts Summary Table -->
+        <div class="config-section">
+            <h3>📊 Hosts Summary</h3>
+            <div class="table-responsive">
+                <table class="config-hosts-table" id="configHostsTable">
+                    <thead>
+                    <tr>
+                        <th>Host</th>
+                        <th>Routes</th>
+                        <th>Backends</th>
+                        <th>TLS</th>
+                        <th>Domains</th>
+                    </tr>
+                    </thead>
+                    <tbody id="configHostsBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Raw Configuration (collapsible) -->
         <div class="config-section">
             <div class="config-header">
                 <h3>📄 Raw Configuration</h3>
@@ -232,7 +299,15 @@
             </div>
             <div class="code-box" id="configContent"></div>
         </div>
+
+        <!-- Previous Config Diff (hidden by default) -->
+        <div class="config-section" id="configDiffSection" style="display: none;">
+            <h3>↔️ Configuration Changes</h3>
+            <div class="code-box diff-box" id="configDiff"></div>
+        </div>
     </div>
+
+
 </div>
 
 <!-- SYSTEM STATS BAR -->

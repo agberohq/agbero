@@ -2,7 +2,7 @@ const EventHandler = {
     bindAll(app) {
         if (!app) return;
 
-        // ================== GLOBAL EVENT DELEGATION (CSP SAFE) ==================
+        // ================== GLOBAL EVENT DELEGATION ==================
         document.body.addEventListener('click', (e) => {
             const openRouteBtn = e.target.closest('[data-action="open-route"]');
             if (openRouteBtn) {
@@ -66,7 +66,7 @@ const EventHandler = {
 
                 searchTimeout = setTimeout(() => {
                     UI.renderHosts(app.hostsData, term, app.certificates);
-                }, 300); // Wait 300ms after typing stops
+                }, 300);
             });
         }
 
@@ -118,7 +118,6 @@ const EventHandler = {
             });
         }
 
-        // Add to EventHandler.bindAll() where other logs buttons are
         const logsExportBtn = document.getElementById("logsExportBtn");
         if (logsExportBtn) {
             logsExportBtn.addEventListener("click", () => app.exportLogs());
@@ -243,7 +242,6 @@ const EventHandler = {
                 }
             });
 
-            // Double-click from drawer opens performance modal directly
             hostNameEl.addEventListener("dblclick", (e) => {
                 e.stopPropagation();
                 const hostname = hostNameEl.innerText;
@@ -271,8 +269,68 @@ const EventHandler = {
 
         // ================== KEYBOARD SHORTCUTS ==================
         document.addEventListener("keydown", (e) => {
+            if (e.target.matches('input, textarea, select')) return;
+
             if (e.key === "Escape") {
                 app.closeDrawer();
+                return;
+            }
+
+            if (e.ctrlKey || e.metaKey) {
+                const num = parseInt(e.key);
+                if (num >= 1 && num <= 7) {
+                    e.preventDefault();
+                    const pages = ['dashboard', 'hosts', 'cluster', 'map', 'firewall', 'logs', 'config'];
+                    app.setPage(pages[num - 1]);
+                    return;
+                }
+            }
+
+            if (e.key === 'r' && !e.ctrlKey && !e.metaKey) {
+                e.preventDefault();
+                app.refreshCurrentPage();
+                const activePage = document.querySelector('.page.active');
+                if (activePage) {
+                    activePage.style.opacity = '0.7';
+                    setTimeout(() => activePage.style.opacity = '1', 200);
+                }
+                return;
+            }
+
+            if (e.key === '/' && app.page === 'hosts') {
+                e.preventDefault();
+                document.getElementById('hostSearch')?.focus();
+                return;
+            }
+
+            if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
+                e.preventDefault();
+                const shortcuts = [
+                    'Ctrl+1-7: Navigate pages',
+                    'r: Refresh current page',
+                    'Esc: Close drawers',
+                    '/: Focus search (hosts page)'
+                ].join('\n');
+
+                const toast = document.createElement('div');
+                toast.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    background: var(--fg);
+                    color: var(--bg);
+                    padding: 16px 24px;
+                    border-radius: 8px;
+                    font-size: 12px;
+                    font-family: monospace;
+                    white-space: pre-line;
+                    z-index: 2000;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+                    animation: slideIn 0.2s ease;
+                `;
+                toast.textContent = shortcuts;
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 4000);
             }
         });
 

@@ -43,7 +43,6 @@ const UI = {
         setText("apdexStat", stats.apdex || "1.0");
         setText("uptimeStat", stats.uptime || "100%");
 
-        // Add RPS display - THIS IS THE KEY FIX
         const rps = stats.rps !== undefined ? stats.rps.toFixed(1) : "0.0";
         setText("rpsStat", rps);
 
@@ -73,10 +72,15 @@ const UI = {
         setMetric('configHttpPort', metrics.httpPort);
         setMetric('configHttpsPort', metrics.httpsPort);
         setMetric('configVersion', metrics.version);
+        setMetric('configBuild', metrics.build);
         setMetric('configHostCount', this.fmtNum(metrics.hostCount));
         setMetric('configRouteCount', this.fmtNum(metrics.routeCount));
         setMetric('configTlsCount', this.fmtNum(metrics.tlsCount));
         setMetric('configLogLevel', metrics.logLevel ? metrics.logLevel.toUpperCase() : 'INFO');
+        setMetric('configNodeId', metrics.nodeId);
+        setMetric('configHostname', metrics.hostname);
+        setMetric('configPid', metrics.pid);
+        setMetric('configStartTime', metrics.startTime);
     },
 
     updateLastUpdated(timestamp) {
@@ -126,7 +130,10 @@ const UI = {
                 label: 'Max Header Size',
                 value: global.general?.max_header_bytes ? this.formatBytes(global.general.max_header_bytes) : '—'
             },
-            {label: 'Trusted Proxies', value: trustedProxies.length > 0 ? trustedProxies.join(', ') : 'none'}
+            {label: 'Trusted Proxies', value: trustedProxies.length > 0 ? trustedProxies.join(', ') : 'none'},
+            {label: 'Read Timeout', value: global.general?.read_timeout ? (global.general.read_timeout/1000000000) + 's' : '—'},
+            {label: 'Write Timeout', value: global.general?.write_timeout ? (global.general.write_timeout/1000000000) + 's' : '—'},
+            {label: 'Idle Timeout', value: global.general?.idle_timeout ? (global.general.idle_timeout/1000000000) + 's' : '—'}
         ];
 
         container.innerHTML = settings.map(setting => `
@@ -166,6 +173,171 @@ const UI = {
         });
 
         container.innerHTML = html;
+    },
+
+    renderTlsSummary(certificates, config) {
+        const container = document.getElementById('configTlsSummary');
+        if (!container) return;
+
+        const totalCerts = certificates.length;
+        const validCerts = certificates.filter(c => c.daysLeft > 0).length;
+        const expiringCerts = certificates.filter(c => c.daysLeft > 0 && c.daysLeft < 7).length;
+        const expiredCerts = certificates.filter(c => c.daysLeft <= 0).length;
+
+        container.innerHTML = `
+            <div class="config-detail-item">
+                <div class="config-detail-label">Total Certificates</div>
+                <div class="config-detail-value">${totalCerts}</div>
+            </div>
+            <div class="config-detail-item">
+                <div class="config-detail-label">Valid</div>
+                <div class="config-detail-value"><span class="badge success">${validCerts}</span></div>
+            </div>
+            <div class="config-detail-item">
+                <div class="config-detail-label">Expiring Soon</div>
+                <div class="config-detail-value"><span class="badge warning">${expiringCerts}</span></div>
+            </div>
+            <div class="config-detail-item">
+                <div class="config-detail-label">Expired</div>
+                <div class="config-detail-value"><span class="badge error">${expiredCerts}</span></div>
+            </div>
+        `;
+
+        const noteEl = document.getElementById('configTlsNote');
+        if (noteEl && config?.global?.lets_encrypt) {
+            noteEl.innerHTML = `<span class="config-note-text">🔒 Auto-TLS: ${config.global.lets_encrypt.email || 'No email'} | Staging: ${config.global.lets_encrypt.staging ? 'Yes' : 'No'}</span>`;
+        }
+    },
+
+    renderRuntimeSettings(stats) {
+        const container = document.getElementById('configRuntimeDetails');
+        if (!container || !stats?.system) return;
+
+        const sys = stats.system;
+        container.innerHTML = `
+            <div class="config-detail-item">
+                <div class="config-detail-label">Goroutines</div>
+                <div class="config-detail-value">${sys.num_goroutine || 0}</div>
+            </div>
+            <div class="config-detail-item">
+                <div class="config-detail-label">CPU Cores</div>
+                <div class="config-detail-value">${sys.num_cpu || '—'}</div>
+            </div>
+            <div class="config-detail-item">
+                <div class="config-detail-label">Memory RSS</div>
+                <div class="config-detail-value">${this.formatBytes(sys.mem_rss || 0)}</div>
+            </div>
+            <div class="config-detail-item">
+                <div class="config-detail-label">Memory Alloc</div>
+                <div class="config-detail-value">${this.formatBytes(sys.mem_alloc || 0)}</div>
+            </div>
+            <div class="config-detail-item">
+                <div class="config-detail-label">GC Cycles</div>
+                <div class="config-detail-value">${sys.num_gc || 0}</div>
+            </div>
+            <div class="config-detail-item">
+                <div class="config-detail-label">Uptime</div>
+                <div class="config-detail-value">${this.formatUptime(sys.uptime_seconds)}</div>
+            </div>
+        `;
+    },
+
+    formatUptime(seconds) {
+        if (!seconds) return '—';
+        const days = Math.floor(seconds / 86400);
+        const hours = Math.floor((seconds % 86400) / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+
+        const parts = [];
+        if (days > 0) parts.push(`${days}d`);
+        if (hours > 0) parts.push(`${hours}h`);
+        if (mins > 0) parts.push(`${mins}m`);
+
+        return parts.join(' ') || '<1m';
+    },
+
+    renderFeatureFlags(config) {
+        const container = document.getElementById('configFeatures');
+        if (!container) return;
+
+        const features = [];
+
+        if (config.global?.development) features.push({ name: 'Development Mode', icon: '🔧', enabled: true });
+        if (config.global?.lets_encrypt) features.push({ name: 'Auto TLS', icon: '🔐', enabled: true });
+        if (config.cluster?.enabled) features.push({ name: 'Clustering', icon: '🌐', enabled: true });
+        if (config.global?.security?.trusted_proxies?.length) features.push({ name: 'Trusted Proxies', icon: '🛡️', enabled: true });
+
+        const hosts = config.hosts || {};
+        let hasWasm = false, hasRateLimit = false, hasAuth = false, hasCompression = false;
+
+        Object.values(hosts).forEach(host => {
+            (host.routes || []).forEach(route => {
+                if (route.wasm?.enabled === 'on') hasWasm = true;
+                if (route.rate_limit?.enabled === 'on') hasRateLimit = true;
+                if (route.basic_auth?.enabled === 'on' || route.jwt_auth?.enabled === 'on') hasAuth = true;
+                if (route.compression_config?.enabled === 'on') hasCompression = true;
+            });
+        });
+
+        if (hasWasm) features.push({ name: 'WASM Filters', icon: '⚡', enabled: true });
+        if (hasRateLimit) features.push({ name: 'Rate Limiting', icon: '⏱️', enabled: true });
+        if (hasAuth) features.push({ name: 'Authentication', icon: '🔑', enabled: true });
+        if (hasCompression) features.push({ name: 'Compression', icon: '🗜️', enabled: true });
+
+        if (features.length === 0) {
+            container.innerHTML = '<div class="empty-state">No special features enabled</div>';
+            return;
+        }
+
+        container.innerHTML = features.map(f => `
+            <div class="feature-item">
+                <span class="feature-icon">${f.icon}</span>
+                <span class="feature-name">${f.name}</span>
+                <span class="feature-status success">✓</span>
+            </div>
+        `).join('');
+    },
+
+    renderHostsSummary(hosts, stats) {
+        const tbody = document.getElementById('configHostsBody');
+        if (!tbody) return;
+
+        if (!hosts || Object.keys(hosts).length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state">No hosts configured</div></td></tr>';
+            return;
+        }
+
+        let html = '';
+        Object.entries(hosts).forEach(([hostname, host]) => {
+            const routeCount = (host.routes?.length || 0) + (host.proxies?.length || 0);
+            const backendCount = this.countBackends(host);
+            const tlsMode = host.tls?.mode || 'none';
+            const tlsBadge = tlsMode === 'none' ? 'error' : (tlsMode.includes('local') ? 'warning' : 'success');
+            const tlsText = tlsMode === 'none' ? 'No TLS' : (tlsMode.includes('local') ? 'Local' : 'Auto');
+
+            html += `
+                <tr>
+                    <td class="mono">${hostname}</td>
+                    <td>${routeCount}</td>
+                    <td>${backendCount}</td>
+                    <td><span class="badge ${tlsBadge}">${tlsText}</span></td>
+                    <td class="host-domains">${(host.domains || []).slice(0, 2).join(', ')}${host.domains?.length > 2 ? '...' : ''}</td>
+                </tr>
+            `;
+        });
+
+        tbody.innerHTML = html;
+    },
+
+    countBackends(host) {
+        let count = 0;
+        (host.routes || []).forEach(route => {
+            if (route.backends?.servers) count += route.backends.servers.length;
+        });
+        (host.proxies || []).forEach(proxy => {
+            if (proxy.backends) count += proxy.backends.length;
+        });
+        return count;
     },
 
     renderClusterPage(config, stats) {
@@ -561,7 +733,7 @@ const UI = {
             </tr>`;
         }).join("");
     },
-    
+
     renderLogs(logs, filter) {
         const container = document.getElementById("logsList");
         if (!container) return;
@@ -611,14 +783,12 @@ const UI = {
                 fields = l.fields || {};
             }
 
-            // Format timestamp to show only time if it's ISO
             if (ts) {
                 if (ts.includes('T')) {
                     ts = ts.split('T')[1]?.split('.')[0] || ts;
                 }
             }
 
-            // Extract fields for display
             if (fields.method) method = fields.method;
             if (fields.path) path = fields.path;
             if (fields.status) status = fields.status;
@@ -627,11 +797,7 @@ const UI = {
                 const ms = (fields.duration / 1000000).toFixed(2);
                 duration = `${ms}ms`;
             }
-            if (fields.bytes) {
-                const bytes = fields.bytes > 1024 ? `${(fields.bytes / 1024).toFixed(1)}KB` : `${fields.bytes}B`;
-            }
 
-            // Build the message with fields
             let fullMsg = msg;
             if (method && path) fullMsg += ` ${method} ${path}`;
             if (status) fullMsg += ` [${status}]`;
@@ -1168,7 +1334,6 @@ const UI = {
         return parseFloat((b / Math.pow(k, i)).toFixed(1)) + s[i];
     }
 };
-
 
 const PerfChart = {
     render(containerId, values, timestamps, opts = {}) {
