@@ -171,6 +171,19 @@ const EventHandler = {
             b.addEventListener("click", () => Modal.closeAll());
         });
 
+        // ================== PERFORMANCE MODAL ==================
+        const perfRange = document.getElementById("perfRangeSelect");
+        if (perfRange) {
+            perfRange.addEventListener("change", async () => {
+                if (app._perfHost) {
+                    ["perfChartReqs", "perfChartP99", "perfChartErrors", "perfChartBE"].forEach(id => {
+                        document.getElementById(id).innerHTML = `<div class="perf-skeleton"></div>`;
+                    });
+                    await app._loadPerfData(app._perfHost, perfRange.value);
+                }
+            });
+        }
+
         // ================== CONFIRM MODAL ==================
         const confirmCancel = document.getElementById("confirmCancel");
         if (confirmCancel) confirmCancel.addEventListener("click", () => Modal.closeAll());

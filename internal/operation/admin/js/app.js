@@ -553,6 +553,43 @@ class AgberoApp {
         Modal.open("confirmModal");
     }
 
+    async openPerformanceModal(hostname) {
+        document.getElementById("perfModalTitle").textContent = "Performance History";
+        document.getElementById("perfModalHost").textContent = hostname;
+        document.getElementById("perfDataRange").textContent = "";
+        ["perfChartReqs", "perfChartP99", "perfChartErrors", "perfChartBE"].forEach(id => {
+            document.getElementById(id).innerHTML = `<div class="perf-skeleton"></div>`;
+        });
+        Modal.open("perfModal");
+        this._perfHost = hostname;
+        await this._loadPerfData(hostname, document.getElementById("perfRangeSelect").value);
+    }
+
+    async _loadPerfData(hostname, range) {
+        const data = await this.api(`/telemetry/history?host=${encodeURIComponent(hostname)}&range=${range}`);
+        if (!data || !data.samples || data.samples.length === 0) {
+            this._renderPerfEmpty("No history data yet.\nThe collector samples every 60s — check back shortly.");
+            return;
+        }
+        const s = data.samples;
+        PerfChart.render("perfChartReqs",   s.map(x => x.requests_sec),    s.map(x => x.ts), { unit: "/s", color: "var(--accent)",  minY: 0 });
+        PerfChart.render("perfChartP99",    s.map(x => x.p99_ms),          s.map(x => x.ts), { unit: "ms", color: "var(--warning)", minY: 0 });
+        PerfChart.render("perfChartErrors", s.map(x => x.error_rate),      s.map(x => x.ts), { unit: "%",  color: "var(--danger)",  minY: 0, maxY: 100, warnAt: 1 });
+        PerfChart.render("perfChartBE",     s.map(x => x.active_backends), s.map(x => x.ts), { unit: "",   color: "var(--success)", minY: 0, isInt: true });
+        if (s.length >= 2) {
+            const fmt = ts => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            document.getElementById("perfDataRange").textContent =
+                `${fmt(s[0].ts)} – ${fmt(s[s.length - 1].ts)} · ${s.length} points`;
+        }
+    }
+
+    _renderPerfEmpty(message) {
+        ["perfChartReqs", "perfChartP99", "perfChartErrors", "perfChartBE"].forEach(id => {
+            document.getElementById(id).innerHTML =
+                `<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-mute);font-size:11px;text-align:center;white-space:pre-line;padding:8px;">${message}</div>`;
+        });
+    }
+
     openRouteDrawer(hostname, idx, type = 'route') {
         let cfg_item;
         let itemStats = {};

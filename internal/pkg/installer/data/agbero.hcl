@@ -8,10 +8,6 @@
 # Configuration schema version
 version = 1
 
-# Enable development mode: debug logging, verbose errors, relaxed TLS
-# WARNING: Disable for production
-development = {DEV_MODE}
-
 # -------------------------------------------------------------
 # BINDING ADDRESSES
 # -------------------------------------------------------------

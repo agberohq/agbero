@@ -1643,3 +1643,155 @@ svg text {
         font-size: 18px;
     }
 }
+
+/* ========== PERFORMANCE HISTORY MODAL ========== */
+
+.modal-perf {
+    width: 860px;
+    max-width: 96vw;
+    padding: 24px 28px 20px;
+}
+
+.perf-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    gap: 16px;
+}
+
+.perf-modal-header h3 {
+    margin: 0 0 4px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--fg);
+}
+
+.perf-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.perf-range-select {
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    font-family: inherit;
+    font-size: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    outline: none;
+}
+
+.perf-range-select:focus {
+    border-color: var(--accent);
+}
+
+.perf-status {
+    font-size: 12px;
+    color: var(--text-mute);
+    text-align: center;
+    padding: 12px 0;
+}
+
+.perf-charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 160px 160px;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.perf-chart-cell {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow: hidden;
+}
+
+.perf-chart-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--text-mute);
+    flex-shrink: 0;
+}
+
+.perf-chart-area {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+}
+
+.perf-chart-area svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+}
+
+.perf-modal-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+/* Host header — make it look clickable for perf modal trigger */
+.host-header {
+    cursor: pointer;
+    transition: background 0.15s;
+    border-radius: 4px;
+    padding: 2px 4px;
+    margin: -2px -4px;
+}
+
+.host-header:hover {
+    background: var(--hover-bg);
+}
+
+.host-header:hover .host-name::after {
+    content: " ↗";
+    font-size: 10px;
+    color: var(--text-mute);
+    font-weight: 400;
+}
+
+/* Skeleton loading shimmer for charts */
+@keyframes perf-shimmer {
+    0%   { background-position: -400px 0; }
+    100% { background-position: 400px 0; }
+}
+
+.perf-skeleton {
+    width: 100%;
+    height: 100%;
+    border-radius: 4px;
+    background: linear-gradient(90deg,
+    var(--border) 25%,
+    var(--hover-bg) 50%,
+    var(--border) 75%);
+    background-size: 400px 100%;
+    animation: perf-shimmer 1.4s ease infinite;
+}
+
+/* Responsive — stack to single column on small screens */
+@media (max-width: 600px) {
+    .perf-charts-grid {
+        grid-template-columns: 1fr;
+        grid-template-rows: repeat(4, 140px);
+    }
+
+    .modal-perf {
+        padding: 16px;
+    }
+}

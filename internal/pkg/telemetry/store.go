@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"go.etcd.io/bbolt"
@@ -27,9 +28,10 @@ var (
 // All writes are async (non-blocking channel), reads are direct DB queries.
 // Zero allocations on the hot path — the collector goroutine owns all writes.
 type Store struct {
-	db      *bbolt.DB
-	writeCh chan writeOp
-	quit    chan struct{}
+	db        *bbolt.DB
+	writeCh   chan writeOp
+	quit      chan struct{}
+	closeOnce sync.Once
 }
 
 type writeOp struct {
@@ -137,9 +139,13 @@ func (s *Store) Hosts() ([]string, error) {
 }
 
 // Close flushes pending writes and closes the database.
-func (s *Store) Close() error {
-	close(s.quit)
-	return s.db.Close()
+// Safe to call more than once — subsequent calls are no-ops.
+func (s *Store) Close() (err error) {
+	s.closeOnce.Do(func() {
+		close(s.quit)
+		err = s.db.Close()
+	})
+	return err
 }
 
 // writeLoop drains writeCh, batching writes every 5 seconds for efficiency.
