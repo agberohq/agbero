@@ -7,7 +7,7 @@ route "/" {
     index = "index.md"
 
     markdown {
-      enabled = on
+      enabled = "on"
       view = "normal" // or browse
 
       highlight {

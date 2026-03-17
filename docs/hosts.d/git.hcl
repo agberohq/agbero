@@ -5,14 +5,14 @@ route "/pull" {
     index = "index.md"
 
     git {
-      enabled = on
+      enabled = "on"
       id = "olekukonko-sample"
       url = "https://github.com/olekukonko/sample"
       interval = "1m"  // Pull every 1min
     }
 
     markdown {
-      enabled = on
+      enabled = "on"
       view = "browse"
 
       highlight {
@@ -29,14 +29,14 @@ route "/pull" {
     index = "index.md"
 
     git {
-      enabled = on
+      enabled = "on"
       id = "olekukonko-sample"
       url = "https://github.com/olekukonko/sample"
       secret = "${env.GITHUB_WEBHOOK_SECRET}"
     }
 
     markdown {
-      enabled = on
+      enabled = "on"
       view = "browse"
 
       highlight {

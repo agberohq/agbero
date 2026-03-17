@@ -23,14 +23,14 @@ tls {
 
   # For mode = "local"
   local {
-    enabled   = on
+    enabled   = "on"
     cert_file = "/etc/certs/example.pem"
     key_file  = "/etc/certs/example.key"
   }
 
   # For mode = "letsencrypt"
   lets_encrypt {
-    enabled     = on
+    enabled     = "on"
     email       = "admin@example.com"
     staging     = false
     short_lived = false
@@ -49,15 +49,15 @@ limits {
 }
 
 headers {
-  enabled = on
+  enabled = "on"
   request {
-    enabled = on
+    enabled = "on"
     set     = { "X-Host-ID" = "primary" }
     add     = { "X-Trace" = "${request_id}" }
     remove  = ["X-Powered-By"]
   }
   response {
-    enabled = on
+    enabled = "on"
     set     = { "Strict-Transport-Security" = "max-age=31536000" }
   }
 }
@@ -73,7 +73,7 @@ error_pages {
 
 # --- A. Reverse Proxy Route ---
 route {
-  enabled = on
+  enabled = "on"
   path    = "/api"
 
   # Strip prefix before sending to backend
@@ -84,7 +84,7 @@ route {
 
   # Backend Pool
   backend {
-    enabled  = on
+    enabled  = "on"
     strategy = "weighted_least_conn" # round_robin, ip_hash, least_conn, etc.
 
     server {
@@ -98,7 +98,7 @@ route {
 
       # WebSocket/Streaming optimizations
       streaming {
-        enabled        = on
+        enabled        = "on"
         flush_interval = "100ms"
       }
     }
@@ -111,7 +111,7 @@ route {
 
   # Active Health Checks
   health_check {
-    enabled   = on
+    enabled   = "on"
     path      = "/health"
     interval  = "10s"
     timeout   = "5s"
@@ -121,23 +121,23 @@ route {
 
   # Circuit Breaker
   circuit_breaker {
-    enabled   = on
+    enabled   = "on"
     threshold = 10
     duration  = "30s"
   }
 
   # Authentication: JWT
   jwt_auth {
-    enabled = on
+    enabled = "on"
     secret  = "env.JWT_SECRET"
     claims_to_headers = { "sub" = "X-User" }
   }
 
   # Rate Limiting
   rate_limit {
-    enabled = on
+    enabled = "on"
     rule {
-      enabled  = on
+      enabled  = "on"
       requests = 100
       window   = "1m"
       key      = "header:Authorization"
@@ -146,7 +146,7 @@ route {
 
   # WebAssembly Plugin
   wasm {
-    enabled = on
+    enabled = "on"
     module  = "/etc/agbero/plugins/auth.wasm"
     access  = ["headers", "body"]
   }
@@ -154,11 +154,11 @@ route {
 
 # --- B. Static Web Route ---
 route {
-  enabled = on
+  enabled = "on"
   path    = "/"
 
   web {
-    enabled = on
+    enabled = "on"
     root    = "/var/www/html"
     index   = "index.html"
     listing = true # Enable directory listing
@@ -166,7 +166,7 @@ route {
 
     # PHP Integration
     php {
-      enabled = on
+      enabled = "on"
       address = "unix:/run/php/php-fpm.sock"
       index   = "index.php"
     }
@@ -174,21 +174,21 @@ route {
 
   # Authentication: Basic
   basic_auth {
-    enabled = on
+    enabled = "on"
     users   = ["admin:$2a$10$..."] # bcrypt hash
     realm   = "Admin Area"
   }
 
   # Compression
   compression_config {
-    enabled = on
+    enabled = "on"
     type    = "brotli"
     level   = 4
   }
 
   # Caching
   cache {
-    enabled = on
+    enabled = "on"
     driver  = "memory"
     ttl     = "1h"
   }
@@ -198,7 +198,7 @@ route {
 # 5. TCP PROXY (Layer 4)
 # =============================================================================
 proxy {
-  enabled = on
+  enabled = "on"
   name    = "database"
   listen  = ":5432"
 
@@ -214,7 +214,7 @@ proxy {
   }
 
   health_check {
-    enabled  = on
+    enabled  = "on"
     interval = "5s"
     # Plain TCP connect check
   }
