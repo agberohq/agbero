@@ -22,6 +22,8 @@ import (
 	"github.com/olekukonko/ll"
 )
 
+var proxyBufPool = zulu.NewBufferPool()
+
 type ctxKeyFailed struct{}
 
 type basicStatusWriter struct {
@@ -136,7 +138,9 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 
 	b.Abort = health.NewEarlyAbortController(b.Weights.EarlyAbortEnabled)
 
-	rp := &httputil.ReverseProxy{}
+	rp := &httputil.ReverseProxy{
+		BufferPool: proxyBufPool,
+	}
 	t := xhttpCfg.Resource.Transport.Clone()
 	t.Proxy = nil
 	t.ExpectContinueTimeout = 0
