@@ -47,32 +47,49 @@ func newConnPool(addr string, maxSize int, timeout time.Duration) *connPool {
 }
 
 // get acquires a healthy connection from the pool or establishes a new one
-// Safe from data races by maintaining read locks during slice traversal
+// Uses CAS-first pattern to avoid holding locks during syscalls
 func (p *connPool) get(ctx context.Context) (*pooledConn, error) {
-	p.mu.RLock()
-	for _, c := range p.conns {
-		if c.inUse.CompareAndSwap(false, true) && !c.failed.Load() {
-			if p.isAlive(c.Conn) {
-				p.mu.RUnlock()
-				p.mu.Lock()
-				c.lastUsed = time.Now()
-				p.mu.Unlock()
-				return c, nil
+	for {
+		p.mu.RLock()
+		var candidate *pooledConn
+		for _, c := range p.conns {
+			if !c.inUse.Load() && !c.failed.Load() {
+				candidate = c
+				break
 			}
-			c.failed.Store(true)
-			c.inUse.Store(false)
 		}
+		p.mu.RUnlock()
+
+		if candidate == nil {
+			break
+		}
+
+		if !candidate.inUse.CompareAndSwap(false, true) {
+			continue
+		}
+
+		if p.isAlive(candidate.Conn) {
+			p.mu.Lock()
+			candidate.lastUsed = time.Now()
+			p.mu.Unlock()
+			return candidate, nil
+		}
+
+		candidate.failed.Store(true)
+		candidate.inUse.Store(false)
 	}
-	p.mu.RUnlock()
+
 	conn, err := p.dial(ctx)
 	if err != nil {
 		return nil, err
 	}
+
 	pc := &pooledConn{
 		Conn:     conn,
 		lastUsed: time.Now(),
 	}
 	pc.inUse.Store(true)
+
 	p.mu.Lock()
 	if len(p.conns) < p.maxSize {
 		p.conns = append(p.conns, pc)
@@ -93,6 +110,7 @@ func (p *connPool) get(ctx context.Context) (*pooledConn, error) {
 		}
 	}
 	p.mu.Unlock()
+
 	return pc, nil
 }
 

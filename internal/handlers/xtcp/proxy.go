@@ -150,7 +150,11 @@ func (p *Proxy) Start() error {
 
 	p.wg.Go(func() {
 		defer l.Close()
-		defer p.res.TCPCache.Delete(p.Listen)
+		defer func() {
+			if it, ok := p.res.TCPCache.Load(p.Listen); ok && it.Value == p {
+				p.res.TCPCache.Delete(p.Listen)
+			}
+		}()
 
 		bo := zulu.NewInfinite()
 
