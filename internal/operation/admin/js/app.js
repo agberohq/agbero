@@ -1,3 +1,4 @@
+// js/app.js
 class AgberoApp {
     constructor() {
         this.apiBase = window.location.origin;
@@ -32,10 +33,12 @@ class AgberoApp {
         this.isOnline = true;
 
         this.timers = { metrics: null, config: null, logs: null };
+        this.latencyCheckInterval = null;
         this.page = sessionStorage.getItem("ag_page") || "dashboard";
         this.lastConfig = null;
-        this.lastStatsData = null; // Store stats for cluster page
+        this.lastStatsData = null;
         this._confirmFn = null;
+        this.connectionQuality = 'unknown';
 
         this.routeGraph = new RouteGraph("graphContainer");
     }
@@ -117,6 +120,22 @@ class AgberoApp {
         this.gitStats = data.git || {};
 
         const stats = this.parseMetricsJSON(data);
+
+        // Calculate RPS
+        const now = Date.now();
+        const timeDiffSeconds = (now - this.lastReqTime) / 1000;
+
+        if (this.lastReqTotal > 0 && timeDiffSeconds > 0) {
+            const reqDiff = stats.total_reqs - this.lastReqTotal;
+            stats.rps = reqDiff / timeDiffSeconds;
+        } else {
+            stats.rps = 0;
+        }
+
+        // Store current values for next calculation
+        this.lastReqTotal = stats.total_reqs;
+        this.lastReqTime = now;
+
         const metrics = {
             stats,
             system: data.system || {},
@@ -137,7 +156,6 @@ class AgberoApp {
 
         UI.updateMetrics(metrics, this.metricsHistory[this.activeChart]);
 
-        // Refresh Cluster page if active
         if (this.page === 'cluster') {
             UI.renderClusterPage(this.lastConfig?.cluster, data.cluster);
         }
@@ -297,7 +315,7 @@ class AgberoApp {
             route: {
                 path: path,
                 backends: {
-                    servers: [{ address: target }]
+                    servers:[{ address: target }]
                 }
             }
         };
@@ -313,7 +331,10 @@ class AgberoApp {
 
     async fetchConfig() {
         const data = await this.api("/config");
+        const stats = await this.api("/uptime");
+
         this.lastConfig = data;
+        this.lastStatsData = stats;
 
         if (data) {
             const bindHttp = data.global?.bind?.http;
@@ -327,15 +348,56 @@ class AgberoApp {
                 logLevel: data.global?.logging?.level || 'info',
                 hostCount: Object.keys(data.hosts || {}).length,
                 routeCount: this.getRouteCount(data.hosts),
-                tlsCount: this.getTLSConfigCount(data)
+                tlsCount: this.getTLSConfigCount(data),
+                nodeId: stats?.system?.node_id || data.global?.node_id || 'standalone',
+                hostname: stats?.system?.hostname || window.location.hostname,
+                pid: stats?.system?.pid || '—',
+                startTime: stats?.system?.start_time ? new Date(stats.system.start_time).toLocaleString() : '—'
             };
 
             UI.renderConfigMetrics(metrics);
             UI.renderGlobalSettings(data.global);
             UI.renderClusterSettings(data.cluster);
+            UI.renderTlsSummary(this.certificates, data);
+            UI.renderRuntimeSettings(stats);
+            UI.renderFeatureFlags(data);
+            UI.renderHostsSummary(data.hosts, stats?.hosts);
             UI.renderRawConfig(data);
             this.updateConfigTitle(metrics.version, metrics.build);
+
+            this.previousConfig = this.currentConfig;
+            this.currentConfig = data;
         }
+    }
+
+    showConfigDiff() {
+        if (!this.previousConfig || !this.currentConfig) {
+            alert('No previous configuration to compare with');
+            return;
+        }
+        const diff = this.generateDiff(this.previousConfig, this.currentConfig);
+        document.getElementById('configDiff').textContent = diff;
+        document.getElementById('configDiffSection').style.display = 'block';
+    }
+
+    generateDiff(oldConfig, newConfig) {
+        const oldStr = JSON.stringify(oldConfig, null, 2);
+        const newStr = JSON.stringify(newConfig, null, 2);
+        if (oldStr === newStr) return 'No changes detected';
+
+        const oldLines = oldStr.split('\n');
+        const newLines = newStr.split('\n');
+        let diff = '';
+
+        for (let i = 0; i < Math.max(oldLines.length, newLines.length); i++) {
+            if (oldLines[i] !== newLines[i]) {
+                if (oldLines[i]) diff += `- ${oldLines[i]}\n`;
+                if (newLines[i]) diff += `+ ${newLines[i]}\n`;
+            } else {
+                diff += `  ${oldLines[i]}\n`;
+            }
+        }
+        return diff;
     }
 
     getTLSConfigCount(config) {
@@ -482,12 +544,15 @@ class AgberoApp {
         this.timers.logs = setInterval(() => {
             if (this.page === 'logs' && !this.logsPaused) this.fetchLogs();
         }, interval);
+
+        this.startLatencyCheck();
     }
 
     stopLoop() {
         if (this.timers.metrics) clearInterval(this.timers.metrics);
         if (this.timers.config) clearInterval(this.timers.config);
         if (this.timers.logs) clearInterval(this.timers.logs);
+        if (this.latencyCheckInterval) clearInterval(this.latencyCheckInterval);
         this.timers = { metrics: null, config: null, logs: null };
     }
 
@@ -553,6 +618,41 @@ class AgberoApp {
         Modal.open("confirmModal");
     }
 
+    async openPerformanceModal(hostname) {
+        document.getElementById("perfModalTitle").textContent = "Performance History";
+        document.getElementById("perfModalHost").textContent = hostname;
+        document.getElementById("perfDataRange").textContent = "";["perfChartReqs", "perfChartP99", "perfChartErrors", "perfChartBE"].forEach(id => {
+            document.getElementById(id).innerHTML = `<div class="perf-skeleton"></div>`;
+        });
+        Modal.open("perfModal");
+        this._perfHost = hostname;
+        await this._loadPerfData(hostname, document.getElementById("perfRangeSelect").value);
+    }
+
+    async _loadPerfData(hostname, range) {
+        const data = await this.api(`/telemetry/history?host=${encodeURIComponent(hostname)}&range=${range}`);
+        if (!data || !data.samples || data.samples.length === 0) {
+            this._renderPerfEmpty("No history data yet.\nThe collector samples every 60s — check back shortly.");
+            return;
+        }
+        const s = data.samples;
+        PerfChart.render("perfChartReqs",   s.map(x => x.requests_sec),    s.map(x => x.ts), { unit: "/s", color: "var(--accent)",  minY: 0 });
+        PerfChart.render("perfChartP99",    s.map(x => x.p99_ms),          s.map(x => x.ts), { unit: "ms", color: "var(--warning)", minY: 0 });
+        PerfChart.render("perfChartErrors", s.map(x => x.error_rate),      s.map(x => x.ts), { unit: "%",  color: "var(--danger)",  minY: 0, maxY: 100, warnAt: 1 });
+        PerfChart.render("perfChartBE",     s.map(x => x.active_backends), s.map(x => x.ts), { unit: "",   color: "var(--success)", minY: 0, isInt: true });
+        if (s.length >= 2) {
+            const fmt = ts => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            document.getElementById("perfDataRange").textContent =
+                `${fmt(s[0].ts)} – ${fmt(s[s.length - 1].ts)} · ${s.length} points`;
+        }
+    }
+
+    _renderPerfEmpty(message) {["perfChartReqs", "perfChartP99", "perfChartErrors", "perfChartBE"].forEach(id => {
+        document.getElementById(id).innerHTML =
+            `<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-mute);font-size:11px;text-align:center;white-space:pre-line;padding:8px;">${message}</div>`;
+    });
+    }
+
     openRouteDrawer(hostname, idx, type = 'route') {
         let cfg_item;
         let itemStats = {};
@@ -609,12 +709,130 @@ class AgberoApp {
         UI.renderGraph(this.metricsHistory[type]);
     }
 
+    checkLatency() {
+        const start = Date.now();
+        fetch(`${this.apiBase}/uptime`, {
+            method: 'HEAD',
+            cache: 'no-cache'
+        })
+            .then(() => {
+                const latency = Date.now() - start;
+
+                if (latency < 100) this.connectionQuality = 'excellent';
+                else if (latency < 300) this.connectionQuality = 'good';
+                else if (latency < 1000) this.connectionQuality = 'fair';
+                else this.connectionQuality = 'poor';
+
+                this.updateConnectionIndicator(latency);
+            })
+            .catch(() => {
+                this.connectionQuality = 'offline';
+                this.updateConnectionIndicator();
+            });
+    }
+
+    updateConnectionIndicator(latency) {
+        const indicator = document.getElementById('connectionIndicator');
+        if (!indicator) return;
+
+        indicator.className = 'sys-item';
+
+        switch(this.connectionQuality) {
+            case 'excellent':
+                indicator.innerHTML = '⚡ <span id="connLatency">' + (latency || '') + 'ms</span>';
+                indicator.style.color = 'var(--success)';
+                break;
+            case 'good':
+                indicator.innerHTML = '✓ <span id="connLatency">' + (latency || '') + 'ms</span>';
+                indicator.style.color = 'var(--info)';
+                break;
+            case 'fair':
+                indicator.innerHTML = '⚠️ <span id="connLatency">' + (latency || '') + 'ms</span>';
+                indicator.style.color = 'var(--warning)';
+                break;
+            case 'poor':
+                indicator.innerHTML = '🐢 <span id="connLatency">' + (latency || '') + 'ms</span>';
+                indicator.style.color = 'var(--danger)';
+                break;
+            case 'offline':
+                indicator.innerHTML = '❌ offline';
+                indicator.style.color = 'var(--danger)';
+                break;
+            default:
+                indicator.innerHTML = '○';
+                indicator.style.color = 'var(--text-mute)';
+        }
+
+        indicator.title = `Connection: ${this.connectionQuality}${latency ? ` · ${latency}ms` : ''}`;
+    }
+
+    startLatencyCheck() {
+        if (this.latencyCheckInterval) clearInterval(this.latencyCheckInterval);
+        this.checkLatency();
+        this.latencyCheckInterval = setInterval(() => this.checkLatency(), 30000);
+    }
+
+    async exportLogs() {
+        try {
+            const lines = document.getElementById("logsTailSelect")?.value || "1000";
+            const data = await this.api(`/logs?lines=${lines}`);
+
+            if (data && Array.isArray(data)) {
+                const formattedLogs = data.map(log => {
+                    if (typeof log === 'object' && log !== null) {
+                        const ts = log.ts || '';
+                        const lvl = log.lvl || 'INFO';
+                        const msg = log.msg || '';
+                        const fields = log.fields || {};
+
+                        let readableLine = `[${ts}] ${lvl} - ${msg}`;
+
+                        if (fields.method && fields.path) {
+                            readableLine += ` ${fields.method} ${fields.path}`;
+                        }
+                        if (fields.status) {
+                            readableLine += ` [${fields.status}]`;
+                        }
+                        if (fields.duration) {
+                            const durationMs = (fields.duration / 1000000).toFixed(2);
+                            readableLine += ` (${durationMs}ms)`;
+                        }
+                        if (fields.remote) {
+                            readableLine += ` from ${fields.remote}`;
+                        }
+
+                        return readableLine + '\n' + JSON.stringify(log);
+                    }
+                    return typeof log === 'string' ? log : JSON.stringify(log);
+                }).join('\n---\n');
+
+                const blob = new Blob([formattedLogs], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `agbero-logs-${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.log`;
+                a.click();
+                URL.revokeObjectURL(url);
+
+                const btn = document.getElementById('logsExportBtn');
+                if (btn) {
+                    const originalText = btn.innerText;
+                    btn.innerText = '✓ Exported';
+                    setTimeout(() => btn.innerText = originalText, 2000);
+                }
+            }
+        } catch (e) {
+            console.error('Failed to export logs:', e);
+            alert('Failed to export logs. Check console for details.');
+        }
+    }
+
     init() {
         this.loadTheme();
         this.updateAuthButton();
-        this.fetchVersion();
 
         if (this.token || this.basic) {
+            this.fetchVersion();
             this.startLoop();
             this.fetchHostsData();
             this.parseJWTExpiry();

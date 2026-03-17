@@ -53,11 +53,14 @@ Agbero is a modern reverse proxy that bridges local development and production d
 
 ### Installation
 
+**Edge (development)**
 ```bash
-# Download latest release
-curl -fsSL https://github.com/agberohq/agbero/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/agberohq/agbero/refs/heads/main/scripts/install.sh | sh
 ```
-
+**Release (stable)**
+```bash
+curl -fsSL https://github.com/agberohq/agbero/releases/latest/download/install.sh | sh
+```
 
 ### The Simplest Possible Start
 
@@ -70,11 +73,14 @@ agbero init
 AGBERO_HOME=/etc/agbero agbero init
 
 # Run Agbero using the generated configuration
-agbero run
+agbero run --dev
 
 # Or specify a custom configuration file
 agbero run -c /etc/agbero/agbero.hcl
 ```
+
+now visit `https://admin.localhost` in your browser.
+
 
 **2. Instant Ephemeral Mode** (No config required)
 ```bash
@@ -95,59 +101,27 @@ sudo agbero service install
 sudo agbero service start
 ```
 
-
-## Core Features
-
-### 1. Git-Based Atomic Deployments
-Deploy static sites and SPAs directly from your Git provider. Agbero securely clones your repository and performs atomic directory swaps with zero downtime when a webhook is triggered.
-
-```hcl
-route "/app" {
-  strip_prefixes = ["/app"]
-  web {
-    spa = true
-    git {
-      enabled = true
-      id      = "frontend-app"
-      url     = "https://github.com/your-org/spa-builds.git"
-      branch  = "main"
-      secret  = "${env.GITHUB_WEBHOOK_SECRET}"
-    }
-  }
-}
-```
-
-### 2. Smart TLS Management
-- **Development**: Auto-generates and trusts local CA certificates.
-- **Production**: Automatic Let's Encrypt with HTTP-01 challenge and cluster-wide certificate replication.
-- **Custom CAs**: Bring your own certificate authority.
-
-### 3. Advanced Load Balancing & Routing
-```hcl
-route "/api" {
-  backend {
-    strategy = "weighted_round_robin"
-
-    # Canary deployment: 10% traffic to new version
-    server {
-      address = "http://v2-service:8080"
-      weight  = 10
-    }
-
-    # Stable version: 90% traffic
-    server {
-      address = "http://v1-service:8080"
-      weight  = 90
-    }
-  }
-}
-```
-
 ## Performance
 
-- **Latency**: <1ms P99 for static file serving.
-- **Memory**: ~15MB idle, ~50MB under load.
-- **Connections**: 10k+ concurrent connections with HTTP/3 (QUIC) and TCP proxy support.
+- **Latency**: ~1ms average, <3ms P99 for static file serving under 50k requests/sec
+- **Throughput**: 50,000+ requests per second on modest hardware
+- **Memory**: ~25MB idle, ~50MB under load
+- **Connections**: 50k+ concurrent connections with HTTP/3 (QUIC) and TCP proxy support
+
+### Real-World Benchmark (1M requests)
+
+| Metric | Value |
+|--------|-------|
+| Total Requests | 1,000,000 |
+| Duration | 19.77 seconds |
+| Requests/sec | 50,574 |
+| Average Latency | 1.0ms |
+| P95 Latency | 1.6ms |
+| **P99 Latency** | **2.7ms** |
+| Fastest Response | 0.1ms |
+| Slowest Response | 58.9ms |
+
+All responses returned HTTP 200 with zero errors.
 
 ## Documentation
 

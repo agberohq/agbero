@@ -2,7 +2,7 @@ const EventHandler = {
     bindAll(app) {
         if (!app) return;
 
-        // ================== GLOBAL EVENT DELEGATION (CSP SAFE) ==================
+        // ================== GLOBAL EVENT DELEGATION ==================
         document.body.addEventListener('click', (e) => {
             const openRouteBtn = e.target.closest('[data-action="open-route"]');
             if (openRouteBtn) {
@@ -57,11 +57,16 @@ const EventHandler = {
 
         const searchInput = document.getElementById("hostSearch");
         if (searchInput) {
+            let searchTimeout = null;
             searchInput.addEventListener("input", (e) => {
+                clearTimeout(searchTimeout);
                 const term = e.target.value;
                 sessionStorage.setItem("ag_search", term);
                 app.searchTerm = term;
-                UI.renderHosts(app.hostsData, term, app.certificates);
+
+                searchTimeout = setTimeout(() => {
+                    UI.renderHosts(app.hostsData, term, app.certificates);
+                }, 300);
             });
         }
 
@@ -111,6 +116,11 @@ const EventHandler = {
                 app.logsPaused = !app.logsPaused;
                 logsPauseBtn.innerText = app.logsPaused ? "Resume" : "Pause";
             });
+        }
+
+        const logsExportBtn = document.getElementById("logsExportBtn");
+        if (logsExportBtn) {
+            logsExportBtn.addEventListener("click", () => app.exportLogs());
         }
 
         const logsClearBtn = document.getElementById("logsClearBtn");
@@ -171,6 +181,19 @@ const EventHandler = {
             b.addEventListener("click", () => Modal.closeAll());
         });
 
+        // ================== PERFORMANCE MODAL ==================
+        const perfRange = document.getElementById("perfRangeSelect");
+        if (perfRange) {
+            perfRange.addEventListener("change", async () => {
+                if (app._perfHost) {
+                    ["perfChartReqs", "perfChartP99", "perfChartErrors", "perfChartBE"].forEach(id => {
+                        document.getElementById(id).innerHTML = `<div class="perf-skeleton"></div>`;
+                    });
+                    await app._loadPerfData(app._perfHost, perfRange.value);
+                }
+            });
+        }
+
         // ================== CONFIRM MODAL ==================
         const confirmCancel = document.getElementById("confirmCancel");
         if (confirmCancel) confirmCancel.addEventListener("click", () => Modal.closeAll());
@@ -218,6 +241,22 @@ const EventHandler = {
                     UI.renderHosts(app.hostsData, hostname, app.certificates);
                 }
             });
+
+            hostNameEl.addEventListener("dblclick", (e) => {
+                e.stopPropagation();
+                const hostname = hostNameEl.innerText;
+                app.openPerformanceModal(hostname);
+            });
+
+            hostNameEl.title = "Click to filter · Double-click for performance history";
+        }
+
+        const drawerPerfBtn = document.getElementById("drawerPerfBtn");
+        if (drawerPerfBtn) {
+            drawerPerfBtn.addEventListener("click", () => {
+                const hostname = document.getElementById("drawerHostName")?.innerText;
+                if (hostname) app.openPerformanceModal(hostname);
+            });
         }
 
         // ================== SESSION MANAGEMENT ==================
@@ -230,8 +269,68 @@ const EventHandler = {
 
         // ================== KEYBOARD SHORTCUTS ==================
         document.addEventListener("keydown", (e) => {
+            if (e.target.matches('input, textarea, select')) return;
+
             if (e.key === "Escape") {
                 app.closeDrawer();
+                return;
+            }
+
+            if (e.ctrlKey || e.metaKey) {
+                const num = parseInt(e.key);
+                if (num >= 1 && num <= 7) {
+                    e.preventDefault();
+                    const pages = ['dashboard', 'hosts', 'cluster', 'map', 'firewall', 'logs', 'config'];
+                    app.setPage(pages[num - 1]);
+                    return;
+                }
+            }
+
+            if (e.key === 'r' && !e.ctrlKey && !e.metaKey) {
+                e.preventDefault();
+                app.refreshCurrentPage();
+                const activePage = document.querySelector('.page.active');
+                if (activePage) {
+                    activePage.style.opacity = '0.7';
+                    setTimeout(() => activePage.style.opacity = '1', 200);
+                }
+                return;
+            }
+
+            if (e.key === '/' && app.page === 'hosts') {
+                e.preventDefault();
+                document.getElementById('hostSearch')?.focus();
+                return;
+            }
+
+            if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
+                e.preventDefault();
+                const shortcuts = [
+                    'Ctrl+1-7: Navigate pages',
+                    'r: Refresh current page',
+                    'Esc: Close drawers',
+                    '/: Focus search (hosts page)'
+                ].join('\n');
+
+                const toast = document.createElement('div');
+                toast.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    background: var(--fg);
+                    color: var(--bg);
+                    padding: 16px 24px;
+                    border-radius: 8px;
+                    font-size: 12px;
+                    font-family: monospace;
+                    white-space: pre-line;
+                    z-index: 2000;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+                    animation: slideIn 0.2s ease;
+                `;
+                toast.textContent = shortcuts;
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 4000);
             }
         });
 

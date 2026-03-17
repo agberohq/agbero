@@ -8,10 +8,6 @@
 # Configuration schema version
 version = 1
 
-# Enable development mode: debug logging, verbose errors, relaxed TLS
-# WARNING: Disable for production
-development = {DEV_MODE}
-
 # -------------------------------------------------------------
 # BINDING ADDRESSES
 # -------------------------------------------------------------
@@ -44,6 +40,11 @@ admin {
   #   enabled = "off"
   #   bind = "6061"
   # }
+
+  # Telemetry for admin is enabled by default
+  telemetry {
+    enabled = "on"
+  }
 
   # ---------------------------------------------------------
   # BASIC AUTH (for /login endpoint)
@@ -116,7 +117,7 @@ logging {
     enabled    = "on"
     path       = "{LOGS_DIR}/agbero.log"
     batch_size = 500
-    rotate_size = 1024
+    rotate_size = 52428800
   }
 
   # ---------------------------------------------------------
@@ -222,10 +223,10 @@ gossip {
 # ACME / LET'S ENCRYPT
 # -------------------------------------------------------------
 letsencrypt {
-  enabled = "on"
+  enabled = "{LE_ENABLED}"
 
   # Email for registration and expiry notifications
-  email = "admin@example.com"
+  email = "{LE_EMAIL}"
 
   # Use staging CA for testing (avoids rate limits, untrusted certs)
   staging = true

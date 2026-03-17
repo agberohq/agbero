@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -460,16 +461,6 @@ func (s *Server) Reload() {
 		}
 	}
 
-	// Start the new listeners first to ensure zero downtime
-	for _, l := range newListeners {
-		go func(listener handlers.Listener) {
-			s.logger.Fields("bind", listener.Addr(), "proto", listener.Kind()).Info("reloaded listener starting")
-			if err := listener.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				s.logger.Fields("err", err, "bind", listener.Addr()).Error("reloaded listener failed")
-			}
-		}(l)
-	}
-
 	// Drain the old listeners asynchronously so Reload() returns immediately
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultReloadTimeout)
@@ -493,6 +484,30 @@ func (s *Server) Reload() {
 			_ = oldSharedState.Close()
 		}
 	}()
+
+	// Start the new listeners, retrying if the port is temporarily in use while old listeners shut down
+	for _, l := range newListeners {
+		go func(listener handlers.Listener) {
+			s.logger.Fields("bind", listener.Addr(), "proto", listener.Kind()).Info("reloaded listener starting")
+			var err error
+			for i := 0; i < 50; i++ {
+				err = listener.Start()
+				if err != nil {
+					errStr := err.Error()
+					if strings.Contains(errStr, "address already in use") || strings.Contains(errStr, "Only one usage") {
+						if i < 49 {
+							time.Sleep(100 * time.Millisecond)
+							continue
+						}
+					}
+					if !errors.Is(err, http.ErrServerClosed) {
+						s.logger.Fields("err", err, "bind", listener.Addr()).Error("reloaded listener failed")
+					}
+				}
+				break
+			}
+		}(l)
+	}
 
 	s.logger.Info("configuration reloaded successfully")
 }

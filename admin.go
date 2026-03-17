@@ -85,10 +85,10 @@ func (s *Server) startAdminServer() {
 // Zero auth, zero rate limiting, zero CSP headers — profiles reflect the proxy
 // hot path directly. Bind to a loopback address in production.
 func (s *Server) startPprofServer() {
-	if s.global.Pprof.Enabled.NotActive() || s.global.Pprof.Bind == "" {
+	if s.global.Admin.Pprof.Enabled.NotActive() || s.global.Admin.Pprof.Bind == "" {
 		return
 	}
-	addr := s.global.Pprof.Bind
+	addr := s.global.Admin.Pprof.Bind
 	if !strings.Contains(addr, ":") {
 		addr = ":" + addr
 	}
@@ -148,14 +148,6 @@ func (s *Server) registerAdminAPI(mux *http.ServeMux) {
 	}
 }
 
-// registerAdminProtectedEndpoints mounts all auth-protected admin routes.
-//
-// Telemetry is only mounted when s.telemetryStore != nil, which requires both:
-//   - telemetry { enabled = true } in the global config
-//   - storage { data_dir = "..." } to be set (where the bbolt db lives)
-//
-// When telemetry is disabled (the default), /telemetry/ simply does not exist —
-// no handler registered, no 404, no feature leak.
 func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.Admin) {
 	protect := s.buildAuthMiddleware(cfg)
 	mux.Handle("/uptime", protect(uptime.Uptime(s.resource, s.hostManager, s.clusterManager, s.cookManager)))
@@ -168,7 +160,8 @@ func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.A
 	// intentional — it causes ServeMux to match all paths under /telemetry/.
 	// StripPrefix removes the prefix before handing off to telemetry.Handler,
 	// which owns /history and /hosts internally.
-	if s.telemetryStore != nil {
+	if s.global.Admin.Telemetry.Enabled.Active() && s.telemetryStore != nil {
+		s.logger.Info("telemetry history enabled")
 		mux.Handle("/telemetry/", protect(
 			http.StripPrefix("/telemetry", telemetry.Handler(s.telemetryStore)),
 		))
@@ -194,7 +187,7 @@ func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Ha
 }
 
 func (s *Server) registerPprofEndpoints(mux *http.ServeMux, cfg alaye.Admin) {
-	if !cfg.Pprof.Active() {
+	if !cfg.Pprof.Enabled.Active() {
 		return
 	}
 	s.logger.Warn("pprof debugging enabled on admin interface")

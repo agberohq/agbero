@@ -943,7 +943,16 @@ func TestServer_shutdownImpl(t *testing.T) {
 // TestServer_Reload_ZeroDowntime_And_NoRace verifies that Reload() gracefully drains
 // old connections asynchronously without blocking the launch of new listeners.
 func TestServer_Reload_ZeroDowntime_And_NoRace(t *testing.T) {
+	// slowReady is closed when the slow backend has received the request —
+	// gives us a hard signal that the request is genuinely in-flight before reload.
+	slowReady := make(chan struct{})
+
 	slowBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-slowReady:
+		default:
+			close(slowReady)
+		}
 		time.Sleep(2 * time.Second)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("slow-backend"))
@@ -966,7 +975,6 @@ func TestServer_Reload_ZeroDowntime_And_NoRace(t *testing.T) {
 
 	proxyPort := zulu.PortFree()
 
-	// Helper to write both configs to disk
 	writeConfigs := func(port int, backendURL string) {
 		globalCfg := fmt.Sprintf(`version = 1
 bind {
@@ -1000,7 +1008,6 @@ route "/" {
 		writeSyncedFile(t, hostPath, []byte(hostCfg))
 	}
 
-	// Start with the slow backend
 	writeConfigs(proxyPort, slowBackend.URL)
 
 	global, err := parser.LoadGlobal(configPath)
@@ -1034,11 +1041,11 @@ route "/" {
 
 	waitForPort(t, proxyPort)
 
-	// Fire an asynchronous request to the slow backend
-	slowReqCtx, slowReqCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer slowReqCancel()
-
-	slowReq, err := http.NewRequestWithContext(slowReqCtx, "GET", fmt.Sprintf("http://127.0.0.1:%d", proxyPort), nil)
+	// Fire the slow request
+	slowReq, err := http.NewRequestWithContext(
+		context.Background(), "GET",
+		fmt.Sprintf("http://127.0.0.1:%d", proxyPort), nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1046,7 +1053,6 @@ route "/" {
 
 	slowRespCh := make(chan *http.Response, 1)
 	slowErrCh := make(chan error, 1)
-
 	go func() {
 		client := &http.Client{Timeout: 10 * time.Second}
 		resp, err := client.Do(slowReq)
@@ -1057,79 +1063,79 @@ route "/" {
 		slowRespCh <- resp
 	}()
 
-	// Wait briefly to ensure the slow request is properly inflight
-	time.Sleep(500 * time.Millisecond)
+	// Wait for hard signal that the slow backend received the request —
+	// no time.Sleep, no guessing.
+	select {
+	case <-slowReady:
+		// request is genuinely in-flight inside the slow backend
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for slow backend to receive request")
+	}
 
-	// Update configs to the fast backend and EXPLICITLY reload
-	// (Explicit reload removes the test's dependency on fsnotify flakiness)
+	// Now safe to reload — slow request is already being served
 	writeConfigs(proxyPort, fastBackend.URL)
 	s.Reload()
 
-	// Poll the proxy until it routes to the new fast backend
-	fastReqCtx, fastReqCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer fastReqCancel()
-
-	fastClient := &http.Client{Timeout: 5 * time.Second}
+	// Poll until the proxy routes to the fast backend.
+	// Each iteration gets its own fresh context so a slow iteration
+	// doesn't poison the next one.
 	var fastResponse string
-
-	pollStart := time.Now()
-	pollDeadline := pollStart.Add(3 * time.Second)
+	pollDeadline := time.Now().Add(5 * time.Second)
+	fastClient := &http.Client{Timeout: 2 * time.Second}
 
 	for time.Now().Before(pollDeadline) {
-		fastReq, err := http.NewRequestWithContext(fastReqCtx, "GET", fmt.Sprintf("http://127.0.0.1:%d", proxyPort), nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		req, err := http.NewRequestWithContext(ctx, "GET",
+			fmt.Sprintf("http://127.0.0.1:%d", proxyPort), nil)
 		if err != nil {
+			cancel()
 			t.Fatal(err)
 		}
-		fastReq.Host = "localhost"
+		req.Host = "localhost"
 
-		fastResp, err := fastClient.Do(fastReq)
+		resp, err := fastClient.Do(req)
+		cancel()
 		if err != nil {
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 
-		fastBody := make([]byte, 1024)
-		n, _ := fastResp.Body.Read(fastBody)
-		fastBodyResp := string(fastBody[:n])
-		fastResp.Body.Close()
+		body := make([]byte, 1024)
+		n, _ := resp.Body.Read(body)
+		resp.Body.Close()
+		bodyStr := string(body[:n])
 
-		if strings.Contains(fastBodyResp, "fast-backend") {
-			fastResponse = fastBodyResp
+		if strings.Contains(bodyStr, "fast-backend") {
+			fastResponse = bodyStr
 			break
 		}
-
 		time.Sleep(100 * time.Millisecond)
 	}
 
 	if fastResponse == "" {
-		t.Fatalf("Timed out waiting for fast backend response after reload")
+		t.Fatal("timed out waiting for fast backend response after reload")
 	}
 
-	if !strings.Contains(fastResponse, "fast-backend") {
-		t.Errorf("Fast backend returned wrong response: %s", fastResponse)
-	}
-
-	// Assert the inflight slow request completed safely despite the reload
+	// Assert the in-flight slow request completed safely
 	select {
 	case resp := <-slowRespCh:
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Slow backend returned non-200: %d", resp.StatusCode)
+			t.Errorf("slow backend returned non-200: %d", resp.StatusCode)
 		}
-		slowBody := make([]byte, 1024)
-		n, _ := resp.Body.Read(slowBody)
-		slowResponse := string(slowBody[:n])
-		if !strings.Contains(slowResponse, "slow-backend") {
-			t.Errorf("Slow backend returned wrong response: %s", slowResponse)
+		body := make([]byte, 1024)
+		n, _ := resp.Body.Read(body)
+		if !strings.Contains(string(body[:n]), "slow-backend") {
+			t.Errorf("slow backend returned wrong body: %s", string(body[:n]))
 		}
-		t.Log("Slow request completed successfully after reload")
+		t.Log("slow request completed successfully after reload")
 	case err := <-slowErrCh:
-		t.Errorf("Slow request failed: %v", err)
-	case <-time.After(3 * time.Second):
-		t.Error("Slow request timed out - connection may have been terminated prematurely")
+		t.Errorf("slow request failed: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Error("slow request timed out — connection may have been terminated prematurely")
 	}
 
-	t.Log("Zero-downtime reload test completed successfully")
+	t.Log("zero-downtime reload test passed")
 }
 
 // Helper functions

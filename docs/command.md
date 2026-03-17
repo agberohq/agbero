@@ -1,53 +1,33 @@
-# Agbero CLI Reference
+# Agbero Command Line Interface
 
-Complete documentation for the Agbero command-line interface.
+Complete reference for all Agbero commands and subcommands based on the actual implementation in `cmd/agbero/main.go`.
 
 ## Global Flags
 
-These flags can be used with any command:
-
 | Flag | Description |
 |------|-------------|
-| `-c, --config string` | Path to configuration file (default: auto-detected) |
-| `-d, --dev` | Enable development mode (debug logs, staging certificates) |
+| `-c, --config string` | Path to configuration file |
+| `-d, --dev` | Enable development mode |
 | `--version` | Show version information |
-| `--help` | Show help for any command |
-
-### Configuration Discovery Order
-
-When `--config` is not specified, Agbero looks for `agbero.hcl` in this order:
-
-1. Current working directory (`./agbero.hcl`)
-2. User configuration directory (`~/.config/agbero/agbero.hcl`)
-3. System configuration directory (`/etc/agbero/agbero.hcl`)
+| `--help` | Show help |
 
 ## Core Commands
 
-### `init` - Interactive Setup
-
-Run the interactive setup wizard to create a new configuration.
+### `init` - Scaffold Configuration
+Initialize a new configuration in the current directory.
 
 **Usage:**
 ```bash
 agbero init
 ```
 
-**What it does:**
-- Prompts for environment type (local/production)
-- Creates directory structure (`hosts.d`, `certs.d`, `data.d`, `logs.d`, `work.d`)
-- Generates secure admin password
-- Creates internal auth key
-- Sets up local CA (development mode)
-- Writes default `agbero.hcl` configuration
+**Description:**
+Creates the directory structure (`hosts.d`, `certs.d`, `data.d`, `logs.d`, `work.d`) and a default `agbero.hcl` configuration file.
 
-**Example:**
-```bash
-agbero init
-```
+---
 
-### `run` - Run Agbero in foreground
-
-Start Agbero interactively. Ideal for development, testing, or container environments.
+### `run` - Run Agbero
+Start Agbero using the discovered configuration.
 
 **Usage:**
 ```bash
@@ -55,617 +35,361 @@ agbero run [flags]
 ```
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
-| `-d, --dev` | Enable development mode |
+- `-d, --dev`: Enable development mode (debug logs, staging certificates)
 
 **Examples:**
 ```bash
-# Run with auto-detected config
 agbero run
-
-# Run with custom config in development mode
-agbero run --config "./config/agbero.hcl" --dev
+agbero run --dev
+agbero run --config ./custom/agbero.hcl
 ```
 
-**Behavior:**
-- Loads and validates configuration
-- Starts HTTP/HTTPS listeners based on `bind` settings
-- Watches for host configuration changes in `hosts_dir`
-- Supports hot reload via SIGHUP signal
-- Blocks until SIGTERM or SIGINT is received
+---
 
-## Configuration Management
+## Configuration Commands
 
-### `config validate` - Validate Configuration
+### `config` - Configuration Management
 
-Check the main config and all host files for syntax and validity.
+**Subcommands:**
+
+| Command | Description |
+|---------|-------------|
+| `config validate` | Validate configuration file |
+| `config reload` | Hot-reload the running instance (SIGHUP) |
+| `config view` | Print configuration file |
+| `config path` | Show resolved config file path |
+| `config edit` | Open configuration in $EDITOR |
 
 **Usage:**
 ```bash
-agbero config validate [flags]
+agbero config <subcommand> [flags]
 ```
+
+**Flags for view:**
+- `-e, --editor string`: Open in specific editor (vim, nano, cat, etc.)
 
 **Examples:**
 ```bash
+# Validate configuration
 agbero config validate
-agbero config validate --config ./custom/agbero.hcl
-```
 
-### `config reload` - Hot Reload
-
-Send SIGHUP to running process to reload configuration without restart.
-
-**Usage:**
-```bash
-agbero config reload [flags]
-```
-
-**Examples:**
-```bash
-# Reload system service
+# Reload running instance
 sudo agbero config reload
 
-# Reload specific instance
-agbero config reload --config ./agbero.hcl
-```
-
-**Note:** Requires `data_dir` to be set in config for PID file location.
-
-### `config view` - View Configuration
-
-Print the configuration file contents.
-
-**Usage:**
-```bash
-agbero config view [flags]
-```
-
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-e, --editor string` | Open in specific editor (vim, nano, cat, etc.) |
-
-**Examples:**
-```bash
-# Print to stdout
+# View configuration
 agbero config view
-
-# View with specific editor
 agbero config view --editor vim
-agbero config view --editor "code -w"
-```
 
-### `config path` - Show Config Path
-
-Display the resolved configuration file path.
-
-**Usage:**
-```bash
-agbero config path [flags]
-```
-
-**Examples:**
-```bash
+# Show config path
 agbero config path
-# Output: /etc/agbero/agbero.hcl
-```
 
-### `config edit` - Edit Configuration
-
-Open the configuration file in `$EDITOR`.
-
-**Usage:**
-```bash
-agbero config edit [flags]
-```
-
-**Examples:**
-```bash
-# Uses $EDITOR environment variable
+# Edit configuration
 agbero config edit
-
-# Falls back to vi if $EDITOR not set
 ```
 
-## Secret & Key Management
+---
 
-### `secret cluster` - Generate Cluster Secret
+## Secret Management
 
-Generate a 32-byte AES-256 compatible secret key for gossip encryption.
+### `secret` - Generate Secrets and Keys
+
+**Subcommands:**
+
+| Command | Description |
+|---------|-------------|
+| `secret cluster` | Generate AES-256 gossip secret key |
+| `secret key init` | Generate master private key for internal auth |
+| `secret token` | Generate signed API token for a service |
+| `secret hash` | Generate bcrypt hash of a password |
+| `secret password` | Generate random password and its bcrypt hash |
 
 **Usage:**
 ```bash
-agbero secret cluster
+agbero secret <subcommand> [flags]
 ```
 
-**Output:**
-```
-Generated 32-byte Secret Key (AES-256 compatible):
-==================================================
-b64.xVZ9k2mN8pQrS4tU6vW8xY0zA1bC3dE5fG7hI9jK=
-==================================================
+**Flags for token:**
+- `-s, --service string`: Service identifier (required)
+- `-t, --ttl duration`: Token validity duration (default: 8760h)
 
-Usage in agbero.hcl:
-gossip {
-  secret_key = "b64.xVZ9k2mN8pQrS4tU6vW8xY0zA1bC3dE5fG7hI9jK="
-}
-```
+**Flags for hash:**
+- `-p, --password string`: Password to hash (prompts if omitted)
 
-### `secret key init` - Initialize Auth Key
-
-Generate the master Ed25519 private key for internal service authentication.
-
-**Usage:**
-```bash
-agbero secret key init [flags]
-```
-
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-c, --config string` | Path to config file (to read key location) |
+**Arguments for password:**
+- `length`: Password length (default: 32)
 
 **Examples:**
 ```bash
-# Generate key at default location
+# Generate cluster secret
+agbero secret cluster
+
+# Initialize auth key
 agbero secret key init
 
-# Generate key using path from config
-agbero secret key init --config ./agbero.hcl
-```
-
-**Output:**
-```
-generated internal auth key: /etc/agbero/certs.d/internal_auth.key
-
-security {
-  enabled = true
-  internal_auth_key = "/etc/agbero/certs.d/internal_auth.key"
-}
-```
-
-### `secret token` - Generate API Token
-
-Generate a signed JWT token for service-to-service authentication.
-
-**Usage:**
-```bash
-agbero secret token [flags]
-```
-
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-s, --service string` | Service identifier (required) |
-| `-t, --ttl duration` | Token validity duration (default: 8760h0m0s = 1 year) |
-| `-c, --config string` | Path to config file |
-
-**Examples:**
-```bash
-# Generate token valid for 1 year
-agbero secret token --service myapp
-
-# Generate token with custom TTL
+# Generate API token
 agbero secret token --service myapp --ttl 24h
 
-# Use specific config
-agbero secret token --service myapp --config ./prod.hcl
-```
-
-**Output:**
-```
-API Token for service: myapp
-Expires: 2025-03-15T10:30:00Z (8760h0m0s)
-------------------------------------------------------------
-eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJzdmMiOiJteWFwcCIsImlhdCI6MTcxMDUwMTAwMCwiZXhwIjoxNzQyMDM3MDAwfQ...
-------------------------------------------------------------
-```
-
-### `secret hash` - Generate Password Hash
-
-Generate a bcrypt hash of a password (for `basic_auth` users).
-
-**Usage:**
-```bash
-agbero secret hash [flags]
-```
-
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-p, --password string` | Password to hash (prompts if omitted) |
-
-**Examples:**
-```bash
-# Interactive password prompt
-agbero secret hash
-
-# Provide password directly
+# Generate password hash
 agbero secret hash --password "mysecret"
-```
 
-**Output:**
-```
-$2a$10$K2ul0gaUotcRRqTWnq4TRu06nxRo0yyO.ky8k..vpu2MgedAFLX4K
-```
-
-### `secret password` - Generate Random Password
-
-Generate a secure random password and its bcrypt hash.
-
-**Usage:**
-```bash
-agbero secret password [length]
-```
-
-**Arguments:**
-| Argument | Description |
-|----------|-------------|
-| `length` | Password length (default: 32) |
-
-**Examples:**
-```bash
-# Generate 32-character password
+# Generate random password
 agbero secret password
-
-# Generate 16-character password
 agbero secret password 16
 ```
 
-**Output:**
-```
-Generated Password:
-==================================================
-aB3$dE7fG9hJ1kL4mN6pQ8rS2tU5vW8xY
-==================================================
+---
 
-Bcrypt Hash (for agbero.hcl basic_auth):
-$2a$10$X9q8Y7zW6vU5tR4sS3pQ2oN1mL0kK9jJ8hH7gG6fF5dD4sS3aA2
-```
+## Host Management
 
-## Host & Route Management
+### `host` - Manage Hosts and Routes
 
-### `host list` - List Hosts
+**Subcommands:**
 
-Display all configured hosts and their routes.
+| Command | Description |
+|---------|-------------|
+| `host list` | List all configured hosts |
+| `host add` | Add a new host/route (interactive) |
+| `host remove` | Remove a host/route (interactive) |
 
 **Usage:**
 ```bash
-agbero host list [flags]
+agbero host <subcommand> [flags]
 ```
 
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-c, --config string` | Path to config file |
+**Template files used:**
+- `proxy.hcl` - Reverse proxy route template
+- `static.hcl` - Static site route template
+- `tcp.hcl` - TCP proxy route template
 
-**Example:**
+**Examples:**
 ```bash
+# List hosts
 agbero host list
-```
 
-**Output:**
-```
-INFO[0000] configured host                           host_id=api domains="[api.example.com]" routes=3
-INFO[0000] configured host                           host_id=admin domains="[admin.example.com]" routes=1
-INFO[0000] configured host                           host_id=static domains="[static.example.com]" routes=2
-```
-
-### `host add` - Add Host (Interactive)
-
-Interactively create a new host/route configuration.
-
-**Usage:**
-```bash
-agbero host add [flags]
-```
-
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-c, --config string` | Path to config file |
-
-**Interactive Prompts:**
-1. Route Type: Reverse Proxy, Static Site, or TCP Proxy
-2. Domain Name
-3. Target/Directory/Backend Address
-4. Listen Port (for TCP)
-
-**Example:**
-```bash
+# Add a new route (interactive)
 agbero host add
-```
 
-**Output:**
-```
-host created: /etc/agbero/hosts.d/app.localhost.hcl
-Agbero daemon will pick up changes automatically.
-```
-
-### `host remove` - Remove Host (Interactive)
-
-Interactively remove an existing host configuration.
-
-**Usage:**
-```bash
-agbero host remove [flags]
-```
-
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-c, --config string` | Path to config file |
-
-**Example:**
-```bash
+# Remove a route (interactive)
 agbero host remove
-# Select host from interactive list
 ```
 
-**Output:**
-```
-removed host: app.localhost.hcl
-```
+---
 
 ## Certificate Management
 
-### `cert install` - Install CA Certificate
+### `cert` - Manage TLS Certificates
 
-Install the local Certificate Authority for development HTTPS.
+**Subcommands:**
+
+| Command | Description |
+|---------|-------------|
+| `cert install` | Install CA certificate |
+| `cert uninstall` | Uninstall CA certificate |
+| `cert list` | List managed certificates |
+| `cert info` | Show certificate store information |
 
 **Usage:**
 ```bash
-agbero cert install [flags]
+agbero cert <subcommand> [flags]
 ```
 
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-f, --force` | Force reinstall even if already installed |
-| `-c, --config string` | Path to config file |
+**Flags for install:**
+- `-f, --force`: Force reinstall even if already installed
+
+**Flags for info:**
+- `-d, --dir string`: Override certificate directory
 
 **Examples:**
 ```bash
 # Install CA
 agbero cert install
-
-# Force reinstall
 agbero cert install --force
-```
 
-### `cert uninstall` - Uninstall CA Certificate
-
-Remove the local CA from system trust store and delete certificate files.
-
-**Usage:**
-```bash
-agbero cert uninstall [flags]
-```
-
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-c, --config string` | Path to config file |
-
-**Example:**
-```bash
+# Uninstall CA
 agbero cert uninstall
-```
 
-### `cert list` - List Certificates
-
-Display all managed certificates.
-
-**Usage:**
-```bash
-agbero cert list [flags]
-```
-
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-c, --config string` | Path to config file |
-
-**Example:**
-```bash
+# List certificates
 agbero cert list
-```
 
-**Output:**
-```
-found 3 certificates:
-  1. ca-cert.pem
-  2. localhost-443-cert.pem
-  3. api.example.com.crt
-```
-
-### `cert info` - Certificate Information
-
-Show detailed certificate store information.
-
-**Usage:**
-```bash
-agbero cert info [flags]
-```
-
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-d, --dir string` | Override certificate directory |
-| `-c, --config string` | Path to config file |
-
-**Example:**
-```bash
+# Show certificate info
 agbero cert info
 ```
 
-**Output:**
-```
-CERTIFICATE INFORMATION
-Store Listing: /etc/agbero/certs.d
-  • ca-cert.pem (1.2 KB, 2024-01-01)
-  • localhost-443-cert.pem (1.1 KB, 2024-01-01)
-  • api.example.com.crt (1.8 KB, 2024-01-15)
-```
+---
 
 ## Service Management
 
-### `service install` - Install System Service
+### `service` - Manage System Service
 
-Install Agbero as a system service (requires appropriate privileges).
+**Subcommands:**
+
+| Command | Description |
+|---------|-------------|
+| `service install` | Install configuration and system service |
+| `service uninstall` | Uninstall system service |
+| `service start` | Start system service |
+| `service stop` | Stop system service |
+| `service restart` | Restart system service |
+| `service status` | Check service status |
 
 **Usage:**
 ```bash
-agbero service install [flags]
+agbero service <subcommand> [flags]
 ```
 
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `--here` | Install configuration in current directory only (skip service) |
-| `-c, --config string` | Path to config file |
+**Flags for install:**
+- `--here`: Install configuration in current directory only (skip service)
+
+**Flags for uninstall:**
+- `--all`: Remove service, CA, all data, and binary
+- `--force`: Skip confirmation prompt
 
 **Examples:**
 ```bash
-# System-wide installation (requires sudo)
+# Install system-wide
 sudo agbero service install
 
-# Local configuration only (no service)
+# Install locally (no service)
 agbero service install --here
-```
 
-### `service uninstall` - Uninstall System Service
-
-Remove the system service.
-
-**Usage:**
-```bash
-agbero service uninstall [flags]
-```
-
-**Example:**
-```bash
-sudo agbero service uninstall
-```
-
-### `service start` - Start Service
-
-Start the Agbero system service.
-
-**Usage:**
-```bash
-agbero service start [flags]
-```
-
-**Example:**
-```bash
+# Start service
 sudo agbero service start
-```
 
-### `service stop` - Stop Service
-
-Stop the Agbero system service.
-
-**Usage:**
-```bash
-agbero service stop [flags]
-```
-
-**Example:**
-```bash
+# Stop service
 sudo agbero service stop
-```
 
-### `service restart` - Restart Service
-
-Restart the Agbero system service.
-
-**Usage:**
-```bash
-agbero service restart [flags]
-```
-
-**Example:**
-```bash
+# Restart service
 sudo agbero service restart
-```
 
-### `service status` - Check Service Status
-
-Display the current status of the Agbero service.
-
-**Usage:**
-```bash
-agbero service status [flags]
-```
-
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-c, --config string` | Path to config file (for PID lookup) |
-
-**Example:**
-```bash
+# Check status
 sudo agbero service status
+
+# Uninstall service only
+sudo agbero service uninstall
+
+# Uninstall everything
+sudo agbero service uninstall --all
+sudo agbero service uninstall --all --force
 ```
 
-**Output:**
-```
-INFO[0000] service status: running
-INFO[0000] process ID: 12345
-```
+---
 
 ## Cluster Management
 
-### `cluster start` - Start Cluster Seed
+### `cluster` - Manage Cluster Settings
 
-Start Agbero as a cluster seed node.
+**Subcommands:**
 
-**Usage:**
-```bash
-agbero cluster start [flags]
-```
-
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `-c, --config string` | Path to config file |
-
-**Example:**
-```bash
-agbero cluster start --config ./seed.hcl
-```
-
-### `cluster join` - Join Cluster
-
-Join an existing Agbero cluster.
+| Command | Description |
+|---------|-------------|
+| `cluster start` | Start as cluster seed node |
+| `cluster join` | Join an existing cluster |
 
 **Usage:**
 ```bash
-agbero cluster join <ip> [flags]
+agbero cluster <subcommand> [flags]
 ```
 
-**Arguments:**
-| Argument | Description |
-|----------|-------------|
-| `ip` | IP address of the cluster seed node |
+**Arguments for join:**
+- `ip`: IP address of the cluster seed node (positional argument)
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
-| `-s, --secret string` | Cluster secret key |
-| `-c, --config string` | Path to config file |
+- `-s, --secret string`: Cluster secret key
 
 **Examples:**
 ```bash
-agbero cluster join 192.168.1.10 --secret b64.xVZ9k2mN8pQrS4tU6vW8xY0zA1bC3dE5fG7hI9jK=
+# Start as seed node
+agbero cluster start --config ./seed.hcl
+
+# Join cluster
+agbero cluster join 192.168.1.10 --secret b64.encoded-key
 ```
+
+---
+
+## Uninstall
+
+### `uninstall` - Complete Uninstall
+Alias for `service uninstall --all`. Removes everything Agbero installed.
+
+**Usage:**
+```bash
+agbero uninstall [flags]
+```
+
+**Flags:**
+- `--force`: Skip confirmation prompt
+
+**Examples:**
+```bash
+sudo agbero uninstall
+sudo agbero uninstall --force
+```
+
+---
+
+## Navigation
+
+### `home` - Navigate Configuration Directories
+Print or navigate to Agbero configuration directories.
+
+**Usage:**
+```bash
+agbero home [target] [action]
+```
+
+**Arguments:**
+- `target`: Directory to locate:
+    - `hosts` - Hosts directory (`hosts.d`)
+    - `certs` - Certificates directory (`certs.d`)
+    - `data` - Data directory (`data.d`)
+    - `logs` - Logs directory (`logs.d`)
+    - `work` - Work directory (`work.d`)
+    - `config` - Configuration file
+    - (omit) - Root Agbero directory
+- `action`: Action to perform:
+    - `@` - Open shell in the directory
+    - `@editor` - View/edit file (e.g., `@cat`, `@vim`, `@nano`, `@code`)
+    - `.` or `open` - Open in file explorer
+    - (omit) - Print the path
+
+**Examples:**
+```bash
+# Show root directory path
+agbero home
+
+# Open shell in root directory
+agbero home @
+
+# Open root directory in file explorer
+agbero home .
+
+# Show config file path
+agbero home config
+
+# View config file contents
+agbero home config @cat
+
+# Edit config with vim
+agbero home config @vim
+
+# Open hosts directory in file explorer
+agbero home hosts .
+
+# Open shell in certs directory
+agbero home certs @
+
+# Navigate to logs directory
+cd $(agbero home logs)
+```
+
+**Available targets:** `hosts`, `certs`, `data`, `logs`, `work`, `config`
+
+---
 
 ## Ephemeral Commands
 
 ### `serve` - Static File Server
-
 Serve a static directory instantly without persistent configuration.
 
 **Usage:**
@@ -674,34 +398,28 @@ agbero serve [path] [flags]
 ```
 
 **Arguments:**
-| Argument | Description |
-|----------|-------------|
-| `path` | Directory to serve (default: ".") |
+- `path`: Directory to serve (default: ".")
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
-| `-p, --port int` | Listen port (default: 8000) |
-| `-b, --bind string` | Bind address (default: "") |
-| `-s, --https` | Enable HTTPS with auto-generated certificates |
+- `-p, --port int`: Listen port (default: 8000)
+- `-b, --bind string`: Bind address (default: "")
+- `-s, --https`: Enable HTTPS with auto-generated certificates
 
 **Examples:**
 ```bash
-# Serve current directory on port 8000
+# Serve current directory
 agbero serve
 
-# Serve /var/www on port 8080
-agbero serve /var/www --port 8080
-
-# Serve with HTTPS
-agbero serve . --https
+# Serve specific directory with HTTPS
+agbero serve /var/www --https --port 8443
 
 # Bind to specific interface
 agbero serve . --bind 192.168.1.100 --port 9000
 ```
 
-### `proxy` - Reverse Proxy
+---
 
+### `proxy` - Reverse Proxy
 Proxy traffic to a local target instantly.
 
 **Usage:**
@@ -710,17 +428,13 @@ agbero proxy <target> [domain] [flags]
 ```
 
 **Arguments:**
-| Argument | Description |
-|----------|-------------|
-| `target` | Target address (e.g., ":3000", "http://127.0.0.1:3000") |
-| `domain` | Domain name (default: "localhost") |
+- `target`: Target address (e.g., ":3000", "http://127.0.0.1:3000")
+- `domain`: Domain name (default: "localhost") - optional positional argument
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
-| `-p, --port int` | Listen port (default: 8080) |
-| `-b, --bind string` | Bind address (default: "") |
-| `-s, --https` | Enable HTTPS with auto-generated certificates |
+- `-p, --port int`: Listen port (default: 8080)
+- `-b, --bind string`: Bind address (default: "")
+- `-s, --https`: Enable HTTPS with auto-generated certificates
 
 **Examples:**
 ```bash
@@ -734,54 +448,14 @@ agbero proxy http://127.0.0.1:3000 app.localhost
 agbero proxy :3000 --https --port 8443
 
 # Bind to specific interface
-agbero proxy :3000 --bind 192.168.1.100
+agbero proxy :3000 --bind 192.168.1.100 --port 8443
 ```
 
-## Navigation
-
-### `home` - Configuration Directory
-
-Print or navigate to Agbero configuration directories.
-
-**Usage:**
-```bash
-agbero home [target] [action]
-```
-
-**Arguments:**
-| Argument | Description |
-|----------|-------------|
-| `target` | Directory: `hosts`, `certs`, `data`, `logs`, `work`, `config` (default: root) |
-| `action` | `@` to open shell, or `@editor` to view/edit |
-
-**Examples:**
-```bash
-# Show root directory path
-agbero home
-
-# Open shell in root directory
-agbero home @
-
-# Show config file path
-agbero home config
-
-# View config file
-agbero home config @cat
-
-# Edit config with vim
-agbero home config @vim
-
-# Navigate to hosts directory
-cd $(agbero home hosts)
-
-# Open shell in certs directory
-agbero home certs @
-```
+---
 
 ## Help
 
-### `help` - Show Examples
-
+### `help` - Show Usage Examples
 Display usage examples and common workflows.
 
 **Usage:**
@@ -789,68 +463,31 @@ Display usage examples and common workflows.
 agbero help
 ```
 
-**Output:**
-```
-agbero - High-performance reverse proxy / load balancer with TLS v1.0.0
+---
 
-===============================================================
-USAGE EXAMPLES
-===============================================================
+## Configuration Discovery Order
 
-SCAFFOLDING:
-  agbero init                        # scaffold config in current folder
-  agbero service install             # install config + system service
+When `--config` is not specified, Agbero looks for `agbero.hcl` in this order:
 
-EXECUTION:
-  agbero run                         # run using discovered config
-  agbero serve .                     # serve current directory on the fly
-  agbero proxy :3000                 # proxy local port 3000
+1. Current working directory (`./agbero.hcl`)
+2. User configuration directory (`~/.config/agbero/agbero.hcl`)
+3. System configuration directory (`/etc/agbero/agbero.hcl`)
 
-CONFIGURATION:
-  agbero config validate             # validate config file
-  agbero config view                 # print config file
-  agbero config edit                 # edit config in $EDITOR
-  agbero config path                 # show config file path
-  agbero config reload               # hot reload running instance
+## Environment Variables
 
-SECRETS & KEYS:
-  agbero secret cluster              # generate gossip secret key
-  agbero secret key init             # generate internal auth key
-  agbero secret token -s myapp       # generate API token for 'myapp'
-  agbero secret hash -p mypass       # bcrypt hash a password
-  agbero secret password             # generate random password + hash
-
-HOSTS:
-  agbero host list                   # list configured hosts
-  agbero host add                    # add host/route (interactive)
-  agbero host remove                 # remove host/route (interactive)
-
-NAVIGATION:
-  agbero home                        # print Agbero home directory
-  agbero home @                      # open shell in home directory
-  agbero home hosts @                # open shell in hosts.d
-  
-  agbero home .                      # open home directory
-  agbero home hosts .                # open hosts.d 
-  
-
-SERVICE MANAGEMENT:
-  sudo agbero service install
-  sudo agbero service start
-  sudo agbero service stop
-  sudo agbero service restart
-  sudo agbero service status
-  sudo agbero service uninstall
-```
+| Variable | Description | Source File |
+|----------|-------------|-------------|
+| `EDITOR` | Editor used by `config edit` and `home @editor` | `helper/configuration.go` |
+| `AGBERO_HOME` | Override configuration home directory | `core/woos/paths.go` |
+| `AGBERO_CONTAINER` | Set to "true" to force container mode | `cmd/agbero/main.go` |
+| `KUBERNETES_SERVICE_HOST` | Auto-detects Kubernetes environment | `cmd/agbero/main.go` |
 
 ## Signal Handling
-
-Agbero responds to the following signals:
 
 | Signal | Behavior |
 |--------|----------|
 | `SIGHUP` | Hot reload configuration (same as `config reload`) |
-| `SIGTERM` | Graceful shutdown - wait for active requests, then exit |
+| `SIGTERM` | Graceful shutdown |
 | `SIGINT` | Graceful shutdown (Ctrl+C) |
 
 ## Exit Codes
@@ -858,33 +495,27 @@ Agbero responds to the following signals:
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `1` | General error (config error, runtime error) |
+| `1` | General error |
 | `2` | Invalid command or flags |
-| `3` | Permission denied |
-| `4` | Configuration not found |
-
-## Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `EDITOR` | Editor used by `config edit` and `home @editor` |
-| `AGBERO_HOME` | Override configuration home directory |
 
 ## Common Workflows
 
 ### Development Setup
 ```bash
-# Init in default location
+# Initialize configuration
 agbero init
 
-# Init in a specific directory
-AGBERO_HOME=/etc/agbero agbero init
-
-# Run
-agbero run
-
-# Run in foreground
+# Run in foreground with auto-reload
 agbero run --dev
+
+# Add a route interactively
+agbero host add
+
+# Serve static files
+agbero serve ./dist --https
+
+# Proxy a dev server
+agbero proxy :3000 --https
 ```
 
 ### Production Setup
@@ -898,22 +529,20 @@ sudo agbero service start
 # Check status
 sudo agbero service status
 
-# After config changes
+# After config changes, reload
 sudo agbero config reload
-# or
-sudo agbero service restart
 ```
 
 ### Cluster Setup
 ```bash
+# Generate cluster secret
+agbero secret cluster
+
 # On seed node
 agbero cluster start --config seed.hcl
 
 # On joining node
-agbero cluster join 192.168.1.10 --secret b64.xxx
-
-# Generate cluster secret
-agbero secret cluster
+agbero cluster join 192.168.1.10 --secret b64.encoded-key
 ```
 
 ### API Authentication Setup
@@ -925,15 +554,20 @@ agbero secret key init
 agbero secret token --service myapi --ttl 720h
 ```
 
-### Quick Ephemeral Usage
+### File Explorer Navigation
 ```bash
-# Serve static files
-agbero serve ./dist --https
+# Open various directories in file explorer
+agbero home .
+agbero home hosts .
+agbero home certs .
+agbero home logs .
+```
 
-# Proxy development server
-agbero proxy :3000 --https
-
-# Test configuration changes
-agbero config validate
-agbero config reload
+### Shell Navigation
+```bash
+# Open shell in various directories
+agbero home @
+agbero home hosts @
+agbero home certs @
+cd $(agbero home work)
 ```

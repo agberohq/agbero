@@ -152,6 +152,7 @@
                 <option value="100">100 Lines</option>
                 <option value="500">500 Lines</option>
             </select>
+            <button class="btn" id="logsExportBtn">Export</button>
             <button class="btn" id="logsPauseBtn">Pause</button>
             <button class="btn" id="logsClearBtn">Clear</button>
         </div>
@@ -162,9 +163,36 @@
     <div id="configPage" class="page">
         <div class="config-header">
             <h2>Configuration Overview</h2>
-            <button class="btn config-refresh">⟳ Refresh</button>
+            <div class="config-actions">
+                <button class="btn config-refresh">⟳ Refresh</button>
+                <button class="btn config-diff" id="configDiffBtn" title="Compare with previous">↔️ Diff</button>
+            </div>
         </div>
 
+        <!-- Server Identity -->
+        <div class="config-section">
+            <h3>🆔 Server Identity</h3>
+            <div class="config-details-grid">
+                <div class="config-detail-item">
+                    <div class="config-detail-label">Node ID</div>
+                    <div class="config-detail-value" id="configNodeId">—</div>
+                </div>
+                <div class="config-detail-item">
+                    <div class="config-detail-label">Hostname</div>
+                    <div class="config-detail-value" id="configHostname">—</div>
+                </div>
+                <div class="config-detail-item">
+                    <div class="config-detail-label">PID</div>
+                    <div class="config-detail-value" id="configPid">—</div>
+                </div>
+                <div class="config-detail-item">
+                    <div class="config-detail-label">Start Time</div>
+                    <div class="config-detail-value" id="configStartTime">—</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Core Metrics Grid (enhanced) -->
         <div class="config-metrics-grid">
             <div class="metric-card">
                 <div class="metric-content">
@@ -172,42 +200,42 @@
                     <div class="metric-value" id="configHttpPort">—</div>
                 </div>
             </div>
-
             <div class="metric-card">
                 <div class="metric-content">
                     <div class="metric-label">HTTPS Port</div>
                     <div class="metric-value" id="configHttpsPort">—</div>
                 </div>
             </div>
-
             <div class="metric-card">
                 <div class="metric-content">
                     <div class="metric-label">Version</div>
                     <div class="metric-value" id="configVersion">—</div>
                 </div>
             </div>
-
+            <div class="metric-card">
+                <div class="metric-content">
+                    <div class="metric-label">Build</div>
+                    <div class="metric-value" id="configBuild">—</div>
+                </div>
+            </div>
             <div class="metric-card">
                 <div class="metric-content">
                     <div class="metric-label">Hosts</div>
                     <div class="metric-value" id="configHostCount">0</div>
                 </div>
             </div>
-
             <div class="metric-card">
                 <div class="metric-content">
                     <div class="metric-label">Routes</div>
                     <div class="metric-value" id="configRouteCount">0</div>
                 </div>
             </div>
-
             <div class="metric-card">
                 <div class="metric-content">
                     <div class="metric-label">TLS Domains</div>
                     <div class="metric-value" id="configTlsCount">0</div>
                 </div>
             </div>
-
             <div class="metric-card">
                 <div class="metric-content">
                     <div class="metric-label">Log Level</div>
@@ -216,11 +244,51 @@
             </div>
         </div>
 
+        <!-- Global Settings (enhanced) -->
         <div class="config-section">
             <h3>⚙️ Global Settings</h3>
             <div class="config-details-grid" id="configGlobalDetails"></div>
         </div>
 
+        <!-- TLS/Certificate Summary -->
+        <div class="config-section">
+            <h3>🔐 TLS Certificates Summary</h3>
+            <div class="config-details-grid" id="configTlsSummary"></div>
+            <div class="config-note" id="configTlsNote"></div>
+        </div>
+
+        <!-- Runtime Configuration (from /uptime) -->
+        <div class="config-section">
+            <h3>⏱️ Runtime Configuration</h3>
+            <div class="config-details-grid" id="configRuntimeDetails"></div>
+        </div>
+
+        <!-- Feature Flags & Middleware -->
+        <div class="config-section">
+            <h3>🚩 Enabled Features</h3>
+            <div class="feature-grid" id="configFeatures"></div>
+        </div>
+
+        <!-- Hosts Summary Table -->
+        <div class="config-section">
+            <h3>📊 Hosts Summary</h3>
+            <div class="table-responsive">
+                <table class="config-hosts-table" id="configHostsTable">
+                    <thead>
+                    <tr>
+                        <th>Host</th>
+                        <th>Routes</th>
+                        <th>Backends</th>
+                        <th>TLS</th>
+                        <th>Domains</th>
+                    </tr>
+                    </thead>
+                    <tbody id="configHostsBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Raw Configuration (collapsible) -->
         <div class="config-section">
             <div class="config-header">
                 <h3>📄 Raw Configuration</h3>
@@ -231,30 +299,39 @@
             </div>
             <div class="code-box" id="configContent"></div>
         </div>
+
+        <!-- Previous Config Diff (hidden by default) -->
+        <div class="config-section" id="configDiffSection" style="display: none;">
+            <h3>↔️ Configuration Changes</h3>
+            <div class="code-box diff-box" id="configDiff"></div>
+        </div>
     </div>
+
+
 </div>
 
 <!-- SYSTEM STATS BAR -->
 <div class="sys-bar">
     <div class="sys-bar-left">
-        <span class="sys-item" title="Memory RSS">💾 <span id="sysMem">—</span></span>
-        <span class="sys-item hide-mobile" title="Memory Allocated">📊 <span id="sysMemAlloc">—</span></span>
+        <span class="sys-item" title="Memory RSS">rss <span id="sysMem">—</span></span>
+        <span class="sys-item hide-mobile" title="Memory Allocated">alloc <span id="sysMemAlloc">—</span></span>
         <span class="sys-divider hide-mobile">·</span>
-        <span class="sys-item hide-mobile" title="Goroutines">🧵 <span id="sysGoroutines">—</span></span>
+        <span class="sys-item hide-mobile" title="Goroutines">goroutines <span id="sysGoroutines">—</span></span>
         <span class="sys-divider">·</span>
-        <span class="sys-item" title="Active Certificates">🔐 <span id="activeCertsCount">0</span></span>
-        <span class="sys-divider">·</span>
-        <span class="sys-item" title="Expiring soon (<7d)">⚠️ <span id="expiringCertsCount">0</span></span>
+        <span class="sys-item" title="Active Certificates">certs <span id="activeCertsCount">0</span></span>
+        <span class="sys-item" title="Expiring soon (&lt;7d)" id="expiringCertsWrap">&nbsp;(<span id="expiringCertsCount">0</span> expiring)</span>
     </div>
     <div class="sys-bar-right">
-        <span class="sys-item" title="CPU Usage">⚡ <span id="sysCpu">—</span></span>
-        <span class="sys-item hide-mobile" title="CPU Cores">🎛️ <span id="sysCpuCores">—</span></span>
+        <span class="sys-item" title="CPU Usage">cpu <span id="sysCpu">—</span></span>
+        <span class="sys-item hide-mobile" title="CPU Cores"><span id="sysCpuCores">—</span> cores</span>
         <span class="sys-divider">·</span>
-        <span class="sys-item hide-mobile" title="OS Memory Used">🖥️ <span id="sysMemUsed">—</span></span>
+        <span class="sys-item hide-mobile" title="OS Memory Used">mem <span id="sysMemUsed">—</span></span>
+        <span class="sys-item hide-mobile" title="Total OS Memory"> / <span id="sysMemTotalOs">—</span></span>
         <span class="sys-divider hide-mobile">·</span>
-        <span class="sys-item hide-mobile" title="Total OS Memory">💿 <span id="sysMemTotalOs">—</span></span>
-        <span class="sys-divider hide-mobile">·</span>
+        <span class="sys-item" id="connectionIndicator" title="Connection Quality">○</span>
+        <span class="sys-divider">·</span>
         <span class="sys-item" id="versionDisplay" title="Agbero Version">v—</span>
+
     </div>
 </div>
 
@@ -348,6 +425,47 @@
     </div>
 </div>
 
+<!-- PERFORMANCE HISTORY MODAL -->
+<div class="modal-overlay" id="perfModal">
+    <div class="modal modal-perf">
+        <button class="perf-close-btn close-modal" title="Close">&#x2715;</button>
+        <div class="perf-modal-header">
+            <div>
+                <h3 id="perfModalTitle">Performance History</h3>
+                <span id="perfModalHost" style="font-size:11px; color:var(--text-mute); font-family:monospace;"></span>
+            </div>
+            <select id="perfRangeSelect" class="perf-range-select">
+                <option value="30m">Last 30 min</option>
+                <option value="1h" selected>Last 1 hour</option>
+                <option value="6h">Last 6 hours</option>
+                <option value="24h">Last 24 hours</option>
+            </select>
+        </div>
+        <div class="perf-charts-grid">
+            <div class="perf-chart-cell">
+                <div class="perf-chart-label">Requests / sec</div>
+                <div class="perf-chart-area" id="perfChartReqs"></div>
+            </div>
+            <div class="perf-chart-cell">
+                <div class="perf-chart-label">p99 Latency (ms)</div>
+                <div class="perf-chart-area" id="perfChartP99"></div>
+            </div>
+            <div class="perf-chart-cell">
+                <div class="perf-chart-label">Error Rate (%)</div>
+                <div class="perf-chart-area" id="perfChartErrors"></div>
+            </div>
+            <div class="perf-chart-cell">
+                <div class="perf-chart-label">Active Backends</div>
+                <div class="perf-chart-area" id="perfChartBE"></div>
+            </div>
+        </div>
+        <div class="perf-modal-footer">
+            <span id="perfDataRange" style="font-size:10px; color:var(--text-mute);"></span>
+            <span style="font-size:10px; color:var(--text-mute);">Sampled every 60s &bull; 24h max retention</span>
+        </div>
+    </div>
+</div>
+
 <!-- SESSION EXPIRY BANNER -->
 <div class="session-warning" id="sessionWarning">
     <span>🔐 Your session expires in <span id="sessionExpiryTime">5m 0s</span></span>
@@ -363,7 +481,10 @@
                 <span class="drawer-back-link" data-action="close-drawer" data-target="routeDrawer">← All hosts</span>
             </div>
             <h2 id="drawerRoutePath">/</h2>
-            <span id="drawerHostName" class="clickable-host" data-action="filter-host">example.com</span>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span id="drawerHostName" class="clickable-host" data-action="filter-host">example.com</span>
+                <button id="drawerPerfBtn" class="btn small" title="View performance history" style="font-size:10px; padding:3px 8px; opacity:0.7;">&#x1F4C8; Perf</button>
+            </div>
         </div>
         <button class="drawer-close" data-action="close-drawer" data-target="routeDrawer">&times;</button>
     </div>
