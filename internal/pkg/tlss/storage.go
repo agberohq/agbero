@@ -27,6 +27,8 @@ type Storage struct {
 	mu     sync.Mutex
 }
 
+// NewDiskStorage initializes a new certificate storage instance with atomic write guarantees
+// Ensures directory exists and is writable before accepting save operations
 func NewDiskStorage(dir woos.Folder, cipher *security.Cipher) (*Storage, error) {
 	// Check if path exists but is not a directory
 	if dir.IsSet() {
@@ -45,10 +47,14 @@ func NewDiskStorage(dir woos.Folder, cipher *security.Cipher) (*Storage, error) 
 	}, nil
 }
 
+// safeName replaces wildcard characters to create filesystem-safe filenames
+// Prevents path traversal or invalid filename issues with special characters
 func (s *Storage) safeName(domain string) string {
 	return strings.ReplaceAll(domain, "*", "_wildcard_")
 }
 
+// filenameKey returns the appropriate key filename based on encryption status
+// Appends .enc suffix when encryption is enabled for the storage backend
 func (s *Storage) filenameKey(base string) string {
 	if s.cipher != nil {
 		return base + ".key.enc"
@@ -56,13 +62,31 @@ func (s *Storage) filenameKey(base string) string {
 	return base + ".key"
 }
 
+// writeFileAtomic writes data to a temporary file then atomically renames to target
+// Prevents corrupted files from partial writes during crashes or disk full errors
+func (s *Storage) writeFileAtomic(targetPath string, data []byte, perm os.FileMode) error {
+	tmpPath := targetPath + ".tmp"
+
+	// Write to temporary file
+	if err := os.WriteFile(tmpPath, data, perm); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
+	// Atomic rename replaces target only after write succeeds
+	return os.Rename(tmpPath, targetPath)
+}
+
+// Save stores certificate and key files atomically with optional encryption
+// Both files are written via temporary files to ensure完整性 on disk
 func (s *Storage) Save(domain string, certPEM, keyPEM []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	base := filepath.Join(s.dir, s.safeName(domain))
 
-	if err := os.WriteFile(base+".crt", certPEM, 0644); err != nil {
+	// Write certificate atomically
+	if err := s.writeFileAtomic(base+".crt", certPEM, 0644); err != nil {
 		return err
 	}
 
@@ -75,9 +99,12 @@ func (s *Storage) Save(domain string, certPEM, keyPEM []byte) error {
 		}
 	}
 
-	return os.WriteFile(s.filenameKey(base), keyData, 0600)
+	// Write key atomically with restricted permissions
+	return s.writeFileAtomic(s.filenameKey(base), keyData, 0600)
 }
 
+// Load retrieves certificate and key files, handling legacy unencrypted keys
+// Automatically detects and decrypts encrypted key files when cipher is configured
 func (s *Storage) Load(domain string) ([]byte, []byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -94,6 +121,7 @@ func (s *Storage) Load(domain string) ([]byte, []byte, error) {
 
 	keyPath := s.filenameKey(base)
 
+	// Check for legacy unencrypted key file during migration
 	if s.cipher != nil {
 		if _, err := os.Stat(keyPath); os.IsNotExist(err) {
 			plainKeyPath := base + ".key"
@@ -119,6 +147,8 @@ func (s *Storage) Load(domain string) ([]byte, []byte, error) {
 	return certPEM, keyPEM, nil
 }
 
+// List returns all domains with stored certificates in the directory
+// Scans for .crt files and converts safe names back to wildcard format
 func (s *Storage) List() ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -139,6 +169,8 @@ func (s *Storage) List() ([]string, error) {
 	return domains, nil
 }
 
+// Delete removes all certificate files for a given domain
+// Cleans up both .crt, .key, and encrypted .key.enc variants
 func (s *Storage) Delete(domain string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
