@@ -1,4 +1,4 @@
-package asearch
+package ahash
 
 import (
 	"math/rand"

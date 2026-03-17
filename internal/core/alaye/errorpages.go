@@ -7,12 +7,11 @@ import (
 )
 
 type ErrorPages struct {
-	// Maps status code "404" to file path "./errors/404.html"
-	Pages map[string]string `hcl:"pages,optional" json:"pages"`
-	// Fallback file for any unmapped 4xx/5xx error
-	Default string `hcl:"default,optional" json:"default"`
+	Pages   map[string]string `hcl:"pages,attr" json:"pages"`
+	Default string            `hcl:"default,attr" json:"default"`
 }
 
+// Validate checks that every configured error page file exists on disk.
 func (e *ErrorPages) Validate() error {
 	for code, path := range e.Pages {
 		if _, err := os.Stat(path); err != nil {

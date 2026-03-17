@@ -1,20 +1,18 @@
 package alaye
 
-import "time"
-
 type Timeout struct {
-	Enabled    Enabled       `hcl:"enabled,optional" json:"enabled"`
-	Read       time.Duration `hcl:"read,optional" json:"read"`
-	Write      time.Duration `hcl:"write,optional" json:"write"`
-	Idle       time.Duration `hcl:"idle,optional" json:"idle"`
-	ReadHeader time.Duration `hcl:"read_header,optional" json:"read_header"`
+	Enabled    Enabled  `hcl:"enabled,attr" json:"enabled"`
+	Read       Duration `hcl:"read,attr" json:"read"`
+	Write      Duration `hcl:"write,attr" json:"write"`
+	Idle       Duration `hcl:"idle,attr" json:"idle"`
+	ReadHeader Duration `hcl:"read_header,attr" json:"read_header"`
 }
 
+// Validate checks that all timeout values are non-negative when timeouts are enabled.
 func (t *Timeout) Validate() error {
 	if t.Enabled.NotActive() {
 		return nil
 	}
-
 	if t.Read < 0 {
 		return ErrNegativeReadTimeout
 	}
@@ -27,21 +25,19 @@ func (t *Timeout) Validate() error {
 	if t.ReadHeader < 0 {
 		return ErrNegativeReadHeaderTimeout
 	}
-
-	// Set defaults if not provided (caller will apply defaults later)
 	return nil
 }
 
 type TimeoutRoute struct {
-	Enabled Enabled       `hcl:"enabled,optional" json:"enabled"`
-	Request time.Duration `hcl:"request,optional" json:"request"`
+	Enabled Enabled  `hcl:"enabled,attr" json:"enabled"`
+	Request Duration `hcl:"request,attr" json:"request"`
 }
 
+// Validate checks that the request timeout is non-negative when enabled.
 func (t *TimeoutRoute) Validate() error {
 	if t.Enabled.NotActive() {
 		return nil
 	}
-	// Request timeout validation (if provided)
 	if t.Request < 0 {
 		return ErrNegativeRequestTimeout
 	}

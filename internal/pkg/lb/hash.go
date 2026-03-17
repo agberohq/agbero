@@ -3,7 +3,6 @@ package lb
 import (
 	"slices"
 
-	"github.com/agberohq/agbero/internal/dependency"
 	"github.com/cespare/xxhash/v2"
 )
 
@@ -89,6 +88,6 @@ func (r *Consistent) Get(key uint64) int {
 	if len(r.ring) == emptyRingSize {
 		return emptyRingSize
 	}
-	idx := dependency.SortedSearch(r.ring, key)
+	idx := asearch.SortedSearch(r.ring, key)
 	return int(r.backends[idx])
 }

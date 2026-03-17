@@ -7,17 +7,18 @@ import (
 )
 
 type BasicAuth struct {
-	Enabled Enabled  `hcl:"enabled,optional" json:"enabled"`
-	Users   []string `hcl:"users" json:"users"`
-	Realm   string   `hcl:"realm,optional" json:"realm"`
+	Enabled Enabled  `hcl:"enabled,attr" json:"enabled"`
+	Users   []string `hcl:"users,attr" json:"users"`
+	Realm   string   `hcl:"realm,attr" json:"realm"`
 }
 
+// Validate checks that users are present and formatted as username:password pairs.
+// Each entry is trimmed of whitespace and normalised in place.
 func (b *BasicAuth) Validate() error {
 	if b.Enabled.NotActive() {
 		return nil
 	}
 
-	// Users validation
 	if len(b.Users) == 0 {
 		return ErrEmptyUsers
 	}
@@ -26,13 +27,11 @@ func (b *BasicAuth) Validate() error {
 		if user == "" {
 			return errors.Newf("users[%d]: %w", i, ErrCannotBeEmpty)
 		}
-		// Check for username:password format
 		if !strings.Contains(user, ":") {
 			return errors.Newf("%w: users[%d]: %q must be in format 'username:password'", ErrInvaliFormat, i, user)
 		}
-		b.Users[i] = user // Normalize
+		b.Users[i] = user
 	}
 
-	// Realm is optional, no validation needed
 	return nil
 }

@@ -51,7 +51,6 @@ const (
 	HeaderVia              = "Via"
 	HeaderHost             = "Host"
 
-	// Hop-by-hop Headers (RFC 7230 §6.1)
 	HeaderKeepAlive          = "Keep-alive"
 	HeaderProxyAuthenticate  = "Proxy-Authenticate"
 	HeaderProxyAuthorization = "Proxy-Authorization"
@@ -117,14 +116,12 @@ const (
 
 	PrivateBindingHost = "private-binding"
 
-	// Buckets
 	BucketACME           = "acme"
 	BucketAuth           = "auth"
 	BucketAuthDisabled   = "auth_disabled"
 	BucketGlobal         = "global"
 	BucketGlobalDisabled = "global_disabled"
 
-	// ALPN Protocols
 	AlpnH3  = "h3"
 	AlpnH2  = "h2"
 	AlpnH11 = "http/1.1"
@@ -185,7 +182,6 @@ const (
 	DefaultMaxBuffer     = 12_000
 	DefaultVictoriaBatch = 500
 
-	// Rotate logs at 50MB by default
 	DefaultLogRotateSize = 50 * 1024 * 1024
 
 	BufferSize = 32 * 1024
@@ -264,6 +260,7 @@ const (
 // gossip
 const (
 	DefaultGossipPort       = 7946
+	DefaultGossipTTL        = 30
 	DefaultPushPullInterval = 60 * time.Second
 	DefaultAuthTimeout      = 2 * time.Second
 
@@ -370,7 +367,7 @@ const (
 	DirPerm         = 0755
 	FilePerm        = 0644
 	FilePermSecured = 0600
-	SecurePerm      = 0700 // For keys/certs
+	SecurePerm      = 0700
 )
 
 // oauth
@@ -407,4 +404,18 @@ const (
 
 const (
 	LifetimeShards = 32
+)
+
+// defaults used by woos/default.go — single source of truth for all config defaults
+const (
+	DefaultForwardAuthTimeout      = 5 * time.Second
+	DefaultFirewallMaxInspectBytes = int64(8192)
+	DefaultCompressionLevel        = 5
+	DefaultFallbackRedirectCode    = 307
+	DefaultFallbackProxyCode       = 200
+	DefaultFallbackStaticCode      = 503
+	DefaultCORSMaxAge              = 86400
+	DefaultCacheTTL                = 5 * time.Minute
+	DefaultCacheMaxItems           = 10_000
+	DefaultRedisPort               = 6379
 )

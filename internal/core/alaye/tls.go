@@ -7,15 +7,15 @@ import (
 )
 
 type TLS struct {
-	Mode        TlsMode     `hcl:"mode,optional" json:"mode"`
+	Mode        TlsMode     `hcl:"mode,attr" json:"mode"`
+	ClientAuth  string      `hcl:"client_auth,attr" json:"client_auth"`
+	ClientCAs   []string    `hcl:"client_cas,attr" json:"client_cas"`
 	Local       LocalCert   `hcl:"local,block" json:"local"`
 	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt"`
 	CustomCA    CustomCA    `hcl:"custom_ca,block" json:"custom_ca"`
-
-	ClientAuth string   `hcl:"client_auth,optional" json:"client_auth"`
-	ClientCAs  []string `hcl:"client_cas,optional" json:"client_cas"`
 }
 
+// Validate checks the TLS mode, client auth setting, and delegates to the relevant sub-block.
 func (t *TLS) Validate() error {
 	if t.Mode != "" {
 		switch t.Mode {
@@ -38,11 +38,9 @@ func (t *TLS) Validate() error {
 		}
 	}
 
-	if len(t.ClientCAs) > 0 {
-		for _, ca := range t.ClientCAs {
-			if !strings.HasPrefix(ca, Slash) {
-				return errors.Newf("client_ca path must be absolute: %s", ca)
-			}
+	for _, ca := range t.ClientCAs {
+		if !strings.HasPrefix(ca, Slash) {
+			return errors.Newf("client_ca path must be absolute: %s", ca)
 		}
 	}
 
@@ -61,11 +59,12 @@ func (t *TLS) Validate() error {
 }
 
 type LocalCert struct {
-	Enabled  Enabled `hcl:"enabled,optional" json:"enabled"`
-	CertFile string  `hcl:"cert_file" json:"cert_file"`
-	KeyFile  string  `hcl:"key_file" json:"key_file"`
+	Enabled  Enabled `hcl:"enabled,attr" json:"enabled"`
+	CertFile string  `hcl:"cert_file,attr" json:"cert_file"`
+	KeyFile  string  `hcl:"key_file,attr" json:"key_file"`
 }
 
+// Validate checks that cert and key file paths are absolute when local TLS is enabled.
 func (l *LocalCert) Validate() error {
 	if l.Enabled.NotActive() {
 		return nil
@@ -86,13 +85,14 @@ func (l *LocalCert) Validate() error {
 }
 
 type Pebble struct {
-	Enabled    bool   `hcl:"enabled,optional" json:"enabled"`
-	URL        string `hcl:"url,optional" json:"url"`
-	Insecure   bool   `hcl:"insecure,optional" json:"insecure"`
-	ChallSrv   string `hcl:"chall_srv,optional" json:"chall_srv"`
-	MgmtServer string `hcl:"mgmt_server,optional" json:"mgmt_server"`
+	Enabled    bool   `hcl:"enabled,attr" json:"enabled"`
+	URL        string `hcl:"url,attr" json:"url"`
+	Insecure   bool   `hcl:"insecure,attr" json:"insecure"`
+	ChallSrv   string `hcl:"chall_srv,attr" json:"chall_srv"`
+	MgmtServer string `hcl:"mgmt_server,attr" json:"mgmt_server"`
 }
 
+// Validate checks Pebble configuration and applies sensible URL defaults when enabled.
 func (p *Pebble) Validate() error {
 	if !p.Enabled {
 		return nil
@@ -110,13 +110,14 @@ func (p *Pebble) Validate() error {
 }
 
 type LetsEncrypt struct {
-	Enabled    Enabled `hcl:"enabled,optional" json:"enabled"`
-	Email      string  `hcl:"email,optional" json:"email"`
-	Staging    bool    `hcl:"staging,optional" json:"staging"`
-	ShortLived bool    `hcl:"short_lived,optional" json:"short_lived"`
+	Enabled    Enabled `hcl:"enabled,attr" json:"enabled"`
+	Email      string  `hcl:"email,attr" json:"email"`
+	Staging    bool    `hcl:"staging,attr" json:"staging"`
+	ShortLived bool    `hcl:"short_lived,attr" json:"short_lived"`
 	Pebble     Pebble  `hcl:"pebble,block" json:"pebble"`
 }
 
+// Validate checks that the email address is valid when Let's Encrypt is enabled.
 func (l *LetsEncrypt) Validate() error {
 	if l.Enabled.NotActive() {
 		return nil
@@ -131,10 +132,11 @@ func (l *LetsEncrypt) Validate() error {
 }
 
 type CustomCA struct {
-	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
-	Root    string  `hcl:"root" json:"root"`
+	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
+	Root    string  `hcl:"root,attr" json:"root"`
 }
 
+// Validate checks that the root path is present and absolute when custom CA is enabled.
 func (c *CustomCA) Validate() error {
 	if c.Enabled.NotActive() {
 		return nil

@@ -1,6 +1,7 @@
 package alaye
 
 import (
+	"encoding"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -14,10 +15,17 @@ const (
 	emptySeconds = 0
 )
 
+var (
+	_ encoding.TextUnmarshaler = (*Duration)(nil)
+	_ encoding.TextMarshaler   = (*Duration)(nil)
+	_ json.Unmarshaler         = (*Duration)(nil)
+	_ json.Marshaler           = (*Duration)(nil)
+)
+
 type Duration time.Duration
 
-// UnmarshalText implements the encoding.TextUnmarshaler interface
-// Parses human-readable time strings or raw integers into standard durations
+// UnmarshalText implements encoding.TextUnmarshaler for HCL2 and other text-based decoders.
+// Accepts Go duration strings ("30s", "1m"), bare integers treated as seconds, and empty strings as zero.
 func (d *Duration) UnmarshalText(text []byte) error {
 	str := strings.TrimSpace(string(text))
 	if str == "" {
@@ -38,20 +46,38 @@ func (d *Duration) UnmarshalText(text []byte) error {
 	return fmt.Errorf("invalid duration format: %s", str)
 }
 
-// String returns the formatted string representation of the duration
-// Formats the underlying time value into a standard Go duration string
+// MarshalText implements encoding.TextMarshaler for hclwrite round-trip serialisation.
+// Encodes the duration as a standard Go duration string such as "30s" or "1m30s".
+func (d Duration) MarshalText() ([]byte, error) {
+	return []byte(d.String()), nil
+}
+
+// String returns the formatted string representation of the duration.
+// Delegates to the underlying time.Duration for standard Go formatting.
 func (d Duration) String() string {
 	return time.Duration(d).String()
 }
 
-// MarshalJSON implements the json.Marshaler interface
-// Encodes the duration as a standard string for JSON serialization
+// StdDuration returns the underlying time.Duration value.
+// Use at stdlib assignment sites such as http.Server fields to avoid scattered casts.
+func (d Duration) StdDuration() time.Duration {
+	return time.Duration(d)
+}
+
+// Seconds returns the duration as a floating-point number of seconds.
+// Proxies time.Duration.Seconds so callers do not need a cast after field type changes.
+func (d Duration) Seconds() float64 {
+	return time.Duration(d).Seconds()
+}
+
+// MarshalJSON implements json.Marshaler.
+// Encodes the duration as a string for JSON serialisation.
 func (d Duration) MarshalJSON() ([]byte, error) {
 	return json.Marshal(d.String())
 }
 
-// UnmarshalJSON implements the json.Unmarshaler interface
-// Supports parsing both string and integer types from JSON payloads
+// UnmarshalJSON implements json.Unmarshaler.
+// Supports both string ("30s") and numeric (30 treated as seconds) JSON values.
 func (d *Duration) UnmarshalJSON(b []byte) error {
 	var v interface{}
 	if err := json.Unmarshal(b, &v); err != nil {

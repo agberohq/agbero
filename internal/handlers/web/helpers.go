@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/agberohq/agbero/internal/dependency"
 )
 
 const (
@@ -125,8 +123,8 @@ func weakETag(path string, size int64, modTime time.Time) string {
 	sb.WriteByte('-')
 	sb.WriteString(strconv.FormatInt(modTime.UnixNano(), baseDecimalFormat))
 	sb.WriteByte('-')
-	sb.WriteString(strconv.FormatUint(dependency.InodeOf(path), baseDecimalFormat))
-	return `W/"` + strconv.FormatUint(dependency.CRC32Hash(sb.String()), hexDecimalFormat) + `"`
+	sb.WriteString(strconv.FormatUint(afn.InodeOf(path), baseDecimalFormat))
+	return `W/"` + strconv.FormatUint(ahash.CRC32Hash(sb.String()), hexDecimalFormat) + `"`
 }
 
 // isMarkdownPath verifies file extensions before attempting structural conversions.

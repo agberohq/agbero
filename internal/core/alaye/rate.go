@@ -1,86 +1,71 @@
 package alaye
 
-import (
-	"strings"
-	"time"
+import "github.com/olekukonko/errors"
 
-	"github.com/olekukonko/errors"
-)
-
-// GlobalRate defines the global registry and default rules.
 type GlobalRate struct {
-	Enabled    Enabled       `hcl:"enabled,optional" json:"enabled"`
-	TTL        time.Duration `hcl:"ttl,optional" json:"ttl"`
-	MaxEntries int           `hcl:"max_entries,optional" json:"max_entries"`
+	Enabled    Enabled  `hcl:"enabled,attr" json:"enabled"`
+	TTL        Duration `hcl:"ttl,attr" json:"ttl"`
+	MaxEntries int      `hcl:"max_entries,attr" json:"max_entries"`
 
-	// Default rules applied to all routes (unless ignored)
-	Rules []RateRule `hcl:"rule,block" json:"rules"`
-
-	// Named policies that routes can opt-in to
+	Rules    []RateRule   `hcl:"rule,block" json:"rules"`
 	Policies []RatePolicy `hcl:"policy,block" json:"policies"`
 }
 
+// Validate checks TTL, max_entries, and all nested rules and policies.
 func (g *GlobalRate) Validate() error {
 	if !g.Enabled.Active() {
 		return nil
 	}
-
 	if g.TTL < 0 {
 		return ErrProxyRouteNegativeTTL
 	}
 	if g.MaxEntries < 0 {
 		return ErrProxyRouteNegativeMaxEntries
 	}
-
 	for i, rule := range g.Rules {
 		if err := rule.Validate(); err != nil {
 			return errors.Newf("global rule[%d]: %w", i, err)
 		}
 	}
-
 	for _, pol := range g.Policies {
 		if err := pol.Validate(); err != nil {
 			return errors.Newf("policy %q: %w", pol.Name, err)
 		}
 	}
-
 	return nil
 }
 
-// RouteRate defines rate limiting for a specific route.
 type RouteRate struct {
-	Enabled      Enabled  `hcl:"enabled,optional" json:"enabled"`
-	IgnoreGlobal bool     `hcl:"ignore_global,optional" json:"ignore_global"` // Stop global rules processing
-	UsePolicy    string   `hcl:"use_policy,optional" json:"use_policy"`       // Reference a named policy
-	Rule         RateRule `hcl:"rule,block" json:"rule"`                      // Ad-hoc definition
+	Enabled      Enabled  `hcl:"enabled,attr" json:"enabled"`
+	IgnoreGlobal bool     `hcl:"ignore_global,attr" json:"ignore_global"`
+	UsePolicy    string   `hcl:"use_policy,attr" json:"use_policy"`
+	Rule         RateRule `hcl:"rule,block" json:"rule"`
 }
 
+// Validate checks the ad-hoc rule when route-level rate limiting is enabled.
 func (r *RouteRate) Validate() error {
 	if !r.Enabled.Active() {
 		return nil
 	}
-
 	if err := r.Rule.Validate(); err != nil {
 		return errors.Newf("ad-hoc rule: %w", err)
 	}
-
 	return nil
 }
 
-// RatePolicy is a named configuration in the global scope.
 type RatePolicy struct {
-	Name     string        `hcl:"name,label" json:"name"`
-	Requests int           `hcl:"requests" json:"requests"`
-	Window   time.Duration `hcl:"window" json:"window"`
-	Burst    int           `hcl:"burst,optional" json:"burst"`
-	Key      string        `hcl:"key,optional" json:"key"` // "ip", "header:X", etc.
+	Name     string   `hcl:"name,label" json:"name"`
+	Requests int      `hcl:"requests,attr" json:"requests"`
+	Window   Duration `hcl:"window,attr" json:"window"`
+	Burst    int      `hcl:"burst,attr" json:"burst"`
+	Key      string   `hcl:"key,attr" json:"key"`
 }
 
+// Validate checks requests, window, and burst values for a named policy.
 func (p *RatePolicy) Validate() error {
 	if p.Name == "" {
 		return errors.New("policy name is required")
 	}
-	// Re-use logic by casting to RateRule for validation
 	rr := RateRule{
 		Requests: p.Requests,
 		Window:   p.Window,
@@ -89,49 +74,41 @@ func (p *RatePolicy) Validate() error {
 	return rr.Validate()
 }
 
-// RateRule is a specific rule application (matching path/method).
 type RateRule struct {
-	Enabled  Enabled  `hcl:"enabled,optional" json:"enabled"`
-	Name     string   `hcl:"name,label,optional" json:"name"` // Optional label for logging
-	Prefixes []string `hcl:"prefixes,optional" json:"prefixes"`
-	Methods  []string `hcl:"methods,optional" json:"methods"`
-
-	Requests int           `hcl:"requests" json:"requests"`
-	Window   time.Duration `hcl:"window" json:"window"`
-	Burst    int           `hcl:"burst,optional" json:"burst"`
-	Key      string        `hcl:"key,optional" json:"key"`
+	Enabled  Enabled  `hcl:"enabled,attr" json:"enabled"`
+	Name     string   `hcl:"name,label" json:"name"`
+	Prefixes []string `hcl:"prefixes,attr" json:"prefixes"`
+	Methods  []string `hcl:"methods,attr" json:"methods"`
+	Requests int      `hcl:"requests,attr" json:"requests"`
+	Window   Duration `hcl:"window,attr" json:"window"`
+	Burst    int      `hcl:"burst,attr" json:"burst"`
+	Key      string   `hcl:"key,attr" json:"key"`
 }
 
+// Validate checks requests, window, burst, and key format for a rate rule.
+// It does not set defaults — all defaults are applied by woos.defaultRateLimit.
 func (r *RateRule) Validate() error {
 	if !r.Enabled.Active() {
 		return nil
 	}
-
 	if r.Requests <= 0 {
 		return ErrRateLimitNegativeRequests
 	}
-
 	if r.Window <= 0 {
 		return ErrRateLimitInvalidWindow
 	}
-
 	if r.Burst < 0 {
 		return ErrRateLimitNegativeBurst
-	}
-	if r.Burst == 0 {
-		r.Burst = r.Requests
 	}
 	if r.Burst < r.Requests {
 		return ErrRateLimitBurstTooSmall
 	}
-
-	if strings.Contains(r.Key, " ") {
-		return ErrRateLimitInvalidKeyHeader
+	if len(r.Key) > 0 {
+		for _, ch := range r.Key {
+			if ch == ' ' {
+				return ErrRateLimitInvalidKeyHeader
+			}
+		}
 	}
-
-	for i, m := range r.Methods {
-		r.Methods[i] = strings.ToUpper(m)
-	}
-
 	return nil
 }

@@ -3,41 +3,37 @@ package alaye
 import "github.com/olekukonko/errors"
 
 type Headers struct {
-	Enabled  Enabled `hcl:"enabled,optional" json:"enabled"`
+	Enabled  Enabled `hcl:"enabled,attr" json:"enabled"`
 	Request  Header  `hcl:"request,block" json:"request"`
 	Response Header  `hcl:"response,block" json:"response"`
 }
 
+// Validate checks that set and add header entries have non-empty keys and values.
 func (h *Headers) Validate() error {
 	if !h.Enabled.Active() {
 		return nil
 	}
-	// Both Request and Response are optional
-
 	if err := h.Request.Validate(); err != nil {
 		return errors.Newf("request: %w", err)
 	}
-
 	if err := h.Response.Validate(); err != nil {
 		return errors.Newf("response: %w", err)
 	}
-
 	return nil
 }
 
 type Header struct {
-	Enabled Enabled           `hcl:"enabled,optional" json:"enabled"`
-	Set     map[string]string `hcl:"set,optional" json:"set"`
-	Add     map[string]string `hcl:"add,optional" json:"add"`
-	Remove  []string          `hcl:"remove,optional" json:"remove"`
+	Enabled Enabled           `hcl:"enabled,attr" json:"enabled"`
+	Set     map[string]string `hcl:"set,attr" json:"set"`
+	Add     map[string]string `hcl:"add,attr" json:"add"`
+	Remove  []string          `hcl:"remove,attr" json:"remove"`
 }
 
+// Validate checks that all set/add header entries have non-empty keys and values.
 func (h *Header) Validate() error {
 	if !h.Enabled.Active() {
 		return nil
 	}
-
-	// Set headers validation
 	for k, v := range h.Set {
 		if k == "" {
 			return ErrSetHeaderKeyEmpty
@@ -46,8 +42,6 @@ func (h *Header) Validate() error {
 			return errors.Newf("%w: %q value cannot be empty", ErrSetHeaderValueEmpty, k)
 		}
 	}
-
-	// Add headers validation
 	for k, v := range h.Add {
 		if k == "" {
 			return ErrAddHeaderKeyEmpty
@@ -56,13 +50,10 @@ func (h *Header) Validate() error {
 			return errors.Newf("%w: %q value cannot be empty", ErrAddHeaderValueEmpty, k)
 		}
 	}
-
-	// Remove headers validation
-	for i, header := range h.Remove {
-		if header == "" {
+	for i, name := range h.Remove {
+		if name == "" {
 			return errors.Newf("remove[%d]: %w", i, ErrHeaderNameEmpty)
 		}
 	}
-
 	return nil
 }

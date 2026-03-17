@@ -8,11 +8,13 @@ import (
 )
 
 type Bind struct {
-	HTTP     []string `hcl:"http,optional" json:"http"`
-	HTTPS    []string `hcl:"https,optional" json:"https"`
-	Redirect Enabled  `hcl:"redirect,optional" json:"redirect"`
+	HTTP     []string `hcl:"http,attr" json:"http"`
+	HTTPS    []string `hcl:"https,attr" json:"https"`
+	Redirect Enabled  `hcl:"redirect,attr" json:"redirect"`
 }
 
+// Validate checks that at least one HTTP or HTTPS address is configured.
+// Each address must be a valid host:port or port-only string.
 func (b *Bind) Validate() error {
 	if len(b.HTTP) == 0 && len(b.HTTPS) == 0 {
 		return ErrNoBindAddresses

@@ -5,16 +5,33 @@ import (
 	"net"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/olekukonko/errors"
 )
 
 type Security struct {
-	Enabled         Enabled  `hcl:"enabled,optional" json:"enabled"`
-	TrustedProxies  []string `hcl:"trusted_proxies,optional" json:"trusted_proxies"`
-	InternalAuthKey string   `hcl:"internal_auth_key,optional" json:"internal_auth_key"` // Moved from API
+	Enabled         Enabled  `hcl:"enabled,attr" json:"enabled"`
+	TrustedProxies  []string `hcl:"trusted_proxies,attr" json:"trusted_proxies"`
+	InternalAuthKey string   `hcl:"internal_auth_key,attr" json:"internal_auth_key"`
 	Firewall        Firewall `hcl:"firewall,block" json:"firewall"`
+}
+
+// Validate checks trusted proxy formats and delegates to Firewall.Validate.
+func (s *Security) Validate() error {
+	if s == nil {
+		return nil
+	}
+	if s.Enabled.NotActive() {
+		return nil
+	}
+	for i, proxy := range s.TrustedProxies {
+		if _, _, err := net.ParseCIDR(proxy); err != nil {
+			if ip := net.ParseIP(proxy); ip == nil {
+				return errors.Newf("security: trusted_proxies[%d]=%q is invalid", i, proxy)
+			}
+		}
+	}
+	return s.Firewall.Validate()
 }
 
 type Defaults struct {
@@ -23,48 +40,41 @@ type Defaults struct {
 }
 
 type DefaultAction struct {
-	Action   string        `hcl:"action,optional" json:"action"`
-	Duration time.Duration `hcl:"duration,optional" json:"duration"`
+	Action   string   `hcl:"action,attr" json:"action"`
+	Duration Duration `hcl:"duration,attr" json:"duration"`
 }
 
 type Rule struct {
-	Name        string        `hcl:"name,label" json:"name"`
-	Description string        `hcl:"description,optional" json:"description"`
-	Priority    int           `hcl:"priority,optional" json:"priority"`
-	Type        string        `hcl:"type,optional" json:"type"`
-	Action      string        `hcl:"action,optional" json:"action"`
-	Duration    time.Duration `hcl:"duration,optional" json:"duration"`
-	Match       Match         `hcl:"match,block" json:"match"`
+	Name        string   `hcl:"name,label" json:"name"`
+	Description string   `hcl:"description,attr" json:"description"`
+	Priority    int      `hcl:"priority,attr" json:"priority"`
+	Type        string   `hcl:"type,attr" json:"type"`
+	Action      string   `hcl:"action,attr" json:"action"`
+	Duration    Duration `hcl:"duration,attr" json:"duration"`
+	Match       Match    `hcl:"match,block" json:"match"`
 }
 
+// Validate checks that name is present and type is one of the accepted values.
 func (r *Rule) Validate() error {
 	if r == nil {
 		return errors.New("nil rule")
 	}
-
 	if r.Name == "" {
 		return errors.New("rule name required")
 	}
-
-	r.Type = strings.ToLower(r.Type)
-	switch r.Type {
+	switch strings.ToLower(r.Type) {
 	case "static", "dynamic", "whitelist":
 	default:
 		return errors.New("type must be 'static', 'dynamic', or 'whitelist'")
 	}
-
-	if err := r.Match.Validate(); err != nil {
-		return err
-	}
-
-	return nil
+	return r.Match.Validate()
 }
 
 type Match struct {
-	Enabled   Enabled     `hcl:"enabled,optional" json:"enabled"`
-	IP        []string    `hcl:"ip,optional" json:"ip"`
-	Path      []string    `hcl:"path,optional" json:"path"`
-	Methods   []string    `hcl:"methods,optional" json:"methods"`
+	Enabled   Enabled     `hcl:"enabled,attr" json:"enabled"`
+	IP        []string    `hcl:"ip,attr" json:"ip"`
+	Path      []string    `hcl:"path,attr" json:"path"`
+	Methods   []string    `hcl:"methods,attr" json:"methods"`
 	Any       []Condition `hcl:"any,block" json:"any"`
 	All       []Condition `hcl:"all,block" json:"all"`
 	None      []Condition `hcl:"none,block" json:"none"`
@@ -72,6 +82,7 @@ type Match struct {
 	Threshold *Threshold  `hcl:"threshold,block" json:"threshold,omitempty"`
 }
 
+// Validate checks all condition groups, extract, and threshold blocks.
 func (m *Match) Validate() error {
 	if m.Enabled.NotActive() {
 		return nil
@@ -91,46 +102,42 @@ func (m *Match) Validate() error {
 			return errors.Newf("none[%d]: %w", i, err)
 		}
 	}
-
 	if m.Extract != nil && m.Extract.Enabled.Active() {
 		if err := m.Extract.Validate(); err != nil {
 			return errors.Newf("extract: %w", err)
 		}
 	}
-
 	if m.Threshold != nil && m.Threshold.Enabled.Active() {
 		if err := m.Threshold.Validate(); err != nil {
 			return errors.Newf("threshold: %w", err)
 		}
 	}
-
 	return nil
 }
 
 type Condition struct {
-	Enabled    Enabled `hcl:"enabled,optional" json:"enabled"`
-	Location   string  `hcl:"location,optional" json:"location"`
-	Key        string  `hcl:"key,optional" json:"key"`
-	Operator   string  `hcl:"operator,optional" json:"operator"`
-	Value      string  `hcl:"value,optional" json:"value"`
-	Pattern    string  `hcl:"pattern,optional" json:"pattern"`
-	Negate     bool    `hcl:"negate,optional" json:"negate"`
-	IgnoreCase bool    `hcl:"ignore_case,optional" json:"ignore_case"`
+	Enabled    Enabled `hcl:"enabled,attr" json:"enabled"`
+	Location   string  `hcl:"location,attr" json:"location"`
+	Key        string  `hcl:"key,attr" json:"key"`
+	Operator   string  `hcl:"operator,attr" json:"operator"`
+	Value      string  `hcl:"value,attr" json:"value"`
+	Pattern    string  `hcl:"pattern,attr" json:"pattern"`
+	Negate     bool    `hcl:"negate,attr" json:"negate"`
+	IgnoreCase bool    `hcl:"ignore_case,attr" json:"ignore_case"`
 
 	Compiled *regexp.Regexp `hcl:"-" json:"-"`
 }
 
+// Validate checks location and compiles the pattern regex when present.
 func (c *Condition) Validate() error {
 	if c.Enabled.NotActive() {
 		return nil
 	}
-	c.Location = strings.ToLower(c.Location)
-	switch c.Location {
+	switch strings.ToLower(c.Location) {
 	case "ip", "path", "method", "header", "headers", "query", "body", "uri", "":
 	default:
 		return errors.Newf("unknown location %q", c.Location)
 	}
-
 	if c.Pattern != "" {
 		re, err := regexp.Compile(c.Pattern)
 		if err != nil {
@@ -138,19 +145,19 @@ func (c *Condition) Validate() error {
 		}
 		c.Compiled = re
 	}
-
 	return nil
 }
 
 type Extract struct {
-	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
-	From    string  `hcl:"from,optional" json:"from"`
-	Pattern string  `hcl:"pattern,optional" json:"pattern"`
-	As      string  `hcl:"as,optional" json:"as"`
+	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
+	From    string  `hcl:"from,attr" json:"from"`
+	Pattern string  `hcl:"pattern,attr" json:"pattern"`
+	As      string  `hcl:"as,attr" json:"as"`
 
 	Regex *regexp.Regexp `hcl:"-" json:"-"`
 }
 
+// Validate checks that a pattern is present and compiles as a valid regex.
 func (e *Extract) Validate() error {
 	if e.Enabled.NotActive() {
 		return nil
@@ -163,19 +170,19 @@ func (e *Extract) Validate() error {
 		return errors.Newf("extract regex: %w", err)
 	}
 	e.Regex = re
-
 	return nil
 }
 
 type Threshold struct {
-	Enabled  Enabled       `hcl:"enabled,optional" json:"enabled"`
-	Count    int           `hcl:"count,optional" json:"count"`
-	Window   time.Duration `hcl:"window,optional" json:"window"`
-	TrackBy  string        `hcl:"track_by,optional" json:"track_by"`
-	GroupBy  string        `hcl:"group_by,optional" json:"group_by"`
-	OnExceed string        `hcl:"on_exceed,optional" json:"on_exceed"`
+	Enabled  Enabled  `hcl:"enabled,attr" json:"enabled"`
+	Count    int      `hcl:"count,attr" json:"count"`
+	Window   Duration `hcl:"window,attr" json:"window"`
+	TrackBy  string   `hcl:"track_by,attr" json:"track_by"`
+	GroupBy  string   `hcl:"group_by,attr" json:"group_by"`
+	OnExceed string   `hcl:"on_exceed,attr" json:"on_exceed"`
 }
 
+// Validate checks that count and window are positive when threshold is enabled.
 func (t *Threshold) Validate() error {
 	if t.Enabled.NotActive() {
 		return nil
@@ -186,81 +193,48 @@ func (t *Threshold) Validate() error {
 	if t.Window <= 0 {
 		return errors.New("threshold window must be > 0")
 	}
-
 	return nil
 }
 
 type Action struct {
 	Name       string   `hcl:"name,label" json:"name"`
+	Mitigation string   `hcl:"mitigation,attr" json:"mitigation"`
 	Response   Response `hcl:"response,block" json:"response"`
 	Logging    Logging  `hcl:"logging,block" json:"logging"`
-	Mitigation string   `hcl:"mitigation,optional" json:"mitigation"`
 }
 
 type Response struct {
-	Status       Enabled            `hcl:"enabled,optional" json:"enabled"`
-	ContentType  string             `hcl:"content_type,optional" json:"content_type"`
-	BodyTemplate string             `hcl:"body_template,optional" json:"body_template"`
-	Headers      map[string]string  `hcl:"headers,optional" json:"headers"`
-	StatusCode   int                `hcl:"status_code,optional" json:"status_code"`
-	Template     *template.Template `hcl:"-" json:"-"`
-}
+	Status       Enabled           `hcl:"enabled,attr" json:"enabled"`
+	ContentType  string            `hcl:"content_type,attr" json:"content_type"`
+	BodyTemplate string            `hcl:"body_template,attr" json:"body_template"`
+	Headers      map[string]string `hcl:"headers,attr" json:"headers"`
+	StatusCode   int               `hcl:"status_code,attr" json:"status_code"`
 
-func (s *Security) Validate() error {
-	if s == nil {
-		return nil
-	}
-
-	if s.Enabled.NotActive() {
-		return nil
-	}
-	for i, proxy := range s.TrustedProxies {
-		if _, _, err := net.ParseCIDR(proxy); err != nil {
-			if ip := net.ParseIP(proxy); ip == nil {
-				return errors.Newf("security: trusted_proxies[%d]=%q is invalid", i, proxy)
-			}
-		}
-	}
-
-	return s.Firewall.Validate()
+	Template *template.Template `hcl:"-" json:"-"`
 }
 
 type Firewall struct {
-	Status              Enabled  `hcl:"enabled,optional" json:"enabled"`
-	Mode                string   `hcl:"mode,optional" json:"mode"`
-	InspectBody         bool     `hcl:"inspect_body,optional" json:"inspect_body"`
-	MaxInspectBytes     int64    `hcl:"max_inspect_bytes,optional" json:"max_inspect_bytes"`
-	InspectContentTypes []string `hcl:"inspect_content_types,optional" json:"inspect_content_types"`
+	Status              Enabled  `hcl:"enabled,attr" json:"enabled"`
+	Mode                string   `hcl:"mode,attr" json:"mode"`
+	InspectBody         bool     `hcl:"inspect_body,attr" json:"inspect_body"`
+	MaxInspectBytes     int64    `hcl:"max_inspect_bytes,attr" json:"max_inspect_bytes"`
+	InspectContentTypes []string `hcl:"inspect_content_types,attr" json:"inspect_content_types"`
 	Defaults            Defaults `hcl:"defaults,block" json:"defaults"`
 	Rules               []Rule   `hcl:"rule,block" json:"rules"`
 	Actions             []Action `hcl:"action,block" json:"actions"`
 }
 
+// Validate checks firewall mode and delegates rule and action validation.
+// It does not set defaults — all defaults are applied by woos.defaultFirewall.
 func (f *Firewall) Validate() error {
 	if f.Status.Inactive() {
 		return nil
 	}
-
-	f.Mode = strings.ToLower(f.Mode)
-	if f.Mode == "" {
-		f.Mode = "active"
-	}
-	if f.Mode != "active" && f.Mode != "verbose" && f.Mode != "monitor" {
+	switch f.Mode {
+	case "active", "verbose", "monitor":
+	default:
 		return errors.New("firewall: mode must be 'active', 'verbose', or 'monitor'")
 	}
-
-	if f.MaxInspectBytes == 0 {
-		f.MaxInspectBytes = 8192
-	}
-	if len(f.InspectContentTypes) == 0 {
-		f.InspectContentTypes = []string{
-			"application/json",
-			"application/xml",
-			"application/x-www-form-urlencoded",
-			"text/plain",
-		}
-	}
-
 	for i, a := range f.Actions {
 		if a.Name == "" {
 			return errors.New("firewall: action name required")
@@ -273,7 +247,6 @@ func (f *Firewall) Validate() error {
 			a.Response.Template = t
 		}
 	}
-
 	for i, r := range f.Rules {
 		if err := r.Validate(); err != nil {
 			return errors.Newf("rule[%d]: %w", i, err)
@@ -283,8 +256,8 @@ func (f *Firewall) Validate() error {
 }
 
 type FirewallRoute struct {
-	Status       Enabled  `hcl:"enabled,optional" json:"enabled"`
-	IgnoreGlobal bool     `hcl:"ignore_global,optional" json:"ignore_global"`
-	ApplyRules   []string `hcl:"apply_rules,optional" json:"apply_rules"`
+	Status       Enabled  `hcl:"enabled,attr" json:"enabled"`
+	IgnoreGlobal bool     `hcl:"ignore_global,attr" json:"ignore_global"`
+	ApplyRules   []string `hcl:"apply_rules,attr" json:"apply_rules"`
 	Rules        []Rule   `hcl:"rule,block" json:"rules,omitempty"`
 }

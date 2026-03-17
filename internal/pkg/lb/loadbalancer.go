@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/dependency"
+	"github.com/agberohq/agbero/internal/pkg/raw/ahash"
 	"github.com/cespare/xxhash/v2"
 )
 
@@ -46,13 +46,13 @@ const (
 // HashString processes the payload rapidly targeting the underlying architecture.
 // Uses hardware-accelerated CRC32 instructions for routing resolutions.
 func HashString(s string) uint64 {
-	return dependency.CRC32Hash(s)
+	return ahash.CRC32Hash(s)
 }
 
 // HashBytes processes the payload rapidly targeting the underlying architecture.
 // Uses hardware-accelerated CRC32 instructions for routing resolutions.
 func HashBytes(b []byte) uint64 {
-	return dependency.CRC32HashBytes(b)
+	return ahash.CRC32HashBytes(b)
 }
 
 // HashUint64 retains xxhash purely to satisfy distribution qualities required by consistent hashing.

@@ -3,36 +3,35 @@ package alaye
 import (
 	"fmt"
 	"net"
-	"strings"
 
 	"github.com/olekukonko/errors"
 )
 
 type Gossip struct {
-	Enabled     Enabled     `hcl:"enabled,optional" json:"enabled"`
-	Port        int         `hcl:"port,optional" json:"port"`
-	SecretKey   Value       `hcl:"secret_key,optional" json:"secret-key"` // Memberlist encryption key (16, 24, or 32 bytes)
-	Seeds       []string    `hcl:"seeds,optional" json:"seeds"`           // Initial cluster peers
-	TTL         int         `hcl:"ttl,optional" json:"ttl"`               // how long since I last heard from you before I assume you’re dead
+	Enabled     Enabled     `hcl:"enabled,attr" json:"enabled"`
+	Port        int         `hcl:"port,attr" json:"port"`
+	SecretKey   Value       `hcl:"secret_key,attr" json:"secret-key"`
+	Seeds       []string    `hcl:"seeds,attr" json:"seeds"`
+	TTL         int         `hcl:"ttl,attr" json:"ttl"`
 	SharedState SharedState `hcl:"shared_state,block" json:"shared_state"`
 }
 
 type SharedState struct {
-	Enabled Enabled     `hcl:"enabled,optional" json:"enabled"`
-	Driver  string      `hcl:"driver,optional" json:"driver"` // "memory" (default) or "redis"
+	Enabled Enabled     `hcl:"enabled,attr" json:"enabled"`
+	Driver  string      `hcl:"driver,attr" json:"driver"`
 	Redis   *RedisState `hcl:"redis,block" json:"redis,omitempty"`
 }
 
 type RedisState struct {
-	Host      string `hcl:"host,optional" json:"host"`
-	Port      int    `hcl:"port,optional" json:"port"`
-	Password  string `hcl:"password,optional" json:"password"`
-	DB        int    `hcl:"db,optional" json:"db"`
-	KeyPrefix string `hcl:"key_prefix,optional" json:"key_prefix"`
+	Host      string `hcl:"host,attr" json:"host"`
+	Port      int    `hcl:"port,attr" json:"port"`
+	Password  string `hcl:"password,attr" json:"password"`
+	DB        int    `hcl:"db,attr" json:"db"`
+	KeyPrefix string `hcl:"key_prefix,attr" json:"key_prefix"`
 }
 
-// Validate verifies the constraints of the gossip configuration.
-// It checks ports, secret keys, and normalizes optional drivers.
+// Validate checks port range, secret key length, seed formats, and shared state driver.
+// It does not set defaults — all defaults are applied by woos.defaultGossip.
 func (g *Gossip) Validate() error {
 	if g.Enabled.NotActive() {
 		return nil
@@ -40,9 +39,6 @@ func (g *Gossip) Validate() error {
 
 	if g.Port < MinPort || g.Port > MaxPort {
 		return errors.Newf("%w: port must be between 0 and 65535", ErrInvalidPort)
-	}
-	if g.Port == 0 {
-		g.Port = DefaultGossipPort
 	}
 
 	if g.SecretKey != "" {
@@ -64,11 +60,8 @@ func (g *Gossip) Validate() error {
 	}
 
 	if g.SharedState.Enabled.Active() {
-		driver := strings.ToLower(g.SharedState.Driver)
-		if driver == "" {
-			g.SharedState.Driver = "memory"
-		} else if driver != "memory" && driver != "redis" {
-			return errors.Newf("unsupported shared_state driver: %s", driver)
+		if g.SharedState.Driver != "memory" && g.SharedState.Driver != "redis" {
+			return errors.Newf("unsupported shared_state driver: %s", g.SharedState.Driver)
 		}
 	}
 

@@ -1,26 +1,21 @@
 package alaye
 
-import "time"
-
 type CircuitBreaker struct {
-	Enabled   Enabled       `hcl:"enabled,optional" json:"enabled"`
-	Threshold int           `hcl:"threshold,optional" json:"threshold"`
-	Duration  time.Duration `hcl:"duration,optional" json:"duration"`
+	Enabled   Enabled  `hcl:"enabled,attr" json:"enabled"`
+	Threshold int      `hcl:"threshold,attr" json:"threshold"`
+	Duration  Duration `hcl:"duration,attr" json:"duration"`
 }
 
+// Validate checks that threshold and duration are non-negative when circuit breaker is enabled.
 func (c *CircuitBreaker) Validate() error {
 	if !c.Enabled.Active() {
 		return nil
 	}
-	// Threshold validation (if provided)
 	if c.Threshold < 0 {
 		return ErrNegativeThreshold
 	}
-
-	// Duration validation (if provided)
 	if c.Duration < 0 {
 		return ErrNegativeDuration
 	}
-
 	return nil
 }

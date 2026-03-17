@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/dependency"
+	"github.com/agberohq/agbero/internal/pkg/raw/afs"
 )
 
 const (
@@ -172,5 +172,5 @@ func (p *connPool) close() {
 // isAlive checks the platform-specific socket status to ensure usability
 // Filters out connections dropped silently by the remote peer
 func (p *connPool) isAlive(conn net.Conn) bool {
-	return dependency.ConnAlive(conn)
+	return afs.ConnAlive(conn)
 }

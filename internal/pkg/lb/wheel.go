@@ -3,7 +3,7 @@ package lb
 import (
 	"math/rand/v2"
 
-	"github.com/agberohq/agbero/internal/dependency"
+	"github.com/agberohq/agbero/internal/pkg/raw/asearch"
 )
 
 const (
@@ -65,5 +65,5 @@ func (w *WeightWheel) RandomIndex(r *rand.Rand) int {
 	if len(w.cumul) == emptyValue {
 		return int(r.Uint64N(w.total))
 	}
-	return dependency.LinearSearch(w.cumul, r.Uint64N(w.total))
+	return asearch.LinearSearch(w.cumul, r.Uint64N(w.total))
 }

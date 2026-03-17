@@ -1,26 +1,23 @@
 package alaye
 
-import (
-	"strings"
-
-	"github.com/olekukonko/errors"
-)
+import "github.com/olekukonko/errors"
 
 type OAuth struct {
-	Enabled      Enabled `hcl:"enabled,optional" json:"enabled"`
-	Provider     string  `hcl:"provider" json:"provider"` // "google", "github", "oidc"
-	ClientID     string  `hcl:"client_id" json:"client_id"`
-	ClientSecret Value   `hcl:"client_secret" json:"client_secret"`
-	RedirectURL  string  `hcl:"redirect_url" json:"redirect_url"`          // e.g. https://agbero.com/auth/callback
-	AuthURL      string  `hcl:"auth_url,optional" json:"auth_url"`         // For generic/custom provider
-	TokenURL     string  `hcl:"token_url,optional" json:"token_url"`       // For generic/custom provider
-	UserApiURL   string  `hcl:"user_api_url,optional" json:"user_api_url"` // For generic (to fetch email)
-
-	Scopes       []string `hcl:"scopes,optional" json:"scopes"`
-	CookieSecret Value    `hcl:"cookie_secret" json:"cookie_secret"`          // To encrypt session cookie
-	EmailDomains []string `hcl:"email_domains,optional" json:"email_domains"` // Restrict to @company.com
+	Enabled      Enabled  `hcl:"enabled,attr" json:"enabled"`
+	Provider     string   `hcl:"provider,attr" json:"provider"`
+	ClientID     string   `hcl:"client_id,attr" json:"client_id"`
+	ClientSecret Value    `hcl:"client_secret,attr" json:"client_secret"`
+	RedirectURL  string   `hcl:"redirect_url,attr" json:"redirect_url"`
+	AuthURL      string   `hcl:"auth_url,attr" json:"auth_url"`
+	TokenURL     string   `hcl:"token_url,attr" json:"token_url"`
+	UserApiURL   string   `hcl:"user_api_url,attr" json:"user_api_url"`
+	Scopes       []string `hcl:"scopes,attr" json:"scopes"`
+	CookieSecret Value    `hcl:"cookie_secret,attr" json:"cookie_secret"`
+	EmailDomains []string `hcl:"email_domains,attr" json:"email_domains"`
 }
 
+// Validate checks required OAuth fields when enabled.
+// It does not set default scopes — those are applied by woos.defaultOAuth.
 func (o *OAuth) Validate() error {
 	if !o.Enabled.Active() {
 		return nil
@@ -40,15 +37,5 @@ func (o *OAuth) Validate() error {
 	if o.CookieSecret == "" || len(o.CookieSecret) < 16 {
 		return errors.New("cookie_secret must be at least 16 characters")
 	}
-
-	// Default Scopes if empty
-	if len(o.Scopes) == 0 {
-		if strings.EqualFold(o.Provider, ProviderGoogle) || strings.EqualFold(o.Provider, ProviderOIDC) {
-			o.Scopes = []string{ScopeOpenID, ScopeProfile, ScopeEmail}
-		} else if strings.EqualFold(o.Provider, ProviderGitHub) {
-			o.Scopes = []string{"user:email"}
-		}
-	}
-
 	return nil
 }

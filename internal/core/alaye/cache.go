@@ -1,46 +1,39 @@
 package alaye
 
 import (
-	"strings"
-	"time"
-
 	"github.com/olekukonko/errors"
 )
 
 type Cache struct {
-	Enabled Enabled       `hcl:"enabled,optional" json:"enabled"`
-	Driver  string        `hcl:"driver,optional" json:"driver"` // "memory", "redis"
-	TTL     time.Duration `hcl:"ttl,optional" json:"ttl"`
-	Methods []string      `hcl:"methods,optional" json:"methods"`
+	Enabled Enabled  `hcl:"enabled,attr" json:"enabled"`
+	Driver  string   `hcl:"driver,attr" json:"driver"`
+	TTL     Duration `hcl:"ttl,attr" json:"ttl"`
+	Methods []string `hcl:"methods,attr" json:"methods"`
 
 	Memory *MemoryCache `hcl:"memory,block" json:"memory,omitempty"`
 	Redis  *RedisCache  `hcl:"redis,block" json:"redis,omitempty"`
 }
 
 type MemoryCache struct {
-	MaxItems int `hcl:"max_items,optional" json:"max_items"`
+	MaxItems int `hcl:"max_items,attr" json:"max_items"`
 }
 
 type RedisCache struct {
-	Host      string `hcl:"host,optional" json:"host"`
-	Port      int    `hcl:"port,optional" json:"port"`
-	Password  string `hcl:"password,optional" json:"password"`
-	DB        int    `hcl:"db,optional" json:"db"`
-	KeyPrefix string `hcl:"key_prefix,optional" json:"key_prefix"`
+	Host      string `hcl:"host,attr" json:"host"`
+	Port      int    `hcl:"port,attr" json:"port"`
+	Password  string `hcl:"password,attr" json:"password"`
+	DB        int    `hcl:"db,attr" json:"db"`
+	KeyPrefix string `hcl:"key_prefix,attr" json:"key_prefix"`
 }
 
+// Validate checks that the cache driver is one of the supported values.
+// It does not set defaults — all defaults are applied by woos.defaultCache.
 func (c *Cache) Validate() error {
 	if c.Enabled.NotActive() {
 		return nil
 	}
-	if c.Driver == "" {
-		c.Driver = "memory"
-	}
 	if c.Driver != "memory" && c.Driver != "redis" {
 		return errors.Newf("cache: unsupported driver %q", c.Driver)
-	}
-	for i, m := range c.Methods {
-		c.Methods[i] = strings.ToUpper(m)
 	}
 	return nil
 }
