@@ -400,6 +400,7 @@ const (
 	GzipEncodingType    = "gzip"
 	CompressionBrotli   = "brotli"
 	BrotliEncodingType  = "br"
+	DynamicGzMaxSize    = 10 * 1024 * 1024
 )
 
 const (

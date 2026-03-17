@@ -636,6 +636,12 @@ func (h *web) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *o
 // serveDynamicGzip compresses the file on the fly and writes the gzip response.
 // Results are cached in memory; mappo is lock-free so no mutex is needed.
 func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath string, f *os.File, info fs.FileInfo, mimeType string) bool {
+
+	// Prevent OOM: skip compression for files larger than threshold
+	if info.Size() > woos.DynamicGzMaxSize {
+		return false // Fall back to uncompressed serving
+	}
+
 	cached, ok := dynamicGzCache.Load(reqPath)
 
 	var entry *dynamicGzEntry
