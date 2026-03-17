@@ -57,11 +57,16 @@ const EventHandler = {
 
         const searchInput = document.getElementById("hostSearch");
         if (searchInput) {
+            let searchTimeout = null;
             searchInput.addEventListener("input", (e) => {
+                clearTimeout(searchTimeout);
                 const term = e.target.value;
                 sessionStorage.setItem("ag_search", term);
                 app.searchTerm = term;
-                UI.renderHosts(app.hostsData, term, app.certificates);
+
+                searchTimeout = setTimeout(() => {
+                    UI.renderHosts(app.hostsData, term, app.certificates);
+                }, 300); // Wait 300ms after typing stops
             });
         }
 
@@ -111,6 +116,12 @@ const EventHandler = {
                 app.logsPaused = !app.logsPaused;
                 logsPauseBtn.innerText = app.logsPaused ? "Resume" : "Pause";
             });
+        }
+
+        // Add to EventHandler.bindAll() where other logs buttons are
+        const logsExportBtn = document.getElementById("logsExportBtn");
+        if (logsExportBtn) {
+            logsExportBtn.addEventListener("click", () => app.exportLogs());
         }
 
         const logsClearBtn = document.getElementById("logsClearBtn");
@@ -230,6 +241,23 @@ const EventHandler = {
                     app.searchTerm = hostname;
                     UI.renderHosts(app.hostsData, hostname, app.certificates);
                 }
+            });
+
+            // Double-click from drawer opens performance modal directly
+            hostNameEl.addEventListener("dblclick", (e) => {
+                e.stopPropagation();
+                const hostname = hostNameEl.innerText;
+                app.openPerformanceModal(hostname);
+            });
+
+            hostNameEl.title = "Click to filter · Double-click for performance history";
+        }
+
+        const drawerPerfBtn = document.getElementById("drawerPerfBtn");
+        if (drawerPerfBtn) {
+            drawerPerfBtn.addEventListener("click", () => {
+                const hostname = document.getElementById("drawerHostName")?.innerText;
+                if (hostname) app.openPerformanceModal(hostname);
             });
         }
 

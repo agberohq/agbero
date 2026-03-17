@@ -1,3 +1,4 @@
+<!-- index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -151,6 +152,7 @@
                 <option value="100">100 Lines</option>
                 <option value="500">500 Lines</option>
             </select>
+            <button class="btn" id="logsExportBtn">Export</button>
             <button class="btn" id="logsPauseBtn">Pause</button>
             <button class="btn" id="logsClearBtn">Clear</button>
         </div>
@@ -236,24 +238,25 @@
 <!-- SYSTEM STATS BAR -->
 <div class="sys-bar">
     <div class="sys-bar-left">
-        <span class="sys-item" title="Memory RSS">💾 <span id="sysMem">—</span></span>
-        <span class="sys-item hide-mobile" title="Memory Allocated">📊 <span id="sysMemAlloc">—</span></span>
+        <span class="sys-item" title="Memory RSS">rss <span id="sysMem">—</span></span>
+        <span class="sys-item hide-mobile" title="Memory Allocated">alloc <span id="sysMemAlloc">—</span></span>
         <span class="sys-divider hide-mobile">·</span>
-        <span class="sys-item hide-mobile" title="Goroutines">🧵 <span id="sysGoroutines">—</span></span>
+        <span class="sys-item hide-mobile" title="Goroutines">goroutines <span id="sysGoroutines">—</span></span>
         <span class="sys-divider">·</span>
-        <span class="sys-item" title="Active Certificates">🔐 <span id="activeCertsCount">0</span></span>
-        <span class="sys-divider">·</span>
-        <span class="sys-item" title="Expiring soon (<7d)">⚠️ <span id="expiringCertsCount">0</span></span>
+        <span class="sys-item" title="Active Certificates">certs <span id="activeCertsCount">0</span></span>
+        <span class="sys-item" title="Expiring soon (&lt;7d)" id="expiringCertsWrap">&nbsp;(<span id="expiringCertsCount">0</span> expiring)</span>
     </div>
     <div class="sys-bar-right">
-        <span class="sys-item" title="CPU Usage">⚡ <span id="sysCpu">—</span></span>
-        <span class="sys-item hide-mobile" title="CPU Cores">🎛️ <span id="sysCpuCores">—</span></span>
+        <span class="sys-item" title="CPU Usage">cpu <span id="sysCpu">—</span></span>
+        <span class="sys-item hide-mobile" title="CPU Cores"><span id="sysCpuCores">—</span> cores</span>
         <span class="sys-divider">·</span>
-        <span class="sys-item hide-mobile" title="OS Memory Used">🖥️ <span id="sysMemUsed">—</span></span>
+        <span class="sys-item hide-mobile" title="OS Memory Used">mem <span id="sysMemUsed">—</span></span>
+        <span class="sys-item hide-mobile" title="Total OS Memory"> / <span id="sysMemTotalOs">—</span></span>
         <span class="sys-divider hide-mobile">·</span>
-        <span class="sys-item hide-mobile" title="Total OS Memory">💿 <span id="sysMemTotalOs">—</span></span>
-        <span class="sys-divider hide-mobile">·</span>
+        <span class="sys-item" id="connectionIndicator" title="Connection Quality">○</span>
+        <span class="sys-divider">·</span>
         <span class="sys-item" id="versionDisplay" title="Agbero Version">v—</span>
+
     </div>
 </div>
 
@@ -350,20 +353,18 @@
 <!-- PERFORMANCE HISTORY MODAL -->
 <div class="modal-overlay" id="perfModal">
     <div class="modal modal-perf">
+        <button class="perf-close-btn close-modal" title="Close">&#x2715;</button>
         <div class="perf-modal-header">
             <div>
                 <h3 id="perfModalTitle">Performance History</h3>
                 <span id="perfModalHost" style="font-size:11px; color:var(--text-mute); font-family:monospace;"></span>
             </div>
-            <div class="perf-controls">
-                <select id="perfRangeSelect" class="perf-range-select">
-                    <option value="30m">Last 30 min</option>
-                    <option value="1h" selected>Last 1 hour</option>
-                    <option value="6h">Last 6 hours</option>
-                    <option value="24h">Last 24 hours</option>
-                </select>
-                <button class="btn close-modal" style="padding:6px 12px;">&#x2715;</button>
-            </div>
+            <select id="perfRangeSelect" class="perf-range-select">
+                <option value="30m">Last 30 min</option>
+                <option value="1h" selected>Last 1 hour</option>
+                <option value="6h">Last 6 hours</option>
+                <option value="24h">Last 24 hours</option>
+            </select>
         </div>
         <div class="perf-charts-grid">
             <div class="perf-chart-cell">
@@ -405,7 +406,10 @@
                 <span class="drawer-back-link" data-action="close-drawer" data-target="routeDrawer">← All hosts</span>
             </div>
             <h2 id="drawerRoutePath">/</h2>
-            <span id="drawerHostName" class="clickable-host" data-action="filter-host">example.com</span>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span id="drawerHostName" class="clickable-host" data-action="filter-host">example.com</span>
+                <button id="drawerPerfBtn" class="btn small" title="View performance history" style="font-size:10px; padding:3px 8px; opacity:0.7;">&#x1F4C8; Perf</button>
+            </div>
         </div>
         <button class="drawer-close" data-action="close-drawer" data-target="routeDrawer">&times;</button>
     </div>

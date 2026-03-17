@@ -222,9 +222,12 @@ When multiple auth methods are enabled, Agbero uses them in this order:
 Separate pprof listener with no middleware for performance profiling.
 
 ```hcl
-pprof {
-  enabled = "off"
-  bind    = "localhost:6060"  # Bind address for pprof
+admin {
+  enabled = "on"
+  pprof {
+    enabled = "on"
+    bind    = "localhost:6060"  # Bind address for pprof
+  }
 }
 ```
 

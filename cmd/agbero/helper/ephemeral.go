@@ -54,7 +54,9 @@ func (e *Ephemeral) Serve() {
 
 	global := e.createGlobal(cfg.ServeBind, finalPort, cfg.ServeHTTPS, ctx)
 	hosts := map[string]*alaye.Host{
-		"localhost": alaye.NewStaticHost("localhost", alaye.Address(absPath), false),
+		"localhost": woos.NewStaticHost(woos.Static{
+			Domain: "localhost", Target: alaye.Address(absPath), Markdown: cfg.ServeMarkdown,
+		}),
 	}
 
 	domain := cfg.ServeBind
@@ -68,6 +70,9 @@ func (e *Ephemeral) Serve() {
 	table.Append([]string{""})
 	table.Append([]string{"Serving Directory:", absPath})
 	table.Append([]string{"Available at:", displayURL})
+	if cfg.ServeMarkdown {
+		table.Append([]string{"Markdown:", "enabled (.md files rendered as HTML)"})
+	}
 	table.Append([]string{""})
 	table.Render()
 	e.p.Logger.Print(buf.String())
@@ -122,7 +127,7 @@ func (e *Ephemeral) Proxy() {
 
 	global := e.createGlobal(cfg.ProxyBind, finalPort, cfg.ProxyHTTPS, ctx)
 	hosts := map[string]*alaye.Host{
-		domain: alaye.NewStaticHost(domain, alaye.Address(target), true),
+		domain: woos.NewStaticHost(woos.Static{Domain: domain, Target: alaye.Address(target), IsProxy: true, Markdown: cfg.ServeMarkdown}),
 	}
 
 	displayURL := buildURL(cfg.ProxyHTTPS, domain, finalPort)
@@ -141,7 +146,7 @@ func (e *Ephemeral) Proxy() {
 }
 
 func (e *Ephemeral) createGlobal(bindHost string, port int, useHTTPS bool, ctx *installer.Context) *alaye.Global {
-	global := alaye.NewEphemeralGlobal(port, useHTTPS)
+	global := woos.NewEphemeralGlobal(port, useHTTPS)
 	if bindHost != "" {
 		addr := fmt.Sprintf("%s:%d", bindHost, port)
 		if useHTTPS {

@@ -19,10 +19,11 @@ type Config struct {
 	ClusterJoinIP string
 	ClusterSecret string
 
-	ServePath  string
-	ServePort  int
-	ServeBind  string
-	ServeHTTPS bool
+	ServePath     string
+	ServePort     int
+	ServeBind     string
+	ServeHTTPS    bool
+	ServeMarkdown bool
 
 	ProxyTarget string
 	ProxyDomain string

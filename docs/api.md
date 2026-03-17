@@ -22,21 +22,25 @@ Instead of manually creating HCL files for every new service deployment, you can
 │   API   │                              │ Cluster│
 └─────────┘                              └────┬────┘
 │
-┌──────────┼──────────┐
-▼          ▼          ▼
-┌─────────┐ ┌─────────┐ ┌─────────┐
-│ Node 1  │ │ Node 2  │ │ Node 3  │
-│ route   │ │ route   │ │ route   │
-└─────────┘ └─────────┘ └─────────┘
+┌─────────────────────┼─────────────────────┐
+▼                     ▼                     ▼
+┌─────────┐           ┌─────────┐           ┌─────────┐
+│ Node 1  │           │ Node 2  │           │ Node 3  │
+│ route   │           │ route   │           │ route   │
+└─────────┘           └─────────┘           └─────────┘
 ```
 
 1. A service (or orchestrator) calls the Agbero API
-2. The route is stored in the cluster's gossip state
-3. All nodes in the cluster receive the route automatically
+2. The route is stored in the cluster's gossip state with key `route:host|path`
+3. All nodes in the cluster receive the route automatically via gossip
 4. Traffic is immediately load-balanced to the new service
 5. Routes expire after TTL if not renewed
 
-## Configuration
+---
+
+## Prerequisites
+
+### 1. Enable Admin API
 
 First, ensure the admin API is enabled in your `agbero.hcl`:
 
@@ -45,20 +49,20 @@ admin {
   enabled = true
   address = ":9090"
   
-  # Authentication for API access
+  # Enable authentication for API access
   jwt_auth {
     enabled = true
-    secret = "your-jwt-secret"  # or use internal_auth_key
+    secret = "${env.ADMIN_JWT_SECRET}"  # or use internal_auth_key
   }
 }
 ```
 
-## Authentication
+### 2. Generate Authentication Credentials
 
-### Method 1: JWT Token (for automation)
+#### For JWT Authentication (Human Users)
 
 ```bash
-# Get a JWT token
+# Get a JWT token (if using basic_auth)
 curl -X POST http://localhost:9090/login \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "your-password"}'
@@ -68,26 +72,9 @@ curl -X POST http://localhost:9090/login \
   "token": "eyJhbGciOiJIUzI1NiIs...",
   "expires": "2024-01-16T10:30:00Z"
 }
-
-# Use token for API calls
-curl -X POST http://localhost:9090/api/v1/routes \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
-  -H "Content-Type: application/json" \
-  -d '{
-    "host": "service-123.example.com",
-    "route": {
-      "path": "/api/*",
-      "backend": {
-        "servers": [
-          {"address": "http://10.0.0.123:8080", "weight": 1}
-        ]
-      }
-    },
-    "ttl_seconds": 300
-  }'
 ```
 
-### Method 2: Internal Auth Key (for service-to-service)
+#### For Internal Auth Key (Service-to-Service)
 
 ```bash
 # Generate internal auth key (one-time setup)
@@ -96,25 +83,39 @@ agbero secret key init
 # Generate a token for your service
 agbero secret token --service auto-scaler --ttl 8760h
 
-# Use token for API calls
-curl -X POST http://localhost:9090/api/v1/routes \
-  -H "Authorization: Bearer <token-from-command>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "host": "service-123.example.com",
-    "route": {
-      "path": "/api/*",
-      "backend": {
-        "servers": [
-          {"address": "http://10.0.0.123:8080", "weight": 1}
-        ]
-      }
-    },
-    "ttl_seconds": 300
-  }'
+# Response
+API Token for service: auto-scaler
+Expires: 2025-03-15T10:30:00Z (8760h0m0s)
+------------------------------------------------------------
+eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJzdmMiOiJhdXRvLXNjYWxlciIsImlhdCI6MTcxMDUwMTAwMCwiZXhwIjoxNzQyMDM3MDAwfQ...
+------------------------------------------------------------
 ```
 
+---
+
 ## API Endpoints
+
+All API endpoints are under the `/api/v1/` prefix and require authentication.
+
+### Base URL
+
+```
+http://localhost:9090/api/v1/
+```
+
+### Authentication Header
+
+All requests must include an `Authorization` header:
+
+```bash
+# JWT token
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+
+# Internal auth token
+Authorization: Bearer eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9...
+```
+
+---
 
 ### Create Ephemeral Route
 
@@ -129,6 +130,7 @@ Creates a new route that is broadcast to all cluster nodes. The route will autom
   "route": {
     "path": "/api/*",
     "backend": {
+      "strategy": "round_robin",
       "servers": [
         {
           "address": "http://10.0.0.123:8080",
@@ -151,9 +153,19 @@ Creates a new route that is broadcast to all cluster nodes. The route will autom
 
 **What happens:**
 - Route is stored in cluster state with key `route:service-123.example.com|/api/*`
-- All nodes receive the route within seconds
+- All nodes receive the route within seconds via gossip
 - Traffic to `service-123.example.com/api/*` is load-balanced to the specified backend
 - After 300 seconds, the route is automatically deleted from all nodes
+
+**Supported route fields:**
+| Field | Description | Example |
+|-------|-------------|---------|
+| `path` | Route path pattern | `/api/*`, `/users/{id}` |
+| `backend.strategy` | Load balancing strategy | `round_robin`, `least_conn`, `ip_hash` |
+| `backend.servers[].address` | Backend server address | `http://10.0.0.123:8080` |
+| `backend.servers[].weight` | Server weight (for weighted strategies) | `1` (default), `10` |
+
+---
 
 ### Delete Ephemeral Route
 
@@ -161,6 +173,13 @@ Creates a new route that is broadcast to all cluster nodes. The route will autom
 
 Explicitly remove a route before its TTL expires.
 
+**Query Parameters:**
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `host` | Hostname of the route | Yes |
+| `path` | Path of the route (default: `/`) | No |
+
+**Request:**
 ```bash
 curl -X DELETE "http://localhost:9090/api/v1/routes?host=service-123.example.com&path=/api/*" \
   -H "Authorization: Bearer <token>"
@@ -174,9 +193,31 @@ curl -X DELETE "http://localhost:9090/api/v1/routes?host=service-123.example.com
 }
 ```
 
+---
+
+## Route Storage Format
+
+Routes created via the API are stored in the cluster with a wrapper that includes expiration metadata:
+
+```go
+type ClusterRouteWrapper struct {
+    Route     alaye.Route `json:"route"`
+    ExpiresAt time.Time   `json:"expires_at"`
+}
+```
+
+The cluster key format is:
+```
+route:{host}|{path}
+```
+
+Example: `route:service-123.example.com|/api/*`
+
+---
+
 ## Real-World Usage Examples
 
-### Example 1: Auto-scaling Web Service
+### Example 1: Auto-scaling Web Service (Python)
 
 When a new instance spins up in your auto-scaling group, it registers itself:
 
@@ -184,50 +225,88 @@ When a new instance spins up in your auto-scaling group, it registers itself:
 import requests
 import socket
 import time
+import os
 
-# Get my IP address
-hostname = socket.gethostname()
-ip_address = socket.gethostbyname(hostname)
+# Configuration
+API_URL = "http://agbero-cluster:9090/api/v1"
+TOKEN = os.environ.get("AGBERO_TOKEN")
 
-# Register with Agbero
-response = requests.post(
-    "http://agbero-cluster:9090/api/v1/routes",
-    headers={"Authorization": "Bearer your-token"},
-    json={
-        "host": f"webapp-{hostname}.example.com",
-        "route": {
-            "path": "/*",
-            "backend": {
-                "servers": [
-                    {"address": f"http://{ip_address}:8080", "weight": 1}
-                ]
-            }
-        },
-        "ttl_seconds": 60  # Renew every minute
-    }
-)
+class ServiceRegistry:
+    def __init__(self, service_name, port):
+        self.service_name = service_name
+        self.port = port
+        self.hostname = socket.gethostname()
+        self.ip_address = socket.gethostbyname(self.hostname)
+        
+    def register(self, ttl=60):
+        """Register this service with Agbero"""
+        payload = {
+            "host": f"{self.service_name}-{self.hostname}.internal",
+            "route": {
+                "path": "/*",
+                "backend": {
+                    "servers": [
+                        {
+                            "address": f"http://{self.ip_address}:{self.port}",
+                            "weight": 1
+                        }
+                    ]
+                }
+            },
+            "ttl_seconds": ttl
+        }
+        
+        response = requests.post(
+            f"{API_URL}/routes",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json=payload
+        )
+        
+        if response.status_code == 200:
+            print(f"Registered {self.service_name} with TTL {ttl}s")
+            return response.json()["key"]
+        else:
+            print(f"Registration failed: {response.text}")
+            return None
+    
+    def heartbeat(self, key, ttl=60):
+        """Renew registration by re-POSTing"""
+        return self.register(ttl)
 
-# Keep renewing
-while True:
-    time.sleep(45)
-    # Renew by POSTing again with same data
-    requests.post(...)
+# Usage
+if __name__ == "__main__":
+    registry = ServiceRegistry("webapp", 8080)
+    
+    # Initial registration
+    key = registry.register(ttl=30)
+    
+    # Heartbeat loop
+    while True:
+        time.sleep(25)
+        registry.heartbeat(key, ttl=30)
 ```
 
-### Example 2: Canary Deployment
+---
+
+### Example 2: Canary Deployment (Bash)
 
 Gradually shift traffic to a new version:
 
 ```bash
+#!/bin/bash
+API="http://localhost:9090/api/v1"
+TOKEN="your-token-here"
+
 # Deploy v2 with 10% traffic
-curl -X POST http://localhost:9090/api/v1/routes \
-  -H "Authorization: Bearer <token>" \
+curl -X POST "$API/routes" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
   -d '{
     "host": "api.example.com",
     "route": {
-      "path": "/v2/*",
+      "path": "/*",
       "backend": {
-        "strategy": "round_robin",
+        "strategy": "weighted_least_conn",
         "servers": [
           {"address": "http://v1-api:8080", "weight": 90},
           {"address": "http://v2-api:8080", "weight": 10}
@@ -238,14 +317,13 @@ curl -X POST http://localhost:9090/api/v1/routes \
   }'
 
 # After monitoring, shift to 50/50
-curl -X POST http://localhost:9090/api/v1/routes \
-  -H "Authorization: Bearer <token>" \
+curl -X POST "$API/routes" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "host": "api.example.com",
     "route": {
-      "path": "/v2/*",
+      "path": "/*",
       "backend": {
-        "strategy": "round_robin",
         "servers": [
           {"address": "http://v1-api:8080", "weight": 50},
           {"address": "http://v2-api:8080", "weight": 50}
@@ -256,12 +334,12 @@ curl -X POST http://localhost:9090/api/v1/routes \
   }'
 
 # Finally, full v2
-curl -X POST http://localhost:9090/api/v1/routes \
-  -H "Authorization: Bearer <token>" \
+curl -X POST "$API/routes" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "host": "api.example.com",
     "route": {
-      "path": "/v2/*",
+      "path": "/*",
       "backend": {
         "servers": [
           {"address": "http://v2-api:8080", "weight": 100}
@@ -272,40 +350,11 @@ curl -X POST http://localhost:9090/api/v1/routes \
   }'
 ```
 
-### Example 3: Temporary Preview Environment
+---
+
+### Example 3: Temporary Preview Environment (Go)
 
 For each PR, create a temporary route:
-
-```bash
-#!/bin/bash
-PR_NUMBER=$1
-COMMIT_HASH=$2
-
-# Deploy preview environment
-kubectl apply -f k8s/preview-$PR_NUMBER.yaml
-
-# Register with Agbero
-curl -X POST http://agbero:9090/api/v1/routes \
-  -H "Authorization: Bearer <token>" \
-  -d "{
-    \"host\": \"pr-$PR_NUMBER.preview.example.com\",
-    \"route\": {
-      \"path\": \"/*\",
-      \"backend\": {
-        \"servers\": [
-          {\"address\": \"http://preview-$PR_NUMBER:8080\", \"weight\": 1}
-        ]
-      }
-    },
-    \"ttl_seconds\": 86400
-  }"
-
-echo "Preview URL: http://pr-$PR_NUMBER.preview.example.com"
-```
-
-### Example 4: Service Mesh Style Routing
-
-Services discover and route to each other dynamically:
 
 ```go
 package main
@@ -313,83 +362,207 @@ package main
 import (
     "bytes"
     "encoding/json"
+    "fmt"
     "net/http"
-    "time"
+    "os"
 )
 
-type ServiceRegistry struct {
-    apiURL    string
-    token     string
-    services  map[string]string
+type RouteRequest struct {
+    Host       string      `json:"host"`
+    Route      RouteConfig `json:"route"`
+    TTLSeconds int         `json:"ttl_seconds"`
 }
 
-func (r *ServiceRegistry) Register(serviceName, address string, ttl int) error {
-    route := map[string]interface{}{
-        "host": serviceName + ".internal",
-        "route": map[string]interface{}{
-            "path": "/*",
-            "backend": map[string]interface{}{
-                "servers": []map[string]interface{}{
-                    {"address": "http://" + address, "weight": 1},
+type RouteConfig struct {
+    Path    string        `json:"path"`
+    Backend BackendConfig `json:"backend"`
+}
+
+type BackendConfig struct {
+    Servers []ServerConfig `json:"servers"`
+}
+
+type ServerConfig struct {
+    Address string `json:"address"`
+    Weight  int    `json:"weight,omitempty"`
+}
+
+func createPreviewRoute(prNumber, commitHash string) error {
+    apiURL := os.Getenv("AGBERO_API_URL")
+    token := os.Getenv("AGBERO_TOKEN")
+    
+    route := RouteRequest{
+        Host: fmt.Sprintf("pr-%s.preview.example.com", prNumber),
+        Route: RouteConfig{
+            Path: "/*",
+            Backend: BackendConfig{
+                Servers: []ServerConfig{
+                    {
+                        Address: fmt.Sprintf("http://preview-%s:8080", prNumber),
+                        Weight:  1,
+                    },
                 },
             },
         },
-        "ttl_seconds": ttl,
+        TTLSeconds: 86400, // 24 hours
     }
     
     data, _ := json.Marshal(route)
-    resp, err := http.Post(
-        r.apiURL+"/api/v1/routes",
-        "application/json",
-        bytes.NewReader(data),
-    )
-    return err
-}
-
-func (r *ServiceRegistry) Discover(serviceName string) (string, error) {
-    // Routes are automatically available to all nodes
-    // Just use the hostname: serviceName + ".internal"
-    return serviceName + ".internal", nil
+    req, _ := http.NewRequest("POST", apiURL+"/routes", bytes.NewReader(data))
+    req.Header.Set("Authorization", "Bearer "+token)
+    req.Header.Set("Content-Type", "application/json")
+    
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return err
+    }
+    defer resp.Body.Close()
+    
+    if resp.StatusCode != http.StatusOK {
+        return fmt.Errorf("API returned %d", resp.StatusCode)
+    }
+    
+    fmt.Printf("Preview URL: http://pr-%s.preview.example.com\n", prNumber)
+    return nil
 }
 
 func main() {
-    registry := &ServiceRegistry{
-        apiURL: "http://agbero-cluster:9090",
-        token:  "your-auth-token",
+    if len(os.Args) < 3 {
+        fmt.Println("Usage: create-preview <pr-number> <commit-hash>")
+        os.Exit(1)
     }
     
-    // Register this service
-    registry.Register("auth-service", "10.0.0.50:9000", 30)
-    
-    // Discover and call another service
-    authURL, _ := registry.Discover("auth-service")
-    http.Get("http://" + authURL + "/health")
+    if err := createPreviewRoute(os.Args[1], os.Args[2]); err != nil {
+        fmt.Printf("Error: %v\n", err)
+        os.Exit(1)
+    }
 }
 ```
 
-## Cluster Awareness
+---
 
-Routes created via the API are automatically distributed to all nodes in the cluster:
+### Example 4: Service Mesh Style Routing (Node.js)
+
+Services discover and route to each other dynamically:
+
+```javascript
+// service-registry.js
+const axios = require('axios');
+
+class ServiceRegistry {
+    constructor(apiUrl, token) {
+        this.apiUrl = apiUrl;
+        this.token = token;
+        this.services = new Map();
+    }
+    
+    async register(serviceName, address, port, ttl = 30) {
+        const hostname = require('os').hostname();
+        const payload = {
+            host: `${serviceName}-${hostname}.internal`,
+            route: {
+                path: '/*',
+                backend: {
+                    servers: [
+                        { address: `http://${address}:${port}`, weight: 1 }
+                    ]
+                }
+            },
+            ttl_seconds: ttl
+        };
+        
+        try {
+            const response = await axios.post(
+                `${this.apiUrl}/routes`,
+                payload,
+                { headers: { Authorization: `Bearer ${this.token}` } }
+            );
+            
+            console.log(`Registered ${serviceName} with TTL ${ttl}s`);
+            return response.data.key;
+        } catch (error) {
+            console.error('Registration failed:', error.message);
+            return null;
+        }
+    }
+    
+    async discover(serviceName) {
+        // Routes are automatically available to all nodes
+        // Just use the hostname pattern: serviceName-instance.internal
+        return `${serviceName}-*.internal`;
+    }
+    
+    async call(serviceName, path) {
+        // In real code, you'd need to get actual instance IPs
+        // This is a simplified example
+        const hostPattern = await this.discover(serviceName);
+        // In practice, you'd query the cluster or use DNS
+        return `http://${hostPattern.replace('*', 'active')}${path}`;
+    }
+}
+
+// Usage
+async function main() {
+    const registry = new ServiceRegistry(
+        'http://agbero-cluster:9090/api/v1',
+        process.env.AGBERO_TOKEN
+    );
+    
+    // Register this service
+    await registry.register('auth-service', '10.0.0.50', 9000, 30);
+    
+    // Discover and call another service
+    const authURL = await registry.call('auth-service', '/health');
+    console.log(`Auth service URL: ${authURL}`);
+}
+
+main();
+```
+
+---
+
+## Monitoring Routes
+
+### Check Active Routes via Uptime Endpoint
 
 ```bash
-# On node1, create a route
-curl -X POST http://node1:9090/api/v1/routes ... -d '{...}'
-
-# On node2, the route is automatically available
-curl http://node2:9090/uptime | jq '.hosts'
-# The route appears in node2's configuration without any extra work
+curl http://localhost:9090/uptime | jq '.hosts'
 ```
+
+Look for hosts with dynamic routes (they'll appear like regular hosts).
+
+### Cluster Metrics
+
+```bash
+curl http://localhost:9090/uptime | jq '.cluster.metrics'
+```
+
+Example response:
+```json
+{
+  "updates_received": 150,
+  "updates_ignored": 12,
+  "deletes": 45,
+  "joins": 3,
+  "leaves": 1
+}
+```
+
+---
 
 ## Route Persistence vs Ephemeral Routes
 
-| Feature | HCL Files (hosts.d/) | API Routes |
-|---------|---------------------|------------|
-| Persistence | Persistent on disk | Ephemeral, expires with TTL |
-| Management | Manual file edits | Programmatic API |
-| Distribution | File sync (manual/SCM) | Automatic cluster gossip |
-| Use Case | Permanent services | Dynamic/temporary services |
-| TTL Support | No | Yes |
-| Auto-cleanup | No | Yes (on expiry) |
+| Feature | HCL Files (`hosts.d/`) | API Routes |
+|---------|------------------------|------------|
+| **Persistence** | Persistent on disk | Ephemeral, expires with TTL |
+| **Management** | Manual file edits | Programmatic API |
+| **Distribution** | File sync (manual/SCM) | Automatic cluster gossip |
+| **Use Case** | Permanent services | Dynamic/temporary services |
+| **TTL Support** | No | Yes |
+| **Auto-cleanup** | No | Yes (on expiry) |
+| **Key Format** | Filename-based | `route:{host}\|{path}` |
+
+---
 
 ## Best Practices
 
@@ -398,20 +571,86 @@ curl http://node2:9090/uptime | jq '.hosts'
 3. **Always authenticate** - use internal auth keys for service-to-service
 4. **Monitor route counts** - ensure expired routes are being cleaned up
 5. **Combine with HCL** - use HCL for infrastructure, API for application services
+6. **Include health checks** in your service registration
+7. **Implement graceful shutdown** - deregister on service termination
 
-## Monitoring
+### Renewal Pattern
 
-Check active ephemeral routes via the uptime endpoint:
-
-```bash
-curl http://localhost:9090/uptime | jq '.hosts'
-
-# Look for hosts with "route:" prefix in cluster metrics
-curl http://localhost:9090/uptime | jq '.cluster.metrics'
+```python
+def run_with_registration(registry, ttl=30):
+    key = registry.register(ttl)
+    try:
+        while True:
+            time.sleep(ttl * 0.8)  # Renew at 80% of TTL
+            registry.heartbeat(key, ttl)
+    except KeyboardInterrupt:
+        # Optionally deregister on shutdown
+        registry.deregister(key)
 ```
+
+---
+
+## Error Handling
+
+| HTTP Status | Meaning | Handling |
+|-------------|---------|----------|
+| `200 OK` | Success | Proceed |
+| `400 Bad Request` | Invalid JSON or missing fields | Check request format |
+| `401 Unauthorized` | Missing or invalid token | Check authentication |
+| `403 Forbidden` | Token invalid or expired | Refresh token |
+| `500 Internal Server Error` | Server error | Retry with backoff |
+| `503 Service Unavailable` | Cluster disabled | Enable gossip cluster |
+
+---
+
+## Rate Limiting
+
+The API itself is subject to rate limiting if configured in `rate_limits`. Consider excluding the API from rate limits:
+
+```hcl
+rate_limits {
+  rules = [
+    {
+      name = "global-limit"
+      prefixes = ["/api/"]
+      enabled = false  # Disable rate limiting for API
+    }
+  ]
+}
+```
+
+---
+
+## Implementation Details
+
+The API is implemented in:
+
+- `internal/operation/api/router.go` - Main router and auth
+- `internal/operation/api/handlers.go` - Route handlers
+- `admin.go` - Admin server setup and authentication
+
+### Key Components
+
+```go
+// Route storage in cluster
+type ClusterRouteWrapper struct {
+    Route     alaye.Route `json:"route"`
+    ExpiresAt time.Time   `json:"expires_at"`
+}
+
+// API request payload
+type routePayload struct {
+    Host       string      `json:"host"`
+    Route      alaye.Route `json:"route"`
+    TTLSeconds int         `json:"ttl_seconds"`
+}
+```
+
+---
 
 ## Next Steps
 
 - **Cluster Setup**: See [Advanced Guide](./advance.md) for gossip configuration
 - **Authentication**: See [Global Configuration](./global.md) for admin auth setup
 - **Route Options**: See [Host Configuration](./host.md) for all route parameters
+- **CLI Reference**: See [Command Guide](./command.md) for generating tokens

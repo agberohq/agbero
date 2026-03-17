@@ -117,6 +117,22 @@ class AgberoApp {
         this.gitStats = data.git || {};
 
         const stats = this.parseMetricsJSON(data);
+
+        // Calculate RPS
+        const now = Date.now();
+        const timeDiffSeconds = (now - this.lastReqTime) / 1000;
+
+        if (this.lastReqTotal > 0 && timeDiffSeconds > 0) {
+            const reqDiff = stats.total_reqs - this.lastReqTotal;
+            stats.rps = reqDiff / timeDiffSeconds;
+        } else {
+            stats.rps = 0;
+        }
+
+        // Store current values for next calculation
+        this.lastReqTotal = stats.total_reqs;
+        this.lastReqTime = now;
+
         const metrics = {
             stats,
             system: data.system || {},
@@ -694,5 +710,168 @@ class AgberoApp {
             const staleTime = Date.now() - this.lastUpdateTime;
             UI.updateStaleState(staleTime > 10000);
         }, 1000);
+    }
+
+
+    // Add to AgberoApp class
+    async exportLogs() {
+        try {
+            const lines = document.getElementById("logsTailSelect")?.value || "1000";
+            const data = await this.api(`/logs?lines=${lines}`);
+
+            if (data && Array.isArray(data)) {
+                // Format logs nicely for export
+                const formattedLogs = data.map(log => {
+                    if (typeof log === 'object' && log !== null) {
+                        // For JSON logs, format with timestamp first for readability
+                        const ts = log.ts || '';
+                        const lvl = log.lvl || 'INFO';
+                        const msg = log.msg || '';
+                        const fields = log.fields || {};
+
+                        // Create a readable log line: [TIMESTAMP] LEVEL - message (method path)
+                        let readableLine = `[${ts}] ${lvl} - ${msg}`;
+
+                        // Add method and path if available
+                        if (fields.method && fields.path) {
+                            readableLine += ` ${fields.method} ${fields.path}`;
+                        }
+
+                        // Add status if available
+                        if (fields.status) {
+                            readableLine += ` [${fields.status}]`;
+                        }
+
+                        // Add duration if available
+                        if (fields.duration) {
+                            const durationMs = (fields.duration / 1000000).toFixed(2);
+                            readableLine += ` (${durationMs}ms)`;
+                        }
+
+                        // Add remote address if available
+                        if (fields.remote) {
+                            readableLine += ` from ${fields.remote}`;
+                        }
+
+                        // Also include the raw JSON for completeness
+                        return readableLine + '\n' + JSON.stringify(log);
+                    }
+                    return typeof log === 'string' ? log : JSON.stringify(log);
+                }).join('\n---\n'); // Separator between logs
+
+                const blob = new Blob([formattedLogs], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `agbero-logs-${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.log`;
+                a.click();
+                URL.revokeObjectURL(url);
+
+                // Optional: Show success feedback
+                const btn = document.getElementById('logsExportBtn');
+                if (btn) {
+                    const originalText = btn.innerText;
+                    btn.innerText = '✓ Exported';
+                    setTimeout(() => btn.innerText = originalText, 2000);
+                }
+            }
+        } catch (e) {
+            console.error('Failed to export logs:', e);
+            alert('Failed to export logs. Check console for details.');
+        }
+    }
+
+
+    // Add to AgberoApp class
+    checkLatency() {
+        const start = Date.now();
+        // Use a HEAD request to minimize data transfer
+        fetch(`${this.apiBase}/uptime`, {
+            method: 'HEAD',
+            cache: 'no-cache'
+        })
+            .then(() => {
+                const latency = Date.now() - start;
+
+                if (latency < 100) this.connectionQuality = 'excellent';
+                else if (latency < 300) this.connectionQuality = 'good';
+                else if (latency < 1000) this.connectionQuality = 'fair';
+                else this.connectionQuality = 'poor';
+
+                this.updateConnectionIndicator(latency);
+            })
+            .catch(() => {
+                this.connectionQuality = 'offline';
+                this.updateConnectionIndicator();
+            });
+    }
+
+    updateConnectionIndicator(latency) {
+        const indicator = document.getElementById('connectionIndicator');
+        if (!indicator) return;
+
+        // Remove existing classes
+        indicator.className = 'sys-item';
+
+        // Add quality class and update content
+        switch(this.connectionQuality) {
+            case 'excellent':
+                indicator.innerHTML = '⚡ <span id="connLatency">' + (latency || '') + 'ms</span>';
+                indicator.style.color = 'var(--success)';
+                break;
+            case 'good':
+                indicator.innerHTML = '✓ <span id="connLatency">' + (latency || '') + 'ms</span>';
+                indicator.style.color = 'var(--info)';
+                break;
+            case 'fair':
+                indicator.innerHTML = '⚠️ <span id="connLatency">' + (latency || '') + 'ms</span>';
+                indicator.style.color = 'var(--warning)';
+                break;
+            case 'poor':
+                indicator.innerHTML = '🐢 <span id="connLatency">' + (latency || '') + 'ms</span>';
+                indicator.style.color = 'var(--danger)';
+                break;
+            case 'offline':
+                indicator.innerHTML = '❌ offline';
+                indicator.style.color = 'var(--danger)';
+                break;
+            default:
+                indicator.innerHTML = '○';
+                indicator.style.color = 'var(--text-mute)';
+        }
+
+        indicator.title = `Connection: ${this.connectionQuality}${latency ? ` · ${latency}ms` : ''}`;
+    }
+
+    startLatencyCheck() {
+        if (this.latencyCheckInterval) clearInterval(this.latencyCheckInterval);
+        this.checkLatency(); // Immediate check
+        this.latencyCheckInterval = setInterval(() => this.checkLatency(), 30000);
+    }
+
+// Modify startLoop to also start latency checks
+    startLoop() {
+        this.stopLoop();
+        const interval = this.isOnline ? 2000 : 10000;
+
+        this.timers.metrics = setInterval(() => this.fetchMetrics(), interval);
+        this.timers.config = setInterval(() => {
+            if (this.page === 'hosts' || this.page === 'map' || this.page === 'cluster') this.fetchHostsData();
+        }, this.isOnline ? 10000 : 30000);
+        this.timers.logs = setInterval(() => {
+            if (this.page === 'logs' && !this.logsPaused) this.fetchLogs();
+        }, interval);
+
+        // Start latency checks
+        this.startLatencyCheck();
+    }
+
+// Add cleanup
+    stopLoop() {
+        if (this.timers.metrics) clearInterval(this.timers.metrics);
+        if (this.timers.config) clearInterval(this.timers.config);
+        if (this.timers.logs) clearInterval(this.timers.logs);
+        if (this.latencyCheckInterval) clearInterval(this.latencyCheckInterval);
+        this.timers = { metrics: null, config: null, logs: null };
     }
 }

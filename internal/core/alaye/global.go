@@ -12,8 +12,8 @@ type Global struct {
 	Storage  Storage `hcl:"storage,block" json:"storage"`
 	General  General `hcl:"general,block" json:"general"`
 
-	Admin       Admin       `hcl:"admin,block" json:"admin"`
-	Pprof       Pprof       `hcl:"pprof,block" json:"pprof"`
+	Admin Admin `hcl:"admin,block" json:"admin"`
+
 	API         API         `hcl:"api,block" json:"api"`
 	Logging     Logging     `hcl:"logging,block" json:"logging"`
 	Security    Security    `hcl:"security,block" json:"security"`
@@ -22,7 +22,6 @@ type Global struct {
 	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt"`
 	Fallback    Fallback    `hcl:"fallback,block" json:"fallback"`
 	ErrorPages  ErrorPages  `hcl:"error_pages,block" json:"error_pages"`
-	Telemetry   Telemetry   `hcl:"telemetry,block" json:"telemetry"` // ← added; off by default
 }
 
 // Validate checks all nested blocks in the global configuration.
@@ -34,9 +33,7 @@ func (g *Global) Validate() error {
 	if err := g.Admin.Validate(); err != nil {
 		return errors.Newf("admin: %w", err)
 	}
-	if err := g.Pprof.Validate(); err != nil {
-		return errors.Newf("pprof: %w", err)
-	}
+
 	if err := g.API.Validate(); err != nil {
 		return errors.Newf("api: %w", err)
 	}

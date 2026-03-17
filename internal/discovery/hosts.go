@@ -653,7 +653,7 @@ func (hm *Host) rebuildLookupLocked() {
 		domainToRoutes[host] = append(domainToRoutes[host], route)
 
 		if _, exists := domainToConfig[host]; !exists {
-			defaultHost := alaye.NewStaticHost(host, emptyString, true)
+			defaultHost := woos.NewStaticHost(woos.Static{Domain: host, Target: emptyString, IsProxy: true})
 			defaultHost.Routes = nil
 			domainToConfig[host] = defaultHost
 		}

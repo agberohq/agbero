@@ -63,7 +63,6 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 				}
 
 				go compressLogFile(backupName)
-
 				return nil
 			},
 		}

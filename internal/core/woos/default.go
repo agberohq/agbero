@@ -121,7 +121,7 @@ func defaultGlobal(g *alaye.Global, configPath string) {
 	defaultGossip(&g.Gossip)
 	defaultLetsEncrypt(&g.LetsEncrypt)
 	defaultFallback(&g.Fallback)
-	defaultTelemetry(&g.Telemetry)
+
 }
 
 func defaultRouteAll(r *alaye.Route) {
@@ -230,6 +230,7 @@ func defaultAdmin(a *alaye.Admin) {
 		defaultJWTAuth(&a.JWTAuth)
 		defaultForwardAuth(&a.ForwardAuth)
 		defaultOAuth(&a.OAuth)
+		defaultTelemetry(&a.Telemetry)
 	}
 }
 

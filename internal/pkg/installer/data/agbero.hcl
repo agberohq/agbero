@@ -41,6 +41,11 @@ admin {
   #   bind = "6061"
   # }
 
+  # Telemetry for admin is enabled by default
+  telemetry {
+    enabled = "on"
+  }
+
   # ---------------------------------------------------------
   # BASIC AUTH (for /login endpoint)
   # ---------------------------------------------------------
@@ -218,10 +223,10 @@ gossip {
 # ACME / LET'S ENCRYPT
 # -------------------------------------------------------------
 letsencrypt {
-  enabled = "on"
+  enabled = "{LE_ENABLED}"
 
   # Email for registration and expiry notifications
-  email = "admin@example.com"
+  email = "{LE_EMAIL}"
 
   # Use staging CA for testing (avoids rate limits, untrusted certs)
   staging = true

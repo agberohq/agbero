@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/discovery"
 )
 
 func mockHostManager(t *testing.T) *discovery.Host {
 	hm := discovery.NewHost("")
 
-	host := alaye.NewStaticHost("test.local", "http://backend:8080", true)
+	host := woos.NewStaticHost(woos.Static{Domain: "test.local", Target: "http://backend:8080", IsProxy: true, Markdown: true})
 	host.Routes[0].Path = "/api"
 
 	hostsMap := map[string]*alaye.Host{
@@ -26,7 +27,7 @@ func mockHostManager(t *testing.T) *discovery.Host {
 
 func TestAdminConfigDumpStructure(t *testing.T) {
 	hm := mockHostManager(t)
-	global := alaye.NewEphemeralGlobal(8080, false)
+	global := woos.NewEphemeralGlobal(8080, false)
 
 	srv := NewServer(
 		WithHostManager(hm),
@@ -94,7 +95,7 @@ func TestAdminConfigDumpStructure(t *testing.T) {
 
 func TestClusterInfoExposure(t *testing.T) {
 	hm := discovery.NewHost("")
-	global := alaye.NewEphemeralGlobal(8080, false)
+	global := woos.NewEphemeralGlobal(8080, false)
 
 	srv := NewServer(
 		WithHostManager(hm),

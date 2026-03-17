@@ -43,6 +43,10 @@ const UI = {
         setText("apdexStat", stats.apdex || "1.0");
         setText("uptimeStat", stats.uptime || "100%");
 
+        // Add RPS display - THIS IS THE KEY FIX
+        const rps = stats.rps !== undefined ? stats.rps.toFixed(1) : "0.0";
+        setText("rpsStat", rps);
+
         const errorRate = stats.total_reqs > 0 ? ((stats.total_errors / stats.total_reqs) * 100).toFixed(1) : 0;
         setText("errorRateText", `${errorRate}% errors`);
     },
@@ -114,8 +118,8 @@ const UI = {
             return;
         }
 
-        const trustedProxies = global.security?.trusted_proxies ||[];
-        const settings =[
+        const trustedProxies = global.security?.trusted_proxies || [];
+        const settings = [
             {label: 'Environment', value: global.development ? 'development' : 'production'},
             {label: 'Admin Email', value: global.lets_encrypt?.email || '—'},
             {
@@ -175,7 +179,7 @@ const UI = {
             return;
         }
 
-        const members = stats.members ||[];
+        const members = stats.members || [];
         const metrics = stats.metrics || {};
 
         grid.innerHTML = `
@@ -275,8 +279,8 @@ const UI = {
             return;
         }
 
-        for (const[hostname, cfg] of Object.entries(hosts)) {
-            const domainsStr = (cfg.domains ||[]).join(" ");
+        for (const [hostname, cfg] of Object.entries(hosts)) {
+            const domainsStr = (cfg.domains || []).join(" ");
             const matchesHost = hostname.toLowerCase().includes(filterTerm) || domainsStr.toLowerCase().includes(filterTerm);
 
             let hostHtml = "";
@@ -310,10 +314,13 @@ const UI = {
             hostHtml += `
         <div class="host-row" data-hostname="${hostname}">
             <div class="host-header">
-                <div class="host-name">${hostname} 
-                    <span class="badge ${tlsClass}" title="${tlsTitle}">${tlsText}</span>
+                <div>
+                    <div class="host-name">${hostname}
+                        <span class="badge ${tlsClass}" title="${tlsTitle}">${tlsText}</span>${rtStats.total_reqs ? `<span class="badge" style="background:var(--hover-bg);color:var(--text-mute);border:1px solid var(--border);">${this.fmtNum(rtStats.total_reqs)} reqs</span>` : ''}
+                    </div>
+                    ${cfg.domains?.length && cfg.domains.join(", ") !== hostname ? `<div class="host-meta">${cfg.domains.join(", ")}</div>` : ''}
                 </div>
-                <div class="host-meta">${cfg.domains?.join(", ")} &bull; ${this.fmtNum(rtStats.total_reqs || 0)} Reqs</div>
+                <span class="host-perf-hint">Performance &nearr;</span>
             </div>`;
 
             if (cfg.routes && Array.isArray(cfg.routes)) {
@@ -323,8 +330,8 @@ const UI = {
                     const routeStats = (rtStats.routes && rtStats.routes[idx]) || {};
 
                     let backendHtml = "";
-                    const configBackends = route.backends?.servers ||[];
-                    const uptimeBackends = routeStats.backends ||[];
+                    const configBackends = route.backends?.servers || [];
+                    const uptimeBackends = routeStats.backends || [];
 
                     if (configBackends.length > 0 || uptimeBackends.length > 0) {
                         const displayBackends = uptimeBackends.length > 0 ? uptimeBackends : configBackends;
@@ -418,7 +425,7 @@ const UI = {
 
                     let backendHtml = "";
                     const configBackends = proxy.backends || [];
-                    const uptimeBackends = proxyStats.backends ||[];
+                    const uptimeBackends = proxyStats.backends || [];
 
                     if (configBackends.length > 0 || uptimeBackends.length > 0) {
                         const displayBackends = uptimeBackends.length > 0 ? uptimeBackends : configBackends;
@@ -532,7 +539,7 @@ const UI = {
             return;
         }
 
-        const rules = data.rules ||[];
+        const rules = data.rules || [];
         if (rules.length === 0) {
             tbody.innerHTML = `<tr><td colspan="5" style="padding:20px;"><div class="empty-state">
                 <span>✅ No blocked IPs</span>
@@ -554,16 +561,16 @@ const UI = {
             </tr>`;
         }).join("");
     },
-
+    
     renderLogs(logs, filter) {
         const container = document.getElementById("logsList");
         if (!container) return;
 
         if (!logs || logs.length === 0) {
             container.innerHTML = `<div style="color:var(--text-mute); text-align:center; padding:40px;">
-                <span style="display:block; font-size:24px; margin-bottom:10px;">📭</span>
-                No logs yet. Waiting for traffic...
-            </div>`;
+            <span style="display:block; font-size:24px; margin-bottom:10px;">📭</span>
+            No logs yet. Waiting for traffic...
+        </div>`;
             return;
         }
 
@@ -571,7 +578,10 @@ const UI = {
             if (filter === "ALL") return true;
             let lvl = "INFO";
             if (typeof l === 'object' && l !== null) lvl = l.lvl || l.level || "INFO";
-            else if (typeof l === 'string' && l.includes("ERR")) lvl = "ERROR";
+            else if (typeof l === 'string') {
+                if (l.includes('"lvl":"ERROR"') || l.includes('ERROR')) lvl = "ERROR";
+                else if (l.includes('"lvl":"WARN"') || l.includes('WARN')) lvl = "WARN";
+            }
             return lvl === filter;
         });
 
@@ -581,13 +591,16 @@ const UI = {
         }
 
         container.innerHTML = filtered.map(l => {
-            let lvl = "INFO", msg = "", ts = "";
+            let lvl = "INFO", msg = "", ts = "", fields = {};
+            let duration = "", method = "", path = "", status = "", remote = "";
+
             if (typeof l === 'string') {
                 try {
                     const parsed = JSON.parse(l);
                     lvl = parsed.lvl || parsed.level || "INFO";
                     msg = parsed.msg || parsed.message || l;
                     ts = parsed.ts || parsed.time || "";
+                    fields = parsed.fields || {};
                 } catch {
                     msg = l;
                 }
@@ -595,13 +608,45 @@ const UI = {
                 lvl = l.lvl || l.level || "INFO";
                 msg = l.msg || l.message || "";
                 ts = l.ts || l.time || "";
-                if (ts) ts = ts.split('T')[1]?.split('.')[0] || ts;
-                if (l.fields) msg += `[${l.fields.method || ''} ${l.fields.path || ''}]`;
+                fields = l.fields || {};
             }
+
+            // Format timestamp to show only time if it's ISO
+            if (ts) {
+                if (ts.includes('T')) {
+                    ts = ts.split('T')[1]?.split('.')[0] || ts;
+                }
+            }
+
+            // Extract fields for display
+            if (fields.method) method = fields.method;
+            if (fields.path) path = fields.path;
+            if (fields.status) status = fields.status;
+            if (fields.remote) remote = fields.remote;
+            if (fields.duration) {
+                const ms = (fields.duration / 1000000).toFixed(2);
+                duration = `${ms}ms`;
+            }
+            if (fields.bytes) {
+                const bytes = fields.bytes > 1024 ? `${(fields.bytes / 1024).toFixed(1)}KB` : `${fields.bytes}B`;
+            }
+
+            // Build the message with fields
+            let fullMsg = msg;
+            if (method && path) fullMsg += ` ${method} ${path}`;
+            if (status) fullMsg += ` [${status}]`;
+            if (duration) fullMsg += ` (${duration})`;
+            if (remote) fullMsg += ` from ${remote}`;
+
             let color = "#aaa";
             if (lvl === "ERROR") color = "var(--danger)";
             if (lvl === "WARN") color = "var(--warning)";
-            return `<div class="log-entry"><div class="log-ts">${ts}</div><div class="log-lvl" style="color:${color}">${lvl}</div><div class="log-msg">${msg}</div></div>`;
+
+            return `<div class="log-entry">
+            <div class="log-ts">${ts}</div>
+            <div class="log-lvl" style="color:${color}">${lvl}</div>
+            <div class="log-msg" title="${JSON.stringify(fields)}">${fullMsg}</div>
+        </div>`;
         }).join("");
     },
 
@@ -687,7 +732,7 @@ const UI = {
         }
 
         const configBackends = cfg_item.backends?.servers || cfg_item.backends || [];
-        const statBackends = (itemStats && itemStats.backends) ||[];
+        const statBackends = (itemStats && itemStats.backends) || [];
         const displayBackends = configBackends.length > 0 ? configBackends : statBackends;
 
         if (displayBackends.length > 0) {
@@ -773,8 +818,8 @@ const UI = {
                     healthCheckHtml = `<div class="kv-item"><label>Health Check</label><div><span class="badge success">Send: ${healthCheck.send} | Expect: ${healthCheck.expect || 'connection'}</span></div></div>`;
                 } else {
                     const hcPath = healthCheck.path || '/health';
-                    const hcInterval = healthCheck.interval ? (healthCheck.interval/1000000000)+'s' : '30s';
-                    const hcTimeout = healthCheck.timeout ? (healthCheck.timeout/1000000000)+'s' : '5s';
+                    const hcInterval = healthCheck.interval ? (healthCheck.interval / 1000000000) + 's' : '30s';
+                    const hcTimeout = healthCheck.timeout ? (healthCheck.timeout / 1000000000) + 's' : '5s';
                     healthCheckHtml = `<div class="kv-item"><label>Health Check</label><div><span class="badge success">${hcPath} | ${hcInterval} | ${hcTimeout}</span></div></div>`;
                 }
             }
@@ -789,9 +834,9 @@ const UI = {
             }
 
             const timeouts = cfg_item.timeouts || {};
-            const readTimeout = timeouts.read ? (timeouts.read/1000000000)+'s' : 'inherit';
-            const writeTimeout = timeouts.write ? (timeouts.write/1000000000)+'s' : 'inherit';
-            const idleTimeout = timeouts.idle ? (timeouts.idle/1000000000)+'s' : 'inherit';
+            const readTimeout = timeouts.read ? (timeouts.read / 1000000000) + 's' : 'inherit';
+            const writeTimeout = timeouts.write ? (timeouts.write / 1000000000) + 's' : 'inherit';
+            const idleTimeout = timeouts.idle ? (timeouts.idle / 1000000000) + 's' : 'inherit';
 
             let upstreamsHtml = `
             <div class="detail-section">
@@ -829,7 +874,7 @@ const UI = {
                 if (rl && rl.enabled && rl.enabled === "on") {
                     const keyType = rl.key || 'ip';
                     const rule = rl.rule || {};
-                    httpFeaturesHtml += `<div class="kv-item"><label>Rate Limit</label><div><span class="badge warning">${rule.requests || rl.requests || 0} req / ${(rule.window || rl.window || 60)/1000000000}s (${keyType})</span></div></div>`;
+                    httpFeaturesHtml += `<div class="kv-item"><label>Rate Limit</label><div><span class="badge warning">${rule.requests || rl.requests || 0} req / ${(rule.window || rl.window || 60) / 1000000000}s (${keyType})</span></div></div>`;
                 }
 
                 const wasm = cfg_item.wasm;
@@ -1131,7 +1176,7 @@ const PerfChart = {
         if (!el) return;
         const W = el.clientWidth || 360;
         const H = el.clientHeight || 110;
-        const P = { top: 14, right: 8, bottom: 20, left: 36 };
+        const P = {top: 14, right: 8, bottom: 20, left: 36};
         const iW = W - P.left - P.right;
         const iH = H - P.top - P.bottom;
 
@@ -1140,29 +1185,29 @@ const PerfChart = {
             return;
         }
 
-        const unit     = opts.unit    ?? "";
-        const color    = opts.color   ?? "var(--accent)";
-        const isInt    = opts.isInt   ?? false;
-        const warnAt   = opts.warnAt  ?? null;
-        const rawMax   = Math.max(...values);
-        let   yMax     = opts.maxY !== undefined ? opts.maxY : (rawMax === 0 ? 1 : rawMax * 1.15);
-        const yMin     = opts.minY !== undefined ? opts.minY : 0;
+        const unit = opts.unit ?? "";
+        const color = opts.color ?? "var(--accent)";
+        const isInt = opts.isInt ?? false;
+        const warnAt = opts.warnAt ?? null;
+        const rawMax = Math.max(...values);
+        let yMax = opts.maxY !== undefined ? opts.maxY : (rawMax === 0 ? 1 : rawMax * 1.15);
+        const yMin = opts.minY !== undefined ? opts.minY : 0;
         if (yMax <= yMin) yMax = yMin + 1;
 
-        const n    = values.length;
-        const xS   = i => P.left + (i / Math.max(n - 1, 1)) * iW;
-        const yS   = v => P.top  + iH - ((Math.min(v, yMax) - yMin) / (yMax - yMin)) * iH;
-        const pts  = values.map((v, i) => `${xS(i).toFixed(1)},${yS(v).toFixed(1)}`).join(" ");
-        const fX   = xS(0).toFixed(1), lX = xS(n - 1).toFixed(1), bY = (P.top + iH).toFixed(1);
+        const n = values.length;
+        const xS = i => P.left + (i / Math.max(n - 1, 1)) * iW;
+        const yS = v => P.top + iH - ((Math.min(v, yMax) - yMin) / (yMax - yMin)) * iH;
+        const pts = values.map((v, i) => `${xS(i).toFixed(1)},${yS(v).toFixed(1)}`).join(" ");
+        const fX = xS(0).toFixed(1), lX = xS(n - 1).toFixed(1), bY = (P.top + iH).toFixed(1);
         const area = `M${fX},${bY} ` + values.map((v, i) => `L${xS(i).toFixed(1)},${yS(v).toFixed(1)}`).join(" ") + ` L${lX},${bY} Z`;
-        const lc   = (warnAt !== null && rawMax >= warnAt) ? "var(--danger)" : color;
-        const fmt  = v => isInt ? Math.round(v) + "" : (v >= 1000 ? (v / 1000).toFixed(1) + "k" : v < 10 ? v.toFixed(1) : v.toFixed(0));
-        const ytks = [yMin, (yMin + yMax) / 2, yMax].map(v => ({ y: yS(v), l: fmt(v) + unit }));
-        const tL   = ts => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        const lc = (warnAt !== null && rawMax >= warnAt) ? "var(--danger)" : color;
+        const fmt = v => isInt ? Math.round(v) + "" : (v >= 1000 ? (v / 1000).toFixed(1) + "k" : v < 10 ? v.toFixed(1) : v.toFixed(0));
+        const ytks = [yMin, (yMin + yMax) / 2, yMax].map(v => ({y: yS(v), l: fmt(v) + unit}));
+        const tL = ts => new Date(ts * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
         const xlbs = [
-            { x: xS(0),                       l: tL(timestamps[0]),                       a: "start"  },
-            { x: xS(Math.floor((n - 1) / 2)), l: tL(timestamps[Math.floor((n - 1) / 2)]), a: "middle" },
-            { x: xS(n - 1),                   l: tL(timestamps[n - 1]),                   a: "end"    }
+            {x: xS(0), l: tL(timestamps[0]), a: "start"},
+            {x: xS(Math.floor((n - 1) / 2)), l: tL(timestamps[Math.floor((n - 1) / 2)]), a: "middle"},
+            {x: xS(n - 1), l: tL(timestamps[n - 1]), a: "end"}
         ];
         const gid = "pg_" + containerId;
 
@@ -1174,7 +1219,7 @@ const PerfChart = {
             ${ytks.map(t => `<line x1="${P.left}" y1="${t.y.toFixed(1)}" x2="${P.left + iW}" y2="${t.y.toFixed(1)}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 3"/>`).join("")}
             <path d="${area}" fill="url(#${gid})"/>
             <polyline points="${pts}" fill="none" stroke="${lc}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
-            <circle cx="${xS(n-1).toFixed(1)}" cy="${yS(values[n-1]).toFixed(1)}" r="3" fill="${lc}" stroke="var(--bg)" stroke-width="1.5"/>
+            <circle cx="${xS(n - 1).toFixed(1)}" cy="${yS(values[n - 1]).toFixed(1)}" r="3" fill="${lc}" stroke="var(--bg)" stroke-width="1.5"/>
             ${ytks.map(t => `<text x="${P.left - 4}" y="${(t.y + 3.5).toFixed(1)}" font-size="9" font-family="monospace" fill="var(--text-mute)" text-anchor="end">${t.l}</text>`).join("")}
             ${xlbs.map(xl => `<text x="${xl.x.toFixed(1)}" y="${H - 3}" font-size="9" font-family="monospace" fill="var(--text-mute)" text-anchor="${xl.a}">${xl.l}</text>`).join("")}
         </svg>`;

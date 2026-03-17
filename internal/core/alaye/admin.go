@@ -9,7 +9,6 @@ import (
 
 type Admin struct {
 	Enabled    Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Pprof      Enabled  `hcl:"pprof,attr" json:"pprof"`
 	Address    string   `hcl:"address,attr" json:"address"`
 	AllowedIPs []string `hcl:"allowed_ips,attr" json:"allowed_ips"`
 
@@ -17,6 +16,9 @@ type Admin struct {
 	ForwardAuth ForwardAuth `hcl:"forward_auth,block" json:"forward_auth"`
 	JWTAuth     JWTAuth     `hcl:"jwt_auth,block" json:"jwt_auth"`
 	OAuth       OAuth       `hcl:"o_auth,block" json:"o_auth"`
+
+	Pprof     Pprof     `hcl:"pprof,block" json:"pprof"`
+	Telemetry Telemetry `hcl:"telemetry,block" json:"telemetry"`
 }
 
 // Validate checks that the admin block is correctly configured when enabled.
@@ -56,5 +58,8 @@ func (a *Admin) Validate() error {
 		return errors.Newf("o_auth: %w", err)
 	}
 
+	if err := a.Pprof.Validate(); err != nil {
+		return errors.Newf("pprof: %w", err)
+	}
 	return nil
 }
