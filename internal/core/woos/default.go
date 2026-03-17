@@ -121,6 +121,7 @@ func defaultGlobal(g *alaye.Global, configPath string) {
 	defaultGossip(&g.Gossip)
 	defaultLetsEncrypt(&g.LetsEncrypt)
 	defaultFallback(&g.Fallback)
+	defaultTelemetry(&g.Telemetry)
 }
 
 func defaultRouteAll(r *alaye.Route) {
@@ -676,5 +677,14 @@ func compileCondition(c *alaye.Condition) {
 func compileExtract(e *alaye.Extract) {
 	if e.Pattern != "" && e.Regex == nil {
 		e.Regex = regexp.MustCompile(e.Pattern)
+	}
+}
+
+func defaultTelemetry(t *alaye.Telemetry) {
+	// Inactive unless the operator explicitly writes:
+	//   telemetry { enabled = true }
+	// Mirrors the same pattern used by Pprof, Gossip, etc.
+	if t.Enabled == alaye.Unknown {
+		t.Enabled = alaye.Inactive
 	}
 }

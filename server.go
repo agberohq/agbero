@@ -1,4 +1,3 @@
-// server.go
 package agbero
 
 import (
@@ -24,6 +23,7 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/cook"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/agberohq/agbero/internal/pkg/security"
+	"github.com/agberohq/agbero/internal/pkg/telemetry"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
@@ -62,6 +62,9 @@ type Server struct {
 
 	firewall    *firewall.Engine
 	sharedState woos.SharedState
+
+	telemetryStore     *telemetry.Store
+	telemetryCollector *telemetry.Collector
 }
 
 // NewServer configures and injects dependencies required for core proxy execution.
@@ -224,6 +227,24 @@ func (s *Server) Start(configPath string) error {
 			s.clusterManager = cm
 			if s.shutdown != nil {
 				s.shutdown.RegisterFunc("Cluster", func() { _ = s.clusterManager.Shutdown() })
+			}
+		}
+	}
+
+	if s.global.Storage.DataDir != "" {
+		ts, err := telemetry.NewStore(s.global.Storage.DataDir)
+		if err != nil {
+			s.logger.Fields("err", err).Warn("telemetry store unavailable, history disabled")
+		} else {
+			s.telemetryStore = ts
+			col := telemetry.NewCollector(ts, s.hostManager, s.resource, s.logger)
+			col.Start()
+			s.telemetryCollector = col
+			if s.shutdown != nil {
+				s.shutdown.RegisterFunc("Telemetry", func() {
+					col.Stop()
+					_ = ts.Close()
+				})
 			}
 		}
 	}

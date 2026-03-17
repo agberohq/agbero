@@ -22,6 +22,7 @@ type Global struct {
 	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt"`
 	Fallback    Fallback    `hcl:"fallback,block" json:"fallback"`
 	ErrorPages  ErrorPages  `hcl:"error_pages,block" json:"error_pages"`
+	Telemetry   Telemetry   `hcl:"telemetry,block" json:"telemetry"` // ← added; off by default
 }
 
 // Validate checks all nested blocks in the global configuration.

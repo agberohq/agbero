@@ -1,4 +1,3 @@
-// admin.go
 package agbero
 
 import (
@@ -22,6 +21,7 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/ratelimit"
 	"github.com/agberohq/agbero/internal/operation"
 	"github.com/agberohq/agbero/internal/operation/api"
+	"github.com/agberohq/agbero/internal/pkg/telemetry"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/crypto/bcrypt"
@@ -148,6 +148,14 @@ func (s *Server) registerAdminAPI(mux *http.ServeMux) {
 	}
 }
 
+// registerAdminProtectedEndpoints mounts all auth-protected admin routes.
+//
+// Telemetry is only mounted when s.telemetryStore != nil, which requires both:
+//   - telemetry { enabled = true } in the global config
+//   - storage { data_dir = "..." } to be set (where the bbolt db lives)
+//
+// When telemetry is disabled (the default), /telemetry/ simply does not exist —
+// no handler registered, no 404, no feature leak.
 func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.Admin) {
 	protect := s.buildAuthMiddleware(cfg)
 	mux.Handle("/uptime", protect(uptime.Uptime(s.resource, s.hostManager, s.clusterManager, s.cookManager)))
@@ -155,6 +163,16 @@ func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.A
 	mux.Handle("/config", protect(http.HandlerFunc(s.handleConfigDump)))
 	mux.Handle("/logs", protect(http.HandlerFunc(s.handleLogs)))
 	mux.Handle("/firewall", protect(http.HandlerFunc(s.handleFirewall)))
+
+	// Telemetry history sub-router. The trailing slash on "/telemetry/" is
+	// intentional — it causes ServeMux to match all paths under /telemetry/.
+	// StripPrefix removes the prefix before handing off to telemetry.Handler,
+	// which owns /history and /hosts internally.
+	if s.telemetryStore != nil {
+		mux.Handle("/telemetry/", protect(
+			http.StripPrefix("/telemetry", telemetry.Handler(s.telemetryStore)),
+		))
+	}
 }
 
 // buildAuthMiddleware constructs an IP allowlist + auth chain for admin endpoints.
