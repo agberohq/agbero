@@ -95,12 +95,13 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 		if fwConfig.Status.Active() {
 			dataDir := woos.NewFolder(cfg.Global.Storage.DataDir)
 			fw, err := firewall.New(firewall.Config{
-				Firewall:    &fwConfig,
-				DataDir:     dataDir,
-				Logger:      cfg.Resource.Logger,
-				IPMgr:       cfg.IPMgr,
-				SharedState: cfg.SharedState,
-				BotChecker:  m.botChecker,
+				Firewall:       &fwConfig,
+				TrustedProxies: cfg.Global.Security.TrustedProxies,
+				DataDir:        dataDir,
+				Logger:         cfg.Resource.Logger,
+				IPMgr:          cfg.IPMgr,
+				SharedState:    cfg.SharedState,
+				BotChecker:     m.botChecker,
 			})
 			if err != nil {
 				return nil, errors.Newf("firewall init: %w", err)

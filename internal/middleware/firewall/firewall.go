@@ -35,12 +35,13 @@ type readCloserWrapper struct {
 }
 
 type Config struct {
-	Firewall    *alaye.Firewall
-	DataDir     woos.Folder
-	Logger      *ll.Logger
-	IPMgr       *zulu.IPManager
-	SharedState woos.SharedState
-	BotChecker  *bot.Checker
+	Firewall       *alaye.Firewall
+	TrustedProxies []string
+	DataDir        woos.Folder
+	Logger         *ll.Logger
+	IPMgr          *zulu.IPManager
+	SharedState    woos.SharedState
+	BotChecker     *bot.Checker
 }
 
 type Engine struct {
@@ -50,6 +51,7 @@ type Engine struct {
 	logger          *ll.Logger
 	whitelistRanger cidranger.Ranger
 	blacklistRanger cidranger.Ranger
+	trustedRanger   cidranger.Ranger
 	ipMgr           *zulu.IPManager
 	sharedState     woos.SharedState
 	botChecker      *bot.Checker
@@ -86,11 +88,16 @@ func New(cfg Config) (*Engine, error) {
 		logger:          cfg.Logger.Namespace("firewall"),
 		whitelistRanger: cidranger.NewPCTrieRanger(),
 		blacklistRanger: cidranger.NewPCTrieRanger(),
+		trustedRanger:   cidranger.NewPCTrieRanger(),
 		ipMgr:           ipMgr,
 		sharedState:     cfg.SharedState,
 		botChecker:      botChecker,
 	}
 	if err := e.loadStaticRules(); err != nil {
+		store.Close()
+		return nil, err
+	}
+	if err := e.loadTrustedProxies(cfg.TrustedProxies); err != nil {
 		store.Close()
 		return nil, err
 	}
@@ -113,6 +120,11 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := e.ipMgr.ClientIP(r)
+
+		if e.checkRanger(e.trustedRanger, ip) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if ban, err := e.store.GetBan(ip); err == nil && !ban.IsExpired() {
 			e.blockRequest(w, r, "banned_ip", ban.Reason)
 			return
@@ -160,6 +172,24 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// loadTrustedProxies populates the trusted ranger from Security.TrustedProxies.
+// Any IP in this set bypasses all WAF checks entirely.
+func (e *Engine) loadTrustedProxies(proxies []string) error {
+	for _, cidr := range proxies {
+		if !strings.Contains(cidr, "/") {
+			cidr += "/32"
+		}
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			return fmt.Errorf("firewall: invalid trusted proxy CIDR %q: %w", cidr, err)
+		}
+		if err := e.trustedRanger.Insert(cidranger.NewBasicRangerEntry(*network)); err != nil {
+			return fmt.Errorf("firewall: failed to insert trusted proxy %q: %w", cidr, err)
+		}
+	}
+	return nil
 }
 
 func (e *Engine) shouldInspectBody(r *http.Request) bool {
@@ -434,7 +464,6 @@ func (e *Engine) checkThreshold(rule alaye.Rule, in *Inspector) bool {
 	if key == "" {
 		return false
 	}
-
 	var count int64
 	var err error
 	if e.sharedState != nil {
@@ -446,7 +475,6 @@ func (e *Engine) checkThreshold(rule alaye.Rule, in *Inspector) bool {
 	} else {
 		count = e.counters.Increment(rule.Name, key, t.Window.StdDuration())
 	}
-
 	return count >= int64(t.Count)
 }
 
