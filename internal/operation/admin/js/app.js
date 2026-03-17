@@ -1,3 +1,4 @@
+// js/app.js
 class AgberoApp {
     constructor() {
         this.apiBase = window.location.origin;
@@ -32,7 +33,7 @@ class AgberoApp {
         this.isOnline = true;
 
         this.timers = { metrics: null, config: null, logs: null };
-        this.latencyCheckInterval = null;  // <-- ADDED
+        this.latencyCheckInterval = null;
         this.page = sessionStorage.getItem("ag_page") || "dashboard";
         this.lastConfig = null;
         this.lastStatsData = null;
@@ -314,7 +315,7 @@ class AgberoApp {
             route: {
                 path: path,
                 backends: {
-                    servers: [{ address: target }]
+                    servers:[{ address: target }]
                 }
             }
         };
@@ -330,7 +331,7 @@ class AgberoApp {
 
     async fetchConfig() {
         const data = await this.api("/config");
-        const stats = await this.api("/uptime"); // Get runtime stats too
+        const stats = await this.api("/uptime");
 
         this.lastConfig = data;
         this.lastStatsData = stats;
@@ -364,34 +365,26 @@ class AgberoApp {
             UI.renderRawConfig(data);
             this.updateConfigTitle(metrics.version, metrics.build);
 
-            // Store for diff
             this.previousConfig = this.currentConfig;
             this.currentConfig = data;
         }
     }
 
-// Add diff method
     showConfigDiff() {
         if (!this.previousConfig || !this.currentConfig) {
             alert('No previous configuration to compare with');
             return;
         }
-
         const diff = this.generateDiff(this.previousConfig, this.currentConfig);
         document.getElementById('configDiff').textContent = diff;
         document.getElementById('configDiffSection').style.display = 'block';
     }
 
     generateDiff(oldConfig, newConfig) {
-        // Simple diff - you could use a library like jsdiff for better results
         const oldStr = JSON.stringify(oldConfig, null, 2);
         const newStr = JSON.stringify(newConfig, null, 2);
+        if (oldStr === newStr) return 'No changes detected';
 
-        if (oldStr === newStr) {
-            return 'No changes detected';
-        }
-
-        // Basic line-based diff
         const oldLines = oldStr.split('\n');
         const newLines = newStr.split('\n');
         let diff = '';
@@ -404,7 +397,6 @@ class AgberoApp {
                 diff += `  ${oldLines[i]}\n`;
             }
         }
-
         return diff;
     }
 
@@ -553,7 +545,6 @@ class AgberoApp {
             if (this.page === 'logs' && !this.logsPaused) this.fetchLogs();
         }, interval);
 
-        // Start latency checks
         this.startLatencyCheck();
     }
 
@@ -630,8 +621,7 @@ class AgberoApp {
     async openPerformanceModal(hostname) {
         document.getElementById("perfModalTitle").textContent = "Performance History";
         document.getElementById("perfModalHost").textContent = hostname;
-        document.getElementById("perfDataRange").textContent = "";
-        ["perfChartReqs", "perfChartP99", "perfChartErrors", "perfChartBE"].forEach(id => {
+        document.getElementById("perfDataRange").textContent = "";["perfChartReqs", "perfChartP99", "perfChartErrors", "perfChartBE"].forEach(id => {
             document.getElementById(id).innerHTML = `<div class="perf-skeleton"></div>`;
         });
         Modal.open("perfModal");
@@ -657,11 +647,10 @@ class AgberoApp {
         }
     }
 
-    _renderPerfEmpty(message) {
-        ["perfChartReqs", "perfChartP99", "perfChartErrors", "perfChartBE"].forEach(id => {
-            document.getElementById(id).innerHTML =
-                `<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-mute);font-size:11px;text-align:center;white-space:pre-line;padding:8px;">${message}</div>`;
-        });
+    _renderPerfEmpty(message) {["perfChartReqs", "perfChartP99", "perfChartErrors", "perfChartBE"].forEach(id => {
+        document.getElementById(id).innerHTML =
+            `<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-mute);font-size:11px;text-align:center;white-space:pre-line;padding:8px;">${message}</div>`;
+    });
     }
 
     openRouteDrawer(hostname, idx, type = 'route') {
@@ -720,10 +709,9 @@ class AgberoApp {
         UI.renderGraph(this.metricsHistory[type]);
     }
 
-    // ================== CONNECTION QUALITY INDICATOR ==================
     checkLatency() {
         const start = Date.now();
-        fetch(`${this.apiBase}/healthz`, {
+        fetch(`${this.apiBase}/uptime`, {
             method: 'HEAD',
             cache: 'no-cache'
         })
@@ -784,7 +772,6 @@ class AgberoApp {
         this.latencyCheckInterval = setInterval(() => this.checkLatency(), 30000);
     }
 
-    // ================== EXPORT LOGS ==================
     async exportLogs() {
         try {
             const lines = document.getElementById("logsTailSelect")?.value || "1000";
@@ -843,9 +830,9 @@ class AgberoApp {
     init() {
         this.loadTheme();
         this.updateAuthButton();
-        this.fetchVersion();
 
         if (this.token || this.basic) {
+            this.fetchVersion();
             this.startLoop();
             this.fetchHostsData();
             this.parseJWTExpiry();
