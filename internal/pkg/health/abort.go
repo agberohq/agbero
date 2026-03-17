@@ -1,58 +1,58 @@
+// internal/pkg/health/abort.go
 package health
 
 import (
 	"sync/atomic"
+)
 
-	"github.com/agberohq/agbero/internal/core/alaye"
+const (
+	defaultScoreThreshold = 30
+	defaultWindowSecs     = 5
 )
 
 type EarlyAbortController struct {
 	enabled    atomic.Bool
-	abortCh    chan alaye.BackendKey // backend ID to abort
-	threshold  int32                 // score drop threshold
+	threshold  int32
 	windowSecs int32
 }
 
+// NewEarlyAbortController constructs a controller for preemptive traffic shedding.
+// Drops traffic safely based on health telemetry without background channel monitors.
 func NewEarlyAbortController(enabled bool) *EarlyAbortController {
 	eac := &EarlyAbortController{
-		abortCh:    make(chan alaye.BackendKey, 100),
-		threshold:  30,
-		windowSecs: 5,
+		threshold:  defaultScoreThreshold,
+		windowSecs: defaultWindowSecs,
 	}
 	eac.enabled.Store(enabled)
 	return eac
 }
 
+// Enable activates the early abort circuit breaker mechanism globally.
+// Restores rapid deterioration checks for all configured routing backends.
 func (eac *EarlyAbortController) Enable() {
 	eac.enabled.Store(true)
 }
 
+// Disable deactivates the early abort circuit breaker mechanism globally.
+// Permits traffic to flow regardless of rapid deterioration telemetry.
 func (eac *EarlyAbortController) Disable() {
 	eac.enabled.Store(false)
 }
 
-func (eac *EarlyAbortController) ShouldAbort(backendKey alaye.BackendKey, score *Score) bool {
+// ShouldAbort evaluates if traffic should be preemptively dropped before dialing.
+// Halts execution if the backend shows rapid deterioration or prolonged instability.
+func (eac *EarlyAbortController) ShouldAbort(score *Score) bool {
 	if !eac.enabled.Load() {
 		return false
 	}
 
-	// Check rapid deterioration
 	if score.IsRapidDeterioration() {
-		select {
-		case eac.abortCh <- backendKey:
-		default:
-		}
 		return true
 	}
 
-	// Check unhealthy state
 	if score.State() == StateUnhealthy {
 		return true
 	}
 
 	return false
-}
-
-func (eac *EarlyAbortController) AbortChannel() <-chan alaye.BackendKey {
-	return eac.abortCh
 }

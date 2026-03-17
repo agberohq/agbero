@@ -331,7 +331,7 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if b.Abort.ShouldAbort(b.StatsKey, b.HealthScore) {
+	if b.Abort.ShouldAbort(b.HealthScore) {
 		if b.Fallback != nil {
 			b.Fallback.ServeHTTP(w, r)
 		} else {
