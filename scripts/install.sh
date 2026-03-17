@@ -6,13 +6,20 @@
 
 set -e
 
-# Color codes for output
+# Color codes for output - use printf for reliable color output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
+
+# Print functions to handle colors reliably across environments
+print_error() { printf "${RED}%s${NC}\n" "$1" >&2; }
+print_success() { printf "${GREEN}%s${NC}\n" "$1"; }
+print_warning() { printf "${YELLOW}%s${NC}\n" "$1"; }
+print_info() { printf "${BLUE}%s${NC}\n" "$1"; }
+print_cyan() { printf "${CYAN}%s${NC}\n" "$1"; }
 
 # Default values
 REPO="agberohq/agbero"
@@ -32,7 +39,7 @@ detect_platform() {
         linux) OS="linux" ;;
         darwin) OS="darwin" ;;
         *)
-            echo -e "${RED}Unsupported operating system: $OS${NC}"
+            print_error "Unsupported operating system: $OS"
             exit 1
             ;;
     esac
@@ -42,12 +49,12 @@ detect_platform() {
         aarch64|arm64) ARCH="arm64" ;;
         armv7l|armv8l) ARCH="arm64" ;;
         *)
-            echo -e "${RED}Unsupported architecture: $ARCH${NC}"
+            print_error "Unsupported architecture: $ARCH"
             exit 1
             ;;
     esac
 
-    echo -e "${BLUE}Detected:${NC} $OS/$ARCH"
+    print_info "Detected: $OS/$ARCH"
 }
 
 # Parse command line arguments
@@ -67,7 +74,7 @@ parse_args() {
                 exit 0
                 ;;
             *)
-                echo -e "${RED}Unknown option: $1${NC}"
+                print_error "Unknown option: $1"
                 show_help
                 exit 1
                 ;;
@@ -96,7 +103,7 @@ EOF
 # Check for required commands
 check_dependencies() {
     local missing=()
-    
+
     for cmd in curl tar gunzip; do
         if ! command -v $cmd >/dev/null 2>&1; then
             missing+=($cmd)
@@ -104,7 +111,7 @@ check_dependencies() {
     done
 
     if [[ ${#missing[@]} -gt 0 ]]; then
-        echo -e "${RED}Missing required dependencies: ${missing[*]}${NC}"
+        print_error "Missing required dependencies: ${missing[*]}"
         echo "Please install them and try again."
         exit 1
     fi
@@ -113,15 +120,15 @@ check_dependencies() {
 # Get latest version from GitHub
 get_latest_version() {
     if [[ "$VERSION" == "latest" ]]; then
-        echo -e "${BLUE}Fetching latest version...${NC}"
+        print_info "Fetching latest version..."
         LATEST=$(curl -s "$GITHUB_API/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
         if [[ -z "$LATEST" ]]; then
-            echo -e "${RED}Failed to fetch latest version${NC}"
+            print_error "Failed to fetch latest version"
             exit 1
         fi
         VERSION="$LATEST"
     fi
-    echo -e "${GREEN}Version:${NC} $VERSION"
+    print_success "Version: $VERSION"
 }
 
 # Download and install binary
@@ -129,9 +136,9 @@ install_binary() {
     local filename="agbero-${OS}-${ARCH}"
     local archive_ext="tar.gz"
     local download_url="https://github.com/${REPO}/releases/download/${VERSION}/${filename}.${archive_ext}"
-    
-    echo -e "${BLUE}Downloading Agbero ${VERSION}...${NC}"
-    echo -e "URL: $download_url"
+
+    print_info "Downloading Agbero ${VERSION}..."
+    echo "URL: $download_url"
 
     # Create temp directory
     TMP_DIR=$(mktemp -d)
@@ -145,25 +152,25 @@ install_binary() {
     fi
 
     # Extract archive
-    echo -e "${BLUE}Extracting...${NC}"
+    print_info "Extracting..."
     tar -xzf "agbero.${archive_ext}"
 
     # Make binary executable
     chmod +x agbero
 
     # Install to target directory
-    echo -e "${BLUE}Installing to ${INSTALL_DIR}/agbero...${NC}"
-    
+    print_info "Installing to ${INSTALL_DIR}/agbero..."
+
     # Check if install directory exists and is writable
     if [[ ! -d "$INSTALL_DIR" ]]; then
-        echo -e "${YELLOW}Creating installation directory: ${INSTALL_DIR}${NC}"
+        print_warning "Creating installation directory: ${INSTALL_DIR}"
         mkdir -p "$INSTALL_DIR"
     fi
 
     if [[ -w "$INSTALL_DIR" ]]; then
         mv agbero "$INSTALL_DIR/"
     else
-        echo -e "${YELLOW}Requesting sudo to install to ${INSTALL_DIR}...${NC}"
+        print_warning "Requesting sudo to install to ${INSTALL_DIR}..."
         sudo mv agbero "$INSTALL_DIR/"
     fi
 
@@ -171,20 +178,20 @@ install_binary() {
     cd - > /dev/null
     rm -rf "$TMP_DIR"
 
-    echo -e "${GREEN}✓ Agbero installed successfully!${NC}"
+    print_success "✓ Agbero installed successfully!"
 }
 
 # Verify installation
 verify_installation() {
     if command -v agbero >/dev/null 2>&1; then
         local installed_path=$(which agbero)
-        echo -e "${GREEN}✓ Agbero found in PATH: ${installed_path}${NC}"
-        
+        print_success "✓ Agbero found in PATH: ${installed_path}"
+
         # Show version
         local version_output=$(agbero --version 2>/dev/null | head -n1)
-        echo -e "${GREEN}✓ ${version_output}${NC}"
+        print_success "✓ ${version_output}"
     else
-        echo -e "${YELLOW}⚠ Agbero not in PATH${NC}"
+        print_warning "⚠ Agbero not in PATH"
         echo "Add ${INSTALL_DIR} to your PATH or run:"
         echo "  export PATH=\$PATH:${INSTALL_DIR}"
     fi
@@ -192,35 +199,32 @@ verify_installation() {
 
 # Show post-installation instructions
 show_next_steps() {
-    cat << EOF
+    printf "\n${CYAN}═══════════════════════════════════════════════════════════════${NC}\n"
+    printf "${GREEN}Agbero has been installed successfully!${NC}\n\n"
 
-${CYAN}═══════════════════════════════════════════════════════════════${NC}
-${GREEN}Agbero has been installed successfully!${NC}
+    printf "${YELLOW}Quick Start:${NC}\n"
+    printf "  ${BLUE}1. Create a configuration:${NC}        agbero init\n"
+    printf "  ${BLUE}2. Validate configuration:${NC}        agbero config validate\n"
+    printf "  ${BLUE}3. Run in development mode:${NC}       agbero run --dev\n"
+    printf "  ${BLUE}4. Serve current directory:${NC}       agbero serve .\n"
+    printf "  ${BLUE}5. Proxy a local app:${NC}             agbero proxy :3000\n\n"
 
-${YELLOW}Quick Start:${NC}
-  ${BLUE}1. Create a configuration:${NC}        agbero init
-  ${BLUE}2. Validate configuration:${NC}        agbero validate
-  ${BLUE}3. Run in development mode:${NC}       agbero run --dev
-  ${BLUE}4. Serve current directory:${NC}       agbero serve .
-  ${BLUE}5. Proxy a local app:${NC}             agbero proxy :3000
+    printf "${YELLOW}Documentation:${NC}\n"
+    printf "  • CLI Reference:        https://github.com/${REPO}/blob/main/docs/command.md\n"
+    printf "  • Installation Guide:   https://github.com/${REPO}/blob/main/docs/install.md\n"
+    printf "  • Configuration Guide:  https://github.com/${REPO}/blob/main/docs/configuration.md\n\n"
 
-${YELLOW}Documentation:${NC}
-  • CLI Reference:        https://github.com/${REPO}/blob/main/docs/command.md
-  • Installation Guide:   https://github.com/${REPO}/blob/main/docs/install.md
-  • Configuration Guide:  https://github.com/${REPO}/blob/main/docs/configuration.md
+    printf "${YELLOW}Service Installation (requires sudo):${NC}\n"
+    printf "  ${BLUE}Install as system service:${NC}        sudo agbero service install\n"
+    printf "  ${BLUE}Start service:${NC}                     sudo agbero service start\n"
+    printf "  ${BLUE}Check service status:${NC}               sudo agbero service status\n\n"
 
-${YELLOW}Service Installation (requires sudo):${NC}
-  ${BLUE}Install as system service:${NC}        sudo agbero service install
-  ${BLUE}Start service:${NC}                     sudo agbero service start
-  ${BLUE}Check service status:${NC}               sudo agbero service status
-
-${CYAN}═══════════════════════════════════════════════════════════════${NC}
-EOF
+    printf "${CYAN}═══════════════════════════════════════════════════════════════${NC}\n"
 }
 
 # Main installation flow
 main() {
-    echo -e "${CYAN}"
+    printf "${CYAN}\n"
     cat << "EOF"
 
    _____         ___.
@@ -230,11 +234,11 @@ main() {
 \____|__  /\___  /|___  /\___  >__|   \____/
         \//_____/     \/     \/
 
- 
-                                    
+
+
 EOF
-    echo -e "${NC}"
-    echo -e "${GREEN}Agbero - Modern Reverse Proxy & API Gateway${NC}"
+    printf "${NC}\n"
+    printf "${GREEN}Agbero - Modern Reverse Proxy & API Gateway${NC}\n"
     echo "=================================================="
     echo ""
 
