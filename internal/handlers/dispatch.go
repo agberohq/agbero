@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/middleware/h3"
@@ -220,10 +221,9 @@ func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 		}
 	}
 
-	h := NewRoute(Config{
+	h := NewRoute(resource.Proxy{
 		Global:      m.cfg.Global,
 		Host:        host,
-		Logger:      m.cfg.Resource.Logger,
 		IPMgr:       m.cfg.IPMgr,
 		CookMgr:     m.cfg.CookManager,
 		Resource:    m.cfg.Resource,

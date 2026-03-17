@@ -406,6 +406,19 @@ const (
 	LifetimeShards = 32
 )
 
+// server lifecycle — used by server.go and admin.go
+const (
+	DefaultReloadTimeout   = 30 * time.Second
+	DefaultShutdownTimeout = 5 * time.Second
+	DefaultGitPoolTimeout  = 1 * time.Second
+	DefaultGitPoolSize     = 4
+
+	AdminTokenTTL            = 24 * time.Hour
+	DefaultAdminReadTimeout  = 10 * time.Second
+	DefaultAdminWriteTimeout = 60 * time.Second
+	DefaultAdminIdleTimeout  = 120 * time.Second
+)
+
 // defaults used by woos/default.go — single source of truth for all config defaults
 const (
 	DefaultForwardAuthTimeout      = 5 * time.Second
@@ -418,4 +431,23 @@ const (
 	DefaultCacheTTL                = 5 * time.Minute
 	DefaultCacheMaxItems           = 10_000
 	DefaultRedisPort               = 6379
+	ForwardAuthMaxBodyDefault      = int64(64 * 1024)
+)
+
+// NSS / certutil — used by tlss and installer for Firefox/Chrome trust store detection
+const (
+	CertutilBinary = "certutil"
+
+	NSSPathLinuxUsrBin      = "/usr/bin/certutil"
+	NSSPathLinuxUsrLocalBin = "/usr/local/bin/certutil"
+	NSSPathLinuxSnapBin     = "/snap/bin/certutil"
+
+	NSSPathDarwinHomebrewBin   = "/opt/homebrew/bin/certutil"
+	NSSPathDarwinUsrLocalBin   = "/usr/local/bin/certutil"
+	NSSPathDarwinMozillaNSS    = "/opt/homebrew/opt/nss/bin/certutil"
+	NSSPathDarwinMozillaNSSAlt = "/usr/local/opt/nss/bin/certutil"
+
+	NSSInstallHintLinux  = "NSS certutil not found. Firefox trust store will not be updated. Install with: sudo apt-get install libnss3-tools  (Debian/Ubuntu)  or  sudo dnf install nss-tools  (Fedora/RHEL)"
+	NSSInstallHintDarwin = "NSS certutil not found. Firefox trust store will not be updated. Install with: brew install nss"
+	NSSInstallHintOther  = "NSS certutil not found. Firefox trust store may not be updated automatically."
 )

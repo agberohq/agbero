@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/agberohq/agbero/internal/pkg/raw/afs"
+	"github.com/agberohq/agbero/internal/pkg/raw/ahash"
 )
 
 const (
@@ -123,7 +126,7 @@ func weakETag(path string, size int64, modTime time.Time) string {
 	sb.WriteByte('-')
 	sb.WriteString(strconv.FormatInt(modTime.UnixNano(), baseDecimalFormat))
 	sb.WriteByte('-')
-	sb.WriteString(strconv.FormatUint(afn.InodeOf(path), baseDecimalFormat))
+	sb.WriteString(strconv.FormatUint(afs.InodeOf(path), baseDecimalFormat))
 	return `W/"` + strconv.FormatUint(ahash.CRC32Hash(sb.String()), hexDecimalFormat) + `"`
 }
 

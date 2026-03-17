@@ -34,10 +34,10 @@ func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb al
 	statsKey := route.BackendKey(domain, server.Address.String())
 	hScore := testRes.Health.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
 	b, err := NewBackend(ConfigBackend{
-		Server:   server,
-		Route:    route,
-		Domains:  []string{domain},
-		Logger:   testLogger,
+		Server:  server,
+		Route:   route,
+		Domains: []string{domain},
+
 		Resource: testRes,
 	})
 	if err != nil {
@@ -65,7 +65,7 @@ func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb al
 			hostHeader = domain
 		}
 		execClient := &http.Client{
-			Timeout: hc.Timeout,
+			Timeout: hc.Timeout.StdDuration(),
 			Transport: &http.Transport{
 				MaxIdleConnsPerHost: 10,
 				DisableKeepAlives:   true,
@@ -82,8 +82,8 @@ func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb al
 		}
 		patient := jack.NewPatient(jack.PatientConfig{
 			ID:       statsKey.String(),
-			Interval: hc.Interval,
-			Timeout:  hc.Timeout,
+			Interval: hc.Interval.StdDuration(),
+			Timeout:  hc.Timeout.StdDuration(),
 			Check: func(ctx context.Context) error {
 				success, latency, err := executor.Probe(ctx)
 				hScore.Update(health.Record{
@@ -139,7 +139,7 @@ func TestConfigBackend_Validate(t *testing.T) {
 			name: "resource missing metrics",
 			cfg: ConfigBackend{
 				Server: alaye.NewServer("http://example.com"),
-				Resource: func() *resource.Manager {
+				Resource: func() *resource.Resource {
 					r := resource.New()
 					r.Metrics = nil
 					return r
@@ -151,7 +151,7 @@ func TestConfigBackend_Validate(t *testing.T) {
 			name: "resource missing health",
 			cfg: ConfigBackend{
 				Server: alaye.NewServer("http://example.com"),
-				Resource: func() *resource.Manager {
+				Resource: func() *resource.Resource {
 					r := resource.New()
 					r.Health = nil
 					return r
@@ -214,23 +214,12 @@ func TestConfigProxy_Validate(t *testing.T) {
 func TestNewBackend_InvalidURL(t *testing.T) {
 	testRes := resource.New()
 	_, err := NewBackend(ConfigBackend{
-		Server:   alaye.NewServer("://invalid-url"),
-		Logger:   testLogger,
+		Server: alaye.NewServer("://invalid-url"),
+
 		Resource: testRes,
 	})
 	if err == nil {
 		t.Error("Expected error for invalid URL, got nil")
-	}
-}
-
-func TestNewBackend_NoResource(t *testing.T) {
-	_, err := NewBackend(ConfigBackend{
-		Server:   alaye.NewServer("http://example.com"),
-		Logger:   testLogger,
-		Resource: nil,
-	})
-	if err == nil {
-		t.Error("Expected error for nil resource, got nil")
 	}
 }
 
@@ -259,10 +248,10 @@ func TestNewBackend_NilRoute(t *testing.T) {
 	defer server.Close()
 
 	b, err := NewBackend(ConfigBackend{
-		Server:   alaye.NewServer(server.URL),
-		Route:    nil,
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server.URL),
+		Route:   nil,
+		Domains: []string{"example.com"},
+
 		Resource: testRes,
 	})
 	if err != nil {
@@ -286,7 +275,6 @@ func TestNewBackend_NilLogger(t *testing.T) {
 		Server:   alaye.NewServer(server.URL),
 		Route:    &alaye.Route{Path: "/"},
 		Domains:  []string{"example.com"},
-		Logger:   nil,
 		Resource: testRes,
 	})
 	if err != nil {
@@ -307,10 +295,10 @@ func TestNewBackend_EmptyDomains(t *testing.T) {
 	defer server.Close()
 
 	b, err := NewBackend(ConfigBackend{
-		Server:   alaye.NewServer(server.URL),
-		Route:    &alaye.Route{Path: "/"},
-		Domains:  []string{},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server.URL),
+		Route:   &alaye.Route{Path: "/"},
+		Domains: []string{},
+
 		Resource: testRes,
 	})
 	if err != nil {
@@ -335,10 +323,10 @@ func TestNewBackend_StreamingEnabled(t *testing.T) {
 	srv.Streaming.FlushInterval = 50 * time.Millisecond
 
 	b, err := NewBackend(ConfigBackend{
-		Server:   srv,
-		Route:    &alaye.Route{Path: "/"},
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  srv,
+		Route:   &alaye.Route{Path: "/"},
+		Domains: []string{"example.com"},
+
 		Resource: testRes,
 	})
 	if err != nil {
@@ -459,10 +447,10 @@ func TestServeHTTP_CircuitBreakerOpen_WithFallback(t *testing.T) {
 	hScore := health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil)
 	testRes.Health.Set(statsKey, hScore)
 	b, err := NewBackend(ConfigBackend{
-		Server:   alaye.NewServer(server.URL),
-		Route:    route,
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server.URL),
+		Route:   route,
+		Domains: []string{"example.com"},
+
 		Resource: testRes,
 		Fallback: fallbackHandler,
 	})
@@ -608,9 +596,9 @@ func TestHealthCheck_Failure(t *testing.T) {
 	hc := alaye.HealthCheck{
 		Enabled:   alaye.Active,
 		Path:      "/health",
-		Interval:  50 * time.Millisecond,
+		Interval:  alaye.Duration(50 * time.Millisecond),
 		Threshold: 2,
-		Timeout:   100 * time.Millisecond,
+		Timeout:   alaye.Duration(100 * time.Millisecond),
 	}
 
 	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
@@ -641,9 +629,9 @@ func TestHealthCheck_Recovery(t *testing.T) {
 	hc := alaye.HealthCheck{
 		Enabled:   alaye.Active,
 		Path:      "/health",
-		Interval:  50 * time.Millisecond,
+		Interval:  alaye.Duration(50 * time.Millisecond),
 		Threshold: 2,
-		Timeout:   100 * time.Millisecond,
+		Timeout:   alaye.Duration(100 * time.Millisecond),
 	}
 
 	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
@@ -690,9 +678,9 @@ func TestHealthCheck_Advanced(t *testing.T) {
 		Headers:        map[string]string{"X-Check": "true"},
 		ExpectedStatus: []int{201},
 		ExpectedBody:   `"status": "OK"`,
-		Interval:       50 * time.Millisecond,
+		Interval:       alaye.Duration(50 * time.Millisecond),
 		Threshold:      1,
-		Timeout:        100 * time.Millisecond,
+		Timeout:        alaye.Duration(100 * time.Millisecond),
 	}
 
 	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
@@ -718,9 +706,9 @@ func TestHealthCheck_Advanced_BodyMismatch(t *testing.T) {
 		Enabled:      alaye.Active,
 		Path:         "/health",
 		ExpectedBody: `"status": "OK"`,
-		Interval:     50 * time.Millisecond,
+		Interval:     alaye.Duration(50 * time.Millisecond),
 		Threshold:    1,
-		Timeout:      100 * time.Millisecond,
+		Timeout:      alaye.Duration(100 * time.Millisecond),
 	}
 
 	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
@@ -748,8 +736,8 @@ func TestHealthCheck_HostHeader_From_Domains(t *testing.T) {
 	hc := alaye.HealthCheck{
 		Enabled:  alaye.Active,
 		Path:     "/",
-		Interval: 50 * time.Millisecond,
-		Timeout:  100 * time.Millisecond,
+		Interval: alaye.Duration(50 * time.Millisecond),
+		Timeout:  alaye.Duration(100 * time.Millisecond),
 	}
 
 	route := &alaye.Route{
@@ -764,10 +752,10 @@ func TestHealthCheck_HostHeader_From_Domains(t *testing.T) {
 	testRes.Health.Set(statsKey, hScore)
 
 	b, err := NewBackend(ConfigBackend{
-		Server:   alaye.NewServer(server.URL),
-		Route:    route,
-		Domains:  []string{domain},
-		Logger:   testLogger,
+		Server:  alaye.NewServer(server.URL),
+		Route:   route,
+		Domains: []string{domain},
+
 		Resource: testRes,
 	})
 	if err != nil {
@@ -782,13 +770,13 @@ func TestHealthCheck_HostHeader_From_Domains(t *testing.T) {
 	executor := &HTTPExecutor{
 		URL:    u.String(),
 		Method: "GET",
-		Client: &http.Client{Timeout: hc.Timeout},
+		Client: &http.Client{Timeout: hc.Timeout.StdDuration()},
 		Host:   domain,
 	}
 	patient := jack.NewPatient(jack.PatientConfig{
 		ID:       statsKey.String(),
-		Interval: hc.Interval,
-		Timeout:  hc.Timeout,
+		Interval: hc.Interval.StdDuration(),
+		Timeout:  hc.Timeout.StdDuration(),
 		Check: func(ctx context.Context) error {
 			success, latency, err := executor.Probe(ctx)
 			hScore.Update(health.Record{
@@ -825,8 +813,8 @@ func TestHealthCheck_Jitter(t *testing.T) {
 	hc := alaye.HealthCheck{
 		Enabled:  alaye.Active,
 		Path:     "/",
-		Interval: 20 * time.Millisecond,
-		Timeout:  100 * time.Millisecond,
+		Interval: alaye.Duration(20 * time.Millisecond),
+		Timeout:  alaye.Duration(100 * time.Millisecond),
 	}
 
 	b, _, doctor := setupBackend(t, alaye.NewServer(ts.URL), hc, alaye.CircuitBreaker{})
@@ -852,9 +840,9 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 	hc := alaye.HealthCheck{
 		Enabled:   alaye.Active,
 		Path:      "/health",
-		Interval:  50 * time.Millisecond,
+		Interval:  alaye.Duration(50 * time.Millisecond),
 		Threshold: 1,
-		Timeout:   100 * time.Millisecond,
+		Timeout:   alaye.Duration(100 * time.Millisecond),
 	}
 
 	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
@@ -1026,10 +1014,10 @@ func TestActivitySnapshot(t *testing.T) {
 	testRes.Health.Set(statsKey, hScore)
 
 	b, err := NewBackend(ConfigBackend{
-		Server:   alaye.NewServer("http://example.com"),
-		Route:    route,
-		Domains:  []string{"example.com"},
-		Logger:   testLogger,
+		Server:  alaye.NewServer("http://example.com"),
+		Route:   route,
+		Domains: []string{"example.com"},
+
 		Resource: testRes,
 	})
 	if err != nil {

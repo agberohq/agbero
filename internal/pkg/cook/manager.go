@@ -60,18 +60,15 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	if cfg.Pool == nil {
 		return nil, errors.New("worker pool is required")
 	}
-
 	if err := os.MkdirAll(cfg.WorkDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create manager workdir: %w", err)
 	}
-
 	logger := cfg.Logger
 	if logger == nil {
 		logger = ll.New("cookmgr").Disable()
 	} else {
 		logger = logger.Namespace("cookmgr")
 	}
-
 	return &Manager{
 		entries: make(map[string]*Entry),
 		logger:  logger,
@@ -86,7 +83,6 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 	if cfg.URL == "" {
 		return errors.New("git URL is required")
 	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -146,7 +142,7 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 
 	if cfg.Interval > 0 {
 		m.wg.Add(1)
-		go m.poll(ctx, routeKey, c, cfg.Interval)
+		go m.poll(ctx, routeKey, c, cfg.Interval.StdDuration())
 	}
 
 	return nil
@@ -175,12 +171,10 @@ func (m *Manager) CurrentPath(routeKey string) string {
 	if !ok {
 		return ""
 	}
-
 	basePath := entry.Cook.CurrentPath()
 	if basePath == "" {
 		return ""
 	}
-
 	if entry.Config.SubDir != "" {
 		return filepath.Join(basePath, entry.Config.SubDir)
 	}
@@ -276,11 +270,9 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		if signature == "" {
 			signature = r.Header.Get("X-Hub-Signature")
 		}
-
 		mac := hmac.New(sha256.New, []byte(entry.Config.Secret.String()))
 		mac.Write(body)
 		expectedMAC := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
 		if subtle.ConstantTimeCompare([]byte(signature), []byte(expectedMAC)) != 1 {
 			m.logger.Fields("route", routeKey).Warn("invalid webhook signature")
 			http.Error(w, "Invalid signature", http.StatusForbidden)
@@ -345,7 +337,6 @@ func (m *Manager) Health() map[string]HealthStatus {
 		if path == "" {
 			state = "unavailable"
 		}
-
 		deps, _ := entry.Cook.ListDeployments()
 		status[key] = HealthStatus{
 			State:       state,
@@ -354,7 +345,6 @@ func (m *Manager) Health() map[string]HealthStatus {
 			Deployments: len(deps),
 		}
 	}
-
 	return status
 }
 

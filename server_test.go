@@ -80,10 +80,10 @@ func TestServer_Start_Minimal(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       alaye.Duration(10 * time.Second),
+			Write:      alaye.Duration(30 * time.Second),
+			Idle:       alaye.Duration(60 * time.Second),
+			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -162,10 +162,10 @@ address = "%s"
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       alaye.Duration(10 * time.Second),
+			Write:      alaye.Duration(30 * time.Second),
+			Idle:       alaye.Duration(60 * time.Second),
+			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -394,10 +394,10 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       alaye.Duration(10 * time.Second),
+			Write:      alaye.Duration(30 * time.Second),
+			Idle:       alaye.Duration(60 * time.Second),
+			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -419,10 +419,10 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       alaye.Duration(10 * time.Second),
+			Write:      alaye.Duration(30 * time.Second),
+			Idle:       alaye.Duration(60 * time.Second),
+			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -588,10 +588,10 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       alaye.Duration(10 * time.Second),
+			Write:      alaye.Duration(30 * time.Second),
+			Idle:       alaye.Duration(60 * time.Second),
+			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -613,10 +613,10 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       alaye.Duration(10 * time.Second),
+			Write:      alaye.Duration(30 * time.Second),
+			Idle:       alaye.Duration(60 * time.Second),
+			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -915,10 +915,10 @@ func TestServer_shutdownImpl(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
-			Read:       10 * time.Second,
-			Write:      30 * time.Second,
-			Idle:       60 * time.Second,
-			ReadHeader: 5 * time.Second,
+			Read:       alaye.Duration(10 * time.Second),
+			Write:      alaye.Duration(30 * time.Second),
+			Idle:       alaye.Duration(60 * time.Second),
+			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 	}
 

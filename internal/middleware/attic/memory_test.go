@@ -26,7 +26,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{method: "GET", path: "/test", body: "response1"},
@@ -41,7 +41,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{method: "GET", path: "/a", body: "a-response"},
@@ -56,7 +56,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{method: "GET", path: "/search?q=foo", body: "foo results"},
@@ -71,7 +71,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{method: "POST", path: "/test", body: "post1"},
@@ -86,7 +86,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{
@@ -110,7 +110,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{
@@ -144,7 +144,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Minute,
+				TTL:     alaye.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{
@@ -169,7 +169,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: alaye.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     time.Hour,
+				TTL:     alaye.Duration(time.Hour),
 			},
 			requests: []testRequest{
 				{

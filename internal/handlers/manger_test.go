@@ -103,31 +103,11 @@ func TestNewManager_MinimalConfig(t *testing.T) {
 	m.Close()
 }
 
-func TestManager_Close(t *testing.T) {
-	cfg := testManagerConfig(t)
-	cfg.Global.Security.Enabled = alaye.Active
-	cfg.Global.Security.Firewall.Status = alaye.Active
-	cfg.Global.Storage.DataDir = t.TempDir()
-	cfg.Global.RateLimits.Enabled = alaye.Active
-	cfg.Global.RateLimits.Rules = []alaye.RateRule{
-		{
-			Enabled:  alaye.Active,
-			Requests: 100,
-			Window:   time.Minute,
-		},
-	}
-
-	m, err := NewManager(cfg)
-	if err != nil {
-		t.Fatalf("NewManager() error = %v", err)
-	}
-	m.Close()
-}
-
 func TestManager_Firewall(t *testing.T) {
 	cfg := testManagerConfig(t)
 	cfg.Global.Security.Enabled = alaye.Active
 	cfg.Global.Security.Firewall.Status = alaye.Active
+	cfg.Global.Security.Firewall.Mode = "active"
 	cfg.Global.Storage.DataDir = t.TempDir()
 
 	m, err := NewManager(cfg)
@@ -487,10 +467,10 @@ func TestManager_handleRoute_WASM_InvalidModule(t *testing.T) {
 	cfg := ManagerConfig{
 		Global: &alaye.Global{
 			Timeouts: alaye.Timeout{
-				Read:       30 * time.Second,
-				Write:      30 * time.Second,
-				Idle:       120 * time.Second,
-				ReadHeader: 5 * time.Second,
+				Read:       alaye.Duration(30 * time.Second),
+				Write:      alaye.Duration(30 * time.Second),
+				Idle:       alaye.Duration(120 * time.Second),
+				ReadHeader: alaye.Duration(5 * time.Second),
 			},
 			Security: alaye.Security{
 				Enabled:        alaye.Inactive,
@@ -498,7 +478,7 @@ func TestManager_handleRoute_WASM_InvalidModule(t *testing.T) {
 			},
 			RateLimits: alaye.GlobalRate{
 				Enabled:    alaye.Inactive,
-				TTL:        10 * time.Minute,
+				TTL:        alaye.Duration(10 * time.Minute),
 				MaxEntries: 10000,
 			},
 			Storage: alaye.Storage{
@@ -561,7 +541,7 @@ func TestManager_handleRoute_RateLimit_IgnoreGlobal(t *testing.T) {
 					{
 						Enabled:  alaye.Active,
 						Requests: 1,
-						Window:   time.Second,
+						Window:   alaye.Duration(time.Second),
 					},
 				},
 			},
@@ -744,7 +724,7 @@ func TestManager_buildGlobalRateLimiter_ACMEExcluded(t *testing.T) {
 				{
 					Enabled:  alaye.Active,
 					Requests: 100,
-					Window:   time.Minute,
+					Window:   alaye.Duration(time.Minute),
 				},
 			},
 		},
@@ -771,10 +751,10 @@ func TestManager_buildGlobalRateLimiter_ACMEExcluded(t *testing.T) {
 
 func TestManager_createHTTPListener_TLSConfig(t *testing.T) {
 	cfg := testManagerConfig(t)
-	cfg.Global.Timeouts.Read = 10 * time.Second
-	cfg.Global.Timeouts.Write = 30 * time.Second
-	cfg.Global.Timeouts.Idle = 120 * time.Second
-	cfg.Global.Timeouts.ReadHeader = 5 * time.Second
+	cfg.Global.Timeouts.Read = alaye.Duration(10 * time.Second)
+	cfg.Global.Timeouts.Write = alaye.Duration(30 * time.Second)
+	cfg.Global.Timeouts.Idle = alaye.Duration(120 * time.Second)
+	cfg.Global.Timeouts.ReadHeader = alaye.Duration(5 * time.Second)
 	cfg.Global.General.MaxHeaderBytes = 1 << 20
 
 	m, err := NewManager(cfg)

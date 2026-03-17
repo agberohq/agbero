@@ -16,22 +16,22 @@ import (
 	"github.com/olekukonko/mappo"
 )
 
-type Option func(*Manager)
+type Option func(*Resource)
 
 func WithLogger(logger *ll.Logger) Option {
-	return func(m *Manager) {
+	return func(m *Resource) {
 		m.Logger = logger
 	}
 }
 
 func WithShutdown(shutdown *jack.Shutdown) Option {
-	return func(m *Manager) {
+	return func(m *Resource) {
 		m.Shutdown = shutdown
 	}
 }
 
 func WithReaper(reapHandler func(context.Context, string)) Option {
-	return func(m *Manager) {
+	return func(m *Resource) {
 		if m.Reaper != nil {
 			m.Reaper.Stop()
 		}
@@ -48,7 +48,7 @@ func WithReaper(reapHandler func(context.Context, string)) Option {
 }
 
 func WithCustomTransport(transport *http.Transport) Option {
-	return func(m *Manager) {
+	return func(m *Resource) {
 		m.Transport = transport
 		if m.HTTPClient != nil && m.HTTPClient.Transport == m.Transport {
 			m.HTTPClient.Transport = transport
@@ -57,13 +57,13 @@ func WithCustomTransport(transport *http.Transport) Option {
 }
 
 func WithCustomHTTPClient(client *http.Client) Option {
-	return func(m *Manager) {
+	return func(m *Resource) {
 		m.HTTPClient = client
 	}
 }
 
 func WithDoctor(doctor *jack.Doctor) Option {
-	return func(m *Manager) {
+	return func(m *Resource) {
 		if m.Doctor != nil {
 			m.Doctor.StopAll(2 * time.Second)
 		}
@@ -72,7 +72,7 @@ func WithDoctor(doctor *jack.Doctor) Option {
 }
 
 func WithLifetimeManager(lm *jack.Lifetime) Option {
-	return func(m *Manager) {
+	return func(m *Resource) {
 		if m.Lifetime != nil {
 			m.Lifetime.Stop()
 		}
@@ -81,7 +81,7 @@ func WithLifetimeManager(lm *jack.Lifetime) Option {
 }
 
 func WithCacheSizes(routeMax, tcpMax, authMax, gzMax int) Option {
-	return func(m *Manager) {
+	return func(m *Resource) {
 		if routeMax > 0 {
 			oldCache := m.RouteCache
 			m.RouteCache = mappo.NewCache(mappo.CacheOptions{MaximumSize: routeMax, OnDelete: mappo.CloserDelete})
@@ -114,7 +114,7 @@ func WithCacheSizes(routeMax, tcpMax, authMax, gzMax int) Option {
 }
 
 func WithMetrics(registry *metrics.Registry) Option {
-	return func(m *Manager) {
+	return func(m *Resource) {
 		oldMetrics := m.Metrics
 		m.Metrics = registry
 		if oldMetrics != nil {
@@ -124,7 +124,7 @@ func WithMetrics(registry *metrics.Registry) Option {
 }
 
 func WithHealth(registry *health.Registry) Option {
-	return func(m *Manager) {
+	return func(m *Resource) {
 		oldHealth := m.Health
 		m.Health = registry
 		if oldHealth != nil {
@@ -134,7 +134,7 @@ func WithHealth(registry *health.Registry) Option {
 }
 
 func WithRouteCache(cache *mappo.Cache) Option {
-	return func(m *Manager) {
+	return func(m *Resource) {
 		oldCache := m.RouteCache
 		m.RouteCache = cache
 		if oldCache != nil {
@@ -144,7 +144,7 @@ func WithRouteCache(cache *mappo.Cache) Option {
 }
 
 func WithTCPCache(cache *mappo.Cache) Option {
-	return func(m *Manager) {
+	return func(m *Resource) {
 		oldCache := m.TCPCache
 		m.TCPCache = cache
 		if oldCache != nil {
@@ -154,7 +154,7 @@ func WithTCPCache(cache *mappo.Cache) Option {
 }
 
 func WithAuthCache(cache *mappo.Cache) Option {
-	return func(m *Manager) {
+	return func(m *Resource) {
 		oldCache := m.AuthCache
 		m.AuthCache = cache
 		if oldCache != nil {
@@ -164,7 +164,7 @@ func WithAuthCache(cache *mappo.Cache) Option {
 }
 
 func WithGzCache(cache *mappo.Cache) Option {
-	return func(m *Manager) {
+	return func(m *Resource) {
 		oldCache := m.GzCache
 		m.GzCache = cache
 		if oldCache != nil {
@@ -173,7 +173,7 @@ func WithGzCache(cache *mappo.Cache) Option {
 	}
 }
 
-type Manager struct {
+type Resource struct {
 	Metrics    *metrics.Registry
 	Health     *health.Registry
 	RouteCache *mappo.Cache
@@ -195,8 +195,8 @@ type Manager struct {
 	counter *atomic.Uint64
 }
 
-func New(opts ...Option) *Manager {
-	m := &Manager{
+func New(opts ...Option) *Resource {
+	m := &Resource{
 		Metrics:    metrics.NewRegistry(),
 		Health:     health.NewRegistry(),
 		RouteCache: mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMax, OnDelete: mappo.CloserDelete}),
@@ -204,6 +204,7 @@ func New(opts ...Option) *Manager {
 		AuthCache:  mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMaxBig, OnDelete: mappo.CloserDelete}),
 		GzCache:    mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMax}),
 		counter:    new(atomic.Uint64),
+		Logger:     ll.New("agbero").Disable().Suspend(), // disabled by default, this will be set by server
 	}
 
 	m.counter.Add(1)
@@ -213,7 +214,7 @@ func New(opts ...Option) *Manager {
 	return m
 }
 
-func (m *Manager) Apply(opts ...Option) {
+func (m *Resource) Apply(opts ...Option) {
 	for _, opt := range opts {
 		if opt != nil {
 			opt(m)
@@ -221,7 +222,7 @@ func (m *Manager) Apply(opts ...Option) {
 	}
 }
 
-func (m *Manager) setDefaults() {
+func (m *Resource) setDefaults() {
 	if m.Logger == nil {
 		m.Logger = ll.New("agbero").Disable()
 	}
@@ -266,7 +267,7 @@ func (m *Manager) setDefaults() {
 	}
 }
 
-func (m *Manager) Validate() error {
+func (m *Resource) Validate() error {
 	if m.Metrics == nil {
 		return errors.New("resource.metrics registry required")
 	}
@@ -282,7 +283,7 @@ func (m *Manager) Validate() error {
 	return nil
 }
 
-func (m *Manager) Close() {
+func (m *Resource) Close() {
 	// Step 1: Shutdown the janitor pool first - this prevents new submissions
 	if m.Janitor != nil {
 		_ = m.Janitor.Shutdown(2 * time.Second)
@@ -312,13 +313,13 @@ func (m *Manager) Close() {
 }
 
 // Counter returns the current value without incrementing (if needed)
-func (m *Manager) Counter() uint64 {
+func (m *Resource) Counter() uint64 {
 	return m.counter.Load()
 }
 
 // NextID increments and returns the next ID - HOT PATH
 //
 //go:nosplit
-func (m *Manager) NextID() uint64 {
+func (m *Resource) NextID() uint64 {
 	return m.counter.Add(1)
 }

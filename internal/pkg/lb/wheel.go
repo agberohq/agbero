@@ -53,7 +53,7 @@ func (w *WeightWheel) Next(counter uint64) int {
 	if len(w.cumul) == emptyValue {
 		return int(counter % w.total)
 	}
-	return dependency.LinearSearch(w.cumul, counter%w.total)
+	return asearch.LinearSearch(w.cumul, counter%w.total)
 }
 
 // RandomIndex processes asynchronous numeric ranges avoiding predictable cycles.
@@ -66,4 +66,13 @@ func (w *WeightWheel) RandomIndex(r *rand.Rand) int {
 		return int(r.Uint64N(w.total))
 	}
 	return asearch.LinearSearch(w.cumul, r.Uint64N(w.total))
+}
+
+// search finds the first index where cumul[i] > target using LinearSearch.
+// Falls back to modulo arithmetic when cumul is nil (uniform weights).
+func (w *WeightWheel) search(target uint64) int {
+	if len(w.cumul) == emptyValue {
+		return int(target % w.total)
+	}
+	return asearch.LinearSearch(w.cumul, target)
 }

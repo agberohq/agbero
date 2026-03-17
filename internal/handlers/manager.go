@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
@@ -29,11 +28,11 @@ import (
 type ManagerConfig struct {
 	Global      *alaye.Global
 	HostManager *discovery.Host
-	Resource    *resource.Manager
+	Resource    *resource.Resource
 	IPMgr       *zulu.IPManager
 	CookManager *cook.Manager
 	TLSManager  *tlss.Manager
-	SharedState cluster.SharedState
+	SharedState woos.SharedState
 }
 
 type Manager struct {
@@ -130,6 +129,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	return m, nil
 }
 
+// Close shuts down firewall, rate limiter, and wasm instances cleanly.
 func (m *Manager) Close() {
 	if m.firewall != nil {
 		_ = m.firewall.Close()
@@ -140,10 +140,13 @@ func (m *Manager) Close() {
 	m.wasmCleanup()
 }
 
+// Firewall returns the active firewall engine, or nil if not configured.
 func (m *Manager) Firewall() *firewall.Engine {
 	return m.firewall
 }
 
+// BuildListeners constructs all HTTP, HTTPS, H3, and TCP listeners from configuration.
+// Called after NewManager to produce the active listener set.
 func (m *Manager) BuildListeners() []Listener {
 	var listeners []Listener
 	hosts, _ := m.cfg.HostManager.LoadAll()
@@ -170,7 +173,6 @@ func (m *Manager) BuildListeners() []Listener {
 		}
 		_, port, _ := net.SplitHostPort(addr)
 		usedPorts[port] = true
-
 		listeners = append(listeners, m.createHTTPListener(addr, port, true))
 		if h3 := m.createH3Listener(addr, port); h3 != nil {
 			listeners = append(listeners, h3)
@@ -183,14 +185,11 @@ func (m *Manager) BuildListeners() []Listener {
 				continue
 			}
 			usedPorts[port] = true
-
 			addr := port
 			if !strings.Contains(port, ":") {
 				addr = ":" + port
 			}
-
 			isTLS := h.TLS.Mode != alaye.ModeLocalNone
-
 			listeners = append(listeners, m.createHTTPListener(addr, port, isTLS))
 			if isTLS {
 				if h3 := m.createH3Listener(addr, port); h3 != nil {
@@ -202,7 +201,7 @@ func (m *Manager) BuildListeners() []Listener {
 
 	tcpGroups := groupTCPRoutesByListen(hosts)
 	for listen, routes := range tcpGroups {
-		tp := xtcp.NewProxy(m.cfg.Resource, m.cfg.Resource.Logger, listen)
+		tp := xtcp.NewProxy(m.cfg.Resource, listen)
 		var maxC int64
 		for _, r := range routes {
 			pattern := r.SNI
@@ -241,10 +240,10 @@ func (m *Manager) createHTTPListener(addr, port string, isTLS bool) Listener {
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           wrappedHandler,
-		ReadTimeout:       m.cfg.Global.Timeouts.Read,
-		WriteTimeout:      m.cfg.Global.Timeouts.Write,
-		IdleTimeout:       m.cfg.Global.Timeouts.Idle,
-		ReadHeaderTimeout: m.cfg.Global.Timeouts.ReadHeader,
+		ReadTimeout:       m.cfg.Global.Timeouts.Read.StdDuration(),
+		WriteTimeout:      m.cfg.Global.Timeouts.Write.StdDuration(),
+		IdleTimeout:       m.cfg.Global.Timeouts.Idle.StdDuration(),
+		ReadHeaderTimeout: m.cfg.Global.Timeouts.ReadHeader.StdDuration(),
 		MaxHeaderBytes:    m.cfg.Global.General.MaxHeaderBytes,
 		ErrorLog:          log.New(&llWriter{logger: m.cfg.Resource.Logger}, "", 0),
 		ConnState:         tracker.Track,
@@ -278,7 +277,6 @@ func (m *Manager) createH3Listener(addr, port string) Listener {
 	if m.tlsConfig == nil {
 		return nil
 	}
-
 	handler := m.chainBuild(m.baseHandler, false, "")
 	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), woos.CtxPort, port)
@@ -287,7 +285,6 @@ func (m *Manager) createH3Listener(addr, port string) Listener {
 		}
 		handler.ServeHTTP(w, r.WithContext(ctx))
 	})
-
 	serverTLSCfg := m.tlsConfig.Clone()
 	serverTLSCfg.GetConfigForClient = nil
 	serverTLSCfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -305,13 +302,11 @@ func (m *Manager) createH3Listener(addr, port string) Listener {
 		}
 		return nil, errors.New("no certificate found")
 	}
-
 	srv := &http3.Server{
 		Addr:      addr,
 		Handler:   wrappedHandler,
 		TLSConfig: serverTLSCfg,
 	}
-
 	return &H3Listener{Srv: srv}
 }
 
@@ -319,17 +314,14 @@ func (m *Manager) wasmManager(cfg *alaye.Wasm, key string) (*wasm.Manager, error
 	if v, ok := m.wasmCache.Load(key); ok {
 		return v.(*wasm.Manager), nil
 	}
-
 	mgr, err := wasm.NewManager(context.Background(), m.cfg.Resource.Logger, cfg)
 	if err != nil {
 		return nil, err
 	}
-
 	if actual, loaded := m.wasmCache.LoadOrStore(key, mgr); loaded {
 		mgr.Close(context.Background())
 		return actual.(*wasm.Manager), nil
 	}
-
 	return mgr, nil
 }
 
@@ -354,18 +346,18 @@ func groupTCPRoutesByListen(hosts map[string]*alaye.Host) map[string][]alaye.Pro
 	return tcpGroups
 }
 
-func buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedState cluster.SharedState) *ratelimit.RateLimiter {
+// buildGlobalRateLimiter constructs the process-wide rate limiter from global config.
+// Returns nil when rate limiting is not configured or not enabled.
+func buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedState woos.SharedState) *ratelimit.RateLimiter {
 	if global == nil || !global.RateLimits.Enabled.Active() || len(global.RateLimits.Rules) == 0 {
 		return nil
 	}
-
 	rlc := global.RateLimits
 	policy := func(r *http.Request) (bucket string, pol ratelimit.RatePolicy, ok bool) {
 		p := r.URL.Path
 		if strings.HasPrefix(p, "/.well-known/acme-challenge/") {
 			return woos.BucketACME, ratelimit.RatePolicy{}, false
 		}
-
 		for _, rule := range rlc.Rules {
 			if len(rule.Methods) > 0 {
 				methodMatch := false
@@ -379,7 +371,6 @@ func buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedS
 					continue
 				}
 			}
-
 			if len(rule.Prefixes) > 0 {
 				prefixMatch := false
 				for _, pref := range rule.Prefixes {
@@ -392,25 +383,21 @@ func buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedS
 					continue
 				}
 			}
-
 			ruleName := rule.Name
 			if ruleName == "" {
 				ruleName = "global_default"
 			}
-
 			return ruleName, ratelimit.RatePolicy{
 				Requests: rule.Requests,
-				Window:   rule.Window,
+				Window:   rule.Window.StdDuration(),
 				Burst:    rule.Burst,
 				KeySpec:  rule.Key,
 			}, true
 		}
-
 		return "", ratelimit.RatePolicy{}, false
 	}
-
 	return ratelimit.New(ratelimit.Config{
-		TTL:         rlc.TTL,
+		TTL:         rlc.TTL.StdDuration(),
 		MaxEntries:  rlc.MaxEntries,
 		Policy:      policy,
 		IPManager:   ipMgr,

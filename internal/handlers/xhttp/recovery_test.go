@@ -19,7 +19,7 @@ import (
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func newTestResource(t *testing.T) *resource.Manager {
+func newTestResource(t *testing.T) *resource.Resource {
 	t.Helper()
 	res := resource.New()
 	t.Cleanup(func() { res.Close() })
@@ -339,8 +339,8 @@ func TestDeathSpiral_FullRecovery(t *testing.T) {
 		Path: "/",
 		HealthCheck: alaye.HealthCheck{
 			Path:     "/health",
-			Interval: 2 * time.Second,
-			Timeout:  time.Second,
+			Interval: alaye.Duration(2 * time.Second),
+			Timeout:  alaye.Duration(time.Second),
 		},
 	}
 

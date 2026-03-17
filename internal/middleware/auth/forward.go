@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/resource"
@@ -39,11 +38,10 @@ var forwardAuthAllowedDenyHeaders = map[string]bool{
 
 // Forward returns middleware that delegates authentication to an external service.
 // On non-2xx responses only a safe allowlist of headers is forwarded to the client.
-func Forward(res *resource.Manager, cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
+func Forward(res *resource.Resource, cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 	if cfg.Enabled.NotActive() {
 		return func(next http.Handler) http.Handler { return next }
 	}
-
 	if cfg.URL == "" {
 		return func(next http.Handler) http.Handler { return next }
 	}
@@ -58,13 +56,14 @@ func Forward(res *resource.Manager, cfg *alaye.ForwardAuth) func(http.Handler) h
 		cachePrefix = "default_" + cfg.URL
 	}
 
-	timeout := cfg.Timeout
+	// Resolve timeout to time.Duration at construction time — not per-request.
+	timeout := cfg.Timeout.StdDuration()
 	if timeout <= 0 {
-		timeout = 5 * time.Second
+		timeout = woos.DefaultForwardAuthTimeout
 	}
 
 	var client *http.Client
-	if cfg.TLS != nil && cfg.TLS.Enabled.Active() {
+	if cfg.TLS.Enabled.Active() {
 		tlsConfig, err := createTLSConfig(cfg.TLS)
 		if err != nil {
 			return func(next http.Handler) http.Handler {
@@ -76,9 +75,9 @@ func Forward(res *resource.Manager, cfg *alaye.ForwardAuth) func(http.Handler) h
 		client = &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 100,
-				IdleConnTimeout:     90 * time.Second,
+				MaxIdleConns:        woos.CacheClientMaxIdleCons,
+				MaxIdleConnsPerHost: woos.CacheClientMaxIdleCons,
+				IdleConnTimeout:     woos.CacheClientMaxIdleTimeOuts,
 				DisableCompression:  true,
 				TLSClientConfig:     tlsConfig,
 			},
@@ -86,6 +85,9 @@ func Forward(res *resource.Manager, cfg *alaye.ForwardAuth) func(http.Handler) h
 	} else {
 		client = res.HTTPClient
 	}
+
+	// Resolve CacheTTL to time.Duration at construction time.
+	cacheTTL := cfg.Response.CacheTTL.StdDuration()
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +154,7 @@ func Forward(res *resource.Manager, cfg *alaye.ForwardAuth) func(http.Handler) h
 				case "limited":
 					maxBody := cfg.Request.MaxBody
 					if maxBody <= 0 {
-						maxBody = 64 * 1024
+						maxBody = woos.ForwardAuthMaxBodyDefault
 					}
 					body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
 					if err != nil {
@@ -181,18 +183,16 @@ func Forward(res *resource.Manager, cfg *alaye.ForwardAuth) func(http.Handler) h
 							r.Header.Set(h, v)
 						}
 					}
-
-					if cfg.Response.CacheTTL > 0 {
+					if cacheTTL > 0 {
 						allowItem := &mappo.Item{Value: true}
 						headersItem := &mappo.Item{Value: headersToCopy}
-						res.AuthCache.StoreTTL(cacheKey, allowItem, cfg.Response.CacheTTL)
-						res.AuthCache.StoreTTL(cacheKey+"_headers", headersItem, cfg.Response.CacheTTL)
+						res.AuthCache.StoreTTL(cacheKey, allowItem, cacheTTL)
+						res.AuthCache.StoreTTL(cacheKey+"_headers", headersItem, cacheTTL)
 					}
-				} else if cfg.Response.CacheTTL > 0 {
+				} else if cacheTTL > 0 {
 					allowItem := &mappo.Item{Value: true}
-					res.AuthCache.StoreTTL(cacheKey, allowItem, cfg.Response.CacheTTL)
+					res.AuthCache.StoreTTL(cacheKey, allowItem, cacheTTL)
 				}
-
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -212,15 +212,13 @@ func Forward(res *resource.Manager, cfg *alaye.ForwardAuth) func(http.Handler) h
 }
 
 // createTLSConfig builds a tls.Config from the forward auth TLS block.
-func createTLSConfig(cfg *alaye.ForwardTLS) (*tls.Config, error) {
+func createTLSConfig(cfg alaye.ForwardTLS) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 	}
-
 	if cfg.InsecureSkipVerify {
 		tlsConfig.InsecureSkipVerify = true
 	}
-
 	if cfg.ClientCert != "" && cfg.ClientKey != "" {
 		cert, err := tls.X509KeyPair([]byte(cfg.ClientCert.String()), []byte(cfg.ClientKey.String()))
 		if err != nil {
@@ -228,7 +226,6 @@ func createTLSConfig(cfg *alaye.ForwardTLS) (*tls.Config, error) {
 		}
 		tlsConfig.Certificates = []tls.Certificate{cert}
 	}
-
 	if cfg.CA != "" {
 		caCertPool := x509.NewCertPool()
 		if !caCertPool.AppendCertsFromPEM([]byte(cfg.CA.String())) {
@@ -236,34 +233,28 @@ func createTLSConfig(cfg *alaye.ForwardTLS) (*tls.Config, error) {
 		}
 		tlsConfig.RootCAs = caCertPool
 	}
-
 	return tlsConfig, nil
 }
 
 // buildCacheKey produces a stable hash key for caching forward auth decisions.
 func buildCacheKey(r *http.Request, cacheKeyHeaders []string, prefix string) string {
 	h := xxhash.New()
-
 	if prefix != "" {
 		h.WriteString(prefix)
 		h.WriteString("|")
 	}
-
 	if len(cacheKeyHeaders) == 0 {
 		cacheKeyHeaders = []string{"Authorization"}
 	}
-
 	for _, header := range cacheKeyHeaders {
 		h.WriteString(r.Header.Get(header))
 		h.WriteString("|")
 	}
-
 	h.WriteString(r.Method)
 	h.WriteString("|")
 	h.WriteString(r.URL.Path)
 	h.WriteString("|")
 	h.WriteString(r.URL.RawQuery)
-
 	return strconv.FormatUint(h.Sum64(), 16)
 }
 
@@ -278,7 +269,6 @@ func copyHeaders(src http.Header, dst http.Header, keys []string) {
 		}
 		return
 	}
-
 	for _, k := range keys {
 		if v := src.Get(k); v != "" {
 			dst.Set(k, v)

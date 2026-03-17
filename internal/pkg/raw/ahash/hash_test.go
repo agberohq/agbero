@@ -6,9 +6,9 @@ import (
 )
 
 const (
-	// testIterations = 10000
-	maxCollisions = 5
-	randStrMaxLen = 128
+	testIterations = 10000
+	maxCollisions  = 5
+	randStrMaxLen  = 128
 )
 
 // randomString generates a slice of bytes dynamically for testing inputs.

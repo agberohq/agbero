@@ -119,7 +119,7 @@ func getCPUPercent() float64 {
 	return lastCPUPercent
 }
 
-func Uptime(res *resource.Manager, hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manager) http.HandlerFunc {
+func Uptime(res *resource.Resource, hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		snapshot := collectMetrics(hm, cm, cookMgr, res)
 
@@ -130,7 +130,7 @@ func Uptime(res *resource.Manager, hm *discovery.Host, cm *cluster.Manager, cook
 	}
 }
 
-func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manager, res *resource.Manager) *SystemSnapshot {
+func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manager, res *resource.Resource) *SystemSnapshot {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 

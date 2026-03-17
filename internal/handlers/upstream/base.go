@@ -22,7 +22,7 @@ type Config struct {
 	CBThreshold    int64
 	HasProber      bool
 	StatsKey       alaye.BackendKey
-	Resource       *resource.Manager
+	Resource       *resource.Resource
 }
 
 func (c Config) Validate() error {
@@ -53,7 +53,7 @@ type Base struct {
 	StartTime time.Time
 	LastRecov atomic.Int64
 
-	resource  *resource.Manager
+	resource  *resource.Resource
 	PatientID string
 }
 

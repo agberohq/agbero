@@ -233,7 +233,7 @@ func (f *Firewall) Validate() error {
 	switch f.Mode {
 	case "active", "verbose", "monitor":
 	default:
-		return errors.New("firewall: mode must be 'active', 'verbose', or 'monitor'")
+		return errors.Newf("firewall: mode must be 'active', 'verbose', or 'monitor' got '%s", f.Mode)
 	}
 	for i, a := range f.Actions {
 		if a.Name == "" {

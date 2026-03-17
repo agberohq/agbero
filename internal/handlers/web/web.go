@@ -115,7 +115,7 @@ type dynamicGzEntry struct {
 
 type web struct {
 	route            *alaye.Route
-	res              *resource.Manager
+	res              *resource.Resource
 	cookMgr          *cook.Manager
 	phpClientFactory gofast.ClientFactory
 	mdConverter      goldmark.Markdown
@@ -124,7 +124,7 @@ type web struct {
 
 // NewWeb constructs a web handler for the given route.
 // Logger is sourced from res.Logger; no separate logger parameter is needed.
-func NewWeb(res *resource.Manager, route *alaye.Route, cookMgr *cook.Manager) *web {
+func NewWeb(res *resource.Resource, route *alaye.Route, cookMgr *cook.Manager) *web {
 	h := &web{
 		route:   route,
 		res:     res,

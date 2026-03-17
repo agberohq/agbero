@@ -91,7 +91,7 @@ func main() {}
 		t.Fatalf("failed to compile wasm: %v\n%s", err, out)
 	}
 
-	// 4. Initialize Manager
+	// 4. Initialize Resource
 	logger := ll.New("test").Disable()
 	cfg := &alaye.Wasm{
 		Module: wasmOut,

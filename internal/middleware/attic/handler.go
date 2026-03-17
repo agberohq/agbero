@@ -59,7 +59,7 @@ func New(cfg *alaye.Cache, logger *ll.Logger) func(http.Handler) http.Handler {
 		logger:         logger,
 		allowedMethods: make(map[string]bool, len(cfg.Methods)),
 		enabled:        true,
-		defaultTTL:     cfg.TTL,
+		defaultTTL:     cfg.TTL.StdDuration(),
 	}
 	for _, m := range cfg.Methods {
 		mw.allowedMethods[strings.ToUpper(m)] = true

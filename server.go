@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -32,10 +31,10 @@ import (
 )
 
 const (
-	defaultReloadTimeout   = 30 * time.Second
-	defaultShutdownTimeout = 5 * time.Second
-	defaultGitPoolTimeout  = 1 * time.Second
-	defaultGitPoolSize     = 4
+	defaultReloadTimeout   = woos.DefaultReloadTimeout
+	defaultShutdownTimeout = woos.DefaultShutdownTimeout
+	defaultGitPoolTimeout  = woos.DefaultGitPoolTimeout
+	defaultGitPoolSize     = woos.DefaultGitPoolSize
 )
 
 type Server struct {
@@ -46,7 +45,7 @@ type Server struct {
 	global          *alaye.Global
 	tlsManager      *tlss.Manager
 	securityManager *security.Manager
-	resource        *resource.Manager
+	resource        *resource.Resource
 
 	mu        sync.RWMutex
 	listeners []handlers.Listener
@@ -61,7 +60,7 @@ type Server struct {
 	shutdown *jack.Shutdown
 
 	firewall    *firewall.Engine
-	sharedState cluster.SharedState
+	sharedState woos.SharedState
 }
 
 // NewServer configures and injects dependencies required for core proxy execution.
@@ -353,7 +352,7 @@ func (s *Server) Reload() {
 	s.global = global
 	s.configSHA = sha
 
-	var newSharedState cluster.SharedState
+	var newSharedState woos.SharedState
 	if global.Gossip.SharedState.Enabled.Active() && global.Gossip.SharedState.Driver == "redis" {
 		ss, err := cluster.NewRedisSharedState(global.Gossip.SharedState.Redis)
 		if err == nil {
@@ -427,7 +426,6 @@ func (s *Server) Reload() {
 		}
 		return true
 	})
-
 	for _, k := range staleRoutes {
 		s.resource.RouteCache.Delete(k)
 		if s.resource.Reaper != nil {
@@ -458,7 +456,7 @@ func (s *Server) Reload() {
 }
 
 // shutdownImpl orchestrates a graceful teardown of the proxy server.
-// Drains active connections and signals cluster peers before terminating processes.
+// Drains active connections and signals cluster peers before terminating.
 func (s *Server) shutdownImpl(ctx context.Context) error {
 	if s.clusterManager != nil {
 		s.clusterManager.BroadcastStatus("draining")
@@ -487,7 +485,7 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 }
 
 // configComputeSHA hashes the main config file and all host files to detect changes.
-// Reads under the same RLock to prevent data races with concurrent Reload calls.
+// Reads under RLock to prevent data races with concurrent Reload calls.
 func (s *Server) configComputeSHA() (string, error) {
 	hasher := sha256.New()
 
@@ -525,7 +523,6 @@ func (s *Server) configComputeSHA() (string, error) {
 }
 
 // tlsValidate ensures required TLS certificates are present before startup.
-// Skips validation if dynamic ACME provisioning is enabled globally.
 func (s *Server) tlsValidate() error {
 	return nil
 }

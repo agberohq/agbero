@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -28,7 +27,7 @@ import (
 )
 
 const (
-	adminTokenTTL    = 24 * time.Hour
+	adminTokenTTL    = woos.AdminTokenTTL
 	adminTokenIssuer = "agbero-admin"
 )
 
@@ -68,9 +67,9 @@ func (s *Server) startAdminServer() {
 	srv := &http.Server{
 		Addr:         cfg.Address,
 		Handler:      finalHandler,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		ReadTimeout:  woos.DefaultAdminReadTimeout,
+		WriteTimeout: woos.DefaultAdminWriteTimeout,
+		IdleTimeout:  woos.DefaultAdminIdleTimeout,
 	}
 
 	go func() {
@@ -93,8 +92,7 @@ func (s *Server) registerAdminLoginEndpoint(mux *http.ServeMux) {
 }
 
 func (s *Server) registerAdminUI(mux *http.ServeMux) {
-	uiHandler := operation.Admin()
-	mux.Handle("/", uiHandler)
+	mux.Handle("/", operation.Admin())
 }
 
 func (s *Server) registerAdminAPI(mux *http.ServeMux) {
@@ -110,7 +108,6 @@ func (s *Server) registerAdminAPI(mux *http.ServeMux) {
 
 func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.Admin) {
 	protect := s.buildAuthMiddleware(cfg)
-
 	mux.Handle("/uptime", protect(uptime.Uptime(s.resource, s.hostManager, s.clusterManager, s.cookManager)))
 	mux.Handle("/metrics", protect(promhttp.Handler()))
 	mux.Handle("/config", protect(http.HandlerFunc(s.handleConfigDump)))
@@ -140,17 +137,13 @@ func (s *Server) registerPprofEndpoints(mux *http.ServeMux, cfg alaye.Admin) {
 	if !cfg.Pprof.Active() {
 		return
 	}
-
 	s.logger.Warn("pprof debugging enabled on admin interface")
-
 	protect := s.buildAuthMiddleware(cfg)
-
 	mux.Handle("/debug/pprof/", protect(http.HandlerFunc(pprof.Index)))
 	mux.Handle("/debug/pprof/cmdline", protect(http.HandlerFunc(pprof.Cmdline)))
 	mux.Handle("/debug/pprof/profile", protect(http.HandlerFunc(pprof.Profile)))
 	mux.Handle("/debug/pprof/symbol", protect(http.HandlerFunc(pprof.Symbol)))
 	mux.Handle("/debug/pprof/trace", protect(http.HandlerFunc(pprof.Trace)))
-
 	mux.Handle("/debug/pprof/heap", protect(pprof.Handler("heap")))
 	mux.Handle("/debug/pprof/goroutine", protect(pprof.Handler("goroutine")))
 	mux.Handle("/debug/pprof/threadcreate", protect(pprof.Handler("threadcreate")))
@@ -174,7 +167,6 @@ func (s *Server) wrapAdminMiddleware(next http.Handler, rl *ratelimit.RateLimite
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-
 		if rl != nil {
 			rl.Handler(next).ServeHTTP(w, r)
 			return
@@ -184,13 +176,11 @@ func (s *Server) wrapAdminMiddleware(next http.Handler, rl *ratelimit.RateLimite
 }
 
 // handleLogin authenticates an admin user and issues a signed JWT.
-// Rate limiting for this endpoint is driven by global rate_limits rules applied in wrapAdminMiddleware.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	s.mu.RLock()
 	cfg := s.global.Admin
 	s.mu.RUnlock()
@@ -199,7 +189,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Server Config Error: Unknown admin users defined in 'basic_auth'", http.StatusForbidden)
 		return
 	}
-
 	if !cfg.JWTAuth.Enabled.Active() || cfg.JWTAuth.Secret == "" {
 		http.Error(w, "Server Config Error: 'jwt_auth.secret' is required for login", http.StatusForbidden)
 		return
@@ -213,7 +202,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-
 	if !s.verifyCredentials(cfg.BasicAuth.Users, creds.Username, creds.Password) {
 		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 		return
@@ -256,9 +244,7 @@ func (s *Server) verifyCredentials(users []string, username, password string) bo
 	if userFound == 0 {
 		targetHash = dummyHash
 	}
-
-	err := bcrypt.CompareHashAndPassword(targetHash, []byte(password))
-	return userFound == 1 && err == nil
+	return userFound == 1 && bcrypt.CompareHashAndPassword(targetHash, []byte(password)) == nil
 }
 
 // generateAdminToken creates a signed JWT with IssuedAt and NotBefore claims set.
@@ -282,7 +268,6 @@ func (s *Server) generateAdminToken(username, secret string) (string, time.Time,
 
 func (s *Server) handleConfigDump(w http.ResponseWriter, r *http.Request) {
 	hosts, _ := s.hostManager.LoadAll()
-
 	resp := struct {
 		Global  any `json:"global"`
 		Hosts   any `json:"hosts"`
@@ -291,13 +276,11 @@ func (s *Server) handleConfigDump(w http.ResponseWriter, r *http.Request) {
 		Global: sanitizeGlobalConfig(s.global),
 		Hosts:  sanitizeHostConfigs(hosts),
 	}
-
 	if s.clusterManager != nil {
 		resp.Cluster = map[string]any{
 			"members": s.clusterManager.Members(),
 		}
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -307,7 +290,6 @@ func (s *Server) handleFirewall(w http.ResponseWriter, r *http.Request) {
 		s.handleFirewallDisabled(w, r)
 		return
 	}
-
 	switch r.Method {
 	case http.MethodGet:
 		s.handleFirewallList(w)
@@ -346,7 +328,6 @@ func (s *Server) handleFirewallList(w http.ResponseWriter) {
 }
 
 // handleFirewallBlock validates the supplied IP/CIDR before blocking it.
-// The ip field must parse as a valid IP address or CIDR notation.
 func (s *Server) handleFirewallBlock(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IP          string `json:"ip"`
@@ -367,10 +348,8 @@ func (s *Server) handleFirewallBlock(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid IP address or CIDR", http.StatusBadRequest)
 		return
 	}
-
 	dur := time.Duration(req.DurationSec) * time.Second
 	reason := s.buildBlockReason(req.Reason, req.Host, req.Path)
-
 	if err := s.firewall.Block(req.IP, reason, dur); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -395,7 +374,6 @@ func (s *Server) buildBlockReason(reason, host, path string) string {
 }
 
 // handleFirewallUnblock validates the supplied IP before removing it from the blocklist.
-// The ip query parameter must be a valid IP address or CIDR.
 func (s *Server) handleFirewallUnblock(w http.ResponseWriter, r *http.Request) {
 	ip := r.URL.Query().Get("ip")
 	if ip == "" {
@@ -416,32 +394,27 @@ func (s *Server) handleFirewallUnblock(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleLogs returns the last N log lines as a JSON array of raw strings.
-// Lines are not re-parsed as JSON to prevent log injection into the admin UI.
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	var logPath string
 	if s.global.Logging.File.Enabled.Active() {
 		logPath = s.global.Logging.File.Path
 	}
-
 	if logPath == "" {
 		http.Error(w, "File logging disabled", http.StatusNotImplemented)
 		return
 	}
-
 	const limit = 50
 	lines, err := readLastLogLines(logPath, limit)
 	if err != nil {
 		http.Error(w, "Error reading logs: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-
 	out := make([]string, 0, len(lines))
 	for _, l := range lines {
 		if l != "" {
 			out = append(out, l)
 		}
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
 }
@@ -455,14 +428,12 @@ func isValidIPOrCIDR(s string) bool {
 	return err == nil
 }
 
-// buildAdminRateLimiter constructs a rate limiter for the admin server from the global
-// rate_limits rules. Returns nil when no matching rules exist, leaving the admin server
-// unthrottled; operators add protection via the rate_limits block in the global config.
-func buildAdminRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedState cluster.SharedState) *ratelimit.RateLimiter {
+// buildAdminRateLimiter constructs a rate limiter for the admin server from global rate_limits rules.
+// Returns nil when no matching rules exist, leaving the admin server unthrottled.
+func buildAdminRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedState woos.SharedState) *ratelimit.RateLimiter {
 	if global == nil || !global.RateLimits.Enabled.Active() || len(global.RateLimits.Rules) == 0 {
 		return nil
 	}
-
 	rlc := global.RateLimits
 	policy := func(r *http.Request) (bucket string, pol ratelimit.RatePolicy, ok bool) {
 		p := r.URL.Path
@@ -479,7 +450,6 @@ func buildAdminRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedSt
 					continue
 				}
 			}
-
 			if len(rule.Prefixes) > 0 {
 				prefixMatch := false
 				for _, pref := range rule.Prefixes {
@@ -492,31 +462,27 @@ func buildAdminRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedSt
 					continue
 				}
 			}
-
 			ruleName := rule.Name
 			if ruleName == "" {
 				ruleName = "admin_default"
 			}
-
 			return ruleName, ratelimit.RatePolicy{
 				Requests: rule.Requests,
-				Window:   rule.Window,
+				Window:   rule.Window.StdDuration(),
 				Burst:    rule.Burst,
 				KeySpec:  rule.Key,
 			}, true
 		}
 		return "", ratelimit.RatePolicy{}, false
 	}
-
 	ttl := woos.DefaultRateTTL
 	maxEntries := woos.DefaultRateMaxEntries
 	if rlc.TTL > 0 {
-		ttl = rlc.TTL
+		ttl = rlc.TTL.StdDuration()
 	}
 	if rlc.MaxEntries > 0 {
 		maxEntries = rlc.MaxEntries
 	}
-
 	return ratelimit.New(ratelimit.Config{
 		TTL:         ttl,
 		MaxEntries:  maxEntries,

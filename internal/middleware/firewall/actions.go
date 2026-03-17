@@ -39,7 +39,7 @@ func (e *Engine) handleAction(w http.ResponseWriter, r *http.Request, rule alaye
 	if actionDef.Mitigation == "add" || actionDef.Mitigation == "ban" {
 		duration := 24 * time.Hour
 		if rule.Duration > 0 {
-			duration = rule.Duration
+			duration = rule.Duration.StdDuration()
 		}
 
 		ip := e.ipMgr.ClientIP(r)

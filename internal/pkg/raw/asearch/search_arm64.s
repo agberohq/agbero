@@ -10,10 +10,10 @@ TEXT ·linearSearchAsm(SB), NOSPLIT, $0-32
     MOVD target+16(FP), R2
     MOVD $0, R3
 loop:
-    CMP R3, R1
+    CMP R1, R3
     BGE done_linear
     MOVD (R0)(R3<<3), R4
-    CMP R4, R2
+    CMP R2, R4
     BHI found_linear
     ADD $1, R3
     B loop
@@ -34,12 +34,12 @@ TEXT ·sortedSearchAsm(SB), NOSPLIT, $0-32
     MOVD $0, R3
     MOVD R1, R4
 bin_loop:
-    CMP R3, R4
+    CMP R4, R3
     BGE bin_done
     ADD R3, R4, R5
     LSR $1, R5
     MOVD (R0)(R5<<3), R6
-    CMP R6, R2
+    CMP R2, R6
     BHS bin_greater
     ADD $1, R5, R3
     B bin_loop
@@ -53,4 +53,3 @@ bin_done:
 bin_exit:
     MOVD R3, ret+24(FP)
     RET
-

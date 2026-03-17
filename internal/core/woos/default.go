@@ -8,10 +8,98 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 )
 
-// DefaultApply applies all global configuration defaults before validation.
-// This is the single entry point for setting default values on a Global struct.
-func DefaultApply(g *alaye.Global, configPath string) {
+// Defaults provides a zero-state receiver for applying configuration defaults.
+// Use the package-level D variable: woos.D.Firewall(cfg), woos.D.Route(r), etc.
+// All methods are safe to call on a zero-value Defaults.
+type Defaults struct{}
+
+// D is the package-level Defaults receiver for applying configuration defaults.
+var D = Defaults{}
+
+// Global applies all global configuration defaults before validation.
+func (Defaults) Global(g *alaye.Global, configPath string) {
 	defaultGlobal(g, configPath)
+}
+
+// Host applies all host configuration defaults before validation.
+func (Defaults) Host(h *alaye.Host) {
+	defaultTLS(&h.TLS, h.Domains)
+	defaultLimits(&h.Limits)
+	defaultHeaders(&h.Headers)
+	for i := range h.Routes {
+		defaultRouteAll(&h.Routes[i])
+	}
+	for i := range h.Proxies {
+		defaultTCPRoute(&h.Proxies[i])
+	}
+}
+
+// Route applies defaults to a single route and all its nested blocks.
+func (Defaults) Route(r *alaye.Route) {
+	defaultRouteAll(r)
+}
+
+// Firewall applies all firewall configuration defaults before validation.
+func (Defaults) Firewall(f *alaye.Firewall) {
+	defaultFirewall(f)
+}
+
+// Cache applies cache configuration defaults before validation.
+func (Defaults) Cache(c *alaye.Cache) {
+	defaultCache(c)
+}
+
+// BasicAuth applies basic auth configuration defaults before validation.
+func (Defaults) BasicAuth(ba *alaye.BasicAuth) {
+	defaultBasicAuth(ba)
+}
+
+// ForwardAuth applies forward auth configuration defaults before validation.
+func (Defaults) ForwardAuth(fa *alaye.ForwardAuth) {
+	defaultForwardAuth(fa)
+}
+
+// CORS applies CORS configuration defaults before validation.
+func (Defaults) CORS(c *alaye.CORS) {
+	defaultCORS(c)
+}
+
+// Compression applies compression configuration defaults before validation.
+func (Defaults) Compression(c *alaye.Compression) {
+	defaultCompression(c)
+}
+
+// RateLimit applies route rate limit configuration defaults before validation.
+func (Defaults) RateLimit(rl *alaye.RouteRate) {
+	defaultRateLimit(rl)
+}
+
+// Wasm applies wasm configuration defaults before validation.
+func (Defaults) Wasm(w *alaye.Wasm) {
+	defaultWasm(w)
+}
+
+// HealthCheck applies health check configuration defaults before validation.
+func (Defaults) HealthCheck(hc *alaye.HealthCheck) {
+	defaultHealthCheck(hc)
+}
+
+// DefaultApply applies all global configuration defaults before validation.
+// Kept for backwards compatibility with existing production call sites.
+func DefaultApply(g *alaye.Global, configPath string) {
+	D.Global(g, configPath)
+}
+
+// DefaultHost applies all host configuration defaults before validation.
+// Kept for backwards compatibility with existing production call sites.
+func DefaultHost(h *alaye.Host) {
+	D.Host(h)
+}
+
+// DefaultRoute applies defaults to a single route and all its nested blocks.
+// Kept for backwards compatibility with existing production call sites.
+func DefaultRoute(r *alaye.Route) {
+	D.Route(r)
 }
 
 func defaultGlobal(g *alaye.Global, configPath string) {
@@ -24,7 +112,6 @@ func defaultGlobal(g *alaye.Global, configPath string) {
 	if g.Bind.Redirect == alaye.Unknown && len(g.Bind.HTTPS) > 0 {
 		g.Bind.Redirect = alaye.Active
 	}
-
 	defaultTimeout(&g.Timeouts)
 	defaultStorage(&g.Storage, configPath)
 	defaultAdmin(&g.Admin)
@@ -36,32 +123,12 @@ func defaultGlobal(g *alaye.Global, configPath string) {
 	defaultFallback(&g.Fallback)
 }
 
-// DefaultHost applies all host configuration defaults before validation.
-// This is the single entry point for setting default values on a Host struct.
-func DefaultHost(h *alaye.Host) {
-	defaultTLS(&h.TLS, h.Domains)
-	defaultLimits(&h.Limits)
-	defaultHeaders(&h.Headers)
-
-	for i := range h.Routes {
-		DefaultRoute(&h.Routes[i])
-	}
-
-	for i := range h.Proxies {
-		defaultTCPRoute(&h.Proxies[i])
-	}
-}
-
-// DefaultRoute applies defaults to a single route and all its nested blocks.
-// Dispatches to web or proxy defaults based on which content type is configured.
-func DefaultRoute(r *alaye.Route) {
+func defaultRouteAll(r *alaye.Route) {
 	if r.Enabled == alaye.Unknown {
 		r.Enabled = alaye.Active
 	}
-
 	hasWeb := r.Web.Root.IsSet() || r.Web.Git.Enabled.Active()
 	hasBackends := len(r.Backends.Servers) > 0
-
 	if hasWeb {
 		defaultWebRoute(r)
 	} else if hasBackends {
@@ -106,7 +173,6 @@ func defaultProxyRoute(r *alaye.Route) {
 
 func defaultTimeout(t *alaye.Timeout) {
 	hasAnyTimeout := t.Read > 0 || t.Write > 0 || t.Idle > 0 || t.ReadHeader > 0
-
 	if t.Enabled == alaye.Unknown && hasAnyTimeout {
 		t.Enabled = alaye.Active
 	}
@@ -132,7 +198,6 @@ func defaultStorage(s *alaye.Storage, configPath string) {
 		return
 	}
 	configDir := filepath.Dir(configPath)
-
 	if s.HostsDir == "" {
 		s.HostsDir = filepath.Join(configDir, HostDir.String())
 	} else if !filepath.IsAbs(s.HostsDir) {
@@ -174,7 +239,6 @@ func defaultLogging(l *alaye.Logging) {
 		l.Prometheus.Enabled = alaye.Inactive
 		return
 	}
-
 	if l.Deduplicate == alaye.Unknown {
 		l.Deduplicate = alaye.Active
 	}
@@ -184,7 +248,6 @@ func defaultLogging(l *alaye.Logging) {
 	if l.BotChecker == alaye.Unknown {
 		l.BotChecker = alaye.Active
 	}
-
 	hasConfig := l.File.Path != "" || l.Victoria.URL != ""
 	if l.Enabled == alaye.Unknown && hasConfig {
 		l.Enabled = alaye.Active
@@ -333,7 +396,6 @@ func defaultLimits(_ *alaye.Limit) {}
 func defaultHeaders(h *alaye.Headers) {
 	hasOps := len(h.Request.Set) > 0 || len(h.Request.Add) > 0 || len(h.Request.Remove) > 0 ||
 		len(h.Response.Set) > 0 || len(h.Response.Add) > 0 || len(h.Response.Remove) > 0
-
 	if h.Enabled == alaye.Unknown && hasOps {
 		h.Enabled = alaye.Active
 	}
@@ -443,6 +505,9 @@ func defaultForwardAuth(fa *alaye.ForwardAuth) {
 			if len(fa.Request.Headers) > 0 || fa.Request.ForwardMethod || fa.Request.ForwardURI || fa.Request.ForwardIP {
 				fa.Request.Enabled = alaye.Active
 			}
+		}
+		if fa.Request.BodyMode == "" {
+			fa.Request.BodyMode = "none"
 		}
 		if fa.Response.Enabled == alaye.Unknown && fa.Response.CacheTTL > 0 {
 			fa.Response.Enabled = alaye.Active

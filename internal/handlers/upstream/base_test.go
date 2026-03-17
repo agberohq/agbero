@@ -44,7 +44,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "resource missing metrics",
 			cfg: Config{
 				Address: "http://example.com",
-				Resource: func() *resource.Manager {
+				Resource: func() *resource.Resource {
 					r := resource.New()
 					r.Metrics = nil
 					return r
@@ -56,7 +56,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "resource missing health",
 			cfg: Config{
 				Address: "http://example.com",
-				Resource: func() *resource.Manager {
+				Resource: func() *resource.Resource {
 					r := resource.New()
 					r.Health = nil
 					return r
@@ -69,7 +69,7 @@ func TestConfig_Validate(t *testing.T) {
 			cfg: Config{
 				Address:   "http://example.com",
 				HasProber: true,
-				Resource: func() *resource.Manager {
+				Resource: func() *resource.Resource {
 					r := resource.New()
 					r.Doctor = nil
 					return r

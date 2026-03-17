@@ -57,12 +57,13 @@ type Backend struct {
 	Fallback     http.Handler
 }
 
+// NewBackend constructs an HTTP reverse proxy backend from the given config.
+// Logger is sourced from Resource.Logger — no separate logger parameter is needed.
 func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	u, err := xhttpCfg.Server.Address.URL()
 	if err != nil {
 		return nil, err
 	}
-
 	if u.Scheme == "" {
 		return nil, errors.Newf("%w :(http or https)", woos.ErrBackendMissingScheme)
 	}
@@ -85,7 +86,7 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 		route = &alaye.Route{Path: "/"}
 	}
 
-	logger := xhttpCfg.Logger
+	logger := xhttpCfg.Resource.Logger
 	if logger == nil {
 		logger = ll.New("backend").Disable()
 	}
@@ -153,25 +154,18 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		if errors.Is(err, context.Canceled) {
 			b.logger.Fields("backend", u.Host, "remote", r.RemoteAddr).Debug("client disconnected early")
-
-			// 499 Client Closed Request (Standardized by Nginx)
-			// This prevents it from being logged as a false 200 OK, but ensures
-			// it DOES NOT trip your circuit breaker (since it's not a 50x error).
 			w.WriteHeader(499)
 			return
 		}
-
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Timeout() {
 			http.Error(w, "Gateway Timeout", http.StatusGatewayTimeout)
 			return
 		}
-
 		if errors.Is(err, context.DeadlineExceeded) {
 			http.Error(w, "Gateway Timeout", http.StatusGatewayTimeout)
 			return
 		}
-
 		if err != nil && strings.Contains(err.Error(), "request body too large") {
 			http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
 			return
@@ -261,7 +255,7 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	return b, nil
 }
 
-func (b *Backend) initHealth(res *resource.Manager, targetURL string) error {
+func (b *Backend) initHealth(res *resource.Resource, targetURL string) error {
 	if !b.HasProber {
 		return nil
 	}
@@ -273,10 +267,10 @@ func (b *Backend) initHealth(res *resource.Manager, targetURL string) error {
 		probeCfg.Path = b.hcConfig.Path
 	}
 	if b.hcConfig.Interval > 0 {
-		probeCfg.StandardInterval = b.hcConfig.Interval
+		probeCfg.StandardInterval = b.hcConfig.Interval.StdDuration()
 	}
 	if b.hcConfig.Timeout > 0 {
-		probeCfg.Timeout = b.hcConfig.Timeout
+		probeCfg.Timeout = b.hcConfig.Timeout.StdDuration()
 	}
 	headers := http.Header{}
 	hostHeader := ""
@@ -322,6 +316,8 @@ func (b *Backend) initHealth(res *resource.Manager, targetURL string) error {
 	}, nil)
 }
 
+// ServeHTTP proxies the request to the upstream backend.
+// Applies circuit breaker and early abort checks before forwarding.
 func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !b.AcquireCircuit() {
 		if b.Fallback != nil {
@@ -331,7 +327,6 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-
 	if b.Abort.ShouldAbort(b.StatsKey, b.HealthScore) {
 		if b.Fallback != nil {
 			b.Fallback.ServeHTTP(w, r)
@@ -351,7 +346,6 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var sw *basicStatusWriter
 
 	if _, ok := w.(*zulu.ResponseWriter); !ok {
-		// Stack allocation: safer than Pool for async proxy logic
 		sw = &basicStatusWriter{ResponseWriter: w, code: 200}
 		actualWriter = sw
 	}
@@ -372,12 +366,10 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				failed = true
 			}
 		}
-
 		b.Activity.EndRequest(dur.Microseconds(), failed)
 		if b.HealthScore != nil {
 			b.HealthScore.RecordPassiveRequest(!failed)
 		}
-
 		if justTripped := b.RecordResult(!failed); justTripped {
 			b.logger.Fields("backend", b.Address, "failures", b.CBThreshold).Warn("circuit breaker tripped")
 		}
@@ -386,12 +378,11 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b.Proxy.ServeHTTP(actualWriter, req)
 }
 
+// Drain waits for in-flight requests to complete up to the given timeout.
 func (b *Backend) Drain(timeout time.Duration) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-
 	deadline := time.Now().Add(timeout)
-
 	for {
 		if b.Activity.InFlight.Load() <= 0 {
 			break
@@ -404,6 +395,7 @@ func (b *Backend) Drain(timeout time.Duration) {
 	}
 }
 
+// Stop closes the backend and drains the transport idle connections.
 func (b *Backend) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.stop)
@@ -418,6 +410,7 @@ func (b *Backend) Stop() {
 	})
 }
 
+// RouteDomains returns the domains this backend serves.
 func (b *Backend) RouteDomains() []string {
 	return b.routeDomains
 }
