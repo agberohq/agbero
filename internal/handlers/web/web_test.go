@@ -864,7 +864,7 @@ func TestServeHTTP_IndexMd_RenderedWhenMarkdownEnabled(t *testing.T) {
 	root := newTestRoot(t)
 	writeFile(t, root, "index.md", "# Welcome\n\nThis is the home page.")
 	h := newHandler(t, root, withMarkdown(), func(r *alaye.Route) {
-		r.Web.Index = "index.md"
+		r.Web.Index = []string{"index.md"}
 	})
 	rr := do(t, h, http.MethodGet, "/")
 	if rr.Code != http.StatusOK {
@@ -883,7 +883,7 @@ func TestServeHTTP_IndexMd_RawWhenMarkdownDisabled(t *testing.T) {
 	root := newTestRoot(t)
 	writeFile(t, root, "index.md", "# Welcome")
 	h := newHandler(t, root, func(r *alaye.Route) {
-		r.Web.Index = "index.md"
+		r.Web.Index = []string{"index.md"}
 	})
 	rr := do(t, h, http.MethodGet, "/")
 	if rr.Code != http.StatusOK {
@@ -898,7 +898,7 @@ func TestServeHTTP_IndexMd_DownloadBypassesRenderer(t *testing.T) {
 	root := newTestRoot(t)
 	writeFile(t, root, "index.md", "# Welcome")
 	h := newHandler(t, root, withMarkdown(), func(r *alaye.Route) {
-		r.Web.Index = "index.md"
+		r.Web.Index = []string{"index.md"}
 	})
 	rr := do(t, h, http.MethodGet, "/?download")
 	if rr.Code != http.StatusOK {

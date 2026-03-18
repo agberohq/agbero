@@ -133,7 +133,7 @@ func NewWeb(res *resource.Resource, route *alaye.Route, cookMgr *cook.Manager) *
 
 	logger := res.Logger.Namespace("web")
 
-	if route != nil && route.Web.PHP.Status.Active() {
+	if route != nil && route.Web.PHP.Enabled.Active() {
 		network, address := "tcp", "127.0.0.1:9000"
 		if strings.TrimSpace(route.Web.PHP.Address) != "" {
 			addr := strings.TrimSpace(route.Web.PHP.Address)
@@ -297,18 +297,16 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !wantsDownload && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-		gzPath, gzOrigPath := h.resolveGzipPath(reqPath)
+		gzPath := reqPath + ".gz"
 		if h.gzMayExist(gzPath) {
-			fGz, err := root.Open(gzPath)
-			if err == nil {
-				defer fGz.Close()
-				infoGz, statErr := fGz.Stat()
-				if statErr == nil && !infoGz.IsDir() {
+			if fGz, err := root.Open(gzPath); err == nil {
+				if infoGz, statErr := fGz.Stat(); statErr == nil && !infoGz.IsDir() {
+					defer fGz.Close()
 					h.gzSetExists(gzPath, true)
-					if h.setCommonHeaders(w, r, gzOrigPath, infoGz.ModTime(), infoGz.Size(), true) {
+					if h.setCommonHeaders(w, r, reqPath, infoGz.ModTime(), infoGz.Size(), true) {
 						return
 					}
-					origType := getMimeType(gzOrigPath)
+					origType := getMimeType(reqPath)
 					if origType == "" {
 						origType = "application/octet-stream"
 					}
@@ -319,6 +317,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					http.ServeContent(w, r, gzPath, infoGz.ModTime(), fGz)
 					return
 				}
+				fGz.Close()
 			} else if errors.Is(err, fs.ErrNotExist) {
 				h.gzSetExists(gzPath, false)
 			}
@@ -501,41 +500,81 @@ func (h *web) serveMarkdownWithTemplate(w http.ResponseWriter, root *os.Root, re
 	return true
 }
 
-// serveDir handles directory requests: redirect, index file, listing, or 403.
+// serveDir handles directory requests: index file loop, listing, or 403.
 func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, f *os.File, reqPath, browserPath string) {
 	if !strings.HasSuffix(browserPath, "/") {
 		http.Redirect(w, r, browserPath+"/", http.StatusMovedPermanently)
 		return
 	}
 
-	indexName := "index.html"
-	if h.route.Web.Index != "" {
-		indexName = h.route.Web.Index
+	var indexFile *os.File
+	var indexInfo fs.FileInfo
+	var indexName string
+	var indexPath string
+
+	// Iterate over configured indices
+	for _, idx := range h.getIndices() {
+		p := filepath.Join(reqPath, idx)
+		if idxF, err := root.Open(p); err == nil {
+			if info, err := idxF.Stat(); err == nil && !info.IsDir() {
+				indexFile = idxF
+				indexInfo = info
+				indexName = idx
+				indexPath = p
+				break
+			}
+			idxF.Close()
+		}
 	}
 
-	indexPath := filepath.Join(reqPath, indexName)
-	indexFile, err := root.Open(indexPath)
-	if err == nil {
+	if indexFile != nil {
 		defer indexFile.Close()
-		indexInfo, err := indexFile.Stat()
-		if err == nil && !indexInfo.IsDir() {
-			wantsDownload := r.URL.Query().Has("download")
-			if !wantsDownload && h.mdConverter != nil && isMarkdownPath(indexName) {
-				h.serveMarkdown(w, r, root, indexPath, browserPath, indexInfo)
-				return
-			}
-			if h.setCommonHeaders(w, r, indexName, indexInfo.ModTime(), indexInfo.Size(), false) {
-				return
-			}
-			mt := getMimeType(indexName)
-			if mt == "" {
-				mt = "application/octet-stream"
-			}
-			w.Header().Set("Content-Type", mt)
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			http.ServeContent(w, r, indexName, indexInfo.ModTime(), indexFile)
+		wantsDownload := r.URL.Query().Has("download")
+
+		if !wantsDownload && h.mdConverter != nil && isMarkdownPath(indexName) {
+			h.serveMarkdown(w, r, root, indexPath, browserPath, indexInfo)
 			return
 		}
+
+		if !wantsDownload && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			gzPath := indexPath + ".gz"
+			if h.gzMayExist(gzPath) {
+				if fGz, err := root.Open(gzPath); err == nil {
+					if infoGz, statErr := fGz.Stat(); statErr == nil && !infoGz.IsDir() {
+						defer fGz.Close()
+						h.gzSetExists(gzPath, true)
+						if h.setCommonHeaders(w, r, indexPath, infoGz.ModTime(), infoGz.Size(), true) {
+							return
+						}
+						origType := getMimeType(indexPath)
+						if origType == "" {
+							origType = "application/octet-stream"
+						}
+						w.Header().Set("Content-Type", origType)
+						w.Header().Set("Content-Encoding", "gzip")
+						w.Header().Add("Vary", "Accept-Encoding")
+						w.Header().Set("X-Content-Type-Options", "nosniff")
+						http.ServeContent(w, r, gzPath, infoGz.ModTime(), fGz)
+						return
+					}
+					fGz.Close()
+				} else if errors.Is(err, fs.ErrNotExist) {
+					h.gzSetExists(gzPath, false)
+				}
+			}
+		}
+
+		if h.setCommonHeaders(w, r, indexPath, indexInfo.ModTime(), indexInfo.Size(), false) {
+			return
+		}
+		mt := getMimeType(indexPath)
+		if mt == "" {
+			mt = "application/octet-stream"
+		}
+		w.Header().Set("Content-Type", mt)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		http.ServeContent(w, r, indexPath, indexInfo.ModTime(), indexFile)
+		return
 	}
 
 	if h.route.Web.Listing {
@@ -701,25 +740,30 @@ func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath s
 }
 
 // handleOpenError maps os.Root.Open failures to HTTP responses with tiered logging.
+// If SPA routing is enabled, it iterates through the configured indices and serves the first match.
 func (h *web) handleOpenError(w http.ResponseWriter, r *http.Request, root *os.Root, reqPath string, err error) {
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		if h.route.Web.SPA {
-			indexName := "index.html"
-			if h.route.Web.Index != "" {
-				indexName = h.route.Web.Index
-			}
-			if indexFile, iErr := root.Open(indexName); iErr == nil {
-				defer indexFile.Close()
-				if iInfo, sErr := indexFile.Stat(); sErr == nil {
-					w.Header().Set("Content-Type", "text/html; charset=utf-8")
-					w.Header().Set("Cache-Control", "no-cache")
-					http.ServeContent(w, r, indexName, iInfo.ModTime(), indexFile)
-					return
+			for _, idxName := range h.getIndices() {
+				indexFile, iErr := root.Open(idxName)
+				if iErr == nil {
+					iInfo, sErr := indexFile.Stat()
+					if sErr == nil && !iInfo.IsDir() {
+						defer indexFile.Close() // Safe: we return immediately after
+						mt := getMimeType(idxName)
+						if mt == "" {
+							mt = "text/html; charset=utf-8"
+						}
+						w.Header().Set("Content-Type", mt)
+						w.Header().Set("Cache-Control", "no-cache")
+						http.ServeContent(w, r, idxName, iInfo.ModTime(), indexFile)
+						return
+					}
+					indexFile.Close() // Close it since we didn't use it
 				}
 			}
 		}
-		//h.logger().Fields("path", reqPath).Stack("file not found (404)")
 		http.Error(w, "Not Found", http.StatusNotFound)
 
 	case errors.Is(err, fs.ErrPermission):
@@ -734,25 +778,23 @@ func (h *web) handleOpenError(w http.ResponseWriter, r *http.Request, root *os.R
 	}
 }
 
+// getIndices returns the configured index slice, falling back to smart defaults
+// to ensure resilience during direct unit test instantiation.
+func (h *web) getIndices() []string {
+	if len(h.route.Web.Index) > 0 {
+		return h.route.Web.Index
+	}
+	if h.route.Web.PHP.Enabled.Active() {
+		return []string{"index.php", "index.html"}
+	}
+	return []string{"index.html"}
+}
+
 func (h *web) resolveRootPath() string {
 	if h.route.Web.Git.Enabled.Active() && h.cookMgr != nil {
 		return h.cookMgr.CurrentPath(h.route.Web.Git.ID)
 	}
 	return h.route.Web.Root.String()
-}
-
-func (h *web) resolveGzipPath(reqPath string) (gzPath, origPath string) {
-	origPath = reqPath
-	gzPath = reqPath + ".gz"
-	if reqPath == "." {
-		indexName := "index.html"
-		if h.route.Web.Index != "" {
-			indexName = h.route.Web.Index
-		}
-		origPath = indexName
-		gzPath = indexName + ".gz"
-	}
-	return gzPath, origPath
 }
 
 // gzMayExist returns true when the cache holds no confirmed-negative entry.

@@ -488,7 +488,7 @@ func (s *Server) Reload() {
 	// Start the new listeners, retrying if the port is temporarily in use while old listeners shut down
 	for _, l := range newListeners {
 		go func(listener handlers.Listener) {
-			s.logger.Fields("bind", listener.Addr(), "proto", listener.Kind()).Info("reloaded listener starting")
+			s.logger.Fields("bind", listener.Addr(), "proto", listener.Kind()).Info("reloaded listener")
 			var err error
 			for i := 0; i < 50; i++ {
 				err = listener.Start()
