@@ -257,11 +257,13 @@ func (r *Route) Key() string {
 
 	if r.Web.Root.IsSet() {
 		w.WriteString(r.Web.Root.String())
-		w.WriteString(r.Web.Index)
+		for _, idx := range r.Web.Index {
+			w.WriteString(idx)
+		}
 		if r.Web.Listing {
 			w.WriteString("ls")
 		}
-		if r.Web.PHP.Status.Active() {
+		if r.Web.PHP.Enabled.Active() {
 			w.WriteString("php")
 			w.WriteString(r.Web.PHP.Address)
 		}
