@@ -639,7 +639,7 @@ func TestRouteHandler_Web_BasicFileServing(t *testing.T) {
 		Web: alaye.Web{
 			Enabled: alaye.Active,
 			Root:    alaye.WebRoot(root),
-			Index:   "index.html",
+			Index:   []string{"index.html"},
 		},
 	}
 
@@ -741,7 +741,7 @@ func TestRouteHandler_Web_CustomIndex(t *testing.T) {
 		Web: alaye.Web{
 			Enabled: alaye.Active,
 			Root:    alaye.WebRoot(root),
-			Index:   "home.htm",
+			Index:   []string{"home.htm"},
 		},
 	}
 
@@ -953,7 +953,7 @@ func TestRouteHandler_Validation(t *testing.T) {
 					t.Fatal(err)
 				}
 				r.Web.Root = alaye.WebRoot(root)
-				r.Web.Index = "index.html"
+				r.Web.Index = []string{"index.html"}
 				r.Web.Enabled = alaye.Active
 			},
 			wantStatus: http.StatusOK,
@@ -993,7 +993,7 @@ func TestRouteHandler_Validation(t *testing.T) {
 				root := t.TempDir()
 				os.WriteFile(filepath.Join(root, "index.html"), []byte("ok"), 0644)
 				r.Web.Root = alaye.WebRoot(root)
-				r.Web.Index = "index.html"
+				r.Web.Index = []string{"index.html"}
 			},
 			wantStatus: http.StatusOK,
 		},
@@ -1224,7 +1224,7 @@ func TestRouteHandler_WithForwardAuth(t *testing.T) {
 		Web: alaye.Web{
 			Enabled: alaye.Active,
 			Root:    alaye.WebRoot(root),
-			Index:   "index.html",
+			Index:   []string{"index.html"},
 		},
 	}
 
@@ -1259,7 +1259,7 @@ func TestRouteHandler_WithWASM(t *testing.T) {
 		Web: alaye.Web{
 			Enabled: alaye.Active,
 			Root:    alaye.WebRoot(root),
-			Index:   "index.html",
+			Index:   []string{"index.html"},
 		},
 		Wasm: alaye.Wasm{
 			Enabled: alaye.Active,

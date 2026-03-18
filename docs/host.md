@@ -77,7 +77,7 @@ route "/" {
   web {
     root    = "/var/www/html"  # Directory to serve
     listing = true              # Enable directory browsing
-    index   = "index.html"      # Default index file
+    index   = ["index.html"]      # Default index file
     spa     = false             # SPA mode (redirect 404 to index)
   }
 }
@@ -116,7 +116,7 @@ route "/app" {
     php {
       enabled = true
       address = "127.0.0.1:9000"  # or "unix:/run/php/php-fpm.sock"
-      index   = "index.php"
+      index   = ["index.php"]
     }
   }
 }
@@ -127,7 +127,7 @@ route "/app" {
 ```hcl
 route "/" {
   web {
-    index = "index.html"
+    index = ["index.html"]
     
     git {
       enabled  = true
@@ -841,7 +841,7 @@ headers {
 route "/" {
   web {
     root = "/var/www/site"
-    index = "index.html"
+    index = ["index.html"]
     
     git {
       enabled = true

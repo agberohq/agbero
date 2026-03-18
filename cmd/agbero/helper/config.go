@@ -24,6 +24,8 @@ type Config struct {
 	ServeBind     string
 	ServeHTTPS    bool
 	ServeMarkdown bool
+	ServeSPA      bool
+	ServePHP      string
 
 	ProxyTarget string
 	ProxyDomain string

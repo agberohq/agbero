@@ -49,6 +49,8 @@ type Static struct {
 	Target   alaye.Address
 	IsProxy  bool
 	Markdown bool
+	SPA      bool
+	PHP      string
 }
 
 // NewStaticHost creates a Host config for a single domain pointing to a static
@@ -87,14 +89,25 @@ func NewStaticHost(c Static) *alaye.Host {
 		if c.Markdown {
 			markdownToggle = alaye.Active
 		}
+
+		phpToggle := alaye.Inactive
+		if c.PHP != "" {
+			markdownToggle = alaye.Active
+		}
+
 		route.Web = alaye.Web{
 			Enabled: alaye.Active,
 			Root:    alaye.WebRoot(c.Target),
 			Listing: true,
-			Index:   "index.html",
+			Index:   []string{"index.html"},
+			SPA:     c.SPA,
 			Markdown: alaye.Markdown{
 				Enabled: markdownToggle,
 				View:    "normal",
+			},
+			PHP: alaye.PHP{
+				Enabled: phpToggle,
+				Address: c.PHP,
 			},
 		}
 		route.Backends.Enabled = alaye.Inactive

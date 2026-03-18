@@ -653,8 +653,16 @@ func (hm *Host) rebuildLookupLocked() {
 		domainToRoutes[host] = append(domainToRoutes[host], route)
 
 		if _, exists := domainToConfig[host]; !exists {
-			defaultHost := woos.NewStaticHost(woos.Static{Domain: host, Target: emptyString, IsProxy: true})
-			defaultHost.Routes = nil
+			defaultHost := &alaye.Host{
+				Domains: []string{host},
+				TLS:     alaye.TLS{Mode: alaye.ModeLocalAuto},
+			}
+
+			// If it's a public domain, default to Let's Encrypt instead of mkcert
+			if !woos.IsLocalContext(host) {
+				defaultHost.TLS.Mode = alaye.ModeLetsEncrypt
+			}
+			woos.DefaultHost(defaultHost)
 			domainToConfig[host] = defaultHost
 		}
 	}
