@@ -2,7 +2,7 @@ domains = ["markdown.localhost"]
 
 route "/pull" {
   web {
-    index = "index.md"
+    index = ["index.md"]
 
     git {
       enabled = "on"
@@ -26,7 +26,7 @@ route "/pull" {
 
 route "/pull" {
   web {
-    index = "index.md"
+    index = ["index.md"]
 
     git {
       enabled = "on"

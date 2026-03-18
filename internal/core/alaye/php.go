@@ -3,13 +3,12 @@ package alaye
 import "strings"
 
 type PHP struct {
-	Status  Enabled `hcl:"enabled,optional" json:"enabled"`
+	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
 	Address string  `hcl:"address,optional" json:"address"` // unix:/path/to.sock OR 127.0.0.1:9000
-	Index   string  `hcl:"index,optional" json:"index"`     // default: index.php
 }
 
 func (p *PHP) Validate() error {
-	if p.Status.Inactive() {
+	if p.Enabled.Inactive() {
 		return nil
 	}
 	addr := strings.TrimSpace(p.Address)
@@ -29,10 +28,6 @@ func (p *PHP) Validate() error {
 	// Very light check; real dial will validate host:port
 	if !strings.Contains(addr, ":") {
 		return ErrBadAddress
-	}
-
-	if p.Index != "" && strings.Contains(p.Index, Slash) {
-		return ErrIndexPath
 	}
 
 	return nil

@@ -240,7 +240,7 @@ func TestUnmarshalHost_webRoute(t *testing.T) {
 	if r.Web.Root.String() != "/var/www/html" {
 		t.Errorf("Web.Root: got %q, want /var/www/html", r.Web.Root)
 	}
-	if r.Web.Index != "index.html" {
+	if r.Web.Index[0] != "index.html" {
 		t.Errorf("Web.Index: got %q, want index.html", r.Web.Index)
 	}
 	if !r.Web.Listing {
