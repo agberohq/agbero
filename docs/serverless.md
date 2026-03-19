@@ -197,7 +197,7 @@ route "/tools" {
 
 ```bash
 # Send HTML, receive PDF
-curl -X POST https://myapp.com/tools/work/pdf \
+curl -X POST https://myapp.com/tools/pdf \
   --data-binary @page.html \
   --output report.pdf
 ```
@@ -206,11 +206,11 @@ The HTML body arrives as stdin to `wkhtmltopdf`. The PDF streams out as the resp
 
 Other use cases: image conversion with ImageMagick, data transformation with `jq`, running Python or Node scripts, shell pipelines.
 
-Worker endpoints are reachable at `{route-path}/work/{name}`:
+Worker endpoints are reachable at `{route-path}/{name}`:
 ```
-POST /tools/work/pdf
-POST /tools/work/resize-image
-POST /tools/work/convert-csv
+POST /tools/pdf
+POST /tools/resize-image
+POST /tools/convert-csv
 ```
 
 ### Background daemons
@@ -518,7 +518,7 @@ const url = URL.createObjectURL(blob)
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string (label) | Required. Used in URL path for on-demand workers: `/work/{name}` |
+| `name` | string (label) | Required. Used in URL path for on-demand workers: `/{name}` |
 | `command` | []string | Required. Command and arguments |
 | `background` | bool | Run as persistent background daemon |
 | `restart` | string | Restart policy: `always`, `on-failure`, `never` |

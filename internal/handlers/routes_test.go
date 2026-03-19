@@ -542,7 +542,6 @@ func TestRouteHandler_Proxy_Timeout(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
-	// 504 Gateway Timeout is the correct status for timeout
 	if w.Code != http.StatusGatewayTimeout && w.Code != http.StatusBadGateway {
 		t.Errorf("Expected 504 (Gateway Timeout) or 502 (Bad Gateway), got %d", w.Code)
 	}
@@ -1776,8 +1775,13 @@ func TestRouteHandler_MaxBodySize(t *testing.T) {
 }
 
 // TestRouteHandler_Serverless_Selection verifies that a serverless route correctly dispatches requests.
-// It confirms that the underlying serverless multiplexer handles /rest and /work paths through the main Route handler.
+// It confirms that the underlying serverless multiplexer handles  and  paths through the main Route handler.
 func TestRouteHandler_Serverless_Selection(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
+		fmt.Fprintln(os.Stdout, os.Getenv("TEST_WORKER_OUTPUT"))
+		os.Exit(0)
+	}
+
 	cfg := NewTestConfig(t)
 	cfg.Orch = orchestrator.New(cfg.Resource.Logger, t.TempDir(), nil, nil)
 
@@ -1787,11 +1791,12 @@ func TestRouteHandler_Serverless_Selection(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	uniqueWorkerOutput := "worker-response-" + fmt.Sprintf("%d", os.Getpid())
 	var cmd []string
 	if runtime.GOOS == "windows" {
-		cmd = []string{"cmd", "/c", "echo", "worker-response"}
+		cmd = []string{os.Args[0], "-test.run=TestRouteHandler_Serverless_Selection", "--"}
 	} else {
-		cmd = []string{"echo", "worker-response"}
+		cmd = []string{os.Args[0], "-test.run=TestRouteHandler_Serverless_Selection", "--"}
 	}
 
 	route := &alaye.Route{
@@ -1802,7 +1807,14 @@ func TestRouteHandler_Serverless_Selection(t *testing.T) {
 				{Name: "sms", URL: ts.URL, Enabled: alaye.Active},
 			},
 			Workers: []alaye.Work{
-				{Name: "echo", Command: cmd},
+				{
+					Name:    "echo",
+					Command: cmd,
+					Env: map[string]alaye.Value{
+						"GO_WANT_HELPER_PROCESS": alaye.Value("1"),
+						"TEST_WORKER_OUTPUT":     alaye.Value(uniqueWorkerOutput),
+					},
+				},
 			},
 		},
 	}
@@ -1818,8 +1830,8 @@ func TestRouteHandler_Serverless_Selection(t *testing.T) {
 		wantStatus int
 		wantBody   string
 	}{
-		{"/rest/sms", http.StatusOK, "rest-response"},
-		{"/work/echo", http.StatusOK, "worker-response"},
+		{"/sms", http.StatusOK, "rest-response"},
+		{"/echo", http.StatusOK, uniqueWorkerOutput},
 	}
 
 	for _, tt := range tests {
@@ -1853,7 +1865,7 @@ func TestRouteHandler_Serverless_NotFound(t *testing.T) {
 	}
 	defer h.Close()
 
-	req := httptest.NewRequest(http.MethodGet, "/rest/unknown", nil)
+	req := httptest.NewRequest(http.MethodGet, "/unknown", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 

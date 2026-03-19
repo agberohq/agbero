@@ -33,7 +33,6 @@ func (p *Process) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) er
 		return nil
 	}
 
-	// Ensure working directory exists before execution
 	if p.Dir != "" {
 		if err := os.MkdirAll(p.Dir, 0755); err != nil {
 			return err

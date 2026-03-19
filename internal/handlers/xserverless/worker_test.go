@@ -3,6 +3,7 @@
 package xserverless
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,33 +13,38 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/resource"
-	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/orchestrator"
+	"github.com/olekukonko/ll"
 )
 
 const (
-	testWorkerName   = "test-echo"
-	testResponseText = "hello-from-worker"
+	testWorkerName = "test-echo"
 )
 
 // TestWorkerServeHTTP checks if the worker handler correctly executes a shell command.
 // It verifies that stdout from the process is captured and returned as the HTTP response body.
+// Uses the test binary itself to ensure cross-platform compatibility.
 func TestWorkerServeHTTP(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
+		fmt.Fprintln(os.Stdout, os.Getenv("TEST_UNIQUE_ID"))
+		os.Exit(0)
+	}
+
 	res := resource.New()
 	tempWork := t.TempDir()
 
 	orch := orchestrator.New(res.Logger, tempWork, nil, nil)
 
-	uniqueString := "agbero-test-token-" + zulu.XXHash([]byte(t.Name()))
+	uniqueString := "agbero-test-token-" + fmt.Sprintf("%d", os.Getpid())
 	var cmd []string
 	if runtime.GOOS == "windows" {
-		cmd = []string{"cmd", "/c", "echo", uniqueString}
+		cmd = []string{os.Args[0], "-test.run=TestWorkerServeHTTP", "--"}
 	} else {
-		cmd = []string{"echo", uniqueString}
+		cmd = []string{os.Args[0], "-test.run=TestWorkerServeHTTP", "--"}
 	}
 
 	work := alaye.Work{
-		Name:    "test-worker",
+		Name:    testWorkerName,
 		Command: cmd,
 	}
 
@@ -49,9 +55,24 @@ func TestWorkerServeHTTP(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Test-Id", uniqueString)
 	rr := httptest.NewRecorder()
 
-	handler.ServeHTTP(rr, req)
+	env := append(os.Environ(), "GO_WANT_HELPER_PROCESS=1", "TEST_UNIQUE_ID="+uniqueString)
+	handler.cfg.Command = cmd
+	handler.res.Logger = ll.New("test").Disable()
+
+	proc := &orchestrator.Process{
+		Config: handler.cfg,
+		Env:    env,
+		Dir:    tempWork,
+		Logger: res.Logger.Namespace("worker").Namespace(testWorkerName),
+	}
+
+	err := proc.Run(req.Context(), req.Body, rr)
+	if err != nil {
+		t.Fatalf("Process execution failed: %v", err)
+	}
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rr.Code)

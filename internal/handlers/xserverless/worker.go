@@ -4,6 +4,7 @@ package xserverless
 
 import (
 	"net/http"
+	"os"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/resource"
@@ -46,14 +47,19 @@ func (h *WorkerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		host = "default"
 	}
 
-	routeCfg := alaye.Route{
-		Env: h.routeEnv,
-		Serverless: alaye.Serverless{
-			Workers: []alaye.Work{h.cfg},
-		},
+	var dir string
+	if h.orch != nil {
+		routeCfg := alaye.Route{
+			Env: h.routeEnv,
+			Serverless: alaye.Serverless{
+				Workers: []alaye.Work{h.cfg},
+			},
+		}
+		dir = h.orch.ResolveDir(host, routeCfg, h.cfg)
+	} else {
+		dir = os.TempDir()
 	}
 
-	dir := h.orch.ResolveDir(host, routeCfg, h.cfg)
 	env := alaye.CompileEnv(h.globalEnv, h.routeEnv, h.cfg.Env)
 
 	proc := &orchestrator.Process{

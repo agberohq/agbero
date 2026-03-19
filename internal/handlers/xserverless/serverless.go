@@ -38,7 +38,7 @@ func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
 			GlobalEnv: globalEnv,
 			RouteEnv:  routeEnv,
 		})
-		s.mux.Handle("/rest/"+rest.Name, handler)
+		s.mux.Handle("/"+rest.Name, handler)
 	}
 
 	for _, worker := range route.Serverless.Workers {
@@ -49,7 +49,7 @@ func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
 			RouteEnv:  routeEnv,
 			Orch:      cfg.Orch,
 		})
-		s.mux.Handle("/work/"+worker.Name, handler)
+		s.mux.Handle("/"+worker.Name, handler)
 	}
 
 	return s
