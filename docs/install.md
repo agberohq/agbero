@@ -211,3 +211,15 @@ sudo agbero cert uninstall
 - Ensure you have admin/sudo privileges
 - On Linux, you may need to install  `nss` or `libnss3-tools` for Firefox support
 - Run with `--force` to retry
+
+## Documentation Guide
+
+Navigate through the documentation to master Agbero:
+
+- [**Home**](./home.md) - Introduction to Agbero.
+- [**Command Line**](./command.md) - Using Agbero from the command line.
+- [**Global Config**](./guide_global.md) - Practical configuration examples for APIs, WebSockets, and Auth.
+- [**Host Config**](./guide_host.md) - Practical configuration examples for APIs, WebSockets, and Auth.
+- [**Advanced Guide**](./advance.md) - Deep dive into Clustering, Git Deployments, and Firewall tuning.
+- [**Plugin Guide**](./plugin.md) - Write custom high-performance middleware using WebAssembly.
+- [**Contributor Guide**](./contributor.md) - Architecture overview and guidelines for contributing to Agbero.

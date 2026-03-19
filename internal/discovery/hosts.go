@@ -653,11 +653,11 @@ func (hm *Host) rebuildLookupLocked() {
 		domainToRoutes[host] = append(domainToRoutes[host], route)
 
 		if _, exists := domainToConfig[host]; !exists {
+			// Create a clean shell host directly
 			defaultHost := &alaye.Host{
 				Domains: []string{host},
 				TLS:     alaye.TLS{Mode: alaye.ModeLocalAuto},
 			}
-
 			// If it's a public domain, default to Let's Encrypt instead of mkcert
 			if !woos.IsLocalContext(host) {
 				defaultHost.TLS.Mode = alaye.ModeLetsEncrypt
@@ -784,6 +784,34 @@ func (hm *Host) Save(domain string) error {
 
 	p := parser.NewParser(filePath)
 	return p.MarshalFile(cfg)
+}
+
+// DeleteFile removes the host configuration from memory and deletes its corresponding HCL file.
+// Allows the admin UI to dynamically destroy registered domains and unbind routing topologies immediately.
+func (hm *Host) DeleteFile(domain string) error {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+
+	domain = zulu.NormalizeHost(domain)
+	if domain == emptyString {
+		return fmt.Errorf("invalid domain")
+	}
+
+	filename := domain + woos.HCLSuffix
+	filePath := filepath.Join(hm.hostsDir.Path(), filename)
+
+	// Remove from memory
+	delete(hm.hosts, domain)
+	hm.rebuildLookupLocked()
+
+	// Remove from disk
+	err := os.Remove(filePath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	hm.logger.Fields("domain", domain, "file", filename).Info("host configuration deleted")
+	return nil
 }
 
 // validatePathSegment rejects values that could escape a base directory via path traversal.

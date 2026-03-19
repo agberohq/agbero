@@ -2,57 +2,51 @@ package alaye
 
 import (
 	"encoding/base64"
-	"fmt"
 	"os"
 	"strings"
 )
 
-// Value is a custom string type that supports dynamic resolution
-// from Environment variables ("env."), Base64 ("b64."), or raw strings.
+// Value is a custom string type that supports dynamic resolution.
+// It can resolve data from Environment variables, Base64, or raw strings.
 type Value string
 
+// String returns the resolved value by checking the system environment.
+// It acts as a convenience wrapper for Resolve using os.Getenv as the provider.
 func (v Value) String() string {
-	return string(v)
+	return v.Resolve(os.Getenv)
 }
 
-// UnmarshalText implements encoding.TextMarshaler for JSON/XML support
+// UnmarshalText implements the encoding.TextUnmarshaler interface.
+// It stores the raw string value from the configuration without immediate resolution.
 func (v *Value) UnmarshalText(text []byte) error {
-	raw := strings.TrimSpace(string(text))
-	return v.resolve(raw)
+	*v = Value(string(text))
+	return nil
 }
 
-// resolve contains the shared logic for env/b64/shell expansion
-func (v *Value) resolve(raw string) error {
+// Resolve resolves the underlying value using a provided lookup function.
+// It handles "b64." and "env." prefixes, and performs shell-style variable expansion.
+func (v Value) Resolve(lookup func(string) string) string {
+	raw := strings.TrimSpace(string(v))
 	if raw == "" {
-		*v = ""
-		return nil
+		return ""
 	}
 
-	// 1. Base64 Handling: "b64.encodedstring"
 	if after, ok := strings.CutPrefix(raw, "b64."); ok {
-		b64Str := after
-		decoded, err := base64.StdEncoding.DecodeString(b64Str)
+		decoded, err := base64.StdEncoding.DecodeString(after)
 		if err != nil {
-			return fmt.Errorf("failed to decode base64 config value: %w", err)
+			return raw
 		}
-		*v = Value(decoded)
-		return nil
+		return string(decoded)
 	}
 
-	// 2. Explicit Env Var: "env.MY_VAR"
 	if after, ok := strings.CutPrefix(raw, "env."); ok {
-		key := after
-		*v = Value(os.Getenv(key))
-		return nil
+		return lookup(after)
 	}
 
-	// 3. Shell Expansion style: "${env.MY_VAR}" or "foo-${env.BAR}-baz"
-	// This handles cases where HCL didn't pre-resolve or for non-HCL sources (JSON)
-	resolved := os.Expand(raw, func(key string) string {
-		key = strings.TrimPrefix(key, "env.")
-		return os.Getenv(key)
+	return os.Expand(raw, func(key string) string {
+		if after, ok := strings.CutPrefix(key, "env."); ok {
+			return lookup(after)
+		}
+		return lookup(key)
 	})
-
-	*v = Value(resolved)
-	return nil
 }
