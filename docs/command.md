@@ -7,7 +7,6 @@ Complete reference for all Agbero commands and subcommands based on the actual i
 | Flag | Description |
 |------|-------------|
 | `-c, --config string` | Path to configuration file |
-| `-d, --dev` | Enable development mode |
 | `--version` | Show version information |
 | `--help` | Show help |
 
@@ -340,18 +339,18 @@ agbero home [target] [action]
 
 **Arguments:**
 - `target`: Directory to locate:
-    - `hosts` - Hosts directory (`hosts.d`)
-    - `certs` - Certificates directory (`certs.d`)
-    - `data` - Data directory (`data.d`)
-    - `logs` - Logs directory (`logs.d`)
-    - `work` - Work directory (`work.d`)
-    - `config` - Configuration file
-    - (omit) - Root Agbero directory
+  - `hosts` - Hosts directory (`hosts.d`)
+  - `certs` - Certificates directory (`certs.d`)
+  - `data` - Data directory (`data.d`)
+  - `logs` - Logs directory (`logs.d`)
+  - `work` - Work directory (`work.d`)
+  - `config` - Configuration file
+  - (omit) - Root Agbero directory
 - `action`: Action to perform:
-    - `@` - Open shell in the directory
-    - `@editor` - View/edit file (e.g., `@cat`, `@vim`, `@nano`, `@code`)
-    - `.` or `open` - Open in file explorer
-    - (omit) - Print the path
+  - `@` - Open shell in the directory
+  - `@editor` - View/edit file (e.g., `@cat`, `@vim`, `@nano`, `@code`)
+  - `.` or `open` - Open in file explorer
+  - (omit) - Print the path
 
 **Examples:**
 ```bash
@@ -404,6 +403,9 @@ agbero serve [path] [flags]
 - `-p, --port int`: Listen port (default: 8000)
 - `-b, --bind string`: Bind address (default: "")
 - `-s, --https`: Enable HTTPS with auto-generated certificates
+- `-m, --markdown`: Render `.md` files as HTML
+- `--spa`: SPA mode — unmatched paths fall back to `index.html`
+- `--php string`: PHP-FPM address (e.g. `127.0.0.1:9000` or `unix:/run/php-fpm.sock`)
 
 **Examples:**
 ```bash
@@ -479,8 +481,6 @@ When `--config` is not specified, Agbero looks for `agbero.hcl` in this order:
 |----------|-------------|-------------|
 | `EDITOR` | Editor used by `config edit` and `home @editor` | `helper/configuration.go` |
 | `AGBERO_HOME` | Override configuration home directory | `core/woos/paths.go` |
-| `AGBERO_CONTAINER` | Set to "true" to force container mode | `cmd/agbero/main.go` |
-| `KUBERNETES_SERVICE_HOST` | Auto-detects Kubernetes environment | `cmd/agbero/main.go` |
 
 ## Signal Handling
 

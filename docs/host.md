@@ -44,19 +44,19 @@ Each route has a path label and various configuration blocks:
 ```hcl
 route "/path" {
   enabled = true  # Enable/disable this route
-  
+
   # Path manipulation
   strip_prefixes = ["/path", "/api"]
-  
+
   # IP restrictions
   allowed_ips = ["10.0.0.0/8", "192.168.1.0/24"]
-  
+
   # URL rewrites
   rewrite {
     pattern = "^/old/(.*)$"
     target  = "/new/$1"
   }
-  
+
   # Route type: EITHER web (static) OR backend (proxy)
   web { ... }        # Static file serving
   # OR
@@ -89,17 +89,17 @@ route "/" {
 route "/docs" {
   web {
     root = "/var/www/docs"
-    
+
     markdown {
       enabled = true
       view    = "browse"        # "normal" or "browse"
-      
+
       highlight {
         enabled = true
         theme   = "dracula"     # github, dracula, monokai, nord, etc.
       }
-      
-      unsafe_html = false        # Allow raw HTML in markdown
+
+      unsafe = false             # Allow raw HTML in markdown
       toc = true                 # Generate table of contents
     }
   }
@@ -116,7 +116,6 @@ route "/app" {
     php {
       enabled = true
       address = "127.0.0.1:9000"  # or "unix:/run/php/php-fpm.sock"
-      index   = ["index.php"]
     }
   }
 }
@@ -141,7 +140,7 @@ route "/" {
       auth {
         type = "ssh-key"           # "basic", "ssh-key", "ssh-agent"
         username = "git"
-        ssh_key = "${b64.PRIVATE_KEY_BASE64}"
+        ssh_key = "env.PRIVATE_KEY"   # set env var to the raw PEM key content
       }
     }
   }
@@ -325,8 +324,8 @@ route "/api/secure" {
     secret  = "${env.JWT_SECRET}"
     issuer  = "auth.example.com"     # Optional: validate issuer
     
-    # Map claims to headers for backend
-    claim_map = {
+    # Map JWT claims to upstream request headers
+    claims_to_headers = {
       "sub"   = "X-User-ID"
       "email" = "X-User-Email"
       "role"  = "X-User-Role"
@@ -866,7 +865,7 @@ route "/api" {
   jwt_auth {
     enabled = true
     secret = "${env.JWT_SECRET}"
-    claim_map = { "sub" = "X-User-ID" }
+    claims_to_headers = { "sub" = "X-User-ID" }
   }
   
   rate_limit {
@@ -980,9 +979,9 @@ path   = "${env.CONFIG_DIR}/certs"
 users  = ["admin:${env.ADMIN_HASH}"]
 ```
 
-Base64-encoded values:
+Base64-encoded secrets: store the literal base64 string with the `b64.` prefix so Agbero decodes it at load time:
 ```hcl
-ssh_key = "b64.${env.PRIVATE_KEY_BASE64}"
+ssh_key = "b64.LS0tLS1CRUdJTiBPUEVOU1NIIFBSSVZBVEUgS0VZLS0tLS0..."
 ```
 
 ---
@@ -990,5 +989,6 @@ ssh_key = "b64.${env.PRIVATE_KEY_BASE64}"
 ## Next Steps
 
 - [Advanced Guide](./advance.md) - Clustering, Git Deployments, and Firewall tuning
+- [Serverless Guide](./serverless.md) - REST proxying, workers, and scheduled tasks
 - [Plugin Guide](./plugin.md) - Write custom WebAssembly middleware
 - [CLI Reference](./command.md) - Command-line interface documentation

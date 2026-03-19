@@ -1,3 +1,5 @@
+// Package agbero provides the main server implementation and lifecycle management.
+// It coordinates listeners, security managers, and traffic managers for proxy operations.
 package agbero
 
 import (
@@ -22,6 +24,7 @@ import (
 	"github.com/agberohq/agbero/internal/handlers"
 	"github.com/agberohq/agbero/internal/middleware/firewall"
 	"github.com/agberohq/agbero/internal/pkg/cook"
+	"github.com/agberohq/agbero/internal/pkg/orchestrator"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/telemetry"
@@ -48,6 +51,7 @@ type Server struct {
 	tlsManager      *tlss.Manager
 	securityManager *security.Manager
 	resource        *resource.Resource
+	orchManager     *orchestrator.Manager
 
 	mu        sync.RWMutex
 	listeners []handlers.Listener
@@ -68,8 +72,8 @@ type Server struct {
 	telemetryCollector *telemetry.Collector
 }
 
-// NewServer configures and injects dependencies required for core proxy execution.
-// Prepares logic components before starting up listeners.
+// NewServer initializes a Server instance with the provided options.
+// It configures the core components before the start sequence is initiated.
 func NewServer(opts ...Option) *Server {
 	s := &Server{}
 	for _, opt := range opts {
@@ -78,16 +82,16 @@ func NewServer(opts ...Option) *Server {
 	return s
 }
 
-// OnClusterChange processes routing updates from the gossip network.
-// Informs the host manager of updates retrieved from other peers dynamically.
+// OnClusterChange implements the cluster update handler for route modifications.
+// It signals the host manager to update internal routing tables based on peer updates.
 func (s *Server) OnClusterChange(key string, value []byte, deleted bool) {
 	if s.hostManager != nil {
 		s.hostManager.OnClusterChange(key, value, deleted)
 	}
 }
 
-// OnClusterCert updates local TLS certificates safely across the cluster map.
-// Resolves missing files whenever a peer resolves LetsEncrypt successfully.
+// OnClusterCert handles the synchronization of certificates across the cluster.
+// It ensures that ACME certificates obtained by one node are available to all peers.
 func (s *Server) OnClusterCert(domain string, certPEM, keyPEM []byte) error {
 	if s.tlsManager != nil {
 		return s.tlsManager.ApplyClusterCertificate(domain, certPEM, keyPEM)
@@ -95,16 +99,16 @@ func (s *Server) OnClusterCert(domain string, certPEM, keyPEM []byte) error {
 	return nil
 }
 
-// OnClusterChallenge syncs an ACME domain challenge across the mesh.
-// Provides global resolution regardless of which node Let's Encrypt contacts.
+// OnClusterChallenge synchronizes ACME challenge tokens across cluster members.
+// It allows any node to fulfill a challenge request regardless of which node initiated it.
 func (s *Server) OnClusterChallenge(token, keyAuth string, deleted bool) {
 	if s.tlsManager != nil {
 		s.tlsManager.ApplyClusterChallenge(token, keyAuth, deleted)
 	}
 }
 
-// Start initializes systems, hooks watchers, and activates configured listeners.
-// Spawns necessary daemon modules, cluster meshes, and HTTP/TCP frontends.
+// Start initiates the proxy server lifecycle including listeners and managers.
+// It blocks until the shutdown signal is received or a critical error occurs.
 func (s *Server) Start(configPath string) error {
 	s.mu.Lock()
 	s.configPath = configPath
@@ -151,6 +155,8 @@ func (s *Server) Start(configPath string) error {
 			}))
 	}
 
+	s.populateResourceEnv()
+
 	if s.shutdown != nil {
 		s.shutdown.RegisterFunc("Resource", s.resource.Close)
 	}
@@ -196,6 +202,8 @@ func (s *Server) Start(configPath string) error {
 			}
 		}
 	}
+
+	s.orchManager = orchestrator.New(s.logger, s.global.Storage.WorkDir, s.cookManager, s.global.Env)
 
 	if s.global.Gossip.SharedState.Enabled.Active() {
 		if s.global.Gossip.SharedState.Driver == "redis" {
@@ -321,8 +329,8 @@ func (s *Server) Start(configPath string) error {
 	return nil
 }
 
-// Reload applies updated configurations to the server without downtime.
-// Safely drains old connections to prevent dropping active websocket or file transfers.
+// Reload triggers a full configuration hot-swap if the underlying HCL files have changed.
+// It gracefully closes old listeners and transfers traffic to the new instances.
 func (s *Server) Reload() {
 	s.mu.RLock()
 	configPath := s.configPath
@@ -375,6 +383,8 @@ func (s *Server) Reload() {
 
 	s.global = global
 	s.configSHA = sha
+
+	s.populateResourceEnv()
 
 	var newSharedState woos.SharedState
 	if global.Gossip.SharedState.Enabled.Active() && global.Gossip.SharedState.Driver == "redis" {
@@ -461,7 +471,6 @@ func (s *Server) Reload() {
 		}
 	}
 
-	// Drain the old listeners asynchronously so Reload() returns immediately
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultReloadTimeout)
 		defer cancel()
@@ -485,7 +494,6 @@ func (s *Server) Reload() {
 		}
 	}()
 
-	// Start the new listeners, retrying if the port is temporarily in use while old listeners shut down
 	for _, l := range newListeners {
 		go func(listener handlers.Listener) {
 			s.logger.Fields("bind", listener.Addr(), "proto", listener.Kind()).Info("reloaded listener")
@@ -512,8 +520,8 @@ func (s *Server) Reload() {
 	s.logger.Info("configuration reloaded successfully")
 }
 
-// shutdownImpl orchestrates a graceful teardown of the proxy server.
-// Drains active connections and signals cluster peers before terminating.
+// shutdownImpl performs the final listener termination during server shutdown.
+// it ensures all active connections are drained or timed out before process exit.
 func (s *Server) shutdownImpl(ctx context.Context) error {
 	if s.clusterManager != nil {
 		s.clusterManager.BroadcastStatus("draining")
@@ -541,8 +549,8 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 	return nil
 }
 
-// configComputeSHA hashes the main config file and all host files to detect changes.
-// Reads under RLock to prevent data races with concurrent Reload calls.
+// configComputeSHA calculates the SHA-256 fingerprint of the main config and host directory.
+// It is used to detect filesystem changes that trigger a hot reload.
 func (s *Server) configComputeSHA() (string, error) {
 	hasher := sha256.New()
 
@@ -579,13 +587,14 @@ func (s *Server) configComputeSHA() (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-// tlsValidate ensures required TLS certificates are present before startup.
+// tlsValidate is a placeholder for future comprehensive certificate chain validation.
+// Currently returns nil to satisfy startup requirements.
 func (s *Server) tlsValidate() error {
 	return nil
 }
 
-// serverWatchConfig continuously monitors the host manager for configuration changes.
-// Triggers hot-reloads seamlessly without dropping active client connections.
+// serverWatchConfig monitors the host manager for change events that require a reload.
+// It executes a full reload sequence whenever configuration updates are detected.
 func (s *Server) serverWatchConfig() {
 	for {
 		select {
@@ -594,5 +603,18 @@ func (s *Server) serverWatchConfig() {
 		case <-s.shutdown.Done():
 			return
 		}
+	}
+}
+
+// populateResourceEnv copies global environment variables into the resource manager.
+// This makes the HCL-defined environment accessible to runtime components like serverless functions.
+func (s *Server) populateResourceEnv() {
+	if s.resource == nil || s.resource.Env == nil {
+		return
+	}
+
+	s.resource.Env.Global.Clear()
+	for k, v := range s.global.Env {
+		s.resource.Env.Global.Set(k, v)
 	}
 }

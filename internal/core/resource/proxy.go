@@ -1,3 +1,5 @@
+// Package resource defines context structures for routing and traffic handling.
+// It facilitates dependency injection for HTTP route and proxy handlers.
 package resource
 
 import (
@@ -5,14 +7,11 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/cook"
+	"github.com/agberohq/agbero/internal/pkg/orchestrator"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 )
 
-// Proxy carries the complete context required to serve a proxied request.
-// It groups the three distinct lifetimes that every handler and middleware needs:
-// process-lifetime infrastructure (Resource), config-lifetime settings (Global),
-// and host-lifetime routing rules (Host).
 type Proxy struct {
 	Resource    *Resource
 	Global      *alaye.Global
@@ -20,16 +19,17 @@ type Proxy struct {
 	SharedState woos.SharedState
 	CookMgr     *cook.Manager
 	IPMgr       *zulu.IPManager
+	Orch        *orchestrator.Manager
 }
 
-// Logger returns the process logger from the underlying Resource.
-// Provides a single access point so callers never need to reach into Resource directly.
+// Logger provides access to the namespaced system logger from the resource manager.
+// This ensures that all proxy-related events are logged consistently.
 func (p Proxy) Logger() *ll.Logger {
 	return p.Resource.Logger
 }
 
-// Validate checks that the mandatory fields are populated.
-// SharedState and CookMgr are optional and may be nil.
+// Validate ensures that all mandatory proxy dependencies are correctly initialized.
+// It performs integrity checks on the resource, global config, and host configuration.
 func (p Proxy) Validate() error {
 	if p.Resource == nil {
 		return errors.New("proxy: resource manager is required")

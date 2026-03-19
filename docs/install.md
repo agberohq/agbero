@@ -172,7 +172,7 @@ sudo agbero cert uninstall
 - **Quick Start**: Run `agbero run --dev` and visit https://localhost
 - **CLI Reference**: See the [Command Guide](./command.md) for all available commands
 - **Configuration**: Learn about [Global Configuration](./global.md) and [Host Configuration](./host.md)
-- **Examples**: Check out practical examples in the [Guide](./guide.md)
+- **Serverless**: Learn about [REST proxying and workers](./serverless.md)
 
 ## Platform-Specific Notes
 
@@ -216,10 +216,12 @@ sudo agbero cert uninstall
 
 Navigate through the documentation to master Agbero:
 
-- [**Home**](./home.md) - Introduction to Agbero.
+- [**Home**](./index.md) - Introduction to Agbero.
 - [**Command Line**](./command.md) - Using Agbero from the command line.
-- [**Global Config**](./guide_global.md) - Practical configuration examples for APIs, WebSockets, and Auth.
-- [**Host Config**](./guide_host.md) - Practical configuration examples for APIs, WebSockets, and Auth.
+- [**Global Config**](./global.md) - Configure bind addresses, TLS, logging, rate limits, and clustering.
+- [**Host Config**](./host.md) - Define routes, backends, auth, and TLS per virtual host.
+- [**Serverless Guide**](./serverless.md) - REST proxying, workers, and scheduled tasks without the cloud.
 - [**Advanced Guide**](./advance.md) - Deep dive into Clustering, Git Deployments, and Firewall tuning.
 - [**Plugin Guide**](./plugin.md) - Write custom high-performance middleware using WebAssembly.
+- [**API Reference**](./api.md) - Dynamic route management via the cluster API.
 - [**Contributor Guide**](./contributor.md) - Architecture overview and guidelines for contributing to Agbero.

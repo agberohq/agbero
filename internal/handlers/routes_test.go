@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/cook"
+	"github.com/agberohq/agbero/internal/pkg/orchestrator"
 	"github.com/olekukonko/ll"
 )
 
@@ -1770,5 +1772,92 @@ func TestRouteHandler_MaxBodySize(t *testing.T) {
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("Expected 413, got %d", w.Code)
+	}
+}
+
+// TestRouteHandler_Serverless_Selection verifies that a serverless route correctly dispatches requests.
+// It confirms that the underlying serverless multiplexer handles /rest and /work paths through the main Route handler.
+func TestRouteHandler_Serverless_Selection(t *testing.T) {
+	cfg := NewTestConfig(t)
+	cfg.Orch = orchestrator.New(cfg.Resource.Logger, t.TempDir(), nil, nil)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("rest-response"))
+	}))
+	defer ts.Close()
+
+	var cmd []string
+	if runtime.GOOS == "windows" {
+		cmd = []string{"cmd", "/c", "echo", "worker-response"}
+	} else {
+		cmd = []string{"echo", "worker-response"}
+	}
+
+	route := &alaye.Route{
+		Path: "/api",
+		Serverless: alaye.Serverless{
+			Enabled: alaye.Active,
+			RESTs: []alaye.REST{
+				{Name: "sms", URL: ts.URL, Enabled: alaye.Active},
+			},
+			Workers: []alaye.Work{
+				{Name: "echo", Command: cmd},
+			},
+		},
+	}
+
+	h := NewRoute(cfg, route)
+	if h == nil {
+		t.Fatal("route handler should not be nil")
+	}
+	defer h.Close()
+
+	tests := []struct {
+		path       string
+		wantStatus int
+		wantBody   string
+	}{
+		{"/rest/sms", http.StatusOK, "rest-response"},
+		{"/work/echo", http.StatusOK, "worker-response"},
+	}
+
+	for _, tt := range tests {
+		req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+
+		if rr.Code != tt.wantStatus {
+			t.Errorf("Path %s: expected status %d, got %d", tt.path, tt.wantStatus, rr.Code)
+		}
+
+		gotBody := strings.TrimSpace(rr.Body.String())
+		if gotBody != tt.wantBody {
+			t.Errorf("Path %s: expected body %q, got %q", tt.path, tt.wantBody, gotBody)
+		}
+	}
+}
+
+// TestRouteHandler_Serverless_NotFound validates that invalid serverless endpoints return 404.
+// It ensures that the dispatcher correctly identifies and rejects unconfigured serverless tasks.
+func TestRouteHandler_Serverless_NotFound(t *testing.T) {
+	cfg := NewTestConfig(t)
+	route := &alaye.Route{
+		Path:       "/api",
+		Serverless: alaye.Serverless{Enabled: alaye.Active},
+	}
+
+	h := NewRoute(cfg, route)
+	if h == nil {
+		t.Fatal("route handler should not be nil")
+	}
+	defer h.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/rest/unknown", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d", rr.Code)
 	}
 }

@@ -5,192 +5,107 @@
 </p>
 
 
+
 [![Go Report Card](https://goreportcard.com/badge/github.com/agberohq/agbero)](https://goreportcard.com/report/github.com/agberohq/agbero)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 
-### **Agbero**: *noun* [`Yoruba` ,`English`] - a motor-park tout or conductor who directs traffic, loads buses, checks tickets, and collects tolls.
+### **Agbero**: *noun* [`Yoruba`, `English`] - a motor-park tout or conductor who directs traffic, loads buses, checks tickets, and collects tolls.
 ##### **In Context**: This is exactly what a modern API Gateway does. It sits at the edge of your network, directs incoming API traffic to the right microservices, checks authentication ("tickets"), and enforces rate limits ("tolls").
-
 
 Agbero is a modern reverse proxy that bridges local development and production deployments. It offers Zero-Config TLS for developers, Production-Grade Load Balancing, Git-based atomic deployments, and a Programmable WASM Data Plane.
 
-## Why Choose Agbero?
+Whether you are a JavaScript developer serving a static site, a backend engineer proxying microservices, or running a distributed cluster across multiple nodes — Agbero handles it all from a single binary and a single config file.
+
+## Why Agbero?
 
 <p align="center">
   <img src="assets/dash.1.png" width="500" alt="Agbero Dashboard">
 </p>
 
 
-### For Developers
-- **Zero-Config Local HTTPS**: Run `agbero run` in any directory for instant HTTPS with auto-trusted certificates.
-- **Hot Reload**: Modify configurations, routes, and WASM plugins without restarting or dropping connections.
-- **Unified Config**: Use `${env.VAR}` syntax to make one configuration file work seamlessly across Dev, Staging, and Production.
+
+Traditional proxies often rely on static IP-based rules and manual configuration reloads, which break down in modern, dynamic environments. Complex service meshes solve this but introduce massive operational overhead, sidecar injections, and steep learning curves.
+
+Agbero solves these challenges natively:
+
+*   **Identity-Based Rate Limiting:** Stop punishing legitimate users behind corporate NATs. Agbero supports distributed rate limiting and firewalling based on JWT claims, headers, or cookies, synchronized across your cluster via Redis or Gossip.
+*   **Centralized Edge Authentication:** Eliminate authentication sprawl. Agbero validates JWTs, handles full OAuth flows (Google, GitHub, OIDC), and integrates with external Forward Auth services directly at the edge.
+*   **Zero-Downtime GitOps (Cook):** Deploy static sites and Single Page Applications directly from Git repositories. Agbero pulls, builds isolated deployments, and performs atomic symlink swaps without dropping a single request.
+*   **Distributed Cluster Mesh:** No external dependencies required. Agbero nodes automatically discover each other via UDP Gossip and synchronize routing configurations and ACME certificates over reliable TCP streams.
+*   **Deep Observability:** Built-in Prometheus and VictoriaMetrics integration provides high-resolution latency histograms and circuit-breaker telemetry without requiring complex log-parsing pipelines.
+*   **Serverless Without the Cloud:** Proxy calls to external APIs with credentials injected server-side — no tokens in the browser. Run local scripts on demand, on a schedule, or as background daemons, all defined in HCL.
+
+## Get Started
+
+```bash
+# Install
+curl -fsSL https://github.com/agberohq/agbero/releases/latest/download/install.sh | sh
+
+# Install as a system service with default configuration
+sudo agbero service install
+
+# Or run directly against a config file
+agbero run --config agbero.hcl
+
+# Develop locally — serve any directory with trusted HTTPS in one command
+agbero cert install
+agbero serve . --https
+```
+
+## Core Capabilities
 
 <p align="center">
   <img src="assets/dash.2.png" width="500" alt="Agbero Dashboard">
 </p>
 
 
-### Scalable
-- **Atomic Git Deployments**: Serve static sites and Single Page Applications (SPAs) directly from a Git repository with zero-downtime updates via Webhooks or interval polling.
-- **Weighted Load Balancing**: Native support for canary deployments and A/B testing.
-- **Built-in Gossip Protocol**: Automatic service discovery across nodes without external dependencies like Consul or Zookeeper.
-- **Circuit Breaking & Health Checks**: Automatic failure detection, predictive health scoring, and rapid recovery.
-- **HDR Histogram Metrics**: Detailed latency tracking (P50/P90/P99) exposed via JSON and the built-in Dashboard.
+### Traffic Management (L4 & L7)
+*   HTTP/1.1, HTTP/2, and HTTP/3 (QUIC) support.
+*   TCP Proxying with SNI routing and PROXY Protocol support.
+*   11 load balancing strategies: Round Robin, Least Conn, IP Hash, URL Hash, Consistent Hash, Adaptive, Sticky, and more.
+*   Automatic Circuit Breaking and Active/Passive Health Probes with 0–100 health scoring.
+*   Graceful connection draining and hot-reloading via SIGHUP.
+
+### Security & WAF
+*   Automated Let's Encrypt (HTTP-01) and local development CA provisioning — trusted by all browsers.
+*   Dynamic Web Application Firewall (WAF) with regex matching, threshold tracking, and auto-banning.
+*   Cross-Origin Resource Sharing (CORS) and security header injection.
+*   WebAssembly (WASM) middleware for custom, high-performance request filtering.
+
+### Authentication at the Edge
+*   HTTP Basic Auth with bcrypt password hashing.
+*   JWT validation with claim-to-header forwarding.
+*   OAuth 2.0 / OIDC (Google, GitHub, any OIDC provider).
+*   Forward Auth — delegate to any external auth service.
+*   Mutual TLS (mTLS) with client certificate verification.
+
+### Content Serving
+*   High-performance static file serving with on-the-fly Brotli and Gzip compression.
+*   FastCGI support for PHP applications.
+*   On-the-fly Markdown to HTML rendering with syntax highlighting and table of contents.
+*   Git-backed deployments with atomic symlink swaps and webhook push-to-deploy.
+
+### Serverless & Workers
+*   Credential-injecting REST proxy — call Stripe, SendGrid, or any API without exposing keys to the browser.
+*   On-demand HTTP-triggered process execution with stdin/stdout streaming.
+*   Background daemons with automatic restart policies.
+*   Cron-scheduled tasks defined in HCL.
+*   One-shot startup tasks (migrations, seed data).
+
+## Documentation
 
 <p align="center">
   <img src="assets/dash.3.png" width="500" alt="Agbero Dashboard">
 </p>
 
 
-### Programmable & Extensible
-- **WASM Middleware**: Write custom logic in Go, Rust, or TinyGo and run it safely inside the proxy.
-- **Native Authentication**: Built-in support for JWT validation, OAuth (Google, GitHub, OIDC), Basic Auth, and Forward Auth.
-- **Rate Limiting**: Identity-based limiting (API Key, IP, Cookie) with distributed sharding.
-
-## Quick Start
-
-### Installation
-
-**Edge (development)**
-```bash
-curl -fsSL https://raw.githubusercontent.com/agberohq/agbero/refs/heads/main/scripts/install.sh | sh
-```
-**Release (stable)**
-```bash
-curl -fsSL https://github.com/agberohq/agbero/releases/latest/download/install.sh | sh
-```
-
-### The Simplest Possible Start
-
-**1. Persistent Configuration** (Recommended for projects)
-```bash
-# Init in default location
-agbero init
-
-# Init in a specific directory
-AGBERO_HOME=/etc/agbero agbero init
-
-# Run Agbero using the generated configuration
-agbero run --dev
-
-# Or specify a custom configuration file
-agbero run -c /etc/agbero/agbero.hcl
-```
-
-now visit `https://admin.localhost` in your browser.
-
-
-**2. Instant Ephemeral Mode** (No config required)
-```bash
-# Serve the current directory on https://localhost:8000 with auto-generated TLS
-agbero serve . --https
-
-# Proxy localhost:3000 to https://app.localhost:8080
-agbero proxy :3000 app.localhost --https
-```
-
-### Service Setup
-
-```bash
-# Interactive service installation (Systemd / Launchd / Windows Service)
-sudo agbero service install
-
-# Start the service
-sudo agbero service start
-```
-
-## Performance
-
-- **Latency**: ~1ms average, <3ms P99 for static file serving under 50k requests/sec
-- **Throughput**: 50,000+ requests per second on modest hardware
-- **Memory**: ~25MB idle, ~50MB under load
-- **Connections**: 50k+ concurrent connections with HTTP/3 (QUIC) and TCP proxy support
-
-### Real-World Benchmark (1M requests)
-
-| Metric | Value |
-|--------|-------|
-| Total Requests | 1,000,000 |
-| Duration | 19.77 seconds |
-| Requests/sec | 50,574 |
-| Average Latency | 1.0ms |
-| P95 Latency | 1.6ms |
-| **P99 Latency** | **2.7ms** |
-| Fastest Response | 0.1ms |
-| Slowest Response | 58.9ms |
-
-All responses returned HTTP 200 with zero errors.
-
-## Documentation
-
-- **[Global Configuration](docs/global.md)**: Main config reference (`agbero.hcl`).
-- **[Host Configuration](docs/host.md)**: Routes, backends, and TLS.
-- **[Advanced Guide](docs/advance.md)**: Clustering, Git deployments, health scoring.
-- **[Plugin Guide](docs/plugin.md)**: Writing WebAssembly middleware in Go and Rust.
-- **[CLI Reference](docs/command.md)**: Command-line interface documentation.
-- **[API Reference](docs/api.md)**: Dynamic route management API.
-
-## Roadmap
-
-- [x] Auto-TLS (Local & Let's Encrypt)
-- [x] HTTP/3 (QUIC) support
-- [x] TCP & HTTP Reverse Proxying
-- [x] WebAssembly (WASM) middleware
-- [x] Native Authentication (JWT, Basic, OAuth, Forward Auth)
-- [x] Advanced rate limiting & Active Firewall
-- [x] Gossip-based cluster state synchronization
-- [x] Git-based atomic deployments
-- [x] Admin Dashboard UI
-- [x] Cluster Implementation
-- [ ] Better Test Coverage
-- [ ] Proper Documentation
-
-## Architecture
-
-Agbero acts as an intelligent **edge traffic controller** that manages incoming requests and routes them to the appropriate backend services. It handles TLS termination, routing logic, middleware execution, and load balancing before forwarding requests to application servers.
-
-The architecture is built around a **high-performance Go runtime**, a **programmable WebAssembly middleware layer**, and a **distributed cluster model powered by a gossip protocol**.
-
-```mermaid
-flowchart TD
-
-    A[Client / Browser] --> B[Agbero Edge Listener]
-
-    B --> C[TLS Manager]
-    C --> D[Routing Engine]
-
-    D --> E[Middleware Pipeline]
-
-    E --> F[WASM Plugins]
-    E --> G[Authentication]
-    E --> H[Rate Limiting]
-
-    D --> I[Load Balancer]
-
-    I --> J[Backend Services]
-
-    J --> J1[API Services]
-    J --> J2[Static Sites from Git]
-    J --> J3[Microservices]
-
-    B --> K[Cluster Layer]
-
-    K --> L[Gossip Protocol]
-    L --> M[Service Discovery]
-    L --> N[State Replication]
-```
-
-## Contributing
-
-We welcome contributions! Please see our [Contributing Guide](docs/contributor.md) for details.
-
-1. Fork the repository.
-2. Create a feature branch.
-3. Add tests for your changes.
-4. Submit a pull request.
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
+- [**Installation Guide**](./docs/install.md) - Get Agbero running on Linux, macOS, or Windows.
+- [**Command Line**](./docs/command.md) - Every command and flag.
+- [**Global Config**](./docs/global.md) - Configure bind addresses, TLS, logging, rate limits, and clustering.
+- [**Host Config**](./docs/host.md) - Define routes, backends, auth, and TLS per virtual host.
+- [**Serverless Guide**](./docs/serverless.md) - REST proxying, workers, and scheduled tasks without the cloud.
+- [**Advanced Guide**](./docs/advance.md) - Deep dive into Clustering, Git Deployments, and Firewall tuning.
+- [**Plugin Guide**](./docs/plugin.md) - Write custom high-performance middleware using WebAssembly.
+- [**API Reference**](./docs/api.md) - Dynamic ephemeral route management via the cluster API.
+- [**Contributor Guide**](./docs/contributor.md) - Architecture overview and guidelines for contributing.

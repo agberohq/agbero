@@ -2,7 +2,7 @@ module github.com/agberohq/agbero
 
 go 1.26
 
-//replace github.com/olekukonko/ll => /Users/oleku/gopath/src/github.com/olekukonko/ll
+replace github.com/olekukonko/ll => /Users/oleku/gopath/src/github.com/olekukonko/ll
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0

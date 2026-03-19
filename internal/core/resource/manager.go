@@ -1,3 +1,5 @@
+// Package resource coordinates long-lived system components and shared state.
+// It manages the lifecycle of caches, metrics, health registries, and environment variables.
 package resource
 
 import (
@@ -7,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/pkg/health"
 	"github.com/agberohq/agbero/internal/pkg/metrics"
@@ -18,18 +21,24 @@ import (
 
 type Option func(*Resource)
 
+// WithLogger sets the system-wide logger for the resource manager.
+// It allows for namespaced logging across all managed proxy components.
 func WithLogger(logger *ll.Logger) Option {
 	return func(m *Resource) {
 		m.Logger = logger
 	}
 }
 
+// WithShutdown configures the global shutdown manager for the resource.
+// It ensures that all registered cleanup functions are executed on exit.
 func WithShutdown(shutdown *jack.Shutdown) Option {
 	return func(m *Resource) {
 		m.Shutdown = shutdown
 	}
 }
 
+// WithReaper initializes the cache reaper with a custom cleanup handler.
+// It automatically removes expired entries from the route and auth caches.
 func WithReaper(reapHandler func(context.Context, string)) Option {
 	return func(m *Resource) {
 		if m.Reaper != nil {
@@ -47,6 +56,8 @@ func WithReaper(reapHandler func(context.Context, string)) Option {
 	}
 }
 
+// WithCustomTransport sets a specialized HTTP transport for backend proxying.
+// It is primarily used to tune connection pooling and timeout behavior.
 func WithCustomTransport(transport *http.Transport) Option {
 	return func(m *Resource) {
 		m.Transport = transport
@@ -56,12 +67,16 @@ func WithCustomTransport(transport *http.Transport) Option {
 	}
 }
 
+// WithCustomHTTPClient assigns a pre-configured HTTP client to the resource manager.
+// This client is used for all outgoing requests including auth and serverless REST.
 func WithCustomHTTPClient(client *http.Client) Option {
 	return func(m *Resource) {
 		m.HTTPClient = client
 	}
 }
 
+// WithDoctor attaches a health monitor to track the status of backend patients.
+// It ensures that background health checks are executed according to their interval.
 func WithDoctor(doctor *jack.Doctor) Option {
 	return func(m *Resource) {
 		if m.Doctor != nil {
@@ -71,6 +86,8 @@ func WithDoctor(doctor *jack.Doctor) Option {
 	}
 }
 
+// WithLifetimeManager configures the TTL manager for dynamic cluster resources.
+// It tracks the expiration of temporary routes and security tokens.
 func WithLifetimeManager(lm *jack.Lifetime) Option {
 	return func(m *Resource) {
 		if m.Lifetime != nil {
@@ -80,6 +97,8 @@ func WithLifetimeManager(lm *jack.Lifetime) Option {
 	}
 }
 
+// WithCacheSizes reinitializes internal caches with the specified maximum capacities.
+// It clears existing data to ensure the new size constraints are applied immediately.
 func WithCacheSizes(routeMax, tcpMax, authMax, gzMax int) Option {
 	return func(m *Resource) {
 		if routeMax > 0 {
@@ -113,6 +132,8 @@ func WithCacheSizes(routeMax, tcpMax, authMax, gzMax int) Option {
 	}
 }
 
+// WithMetrics replaces the current metrics registry with a new instance.
+// This is used during reloads to reset or reconfigure telemetry collection.
 func WithMetrics(registry *metrics.Registry) Option {
 	return func(m *Resource) {
 		oldMetrics := m.Metrics
@@ -123,6 +144,8 @@ func WithMetrics(registry *metrics.Registry) Option {
 	}
 }
 
+// WithHealth replaces the current backend health registry.
+// It allows for fresh health score tracking during configuration updates.
 func WithHealth(registry *health.Registry) Option {
 	return func(m *Resource) {
 		oldHealth := m.Health
@@ -133,6 +156,8 @@ func WithHealth(registry *health.Registry) Option {
 	}
 }
 
+// WithRouteCache sets a specific cache instance for HTTP route lookup results.
+// It ensures that high-frequency route matching remains performant under load.
 func WithRouteCache(cache *mappo.Cache) Option {
 	return func(m *Resource) {
 		oldCache := m.RouteCache
@@ -143,6 +168,8 @@ func WithRouteCache(cache *mappo.Cache) Option {
 	}
 }
 
+// WithTCPCache sets a specific cache instance for TCP stream mapping results.
+// This provides rapid lookup for SNI and port-based connection routing.
 func WithTCPCache(cache *mappo.Cache) Option {
 	return func(m *Resource) {
 		oldCache := m.TCPCache
@@ -153,6 +180,8 @@ func WithTCPCache(cache *mappo.Cache) Option {
 	}
 }
 
+// WithAuthCache sets the cache used for storing successful authentication results.
+// It reduces the load on external auth providers by caching tokens and session state.
 func WithAuthCache(cache *mappo.Cache) Option {
 	return func(m *Resource) {
 		oldCache := m.AuthCache
@@ -163,6 +192,8 @@ func WithAuthCache(cache *mappo.Cache) Option {
 	}
 }
 
+// WithGzCache sets the cache instance for pre-compressed static content.
+// It allows the server to serve gzipped payloads without re-compressing them.
 func WithGzCache(cache *mappo.Cache) Option {
 	return func(m *Resource) {
 		oldCache := m.GzCache
@@ -171,6 +202,11 @@ func WithGzCache(cache *mappo.Cache) Option {
 			oldCache.Clear()
 		}
 	}
+}
+
+type Env struct {
+	Global *mappo.Concurrent[string, alaye.Value]
+	Route  *mappo.Concurrent[string, alaye.Value]
 }
 
 type Resource struct {
@@ -191,10 +227,13 @@ type Resource struct {
 	Lifetime *jack.Lifetime
 	Janitor  *jack.Pool
 
-	// internal
+	Env *Env
+
 	counter *atomic.Uint64
 }
 
+// New constructs a Resource manager and initializes all core sub-systems.
+// It sets up thread-safe registries and default networking transports.
 func New(opts ...Option) *Resource {
 	m := &Resource{
 		Metrics:    metrics.NewRegistry(),
@@ -204,7 +243,11 @@ func New(opts ...Option) *Resource {
 		AuthCache:  mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMaxBig, OnDelete: mappo.CloserDelete}),
 		GzCache:    mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMax}),
 		counter:    new(atomic.Uint64),
-		Logger:     ll.New("agbero").Disable().Suspend(), // disabled by default, this will be set by server
+		Logger:     ll.New("agbero").Disable().Suspend(),
+		Env: &Env{
+			Global: mappo.NewConcurrent[string, alaye.Value](),
+			Route:  mappo.NewConcurrent[string, alaye.Value](),
+		},
 	}
 
 	m.counter.Add(1)
@@ -214,6 +257,8 @@ func New(opts ...Option) *Resource {
 	return m
 }
 
+// Apply executes a list of configuration options on the Resource instance.
+// This is used for both initial setup and dynamic runtime re-configuration.
 func (m *Resource) Apply(opts ...Option) {
 	for _, opt := range opts {
 		if opt != nil {
@@ -222,6 +267,8 @@ func (m *Resource) Apply(opts ...Option) {
 	}
 }
 
+// setDefaults ensures that all required components are initialized with safe values.
+// It populates the HTTP transport and background task pools if they were not provided.
 func (m *Resource) setDefaults() {
 	if m.Logger == nil {
 		m.Logger = ll.New("agbero").Disable()
@@ -267,6 +314,8 @@ func (m *Resource) setDefaults() {
 	}
 }
 
+// Validate checks the integrity of the Resource manager before it starts processing traffic.
+// It returns an error if critical networking or monitoring components are uninitialized.
 func (m *Resource) Validate() error {
 	if m.Metrics == nil {
 		return errors.New("resource.metrics registry required")
@@ -283,13 +332,14 @@ func (m *Resource) Validate() error {
 	return nil
 }
 
+// Close gracefully terminates all background processes and clears internal registries.
+// It ensures that idle connections are closed and cache entries are properly disposed of.
 func (m *Resource) Close() {
-	// Step 1: Shutdown the janitor pool first - this prevents new submissions
+
 	if m.Janitor != nil {
 		_ = m.Janitor.Shutdown(2 * time.Second)
 	}
 
-	// Step 2: Now stop other components that might submit to the pool
 	if m.Lifetime != nil {
 		m.Lifetime.Stop()
 	}
@@ -300,7 +350,6 @@ func (m *Resource) Close() {
 		m.Doctor.StopAll(2 * time.Second)
 	}
 
-	// Step 3: Clear caches - these may trigger callbacks but the pool is already shut down
 	m.Metrics.Clear()
 	m.Health.Clear()
 	m.RouteCache.Clear()
@@ -308,18 +357,17 @@ func (m *Resource) Close() {
 	m.AuthCache.Clear()
 	m.GzCache.Clear()
 
-	// Step 4: Clean up remaining resources
 	m.Transport.CloseIdleConnections()
 }
 
-// Counter returns the current value without incrementing (if needed)
+// Counter returns the current global sequence value from the resource manager.
+// This value is used for generating unique IDs across various server sub-systems.
 func (m *Resource) Counter() uint64 {
 	return m.counter.Load()
 }
 
-// NextID increments and returns the next ID - HOT PATH
-//
-//go:nosplit
+// NextID increments and returns the global counter to provide a unique identifier.
+// It is used for tracking requests, tasks, and backend patient registration.
 func (m *Resource) NextID() uint64 {
 	return m.counter.Add(1)
 }
