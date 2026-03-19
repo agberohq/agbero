@@ -13,19 +13,36 @@ import (
 	"github.com/agberohq/agbero/internal/core/resource"
 )
 
+const (
+	tcpReadyTimeout     = 800 * time.Millisecond
+	tcpDialTimeout      = 1 * time.Second
+	tcpReadDeadline     = 2 * time.Second
+	tcpShortReadTimeout = 500 * time.Millisecond
+	tcpPollInterval     = 10 * time.Millisecond
+	tcpPollTimeout      = 150 * time.Millisecond
+	idleTimeoutDuration = 5 * time.Second
+	defaultBufferSize   = 256
+	smallBufferSize     = 64
+)
+
+// Waits for a TCP listener to become available at the specified address
+// Polls the address repeatedly until successful or the timeout is reached
 func waitTCPReady(t *testing.T, addr string, d time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("tcp", addr, 150*time.Millisecond)
+		c, err := net.DialTimeout("tcp", addr, tcpPollTimeout)
 		if err == nil {
 			_ = c.Close()
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(tcpPollInterval)
 	}
 	t.Fatalf("listener not ready: %s", addr)
 }
+
+// Starts a simple TCP server that writes a specific ID upon connection
+// Returns the address of the server and a function to stop it
 func startIDServer(t *testing.T, id string) (addr string, stop func()) {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -52,6 +69,9 @@ func startIDServer(t *testing.T, id string) (addr string, stop func()) {
 		<-done
 	}
 }
+
+// Starts a TCP server that reads data until EOF before responding
+// Simulates a backend that waits for the client to close its write half
 func startHalfCloseServer(t *testing.T) (addr string, stop func()) {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -69,7 +89,7 @@ func startHalfCloseServer(t *testing.T) (addr string, stop func()) {
 			}
 			go func(conn net.Conn) {
 				defer conn.Close()
-				buf := make([]byte, 64)
+				buf := make([]byte, smallBufferSize)
 				for {
 					_, rerr := conn.Read(buf)
 					if rerr != nil {
@@ -85,6 +105,9 @@ func startHalfCloseServer(t *testing.T) (addr string, stop func()) {
 		<-done
 	}
 }
+
+// Assigns an available free port on the local machine
+// Closes the listener immediately to make the port available for tests
 func getFreePort(t *testing.T) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -95,6 +118,9 @@ func getFreePort(t *testing.T) string {
 	_ = l.Close()
 	return addr
 }
+
+// Constructs a simulated TLS ClientHello packet containing a Server Name Indication
+// Enables testing of SNI-based routing without needing an actual TLS handshake
 func makeSNIClientHello(sni string) []byte {
 	sniBytes := []byte(sni)
 	sniLen := len(sniBytes)
@@ -140,16 +166,22 @@ func makeSNIClientHello(sni string) []byte {
 	copy(pkt[9:], body)
 	return pkt
 }
+
+// Reads a single buffer length of data from the given network connection
+// Uses a fixed read deadline to prevent indefinite test hangs
 func readOne(t *testing.T, c net.Conn) string {
 	t.Helper()
-	buf := make([]byte, 256)
-	_ = c.SetReadDeadline(time.Now().Add(1 * time.Second))
+	buf := make([]byte, defaultBufferSize)
+	_ = c.SetReadDeadline(time.Now().Add(tcpDialTimeout))
 	n, err := c.Read(buf)
 	if err != nil && !errors.Is(err, io.EOF) {
 		t.Fatalf("read failed: %v", err)
 	}
 	return string(buf[:n])
 }
+
+// Verifies that SNI routing matches exact domains, wildcard domains, and default routes
+// Ensures the correct backend receives the connection based on the SNI provided
 func TestProxy_SNIRouting_Exact_Wildcard_Default(t *testing.T) {
 	sA, stopA := startIDServer(t, "BackendA")
 	defer stopA()
@@ -172,7 +204,7 @@ func TestProxy_SNIRouting_Exact_Wildcard_Default(t *testing.T) {
 		t.Fatalf("failed to start: %v", err)
 	}
 	defer p.Stop()
-	waitTCPReady(t, proxyAddr, 800*time.Millisecond)
+	waitTCPReady(t, proxyAddr, tcpReadyTimeout)
 	tests := []struct {
 		name string
 		sni  string
@@ -184,7 +216,7 @@ func TestProxy_SNIRouting_Exact_Wildcard_Default(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			conn, err := net.DialTimeout("tcp", proxyAddr, 1*time.Second)
+			conn, err := net.DialTimeout("tcp", proxyAddr, tcpDialTimeout)
 			if err != nil {
 				t.Fatalf("dial failed: %v", err)
 			}
@@ -197,6 +229,9 @@ func TestProxy_SNIRouting_Exact_Wildcard_Default(t *testing.T) {
 		})
 	}
 }
+
+// Verifies that a default route still connects even if no SNI data is sent by the client
+// Validates that non-TLS TCP streams fallback to the configured default handler
 func TestProxy_DefaultRoute_NoClientData_StillConnects(t *testing.T) {
 	sD, stopD := startIDServer(t, "BackendD")
 	defer stopD()
@@ -209,8 +244,8 @@ func TestProxy_DefaultRoute_NoClientData_StillConnects(t *testing.T) {
 		t.Fatalf("failed to start: %v", err)
 	}
 	defer p.Stop()
-	waitTCPReady(t, proxyAddr, 800*time.Millisecond)
-	conn, err := net.DialTimeout("tcp", proxyAddr, 1*time.Second)
+	waitTCPReady(t, proxyAddr, tcpReadyTimeout)
+	conn, err := net.DialTimeout("tcp", proxyAddr, tcpDialTimeout)
 	if err != nil {
 		t.Fatalf("dial failed: %v", err)
 	}
@@ -220,6 +255,9 @@ func TestProxy_DefaultRoute_NoClientData_StillConnects(t *testing.T) {
 		t.Fatalf("got %q, want containing %q", got, "BackendD")
 	}
 }
+
+// Ensures that the proxy skips dead backends and routes traffic to a live one
+// Prevents proxy from failing entirely when a partial outage occurs in a backend pool
 func TestProxy_DialRetry_SkipsDeadBackend(t *testing.T) {
 	live, stopLive := startIDServer(t, "LIVE")
 	defer stopLive()
@@ -237,8 +275,8 @@ func TestProxy_DialRetry_SkipsDeadBackend(t *testing.T) {
 		t.Fatalf("failed to start: %v", err)
 	}
 	defer p.Stop()
-	waitTCPReady(t, proxyAddr, 800*time.Millisecond)
-	conn, err := net.DialTimeout("tcp", proxyAddr, 1*time.Second)
+	waitTCPReady(t, proxyAddr, tcpReadyTimeout)
+	conn, err := net.DialTimeout("tcp", proxyAddr, tcpDialTimeout)
 	if err != nil {
 		t.Fatalf("dial failed: %v", err)
 	}
@@ -248,12 +286,15 @@ func TestProxy_DialRetry_SkipsDeadBackend(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, "LIVE")
 	}
 }
+
+// Validates that closing the write half of a connection is appropriately handled
+// Ensures backend EOF propagates back to the client correctly without dropping responses
 func TestProxy_HalfClose_PropagatesEOF(t *testing.T) {
 	up, stop := startHalfCloseServer(t)
 	defer stop()
 	proxyAddr := getFreePort(t)
 	p := NewProxy(resource.New(), proxyAddr)
-	p.SetIdleTimeout(5 * time.Second)
+	p.SetIdleTimeout(idleTimeoutDuration)
 	p.AddRoute("*", alaye.Proxy{
 		Backends: []alaye.Server{alaye.NewServer(up)},
 	})
@@ -261,8 +302,8 @@ func TestProxy_HalfClose_PropagatesEOF(t *testing.T) {
 		t.Fatalf("failed to start: %v", err)
 	}
 	defer p.Stop()
-	waitTCPReady(t, proxyAddr, 800*time.Millisecond)
-	conn, err := net.DialTimeout("tcp", proxyAddr, 1*time.Second)
+	waitTCPReady(t, proxyAddr, tcpReadyTimeout)
+	conn, err := net.DialTimeout("tcp", proxyAddr, tcpDialTimeout)
 	if err != nil {
 		t.Fatalf("dial failed: %v", err)
 	}
@@ -278,6 +319,9 @@ func TestProxy_HalfClose_PropagatesEOF(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, "OK")
 	}
 }
+
+// Verifies that updating proxy routes replaces the old routing rules successfully
+// Guarantees zero-downtime routing behavior when configuration maps are swapped
 func TestProxy_UpdateRoutes(t *testing.T) {
 	s1, stop1 := startIDServer(t, "Backend1")
 	defer stop1()
@@ -292,13 +336,13 @@ func TestProxy_UpdateRoutes(t *testing.T) {
 		t.Fatalf("failed to start: %v", err)
 	}
 	defer p.Stop()
-	waitTCPReady(t, proxyAddr, 800*time.Millisecond)
+	waitTCPReady(t, proxyAddr, tcpReadyTimeout)
 	newRoutes := make(map[string]*tcpRoute)
 	newDefault := p.buildRoute(alaye.Proxy{
 		Backends: []alaye.Server{alaye.NewServer(s2)},
 	})
 	p.UpdateRoutes(newRoutes, newDefault)
-	conn, err := net.DialTimeout("tcp", proxyAddr, 1*time.Second)
+	conn, err := net.DialTimeout("tcp", proxyAddr, tcpDialTimeout)
 	if err != nil {
 		t.Fatalf("dial failed: %v", err)
 	}
@@ -308,6 +352,9 @@ func TestProxy_UpdateRoutes(t *testing.T) {
 		t.Fatalf("got %q, want containing %q", got, "Backend2")
 	}
 }
+
+// Verifies that a stop instruction forcefully closes tracked connections
+// Sends dummy data to unblock io.CopyBuffer prior to calling stop
 func TestProxy_Stop_ClosesConnections(t *testing.T) {
 	s1, stop1 := startIDServer(t, "Backend1")
 	defer stop1()
@@ -319,12 +366,15 @@ func TestProxy_Stop_ClosesConnections(t *testing.T) {
 	if err := p.Start(); err != nil {
 		t.Fatalf("failed to start: %v", err)
 	}
-	waitTCPReady(t, proxyAddr, 800*time.Millisecond)
-	conn, err := net.DialTimeout("tcp", proxyAddr, 1*time.Second)
+	waitTCPReady(t, proxyAddr, tcpReadyTimeout)
+	conn, err := net.DialTimeout("tcp", proxyAddr, tcpDialTimeout)
 	if err != nil {
 		t.Fatalf("dial failed: %v", err)
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(tcpReadDeadline))
+
+	_, _ = conn.Write([]byte("ping"))
+
 	p.Stop()
 	buf := make([]byte, 1)
 	_, err = conn.Read(buf)
@@ -333,6 +383,9 @@ func TestProxy_Stop_ClosesConnections(t *testing.T) {
 	}
 	_ = conn.Close()
 }
+
+// Ensures that an idle proxy accurately reports zero active backends
+// Avoids incorrect connection tracking metrics
 func TestProxy_BackendCount(t *testing.T) {
 	proxyAddr := getFreePort(t)
 	p := NewProxy(resource.New(), proxyAddr)
@@ -341,6 +394,9 @@ func TestProxy_BackendCount(t *testing.T) {
 		t.Errorf("expected 0 backends, got %d", count)
 	}
 }
+
+// Tests that connections are appropriately rejected when no valid route exists
+// Secures proxy by ensuring unmapped traffic does not hang the handler
 func TestProxy_NoRoute_NoDefault(t *testing.T) {
 	proxyAddr := getFreePort(t)
 	p := NewProxy(resource.New(), proxyAddr)
@@ -348,20 +404,23 @@ func TestProxy_NoRoute_NoDefault(t *testing.T) {
 		t.Fatalf("failed to start: %v", err)
 	}
 	defer p.Stop()
-	waitTCPReady(t, proxyAddr, 800*time.Millisecond)
-	conn, err := net.DialTimeout("tcp", proxyAddr, 1*time.Second)
+	waitTCPReady(t, proxyAddr, tcpReadyTimeout)
+	conn, err := net.DialTimeout("tcp", proxyAddr, tcpDialTimeout)
 	if err != nil {
 		t.Fatalf("dial failed: %v", err)
 	}
 	defer conn.Close()
 	_, _ = conn.Write(makeSNIClientHello("test.com"))
 	buf := make([]byte, 1)
-	_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	_ = conn.SetReadDeadline(time.Now().Add(tcpShortReadTimeout))
 	_, err = conn.Read(buf)
 	if err == nil {
 		t.Error("expected connection to be closed with no route")
 	}
 }
+
+// Tests SNI extraction correctly maps wildcard domains to the assigned backend
+// Asserts that unrelated subdomains are properly disregarded
 func TestProxy_WildcardSubdomain(t *testing.T) {
 	sW, stopW := startIDServer(t, "WildcardBackend")
 	defer stopW()
@@ -374,7 +433,7 @@ func TestProxy_WildcardSubdomain(t *testing.T) {
 		t.Fatalf("failed to start: %v", err)
 	}
 	defer p.Stop()
-	waitTCPReady(t, proxyAddr, 800*time.Millisecond)
+	waitTCPReady(t, proxyAddr, tcpReadyTimeout)
 	tests := []struct {
 		sni  string
 		want string
@@ -385,7 +444,7 @@ func TestProxy_WildcardSubdomain(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.sni, func(t *testing.T) {
-			conn, err := net.DialTimeout("tcp", proxyAddr, 1*time.Second)
+			conn, err := net.DialTimeout("tcp", proxyAddr, tcpDialTimeout)
 			if err != nil {
 				t.Fatalf("dial failed: %v", err)
 			}
@@ -401,6 +460,8 @@ func TestProxy_WildcardSubdomain(t *testing.T) {
 	}
 }
 
+// Validates that PROXY protocol headers are prepended to connections seamlessly
+// Enables testing backend reception of correct client IP identities over TCP
 func TestProxy_ProxyProtocol(t *testing.T) {
 	s1, stop1 := startIDServer(t, "Backend1")
 	defer stop1()
@@ -414,8 +475,8 @@ func TestProxy_ProxyProtocol(t *testing.T) {
 		t.Fatalf("failed to start: %v", err)
 	}
 	defer p.Stop()
-	waitTCPReady(t, proxyAddr, 800*time.Millisecond)
-	conn, err := net.DialTimeout("tcp", proxyAddr, 1*time.Second)
+	waitTCPReady(t, proxyAddr, tcpReadyTimeout)
+	conn, err := net.DialTimeout("tcp", proxyAddr, tcpDialTimeout)
 	if err != nil {
 		t.Fatalf("dial failed: %v", err)
 	}

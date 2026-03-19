@@ -1,4 +1,3 @@
-// internal/handlers/xtcp/proxy.go
 package xtcp
 
 import (
@@ -27,6 +26,8 @@ type tcpRoute struct {
 	proxyProtocol bool
 }
 
+// Stops all active backends associated with this TCP route
+// Iterates through the selector pool and triggers backend shutdown
 func (r *tcpRoute) Stop() {
 	for _, b := range r.selector.Backends() {
 		if be, ok := b.(*Backend); ok {
@@ -58,8 +59,8 @@ type Proxy struct {
 	wg   sync.WaitGroup
 }
 
-// NewProxy constructs a TCP proxy using the process resource manager for logging and caching.
-// The logger is sourced from res.Logger — no separate logger parameter is needed.
+// Initializes a new TCP proxy instance for the specified listen address
+// Configures the underlying connection maps and resource dependencies
 func NewProxy(res *resource.Resource, listen string) *Proxy {
 	return &Proxy{
 		Listen: listen,
@@ -69,16 +70,20 @@ func NewProxy(res *resource.Resource, listen string) *Proxy {
 	}
 }
 
-// BackendCount returns the current number of active connections.
+// Returns the total number of currently tracked active connections
+// Uses atomic operations to ensure thread-safe connection counting
 func (p *Proxy) BackendCount() int {
 	return int(p.connCnt.Load())
 }
 
-// SetIdleTimeout configures the idle connection timeout for this proxy.
+// Configures the maximum idle duration before a connection is dropped
+// Applies to both client and backend TCP streams within the proxy
 func (p *Proxy) SetIdleTimeout(timeout time.Duration) {
 	p.IdleTimeout = timeout
 }
 
+// Constructs a TCP route structure from the provided proxy configuration
+// Initializes the load balancing selector and parses protocol settings
 func (p *Proxy) buildRoute(cfg alaye.Proxy) *tcpRoute {
 	var backends []lb.Backend
 	for _, srv := range cfg.Backends {
@@ -105,8 +110,8 @@ func (p *Proxy) buildRoute(cfg alaye.Proxy) *tcpRoute {
 	}
 }
 
-// AddRoute registers a hostname pattern with its backend configuration.
-// An empty or wildcard hostname sets the default route.
+// Registers a new TCP route for the specified SNI hostname
+// Assigns it as the default route if the hostname is empty or a wildcard
 func (p *Proxy) AddRoute(hostname string, cfg alaye.Proxy) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -119,8 +124,8 @@ func (p *Proxy) AddRoute(hostname string, cfg alaye.Proxy) {
 	}
 }
 
-// UpdateRoutes atomically replaces all routes and stops the old ones.
-// Used during hot reload to swap routing tables without dropping connections.
+// Swaps the active routing table safely using mutex locks
+// Stops any previously configured routes that are no longer active
 func (p *Proxy) UpdateRoutes(newRoutes map[string]*tcpRoute, newDefault *tcpRoute) {
 	p.mu.Lock()
 	oldDef := p.def
@@ -138,8 +143,8 @@ func (p *Proxy) UpdateRoutes(newRoutes map[string]*tcpRoute, newDefault *tcpRout
 	p.res.Logger.Fields("listen", p.Listen).Info("tcp proxy routes updated")
 }
 
-// Start begins accepting TCP connections on the configured listen address.
-// Blocks until the proxy is stopped via Stop().
+// Opens the TCP listener and spawns a goroutine to accept connections
+// Enforces maximum connection limits and handles transient accept errors
 func (p *Proxy) Start() error {
 	l, err := net.Listen(woos.TCP, p.Listen)
 	if err != nil {
@@ -148,7 +153,9 @@ func (p *Proxy) Start() error {
 
 	p.res.TCPCache.Store(p.Listen, &mappo.Item{Value: p})
 
-	p.wg.Go(func() {
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
 		defer l.Close()
 		defer func() {
 			if it, ok := p.res.TCPCache.Load(p.Listen); ok && it.Value == p {
@@ -196,13 +203,14 @@ func (p *Proxy) Start() error {
 			p.wg.Add(1)
 			go p.handle(conn)
 		}
-	})
+	}()
 
 	p.res.Logger.Fields("bind", p.Listen).Info("tcp proxy started")
 	return nil
 }
 
-// Stop gracefully shuts down the proxy, closing all active connections.
+// Initiates a graceful shutdown of the proxy and its tracked connections
+// Closes the listener, active sockets, and wait-groups for completion
 func (p *Proxy) Stop() {
 	if !p.closing.CompareAndSwap(false, true) {
 		return
@@ -238,25 +246,39 @@ func (p *Proxy) Stop() {
 	p.wg.Wait()
 }
 
+// Safely tracks or untracks active connections in the concurrent map
+// Immediately closes incoming connections if the proxy is shutting down
 func (p *Proxy) trackConn(c net.Conn, add bool) {
 	if add {
-		if p.closing.Load() {
-			_ = c.Close()
-			return
-		}
 		entry := &connEntry{conn: c}
 		p.conns.Store(c, entry)
 		p.connCnt.Add(1)
+
+		if p.closing.Load() {
+			if val, ok := p.conns.LoadAndDelete(c); ok {
+				if e, ok := val.(*connEntry); ok {
+					if e.closed.CompareAndSwap(false, true) {
+						_ = c.Close()
+					}
+				}
+				p.connCnt.Add(-1)
+			}
+			return
+		}
 	} else {
 		if val, ok := p.conns.LoadAndDelete(c); ok {
 			if e, ok := val.(*connEntry); ok {
-				e.closed.Store(true)
+				if e.closed.CompareAndSwap(false, true) {
+					_ = c.Close()
+				}
 			}
 			p.connCnt.Add(-1)
 		}
 	}
 }
 
+// Manages a single accepted connection through SNI extraction and dialing
+// Proxies traffic to the selected backend and manages proxy protocol headers
 func (p *Proxy) handle(src net.Conn) {
 	p.trackConn(src, true)
 	defer p.trackConn(src, false)
@@ -401,6 +423,8 @@ func (p *Proxy) handle(src net.Conn) {
 	p.pipe(client, dst)
 }
 
+// Matches an extracted SNI hostname against configured routing rules
+// Falls back to the wildcard or default route if no exact match exists
 func (p *Proxy) pickRoute(sni string) *tcpRoute {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -423,6 +447,8 @@ func (p *Proxy) pickRoute(sni string) *tcpRoute {
 	return p.def
 }
 
+// Establishes a bidirectional data stream between the client and backend
+// Enforces idle timeouts and ensures both connections close upon completion
 func (p *Proxy) pipe(client, backend net.Conn) {
 	timeout := p.IdleTimeout
 	if timeout == 0 {
@@ -459,6 +485,8 @@ func (p *Proxy) pipe(client, backend net.Conn) {
 	_ = backend.Close()
 }
 
+// Parses a raw TLS byte buffer to extract the Server Name Indication
+// Returns an error if the payload is too short or not a valid ClientHello
 func (p *Proxy) readClientHello(data []byte) (string, error) {
 	if len(data) < woos.MinClientHelloLen {
 		return "", woos.ErrShortData
@@ -534,6 +562,8 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 	return "", nil
 }
 
+// Determines whether a given network error represents a timeout condition
+// Casts the error to the net.Error interface to evaluate its timeout flag
 func (p *Proxy) isTimeout(err error) bool {
 	if netErr, ok := errors.AsType[net.Error](err); ok {
 		return netErr.Timeout()
@@ -541,8 +571,8 @@ func (p *Proxy) isTimeout(err error) bool {
 	return false
 }
 
-// SnapBackends returns all backend instances by unwrapping the balancer chain.
-// Traverses Adaptive/Sticky wrappers to reach the leaf Selector and extract raw *Backend.
+// Retrieves a snapshot of all active backends across configured routes
+// Iterates deeply through the load balancer hierarchy to extract endpoints
 func (p *Proxy) SnapBackends() []*Backend {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
