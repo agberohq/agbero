@@ -132,8 +132,9 @@ func TestStore_DropsSamplesWhenBufferFull(t *testing.T) {
 func TestStore_DownSampling(t *testing.T) {
 	store := newTestStore(t)
 
-	// Write 10 samples 1 second apart — all within the same 1-minute resolution bucket.
-	base := time.Now().Add(-5 * time.Minute).Unix()
+	// Truncate to the minute boundary to guarantee all 10 points
+	// (which span 10 seconds) fall within the exact same 1-minute bucket.
+	base := time.Now().Truncate(time.Minute).Add(-5 * time.Minute).Unix()
 	for i := 0; i < 10; i++ {
 		store.Record("ds.localhost", telemetry.Sample{
 			Timestamp:   base + int64(i),
@@ -142,7 +143,6 @@ func TestStore_DownSampling(t *testing.T) {
 	}
 	time.Sleep(6 * time.Second)
 
-	// At 1-minute resolution (30m range), all 10 points collapse to 1.
 	qr := telemetry.KnownRanges["30m"]
 	got, err := store.Query("ds.localhost", qr)
 	if err != nil {

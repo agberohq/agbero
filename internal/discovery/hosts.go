@@ -385,10 +385,10 @@ func (hm *Host) watchLoop() {
 	}
 }
 
-// handleEvent processes filesystem notifications and triggers reloads.
-// It intercepts file creations, modifications, and deletions to synchronize state across the cluster.
+// Processes incoming fsnotify events for configuration changes
+// Triggers a debounced reload to prevent excessive parsing on multiple rapid events
 func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
-	if event.Has(fsnotify.Chmod) {
+	if event.Op == fsnotify.Chmod {
 		return
 	}
 

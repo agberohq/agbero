@@ -148,6 +148,8 @@ func (b *Base) AcquireCircuit() bool {
 	return false
 }
 
+// RecordResult - Evaluates and updates the circuit breaker state based on the request success
+// Returns true if the circuit just tripped allowing handlers to log the event
 func (b *Base) RecordResult(success bool) bool {
 	if success {
 		b.Activity.Failures.Store(0)
@@ -156,10 +158,12 @@ func (b *Base) RecordResult(success bool) bool {
 
 	failures := b.Activity.Failures.Load()
 
-	// Only stamp LastRecov when the circuit first trips.
-	// Do NOT update it on subsequent failures — that is the stun-lock bug.
-	if b.CBThreshold > 0 && failures == uint64(b.CBThreshold) {
-		b.LastRecov.Store(time.Now().UnixNano())
+	if b.CBThreshold > 0 && failures >= uint64(b.CBThreshold) {
+		now := time.Now().UnixNano()
+		last := b.LastRecov.Load()
+		if now-last > DefaultHalfOpenCooldown {
+			b.LastRecov.CompareAndSwap(last, now)
+		}
 	}
 
 	return b.CBThreshold > 0 && failures >= uint64(b.CBThreshold)
