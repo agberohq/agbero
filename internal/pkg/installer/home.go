@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +12,13 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/crypto/bcrypt"
+)
+
+// Lipgloss styles
+var (
+	redStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Bold(true)
 )
 
 type Home struct {
@@ -126,12 +131,15 @@ func (h *Home) Run() error {
 		return err
 	}
 
+	// Highlight password in red using Lipgloss
+	highlightedPassword := redStyle.Render(adminPassword)
+
 	h.ctx.Logger.Println("\n===============================================================")
 	h.ctx.Logger.Println("CONFIGURATION INITIALIZED")
 	h.ctx.Logger.Println("===============================================================")
 	h.ctx.Logger.Printf("Config File:    %s\n", h.ctx.Paths.ConfigFile)
 	h.ctx.Logger.Printf("Admin User:     admin\n")
-	h.ctx.Logger.Printf("Admin Password: %s\n", adminPassword)
+	h.ctx.Logger.Printf("Admin Password: %s\n", highlightedPassword)
 	h.ctx.Logger.Println("===============================================================")
 	h.ctx.Logger.Println("Note: Save this password - it will not be shown again.")
 	h.ctx.Logger.Println("")
@@ -155,14 +163,59 @@ func (h *Home) generateSecureKey(n int) (string, error) {
 }
 
 func (h *Home) generateRandomPassword(length int) (string, error) {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
-	b := make([]byte, length)
-	for i := range b {
-		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
-		if err != nil {
+	if length < 5 {
+		return "", fmt.Errorf("password length must be at least 5")
+	}
+
+	const (
+		lower   = "abcdefghijklmnopqrstuvwxyz"
+		upper   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		digits  = "0123456789"
+		symbols = "!@#$%^&*"
+	)
+	all := lower + upper + digits + symbols
+
+	// Ensure at least one of each character class
+	var result []byte
+	result = append(result, lower[randByte(len(lower))])
+	result = append(result, upper[randByte(len(upper))])
+	result = append(result, digits[randByte(len(digits))])
+	result = append(result, symbols[randByte(len(symbols))])
+
+	// Fill remaining with random from all charset
+	remaining := length - len(result)
+	buf := make([]byte, remaining)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	for _, b := range buf {
+		result = append(result, all[int(b)%len(all)])
+	}
+
+	// Shuffle to avoid predictable positions (Fisher-Yates)
+	for i := len(result) - 1; i > 0; i-- {
+		jBuf := make([]byte, 1)
+		if _, err := rand.Read(jBuf); err != nil {
 			return "", err
 		}
-		b[i] = charset[num.Int64()]
+		j := int(jBuf[0]) % (i + 1)
+		result[i], result[j] = result[j], result[i]
 	}
-	return string(b), nil
+
+	return string(result), nil
+}
+
+// Helper using crypto/rand directly for uniform distribution
+func randByte(max int) int {
+	// Rejection sampling for unbiased distribution
+	for {
+		b := make([]byte, 1)
+		if _, err := rand.Read(b); err != nil {
+			// Fallback - should not happen with crypto/rand
+			return 0
+		}
+		if int(b[0]) < 256-(256%max) { // Reject values that would create bias
+			return int(b[0]) % max
+		}
+	}
 }

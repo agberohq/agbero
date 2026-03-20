@@ -160,7 +160,7 @@ route {
   web {
     enabled = "on"
     root    = "/var/www/html"
-    index   = "index.html"
+    index   = ["index.html"]
     listing = true # Enable directory listing
     spa     = false # SPA mode (redirect 404 to index)
 
@@ -168,7 +168,6 @@ route {
     php {
       enabled = "on"
       address = "unix:/run/php/php-fpm.sock"
-      index   = "index.php"
     }
   }
 

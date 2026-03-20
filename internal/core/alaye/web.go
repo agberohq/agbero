@@ -9,7 +9,7 @@ import (
 type Web struct {
 	Enabled  Enabled  `hcl:"enabled,attr" json:"enabled"`
 	Root     WebRoot  `hcl:"root,attr" json:"root"`
-	Index    string   `hcl:"index,attr" json:"index"`
+	Index    []string `hcl:"index,optional" json:"index"`
 	Listing  bool     `hcl:"listing,attr" json:"listing"`
 	SPA      bool     `hcl:"spa,attr" json:"spa"`
 	PHP      PHP      `hcl:"php,block" json:"php"`
@@ -28,8 +28,10 @@ func (w *Web) Validate() error {
 	if w.Git.Enabled.NotActive() && !w.Root.IsSet() {
 		return ErrRootRequired
 	}
-	if w.Index != "" && strings.Contains(w.Index, Slash) {
-		return ErrIndexPath
+	for _, idx := range w.Index {
+		if strings.Contains(idx, Slash) {
+			return ErrIndexPath
+		}
 	}
 	if err := w.PHP.Validate(); err != nil {
 		return errors.Newf("php: %w", err)

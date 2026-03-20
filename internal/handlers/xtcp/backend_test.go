@@ -14,6 +14,18 @@ import (
 
 var testLogger = ll.New("xtcp").Disable()
 
+const (
+	tcpNetwork     = "tcp"
+	localHostAddr  = "127.0.0.1:0"
+	pingMsg        = "PING\r\n"
+	pongMsg        = "PONG"
+	bufferSize     = 1024
+	hcInterval     = 50 * time.Millisecond
+	hcTimeout      = 100 * time.Millisecond
+	sleepWait      = 300 * time.Millisecond
+	docStopTimeout = 1 * time.Second
+)
+
 func TestBackendConfig_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -70,65 +82,78 @@ func TestNewBackend_Valid(t *testing.T) {
 		t.Error("Expected non-empty address")
 	}
 }
+
 func TestNewBackend_WithHealthCheck(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen(tcpNetwork, localHostAddr)
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
 	}
 	defer ln.Close()
+
 	go func() {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		buf := make([]byte, 1024)
-		n, rerr := conn.Read(buf)
-		if rerr != nil {
-			return
-		}
-		if string(buf[:n]) == "PING\r\n" {
-			conn.Write([]byte("PONG"))
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, bufferSize)
+				n, rerr := c.Read(buf)
+				if rerr != nil {
+					return
+				}
+				if string(buf[:n]) == pingMsg {
+					_, _ = c.Write([]byte(pongMsg))
+				}
+			}(conn)
 		}
 	}()
+
 	proxy := alaye.Proxy{
-		Name: "test-proxy",
+		Name: "test-proxy-healthy",
 		HealthCheck: alaye.TCPHealthCheck{
 			Enabled:  alaye.Active,
-			Interval: alaye.Duration(50 * time.Millisecond),
-			Timeout:  alaye.Duration(100 * time.Millisecond),
-			Send:     "PING\r\n",
-			Expect:   "PONG",
+			Interval: alaye.Duration(hcInterval),
+			Timeout:  alaye.Duration(hcTimeout),
+			Send:     pingMsg,
+			Expect:   pongMsg,
 		},
 	}
+
 	testRes := resource.New()
 	testRes.Doctor = jack.NewDoctor(jack.DoctorWithLogger(testLogger))
-	defer testRes.Doctor.StopAll(1 * time.Second)
+	defer testRes.Doctor.StopAll(docStopTimeout)
+
 	cfg := BackendConfig{
 		Server:   alaye.NewServer("tcp://" + ln.Addr().String()),
 		Proxy:    proxy,
 		Resource: testRes,
 		Logger:   testLogger,
 	}
+
 	b, err := NewBackend(cfg)
 	if err != nil {
 		t.Fatalf("NewBackend() error = %v", err)
 	}
 	defer b.Stop()
-	time.Sleep(200 * time.Millisecond)
+
+	time.Sleep(sleepWait)
+
 	if !b.Alive() {
 		t.Error("Expected backend to be alive with successful health check")
 	}
 }
+
 func TestNewBackend_HealthCheckFailure(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
 			Enabled:  alaye.Active,
-			Interval: alaye.Duration(20 * time.Millisecond),
-			Timeout:  alaye.Duration(50 * time.Millisecond),
-			Send:     "PING\r\n",
-			Expect:   "PONG",
+			Interval: alaye.Duration(hcInterval),
+			Timeout:  alaye.Duration(hcTimeout),
+			Send:     pingMsg,
+			Expect:   pongMsg,
 		},
 	}
 	testRes := resource.New()

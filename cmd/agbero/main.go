@@ -219,6 +219,8 @@ func main() {
 	cmdServe.String(&cfg.ServeBind, "b", "bind", "Bind address")
 	cmdServe.Bool(&cfg.ServeHTTPS, "s", "https", "Enable HTTPS")
 	cmdServe.Bool(&cfg.ServeMarkdown, "m", "markdown", "Render .md files as HTML")
+	cmdServe.Bool(&cfg.ServeSPA, "spa", "spa", "Render Single Page Applications as HTML (default: false)")
+	cmdServe.String(&cfg.ServePHP, "php", "php", "Render PHP files as HTML (default: false)")
 
 	cmdProxy := flaggy.NewSubcommand("proxy")
 	cmdProxy.Description = "Reverse-proxy a local target instantly"
@@ -572,7 +574,9 @@ func showHelpExamples() {
 	fmt.Printf("  %s run                         # run using discovered config\n", exeName)
 	fmt.Printf("  %s serve .                     # serve current directory on the fly\n", exeName)
 	fmt.Printf("  %s serve . --markdown           # serve with .md files rendered as HTML\n", exeName)
-	fmt.Printf("  %s serve . --https              # serve with HTTPS\n", exeName)
+	fmt.Printf("  %s serve . --spa               # serve SPA (fallback to index.html on 404)\n", exeName)
+	fmt.Printf("  %s serve . --https             # serve with HTTPS\n", exeName)
+	fmt.Printf("  %s serve . --php               # serve with PHP\n", exeName)
 	fmt.Printf("  %s proxy :3000                 # proxy local port 3000\n", exeName)
 	fmt.Printf("\nCONFIGURATION:\n")
 	fmt.Printf("  %s config validate             # validate config file\n", exeName)

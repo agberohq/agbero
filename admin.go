@@ -156,10 +156,10 @@ func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.A
 	mux.Handle("/logs", protect(http.HandlerFunc(s.handleLogs)))
 	mux.Handle("/firewall", protect(http.HandlerFunc(s.handleFirewall)))
 
-	// Telemetry history sub-router. The trailing slash on "/telemetry/" is
-	// intentional — it causes ServeMux to match all paths under /telemetry/.
-	// StripPrefix removes the prefix before handing off to telemetry.Handler,
-	// which owns /history and /hosts internally.
+	// Protected UI API endpoints
+	mux.Handle("/api/hosts", protect(http.HandlerFunc(s.handleHostsAPI)))
+
+	// Telemetry history sub-router
 	if s.global.Admin.Telemetry.Enabled.Active() && s.telemetryStore != nil {
 		s.logger.Info("telemetry history enabled")
 		mux.Handle("/telemetry/", protect(
@@ -226,6 +226,100 @@ func (s *Server) wrapAdminMiddleware(next http.Handler, rl *ratelimit.RateLimite
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// handleHostsAPI manages creation, modification, and deletion of hosts via the UI.
+// Changes are instantly saved to disk as .hcl files, which triggers the hot-reloader automatically.
+func (s *Server) handleHostsAPI(w http.ResponseWriter, r *http.Request) {
+	if s.hostManager == nil {
+		http.Error(w, "Host manager not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPost:
+		var req struct {
+			Domain string      `json:"domain"`
+			Config *alaye.Host `json:"config"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+			return
+		}
+
+		domain := strings.ToLower(strings.TrimSpace(req.Domain))
+		if domain == "" {
+			if req.Config != nil && len(req.Config.Domains) > 0 {
+				domain = req.Config.Domains[0]
+			} else {
+				http.Error(w, "Domain is required", http.StatusBadRequest)
+				return
+			}
+		}
+
+		if strings.ContainsAny(domain, "/\\") || strings.Contains(domain, "..") {
+			http.Error(w, "Invalid domain string", http.StatusBadRequest)
+			return
+		}
+
+		if req.Config == nil {
+			http.Error(w, "Config object is required", http.StatusBadRequest)
+			return
+		}
+
+		// Ensure the primary domain is injected
+		req.Config.Domains = []string{domain}
+
+		// Apply defaults so validation has the full picture
+		woos.DefaultHost(req.Config)
+
+		// Validate strict rules
+		if err := req.Config.Validate(); err != nil {
+			http.Error(w, fmt.Sprintf("Configuration validation failed: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		// Set in memory & Save to disk (which triggers fsnotify hot reload)
+		s.hostManager.Set(domain, req.Config)
+		if err := s.hostManager.Save(domain); err != nil {
+			s.logger.Fields("domain", domain, "err", err).Error("admin: failed to save host to disk")
+			http.Error(w, "Failed to save configuration to disk", http.StatusInternalServerError)
+			return
+		}
+
+		s.logger.Fields("domain", domain).Info("admin: host created/updated via api")
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok", "message":"Host saved successfully"}`))
+
+	case http.MethodDelete:
+		domain := r.URL.Query().Get("domain")
+		if domain == "" {
+			http.Error(w, "Domain query parameter required", http.StatusBadRequest)
+			return
+		}
+
+		if strings.ContainsAny(domain, "/\\") || strings.Contains(domain, "..") {
+			http.Error(w, "Invalid domain string", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.hostManager.DeleteFile(domain); err != nil {
+			s.logger.Fields("domain", domain, "err", err).Error("admin: failed to delete host file")
+			http.Error(w, "Failed to delete host file", http.StatusInternalServerError)
+			return
+		}
+
+		s.logger.Fields("domain", domain).Info("admin: host deleted via api")
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok", "message":"Host deleted successfully"}`))
+
+	default:
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // handleLogin authenticates an admin user and issues a signed JWT.

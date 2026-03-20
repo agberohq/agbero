@@ -48,7 +48,7 @@ First, ensure the admin API is enabled in your `agbero.hcl`:
 admin {
   enabled = true
   address = ":9090"
-  
+
   # Enable authentication for API access
   jwt_auth {
     enabled = true
@@ -201,8 +201,8 @@ Routes created via the API are stored in the cluster with a wrapper that include
 
 ```go
 type ClusterRouteWrapper struct {
-    Route     alaye.Route `json:"route"`
-    ExpiresAt time.Time   `json:"expires_at"`
+Route     alaye.Route `json:"route"`
+ExpiresAt time.Time   `json:"expires_at"`
 }
 ```
 
@@ -237,7 +237,7 @@ class ServiceRegistry:
         self.port = port
         self.hostname = socket.gethostname()
         self.ip_address = socket.gethostbyname(self.hostname)
-        
+
     def register(self, ttl=60):
         """Register this service with Agbero"""
         payload = {
@@ -255,20 +255,20 @@ class ServiceRegistry:
             },
             "ttl_seconds": ttl
         }
-        
+
         response = requests.post(
             f"{API_URL}/routes",
             headers={"Authorization": f"Bearer {TOKEN}"},
             json=payload
         )
-        
+
         if response.status_code == 200:
             print(f"Registered {self.service_name} with TTL {ttl}s")
             return response.json()["key"]
         else:
             print(f"Registration failed: {response.text}")
             return None
-    
+
     def heartbeat(self, key, ttl=60):
         """Renew registration by re-POSTing"""
         return self.register(ttl)
@@ -276,10 +276,10 @@ class ServiceRegistry:
 # Usage
 if __name__ == "__main__":
     registry = ServiceRegistry("webapp", 8080)
-    
+
     # Initial registration
     key = registry.register(ttl=30)
-    
+
     # Heartbeat loop
     while True:
         time.sleep(25)
@@ -360,82 +360,82 @@ For each PR, create a temporary route:
 package main
 
 import (
-    "bytes"
-    "encoding/json"
-    "fmt"
-    "net/http"
-    "os"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
 )
 
 type RouteRequest struct {
-    Host       string      `json:"host"`
-    Route      RouteConfig `json:"route"`
-    TTLSeconds int         `json:"ttl_seconds"`
+	Host       string      `json:"host"`
+	Route      RouteConfig `json:"route"`
+	TTLSeconds int         `json:"ttl_seconds"`
 }
 
 type RouteConfig struct {
-    Path    string        `json:"path"`
-    Backend BackendConfig `json:"backend"`
+	Path    string        `json:"path"`
+	Backend BackendConfig `json:"backend"`
 }
 
 type BackendConfig struct {
-    Servers []ServerConfig `json:"servers"`
+	Servers []ServerConfig `json:"servers"`
 }
 
 type ServerConfig struct {
-    Address string `json:"address"`
-    Weight  int    `json:"weight,omitempty"`
+	Address string `json:"address"`
+	Weight  int    `json:"weight,omitempty"`
 }
 
 func createPreviewRoute(prNumber, commitHash string) error {
-    apiURL := os.Getenv("AGBERO_API_URL")
-    token := os.Getenv("AGBERO_TOKEN")
-    
-    route := RouteRequest{
-        Host: fmt.Sprintf("pr-%s.preview.example.com", prNumber),
-        Route: RouteConfig{
-            Path: "/*",
-            Backend: BackendConfig{
-                Servers: []ServerConfig{
-                    {
-                        Address: fmt.Sprintf("http://preview-%s:8080", prNumber),
-                        Weight:  1,
-                    },
-                },
-            },
-        },
-        TTLSeconds: 86400, // 24 hours
-    }
-    
-    data, _ := json.Marshal(route)
-    req, _ := http.NewRequest("POST", apiURL+"/routes", bytes.NewReader(data))
-    req.Header.Set("Authorization", "Bearer "+token)
-    req.Header.Set("Content-Type", "application/json")
-    
-    resp, err := http.DefaultClient.Do(req)
-    if err != nil {
-        return err
-    }
-    defer resp.Body.Close()
-    
-    if resp.StatusCode != http.StatusOK {
-        return fmt.Errorf("API returned %d", resp.StatusCode)
-    }
-    
-    fmt.Printf("Preview URL: http://pr-%s.preview.example.com\n", prNumber)
-    return nil
+	apiURL := os.Getenv("AGBERO_API_URL")
+	token := os.Getenv("AGBERO_TOKEN")
+
+	route := RouteRequest{
+		Host: fmt.Sprintf("pr-%s.preview.example.com", prNumber),
+		Route: RouteConfig{
+			Path: "/*",
+			Backend: BackendConfig{
+				Servers: []ServerConfig{
+					{
+						Address: fmt.Sprintf("http://preview-%s:8080", prNumber),
+						Weight:  1,
+					},
+				},
+			},
+		},
+		TTLSeconds: 86400, // 24 hours
+	}
+
+	data, _ := json.Marshal(route)
+	req, _ := http.NewRequest("POST", apiURL+"/routes", bytes.NewReader(data))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("API returned %d", resp.StatusCode)
+	}
+
+	fmt.Printf("Preview URL: http://pr-%s.preview.example.com\n", prNumber)
+	return nil
 }
 
 func main() {
-    if len(os.Args) < 3 {
-        fmt.Println("Usage: create-preview <pr-number> <commit-hash>")
-        os.Exit(1)
-    }
-    
-    if err := createPreviewRoute(os.Args[1], os.Args[2]); err != nil {
-        fmt.Printf("Error: %v\n", err)
-        os.Exit(1)
-    }
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: create-preview <pr-number> <commit-hash>")
+		os.Exit(1)
+	}
+
+	if err := createPreviewRoute(os.Args[1], os.Args[2]); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
 }
 ```
 
@@ -455,7 +455,7 @@ class ServiceRegistry {
         this.token = token;
         this.services = new Map();
     }
-    
+
     async register(serviceName, address, port, ttl = 30) {
         const hostname = require('os').hostname();
         const payload = {
@@ -470,14 +470,14 @@ class ServiceRegistry {
             },
             ttl_seconds: ttl
         };
-        
+
         try {
             const response = await axios.post(
                 `${this.apiUrl}/routes`,
                 payload,
                 { headers: { Authorization: `Bearer ${this.token}` } }
             );
-            
+
             console.log(`Registered ${serviceName} with TTL ${ttl}s`);
             return response.data.key;
         } catch (error) {
@@ -485,13 +485,13 @@ class ServiceRegistry {
             return null;
         }
     }
-    
+
     async discover(serviceName) {
         // Routes are automatically available to all nodes
         // Just use the hostname pattern: serviceName-instance.internal
         return `${serviceName}-*.internal`;
     }
-    
+
     async call(serviceName, path) {
         // In real code, you'd need to get actual instance IPs
         // This is a simplified example
@@ -507,10 +507,10 @@ async function main() {
         'http://agbero-cluster:9090/api/v1',
         process.env.AGBERO_TOKEN
     );
-    
+
     // Register this service
     await registry.register('auth-service', '10.0.0.50', 9000, 30);
-    
+
     // Discover and call another service
     const authURL = await registry.call('auth-service', '/health');
     console.log(`Auth service URL: ${authURL}`);
@@ -634,15 +634,15 @@ The API is implemented in:
 ```go
 // Route storage in cluster
 type ClusterRouteWrapper struct {
-    Route     alaye.Route `json:"route"`
-    ExpiresAt time.Time   `json:"expires_at"`
+Route     alaye.Route `json:"route"`
+ExpiresAt time.Time   `json:"expires_at"`
 }
 
 // API request payload
 type routePayload struct {
-    Host       string      `json:"host"`
-    Route      alaye.Route `json:"route"`
-    TTLSeconds int         `json:"ttl_seconds"`
+Host       string      `json:"host"`
+Route      alaye.Route `json:"route"`
+TTLSeconds int         `json:"ttl_seconds"`
 }
 ```
 

@@ -4,7 +4,7 @@ route "/" {
   web {
     root    = "."
     listing = true
-    index = "index.md"
+    index = ["index.md"]
 
     markdown {
       enabled = "on"

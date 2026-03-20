@@ -13,10 +13,10 @@ Agbero uses a hybrid clustering approach. It leverages HashiCorp's memberlist fo
 gossip {
   enabled    = true
   port       = 7946                           # UDP/TCP cluster port
-  secret_key = "b64.${env.GOSSIP_SECRET}"     # 16/24/32 bytes or base64 encoded
+  secret_key = "env.GOSSIP_SECRET"               # 16, 24, or 32 raw bytes
   seeds      = ["node2:7946", "node3:7946"]   # Initial peers
   ttl        = 30                             # Seconds before dead node removal
-  
+
   # Shared state for distributed rate limiting & firewalls
   shared_state {
     enabled = true
@@ -90,8 +90,8 @@ route "/" {
       auth {
         type = "ssh-key"         # "basic", "ssh-key", "ssh-agent"
         username = "git"
-        ssh_key = "${b64.PRIVATE_KEY_BASE64}"
-        ssh_key_passphrase = "${env.SSH_PASSPHRASE}"
+        ssh_key = "env.PRIVATE_KEY"
+        ssh_key_passphrase = "env.SSH_PASSPHRASE"
       }
     }
   }
@@ -213,23 +213,19 @@ Agbero includes a robust Web Application Firewall (WAF) and Rate Limiter capable
 # agbero.hcl (Global definitions)
 rate_limits {
   enabled = true
-  
-  policies = [
-    {
-      name     = "api-strict"
-      requests = 10
-      window   = "1m"
-      burst    = 15
-      key      = "ip"
-    },
-    {
-      name     = "api-lenient"
-      requests = 1000
-      window   = "1h"
-      burst    = 200
-      key      = "header:X-API-Key"
-    }
-  ]
+
+  policy "api-strict" {
+    requests = 10
+    window   = "1m"
+    burst    = 15
+    key      = "X-API-Key"   # header name; omit for IP-based
+  }
+
+  policy "api-lenient" {
+    requests = 1000
+    window   = "1h"
+    burst    = 200
+  }
 }
 ```
 

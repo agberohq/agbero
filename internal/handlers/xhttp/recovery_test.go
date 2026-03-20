@@ -87,8 +87,6 @@ func waitUsable(b *Backend, timeout time.Duration) bool {
 	return false
 }
 
-// ── Bug 1: circuit-breaker stun-lock ─────────────────────────────────────────
-
 // TestCircuitBreaker_StunLock reproduces the death spiral where
 // RecordResult(false) kept resetting LastRecov on every failure, preventing
 // the half-open window from ever opening.
@@ -185,8 +183,6 @@ func TestCircuitBreaker_HalfOpenAllowsOneProbe(t *testing.T) {
 	}
 }
 
-// ── Bug 1 regression ─────────────────────────────────────────────────────────
-
 // TestRecordResult_DoesNotResetLastRecovOnFailure verifies that RecordResult(false)
 // after the circuit has tripped does not push LastRecov forward.
 func TestRecordResult_DoesNotResetLastRecovOnFailure(t *testing.T) {
@@ -223,8 +219,6 @@ func TestRecordResult_DoesNotResetLastRecovOnFailure(t *testing.T) {
 		)
 	}
 }
-
-// ── Bug 2: passive-rate lifetime poisoning ────────────────────────────────────
 
 // TestPassiveRate_LifetimePoisoning reproduces the score poisoning where
 // passiveErrors/passiveRequests accumulated forever and prevented recovery.

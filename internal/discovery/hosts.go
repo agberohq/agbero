@@ -385,10 +385,10 @@ func (hm *Host) watchLoop() {
 	}
 }
 
-// handleEvent processes filesystem notifications and triggers reloads.
-// It intercepts file creations, modifications, and deletions to synchronize state across the cluster.
+// Processes incoming fsnotify events for configuration changes
+// Triggers a debounced reload to prevent excessive parsing on multiple rapid events
 func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
-	if event.Has(fsnotify.Chmod) {
+	if event.Op == fsnotify.Chmod {
 		return
 	}
 
@@ -653,8 +653,16 @@ func (hm *Host) rebuildLookupLocked() {
 		domainToRoutes[host] = append(domainToRoutes[host], route)
 
 		if _, exists := domainToConfig[host]; !exists {
-			defaultHost := woos.NewStaticHost(woos.Static{Domain: host, Target: emptyString, IsProxy: true})
-			defaultHost.Routes = nil
+			// Create a clean shell host directly
+			defaultHost := &alaye.Host{
+				Domains: []string{host},
+				TLS:     alaye.TLS{Mode: alaye.ModeLocalAuto},
+			}
+			// If it's a public domain, default to Let's Encrypt instead of mkcert
+			if !woos.IsLocalContext(host) {
+				defaultHost.TLS.Mode = alaye.ModeLetsEncrypt
+			}
+			woos.DefaultHost(defaultHost)
 			domainToConfig[host] = defaultHost
 		}
 	}
@@ -776,6 +784,34 @@ func (hm *Host) Save(domain string) error {
 
 	p := parser.NewParser(filePath)
 	return p.MarshalFile(cfg)
+}
+
+// DeleteFile removes the host configuration from memory and deletes its corresponding HCL file.
+// Allows the admin UI to dynamically destroy registered domains and unbind routing topologies immediately.
+func (hm *Host) DeleteFile(domain string) error {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+
+	domain = zulu.NormalizeHost(domain)
+	if domain == emptyString {
+		return fmt.Errorf("invalid domain")
+	}
+
+	filename := domain + woos.HCLSuffix
+	filePath := filepath.Join(hm.hostsDir.Path(), filename)
+
+	// Remove from memory
+	delete(hm.hosts, domain)
+	hm.rebuildLookupLocked()
+
+	// Remove from disk
+	err := os.Remove(filePath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	hm.logger.Fields("domain", domain, "file", filename).Info("host configuration deleted")
+	return nil
 }
 
 // validatePathSegment rejects values that could escape a base directory via path traversal.

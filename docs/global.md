@@ -410,7 +410,7 @@ security {
       name   = "rate-limit-abuse"
       type   = "dynamic"
       action = "rate-limit"
-      
+
       match {
         threshold {
           enabled = true
@@ -444,48 +444,35 @@ rate_limits {
   ttl     = "30m"        # Cache TTL for rate limit entries
   max_entries = 100000   # Maximum entries in cache
 
-  # Named policies that can be referenced by routes
-  policies = [
-    {
-      name     = "api-strict"
-      requests = 10
-      window   = "1m"
-      burst    = 15
-      key      = "ip"
-    },
-    {
-      name     = "api-lenient"
-      requests = 1000
-      window   = "1h"
-      burst    = 200
-      key      = "header:X-API-Key"
-    }
-  ]
+  # Named policies that can be referenced by routes via use_policy
+  policy "api-strict" {
+    requests = 10
+    window   = "1m"
+    burst    = 15
+    key      = "X-API-Key"   # header name to rate-limit by; omit for IP-based
+  }
+
+  policy "api-lenient" {
+    requests = 1000
+    window   = "1h"
+    burst    = 200
+  }
 
   # Global rules applied to all requests
-  rules = [
-    {
-      name     = "global-limit"
-      enabled  = "on"
-      prefixes = ["/api/"]
-      methods  = ["GET", "POST"]
-      requests = 100
-      window   = "1m"
-      burst    = 150
-      key      = "ip"
-    }
-  ]
+  rule "global-limit" {
+    enabled  = "on"
+    prefixes = ["/api/"]
+    methods  = ["GET", "POST"]
+    requests = 100
+    window   = "1m"
+    burst    = 150
+  }
 }
 ```
 
-### Rate Limit Keys
+### Rate Limit Key
 
-| Key | Description |
-|-----|-------------|
-| `ip` | Client IP address |
-| `header:Name` | Value of specified header |
-| `cookie:Name` | Value of specified cookie |
-| `query:Name` | Value of query parameter |
+The `key` field inside a `rule` or `policy` block is a plain HTTP header name. When set, requests are bucketed by the value of that header instead of the client IP. When omitted or empty, the client IP is used.
 
 ---
 
@@ -652,9 +639,14 @@ secret = "${env.JWT_SECRET}"
 path   = "${env.CONFIG_DIR}/certs"
 ```
 
-Also supports base64-encoded values:
+For base64-encoded secrets, store the decoded value as an env var and reference it directly:
 ```hcl
-secret_key = "b64.${env.BASE64_SECRET}"
+secret_key = "env.GOSSIP_SECRET"   # set GOSSIP_SECRET=<16/24/32 raw bytes> in environment
+```
+
+If you have a base64-encoded secret and want Agbero to decode it at load time, pass the literal base64 string with the `b64.` prefix:
+```hcl
+secret_key = "b64.dGhpcyBpcyBhIDMyLWJ5dGUga2V5ISEhISEhISE="
 ```
 
 ## Next Steps

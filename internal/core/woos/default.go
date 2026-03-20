@@ -144,8 +144,8 @@ func defaultWebRoute(r *alaye.Route) {
 	if r.Web.Enabled == alaye.Unknown {
 		r.Web.Enabled = alaye.Active
 	}
-	if r.Web.Index == "" {
-		r.Web.Index = "index.html"
+	if len(r.Web.Index) == 0 {
+		r.Web.Index = []string{"index.html"}
 	}
 	defaultPHP(&r.Web.PHP)
 	defaultCompression(&r.CompressionConfig)
@@ -534,11 +534,8 @@ func defaultOAuth(oa *alaye.OAuth) {
 }
 
 func defaultPHP(p *alaye.PHP) {
-	if p.Status == alaye.Unknown && p.Address != "" {
-		p.Status = alaye.Active
-	}
-	if p.Status == alaye.Active && p.Index == "" {
-		p.Index = "index.php"
+	if p.Enabled == alaye.Unknown && p.Address != "" {
+		p.Enabled = alaye.Active
 	}
 }
 

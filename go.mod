@@ -2,11 +2,11 @@ module github.com/agberohq/agbero
 
 go 1.26
 
-//replace github.com/olekukonko/ll => /Users/oleku/gopath/src/github.com/olekukonko/ll
+// replace github.com/olekukonko/ll => /Users/oleku/gopath/src/github.com/olekukonko/ll
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
-	github.com/alecthomas/chroma/v2 v2.2.0
+	github.com/alecthomas/chroma/v2 v2.23.1
 	github.com/alecthomas/hcl v0.5.5
 	github.com/andybalholm/brotli v1.2.0
 	github.com/cenkalti/backoff/v4 v4.3.0
@@ -15,8 +15,8 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fsnotify/fsnotify v1.9.0
-	github.com/go-acme/lego/v4 v4.32.0
-	github.com/go-git/go-git/v6 v6.0.0-20260313081548-799bb393a8ed
+	github.com/go-acme/lego/v4 v4.33.0
+	github.com/go-git/go-git/v6 v6.0.0-20260319164504-86746b2322b2
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/hcl/v2 v2.24.0
@@ -27,7 +27,7 @@ require (
 	github.com/markbates/goth v1.82.0
 	github.com/olekukonko/errors v1.2.0
 	github.com/olekukonko/jack v0.0.0-20260315063850-82b24943796a
-	github.com/olekukonko/ll v0.1.8-0.20260317224542-293b1cd00162
+	github.com/olekukonko/ll v0.1.8-0.20260319224941-fdbfdbd3cdea
 	github.com/olekukonko/mappo v0.0.0-20260305135522-3435c72de434
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/pires/go-proxyproto v0.11.0
@@ -39,7 +39,7 @@ require (
 	github.com/tetratelabs/wazero v1.11.0
 	github.com/yl2chen/cidranger v1.0.2
 	github.com/yookoala/gofast v0.8.0
-	github.com/yuin/goldmark v1.7.16
+	github.com/yuin/goldmark v1.7.17
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
 	github.com/zclconf/go-cty v1.18.0
 	go.abhg.dev/goldmark/toc v0.12.0
@@ -56,10 +56,10 @@ require (
 require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/ProtonMail/go-crypto v1.4.0 // indirect
+	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/agext/levenshtein v1.2.3 // indirect
 	github.com/alecthomas/participle/v2 v2.0.0-beta.5 // indirect
-	github.com/alecthomas/repr v0.4.0 // indirect
+	github.com/alecthomas/repr v0.5.2 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
@@ -80,7 +80,7 @@ require (
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
-	github.com/dlclark/regexp2 v1.7.0 // indirect
+	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/fatih/color v1.18.0 // indirect

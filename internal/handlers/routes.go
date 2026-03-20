@@ -14,6 +14,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/handlers/web"
 	"github.com/agberohq/agbero/internal/handlers/xhttp"
+	"github.com/agberohq/agbero/internal/handlers/xserverless"
 	"github.com/agberohq/agbero/internal/middleware/attic"
 	"github.com/agberohq/agbero/internal/middleware/auth"
 	"github.com/agberohq/agbero/internal/middleware/compress"
@@ -37,8 +38,8 @@ type Route struct {
 	lastTouch atomic.Int64
 }
 
-// NewRoute constructs the appropriate request handling chain for a specific endpoint.
-// Isolates routing definitions into self-contained executable pathways.
+// NewRoute creates a new traffic handler based on the provided route configuration.
+// It determines if the route is a static web route, a proxy route, or a serverless function.
 func NewRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 	if route == nil {
 		return FallbackRoute("nil route")
@@ -52,22 +53,23 @@ func NewRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 		cfg.Resource.Logger.Fields("path", route.Path, "err", err).Error("invalid route config")
 		return FallbackRoute("invalid route config: " + err.Error())
 	}
-	isWebRoute := route.Web.Root.IsSet() || route.Web.Git.Enabled.Active()
-	hasBackends := len(route.Backends.Servers) > 0
-	if isWebRoute && hasBackends {
-		return FallbackRoute("route cannot have both web and proxy config")
-	}
-	if isWebRoute {
-		return newWebRoute(cfg, route)
-	}
-	if hasBackends {
+
+	var primary http.Handler
+	if route.Serverless.Enabled.Active() {
+		primary = xserverless.New(cfg, route)
+	} else if route.Web.Root.IsSet() || route.Web.Git.Enabled.Active() {
+		primary = web.NewWeb(cfg.Resource, route, cfg.CookMgr)
+	} else {
 		return newProxyRoute(cfg, route)
 	}
-	return FallbackRoute("route has no handler configuration")
+
+	return wrapHandler(cfg, route, primary)
 }
 
-func newWebRoute(cfg resource.Proxy, route *alaye.Route) *Route {
-	chain := http.Handler(web.NewWeb(cfg.Resource, route, cfg.CookMgr))
+// wrapHandler applies the standard middleware chain to a primary route handler.
+// This includes authentication, rate limiting, security headers, and rewrite rules.
+func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *Route {
+	chain := primary
 	ipMgr := zulu.NewIPManager(cfg.Global.Security.TrustedProxies)
 	if len(route.AllowedIPs) > 0 {
 		chain = ipallow.New(route.AllowedIPs, cfg.Resource.Logger, ipMgr)(chain)
@@ -95,15 +97,17 @@ func newWebRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 	chain = errorpages.New(errCfg)(chain)
 	chain = cors.New(&route.CORS)(chain)
 	chain = rewrite.New(cfg.Resource.Logger, route.StripPrefixes, route.Rewrites)(chain)
+
 	return &Route{
 		handler:  chain,
-		Backends: nil,
 		ipMgr:    ipMgr,
 		global:   cfg.Global,
 		resource: cfg.Resource,
 	}
 }
 
+// newProxyRoute constructs a load-balanced proxy handler for a set of backends.
+// It supports health checking, circuit breaking, and customizable balancing strategies.
 func newProxyRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 	var backends []*xhttp.Backend
 	for i, backendCfg := range route.Backends.Servers {
@@ -153,44 +157,11 @@ func newProxyRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 		Fallback: fallbackHandler,
 	}
 	loadBalancer := xhttp.NewProxy(balancerCfg, backends, cfg.IPMgr)
-	var chain http.Handler = loadBalancer
-	if len(route.AllowedIPs) > 0 {
-		chain = ipallow.New(route.AllowedIPs, cfg.Resource.Logger, cfg.IPMgr)(chain)
-	}
-	chain = auth.JWT(&route.JWTAuth)(chain)
-	chain = auth.Basic(&route.BasicAuth, cfg.Resource.Logger)(chain)
-	chain = auth.Forward(cfg.Resource, &route.ForwardAuth)(chain)
-	chain = auth.OAuth(&route.OAuth)(chain)
-	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, cfg.IPMgr, cfg.SharedState); rl != nil {
-		chain = rl.Handler(chain)
-	}
-	maxBody := int64(alaye.DefaultMaxBodySize)
-	if cfg.Host.Limits.MaxBodySize > 0 {
-		maxBody = cfg.Host.Limits.MaxBodySize
-	}
-	chain = http.MaxBytesHandler(chain, maxBody)
-	chain = headers.Headers(&route.Headers)(chain)
-	chain = compress.Compress(route)(chain)
-	chain = attic.New(&route.Cache, cfg.Resource.Logger)(chain)
-	errCfg := errorpages.Config{
-		RoutePages:  route.ErrorPages,
-		HostPages:   cfg.Host.ErrorPages,
-		GlobalPages: cfg.Global.ErrorPages,
-	}
-	chain = errorpages.New(errCfg)(chain)
-	chain = cors.New(&route.CORS)(chain)
-	chain = rewrite.New(cfg.Resource.Logger, route.StripPrefixes, route.Rewrites)(chain)
-	return &Route{
-		handler:  chain,
-		Backends: backends,
-		Proxy:    loadBalancer,
-		ipMgr:    cfg.IPMgr,
-		global:   cfg.Global,
-		resource: cfg.Resource,
-	}
+	return wrapHandler(cfg, route, loadBalancer)
 }
 
-// ServeHTTP dispatches the request to the built handler chain.
+// ServeHTTP implements the http.Handler interface for the Route struct.
+// It forwards the incoming request to the pre-built middleware chain and primary handler.
 func (h *Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h == nil || h.handler == nil {
 		http.Error(w, "route handler not initialized", http.StatusBadGateway)
@@ -199,8 +170,8 @@ func (h *Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.handler.ServeHTTP(w, r)
 }
 
-// Close drains and stops all backends associated with this route.
-// Draining executes in isolated goroutines avoiding shared pool deadlocks.
+// Close performs cleanup operations for the route, including closing idle backend connections.
+// It ensures that all active proxy listeners and workers are stopped gracefully.
 func (h *Route) Close() error {
 	if h.Proxy != nil {
 		h.Proxy.Stop()
@@ -226,6 +197,8 @@ func (h *Route) Close() error {
 	return nil
 }
 
+// resolveFallback determines which fallback configuration to use for a route.
+// It prioritizes route-specific fallbacks over global server fallbacks.
 func resolveFallback(routeFallback, globalFallback *alaye.Fallback) *alaye.Fallback {
 	if routeFallback.Enabled.Active() {
 		return routeFallback
@@ -236,6 +209,8 @@ func resolveFallback(routeFallback, globalFallback *alaye.Fallback) *alaye.Fallb
 	return routeFallback
 }
 
+// buildFallbackHandler creates an http.Handler based on the specified fallback type.
+// It can serve static content, perform redirects, or proxy requests to a tertiary URL.
 func buildFallbackHandler(fallback *alaye.Fallback, logger *ll.Logger) http.Handler {
 	switch strings.ToLower(fallback.Type) {
 	case "static":
@@ -286,7 +261,8 @@ func buildFallbackHandler(fallback *alaye.Fallback, logger *ll.Logger) http.Hand
 	}
 }
 
-// FallbackRoute returns a route that responds with a 502 Bad Gateway and the given message.
+// FallbackRoute returns a Route that simply serves a fixed error message.
+// It is used as a safe default when route construction fails due to configuration errors.
 func FallbackRoute(msg string) *Route {
 	return &Route{
 		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -295,8 +271,8 @@ func FallbackRoute(msg string) *Route {
 	}
 }
 
-// buildRouteLimiter constructs a per-route rate limiter from route and global config.
-// Returns nil when rate limiting is not configured for this route.
+// buildRouteLimiter creates a rate limiter for specific routes based on ad-hoc rules or global policies.
+// It ignores ACME challenge paths to ensure certificate renewals are never blocked.
 func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate, ipMgr *zulu.IPManager, sharedState woos.SharedState) *ratelimit.RateLimiter {
 	if rlc == nil || (!rlc.Enabled.Active() && rlc.UsePolicy == "") {
 		return nil

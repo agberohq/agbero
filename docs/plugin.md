@@ -45,10 +45,10 @@ route "/api" {
     enabled = true
     module  = "/etc/agbero/plugins/auth.wasm"
     max_body_size = 1048576  # 1MB maximum body to inspect (optional)
-    
+
     # Explicitly grant capabilities
     access = ["headers", "config", "body", "method", "uri"]
-    
+
     # Configuration passed to plugin (as JSON)
     config = {
       "required_role" = "admin"
@@ -351,8 +351,8 @@ func handle_request() {
 			if country == blocked {
 				if cfg.Debug {
 					debugHeader := "X-Blocked-Country"
-					agbero_set_header(ptr(debugHeader), uint32(len(debugHeader)), 
-                                     ptr(country), uint32(len(country)))
+					agbero_set_header(ptr(debugHeader), uint32(len(debugHeader)),
+						ptr(country), uint32(len(country)))
 				}
 				agbero_done(403)
 				return
@@ -590,14 +590,14 @@ Example host function pattern:
 
 ```go
 builder.NewFunctionBuilder().
-    WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
-        // 1. Extract parameters from stack
-        // 2. Validate inputs and bounds
-        // 3. Check permissions
-        // 4. Perform operation
-        // 5. Write results back to stack
-    }), paramTypes, returnTypes).
-    Export("agbero_custom_function")
+WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
+// 1. Extract parameters from stack
+// 2. Validate inputs and bounds
+// 3. Check permissions
+// 4. Perform operation
+// 5. Write results back to stack
+}), paramTypes, returnTypes).
+Export("agbero_custom_function")
 ```
 
 ---

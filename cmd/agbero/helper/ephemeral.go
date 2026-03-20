@@ -55,7 +55,11 @@ func (e *Ephemeral) Serve() {
 	global := e.createGlobal(cfg.ServeBind, finalPort, cfg.ServeHTTPS, ctx)
 	hosts := map[string]*alaye.Host{
 		"localhost": woos.NewStaticHost(woos.Static{
-			Domain: "localhost", Target: alaye.Address(absPath), Markdown: cfg.ServeMarkdown,
+			Domain:   "localhost",
+			Target:   alaye.Address(absPath),
+			Markdown: cfg.ServeMarkdown,
+			SPA:      cfg.ServeSPA,
+			PHP:      cfg.ServePHP,
 		}),
 	}
 
@@ -72,6 +76,9 @@ func (e *Ephemeral) Serve() {
 	table.Append([]string{"Available at:", displayURL})
 	if cfg.ServeMarkdown {
 		table.Append([]string{"Markdown:", "enabled (.md files rendered as HTML)"})
+	}
+	if cfg.ServeSPA {
+		table.Append([]string{"SPA Mode:", "enabled (unmatched routes fallback to index.html)"})
 	}
 	table.Append([]string{""})
 	table.Render()
@@ -127,7 +134,13 @@ func (e *Ephemeral) Proxy() {
 
 	global := e.createGlobal(cfg.ProxyBind, finalPort, cfg.ProxyHTTPS, ctx)
 	hosts := map[string]*alaye.Host{
-		domain: woos.NewStaticHost(woos.Static{Domain: domain, Target: alaye.Address(target), IsProxy: true, Markdown: cfg.ServeMarkdown}),
+		domain: woos.NewStaticHost(woos.Static{
+			Domain:   domain,
+			Target:   alaye.Address(target),
+			IsProxy:  true,
+			Markdown: cfg.ServeMarkdown,
+			SPA:      cfg.ServeSPA,
+		}),
 	}
 
 	displayURL := buildURL(cfg.ProxyHTTPS, domain, finalPort)

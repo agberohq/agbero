@@ -205,6 +205,7 @@ show_next_steps() {
     printf "${YELLOW}Quick Start:${NC}\n"
     printf "  ${BLUE}1. Create a configuration:${NC}        agbero init\n"
     printf "  ${BLUE}2. Validate configuration:${NC}        agbero config validate\n"
+    printf "  ${BLUE}3. Run the server :${NC}               agbero run\n"
     printf "  ${BLUE}3. Run in development mode:${NC}       agbero run --dev\n"
     printf "  ${BLUE}4. Serve current directory:${NC}       agbero serve .\n"
     printf "  ${BLUE}5. Proxy a local app:${NC}             agbero proxy :3000\n\n"

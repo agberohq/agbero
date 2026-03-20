@@ -1,4 +1,3 @@
-// internal/handlers/xtcp/pool.go
 package xtcp
 
 import (

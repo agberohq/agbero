@@ -26,7 +26,7 @@ class RouteGraph {
         const defs = this.svg.append("defs");
 
         // One sharp arrowhead per link color
-        const arrowConfigs = [
+        const arrowConfigs =[
             { id: "arrow-default",   color: "#bbbbbb" },
             { id: "arrow-dead",      color: "#ff3b30" },
             { id: "arrow-degraded",  color: "#ffcc00" },
@@ -98,13 +98,8 @@ class RouteGraph {
                 } else if (d.type === "backend" && d.meta) {
                     window.app.openBackendDrawer(d.meta.hostname, d.meta.routeIdx, d.meta.backendIdx, d.meta.routeType);
                 } else if (d.type === "host" && d.meta) {
-                    const searchInput = document.getElementById("hostSearch");
-                    if (searchInput) {
-                        searchInput.value = d.meta.hostname;
-                        sessionStorage.setItem("ag_search", d.meta.hostname);
-                        window.app.searchTerm = d.meta.hostname;
-                        window.app.setPage("hosts");
-                    }
+                    // CHANGED: Open the performance modal instead of redirecting to hosts page
+                    window.app.openPerformanceModal(d.meta.hostname);
                 }
             })
             .on("mouseenter", function(event, d) {
@@ -286,8 +281,8 @@ class RouteGraph {
     // ── Data processing (unchanged) ───────────────────────────────────────────
 
     processData(config, stats) {
-        const nodes  = [];
-        const links  = [];
+        const nodes  =[];
+        const links  =[];
         const nodeSet = new Set();
 
         const addNode = (id, label, type, status = "ok", meta = null) => {
@@ -315,7 +310,7 @@ class RouteGraph {
                         links.push({ source: hostname, target: routeId });
 
                         const routeStats   = hostStats.routes ? hostStats.routes[rIdx] : {};
-                        const backendStats = routeStats.backends || [];
+                        const backendStats = routeStats.backends ||[];
 
                         if (route.backends && route.backends.servers) {
                             route.backends.servers.forEach((srv, bIdx) => {
@@ -354,7 +349,7 @@ class RouteGraph {
                         links.push({ source: hostname, target: proxyId });
 
                         const proxyStats   = hostStats.proxies ? hostStats.proxies[pIdx] : {};
-                        const backendStats = proxyStats.backends || [];
+                        const backendStats = proxyStats.backends ||[];
 
                         if (proxy.backends) {
                             proxy.backends.forEach((srv, bIdx) => {
