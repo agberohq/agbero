@@ -107,8 +107,8 @@ func (s *Server) OnClusterChallenge(token, keyAuth string, deleted bool) {
 	}
 }
 
-// Start initiates the proxy server lifecycle including listeners and managers.
-// It blocks until the shutdown signal is received or a critical error occurs.
+// Start - boots up the server instance and all background dependencies
+// Initializes orchestrator, cache, clustering, and local listeners
 func (s *Server) Start(configPath string) error {
 	s.mu.Lock()
 	s.configPath = configPath
@@ -286,6 +286,7 @@ func (s *Server) Start(configPath string) error {
 		CookManager: s.cookManager,
 		TLSManager:  s.tlsManager,
 		SharedState: s.sharedState,
+		OrchManager: s.orchManager,
 	}
 
 	tm, err := handlers.NewManager(tmCfg)
@@ -329,8 +330,8 @@ func (s *Server) Start(configPath string) error {
 	return nil
 }
 
-// Reload triggers a full configuration hot-swap if the underlying HCL files have changed.
-// It gracefully closes old listeners and transfers traffic to the new instances.
+// Reload - applies new configurations to the active server without dropping traffic
+// Identifies host or global differences and updates local listeners
 func (s *Server) Reload() {
 	s.mu.RLock()
 	configPath := s.configPath
@@ -419,6 +420,7 @@ func (s *Server) Reload() {
 		CookManager: s.cookManager,
 		TLSManager:  s.tlsManager,
 		SharedState: s.sharedState,
+		OrchManager: s.orchManager,
 	}
 
 	tm, err := handlers.NewManager(tmCfg)

@@ -9,8 +9,6 @@ import (
 	"github.com/olekukonko/errors"
 )
 
-// Route defines the logic for handling a specific path on a host.
-// It must define exactly one engine: web, backend, or serverless.
 type Route struct {
 	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
 	Path    string  `hcl:"path,label" json:"path"`
@@ -45,8 +43,8 @@ type Route struct {
 	Fallback          Fallback      `hcl:"fallback,block" json:"fallback"`
 }
 
-// Validate verifies the route configuration and enforces the single-engine rule.
-// It ensures only one of Web, Backend, or Serverless is configured as the primary handler.
+// Validates the route configuration to ensure correctness
+// Checks for conflicting handler engines and validates individual components
 func (r *Route) Validate() error {
 	if r.Path == "" {
 		return ErrRoutePathRequired
@@ -55,7 +53,7 @@ func (r *Route) Validate() error {
 		return errors.Newf("%w: path %q must start with '/'", ErrRouteInvalidPrefix, r.Path)
 	}
 
-	isWeb := r.Web.Root.IsSet()
+	isWeb := r.Web.Root.IsSet() || (r.Web.Git.Enabled.Active() && !r.Serverless.Enabled.Active())
 	isBackend := len(r.Backends.Servers) > 0
 	isServerless := r.Serverless.Enabled.Active()
 
@@ -74,7 +72,7 @@ func (r *Route) Validate() error {
 		return fmt.Errorf("route %q: engine conflict. Choose one: web, backend, or serverless", r.Path)
 	}
 	if engines == 0 {
-		return fmt.Errorf("route %q: no handler engine defined", r.Path)
+		return ErrRouteNoBackendOrWeb
 	}
 
 	if err := r.RateLimit.Validate(); err != nil {
@@ -121,8 +119,8 @@ func (r *Route) Validate() error {
 	return r.validateWebRoute()
 }
 
-// validateAuth ensures all authentication middlewares are correctly configured.
-// It checks basic auth, forward auth, JWT, and OAuth settings.
+// Validates all configured authentication plugins for the route
+// Returns the first error encountered, if any
 func (r *Route) validateAuth() error {
 	if err := r.BasicAuth.Validate(); err != nil {
 		return errors.Newf("basic_auth: %w", err)
@@ -139,8 +137,8 @@ func (r *Route) validateAuth() error {
 	return nil
 }
 
-// validatePlugins ensures additional logic modules like WASM and Compression are valid.
-// It verifies headers, module paths, and capabilities.
+// Validates routing plugins such as headers, compression, and Wasm modules
+// Returns an error if any of the configurations are invalid
 func (r *Route) validatePlugins() error {
 	if err := r.Headers.Validate(); err != nil {
 		return errors.Newf("headers: %w", err)
@@ -154,10 +152,10 @@ func (r *Route) validatePlugins() error {
 	return nil
 }
 
-// validateWebRoute performs checks specific to static file serving logic.
-// It validates indices, directory listing, and PHP or Markdown settings.
+// Verifies that web routing requirements are met, such as valid root paths
+// Ensures no conflicting proxy-only features like health checks are enabled
 func (r *Route) validateWebRoute() error {
-	if !r.Web.Root.IsSet() {
+	if !r.Web.Root.IsSet() && !r.Web.Git.Enabled.Active() {
 		return ErrWebRouteRootRequired
 	}
 	if err := r.Web.Validate(); err != nil {
@@ -183,8 +181,8 @@ func (r *Route) validateWebRoute() error {
 	return r.validatePlugins()
 }
 
-// validateProxyRoute performs checks specific to standard backend load balancing.
-// It ensures backends are defined and strategy strings are valid.
+// Verifies that a proxy route has at least one backend server available
+// Validates path stripping, LB strategies, and circuit breakers
 func (r *Route) validateProxyRoute() error {
 	if len(r.Backends.Servers) == 0 {
 		return ErrProxyRouteNoBackends
@@ -220,8 +218,8 @@ func (r *Route) validateProxyRoute() error {
 	return r.validatePlugins()
 }
 
-// Key generates a hash representing the route's current configuration state.
-// This is used for cache invalidation when any parameter of the route changes.
+// Computes a fast xxhash signature based on the route's configurations
+// Used primarily for caching optimized handler chains in memory
 func (r *Route) Key() string {
 	w := xxhash.New()
 
@@ -369,8 +367,8 @@ func (r *Route) Key() string {
 	return fmt.Sprintf("%x", w.Sum64())
 }
 
-// BackendKey creates a structured key identifying a specific backend for metrics.
-// It combines the protocol, domain, path, and backend address.
+// Generates a struct identifier combining protocol, domain, path, and address
+// Primarily used for referencing upstream targets consistently in metrics
 func (r *Route) BackendKey(domain, backendAddr string) BackendKey {
 	if domain == "" {
 		domain = "*"

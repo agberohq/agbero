@@ -3,6 +3,7 @@ package uptime
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -19,16 +20,21 @@ import (
 	"github.com/shirou/gopsutil/v3/mem"
 )
 
+var processStartTime = time.Now()
+
 type SystemStats struct {
-	NumCPU       int     `json:"num_cpu"`
-	NumGoroutine int     `json:"num_goroutine"`
-	MemAlloc     uint64  `json:"mem_alloc"`
-	MemTotal     uint64  `json:"mem_total"`
-	MemSys       uint64  `json:"mem_sys"`
-	MemRSS       uint64  `json:"mem_rss"`
-	CPUPercent   float64 `json:"cpu_percent"`
-	MemUsed      uint64  `json:"mem_used"`
-	MemTotalOS   uint64  `json:"mem_total_os"`
+	PID          int       `json:"pid"`
+	StartTime    time.Time `json:"start_time"`
+	Uptime       string    `json:"uptime"`
+	NumCPU       int       `json:"num_cpu"`
+	NumGoroutine int       `json:"num_goroutine"`
+	MemAlloc     uint64    `json:"mem_alloc"`
+	MemTotal     uint64    `json:"mem_total"`
+	MemSys       uint64    `json:"mem_sys"`
+	MemRSS       uint64    `json:"mem_rss"`
+	CPUPercent   float64   `json:"cpu_percent"`
+	MemUsed      uint64    `json:"mem_used"`
+	MemTotalOS   uint64    `json:"mem_total_os"`
 }
 
 type GlobalStats struct {
@@ -137,6 +143,9 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 	vmStat, _ := mem.VirtualMemory()
 
 	sysStats := SystemStats{
+		PID:          os.Getpid(),
+		StartTime:    processStartTime,
+		Uptime:       time.Since(processStartTime).Round(time.Second).String(),
 		NumCPU:       runtime.NumCPU(),
 		NumGoroutine: runtime.NumGoroutine(),
 		MemAlloc:     m.Alloc,
