@@ -8,6 +8,7 @@ import (
 )
 
 type Host struct {
+	Protected    Enabled  `hcl:"protected,attr" json:"protected"`
 	Domains      []string `hcl:"domains,attr" json:"domains"`
 	Bind         []string `hcl:"bind,attr" json:"bind"`
 	NotFoundPage string   `hcl:"not_found_page,attr" json:"not_found_page"`

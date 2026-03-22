@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"strconv"
 	"strings"
 	"time"
 
@@ -267,6 +268,13 @@ func (s *Server) handleHostsAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if existingCfg := s.hostManager.Get(domain); existingCfg != nil {
+			if existingCfg.Protected.Active() {
+				http.Error(w, "Cannot modify host with protected routes via API", http.StatusForbidden)
+				return
+			}
+		}
+
 		// Ensure the primary domain is injected
 		req.Config.Domains = []string{domain}
 
@@ -303,6 +311,13 @@ func (s *Server) handleHostsAPI(w http.ResponseWriter, r *http.Request) {
 		if strings.ContainsAny(domain, "/\\") || strings.Contains(domain, "..") {
 			http.Error(w, "Invalid domain string", http.StatusBadRequest)
 			return
+		}
+
+		if existingCfg := s.hostManager.Get(domain); existingCfg != nil {
+			if existingCfg.Protected.Active() {
+				http.Error(w, "Cannot modify host with protected routes via API", http.StatusForbidden)
+				return
+			}
 		}
 
 		if err := s.hostManager.DeleteFile(domain); err != nil {
@@ -550,7 +565,15 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "File logging disabled", http.StatusNotImplemented)
 		return
 	}
-	const limit = 50
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+			if limit > 1000 {
+				limit = 1000
+			}
+		}
+	}
 	lines, err := readLastLogLines(logPath, limit)
 	if err != nil {
 		http.Error(w, "Error reading logs: "+err.Error(), http.StatusInternalServerError)
