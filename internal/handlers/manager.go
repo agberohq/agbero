@@ -20,6 +20,7 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/wasm"
 	"github.com/agberohq/agbero/internal/pkg/bot"
 	"github.com/agberohq/agbero/internal/pkg/cook"
+	"github.com/agberohq/agbero/internal/pkg/orchestrator"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/olekukonko/errors"
 	"github.com/quic-go/quic-go/http3"
@@ -33,6 +34,7 @@ type ManagerConfig struct {
 	CookManager *cook.Manager
 	TLSManager  *tlss.Manager
 	SharedState woos.SharedState
+	OrchManager *orchestrator.Manager
 }
 
 type Manager struct {

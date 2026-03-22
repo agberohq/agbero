@@ -1,4 +1,6 @@
-// Package xserverless_test provides unit tests for the serverless binary worker handler.
+// internal/handlers/xserverless/xserverless_test.go
+// ====== DETAILED ======
+// Package xserverless provides unit tests for the serverless binary worker handler.
 // It verifies that processes are spawned and their output is correctly streamed.
 package xserverless
 
@@ -14,7 +16,6 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/pkg/orchestrator"
-	"github.com/olekukonko/ll"
 )
 
 const (
@@ -23,7 +24,6 @@ const (
 
 // TestWorkerServeHTTP checks if the worker handler correctly executes a shell command.
 // It verifies that stdout from the process is captured and returned as the HTTP response body.
-// Uses the test binary itself to ensure cross-platform compatibility.
 func TestWorkerServeHTTP(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
 		fmt.Fprintln(os.Stdout, os.Getenv("TEST_UNIQUE_ID"))
@@ -48,9 +48,16 @@ func TestWorkerServeHTTP(t *testing.T) {
 		Command: cmd,
 	}
 
+	route := alaye.Route{
+		Serverless: alaye.Serverless{
+			Root: tempWork,
+		},
+	}
+
 	handler := NewWorker(WorkerConfig{
 		Resource: res,
 		Work:     work,
+		Route:    route,
 		Orch:     orch,
 	})
 
@@ -58,21 +65,12 @@ func TestWorkerServeHTTP(t *testing.T) {
 	req.Header.Set("X-Test-Id", uniqueString)
 	rr := httptest.NewRecorder()
 
-	env := append(os.Environ(), "GO_WANT_HELPER_PROCESS=1", "TEST_UNIQUE_ID="+uniqueString)
-	handler.cfg.Command = cmd
-	handler.res.Logger = ll.New("test").Disable()
+	os.Setenv("GO_WANT_HELPER_PROCESS", "1")
+	os.Setenv("TEST_UNIQUE_ID", uniqueString)
+	defer os.Unsetenv("GO_WANT_HELPER_PROCESS")
+	defer os.Unsetenv("TEST_UNIQUE_ID")
 
-	proc := &orchestrator.Process{
-		Config: handler.cfg,
-		Env:    env,
-		Dir:    tempWork,
-		Logger: res.Logger.Namespace("worker").Namespace(testWorkerName),
-	}
-
-	err := proc.Run(req.Context(), req.Body, rr)
-	if err != nil {
-		t.Fatalf("Process execution failed: %v", err)
-	}
+	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rr.Code)
@@ -110,3 +108,13 @@ func TestWorkerExecutionFailure(t *testing.T) {
 		t.Errorf("expected status 500 for failed execution, got %d", rr.Code)
 	}
 }
+
+// TestWorkerGitDeploymentPending verifies that a 503 Service Unavailable is returned
+// when the execution directory is empty and Git is enabled (signifying pending deployment).
+//func TestWorkerGitDeploymentPending(t *testing.T) {
+//	res := resource.New()
+//	orch := orchestrator.New(res.Logger, os.TempDir(), nil, nil)
+//
+//	work := alaye.Work{
+//		Name:    "git-worker",
+//		Command:

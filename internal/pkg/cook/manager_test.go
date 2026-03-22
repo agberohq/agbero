@@ -17,9 +17,18 @@ import (
 	"github.com/olekukonko/ll"
 )
 
+const (
+	testPoolSize     = 2
+	testPollInterval = 50 * time.Millisecond
+	testTimeout      = 5 * time.Second
+	testCleanupSleep = 300 * time.Millisecond
+)
+
+// Tests the initialization logic for the cook manager
+// Ensures valid instances are created and invalid configurations return errors
 func TestManager_NewManager(t *testing.T) {
 	logger := ll.New("test").Disable()
-	pool := jack.NewPool(2)
+	pool := jack.NewPool(testPoolSize)
 	t.Run("valid", func(t *testing.T) {
 		_, err := NewManager(ManagerConfig{
 			WorkDir: t.TempDir(),
@@ -52,12 +61,14 @@ func TestManager_NewManager(t *testing.T) {
 	})
 }
 
+// Tests the registration and webhook handling workflow
+// Verifies successful cloning, valid signature processing, and invalid signature rejection
 func TestManager_Register_And_Webhook(t *testing.T) {
 	upstream := filepath.Join(t.TempDir(), "upstream")
 	workDir := t.TempDir()
 	setupTestRepo(t, upstream)
 	logger := ll.New("test").Disable()
-	pool := jack.NewPool(2)
+	pool := jack.NewPool(testPoolSize)
 	mgr, err := NewManager(ManagerConfig{
 		WorkDir: workDir,
 		Pool:    pool,
@@ -66,11 +77,10 @@ func TestManager_Register_And_Webhook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
-	// Ensure cleanup happens before temp dir removal
+
 	t.Cleanup(func() {
 		mgr.Stop()
-		// Wait for git processes to fully terminate
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(testCleanupSleep)
 	})
 	cfg := alaye.Git{
 		Enabled:  alaye.Active,
@@ -83,20 +93,20 @@ func TestManager_Register_And_Webhook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Register failed: %v", err)
 	}
-	// Poll for clone completion
-	deadline := time.Now().Add(5 * time.Second)
+
+	deadline := time.Now().Add(testTimeout)
 	var path string
 	for time.Now().Before(deadline) {
 		path = mgr.CurrentPath("test_route")
 		if path != "" {
 			break
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(testPollInterval)
 	}
 	if path == "" {
 		t.Fatal("expected current path to be set after register, timed out waiting for clone")
 	}
-	// Test Valid Webhook
+
 	payload := WebhookPayload{
 		Ref:    "refs/heads/master",
 		Before: "0000000",
@@ -113,7 +123,7 @@ func TestManager_Register_And_Webhook(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Errorf("expected 202, got %d: %s", w.Code, w.Body.String())
 	}
-	// Test Invalid Signature
+
 	req = httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", "sha256=invalid")
 	w = httptest.NewRecorder()
@@ -123,12 +133,14 @@ func TestManager_Register_And_Webhook(t *testing.T) {
 	}
 }
 
+// Tests the health summary generation
+// Validates that active deployments reflect a healthy state dynamically
 func TestManager_Health(t *testing.T) {
 	upstream := filepath.Join(t.TempDir(), "upstream")
 	workDir := t.TempDir()
 	setupTestRepo(t, upstream)
 	logger := ll.New("test").Disable()
-	pool := jack.NewPool(2)
+	pool := jack.NewPool(testPoolSize)
 	mgr, _ := NewManager(ManagerConfig{
 		WorkDir: workDir,
 		Pool:    pool,
@@ -140,8 +152,16 @@ func TestManager_Health(t *testing.T) {
 		URL:     upstream,
 		Branch:  "master",
 	}
-	mgr.Register("healthy_route", cfg)
-	time.Sleep(100 * time.Millisecond)
+	_ = mgr.Register("healthy_route", cfg)
+
+	deadline := time.Now().Add(testTimeout)
+	for time.Now().Before(deadline) {
+		if mgr.CurrentPath("healthy_route") != "" {
+			break
+		}
+		time.Sleep(testPollInterval)
+	}
+
 	health := mgr.Health()
 	if len(health) != 1 {
 		t.Fatalf("expected 1 health entry, got %d", len(health))
@@ -149,5 +169,56 @@ func TestManager_Health(t *testing.T) {
 	status := health["healthy_route"]
 	if status.State != "healthy" {
 		t.Errorf("expected healthy state, got %s", status.State)
+	}
+}
+
+// Tests updating an existing registered Git route
+// Verifies that redundant cloning operations are skipped while secrets and polling intervals update safely
+func TestManager_Register_Update(t *testing.T) {
+	upstream := filepath.Join(t.TempDir(), "upstream")
+	workDir := t.TempDir()
+	setupTestRepo(t, upstream)
+	logger := ll.New("test").Disable()
+	pool := jack.NewPool(testPoolSize)
+	mgr, _ := NewManager(ManagerConfig{
+		WorkDir: workDir,
+		Pool:    pool,
+		Logger:  logger,
+	})
+	defer mgr.Stop()
+
+	cfg1 := alaye.Git{
+		Enabled: alaye.Active,
+		URL:     upstream,
+		Branch:  "master",
+	}
+
+	err := mgr.Register("update_route", cfg1)
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	cfg2 := alaye.Git{
+		Enabled:  alaye.Active,
+		URL:      upstream,
+		Branch:   "master",
+		Secret:   alaye.Value("new_secret"),
+		Interval: alaye.Duration(1 * time.Minute),
+	}
+
+	err = mgr.Register("update_route", cfg2)
+	if err != nil {
+		t.Fatalf("Second Register failed: %v", err)
+	}
+
+	entry, ok := mgr.entries.Get("update_route")
+	if !ok {
+		t.Fatal("entry missing")
+	}
+	if entry.Config.Secret != "new_secret" {
+		t.Errorf("expected secret to be updated to 'new_secret', got %q", entry.Config.Secret)
+	}
+	if entry.Config.Interval.StdDuration() != 1*time.Minute {
+		t.Errorf("expected interval to be updated to 1m, got %v", entry.Config.Interval.StdDuration())
 	}
 }

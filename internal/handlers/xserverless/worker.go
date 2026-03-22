@@ -1,5 +1,3 @@
-// Package xserverless handles ephemeral binary execution as request handlers.
-// Workers process incoming request bodies and write to the response stream.
 package xserverless
 
 import (
@@ -13,6 +11,7 @@ import (
 
 type WorkerConfig struct {
 	Resource  *resource.Resource
+	Route     alaye.Route
 	Work      alaye.Work
 	GlobalEnv map[string]alaye.Value
 	RouteEnv  map[string]alaye.Value
@@ -21,17 +20,18 @@ type WorkerConfig struct {
 
 type WorkerHandler struct {
 	res       *resource.Resource
+	route     alaye.Route
 	cfg       alaye.Work
 	globalEnv map[string]alaye.Value
 	routeEnv  map[string]alaye.Value
 	orch      *orchestrator.Manager
 }
 
-// NewWorker constructs a handler for executing a background or interactive system process.
-// It leverages the provided orchestrator to resolve working directories and execution context.
+// NewWorker initializes a new worker handler with the given configuration.
 func NewWorker(cfg WorkerConfig) *WorkerHandler {
 	return &WorkerHandler{
 		res:       cfg.Resource,
+		route:     cfg.Route,
 		cfg:       cfg.Work,
 		globalEnv: cfg.GlobalEnv,
 		routeEnv:  cfg.RouteEnv,
@@ -39,8 +39,8 @@ func NewWorker(cfg WorkerConfig) *WorkerHandler {
 	}
 }
 
-// ServeHTTP executes the system process associated with the worker for the current request.
-// It pipes the HTTP request body to the process stdin and process stdout to the HTTP response.
+// ServeHTTP handles the incoming HTTP request by running the configured worker process.
+// It resolves the execution directory and returns 503 if a git deployment is pending.
 func (h *WorkerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := r.Host
 	if host == "" {
@@ -49,15 +49,14 @@ func (h *WorkerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var dir string
 	if h.orch != nil {
-		routeCfg := alaye.Route{
-			Env: h.routeEnv,
-			Serverless: alaye.Serverless{
-				Workers: []alaye.Work{h.cfg},
-			},
-		}
-		dir = h.orch.ResolveDir(host, routeCfg, h.cfg)
+		dir = h.orch.ResolveDir(host, h.route, h.cfg)
 	} else {
 		dir = os.TempDir()
+	}
+
+	if dir == "" && h.route.Web.Git.Enabled.Active() {
+		http.Error(w, "Deployment in progress...", http.StatusServiceUnavailable)
+		return
 	}
 
 	env := alaye.CompileEnv(h.globalEnv, h.routeEnv, h.cfg.Env)
