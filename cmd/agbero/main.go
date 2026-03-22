@@ -202,6 +202,23 @@ func main() {
 	cmdCluster.AttachSubcommand(cmdClusterStart, 1)
 	cmdCluster.AttachSubcommand(cmdClusterJoin, 1)
 
+	cmdSystem := flaggy.NewSubcommand("system")
+	cmdSystem.Description = "System-level operations (backup, restore, etc.)"
+
+	cmdSystemBackup := flaggy.NewSubcommand("backup")
+	cmdSystemBackup.Description = "Backup configurations, certificates, and data to a password-protected zip"
+	cmdSystemBackup.String(&cfg.SystemOut, "o", "out", "Output zip file path (default: agbero_backup_<timestamp>.zip)")
+	cmdSystemBackup.String(&cfg.SystemPass, "p", "password", "Password for AES-256 encryption")
+
+	cmdSystemRestore := flaggy.NewSubcommand("restore")
+	cmdSystemRestore.Description = "Restore configurations, certificates, and data from a backup zip"
+	cmdSystemRestore.String(&cfg.SystemIn, "i", "in", "Input zip file path")
+	cmdSystemRestore.String(&cfg.SystemPass, "p", "password", "Password for AES-256 decryption")
+	cmdSystemRestore.Bool(&cfg.SystemForce, "f", "force", "Force overwrite of existing files without prompting")
+
+	cmdSystem.AttachSubcommand(cmdSystemBackup, 1)
+	cmdSystem.AttachSubcommand(cmdSystemRestore, 1)
+
 	cmdRun := flaggy.NewSubcommand("run")
 	cmdRun.Description = "Run agbero using the discovered config"
 	cmdRun.Bool(&cfg.DevMode, "d", "dev", "Enable development mode")
@@ -241,6 +258,7 @@ func main() {
 	flaggy.AttachSubcommand(cmdService, 1)
 	flaggy.AttachSubcommand(cmdUninstall, 1)
 	flaggy.AttachSubcommand(cmdCluster, 1)
+	flaggy.AttachSubcommand(cmdSystem, 1)
 	flaggy.AttachSubcommand(cmdRun, 1)
 	flaggy.AttachSubcommand(cmdHome, 1)
 	flaggy.AttachSubcommand(cmdServe, 1)
@@ -266,6 +284,18 @@ func main() {
 	if cmdProxy.Used {
 		hel.Ephemeral().Proxy()
 		return
+	}
+
+	if cmdSystem.Used {
+		if cmdSystemBackup.Used {
+			resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
+			hel.System().Backup(resolvedPath, cfg.SystemOut, cfg.SystemPass)
+			return
+		}
+		if cmdSystemRestore.Used {
+			hel.System().Restore(cfg.SystemIn, cfg.SystemPass, cfg.SystemForce)
+			return
+		}
 	}
 
 	if cmdSecret.Used {
@@ -573,7 +603,7 @@ func showHelpExamples() {
 	fmt.Printf("\nEXECUTION:\n")
 	fmt.Printf("  %s run                         # run using discovered config\n", exeName)
 	fmt.Printf("  %s serve .                     # serve current directory on the fly\n", exeName)
-	fmt.Printf("  %s serve . --markdown           # serve with .md files rendered as HTML\n", exeName)
+	fmt.Printf("  %s serve . --markdown          # serve with .md files rendered as HTML\n", exeName)
 	fmt.Printf("  %s serve . --spa               # serve SPA (fallback to index.html on 404)\n", exeName)
 	fmt.Printf("  %s serve . --https             # serve with HTTPS\n", exeName)
 	fmt.Printf("  %s serve . --php               # serve with PHP\n", exeName)
@@ -584,6 +614,9 @@ func showHelpExamples() {
 	fmt.Printf("  %s config edit                 # edit config in $EDITOR\n", exeName)
 	fmt.Printf("  %s config path                 # show config file path\n", exeName)
 	fmt.Printf("  %s config reload               # hot reload running instance\n", exeName)
+	fmt.Printf("\nSYSTEM MANAGEMENT:\n")
+	fmt.Printf("  %s system backup -o backup.zip -p mypass\n", exeName)
+	fmt.Printf("  %s system restore -i backup.zip -p mypass\n", exeName)
 	fmt.Printf("\nSECRETS & KEYS:\n")
 	fmt.Printf("  %s secret cluster              # generate gossip secret key\n", exeName)
 	fmt.Printf("  %s secret key init             # generate internal auth key\n", exeName)
