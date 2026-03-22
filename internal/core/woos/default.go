@@ -23,6 +23,10 @@ func (Defaults) Global(g *alaye.Global, configPath string) {
 
 // Host applies all host configuration defaults before validation.
 func (Defaults) Host(h *alaye.Host) {
+
+	if h.Protected == alaye.Unknown {
+		h.Protected = alaye.Inactive
+	}
 	defaultTLS(&h.TLS, h.Domains)
 	defaultLimits(&h.Limits)
 	defaultHeaders(&h.Headers)

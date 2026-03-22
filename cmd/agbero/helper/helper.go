@@ -11,7 +11,6 @@ type Helper struct {
 	Cfg      *Config
 }
 
-// New constructs a Helper with shared logger, shutdown manager, and config.
 func New(logger *ll.Logger, shutdown *jack.Shutdown, cfg *Config) *Helper {
 	return &Helper{
 		Logger:   logger,
@@ -28,3 +27,4 @@ func (h *Helper) Service() *Service      { return &Service{p: h} }
 func (h *Helper) Cluster() *Cluster      { return &Cluster{p: h} }
 func (h *Helper) Home() *Home            { return &Home{p: h} }
 func (h *Helper) Ephemeral() *Ephemeral  { return &Ephemeral{p: h} }
+func (h *Helper) System() *System        { return &System{p: h} }

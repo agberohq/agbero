@@ -106,14 +106,14 @@ func (h *Home) Run() error {
 	}
 
 	content := ConfigTmpl
-	content = strings.ReplaceAll(content, "{HOST_DIR}", h.ctx.Paths.HostsDir.Path())
-	content = strings.ReplaceAll(content, "{CERTS_DIR}", h.ctx.Paths.CertsDir.Path())
-	content = strings.ReplaceAll(content, "{DATA_DIR}", h.ctx.Paths.DataDir.Path())
-	content = strings.ReplaceAll(content, "{LOGS_DIR}", h.ctx.Paths.LogsDir.Path())
-	content = strings.ReplaceAll(content, "{WORK_DIR}", h.ctx.Paths.WorkDir.Path())
+	content = strings.ReplaceAll(content, "{HOST_DIR}", filepath.ToSlash(h.ctx.Paths.HostsDir.Path()))
+	content = strings.ReplaceAll(content, "{CERTS_DIR}", filepath.ToSlash(h.ctx.Paths.CertsDir.Path()))
+	content = strings.ReplaceAll(content, "{DATA_DIR}", filepath.ToSlash(h.ctx.Paths.DataDir.Path()))
+	content = strings.ReplaceAll(content, "{LOGS_DIR}", filepath.ToSlash(h.ctx.Paths.LogsDir.Path()))
+	content = strings.ReplaceAll(content, "{WORK_DIR}", filepath.ToSlash(h.ctx.Paths.WorkDir.Path()))
 	content = strings.ReplaceAll(content, "{ADMIN_PASSWORD}", string(hash))
 	content = strings.ReplaceAll(content, "{ADMIN_SECRET}", adminSecret)
-	content = strings.ReplaceAll(content, "{INTERNAL_AUTH_KEY}", internalAuthKeyPath)
+	content = strings.ReplaceAll(content, "{INTERNAL_AUTH_KEY}", filepath.ToSlash(internalAuthKeyPath))
 	content = strings.ReplaceAll(content, "{LE_ENABLED}", leEnabled)
 	content = strings.ReplaceAll(content, "{LE_EMAIL}", leEmail)
 

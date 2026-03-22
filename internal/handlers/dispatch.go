@@ -214,8 +214,8 @@ func (m *Manager) handleRoute(w http.ResponseWriter, r *http.Request, route *ala
 	handler.ServeHTTP(w, reqOut)
 }
 
-// routeBuilder constructs or retrieves a cached Route handler for the given route configuration.
-// It manages cache lifecycle with touch timestamps and ensures efficient reuse of route handler instances.
+// routeBuilder - constructs and caches the handler chain for a given route
+// Injects orchestrator to support serverless operations safely
 func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 	key := route.Key()
 	if it, ok := m.cfg.Resource.RouteCache.Load(key); ok {
@@ -238,6 +238,7 @@ func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 		CookMgr:     m.cfg.CookManager,
 		Resource:    m.cfg.Resource,
 		SharedState: m.cfg.SharedState,
+		Orch:        m.cfg.OrchManager,
 	}, route)
 
 	newItem := &mappo.Item{Value: h}
