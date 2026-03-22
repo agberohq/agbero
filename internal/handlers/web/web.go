@@ -208,6 +208,8 @@ func (h *web) logger() *ll.Logger {
 	return h.res.Logger.Namespace("web")
 }
 
+// ServeHTTP - handles web route requests including static files, php, and markdown
+// Bypasses caches automatically if NoCache is enabled or a refresh query is provided
 func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -260,7 +262,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	reqPath = cleanedPath
 	wantsDownload := r.URL.Query().Has("download")
 
-	if r.URL.Query().Has("refresh") {
+	if r.URL.Query().Has("refresh") || h.route.Web.NoCache {
 		dynamicGzCache.Delete(reqPath)
 	}
 
@@ -378,6 +380,111 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", mt)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+}
+
+// serveDynamicGzip - handles on-the-fly compression for large text files
+// Validates file modification time against the cache entry to ensure freshness
+func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath string, f *os.File, info fs.FileInfo, mimeType string) bool {
+	if info.Size() > woos.DynamicGzMaxSize {
+		return false
+	}
+
+	cached, ok := dynamicGzCache.Load(reqPath)
+
+	var entry *dynamicGzEntry
+	if ok {
+		if e, valid := zulu.GetCache[*dynamicGzEntry](cached); valid {
+			if e.modTime.Equal(info.ModTime()) || e.modTime.After(info.ModTime()) {
+				entry = e
+			}
+		}
+	}
+
+	if entry == nil {
+		raw, err := io.ReadAll(f)
+		if err != nil {
+			h.logger().Fields("err", err, "path", reqPath).Warn("dynamic gzip: read failed")
+			return false
+		}
+
+		var buf bytes.Buffer
+		gz := gzWriterPool.Get().(*gzip.Writer)
+		gz.Reset(&buf)
+		if _, err := gz.Write(raw); err != nil {
+			gz.Close()
+			gzWriterPool.Put(gz)
+			h.logger().Fields("err", err, "path", reqPath).Warn("dynamic gzip: compress failed")
+			return false
+		}
+		if err := gz.Close(); err != nil {
+			gzWriterPool.Put(gz)
+			h.logger().Fields("err", err, "path", reqPath).Warn("dynamic gzip: flush failed")
+			return false
+		}
+		gzWriterPool.Put(gz)
+
+		entry = &dynamicGzEntry{
+			data:    buf.Bytes(),
+			modTime: info.ModTime(),
+			size:    info.Size(),
+		}
+
+		if len(entry.data) <= dynamicGzMaxCacheSize {
+			dynamicGzCache.StoreTTL(reqPath, &mappo.Item{Value: entry}, dynamicGzTTL)
+		}
+	}
+
+	if h.setCommonHeaders(w, r, reqPath, entry.modTime, entry.size, true) {
+		return true
+	}
+
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Content-Encoding", "gzip")
+	w.Header().Add("Vary", "Accept-Encoding")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(w, r, reqPath, entry.modTime, bytes.NewReader(entry.data))
+	return true
+}
+
+// setCommonHeaders - assigns cache headers and checks etags
+// Checks if client requested refresh or if route disables cache completely
+func (h *web) setCommonHeaders(w http.ResponseWriter, r *http.Request, reqPath string, modTime time.Time, size int64, isGzipVariant bool) (notModified bool) {
+	if r.URL.Query().Has("refresh") || h.route.Web.NoCache {
+		w.Header().Set("Cache-Control", "no-store")
+		if isGzipVariant {
+			w.Header().Add("Vary", "Accept-Encoding")
+		}
+		return false
+	}
+
+	ext := strings.ToLower(filepath.Ext(reqPath))
+
+	var cacheControl string
+	switch {
+	case ext == ".html" || ext == "" || strings.HasSuffix(r.URL.Path, "/"):
+		cacheControl = "public, max-age=0, must-revalidate"
+	case fingerprintRe.FindStringIndex(filepath.Base(reqPath)) != nil:
+		cacheControl = "public, max-age=31536000, immutable"
+	default:
+		cacheControl = "public, max-age=300"
+	}
+	w.Header().Set("Cache-Control", cacheControl)
+
+	if isGzipVariant {
+		w.Header().Add("Vary", "Accept-Encoding")
+	}
+
+	etag := weakETag(reqPath, size, modTime)
+	w.Header().Set("ETag", etag)
+
+	if inm := r.Header.Get("If-None-Match"); inm != "" && ifNoneMatchHas(inm, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return true
+	}
+	return false
 }
 
 // serveMarkdown converts a Markdown file to HTML and writes the response.
@@ -672,73 +779,6 @@ func (h *web) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *o
 	_, _ = w.Write(buf.Bytes())
 }
 
-// serveDynamicGzip compresses the file on the fly and writes the gzip response.
-// Results are cached in memory; mappo is lock-free so no mutex is needed.
-func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath string, f *os.File, info fs.FileInfo, mimeType string) bool {
-
-	// Prevent OOM: skip compression for files larger than threshold
-	if info.Size() > woos.DynamicGzMaxSize {
-		return false // Fall back to uncompressed serving
-	}
-
-	cached, ok := dynamicGzCache.Load(reqPath)
-
-	var entry *dynamicGzEntry
-	if ok {
-		if e, valid := zulu.GetCache[*dynamicGzEntry](cached); valid {
-			entry = e
-		}
-	}
-
-	if entry == nil {
-		raw, err := io.ReadAll(f)
-		if err != nil {
-			h.logger().Fields("err", err, "path", reqPath).Warn("dynamic gzip: read failed")
-			return false
-		}
-
-		var buf bytes.Buffer
-		gz := gzWriterPool.Get().(*gzip.Writer)
-		gz.Reset(&buf)
-		if _, err := gz.Write(raw); err != nil {
-			gz.Close()
-			gzWriterPool.Put(gz)
-			h.logger().Fields("err", err, "path", reqPath).Warn("dynamic gzip: compress failed")
-			return false
-		}
-		if err := gz.Close(); err != nil {
-			gzWriterPool.Put(gz)
-			h.logger().Fields("err", err, "path", reqPath).Warn("dynamic gzip: flush failed")
-			return false
-		}
-		gzWriterPool.Put(gz)
-
-		entry = &dynamicGzEntry{
-			data:    buf.Bytes(),
-			modTime: info.ModTime(),
-			size:    info.Size(),
-		}
-
-		if len(entry.data) <= dynamicGzMaxCacheSize {
-			dynamicGzCache.StoreTTL(reqPath, &mappo.Item{Value: entry}, dynamicGzTTL)
-		}
-	}
-
-	if h.setCommonHeaders(w, r, reqPath, entry.modTime, entry.size, true) {
-		return true
-	}
-
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
-	}
-	w.Header().Set("Content-Type", mimeType)
-	w.Header().Set("Content-Encoding", "gzip")
-	w.Header().Add("Vary", "Accept-Encoding")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	http.ServeContent(w, r, reqPath, entry.modTime, bytes.NewReader(entry.data))
-	return true
-}
-
 // handleOpenError maps os.Root.Open failures to HTTP responses with tiered logging.
 // If SPA routing is enabled, it iterates through the configured indices and serves the first match.
 func (h *web) handleOpenError(w http.ResponseWriter, r *http.Request, root *os.Root, reqPath string, err error) {
@@ -817,44 +857,6 @@ func (h *web) gzSetExists(gzPath string, exists bool) {
 	jitter := time.Duration(time.Now().UnixNano()%int64(5*time.Second)) - 2500*time.Millisecond
 	ttl := max(gzCacheTTL+jitter, time.Second)
 	gzExistsCache.StoreTTL(gzPath, &mappo.Item{Value: exists}, ttl)
-}
-
-// setCommonHeaders writes Cache-Control, ETag, and Vary and evaluates If-None-Match.
-// Returns true and writes 304 when the client already holds a current copy.
-func (h *web) setCommonHeaders(w http.ResponseWriter, r *http.Request, reqPath string, modTime time.Time, size int64, isGzipVariant bool) (notModified bool) {
-	if r.URL.Query().Has("refresh") {
-		w.Header().Set("Cache-Control", "no-store")
-		if isGzipVariant {
-			w.Header().Add("Vary", "Accept-Encoding")
-		}
-		return false
-	}
-
-	ext := strings.ToLower(filepath.Ext(reqPath))
-
-	var cacheControl string
-	switch {
-	case ext == ".html" || ext == "" || strings.HasSuffix(r.URL.Path, "/"):
-		cacheControl = "public, max-age=0, must-revalidate"
-	case fingerprintRe.FindStringIndex(filepath.Base(reqPath)) != nil:
-		cacheControl = "public, max-age=31536000, immutable"
-	default:
-		cacheControl = "public, max-age=300"
-	}
-	w.Header().Set("Cache-Control", cacheControl)
-
-	if isGzipVariant {
-		w.Header().Add("Vary", "Accept-Encoding")
-	}
-
-	etag := weakETag(reqPath, size, modTime)
-	w.Header().Set("ETag", etag)
-
-	if inm := r.Header.Get("If-None-Match"); inm != "" && ifNoneMatchHas(inm, etag) {
-		w.WriteHeader(http.StatusNotModified)
-		return true
-	}
-	return false
 }
 
 func (h *web) buildBreadcrumbs(displayPath string) []crumb {

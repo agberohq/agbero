@@ -12,6 +12,7 @@ type Web struct {
 	Index    []string `hcl:"index,optional" json:"index"`
 	Listing  bool     `hcl:"listing,attr" json:"listing"`
 	SPA      bool     `hcl:"spa,attr" json:"spa"`
+	NoCache  bool     `hcl:"no_cache,attr" json:"no_cache"`
 	PHP      PHP      `hcl:"php,block" json:"php"`
 	Git      Git      `hcl:"git,block" json:"git"`
 	Markdown Markdown `hcl:"markdown,block" json:"markdown"`
