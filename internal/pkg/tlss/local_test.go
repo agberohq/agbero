@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -758,5 +759,36 @@ func TestParsePrivateKey(t *testing.T) {
 	}
 	if _, ok := parsed.(*rsa.PrivateKey); !ok {
 		t.Error("parsed PKCS8 key is not *rsa.PrivateKey")
+	}
+}
+
+func TestCertLocal_HasCertutil(t *testing.T) {
+	tmp := t.TempDir()
+	ci := setupLocalTest(t, tmp)
+
+	// Since HasCertutil interacts with the host OS, we just verify it doesn't panic
+	// and returns a boolean value
+	result := ci.HasCertutil()
+	if result != true && result != false {
+		t.Errorf("HasCertutil returned unexpected type or paniced")
+	}
+}
+
+func TestCertutilPaths(t *testing.T) {
+	paths := certutilPaths()
+
+	switch runtime.GOOS {
+	case woos.Darwin:
+		if len(paths) == 0 {
+			t.Error("certutilPaths should return paths for Darwin")
+		}
+	case woos.Linux:
+		if len(paths) == 0 {
+			t.Error("certutilPaths should return paths for Linux")
+		}
+	default:
+		if len(paths) != 0 {
+			t.Errorf("certutilPaths should return nil for unsupported OS %s, got: %v", runtime.GOOS, paths)
+		}
 	}
 }

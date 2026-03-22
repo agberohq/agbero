@@ -45,7 +45,6 @@ func NewLocal(logger *ll.Logger, absoluteCertDir ...woos.Folder) *Local {
 		certDir = absoluteCertDir[0]
 	}
 
-	// Auto-enable mock mode if in test environment
 	mockMode := os.Getenv("AGBERO_TEST_MODE") == "1" || os.Getenv("PEBBLE_TEST") != ""
 
 	return &Local{
@@ -120,14 +119,12 @@ func (ci *Local) EnsureLocalhostCert() (certFile, keyFile string, err error) {
 
 	if err := ci.validateCertificate(certFile, keyFile); err == nil {
 		ci.logger.Fields("cert", certFile, "key", keyFile).Info("Using existing certificates")
-
 		return certFile, keyFile, nil
 	}
 
 	ci.logger.Fields("hosts", ci.certHosts, "cert", certFile).Info("Generating localhost certificates with ECDSA")
 
 	if !ci.caExists() {
-
 		ci.logger.Info("CA root not found. Generating and installing local CA...")
 		if err := ci.generateAndInstallCA(); err != nil {
 			return "", "", err
@@ -145,28 +142,37 @@ func (ci *Local) EnsureLocalhostCert() (certFile, keyFile string, err error) {
 func (ci *Local) InstallCARootIfNeeded() error {
 	_ = BootstrapEnv(ci.logger)
 
-	// Skip if CA already exists
-	if ci.caExists() {
+	if !ci.caExists() {
+		ci.logger.Info("Generating and installing local CA root...")
+		return ci.generateAndInstallCA()
+	}
+
+	ci.logger.Info("CA root already exists. Synchronizing with system trust stores...")
+	return ci.installToTrustStore()
+}
+
+func (ci *Local) installToTrustStore() error {
+	if ci.mockMode {
+		ci.logger.Debug("mock mode: skipping system trust store installation")
 		return nil
 	}
 
-	// In mock mode, just generate files without installing to system trust store
-	if ci.mockMode {
-		ci.logger.Debug("mock mode: generating CA files only (no system installation)")
-		return ci.generateCAFilesOnly()
+	certPath := ci.caCertPath()
+	var opts []truststore.Option
+	opts = append(opts, truststore.WithJava())
+	if ci.HasCertutil() {
+		opts = append(opts, truststore.WithFirefox())
 	}
 
-	ci.logger.Info("Generating and installing local CA root...")
-	if err := ci.generateAndInstallCA(); err != nil {
-		return err
+	if err := truststore.InstallFile(certPath, opts...); err != nil {
+		return errors.Newf("failed to install CA to system trust store: %w", err)
 	}
 
-	ci.logger.Info("CA root installed successfully")
+	ci.logger.Fields("cert", certPath).Info("CA root synchronized to system trust stores")
 	return nil
 }
 
 func (ci *Local) UninstallCARoot() error {
-	// Skip in mock mode
 	if ci.mockMode {
 		ci.logger.Debug("mock mode: skipping CA uninstall")
 		return nil
@@ -180,7 +186,14 @@ func (ci *Local) UninstallCARoot() error {
 		ci.logger.Info("CA certificate not found, nothing to uninstall")
 		return nil
 	}
-	if err := truststore.UninstallFile(caPath, truststore.WithFirefox(), truststore.WithJava()); err != nil {
+
+	var opts []truststore.Option
+	opts = append(opts, truststore.WithJava())
+	if ci.HasCertutil() {
+		opts = append(opts, truststore.WithFirefox())
+	}
+
+	if err := truststore.UninstallFile(caPath, opts...); err != nil {
 		return errors.Newf("failed to uninstall CA from system trust store: %w", err)
 	}
 
@@ -194,7 +207,6 @@ func (ci *Local) RemoveCA() {
 }
 
 func (ci *Local) generateCAFilesOnly() error {
-	// Ensure cert directory exists
 	if err := ci.CertDir.Ensure("", true); err != nil {
 		return errors.Newf("failed to ensure cert dir: %w", err)
 	}
@@ -268,19 +280,7 @@ func (ci *Local) generateAndInstallCA() error {
 	if err := ci.generateCAFilesOnly(); err != nil {
 		return err
 	}
-
-	// Skip actual installation in mock mode
-	if ci.mockMode {
-		ci.logger.Debug("mock mode: skipping system trust store installation")
-		return nil
-	}
-
-	certPath := ci.caCertPath()
-	if err := truststore.InstallFile(certPath, truststore.WithFirefox(), truststore.WithJava()); err != nil {
-		return errors.Newf("failed to install CA to system trust store: %w", err)
-	}
-	ci.logger.Fields("cert", certPath).Info("CA root installed to system trust store")
-	return nil
+	return ci.installToTrustStore()
 }
 
 func (ci *Local) generateLeaf(certFile, keyFile string) (string, string, error) {
@@ -299,7 +299,6 @@ func (ci *Local) generateLeaf(certFile, keyFile string) (string, string, error) 
 		return "", "", errors.Newf("generate serial: %w", err)
 	}
 
-	// Build SANs from hosts
 	var dnsNames []string
 	var ipAddresses []net.IP
 	for _, h := range ci.certHosts {
@@ -369,7 +368,6 @@ func (ci *Local) loadCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	certPath := ci.caCertPath()
 	keyPath := ci.caKeyPath()
 
-	// Load and parse CA certificate
 	certData, err := os.ReadFile(certPath)
 	if err != nil {
 		return nil, nil, err
@@ -383,7 +381,6 @@ func (ci *Local) loadCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 		return nil, nil, err
 	}
 
-	// Load and parse CA private key (dual-format support)
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, nil, err
@@ -393,13 +390,11 @@ func (ci *Local) loadCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 		return nil, nil, errors.New("invalid CA key PEM")
 	}
 
-	// Use parsePrivateKey helper for PKCS#8 + SEC1 support
 	priv, err := parsePrivateKey(keyBlock.Bytes)
 	if err != nil {
 		return nil, nil, errors.Newf("parse CA private key: %w", err)
 	}
 
-	// Assert to ECDSA (as required by your codebase)
 	caKey, ok := priv.(*ecdsa.PrivateKey)
 	if !ok {
 		return nil, nil, errors.Newf("expected ECDSA key, got %T", priv)
@@ -571,8 +566,6 @@ func (ci *Local) SetMockMode(mock bool) {
 	}
 }
 
-// HasCertutil reports whether the NSS certutil binary is present on this system.
-// Probes known OS-specific installation paths rather than relying on PATH.
 func (ci *Local) HasCertutil() bool {
 	return hasCertutil()
 }
@@ -630,8 +623,6 @@ func getLocalLANIPs() []string {
 	return ips
 }
 
-// hasCertutil probes well-known certutil installation paths per OS.
-// Returns true when any known path resolves to an existing executable.
 func hasCertutil() bool {
 	paths := certutilPaths()
 	for _, p := range paths {
@@ -642,8 +633,6 @@ func hasCertutil() bool {
 	return false
 }
 
-// certutilPaths returns the ordered list of certutil binary locations for the current OS.
-// Covers Homebrew, system package managers, and snap on Linux.
 func certutilPaths() []string {
 	switch runtime.GOOS {
 	case woos.Darwin:
