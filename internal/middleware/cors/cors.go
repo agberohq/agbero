@@ -9,8 +9,6 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 )
 
-// New returns CORS middleware based on configuration.
-// Returns no-op handler if CORS is disabled.
 func New(cfg *alaye.CORS) func(http.Handler) http.Handler {
 	if cfg.Enabled.NotActive() {
 		return func(next http.Handler) http.Handler { return next }
@@ -31,38 +29,47 @@ func New(cfg *alaye.CORS) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Always add Vary header
 			w.Header().Add("Vary", "Origin")
 
 			allowedOrigin := ""
 			if allowAllOrigins {
 				allowedOrigin = "*"
-				// Cannot use "*" with credentials
+
 				if cfg.AllowCredentials {
 					allowedOrigin = origin
 				}
 			} else {
+				originLower := strings.ToLower(origin)
 				for _, o := range cfg.AllowedOrigins {
-					if strings.EqualFold(o, origin) {
+					oLower := strings.ToLower(o)
+
+					if oLower == originLower {
 						allowedOrigin = origin
 						break
+					}
+
+					if strings.Contains(oLower, "*") {
+						parts := strings.SplitN(oLower, "*", 2)
+						if len(parts) == 2 {
+							if strings.HasPrefix(originLower, parts[0]) && strings.HasSuffix(originLower, parts[1]) {
+								allowedOrigin = origin
+								break
+							}
+						}
 					}
 				}
 			}
 
 			if allowedOrigin == "" {
-				// Origin not allowed, proceed without CORS headers
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			// Set basic CORS headers
 			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 			if cfg.AllowCredentials {
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 			}
 
-			// Handle preflight requests
 			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 				w.Header().Set("Access-Control-Allow-Methods", allowMethods)
 				w.Header().Set("Access-Control-Allow-Headers", allowHeaders)
@@ -71,7 +78,6 @@ func New(cfg *alaye.CORS) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Set exposed headers for actual requests
 			if exposeHeaders != "" {
 				w.Header().Set("Access-Control-Expose-Headers", exposeHeaders)
 			}

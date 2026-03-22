@@ -227,6 +227,66 @@ func TestCORS(t *testing.T) {
 				"Vary":                        "Origin",
 			},
 		},
+		{
+			name: "Wildcard Subdomain Match",
+			config: alaye.CORS{
+				Enabled:        alaye.Active,
+				AllowedOrigins: []string{"https://*.localhost"},
+			},
+			reqMethod:  "GET",
+			reqHeaders: map[string]string{"Origin": "https://ui.localhost"},
+			wantStatus: http.StatusOK,
+			wantHeaders: map[string]string{
+				"Access-Control-Allow-Origin": "https://ui.localhost",
+				"Vary":                        "Origin",
+			},
+		},
+		{
+			name: "Wildcard Subdomain Multiple Levels Match",
+			config: alaye.CORS{
+				Enabled:        alaye.Active,
+				AllowedOrigins: []string{"https://*.example.com"},
+			},
+			reqMethod:  "GET",
+			reqHeaders: map[string]string{"Origin": "https://api.dev.example.com"},
+			wantStatus: http.StatusOK,
+			wantHeaders: map[string]string{
+				"Access-Control-Allow-Origin": "https://api.dev.example.com",
+				"Vary":                        "Origin",
+			},
+		},
+		{
+			name: "Wildcard Subdomain Mismatch (Wrong Base Domain)",
+			config: alaye.CORS{
+				Enabled:        alaye.Active,
+				AllowedOrigins: []string{"https://*.localhost"},
+			},
+			reqMethod:  "GET",
+			reqHeaders: map[string]string{"Origin": "https://ui.local"},
+			wantStatus: http.StatusOK,
+			wantHeaders: map[string]string{
+				"Vary": "Origin",
+			},
+			dontWantHeader: []string{
+				"Access-Control-Allow-Origin",
+			},
+		},
+		{
+			name: "Wildcard Subdomain Mismatch (Wrong Protocol)",
+			config: alaye.CORS{
+				Enabled:        alaye.Active,
+				AllowedOrigins: []string{"https://*.localhost"},
+			},
+			reqMethod:  "GET",
+			reqHeaders: map[string]string{"Origin": "http://ui.localhost"},
+			wantStatus: http.StatusOK,
+			wantHeaders: map[string]string{
+				"Vary": "Origin",
+			},
+			dontWantHeader: []string{
+				"Access-Control-Allow-Origin",
+			},
+		},
 	}
 
 	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -265,7 +325,6 @@ func TestCORS(t *testing.T) {
 }
 
 func TestCORSVaryHeader(t *testing.T) {
-	// Test that Vary: Origin is always set when Origin header is present
 	config := &alaye.CORS{
 		Enabled:        alaye.Active,
 		AllowedOrigins: []string{"https://example.com"},

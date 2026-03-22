@@ -35,4 +35,9 @@ type Config struct {
 
 	HashPassword   string
 	PasswordLength string
+
+	SystemOut   string
+	SystemIn    string
+	SystemPass  string
+	SystemForce bool
 }
