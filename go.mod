@@ -27,7 +27,7 @@ require (
 	github.com/markbates/goth v1.82.0
 	github.com/olekukonko/errors v1.2.0
 	github.com/olekukonko/jack v0.0.0-20260315063850-82b24943796a
-	github.com/olekukonko/ll v0.1.8-0.20260319224941-fdbfdbd3cdea
+	github.com/olekukonko/ll v0.1.8
 	github.com/olekukonko/mappo v0.0.0-20260305135522-3435c72de434
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/pires/go-proxyproto v0.11.0
