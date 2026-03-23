@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -11,12 +10,13 @@ import (
 	"syscall"
 	"time"
 
+	"charm.land/huh/v2"
 	"github.com/agberohq/agbero/cmd/agbero/helper"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/installer"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
-	"github.com/charmbracelet/huh"
+	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/jack"
@@ -27,8 +27,6 @@ import (
 
 var logger *ll.Logger
 
-// Entry point for the application lifecycle
-// Parses command line arguments and orchestrates core services
 func main() {
 	logger = ll.New(woos.Name,
 		ll.WithHandler(lh.NewColorizedHandler(os.Stdout)),
@@ -269,11 +267,14 @@ func main() {
 
 	hel := helper.New(logger, shutdown, cfg)
 
+	// home is the one command that runs before welcome() — it is
+	// intentionally pipeable (cd $(agbero home hosts)) so no banner.
 	if cmdHome.Used {
 		hel.Home().Navigate(homeTarget, homeAction)
 		return
 	}
 
+	// Banner fires for every other command — it is our identity.
 	welcome()
 
 	if cmdServe.Used {
@@ -328,11 +329,9 @@ func main() {
 	}
 
 	if cmdInit.Used {
-		path, err := helper.InitConfiguration(logger, "")
-		if err != nil {
+		if _, err := helper.InitConfiguration(logger, ""); err != nil {
 			logger.Fatal("init failed: ", err)
 		}
-		logger.Info("initialized configuration at: ", path)
 		return
 	}
 
@@ -400,16 +399,14 @@ func main() {
 		ch := hel.Config()
 		switch {
 		case cmdConfigValidate.Used:
-			logger.Info("validating configuration...")
 			if err := ch.Validate(resolvedPath); err != nil {
 				logger.Fatal("invalid config: ", err)
 			}
-			logger.Info("configuration OK")
 		case cmdConfigReload.Used:
 			if err := ch.Reload(resolvedPath); err != nil {
 				logger.Fatal("reload failed: ", err)
 			}
-			logger.Info("signal sent. Check logs for reload status.")
+			ui.New().SuccessLine("signal sent — check logs for reload status")
 		case cmdConfigView.Used:
 			ch.View(resolvedPath, configViewEditor)
 		case cmdConfigPath.Used:
@@ -547,6 +544,26 @@ func main() {
 			logger.Warn("development mode enabled")
 		}
 
+		// Show startup context before handing off to the daemon.
+		u := ui.New()
+		switch {
+		case cmdClusterStart.Used:
+			u.SectionHeader("Cluster — seed node")
+			u.KeyValueBlock("", []ui.KV{
+				{Label: "Config", Value: resolvedPath},
+				{Label: "Mode", Value: "seed — this node is joinable"},
+			})
+		case cmdClusterJoin.Used:
+			u.SectionHeader("Cluster — joining")
+			u.KeyValueBlock("", []ui.KV{
+				{Label: "Config", Value: resolvedPath},
+				{Label: "Seed", Value: cfg.ClusterJoinIP},
+			})
+		default:
+			u.SectionHeader("Starting")
+			u.KeyValue("Config", resolvedPath)
+		}
+
 		isContainer := os.Getenv("AGBERO_CONTAINER") == "true" || os.Getenv("KUBERNETES_SERVICE_HOST") != ""
 		if !service.Interactive() && !isContainer {
 			errs := make(chan error, 5)
@@ -573,17 +590,11 @@ func main() {
 	showHelpExamples()
 }
 
-// Prints the banner and application summary to the terminal
-// Highlights the current version and build date automatically
 func welcome() {
-	fmt.Println(installer.BannerTmpl)
-	fmt.Printf("\033[1;34m%s\033[0m - %s\n", woos.Name, woos.Description)
-	fmt.Printf("\033[90mVersion: %s\033[0m\n", woos.Version)
-	fmt.Printf("\033[90mDate: %s\033[0m\n\n", woos.Date)
+	u := ui.New()
+	u.Welcome(woos.Name, woos.Description, woos.Version, woos.Date, installer.BannerTmpl)
 }
 
-// Displays standard usage instructions and execution examples
-// Formats output automatically for the host operating system platform
 func showHelpExamples() {
 	exeName := woos.Name
 	if len(os.Args) > 0 {
@@ -593,54 +604,100 @@ func showHelpExamples() {
 	if runtime.GOOS == woos.Windows {
 		prefix = ""
 	}
-	fmt.Printf("\n%s - %s v%s\n", woos.Name, woos.Description, woos.Version)
-	fmt.Println("\n===============================================================")
-	fmt.Println("USAGE EXAMPLES")
-	fmt.Println("===============================================================")
-	fmt.Printf("\nSCAFFOLDING:\n")
-	fmt.Printf("  %s init                        # scaffold config in current folder\n", exeName)
-	fmt.Printf("  %s service install             # install config + system service\n", exeName)
-	fmt.Printf("\nEXECUTION:\n")
-	fmt.Printf("  %s run                         # run using discovered config\n", exeName)
-	fmt.Printf("  %s serve .                     # serve current directory on the fly\n", exeName)
-	fmt.Printf("  %s serve . --markdown          # serve with .md files rendered as HTML\n", exeName)
-	fmt.Printf("  %s serve . --spa               # serve SPA (fallback to index.html on 404)\n", exeName)
-	fmt.Printf("  %s serve . --https             # serve with HTTPS\n", exeName)
-	fmt.Printf("  %s serve . --php               # serve with PHP\n", exeName)
-	fmt.Printf("  %s proxy :3000                 # proxy local port 3000\n", exeName)
-	fmt.Printf("\nCONFIGURATION:\n")
-	fmt.Printf("  %s config validate             # validate config file\n", exeName)
-	fmt.Printf("  %s config view                 # print config file\n", exeName)
-	fmt.Printf("  %s config edit                 # edit config in $EDITOR\n", exeName)
-	fmt.Printf("  %s config path                 # show config file path\n", exeName)
-	fmt.Printf("  %s config reload               # hot reload running instance\n", exeName)
-	fmt.Printf("\nSYSTEM MANAGEMENT:\n")
-	fmt.Printf("  %s system backup -o backup.zip -p mypass\n", exeName)
-	fmt.Printf("  %s system restore -i backup.zip -p mypass\n", exeName)
-	fmt.Printf("\nSECRETS & KEYS:\n")
-	fmt.Printf("  %s secret cluster              # generate gossip secret key\n", exeName)
-	fmt.Printf("  %s secret key init             # generate internal auth key\n", exeName)
-	fmt.Printf("  %s secret token -s myapp       # generate API token for 'myapp'\n", exeName)
-	fmt.Printf("  %s secret hash -p mypass       # bcrypt hash a password\n", exeName)
-	fmt.Printf("  %s secret password             # generate random password + hash\n", exeName)
-	fmt.Printf("\nHOSTS:\n")
-	fmt.Printf("  %s host list                   # list configured hosts\n", exeName)
-	fmt.Printf("  %s host add                    # add host/route (interactive)\n", exeName)
-	fmt.Printf("  %s host remove                 # remove host/route (interactive)\n", exeName)
-	fmt.Printf("\nNAVIGATION:\n")
-	fmt.Printf("  %s home                        # print Agbero home directory\n", exeName)
-	fmt.Printf("  %s home @                      # open shell in home directory\n", exeName)
-	fmt.Printf("  %s home hosts @                # open shell in hosts.d\n", exeName)
-	fmt.Printf("  %s home .                      # open home directory\n", exeName)
-	fmt.Printf("  %s home hosts .                # open hosts.d\n", exeName)
-	fmt.Printf("\nSERVICE MANAGEMENT:\n")
-	fmt.Printf("  %s%s service install\n", prefix, exeName)
-	fmt.Printf("  %s%s service start\n", prefix, exeName)
-	fmt.Printf("  %s%s service stop\n", prefix, exeName)
-	fmt.Printf("  %s%s service restart\n", prefix, exeName)
-	fmt.Printf("  %s%s service status\n", prefix, exeName)
-	fmt.Printf("  %s%s service uninstall\n", prefix, exeName)
-	fmt.Printf("  %s%s service uninstall --all   # remove everything agbero installed\n", prefix, exeName)
-	fmt.Printf("  %s%s service uninstall --all --force  # skip confirmation prompt\n", prefix, exeName)
-	fmt.Printf("  %s%s uninstall                 # alias to remove everything agbero installed\n", prefix, exeName)
+
+	u := ui.New()
+	u.HelpScreen([]ui.HelpSection{
+		{
+			Title: "Scaffolding",
+			Commands: []ui.HelpCmd{
+				{Cmd: exeName + " init", Desc: "scaffold config in current folder"},
+				{Cmd: prefix + exeName + " service install", Desc: "install config + system service"},
+			},
+		},
+		{
+			Title: "Execution",
+			Commands: []ui.HelpCmd{
+				{Cmd: exeName + " run", Desc: "run using discovered config"},
+				{Cmd: exeName + " serve .", Desc: "serve current directory on the fly"},
+				{Cmd: exeName + " serve . --markdown", Desc: "serve with .md files rendered as HTML"},
+				{Cmd: exeName + " serve . --spa", Desc: "serve SPA (fallback to index.html on 404)"},
+				{Cmd: exeName + " serve . --https", Desc: "serve with HTTPS"},
+				{Cmd: exeName + " serve . --php", Desc: "serve with PHP"},
+				{Cmd: exeName + " proxy :3000", Desc: "proxy local port 3000"},
+			},
+		},
+		{
+			Title: "Configuration",
+			Commands: []ui.HelpCmd{
+				{Cmd: exeName + " config validate", Desc: "validate config file"},
+				{Cmd: exeName + " config view", Desc: "print config file"},
+				{Cmd: exeName + " config edit", Desc: "edit config in $EDITOR"},
+				{Cmd: exeName + " config path", Desc: "show config file path"},
+				{Cmd: exeName + " config reload", Desc: "hot reload running instance"},
+			},
+		},
+		{
+			Title: "Certificates",
+			Commands: []ui.HelpCmd{
+				{Cmd: exeName + " cert install", Desc: "install local CA certificate"},
+				{Cmd: exeName + " cert uninstall", Desc: "uninstall local CA certificate"},
+				{Cmd: exeName + " cert list", Desc: "list managed certificates"},
+				{Cmd: exeName + " cert info", Desc: "show certificate store information"},
+			},
+		},
+		{
+			Title: "Secrets & keys",
+			Commands: []ui.HelpCmd{
+				{Cmd: exeName + " secret cluster", Desc: "generate gossip secret key"},
+				{Cmd: exeName + " secret key init", Desc: "generate internal auth key"},
+				{Cmd: exeName + " secret token -s myapp", Desc: "generate API token for a service"},
+				{Cmd: exeName + " secret hash -p mypass", Desc: "bcrypt hash a password"},
+				{Cmd: exeName + " secret password", Desc: "generate random password + hash"},
+			},
+		},
+		{
+			Title: "Hosts",
+			Commands: []ui.HelpCmd{
+				{Cmd: exeName + " host list", Desc: "list configured hosts"},
+				{Cmd: exeName + " host add", Desc: "add host/route (interactive)"},
+				{Cmd: exeName + " host remove", Desc: "remove host/route (interactive)"},
+			},
+		},
+		{
+			Title: "System",
+			Commands: []ui.HelpCmd{
+				{Cmd: exeName + " system backup -o backup.zip -p mypass", Desc: "create encrypted backup"},
+				{Cmd: exeName + " system restore -i backup.zip -p mypass", Desc: "restore from backup"},
+			},
+		},
+		{
+			Title: "Cluster",
+			Commands: []ui.HelpCmd{
+				{Cmd: exeName + " cluster start", Desc: "start as cluster seed node"},
+				{Cmd: exeName + " cluster join <ip>", Desc: "join an existing cluster"},
+			},
+		},
+		{
+			Title: "Navigation",
+			Commands: []ui.HelpCmd{
+				{Cmd: exeName + " home", Desc: "print agbero home directory"},
+				{Cmd: exeName + " home @", Desc: "open shell in home directory"},
+				{Cmd: exeName + " home hosts @", Desc: "open shell in hosts.d"},
+				{Cmd: exeName + " home .", Desc: "open home directory in file explorer"},
+			},
+		},
+		{
+			Title: "Service management",
+			Commands: []ui.HelpCmd{
+				{Cmd: prefix + exeName + " service install", Desc: "install system service"},
+				{Cmd: prefix + exeName + " service start", Desc: "start service"},
+				{Cmd: prefix + exeName + " service stop", Desc: "stop service"},
+				{Cmd: prefix + exeName + " service restart", Desc: "restart service"},
+				{Cmd: prefix + exeName + " service status", Desc: "check service status"},
+				{Cmd: prefix + exeName + " service uninstall", Desc: "uninstall service"},
+				{Cmd: prefix + exeName + " service uninstall --all", Desc: "remove everything agbero installed"},
+				{Cmd: prefix + exeName + " uninstall", Desc: "alias — remove everything"},
+			},
+		},
+	})
 }
