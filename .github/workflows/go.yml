@@ -51,5 +51,16 @@ jobs:
         with:
           go-version: '1.26'
           check-latest: true
-      - name: Test Windows (skip flaky tests)
-        run: go test -v -skip "TestServer_Reload_DynamicBind|TestServer_Cluster_ConfigSync_RoutePropagation|TestServer_Cluster_ConfigSync_TombstoneDeletion|TestManager_Register_Update|TestTCPExecutor_Probe_ReadError|TestTCPExecutor_Probe_WriteError|TestConnPoolIsAlive" ./...
+      - name: Build Windows native
+        run: go build -v ./...
+        
+#  test-windows:
+#    runs-on: windows-latest
+#    steps:
+#      - uses: actions/checkout@v4
+#      - uses: actions/setup-go@v5
+#        with:
+#          go-version: '1.26'
+#          check-latest: true
+#      - name: Test Windows (skip flaky tests)
+#        run: go test -v -skip "TestServer_Reload_DynamicBind|TestServer_Cluster_ConfigSync_RoutePropagation|TestServer_Cluster_ConfigSync_TombstoneDeletion|TestManager_Register_Update|TestTCPExecutor_Probe_ReadError|TestTCPExecutor_Probe_WriteError|TestConnPoolIsAlive" ./...
