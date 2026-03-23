@@ -11,7 +11,7 @@ type serverless struct {
 	mux *http.ServeMux
 }
 
-// Instantiates a new serverless handler router that multiplexes mapped REST and Worker execution endpoints
+// New - Instantiates a new serverless handler router that multiplexes mapped REST and Worker execution endpoints
 // Configures route-specific environments injected globally down to the handlers
 func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
 	s := &serverless{
