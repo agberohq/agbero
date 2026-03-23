@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 
+	"charm.land/huh/v2"
+	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/discovery"
-	"github.com/charmbracelet/huh"
+	"github.com/agberohq/agbero/internal/pkg/ui"
 )
 
 const (
@@ -42,22 +45,45 @@ func (h *Host) List(configPath string) error {
 	if err != nil {
 		return err
 	}
+
+	u := ui.New()
+	u.SectionHeader("Hosts")
+
 	if len(hosts) == 0 {
-		h.p.Logger.Warn("no hosts found")
+		u.WarnLine("no hosts found")
 		return nil
 	}
-	for name, c := range hosts {
-		h.p.Logger.Fields(
-			"host_id", name,
-			"domains", c.Domains,
-			"routes", len(c.Routes),
-		).Info("configured host")
+
+	names := make([]string, 0, len(hosts))
+	for name := range hosts {
+		names = append(names, name)
 	}
+	sort.Strings(names)
+
+	rows := make([][]string, 0, len(hosts))
+	for _, name := range names {
+		c := hosts[name]
+		domains := strings.Join(c.Domains, ", ")
+		routes := fmt.Sprintf("%d", len(c.Routes))
+		tls := "—"
+		if c.TLS.Mode == alaye.ModeLocalAuto {
+			tls = "auto"
+		} else if c.TLS.Local.CertFile != "" {
+			tls = "local"
+		}
+		rows = append(rows, []string{name, domains, routes, tls})
+	}
+
+	u.Table([]string{"Host", "Domains", "Routes", "TLS"}, rows)
 	return nil
 }
 
 func (h *Host) Add(configPath string) {
 	hostsDir := h.resolveHostsDir(configPath)
+
+	u := ui.New()
+	u.SectionHeader("Add host")
+	u.KeyValue("Hosts dir", hostsDir)
 
 	var (
 		rType  string
@@ -75,7 +101,7 @@ func (h *Host) Add(configPath string) {
 		).
 		Value(&rType).
 		Run(); err != nil {
-		fmt.Println("Cancelled")
+		u.InfoLine("cancelled")
 		return
 	}
 
@@ -129,7 +155,7 @@ func (h *Host) Add(configPath string) {
 		fields[i] = v
 	}
 	if err := huh.NewForm(huh.NewGroup(fields...)).Run(); err != nil {
-		fmt.Println("Cancelled")
+		u.InfoLine("cancelled")
 		return
 	}
 
@@ -174,8 +200,8 @@ func (h *Host) Add(configPath string) {
 		h.p.Logger.Fatal("failed to write config: ", err)
 	}
 
-	h.p.Logger.Infof("host created: %s", filePath)
-	fmt.Println("Agbero daemon will pick up changes automatically.")
+	u.SuccessLine("host created: " + filePath)
+	u.InfoLine("daemon will pick up changes automatically")
 }
 
 func (h *Host) Remove(configPath string) {
@@ -192,8 +218,12 @@ func (h *Host) Remove(configPath string) {
 			files = append(files, e.Name())
 		}
 	}
+
+	u := ui.New()
+	u.SectionHeader("Remove host")
+
 	if len(files) == 0 {
-		fmt.Println("no host files found in", hostsDir)
+		u.WarnLine("no host files found in " + hostsDir)
 		return
 	}
 
@@ -206,7 +236,7 @@ func (h *Host) Remove(configPath string) {
 				Value(&selected),
 		),
 	).Run(); err != nil {
-		fmt.Println("Cancelled")
+		u.InfoLine("cancelled")
 		return
 	}
 	if selected == "" {
@@ -216,7 +246,9 @@ func (h *Host) Remove(configPath string) {
 	if err := os.Remove(filepath.Join(hostsDir, selected)); err != nil {
 		h.p.Logger.Fatal("failed to delete file: ", err)
 	}
-	h.p.Logger.Infof("removed host: %s", selected)
+
+	u.SuccessLine("removed: " + selected)
+	u.InfoLine("daemon will pick up changes automatically")
 }
 
 func (h *Host) resolveHostsDir(configPath string) string {

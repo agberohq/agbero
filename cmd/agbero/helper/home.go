@@ -8,16 +8,16 @@ import (
 	"runtime"
 	"strings"
 
+	"charm.land/huh/v2"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/installer"
-	"github.com/charmbracelet/huh"
+	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/kardianos/service"
 )
 
 type Home struct {
 	p      *Helper
-	viewer *zulu.Viewer
+	viewer *ui.Viewer
 }
 
 // Navigate to the specified target directory and opens an interactive shell
@@ -86,10 +86,10 @@ func (h *Home) Navigate(target, action string) {
 		}
 
 		if h.viewer == nil {
-			h.viewer = zulu.NewViewer()
+			h.viewer = ui.NewViewerWithUI(ui.New())
 		}
 
-		h.viewer.Show(dir, true)
+		h.viewer.Show(dir, false)
 
 		shell := os.Getenv("SHELL")
 		if shell == "" {
@@ -119,28 +119,27 @@ func (h *Home) Navigate(target, action string) {
 // Requires explicit interactive confirmation unless the force flag is provided
 func (h *Home) Uninstall(svc service.Service, configPath string, force bool) {
 	if !force {
+		u := ui.New()
+		u.UninstallWarning([]string{
+			"stop and remove the system service",
+			"remove the local Certificate Authority from system trust",
+			"delete all configurations, host files, certificates, logs, and data",
+			"attempt to remove the agbero binary",
+		})
+
 		var confirm bool
 		err := huh.NewConfirm().
-			Title("DANGER: Complete Uninstall").
-			Description(
-				"This will:\n" +
-					"  • Stop and remove the system service\n" +
-					"  • Remove the local Certificate Authority from system trust\n" +
-					"  • Delete all configurations, host files, certificates, logs, and data\n" +
-					"  • Attempt to remove the agbero binary\n\n" +
-					"The binary removal may require manual cleanup on Windows.\n" +
-					"This action cannot be undone.",
-			).
+			Title("Confirm complete uninstall").
+			Description("The binary removal may require manual cleanup on Windows.").
 			Value(&confirm).
 			Run()
 		if err != nil || !confirm {
-			fmt.Println("Uninstall cancelled.")
+			u.InfoLine("uninstall cancelled")
 			return
 		}
 	}
 
 	h.p.Logger.Info("starting complete uninstall sequence")
-
 	h.uninstallService(svc)
 	h.uninstallCA(configPath)
 	h.deleteDataDirectories()

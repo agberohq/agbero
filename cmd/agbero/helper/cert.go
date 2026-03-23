@@ -1,7 +1,6 @@
 package helper
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,6 +8,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/dustin/go-humanize"
 )
 
@@ -86,14 +86,25 @@ func (c *Cert) List(configPath string) {
 	if err != nil {
 		c.p.Logger.Fatal("failed to list certificates: ", err)
 	}
+
+	u := ui.New()
+	u.SectionHeader("Certificates")
+
 	if len(certs) == 0 {
-		c.p.Logger.Warn("no certificates found")
+		u.WarnLine("no certificates found")
 		return
 	}
-	c.p.Logger.Infof("found %d certificates:", len(certs))
-	for i, cert := range certs {
-		c.p.Logger.Printf("  %d. %s\n", i+1, cert)
+
+	// Parse filenames into rows.
+	// Patterns: {domain}-{port}-cert.pem, {domain}-{port}-key.pem,
+	//           ca-cert.pem, ca-key.pem, internal_auth.key, etc.
+	var rows [][]string
+	for _, name := range certs {
+		domain, kind := parseCertName(name)
+		rows = append(rows, []string{domain, kind, name})
 	}
+
+	u.Table([]string{"Domain", "Type", "File"}, rows)
 }
 
 func (c *Cert) Info(configPath string) {
@@ -102,32 +113,41 @@ func (c *Cert) Info(configPath string) {
 		c.p.Logger.Warnf("could not load config: %v", err)
 		return
 	}
+
 	storageDir := woos.NewFolder(global.Storage.CertsDir)
-	fmt.Println("\nCERTIFICATE INFORMATION")
-	fmt.Printf("Store Listing: %s\n", storageDir.Path())
+	u := ui.New()
+	u.SectionHeader("Certificate store")
+	u.KeyValue("Directory", storageDir.Path())
+
 	if !storageDir.Exists("") {
-		fmt.Println("⚠  store does not exist")
+		u.WarnLine("store directory does not exist")
 		return
 	}
+
 	files, err := storageDir.ReadFiles()
 	if err != nil {
-		fmt.Printf("⚠  cannot read directory: %v\n", err)
+		u.ErrorHint("cannot read directory", err.Error())
 		return
 	}
-	count := 0
+
+	var rows [][]string
 	for _, file := range files {
 		if strings.HasSuffix(file.Name(), ".pem") {
-			count++
 			info, _ := file.Info()
-			fmt.Printf("  • %s (%s, %s)\n",
+			rows = append(rows, []string{
 				file.Name(),
 				humanize.Bytes(uint64(info.Size())),
-				info.ModTime().Format("2006-01-02"))
+				info.ModTime().Format("2006-01-02"),
+			})
 		}
 	}
-	if count == 0 {
-		fmt.Println("  (no certificates found)")
+
+	if len(rows) == 0 {
+		u.WarnLine("no certificates found")
+		return
 	}
+
+	u.Table([]string{"Certificate", "Size", "Modified"}, rows)
 }
 
 func (c *Cert) newLocal(configPath string) *tlss.Local {
@@ -136,4 +156,24 @@ func (c *Cert) newLocal(configPath string) *tlss.Local {
 		_ = loc.SetStorageDir(woos.NewFolder(global.Storage.CertsDir))
 	}
 	return loc
+}
+
+// parseCertName extracts domain and type from a certificate filename.
+func parseCertName(name string) (domain, kind string) {
+	base := strings.TrimSuffix(name, ".pem")
+	base = strings.TrimSuffix(base, ".crt")
+	base = strings.TrimSuffix(base, ".key")
+
+	switch {
+	case strings.HasSuffix(base, "-cert"):
+		return strings.TrimSuffix(base, "-cert"), "cert"
+	case strings.HasSuffix(base, "-key"):
+		return strings.TrimSuffix(base, "-key"), "key"
+	case name == "internal_auth.key":
+		return "internal", "auth key"
+	case strings.HasPrefix(name, "ca-"):
+		return "CA", strings.TrimPrefix(base, "ca-")
+	default:
+		return base, "—"
+	}
 }

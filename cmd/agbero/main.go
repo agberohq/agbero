@@ -267,14 +267,11 @@ func main() {
 
 	hel := helper.New(logger, shutdown, cfg)
 
-	// home is the one command that runs before welcome() — it is
-	// intentionally pipeable (cd $(agbero home hosts)) so no banner.
 	if cmdHome.Used {
 		hel.Home().Navigate(homeTarget, homeAction)
 		return
 	}
 
-	// Banner fires for every other command — it is our identity.
 	welcome()
 
 	if cmdServe.Used {
@@ -339,12 +336,26 @@ func main() {
 	var configExists bool
 
 	if cmdServiceInstall.Used {
-		path, err := helper.InstallConfiguration(logger, cfg.InstallHere)
-		if err != nil {
-			logger.Fatal("install failed: ", err)
+		if strings.TrimSpace(cfg.ConfigPath) != "" {
+			resolvedPath, configExists = helper.ResolveConfigPath(logger, cfg.ConfigPath)
+			if !configExists {
+				logger.Fatalf("provided config file not found: %s", cfg.ConfigPath)
+			}
+		} else {
+			path, err := helper.InstallConfiguration(logger, cfg.InstallHere)
+			if err != nil {
+				if strings.Contains(err.Error(), "already exists") {
+					logger.Info(err.Error() + " — skipping initialization.")
+					resolvedPath = path
+					configExists = true
+				} else {
+					logger.Fatal("install failed: ", err)
+				}
+			} else {
+				resolvedPath = path
+				configExists = true
+			}
 		}
-		resolvedPath = path
-		configExists = true
 	} else {
 		resolvedPath, configExists = helper.ResolveConfigPath(logger, cfg.ConfigPath)
 	}
@@ -457,10 +468,11 @@ func main() {
 	}
 
 	svcConfig := &service.Config{
-		Name:        woos.Name,
-		DisplayName: woos.Display,
-		Description: woos.Description,
-		Arguments:   []string{"run", "-c", resolvedPath},
+		Name:             woos.Name,
+		DisplayName:      woos.Display,
+		Description:      woos.Description,
+		Arguments:        []string{"run", "-c", resolvedPath},
+		WorkingDirectory: filepath.Dir(resolvedPath),
 	}
 	if cfg.DevMode {
 		svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
@@ -544,7 +556,6 @@ func main() {
 			logger.Warn("development mode enabled")
 		}
 
-		// Show startup context before handing off to the daemon.
 		u := ui.New()
 		switch {
 		case cmdClusterStart.Used:

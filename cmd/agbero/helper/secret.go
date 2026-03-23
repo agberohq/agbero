@@ -10,6 +10,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/pkg/installer"
 	"github.com/agberohq/agbero/internal/pkg/security"
+	"github.com/agberohq/agbero/internal/pkg/ui"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -23,14 +24,10 @@ func (s *Secret) Cluster() {
 		s.p.Logger.Fatal("random generation failed: ", err)
 	}
 	encoded := base64.StdEncoding.EncodeToString(key)
-	fmt.Println("\nGenerated 32-byte Secret Key (AES-256 compatible):")
-	fmt.Println("==================================================")
-	fmt.Printf("b64.%s\n", encoded)
-	fmt.Println("==================================================")
-	fmt.Println("\nUsage in agbero.hcl:")
-	fmt.Println("gossip {")
-	fmt.Printf("  secret_key = \"b64.%s\"\n", encoded)
-	fmt.Println("}")
+
+	u := ui.New()
+	u.SecretBox("Cluster key", "b64."+encoded)
+	u.InfoLine(`add to agbero.hcl:  gossip { secret_key = "b64.` + encoded + `" }`)
 }
 
 func (s *Secret) KeyInit(configPath string) {
@@ -55,8 +52,9 @@ func (s *Secret) KeyInit(configPath string) {
 		s.p.Logger.Fatal("failed to generate key: ", err)
 	}
 
-	s.p.Logger.Info("generated internal auth key: ", targetPath)
-	fmt.Printf("\nsecurity {\n  enabled = true\n  internal_auth_key = \"%s\"\n}\n", targetPath)
+	u := ui.New()
+	u.SecretBox("Internal auth key", targetPath)
+	u.InfoLine(`add to agbero.hcl:  security { enabled = true  internal_auth_key = "` + targetPath + `" }`)
 }
 
 func (s *Secret) Token(configPath, svcName string, ttl time.Duration) {
@@ -95,11 +93,15 @@ func (s *Secret) Token(configPath, svcName string, ttl time.Duration) {
 		s.p.Logger.Fatal("failed to mint token: ", err)
 	}
 
-	fmt.Printf("\nAPI Token for service: %s\n", svcName)
-	fmt.Printf("Expires: %s (%s)\n", time.Now().Add(ttl).Format(time.RFC3339), ttl)
-	fmt.Println("------------------------------------------------------------")
-	fmt.Println(token)
-	fmt.Println("------------------------------------------------------------")
+	u := ui.New()
+	u.SecretBox(
+		"API token — "+svcName,
+		token,
+	)
+	u.KeyValueBlock("", []ui.KV{
+		{Label: "Service", Value: svcName},
+		{Label: "Expires", Value: time.Now().Add(ttl).Format(time.RFC3339) + "  (" + ttl.String() + ")"},
+	})
 }
 
 func (s *Secret) Hash(password string) {
@@ -111,7 +113,9 @@ func (s *Secret) Hash(password string) {
 	if err != nil {
 		s.p.Logger.Fatal(err)
 	}
-	fmt.Printf("\n%s\n", string(hash))
+
+	u := ui.New()
+	u.SecretBox("Bcrypt hash", string(hash))
 }
 
 func (s *Secret) Password(length int) {
@@ -129,10 +133,7 @@ func (s *Secret) Password(length int) {
 		s.p.Logger.Fatal("failed to hash password: ", err)
 	}
 
-	fmt.Println("\nGenerated Password:")
-	fmt.Println("==================================================")
-	fmt.Println(password)
-	fmt.Println("==================================================")
-	fmt.Println("\nBcrypt Hash (for agbero.hcl basic_auth):")
-	fmt.Printf("%s\n", string(hash))
+	u := ui.New()
+	u.SecretBox("Generated password", password)
+	u.SecretBox("Bcrypt hash", string(hash))
 }

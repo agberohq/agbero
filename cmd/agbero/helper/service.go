@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/pkg/installer"
+	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/kardianos/service"
 )
 
@@ -15,61 +18,106 @@ type Service struct {
 	p *Helper
 }
 
+// requiresRoot checks whether the current process has the privileges needed
+// to manage system services and warns the user if not.
+//
+// On Unix: root is euid 0.
+// On Windows: elevation check is not straightforward — we let the OS error
+// surface naturally and mapError provides a clear message.
+func (s *Service) requiresRoot(cmd string) bool {
+	if runtime.GOOS == woos.Windows {
+		return true // let Windows surface its own elevation error
+	}
+	if os.Geteuid() == 0 {
+		return true
+	}
+	// Not root — show a clear hint before attempting.
+	exe := "agbero"
+	if len(os.Args) > 0 {
+		exe = filepath.Base(os.Args[0])
+	}
+	ui.New().ErrorHint(
+		"this command requires root privileges",
+		"try:  sudo "+exe+" service "+cmd,
+	)
+	return false
+}
+
 func (s *Service) Install(svc service.Service, installHere bool) {
+	u := ui.New()
 	if installHere {
-		s.p.Logger.Info("local mode: service registration skipped.")
+		u.InfoLine("local mode — service registration skipped")
 		return
 	}
-	s.p.Logger.Info("installing system service...")
+	if !s.requiresRoot("install") {
+		return
+	}
+	u.Step("run", "installing system service")
 	if err := svc.Install(); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "already exists") {
-			s.p.Logger.Warn("service already exists.")
+			u.WarnLine("service already exists")
 		} else {
 			s.p.Logger.Fatal(s.mapError(err, "install"))
 		}
 		return
 	}
-	s.p.Logger.Info("service installed.")
+	u.SuccessLine("service installed")
 }
 
 func (s *Service) Uninstall(svc service.Service) {
-	s.p.Logger.Info("uninstalling system service...")
+	if !s.requiresRoot("uninstall") {
+		return
+	}
+	u := ui.New()
+	u.Step("run", "uninstalling system service")
 	if err := svc.Uninstall(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "uninstall"))
 	}
-	s.p.Logger.Info("service uninstalled.")
+	u.SuccessLine("service uninstalled")
 }
 
 func (s *Service) Start(svc service.Service) {
-	s.p.Logger.Info("starting system service...")
+	if !s.requiresRoot("start") {
+		return
+	}
+	u := ui.New()
+	u.Step("run", "starting system service")
 	if err := svc.Start(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "start"))
 	}
-	s.p.Logger.Info("service started.")
+	u.SuccessLine("service started")
 }
 
 func (s *Service) Stop(svc service.Service) {
-	s.p.Logger.Info("stopping system service...")
+	if !s.requiresRoot("stop") {
+		return
+	}
+	u := ui.New()
+	u.Step("run", "stopping system service")
 	if err := svc.Stop(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "stop"))
 	}
-	s.p.Logger.Info("service stopped.")
+	u.SuccessLine("service stopped")
 }
 
 func (s *Service) Restart(svc service.Service) {
-	s.p.Logger.Info("restarting system service...")
+	if !s.requiresRoot("restart") {
+		return
+	}
+	u := ui.New()
+	u.Step("run", "stopping system service")
 	if err := svc.Stop(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "stop"))
 	}
 	time.Sleep(2 * time.Second)
+	u.Step("run", "starting system service")
 	if err := svc.Start(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "start"))
 	}
-	s.p.Logger.Info("service restarted.")
+	u.SuccessLine("service restarted")
 }
 
 func (s *Service) Status(svc service.Service, configPath string) {
-	s.p.Logger.Info("checking service status...")
 	status, err := svc.Status()
 	if err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "status"))
@@ -82,18 +130,21 @@ func (s *Service) Status(svc service.Service, configPath string) {
 	case service.StatusStopped:
 		statusStr = "stopped"
 	case service.StatusUnknown:
-		statusStr = "unknown (not installed?)"
+		statusStr = "unknown"
 	}
-	s.p.Logger.Infof("service status: %s", statusStr)
 
+	var pid string
 	if status == service.StatusRunning {
 		if global, err := loadGlobal(configPath); err == nil && global.Storage.DataDir != "" {
 			pidFile := filepath.Join(global.Storage.DataDir, "agbero.pid")
 			if data, err := os.ReadFile(pidFile); err == nil {
-				s.p.Logger.Infof("process ID: %s", strings.TrimSpace(string(data)))
+				pid = strings.TrimSpace(string(data))
 			}
 		}
 	}
+
+	u := ui.New()
+	u.ServiceStatus(statusStr, pid, configPath)
 }
 
 func (s *Service) mapError(err error, cmd string) error {
@@ -103,11 +154,11 @@ func (s *Service) mapError(err error, cmd string) error {
 	switch cmd {
 	case "status":
 		if strings.Contains(errMsg, "not installed") {
-			return fmt.Errorf("service not installed. Run 'sudo agbero service install' first")
+			return fmt.Errorf("service not installed — run: sudo agbero service install")
 		}
 	case "restart":
 		if strings.Contains(errMsg, "not running") {
-			return fmt.Errorf("service not running. Try 'sudo agbero service start'")
+			return fmt.Errorf("service not running — try: sudo agbero service start")
 		}
 	}
 	return svc.MapError(err, cmd)

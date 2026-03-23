@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"runtime"
 
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
 )
 
 type CA struct {

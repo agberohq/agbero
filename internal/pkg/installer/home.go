@@ -7,12 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/pkg/security"
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/agberohq/agbero/internal/pkg/ui"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -39,12 +39,6 @@ func (h *Home) Run() error {
 	var leEmail = ""
 
 	if h.ctx.Interactive {
-		h.ctx.Logger.Println(BannerTmpl)
-		h.ctx.Logger.Printf("%s - %s\n", woos.Name, woos.Description)
-		h.ctx.Logger.Printf("Version: %s\n", woos.Version)
-		h.ctx.Logger.Printf("Date: %s\n", time.Now().Format("2006-01-02T15:04:05Z"))
-		h.ctx.Logger.Println()
-
 		ca := NewCA(h.ctx)
 		if err := ca.PromptAndInstall(); err != nil {
 			h.ctx.Logger.Warn("CA prompt interrupted", "err", err)
@@ -131,26 +125,20 @@ func (h *Home) Run() error {
 		return err
 	}
 
-	// Highlight password in red using Lipgloss
-	highlightedPassword := redStyle.Render(adminPassword)
+	bin := filepath.Base(os.Args[0])
 
-	h.ctx.Logger.Println("\n===============================================================")
-	h.ctx.Logger.Println("CONFIGURATION INITIALIZED")
-	h.ctx.Logger.Println("===============================================================")
-	h.ctx.Logger.Printf("Config File:    %s\n", h.ctx.Paths.ConfigFile)
-	h.ctx.Logger.Printf("Admin User:     admin\n")
-	h.ctx.Logger.Printf("Admin Password: %s\n", highlightedPassword)
-	h.ctx.Logger.Println("===============================================================")
-	h.ctx.Logger.Println("Note: Save this password - it will not be shown again.")
-	h.ctx.Logger.Println("")
-	h.ctx.Logger.Println("Next steps:")
-	h.ctx.Logger.Printf("  • Start Agbero:   sudo %s start\n", filepath.Base(os.Args[0]))
-	h.ctx.Logger.Printf("  • Check status:   sudo %s status\n", filepath.Base(os.Args[0]))
-	h.ctx.Logger.Printf("  • View logs:      sudo %s logs\n", filepath.Base(os.Args[0]))
-	h.ctx.Logger.Printf("  • Admin UI:       http://admin.localhost:9090\n")
-	h.ctx.Logger.Printf("  • Web UI:         http://localhost\n")
-	h.ctx.Logger.Println()
-
+	u := ui.New()
+	u.InitSuccess(
+		h.ctx.Paths.ConfigFile,
+		"admin",
+		adminPassword,
+		[]string{
+			"sudo " + bin + " service start",
+			"sudo " + bin + " service status",
+			"http://admin.localhost:9090  — admin UI",
+			"http://localhost             — web UI",
+		},
+	)
 	return nil
 }
 

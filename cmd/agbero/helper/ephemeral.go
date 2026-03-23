@@ -1,7 +1,6 @@
 package helper
 
 import (
-	"bytes"
 	"fmt"
 	"net"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/agberohq/agbero/internal/pkg/installer"
+	"github.com/agberohq/agbero/internal/pkg/ui"
 )
 
 type Ephemeral struct {
@@ -69,21 +69,24 @@ func (e *Ephemeral) Serve() {
 	}
 	displayURL := buildURL(cfg.ServeHTTPS, domain, finalPort)
 
-	var buf bytes.Buffer
-	table := zulu.Table(&buf)
-	table.Append([]string{""})
-	table.Append([]string{"Serving Directory:", absPath})
-	table.Append([]string{"Available at:", displayURL})
+	u := ui.New()
+	u.SectionHeader("Serving")
+
+	pairs := []ui.KV{
+		{Label: "Directory", Value: absPath},
+		{Label: "URL", Value: u.LinkInline(displayURL, displayURL)},
+	}
 	if cfg.ServeMarkdown {
-		table.Append([]string{"Markdown:", "enabled (.md files rendered as HTML)"})
+		pairs = append(pairs, ui.KV{Label: "Markdown", Value: "enabled"})
 	}
 	if cfg.ServeSPA {
-		table.Append([]string{"SPA Mode:", "enabled (unmatched routes fallback to index.html)"})
+		pairs = append(pairs, ui.KV{Label: "SPA mode", Value: "enabled"})
 	}
-	table.Append([]string{""})
-	table.Render()
-	e.p.Logger.Print(buf.String())
-	e.p.Logger.Line(2)
+	if cfg.ServePHP != "" {
+		pairs = append(pairs, ui.KV{Label: "PHP", Value: "enabled"})
+	}
+	u.KeyValueBlock("", pairs)
+	u.InfoLine("press Ctrl+C to stop")
 
 	e.run(global, hosts)
 }
@@ -145,15 +148,13 @@ func (e *Ephemeral) Proxy() {
 
 	displayURL := buildURL(cfg.ProxyHTTPS, domain, finalPort)
 
-	var buf bytes.Buffer
-	table := zulu.Table(&buf)
-	table.Append([]string{""})
-	table.Append([]string{"Proxying traffic:", fmt.Sprintf("%s → %s", domain, target)})
-	table.Append([]string{"Available at:", displayURL})
-	table.Append([]string{""})
-	table.Render()
-	e.p.Logger.Print(buf.String())
-	e.p.Logger.Line(2)
+	u := ui.New()
+	u.SectionHeader("Proxy")
+	u.KeyValueBlock("", []ui.KV{
+		{Label: "Traffic", Value: domain + "  →  " + u.LinkInline(target, target)},
+		{Label: "URL", Value: u.LinkInline(displayURL, displayURL)},
+	})
+	u.InfoLine("press Ctrl+C to stop")
 
 	e.run(global, hosts)
 }

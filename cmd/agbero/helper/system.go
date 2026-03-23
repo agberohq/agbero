@@ -12,9 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/huh/v2"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/discovery"
-	"github.com/charmbracelet/huh"
+	"github.com/agberohq/agbero/internal/pkg/ui"
+	"github.com/dustin/go-humanize"
 	"github.com/yeka/zip"
 )
 
@@ -49,11 +51,9 @@ func (s *System) Backup(configPath, outPath, password string) {
 	}
 	outAbs, _ := filepath.Abs(outPath)
 
-	if password == "" {
-		s.p.Logger.Warn("No password provided. Creating UNENCRYPTED zip file. Use -p to secure it.")
-	} else {
-		s.p.Logger.Info("Creating AES-256 password-protected backup...")
-	}
+	u := ui.New()
+	u.SectionHeader("Backup")
+	u.BackupStart(password != "")
 
 	addedFiles := make(map[string]bool)
 
@@ -70,7 +70,6 @@ func (s *System) Backup(configPath, outPath, password string) {
 		if err != nil {
 			return
 		}
-
 		if info.IsDir() {
 			_ = filepath.Walk(abs, func(walkPath string, walkInfo os.FileInfo, walkErr error) error {
 				if walkErr == nil && !walkInfo.IsDir() {
@@ -83,7 +82,7 @@ func (s *System) Backup(configPath, outPath, password string) {
 		}
 	}
 
-	s.p.Logger.Info("Scanning configuration to locate all associated files...")
+	u.Step("run", "scanning configuration for associated files")
 
 	addPath(configPath)
 	addPath(global.Storage.HostsDir)
@@ -103,7 +102,7 @@ func (s *System) Backup(configPath, outPath, password string) {
 	hm := discovery.NewHost(woos.NewFolder(global.Storage.HostsDir), discovery.WithLogger(s.p.Logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
-		s.p.Logger.Warn("Failed to load some hosts while building backup", "err", err)
+		u.WarnLine(fmt.Sprintf("failed to load some hosts: %v", err))
 	}
 
 	for _, h := range hosts {
@@ -128,7 +127,7 @@ func (s *System) Backup(configPath, outPath, password string) {
 		}
 	}
 
-	s.p.Logger.Infof("Located %d files to backup. Creating archive...", len(addedFiles))
+	u.Step("run", fmt.Sprintf("found %d files — creating archive", len(addedFiles)))
 
 	outFile, err := os.Create(outAbs)
 	if err != nil {
@@ -154,20 +153,20 @@ func (s *System) Backup(configPath, outPath, password string) {
 
 		info, err := os.Stat(absPath)
 		if err != nil {
-			s.p.Logger.Warnf("Failed to stat %s: %v", absPath, err)
+			u.Step("warn", fmt.Sprintf("stat failed: %s", filepath.Base(absPath)))
 			continue
 		}
 
 		file, err := os.Open(absPath)
 		if err != nil {
-			s.p.Logger.Warnf("Failed to open %s: %v", absPath, err)
+			u.Step("warn", fmt.Sprintf("open failed: %s", filepath.Base(absPath)))
 			continue
 		}
 
 		hasher := sha256.New()
 		if _, err := io.Copy(hasher, file); err != nil {
 			file.Close()
-			s.p.Logger.Warnf("Failed to hash %s: %v", absPath, err)
+			u.Step("warn", fmt.Sprintf("hash failed: %s", filepath.Base(absPath)))
 			continue
 		}
 		hashString := hex.EncodeToString(hasher.Sum(nil))
@@ -184,16 +183,22 @@ func (s *System) Backup(configPath, outPath, password string) {
 
 		if err != nil {
 			file.Close()
-			s.p.Logger.Warnf("Failed to create zip entry for %s: %v", absPath, err)
+			u.Step("warn", fmt.Sprintf("archive entry failed: %s", filepath.Base(absPath)))
 			continue
 		}
 
 		_, _ = file.Seek(0, 0)
 		if _, err = io.Copy(writer, file); err != nil {
-			s.p.Logger.Warnf("Failed to write data to zip for %s: %v", absPath, err)
+			u.Step("warn", fmt.Sprintf("write failed: %s", filepath.Base(absPath)))
 		}
 
 		file.Close()
+
+		// Show each file being added with its size.
+		u.Step("ok", fmt.Sprintf("%-48s  %s",
+			truncatePath(absPath, 48),
+			humanize.Bytes(uint64(info.Size())),
+		))
 
 		manifest.Files = append(manifest.Files, FileEntry{
 			OriginalPath: absPath,
@@ -223,7 +228,7 @@ func (s *System) Backup(configPath, outPath, password string) {
 		s.p.Logger.Fatal("Failed to write manifest data: ", err)
 	}
 
-	s.p.Logger.Infof("Backup completed successfully: %s", outAbs)
+	u.BackupDone(outAbs, len(manifest.Files))
 }
 
 func (s *System) Restore(inPath, password string, force bool) {
@@ -272,11 +277,20 @@ func (s *System) Restore(inPath, password string, force bool) {
 		s.p.Logger.Fatal("Failed to parse manifest: ", err)
 	}
 
+	u := ui.New()
+	u.SectionHeader("Restore")
+
 	if manifest.OS != runtime.GOOS {
-		s.p.Logger.Warnf("Warning: Backup was created on %s/%s, currently running on %s/%s", manifest.OS, manifest.Arch, runtime.GOOS, runtime.GOARCH)
+		u.WarnLine(fmt.Sprintf("backup created on %s/%s, currently running %s/%s",
+			manifest.OS, manifest.Arch, runtime.GOOS, runtime.GOARCH))
 	}
 
-	s.p.Logger.Infof("Backup loaded. Found %d files. Timestamp: %s", len(manifest.Files), manifest.Timestamp.Format(time.RFC3339))
+	u.KeyValueBlock("", []ui.KV{
+		{Label: "Archive", Value: inAbs},
+		{Label: "Created", Value: manifest.Timestamp.Format("2006-01-02 15:04:05")},
+		{Label: "Platform", Value: fmt.Sprintf("%s/%s", manifest.OS, manifest.Arch)},
+		{Label: "Files", Value: fmt.Sprintf("%d", len(manifest.Files))},
+	})
 
 	if !force {
 		var conflicts []string
@@ -287,7 +301,7 @@ func (s *System) Restore(inPath, password string, force bool) {
 		}
 
 		if len(conflicts) > 0 {
-			s.p.Logger.Warnf("Warning: This operation will overwrite %d existing files on the system.", len(conflicts))
+			u.WarnLine(fmt.Sprintf("%d existing files will be overwritten", len(conflicts)))
 			var confirm bool
 			err := huh.NewConfirm().
 				Title("Files Exist").
@@ -304,6 +318,8 @@ func (s *System) Restore(inPath, password string, force bool) {
 	for _, f := range zr.File {
 		archiveMap[f.Name] = f
 	}
+
+	u.Step("run", "restoring files")
 
 	restored := 0
 	for _, fe := range manifest.Files {
@@ -358,8 +374,33 @@ func (s *System) Restore(inPath, password string, force bool) {
 			s.p.Logger.Fatalf("Failed to finalize restoration of %s: %v", fe.OriginalPath, err)
 		}
 
+		// Show each file restored with its size.
+		u.Step("ok", fmt.Sprintf("%-48s  %s",
+			truncatePath(fe.OriginalPath, 48),
+			humanize.Bytes(uint64(fe.Size)),
+		))
+
 		restored++
 	}
 
-	s.p.Logger.Infof("Restore completed successfully! %d files restored to their original locations.", restored)
+	u.RestoreDone(restored)
+}
+
+// truncatePath shortens a path to maxLen by keeping the filename and
+// as much of the directory as fits, prefixing with "…/" if truncated.
+func truncatePath(path string, maxLen int) string {
+	if len([]rune(path)) <= maxLen {
+		return path
+	}
+	base := filepath.Base(path)
+	if len([]rune(base)) >= maxLen {
+		return base
+	}
+	available := maxLen - len([]rune(base)) - 4 // 4 = "…/" + some dir chars
+	dir := filepath.Dir(path)
+	dirRunes := []rune(dir)
+	if len(dirRunes) > available {
+		dir = "…/" + string(dirRunes[len(dirRunes)-available:])
+	}
+	return dir + string(filepath.Separator) + base
 }
