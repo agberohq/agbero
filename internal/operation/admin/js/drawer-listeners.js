@@ -202,16 +202,20 @@ function backendRow(b, cfgB, bStat, hostname, routeIdx, bIdx, type) {
     return `<div class="drawer-row clickable" data-action="open-backend"
             data-host="${hostname}" data-route-idx="${routeIdx}"
             data-backend-idx="${bIdx}" data-type="${type}">
-        <div class="row-left">
-            <span class="dot ${dc}" title="${dt}"></span>
-            <span class="mono" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;">${url}</span>
-            ${inf  > 0 ? badge('⚡ ' + inf + ' in flight', 'info')        : ''}
-            ${fail > 0 ? badge('⚠️ ' + fmtNum(fail) + ' failures', 'error') : ''}
+        <div class="drawer-row-top">
+            <div class="row-left">
+                <span class="dot ${dc}" title="${dt}"></span>
+                <span class="mono row-url">${url}</span>
+            </div>
+            <div class="row-right">
+                ${inf  > 0 ? `<span class="be-tag be-tag-warn">⚡ ${inf} in flight</span>` : ''}
+                ${fail > 0 ? `<span class="be-tag be-tag-danger">⚠️ ${fmtNum(fail)} fails</span>` : ''}
+            </div>
         </div>
-        <div class="row-right" style="flex-shrink:0;display:flex;gap:4px;align-items:center;">
-            ${p99 ? badge('p99: ' + p99, 'info') : ''}
-            ${badge('W: ' + w, wCls)}
-            ${badge(fmtNum(reqs) + ' reqs')}
+        <div class="drawer-row-bottom">
+            ${p99 ? `<span class="be-tag be-tag-info">p99: ${p99}</span>` : ''}
+            <span class="be-tag be-tag-${wCls}">W: ${w}</span>
+            <span class="be-tag">${fmtNum(reqs)} reqs</span>
         </div>
     </div>`;
 }

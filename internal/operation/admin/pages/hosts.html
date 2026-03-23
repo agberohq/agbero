@@ -33,29 +33,33 @@
     // ── Row builders ───────────────────────────────────────────────────────────
 
     function backendRowHtml(b, cfgB, statBEs, bIdx) {
-        const url    = b.url || b.address || cfgB.address || '';
-        const w      = cfgB.weight !== undefined ? cfgB.weight : (b.weight || 1);
+        const url      = b.url || b.address || cfgB.address || '';
+        const w        = cfgB.weight !== undefined ? cfgB.weight : (b.weight || 1);
         const { cls, title } = healthDot(b, !!statBEs[bIdx]);
-        const p99    = b.latency_us?.p99 ? (b.latency_us.p99 / 1000).toFixed(0) + 'ms' : '—';
-        const score  = b.health?.score ?? '';
-        const tv     = b.health?.trend ?? 0;
-        const tGlyph = tv > 0 ? '↑' : tv < 0 ? '↓' : '→';
-        const tColor = tv > 0 ? 'var(--success)' : tv < 0 ? 'var(--danger)' : 'var(--text-mute)';
-        const inflight = b.in_flight > 0 ? ` <span class="badge warn">⚡${b.in_flight}</span>` : '';
+        const p99      = b.latency_us?.p99 ? (b.latency_us.p99 / 1000).toFixed(0) + 'ms' : null;
+        const score    = b.health?.score ?? null;
+        const tv       = b.health?.trend ?? 0;
+        const tGlyph   = tv > 0 ? '↑' : tv < 0 ? '↓' : '→';
+        const tColor   = tv > 0 ? 'var(--success)' : tv < 0 ? 'var(--danger)' : 'var(--text-mute)';
+        const reqs     = b.total_reqs || 0;
+        const inflight = b.in_flight  > 0;
+        const stateLabel = title !== 'No data' ? title : '';
+
+        const tags = [
+            score !== null ? `<span class="be-tag" title="Health score">${score}</span>` : null,
+            p99 ? `<span class="be-tag">p99 ${p99}</span>` : null,
+            `<span class="be-tag">W:${w}</span>`,
+            reqs ? `<span class="be-tag">${fmtNum(reqs)}</span>` : null,
+        ].filter(Boolean).join('');
 
         return `
         <div class="backend-row ${cls === 'down' ? 'down' : ''}">
-            <div class="be-line1">
+            <div class="be-left">
                 <span class="dot ${cls}" title="${title}"></span>
-                <span style="font-size:10px;color:${tColor};flex-shrink:0;">${tGlyph}</span>
-                <span class="be-url copyable" data-action="copy-url" data-url="${url}">${url}${inflight}</span>
+                <span class="be-url copyable" data-action="copy-url" data-url="${url}">${url}</span>
+                ${inflight ? `<span class="be-tag be-tag-warn">⚡ ${b.in_flight}</span>` : ''}
             </div>
-            <div class="be-line2">
-                ${score !== '' ? `<span class="be-stat" title="Health score">${score}</span>` : ''}
-                <span class="be-stat">W:${w}</span>
-                <span class="be-stat">${p99}</span>
-                <span class="be-stat">${fmtNum(b.total_reqs || 0)}</span>
-            </div>
+            <div class="be-tags">${tags}</div>
         </div>`;
     }
 

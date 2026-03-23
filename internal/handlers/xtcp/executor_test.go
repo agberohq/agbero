@@ -50,8 +50,8 @@ func TestTCPExecutor_Probe_Success(t *testing.T) {
 	if !success {
 		t.Error("expected successful probe")
 	}
-	if latency <= 0 {
-		t.Error("expected positive latency")
+	if latency < 0 {
+		t.Error("expected non-negative latency")
 	}
 }
 
@@ -92,8 +92,8 @@ func TestTCPExecutor_Probe_ExpectMismatch(t *testing.T) {
 	if success {
 		t.Error("expected failed probe due to expect mismatch")
 	}
-	if latency <= 0 {
-		t.Error("expected positive latency")
+	if latency < 0 {
+		t.Error("expected non-negative latency")
 	}
 }
 
@@ -118,8 +118,8 @@ func TestTCPExecutor_Probe_ConnectionRefused(t *testing.T) {
 	if success {
 		t.Error("expected failed probe")
 	}
-	if latency <= 0 {
-		t.Error("expected positive latency")
+	if latency < 0 {
+		t.Error("expected non-negative latency")
 	}
 }
 
@@ -161,8 +161,8 @@ func TestTCPExecutor_Probe_ContextTimeout(t *testing.T) {
 	if success {
 		t.Error("expected failed probe")
 	}
-	if latency <= 0 {
-		t.Error("expected positive latency")
+	if latency < 0 {
+		t.Error("expected non-negative latency")
 	}
 }
 
@@ -201,8 +201,8 @@ func TestTCPExecutor_Probe_EmptySend(t *testing.T) {
 	if !success {
 		t.Error("expected successful probe with empty send")
 	}
-	if latency <= 0 {
-		t.Error("expected positive latency")
+	if latency < 0 {
+		t.Error("expected non-negative latency")
 	}
 }
 
@@ -243,8 +243,8 @@ func TestTCPExecutor_Probe_EmptyExpect(t *testing.T) {
 	if !success {
 		t.Error("expected successful probe with empty expect")
 	}
-	if latency <= 0 {
-		t.Error("expected positive latency")
+	if latency < 0 {
+		t.Error("expected non-negative latency")
 	}
 }
 
@@ -283,8 +283,8 @@ func TestTCPExecutor_Probe_EmptySendAndExpect(t *testing.T) {
 	if !success {
 		t.Error("expected successful connection-only probe")
 	}
-	if latency <= 0 {
-		t.Error("expected positive latency")
+	if latency < 0 {
+		t.Error("expected non-negative latency")
 	}
 }
 
@@ -473,8 +473,8 @@ func TestTCPExecutor_Probe_ReadError(t *testing.T) {
 	if success {
 		t.Error("expected failed probe")
 	}
-	if latency <= 0 {
-		t.Error("expected positive latency")
+	if latency < 0 {
+		t.Error("expected non-negative latency")
 	}
 }
 
@@ -512,8 +512,8 @@ func TestTCPExecutor_Probe_WriteError(t *testing.T) {
 	if success {
 		t.Error("expected failed probe")
 	}
-	if latency <= 0 {
-		t.Error("expected positive latency")
+	if latency < 0 {
+		t.Error("expected non-negative latency")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -373,6 +374,12 @@ func TestConnPoolIsAlive(t *testing.T) {
 		t.Fatalf("Failed to create closed test connection: %v", err)
 	}
 	closedConn.Close()
+
+	// Windows needs a moment for TCP state to propagate
+	if runtime.GOOS == "windows" {
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	if pool.isAlive(closedConn) {
 		t.Error("isAlive should return false for closed connection")
 	}
