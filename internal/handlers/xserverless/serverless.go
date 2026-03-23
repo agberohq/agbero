@@ -26,20 +26,40 @@ func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
 
 	routeEnv := route.Env
 
+	validRests := make(map[string]alaye.REST)
 	for _, rest := range route.Serverless.RESTs {
 		if !rest.Enabled.Active() {
 			continue
 		}
+		if _, exists := validRests[rest.Name]; exists {
+			cfg.Resource.Logger.Fields("name", rest.Name).Warn("serverless: duplicate REST name detected, overwriting previous registration")
+		}
+		validRests[rest.Name] = rest
+	}
+
+	for name, rest := range validRests {
 		handler := NewRest(RestConfig{
 			Resource:  cfg.Resource,
 			REST:      rest,
 			GlobalEnv: globalEnv,
 			RouteEnv:  routeEnv,
 		})
-		s.mux.Handle("/"+rest.Name, handler)
+		s.mux.Handle("/"+name, handler)
 	}
 
+	validWorkers := make(map[string]alaye.Work)
 	for _, worker := range route.Serverless.Workers {
+		if _, exists := validWorkers[worker.Name]; exists {
+			cfg.Resource.Logger.Fields("name", worker.Name).Warn("serverless: duplicate Worker name detected, overwriting previous registration")
+		}
+		validWorkers[worker.Name] = worker
+	}
+
+	for name, worker := range validWorkers {
+		if _, exists := validRests[name]; exists {
+			cfg.Resource.Logger.Fields("name", name).Warn("serverless: Worker name collides with REST name, skipping worker registration")
+			continue
+		}
 		handler := NewWorker(WorkerConfig{
 			Resource:  cfg.Resource,
 			Route:     *route,
@@ -48,7 +68,7 @@ func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
 			RouteEnv:  routeEnv,
 			Orch:      cfg.Orch,
 		})
-		s.mux.Handle("/"+worker.Name, handler)
+		s.mux.Handle("/"+name, handler)
 	}
 
 	return s

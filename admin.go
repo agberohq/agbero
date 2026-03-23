@@ -1,3 +1,4 @@
+// admin.go
 package agbero
 
 import (
@@ -45,8 +46,6 @@ type adminClaims struct {
 	jwt.RegisteredClaims
 }
 
-// startAdminServer binds and starts the admin HTTP server when enabled.
-// Rate limiting is applied from global rate_limits rules; IP allowlists and auth wrap protected endpoints.
 func (s *Server) startAdminServer() {
 	if s.global.Admin.Enabled.NotActive() || s.global.Admin.Address == "" {
 		return
@@ -82,9 +81,6 @@ func (s *Server) startAdminServer() {
 	}()
 }
 
-// startPprofServer binds a dedicated pprof listener with no middleware.
-// Zero auth, zero rate limiting, zero CSP headers — profiles reflect the proxy
-// hot path directly. Bind to a loopback address in production.
 func (s *Server) startPprofServer() {
 	if s.global.Admin.Pprof.Enabled.NotActive() || s.global.Admin.Pprof.Bind == "" {
 		return
@@ -157,10 +153,8 @@ func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.A
 	mux.Handle("/logs", protect(http.HandlerFunc(s.handleLogs)))
 	mux.Handle("/firewall", protect(http.HandlerFunc(s.handleFirewall)))
 
-	// Protected UI API endpoints
 	mux.Handle("/api/hosts", protect(http.HandlerFunc(s.handleHostsAPI)))
 
-	// Telemetry history sub-router
 	if s.global.Admin.Telemetry.Enabled.Active() && s.telemetryStore != nil {
 		s.logger.Info("telemetry history enabled")
 		mux.Handle("/telemetry/", protect(
@@ -169,8 +163,6 @@ func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.A
 	}
 }
 
-// buildAuthMiddleware constructs an IP allowlist + auth chain for admin endpoints.
-// IP filtering is applied first and unconditionally when AllowedIPs is non-empty.
 func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Handler {
 	ipMgr := zulu.NewIPManager(nil)
 	return func(h http.Handler) http.Handler {
@@ -229,8 +221,6 @@ func (s *Server) wrapAdminMiddleware(next http.Handler, rl *ratelimit.RateLimite
 	})
 }
 
-// handleHostsAPI manages creation, modification, and deletion of hosts via the UI.
-// Changes are instantly saved to disk as .hcl files, which triggers the hot-reloader automatically.
 func (s *Server) handleHostsAPI(w http.ResponseWriter, r *http.Request) {
 	if s.hostManager == nil {
 		http.Error(w, "Host manager not initialized", http.StatusInternalServerError)
@@ -275,19 +265,15 @@ func (s *Server) handleHostsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Ensure the primary domain is injected
 		req.Config.Domains = []string{domain}
 
-		// Apply defaults so validation has the full picture
 		woos.DefaultHost(req.Config)
 
-		// Validate strict rules
 		if err := req.Config.Validate(); err != nil {
 			http.Error(w, fmt.Sprintf("Configuration validation failed: %v", err), http.StatusBadRequest)
 			return
 		}
 
-		// Set in memory & Save to disk (which triggers fsnotify hot reload)
 		s.hostManager.Set(domain, req.Config)
 		if err := s.hostManager.Save(domain); err != nil {
 			s.logger.Fields("domain", domain, "err", err).Error("admin: failed to save host to disk")
@@ -337,7 +323,6 @@ func (s *Server) handleHostsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleLogin authenticates an admin user and issues a signed JWT.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -383,8 +368,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// verifyCredentials performs constant-time username lookup and bcrypt password comparison.
-// A dummy bcrypt comparison runs when the username is not found to prevent timing attacks.
 func (s *Server) verifyCredentials(users []string, username, password string) bool {
 	var foundHash []byte
 	userFound := 0
@@ -409,8 +392,6 @@ func (s *Server) verifyCredentials(users []string, username, password string) bo
 	return userFound == 1 && bcrypt.CompareHashAndPassword(targetHash, []byte(password)) == nil
 }
 
-// generateAdminToken creates a signed JWT with IssuedAt and NotBefore claims set.
-// Tokens are valid for adminTokenTTL from the time of issuance.
 func (s *Server) generateAdminToken(username, secret string) (string, time.Time, error) {
 	now := time.Now()
 	expirationTime := now.Add(adminTokenTTL)
@@ -489,7 +470,6 @@ func (s *Server) handleFirewallList(w http.ResponseWriter) {
 	})
 }
 
-// handleFirewallBlock validates the supplied IP/CIDR before blocking it.
 func (s *Server) handleFirewallBlock(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IP          string `json:"ip"`
@@ -535,7 +515,6 @@ func (s *Server) buildBlockReason(reason, host, path string) string {
 	return reason
 }
 
-// handleFirewallUnblock validates the supplied IP before removing it from the blocklist.
 func (s *Server) handleFirewallUnblock(w http.ResponseWriter, r *http.Request) {
 	ip := r.URL.Query().Get("ip")
 	if ip == "" {
@@ -555,7 +534,6 @@ func (s *Server) handleFirewallUnblock(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Unblocked"))
 }
 
-// handleLogs returns the last N log lines as a JSON array of raw strings.
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	var logPath string
 	if s.global.Logging.File.Enabled.Active() {
@@ -589,7 +567,6 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(out)
 }
 
-// isValidIPOrCIDR returns true when s parses as a valid IP address or CIDR block.
 func isValidIPOrCIDR(s string) bool {
 	if net.ParseIP(s) != nil {
 		return true
@@ -598,8 +575,6 @@ func isValidIPOrCIDR(s string) bool {
 	return err == nil
 }
 
-// buildAdminRateLimiter constructs a rate limiter for the admin server from global rate_limits rules.
-// Returns nil when no matching rules exist, leaving the admin server unthrottled.
 func buildAdminRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedState woos.SharedState) *ratelimit.RateLimiter {
 	if global == nil || !global.RateLimits.Enabled.Active() || len(global.RateLimits.Rules) == 0 {
 		return nil

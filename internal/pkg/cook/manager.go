@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -59,8 +60,6 @@ type Entry struct {
 	cancel context.CancelFunc
 }
 
-// Creates a new cook manager instance with the specified configuration
-// Ensures the base work directory is properly initialized
 func NewManager(cfg ManagerConfig) (*Manager, error) {
 	if cfg.WorkDir == "" {
 		return nil, errors.New("work directory is required")
@@ -88,6 +87,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 // Registers a new Git repository configuration for background polling and webhooks
 // Merges intervals and secrets if an identical repository clone is already active
 func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
+
 	if cfg.URL == "" {
 		return errors.New("git URL is required")
 	}
@@ -95,21 +95,17 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 	if existing, ok := m.entries.Get(routeKey); ok {
 		if existing.Config.URL == cfg.URL &&
 			existing.Config.Branch == cfg.Branch &&
-			existing.Config.WorkDir == cfg.WorkDir {
-
-			if cfg.Secret != "" && existing.Config.Secret == "" {
-				existing.Config.Secret = cfg.Secret
-			}
-
-			if cfg.Interval > 0 && existing.Config.Interval == 0 {
-				existing.Config.Interval = cfg.Interval
-				m.wg.Add(1)
-				go m.poll(existing.ctx, routeKey, existing.Cook, cfg.Interval.StdDuration())
-			}
+			existing.Config.WorkDir == cfg.WorkDir &&
+			existing.Config.Interval == cfg.Interval &&
+			existing.Config.Secret == cfg.Secret &&
+			existing.Config.Auth.Type == cfg.Auth.Type &&
+			existing.Config.Auth.Username == cfg.Auth.Username {
 
 			m.logger.Fields("route_key", routeKey).Debug("git integration already configured for this repository, skipping clone")
 			return nil
 		}
+
+		m.logger.Fields("route_key", routeKey).Info("git integration configuration changed, reloading")
 		if existing.cancel != nil {
 			existing.cancel()
 		}
@@ -155,7 +151,10 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 
 	err = m.pool.Submit(jack.Func(func() error {
 		if err := c.Make(ctx); err != nil {
-			m.logger.Fields("route", routeKey, "err", err).Error("initial git pull failed")
+			// Suppress context canceled errors so it doesn't look like a bug during overwrites
+			if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context canceled") {
+				m.logger.Fields("route", routeKey, "err", err).Error("initial git pull failed")
+			}
 		}
 		return nil
 	}))
@@ -172,8 +171,21 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 	return nil
 }
 
-// Unregisters and halts background operations for a specific route
-// Cancels the active context associated with the repository polling
+func (m *Manager) Prune(activeIDs map[string]bool) {
+	var toDelete []string
+	m.entries.Range(func(key string, entry *Entry) bool {
+		if !activeIDs[key] {
+			toDelete = append(toDelete, key)
+		}
+		return true
+	})
+
+	for _, key := range toDelete {
+		m.logger.Fields("route_key", key).Info("git integration removed from config, stopping")
+		m.Unregister(key)
+	}
+}
+
 func (m *Manager) Unregister(routeKey string) {
 	if entry, ok := m.entries.Get(routeKey); ok {
 		m.entries.Delete(routeKey)
@@ -183,8 +195,6 @@ func (m *Manager) Unregister(routeKey string) {
 	}
 }
 
-// Retrieves the absolute file path to the currently active deployment
-// Resolves subdirectories if configured for the repository
 func (m *Manager) CurrentPath(routeKey string) string {
 	entry, ok := m.entries.Get(routeKey)
 	if !ok {
@@ -200,8 +210,6 @@ func (m *Manager) CurrentPath(routeKey string) string {
 	return basePath
 }
 
-// Fetches the underlying Cook instance for a registered repository
-// Returns false if no repository is tracked under the provided key
 func (m *Manager) GetCook(routeKey string) (*Cook, bool) {
 	entry, ok := m.entries.Get(routeKey)
 	if !ok {
@@ -210,8 +218,6 @@ func (m *Manager) GetCook(routeKey string) (*Cook, bool) {
 	return entry.Cook, true
 }
 
-// Halts all background polling and ongoing deployments safely
-// Blocks until all outstanding operations confirm cancellation or timeout
 func (m *Manager) Stop() {
 	m.entries.Range(func(key string, entry *Entry) bool {
 		if entry.cancel != nil {
@@ -234,8 +240,6 @@ func (m *Manager) Stop() {
 	}
 }
 
-// Continuously invokes repository syncs at the specified interval
-// Terminates automatically when the context is canceled
 func (m *Manager) poll(ctx context.Context, routeKey string, c *Cook, interval time.Duration) {
 	defer m.wg.Done()
 
@@ -251,7 +255,9 @@ func (m *Manager) poll(ctx context.Context, routeKey string, c *Cook, interval t
 				}
 
 				if err := c.Make(ctx); err != nil {
-					m.logger.Fields("route", routeKey, "err", err).Error("scheduled git pull failed")
+					if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context canceled") {
+						m.logger.Fields("route", routeKey, "err", err).Error("scheduled git pull failed")
+					}
 				}
 				return nil
 			}))
@@ -264,8 +270,6 @@ func (m *Manager) poll(ctx context.Context, routeKey string, c *Cook, interval t
 	}
 }
 
-// Validates and processes an incoming webhook payload for a given route
-// Initiates an immediate deployment if the signature and branch constraints match
 func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey string) {
 	entry, ok := m.entries.Get(routeKey)
 	if !ok {
@@ -318,7 +322,9 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		ctx, cancel := context.WithTimeout(context.Background(), defaultWebhookTimeout)
 		defer cancel()
 		if err := entry.Cook.Make(ctx); err != nil {
-			m.logger.Fields("route", routeKey, "err", err).Error("webhook deployment failed")
+			if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context canceled") {
+				m.logger.Fields("route", routeKey, "err", err).Error("webhook deployment failed")
+			}
 		}
 		return nil
 	}))
@@ -333,8 +339,6 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 	_, _ = w.Write([]byte("Deployment Triggered"))
 }
 
-// Creates an HTTP handler specifically tuned for receiving webhook POST requests
-// Maps requests to the HandleWebhook function with the bound route key
 func (m *Manager) WebhookHandler(routeKey string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -345,8 +349,6 @@ func (m *Manager) WebhookHandler(routeKey string) http.HandlerFunc {
 	}
 }
 
-// Gathers status summaries of all tracked repository deployments
-// Used by uptime and health endpoints to reflect active commit paths
 func (m *Manager) Health() map[string]HealthStatus {
 	status := make(map[string]HealthStatus)
 	m.entries.Range(func(key string, entry *Entry) bool {

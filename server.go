@@ -459,6 +459,21 @@ func (s *Server) Reload() {
 
 	s.resource.Metrics.Prune(validKeys)
 
+	if s.cookManager != nil {
+		validGitIDs := make(map[string]bool)
+		for _, hcfg := range hosts {
+			for _, r := range hcfg.Routes {
+				if r.Web.Git.Enabled.Active() {
+					validGitIDs[r.Web.Git.ID] = true
+					if err := s.cookManager.Register(r.Web.Git.ID, r.Web.Git); err != nil {
+						s.logger.Error("failed to register/update cook", "id", r.Web.Git.ID, "err", err)
+					}
+				}
+			}
+		}
+		s.cookManager.Prune(validGitIDs)
+	}
+
 	var staleRoutes []string
 	s.resource.RouteCache.Range(func(k string, it *mappo.Item) bool {
 		if !validRouteKeys[k] {
