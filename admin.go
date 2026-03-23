@@ -212,7 +212,7 @@ func (s *Server) wrapAdminMiddleware(next http.Handler, rl *ratelimit.RateLimite
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'self'; "+
-				"script-src 'self' https://d3js.org; "+
+				"script-src 'self' 'unsafe-inline' blob: https://d3js.org; "+
 				"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
 				"font-src 'self' https://fonts.gstatic.com; "+
 				"img-src 'self' data:; "+

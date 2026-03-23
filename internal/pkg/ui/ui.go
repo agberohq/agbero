@@ -285,7 +285,7 @@ func (u *UI) SecretBox(label, value string) {
 		PaddingRight(1)
 
 	content := u.s(u.theme.Accent).Bold(true).Render(u.icons.Key+" "+label) +
-		"\n" +
+		"\n\n" +
 		u.s(u.theme.Value).Render(value)
 
 	u.blank()

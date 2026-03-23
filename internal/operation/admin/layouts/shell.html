@@ -1,0 +1,615 @@
+<nav class="navbar">
+    <div class="brand">AGBERO <span>ADMIN</span></div>
+    <div class="menu">
+        <a href="#/" class="nav-link" data-page="/">dashboard</a>
+        <a href="#/hosts" class="nav-link" data-page="/hosts">hosts</a>
+        <a href="#/cluster" class="nav-link" data-page="/cluster">cluster</a>
+        <a href="#/map" class="nav-link" data-page="/map">map</a>
+        <a href="#/firewall" class="nav-link" data-page="/firewall">firewall</a>
+        <a href="#/logs" class="nav-link" data-page="/logs">logs</a>
+        <a href="#/config" class="nav-link" data-page="/config">config</a>
+
+        <button id="targetHostBtn" class="target-btn" title="Change target node" data-host="local">⬡</button>
+        <button id="themeToggle" class="theme-toggle" title="Toggle theme">◑</button>
+        <a href="#" id="loginBtn" class="nav-link" style="margin-left:10px;" data-oja-bind="auth.isLoggedIn" data-oja-transform="loginText">Login</a>
+    </div>
+</nav>
+
+<div id="offlineBanner" class="offline-banner" style="display: none; background: var(--danger, #ff3b30); color: #fff; text-align: center; padding: 10px; font-size: 13px; font-weight: 500; letter-spacing: 0.4px; z-index: 9999; position: relative;">
+    ⚠️ Connection lost. Attempting to reconnect...
+</div>
+
+<div id="app" class="main-content"></div>
+
+<!-- SYSTEM STATS BAR -->
+<div class="sys-bar">
+    <div class="sys-bar-left">
+        <span class="sys-item" title="Memory RSS">rss <span data-oja-bind="sys.memRss" data-oja-transform="formatBytes">—</span></span>
+        <span class="sys-item hide-mobile" title="Memory Allocated">alloc <span data-oja-bind="sys.memAlloc" data-oja-transform="formatBytes">—</span></span>
+        <span class="sys-divider hide-mobile">·</span>
+        <span class="sys-item hide-mobile" title="Goroutines">goroutines <span data-oja-bind="sys.goroutines" data-oja-transform="fmtNum">—</span></span>
+        <span class="sys-divider">·</span>
+        <span class="sys-item" title="Active Certificates">certs <span data-oja-bind="certs.active" data-oja-transform="fmtNum">0</span></span>
+        <span class="sys-item" title="Expiring <7d">&nbsp;(<span data-oja-bind="certs.expiring" data-oja-transform="fmtNum">0</span> expiring)</span>
+    </div>
+    <div class="sys-bar-right">
+        <span class="sys-item" title="CPU">cpu <span data-oja-bind="sys.cpu" data-oja-transform="formatPercent">—</span></span>
+        <span class="sys-item hide-mobile"><span data-oja-bind="sys.cores">—</span> cores</span>
+        <span class="sys-divider">·</span>
+        <span class="sys-item hide-mobile">mem <span data-oja-bind="sys.memUsed" data-oja-transform="formatBytes">—</span></span>
+        <span class="sys-item hide-mobile"> / <span data-oja-bind="sys.memTotalOs" data-oja-transform="formatBytes">—</span></span>
+        <span class="sys-divider hide-mobile">·</span>
+        <span class="sys-item" id="connectionIndicator" data-oja-bind="conn.html" data-oja-bind-type="html">○</span>
+        <span class="sys-divider">·</span>
+        <span class="sys-item" data-oja-bind="sys.version" title="Version">v—</span>
+    </div>
+</div>
+
+<!-- STATS FOOTER -->
+<div class="stats-footer">
+    <div class="stat-item"><label>Uptime</label><span data-oja-bind="stats.uptime">100%</span></div>
+    <div class="stat-item"><label>Req / Sec</label><span data-oja-bind="stats.rps" style="color:#00c770">0.0</span></div>
+    <div class="stat-item"><label>Total Reqs</label><span data-oja-bind="stats.total" data-oja-transform="fmtNum">0</span></div>
+    <div class="stat-item"><label>p99 Latency</label><span data-oja-bind="stats.avgMs">0ms</span></div>
+    <div class="stat-item"><label>Apdex</label><span data-oja-bind="stats.apdex">1.0</span></div>
+    <div class="stat-item"><label>Errors</label><span data-oja-bind="stats.errors" data-oja-transform="fmtNum" style="color:#ff3b30">0</span></div>
+    <div class="stat-item"><label>Backends</label><span data-oja-bind="stats.activeBackends" data-oja-transform="fmtNum">0</span></div>
+</div>
+
+<!-- MODALS -->
+<div class="modal-overlay" id="targetHostModal">
+    <div class="modal">
+        <h3>Target Node</h3>
+        <p style="font-size:11px;color:var(--text-mute);margin-bottom:15px;">Connect to a different Agbero node. Leave empty for local.</p>
+        <form id="targetHostForm">
+            <input type="url" id="targetHostInput" placeholder="http://10.0.0.5:9090" autocomplete="off">
+            <button type="submit" class="primary">Connect</button>
+            <button type="button" class="btn close-modal" style="margin-top:5px;">Cancel</button>
+        </form>
+    </div>
+</div>
+
+<div class="modal-overlay" id="loginModal">
+    <div class="modal modal-login">
+        <div class="login-brand">AGBERO <span>ADMIN</span></div>
+        <div class="login-sub">Admin Console</div>
+        <div class="login-node" id="loginNodeRow">
+            <span class="login-node-label">NODE</span>
+            <span class="login-node-value" id="loginNodeDisplay">local</span>
+            <button type="button" id="loginEditNodeBtn" class="btn-link">change</button>
+            <span id="loginServerDot" title="Server reachability" style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:10px;color:var(--text-mute);"><span id="loginServerDotCircle" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--text-mute);"></span><span id="loginServerDotLabel">checking…</span></span>
+        </div>
+        <div class="login-node-edit" id="loginNodeEdit">
+            <input type="url" id="loginTargetHost" placeholder="http://10.0.0.5:9090" autocomplete="off">
+            <button type="button" id="loginResetHostBtn" class="btn small">local</button>
+        </div>
+        <form id="loginForm">
+            <input type="text" id="username" placeholder="Username" autocomplete="username" required>
+            <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
+            <button type="submit" class="btn primary" style="width:100%;margin-top:4px;">Sign In</button>
+        </form>
+        <div id="loginError" style="color:var(--danger);font-size:11px;margin-top:10px;display:none;text-align:center;"></div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="ruleModal">
+    <div class="modal">
+        <h3>Firewall Rule</h3>
+        <form id="ruleForm">
+            <input type="text" id="fwIp" placeholder="IP Address or CIDR" required>
+            <input type="text" id="fwReason" placeholder="Reason (e.g. Abuse)" required>
+            <input type="text" id="fwPath" placeholder="Path (Optional, e.g. /admin)">
+            <select id="fwDuration">
+                <option value="0">Permanent</option>
+                <option value="3600">1 Hour</option>
+                <option value="86400">24 Hours</option>
+            </select>
+            <div id="ruleError" style="color:var(--danger);font-size:11px;margin-bottom:8px;display:none;background:rgba(255,59,48,0.08);padding:8px;border-radius:4px;"></div>
+            <button type="submit" class="btn primary" style="width:100%;">Block</button>
+            <button type="button" class="btn close-modal" style="margin-top:5px;width:100%;">Cancel</button>
+        </form>
+    </div>
+</div>
+
+<div class="modal-overlay" id="clusterRouteModal">
+    <div class="modal">
+        <h3>Broadcast Dynamic Route</h3>
+        <p style="font-size:11px;color:var(--text-mute);margin-bottom:15px;">Inject an ephemeral routing rule into the cluster gossip mesh.</p>
+        <form id="clusterRouteForm">
+            <input type="text" id="crHost" placeholder="Hostname (e.g. api.example.com)" required>
+            <input type="text" id="crPath" placeholder="Path (e.g. /v1/temp)" required>
+            <input type="text" id="crTarget" placeholder="Target URL (e.g. http://10.0.0.5:8080)" required>
+            <input type="number" id="crTTL" placeholder="TTL seconds (0 = permanent)" value="3600">
+            <button type="submit" class="primary">Broadcast</button>
+            <button type="button" class="btn close-modal" style="margin-top:5px;">Cancel</button>
+        </form>
+    </div>
+</div>
+
+<div class="modal-overlay" id="addHostModal">
+    <div class="modal">
+        <h3 id="addHostModalTitle">Add Host</h3>
+        <form id="addHostForm">
+            <label style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);">Domain</label>
+            <input type="text" id="ahDomain" placeholder="api.example.com" required>
+            <label style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);">Route Path</label>
+            <input type="text" id="ahPath" placeholder="/" value="/" required>
+
+            <label style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);">Mode</label>
+            <select id="ahMode" style="margin-bottom:14px;">
+                <option value="proxy">Proxy to Backend</option>
+                <option value="static">Serve Static Files</option>
+            </select>
+
+            <div id="ahProxySection">
+                <label style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);">Backend URL</label>
+                <input type="text" id="ahBackend" placeholder="http://10.0.0.5:8080 or unix:/run/app.sock">
+                <label style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);">Strategy</label>
+                <select id="ahStrategy">
+                    <option value="round_robin">Round Robin</option>
+                    <option value="least_conn">Least Connections</option>
+                    <option value="least_response_time">Least Response Time</option>
+                    <option value="weighted_least_conn">Weighted Least Connections</option>
+                    <option value="ip_hash">IP Hash</option>
+                    <option value="url_hash">URL Hash</option>
+                    <option value="consistent_hash">Consistent Hash</option>
+                    <option value="sticky">Sticky</option>
+                    <option value="adaptive">Adaptive</option>
+                    <option value="power_of_two">Power of Two</option>
+                    <option value="random">Random</option>
+                </select>
+            </div>
+
+            <div id="ahStaticSection" style="display:none;">
+                <label style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);">Web Root</label>
+                <input type="text" id="ahWebRoot" placeholder="/var/www/html">
+            </div>
+
+            <div id="addHostError" style="color:var(--danger);font-size:11px;margin-bottom:8px;display:none;background:rgba(255,59,48,0.08);padding:8px;border-radius:4px;"></div>
+            <button type="submit" class="btn primary" style="width:100%;">Save Host</button>
+            <button type="button" class="btn close-modal" style="margin-top:5px;width:100%;">Cancel</button>
+        </form>
+    </div>
+</div>
+
+<!-- STRICT DELETE MODAL -->
+<div class="modal-overlay" id="strictDeleteModal">
+    <div class="modal">
+        <h3 style="color: var(--danger);">⚠️ Danger Zone</h3>
+        <p id="strictDeleteText" style="font-size:13px; margin-bottom: 10px;"></p>
+        <p style="font-size:11px; color:var(--text-mute); margin-bottom: 15px;">
+            To confirm, type <strong id="strictDeleteTarget" style="color:var(--fg);"></strong> below:
+        </p>
+        <input type="text" id="strictDeleteInput" autocomplete="off" style="border-color: var(--danger);">
+        <div style="display:flex;gap:10px;margin-top:20px;">
+            <button id="strictDeleteBtn" class="btn error" style="flex:1;" disabled>Delete Forever</button>
+            <button class="btn close-modal" style="flex:1;">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- EDIT JSON MODAL -->
+<div class="modal-overlay" id="editHostJsonModal">
+    <div class="modal" style="max-width: 650px; width: 95vw;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+            <div>
+                <h3 style="margin-bottom: 5px;">Edit Host: <span id="editHostTitle" class="mono"></span></h3>
+                <p style="font-size:11px;color:var(--text-mute);margin:0;">Edit configuration as JSON. Saves immediately to disk and hot-reloads.</p>
+            </div>
+            <button id="formatHostJsonBtn" type="button" class="btn small" style="background:var(--hover-bg);">✨ Format</button>
+        </div>
+
+        <div id="editHostError" style="color:var(--danger);font-size:12px;margin-bottom:10px;display:none;background:rgba(255,59,48,0.1);padding:8px;border-radius:4px;"></div>
+
+        <textarea id="editHostJsonTextarea" class="json-editor" spellcheck="false"></textarea>
+
+        <div style="display:flex; gap:10px; margin-top:15px;">
+            <button id="saveHostJsonBtn" class="btn primary" style="flex:1;">Save Configuration</button>
+            <button class="btn close-modal" style="width:100px;">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- PERFORMANCE GRAPH MODAL -->
+<div class="modal-overlay" id="perfModal">
+    <div class="modal modal-perf">
+        <button class="perf-close-btn close-modal" title="Close">&#x2715;</button>
+        <div class="perf-modal-header" style="display: flex; align-items: center; justify-content: space-between;">
+            <div>
+                <h3 id="perfModalTitle" style="margin:0;">Performance History</h3>
+                <span id="perfModalHost" style="font-size:11px;color:var(--text-mute);font-family:monospace;"></span>
+            </div>
+            <select id="perfRangeSelect" class="perf-range-select" style="width: auto; min-width: 130px; margin-bottom: 0;">
+                <option value="30m">Last 30 min</option>
+                <option value="1h" selected>Last 1 hour</option>
+                <option value="6h">Last 6 hours</option>
+                <option value="24h">Last 24 hours</option>
+            </select>
+        </div>
+        <div class="perf-charts-grid">
+            <div class="perf-chart-cell"><div class="perf-chart-label">Requests / sec</div><div class="perf-chart-area" id="perfChartReqs"></div></div>
+            <div class="perf-chart-cell"><div class="perf-chart-label">p99 Latency (ms)</div><div class="perf-chart-area" id="perfChartP99"></div></div>
+            <div class="perf-chart-cell"><div class="perf-chart-label">Error Rate (%)</div><div class="perf-chart-area" id="perfChartErrors"></div></div>
+            <div class="perf-chart-cell"><div class="perf-chart-label">Active Backends</div><div class="perf-chart-area" id="perfChartBE"></div></div>
+        </div>
+        <div class="perf-modal-footer">
+            <span id="perfDataRange" style="font-size:10px;color:var(--text-mute);"></span>
+            <span style="font-size:10px;color:var(--text-mute);">Sampled every 60s &bull; 24h max retention</span>
+        </div>
+    </div>
+</div>
+
+<!-- SESSION EXPIRY -->
+<div class="session-warning" id="sessionWarning">
+    <span>🔐 Session expires in <span id="sessionExpiryTime">5m 0s</span></span>
+    <div class="session-warning-actions">
+        <button id="refreshSessionBtn" class="btn small" title="Renew session">↺ Renew</button>
+        <button id="dismissSessionBtn" class="btn small" title="Dismiss">✕</button>
+    </div>
+</div>
+
+<!-- DRAWERS -->
+<div class="drawer-backdrop" id="drawerBackdrop"></div>
+<div class="drawer" id="routeDrawer">
+    <div class="drawer-header">
+        <div class="drawer-title">
+            <div class="drawer-breadcrumb"><span class="drawer-back-link" data-action="close-drawer" data-target="routeDrawer">← All hosts</span></div>
+            <h2 id="drawerRoutePath">/</h2>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span id="drawerHostName" class="clickable-host" data-action="filter-host">example.com</span>
+                <button id="drawerPerfBtn" class="btn small" style="font-size:10px;padding:3px 8px;opacity:0.7;">📈 Perf</button>
+            </div>
+        </div>
+        <button class="drawer-close" data-action="close-drawer" data-target="routeDrawer">&times;</button>
+    </div>
+    <div class="drawer-content" id="drawerBody"></div>
+</div>
+<div class="drawer level-2" id="backendDrawer">
+    <div class="drawer-header">
+        <div class="drawer-title">
+            <div class="drawer-breadcrumb"><span class="drawer-back-link" data-action="close-drawer" data-target="backendDrawer">← Back to Route</span></div>
+            <h2 id="backendDrawerTitle">Backend Details</h2>
+            <span id="backendDrawerUrl" class="clickable-host mono"></span>
+        </div>
+        <button class="drawer-close" data-action="close-drawer" data-target="backendDrawer">&times;</button>
+    </div>
+    <div class="drawer-content" id="backendDrawerBody"></div>
+</div>
+
+<script type="module">
+    import { modal, layout, emit, listen, chart, on, auth, ui, query } from '../lib/oja.full.esm.js';
+    import { store, getCreds, isLoggedIn, setCredentials, clearCredentials, getHost, setHost } from '../js/store.js';
+    import { fetchTelemetry, login, addFirewallRule, broadcastClusterRoute, addHost, deleteHost } from '../js/api.js';
+    import { loadConfigData } from '../js/main.js';
+    let _perfCharts = null;
+
+    // JSON Syntax Highlighter wrapper (Outputs beautifully themed <pre> block)
+    window.app = window.app || {};
+    window.app.syntaxHighlight = function(json) {
+        if (typeof json != 'string') { json = JSON.stringify(json, undefined, 4); }
+        json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const highlighted = json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+            let cls = 'json-number';
+            if (/^"/.test(match)) { if (/:$/.test(match)) cls = 'json-key'; else cls = 'json-string'; }
+            else if (/true|false/.test(match)) cls = 'json-boolean';
+            else if (/null/.test(match)) cls = 'json-null';
+            return '<span class="' + cls + '">' + match + '</span>';
+        });
+        return `<pre class="syntax-box">${highlighted}</pre>`;
+    };
+
+    function updateNodeDisplay() {
+        const h = getHost();
+        document.getElementById('targetHostBtn')?.setAttribute('data-host', h || 'local');
+        if (document.getElementById('loginNodeDisplay')) document.getElementById('loginNodeDisplay').textContent = h || 'local';
+        if (document.getElementById('loginTargetHost')) document.getElementById('loginTargetHost').value = h;
+    }
+    updateNodeDisplay();
+
+    on('#loginEditNodeBtn', 'click', () => {
+        const el = document.getElementById('loginNodeEdit');
+        el.style.display = el.style.display === 'flex' ? 'none' : 'flex';
+    });
+    on('#loginResetHostBtn', 'click', () => {
+        document.getElementById('loginTargetHost').value = '';
+        setHost(''); updateNodeDisplay();
+        document.getElementById('loginNodeEdit').style.display = 'none';
+    });
+
+    on('#themeToggle', 'click', () => { ui.theme.toggle(); });
+
+    on('#targetHostBtn', 'click', () => { document.getElementById('targetHostInput').value = getHost(); modal.open('targetHostModal'); });
+    on('#targetHostForm', 'submit', (e, el) => {
+        e.preventDefault(); setHost(el.querySelector('#targetHostInput').value.trim());
+        modal.closeAll(); window.location.reload();
+    });
+
+    on('#loginBtn', 'click', async e => {
+        e.preventDefault();
+        if (isLoggedIn()) {
+            clearCredentials(); await auth.session.end();
+            store.set('auth.isLoggedIn', false);
+            window._isPolling = false; window._latencyStarted = false;
+        }
+        updateNodeDisplay(); modal.open('loginModal');
+    });
+
+    on('#loginForm', 'submit', async (e, el) => {
+        e.preventDefault();
+        const errEl = document.getElementById('loginError'); errEl.style.display = 'none';
+        const targetVal = el.querySelector('#loginTargetHost')?.value?.trim();
+        if (targetVal !== undefined) { setHost(targetVal); updateNodeDisplay(); }
+
+        const submitBtn = el.querySelector('[type="submit"]'); submitBtn.disabled = true; submitBtn.textContent = 'Signing in…';
+        const result = await login(el.querySelector('#username').value, el.querySelector('#password').value);
+        submitBtn.disabled = false; submitBtn.textContent = 'Sign In';
+
+        if (!result) { errEl.textContent = 'Login failed.'; errEl.style.display = 'block'; return; }
+        setCredentials(result.type, result.token);
+        await auth.session.start(result.token);
+        startLatencyChecks();
+    });
+
+    on('.modal-overlay', 'click', (e, overlay) => { if (e.target === overlay && overlay.id !== 'loginModal') modal.closeAll(); });
+    on('.close-modal', 'click', () => modal.closeAll());
+
+    on('#ruleForm', 'submit', async (e, form) => {
+        e.preventDefault();
+        const errEl = document.getElementById('ruleError');
+        errEl.style.display = 'none';
+        const submitBtn = form.querySelector('[type="submit"]');
+        ui.btn.loading(submitBtn, 'Blocking…');
+        try {
+            await addFirewallRule(getCreds(), {
+                ip: form.querySelector('#fwIp').value.trim(),
+                reason: form.querySelector('#fwReason').value.trim(),
+                path: form.querySelector('#fwPath').value.trim(),
+                host: '',
+                duration_sec: parseInt(form.querySelector('#fwDuration').value, 10) || 0,
+            });
+            ui.btn.done(submitBtn, 'Blocked ✓');
+            setTimeout(() => modal.closeAll(), 800);
+            emit('firewall:refresh');
+        } catch(err) {
+            ui.btn.reset(submitBtn);
+            errEl.textContent = err.message || 'Failed to block IP.';
+            errEl.style.display = 'block';
+        }
+    });
+
+    // Add Host — mode toggle
+    on('#ahMode', 'change', (e, sel) => {
+        document.getElementById('ahProxySection').style.display = sel.value === 'proxy' ? '' : 'none';
+        document.getElementById('ahStaticSection').style.display = sel.value === 'static' ? '' : 'none';
+    });
+
+    on('#addHostForm', 'submit', async (e, form) => {
+        e.preventDefault();
+        const errEl = document.getElementById('addHostError'); errEl.style.display = 'none';
+        const domain  = form.querySelector('#ahDomain').value.trim();
+        const path    = form.querySelector('#ahPath').value.trim() || '/';
+        const mode    = form.querySelector('#ahMode').value;
+        const backend = form.querySelector('#ahBackend').value.trim();
+        const webRoot = form.querySelector('#ahWebRoot')?.value.trim();
+
+        if (mode === 'proxy' && !backend) {
+            errEl.textContent = 'Backend URL is required for proxy mode.';
+            errEl.style.display = 'block'; return;
+        }
+        if (mode === 'static' && !webRoot) {
+            errEl.textContent = 'Web Root path is required for static mode.';
+            errEl.style.display = 'block'; return;
+        }
+
+        let routeBlock = { enabled: 'on', path };
+        if (mode === 'proxy') {
+            routeBlock.backends = { enabled: 'on', strategy: form.querySelector('#ahStrategy').value, servers: [{ address: backend, weight: 1 }] };
+        } else {
+            routeBlock.web = { enabled: 'on', root: webRoot, listing: true };
+        }
+
+        const btn = form.querySelector('[type="submit"]');
+        ui.btn.loading(btn, 'Saving…');
+        try {
+            const result = await addHost(getCreds(), domain, { domains: [domain], tls: { mode: 'auto' }, routes: [routeBlock] });
+            if (result && result.error) throw new Error(result.error);
+            ui.btn.done(btn, 'Saved ✓');
+            setTimeout(() => modal.closeAll(), 800);
+            emit('hosts:refresh');
+            loadConfigData();
+        } catch (err) {
+            ui.btn.reset(btn);
+            errEl.textContent = err.message; errEl.style.display = 'block';
+        }
+    });
+
+    // JSON Format Button — standard JSON.parse only (CSP blocks eval/new Function)
+    on('#formatHostJsonBtn', 'click', () => {
+        const el = document.getElementById('editHostJsonTextarea');
+        const errEl = document.getElementById('editHostError');
+        try {
+            const parsed = JSON.parse(el.value);
+            el.value = JSON.stringify(parsed, null, 4);
+            errEl.style.display = 'none';
+        } catch(err) {
+            errEl.innerText = 'Cannot format — invalid JSON: ' + err.message;
+            errEl.style.display = 'block';
+        }
+    });
+
+    // STRICT DELETE LOGIC
+    let _pendingDelete = null;
+    listen('app:strict-delete', ({ message, targetText, onConfirm }) => {
+        document.getElementById('strictDeleteText').innerHTML = message;
+        document.getElementById('strictDeleteTarget').innerText = targetText;
+        const input = document.getElementById('strictDeleteInput');
+        const btn = document.getElementById('strictDeleteBtn');
+        input.value = ''; btn.disabled = true; _pendingDelete = onConfirm;
+        input.oninput = () => { btn.disabled = (input.value !== targetText); };
+        modal.open('strictDeleteModal');
+    });
+    on('#strictDeleteBtn', 'click', () => { if (_pendingDelete) _pendingDelete(); modal.closeAll(); });
+
+    const LATENCY_ONLINE_MS  = 30_000;
+    const LATENCY_OFFLINE_MS = 5_000;
+    let _latencyTimer = null;
+
+    function scheduleLatencyCheck(ms) {
+        clearTimeout(_latencyTimer);
+        _latencyTimer = setTimeout(() => { checkLatency(); }, ms);
+    }
+
+    // OFFLINE & LATENCY LOGIC (Fast detection with AbortController)
+    let currentLatencyController = null;
+    async function checkLatency() {
+        const banner = document.getElementById('offlineBanner');
+        if (!navigator.onLine) {
+            store.set('conn.html', `<span class="conn-dot"><span class="conn-dot-circle" style="background:var(--danger)"></span><span>offline</span></span>`);
+            updateLoginDot('var(--danger)', 'offline');
+            if (banner) { banner.style.display = 'block'; banner.classList.add('active'); }
+            scheduleLatencyCheck(LATENCY_OFFLINE_MS);
+            return;
+        }
+
+        if (currentLatencyController) currentLatencyController.abort();
+        currentLatencyController = new AbortController();
+        const start = Date.now();
+        try {
+            const baseUrl = getHost() || window.location.origin;
+            const headers = new Headers();
+            if (getCreds()?.token) headers.set('Authorization', `Bearer ${getCreds().token}`);
+
+            const timeoutId = setTimeout(() => currentLatencyController.abort(), 5000);
+            const res = await fetch(baseUrl + '/uptime', { method: 'HEAD', headers, cache: 'no-store', signal: currentLatencyController.signal });
+            clearTimeout(timeoutId);
+
+            if (res.ok || res.status === 401) {
+                if (banner) { banner.style.display = 'none'; banner.classList.remove('active'); }
+            }
+            if (res.status === 401) {
+                store.set('conn.html', `<span class="conn-dot"><span class="conn-dot-circle" style="background:var(--danger)"></span><span>auth</span></span>`);
+                updateLoginDot('var(--warning)', 'reachable');
+                scheduleLatencyCheck(LATENCY_ONLINE_MS);
+                return;
+            }
+            if (!res.ok) throw new Error('non-ok');
+
+            const ms = Date.now() - start;
+            const color = ms < 100 ? 'var(--success)' : ms < 300 ? 'var(--info)' : ms < 1000 ? 'var(--warning)' : 'var(--danger)';
+            store.set('conn.html', `<span class="conn-dot"><span class="conn-dot-circle" style="background:${color}"></span><span>${ms}ms</span></span>`);
+            updateLoginDot('var(--success)', `${ms}ms`);
+            scheduleLatencyCheck(LATENCY_ONLINE_MS);
+        } catch (e) {
+            if (e.name !== 'AbortError') {
+                store.set('conn.html', `<span class="conn-dot"><span class="conn-dot-circle" style="background:var(--danger)"></span><span>offline</span></span>`);
+                updateLoginDot('var(--danger)', 'offline');
+                if (banner) { banner.style.display = 'block'; banner.classList.add('active'); }
+                scheduleLatencyCheck(LATENCY_OFFLINE_MS);
+            } else {
+                scheduleLatencyCheck(LATENCY_ONLINE_MS);
+            }
+        }
+    }
+
+    window.addEventListener('offline', () => {
+        document.getElementById('offlineBanner').style.display = 'block';
+        store.set('conn.html', `<span class="conn-dot"><span class="conn-dot-circle" style="background:var(--danger)"></span><span>offline</span></span>`);
+        scheduleLatencyCheck(LATENCY_OFFLINE_MS);
+    });
+    window.addEventListener('online', checkLatency);
+
+    function updateLoginDot(color, label) {
+        const circle = document.getElementById('loginServerDotCircle');
+        const lbl    = document.getElementById('loginServerDotLabel');
+        if (circle) circle.style.background = color;
+        if (lbl)    lbl.textContent = label;
+    }
+
+    function startLatencyChecks() {
+        if (window._latencyStarted) return;
+        window._latencyStarted = true;
+        checkLatency();
+    }
+    startLatencyChecks();
+
+    // THE PERFORMANCE MODAL IMPLEMENTATION
+    function _initPerfCharts() {
+        _perfCharts = {
+            reqs:     chart.line('#perfChartReqs',   [],[], { unit: '/s', color: 'var(--accent)' }),
+            p99:      chart.line('#perfChartP99',    [],[], { unit: 'ms', color: 'var(--warning)' }),
+            errors:   chart.line('#perfChartErrors',[],[], { unit: '%',  color: 'var(--danger)',  maxY: 100 }),
+            backends: chart.line('#perfChartBE',     [],[], { unit: '',   color: 'var(--success)', isInt: true }),
+        };
+    }
+
+    async function loadPerfData(hostname, range) {
+        if (!_perfCharts) _initPerfCharts();
+        const skel = '<div class="perf-skeleton"></div>';['perfChartReqs','perfChartP99','perfChartErrors','perfChartBE'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = skel;
+        });
+
+        const data = await fetchTelemetry(getCreds(), hostname, range);
+        if (!data?.samples?.length) {['perfChartReqs','perfChartP99','perfChartErrors','perfChartBE'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-mute);font-size:11px;">No history data yet</div>';
+        });
+            return;
+        }
+        const s = data.samples;
+        _perfCharts.reqs.update(s.map(x => x.requests_sec),      s.map(x => x.ts));
+        _perfCharts.p99.update(s.map(x => x.p99_ms),             s.map(x => x.ts));
+        _perfCharts.errors.update(s.map(x => x.error_rate),      s.map(x => x.ts));
+        _perfCharts.backends.update(s.map(x => x.active_backends), s.map(x => x.ts));
+
+        if (s.length >= 2) {
+            const fmt = ts => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            document.getElementById('perfDataRange').textContent = `${fmt(s[0].ts)} – ${fmt(s[s.length - 1].ts)} · ${s.length} points`;
+        }
+    }
+
+    listen('perf:open', async ({ hostname }) => {
+        query('#perfModalTitle').textContent = 'Performance History';
+        query('#perfModalHost').textContent  = hostname;
+        query('#perfDataRange').textContent  = '';
+        modal.open('perfModal');
+        window._perfHost = hostname;
+        await loadPerfData(hostname, query('#perfRangeSelect').value);
+    });
+
+    on('#perfRangeSelect', 'change', async (e, el) => { if (window._perfHost) await loadPerfData(window._perfHost, el.value); });
+
+    listen('metrics:updated', () => {
+        const certs = store.get('certificates') ||[];
+        store.set('certs.active', certs.filter(c => c.daysLeft > 0).length);
+        store.set('certs.expiring', certs.filter(c => c.daysLeft > 0 && c.daysLeft < 7).length);
+    });
+
+    // RESTORED SESSION EXPIRY
+    listen('auth:expiring', ({ expiresAt }) => {
+        const warningEl = document.getElementById('sessionWarning');
+        const timeEl = document.getElementById('sessionExpiryTime');
+        if (warningEl) warningEl.classList.add('active');
+
+        const tick = () => {
+            const left = expiresAt - Date.now();
+            if (left <= 0) { warningEl?.classList.remove('active'); return; }
+            if (timeEl) timeEl.innerText = `${Math.floor(left / 60000)}m ${Math.floor((left % 60000) / 1000)}s`;
+            requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+    });
+
+    on('#refreshSessionBtn', 'click', async () => {
+        document.getElementById('sessionWarning')?.classList.remove('active');
+        clearCredentials(); await auth.session.end();
+        store.set('auth.isLoggedIn', false); window.location.reload();
+    });
+    on('#dismissSessionBtn', 'click', () => document.getElementById('sessionWarning')?.classList.remove('active'));
+    listen('auth:expired', () => {
+        store.set('auth.isLoggedIn', false); clearCredentials();
+        window._isPolling = window._latencyStarted = false;
+        document.getElementById('sessionWarning')?.classList.remove('active');
+        modal.open('loginModal');
+    });
+</script>

@@ -1,0 +1,71 @@
+<div class="page active">
+    <div class="config-header">
+        <h2>Cluster Management</h2>
+        <button class="btn primary" id="addClusterRouteBtn">Broadcast Route</button>
+    </div>
+    <div class="config-metrics-grid" id="clusterMetricsGrid"></div>
+    <div class="detail-section">
+        <div class="detail-title">Active Nodes</div>
+        <div class="table-responsive">
+            <table class="simple-table">
+                <thead><tr><th>NODE NAME</th><th>STATUS</th></tr></thead>
+                <tbody id="clusterNodesTable"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+import { component, modal, listen, on } from '../lib/oja.full.esm.js';
+import { store, getCreds }              from '../js/store.js';
+import { fetchUptime, fmtNum }          from '../js/api.js';
+
+// render - populates cluster status from the /uptime cluster block
+function render(clusterStats) {
+    const grid  = document.getElementById('clusterMetricsGrid');
+    const table = document.getElementById('clusterNodesTable');
+    if (!grid || !table) return;
+
+    if (!clusterStats?.enabled) {
+        grid.innerHTML  = '<div class="empty-state" style="grid-column:1/-1;"><span>Cluster mode is disabled</span><span>Enable gossip in agbero.hcl to use clustering</span></div>';
+        table.innerHTML = '';
+        return;
+    }
+
+    const members = clusterStats.members || [];
+    const metrics = clusterStats.metrics || {};
+
+    grid.innerHTML = `
+    <div class="metric-card"><div class="metric-label">Active Nodes</div><div class="metric-value">${members.length}</div></div>
+    <div class="metric-card"><div class="metric-label">Updates Received</div><div class="metric-value">${fmtNum(metrics.updates_received || 0)}</div></div>
+    <div class="metric-card"><div class="metric-label">Total Deletes</div><div class="metric-value">${fmtNum(metrics.deletes || 0)}</div></div>
+    <div class="metric-card"><div class="metric-label">Ignored Updates</div><div class="metric-value">${fmtNum(metrics.updates_ignored || 0)}</div></div>`;
+
+    table.innerHTML = members.length
+        ? members.map(m => `<tr><td class="mono">${m}</td><td><span class="badge success">Active</span></td></tr>`).join('')
+        : `<tr><td colspan="2"><div class="empty-state">No active nodes</div></td></tr>`;
+}
+
+// refresh - pulls latest cluster state from /uptime
+async function refresh() {
+    const data = await fetchUptime(getCreds());
+    render(data?.cluster);
+}
+
+// cluster:updated is emitted by metrics.js every poll cycle
+const unsub = listen('cluster:updated', ({ clusterStats }) => {
+    render(clusterStats);
+});
+
+component.onMount(() => {
+    // Paint immediately from last known state if available
+    const cached = store.get('hostsData');
+    if (cached) render(cached.cluster);
+
+    on('#addClusterRouteBtn', 'click', () => modal.open('clusterRouteModal'));
+    refresh();
+    component.interval(refresh, 10000);
+});
+
+component.onUnmount(() => unsub());
+</script>

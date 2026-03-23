@@ -1,0 +1,379 @@
+<div class="page active">
+    <div class="config-header">
+        <h2 id="configPageTitle">Configuration Overview</h2>
+        <div class="config-actions">
+            <button class="btn small config-refresh" id="configRefreshBtn">⟳ Refresh</button>
+            <button class="btn small config-diff" id="configDiffBtn">↔️ Diff</button>
+        </div>
+    </div>
+
+    <div class="config-section">
+        <h3>🆔 Server Identity</h3>
+        <div class="config-details-grid">
+            <div class="config-detail-item"><div class="config-detail-label">Node ID</div><div class="config-detail-value" id="configNodeId">—</div></div>
+            <div class="config-detail-item"><div class="config-detail-label">Hostname</div><div class="config-detail-value" id="configHostname">—</div></div>
+            <div class="config-detail-item"><div class="config-detail-label">PID</div><div class="config-detail-value" id="configPid">—</div></div>
+            <div class="config-detail-item"><div class="config-detail-label">Start Time</div><div class="config-detail-value" id="configStartTime">—</div></div>
+        </div>
+    </div>
+
+    <div class="config-metrics-grid">
+        <div class="metric-card"><div class="metric-label">HTTP Port</div><div class="metric-value" id="configHttpPort">—</div></div>
+        <div class="metric-card"><div class="metric-label">HTTPS Port</div><div class="metric-value" id="configHttpsPort">—</div></div>
+        <div class="metric-card"><div class="metric-label">Version</div><div class="metric-value" id="configVersion">—</div></div>
+        <div class="metric-card"><div class="metric-label">Build</div><div class="metric-value" id="configBuild">—</div></div>
+        <div class="metric-card"><div class="metric-label">Hosts</div><div class="metric-value" id="configHostCount">0</div></div>
+        <div class="metric-card"><div class="metric-label">Routes</div><div class="metric-value" id="configRouteCount">0</div></div>
+        <div class="metric-card"><div class="metric-label">TLS Domains</div><div class="metric-value" id="configTlsCount">0</div></div>
+        <div class="metric-card"><div class="metric-label">Log Level</div><div class="metric-value" id="configLogLevel">—</div></div>
+    </div>
+
+    <div class="config-section">
+        <h3>⚙️ Global Settings</h3>
+        <div class="config-details-grid" id="configGlobalDetails"></div>
+    </div>
+
+    <div class="config-section">
+        <h3>🔐 TLS Certificates Summary</h3>
+        <div class="config-details-grid" id="configTlsSummary"></div>
+        <div class="config-note" id="configTlsNote"></div>
+    </div>
+
+    <div class="config-section">
+        <h3>⏱️ Runtime Configuration</h3>
+        <div class="config-details-grid" id="configRuntimeDetails"></div>
+    </div>
+
+    <div class="config-section">
+        <h3>🚩 Enabled Features</h3>
+        <div class="feature-grid" id="configFeatures"></div>
+    </div>
+
+    <div class="config-section" id="configGitSection" style="display:none;">
+        <h3>🐙 Git Deployments</h3>
+        <div class="config-details-grid" id="configGitDetails"></div>
+    </div>
+
+    <div class="config-section">
+        <h3>📊 Hosts Summary</h3>
+        <div class="table-responsive">
+            <table class="config-hosts-table">
+                <thead><tr><th>Host</th><th>Routes</th><th>Backends</th><th>TLS</th><th>Domains</th></tr></thead>
+                <tbody id="configHostsBody"></tbody>
+            </table>
+        </div>
+        <div id="configHostsPager"></div>
+    </div>
+
+    <div class="config-section">
+        <div class="config-header" style="margin-bottom:10px;">
+            <h3 style="margin:0;">📄 Raw Configuration</h3>
+            <div class="config-actions">
+                <button class="btn small config-copy" data-action="copy-config">📋 Copy</button>
+                <button class="btn small config-expand" data-action="expand-config">↕️ Expand</button>
+            </div>
+        </div>
+        <div class="code-box" id="configContent" style="max-height:300px;"></div>
+    </div>
+
+    <div class="config-section" id="configDiffSection" style="display:none;">
+        <h3>↔️ Configuration Changes</h3>
+        <div class="code-box diff-box" id="configDiff"></div>
+    </div>
+</div>
+
+<script type="module">
+    import { on, ui, clipboard, notify, query, queryAll, pagination } from '../lib/oja.full.esm.js';
+    import { store, getCreds } from '../js/store.js';
+    import { fetchConfig, fetchUptime } from '../js/api.js';
+
+    let _prevConfig = null;
+    let _currConfig = null;
+    let _allHosts   = {};
+
+    // Pagination instance for Hosts Summary (pageSize=10)
+    const _hostsPg = pagination({
+        pageSize: 10,
+        onPageChange: () => renderHostsSummary(_allHosts),
+    });
+    _hostsPg.mount(query('#configHostsPager'));
+
+    const set = (id, v) => { const e = query('#' + id); if (e) e.innerText = v ?? '—'; };
+
+    function formatBytes(b) {
+        if (!b) return '0 B';
+        const k = 1024, s = ['B','KB','MB','GB','TB'];
+        const i = Math.floor(Math.log(b) / Math.log(k));
+        return parseFloat((b / Math.pow(k, i)).toFixed(1)) + ' ' + s[i];
+    }
+
+    function fmtNum(n) {
+        if (!n) return '0';
+        if (n >= 1000000) return (n/1000000).toFixed(1)+'M';
+        if (n >= 1000) return (n/1000).toFixed(1)+'k';
+        return String(n);
+    }
+
+    function formatUptime(val) {
+        if (!val) return '—';
+        // /uptime returns uptime as a Go duration string e.g. "11s", "2m30s", "1h5m2s"
+        if (typeof val === 'string') return val;
+        // fallback: integer seconds
+        const seconds = parseInt(val, 10);
+        if (isNaN(seconds)) return String(val);
+        const d = Math.floor(seconds / 86400);
+        const h = Math.floor((seconds % 86400) / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        return [d > 0 && `${d}d`, h > 0 && `${h}h`, m > 0 && `${m}m`].filter(Boolean).join(' ') || '<1m';
+    }
+
+    function countBackends(host) {
+        let n = 0;
+        (host.routes ||[]).forEach(r => n += r.backends?.servers?.length || 0);
+        (host.proxies ||[]).forEach(p => n += p.backends?.length || 0);
+        return n;
+    }
+
+    function getRouteCount(hosts) {
+        let n = 0;
+        Object.values(hosts || {}).forEach(h => { n += (h.routes?.length || 0) + (h.proxies?.length || 0); });
+        return n;
+    }
+
+    function getTLSCount(hosts) {
+        let n = 0;
+        Object.values(hosts || {}).forEach(h => { if (h.tls?.mode && h.tls.mode !== 'none') n++; });
+        return n;
+    }
+
+    function renderConfigMetrics(config, uptime) {
+        const g = config.global || {};
+        const sys = uptime?.system || {};
+        const hosts = config.hosts || {};
+
+        set('configHttpPort', g.bind?.http?.[0]?.replace(':', '') || '80');
+        set('configHttpsPort', g.bind?.https?.[0]?.replace(':', '') || '443');
+        set('configVersion', 'v' + (g.version || '?'));
+        set('configBuild', g.build || 'dev');
+        set('configLogLevel', (g.logging?.level || 'info').toUpperCase());
+        set('configHostCount', fmtNum(Object.keys(hosts).length));
+        set('configRouteCount', fmtNum(getRouteCount(hosts)));
+        set('configTlsCount', fmtNum(getTLSCount(hosts)));
+        set('configNodeId', sys.node_id || g.node_id || 'standalone');
+        set('configHostname', sys.hostname || window.location.hostname);
+        set('configPid', sys.pid || '—');
+        set('configStartTime', sys.start_time ? new Date(sys.start_time).toLocaleString() : '—');
+
+        const titleEl = query('#configPageTitle');
+        if (titleEl) titleEl.innerHTML = `Configuration Overview <span style="font-size:14px;color:var(--text-mute);margin-left:10px;">v${g.version || '?'} (${g.build || 'dev'})</span>`;
+    }
+
+    function renderGlobalSettings(g) {
+        const el = query('#configGlobalDetails');
+        if (!el || !g) return;
+        const trusted = g.security?.trusted_proxies || [];
+        const settings =[
+            { label: 'Environment', value: g.development ? 'development' : 'production' },
+            { label: 'Admin Email', value: g.lets_encrypt?.email || '—' },
+            { label: 'Max Header Size', value: g.general?.max_header_bytes ? formatBytes(g.general.max_header_bytes) : '—' },
+            { label: 'Trusted Proxies', value: trusted.length > 0 ? trusted.length + ' configured' : 'none' },
+            { label: 'Read Timeout', value: g.timeouts?.read || '—' },
+            { label: 'Write Timeout', value: g.timeouts?.write || '—' },
+            { label: 'Idle Timeout', value: g.timeouts?.idle || '—' },
+        ];
+        el.innerHTML = settings.map(s => `<div class="config-detail-item"><div class="config-detail-label">${s.label}</div><div class="config-detail-value">${s.value}</div></div>`).join('');
+    }
+
+    function renderTlsSummary(certificates, config) {
+        const el = query('#configTlsSummary');
+        if (!el) return;
+        const total = certificates.length;
+        const valid = certificates.filter(c => c.daysLeft > 0).length;
+        const expiring = certificates.filter(c => c.daysLeft > 0 && c.daysLeft < 7).length;
+        const expired = certificates.filter(c => c.daysLeft <= 0).length;
+
+        el.innerHTML = [
+            ['Total Certificates', total],['Valid', `<span class="badge success">${valid}</span>`],['Expiring Soon', `<span class="badge warning">${expiring}</span>`],
+            ['Expired', `<span class="badge error">${expired}</span>`],
+        ].map(([l, v]) => `<div class="config-detail-item"><div class="config-detail-label">${l}</div><div class="config-detail-value">${v}</div></div>`).join('');
+
+        const noteEl = query('#configTlsNote');
+        if (noteEl && config.global?.lets_encrypt) {
+            noteEl.innerHTML = `<span class="config-note-text">🔒 Auto-TLS: ${config.global.lets_encrypt.email || 'No email'} | Staging: ${config.global.lets_encrypt.staging ? 'Yes' : 'No'}</span>`;
+        }
+    }
+
+    function renderRuntimeSettings(uptime) {
+        const el = query('#configRuntimeDetails');
+        if (!el || !uptime?.system) return;
+        const sys = uptime.system;
+        el.innerHTML = [
+            ['PID',          sys.pid        || '—'],
+            ['Uptime',       formatUptime(sys.uptime)],
+            ['Start Time',   sys.start_time ? new Date(sys.start_time).toLocaleString() : '—'],
+            ['Goroutines',   sys.num_goroutine || 0],
+            ['CPU Cores',    sys.num_cpu    || '—'],
+            ['Memory RSS',   formatBytes(sys.mem_rss   || 0)],
+            ['Memory Alloc', formatBytes(sys.mem_alloc || 0)],
+        ].map(([l, v]) =>
+            `<div class="config-detail-item">` +
+            `<div class="config-detail-label">${l}</div>` +
+            `<div class="config-detail-value">${v}</div>` +
+            `</div>`
+        ).join('');
+    }
+
+    function renderFeatureFlags(config) {
+        const el = query('#configFeatures');
+        if (!el) return;
+        const features =[];
+        if (config.global?.development) features.push({ name: 'Development Mode', icon: '🔧' });
+        if (config.global?.lets_encrypt?.enabled === 'on') features.push({ name: 'Auto TLS', icon: '🔐' });
+        if (config.cluster?.enabled) features.push({ name: 'Clustering', icon: '🌐' });
+        if (config.global?.security?.trusted_proxies?.length) features.push({ name: 'Trusted Proxies', icon: '🛡️' });
+
+        let hasWasm = false, hasRL = false, hasAuth = false, hasComp = false;
+        Object.values(config.hosts || {}).forEach(host => {
+            (host.routes ||[]).forEach(r => {
+                if (r.wasm?.enabled === 'on') hasWasm = true;
+                if (r.rate_limit?.enabled === 'on') hasRL = true;
+                if (r.basic_auth?.enabled === 'on' || r.jwt_auth?.enabled === 'on') hasAuth = true;
+                if (r.compression_config?.enabled === 'on') hasComp = true;
+            });
+        });
+
+        if (hasWasm) features.push({ name: 'WASM Filters', icon: '⚡' });
+        if (hasRL) features.push({ name: 'Rate Limiting', icon: '⏱️' });
+        if (hasAuth) features.push({ name: 'Authentication', icon: '🔑' });
+        if (hasComp) features.push({ name: 'Compression', icon: '🗜️' });
+
+        if (!features.length) { el.innerHTML = '<div class="empty-state">No special features enabled</div>'; return; }
+        el.innerHTML = features.map(f => `<div class="feature-item"><span class="feature-icon">${f.icon}</span><span class="feature-name">${f.name}</span><span class="feature-status success">✓</span></div>`).join('');
+    }
+
+    function renderHostsSummary(hosts) {
+        _allHosts = hosts || {};
+        const tbody = query('#configHostsBody');
+        if (!tbody) return;
+        const entries = Object.entries(_allHosts);
+        if (!entries.length) {
+            tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state">No hosts configured</div></td></tr>';
+            _hostsPg.updateTotal(0);
+            return;
+        }
+        _hostsPg.updateTotal(entries.length);
+        const page = _hostsPg.slice(entries);
+        tbody.innerHTML = page.map(([hostname, host]) => {
+            const routeCount   = (host.routes?.length || 0) + (host.proxies?.length || 0);
+            const backendCount = countBackends(host);
+            const tlsMode = host.tls?.mode || 'none';
+            const tlsCls  = tlsMode === 'none' ? 'error' : (tlsMode.includes('local') ? 'warning' : 'success');
+            const tlsTxt  = tlsMode === 'none' ? 'No TLS' : (tlsMode.includes('local') ? 'Local' : 'Auto');
+            const domains = (host.domains ||[]).slice(0, 2).join(', ') + (host.domains?.length > 2 ? '…' : '');
+            return `<tr><td class="mono">${hostname}</td><td>${routeCount}</td><td>${backendCount}</td><td><span class="badge ${tlsCls}">${tlsTxt}</span></td><td>${domains}</td></tr>`;
+        }).join('');
+    }
+
+    function renderGitSection(gitStats) {
+        const section = query('#configGitSection');
+        const details = query('#configGitDetails');
+        if (!section || !details) return;
+        const entries = Object.entries(gitStats || {});
+        if (!entries.length) { section.style.display = 'none'; return; }
+        section.style.display = '';
+        details.innerHTML = entries.map(([id, gs]) => {
+            const cls = gs.state === 'healthy' ? 'success' : gs.state === 'unavailable' ? 'warning' : 'error';
+            const commit = gs.commit ? gs.commit.substring(0, 8) : '—';
+            return `<div class="config-detail-item"><div class="config-detail-label">${id}</div><div class="config-detail-value"><span class="badge ${cls}">${gs.state || 'unknown'}</span><span class="mono" style="font-size:10px;margin-left:4px;">${commit}</span><span style="color:var(--text-mute);font-size:10px;"> · ${gs.deployments || 0} deploys</span></div></div>`;
+        }).join('');
+    }
+
+    function renderRawConfig(config) {
+        const el = query('#configContent');
+        if (el && window.app?.syntaxHighlight) {
+            el.innerHTML = window.app.syntaxHighlight(config);
+        } else if (el) {
+            el.innerText = JSON.stringify(config, null, 2);
+        }
+    }
+
+    function renderAll(config, uptime) {
+        if (!config || config.__offline) return;
+        _prevConfig = _currConfig;
+        _currConfig = config;
+
+        renderConfigMetrics(config, uptime);
+        renderGlobalSettings(config.global);
+        renderTlsSummary(store.get('certificates') ||[], config);
+        renderRuntimeSettings(uptime);
+        renderFeatureFlags(config);
+        renderHostsSummary(config.hosts);
+        renderGitSection(uptime?.git || store.get('gitStats') || {});
+        renderRawConfig(config);
+    }
+
+    async function refresh() {
+        const btn = query('#configRefreshBtn');
+        ui.btn.loading(btn, '⟳ Loading…');
+        const [config, uptime] = await Promise.all([fetchConfig(getCreds()), fetchUptime(getCreds())]);
+        ui.btn.reset(btn);
+        if (config && !config.__offline && !config.__unauthorized) {
+            store.set('lastConfig', config);
+            store.set('lastUptime', uptime);
+            if (uptime?.git) store.set('gitStats', uptime.git);
+        }
+        renderAll(config, uptime);
+    }
+
+    const cachedConfig = store.get('lastConfig');
+    const cachedUptime = store.get('lastUptime');
+    if (cachedConfig) renderAll(cachedConfig, cachedUptime);
+    else refresh();
+
+    on('#configRefreshBtn', 'click', refresh);
+
+    on('.config-copy', 'click', (e, btn) => {
+        const text = query('#configContent')?.innerText || '';
+        clipboard.write(text)
+            .then(() => notify.show('Copied', 'success'))
+            .catch(() => notify.show('Copy failed', 'error'));
+    });
+
+    on('.config-expand', 'click', (e, btn) => {
+        const box = query('#configContent');
+        if (!box) return;
+        const expanded = box.style.maxHeight === 'none';
+        box.style.maxHeight = expanded ? '300px' : 'none';
+        btn.textContent = expanded ? '↕️ Expand' : '↕️ Collapse';
+    });
+
+    on('#configDiffBtn', 'click', () => {
+        const section = query('#configDiffSection');
+        const diffEl = query('#configDiff');
+        if (!section || !diffEl) return;
+
+        if (section.style.display !== 'none') { section.style.display = 'none'; return; }
+
+        if (!_prevConfig || !_currConfig) {
+            diffEl.textContent = 'Refresh once more to compare with previous version.';
+        } else {
+            const oldStr = JSON.stringify(_prevConfig, null, 2).split('\n');
+            const newStr = JSON.stringify(_currConfig, null, 2).split('\n');
+            if (oldStr.join('') === newStr.join('')) {
+                diffEl.textContent = 'No changes detected.';
+            } else {
+                let out = '';
+                for (let i = 0; i < Math.max(oldStr.length, newStr.length); i++) {
+                    if (oldStr[i] !== newStr[i]) {
+                        if (oldStr[i]) out += `- ${oldStr[i]}\n`;
+                        if (newStr[i]) out += `+ ${newStr[i]}\n`;
+                    } else {
+                        out += `  ${oldStr[i]}\n`;
+                    }
+                }
+                diffEl.textContent = out;
+            }
+        }
+        section.style.display = '';
+    });
+</script>

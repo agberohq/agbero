@@ -93,14 +93,7 @@ class RouteGraph {
                 .on("end",   (event, d) => this.dragended(event, d)))
             .on("click", (event, d) => {
                 if (event.defaultPrevented) return;
-                if (d.type === "route" && d.meta) {
-                    window.app.openRouteDrawer(d.meta.hostname, d.meta.routeIdx, d.meta.routeType);
-                } else if (d.type === "backend" && d.meta) {
-                    window.app.openBackendDrawer(d.meta.hostname, d.meta.routeIdx, d.meta.backendIdx, d.meta.routeType);
-                } else if (d.type === "host" && d.meta) {
-                    // CHANGED: Open the performance modal instead of redirecting to hosts page
-                    window.app.openPerformanceModal(d.meta.hostname);
-                }
+                if (typeof this._onClick === 'function') this._onClick(d);
             })
             .on("mouseenter", function(event, d) {
                 if (d.type === "root") return;

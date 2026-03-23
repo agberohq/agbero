@@ -1,0 +1,112 @@
+<div class="page active">
+    <div class="flex-right">
+        <button class="btn primary" id="addRuleBtn">Block IP</button>
+    </div>
+    <div class="table-responsive">
+        <table class="simple-table">
+            <thead>
+            <tr>
+                <th>IP / CIDR</th>
+                <th>REASON</th>
+                <th class="hide-mobile">SCOPE</th>
+                <th class="hide-mobile">CREATED</th>
+                <th>ACTION</th>
+            </tr>
+            </thead>
+            <tbody id="firewallTable"></tbody>
+        </table>
+    </div>
+</div>
+
+<script type="module">
+    import { component, modal, listen, on, notify, query } from '../lib/oja.full.esm.js';
+    import { getCreds } from '../js/store.js';
+    import { fetchFirewall, deleteFirewallRule } from '../js/api.js';
+
+    // ── Row builders — named functions, not anonymous HTML strings ─────────────
+
+    function emptyRow(colspan, html) {
+        return `<tr><td colspan="${colspan}" style="padding:20px;">
+            <div class="empty-state">${html}</div>
+        </td></tr>`;
+    }
+
+    function ruleRow(r) {
+        const created = r.created_at ? new Date(r.created_at) : null;
+        const dateStr  = created && !isNaN(created) ? created.toLocaleDateString() : '—';
+        return `<tr>
+            <td class="mono">${r.ip || '0.0.0.0'}</td>
+            <td>${r.reason || '—'}</td>
+            <td class="hide-mobile">${r.host || '*'} / ${r.path || '*'}</td>
+            <td class="hide-mobile">${dateStr}</td>
+            <td>
+                <button class="btn small error"
+                        data-action="unblock-ip"
+                        data-ip="${r.ip || ''}">Unblock</button>
+            </td>
+        </tr>`;
+    }
+
+    // ── Render ─────────────────────────────────────────────────────────────────
+
+    function render(data) {
+        const tbody = query('#firewallTable');
+        if (!tbody) return;
+
+        if (!data) {
+            tbody.innerHTML = emptyRow(5, '⚠️ Firewall unavailable');
+            return;
+        }
+        if (data.enabled === false) {
+            tbody.innerHTML = emptyRow(5,
+                '<span>🛡️ Firewall disabled</span><span>Enable in agbero.hcl to block IPs</span>'
+            );
+            return;
+        }
+
+        const rules = data.rules || [];
+        if (!rules.length) {
+            tbody.innerHTML = emptyRow(5,
+                '<span>✅ No blocked IPs</span><span>All traffic is allowed</span>'
+            );
+            return;
+        }
+
+        tbody.innerHTML = rules.map(ruleRow).join('');
+    }
+
+    async function refresh() {
+        render(await fetchFirewall(getCreds()));
+    }
+
+    // ── Events — registered at top level, not inside onMount ──────────────────
+    // on() uses document-level delegation — elements don't need to exist yet.
+
+    on('#addRuleBtn', 'click', () => modal.open('ruleModal'));
+
+    on('[data-action="unblock-ip"]', 'click', async (e, btn) => {
+        const ip = btn.dataset.ip;
+        if (!ip) return;
+        const ok = await modal.confirm(`Unblock ${ip}?`);
+        if (!ok) return;
+        const orig = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Unblocking…';
+        try {
+            await deleteFirewallRule(getCreds(), ip);
+            notify.show(`${ip} unblocked`, 'success');
+            refresh();
+        } catch {
+            btn.disabled = false;
+            btn.textContent = orig;
+            notify.show('Failed to unblock IP', 'error');
+        }
+    });
+
+    const unsubRefresh = listen('firewall:refresh', refresh);
+
+    // ── Boot ───────────────────────────────────────────────────────────────────
+    refresh();
+
+    component.onUnmount(() => unsubRefresh());
+</script>

@@ -38,5 +38,20 @@ jobs:
       - name: Build macOS arm64
         run: GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -v ./...
 
-      - name: Test
+      - name: Test Linux
+        run: go test -v ./...
+
+  # Add this job for Windows runtime tests
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          check-latest: true
+
+      - name: Test Windows
         run: go test -v ./...
