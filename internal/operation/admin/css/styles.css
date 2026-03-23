@@ -1395,3 +1395,17 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
     padding: 0 2px; line-height: 1; flex-shrink: 0;
 }
 .oja-toast-close:hover { opacity: 1; }
+
+.btn-icon-save {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 4px 8px;
+    transition: border-color 0.15s, background 0.15s;
+    flex-shrink: 0;
+}
+.btn-icon-save:hover { border-color: var(--accent); background: rgba(0,102,255,0.06); }
