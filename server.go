@@ -191,12 +191,21 @@ func (s *Server) Start(configPath string) error {
 	cookMgr, err := cook.NewManager(cookCfg)
 	if err == nil {
 		s.cookManager = cookMgr
+		seenGitConfigs := make(map[string]alaye.Git)
 		for _, hcfg := range hosts {
 			for _, r := range hcfg.Routes {
 				if r.Web.Git.Enabled.Active() {
-					err = s.cookManager.Register(r.Web.Git.ID, r.Web.Git)
+					gitID := r.Web.Git.ID
+					if existing, exists := seenGitConfigs[gitID]; exists {
+						if existing.URL != r.Web.Git.URL || existing.Branch != r.Web.Git.Branch || existing.WorkDir != r.Web.Git.WorkDir {
+							s.logger.Fields("id", gitID).Warn("server: Git ID collision with differing configurations detected, skipping duplicate")
+						}
+						continue
+					}
+					seenGitConfigs[gitID] = r.Web.Git
+					err = s.cookManager.Register(gitID, r.Web.Git)
 					if err != nil {
-						s.logger.Error("failed to register cook", "id", r.Web.Git.ID, "err", err)
+						s.logger.Error("failed to register cook", "id", gitID, "err", err)
 					}
 				}
 			}
@@ -330,8 +339,6 @@ func (s *Server) Start(configPath string) error {
 	return nil
 }
 
-// Reload - applies new configurations to the active server without dropping traffic
-// Identifies host or global differences and updates local listeners
 func (s *Server) Reload() {
 	s.mu.RLock()
 	configPath := s.configPath
@@ -461,12 +468,21 @@ func (s *Server) Reload() {
 
 	if s.cookManager != nil {
 		validGitIDs := make(map[string]bool)
+		seenGitConfigs := make(map[string]alaye.Git)
 		for _, hcfg := range hosts {
 			for _, r := range hcfg.Routes {
 				if r.Web.Git.Enabled.Active() {
-					validGitIDs[r.Web.Git.ID] = true
-					if err := s.cookManager.Register(r.Web.Git.ID, r.Web.Git); err != nil {
-						s.logger.Error("failed to register/update cook", "id", r.Web.Git.ID, "err", err)
+					gitID := r.Web.Git.ID
+					validGitIDs[gitID] = true
+					if existing, exists := seenGitConfigs[gitID]; exists {
+						if existing.URL != r.Web.Git.URL || existing.Branch != r.Web.Git.Branch || existing.WorkDir != r.Web.Git.WorkDir {
+							s.logger.Fields("id", gitID).Warn("server: Git ID collision with differing configurations detected, skipping duplicate")
+						}
+						continue
+					}
+					seenGitConfigs[gitID] = r.Web.Git
+					if err := s.cookManager.Register(gitID, r.Web.Git); err != nil {
+						s.logger.Error("failed to register/update cook", "id", gitID, "err", err)
 					}
 				}
 			}
