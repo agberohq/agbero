@@ -16,14 +16,24 @@ type Cert struct {
 	p *Helper
 }
 
-// Install installs the local CA root, then prints an NSS hint when certutil is absent.
-// Firefox and Chrome require certutil to trust the CA; we surface the install command per OS.
 func (c *Cert) Install(configPath string, force bool) {
 	loc := c.newLocal(configPath)
-	if tlss.IsCARootInstalled(loc.CertDir.Path()) && !force {
-		c.p.Logger.Info("CA root is already installed. Use --force to reinstall.")
+
+	if force {
+		c.p.Logger.Info("Force flag detected. Removing existing CA and regenerating...")
+		_ = loc.UninstallCARoot() // Attempt to uninstall from trust stores
+		loc.RemoveCA()            // Remove CA files
+	} else if tlss.IsCARootInstalled(loc.CertDir.Path()) {
+		c.p.Logger.Info("CA root is already installed. Synchronizing with system trust stores...")
+		if err := loc.InstallCARootIfNeeded(); err != nil {
+			c.p.Logger.Fatal("failed to synchronize CA: ", err)
+		}
+		c.p.Logger.Info("CA synchronization complete.")
+		c.printNSSHint(loc)
 		return
 	}
+
+	// If not forced and not already installed, or if forced and regenerated, proceed with full install
 	if err := loc.InstallCARootIfNeeded(); err != nil {
 		c.p.Logger.Fatal("failed to install CA: ", err)
 	}
@@ -31,8 +41,6 @@ func (c *Cert) Install(configPath string, force bool) {
 	c.printNSSHint(loc)
 }
 
-// printNSSHint warns the user when NSS certutil is missing and provides
-// the OS-specific install command so Firefox/Chrome trust store is updated.
 func (c *Cert) printNSSHint(loc *tlss.Local) {
 	if loc.HasCertutil() {
 		return
@@ -95,9 +103,6 @@ func (c *Cert) List(configPath string) {
 		return
 	}
 
-	// Parse filenames into rows.
-	// Patterns: {domain}-{port}-cert.pem, {domain}-{port}-key.pem,
-	//           ca-cert.pem, ca-key.pem, internal_auth.key, etc.
 	var rows [][]string
 	for _, name := range certs {
 		domain, kind := parseCertName(name)
@@ -158,7 +163,6 @@ func (c *Cert) newLocal(configPath string) *tlss.Local {
 	return loc
 }
 
-// parseCertName extracts domain and type from a certificate filename.
 func parseCertName(name string) (domain, kind string) {
 	base := strings.TrimSuffix(name, ".pem")
 	base = strings.TrimSuffix(base, ".crt")
