@@ -1,9 +1,11 @@
-// admin.go
 package agbero
 
 import (
+	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,7 +33,7 @@ import (
 
 const (
 	adminTokenTTL    = woos.AdminTokenTTL
-	adminTokenIssuer = "agbero-admin"
+	adminTokenIssuer = woos.AdminTokenIssuer
 )
 
 var dummyHash []byte
@@ -46,6 +48,8 @@ type adminClaims struct {
 	jwt.RegisteredClaims
 }
 
+// startAdminServer binds the admin HTTP server and registers it with the shutdown manager.
+// The server is stored on s.adminSrv so it can be drained gracefully on process exit.
 func (s *Server) startAdminServer() {
 	if s.global.Admin.Enabled.NotActive() || s.global.Admin.Address == "" {
 		return
@@ -56,6 +60,7 @@ func (s *Server) startAdminServer() {
 
 	s.registerAdminHealthEndpoint(mux)
 	s.registerAdminLoginEndpoint(mux)
+	s.registerAdminLogoutEndpoint(mux)
 	s.registerAdminAPI(mux)
 	s.registerAdminProtectedEndpoints(mux, cfg)
 	s.registerPprofEndpoints(mux, cfg)
@@ -65,7 +70,7 @@ func (s *Server) startAdminServer() {
 	adminRL := buildAdminRateLimiter(s.global, ipMgr, s.sharedState)
 	finalHandler := s.wrapAdminMiddleware(mux, adminRL)
 
-	srv := &http.Server{
+	s.adminSrv = &http.Server{
 		Addr:         cfg.Address,
 		Handler:      finalHandler,
 		ReadTimeout:  woos.DefaultAdminReadTimeout,
@@ -73,14 +78,22 @@ func (s *Server) startAdminServer() {
 		IdleTimeout:  woos.DefaultAdminIdleTimeout,
 	}
 
+	if s.shutdown != nil {
+		s.shutdown.RegisterWithContext("AdminServer", func(ctx context.Context) error {
+			return s.adminSrv.Shutdown(ctx)
+		})
+	}
+
 	go func() {
 		s.logger.Fields("bind", cfg.Address).Info("listener admin")
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := s.adminSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.logger.Fields("err", err).Error("admin server failed")
 		}
 	}()
 }
 
+// startPprofServer binds the standalone pprof HTTP server when configured.
+// The server is stored on s.pprofSrv so it can be drained gracefully on process exit.
 func (s *Server) startPprofServer() {
 	if s.global.Admin.Pprof.Enabled.NotActive() || s.global.Admin.Pprof.Bind == "" {
 		return
@@ -103,7 +116,7 @@ func (s *Server) startPprofServer() {
 	mux.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
 	mux.Handle("/debug/pprof/allocs", pprof.Handler("allocs"))
 
-	srv := &http.Server{
+	s.pprofSrv = &http.Server{
 		Addr:         addr,
 		Handler:      mux,
 		ReadTimeout:  woos.DefaultAdminReadTimeout,
@@ -111,9 +124,15 @@ func (s *Server) startPprofServer() {
 		IdleTimeout:  woos.DefaultAdminIdleTimeout,
 	}
 
+	if s.shutdown != nil {
+		s.shutdown.RegisterWithContext("PprofServer", func(ctx context.Context) error {
+			return s.pprofSrv.Shutdown(ctx)
+		})
+	}
+
 	go func() {
 		s.logger.Fields("bind", addr).Warn("pprof listener started — do not expose publicly")
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := s.pprofSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.logger.Fields("err", err).Error("pprof server failed")
 		}
 	}()
@@ -128,6 +147,12 @@ func (s *Server) registerAdminHealthEndpoint(mux *http.ServeMux) {
 
 func (s *Server) registerAdminLoginEndpoint(mux *http.ServeMux) {
 	mux.HandleFunc("/login", s.handleLogin)
+}
+
+// registerAdminLogoutEndpoint exposes POST /logout which revokes the caller's JWT.
+// The JTI is inserted into the in-memory revocation store and auto-expires via jtiLifetime.
+func (s *Server) registerAdminLogoutEndpoint(mux *http.ServeMux) {
+	mux.HandleFunc("/logout", s.handleLogout)
 }
 
 func (s *Server) registerAdminUI(mux *http.ServeMux) {
@@ -152,7 +177,6 @@ func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.A
 	mux.Handle("/config", protect(http.HandlerFunc(s.handleConfigDump)))
 	mux.Handle("/logs", protect(http.HandlerFunc(s.handleLogs)))
 	mux.Handle("/firewall", protect(http.HandlerFunc(s.handleFirewall)))
-
 	mux.Handle("/api/hosts", protect(http.HandlerFunc(s.handleHostsAPI)))
 
 	if s.global.Admin.Telemetry.Enabled.Active() && s.telemetryStore != nil {
@@ -163,6 +187,9 @@ func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.A
 	}
 }
 
+// buildAuthMiddleware constructs the auth chain for protected admin endpoints.
+// JWT issuer is always hardcoded to woos.AdminTokenIssuer regardless of operator config,
+// preventing route-level tokens from being accepted on admin endpoints (SEC-05).
 func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Handler {
 	ipMgr := zulu.NewIPManager(nil)
 	return func(h http.Handler) http.Handler {
@@ -170,7 +197,9 @@ func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Ha
 			h = ipallow.New(cfg.AllowedIPs, s.logger, ipMgr)(h)
 		}
 		if cfg.JWTAuth.Enabled.Active() {
-			return auth.JWT(&cfg.JWTAuth)(h)
+			adminJWT := cfg.JWTAuth
+			adminJWT.Issuer = woos.AdminTokenIssuer
+			return auth.JWT(&adminJWT)(h)
 		}
 		if len(cfg.BasicAuth.Users) > 0 {
 			return auth.Basic(&cfg.BasicAuth, s.logger)(h)
@@ -266,7 +295,6 @@ func (s *Server) handleHostsAPI(w http.ResponseWriter, r *http.Request) {
 		}
 
 		req.Config.Domains = []string{domain}
-
 		woos.DefaultHost(req.Config)
 
 		if err := req.Config.Validate(); err != nil {
@@ -274,15 +302,15 @@ func (s *Server) handleHostsAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		s.hostManager.Set(domain, req.Config)
-		if err := s.hostManager.Save(domain); err != nil {
+		if err := s.hostManager.Create(domain, req.Config); err != nil {
 			s.logger.Fields("domain", domain, "err", err).Error("admin: failed to save host to disk")
 			http.Error(w, "Failed to save configuration to disk", http.StatusInternalServerError)
 			return
 		}
 
-		s.logger.Fields("domain", domain).Info("admin: host created/updated via api")
+		s.hostManager.Set(domain, req.Config)
 
+		s.logger.Fields("domain", domain).Info("admin: host created/updated via api")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok", "message":"Host saved successfully"}`))
@@ -313,7 +341,6 @@ func (s *Server) handleHostsAPI(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.logger.Fields("domain", domain).Info("admin: host deleted via api")
-
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok", "message":"Host deleted successfully"}`))
@@ -368,6 +395,55 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleLogout revokes the JWT carried in the Authorization header by storing its JTI.
+// The revocation entry auto-expires via jtiLifetime so the store never accumulates stale entries.
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	authHeader := r.Header.Get(woos.AuthorizationHeaderKey)
+	if authHeader == "" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
+
+	s.mu.RLock()
+	cfg := s.global.Admin
+	s.mu.RUnlock()
+
+	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (any, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return []byte(cfg.JWTAuth.Secret.String()), nil
+	})
+	if err != nil || !token.Valid {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok {
+		if jti, _ := claims["jti"].(string); jti != "" {
+			exp := adminTokenTTL
+			if expClaim, ok := claims["exp"].(float64); ok {
+				if remaining := time.Until(time.Unix(int64(expClaim), 0)); remaining > 0 {
+					exp = remaining
+				}
+			}
+			s.jtiStore.SetTTL(jti, time.Now().Add(exp), exp)
+			s.jtiLifetime.ScheduleTimed(r.Context(), jti, func(ctx context.Context, id string) {
+				s.jtiStore.Delete(id)
+			}, exp)
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
 func (s *Server) verifyCredentials(users []string, username, password string) bool {
 	var foundHash []byte
 	userFound := 0
@@ -392,12 +468,21 @@ func (s *Server) verifyCredentials(users []string, username, password string) bo
 	return userFound == 1 && bcrypt.CompareHashAndPassword(targetHash, []byte(password)) == nil
 }
 
+// generateAdminToken mints a signed HS256 JWT for admin access.
+// Each token carries a unique JTI so individual tokens can be revoked via POST /logout.
 func (s *Server) generateAdminToken(username, secret string) (string, time.Time, error) {
+	jtiBytes := make([]byte, 16)
+	if _, err := rand.Read(jtiBytes); err != nil {
+		return "", time.Time{}, err
+	}
+	jti := hex.EncodeToString(jtiBytes)
+
 	now := time.Now()
 	expirationTime := now.Add(adminTokenTTL)
 	claims := &adminClaims{
 		User: username,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        jti,
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
@@ -543,12 +628,12 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "File logging disabled", http.StatusNotImplemented)
 		return
 	}
-	limit := 50
+	limit := woos.DefaultAdminLogLimit
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
 			limit = parsed
-			if limit > 1000 {
-				limit = 1000
+			if limit > woos.DefaultAdminLogMaxLimit {
+				limit = woos.DefaultAdminLogMaxLimit
 			}
 		}
 	}

@@ -1,7 +1,3 @@
-// internal/handlers/xserverless/xserverless_test.go
-// ====== DETAILED ======
-// Package xserverless provides unit tests for the serverless binary worker handler.
-// It verifies that processes are spawned and their output is correctly streamed.
 package xserverless
 
 import (

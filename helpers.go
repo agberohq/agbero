@@ -43,6 +43,11 @@ func sanitizeGlobalConfig(g *alaye.Global) *alaye.Global {
 		clone.LetsEncrypt.Email = "***"
 	}
 
+	clone.Storage.HostsDir = "<configured>"
+	clone.Storage.CertsDir = "<configured>"
+	clone.Storage.DataDir = "<configured>"
+	clone.Storage.WorkDir = "<configured>"
+
 	return &clone
 }
 

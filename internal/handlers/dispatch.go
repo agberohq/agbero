@@ -345,10 +345,11 @@ func (m *Manager) logRequest(host string, r *http.Request, start time.Time, stat
 	if m.cfg.Global != nil {
 		ua := r.UserAgent()
 		if m.cfg.Global.Logging.Truncate.Active() {
-			args = append(args, "ua", zulu.Truncate(ua, 50))
+			args = append(args, "ua", zulu.Truncate(ua, woos.LogUATruncateLen))
 		} else {
-			args = append(args, "ua", zulu.Truncate(ua, 50))
+			args = append(args, "ua", ua)
 		}
+
 		if m.cfg.Global.Logging.BotChecker.Active() {
 			args = append(args, "bot", m.botChecker.IsBot(ua))
 		}

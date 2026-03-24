@@ -1,8 +1,15 @@
+// Package woos is the single source of truth for all constants that control
+// server behaviour: timeouts, size limits, cache capacities, retry counts,
+// protocol defaults, and directory names.
+//
+// Rule: no bare integer literal, duration, or string constant may appear in
+// non-woos packages to represent any of the above. Reference a named constant
+// here instead. Local string constants used only as map keys or enum selectors
+// are exempt.
 package woos
 
 import "time"
 
-// General Info
 const (
 	Name         = "agbero"
 	Organization = "aibox Systems"
@@ -10,7 +17,6 @@ const (
 	Description  = "High-performance reverse proxy / load balancer with TLS"
 )
 
-// Hosts & Network
 const (
 	ConfigFormatVersion = 1
 	MaxPortRetries      = 10
@@ -35,7 +41,6 @@ const (
 	TCP       = "tcp"
 )
 
-// Standard Headers
 const (
 	HeaderContentType     = "Content-Type"
 	HeaderContentEnc      = "Content-Encoding"
@@ -68,21 +73,18 @@ const (
 	HeaderKeyAltSvc       = "Alt-Svc"
 )
 
-// MIME Types
 const (
 	MimeJSON = "application/json"
 	MimeHTML = "text/html; charset=utf-8"
 	MimeText = "text/plain; charset=utf-8"
 )
 
-// Internal Context Keys
 const (
 	CtxPort         = "local-port"
 	CtxIP           = "client-ip"
 	CtxOriginalPath = "original-path"
 )
 
-// File & Folder Names
 const (
 	HostDir Folder = "hosts.d"
 	CertDir Folder = "certs.d"
@@ -94,17 +96,14 @@ const (
 	DefaultLogName    = "agbero.log"
 )
 
-// Operating Systems
 const (
 	Darwin  = "darwin"
 	Linux   = "linux"
 	Windows = "windows"
 )
 
-// Users
 const User = "user"
 
-// Server Defaults & Settings
 const (
 	DefaultConfigAddr          = "disabled"
 	DefaultHTTPSPort           = 443
@@ -128,7 +127,6 @@ const (
 	AlpnTls = "acme-tls/1"
 )
 
-// Path & Template Constants
 const (
 	Empty               = ""
 	Slash               = "/"
@@ -143,14 +141,12 @@ const (
 	Straight            = "|"
 )
 
-// Cache
 const (
 	CacheMax         = 10_000
 	CacheMaxBig      = 100_000
 	CacheMaxBodySize = 5 * 1024 * 1024
 )
 
-// Route Segment Kinds
 type Kind uint8
 
 const (
@@ -160,14 +156,12 @@ const (
 	KindCatchAll
 )
 
-// Metrics
 const (
 	HistogramWindow = 60 * time.Second
 	MinUS           = int64(1)
 	MaxUS           = int64(60_000_000)
 )
 
-// Token & Security
 const (
 	BlockPrivateKey = "PRIVATE KEY"
 	DefaultIssuer   = "agbero"
@@ -175,7 +169,6 @@ const (
 	TokenAlg        = "alg"
 )
 
-// Setup / Logging / Buffer
 const (
 	DefaultFilePermFile  = 0o666
 	DefaultFilePermDir   = 0o755
@@ -193,7 +186,6 @@ const (
 	LogLevelError = "error"
 )
 
-// TLS / mkcert
 const (
 	MkCertBinary        = "mkcert"
 	MkCertWindowsExe    = "mkcert.exe"
@@ -224,7 +216,6 @@ const (
 	MkcertNotFoundMsg = "mkcert is required to install the local CA root but was not found. macOS: 'brew install mkcert' then 'mkcert -install'"
 )
 
-// SAN / Certificates / Files
 const (
 	HomeDirPrefix        = "~/"
 	LocalhostWildcardSAN = "*.localhost"
@@ -244,21 +235,18 @@ const (
 	Dot              = "."
 )
 
-// LetsEncrypt
 const (
 	LetsEncryptProdDir    = "https://acme-v02.api.letsencrypt.org/directory"
 	LetsEncryptStagingDir = "https://acme-staging-v02.api.letsencrypt.org/directory"
 	AcmeProfileShortLived = "shortlived"
 )
 
-// woos
 const (
 	DefaultAuthPath = "/.well-known/agbero"
 	URLFormat       = "http://%s:%d%s"
 	URLPrefixFormat = "http://%s:%d"
 )
 
-// gossip
 const (
 	DefaultGossipPort       = 7946
 	DefaultGossipTTL        = 30
@@ -275,7 +263,6 @@ const (
 	LogErr   = "[ERR]"
 )
 
-// backend
 const (
 	DefaultCircuitBreakerThreshold = 5
 	HealthCheckJitterFraction      = 2
@@ -285,7 +272,6 @@ const (
 	DefaultHealthCheckThreshold = 3
 )
 
-// lb
 const (
 	StRoundRobin uint8 = iota
 	StIPHash
@@ -295,7 +281,6 @@ const (
 	StWeightedLeastConn
 )
 
-// tcp
 const (
 	AcceptLoopDeadline = 500 * time.Millisecond
 	PeekBufferSize     = 4096
@@ -331,7 +316,6 @@ const (
 	ETCPath         = "/etc"
 )
 
-// High-throughput Transport configuration
 const (
 	DefaultTransportDialTimeout           = 3 * time.Second
 	DefaultTransportKeepAlive             = 30 * time.Second
@@ -349,7 +333,6 @@ const (
 	DefaultRateMaxEntries = 100_000
 )
 
-// middleware
 const (
 	Realm                  = "Restricted"
 	MaxSizeCache           = 10_000
@@ -363,7 +346,6 @@ const (
 	CacheSetTTL                = 10 * time.Second
 )
 
-// folder
 const (
 	DirPerm         = 0755
 	FilePerm        = 0644
@@ -371,7 +353,6 @@ const (
 	SecurePerm      = 0700
 )
 
-// oauth
 const (
 	SessionCookieName = "agbero_sess"
 	GothSessionCookie = "agbero_oauth_state"
@@ -404,26 +385,29 @@ const (
 	DynamicGzMaxSize    = 10 * 1024 * 1024
 )
 
-const ()
-
 const (
 	LifetimeShards = 32
 )
 
-// server lifecycle — used by server.go and admin.go
 const (
 	DefaultReloadTimeout   = 30 * time.Second
 	DefaultShutdownTimeout = 5 * time.Second
 	DefaultGitPoolTimeout  = 1 * time.Second
 	DefaultGitPoolSize     = 4
 
-	AdminTokenTTL            = 24 * time.Hour
+	// AdminTokenTTL is the lifetime of a JWT issued by the admin login endpoint.
+	// Reduced from 24h to 8h to limit the exposure window of a stolen token.
+	AdminTokenTTL = 8 * time.Hour
+
+	// AdminTokenIssuer is the fixed issuer claim embedded in every admin JWT.
+	// The validation middleware always enforces this value, regardless of operator config.
+	AdminTokenIssuer = "agbero-admin"
+
 	DefaultAdminReadTimeout  = 10 * time.Second
 	DefaultAdminWriteTimeout = 60 * time.Second
 	DefaultAdminIdleTimeout  = 120 * time.Second
 )
 
-// defaults used by woos/default.go — single source of truth for all config defaults
 const (
 	DefaultForwardAuthTimeout      = 5 * time.Second
 	DefaultFirewallMaxInspectBytes = int64(8192)
@@ -438,7 +422,6 @@ const (
 	ForwardAuthMaxBodyDefault      = int64(64 * 1024)
 )
 
-// NSS / certutil — used by tlss and installer for Firefox/Chrome trust store detection
 const (
 	CertutilBinary = "certutil"
 
@@ -454,4 +437,67 @@ const (
 	NSSInstallHintLinux  = "NSS certutil not found. Firefox trust store will not be updated. Install with: sudo apt-get install libnss3-tools  (Debian/Ubuntu)  or  sudo dnf install nss-tools  (Fedora/RHEL)"
 	NSSInstallHintDarwin = "NSS certutil not found. Firefox trust store will not be updated. Install with: brew install nss"
 	NSSInstallHintOther  = "NSS certutil not found. Firefox trust store may not be updated automatically."
+)
+
+// Logging constants control request log output behaviour.
+const (
+	// LogUATruncateLen is the character limit applied to the User-Agent header
+	// when logging.truncate is enabled.
+	LogUATruncateLen = 50
+
+	// LogMaxLineBytes caps individual log lines returned by the admin /logs endpoint
+	// to prevent a single oversized entry from exhausting memory.
+	LogMaxLineBytes = 64 * 1024
+)
+
+// Web server constants control static file serving and dynamic compression behaviour.
+const (
+	WebGzCacheTTL           = 60 * time.Second
+	WebPHPTimeout           = 30 * time.Second
+	WebDynamicGzMinBytes    = 1024
+	WebDynamicGzMaxBytes    = 512 * 1024
+	WebDynamicGzTTL         = 60 * time.Second
+	WebDynamicGzCacheItems  = 256
+	DefaultPHPFPMAddr       = "127.0.0.1:9000"
+	WebCacheImmutableMaxAge = 31536000
+	WebCacheDefaultMaxAge   = 300
+)
+
+// Host trash constants control soft-delete retention for host configurations
+// deleted via the admin API.
+const (
+	TrashDirName   = ".trash"
+	TrashRetention = 7 * 24 * time.Hour
+)
+
+// WASM execution constants bound how long a WebAssembly module may run per request.
+const (
+	// DefaultWasmTimeout is the maximum wall-clock time a WASM handle_request
+	// function may consume before the request goroutine is unblocked and a 504
+	// is returned to the client.
+	DefaultWasmTimeout = 30 * time.Second
+)
+
+// Cluster and internal security constants.
+const (
+	// MinGossipSecretLen is the minimum byte length accepted for the gossip
+	// secret key when supplied as a plain string rather than a base64-encoded key.
+	MinGossipSecretLen = 16
+
+	// DefaultRegexTimeout caps the duration of a single WAF regex match to prevent
+	// pathological patterns from monopolising a CPU core.
+	DefaultRegexTimeout = 100 * time.Millisecond
+)
+
+// GitHub release constants are used by the system update command.
+const (
+	GitHubReleaseAPIURL   = "https://api.github.com/repos/agberohq/agbero/releases/latest"
+	UpdateFetchTimeout    = 30 * time.Second
+	UpdateDownloadTimeout = 120 * time.Second
+)
+
+// Admin
+const (
+	DefaultAdminLogLimit    = 50
+	DefaultAdminLogMaxLimit = 1000
 )

@@ -1,6 +1,10 @@
 package alaye
 
-import "github.com/olekukonko/errors"
+import (
+	"net"
+
+	"github.com/olekukonko/errors"
+)
 
 // Global represents the root configuration of Agbero.
 // It contains system-wide settings, storage paths, and global environment variables.
@@ -116,6 +120,14 @@ func (p *Pprof) Validate() error {
 	}
 	if p.Bind == "" {
 		return ErrPprofPortRequired
+	}
+	host, _, err := net.SplitHostPort(p.Bind)
+	if err != nil {
+		host = p.Bind
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || (!ip.IsLoopback() && host != "localhost") {
+		return ErrPprofLoopbackOnly
 	}
 	return nil
 }

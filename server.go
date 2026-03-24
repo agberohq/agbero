@@ -5,6 +5,7 @@ package agbero
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -70,12 +71,28 @@ type Server struct {
 
 	telemetryStore     *telemetry.Store
 	telemetryCollector *telemetry.Collector
+
+	// adminSrv and pprofSrv are stored so they can be gracefully shut down
+	// via s.shutdown on process exit rather than being hard-killed.
+	adminSrv *http.Server
+	pprofSrv *http.Server
+
+	// jtiStore holds revoked admin JWT identifiers mapped to their expiry time.
+	// mappo.Concurrent is used for its lock-free read performance under high concurrency.
+	jtiStore *mappo.Concurrent[string, time.Time]
+
+	// jtiLifetime schedules automatic removal of expired JTI entries so the
+	// revocation map does not accumulate stale entries indefinitely.
+	jtiLifetime *jack.Lifetime
 }
 
 // NewServer initializes a Server instance with the provided options.
 // It configures the core components before the start sequence is initiated.
 func NewServer(opts ...Option) *Server {
-	s := &Server{}
+	s := &Server{
+		jtiStore:    mappo.NewConcurrent[string, time.Time](),
+		jtiLifetime: jack.NewLifetime(jack.LifetimeWithShards(woos.LifetimeShards)),
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -339,6 +356,8 @@ func (s *Server) Start(configPath string) error {
 	return nil
 }
 
+// Reload applies an updated configuration without dropping active connections.
+// It builds new listeners and traffic managers before tearing down the old ones.
 func (s *Server) Reload() {
 	s.mu.RLock()
 	configPath := s.configPath
@@ -355,6 +374,7 @@ func (s *Server) Reload() {
 
 	s.mu.RLock()
 	currentSHA := s.configSHA
+	currentGlobal := s.global
 	s.mu.RUnlock()
 
 	if sha == currentSHA {
@@ -366,8 +386,8 @@ func (s *Server) Reload() {
 		return
 	}
 
-	if s.global.Logging.Diff.Active() {
-		for _, v := range zulu.Diff(s.global, global) {
+	if currentGlobal.Logging.Diff.Active() {
+		for _, v := range zulu.Diff(currentGlobal, global) {
 			s.logger.Debug(v)
 		}
 	}
@@ -377,23 +397,8 @@ func (s *Server) Reload() {
 
 	_ = s.hostManager.ReloadFull()
 
-	s.mu.Lock()
-
-	oldListeners := s.listeners
-	oldTrafficManager := s.trafficManager
-	oldSharedState := s.sharedState
-
-	var trustedProxies []string
-	if global.Security.Enabled.Active() {
-		trustedProxies = global.Security.TrustedProxies
-	}
-	ipMgr := zulu.NewIPManager(trustedProxies)
-
-	s.global = global
-	s.configSHA = sha
-
-	s.populateResourceEnv()
-
+	// Build the new Redis shared state outside the lock so a slow or
+	// unreachable Redis server does not stall in-flight request handling.
 	var newSharedState woos.SharedState
 	if global.Gossip.SharedState.Enabled.Active() && global.Gossip.SharedState.Driver == "redis" {
 		ss, err := cluster.NewRedisSharedState(global.Gossip.SharedState.Redis)
@@ -404,43 +409,68 @@ func (s *Server) Reload() {
 			s.logger.Error("failed to reload redis shared state", "err", err)
 		}
 	}
-	s.sharedState = newSharedState
 
-	s.tlsManager.Close()
-	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, global)
+	var trustedProxies []string
+	if global.Security.Enabled.Active() {
+		trustedProxies = global.Security.TrustedProxies
+	}
+	ipMgr := zulu.NewIPManager(trustedProxies)
+
+	// Build the new traffic manager and listeners outside the lock so the
+	// firewall CIDR ranger and rate limiter initialisation do not block request
+	// handling on the current listeners during a potentially slow rebuild.
+	newTLSManager := tlss.NewManager(s.logger, s.hostManager, global)
 	if s.clusterManager != nil {
-		s.tlsManager.SetUpdateCallback(func(domain string, certPEM, keyPEM []byte) {
+		newTLSManager.SetUpdateCallback(func(domain string, certPEM, keyPEM []byte) {
 			_ = s.clusterManager.BroadcastCert(domain, certPEM, keyPEM)
 		})
-		s.tlsManager.SetCluster(s.clusterManager)
+		newTLSManager.SetCluster(s.clusterManager)
 	}
+
+	tmCfg := handlers.ManagerConfig{
+		Global:      global,
+		HostManager: s.hostManager,
+		Resource:    s.resource,
+		IPMgr:       ipMgr,
+		CookManager: s.cookManager,
+		TLSManager:  newTLSManager,
+		SharedState: newSharedState,
+		OrchManager: s.orchManager,
+	}
+
+	newTM, err := handlers.NewManager(tmCfg)
+	if err != nil {
+		s.logger.Fields("err", err).Error("reload: failed to create traffic manager, keeping existing config")
+		if newSharedState != nil {
+			_ = newSharedState.Close()
+		}
+		newTLSManager.Close()
+		return
+	}
+
+	newListeners := newTM.BuildListeners()
+
+	// Lock only for the pointer swaps — all expensive construction is already done.
+	s.mu.Lock()
+	oldListeners := s.listeners
+	oldTrafficManager := s.trafficManager
+	oldSharedState := s.sharedState
+
+	s.global = global
+	s.configSHA = sha
+	s.sharedState = newSharedState
+
+	s.populateResourceEnv()
+
+	s.tlsManager.Close()
+	s.tlsManager = newTLSManager
 
 	if oldTrafficManager != nil {
 		oldTrafficManager.CloseFirewall()
 	}
 
-	tmCfg := handlers.ManagerConfig{
-		Global:      s.global,
-		HostManager: s.hostManager,
-		Resource:    s.resource,
-		IPMgr:       ipMgr,
-		CookManager: s.cookManager,
-		TLSManager:  s.tlsManager,
-		SharedState: s.sharedState,
-		OrchManager: s.orchManager,
-	}
-
-	tm, err := handlers.NewManager(tmCfg)
-	if err != nil {
-		s.logger.Fields("err", err).Error("reload: failed to create traffic manager, keeping existing config")
-		s.mu.Unlock()
-		return
-	}
-
-	s.trafficManager = tm
-	s.firewall = tm.Firewall()
-
-	newListeners := tm.BuildListeners()
+	s.trafficManager = newTM
+	s.firewall = newTM.Firewall()
 	s.listeners = newListeners
 	s.mu.Unlock()
 
@@ -531,12 +561,12 @@ func (s *Server) Reload() {
 		go func(listener handlers.Listener) {
 			s.logger.Fields("bind", listener.Addr(), "proto", listener.Kind()).Info("reloaded listener")
 			var err error
-			for i := 0; i < 50; i++ {
+			for i := 0; i < woos.MaxPortRetries; i++ {
 				err = listener.Start()
 				if err != nil {
 					errStr := err.Error()
 					if strings.Contains(errStr, "address already in use") || strings.Contains(errStr, "Only one usage") {
-						if i < 49 {
+						if i < woos.MaxPortRetries-1 {
 							time.Sleep(100 * time.Millisecond)
 							continue
 						}
@@ -554,7 +584,7 @@ func (s *Server) Reload() {
 }
 
 // shutdownImpl performs the final listener termination during server shutdown.
-// it ensures all active connections are drained or timed out before process exit.
+// It ensures all active connections are drained or timed out before process exit.
 func (s *Server) shutdownImpl(ctx context.Context) error {
 	if s.clusterManager != nil {
 		s.clusterManager.BroadcastStatus("draining")
@@ -564,6 +594,9 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 	}
 	if s.gitPool != nil {
 		_ = s.gitPool.Shutdown(defaultGitPoolTimeout)
+	}
+	if s.jtiLifetime != nil {
+		s.jtiLifetime.Stop()
 	}
 
 	s.mu.RLock()
@@ -589,7 +622,10 @@ func (s *Server) configComputeSHA() (string, error) {
 
 	s.mu.RLock()
 	configPath := s.configPath
-	hostDir := s.global.Storage.HostsDir
+	var hostDir string
+	if s.global != nil {
+		hostDir = s.global.Storage.HostsDir
+	}
 	s.mu.RUnlock()
 
 	mainData, err := os.ReadFile(configPath)
@@ -620,9 +656,17 @@ func (s *Server) configComputeSHA() (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-// tlsValidate is a placeholder for future comprehensive certificate chain validation.
-// Currently returns nil to satisfy startup requirements.
+// tlsValidate checks that every host configured with a local certificate can
+// load its key pair before the server binds any listeners.
 func (s *Server) tlsValidate() error {
+	hosts, _ := s.hostManager.LoadAll()
+	for domain, h := range hosts {
+		if h.TLS.Mode == alaye.ModeLocalCert && h.TLS.Local.Enabled.Active() {
+			if _, err := tls.LoadX509KeyPair(h.TLS.Local.CertFile, h.TLS.Local.KeyFile); err != nil {
+				return fmt.Errorf("tls: host %q: %w", domain, err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -640,14 +684,14 @@ func (s *Server) serverWatchConfig() {
 }
 
 // populateResourceEnv copies global environment variables into the resource manager.
-// This makes the HCL-defined environment accessible to runtime components like serverless functions.
+// It performs an atomic pointer swap so concurrent readers never see a partially populated map.
 func (s *Server) populateResourceEnv() {
 	if s.resource == nil || s.resource.Env == nil {
 		return
 	}
-
-	s.resource.Env.Global.Clear()
+	newGlobal := mappo.NewConcurrent[string, alaye.Value]()
 	for k, v := range s.global.Env {
-		s.resource.Env.Global.Set(k, v)
+		newGlobal.Set(k, v)
 	}
+	s.resource.Env.Global = newGlobal
 }

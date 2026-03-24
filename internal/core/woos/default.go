@@ -397,6 +397,8 @@ func defaultTLS(t *alaye.TLS, domains []string) {
 	}
 }
 
+// defaultLimits applies default values to the Limit configuration block.
+// MaxBodySize default is enforced at dispatch level via alaye.DefaultMaxBodySize; add per-field defaults here as alaye.Limit grows.
 func defaultLimits(_ *alaye.Limit) {}
 
 func defaultHeaders(h *alaye.Headers) {
@@ -683,9 +685,7 @@ func compileExtract(e *alaye.Extract) {
 }
 
 func defaultTelemetry(t *alaye.Telemetry) {
-	// Inactive unless the operator explicitly writes:
-	//   telemetry { enabled = true }
-	// Mirrors the same pattern used by Pprof, Gossip, etc.
+
 	if t.Enabled == alaye.Unknown {
 		t.Enabled = alaye.Inactive
 	}
