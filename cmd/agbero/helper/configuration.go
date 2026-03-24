@@ -10,6 +10,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/agberohq/agbero/internal/pkg/installer"
+	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/olekukonko/ll"
 )
@@ -141,6 +142,19 @@ func InitConfiguration(logger *ll.Logger, targetDir string) (string, error) {
 	return ctx.Paths.ConfigFile, err
 }
 
+// InstallConfiguration prepares agbero for service registration. The decision
+// tree is:
+//
+//  1. If an existing config is discoverable (cwd, AGBERO_HOME, or platform
+//     home), load it and ensure the CA is installed against the certs_dir it
+//     declares. Return the existing path — no new installation is created.
+//
+//  2. If here is true, scaffold a new installation in the current directory.
+//
+//  3. Otherwise scaffold a new installation in the platform home directory.
+//
+// Returning an "already exists" error signals callers to reuse the path
+// without treating it as a failure.
 func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 	if here {
 		cwd, err := os.Getwd()
@@ -149,6 +163,22 @@ func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 		}
 		return InitConfiguration(logger, cwd)
 	}
+
+	existing, found := ResolveConfigPath(logger, "")
+	if found {
+		global, err := loadGlobal(existing)
+		if err == nil && global.Storage.CertsDir != "" {
+			certsDir := global.Storage.CertsDir
+			if !tlss.IsCARootInstalled(certsDir) {
+				loc := tlss.NewLocal(logger, woos.NewFolder(certsDir))
+				if err := loc.InstallCARootIfNeeded(); err != nil {
+					logger.Warn("CA install skipped: ", err)
+				}
+			}
+		}
+		return existing, fmt.Errorf("configuration already exists at %s", existing)
+	}
+
 	ctx := installer.NewContext(logger)
 	return InitConfiguration(logger, ctx.Paths.BaseDir.Path())
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -213,9 +214,16 @@ func main() {
 	cmdSystemRestore.String(&cfg.SystemIn, "i", "in", "Input zip file path")
 	cmdSystemRestore.String(&cfg.SystemPass, "p", "password", "Password for AES-256 decryption")
 	cmdSystemRestore.Bool(&cfg.SystemForce, "f", "force", "Force overwrite of existing files without prompting")
+	cmdSystemRestore.Bool(&cfg.SystemYes, "y", "yes", "Skip top-level confirmation prompt")
+
+	cmdSystemUpdate := flaggy.NewSubcommand("update")
+	cmdSystemUpdate.Description = "Download and apply the latest agbero release from GitHub"
+	cmdSystemUpdate.Bool(&cfg.SystemForce, "f", "force", "Apply even if already on latest version")
+	cmdSystemUpdate.Bool(&cfg.SystemYes, "y", "yes", "Skip confirmation prompt")
 
 	cmdSystem.AttachSubcommand(cmdSystemBackup, 1)
 	cmdSystem.AttachSubcommand(cmdSystemRestore, 1)
+	cmdSystem.AttachSubcommand(cmdSystemUpdate, 1)
 
 	cmdRun := flaggy.NewSubcommand("run")
 	cmdRun.Description = "Run agbero using the discovered config"
@@ -291,7 +299,11 @@ func main() {
 			return
 		}
 		if cmdSystemRestore.Used {
-			hel.System().Restore(cfg.SystemIn, cfg.SystemPass, cfg.SystemForce)
+			hel.System().Restore(cfg.SystemIn, cfg.SystemPass, cfg.SystemForce, cfg.SystemYes)
+			return
+		}
+		if cmdSystemUpdate.Used {
+			hel.System().Update(cfg.SystemForce, cfg.SystemYes)
 			return
 		}
 	}
@@ -342,18 +354,27 @@ func main() {
 				logger.Fatalf("provided config file not found: %s", cfg.ConfigPath)
 			}
 		} else {
-			path, err := helper.InstallConfiguration(logger, cfg.InstallHere)
-			if err != nil {
-				if strings.Contains(err.Error(), "already exists") {
-					logger.Info(err.Error() + " — skipping initialization.")
+			// Check for any discoverable config before attempting a fresh install.
+			// This prevents creating a second installation when the user already
+			// ran 'agbero init' in a different directory.
+			resolvedPath, configExists = helper.ResolveConfigPath(logger, "")
+			if configExists {
+				u := ui.New()
+				u.InfoLine(fmt.Sprintf("using existing configuration: %s", resolvedPath))
+			} else {
+				path, err := helper.InstallConfiguration(logger, cfg.InstallHere)
+				if err != nil {
+					if strings.Contains(err.Error(), "already exists") {
+						logger.Info(err.Error() + " — skipping initialization.")
+						resolvedPath = path
+						configExists = true
+					} else {
+						logger.Fatal("install failed: ", err)
+					}
+				} else {
 					resolvedPath = path
 					configExists = true
-				} else {
-					logger.Fatal("install failed: ", err)
 				}
-			} else {
-				resolvedPath = path
-				configExists = true
 			}
 		}
 	} else {
@@ -679,6 +700,8 @@ func showHelpExamples() {
 			Commands: []ui.HelpCmd{
 				{Cmd: exeName + " system backup -o backup.zip -p mypass", Desc: "create encrypted backup"},
 				{Cmd: exeName + " system restore -i backup.zip -p mypass", Desc: "restore from backup"},
+				{Cmd: exeName + " system update", Desc: "update to latest release from GitHub"},
+				{Cmd: exeName + " system update --force", Desc: "re-apply even if already on latest"},
 			},
 		},
 		{

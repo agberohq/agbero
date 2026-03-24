@@ -40,4 +40,5 @@ type Config struct {
 	SystemIn    string
 	SystemPass  string
 	SystemForce bool
+	SystemYes   bool
 }
