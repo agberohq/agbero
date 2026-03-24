@@ -763,7 +763,11 @@ func TestUpdate_ValidChecksum_Applies(t *testing.T) {
 	tarPath := filepath.Join(tmpDir, assetName)
 	writeTarGz(t, tarPath, binaryContent)
 
-	correctHash := sha256Hex(binaryContent)
+	archiveBytes, err := os.ReadFile(tarPath)
+	if err != nil {
+		t.Fatalf("failed to read archive: %v", err)
+	}
+	correctHash := sha256Hex(archiveBytes)
 	checksumContent := fmt.Sprintf("%s  %s\n", correctHash, assetName)
 	checksumPath := filepath.Join(tmpDir, "checksums.txt")
 	_ = os.WriteFile(checksumPath, []byte(checksumContent), 0644)

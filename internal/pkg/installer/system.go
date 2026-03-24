@@ -505,11 +505,11 @@ func (s *System) Update(force, autoYes bool) error {
 	}
 
 	u.Step("run", "downloading binary")
-	tmpBinary, err := s.downloadToTemp(binaryAsset.BrowserDownloadURL, assetName, woos.UpdateDownloadTimeout)
+	tmpArchive, err := s.downloadArchive(binaryAsset.BrowserDownloadURL, assetName, woos.UpdateDownloadTimeout)
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
-	defer os.Remove(tmpBinary)
+	defer os.Remove(tmpArchive)
 
 	u.Step("run", "downloading checksums")
 	checksumBody, err := s.downloadBytes(checksumAsset.BrowserDownloadURL, woos.UpdateFetchTimeout)
@@ -523,9 +523,9 @@ func (s *System) Update(force, autoYes bool) error {
 	}
 
 	u.Step("run", "verifying checksum")
-	actualHash, err := hashFile(tmpBinary)
+	actualHash, err := hashFile(tmpArchive)
 	if err != nil {
-		return fmt.Errorf("failed to hash downloaded binary: %w", err)
+		return fmt.Errorf("failed to hash downloaded archive: %w", err)
 	}
 
 	if !hmac.Equal([]byte(expectedHash), []byte(actualHash)) {
@@ -533,10 +533,11 @@ func (s *System) Update(force, autoYes bool) error {
 	}
 
 	u.Step("run", "applying update")
-	f, err := os.Open(tmpBinary)
+	f, err := s.extractBinary(tmpArchive, assetName)
 	if err != nil {
-		return fmt.Errorf("failed to open verified binary: %w", err)
+		return fmt.Errorf("failed to extract binary: %w", err)
 	}
+	defer os.Remove(f.Name())
 	defer f.Close()
 
 	if s.cfg.applyFn != nil {
@@ -665,11 +666,10 @@ func (s *System) findAsset(assets []githubAsset, name string) *githubAsset {
 	return nil
 }
 
-// downloadToTemp downloads rawURL to a temp file and returns its path.
-// assetName is used to detect whether to extract from a .tar.gz archive,
-// since the URL path may not reflect the original filename (e.g. /binary).
-// The caller must remove the file when done.
-func (s *System) downloadToTemp(rawURL, assetName string, timeout time.Duration) (string, error) {
+// downloadArchive downloads rawURL to a temp file as-is (no extraction).
+// The archive is kept intact so its SHA-256 can be verified against checksums.txt
+// before any extraction occurs. The caller must remove the file when done.
+func (s *System) downloadArchive(rawURL, assetName string, timeout time.Duration) (string, error) {
 	client := &http.Client{Timeout: timeout}
 	if s.cfg.httpClient != nil {
 		client = s.cfg.httpClient
@@ -683,30 +683,70 @@ func (s *System) downloadToTemp(rawURL, assetName string, timeout time.Duration)
 		return "", fmt.Errorf("download returned HTTP %d", resp.StatusCode)
 	}
 
-	tmp, err := os.CreateTemp("", "agbero_update_*")
+	ext := ".tar.gz"
+	if strings.HasSuffix(strings.ToLower(assetName), ".zip") {
+		ext = ".zip"
+	}
+	tmp, err := os.CreateTemp("", "agbero_archive_*"+ext)
 	if err != nil {
 		return "", err
 	}
-
-	if strings.HasSuffix(strings.ToLower(assetName), ".tar.gz") {
-		if err := extractBinaryFromTarGz(resp.Body, tmp); err != nil {
-			tmp.Close()
-			os.Remove(tmp.Name())
-			return "", fmt.Errorf("failed to extract binary from archive: %w", err)
-		}
-	} else {
-		if _, err := io.Copy(tmp, resp.Body); err != nil {
-			tmp.Close()
-			os.Remove(tmp.Name())
-			return "", err
-		}
+	if _, err := io.Copy(tmp, resp.Body); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return "", err
 	}
-
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmp.Name())
 		return "", err
 	}
 	return tmp.Name(), nil
+}
+
+// extractBinary opens archivePath and extracts the agbero binary into a new
+// temp file. The archive must have already been checksum-verified before this
+// is called. The caller is responsible for closing and removing the returned file.
+func (s *System) extractBinary(archivePath, assetName string) (*os.File, error) {
+	tmp, err := os.CreateTemp("", "agbero_binary_*")
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.HasSuffix(strings.ToLower(assetName), ".tar.gz") {
+		src, err := os.Open(archivePath)
+		if err != nil {
+			tmp.Close()
+			os.Remove(tmp.Name())
+			return nil, err
+		}
+		defer src.Close()
+		if err := extractBinaryFromTarGz(src, tmp); err != nil {
+			tmp.Close()
+			os.Remove(tmp.Name())
+			return nil, fmt.Errorf("extraction failed: %w", err)
+		}
+	} else {
+		src, err := os.Open(archivePath)
+		if err != nil {
+			tmp.Close()
+			os.Remove(tmp.Name())
+			return nil, err
+		}
+		if _, err := io.Copy(tmp, src); err != nil {
+			src.Close()
+			tmp.Close()
+			os.Remove(tmp.Name())
+			return nil, err
+		}
+		src.Close()
+	}
+
+	if _, err := tmp.Seek(0, 0); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return nil, err
+	}
+	return tmp, nil
 }
 
 // downloadBytes downloads rawURL and returns the response body in full.
