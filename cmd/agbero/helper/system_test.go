@@ -80,14 +80,14 @@ route "/" {
 			t.Fatalf("host file should be deleted to simulate loss")
 		}
 
-		sys.Restore(backupZip, password, true)
+		sys.Restore(backupZip, password, true, true)
 
 		restoredHost, err := os.ReadFile(hostFilePath)
 		if err != nil {
 			t.Fatalf("failed to read restored host file: %v", err)
 		}
 		if string(restoredHost) != hostContent {
-			t.Errorf("restored host content mismatch. Expected: %s, Got: %s", hostContent, string(restoredHost))
+			t.Errorf("restored host content mismatch.\nExpected: %s\nGot: %s", hostContent, string(restoredHost))
 		}
 
 		restoredCert, err := os.ReadFile(certFilePath)
@@ -114,14 +114,14 @@ route "/" {
 			t.Fatalf("failed to tamper file: %v", err)
 		}
 
-		sys.Restore(backupZip, password, true)
+		sys.Restore(backupZip, password, true, true)
 
 		restoredHost, err := os.ReadFile(hostFilePath)
 		if err != nil {
 			t.Fatalf("failed to read restored host file: %v", err)
 		}
 		if string(restoredHost) != hostContent {
-			t.Errorf("restore failed to overwrite tampered file. Expected: %s, Got: %s", hostContent, string(restoredHost))
+			t.Errorf("restore failed to overwrite tampered file.\nExpected: %s\nGot: %s", hostContent, string(restoredHost))
 		}
 	})
 }
