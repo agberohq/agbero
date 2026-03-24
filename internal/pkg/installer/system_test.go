@@ -660,10 +660,6 @@ func TestFindAsset_caseInsensitive(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// Update — already up to date
-// --------------------------------------------------------------------------
-
 func TestUpdate_AlreadyUpToDate(t *testing.T) {
 	original := woos.Version
 	woos.Version = "v1.0.0"

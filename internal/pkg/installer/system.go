@@ -23,6 +23,7 @@ import (
 	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/agberohq/agbero/internal/pkg/ui"
+	"github.com/agberohq/agbero/internal/pkg/version"
 	"github.com/dustin/go-humanize"
 	"github.com/minio/selfupdate"
 	"github.com/olekukonko/ll"
@@ -456,10 +457,9 @@ func (s *System) Update(force, autoYes bool) error {
 	}
 
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
-	currentVersion := strings.TrimPrefix(woos.Version, "v")
 
-	if !force && latestVersion == currentVersion {
-		u.SuccessLine(fmt.Sprintf("already up to date (v%s)", currentVersion))
+	if !force && !version.ShouldUpdate(woos.Version, latestVersion) {
+		u.SuccessLine(fmt.Sprintf("already up to date (%s)", woos.Version))
 		return nil
 	}
 
@@ -487,7 +487,7 @@ func (s *System) Update(force, autoYes bool) error {
 	}
 
 	u.KeyValueBlock("", []ui.KV{
-		{Label: "Current", Value: "v" + currentVersion},
+		{Label: "Current", Value: woos.Version},
 		{Label: "Latest", Value: release.TagName},
 		{Label: "Asset", Value: assetName},
 		{Label: "Size", Value: humanize.Bytes(uint64(binaryAsset.Size))},
