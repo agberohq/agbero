@@ -109,6 +109,15 @@ func (d *delegate) apply(env Envelope, local bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.metrics.IncUpdatesReceived()
+
+	// Reject envelopes older than tombstoneTTL regardless
+	age := time.Duration(time.Now().UnixNano() - env.Timestamp)
+	if age > tombstoneTTL {
+		d.logger.Debug("cluster: discarding stale envelope", "key", env.Key, "age", age)
+		d.metrics.IncUpdatesIgnored()
+		return
+	}
+
 	existing, exists := d.store[env.Key]
 	shouldApply := false
 	if env.Op == OpLock {
@@ -234,8 +243,6 @@ func (d *delegate) pruneTombstones() {
 	}
 }
 
-// get securely reads a value from the local state tree.
-// Filters out logically deleted or expired entries.
 func (d *delegate) get(key string) ([]byte, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
