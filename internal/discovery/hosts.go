@@ -766,6 +766,7 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 	}
 
 	hm.rebuildLookupLocked()
+	hm.notifyChanged()
 }
 
 // Save attempts to serialize the current memory host layout down to disk.
