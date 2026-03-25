@@ -397,8 +397,6 @@ func (s *Server) Reload() {
 
 	_ = s.hostManager.ReloadFull()
 
-	// Build the new Redis shared state outside the lock so a slow or
-	// unreachable Redis server does not stall in-flight request handling.
 	var newSharedState woos.SharedState
 	if global.Gossip.SharedState.Enabled.Active() && global.Gossip.SharedState.Driver == "redis" {
 		ss, err := cluster.NewRedisSharedState(global.Gossip.SharedState.Redis)
@@ -416,9 +414,6 @@ func (s *Server) Reload() {
 	}
 	ipMgr := zulu.NewIPManager(trustedProxies)
 
-	// Build the new traffic manager and listeners outside the lock so the
-	// firewall CIDR ranger and rate limiter initialisation do not block request
-	// handling on the current listeners during a potentially slow rebuild.
 	newTLSManager := tlss.NewManager(s.logger, s.hostManager, global)
 	if s.clusterManager != nil {
 		newTLSManager.SetUpdateCallback(func(domain string, certPEM, keyPEM []byte) {
@@ -450,11 +445,11 @@ func (s *Server) Reload() {
 
 	newListeners := newTM.BuildListeners()
 
-	// Lock only for the pointer swaps — all expensive construction is already done.
 	s.mu.Lock()
 	oldListeners := s.listeners
 	oldTrafficManager := s.trafficManager
 	oldSharedState := s.sharedState
+	oldTLSManager := s.tlsManager
 
 	s.global = global
 	s.configSHA = sha
@@ -462,7 +457,6 @@ func (s *Server) Reload() {
 
 	s.populateResourceEnv()
 
-	s.tlsManager.Close()
 	s.tlsManager = newTLSManager
 
 	if oldTrafficManager != nil {
@@ -547,6 +541,8 @@ func (s *Server) Reload() {
 			}(l)
 		}
 		wg.Wait()
+
+		oldTLSManager.Close()
 
 		if oldTrafficManager != nil {
 			oldTrafficManager.Close()

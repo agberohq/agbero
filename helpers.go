@@ -5,17 +5,9 @@ import (
 	"io"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 )
-
-var logArgsPool = sync.Pool{
-	New: func() any {
-		s := make([]any, 0, 16)
-		return &s
-	},
-}
 
 // sanitizeGlobalConfig returns a deep clone of the global config with all secrets
 // and sensitive paths replaced with "***" before serving it over the admin API.

@@ -349,7 +349,6 @@ func (m *Manager) logRequest(host string, r *http.Request, start time.Time, stat
 		} else {
 			args = append(args, "ua", ua)
 		}
-
 		if m.cfg.Global.Logging.BotChecker.Active() {
 			args = append(args, "bot", m.botChecker.IsBot(ua))
 		}

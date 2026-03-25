@@ -1,5 +1,3 @@
-// Package xserverless provides handlers for executing functions as web services.
-// It includes REST proxying and direct binary execution for ephemeral workloads.
 package xserverless
 
 import (
