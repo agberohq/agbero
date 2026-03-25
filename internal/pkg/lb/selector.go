@@ -78,7 +78,7 @@ func (s *Selector) Pick(r *http.Request, keyFunc func() uint64) Backend {
 	case StrategyWeightedLeastConn:
 		return s.pickWeightedLeastConn(st)
 	case StrategyIPHash:
-		return s.pickIPHash(r, st)
+		return s.pickIPHash(r, keyFunc, st)
 	case StrategyURLHash:
 		return s.pickURLHash(r, st)
 	case StrategyLeastResponseTime:
@@ -169,12 +169,17 @@ func (s *Selector) pickWeightedLeastConn(st *selectorState) Backend {
 	return best
 }
 
-func (s *Selector) pickIPHash(r *http.Request, st *selectorState) Backend {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
+func (s *Selector) pickIPHash(r *http.Request, keyFunc func() uint64, st *selectorState) Backend {
+	var key uint64
+	if keyFunc != nil {
+		key = keyFunc()
+	} else {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		key = xxhash.Sum64String(host)
 	}
-	key := xxhash.Sum64String(host)
 	return s.pickHash(key, st)
 }
 
