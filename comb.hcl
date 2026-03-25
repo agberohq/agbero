@@ -1,7 +1,7 @@
 recursive = true
-output_file = "all.txt"
+output_file = "agbero.zip"
 #extensions = [".go",".css",".js",".html",".md",".hcl"]
-extensions = [".go",".s",".md"]
+extensions = [".go",".s"]
 exclude_dirs {
   items = ["lab", "bin", "dist", "assets", "oppor", "docs"]
 }
@@ -12,3 +12,4 @@ use_gitignore = true
 detailed = true
 go_mode = "code"
 minify = true
+zip = true
