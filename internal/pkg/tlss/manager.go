@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -48,6 +49,8 @@ type Manager struct {
 	// Tracks domains currently being renewed to prevent thundering herd
 	renewingDomains *mappo.Concurrent[string, bool]
 	acmeFlight      singleflight.Group
+
+	closeOnce sync.Once
 }
 
 // NewManager builds the cryptography orchestration layer.
@@ -439,18 +442,20 @@ func (m *Manager) GetConfigForClient(chi *tls.ClientHelloInfo) (*tls.Config, err
 }
 
 func (m *Manager) Close() {
-	if m.quit != nil {
-		close(m.quit)
-	}
-	if m.watcher != nil {
-		_ = m.watcher.Close()
-	}
-	if m.debouncer != nil {
-		m.debouncer.Cancel()
-	}
-	m.cache.Clear()
-	m.pendingDomains.Clear()
-	m.renewingDomains.Clear()
+	m.closeOnce.Do(func() {
+		if m.quit != nil {
+			close(m.quit)
+		}
+		if m.watcher != nil {
+			_ = m.watcher.Close()
+		}
+		if m.debouncer != nil {
+			m.debouncer.Cancel()
+		}
+		m.cache.Clear()
+		m.pendingDomains.Clear()
+		m.renewingDomains.Clear()
+	})
 }
 
 func (m *Manager) SetUpdateCallback(fn func(domain string, certPEM, keyPEM []byte)) {
