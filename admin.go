@@ -192,6 +192,10 @@ func (s *Server) registerAdminProtectedEndpoints(mux *http.ServeMux, cfg alaye.A
 // preventing route-level tokens from being accepted on admin endpoints (SEC-05).
 func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Handler {
 	ipMgr := zulu.NewIPManager(nil)
+	isRevoked := func(jti string) bool {
+		_, revoked := s.jtiStore.Get(jti)
+		return revoked
+	}
 	return func(h http.Handler) http.Handler {
 		if len(cfg.AllowedIPs) > 0 {
 			h = ipallow.New(cfg.AllowedIPs, s.logger, ipMgr)(h)
@@ -199,7 +203,7 @@ func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Ha
 		if cfg.JWTAuth.Enabled.Active() {
 			adminJWT := cfg.JWTAuth
 			adminJWT.Issuer = woos.AdminTokenIssuer
-			return auth.JWT(&adminJWT)(h)
+			return auth.JWTWithRevocation(&adminJWT, isRevoked)(h)
 		}
 		if len(cfg.BasicAuth.Users) > 0 {
 			return auth.Basic(&cfg.BasicAuth, s.logger)(h)
@@ -445,27 +449,24 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) verifyCredentials(users []string, username, password string) bool {
-	var foundHash []byte
-	userFound := 0
 	inputUserHash := sha256.Sum256([]byte(username))
+	foundHash := dummyHash
+	found := 0
 
 	for _, u := range users {
 		parts := strings.SplitN(u, ":", 2)
-		if len(parts) == 2 {
-			storedUserHash := sha256.Sum256([]byte(parts[0]))
-			if subtle.ConstantTimeCompare(inputUserHash[:], storedUserHash[:]) == 1 {
-				foundHash = []byte(parts[1])
-				userFound = 1
-				break
-			}
+		if len(parts) != 2 {
+			continue
+		}
+		storedUserHash := sha256.Sum256([]byte(parts[0]))
+		match := subtle.ConstantTimeCompare(inputUserHash[:], storedUserHash[:])
+		if match == 1 && found == 0 {
+			foundHash = []byte(parts[1])
+			found = 1
 		}
 	}
 
-	targetHash := foundHash
-	if userFound == 0 {
-		targetHash = dummyHash
-	}
-	return userFound == 1 && bcrypt.CompareHashAndPassword(targetHash, []byte(password)) == nil
+	return found == 1 && bcrypt.CompareHashAndPassword(foundHash, []byte(password)) == nil
 }
 
 // generateAdminToken mints a signed HS256 JWT for admin access.
