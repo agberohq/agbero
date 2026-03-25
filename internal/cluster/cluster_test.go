@@ -56,17 +56,19 @@ func TestDelegate_Apply_LWW(t *testing.T) {
 	configMgr := NewDistributor(testLoogerCluster, "")
 	d := newDelegate(h, ll.New("test").Disable(), nil, nil, configMgr)
 
-	d.apply(Envelope{Op: OpSet, Key: "foo", Value: []byte("old"), Timestamp: 100}, true)
+	now := time.Now().UnixNano()
+
+	d.apply(Envelope{Op: OpSet, Key: "foo", Value: []byte("old"), Timestamp: now}, true)
 	if string(h.Changes["foo"]) != "old" {
 		t.Error("Failed to apply initial")
 	}
 
-	d.apply(Envelope{Op: OpSet, Key: "foo", Value: []byte("new"), Timestamp: 200}, false)
+	d.apply(Envelope{Op: OpSet, Key: "foo", Value: []byte("new"), Timestamp: now + 1}, false)
 	if string(h.Changes["foo"]) != "new" {
 		t.Error("Failed to apply newer")
 	}
 
-	d.apply(Envelope{Op: OpSet, Key: "foo", Value: []byte("ancient"), Timestamp: 50}, false)
+	d.apply(Envelope{Op: OpSet, Key: "foo", Value: []byte("ancient"), Timestamp: now - 1}, false)
 	if string(h.Changes["foo"]) != "new" {
 		t.Error("Applied older timestamp update")
 	}
