@@ -433,6 +433,14 @@ func (s *Server) Reload() {
 		OrchManager: s.orchManager,
 	}
 
+	s.mu.RLock()
+	oldTrafficManagerForFirewall := s.trafficManager
+	s.mu.RUnlock()
+
+	if oldTrafficManagerForFirewall != nil {
+		oldTrafficManagerForFirewall.CloseFirewall()
+	}
+
 	newTM, err := handlers.NewManager(tmCfg)
 	if err != nil {
 		s.logger.Fields("err", err).Error("reload: failed to create traffic manager, keeping existing config")
@@ -458,10 +466,6 @@ func (s *Server) Reload() {
 	s.populateResourceEnv()
 
 	s.tlsManager = newTLSManager
-
-	if oldTrafficManager != nil {
-		oldTrafficManager.CloseFirewall()
-	}
 
 	s.trafficManager = newTM
 	s.firewall = newTM.Firewall()
