@@ -62,6 +62,7 @@ func (s *Server) startAdminServer() {
 	s.setupAdminMiddleware(r, state.Global.Admin)
 	s.registerAdminRoutes(r, state.Global.Admin)
 
+	s.mu.Lock()
 	s.adminSrv = &http.Server{
 		Addr:         state.Global.Admin.Address,
 		Handler:      r,
@@ -69,6 +70,7 @@ func (s *Server) startAdminServer() {
 		WriteTimeout: woos.DefaultAdminWriteTimeout,
 		IdleTimeout:  woos.DefaultAdminIdleTimeout,
 	}
+	s.mu.Unlock()
 
 	if s.shutdown != nil {
 		s.shutdown.RegisterWithContext("AdminServer", func(ctx context.Context) error {
@@ -108,6 +110,7 @@ func (s *Server) startPprofServer() {
 	r.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
 	r.Handle("/debug/pprof/allocs", pprof.Handler("allocs"))
 
+	s.mu.Lock()
 	s.pprofSrv = &http.Server{
 		Addr:         addr,
 		Handler:      r,
@@ -115,6 +118,7 @@ func (s *Server) startPprofServer() {
 		WriteTimeout: woos.DefaultAdminWriteTimeout,
 		IdleTimeout:  woos.DefaultAdminIdleTimeout,
 	}
+	s.mu.Unlock()
 
 	if s.shutdown != nil {
 		s.shutdown.RegisterWithContext("PprofServer", func(ctx context.Context) error {
@@ -159,22 +163,6 @@ func (s *Server) setupAdminMiddleware(r chi.Router, cfg alaye.Admin) {
 
 // registerAdminRoutes registers all admin HTTP endpoints and initializes shared API state.
 func (s *Server) registerAdminRoutes(r chi.Router, cfg alaye.Admin) {
-	//s.apiShared = &api.Shared{
-	//	Logger:    s.logger,
-	//	Cluster:   s.clusterManager,
-	//	Store:     s.secret,
-	//	Discovery: s.hostManager,
-	//	PPK:       s.securityManager,
-	//	Telemetry: s.telemetryStore,
-	//}
-	//
-	//state := s.apiShared.State()
-	//s.apiShared.UpdateState(&api.ActiveState{
-	//	Global:   state.Global,
-	//	Firewall: s.firewall,
-	//	TLSS:     s.tlsManager,
-	//})
-
 	s.totpHandler = api.NewTOTP(s.apiShared)
 
 	r.Get("/healthz", s.handleHealthz)
@@ -253,6 +241,7 @@ func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Ha
 		if len(cfg.AllowedIPs) > 0 {
 			handler = ipallow.New(cfg.AllowedIPs, s.logger, ipMgr)(handler)
 		}
+
 		if cfg.JWTAuth.Enabled.Active() {
 			adminJWT := cfg.JWTAuth
 			adminJWT.Issuer = woos.AdminTokenIssuer

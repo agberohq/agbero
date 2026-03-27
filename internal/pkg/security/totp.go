@@ -1,11 +1,12 @@
-// totp.go
 package security
 
 import (
+	"encoding/base32"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/olekukonko/ll"
 	"github.com/xlzd/gotp"
 )
 
@@ -94,7 +95,23 @@ func (t *TOTPGenerator) Now(secret string) (string, error) {
 
 // VerifyCode verifies a TOTP code against a secret
 // Checks current time and adjacent windows based on config.Window
-func (t *TOTPGenerator) VerifyCode(secret, code string) bool {
+func (t *TOTPGenerator) VerifyCode(secret, code string) (ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			ll.Warnf("TOTP verification failed: %v", r)
+			ok = false
+		}
+	}()
+
+	// Pre-validate Base32 to fail fast without panic
+	secret = strings.ToUpper(strings.TrimSpace(secret))
+	if len(secret)%8 != 0 {
+		secret += strings.Repeat("=", 8-len(secret)%8)
+	}
+	if _, err := base32.StdEncoding.DecodeString(secret); err != nil {
+		return false
+	}
+
 	return t.VerifyCodeAtTime(secret, code, time.Now().Unix())
 }
 

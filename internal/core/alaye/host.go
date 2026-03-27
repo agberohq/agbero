@@ -21,6 +21,9 @@ type Host struct {
 
 	Routes  []Route `hcl:"route,block" json:"routes"`
 	Proxies []Proxy `hcl:"proxy,block" json:"proxies"`
+
+	// source
+	SourceFile string `hcl:"-" json:"source_file,omitempty"`
 }
 
 // Validate checks domains, bind ports, routes, and all nested blocks.

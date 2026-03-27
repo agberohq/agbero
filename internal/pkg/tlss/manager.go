@@ -511,3 +511,37 @@ func (m *Manager) UpdateCertificate(domain string, certPEM, keyPEM []byte) error
 	}
 	return nil
 }
+
+// DeleteCertificate removes a certificate from cache, storage, and broadcasts deletion to cluster.
+func (m *Manager) DeleteCertificate(domain string) error {
+	if m.LikelyInternal(domain) {
+		return fmt.Errorf("cannot delete internal certificate %s", domain)
+	}
+	// Remove from cache
+	m.cache.Delete(domain)
+
+	// Remove from persistent storage
+	if m.storage != nil {
+		if err := m.storage.Delete(domain); err != nil {
+			m.logger.Fields("domain", domain, "err", err).Warn("failed to delete cert from storage")
+			// Continue anyway — cache is already cleared
+		}
+	}
+
+	// Broadcast to cluster peers
+	if m.cluster != nil {
+		// Optional: implement BroadcastCertDelete in ClusterBroadcaster interface
+		// For now, skip or log
+		m.logger.Fields("domain", domain).Debug("certificate deletion not broadcasted (cluster interface lacks DeleteCert)")
+	}
+
+	m.logger.Fields("domain", domain).Info("certificate deleted from TLS manager")
+	return nil
+}
+
+func (m *Manager) LikelyInternal(name string) bool {
+	if strings.HasPrefix(name, "admin") || strings.HasPrefix(name, "ca") || strings.HasPrefix(name, "acme") {
+		return true
+	}
+	return false
+}

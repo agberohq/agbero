@@ -507,6 +507,10 @@ func (hm *Host) scanFromDisk() (map[string]*alaye.Host, struct{ TotalFiles int }
 		if relErr != nil {
 			rel = p
 		}
+
+		// update source file
+		cfg.SourceFile = rel
+
 		hostID := strings.TrimSuffix(rel, woos.HCLSuffix)
 		hostID = strings.ReplaceAll(hostID, string(filepath.Separator), woos.Slash)
 
@@ -760,9 +764,21 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 	}
 
 	if cfg == nil {
-		delete(hm.hosts, domain)
+		m := hm.lookupMap.Load().(map[string]*alaye.Host)
+		if existing := m[domain]; existing != nil && existing.SourceFile != "" {
+			hostID := strings.TrimSuffix(existing.SourceFile, woos.HCLSuffix)
+			delete(hm.hosts, hostID)
+		} else {
+			delete(hm.hosts, domain)
+		}
 	} else {
-		hm.hosts[domain] = cfg
+		// Map the new config to memory using its source file name
+		hostID := strings.TrimSuffix(cfg.SourceFile, woos.HCLSuffix)
+		if hostID == "" {
+			hostID = zulu.NormalizeHost(domain)
+			cfg.SourceFile = hostID + woos.HCLSuffix
+		}
+		hm.hosts[hostID] = cfg
 	}
 
 	hm.rebuildLookupLocked()
@@ -775,12 +791,17 @@ func (hm *Host) Save(domain string) error {
 	hm.mu.RLock()
 	defer hm.mu.RUnlock()
 
-	cfg, ok := hm.hosts[domain]
-	if !ok || cfg == nil {
+	m := hm.lookupMap.Load().(map[string]*alaye.Host)
+	domainKey := hm.resolveDomain(m, domain)
+	if domainKey == "" {
 		return fmt.Errorf("host %q not found", domain)
 	}
+	cfg := m[domainKey]
 
-	filename := zulu.NormalizeHost(domain) + woos.HCLSuffix
+	filename := cfg.SourceFile
+	if filename == "" {
+		filename = zulu.NormalizeHost(domain) + woos.HCLSuffix
+	}
 	filePath := filepath.Join(hm.hostsDir.Path(), filename)
 
 	p := parser.NewParser(filePath)
@@ -790,7 +811,11 @@ func (hm *Host) Save(domain string) error {
 // Create writes cfg to disk for domain without requiring the host to be present
 // in the in-memory store. Used by the admin API to persist before updating memory.
 func (hm *Host) Create(domain string, cfg *alaye.Host) error {
-	filename := zulu.NormalizeHost(domain) + woos.HCLSuffix
+	filename := cfg.SourceFile
+	if filename == "" {
+		filename = zulu.NormalizeHost(domain) + woos.HCLSuffix
+		cfg.SourceFile = filename
+	}
 	filePath := filepath.Join(hm.hostsDir.Path(), filename)
 	p := parser.NewParser(filePath)
 	return p.MarshalFile(cfg)
@@ -805,12 +830,29 @@ func (hm *Host) DeleteFile(domain string) error {
 		return fmt.Errorf("invalid domain")
 	}
 
-	filename := domain + woos.HCLSuffix
-	filePath := filepath.Join(hm.hostsDir.Path(), filename)
+	if hm.LikelyInternal(domain) {
+		return fmt.Errorf("cannot delete internal host %q", domain)
+	}
 
-	delete(hm.hosts, domain)
+	m := hm.lookupMap.Load().(map[string]*alaye.Host)
+	domainKey := hm.resolveDomain(m, domain)
+	if domainKey == "" {
+		return fmt.Errorf("host %q not found", domain)
+	}
+	cfg := m[domainKey]
+
+	filename := cfg.SourceFile
+	if filename == "" {
+		filename = domain + woos.HCLSuffix
+	}
+
+	// Remove from memory
+	hostID := strings.TrimSuffix(filename, woos.HCLSuffix)
+	delete(hm.hosts, hostID)
 	hm.rebuildLookupLocked()
 
+	// Remove from disk
+	filePath := filepath.Join(hm.hostsDir.Path(), filename)
 	err := os.Remove(filePath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -818,6 +860,13 @@ func (hm *Host) DeleteFile(domain string) error {
 
 	hm.logger.Fields("domain", domain, "file", filename).Info("host configuration deleted")
 	return nil
+}
+
+func (hm *Host) LikelyInternal(name string) bool {
+	if strings.HasPrefix(name, "admin") || strings.HasPrefix(name, "web") {
+		return true
+	}
+	return false
 }
 
 // validatePathSegment rejects values that could escape a base directory via path traversal.

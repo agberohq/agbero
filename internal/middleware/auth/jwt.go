@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -10,6 +11,10 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/olekukonko/errors"
 )
+
+type contextKey string
+
+const ClaimsContextKey contextKey = "jwt_claims"
 
 func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
 	// Return passthrough if disabled
@@ -131,7 +136,13 @@ func JWTWithRevocation(cfg *alaye.JWTAuth, isRevoked func(jti string) bool) func
 				}
 			}
 
-			next.ServeHTTP(w, r)
+			ctx := context.WithValue(r.Context(), ClaimsContextKey, claims)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func GetClaims(r *http.Request) (jwt.MapClaims, bool) {
+	claims, ok := r.Context().Value(ClaimsContextKey).(jwt.MapClaims)
+	return claims, ok
 }
