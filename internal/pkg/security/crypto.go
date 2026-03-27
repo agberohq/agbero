@@ -44,6 +44,17 @@ func NewCipher(secret string) (*Cipher, error) {
 	return &Cipher{aead: aead}, nil
 }
 
+func NewCipherFromKey(key []byte) (*Cipher, error) {
+	if len(key) != chacha20poly1305.KeySize {
+		return nil, errors.New("key must be 32 bytes")
+	}
+	aead, err := chacha20poly1305.NewX(key)
+	if err != nil {
+		return nil, err
+	}
+	return &Cipher{aead: aead}, nil
+}
+
 func (c *Cipher) Encrypt(plaintext []byte) ([]byte, error) {
 	if c == nil || c.aead == nil {
 		return nil, errors.New("cipher not initialized")

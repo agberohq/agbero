@@ -10,8 +10,8 @@ import (
 
 	"charm.land/huh/v2"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/pkg/installer"
 	"github.com/agberohq/agbero/internal/pkg/ui"
+	"github.com/agberohq/agbero/internal/setup"
 	"github.com/kardianos/service"
 )
 
@@ -23,7 +23,7 @@ type Home struct {
 // Navigate to the specified target directory and opens an interactive shell
 // Supports viewing or editing the configuration file based on the selected action
 func (h *Home) Navigate(target, action string) {
-	ctx := installer.NewContext(h.p.Logger)
+	ctx := setup.NewContext(h.p.Logger)
 
 	openShell := false
 	showContent := false
@@ -120,12 +120,16 @@ func (h *Home) Navigate(target, action string) {
 func (h *Home) Uninstall(svc service.Service, configPath string, force bool) {
 	if !force {
 		u := ui.New()
-		u.UninstallWarning([]string{
-			"stop and remove the system service",
-			"remove the local Certificate Authority from system trust",
-			"delete all configurations, host files, certificates, logs, and data",
-			"attempt to remove the agbero binary",
-		})
+		u.DialogBox(ui.DialogDanger,
+			"DANGER — Complete uninstall",
+			[]string{
+				"stop and remove the system service",
+				"remove the local Certificate Authority from system trust",
+				"delete all configurations, host files, certificates, logs, and data",
+				"attempt to remove the agbero binary",
+			},
+			"This action cannot be undone.",
+		)
 
 		var confirm bool
 		err := huh.NewConfirm().
@@ -172,7 +176,7 @@ func (h *Home) uninstallCA(configPath string) {
 // Deletes the base directory containing all application data and configuration
 // Exits early and skips processing if the target directory does not exist
 func (h *Home) deleteDataDirectories() {
-	ctx := installer.NewContext(h.p.Logger)
+	ctx := setup.NewContext(h.p.Logger)
 	baseDir := ctx.Paths.BaseDir.Path()
 
 	h.p.Logger.Infof("deleting all agbero data in %s", baseDir)

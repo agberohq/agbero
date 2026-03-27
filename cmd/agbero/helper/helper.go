@@ -21,6 +21,7 @@ func New(logger *ll.Logger, shutdown *jack.Shutdown, cfg *Config) *Helper {
 
 func (h *Helper) Config() *Configuration { return &Configuration{p: h} }
 func (h *Helper) Secret() *Secret        { return &Secret{p: h} }
+func (h *Helper) Keeper() *Keeper        { return &Keeper{p: h} }
 func (h *Helper) Host() *Host            { return &Host{p: h} }
 func (h *Helper) Cert() *Cert            { return &Cert{p: h} }
 func (h *Helper) Service() *Service      { return &Service{p: h} }

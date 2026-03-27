@@ -13,8 +13,8 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/discovery"
-	"github.com/agberohq/agbero/internal/pkg/installer"
 	"github.com/agberohq/agbero/internal/pkg/ui"
+	"github.com/agberohq/agbero/internal/setup"
 )
 
 type Ephemeral struct {
@@ -45,9 +45,9 @@ func (e *Ephemeral) Serve() {
 		os.Exit(1)
 	}
 
-	ctx := installer.NewContext(e.p.Logger)
+	ctx := setup.NewContext(e.p.Logger)
 	if cfg.ServeHTTPS {
-		if err := installer.NewCA(ctx).PromptAndInstall(); err != nil {
+		if err := setup.NewCA(ctx).PromptAndInstall(); err != nil {
 			e.p.Logger.Warn("CA installation prompt interrupted: ", err)
 		}
 	}
@@ -128,9 +128,9 @@ func (e *Ephemeral) Proxy() {
 		os.Exit(1)
 	}
 
-	ctx := installer.NewContext(e.p.Logger)
+	ctx := setup.NewContext(e.p.Logger)
 	if cfg.ProxyHTTPS {
-		if err := installer.NewCA(ctx).PromptAndInstall(); err != nil {
+		if err := setup.NewCA(ctx).PromptAndInstall(); err != nil {
 			e.p.Logger.Warn("CA installation prompt interrupted: ", err)
 		}
 	}
@@ -159,7 +159,7 @@ func (e *Ephemeral) Proxy() {
 	e.run(global, hosts)
 }
 
-func (e *Ephemeral) createGlobal(bindHost string, port int, useHTTPS bool, ctx *installer.Context) *alaye.Global {
+func (e *Ephemeral) createGlobal(bindHost string, port int, useHTTPS bool, ctx *setup.Context) *alaye.Global {
 	global := woos.NewEphemeralGlobal(port, useHTTPS)
 	if bindHost != "" {
 		addr := fmt.Sprintf("%s:%d", bindHost, port)

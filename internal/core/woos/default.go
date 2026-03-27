@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 )
@@ -235,6 +236,25 @@ func defaultAdmin(a *alaye.Admin) {
 		defaultForwardAuth(&a.ForwardAuth)
 		defaultOAuth(&a.OAuth)
 		defaultTelemetry(&a.Telemetry)
+	}
+
+	if a.TOTP.Enabled.Active() {
+
+		if a.TOTP.Issuer == "" {
+			a.TOTP.Issuer = strings.ToUpper(Name)
+		}
+
+		if a.TOTP.Digits == 0 {
+			a.TOTP.Digits = 6
+		}
+
+		if a.TOTP.Period == 0 {
+			a.TOTP.Period = 30
+		}
+
+		if a.TOTP.Algorithm == "" {
+			a.TOTP.Algorithm = "SHA1"
+		}
 	}
 }
 
