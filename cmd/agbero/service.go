@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"charm.land/huh/v2"
 	"github.com/agberohq/agbero"
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
@@ -42,6 +43,23 @@ func (p *program) run() {
 	if err != nil {
 		logger.Fields("file", p.configPath, "err", err).Fatal("failed to load config")
 		return
+	}
+
+	if global.Security.Keeper.Enabled.Active() && global.Security.Keeper.Passphrase.Empty() && service.Interactive() {
+		var pass string
+		err := huh.NewInput().
+			Title("Keeper Passphrase").
+			Description("Unlock the encrypted secret store").
+			EchoMode(huh.EchoModePassword).
+			Value(&pass).
+			Run()
+
+		if err == nil && pass != "" {
+			global.Security.Keeper.Passphrase = alaye.ValuePlain(pass)
+		} else {
+			logger.Fatal("Passphrase is required to start Agbero when Keeper is enabled.")
+			return
+		}
 	}
 
 	if p.clusterStart || p.clusterJoinIP != "" {

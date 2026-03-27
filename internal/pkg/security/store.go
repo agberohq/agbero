@@ -1,6 +1,5 @@
-// store.go
 // Package security provides a secure, encrypted secret store backed by BoltDB.
-// It supports passphrase-based encryption, Shamir's Secret Sharing for M-of-N
+// It supports passphrase-based encryption, optional Shamir's Secret Sharing for M-of-N
 // admin access, automatic locking, key rotation, and comprehensive audit logging.
 package security
 
@@ -34,6 +33,8 @@ var (
 	ErrInvalidConfig = errors.New("invalid store configuration")
 	// ErrShamirThreshold indicates insufficient shares for Shamir reconstruction.
 	ErrShamirThreshold = errors.New("insufficient shares for Shamir reconstruction")
+	// ErrShamirDisabled indicates Shamir operations were requested but not enabled.
+	ErrShamirDisabled = errors.New("Shamir secret sharing is not enabled")
 )
 
 // Store manages encrypted secrets in BoltDB with optional passphrase protection.
@@ -54,9 +55,10 @@ type Store struct {
 	lastActivity int64
 	autoLockStop chan struct{}
 
-	// Shamir's Secret Sharing configuration
+	// Shamir's Secret Sharing configuration (only used if EnableShamir=true)
 	shamirThreshold int
 	shamirTotal     int
+	shamirEnabled   bool
 
 	shamir *Shamir
 }
@@ -77,6 +79,9 @@ type StoreConfig struct {
 	AutoLockInterval time.Duration
 	// EnableAudit enables audit logging of all secret access.
 	EnableAudit bool
+	// EnableShamir enables Shamir's Secret Sharing for M-of-N admin access.
+	// When false, the store uses simple single-passphrase unlocking.
+	EnableShamir bool
 }
 
 // Secret represents an encrypted secret with metadata.
@@ -123,7 +128,9 @@ func NewStore(config StoreConfig) (*Store, error) {
 		locked:          true, // Start locked
 		config:          config,
 		autoLockStop:    make(chan struct{}),
+		shamirEnabled:   config.EnableShamir,
 		shamirThreshold: 0,
+		shamirTotal:     0,
 		shamir:          NewShamir(),
 	}
 
@@ -133,10 +140,12 @@ func NewStore(config StoreConfig) (*Store, error) {
 		return nil, fmt.Errorf("failed to initialize buckets: %w", err)
 	}
 
-	// Load Shamir metadata if exists
-	if err := store.loadShamirMetadata(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to load shamir metadata: %w", err)
+	// Load Shamir metadata if enabled and exists
+	if config.EnableShamir {
+		if err := store.loadShamirMetadata(); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to load shamir metadata: %w", err)
+		}
 	}
 
 	return store, nil
@@ -194,12 +203,23 @@ func (s *Store) SetAuditFunc(fn func(action, key string, success bool, duration 
 
 // Unlock derives the master key from passphrase using scrypt and unlocks the store.
 // This must be called before any secret operations.
+// For Shamir-enabled stores, use UnlockShamir instead.
 func (s *Store) Unlock(passphrase string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// If Shamir is enabled in config, single-passphrase unlock is disabled
+	if s.config.EnableShamir {
+		return ErrShamirDisabled
+	}
+
 	if !s.locked {
 		return ErrAlreadyUnlocked
+	}
+
+	// If Shamir is enabled, single-passphrase unlock is disabled
+	if s.shamirEnabled && s.shamirThreshold > 0 {
+		return ErrShamirDisabled
 	}
 
 	start := time.Now()
@@ -248,6 +268,7 @@ func (s *Store) Unlock(passphrase string) error {
 }
 
 // UnlockShamir reconstructs the master key from M-of-N shares using Shamir's Secret Sharing.
+// Requires Shamir to be enabled in StoreConfig.
 func (s *Store) UnlockShamir(encryptedShares [][]byte, passphrases []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -256,12 +277,16 @@ func (s *Store) UnlockShamir(encryptedShares [][]byte, passphrases []string) err
 		return ErrAlreadyUnlocked
 	}
 
+	if !s.shamirEnabled {
+		return ErrShamirDisabled
+	}
+
 	if len(encryptedShares) != len(passphrases) {
 		return fmt.Errorf("mismatched shares and passphrases: %d shares, %d passphrases", len(encryptedShares), len(passphrases))
 	}
 
 	if len(encryptedShares) < s.shamirThreshold {
-		return ErrShamirThreshold // bare error so existing test passes
+		return ErrShamirThreshold
 	}
 
 	start := time.Now()
@@ -306,7 +331,12 @@ func (s *Store) UnlockShamir(encryptedShares [][]byte, passphrases []string) err
 
 // InitializeShamir sets up M-of-N secret sharing for the master key.
 // It encrypts the store with a new random key and returns encrypted shares for each admin.
+// Requires EnableShamir=true in StoreConfig.
 func (s *Store) InitializeShamir(threshold, total int, adminPassphrases []string) ([][]byte, error) {
+	if !s.config.EnableShamir {
+		return nil, ErrShamirDisabled
+	}
+
 	if threshold <= 0 || total <= 0 || threshold > total {
 		return nil, fmt.Errorf("invalid threshold/total: need 0 < threshold <= total")
 	}
@@ -347,7 +377,7 @@ func (s *Store) InitializeShamir(threshold, total int, adminPassphrases []string
 		key := argon2.IDKey([]byte(passphrase), salt, 3, 64*1024, 4, 32)
 
 		// Encrypt share with XChaCha20-Poly1305
-		cipher, err := NewCipher(string(key))
+		cipher, err := NewCipherFromKey(key)
 		if err != nil {
 			secureZero(key)
 			secureZero(masterKey)
@@ -363,7 +393,10 @@ func (s *Store) InitializeShamir(threshold, total int, adminPassphrases []string
 		}
 
 		// Store: version(1) + salt(16) + ciphertext
-		encryptedShares[i] = append([]byte{1}, append(salt, ciphertext...)...)
+		encryptedShares[i] = make([]byte, 0, 1+len(salt)+len(ciphertext))
+		encryptedShares[i] = append(encryptedShares[i], 1)
+		encryptedShares[i] = append(encryptedShares[i], salt...)
+		encryptedShares[i] = append(encryptedShares[i], ciphertext...)
 
 		// Clean up
 		secureZero(key)
@@ -373,6 +406,7 @@ func (s *Store) InitializeShamir(threshold, total int, adminPassphrases []string
 	// Store Shamir configuration
 	s.shamirThreshold = threshold
 	s.shamirTotal = total
+	s.shamirEnabled = true
 
 	// Save metadata about Shamir configuration
 	if err := s.saveShamirMetadata(threshold, total); err != nil {
@@ -386,10 +420,13 @@ func (s *Store) InitializeShamir(threshold, total int, adminPassphrases []string
 		return nil, fmt.Errorf("failed to store verification hash: %w", err)
 	}
 
-	// Re-encrypt all existing secrets with new master key
-	if err := s.reencryptAll(masterKey); err != nil {
-		secureZero(masterKey)
-		return nil, fmt.Errorf("failed to reencrypt secrets: %w", err)
+	// Re-encrypt all existing secrets with new master key only if we have an old key
+	// (i.e., store was previously unlocked). If locked, there's nothing to re-encrypt.
+	if len(s.masterKey) > 0 {
+		if err := s.reencryptAllWithKey(masterKey, s.masterKey); err != nil {
+			secureZero(masterKey)
+			return nil, fmt.Errorf("failed to reencrypt secrets: %w", err)
+		}
 	}
 
 	s.masterKey = masterKey
@@ -417,7 +454,7 @@ func (s *Store) DecryptShare(encryptedShare []byte, passphrase string) ([]byte, 
 	key := argon2.IDKey([]byte(passphrase), salt, 3, 64*1024, 4, 32)
 
 	// Decrypt using XChaCha20-Poly1305
-	cipher, err := NewCipher(string(key))
+	cipher, err := NewCipherFromKey(key)
 	if err != nil {
 		secureZero(key)
 		return nil, err
@@ -465,6 +502,21 @@ func (s *Store) IsLocked() bool {
 	return s.locked
 }
 
+// IsShamirEnabled returns true if Shamir secret sharing is configured.
+func (s *Store) IsShamirEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.config.EnableShamir || s.shamirThreshold > 0
+}
+
+// GetShamirConfig returns the current Shamir configuration (threshold, total).
+// Returns (0, 0) if Shamir is not enabled.
+func (s *Store) GetShamirConfig() (threshold, total int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.shamirThreshold, s.shamirTotal
+}
+
 // Get retrieves and decrypts a secret by key.
 func (s *Store) Get(key string) (string, error) {
 	start := time.Now()
@@ -475,7 +527,8 @@ func (s *Store) Get(key string) (string, error) {
 		s.audit("get", key, false, time.Since(start))
 		return "", ErrStoreLocked
 	}
-	masterKey := s.masterKey
+	masterKey := make([]byte, len(s.masterKey))
+	copy(masterKey, s.masterKey)
 	s.updateActivity()
 	s.mu.RUnlock()
 
@@ -495,11 +548,14 @@ func (s *Store) Get(key string) (string, error) {
 	})
 
 	if err != nil {
+		secureZero(masterKey)
 		s.audit("get", key, false, time.Since(start))
 		return "", err
 	}
 
 	plaintext, err := s.decrypt(secret.Ciphertext, masterKey)
+	secureZero(masterKey)
+
 	if err != nil {
 		s.audit("get", key, false, time.Since(start))
 		return "", fmt.Errorf("decryption failed: %w", err)
@@ -536,9 +592,12 @@ func (s *Store) SetBytes(key string, value []byte) error {
 		s.audit("set", key, false, time.Since(start))
 		return ErrStoreLocked
 	}
-	masterKey := s.masterKey
+	masterKey := make([]byte, len(s.masterKey))
+	copy(masterKey, s.masterKey)
 	s.updateActivity()
 	s.mu.RUnlock()
+
+	defer secureZero(masterKey)
 
 	// Check if key exists to preserve creation time
 	var existing Secret
@@ -680,7 +739,12 @@ func (s *Store) Exists(key string) (bool, error) {
 
 // Rotate re-encrypts all secrets with a new master key derived from newPassphrase.
 // This should be called periodically or when an admin leaves.
+// For Shamir-enabled stores, use RotateShamir instead.
 func (s *Store) Rotate(newPassphrase string) error {
+	if s.config.EnableShamir {
+		return ErrShamirDisabled
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -709,13 +773,16 @@ func (s *Store) Rotate(newPassphrase string) error {
 		return fmt.Errorf("scrypt failed: %w", err)
 	}
 
-	oldKey := s.masterKey
+	oldKey := make([]byte, len(s.masterKey))
+	copy(oldKey, s.masterKey)
 
 	// Re-encrypt all secrets
-	if err := s.reencryptAll(newKey); err != nil {
+	if err := s.reencryptAllWithKey(newKey, oldKey); err != nil {
 		secureZero(newKey)
+		secureZero(oldKey)
 		return err
 	}
+	secureZero(oldKey)
 
 	// Update verification hash
 	if err := s.storeVerificationHash(newKey); err != nil {
@@ -730,13 +797,109 @@ func (s *Store) Rotate(newPassphrase string) error {
 	}
 
 	// Clean up old key
-	secureZero(oldKey)
+	secureZero(s.masterKey)
 
 	s.masterKey = newKey
 	s.salt = newSalt
 
 	s.audit("rotate", "", true, time.Since(start))
 	return nil
+}
+
+// RotateShamir re-encrypts all secrets with a new master key and regenerates Shamir shares.
+// Requires Shamir to be enabled.
+func (s *Store) RotateShamir(newAdminPassphrases []string) ([][]byte, error) {
+	if !s.shamirEnabled {
+		return nil, ErrShamirDisabled
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.locked {
+		return nil, ErrStoreLocked
+	}
+
+	if len(newAdminPassphrases) != s.shamirTotal {
+		return nil, fmt.Errorf("need exactly %d passphrases for %d admins", s.shamirTotal, s.shamirTotal)
+	}
+
+	start := time.Now()
+
+	// Generate new random master key
+	newMasterKey := make([]byte, s.config.KeyLen)
+	if _, err := rand.Read(newMasterKey); err != nil {
+		return nil, fmt.Errorf("failed to generate master key: %w", err)
+	}
+
+	// Split into new shares
+	shares, err := s.shamir.Split(newMasterKey, s.shamirTotal, s.shamirThreshold)
+	if err != nil {
+		secureZero(newMasterKey)
+		return nil, fmt.Errorf("shamir split failed: %w", err)
+	}
+
+	// Encrypt each new share
+	encryptedShares := make([][]byte, s.shamirTotal)
+	for i, passphrase := range newAdminPassphrases {
+		shareBytes := s.shamir.SerializeShare(shares[i])
+
+		salt := make([]byte, 16)
+		if _, err := rand.Read(salt); err != nil {
+			secureZero(newMasterKey)
+			return nil, err
+		}
+
+		key := argon2.IDKey([]byte(passphrase), salt, 3, 64*1024, 4, 32)
+		cipher, err := NewCipherFromKey(key)
+		if err != nil {
+			secureZero(key)
+			secureZero(newMasterKey)
+			return nil, err
+		}
+
+		ciphertext, err := cipher.Encrypt(shareBytes)
+		if err != nil {
+			secureZero(key)
+			secureZero(shareBytes)
+			secureZero(newMasterKey)
+			return nil, err
+		}
+
+		encryptedShares[i] = make([]byte, 0, 1+len(salt)+len(ciphertext))
+		encryptedShares[i] = append(encryptedShares[i], 1)
+		encryptedShares[i] = append(encryptedShares[i], salt...)
+		encryptedShares[i] = append(encryptedShares[i], ciphertext...)
+
+		secureZero(key)
+		secureZero(shareBytes)
+	}
+
+	// Preserve old key for re-encryption
+	oldKey := make([]byte, len(s.masterKey))
+	copy(oldKey, s.masterKey)
+
+	// Re-encrypt all secrets with new master key
+	if err := s.reencryptAllWithKey(newMasterKey, oldKey); err != nil {
+		secureZero(newMasterKey)
+		secureZero(oldKey)
+		return nil, err
+	}
+	secureZero(oldKey)
+
+	// Update verification hash
+	if err := s.storeVerificationHash(newMasterKey); err != nil {
+		secureZero(newMasterKey)
+		return nil, err
+	}
+
+	// Update master key and activity
+	secureZero(s.masterKey)
+	s.masterKey = newMasterKey
+	s.updateActivity()
+
+	s.audit("rotate_shamir", "", true, time.Since(start))
+	return encryptedShares, nil
 }
 
 // Close closes the database and locks the store.
@@ -747,7 +910,7 @@ func (s *Store) Close() error {
 
 // autoLockRoutine locks the store after period of inactivity.
 func (s *Store) autoLockRoutine() {
-	ticker := time.NewTicker(s.config.AutoLockInterval) // was hardcoded 30s
+	ticker := time.NewTicker(s.config.AutoLockInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -770,12 +933,27 @@ func (s *Store) updateActivity() {
 
 // reencryptAll re-encrypts all secrets with a new master key.
 func (s *Store) reencryptAll(newKey []byte) error {
-	var secretsToUpdate []struct {
+	oldKey := make([]byte, len(s.masterKey))
+	copy(oldKey, s.masterKey)
+	defer secureZero(oldKey)
+	return s.reencryptAllWithKey(newKey, oldKey)
+}
+
+// reencryptAllWithKey re-encrypts all secrets using explicit oldKey and newKey.
+// This avoids race conditions with s.masterKey being modified during iteration.
+func (s *Store) reencryptAllWithKey(newKey, oldKey []byte) error {
+	if len(oldKey) == 0 {
+		return errors.New("old key is empty")
+	}
+
+	type secretUpdate struct {
 		key    string
 		secret Secret
 	}
 
-	// Collect all secrets
+	var secretsToUpdate []secretUpdate
+
+	// Collect and re-encrypt all secrets
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte("secrets"))
 		if b == nil {
@@ -788,15 +966,16 @@ func (s *Store) reencryptAll(newKey []byte) error {
 				return err
 			}
 
-			// Decrypt with old key
-			plaintext, err := s.decrypt(secret.Ciphertext, s.masterKey)
+			// Decrypt with explicit old key
+			plaintext, err := s.decrypt(secret.Ciphertext, oldKey)
 			if err != nil {
 				return fmt.Errorf("failed to decrypt %s: %w", string(k), err)
 			}
 
-			// Re-encrypt with new key
+			// Re-encrypt with explicit new key
 			ciphertext, err := s.encrypt(plaintext, newKey)
 			if err != nil {
+				secureZero(plaintext)
 				return fmt.Errorf("failed to encrypt %s: %w", string(k), err)
 			}
 
@@ -806,10 +985,10 @@ func (s *Store) reencryptAll(newKey []byte) error {
 			secret.UpdatedAt = time.Now()
 			secret.Version++
 
-			secretsToUpdate = append(secretsToUpdate, struct {
-				key    string
-				secret Secret
-			}{string(k), secret})
+			secretsToUpdate = append(secretsToUpdate, secretUpdate{
+				key:    string(k),
+				secret: secret,
+			})
 
 			return nil
 		})
@@ -841,7 +1020,7 @@ func (s *Store) reencryptAll(newKey []byte) error {
 // encrypt encrypts plaintext using XChaCha20-Poly1305 with the given key.
 // Returns ciphertext with nonce prepended (nonceSize + len(plaintext) + tagSize).
 func (s *Store) encrypt(plaintext []byte, key []byte) ([]byte, error) {
-	cipher, err := NewCipher(string(key))
+	cipher, err := NewCipherFromKey(key)
 	if err != nil {
 		return nil, err
 	}
@@ -851,7 +1030,7 @@ func (s *Store) encrypt(plaintext []byte, key []byte) ([]byte, error) {
 // decrypt decrypts ciphertext using XChaCha20-Poly1305 with the given key.
 // Expects ciphertext with nonce prepended.
 func (s *Store) decrypt(ciphertext []byte, key []byte) ([]byte, error) {
-	cipher, err := NewCipher(string(key))
+	cipher, err := NewCipherFromKey(key)
 	if err != nil {
 		return nil, err
 	}
@@ -982,6 +1161,7 @@ func (s *Store) loadShamirMetadata() error {
 
 	s.shamirThreshold = threshold
 	s.shamirTotal = total
+	s.shamirEnabled = true
 	return nil
 }
 

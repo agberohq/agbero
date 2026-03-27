@@ -46,6 +46,7 @@ admin {
     enabled = "on"
   }
 
+
   # ---------------------------------------------------------
   # BASIC AUTH (for /login endpoint)
   # ---------------------------------------------------------
@@ -66,6 +67,30 @@ admin {
     secret = "{ADMIN_SECRET}"
   }
 
+
+  # ---------------------------------------------------------
+  # TOTP TWO-FACTOR AUTHENTICATION
+  # ---------------------------------------------------------
+  # Uncomment and configure to enable TOTP 2FA for admin users
+  totp {
+    enabled = "{TOTP_ENABLED}"
+    issuer = "agbero"
+    algorithm = "SHA1"
+    digits = 6
+    period = 30
+    window_size = 1
+
+    # TOTP users - secrets are stored in the Keeper (ss:// references)
+    user {
+      username = "admin"
+      secret = "{TOTP_ADMIN_SECRECT}"
+    }
+    # user {
+    #   username = "operator"
+    #   secret = "ss://totp/operator"
+    # }
+  }
+  
   # ---------------------------------------------------------
   # OAUTH / FORWARD AUTH (Examples)
   # ---------------------------------------------------------
@@ -114,9 +139,9 @@ logging {
   # FILE LOGGING
   # ---------------------------------------------------------
   file {
-    enabled    = "on"
-    path       = "{LOGS_DIR}/agbero.log"
-    batch_size = 500
+    enabled     = "on"
+    path        = "{LOGS_DIR}/agbero.log"
+    batch_size  = 500
     rotate_size = 52428800
   }
 
@@ -155,7 +180,19 @@ security {
 
   # Path to internal auth key for service-to-service authentication
   # Generate: agbero key init
-  # internal_auth_key = "/etc/agbero/internal_auth.key"
+  internal_auth_key = "{INTERNAL_AUTH_KEY}"
+
+  # ---------------------------------------------------------
+  # KEEPER - ENCRYPTED SECRET STORE
+  # ---------------------------------------------------------
+  # Uncomment to enable the encrypted secret store for TOTP and other secrets
+  keeper {
+    enabled = "{KEEPER_ENABLED}"
+    auto_lock = "30m"
+    audit = "on"
+    # Master passphrase - can be env variable or prompt at runtime
+    passphrase = "env.AGBERO_KEEPER_PASSPHRASE"
+  }
 
   # ---------------------------------------------------------
   # APPLICATION FIREWALL / WAF
@@ -166,14 +203,14 @@ security {
 
     defaults {
       dynamic { action = "ban_short" }
-      static  { action = "ban_hard" }
+      static { action = "ban_hard" }
     }
 
     # Define actions referenced above
     action "ban_hard" {
       mitigation = "add"
       response {
-        status_code = 403
+        status_code   = 403
         body_template = "{\"error\": \"Access Denied\"}"
       }
     }
@@ -244,7 +281,7 @@ rate_limits {
   # Protect the admin login endpoint from brute force
   rule "protect_admin_login" {
     prefixes = ["/login"]
-    methods  = ["POST"]
+    methods = ["POST"]
     requests = 5
     window   = "1m"
     burst    = 5

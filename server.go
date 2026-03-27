@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"charm.land/huh/v2"
 	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/resource"
@@ -24,12 +25,14 @@ import (
 	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/agberohq/agbero/internal/handlers"
 	"github.com/agberohq/agbero/internal/middleware/firewall"
+	"github.com/agberohq/agbero/internal/operation/api"
 	"github.com/agberohq/agbero/internal/pkg/cook"
 	"github.com/agberohq/agbero/internal/pkg/orchestrator"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/telemetry"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/kardianos/service"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -50,7 +53,7 @@ type Server struct {
 	hostManager     *discovery.Host
 	global          *alaye.Global
 	tlsManager      *tlss.Manager
-	securityManager *security.Manager
+	securityManager *security.PPK
 	resource        *resource.Resource
 	orchManager     *orchestrator.Manager
 
@@ -84,6 +87,11 @@ type Server struct {
 	// jtiLifetime schedules automatic removal of expired JTI entries so the
 	// revocation map does not accumulate stale entries indefinitely.
 	jtiLifetime *jack.Lifetime
+
+	secret      *security.Store
+	totpHandler *api.TOTP
+
+	apiShared *api.Shared
 }
 
 // NewServer initializes a Server instance with the provided options.
@@ -179,7 +187,7 @@ func (s *Server) Start(configPath string) error {
 	}
 
 	if s.global.Security.Enabled.Active() && s.global.Security.InternalAuthKey != "" {
-		mgr, err := security.LoadKeys(s.global.Security.InternalAuthKey)
+		mgr, err := security.PPKLoad(s.global.Security.InternalAuthKey)
 		if err != nil {
 			return err
 		}
@@ -198,7 +206,56 @@ func (s *Server) Start(configPath string) error {
 
 	hosts, _ := s.hostManager.LoadAll()
 
+	// ---------------------------------------------------------
+	// KEEPER INITIALIZATION & INTERACTIVE PROMPT
+	// ---------------------------------------------------------
+	if s.global.Security.Keeper.Enabled.Active() {
+
+		// Prompt for keeper password if running interactively and no passphrase is set
+		if s.global.Security.Keeper.Passphrase.Empty() && service.Interactive() {
+			var pass string
+			err := huh.NewInput().
+				Title("Keeper Passphrase").
+				Description("Unlock the encrypted secret store").
+				EchoMode(huh.EchoModePassword).
+				Value(&pass).
+				Run()
+
+			if err == nil && pass != "" {
+				s.global.Security.Keeper.Passphrase = alaye.ValuePlain(pass)
+			} else {
+				s.logger.Fatal("Passphrase is required to start Agbero when Keeper is enabled.")
+				return fmt.Errorf("keeper passphrase required")
+			}
+		}
+
+		storeConfig := security.StoreConfig{
+			DBPath:           filepath.Join(s.global.Storage.DataDir, woos.DefaultKeeperName),
+			AutoLockInterval: s.global.Security.Keeper.AutoLock.StdDuration(),
+			EnableAudit:      s.global.Security.Keeper.Audit.Active(),
+		}
+
+		store, err := security.OpenExisting(storeConfig)
+		if err != nil {
+			s.logger.Fields("err", err).Error("failed to open secret store")
+		} else {
+			s.secret = store
+
+			if s.global.Security.Keeper.Enabled.Active() {
+				if err := s.secret.Unlock(s.global.Security.Keeper.Passphrase.String()); err != nil {
+					s.logger.Fields("err", err).Error("failed to unlock secret store")
+				} else {
+					security.NewResolver(s.secret).Wire()
+					s.logger.Info("secret store unlocked and set as global")
+				}
+			} else {
+				s.logger.Warn("secret store exists but no passphrase configured – store remains locked")
+			}
+		}
+	}
+
 	s.gitPool = jack.NewPool(defaultGitPoolSize)
+
 	cookCfg := cook.ManagerConfig{
 		WorkDir: s.global.Storage.WorkDir,
 		Pool:    s.gitPool,
@@ -261,7 +318,7 @@ func (s *Server) Start(configPath string) error {
 		if cm, err := cluster.NewManager(cfg, s, s.logger); err == nil {
 			s.clusterManager = cm
 			if s.shutdown != nil {
-				s.shutdown.RegisterFunc("Cluster", func() { _ = s.clusterManager.Shutdown() })
+				s.shutdown.RegisterFunc("ClusterHandler", func() { _ = s.clusterManager.Shutdown() })
 			}
 		}
 	}
@@ -281,11 +338,10 @@ func (s *Server) Start(configPath string) error {
 					_ = ts.Close()
 				})
 			}
+
+			s.logger.Info("telemetry store initialized")
 		}
 	}
-
-	s.startAdminServer()
-	s.startPprofServer()
 
 	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global)
 	if s.shutdown != nil {
@@ -326,6 +382,25 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("TrafficManager", tm.Close)
 	}
 
+	// ---------------------------------------------------------
+	// API SHARED STATE INITIALIZATION (Lock-Free Push)
+	// ---------------------------------------------------------
+	s.apiShared = &api.Shared{
+		Logger:    s.logger,
+		Cluster:   s.clusterManager,
+		Store:     s.secret,
+		Discovery: s.hostManager,
+		PPK:       s.securityManager,
+		Telemetry: s.telemetryStore,
+	}
+
+	// Atomically store the initial active state for the API
+	s.apiShared.UpdateState(&api.ActiveState{
+		Global:   s.global,
+		Firewall: s.firewall,
+		TLSS:     s.tlsManager,
+	})
+
 	listeners := tm.BuildListeners()
 	s.mu.Lock()
 	s.listeners = listeners
@@ -347,6 +422,10 @@ func (s *Server) Start(configPath string) error {
 	if configPath != "" {
 		go s.serverWatchConfig()
 	}
+
+	// Now completely safe to start the Admin API since apiShared is fully populated
+	s.startAdminServer()
+	s.startPprofServer()
 
 	if s.shutdown != nil {
 		s.shutdown.RegisterWithContext("Listeners", s.shutdownImpl)
@@ -437,6 +516,7 @@ func (s *Server) Reload() {
 	oldTrafficManagerForFirewall := s.trafficManager
 	s.mu.RUnlock()
 
+	// Must close the old firewall first to release bbolt database locks
 	if oldTrafficManagerForFirewall != nil {
 		oldTrafficManagerForFirewall.CloseFirewall()
 	}
@@ -471,6 +551,16 @@ func (s *Server) Reload() {
 	s.firewall = newTM.Firewall()
 	s.listeners = newListeners
 	s.mu.Unlock()
+
+	// ---------------------------------------------------------
+	// API SHARED STATE UPDATE (Lock-Free Push)
+	// ---------------------------------------------------------
+	// Atomically push the new state down to the API handlers
+	s.apiShared.UpdateState(&api.ActiveState{
+		Global:   global,
+		Firewall: newTM.Firewall(),
+		TLSS:     newTLSManager,
+	})
 
 	hosts, _ := s.hostManager.LoadAll()
 	validKeys := make(map[alaye.BackendKey]bool)
@@ -532,6 +622,7 @@ func (s *Server) Reload() {
 		}
 	}
 
+	// Teardown old components safely in the background
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultReloadTimeout)
 		defer cancel()
@@ -557,6 +648,7 @@ func (s *Server) Reload() {
 		}
 	}()
 
+	// Spin up the new listeners
 	for _, l := range newListeners {
 		go func(listener handlers.Listener) {
 			s.logger.Fields("bind", listener.Addr(), "proto", listener.Kind()).Info("reloaded listener")
@@ -565,6 +657,7 @@ func (s *Server) Reload() {
 				err = listener.Start()
 				if err != nil {
 					errStr := err.Error()
+					// If the port is still briefly held by the OS, backoff slightly and retry
 					if strings.Contains(errStr, "address already in use") || strings.Contains(errStr, "Only one usage") {
 						if i < woos.MaxPortRetries-1 {
 							time.Sleep(100 * time.Millisecond)
@@ -612,6 +705,19 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 		}(l)
 	}
 	wg.Wait()
+
+	s.mu.RLock()
+	adminSrv := s.adminSrv
+	pprofSrv := s.pprofSrv
+	s.mu.RUnlock()
+
+	if adminSrv != nil {
+		_ = adminSrv.Shutdown(ctx)
+	}
+	if pprofSrv != nil {
+		_ = pprofSrv.Shutdown(ctx)
+	}
+
 	return nil
 }
 

@@ -14,6 +14,7 @@ type Security struct {
 	TrustedProxies  []string `hcl:"trusted_proxies,attr" json:"trusted_proxies"`
 	InternalAuthKey string   `hcl:"internal_auth_key,attr" json:"internal_auth_key"`
 	Firewall        Firewall `hcl:"firewall,block" json:"firewall"`
+	Keeper          Keeper   `hcl:"keeper,block" json:"keep"`
 }
 
 // Validate checks trusted proxy formats and delegates to Firewall.Validate.
@@ -260,4 +261,19 @@ type FirewallRoute struct {
 	IgnoreGlobal bool     `hcl:"ignore_global,attr" json:"ignore_global"`
 	ApplyRules   []string `hcl:"apply_rules,attr" json:"apply_rules"`
 	Rules        []Rule   `hcl:"rule,block" json:"rules,omitempty"`
+}
+
+type Keeper struct {
+	// Enabled indicates whether the secret store is active.
+	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
+
+	// AutoLock is the duration after which the store auto-locks when idle (0 = disabled).
+	AutoLock Duration `hcl:"auto_lock,attr" json:"auto_lock"`
+
+	// Audit enables audit logging of all secret access (get/set/delete).
+	Audit Enabled `hcl:"audit,attr" json:"audit"`
+
+	// Passphrase is the master passphrase to unlock the store.
+	// This should be a secret reference (e.g., "env.SECRET_STORE_PASS") to avoid plaintext.
+	Passphrase Value `hcl:"passphrase,attr" json:"passphrase"` // can later be *security.Value
 }

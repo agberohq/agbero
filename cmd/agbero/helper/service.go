@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/pkg/installer"
 	"github.com/agberohq/agbero/internal/pkg/ui"
+	"github.com/agberohq/agbero/internal/setup"
 	"github.com/kardianos/service"
 )
 
@@ -148,8 +148,8 @@ func (s *Service) Status(svc service.Service, configPath string) {
 }
 
 func (s *Service) mapError(err error, cmd string) error {
-	ctx := installer.NewContext(s.p.Logger)
-	svc := installer.NewService(ctx)
+	ctx := setup.NewContext(s.p.Logger)
+	svc := setup.NewService(ctx)
 	errMsg := err.Error()
 	switch cmd {
 	case "status":

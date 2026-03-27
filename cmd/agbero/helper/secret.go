@@ -1,42 +1,45 @@
 package helper
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/agberohq/agbero/internal/pkg/installer"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/ui"
-	"golang.org/x/crypto/bcrypt"
+	"github.com/agberohq/agbero/internal/setup"
 )
 
+// Secret handles CLI commands under `agbero secret`.
+// Cryptographic primitives (hashing, generation) all delegate to
+// pkg/security so there is no duplicate crypto code here.
 type Secret struct {
 	p *Helper
 }
 
+// Cluster generates a random 32-byte AES-256 gossip key and prints it
+// in b64. format ready to paste into agbero.hcl.
 func (s *Secret) Cluster() {
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
+	pw := security.NewPassword()
+	key, err := pw.Generate(32)
+	if err != nil {
 		s.p.Logger.Fatal("random generation failed: ", err)
 	}
-	encoded := base64.StdEncoding.EncodeToString(key)
 
 	u := ui.New()
-	u.SecretBox("Cluster key", "b64."+encoded)
-	u.InfoLine(`add to agbero.hcl:  gossip { secret_key = "b64.` + encoded + `" }`)
+	u.SecretBox("Cluster key", "b64."+key)
+	u.InfoLine(`add to agbero.hcl:  gossip { secret_key = "b64.` + key + `" }`)
 }
 
+// KeyInit generates the ed25519 key used for internal service-to-service JWT auth.
 func (s *Secret) KeyInit(configPath string) {
 	global, err := loadGlobal(configPath)
 	var targetPath string
 	if err == nil && global.Security.InternalAuthKey != "" {
 		targetPath = global.Security.InternalAuthKey
 	} else {
-		ctx := installer.NewContext(s.p.Logger)
+		ctx := setup.NewContext(s.p.Logger)
 		targetPath = filepath.Join(ctx.Paths.CertsDir.Path(), "internal_auth.key")
 	}
 
@@ -48,7 +51,7 @@ func (s *Secret) KeyInit(configPath string) {
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 		s.p.Logger.Fatal("failed to create directory: ", err)
 	}
-	if err := security.GenerateNewKeyFile(targetPath); err != nil {
+	if err := security.NewPPK(targetPath); err != nil {
 		s.p.Logger.Fatal("failed to generate key: ", err)
 	}
 
@@ -57,6 +60,7 @@ func (s *Secret) KeyInit(configPath string) {
 	u.InfoLine(`add to agbero.hcl:  security { enabled = true  internal_auth_key = "` + targetPath + `" }`)
 }
 
+// Token mints a signed JWT for a named service using the internal auth key.
 func (s *Secret) Token(configPath, svcName string, ttl time.Duration) {
 	if svcName == "" {
 		s.p.Logger.Fatal("--service name is required")
@@ -69,7 +73,7 @@ func (s *Secret) Token(configPath, svcName string, ttl time.Duration) {
 
 	keyPath := global.Security.InternalAuthKey
 	if keyPath == "" {
-		ctx := installer.NewContext(s.p.Logger)
+		ctx := setup.NewContext(s.p.Logger)
 		defaultPath := filepath.Join(ctx.Paths.CertsDir.Path(), "internal_auth.key")
 		if _, err := os.Stat(defaultPath); err == nil {
 			keyPath = defaultPath
@@ -79,7 +83,7 @@ func (s *Secret) Token(configPath, svcName string, ttl time.Duration) {
 		s.p.Logger.Fatal("security.internal_auth_key is not set and default key file not found")
 	}
 
-	tm, err := security.LoadKeys(keyPath)
+	tm, err := security.PPKLoad(keyPath)
 	if err != nil {
 		s.p.Logger.Fatal("failed to load private key: ", err)
 	}
@@ -94,46 +98,45 @@ func (s *Secret) Token(configPath, svcName string, ttl time.Duration) {
 	}
 
 	u := ui.New()
-	u.SecretBox(
-		"API token — "+svcName,
-		token,
-	)
+	u.SecretBox("API token — "+svcName, token)
 	u.KeyValueBlock("", []ui.KV{
 		{Label: "Service", Value: svcName},
 		{Label: "Expires", Value: time.Now().Add(ttl).Format(time.RFC3339) + "  (" + ttl.String() + ")"},
 	})
 }
 
+// Hash bcrypt-hashes a password and prints the hash.
+// If password is empty the user is prompted interactively.
 func (s *Secret) Hash(password string) {
 	if password == "" {
 		fmt.Print("Enter password: ")
 		fmt.Scanln(&password)
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+
+	pw := security.NewPassword()
+	hash, err := pw.Hash(password)
 	if err != nil {
 		s.p.Logger.Fatal(err)
 	}
 
 	u := ui.New()
-	u.SecretBox("Bcrypt hash", string(hash))
+	u.SecretBox("Bcrypt hash", hash)
 }
 
+// Password generates a random password and prints both the plaintext and
+// its bcrypt hash, ready to paste into a users = [...] block.
 func (s *Secret) Password(length int) {
 	if length <= 0 {
 		length = 32
 	}
-	b := make([]byte, length)
-	if _, err := rand.Read(b); err != nil {
-		s.p.Logger.Fatal("random generation failed: ", err)
-	}
-	password := base64.URLEncoding.EncodeToString(b)[:length]
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	pw := security.NewPassword()
+	password, hash, err := pw.Make(length)
 	if err != nil {
-		s.p.Logger.Fatal("failed to hash password: ", err)
+		s.p.Logger.Fatal("failed to generate password: ", err)
 	}
 
 	u := ui.New()
 	u.SecretBox("Generated password", password)
-	u.SecretBox("Bcrypt hash", string(hash))
+	u.SecretBox("Bcrypt hash", hash)
 }

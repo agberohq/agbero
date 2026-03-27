@@ -231,7 +231,7 @@ func (h *Host) Remove(configPath string) {
 	if err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Select Host to Remove").
+				Title("Select Discovery to Remove").
 				Options(huh.NewOptions(files...)...).
 				Value(&selected),
 		),

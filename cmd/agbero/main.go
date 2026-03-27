@@ -15,9 +15,10 @@ import (
 	"github.com/agberohq/agbero/cmd/agbero/helper"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/pkg/installer"
+	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
+	"github.com/agberohq/agbero/internal/setup"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/jack"
@@ -55,6 +56,9 @@ func main() {
 
 	cmdInit := flaggy.NewSubcommand("init")
 	cmdInit.Description = "Scaffold configuration in current directory"
+
+	cmdInstall := flaggy.NewSubcommand("install")
+	cmdInstall.Description = "Scaffold configuration in current directory (alias for 'init')"
 
 	cmdConfig := flaggy.NewSubcommand("config")
 	cmdConfig.Description = "Configuration management"
@@ -113,6 +117,57 @@ func main() {
 	cmdSecret.AttachSubcommand(cmdSecretToken, 1)
 	cmdSecret.AttachSubcommand(cmdSecretHash, 1)
 	cmdSecret.AttachSubcommand(cmdSecretPassword, 1)
+
+	// ------------------------------------------------------------------
+	// keeper — secret store (encrypted bbolt)
+	// ------------------------------------------------------------------
+	cmdKeeper := flaggy.NewSubcommand("keeper")
+	cmdKeeper.Description = "Manage the encrypted secret store"
+
+	cmdKeeperList := flaggy.NewSubcommand("list")
+	cmdKeeperList.Description = "List all keys in the keeper"
+
+	cmdKeeperGet := flaggy.NewSubcommand("get")
+	cmdKeeperGet.Description = "Retrieve a value from the keeper"
+	cmdKeeperGet.AddPositionalValue(&cfg.KeeperKey, "key", 1, true, "Secret key name")
+
+	cmdKeeperSet := flaggy.NewSubcommand("set")
+	cmdKeeperSet.Description = "Store a value in the keeper"
+	cmdKeeperSet.AddPositionalValue(&cfg.KeeperKey, "key", 1, true, "Secret key name")
+	cmdKeeperSet.AddPositionalValue(&cfg.KeeperValue, "value", 2, false, "Plaintext value (omit to use --file)")
+	cmdKeeperSet.Bool(&cfg.KeeperB64, "b", "b64", "Value is already base64-encoded — decode before storing")
+	cmdKeeperSet.String(&cfg.KeeperFile, "f", "file", "Read value from file (e.g. a certificate)")
+
+	cmdKeeperDelete := flaggy.NewSubcommand("delete")
+	cmdKeeperDelete.Description = "Delete a key from the keeper"
+	cmdKeeperDelete.AddPositionalValue(&cfg.KeeperKey, "key", 1, true, "Secret key name")
+	cmdKeeperDelete.Bool(&cfg.KeeperForce, "f", "force", "Skip confirmation prompt")
+
+	cmdKeeperRotate := flaggy.NewSubcommand("rotate")
+	cmdKeeperRotate.Description = "Change the keeper master passphrase (re-encrypts all secrets)"
+
+	cmdKeeperTOTP := flaggy.NewSubcommand("totp")
+	cmdKeeperTOTP.Description = "Manage TOTP secrets"
+
+	cmdKeeperTOTPSetup := flaggy.NewSubcommand("setup")
+	cmdKeeperTOTPSetup.Description = "Generate and store a new TOTP secret, print QR code"
+	cmdKeeperTOTPSetup.String(&cfg.KeeperUser, "u", "user", "Admin username")
+	cmdKeeperTOTPSetup.String(&cfg.KeeperOutFile, "o", "out", "Write QR code PNG to this file")
+
+	cmdKeeperTOTPQR := flaggy.NewSubcommand("qr")
+	cmdKeeperTOTPQR.Description = "Re-display the QR code for an existing TOTP secret"
+	cmdKeeperTOTPQR.String(&cfg.KeeperUser, "u", "user", "Admin username")
+	cmdKeeperTOTPQR.String(&cfg.KeeperOutFile, "o", "out", "Write QR code PNG to this file")
+
+	cmdKeeperTOTP.AttachSubcommand(cmdKeeperTOTPSetup, 1)
+	cmdKeeperTOTP.AttachSubcommand(cmdKeeperTOTPQR, 1)
+
+	cmdKeeper.AttachSubcommand(cmdKeeperList, 1)
+	cmdKeeper.AttachSubcommand(cmdKeeperGet, 1)
+	cmdKeeper.AttachSubcommand(cmdKeeperSet, 1)
+	cmdKeeper.AttachSubcommand(cmdKeeperDelete, 1)
+	cmdKeeper.AttachSubcommand(cmdKeeperRotate, 1)
+	cmdKeeper.AttachSubcommand(cmdKeeperTOTP, 1)
 
 	cmdHost := flaggy.NewSubcommand("host")
 	cmdHost.Description = "Manage hosts and routes"
@@ -257,8 +312,10 @@ func main() {
 	cmdHelp.Description = "Show usage examples"
 
 	flaggy.AttachSubcommand(cmdInit, 1)
+	flaggy.AttachSubcommand(cmdInstall, 1)
 	flaggy.AttachSubcommand(cmdConfig, 1)
 	flaggy.AttachSubcommand(cmdSecret, 1)
+	flaggy.AttachSubcommand(cmdKeeper, 1)
 	flaggy.AttachSubcommand(cmdHost, 1)
 	flaggy.AttachSubcommand(cmdCert, 1)
 	flaggy.AttachSubcommand(cmdService, 1)
@@ -337,7 +394,41 @@ func main() {
 		return
 	}
 
-	if cmdInit.Used {
+	if cmdKeeper.Used {
+		k := hel.Keeper()
+		resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
+		switch {
+		case cmdKeeperList.Used:
+			k.List(resolvedPath)
+		case cmdKeeperGet.Used:
+			k.Get(resolvedPath, cfg.KeeperKey)
+		case cmdKeeperSet.Used:
+			k.Set(resolvedPath, cfg.KeeperKey, cfg.KeeperValue, cfg.KeeperB64, cfg.KeeperFile)
+		case cmdKeeperDelete.Used:
+			k.Delete(resolvedPath, cfg.KeeperKey, cfg.KeeperForce)
+		case cmdKeeperRotate.Used:
+			k.Rotate(resolvedPath)
+		case cmdKeeperTOTP.Used && cmdKeeperTOTPSetup.Used:
+			k.TOTPSetup(resolvedPath, cfg.KeeperUser)
+			if cfg.KeeperOutFile != "" {
+				writeQRPNG(logger, cfg.KeeperOutFile,
+					security.NewTOTPGenerator(security.DefaultTOTPConfig()),
+					resolvedPath, cfg.KeeperUser)
+			}
+		case cmdKeeperTOTP.Used && cmdKeeperTOTPQR.Used:
+			k.TOTPQR(resolvedPath, cfg.KeeperUser)
+			if cfg.KeeperOutFile != "" {
+				writeQRPNG(logger, cfg.KeeperOutFile,
+					security.NewTOTPGenerator(security.DefaultTOTPConfig()),
+					resolvedPath, cfg.KeeperUser)
+			}
+		default:
+			flaggy.ShowHelpAndExit("keeper")
+		}
+		return
+	}
+
+	if cmdInit.Used || cmdInstall.Used {
 		if _, err := helper.InitConfiguration(logger, ""); err != nil {
 			logger.Fatal("init failed: ", err)
 		}
@@ -354,9 +445,7 @@ func main() {
 				logger.Fatalf("provided config file not found: %s", cfg.ConfigPath)
 			}
 		} else {
-			// Check for any discoverable config before attempting a fresh install.
-			// This prevents creating a second installation when the user already
-			// ran 'agbero init' in a different directory.
+
 			resolvedPath, configExists = helper.ResolveConfigPath(logger, "")
 			if configExists {
 				u := ui.New()
@@ -399,7 +488,7 @@ func main() {
 		if strings.TrimSpace(cfg.ConfigPath) != "" {
 			logger.Fatal("config file not found at: ", cfg.ConfigPath)
 		} else {
-			ctx := installer.NewContext(logger)
+			ctx := setup.NewContext(logger)
 			if ctx.Interactive {
 				var doInit bool
 				err := huh.NewConfirm().
@@ -624,7 +713,7 @@ func main() {
 
 func welcome() {
 	u := ui.New()
-	u.Welcome(woos.Name, woos.Description, woos.Version, woos.Date, installer.BannerTmpl)
+	u.Welcome(woos.Name, woos.Description, woos.Version, woos.Date, setup.BannerTmpl)
 }
 
 func showHelpExamples() {
@@ -688,6 +777,21 @@ func showHelpExamples() {
 			},
 		},
 		{
+			Title: "Keeper (secret store)",
+			Commands: []ui.HelpCmd{
+				{Cmd: exeName + " keeper list", Desc: "list all keys in the encrypted store"},
+				{Cmd: exeName + " keeper get <key>", Desc: "retrieve a secret value"},
+				{Cmd: exeName + " keeper set <key> <value>", Desc: "store a plain string secret"},
+				{Cmd: exeName + " keeper set <key> --file cert.pem", Desc: "store a certificate or binary file"},
+				{Cmd: exeName + " keeper set <key> <b64> --b64", Desc: "store pre-encoded base64 value"},
+				{Cmd: exeName + " keeper delete <key>", Desc: "delete a secret"},
+				{Cmd: exeName + " keeper rotate", Desc: "change master passphrase (re-encrypts all)"},
+				{Cmd: exeName + " keeper totp setup -u admin", Desc: "generate TOTP secret + print QR"},
+				{Cmd: exeName + " keeper totp qr -u admin", Desc: "re-display TOTP QR for a user"},
+				{Cmd: exeName + " keeper totp qr -u admin -o qr.png", Desc: "write QR code to PNG file"},
+			},
+		},
+		{
 			Title: "Hosts",
 			Commands: []ui.HelpCmd{
 				{Cmd: exeName + " host list", Desc: "list configured hosts"},
@@ -734,4 +838,59 @@ func showHelpExamples() {
 			},
 		},
 	})
+}
+
+// writeQRPNG generates a QR code PNG for a user's TOTP secret and writes it
+// to outFile.  This is called from the keeper totp dispatch when --out is set.
+// The actual QR computation lives in internal/setup — main.go only does I/O.
+func writeQRPNG(logger *ll.Logger, outFile string, gen *security.TOTPGenerator, configPath, username string) {
+	global, err := loadConfig(configPath)
+	if err != nil {
+		logger.Warn("could not load config for QR export: ", err)
+		return
+	}
+
+	dataDir := global.Storage.DataDir
+	dbPath := filepath.Join(dataDir, woos.DefaultKeeperName)
+
+	store, err := security.NewStore(security.StoreConfig{DBPath: dbPath})
+	if err != nil {
+		if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "temporarily unavailable") {
+			logger.Fatal("Keeper database is locked by a running Agbero service. Please use the Admin UI/API to manage secrets, or stop the service first.")
+		}
+		logger.Warn("could not open keeper for QR export: ", err)
+		return
+	}
+	defer store.Close()
+
+	// Passphrase already collected by Keeper.openStore — re-prompt minimally.
+	var pass string
+	if err := huh.NewInput().Title("Keeper passphrase (for PNG export)").Password(true).Value(&pass).Run(); err != nil || pass == "" {
+		return
+	}
+	if err := store.Unlock(pass); err != nil {
+		logger.Warn("unlock failed for QR export")
+		return
+	}
+
+	secret, err := store.Get("totp/" + username)
+	if err != nil {
+		logger.Warn("TOTP secret not found: ", err)
+		return
+	}
+
+	uri := gen.GetProvisioningURI(secret, username)
+	qr, err := setup.TOTPProvisioningQR(uri)
+	if err != nil {
+		logger.Warn("QR generation failed: ", err)
+		return
+	}
+
+	if err := os.WriteFile(outFile, qr.PNG, 0600); err != nil {
+		logger.Warn("failed to write QR PNG: ", err)
+		return
+	}
+
+	u := ui.New()
+	u.SuccessLine(fmt.Sprintf("QR code written to %s", outFile))
 }
