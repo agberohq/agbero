@@ -9,11 +9,29 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/middleware/auth"
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5" // Add this import
 )
 
+func setupTestTOTP(t *testing.T, admin alaye.Admin) *Shared {
+	t.Helper()
+
+	shared := &Shared{
+		Logger: testLogger,
+	}
+
+	shared.UpdateState(&ActiveState{
+		Global: &alaye.Global{
+			Admin: admin,
+		},
+	})
+
+	return shared
+}
+
 func TestTOTPHandler_Setup(t *testing.T) {
-	globalConfig := alaye.Admin{
+	admin := alaye.Admin{
 		TOTP: alaye.TOTP{
 			Enabled:    alaye.Active,
 			Digits:     6,
@@ -30,20 +48,20 @@ func TestTOTPHandler_Setup(t *testing.T) {
 		},
 	}
 
-	globalFn := func() alaye.Admin {
-		return globalConfig
-	}
+	shared := setupTestTOTP(t, admin)
 
-	handler := NewTOTPHandler(globalFn, testLogger)
-
-	// Test setup for new user
 	t.Run("New user setup", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/totp/setup", nil)
-		ctx := context.WithValue(req.Context(), "user", "newuser")
+		r := chi.NewRouter()
+		TOTPHandler(shared, r)
+
+		req := httptest.NewRequest(http.MethodPost, "/totp/setup", nil)
+		// Fix: Use jwt.MapClaims instead of map[string]interface{}
+		claims := jwt.MapClaims{"user": "newuser"}
+		ctx := context.WithValue(req.Context(), auth.ClaimsContextKey, claims)
 		req = req.WithContext(ctx)
 
 		w := httptest.NewRecorder()
-		handler.setup(w, req)
+		r.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			t.Errorf("Expected 200, got %d", w.Code)
@@ -66,12 +84,17 @@ func TestTOTPHandler_Setup(t *testing.T) {
 	})
 
 	t.Run("Existing user setup fails", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/totp/setup", nil)
-		ctx := context.WithValue(req.Context(), "user", "existinguser")
+		r := chi.NewRouter()
+		TOTPHandler(shared, r)
+
+		req := httptest.NewRequest(http.MethodPost, "/totp/setup", nil)
+		// Fix: Use jwt.MapClaims
+		claims := jwt.MapClaims{"user": "existinguser"}
+		ctx := context.WithValue(req.Context(), auth.ClaimsContextKey, claims)
 		req = req.WithContext(ctx)
 
 		w := httptest.NewRecorder()
-		handler.setup(w, req)
+		r.ServeHTTP(w, req)
 
 		if w.Code != http.StatusConflict {
 			t.Errorf("Expected 409, got %d", w.Code)
@@ -80,21 +103,21 @@ func TestTOTPHandler_Setup(t *testing.T) {
 }
 
 func TestTOTPHandler_SetupWithoutAuth(t *testing.T) {
-	globalConfig := alaye.Admin{
+	admin := alaye.Admin{
 		TOTP: alaye.TOTP{
 			Enabled: alaye.Active,
 		},
 	}
 
-	globalFn := func() alaye.Admin {
-		return globalConfig
-	}
+	shared := setupTestTOTP(t, admin)
 
-	handler := NewTOTPHandler(globalFn, testLogger)
+	r := chi.NewRouter()
+	TOTPHandler(shared, r)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/totp/setup", nil)
+	req := httptest.NewRequest(http.MethodPost, "/totp/setup", nil)
+	// No auth context set - should return 401
 	w := httptest.NewRecorder()
-	handler.setup(w, req)
+	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("Expected 401, got %d", w.Code)
@@ -102,24 +125,25 @@ func TestTOTPHandler_SetupWithoutAuth(t *testing.T) {
 }
 
 func TestTOTPHandler_SetupDisabled(t *testing.T) {
-	globalConfig := alaye.Admin{
+	admin := alaye.Admin{
 		TOTP: alaye.TOTP{
 			Enabled: alaye.Inactive,
 		},
 	}
 
-	globalFn := func() alaye.Admin {
-		return globalConfig
-	}
+	shared := setupTestTOTP(t, admin)
 
-	handler := NewTOTPHandler(globalFn, testLogger)
+	r := chi.NewRouter()
+	TOTPHandler(shared, r)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/totp/setup", nil)
-	ctx := context.WithValue(req.Context(), "user", "testuser")
+	req := httptest.NewRequest(http.MethodPost, "/totp/setup", nil)
+	// Fix: Use jwt.MapClaims
+	claims := jwt.MapClaims{"user": "testuser"}
+	ctx := context.WithValue(req.Context(), auth.ClaimsContextKey, claims)
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
-	handler.setup(w, req)
+	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotImplemented {
 		t.Errorf("Expected 501, got %d", w.Code)
@@ -127,7 +151,7 @@ func TestTOTPHandler_SetupDisabled(t *testing.T) {
 }
 
 func TestTOTPHandler_QRCode(t *testing.T) {
-	globalConfig := alaye.Admin{
+	admin := alaye.Admin{
 		TOTP: alaye.TOTP{
 			Enabled: alaye.Active,
 			Issuer:  "Agbero Test",
@@ -140,17 +164,13 @@ func TestTOTPHandler_QRCode(t *testing.T) {
 		},
 	}
 
-	globalFn := func() alaye.Admin {
-		return globalConfig
-	}
-
-	handler := NewTOTPHandler(globalFn, testLogger)
+	shared := setupTestTOTP(t, admin)
 
 	r := chi.NewRouter()
-	handler.Mount(r)
+	TOTPHandler(shared, r)
 
 	t.Run("SVG QR", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/totp/qruser/qr.svg", nil)
+		req := httptest.NewRequest(http.MethodGet, "/totp/qruser/qr.svg", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
@@ -166,7 +186,7 @@ func TestTOTPHandler_QRCode(t *testing.T) {
 	})
 
 	t.Run("PNG QR", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/totp/qruser/qr.png", nil)
+		req := httptest.NewRequest(http.MethodGet, "/totp/qruser/qr.png", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
@@ -183,23 +203,19 @@ func TestTOTPHandler_QRCode(t *testing.T) {
 }
 
 func TestTOTPHandler_QRCodeUserNotFound(t *testing.T) {
-	globalConfig := alaye.Admin{
+	admin := alaye.Admin{
 		TOTP: alaye.TOTP{
 			Enabled: alaye.Active,
 			Users:   []alaye.TOTPUser{},
 		},
 	}
 
-	globalFn := func() alaye.Admin {
-		return globalConfig
-	}
-
-	handler := NewTOTPHandler(globalFn, testLogger)
+	shared := setupTestTOTP(t, admin)
 
 	r := chi.NewRouter()
-	handler.Mount(r)
+	TOTPHandler(shared, r)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/totp/nonexistent/qr.svg", nil)
+	req := httptest.NewRequest(http.MethodGet, "/totp/nonexistent/qr.svg", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -209,9 +225,9 @@ func TestTOTPHandler_QRCodeUserNotFound(t *testing.T) {
 }
 
 func TestTOTPHandler_VerifyCode(t *testing.T) {
-	testSecret := "JBSWY3DPEHPK3PXP" // Base32 encoded "Hello!"
+	testSecret := "JBSWY3DPEHPK3PXP"
 
-	globalConfig := alaye.Admin{
+	admin := alaye.Admin{
 		TOTP: alaye.TOTP{
 			Enabled:    alaye.Active,
 			Digits:     6,
@@ -228,37 +244,75 @@ func TestTOTPHandler_VerifyCode(t *testing.T) {
 		},
 	}
 
-	globalFn := func() alaye.Admin {
-		return globalConfig
-	}
+	shared := setupTestTOTP(t, admin)
 
-	handler := NewTOTPHandler(globalFn, testLogger)
+	totp := NewTOTP(shared)
 
-	// Test with invalid code
-	if handler.VerifyCode("verifyuser", "000000") {
+	if totp.VerifyCode("verifyuser", "000000") {
 		t.Error("Expected invalid code to fail")
 	}
 
-	// Test with non-existent user
-	if handler.VerifyCode("nonexistent", "123456") {
+	if totp.VerifyCode("nonexistent", "123456") {
 		t.Error("Expected nonexistent user to fail")
 	}
 }
 
 func TestTOTPHandler_VerifyCodeDisabled(t *testing.T) {
-	globalConfig := alaye.Admin{
+	admin := alaye.Admin{
 		TOTP: alaye.TOTP{
 			Enabled: alaye.Inactive,
 		},
 	}
 
-	globalFn := func() alaye.Admin {
-		return globalConfig
+	shared := setupTestTOTP(t, admin)
+
+	totp := NewTOTP(shared)
+
+	if totp.VerifyCode("anyuser", "123456") {
+		t.Error("Expected verification to fail when TOTP is disabled")
+	}
+}
+
+func TestTOTPHandler_SetupWithQRGeneration(t *testing.T) {
+	admin := alaye.Admin{
+		TOTP: alaye.TOTP{
+			Enabled:    alaye.Active,
+			Digits:     6,
+			Period:     30,
+			Algorithm:  "SHA1",
+			Issuer:     "Agbero Test",
+			WindowSize: 1,
+			Users:      []alaye.TOTPUser{},
+		},
 	}
 
-	handler := NewTOTPHandler(globalFn, testLogger)
+	shared := setupTestTOTP(t, admin)
 
-	if handler.VerifyCode("anyuser", "123456") {
-		t.Error("Expected verification to fail when TOTP is disabled")
+	r := chi.NewRouter()
+	TOTPHandler(shared, r)
+
+	req := httptest.NewRequest(http.MethodPost, "/totp/setup", nil)
+	// Fix: Use jwt.MapClaims
+	claims := jwt.MapClaims{"user": "qruser"}
+	ctx := context.WithValue(req.Context(), auth.ClaimsContextKey, claims)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if resp["qr_svg"] == "" {
+		t.Error("Expected QR SVG in response")
+	}
+	if !strings.Contains(resp["qr_svg"], "svg") {
+		t.Error("Expected SVG content in qr_svg field")
 	}
 }

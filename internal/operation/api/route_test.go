@@ -3,12 +3,16 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
 )
 
@@ -53,22 +57,37 @@ func TestRouteAPI(t *testing.T) {
 		challenges: make(map[string]string),
 	}
 
+	port := zulu.PortFree()
 	cMgr, err := cluster.NewManager(cluster.Config{
 		BindAddr: "127.0.0.1",
-		BindPort: 0,
+		BindPort: port,
 		Name:     "test-node",
+		Seeds:    []string{},
 	}, handler, logger)
 	if err != nil {
 		t.Fatalf("cluster init failed: %v", err)
 	}
 	defer cMgr.Shutdown()
 
-	noopMiddleware := func(h http.Handler) http.Handler {
-		return h
+	// Wait for cluster to initialize
+	time.Sleep(500 * time.Millisecond)
+
+	shared := &Shared{
+		Cluster: cMgr,
+		Logger:  logger,
 	}
 
-	router := NewRouter(cMgr, logger, noopMiddleware)
-	ts := httptest.NewServer(router)
+	r := chi.NewRouter()
+	RouterHandler(shared, r)
+
+	// Debug: Print all routes
+	t.Log("Registered routes:")
+	chi.Walk(r, func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
+		t.Logf("  %s %s", method, route)
+		return nil
+	})
+
+	ts := httptest.NewServer(r)
 	defer ts.Close()
 
 	route := alaye.Route{
@@ -84,28 +103,40 @@ func TestRouteAPI(t *testing.T) {
 	}
 	body, _ := json.Marshal(payload)
 
-	resp, err := http.Post(ts.URL+"/routes", "application/json", bytes.NewReader(body))
+	// Use the correct path from debug output
+	resp, err := http.Post(ts.URL+"/route", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("http post failed: %v", err)
 	}
+	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected 200 OK, got %d", resp.StatusCode)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200 OK, got %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	expectedKey := "route:example.com|/api"
+	time.Sleep(500 * time.Millisecond)
+
 	_, exists := handler.kv[expectedKey]
 	if !exists {
 		t.Error("route not found in cluster state")
 	}
 
-	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/routes?host=example.com&path=/api", nil)
+	// DELETE test
+	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/route?host=example.com&path=/api", nil)
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("http delete failed: %v", err)
 	}
+	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected 200 OK, got %d", resp.StatusCode)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200 OK, got %d: %s", resp.StatusCode, string(bodyBytes))
 	}
+
+	time.Sleep(500 * time.Millisecond)
 
 	if _, ok := handler.kv[expectedKey]; ok {
 		t.Error("route should have been deleted from cluster state")
