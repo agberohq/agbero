@@ -9,9 +9,9 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/discovery"
-	"github.com/agberohq/agbero/internal/pkg/installer"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
+	"github.com/agberohq/agbero/internal/setup"
 	"github.com/olekukonko/ll"
 )
 
@@ -118,7 +118,7 @@ func ResolveConfigPath(logger *ll.Logger, flagPath string) (string, bool) {
 		return cwdPath, true
 	}
 
-	ctx := installer.NewContext(logger)
+	ctx := setup.NewContext(logger)
 	if _, err := os.Stat(ctx.Paths.ConfigFile); err == nil {
 		return ctx.Paths.ConfigFile, true
 	}
@@ -127,7 +127,7 @@ func ResolveConfigPath(logger *ll.Logger, flagPath string) (string, bool) {
 }
 
 func InitConfiguration(logger *ll.Logger, targetDir string) (string, error) {
-	ctx := installer.NewContext(logger)
+	ctx := setup.NewContext(logger)
 	if targetDir != "" {
 		base := woos.NewFolder(targetDir)
 		ctx.Paths.BaseDir = base
@@ -138,7 +138,7 @@ func InitConfiguration(logger *ll.Logger, targetDir string) (string, error) {
 		ctx.Paths.LogsDir = base.Join(woos.LogDir.Name())
 		ctx.Paths.WorkDir = base.Join(woos.WorkDir.Name())
 	}
-	err := installer.NewHome(ctx).Run()
+	err := setup.NewHome(ctx).Run()
 	return ctx.Paths.ConfigFile, err
 }
 
@@ -179,6 +179,6 @@ func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 		return existing, fmt.Errorf("configuration already exists at %s", existing)
 	}
 
-	ctx := installer.NewContext(logger)
+	ctx := setup.NewContext(logger)
 	return InitConfiguration(logger, ctx.Paths.BaseDir.Path())
 }

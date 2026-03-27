@@ -11,12 +11,12 @@ func TestTokenLifecycle(t *testing.T) {
 	defer os.Remove(tmpFile)
 
 	// 1. Generate Key
-	if err := GenerateNewKeyFile(tmpFile); err != nil {
+	if err := NewPPK(tmpFile); err != nil {
 		t.Fatalf("failed to generate key: %v", err)
 	}
 
 	// 2. Load Key
-	tm, err := LoadKeys(tmpFile)
+	tm, err := PPKLoad(tmpFile)
 	if err != nil {
 		t.Fatalf("failed to load keys: %v", err)
 	}

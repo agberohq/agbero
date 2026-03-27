@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync/atomic"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/olekukonko/ll"
@@ -55,5 +56,20 @@ func (p *Process) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) er
 
 	cmd.Stderr = p.Logger.Writer(lx.LevelError)
 
-	return cmd.Run()
+	setupProcessGroup(cmd)
+	var pid atomic.Int32
+	cmd.Cancel = func() error {
+		p := int(pid.Load())
+		if p > 0 {
+			return killProcessGroup(p) // build-tagged
+		}
+		return nil
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	pid.Store(int32(cmd.Process.Pid))
+
+	return cmd.Wait()
 }

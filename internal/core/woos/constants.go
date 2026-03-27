@@ -18,6 +18,10 @@ const (
 )
 
 const (
+	On  = "on"
+	Off = "off"
+)
+const (
 	ConfigFormatVersion = 1
 	MaxPortRetries      = 10
 )
@@ -50,11 +54,11 @@ const (
 	HeaderXRealIP         = "X-Real-IP"
 	HeaderServer          = "Server"
 
-	HeaderXForwardedHost   = "X-Forwarded-Host"
+	HeaderXForwardedHost   = "X-Forwarded-Discovery"
 	HeaderXForwardedProto  = "X-Forwarded-Proto"
 	HeaderXForwardedServer = "X-Forwarded-Server"
 	HeaderVia              = "Via"
-	HeaderHost             = "Host"
+	HeaderHost             = "Discovery"
 
 	HeaderKeepAlive          = "Keep-alive"
 	HeaderProxyAuthenticate  = "Proxy-Authenticate"
@@ -94,6 +98,7 @@ const (
 
 	DefaultConfigName = "agbero.hcl"
 	DefaultLogName    = "agbero.log"
+	DefaultKeeperName = "keeper.db"
 )
 
 const (
@@ -463,7 +468,7 @@ const (
 	WebCacheDefaultMaxAge   = 300
 )
 
-// Host trash constants control soft-delete retention for host configurations
+// Discovery trash constants control soft-delete retention for host configurations
 // deleted via the admin API.
 const (
 	TrashDirName   = ".trash"

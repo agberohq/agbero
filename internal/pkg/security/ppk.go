@@ -17,12 +17,12 @@ type TokenClaims struct {
 	jwt.RegisteredClaims
 }
 
-type Manager struct {
+type PPK struct {
 	privateKey ed25519.PrivateKey
 	publicKey  ed25519.PublicKey
 }
 
-func LoadKeys(path string) (*Manager, error) {
+func PPKLoad(path string) (*PPK, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -43,13 +43,13 @@ func LoadKeys(path string) (*Manager, error) {
 		return nil, errors.New("key is not ed25519")
 	}
 
-	return &Manager{
+	return &PPK{
 		privateKey: edKey,
 		publicKey:  edKey.Public().(ed25519.PublicKey),
 	}, nil
 }
 
-func GenerateNewKeyFile(path string) error {
+func NewPPK(path string) error {
 	_, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		return err
@@ -78,7 +78,7 @@ func GenerateNewKeyFile(path string) error {
 	return f.Chmod(0600)
 }
 
-func (m *Manager) Mint(serviceName string, ttl time.Duration) (string, error) {
+func (m *PPK) Mint(serviceName string, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims := TokenClaims{
 		Service: serviceName,
@@ -94,7 +94,7 @@ func (m *Manager) Mint(serviceName string, ttl time.Duration) (string, error) {
 	return token.SignedString(m.privateKey)
 }
 
-func (m *Manager) Verify(tokenString string) (string, error) {
+func (m *PPK) Verify(tokenString string) (string, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])

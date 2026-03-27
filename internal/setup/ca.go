@@ -1,14 +1,13 @@
-package installer
+package setup
 
 import (
-	"bytes"
 	"runtime"
 
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/agberohq/agbero/internal/pkg/ui"
 )
 
 type CA struct {
@@ -65,14 +64,14 @@ func (c *CA) PromptAndInstall() error {
 		return nil
 	}
 
-	var output bytes.Buffer
-	table := zulu.Table(&output)
-	table.Append([]string{""})
-	table.Append([]string{"Warning: HTTPS certificates will show browser"})
-	table.Append([]string{"warnings without a local CA installed"})
-	table.Append([]string{""})
-	table.Render()
-	c.ctx.Logger.Println(output.String())
+	u := ui.New()
+	u.DialogBox(ui.DialogDanger,
+		"Local Certificate Authority",
+		[]string{
+			"HTTPS certificates will show browser warnings without a local CA installed",
+		},
+		"please read the documentation for more information:",
+	)
 
 	var confirm bool
 	err := huh.NewConfirm().
