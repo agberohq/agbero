@@ -1,7 +1,7 @@
 package helper
 
 import (
-	"github.com/agberohq/agbero/internal/pkg/installer"
+	"github.com/agberohq/agbero/internal/setup"
 )
 
 // System is the CLI-facing accessor for system-level operations.
@@ -14,7 +14,7 @@ type System struct {
 
 // Backup delegates to installer.System.Backup.
 func (s *System) Backup(configPath, outPath, password string) {
-	sys := installer.NewSystem(installer.SystemConfig{Logger: s.p.Logger})
+	sys := setup.NewSystem(setup.SystemConfig{Logger: s.p.Logger})
 	if err := sys.Backup(configPath, outPath, password); err != nil {
 		s.p.Logger.Fatal("backup: ", err)
 	}
@@ -22,7 +22,7 @@ func (s *System) Backup(configPath, outPath, password string) {
 
 // Restore delegates to installer.System.Restore.
 func (s *System) Restore(inPath, password string, force, autoYes bool) {
-	sys := installer.NewSystem(installer.SystemConfig{Logger: s.p.Logger})
+	sys := setup.NewSystem(setup.SystemConfig{Logger: s.p.Logger})
 	if err := sys.Restore(inPath, password, force, autoYes); err != nil {
 		s.p.Logger.Fatal("restore: ", err)
 	}
@@ -30,7 +30,7 @@ func (s *System) Restore(inPath, password string, force, autoYes bool) {
 
 // Update delegates to installer.System.Update.
 func (s *System) Update(force, autoYes bool) {
-	sys := installer.NewSystem(installer.SystemConfig{Logger: s.p.Logger})
+	sys := setup.NewSystem(setup.SystemConfig{Logger: s.p.Logger})
 	if err := sys.Update(force, autoYes); err != nil {
 		s.p.Logger.Fatal("update: ", err)
 	}

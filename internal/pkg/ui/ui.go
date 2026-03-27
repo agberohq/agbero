@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"bytes"
 	"fmt"
+	"image"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 	"charm.land/lipgloss/v2/list"
 	"charm.land/lipgloss/v2/table"
 	"charm.land/lipgloss/v2/tree"
+	"github.com/blacktop/go-termimg"
 )
 
 // ─────────────────────────────────────────────
@@ -171,7 +174,6 @@ func (u *UI) FileLink(path string, isDir bool) string {
 		absPath = path
 	}
 
-	// Convert to file:// URL (handle Windows paths)
 	url := "file://" + filepath.ToSlash(absPath)
 
 	style := u.s(u.theme.Accent)
@@ -184,10 +186,6 @@ func (u *UI) FileLink(path string, isDir bool) string {
 	}
 	return style.Hyperlink(url).Render(path)
 }
-
-// ─────────────────────────────────────────────
-//  Welcome
-// ─────────────────────────────────────────────
 
 func (u *UI) Welcome(name, description, version, date, banner string) {
 	if banner != "" {
@@ -275,14 +273,25 @@ func (u *UI) KeyValueFile(label, path string, isDir bool) {
 // ─────────────────────────────────────────────
 
 func (u *UI) SecretBox(label, value string) {
+	// Long secrets: plain display (no border breakage)
+	if len(value) > 60 {
+		u.blank()
+		u.indented(u.s(u.theme.Accent).Bold(true).Render(u.icons.Key + " " + label))
+		u.line("")
+		u.indented(u.s(u.theme.Value).Render(value))
+		u.blank()
+		u.Flush()
+		return
+	}
+
+	// Short secrets: bordered box
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderTopForeground(u.theme.Accent).
 		BorderLeftForeground(u.theme.Border).
 		BorderRightForeground(u.theme.Border).
 		BorderBottomForeground(u.theme.Border).
-		PaddingLeft(1).
-		PaddingRight(1)
+		Padding(1)
 
 	content := u.s(u.theme.Accent).Bold(true).Render(u.icons.Key+" "+label) +
 		"\n\n" +
@@ -546,12 +555,10 @@ func (u *UI) TreeWithFiles(rootPath string, nodes []TreeNode) {
 			fullPath := filepath.Join(parentPath, n.Label)
 			label := n.Label
 
-			// Add icon
 			if n.Icon != "" {
 				label = n.Icon + " " + label
 			}
 
-			// Make files/directories clickable
 			isDir := len(n.Children) > 0
 			if n.URL != "" {
 				label = u.LinkInline(label, n.URL)
@@ -665,11 +672,11 @@ func (u *UI) StepWithLink(state, msg, url string) {
 //  Init success
 // ─────────────────────────────────────────────
 
-func (u *UI) InitSuccess(configFile, adminUser, adminPassword string, nextSteps []string) {
+func (u *UI) InitSuccess(configFile, adminUser, adminPassword string, nextSteps []ListItem) {
 	u.SectionHeader("Configuration initialised")
 
 	u.KeyValueBlock("", []KV{
-		{Label: "Config file", Value: configFile},
+		{Label: "Config file", Value: u.FileLink(configFile, false)},
 		{Label: "Admin user", Value: adminUser},
 		{Label: "Admin password", Value: u.s(u.theme.Warn).Bold(true).Render(adminPassword)},
 	})
@@ -678,50 +685,9 @@ func (u *UI) InitSuccess(configFile, adminUser, adminPassword string, nextSteps 
 	u.blank()
 
 	if len(nextSteps) > 0 {
-		u.indented(u.s(u.theme.Secondary).Render("Next steps"))
-
-		l := list.New().
-			Enumerator(func(_ list.Items, _ int) string { return u.icons.Bullet }).
-			EnumeratorStyle(lipgloss.NewStyle().Foreground(u.theme.Faint).MarginRight(1)).
-			ItemStyle(lipgloss.NewStyle().Foreground(u.theme.Accent))
-		for _, step := range nextSteps {
-			l.Item(step)
-		}
-		u.indented(l.String())
-		u.blank()
+		u.LinkList("Next steps", nextSteps)
 	}
 
-	u.Flush()
-}
-
-// ─────────────────────────────────────────────
-//  Uninstall warning
-// ─────────────────────────────────────────────
-
-func (u *UI) UninstallWarning(items []string) {
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(u.theme.Danger).
-		PaddingLeft(2).
-		PaddingRight(2).
-		PaddingTop(1).
-		PaddingBottom(1)
-
-	l := list.New().
-		Enumerator(func(_ list.Items, _ int) string { return u.icons.Bullet }).
-		EnumeratorStyle(lipgloss.NewStyle().Foreground(u.theme.Faint).MarginRight(1)).
-		ItemStyle(lipgloss.NewStyle().Foreground(u.theme.Secondary))
-	for _, item := range items {
-		l.Item(item)
-	}
-
-	content := u.s(u.theme.Danger).Bold(true).Render(u.icons.Warning+" DANGER — Complete uninstall") +
-		"\n\n" + l.String() +
-		"\n\n" + u.s(u.theme.Danger).Render("This action cannot be undone.")
-
-	u.blank()
-	u.indented(box.Render(content))
-	u.blank()
 	u.Flush()
 }
 
@@ -745,10 +711,6 @@ func (u *UI) RestoreDone(count int) {
 	u.SuccessLine(fmt.Sprintf("restore complete — %d files restored", count))
 }
 
-// ─────────────────────────────────────────────
-//  Misc
-// ─────────────────────────────────────────────
-
 func (u *UI) Blank() {
 	u.blank()
 	u.Flush()
@@ -771,4 +733,168 @@ func (u *UI) Println(s string) {
 // Sprint renders a styled string to return as value.
 func (u *UI) Sprint(s string) string {
 	return lipgloss.Sprint(s)
+}
+
+// Image renders raw PNG bytes to the terminal using go-termimg's auto-detection.
+// Falls back to half-block text if image protocols fail.
+func (u *UI) Image(pngData []byte) error {
+	u.Flush()
+
+	// Decode the PNG bytes into an image.Image
+	img, _, err := image.Decode(bytes.NewReader(pngData))
+	if err != nil {
+		return err
+	}
+
+	// Images are rendered directly without indentation (they ignore the buffer)
+	// Use termimg.New to create an Image from the decoded image
+	return termimg.New(img).
+		Width(40).
+		Height(40).
+		Scale(termimg.ScaleFit).
+		Print()
+}
+
+// QR generates a QR code, renders it via go-termimg, and returns all formats.
+func (u *UI) QR(content string) *QRResult {
+	qrCode, err := NewQr(content, QRLevelM)
+	if err != nil {
+		u.ErrorHint("QR generation failed", err.Error())
+		return nil
+	}
+
+	result := qrCode.Result(4) // scale=4 for crisp terminal display
+
+	if result != nil && len(result.PNG) > 0 {
+		if err := u.Image(result.PNG); err != nil {
+			// Graceful fallback to text rendering
+			u.WarnLine("Image rendering failed; using text QR fallback")
+
+			// Terminal fallback should be indented
+			indentedFallback := u.padStyle().Render(result.Terminal)
+			u.line(indentedFallback)
+			u.Flush()
+		}
+	}
+
+	return result
+}
+
+// ─────────────────────────────────────────────
+//  Link List
+// ─────────────────────────────────────────────
+
+type ListItem struct {
+	Text string
+	URL  string // optional; if set, renders as clickable link
+}
+
+// LinkList renders a bulleted list with optional clickable links.
+// Items with a URL are rendered as OSC 8 hyperlinks (or styled fallback).
+func (u *UI) LinkList(title string, items []ListItem) {
+	if len(items) == 0 {
+		return
+	}
+
+	if title != "" {
+		u.blank()
+		u.indented(u.s(u.theme.Secondary).Render(title))
+		u.blank()
+	}
+
+	enum := u.s(u.theme.Faint).Render(u.icons.Bullet)
+	enumStyle := lipgloss.NewStyle().MarginRight(1)
+
+	l := list.New().
+		Enumerator(func(_ list.Items, _ int) string { return enum }).
+		EnumeratorStyle(enumStyle).
+		ItemStyle(lipgloss.NewStyle().Foreground(u.theme.Accent))
+
+	for _, item := range items {
+		content := item.Text
+		if item.URL != "" {
+			content = u.LinkInline(item.Text, item.URL)
+		}
+		l.Item(content)
+	}
+
+	u.indented(l.String())
+	u.blank()
+	u.Flush()
+}
+
+// ─────────────────────────────────────────────
+//  Dialog Box (Universal Warning/Info/Confirm)
+// ─────────────────────────────────────────────
+
+type DialogStyle int
+
+const (
+	DialogDanger DialogStyle = iota
+	DialogWarning
+	DialogInfo
+	DialogSuccess
+)
+
+// DialogBox renders a bordered dialog with title, bulleted items, and optional footer.
+// Style controls border color, icon, and emphasis (Danger/Warning/Info/Success).
+func (u *UI) DialogBox(style DialogStyle, title string, items []string, footer string) {
+	var borderColor compat.AdaptiveColor
+	var icon string
+	var iconStyle lipgloss.Style
+	var footerStyle lipgloss.Style
+
+	switch style {
+	case DialogDanger:
+		borderColor = u.theme.Danger
+		icon = u.icons.Warning
+		iconStyle = u.s(u.theme.Danger)
+		footerStyle = u.s(u.theme.Danger)
+	case DialogWarning:
+		borderColor = u.theme.Warn
+		icon = u.icons.Warning
+		iconStyle = u.s(u.theme.Warn)
+		footerStyle = u.s(u.theme.Secondary)
+	case DialogInfo:
+		borderColor = u.theme.Accent
+		icon = u.icons.Info
+		iconStyle = u.s(u.theme.Accent)
+		footerStyle = u.s(u.theme.Secondary)
+	case DialogSuccess:
+		borderColor = u.theme.Success
+		icon = u.icons.Success
+		iconStyle = u.s(u.theme.Success)
+		footerStyle = u.s(u.theme.Secondary)
+	default:
+		borderColor = u.theme.Border
+		icon = u.icons.Bullet
+		iconStyle = u.s(u.theme.Primary)
+		footerStyle = u.s(u.theme.Secondary)
+	}
+
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		PaddingLeft(2).
+		PaddingRight(2).
+		PaddingTop(1).
+		PaddingBottom(1)
+
+	l := list.New().
+		Enumerator(func(_ list.Items, _ int) string { return u.icons.Bullet }).
+		EnumeratorStyle(lipgloss.NewStyle().Foreground(u.theme.Faint).MarginRight(1)).
+		ItemStyle(lipgloss.NewStyle().Foreground(u.theme.Secondary))
+	for _, item := range items {
+		l.Item(item)
+	}
+
+	content := iconStyle.Bold(true).Render(icon+" "+title) + "\n\n" + l.String()
+	if footer != "" {
+		content += "\n\n" + footerStyle.Render(footer)
+	}
+
+	u.blank()
+	u.indented(box.Render(content))
+	u.blank()
+	u.Flush()
 }

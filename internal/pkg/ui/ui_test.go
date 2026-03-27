@@ -153,7 +153,7 @@ func TestHelpScreen_containsSectionTitlesAndCommands(t *testing.T) {
 
 func TestInitSuccess_containsRequiredFields(t *testing.T) {
 	u, buf := newBuf()
-	u.InitSuccess("/etc/agbero.hcl", "admin", "s3cr3t!", []string{"agbero service start"})
+	u.InitSuccess("/etc/agbero.hcl", "admin", "s3cr3t!", []ListItem{{Text: "agbero service start"}})
 	out := out(buf)
 	for _, want := range []string{"/etc/agbero.hcl", "admin", "s3cr3t!", "agbero service start"} {
 		if !strings.Contains(out, want) {

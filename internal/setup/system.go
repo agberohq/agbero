@@ -1,4 +1,4 @@
-package installer
+package setup
 
 import (
 	"archive/tar"
@@ -215,6 +215,10 @@ func (s *System) Backup(configPath, outPath, password string) error {
 		}
 		file, err := os.Open(absPath)
 		if err != nil {
+			if strings.Contains(absPath, woos.DefaultKeeperName) {
+				u.Step("fail", fmt.Sprintf("%s is locked. You MUST stop the Agbero service before taking a system backup.", woos.DefaultKeeperName))
+				return fmt.Errorf("failed to backup %s: file is locked", woos.DefaultKeeperName)
+			}
 			u.Step("warn", fmt.Sprintf("open failed: %s", filepath.Base(absPath)))
 			continue
 		}

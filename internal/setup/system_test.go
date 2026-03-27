@@ -1,4 +1,4 @@
-package installer
+package setup
 
 import (
 	"archive/tar"
