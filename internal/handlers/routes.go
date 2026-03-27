@@ -83,8 +83,8 @@ func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *
 	}
 	// dispatch.go wraps r.Body with http.MaxBytesReader(w, r.Body, maxBody) (host limit)
 	// maxBody := int64(alaye.DefaultMaxBodySize)
-	// if cfg.Host.Limits.MaxBodySize > 0 {
-	//	maxBody = cfg.Host.Limits.MaxBodySize
+	// if cfg.Discovery.Limits.MaxBodySize > 0 {
+	//	maxBody = cfg.Discovery.Limits.MaxBodySize
 	// }
 	// chain = http.MaxBytesHandler(chain, maxBody)
 	chain = headers.Headers(&route.Headers)(chain)

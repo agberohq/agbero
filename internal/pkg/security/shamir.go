@@ -1,4 +1,3 @@
-// shamir.go
 package security
 
 import (
@@ -337,8 +336,11 @@ func (s *Shamir) DeserializeShare(data []byte) (*Share, error) {
 	if len(data) < 2 {
 		return nil, errors.New("share data too short")
 	}
+	// Copy Y data so secureZero on input doesn't corrupt the share
+	yCopy := make([]byte, len(data)-1)
+	copy(yCopy, data[1:])
 	return &Share{
 		X: data[0],
-		Y: data[1:],
+		Y: yCopy,
 	}, nil
 }
