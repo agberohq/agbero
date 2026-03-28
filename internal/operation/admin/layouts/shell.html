@@ -1,621 +1,502 @@
-<nav class="navbar">
-    <div class="brand">AGBERO <span>ADMIN</span></div>
-    <div class="menu">
-        <a href="#/" class="nav-link" data-page="/">dashboard</a>
-        <a href="#/hosts" class="nav-link" data-page="/hosts">hosts</a>
-        <a href="#/cluster" class="nav-link" data-page="/cluster">cluster</a>
-        <a href="#/map" class="nav-link" data-page="/map">map</a>
-        <a href="#/firewall" class="nav-link" data-page="/firewall">firewall</a>
-        <a href="#/logs" class="nav-link" data-page="/logs">logs</a>
-        <a href="#/config" class="nav-link" data-page="/config">config</a>
-
-        <button id="targetHostBtn" class="target-btn" title="Change target node" data-host="local">⬡</button>
-        <button id="themeToggle" class="theme-toggle" title="Toggle theme">◑</button>
-        <a href="#" id="loginBtn" class="nav-link" style="margin-left:10px;" data-oja-bind="auth.isLoggedIn" data-oja-transform="loginText">Login</a>
-    </div>
-</nav>
-
-<div id="offlineBanner" class="offline-banner" style="display: none; background: var(--danger, #ff3b30); color: #fff; text-align: center; padding: 10px; font-size: 13px; font-weight: 500; letter-spacing: 0.4px; z-index: 9999; position: relative;">
-    ⚠️ Connection lost. Attempting to reconnect...
-</div>
-
-<div id="app" class="main-content"></div>
-
-<!-- SYSTEM STATS BAR -->
-<div class="sys-bar">
-    <div class="sys-bar-left">
-        <span class="sys-item" title="Memory RSS">rss <span data-oja-bind="sys.memRss" data-oja-transform="formatBytes">—</span></span>
-        <span class="sys-item hide-mobile" title="Memory Allocated">alloc <span data-oja-bind="sys.memAlloc" data-oja-transform="formatBytes">—</span></span>
-        <span class="sys-divider hide-mobile">·</span>
-        <span class="sys-item hide-mobile" title="Goroutines">goroutines <span data-oja-bind="sys.goroutines" data-oja-transform="fmtNum">—</span></span>
-        <span class="sys-divider">·</span>
-        <span class="sys-item" title="Active Certificates">certs <span data-oja-bind="certs.active" data-oja-transform="fmtNum">0</span></span>
-        <span class="sys-item" title="Expiring <7d">&nbsp;(<span data-oja-bind="certs.expiring" data-oja-transform="fmtNum">0</span> expiring)</span>
-    </div>
-    <div class="sys-bar-right">
-        <span class="sys-item" title="CPU">cpu <span data-oja-bind="sys.cpu" data-oja-transform="formatPercent">—</span></span>
-        <span class="sys-item hide-mobile"><span data-oja-bind="sys.cores">—</span> cores</span>
-        <span class="sys-divider">·</span>
-        <span class="sys-item hide-mobile">mem <span data-oja-bind="sys.memUsed" data-oja-transform="formatBytes">—</span></span>
-        <span class="sys-item hide-mobile"> / <span data-oja-bind="sys.memTotalOs" data-oja-transform="formatBytes">—</span></span>
-        <span class="sys-divider hide-mobile">·</span>
-        <span class="sys-item" id="connectionIndicator" data-oja-bind="conn.html" data-oja-bind-type="html">○</span>
-        <span class="sys-divider">·</span>
-        <span class="sys-item" data-oja-bind="sys.version" title="Version">v—</span>
-    </div>
-</div>
-
-<!-- STATS FOOTER -->
-<div class="stats-footer">
-    <div class="stat-item"><label>Uptime</label><span data-oja-bind="stats.uptime">100%</span></div>
-    <div class="stat-item"><label>Req / Sec</label><span data-oja-bind="stats.rps" style="color:#00c770">0.0</span></div>
-    <div class="stat-item"><label>Total Reqs</label><span data-oja-bind="stats.total" data-oja-transform="fmtNum">0</span></div>
-    <div class="stat-item"><label>p99 Latency</label><span data-oja-bind="stats.avgMs">0ms</span></div>
-    <div class="stat-item"><label>Apdex</label><span data-oja-bind="stats.apdex">1.0</span></div>
-    <div class="stat-item"><label>Errors</label><span data-oja-bind="stats.errors" data-oja-transform="fmtNum" style="color:#ff3b30">0</span></div>
-    <div class="stat-item"><label>Backends</label><span data-oja-bind="stats.activeBackends" data-oja-transform="fmtNum">0</span></div>
-</div>
-
-<!-- MODALS -->
-<div class="modal-overlay" id="targetHostModal">
-    <div class="modal">
-        <h3>Target Node</h3>
-        <p style="font-size:11px;color:var(--text-mute);margin-bottom:15px;">Connect to a different Agbero node. Leave empty for local.</p>
-        <form id="targetHostForm">
-            <input type="url" id="targetHostInput" placeholder="http://10.0.0.5:9090" autocomplete="off">
-            <button type="submit" class="primary">Connect</button>
-            <button type="button" class="btn close-modal" style="margin-top:5px;">Cancel</button>
-        </form>
-    </div>
-</div>
-
-<div class="modal-overlay" id="loginModal">
-    <div class="modal modal-login">
-        <div class="login-brand">AGBERO <span>ADMIN</span></div>
-        <div class="login-sub">Admin Console</div>
-        <div class="login-node" id="loginNodeRow">
-            <span class="login-node-label">NODE</span>
-            <span class="login-node-value" id="loginNodeDisplay">local</span>
-            <button type="button" id="loginEditNodeBtn" class="btn-link">change</button>
-            <span id="loginServerDot" title="Server reachability" style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:10px;color:var(--text-mute);"><span id="loginServerDotCircle" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--text-mute);"></span><span id="loginServerDotLabel">checking…</span></span>
-        </div>
-        <div class="login-node-edit" id="loginNodeEdit">
-            <input type="url" id="loginTargetHost" placeholder="http://10.0.0.5:9090" autocomplete="off">
-            <button type="button" id="loginSaveHostBtn" class="btn-icon-save" title="Save">↵</button>
-            <button type="button" id="loginResetHostBtn" class="btn small">local</button>
-        </div>
-        <form id="loginForm">
-            <input type="text" id="username" placeholder="Username" autocomplete="username" required>
-            <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
-            <button type="submit" class="btn primary" style="width:100%;margin-top:4px;">Sign In</button>
-        </form>
-        <div id="loginError" style="color:var(--danger);font-size:11px;margin-top:10px;display:none;text-align:center;"></div>
-    </div>
-</div>
-
-<div class="modal-overlay" id="ruleModal">
-    <div class="modal">
-        <h3>Firewall Rule</h3>
-        <form id="ruleForm">
-            <input type="text" id="fwIp" placeholder="IP Address or CIDR" required>
-            <input type="text" id="fwReason" placeholder="Reason (e.g. Abuse)" required>
-            <input type="text" id="fwPath" placeholder="Path (Optional, e.g. /admin)">
-            <select id="fwDuration">
-                <option value="0">Permanent</option>
-                <option value="3600">1 Hour</option>
-                <option value="86400">24 Hours</option>
-            </select>
-            <div id="ruleError" style="color:var(--danger);font-size:11px;margin-bottom:8px;display:none;background:rgba(255,59,48,0.08);padding:8px;border-radius:4px;"></div>
-            <button type="submit" class="btn primary" style="width:100%;">Block</button>
-            <button type="button" class="btn close-modal" style="margin-top:5px;width:100%;">Cancel</button>
-        </form>
-    </div>
-</div>
-
-<div class="modal-overlay" id="clusterRouteModal">
-    <div class="modal">
-        <h3>Broadcast Dynamic Route</h3>
-        <p style="font-size:11px;color:var(--text-mute);margin-bottom:15px;">Inject an ephemeral routing rule into the cluster gossip mesh.</p>
-        <form id="clusterRouteForm">
-            <input type="text" id="crHost" placeholder="Hostname (e.g. api.example.com)" required>
-            <input type="text" id="crPath" placeholder="Path (e.g. /v1/temp)" required>
-            <input type="text" id="crTarget" placeholder="Target URL (e.g. http://10.0.0.5:8080)" required>
-            <input type="number" id="crTTL" placeholder="TTL seconds (0 = permanent)" value="3600">
-            <button type="submit" class="primary">Broadcast</button>
-            <button type="button" class="btn close-modal" style="margin-top:5px;">Cancel</button>
-        </form>
-    </div>
-</div>
-
-<div class="modal-overlay" id="addHostModal">
-    <div class="modal">
-        <h3 id="addHostModalTitle">Add Host</h3>
-        <form id="addHostForm">
-            <label style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);">Domain</label>
-            <input type="text" id="ahDomain" placeholder="api.example.com" required>
-            <label style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);">Route Path</label>
-            <input type="text" id="ahPath" placeholder="/" value="/" required>
-
-            <label style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);">Mode</label>
-            <select id="ahMode" style="margin-bottom:14px;">
-                <option value="proxy">Proxy to Backend</option>
-                <option value="static">Serve Static Files</option>
-            </select>
-
-            <div id="ahProxySection">
-                <label style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);">Backend URL</label>
-                <input type="text" id="ahBackend" placeholder="http://10.0.0.5:8080 or unix:/run/app.sock">
-                <label style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);">Strategy</label>
-                <select id="ahStrategy">
-                    <option value="round_robin">Round Robin</option>
-                    <option value="least_conn">Least Connections</option>
-                    <option value="least_response_time">Least Response Time</option>
-                    <option value="weighted_least_conn">Weighted Least Connections</option>
-                    <option value="ip_hash">IP Hash</option>
-                    <option value="url_hash">URL Hash</option>
-                    <option value="consistent_hash">Consistent Hash</option>
-                    <option value="sticky">Sticky</option>
-                    <option value="adaptive">Adaptive</option>
-                    <option value="power_of_two">Power of Two</option>
-                    <option value="random">Random</option>
-                </select>
+<nav class=navbar><a href=#/ class=brand style=text-decoration:none>AGBERO <span>ADMIN</span></a><div style=flex:1;min-width:0></div><div class=menu id=navMenu><a href=#/ class=nav-link data-page=/>dashboard</a>
+<a href=#/hosts class=nav-link data-page=/hosts>hosts</a>
+<a href=#/logs class="nav-link nav-hide-md" data-page=/logs>logs</a>
+<a href=#/cluster class="nav-link nav-hide-md" data-page=/cluster>cluster</a>
+<a href=#/map class="nav-link nav-hide-lg" data-page=/map>map</a>
+<a href=#/firewall class="nav-link nav-hide-lg" data-page=/firewall>firewall</a>
+<a href=#/config class="nav-link nav-hide-xl" data-page=/config>config</a>
+<a href=#/keeper class="nav-link nav-hide-xl" data-page=/keeper>keeper</a>
+<a href=#/certs class="nav-link nav-hide-xl" data-page=/certs>certs</a><div class="nav-overflow nav-show-overflow" id=navOverflow><button class=nav-overflow-btn id=navOverflowBtn title="More pages" aria-expanded=false>···</button><div class=nav-overflow-menu id=navOverflowMenu></div></div></div><div class=nav-right><button id=targetHostBtn class=target-btn title="Change target node" data-host=local>⬡</button><div class=nav-overflow id=themeOverflow><button class=theme-toggle id=themeToggle title="Switch theme">◑</button><div class=nav-overflow-menu id=themeMenu style=right:0;left:auto;min-width:130px><button class=nav-overflow-item data-theme-pick=light>☀️ Light</button>
+<button class=nav-overflow-item data-theme-pick=dark>🌙 Dark</button>
+<button class=nav-overflow-item data-theme-pick=dracula>🧛 Dracula</button>
+<button class=nav-overflow-item data-theme-pick=monokai>🎨 Monokai</button></div></div><a href=#/profile id=profileNavLink class=nav-avatar data-page=/profile title=Profile>?</a>
+<button id=loginBtn class=nav-auth-btn title=Login>
+<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+</button>
+<button class=nav-hamburger id=navHamburger title=Menu aria-label="Open navigation">
+<span class=hamburger-line></span>
+<span class=hamburger-line></span>
+<span class=hamburger-line></span></button></div></nav><div class=nav-mobile-drawer id=navMobileDrawer><button class=nav-mobile-close id=navMobileClose aria-label=Close>✕</button>
+<a href=#/ class=nav-mobile-link data-page=/><svg class="nav-mobile-icon" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+Dashboard
+</a><a href=#/hosts class=nav-mobile-link data-page=/hosts><svg class="nav-mobile-icon" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+Hosts
+</a><a href=#/logs class=nav-mobile-link data-page=/logs><svg class="nav-mobile-icon" viewBox="0 0 24 24"><path d="M14 2H6A2 2 0 004 4v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+Logs
+</a><a href=#/cluster class=nav-mobile-link data-page=/cluster><svg class="nav-mobile-icon" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+Cluster
+</a><a href=#/map class=nav-mobile-link data-page=/map><svg class="nav-mobile-icon" viewBox="0 0 24 24"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+Map
+</a><a href=#/firewall class=nav-mobile-link data-page=/firewall><svg class="nav-mobile-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+Firewall
+</a><a href=#/config class=nav-mobile-link data-page=/config><svg class="nav-mobile-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65.0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83.0l-.06-.06a1.65 1.65.0 00-1.82-.33 1.65 1.65.0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65.0 009 19.4a1.65 1.65.0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65.0 004.68 15a1.65 1.65.0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65.0 004.6 9a1.65 1.65.0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65.0 009 4.68a1.65 1.65.0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65.0 001 1.51 1.65 1.65.0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65.0 0019.4 9a1.65 1.65.0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65.0 00-1.51 1z"/></svg>
+Config
+</a><a href=#/keeper class=nav-mobile-link data-page=/keeper><svg class="nav-mobile-icon" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+Keeper
+</a><a href=#/certs class=nav-mobile-link data-page=/certs><svg class="nav-mobile-icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg>
+Certificates
+</a><a href=#/profile class=nav-mobile-link data-page=/profile><svg class="nav-mobile-icon" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+Profile</a></div><div id=offlineBanner class=offline-banner style=display:none;background:var(--danger,#ff3b30);color:#fff;text-align:center;padding:10px;font-size:13px;font-weight:500;letter-spacing:.4px;z-index:9999;position:relative>⚠️ Connection lost. Attempting to reconnect...</div><div id=app class=main-content></div><div class=sys-bar id=sysBar title="Click to expand system stats" style=cursor:pointer><div class=sys-bar-left><span class=sys-item title="Memory RSS">rss <span data-oja-bind=sys.memRss data-oja-transform=formatBytes>—</span></span>
+<span class="sys-item hide-mobile" title="Memory Allocated">alloc <span data-oja-bind=sys.memAlloc data-oja-transform=formatBytes>—</span></span>
+<span class="sys-divider hide-mobile">·</span>
+<span class="sys-item hide-mobile" title=Goroutines>goroutines <span data-oja-bind=sys.goroutines data-oja-transform=fmtNum>—</span></span>
+<span class=sys-divider>·</span>
+<span class=sys-item title="Active Certificates">certs <span data-oja-bind=certs.active data-oja-transform=fmtNum>0</span></span>
+<span class=sys-item title="Expiring <7d">&nbsp;(<span data-oja-bind=certs.expiring data-oja-transform=fmtNum>0</span> expiring)</span></div><div class=sys-bar-right><span class=sys-item title=CPU>cpu <span data-oja-bind=sys.cpu data-oja-transform=formatPercent>—</span></span>
+<span class="sys-item hide-mobile"><span data-oja-bind=sys.cores>—</span> cores</span>
+<span class=sys-divider>·</span>
+<span class="sys-item hide-mobile">mem <span data-oja-bind=sys.memUsed data-oja-transform=formatBytes>—</span></span>
+<span class="sys-item hide-mobile">/ <span data-oja-bind=sys.memTotalOs data-oja-transform=formatBytes>—</span></span>
+<span class="sys-divider hide-mobile">·</span>
+<span class=sys-item id=connectionIndicator data-oja-bind=conn.html data-oja-bind-type=html>○</span>
+<span class=sys-divider>·</span>
+<span class=sys-item data-oja-bind=sys.version title=Version>v—</span>
+<span class="sys-bar-expand-hint hide-mobile" style=margin-left:8px;opacity:.4;font-size:10px>▲</span></div></div><div class=stats-footer><div class=stat-item><label>Uptime</label><span data-oja-bind=stats.uptime>100%</span></div><div class=stat-item><label>Req / Sec</label><span data-oja-bind=stats.rps style=color:#00c770>0.0</span></div><div class=stat-item><label>Total Reqs</label><span data-oja-bind=stats.total data-oja-transform=fmtNum>0</span></div><div class=stat-item><label>p99 Latency</label><span data-oja-bind=stats.avgMs>0ms</span></div><div class=stat-item><label>Apdex</label><span data-oja-bind=stats.apdex>1.0</span></div><div class=stat-item><label>Errors</label><span data-oja-bind=stats.errors data-oja-transform=fmtNum style=color:#ff3b30>0</span></div><div class=stat-item><label>Backends</label><span data-oja-bind=stats.activeBackends data-oja-transform=fmtNum>0</span></div></div><div class=modal-overlay id=targetHostModal><div class=modal><h3>Target Node</h3><p style=font-size:11px;color:var(--text-mute);margin-bottom:15px>Connect to a different Agbero node. Leave empty for local.<form id=targetHostForm><input type=url id=targetHostInput placeholder=http://10.0.0.5:9090 autocomplete=off>
+<button type=submit class=primary>Connect</button>
+<button type=button class="btn close-modal" style=margin-top:5px>Cancel</button></form></div></div><div class=modal-overlay id=loginModal><div class="modal modal-login"><div class=login-brand>AGBERO <span>ADMIN</span></div><div class=login-sub>Admin Console</div><div class=login-node id=loginNodeRow><span class=login-node-label>NODE</span>
+<span class=login-node-value id=loginNodeDisplay>local</span>
+<button type=button id=loginEditNodeBtn class=btn-link>change</button>
+<span id=loginServerDot title="Server reachability" style=display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:10px;color:var(--text-mute)><span id=loginServerDotCircle style=display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--text-mute)></span><span id=loginServerDotLabel>checking…</span></span></div><div class=login-node-edit id=loginNodeEdit><input type=url id=loginTargetHost placeholder=http://10.0.0.5:9090 autocomplete=off>
+<button type=button id=loginSaveHostBtn class=btn-icon-save title=Save>↵</button>
+<button type=button id=loginResetHostBtn class="btn small">local</button></div><form id=loginForm autocomplete=on><div id=loginStepCreds><input type=text id=username placeholder=Username autocomplete=username required>
+<input type=password id=password placeholder=Password autocomplete=current-password required>
+<button type=submit class="btn primary" style=width:100%;margin-top:4px>Sign In</button></div><div id=loginStepTOTP style=display:none;text-align:center><div style=font-size:13px;color:var(--text-main);margin-bottom:12px>🔐 Enter your authenticator code</div><input type=text id=totp placeholder=000000 autocomplete=one-time-code inputmode=numeric pattern=[0-9]* maxlength=6 style="text-align:center;letter-spacing:.35em;font-size:22px;font-family:var(--font-mono);width:100%;padding:10px 0"><div style=font-size:11px;color:var(--text-mute);margin-top:8px>Open your authenticator app and enter the 6-digit code</div><button type=submit class="btn primary" style=width:100%;margin-top:12px>Verify</button>
+<button type=button id=loginTOTPBack class=btn style=width:100%;margin-top:6px;font-size:11px>← Back</button></div></form><div id=loginError style=color:var(--danger);font-size:11px;margin-top:10px;display:none;text-align:center></div></div></div><div class=modal-overlay id=ruleModal><div class=modal><h3>Firewall Rule</h3><form id=ruleForm><input type=text id=fwIp placeholder="IP Address or CIDR" required>
+<input type=text id=fwReason placeholder="Reason (e.g. Abuse)" required>
+<input type=text id=fwPath placeholder="Path (Optional, e.g. /admin)">
+<select id=fwDuration><option value=0>Permanent<option value=3600>1 Hour<option value=86400>24 Hours</select><div id=ruleError style=color:var(--danger);font-size:11px;margin-bottom:8px;display:none;background:rgba(255,59,48,8%);padding:8px;border-radius:4px></div><button type=submit class="btn primary" style=width:100%>Block</button>
+<button type=button class="btn close-modal" style=margin-top:5px;width:100%>Cancel</button></form></div></div><div class=modal-overlay id=clusterRouteModal><div class=modal><h3>Broadcast Dynamic Route</h3><p style=font-size:11px;color:var(--text-mute);margin-bottom:15px>Inject an ephemeral routing rule into the cluster gossip mesh.<form id=clusterRouteForm><input type=text id=crHost placeholder="Hostname (e.g. api.example.com)" required>
+<input type=text id=crPath placeholder="Path (e.g. /v1/temp)" required>
+<input type=text id=crTarget placeholder="Target URL (e.g. http://10.0.0.5:8080)" required>
+<input type=number id=crTTL placeholder="TTL seconds (0 = permanent)" value=3600>
+<button type=submit class=primary>Broadcast</button>
+<button type=button class="btn close-modal" style=margin-top:5px>Cancel</button></form></div></div><div class=modal-overlay id=addHostModal><div class="modal modal-wizard"><button class="modal-close-x close-modal" title=Close>&#215;</button><div id=addHostWizardMount></div></div></div><div class=modal-overlay id=strictDeleteModal><div class=modal><h3 style=color:var(--danger)>⚠️ Danger Zone</h3><p id=strictDeleteText style=font-size:13px;margin-bottom:10px><p style=font-size:11px;color:var(--text-mute);margin-bottom:15px>To confirm, type <strong id=strictDeleteTarget style=color:var(--fg)></strong> below:</p><input type=text id=strictDeleteInput autocomplete=off style=border-color:var(--danger)><div style=display:flex;gap:10px;margin-top:20px><button id=strictDeleteBtn class="btn error" style=flex:1 disabled>Delete Forever</button>
+<button class="btn close-modal" style=flex:1>Cancel</button></div></div></div><div class=modal-overlay id=editHostJsonModal><div class=modal style=max-width:650px;width:95vw><div style=display:flex;justify-content:space-between;align-items:center;margin-bottom:6px><h3 style=margin:0;font-size:15px>Edit: <span id=editHostTitle class=mono style=font-size:14px></span></h3><div style=display:flex;gap:6px;align-items:center><span style="font-size:11px;color:var(--text-mute);background:var(--hover-bg);padding:2px 8px;border-radius:3px;font-family:var(--font-mono)">HCL</span>
+<button id=formatHostJsonBtn type=button class="btn small">Format</button></div></div><p style="font-size:11px;color:var(--text-mute);margin:0 0 10px">Edit raw HCL — comments and formatting are preserved. Changes save to disk and hot-reload.<div id=editHostError style=color:var(--danger);font-size:12px;margin-bottom:10px;display:none;background:rgba(255,59,48,.1);padding:8px;border-radius:4px></div><textarea id=editHostJsonTextarea class=json-editor spellcheck=false></textarea><div style=display:flex;gap:10px;margin-top:15px><button id=saveHostJsonBtn class="btn primary" style=flex:1>Save</button>
+<button class="btn close-modal" style=width:100px>Cancel</button></div></div></div><div class=modal-overlay id=perfModal><div class="modal modal-perf"><div class=perf-modal-header><div style=flex:1;min-width:0><h3 id=perfModalTitle style=margin:0>Performance History</h3><span id=perfModalHost style=font-size:11px;color:var(--text-mute);font-family:var(--font-mono)></span></div><select id=perfRangeSelect class=perf-range-select style="margin:0 8px 0 16px;flex-shrink:0"><option value=30m>Last 30 min<option value=1h selected>Last 1 hour<option value=6h>Last 6 hours<option value=24h>Last 24 hours</select>
+<button class="perf-close-btn close-modal" title=Close>&#x2715;</button></div><div class=perf-charts-grid><div class=perf-chart-cell><div class=perf-chart-label>Requests / sec</div><div class=perf-chart-area id=perfChartReqs></div></div><div class=perf-chart-cell><div class=perf-chart-label>p99 Latency (ms)</div><div class=perf-chart-area id=perfChartP99></div></div><div class=perf-chart-cell><div class=perf-chart-label>Error Rate (%)</div><div class=perf-chart-area id=perfChartErrors></div></div><div class=perf-chart-cell><div class=perf-chart-label>Active Backends</div><div class=perf-chart-area id=perfChartBE></div></div></div><div class=perf-modal-footer><span id=perfDataRange style=font-size:10px;color:var(--text-mute)></span>
+<span style=font-size:10px;color:var(--text-mute)>Sampled every 60s &bull; 24h max retention</span></div></div></div><div class=modal-overlay id=commandPaletteModal style=align-items:flex-start;padding-top:80px><div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;width:100%;max-width:480px;box-shadow:0 16px 40px rgba(0,0,0,.2);overflow:hidden"><div style="display:flex;align-items:center;padding:0 14px;border-bottom:1px solid var(--border)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-mute)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+<input type=text id=cmdPaletteInput placeholder="Go to page…" autocomplete=off spellcheck=false style="flex:1;border:none;background:0 0;padding:14px 10px;font-size:14px;color:var(--text-main);outline:none;font-family:var(--font-sans)">
+<kbd style="font-size:10px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;color:var(--text-mute);font-family:var(--font-mono)">Esc</kbd></div><div id=cmdPaletteResults style=max-height:320px;overflow-y:auto;padding:4px></div></div></div><div class=modal-overlay id=shortcutsModal><div class=modal-box style=max-width:400px><div class=modal-header><h3 style=margin:0;font-size:14px>Keyboard Shortcuts</h3><button class=close-modal data-modal=shortcutsModal style="background:0 0;border:none;cursor:pointer;font-size:18px;color:var(--text-mute);padding:0 4px">✕</button></div><div style="padding:16px 20px"><div style="display:grid;grid-template-columns:auto 1fr;gap:6px 20px;font-size:13px"><kbd class=help-kbd>Ctrl+1–9, 0</kbd><span style=color:var(--text-mute)>Navigate pages</span>
+<kbd class=help-kbd>Ctrl+K</kbd><span style=color:var(--text-mute)>Command palette</span>
+<kbd class=help-kbd>Ctrl+?</kbd><span style=color:var(--text-mute)>This help</span>
+<kbd class=help-kbd>/</kbd><span style=color:var(--text-mute)>Focus host search</span>
+<kbd class=help-kbd>r</kbd><span style=color:var(--text-mute)>Refresh current page</span>
+<kbd class=help-kbd>Esc</kbd><span style=color:var(--text-mute)>Close drawer / palette</span></div><div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px;display:grid;grid-template-columns:auto 1fr;gap:6px 20px;font-size:12px;color:var(--text-mute)"><kbd class=help-kbd>Ctrl+1</kbd><span>Dashboard</span>
+<kbd class=help-kbd>Ctrl+2</kbd><span>Hosts</span>
+<kbd class=help-kbd>Ctrl+3</kbd><span>Cluster</span>
+<kbd class=help-kbd>Ctrl+4</kbd><span>Map</span>
+<kbd class=help-kbd>Ctrl+5</kbd><span>Firewall</span>
+<kbd class=help-kbd>Ctrl+6</kbd><span>Logs</span>
+<kbd class=help-kbd>Ctrl+7</kbd><span>Config</span>
+<kbd class=help-kbd>Ctrl+8</kbd><span>Keeper</span>
+<kbd class=help-kbd>Ctrl+9</kbd><span>Profile</span>
+<kbd class=help-kbd>Ctrl+0</kbd><span>Certificates</span></div></div></div></div><div class=drawer-backdrop id=drawerBackdrop></div><div class=drawer id=routeDrawer><div class=drawer-header><div class=drawer-title><div class=drawer-breadcrumb><span class=drawer-back-link data-action=close-drawer data-target=routeDrawer>← All hosts</span></div><h2 id=drawerRoutePath>/</h2><div style=display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:2px><span id=drawerHostName class=clickable-host title="Open in new tab" style=cursor:pointer;font-family:var(--font-mono);font-size:12px;color:var(--text-mute);display:inline-flex;align-items:center;gap:3px>example.com <span style=opacity:.45;font-size:10px>↗</span></span><div style=display:flex;align-items:center;gap:8px><div id=drawerSparkline style=opacity:.75 title="Requests/sec — last 60s"></div><button id=drawerPerfBtn class="btn small" style="font-size:10px;padding:3px 10px">📈 Perf</button></div></div></div><button class=drawer-close data-action=close-drawer data-target=routeDrawer>&#215;</button></div><div class=drawer-content id=drawerBody></div></div><div class="drawer level-2" id=backendDrawer><div class=drawer-header><div class=drawer-title><div class=drawer-breadcrumb><span class=drawer-back-link data-action=close-drawer data-target=backendDrawer>← Back to Route</span></div><h2 id=backendDrawerTitle>Backend Details</h2><span id=backendDrawerUrl class="clickable-host mono"></span></div><button class=drawer-close data-action=close-drawer data-target=backendDrawer>&#215;</button></div><div class=drawer-content id=backendDrawerBody></div></div><script type=module>import{modal,layout,emit,listen,chart,on,auth,ui,query,queryAll,notify,wizard,collapse,tabs}from"../lib/oja.full.esm.js";import{store,isLoggedIn,clearCredentials,getCreds,getHost,setHost}from"../js/store.js";import{fetchTelemetry,login,logout,fetchStatus,addFirewallRule,broadcastClusterRoute,addHost,addHostHCL,updateHost,updateHostHCL,checkHostExists,deleteHost,getHostHCL}from"../js/api.js";import{buildHostConfig}from"../js/host-builder.js";import{formatHCL,validateHCL}from"../js/hcl.js";import{initials}from"../js/utils.js";let _perfCharts=null;layout.onUnmount(()=>{emit("app:layout-unmount")}),window.app=window.app||{},window.app.syntaxHighlight=function(e){typeof e!="string"&&(e=JSON.stringify(e,0[0],4)),e=e.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");const t=e.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g,function(e){let t="json-number";return/^"/.test(e)?/:$/.test(e)?t="json-key":t="json-string":/true|false/.test(e)?t="json-boolean":/null/.test(e)&&(t="json-null"),'<span class="'+t+'">'+e+"</span>"});return`<pre class="syntax-box">${t}</pre>`};function updateNodeDisplay(){const e=getHost();query("#targetHostBtn")?.setAttribute("data-host",e||"local"),query("#loginNodeDisplay")&&(query("#loginNodeDisplay").textContent=e||"local"),query("#loginTargetHost")&&(query("#loginTargetHost").value=e)}updateNodeDisplay(),on("#loginEditNodeBtn","click",()=>{const e=query("#loginNodeEdit");e.style.display=e.style.display==="flex"?"none":"flex"}),on("#loginResetHostBtn","click",()=>{query("#loginTargetHost").value="",setHost(""),updateNodeDisplay(),query("#loginNodeEdit").style.display="none"}),on("#loginSaveHostBtn","click",()=>{const e=query("#loginTargetHost").value.trim();setHost(e),updateNodeDisplay(),query("#loginNodeEdit").style.display="none"});function _updateAvatar(){const{token:e}=getCreds();let t="A";try{if(e){const n=JSON.parse(atob(e.split(".")[1]));t=n.user||n.sub||n.username||"A"}}catch{}const n=query("#profileNavLink");n&&(n.textContent=initials(t))}_updateAvatar();function _rebuildOverflowMenu(){const e=query("#navOverflowMenu"),s=query("#navOverflowBtn"),t=query("#navOverflow");if(!e)return;const n=Array.from(document.querySelectorAll(".menu .nav-link")).filter(e=>window.getComputedStyle(e).display==="none");e.innerHTML=n.map(e=>{const t=e.dataset.page||e.getAttribute("href")?.replace("#","")||"",n=e.textContent.trim();return`<a href="${e.getAttribute("href")}" class="nav-overflow-item" data-page="${t}">${n}</a>`}).join(""),t&&(t.style.display=n.length>0?"":"none")}_rebuildOverflowMenu(),window.addEventListener("resize",_rebuildOverflowMenu),on("#navOverflowBtn","click",e=>{e.stopPropagation();const t=query("#navOverflow"),n=t.classList.toggle("open");query("#navOverflowBtn")?.setAttribute("aria-expanded",n)}),on("#themeToggle","click",e=>{e.stopPropagation(),query("#themeOverflow")?.classList.toggle("open")}),document.addEventListener("click",()=>{document.querySelectorAll(".nav-overflow.open").forEach(e=>e.classList.remove("open"))});const THEMES=["light","dark","dracula","monokai"];function _applyTheme(e){document.documentElement.setAttribute("data-theme",e),localStorage.setItem("ag-theme",e),document.querySelectorAll("[data-theme-pick]").forEach(t=>{t.style.fontWeight=t.dataset.themePick===e?"600":""})}const _savedTheme=localStorage.getItem("ag-theme");_applyTheme(_savedTheme&&THEMES.includes(_savedTheme)?_savedTheme:window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"),on("[data-theme-pick]","click",(e,t)=>{_applyTheme(t.dataset.themePick),query("#themeOverflow")?.classList.remove("open")}),on("#navHamburger","click",()=>{query("#navMobileDrawer")?.classList.add("open")}),on("#navMobileClose","click",()=>{query("#navMobileDrawer")?.classList.remove("open")}),on(".nav-mobile-link","click",()=>{query("#navMobileDrawer")?.classList.remove("open")}),document.addEventListener("click",e=>{const t=query("#navMobileDrawer");t?.classList.contains("open")&&!t.contains(e.target)&&e.target!==query("#navHamburger")&&t.classList.remove("open")}),on("#targetHostBtn","click",()=>{query("#targetHostInput").value=getHost(),modal.open("targetHostModal")}),on("#targetHostForm","submit",(e,t)=>{e.preventDefault(),setHost(t.querySelector("#targetHostInput").value.trim()),modal.closeAll(),window.location.reload()}),on("#loginBtn","click",async e=>{if(e.preventDefault(),isLoggedIn()){await logout(),clearCredentials(),await auth.session.end(),store.set("auth.isLoggedIn",!1),window._isPolling=!1,window._latencyStarted=!1,_setAuthIcon(!1);return}updateNodeDisplay(),_loginReset(),modal.open("loginModal"),requestAnimationFrame(()=>query("#username")?.focus())}),listen("auth:login:success",()=>{_setAuthIcon(!0),_updateAvatar()}),listen("auth:expired",()=>{_setAuthIcon(!1)});function _setAuthIcon(e){const t=query("#loginBtn");if(!t)return;e?(t.title="Logout",t.setAttribute("data-logged-in","true"),t.innerHTML=`<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 0 9.9-1"/>
+            </svg>`):(t.title="Login",t.setAttribute("data-logged-in","false"),t.innerHTML=`<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>`)}_setAuthIcon(isLoggedIn());const CMD_PAGES=[{label:"Dashboard",path:"/",keys:"Ctrl+1",icon:"🏠"},{label:"Hosts",path:"/hosts",keys:"Ctrl+2",icon:"🖥"},{label:"Cluster",path:"/cluster",keys:"Ctrl+3",icon:"🔗"},{label:"Map",path:"/map",keys:"Ctrl+4",icon:"🗺"},{label:"Firewall",path:"/firewall",keys:"Ctrl+5",icon:"🛡"},{label:"Logs",path:"/logs",keys:"Ctrl+6",icon:"📄"},{label:"Config",path:"/config",keys:"Ctrl+7",icon:"⚙️"},{label:"Keeper",path:"/keeper",keys:"Ctrl+8",icon:"🔐"},{label:"Profile",path:"/profile",keys:"Ctrl+9",icon:"👤"},{label:"Certificates",path:"/certs",keys:"Ctrl+0",icon:"📜"}];function _renderCmdResults(e){const t=query("#cmdPaletteResults");if(!t)return;const n=e?CMD_PAGES.filter(t=>t.label.toLowerCase().includes(e.toLowerCase())):CMD_PAGES;if(!n.length){t.innerHTML=`<div style="padding:14px 16px;font-size:13px;color:var(--text-mute);">No results</div>`;return}t.innerHTML=n.map((e,t)=>`
+            <button class="cmd-item${t===0?" cmd-item-active":""}" data-path="${e.path}"
+                    style="width:100%;display:flex;align-items:center;gap:12px;padding:10px 14px;
+                           background:${t===0?"var(--hover-bg)":"none"};border:none;border-radius:6px;
+                           cursor:pointer;text-align:left;font-family:var(--font-sans);transition:background .1s;">
+                <span style="font-size:15px;width:20px;text-align:center;">${e.icon}</span>
+                <span style="flex:1;font-size:13px;color:var(--text-main);">${e.label}</span>
+                <kbd style="font-size:10px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;
+                            color:var(--text-mute);font-family:var(--font-mono);">${e.keys}</kbd>
+            </button>`).join("")}listen("app:command-palette",()=>{modal.open("commandPaletteModal");const e=query("#cmdPaletteInput");e&&(e.value="",_renderCmdResults("")),requestAnimationFrame(()=>e?.focus())}),listen("app:command-palette-close",()=>{modal.closeById("commandPaletteModal")}),on("#cmdPaletteInput","input",(e,t)=>_renderCmdResults(t.value)),on("#cmdPaletteInput","keydown",e=>{const t=queryAll("#cmdPaletteResults .cmd-item");if(!t.length)return;const n=Array.from(t).findIndex(e=>e.classList.contains("cmd-item-active"));if(e.key==="ArrowDown"){e.preventDefault();const s=(n+1)%t.length;t.forEach((e,t)=>{e.classList.toggle("cmd-item-active",t===s),e.style.background=t===s?"var(--hover-bg)":"none"})}else if(e.key==="ArrowUp"){e.preventDefault();const s=(n-1+t.length)%t.length;t.forEach((e,t)=>{e.classList.toggle("cmd-item-active",t===s),e.style.background=t===s?"var(--hover-bg)":"none"})}else if(e.key==="Enter"){e.preventDefault();const s=t[n]||t[0];s?.dataset.path&&(modal.closeById("commandPaletteModal"),emit("app:navigate",{path:s.dataset.path}))}}),on(".cmd-item","click",(e,t)=>{t.dataset.path&&(modal.closeById("commandPaletteModal"),emit("app:navigate",{path:t.dataset.path}))}),on("#commandPaletteModal","click",e=>{e.target===query("#commandPaletteModal")&&modal.closeById("commandPaletteModal")}),document.addEventListener("keydown",e=>{(e.ctrlKey||e.metaKey)&&e.key==="?"&&(e.preventDefault(),modal.open("shortcutsModal"))}),on('[data-modal="shortcutsModal"]',"click",()=>modal.closeById("shortcutsModal"));let _loginPending=null;function _loginReset(){_loginPending=null;const t=query("#loginStepCreds"),n=query("#loginStepTOTP"),e=query("#loginError"),s=query("#totp");t&&(t.style.display=""),n&&(n.style.display="none"),e&&(e.style.display="none",e.textContent=""),s&&(s.value="")}function _loginShowTOTP(){const e=query("#loginStepCreds"),t=query("#loginStepTOTP");e&&(e.style.display="none"),t&&(t.style.display=""),requestAnimationFrame(()=>query("#totp")?.focus())}on("#loginTOTPBack","click",()=>{_loginReset(),requestAnimationFrame(()=>query("#username")?.focus())}),on("#totp","input",(e,t)=>{t.value=t.value.replace(/\D/g,"").slice(0,6),t.value.length===6&&query("#loginForm")?.requestSubmit()}),on("#loginForm","submit",async(e,t)=>{e.preventDefault();const s=query("#loginError"),n=t.querySelector('[type="submit"]:not([style*="display:none"])');s&&(s.style.display="none",s.textContent="");const o=t.querySelector("#loginTargetHost")?.value?.trim();o!==0[0]&&(setHost(o),updateNodeDisplay()),n&&(n.disabled=!0,n.textContent="Signing in…");try{if(_loginPending){const e=(query("#totp")?.value||"").trim();if(!e){s&&(s.textContent="Enter the 6-digit code from your authenticator app",s.style.display="block"),n&&(n.disabled=!1,n.textContent="Verify");return}const t=await login(_loginPending.username,_loginPending.password,e);_loginPending=null,n&&(n.disabled=!1,n.textContent="Verify"),emit("auth:login:success",{type:t.type,token:t.token}),checkLatency();return}const o=t.querySelector("#username").value,i=t.querySelector("#password").value,e=await login(o,i,"");n&&(n.disabled=!1,n.textContent="Sign In"),emit("auth:login:success",{type:e.type,token:e.token}),checkLatency()}catch(e){n&&(n.disabled=!1,n.textContent=_loginPending?"Verify":"Sign In");const o=(e.message||"Login failed").trim();if(e.status===401&&o.toLowerCase().includes("totp")){_loginPending={username:t.querySelector("#username").value,password:t.querySelector("#password").value},_loginShowTOTP();return}s&&(s.textContent=o,s.style.display="block")}}),listen("modal:close",({id:e})=>{e==="loginModal"&&_loginReset()}),on("#ruleForm","submit",async(e,t)=>{e.preventDefault();const n=query("#ruleError");n.style.display="none";const s=t.querySelector('[type="submit"]');ui.btn.loading(s,"Blocking…");try{await addFirewallRule({ip:t.querySelector("#fwIp").value.trim(),reason:t.querySelector("#fwReason").value.trim(),path:t.querySelector("#fwPath").value.trim(),host:"",duration_sec:parseInt(t.querySelector("#fwDuration").value,10)||0}),ui.btn.done(s,"Blocked ✓"),setTimeout(()=>modal.closeAll(),800),emit("firewall:refresh")}catch(e){ui.btn.reset(s),n.textContent=e.message||"Failed to block IP.",n.style.display="block"}}),on("#clusterRouteForm","submit",async(e,t)=>{e.preventDefault();const n=t.querySelector("#clusterRouteError")||(()=>{const e=document.createElement("div");return e.id="clusterRouteError",e.style.cssText="color:var(--danger);font-size:12px;margin-bottom:8px;display:none;background:rgba(255,59,48,0.08);padding:8px;border-radius:4px;",t.insertBefore(e,t.querySelector('button[type="submit"]')),e})();n.style.display="none";const s=t.querySelector('[type="submit"]');ui.btn.loading(s,"Broadcasting…");try{const e=await broadcastClusterRoute({host:t.querySelector("#crHost").value.trim(),route:{path:t.querySelector("#crPath").value.trim()||"/",enabled:"on",backends:{enabled:"on",servers:[{address:t.querySelector("#crTarget").value.trim(),weight:1}]}},ttl_seconds:parseInt(t.querySelector("#crTTL").value,10)||0});if(e?.error)throw new Error(e.error);ui.btn.done(s,"Broadcast ✓"),setTimeout(()=>modal.closeAll(),800)}catch(e){ui.btn.reset(s),n.textContent=e.message||"Broadcast failed",n.style.display="block"}});let _addHostWizard=null;listen("host:open-add-wizard",()=>{const e=query("#addHostWizardMount");if(!e)return;_addHostWizard&&(_addHostWizard.destroy(),_addHostWizard=null);const t=(()=>{try{return JSON.parse(store.get("wz.draft")||"null")}catch{return null}})();t?.host_type?(e.innerHTML=`<div style="padding:24px;text-align:center;">
+                <div style="font-size:13px;margin-bottom:16px;color:var(--text-main);">
+                    You have an unfinished host configuration
+                    <strong>${t.domain?"("+t.domain+")":""}</strong>.
+                </div>
+                <div style="display:flex;gap:10px;justify-content:center;">
+                    <button id="wzResumeDraft" class="btn primary">Resume</button>
+                    <button id="wzDiscardDraft" class="btn">Start fresh</button>
+                </div>
+            </div>`,e.querySelector("#wzResumeDraft").addEventListener("click",()=>{_addHostWizard=buildAddHostWizard(e)}),e.querySelector("#wzDiscardDraft").addEventListener("click",()=>{store.set("wz.draft",null),_addHostWizard=buildAddHostWizard(e)})):_addHostWizard=buildAddHostWizard(e),modal.open("addHostModal")}),listen("modal:close",({id:e})=>{e==="addHostModal"&&_addHostWizard&&(_addHostWizard.destroy(),_addHostWizard=null)});const DRAFT_KEY="wz.draft";function saveDraft(e){store.set(DRAFT_KEY,JSON.stringify(e))}function loadDraft(){try{return JSON.parse(store.get(DRAFT_KEY)||"null")}catch{return null}}function clearDraft(){store.set(DRAFT_KEY,null)}async function pickFolder(e){if(window.showDirectoryPicker)try{const t=await window.showDirectoryPicker();return e&&(e.value=t.name),t.name}catch{}}function buildSparklineSVG(e,t=84,n=28){if(!e||e.length<2)return"";const s=3,g=t-s*2,r=n-s*2,u=Math.max(...e,.001),i=e.length,o=e=>(s+e/Math.max(i-1,1)*g).toFixed(1),c=e=>(s+r-e/u*r).toFixed(1),p=e.map((e,t)=>`${o(t)},${c(e)}`).join(" "),m=o(0),h=o(i-1),l=(s+r).toFixed(1),f=`M${m},${l} `+e.map((e,t)=>`L${o(t)},${c(e)}`).join(" ")+` L${h},${l} Z`,a=e.some(e=>e>0)?"var(--accent)":"var(--text-mute)",d="sk_d"+Math.random().toString(36).slice(2,8);return`<svg width="${t}" height="${n}" viewBox="0 0 ${t} ${n}" style="display:block;overflow:visible;">
+            <defs><linearGradient id="${d}" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="${a}" stop-opacity="0.25"/>
+                <stop offset="100%" stop-color="${a}" stop-opacity="0.02"/>
+            </linearGradient></defs>
+            <path d="${f}" fill="url(#${d})"/>
+            <polyline points="${p}" fill="none" stroke="${a}" stroke-width="1.5"
+                stroke-linejoin="round" stroke-linecap="round"/>
+            <circle cx="${o(i-1)}" cy="${c(e[i-1])}" r="2.5"
+                fill="${a}" stroke="var(--bg)" stroke-width="1.5"/>
+        </svg>`}listen("drawer:open-route",({host:e})=>{const t=query("#drawerHostName");t&&(t.textContent=e,t.dataset.host=e);const n=query("#drawerPerfBtn");n&&(n.dataset.hostname=e),requestAnimationFrame(()=>{const t=query("#drawerSparkline");if(!t)return;const n=store.get("sparklines."+e);n?.rps?.length>=2&&(t.innerHTML=buildSparklineSVG(n.rps,100,32))})}),on("#drawerHostName","click",(e,t)=>{const n=t.dataset.host||t.textContent.trim();if(!n)return;const o=store.get("lastConfig")?.hosts?.[n],s=o?.tls?.mode,i=!s||s==="none"?"http":"https";window.open(`${i}://${n}`,"_blank","noopener")}),on("#drawerPerfBtn","click",(e,t)=>{const n=t.dataset.hostname;n&&emit("perf:open",{hostname:n})});function buildAddHostWizard(e){let t=[d("/")],o=t[0].id,l=null;function d(e){return{id:"r"+Date.now()+Math.random().toString(36).slice(2,6),path:e||"/",engine:"",engineData:{},extras:{},authData:{}}}const n=loadDraft();let a="";n&&(a=n.host_type||"",n.routes?.length&&(t=n.routes),o=t[0]?.id||"");function A(){const e=a;return`
+            <div class="wz-type-grid">
+                <button type="button" class="wz-type-card${e==="web"?" selected":""}" data-wizard-field="host_type" data-value="web" data-action="wz-type-pick">
+                    <span class="wz-type-icon">🌐</span>
+                    <strong>Web / Frontend</strong>
+                    <span>Static files, SPA, PHP, Git deploy</span>
+                </button>
+                <button type="button" class="wz-type-card${e==="proxy"?" selected":""}" data-wizard-field="host_type" data-value="proxy" data-action="wz-type-pick">
+                    <span class="wz-type-icon">⚡</span>
+                    <strong>Backend / Proxy</strong>
+                    <span>Reverse proxy to upstream services</span>
+                </button>
+                <button type="button" class="wz-type-card${e==="serverless"?" selected":""}" data-wizard-field="host_type" data-value="serverless" data-action="wz-type-pick">
+                    <span class="wz-type-icon">λ</span>
+                    <strong>Serverless</strong>
+                    <span>REST proxies &amp; managed workers</span>
+                </button>
+                <button type="button" class="wz-type-card${e==="advanced"?" selected":""}" data-wizard-field="host_type" data-value="advanced" data-action="wz-type-pick">
+                    <span class="wz-type-icon">⚙️</span>
+                    <strong>Advanced</strong>
+                    <span>Write config JSON directly</span>
+                </button>
             </div>
-
-            <div id="ahStaticSection" style="display:none;">
-                <label style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);">Web Root</label>
-                <input type="text" id="ahWebRoot" placeholder="/var/www/html">
+            <input type="hidden" id="wzHostType" data-wizard-field="host_type" value="${e}">`}function i(e){const t=(e||"").trim().toLowerCase();return!!t&&(!!/^\d+\.\d+\.\d+\.\d+$/.test(t)||t==="localhost"||!!t.endsWith(".localhost")||!!t.endsWith(".local")||!!t.endsWith(".internal")||!!t.endsWith(".test")||!!t.endsWith(".example"))}function E(){const e=n||{},t=i(e.domain),s=e.tls_mode==="local"&&!t;return`
+            <div class="wz-field-group">
+                <label class="wz-label">Domain <span style="color:var(--danger)">*</span></label>
+                <div style="position:relative;">
+                    <input type="text" data-wizard-field="domain" id="wzDomainInput" class="wz-input"
+                           placeholder="app.example.com" autocomplete="off" spellcheck="false"
+                           value="${e.domain||""}">
+                    <span id="wzDomainStatus" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11px;"></span>
+                </div>
+                <div class="wz-hint">No protocol prefix — e.g. <code>app.example.com</code> or <code>localhost</code></div>
             </div>
-
-            <div id="addHostError" style="color:var(--danger);font-size:11px;margin-bottom:8px;display:none;background:rgba(255,59,48,0.08);padding:8px;border-radius:4px;"></div>
-            <button type="submit" class="btn primary" style="width:100%;">Save Host</button>
-            <button type="button" class="btn close-modal" style="margin-top:5px;width:100%;">Cancel</button>
-        </form>
-    </div>
-</div>
-
-<!-- STRICT DELETE MODAL -->
-<div class="modal-overlay" id="strictDeleteModal">
-    <div class="modal">
-        <h3 style="color: var(--danger);">⚠️ Danger Zone</h3>
-        <p id="strictDeleteText" style="font-size:13px; margin-bottom: 10px;"></p>
-        <p style="font-size:11px; color:var(--text-mute); margin-bottom: 15px;">
-            To confirm, type <strong id="strictDeleteTarget" style="color:var(--fg);"></strong> below:
-        </p>
-        <input type="text" id="strictDeleteInput" autocomplete="off" style="border-color: var(--danger);">
-        <div style="display:flex;gap:10px;margin-top:20px;">
-            <button id="strictDeleteBtn" class="btn error" style="flex:1;" disabled>Delete Forever</button>
-            <button class="btn close-modal" style="flex:1;">Cancel</button>
-        </div>
-    </div>
-</div>
-
-<!-- EDIT JSON MODAL -->
-<div class="modal-overlay" id="editHostJsonModal">
-    <div class="modal" style="max-width: 650px; width: 95vw;">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
-            <div>
-                <h3 style="margin-bottom: 5px;">Edit Host: <span id="editHostTitle" class="mono"></span></h3>
-                <p style="font-size:11px;color:var(--text-mute);margin:0;">Edit configuration as JSON. Saves immediately to disk and hot-reloads.</p>
+            <div class="wz-field-group wz-collapsible${t?" wz-collapsed":""}" id="wzTLSSection">
+                <label class="wz-label">TLS Mode</label>
+                <div class="wz-radio-group">
+                    <label class="wz-radio"><input type="radio" name="tls_mode" data-wizard-field="tls_mode" value="auto"${!e.tls_mode||e.tls_mode==="auto"?" checked":""}> <span>Auto — Let's Encrypt (recommended)</span></label>
+                    <label class="wz-radio"><input type="radio" name="tls_mode" data-wizard-field="tls_mode" value="local"${e.tls_mode==="local"?" checked":""}> <span>Local certificate (provide cert + key file paths)</span></label>
+                    <label class="wz-radio"><input type="radio" name="tls_mode" data-wizard-field="tls_mode" value="none"${e.tls_mode==="none"?" checked":""}> <span>None (HTTP only)</span></label>
+                </div>
             </div>
-            <button id="formatHostJsonBtn" type="button" class="btn small" style="background:var(--hover-bg);">✨ Format</button>
-        </div>
+            <div class="wz-field-group wz-collapsible${s?"":" wz-collapsed"}" id="wzLocalCertFields">
+                <label class="wz-label">Certificate file <span style="color:var(--danger)">*</span></label>
+                <div class="wz-path-row">
+                    <input type="text" data-wizard-field="tls_cert" id="wzTLSCert" class="wz-input"
+                           placeholder="/etc/ssl/certs/example.pem" value="${e.tls_cert||""}">
+                </div>
+                <label class="wz-label" style="margin-top:8px;">Key file <span style="color:var(--danger)">*</span></label>
+                <div class="wz-path-row">
+                    <input type="text" data-wizard-field="tls_key" id="wzTLSKey" class="wz-input"
+                           placeholder="/etc/ssl/private/example.key" value="${e.tls_key||""}">
+                </div>
+                <div class="wz-hint" style="margin-top:6px;">Both paths must be absolute and readable by the Agbero process.</div>
+            </div>`}function p(e){const n=e.querySelector("#wzDomainInput"),c=e.querySelector("#wzTLSSection"),o=e.querySelector("#wzLocalCertFields"),t=e.querySelector("#wzDomainStatus");let a=null;function s(e,t){if(!e)return;e.classList.toggle("wz-collapsed",t)}function l(){const t=i(n?.value);s(c,t),t?(s(o,!0),e.querySelectorAll('[name="tls_mode"]').forEach(e=>e.checked=!1)):r()}function r(){const t=e.querySelector('[name="tls_mode"][value="local"]'),a=i(n?.value);s(o,a||!t?.checked)}e.querySelectorAll('[name="tls_mode"]').forEach(e=>{e.addEventListener("change",r)}),n?.addEventListener("input",()=>{l(),clearTimeout(a),t&&(t.textContent="");const e=(n.value||"").trim().toLowerCase();if(!e||e.includes("://")||e.length<3)return;a=setTimeout(async()=>{try{const n=await checkHostExists(e);t&&(t.textContent=n?"⚠ already exists":"✓ available",t.style.color=n?"var(--warning)":"var(--success)")}catch{t&&(t.textContent="")}},600)})}function m(){return`
+            <div id="wzRouteTabs" style="margin-bottom:10px;"></div>
+            <div id="wzRoutePanels"></div>
+            <button type="button" class="btn small" id="wzAddRouteBtn" style="margin-top:10px;">+ Add Route</button>
+            <input type="hidden" data-wizard-field="routes_data" id="wzRoutesDataField" value="[]">`}function y(e){const h=e.querySelector("#wzRouteTabs"),i=e.querySelector("#wzRoutePanels"),m=e.querySelector("#wzAddRouteBtn"),a=e.querySelector("#wzRoutesDataField"),p=s.data().host_type||"proxy";function n(){a&&(a.value=JSON.stringify(t))}function r(e){const s=document.createElement("div");s.setAttribute("data-tab",e.id),s.style.padding="2px 0";const d=document.createElement("div");d.className="wz-field-group",d.innerHTML=`<label class="wz-label">Route Path</label>
+                    <input type="text" class="wz-input wz-route-path" placeholder="/api" value="${e.path}">
+                    <div class="wz-hint">Must start with <code>/</code></div>`,d.querySelector(".wz-route-path").addEventListener("input",s=>{e.path=s.target.value,n(),l&&t.map((e)=>({key:e.id,label:(e.path||"/")+(t.length>1?"":"")}))}),s.appendChild(d);const h=document.createElement("div");h.id="wzSubTabs_"+e.id;const r=document.createElement("div");r.id="wzSubPanels_"+e.id,s.appendChild(h),s.appendChild(r);const u=document.createElement("div");u.style.paddingTop="12px",f(u,e,p);const o=document.createElement("div");o.style.paddingTop="12px",o.style.display="none",o.innerHTML=_(e),_wireToggleCards(o);const a=document.createElement("div");a.style.paddingTop="12px",a.style.display="none",a.innerHTML=w(e),_wireToggleCards(a),r.appendChild(u),r.appendChild(o),r.appendChild(a);const m={engine:u,extras:o,auth:a};tabs.render(h,[{key:"engine",label:"Engine"},{key:"extras",label:"Extras"},{key:"auth",label:"Auth"}],{active:"engine",variant:"pill",onChange:e=>{Object.entries(m).forEach(([t,n])=>{n.style.display=t===e?"":"none"})}}),s.addEventListener("change",()=>{c(s,e),n()}),s.addEventListener("input",()=>{c(s,e),n()}),i.appendChild(s)}function g(){return t.map(e=>({key:e.id,label:e.path||"/"}))}function u(){l=tabs.render(h,g(),{panels:i,active:o,variant:"line",onChange:e=>{o=e}})}t.forEach(e=>r(e)),u(),n(),m.addEventListener("click",()=>{const e=d("/new");t.push(e),o=e.id,r(e),u(),n()})}function c(e,t){e.querySelectorAll("[data-wz-route-field]").forEach(e=>{const o=e.dataset.wzRouteField;if(!o)return;const[n,s]=o.split(".");t[n]||(t[n]={}),e.type==="checkbox"?t[n][s]=e.checked:e.type==="radio"?e.checked&&(t[n][s]=e.value):t[n][s]=e.value})}function f(e,t,n){n==="web"?(e.innerHTML=u(t),g(e,t)):n==="proxy"?(e.innerHTML=v(t),b(e,t)):n==="serverless"&&(e.innerHTML=j(),h(e,t))}function u(e){const t=e.engineData||{};return`
+            <div class="wz-toggle-grid">
 
-        <div id="editHostError" style="color:var(--danger);font-size:12px;margin-bottom:10px;display:none;background:rgba(255,59,48,0.1);padding:8px;border-radius:4px;"></div>
+                <div class="wz-toggle-card">
+                    <div class="wz-toggle-header" data-action="wz-toggle" data-target="wztStatic_${e.id}">
+                        <div><strong>Static Files</strong><span class="wz-toggle-sub">Serve a directory from disk</span></div>
+                        <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="engineData.web_static_on"${t.web_static_on?" checked":""}><span class="wz-slider"></span></label>
+                    </div>
+                    <div class="wz-toggle-body" id="wztStatic_${e.id}" style="display:none;">
+                        <div class="wz-path-row">
+                            <input type="text" data-wz-route-field="engineData.web_root" class="wz-input"
+                                   placeholder="/var/www/html" value="${t.web_root||""}">
+                            <button type="button" class="btn small wz-pick-folder" title="Browse">📁</button>
+                        </div>
+                        <div class="wz-inline-checks" style="margin-top:8px;">
+                            <label class="wz-check"><input type="checkbox" data-wz-route-field="engineData.web_listing"${t.web_listing?" checked":""}> Directory listing</label>
+                            <label class="wz-check"><input type="checkbox" data-wz-route-field="engineData.web_spa"${t.web_spa?" checked":""}> SPA mode (fallback to index.html)</label>
+                            <label class="wz-check"><input type="checkbox" data-wz-route-field="engineData.web_nocache"${t.web_nocache?" checked":""}> Disable caching headers</label>
+                        </div>
+                        <div style="margin-top:10px;">
+                            <label class="wz-label" style="font-size:11px;">Index files (comma-separated, no paths)</label>
+                            <input type="text" data-wz-route-field="engineData.web_index" class="wz-input"
+                                   placeholder="index.html, index.php, index.md, README.md"
+                                   value="${t.web_index||""}">
+                            <div class="wz-hint">Files tried in order when a directory is requested. No slashes.</div>
+                        </div>
+                    </div>
+                </div>
 
-        <textarea id="editHostJsonTextarea" class="json-editor" spellcheck="false"></textarea>
+                <div class="wz-toggle-card">
+                    <div class="wz-toggle-header" data-action="wz-toggle" data-target="wztPHP_${e.id}">
+                        <div><strong>PHP</strong><span class="wz-toggle-sub">via PHP-FPM FastCGI</span></div>
+                        <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="engineData.php_enabled"${t.php_enabled?" checked":""}><span class="wz-slider"></span></label>
+                    </div>
+                    <div class="wz-toggle-body" id="wztPHP_${e.id}" style="display:none;">
+                        <input type="text" data-wz-route-field="engineData.php_address" class="wz-input"
+                               placeholder="127.0.0.1:9000 or unix:/run/php/php8.sock" value="${t.php_address||""}">
+                        <div class="wz-hint">Leave blank for default (127.0.0.1:9000)</div>
+                    </div>
+                </div>
 
-        <div style="display:flex; gap:10px; margin-top:15px;">
-            <button id="saveHostJsonBtn" class="btn primary" style="flex:1;">Save Configuration</button>
-            <button class="btn close-modal" style="width:100px;">Cancel</button>
-        </div>
-    </div>
-</div>
+                <div class="wz-toggle-card">
+                    <div class="wz-toggle-header" data-action="wz-toggle" data-target="wztGit_${e.id}">
+                        <div><strong>Git Deploy</strong><span class="wz-toggle-sub">Pull + optional webhook trigger</span></div>
+                        <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="engineData.git_enabled"${t.git_enabled?" checked":""}><span class="wz-slider"></span></label>
+                    </div>
+                    <div class="wz-toggle-body" id="wztGit_${e.id}" style="display:none;">
+                        <input type="text" data-wz-route-field="engineData.git_url" class="wz-input"
+                               placeholder="https://github.com/org/repo.git" value="${t.git_url||""}" style="margin-bottom:6px;">
+                        <div style="display:flex;gap:8px;margin-bottom:6px;">
+                            <input type="text" data-wz-route-field="engineData.git_branch" class="wz-input"
+                                   placeholder="Branch (default: main)" value="${t.git_branch||""}" style="flex:1;">
+                            <input type="text" data-wz-route-field="engineData.git_id" class="wz-input"
+                                   placeholder="Deploy ID (e.g. my-site)" value="${t.git_id||""}" style="flex:1;">
+                        </div>
+                        <div class="wz-hint" style="margin-bottom:10px;">
+                            Webhook: <code style="font-size:10px;">https://{domain}/.well-known/agbero/webhook/git/{id}</code>
+                        </div>
+                        <div style="display:flex;gap:8px;margin-bottom:6px;">
+                            <div style="flex:1;">
+                                <label class="wz-label" style="font-size:11px;">Poll interval (Pull mode)</label>
+                                <input type="text" data-wz-route-field="engineData.git_interval" class="wz-input"
+                                       placeholder="e.g. 5m — blank = webhook only" value="${t.git_interval||""}">
+                            </div>
+                            <div style="flex:1;">
+                                <label class="wz-label" style="font-size:11px;">Webhook secret (Push mode)</label>
+                                <input type="text" data-wz-route-field="engineData.git_secret" class="wz-input"
+                                       placeholder="Must match GitHub/GitLab setting" value="${t.git_secret||""}">
+                            </div>
+                        </div>
+                        <label class="wz-label" style="font-size:11px;margin-top:4px;">Auth (private repos)</label>
+                        <select data-wz-route-field="engineData.git_auth_type" class="wz-select-inline" style="margin-bottom:6px;">
+                            <option value="">None (public)</option>
+                            <option value="basic"${t.git_auth_type==="basic"?" selected":""}>Basic (username / password)</option>
+                            <option value="ssh-key"${t.git_auth_type==="ssh-key"?" selected":""}>SSH Key</option>
+                            <option value="ssh-agent"${t.git_auth_type==="ssh-agent"?" selected":""}>SSH Agent</option>
+                        </select>
+                        <div class="wz-git-auth-fields"></div>
+                    </div>
+                </div>
 
-<!-- PERFORMANCE GRAPH MODAL -->
-<div class="modal-overlay" id="perfModal">
-    <div class="modal modal-perf">
-        <button class="perf-close-btn close-modal" title="Close">&#x2715;</button>
-        <div class="perf-modal-header" style="display: flex; align-items: center; justify-content: space-between;">
-            <div>
-                <h3 id="perfModalTitle" style="margin:0;">Performance History</h3>
-                <span id="perfModalHost" style="font-size:11px;color:var(--text-mute);font-family:monospace;"></span>
+                <div class="wz-toggle-card">
+                    <div class="wz-toggle-header" data-action="wz-toggle" data-target="wztMd_${e.id}">
+                        <div><strong>Markdown</strong><span class="wz-toggle-sub">Render .md files as HTML</span></div>
+                        <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="engineData.markdown_enabled"${t.markdown_enabled?" checked":""}><span class="wz-slider"></span></label>
+                    </div>
+                    <div class="wz-toggle-body" id="wztMd_${e.id}" style="display:none;">
+                        <div class="wz-field-group" style="margin-bottom:10px;">
+                            <label class="wz-label" style="font-size:11px;">Mode</label>
+                            <div class="wz-radio-group" style="flex-direction:row;gap:16px;">
+                                <label class="wz-radio"><input type="radio" name="md_view_${e.id}" data-wz-route-field="engineData.markdown_view" value=""${t.markdown_view?"":" checked"}> <span>Website — rendered pages</span></label>
+                                <label class="wz-radio"><input type="radio" name="md_view_${e.id}" data-wz-route-field="engineData.markdown_view" value="browse"${t.markdown_view==="browse"?" checked":""}> <span>Browse — document manager</span></label>
+                            </div>
+                            <div class="wz-hint">Browse mode shows a navigable file tree with rendered previews.</div>
+                        </div>
+                        <div class="wz-inline-checks">
+                            <label class="wz-check"><input type="checkbox" data-wz-route-field="engineData.markdown_toc"${t.markdown_toc?" checked":""}> Table of contents</label>
+                            <label class="wz-check"><input type="checkbox" data-wz-route-field="engineData.markdown_highlight"${t.markdown_highlight?" checked":""}> Syntax highlighting</label>
+                            <label class="wz-check"><input type="checkbox" data-wz-route-field="engineData.markdown_unsafe"${t.markdown_unsafe?" checked":""}> Allow raw HTML in markdown</label>
+                        </div>
+                    </div>
+                </div>
+
+            </div>`}function g(e,t){_wireToggleCards(e),e.querySelectorAll(".wz-pick-folder").forEach(e=>{e.addEventListener("click",async()=>{const t=e.previousElementSibling;if(!t)return;if(window.showDirectoryPicker)try{const n=await window.showDirectoryPicker(),e=n.name;t.value.trim()?t.value=t.value.replace(/\/?$/,"/")+e:t.value="/"+e,t.dispatchEvent(new Event("input")),t.focus(),t.select(),notify.show(`Folder name "${e}" inserted — complete the full server path`,"info")}catch{}else t.focus(),notify.show("Type the full server path directly (e.g. /var/www/html)","info")})});const n=e.querySelector('[data-wz-route-field="engineData.git_auth_type"]'),s=e.querySelector(".wz-git-auth-fields");function o(){if(!s)return;const e=n?.value||"";s.innerHTML=e==="basic"?`
+                    <input type="text" data-wz-route-field="engineData.git_auth_user" class="wz-input" placeholder="Username" style="margin-bottom:4px;" value="${t.engineData?.git_auth_user||""}">
+                    <input type="password" data-wz-route-field="engineData.git_auth_pass" class="wz-input" placeholder="Password / token" value="${t.engineData?.git_auth_pass||""}">
+                `:e==="ssh-key"?`
+                    <textarea data-wz-route-field="engineData.git_ssh_key" class="wz-input" rows="3"
+                        placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                        style="font-family:var(--font-mono);font-size:11px;resize:vertical;">${t.engineData?.git_ssh_key||""}</textarea>
+                `:""}n?.addEventListener("change",o),o()}function v(e){const n=e.engineData||{},t=n.lb_strategy||"round_robin";return`
+            <div class="wz-section-heading">Backends</div>
+            <div class="wz-hint" style="margin-bottom:8px;">Add one or more upstream servers. Agbero load-balances across all active backends.</div>
+            <div id="wzProxyBackends_${e.id}" class="wz-backend-list"></div>
+            <button type="button" class="btn small wz-add-backend" style="margin-top:8px;">+ Add Backend</button>
+            <input type="hidden" data-wz-route-field="engineData.backends_list" class="wz-backends-field" value="${n.backends_list||"[]"}">
+
+            <div class="wz-section-heading" style="margin-top:20px;">Load Balancing Strategy</div>
+            <div class="wz-strategy-grid">
+                <label class="wz-strategy-opt"><input type="radio" name="lb_strategy_${e.id}" data-wz-route-field="engineData.lb_strategy" value="round_robin"${t==="round_robin"?" checked":""}><span><strong>Round Robin</strong><em>Balanced, default</em></span></label>
+                <label class="wz-strategy-opt"><input type="radio" name="lb_strategy_${e.id}" data-wz-route-field="engineData.lb_strategy" value="least_conn"${t==="least_conn"?" checked":""}><span><strong>Least Connections</strong><em>Lowest active load</em></span></label>
+                <label class="wz-strategy-opt"><input type="radio" name="lb_strategy_${e.id}" data-wz-route-field="engineData.lb_strategy" value="least_response_time"${t==="least_response_time"?" checked":""}><span><strong>Least Response Time</strong><em>Fastest backend</em></span></label>
+                <label class="wz-strategy-opt"><input type="radio" name="lb_strategy_${e.id}" data-wz-route-field="engineData.lb_strategy" value="sticky"${t==="sticky"?" checked":""}><span><strong>Sticky Sessions</strong><em>Same client → same server</em></span></label>
+                <label class="wz-strategy-opt"><input type="radio" name="lb_strategy_${e.id}" data-wz-route-field="engineData.lb_strategy" value="ip_hash"${t==="ip_hash"?" checked":""}><span><strong>IP Hash</strong><em>Consistent by client IP</em></span></label>
+                <label class="wz-strategy-opt"><input type="radio" name="lb_strategy_${e.id}" data-wz-route-field="engineData.lb_strategy" value="adaptive"${t==="adaptive"?" checked":""}><span><strong>Adaptive</strong><em>Auto-tune by health score</em></span></label>
+            </div>`}function b(e,t){let n=[];try{n=JSON.parse(t.engineData?.backends_list||"[]")}catch{n=[]}n.length||(n=[{address:"",weight:1}]);const s=e.querySelector("#wzProxyBackends_"+t.id),o=e.querySelector(".wz-backends-field"),r=e.querySelector(".wz-add-backend");function i(){o&&(o.value=JSON.stringify(n),t.engineData=t.engineData||{},t.engineData.backends_list=o.value)}function a(){if(!s)return;s.innerHTML=n.map((e,t)=>`
+                    <div class="wz-backend-row" data-idx="${t}">
+                        <input type="text" class="wz-input wz-be-addr" value="${e.address||""}"
+                               placeholder="http://10.0.0.5:8080 or unix:/run/app.sock" style="flex:1;">
+                        <input type="number" class="wz-input-sm wz-be-weight" value="${e.weight||1}"
+                               min="1" max="100" title="Weight" style="width:60px;">
+                        <span class="wz-hint-inline" style="font-size:10px;white-space:nowrap;">weight</span>
+                        <button type="button" class="btn small wz-be-remove"
+                            style="color:var(--danger);border-color:var(--danger);padding:4px 8px;" title="Remove">✕</button>
+                    </div>`).join(""),s.querySelectorAll(".wz-be-addr").forEach((e,t)=>{e.addEventListener("input",()=>{n[t].address=e.value,i()})}),s.querySelectorAll(".wz-be-weight").forEach((e,t)=>{e.addEventListener("input",()=>{n[t].weight=Number(e.value)||1,i()})}),s.querySelectorAll(".wz-be-remove").forEach(e=>{e.addEventListener("click",()=>{n.splice(+e.closest("[data-idx]").dataset.idx,1),a()})})}r?.addEventListener("click",()=>{n.push({address:"",weight:1}),a();const e=s?.querySelectorAll(".wz-be-addr");e?.length&&e[e.length-1].focus()}),a(),i()}function j(){return`
+            <div id="wzSlTabNav"></div>
+            <div id="wzSlPanelRests" style="padding-top:10px;">
+                <div class="wz-hint" style="margin-bottom:10px;">Each REST proxy forwards requests to an external API and injects credentials server-side. Reached at <code>/{name}</code>.</div>
+                <div id="wzRestList" class="wz-backend-list"></div>
+                <button type="button" class="btn small" id="wzAddRestBtn" style="margin-top:8px;">+ Add REST Proxy</button>
+                <input type="hidden" class="wz-rest-field" value="[]">
             </div>
-            <select id="perfRangeSelect" class="perf-range-select" style="width: auto; min-width: 130px; margin-bottom: 0;">
-                <option value="30m">Last 30 min</option>
-                <option value="1h" selected>Last 1 hour</option>
-                <option value="6h">Last 6 hours</option>
-                <option value="24h">Last 24 hours</option>
-            </select>
-        </div>
-        <div class="perf-charts-grid">
-            <div class="perf-chart-cell"><div class="perf-chart-label">Requests / sec</div><div class="perf-chart-area" id="perfChartReqs"></div></div>
-            <div class="perf-chart-cell"><div class="perf-chart-label">p99 Latency (ms)</div><div class="perf-chart-area" id="perfChartP99"></div></div>
-            <div class="perf-chart-cell"><div class="perf-chart-label">Error Rate (%)</div><div class="perf-chart-area" id="perfChartErrors"></div></div>
-            <div class="perf-chart-cell"><div class="perf-chart-label">Active Backends</div><div class="perf-chart-area" id="perfChartBE"></div></div>
-        </div>
-        <div class="perf-modal-footer">
-            <span id="perfDataRange" style="font-size:10px;color:var(--text-mute);"></span>
-            <span style="font-size:10px;color:var(--text-mute);">Sampled every 60s &bull; 24h max retention</span>
-        </div>
-    </div>
-</div>
-
-<!-- SESSION EXPIRY -->
-<div class="session-warning" id="sessionWarning">
-    <span>🔐 Session expires in <span id="sessionExpiryTime">5m 0s</span></span>
-    <div class="session-warning-actions">
-        <button id="refreshSessionBtn" class="btn small" title="Renew session">↺ Renew</button>
-        <button id="dismissSessionBtn" class="btn small" title="Dismiss">✕</button>
-    </div>
-</div>
-
-<!-- DRAWERS -->
-<div class="drawer-backdrop" id="drawerBackdrop"></div>
-<div class="drawer" id="routeDrawer">
-    <div class="drawer-header">
-        <div class="drawer-title">
-            <div class="drawer-breadcrumb"><span class="drawer-back-link" data-action="close-drawer" data-target="routeDrawer">← All hosts</span></div>
-            <h2 id="drawerRoutePath">/</h2>
-            <div style="display:flex;align-items:center;gap:8px;">
-                <span id="drawerHostName" class="clickable-host" data-action="filter-host">example.com</span>
-                <button id="drawerPerfBtn" class="btn small" style="font-size:10px;padding:3px 8px;opacity:0.7;">📈 Perf</button>
-            </div>
-        </div>
-        <button class="drawer-close" data-action="close-drawer" data-target="routeDrawer">&times;</button>
-    </div>
-    <div class="drawer-content" id="drawerBody"></div>
-</div>
-<div class="drawer level-2" id="backendDrawer">
-    <div class="drawer-header">
-        <div class="drawer-title">
-            <div class="drawer-breadcrumb"><span class="drawer-back-link" data-action="close-drawer" data-target="backendDrawer">← Back to Route</span></div>
-            <h2 id="backendDrawerTitle">Backend Details</h2>
-            <span id="backendDrawerUrl" class="clickable-host mono"></span>
-        </div>
-        <button class="drawer-close" data-action="close-drawer" data-target="backendDrawer">&times;</button>
-    </div>
-    <div class="drawer-content" id="backendDrawerBody"></div>
-</div>
-
-<script type="module">
-    import { modal, layout, emit, listen, chart, on, auth, ui, query } from '../lib/oja.full.esm.js';
-    import { store, getCreds, isLoggedIn, setCredentials, clearCredentials, getHost, setHost } from '../js/store.js';
-    import { fetchTelemetry, login, addFirewallRule, broadcastClusterRoute, addHost, deleteHost } from '../js/api.js';
-    import { loadConfigData } from '../js/main.js';
-    let _perfCharts = null;
-
-    // JSON Syntax Highlighter wrapper (Outputs beautifully themed <pre> block)
-    window.app = window.app || {};
-    window.app.syntaxHighlight = function(json) {
-        if (typeof json != 'string') { json = JSON.stringify(json, undefined, 4); }
-        json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const highlighted = json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
-            let cls = 'json-number';
-            if (/^"/.test(match)) { if (/:$/.test(match)) cls = 'json-key'; else cls = 'json-string'; }
-            else if (/true|false/.test(match)) cls = 'json-boolean';
-            else if (/null/.test(match)) cls = 'json-null';
-            return '<span class="' + cls + '">' + match + '</span>';
-        });
-        return `<pre class="syntax-box">${highlighted}</pre>`;
-    };
-
-    function updateNodeDisplay() {
-        const h = getHost();
-        document.getElementById('targetHostBtn')?.setAttribute('data-host', h || 'local');
-        if (document.getElementById('loginNodeDisplay')) document.getElementById('loginNodeDisplay').textContent = h || 'local';
-        if (document.getElementById('loginTargetHost')) document.getElementById('loginTargetHost').value = h;
-    }
-    updateNodeDisplay();
-
-    on('#loginEditNodeBtn', 'click', () => {
-        const el = document.getElementById('loginNodeEdit');
-        el.style.display = el.style.display === 'flex' ? 'none' : 'flex';
-    });
-    on('#loginResetHostBtn', 'click', () => {
-        document.getElementById('loginTargetHost').value = '';
-        setHost(''); updateNodeDisplay();
-        document.getElementById('loginNodeEdit').style.display = 'none';
-    });
-    on('#loginSaveHostBtn', 'click', () => {
-        const val = document.getElementById('loginTargetHost').value.trim();
-        setHost(val); updateNodeDisplay();
-        document.getElementById('loginNodeEdit').style.display = 'none';
-    });
-
-    on('#themeToggle', 'click', () => { ui.theme.toggle(); });
-
-    on('#targetHostBtn', 'click', () => { document.getElementById('targetHostInput').value = getHost(); modal.open('targetHostModal'); });
-    on('#targetHostForm', 'submit', (e, el) => {
-        e.preventDefault(); setHost(el.querySelector('#targetHostInput').value.trim());
-        modal.closeAll(); window.location.reload();
-    });
-
-    on('#loginBtn', 'click', async e => {
-        e.preventDefault();
-        if (isLoggedIn()) {
-            clearCredentials(); await auth.session.end();
-            store.set('auth.isLoggedIn', false);
-            window._isPolling = false; window._latencyStarted = false;
-        }
-        updateNodeDisplay(); modal.open('loginModal');
-    });
-
-    on('#loginForm', 'submit', async (e, el) => {
-        e.preventDefault();
-        const errEl = document.getElementById('loginError'); errEl.style.display = 'none';
-        const targetVal = el.querySelector('#loginTargetHost')?.value?.trim();
-        if (targetVal !== undefined) { setHost(targetVal); updateNodeDisplay(); }
-
-        const submitBtn = el.querySelector('[type="submit"]'); submitBtn.disabled = true; submitBtn.textContent = 'Signing in…';
-        const result = await login(el.querySelector('#username').value, el.querySelector('#password').value);
-        submitBtn.disabled = false; submitBtn.textContent = 'Sign In';
-
-        if (!result) { errEl.textContent = 'Login failed.'; errEl.style.display = 'block'; return; }
-        setCredentials(result.type, result.token);
-        await auth.session.start(result.token);
-        startLatencyChecks();
-    });
-
-    on('.modal-overlay', 'click', (e, overlay) => { if (e.target === overlay && overlay.id !== 'loginModal') modal.closeAll(); });
-    on('.close-modal', 'click', () => modal.closeAll());
-
-    on('#ruleForm', 'submit', async (e, form) => {
-        e.preventDefault();
-        const errEl = document.getElementById('ruleError');
-        errEl.style.display = 'none';
-        const submitBtn = form.querySelector('[type="submit"]');
-        ui.btn.loading(submitBtn, 'Blocking…');
-        try {
-            await addFirewallRule(getCreds(), {
-                ip: form.querySelector('#fwIp').value.trim(),
-                reason: form.querySelector('#fwReason').value.trim(),
-                path: form.querySelector('#fwPath').value.trim(),
-                host: '',
-                duration_sec: parseInt(form.querySelector('#fwDuration').value, 10) || 0,
-            });
-            ui.btn.done(submitBtn, 'Blocked ✓');
-            setTimeout(() => modal.closeAll(), 800);
-            emit('firewall:refresh');
-        } catch(err) {
-            ui.btn.reset(submitBtn);
-            errEl.textContent = err.message || 'Failed to block IP.';
-            errEl.style.display = 'block';
-        }
-    });
-
-    // Add Host — mode toggle
-    on('#ahMode', 'change', (e, sel) => {
-        document.getElementById('ahProxySection').style.display = sel.value === 'proxy' ? '' : 'none';
-        document.getElementById('ahStaticSection').style.display = sel.value === 'static' ? '' : 'none';
-    });
-
-    on('#addHostForm', 'submit', async (e, form) => {
-        e.preventDefault();
-        const errEl = document.getElementById('addHostError'); errEl.style.display = 'none';
-        const domain  = form.querySelector('#ahDomain').value.trim();
-        const path    = form.querySelector('#ahPath').value.trim() || '/';
-        const mode    = form.querySelector('#ahMode').value;
-        const backend = form.querySelector('#ahBackend').value.trim();
-        const webRoot = form.querySelector('#ahWebRoot')?.value.trim();
-
-        if (mode === 'proxy' && !backend) {
-            errEl.textContent = 'Backend URL is required for proxy mode.';
-            errEl.style.display = 'block'; return;
-        }
-        if (mode === 'static' && !webRoot) {
-            errEl.textContent = 'Web Root path is required for static mode.';
-            errEl.style.display = 'block'; return;
-        }
-
-        let routeBlock = { enabled: 'on', path };
-        if (mode === 'proxy') {
-            routeBlock.backends = { enabled: 'on', strategy: form.querySelector('#ahStrategy').value, servers: [{ address: backend, weight: 1 }] };
-        } else {
-            routeBlock.web = { enabled: 'on', root: webRoot, listing: true };
-        }
-
-        const btn = form.querySelector('[type="submit"]');
-        ui.btn.loading(btn, 'Saving…');
-        try {
-            const result = await addHost(getCreds(), domain, { domains: [domain], tls: { mode: 'auto' }, routes: [routeBlock] });
-            if (result && result.error) throw new Error(result.error);
-            ui.btn.done(btn, 'Saved ✓');
-            setTimeout(() => modal.closeAll(), 800);
-            emit('hosts:refresh');
-            loadConfigData();
-        } catch (err) {
-            ui.btn.reset(btn);
-            errEl.textContent = err.message; errEl.style.display = 'block';
-        }
-    });
-
-    // JSON Format Button — standard JSON.parse only (CSP blocks eval/new Function)
-    on('#formatHostJsonBtn', 'click', () => {
-        const el = document.getElementById('editHostJsonTextarea');
-        const errEl = document.getElementById('editHostError');
-        try {
-            const parsed = JSON.parse(el.value);
-            el.value = JSON.stringify(parsed, null, 4);
-            errEl.style.display = 'none';
-        } catch(err) {
-            errEl.innerText = 'Cannot format — invalid JSON: ' + err.message;
-            errEl.style.display = 'block';
-        }
-    });
-
-    // STRICT DELETE LOGIC
-    let _pendingDelete = null;
-    listen('app:strict-delete', ({ message, targetText, onConfirm }) => {
-        document.getElementById('strictDeleteText').innerHTML = message;
-        document.getElementById('strictDeleteTarget').innerText = targetText;
-        const input = document.getElementById('strictDeleteInput');
-        const btn = document.getElementById('strictDeleteBtn');
-        input.value = ''; btn.disabled = true; _pendingDelete = onConfirm;
-        input.oninput = () => { btn.disabled = (input.value !== targetText); };
-        modal.open('strictDeleteModal');
-    });
-    on('#strictDeleteBtn', 'click', () => { if (_pendingDelete) _pendingDelete(); modal.closeAll(); });
-
-    const LATENCY_ONLINE_MS  = 30_000;
-    const LATENCY_OFFLINE_MS = 5_000;
-    let _latencyTimer = null;
-
-    function scheduleLatencyCheck(ms) {
-        clearTimeout(_latencyTimer);
-        _latencyTimer = setTimeout(() => { checkLatency(); }, ms);
-    }
-
-    // OFFLINE & LATENCY LOGIC (Fast detection with AbortController)
-    let currentLatencyController = null;
-    async function checkLatency() {
-        const banner = document.getElementById('offlineBanner');
-        if (!navigator.onLine) {
-            store.set('conn.html', `<span class="conn-dot"><span class="conn-dot-circle" style="background:var(--danger)"></span><span>offline</span></span>`);
-            updateLoginDot('var(--danger)', 'offline');
-            if (banner) { banner.style.display = 'block'; banner.classList.add('active'); }
-            scheduleLatencyCheck(LATENCY_OFFLINE_MS);
-            return;
-        }
-
-        if (currentLatencyController) currentLatencyController.abort();
-        currentLatencyController = new AbortController();
-        const start = Date.now();
-        try {
-            const baseUrl = getHost() || window.location.origin;
-            const headers = new Headers();
-            if (getCreds()?.token) headers.set('Authorization', `Bearer ${getCreds().token}`);
-
-            const timeoutId = setTimeout(() => currentLatencyController.abort(), 5000);
-            const res = await fetch(baseUrl + '/uptime', { method: 'HEAD', headers, cache: 'no-store', signal: currentLatencyController.signal });
-            clearTimeout(timeoutId);
-
-            if (res.ok || res.status === 401) {
-                if (banner) { banner.style.display = 'none'; banner.classList.remove('active'); }
-            }
-            if (res.status === 401) {
-                store.set('conn.html', `<span class="conn-dot"><span class="conn-dot-circle" style="background:var(--danger)"></span><span>auth</span></span>`);
-                updateLoginDot('var(--warning)', 'reachable');
-                scheduleLatencyCheck(LATENCY_ONLINE_MS);
-                return;
-            }
-            if (!res.ok) throw new Error('non-ok');
-
-            const ms = Date.now() - start;
-            const color = ms < 100 ? 'var(--success)' : ms < 300 ? 'var(--info)' : ms < 1000 ? 'var(--warning)' : 'var(--danger)';
-            store.set('conn.html', `<span class="conn-dot"><span class="conn-dot-circle" style="background:${color}"></span><span>${ms}ms</span></span>`);
-            updateLoginDot('var(--success)', `${ms}ms`);
-            scheduleLatencyCheck(LATENCY_ONLINE_MS);
-        } catch (e) {
-            if (e.name !== 'AbortError') {
-                store.set('conn.html', `<span class="conn-dot"><span class="conn-dot-circle" style="background:var(--danger)"></span><span>offline</span></span>`);
-                updateLoginDot('var(--danger)', 'offline');
-                if (banner) { banner.style.display = 'block'; banner.classList.add('active'); }
-                scheduleLatencyCheck(LATENCY_OFFLINE_MS);
-            } else {
-                scheduleLatencyCheck(LATENCY_ONLINE_MS);
-            }
-        }
-    }
-
-    window.addEventListener('offline', () => {
-        document.getElementById('offlineBanner').style.display = 'block';
-        store.set('conn.html', `<span class="conn-dot"><span class="conn-dot-circle" style="background:var(--danger)"></span><span>offline</span></span>`);
-        scheduleLatencyCheck(LATENCY_OFFLINE_MS);
-    });
-    window.addEventListener('online', checkLatency);
-
-    function updateLoginDot(color, label) {
-        const circle = document.getElementById('loginServerDotCircle');
-        const lbl    = document.getElementById('loginServerDotLabel');
-        if (circle) circle.style.background = color;
-        if (lbl)    lbl.textContent = label;
-    }
-
-    function startLatencyChecks() {
-        if (window._latencyStarted) return;
-        window._latencyStarted = true;
-        checkLatency();
-    }
-    startLatencyChecks();
-
-    // THE PERFORMANCE MODAL IMPLEMENTATION
-    function _initPerfCharts() {
-        _perfCharts = {
-            reqs:     chart.line('#perfChartReqs',   [],[], { unit: '/s', color: 'var(--accent)' }),
-            p99:      chart.line('#perfChartP99',    [],[], { unit: 'ms', color: 'var(--warning)' }),
-            errors:   chart.line('#perfChartErrors',[],[], { unit: '%',  color: 'var(--danger)',  maxY: 100 }),
-            backends: chart.line('#perfChartBE',     [],[], { unit: '',   color: 'var(--success)', isInt: true }),
-        };
-    }
-
-    async function loadPerfData(hostname, range) {
-        if (!_perfCharts) _initPerfCharts();
-        const skel = '<div class="perf-skeleton"></div>';['perfChartReqs','perfChartP99','perfChartErrors','perfChartBE'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.innerHTML = skel;
-        });
-
-        const data = await fetchTelemetry(getCreds(), hostname, range);
-        if (!data?.samples?.length) {['perfChartReqs','perfChartP99','perfChartErrors','perfChartBE'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-mute);font-size:11px;">No history data yet</div>';
-        });
-            return;
-        }
-        const s = data.samples;
-        _perfCharts.reqs.update(s.map(x => x.requests_sec),      s.map(x => x.ts));
-        _perfCharts.p99.update(s.map(x => x.p99_ms),             s.map(x => x.ts));
-        _perfCharts.errors.update(s.map(x => x.error_rate),      s.map(x => x.ts));
-        _perfCharts.backends.update(s.map(x => x.active_backends), s.map(x => x.ts));
-
-        if (s.length >= 2) {
-            const fmt = ts => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            document.getElementById('perfDataRange').textContent = `${fmt(s[0].ts)} – ${fmt(s[s.length - 1].ts)} · ${s.length} points`;
-        }
-    }
-
-    listen('perf:open', async ({ hostname }) => {
-        query('#perfModalTitle').textContent = 'Performance History';
-        query('#perfModalHost').textContent  = hostname;
-        query('#perfDataRange').textContent  = '';
-        modal.open('perfModal');
-        window._perfHost = hostname;
-        await loadPerfData(hostname, query('#perfRangeSelect').value);
-    });
-
-    on('#perfRangeSelect', 'change', async (e, el) => { if (window._perfHost) await loadPerfData(window._perfHost, el.value); });
-
-    listen('metrics:updated', () => {
-        const certs = store.get('certificates') ||[];
-        store.set('certs.active', certs.filter(c => c.daysLeft > 0).length);
-        store.set('certs.expiring', certs.filter(c => c.daysLeft > 0 && c.daysLeft < 7).length);
-    });
-
-    // RESTORED SESSION EXPIRY
-    listen('auth:expiring', ({ expiresAt }) => {
-        const warningEl = document.getElementById('sessionWarning');
-        const timeEl = document.getElementById('sessionExpiryTime');
-        if (warningEl) warningEl.classList.add('active');
-
-        const tick = () => {
-            const left = expiresAt - Date.now();
-            if (left <= 0) { warningEl?.classList.remove('active'); return; }
-            if (timeEl) timeEl.innerText = `${Math.floor(left / 60000)}m ${Math.floor((left % 60000) / 1000)}s`;
-            requestAnimationFrame(tick);
-        };
-        requestAnimationFrame(tick);
-    });
-
-    on('#refreshSessionBtn', 'click', async () => {
-        document.getElementById('sessionWarning')?.classList.remove('active');
-        clearCredentials(); await auth.session.end();
-        store.set('auth.isLoggedIn', false); window.location.reload();
-    });
-    on('#dismissSessionBtn', 'click', () => document.getElementById('sessionWarning')?.classList.remove('active'));
-    listen('auth:expired', () => {
-        store.set('auth.isLoggedIn', false); clearCredentials();
-        window._isPolling = window._latencyStarted = false;
-        document.getElementById('sessionWarning')?.classList.remove('active');
-        modal.open('loginModal');
-    });
-</script>
+            <div id="wzSlPanelWorkers" style="padding-top:10px;display:none;">
+                <div class="wz-hint" style="margin-bottom:10px;">Workers are managed OS processes — on-demand HTTP triggers, scheduled cron, background daemons, or one-shot startup tasks.</div>
+                <div id="wzWorkerList" class="wz-backend-list"></div>
+                <button type="button" class="btn small" id="wzAddWorkerBtn" style="margin-top:8px;">+ Add Worker</button>
+                <input type="hidden" class="wz-worker-field" value="[]">
+            </div>`}function h(e,t){const d=e.querySelector("#wzSlPanelRests"),u=e.querySelector("#wzSlPanelWorkers");tabs.render(e.querySelector("#wzSlTabNav"),[{key:"rests",label:"REST Proxies"},{key:"workers",label:"Workers"}],{active:"rests",variant:"pill",onChange:e=>{d&&(d.style.display=e==="rests"?"":"none"),u&&(u.style.display=e==="workers"?"":"none")}});let s=[],n=[];const a=e.querySelector(".wz-rest-field"),r=e.querySelector(".wz-worker-field");function i(){a&&(a.value=JSON.stringify(s),t.engineData=t.engineData||{},t.engineData.serverless_rests=a.value)}function o(){r&&(r.value=JSON.stringify(n),t.engineData=t.engineData||{},t.engineData.serverless_workers=r.value)}function c(){const t=e.querySelector("#wzRestList");if(!t)return;t.innerHTML=s.map((e,t)=>`
+                    <div class="wz-item-card" data-idx="${t}">
+                        <div class="wz-item-row">
+                            <input type="text" class="wz-input wz-rest-name" placeholder="Name (e.g. stripe)" value="${e.name||""}" style="flex:1;min-width:0;">
+                            <select class="wz-select-inline wz-rest-method" style="width:80px;flex-shrink:0;">
+                                ${["GET","POST","PUT","DELETE","PATCH"].map(t=>`<option${e.method===t?" selected":""}>${t}</option>`).join("")}
+                            </select>
+                            <button type="button" class="btn small wz-rest-remove" style="color:var(--danger);border-color:rgba(255,59,48,0.4);flex-shrink:0;width:var(--btn-h-sm);padding:0;" title="Remove">✕</button>
+                        </div>
+                        <input type="text" class="wz-input wz-rest-url" placeholder="https://api.example.com/endpoint" value="${e.url||""}" style="margin-top:5px;">
+                        <div class="wz-item-row" style="margin-top:5px;">
+                            <input type="text" class="wz-input wz-rest-auth" placeholder="Authorization: Bearer env.MY_API_KEY" value="${e.auth_header||""}" style="flex:1;min-width:0;">
+                            <input type="text" class="wz-input-sm wz-rest-timeout" placeholder="Timeout" value="${e.timeout||""}" style="width:80px;flex-shrink:0;">
+                        </div>
+                        <div class="wz-hint" style="margin-top:3px;">Use <code>env.VAR</code> to inject secrets — never exposed to the browser.</div>
+                    </div>`).join("")||'<div class="wz-hint" style="padding:6px 0;">No REST proxies yet.</div>',t.querySelectorAll("[data-idx]").forEach(e=>{const t=+e.dataset.idx;e.querySelector(".wz-rest-name")?.addEventListener("input",e=>{s[t].name=e.target.value,i()}),e.querySelector(".wz-rest-url")?.addEventListener("input",e=>{s[t].url=e.target.value,i()}),e.querySelector(".wz-rest-auth")?.addEventListener("input",e=>{s[t].auth_header=e.target.value,i()}),e.querySelector(".wz-rest-timeout")?.addEventListener("input",e=>{s[t].timeout=e.target.value,i()}),e.querySelector(".wz-rest-method")?.addEventListener("change",e=>{s[t].method=e.target.value,i()}),e.querySelector(".wz-rest-remove")?.addEventListener("click",()=>{s.splice(t,1),c()})})}function l(){const t=e.querySelector("#wzWorkerList");if(!t)return;t.innerHTML=n.map((e,t)=>`
+                    <div class="wz-item-card" data-idx="${t}">
+                        <div class="wz-item-row">
+                            <input type="text" class="wz-input wz-wk-name" placeholder="Name (e.g. pdf-renderer)" value="${e.name||""}" style="flex:1;min-width:0;">
+                            <button type="button" class="btn small wz-wk-remove" style="color:var(--danger);border-color:rgba(255,59,48,0.4);flex-shrink:0;width:var(--btn-h-sm);padding:0;" title="Remove">✕</button>
+                        </div>
+                        <input type="text" class="wz-input wz-wk-command" placeholder="Command — e.g. node scripts/pdf.js or python3 worker.py" value="${e.command||""}" style="margin-top:5px;">
+                        <div class="wz-hint" style="margin-top:2px;">Space-separated. Agbero manages the process lifecycle.</div>
+                        <div class="wz-item-row" style="margin-top:8px;gap:16px;">
+                            <label class="wz-check"><input type="checkbox" class="wz-wk-bg"${e.background?" checked":""}> Background daemon</label>
+                            <label class="wz-check"><input type="checkbox" class="wz-wk-once"${e.run_once?" checked":""}> Run once at startup</label>
+                        </div>
+                        <div class="wz-item-row" style="margin-top:8px;gap:8px;">
+                            <div style="flex:1;min-width:0;">
+                                <label class="wz-label">Schedule (cron)</label>
+                                <input type="text" class="wz-input wz-wk-schedule" placeholder="0 2 * * *  or blank" value="${e.schedule||""}">
+                            </div>
+                            <div style="width:110px;flex-shrink:0;">
+                                <label class="wz-label">Timeout</label>
+                                <input type="text" class="wz-input wz-wk-timeout" placeholder="30s" value="${e.timeout||""}">
+                            </div>
+                        </div>
+                    </div>`).join("")||'<div class="wz-hint" style="padding:6px 0;">No workers yet.</div>',t.querySelectorAll("[data-idx]").forEach(e=>{const t=+e.dataset.idx;e.querySelector(".wz-wk-name")?.addEventListener("input",e=>{n[t].name=e.target.value,o()}),e.querySelector(".wz-wk-command")?.addEventListener("input",e=>{n[t].command=e.target.value,o()}),e.querySelector(".wz-wk-schedule")?.addEventListener("input",e=>{n[t].schedule=e.target.value,o()}),e.querySelector(".wz-wk-timeout")?.addEventListener("input",e=>{n[t].timeout=e.target.value,o()}),e.querySelector(".wz-wk-bg")?.addEventListener("change",e=>{n[t].background=e.target.checked,o()}),e.querySelector(".wz-wk-once")?.addEventListener("change",e=>{n[t].run_once=e.target.checked,o()}),e.querySelector(".wz-wk-remove")?.addEventListener("click",()=>{n.splice(t,1),l()})})}e.querySelector("#wzAddRestBtn")?.addEventListener("click",()=>{s.push({name:"",method:"GET",url:"",auth_header:"",timeout:""}),c()}),e.querySelector("#wzAddWorkerBtn")?.addEventListener("click",()=>{n.push({name:"",command:"",background:!1,run_once:!1,schedule:"",timeout:""}),l()}),c(),l()}function _(e){const t=e.extras||{};return`
+            <div class="wz-toggle-grid">
+                <div class="wz-toggle-card">
+                    <div class="wz-toggle-header" data-action="wz-toggle" data-target="wztCache_${e.id}">
+                        <div><strong>Cache</strong><span class="wz-toggle-sub">Memory or Redis response cache</span></div>
+                        <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="extras.cache_enabled"${t.cache_enabled?" checked":""}><span class="wz-slider"></span></label>
+                    </div>
+                    <div class="wz-toggle-body" id="wztCache_${e.id}" style="display:none;">
+                        <div class="wz-inline-row">
+                            <select data-wz-route-field="extras.cache_driver" class="wz-select-inline">
+                                <option value="memory"${t.cache_driver!=="redis"?" selected":""}>Memory</option>
+                                <option value="redis"${t.cache_driver==="redis"?" selected":""}>Redis</option>
+                            </select>
+                            <input type="text" data-wz-route-field="extras.cache_ttl" class="wz-input-sm" placeholder="TTL e.g. 5m" value="${t.cache_ttl||""}">
+                        </div>
+                    </div>
+                </div>
+                <div class="wz-toggle-card">
+                    <div class="wz-toggle-header" data-action="wz-toggle" data-target="wztCORS_${e.id}">
+                        <div><strong>CORS</strong><span class="wz-toggle-sub">Cross-origin resource sharing</span></div>
+                        <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="extras.cors_enabled"${t.cors_enabled?" checked":""}><span class="wz-slider"></span></label>
+                    </div>
+                    <div class="wz-toggle-body" id="wztCORS_${e.id}" style="display:none;">
+                        <textarea data-wz-route-field="extras.cors_origins" class="wz-input" rows="2"
+                                  placeholder="One origin per line, or * for all" style="resize:vertical;">${t.cors_origins||""}</textarea>
+                    </div>
+                </div>
+                <div class="wz-toggle-card">
+                    <div class="wz-toggle-header" data-action="wz-toggle" data-target="wztRate_${e.id}">
+                        <div><strong>Rate Limit</strong><span class="wz-toggle-sub">Throttle requests by IP</span></div>
+                        <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="extras.rate_enabled"${t.rate_enabled?" checked":""}><span class="wz-slider"></span></label>
+                    </div>
+                    <div class="wz-toggle-body" id="wztRate_${e.id}" style="display:none;">
+                        <div class="wz-inline-row">
+                            <input type="number" data-wz-route-field="extras.rate_requests" class="wz-input-sm" placeholder="Requests" value="${t.rate_requests||100}">
+                            <span class="wz-hint-inline">per</span>
+                            <input type="text" data-wz-route-field="extras.rate_window" class="wz-input-sm" placeholder="Window e.g. 1m" value="${t.rate_window||""}">
+                        </div>
+                    </div>
+                </div>
+                <div class="wz-toggle-card">
+                    <div class="wz-toggle-header">
+                        <div><strong>GZIP</strong><span class="wz-toggle-sub">Compress responses automatically</span></div>
+                        <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="extras.gzip_enabled"${t.gzip_enabled?" checked":""}><span class="wz-slider"></span></label>
+                    </div>
+                </div>
+                <div class="wz-toggle-card">
+                    <div class="wz-toggle-header">
+                        <div><strong>Firewall</strong><span class="wz-toggle-sub">Enable per-route IP blocking</span></div>
+                        <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="extras.firewall_enabled"${t.firewall_enabled?" checked":""}><span class="wz-slider"></span></label>
+                    </div>
+                </div>
+                <div class="wz-toggle-card">
+                    <div class="wz-toggle-header" data-action="wz-toggle" data-target="wztHealth_${e.id}">
+                        <div><strong>Health Check</strong><span class="wz-toggle-sub">Active backend probe</span></div>
+                        <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="extras.health_enabled"${t.health_enabled?" checked":""}><span class="wz-slider"></span></label>
+                    </div>
+                    <div class="wz-toggle-body" id="wztHealth_${e.id}" style="display:none;">
+                        <div class="wz-item-row" style="gap:8px;">
+                            <div style="flex:2;">
+                                <label class="wz-label">Path</label>
+                                <input type="text" data-wz-route-field="extras.health_path" class="wz-input" placeholder="/health" value="${t.health_path||"/health"}">
+                            </div>
+                            <div style="flex:1;">
+                                <label class="wz-label">Interval</label>
+                                <input type="text" data-wz-route-field="extras.health_interval" class="wz-input" placeholder="10s" value="${t.health_interval||""}">
+                            </div>
+                            <div style="flex:1;">
+                                <label class="wz-label">Timeout</label>
+                                <input type="text" data-wz-route-field="extras.health_timeout" class="wz-input" placeholder="5s" value="${t.health_timeout||""}">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="wz-toggle-card">
+                    <div class="wz-toggle-header" data-action="wz-toggle" data-target="wztCB_${e.id}">
+                        <div><strong>Circuit Breaker</strong><span class="wz-toggle-sub">Open after N consecutive failures</span></div>
+                        <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="extras.cb_enabled"${t.cb_enabled?" checked":""}><span class="wz-slider"></span></label>
+                    </div>
+                    <div class="wz-toggle-body" id="wztCB_${e.id}" style="display:none;">
+                        <div class="wz-item-row" style="gap:8px;">
+                            <div style="flex:1;">
+                                <label class="wz-label">Threshold (failures)</label>
+                                <input type="number" data-wz-route-field="extras.cb_threshold" class="wz-input" placeholder="5" min="1" value="${t.cb_threshold||5}">
+                            </div>
+                            <div style="flex:1;">
+                                <label class="wz-label">Reset after</label>
+                                <input type="text" data-wz-route-field="extras.cb_duration" class="wz-input" placeholder="30s" value="${t.cb_duration||""}">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>`}function w(e){const t=e.authData||{};return`
+            <div class="wz-toggle-grid">
+                <div class="wz-toggle-card">
+                    <div class="wz-toggle-header" data-action="wz-toggle" data-target="wztBasicAuth_${e.id}">
+                        <div><strong>Basic Auth</strong><span class="wz-toggle-sub">Username / bcrypt password</span></div>
+                        <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="authData.basic_enabled"${t.basic_enabled?" checked":""}><span class="wz-slider"></span></label>
+                    </div>
+                    <div class="wz-toggle-body" id="wztBasicAuth_${e.id}" style="display:none;">
+                        <div class="wz-hint" style="margin-bottom:6px;">One entry per line: <code>username:$2y$10$...</code></div>
+                        <textarea data-wz-route-field="authData.basic_users" class="wz-input" rows="3"
+                                  placeholder="admin:$2y$10$hash&#10;deploy:$2y$10$hash"
+                                  style="resize:vertical;font-family:var(--font-mono);font-size:11px;">${t.basic_users||""}</textarea>
+                    </div>
+                </div>
+                <div class="wz-toggle-card">
+                    <div class="wz-toggle-header" data-action="wz-toggle" data-target="wztJWT_${e.id}">
+                        <div><strong>JWT Auth</strong><span class="wz-toggle-sub">Validate Bearer tokens</span></div>
+                        <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="authData.jwt_enabled"${t.jwt_enabled?" checked":""}><span class="wz-slider"></span></label>
+                    </div>
+                    <div class="wz-toggle-body" id="wztJWT_${e.id}" style="display:none;">
+                        <input type="text" data-wz-route-field="authData.jwt_secret" class="wz-input" placeholder="JWT secret" style="margin-bottom:6px;" value="${t.jwt_secret||""}">
+                        <input type="text" data-wz-route-field="authData.jwt_issuer" class="wz-input" placeholder="Issuer (optional)" value="${t.jwt_issuer||""}">
+                    </div>
+                </div>
+                <div class="wz-toggle-card">
+                    <div class="wz-toggle-header" data-action="wz-toggle" data-target="wztForward_${e.id}">
+                        <div><strong>Forward Auth</strong><span class="wz-toggle-sub">Delegate auth to external service</span></div>
+                        <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="authData.forward_enabled"${t.forward_enabled?" checked":""}><span class="wz-slider"></span></label>
+                    </div>
+                    <div class="wz-toggle-body" id="wztForward_${e.id}" style="display:none;">
+                        <input type="text" data-wz-route-field="authData.forward_url" class="wz-input" placeholder="https://auth.example.com/validate" value="${t.forward_url||""}">
+                    </div>
+                </div>
+            </div>`}function O(){const e=n?.raw_json||"";return`
+            <p class="wz-section-hint">Write the complete host config as JSON. It will be validated on save.</p>
+            <button type="button" id="wzFormatJsonBtn" class="btn small" style="margin-bottom:8px;">✨ Format</button>
+            <textarea data-wizard-field="raw_json" id="wzAdvancedJson" class="json-editor" spellcheck="false"
+                      style="min-height:260px;" placeholder='{ "domains": ["..."], "tls": { "mode": "auto" }, "routes": [...] }'>${e}</textarea>`}function x(e){let t={};try{if(e.host_type==="advanced")t=JSON.parse(e.raw_json||"{}");else{const n=JSON.parse(e.routes_data||"[]");t=buildHostConfig({...e,routes:n})}}catch(e){t={error:"Could not build config — "+e.message}}const n=JSON.stringify(t,null,2);return saveDraft({...e,_previewJson:n}),`
+            <p class="wz-section-hint">Review your configuration before creating. This is the JSON that will be sent to the server. You can edit it here.</p>
+            <textarea id="wzConfirmJson" data-wizard-field="confirm_json" class="json-editor" spellcheck="false"
+                      style="min-height:280px;width:100%;box-sizing:border-box;">${n.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</textarea>`}function C(e){const t=e.querySelector("#wzConfirmJson");t?.addEventListener("input",()=>{})}const r=a==="advanced",k=[{key:"type",label:"Host type",body:A(),validate:e=>(e.host_type||"")!==""||"Please select a host type"},...r?[]:[{key:"domain",label:"Domain & TLS",body:e=>{e.innerHTML=E(),p(e)},validate:e=>{const t=(e.domain||"").trim();if(!t)return"Domain is required";if(t.includes("://"))return"Domain must not include a protocol prefix";if(t.includes(".."))return"Invalid domain";if(e.tls_mode==="local"&&!i(t)){if(!(e.tls_cert||"").trim())return"Certificate file path is required for local TLS";if(!(e.tls_key||"").trim())return"Key file path is required for local TLS"}return!0}}],...r?[{key:"advanced",label:"Config JSON",body:e=>{e.innerHTML=O(),e.querySelector("#wzFormatJsonBtn")?.addEventListener("click",()=>{const t=e.querySelector("#wzAdvancedJson");if(!t)return;try{t.value=JSON.stringify(JSON.parse(t.value),null,2)}catch(e){notify.show("Invalid JSON: "+e.message,"error")}})}}]:[{key:"routes",label:"Routes",body:e=>{e.innerHTML=m(),y(e)},validate:e=>{try{const t=JSON.parse(e.routes_data||"[]");if(!t.length)return"Add at least one route";for(const e of t){if(!e.path?.startsWith("/"))return`Route path must start with /`;if(e.engineData?.web_static_on&&!(e.engineData?.web_root||"").trim())return`Route "${e.path}": Static Files is enabled but the root directory path is empty. Enter the full server path (e.g. /var/www/html).`;if(e.engineData?.git_enabled&&!(e.engineData?.git_url||"").trim())return`Route "${e.path}": Git Deploy is enabled but repository URL is empty.`}}catch{return"Invalid route data"}return!0}}],{key:"confirm",label:"Review & Create",body:e=>{e.innerHTML=x(s.data()),C(e)},final:!0}],s=wizard.render(e,k,{labels:{submit:"Create Host",cancel:"Cancel"},onCancel:()=>{clearDraft(),modal.closeAll()},onStepChange:(t)=>{if(saveDraft(s.data()),t===0){const t=s.data().host_type;if(t==="advanced"&&!r){clearDraft(),saveDraft({host_type:"advanced"}),buildAddHostWizard(e);return}}},onComplete:async e=>{let t;try{const n=(e.confirm_json||"").trim();t=JSON.parse(n||"{}")}catch(e){throw new Error("Invalid JSON: "+e.message)}const n=(e.domain||t.domains?.[0]||"").trim().toLowerCase();if(!n)throw new Error("Domain is required");const s=await addHost(n,t);if(s?.error)throw new Error(s.error);clearDraft(),modal.closeAll(),notify.show(n+" created","success"),emit("hosts:refresh"),emit("config:reload")}});return s}function _wireToggleCards(e){e.querySelectorAll('.wz-toggle-card input[type="checkbox"]').forEach(t=>{const r=t.closest(".wz-toggle-card"),i=r?.querySelector(".wz-toggle-header[data-target]"),s=i?.dataset.target,n=s?e.querySelector("#"+s)??query("#"+s):null;if(!n)return;n.dataset.collapseManaged="1";const o=collapse.attach(null,n,{open:t.checked,animation:!0,duration:180});function a(){n.style.opacity=t.checked?"":"0.45",n.style.pointerEvents=t.checked?"":"none"}a(),t.addEventListener("change",()=>{t.checked&&o.open(),a()}),i.addEventListener("click",e=>{if(e.target.closest(".wz-switch"))return;e.stopPropagation();const s=n.style.display!=="none"&&n.offsetHeight>0;s?o.close():(o.open(),t.checked||(t.checked=!0,t.dispatchEvent(new Event("change",{bubbles:!1}))))})})}on('[data-action="wz-toggle"]',"click",(e,t)=>{const s=t.dataset.target;if(!s)return;const n=query("#"+s);if(!n||n.dataset.collapseManaged)return;collapse.toggle(n,{animation:!0,duration:180})}),on('[data-action="wz-type-pick"]',"click",(e,t)=>{const s=t.dataset.value;queryAll(".wz-type-card").forEach(e=>e.classList.toggle("selected",e===t));const n=query("#wzHostType");n&&(n.value=s)}),on("#wzFormatJsonBtn","click",()=>{const e=query("#wzAdvancedJson");if(!e)return;try{e.value=JSON.stringify(JSON.parse(e.value),null,4)}catch(e){notify.show("Invalid JSON: "+e.message,"error")}}),listen("host:open-edit-hcl",({domain:e,hcl:t})=>{query("#editHostTitle").innerText=e,query("#editHostError").style.display="none",query("#editHostError").style.cssText="",query("#editHostJsonTextarea").value=t,query("#saveHostJsonBtn").dataset.hostname=e,modal.open("editHostJsonModal")}),listen("host:open-edit",async({domain:e})=>{query("#editHostTitle").innerText=e,query("#editHostError").style.display="none",query("#editHostError").style.cssText="",query("#editHostJsonTextarea").value="Loading…",query("#saveHostJsonBtn").dataset.hostname=e,modal.open("editHostJsonModal");const t=await getHostHCL(e);if(t)query("#editHostJsonTextarea").value=t;else{const t=store.get("lastConfig")?.hosts?.[e];query("#editHostJsonTextarea").value=t?JSON.stringify(t,null,2):"";const n=query("#editHostError");n.innerText="ℹ️ Could not load HCL — showing JSON. Save will send as JSON.",n.style.cssText="color:var(--text-mute);font-size:11px;margin-bottom:8px;background:var(--panel-bg);padding:7px 10px;border-radius:5px;border:1px solid var(--border);display:block;"}}),on("#formatHostJsonBtn","click",()=>{const t=query("#editHostJsonTextarea"),e=query("#editHostError");e.style.display="none";try{t.value=formatHCL(t.value)}catch(t){e.innerText="Format error: "+t.message,e.style.cssText="",e.style.display="block"}}),on("#saveHostJsonBtn","click",async(e,t)=>{const s=t.dataset.hostname,n=query("#editHostError"),o=query("#editHostJsonTextarea");n.style.display="none",ui.btn.loading(t,"Saving…");try{const e=await updateHostHCL(s,o.value);if(e?.error)throw new Error(e.error);ui.btn.done(t,"Saved ✓"),setTimeout(()=>{modal.closeAll(),ui.btn.reset(t)},800),emit("hosts:refresh"),emit("config:reload")}catch(e){ui.btn.reset(t),n.innerText=e.message||"Save failed",n.style.cssText="",n.style.display="block"}});let _pendingDelete=null;listen("app:strict-delete",({message:e,targetText:t,onConfirm:n})=>{query("#strictDeleteText").innerHTML=e,query("#strictDeleteTarget").innerText=t;const s=query("#strictDeleteInput"),o=query("#strictDeleteBtn");s.value="",o.disabled=!0,_pendingDelete=n,s.oninput=()=>{o.disabled=s.value!==t},modal.open("strictDeleteModal")}),on("#strictDeleteBtn","click",()=>{_pendingDelete&&_pendingDelete(),modal.closeAll()});const LATENCY_ONLINE_MS=3e4,LATENCY_OFFLINE_MS=5e3;let _latencyTimer=null,_latencyController=null;function _connDot(e,t){store.set("conn.html",`<span class="conn-dot"><span class="conn-dot-circle" style="background:${e}"></span><span>${t}</span></span>`)}function _loginDot(e,t){const n=query("#loginServerDotCircle"),s=query("#loginServerDotLabel");n&&(n.style.background=e),s&&(s.textContent=t)}function _scheduleLatency(e){clearTimeout(_latencyTimer),_latencyTimer=setTimeout(checkLatency,e)}async function checkLatency(){if(!navigator.onLine){_connDot("var(--danger)","offline"),_loginDot("var(--danger)","offline"),_scheduleLatency(LATENCY_OFFLINE_MS);return}_latencyController&&_latencyController.abort(),_latencyController=new AbortController;const e=Date.now();try{const n=getHost()||window.location.origin,s=setTimeout(()=>_latencyController.abort(),5e3),o=await fetch(n+"/healthz",{method:"GET",cache:"no-store",signal:_latencyController.signal});if(clearTimeout(s),!o.ok)throw new Error("non-ok");const t=Date.now()-e,i=t<100?"var(--success)":t<300?"var(--info)":t<1e3?"var(--warning)":"var(--danger)";_connDot(i,t+"ms"),_loginDot("var(--success)",t+"ms"),_scheduleLatency(LATENCY_ONLINE_MS)}catch(e){e.name!=="AbortError"?(_connDot("var(--danger)","offline"),_loginDot("var(--danger)","offline"),_scheduleLatency(LATENCY_OFFLINE_MS)):_scheduleLatency(LATENCY_ONLINE_MS)}}window.addEventListener("offline",()=>{_connDot("var(--danger)","offline"),_scheduleLatency(LATENCY_OFFLINE_MS)}),window.addEventListener("online",checkLatency),window._latencyStarted||(window._latencyStarted=!0,checkLatency()),on("#sysBar","click",()=>{const t=query("#sysBar"),e=query(".sys-bar-expand-hint"),n=t?.classList.toggle("sys-bar-expanded");e&&(e.textContent=n?"▼":"▲")});function _initPerfCharts(){_perfCharts={reqs:chart.line("#perfChartReqs",[],[],{unit:"/s",color:"var(--accent)"}),p99:chart.line("#perfChartP99",[],[],{unit:"ms",color:"var(--warning)"}),errors:chart.line("#perfChartErrors",[],[],{unit:"%",color:"var(--danger)",maxY:100}),backends:chart.line("#perfChartBE",[],[],{unit:"",color:"var(--success)",isInt:!0})}}async function loadPerfData(e,t){_perfCharts||_initPerfCharts();const s=store.get("lastConfig")?.global?.admin?.telemetry?.enabled;if(s&&s!=="on"){["perfChartReqs","perfChartP99","perfChartErrors","perfChartBE"].forEach(e=>{const t=query("#"+e);t&&(t.innerHTML='<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-mute);font-size:11px;text-align:center;padding:0 12px;">Telemetry not enabled.<br>Add <code style="background:var(--hover-bg);padding:1px 4px;border-radius:3px;">telemetry { enabled = &quot;on&quot; }</code> to your admin block.</div>')});return}const i='<div class="perf-skeleton"></div>';["perfChartReqs","perfChartP99","perfChartErrors","perfChartBE"].forEach(e=>{const t=query("#"+e);t&&(t.innerHTML=i)});const o=await fetchTelemetry(e,t);if(!o?.samples?.length){["perfChartReqs","perfChartP99","perfChartErrors","perfChartBE"].forEach(e=>{const t=query("#"+e);t&&(t.innerHTML='<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-mute);font-size:11px;">No history data yet — data accumulates over time</div>')});return}const n=o.samples;if(_perfCharts.reqs.update(n.map(e=>e.requests_sec),n.map(e=>e.ts)),_perfCharts.p99.update(n.map(e=>e.p99_ms),n.map(e=>e.ts)),_perfCharts.errors.update(n.map(e=>e.error_rate),n.map(e=>e.ts)),_perfCharts.backends.update(n.map(e=>e.active_backends),n.map(e=>e.ts)),n.length>=2){const e=e=>new Date(e*1e3).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});query("#perfDataRange").textContent=`${e(n[0].ts)} – ${e(n[n.length-1].ts)} · ${n.length} points`}}listen("perf:open",async({hostname:e})=>{query("#perfModalTitle").textContent="Performance History",query("#perfModalHost").textContent=e,query("#perfDataRange").textContent="",modal.open("perfModal"),window._perfHost=e,await loadPerfData(e,query("#perfRangeSelect").value)}),on("#perfRangeSelect","change",async(e,t)=>{window._perfHost&&await loadPerfData(window._perfHost,t.value)}),listen("metrics:updated",()=>{const e=store.get("certificates")||[];store.set("certs.active",e.filter(e=>e.daysLeft>0).length),store.set("certs.expiring",e.filter(e=>e.daysLeft>0&&e.daysLeft<7).length)});let _expiryToastId=null,_expiryInterval=null;listen("auth:expiring",({expiresAt:e})=>{_expiryInterval&&clearInterval(_expiryInterval),_expiryToastId&&notify.dismiss(_expiryToastId);function t(){const t=e-Date.now();if(t<=0)return"0s";const n=Math.floor(t/6e4),s=Math.floor(t%6e4/1e3);return n>0?`${n}m ${s}s`:`${s}s`}_expiryToastId=notify.warn(`🔐 Session expires in ${t()}`,{duration:0,dismissible:!0,action:{label:"↺ Renew",fn:()=>{clearCredentials(),auth.session.end(),store.set("auth.isLoggedIn",!1),window.location.reload()}}}),_expiryInterval=setInterval(()=>{const n=e-Date.now();if(n<=0){clearInterval(_expiryInterval),notify.dismiss(_expiryToastId);return}notify.dismiss(_expiryToastId),_expiryToastId=notify.warn(`🔐 Session expires in ${t()}`,{duration:0,dismissible:!0,action:{label:"↺ Renew",fn:()=>{clearCredentials(),auth.session.end(),store.set("auth.isLoggedIn",!1),window.location.reload()}}})},1e4)}),listen("auth:expired",()=>{_expiryInterval&&(clearInterval(_expiryInterval),_expiryInterval=null),_expiryToastId&&(notify.dismiss(_expiryToastId),_expiryToastId=null),store.set("auth.isLoggedIn",!1),clearCredentials(),window._isPolling=window._latencyStarted=!1,modal.open("loginModal")})</script>

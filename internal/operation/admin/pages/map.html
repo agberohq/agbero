@@ -1,129 +1,14 @@
-<div class="page full-width-page active" style="min-height: 70vh; display: flex; flex-direction: column;">
-    <div class="graph-toolbar">
-        <div class="graph-legend">
-            <span class="legend-item"><span class="dot root"></span> Agbero</span>
-            <span class="legend-item"><span class="dot host"></span> Host</span>
-            <span class="legend-item"><span class="dot route"></span> Route</span>
-            <span class="legend-item"><span class="dot backend"></span> Backend</span>
-            <span class="legend-item"><span class="dot down"></span> Error/Dead</span>
-        </div>
-        <div class="graph-actions">
-            <button class="btn small" id="mapPauseBtn">Resume Updates</button>
-            <button class="btn small" id="resetZoomBtn">Reset View</button>
-        </div>
-    </div>
-
-    <div style="display:flex; flex:1; overflow:hidden; min-height: 400px;">
-        <div id="graphContainer" style="flex:1; overflow:hidden;"></div>
-        <div id="mapInfoPanel" style="display:none; width:280px; border-left:1px solid var(--border); overflow-y:auto; padding:16px; background:var(--panel-bg); flex-shrink:0;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-                <strong id="mapInfoTitle" style="font-size:13px;"></strong>
-                <button id="mapInfoClose" class="btn small">✕</button>
-            </div>
-            <div id="mapInfoBody" style="font-size:12px;"></div>
-        </div>
-    </div>
-</div>
-
-<script type="module">
-    import { component, on, listen, emit } from '../lib/oja.full.esm.js';
-    import { store, getCreds } from '../js/store.js';
-    import { fetchUptime, fetchConfig } from '../js/api.js';
-
-    const graph = new RouteGraph('graphContainer');
-    let paused = true;
-    let pollTimer = null;
-
-    // Wire graph node clicks through emit — no window.app dependency
-    graph._onClick = function(d) {
-        if (d.type === 'route' && d.meta) {
-            emit('drawer:open-route', { host: d.meta.hostname, idx: d.meta.routeIdx, type: d.meta.routeType });
-        } else if (d.type === 'backend' && d.meta) {
-            emit('drawer:open-backend', { host: d.meta.hostname, routeIdx: d.meta.routeIdx, backendIdx: d.meta.backendIdx, type: d.meta.routeType });
-        } else if (d.type === 'host' && d.meta) {
-            emit('perf:open', { hostname: d.meta.hostname });
-        }
-    };
-
-    graph.onNodeClick = function(node) {
-        const panel = document.getElementById('mapInfoPanel');
-        const titleEl = document.getElementById('mapInfoTitle');
-        const bodyEl = document.getElementById('mapInfoBody');
-        if (!panel || !titleEl || !bodyEl) return;
-
-        titleEl.textContent = node.label || node.id || 'Node';
-        bodyEl.innerHTML = buildNodeInfo(node);
-        panel.style.display = 'block';
-    };
-
-    function buildNodeInfo(node) {
-        const rows =[];
-        const add = (label, val) => {
-            if (val !== undefined && val !== null && val !== '')
-                rows.push(`<div style="margin-bottom:8px;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-mute);margin-bottom:2px;">${label}</div><div style="font-family:var(--font-mono,monospace);font-size:11px;color:var(--fg);word-break:break-all;">${val}</div></div>`);
-        };
-
-        add('Type', node.type);
-        add('ID', node.id);
-        add('Status', node.alive === false ? '❌ Dead' : node.alive === true ? '✅ Alive' : '—');
-        add('Protocol', node.protocol);
-        add('Path', node.path);
-        add('Strategy', node.strategy);
-
-        if (node.latency_us) {
-            add('p50', node.latency_us.p50 ? (node.latency_us.p50 / 1000).toFixed(1) + 'ms' : null);
-            add('p99', node.latency_us.p99 ? (node.latency_us.p99 / 1000).toFixed(1) + 'ms' : null);
-            add('Reqs', node.latency_us.count);
-        }
-
-        if (node.health) {
-            add('Health Score', node.health.score);
-            add('Health Status', node.health.status);
-            if (node.health.consecutive_failures > 0) add('Consec. Fails', node.health.consecutive_failures);
-        }
-
-        if (node.type === 'host') {
-            const hostsData = store.get('hostsData') || { stats: {} };
-            const hStat = hostsData.stats?.[node.id] || {};
-            add('Total Reqs', hStat.total_reqs);
-            rows.push(`<button class="btn small" onclick="window.openPerformanceModal?.('${node.id}')" style="margin-top:8px;">📈 Perf History</button>`);
-        }
-
-        return rows.join('') || '<div style="color:var(--text-mute);">No data</div>';
-    }
-
-    async function refresh() {
-        const [config, uptime] = await Promise.all([
-            store.get('lastConfig') ? Promise.resolve(store.get('lastConfig')) : fetchConfig(getCreds()),
-            fetchUptime(getCreds()),
-        ]);
-
-        if (!config || config.__offline) return;
-        if (!config.__offline) store.set('lastConfig', config);
-        graph.render(config, uptime?.hosts || {});
-    }
-
-    refresh();
-
-    const unsub = listen('metrics:updated', ({ hosts }) => {
-        if (paused) return;
-        const config = store.get('lastConfig');
-        if (config) graph.render(config, hosts || {});
-    });
-
-    on('#mapPauseBtn', 'click', (e, el) => {
-        paused = !paused;
-        el.innerText = paused ? 'Resume Updates' : 'Pause Updates';
-        if (!paused) refresh();
-    });
-
-    on('#resetZoomBtn', 'click', () => graph.resetZoom());
-    on('#mapInfoClose', 'click', () => { document.getElementById('mapInfoPanel').style.display = 'none'; });
-
-    pollTimer = setInterval(() => { if (!paused) refresh(); }, 10000);
-
-    component.onUnmount(() => {
-        if (unsub) unsub();
-        if (pollTimer) clearInterval(pollTimer);
-    });
-</script>
+<div class="page full-width-page active" style=min-height:70vh;display:flex;flex-direction:column><div class=graph-toolbar><div class=graph-legend><span class=legend-item><span class="dot root"></span> Agbero</span>
+<span class=legend-item><span class="dot host"></span> Host</span>
+<span class=legend-item><span class="dot route"></span> Route</span>
+<span class=legend-item><span class="dot backend"></span> Backend</span>
+<span class=legend-item><span class="dot down"></span> Error/Dead</span></div><div class=graph-actions><button class="btn small" id=mapPauseBtn>Pause Updates</button>
+<button class="btn small" id=resetZoomBtn>Reset View</button></div></div><div style=display:flex;flex:1;overflow:hidden;min-height:400px;position:relative><div id=mapLoading style=position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg);z-index:5><div style=text-align:center;color:var(--text-mute)><div class=loading-row style="width:200px;height:4px;border-radius:2px;margin:0 auto 12px"></div><div style=font-size:12px>Loading route graph…</div></div></div><div id=graphContainer style=flex:1;overflow:hidden></div><div id=mapInfoPanel style="display:none;width:280px;border-left:1px solid var(--border);overflow-y:auto;padding:16px;background:var(--panel-bg);flex-shrink:0"><div style=display:flex;justify-content:space-between;align-items:center;margin-bottom:14px><strong id=mapInfoTitle style=font-size:13px></strong>
+<button id=mapInfoClose class="btn small">✕</button></div><div id=mapInfoBody style=font-size:12px></div></div></div></div><script type=module>import{component,on,listen,emit,query}from"../lib/oja.full.esm.js";import{store}from"../js/store.js";import{fetchUptime,fetchConfig}from"../js/api.js";async function loadGraphDeps(){if(window.RouteGraph)return;await new Promise((e,t)=>{const n=document.createElement("script");n.src="https://d3js.org/d3.v7.min.js",n.onload=e,n.onerror=t,document.head.appendChild(n)}),await new Promise((e,t)=>{const n=document.createElement("script");n.src="js/graph.js",n.onload=e,n.onerror=t,document.head.appendChild(n)})}let graph=null,paused=!1,pollTimer=null;function hideLoading(){const e=query("#mapLoading");e&&(e.style.display="none")}function showEmpty(){hideLoading();const e=query("#graphContainer");e&&(e.innerHTML=`<div class="empty-state" style="margin-top:80px;">
+            <span>🗺️ No routes configured</span>
+            <span>Add a host to see the route graph</span>
+            <button class="btn primary small" style="margin-top:12px;" id="mapAddHostBtn">+ Add Host</button>
+        </div>`),on("#mapAddHostBtn","click",()=>emit("host:open-add-wizard"))}function buildNodeInfo(e){const n=[],t=(e,t)=>{t!=null&&t!==""&&n.push(`<div style="margin-bottom:8px;">
+                    <div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-mute);margin-bottom:2px;">${e}</div>
+                    <div style="font-family:var(--font-mono);font-size:11px;color:var(--fg);word-break:break-all;">${t}</div>
+                </div>`)};if(t("Type",e.type),t("ID",e.id),t("Status",e.alive===!1?"❌ Dead":e.alive===!0?"✅ Alive":"—"),t("Protocol",e.protocol),t("Path",e.path),t("Strategy",e.strategy),e.latency_us&&(t("p50",e.latency_us.p50?(e.latency_us.p50/1e3).toFixed(1)+"ms":null),t("p99",e.latency_us.p99?(e.latency_us.p99/1e3).toFixed(1)+"ms":null),t("Reqs",e.latency_us.count)),e.health&&(t("Health Score",e.health.score),t("Health Status",e.health.status),e.health.consecutive_failures>0&&t("Consec. Fails",e.health.consecutive_failures)),e.type==="host"){const s=store.get("hostsData")?.stats?.[e.id]||{};t("Total Reqs",s.total_reqs),n.push(`<button class="btn small" data-action="perf-node" data-hostname="${e.id}" style="margin-top:8px;">📈 Perf History</button>`)}return n.join("")||'<div style="color:var(--text-mute);">No data</div>'}async function refresh(){if(!graph)return;const e=store.get("lastConfig")||await fetchConfig(),t=await fetchUptime();if(!e||!t)return;const n=Object.keys(e.hosts||{}).length;if(n===0){showEmpty();return}graph.render(e,t.hosts||{}),hideLoading()}async function init(){try{await loadGraphDeps()}catch(t){hideLoading();const e=query("#graphContainer");e&&(e.innerHTML=`<div class="empty-state" style="margin-top:60px;">⚠️ Failed to load graph: ${t.message}</div>`);return}graph=new RouteGraph("graphContainer"),graph._onClick=function(e){e.type==="route"&&e.meta&&emit("drawer:open-route",{host:e.meta.hostname,idx:e.meta.routeIdx,type:e.meta.routeType}),e.type==="backend"&&e.meta&&emit("drawer:open-backend",{host:e.meta.hostname,routeIdx:e.meta.routeIdx,backendIdx:e.meta.backendIdx,type:e.meta.routeType}),e.type==="host"&&e.meta&&emit("perf:open",{hostname:e.meta.hostname})},graph.onNodeClick=function(e){const t=query("#mapInfoPanel"),n=query("#mapInfoTitle"),s=query("#mapInfoBody");if(!t||!n||!s)return;n.textContent=e.label||e.id||"Node",s.innerHTML=buildNodeInfo(e),t.style.display="block"},await refresh()}on('[data-action="perf-node"]',"click",(e,t)=>{emit("perf:open",{hostname:t.dataset.hostname})}),init();const unsub=listen("metrics:updated",({hosts:e})=>{if(paused||!graph)return;const t=store.get("lastConfig");t&&graph.render(t,e||{})});on("#mapPauseBtn","click",(e,t)=>{paused=!paused,t.textContent=paused?"Resume Updates":"Pause Updates",paused||refresh()}),on("#resetZoomBtn","click",()=>graph?.resetZoom()),on("#mapInfoClose","click",()=>{query("#mapInfoPanel").style.display="none"}),pollTimer=setInterval(()=>{paused||refresh()},1e4),component.onUnmount(()=>{unsub?.(),pollTimer&&(clearInterval(pollTimer),pollTimer=null)})</script>
