@@ -26,13 +26,6 @@ func RouterHandler(s *Shared, r chi.Router) {
 	})
 }
 
-// RouteRouteWrapper wraps the route with expiration metadata for cluster storage.
-// It embeds the core route definition alongside an optional expiration timestamp.
-type RouteRouteWrapper struct {
-	Route     alaye.Route `json:"route"`
-	ExpiresAt time.Time   `json:"expires_at"`
-}
-
 // routePayload defines the expected JSON body for route registration requests.
 // It includes host, route definition, and optional TTL for automatic expiration.
 type routePayload struct {
@@ -42,7 +35,7 @@ type routePayload struct {
 }
 
 func (r routePayload) Validate() error {
-	// Validate host using expect
+
 	h := expect.New(r.Host)
 	host, err := h.Domain()
 	if err != nil {
@@ -50,12 +43,10 @@ func (r routePayload) Validate() error {
 	}
 	r.Host = host
 
-	// Validate route path
 	if r.Route.Path == "" {
 		r.Route.Path = "/"
 	}
 
-	// Use expect for path validation
 	p := expect.New(r.Route.Path)
 	path, err := p.Path()
 	if err != nil {
@@ -63,7 +54,6 @@ func (r routePayload) Validate() error {
 	}
 	r.Route.Path = path
 
-	// Validate TTL if provided
 	if r.TTLSeconds < 0 {
 		return fmt.Errorf("TTL cannot be negative")
 	}
@@ -106,7 +96,7 @@ func (rt *Route) addRoute(w http.ResponseWriter, r *http.Request) {
 		rt.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	wrapper := RouteRouteWrapper{
+	wrapper := discovery.ClusterRouteWrapper{
 		Route: payload.Route,
 	}
 
@@ -121,7 +111,7 @@ func (rt *Route) addRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := fmt.Sprintf("%s%s|%s", discovery.ClusterRoutePrefix, payload.Host, payload.Route.Path)
-	rt.cluster.Set(key, val)
+	rt.cluster.BroadcastRoute(key, val)
 
 	rt.jsonResponse(w, http.StatusOK, map[string]string{
 		"status": "ok",

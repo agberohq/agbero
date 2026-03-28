@@ -35,7 +35,10 @@ const (
 	emptyString         = ""
 )
 
-type routeWrapper struct {
+// ClusterRouteWrapper is the gossip payload for ephemeral routes created via
+// the auto API. Exported so the api package can marshal/unmarshal without
+// duplicating the type.
+type ClusterRouteWrapper struct {
 	Route     alaye.Route `json:"route"`
 	ExpiresAt time.Time   `json:"expires_at"`
 }
@@ -77,8 +80,6 @@ func NewConfigSync(logger *ll.Logger, cluster *cluster.Manager) *ConfigSync {
 	}
 }
 
-// ShouldBroadcast delegates checksum validation to the central cluster manager.
-// It prevents fsnotify echo loops by ensuring only genuinely new files trigger broadcasts.
 func (c *ConfigSync) ShouldBroadcast(domain string, content []byte) bool {
 	if c.cluster == nil || c.cluster.ConfigManager() == nil {
 		return false
@@ -86,8 +87,6 @@ func (c *ConfigSync) ShouldBroadcast(domain string, content []byte) bool {
 	return c.cluster.ConfigManager().ShouldBroadcast(domain, content)
 }
 
-// ShouldBroadcastDeletion delegates deletion validation to the central cluster manager.
-// It verifies if the file was previously known before broadcasting its removal.
 func (c *ConfigSync) ShouldBroadcastDeletion(domain string) bool {
 	if c.cluster == nil || c.cluster.ConfigManager() == nil {
 		return false
@@ -95,8 +94,6 @@ func (c *ConfigSync) ShouldBroadcastDeletion(domain string) bool {
 	return c.cluster.ConfigManager().ShouldBroadcastDeletion(domain)
 }
 
-// NewHost allocates a new Host discovery engine and prepares caching structures.
-// It initializes debouncers and lock-free router maps for instantaneous traffic updates.
 func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 	h := &Host{
 		hostsDir:      hostsDir,
@@ -229,7 +226,7 @@ func (hm *Host) handleRouteDeletion(key string) {
 // handleRouteUpdate merges an incoming cluster route into local memory.
 // Establishes a TTL schedule if the route configuration defines an expiration time.
 func (hm *Host) handleRouteUpdate(originalKey, trimmedKey string, value []byte) {
-	var wrapper routeWrapper
+	var wrapper ClusterRouteWrapper
 	if err := json.Unmarshal(value, &wrapper); err != nil {
 		var simpleRoute alaye.Route
 		if err2 := json.Unmarshal(value, &simpleRoute); err2 == nil {
@@ -284,8 +281,6 @@ func (hm *Host) LoadStatic(staticHosts map[string]*alaye.Host) {
 	hm.logger.Fields("count", len(staticHosts)).Info("static hosts loaded from memory")
 }
 
-// rebuildAndNotify computes lock-free lookup maps and dispatches an update signal.
-// Allows the core server to transition active configurations without dropping traffic.
 func (hm *Host) rebuildAndNotify() {
 	hm.mu.Lock()
 	hm.rebuildLookupLocked()
@@ -508,7 +503,6 @@ func (hm *Host) scanFromDisk() (map[string]*alaye.Host, struct{ TotalFiles int }
 			rel = p
 		}
 
-		// update source file
 		cfg.SourceFile = rel
 
 		hostID := strings.TrimSuffix(rel, woos.HCLSuffix)
@@ -772,7 +766,7 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 			delete(hm.hosts, domain)
 		}
 	} else {
-		// Map the new config to memory using its source file name
+
 		hostID := strings.TrimSuffix(cfg.SourceFile, woos.HCLSuffix)
 		if hostID == "" {
 			hostID = zulu.NormalizeHost(domain)
@@ -821,6 +815,28 @@ func (hm *Host) Create(domain string, cfg *alaye.Host) error {
 	return p.MarshalFile(cfg)
 }
 
+// CreateRaw writes raw HCL bytes directly to disk for a domain, bypassing
+// struct re-encoding so comments and formatting are preserved exactly.
+// The caller is responsible for ensuring raw has already been validated
+// and parsed — CreateRaw only handles filename resolution and atomic write.
+func (hm *Host) CreateRaw(domain string, cfg *alaye.Host, raw []byte) error {
+	filename := cfg.SourceFile
+	if filename == "" {
+		filename = zulu.NormalizeHost(domain) + woos.HCLSuffix
+		cfg.SourceFile = filename
+	}
+	filePath := filepath.Join(hm.hostsDir.Path(), filename)
+	tmpPath := filePath + ".tmp"
+	if err := os.WriteFile(tmpPath, raw, woos.FilePerm); err != nil {
+		return fmt.Errorf("write temp config: %w", err)
+	}
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename temp config: %w", err)
+	}
+	return nil
+}
+
 func (hm *Host) DeleteFile(domain string) error {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
@@ -846,12 +862,10 @@ func (hm *Host) DeleteFile(domain string) error {
 		filename = domain + woos.HCLSuffix
 	}
 
-	// Remove from memory
 	hostID := strings.TrimSuffix(filename, woos.HCLSuffix)
 	delete(hm.hosts, hostID)
 	hm.rebuildLookupLocked()
 
-	// Remove from disk
 	filePath := filepath.Join(hm.hostsDir.Path(), filename)
 	err := os.Remove(filePath)
 	if err != nil && !os.IsNotExist(err) {

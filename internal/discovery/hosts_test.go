@@ -78,7 +78,7 @@ func TestOnClusterChange_Add(t *testing.T) {
 		},
 	}
 
-	wrapper := routeWrapper{Route: route}
+	wrapper := ClusterRouteWrapper{Route: route}
 	val, _ := json.Marshal(wrapper)
 
 	key := ClusterRoutePrefix + "example.com"
@@ -112,7 +112,7 @@ func TestOnClusterChange_Remove(t *testing.T) {
 		},
 	}
 
-	wrapper := routeWrapper{Route: route}
+	wrapper := ClusterRouteWrapper{Route: route}
 	val, _ := json.Marshal(wrapper)
 	key := ClusterRoutePrefix + "example.com"
 
@@ -137,7 +137,7 @@ func TestRouteExists(t *testing.T) {
 			Servers: []alaye.Server{{Address: "http://10.0.0.1:80"}},
 		},
 	}
-	wrapper := routeWrapper{Route: route}
+	wrapper := ClusterRouteWrapper{Route: route}
 	val, _ := json.Marshal(wrapper)
 
 	hm.OnClusterChange(ClusterRoutePrefix+"example.com", val, false)
@@ -146,6 +146,38 @@ func TestRouteExists(t *testing.T) {
 
 	if !hm.RouteExists("example.com", "/api") {
 		t.Error("route not found")
+	}
+}
+
+func TestHost_RouteExpiration(t *testing.T) {
+	hm := NewHost(woos.Folder("."), WithLogger(testLogger))
+	defer hm.Close()
+
+	route := alaye.Route{Path: "/expire", Enabled: alaye.Active}
+	// Use longer TTL to ensure route exists after debounced rebuild
+	expiry := time.Now().Add(2 * time.Second)
+
+	wrapper := ClusterRouteWrapper{
+		Route:     route,
+		ExpiresAt: expiry,
+	}
+	data, _ := json.Marshal(wrapper)
+
+	key := ClusterRoutePrefix + "example.com|/expire"
+
+	hm.OnClusterChange(key, data, false)
+	waitChanged(t, hm.Changed(), 3*time.Second)
+
+	if !hm.RouteExists("example.com", "/expire") {
+		t.Fatal("route should exist immediately after update")
+	}
+
+	// Wait for expiration
+	time.Sleep(2500 * time.Millisecond)
+	waitChanged(t, hm.Changed(), 3*time.Second)
+
+	if hm.RouteExists("example.com", "/expire") {
+		t.Fatal("route should have expired")
 	}
 }
 
@@ -486,38 +518,6 @@ func TestHost_OnClusterChange_Deletion(t *testing.T) {
 				t.Error("Route still present after deletion")
 			}
 		}
-	}
-}
-
-func TestHost_RouteExpiration(t *testing.T) {
-	hm := NewHost(woos.Folder("."), WithLogger(testLogger))
-	defer hm.Close()
-
-	route := alaye.Route{Path: "/expire", Enabled: alaye.Active}
-	// Use longer TTL to ensure route exists after debounced rebuild
-	expiry := time.Now().Add(2 * time.Second)
-
-	wrapper := routeWrapper{
-		Route:     route,
-		ExpiresAt: expiry,
-	}
-	data, _ := json.Marshal(wrapper)
-
-	key := ClusterRoutePrefix + "example.com|/expire"
-
-	hm.OnClusterChange(key, data, false)
-	waitChanged(t, hm.Changed(), 3*time.Second)
-
-	if !hm.RouteExists("example.com", "/expire") {
-		t.Fatal("route should exist immediately after update")
-	}
-
-	// Wait for expiration
-	time.Sleep(2500 * time.Millisecond)
-	waitChanged(t, hm.Changed(), 3*time.Second)
-
-	if hm.RouteExists("example.com", "/expire") {
-		t.Fatal("route should have expired")
 	}
 }
 

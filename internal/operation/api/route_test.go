@@ -16,6 +16,8 @@ import (
 	"github.com/olekukonko/ll"
 )
 
+// mockHandler records cluster changes so tests can assert on gossip state
+// without a real cluster network.
 type mockHandler struct {
 	kv         map[string][]byte
 	certs      map[string]bool
@@ -69,7 +71,6 @@ func TestRouteAPI(t *testing.T) {
 	}
 	defer cMgr.Shutdown()
 
-	// Wait for cluster to initialize
 	time.Sleep(500 * time.Millisecond)
 
 	shared := &Shared{
@@ -80,7 +81,6 @@ func TestRouteAPI(t *testing.T) {
 	r := chi.NewRouter()
 	RouterHandler(shared, r)
 
-	// Debug: Print all routes
 	t.Log("Registered routes:")
 	chi.Walk(r, func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
 		t.Logf("  %s %s", method, route)
@@ -103,7 +103,6 @@ func TestRouteAPI(t *testing.T) {
 	}
 	body, _ := json.Marshal(payload)
 
-	// Use the correct path from debug output
 	resp, err := http.Post(ts.URL+"/route", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("http post failed: %v", err)
@@ -118,22 +117,20 @@ func TestRouteAPI(t *testing.T) {
 	expectedKey := "route:example.com|/api"
 	time.Sleep(500 * time.Millisecond)
 
-	_, exists := handler.kv[expectedKey]
-	if !exists {
+	if _, exists := handler.kv[expectedKey]; !exists {
 		t.Error("route not found in cluster state")
 	}
 
-	// DELETE test
 	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/route?host=example.com&path=/api", nil)
-	resp, err = http.DefaultClient.Do(req)
+	resp2, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("http delete failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp2.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected 200 OK, got %d: %s", resp.StatusCode, string(bodyBytes))
+	if resp2.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp2.Body)
+		t.Fatalf("expected 200 OK, got %d: %s", resp2.StatusCode, string(bodyBytes))
 	}
 
 	time.Sleep(500 * time.Millisecond)

@@ -52,6 +52,7 @@ const (
 	HeaderXOriginalURI    = "X-Original-URI"
 	HeaderXOriginalMethod = "X-Original-Method"
 	HeaderXRealIP         = "X-Real-IP"
+	HeaderXAgberoService  = "X-Agbero-Service"
 	HeaderServer          = "Server"
 
 	HeaderXForwardedHost   = "X-Forwarded-Discovery"
@@ -400,12 +401,8 @@ const (
 	DefaultGitPoolTimeout  = 1 * time.Second
 	DefaultGitPoolSize     = 4
 
-	// AdminTokenTTL is the lifetime of a JWT issued by the admin login endpoint.
-	// Reduced from 24h to 8h to limit the exposure window of a stolen token.
 	AdminTokenTTL = 8 * time.Hour
 
-	// AdminTokenIssuer is the fixed issuer claim embedded in every admin JWT.
-	// The validation middleware always enforces this value, regardless of operator config.
 	AdminTokenIssuer = "agbero-admin"
 
 	DefaultAdminReadTimeout  = 10 * time.Second
@@ -444,18 +441,12 @@ const (
 	NSSInstallHintOther  = "NSS certutil not found. Firefox trust store may not be updated automatically."
 )
 
-// Logging constants control request log output behaviour.
 const (
-	// LogUATruncateLen is the character limit applied to the User-Agent header
-	// when logging.truncate is enabled.
 	LogUATruncateLen = 50
 
-	// LogMaxLineBytes caps individual log lines returned by the admin /logs endpoint
-	// to prevent a single oversized entry from exhausting memory.
 	LogMaxLineBytes = 64 * 1024
 )
 
-// Web server constants control static file serving and dynamic compression behaviour.
 const (
 	WebGzCacheTTL           = 60 * time.Second
 	WebPHPTimeout           = 30 * time.Second
@@ -477,20 +468,13 @@ const (
 
 // WASM execution constants bound how long a WebAssembly module may run per request.
 const (
-	// DefaultWasmTimeout is the maximum wall-clock time a WASM handle_request
-	// function may consume before the request goroutine is unblocked and a 504
-	// is returned to the client.
 	DefaultWasmTimeout = 30 * time.Second
 )
 
 // Cluster and internal security constants.
 const (
-	// MinGossipSecretLen is the minimum byte length accepted for the gossip
-	// secret key when supplied as a plain string rather than a base64-encoded key.
 	MinGossipSecretLen = 16
 
-	// DefaultRegexTimeout caps the duration of a single WAF regex match to prevent
-	// pathological patterns from monopolising a CPU core.
 	DefaultRegexTimeout = 100 * time.Millisecond
 )
 

@@ -50,7 +50,6 @@ type adminClaims struct {
 	jwt.RegisteredClaims
 }
 
-// startAdminServer initializes and starts the admin HTTP server if enabled.
 func (s *Server) startAdminServer() {
 	state := s.apiShared.State()
 	if state.Global.Admin.Enabled.NotActive() || state.Global.Admin.Address == "" {
@@ -86,7 +85,6 @@ func (s *Server) startAdminServer() {
 	}()
 }
 
-// startPprofServer starts the pprof debug server if configured.
 func (s *Server) startPprofServer() {
 	state := s.apiShared.State()
 	if state.Global.Admin.Pprof.Enabled.NotActive() || state.Global.Admin.Pprof.Bind == "" {
@@ -161,7 +159,6 @@ func (s *Server) setupAdminMiddleware(r chi.Router, cfg alaye.Admin) {
 	}
 }
 
-// registerAdminRoutes registers all admin HTTP endpoints and initializes shared API state.
 func (s *Server) registerAdminRoutes(r chi.Router, cfg alaye.Admin) {
 	s.totpHandler = api.NewTOTP(s.apiShared)
 
@@ -184,7 +181,7 @@ func (s *Server) registerAdminRoutes(r chi.Router, cfg alaye.Admin) {
 		ll.Dbg(s.apiShared)
 		ll.Dbg(r)
 
-		api.Handler(s.apiShared, r)
+		api.AdminHandler(s.apiShared, r)
 
 		if cfg.Pprof.Enabled.Active() {
 			s.logger.Warn("pprof debugging enabled on admin interface")
@@ -202,16 +199,27 @@ func (s *Server) registerAdminRoutes(r chi.Router, cfg alaye.Admin) {
 		}
 	})
 
-	r.Get("/*", operation.Admin().ServeHTTP)
+	// /auto/v1 is guarded by service tokens (PPK/EdDSA), not admin JWT.
+	// Services may only register and deregister their own routes.
+	if s.apiShared.PPK != nil {
+		r.Group(func(r chi.Router) {
+			r.Use(auth.Internal(s.apiShared.PPK, s.logger))
+			api.AutoHandler(s.apiShared, r)
+		})
+	} else {
+		s.logger.Warn("auto api disabled: internal_auth_key not configured")
+	}
+
+	// r.Get("/*", operation.Admin().ServeHTTP)
+	r.Mount("/", operation.Admin())
+
 }
 
-// handleHealthz returns a simple health check response.
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }
 
-// handleStatus returns the current admin configuration status.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	state := s.apiShared.State()
@@ -428,7 +436,6 @@ func (s *Server) generateAdminToken(username, secret string) (string, time.Time,
 	return tokenString, expirationTime, err
 }
 
-// handleConfigDump returns the full configuration dump.
 func (s *Server) handleConfigDump(w http.ResponseWriter, r *http.Request) {
 	format := detectFormat(r)
 
@@ -487,7 +494,6 @@ func (s *Server) handleConfigHosts(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(sanitizeHostConfigs(hosts))
 }
 
-// buildBlockReason constructs a human-readable block reason string.
 func (s *Server) buildBlockReason(reason, host, path string) string {
 	var details []string
 	if host != "" {

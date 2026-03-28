@@ -208,59 +208,95 @@ func (h *Host) get(w http.ResponseWriter, r *http.Request) {
 
 // create handles POST requests to register a new host configuration via JSON payload.
 func (h *Host) create(w http.ResponseWriter, r *http.Request) {
-	var req hostCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
-		return
-	}
+	contentType := r.Header.Get("Content-Type")
+	isJSON := strings.Contains(contentType, "application/json")
 
-	if err := req.Validate(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+	var domain string
+	var hostConfig *alaye.Host
 
-	// Determine domain from request or config
-	domain := strings.ToLower(strings.TrimSpace(req.Domain))
-	if domain == "" && len(req.Config.Domains) > 0 {
-		domain = strings.ToLower(strings.TrimSpace(req.Config.Domains[0]))
-	}
-
-	if domain == "" {
-		http.Error(w, "Domain is required", http.StatusBadRequest)
-		return
-	}
-
-	// Check if overwrite is allowed
-	overwrite := r.URL.Query().Get("overwrite")
-	if overwrite == "false" || overwrite == "0" {
-		if h.discovery.Get(domain) != nil {
-			http.Error(w, "Domain already exists", http.StatusConflict)
+	if isJSON {
+		var req hostCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 			return
 		}
-	}
-
-	// Check if protected
-	if existingCfg := h.discovery.Get(domain); existingCfg != nil {
-		if existingCfg.Protected.Active() {
-			http.Error(w, "Cannot modify host with protected routes via API", http.StatusForbidden)
+		if err := req.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		domain = strings.ToLower(strings.TrimSpace(req.Domain))
+		if domain == "" && len(req.Config.Domains) > 0 {
+			domain = strings.ToLower(strings.TrimSpace(req.Config.Domains[0]))
+		}
+		if domain == "" {
+			http.Error(w, "Domain is required", http.StatusBadRequest)
+			return
+		}
+		if err := h.checkProtected(w, domain); err != nil {
+			return
+		}
+		req.Config.Domains = []string{domain}
+		woos.DefaultHost(req.Config)
+		if err := h.discovery.Create(domain, req.Config); err != nil {
+			h.logger.Fields("domain", domain, "err", err).Error("admin: failed to save host to disk")
+			http.Error(w, "Failed to save configuration to disk", http.StatusInternalServerError)
+			return
+		}
+		h.discovery.Set(domain, req.Config)
+	} else {
+		// HCL path — validate syntax, parse for semantic validation,
+		// then write raw bytes to disk to preserve comments and formatting.
+		rawHCL, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read body", http.StatusBadRequest)
+			return
+		}
+		if err := parser.ValidateHCL(rawHCL); err != nil {
+			http.Error(w, fmt.Sprintf("HCL syntax error: %v", err), http.StatusBadRequest)
+			return
+		}
+		tmpFile, err := os.CreateTemp("", "agbero_tmp_*.hcl")
+		if err != nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		defer os.Remove(tmpFile.Name())
+		if _, err := tmpFile.Write(rawHCL); err != nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		tmpFile.Close()
+		hostConfig, err = parser.ParseHostConfig(tmpFile.Name())
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to parse host config: %v", err), http.StatusBadRequest)
+			return
+		}
+		if err := hostConfig.Validate(); err != nil {
+			http.Error(w, fmt.Sprintf("Configuration validation failed: %v", err), http.StatusBadRequest)
+			return
+		}
+		domain = strings.ToLower(strings.TrimSpace(r.URL.Query().Get("domain")))
+		if domain == "" && len(hostConfig.Domains) > 0 {
+			domain = strings.ToLower(strings.TrimSpace(hostConfig.Domains[0]))
+		}
+		if domain == "" {
+			http.Error(w, "Domain is required (set in HCL domains attr or ?domain= query param)", http.StatusBadRequest)
+			return
+		}
+		if err := h.checkProtected(w, domain); err != nil {
+			return
+		}
+		hostConfig.Domains = []string{domain}
+		woos.DefaultHost(hostConfig)
+		if err := h.discovery.CreateRaw(domain, hostConfig, rawHCL); err != nil {
+			h.logger.Fields("domain", domain, "err", err).Error("admin: failed to save host to disk")
+			http.Error(w, "Failed to save configuration to disk", http.StatusInternalServerError)
+			return
+		}
+		h.discovery.Set(domain, hostConfig)
 	}
 
-	// Set domains and apply defaults
-	req.Config.Domains = []string{domain}
-	woos.DefaultHost(req.Config)
-
-	// Save configuration
-	if err := h.discovery.Create(domain, req.Config); err != nil {
-		h.logger.Fields("domain", domain, "err", err).Error("admin: failed to save host to disk")
-		http.Error(w, "Failed to save configuration to disk", http.StatusInternalServerError)
-		return
-	}
-
-	h.discovery.Set(domain, req.Config)
 	h.logger.Fields("domain", domain).Info("admin: host created via api")
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok", "message":"Discovery saved successfully"}`))
@@ -507,6 +543,19 @@ func (h *Host) deleteByDomain(w http.ResponseWriter, r *http.Request, domain str
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok", "message":"Discovery deleted successfully"}`))
+}
+
+// checkProtected verifies the domain is not protected and handles the
+// overwrite query param. Returns non-nil error if the request should be
+// rejected (response already written).
+func (h *Host) checkProtected(w http.ResponseWriter, domain string) error {
+	if existingCfg := h.discovery.Get(domain); existingCfg != nil {
+		if existingCfg.Protected.Active() {
+			http.Error(w, "Cannot modify host with protected routes via API", http.StatusForbidden)
+			return fmt.Errorf("protected")
+		}
+	}
+	return nil
 }
 
 // sanitizeHostConfigs redacts sensitive fields from host configurations before JSON serialization.

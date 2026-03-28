@@ -28,7 +28,6 @@ type Shared struct {
 	PPK       *security.PPK
 	Telemetry *telemetry.Store
 
-	// monitor shared state
 	state atomic.Value
 }
 
@@ -36,17 +35,16 @@ func (s *Shared) State() *ActiveState {
 	if v := s.state.Load(); v != nil {
 		return v.(*ActiveState)
 	}
-	return &ActiveState{} // Fallback to avoid nil panics
+	return &ActiveState{}
 }
 
-// UpdateState is called by the main server to push a new copy of the state.
 func (s *Shared) UpdateState(newState *ActiveState) {
 	s.state.Store(newState)
 }
 
-// Handler registers all API routes under /api/v1 on the provided router.
-// It sets up public endpoints (health, auth) and protected groups (cluster, host, etc.).
-func Handler(shared *Shared, r chi.Router) {
+// AdminHandler registers all /api/v1 routes. Must be called inside an
+// admin-auth middleware group — these routes require a valid admin token.
+func AdminHandler(shared *Shared, r chi.Router) {
 	r.Route("/api/v1", func(r chi.Router) {
 		if shared.Cluster != nil && shared.PPK != nil {
 			ClusterHandler(shared, r)
@@ -69,12 +67,14 @@ func Handler(shared *Shared, r chi.Router) {
 		FirewallHandler(shared, r)
 		SecretsHandler(shared, r)
 		HostHandler(shared, r)
-		RouterHandler(shared, r)
 	})
+}
 
+// AutoHandler registers all /auto/v1 routes. Must be called inside a
+// service-token (PPK/Internal) middleware group — admin tokens are not
+// valid here. Services may only register and deregister themselves.
+func AutoHandler(shared *Shared, r chi.Router) {
 	r.Route("/auto/v1", func(r chi.Router) {
-		CertsHandler(shared, r)
-		RouterHandler(shared, r)
+		AutoRouteHandler(shared, r)
 	})
-
 }

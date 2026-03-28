@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/olekukonko/ll"
 )
@@ -11,7 +12,7 @@ import (
 func Internal(tm *security.PPK, logger *ll.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get("Authorization")
+			authHeader := r.Header.Get(woos.AuthorizationHeaderKey)
 			if authHeader == "" {
 				http.Error(w, `{"error": "authorization header required"}`, http.StatusUnauthorized)
 				return
@@ -31,8 +32,7 @@ func Internal(tm *security.PPK, logger *ll.Logger) func(http.Handler) http.Handl
 				return
 			}
 
-			// Add service name to header for downstream handlers if needed
-			r.Header.Set("X-Agbero-Service", serviceName)
+			r.Header.Set(woos.HeaderXAgberoService, serviceName)
 			next.ServeHTTP(w, r)
 		})
 	}
