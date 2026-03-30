@@ -253,7 +253,7 @@ func (e *Expect) Domain() (string, error) {
 	if e.keyType != TypeDomain {
 		return "", fmt.Errorf("expected domain key, got %s: %s", e.keyType, e.raw)
 	}
-	if !_DomainRegex.MatchString(e.raw) {
+	if !_DomainRegex.MatchString(e.raw) && e.raw != "localhost" {
 		return "", fmt.Errorf("invalid domain format: %s", e.raw)
 	}
 	if len(e.raw) > 253 {
