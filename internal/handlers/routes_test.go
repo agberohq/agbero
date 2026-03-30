@@ -694,7 +694,7 @@ func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
 			Enabled: alaye.Active,
 			Root:    alaye.WebRoot(root),
 		},
-		CompressionConfig: alaye.Compression{
+		Compression: alaye.Compression{
 			Enabled: alaye.Active,
 			Type:    "gzip",
 			Level:   5,
@@ -876,7 +876,7 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 			Enabled: alaye.Active,
 			Root:    alaye.WebRoot(root),
 		},
-		CompressionConfig: alaye.Compression{
+		Compression: alaye.Compression{
 			Enabled: alaye.Active,
 			Type:    "gzip",
 			Level:   5,

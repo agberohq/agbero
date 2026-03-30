@@ -1,12 +1,15 @@
 package api
 
 import (
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
@@ -63,11 +66,14 @@ func (c *Certs) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type CertInfo struct {
-		Domain string `json:"domain"`
-		File   string `json:"file"`
+		Domain    string    `json:"domain"`
+		File      string    `json:"file"`
+		ExpiresAt time.Time `json:"expires_at"`
+		IsExpired bool      `json:"is_expired"`
 	}
 	var certs []CertInfo
 	seen := make(map[string]bool)
+	now := time.Now()
 
 	for _, e := range entries {
 		if e.IsDir() {
@@ -84,22 +90,45 @@ func (c *Certs) list(w http.ResponseWriter, r *http.Request) {
 			domain = strings.TrimSuffix(domain, ".pem")
 			domain = strings.TrimSuffix(domain, "-cert")
 			domain = strings.TrimSuffix(domain, "-key")
-
 			domain = strings.ReplaceAll(domain, "_wildcard_", "*")
-			domain = strings.ReplaceAll(domain, "_wildcard", "*") // Catch trailing underscore variants
+			domain = strings.ReplaceAll(domain, "_wildcard", "*")
 
 			if strings.HasPrefix(domain, "*") && !strings.HasPrefix(domain, "*.") && len(domain) > 1 {
-				domain = "*" + domain[1:] // e.g., "*example.com" → "*.example.com"
+				domain = "*" + domain[1:]
 			}
 
 			if ts.LikelyInternal(domain) || seen[domain] {
 				continue
 			}
 
+			// Parse the certificate to get expiration
+			certPath := filepath.Join(c.certsDir, name)
+			certData, err := os.ReadFile(certPath)
+			if err != nil {
+				c.logger.Fields("domain", domain, "err", err).Warn("failed to read certificate")
+				continue
+			}
+
+			block, _ := pem.Decode(certData)
+			if block == nil {
+				continue
+			}
+
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				c.logger.Fields("domain", domain, "err", err).Warn("failed to parse certificate")
+				continue
+			}
+
+			expiresAt := cert.NotAfter
+			isExpired := now.After(expiresAt)
+
 			seen[domain] = true
 			certs = append(certs, CertInfo{
-				Domain: domain,
-				File:   name,
+				Domain:    domain,
+				File:      name,
+				ExpiresAt: expiresAt,
+				IsExpired: isExpired,
 			})
 		}
 	}

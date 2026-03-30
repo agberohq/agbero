@@ -1,3 +1,4 @@
+// totp.go - fixed to use the existing GetUserSecret method
 package api
 
 import (
@@ -23,6 +24,7 @@ func TOTPHandler(s *Shared, r chi.Router) {
 		r.Post("/setup", t.setup)
 		r.Get("/{user}/qr.svg", t.qrSVG)
 		r.Get("/{user}/qr.png", t.qrPNG)
+		r.Post("/{user}/verify", t.verify)
 	})
 }
 
@@ -62,7 +64,9 @@ func (t *TOTP) setup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "TOTP not enabled in configuration", http.StatusNotImplemented)
 		return
 	}
-	if _, exists := t.getUserSecret(cfg, user); exists {
+
+	// Use the existing GetUserSecret method to check if already configured
+	if _, exists := cfg.GetUserSecret(user); exists {
 		http.Error(w, "TOTP already configured for this user", http.StatusConflict)
 		return
 	}
@@ -116,6 +120,37 @@ func (t *TOTP) qrPNG(w http.ResponseWriter, r *http.Request) {
 	w.Write(qr.PNG) //nolint:errcheck
 }
 
+// verify handles POST requests to validate a TOTP code for a user.
+func (t *TOTP) verify(w http.ResponseWriter, r *http.Request) {
+	user := chi.URLParam(r, "user")
+	if user == "" {
+		http.Error(w, "User required", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Code == "" {
+		http.Error(w, "Code required", http.StatusBadRequest)
+		return
+	}
+
+	if t.VerifyCode(user, req.Code) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"valid": true,
+			"user":  user,
+		})
+	} else {
+		http.Error(w, "Invalid TOTP code", http.StatusUnauthorized)
+	}
+}
+
 // VerifyCode checks a TOTP code for a username against the current admin config.
 // It is exported for use by login handlers and returns false if TOTP is disabled or unset.
 func (t *TOTP) VerifyCode(username, code string) bool {
@@ -123,11 +158,16 @@ func (t *TOTP) VerifyCode(username, code string) bool {
 	if !cfg.Enabled.Active() {
 		return false
 	}
-	secret, ok := t.getUserSecret(cfg, username)
+
+	// Use the existing GetUserSecret method which handles alaye.Value resolution
+	secret, ok := cfg.GetUserSecret(username)
 	if !ok || secret == "" {
 		return false
 	}
-	return t.generatorFrom(cfg).VerifyCode(secret.String(), code)
+
+	// Verify the code
+	gen := t.generatorFrom(cfg)
+	return gen.VerifyCode(secret, code)
 }
 
 // buildQR generates a QR code for a user's TOTP secret, handling validation and errors.
@@ -141,14 +181,16 @@ func (t *TOTP) buildQR(w http.ResponseWriter, r *http.Request) (*ui.QRResult, bo
 	}
 
 	cfg := t.shared.State().Global.Admin.TOTP
-	secret, ok := t.getUserSecret(cfg, user)
+
+	// Use the existing GetUserSecret method
+	secret, ok := cfg.GetUserSecret(user)
 	if !ok || secret == "" {
 		http.Error(w, "TOTP not configured for "+user, http.StatusNotFound)
 		return nil, false
 	}
 
 	gen := t.generatorFrom(cfg)
-	uri := gen.GetProvisioningURI(secret.String(), user)
+	uri := gen.GetProvisioningURI(secret, user)
 
 	qr, err := setup.TOTPProvisioningQR(uri)
 	if err != nil {
@@ -180,14 +222,4 @@ func (t *TOTP) generatorFrom(cfg alaye.TOTP) *security.TOTPGenerator {
 		Window:    cfg.WindowSize,
 		Issuer:    cfg.Issuer,
 	})
-}
-
-// getUserSecret retrieves a user's TOTP secret from the configuration.
-func (t *TOTP) getUserSecret(cfg alaye.TOTP, username string) (alaye.Value, bool) {
-	for _, user := range cfg.Users {
-		if user.Username == username {
-			return user.Secret, true
-		}
-	}
-	return "", false
 }

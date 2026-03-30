@@ -202,9 +202,6 @@ func (s *Server) Start(configPath string) error {
 	hosts, _ := s.hostManager.LoadAll()
 
 	if s.global.Security.Keeper.Enabled.Active() {
-
-		ll.Output(s.global.Security.Keeper)
-
 		if s.global.Security.Keeper.Passphrase.Empty() && service.Interactive() {
 			var pass string
 			err := huh.NewInput().
@@ -217,8 +214,8 @@ func (s *Server) Start(configPath string) error {
 			if err == nil && pass != "" {
 				s.global.Security.Keeper.Passphrase = alaye.ValuePlain(pass)
 			} else {
-				s.logger.Fatal("Passphrase is required to start Agbero when Keeper is enabled.")
-				return fmt.Errorf("keeper passphrase required")
+				s.logger.Warn("No passphrase provided interactively; store will remain locked until admin challenge")
+				// Continue startup - admin can unlock via challenge endpoint
 			}
 		}
 
@@ -226,6 +223,7 @@ func (s *Server) Start(configPath string) error {
 			DBPath:           filepath.Join(s.global.Storage.DataDir, woos.DefaultKeeperName),
 			AutoLockInterval: s.global.Security.Keeper.AutoLock.StdDuration(),
 			EnableAudit:      s.global.Security.Keeper.Audit.Active(),
+			Logger:           s.logger,
 		}
 
 		store, err := security.OpenExisting(storeConfig)
@@ -239,6 +237,7 @@ func (s *Server) Start(configPath string) error {
 					s.logger.Warn("secret store exists but no passphrase provided — store remains locked; set AGBERO_KEEPER_PASSPHRASE or use keeper.passphrase in config")
 				} else if err := s.secret.Unlock(s.global.Security.Keeper.Passphrase.String()); err != nil {
 					s.logger.Fields("err", err).Error("failed to unlock secret store")
+					// Don't fatal - allow admin challenge flow to handle unlock
 				} else {
 					security.NewResolver(s.secret).Wire()
 					s.logger.Info("secret store unlocked and set as global")
@@ -405,6 +404,10 @@ func (s *Server) Start(configPath string) error {
 		TLSS:     s.tlsManager,
 	})
 
+	if s.global.Admin.TOTP.Enabled.Active() {
+		s.totpHandler = api.NewTOTP(s.apiShared)
+	}
+
 	listeners := tm.BuildListeners()
 	s.mu.Lock()
 	s.listeners = listeners
@@ -565,6 +568,10 @@ func (s *Server) Reload() {
 		Firewall: newTM.Firewall(),
 		TLSS:     newTLSManager,
 	})
+
+	if global.Admin.TOTP.Enabled.Active() && s.totpHandler == nil {
+		s.totpHandler = api.NewTOTP(s.apiShared)
+	}
 
 	hosts, _ := s.hostManager.LoadAll()
 	validKeys := make(map[alaye.BackendKey]bool)

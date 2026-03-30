@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/olekukonko/ll"
 	"go.etcd.io/bbolt"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/scrypt"
@@ -61,6 +62,7 @@ type Store struct {
 	shamirEnabled   bool
 
 	shamir *Shamir
+	logger *ll.Logger
 }
 
 // StoreConfig contains configuration parameters for the secret store.
@@ -82,6 +84,8 @@ type StoreConfig struct {
 	// EnableShamir enables Shamir's Secret Sharing for M-of-N admin access.
 	// When false, the store uses simple single-passphrase unlocking.
 	EnableShamir bool
+
+	Logger *ll.Logger
 }
 
 // Secret represents an encrypted secret with metadata.
@@ -113,11 +117,16 @@ func NewStore(config StoreConfig) (*Store, error) {
 		return nil, fmt.Errorf("failed to create secrets directory: %w", err)
 	}
 
+	if config.Logger == nil {
+		config.Logger = ll.New("store").Disable()
+	}
+
 	// Open BoltDB with restricted permissions
 	db, err := bbolt.Open(config.DBPath, 0600, &bbolt.Options{
 		Timeout:      5 * time.Second,
 		NoGrowSync:   false,
 		FreelistType: bbolt.FreelistMapType,
+		Logger:       config.Logger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open secrets database: %w", err)

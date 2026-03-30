@@ -34,9 +34,6 @@ func KeeperHandler(s *Shared, r chi.Router) {
 			r.Post("/secrets", k.set)
 			r.Delete("/secrets/{key}", k.delete)
 			r.Get("/secrets/{key}", k.get)
-			r.Post("/totp/{user}", k.totpSetup)
-			r.Get("/totp/{user}/qr.svg", k.totpQRSVG)
-			r.Get("/totp/{user}/qr.png", k.totpQRPNG)
 		})
 	})
 }

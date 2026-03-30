@@ -228,7 +228,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	status := map[string]any{
 		"status":    "ok",
 		"auth":      state.Global.Admin.JWTAuth.Enabled.Active(),
-		"totp":      state.Global.Admin.TOTP.Enabled.Active(),
 		"telemetry": state.Global.Admin.Telemetry.Enabled.Active(),
 	}
 
@@ -401,6 +400,7 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 		TOTP             string `json:"totp"`
 		KeeperPassphrase string `json:"keeper_passphrase"`
 	}
+
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return

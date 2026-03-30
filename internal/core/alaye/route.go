@@ -32,15 +32,15 @@ type Route struct {
 	JWTAuth     JWTAuth     `hcl:"jwt_auth,block,omitempty" json:"jwt_auth"`
 	OAuth       OAuth       `hcl:"o_auth,block,omitempty" json:"oauth"`
 
-	Headers           Headers       `hcl:"headers,block,omitempty" json:"headers"`
-	CORS              CORS          `hcl:"cors,block,omitempty" json:"cors"`
-	Cache             Cache         `hcl:"cache,block,omitempty" json:"cache"`
-	ErrorPages        ErrorPages    `hcl:"error_pages,block,omitempty" json:"error_pages"`
-	Wasm              Wasm          `hcl:"wasm,block,omitempty" json:"wasm"`
-	RateLimit         RouteRate     `hcl:"rate_limit,block,omitempty" json:"rate_limit"`
-	Firewall          FirewallRoute `hcl:"firewall,block,omitempty" json:"firewall"`
-	CompressionConfig Compression   `hcl:"compression,block,omitempty" json:"compression_config"`
-	Fallback          Fallback      `hcl:"fallback,block,omitempty" json:"fallback"`
+	Headers     Headers       `hcl:"headers,block,omitempty" json:"headers"`
+	CORS        CORS          `hcl:"cors,block,omitempty" json:"cors"`
+	Cache       Cache         `hcl:"cache,block,omitempty" json:"cache"`
+	ErrorPages  ErrorPages    `hcl:"error_pages,block,omitempty" json:"error_pages"`
+	Wasm        Wasm          `hcl:"wasm,block,omitempty" json:"wasm"`
+	RateLimit   RouteRate     `hcl:"rate_limit,block,omitempty" json:"rate_limit"`
+	Firewall    FirewallRoute `hcl:"firewall,block,omitempty" json:"firewall"`
+	Compression Compression   `hcl:"compression,block,omitempty" json:"compression"`
+	Fallback    Fallback      `hcl:"fallback,block,omitempty" json:"fallback"`
 }
 
 // Validates the route configuration to ensure correctness
@@ -146,7 +146,7 @@ func (r *Route) validatePlugins() error {
 	if err := r.Wasm.Validate(); err != nil {
 		return errors.Newf("wasm: %w", err)
 	}
-	if err := r.CompressionConfig.Validate(); err != nil {
+	if err := r.Compression.Validate(); err != nil {
 		return errors.Newf("compression: %w", err)
 	}
 	return nil
@@ -256,9 +256,9 @@ func (r *Route) Key() string {
 		w.WriteString(fmt.Sprint(r.Timeouts.Request))
 	}
 
-	if r.CompressionConfig.Enabled.Active() {
-		w.WriteString(r.CompressionConfig.Type)
-		w.WriteString(fmt.Sprint(r.CompressionConfig.Level))
+	if r.Compression.Enabled.Active() {
+		w.WriteString(r.Compression.Type)
+		w.WriteString(fmt.Sprint(r.Compression.Level))
 	}
 
 	if r.Headers.Enabled.Active() {

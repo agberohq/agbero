@@ -153,7 +153,7 @@ func defaultWebRoute(r *alaye.Route) {
 		r.Web.Index = []string{"index.html"}
 	}
 	defaultPHP(&r.Web.PHP)
-	defaultCompression(&r.CompressionConfig)
+	defaultCompression(&r.Compression)
 	defaultHeaders(&r.Headers)
 	defaultBasicAuth(&r.BasicAuth)
 	defaultJWTAuth(&r.JWTAuth)
@@ -166,7 +166,7 @@ func defaultProxyRoute(r *alaye.Route) {
 	defaultHealthCheck(&r.HealthCheck)
 	defaultCircuitBreaker(&r.CircuitBreaker)
 	defaultTimeoutRoute(&r.Timeouts)
-	defaultCompression(&r.CompressionConfig)
+	defaultCompression(&r.Compression)
 	defaultHeaders(&r.Headers)
 	defaultBasicAuth(&r.BasicAuth)
 	defaultJWTAuth(&r.JWTAuth)

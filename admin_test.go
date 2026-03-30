@@ -16,6 +16,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/operation/api"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/olekukonko/jack"
 	"golang.org/x/crypto/bcrypt"
@@ -196,11 +197,16 @@ func newTestAdminServerWithTOTP(t *testing.T) (*Server, int, func()) {
 
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 
+	apiShared := &api.Shared{
+		Logger: testLogger,
+	}
+
 	s := NewServer(
 		WithHostManager(hm),
 		WithGlobalConfig(global),
 		WithLogger(testLogger),
 		WithShutdownManager(shutdown),
+		WithAPIShared(apiShared),
 	)
 
 	errCh := make(chan error, 1)
@@ -255,7 +261,7 @@ func newTestAdminServerWithTOTP(t *testing.T) (*Server, int, func()) {
 //	// will fail entirely and `s.secret` will be nil, meaning the backend won't
 //	// demand a `keeper_unlock` requirement.
 //	dbPath := filepath.Join(dataDir, woos.DefaultKeeperName)
-//	store, err := security.NewStore(security.StoreConfig{DBPath: dbPath})
+//	store, err := security.NewStore(security.StoreConfig{DBPath: dbPath, Logger: testLogger})
 //	if err != nil {
 //		t.Fatalf("Failed to create test keeper store: %v", err)
 //	}
