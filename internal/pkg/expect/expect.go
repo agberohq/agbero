@@ -62,7 +62,7 @@ var (
 	}
 	_Base64URLRegex = regexp.MustCompile(`^[A-Za-z0-9\-_]*={0,2}$`)
 	_SecretKeyRegex = regexp.MustCompile(`^[a-zA-Z0-9_.\-]+$`)
-	_DomainRegex    = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`)
+	_DomainRegex    = regexp.MustCompile(`^(\*\.)?([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`)
 	_UsernameRegex  = regexp.MustCompile(`^[a-zA-Z0-9_.\-]+$`)
 	_HostnameRegex  = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-_.]*[a-zA-Z0-9])?$`)
 )
