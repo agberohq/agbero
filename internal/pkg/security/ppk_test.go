@@ -22,9 +22,9 @@ func TestTokenLifecycle(t *testing.T) {
 	}
 
 	// 3. Mint Token
-	service := "my-service"
+	service := VerifiedToken{Service: "test-service"}
 	ttl := 5 * time.Second
-	token, err := tm.Mint(service, ttl)
+	token, err := tm.Mint(service.Service, ttl)
 	if err != nil {
 		t.Fatalf("failed to mint token: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestTokenLifecycle(t *testing.T) {
 		t.Fatalf("failed to verify token: %v", err)
 	}
 
-	if gotService != service {
-		t.Errorf("expected service %q, got %q", service, gotService)
+	if gotService.Service != service.Service {
+		t.Errorf("expected service %q, got %q", service.Service, gotService.Service)
 	}
 }

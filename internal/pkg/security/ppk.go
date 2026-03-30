@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/olekukonko/errors"
 )
@@ -15,6 +16,14 @@ import (
 type TokenClaims struct {
 	Service string `json:"svc"`
 	jwt.RegisteredClaims
+}
+
+// VerifiedToken holds the validated claims extracted from a service token.
+// JTI is included so callers can check revocation lists without re-parsing the token.
+type VerifiedToken struct {
+	Service string
+	JTI     string
+	Expiry  time.Time
 }
 
 type PPK struct {
@@ -78,12 +87,21 @@ func NewPPK(path string) error {
 	return f.Chmod(0600)
 }
 
+// Mint issues a signed service token with a random JTI for revocation support.
+// The JTI is embedded in the token and returned as part of the signed string —
+// callers retrieve it via Verify when they need to add it to a revocation list.
 func (m *PPK) Mint(serviceName string, ttl time.Duration) (string, error) {
+	p := NewPassword()
+	jit, err := p.JTI()
+	if err != nil {
+		return "", err
+	}
 	now := time.Now()
 	claims := TokenClaims{
 		Service: serviceName,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    "agbero-api",
+			ID:        jit,
+			Issuer:    woos.Name,
 			Subject:   serviceName,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
@@ -94,7 +112,9 @@ func (m *PPK) Mint(serviceName string, ttl time.Duration) (string, error) {
 	return token.SignedString(m.privateKey)
 }
 
-func (m *PPK) Verify(tokenString string) (string, error) {
+// Verify validates a service token and returns the verified claims.
+// The returned JTI can be used to check a revocation list before granting access.
+func (m *PPK) Verify(tokenString string) (VerifiedToken, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -103,12 +123,20 @@ func (m *PPK) Verify(tokenString string) (string, error) {
 	})
 
 	if err != nil {
-		return "", err
+		return VerifiedToken{}, err
 	}
 
 	if claims, ok := token.Claims.(*TokenClaims); ok && token.Valid {
-		return claims.Service, nil
+		expiry := time.Time{}
+		if claims.ExpiresAt != nil {
+			expiry = claims.ExpiresAt.Time
+		}
+		return VerifiedToken{
+			Service: claims.Service,
+			JTI:     claims.ID,
+			Expiry:  expiry,
+		}, nil
 	}
 
-	return "", errors.New("invalid token claims")
+	return VerifiedToken{}, errors.New("invalid token claims")
 }
