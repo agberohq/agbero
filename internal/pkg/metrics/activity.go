@@ -82,3 +82,10 @@ func (at *Activity) Snapshot() map[string]any {
 func (at *Activity) EWMA() int64 {
 	return at.ewmaUs.Load()
 }
+
+// Close shuts down the latency tracker
+func (at *Activity) Close() {
+	if at.Latency != nil {
+		at.Latency.Close()
+	}
+}
