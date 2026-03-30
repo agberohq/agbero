@@ -214,10 +214,9 @@ func decodeBody(body *hclsyntax.Body, ctx *hcl.EvalContext, v reflect.Value) err
 			}
 
 		case "label":
-			// Labels are captured during block decoding, not here.
 
 		default:
-			// Tags with no kind suffix (e.g. hcl:"address") are treated as attr.
+
 			attr, exists := body.Attributes[tagName]
 			if !exists {
 				continue
@@ -339,7 +338,6 @@ func setField(field reflect.Value, val cty.Value) error {
 		return nil
 	}
 
-	// TextUnmarshaler covers Enabled, Duration, Value — highest priority.
 	if tu, ok := fieldAsTextUnmarshaler(field); ok {
 		text, err := ctyToString(val)
 		if err != nil {
@@ -561,9 +559,9 @@ func parseTag(tag string) (name, kind string) {
 	if tag == "" {
 		return "", ""
 	}
-	parts := strings.SplitN(tag, ",", 2)
+	parts := strings.Split(tag, ",")
 	name = parts[0]
-	if len(parts) == 2 {
+	if len(parts) > 1 {
 		kind = parts[1]
 	}
 	return name, kind
@@ -642,7 +640,7 @@ func encodeValue(body *hclwrite.Body, v reflect.Value) error {
 				return err
 			}
 		case "label":
-			// Labels are written as part of the block header, not as attributes.
+
 		default:
 			tokens := scalarTokens(field)
 			if tokens != nil {
@@ -700,7 +698,6 @@ func scalarTokens(v reflect.Value) hclwrite.Tokens {
 		return nil
 	}
 
-	// TextMarshaler covers Enabled, Duration, Value.
 	if tm, ok := v.Interface().(interface{ MarshalText() ([]byte, error) }); ok {
 		text, err := tm.MarshalText()
 		if err != nil || len(text) == 0 || string(text) == "unknown" {
