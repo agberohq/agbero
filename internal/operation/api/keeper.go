@@ -25,6 +25,7 @@ func KeeperHandler(s *Shared, r chi.Router) {
 	r.Route("/keeper", func(r chi.Router) {
 		// Public endpoint - no authentication required
 		r.Post("/unlock", k.unlock)
+		r.Get("/status", k.status)
 
 		// Protected endpoints - caller should apply auth middleware via r.Use() or r.With()
 		r.Group(func(r chi.Router) {
@@ -432,6 +433,21 @@ func (k *Keeper) jsonResponse(w http.ResponseWriter, code int, data any) {
 			k.logger.Error("failed to encode response", "err", err)
 		}
 	}
+}
+
+// status handles GET requests to retrieve the current state of the keeper (enabled and locked status).
+// It does not expose any secrets and is safe to be polled by the frontend to trigger unlock modals.
+func (k *Keeper) status(w http.ResponseWriter, r *http.Request) {
+	enabled := k.store != nil
+	locked := false
+	if enabled {
+		locked = k.store.IsLocked()
+	}
+
+	k.jsonResponse(w, http.StatusOK, map[string]any{
+		"enabled": enabled,
+		"locked":  locked,
+	})
 }
 
 // decodeB64Loose attempts to decode a base64 string using both standard and URL encodings.
