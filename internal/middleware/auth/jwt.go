@@ -17,12 +17,10 @@ type contextKey string
 const ClaimsContextKey contextKey = "jwt_claims"
 
 func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
-	// Return passthrough if disabled
 	if cfg.Enabled.NotActive() {
 		return func(next http.Handler) http.Handler { return next }
 	}
 
-	// Resolve value to string
 	secretBytes := []byte(cfg.Secret.String())
 
 	return func(next http.Handler) http.Handler {
@@ -60,7 +58,11 @@ func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
 				}
 			}
 
-			// Avoid Spoofing
+			if scope, _ := claims["scope"].(string); scope == "challenge" {
+				http.Error(w, `{"error":"insufficient_scope"}`, http.StatusForbidden)
+				return
+			}
+
 			for _, headerName := range cfg.ClaimMap {
 				r.Header.Del(headerName)
 			}
@@ -126,6 +128,11 @@ func JWTWithRevocation(cfg *alaye.JWTAuth, isRevoked func(jti string) bool) func
 				return
 			}
 
+			if scope, _ := claims["scope"].(string); scope == "challenge" {
+				http.Error(w, `{"error":"insufficient_scope"}`, http.StatusForbidden)
+				return
+			}
+
 			for _, headerName := range cfg.ClaimMap {
 				r.Header.Del(headerName)
 			}
@@ -140,6 +147,10 @@ func JWTWithRevocation(cfg *alaye.JWTAuth, isRevoked func(jti string) bool) func
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func JWTWithRevocationAndScope(cfg *alaye.JWTAuth, isRevoked func(jti string) bool) func(http.Handler) http.Handler {
+	return JWTWithRevocation(cfg, isRevoked)
 }
 
 func GetClaims(r *http.Request) (jwt.MapClaims, bool) {

@@ -102,6 +102,35 @@ func TestJWT(t *testing.T) {
 			}, secret.String()),
 			wantStatus: http.StatusUnauthorized,
 		},
+		{
+			name: "Challenge Token Rejected - scope=challenge",
+			cfg:  &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret},
+			authHeader: "Bearer " + genToken(jwt.MapClaims{
+				"sub":   "user123",
+				"scope": "challenge",
+				"exp":   time.Now().Add(time.Hour).Unix(),
+			}, secret.String()),
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "Full Token Accepted - scope=full",
+			cfg:  &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret},
+			authHeader: "Bearer " + genToken(jwt.MapClaims{
+				"sub":   "user123",
+				"scope": "full",
+				"exp":   time.Now().Add(time.Hour).Unix(),
+			}, secret.String()),
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "Token Without Scope Accepted",
+			cfg:  &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret},
+			authHeader: "Bearer " + genToken(jwt.MapClaims{
+				"sub": "user123",
+				"exp": time.Now().Add(time.Hour).Unix(),
+			}, secret.String()),
+			wantStatus: http.StatusOK,
+		},
 	}
 
 	for _, tt := range tests {
@@ -137,11 +166,14 @@ func TestJWT(t *testing.T) {
 func TestJWTWithRevocation(t *testing.T) {
 	secret := alaye.Value("test-secret-key-12345")
 
-	genToken := func(jti string) string {
+	genToken := func(jti string, scope string) string {
 		claims := jwt.MapClaims{
 			"sub": "user123",
 			"exp": time.Now().Add(time.Hour).Unix(),
 			"jti": jti,
+		}
+		if scope != "" {
+			claims["scope"] = scope
 		}
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 		s, _ := token.SignedString([]byte(secret.String()))
@@ -154,7 +186,7 @@ func TestJWTWithRevocation(t *testing.T) {
 		isRevoked := func(jti string) bool { return false }
 
 		req := httptest.NewRequest("GET", "/", nil)
-		req.Header.Set("Authorization", "Bearer "+genToken("jti-abc"))
+		req.Header.Set("Authorization", "Bearer "+genToken("jti-abc", ""))
 		rec := httptest.NewRecorder()
 
 		JWTWithRevocation(cfg, isRevoked)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -171,7 +203,7 @@ func TestJWTWithRevocation(t *testing.T) {
 		isRevoked := func(jti string) bool { return jti == revokedJTI }
 
 		req := httptest.NewRequest("GET", "/", nil)
-		req.Header.Set("Authorization", "Bearer "+genToken(revokedJTI))
+		req.Header.Set("Authorization", "Bearer "+genToken(revokedJTI, ""))
 		rec := httptest.NewRecorder()
 
 		JWTWithRevocation(cfg, isRevoked)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -180,6 +212,38 @@ func TestJWTWithRevocation(t *testing.T) {
 
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("expected 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("Challenge token rejected even if not revoked", func(t *testing.T) {
+		isRevoked := func(jti string) bool { return false }
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Authorization", "Bearer "+genToken("jti-xyz", "challenge"))
+		rec := httptest.NewRecorder()
+
+		JWTWithRevocation(cfg, isRevoked)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected 403 for challenge token, got %d", rec.Code)
+		}
+	})
+
+	t.Run("Full scope token accepted with revocation check", func(t *testing.T) {
+		isRevoked := func(jti string) bool { return false }
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Authorization", "Bearer "+genToken("jti-full", "full"))
+		rec := httptest.NewRecorder()
+
+		JWTWithRevocation(cfg, isRevoked)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rec.Code)
 		}
 	})
 
@@ -226,6 +290,122 @@ func TestJWTWithRevocation(t *testing.T) {
 		}
 		if checked {
 			t.Error("isRevoked should not be called for an invalid token")
+		}
+	})
+}
+
+func TestJWTWithRevocationAndScope(t *testing.T) {
+	secret := alaye.Value("test-secret-key-12345")
+
+	genToken := func(scope string) string {
+		claims := jwt.MapClaims{
+			"sub":   "user123",
+			"exp":   time.Now().Add(time.Hour).Unix(),
+			"jti":   "test-jti-123",
+			"scope": scope,
+		}
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		s, _ := token.SignedString([]byte(secret.String()))
+		return s
+	}
+
+	cfg := &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret}
+	isRevoked := func(jti string) bool { return false }
+
+	t.Run("JWTWithRevocationAndScope rejects challenge tokens", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Authorization", "Bearer "+genToken("challenge"))
+		rec := httptest.NewRecorder()
+
+		JWTWithRevocationAndScope(cfg, isRevoked)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected 403, got %d", rec.Code)
+		}
+	})
+
+	t.Run("JWTWithRevocationAndScope accepts full tokens", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Authorization", "Bearer "+genToken("full"))
+		rec := httptest.NewRecorder()
+
+		JWTWithRevocationAndScope(cfg, isRevoked)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rec.Code)
+		}
+	})
+}
+
+func TestGetClaims(t *testing.T) {
+	secret := alaye.Value("test-secret-key-12345")
+
+	genToken := func() string {
+		claims := jwt.MapClaims{
+			"sub":  "user123",
+			"user": "admin",
+			"exp":  time.Now().Add(time.Hour).Unix(),
+		}
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		s, _ := token.SignedString([]byte(secret.String()))
+		return s
+	}
+
+	cfg := &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret}
+	isRevoked := func(jti string) bool { return false }
+
+	t.Run("GetClaims returns claims from context", func(t *testing.T) {
+		var capturedClaims jwt.MapClaims
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Authorization", "Bearer "+genToken())
+		rec := httptest.NewRecorder()
+
+		JWTWithRevocation(cfg, isRevoked)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := GetClaims(r)
+			if !ok {
+				t.Error("GetClaims returned false")
+			}
+			capturedClaims = claims
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rec.Code)
+		}
+
+		if capturedClaims == nil {
+			t.Fatal("capturedClaims is nil")
+		}
+
+		if user, _ := capturedClaims["user"].(string); user != "admin" {
+			t.Errorf("expected user=admin, got %v", user)
+		}
+	})
+
+	t.Run("GetClaims returns false when no claims in context", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		rec := httptest.NewRecorder()
+
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := GetClaims(r)
+			if ok {
+				t.Error("GetClaims should return false when no claims")
+			}
+			if claims != nil {
+				t.Error("claims should be nil")
+			}
+			w.WriteHeader(http.StatusOK)
+		})
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rec.Code)
 		}
 	})
 }
