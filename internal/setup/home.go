@@ -131,7 +131,7 @@ func (h *Home) generateSecrets() (*setupSecrets, error) {
 		return nil, fmt.Errorf("failed to generate admin secret: %w", err)
 	}
 
-	internalAuthKeyPath := filepath.Join(h.ctx.Paths.CertsDir.Path(), "internal_auth.key")
+	internalAuthKeyPath := filepath.Join(h.ctx.Paths.DataDir.Path(), woos.InternalAuthKeyName)
 	if err := security.NewPPK(internalAuthKeyPath); err != nil {
 		return nil, fmt.Errorf("failed to generate internal auth key: %w", err)
 	}

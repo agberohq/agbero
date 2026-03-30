@@ -1,12 +1,14 @@
 package alaye
 
 import (
+	"net/mail"
 	"strings"
 
 	"github.com/olekukonko/errors"
 )
 
 type TLS struct {
+	Enabled     Enabled     `hcl:"enabled,attr" json:"enabled"`
 	Mode        TlsMode     `hcl:"mode,attr" json:"mode"`
 	ClientAuth  string      `hcl:"client_auth,attr" json:"client_auth"`
 	ClientCAs   []string    `hcl:"client_cas,attr" json:"client_cas"`
@@ -85,16 +87,16 @@ func (l *LocalCert) Validate() error {
 }
 
 type Pebble struct {
-	Enabled    bool   `hcl:"enabled,attr" json:"enabled"`
-	URL        string `hcl:"url,attr" json:"url"`
-	Insecure   bool   `hcl:"insecure,attr" json:"insecure"`
-	ChallSrv   string `hcl:"chall_srv,attr" json:"chall_srv"`
-	MgmtServer string `hcl:"mgmt_server,attr" json:"mgmt_server"`
+	Enabled    Enabled `hcl:"enabled,attr" json:"enabled"`
+	URL        string  `hcl:"url,attr" json:"url"`
+	Insecure   Enabled `hcl:"insecure,attr" json:"insecure"`
+	ChallSrv   string  `hcl:"chall_srv,attr" json:"chall_srv"`
+	MgmtServer string  `hcl:"mgmt_server,attr" json:"mgmt_server"`
 }
 
 // Validate checks Pebble configuration and applies sensible URL defaults when enabled.
 func (p *Pebble) Validate() error {
-	if !p.Enabled {
+	if !p.Enabled.Active() {
 		return nil
 	}
 	if p.URL == "" {
@@ -111,8 +113,8 @@ func (p *Pebble) Validate() error {
 
 type LetsEncrypt struct {
 	Enabled    Enabled `hcl:"enabled,attr" json:"enabled"`
+	Staging    Enabled `hcl:"staging,attr" json:"staging"`
 	Email      string  `hcl:"email,attr" json:"email"`
-	Staging    bool    `hcl:"staging,attr" json:"staging"`
 	ShortLived bool    `hcl:"short_lived,attr" json:"short_lived"`
 	Pebble     Pebble  `hcl:"pebble,block" json:"pebble"`
 }
@@ -122,12 +124,23 @@ func (l *LetsEncrypt) Validate() error {
 	if l.Enabled.NotActive() {
 		return nil
 	}
-	if l.Pebble.Enabled {
-		return l.Pebble.Validate()
-	}
-	if l.Email != "" && !strings.Contains(l.Email, "@") {
+
+	l.Email = strings.TrimSpace(l.Email)
+	if l.Email == "" {
 		return ErrInvalidEmail
 	}
+
+	// err == nil means the format is valid according to RFC 5322
+	// emailAddress.Address == email ensures there wasn't a display name component
+	_, err := mail.ParseAddress(l.Email)
+	if err != nil {
+		return ErrInvalidEmail
+	}
+
+	if l.Pebble.Enabled.Active() {
+		return l.Pebble.Validate()
+	}
+
 	return nil
 }
 

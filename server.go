@@ -29,6 +29,7 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/cook"
 	"github.com/agberohq/agbero/internal/pkg/orchestrator"
 	"github.com/agberohq/agbero/internal/pkg/parser"
+	"github.com/agberohq/agbero/internal/pkg/revoke"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/telemetry"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
@@ -37,13 +38,6 @@ import (
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
-)
-
-const (
-	defaultReloadTimeout   = woos.DefaultReloadTimeout
-	defaultShutdownTimeout = woos.DefaultShutdownTimeout
-	defaultGitPoolTimeout  = woos.DefaultGitPoolTimeout
-	defaultGitPoolSize     = woos.DefaultGitPoolSize
 )
 
 type Server struct {
@@ -89,6 +83,7 @@ type Server struct {
 	jtiLifetime *jack.Lifetime
 
 	secret      *security.Store
+	revokeStore *revoke.Store
 	totpHandler *api.TOTP
 
 	apiShared *api.Shared
@@ -206,12 +201,10 @@ func (s *Server) Start(configPath string) error {
 
 	hosts, _ := s.hostManager.LoadAll()
 
-	// ---------------------------------------------------------
-	// KEEPER INITIALIZATION & INTERACTIVE PROMPT
-	// ---------------------------------------------------------
 	if s.global.Security.Keeper.Enabled.Active() {
 
-		// Prompt for keeper password if running interactively and no passphrase is set
+		ll.Output(s.global.Security.Keeper)
+
 		if s.global.Security.Keeper.Passphrase.Empty() && service.Interactive() {
 			var pass string
 			err := huh.NewInput().
@@ -242,7 +235,9 @@ func (s *Server) Start(configPath string) error {
 			s.secret = store
 
 			if s.global.Security.Keeper.Enabled.Active() {
-				if err := s.secret.Unlock(s.global.Security.Keeper.Passphrase.String()); err != nil {
+				if s.global.Security.Keeper.Passphrase.Empty() {
+					s.logger.Warn("secret store exists but no passphrase provided — store remains locked; set AGBERO_KEEPER_PASSPHRASE or use keeper.passphrase in config")
+				} else if err := s.secret.Unlock(s.global.Security.Keeper.Passphrase.String()); err != nil {
 					s.logger.Fields("err", err).Error("failed to unlock secret store")
 				} else {
 					security.NewResolver(s.secret).Wire()
@@ -254,7 +249,7 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	s.gitPool = jack.NewPool(defaultGitPoolSize)
+	s.gitPool = jack.NewPool(woos.DefaultGitPoolSize)
 
 	cookCfg := cook.ManagerConfig{
 		WorkDir: s.global.Storage.WorkDir,
@@ -343,6 +338,14 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
+	if s.global.Storage.DataDir != "" {
+		if rs, err := revoke.New(s.global.Storage.DataDir, s.logger); err != nil {
+			s.logger.Fields("err", err).Warn("revoke store failed to load, token revocation disabled")
+		} else {
+			s.revokeStore = rs
+		}
+	}
+
 	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global)
 	if s.shutdown != nil {
 		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
@@ -386,12 +389,13 @@ func (s *Server) Start(configPath string) error {
 	// API SHARED STATE INITIALIZATION (Lock-Free Push)
 	// ---------------------------------------------------------
 	s.apiShared = &api.Shared{
-		Logger:    s.logger,
-		Cluster:   s.clusterManager,
-		Store:     s.secret,
-		Discovery: s.hostManager,
-		PPK:       s.securityManager,
-		Telemetry: s.telemetryStore,
+		Logger:      s.logger,
+		Cluster:     s.clusterManager,
+		Store:       s.secret,
+		Discovery:   s.hostManager,
+		PPK:         s.securityManager,
+		Telemetry:   s.telemetryStore,
+		RevokeStore: s.revokeStore,
 	}
 
 	// Atomically store the initial active state for the API
@@ -624,7 +628,7 @@ func (s *Server) Reload() {
 
 	// Teardown old components safely in the background
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), defaultReloadTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), woos.DefaultReloadTimeout)
 		defer cancel()
 
 		var wg sync.WaitGroup
@@ -686,7 +690,7 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 		s.cookManager.Stop()
 	}
 	if s.gitPool != nil {
-		_ = s.gitPool.Shutdown(defaultGitPoolTimeout)
+		_ = s.gitPool.Shutdown(woos.DefaultGitPoolTimeout)
 	}
 	if s.jtiLifetime != nil {
 		s.jtiLifetime.Stop()

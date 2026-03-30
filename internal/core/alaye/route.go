@@ -19,28 +19,28 @@ type Route struct {
 	AllowedIPs    []string  `hcl:"allowed_ips,attr" json:"allowed_ips"`
 	Rewrites      []Rewrite `hcl:"rewrite,block" json:"rewrites"`
 
-	Web        Web        `hcl:"web,block" json:"web"`
-	Backends   Backend    `hcl:"backend,block" json:"backends"`
-	Serverless Serverless `hcl:"serverless,block" json:"serverless"`
+	Web        Web        `hcl:"web,block,omitempty" json:"web"`
+	Backends   Backend    `hcl:"backend,block,omitempty" json:"backends"`
+	Serverless Serverless `hcl:"serverless,block,omitempty" json:"serverless"`
 
-	HealthCheck    HealthCheck    `hcl:"health_check,block" json:"health_check"`
-	CircuitBreaker CircuitBreaker `hcl:"circuit_breaker,block" json:"circuit_breaker"`
-	Timeouts       TimeoutRoute   `hcl:"timeouts,block" json:"timeouts"`
+	HealthCheck    HealthCheck    `hcl:"health_check,block,omitempty" json:"health_check"`
+	CircuitBreaker CircuitBreaker `hcl:"circuit_breaker,block,omitempty" json:"circuit_breaker"`
+	Timeouts       TimeoutRoute   `hcl:"timeouts,block,omitempty" json:"timeouts"`
 
-	BasicAuth   BasicAuth   `hcl:"basic_auth,block" json:"basic_auth"`
-	ForwardAuth ForwardAuth `hcl:"forward_auth,block" json:"forward_auth"`
-	JWTAuth     JWTAuth     `hcl:"jwt_auth,block" json:"jwt_auth"`
-	OAuth       OAuth       `hcl:"o_auth,block" json:"oauth"`
+	BasicAuth   BasicAuth   `hcl:"basic_auth,block,omitempty" json:"basic_auth"`
+	ForwardAuth ForwardAuth `hcl:"forward_auth,block,omitempty" json:"forward_auth"`
+	JWTAuth     JWTAuth     `hcl:"jwt_auth,block,omitempty" json:"jwt_auth"`
+	OAuth       OAuth       `hcl:"o_auth,block,omitempty" json:"oauth"`
 
-	Headers           Headers       `hcl:"headers,block" json:"headers"`
-	CORS              CORS          `hcl:"cors,block" json:"cors"`
-	Cache             Cache         `hcl:"cache,block" json:"cache"`
-	ErrorPages        ErrorPages    `hcl:"error_pages,block" json:"error_pages"`
-	Wasm              Wasm          `hcl:"wasm,block" json:"wasm"`
-	RateLimit         RouteRate     `hcl:"rate_limit,block" json:"rate_limit"`
-	Firewall          FirewallRoute `hcl:"firewall,block" json:"firewall"`
-	CompressionConfig Compression   `hcl:"compression,block" json:"compression_config"`
-	Fallback          Fallback      `hcl:"fallback,block" json:"fallback"`
+	Headers           Headers       `hcl:"headers,block,omitempty" json:"headers"`
+	CORS              CORS          `hcl:"cors,block,omitempty" json:"cors"`
+	Cache             Cache         `hcl:"cache,block,omitempty" json:"cache"`
+	ErrorPages        ErrorPages    `hcl:"error_pages,block,omitempty" json:"error_pages"`
+	Wasm              Wasm          `hcl:"wasm,block,omitempty" json:"wasm"`
+	RateLimit         RouteRate     `hcl:"rate_limit,block,omitempty" json:"rate_limit"`
+	Firewall          FirewallRoute `hcl:"firewall,block,omitempty" json:"firewall"`
+	CompressionConfig Compression   `hcl:"compression,block,omitempty" json:"compression_config"`
+	Fallback          Fallback      `hcl:"fallback,block,omitempty" json:"fallback"`
 }
 
 // Validates the route configuration to ensure correctness

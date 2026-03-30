@@ -102,7 +102,7 @@ func (v Value) resolve(lookup func(string) string) (string, error) {
 func (v Value) String() string { return v.Resolve(os.Getenv) }
 
 // Empty returns true if the raw string is empty or whitespace-only.
-func (v Value) Empty() bool { return strings.TrimSpace(string(v)) == "" }
+func (v Value) Empty() bool { return strings.TrimSpace(v.String()) == "" }
 
 // IsSecretStoreRef reports whether this value will be resolved from the keeper.
 func (v Value) IsSecretStoreRef() bool {
