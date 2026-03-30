@@ -18,6 +18,9 @@ const (
 )
 
 const (
+	InternalAuthKeyName = "internal_auth.key"
+)
+const (
 	On  = "on"
 	Off = "off"
 )
@@ -53,6 +56,7 @@ const (
 	HeaderXOriginalMethod = "X-Original-Method"
 	HeaderXRealIP         = "X-Real-IP"
 	HeaderXAgberoService  = "X-Agbero-Service"
+	HeaderXAgberoJTI      = "X-Agbero-JTI"
 	HeaderServer          = "Server"
 
 	HeaderXForwardedHost   = "X-Forwarded-Discovery"

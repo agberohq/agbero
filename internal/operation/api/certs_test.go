@@ -119,23 +119,11 @@ func TestCertsHandler_List_WithWildcardCert(t *testing.T) {
 	defer cleanup()
 
 	state := shared.State()
-	certsDir := state.Global.Storage.CertsDir
 
 	// Create certificate directly in the storage directory
 	certPEM, keyPEM, err := generateTestCert("*.example.com")
 	if err != nil {
 		t.Fatalf("Failed to generate test cert: %v", err)
-	}
-
-	// The storage expects the file name format: _wildcard_example.com.crt
-	certPath := filepath.Join(certsDir, "_wildcard_example.com.crt")
-	keyPath := filepath.Join(certsDir, "_wildcard_example.com.key")
-
-	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
-		t.Fatalf("Failed to write cert: %v", err)
-	}
-	if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
-		t.Fatalf("Failed to write key: %v", err)
 	}
 
 	// Load from storage so it's in the cache

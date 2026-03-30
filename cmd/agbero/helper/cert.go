@@ -173,7 +173,7 @@ func parseCertName(name string) (domain, kind string) {
 		return strings.TrimSuffix(base, "-cert"), "cert"
 	case strings.HasSuffix(base, "-key"):
 		return strings.TrimSuffix(base, "-key"), "key"
-	case name == "internal_auth.key":
+	case name == woos.InternalAuthKeyName:
 		return "internal", "auth key"
 	case strings.HasPrefix(name, "ca-"):
 		return "CA", strings.TrimPrefix(base, "ca-")

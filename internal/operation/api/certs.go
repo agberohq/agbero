@@ -67,6 +67,7 @@ func (c *Certs) list(w http.ResponseWriter, r *http.Request) {
 		File   string `json:"file"`
 	}
 	var certs []CertInfo
+	seen := make(map[string]bool)
 
 	for _, e := range entries {
 		if e.IsDir() {
@@ -81,12 +82,21 @@ func (c *Certs) list(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(name, ".crt") || strings.HasSuffix(name, ".pem") {
 			domain := strings.TrimSuffix(name, ".crt")
 			domain = strings.TrimSuffix(domain, ".pem")
-			domain = strings.ReplaceAll(domain, "_wildcard_", "*")
+			domain = strings.TrimSuffix(domain, "-cert")
+			domain = strings.TrimSuffix(domain, "-key")
 
-			if ts.LikelyInternal(domain) {
+			domain = strings.ReplaceAll(domain, "_wildcard_", "*")
+			domain = strings.ReplaceAll(domain, "_wildcard", "*") // Catch trailing underscore variants
+
+			if strings.HasPrefix(domain, "*") && !strings.HasPrefix(domain, "*.") && len(domain) > 1 {
+				domain = "*" + domain[1:] // e.g., "*example.com" → "*.example.com"
+			}
+
+			if ts.LikelyInternal(domain) || seen[domain] {
 				continue
 			}
 
+			seen[domain] = true
 			certs = append(certs, CertInfo{
 				Domain: domain,
 				File:   name,
