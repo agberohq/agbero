@@ -165,8 +165,6 @@ func (s *Server) setupAdminMiddleware(r chi.Router, cfg alaye.Admin) {
 }
 
 func (s *Server) registerAdminRoutes(r chi.Router, cfg alaye.Admin) {
-	s.totpHandler = api.NewTOTP(s.apiShared)
-
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/status", s.handleStatus)
 	r.Post("/login", s.handleLogin)
