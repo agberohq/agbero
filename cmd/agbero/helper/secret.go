@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
@@ -40,7 +41,7 @@ func (s *Secret) KeyInit(configPath string) {
 		targetPath = global.Security.InternalAuthKey
 	} else {
 		ctx := setup.NewContext(s.p.Logger)
-		targetPath = filepath.Join(ctx.Paths.CertsDir.Path(), "internal_auth.key")
+		targetPath = filepath.Join(ctx.Paths.DataDir.Path(), woos.InternalAuthKeyName)
 	}
 
 	if _, err := os.Stat(targetPath); err == nil {
@@ -74,7 +75,7 @@ func (s *Secret) Token(configPath, svcName string, ttl time.Duration) {
 	keyPath := global.Security.InternalAuthKey
 	if keyPath == "" {
 		ctx := setup.NewContext(s.p.Logger)
-		defaultPath := filepath.Join(ctx.Paths.CertsDir.Path(), "internal_auth.key")
+		defaultPath := filepath.Join(ctx.Paths.DataDir.Path(), woos.InternalAuthKeyName)
 		if _, err := os.Stat(defaultPath); err == nil {
 			keyPath = defaultPath
 		}
@@ -97,12 +98,20 @@ func (s *Secret) Token(configPath, svcName string, ttl time.Duration) {
 		s.p.Logger.Fatal("failed to mint token: ", err)
 	}
 
+	verified, err := tm.Verify(token)
+	if err != nil {
+		s.p.Logger.Fatal("failed to verify minted token: ", err)
+	}
+
+	expires := time.Now().Add(ttl)
 	u := ui.New()
 	u.SecretBox("API token — "+svcName, token)
 	u.KeyValueBlock("", []ui.KV{
 		{Label: "Service", Value: svcName},
-		{Label: "Expires", Value: time.Now().Add(ttl).Format(time.RFC3339) + "  (" + ttl.String() + ")"},
+		{Label: "JTI", Value: verified.JTI},
+		{Label: "Expires", Value: expires.Format(time.RFC3339) + "  (" + ttl.String() + ")"},
 	})
+	u.InfoLine("Keep the JTI — you will need it to revoke this token via POST /api/v1/auto/revoke")
 }
 
 // Hash bcrypt-hashes a password and prints the hash.

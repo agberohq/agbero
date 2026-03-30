@@ -10,8 +10,6 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-// SecretsHandler registers the secrets utility API endpoint under the /secrets prefix on the provided chi.Router.
-// Caller should apply authentication middleware via r.Use() before or within the route group.
 func SecretsHandler(s *Shared, r chi.Router) {
 	sec := NewSecrets(s)
 
@@ -20,15 +18,11 @@ func SecretsHandler(s *Shared, r chi.Router) {
 	})
 }
 
-// Secrets provides HTTP handlers for password hashing, random key generation, and token minting operations.
-// It encapsulates the security ppk and logger for administrative secret utilities.
 type Secrets struct {
 	ppk    *security.PPK
 	logger *ll.Logger
 }
 
-// NewSecrets initializes a Secrets instance with shared application dependencies.
-// It configures the logger namespace and prepares the handler for secret operations.
 func NewSecrets(cfg *Shared) *Secrets {
 	return &Secrets{
 		ppk:    cfg.PPK,
@@ -36,8 +30,6 @@ func NewSecrets(cfg *Shared) *Secrets {
 	}
 }
 
-// generate handles POST requests to perform secret-related operations: hash, password, key, or token generation.
-// It parses the action from the request body, validates input, and returns the result as JSON.
 func (sec *Secrets) generate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Action   string `json:"action"`
@@ -120,9 +112,16 @@ func (sec *Secrets) generate(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to mint token", http.StatusInternalServerError)
 			return
 		}
+		verified, err := sec.ppk.Verify(token)
+		if err != nil {
+			http.Error(w, "Failed to verify minted token", http.StatusInternalServerError)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{
 			"token":      token,
 			"service":    req.Service,
+			"jti":        verified.JTI,
+			"expires_at": time.Now().Add(ttl).UTC().Format(time.RFC3339),
 			"expires_in": ttl.String(),
 		})
 

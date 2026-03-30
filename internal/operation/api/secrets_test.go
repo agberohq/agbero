@@ -213,7 +213,7 @@ func TestSecretsHandler_Token(t *testing.T) {
 	if err != nil {
 		t.Errorf("Failed to verify token: %v", err)
 	}
-	if verifiedService != "test-service" {
+	if verifiedService.Service != "test-service" {
 		t.Errorf("Expected verified service test-service, got %s", verifiedService)
 	}
 }
