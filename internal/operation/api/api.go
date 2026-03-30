@@ -7,6 +7,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/agberohq/agbero/internal/middleware/firewall"
+	"github.com/agberohq/agbero/internal/pkg/revoke"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/telemetry"
 	"github.com/agberohq/agbero/internal/pkg/tlss"
@@ -21,12 +22,13 @@ type ActiveState struct {
 }
 
 type Shared struct {
-	Logger    *ll.Logger
-	Cluster   *cluster.Manager
-	Store     *security.Store
-	Discovery *discovery.Host
-	PPK       *security.PPK
-	Telemetry *telemetry.Store
+	Logger      *ll.Logger
+	Cluster     *cluster.Manager
+	Store       *security.Store
+	Discovery   *discovery.Host
+	PPK         *security.PPK
+	Telemetry   *telemetry.Store
+	RevokeStore *revoke.Store
 
 	state atomic.Value
 }
@@ -67,6 +69,8 @@ func AdminHandler(shared *Shared, r chi.Router) {
 		FirewallHandler(shared, r)
 		SecretsHandler(shared, r)
 		HostHandler(shared, r)
+		RevokeHandler(shared, r)
+		KVHandler(shared, r)
 	})
 }
 

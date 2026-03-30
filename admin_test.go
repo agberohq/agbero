@@ -99,7 +99,6 @@ func newTestAdminServer(t *testing.T) (*Server, *http.Server, int, func()) {
 	waitForPort(t, adminPort)
 	waitForPort(t, httpPort)
 
-	// Wait until s.adminSrv is actually assigned (this removes the race)
 	for i := 0; i < 100; i++ {
 		s.mu.RLock()
 		ready := s.adminSrv != nil
@@ -110,7 +109,7 @@ func newTestAdminServer(t *testing.T) (*Server, *http.Server, int, func()) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if s.adminSrv == nil {
-		t.Fatal("admin server failed to initialize (s.adminSrv is still nil)")
+		t.Fatal("admin server failed to initialize")
 	}
 
 	cleanup := func() {
@@ -180,7 +179,6 @@ func getToken(t *testing.T, port int) string {
 	return result["token"]
 }
 
-// ==================== CORE ENDPOINTS ====================
 func TestAdminCoreEndpoints(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -193,25 +191,36 @@ func TestAdminCoreEndpoints(t *testing.T) {
 		}
 	})
 
-	t.Run("GET /status - returns status", func(t *testing.T) {
+	t.Run("GET /status - returns status with auth_state", func(t *testing.T) {
 		resp := makeRequest(t, port, http.MethodGet, "/status", nil, "")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+		var result map[string]any
+		json.NewDecoder(resp.Body).Decode(&result)
+		if result["status"] != "ok" {
+			t.Error("status not ok")
+		}
+		if _, ok := result["auth_state"]; !ok {
+			t.Error("auth_state field missing from /status")
+		}
+	})
+
+	t.Run("POST /login - success without challenges", func(t *testing.T) {
+		body := `{"username":"admin","password":"correct-password"}`
+		resp := makeRequest(t, port, http.MethodPost, "/login", []byte(body), "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("expected 200, got %d", resp.StatusCode)
 		}
 		var result map[string]string
 		json.NewDecoder(resp.Body).Decode(&result)
-		if result["status"] != "ok" {
-			t.Error("status not ok")
+		if result["token"] == "" {
+			t.Error("token missing from response")
 		}
-	})
-
-	t.Run("POST /login - success", func(t *testing.T) {
-		body := `{"username":"admin","password":"correct-password"}`
-		resp := makeRequest(t, port, http.MethodPost, "/login", []byte(body), "")
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("expected 200, got %d", resp.StatusCode)
+		if result["expires"] == "" {
+			t.Error("expires missing from response")
 		}
 	})
 
@@ -240,7 +249,44 @@ func TestAdminCoreEndpoints(t *testing.T) {
 	})
 }
 
-// ==================== HOST MANAGEMENT API ====================
+func TestAdminTwoTokenFlow(t *testing.T) {
+	_, _, port, cleanup := newTestAdminServer(t)
+	defer cleanup()
+
+	t.Run("POST /login - returns challenge_required when TOTP enabled", func(t *testing.T) {
+		body := `{"username":"admin","password":"correct-password"}`
+		resp := makeRequest(t, port, http.MethodPost, "/login", []byte(body), "")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200 (no challenges needed), got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("POST /login/challenge - rejects without pre-auth token", func(t *testing.T) {
+		body := `{"totp":"123456","keeper_passphrase":"test"}`
+		resp := makeRequest(t, port, http.MethodPost, "/login/challenge", []byte(body), "")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("POST /refresh - requires valid full token", func(t *testing.T) {
+		token := getToken(t, port)
+		resp := makeRequest(t, port, http.MethodPost, "/refresh", nil, token)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+		var result map[string]string
+		json.NewDecoder(resp.Body).Decode(&result)
+		if result["token"] == "" {
+			t.Error("new token missing from refresh response")
+		}
+	})
+}
+
 func TestAdminHostAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -301,7 +347,6 @@ func TestAdminHostAPI(t *testing.T) {
 	})
 }
 
-// ==================== SECRETS UTILITY API ====================
 func TestAdminSecretsAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -361,7 +406,6 @@ func TestAdminSecretsAPI(t *testing.T) {
 	})
 }
 
-// ==================== ADMIN UI ENDPOINTS ====================
 func TestAdminUIEndpoints(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -417,7 +461,6 @@ func TestAdminUIEndpoints(t *testing.T) {
 	})
 }
 
-// ==================== TOTP API ====================
 func TestAdminTOTPAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -442,7 +485,6 @@ func TestAdminTOTPAPI(t *testing.T) {
 	})
 }
 
-// ==================== CLUSTER API ====================
 func TestAdminClusterAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -454,14 +496,12 @@ func TestAdminClusterAPI(t *testing.T) {
 		payload := `{"host":"example.com","path":"/api"}`
 		resp := makeRequest(t, port, http.MethodPost, basePath, []byte(payload), validToken)
 		defer resp.Body.Close()
-		// Cluster is disabled in test config
 		if resp.StatusCode != http.StatusServiceUnavailable && resp.StatusCode != http.StatusNotFound {
 			t.Errorf("expected 503 or 404, got %d", resp.StatusCode)
 		}
 	})
 }
 
-// ==================== KEEPER API ====================
 func TestAdminKeeperAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -472,14 +512,12 @@ func TestAdminKeeperAPI(t *testing.T) {
 	t.Run("GET /api/v1/keeper/secrets - keeper not configured", func(t *testing.T) {
 		resp := makeRequest(t, port, http.MethodGet, basePath+"/secrets", nil, validToken)
 		defer resp.Body.Close()
-		// Keeper is not configured in test config
 		if resp.StatusCode != http.StatusServiceUnavailable {
 			t.Logf("Keeper not configured - got %d", resp.StatusCode)
 		}
 	})
 }
 
-// ==================== FIREWALL API ====================
 func TestAdminFirewallAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -505,7 +543,6 @@ func TestAdminFirewallAPI(t *testing.T) {
 	})
 }
 
-// ==================== CERTIFICATES API ====================
 func TestAdminCertsAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -516,7 +553,6 @@ func TestAdminCertsAPI(t *testing.T) {
 	t.Run("GET /api/v1/certs - list certificates", func(t *testing.T) {
 		resp := makeRequest(t, port, http.MethodGet, basePath, nil, validToken)
 		defer resp.Body.Close()
-		// TLS manager may not be fully initialized in test, but should not panic
 		if resp.StatusCode == http.StatusInternalServerError {
 			t.Log("TLS manager not fully initialized - test environment limitation")
 		} else if resp.StatusCode != http.StatusOK {

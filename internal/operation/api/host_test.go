@@ -242,12 +242,14 @@ func TestHostHandler_Create_HCL_Backend(t *testing.T) {
 	r := chi.NewRouter()
 	HostHandler(shared, r)
 
-	rawHCL := `# backend service config
+	rawHCL := `
+# backend service config
 domains = ["hcl-backend.example.com"]
 
+# the route information
 route "/" {
   backend {
-    server { address = "http://127.0.0.1:9000" }
+	server { address = "http://127.0.0.1:9000" }
   }
 }
 `
