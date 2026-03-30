@@ -72,32 +72,68 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global) *Ma
 		jack.WithDebounceMaxWait(2*time.Second),
 	)
 
-	baseDir := woos.MakeFolder(global.Storage.DataDir, woos.DataDir)
-
-	var cipher *security.Cipher
-	if global.Gossip.Enabled.Active() && global.Gossip.SecretKey != "" {
-		var err error
-		cipher, err = security.NewCipher(string(global.Gossip.SecretKey))
-		if err != nil {
-			m.logger.Warn("invalid gossip secret key, storage will be plaintext")
+	// Check if DataDir is valid before initializing storage
+	// If DataDir is invalid (e.g., a file, not a directory), run in ephemeral mode
+	dataDir := woos.NewFolder(global.Storage.DataDir)
+	storageValid := false
+	if dataDir.IsSet() {
+		info, err := os.Stat(dataDir.Path())
+		if err == nil && !info.IsDir() {
+			m.logger.Error("DataDir exists but is not a directory, running in ephemeral mode", "path", dataDir.Path())
+		} else if err != nil && !os.IsNotExist(err) {
+			m.logger.Error("DataDir cannot be accessed, running in ephemeral mode", "path", dataDir.Path(), "error", err)
+		} else {
+			storageValid = true
 		}
+	} else {
+		m.logger.Info("DataDir not configured, running in ephemeral certificate mode")
 	}
 
-	var err error
-	m.storage, err = NewDiskStorage(baseDir, cipher)
-	if err != nil {
-		m.logger.Error("failed to initialize TLS storage", "error", err)
-		m.storage = nil
+	if storageValid {
+		// Use CertsDir if set, otherwise default to CertDir
+		certDir := woos.MakeFolder(global.Storage.CertsDir, woos.CertDir)
+
+		// If CertsDir is relative, resolve it against DataDir
+		if !filepath.IsAbs(certDir.String()) {
+			certDir = woos.NewFolder(filepath.Join(dataDir.Path(), certDir.String()))
+		}
+
+		var cipher *security.Cipher
+		if global.Gossip.Enabled.Active() && global.Gossip.SecretKey != "" {
+			var err error
+			cipher, err = security.NewCipher(string(global.Gossip.SecretKey))
+			if err != nil {
+				m.logger.Warn("invalid gossip secret key, storage will be plaintext")
+			}
+		}
+
+		var err error
+		m.storage, err = NewDiskStorage(certDir, cipher)
+		if err != nil {
+			m.logger.Error("failed to initialize TLS storage, running in ephemeral mode", "error", err)
+			m.storage = nil
+		}
+	} else {
+		m.storage = nil // Ephemeral mode: certificates exist only in memory/cache
 	}
 
-	m.acme = NewACMEProvider(logger, &global.LetsEncrypt, m.storage, m.Challenges)
+	m.acme = NewACMEProvider(logger, m.storage, m.Challenges, global.LetsEncrypt)
+
+	// installer needs a directory even in ephemeral mode for temp files
 	certDir := woos.MakeFolder(global.Storage.CertsDir, woos.CertDir)
+	if !filepath.IsAbs(certDir.String()) && dataDir.IsSet() {
+		certDir = woos.NewFolder(filepath.Join(dataDir.Path(), certDir.String()))
+	}
 	m.installer = NewLocal(logger, certDir)
 
+	// Load existing certificates from storage (no-op if storage is nil)
 	m.loadFromStorage()
 
-	if err := m.startWatcher(certDir.Path()); err != nil {
-		m.logger.Fields("err", err).Warn("failed to start certificate watcher")
+	// Start filesystem watcher only if we have persistent storage
+	if m.storage != nil {
+		if err := m.startWatcher(certDir.Path()); err != nil {
+			m.logger.Fields("err", err).Warn("failed to start certificate watcher")
+		}
 	}
 
 	return m
@@ -243,12 +279,16 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return cert, nil
 	}
 
+	settings := m.global.LetsEncrypt
 	host := m.hostManager.Get(name)
-	mode := alaye.ModeLetsEncrypt
-	if host != nil && host.TLS.Mode != "" {
-		mode = host.TLS.Mode
-	} else if woos.IsLocalhost(name) {
-		mode = alaye.ModeLocalAuto
+	mode := m.determineTLSMode(host, name)
+
+	if host == nil {
+		return nil, woos.ErrCertNotfound
+	}
+
+	if host.TLS.LetsEncrypt.Enabled.Active() {
+		settings = host.TLS.LetsEncrypt
 	}
 
 	switch mode {
@@ -265,7 +305,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		}
 		return nil, fmt.Errorf("failed to load manual certs for %s", name)
 	case alaye.ModeLetsEncrypt:
-		return m.getCertificateACME(name)
+		return m.getCertificateACME(name, settings)
 	}
 
 	return nil, fmt.Errorf("no certificate strategy found for %s", name)
@@ -309,6 +349,8 @@ func (m *Manager) triggerRenewal(domain string) {
 		return
 	}
 
+	// host := m.hostManager.Get(domain)
+
 	go func() {
 		defer m.renewingDomains.Delete(domain)
 
@@ -321,12 +363,7 @@ func (m *Manager) triggerRenewal(domain string) {
 		m.logger.Fields("domain", domain).Info("certificate nearing expiration, starting background renewal")
 
 		host := m.hostManager.Get(domain)
-		mode := alaye.ModeLetsEncrypt
-		if host != nil && host.TLS.Mode != "" {
-			mode = host.TLS.Mode
-		} else if woos.IsLocalhost(domain) {
-			mode = alaye.ModeLocalAuto
-		}
+		mode := m.determineTLSMode(host, domain)
 
 		switch mode {
 		case alaye.ModeLocalAuto:
@@ -334,7 +371,7 @@ func (m *Manager) triggerRenewal(domain string) {
 				m.logger.Fields("domain", domain, "err", err).Error("failed to renew local certificate")
 			}
 		case alaye.ModeLetsEncrypt:
-			if _, err := m.getCertificateACME(domain); err != nil {
+			if _, err := m.getCertificateACME(domain, host.TLS.LetsEncrypt); err != nil {
 				m.logger.Fields("domain", domain, "err", err).Error("failed to renew ACME certificate")
 			}
 		}
@@ -359,10 +396,10 @@ func (m *Manager) getCertificateLocal(host string) (*tls.Certificate, error) {
 	return &cert, nil
 }
 
-func (m *Manager) getCertificateACME(domain string) (*tls.Certificate, error) {
+func (m *Manager) getCertificateACME(domain string, setting alaye.LetsEncrypt) (*tls.Certificate, error) {
 
 	v, err, _ := m.acmeFlight.Do(domain, func() (any, error) {
-		tlsCert, certPEM, keyPEM, err := m.acme.ObtainCert(domain)
+		tlsCert, certPEM, keyPEM, err := m.acme.ObtainCert(domain, setting)
 		if err != nil {
 			return nil, woos.ErrCertNotfound
 		}
@@ -544,4 +581,34 @@ func (m *Manager) LikelyInternal(name string) bool {
 		return true
 	}
 	return false
+}
+
+// Add helper method to determine TLS mode with proper priority
+func (m *Manager) determineTLSMode(host *alaye.Host, domain string) alaye.TlsMode {
+	// If host has explicit mode configured, use it
+	if host != nil && host.TLS.Mode != "" {
+		return host.TLS.Mode
+	}
+
+	// Check if host has custom certificates
+	if host != nil && host.TLS.Local.CertFile != "" && host.TLS.Local.KeyFile != "" {
+		return alaye.ModeLocalCert
+	}
+
+	// Localhost gets auto mode
+	if woos.IsLocalhost(domain) {
+		return alaye.ModeLocalAuto
+	}
+
+	// Check if Let's Encrypt is explicitly disabled for this host
+	if host != nil && host.TLS.LetsEncrypt.Enabled.Inactive() {
+		return alaye.ModeLocalNone
+	}
+
+	// Default to Let's Encrypt if globally enabled
+	if m.global.LetsEncrypt.Enabled.Active() {
+		return alaye.ModeLetsEncrypt
+	}
+
+	return alaye.ModeLocalNone
 }

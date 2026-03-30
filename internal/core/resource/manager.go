@@ -288,6 +288,8 @@ func (m *Resource) setDefaults() {
 			TLSHandshakeTimeout:   woos.DefaultTransportTLSHandshakeTimeout,
 			ResponseHeaderTimeout: woos.DefaultTransportResponseHeaderTimeout,
 			ExpectContinueTimeout: 0,
+			WriteBufferSize:       woos.BufferSize,
+			ReadBufferSize:        woos.BufferSize,
 		}
 	}
 

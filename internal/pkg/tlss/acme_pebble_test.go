@@ -54,11 +54,11 @@ func TestPebbleIntegration(t *testing.T) {
 		LetsEncrypt: alaye.LetsEncrypt{
 			Enabled: alaye.Active,
 			Email:   "test@pebble.local",
-			Staging: false,
+			Staging: alaye.Inactive,
 			Pebble: alaye.Pebble{
-				Enabled:  true,
+				Enabled:  alaye.Active,
 				URL:      pebbleURL,
-				Insecure: true, // Pebble uses self-signed certs
+				Insecure: alaye.Active, // Pebble uses self-signed certs
 			},
 		},
 	}
@@ -184,9 +184,9 @@ func TestPebbleWithCustomDomain(t *testing.T) {
 			Enabled: alaye.Active,
 			Email:   "test@pebble.local",
 			Pebble: alaye.Pebble{
-				Enabled:  true,
+				Enabled:  alaye.Active,
 				URL:      "https://localhost:14000/dir",
-				Insecure: true,
+				Insecure: alaye.Active,
 			},
 		},
 	}

@@ -552,7 +552,7 @@ func TestManager_EntryPoint_LocalhostVsPublic(t *testing.T) {
 		LetsEncrypt: alaye.LetsEncrypt{
 			Enabled: alaye.Active,
 			Email:   "test@example.com",
-			Pebble:  alaye.Pebble{Enabled: true, Insecure: true},
+			Pebble:  alaye.Pebble{Enabled: alaye.Active, Insecure: alaye.Active},
 		},
 	}
 
@@ -604,9 +604,9 @@ func TestACMEProvider_PebbleIntegration(t *testing.T) {
 			Enabled: alaye.Active,
 			Email:   "test@pebble.local",
 			Pebble: alaye.Pebble{
-				Enabled:  true,
+				Enabled:  alaye.Active,
 				URL:      pebbleURL,
-				Insecure: true,
+				Insecure: alaye.Active,
 			},
 		},
 	}

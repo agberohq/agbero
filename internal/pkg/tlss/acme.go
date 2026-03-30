@@ -33,27 +33,32 @@ func (u *AcmeUser) GetPrivateKey() crypto.PrivateKey        { return u.key }
 
 type ACMEProvider struct {
 	logger     *ll.Logger
-	config     *alaye.LetsEncrypt
 	storage    Store
 	challenges *ChallengeStore
 	user       *AcmeUser
 	mu         sync.Mutex
+	// glocal     alaye.LetsEncrypt
 }
 
-func NewACMEProvider(logger *ll.Logger, config *alaye.LetsEncrypt, storage Store, challenges *ChallengeStore) *ACMEProvider {
+func NewACMEProvider(logger *ll.Logger, storage Store, challenges *ChallengeStore, global alaye.LetsEncrypt) *ACMEProvider {
 	return &ACMEProvider{
 		logger:     logger,
-		config:     config,
 		storage:    storage,
 		challenges: challenges,
 	}
 }
 
-func (p *ACMEProvider) ObtainCert(domain string) (*tls.Certificate, []byte, []byte, error) {
+func (p *ACMEProvider) ObtainCert(domain string, setting alaye.LetsEncrypt) (*tls.Certificate, []byte, []byte, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	client, err := p.setupLegoClient()
+	// validate first
+	if err := setting.Validate(); err != nil {
+		p.logger.Errorf("invalid Let's Encrypt setting: %s", err)
+		return nil, nil, nil, err
+	}
+
+	client, err := p.setupLegoClient(setting)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -76,31 +81,34 @@ func (p *ACMEProvider) ObtainCert(domain string) (*tls.Certificate, []byte, []by
 	return &tlsCert, certs.Certificate, certs.PrivateKey, nil
 }
 
-func (p *ACMEProvider) setupLegoClient() (*lego.Client, error) {
+func (p *ACMEProvider) setupLegoClient(setting alaye.LetsEncrypt) (*lego.Client, error) {
 	if p.user == nil {
-		if err := p.loadUser(); err != nil {
+		if err := p.loadUser(setting); err != nil {
 			return nil, err
 		}
 	}
 
 	config := lego.NewConfig(p.user)
-
-	if p.config.Pebble.Enabled {
-		config.CADirURL = p.config.Pebble.URL
+	if setting.Pebble.Enabled.Active() {
+		p.logger.Warn("pebble is enabled, this is not recommended for production")
+		config.CADirURL = setting.Pebble.URL
 		if config.CADirURL == "" {
 			config.CADirURL = "https://localhost:14000/dir"
 		}
-		if p.config.Pebble.Insecure {
+		if setting.Pebble.Insecure.Active() {
 			config.HTTPClient = &http.Client{
 				Transport: &http.Transport{
 					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 				},
 			}
 		}
-	} else if p.config.Staging {
-		config.CADirURL = woos.LetsEncryptStagingDir
 	} else {
-		config.CADirURL = woos.LetsEncryptProdDir
+		if setting.Staging.Active() {
+			config.CADirURL = woos.LetsEncryptStagingDir
+			p.logger.Warn("staging Let's Encrypt is enabled, this is not recommended for production")
+		} else {
+			config.CADirURL = woos.LetsEncryptProdDir
+		}
 	}
 
 	config.Certificate.KeyType = certcrypto.RSA2048
@@ -129,9 +137,8 @@ func (p *ACMEProvider) setupLegoClient() (*lego.Client, error) {
 	return client, nil
 }
 
-func (p *ACMEProvider) loadUser() error {
-	email := p.config.Email
-	if email == "" {
+func (p *ACMEProvider) loadUser(setting alaye.LetsEncrypt) error {
+	if setting.Email == "" {
 		return fmt.Errorf("email is required for Let's Encrypt")
 	}
 	var privateKey crypto.PrivateKey
@@ -160,7 +167,7 @@ func (p *ACMEProvider) loadUser() error {
 		_ = p.storage.Save("acme_account", nil, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: bytes}))
 	}
 	p.user = &AcmeUser{
-		Email: email,
+		Email: setting.Email,
 		key:   privateKey,
 	}
 	return nil
