@@ -268,7 +268,6 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 	host := m.hostManager.Get(name)
 	mode := m.determineTLSMode(host, name)
 
-	// If no host and no default strategy, return ErrCertNotfound
 	if host == nil && mode == alaye.ModeLocalNone {
 		return nil, woos.ErrCertNotfound
 	}
@@ -386,6 +385,11 @@ func (m *Manager) getCertificateLocal(host string) (*tls.Certificate, error) {
 	}
 
 	m.cache.Set(host, &cert)
+
+	if m.onUpdate != nil {
+		go m.onUpdate(host, certPEM, keyPEM)
+	}
+
 	return &cert, nil
 }
 

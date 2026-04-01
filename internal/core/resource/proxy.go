@@ -40,8 +40,10 @@ func (p Proxy) Validate() error {
 	if p.Host == nil {
 		return errors.New("proxy: host config is required")
 	}
+
 	if len(p.Host.Domains) == 0 {
 		return errors.New("proxy: host must have at least one domain")
 	}
+
 	return p.Resource.Validate()
 }

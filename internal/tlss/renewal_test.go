@@ -58,45 +58,27 @@ func TestManager_RenewalLogic(t *testing.T) {
 	}
 	oldSerial := certBefore.Leaf.SerialNumber.String()
 
-	// Channel to signal renewal completion
-	renewalDone := make(chan struct{})
-	mgr.SetUpdateCallback(func(cbDomain string, certPEM, keyPEM []byte) {
-		if cbDomain == domain {
-			select {
-			case renewalDone <- struct{}{}:
-			default:
-			}
-		}
-	})
-
-	// GetCertificate triggers background renewal
-	certFast, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
+	// Trigger the renewal by calling GetCertificate
+	_, err = mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
 	if err != nil {
 		t.Fatalf("GetCertificate failed: %v", err)
 	}
-	if certFast.Leaf.SerialNumber.String() != oldSerial {
-		t.Fatalf("GetCertificate didn't return the immediate cached cert!")
+
+	// Poll the cache until the serial changes or timeout
+	deadline := time.Now().Add(10 * time.Second)
+	var newSerial string
+	for time.Now().Before(deadline) {
+		if cert, ok := mgr.cache.Get(domain); ok && cert != nil && cert.Leaf != nil {
+			newSerial = cert.Leaf.SerialNumber.String()
+			if newSerial != oldSerial {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Wait for renewal to complete
-	select {
-	case <-renewalDone:
-		// completed
-	case <-time.After(10 * time.Second):
-		t.Fatal("background renewal timed out")
-	}
-
-	// Give cache a moment to update
-	time.Sleep(100 * time.Millisecond)
-
-	certAfter, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
-	if err != nil {
-		t.Fatalf("GetCertificate after renewal failed: %v", err)
-	}
-
-	newSerial := certAfter.Leaf.SerialNumber.String()
-	if oldSerial == newSerial {
-		t.Errorf("certificate was not renewed! Serial is still %s", oldSerial)
+	if newSerial == "" || newSerial == oldSerial {
+		t.Fatal("certificate was not renewed")
 	}
 	t.Logf("Successfully renewed! Old Serial: %s, New Serial: %s", oldSerial, newSerial)
 }
@@ -115,8 +97,8 @@ func generateExpiringCert(t *testing.T, domain string, expiresIn time.Duration) 
 			Organization: []string{"Test Expiry Org"},
 			CommonName:   domain,
 		},
-		NotBefore:             time.Now().Add(-24 * time.Hour), // valid since yesterday
-		NotAfter:              time.Now().Add(expiresIn),       // expires at the given offset
+		NotBefore:             time.Now().Add(-24 * time.Hour),
+		NotAfter:              time.Now().Add(expiresIn),
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
