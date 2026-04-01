@@ -34,7 +34,6 @@ func SetupTestManager(t *testing.T, global *alaye.Global) (*Manager, string) {
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 
-	// CRITICAL: Enable mock mode for the local installer to prevent system CA installation
 	if mgr.installer != nil {
 		mgr.installer.SetMockMode(true)
 	}

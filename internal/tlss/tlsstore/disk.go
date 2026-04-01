@@ -33,7 +33,6 @@ func NewDisk(cfg DiskConfig) (*Disk, error) {
 		certDir: cfg.CertDir,
 		cipher:  cfg.Cipher,
 	}
-
 	// Create necessary directories if they exist
 	if d.dataDir != "" {
 		// Create issuer subdirectories for data dir (CA and System)
