@@ -1,4 +1,4 @@
-package alaye
+package expect
 
 import (
 	"encoding"
@@ -58,16 +58,12 @@ func (v Value) resolve(lookup func(string) string) (string, error) {
 	}
 
 	// Secret store refs: ss://key  ss.key  keeper.key
-	for _, pfx := range []string{"ss://", "ss.", "keeper."} {
+	for _, pfx := range KeeperStorePrefixes {
 		if after, ok := strings.CutPrefix(raw, pfx); ok {
 			if storeLookupFn == nil {
 				return "", ErrStoreLocked
 			}
-			val, err := storeLookupFn(after)
-			if err != nil {
-				return "", err
-			}
-			return val, nil
+			return storeLookupFn(after)
 		}
 	}
 
@@ -107,7 +103,7 @@ func (v Value) Empty() bool { return strings.TrimSpace(v.String()) == "" }
 // IsSecretStoreRef reports whether this value will be resolved from the keeper.
 func (v Value) IsSecretStoreRef() bool {
 	raw := strings.TrimSpace(string(v))
-	for _, pfx := range []string{"ss://", "ss.", "keeper."} {
+	for _, pfx := range KeeperStorePrefixes {
 		if strings.HasPrefix(raw, pfx) {
 			return true
 		}
