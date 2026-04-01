@@ -21,7 +21,7 @@ func setupManager(t *testing.T) (*Manager, string) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(ll.New("test").Disable(), hm, global)
+	mgr := NewManager(ll.New("test").Disable(), hm, global, nil)
 	return mgr, tmpDir
 }
 

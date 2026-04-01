@@ -20,6 +20,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/pkg/tlss/tlsstore"
 	"github.com/go-acme/lego/v4/registration"
 )
 
@@ -138,7 +139,7 @@ func TestManager_updateInternal_Notify(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	var called atomic.Bool
 	done := make(chan struct{})
@@ -171,7 +172,7 @@ func TestManager_ApplyClusterCertificate(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	certPEM, keyPEM := generateACMETestCert(t, "cluster.com")
 	err := mgr.ApplyClusterCertificate("cluster.com", certPEM, keyPEM)
@@ -197,7 +198,7 @@ func TestManager_ApplyClusterChallenge(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	mgr.ApplyClusterChallenge("token1", "auth1", false)
 	auth, ok := mgr.Challenges.GetKeyAuth("token1")
@@ -238,16 +239,17 @@ func TestManager_loadFromStorage(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
-	defer mgr.Close()
-	certPEM, keyPEM := generateACMETestCert(t, "persist.com")
-	err := mgr.UpdateCertificate("persist.com", certPEM, keyPEM)
+	mgr := NewManager(testLogger, hm, global, nil)
+	certPEM, keyPEM := generateACMETestCert(t, "localhost")
+	err := mgr.UpdateCertificate("localhost", certPEM, keyPEM)
 	if err != nil {
+		mgr.Close()
 		t.Fatalf("UpdateCertificate failed: %v", err)
 	}
-	mgr2 := NewManager(testLogger, hm, global)
+	mgr.Close()
+	mgr2 := NewManager(testLogger, hm, global, nil)
 	defer mgr2.Close()
-	cert, err := mgr2.GetCertificate(&tls.ClientHelloInfo{ServerName: "persist.com"})
+	cert, err := mgr2.GetCertificate(&tls.ClientHelloInfo{ServerName: "localhost"})
 	if err != nil {
 		t.Fatalf("GetCertificate failed: %v", err)
 	}
@@ -258,11 +260,8 @@ func TestManager_loadFromStorage(t *testing.T) {
 
 func TestManager_loadFromStorage_NilStorage(t *testing.T) {
 	tmpDir := t.TempDir()
-
-	// Create a file at the path to make it invalid for directory creation
 	badPath := filepath.Join(tmpDir, "not-a-dir")
 	_ = os.WriteFile(badPath, []byte("x"), 0644)
-
 	global := &alaye.Global{
 		Storage: alaye.Storage{
 			CertsDir: filepath.Join(tmpDir, "certs"),
@@ -271,13 +270,14 @@ func TestManager_loadFromStorage_NilStorage(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
-
-	if mgr.storage != nil {
-		t.Error("expected storage to be nil with invalid DataDir")
+	if mgr.storage == nil {
+		t.Error("expected fallback to MemoryStore")
 	}
-
+	if _, ok := mgr.storage.(*tlsstore.MemoryStore); !ok {
+		t.Error("expected MemoryStore fallback")
+	}
 	mgr.loadFromStorage()
 }
 
@@ -291,7 +291,7 @@ func TestManager_updateInternal_InvalidPEM(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	err := mgr.UpdateCertificate("bad.com", []byte("invalid"), []byte("invalid"))
 	if err == nil {
@@ -309,7 +309,7 @@ func TestManager_GetCertificate_Wildcard(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	certPEM, keyPEM := generateACMETestCert(t, "*.example.com")
 	err := mgr.UpdateCertificate("*.example.com", certPEM, keyPEM)
@@ -335,7 +335,7 @@ func TestManager_GetCertificate_NotFound(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	_, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: "missing.com"})
 	if err != woos.ErrCertNotfound {
@@ -353,7 +353,7 @@ func TestManager_GetCertificate_EmptySNI(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	_, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: ""})
 	if err != woos.ErrMissingSNI {
@@ -371,7 +371,7 @@ func TestManager_ACMEGetConfigForClient(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	cfg, err := mgr.GetConfigForClient(&tls.ClientHelloInfo{})
 	if err != nil {
@@ -392,7 +392,7 @@ func TestManager_EnsureCertMagic(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
 	h, err := mgr.EnsureCertMagic(handler)
@@ -420,7 +420,7 @@ func TestManager_SetUpdateCallback(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	mgr.SetUpdateCallback(func(domain string, certPEM, keyPEM []byte) {})
 	if mgr.onUpdate == nil {
@@ -438,7 +438,7 @@ func TestManager_SetCluster(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	cluster := &mockCluster{}
 	mgr.SetCluster(cluster)
@@ -457,17 +457,14 @@ func TestManager_Close(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	mgr.Close()
 }
 
 func TestNewManager_StorageInitFail(t *testing.T) {
 	tmpDir := t.TempDir()
-
-	// Create a file at the path to make it truly invalid for directory creation
 	badPath := filepath.Join(tmpDir, "not-a-dir")
 	_ = os.WriteFile(badPath, []byte("x"), 0644)
-
 	global := &alaye.Global{
 		Storage: alaye.Storage{
 			CertsDir: filepath.Join(tmpDir, "certs"),
@@ -478,12 +475,13 @@ func TestNewManager_StorageInitFail(t *testing.T) {
 			SecretKey: "test-secret-1234567890123456",
 		},
 	}
-
 	mgr, _ := SetupTestManager(t, global)
 	defer mgr.Close()
-
-	if mgr.storage != nil {
-		t.Error("storage should be nil when initialized with invalid path")
+	if mgr.storage == nil {
+		t.Error("expected fallback to MemoryStore")
+	}
+	if _, ok := mgr.storage.(*tlsstore.MemoryStore); !ok {
+		t.Error("expected MemoryStore fallback")
 	}
 }
 
@@ -497,7 +495,7 @@ func TestManager_updateInternal_StorageSaveFail(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	certPEM, keyPEM := generateACMETestCert(t, "test.com")
 	err := mgr.UpdateCertificate("test.com", certPEM, keyPEM)
@@ -520,7 +518,7 @@ func TestManager_loadFromStorage_InvalidCert(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	mgr.loadFromStorage()
 }
@@ -535,7 +533,7 @@ func TestManager_loadFromStorage_ListFail(t *testing.T) {
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	os.RemoveAll(tmpDir)
 	mgr.loadFromStorage()
@@ -555,30 +553,21 @@ func TestManager_EntryPoint_LocalhostVsPublic(t *testing.T) {
 			Pebble:  alaye.Pebble{Enabled: alaye.Active, Insecure: alaye.Active},
 		},
 	}
-
-	// Use test helper to create manager with mock mode
 	mgr, _ := SetupTestManager(t, global)
 	defer mgr.Close()
-
-	// First, ensure CA is initialized in mock mode
 	if mgr.installer != nil {
 		err := mgr.installer.InstallCARootIfNeeded()
 		if err != nil {
 			t.Fatalf("Failed to initialize CA in mock mode: %v", err)
 		}
 	}
-
-	// For localhost, with mock mode enabled, this should NOT prompt for password
 	cert, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: "localhost"})
 	if err != nil {
-		// In mock mode, we expect either a cert or a specific error, but NOT a password prompt
 		t.Logf("localhost cert result (mock mode): %v", err)
 	} else if cert != nil {
 		leaf, _ := x509.ParseCertificate(cert.Certificate[0])
 		t.Logf("got localhost cert with CN: %s", leaf.Subject.CommonName)
 	}
-
-	// Public domain should return ErrCertNotfound in mock mode
 	_, err = mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: "public.example.com"})
 	if err != woos.ErrCertNotfound {
 		t.Logf("public domain result: %v", err)
@@ -611,7 +600,7 @@ func TestACMEProvider_PebbleIntegration(t *testing.T) {
 		},
 	}
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	testDomain := "test.pebble.local"
 	cert, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: testDomain})

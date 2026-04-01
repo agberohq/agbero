@@ -14,6 +14,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/pkg/tlss/tlsstore"
 	"github.com/go-acme/lego/v4/certcrypto"
 	"github.com/go-acme/lego/v4/certificate"
 	"github.com/go-acme/lego/v4/lego"
@@ -33,14 +34,14 @@ func (u *AcmeUser) GetPrivateKey() crypto.PrivateKey        { return u.key }
 
 type ACMEProvider struct {
 	logger     *ll.Logger
-	storage    Store
+	storage    tlsstore.Store
 	challenges *ChallengeStore
 	user       *AcmeUser
 	mu         sync.Mutex
 	// glocal     alaye.LetsEncrypt
 }
 
-func NewACMEProvider(logger *ll.Logger, storage Store, challenges *ChallengeStore, global alaye.LetsEncrypt) *ACMEProvider {
+func NewACMEProvider(logger *ll.Logger, storage tlsstore.Store, challenges *ChallengeStore, global alaye.LetsEncrypt) *ACMEProvider {
 	return &ACMEProvider{
 		logger:     logger,
 		storage:    storage,
@@ -52,7 +53,6 @@ func (p *ACMEProvider) ObtainCert(domain string, setting alaye.LetsEncrypt) (*tl
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// validate first
 	if err := setting.Validate(); err != nil {
 		p.logger.Errorf("invalid Let's Encrypt setting: %s", err)
 		return nil, nil, nil, err
@@ -78,6 +78,7 @@ func (p *ACMEProvider) ObtainCert(domain string, setting alaye.LetsEncrypt) (*tl
 		return nil, nil, nil, err
 	}
 
+	_ = p.storage.Save(tlsstore.IssuerACME, domain, certs.Certificate, certs.PrivateKey)
 	return &tlsCert, certs.Certificate, certs.PrivateKey, nil
 }
 
@@ -142,6 +143,8 @@ func (p *ACMEProvider) loadUser(setting alaye.LetsEncrypt) error {
 		return fmt.Errorf("email is required for Let's Encrypt")
 	}
 	var privateKey crypto.PrivateKey
+
+	// Load exclusively from store
 	_, keyBytes, keyErr := p.storage.Load("acme_account")
 	if keyErr == nil {
 		block, _ := pem.Decode(keyBytes)
@@ -149,7 +152,6 @@ func (p *ACMEProvider) loadUser(setting alaye.LetsEncrypt) error {
 			var err error
 			privateKey, err = x509.ParseECPrivateKey(block.Bytes)
 			if err != nil {
-				// Try RSA if EC fails (legacy keys)
 				privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
 				if err != nil {
 					p.logger.Warn("failed to parse existing account key, generating new one")
@@ -164,7 +166,7 @@ func (p *ACMEProvider) loadUser(setting alaye.LetsEncrypt) error {
 			return err
 		}
 		bytes, _ := x509.MarshalECPrivateKey(privateKey.(*ecdsa.PrivateKey))
-		_ = p.storage.Save("acme_account", nil, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: bytes}))
+		_ = p.storage.Save(tlsstore.IssuerSystem, "acme_account", nil, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: bytes}))
 	}
 	p.user = &AcmeUser{
 		Email: setting.Email,

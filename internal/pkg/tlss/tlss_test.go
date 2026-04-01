@@ -32,7 +32,7 @@ func SetupTestManager(t *testing.T, global *alaye.Global) (*Manager, string) {
 	}
 
 	hm := discovery.NewHost(woos.NewFolder(tmpDir))
-	mgr := NewManager(testLogger, hm, global)
+	mgr := NewManager(testLogger, hm, global, nil)
 
 	// CRITICAL: Enable mock mode for the local installer to prevent system CA installation
 	if mgr.installer != nil {
@@ -43,14 +43,4 @@ func SetupTestManager(t *testing.T, global *alaye.Global) (*Manager, string) {
 	os.Setenv("AGBERO_TEST_MODE", "1")
 
 	return mgr, tmpDir
-}
-
-// SetupTestLocal creates a Local instance with mock mode enabled
-func SetupTestLocal(t *testing.T, tmpDir string) *Local {
-	t.Helper()
-	logger := testLogger
-	ci := NewLocal(logger)
-	ci.CertDir = woos.NewFolder(tmpDir)
-	ci.SetMockMode(true)
-	return ci
 }
