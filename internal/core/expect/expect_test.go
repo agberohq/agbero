@@ -74,7 +74,7 @@ func TestNew(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := New(tt.input)
+			e := NewRaw(tt.input)
 			if e == nil {
 				t.Fatalf("New() returned nil")
 			}
@@ -133,7 +133,7 @@ func TestExpect_IP(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := New(tt.input)
+			e := NewRaw(tt.input)
 			if e == nil {
 				t.Fatalf("New() returned nil")
 			}
@@ -194,7 +194,7 @@ func TestExpect_Domain(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := New(tt.input)
+			e := NewRaw(tt.input)
 			if e == nil {
 				t.Fatalf("New() returned nil")
 			}
@@ -264,7 +264,7 @@ func TestExpect_SSH(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := New(tt.input)
+			e := NewRaw(tt.input)
 			if e == nil {
 				t.Fatalf("New() returned nil")
 			}
@@ -324,7 +324,7 @@ func TestExpect_Path(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := New(tt.input)
+			e := NewRaw(tt.input)
 			if e == nil {
 				t.Fatalf("New() returned nil")
 			}
@@ -385,7 +385,7 @@ func TestExpect_Username(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := New(tt.input)
+			e := NewRaw(tt.input)
 			if e == nil {
 				t.Fatalf("New() returned nil")
 			}
@@ -432,7 +432,7 @@ func TestExpect_JWT(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := New(tt.input)
+			e := NewRaw(tt.input)
 			if e == nil {
 				t.Fatalf("New() returned nil")
 			}
@@ -534,7 +534,7 @@ func TestExpect_Secret(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := New(tt.input)
+			e := NewRaw(tt.input)
 			if e == nil {
 				t.Fatalf("New() returned nil")
 			}
@@ -564,7 +564,7 @@ func TestExpect_Secret(t *testing.T) {
 }
 
 func TestExpect_SecretHelpers(t *testing.T) {
-	e := New("ss://admin/jwt_secret/v1/primary")
+	e := NewRaw("ss://admin/jwt_secret/v1/primary")
 	if e == nil {
 		t.Fatalf("New() returned nil")
 	}
@@ -608,7 +608,7 @@ func TestExpect_SecretHelpers(t *testing.T) {
 
 func TestExpect_Raw(t *testing.T) {
 	input := "test-key"
-	e := New(input)
+	e := NewRaw(input)
 	if e == nil {
 		t.Fatalf("New() returned nil")
 	}
@@ -634,7 +634,7 @@ func TestExpect_Type(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			e := New(tt.input)
+			e := NewRaw(tt.input)
 			if e == nil {
 				t.Fatalf("New() returned nil")
 			}
@@ -671,7 +671,7 @@ func TestExpect_URLEncoded(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := New(tt.input)
+			e := NewRaw(tt.input)
 			if e == nil {
 				t.Fatalf("New() returned nil")
 			}
@@ -697,7 +697,7 @@ func TestExpect_Error(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := New(tt.input)
+			e := NewRaw(tt.input)
 			hasErr := e.Error() != nil
 			if hasErr != tt.wantErr {
 				t.Errorf("Error() = %v, wantErr %v", e.Error(), tt.wantErr)
@@ -708,12 +708,12 @@ func TestExpect_Error(t *testing.T) {
 
 func BenchmarkExpect_New(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		New("ss://admin/jwt_secret/v1/primary")
+		NewRaw("ss://admin/jwt_secret/v1/primary")
 	}
 }
 
 func BenchmarkExpect_IP(b *testing.B) {
-	e := New("192.168.0.1")
+	e := NewRaw("192.168.0.1")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = e.IP()
@@ -721,7 +721,7 @@ func BenchmarkExpect_IP(b *testing.B) {
 }
 
 func BenchmarkExpect_Domain(b *testing.B) {
-	e := New("example.com")
+	e := NewRaw("example.com")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = e.Domain()
@@ -729,7 +729,7 @@ func BenchmarkExpect_Domain(b *testing.B) {
 }
 
 func BenchmarkExpect_Secret(b *testing.B) {
-	e := New("ss://admin/jwt_secret/v1/primary")
+	e := NewRaw("ss://admin/jwt_secret/v1/primary")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = e.Secret()

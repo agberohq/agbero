@@ -1,6 +1,8 @@
-package alaye
+package expect
 
-import "os"
+import (
+	"os"
+)
 
 const (
 	envDelimiter = "="

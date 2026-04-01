@@ -24,33 +24,13 @@ const (
 	TypeSecret   KeyType = "secret"
 )
 
-// SecretScheme represents the storage scheme for secret URIs
-type SecretScheme string
-
-const (
-	SchemeSecret SecretScheme = "secret"
-	SchemeSS     SecretScheme = "ss"
-	SchemeVault  SecretScheme = "vault"
-	SchemeEnv    SecretScheme = "env"
-	SchemeFile   SecretScheme = "file"
-)
-
-// SecretPath represents a parsed secret path with namespace, key, and subkeys
-type SecretPath struct {
-	Scheme    SecretScheme
-	Namespace string
-	Key       string
-	SubKeys   []string
-	Raw       string
-}
-
-// Expect provides typed validation for different key formats
-type Expect struct {
-	raw        string
-	keyType    KeyType
-	secretPath *SecretPath
-	parseErr   error
-	validate   *validator.Validate
+// Raw provides typed validation for different key formats
+type Raw struct {
+	raw      string
+	keyType  KeyType
+	secret   *Secret
+	parseErr error
+	validate *validator.Validate
 }
 
 var (
@@ -75,22 +55,22 @@ func init() {
 	_ = _Validate.RegisterValidation("username", validateUsername)
 }
 
-// New creates a new Expect (never returns error - check via typed methods or Error())
-func New(rawKey string) *Expect {
+// NewRaw creates a new Raw (never returns error - check via typed methods or Error())
+func NewRaw(rawKey string) *Raw {
 	decoded, err := url.QueryUnescape(rawKey)
 	if err != nil {
-		return &Expect{raw: rawKey, parseErr: fmt.Errorf("failed to decode key: %w", err), validate: _Validate}
+		return &Raw{raw: rawKey, parseErr: fmt.Errorf("failed to decode key: %w", err), validate: _Validate}
 	}
 	decoded = strings.TrimSpace(decoded)
 	if decoded == "" {
-		return &Expect{raw: rawKey, parseErr: errors.New("key cannot be empty"), validate: _Validate}
+		return &Raw{raw: rawKey, parseErr: errors.New("key cannot be empty"), validate: _Validate}
 	}
-	e := &Expect{raw: decoded, validate: _Validate}
+	e := &Raw{raw: decoded, validate: _Validate}
 	e.detectType()
 	return e
 }
 
-func (e *Expect) detectType() {
+func (e *Raw) detectType() {
 	if e.parseErr != nil {
 		return
 	}
@@ -154,7 +134,7 @@ func (e *Expect) detectType() {
 	// Contains / but no @ (avoid SSH), no leading / (avoid Path collision)
 	if !strings.Contains(e.raw, "@") && strings.Contains(e.raw, "/") {
 		if secret, err := ParseSecret(e.raw); err == nil {
-			e.secretPath = secret.ToSecretPath()
+			e.secret = secret.ToSecretPath()
 			e.keyType = TypeSecret
 			return
 		}
@@ -170,63 +150,34 @@ func (e *Expect) detectType() {
 }
 
 // isValidHostForSSH validates host part of SSH pattern (IP, simple hostname, or FQDN)
-func (e *Expect) isValidHostForSSH(s string) bool {
+func (e *Raw) isValidHostForSSH(s string) bool {
 	if net.ParseIP(s) != nil {
 		return true
 	}
 	return _HostnameRegex.MatchString(s)
 }
 
-func (e *Expect) parseSecretURI() error {
-	parsedURL, err := url.Parse(e.raw)
+func (e *Raw) parseSecretURI() error {
+	// ParseSecret centralizes all URL parsing, splitting, and validation
+	// using the highly optimized pre-compiled regexes in constants.go.
+	secret, err := ParseSecret(e.raw)
 	if err != nil {
 		return err
 	}
-	scheme := SecretScheme(parsedURL.Scheme)
-	if !isValidScheme(scheme) {
-		return fmt.Errorf("unsupported secret scheme: %s", parsedURL.Scheme)
+
+	// Ensure the scheme is one of the strictly supported ones
+	if !isValidScheme(secret.Scheme) {
+		return fmt.Errorf("unsupported secret scheme: %s", secret.Scheme)
 	}
 
-	var pathParts []string
-	if parsedURL.Host != "" {
-		pathParts = append(pathParts, parsedURL.Host)
-	}
-	path := strings.Trim(parsedURL.Path, "/")
-	if path != "" {
-		pathParts = append(pathParts, strings.Split(path, "/")...)
-	}
-	if len(pathParts) < 2 {
-		return errors.New("secret path must contain at least namespace and key")
-	}
-
-	secretPath := &SecretPath{
-		Scheme:    scheme,
-		Namespace: pathParts[0],
-		Key:       pathParts[1],
-		SubKeys:   []string{},
-		Raw:       e.raw,
-	}
-	if err := e.validate.Var(secretPath.Namespace, "namespace"); err != nil {
-		return fmt.Errorf("invalid namespace: %s", secretPath.Namespace)
-	}
-	if err := e.validate.Var(secretPath.Key, "secretkey"); err != nil {
-		return fmt.Errorf("invalid key: %s", secretPath.Key)
-	}
-	if len(pathParts) > 2 {
-		secretPath.SubKeys = pathParts[2:]
-		for _, subkey := range secretPath.SubKeys {
-			if err := e.validate.Var(subkey, "subkey"); err != nil {
-				return fmt.Errorf("invalid subkey: %s", subkey)
-			}
-		}
-	}
-	e.secretPath = secretPath
+	// Store the unified Secret type (replaces the deprecated SecretPath)
+	e.secret = secret
 	return nil
 }
 
-func (e *Expect) checkError() error { return e.parseErr }
+func (e *Raw) checkError() error { return e.parseErr }
 
-func (e *Expect) IP() (net.IP, error) {
+func (e *Raw) IP() (net.IP, error) {
 	if err := e.checkError(); err != nil {
 		return nil, err
 	}
@@ -246,7 +197,7 @@ func (e *Expect) IP() (net.IP, error) {
 	return ip, nil
 }
 
-func (e *Expect) Domain() (string, error) {
+func (e *Raw) Domain() (string, error) {
 	if err := e.checkError(); err != nil {
 		return "", err
 	}
@@ -262,7 +213,7 @@ func (e *Expect) Domain() (string, error) {
 	return e.raw, nil
 }
 
-func (e *Expect) SSH() (username, host string, err error) {
+func (e *Raw) SSH() (username, host string, err error) {
 	if err := e.checkError(); err != nil {
 		return "", "", err
 	}
@@ -292,7 +243,7 @@ func (e *Expect) SSH() (username, host string, err error) {
 	return username, host, nil
 }
 
-func (e *Expect) Path() (string, error) {
+func (e *Raw) Path() (string, error) {
 	if err := e.checkError(); err != nil {
 		return "", err
 	}
@@ -308,7 +259,7 @@ func (e *Expect) Path() (string, error) {
 	return e.raw, nil
 }
 
-func (e *Expect) Username() (string, error) {
+func (e *Raw) Username() (string, error) {
 	if err := e.checkError(); err != nil {
 		return "", err
 	}
@@ -321,7 +272,7 @@ func (e *Expect) Username() (string, error) {
 	return e.raw, nil
 }
 
-func (e *Expect) JWT() (string, error) {
+func (e *Raw) JWT() (string, error) {
 	if err := e.checkError(); err != nil {
 		return "", err
 	}
@@ -338,21 +289,21 @@ func (e *Expect) JWT() (string, error) {
 }
 
 // Secret returns backward-compatible SecretPath
-func (e *Expect) Secret() (*SecretPath, error) {
+func (e *Raw) Secret() (*Secret, error) {
 	if err := e.checkError(); err != nil {
 		return nil, err
 	}
 	if e.keyType != TypeSecret {
 		return nil, fmt.Errorf("expected secret URI, got %s: %s", e.keyType, e.raw)
 	}
-	if e.secretPath == nil {
+	if e.secret == nil {
 		return nil, errors.New("secret path not parsed")
 	}
-	return e.secretPath, nil
+	return e.secret, nil
 }
 
 // SecretRef returns the new Secret type with extended methods
-func (e *Expect) SecretRef() (*Secret, error) {
+func (e *Raw) SecretRef() (*Secret, error) {
 	if err := e.checkError(); err != nil {
 		return nil, err
 	}
@@ -362,51 +313,51 @@ func (e *Expect) SecretRef() (*Secret, error) {
 	return ParseSecret(e.raw)
 }
 
-func (e *Expect) Namespace() (string, error) {
+func (e *Raw) Namespace() (string, error) {
 	if err := e.checkError(); err != nil {
 		return "", err
 	}
-	if e.keyType != TypeSecret || e.secretPath == nil {
+	if e.keyType != TypeSecret || e.secret == nil {
 		return "", errors.New("secret path not parsed")
 	}
-	return e.secretPath.Namespace, nil
+	return e.secret.Namespace, nil
 }
 
-func (e *Expect) SecretKey() (string, error) {
+func (e *Raw) SecretKey() (string, error) {
 	if err := e.checkError(); err != nil {
 		return "", err
 	}
-	if e.keyType != TypeSecret || e.secretPath == nil {
+	if e.keyType != TypeSecret || e.secret == nil {
 		return "", errors.New("secret path not parsed")
 	}
-	return e.secretPath.Key, nil
+	return e.secret.Key, nil
 }
 
-func (e *Expect) SubKeys() ([]string, error) {
+func (e *Raw) SubKeys() ([]string, error) {
 	if err := e.checkError(); err != nil {
 		return nil, err
 	}
-	if e.keyType != TypeSecret || e.secretPath == nil {
+	if e.keyType != TypeSecret || e.secret == nil {
 		return nil, errors.New("secret path not parsed")
 	}
-	return e.secretPath.SubKeys, nil
+	return e.secret.SubKeys, nil
 }
 
-func (e *Expect) SecretScheme() (SecretScheme, error) {
+func (e *Raw) SecretScheme() (SecretScheme, error) {
 	if err := e.checkError(); err != nil {
 		return "", err
 	}
-	if e.keyType != TypeSecret || e.secretPath == nil {
+	if e.keyType != TypeSecret || e.secret == nil {
 		return "", errors.New("secret path not parsed")
 	}
-	return e.secretPath.Scheme, nil
+	return e.secret.Scheme, nil
 }
 
-func (e *Expect) Raw() string   { return e.raw }
-func (e *Expect) Type() KeyType { return e.keyType }
-func (e *Expect) Error() error  { return e.parseErr }
+func (e *Raw) Raw() string   { return e.raw }
+func (e *Raw) Type() KeyType { return e.keyType }
+func (e *Raw) Error() error  { return e.parseErr }
 
-func (e *Expect) isValidJWTFormat() bool {
+func (e *Raw) isValidJWTFormat() bool {
 	if strings.Count(e.raw, ".") != 2 {
 		return false
 	}
@@ -422,7 +373,7 @@ func (e *Expect) isValidJWTFormat() bool {
 	return true
 }
 
-func (e *Expect) isAllowedLoopback() bool { return false }
+func (e *Raw) isAllowedLoopback() bool { return false }
 
 // Custom validator functions for go-playground/validator
 func validateNamespace(fl validator.FieldLevel) bool {
