@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/pkg/tlss/tlsstore"
+	"github.com/agberohq/agbero/internal/tlss/tlsstore"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 	"github.com/smallstep/truststore"

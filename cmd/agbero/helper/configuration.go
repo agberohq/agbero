@@ -9,9 +9,9 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/discovery"
-	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
+	tlss2 "github.com/agberohq/agbero/internal/tlss"
 	"github.com/olekukonko/ll"
 )
 
@@ -169,8 +169,8 @@ func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 		global, err := loadGlobal(existing)
 		if err == nil && global.Storage.CertsDir != "" {
 			certsDir := global.Storage.CertsDir
-			if !tlss.IsCARootInstalled(certsDir) {
-				loc := tlss.NewLocal(logger, woos.NewFolder(certsDir))
+			if !tlss2.IsCARootInstalled(certsDir) {
+				loc := tlss2.NewLocal(logger, woos.NewFolder(certsDir))
 				if err := loc.InstallCARootIfNeeded(); err != nil {
 					logger.Warn("CA install skipped: ", err)
 				}

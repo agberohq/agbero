@@ -18,20 +18,20 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/pkg/tlss/tlsstore"
+	tlsstore2 "github.com/agberohq/agbero/internal/tlss/tlsstore"
 	"github.com/olekukonko/ll"
 )
 
 func setupLocalTest(t *testing.T, tmpDir string) *Local {
 	t.Helper()
 	logger := ll.New("test").Disable()
-	store := tlsstore.NewMemory()
+	store := tlsstore2.NewMemory()
 	ci := NewLocal(logger, store)
 	ci.SetMockMode(true)
 	return ci
 }
 
-func writeSelfSignedCert(t *testing.T, store tlsstore.Store, domain string, hosts []string) {
+func writeSelfSignedCert(t *testing.T, store tlsstore2.Store, domain string, hosts []string) {
 	t.Helper()
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -79,12 +79,12 @@ func writeSelfSignedCert(t *testing.T, store tlsstore.Store, domain string, host
 		t.Fatalf("marshal private key: %v", err)
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes})
-	if err := store.Save(tlsstore.IssuerLocal, domain, certPEM, keyPEM); err != nil {
+	if err := store.Save(tlsstore2.IssuerLocal, domain, certPEM, keyPEM); err != nil {
 		t.Fatalf("save to store: %v", err)
 	}
 }
 
-func writeECDSASelfSignedCert(t *testing.T, store tlsstore.Store, domain string, hosts []string) {
+func writeECDSASelfSignedCert(t *testing.T, store tlsstore2.Store, domain string, hosts []string) {
 	t.Helper()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -132,12 +132,12 @@ func writeECDSASelfSignedCert(t *testing.T, store tlsstore.Store, domain string,
 		t.Fatalf("marshal EC key: %v", err)
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
-	if err := store.Save(tlsstore.IssuerLocal, domain, certPEM, keyPEM); err != nil {
+	if err := store.Save(tlsstore2.IssuerLocal, domain, certPEM, keyPEM); err != nil {
 		t.Fatalf("save to store: %v", err)
 	}
 }
 
-func writeCACert(t *testing.T, store tlsstore.Store) {
+func writeCACert(t *testing.T, store tlsstore2.Store) {
 	t.Helper()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -166,13 +166,13 @@ func writeCACert(t *testing.T, store tlsstore.Store) {
 		t.Fatalf("marshal ECDSA key: %v", err)
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
-	if err := store.Save(tlsstore.IssuerCA, "ca", certPEM, keyPEM); err != nil {
+	if err := store.Save(tlsstore2.IssuerCA, "ca", certPEM, keyPEM); err != nil {
 		t.Fatalf("save CA to store: %v", err)
 	}
 }
 
 func TestCertLocal_validateCertificate_HostMatch(t *testing.T) {
-	store := tlsstore.NewMemory()
+	store := tlsstore2.NewMemory()
 	ci := NewLocal(ll.New("test").Disable(), store)
 	ci.SetMockMode(true)
 	domain := "localhost-443"
@@ -196,7 +196,7 @@ func TestCertLocal_validateCertificate_HostMatch(t *testing.T) {
 }
 
 func TestCertLocal_validateCertificate_StripsPortAndBracketedIPv6(t *testing.T) {
-	store := tlsstore.NewMemory()
+	store := tlsstore2.NewMemory()
 	ci := NewLocal(ll.New("test").Disable(), store)
 	ci.SetMockMode(true)
 	domain := "mixed-443"
@@ -216,7 +216,7 @@ func TestCertLocal_validateCertificate_StripsPortAndBracketedIPv6(t *testing.T) 
 }
 
 func TestCertLocal_validateCertificate_Wildcard_VerifiedByConcreteSubdomain(t *testing.T) {
-	store := tlsstore.NewMemory()
+	store := tlsstore2.NewMemory()
 	ci := NewLocal(ll.New("test").Disable(), store)
 	ci.SetMockMode(true)
 	domain := "wild-443"
@@ -236,7 +236,7 @@ func TestCertLocal_validateCertificate_Wildcard_VerifiedByConcreteSubdomain(t *t
 }
 
 func TestCertLocal_certPrefix_NormalizesPortsAndIPv6(t *testing.T) {
-	store := tlsstore.NewMemory()
+	store := tlsstore2.NewMemory()
 	ci := NewLocal(ll.New("test").Disable(), store)
 	ci.SetMockMode(true)
 	ci.SetHosts([]string{"app.localhost:443"}, 443)
@@ -258,7 +258,7 @@ func TestCertLocal_certPrefix_NormalizesPortsAndIPv6(t *testing.T) {
 }
 
 func TestCertLocal_EnsureLocalhostCert_ReusesValidECDSA(t *testing.T) {
-	store := tlsstore.NewMemory()
+	store := tlsstore2.NewMemory()
 	ci := NewLocal(ll.New("test").Disable(), store)
 	ci.SetMockMode(true)
 	ci.SetHosts([]string{"localhost"}, 443)
@@ -285,7 +285,7 @@ func TestCertLocal_EnsureLocalhostCert_ReusesValidECDSA(t *testing.T) {
 }
 
 func TestCertLocal_EnsureLocalhostCert_GeneratesNewWhenMissing(t *testing.T) {
-	store := tlsstore.NewMemory()
+	store := tlsstore2.NewMemory()
 	ci := NewLocal(ll.New("test").Disable(), store)
 	ci.SetMockMode(true)
 	ci.SetHosts([]string{"test.local"}, 8443)
@@ -313,7 +313,7 @@ func TestCertLocal_EnsureLocalhostCert_GeneratesNewWhenMissing(t *testing.T) {
 }
 
 func TestCertLocal_InstallCARootIfNeeded_MockMode(t *testing.T) {
-	store := tlsstore.NewMemory()
+	store := tlsstore2.NewMemory()
 	ci := NewLocal(ll.New("test").Disable(), store)
 	ci.SetMockMode(true)
 	if ci.caExists() {
@@ -348,7 +348,7 @@ func TestCertLocal_InstallCARootIfNeeded_MockMode(t *testing.T) {
 }
 
 func TestCertLocal_UninstallCARoot_MockMode(t *testing.T) {
-	store := tlsstore.NewMemory()
+	store := tlsstore2.NewMemory()
 	ci := NewLocal(ll.New("test").Disable(), store)
 	ci.SetMockMode(true)
 	err := ci.InstallCARootIfNeeded()
@@ -368,7 +368,7 @@ func TestCertLocal_UninstallCARoot_MockMode(t *testing.T) {
 }
 
 func TestCertLocal_LoadCA(t *testing.T) {
-	store := tlsstore.NewMemory()
+	store := tlsstore2.NewMemory()
 	ci := NewLocal(ll.New("test").Disable(), store)
 	ci.SetMockMode(true)
 	err := ci.generateCAFilesOnly()
@@ -391,7 +391,7 @@ func TestCertLocal_LoadCA(t *testing.T) {
 }
 
 func TestCertLocal_ListCertificates(t *testing.T) {
-	store := tlsstore.NewMemory()
+	store := tlsstore2.NewMemory()
 	ci := NewLocal(ll.New("test").Disable(), store)
 	ci.SetMockMode(true)
 	writeSelfSignedCert(t, store, "test-cert", []string{"localhost"})
@@ -412,7 +412,7 @@ func TestCertLocal_ListCertificates(t *testing.T) {
 }
 
 func TestCertLocal_validateCertificate_Expired(t *testing.T) {
-	store := tlsstore.NewMemory()
+	store := tlsstore2.NewMemory()
 	ci := NewLocal(ll.New("test").Disable(), store)
 	ci.SetMockMode(true)
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -434,7 +434,7 @@ func TestCertLocal_validateCertificate_Expired(t *testing.T) {
 		t.Fatalf("marshal key: %v", err)
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
-	if err := store.Save(tlsstore.IssuerLocal, "expired", certPEM, keyPEM); err != nil {
+	if err := store.Save(tlsstore2.IssuerLocal, "expired", certPEM, keyPEM); err != nil {
 		t.Fatalf("save to store: %v", err)
 	}
 	ci.SetHosts([]string{"localhost"}, 443)
@@ -444,7 +444,7 @@ func TestCertLocal_validateCertificate_Expired(t *testing.T) {
 }
 
 func TestCertLocal_validateCertificate_NotYetValid(t *testing.T) {
-	store := tlsstore.NewMemory()
+	store := tlsstore2.NewMemory()
 	ci := NewLocal(ll.New("test").Disable(), store)
 	ci.SetMockMode(true)
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -466,7 +466,7 @@ func TestCertLocal_validateCertificate_NotYetValid(t *testing.T) {
 		t.Fatalf("marshal key: %v", err)
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
-	if err := store.Save(tlsstore.IssuerLocal, "future", certPEM, keyPEM); err != nil {
+	if err := store.Save(tlsstore2.IssuerLocal, "future", certPEM, keyPEM); err != nil {
 		t.Fatalf("save to store: %v", err)
 	}
 	ci.SetHosts([]string{"localhost"}, 443)
@@ -546,7 +546,7 @@ func TestParsePrivateKey(t *testing.T) {
 }
 
 func TestCertLocal_HasCertutil(t *testing.T) {
-	store := tlsstore.NewMemory()
+	store := tlsstore2.NewMemory()
 	ci := NewLocal(ll.New("test").Disable(), store)
 	ci.SetMockMode(true)
 	result := ci.HasCertutil()

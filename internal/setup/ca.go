@@ -6,8 +6,8 @@ import (
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/pkg/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
+	tlss2 "github.com/agberohq/agbero/internal/tlss"
 )
 
 type CA struct {
@@ -19,11 +19,11 @@ func NewCA(ctx *Context) *CA {
 }
 
 func (c *CA) IsInstalled() bool {
-	return tlss.IsCARootInstalled(c.ctx.Paths.CertsDir.Path())
+	return tlss2.IsCARootInstalled(c.ctx.Paths.CertsDir.Path())
 }
 
 func (c *CA) Install() error {
-	installer := tlss.NewLocal(c.ctx.Logger, c.ctx.Paths.CertsDir)
+	installer := tlss2.NewLocal(c.ctx.Logger, c.ctx.Paths.CertsDir)
 	if err := installer.InstallCARootIfNeeded(); err != nil {
 		installer.RemoveCA()
 		return err
@@ -33,13 +33,13 @@ func (c *CA) Install() error {
 }
 
 func (c *CA) Uninstall() error {
-	installer := tlss.NewLocal(c.ctx.Logger, c.ctx.Paths.CertsDir)
+	installer := tlss2.NewLocal(c.ctx.Logger, c.ctx.Paths.CertsDir)
 	return installer.UninstallCARoot()
 }
 
 // printNSSHint logs the OS-appropriate certutil install command when NSS is absent.
 // Firefox and Chrome on Linux/macOS require certutil to register the local CA.
-func (c *CA) printNSSHint(loc *tlss.Local) {
+func (c *CA) printNSSHint(loc *tlss2.Local) {
 	if loc.HasCertutil() {
 		return
 	}

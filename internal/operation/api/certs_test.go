@@ -19,7 +19,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/discovery"
-	"github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/agberohq/agbero/internal/tlss"
 	"github.com/go-chi/chi/v5"
 )
 

@@ -57,7 +57,7 @@ func OpenStore(dataDir string, cfg *alaye.Keeper, logger *ll.Logger) (*keeper.Ke
 	if passphrase != "" {
 		passBytes := []byte(passphrase)
 		master, deriveErr := store.DeriveMaster(passBytes)
-		zero.Byte(passBytes) // Use exported function
+		zero.Bytes(passBytes) // Use exported function
 		if deriveErr != nil {
 			store.Close()
 			return nil, fmt.Errorf("failed to derive master key: %w", deriveErr)
@@ -72,7 +72,7 @@ func OpenStore(dataDir string, cfg *alaye.Keeper, logger *ll.Logger) (*keeper.Ke
 			// If UnlockDatabase doesn't accept nil, create a default master key
 			defaultKey := make([]byte, 32)
 			master, deriveErr := store.DeriveMaster(defaultKey)
-			zero.Byte(defaultKey) // Use exported function
+			zero.Bytes(defaultKey) // Use exported function
 			if deriveErr != nil {
 				store.Close()
 				return nil, fmt.Errorf("failed to derive default master key: %w", deriveErr)

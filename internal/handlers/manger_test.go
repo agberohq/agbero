@@ -16,7 +16,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/agberohq/agbero/internal/pkg/cook"
-	"github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/agberohq/agbero/internal/tlss"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )

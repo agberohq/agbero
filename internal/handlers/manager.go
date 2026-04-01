@@ -21,7 +21,7 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/bot"
 	"github.com/agberohq/agbero/internal/pkg/cook"
 	"github.com/agberohq/agbero/internal/pkg/orchestrator"
-	"github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/agberohq/agbero/internal/tlss"
 	"github.com/olekukonko/errors"
 	"github.com/quic-go/quic-go/http3"
 )
