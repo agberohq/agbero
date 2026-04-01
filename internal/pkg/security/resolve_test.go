@@ -1,48 +1,53 @@
-package expect
+package security
 
 import (
+	"path/filepath"
 	"testing"
 
-	"path/filepath"
-
-	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/pkg/security"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/keeper"
-	"github.com/olekukonko/ll"
 )
 
 func TestResolver_WireUnwire(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
-		Passphrase: Value("test-passphrase-32-bytes-long!!"),
-	}
-	logger := ll.New("test").Disable()
-	store, err := security.OpenStore(dataDir, cfg, logger)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := keeper.New(keeper.Config{DBPath: dbPath})
 	if err != nil {
-		t.Fatalf("OpenStore failed: %v", err)
+		t.Fatalf("Failed to create keeper: %v", err)
 	}
 	defer store.Close()
 
-	// Create the bucket before writing
+	// Unlock the store
+	if err := store.Unlock([]byte("test-passphrase-32-bytes-long!!")); err != nil {
+		t.Fatalf("Unlock failed: %v", err)
+	}
+
+	// Create a bucket - this is required
 	if err := store.CreateBucket("vault", "test-ns", keeper.LevelPasswordOnly, "test"); err != nil {
 		t.Fatalf("CreateBucket failed: %v", err)
 	}
 
 	testKey := "vault://test-ns/test-key"
 	testValue := "test-value"
+
+	// Set the value
 	if err := store.Set(testKey, []byte(testValue)); err != nil {
 		t.Fatalf("Set failed: %v", err)
 	}
 
+	// Verify it's there
+	got, err := store.Get(testKey)
+	if err != nil || string(got) != testValue {
+		t.Fatalf("Store verification failed: got %s, want %s, err: %v", got, testValue, err)
+	}
+
 	resolver := NewResolver(store)
 
-	// Test without Wire - should return original key because storeLookupFn is nil
-	resolver.Unwire() // Ensure no lookup function is set
-	val := Value(testKey)
+	// Test without Wire
+	resolver.Unwire()
+	val := expect.Value(testKey)
 	resolved, err := resolver.Resolve(val)
-	if err != ErrStoreLocked {
+	if err != expect.ErrStoreLocked {
 		t.Errorf("Without Wire, expected ErrStoreLocked, got: %v", err)
 	}
 
@@ -62,17 +67,16 @@ func TestResolver_WireUnwire(t *testing.T) {
 
 func TestResolver_ResolveNamespaced(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
-		Passphrase: Value("test-passphrase-32-bytes-long!!"),
-	}
-	logger := ll.New("test").Disable()
-	store, err := security.OpenStore(dataDir, cfg, logger)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := keeper.New(keeper.Config{DBPath: dbPath})
 	if err != nil {
-		t.Fatalf("OpenStore failed: %v", err)
+		t.Fatalf("Failed to create keeper: %v", err)
 	}
 	defer store.Close()
+
+	if err := store.Unlock([]byte("test-passphrase-32-bytes-long!!")); err != nil {
+		t.Fatalf("Unlock failed: %v", err)
+	}
 
 	// Create buckets
 	if err := store.CreateBucket("vault", "prod", keeper.LevelPasswordOnly, "test"); err != nil {
@@ -93,7 +97,7 @@ func TestResolver_ResolveNamespaced(t *testing.T) {
 	resolver := NewResolver(store)
 
 	// Test ResolveNamespaced
-	resolved, err := resolver.ResolveNamespaced("vault", "prod", Value("db-password"))
+	resolved, err := resolver.ResolveNamespaced("vault", "prod", expect.Value("db-password"))
 	if err != nil {
 		t.Fatalf("ResolveNamespaced failed: %v", err)
 	}
@@ -102,7 +106,7 @@ func TestResolver_ResolveNamespaced(t *testing.T) {
 	}
 
 	// Test with different namespace
-	resolved, err = resolver.ResolveNamespaced("vault", "staging", Value("db-password"))
+	resolved, err = resolver.ResolveNamespaced("vault", "staging", expect.Value("db-password"))
 	if err != nil {
 		t.Fatalf("ResolveNamespaced staging failed: %v", err)
 	}
@@ -113,17 +117,16 @@ func TestResolver_ResolveNamespaced(t *testing.T) {
 
 func TestResolver_MultipleSchemes(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
-		Passphrase: Value("test-passphrase-32-bytes-long!!"),
-	}
-	logger := ll.New("test").Disable()
-	store, err := security.OpenStore(dataDir, cfg, logger)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := keeper.New(keeper.Config{DBPath: dbPath})
 	if err != nil {
-		t.Fatalf("OpenStore failed: %v", err)
+		t.Fatalf("Failed to create keeper: %v", err)
 	}
 	defer store.Close()
+
+	if err := store.Unlock([]byte("test-passphrase-32-bytes-long!!")); err != nil {
+		t.Fatalf("Unlock failed: %v", err)
+	}
 
 	// Create buckets with different schemes
 	if err := store.CreateBucket("vault", "system", keeper.LevelPasswordOnly, "test"); err != nil {
@@ -163,7 +166,7 @@ func TestResolver_MultipleSchemes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			val := Value(tt.key)
+			val := expect.Value(tt.key)
 			resolved, err := resolver.Resolve(val)
 			if err != nil {
 				t.Fatalf("Resolve failed: %v", err)
@@ -177,17 +180,16 @@ func TestResolver_MultipleSchemes(t *testing.T) {
 
 func TestResolver_WithDifferentPrefixes(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
-		Passphrase: Value("test-passphrase-32-bytes-long!!"),
-	}
-	logger := ll.New("test").Disable()
-	store, err := security.OpenStore(dataDir, cfg, logger)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := keeper.New(keeper.Config{DBPath: dbPath})
 	if err != nil {
-		t.Fatalf("OpenStore failed: %v", err)
+		t.Fatalf("Failed to create keeper: %v", err)
 	}
 	defer store.Close()
+
+	if err := store.Unlock([]byte("test-passphrase-32-bytes-long!!")); err != nil {
+		t.Fatalf("Unlock failed: %v", err)
+	}
 
 	// Create bucket
 	if err := store.CreateBucket("vault", "test", keeper.LevelPasswordOnly, "test"); err != nil {
@@ -203,7 +205,7 @@ func TestResolver_WithDifferentPrefixes(t *testing.T) {
 	resolver.Wire()
 	defer resolver.Unwire()
 
-	// Test different prefix formats that alaye.Value supports
+	// Test different prefix formats that Value supports
 	prefixes := []string{
 		"ss://vault://test/mykey",   // ss:// prefix
 		"ss.vault://test/mykey",     // ss. prefix
@@ -212,7 +214,7 @@ func TestResolver_WithDifferentPrefixes(t *testing.T) {
 
 	for _, prefix := range prefixes {
 		t.Run(prefix, func(t *testing.T) {
-			val := Value(prefix)
+			val := expect.Value(prefix)
 			resolved, err := resolver.Resolve(val)
 			if err != nil {
 				t.Fatalf("Resolve with prefix %s failed: %v", prefix, err)
@@ -226,17 +228,16 @@ func TestResolver_WithDifferentPrefixes(t *testing.T) {
 
 func TestResolver_Unwire(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
-		Passphrase: Value("test-passphrase-32-bytes-long!!"),
-	}
-	logger := ll.New("test").Disable()
-	store, err := security.OpenStore(dataDir, cfg, logger)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := keeper.New(keeper.Config{DBPath: dbPath})
 	if err != nil {
-		t.Fatalf("OpenStore failed: %v", err)
+		t.Fatalf("Failed to create keeper: %v", err)
 	}
 	defer store.Close()
+
+	if err := store.Unlock([]byte("test-passphrase-32-bytes-long!!")); err != nil {
+		t.Fatalf("Unlock failed: %v", err)
+	}
 
 	// Create bucket and set value
 	if err := store.CreateBucket("vault", "test", keeper.LevelPasswordOnly, "test"); err != nil {
@@ -252,7 +253,7 @@ func TestResolver_Unwire(t *testing.T) {
 
 	// Wire and verify it works
 	resolver.Wire()
-	val := Value("vault://test/mykey")
+	val := expect.Value("vault://test/mykey")
 	resolved, err := resolver.Resolve(val)
 	if err != nil {
 		t.Fatalf("Resolve after wire failed: %v", err)
@@ -264,24 +265,23 @@ func TestResolver_Unwire(t *testing.T) {
 	// Unwire and verify it fails
 	resolver.Unwire()
 	_, err = resolver.Resolve(val)
-	if err != ErrStoreLocked {
+	if err != expect.ErrStoreLocked {
 		t.Errorf("After unwire, expected ErrStoreLocked, got: %v", err)
 	}
 }
 
 func TestResolver_NonExistentKey(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
-		Passphrase: Value("test-passphrase-32-bytes-long!!"),
-	}
-	logger := ll.New("test").Disable()
-	store, err := security.OpenStore(dataDir, cfg, logger)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := keeper.New(keeper.Config{DBPath: dbPath})
 	if err != nil {
-		t.Fatalf("OpenStore failed: %v", err)
+		t.Fatalf("Failed to create keeper: %v", err)
 	}
 	defer store.Close()
+
+	if err := store.Unlock([]byte("test-passphrase-32-bytes-long!!")); err != nil {
+		t.Fatalf("Unlock failed: %v", err)
+	}
 
 	// Create bucket
 	if err := store.CreateBucket("vault", "test", keeper.LevelPasswordOnly, "test"); err != nil {
@@ -293,10 +293,10 @@ func TestResolver_NonExistentKey(t *testing.T) {
 	defer resolver.Unwire()
 
 	// Try to resolve a non-existent key
-	val := Value("vault://test/nonexistent")
+	val := expect.Value("vault://test/nonexistent")
 	resolved, err := resolver.Resolve(val)
 
-	// Should return the original key and no error (or maybe a not found error)
+	// Should return the original key and no error
 	if err != nil && err != keeper.ErrKeyNotFound {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -307,24 +307,23 @@ func TestResolver_NonExistentKey(t *testing.T) {
 
 func TestResolver_EmptyKey(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
-		Passphrase: Value("test-passphrase-32-bytes-long!!"),
-	}
-	logger := ll.New("test").Disable()
-	store, err := security.OpenStore(dataDir, cfg, logger)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := keeper.New(keeper.Config{DBPath: dbPath})
 	if err != nil {
-		t.Fatalf("OpenStore failed: %v", err)
+		t.Fatalf("Failed to create keeper: %v", err)
 	}
 	defer store.Close()
+
+	if err := store.Unlock([]byte("test-passphrase-32-bytes-long!!")); err != nil {
+		t.Fatalf("Unlock failed: %v", err)
+	}
 
 	resolver := NewResolver(store)
 	resolver.Wire()
 	defer resolver.Unwire()
 
 	// Empty key should resolve to empty string
-	val := Value("")
+	val := expect.Value("")
 	resolved, err := resolver.Resolve(val)
 	if err != nil {
 		t.Errorf("Resolve empty key failed: %v", err)

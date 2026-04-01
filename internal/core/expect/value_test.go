@@ -380,21 +380,21 @@ func TestValueFormatter(t *testing.T) {
 
 	// %#v with a secret store ref to check raw representation
 	secret := Value("ss://key")
-	expected := `alaye.Value("ss://key")`
+	expected := `expect.Value("ss://key")`
 	if fmt.Sprintf("%#v", secret) != expected {
 		t.Errorf("%%#v failed: got %q", fmt.Sprintf("%#v", secret))
 	}
 
 	// Unknown verb
 	output := fmt.Sprintf("%x", plain)
-	if !strings.Contains(output, "alaye.Value") {
+	if !strings.Contains(output, "expect.Value") {
 		t.Errorf("Unknown verb handling failed: got %q", output)
 	}
 }
 
 func TestValueGoString(t *testing.T) {
 	v := Value("ss://key")
-	expected := `alaye.Value("ss://key")`
+	expected := `expect.Value("ss://key")`
 	if v.GoString() != expected {
 		t.Errorf("Expected %q, got %q", expected, v.GoString())
 	}

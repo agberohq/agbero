@@ -4,8 +4,8 @@ import "regexp"
 
 type SecretScheme string
 
+// Standard URI Schemes
 const (
-	// Standard URI Schemes
 	SchemeSS     SecretScheme = "ss"
 	SchemeVault  SecretScheme = "vault"
 	SchemeKeeper SecretScheme = "keeper"
@@ -25,7 +25,7 @@ const (
 // KeeperStorePrefixes contains all prefixes that must be resolved via the Keeper
 var KeeperStorePrefixes = []string{
 	string(SchemeSS) + "://",
-	string(SchemeVault) + "://",
+	string(SchemeVault) + "://", // ADD THIS
 	string(SchemeKeeper) + "://",
 	string(SchemeCerts) + "://",
 	string(SchemeSpaces) + "://",

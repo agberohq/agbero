@@ -1,3 +1,4 @@
+// expect/value.go
 package expect
 
 import (
@@ -9,28 +10,13 @@ import (
 	"strings"
 )
 
-// Value is a lazy-resolving string used throughout alaye config structs.
-//
-// Supported prefixes (resolved in order):
-//
-//	ss://key   — secret store lookup (keeper)
-//	ss.key     — alias for ss://key
-//	keeper.key — alias for ss://key
-//	b64.data   — base64-decode the remainder (StdEncoding)
-//	env.VAR    — os.Getenv(VAR)
-//	$VAR       — shell-style expansion via os.Expand
-//	(plain)    — returned as-is
-//
-// Store resolution is wired in at runtime by calling SetStoreLookup once
-// the keeper is unlocked.  This keeps alaye free of any direct import of
-// pkg/security.
+// Value is a lazy-resolving string used throughout config structs.
 type Value string
 
-// storeLookupFn is set once by server.go after Store.Unlock() succeeds.
+// storeLookupFn is set once after Store.Unlock() succeeds.
 var storeLookupFn func(key string) (string, error)
 
 // SetStoreLookup wires the keeper into all Value resolutions.
-// Call from server.go immediately after Store.Unlock().
 func SetStoreLookup(fn func(key string) (string, error)) {
 	storeLookupFn = fn
 }
@@ -39,8 +25,6 @@ func SetStoreLookup(fn func(key string) (string, error)) {
 var ErrStoreLocked = errors.New("secret store is locked")
 
 // Resolve resolves the value using lookup for env vars.
-// Keeper refs silently return "" when the store is not yet unlocked,
-// matching expected behaviour during initial config load.
 func (v Value) Resolve(lookup func(string) string) string {
 	result, _ := v.resolve(lookup)
 	return result
@@ -57,13 +41,36 @@ func (v Value) resolve(lookup func(string) string) (string, error) {
 		return "", nil
 	}
 
-	// Secret store refs: ss://key  ss.key  keeper.key
-	for _, pfx := range KeeperStorePrefixes {
+	// Handle alias prefixes that should be stripped (ss://, ss., keeper.)
+	aliasPrefixes := []string{
+		"ss://",
+		"ss.",
+		"keeper.",
+	}
+	for _, pfx := range aliasPrefixes {
 		if after, ok := strings.CutPrefix(raw, pfx); ok {
 			if storeLookupFn == nil {
 				return "", ErrStoreLocked
 			}
+			// Strip the alias, pass the inner key
 			return storeLookupFn(after)
+		}
+	}
+
+	// Handle keeper schemes that should be passed through unchanged (vault://, keeper://, certs://, spaces://)
+	schemePrefixes := []string{
+		"vault://",
+		"keeper://",
+		"certs://",
+		"spaces://",
+	}
+	for _, pfx := range schemePrefixes {
+		if strings.HasPrefix(raw, pfx) {
+			if storeLookupFn == nil {
+				return "", ErrStoreLocked
+			}
+			// Pass the full key unchanged
+			return storeLookupFn(raw)
 		}
 	}
 
@@ -103,7 +110,7 @@ func (v Value) Empty() bool { return strings.TrimSpace(v.String()) == "" }
 // IsSecretStoreRef reports whether this value will be resolved from the keeper.
 func (v Value) IsSecretStoreRef() bool {
 	raw := strings.TrimSpace(string(v))
-	for _, pfx := range KeeperStorePrefixes {
+	for _, pfx := range []string{"ss://", "ss.", "keeper.", "vault://", "keeper://", "certs://", "spaces://"} {
 		if strings.HasPrefix(raw, pfx) {
 			return true
 		}
@@ -122,14 +129,13 @@ func (v Value) IsBase64() bool {
 	return strings.HasPrefix(strings.TrimSpace(string(v)), "b64.")
 }
 
-// UnmarshalText implements encoding.TextUnmarshaler (HCL / TOML / YAML).
+// UnmarshalText implements encoding.TextUnmarshaler.
 func (v *Value) UnmarshalText(text []byte) error {
 	*v = Value(string(text))
 	return nil
 }
 
 // MarshalText implements encoding.TextMarshaler.
-// Keeper refs are emitted as-is; everything else is redacted.
 func (v Value) MarshalText() ([]byte, error) {
 	if v.IsSecretStoreRef() {
 		return []byte(v), nil
@@ -167,7 +173,7 @@ func (v *Value) GobDecode(data []byte) error {
 	return nil
 }
 
-// Format implements fmt.Formatter so %s/%q/%v/%#v all do the right thing.
+// Format implements fmt.Formatter.
 func (v Value) Format(f fmt.State, verb rune) {
 	switch verb {
 	case 's':
@@ -176,17 +182,17 @@ func (v Value) Format(f fmt.State, verb rune) {
 		fmt.Fprintf(f, "%q", v.String())
 	case 'v':
 		if f.Flag('#') {
-			fmt.Fprintf(f, "alaye.Value(%q)", string(v))
+			fmt.Fprintf(f, "expect.Value(%q)", string(v))
 		} else {
 			fmt.Fprint(f, v.String())
 		}
 	default:
-		fmt.Fprintf(f, "%%!%c(alaye.Value)", verb)
+		fmt.Fprintf(f, "%%!%c(expect.Value)", verb)
 	}
 }
 
 // GoString implements fmt.GoStringer.
-func (v Value) GoString() string { return fmt.Sprintf("alaye.Value(%q)", string(v)) }
+func (v Value) GoString() string { return fmt.Sprintf("expect.Value(%q)", string(v)) }
 
 // Constructor helpers.
 func ValueSecret(key string) Value  { return Value("ss://" + key) }
