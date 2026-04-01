@@ -100,7 +100,7 @@ func (s *Secret) validate() error {
 	if len(s.Namespace) < 3 || len(s.Namespace) > 64 {
 		return fmt.Errorf("namespace length %d invalid (3-64)", len(s.Namespace))
 	}
-	if !regexp.MustCompile(`^[a-zA-Z0-9_\-]+$`).MatchString(s.Namespace) {
+	if !RegexNamespace.MatchString(s.Namespace) {
 		return fmt.Errorf("invalid namespace: %s", s.Namespace)
 	}
 
@@ -176,14 +176,20 @@ func (s *Secret) HasScheme() bool { return s.hasScheme }
 func (s *Secret) String() string { return s.Raw }
 
 // ToSecretPath converts to backward-compatible SecretPath
-func (s *Secret) ToSecretPath() *SecretPath {
-	return &SecretPath{
+func (s *Secret) ToSecretPath() *Secret {
+	return &Secret{
 		Scheme:    s.Scheme,
 		Namespace: s.Namespace,
 		Key:       s.Key,
 		SubKeys:   append([]string(nil), s.SubKeys...),
 		Raw:       s.Raw,
 	}
+}
+
+// IsInternal returns true if the secret is marked as internal
+// Internal secrets are those with namespace "internal" or starting with "internal/"
+func (s *Secret) IsInternal() bool {
+	return s.Namespace == "internal" || strings.HasPrefix(s.Namespace, "internal/")
 }
 
 func isValidScheme(s SecretScheme) bool {
