@@ -1,7 +1,7 @@
 package discovery
 
 import (
-	"github.com/agberohq/agbero/internal/cluster"
+	"github.com/agberohq/agbero/internal/hub/cluster"
 	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/ll"
 )

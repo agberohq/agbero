@@ -11,7 +11,7 @@ import (
 	"charm.land/huh/v2"
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/discovery"
+	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 )
 
@@ -40,7 +40,7 @@ func (h *Host) List(configPath string) error {
 		return err
 	}
 	hostsFolder := woos.NewFolder(global.Storage.HostsDir)
-	hm := discovery.NewHost(hostsFolder, discovery.WithLogger(h.p.Logger))
+	hm := discovery2.NewHost(hostsFolder, discovery2.WithLogger(h.p.Logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err

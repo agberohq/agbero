@@ -47,9 +47,7 @@ func buildBasicTree(tb testing.TB) (*Tree, map[string]*alaye.Route) {
 }
 
 //
-// =====================
 // Tests
-// =====================
 //
 
 func TestMatcher_OrderAndFallback(t *testing.T) {
@@ -202,9 +200,7 @@ func TestMatcher_CatchAll(t *testing.T) {
 }
 
 //
-// =====================
 // Benchmarks
-// =====================
 //
 
 // Old matcher (your deprecated code)

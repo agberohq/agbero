@@ -13,9 +13,9 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/agberohq/agbero/internal/pkg/security"
-	tlsstore2 "github.com/agberohq/agbero/internal/tlss/tlsstore"
 	"github.com/agberohq/keeper"
 	"github.com/fsnotify/fsnotify"
 	"github.com/olekukonko/jack"
@@ -34,7 +34,7 @@ type Manager struct {
 	logger      *ll.Logger
 	hostManager *discovery.Host
 	global      *alaye.Global
-	storage     tlsstore2.Store
+	storage     tlsstore.Store
 	installer   *Local
 	acme        *ACMEProvider
 	Challenges  *ChallengeStore
@@ -71,7 +71,7 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global, kee
 	)
 
 	if keeperStore != nil && !keeperStore.IsLocked() {
-		ks, err := tlsstore2.NewKeeper(keeperStore)
+		ks, err := tlsstore.NewKeeper(keeperStore)
 		if err == nil {
 			m.storage = ks
 			m.logger.Info("TLS storage initialized using Keeper backend")
@@ -94,7 +94,7 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global, kee
 				cipher, _ = security.NewCipher(global.Gossip.SecretKey.String())
 			}
 
-			diskCfg := tlsstore2.DiskConfig{
+			diskCfg := tlsstore.DiskConfig{
 				DataDir: dataDir.Path(),
 				CertDir: certDir.Path(),
 			}
@@ -103,7 +103,7 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global, kee
 				diskCfg.Cipher = cipher
 			}
 
-			ds, err := tlsstore2.NewDisk(diskCfg)
+			ds, err := tlsstore.NewDisk(diskCfg)
 			if err == nil {
 				m.storage = ds
 				m.logger.Info("TLS storage initialized using Disk backend")
@@ -115,7 +115,7 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global, kee
 
 	if m.storage == nil {
 		m.logger.Info("Persistent storage not configured or failed, running in ephemeral Memory mode")
-		m.storage = tlsstore2.NewMemory()
+		m.storage = tlsstore.NewMemory()
 	}
 
 	m.acme = NewACMEProvider(logger, m.storage, m.Challenges, global.LetsEncrypt)
@@ -123,7 +123,7 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global, kee
 
 	m.loadFromStorage()
 
-	if ds, isDisk := m.storage.(*tlsstore2.Disk); isDisk {
+	if ds, isDisk := m.storage.(*tlsstore.Disk); isDisk {
 		if err := m.startWatcher(ds.CertDir()); err != nil {
 			m.logger.Fields("err", err).Warn("failed to start disk certificate watcher")
 		}
@@ -333,33 +333,41 @@ func (m *Manager) needsRenewal(cert *tls.Certificate) bool {
 	return timeLeft < (totalLifetime / 3)
 }
 
+// renewCertificateSync performs synchronous certificate renewal for the given domain.
+// This method is intended for testing and internal use where immediate renewal is required.
+func (m *Manager) renewCertificateSync(domain string) error {
+	host := m.hostManager.Get(domain)
+	mode := m.determineTLSMode(host, domain)
+	switch mode {
+	case alaye.ModeLocalAuto:
+		_, err := m.getCertificateLocal(domain)
+		return err
+	case alaye.ModeLetsEncrypt:
+		if host == nil {
+			return fmt.Errorf("host configuration not found for domain %s", domain)
+		}
+		_, err := m.getCertificateACME(domain, host.TLS.LetsEncrypt)
+		return err
+	default:
+		return fmt.Errorf("renewal not supported for TLS mode %s", mode)
+	}
+}
+
+// triggerRenewal initiates background certificate renewal for the given domain.
+// It prevents duplicate renewal attempts using a concurrent map and cluster lock.
 func (m *Manager) triggerRenewal(domain string) {
 	if _, loaded := m.renewingDomains.SetIfAbsent(domain, true); loaded {
 		return
 	}
-
 	go func() {
 		defer m.renewingDomains.Delete(domain)
-
 		if m.cluster != nil && !m.cluster.TryAcquireLock("renew:"+domain) {
 			m.logger.Fields("domain", domain).Debug("cluster peer is already renewing certificate")
 			return
 		}
-
 		m.logger.Fields("domain", domain).Info("certificate nearing expiration, starting background renewal")
-
-		host := m.hostManager.Get(domain)
-		mode := m.determineTLSMode(host, domain)
-
-		switch mode {
-		case alaye.ModeLocalAuto:
-			if _, err := m.getCertificateLocal(domain); err != nil {
-				m.logger.Fields("domain", domain, "err", err).Error("failed to renew local certificate")
-			}
-		case alaye.ModeLetsEncrypt:
-			if _, err := m.getCertificateACME(domain, host.TLS.LetsEncrypt); err != nil {
-				m.logger.Fields("domain", domain, "err", err).Error("failed to renew ACME certificate")
-			}
+		if err := m.renewCertificateSync(domain); err != nil {
+			m.logger.Fields("domain", domain, "err", err).Error("failed to renew certificate")
 		}
 	}()
 }
@@ -512,7 +520,7 @@ func (m *Manager) ApplyClusterCertificate(domain string, certPEM, keyPEM []byte)
 	m.cache.Set(domain, &cert)
 
 	if m.storage != nil {
-		if err := m.storage.Save(tlsstore2.IssuerCustom, domain, certPEM, keyPEM); err != nil {
+		if err := m.storage.Save(tlsstore.IssuerCustom, domain, certPEM, keyPEM); err != nil {
 			return err
 		}
 	}
@@ -536,7 +544,7 @@ func (m *Manager) UpdateCertificate(domain string, certPEM, keyPEM []byte) error
 	m.cache.Set(domain, &cert)
 
 	if m.storage != nil {
-		if err := m.storage.Save(tlsstore2.IssuerCustom, domain, certPEM, keyPEM); err != nil {
+		if err := m.storage.Save(tlsstore.IssuerCustom, domain, certPEM, keyPEM); err != nil {
 			return err
 		}
 	}

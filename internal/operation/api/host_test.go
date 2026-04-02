@@ -12,7 +12,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/discovery"
+	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
 )
@@ -59,7 +59,7 @@ func validWebPayload(domain, root string) []byte {
 
 // setupTestHost creates a temp hosts dir, a discovery instance, and a Shared
 // wired for host handler tests. Returns cleanup to defer.
-func setupTestHost(t *testing.T) (*discovery.Host, string, *Shared, func()) {
+func setupTestHost(t *testing.T) (*discovery2.Host, string, *Shared, func()) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts.d")
@@ -67,7 +67,7 @@ func setupTestHost(t *testing.T) (*discovery.Host, string, *Shared, func()) {
 		t.Fatalf("failed to create hosts dir: %v", err)
 	}
 
-	hosts := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
+	hosts := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
 	global := &alaye.Global{
 		Storage: alaye.Storage{HostsDir: hostsDir},
 	}

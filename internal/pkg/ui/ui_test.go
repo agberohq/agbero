@@ -9,9 +9,7 @@ import (
 	"charm.land/lipgloss/v2/compat"
 )
 
-// ─────────────────────────────────────────────
 //  Helpers
-// ─────────────────────────────────────────────
 
 func newBuf() (*UI, *bytes.Buffer) {
 	buf := &bytes.Buffer{}
@@ -42,9 +40,7 @@ func stripped(s string) string {
 	return b.String()
 }
 
-// ─────────────────────────────────────────────
 //  Core functionality
-// ─────────────────────────────────────────────
 
 func TestFlush_writesAndResets(t *testing.T) {
 	u, buf := newBuf()
@@ -174,9 +170,7 @@ func TestTable_containsHeadersAndData(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────
 //  Edge cases
-// ─────────────────────────────────────────────
 
 func TestKeyValueBlock_emptyNoOutput(t *testing.T) {
 	u, buf := newBuf()

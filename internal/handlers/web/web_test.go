@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
+	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
 // -----------------------------------------------------------------------------
@@ -135,9 +135,7 @@ func decompressGzip(t *testing.T, rr *httptest.ResponseRecorder) string {
 	return string(got)
 }
 
-// =============================================================================
 // Pure unit tests — no HTTP, no filesystem
-// =============================================================================
 
 func TestIsMarkdownPath(t *testing.T) {
 	cases := []struct {
@@ -259,9 +257,7 @@ func writeTempFile(t *testing.T, content string) *os.File {
 	return f
 }
 
-// =============================================================================
 // HTTP integration tests
-// =============================================================================
 
 func TestServeHTTP_MethodNotAllowed(t *testing.T) {
 	h := newHandler(t, newTestRoot(t))
@@ -856,9 +852,7 @@ func TestServeHTTP_VaryHeader_Gzip(t *testing.T) {
 	}
 }
 
-// =============================================================================
 // index.md rendering
-// =============================================================================
 
 func TestServeHTTP_IndexMd_RenderedWhenMarkdownEnabled(t *testing.T) {
 	root := newTestRoot(t)
@@ -909,9 +903,7 @@ func TestServeHTTP_IndexMd_DownloadBypassesRenderer(t *testing.T) {
 	}
 }
 
-// =============================================================================
 // ?refresh cache busting
-// =============================================================================
 
 func TestServeHTTP_Refresh_NoCacheHeader(t *testing.T) {
 	root := newTestRoot(t)

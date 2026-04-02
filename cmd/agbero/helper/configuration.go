@@ -8,10 +8,10 @@ import (
 	"syscall"
 
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/discovery"
+	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
-	tlss2 "github.com/agberohq/agbero/internal/tlss"
 	"github.com/olekukonko/ll"
 )
 
@@ -25,7 +25,7 @@ func (c *Configuration) Validate(configFile string) error {
 		return err
 	}
 	hostsFolder := woos.NewFolder(global.Storage.HostsDir)
-	hm := discovery.NewHost(hostsFolder, discovery.WithLogger(c.p.Logger))
+	hm := discovery2.NewHost(hostsFolder, discovery2.WithLogger(c.p.Logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err
@@ -145,13 +145,14 @@ func InitConfiguration(logger *ll.Logger, targetDir string) (string, error) {
 // InstallConfiguration prepares agbero for service registration. The decision
 // tree is:
 //
-//  1. If an existing config is discoverable (cwd, AGBERO_HOME, or platform
-//     home), load it and ensure the CA is installed against the certs_dir it
-//     declares. Return the existing path — no new installation is created.
+// If an existing config is discoverable (cwd, AGBERO_HOME, or platform
 //
-//  2. If here is true, scaffold a new installation in the current directory.
+//	home), load it and ensure the CA is installed against the certs_dir it
+//	declares. Return the existing path — no new installation is created.
 //
-//  3. Otherwise scaffold a new installation in the platform home directory.
+// If here is true, scaffold a new installation in the current directory.
+//
+// Otherwise scaffold a new installation in the platform home directory.
 //
 // Returning an "already exists" error signals callers to reuse the path
 // without treating it as a failure.
@@ -169,8 +170,8 @@ func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 		global, err := loadGlobal(existing)
 		if err == nil && global.Storage.CertsDir != "" {
 			certsDir := global.Storage.CertsDir
-			if !tlss2.IsCARootInstalled(certsDir) {
-				loc := tlss2.NewLocal(logger, woos.NewFolder(certsDir))
+			if !tlss.IsCARootInstalled(certsDir) {
+				loc := tlss.NewLocal(logger, woos.NewFolder(certsDir))
 				if err := loc.InstallCARootIfNeeded(); err != nil {
 					logger.Warn("CA install skipped: ", err)
 				}

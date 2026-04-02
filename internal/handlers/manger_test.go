@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/discovery"
-	"github.com/agberohq/agbero/internal/pkg/cook"
-	"github.com/agberohq/agbero/internal/tlss"
+	"github.com/agberohq/agbero/internal/hub/cook"
+	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/hub/resource"
+	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
@@ -52,12 +52,12 @@ func testTLSManager(t *testing.T) *tlss.Manager {
 }
 
 // testHostManagerWithHosts creates a host manager with pre-loaded hosts
-func testHostManagerWithHosts(t *testing.T, hosts map[string]*alaye.Host) *discovery.Host {
+func testHostManagerWithHosts(t *testing.T, hosts map[string]*alaye.Host) *discovery2.Host {
 	t.Helper()
 
-	hm := discovery.NewHost(
+	hm := discovery2.NewHost(
 		woos.NewFolder(t.TempDir()),
-		discovery.WithLogger(testLogger),
+		discovery2.WithLogger(testLogger),
 	)
 
 	// Use LoadStatic to load multiple hosts at once (matches old code)
@@ -72,7 +72,7 @@ func testManagerConfig(t *testing.T) ManagerConfig {
 
 	return ManagerConfig{
 		Global:      &alaye.Global{},
-		HostManager: discovery.NewHost(woos.NewFolder(t.TempDir()), discovery.WithLogger(testLogger)),
+		HostManager: discovery2.NewHost(woos.NewFolder(t.TempDir()), discovery2.WithLogger(testLogger)),
 		Resource:    testResource,
 		IPMgr:       testIPManager,
 		CookManager: testCookManager(t),

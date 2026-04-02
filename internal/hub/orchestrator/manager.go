@@ -8,7 +8,8 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/pkg/cook"
+	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
@@ -26,12 +27,12 @@ type Manager struct {
 	logger    *ll.Logger
 	workDir   string
 	cookMgr   *cook.Manager
-	globalEnv map[string]alaye.Value
+	globalEnv map[string]expect.Value
 }
 
 // New constructs a new orchestrator Manager to handle background and ephemeral processes.
 // It requires a logger, working directory, and a reference to the cook manager for git-based roots.
-func New(logger *ll.Logger, workDir string, cookMgr *cook.Manager, globalEnv map[string]alaye.Value) *Manager {
+func New(logger *ll.Logger, workDir string, cookMgr *cook.Manager, globalEnv map[string]expect.Value) *Manager {
 	return &Manager{
 		pool:      jack.NewPool(defaultPoolSize),
 		loopers:   mappo.NewConcurrent[string, *jack.Looper](),
@@ -47,7 +48,7 @@ func New(logger *ll.Logger, workDir string, cookMgr *cook.Manager, globalEnv map
 func (m *Manager) Provision(host string, route alaye.Route) error {
 	for _, w := range route.Serverless.Workers {
 		dir := m.ResolveDir(host, route, w)
-		env := alaye.CompileEnv(m.globalEnv, route.Env, w.Env)
+		env := expect.CompileEnv(m.globalEnv, route.Env, w.Env)
 
 		proc := &Process{
 			Config: w,

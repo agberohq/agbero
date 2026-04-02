@@ -2,8 +2,8 @@ package agbero
 
 import (
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
-	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/operation/api"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"

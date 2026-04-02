@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

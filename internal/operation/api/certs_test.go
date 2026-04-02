@@ -18,13 +18,13 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/discovery"
-	"github.com/agberohq/agbero/internal/tlss"
+	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/go-chi/chi/v5"
 )
 
 type mockHostManagerForCerts struct {
-	*discovery.Host
+	*discovery2.Host
 }
 
 func newMockHostManagerForCerts(t *testing.T) *mockHostManagerForCerts {
@@ -33,7 +33,7 @@ func newMockHostManagerForCerts(t *testing.T) *mockHostManagerForCerts {
 	if err := os.MkdirAll(hostsDir, 0755); err != nil {
 		t.Fatalf("Failed to create hosts dir: %v", err)
 	}
-	h := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
+	h := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
 	return &mockHostManagerForCerts{Host: h}
 }
 

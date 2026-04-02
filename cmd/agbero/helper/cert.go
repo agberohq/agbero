@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
-	tlss2 "github.com/agberohq/agbero/internal/tlss"
 	"github.com/dustin/go-humanize"
 )
 
@@ -23,7 +23,7 @@ func (c *Cert) Install(configPath string, force bool) {
 		c.p.Logger.Info("Force flag detected. Removing existing CA and regenerating...")
 		_ = loc.UninstallCARoot() // Attempt to uninstall from trust stores
 		loc.RemoveCA()            // Remove CA files
-	} else if tlss2.IsCARootInstalled(loc.CertDir.Path()) {
+	} else if tlss.IsCARootInstalled(loc.CertDir.Path()) {
 		c.p.Logger.Info("CA root is already installed. Synchronizing with system trust stores...")
 		if err := loc.InstallCARootIfNeeded(); err != nil {
 			c.p.Logger.Fatal("failed to synchronize CA: ", err)
@@ -41,7 +41,7 @@ func (c *Cert) Install(configPath string, force bool) {
 	c.printNSSHint(loc)
 }
 
-func (c *Cert) printNSSHint(loc *tlss2.Local) {
+func (c *Cert) printNSSHint(loc *tlss.Local) {
 	if loc.HasCertutil() {
 		return
 	}
@@ -155,8 +155,8 @@ func (c *Cert) Info(configPath string) {
 	u.Table([]string{"Certificate", "Size", "Modified"}, rows)
 }
 
-func (c *Cert) newLocal(configPath string) *tlss2.Local {
-	loc := tlss2.NewLocal(c.p.Logger)
+func (c *Cert) newLocal(configPath string) *tlss.Local {
+	loc := tlss.NewLocal(c.p.Logger)
 	if global, err := loadGlobal(configPath); err == nil && global.Storage.CertsDir != "" {
 		_ = loc.SetStorageDir(woos.NewFolder(global.Storage.CertsDir))
 	}

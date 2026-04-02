@@ -20,7 +20,7 @@ import (
 	"charm.land/huh/v2"
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/discovery"
+	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/pkg/version"
@@ -158,7 +158,7 @@ func (s *System) Backup(configPath, outPath, password string) error {
 		addPath(p)
 	}
 
-	hm := discovery.NewHost(woos.NewFolder(global.Storage.HostsDir), discovery.WithLogger(s.cfg.Logger))
+	hm := discovery2.NewHost(woos.NewFolder(global.Storage.HostsDir), discovery2.WithLogger(s.cfg.Logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		u.WarnLine(fmt.Sprintf("failed to load some hosts: %v", err))

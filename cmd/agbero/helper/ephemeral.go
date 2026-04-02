@@ -12,7 +12,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/discovery"
+	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
 )
@@ -178,7 +178,7 @@ func (e *Ephemeral) createGlobal(bindHost string, port int, useHTTPS bool, ctx *
 }
 
 func (e *Ephemeral) run(global *alaye.Global, hosts map[string]*alaye.Host) {
-	hm := discovery.NewHost(woos.NewFolder(""), discovery.WithLogger(e.p.Logger))
+	hm := discovery2.NewHost(woos.NewFolder(""), discovery2.WithLogger(e.p.Logger))
 	hm.LoadStatic(hosts)
 
 	l, _ := zulu.Logging(&global.Logging, e.p.Cfg.DevMode, e.p.Shutdown)

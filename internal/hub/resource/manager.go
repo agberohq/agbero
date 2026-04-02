@@ -9,10 +9,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/pkg/health"
 	"github.com/agberohq/agbero/internal/pkg/metrics"
+	"github.com/agberohq/keeper"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -204,9 +205,15 @@ func WithGzCache(cache *mappo.Cache) Option {
 	}
 }
 
+func WithKeeper(k *keeper.Keeper) Option {
+	return func(m *Resource) {
+		m.Keeper = k
+	}
+}
+
 type Env struct {
-	Global *mappo.Concurrent[string, alaye.Value]
-	Route  *mappo.Concurrent[string, alaye.Value]
+	Global *mappo.Concurrent[string, expect.Value]
+	Route  *mappo.Concurrent[string, expect.Value]
 }
 
 type Resource struct {
@@ -226,6 +233,7 @@ type Resource struct {
 	Shutdown *jack.Shutdown
 	Lifetime *jack.Lifetime
 	Janitor  *jack.Pool
+	Keeper   *keeper.Keeper
 
 	Env *Env
 
@@ -245,8 +253,8 @@ func New(opts ...Option) *Resource {
 		counter:    new(atomic.Uint64),
 		Logger:     ll.New("agbero").Disable().Suspend(),
 		Env: &Env{
-			Global: mappo.NewConcurrent[string, alaye.Value](),
-			Route:  mappo.NewConcurrent[string, alaye.Value](),
+			Global: mappo.NewConcurrent[string, expect.Value](),
+			Route:  mappo.NewConcurrent[string, expect.Value](),
 		},
 	}
 

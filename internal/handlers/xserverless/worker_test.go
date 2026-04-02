@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
-	"github.com/agberohq/agbero/internal/pkg/orchestrator"
+	"github.com/agberohq/agbero/internal/hub/orchestrator"
+	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
 const (

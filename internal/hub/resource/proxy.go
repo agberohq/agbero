@@ -6,8 +6,8 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/pkg/cook"
-	"github.com/agberohq/agbero/internal/pkg/orchestrator"
+	"github.com/agberohq/agbero/internal/hub/cook"
+	"github.com/agberohq/agbero/internal/hub/orchestrator"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 )

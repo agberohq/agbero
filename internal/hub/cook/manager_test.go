@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
@@ -87,7 +88,7 @@ func TestManager_Register_And_Webhook(t *testing.T) {
 		Enabled:  alaye.Active,
 		URL:      upstream,
 		Branch:   "master",
-		Secret:   alaye.Value("my_super_secret"),
+		Secret:   expect.Value("my_super_secret"),
 		Interval: 0,
 	}
 	err = mgr.Register("test_route", cfg)
@@ -207,7 +208,7 @@ func TestManager_Register_Update(t *testing.T) {
 		Enabled:  alaye.Active,
 		URL:      upstream,
 		Branch:   "master",
-		Secret:   alaye.Value("new_secret"),
+		Secret:   expect.Value("new_secret"),
 		Interval: alaye.Duration(1 * time.Minute),
 	}
 
