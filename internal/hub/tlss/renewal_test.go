@@ -58,11 +58,19 @@ func TestManager_RenewalLogic(t *testing.T) {
 	}
 	oldSerial := certBefore.Leaf.SerialNumber.String()
 
+	wait := make(chan struct{})
+	mgr.triggerRenewal(domain, func(response response) {
+		wait <- struct{}{}
+	})
 	// Trigger the renewal by calling GetCertificate
 	_, err = mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
 	if err != nil {
 		t.Fatalf("GetCertificate failed: %v", err)
 	}
+
+	t.Logf("Waiting for renewal to complete...")
+	<-wait
+	close(wait)
 
 	// Poll the cache until the serial changes or timeout
 	deadline := time.Now().Add(10 * time.Second)

@@ -66,50 +66,7 @@ func (ci *Local) SetHosts(hosts []string, port int) {
 func (ci *Local) EnsureLocalhostCert() (string, string, error) {
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
-
-	seen := make(map[string]bool)
-	var out []string
-	for _, h := range ci.certHosts {
-		h = strings.TrimSpace(h)
-		if h != "" && !seen[h] {
-			seen[h] = true
-			out = append(out, h)
-		}
-	}
-	ci.certHosts = out
-
-	defaults := []string{woos.Localhost, woos.LocalhostWildcardSAN, woos.IPv4LoopbackSAN, woos.IPv6LoopbackSAN}
-	defaults = append(defaults, getLocalLANIPs()...)
-	for _, d := range defaults {
-		if !seen[d] {
-			ci.certHosts = append(ci.certHosts, d)
-			seen[d] = true
-		}
-	}
-
-	domain := ci.certPrefix()
-
-	certPEM, keyPEM, err := ci.store.Load(domain)
-	if err == nil {
-		if err := ci.validateCertificateBytes(certPEM, keyPEM); err == nil {
-			ci.logger.Fields("domain", domain).Info("using existing local certificate")
-			return domain, domain, nil
-		}
-		_ = ci.store.Delete(domain)
-	}
-
-	if !ci.caExists() {
-		ci.logger.Info("CA root not found, generating and installing local CA")
-		if err := ci.generateAndInstallCA(); err != nil {
-			return "", "", err
-		}
-	}
-
-	if err := ci.generateLeaf(domain); err != nil {
-		return "", "", err
-	}
-
-	return domain, domain, nil
+	return ci.ensureLocalhostCertUnlocked()
 }
 
 // InstallCARootIfNeeded generates a CA root if missing and installs it to system trust stores.
@@ -186,7 +143,7 @@ func (ci *Local) EnsureForHost(host string, port int) (certFile, keyFile string,
 	defer ci.mu.Unlock()
 	ci.certHosts = []string{host}
 	ci.port = port
-	return ci.EnsureLocalhostCert()
+	return ci.ensureLocalhostCertUnlocked()
 }
 
 // ListCertificates returns all certificate domains stored in the local issuer namespace.
@@ -324,12 +281,22 @@ func (ci *Local) generateLeaf(domain string) error {
 	var dnsNames []string
 	var ipAddresses []net.IP
 	for _, h := range ci.certHosts {
-		if ip := net.ParseIP(h); ip != nil {
+		norm, ok := normalizeHostForVerify(h)
+		if !ok {
+			continue
+		}
+		if ip := net.ParseIP(norm); ip != nil {
 			ipAddresses = append(ipAddresses, ip)
 		} else {
-			dnsNames = append(dnsNames, h)
+			dnsNames = append(dnsNames, norm)
 		}
 	}
+
+	ci.logger.Fields(
+		"domain", domain,
+		"dns_names", dnsNames,
+		"ip_addresses", ipAddresses,
+	).Debug("generating local leaf certificate SANs")
 
 	commonName := fmt.Sprintf("%s Development CA", woos.Name)
 	template := x509.Certificate{
@@ -472,6 +439,58 @@ func (ci *Local) certPrefix() string {
 	return woos.Localhost
 }
 
+func (ci *Local) ensureLocalhostCertUnlocked() (string, string, error) {
+	// Deduplicate and sanitize hosts
+	seen := make(map[string]bool)
+	var out []string
+	for _, h := range ci.certHosts {
+		h = strings.TrimSpace(h)
+		if h != "" && !seen[h] {
+			seen[h] = true
+			out = append(out, h)
+		}
+	}
+	ci.certHosts = out
+
+	// Add default SANs for localhost development
+	defaults := []string{woos.Localhost, woos.LocalhostWildcardSAN, woos.IPv4LoopbackSAN, woos.IPv6LoopbackSAN}
+	defaults = append(defaults, getLocalLANIPs()...)
+	for _, d := range defaults {
+		if !seen[d] {
+			ci.certHosts = append(ci.certHosts, d)
+			seen[d] = true
+		}
+	}
+
+	domain := ci.certPrefix()
+
+	// Try to load existing cert from storage
+	certPEM, keyPEM, err := ci.store.Load(domain)
+	if err == nil {
+		if err := ci.validateCertificateBytes(certPEM, keyPEM); err == nil {
+			ci.logger.Fields("domain", domain).Info("using existing local certificate")
+			return domain, domain, nil
+		}
+		// Invalid cert, remove it
+		_ = ci.store.Delete(domain)
+	}
+
+	// Generate CA if missing
+	if !ci.caExists() {
+		ci.logger.Info("CA root not found, generating and installing local CA")
+		if err := ci.generateAndInstallCA(); err != nil {
+			return "", "", err
+		}
+	}
+
+	// Generate leaf certificate
+	if err := ci.generateLeaf(domain); err != nil {
+		return "", "", err
+	}
+
+	return domain, domain, nil
+}
+
 // hasCertutil checks for certutil presence on the system.
 func hasCertutil() bool {
 	paths := certutilPaths()
@@ -550,3 +569,6 @@ func parsePrivateKey(der []byte) (crypto.PrivateKey, error) {
 	}
 	return x509.ParseECPrivateKey(der)
 }
+
+// ensureLocalhostCertUnlocked is the internal implementation of EnsureLocalhostCert
+// without mutex locking. Must only be called when ci.mu is already held.

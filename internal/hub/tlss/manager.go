@@ -30,6 +30,10 @@ type ClusterBroadcaster interface {
 	TryAcquireLock(key string) bool
 }
 
+type response struct {
+	Domain string
+	Error  error
+}
 type Manager struct {
 	logger      *ll.Logger
 	hostManager *discovery.Host
@@ -260,7 +264,7 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 
 	if cert, hit := m.cache.Get(name); hit {
 		if m.needsRenewal(cert) {
-			m.triggerRenewal(name)
+			m.triggerRenewal(name, nil)
 		}
 		return cert, nil
 	}
@@ -355,20 +359,31 @@ func (m *Manager) renewCertificateSync(domain string) error {
 
 // triggerRenewal initiates background certificate renewal for the given domain.
 // It prevents duplicate renewal attempts using a concurrent map and cluster lock.
-func (m *Manager) triggerRenewal(domain string) {
+func (m *Manager) triggerRenewal(domain string, onComplete func(response response)) {
 	if _, loaded := m.renewingDomains.SetIfAbsent(domain, true); loaded {
 		return
 	}
 	go func() {
+		var err error
 		defer m.renewingDomains.Delete(domain)
 		if m.cluster != nil && !m.cluster.TryAcquireLock("renew:"+domain) {
 			m.logger.Fields("domain", domain).Debug("cluster peer is already renewing certificate")
 			return
 		}
 		m.logger.Fields("domain", domain).Info("certificate nearing expiration, starting background renewal")
-		if err := m.renewCertificateSync(domain); err != nil {
+		if err = m.renewCertificateSync(domain); err != nil {
 			m.logger.Fields("domain", domain, "err", err).Error("failed to renew certificate")
 		}
+
+		// Signal completion for testing - ADD THESE 8 LINES
+		if onComplete == nil {
+			return
+		}
+
+		onComplete(response{
+			Domain: domain,
+			Error:  err,
+		})
 	}()
 }
 

@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	testLogger = ll.New("tlss").Disable()
+	testLogger = ll.New("tlss").Enable()
 )
 
 // SetupTestManager creates a Manager with mock mode enabled for testing
