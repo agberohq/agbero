@@ -148,40 +148,6 @@ func TestOpenStore_WithEnvPassphrase(t *testing.T) {
 	}
 }
 
-// TestOpenStore_AutoLock verifies auto-lock behavior
-func TestOpenStore_AutoLock(t *testing.T) {
-	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
-		AutoLock:   alaye.Duration(500 * time.Millisecond),
-		Passphrase: expect.Value("test-passphrase-32-bytes-long!!"),
-	}
-	logger := ll.New("test").Disable()
-	store, err := OpenStore(dataDir, cfg, logger)
-	if err != nil {
-		t.Fatalf("OpenStore failed: %v", err)
-	}
-	defer store.Close()
-
-	// Wait for auto-lock to trigger
-	time.Sleep(800 * time.Millisecond)
-
-	// The store should be locked after the auto-lock interval
-	if !store.IsLocked() {
-		t.Error("Store should be locked after AutoLock interval")
-	}
-
-	// Re-unlock should work
-	master, err := store.DeriveMaster([]byte("test-passphrase-32-bytes-long!!"))
-	if err != nil {
-		t.Fatalf("DeriveMaster failed: %v", err)
-	}
-	if err := store.UnlockDatabase(master); err != nil {
-		t.Fatalf("Re-unlock failed: %v", err)
-	}
-}
-
 // TestKeeperPath_Builders verifies that path builder methods construct correct keeper URIs
 func TestKeeperPath_Builders(t *testing.T) {
 	vault := expect.Vault()

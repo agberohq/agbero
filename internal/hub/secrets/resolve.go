@@ -1,5 +1,4 @@
-// security/resolve.go
-package security
+package secrets
 
 import (
 	"github.com/agberohq/agbero/internal/core/expect"

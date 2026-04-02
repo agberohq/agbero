@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
@@ -83,22 +82,5 @@ func OpenStore(dataDir string, cfg *alaye.Keeper, logger *ll.Logger) (*keeper.Ke
 			}
 		}
 	}
-
-	// Configure auto-lock if enabled
-	if kConfig.AutoLockInterval > 0 {
-		go func() {
-			ticker := time.NewTicker(kConfig.AutoLockInterval)
-			defer ticker.Stop()
-			for range ticker.C {
-				if store.IsLocked() {
-					continue
-				}
-				if err := store.Lock(); err != nil {
-					logger.Error("Failed to auto-lock store", "error", err)
-				}
-			}
-		}()
-	}
-
 	return store, nil
 }
