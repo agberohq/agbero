@@ -31,9 +31,7 @@ func newTestSystem(t *testing.T) *System {
 	return NewSystem(SystemConfig{Logger: logger})
 }
 
-// --------------------------------------------------------------------------
 // Test archive builders
-// --------------------------------------------------------------------------
 
 // writeTestZip creates a valid backup archive at path containing files.
 // When password is non-empty entries are AES-256 encrypted.
@@ -171,9 +169,7 @@ func sha256Hex(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// --------------------------------------------------------------------------
 // isSafeRestorePath
-// --------------------------------------------------------------------------
 
 func TestIsSafeRestorePath_allow(t *testing.T) {
 	root := t.TempDir()
@@ -208,9 +204,7 @@ func TestIsSafeRestorePath_multipleRoots(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
 // rejectInsecureURL
-// --------------------------------------------------------------------------
 
 func TestRejectInsecureURL_https(t *testing.T) {
 	if err := rejectInsecureURL("https://github.com/agberohq/agbero/releases/download/v1.0.0/agbero_1.0.0_linux_amd64.tar.gz"); err != nil {
@@ -230,9 +224,7 @@ func TestRejectInsecureURL_noScheme(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
 // parseChecksumFile
-// --------------------------------------------------------------------------
 
 func TestParseChecksumFile_found(t *testing.T) {
 	data := []byte("abc123  agbero_1.0.0_linux_amd64.tar.gz\ndef456  agbero_1.0.0_darwin_arm64.tar.gz\n")
@@ -259,9 +251,7 @@ func TestParseChecksumFile_caseInsensitive(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
 // computeManifestHMAC
-// --------------------------------------------------------------------------
 
 func TestComputeManifestHMAC_deterministic(t *testing.T) {
 	data := []byte(`{"version":1}`)
@@ -288,9 +278,7 @@ func TestComputeManifestHMAC_noPasswordUsesTimestamp(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
 // buildAllowedRoots
-// --------------------------------------------------------------------------
 
 func TestBuildAllowedRoots_deduplicates(t *testing.T) {
 	root := t.TempDir()
@@ -305,9 +293,7 @@ func TestBuildAllowedRoots_deduplicates(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
 // Restore — ZipSlip (SEC-01)
-// --------------------------------------------------------------------------
 
 func TestRestore_ZipSlip_archivePath(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -447,9 +433,7 @@ func TestRestore_ZipSlip_originalPath(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
 // Restore — manifest HMAC (SEC-08)
-// --------------------------------------------------------------------------
 
 func TestRestore_TamperedSignature(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -498,9 +482,7 @@ func TestRestore_TamperedSignature(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
 // Restore — encrypted backup round-trip
-// --------------------------------------------------------------------------
 
 func TestRestore_EncryptedRoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -546,9 +528,7 @@ func TestRestore_WrongPassword(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
 // Restore — hash mismatch (corrupt archive)
-// --------------------------------------------------------------------------
 
 func TestRestore_HashMismatch(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -596,9 +576,7 @@ func TestRestore_HashMismatch(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
 // Restore — overwrite tampered file
-// --------------------------------------------------------------------------
 
 func TestRestore_OverwriteTamperedFile(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -624,9 +602,7 @@ func TestRestore_OverwriteTamperedFile(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
 // Update — asset naming
-// --------------------------------------------------------------------------
 
 func TestBuildAssetName(t *testing.T) {
 	sys := newTestSystem(t)
@@ -685,9 +661,7 @@ func TestUpdate_AlreadyUpToDate(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
 // Update — checksum mismatch aborts apply
-// --------------------------------------------------------------------------
 
 func TestUpdate_ChecksumMismatch_Aborts(t *testing.T) {
 	original := woos.Version
@@ -745,9 +719,7 @@ func TestUpdate_ChecksumMismatch_Aborts(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
 // Update — valid checksum triggers apply
-// --------------------------------------------------------------------------
 
 func TestUpdate_ValidChecksum_Applies(t *testing.T) {
 	original := woos.Version
@@ -805,9 +777,7 @@ func TestUpdate_ValidChecksum_Applies(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
 // extractBinaryFromTarGz
-// --------------------------------------------------------------------------
 
 func TestExtractBinaryFromTarGz(t *testing.T) {
 	tmpDir := t.TempDir()

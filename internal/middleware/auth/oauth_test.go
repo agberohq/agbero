@@ -17,7 +17,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// --- Mocks ---
+// Mocks
 
 type MockProvider struct {
 	goth.Provider

@@ -158,8 +158,9 @@ func (v *Version) preReleaseNumeric() int {
 //
 //	1 if v > other (v is newer)
 //	0 if v == other
-//	-1 if v < other (other is newer)
-//	-2 if either version is invalid
+//
+// 1 if v < other (other is newer)
+// 2 if either version is invalid
 func (v *Version) Compare(other *Version) int {
 	if !v.valid || !other.valid {
 		return -2

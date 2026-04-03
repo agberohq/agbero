@@ -1,4 +1,3 @@
-// totp_test.go
 package api
 
 import (

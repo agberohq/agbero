@@ -1,6 +1,10 @@
 package alaye
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/agberohq/agbero/internal/core/expect"
+)
 
 // Work defines a managed external OS process that acts as a handler or sidecar.
 // It handles process execution, environment merging, and lifecycle management via jack.
@@ -11,7 +15,7 @@ type Work struct {
 
 	Command []string `hcl:"command,attr" json:"command"`
 
-	Env map[string]Value `hcl:"env,attr" json:"env"`
+	Env map[string]expect.Value `hcl:"env,attr" json:"env"`
 
 	Background bool `hcl:"background,attr" json:"background"`
 

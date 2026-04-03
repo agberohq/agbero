@@ -17,12 +17,12 @@ import (
 // TestWasmMiddleware_EndToEnd compiles a real WASM module using TinyGo
 // and tests the entire request flow (Host -> Guest -> Host).
 func TestWasmMiddleware_EndToEnd(t *testing.T) {
-	// 1. Check if tinygo is installed
+	// Check if tinygo is installed
 	if _, err := exec.LookPath("tinygo"); err != nil {
 		t.Skip("tinygo not found, skipping wasm integration test")
 	}
 
-	// 2. Create a temporary Go file that will become our WASM module
+	// Create a temporary Go file that will become our WASM module
 	tmpDir := t.TempDir()
 	goSrc := filepath.Join(tmpDir, "main.go")
 	wasmOut := filepath.Join(tmpDir, "test.wasm")
@@ -51,7 +51,7 @@ func handle_request() {
 	key := "X-Secret"
 	valBuf := make([]byte, 64)
 	
-	// 1. Read Header
+	// Read Header
 	l := agbero_get_header(
 		uint32(uintptr(unsafe.Pointer(&[]byte(key)[0]))),
 		uint32(len(key)),
@@ -60,7 +60,7 @@ func handle_request() {
 	)
 	secret := string(valBuf[:l])
 
-	// 2. Logic
+	// Logic
 	if secret == "open-sesame" {
 		// Set Response Header
 		outKey := "X-Active"
@@ -85,13 +85,13 @@ func main() {}
 		t.Fatal(err)
 	}
 
-	// 3. Compile to WASM: tinygo build -o test.wasm -target=wasi main.go
+	// Compile to WASM: tinygo build -o test.wasm -target=wasi main.go
 	cmd := exec.Command("tinygo", "build", "-o", wasmOut, "-target=wasi", "-no-debug", goSrc)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to compile wasm: %v\n%s", err, out)
 	}
 
-	// 4. Initialize Resource
+	// Initialize Resource
 	logger := ll.New("test").Disable()
 	cfg := &alaye.Wasm{
 		Module: wasmOut,
@@ -104,7 +104,7 @@ func main() {}
 	}
 	defer mgr.Close(context.Background())
 
-	// 5. Build Handler Chain
+	// Build Handler Chain
 	// The "Next" handler simply writes "Active"
 	finalHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)

@@ -15,9 +15,7 @@ type Listener interface {
 	Kind() string
 }
 
-// -----------------------------------------------------------------------------
 // HTTP Listener
-// -----------------------------------------------------------------------------
 
 type HTTPListener struct {
 	Srv     *http.Server
@@ -46,9 +44,7 @@ func (h *HTTPListener) Kind() string {
 	return "http"
 }
 
-// -----------------------------------------------------------------------------
 // HTTP/3 (QUIC) Listener
-// -----------------------------------------------------------------------------
 
 type H3Listener struct {
 	Srv *http3.Server
@@ -69,9 +65,7 @@ func (h *H3Listener) Stop(ctx context.Context) error {
 func (h *H3Listener) Addr() string { return h.Srv.Addr }
 func (h *H3Listener) Kind() string { return "h3" }
 
-// -----------------------------------------------------------------------------
 // TCP Proxy Listener
-// -----------------------------------------------------------------------------
 
 type TCPListener struct {
 	Proxy *xtcp.Proxy

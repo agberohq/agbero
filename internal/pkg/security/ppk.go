@@ -159,3 +159,25 @@ func generateJTI() (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
+
+func LoadPPKFromPEM(pemData []byte) (*PPK, error) {
+	block, _ := pem.Decode(pemData)
+	if block == nil || block.Type != pemTypePrivateKey {
+		return nil, errors.New("invalid PEM: missing PRIVATE KEY block")
+	}
+
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse private key: %w", err)
+	}
+
+	edKey, ok := key.(ed25519.PrivateKey)
+	if !ok {
+		return nil, errors.New("key is not Ed25519")
+	}
+
+	return &PPK{
+		privateKey: edKey,
+		publicKey:  edKey.Public().(ed25519.PublicKey),
+	}, nil
+}

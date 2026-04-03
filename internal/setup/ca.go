@@ -1,29 +1,62 @@
 package setup
 
 import (
+	"fmt"
 	"runtime"
 
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/tlss"
+	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 )
 
 type CA struct {
-	ctx *Context
+	ctx   *Context
+	store tlsstore.Store
 }
 
+// NewCA creates CA with disk store (for all modes - persistence needed)
 func NewCA(ctx *Context) *CA {
-	return &CA{ctx: ctx}
+	var store tlsstore.Store
+	// Always use disk store for CA - certificates need persistence
+	store, err := tlsstore.NewDisk(tlsstore.DiskConfig{
+		DataDir: ctx.Paths.DataDir.Path(),
+		CertDir: ctx.Paths.CertsDir.Path(),
+	})
+	if err != nil {
+		ctx.Logger.Error("Failed to create disk store, using memory fallback: ", err)
+		store = tlsstore.NewMemory()
+	}
+	return &CA{
+		ctx:   ctx,
+		store: store,
+	}
+}
+
+// NewCAWithStore creates CA with provided store (for when you already have one)
+func NewCAWithStore(ctx *Context, store tlsstore.Store) *CA {
+	return &CA{
+		ctx:   ctx,
+		store: store,
+	}
 }
 
 func (c *CA) IsInstalled() bool {
-	return tlss.IsCARootInstalled(c.ctx.Paths.CertsDir.Path())
+	if c.store == nil {
+		return false
+	}
+	_, _, err := c.store.Load("ca")
+	return err == nil
 }
 
 func (c *CA) Install() error {
-	installer := tlss.NewLocal(c.ctx.Logger, c.ctx.Paths.CertsDir)
+	if c.store == nil {
+		return fmt.Errorf("TLS store not available")
+	}
+
+	installer := tlss.NewLocal(c.ctx.Logger, c.store)
 	if err := installer.InstallCARootIfNeeded(); err != nil {
 		installer.RemoveCA()
 		return err
@@ -33,12 +66,14 @@ func (c *CA) Install() error {
 }
 
 func (c *CA) Uninstall() error {
-	installer := tlss.NewLocal(c.ctx.Logger, c.ctx.Paths.CertsDir)
+	if c.store == nil {
+		return fmt.Errorf("TLS store not available")
+	}
+
+	installer := tlss.NewLocal(c.ctx.Logger, c.store)
 	return installer.UninstallCARoot()
 }
 
-// printNSSHint logs the OS-appropriate certutil install command when NSS is absent.
-// Firefox and Chrome on Linux/macOS require certutil to register the local CA.
 func (c *CA) printNSSHint(loc *tlss.Local) {
 	if loc.HasCertutil() {
 		return

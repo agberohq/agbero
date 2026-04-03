@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
+	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
 const (
@@ -17,15 +18,15 @@ const (
 type RestConfig struct {
 	Resource  *resource.Resource
 	REST      alaye.REST
-	GlobalEnv map[string]alaye.Value
-	RouteEnv  map[string]alaye.Value
+	GlobalEnv map[string]expect.Value
+	RouteEnv  map[string]expect.Value
 }
 
 type RestHandler struct {
 	res       *resource.Resource
 	cfg       alaye.REST
-	globalEnv map[string]alaye.Value
-	routeEnv  map[string]alaye.Value
+	globalEnv map[string]expect.Value
+	routeEnv  map[string]expect.Value
 	client    *http.Client
 }
 

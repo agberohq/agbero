@@ -12,6 +12,7 @@ import "time"
 
 const (
 	Name         = "agbero"
+	Issuer       = "agbero"
 	Organization = "aibox Systems"
 	Display      = "agbero proxy"
 	Description  = "High-performance reverse proxy / load balancer with TLS"
@@ -27,6 +28,23 @@ const (
 const (
 	ConfigFormatVersion = 1
 	MaxPortRetries      = 10
+)
+
+// Setup steps
+const (
+	SetupStepInit          = "init"
+	SetupStepAdmin         = "admin"
+	SetupStepKeeperSecrets = "keeper_secrets"
+	SetupStepTOTP          = "totp"
+	SetupStepLetsEncrypt   = "letsencrypt"
+	SetupStepDone          = "done"
+)
+
+// Password defaults
+const (
+	MinPasswordLength = 8
+	JWTSecretLength   = 128
+	ClusterSecretLen  = 32
 )
 
 const (

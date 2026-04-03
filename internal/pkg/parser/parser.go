@@ -150,7 +150,7 @@ func ValidateHCL(data []byte) error {
 	return nil
 }
 
-// ---- decode engine ----
+// decode engine
 
 // decodeHCL parses raw HCL bytes and maps the result into output using
 // a reflection-driven walker over hclsyntax.Body. No schema is enforced —
@@ -567,7 +567,7 @@ func parseTag(tag string) (name, kind string) {
 	return name, kind
 }
 
-// ---- eval context ----
+// eval context
 
 // buildEvalContext constructs the HCL evaluation context used during attribute decoding.
 // Environment variables are exposed under the "env" namespace as a map so that
@@ -606,7 +606,7 @@ func buildEvalContext() *hcl.EvalContext {
 	}
 }
 
-// ---- encode engine ----
+// encode engine
 
 // encodeHCL serialises a Go struct to formatted HCL bytes using hclwrite.
 func encodeHCL(input any) ([]byte, error) {
@@ -757,7 +757,7 @@ func scalarTokens(v reflect.Value) hclwrite.Tokens {
 	return nil
 }
 
-// ---- diagnostics ----
+// diagnostics
 
 // parseDuration parses a duration string ("30s", "1m") or bare integer (seconds).
 // This handles time.Duration fields that cannot use TextUnmarshaler.

@@ -85,9 +85,10 @@ admin {
       username = "admin"
       secret = "{TOTP_ADMIN_SECRECT}"
     }
+    # example
     # user {
     #   username = "operator"
-    #   secret = "ss://totp/operator"
+    #   secret = "ss://internal/totp/admin"
     # }
   }
   

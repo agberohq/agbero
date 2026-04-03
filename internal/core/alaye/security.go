@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
@@ -275,5 +276,5 @@ type Keeper struct {
 
 	// Passphrase is the master passphrase to unlock the store.
 	// This should be a secret reference (e.g., "env.SECRET_STORE_PASS") to avoid plaintext.
-	Passphrase Value `hcl:"passphrase,attr" json:"passphrase"` // can later be *security.Value
+	Passphrase expect.Value `hcl:"passphrase,attr" json:"passphrase"` // can later be *security.Value
 }

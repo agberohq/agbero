@@ -155,7 +155,7 @@ func TestOpenStore_EmptyPassphrase_ReturnsLocked(t *testing.T) {
 }
 
 // TestOpenStore_DevMode verifies that passphrase="dev" unlocks the store with a
-// fixed sentinel passphrase (the KDF rejects empty passwords) and that the same
+// sentinel passphrase (the KDF rejects empty passwords) and that the same
 // store can be reopened consistently.
 func TestOpenStore_DevMode(t *testing.T) {
 	tmpDir := t.TempDir()

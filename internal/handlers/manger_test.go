@@ -48,7 +48,7 @@ func testCookManager(t *testing.T) *cook.Manager {
 // testTLSManager creates a TLS manager for testing
 func testTLSManager(t *testing.T) *tlss.Manager {
 	t.Helper()
-	return tlss.NewManager(testLogger, nil, &alaye.Global{})
+	return tlss.NewManager(testLogger, nil, &alaye.Global{}, nil)
 }
 
 // testHostManagerWithHosts creates a host manager with pre-loaded hosts
@@ -80,9 +80,7 @@ func testManagerConfig(t *testing.T) ManagerConfig {
 	}
 }
 
-// -----------------------------------------------------------------------------
 // Tests
-// -----------------------------------------------------------------------------
 
 func TestNewManager_NilConfig(t *testing.T) {
 	_, err := NewManager(ManagerConfig{})

@@ -15,11 +15,12 @@ import (
 // OpenStore opens (or creates) the keeper database at dataDir/keeper.db.
 //
 // Passphrase resolution order:
-//  1. cfg.Passphrase (any expect.Value — plain text, env., ss://, b64. …)
-//  2. AGBERO_PASSPHRASE environment variable
-//  3. If neither is set: return a locked store so the caller can prompt and
-//     call store.Unlock(passphrase) themselves (used by setup/home.go and the
-//     interactive run mode).
+// cfg.Passphrase (any expect.Value — plain text, env., ss://, b64. …)
+// AGBERO_PASSPHRASE environment variable
+// If neither is set: return a locked store so the caller can prompt and
+//
+//	call store.Unlock(passphrase) themselves (used by setup/home.go and the
+//	interactive run mode).
 //
 // A nil cfg is valid and means "open the store locked, let the caller unlock".
 // An empty passphrase string (cfg.Passphrase = "") also means locked-on-return
@@ -90,7 +91,7 @@ func OpenStore(dataDir string, cfg *alaye.Keeper, logger *ll.Logger) (*keeper.Ke
 
 	case passphrase == "dev":
 		// Development shorthand. The KDF rejects empty passwords so we use a
-		// fixed non-empty sentinel. It is deterministic — a dev store opened
+		// non-empty sentinel. It is deterministic — a dev store opened
 		// twice with passphrase="dev" reopens correctly.
 		// Log loudly so this is never silently used in production.
 		logger.Warn("keeper: opening in DEV mode — DO NOT use in production")
@@ -125,8 +126,8 @@ func OpenStore(dataDir string, cfg *alaye.Keeper, logger *ll.Logger) (*keeper.Ke
 }
 
 // resolvePassphrase returns the first non-empty passphrase from:
-//  1. cfg.Passphrase (resolved through expect.Value — handles env., b64., ss:// …)
-//  2. AGBERO_PASSPHRASE environment variable
+// cfg.Passphrase (resolved through expect.Value — handles env., b64., ss:// …)
+// AGBERO_PASSPHRASE environment variable
 //
 // Returns "" when no passphrase is available — callers that need an unlocked
 // store must detect this and prompt the user.

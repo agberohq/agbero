@@ -1,4 +1,3 @@
-// loadbalancer_test.go
 package lb
 
 import (

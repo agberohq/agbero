@@ -30,9 +30,7 @@ func envelope(key string, op OpType, offset time.Duration) Envelope {
 	}
 }
 
-// --------------------------------------------------------------------------
 // SEC-06 — stale envelope rejection
-// --------------------------------------------------------------------------
 
 // TestApply_StaleEnvelope_Rejected verifies that an envelope older than
 // tombstoneTTL is discarded even when the delegate store is empty (no existing
@@ -123,9 +121,7 @@ func TestMergeRemoteState_StaleRejected(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
 // Existing apply logic
-// --------------------------------------------------------------------------
 
 // TestApply_NewerTimestampWins verifies that a newer envelope for the same
 // key replaces an older one.

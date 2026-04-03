@@ -20,7 +20,7 @@ func GenerateQR(content string, level qr.Level) (*ui.QRResult, error) {
 		return nil, err
 	}
 
-	// FIX: Use the Result() method to get the populated *ui.QRResult
+	// Use the Result() method to get the populated *ui.QRResult
 	// Passing 6 as the scale based on your original PNG(6) requirement.
 	return qrCode.Result(6), nil
 }

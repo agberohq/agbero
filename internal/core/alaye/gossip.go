@@ -4,16 +4,17 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
 type Gossip struct {
-	Enabled     Enabled     `hcl:"enabled,attr" json:"enabled"`
-	Port        int         `hcl:"port,attr" json:"port"`
-	SecretKey   Value       `hcl:"secret_key,attr" json:"secret-key"`
-	Seeds       []string    `hcl:"seeds,attr" json:"seeds"`
-	TTL         int         `hcl:"ttl,attr" json:"ttl"`
-	SharedState SharedState `hcl:"shared_state,block" json:"shared_state"`
+	Enabled     Enabled      `hcl:"enabled,attr" json:"enabled"`
+	Port        int          `hcl:"port,attr" json:"port"`
+	SecretKey   expect.Value `hcl:"secret_key,attr" json:"secret-key"`
+	Seeds       []string     `hcl:"seeds,attr" json:"seeds"`
+	TTL         int          `hcl:"ttl,attr" json:"ttl"`
+	SharedState SharedState  `hcl:"shared_state,block" json:"shared_state"`
 }
 
 type SharedState struct {

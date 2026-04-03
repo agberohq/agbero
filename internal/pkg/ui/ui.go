@@ -9,17 +9,18 @@ import (
 	"path/filepath"
 	"strings"
 
+	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
 	"charm.land/lipgloss/v2/list"
 	"charm.land/lipgloss/v2/table"
 	"charm.land/lipgloss/v2/tree"
+	"github.com/agberohq/keeper/pkg/prompter"
 	"github.com/blacktop/go-termimg"
+	"golang.org/x/crypto/bcrypt"
 )
 
-// ─────────────────────────────────────────────
 //  Icon Set
-// ─────────────────────────────────────────────
 
 type IconSet struct {
 	Success         string
@@ -57,9 +58,7 @@ var DefaultIconSet = IconSet{
 	Pipe:            "│",
 }
 
-// ─────────────────────────────────────────────
 //  Theme
-// ─────────────────────────────────────────────
 
 // Theme uses compat.AdaptiveColor for automatic light/dark detection
 type Theme struct {
@@ -86,9 +85,7 @@ var DefaultTheme = Theme{
 	Border:    compat.AdaptiveColor{Dark: lipgloss.Color("#3A3A36"), Light: lipgloss.Color("#D1CFC8")},
 }
 
-// ─────────────────────────────────────────────
 //  UI
-// ─────────────────────────────────────────────
 
 type UI struct {
 	w                  io.Writer
@@ -123,9 +120,7 @@ func New(opts ...Option) *UI {
 	return u
 }
 
-// ─────────────────────────────────────────────
 //  Internal helpers
-// ─────────────────────────────────────────────
 
 func (u *UI) s(c compat.AdaptiveColor) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(c)
@@ -147,9 +142,7 @@ func (u *UI) Flush() {
 func (u *UI) String() string { return u.buf.String() }
 func (u *UI) Reset()         { u.buf.Reset() }
 
-// ─────────────────────────────────────────────
 //  Hyperlink (OSC 8)
-// ─────────────────────────────────────────────
 
 // Link creates an OSC 8 hyperlink. Falls back to plain text if unsupported.
 func (u *UI) Link(text, url string) string {
@@ -200,9 +193,7 @@ func (u *UI) Welcome(name, description, version, date, banner string) {
 	u.Flush()
 }
 
-// ─────────────────────────────────────────────
 //  Section header
-// ─────────────────────────────────────────────
 
 func (u *UI) SectionHeader(label string) {
 	bar := lipgloss.NewStyle().
@@ -218,9 +209,7 @@ func (u *UI) SectionHeader(label string) {
 	u.Flush()
 }
 
-// ─────────────────────────────────────────────
 //  Key-value block
-// ─────────────────────────────────────────────
 
 type KV struct {
 	Label string
@@ -268,9 +257,7 @@ func (u *UI) KeyValueFile(label, path string, isDir bool) {
 	u.KeyValue(label, u.FileLink(path, isDir))
 }
 
-// ─────────────────────────────────────────────
 //  Secret box
-// ─────────────────────────────────────────────
 
 func (u *UI) SecretBox(label, value string) {
 	// Long secrets: plain display (no border breakage)
@@ -303,9 +290,7 @@ func (u *UI) SecretBox(label, value string) {
 	u.Flush()
 }
 
-// ─────────────────────────────────────────────
 //  Status badge
-// ─────────────────────────────────────────────
 
 func (u *UI) StatusBadge(status string) {
 	lower := strings.ToLower(strings.TrimSpace(status))
@@ -339,9 +324,7 @@ func (u *UI) ServiceStatus(status, pid, configPath string) {
 	}
 }
 
-// ─────────────────────────────────────────────
 //  Table
-// ─────────────────────────────────────────────
 
 func (u *UI) Table(headers []string, rows [][]string) {
 	if len(headers) == 0 {
@@ -391,9 +374,7 @@ func (u *UI) TableWithLinks(headers []string, rows [][]interface{}) {
 	u.Table(headers, strRows)
 }
 
-// ─────────────────────────────────────────────
 //  Help screen
-// ─────────────────────────────────────────────
 
 type HelpCmd struct {
 	Cmd  string
@@ -486,9 +467,7 @@ func (u *UI) HelpScreen(sections []HelpSection) {
 	u.Flush()
 }
 
-// ─────────────────────────────────────────────
 //  Directory tree
-// ─────────────────────────────────────────────
 
 type TreeNode struct {
 	Label    string
@@ -593,9 +572,7 @@ func (u *UI) TreeWithFiles(rootPath string, nodes []TreeNode) {
 	u.Flush()
 }
 
-// ─────────────────────────────────────────────
 //  Feedback lines
-// ─────────────────────────────────────────────
 
 func (u *UI) SuccessLine(msg string) {
 	u.indented(u.s(u.theme.Success).Bold(true).Render(u.icons.Success) + "  " +
@@ -668,9 +645,7 @@ func (u *UI) StepWithLink(state, msg, url string) {
 	u.Flush()
 }
 
-// ─────────────────────────────────────────────
 //  Init success
-// ─────────────────────────────────────────────
 
 func (u *UI) InitSuccess(configFile, adminUser, adminPassword string, nextSteps []ListItem) {
 	u.SectionHeader("Configuration initialised")
@@ -691,9 +666,7 @@ func (u *UI) InitSuccess(configFile, adminUser, adminPassword string, nextSteps 
 	u.Flush()
 }
 
-// ─────────────────────────────────────────────
 //  Backup / restore
-// ─────────────────────────────────────────────
 
 func (u *UI) BackupStart(encrypted bool) {
 	if encrypted {
@@ -780,9 +753,7 @@ func (u *UI) QR(content string) *QRResult {
 	return result
 }
 
-// ─────────────────────────────────────────────
 //  Link List
-// ─────────────────────────────────────────────
 
 type ListItem struct {
 	Text string
@@ -823,9 +794,7 @@ func (u *UI) LinkList(title string, items []ListItem) {
 	u.Flush()
 }
 
-// ─────────────────────────────────────────────
 //  Dialog Box (Universal Warning/Info/Confirm)
-// ─────────────────────────────────────────────
 
 type DialogStyle int
 
@@ -897,4 +866,267 @@ func (u *UI) DialogBox(style DialogStyle, title string, items []string, footer s
 	u.indented(box.Render(content))
 	u.blank()
 	u.Flush()
+}
+
+// Confirm prompts for a yes/no confirmation with optional help text
+// Returns true if confirmed, false otherwise
+func (u *UI) Confirm(prompt string, helpText ...string) (bool, error) {
+	u.Flush() // Flush any pending output before interactive prompt
+
+	confirm := huh.NewConfirm().
+		Title(prompt).
+		Affirmative("Yes").
+		Negative("No")
+
+	if len(helpText) > 0 && helpText[0] != "" {
+		confirm = confirm.Description(helpText[0])
+	}
+
+	var value bool
+	err := confirm.Value(&value).Run()
+	return value, err
+}
+
+// ConfirmDefault prompts with a default value (true = yes preselected)
+func (u *UI) ConfirmDefault(prompt string, defaultYes bool, helpText ...string) (bool, error) {
+	u.Flush()
+
+	confirm := huh.NewConfirm().
+		Title(prompt).
+		Affirmative("Yes").
+		Negative("No")
+
+	if len(helpText) > 0 && helpText[0] != "" {
+		confirm = confirm.Description(helpText[0])
+	}
+
+	var value bool = defaultYes
+	err := confirm.Value(&value).Run()
+	return value, err
+}
+
+//  Simple Input (wraps huh.Input)
+
+type InputConfig struct {
+	Title       string
+	Placeholder string
+	Description string
+	Width       int
+}
+
+// Input prompts for a single line of input
+//
+//	Simple Input (wraps huh.Input)
+//
+// Input prompts for a single line of input
+func (u *UI) Input(cfg InputConfig) (string, error) {
+	u.Flush()
+
+	if cfg.Width == 0 {
+		cfg.Width = 60
+	}
+
+	var value string
+	err := huh.NewInput().
+		Title(cfg.Title).
+		Description(cfg.Description).
+		Placeholder(cfg.Placeholder).
+		Value(&value).
+		WithWidth(cfg.Width).
+		Run()
+
+	return value, err
+}
+
+// Password prompts for a secure password with optional confirmation
+// Returns a prompter.Result that must be Zero()'d when done
+func (u *UI) Password(prompt string, opts ...func(*prompter.Input)) (*prompter.Result, error) {
+	// Create input using prompter.NewInput with the prompt
+	input := prompter.NewInput(prompt)
+
+	// Apply UI styling via custom prompt formatter
+	input.WithPromptFormatter(func(p string) string {
+		lockIcon := u.s(u.theme.Accent).Render(u.icons.Lock)
+		promptStyle := u.s(u.theme.Primary).Bold(true).Render(p)
+		return fmt.Sprintf("\n%s  %s: ", lockIcon, promptStyle)
+	})
+
+	// Apply any additional functional options from caller
+	for _, opt := range opts {
+		opt(input)
+	}
+
+	u.Flush() // Ensure any pending output is written before interactive prompt
+	return input.Run()
+}
+
+// PasswordConfirm prompts for password with confirmation using prompter.WithConfirm
+func (u *UI) PasswordConfirm(prompt string) (*prompter.Result, error) {
+	return u.Password(prompt, prompter.WithConfirm())
+}
+
+// PasswordRequired prompts for a non-empty password using prompter.WithRequired
+func (u *UI) PasswordRequired(prompt string) (*prompter.Result, error) {
+	return u.Password(prompt, prompter.WithRequired(true, "password cannot be empty"))
+}
+
+// PasswordMinLength prompts for a password with minimum length requirement
+func (u *UI) PasswordMinLength(prompt string, minLen int, errorMsg string) (*prompter.Result, error) {
+	return u.Password(prompt, prompter.WithMinLength(minLen, errorMsg))
+}
+
+// PasswordConfirmRequired combines confirmation and required validation
+func (u *UI) PasswordConfirmRequired(prompt string) (*prompter.Result, error) {
+	return u.Password(prompt,
+		prompter.WithConfirm(),
+		prompter.WithRequired(true, "password cannot be empty"),
+	)
+}
+
+// PasswordStyled is a flexible version allowing custom styling via formatter func
+func (u *UI) PasswordStyled(prompt string, styleFunc func(string) string, opts ...func(*prompter.Input)) (*prompter.Result, error) {
+	input := prompter.NewInput(prompt)
+
+	if styleFunc != nil {
+		input.WithPromptFormatter(styleFunc)
+	} else {
+		// Default UI styling with lock icon and themed colors
+		input.WithPromptFormatter(func(p string) string {
+			lockIcon := u.s(u.theme.Accent).Render(u.icons.Lock)
+			promptStyle := u.s(u.theme.Primary).Bold(true).Render(p)
+			return fmt.Sprintf("\n%s  %s: ", lockIcon, promptStyle)
+		})
+	}
+
+	for _, opt := range opts {
+		opt(input)
+	}
+
+	u.Flush()
+	return input.Run()
+}
+
+// PasswordWithHint prompts for a password with a hint/description
+// The hint appears below the prompt to guide the user
+func (u *UI) PasswordWithHint(prompt, hint string, opts ...func(*prompter.Input)) (*prompter.Result, error) {
+	input := prompter.NewInput(prompt)
+
+	// Create styled prompt with hint
+	input.WithPromptFormatter(func(p string) string {
+		lockIcon := u.s(u.theme.Accent).Render(u.icons.Lock)
+		promptStyle := u.s(u.theme.Primary).Bold(true).Render(p)
+
+		// If hint is provided, format it nicely below
+		if hint != "" {
+			hintStyle := u.s(u.theme.Secondary).Render(hint)
+			return fmt.Sprintf("\n%s  %s\n  %s  %s\n\n  %s",
+				lockIcon, promptStyle,
+				"", u.icons.Arrow, hintStyle)
+		}
+
+		return fmt.Sprintf("\n%s  %s: ", lockIcon, promptStyle)
+	})
+
+	for _, opt := range opts {
+		opt(input)
+	}
+
+	u.Flush()
+	return input.Run()
+}
+
+// PasswordRequiredWithHint combines required validation with a hint
+func (u *UI) PasswordRequiredWithHint(prompt, hint string) (*prompter.Result, error) {
+	return u.PasswordWithHint(prompt, hint,
+		prompter.WithRequired(true, "password cannot be empty"),
+	)
+}
+
+// PasswordConfirmWithHint adds confirmation with a hint
+func (u *UI) PasswordConfirmWithHint(prompt, hint string) (*prompter.Result, error) {
+	return u.PasswordWithHint(prompt, hint, prompter.WithConfirm())
+}
+
+// RegistrationForm collects username and password with confirmation
+type RegistrationResult struct {
+	Username     string
+	Password     string // plaintext password (use immediately, then zero)
+	PasswordHash []byte
+}
+
+// RegistrationForm prompts for username and password with confirmation
+func (u *UI) RegistrationForm(title, description string) (*RegistrationResult, error) {
+	u.Flush()
+
+	u.SectionHeader(title)
+	if description != "" {
+		u.InfoLine(description)
+		u.Blank()
+	}
+
+	username, err := u.Input(InputConfig{
+		Title:       "Username",
+		Description: "Choose a username for admin access",
+		Placeholder: "admin",
+		Width:       60,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if username == "" {
+		username = "admin" // Default if empty
+	}
+
+	// Prompt for password
+	passwordResult, err := u.PasswordConfirmWithHint(
+		"Password",
+		"Choose a strong password (minimum 8 characters)",
+	)
+	if err != nil {
+		return nil, err
+	}
+	password := passwordResult.String()
+	defer passwordResult.Zero()
+
+	if len(password) < 8 {
+		return nil, fmt.Errorf("password must be at least 8 characters")
+	}
+
+	// Hash the password
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	return &RegistrationResult{
+		Username:     username,
+		Password:     password,
+		PasswordHash: hash,
+	}, nil
+}
+
+// SimpleUserPass prompts for username and password separately
+func (u *UI) SimpleUserPass() (username, password string, err error) {
+	username, err = u.Input(InputConfig{
+		Title:       "Username",
+		Description: "Admin username",
+		Placeholder: "admin",
+	})
+	if err != nil {
+		return "", "", err
+	}
+
+	if username == "" {
+		username = "admin"
+	}
+
+	passwordResult, err := u.PasswordConfirm("Password")
+	if err != nil {
+		return "", "", err
+	}
+	password = passwordResult.String()
+	defer passwordResult.Zero()
+
+	return username, password, nil
 }

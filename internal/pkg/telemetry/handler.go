@@ -15,11 +15,8 @@ import (
 //	GET /history?host=example.localhost&range=1h
 //	GET /hosts   — list all hosts that have data
 //
-// Mount it in admin.go under a protected path, e.g.:
 //
 //	mux.Handle("/telemetry/", protect(http.StripPrefix("/telemetry", telemetry.Handler(store))))
-//
-// In internal/pkg/telemetry/handler.go
 func Handler(store *Store) http.Handler {
 	r := chi.NewRouter()
 

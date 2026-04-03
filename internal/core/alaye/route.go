@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/cespare/xxhash/v2"
 	"github.com/olekukonko/errors"
 )
@@ -13,7 +14,7 @@ type Route struct {
 	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
 	Path    string  `hcl:"path,label" json:"path"`
 
-	Env map[string]Value `hcl:"env,attr" json:"env"`
+	Env map[string]expect.Value `hcl:"env,attr" json:"env"`
 
 	StripPrefixes []string  `hcl:"strip_prefixes,attr" json:"strip_prefixes"`
 	AllowedIPs    []string  `hcl:"allowed_ips,attr" json:"allowed_ips"`

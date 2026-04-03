@@ -5,6 +5,8 @@ import (
 	"runtime"
 
 	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
+	"github.com/agberohq/keeper"
 	"github.com/olekukonko/ll"
 )
 
@@ -13,10 +15,10 @@ type Context struct {
 	Interactive bool
 	Paths       woos.RuntimePaths
 	IsRoot      bool
+	Keeper      *keeper.Keeper
+	TLSStore    tlsstore.Store
 }
 
-// NewContext creates a shared state for all installers.
-// Detects whether the current execution is interactive (TTY) or headless (CI/CD/scripts).
 func NewContext(logger *ll.Logger) *Context {
 	interactive := false
 	if fileInfo, err := os.Stdin.Stat(); err == nil {
@@ -51,7 +53,14 @@ func NewContext(logger *ll.Logger) *Context {
 	}
 }
 
-// checkIsRoot reports whether the current process has root/administrator privileges.
+func (c *Context) SetKeeper(store *keeper.Keeper) {
+	c.Keeper = store
+}
+
+func (c *Context) SetTLSStore(store tlsstore.Store) {
+	c.TLSStore = store
+}
+
 func checkIsRoot() bool {
 	if runtime.GOOS == woos.Windows {
 		return false

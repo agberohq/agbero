@@ -75,7 +75,7 @@ func (e *Raw) detectType() {
 		return
 	}
 
-	// 1. Secret URI with scheme (most specific)
+	// Secret URI with scheme (most specific)
 	if strings.Contains(e.raw, "://") {
 		if err := e.parseSecretURI(); err == nil {
 			e.keyType = TypeSecret
@@ -83,25 +83,25 @@ func (e *Raw) detectType() {
 		}
 	}
 
-	// 2. JWT pattern
+	// JWT pattern
 	if strings.Count(e.raw, ".") == 2 && len(e.raw) > 50 && e.isValidJWTFormat() {
 		e.keyType = TypeJWT
 		return
 	}
 
-	// 3. Absolute path ONLY (must start with /)
+	// Absolute path ONLY (must start with /)
 	if strings.HasPrefix(e.raw, "/") {
 		e.keyType = TypePath
 		return
 	}
 
-	// 4. IP address
+	// IP address
 	if ip := net.ParseIP(e.raw); ip != nil {
 		e.keyType = TypeIP
 		return
 	}
 
-	// 5. SSH: user@host or user@host/path
+	// SSH: user@host or user@host/path
 	if strings.Contains(e.raw, "@") {
 		parts := strings.SplitN(e.raw, "@", 2)
 		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
@@ -114,7 +114,7 @@ func (e *Raw) detectType() {
 		}
 	}
 
-	// 6. Domain: valid domain regex + (3+ parts OR 2 parts with known TLD)
+	// Domain: valid domain regex + (3+ parts OR 2 parts with known TLD)
 	if _DomainRegex.MatchString(e.raw) {
 		parts := strings.Split(e.raw, ".")
 		if len(parts) >= 3 {
@@ -130,7 +130,7 @@ func (e *Raw) detectType() {
 		}
 	}
 
-	// 7. Secret without scheme (namespace/key format)
+	// Secret without scheme (namespace/key format)
 	// Contains / but no @ (avoid SSH), no leading / (avoid Path collision)
 	if !strings.Contains(e.raw, "@") && strings.Contains(e.raw, "/") {
 		if secret, err := ParseSecret(e.raw); err == nil {
@@ -140,7 +140,7 @@ func (e *Raw) detectType() {
 		}
 	}
 
-	// 8. Username: valid username format (fallback)
+	// Username: valid username format (fallback)
 	if e.validate.Var(e.raw, "username") == nil {
 		e.keyType = TypeUsername
 		return

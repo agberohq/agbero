@@ -16,9 +16,7 @@ import (
 	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
-// -----------------------------------------------------------------------------
 // Helpers
-// -----------------------------------------------------------------------------
 
 // newTestRoot returns a temporary directory. t.TempDir() cleans up automatically.
 func newTestRoot(t *testing.T) string {

@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
+	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
 const (
@@ -71,16 +72,16 @@ func TestRestServeHTTP(t *testing.T) {
 		Headers: map[string]string{
 			testHeaderKey: testHeaderVal,
 		},
-		Query: map[string]alaye.Value{
-			testQueryKey: alaye.Value("env." + testEnvKey),
+		Query: map[string]expect.Value{
+			testQueryKey: expect.Value("env." + testEnvKey),
 		},
 	}
 
 	handler := NewRest(RestConfig{
 		Resource: res,
 		REST:     cfg,
-		GlobalEnv: map[string]alaye.Value{
-			testEnvKey: alaye.Value(testEnvVal),
+		GlobalEnv: map[string]expect.Value{
+			testEnvKey: expect.Value(testEnvVal),
 		},
 	})
 

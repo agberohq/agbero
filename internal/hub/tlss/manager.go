@@ -34,6 +34,7 @@ type response struct {
 	Domain string
 	Error  error
 }
+
 type Manager struct {
 	logger      *ll.Logger
 	hostManager *discovery.Host
@@ -134,6 +135,25 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global, kee
 	}
 
 	return m
+}
+
+// ListCertificates returns all user-facing domain names held in the backing
+// store. It delegates to storage.List() so it works correctly for all backends
+// (keeper, disk, memory) regardless of how the store organises its files.
+func (m *Manager) ListCertificates() ([]string, error) {
+	if m.storage == nil {
+		return nil, nil
+	}
+	return m.storage.List()
+}
+
+// LoadCertificate returns the raw PEM bytes for a domain from the backing store.
+// The caller is responsible for parsing or validating the certificate.
+func (m *Manager) LoadCertificate(domain string) (certPEM, keyPEM []byte, err error) {
+	if m.storage == nil {
+		return nil, nil, tlsstore.ErrCertNotFound
+	}
+	return m.storage.Load(domain)
 }
 
 func (m *Manager) startWatcher(dir string) error {
@@ -304,13 +324,11 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 }
 
 func (m *Manager) needsRenewal(cert *tls.Certificate) bool {
-
 	if cert.Leaf == nil {
 		if len(cert.Certificate) > 0 {
 			cert.Leaf, _ = x509.ParseCertificate(cert.Certificate[0])
 		}
 	}
-
 	if cert.Leaf == nil {
 		return false
 	}
@@ -323,22 +341,15 @@ func (m *Manager) needsRenewal(cert *tls.Certificate) bool {
 	timeLeft := cert.Leaf.NotAfter.Sub(now)
 	totalLifetime := cert.Leaf.NotAfter.Sub(cert.Leaf.NotBefore)
 
-	// For very short-lived certificates (like test certs), renew if less than 30% of lifetime remains
 	if totalLifetime < 24*time.Hour {
 		return timeLeft < (totalLifetime / 3)
 	}
-
-	// For Let's Encrypt certs (90 days), renew if less than 30 days remain
 	if totalLifetime > 89*24*time.Hour {
 		return timeLeft < 30*24*time.Hour
 	}
-
-	// Default: renew if less than 1/3 of lifetime remains
 	return timeLeft < (totalLifetime / 3)
 }
 
-// renewCertificateSync performs synchronous certificate renewal for the given domain.
-// This method is intended for testing and internal use where immediate renewal is required.
 func (m *Manager) renewCertificateSync(domain string) error {
 	host := m.hostManager.Get(domain)
 	mode := m.determineTLSMode(host, domain)
@@ -357,8 +368,6 @@ func (m *Manager) renewCertificateSync(domain string) error {
 	}
 }
 
-// triggerRenewal initiates background certificate renewal for the given domain.
-// It prevents duplicate renewal attempts using a concurrent map and cluster lock.
 func (m *Manager) triggerRenewal(domain string, onComplete func(response response)) {
 	if _, loaded := m.renewingDomains.SetIfAbsent(domain, true); loaded {
 		return
@@ -374,16 +383,10 @@ func (m *Manager) triggerRenewal(domain string, onComplete func(response respons
 		if err = m.renewCertificateSync(domain); err != nil {
 			m.logger.Fields("domain", domain, "err", err).Error("failed to renew certificate")
 		}
-
-		// Signal completion for testing - ADD THESE 8 LINES
 		if onComplete == nil {
 			return
 		}
-
-		onComplete(response{
-			Domain: domain,
-			Error:  err,
-		})
+		onComplete(response{Domain: domain, Error: err})
 	}()
 }
 

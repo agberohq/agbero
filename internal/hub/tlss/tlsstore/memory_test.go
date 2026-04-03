@@ -1,4 +1,3 @@
-// tlsstore/memory_test.go
 package tlsstore
 
 import (

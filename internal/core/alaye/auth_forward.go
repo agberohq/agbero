@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
@@ -22,11 +23,11 @@ type ForwardAuth struct {
 }
 
 type ForwardTLS struct {
-	Enabled            Enabled `hcl:"enabled,attr" json:"enabled"`
-	InsecureSkipVerify bool    `hcl:"insecure_skip_verify,attr" json:"insecure_skip_verify"`
-	ClientCert         Value   `hcl:"client_cert,attr" json:"client_cert"`
-	ClientKey          Value   `hcl:"client_key,attr" json:"client_key"`
-	CA                 Value   `hcl:"ca,attr" json:"ca"`
+	Enabled            Enabled      `hcl:"enabled,attr" json:"enabled"`
+	InsecureSkipVerify bool         `hcl:"insecure_skip_verify,attr" json:"insecure_skip_verify"`
+	ClientCert         expect.Value `hcl:"client_cert,attr" json:"client_cert"`
+	ClientKey          expect.Value `hcl:"client_key,attr" json:"client_key"`
+	CA                 expect.Value `hcl:"ca,attr" json:"ca"`
 }
 
 type ForwardAuthRequest struct {

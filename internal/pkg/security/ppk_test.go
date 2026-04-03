@@ -10,18 +10,18 @@ func TestTokenLifecycle(t *testing.T) {
 	tmpFile := "test_key.pem"
 	defer os.Remove(tmpFile)
 
-	// 1. Generate Key
+	// Generate Key
 	if err := NewPPK(tmpFile); err != nil {
 		t.Fatalf("failed to generate key: %v", err)
 	}
 
-	// 2. Load Key
+	// Load Key
 	tm, err := PPKLoad(tmpFile)
 	if err != nil {
 		t.Fatalf("failed to load keys: %v", err)
 	}
 
-	// 3. Mint Token
+	// Mint Token
 	service := VerifiedToken{Service: "test-service"}
 	ttl := 5 * time.Second
 	token, err := tm.Mint(service.Service, ttl)
@@ -29,7 +29,7 @@ func TestTokenLifecycle(t *testing.T) {
 		t.Fatalf("failed to mint token: %v", err)
 	}
 
-	// 4. Verify Token
+	// Verify Token
 	gotService, err := tm.Verify(token)
 	if err != nil {
 		t.Fatalf("failed to verify token: %v", err)

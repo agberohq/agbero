@@ -231,7 +231,7 @@ func defaultAdmin(a *alaye.Admin) {
 		a.Enabled = alaye.Active
 	}
 	if a.Enabled == alaye.Active {
-		defaultBasicAuth(&a.BasicAuth)
+		// defaultBasicAuth(&a.BasicAuth)
 		defaultJWTAuth(&a.JWTAuth)
 		defaultForwardAuth(&a.ForwardAuth)
 		defaultOAuth(&a.OAuth)

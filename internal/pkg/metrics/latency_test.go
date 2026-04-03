@@ -340,7 +340,6 @@ func TestEviction(t *testing.T) {
 	}
 }
 
-// latency_test.go - Allocation Benchmark
 // BenchmarkAllocation shows memory allocation behavior for lazy vs eager allocation
 func BenchmarkAllocation(b *testing.B) {
 	b.Run("Lazy_FreshBackend", func(b *testing.B) {
@@ -398,7 +397,6 @@ func BenchmarkAllocation(b *testing.B) {
 	})
 }
 
-// latency_test.go - Memory tracking benchmark
 // BenchmarkMemoryGrowth tracks actual memory usage per backend
 func BenchmarkMemoryGrowth(b *testing.B) {
 	// Simulate the scale scenario: many backends, varying activity levels

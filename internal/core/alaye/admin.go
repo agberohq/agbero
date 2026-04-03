@@ -3,7 +3,9 @@ package alaye
 import (
 	"net"
 	"strings"
+	"time"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
@@ -14,7 +16,8 @@ type Admin struct {
 
 	TOTP TOTP `hcl:"totp,block" json:"totp"`
 
-	BasicAuth   BasicAuth   `hcl:"basic_auth,block" json:"basic_auth"`
+	//BasicAuth BasicAuth `hcl:"basic_auth,block" json:"basic_auth"`
+
 	ForwardAuth ForwardAuth `hcl:"forward_auth,block" json:"forward_auth"`
 	JWTAuth     JWTAuth     `hcl:"jwt_auth,block" json:"jwt_auth"`
 	OAuth       OAuth       `hcl:"o_auth,block" json:"o_auth"`
@@ -42,21 +45,21 @@ func (a *Admin) Validate() error {
 		}
 	}
 
-	if err := a.BasicAuth.Validate(); err != nil {
-		return errors.Newf("basic_auth: %w", err)
-	}
-
-	if err := a.ForwardAuth.Validate(); err != nil {
-		return errors.Newf("forward_auth: %w", err)
-	}
-
-	if err := a.JWTAuth.Validate(); err != nil {
-		return errors.Newf("jwt_auth: %w", err)
-	}
-
-	if err := a.OAuth.Validate(); err != nil {
-		return errors.Newf("o_auth: %w", err)
-	}
+	//if err := a.BasicAuth.Validate(); err != nil {
+	//	return errors.Newf("basic_auth: %w", err)
+	//}
+	//
+	//if err := a.ForwardAuth.Validate(); err != nil {
+	//	return errors.Newf("forward_auth: %w", err)
+	//}
+	//
+	//if err := a.JWTAuth.Validate(); err != nil {
+	//	return errors.Newf("jwt_auth: %w", err)
+	//}
+	//
+	//if err := a.OAuth.Validate(); err != nil {
+	//	return errors.Newf("o_auth: %w", err)
+	//}
 
 	if err := a.Pprof.Validate(); err != nil {
 		return errors.Newf("pprof: %w", err)
@@ -75,8 +78,8 @@ type TOTP struct {
 }
 
 type TOTPUser struct {
-	Username string `hcl:"username,attr" json:"username"`
-	Secret   Value  `hcl:"secret,attr" json:"secret"`
+	Username string       `hcl:"username,attr" json:"username"`
+	Secret   expect.Value `hcl:"secret,attr" json:"secret"`
 }
 
 func (t *TOTP) Validate() error {
@@ -110,4 +113,13 @@ func (t *TOTP) GetUserSecret(username string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+type AdminUser struct {
+	Username     string    `json:"username"`
+	PasswordHash string    `json:"password_hash"`
+	TOTPEnabled  bool      `json:"totp_enabled"`
+	Role         string    `json:"role"`
+	Notes        string    `json:"notes,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }

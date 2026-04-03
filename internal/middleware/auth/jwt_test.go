@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestJWT(t *testing.T) {
-	secret := alaye.Value("test-secret-key-12345")
+	secret := expect.Value("test-secret-key-12345")
 
 	genToken := func(claims jwt.MapClaims, signingSecret string) string {
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -164,7 +165,7 @@ func TestJWT(t *testing.T) {
 }
 
 func TestJWTWithRevocation(t *testing.T) {
-	secret := alaye.Value("test-secret-key-12345")
+	secret := expect.Value("test-secret-key-12345")
 
 	genToken := func(jti string, scope string) string {
 		claims := jwt.MapClaims{
@@ -295,7 +296,7 @@ func TestJWTWithRevocation(t *testing.T) {
 }
 
 func TestJWTWithRevocationAndScope(t *testing.T) {
-	secret := alaye.Value("test-secret-key-12345")
+	secret := expect.Value("test-secret-key-12345")
 
 	genToken := func(scope string) string {
 		claims := jwt.MapClaims{
@@ -342,7 +343,7 @@ func TestJWTWithRevocationAndScope(t *testing.T) {
 }
 
 func TestGetClaims(t *testing.T) {
-	secret := alaye.Value("test-secret-key-12345")
+	secret := expect.Value("test-secret-key-12345")
 
 	genToken := func() string {
 		claims := jwt.MapClaims{

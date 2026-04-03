@@ -3,6 +3,7 @@ package alaye
 import (
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
@@ -41,11 +42,11 @@ func (w *Web) Validate() error {
 }
 
 type GitAuth struct {
-	Type             string `hcl:"type,attr" json:"type"`
-	Username         string `hcl:"username,attr" json:"username"`
-	Password         Value  `hcl:"password,attr" json:"password"`
-	SSHKey           Value  `hcl:"ssh_key,attr" json:"ssh_key"`
-	SSHKeyPassphrase Value  `hcl:"ssh_key_passphrase,attr" json:"ssh_key_passphrase"`
+	Type             string       `hcl:"type,attr" json:"type"`
+	Username         string       `hcl:"username,attr" json:"username"`
+	Password         expect.Value `hcl:"password,attr" json:"password"`
+	SSHKey           expect.Value `hcl:"ssh_key,attr" json:"ssh_key"`
+	SSHKeyPassphrase expect.Value `hcl:"ssh_key_passphrase,attr" json:"ssh_key_passphrase"`
 }
 
 // Validate checks that the auth type is one of the accepted values.
@@ -61,15 +62,15 @@ func (a *GitAuth) Validate() error {
 }
 
 type Git struct {
-	Enabled  Enabled  `hcl:"enabled,attr" json:"enabled"`
-	ID       string   `hcl:"id,attr" json:"id"`
-	URL      string   `hcl:"url,attr" json:"url"`
-	Branch   string   `hcl:"branch,attr" json:"branch"`
-	Secret   Value    `hcl:"secret,attr" json:"secret"`
-	Interval Duration `hcl:"interval,attr" json:"interval"`
-	WorkDir  string   `hcl:"work_dir,attr" json:"work_dir"`
-	SubDir   string   `hcl:"sub_dir,attr" json:"sub_dir"`
-	Auth     GitAuth  `hcl:"auth,block" json:"auth"`
+	Enabled  Enabled      `hcl:"enabled,attr" json:"enabled"`
+	ID       string       `hcl:"id,attr" json:"id"`
+	URL      string       `hcl:"url,attr" json:"url"`
+	Branch   string       `hcl:"branch,attr" json:"branch"`
+	Secret   expect.Value `hcl:"secret,attr" json:"secret"`
+	Interval Duration     `hcl:"interval,attr" json:"interval"`
+	WorkDir  string       `hcl:"work_dir,attr" json:"work_dir"`
+	SubDir   string       `hcl:"sub_dir,attr" json:"sub_dir"`
+	Auth     GitAuth      `hcl:"auth,block" json:"auth"`
 }
 
 // Validate checks that ID and URL are present when git serving is enabled.

@@ -1,4 +1,3 @@
-// expect/value.go
 package expect
 
 import (

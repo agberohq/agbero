@@ -187,9 +187,7 @@ func DecodePNG(data []byte) (image.Image, error) {
 	return png.Decode(bytes.NewReader(data))
 }
 
-// --------------------------------------------------------------------------
 // Helper functions (non-exported, used internally)
-// --------------------------------------------------------------------------
 
 func writeInt(b *strings.Builder, n int) {
 	b.WriteString(itoa(n))

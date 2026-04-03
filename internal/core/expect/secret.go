@@ -20,8 +20,8 @@ type Secret struct {
 }
 
 // ParseSecret parses a secret path in either format:
-//   - ss://namespace/key/subkey1/subkey2 (with scheme)
-//   - namespace/key/subkey1/subkey2 (without scheme, defaults to ss://)
+// ss://namespace/key/subkey1/subkey2 (with scheme)
+// namespace/key/subkey1/subkey2 (without scheme, defaults to ss://)
 func ParseSecret(input string) (*Secret, error) {
 	if input == "" {
 		return nil, errors.New("secret input cannot be empty")

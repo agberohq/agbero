@@ -4,7 +4,8 @@ import (
 	"net/http"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
+	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
 type serverless struct {
@@ -18,8 +19,8 @@ func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
 		mux: http.NewServeMux(),
 	}
 
-	globalEnv := make(map[string]alaye.Value)
-	cfg.Resource.Env.Global.Range(func(k string, v alaye.Value) bool {
+	globalEnv := make(map[string]expect.Value)
+	cfg.Resource.Env.Global.Range(func(k string, v expect.Value) bool {
 		globalEnv[k] = v
 		return true
 	})

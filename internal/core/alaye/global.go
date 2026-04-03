@@ -3,6 +3,7 @@ package alaye
 import (
 	"net"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
@@ -13,7 +14,7 @@ type Global struct {
 	Build       string `hcl:"-" json:"build"`
 	Development bool   `hcl:"development,attr" json:"development"`
 
-	Env map[string]Value `hcl:"env,attr" json:"env"`
+	Env map[string]expect.Value `hcl:"env,attr" json:"env"`
 
 	Bind     Bind    `hcl:"bind,block" json:"bind"`
 	Timeouts Timeout `hcl:"timeouts,block" json:"timeouts"`

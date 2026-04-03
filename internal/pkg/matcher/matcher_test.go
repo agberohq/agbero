@@ -9,7 +9,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 )
 
-// --- paths ---
+// paths
 const (
 	pSlash     = woos.Slash
 	pApi       = "/api"
@@ -22,7 +22,7 @@ const (
 	pUnknown   = "/unknown"
 )
 
-// --- helpers ---
+// helpers
 func mkRoute(path string) *alaye.Route {
 	return &alaye.Route{Path: path}
 }
