@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/discovery"
-	"github.com/agberohq/agbero/internal/pkg/expect"
-	"github.com/agberohq/agbero/internal/pkg/security"
+	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/cluster"
+	"github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/keeper"
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
 )
@@ -36,7 +36,7 @@ type routePayload struct {
 
 func (r routePayload) Validate() error {
 
-	h := expect.New(r.Host)
+	h := expect.NewRaw(r.Host)
 	host, err := h.Domain()
 	if err != nil {
 		return fmt.Errorf("invalid host: %w", err)
@@ -47,7 +47,7 @@ func (r routePayload) Validate() error {
 		r.Route.Path = "/"
 	}
 
-	p := expect.New(r.Route.Path)
+	p := expect.NewRaw(r.Route.Path)
 	path, err := p.Path()
 	if err != nil {
 		return fmt.Errorf("invalid path: %w", err)
@@ -68,7 +68,7 @@ func (r routePayload) Validate() error {
 // It interacts with the cluster store to persist route metadata with optional TTL.
 type Route struct {
 	cluster *cluster.Manager
-	store   *security.Store
+	store   *keeper.Keeper
 	logger  *ll.Logger
 }
 
@@ -77,7 +77,7 @@ type Route struct {
 func NewRoute(cfg *Shared) *Route {
 	return &Route{
 		cluster: cfg.Cluster,
-		store:   cfg.Store,
+		store:   cfg.Kepper,
 		logger:  cfg.Logger.Namespace("api"),
 	}
 }
@@ -122,8 +122,8 @@ func (rt *Route) addRoute(w http.ResponseWriter, r *http.Request) {
 // deleteRoute handles DELETE requests to remove a registered route from the cluster store.
 // It constructs the storage key from query params and emits a delete operation.
 func (rt *Route) deleteRoute(w http.ResponseWriter, r *http.Request) {
-	h := expect.New(r.URL.Query().Get("host"))
-	p := expect.New(r.URL.Query().Get("path"))
+	h := expect.NewRaw(r.URL.Query().Get("host"))
+	p := expect.NewRaw(r.URL.Query().Get("path"))
 
 	host, err := h.Domain()
 	if err != nil {

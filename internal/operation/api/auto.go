@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/discovery"
-	"github.com/agberohq/agbero/internal/pkg/expect"
+	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
 )
@@ -103,14 +103,14 @@ func (rt *AutoRoute) deleteRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h := expect.New(r.URL.Query().Get("host"))
+	h := expect.NewRaw(r.URL.Query().Get("host"))
 	host, err := h.Domain()
 	if err != nil {
 		rt.errorResponse(w, http.StatusBadRequest, "host parameter is required")
 		return
 	}
 
-	p := expect.New(r.URL.Query().Get("path"))
+	p := expect.NewRaw(r.URL.Query().Get("path"))
 	path, _ := p.Path()
 	if path == "" {
 		path = "/"

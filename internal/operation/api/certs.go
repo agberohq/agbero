@@ -70,6 +70,7 @@ func (c *Certs) list(w http.ResponseWriter, r *http.Request) {
 		File      string    `json:"file"`
 		ExpiresAt time.Time `json:"expires_at"`
 		IsExpired bool      `json:"is_expired"`
+		DaysLeft  int       `json:"days_left"`
 	}
 	var certs []CertInfo
 	seen := make(map[string]bool)
@@ -122,6 +123,7 @@ func (c *Certs) list(w http.ResponseWriter, r *http.Request) {
 
 			expiresAt := cert.NotAfter
 			isExpired := now.After(expiresAt)
+			daysLeft := int(expiresAt.Sub(now).Hours() / 24)
 
 			seen[domain] = true
 			certs = append(certs, CertInfo{
@@ -129,6 +131,7 @@ func (c *Certs) list(w http.ResponseWriter, r *http.Request) {
 				File:      name,
 				ExpiresAt: expiresAt,
 				IsExpired: isExpired,
+				DaysLeft:  daysLeft,
 			})
 		}
 	}

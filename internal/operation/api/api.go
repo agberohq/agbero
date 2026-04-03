@@ -3,14 +3,15 @@ package api
 import (
 	"sync/atomic"
 
-	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/hub/cluster"
+	"github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/middleware/firewall"
 	"github.com/agberohq/agbero/internal/pkg/revoke"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/telemetry"
-	"github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/agberohq/keeper"
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
 )
@@ -24,7 +25,7 @@ type ActiveState struct {
 type Shared struct {
 	Logger      *ll.Logger
 	Cluster     *cluster.Manager
-	Store       *security.Store
+	Kepper      *keeper.Keeper
 	Discovery   *discovery.Host
 	PPK         *security.PPK
 	Telemetry   *telemetry.Store

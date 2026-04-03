@@ -1,4 +1,3 @@
-// totp.go - fixed to use the existing GetUserSecret method
 package api
 
 import (
@@ -6,8 +5,8 @@ import (
 	"net/http"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/middleware/auth"
-	"github.com/agberohq/agbero/internal/pkg/expect"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
@@ -161,6 +160,7 @@ func (t *TOTP) VerifyCode(username, code string) bool {
 
 	// Use the existing GetUserSecret method which handles alaye.Value resolution
 	secret, ok := cfg.GetUserSecret(username)
+
 	if !ok || secret == "" {
 		return false
 	}
@@ -173,7 +173,7 @@ func (t *TOTP) VerifyCode(username, code string) bool {
 // buildQR generates a QR code for a user's TOTP secret, handling validation and errors.
 // It returns the QR result and a boolean indicating success for caller branching logic.
 func (t *TOTP) buildQR(w http.ResponseWriter, r *http.Request) (*ui.QRResult, bool) {
-	v := expect.New(chi.URLParam(r, "user"))
+	v := expect.NewRaw(chi.URLParam(r, "user"))
 	user, err := v.Username()
 	if err != nil {
 		http.Error(w, "invalid user path parameter", http.StatusBadRequest)

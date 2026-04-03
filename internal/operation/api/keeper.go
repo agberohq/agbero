@@ -3,117 +3,108 @@ package api
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
 
-	"github.com/agberohq/agbero/internal/pkg/expect"
+	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
+	"github.com/agberohq/keeper"
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/zero"
 )
 
-// KeeperHandler registers all keeper API endpoints under the /keeper prefix on the provided chi.Router.
-// Unlock is public; all other endpoints should be protected via middleware applied by the caller.
+// KeeperHandler registers all keeper API endpoints under /keeper.
+// POST /keeper/unlock and GET /keeper/status are public — no auth required.
+// All other routes must be protected by the caller's auth middleware.
 func KeeperHandler(s *Shared, r chi.Router) {
 	k := NewKeeper(s)
 
 	r.Route("/keeper", func(r chi.Router) {
-		// Public endpoint - no authentication required
 		r.Post("/unlock", k.unlock)
 		r.Get("/status", k.status)
 
-		// Protected endpoints - caller should apply auth middleware via r.Use() or r.With()
 		r.Group(func(r chi.Router) {
 			r.Post("/lock", k.lock)
 			r.Get("/secrets", k.list)
 			r.Post("/secrets", k.set)
-			r.Delete("/secrets/{key}", k.delete)
-			r.Get("/secrets/{key}", k.get)
+			r.Delete("/secrets/*", k.delete)
+			r.Get("/secrets/*", k.get)
 		})
 	})
 }
 
-// setRequest defines the JSON payload structure for storing secrets via the keeper API.
-// It supports raw strings, base64-encoded values, and type hints for certificate storage.
+// setRequest is the JSON body for POST /keeper/secrets.
 type setRequest struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
 	B64   bool   `json:"b64"`
 }
 
-func (r setRequest) Validate() error {
-	// Validate key is not empty
+// Validate checks the request and normalises the key to its scheme-stripped form.
+// It rejects keys that are in the internal or vault-managed namespaces.
+func (r *setRequest) Validate() error {
 	if r.Key == "" {
 		return fmt.Errorf("key is required")
 	}
-
-	// Check if it's a secret URI (ss://, secret://, etc.)
-	e := expect.New(r.Key)
-
-	// If it's a valid secret URI, use that validation
-	if e.Type() == expect.TypeSecret {
-		secretPath, err := e.Secret()
-		if err != nil {
-			return fmt.Errorf("invalid secret URI: %w", err)
-		}
-		// Store the validated secret path back as string
-		r.Key = secretPath.Raw
-	} else {
-		if !regexp.MustCompile(`^[a-zA-Z0-9_.\-/]+$`).MatchString(r.Key) {
-			return fmt.Errorf("key contains invalid characters (allowed: a-z, A-Z, 0-9, _, ., -, /)")
-		}
-		if len(r.Key) < 1 || len(r.Key) > 256 {
-			return fmt.Errorf("key length must be between 1 and 256 characters")
-		}
+	e := expect.NewRaw(r.Key)
+	secret, err := e.SecretRef()
+	if err != nil {
+		return fmt.Errorf("invalid secret path: must be namespace/key or ss://namespace/key — %w", err)
 	}
+	if isReserved(secret) {
+		return fmt.Errorf("key is in a reserved namespace and cannot be modified via API")
+	}
+	r.Key = secret.WithoutScheme()
 
-	// Validate value is not empty
 	if r.Value == "" {
 		return fmt.Errorf("value is required")
 	}
-
-	// If B64 is true, validate base64 format
 	if r.B64 {
-		_, err := decodeB64Loose(r.Value)
-		if err != nil {
+		if _, err := decodeB64Loose(r.Value); err != nil {
 			return fmt.Errorf("invalid base64 encoding: %w", err)
 		}
 	}
-
 	return nil
 }
 
-// Keeper provides HTTP handlers for secret management and TOTP provisioning operations.
-// It encapsulates the security store, logger, and TOTP generator for keeper functionality.
+// isReserved returns true for keys that must not be accessible through the
+// user-facing secrets API:
+//
+//   - IsInternal() — namespace "internal" or "internal/*"
+//   - vault:// scheme — agbero-managed keys (admin users, JWT secret, PPK …)
+func isReserved(s *expect.Secret) bool {
+	return s.IsInternal() || s.Scheme == expect.SchemeVault
+}
+
+// Keeper holds the HTTP handlers for secret management.
 type Keeper struct {
-	store  *security.Store
+	store  *keeper.Keeper
 	logger *ll.Logger
 	totp   *security.TOTPGenerator
 }
 
-// NewKeeper initializes a Keeper instance with shared application dependencies.
-// It configures the logger namespace and creates a TOTP generator with default settings.
+// NewKeeper constructs a Keeper handler from shared application state.
 func NewKeeper(cfg *Shared) *Keeper {
 	return &Keeper{
-		store:  cfg.Store,
-		logger: cfg.Logger.Namespace("api"),
+		store:  cfg.Kepper,
+		logger: cfg.Logger.Namespace("api/keeper"),
 		totp:   security.NewTOTPGenerator(security.DefaultTOTPConfig()),
 	}
 }
 
-// unlock handles POST requests to decrypt and unlock the security store with a passphrase.
-// It validates input, attempts decryption, and wires the resolver for ss:// reference resolution.
+// unlock handles POST /keeper/unlock.
 func (k *Keeper) unlock(w http.ResponseWriter, r *http.Request) {
 	if k.store == nil {
 		k.errorResponse(w, http.StatusServiceUnavailable, "keeper not configured")
 		return
 	}
-
 	var body struct {
 		Passphrase string `json:"passphrase"`
 	}
@@ -121,24 +112,24 @@ func (k *Keeper) unlock(w http.ResponseWriter, r *http.Request) {
 		k.errorResponse(w, http.StatusBadRequest, "passphrase required")
 		return
 	}
-
-	if err := k.store.Unlock(body.Passphrase); err != nil {
+	pass := []byte(body.Passphrase)
+	err := k.store.Unlock(pass)
+	zero.Bytes(pass)
+	if err != nil {
 		k.errorResponse(w, http.StatusUnauthorized, "invalid passphrase")
 		return
 	}
-
-	security.NewResolver(k.store).Wire()
+	secrets.NewResolver(k.store).Wire()
 	k.jsonResponse(w, http.StatusOK, map[string]string{"status": "unlocked"})
 }
 
-// lock handles POST requests to encrypt and lock the security store, preventing further access.
-// It unwires the resolver and delegates to the store's Lock method with error handling.
+// lock handles POST /keeper/lock.
 func (k *Keeper) lock(w http.ResponseWriter, r *http.Request) {
 	if k.store == nil {
 		k.errorResponse(w, http.StatusServiceUnavailable, "keeper not configured")
 		return
 	}
-	security.NewResolver(k.store).Unwire()
+	secrets.NewResolver(k.store).Unwire()
 	if err := k.store.Lock(); err != nil {
 		k.errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
@@ -146,16 +137,50 @@ func (k *Keeper) lock(w http.ResponseWriter, r *http.Request) {
 	k.jsonResponse(w, http.StatusOK, map[string]string{"status": "locked"})
 }
 
-// list handles GET requests to retrieve all secret keys currently stored in the keeper.
-// It validates store availability and lock status before returning the key list as JSON.
+// status handles GET /keeper/status.
+func (k *Keeper) status(w http.ResponseWriter, r *http.Request) {
+	enabled := k.store != nil
+	locked := true
+	if enabled {
+		locked = k.store.IsLocked()
+	}
+	k.jsonResponse(w, http.StatusOK, map[string]any{
+		"enabled": enabled,
+		"locked":  locked,
+	})
+}
+
+// list handles GET /keeper/secrets.
+//
+// User-supplied secrets are stored in the "default" keeper scheme under
+// whichever namespace the key path specifies (e.g. "prod/db_pass" goes into
+// default:prod). This handler iterates all namespaces in the default scheme
+// and collects every key, returning a flat list with their full paths
+// ("namespace/key") so the caller can reconstruct the original keys.
 func (k *Keeper) list(w http.ResponseWriter, r *http.Request) {
 	if !k.guard(w) {
 		return
 	}
-	keys, err := k.store.List()
+
+	namespaces, err := k.store.ListNamespacesInSchemeFull("default")
 	if err != nil {
 		k.errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	var keys []string
+	for _, ns := range namespaces {
+		if ns == "__default__" {
+			// Skip the auto-created empty namespace.
+			continue
+		}
+		nsKeys, err := k.store.ListNamespacedFull("default", ns)
+		if err != nil {
+			continue // bucket may be locked; skip silently
+		}
+		for _, key := range nsKeys {
+			keys = append(keys, ns+"/"+key)
+		}
 	}
 	if keys == nil {
 		keys = []string{}
@@ -163,68 +188,74 @@ func (k *Keeper) list(w http.ResponseWriter, r *http.Request) {
 	k.jsonResponse(w, http.StatusOK, map[string]any{"keys": keys})
 }
 
-// get handles GET requests to retrieve a specific secret value by its key from the keeper.
-// It validates the key parameter, checks store state, and returns the value or appropriate error.
+// get handles GET /keeper/secrets/{key}.
 func (k *Keeper) get(w http.ResponseWriter, r *http.Request) {
 	if !k.guard(w) {
 		return
 	}
-
-	rawKey := chi.URLParam(r, "key")
-	var lookupKey string
-
-	e := expect.New(rawKey)
-	if e.Type() == expect.TypeSecret {
-		secret, err := e.SecretRef()
-		if err != nil {
-			k.errorResponse(w, http.StatusBadRequest, "invalid key: "+err.Error())
-			return
-		}
-		lookupKey = secret.WithoutScheme()
-	} else {
-		// Simple key format (backward compatibility)
-		lookupKey = rawKey
+	rawKey := chi.URLParam(r, "*")
+	if rawKey == "" {
+		k.errorResponse(w, http.StatusBadRequest, "key required")
+		return
 	}
-
-	ll.Dbg(lookupKey)
+	e := expect.NewRaw(rawKey)
+	secret, err := e.SecretRef()
+	if err != nil {
+		k.errorResponse(w, http.StatusBadRequest,
+			"invalid key: must be namespace/key or ss://namespace/key — "+err.Error())
+		return
+	}
+	if isReserved(secret) {
+		k.errorResponse(w, http.StatusForbidden, "key is in a reserved namespace")
+		return
+	}
+	lookupKey := secret.WithoutScheme()
 	val, err := k.store.Get(lookupKey)
 	if err != nil {
-		if err == security.ErrKeyNotFound {
+		if errors.Is(err, keeper.ErrKeyNotFound) {
 			k.errorResponse(w, http.StatusNotFound, "key not found")
 		} else {
 			k.errorResponse(w, http.StatusInternalServerError, err.Error())
 		}
 		return
 	}
-	k.jsonResponse(w, http.StatusOK, map[string]string{"key": lookupKey, "value": val})
+	k.jsonResponse(w, http.StatusOK, map[string]string{
+		"key":   lookupKey,
+		"value": string(val),
+	})
 }
 
-// set handles POST requests to store a new secret, supporting JSON body or multipart file upload.
-// It validates input, handles base64 decoding if requested, and stores bytes via the security store.
+// set handles POST /keeper/secrets (JSON or multipart).
+//
+// User secrets go into the "default" keeper scheme. A LevelPasswordOnly bucket
+// is created for the namespace on first write — CreateBucket is idempotent
+// (returns ErrPolicyImmutable if the bucket already exists, which we ignore).
 func (k *Keeper) set(w http.ResponseWriter, r *http.Request) {
 	if !k.guard(w) {
 		return
 	}
 
-	ct := r.Header.Get("Content-Type")
 	var key string
 	var data []byte
 
-	if strings.HasPrefix(ct, "multipart/") {
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 		if err := r.ParseMultipartForm(4 << 20); err != nil {
 			k.errorResponse(w, http.StatusBadRequest, "bad multipart: "+err.Error())
 			return
 		}
-		key = r.FormValue("key")
-
-		// Validate key using expect
-		e := expect.New(key)
-		validKey, err := e.SecretKey()
+		rawKey := r.FormValue("key")
+		e := expect.NewRaw(rawKey)
+		secret, err := e.SecretRef()
 		if err != nil {
-			k.errorResponse(w, http.StatusBadRequest, "invalid key: "+err.Error())
+			k.errorResponse(w, http.StatusBadRequest,
+				"invalid key: must be namespace/key or ss://namespace/key — "+err.Error())
 			return
 		}
-		key = validKey
+		if isReserved(secret) {
+			k.errorResponse(w, http.StatusForbidden, "key is in a reserved namespace")
+			return
+		}
+		key = secret.WithoutScheme()
 
 		file, _, err := r.FormFile("file")
 		if err != nil {
@@ -232,12 +263,11 @@ func (k *Keeper) set(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer file.Close()
-		data, err = io.ReadAll(io.LimitReader(file, 1<<20))
+		data, err = io.ReadAll(io.LimitReader(file, 4<<20))
 		if err != nil {
 			k.errorResponse(w, http.StatusInternalServerError, "read failed")
 			return
 		}
-
 		if len(data) == 0 {
 			k.errorResponse(w, http.StatusBadRequest, "file cannot be empty")
 			return
@@ -248,26 +278,34 @@ func (k *Keeper) set(w http.ResponseWriter, r *http.Request) {
 			k.errorResponse(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 			return
 		}
-
-		// Validate the request
 		if err := req.Validate(); err != nil {
 			k.errorResponse(w, http.StatusBadRequest, err.Error())
 			return
 		}
-
 		key = req.Key
 		if req.B64 {
-			data, _ = decodeB64Loose(req.Value)
+			var err error
+			data, err = decodeB64Loose(req.Value)
+			if err != nil {
+				k.errorResponse(w, http.StatusBadRequest, "invalid base64: "+err.Error())
+				return
+			}
 		} else {
 			data = []byte(req.Value)
 		}
 	}
 
-	if err := k.store.SetBytes(key, data); err != nil {
-		k.errorResponse(w, http.StatusInternalServerError, err.Error())
+	// Ensure the namespace bucket exists. CreateBucket is idempotent —
+	// ErrPolicyImmutable means it already exists, which is fine.
+	if err := k.ensureDefaultBucket(key); err != nil {
+		k.errorResponse(w, http.StatusInternalServerError, "failed to prepare bucket: "+err.Error())
 		return
 	}
 
+	if err := k.store.Set(key, data); err != nil {
+		k.errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	k.jsonResponse(w, http.StatusOK, map[string]any{
 		"key":   key,
 		"bytes": len(data),
@@ -275,30 +313,40 @@ func (k *Keeper) set(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// delete handles DELETE requests to remove a secret from the keeper by its key.
-// It validates the key parameter, checks store state, and returns confirmation or error.
+// delete handles DELETE /keeper/secrets/{key}.
 func (k *Keeper) delete(w http.ResponseWriter, r *http.Request) {
 	if !k.guard(w) {
 		return
 	}
-	key := chi.URLParam(r, "key")
-	if key == "" {
+	rawKey := chi.URLParam(r, "*")
+	if rawKey == "" {
 		k.errorResponse(w, http.StatusBadRequest, "key required")
 		return
 	}
-	if err := k.store.Delete(key); err != nil {
-		if err == security.ErrKeyNotFound {
+	e := expect.NewRaw(rawKey)
+	secret, err := e.SecretRef()
+	if err != nil {
+		k.errorResponse(w, http.StatusBadRequest,
+			"invalid key: must be namespace/key or ss://namespace/key — "+err.Error())
+		return
+	}
+	if isReserved(secret) {
+		k.errorResponse(w, http.StatusForbidden, "key is in a reserved namespace")
+		return
+	}
+	normalizedKey := secret.WithoutScheme()
+	if err := k.store.Delete(normalizedKey); err != nil {
+		if errors.Is(err, keeper.ErrKeyNotFound) {
 			k.errorResponse(w, http.StatusNotFound, "key not found")
 		} else {
 			k.errorResponse(w, http.StatusInternalServerError, err.Error())
 		}
 		return
 	}
-	k.jsonResponse(w, http.StatusOK, map[string]string{"deleted": key})
+	k.jsonResponse(w, http.StatusOK, map[string]string{"deleted": normalizedKey})
 }
 
-// totpSetup handles POST requests to generate and store a new TOTP secret for a user.
-// It returns the provisioning URI and inline SVG QR code for admin UI integration.
+// totpSetup handles POST /keeper/totp/{user}.
 func (k *Keeper) totpSetup(w http.ResponseWriter, r *http.Request) {
 	if !k.guard(w) {
 		return
@@ -308,54 +356,42 @@ func (k *Keeper) totpSetup(w http.ResponseWriter, r *http.Request) {
 		k.errorResponse(w, http.StatusBadRequest, "user required")
 		return
 	}
-
-	secret, err := k.totp.GenerateSecret()
+	totpSecret, err := k.totp.GenerateSecret()
 	if err != nil {
-		k.errorResponse(w, http.StatusInternalServerError, "failed to generate secret")
+		k.errorResponse(w, http.StatusInternalServerError, "failed to generate TOTP secret")
 		return
 	}
-
-	storeKey := "totp/" + user
-	if err := k.store.Set(storeKey, secret); err != nil {
+	storeKey := expect.Vault().AdminTOTP(user)
+	if err := k.store.Set(storeKey, []byte(totpSecret)); err != nil {
 		k.errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	uri := k.totp.GetProvisioningURI(secret, user)
+	uri := k.totp.GetProvisioningURI(totpSecret, user)
 	qr, err := setup.TOTPProvisioningQR(uri)
-	if err != nil {
-		k.jsonResponse(w, http.StatusOK, map[string]string{
-			"user":      user,
-			"store_key": storeKey,
-			"ref":       "ss://" + storeKey,
-			"uri":       uri,
-		})
-		return
-	}
-
-	k.jsonResponse(w, http.StatusOK, map[string]string{
+	resp := map[string]string{
 		"user":      user,
 		"store_key": storeKey,
-		"ref":       "ss://" + storeKey,
+		"ref":       storeKey,
 		"uri":       uri,
-		"qr_svg":    qr.SVG,
-	})
+	}
+	if err == nil {
+		resp["qr_svg"] = qr.SVG
+	}
+	k.jsonResponse(w, http.StatusOK, resp)
 }
 
-// totpQRSVG handles GET requests to return a user's TOTP QR code as a standalone SVG image.
-// It builds the QR via shared logic and sets the appropriate Content-Type header.
+// totpQRSVG handles GET /keeper/totp/{user}/qr.svg.
 func (k *Keeper) totpQRSVG(w http.ResponseWriter, r *http.Request) {
-	svg, ok := k.buildTOTPQR(w, r)
+	qr, ok := k.buildTOTPQR(w, r)
 	if !ok {
 		return
 	}
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(svg.SVG)) //nolint:errcheck
+	w.Write([]byte(qr.SVG)) //nolint:errcheck
 }
 
-// totpQRPNG handles GET requests to return a user's TOTP QR code as a downloadable PNG image.
-// It builds the QR via shared logic and sets Content-Disposition for file download.
+// totpQRPNG handles GET /keeper/totp/{user}/qr.png.
 func (k *Keeper) totpQRPNG(w http.ResponseWriter, r *http.Request) {
 	qr, ok := k.buildTOTPQR(w, r)
 	if !ok {
@@ -367,8 +403,6 @@ func (k *Keeper) totpQRPNG(w http.ResponseWriter, r *http.Request) {
 	w.Write(qr.PNG) //nolint:errcheck
 }
 
-// guard checks if the keeper store is configured and unlocked before allowing handler execution.
-// It returns false and sends an appropriate error response if preconditions are not met.
 func (k *Keeper) guard(w http.ResponseWriter) bool {
 	if k.store == nil {
 		k.errorResponse(w, http.StatusServiceUnavailable, "keeper not configured")
@@ -381,8 +415,6 @@ func (k *Keeper) guard(w http.ResponseWriter) bool {
 	return true
 }
 
-// buildTOTPQR generates a QR code for a user's TOTP secret, handling validation and errors.
-// It returns the QR result and a boolean indicating success for caller branching logic.
 func (k *Keeper) buildTOTPQR(w http.ResponseWriter, r *http.Request) (*ui.QRResult, bool) {
 	if !k.guard(w) {
 		return nil, false
@@ -392,18 +424,18 @@ func (k *Keeper) buildTOTPQR(w http.ResponseWriter, r *http.Request) (*ui.QRResu
 		k.errorResponse(w, http.StatusBadRequest, "user required")
 		return nil, false
 	}
-
-	secret, err := k.store.Get("totp/" + user)
+	storeKey := expect.Vault().AdminTOTP(user)
+	secretBytes, err := k.store.Get(storeKey)
 	if err != nil {
-		if err == security.ErrKeyNotFound {
-			k.errorResponse(w, http.StatusNotFound, "TOTP not configured for "+user+" — POST /keeper/totp/"+user+" first")
+		if errors.Is(err, keeper.ErrKeyNotFound) {
+			k.errorResponse(w, http.StatusNotFound,
+				"TOTP not configured for "+user+" — POST /keeper/totp/"+user+" first")
 		} else {
 			k.errorResponse(w, http.StatusInternalServerError, err.Error())
 		}
 		return nil, false
 	}
-
-	uri := k.totp.GetProvisioningURI(secret, user)
+	uri := k.totp.GetProvisioningURI(string(secretBytes), user)
 	qr, err := setup.TOTPProvisioningQR(uri)
 	if err != nil {
 		k.errorResponse(w, http.StatusInternalServerError, "QR generation failed: "+err.Error())
@@ -412,16 +444,34 @@ func (k *Keeper) buildTOTPQR(w http.ResponseWriter, r *http.Request) (*ui.QRResu
 	return qr, true
 }
 
-// errorResponse sends a standardized JSON error response with HTTP status and message.
-// It ensures consistent error formatting across all keeper API endpoints.
+// ensureDefaultBucket creates a LevelPasswordOnly bucket in the "default"
+// scheme for the namespace parsed from key ("namespace/key" format).
+// It is idempotent: ErrPolicyImmutable (bucket already exists) is silently ignored.
+func (k *Keeper) ensureDefaultBucket(key string) error {
+	// Extract namespace — first segment before "/"
+	ns := key
+	if idx := strings.Index(key, "/"); idx > 0 {
+		ns = key[:idx]
+	}
+	if ns == "" || ns == "__default__" {
+		return nil // no specific namespace, default bucket already seeded
+	}
+	err := k.store.CreateBucket("default", ns, keeper.LevelPasswordOnly, "api")
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(err.Error(), "immutable") || strings.Contains(err.Error(), "already exists") {
+		return nil
+	}
+	return err
+}
+
 func (k *Keeper) errorResponse(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	json.NewEncoder(w).Encode(map[string]string{"error": msg}) //nolint:errcheck
 }
 
-// jsonResponse encodes and sends a JSON response with the provided status code and data.
-// It logs encoding errors internally without exposing them to the client.
 func (k *Keeper) jsonResponse(w http.ResponseWriter, code int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -432,23 +482,6 @@ func (k *Keeper) jsonResponse(w http.ResponseWriter, code int, data any) {
 	}
 }
 
-// status handles GET requests to retrieve the current state of the keeper (enabled and locked status).
-// It does not expose any secrets and is safe to be polled by the frontend to trigger unlock modals.
-func (k *Keeper) status(w http.ResponseWriter, r *http.Request) {
-	enabled := k.store != nil
-	locked := false
-	if enabled {
-		locked = k.store.IsLocked()
-	}
-
-	k.jsonResponse(w, http.StatusOK, map[string]any{
-		"enabled": enabled,
-		"locked":  locked,
-	})
-}
-
-// decodeB64Loose attempts to decode a base64 string using both standard and URL encodings.
-// It returns the decoded bytes or the first error encountered if both attempts fail.
 func decodeB64Loose(s string) ([]byte, error) {
 	data, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {

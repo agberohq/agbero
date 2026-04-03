@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/hub/cluster"
 	"github.com/go-chi/chi/v5"
 )
 

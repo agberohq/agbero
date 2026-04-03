@@ -10,10 +10,10 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/discovery"
-	"github.com/agberohq/agbero/internal/pkg/expect"
+	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
@@ -61,7 +61,7 @@ type hostCreateRequest struct {
 func (r hostCreateRequest) Validate() error {
 
 	if r.Domain != "" {
-		e := expect.New(r.Domain)
+		e := expect.NewRaw(r.Domain)
 		if _, err := e.Domain(); err != nil {
 			return fmt.Errorf("invalid domain: %w", err)
 		}
@@ -165,7 +165,7 @@ func (h *Host) get(w http.ResponseWriter, r *http.Request) {
 	}
 	domain = strings.ToLower(strings.TrimSpace(domain))
 
-	e := expect.New(domain)
+	e := expect.NewRaw(domain)
 	validDomain, err := e.Domain()
 	if err != nil {
 		http.Error(w, "Invalid domain format", http.StatusBadRequest)
@@ -311,7 +311,7 @@ func (h *Host) update(w http.ResponseWriter, r *http.Request) {
 	}
 	domain = strings.ToLower(strings.TrimSpace(domain))
 
-	e := expect.New(domain)
+	e := expect.NewRaw(domain)
 	validDomain, err := e.Domain()
 	if err != nil {
 		http.Error(w, "Invalid domain format", http.StatusBadRequest)
@@ -444,7 +444,7 @@ func (h *Host) deleteByDomain(w http.ResponseWriter, r *http.Request, domain str
 
 	domain = strings.ToLower(strings.TrimSpace(domain))
 
-	e := expect.New(domain)
+	e := expect.NewRaw(domain)
 	validDomain, err := e.Domain()
 	if err != nil {
 		http.Error(w, "Invalid domain format", http.StatusBadRequest)
@@ -517,7 +517,7 @@ func ValidateDomainParam(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if domain := chi.URLParam(r, "domain"); domain != "" {
 
-			e := expect.New(domain)
+			e := expect.NewRaw(domain)
 			if _, err := e.Domain(); err != nil && domain != "localhost" {
 				http.Error(w, "Invalid domain format", http.StatusBadRequest)
 				return

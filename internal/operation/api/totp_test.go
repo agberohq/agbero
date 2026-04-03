@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/middleware/auth"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/go-chi/chi/v5"
@@ -43,7 +44,7 @@ func setupTestTOTPWithConfig(t *testing.T) (*Shared, func()) {
 				Users: []alaye.TOTPUser{
 					{
 						Username: "existinguser",
-						Secret:   alaye.Value("JBSWY3DPEHPK3PXP"),
+						Secret:   expect.Value("JBSWY3DPEHPK3PXP"),
 					},
 				},
 			},
@@ -70,7 +71,7 @@ func addTOTPUser(shared *Shared, username, secret string) {
 	cfg := state.Global.Admin.TOTP
 	cfg.Users = append(cfg.Users, alaye.TOTPUser{
 		Username: username,
-		Secret:   alaye.Value(secret),
+		Secret:   expect.Value(secret),
 	})
 	state.Global.Admin.TOTP = cfg
 	shared.UpdateState(state)

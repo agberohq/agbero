@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/agberohq/agbero/internal/cluster"
-	"github.com/agberohq/agbero/internal/pkg/security"
+	"github.com/agberohq/agbero/internal/hub/cluster"
+	"github.com/agberohq/keeper"
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
 )
@@ -25,7 +25,7 @@ func ClusterHandler(s *Shared, r chi.Router) {
 // It encapsulates dependencies for logging, security, and cluster coordination.
 type Cluster struct {
 	cluster *cluster.Manager
-	store   *security.Store
+	store   *keeper.Keeper
 	logger  *ll.Logger
 }
 
@@ -34,7 +34,7 @@ type Cluster struct {
 func NewCluster(cfg *Shared) *Cluster {
 	return &Cluster{
 		cluster: cfg.Cluster,
-		store:   cfg.Store,
+		store:   cfg.Kepper,
 		logger:  cfg.Logger.Namespace("api"),
 	}
 }

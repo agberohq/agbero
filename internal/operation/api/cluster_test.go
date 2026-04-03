@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/agberohq/agbero/internal/cluster"
+	"github.com/agberohq/agbero/internal/hub/cluster"
 	"github.com/go-chi/chi/v5"
 )
 

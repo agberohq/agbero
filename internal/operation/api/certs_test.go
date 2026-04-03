@@ -68,7 +68,7 @@ func setupTestCerts(t *testing.T) (*Shared, func()) {
 	}
 
 	hm := newMockHostManagerForCerts(t)
-	tlsMgr := tlss.NewManager(testLogger, hm.Host, global)
+	tlsMgr := tlss.NewManager(testLogger, hm.Host, global, nil)
 
 	shared := &Shared{
 		Logger: testLogger,
