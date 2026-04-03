@@ -1,79 +1,607 @@
-import{listen,emit,on,clipboard,notify,query,modal}from"../lib/oja.full.esm.js";import{store}from"./store.js";import{fmtNum}from"./api.js";import{isOn}from"./utils.js";function openDrawer(e){modal.open(e)}function closeDrawer(e){modal.closeById(e)}on('[data-action="close-drawer"]',"click",(e,t)=>closeDrawer(t.dataset.target)),on("#drawerPerfBtn","click",(e,t)=>{const n=t.dataset.hostname||query("#drawerHostName")?.dataset.host;n&&emit("perf:open",{hostname:n})}),on('[data-action="open-backend"]',"click",(e,t)=>{emit("drawer:open-backend",{host:t.dataset.host,routeIdx:parseInt(t.dataset.routeIdx),backendIdx:parseInt(t.dataset.backendIdx),type:t.dataset.type})}),on('[data-action="copy-url"]',"click",(e,t)=>{e.stopPropagation(),clipboard.write(t.dataset.url).then(()=>notify.show("Copied","success")).catch(()=>{})}),on('[data-action="perf-node"]',"click",(e,t)=>{emit("perf:open",{hostname:t.dataset.hostname})}),listen("drawer:open-route",({host:e,idx:t,type:n})=>{const i=(store.get("lastConfig")||{}).hosts?.[e]||{},a=(store.get("hostsData")||{stats:{}}).stats?.[e]||{},s=n==="proxy"?i.proxies?.[t]:i.routes?.[t];if(!s)return;const l=n==="proxy"?a.proxies?.[t]:a.routes?.[t],d=s.path||(s.name?s.name.replace("*default*","* (TCP)"):s.protocol||"*"),r=query("#drawerRoutePath"),o=query("#drawerHostName");if(r&&(r.innerText=d),o){o.dataset.host=e;const t=[...o.childNodes].find(e=>e.nodeType===Node.TEXT_NODE);t?t.textContent=e+" ":o.firstChild&&(o.firstChild.textContent=e+" ")}const c=query("#drawerBody");c&&(c.innerHTML=buildRouteHTML(e,s,l||{},n,store.get("certificates")||[],t)),openDrawer("routeDrawer")}),listen("drawer:open-backend",({host:e,routeIdx:t,backendIdx:n,type:s})=>{const i=(store.get("lastConfig")||{}).hosts?.[e]||{},a=(store.get("hostsData")||{stats:{}}).stats?.[e]||{},r=s==="proxy"?i.proxies?.[t]?.backends?.[n]||{}:i.routes?.[t]?.backends?.servers?.[n]||{},o=s==="proxy"?a.proxies?.[t]?.backends?.[n]||{}:a.routes?.[t]?.backends?.[n]||{},u=o.url||o.address||r.address||"Unknown",c=query("#backendDrawerTitle"),l=query("#backendDrawerUrl");c&&(c.innerText="Backend Activity"),l&&(l.innerText=u);const d=query("#backendDrawerBody");d&&(d.innerHTML=buildBackendHTML(r,o)),openDrawer("backendDrawer")});function section(e,t){return!t||t.trim()===""?"":`<div class="detail-section">
-        <div class="detail-title">${e}</div>
-        ${t}
-    </div>`}function kvGrid(e){const t=e.filter(e=>e&&e[1]!==null&&e[1]!==0[0]&&e[1]!==""&&e[1]!==!1&&e[1]!==0).map(([e,t])=>`<div class="kv-item"><label>${e}</label><div>${t}</div></div>`).join("");return t?`<div class="kv-grid">${t}</div>`:""}function badge(e,t=""){return`<span class="badge ${t}">${e}</span>`}function webSection(e){if(!e)return"";const o=!!e.root,s=isOn(e.git?.enabled);if(!o&&!s)return"";const n=[];e.root&&n.push(["Root",`<code class="mono" style="font-size:11px;word-break:break-all;">${e.root}</code>`]),e.index?.length&&n.push(["Index",e.index.map(e=>`<code>${e}</code>`).join(" ")]),e.listing&&n.push(["Listing",badge("Directory listing","success")]),e.spa&&n.push(["SPA Mode",badge("On","info")]),e.no_cache&&n.push(["No-Cache",badge("headers set","warning")]);const t=e.markdown;if(isOn(t?.enabled)){const s=t.view==="browse",e=[badge(s?"📖 Browse":"🌐 Website",s?"info":"")];isOn(t.toc)&&e.push(badge("TOC","")),isOn(t.unsafe)&&e.push(badge("Unsafe HTML","warning")),isOn(t.highlight?.enabled)&&e.push(badge(t.highlight.theme||"highlight","info")),t.extensions?.length&&e.push(`<span style="font-size:10px;color:var(--text-mute);">${t.extensions.join(", ")}</span>`),t.template&&e.push(`<span style="font-size:10px;color:var(--text-mute);">tpl: ${t.template}</span>`),n.push(["Markdown",e.join(" ")])}isOn(e.php?.enabled)&&n.push(["PHP-FPM",badge(e.php.address||"127.0.0.1:9000","info")]);const i=isOn(t?.enabled)&&t?.view==="browse",a=i?"📖":s?"🐙":"📂",r=s?"Git · Static File Server":"Static File Server";return section(`${a} ${r}`,kvGrid(n))}function gitSection(e){if(!isOn(e?.enabled))return"";const a=store.get("gitStats")||{},n=a[e.id]||{},s=n.state||"unknown",o=n.commit?n.commit.substring(0,8):"none",r=s==="healthy"?"success":s==="unavailable"?"warning":"error",i=`${window.location.origin}/.well-known/agbero/webhook/git/${e.id}`,c=[["ID",`<code>${e.id}</code>`],["URL",`<a href="${e.url}" target="_blank" rel="noopener" style="color:var(--accent);word-break:break-all;font-size:11px;">${e.url}</a>`],["Branch",e.branch||badge("default","")],["Interval",e.interval&&e.interval!=="0s"?e.interval:badge("webhook only","")],["State",badge(s,r)],["Commit",o!=="none"?`<code>${o}</code>`:badge("none yet","warning")],["Deploys",n.deployments||0],e.sub_dir?["Sub Dir",`<code>${e.sub_dir}</code>`]:null,e.auth?.type?["Auth",badge(e.auth.type,"info")]:null].filter(Boolean),l=`<div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
-        <code style="font-size:10px;padding:4px 6px;background:var(--panel-bg);border:1px solid var(--border);border-radius:4px;flex:1;overflow-x:auto;white-space:nowrap;">${i}</code>
-        <button class="btn small" data-action="copy-url" data-url="${i}" style="flex-shrink:0;">Copy</button>
-    </div>`;return section("🐙 Git Deployment",kvGrid(c)+`<div style="margin-top:8px;"><label style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;">Webhook URL</label>${l}</div>`)}function serverlessSection(e){if(!isOn(e?.enabled))return"";const n=e.workers||[],s=e.rests||[];if(!n.length&&!s.length)return"";let t="";return n.length&&(t+=`<div style="font-size:11px;font-weight:500;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Workers (${n.length})</div>`,t+=n.map(e=>`
+/**
+ * js/drawer-listeners.js
+ *
+ * Route and backend drawer wiring.
+ *
+ * TYPE MAP (from alaye Go structs — critical, do not mix):
+ *   Enabled fields → "on" | "off" | "unknown"   — check with isOn(v)
+ *   bool fields    → true | false                — check === true
+ *
+ *   Enabled:  .enabled, protected, web.markdown.enabled, web.markdown.toc,
+ *             web.markdown.unsafe, web.markdown.highlight.enabled,
+ *             web.git.enabled, web.php.enabled, serverless.enabled,
+ *             cache.enabled, cors.enabled, wasm.enabled, rate_limit.enabled,
+ *             firewall.status, fallback.enabled, basic_auth.enabled,
+ *             jwt_auth.enabled, forward_auth.enabled, oauth.enabled
+ *
+ *   bool:     web.listing, web.spa, web.no_cache, host.compression,
+ *             cors.allow_credentials, health_check.accelerated_probing,
+ *             health_check.synthetic_when_idle, rate_limit.ignore_global,
+ *             firewall.ignore_global, forward_auth.allow_private
+ */
+
+import { listen, emit, on, clipboard, notify, query, modal } from '../lib/oja.full.esm.js';
+import { store } from './store.js';
+import { fmtNum } from './api.js';
+import { isOn } from './utils.js';
+
+// All opens/closes through Oja modal so the stack stays consistent and
+// the backdrop clears automatically when the stack empties.
+
+function openDrawer(id)  { modal.open(id); }
+function closeDrawer(id) { modal.closeById(id); }
+
+on('[data-action="close-drawer"]', 'click', (e, btn) => closeDrawer(btn.dataset.target));
+
+on('#drawerPerfBtn', 'click', (e, btn) => {
+    const hostname = btn.dataset.hostname || query('#drawerHostName')?.dataset.host;
+    if (hostname) emit('perf:open', { hostname });
+});
+
+on('[data-action="open-backend"]', 'click', (e, btn) => {
+    emit('drawer:open-backend', {
+        host:       btn.dataset.host,
+        routeIdx:   parseInt(btn.dataset.routeIdx),
+        backendIdx: parseInt(btn.dataset.backendIdx),
+        type:       btn.dataset.type,
+    });
+});
+
+on('[data-action="copy-url"]', 'click', (e, btn) => {
+    e.stopPropagation();
+    clipboard.write(btn.dataset.url)
+        .then(() => notify.show('Copied', 'success'))
+        .catch(() => {});
+});
+
+on('[data-action="perf-node"]', 'click', (e, btn) => {
+    emit('perf:open', { hostname: btn.dataset.hostname });
+});
+
+
+listen('drawer:open-route', ({ host, idx, type }) => {
+    const hostCfg   = (store.get('lastConfig') || {}).hosts?.[host] || {};
+    const hostStats = (store.get('hostsData')  || { stats: {} }).stats?.[host] || {};
+
+    const item      = type === 'proxy' ? hostCfg.proxies?.[idx] : hostCfg.routes?.[idx];
+    if (!item) return;
+    const itemStats = type === 'proxy' ? hostStats.proxies?.[idx] : hostStats.routes?.[idx];
+
+    const path = item.path || (item.name ? item.name.replace('*default*', '* (TCP)') : item.protocol || '*');
+    const el   = query('#drawerRoutePath');
+    const hn   = query('#drawerHostName');
+    if (el) el.innerText = path;
+    if (hn) {
+        hn.dataset.host = host;
+        const textNode = [...hn.childNodes].find(n => n.nodeType === Node.TEXT_NODE);
+        if (textNode) textNode.textContent = host + ' ';
+        else hn.firstChild && (hn.firstChild.textContent = host + ' ');
+    }
+
+    const body = query('#drawerBody');
+    if (body) body.innerHTML = buildRouteHTML(host, item, itemStats || {}, type, store.get('certificates') || [], idx);
+
+    openDrawer('routeDrawer');
+});
+
+listen('drawer:open-backend', ({ host, routeIdx, backendIdx, type }) => {
+    const hostCfg   = (store.get('lastConfig') || {}).hosts?.[host] || {};
+    const hostStats = (store.get('hostsData')  || { stats: {} }).stats?.[host] || {};
+
+    const cfgItem = type === 'proxy'
+        ? (hostCfg.proxies?.[routeIdx]?.backends?.[backendIdx]         || {})
+        : (hostCfg.routes?.[routeIdx]?.backends?.servers?.[backendIdx] || {});
+    const bStat = type === 'proxy'
+        ? (hostStats.proxies?.[routeIdx]?.backends?.[backendIdx] || {})
+        : (hostStats.routes?.[routeIdx]?.backends?.[backendIdx]  || {});
+
+    const url = bStat.url || bStat.address || cfgItem.address || 'Unknown';
+    const titleEl = query('#backendDrawerTitle');
+    const urlEl   = query('#backendDrawerUrl');
+    if (titleEl) titleEl.innerText = 'Backend Activity';
+    if (urlEl)   urlEl.innerText   = url;
+
+    const body = query('#backendDrawerBody');
+    if (body) body.innerHTML = buildBackendHTML(cfgItem, bStat);
+
+    openDrawer('backendDrawer');
+});
+
+
+function section(title, content) {
+    if (!content || content.trim() === '') return '';
+    return `<div class="detail-section">
+        <div class="detail-title">${title}</div>
+        ${content}
+    </div>`;
+}
+
+function kvGrid(pairs) {
+    const items = pairs
+        .filter(p => p && p[1] !== null && p[1] !== undefined && p[1] !== '' && p[1] !== false && p[1] !== 0)
+        .map(([label, value]) => `<div class="kv-item"><label>${label}</label><div>${value}</div></div>`)
+        .join('');
+    if (!items) return '';
+    return `<div class="kv-grid">${items}</div>`;
+}
+
+function badge(text, cls = '') {
+    return `<span class="badge ${cls}">${text}</span>`;
+}
+
+// Guard: web block has meaningful data when it has a root path OR git is enabled.
+// DO NOT guard on web.enabled — that field defaults to "unknown" (not "on") in
+// most HCL configs, so checking isOn(web.enabled) silently hides everything.
+
+function webSection(web) {
+    if (!web) return '';
+    // Only render if there is actual web content
+    const hasRoot = !!web.root;
+    const hasGit  = isOn(web.git?.enabled);
+    if (!hasRoot && !hasGit) return '';
+
+    const pairs = [];
+
+    if (web.root)            pairs.push(['Root',    `<code class="mono" style="font-size:11px;word-break:break-all;">${web.root}</code>`]);
+    if (web.index?.length)   pairs.push(['Index',   web.index.map(i => `<code>${i}</code>`).join(' ')]);
+
+    // bool fields — check with === true
+    if (web.listing)         pairs.push(['Listing',     badge('Directory listing', 'success')]);
+    if (web.spa)             pairs.push(['SPA Mode',    badge('On', 'info')]);
+    if (web.no_cache)        pairs.push(['No-Cache',    badge('headers set', 'warning')]);
+
+    // Markdown — Enabled type
+    const md = web.markdown;
+    if (isOn(md?.enabled)) {
+        const isBrowse  = md.view === 'browse';
+        const mdParts   = [badge(isBrowse ? '📖 Browse' : '🌐 Website', isBrowse ? 'info' : '')];
+        if (isOn(md.toc))              mdParts.push(badge('TOC', ''));
+        if (isOn(md.unsafe))           mdParts.push(badge('Unsafe HTML', 'warning'));
+        if (isOn(md.highlight?.enabled)) {
+            mdParts.push(badge(md.highlight.theme || 'highlight', 'info'));
+        }
+        if (md.extensions?.length)     mdParts.push(`<span style="font-size:10px;color:var(--text-mute);">${md.extensions.join(', ')}</span>`);
+        if (md.template)               mdParts.push(`<span style="font-size:10px;color:var(--text-mute);">tpl: ${md.template}</span>`);
+        pairs.push(['Markdown', mdParts.join(' ')]);
+    }
+
+    // PHP — Enabled type
+    if (isOn(web.php?.enabled)) {
+        pairs.push(['PHP-FPM', badge(web.php.address || '127.0.0.1:9000', 'info')]);
+    }
+
+    const isBrowse = isOn(md?.enabled) && md?.view === 'browse';
+    const icon     = isBrowse ? '📖' : hasGit ? '🐙' : '📂';
+    const title    = hasGit ? 'Git · Static File Server' : 'Static File Server';
+
+    return section(`${icon} ${title}`, kvGrid(pairs));
+}
+
+
+function gitSection(git, hostname) {
+    if (!isOn(git?.enabled)) return '';
+    const gitStats = store.get('gitStats') || {};
+    const gs       = gitStats[git.id]      || {};
+    const state    = gs.state  || 'unknown';
+    const commit   = gs.commit ? gs.commit.substring(0, 8) : 'none';
+    const sCls     = state === 'healthy' ? 'success' : state === 'unavailable' ? 'warning' : 'error';
+    const whUrl    = `${window.location.origin}/.well-known/agbero/webhook/git/${git.id}`;
+
+    const pairs = [
+        ['ID',       `<code>${git.id}</code>`],
+        ['URL',      `<a href="${git.url}" target="_blank" rel="noopener" style="color:var(--accent);word-break:break-all;font-size:11px;">${git.url}</a>`],
+        ['Branch',   git.branch || badge('default', '')],
+        ['Interval', git.interval && git.interval !== '0s' ? git.interval : badge('webhook only', '')],
+        ['State',    badge(state, sCls)],
+        ['Commit',   commit !== 'none' ? `<code>${commit}</code>` : badge('none yet', 'warning')],
+        ['Deploys',  gs.deployments || 0],
+        git.sub_dir    ? ['Sub Dir', `<code>${git.sub_dir}</code>`] : null,
+        git.auth?.type ? ['Auth',    badge(git.auth.type, 'info')]  : null,
+    ].filter(Boolean);
+
+    const whHtml = `<div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+        <code style="font-size:10px;padding:4px 6px;background:var(--panel-bg);border:1px solid var(--border);border-radius:4px;flex:1;overflow-x:auto;white-space:nowrap;">${whUrl}</code>
+        <button class="btn small" data-action="copy-url" data-url="${whUrl}" style="flex-shrink:0;">Copy</button>
+    </div>`;
+
+    return section('🐙 Git Deployment', kvGrid(pairs) +
+        `<div style="margin-top:8px;"><label style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;">Webhook URL</label>${whHtml}</div>`);
+}
+
+
+function serverlessSection(serverless) {
+    if (!isOn(serverless?.enabled)) return '';
+    const workers = serverless.workers || [];
+    const rests   = serverless.rests   || [];
+    if (!workers.length && !rests.length) return '';
+
+    let html = '';
+
+    if (workers.length) {
+        html += `<div style="font-size:11px;font-weight:500;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Workers (${workers.length})</div>`;
+        html += workers.map(w => `
             <div class="handler-card" style="margin-bottom:6px;">
                 <span class="handler-icon" style="font-size:16px;">⚙️</span>
                 <div class="handler-info">
-                    <strong>${e.name}</strong>
-                    <span style="font-family:var(--font-mono);font-size:11px;word-break:break-all;"><code>${(e.command||[]).join(" ")}</code></span>
+                    <strong>${w.name}</strong>
+                    <span style="font-family:var(--font-mono);font-size:11px;word-break:break-all;"><code>${(w.command || []).join(' ')}</code></span>
                     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">
-                        ${e.background?badge("background","info"):""}
-                        ${e.run_once?badge("run once",""):""}
-                        ${e.restart?badge("restart: "+e.restart,""):""}
-                        ${e.schedule?badge("cron: "+e.schedule,"warning"):""}
-                        ${e.timeout&&e.timeout!=="0s"?badge("timeout: "+e.timeout,""):""}
+                        ${w.background  ? badge('background', 'info') : ''}
+                        ${w.run_once    ? badge('run once', '') : ''}
+                        ${w.restart     ? badge('restart: ' + w.restart, '') : ''}
+                        ${w.schedule    ? badge('cron: ' + w.schedule, 'warning') : ''}
+                        ${w.timeout && w.timeout !== '0s' ? badge('timeout: ' + w.timeout, '') : ''}
                     </div>
                 </div>
-            </div>`).join("")),s.length&&(t+=`<div style="font-size:11px;font-weight:500;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 6px;">REST Proxies (${s.length})</div>`,t+=s.map(e=>`
+            </div>`).join('');
+    }
+
+    if (rests.length) {
+        html += `<div style="font-size:11px;font-weight:500;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 6px;">REST Proxies (${rests.length})</div>`;
+        html += rests.map(r => `
             <div class="handler-card" style="margin-bottom:6px;">
                 <span class="handler-icon" style="font-size:16px;">🔌</span>
                 <div class="handler-info">
                     <div style="display:flex;align-items:center;gap:6px;">
-                        <strong>${e.name}</strong>
-                        ${badge(e.method||"GET","info")}
+                        <strong>${r.name}</strong>
+                        ${badge(r.method || 'GET', 'info')}
                     </div>
-                    <span style="font-size:11px;word-break:break-all;"><a href="${e.url}" target="_blank" rel="noopener" style="color:var(--accent);">${e.url}</a></span>
-                    ${e.timeout&&e.timeout!=="0s"?`<span style="font-size:10px;color:var(--text-mute);">timeout: ${e.timeout}</span>`:""}
+                    <span style="font-size:11px;word-break:break-all;"><a href="${r.url}" target="_blank" rel="noopener" style="color:var(--accent);">${r.url}</a></span>
+                    ${r.timeout && r.timeout !== '0s' ? `<span style="font-size:10px;color:var(--text-mute);">timeout: ${r.timeout}</span>` : ''}
                 </div>
-            </div>`).join("")),section("⚡ Serverless",t)}function backendRow(e,t,n,s,o,i,a){const m=n.url||n.address||t.address||"",f=t.weight!==0[0]?t.weight:1,c=n.health?.status||"Unknown";let r="warn",l="No data";(n.url||n.address)&&(!n.alive||c==="Dead"||c==="Unhealthy"?(r="down",l=c!=="Unknown"?c:"Dead"):c==="Degraded"?(r="warn",l="Degraded"):c==="Healthy"?(r="ok",l="Healthy"):(r=n.alive?"info":"down",l=n.alive?"Unverified":"Dead"));const d=n.latency_us?.p99?(n.latency_us.p99/1e3).toFixed(0)+"ms":"",u=n.in_flight||0,h=n.failures||0,p=n.total_reqs||0,g=r==="ok"?"success":r==="warn"?"warning":"error";return`<div class="drawer-row clickable" data-action="open-backend"
-            data-host="${s}" data-route-idx="${o}"
-            data-backend-idx="${i}" data-type="${a}">
+            </div>`).join('');
+    }
+
+    return section('⚡ Serverless', html);
+}
+
+
+function backendRow(b, cfgB, bStat, hostname, routeIdx, bIdx, type) {
+    const url  = bStat.url || bStat.address || cfgB.address || '';
+    const w    = cfgB.weight !== undefined ? cfgB.weight : 1;
+    const hSt  = bStat.health?.status || 'Unknown';
+
+    let dc = 'warn', dt = 'No data';
+    if (bStat.url || bStat.address) {
+        if (!bStat.alive || hSt === 'Dead' || hSt === 'Unhealthy') { dc = 'down'; dt = hSt !== 'Unknown' ? hSt : 'Dead'; }
+        else if (hSt === 'Degraded')                                { dc = 'warn'; dt = 'Degraded'; }
+        else if (hSt === 'Healthy')                                 { dc = 'ok';   dt = 'Healthy'; }
+        else                                                        { dc = bStat.alive ? 'info' : 'down'; dt = bStat.alive ? 'Unverified' : 'Dead'; }
+    }
+
+    const p99  = bStat.latency_us?.p99 ? (bStat.latency_us.p99 / 1000).toFixed(0) + 'ms' : '';
+    const inf  = bStat.in_flight  || 0;
+    const fail = bStat.failures   || 0;
+    const reqs = bStat.total_reqs || 0;
+    const wCls = dc === 'ok' ? 'success' : dc === 'warn' ? 'warning' : 'error';
+
+    return `<div class="drawer-row clickable" data-action="open-backend"
+            data-host="${hostname}" data-route-idx="${routeIdx}"
+            data-backend-idx="${bIdx}" data-type="${type}">
         <div class="drawer-row-top">
             <div class="row-left">
-                <span class="dot ${r}" title="${l}"></span>
-                <span class="mono row-url" style="font-size:11px;word-break:break-all;">${m}</span>
+                <span class="dot ${dc}" title="${dt}"></span>
+                <span class="mono row-url" style="font-size:11px;word-break:break-all;">${url}</span>
             </div>
             <div class="row-right">
-                ${u>0?`<span class="be-tag be-tag-warn">⚡ ${u} in flight</span>`:""}
-                ${h>0?`<span class="be-tag be-tag-danger">⚠️ ${fmtNum(h)} fails</span>`:""}
+                ${inf  > 0 ? `<span class="be-tag be-tag-warn">⚡ ${inf} in flight</span>` : ''}
+                ${fail > 0 ? `<span class="be-tag be-tag-danger">⚠️ ${fmtNum(fail)} fails</span>` : ''}
             </div>
         </div>
         <div class="drawer-row-bottom">
-            ${d?`<span class="be-tag be-tag-info">p99: ${d}</span>`:""}
-            <span class="be-tag be-tag-${g}">W: ${f}</span>
-            <span class="be-tag">${fmtNum(p)} reqs</span>
+            ${p99 ? `<span class="be-tag be-tag-info">p99: ${p99}</span>` : ''}
+            <span class="be-tag be-tag-${wCls}">W: ${w}</span>
+            <span class="be-tag">${fmtNum(reqs)} reqs</span>
         </div>
-    </div>`}function upstreamsSection(e,t,n,s,o){const a=t.backends?.servers||[],i=n?.backends||[],r=i.length?i:a;if(!r.length)return"";const c=t.backends?.strategy,l=c?c.replace(/_/g," ").replace(/\b\w/g,e=>e.toUpperCase()):"Round Robin",d=r.map((t,n)=>backendRow(t,a[n]||{},i[n]||{},e,s,n,o)).join("");return section(`⬆️ Upstreams <span class="badge" style="margin-left:4px;">${l}</span>`,d)}function httpFeaturesSection(e){const t=[];if(isOn(e.health_check?.enabled)){const n=e.health_check,s=[["Path",`<code>${n.path}</code>`],["Interval",n.interval||"—"],["Timeout",n.timeout||"—"],["Threshold",n.threshold||"—"],["Method",n.method||"GET"],n.expected_status?.length?["Expected",n.expected_status.join(", ")]:null,n.accelerated_probing?["Probing",badge("Accelerated","info")]:null,n.synthetic_when_idle?["Idle",badge("Synthetic","")]:null].filter(Boolean);t.push(section("🩺 Health Check",kvGrid(s)))}if(isOn(e.circuit_breaker?.enabled)){const n=e.circuit_breaker;t.push(section("⚡ Circuit Breaker",kvGrid([["Threshold",n.threshold+" failures"],["Reset after",n.duration||"—"]])))}if(isOn(e.timeouts?.enabled)&&e.timeouts?.request&&t.push(section("⏱️ Timeout",kvGrid([["Request",e.timeouts.request]]))),isOn(e.rate_limit?.enabled)){const o=e.rate_limit,n=o.rule||{},s=[];o.use_policy&&s.push(badge("policy: "+o.use_policy,"info")),isOn(n.enabled)&&s.push(`${n.requests}/${n.window}${n.burst>n.requests?` burst ${n.burst}`:""}`),o.ignore_global&&s.push(badge("ignores global","warning")),s.length&&t.push(section("🚦 Rate Limit",s.join(" ")))}if(isOn(e.cors?.enabled)){const n=e.cors,o=n.allowed_origins?.length?n.allowed_origins.slice(0,3).join(", ")+(n.allowed_origins.length>3?"…":""):"*",s=[badge("On","info")];o!=="*"&&s.push(`<code style="font-size:10px;">${o}</code>`),n.allow_credentials&&s.push(badge("credentials","warning")),t.push(section("🌐 CORS",s.join(" ")))}if(isOn(e.cache?.enabled)){const n=e.cache;t.push(section("📦 Cache",[badge(n.driver||"memory","success"),n.ttl?`TTL ${n.ttl}`:""].filter(Boolean).join(" ")))}if(isOn(e.compression_config?.enabled)){const n=e.compression_config;t.push(section("🗜️ Compression",badge(n.type||"gzip","")+(n.level?` level ${n.level}`:"")))}if(isOn(e.firewall?.status)){const n=e.firewall,s=[badge("Enabled","danger")];n.ignore_global&&s.push(badge("ignores global","warning")),n.apply_rules?.length&&s.push(`rules: ${n.apply_rules.join(", ")}`),t.push(section("🛡️ Firewall",s.join(" ")))}if(isOn(e.fallback?.enabled)){const n=e.fallback;t.push(section("🔄 Fallback",badge(n.type,"")+(n.redirect_url?` → <code style="font-size:11px;">${n.redirect_url}</code>`:"")))}if(isOn(e.wasm?.enabled)){const n=e.wasm;t.push(section("🔮 WASM",kvGrid([["Module",`<code style="font-size:10px;word-break:break-all;">${n.module}</code>`],["Access",n.access?.length?n.access.join(", "):"none"]])))}if(e.rewrites?.length){const n=e.rewrites.map(e=>`<div style="font-size:11px;font-family:var(--font-mono);margin-bottom:3px;"><span style="color:var(--text-mute);">${e.pattern}</span> → <span style="color:var(--accent);">${e.target}</span></div>`).join("");t.push(section(`✏️ Rewrites (${e.rewrites.length})`,n))}return e.strip_prefixes?.length&&t.push(section("✂️ Strip Prefixes",e.strip_prefixes.map(e=>`<code>${e}</code>`).join(" "))),e.allowed_ips?.length&&t.push(section("🔒 IP Filter",e.allowed_ips.map(e=>`<code>${e}</code>`).join(" "))),t.join("")}function authSection(e){const t=[];if(isOn(e.basic_auth?.enabled)){const n=e.basic_auth.users?.length||0;t.push(`<div class="mw-card security" style="margin-bottom:6px;">
+    </div>`;
+}
+
+function upstreamsSection(hostname, item, itemStats, routeIdx, type) {
+    const cfgBEs  = item.backends?.servers || [];
+    const statBEs = itemStats?.backends    || [];
+    const display = statBEs.length ? statBEs : cfgBEs;
+    if (!display.length) return '';
+
+    const strategy  = item.backends?.strategy;
+    const stratLabel = strategy
+        ? strategy.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+        : 'Round Robin';
+
+    const rows = display.map((b, i) =>
+        backendRow(b, cfgBEs[i] || {}, statBEs[i] || {}, hostname, routeIdx, i, type)
+    ).join('');
+
+    return section(`⬆️ Upstreams <span class="badge" style="margin-left:4px;">${stratLabel}</span>`, rows);
+}
+
+
+function httpFeaturesSection(item) {
+    const parts = [];
+
+    // Health check — Enabled type
+    if (isOn(item.health_check?.enabled)) {
+        const hc = item.health_check;
+        const rows = [
+            ['Path',     `<code>${hc.path}</code>`],
+            ['Interval', hc.interval || '—'],
+            ['Timeout',  hc.timeout  || '—'],
+            ['Threshold',hc.threshold || '—'],
+            ['Method',   hc.method   || 'GET'],
+            hc.expected_status?.length ? ['Expected', hc.expected_status.join(', ')] : null,
+            hc.accelerated_probing     ? ['Probing',  badge('Accelerated', 'info')] : null,
+            hc.synthetic_when_idle     ? ['Idle',     badge('Synthetic', '')]       : null,
+        ].filter(Boolean);
+        parts.push(section('🩺 Health Check', kvGrid(rows)));
+    }
+
+    // Circuit breaker — Enabled type
+    if (isOn(item.circuit_breaker?.enabled)) {
+        const cb = item.circuit_breaker;
+        parts.push(section('⚡ Circuit Breaker', kvGrid([
+            ['Threshold',   cb.threshold + ' failures'],
+            ['Reset after', cb.duration || '—'],
+        ])));
+    }
+
+    // Timeouts — Enabled type
+    if (isOn(item.timeouts?.enabled) && item.timeouts?.request) {
+        parts.push(section('⏱️ Timeout', kvGrid([['Request', item.timeouts.request]])));
+    }
+
+    // Rate limit — Enabled type
+    if (isOn(item.rate_limit?.enabled)) {
+        const rl   = item.rate_limit;
+        const rule = rl.rule || {};
+        const rParts = [];
+        if (rl.use_policy)      rParts.push(badge('policy: ' + rl.use_policy, 'info'));
+        if (isOn(rule.enabled)) rParts.push(`${rule.requests}/${rule.window}${rule.burst > rule.requests ? ` burst ${rule.burst}` : ''}`);
+        if (rl.ignore_global)   rParts.push(badge('ignores global', 'warning'));
+        if (rParts.length) parts.push(section('🚦 Rate Limit', rParts.join(' ')));
+    }
+
+    // CORS — Enabled type
+    if (isOn(item.cors?.enabled)) {
+        const c = item.cors;
+        const origins = c.allowed_origins?.length
+            ? c.allowed_origins.slice(0, 3).join(', ') + (c.allowed_origins.length > 3 ? '…' : '')
+            : '*';
+        const corsParts = [badge('On', 'info')];
+        if (origins !== '*')     corsParts.push(`<code style="font-size:10px;">${origins}</code>`);
+        if (c.allow_credentials) corsParts.push(badge('credentials', 'warning'));
+        parts.push(section('🌐 CORS', corsParts.join(' ')));
+    }
+
+    // Cache — Enabled type
+    if (isOn(item.cache?.enabled)) {
+        const ca = item.cache;
+        parts.push(section('📦 Cache', [badge(ca.driver || 'memory', 'success'), ca.ttl ? `TTL ${ca.ttl}` : ''].filter(Boolean).join(' ')));
+    }
+
+    // Compression — Enabled type
+    if (isOn(item.compression_config?.enabled)) {
+        const cc = item.compression_config;
+        parts.push(section('🗜️ Compression', badge(cc.type || 'gzip', '') + (cc.level ? ` level ${cc.level}` : '')));
+    }
+
+    // Firewall — uses .status (Enabled type)
+    if (isOn(item.firewall?.status)) {
+        const fw = item.firewall;
+        const fwParts = [badge('Enabled', 'danger')];
+        if (fw.ignore_global)         fwParts.push(badge('ignores global', 'warning'));
+        if (fw.apply_rules?.length)   fwParts.push(`rules: ${fw.apply_rules.join(', ')}`);
+        parts.push(section('🛡️ Firewall', fwParts.join(' ')));
+    }
+
+    // Fallback — Enabled type
+    if (isOn(item.fallback?.enabled)) {
+        const fb = item.fallback;
+        parts.push(section('🔄 Fallback', badge(fb.type, '') + (fb.redirect_url ? ` → <code style="font-size:11px;">${fb.redirect_url}</code>` : '')));
+    }
+
+    // WASM — Enabled type
+    if (isOn(item.wasm?.enabled)) {
+        const wa = item.wasm;
+        parts.push(section('🔮 WASM', kvGrid([
+            ['Module', `<code style="font-size:10px;word-break:break-all;">${wa.module}</code>`],
+            ['Access', wa.access?.length ? wa.access.join(', ') : 'none'],
+        ])));
+    }
+
+    // Rewrites
+    if (item.rewrites?.length) {
+        const rws = item.rewrites.map(r =>
+            `<div style="font-size:11px;font-family:var(--font-mono);margin-bottom:3px;"><span style="color:var(--text-mute);">${r.pattern}</span> → <span style="color:var(--accent);">${r.target}</span></div>`
+        ).join('');
+        parts.push(section(`✏️ Rewrites (${item.rewrites.length})`, rws));
+    }
+
+    // Strip prefixes
+    if (item.strip_prefixes?.length) {
+        parts.push(section('✂️ Strip Prefixes', item.strip_prefixes.map(p => `<code>${p}</code>`).join(' ')));
+    }
+
+    // IP filter
+    if (item.allowed_ips?.length) {
+        parts.push(section('🔒 IP Filter', item.allowed_ips.map(ip => `<code>${ip}</code>`).join(' ')));
+    }
+
+    return parts.join('');
+}
+
+
+function authSection(item) {
+    const parts = [];
+
+    if (isOn(item.basic_auth?.enabled)) {
+        const count = item.basic_auth.users?.length || 0;
+        parts.push(`<div class="mw-card security" style="margin-bottom:6px;">
             <div class="mw-head">Basic Auth</div>
-            <div class="mw-body">${n} user${n!==1?"s":""}</div>
-            ${e.basic_auth.realm?`<div class="mw-sub">realm: ${e.basic_auth.realm}</div>`:""}
-        </div>`)}if(isOn(e.jwt_auth?.enabled)){const n=e.jwt_auth;t.push(`<div class="mw-card security" style="margin-bottom:6px;">
+            <div class="mw-body">${count} user${count !== 1 ? 's' : ''}</div>
+            ${item.basic_auth.realm ? `<div class="mw-sub">realm: ${item.basic_auth.realm}</div>` : ''}
+        </div>`);
+    }
+
+    if (isOn(item.jwt_auth?.enabled)) {
+        const j = item.jwt_auth;
+        parts.push(`<div class="mw-card security" style="margin-bottom:6px;">
             <div class="mw-head">JWT Auth</div>
-            <div class="mw-body">${badge("Bearer token","info")}</div>
-            ${n.issuer?`<div class="mw-sub">issuer: ${n.issuer}</div>`:""}
-        </div>`)}if(isOn(e.forward_auth?.enabled)){const n=e.forward_auth;t.push(`<div class="mw-card security" style="margin-bottom:6px;">
+            <div class="mw-body">${badge('Bearer token', 'info')}</div>
+            ${j.issuer ? `<div class="mw-sub">issuer: ${j.issuer}</div>` : ''}
+        </div>`);
+    }
+
+    if (isOn(item.forward_auth?.enabled)) {
+        const f = item.forward_auth;
+        parts.push(`<div class="mw-card security" style="margin-bottom:6px;">
             <div class="mw-head">Forward Auth</div>
-            <div class="mw-body" style="font-size:11px;word-break:break-all;">${n.url}</div>
+            <div class="mw-body" style="font-size:11px;word-break:break-all;">${f.url}</div>
             <div class="mw-sub">
-                ${badge("on_failure: "+(n.on_failure||"deny"),n.on_failure==="allow"?"warning":"")}
-                ${n.allow_private?badge("allow_private","warning"):""}
+                ${badge('on_failure: ' + (f.on_failure || 'deny'), f.on_failure === 'allow' ? 'warning' : '')}
+                ${f.allow_private ? badge('allow_private', 'warning') : ''}
             </div>
-        </div>`)}if(isOn(e.oauth?.enabled)){const n=e.oauth;t.push(`<div class="mw-card security" style="margin-bottom:6px;">
+        </div>`);
+    }
+
+    if (isOn(item.oauth?.enabled)) {
+        const o = item.oauth;
+        parts.push(`<div class="mw-card security" style="margin-bottom:6px;">
             <div class="mw-head">OAuth</div>
-            <div class="mw-body">${badge(n.provider||"oidc","info")}</div>
-        </div>`)}return t.length?section("🔐 Authentication",`<div class="mw-grid">${t.join("")}</div>`):""}function certsSection(e,t){if(!t?.length)return"";const n=t.find(t=>t.host===e);if(!n)return"";const s=n.daysLeft<0?"var(--danger)":n.daysLeft<7?"var(--warning)":n.daysLeft<30?"var(--info)":"var(--success)",o=n.daysLeft<0?"Expired":n.daysLeft===0?"Today":`${n.daysLeft}d`;return section("🔑 Certificate",kvGrid([["Issuer",n.issuer||"Let's Encrypt"],["Expiry",`<span style="color:${s};">${o}</span>`],["Expires",new Date(n.expiry).toLocaleDateString()]]))}function hostLevelSection(e){const t=(store.get("lastConfig")||{}).hosts?.[e]||{},n=[];if(t.compression&&n.push(["Compression",badge("Enabled","success")]),t.limits?.max_body_size&&n.push(["Max Body",t.limits.max_body_size+" B"]),t.not_found_page&&n.push(["404 Page",`<code style="font-size:10px;">${t.not_found_page}</code>`]),Object.keys(t.error_pages?.pages||{}).length&&n.push(["Error Pages",Object.keys(t.error_pages.pages).join(", ")]),isOn(t.headers?.enabled)){const e=Object.keys(t.headers?.request?.set||{}).length+Object.keys(t.headers?.request?.add||{}).length,s=Object.keys(t.headers?.response?.set||{}).length+Object.keys(t.headers?.response?.add||{}).length;e+s>0&&n.push(["Headers",`${e} req, ${s} resp`])}return t.bind?.length&&n.push(["Bind",t.bind.map(e=>`<code>${e}</code>`).join(" ")]),n.length?section("🏠 Host Settings",kvGrid(n)):""}function rawSection(e){const t=JSON.parse(JSON.stringify(e,(e,t)=>t==="unknown"||t===null?0[0]:Array.isArray(t)&&t.length===0?0[0]:typeof t=="object"&&t!==null&&!Array.isArray(t)&&Object.keys(t).length===0?0[0]:t)),n=JSON.stringify(t,null,2);return section("{ } Raw Config",`
-        <pre class="code-box" style="max-height:220px;overflow:auto;font-size:10px;line-height:1.55;margin:0;white-space:pre-wrap;word-break:break-all;">${n.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</pre>`)}function buildRouteHTML(e,t,n,s,o,i){return s==="proxy"?[section("📡 TCP Proxy",kvGrid([["Listen",`<code>${t.listen}</code>`],["Strategy",t.strategy||"round_robin"],["SNI",t.sni?`<code>${t.sni}</code>`:null],["Max Conn",t.max_connections||null]])),upstreamsSection(e,t,n,i,s),rawSection(t)].filter(Boolean).join(""):[hostLevelSection(e),certsSection(e,o),webSection(t.web),gitSection(t.web?.git,e),serverlessSection(t.serverless),upstreamsSection(e,t,n,i,s),httpFeaturesSection(t),authSection(t),rawSection(t)].filter(Boolean).join("")}function buildBackendHTML(e,t){const n=[];if(t.url||t.address){const o=t.latency_us?.p50?(t.latency_us.p50/1e3).toFixed(1)+"ms":null,i=t.latency_us?.p99?(t.latency_us.p99/1e3).toFixed(1)+"ms":null,a=t.latency_us?.p999?(t.latency_us.p999/1e3).toFixed(1)+"ms":null,e=t.health?.status||"Unknown",s=!t.alive||e==="Dead"||e==="Unhealthy"?"down":e==="Degraded"?"warn":e==="Healthy"?"ok":"info",r=s==="ok"?"var(--success)":s==="down"?"var(--danger)":"var(--warning)";n.push(section("📊 Live Metrics",`
+            <div class="mw-body">${badge(o.provider || 'oidc', 'info')}</div>
+        </div>`);
+    }
+
+    if (!parts.length) return '';
+    return section('🔐 Authentication', `<div class="mw-grid">${parts.join('')}</div>`);
+}
+
+
+function certsSection(hostname, certificates) {
+    if (!certificates?.length) return '';
+    const cert = certificates.find(c => c.host === hostname);
+    if (!cert) return '';
+    const color = cert.daysLeft < 0 ? 'var(--danger)' : cert.daysLeft < 7 ? 'var(--warning)' : cert.daysLeft < 30 ? 'var(--info)' : 'var(--success)';
+    const label = cert.daysLeft < 0 ? 'Expired' : cert.daysLeft === 0 ? 'Today' : `${cert.daysLeft}d`;
+    return section('🔑 Certificate', kvGrid([
+        ['Issuer',  cert.issuer || "Let's Encrypt"],
+        ['Expiry',  `<span style="color:${color};">${label}</span>`],
+        ['Expires', new Date(cert.expiry).toLocaleDateString()],
+    ]));
+}
+
+
+function hostLevelSection(hostname) {
+    const hostCfg = (store.get('lastConfig') || {}).hosts?.[hostname] || {};
+    const items = [];
+
+    if (hostCfg.compression)                               items.push(['Compression', badge('Enabled', 'success')]);
+    if (hostCfg.limits?.max_body_size)                     items.push(['Max Body', hostCfg.limits.max_body_size + ' B']);
+    if (hostCfg.not_found_page)                            items.push(['404 Page', `<code style="font-size:10px;">${hostCfg.not_found_page}</code>`]);
+    if (Object.keys(hostCfg.error_pages?.pages || {}).length) {
+        items.push(['Error Pages', Object.keys(hostCfg.error_pages.pages).join(', ')]);
+    }
+    if (isOn(hostCfg.headers?.enabled)) {
+        const req = Object.keys(hostCfg.headers?.request?.set  || {}).length
+                  + Object.keys(hostCfg.headers?.request?.add  || {}).length;
+        const res = Object.keys(hostCfg.headers?.response?.set || {}).length
+                  + Object.keys(hostCfg.headers?.response?.add || {}).length;
+        if (req + res > 0) items.push(['Headers', `${req} req, ${res} resp`]);
+    }
+    if (hostCfg.bind?.length) items.push(['Bind', hostCfg.bind.map(b => `<code>${b}</code>`).join(' ')]);
+
+    if (!items.length) return '';
+    return section('🏠 Host Settings', kvGrid(items));
+}
+
+
+function rawSection(item) {
+    // Strip circular/redundant fields that would make the JSON too noisy
+    const clean = JSON.parse(JSON.stringify(item, (k, v) => {
+        // Skip zero-value Enabled fields and empty arrays/objects
+        if (v === 'unknown' || v === null) return undefined;
+        if (Array.isArray(v)   && v.length === 0)           return undefined;
+        if (typeof v === 'object' && v !== null && !Array.isArray(v) && Object.keys(v).length === 0) return undefined;
+        return v;
+    }));
+    const j = JSON.stringify(clean, null, 2);
+    return section('{ } Raw Config', `
+        <pre class="code-box" style="max-height:220px;overflow:auto;font-size:10px;line-height:1.55;margin:0;white-space:pre-wrap;word-break:break-all;">${j.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`);
+}
+
+
+function buildRouteHTML(hostname, item, itemStats, type, certificates, routeIdx) {
+    // TCP proxy
+    if (type === 'proxy') {
+        return [
+            section('📡 TCP Proxy', kvGrid([
+                ['Listen',   `<code>${item.listen}</code>`],
+                ['Strategy', item.strategy || 'round_robin'],
+                ['SNI',      item.sni ? `<code>${item.sni}</code>` : null],
+                ['Max Conn', item.max_connections || null],
+            ])),
+            upstreamsSection(hostname, item, itemStats, routeIdx, type),
+            rawSection(item),
+        ].filter(Boolean).join('');
+    }
+
+    // HTTP route — show everything, always
+    return [
+        hostLevelSection(hostname),
+        certsSection(hostname, certificates),
+        // Web engine — web section and git section are separate:
+        // webSection handles root/markdown/php/listing/spa
+        // gitSection handles git deployment details
+        webSection(item.web),
+        gitSection(item.web?.git, hostname),
+        serverlessSection(item.serverless),
+        upstreamsSection(hostname, item, itemStats, routeIdx, type),
+        httpFeaturesSection(item),
+        authSection(item),
+        // Raw config — always at bottom for power users and debugging
+        rawSection(item),
+    ].filter(Boolean).join('');
+}
+
+
+function buildBackendHTML(cfg, stat) {
+    const parts = [];
+
+    if (stat.url || stat.address) {
+        const p50  = stat.latency_us?.p50  ? (stat.latency_us.p50  / 1000).toFixed(1) + 'ms' : null;
+        const p99  = stat.latency_us?.p99  ? (stat.latency_us.p99  / 1000).toFixed(1) + 'ms' : null;
+        const p999 = stat.latency_us?.p999 ? (stat.latency_us.p999 / 1000).toFixed(1) + 'ms' : null;
+        const hSt  = stat.health?.status || 'Unknown';
+        const dotCls = (!stat.alive || hSt === 'Dead' || hSt === 'Unhealthy') ? 'down'
+                     : hSt === 'Degraded' ? 'warn'
+                     : hSt === 'Healthy'  ? 'ok' : 'info';
+        const gaugeColor = dotCls === 'ok' ? 'var(--success)' : dotCls === 'down' ? 'var(--danger)' : 'var(--warning)';
+
+        parts.push(section('📊 Live Metrics', `
             <div class="health-gauge">
-                <div class="gauge-circle" style="background:${r};">
-                    ${t.health?.score!==0[0]?t.health.score:"?"}
+                <div class="gauge-circle" style="background:${gaugeColor};">
+                    ${stat.health?.score !== undefined ? stat.health.score : '?'}
                 </div>
                 <div>
-                    <div class="gauge-status"><span class="dot ${s}"></span> ${e}</div>
-                    <div class="gauge-sub">${t.total_reqs?fmtNum(t.total_reqs)+" total requests":"No requests yet"}</div>
+                    <div class="gauge-status"><span class="dot ${dotCls}"></span> ${hSt}</div>
+                    <div class="gauge-sub">${stat.total_reqs ? fmtNum(stat.total_reqs) + ' total requests' : 'No requests yet'}</div>
                 </div>
             </div>
-            ${kvGrid([["p50",o],["p99",i],["p999",a],["In Flight",t.in_flight>0?badge(t.in_flight,"warning"):null],["Failures",t.failures>0?badge(fmtNum(t.failures),"error"):null],["Consecutive",t.health?.consecutive_failures>0?t.health.consecutive_failures+" fails":null]])}`))}return n.push(section("⚙️ Configuration",kvGrid([["Address",`<code style="word-break:break-all;">${e.address||"—"}</code>`],["Weight",e.weight||1],["Max Conn",e.max_connections||null],e.criteria?.source_ips?.length?["Source IPs",e.criteria.source_ips.map(e=>`<code>${e}</code>`).join(" ")]:null,e.streaming?.enabled?["Streaming",badge("Enabled","info")]:null].filter(Boolean)))),n.join("")}
+            ${kvGrid([
+                ['p50',         p50],
+                ['p99',         p99],
+                ['p999',        p999],
+                ['In Flight',   stat.in_flight  > 0 ? badge(stat.in_flight,            'warning') : null],
+                ['Failures',    stat.failures   > 0 ? badge(fmtNum(stat.failures),     'error')   : null],
+                ['Consecutive', stat.health?.consecutive_failures > 0 ? stat.health.consecutive_failures + ' fails' : null],
+            ])}`));
+    }
+
+    parts.push(section('⚙️ Configuration', kvGrid([
+        ['Address',  `<code style="word-break:break-all;">${cfg.address || '—'}</code>`],
+        ['Weight',   cfg.weight || 1],
+        ['Max Conn', cfg.max_connections || null],
+        cfg.criteria?.source_ips?.length ? ['Source IPs', cfg.criteria.source_ips.map(ip => `<code>${ip}</code>`).join(' ')] : null,
+        cfg.streaming?.enabled ? ['Streaming', badge('Enabled', 'info')] : null,
+    ].filter(Boolean))));
+
+    return parts.join('');
+}

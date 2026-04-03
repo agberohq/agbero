@@ -77,8 +77,8 @@ func (r *setRequest) Validate() error {
 // isReserved returns true for keys that must not be accessible through the
 // user-facing secrets API:
 //
-//   - IsInternal() — namespace "internal" or "internal/*"
-//   - vault:// scheme — agbero-managed keys (admin users, JWT secret, PPK …)
+// IsInternal() — namespace "internal" or "internal/*"
+// vault:// scheme — agbero-managed keys (admin users, JWT secret, PPK …)
 func isReserved(s *expect.Secret) bool {
 	return s.IsInternal() || s.Scheme == expect.SchemeVault
 }

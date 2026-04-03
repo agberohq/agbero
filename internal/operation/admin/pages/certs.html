@@ -1,0 +1,233 @@
+<div class="page active">
+    <div class="flex-right">
+        <div style="display:flex;align-items:center;gap:8px;">
+            <h2 style="margin:0;font-size:17px;font-weight:400;">Certificates</h2>
+            <span id="certsCount" class="badge" style="font-family:var(--font-mono);">—</span>
+        </div>
+        <div style="flex:1;"></div>
+        <button class="btn primary" id="certsUploadBtn">Upload Cert</button>
+        <button class="btn small" id="certsRefreshBtn">⟳</button>
+    </div>
+
+    <!-- Upload form (hidden by default) -->
+    <div id="certsUploadForm" style="display:none;background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;padding:20px;margin-bottom:20px;">
+        <div style="font-size:14px;font-weight:500;margin-bottom:16px;">Upload Custom Certificate</div>
+
+        <div style="margin-bottom:10px;">
+            <label class="wz-label">Domain</label>
+            <input type="text" id="certDomain" class="wz-input" placeholder="e.g. example.com or *.example.com"
+                   autocomplete="off" spellcheck="false">
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+            <div>
+                <label class="wz-label">Certificate (PEM)</label>
+                <textarea id="certPem" class="wz-input" rows="6" spellcheck="false"
+                          style="resize:vertical;font-family:var(--font-mono);font-size:11px;"
+                          placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"></textarea>
+            </div>
+            <div>
+                <label class="wz-label">Private Key (PEM)</label>
+                <textarea id="certKey" class="wz-input" rows="6" spellcheck="false"
+                          style="resize:vertical;font-family:var(--font-mono);font-size:11px;"
+                          placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"></textarea>
+            </div>
+        </div>
+
+        <div id="certsUploadError" style="color:var(--danger);font-size:12px;margin-bottom:10px;display:none;background:rgba(255,59,48,0.08);padding:8px;border-radius:4px;"></div>
+
+        <div style="display:flex;gap:8px;">
+            <button class="btn primary" id="certsUploadSaveBtn">Upload & Apply</button>
+            <button class="btn" id="certsUploadCancelBtn">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Certs table -->
+    <div class="table-responsive">
+        <table class="simple-table">
+            <thead>
+            <tr>
+                <th>DOMAIN</th>
+                <th class="hide-mobile">FILE</th>
+                <th>EXPIRY</th>
+                <th style="width:110px;">ACTION</th>
+            </tr>
+            </thead>
+            <tbody id="certsTable"></tbody>
+        </table>
+    </div>
+</div>
+
+<script type="module">
+    import { component, on, ui, notify, query } from '../lib/oja.full.esm.js';
+    import { fetchCerts, uploadCert, deleteCert } from '../js/api.js';
+    import { store } from '../js/store.js';
+
+    function daysColor(d) {
+        if (d === undefined || d === null) return 'var(--text-mute)';
+        if (d < 0)  return 'var(--danger)';
+        if (d < 7)  return 'var(--warning)';
+        if (d < 30) return 'var(--info)';
+        return 'var(--success)';
+    }
+
+    function daysLabel(d) {
+        if (d === undefined || d === null) return '—';
+        if (d < 0)  return 'Expired';
+        if (d === 0) return 'Today';
+        return `${d}d`;
+    }
+
+    // Cross-reference with parsed cert expiry data from the store
+    function getCertMeta(domain) {
+        const certs = store.get('certificates') || [];
+        return certs.find(c => c.host === domain || c.host === domain.replace('_wildcard_', '*'));
+    }
+
+    function emptyRow(html) {
+        return `<tr><td colspan="4" style="padding:24px;"><div class="empty-state">${html}</div></td></tr>`;
+    }
+
+    function certRow(c) {
+        const meta     = getCertMeta(c.domain);
+        const daysLeft = meta?.daysLeft;
+        const expiry   = meta?.expiry ? new Date(meta.expiry).toLocaleDateString([], { year:'numeric',month:'short',day:'numeric' }) : '—';
+        const color    = daysColor(daysLeft);
+        const label    = daysLabel(daysLeft);
+
+        return `<tr>
+            <td class="mono" style="font-size:12px;">${c.domain}</td>
+            <td class="hide-mobile mono" style="font-size:11px;color:var(--text-mute);">${c.file}</td>
+            <td>
+                <span style="color:${color};font-family:var(--font-mono);font-size:12px;">${label}</span>
+                <span style="font-size:11px;color:var(--text-mute);margin-left:6px;">${expiry}</span>
+            </td>
+            <td>
+                <button class="btn small certs-delete-btn" data-domain="${c.domain}"
+                        style="color:var(--danger);border-color:rgba(255,59,48,0.4);">Delete</button>
+            </td>
+        </tr>`;
+    }
+
+    function render(data) {
+        const tbody    = query('#certsTable');
+        const countEl  = query('#certsCount');
+        if (!tbody) return;
+
+        if (!data) {
+            tbody.innerHTML = emptyRow('⚠️ Could not load certificates');
+            if (countEl) countEl.textContent = '—';
+            return;
+        }
+
+        const certs = data.certificates || [];
+        if (countEl) countEl.textContent = String(certs.length);
+
+        if (!certs.length) {
+            tbody.innerHTML = emptyRow('<span>📜 No custom certificates</span><span>Agbero manages Let\'s Encrypt certificates automatically. Upload here only for custom/wildcard certs.</span>');
+            return;
+        }
+
+        tbody.innerHTML = certs.map(certRow).join('');
+    }
+
+    async function refresh() {
+        const btn = query('#certsRefreshBtn');
+        if (btn) ui.btn.loading(btn, '…');
+        const data = await fetchCerts();
+        if (btn) ui.btn.reset(btn);
+        render(data);
+    }
+
+    // Upload form
+
+    on('#certsUploadBtn', 'click', () => {
+        query('#certsUploadForm').style.display = '';
+        query('#certDomain')?.focus();
+    });
+
+    on('#certsUploadCancelBtn', 'click', () => {
+        query('#certsUploadForm').style.display = 'none';
+        query('#certDomain').value  = '';
+        query('#certPem').value     = '';
+        query('#certKey').value     = '';
+        query('#certsUploadError').style.display = 'none';
+    });
+
+    on('#certsUploadSaveBtn', 'click', async (e, btn) => {
+        const domain = (query('#certDomain').value  || '').trim();
+        const cert   = (query('#certPem').value     || '').trim();
+        const key    = (query('#certKey').value     || '').trim();
+        const errEl  = query('#certsUploadError');
+        errEl.style.display = 'none';
+
+        if (!domain) { errEl.textContent = 'Domain is required';      errEl.style.display = 'block'; return; }
+        if (!cert)   { errEl.textContent = 'Certificate PEM required'; errEl.style.display = 'block'; return; }
+        if (!key)    { errEl.textContent = 'Private key PEM required'; errEl.style.display = 'block'; return; }
+
+        ui.btn.loading(btn, 'Uploading…');
+        const res = await uploadCert(domain, cert, key);
+        ui.btn.reset(btn);
+
+        if (res?.status === 'ok') {
+            notify.show(`Certificate for ${domain} applied`, 'success');
+            query('#certsUploadForm').style.display = 'none';
+            query('#certDomain').value = '';
+            query('#certPem').value    = '';
+            query('#certKey').value    = '';
+            refresh();
+        } else {
+            errEl.textContent = res?.error || res?.message || 'Upload failed';
+            errEl.style.display = 'block';
+        }
+    });
+
+    // Delete — two-step inline confirm
+    let _confirmDomain = null;
+
+    on('.certs-delete-btn', 'click', async (e, btn) => {
+        const domain = btn.dataset.domain;
+
+        if (btn.dataset.confirm === '1') {
+            btn.disabled = true;
+            try {
+                const res = await deleteCert(domain);
+                if (res?.status === 'ok') {
+                    notify.show(`Certificate for ${domain} deleted`, 'success');
+                    _confirmDomain = null;
+                    refresh();
+                } else {
+                    btn.disabled = false;
+                    btn.dataset.confirm = '';
+                    notify.show(res?.error || 'Delete failed', 'error');
+                }
+            } catch {
+                btn.disabled = false;
+                btn.dataset.confirm = '';
+            }
+        } else {
+            // Reset any other pending confirm
+            if (_confirmDomain && _confirmDomain !== domain) {
+                const prev = query(`.certs-delete-btn[data-domain="${_confirmDomain}"]`);
+                if (prev) { prev.textContent = 'Delete'; prev.dataset.confirm = ''; prev.style.cssText = 'color:var(--danger);border-color:rgba(255,59,48,0.4);'; }
+            }
+            _confirmDomain = domain;
+            btn.dataset.confirm = '1';
+            btn.textContent = 'Sure?';
+            btn.style.background = 'var(--danger)';
+            btn.style.color = '#fff';
+            btn.style.borderColor = 'var(--danger)';
+            setTimeout(() => {
+                if (btn.dataset.confirm === '1') {
+                    btn.dataset.confirm = '';
+                    btn.textContent = 'Delete';
+                    btn.style.cssText = 'color:var(--danger);border-color:rgba(255,59,48,0.4);';
+                    _confirmDomain = null;
+                }
+            }, 3000);
+        }
+    });
+
+    refresh();
+    component.onUnmount(() => {});
+</script>

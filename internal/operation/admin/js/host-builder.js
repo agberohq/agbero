@@ -1,1 +1,297 @@
-export function buildHostConfig(e){const a=(e.domain||"").trim().toLowerCase(),t=e.tls_mode||"auto",r=e=>{const t=(e||"").trim().toLowerCase();return!t||/^\d+\.\d+\.\d+\.\d+$/.test(t)||["localhost",".localhost",".local",".internal",".test",".example"].some(e=>t===e.replace(".","")||t.endsWith(e))};let n=null;!r(a)&&t&&t!==""&&(n={mode:t},t==="local"&&(n.local={enabled:"on",cert_file:(e.tls_cert||"").trim(),key_file:(e.tls_key||"").trim()}));const s=e.routes;let o;Array.isArray(s)&&s.length>0?o=s.map(t=>buildRouteFromWizardRoute(t,e.host_type)):o=[buildLegacyRoute(e)];const i={domains:[a],routes:o};return n&&(i.tls=n),e.bind&&e.bind.trim()&&(i.bind=[e.bind.trim().replace(/^:/,"")]),i}function buildRouteFromWizardRoute(e,t){const n={enabled:"on",path:(e.path||"/").trim()||"/"},s=e.engineData||{},o=e.engine||t||"proxy";return o==="web"?n.web=buildWebBlock(s):o==="proxy"?n.backends=buildBackendBlock(s):o==="serverless"&&(n.serverless=buildServerlessBlock(s)),applyExtras(n,e.extras||{}),applyAuth(n,e.authData||{}),n}function buildWebBlock(e){const t={enabled:"on"};if(e.web_static_on){const n=(e.web_root||"").trim();n&&(t.root=n)}if(e.web_spa&&(t.spa=!0),e.web_listing&&(t.listing=!0),e.web_nocache&&(t.no_cache=!0),e.php_enabled&&(t.php={enabled:"on"},e.php_address?.trim()&&(t.php.address=e.php_address.trim())),e.git_enabled){t.git={enabled:"on",id:(e.git_id||"").trim()||slugify(e.domain||"site"),url:(e.git_url||"").trim(),branch:(e.git_branch||"main").trim()},e.git_secret?.trim()&&(t.git.secret=e.git_secret.trim()),e.git_interval?.trim()&&(t.git.interval=e.git_interval.trim());const n=(e.git_auth_type||"").trim();n&&(t.git.auth={type:n},n==="basic"?(t.git.auth.username=(e.git_auth_user||"").trim(),t.git.auth.password=(e.git_auth_pass||"").trim()):n==="ssh-key"&&(t.git.auth.ssh_key=(e.git_ssh_key||"").trim()))}if(e.web_index){const n=e.web_index.split(",").map(e=>e.trim()).filter(Boolean);n.length&&(t.index=n)}return e.markdown_enabled&&(t.markdown={enabled:"on"},e.markdown_view==="browse"&&(t.markdown.view="browse"),e.markdown_toc&&(t.markdown.toc="on"),e.markdown_unsafe&&(t.markdown.unsafe="on"),e.markdown_highlight&&(t.markdown.highlight={enabled:"on"})),t}function buildBackendBlock(e){const n=e.lb_strategy||"round_robin";let t=[];try{const n=e.backends_list;typeof n=="string"?t=JSON.parse(n):Array.isArray(n)&&(t=n)}catch{t=[]}return!t.length&&e.backend_url?.trim()&&(t=[{address:e.backend_url.trim(),weight:1}]),t=t.filter(e=>e?.address?.trim()).map(e=>({address:e.address.trim(),weight:Number(e.weight)||1})),{enabled:"on",strategy:n,servers:t}}function buildServerlessBlock(e){const t={enabled:"on"};let n=[];try{const t=e.serverless_rests;n=typeof t=="string"?JSON.parse(t):Array.isArray(t)?t:[]}catch{n=[]}const o=n.filter(e=>e.name?.trim()&&e.url?.trim()).map(e=>{const t={name:e.name.trim(),enabled:"on",url:e.url.trim(),method:(e.method||"GET").toUpperCase()};e.timeout?.trim()&&(t.timeout=e.timeout.trim());const n=(e.auth_header||"").trim();return n&&(t.headers={Authorization:n}),t});o.length&&(t.rests=o);let s=[];try{const t=e.serverless_workers;s=typeof t=="string"?JSON.parse(t):Array.isArray(t)?t:[]}catch{s=[]}const i=s.filter(e=>e.name?.trim()&&e.command?.trim()).map(e=>{const n=e.command.trim(),s=n.startsWith("[")?(()=>{try{return JSON.parse(n)}catch{return n.split(/\s+/)}})():n.split(/\s+/),t={name:e.name.trim(),command:s};return e.background&&(t.background=!0),e.run_once&&(t.run_once=!0),e.schedule?.trim()&&(t.schedule=e.schedule.trim()),e.timeout?.trim()&&(t.timeout=e.timeout.trim()),t});return i.length&&(t.workers=i),t}function applyExtras(e,t){if(t.cache_enabled&&(e.cache={enabled:"on",driver:t.cache_driver||"memory",ttl:t.cache_ttl||"5m"}),t.cors_enabled){const n=(t.cors_origins||"*").split(/[\n,]+/).map(e=>e.trim()).filter(Boolean);e.cors={enabled:"on",allowed_origins:n,allowed_methods:["GET","POST","PUT","DELETE","OPTIONS"],allowed_headers:["*"]}}t.rate_enabled&&(e.rate_limit={enabled:"on",rule:{enabled:"on",requests:Number(t.rate_requests)||100,window:t.rate_window||"1m",burst:Number(t.rate_burst)||10,key:t.rate_key||"ip"}}),t.gzip_enabled&&(e.compression_config={enabled:"on",type:"gzip",level:5}),t.firewall_enabled&&(e.firewall={status:"on",rules:[]})}function applyAuth(e,t){if(t.basic_enabled){const n=(t.basic_users||"").split(/\n+/).map(e=>e.trim()).filter(Boolean);e.basic_auth={enabled:"on",users:n}}t.jwt_enabled&&(e.jwt_auth={enabled:"on",secret:(t.jwt_secret||"").trim(),issuer:(t.jwt_issuer||"").trim()}),t.forward_enabled&&t.forward_url?.trim()&&(e.forward_auth={enabled:"on",url:t.forward_url.trim()})}function buildLegacyRoute(e){const t={enabled:"on",path:(e.route_path||"/").trim()||"/"},n=e.host_type||"proxy";return n==="web"?t.web=buildWebBlock(e):n==="proxy"?t.backends=buildBackendBlock(e):n==="serverless"&&(t.serverless=buildServerlessBlock(e)),applyExtras(t,e),applyAuth(t,e),t}function slugify(e){return e.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")||"site"}
+/**
+ * js/host-builder.js
+ *
+ * Pure function: buildHostConfig(wizardData) → alaye Host JSON
+ *
+ * Accepts either:
+ *   - new wizard format: wizardData.routes = [{ path, engine, engineData, extras, authData }]
+ *   - legacy flat format: wizardData.domain, wizardData.host_type, etc.
+ *
+ * No DOM, no imports, no side effects — unit-testable.
+ */
+
+export function buildHostConfig(data) {
+    const domain  = (data.domain || '').trim().toLowerCase();
+    const tlsMode = data.tls_mode || 'auto';
+
+    // TLS block
+    // Local/dev domains don't get a TLS block — agbero infers HTTP-only
+    const isLocalDomain = (d) => {
+        const h = (d||'').trim().toLowerCase();
+        return !h || /^\d+\.\d+\.\d+\.\d+$/.test(h) ||
+            ['localhost','.localhost','.local','.internal','.test','.example'].some(s => h === s.replace('.','') || h.endsWith(s));
+    };
+    let tls = null;
+    if (!isLocalDomain(domain) && tlsMode && tlsMode !== '') {
+        tls = { mode: tlsMode };
+        if (tlsMode === 'local') {
+            tls.local = {
+                enabled:   'on',
+                cert_file: (data.tls_cert || '').trim(),
+                key_file:  (data.tls_key  || '').trim(),
+            };
+        }
+    }
+
+    // Routes
+    // New wizard format passes routes as an array of route objects
+    const routesInput = data.routes;
+    let routes;
+
+    if (Array.isArray(routesInput) && routesInput.length > 0) {
+        routes = routesInput.map(r => buildRouteFromWizardRoute(r, data.host_type));
+    } else {
+        // Legacy flat format
+        routes = [buildLegacyRoute(data)];
+    }
+
+    // Host root
+    const host = { domains: [domain], routes };
+    if (tls) host.tls = tls;
+
+    if (data.bind && data.bind.trim()) {
+        host.bind = [data.bind.trim().replace(/^:/, '')];
+    }
+
+    return host;
+}
+
+function buildRouteFromWizardRoute(r, hostType) {
+    const route = {
+        enabled: 'on',
+        path:    (r.path || '/').trim() || '/',
+    };
+
+    const ed = r.engineData || {};
+    const engine = r.engine || hostType || 'proxy';
+
+    if (engine === 'web') {
+        route.web = buildWebBlock(ed);
+    } else if (engine === 'proxy') {
+        route.backends = buildBackendBlock(ed);
+    } else if (engine === 'serverless') {
+        route.serverless = buildServerlessBlock(ed);
+    }
+
+    applyExtras(route, r.extras || {});
+    applyAuth(route, r.authData || {});
+
+    return route;
+}
+
+function buildWebBlock(data) {
+    const web = { enabled: 'on' };
+
+    if (data.web_static_on) {
+        const root = (data.web_root || '').trim();
+        if (root) web.root = root;
+    }
+
+    if (data.web_spa)     web.spa      = true;
+    if (data.web_listing) web.listing  = true;
+    if (data.web_nocache) web.no_cache = true;
+
+    if (data.php_enabled) {
+        web.php = { enabled: 'on' };
+        if (data.php_address?.trim()) web.php.address = data.php_address.trim();
+    }
+
+    if (data.git_enabled) {
+        web.git = {
+            enabled: 'on',
+            id:      (data.git_id     || '').trim() || slugify(data.domain || 'site'),
+            url:     (data.git_url    || '').trim(),
+            branch:  (data.git_branch || 'main').trim(),
+        };
+        if (data.git_secret?.trim())   web.git.secret   = data.git_secret.trim();
+        if (data.git_interval?.trim()) web.git.interval  = data.git_interval.trim();
+
+        const authType = (data.git_auth_type || '').trim();
+        if (authType) {
+            web.git.auth = { type: authType };
+            if (authType === 'basic') {
+                web.git.auth.username = (data.git_auth_user || '').trim();
+                web.git.auth.password = (data.git_auth_pass || '').trim();
+            } else if (authType === 'ssh-key') {
+                web.git.auth.ssh_key = (data.git_ssh_key || '').trim();
+            }
+        }
+    }
+
+    // Index files (comma-separated string from wizard)
+    if (data.web_index) {
+        const idx = data.web_index.split(',').map(s => s.trim()).filter(Boolean);
+        if (idx.length) web.index = idx;
+    }
+
+    // Markdown
+    if (data.markdown_enabled) {
+        web.markdown = { enabled: 'on' };
+        if (data.markdown_view === 'browse') web.markdown.view = 'browse';
+        if (data.markdown_toc)       web.markdown.toc       = 'on';
+        if (data.markdown_unsafe)    web.markdown.unsafe    = 'on';
+        if (data.markdown_highlight) web.markdown.highlight = { enabled: 'on' };
+    }
+
+    return web;
+}
+
+function buildBackendBlock(data) {
+    const strategy = data.lb_strategy || 'round_robin';
+    let servers = [];
+    try {
+        const raw = data.backends_list;
+        if (typeof raw === 'string') servers = JSON.parse(raw);
+        else if (Array.isArray(raw)) servers = raw;
+    } catch { servers = []; }
+
+    if (!servers.length && data.backend_url?.trim()) {
+        servers = [{ address: data.backend_url.trim(), weight: 1 }];
+    }
+
+    servers = servers
+        .filter(s => s?.address?.trim())
+        .map(s => ({ address: s.address.trim(), weight: Number(s.weight) || 1 }));
+
+    return { enabled: 'on', strategy, servers };
+}
+
+function buildServerlessBlock(data) {
+    const block = { enabled: 'on' };
+
+    let rests = [];
+    try {
+        const raw = data.serverless_rests;
+        rests = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+    } catch { rests = []; }
+
+    const builtRests = rests
+        .filter(r => r.name?.trim() && r.url?.trim())
+        .map(r => {
+            const entry = {
+                name:    r.name.trim(),
+                enabled: 'on',
+                url:     r.url.trim(),
+                method:  (r.method || 'GET').toUpperCase(),
+            };
+            if (r.timeout?.trim()) entry.timeout = r.timeout.trim();
+            const auth = (r.auth_header || '').trim();
+            if (auth) entry.headers = { 'Authorization': auth };
+            return entry;
+        });
+
+    if (builtRests.length) block.rests = builtRests;
+
+    let workers = [];
+    try {
+        const raw = data.serverless_workers;
+        workers = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+    } catch { workers = []; }
+
+    const builtWorkers = workers
+        .filter(w => w.name?.trim() && w.command?.trim())
+        .map(w => {
+            const cmdRaw = w.command.trim();
+            const command = cmdRaw.startsWith('[')
+                ? (() => { try { return JSON.parse(cmdRaw); } catch { return cmdRaw.split(/\s+/); } })()
+                : cmdRaw.split(/\s+/);
+            const entry = { name: w.name.trim(), command };
+            if (w.background)       entry.background = true;
+            if (w.run_once)         entry.run_once   = true;
+            if (w.schedule?.trim()) entry.schedule   = w.schedule.trim();
+            if (w.timeout?.trim())  entry.timeout    = w.timeout.trim();
+            return entry;
+        });
+
+    if (builtWorkers.length) block.workers = builtWorkers;
+
+    return block;
+}
+
+function applyExtras(route, data) {
+    if (data.cache_enabled) {
+        route.cache = {
+            enabled: 'on',
+            driver:  data.cache_driver || 'memory',
+            ttl:     data.cache_ttl    || '5m',
+        };
+    }
+
+    if (data.cors_enabled) {
+        const origins = (data.cors_origins || '*')
+            .split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+        route.cors = {
+            enabled:         'on',
+            allowed_origins: origins,
+            allowed_methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+            allowed_headers: ['*'],
+        };
+    }
+
+    if (data.rate_enabled) {
+        route.rate_limit = {
+            enabled: 'on',
+            rule: {
+                enabled:  'on',
+                requests: Number(data.rate_requests) || 100,
+                window:   data.rate_window || '1m',
+                burst:    Number(data.rate_burst) || 10,
+                key:      data.rate_key || 'ip',
+            },
+        };
+    }
+
+    if (data.gzip_enabled) {
+        route.compression_config = { enabled: 'on', type: 'gzip', level: 5 };
+    }
+
+    if (data.firewall_enabled) {
+        route.firewall = { status: 'on', rules: [] };
+    }
+}
+
+function applyAuth(route, data) {
+    if (data.basic_enabled) {
+        const users = (data.basic_users || '').split(/\n+/).map(s => s.trim()).filter(Boolean);
+        route.basic_auth = { enabled: 'on', users };
+    }
+
+    if (data.jwt_enabled) {
+        route.jwt_auth = {
+            enabled: 'on',
+            secret:  (data.jwt_secret || '').trim(),
+            issuer:  (data.jwt_issuer || '').trim(),
+        };
+    }
+
+    if (data.forward_enabled && data.forward_url?.trim()) {
+        route.forward_auth = {
+            enabled: 'on',
+            url:     data.forward_url.trim(),
+        };
+    }
+}
+
+function buildLegacyRoute(data) {
+    const route = {
+        enabled: 'on',
+        path:    (data.route_path || '/').trim() || '/',
+    };
+    const hostType = data.host_type || 'proxy';
+
+    if (hostType === 'web') {
+        route.web = buildWebBlock(data);
+    } else if (hostType === 'proxy') {
+        route.backends = buildBackendBlock(data);
+    } else if (hostType === 'serverless') {
+        route.serverless = buildServerlessBlock(data);
+    }
+
+    applyExtras(route, data);
+    applyAuth(route, data);
+    return route;
+}
+
+function slugify(str) {
+    return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'site';
+}

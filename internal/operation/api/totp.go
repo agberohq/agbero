@@ -163,9 +163,9 @@ func (t *TOTP) verify(w http.ResponseWriter, r *http.Request) {
 // VerifyCode checks a TOTP code for a user against the current admin config.
 //
 // Secret resolution order (all handled transparently by expect.Value.ResolveErr):
-//  1. Plain base32 literal in HCL:   secret = "JBSWY3DPEHPK3PXP"
-//  2. Keeper reference in HCL:       secret = "vault://admin/totp/alice"
-//  3. Environment variable in HCL:   secret = "env.ALICE_TOTP_SECRET"
+// Plain base32 literal in HCL:   secret = "JBSWY3DPEHPK3PXP"
+// Keeper reference in HCL:       secret = "vault://admin/totp/alice"
+// Environment variable in HCL:   secret = "env.ALICE_TOTP_SECRET"
 //
 // Returns false when TOTP is disabled, the user is not found, or the code is wrong.
 func (t *TOTP) VerifyCode(username, code string) bool {
