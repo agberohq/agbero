@@ -14,57 +14,63 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-// TestOpenStore_CreateNew verifies that OpenStore creates a new database and unlocks it with passphrase
+// TestOpenStore_CreateNew verifies that OpenStore creates a new database and
+// unlocks it when a passphrase is supplied.
 func TestOpenStore_CreateNew(t *testing.T) {
 	tmpDir := t.TempDir()
 	dataDir := filepath.Join(tmpDir, "data")
+
 	cfg := &alaye.Keeper{
 		Enabled:    alaye.Active,
 		AutoLock:   alaye.Duration(5 * time.Minute),
 		Passphrase: expect.Value("test-passphrase-32-bytes-long!!"),
 	}
 	logger := ll.New("test").Disable()
+
 	store, err := OpenStore(dataDir, cfg, logger)
 	if err != nil {
 		t.Fatalf("OpenStore failed: %v", err)
 	}
 	defer store.Close()
+
 	dbPath := filepath.Join(dataDir, woos.DefaultKeeperName)
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		t.Error("Keeper database was not created")
+		t.Error("keeper database was not created")
 	}
 	if store.IsLocked() {
-		t.Error("Store should be unlocked")
+		t.Error("store should be unlocked after OpenStore with passphrase")
 	}
 }
 
-// TestOpenStore_ExistingDatabase verifies that an existing database can be reopened with correct passphrase
+// TestOpenStore_ExistingDatabase verifies that a previously written value can
+// be read back after closing and reopening the store with the same passphrase.
 func TestOpenStore_ExistingDatabase(t *testing.T) {
 	tmpDir := t.TempDir()
 	dataDir := filepath.Join(tmpDir, "data")
+
 	cfg := &alaye.Keeper{
 		Enabled:    alaye.Active,
 		Passphrase: expect.Value("test-passphrase-32-bytes-long!!"),
 	}
 	logger := ll.New("test").Disable()
+
+	// First open: create store and write a value.
 	store1, err := OpenStore(dataDir, cfg, logger)
 	if err != nil {
-		t.Fatalf("First OpenStore failed: %v", err)
+		t.Fatalf("first OpenStore failed: %v", err)
 	}
 
-	// Create a bucket first
-	if err := store1.CreateBucket("vault", "system", keeper.LevelPasswordOnly, "test"); err != nil {
-		t.Fatalf("CreateBucket failed: %v", err)
-	}
-
+	// The flat Set routes to the default scheme/namespace bucket which is
+	// created automatically by keeper.New — no CreateBucket call needed.
 	if err := store1.Set("test-key", []byte("test-value")); err != nil {
 		t.Fatalf("Set failed: %v", err)
 	}
 	store1.Close()
 
+	// Second open: reopen with same passphrase and read back the value.
 	store2, err := OpenStore(dataDir, cfg, logger)
 	if err != nil {
-		t.Fatalf("Second OpenStore failed: %v", err)
+		t.Fatalf("second OpenStore failed: %v", err)
 	}
 	defer store2.Close()
 
@@ -73,113 +79,283 @@ func TestOpenStore_ExistingDatabase(t *testing.T) {
 		t.Fatalf("Get failed: %v", err)
 	}
 	if string(val) != "test-value" {
-		t.Errorf("Value mismatch: got %s, want test-value", val)
+		t.Errorf("value mismatch: got %q, want %q", string(val), "test-value")
 	}
 }
 
-// TestOpenStore_WrongPassphrase verifies that opening with incorrect passphrase fails
+// TestOpenStore_WrongPassphrase verifies that opening an existing database
+// with the wrong passphrase returns an error.
 func TestOpenStore_WrongPassphrase(t *testing.T) {
 	tmpDir := t.TempDir()
 	dataDir := filepath.Join(tmpDir, "data")
+	logger := ll.New("test").Disable()
+
+	// Create the store with the correct passphrase.
 	cfg1 := &alaye.Keeper{
 		Enabled:    alaye.Active,
 		Passphrase: expect.Value("correct-passphrase-32-bytes!!"),
 	}
-	logger := ll.New("test").Disable()
 	store1, err := OpenStore(dataDir, cfg1, logger)
 	if err != nil {
-		t.Fatalf("First OpenStore failed: %v", err)
+		t.Fatalf("first OpenStore failed: %v", err)
 	}
 	store1.Close()
 
+	// Attempt to reopen with a wrong passphrase.
 	cfg2 := &alaye.Keeper{
 		Enabled:    alaye.Active,
-		Passphrase: expect.Value("wrong-passphrase-32-bytes!!!"),
+		Passphrase: expect.Value("wrong-passphrase-32-bytes!!!!"),
 	}
 	_, err = OpenStore(dataDir, cfg2, logger)
 	if err == nil {
-		t.Fatal("Expected error with wrong passphrase, got nil")
+		t.Fatal("expected error with wrong passphrase, got nil")
 	}
 }
 
-// TestOpenStore_NoPassphrase verifies store behavior when no passphrase is provided
-func TestOpenStore_NoPassphrase(t *testing.T) {
+// TestOpenStore_NilCfg_ReturnsLocked verifies that passing nil cfg returns a
+// locked store so the caller can prompt for and supply the passphrase.
+// This is the contract required by setup/home.go::initializeKeeper.
+func TestOpenStore_NilCfg_ReturnsLocked(t *testing.T) {
 	tmpDir := t.TempDir()
 	dataDir := filepath.Join(tmpDir, "data")
+	logger := ll.New("test").Disable()
+
+	store, err := OpenStore(dataDir, nil, logger)
+	if err != nil {
+		t.Fatalf("OpenStore(nil cfg) failed: %v", err)
+	}
+	defer store.Close()
+
+	if !store.IsLocked() {
+		t.Error("store should be locked when no passphrase is available — caller must unlock")
+	}
+}
+
+// TestOpenStore_EmptyPassphrase_ReturnsLocked verifies that an explicitly empty
+// passphrase in config also returns a locked store (caller must prompt or set env).
+func TestOpenStore_EmptyPassphrase_ReturnsLocked(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataDir := filepath.Join(tmpDir, "data")
+	logger := ll.New("test").Disable()
+
 	cfg := &alaye.Keeper{
 		Enabled:    alaye.Active,
 		Passphrase: expect.Value(""),
 	}
-	logger := ll.New("test").Disable()
+
 	store, err := OpenStore(dataDir, cfg, logger)
 	if err != nil {
 		t.Fatalf("OpenStore failed: %v", err)
 	}
 	defer store.Close()
 
-	// With empty passphrase, the store should be unlocked (development mode)
-	if store.IsLocked() {
-		t.Error("Store should not be locked when created with empty passphrase")
-	}
-
-	// Verify we can write to the store
-	if err := store.Set("test-key", []byte("test-value")); err != nil {
-		t.Errorf("Should be able to write to store with empty passphrase: %v", err)
+	if !store.IsLocked() {
+		t.Error("store should be locked when passphrase is empty — caller must unlock")
 	}
 }
 
-// TestOpenStore_WithEnvPassphrase verifies that AGBERO_PASSPHRASE env var is used when config lacks passphrase
+// TestOpenStore_DevMode verifies that passphrase="dev" unlocks the store with a
+// fixed sentinel passphrase (the KDF rejects empty passwords) and that the same
+// store can be reopened consistently.
+func TestOpenStore_DevMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataDir := filepath.Join(tmpDir, "data")
+	logger := ll.New("test").Disable()
+
+	cfg := &alaye.Keeper{
+		Enabled:    alaye.Active,
+		Passphrase: expect.Value("dev"),
+	}
+
+	store, err := OpenStore(dataDir, cfg, logger)
+	if err != nil {
+		t.Fatalf("OpenStore (dev mode) failed: %v", err)
+	}
+
+	if store.IsLocked() {
+		store.Close()
+		t.Fatal("store should be unlocked in dev mode")
+	}
+
+	// Write a value, close, and reopen with the same dev passphrase.
+	if err := store.Set("dev-key", []byte("dev-value")); err != nil {
+		store.Close()
+		t.Fatalf("Set in dev mode failed: %v", err)
+	}
+	store.Close()
+
+	store2, err := OpenStore(dataDir, cfg, logger)
+	if err != nil {
+		t.Fatalf("second OpenStore (dev mode) failed: %v", err)
+	}
+	defer store2.Close()
+
+	val, err := store2.Get("dev-key")
+	if err != nil {
+		t.Fatalf("Get after dev reopen failed: %v", err)
+	}
+	if string(val) != "dev-value" {
+		t.Errorf("dev value mismatch: got %q, want %q", string(val), "dev-value")
+	}
+}
+
+// TestOpenStore_WithEnvPassphrase verifies that AGBERO_PASSPHRASE is used when
+// cfg carries no passphrase.
 func TestOpenStore_WithEnvPassphrase(t *testing.T) {
 	tmpDir := t.TempDir()
 	dataDir := filepath.Join(tmpDir, "data")
-	os.Setenv("AGBERO_PASSPHRASE", "env-passphrase-32-bytes-long!!")
-	defer os.Unsetenv("AGBERO_PASSPHRASE")
-	cfg := &alaye.Keeper{
-		Enabled: alaye.Active,
-	}
+
+	t.Setenv("AGBERO_PASSPHRASE", "env-passphrase-32-bytes-long!!")
+
+	cfg := &alaye.Keeper{Enabled: alaye.Active}
 	logger := ll.New("test").Disable()
+
 	store, err := OpenStore(dataDir, cfg, logger)
 	if err != nil {
 		t.Fatalf("OpenStore with env passphrase failed: %v", err)
 	}
 	defer store.Close()
+
 	if store.IsLocked() {
-		t.Error("Store should be unlocked with env passphrase")
+		t.Error("store should be unlocked when AGBERO_PASSPHRASE is set")
 	}
 }
 
-// TestKeeperPath_Builders verifies that path builder methods construct correct keeper URIs
+// TestOpenStore_EnvPassphraseTakesPrecedenceOverEmpty verifies that
+// AGBERO_PASSPHRASE is used even when cfg.Passphrase is empty.
+func TestOpenStore_EnvPassphraseTakesPrecedenceOverEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataDir := filepath.Join(tmpDir, "data")
+
+	t.Setenv("AGBERO_PASSPHRASE", "env-passphrase-32-bytes-long!!")
+
+	cfg := &alaye.Keeper{
+		Enabled:    alaye.Active,
+		Passphrase: expect.Value(""),
+	}
+	logger := ll.New("test").Disable()
+
+	store, err := OpenStore(dataDir, cfg, logger)
+	if err != nil {
+		t.Fatalf("OpenStore failed: %v", err)
+	}
+	defer store.Close()
+
+	if store.IsLocked() {
+		t.Error("store should be unlocked — AGBERO_PASSPHRASE should be used when cfg passphrase is empty")
+	}
+}
+
+// TestOpenStore_CallerCanUnlockAfterLockedReturn verifies that a caller
+// receiving a locked store can unlock it with the correct passphrase.
+func TestOpenStore_CallerCanUnlockAfterLockedReturn(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataDir := filepath.Join(tmpDir, "data")
+	logger := ll.New("test").Disable()
+
+	// First: establish the passphrase by opening with it explicitly.
+	setupCfg := &alaye.Keeper{
+		Enabled:    alaye.Active,
+		Passphrase: expect.Value("the-real-passphrase-32-bytes!!"),
+	}
+	setup, err := OpenStore(dataDir, setupCfg, logger)
+	if err != nil {
+		t.Fatalf("setup OpenStore failed: %v", err)
+	}
+	setup.Close()
+
+	// Second: open without passphrase — caller gets a locked store.
+	store, err := OpenStore(dataDir, nil, logger)
+	if err != nil {
+		t.Fatalf("OpenStore(nil) failed: %v", err)
+	}
+	defer store.Close()
+
+	if !store.IsLocked() {
+		t.Fatal("expected locked store")
+	}
+
+	// Caller unlocks it.
+	if err := store.Unlock([]byte("the-real-passphrase-32-bytes!!")); err != nil {
+		t.Fatalf("caller Unlock failed: %v", err)
+	}
+
+	if store.IsLocked() {
+		t.Error("store should be unlocked after caller Unlock")
+	}
+}
+
+// TestKeeperPath_Builders verifies that path builder methods construct correct
+// keeper URIs.
 func TestKeeperPath_Builders(t *testing.T) {
 	vault := expect.Vault()
-	if vault.System("test") != "vault://system/test" {
-		t.Errorf("System path: got %s", vault.System("test"))
+
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"Vault.System", vault.System("test"), "vault://system/test"},
+		{"Vault.Admin", vault.Admin("users"), "vault://admin/users"},
+		{"Vault.AdminUser", vault.AdminUser("alice"), "vault://admin/users/alice"},
+		{"Vault.AdminTOTP", vault.AdminTOTP("alice"), "vault://admin/totp/alice"},
+		{"Keeper.Tenant", expect.Keeper().Tenant("mytenant", "secret"), "keeper://mytenant/secret"},
+		{"Certs.CertLE", expect.Certs().CertLE("example.com"), "certs://letsencrypt/example.com"},
+		{"Certs.CertLocal", expect.Certs().CertLocal("localhost"), "certs://local/localhost"},
+		{"Certs.CertCustom", expect.Certs().CertCustom("custom.com"), "certs://custom/custom.com"},
+		{"Certs.CertCA", expect.Certs().CertCA("root"), "certs://ca/root"},
 	}
-	if vault.Admin("users") != "vault://admin/users" {
-		t.Errorf("Admin path: got %s", vault.Admin("users"))
-	}
-	if vault.AdminUser("alice") != "vault://admin/users/alice" {
-		t.Errorf("AdminUser path: got %s", vault.AdminUser("alice"))
-	}
-	keeper := expect.Keeper()
-	if keeper.Tenant("mytenant", "secret") != "keeper://mytenant/secret" {
-		t.Errorf("Tenant path: got %s", keeper.Tenant("mytenant", "secret"))
-	}
-	certs := expect.Certs()
-	if certs.CertLE("example.com") != "certs://letsencrypt/example.com" {
-		t.Errorf("CertLE path: got %s", certs.CertLE("example.com"))
-	}
-	if certs.CertLocal("localhost") != "certs://local/localhost" {
-		t.Errorf("CertLocal path: got %s", certs.CertLocal("localhost"))
-	}
-	if certs.CertCustom("custom.com") != "certs://custom/custom.com" {
-		t.Errorf("CertCustom path: got %s", certs.CertCustom("custom.com"))
-	}
-	if certs.CertCA("root") != "certs://ca/root" {
-		t.Errorf("CertCA path: got %s", certs.CertCA("root"))
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Errorf("got %q, want %q", tc.got, tc.want)
+			}
+		})
 	}
 }
 
-// Helper function to check if error contains a specific string
+// TestOpenStore_CreatesBucketAndReadsBack verifies the full round-trip with an
+// explicit bucket creation and namespaced read.
+func TestOpenStore_CreatesBucketAndReadsBack(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataDir := filepath.Join(tmpDir, "data")
+
+	cfg := &alaye.Keeper{
+		Enabled:    alaye.Active,
+		Passphrase: expect.Value("test-passphrase-32-bytes-long!!"),
+	}
+	logger := ll.New("test").Disable()
+
+	store, err := OpenStore(dataDir, cfg, logger)
+	if err != nil {
+		t.Fatalf("OpenStore failed: %v", err)
+	}
+	defer store.Close()
+
+	// Create an explicit LevelPasswordOnly bucket in the vault scheme.
+	if err := store.CreateBucket("vault", "system", keeper.LevelPasswordOnly, "test"); err != nil {
+		// ErrPolicyImmutable is fine — bucket may already exist on re-runs.
+		if err.Error() != "policy already exists for this bucket" {
+			t.Fatalf("CreateBucket failed: %v", err)
+		}
+	}
+
+	// Write via namespaced full and read back via the flat Get convenience.
+	if err := store.SetNamespacedFull("vault", "system", "jwt_secret", []byte("s3cr3t")); err != nil {
+		t.Fatalf("SetNamespacedFull failed: %v", err)
+	}
+
+	val, err := store.Get("vault://system/jwt_secret")
+	if err != nil {
+		t.Fatalf("Get via URI failed: %v", err)
+	}
+	if string(val) != "s3cr3t" {
+		t.Errorf("got %q, want %q", string(val), "s3cr3t")
+	}
+}
+
+// containsError reports whether err contains the target substring.
 func containsError(err error, target string) bool {
 	if err == nil {
 		return false
