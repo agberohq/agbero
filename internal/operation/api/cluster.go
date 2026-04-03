@@ -34,7 +34,7 @@ type Cluster struct {
 func NewCluster(cfg *Shared) *Cluster {
 	return &Cluster{
 		cluster: cfg.Cluster,
-		store:   cfg.Kepper,
+		store:   cfg.Keeper,
 		logger:  cfg.Logger.Namespace("api"),
 	}
 }

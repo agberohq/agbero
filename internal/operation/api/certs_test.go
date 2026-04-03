@@ -28,6 +28,7 @@ type mockHostManagerForCerts struct {
 }
 
 func newMockHostManagerForCerts(t *testing.T) *mockHostManagerForCerts {
+	t.Helper()
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts")
 	if err := os.MkdirAll(hostsDir, 0755); err != nil {
@@ -40,17 +41,14 @@ func newMockHostManagerForCerts(t *testing.T) *mockHostManagerForCerts {
 func setupTestCerts(t *testing.T) (*Shared, func()) {
 	t.Helper()
 	tmpDir := t.TempDir()
+
 	certsDir := filepath.Join(tmpDir, "certs")
-	if err := os.MkdirAll(certsDir, 0755); err != nil {
-		t.Fatalf("Failed to create certs dir: %v", err)
-	}
 	dataDir := filepath.Join(tmpDir, "data")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatalf("Failed to create data dir: %v", err)
-	}
 	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, 0755); err != nil {
-		t.Fatalf("Failed to create hosts dir: %v", err)
+	for _, d := range []string{certsDir, dataDir, hostsDir} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatalf("Failed to create dir %s: %v", d, err)
+		}
 	}
 
 	global := &alaye.Global{
@@ -59,32 +57,24 @@ func setupTestCerts(t *testing.T) (*Shared, func()) {
 			DataDir:  dataDir,
 			HostsDir: hostsDir,
 		},
-		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Inactive,
-		},
-		Gossip: alaye.Gossip{
-			Enabled: alaye.Inactive,
-		},
+		LetsEncrypt: alaye.LetsEncrypt{Enabled: alaye.Inactive},
+		Gossip:      alaye.Gossip{Enabled: alaye.Inactive},
 	}
 
 	hm := newMockHostManagerForCerts(t)
+	// nil keeper → disk backend using certsDir/dataDir
 	tlsMgr := tlss.NewManager(testLogger, hm.Host, global, nil)
 
-	shared := &Shared{
-		Logger: testLogger,
-	}
-
+	shared := &Shared{Logger: testLogger}
 	shared.UpdateState(&ActiveState{
 		Global: global,
 		TLSS:   tlsMgr,
 	})
 
-	cleanup := func() {
+	return shared, func() {
 		tlsMgr.Close()
 		os.RemoveAll(tmpDir)
 	}
-
-	return shared, cleanup
 }
 
 func generateTestCert(domain string) (certPEM, keyPEM []byte, err error) {
@@ -110,7 +100,6 @@ func generateTestCert(domain string) (certPEM, keyPEM []byte, err error) {
 
 	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
-
 	return certPEM, keyPEM, nil
 }
 
@@ -118,16 +107,14 @@ func TestCertsHandler_List_WithWildcardCert(t *testing.T) {
 	shared, cleanup := setupTestCerts(t)
 	defer cleanup()
 
-	state := shared.State()
-
-	// Create certificate directly in the storage directory
 	certPEM, keyPEM, err := generateTestCert("*.example.com")
 	if err != nil {
 		t.Fatalf("Failed to generate test cert: %v", err)
 	}
 
-	// Load from storage so it's in the cache
-	if err := state.TLSS.UpdateCertificate("*.example.com", certPEM, keyPEM); err != nil {
+	// UpdateCertificate stores via storage.Save(IssuerCustom, domain, ...).
+	// list() now calls ts.ListCertificates() → storage.List() which sees it correctly.
+	if err := shared.State().TLSS.UpdateCertificate("*.example.com", certPEM, keyPEM); err != nil {
 		t.Fatalf("Failed to update certificate: %v", err)
 	}
 
@@ -156,9 +143,38 @@ func TestCertsHandler_List_WithWildcardCert(t *testing.T) {
 	}
 
 	firstCert := certs[0].(map[string]any)
-	// Accept either format
-	if firstCert["domain"] != "*example.com" && firstCert["domain"] != "*.example.com" {
-		t.Errorf("Expected domain *example.com or *.example.com, got %s", firstCert["domain"])
+	domain, _ := firstCert["domain"].(string)
+	if domain != "*.example.com" && domain != "*example.com" {
+		t.Errorf("Expected domain *.example.com or *example.com, got %q", domain)
+	}
+}
+
+func TestCertsHandler_List_Empty(t *testing.T) {
+	shared, cleanup := setupTestCerts(t)
+	defer cleanup()
+
+	r := chi.NewRouter()
+	CertsHandler(shared, r)
+
+	req := httptest.NewRequest(http.MethodGet, "/certs", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", w.Code)
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	certs, ok := resp["certificates"].([]any)
+	if !ok {
+		t.Fatal("Expected certificates array")
+	}
+	if len(certs) != 0 {
+		t.Errorf("Expected 0 certificates, got %d", len(certs))
 	}
 }
 
@@ -166,32 +182,27 @@ func TestCertsHandler_Upload(t *testing.T) {
 	shared, cleanup := setupTestCerts(t)
 	defer cleanup()
 
-	// certsDir no longer needed for file check
-	r := chi.NewRouter()
-	CertsHandler(shared, r)
-
 	certPEM, keyPEM, err := generateTestCert("upload.example.com")
 	if err != nil {
 		t.Fatalf("Failed to generate test cert: %v", err)
 	}
 
-	reqBody := map[string]string{
+	r := chi.NewRouter()
+	CertsHandler(shared, r)
+
+	body, _ := json.Marshal(map[string]string{
 		"domain": "upload.example.com",
 		"cert":   string(certPEM),
 		"key":    string(keyPEM),
-	}
-	body, _ := json.Marshal(reqBody)
-
+	})
 	req := httptest.NewRequest(http.MethodPost, "/certs", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	// Verify HTTP response
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Verify JSON response structure
 	var resp map[string]string
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
@@ -199,40 +210,19 @@ func TestCertsHandler_Upload(t *testing.T) {
 	if resp["status"] != "ok" {
 		t.Errorf("Expected status=ok, got %v", resp)
 	}
-
-	// Optional: Verify cert is in TLS manager cache (if public getter exists)
-	// state := shared.State()
-	// if _, err := state.TLSS.GetCertificate("upload.example.com"); err != nil {
-	// 	t.Error("Certificate not stored in TLS manager cache")
-	// }
 }
 
 func TestCertsHandler_Delete_WildcardDomain(t *testing.T) {
 	shared, cleanup := setupTestCerts(t)
 	defer cleanup()
 
-	state := shared.State()
-	certsDir := state.Global.Storage.CertsDir
-
 	certPEM, keyPEM, err := generateTestCert("*.wildcard.com")
 	if err != nil {
 		t.Fatalf("Failed to generate test cert: %v", err)
 	}
 
-	// Update the certificate
-	if err := state.TLSS.UpdateCertificate("*.wildcard.com", certPEM, keyPEM); err != nil {
+	if err := shared.State().TLSS.UpdateCertificate("*.wildcard.com", certPEM, keyPEM); err != nil {
 		t.Fatalf("Failed to update certificate: %v", err)
-	}
-
-	// Check if certificate file was created
-	certPath := filepath.Join(certsDir, "_wildcard_wildcard.com.crt")
-	if _, err := os.Stat(certPath); os.IsNotExist(err) {
-		// Try alternative naming convention
-		certPath = filepath.Join(certsDir, "_wildcard_.wildcard.com.crt")
-		if _, err := os.Stat(certPath); os.IsNotExist(err) {
-			t.Skip("Certificate file not created - UpdateCertificate may not persist to disk in test environment")
-			return
-		}
 	}
 
 	r := chi.NewRouter()
@@ -243,7 +233,7 @@ func TestCertsHandler_Delete_WildcardDomain(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("Expected 200, got %d", w.Code)
+		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -276,34 +266,5 @@ func TestCertsHandler_Delete_NoDomain(t *testing.T) {
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("Expected 405, got %d", w.Code)
-	}
-}
-
-func TestCertsHandler_List_Empty(t *testing.T) {
-	shared, cleanup := setupTestCerts(t)
-	defer cleanup()
-
-	r := chi.NewRouter()
-	CertsHandler(shared, r)
-
-	req := httptest.NewRequest(http.MethodGet, "/certs", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("Expected 200, got %d", w.Code)
-	}
-
-	var resp map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("Failed to decode response: %v", err)
-	}
-
-	certs, ok := resp["certificates"].([]any)
-	if !ok {
-		t.Fatal("Expected certificates array")
-	}
-	if len(certs) != 0 {
-		t.Errorf("Expected 0 certificates, got %d", len(certs))
 	}
 }

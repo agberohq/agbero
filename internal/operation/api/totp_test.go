@@ -30,9 +30,7 @@ func setupTestTOTPWithConfig(t *testing.T) (*Shared, func()) {
 	}
 
 	global := &alaye.Global{
-		Storage: alaye.Storage{
-			HostsDir: hostsDir,
-		},
+		Storage: alaye.Storage{HostsDir: hostsDir},
 		Admin: alaye.Admin{
 			TOTP: alaye.TOTP{
 				Enabled:    alaye.Active,
@@ -44,28 +42,22 @@ func setupTestTOTPWithConfig(t *testing.T) (*Shared, func()) {
 				Users: []alaye.TOTPUser{
 					{
 						Username: "existinguser",
-						Secret:   expect.Value("JBSWY3DPEHPK3PXP"),
+						// Plain base32 literal — no keeper needed in tests.
+						Secret: expect.Value("JBSWY3DPEHPK3PXP"),
 					},
 				},
 			},
 		},
 	}
 
-	shared := &Shared{
-		Logger: testLogger,
-	}
-	shared.UpdateState(&ActiveState{
-		Global: global,
-	})
+	shared := &Shared{Logger: testLogger}
+	shared.UpdateState(&ActiveState{Global: global})
 
-	cleanup := func() {
-		os.RemoveAll(tmpDir)
-	}
-
-	return shared, cleanup
+	return shared, func() { os.RemoveAll(tmpDir) }
 }
 
-// Helper to add a user to the TOTP config in the shared state
+// addTOTPUser adds a user with a plain-text secret directly to the shared state.
+// Used in tests where the secret is generated in-process and does not need keeper.
 func addTOTPUser(shared *Shared, username, secret string) {
 	state := shared.State()
 	cfg := state.Global.Admin.TOTP
@@ -81,10 +73,7 @@ func TestTOTPHandler_Verify_ValidCode(t *testing.T) {
 	shared, cleanup := setupTestTOTPWithConfig(t)
 	defer cleanup()
 
-	// Get the TOTP config
 	cfg := shared.State().Global.Admin.TOTP
-
-	// Generate a real TOTP secret for a test user
 	gen := security.NewTOTPGenerator(&security.TOTPConfig{
 		Digits:    cfg.Digits,
 		Period:    cfg.Period,
@@ -97,30 +86,24 @@ func TestTOTPHandler_Verify_ValidCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate secret: %v", err)
 	}
-
-	// Add the user to config
 	addTOTPUser(shared, "verifyuser", secret)
 
 	r := chi.NewRouter()
 	TOTPHandler(shared, r)
 
-	// Generate current valid code
 	validCode, err := gen.Now(secret)
 	if err != nil {
 		t.Fatalf("Failed to generate code: %v", err)
 	}
 
-	verifyBody := map[string]string{"code": validCode}
-	body, _ := json.Marshal(verifyBody)
-
+	body, _ := json.Marshal(map[string]string{"code": validCode})
 	req := httptest.NewRequest(http.MethodPost, "/totp/verifyuser/verify", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		bodyBytes := w.Body.Bytes()
-		t.Errorf("Expected 200, got %d: %s", w.Code, string(bodyBytes))
+		t.Errorf("Expected 200, got %d: %s", w.Code, w.Body.String())
 		return
 	}
 
@@ -128,7 +111,6 @@ func TestTOTPHandler_Verify_ValidCode(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
-
 	if valid, ok := resp["valid"].(bool); !ok || !valid {
 		t.Errorf("Expected valid=true, got %v", resp["valid"])
 	}
@@ -141,9 +123,7 @@ func TestTOTPHandler_Verify_InvalidCode(t *testing.T) {
 	r := chi.NewRouter()
 	TOTPHandler(shared, r)
 
-	verifyBody := map[string]string{"code": "000000"}
-	body, _ := json.Marshal(verifyBody)
-
+	body, _ := json.Marshal(map[string]string{"code": "000000"})
 	req := httptest.NewRequest(http.MethodPost, "/totp/existinguser/verify", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -158,14 +138,11 @@ func TestTOTPHandler_Verify_WithWindow(t *testing.T) {
 	shared, cleanup := setupTestTOTPWithConfig(t)
 	defer cleanup()
 
-	// Update window size in the shared state
 	state := shared.State()
 	state.Global.Admin.TOTP.WindowSize = 2
 	shared.UpdateState(state)
 
 	cfg := shared.State().Global.Admin.TOTP
-
-	// Create generator with window=2
 	gen := security.NewTOTPGenerator(&security.TOTPConfig{
 		Digits:    cfg.Digits,
 		Period:    cfg.Period,
@@ -178,14 +155,10 @@ func TestTOTPHandler_Verify_WithWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate secret: %v", err)
 	}
-
-	// Add user to config
 	addTOTPUser(shared, "windowuser", secret)
 
-	// Get code from 60 seconds ago (2 periods)
-	// This should be valid with window=2
-	pastTime := time.Now().Unix() - 60
-	code, err := gen.GenerateCode(secret, pastTime)
+	// Code from 60 seconds ago — valid with window=2 (2 periods back).
+	code, err := gen.GenerateCode(secret, time.Now().Unix()-60)
 	if err != nil {
 		t.Fatalf("Failed to generate code: %v", err)
 	}
@@ -193,9 +166,7 @@ func TestTOTPHandler_Verify_WithWindow(t *testing.T) {
 	r := chi.NewRouter()
 	TOTPHandler(shared, r)
 
-	verifyBody := map[string]string{"code": code}
-	body, _ := json.Marshal(verifyBody)
-
+	body, _ := json.Marshal(map[string]string{"code": code})
 	req := httptest.NewRequest(http.MethodPost, "/totp/windowuser/verify", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -213,9 +184,7 @@ func TestTOTPHandler_Verify_UserNotFound(t *testing.T) {
 	r := chi.NewRouter()
 	TOTPHandler(shared, r)
 
-	verifyBody := map[string]string{"code": "123456"}
-	body, _ := json.Marshal(verifyBody)
-
+	body, _ := json.Marshal(map[string]string{"code": "123456"})
 	req := httptest.NewRequest(http.MethodPost, "/totp/nonexistent/verify", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -239,7 +208,7 @@ func TestTOTPHandler_Verify_MissingCode(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("Expected 400 for missing code, got %d", w.Code)
+		t.Errorf("Expected 400, got %d", w.Code)
 	}
 }
 
@@ -266,7 +235,6 @@ func TestTOTPHandler_Setup(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
-
 	if resp["secret"] == "" {
 		t.Error("Expected secret in response")
 	}
@@ -275,6 +243,10 @@ func TestTOTPHandler_Setup(t *testing.T) {
 	}
 	if !strings.Contains(resp["uri"], "newuser") {
 		t.Errorf("Expected URI to contain newuser, got %s", resp["uri"])
+	}
+	// store_key should be the canonical keeper path
+	if resp["store_key"] != "vault://admin/totp/newuser" {
+		t.Errorf("Expected store_key=vault://admin/totp/newuser, got %s", resp["store_key"])
 	}
 }
 
@@ -375,8 +347,6 @@ func TestTOTPHandler_VerifyCode_Integration(t *testing.T) {
 	defer cleanup()
 
 	cfg := shared.State().Global.Admin.TOTP
-
-	// Generate a real secret for a new user
 	gen := security.NewTOTPGenerator(&security.TOTPConfig{
 		Digits:    cfg.Digits,
 		Period:    cfg.Period,
@@ -389,34 +359,26 @@ func TestTOTPHandler_VerifyCode_Integration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate secret: %v", err)
 	}
-
-	// Add user to config
 	addTOTPUser(shared, "integrationuser", secret)
 
 	totp := NewTOTP(shared)
 
-	// Generate valid code
 	validCode, err := gen.Now(secret)
 	if err != nil {
 		t.Fatalf("Failed to generate code: %v", err)
 	}
 
-	// Test valid code
 	if !totp.VerifyCode("integrationuser", validCode) {
 		t.Error("Expected valid code to verify")
 	}
-
-	// Test invalid code
 	if totp.VerifyCode("integrationuser", "000000") {
 		t.Error("Expected invalid code to fail")
 	}
-
-	// Test non-existent user
 	if totp.VerifyCode("nonexistent", "123456") {
 		t.Error("Expected false for non-existent user")
 	}
 
-	// Test TOTP disabled
+	// Disable TOTP.
 	state := shared.State()
 	state.Global.Admin.TOTP.Enabled = alaye.Inactive
 	shared.UpdateState(state)

@@ -91,7 +91,7 @@ func TestKeeperRouter_UnlockLock(t *testing.T) {
 	defer cleanup()
 
 	r := chi.NewRouter()
-	KeeperHandler(&Shared{Kepper: store, Logger: testLogger}, r)
+	KeeperHandler(&Shared{Keeper: store, Logger: testLogger}, r)
 	srv := httptest.NewServer(r)
 	defer srv.Close()
 
@@ -112,7 +112,7 @@ func TestKeeperRouter_Status(t *testing.T) {
 	defer cleanup()
 
 	r := chi.NewRouter()
-	KeeperHandler(&Shared{Kepper: store, Logger: testLogger}, r)
+	KeeperHandler(&Shared{Keeper: store, Logger: testLogger}, r)
 	srv := httptest.NewServer(r)
 	defer srv.Close()
 
@@ -141,7 +141,7 @@ func TestKeeperRouter_UnauthorizedWhenLocked(t *testing.T) {
 	defer cleanup()
 
 	r := chi.NewRouter()
-	KeeperHandler(&Shared{Kepper: store, Logger: testLogger}, r)
+	KeeperHandler(&Shared{Keeper: store, Logger: testLogger}, r)
 	srv := httptest.NewServer(r)
 	defer srv.Close()
 
@@ -160,7 +160,7 @@ func TestKeeperRouter_CRUD(t *testing.T) {
 	defer cleanup()
 
 	r := chi.NewRouter()
-	KeeperHandler(&Shared{Kepper: store, Logger: testLogger}, r)
+	KeeperHandler(&Shared{Keeper: store, Logger: testLogger}, r)
 	srv := httptest.NewServer(r)
 	defer srv.Close()
 
@@ -226,7 +226,7 @@ func TestKeeperRouter_RequiresNamespace(t *testing.T) {
 	defer cleanup()
 
 	r := chi.NewRouter()
-	KeeperHandler(&Shared{Kepper: store, Logger: testLogger}, r)
+	KeeperHandler(&Shared{Keeper: store, Logger: testLogger}, r)
 	srv := httptest.NewServer(r)
 	defer srv.Close()
 
@@ -262,7 +262,7 @@ func TestKeeperRouter_ReservedNamespacesBlocked(t *testing.T) {
 	defer cleanup()
 
 	r := chi.NewRouter()
-	KeeperHandler(&Shared{Kepper: store, Logger: testLogger}, r)
+	KeeperHandler(&Shared{Keeper: store, Logger: testLogger}, r)
 	srv := httptest.NewServer(r)
 	defer srv.Close()
 
@@ -332,7 +332,7 @@ func TestKeeperRouter_SetWithBase64(t *testing.T) {
 	defer cleanup()
 
 	r := chi.NewRouter()
-	KeeperHandler(&Shared{Kepper: store, Logger: testLogger}, r)
+	KeeperHandler(&Shared{Keeper: store, Logger: testLogger}, r)
 	srv := httptest.NewServer(r)
 	defer srv.Close()
 
@@ -372,7 +372,7 @@ func TestKeeperRouter_GetWithScheme(t *testing.T) {
 	defer cleanup()
 
 	r := chi.NewRouter()
-	KeeperHandler(&Shared{Kepper: store, Logger: testLogger}, r)
+	KeeperHandler(&Shared{Keeper: store, Logger: testLogger}, r)
 	srv := httptest.NewServer(r)
 	defer srv.Close()
 
@@ -415,7 +415,7 @@ func TestKeeperRouter_DeleteWithScheme(t *testing.T) {
 	defer cleanup()
 
 	r := chi.NewRouter()
-	KeeperHandler(&Shared{Kepper: store, Logger: testLogger}, r)
+	KeeperHandler(&Shared{Keeper: store, Logger: testLogger}, r)
 	srv := httptest.NewServer(r)
 	defer srv.Close()
 
@@ -443,7 +443,7 @@ func TestKeeperRouter_UnlockWrongPassphrase(t *testing.T) {
 	defer cleanup()
 
 	r := chi.NewRouter()
-	KeeperHandler(&Shared{Kepper: store, Logger: testLogger}, r)
+	KeeperHandler(&Shared{Keeper: store, Logger: testLogger}, r)
 	srv := httptest.NewServer(r)
 	defer srv.Close()
 

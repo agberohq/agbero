@@ -77,7 +77,7 @@ type Route struct {
 func NewRoute(cfg *Shared) *Route {
 	return &Route{
 		cluster: cfg.Cluster,
-		store:   cfg.Kepper,
+		store:   cfg.Keeper,
 		logger:  cfg.Logger.Namespace("api"),
 	}
 }

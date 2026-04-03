@@ -25,7 +25,7 @@ type ActiveState struct {
 type Shared struct {
 	Logger      *ll.Logger
 	Cluster     *cluster.Manager
-	Kepper      *keeper.Keeper
+	Keeper      *keeper.Keeper
 	Discovery   *discovery.Host
 	PPK         *security.PPK
 	Telemetry   *telemetry.Store

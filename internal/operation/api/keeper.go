@@ -93,7 +93,7 @@ type Keeper struct {
 // NewKeeper constructs a Keeper handler from shared application state.
 func NewKeeper(cfg *Shared) *Keeper {
 	return &Keeper{
-		store:  cfg.Kepper,
+		store:  cfg.Keeper,
 		logger: cfg.Logger.Namespace("api/keeper"),
 		totp:   security.NewTOTPGenerator(security.DefaultTOTPConfig()),
 	}

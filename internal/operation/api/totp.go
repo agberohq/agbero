@@ -14,8 +14,7 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-// TOTPHandler registers all TOTP API endpoints under the /totp prefix on the provided chi.Router.
-// Caller should apply authentication middleware via r.Use() before or within the route group.
+// TOTPHandler registers all TOTP API endpoints under /totp.
 func TOTPHandler(s *Shared, r chi.Router) {
 	t := NewTOTP(s)
 
@@ -27,15 +26,12 @@ func TOTPHandler(s *Shared, r chi.Router) {
 	})
 }
 
-// TOTP provides HTTP handlers for TOTP secret generation and QR code provisioning.
-// It uses the shared config accessor to support hot-reload of admin settings.
+// TOTP handles TOTP secret generation, QR provisioning, and code verification.
 type TOTP struct {
 	shared *Shared
 	logger *ll.Logger
 }
 
-// NewTOTP initializes a TOTP instance with shared application dependencies.
-// It stores a config accessor function for thread-safe admin config reads.
 func NewTOTP(cfg *Shared) *TOTP {
 	return &TOTP{
 		shared: cfg,
@@ -43,15 +39,23 @@ func NewTOTP(cfg *Shared) *TOTP {
 	}
 }
 
-// setup handles POST requests to generate a new TOTP secret for the authenticated user.
-// It returns the provisioning URI and inline SVG QR code for immediate admin UI rendering.
+// setup handles POST /totp/setup.
+//
+// Generates a new TOTP secret for the authenticated user and persists it to
+// keeper at vault://admin/totp/<user>. The HCL config entry for that user
+// should reference the secret as:
+//
+//	totp { user { username = "alice" secret = "vault://admin/totp/alice" } }
+//
+// expect.Value.ResolveErr will resolve the vault:// reference at login time.
+// If keeper is not available the secret is returned but not persisted — a
+// warning is logged so this is never silently lost.
 func (t *TOTP) setup(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetClaims(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-
 	user, ok := claims["user"].(string)
 	if !ok || user == "" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -63,8 +67,6 @@ func (t *TOTP) setup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "TOTP not enabled in configuration", http.StatusNotImplemented)
 		return
 	}
-
-	// Use the existing GetUserSecret method to check if already configured
 	if _, exists := cfg.GetUserSecret(user); exists {
 		http.Error(w, "TOTP already configured for this user", http.StatusConflict)
 		return
@@ -77,25 +79,35 @@ func (t *TOTP) setup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t.logger.Fields("user", user).Warn("TOTP secret generated but not persisted — use keeper set to make it durable")
+	// Persist the secret to keeper so HCL config can reference it as
+	// vault://admin/totp/<user> via expect.Value resolution.
+	storeKey := expect.Vault().AdminTOTP(user)
+	if t.shared.Keeper != nil {
+		if err := t.shared.Keeper.Set(storeKey, []byte(secret)); err != nil {
+			t.logger.Fields("user", user, "err", err).Warn("failed to persist TOTP secret to keeper")
+		} else {
+			t.logger.Fields("user", user, "key", storeKey).Info("TOTP secret stored in keeper")
+		}
+	} else {
+		t.logger.Fields("user", user).Warn("keeper not available — TOTP secret not persisted; add to HCL config manually")
+	}
 
 	qr, qrErr := setup.TOTPProvisioningQR(uri)
 
 	resp := map[string]string{
-		"secret":  secret,
-		"uri":     uri,
-		"message": "Scan QR code with Google Authenticator, Authy, or similar app",
+		"secret":    secret,
+		"uri":       uri,
+		"store_key": storeKey,
+		"message":   "Add to HCL: secret = \"" + storeKey + "\"",
 	}
 	if qrErr == nil {
 		resp["qr_svg"] = qr.SVG
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(resp) //nolint:errcheck
 }
 
-// qrSVG handles GET requests to return a user's TOTP QR code as a standalone SVG image.
-// It builds the QR via shared logic and sets the appropriate Content-Type header.
 func (t *TOTP) qrSVG(w http.ResponseWriter, r *http.Request) {
 	qr, ok := t.buildQR(w, r)
 	if !ok {
@@ -106,8 +118,6 @@ func (t *TOTP) qrSVG(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(qr.SVG)) //nolint:errcheck
 }
 
-// qrPNG handles GET requests to return a user's TOTP QR code as a downloadable PNG image.
-// It builds the QR via shared logic and sets Content-Disposition for file download.
 func (t *TOTP) qrPNG(w http.ResponseWriter, r *http.Request) {
 	qr, ok := t.buildQR(w, r)
 	if !ok {
@@ -119,7 +129,7 @@ func (t *TOTP) qrPNG(w http.ResponseWriter, r *http.Request) {
 	w.Write(qr.PNG) //nolint:errcheck
 }
 
-// verify handles POST requests to validate a TOTP code for a user.
+// verify handles POST /totp/{user}/verify.
 func (t *TOTP) verify(w http.ResponseWriter, r *http.Request) {
 	user := chi.URLParam(r, "user")
 	if user == "" {
@@ -141,7 +151,7 @@ func (t *TOTP) verify(w http.ResponseWriter, r *http.Request) {
 
 	if t.VerifyCode(user, req.Code) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
 			"valid": true,
 			"user":  user,
 		})
@@ -150,28 +160,26 @@ func (t *TOTP) verify(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// VerifyCode checks a TOTP code for a username against the current admin config.
-// It is exported for use by login handlers and returns false if TOTP is disabled or unset.
+// VerifyCode checks a TOTP code for a user against the current admin config.
+//
+// Secret resolution order (all handled transparently by expect.Value.ResolveErr):
+//  1. Plain base32 literal in HCL:   secret = "JBSWY3DPEHPK3PXP"
+//  2. Keeper reference in HCL:       secret = "vault://admin/totp/alice"
+//  3. Environment variable in HCL:   secret = "env.ALICE_TOTP_SECRET"
+//
+// Returns false when TOTP is disabled, the user is not found, or the code is wrong.
 func (t *TOTP) VerifyCode(username, code string) bool {
 	cfg := t.shared.State().Global.Admin.TOTP
 	if !cfg.Enabled.Active() {
 		return false
 	}
-
-	// Use the existing GetUserSecret method which handles alaye.Value resolution
 	secret, ok := cfg.GetUserSecret(username)
-
 	if !ok || secret == "" {
 		return false
 	}
-
-	// Verify the code
-	gen := t.generatorFrom(cfg)
-	return gen.VerifyCode(secret, code)
+	return t.generatorFrom(cfg).VerifyCode(secret, code)
 }
 
-// buildQR generates a QR code for a user's TOTP secret, handling validation and errors.
-// It returns the QR result and a boolean indicating success for caller branching logic.
 func (t *TOTP) buildQR(w http.ResponseWriter, r *http.Request) (*ui.QRResult, bool) {
 	v := expect.NewRaw(chi.URLParam(r, "user"))
 	user, err := v.Username()
@@ -181,8 +189,6 @@ func (t *TOTP) buildQR(w http.ResponseWriter, r *http.Request) (*ui.QRResult, bo
 	}
 
 	cfg := t.shared.State().Global.Admin.TOTP
-
-	// Use the existing GetUserSecret method
 	secret, ok := cfg.GetUserSecret(user)
 	if !ok || secret == "" {
 		http.Error(w, "TOTP not configured for "+user, http.StatusNotFound)
@@ -200,8 +206,6 @@ func (t *TOTP) buildQR(w http.ResponseWriter, r *http.Request) (*ui.QRResult, bo
 	return qr, true
 }
 
-// generateSecret creates a new TOTP secret and provisioning URI for a given username.
-// It delegates to the configured TOTPGenerator and returns values for storage and display.
 func (t *TOTP) generateSecret(totpCfg alaye.TOTP, username string) (secret, uri string, err error) {
 	gen := t.generatorFrom(totpCfg)
 	secret, err = gen.GenerateSecret()
@@ -212,8 +216,6 @@ func (t *TOTP) generateSecret(totpCfg alaye.TOTP, username string) (secret, uri 
 	return secret, uri, nil
 }
 
-// generatorFrom constructs a TOTPGenerator instance from admin config settings.
-// It maps alaye.TOTP fields to security.TOTPConfig for consistent generator initialization.
 func (t *TOTP) generatorFrom(cfg alaye.TOTP) *security.TOTPGenerator {
 	return security.NewTOTPGenerator(&security.TOTPConfig{
 		Digits:    cfg.Digits,
