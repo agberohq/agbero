@@ -3,9 +3,7 @@ package helper
 import (
 	"fmt"
 
-	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/secrets"
-	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
 	keeperlib "github.com/agberohq/keeper"
@@ -27,12 +25,12 @@ func (o *uiOutput) Success(msg string)                      { o.u.SuccessLine(ms
 func (o *uiOutput) Info(msg string)                         { o.u.InfoLine(msg) }
 func (o *uiOutput) Error(msg string)                        { o.u.WarnLine(msg) }
 
-// openStore opens an unlocked keeper using the standard resolution chain:
-//  1. cfg.Passphrase in agbero.hcl (any expect.Value — env., vault://, b64. …)
-//  2. AGBERO_PASSPHRASE environment variable
-//  3. Interactive prompt (run mode only — not valid for service mode)
+// openStore opens an unlocked keeper.Keeper.
 //
-// Uses the same pattern as service.go::preflightCheck.
+// Resolution order (same as service.go::preflightCheck):
+// cfg.Passphrase in agbero.hcl (any expect.Value — env., vault://, b64. …)
+// AGBERO_PASSPHRASE environment variable
+// Interactive prompt — used in run mode; never in service mode.
 func (k *Keeper) openStore(configPath string) *keeperlib.Keeper {
 	global, err := loadGlobal(configPath)
 	if err != nil {
@@ -51,7 +49,6 @@ func (k *Keeper) openStore(configPath string) *keeperlib.Keeper {
 	}
 
 	if store.IsLocked() {
-		// No passphrase from config or env — prompt interactively.
 		u := ui.New()
 		result, promptErr := u.PasswordRequired("Keeper passphrase")
 		if promptErr != nil {
@@ -71,9 +68,9 @@ func (k *Keeper) openStore(configPath string) *keeperlib.Keeper {
 	return store
 }
 
-// cmds returns a keepcmd.Commands instance wired to openStore.
-// List, Get, Set, Delete, Backup, and Status all delegate here so there is
-// no duplicate implementation of those operations.
+// cmds returns keepcmd.Commands wired to openStore.
+// List, Get, Set, Delete, Backup, and Status all delegate here — no
+// duplicate implementations.
 func (k *Keeper) cmds(configPath string) *keepcmd.Commands {
 	return &keepcmd.Commands{
 		Store: func() (*keeperlib.Keeper, error) {
@@ -96,8 +93,7 @@ func (k *Keeper) Get(configPath, key string) {
 }
 
 func (k *Keeper) Set(configPath, key, value string, asB64 bool, fromFile string) {
-	opts := keepcmd.SetOptions{Base64: asB64, FromFile: fromFile}
-	if err := k.cmds(configPath).Set(key, value, opts); err != nil {
+	if err := k.cmds(configPath).Set(key, value, keepcmd.SetOptions{Base64: asB64, FromFile: fromFile}); err != nil {
 		k.p.Logger.Fatal(err)
 	}
 	ui.New().InfoLine("reference in agbero.hcl as:  ss://" + key)
@@ -132,9 +128,9 @@ func (k *Keeper) Status(configPath string) {
 	}
 }
 
-// Rotate validates the current passphrase then re-derives under a new one.
-// We keep this manual (not delegating to keepcmd.Rotate) because we need to
-// verify the current passphrase before accepting a new one.
+// Rotate validates the current passphrase then rotates to a new one.
+// Kept manual (not delegated to keepcmd.Rotate) because we verify the
+// current passphrase before accepting a new one.
 func (k *Keeper) Rotate(configPath string) {
 	store := k.openStore(configPath)
 	defer store.Close()
@@ -148,7 +144,6 @@ func (k *Keeper) Rotate(configPath string) {
 	currentPass := currentResult.Bytes()
 	defer currentResult.Zero()
 
-	// Verify the current passphrase.
 	if err := store.Unlock(currentPass); err != nil {
 		k.p.Logger.Fatal("invalid current passphrase: ", err)
 	}
@@ -168,74 +163,4 @@ func (k *Keeper) Rotate(configPath string) {
 	zero.Bytes(newPass)
 
 	ui.New().SuccessLine("passphrase rotated — update keeper.passphrase in agbero.hcl if stored there")
-}
-
-// TOTPSetup generates a new TOTP secret for a user and stores it at the
-// canonical keeper path: vault://admin/totp/<user>.
-//
-// The user's HCL entry should then reference it as:
-//
-//	totp { user { username = "alice"  secret = "vault://admin/totp/alice" } }
-func (k *Keeper) TOTPSetup(configPath, username string) {
-	if username == "" {
-		k.p.Logger.Fatal("--user is required")
-	}
-
-	store := k.openStore(configPath)
-	defer store.Close()
-
-	gen := security.NewTOTPGenerator(security.DefaultTOTPConfig())
-	secret, err := gen.GenerateSecret()
-	if err != nil {
-		k.p.Logger.Fatal("failed to generate TOTP secret: ", err)
-	}
-
-	// Canonical path — same as setup/home.go and api/totp.go.
-	storeKey := expect.Vault().AdminTOTP(username)
-	if err := store.Set(storeKey, []byte(secret)); err != nil {
-		k.p.Logger.Fatal("failed to store TOTP secret: ", err)
-	}
-
-	uri := gen.GetProvisioningURI(secret, username)
-	k.renderTOTPQR(username, storeKey, uri)
-}
-
-// TOTPQR displays the QR code for a user whose TOTP secret is already stored
-// in keeper at vault://admin/totp/<user>.
-func (k *Keeper) TOTPQR(configPath, username string) {
-	if username == "" {
-		k.p.Logger.Fatal("--user is required")
-	}
-
-	store := k.openStore(configPath)
-	defer store.Close()
-
-	storeKey := expect.Vault().AdminTOTP(username)
-	secretBytes, err := store.Get(storeKey)
-	if err != nil {
-		k.p.Logger.Fatal("TOTP secret not found — run 'agbero keeper totp setup' first: ", err)
-	}
-
-	gen := security.NewTOTPGenerator(security.DefaultTOTPConfig())
-	uri := gen.GetProvisioningURI(string(secretBytes), username)
-	k.renderTOTPQR(username, storeKey, uri)
-}
-
-func (k *Keeper) renderTOTPQR(username, storeKey, uri string) {
-	u := ui.New()
-	u.SectionHeader("TOTP — " + username)
-	u.KeyValue("Store key", storeKey)
-	u.Blank()
-	u.QR(uri)
-	u.Blank()
-	u.InfoLine("Add to agbero.hcl admin block:")
-	u.InfoLine(`  totp {`)
-	u.InfoLine(`    enabled = "on"`)
-	u.InfoLine(`    user {`)
-	u.InfoLine(`      username = "` + username + `"`)
-	u.InfoLine(`      secret   = "` + storeKey + `"`)
-	u.InfoLine(`    }`)
-	u.InfoLine(`  }`)
-	u.Blank()
-	u.InfoLine("Or open the admin UI → Security → TOTP for a scannable QR.")
 }

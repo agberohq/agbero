@@ -29,3 +29,4 @@ func (h *Helper) Cluster() *Cluster      { return &Cluster{p: h} }
 func (h *Helper) Home() *Home            { return &Home{p: h} }
 func (h *Helper) Ephemeral() *Ephemeral  { return &Ephemeral{p: h} }
 func (h *Helper) System() *System        { return &System{p: h} }
+func (h *Helper) Admin() *Admin          { return &Admin{p: h} }

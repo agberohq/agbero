@@ -50,4 +50,7 @@ type Config struct {
 	KeeperForce   bool
 	KeeperUser    string
 	KeeperOutFile string
+
+	// Admin subcommands
+	AdminPassword string
 }

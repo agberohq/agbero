@@ -17,23 +17,46 @@ type Cert struct {
 	p *Helper
 }
 
+// newLocal builds a tlss.Local for CLI certificate operations (CA install,
+// uninstall, list). These operations manage the local development CA and are
+// disk-based by design: the CA must be accessible without keeper so that
+// agbero cert install can be run before keeper is configured.
+//
+// In ephemeral mode (serve/proxy) there is no keeper and this is always correct.
+// In full server mode the server's tlsstore (keeper-backed when keeper is
+// configured) handles cert management; cert CLI is for local CA trust only.
+func (c *Cert) newLocal(configPath string) (certsDir string, loc *tlss.Local) {
+	if global, err := loadGlobal(configPath); err == nil && global.Storage.CertsDir != "" {
+		certsDir = global.Storage.CertsDir
+	}
+	store := newDiskStore(certsDir)
+	loc = tlss.NewLocal(c.p.Logger, store)
+	return certsDir, loc
+}
+
+// newDiskStore creates a tlsstore.Disk for the given certsDir.
+// On error or empty certsDir, falls back to memory so that read operations
+// on ephemeral/unconfigured installs still work gracefully.
+func newDiskStore(certsDir string) tlsstore.Store {
+	if certsDir != "" {
+		ds, err := tlsstore.NewDisk(tlsstore.DiskConfig{CertDir: certsDir})
+		if err == nil {
+			return ds
+		}
+	}
+	return tlsstore.NewMemory()
+}
+
 func (c *Cert) Install(configPath string, force bool) {
-	certsDir, loc := c.newLocal(configPath)
+	_, loc := c.newLocal(configPath)
 
 	if force {
 		c.p.Logger.Info("Force flag detected. Removing existing CA and regenerating...")
 		_ = loc.UninstallCARoot()
 		loc.RemoveCA()
-	} else if tlss.IsCARootInstalled(certsDir) {
-		c.p.Logger.Info("CA root is already installed. Synchronizing with system trust stores...")
-		if err := loc.InstallCARootIfNeeded(); err != nil {
-			c.p.Logger.Fatal("failed to synchronize CA: ", err)
-		}
-		c.p.Logger.Info("CA synchronization complete.")
-		c.printNSSHint(loc)
-		return
 	}
 
+	// InstallCARootIfNeeded is idempotent — safe to call unconditionally.
 	if err := loc.InstallCARootIfNeeded(); err != nil {
 		c.p.Logger.Fatal("failed to install CA: ", err)
 	}
@@ -64,12 +87,12 @@ func (c *Cert) Uninstall(configPath string) {
 		c.p.Logger.Info("removed CA from system trust store")
 	}
 
+	// Clean up remaining PEM/key/crt files from the cert root directory.
 	files, err := os.ReadDir(certsDir)
 	if err != nil {
 		c.p.Logger.Warnf("could not read dir: %v", err)
 		return
 	}
-
 	count := 0
 	for _, f := range files {
 		name := f.Name()
@@ -150,32 +173,6 @@ func (c *Cert) Info(configPath string) {
 		return
 	}
 	u.Table([]string{"Certificate", "Size", "Modified"}, rows)
-}
-
-// newLocal constructs a tlss.Local backed by a disk store rooted at the
-// certsDir from config. It returns both the certsDir path (for callers that
-// need to scan files directly) and the Local instance.
-func (c *Cert) newLocal(configPath string) (certsDir string, loc *tlss.Local) {
-	if global, err := loadGlobal(configPath); err == nil && global.Storage.CertsDir != "" {
-		certsDir = global.Storage.CertsDir
-	}
-
-	store := newDiskStore(certsDir)
-	loc = tlss.NewLocal(c.p.Logger, store)
-	return certsDir, loc
-}
-
-// newDiskStore creates a tlsstore.Disk for the given certsDir.
-// On error (e.g. certsDir empty or unwriteable) it falls back to memory so
-// that read-only operations like List still function gracefully.
-func newDiskStore(certsDir string) tlsstore.Store {
-	if certsDir != "" {
-		ds, err := tlsstore.NewDisk(tlsstore.DiskConfig{CertDir: certsDir})
-		if err == nil {
-			return ds
-		}
-	}
-	return tlsstore.NewMemory()
 }
 
 func parseCertName(name string) (domain, kind string) {
