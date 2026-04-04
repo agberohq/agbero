@@ -15,8 +15,7 @@ import (
 	"github.com/agberohq/agbero/cmd/agbero/helper"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/pkg/security"
-	"github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
 	"github.com/integrii/flaggy"
@@ -118,9 +117,8 @@ func main() {
 	cmdSecret.AttachSubcommand(cmdSecretHash, 1)
 	cmdSecret.AttachSubcommand(cmdSecretPassword, 1)
 
-	// ------------------------------------------------------------------
 	// keeper — secret store (encrypted bbolt)
-	// ------------------------------------------------------------------
+
 	cmdKeeper := flaggy.NewSubcommand("keeper")
 	cmdKeeper.Description = "Manage the encrypted secret store"
 
@@ -146,28 +144,33 @@ func main() {
 	cmdKeeperRotate := flaggy.NewSubcommand("rotate")
 	cmdKeeperRotate.Description = "Change the keeper master passphrase (re-encrypts all secrets)"
 
-	cmdKeeperTOTP := flaggy.NewSubcommand("totp")
-	cmdKeeperTOTP.Description = "Manage TOTP secrets"
-
-	cmdKeeperTOTPSetup := flaggy.NewSubcommand("setup")
-	cmdKeeperTOTPSetup.Description = "Generate and store a new TOTP secret, print QR code"
-	cmdKeeperTOTPSetup.String(&cfg.KeeperUser, "u", "user", "Admin username")
-	cmdKeeperTOTPSetup.String(&cfg.KeeperOutFile, "o", "out", "Write QR code PNG to this file")
-
-	cmdKeeperTOTPQR := flaggy.NewSubcommand("qr")
-	cmdKeeperTOTPQR.Description = "Re-display the QR code for an existing TOTP secret"
-	cmdKeeperTOTPQR.String(&cfg.KeeperUser, "u", "user", "Admin username")
-	cmdKeeperTOTPQR.String(&cfg.KeeperOutFile, "o", "out", "Write QR code PNG to this file")
-
-	cmdKeeperTOTP.AttachSubcommand(cmdKeeperTOTPSetup, 1)
-	cmdKeeperTOTP.AttachSubcommand(cmdKeeperTOTPQR, 1)
-
 	cmdKeeper.AttachSubcommand(cmdKeeperList, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperGet, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperSet, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperDelete, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperRotate, 1)
-	cmdKeeper.AttachSubcommand(cmdKeeperTOTP, 1)
+
+	// admin — manage agbero admin state (TOTP, users)
+
+	cmdAdmin := flaggy.NewSubcommand("admin")
+	cmdAdmin.Description = "Manage admin users and authentication"
+
+	cmdAdminTOTP := flaggy.NewSubcommand("totp")
+	cmdAdminTOTP.Description = "Manage TOTP two-factor authentication"
+
+	cmdAdminTOTPSetup := flaggy.NewSubcommand("setup")
+	cmdAdminTOTPSetup.Description = "Generate and store a new TOTP secret for an admin user"
+	cmdAdminTOTPSetup.String(&cfg.KeeperUser, "u", "user", "Admin username")
+	cmdAdminTOTPSetup.String(&cfg.KeeperOutFile, "o", "out", "Write QR code PNG to this file")
+
+	cmdAdminTOTPQR := flaggy.NewSubcommand("qr")
+	cmdAdminTOTPQR.Description = "Re-display the TOTP QR code for an admin user"
+	cmdAdminTOTPQR.String(&cfg.KeeperUser, "u", "user", "Admin username")
+	cmdAdminTOTPQR.String(&cfg.KeeperOutFile, "o", "out", "Write QR code PNG to this file")
+
+	cmdAdminTOTP.AttachSubcommand(cmdAdminTOTPSetup, 1)
+	cmdAdminTOTP.AttachSubcommand(cmdAdminTOTPQR, 1)
+	cmdAdmin.AttachSubcommand(cmdAdminTOTP, 1)
 
 	cmdHost := flaggy.NewSubcommand("host")
 	cmdHost.Description = "Manage hosts and routes"
@@ -316,6 +319,7 @@ func main() {
 	flaggy.AttachSubcommand(cmdConfig, 1)
 	flaggy.AttachSubcommand(cmdSecret, 1)
 	flaggy.AttachSubcommand(cmdKeeper, 1)
+	flaggy.AttachSubcommand(cmdAdmin, 1)
 	flaggy.AttachSubcommand(cmdHost, 1)
 	flaggy.AttachSubcommand(cmdCert, 1)
 	flaggy.AttachSubcommand(cmdService, 1)
@@ -408,22 +412,28 @@ func main() {
 			k.Delete(resolvedPath, cfg.KeeperKey, cfg.KeeperForce)
 		case cmdKeeperRotate.Used:
 			k.Rotate(resolvedPath)
-		case cmdKeeperTOTP.Used && cmdKeeperTOTPSetup.Used:
-			k.TOTPSetup(resolvedPath, cfg.KeeperUser)
-			if cfg.KeeperOutFile != "" {
-				writeQRPNG(logger, cfg.KeeperOutFile,
-					security.NewTOTPGenerator(security.DefaultTOTPConfig()),
-					resolvedPath, cfg.KeeperUser)
-			}
-		case cmdKeeperTOTP.Used && cmdKeeperTOTPQR.Used:
-			k.TOTPQR(resolvedPath, cfg.KeeperUser)
-			if cfg.KeeperOutFile != "" {
-				writeQRPNG(logger, cfg.KeeperOutFile,
-					security.NewTOTPGenerator(security.DefaultTOTPConfig()),
-					resolvedPath, cfg.KeeperUser)
-			}
 		default:
 			flaggy.ShowHelpAndExit("keeper")
+		}
+		return
+	}
+
+	if cmdAdmin.Used {
+		a := hel.Admin()
+		resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
+		switch {
+		case cmdAdminTOTP.Used && cmdAdminTOTPSetup.Used:
+			a.TOTPSetup(resolvedPath, cfg.KeeperUser)
+			if cfg.KeeperOutFile != "" {
+				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
+			}
+		case cmdAdminTOTP.Used && cmdAdminTOTPQR.Used:
+			a.TOTPQR(resolvedPath, cfg.KeeperUser)
+			if cfg.KeeperOutFile != "" {
+				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
+			}
+		default:
+			flaggy.ShowHelpAndExit("admin")
 		}
 		return
 	}
@@ -617,7 +627,7 @@ func main() {
 		sh := hel.Service()
 		switch {
 		case cmdServiceInstall.Used:
-			sh.Install(svc, cfg.InstallHere)
+			sh.Install(svc, cfg.InstallHere, resolvedPath)
 		case cmdServiceUninstall.Used:
 			if cfg.UninstallAll {
 				hel.Home().Uninstall(svc, resolvedPath, cfg.UninstallForce)
@@ -786,9 +796,14 @@ func showHelpExamples() {
 				{Cmd: exeName + " keeper set <key> <b64> --b64", Desc: "store pre-encoded base64 value"},
 				{Cmd: exeName + " keeper delete <key>", Desc: "delete a secret"},
 				{Cmd: exeName + " keeper rotate", Desc: "change master passphrase (re-encrypts all)"},
-				{Cmd: exeName + " keeper totp setup -u admin", Desc: "generate TOTP secret + print QR"},
-				{Cmd: exeName + " keeper totp qr -u admin", Desc: "re-display TOTP QR for a user"},
-				{Cmd: exeName + " keeper totp qr -u admin -o qr.png", Desc: "write QR code to PNG file"},
+			},
+		},
+		{
+			Title: "Admin",
+			Commands: []ui.HelpCmd{
+				{Cmd: exeName + " admin totp setup -u alice", Desc: "generate TOTP secret + print QR"},
+				{Cmd: exeName + " admin totp qr -u alice", Desc: "re-display TOTP QR for a user"},
+				{Cmd: exeName + " admin totp qr -u alice -o qr.png", Desc: "write QR code to PNG file"},
 			},
 		},
 		{
@@ -838,59 +853,4 @@ func showHelpExamples() {
 			},
 		},
 	})
-}
-
-// writeQRPNG generates a QR code PNG for a user's TOTP secret and writes it
-// to outFile.  This is called from the keeper totp dispatch when --out is set.
-// The actual QR computation lives in internal/setup — main.go only does I/O.
-func writeQRPNG(logger *ll.Logger, outFile string, gen *security.TOTPGenerator, configPath, username string) {
-	global, err := loadConfig(configPath)
-	if err != nil {
-		logger.Warn("could not load config for QR export: ", err)
-		return
-	}
-
-	dataDir := global.Storage.DataDir
-	dbPath := filepath.Join(dataDir, woos.DefaultKeeperName)
-
-	store, err := security.NewStore(security.StoreConfig{DBPath: dbPath})
-	if err != nil {
-		if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "temporarily unavailable") {
-			logger.Fatal("Keeper database is locked by a running Agbero service. Please use the Admin UI/API to manage secrets, or stop the service first.")
-		}
-		logger.Warn("could not open keeper for QR export: ", err)
-		return
-	}
-	defer store.Close()
-
-	// Passphrase already collected by Keeper.openStore — re-prompt minimally.
-	var pass string
-	if err := huh.NewInput().Title("Keeper passphrase (for PNG export)").Password(true).Value(&pass).Run(); err != nil || pass == "" {
-		return
-	}
-	if err := store.Unlock(pass); err != nil {
-		logger.Warn("unlock failed for QR export")
-		return
-	}
-
-	secret, err := store.Get("totp/" + username)
-	if err != nil {
-		logger.Warn("TOTP secret not found: ", err)
-		return
-	}
-
-	uri := gen.GetProvisioningURI(secret, username)
-	qr, err := setup.TOTPProvisioningQR(uri)
-	if err != nil {
-		logger.Warn("QR generation failed: ", err)
-		return
-	}
-
-	if err := os.WriteFile(outFile, qr.PNG, 0600); err != nil {
-		logger.Warn("failed to write QR PNG: ", err)
-		return
-	}
-
-	u := ui.New()
-	u.SuccessLine(fmt.Sprintf("QR code written to %s", outFile))
 }

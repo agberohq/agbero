@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"charm.land/huh/v2"
 	"github.com/agberohq/agbero"
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll/lx"
@@ -45,30 +45,13 @@ func (p *program) run() {
 		return
 	}
 
-	if global.Security.Keeper.Enabled.Active() && global.Security.Keeper.Passphrase.Empty() && service.Interactive() {
-		var pass string
-		err := huh.NewInput().
-			Title("Keeper Passphrase").
-			Description("Unlock the encrypted secret store").
-			EchoMode(huh.EchoModePassword).
-			Value(&pass).
-			Run()
-
-		if err == nil && pass != "" {
-			global.Security.Keeper.Passphrase = alaye.ValuePlain(pass)
-		} else {
-			logger.Fatal("Passphrase is required to start Agbero when Keeper is enabled.")
-			return
-		}
-	}
-
 	if p.clusterStart || p.clusterJoinIP != "" {
 		global.Gossip.Enabled = alaye.Active
 		if p.clusterJoinIP != "" {
 			global.Gossip.Seeds = []string{p.clusterJoinIP}
 		}
 		if p.clusterSecret != "" {
-			global.Gossip.SecretKey = alaye.Value(p.clusterSecret)
+			global.Gossip.SecretKey = expect.Value(p.clusterSecret)
 		}
 	}
 
