@@ -43,11 +43,11 @@ func sanitizeGlobalConfig(g *alaye.Global) *alaye.Global {
 }
 
 func sanitizeAdminConfig(cfg *alaye.Admin) {
-	if cfg.BasicAuth.Enabled.Active() {
-		for i := range cfg.BasicAuth.Users {
-			cfg.BasicAuth.Users[i] = "***"
-		}
-	}
+	//if cfg.BasicAuth.Enabled.Active() {
+	//	for i := range cfg.BasicAuth.Users {
+	//		cfg.BasicAuth.Users[i] = "***"
+	//	}
+	//}
 	if cfg.JWTAuth.Enabled.Active() {
 		cfg.JWTAuth.Secret = "***"
 	}
@@ -154,7 +154,6 @@ func readLastLogLines(filename string, n int) ([]string, error) {
 }
 
 // detectFormat reads ?format= or the Accept header to select hcl vs json.
-// Used by config dump and host handlers in admin.go.
 func detectFormat(r *http.Request) string {
 	if format := r.URL.Query().Get("format"); format != "" {
 		switch strings.ToLower(format) {

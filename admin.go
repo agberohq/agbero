@@ -17,9 +17,11 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/handlers/uptime"
+	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/middleware/auth"
 	"github.com/agberohq/agbero/internal/middleware/ipallow"
 	"github.com/agberohq/agbero/internal/middleware/ratelimit"
@@ -28,6 +30,7 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/olekukonko/zero"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -222,6 +225,9 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
+// handleStatus reports the admin server's current auth state.
+// Safe to poll without authentication — the frontend uses it to decide
+// whether to show the unlock modal or the login form.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	state := s.apiShared.State()
 
@@ -233,19 +239,19 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	if state.Global.Admin.JWTAuth.Enabled.Active() {
 		authState := "ready"
-		if state.Global.Admin.BasicAuth.Enabled.Active() && len(state.Global.Admin.BasicAuth.Users) > 0 {
-			var challenges []string
-			if s.secret != nil && s.secret.IsLocked() {
-				challenges = append(challenges, "keeper_unlock")
-			}
-			if state.Global.Admin.TOTP.Enabled.Active() {
-				challenges = append(challenges, "totp")
-			}
-			if len(challenges) > 0 {
-				authState = "challenge_required"
-				status["challenges"] = challenges
-			}
+
+		var challenges []string
+		if s.keeperStore != nil && s.keeperStore.IsLocked() {
+			challenges = append(challenges, "keeper_unlock")
 		}
+		if state.Global.Admin.TOTP.Enabled.Active() {
+			challenges = append(challenges, "totp")
+		}
+		if len(challenges) > 0 {
+			authState = "challenge_required"
+			status["challenges"] = challenges
+		}
+
 		status["auth_state"] = authState
 	}
 
@@ -254,10 +260,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
+// buildAuthMiddleware returns the middleware chain for protected admin routes.
+// Only JWT is supported — basic_auth has been removed.
 func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Handler {
 	ipMgr := zulu.NewIPManager(nil)
 	isRevoked := func(jti string) bool {
-		_, revoked := s.jtiStore.Get(jti)
+		_, revoked := s.resource.TimeStore.Get(jti)
 		return revoked
 	}
 
@@ -273,13 +281,25 @@ func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Ha
 			adminJWT.Issuer = woos.AdminTokenIssuer
 			return auth.JWTWithRevocationAndScope(&adminJWT, isRevoked)(handler)
 		}
-		if len(cfg.BasicAuth.Users) > 0 {
-			return auth.Basic(&cfg.BasicAuth, s.logger)(handler)
-		}
+
 		return handler
 	}
 }
 
+// handleLogin authenticates an admin user whose credentials are stored in
+// keeper at vault://admin/users/<username>. Basic auth from HCL is no longer
+// consulted.
+//
+// Flow:
+// Decode username + password from JSON body.
+// Load AdminUser JSON from keeper.
+// bcrypt-verify password against stored hash.
+// If keeper is locked or TOTP is enabled, issue a short-lived challenge
+//
+//	token (202 Accepted) so the client can complete those steps via
+//	POST /login/challenge.
+//
+// Otherwise issue a full JWT (200 OK).
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -288,11 +308,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	state := s.apiShared.State()
 	cfg := state.Global.Admin
-
-	if !cfg.BasicAuth.Enabled.Active() || len(cfg.BasicAuth.Users) == 0 {
-		http.Error(w, "Server Config Error: Unknown admin users defined in 'basic_auth'", http.StatusForbidden)
-		return
-	}
 
 	var creds struct {
 		Username string `json:"username"`
@@ -303,16 +318,25 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.verifyCredentials(cfg.BasicAuth.Users, creds.Username, creds.Password) {
+	// Users live in keeper. If the store is locked we cannot verify credentials.
+	// Return a challenge so the client can unlock keeper first, then retry.
+	if s.keeperStore == nil || s.keeperStore.IsLocked() {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]any{
+			"status":       "challenge_required",
+			"requirements": []string{"keeper_unlock"},
+		})
+		return
+	}
+
+	if !s.verifyAdminUser(creds.Username, creds.Password) {
 		addJitter(10 * time.Millisecond)
 		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 		return
 	}
 
 	var requirements []string
-	if s.secret != nil && s.secret.IsLocked() {
-		requirements = append(requirements, "keeper_unlock")
-	}
 	if cfg.TOTP.Enabled.Active() {
 		requirements = append(requirements, "totp")
 	}
@@ -326,7 +350,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Internal Signing Error", http.StatusInternalServerError)
 			return
 		}
-
 		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(map[string]any{
 			"status":       "challenge_required",
@@ -361,6 +384,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleLoginChallenge completes a two-step login when keeper unlock and/or
+// TOTP were required. The client must present the short-lived challenge token
+// issued by handleLogin.
 func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -384,7 +410,6 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 		}
 		return challengeSecret, nil
 	})
-
 	if err != nil || !token.Valid {
 		http.Error(w, "Invalid or expired challenge token", http.StatusUnauthorized)
 		return
@@ -400,28 +425,33 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 		TOTP             string `json:"totp"`
 		KeeperPassphrase string `json:"keeper_passphrase"`
 	}
-
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
-	if s.secret != nil && s.secret.IsLocked() {
+	// keeper unlock
+	if s.keeperStore != nil && s.keeperStore.IsLocked() {
 		if creds.KeeperPassphrase == "" {
 			addJitter(5 * time.Millisecond)
 			http.Error(w, "Keeper passphrase required", http.StatusUnauthorized)
 			return
 		}
-		if err := s.secret.Unlock(creds.KeeperPassphrase); err != nil {
+		pass := []byte(creds.KeeperPassphrase)
+		unlockErr := s.keeperStore.Unlock(pass)
+		zero.Bytes(pass)
+		if unlockErr != nil {
 			addJitter(10 * time.Millisecond)
 			http.Error(w, "Invalid Keeper passphrase", http.StatusUnauthorized)
 			return
 		}
-		security.NewResolver(s.secret).Wire()
+		secrets.NewResolver(s.keeperStore).Wire()
 		s.logger.Info("keeper unlocked during admin challenge")
+		// Reload so that any config values referencing ss:// are now resolved.
 		go s.Reload()
 	}
 
+	// TOTP verification
 	if cfg.TOTP.Enabled.Active() {
 		if creds.TOTP == "" {
 			addJitter(5 * time.Millisecond)
@@ -435,6 +465,7 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// issue full JWT
 	jwtSecret := cfg.JWTAuth.Secret.String()
 	if jwtSecret == "" {
 		http.Error(w, "JWT secret not configured or inaccessible", http.StatusForbidden)
@@ -509,7 +540,6 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
-
 	state := s.apiShared.State()
 	cfg := state.Global.Admin
 
@@ -519,7 +549,6 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		}
 		return []byte(cfg.JWTAuth.Secret.String()), nil
 	})
-
 	if err != nil || !token.Valid {
 		token, err = jwt.Parse(tokenStr, func(token *jwt.Token) (any, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -542,9 +571,9 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 					exp = remaining
 				}
 			}
-			s.jtiStore.SetTTL(jti, time.Now().Add(exp), exp)
-			s.jtiLifetime.ScheduleTimed(r.Context(), jti, func(ctx context.Context, id string) {
-				s.jtiStore.Delete(id)
+			s.resource.TimeStore.SetTTL(jti, time.Now().Add(exp), exp)
+			s.resource.Lifetime.ScheduleTimed(r.Context(), jti, func(ctx context.Context, id string) {
+				s.resource.TimeStore.Delete(id)
 			}, exp)
 		}
 	}
@@ -583,6 +612,43 @@ func (s *Server) generateAdminToken(username, secret, scope string, ttl time.Dur
 	return tokenString, expirationTime, err
 }
 
+// verifyAdminUser loads the AdminUser record from keeper and bcrypt-verifies
+// the supplied password. The user record lives at:
+//
+//	vault://admin/users/<username>  →  JSON-encoded alaye.AdminUser
+//
+// A timing-safe dummy comparison is always performed so that missing users
+// take the same time as wrong-password users (preventing username enumeration).
+func (s *Server) verifyAdminUser(username, password string) bool {
+	userKey := expect.Vault().AdminUser(username)
+	data, err := s.keeperStore.Get(userKey)
+
+	// Always run bcrypt to prevent timing-based username enumeration.
+	hashToCompare := dummyHash
+	if err == nil && len(data) > 0 {
+		var user alaye.AdminUser
+		if jsonErr := json.Unmarshal(data, &user); jsonErr == nil && user.PasswordHash != "" {
+			hashToCompare = []byte(user.PasswordHash)
+		}
+	}
+
+	inputUserHash := sha256.Sum256([]byte(username))
+	_ = inputUserHash // future use for constant-time username matching
+
+	found := int32(0)
+	if err == nil && len(data) > 0 {
+		found = 1
+	}
+
+	bcryptErr := bcrypt.CompareHashAndPassword(hashToCompare, []byte(password))
+	return subtle.ConstantTimeEq(found, 1) == 1 && bcryptErr == nil
+}
+
+// verifyCredentials is kept for any remaining callers that still use the old
+// HCL user list format ("username:bcrypt_hash"). It will be removed once all
+// callers migrate to verifyAdminUser.
+//
+// Deprecated: use verifyAdminUser — users are now stored in keeper.
 func (s *Server) verifyCredentials(users []string, username, password string) bool {
 	inputUserHash := sha256.Sum256([]byte(username))
 	foundHash := dummyHash
@@ -607,7 +673,6 @@ func (s *Server) verifyCredentials(users []string, username, password string) bo
 
 func (s *Server) handleConfigDump(w http.ResponseWriter, r *http.Request) {
 	format := detectFormat(r)
-
 	hosts, _ := s.hostManager.LoadAll()
 
 	if format == "hcl" {
@@ -636,13 +701,11 @@ func (s *Server) handleConfigDump(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleConfigGlobal(w http.ResponseWriter, r *http.Request) {
 	format := detectFormat(r)
-
 	if format == "hcl" {
 		w.Header().Set("Content-Type", "application/hcl")
 		http.Error(w, "HCL format not yet implemented", http.StatusNotImplemented)
 		return
 	}
-
 	state := s.apiShared.State()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(sanitizeGlobalConfig(state.Global))
@@ -651,12 +714,10 @@ func (s *Server) handleConfigGlobal(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleConfigHosts(w http.ResponseWriter, r *http.Request) {
 	format := detectFormat(r)
 	hosts, _ := s.hostManager.LoadAll()
-
 	if format == "hcl" {
-		http.Error(w, "HCL format for hosts list not supported, request specific host at /api/hosts/{domain}?format=hcl", http.StatusNotAcceptable)
+		http.Error(w, "HCL format for hosts list not supported", http.StatusNotAcceptable)
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(sanitizeHostConfigs(hosts))
 }

@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/hub/cluster"
 	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/olekukonko/jack"

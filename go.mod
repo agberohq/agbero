@@ -6,8 +6,8 @@ require (
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.2
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
+	github.com/agberohq/keeper v0.0.2-0.20260404192611-1b6e0b2827fd
 	github.com/alecthomas/chroma/v2 v2.23.1
-	github.com/alecthomas/hcl v0.5.5
 	github.com/andybalholm/brotli v1.2.0
 	github.com/blacktop/go-termimg v0.1.26
 	github.com/cenkalti/backoff/v4 v4.3.0
@@ -32,6 +32,7 @@ require (
 	github.com/olekukonko/ll v0.1.9-0.20260330210650-e52da6f04599
 	github.com/olekukonko/mappo v0.0.0-20260329141345-c5de61574284
 	github.com/olekukonko/tablewriter v1.1.4
+	github.com/olekukonko/zero v0.0.0-20260402164708-e3505a21b60e
 	github.com/pires/go-proxyproto v0.11.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.59.0
@@ -60,22 +61,22 @@ require (
 
 require (
 	aead.dev/minisign v0.3.0 // indirect
-	charm.land/bubbles/v2 v2.0.0 // indirect
+	charm.land/bubbles/v2 v2.1.0 // indirect
 	charm.land/bubbletea/v2 v2.0.2 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/agext/levenshtein v1.2.3 // indirect
-	github.com/alecthomas/participle/v2 v2.0.0-beta.5 // indirect
-	github.com/alecthomas/repr v0.5.2 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
+	github.com/awnumar/memcall v0.5.0 // indirect
+	github.com/awnumar/memguard v0.23.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/catppuccin/go v0.3.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260205113103-524a6607adb8 // indirect
+	github.com/charmbracelet/ultraviolet v0.0.0-20260330092749-0f94982c930b // indirect
 	github.com/charmbracelet/x/ansi v0.11.6 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
 	github.com/charmbracelet/x/exp/ordered v0.1.0 // indirect
@@ -114,7 +115,7 @@ require (
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
-	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
+	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/makeworld-the-better-one/dither/v2 v2.4.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect

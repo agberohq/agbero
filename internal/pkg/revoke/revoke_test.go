@@ -10,10 +10,13 @@ import (
 	"github.com/olekukonko/ll"
 )
 
+var (
+	logger = ll.New("test").Disable()
+)
+
 func TestNew(t *testing.T) {
 	t.Run("creates new store when file doesn't exist", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		logger := ll.New("test")
 
 		store, err := New(tmpDir, logger)
 		if err != nil {
@@ -29,7 +32,6 @@ func TestNew(t *testing.T) {
 
 	t.Run("loads existing file", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		logger := ll.New("test")
 
 		// Pre-create a revocation file
 		data := `[
@@ -52,7 +54,6 @@ func TestNew(t *testing.T) {
 
 	t.Run("ignores expired entries on load", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		logger := ll.New("test")
 
 		// Pre-create with expired entry
 		data := `[
@@ -75,7 +76,6 @@ func TestNew(t *testing.T) {
 
 	t.Run("handles corrupt json gracefully", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		logger := ll.New("test")
 
 		path := filepath.Join(tmpDir, filename)
 		if err := os.WriteFile(path, []byte("invalid json"), 0600); err != nil {
@@ -94,7 +94,7 @@ func TestNew(t *testing.T) {
 
 func TestIsRevoked(t *testing.T) {
 	tmpDir := t.TempDir()
-	logger := ll.New("test")
+
 	store, err := New(tmpDir, logger)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
@@ -147,7 +147,7 @@ func TestIsRevoked(t *testing.T) {
 
 func TestRevoke(t *testing.T) {
 	tmpDir := t.TempDir()
-	logger := ll.New("test")
+
 	store, err := New(tmpDir, logger)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
@@ -243,7 +243,7 @@ func TestRevoke(t *testing.T) {
 func TestPrune(t *testing.T) {
 	t.Run("prune removes expired entries", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		logger := ll.New("test")
+
 		store, err := New(tmpDir, logger)
 		if err != nil {
 			t.Fatal(err)
@@ -283,7 +283,7 @@ func TestPrune(t *testing.T) {
 
 	t.Run("prune persists after cleanup", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		logger := ll.New("test")
+
 		store, err := New(tmpDir, logger)
 		if err != nil {
 			t.Fatal(err)
@@ -317,7 +317,6 @@ func TestConcurrency(t *testing.T) {
 
 	t.Run("concurrent revokes with retry", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		logger := ll.New("test")
 		store, err := New(tmpDir, logger)
 		if err != nil {
 			t.Fatal(err)
@@ -371,7 +370,7 @@ func TestConcurrency(t *testing.T) {
 
 	t.Run("concurrent read and write", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		logger := ll.New("test")
+
 		store, err := New(tmpDir, logger)
 		if err != nil {
 			t.Fatal(err)

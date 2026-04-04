@@ -13,9 +13,10 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/discovery"
+	discovery "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/operation/api"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/olekukonko/jack"
@@ -62,10 +63,10 @@ func newTestAdminServer(t *testing.T) (*Server, *http.Server, int, func()) {
 				Enabled: alaye.Active,
 				Secret:  "test-secret-key-32-bytes-minimum!",
 			},
-			BasicAuth: alaye.BasicAuth{
-				Enabled: alaye.Active,
-				Users:   []string{bcryptEntry(t, "admin", "correct-password")},
-			},
+			//BasicAuth: alaye.BasicAuth{
+			//	Enabled: alaye.Active,
+			//	Users:   []string{bcryptEntry(t, "admin", "correct-password")},
+			//},
 			TOTP:      alaye.TOTP{Enabled: alaye.Inactive},
 			Telemetry: alaye.Telemetry{Enabled: alaye.Inactive},
 		},
@@ -164,16 +165,16 @@ func newTestAdminServerWithTOTP(t *testing.T) (*Server, int, func()) {
 				Enabled: alaye.Active,
 				Secret:  "test-secret-key-32-bytes-minimum!",
 			},
-			BasicAuth: alaye.BasicAuth{
-				Enabled: alaye.Active,
-				Users:   []string{bcryptEntry(t, "admin", "correct-password")},
-			},
+			//BasicAuth: alaye.BasicAuth{
+			//	Enabled: alaye.Active,
+			//	Users:   []string{bcryptEntry(t, "admin", "correct-password")},
+			//},
 			TOTP: alaye.TOTP{
 				Enabled: alaye.Active,
 				Users: []alaye.TOTPUser{
 					{
 						Username: "admin",
-						Secret:   alaye.Value("JBSWY3DPEHPK3PXP"), // base32 secret
+						Secret:   expect.Value("JBSWY3DPEHPK3PXP"), // base32 secret
 					},
 				},
 				Issuer:     "agbero-test",
@@ -413,7 +414,6 @@ func getToken(t *testing.T, port int) string {
 	return result["token"]
 }
 
-// ==================== CORE ENDPOINTS ====================
 func TestAdminCoreEndpoints(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -484,7 +484,6 @@ func TestAdminCoreEndpoints(t *testing.T) {
 	})
 }
 
-// ==================== 2-TOKEN AUTH FLOW ====================
 func TestAdminTwoTokenFlow(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -719,8 +718,6 @@ func TestAdminTOTPChallengeFlow(t *testing.T) {
 //	})
 //}
 
-// ==================== HOST MANAGEMENT API ====================
-
 func TestAdminHostAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -780,8 +777,6 @@ func TestAdminHostAPI(t *testing.T) {
 	})
 }
 
-// ==================== SECRETS UTILITY API ====================
-
 func TestAdminSecretsAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -840,8 +835,6 @@ func TestAdminSecretsAPI(t *testing.T) {
 	})
 }
 
-// ==================== ADMIN UI ENDPOINTS ====================
-
 func TestAdminUIEndpoints(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -896,8 +889,6 @@ func TestAdminUIEndpoints(t *testing.T) {
 	})
 }
 
-// ==================== TOTP API ====================
-
 func TestAdminTOTPAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -921,8 +912,6 @@ func TestAdminTOTPAPI(t *testing.T) {
 	})
 }
 
-// ==================== CLUSTER API ====================
-
 func TestAdminClusterAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -939,8 +928,6 @@ func TestAdminClusterAPI(t *testing.T) {
 	})
 }
 
-// ==================== KEEPER API ====================
-
 func TestAdminKeeperAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
@@ -955,8 +942,6 @@ func TestAdminKeeperAPI(t *testing.T) {
 		}
 	})
 }
-
-// ==================== FIREWALL API ====================
 
 func TestAdminFirewallAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
@@ -982,7 +967,6 @@ func TestAdminFirewallAPI(t *testing.T) {
 	})
 }
 
-// ==================== CERTIFICATES API ====================
 func TestAdminCertsAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
 	defer cleanup()
