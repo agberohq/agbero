@@ -8,6 +8,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/tlss"
+	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/dustin/go-humanize"
 )
@@ -17,13 +18,13 @@ type Cert struct {
 }
 
 func (c *Cert) Install(configPath string, force bool) {
-	loc := c.newLocal(configPath)
+	certsDir, loc := c.newLocal(configPath)
 
 	if force {
 		c.p.Logger.Info("Force flag detected. Removing existing CA and regenerating...")
-		_ = loc.UninstallCARoot() // Attempt to uninstall from trust stores
-		loc.RemoveCA()            // Remove CA files
-	} else if tlss.IsCARootInstalled(loc.CertDir.Path()) {
+		_ = loc.UninstallCARoot()
+		loc.RemoveCA()
+	} else if tlss.IsCARootInstalled(certsDir) {
 		c.p.Logger.Info("CA root is already installed. Synchronizing with system trust stores...")
 		if err := loc.InstallCARootIfNeeded(); err != nil {
 			c.p.Logger.Fatal("failed to synchronize CA: ", err)
@@ -33,7 +34,6 @@ func (c *Cert) Install(configPath string, force bool) {
 		return
 	}
 
-	// If not forced and not already installed, or if forced and regenerated, proceed with full install
 	if err := loc.InstallCARootIfNeeded(); err != nil {
 		c.p.Logger.Fatal("failed to install CA: ", err)
 	}
@@ -56,7 +56,7 @@ func (c *Cert) printNSSHint(loc *tlss.Local) {
 }
 
 func (c *Cert) Uninstall(configPath string) {
-	loc := c.newLocal(configPath)
+	certsDir, loc := c.newLocal(configPath)
 	c.p.Logger.Info("uninstalling CA...")
 	if err := loc.UninstallCARoot(); err != nil {
 		c.p.Logger.Warnf("system trust store cleanup: %v (might already be removed)", err)
@@ -64,8 +64,7 @@ func (c *Cert) Uninstall(configPath string) {
 		c.p.Logger.Info("removed CA from system trust store")
 	}
 
-	dir := loc.CertDir.Path()
-	files, err := os.ReadDir(dir)
+	files, err := os.ReadDir(certsDir)
 	if err != nil {
 		c.p.Logger.Warnf("could not read dir: %v", err)
 		return
@@ -75,7 +74,7 @@ func (c *Cert) Uninstall(configPath string) {
 	for _, f := range files {
 		name := f.Name()
 		if strings.HasSuffix(name, ".pem") || strings.HasSuffix(name, ".key") || strings.HasSuffix(name, ".crt") {
-			if err := os.Remove(filepath.Join(dir, name)); err == nil {
+			if err := os.Remove(filepath.Join(certsDir, name)); err == nil {
 				count++
 			}
 		}
@@ -89,7 +88,7 @@ func (c *Cert) Uninstall(configPath string) {
 }
 
 func (c *Cert) List(configPath string) {
-	loc := c.newLocal(configPath)
+	_, loc := c.newLocal(configPath)
 	certs, err := loc.ListCertificates()
 	if err != nil {
 		c.p.Logger.Fatal("failed to list certificates: ", err)
@@ -108,7 +107,6 @@ func (c *Cert) List(configPath string) {
 		domain, kind := parseCertName(name)
 		rows = append(rows, []string{domain, kind, name})
 	}
-
 	u.Table([]string{"Domain", "Type", "File"}, rows)
 }
 
@@ -151,16 +149,33 @@ func (c *Cert) Info(configPath string) {
 		u.WarnLine("no certificates found")
 		return
 	}
-
 	u.Table([]string{"Certificate", "Size", "Modified"}, rows)
 }
 
-func (c *Cert) newLocal(configPath string) *tlss.Local {
-	loc := tlss.NewLocal(c.p.Logger)
+// newLocal constructs a tlss.Local backed by a disk store rooted at the
+// certsDir from config. It returns both the certsDir path (for callers that
+// need to scan files directly) and the Local instance.
+func (c *Cert) newLocal(configPath string) (certsDir string, loc *tlss.Local) {
 	if global, err := loadGlobal(configPath); err == nil && global.Storage.CertsDir != "" {
-		_ = loc.SetStorageDir(woos.NewFolder(global.Storage.CertsDir))
+		certsDir = global.Storage.CertsDir
 	}
-	return loc
+
+	store := newDiskStore(certsDir)
+	loc = tlss.NewLocal(c.p.Logger, store)
+	return certsDir, loc
+}
+
+// newDiskStore creates a tlsstore.Disk for the given certsDir.
+// On error (e.g. certsDir empty or unwriteable) it falls back to memory so
+// that read-only operations like List still function gracefully.
+func newDiskStore(certsDir string) tlsstore.Store {
+	if certsDir != "" {
+		ds, err := tlsstore.NewDisk(tlsstore.DiskConfig{CertDir: certsDir})
+		if err == nil {
+			return ds
+		}
+	}
+	return tlsstore.NewMemory()
 }
 
 func parseCertName(name string) (domain, kind string) {

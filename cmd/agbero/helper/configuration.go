@@ -171,7 +171,7 @@ func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 		if err == nil && global.Storage.CertsDir != "" {
 			certsDir := global.Storage.CertsDir
 			if !tlss.IsCARootInstalled(certsDir) {
-				loc := tlss.NewLocal(logger, woos.NewFolder(certsDir))
+				loc := tlss.NewLocal(logger, newDiskStore(certsDir))
 				if err := loc.InstallCARootIfNeeded(); err != nil {
 					logger.Warn("CA install skipped: ", err)
 				}

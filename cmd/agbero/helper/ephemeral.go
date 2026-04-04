@@ -47,7 +47,9 @@ func (e *Ephemeral) Serve() {
 
 	ctx := setup.NewContext(e.p.Logger)
 	if cfg.ServeHTTPS {
-		if err := setup.NewCA(ctx).PromptAndInstall(); err != nil {
+		// Use memory store for ephemeral mode - no persistence needed
+		ca := setup.NewCA(ctx)
+		if err := ca.PromptAndInstall(); err != nil {
 			e.p.Logger.Warn("CA installation prompt interrupted: ", err)
 		}
 	}
@@ -130,7 +132,8 @@ func (e *Ephemeral) Proxy() {
 
 	ctx := setup.NewContext(e.p.Logger)
 	if cfg.ProxyHTTPS {
-		if err := setup.NewCA(ctx).PromptAndInstall(); err != nil {
+		ca := setup.NewCA(ctx)
+		if err := ca.PromptAndInstall(); err != nil {
 			e.p.Logger.Warn("CA installation prompt interrupted: ", err)
 		}
 	}
