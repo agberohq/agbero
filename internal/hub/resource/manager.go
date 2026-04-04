@@ -6,6 +6,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -205,6 +206,14 @@ func WithGzCache(cache *mappo.Cache) Option {
 	}
 }
 
+// WithLifetime sets the Lifetime field of a Resource to the provided Lifetime instance.
+func WithLifetime(l *jack.Lifetime) Option {
+	return func(h *Resource) {
+		h.Lifetime = l
+	}
+}
+
+// WithKeeper sets the Keeper instance for the Resource, allowing it to manage and coordinate subsystem operations.
 func WithKeeper(k *keeper.Keeper) Option {
 	return func(m *Resource) {
 		m.Keeper = k
@@ -212,8 +221,30 @@ func WithKeeper(k *keeper.Keeper) Option {
 }
 
 type Env struct {
+	mu     sync.RWMutex
 	Global *mappo.Concurrent[string, expect.Value]
 	Route  *mappo.Concurrent[string, expect.Value]
+}
+
+// GetGlobal safely retrieves the current global env map pointer
+func (e *Env) GetGlobal() *mappo.Concurrent[string, expect.Value] {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.Global
+}
+
+// UpdateGlobal creates a new concurrent map, populates it,
+// and safely swaps the pointer so readers never see partial state.
+func (m *Resource) UpdateGlobal(newEnv map[string]expect.Value) {
+	newGlobal := mappo.NewConcurrent[string, expect.Value]()
+	for k, v := range newEnv {
+		newGlobal.Set(k, v)
+	}
+
+	// Perform the pointer swap safely
+	m.Env.mu.Lock()
+	m.Env.Global = newGlobal
+	m.Env.mu.Unlock()
 }
 
 type Resource struct {
@@ -224,16 +255,19 @@ type Resource struct {
 	AuthCache  *mappo.Cache
 	GzCache    *mappo.Cache
 
+	TimeStore *mappo.Concurrent[string, time.Time]
+
 	Transport  *http.Transport
 	HTTPClient *http.Client
 
-	Logger   *ll.Logger
-	Doctor   *jack.Doctor
-	Reaper   *jack.Reaper
-	Shutdown *jack.Shutdown
-	Lifetime *jack.Lifetime
-	Janitor  *jack.Pool
-	Keeper   *keeper.Keeper
+	Logger     *ll.Logger
+	Doctor     *jack.Doctor
+	Reaper     *jack.Reaper
+	Shutdown   *jack.Shutdown
+	Lifetime   *jack.Lifetime
+	Keeper     *keeper.Keeper
+	Janitor    *jack.Pool
+	Background *jack.Pool
 
 	Env *Env
 
@@ -250,8 +284,8 @@ func New(opts ...Option) *Resource {
 		TCPCache:   mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMax, OnDelete: mappo.CloserDelete}),
 		AuthCache:  mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMaxBig, OnDelete: mappo.CloserDelete}),
 		GzCache:    mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMax}),
+		TimeStore:  mappo.NewConcurrent[string, time.Time](),
 		counter:    new(atomic.Uint64),
-		Logger:     ll.New("agbero").Disable().Suspend(),
 		Env: &Env{
 			Global: mappo.NewConcurrent[string, expect.Value](),
 			Route:  mappo.NewConcurrent[string, expect.Value](),
@@ -261,6 +295,11 @@ func New(opts ...Option) *Resource {
 	m.counter.Add(1)
 	m.setDefaults()
 	m.Apply(opts...)
+
+	// register shutdown
+	if m.Shutdown != nil {
+		m.Shutdown.RegisterFunc("Resource", m.Close)
+	}
 
 	return m
 }
@@ -315,12 +354,16 @@ func (m *Resource) setDefaults() {
 	if m.Lifetime == nil {
 		m.Lifetime = jack.NewLifetime(
 			jack.LifetimeWithLogger(m.Logger),
-			jack.LifetimeWithShards(32),
+			jack.LifetimeWithShards(woos.LifetimeShards),
 		)
 	}
 
+	if m.Background == nil {
+		m.Background = jack.NewPool(woos.PoolWorkers, jack.PoolingWithQueueSize(woos.PoolQueueSize))
+	}
+
 	if m.Janitor == nil {
-		m.Janitor = jack.NewPool(2, jack.PoolingWithQueueSize(10000))
+		m.Janitor = jack.NewPool(woos.PoolWorkers, jack.PoolingWithQueueSize(woos.PoolQueueSize))
 	}
 }
 

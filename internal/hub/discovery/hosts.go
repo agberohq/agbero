@@ -58,9 +58,10 @@ type Host struct {
 	logger  *ll.Logger
 	changed chan struct{}
 
-	debouncer *jack.Debouncer
-	lifetimes *jack.Lifetime
-	loaded    bool
+	debouncer    *jack.Debouncer
+	lifetimes    *jack.Lifetime
+	loaded       bool
+	ownsLifetime bool
 
 	configSync *ConfigSync
 	clusterMgr *cluster.Manager
@@ -109,14 +110,19 @@ func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
 		h.logger = ll.New(woos.Name).Disable()
 	}
 
-	h.lifetimes = jack.NewLifetime(
-		jack.LifetimeWithLogger(h.logger),
-		jack.LifetimeWithShards(woos.LifetimeShards),
-	)
-
 	h.lookupMap.Store(make(map[string]*alaye.Host))
 	h.portLookup.Store(make(map[string]*alaye.Host))
 	h.routers.Store(make(map[string]*matcher.Tree))
+
+	if h.lifetimes == nil {
+		h.lifetimes = jack.NewLifetime(
+			jack.LifetimeWithLogger(h.logger),
+			jack.LifetimeWithShards(woos.LifetimeShards),
+		)
+
+		// internal lifetimes are not subject to cluster expiration
+		h.ownsLifetime = true
+	}
 
 	h.debouncer = jack.NewDebouncer(
 		jack.WithDebounceDelay(debounceDelay),
@@ -584,7 +590,9 @@ func (hm *Host) Close() error {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
-	if hm.lifetimes != nil {
+	// Only stop it if we created it locally. If it came from Resource,
+	// Resource.Close() will handle stopping it.
+	if hm.lifetimes != nil && hm.ownsLifetime {
 		hm.lifetimes.Stop()
 	}
 

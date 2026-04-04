@@ -414,14 +414,16 @@ const (
 )
 
 const (
-	LifetimeShards = 32
+	PoolWorkers        = 8
+	PoolQueueSize      = 10240
+	LifetimeShards     = 32
+	LifetimeHostShards = 4
 )
 
 const (
 	DefaultReloadTimeout   = 30 * time.Second
 	DefaultShutdownTimeout = 5 * time.Second
 	DefaultGitPoolTimeout  = 1 * time.Second
-	DefaultGitPoolSize     = 4
 
 	AdminTokenTTL = 8 * time.Hour
 

@@ -3,6 +3,7 @@ package discovery
 import (
 	"github.com/agberohq/agbero/internal/hub/cluster"
 	"github.com/fsnotify/fsnotify"
+	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
 
@@ -28,5 +29,11 @@ func WithClusterManager(cm *cluster.Manager) Option {
 		if cm != nil {
 			h.configSync = NewConfigSync(h.logger, cm)
 		}
+	}
+}
+
+func WithLifetime(l *jack.Lifetime) Option {
+	return func(h *Host) {
+		h.lifetimes = l
 	}
 }
