@@ -69,8 +69,16 @@ func initKeeperForTest(t *testing.T, dataDir string) {
 		PasswordHash: hash,
 	}
 	b, _ := json.Marshal(adminUser)
-	if err := store.SetNamespacedFull("vault", "admin", "users/admin", b); err != nil {
+	if err := store.Set(expect.Vault().AdminUser("admin"), b); err != nil {
 		t.Fatalf("failed to set admin user: %v", err)
+	}
+
+	if err := store.Set(expect.Vault().AdminJWT("admin"), []byte("test-jwt-secret-very-long-string-for-security")); err != nil {
+		t.Fatalf("failed to set jwt secret: %v", err)
+	}
+
+	if err := store.Set(expect.Vault().AdminTOTP("admin"), []byte("JBSWY3DPEHPK3PXP")); err != nil {
+		t.Fatalf("failed to set totp secret: %v", err)
 	}
 
 	store.Close()

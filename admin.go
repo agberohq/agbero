@@ -658,7 +658,6 @@ func (s *Server) generateAdminToken(username, secret, scope string, ttl time.Dur
 func (s *Server) verifyAdminUser(username, password string) bool {
 	userKey := expect.Vault().AdminUser(username)
 	data, err := s.keeperStore.Get(userKey)
-
 	hashToCompare := dummyHash
 	if err == nil && len(data) > 0 {
 		var user alaye.AdminUser
