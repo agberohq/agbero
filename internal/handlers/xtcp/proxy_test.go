@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
+	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
 const (
@@ -347,14 +347,20 @@ func TestProxy_UpdateRoutes(t *testing.T) {
 		t.Fatalf("dial failed: %v", err)
 	}
 	defer conn.Close()
-	got := readOne(t, conn)
+
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("failed to read from proxy: %v", err)
+	}
+
+	got := string(buf[:n])
 	if !bytes.Contains([]byte(got), []byte("Backend2")) {
 		t.Fatalf("got %q, want containing %q", got, "Backend2")
 	}
 }
 
-// Verifies that a stop instruction forcefully closes tracked connections
-// Sends dummy data to unblock io.CopyBuffer prior to calling stop
 func TestProxy_Stop_ClosesConnections(t *testing.T) {
 	s1, stop1 := startIDServer(t, "Backend1")
 	defer stop1()
@@ -371,17 +377,25 @@ func TestProxy_Stop_ClosesConnections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial failed: %v", err)
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(tcpReadDeadline))
+	defer conn.Close()
 
-	_, _ = conn.Write([]byte("ping"))
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("failed to establish connection through proxy: %v", err)
+	}
+	if !bytes.Contains(buf[:n], []byte("Backend1")) {
+		t.Fatalf("unexpected initial data: %s", string(buf[:n]))
+	}
 
 	p.Stop()
-	buf := make([]byte, 1)
+
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	_, err = conn.Read(buf)
 	if err == nil {
 		t.Error("expected connection to be closed or timeout after proxy stop")
 	}
-	_ = conn.Close()
 }
 
 // Ensures that an idle proxy accurately reports zero active backends

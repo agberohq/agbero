@@ -1,5 +1,15 @@
 <div class="page active">
-    <div class="flex-right">
+    <div class="flex-right" style="align-items:center;">
+        <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:12px;color:var(--text-mute);">Blocked IPs:</span>
+            <span id="fwCount" class="badge" style="font-family:var(--font-mono);">—</span>
+        </div>
+        <div style="flex:1;"></div>
+        <select id="fwSortSel" style="height:var(--btn-h-sm);padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--panel-bg);color:var(--text-main);font-size:12px;font-family:var(--font-sans);margin-bottom:0;outline:none;cursor:pointer;">
+            <option value="created_desc">Newest first</option>
+            <option value="created_asc">Oldest first</option>
+            <option value="ip">IP address</option>
+        </select>
         <button class="btn primary" id="addRuleBtn">Block IP</button>
     </div>
     <div class="table-responsive">
@@ -10,7 +20,7 @@
                 <th>REASON</th>
                 <th class="hide-mobile">SCOPE</th>
                 <th class="hide-mobile">CREATED</th>
-                <th>ACTION</th>
+                <th style="width:130px;">ACTION</th>
             </tr>
             </thead>
             <tbody id="firewallTable"></tbody>
@@ -19,94 +29,125 @@
 </div>
 
 <script type="module">
-    import { component, modal, listen, on, notify, query } from '../lib/oja.full.esm.js';
-    import { getCreds } from '../js/store.js';
+    import { component, listen, on, notify, modal, query } from '../lib/oja.full.esm.js';
     import { fetchFirewall, deleteFirewallRule } from '../js/api.js';
 
-    // ── Row builders — named functions, not anonymous HTML strings ─────────────
+    let _rules     = [];
+    let _sortKey   = 'created_desc';
+    let _confirmIp = null;
 
-    function emptyRow(colspan, html) {
-        return `<tr><td colspan="${colspan}" style="padding:20px;">
-            <div class="empty-state">${html}</div>
-        </td></tr>`;
+    function emptyRow(html) {
+        return `<tr><td colspan="5" style="padding:20px;"><div class="empty-state">${html}</div></td></tr>`;
+    }
+
+    function sortRules(rules) {
+        const r = [...rules];
+        if (_sortKey === 'ip')          r.sort((a,b) => (a.ip||'').localeCompare(b.ip||''));
+        else if (_sortKey === 'created_asc') r.sort((a,b) => new Date(a.created_at||0) - new Date(b.created_at||0));
+        else                            r.sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
+        return r;
     }
 
     function ruleRow(r) {
         const created = r.created_at ? new Date(r.created_at) : null;
-        const dateStr  = created && !isNaN(created) ? created.toLocaleDateString() : '—';
+        // toLocaleString preserves the time component — critical for incident response
+        const dateStr = created && !isNaN(created)
+            ? created.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+            : '—';
+        const ip = r.ip || '0.0.0.0';
         return `<tr>
-            <td class="mono">${r.ip || '0.0.0.0'}</td>
+            <td class="mono">${ip}</td>
             <td>${r.reason || '—'}</td>
-            <td class="hide-mobile">${r.host || '*'} / ${r.path || '*'}</td>
-            <td class="hide-mobile">${dateStr}</td>
+            <td class="hide-mobile mono" style="font-size:11px;">${r.host || '*'} / ${r.path || '*'}</td>
+            <td class="hide-mobile" style="font-family:var(--font-mono);font-size:11px;">${dateStr}</td>
             <td>
-                <button class="btn small error"
-                        data-action="unblock-ip"
-                        data-ip="${r.ip || ''}">Unblock</button>
+                <button class="btn small error fw-unblock-btn" data-ip="${ip}" data-confirm="">Unblock</button>
             </td>
         </tr>`;
     }
 
-    // ── Render ─────────────────────────────────────────────────────────────────
-
     function render(data) {
-        const tbody = query('#firewallTable');
+        const tbody   = query('#firewallTable');
+        const countEl = query('#fwCount');
         if (!tbody) return;
 
         if (!data) {
-            tbody.innerHTML = emptyRow(5, '⚠️ Firewall unavailable');
+            tbody.innerHTML = emptyRow('⚠️ Firewall unavailable');
+            if (countEl) countEl.textContent = '—';
             return;
         }
         if (data.enabled === false) {
-            tbody.innerHTML = emptyRow(5,
-                '<span>🛡️ Firewall disabled</span><span>Enable in agbero.hcl to block IPs</span>'
-            );
+            tbody.innerHTML = emptyRow('<span>🛡️ Firewall disabled</span><span>Enable in agbero.hcl to use this feature</span>');
+            if (countEl) countEl.textContent = '0';
             return;
         }
 
-        const rules = data.rules || [];
-        if (!rules.length) {
-            tbody.innerHTML = emptyRow(5,
-                '<span>✅ No blocked IPs</span><span>All traffic is allowed</span>'
-            );
+        _rules = data.rules || [];
+        if (countEl) countEl.textContent = String(_rules.length);
+
+        if (!_rules.length) {
+            tbody.innerHTML = emptyRow('<span>✅ No blocked IPs</span><span>All traffic is currently allowed</span>');
             return;
         }
 
-        tbody.innerHTML = rules.map(ruleRow).join('');
+        tbody.innerHTML = sortRules(_rules).map(ruleRow).join('');
     }
 
-    async function refresh() {
-        render(await fetchFirewall(getCreds()));
-    }
+    async function refresh() { render(await fetchFirewall()); }
 
-    // ── Events — registered at top level, not inside onMount ──────────────────
-    // on() uses document-level delegation — elements don't need to exist yet.
+    // Events
 
-    on('#addRuleBtn', 'click', () => modal.open('ruleModal'));
+    on('#addRuleBtn',  'click', () => modal.open('ruleModal'));
+    on('#fwSortSel',   'change', (e, el) => { _sortKey = el.value; render({ enabled: true, rules: _rules }); });
 
-    on('[data-action="unblock-ip"]', 'click', async (e, btn) => {
+    // Two-step inline confirm — no native dialog, no blocking overlay
+    on('.fw-unblock-btn', 'click', async (e, btn) => {
         const ip = btn.dataset.ip;
         if (!ip) return;
-        const ok = await modal.confirm(`Unblock ${ip}?`);
-        if (!ok) return;
-        const orig = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = 'Unblocking…';
-        try {
-            await deleteFirewallRule(getCreds(), ip);
-            notify.show(`${ip} unblocked`, 'success');
-            refresh();
-        } catch {
-            btn.disabled = false;
-            btn.textContent = orig;
-            notify.show('Failed to unblock IP', 'error');
+
+        if (btn.dataset.confirm === '1') {
+            // Confirmed — execute
+            _confirmIp = null;
+            btn.disabled = true;
+            btn.textContent = '…';
+            try {
+                await deleteFirewallRule(ip);
+                notify.show(`${ip} unblocked`, 'success');
+                refresh();
+            } catch {
+                btn.disabled = false;
+                btn.textContent = 'Unblock';
+                btn.className = 'btn small error fw-unblock-btn';
+                btn.dataset.confirm = '';
+                notify.show('Failed to unblock', 'error');
+            }
+        } else {
+            // Reset any other pending confirm
+            if (_confirmIp && _confirmIp !== ip) {
+                const prev = query(`.fw-unblock-btn[data-ip="${_confirmIp}"]`);
+                if (prev) { prev.textContent = 'Unblock'; prev.className = 'btn small error fw-unblock-btn'; prev.dataset.confirm = ''; }
+            }
+            _confirmIp = ip;
+            btn.dataset.confirm = '1';
+            btn.textContent = 'Sure?';
+            btn.className = 'btn small fw-unblock-btn';
+            btn.style.background = 'var(--warning)';
+            btn.style.color = '#fff';
+            btn.style.borderColor = 'var(--warning)';
+            // Auto-cancel after 3s
+            setTimeout(() => {
+                if (btn.dataset.confirm === '1') {
+                    btn.dataset.confirm = '';
+                    btn.textContent = 'Unblock';
+                    btn.className = 'btn small error fw-unblock-btn';
+                    btn.style.cssText = '';
+                    _confirmIp = null;
+                }
+            }, 3000);
         }
     });
 
     const unsubRefresh = listen('firewall:refresh', refresh);
-
-    // ── Boot ───────────────────────────────────────────────────────────────────
     refresh();
-
     component.onUnmount(() => unsubRefresh());
 </script>

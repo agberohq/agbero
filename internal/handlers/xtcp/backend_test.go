@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
+	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/health"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"

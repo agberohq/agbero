@@ -1,4 +1,4 @@
-<div class="page full-width-page active" style="min-height: 70vh; display: flex; flex-direction: column;">
+<div class="page full-width-page active" style="min-height:70vh;display:flex;flex-direction:column;">
     <div class="graph-toolbar">
         <div class="graph-legend">
             <span class="legend-item"><span class="dot root"></span> Agbero</span>
@@ -8,15 +8,22 @@
             <span class="legend-item"><span class="dot down"></span> Error/Dead</span>
         </div>
         <div class="graph-actions">
-            <button class="btn small" id="mapPauseBtn">Resume Updates</button>
+            <button class="btn small" id="mapPauseBtn">Pause Updates</button>
             <button class="btn small" id="resetZoomBtn">Reset View</button>
         </div>
     </div>
 
-    <div style="display:flex; flex:1; overflow:hidden; min-height: 400px;">
-        <div id="graphContainer" style="flex:1; overflow:hidden;"></div>
-        <div id="mapInfoPanel" style="display:none; width:280px; border-left:1px solid var(--border); overflow-y:auto; padding:16px; background:var(--panel-bg); flex-shrink:0;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+    <div style="display:flex;flex:1;overflow:hidden;min-height:400px;position:relative;">
+        <!-- Loading overlay -->
+        <div id="mapLoading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg);z-index:5;">
+            <div style="text-align:center;color:var(--text-mute);">
+                <div class="loading-row" style="width:200px;height:4px;border-radius:2px;margin:0 auto 12px;"></div>
+                <div style="font-size:12px;">Loading route graph…</div>
+            </div>
+        </div>
+        <div id="graphContainer" style="flex:1;overflow:hidden;"></div>
+        <div id="mapInfoPanel" style="display:none;width:280px;border-left:1px solid var(--border);overflow-y:auto;padding:16px;background:var(--panel-bg);flex-shrink:0;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
                 <strong id="mapInfoTitle" style="font-size:13px;"></strong>
                 <button id="mapInfoClose" class="btn small">✕</button>
             </div>
@@ -26,104 +33,148 @@
 </div>
 
 <script type="module">
-    import { component, on, listen, emit } from '../lib/oja.full.esm.js';
-    import { store, getCreds } from '../js/store.js';
-    import { fetchUptime, fetchConfig } from '../js/api.js';
+    import { component, on, listen, emit, query } from '../lib/oja.full.esm.js';
+    import { store }                               from '../js/store.js';
+    import { fetchUptime, fetchConfig }            from '../js/api.js';
 
-    const graph = new RouteGraph('graphContainer');
-    let paused = true;
+    async function loadGraphDeps() {
+        if (window.RouteGraph) return;
+        await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://d3js.org/d3.v7.min.js';
+            s.onload = resolve; s.onerror = reject;
+            document.head.appendChild(s);
+        });
+        await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'js/graph.js';
+            s.onload = resolve; s.onerror = reject;
+            document.head.appendChild(s);
+        });
+    }
+
+    let graph     = null;
+    let paused    = false; // start live
     let pollTimer = null;
 
-    // Wire graph node clicks through emit — no window.app dependency
-    graph._onClick = function(d) {
-        if (d.type === 'route' && d.meta) {
-            emit('drawer:open-route', { host: d.meta.hostname, idx: d.meta.routeIdx, type: d.meta.routeType });
-        } else if (d.type === 'backend' && d.meta) {
-            emit('drawer:open-backend', { host: d.meta.hostname, routeIdx: d.meta.routeIdx, backendIdx: d.meta.backendIdx, type: d.meta.routeType });
-        } else if (d.type === 'host' && d.meta) {
-            emit('perf:open', { hostname: d.meta.hostname });
-        }
-    };
+    function hideLoading() {
+        const el = query('#mapLoading');
+        if (el) el.style.display = 'none';
+    }
 
-    graph.onNodeClick = function(node) {
-        const panel = document.getElementById('mapInfoPanel');
-        const titleEl = document.getElementById('mapInfoTitle');
-        const bodyEl = document.getElementById('mapInfoBody');
-        if (!panel || !titleEl || !bodyEl) return;
-
-        titleEl.textContent = node.label || node.id || 'Node';
-        bodyEl.innerHTML = buildNodeInfo(node);
-        panel.style.display = 'block';
-    };
+    function showEmpty() {
+        hideLoading();
+        const el = query('#graphContainer');
+        if (el) el.innerHTML = `<div class="empty-state" style="margin-top:80px;">
+            <span>🗺️ No routes configured</span>
+            <span>Add a host to see the route graph</span>
+            <button class="btn primary small" style="margin-top:12px;" id="mapAddHostBtn">+ Add Host</button>
+        </div>`;
+        on('#mapAddHostBtn', 'click', () => emit('host:open-add-wizard'));
+    }
 
     function buildNodeInfo(node) {
-        const rows =[];
-        const add = (label, val) => {
+        const rows = [];
+        const add  = (label, val) => {
             if (val !== undefined && val !== null && val !== '')
-                rows.push(`<div style="margin-bottom:8px;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-mute);margin-bottom:2px;">${label}</div><div style="font-family:var(--font-mono,monospace);font-size:11px;color:var(--fg);word-break:break-all;">${val}</div></div>`);
+                rows.push(`<div style="margin-bottom:8px;">
+                    <div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-mute);margin-bottom:2px;">${label}</div>
+                    <div style="font-family:var(--font-mono);font-size:11px;color:var(--fg);word-break:break-all;">${val}</div>
+                </div>`);
         };
-
-        add('Type', node.type);
-        add('ID', node.id);
-        add('Status', node.alive === false ? '❌ Dead' : node.alive === true ? '✅ Alive' : '—');
+        add('Type',     node.type);
+        add('ID',       node.id);
+        add('Status',   node.alive === false ? '❌ Dead' : node.alive === true ? '✅ Alive' : '—');
         add('Protocol', node.protocol);
-        add('Path', node.path);
+        add('Path',     node.path);
         add('Strategy', node.strategy);
-
         if (node.latency_us) {
-            add('p50', node.latency_us.p50 ? (node.latency_us.p50 / 1000).toFixed(1) + 'ms' : null);
-            add('p99', node.latency_us.p99 ? (node.latency_us.p99 / 1000).toFixed(1) + 'ms' : null);
+            add('p50', node.latency_us.p50 ? (node.latency_us.p50/1000).toFixed(1)+'ms' : null);
+            add('p99', node.latency_us.p99 ? (node.latency_us.p99/1000).toFixed(1)+'ms' : null);
             add('Reqs', node.latency_us.count);
         }
-
         if (node.health) {
-            add('Health Score', node.health.score);
+            add('Health Score',  node.health.score);
             add('Health Status', node.health.status);
             if (node.health.consecutive_failures > 0) add('Consec. Fails', node.health.consecutive_failures);
         }
-
         if (node.type === 'host') {
-            const hostsData = store.get('hostsData') || { stats: {} };
-            const hStat = hostsData.stats?.[node.id] || {};
+            const hStat = (store.get('hostsData')?.stats?.[node.id]) || {};
             add('Total Reqs', hStat.total_reqs);
-            rows.push(`<button class="btn small" onclick="window.openPerformanceModal?.('${node.id}')" style="margin-top:8px;">📈 Perf History</button>`);
+            rows.push(`<button class="btn small" data-action="perf-node" data-hostname="${node.id}" style="margin-top:8px;">📈 Perf History</button>`);
         }
-
         return rows.join('') || '<div style="color:var(--text-mute);">No data</div>';
     }
 
     async function refresh() {
-        const [config, uptime] = await Promise.all([
-            store.get('lastConfig') ? Promise.resolve(store.get('lastConfig')) : fetchConfig(getCreds()),
-            fetchUptime(getCreds()),
-        ]);
+        if (!graph) return;
+        const config = store.get('lastConfig') || await fetchConfig();
+        const uptime = await fetchUptime();
+        if (!config || !uptime) return;
 
-        if (!config || config.__offline) return;
-        if (!config.__offline) store.set('lastConfig', config);
-        graph.render(config, uptime?.hosts || {});
+        const hostCount = Object.keys(config.hosts || {}).length;
+        if (hostCount === 0) { showEmpty(); return; }
+
+        graph.render(config, uptime.hosts || {});
+        hideLoading();
     }
 
-    refresh();
+    async function init() {
+        try {
+            await loadGraphDeps();
+        } catch (err) {
+            hideLoading();
+            const el = query('#graphContainer');
+            if (el) el.innerHTML = `<div class="empty-state" style="margin-top:60px;">⚠️ Failed to load graph: ${err.message}</div>`;
+            return;
+        }
+
+        graph = new RouteGraph('graphContainer');
+
+        // Wire clicks via data attributes — no window globals
+        graph._onClick = function(d) {
+            if (d.type === 'route' && d.meta)   emit('drawer:open-route',   { host: d.meta.hostname, idx: d.meta.routeIdx,    type: d.meta.routeType });
+            if (d.type === 'backend' && d.meta) emit('drawer:open-backend', { host: d.meta.hostname, routeIdx: d.meta.routeIdx, backendIdx: d.meta.backendIdx, type: d.meta.routeType });
+            if (d.type === 'host' && d.meta)    emit('perf:open', { hostname: d.meta.hostname });
+        };
+
+        graph.onNodeClick = function(node) {
+            const panel = query('#mapInfoPanel'), titleEl = query('#mapInfoTitle'), bodyEl = query('#mapInfoBody');
+            if (!panel || !titleEl || !bodyEl) return;
+            titleEl.textContent = node.label || node.id || 'Node';
+            bodyEl.innerHTML    = buildNodeInfo(node);
+            panel.style.display = 'block';
+        };
+
+        await refresh();
+    }
+
+    // Perf button inside node info panel — use delegation (no window._emit)
+    on('[data-action="perf-node"]', 'click', (e, btn) => {
+        emit('perf:open', { hostname: btn.dataset.hostname });
+    });
+
+    init();
 
     const unsub = listen('metrics:updated', ({ hosts }) => {
-        if (paused) return;
+        if (paused || !graph) return;
         const config = store.get('lastConfig');
         if (config) graph.render(config, hosts || {});
     });
 
     on('#mapPauseBtn', 'click', (e, el) => {
         paused = !paused;
-        el.innerText = paused ? 'Resume Updates' : 'Pause Updates';
+        el.textContent = paused ? 'Resume Updates' : 'Pause Updates';
         if (!paused) refresh();
     });
 
-    on('#resetZoomBtn', 'click', () => graph.resetZoom());
-    on('#mapInfoClose', 'click', () => { document.getElementById('mapInfoPanel').style.display = 'none'; });
+    on('#resetZoomBtn', 'click', () => graph?.resetZoom());
+    on('#mapInfoClose', 'click', () => { query('#mapInfoPanel').style.display = 'none'; });
 
-    pollTimer = setInterval(() => { if (!paused) refresh(); }, 10000);
+    pollTimer = setInterval(() => { if (!paused) refresh(); }, 10_000);
 
     component.onUnmount(() => {
-        if (unsub) unsub();
-        if (pollTimer) clearInterval(pollTimer);
+        unsub?.();
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     });
 </script>

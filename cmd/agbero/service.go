@@ -8,8 +8,9 @@ import (
 
 	"github.com/agberohq/agbero"
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll/lx"
@@ -50,7 +51,7 @@ func (p *program) run() {
 			global.Gossip.Seeds = []string{p.clusterJoinIP}
 		}
 		if p.clusterSecret != "" {
-			global.Gossip.SecretKey = alaye.Value(p.clusterSecret)
+			global.Gossip.SecretKey = expect.Value(p.clusterSecret)
 		}
 	}
 

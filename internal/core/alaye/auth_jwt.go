@@ -1,10 +1,13 @@
 package alaye
 
-import "github.com/olekukonko/errors"
+import (
+	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/olekukonko/errors"
+)
 
 type JWTAuth struct {
 	Enabled  Enabled           `hcl:"enabled,attr" json:"enabled"`
-	Secret   Value             `hcl:"secret,attr" json:"secret"`
+	Secret   expect.Value      `hcl:"secret,attr" json:"secret"`
 	ClaimMap map[string]string `hcl:"claims_to_headers,attr" json:"claim_map"`
 	Issuer   string            `hcl:"issuer,attr" json:"issuer"`
 	Audience string            `hcl:"audience,attr" json:"audience"`

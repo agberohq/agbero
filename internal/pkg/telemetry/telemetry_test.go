@@ -12,8 +12,6 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/telemetry"
 )
 
-// ── Store ────────────────────────────────────────────────────────────────────
-
 func TestNewStore_CreatesDB(t *testing.T) {
 	dir := t.TempDir()
 	s, err := telemetry.NewStore(dir)
@@ -170,8 +168,6 @@ func TestStore_CloseTwiceNoPanic(t *testing.T) {
 	_ = store.Close()
 }
 
-// ── KnownRanges ──────────────────────────────────────────────────────────────
-
 func TestKnownRanges_AllPresent(t *testing.T) {
 	for _, k := range []string{"30m", "1h", "6h", "24h"} {
 		if _, ok := telemetry.KnownRanges[k]; !ok {
@@ -190,8 +186,6 @@ func TestKnownRanges_ResolutionFitsInDuration(t *testing.T) {
 		}
 	}
 }
-
-// ── Handler ───────────────────────────────────────────────────────────────────
 
 func TestHandler_HistoryRequiresHost(t *testing.T) {
 	h := telemetry.Handler(newTestStore(t))
@@ -279,8 +273,6 @@ func TestHandler_ContentTypeIsJSON(t *testing.T) {
 		t.Fatalf("expected application/json Content-Type, got %q", ct)
 	}
 }
-
-// ── helpers ───────────────────────────────────────────────────────────────────
 
 func newTestStore(t *testing.T) *telemetry.Store {
 	t.Helper()

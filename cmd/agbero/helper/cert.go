@@ -7,7 +7,8 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/agberohq/agbero/internal/hub/tlss"
+	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/dustin/go-humanize"
 )
@@ -16,24 +17,46 @@ type Cert struct {
 	p *Helper
 }
 
+// newLocal builds a tlss.Local for CLI certificate operations (CA install,
+// uninstall, list). These operations manage the local development CA and are
+// disk-based by design: the CA must be accessible without keeper so that
+// agbero cert install can be run before keeper is configured.
+//
+// In ephemeral mode (serve/proxy) there is no keeper and this is always correct.
+// In full server mode the server's tlsstore (keeper-backed when keeper is
+// configured) handles cert management; cert CLI is for local CA trust only.
+func (c *Cert) newLocal(configPath string) (certsDir string, loc *tlss.Local) {
+	if global, err := loadGlobal(configPath); err == nil && global.Storage.CertsDir != "" {
+		certsDir = global.Storage.CertsDir
+	}
+	store := newDiskStore(certsDir)
+	loc = tlss.NewLocal(c.p.Logger, store)
+	return certsDir, loc
+}
+
+// newDiskStore creates a tlsstore.Disk for the given certsDir.
+// On error or empty certsDir, falls back to memory so that read operations
+// on ephemeral/unconfigured installs still work gracefully.
+func newDiskStore(certsDir string) tlsstore.Store {
+	if certsDir != "" {
+		ds, err := tlsstore.NewDisk(tlsstore.DiskConfig{CertDir: certsDir})
+		if err == nil {
+			return ds
+		}
+	}
+	return tlsstore.NewMemory()
+}
+
 func (c *Cert) Install(configPath string, force bool) {
-	loc := c.newLocal(configPath)
+	_, loc := c.newLocal(configPath)
 
 	if force {
 		c.p.Logger.Info("Force flag detected. Removing existing CA and regenerating...")
-		_ = loc.UninstallCARoot() // Attempt to uninstall from trust stores
-		loc.RemoveCA()            // Remove CA files
-	} else if tlss.IsCARootInstalled(loc.CertDir.Path()) {
-		c.p.Logger.Info("CA root is already installed. Synchronizing with system trust stores...")
-		if err := loc.InstallCARootIfNeeded(); err != nil {
-			c.p.Logger.Fatal("failed to synchronize CA: ", err)
-		}
-		c.p.Logger.Info("CA synchronization complete.")
-		c.printNSSHint(loc)
-		return
+		_ = loc.UninstallCARoot()
+		loc.RemoveCA()
 	}
 
-	// If not forced and not already installed, or if forced and regenerated, proceed with full install
+	// InstallCARootIfNeeded is idempotent — safe to call unconditionally.
 	if err := loc.InstallCARootIfNeeded(); err != nil {
 		c.p.Logger.Fatal("failed to install CA: ", err)
 	}
@@ -56,7 +79,7 @@ func (c *Cert) printNSSHint(loc *tlss.Local) {
 }
 
 func (c *Cert) Uninstall(configPath string) {
-	loc := c.newLocal(configPath)
+	certsDir, loc := c.newLocal(configPath)
 	c.p.Logger.Info("uninstalling CA...")
 	if err := loc.UninstallCARoot(); err != nil {
 		c.p.Logger.Warnf("system trust store cleanup: %v (might already be removed)", err)
@@ -64,18 +87,17 @@ func (c *Cert) Uninstall(configPath string) {
 		c.p.Logger.Info("removed CA from system trust store")
 	}
 
-	dir := loc.CertDir.Path()
-	files, err := os.ReadDir(dir)
+	// Clean up remaining PEM/key/crt files from the cert root directory.
+	files, err := os.ReadDir(certsDir)
 	if err != nil {
 		c.p.Logger.Warnf("could not read dir: %v", err)
 		return
 	}
-
 	count := 0
 	for _, f := range files {
 		name := f.Name()
 		if strings.HasSuffix(name, ".pem") || strings.HasSuffix(name, ".key") || strings.HasSuffix(name, ".crt") {
-			if err := os.Remove(filepath.Join(dir, name)); err == nil {
+			if err := os.Remove(filepath.Join(certsDir, name)); err == nil {
 				count++
 			}
 		}
@@ -89,7 +111,7 @@ func (c *Cert) Uninstall(configPath string) {
 }
 
 func (c *Cert) List(configPath string) {
-	loc := c.newLocal(configPath)
+	_, loc := c.newLocal(configPath)
 	certs, err := loc.ListCertificates()
 	if err != nil {
 		c.p.Logger.Fatal("failed to list certificates: ", err)
@@ -108,7 +130,6 @@ func (c *Cert) List(configPath string) {
 		domain, kind := parseCertName(name)
 		rows = append(rows, []string{domain, kind, name})
 	}
-
 	u.Table([]string{"Domain", "Type", "File"}, rows)
 }
 
@@ -151,16 +172,7 @@ func (c *Cert) Info(configPath string) {
 		u.WarnLine("no certificates found")
 		return
 	}
-
 	u.Table([]string{"Certificate", "Size", "Modified"}, rows)
-}
-
-func (c *Cert) newLocal(configPath string) *tlss.Local {
-	loc := tlss.NewLocal(c.p.Logger)
-	if global, err := loadGlobal(configPath); err == nil && global.Storage.CertsDir != "" {
-		_ = loc.SetStorageDir(woos.NewFolder(global.Storage.CertsDir))
-	}
-	return loc
 }
 
 func parseCertName(name string) (domain, kind string) {
@@ -173,7 +185,7 @@ func parseCertName(name string) (domain, kind string) {
 		return strings.TrimSuffix(base, "-cert"), "cert"
 	case strings.HasSuffix(base, "-key"):
 		return strings.TrimSuffix(base, "-key"), "key"
-	case name == "internal_auth.key":
+	case name == woos.InternalAuthKeyName:
 		return "internal", "auth key"
 	case strings.HasPrefix(name, "ca-"):
 		return "CA", strings.TrimPrefix(base, "ca-")

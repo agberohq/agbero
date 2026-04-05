@@ -9,7 +9,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 )
 
-// --- paths ---
+// paths
 const (
 	pSlash     = woos.Slash
 	pApi       = "/api"
@@ -22,7 +22,7 @@ const (
 	pUnknown   = "/unknown"
 )
 
-// --- helpers ---
+// helpers
 func mkRoute(path string) *alaye.Route {
 	return &alaye.Route{Path: path}
 }
@@ -47,9 +47,7 @@ func buildBasicTree(tb testing.TB) (*Tree, map[string]*alaye.Route) {
 }
 
 //
-// =====================
 // Tests
-// =====================
 //
 
 func TestMatcher_OrderAndFallback(t *testing.T) {
@@ -202,9 +200,7 @@ func TestMatcher_CatchAll(t *testing.T) {
 }
 
 //
-// =====================
 // Benchmarks
-// =====================
 //
 
 // Old matcher (your deprecated code)

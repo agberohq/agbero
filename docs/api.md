@@ -17,7 +17,7 @@ Instead of manually creating HCL files for every new service deployment, you can
 ## How It Works
 
 ```
-┌─────────┐     POST /api/v1/routes     ┌─────────┐
+┌─────────┐     POST /auto/v1/routes     ┌─────────┐
 │ Service │─────────────────────────────►│ Agbero │
 │   API   │                              │ Cluster│
 └─────────┘                              └────┬────┘
@@ -95,12 +95,12 @@ eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJzdmMiOiJhdXRvLXNjYWxlciIsImlhdCI6MTcxMDU
 
 ## API Endpoints
 
-All API endpoints are under the `/api/v1/` prefix and require authentication.
+All API endpoints are under the `/auto/v1/` prefix and require authentication.
 
 ### Base URL
 
 ```
-http://localhost:9090/api/v1/
+http://localhost:9090/auto/v1/
 ```
 
 ### Authentication Header
@@ -119,7 +119,7 @@ Authorization: Bearer eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9...
 
 ### Create Ephemeral Route
 
-**`POST /api/v1/routes`**
+**`POST /auto/v1/routes`**
 
 Creates a new route that is broadcast to all cluster nodes. The route will automatically expire after `ttl_seconds`.
 
@@ -128,7 +128,7 @@ Creates a new route that is broadcast to all cluster nodes. The route will autom
 {
   "host": "service-123.example.com",
   "route": {
-    "path": "/api/*",
+    "path": "/auto/*",
     "backend": {
       "strategy": "round_robin",
       "servers": [
@@ -147,20 +147,20 @@ Creates a new route that is broadcast to all cluster nodes. The route will autom
 ```json
 {
   "status": "ok",
-  "key": "route:service-123.example.com|/api/*"
+  "key": "route:service-123.example.com|/auto/*"
 }
 ```
 
 **What happens:**
-- Route is stored in cluster state with key `route:service-123.example.com|/api/*`
+- Route is stored in cluster state with key `route:service-123.example.com|/auto/*`
 - All nodes receive the route within seconds via gossip
-- Traffic to `service-123.example.com/api/*` is load-balanced to the specified backend
+- Traffic to `service-123.example.com/auto/*` is load-balanced to the specified backend
 - After 300 seconds, the route is automatically deleted from all nodes
 
 **Supported route fields:**
 | Field | Description | Example |
 |-------|-------------|---------|
-| `path` | Route path pattern | `/api/*`, `/users/{id}` |
+| `path` | Route path pattern | `/auto/*`, `/users/{id}` |
 | `backend.strategy` | Load balancing strategy | `round_robin`, `least_conn`, `ip_hash` |
 | `backend.servers[].address` | Backend server address | `http://10.0.0.123:8080` |
 | `backend.servers[].weight` | Server weight (for weighted strategies) | `1` (default), `10` |
@@ -169,7 +169,7 @@ Creates a new route that is broadcast to all cluster nodes. The route will autom
 
 ### Delete Ephemeral Route
 
-**`DELETE /api/v1/routes`**
+**`DELETE /auto/v1/routes`**
 
 Explicitly remove a route before its TTL expires.
 
@@ -181,7 +181,7 @@ Explicitly remove a route before its TTL expires.
 
 **Request:**
 ```bash
-curl -X DELETE "http://localhost:9090/api/v1/routes?host=service-123.example.com&path=/api/*" \
+curl -X DELETE "http://localhost:9090/auto/v1/routes?host=service-123.example.com&path=/auto/*" \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -189,7 +189,7 @@ curl -X DELETE "http://localhost:9090/api/v1/routes?host=service-123.example.com
 ```json
 {
   "status": "deleted",
-  "key": "route:service-123.example.com|/api/*"
+  "key": "route:service-123.example.com|/auto/*"
 }
 ```
 
@@ -211,7 +211,7 @@ The cluster key format is:
 route:{host}|{path}
 ```
 
-Example: `route:service-123.example.com|/api/*`
+Example: `route:service-123.example.com|/auto/*`
 
 ---
 
@@ -228,7 +228,7 @@ import time
 import os
 
 # Configuration
-API_URL = "http://agbero-cluster:9090/api/v1"
+API_URL = "http://agbero-cluster:9090/auto/v1"
 TOKEN = os.environ.get("AGBERO_TOKEN")
 
 class ServiceRegistry:
@@ -294,7 +294,7 @@ Gradually shift traffic to a new version:
 
 ```bash
 #!/bin/bash
-API="http://localhost:9090/api/v1"
+API="http://localhost:9090/auto/v1"
 TOKEN="your-token-here"
 
 # Deploy v2 with 10% traffic
@@ -504,7 +504,7 @@ class ServiceRegistry {
 // Usage
 async function main() {
     const registry = new ServiceRegistry(
-        'http://agbero-cluster:9090/api/v1',
+        'http://agbero-cluster:9090/auto/v1',
         process.env.AGBERO_TOKEN
     );
 
@@ -612,7 +612,7 @@ rate_limits {
   rules = [
     {
       name = "global-limit"
-      prefixes = ["/api/"]
+      prefixes = ["/auto/"]
       enabled = false  # Disable rate limiting for API
     }
   ]
@@ -625,8 +625,8 @@ rate_limits {
 
 The API is implemented in:
 
-- `internal/operation/api/router.go` - Main router and auth
-- `internal/operation/api/handlers.go` - Route handlers
+- `internal/operation/auto/router.go` - Main router and auth
+- `internal/operation/auto/handlers.go` - Route handlers
 - `admin.go` - Admin server setup and authentication
 
 ### Key Components

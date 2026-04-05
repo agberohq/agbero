@@ -40,4 +40,17 @@ type Config struct {
 	SystemIn    string
 	SystemPass  string
 	SystemForce bool
+	SystemYes   bool
+
+	// Keeper subcommands
+	KeeperKey     string
+	KeeperValue   string
+	KeeperB64     bool
+	KeeperFile    string
+	KeeperForce   bool
+	KeeperUser    string
+	KeeperOutFile string
+
+	// Admin subcommands
+	AdminPassword string
 }

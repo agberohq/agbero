@@ -39,7 +39,7 @@ type onlyReader struct {
 }
 
 func TestResponseWriter_ReadFrom_NoInfiniteRecursion(t *testing.T) {
-	// 1. Setup a writer that DOES NOT support ReaderFrom (simulates HTTP/3 response writer)
+	// Setup a writer that DOES NOT support ReaderFrom (simulates HTTP/3 response writer)
 	underlying := &dumbWriter{}
 
 	wrapper := &ResponseWriter{
@@ -47,15 +47,15 @@ func TestResponseWriter_ReadFrom_NoInfiniteRecursion(t *testing.T) {
 		StatusCode:     200,
 	}
 
-	// 2. Create data and wrap it to hide 'WriteTo'
+	// Create data and wrap it to hide 'WriteTo'
 	// This forces io.Copy to check if 'wrapper' is a ReaderFrom.
 	srcData := "Hello, World! This simulates a static file or proxy body."
 	reader := onlyReader{strings.NewReader(srcData)}
 
-	// 3. Perform ReadFrom
+	// Perform ReadFrom
 	n, err := wrapper.ReadFrom(reader)
 
-	// 4. Assertions
+	// Assertions
 	if err != nil {
 		t.Fatalf("ReadFrom returned error: %v", err)
 	}

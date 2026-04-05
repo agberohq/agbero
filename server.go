@@ -5,6 +5,7 @@ package agbero
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -15,31 +16,29 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
+	"github.com/agberohq/agbero/internal/hub/secrets"
+
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/discovery"
 	"github.com/agberohq/agbero/internal/handlers"
+	"github.com/agberohq/agbero/internal/hub/cluster"
+	"github.com/agberohq/agbero/internal/hub/cook"
+	"github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/hub/orchestrator"
+	"github.com/agberohq/agbero/internal/hub/resource"
+	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/middleware/firewall"
-	"github.com/agberohq/agbero/internal/pkg/cook"
-	"github.com/agberohq/agbero/internal/pkg/orchestrator"
+	"github.com/agberohq/agbero/internal/operation/api"
 	"github.com/agberohq/agbero/internal/pkg/parser"
+	"github.com/agberohq/agbero/internal/pkg/revoke"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/telemetry"
-	"github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/agberohq/keeper"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
-)
-
-const (
-	defaultReloadTimeout   = woos.DefaultReloadTimeout
-	defaultShutdownTimeout = woos.DefaultShutdownTimeout
-	defaultGitPoolTimeout  = woos.DefaultGitPoolTimeout
-	defaultGitPoolSize     = woos.DefaultGitPoolSize
 )
 
 type Server struct {
@@ -49,7 +48,7 @@ type Server struct {
 	hostManager     *discovery.Host
 	global          *alaye.Global
 	tlsManager      *tlss.Manager
-	securityManager *security.Manager
+	securityManager *security.PPK
 	resource        *resource.Resource
 	orchManager     *orchestrator.Manager
 
@@ -59,7 +58,6 @@ type Server struct {
 	logger *ll.Logger
 
 	clusterManager *cluster.Manager
-	gitPool        *jack.Pool
 	cookManager    *cook.Manager
 	trafficManager *handlers.Manager
 
@@ -70,6 +68,17 @@ type Server struct {
 
 	telemetryStore     *telemetry.Store
 	telemetryCollector *telemetry.Collector
+
+	// adminSrv and pprofSrv are stored so they can be gracefully shut down
+	// via s.shutdown on process exit rather than being hard-killed.
+	adminSrv *http.Server
+	pprofSrv *http.Server
+
+	keeperStore *keeper.Keeper
+	revokeStore *revoke.Store
+
+	totpHandler *api.TOTP
+	apiShared   *api.Shared
 }
 
 // NewServer initializes a Server instance with the provided options.
@@ -78,6 +87,22 @@ func NewServer(opts ...Option) *Server {
 	s := &Server{}
 	for _, opt := range opts {
 		opt(s)
+	}
+
+	if s.resource == nil {
+		s.resource = resource.New(
+			resource.WithLogger(s.logger),
+			resource.WithShutdown(s.shutdown),
+			resource.WithReaper(func(ctx context.Context, id string) {
+				if s.resource != nil {
+					if it, ok := s.resource.RouteCache.Load(id); ok {
+						if h, ok := it.Value.(*handlers.Route); ok {
+							h.Close()
+						}
+					}
+					s.resource.RouteCache.Delete(id)
+				}
+			}))
 	}
 	return s
 }
@@ -124,6 +149,7 @@ func (s *Server) Start(configPath string) error {
 		s.logger = ll.New(woos.Name).Enable()
 	}
 
+	// Load and normalize config
 	if configPath != "" {
 		absConfigPath, err := filepath.Abs(configPath)
 		if err != nil {
@@ -138,36 +164,37 @@ func (s *Server) Start(configPath string) error {
 		woos.DefaultApply(s.global, ".")
 		s.logger.Info("starting in ephemeral mode")
 	}
+	s.resource.UpdateGlobal(s.global.Env)
 
-	if s.resource == nil {
-		s.resource = resource.New(
-			resource.WithLogger(s.logger),
-			resource.WithShutdown(s.shutdown),
-			resource.WithReaper(func(ctx context.Context, id string) {
-				if s.resource != nil {
-					if it, ok := s.resource.RouteCache.Load(id); ok {
-						if h, ok := it.Value.(*handlers.Route); ok {
-							h.Close()
-						}
-					}
-					s.resource.RouteCache.Delete(id)
-				}
-			}))
+	var err error
+	s.keeperStore, err = secrets.OpenStore(s.global.Storage.DataDir, &s.global.Security.Keeper, s.logger)
+	if err != nil {
+		s.logger.Fatal("Keeper initialization failed. Cannot start: ", err)
 	}
 
-	s.populateResourceEnv()
-
-	if s.shutdown != nil {
-		s.shutdown.RegisterFunc("Resource", s.resource.Close)
+	if s.keeperStore.IsLocked() {
+		s.logger.Fatal("Keeper is locked. AGBERO_PASSPHRASE is required in environment or config to boot.")
 	}
 
-	if s.global.Security.Enabled.Active() && s.global.Security.InternalAuthKey != "" {
-		mgr, err := security.LoadKeys(s.global.Security.InternalAuthKey)
-		if err != nil {
-			return err
-		}
-		s.securityManager = mgr
+	s.resource.Apply(resource.WithKeeper(s.keeperStore))
+	s.logger.Info("Keeper unlocked successfully")
+
+	// WIRE RESOLVER - now all vault:// and ss:// references resolve to Keeper
+	secrets.NewResolver(s.keeperStore).Wire()
+	s.logger.Info("Secret resolver wired")
+
+	// Load PPK from Keeper (needed for API token verification)
+	ppkPEM, err := s.keeperStore.Get("key/internal")
+	if err != nil {
+		s.logger.Fatal("Failed to load Internal Auth Key from Keeper. Run 'agbero init' first. Error: ", err)
 	}
+	s.securityManager, err = security.LoadPPKFromPEM(ppkPEM)
+	if err != nil {
+		s.logger.Fatal("Failed to parse Internal Auth Key: ", err)
+	}
+	s.logger.Info("Loaded Internal Auth Key (PPK)")
+
+	// REST OF SUBSYSTEM INITIALIZATION
 
 	if err := s.tlsValidate(); err != nil {
 		return err
@@ -181,22 +208,30 @@ func (s *Server) Start(configPath string) error {
 
 	hosts, _ := s.hostManager.LoadAll()
 
-	s.gitPool = jack.NewPool(defaultGitPoolSize)
 	cookCfg := cook.ManagerConfig{
 		WorkDir: s.global.Storage.WorkDir,
-		Pool:    s.gitPool,
+		Pool:    s.resource.Background,
 		Logger:  s.logger,
 	}
 
 	cookMgr, err := cook.NewManager(cookCfg)
 	if err == nil {
 		s.cookManager = cookMgr
+		seenGitConfigs := make(map[string]alaye.Git)
 		for _, hcfg := range hosts {
 			for _, r := range hcfg.Routes {
 				if r.Web.Git.Enabled.Active() {
-					err = s.cookManager.Register(r.Web.Git.ID, r.Web.Git)
+					gitID := r.Web.Git.ID
+					if existing, exists := seenGitConfigs[gitID]; exists {
+						if existing.URL != r.Web.Git.URL || existing.Branch != r.Web.Git.Branch || existing.WorkDir != r.Web.Git.WorkDir {
+							s.logger.Fields("id", gitID).Warn("server: Git ID collision with differing configurations detected, skipping duplicate")
+						}
+						continue
+					}
+					seenGitConfigs[gitID] = r.Web.Git
+					err = s.cookManager.Register(gitID, r.Web.Git)
 					if err != nil {
-						s.logger.Error("failed to register cook", "id", r.Web.Git.ID, "err", err)
+						s.logger.Error("failed to register cook", "id", gitID, "err", err)
 					}
 				}
 			}
@@ -221,10 +256,11 @@ func (s *Server) Start(configPath string) error {
 	}
 
 	if s.global.Gossip.Enabled.Active() {
+		// SecretKey is expect.Value - .String() triggers resolver via Wire()
 		cfg := cluster.Config{
 			Name:     s.global.Admin.Address,
 			BindPort: s.global.Gossip.Port,
-			Secret:   []byte(s.global.Gossip.SecretKey),
+			Secret:   []byte(s.global.Gossip.SecretKey.String()),
 			Seeds:    s.global.Gossip.Seeds,
 			HostsDir: s.global.Storage.HostsDir,
 		}
@@ -235,7 +271,7 @@ func (s *Server) Start(configPath string) error {
 		if cm, err := cluster.NewManager(cfg, s, s.logger); err == nil {
 			s.clusterManager = cm
 			if s.shutdown != nil {
-				s.shutdown.RegisterFunc("Cluster", func() { _ = s.clusterManager.Shutdown() })
+				s.shutdown.RegisterFunc("ClusterHandler", func() { _ = s.clusterManager.Shutdown() })
 			}
 		}
 	}
@@ -255,13 +291,19 @@ func (s *Server) Start(configPath string) error {
 					_ = ts.Close()
 				})
 			}
+			s.logger.Info("telemetry store initialized")
 		}
 	}
 
-	s.startAdminServer()
-	s.startPprofServer()
+	if s.global.Storage.DataDir != "" {
+		if rs, err := revoke.New(s.global.Storage.DataDir, s.logger); err != nil {
+			s.logger.Fields("err", err).Warn("revoke store failed to load, token revocation disabled")
+		} else {
+			s.revokeStore = rs
+		}
+	}
 
-	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global)
+	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global, s.keeperStore)
 	if s.shutdown != nil {
 		s.shutdown.RegisterFunc("TLSManager", s.tlsManager.Close)
 	}
@@ -300,6 +342,26 @@ func (s *Server) Start(configPath string) error {
 		s.shutdown.RegisterFunc("TrafficManager", tm.Close)
 	}
 
+	s.apiShared = &api.Shared{
+		Logger:      s.logger,
+		Cluster:     s.clusterManager,
+		Keeper:      s.keeperStore,
+		Discovery:   s.hostManager,
+		PPK:         s.securityManager,
+		Telemetry:   s.telemetryStore,
+		RevokeStore: s.revokeStore,
+	}
+
+	s.apiShared.UpdateState(&api.ActiveState{
+		Global:   s.global,
+		Firewall: s.firewall,
+		TLSS:     s.tlsManager,
+	})
+
+	if s.global.Admin.TOTP.Enabled.Active() {
+		s.totpHandler = api.NewTOTP(s.apiShared)
+	}
+
 	listeners := tm.BuildListeners()
 	s.mu.Lock()
 	s.listeners = listeners
@@ -322,6 +384,9 @@ func (s *Server) Start(configPath string) error {
 		go s.serverWatchConfig()
 	}
 
+	s.startAdminServer()
+	s.startPprofServer()
+
 	if s.shutdown != nil {
 		s.shutdown.RegisterWithContext("Listeners", s.shutdownImpl)
 	}
@@ -330,8 +395,8 @@ func (s *Server) Start(configPath string) error {
 	return nil
 }
 
-// Reload - applies new configurations to the active server without dropping traffic
-// Identifies host or global differences and updates local listeners
+// Reload applies an updated configuration without dropping active connections.
+// It builds new listeners and traffic managers before tearing down the old ones.
 func (s *Server) Reload() {
 	s.mu.RLock()
 	configPath := s.configPath
@@ -348,6 +413,7 @@ func (s *Server) Reload() {
 
 	s.mu.RLock()
 	currentSHA := s.configSHA
+	currentGlobal := s.global
 	s.mu.RUnlock()
 
 	if sha == currentSHA {
@@ -359,8 +425,8 @@ func (s *Server) Reload() {
 		return
 	}
 
-	if s.global.Logging.Diff.Active() {
-		for _, v := range zulu.Diff(s.global, global) {
+	if currentGlobal.Logging.Diff.Active() {
+		for _, v := range zulu.Diff(currentGlobal, global) {
 			s.logger.Debug(v)
 		}
 	}
@@ -369,23 +435,6 @@ func (s *Server) Reload() {
 	woos.DefaultApply(global, absConfigPath)
 
 	_ = s.hostManager.ReloadFull()
-
-	s.mu.Lock()
-
-	oldListeners := s.listeners
-	oldTrafficManager := s.trafficManager
-	oldSharedState := s.sharedState
-
-	var trustedProxies []string
-	if global.Security.Enabled.Active() {
-		trustedProxies = global.Security.TrustedProxies
-	}
-	ipMgr := zulu.NewIPManager(trustedProxies)
-
-	s.global = global
-	s.configSHA = sha
-
-	s.populateResourceEnv()
 
 	var newSharedState woos.SharedState
 	if global.Gossip.SharedState.Enabled.Active() && global.Gossip.SharedState.Driver == "redis" {
@@ -397,45 +446,84 @@ func (s *Server) Reload() {
 			s.logger.Error("failed to reload redis shared state", "err", err)
 		}
 	}
-	s.sharedState = newSharedState
 
-	s.tlsManager.Close()
-	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, global)
+	var trustedProxies []string
+	if global.Security.Enabled.Active() {
+		trustedProxies = global.Security.TrustedProxies
+	}
+	ipMgr := zulu.NewIPManager(trustedProxies)
+
+	newTLSManager := tlss.NewManager(s.logger, s.hostManager, global, s.keeperStore)
 	if s.clusterManager != nil {
-		s.tlsManager.SetUpdateCallback(func(domain string, certPEM, keyPEM []byte) {
+		newTLSManager.SetUpdateCallback(func(domain string, certPEM, keyPEM []byte) {
 			_ = s.clusterManager.BroadcastCert(domain, certPEM, keyPEM)
 		})
-		s.tlsManager.SetCluster(s.clusterManager)
-	}
-
-	if oldTrafficManager != nil {
-		oldTrafficManager.CloseFirewall()
+		newTLSManager.SetCluster(s.clusterManager)
 	}
 
 	tmCfg := handlers.ManagerConfig{
-		Global:      s.global,
+		Global:      global,
 		HostManager: s.hostManager,
 		Resource:    s.resource,
 		IPMgr:       ipMgr,
 		CookManager: s.cookManager,
-		TLSManager:  s.tlsManager,
-		SharedState: s.sharedState,
+		TLSManager:  newTLSManager,
+		SharedState: newSharedState,
 		OrchManager: s.orchManager,
 	}
 
-	tm, err := handlers.NewManager(tmCfg)
+	s.mu.RLock()
+	oldTrafficManagerForFirewall := s.trafficManager
+	s.mu.RUnlock()
+
+	// Must close the old firewall first to release bbolt database locks
+	if oldTrafficManagerForFirewall != nil {
+		oldTrafficManagerForFirewall.CloseFirewall()
+	}
+
+	newTM, err := handlers.NewManager(tmCfg)
 	if err != nil {
 		s.logger.Fields("err", err).Error("reload: failed to create traffic manager, keeping existing config")
-		s.mu.Unlock()
+		if newSharedState != nil {
+			_ = newSharedState.Close()
+		}
+		newTLSManager.Close()
 		return
 	}
 
-	s.trafficManager = tm
-	s.firewall = tm.Firewall()
+	newListeners := newTM.BuildListeners()
 
-	newListeners := tm.BuildListeners()
+	s.mu.Lock()
+	oldListeners := s.listeners
+	oldTrafficManager := s.trafficManager
+	oldSharedState := s.sharedState
+	oldTLSManager := s.tlsManager
+
+	s.global = global
+	s.configSHA = sha
+	s.sharedState = newSharedState
+
+	s.resource.UpdateGlobal(s.global.Env)
+
+	s.tlsManager = newTLSManager
+
+	s.trafficManager = newTM
+	s.firewall = newTM.Firewall()
 	s.listeners = newListeners
 	s.mu.Unlock()
+
+	// API SHARED STATE UPDATE (Lock-Free Push)
+
+	// Atomically push the new state down to the API handlers
+	s.apiShared.UpdateState(&api.ActiveState{
+		Global:   global,
+		Firewall: newTM.Firewall(),
+		TLSS:     newTLSManager,
+	})
+
+	if global.Admin.TOTP.Enabled.Active() && s.totpHandler == nil {
+		s.totpHandler = api.NewTOTP(s.apiShared)
+	}
 
 	hosts, _ := s.hostManager.LoadAll()
 	validKeys := make(map[alaye.BackendKey]bool)
@@ -459,6 +547,30 @@ func (s *Server) Reload() {
 
 	s.resource.Metrics.Prune(validKeys)
 
+	if s.cookManager != nil {
+		validGitIDs := make(map[string]bool)
+		seenGitConfigs := make(map[string]alaye.Git)
+		for _, hcfg := range hosts {
+			for _, r := range hcfg.Routes {
+				if r.Web.Git.Enabled.Active() {
+					gitID := r.Web.Git.ID
+					validGitIDs[gitID] = true
+					if existing, exists := seenGitConfigs[gitID]; exists {
+						if existing.URL != r.Web.Git.URL || existing.Branch != r.Web.Git.Branch || existing.WorkDir != r.Web.Git.WorkDir {
+							s.logger.Fields("id", gitID).Warn("server: Git ID collision with differing configurations detected, skipping duplicate")
+						}
+						continue
+					}
+					seenGitConfigs[gitID] = r.Web.Git
+					if err := s.cookManager.Register(gitID, r.Web.Git); err != nil {
+						s.logger.Error("failed to register/update cook", "id", gitID, "err", err)
+					}
+				}
+			}
+		}
+		s.cookManager.Prune(validGitIDs)
+	}
+
 	var staleRoutes []string
 	s.resource.RouteCache.Range(func(k string, it *mappo.Item) bool {
 		if !validRouteKeys[k] {
@@ -473,8 +585,9 @@ func (s *Server) Reload() {
 		}
 	}
 
+	// Teardown old components safely in the background
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), defaultReloadTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), woos.DefaultReloadTimeout)
 		defer cancel()
 
 		var wg sync.WaitGroup
@@ -487,6 +600,8 @@ func (s *Server) Reload() {
 		}
 		wg.Wait()
 
+		oldTLSManager.Close()
+
 		if oldTrafficManager != nil {
 			oldTrafficManager.Close()
 		}
@@ -496,16 +611,18 @@ func (s *Server) Reload() {
 		}
 	}()
 
+	// Spin up the new listeners
 	for _, l := range newListeners {
 		go func(listener handlers.Listener) {
 			s.logger.Fields("bind", listener.Addr(), "proto", listener.Kind()).Info("reloaded listener")
 			var err error
-			for i := 0; i < 50; i++ {
+			for i := 0; i < woos.MaxPortRetries; i++ {
 				err = listener.Start()
 				if err != nil {
 					errStr := err.Error()
+					// If the port is still briefly held by the OS, backoff slightly and retry
 					if strings.Contains(errStr, "address already in use") || strings.Contains(errStr, "Only one usage") {
-						if i < 49 {
+						if i < woos.MaxPortRetries-1 {
 							time.Sleep(100 * time.Millisecond)
 							continue
 						}
@@ -523,16 +640,13 @@ func (s *Server) Reload() {
 }
 
 // shutdownImpl performs the final listener termination during server shutdown.
-// it ensures all active connections are drained or timed out before process exit.
+// It ensures all active connections are drained or timed out before process exit.
 func (s *Server) shutdownImpl(ctx context.Context) error {
 	if s.clusterManager != nil {
 		s.clusterManager.BroadcastStatus("draining")
 	}
 	if s.cookManager != nil {
 		s.cookManager.Stop()
-	}
-	if s.gitPool != nil {
-		_ = s.gitPool.Shutdown(defaultGitPoolTimeout)
 	}
 
 	s.mu.RLock()
@@ -548,6 +662,19 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 		}(l)
 	}
 	wg.Wait()
+
+	s.mu.RLock()
+	adminSrv := s.adminSrv
+	pprofSrv := s.pprofSrv
+	s.mu.RUnlock()
+
+	if adminSrv != nil {
+		_ = adminSrv.Shutdown(ctx)
+	}
+	if pprofSrv != nil {
+		_ = pprofSrv.Shutdown(ctx)
+	}
+
 	return nil
 }
 
@@ -558,7 +685,10 @@ func (s *Server) configComputeSHA() (string, error) {
 
 	s.mu.RLock()
 	configPath := s.configPath
-	hostDir := s.global.Storage.HostsDir
+	var hostDir string
+	if s.global != nil {
+		hostDir = s.global.Storage.HostsDir
+	}
 	s.mu.RUnlock()
 
 	mainData, err := os.ReadFile(configPath)
@@ -589,9 +719,17 @@ func (s *Server) configComputeSHA() (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-// tlsValidate is a placeholder for future comprehensive certificate chain validation.
-// Currently returns nil to satisfy startup requirements.
+// tlsValidate checks that every host configured with a local certificate can
+// load its key pair before the server binds any listeners.
 func (s *Server) tlsValidate() error {
+	hosts, _ := s.hostManager.LoadAll()
+	for domain, h := range hosts {
+		if h.TLS.Mode == alaye.ModeLocalCert && h.TLS.Local.Enabled.Active() {
+			if _, err := tls.LoadX509KeyPair(h.TLS.Local.CertFile, h.TLS.Local.KeyFile); err != nil {
+				return fmt.Errorf("tls: host %q: %w", domain, err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -605,18 +743,5 @@ func (s *Server) serverWatchConfig() {
 		case <-s.shutdown.Done():
 			return
 		}
-	}
-}
-
-// populateResourceEnv copies global environment variables into the resource manager.
-// This makes the HCL-defined environment accessible to runtime components like serverless functions.
-func (s *Server) populateResourceEnv() {
-	if s.resource == nil || s.resource.Env == nil {
-		return
-	}
-
-	s.resource.Env.Global.Clear()
-	for k, v := range s.global.Env {
-		s.resource.Env.Global.Set(k, v)
 	}
 }

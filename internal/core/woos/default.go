@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 )
@@ -152,7 +153,7 @@ func defaultWebRoute(r *alaye.Route) {
 		r.Web.Index = []string{"index.html"}
 	}
 	defaultPHP(&r.Web.PHP)
-	defaultCompression(&r.CompressionConfig)
+	defaultCompression(&r.Compression)
 	defaultHeaders(&r.Headers)
 	defaultBasicAuth(&r.BasicAuth)
 	defaultJWTAuth(&r.JWTAuth)
@@ -165,7 +166,7 @@ func defaultProxyRoute(r *alaye.Route) {
 	defaultHealthCheck(&r.HealthCheck)
 	defaultCircuitBreaker(&r.CircuitBreaker)
 	defaultTimeoutRoute(&r.Timeouts)
-	defaultCompression(&r.CompressionConfig)
+	defaultCompression(&r.Compression)
 	defaultHeaders(&r.Headers)
 	defaultBasicAuth(&r.BasicAuth)
 	defaultJWTAuth(&r.JWTAuth)
@@ -230,11 +231,30 @@ func defaultAdmin(a *alaye.Admin) {
 		a.Enabled = alaye.Active
 	}
 	if a.Enabled == alaye.Active {
-		defaultBasicAuth(&a.BasicAuth)
+		// defaultBasicAuth(&a.BasicAuth)
 		defaultJWTAuth(&a.JWTAuth)
 		defaultForwardAuth(&a.ForwardAuth)
 		defaultOAuth(&a.OAuth)
 		defaultTelemetry(&a.Telemetry)
+	}
+
+	if a.TOTP.Enabled.Active() {
+
+		if a.TOTP.Issuer == "" {
+			a.TOTP.Issuer = strings.ToUpper(Name)
+		}
+
+		if a.TOTP.Digits == 0 {
+			a.TOTP.Digits = 6
+		}
+
+		if a.TOTP.Period == 0 {
+			a.TOTP.Period = 30
+		}
+
+		if a.TOTP.Algorithm == "" {
+			a.TOTP.Algorithm = "SHA1"
+		}
 	}
 }
 
@@ -397,6 +417,8 @@ func defaultTLS(t *alaye.TLS, domains []string) {
 	}
 }
 
+// defaultLimits applies default values to the Limit configuration block.
+// MaxBodySize default is enforced at dispatch level via alaye.DefaultMaxBodySize; add per-field defaults here as alaye.Limit grows.
 func defaultLimits(_ *alaye.Limit) {}
 
 func defaultHeaders(h *alaye.Headers) {
@@ -683,9 +705,7 @@ func compileExtract(e *alaye.Extract) {
 }
 
 func defaultTelemetry(t *alaye.Telemetry) {
-	// Inactive unless the operator explicitly writes:
-	//   telemetry { enabled = true }
-	// Mirrors the same pattern used by Pprof, Gossip, etc.
+
 	if t.Enabled == alaye.Unknown {
 		t.Enabled = alaye.Inactive
 	}

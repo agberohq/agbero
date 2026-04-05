@@ -12,12 +12,10 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
+	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/health"
 	"github.com/agberohq/agbero/internal/pkg/metrics"
 )
-
-// ── helpers ───────────────────────────────────────────────────────────────────
 
 func newTestResource(t *testing.T) *resource.Resource {
 	t.Helper()
@@ -304,8 +302,6 @@ func TestPassiveRate_ResetsEachProbeCycle(t *testing.T) {
 	}
 }
 
-// ── Death spiral integration (real jack.Doctor ticker) ────────────────────────
-
 // TestDeathSpiral_FullRecovery mirrors the production scenario:
 // oppor serve -f 0.1 -fp burst + hey -n 1000000.
 //
@@ -405,8 +401,6 @@ func TestDeathSpiral_FullRecovery(t *testing.T) {
 	t.Log("phase 4: normal traffic flowing cleanly")
 }
 
-// ── Performance baseline ──────────────────────────────────────────────────────
-
 // BenchmarkBackend_HealthyThroughput establishes the per-request overhead on
 // a healthy backend.
 //
@@ -468,8 +462,6 @@ func BenchmarkBackend_CircuitBreakerCheck(b *testing.B) {
 		}
 	})
 }
-
-// ── unused but kept for completeness ─────────────────────────────────────────
 
 func newTestActivity() *metrics.Activity { return &metrics.Activity{} }
 

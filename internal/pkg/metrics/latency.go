@@ -20,6 +20,8 @@ const (
 	emptySum         = 0
 	cacheLinePadding = 40
 	sigFigPrecision  = 3
+	shardIdleTimeout = 5 * time.Minute // Evict histogram after idle period
+	evictionInterval = 1 * time.Minute // How often to check for idle shards
 )
 
 var snapshotHistogramPool = sync.Pool{
@@ -28,24 +30,27 @@ var snapshotHistogramPool = sync.Pool{
 	},
 }
 
-type shard struct {
+// lazyShard holds histogram data that may not exist yet (nil = not allocated)
+type lazyShard struct {
 	mu           sync.Mutex
-	histogram    *hdrhistogram.Histogram
+	histogram    *hdrhistogram.Histogram // nil until first Record
 	count        uint64
 	sum          int64
+	lastAccess   int64 // UnixNano for idle detection
 	lastRotation int64
-	_            [cacheLinePadding]byte
+	_            [cacheLinePadding - 16]byte // Adjust padding for new fields
 }
 
 type Latency struct {
-	shards    []shard
-	numShards uint64
-	nextShard atomic.Uint64
-	closed    atomic.Bool
+	shards       []lazyShard
+	numShards    uint64
+	nextShard    atomic.Uint64
+	closed       atomic.Bool
+	evictionStop chan struct{}
+	evictionWg   sync.WaitGroup
 }
 
-// nextPowerOfTwo calculates the nearest power of two for an integer
-// Enables rapid bitwise modulo operations on hot paths
+// nextPowerOfTwo rounds v up to nearest power of two for fast modulo via bitmask
 func nextPowerOfTwo(v uint64) uint64 {
 	v--
 	v |= v >> 1
@@ -58,35 +63,69 @@ func nextPowerOfTwo(v uint64) uint64 {
 	return v
 }
 
-// NewLatency initializes a sharded histogram structure for metric tracking
-// Rounds the number of shards to a power of two to optimize indexing math
+// NewLatency creates a sharded histogram with lazy allocation.
+// Shards start as nil histograms; memory only consumed on actual traffic.
 func NewLatency() *Latency {
 	cpuCores := uint64(runtime.GOMAXPROCS(0) * cpuMultiplier)
 	n := max(cpuCores, minLatencyShards)
 	optimalShards := nextPowerOfTwo(n)
 
-	now := time.Now().UnixNano()
 	lt := &Latency{
-		shards:    make([]shard, optimalShards),
-		numShards: optimalShards,
+		shards:       make([]lazyShard, optimalShards),
+		numShards:    optimalShards,
+		evictionStop: make(chan struct{}),
 	}
 
-	for i := range lt.shards {
-		lt.shards[i].histogram = hdrhistogram.New(woos.MinUS, woos.MaxUS, sigFigPrecision)
-		lt.shards[i].lastRotation = now
-	}
+	// Start background eviction goroutine
+	lt.evictionWg.Add(1)
+	go lt.evictionLoop()
 
 	return lt
 }
 
-// Close permanently stops new latency metrics from being recorded
-// Flips the atomic closed flag to bypass incoming telemetry payloads
+// Close shuts down the latency tracker and stops background eviction
 func (lt *Latency) Close() {
-	lt.closed.Store(true)
+	if lt.closed.CompareAndSwap(false, true) {
+		close(lt.evictionStop)
+		lt.evictionWg.Wait()
+	}
 }
 
-// Record injects a single latency measurement into the partitioned histogram
-// Uses bitwise AND against a power-of-two mask instead of expensive division
+// evictionLoop periodically reclaims memory from idle shards
+func (lt *Latency) evictionLoop() {
+	defer lt.evictionWg.Done()
+	ticker := time.NewTicker(evictionInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			lt.evictIdle()
+		case <-lt.evictionStop:
+			return
+		}
+	}
+}
+
+// evictIdle releases histogram memory from shards unused for shardIdleTimeout
+func (lt *Latency) evictIdle() {
+	cutoff := time.Now().Add(-shardIdleTimeout).UnixNano()
+
+	for i := range lt.shards {
+		s := &lt.shards[i]
+		s.mu.Lock()
+		if s.histogram != nil && s.lastAccess < cutoff {
+			// Let GC collect - don't pool large histograms
+			s.histogram = nil
+			s.count = 0
+			s.sum = 0
+		}
+		s.mu.Unlock()
+	}
+}
+
+// Record adds a latency sample, allocating histogram on first use per shard.
+// Rotates histograms on time windows; creates histograms lazily.
 func (lt *Latency) Record(microseconds int64) {
 	if lt.closed.Load() {
 		return
@@ -103,12 +142,22 @@ func (lt *Latency) Record(microseconds int64) {
 
 	s.mu.Lock()
 	now := time.Now().UnixNano()
-	if now-s.lastRotation > int64(woos.HistogramWindow) {
-		s.histogram.Reset()
-		s.count = emptyCount
-		s.sum = emptySum
+	s.lastAccess = now
+
+	// Lazy allocation: create histogram only on first Record to this shard
+	if s.histogram == nil {
+		s.histogram = hdrhistogram.New(woos.MinUS, woos.MaxUS, sigFigPrecision)
 		s.lastRotation = now
 	}
+
+	// Time-based rotation for fresh histogram windows
+	if now-s.lastRotation > int64(woos.HistogramWindow) {
+		s.histogram.Reset()
+		s.count = 0
+		s.sum = 0
+		s.lastRotation = now
+	}
+
 	s.histogram.RecordValue(v)
 	s.count++
 	s.sum += v
@@ -125,8 +174,8 @@ type LatencySnapshot struct {
 	Avg   int64  `json:"avg_us"`
 }
 
-// Snapshot generates a unified representation of all distributed latency shards
-// Retrieves an empty histogram from the sync pool to reduce garbage collection load
+// Snapshot aggregates all active shards into a unified latency view.
+// Skips unallocated (idle) shards efficiently.
 func (lt *Latency) Snapshot() LatencySnapshot {
 	merged := snapshotHistogramPool.Get().(*hdrhistogram.Histogram)
 	merged.Reset()
@@ -138,9 +187,12 @@ func (lt *Latency) Snapshot() LatencySnapshot {
 	for i := range lt.shards {
 		s := &lt.shards[i]
 		s.mu.Lock()
-		merged.Merge(s.histogram)
-		totalCount += s.count
-		totalSum += s.sum
+		// Skip unallocated shards (no memory allocated, no traffic seen)
+		if s.histogram != nil {
+			merged.Merge(s.histogram)
+			totalCount += s.count
+			totalSum += s.sum
+		}
 		s.mu.Unlock()
 	}
 

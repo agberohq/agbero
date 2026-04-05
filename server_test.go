@@ -14,11 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agberohq/agbero/internal/cluster"
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/hub/cluster"
+	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -34,7 +35,6 @@ func TestNewServer_Basic(t *testing.T) {
 	if s == nil {
 		t.Error("NewServer returned nil")
 	}
-	// listeners is a slice field; nil is valid and behaves as empty
 	if s.listeners == nil {
 		// Accept nil slice as valid initialization state
 	}
@@ -51,7 +51,7 @@ func TestServer_Start_NoConfig(t *testing.T) {
 
 // TestServer_Start_NoGlobalConfig tests that Start requires global config
 func TestServer_Start_NoGlobalConfig(t *testing.T) {
-	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
+	hm := discovery2.NewHost("", discovery2.WithLogger(testLogger))
 	s := NewServer(WithHostManager(hm))
 	err := s.Start("")
 	if err == nil || !strings.Contains(err.Error(), "global config") {
@@ -61,21 +61,25 @@ func TestServer_Start_NoGlobalConfig(t *testing.T) {
 
 // TestServer_Start_Minimal tests minimal server startup with shutdown
 func TestServer_Start_Minimal(t *testing.T) {
-	shutdown := jack.NewShutdown(
-		jack.ShutdownWithTimeout(100 * time.Millisecond),
-	)
-
+	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(100 * time.Millisecond))
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts")
 	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
 		t.Fatal(err)
 	}
+	dataDir := filepath.Join(tmpDir, "data")
+	if err := os.MkdirAll(dataDir, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize keeper for test (uses admin_test.go definition)
+	initKeeperForTest(t, dataDir)
 
 	global := &alaye.Global{
 		Bind: alaye.Bind{HTTP: []string{":0"}},
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
-			DataDir:  tmpDir,
+			DataDir:  dataDir,
 			CertsDir: filepath.Join(tmpDir, "certs"),
 		},
 		Timeouts: alaye.Timeout{
@@ -88,9 +92,16 @@ func TestServer_Start_Minimal(t *testing.T) {
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
 		},
+		Security: alaye.Security{
+			Enabled: alaye.Active,
+			Keeper: alaye.Keeper{
+				Enabled:    alaye.Active,
+				Passphrase: expect.Value("test-passphrase"),
+			},
+		},
 	}
 
-	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
+	hm := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
 	s := NewServer(
 		WithGlobalConfig(global),
 		WithHostManager(hm),
@@ -126,7 +137,6 @@ func TestServer_Start_WithBackend(t *testing.T) {
 		w.Write([]byte("backend response"))
 	}))
 	defer backend.Close()
-
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 
 	tmpDir := t.TempDir()
@@ -134,30 +144,35 @@ func TestServer_Start_WithBackend(t *testing.T) {
 	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
 		t.Fatal(err)
 	}
+	dataDir := filepath.Join(tmpDir, "data")
+	if err := os.MkdirAll(dataDir, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
 
-	// Create host config file
+	// Initialize keeper for test
+	initKeeperForTest(t, dataDir)
+
 	hostFile := filepath.Join(hostsDir, "example.com.hcl")
 	content := fmt.Sprintf(`
 domains = ["example.com"]
 route "/" {
-backend {
-server {
-address = "%s"
-}
-}
+  backend {
+    server {
+      address = "%s"
+    }
+  }
 }
 `, backend.URL)
 	if err := os.WriteFile(hostFile, []byte(content), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
-	// Use a fixed port from PortFree() to avoid :0 binding issues
 	testPort := zulu.PortFree()
 	global := &alaye.Global{
 		Bind: alaye.Bind{HTTP: []string{fmt.Sprintf(":%d", testPort)}},
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
-			DataDir:  tmpDir,
+			DataDir:  dataDir,
 			CertsDir: filepath.Join(tmpDir, "certs"),
 		},
 		Timeouts: alaye.Timeout{
@@ -170,9 +185,16 @@ address = "%s"
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
 		},
+		Security: alaye.Security{
+			Enabled: alaye.Active,
+			Keeper: alaye.Keeper{
+				Enabled:    alaye.Active,
+				Passphrase: expect.Value("test-passphrase"),
+			},
+		},
 	}
 
-	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
+	hm := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
 	if err := hm.ReloadFull(); err != nil {
 		t.Fatal(err)
 	}
@@ -192,10 +214,8 @@ address = "%s"
 		errCh <- s.Start(configPath)
 	}()
 
-	// Wait for server to be ready by polling the port
 	waitForPort(t, testPort)
 
-	// Make a test request using the known port
 	client := &http.Client{Timeout: 2 * time.Second}
 	reqURL := fmt.Sprintf("http://127.0.0.1:%d", testPort)
 	req, err := http.NewRequest("GET", reqURL, nil)
@@ -237,7 +257,6 @@ func TestServer_Reload_DynamicBind(t *testing.T) {
 		w.Write([]byte("backend-ok"))
 	}))
 	defer backend.Close()
-
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts")
 	if err := os.MkdirAll(hostsDir, 0755); err != nil {
@@ -247,42 +266,54 @@ func TestServer_Reload_DynamicBind(t *testing.T) {
 	if err := os.MkdirAll(certsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
+	dataDir := filepath.Join(tmpDir, "data")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize keeper for test
+	initKeeperForTest(t, dataDir)
 
 	hostFile := filepath.Join(hostsDir, "dynamic.hcl")
 	initialHostConfig := fmt.Sprintf(`
 domains = ["localhost"]
 tls { mode = "none" }
 route "/" {
-backend {
-server { address = "%s" }
-}
+  backend {
+    server { address = "%s" }
+  }
 }
 `, backend.URL)
 	writeSyncedFile(t, hostFile, []byte(initialHostConfig))
-
 	configFile := filepath.Join(tmpDir, "agbero.hcl")
 	mainPort := zulu.PortFree()
 	time.Sleep(100 * time.Millisecond)
 
 	initialGlobalConfig := fmt.Sprintf(`version = 1
 bind {
-http = [":%d"]
+  http = [":%d"]
 }
 storage {
-hosts_dir = "%s"
-certs_dir = "%s"
-data_dir = "%s"
+  hosts_dir = "%s"
+  certs_dir = "%s"
+  data_dir = "%s"
 }
 timeouts {
-enabled = true
-read = "10s"
-write = "30s"
-idle = "60s"
-read_header = "5s"
+  enabled = true
+  read = "10s"
+  write = "30s"
+  idle = "60s"
+  read_header = "5s"
 }
-`, mainPort, hostsDir, certsDir, tmpDir)
+security {
+  enabled = true
+  keeper {
+    enabled = true
+    passphrase = "test-passphrase"
+  }
+}
+`, mainPort, hostsDir, certsDir, dataDir)
 	writeSyncedFile(t, configFile, []byte(initialGlobalConfig))
-
 	global, err := parser.LoadGlobal(configFile)
 	if err != nil {
 		t.Fatalf("Failed to parse initial config: %v", err)
@@ -290,7 +321,7 @@ read_header = "5s"
 	woos.DefaultApply(global, configFile)
 
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(10 * time.Second))
-	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
+	hm := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
 
 	if err := hm.Watch(); err != nil {
 		t.Fatalf("Failed to start watcher: %v", err)
@@ -326,23 +357,29 @@ read_header = "5s"
 
 	updatedGlobalConfig := fmt.Sprintf(`version = 1
 bind {
-http = [":%d"]
+  http = [":%d"]
 }
 storage {
-hosts_dir = "%s"
-certs_dir = "%s"
-data_dir = "%s"
+  hosts_dir = "%s"
+  certs_dir = "%s"
+  data_dir = "%s"
 }
 timeouts {
-enabled = true
-read = "10s"
-write = "30s"
-idle = "60s"
-read_header = "5s"
+  enabled = true
+  read = "10s"
+  write = "30s"
+  idle = "60s"
+  read_header = "5s"
 }
-`, targetPort, hostsDir, certsDir, tmpDir)
+security {
+  enabled = true
+  keeper {
+    enabled = true
+    passphrase = "test-passphrase"
+  }
+}
+`, targetPort, hostsDir, certsDir, dataDir)
 	writeSyncedFile(t, configFile, []byte(updatedGlobalConfig))
-
 	writeSyncedFile(t, hostFile, []byte(initialHostConfig+" # trigger reload"))
 
 	waitForPort(t, targetPort)
@@ -376,6 +413,28 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
 		t.Fatal(err)
 	}
+	// Separate data dirs for each node to avoid bbolt lock conflicts
+	dataDir1 := filepath.Join(tmpDir, "data1")
+	dataDir2 := filepath.Join(tmpDir, "data2")
+	if err := os.MkdirAll(dataDir1, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dataDir2, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize keeper for node1
+	initKeeperForTest(t, dataDir1)
+	// Copy the seeded keeper DB to node2 so both have the PPK
+	srcDB := filepath.Join(dataDir1, woos.DefaultKeeperName)
+	dstDB := filepath.Join(dataDir2, woos.DefaultKeeperName)
+	srcData, err := os.ReadFile(srcDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dstDB, srcData, woos.FilePerm); err != nil {
+		t.Fatal(err)
+	}
 
 	port1 := zulu.PortFree()
 	port2 := zulu.PortFree()
@@ -389,8 +448,8 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		},
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
-			DataDir:  tmpDir,
-			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  dataDir1,
+			CertsDir: filepath.Join(tmpDir, "certs1"),
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
@@ -401,6 +460,13 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
+		},
+		Security: alaye.Security{
+			Enabled: alaye.Active,
+			Keeper: alaye.Keeper{
+				Enabled:    alaye.Active,
+				Passphrase: expect.Value("test-passphrase"),
+			},
 		},
 	}
 
@@ -414,8 +480,8 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		},
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
-			DataDir:  tmpDir,
-			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  dataDir2,
+			CertsDir: filepath.Join(tmpDir, "certs2"),
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
@@ -427,13 +493,20 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
 		},
+		Security: alaye.Security{
+			Enabled: alaye.Active,
+			Keeper: alaye.Keeper{
+				Enabled:    alaye.Active,
+				Passphrase: expect.Value("test-passphrase"),
+			},
+		},
 	}
 
 	shutdown1 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 	shutdown2 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 
-	hm1 := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
-	hm2 := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
+	hm1 := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
+	hm2 := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
 
 	s1 := NewServer(
 		WithGlobalConfig(global1),
@@ -466,6 +539,8 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		cm1 = s1.clusterManager
 		cmMu.Unlock()
 	}()
+	// Small delay to let node1 acquire keeper lock first
+	time.Sleep(100 * time.Millisecond)
 	go func() {
 		if err := s2.Start(configPath); err != nil && !strings.Contains(err.Error(), "server closed") {
 			errCh2 <- err
@@ -510,7 +585,7 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		t.Fatalf("Failed to marshal route: %v", err)
 	}
 
-	key := fmt.Sprintf("%s%s|%s", discovery.ClusterRoutePrefix, "test.example.com", "/api/v1/test")
+	key := fmt.Sprintf("%s%s|%s", discovery2.ClusterRoutePrefix, "test.example.com", "/api/v1/test")
 	cm1.Set(key, val)
 
 	time.Sleep(1 * time.Second)
@@ -570,6 +645,27 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
 		t.Fatal(err)
 	}
+	// Separate data dirs for each node
+	dataDir1 := filepath.Join(tmpDir, "data1")
+	dataDir2 := filepath.Join(tmpDir, "data2")
+	if err := os.MkdirAll(dataDir1, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dataDir2, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize keeper for node1 and copy to node2
+	initKeeperForTest(t, dataDir1)
+	srcDB := filepath.Join(dataDir1, woos.DefaultKeeperName)
+	dstDB := filepath.Join(dataDir2, woos.DefaultKeeperName)
+	srcData, err := os.ReadFile(srcDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dstDB, srcData, woos.FilePerm); err != nil {
+		t.Fatal(err)
+	}
 
 	port1 := zulu.PortFree()
 	port2 := zulu.PortFree()
@@ -583,8 +679,8 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		},
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
-			DataDir:  tmpDir,
-			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  dataDir1,
+			CertsDir: filepath.Join(tmpDir, "certs1"),
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
@@ -595,6 +691,13 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
+		},
+		Security: alaye.Security{
+			Enabled: alaye.Active,
+			Keeper: alaye.Keeper{
+				Enabled:    alaye.Active,
+				Passphrase: expect.Value("test-passphrase"),
+			},
 		},
 	}
 
@@ -608,8 +711,8 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		},
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
-			DataDir:  tmpDir,
-			CertsDir: filepath.Join(tmpDir, "certs"),
+			DataDir:  dataDir2,
+			CertsDir: filepath.Join(tmpDir, "certs2"),
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
@@ -621,13 +724,20 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
 		},
+		Security: alaye.Security{
+			Enabled: alaye.Active,
+			Keeper: alaye.Keeper{
+				Enabled:    alaye.Active,
+				Passphrase: expect.Value("test-passphrase"),
+			},
+		},
 	}
 
 	shutdown1 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 	shutdown2 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 
-	hm1 := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
-	hm2 := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
+	hm1 := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
+	hm2 := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
 
 	s1 := NewServer(
 		WithGlobalConfig(global1),
@@ -660,6 +770,7 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		cm1 = s1.clusterManager
 		cmMu.Unlock()
 	}()
+	time.Sleep(100 * time.Millisecond)
 	go func() {
 		if err := s2.Start(configPath); err != nil && !strings.Contains(err.Error(), "server closed") {
 			errCh2 <- err
@@ -704,7 +815,7 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		t.Fatalf("Failed to marshal route: %v", err)
 	}
 
-	key := fmt.Sprintf("%s%s|%s", discovery.ClusterRoutePrefix, "temp.example.com", "/ephemeral")
+	key := fmt.Sprintf("%s%s|%s", discovery2.ClusterRoutePrefix, "temp.example.com", "/ephemeral")
 	cm1.Set(key, val)
 	time.Sleep(500 * time.Millisecond)
 
@@ -761,7 +872,6 @@ func TestServer_WithFirewall(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-
 	global := &alaye.Global{
 		Security: alaye.Security{
 			Enabled: alaye.Active,
@@ -795,11 +905,10 @@ func TestServer_WithFirewall(t *testing.T) {
 
 // TestServer_Options tests the option pattern
 func TestServer_Options(t *testing.T) {
-	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
+	hm := discovery2.NewHost("", discovery2.WithLogger(testLogger))
 	global := &alaye.Global{}
 	logger := ll.New("test").Disable()
 	shutdown := jack.NewShutdown()
-
 	s := NewServer(
 		WithHostManager(hm),
 		WithGlobalConfig(global),
@@ -824,14 +933,13 @@ func TestServer_Options(t *testing.T) {
 // TestServer_ClusterHandlers tests cluster integration handler methods
 func TestServer_ClusterHandlers(t *testing.T) {
 	tmpDir := t.TempDir()
-	hm := discovery.NewHost(woos.NewFolder(tmpDir), discovery.WithLogger(testLogger))
+	hm := discovery2.NewHost(woos.NewFolder(tmpDir), discovery2.WithLogger(testLogger))
 	global := &alaye.Global{
 		Storage: alaye.Storage{
 			HostsDir: tmpDir,
 			DataDir:  tmpDir,
 		},
 	}
-
 	s := NewServer(
 		WithHostManager(hm),
 		WithGlobalConfig(global),
@@ -860,7 +968,6 @@ func TestServer_configComputeSHA(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte("test config"), woos.FilePerm); err != nil {
 		t.Fatal(err)
 	}
-
 	hostsDir := filepath.Join(tmpDir, "hosts")
 	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
 		t.Fatal(err)
@@ -906,7 +1013,6 @@ func TestServer_shutdownImpl(t *testing.T) {
 	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
 		t.Fatal(err)
 	}
-
 	global := &alaye.Global{
 		Bind: alaye.Bind{HTTP: []string{":0"}},
 		Storage: alaye.Storage{
@@ -922,7 +1028,7 @@ func TestServer_shutdownImpl(t *testing.T) {
 		},
 	}
 
-	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
+	hm := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
 	s := NewServer(
 		WithGlobalConfig(global),
 		WithHostManager(hm),
@@ -942,11 +1048,10 @@ func TestServer_shutdownImpl(t *testing.T) {
 
 // TestServer_Reload_ZeroDowntime_And_NoRace verifies that Reload() gracefully drains
 // old connections asynchronously without blocking the launch of new listeners.
+// TestServer_Reload_ZeroDowntime_And_NoRace verifies that Reload() gracefully drains
+// old connections asynchronously without blocking the launch of new listeners.
 func TestServer_Reload_ZeroDowntime_And_NoRace(t *testing.T) {
-	// slowReady is closed when the slow backend has received the request —
-	// gives us a hard signal that the request is genuinely in-flight before reload.
 	slowReady := make(chan struct{})
-
 	slowBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-slowReady:
@@ -972,42 +1077,54 @@ func TestServer_Reload_ZeroDowntime_And_NoRace(t *testing.T) {
 	}
 	configPath := filepath.Join(tmpDir, "config.hcl")
 	hostPath := filepath.Join(hostsDir, "domain.hcl")
+	dataDir := filepath.Join(tmpDir, "data")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize keeper for test
+	initKeeperForTest(t, dataDir)
 
 	proxyPort := zulu.PortFree()
 
 	writeConfigs := func(port int, backendURL string) {
 		globalCfg := fmt.Sprintf(`version = 1
 bind {
-    http = [":%d"]
+  http = [":%d"]
 }
 storage {
-    hosts_dir = "%s"
-    data_dir = "%s"
+  hosts_dir = "%s"
+  data_dir = "%s"
 }
 timeouts {
-    enabled = true
-    read = "10s"
-    write = "30s"
-    idle = "60s"
+  enabled = true
+  read = "10s"
+  write = "30s"
+  idle = "60s"
 }
-`, port, hostsDir, tmpDir)
+security {
+  enabled = true
+  keeper {
+    enabled = true
+    passphrase = "test-passphrase"
+  }
+}
+`, port, hostsDir, dataDir)
 		writeSyncedFile(t, configPath, []byte(globalCfg))
-
 		hostCfg := fmt.Sprintf(`domains = ["localhost"]
 tls {
-    mode = "none"
+  mode = "none"
 }
 route "/" {
-    backend {
-        server {
-            address = "%s"
-        }
+  backend {
+    server {
+      address = "%s"
     }
+  }
 }
 `, backendURL)
 		writeSyncedFile(t, hostPath, []byte(hostCfg))
 	}
-
 	writeConfigs(proxyPort, slowBackend.URL)
 
 	global, err := parser.LoadGlobal(configPath)
@@ -1017,7 +1134,7 @@ route "/" {
 	woos.DefaultApply(global, configPath)
 
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(10 * time.Second))
-	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
+	hm := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
 
 	if err := hm.Watch(); err != nil {
 		t.Fatalf("Failed to start watcher: %v", err)
@@ -1041,7 +1158,6 @@ route "/" {
 
 	waitForPort(t, proxyPort)
 
-	// Fire the slow request
 	slowReq, err := http.NewRequestWithContext(
 		context.Background(), "GET",
 		fmt.Sprintf("http://127.0.0.1:%d", proxyPort), nil,
@@ -1063,22 +1179,15 @@ route "/" {
 		slowRespCh <- resp
 	}()
 
-	// Wait for hard signal that the slow backend received the request —
-	// no time.Sleep, no guessing.
 	select {
 	case <-slowReady:
-		// request is genuinely in-flight inside the slow backend
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for slow backend to receive request")
 	}
 
-	// Now safe to reload — slow request is already being served
 	writeConfigs(proxyPort, fastBackend.URL)
 	s.Reload()
 
-	// Poll until the proxy routes to the fast backend.
-	// Each iteration gets its own fresh context so a slow iteration
-	// doesn't poison the next one.
 	var fastResponse string
 	pollDeadline := time.Now().Add(5 * time.Second)
 	fastClient := &http.Client{Timeout: 2 * time.Second}
@@ -1116,7 +1225,6 @@ route "/" {
 		t.Fatal("timed out waiting for fast backend response after reload")
 	}
 
-	// Assert the in-flight slow request completed safely
 	select {
 	case resp := <-slowRespCh:
 		defer resp.Body.Close()
@@ -1146,7 +1254,6 @@ func writeSyncedFile(t *testing.T, path string, data []byte) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-
 	if _, err := f.Write(data); err != nil {
 		t.Fatal(err)
 	}
@@ -1170,7 +1277,7 @@ func waitForPort(t *testing.T, port int) {
 	t.Fatalf("Timeout waiting for port %d to open", port)
 }
 
-func isPortOpen(t *testing.T, port int) bool {
+func isPortOpen(t testing.TB, port int) bool {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
 	if err == nil {

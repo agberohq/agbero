@@ -31,7 +31,7 @@ func NewManager(ctx context.Context, logger *ll.Logger, cfg *alaye.Wasm) (*Manag
 		return nil, err
 	}
 
-	// Safe copy of config
+	// Keeper copy of config
 	safeConfig := make(map[string]string)
 	if cfg.Config != nil {
 		maps.Copy(safeConfig, cfg.Config)
@@ -41,7 +41,9 @@ func NewManager(ctx context.Context, logger *ll.Logger, cfg *alaye.Wasm) (*Manag
 		return nil, err
 	}
 
-	r := wazero.NewRuntime(ctx)
+	// Cap Wasm memory to 512 pages (32 Megabytes) per instance
+	runtimeConfig := wazero.NewRuntimeConfig().WithMemoryLimitPages(512)
+	r := wazero.NewRuntimeWithConfig(ctx, runtimeConfig)
 	wasi_snapshot_preview1.MustInstantiate(ctx, r)
 
 	compiled, err := r.CompileModule(ctx, code)

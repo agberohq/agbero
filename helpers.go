@@ -3,22 +3,13 @@ package agbero
 import (
 	"encoding/json"
 	"io"
+	"net/http"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 )
 
-var logArgsPool = sync.Pool{
-	New: func() any {
-		s := make([]any, 0, 16)
-		return &s
-	},
-}
-
-// sanitizeGlobalConfig returns a deep clone of the global config with all secrets
-// and sensitive paths replaced with "***" before serving it over the admin API.
 func sanitizeGlobalConfig(g *alaye.Global) *alaye.Global {
 	b, _ := json.Marshal(g)
 	var clone alaye.Global
@@ -43,16 +34,20 @@ func sanitizeGlobalConfig(g *alaye.Global) *alaye.Global {
 		clone.LetsEncrypt.Email = "***"
 	}
 
+	clone.Storage.HostsDir = "<configured>"
+	clone.Storage.CertsDir = "<configured>"
+	clone.Storage.DataDir = "<configured>"
+	clone.Storage.WorkDir = "<configured>"
+
 	return &clone
 }
 
-// sanitizeAdminConfig redacts all credential and secret fields in the admin config block.
 func sanitizeAdminConfig(cfg *alaye.Admin) {
-	if cfg.BasicAuth.Enabled.Active() {
-		for i := range cfg.BasicAuth.Users {
-			cfg.BasicAuth.Users[i] = "***"
-		}
-	}
+	//if cfg.BasicAuth.Enabled.Active() {
+	//	for i := range cfg.BasicAuth.Users {
+	//		cfg.BasicAuth.Users[i] = "***"
+	//	}
+	//}
 	if cfg.JWTAuth.Enabled.Active() {
 		cfg.JWTAuth.Secret = "***"
 	}
@@ -65,7 +60,6 @@ func sanitizeAdminConfig(cfg *alaye.Admin) {
 	}
 }
 
-// sanitizeHostConfigs returns deep clones of all host configs with secrets redacted.
 func sanitizeHostConfigs(hosts map[string]*alaye.Host) map[string]*alaye.Host {
 	out := make(map[string]*alaye.Host)
 	for k, v := range hosts {
@@ -81,7 +75,6 @@ func sanitizeHostConfigs(hosts map[string]*alaye.Host) map[string]*alaye.Host {
 	return out
 }
 
-// sanitizeRouteConfig redacts all per-route credential and secret fields.
 func sanitizeRouteConfig(route *alaye.Route) {
 	if route.BasicAuth.Enabled.Active() {
 		for j := range route.BasicAuth.Users {
@@ -103,8 +96,6 @@ func sanitizeRouteConfig(route *alaye.Route) {
 	}
 }
 
-// readLastLogLines reads the last n lines from filename by scanning backwards in
-// fixed-size byte chunks, preserving correct line boundaries across chunk edges.
 func readLastLogLines(filename string, n int) ([]string, error) {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -160,4 +151,20 @@ func readLastLogLines(filename string, n int) ([]string, error) {
 	}
 
 	return lines, nil
+}
+
+// detectFormat reads ?format= or the Accept header to select hcl vs json.
+func detectFormat(r *http.Request) string {
+	if format := r.URL.Query().Get("format"); format != "" {
+		switch strings.ToLower(format) {
+		case "hcl":
+			return "hcl"
+		case "json":
+			return "json"
+		}
+	}
+	if strings.Contains(r.Header.Get("Accept"), "application/hcl") {
+		return "hcl"
+	}
+	return "json"
 }

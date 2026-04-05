@@ -13,7 +13,7 @@ PLAY_ARCH ?= amd64
 REPO_URL = https://github.com/agberohq/agbero-ui
 TARGET_DIR = internal/operation/admin
 TEMP_DIR = tmp
-
+MINIFY_BIN := $(shell go env GOPATH)/bin/minify
 
 # Git remote for pushing tags
 REMOTE ?= origin
@@ -131,13 +131,13 @@ clean:
 
 
 # Pull and filter specific assets
-ui:
+ui: $(MINIFY_BIN)
 	@echo "Fetching clean assets from $(REPO_URL)..."
 	@mkdir -p $(TARGET_DIR) $(TEMP_DIR)
 	# 1. Clone only the latest commit to a temp folder (still has .git)
 	git clone --depth 1 $(REPO_URL) $(TEMP_DIR)
 	# 2. Sync ONLY html, css, js into your target dir (this ignores .git and README)
-	rsync -avm --include='*/' --include='*.html' --include='*.css' --include='*.js' --exclude='*' $(TEMP_DIR)/ $(TARGET_DIR)/
+	rsync -avm --delete --include='*/' --include='*.html' --include='*.css' --include='*.js' --exclude='*' $(TEMP_DIR)/ $(TARGET_DIR)/
 	# 3. Cleanup temp folder
 	@rm -rf $(TEMP_DIR)
 	@echo "UI Assets successfully updated in $(TARGET_DIR)"

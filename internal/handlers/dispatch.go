@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/middleware/h3"
 	"github.com/agberohq/agbero/internal/middleware/memory"
 	"github.com/agberohq/agbero/internal/middleware/observability"
@@ -60,33 +60,8 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if info := wellknown.NewPathInfo(r.URL.Path); info != nil {
-		if info.IsACMEChallenge() {
-			if m.cfg.TLSManager != nil && m.cfg.TLSManager.Challenges != nil {
-				if token, ok := info.GetACMEToken(); ok {
-					if keyAuth, ok := m.cfg.TLSManager.Challenges.GetKeyAuth(token); ok {
-						w.Header().Set("Content-Type", "text/plain")
-						w.WriteHeader(http.StatusOK)
-						w.Write([]byte(keyAuth))
-						m.logRequest(r.Host, r, start, http.StatusOK, int64(len(keyAuth)))
-						return
-					}
-				}
-			}
-			http.Error(w, "Challenge not found", http.StatusNotFound)
-			return
-		}
-
-		if routeKey, ok := info.GetWebhookRouteKey(); ok {
-			if m.cfg.CookManager != nil {
-				m.cfg.CookManager.HandleWebhook(w, r, routeKey)
-				m.logRequest("Webhook", r, start, http.StatusAccepted, 0)
-			} else {
-				http.Error(w, "Git manager disabled", http.StatusServiceUnavailable)
-				m.logRequest("Webhook", r, start, http.StatusServiceUnavailable, 0)
-			}
-			return
-		}
+	if m.wellKnownProcess(w, r) {
+		return
 	}
 
 	var host string
@@ -279,6 +254,11 @@ func (m *Manager) handleFavicon(w http.ResponseWriter, r *http.Request) {
 // redirectToHTTPS constructs and issues a permanent redirect to the HTTPS equivalent of the current request.
 // It respects host-specific bind ports and falls back to global HTTPS configuration for the target URL.
 func (m *Manager) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
+
+	if m.wellKnownProcess(w, r) {
+		return
+	}
+
 	host, _, err := net.SplitHostPort(r.Host)
 	if err != nil {
 		host = r.Host
@@ -345,9 +325,9 @@ func (m *Manager) logRequest(host string, r *http.Request, start time.Time, stat
 	if m.cfg.Global != nil {
 		ua := r.UserAgent()
 		if m.cfg.Global.Logging.Truncate.Active() {
-			args = append(args, "ua", zulu.Truncate(ua, 50))
+			args = append(args, "ua", zulu.Truncate(ua, woos.LogUATruncateLen))
 		} else {
-			args = append(args, "ua", zulu.Truncate(ua, 50))
+			args = append(args, "ua", ua)
 		}
 		if m.cfg.Global.Logging.BotChecker.Active() {
 			args = append(args, "bot", m.botChecker.IsBot(ua))
@@ -357,4 +337,38 @@ func (m *Manager) logRequest(host string, r *http.Request, start time.Time, stat
 	m.cfg.Resource.Logger.Fields(args...).Info(r.Method)
 	*argsPtr = args
 	m.logArgsPool.Put(argsPtr)
+}
+
+func (m *Manager) wellKnownProcess(w http.ResponseWriter, r *http.Request) bool {
+	start := time.Now()
+	if info := wellknown.NewPathInfo(r.URL.Path); info != nil {
+		if info.IsACMEChallenge() {
+			if m.cfg.TLSManager != nil && m.cfg.TLSManager.Challenges != nil {
+				if token, ok := info.GetACMEToken(); ok {
+					if keyAuth, ok := m.cfg.TLSManager.Challenges.GetKeyAuth(token); ok {
+						w.Header().Set("Content-Type", "text/plain")
+						w.WriteHeader(http.StatusOK)
+						w.Write([]byte(keyAuth))
+						m.logRequest(r.Host, r, start, http.StatusOK, int64(len(keyAuth)))
+						return true
+					}
+				}
+			}
+			http.Error(w, "Challenge not found", http.StatusNotFound)
+			return true
+		}
+
+		if routeKey, ok := info.GetWebhookRouteKey(); ok {
+			if m.cfg.CookManager != nil {
+				m.cfg.CookManager.HandleWebhook(w, r, routeKey)
+				m.logRequest("Webhook", r, start, http.StatusAccepted, 0)
+			} else {
+				http.Error(w, "Git manager disabled", http.StatusServiceUnavailable)
+				m.logRequest("Webhook", r, start, http.StatusServiceUnavailable, 0)
+			}
+			return true
+		}
+	}
+
+	return false
 }

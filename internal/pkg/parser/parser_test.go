@@ -25,7 +25,7 @@ func writeTemp(t *testing.T, content string) string {
 	return f.Name()
 }
 
-// --- Global config tests ---
+// Global config tests
 
 const minimalGlobalHCL = `
 version = 1
@@ -129,7 +129,7 @@ func TestUnmarshalGlobal_full(t *testing.T) {
 	}
 }
 
-// --- Host config tests ---
+// Host config tests
 
 const proxyHostHCL = `
 domains = ["example.com", "www.example.com"]
@@ -248,7 +248,7 @@ func TestUnmarshalHost_webRoute(t *testing.T) {
 	}
 }
 
-// --- Enabled coercion tests ---
+// Enabled coercion tests
 
 func TestEnabled_fromBoolTrue(t *testing.T) {
 	hclContent := `
@@ -347,7 +347,7 @@ admin {
 	}
 }
 
-// --- Duration decode tests ---
+// Duration decode tests
 
 func TestDuration_fromGoString(t *testing.T) {
 	hclContent := `
@@ -401,7 +401,7 @@ route "/" {
 	}
 }
 
-// --- Env var interpolation tests ---
+// Env var interpolation tests
 
 func TestEnvVar_interpolation(t *testing.T) {
 	t.Setenv("TEST_ADMIN_PORT", "9191")
@@ -448,7 +448,7 @@ admin {
 	}
 }
 
-// --- Marshal / round-trip tests ---
+// Marshal / round-trip tests
 
 func TestMarshalBytes_roundTrip(t *testing.T) {
 	original := minimalGlobalHCL
@@ -504,7 +504,7 @@ func TestMarshalFile_roundTrip(t *testing.T) {
 	}
 }
 
-// --- ValidateHCL tests ---
+// ValidateHCL tests
 
 func TestValidateHCL_valid(t *testing.T) {
 	data := []byte(`
@@ -540,7 +540,7 @@ func TestValidateHCL_diagnosticContainsPosition(t *testing.T) {
 	}
 }
 
-// --- LoadGlobal version mismatch tests ---
+// LoadGlobal version mismatch tests
 
 func TestLoadGlobal_correctVersion(t *testing.T) {
 	hclContent := `
@@ -579,7 +579,7 @@ func TestLoadGlobal_emptyPath(t *testing.T) {
 	}
 }
 
-// --- ParseHostConfig tests ---
+// ParseHostConfig tests
 
 func TestParseHostConfig_missingFile(t *testing.T) {
 	_, err := ParseHostConfig("/tmp/agbero_nonexistent_file_xyz.hcl")
@@ -599,7 +599,7 @@ func TestParseHostConfig_valid(t *testing.T) {
 	}
 }
 
-// --- Marshal writer test ---
+// Marshal writer test
 
 func TestMarshal_writer(t *testing.T) {
 	path := writeTemp(t, minimalGlobalHCL)
@@ -614,5 +614,92 @@ func TestMarshal_writer(t *testing.T) {
 	}
 	if sb.Len() == 0 {
 		t.Error("Marshal: wrote zero bytes")
+	}
+}
+
+// Omitempty and Tag Parsing tests
+
+func TestParseTag(t *testing.T) {
+	tests := []struct {
+		tag      string
+		wantName string
+		wantKind string
+	}{
+		{"", "", ""},
+		{"-", "-", ""},
+		{"backend,block,omitempty", "backend", "block"},
+		{"web,block,omitempty", "web", "block"},
+		{"domains,attr", "domains", "attr"},
+		{"address,attr,omitempty", "address", "attr"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			name, kind := parseTag(tt.tag)
+			if name != tt.wantName {
+				t.Errorf("parseTag(%q) name = %q, want %q", tt.tag, name, tt.wantName)
+			}
+			if kind != tt.wantKind {
+				t.Errorf("parseTag(%q) kind = %q, want %q", tt.tag, kind, tt.wantKind)
+			}
+		})
+	}
+}
+
+func TestWithOmitempty(t *testing.T) {
+	hclContent := `
+domains = ["omitempty.example.com"]
+
+route "/web" {
+  web {
+    enabled = "on"
+    root    = "/var/www/html"
+  }
+}
+
+route "/backend" {
+  backend {
+    enabled = "on"
+    server {
+      address = "http://127.0.0.1:8080"
+    }
+  }
+}
+`
+	path := writeTemp(t, hclContent)
+	defer os.Remove(path)
+
+	var h alaye.Host
+	p := NewParser(path)
+	if err := p.Unmarshal(&h); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if len(h.Routes) != 2 {
+		t.Fatalf("Expected 2 routes, got %d", len(h.Routes))
+	}
+
+	// Verify the 'web' block (tagged with `hcl:"web,block,omitempty"`)
+	webRoute := h.Routes[0]
+	if webRoute.Path != "/web" {
+		t.Errorf("Expected path '/web', got %q", webRoute.Path)
+	}
+	if webRoute.Web.Enabled != alaye.Active {
+		t.Errorf("Expected Web.Enabled to be Active, got %v", webRoute.Web.Enabled)
+	}
+	if webRoute.Web.Root.String() != "/var/www/html" {
+		t.Errorf("Expected Web.Root to be '/var/www/html', got %q", webRoute.Web.Root)
+	}
+
+	// Verify the 'backend' block (tagged with `hcl:"backend,block,omitempty"`)
+	backendRoute := h.Routes[1]
+	if backendRoute.Path != "/backend" {
+		t.Errorf("Expected path '/backend', got %q", backendRoute.Path)
+	}
+	if backendRoute.Backends.Enabled != alaye.Active {
+		t.Errorf("Expected Backends.Enabled to be Active, got %v", backendRoute.Backends.Enabled)
+	}
+	if len(backendRoute.Backends.Servers) == 0 || backendRoute.Backends.Servers[0].Address.String() != "http://127.0.0.1:8080" {
+		t.Errorf("Expected backend server address 'http://127.0.0.1:8080', got %v", backendRoute.Backends.Servers)
 	}
 }

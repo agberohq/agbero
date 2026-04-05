@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,15 +14,16 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/pkg/cook"
-	"github.com/agberohq/agbero/internal/pkg/orchestrator"
+	"github.com/agberohq/agbero/internal/hub/cook"
+	"github.com/agberohq/agbero/internal/hub/orchestrator"
+	resource2 "github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/olekukonko/ll"
 )
 
-func NewTestConfig(t *testing.T) resource.Proxy {
+func NewTestConfig(t *testing.T) resource2.Proxy {
 	t.Helper()
 	global := &alaye.Global{
 		Timeouts: alaye.Timeout{
@@ -47,12 +47,12 @@ func NewTestConfig(t *testing.T) resource.Proxy {
 	host := &alaye.Host{
 		Domains: []string{"example.com", "test.local"},
 	}
-	res := resource.New()
+	res := resource2.New()
 	cm, _ := cook.NewManager(cook.ManagerConfig{
 		WorkDir: t.TempDir(),
 		Logger:  ll.New("test").Disable(),
 	})
-	return resource.Proxy{
+	return resource2.Proxy{
 		Global:   global,
 		Host:     host,
 		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
@@ -64,21 +64,21 @@ func NewTestConfig(t *testing.T) resource.Proxy {
 func TestConfig_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
-		cfg     resource.Proxy
+		cfg     resource2.Proxy
 		wantErr bool
 	}{
 		{
 			name: "valid config",
-			cfg: resource.Proxy{
+			cfg: resource2.Proxy{
 				Global:   &alaye.Global{},
 				Host:     &alaye.Host{Domains: []string{"example.com"}},
-				Resource: resource.New(),
+				Resource: resource2.New(),
 			},
 			wantErr: false,
 		},
 		{
 			name: "nil resource",
-			cfg: resource.Proxy{
+			cfg: resource2.Proxy{
 				Global: &alaye.Global{},
 				Host:   &alaye.Host{Domains: []string{"example.com"}},
 			},
@@ -86,26 +86,26 @@ func TestConfig_Validate(t *testing.T) {
 		},
 		{
 			name: "nil global",
-			cfg: resource.Proxy{
+			cfg: resource2.Proxy{
 				Host:     &alaye.Host{Domains: []string{"example.com"}},
-				Resource: resource.New(),
+				Resource: resource2.New(),
 			},
 			wantErr: true,
 		},
 		{
 			name: "nil host",
-			cfg: resource.Proxy{
+			cfg: resource2.Proxy{
 				Global:   &alaye.Global{},
-				Resource: resource.New(),
+				Resource: resource2.New(),
 			},
 			wantErr: true,
 		},
 		{
 			name: "empty host domains",
-			cfg: resource.Proxy{
+			cfg: resource2.Proxy{
 				Global:   &alaye.Global{},
 				Host:     &alaye.Host{Domains: []string{}},
-				Resource: resource.New(),
+				Resource: resource2.New(),
 			},
 			wantErr: true,
 		},
@@ -138,7 +138,7 @@ func TestNewRoute_NilRoute(t *testing.T) {
 }
 
 func TestNewRoute_InvalidConfig(t *testing.T) {
-	cfg := resource.Proxy{}
+	cfg := resource2.Proxy{}
 	route := NewRoute(cfg, &alaye.Route{Path: "/"})
 	if route == nil {
 		t.Fatal("NewRoute should return fallback route, not nil")
@@ -695,7 +695,7 @@ func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
 			Enabled: alaye.Active,
 			Root:    alaye.WebRoot(root),
 		},
-		CompressionConfig: alaye.Compression{
+		Compression: alaye.Compression{
 			Enabled: alaye.Active,
 			Type:    "gzip",
 			Level:   5,
@@ -877,7 +877,7 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 			Enabled: alaye.Active,
 			Root:    alaye.WebRoot(root),
 		},
-		CompressionConfig: alaye.Compression{
+		Compression: alaye.Compression{
 			Enabled: alaye.Active,
 			Type:    "gzip",
 			Level:   5,
@@ -1216,8 +1216,9 @@ func TestRouteHandler_WithForwardAuth(t *testing.T) {
 		Enabled: alaye.Active,
 		Path:    "/",
 		ForwardAuth: alaye.ForwardAuth{
-			Enabled: alaye.Active,
-			URL:     authServer.URL,
+			Enabled:      alaye.Active,
+			AllowPrivate: true,
+			URL:          authServer.URL,
 			Request: alaye.ForwardAuthRequest{
 				Enabled: alaye.Active,
 			},
@@ -1744,35 +1745,36 @@ func TestRouteHandler_RequestContextPropagation(t *testing.T) {
 	}
 }
 
-func TestRouteHandler_MaxBodySize(t *testing.T) {
-	cfg := NewTestConfig(t)
-	cfg.Host.Limits.MaxBodySize = 1024
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-	route := &alaye.Route{
-		Enabled: alaye.Active,
-		Path:    "/",
-		Backends: alaye.Backend{
-			Enabled: alaye.Active,
-			Servers: alaye.NewServers(srv.URL),
-		},
-	}
-	h := NewRoute(cfg, route)
-	if h == nil {
-		t.Fatal("route handler should not be nil")
-	}
-	defer h.Close()
-	body := bytes.Repeat([]byte("x"), int(cfg.Host.Limits.MaxBodySize)+1)
-	req := httptest.NewRequest("POST", "/", bytes.NewReader(body))
-	req.ContentLength = int64(len(body))
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-	if w.Code != http.StatusRequestEntityTooLarge {
-		t.Errorf("Expected 413, got %d", w.Code)
-	}
-}
+// Handled by dispatcher already
+//func TestRouteHandler_MaxBodySize(t *testing.T) {
+//	cfg := NewTestConfig(t)
+//	cfg.Host.Limits.MaxBodySize = 1024
+//	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//		w.WriteHeader(http.StatusOK)
+//	}))
+//	defer srv.Close()
+//	route := &alaye.Route{
+//		Enabled: alaye.Active,
+//		Path:    "/",
+//		Backends: alaye.Backend{
+//			Enabled: alaye.Active,
+//			Servers: alaye.NewServers(srv.URL),
+//		},
+//	}
+//	h := NewRoute(cfg, route)
+//	if h == nil {
+//		t.Fatal("route handler should not be nil")
+//	}
+//	defer h.Close()
+//	body := bytes.Repeat([]byte("x"), int(cfg.Host.Limits.MaxBodySize)+1)
+//	req := httptest.NewRequest("POST", "/", bytes.NewReader(body))
+//	req.ContentLength = int64(len(body))
+//	w := httptest.NewRecorder()
+//	h.ServeHTTP(w, req)
+//	if w.Code != http.StatusRequestEntityTooLarge {
+//		t.Errorf("Expected 413, got %d", w.Code)
+//	}
+//}
 
 // TestRouteHandler_Serverless_Selection verifies that a serverless route correctly dispatches requests.
 // It confirms that the underlying serverless multiplexer handles  and  paths through the main Route handler.
@@ -1810,9 +1812,9 @@ func TestRouteHandler_Serverless_Selection(t *testing.T) {
 				{
 					Name:    "echo",
 					Command: cmd,
-					Env: map[string]alaye.Value{
-						"GO_WANT_HELPER_PROCESS": alaye.Value("1"),
-						"TEST_WORKER_OUTPUT":     alaye.Value(uniqueWorkerOutput),
+					Env: map[string]expect.Value{
+						"GO_WANT_HELPER_PROCESS": expect.Value("1"),
+						"TEST_WORKER_OUTPUT":     expect.Value(uniqueWorkerOutput),
 					},
 				},
 			},

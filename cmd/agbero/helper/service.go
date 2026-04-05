@@ -9,8 +9,9 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/pkg/installer"
+	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/pkg/ui"
+	"github.com/agberohq/agbero/internal/setup"
 	"github.com/kardianos/service"
 )
 
@@ -18,20 +19,14 @@ type Service struct {
 	p *Helper
 }
 
-// requiresRoot checks whether the current process has the privileges needed
-// to manage system services and warns the user if not.
-//
-// On Unix: root is euid 0.
-// On Windows: elevation check is not straightforward — we let the OS error
-// surface naturally and mapError provides a clear message.
 func (s *Service) requiresRoot(cmd string) bool {
 	if runtime.GOOS == woos.Windows {
-		return true // let Windows surface its own elevation error
+		return true
 	}
 	if os.Geteuid() == 0 {
 		return true
 	}
-	// Not root — show a clear hint before attempting.
+
 	exe := "agbero"
 	if len(os.Args) > 0 {
 		exe = filepath.Base(os.Args[0])
@@ -43,7 +38,45 @@ func (s *Service) requiresRoot(cmd string) bool {
 	return false
 }
 
-func (s *Service) Install(svc service.Service, installHere bool) {
+// preflightCheck simulates the critical boot steps to ensure the service won't crash on start
+func (s *Service) preflightCheck(configPath string) error {
+	global, err := loadGlobal(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to parse configuration file: %w", err)
+	}
+
+	dataDir := global.Storage.DataDir
+	if dataDir == "" {
+		ctx := setup.NewContext(s.p.Logger)
+		dataDir = ctx.Paths.DataDir.Path()
+	}
+
+	store, err := secrets.OpenStore(dataDir, &global.Security.Keeper, s.p.Logger)
+	if err != nil {
+		return fmt.Errorf("keeper validation failed (wrong passphrase?): %w", err)
+	}
+	defer store.Close()
+
+	if store.IsLocked() {
+		return fmt.Errorf(
+			"Keeper is locked. The service will crash on startup because it cannot decrypt its secrets.\n" +
+				"Hint: Ensure 'AGBERO_PASSPHRASE' is exported, or 'keeper.passphrase' is correctly configured in agbero.hcl.",
+		)
+	}
+
+	// Verify critical system secrets exist (ensures 'agbero init' was run successfully)
+	if _, err := store.GetNamespacedFull("vault", "system", "auth/ppk"); err != nil {
+		return fmt.Errorf("missing internal auth key. Did you run 'agbero init'?")
+	}
+
+	if _, err := store.GetNamespacedFull("vault", "system", "auth/jwt_secret"); err != nil {
+		return fmt.Errorf("missing admin JWT secret. Did you run 'agbero init'?")
+	}
+
+	return nil
+}
+
+func (s *Service) Install(svc service.Service, installHere bool, configPath string) {
 	u := ui.New()
 	if installHere {
 		u.InfoLine("local mode — service registration skipped")
@@ -52,6 +85,14 @@ func (s *Service) Install(svc service.Service, installHere bool) {
 	if !s.requiresRoot("install") {
 		return
 	}
+
+	u.Step("run", "Running pre-flight checks...")
+	if err := s.preflightCheck(configPath); err != nil {
+		s.p.Logger.Fatal("Pre-flight check failed! Fix the errors below before installing the service:\n\n", err)
+		return
+	}
+	u.Step("ok", "Pre-flight checks passed")
+
 	u.Step("run", "installing system service")
 	if err := svc.Install(); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "already exists") {
@@ -148,8 +189,8 @@ func (s *Service) Status(svc service.Service, configPath string) {
 }
 
 func (s *Service) mapError(err error, cmd string) error {
-	ctx := installer.NewContext(s.p.Logger)
-	svc := installer.NewService(ctx)
+	ctx := setup.NewContext(s.p.Logger)
+	svc := setup.NewService(ctx)
 	errMsg := err.Error()
 	switch cmd {
 	case "status":

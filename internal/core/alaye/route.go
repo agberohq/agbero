@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/cespare/xxhash/v2"
 	"github.com/olekukonko/errors"
 )
@@ -13,34 +14,34 @@ type Route struct {
 	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
 	Path    string  `hcl:"path,label" json:"path"`
 
-	Env map[string]Value `hcl:"env,attr" json:"env"`
+	Env map[string]expect.Value `hcl:"env,attr" json:"env"`
 
 	StripPrefixes []string  `hcl:"strip_prefixes,attr" json:"strip_prefixes"`
 	AllowedIPs    []string  `hcl:"allowed_ips,attr" json:"allowed_ips"`
 	Rewrites      []Rewrite `hcl:"rewrite,block" json:"rewrites"`
 
-	Web        Web        `hcl:"web,block" json:"web"`
-	Backends   Backend    `hcl:"backend,block" json:"backends"`
-	Serverless Serverless `hcl:"serverless,block" json:"serverless"`
+	Web        Web        `hcl:"web,block,omitempty" json:"web"`
+	Backends   Backend    `hcl:"backend,block,omitempty" json:"backends"`
+	Serverless Serverless `hcl:"serverless,block,omitempty" json:"serverless"`
 
-	HealthCheck    HealthCheck    `hcl:"health_check,block" json:"health_check"`
-	CircuitBreaker CircuitBreaker `hcl:"circuit_breaker,block" json:"circuit_breaker"`
-	Timeouts       TimeoutRoute   `hcl:"timeouts,block" json:"timeouts"`
+	HealthCheck    HealthCheck    `hcl:"health_check,block,omitempty" json:"health_check"`
+	CircuitBreaker CircuitBreaker `hcl:"circuit_breaker,block,omitempty" json:"circuit_breaker"`
+	Timeouts       TimeoutRoute   `hcl:"timeouts,block,omitempty" json:"timeouts"`
 
-	BasicAuth   BasicAuth   `hcl:"basic_auth,block" json:"basic_auth"`
-	ForwardAuth ForwardAuth `hcl:"forward_auth,block" json:"forward_auth"`
-	JWTAuth     JWTAuth     `hcl:"jwt_auth,block" json:"jwt_auth"`
-	OAuth       OAuth       `hcl:"o_auth,block" json:"oauth"`
+	BasicAuth   BasicAuth   `hcl:"basic_auth,block,omitempty" json:"basic_auth"`
+	ForwardAuth ForwardAuth `hcl:"forward_auth,block,omitempty" json:"forward_auth"`
+	JWTAuth     JWTAuth     `hcl:"jwt_auth,block,omitempty" json:"jwt_auth"`
+	OAuth       OAuth       `hcl:"o_auth,block,omitempty" json:"oauth"`
 
-	Headers           Headers       `hcl:"headers,block" json:"headers"`
-	CORS              CORS          `hcl:"cors,block" json:"cors"`
-	Cache             Cache         `hcl:"cache,block" json:"cache"`
-	ErrorPages        ErrorPages    `hcl:"error_pages,block" json:"error_pages"`
-	Wasm              Wasm          `hcl:"wasm,block" json:"wasm"`
-	RateLimit         RouteRate     `hcl:"rate_limit,block" json:"rate_limit"`
-	Firewall          FirewallRoute `hcl:"firewall,block" json:"firewall"`
-	CompressionConfig Compression   `hcl:"compression,block" json:"compression_config"`
-	Fallback          Fallback      `hcl:"fallback,block" json:"fallback"`
+	Headers     Headers       `hcl:"headers,block,omitempty" json:"headers"`
+	CORS        CORS          `hcl:"cors,block,omitempty" json:"cors"`
+	Cache       Cache         `hcl:"cache,block,omitempty" json:"cache"`
+	ErrorPages  ErrorPages    `hcl:"error_pages,block,omitempty" json:"error_pages"`
+	Wasm        Wasm          `hcl:"wasm,block,omitempty" json:"wasm"`
+	RateLimit   RouteRate     `hcl:"rate_limit,block,omitempty" json:"rate_limit"`
+	Firewall    FirewallRoute `hcl:"firewall,block,omitempty" json:"firewall"`
+	Compression Compression   `hcl:"compression,block,omitempty" json:"compression"`
+	Fallback    Fallback      `hcl:"fallback,block,omitempty" json:"fallback"`
 }
 
 // Validates the route configuration to ensure correctness
@@ -146,7 +147,7 @@ func (r *Route) validatePlugins() error {
 	if err := r.Wasm.Validate(); err != nil {
 		return errors.Newf("wasm: %w", err)
 	}
-	if err := r.CompressionConfig.Validate(); err != nil {
+	if err := r.Compression.Validate(); err != nil {
 		return errors.Newf("compression: %w", err)
 	}
 	return nil
@@ -256,9 +257,9 @@ func (r *Route) Key() string {
 		w.WriteString(fmt.Sprint(r.Timeouts.Request))
 	}
 
-	if r.CompressionConfig.Enabled.Active() {
-		w.WriteString(r.CompressionConfig.Type)
-		w.WriteString(fmt.Sprint(r.CompressionConfig.Level))
+	if r.Compression.Enabled.Active() {
+		w.WriteString(r.Compression.Type)
+		w.WriteString(fmt.Sprint(r.Compression.Level))
 	}
 
 	if r.Headers.Enabled.Active() {

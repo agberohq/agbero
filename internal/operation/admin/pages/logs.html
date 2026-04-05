@@ -72,7 +72,7 @@
 
 <script type="module">
     import { component, on, ui, query, queryAll } from '../lib/oja.full.esm.js';
-    import { store, getCreds } from '../js/store.js';
+    import { store } from '../js/store.js';
     import { fetchLogs } from '../js/api.js';
 
     // SVGs for pause ⏸ and resume ▶ — swapped on toggle
@@ -85,7 +85,7 @@
     let pollTimer     = null;
     let isAllExpanded = false;
 
-    // ── Log parsing ────────────────────────────────────────────────────────────
+    // Log parsing
 
     function parseEntry(l) {
         let lvl = 'INFO', msg = '', ts = '', fields = {};
@@ -116,7 +116,7 @@
         return { lvl, ts, full, fields };
     }
 
-    // ── Render ─────────────────────────────────────────────────────────────────
+    // Render
 
     function renderLogs() {
         const el = query('#logsList');
@@ -160,26 +160,26 @@
         }).join('');
     }
 
-    // ── Fetch ──────────────────────────────────────────────────────────────────
+    // Fetch
 
     async function fetchAndRender() {
         if (paused) return;
         const lines = query('#logsTailSelect')?.value || '100';
-        const data  = await fetchLogs(getCreds(), lines);
+        const data  = await fetchLogs(lines);
         if (data && Array.isArray(data)) {
             logs = [...data].reverse();
             renderLogs();
         }
     }
 
-    // ── Export — clean JSON array, jq-compatible ───────────────────────────────
+    // Export — clean JSON array, jq-compatible
 
     async function exportLogs() {
         const btn   = query('#logsExportBtn');
         const lines = query('#logsTailSelect')?.value || '100';
         ui.btn.loading(btn);
 
-        const data = await fetchLogs(getCreds(), lines);
+        const data = await fetchLogs(lines);
         if (!data || !Array.isArray(data)) { ui.btn.reset(btn); return; }
 
         const out = data.map(l => {
@@ -199,7 +199,7 @@
         ui.btn.done(btn, '✓');
     }
 
-    // ── Boot ───────────────────────────────────────────────────────────────────
+    // Boot
 
     queryAll('.chip').forEach(c => c.classList.remove('active'));
     const activeChip = query(`.chip[data-level="${filter}"]`);
@@ -208,7 +208,7 @@
     fetchAndRender();
     pollTimer = setInterval(fetchAndRender, 2000);
 
-    // ── Events ─────────────────────────────────────────────────────────────────
+    // Events
 
     on('#logsPauseBtn', 'click', (e, btn) => {
         paused = !paused;

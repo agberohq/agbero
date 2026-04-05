@@ -185,6 +185,7 @@ var (
 // pprof
 var (
 	ErrPprofPortRequired = errors.New("pprof port is required when pprof is enabled")
+	ErrPprofLoopbackOnly = errors.New("pprof bind address must be a loopback address")
 )
 
 var (

@@ -87,23 +87,23 @@ func (t *Tree) Insert(pattern string, route *alaye.Route) error {
 func (t *Tree) Find(path string) Result {
 	path = cleanPattern(path)
 
-	// 1. Root exact match
+	// Root exact match
 	root := t.root.Load()
 	if path == woos.Slash {
 		return Result{Route: root.route, Params: nil}
 	}
 
-	// 2. Fast path map - lock-free lookup
+	// Fast path map - lock-free lookup
 	if node, ok := t.fastPaths.Get(path); ok && node != nil && node.route != nil {
 		return Result{Route: node.route, Params: nil}
 	}
 
-	// 3. Cache - strictly typed, no allocations
+	// Cache - strictly typed, no allocations
 	if val, ok := t.cache.Get(path); ok {
 		return val
 	}
 
-	// 4. Tree traversal (read-only, RLock sufficient)
+	// Tree traversal (read-only, RLock sufficient)
 	t.mu.RLock()
 	result := t.findWithBacktrack(root, path, nil)
 	t.mu.RUnlock()
@@ -176,7 +176,7 @@ func (t *Tree) Rebuild(routes []alaye.Route) {
 	}
 }
 
-// ------------------ Internal Helpers ------------------
+// Internal Helpers
 
 func (t *Tree) insertLocked(pattern string, route *alaye.Route) error {
 	if err := t.validatePattern(pattern); err != nil {

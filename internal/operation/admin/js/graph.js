@@ -182,7 +182,7 @@ class RouteGraph {
         }
     }
 
-    // ── Visual helpers ────────────────────────────────────────────────────────
+    // Visual helpers
 
     getNodeRadius(type) {
         switch (type) {
@@ -271,7 +271,7 @@ class RouteGraph {
         return 80;
     }
 
-    // ── Data processing (unchanged) ───────────────────────────────────────────
+    // Data processing (unchanged)
 
     processData(config, stats) {
         const nodes  =[];
@@ -376,7 +376,7 @@ class RouteGraph {
         return { nodes, links };
     }
 
-    // ── Drag handlers ─────────────────────────────────────────────────────────
+    // Drag handlers
 
     dragstarted(event, d) {
         if (!event.active) this.simulation.alphaTarget(0.3).restart();
@@ -395,3 +395,5 @@ class RouteGraph {
         d.fy = null;
     }
 }
+// Expose on window so the lazy-loader guard (window.RouteGraph) works correctly.
+window.RouteGraph = RouteGraph;

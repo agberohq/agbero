@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // Handler returns an http.Handler that serves the telemetry history API.
@@ -13,13 +15,12 @@ import (
 //	GET /history?host=example.localhost&range=1h
 //	GET /hosts   — list all hosts that have data
 //
-// Mount it in admin.go under a protected path, e.g.:
 //
 //	mux.Handle("/telemetry/", protect(http.StripPrefix("/telemetry", telemetry.Handler(store))))
 func Handler(store *Store) http.Handler {
-	mux := http.NewServeMux()
+	r := chi.NewRouter()
 
-	mux.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/history", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -48,7 +49,6 @@ func Handler(store *Store) http.Handler {
 			return
 		}
 
-		// Always return an array, never null
 		if samples == nil {
 			samples = []Sample{}
 		}
@@ -67,7 +67,7 @@ func Handler(store *Store) http.Handler {
 		json.NewEncoder(w).Encode(resp)
 	})
 
-	mux.HandleFunc("/hosts", func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/hosts", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -86,5 +86,5 @@ func Handler(store *Store) http.Handler {
 		json.NewEncoder(w).Encode(map[string]any{"hosts": hosts})
 	})
 
-	return mux
+	return r
 }

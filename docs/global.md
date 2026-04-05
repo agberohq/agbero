@@ -334,7 +334,7 @@ security {
 
   # Path to internal auth key for service-to-service authentication
   # Generate with: agbero secret key init
-  internal_auth_key = "/etc/agbero/certs.d/internal_auth.key"
+  internal_auth_key = "/etc/agbero/data.d/internal_auth.key"
 
   # Web Application Firewall
   firewall {

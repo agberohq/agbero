@@ -9,6 +9,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/lb"
+	"github.com/cespare/xxhash/v2"
 )
 
 type Proxy struct {
@@ -72,7 +73,11 @@ func (b *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Proxy) Pick(r *http.Request) *Backend {
-	pick := b.lb.Pick(r, nil)
+	keyFunc := func() uint64 {
+		ip := b.ipManager.ClientIP(r)
+		return xxhash.Sum64String(ip)
+	}
+	pick := b.lb.Pick(r, keyFunc)
 	if pick == nil {
 		return nil
 	}

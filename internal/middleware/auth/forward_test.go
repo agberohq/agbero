@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
 var res = resource.New()
@@ -63,9 +63,10 @@ func TestForward_Success_AllowsRequest(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_success_allows", // Unique name for cache isolation
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_success_allows",
+		URL:          authServer.URL,
+		AllowPrivate: true, // test server binds to loopback
 		Request: alaye.ForwardAuthRequest{
 			Enabled: alaye.Active,
 			Headers: []string{"Authorization"},
@@ -105,9 +106,10 @@ func TestForward_Forbidden_BlocksRequest(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_forbidden_blocks", // Unique name
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_forbidden_blocks",
+		URL:          authServer.URL,
+		AllowPrivate: true,
 	}
 
 	nextCalled := false
@@ -144,9 +146,10 @@ func TestForward_Unauthorized(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_unauthorized", // Unique name
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_unauthorized",
+		URL:          authServer.URL,
+		AllowPrivate: true,
 	}
 	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Next handler should not be called")
@@ -174,9 +177,10 @@ func TestForward_DefaultHeaders(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_default_headers", // Unique name
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_default_headers",
+		URL:          authServer.URL,
+		AllowPrivate: true,
 	}
 	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
@@ -208,9 +212,10 @@ func TestForward_CustomHeaders(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_custom_headers", // Unique name
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_custom_headers",
+		URL:          authServer.URL,
+		AllowPrivate: true,
 		Request: alaye.ForwardAuthRequest{
 			Enabled: alaye.Active,
 			Headers: []string{"X-API-Key", "X-Tenant-ID"},
@@ -238,7 +243,6 @@ func TestForward_CustomHeaders(t *testing.T) {
 }
 
 func TestForward_MetadataHeaders(t *testing.T) {
-
 	receivedHeaders := make(http.Header)
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedHeaders = r.Header
@@ -247,9 +251,10 @@ func TestForward_MetadataHeaders(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_metadata_headers", // Unique name
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_metadata_headers",
+		URL:          authServer.URL,
+		AllowPrivate: true,
 		Request: alaye.ForwardAuthRequest{
 			Enabled:       alaye.Active,
 			ForwardMethod: true,
@@ -277,7 +282,6 @@ func TestForward_MetadataHeaders(t *testing.T) {
 }
 
 func TestForward_CopyHeadersToBackend(t *testing.T) {
-
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-User-ID", "user-123")
 		w.Header().Set("X-User-Email", "alice@example.com")
@@ -289,9 +293,10 @@ func TestForward_CopyHeadersToBackend(t *testing.T) {
 
 	var receivedUserID, receivedEmail, receivedScopes string
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_copy_headers", // Unique name
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_copy_headers",
+		URL:          authServer.URL,
+		AllowPrivate: true,
 		Response: alaye.ForwardAuthResponse{
 			Enabled:     alaye.Active,
 			CopyHeaders: []string{"X-User-ID", "X-User-Email", "X-User-Scopes"},
@@ -320,7 +325,6 @@ func TestForward_CopyHeadersToBackend(t *testing.T) {
 }
 
 func TestForward_BodyMode_None(t *testing.T) {
-
 	bodyReceived := false
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
@@ -334,9 +338,10 @@ func TestForward_BodyMode_None(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_body_none", // Unique name
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_body_none",
+		URL:          authServer.URL,
+		AllowPrivate: true,
 		Request: alaye.ForwardAuthRequest{
 			Enabled:  alaye.Active,
 			BodyMode: "none",
@@ -362,7 +367,6 @@ func TestForward_BodyMode_None(t *testing.T) {
 }
 
 func TestForward_BodyMode_Metadata(t *testing.T) {
-
 	receivedHeaders := make(http.Header)
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedHeaders = r.Header
@@ -377,9 +381,10 @@ func TestForward_BodyMode_Metadata(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_body_metadata",
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_body_metadata",
+		URL:          authServer.URL,
+		AllowPrivate: true,
 		Request: alaye.ForwardAuthRequest{
 			Enabled:  alaye.Active,
 			BodyMode: "metadata",
@@ -397,7 +402,6 @@ func TestForward_BodyMode_Metadata(t *testing.T) {
 	bodyContent := "large-file-content"
 	req := httptest.NewRequest("POST", "/api/upload", strings.NewReader(bodyContent))
 	req.Header.Set("Content-Type", "application/octet-stream")
-	// Must set ContentLength field explicitly for httptest.NewRequest with generic reader
 	req.ContentLength = int64(len(bodyContent))
 	req.Header.Set("Content-Length", strconv.Itoa(len(bodyContent)))
 
@@ -410,7 +414,6 @@ func TestForward_BodyMode_Metadata(t *testing.T) {
 }
 
 func TestForward_BodyMode_Limited(t *testing.T) {
-
 	authBody := ""
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
@@ -422,9 +425,10 @@ func TestForward_BodyMode_Limited(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_body_limited", // Unique name
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_body_limited",
+		URL:          authServer.URL,
+		AllowPrivate: true,
 		Request: alaye.ForwardAuthRequest{
 			Enabled:  alaye.Active,
 			BodyMode: "limited",
@@ -439,7 +443,7 @@ func TestForward_BodyMode_Limited(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	// Small body - should be sent to both
+	// Small body — sent to both auth and backend
 	smallBody := `{"action":"create","resource":"user"}`
 	req := httptest.NewRequest("POST", "/api/resource", strings.NewReader(smallBody))
 	w := httptest.NewRecorder()
@@ -452,7 +456,7 @@ func TestForward_BodyMode_Limited(t *testing.T) {
 		t.Errorf("Backend should receive full body, got %s", backendBody)
 	}
 
-	// Large body - truncated for auth, full for backend
+	// Large body — truncated for auth, full for backend
 	largeBody := strings.Repeat("x", 1000)
 	authBody = ""
 	backendBody = ""
@@ -469,13 +473,13 @@ func TestForward_BodyMode_Limited(t *testing.T) {
 }
 
 func TestForward_OnFailure_Allow(t *testing.T) {
-
 	cfg := &alaye.ForwardAuth{
-		Enabled:   alaye.Active,
-		Name:      "test_failure_allow", // Unique name
-		URL:       "http://127.0.0.1:1",
-		OnFailure: "allow",
-		Timeout:   alaye.Duration(100 * time.Millisecond),
+		Enabled:      alaye.Active,
+		Name:         "test_failure_allow",
+		URL:          "http://127.0.0.1:1",
+		OnFailure:    "allow",
+		Timeout:      alaye.Duration(100 * time.Millisecond),
+		AllowPrivate: true,
 	}
 
 	called := false
@@ -498,13 +502,13 @@ func TestForward_OnFailure_Allow(t *testing.T) {
 }
 
 func TestForward_OnFailure_Deny(t *testing.T) {
-
 	cfg := &alaye.ForwardAuth{
-		Enabled:   alaye.Active,
-		Name:      "test_failure_deny", // Unique name
-		URL:       "http://127.0.0.1:1",
-		OnFailure: "deny",
-		Timeout:   alaye.Duration(100 * time.Millisecond),
+		Enabled:      alaye.Active,
+		Name:         "test_failure_deny",
+		URL:          "http://127.0.0.1:1",
+		OnFailure:    "deny",
+		Timeout:      alaye.Duration(100 * time.Millisecond),
+		AllowPrivate: true,
 	}
 
 	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -524,7 +528,6 @@ func TestForward_OnFailure_Deny(t *testing.T) {
 }
 
 func TestForward_Timeout(t *testing.T) {
-
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
@@ -532,11 +535,12 @@ func TestForward_Timeout(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:   alaye.Active,
-		Name:      "test_timeout", // Unique name
-		URL:       authServer.URL,
-		Timeout:   alaye.Duration(50 * time.Millisecond),
-		OnFailure: "deny",
+		Enabled:      alaye.Active,
+		Name:         "test_timeout",
+		URL:          authServer.URL,
+		Timeout:      alaye.Duration(50 * time.Millisecond),
+		OnFailure:    "deny",
+		AllowPrivate: true,
 	}
 	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Should not reach next handler on timeout")
@@ -552,16 +556,16 @@ func TestForward_Timeout(t *testing.T) {
 }
 
 func TestForward_TLS_InsecureSkipVerify(t *testing.T) {
-
 	authServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_tls_skip_verify", // Unique name
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_tls_skip_verify",
+		URL:          authServer.URL,
+		AllowPrivate: true,
 		TLS: alaye.ForwardTLS{
 			Enabled:            alaye.Active,
 			InsecureSkipVerify: true,
@@ -581,7 +585,6 @@ func TestForward_TLS_InsecureSkipVerify(t *testing.T) {
 }
 
 func TestForward_EmptyAuthorization(t *testing.T) {
-
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") == "" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -592,9 +595,10 @@ func TestForward_EmptyAuthorization(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_empty_auth", // Unique name
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_empty_auth",
+		URL:          authServer.URL,
+		AllowPrivate: true,
 	}
 	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Should not reach next handler without auth")
@@ -610,7 +614,6 @@ func TestForward_EmptyAuthorization(t *testing.T) {
 }
 
 func TestForward_AuthService5xx(t *testing.T) {
-
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte(`{"error":"auth_service_overloaded"}`))
@@ -618,10 +621,11 @@ func TestForward_AuthService5xx(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:   alaye.Active,
-		Name:      "test_5xx", // Unique name
-		URL:       authServer.URL,
-		OnFailure: "deny",
+		Enabled:      alaye.Active,
+		Name:         "test_5xx",
+		URL:          authServer.URL,
+		OnFailure:    "deny",
+		AllowPrivate: true,
 	}
 	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Should not reach next handler on 503")
@@ -637,7 +641,6 @@ func TestForward_AuthService5xx(t *testing.T) {
 }
 
 func TestForward_ConcurrentRequests(t *testing.T) {
-
 	var authCalls int64
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(&authCalls, 1)
@@ -647,9 +650,10 @@ func TestForward_ConcurrentRequests(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_concurrent", // Unique name
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_concurrent",
+		URL:          authServer.URL,
+		AllowPrivate: true,
 		Request: alaye.ForwardAuthRequest{
 			Enabled:  alaye.Active,
 			CacheKey: []string{"Authorization"},
@@ -666,7 +670,9 @@ func TestForward_ConcurrentRequests(t *testing.T) {
 	var wg sync.WaitGroup
 	successCount := int64(0)
 	for range 10 {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			req := httptest.NewRequest("GET", "/", nil)
 			req.Header.Set("Authorization", "Bearer concurrent-token")
 			w := httptest.NewRecorder()
@@ -674,7 +680,7 @@ func TestForward_ConcurrentRequests(t *testing.T) {
 			if w.Code == http.StatusOK {
 				atomic.AddInt64(&successCount, 1)
 			}
-		})
+		}()
 	}
 	wg.Wait()
 
@@ -684,7 +690,6 @@ func TestForward_ConcurrentRequests(t *testing.T) {
 }
 
 func TestForward_LargeResponseHeaders(t *testing.T) {
-
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		largeToken := "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9." + strings.Repeat("x", 2000) + ".signature"
 		w.Header().Set("X-User-Token", largeToken)
@@ -694,9 +699,10 @@ func TestForward_LargeResponseHeaders(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_large_headers", // Unique name
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_large_headers",
+		URL:          authServer.URL,
+		AllowPrivate: true,
 		Response: alaye.ForwardAuthResponse{
 			Enabled:     alaye.Active,
 			CopyHeaders: []string{"X-User-Token", "X-User-ID"},
@@ -719,7 +725,6 @@ func TestForward_LargeResponseHeaders(t *testing.T) {
 }
 
 func TestForward_SpecialCharactersInURI(t *testing.T) {
-
 	receivedURI := ""
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedURI = r.Header.Get(woos.HeaderXOriginalURI)
@@ -728,9 +733,10 @@ func TestForward_SpecialCharactersInURI(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled: alaye.Active,
-		Name:    "test_special_uri", // Unique name
-		URL:     authServer.URL,
+		Enabled:      alaye.Active,
+		Name:         "test_special_uri",
+		URL:          authServer.URL,
+		AllowPrivate: true,
 		Request: alaye.ForwardAuthRequest{
 			Enabled:    alaye.Active,
 			ForwardURI: true,
@@ -746,5 +752,37 @@ func TestForward_SpecialCharactersInURI(t *testing.T) {
 
 	if !strings.Contains(receivedURI, "hello+world") {
 		t.Errorf("URI should contain query params, got %s", receivedURI)
+	}
+}
+
+// TestForward_SSRF_Rejected verifies that a private URL without allow_private = true
+// is rejected at Validate() time, not at request time.
+func TestForward_SSRF_Rejected(t *testing.T) {
+	cfg := &alaye.ForwardAuth{
+		Enabled:      alaye.Active,
+		Name:         "test_ssrf",
+		URL:          "http://127.0.0.1:9999/",
+		OnFailure:    "deny",
+		Timeout:      alaye.Duration(woos.DefaultForwardAuthTimeout),
+		AllowPrivate: false,
+	}
+	// Config-time check is where the SSRF guard fires.
+	if err := cfg.Validate(); err == nil {
+		t.Error("Validate() must reject a loopback URL when allow_private = false")
+	}
+}
+
+// TestForward_SSRF_AllowPrivate verifies that allow_private = true passes Validate().
+func TestForward_SSRF_AllowPrivate(t *testing.T) {
+	cfg := &alaye.ForwardAuth{
+		Enabled:      alaye.Active,
+		Name:         "test_ssrf_allow",
+		URL:          "http://127.0.0.1:9999/",
+		OnFailure:    "deny",
+		Timeout:      alaye.Duration(woos.DefaultForwardAuthTimeout),
+		AllowPrivate: true,
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() must accept loopback when allow_private = true, got: %v", err)
 	}
 }

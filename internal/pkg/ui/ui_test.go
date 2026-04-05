@@ -9,9 +9,7 @@ import (
 	"charm.land/lipgloss/v2/compat"
 )
 
-// ─────────────────────────────────────────────
 //  Helpers
-// ─────────────────────────────────────────────
 
 func newBuf() (*UI, *bytes.Buffer) {
 	buf := &bytes.Buffer{}
@@ -42,9 +40,7 @@ func stripped(s string) string {
 	return b.String()
 }
 
-// ─────────────────────────────────────────────
 //  Core functionality
-// ─────────────────────────────────────────────
 
 func TestFlush_writesAndResets(t *testing.T) {
 	u, buf := newBuf()
@@ -153,7 +149,7 @@ func TestHelpScreen_containsSectionTitlesAndCommands(t *testing.T) {
 
 func TestInitSuccess_containsRequiredFields(t *testing.T) {
 	u, buf := newBuf()
-	u.InitSuccess("/etc/agbero.hcl", "admin", "s3cr3t!", []string{"agbero service start"})
+	u.InitSuccess("/etc/agbero.hcl", "admin", "s3cr3t!", []ListItem{{Text: "agbero service start"}})
 	out := out(buf)
 	for _, want := range []string{"/etc/agbero.hcl", "admin", "s3cr3t!", "agbero service start"} {
 		if !strings.Contains(out, want) {
@@ -174,9 +170,7 @@ func TestTable_containsHeadersAndData(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────
 //  Edge cases
-// ─────────────────────────────────────────────
 
 func TestKeyValueBlock_emptyNoOutput(t *testing.T) {
 	u, buf := newBuf()

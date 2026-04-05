@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agberohq/agbero/internal/core/resource"
-	"github.com/agberohq/agbero/internal/discovery"
+	"github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/olekukonko/ll"
 )
 

@@ -66,14 +66,15 @@
     </div>
 
     <div class="config-section">
-        <div class="config-header" style="margin-bottom:10px;">
-            <h3 style="margin:0;">📄 Raw Configuration</h3>
-            <div class="config-actions">
-                <button class="btn small config-copy" data-action="copy-config">📋 Copy</button>
-                <button class="btn small config-expand" data-action="expand-config">↕️ Expand</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <h3 style="margin:0;font-size:14px;font-weight:500;color:var(--text-main);">Global Configuration</h3>
+            <div style="display:flex;gap:6px;align-items:center;">
+                <button class="btn small" id="configCopyBtn">Copy</button>
+                <button class="btn small" id="configExpandBtn">Expand</button>
             </div>
         </div>
-        <div class="code-box" id="configContent" style="max-height:300px;"></div>
+        <div id="configFormatTabs" style="margin-bottom:10px;"></div>
+        <pre class="code-box" id="configContent" style="max-height:360px;overflow:auto;font-family:var(--font-mono);font-size:12px;line-height:1.6;margin:0;"></pre>
     </div>
 
     <div class="config-section" id="configDiffSection" style="display:none;">
@@ -83,9 +84,18 @@
 </div>
 
 <script type="module">
-    import { on, ui, clipboard, notify, query, queryAll, pagination } from '../lib/oja.full.esm.js';
-    import { store, getCreds } from '../js/store.js';
+    import { on, ui, clipboard, notify, query, queryAll, pagination, tabs } from '../lib/oja.full.esm.js';
+    import { store } from '../js/store.js';
     import { fetchConfig, fetchUptime } from '../js/api.js';
+    import { highlightHCL, formatHCL, HCL_CSS } from '../js/hcl.js';
+
+    // Inject HCL CSS once
+    if (!document.getElementById('hcl-theme')) {
+        const s = document.createElement('style');
+        s.id = 'hcl-theme';
+        s.textContent = HCL_CSS;
+        document.head.appendChild(s);
+    }
 
     let _prevConfig = null;
     let _currConfig = null;
@@ -288,13 +298,52 @@
         }).join('');
     }
 
+    let _rawFormat  = 'json';  // 'json' | 'hcl'
+    let _rawExpanded = false;
+    let _globalObj  = null;
+
     function renderRawConfig(config) {
+        _globalObj = config?.global || config;
+        _refreshRaw();
+    }
+
+    function _refreshRaw() {
         const el = query('#configContent');
-        if (el && window.app?.syntaxHighlight) {
-            el.innerHTML = window.app.syntaxHighlight(config);
-        } else if (el) {
-            el.innerText = JSON.stringify(config, null, 2);
+        if (!el || !_globalObj) return;
+        if (_rawFormat === 'hcl') {
+            // Best-effort HCL rendering from JSON global
+            const hclStr = _jsonToHCLHint(_globalObj);
+            el.innerHTML = highlightHCL(hclStr);
+        } else {
+            const json = JSON.stringify(_globalObj, null, 2);
+            el.innerHTML = json.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         }
+    }
+
+    // Lightweight JSON → HCL hint (best-effort, not round-trip perfect)
+    function _jsonToHCLHint(obj, indent = 0) {
+        if (!obj || typeof obj !== 'object') return String(obj ?? '');
+        const pad = '  '.repeat(indent);
+        const lines = [];
+        for (const [k, v] of Object.entries(obj)) {
+            if (v === null || v === undefined) continue;
+            const key = k.replace(/-/g, '_');
+            if (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length > 0) {
+                lines.push(`${pad}${key} {`);
+                lines.push(_jsonToHCLHint(v, indent + 1));
+                lines.push(`${pad}}`);
+            } else if (Array.isArray(v)) {
+                const vals = v.map(x => typeof x === 'string' ? `"${x}"` : String(x));
+                lines.push(`${pad}${key} = [${vals.join(', ')}]`);
+            } else if (typeof v === 'string') {
+                lines.push(`${pad}${key} = "${v}"`);
+            } else if (typeof v === 'boolean') {
+                lines.push(`${pad}${key} = ${v}`);
+            } else {
+                lines.push(`${pad}${key} = ${v}`);
+            }
+        }
+        return lines.join('\n');
     }
 
     function renderAll(config, uptime) {
@@ -315,7 +364,7 @@
     async function refresh() {
         const btn = query('#configRefreshBtn');
         ui.btn.loading(btn, '⟳ Loading…');
-        const [config, uptime] = await Promise.all([fetchConfig(getCreds()), fetchUptime(getCreds())]);
+        const [config, uptime] = await Promise.all([fetchConfig(), fetchUptime()]);
         ui.btn.reset(btn);
         if (config && !config.__offline && !config.__unauthorized) {
             store.set('lastConfig', config);
@@ -332,19 +381,29 @@
 
     on('#configRefreshBtn', 'click', refresh);
 
-    on('.config-copy', 'click', (e, btn) => {
+    // Format tabs — JSON / HCL
+    tabs.render(query('#configFormatTabs'), [
+        { key: 'json', label: 'JSON' },
+        { key: 'hcl',  label: 'HCL' },
+    ], {
+        active:   'json',
+        variant:  'pill',
+        onChange: (key) => { _rawFormat = key; _refreshRaw(); },
+    });
+
+    on('#configCopyBtn', 'click', () => {
         const text = query('#configContent')?.innerText || '';
         clipboard.write(text)
             .then(() => notify.show('Copied', 'success'))
             .catch(() => notify.show('Copy failed', 'error'));
     });
 
-    on('.config-expand', 'click', (e, btn) => {
+    on('#configExpandBtn', 'click', (e, btn) => {
         const box = query('#configContent');
         if (!box) return;
-        const expanded = box.style.maxHeight === 'none';
-        box.style.maxHeight = expanded ? '300px' : 'none';
-        btn.textContent = expanded ? '↕️ Expand' : '↕️ Collapse';
+        _rawExpanded = !_rawExpanded;
+        box.style.maxHeight = _rawExpanded ? 'none' : '360px';
+        btn.textContent = _rawExpanded ? '↕️ Collapse' : '↕️ Expand';
     });
 
     on('#configDiffBtn', 'click', () => {

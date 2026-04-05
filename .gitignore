@@ -6,7 +6,7 @@
 
 bin
 tmp
-lab
+_lab
 dist
 
 cmd/agbero/server.log
@@ -17,3 +17,4 @@ server.log
 all.txt
 baseline.txt
 all.txt.zip
+_test/

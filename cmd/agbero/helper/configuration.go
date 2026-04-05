@@ -8,9 +8,10 @@ import (
 	"syscall"
 
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/discovery"
-	"github.com/agberohq/agbero/internal/pkg/installer"
+	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
+	"github.com/agberohq/agbero/internal/setup"
 	"github.com/olekukonko/ll"
 )
 
@@ -24,7 +25,7 @@ func (c *Configuration) Validate(configFile string) error {
 		return err
 	}
 	hostsFolder := woos.NewFolder(global.Storage.HostsDir)
-	hm := discovery.NewHost(hostsFolder, discovery.WithLogger(c.p.Logger))
+	hm := discovery2.NewHost(hostsFolder, discovery2.WithLogger(c.p.Logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err
@@ -117,7 +118,7 @@ func ResolveConfigPath(logger *ll.Logger, flagPath string) (string, bool) {
 		return cwdPath, true
 	}
 
-	ctx := installer.NewContext(logger)
+	ctx := setup.NewContext(logger)
 	if _, err := os.Stat(ctx.Paths.ConfigFile); err == nil {
 		return ctx.Paths.ConfigFile, true
 	}
@@ -126,7 +127,7 @@ func ResolveConfigPath(logger *ll.Logger, flagPath string) (string, bool) {
 }
 
 func InitConfiguration(logger *ll.Logger, targetDir string) (string, error) {
-	ctx := installer.NewContext(logger)
+	ctx := setup.NewContext(logger)
 	if targetDir != "" {
 		base := woos.NewFolder(targetDir)
 		ctx.Paths.BaseDir = base
@@ -137,10 +138,24 @@ func InitConfiguration(logger *ll.Logger, targetDir string) (string, error) {
 		ctx.Paths.LogsDir = base.Join(woos.LogDir.Name())
 		ctx.Paths.WorkDir = base.Join(woos.WorkDir.Name())
 	}
-	err := installer.NewHome(ctx).Run()
+	err := setup.NewHome(ctx).Run()
 	return ctx.Paths.ConfigFile, err
 }
 
+// InstallConfiguration prepares agbero for service registration. The decision
+// tree is:
+//
+// If an existing config is discoverable (cwd, AGBERO_HOME, or platform
+//
+//	home), load it and ensure the CA is installed against the certs_dir it
+//	declares. Return the existing path — no new installation is created.
+//
+// If here is true, scaffold a new installation in the current directory.
+//
+// Otherwise scaffold a new installation in the platform home directory.
+//
+// Returning an "already exists" error signals callers to reuse the path
+// without treating it as a failure.
 func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 	if here {
 		cwd, err := os.Getwd()
@@ -149,6 +164,22 @@ func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 		}
 		return InitConfiguration(logger, cwd)
 	}
-	ctx := installer.NewContext(logger)
+
+	existing, found := ResolveConfigPath(logger, "")
+	if found {
+		global, err := loadGlobal(existing)
+		if err == nil && global.Storage.CertsDir != "" {
+			certsDir := global.Storage.CertsDir
+			if !tlss.IsCARootInstalled(certsDir) {
+				loc := tlss.NewLocal(logger, newDiskStore(certsDir))
+				if err := loc.InstallCARootIfNeeded(); err != nil {
+					logger.Warn("CA install skipped: ", err)
+				}
+			}
+		}
+		return existing, fmt.Errorf("configuration already exists at %s", existing)
+	}
+
+	ctx := setup.NewContext(logger)
 	return InitConfiguration(logger, ctx.Paths.BaseDir.Path())
 }

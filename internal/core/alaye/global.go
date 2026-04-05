@@ -1,6 +1,11 @@
 package alaye
 
-import "github.com/olekukonko/errors"
+import (
+	"net"
+
+	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/olekukonko/errors"
+)
 
 // Global represents the root configuration of Agbero.
 // It contains system-wide settings, storage paths, and global environment variables.
@@ -9,7 +14,7 @@ type Global struct {
 	Build       string `hcl:"-" json:"build"`
 	Development bool   `hcl:"development,attr" json:"development"`
 
-	Env map[string]Value `hcl:"env,attr" json:"env"`
+	Env map[string]expect.Value `hcl:"env,attr" json:"env"`
 
 	Bind     Bind    `hcl:"bind,block" json:"bind"`
 	Timeouts Timeout `hcl:"timeouts,block" json:"timeouts"`
@@ -116,6 +121,14 @@ func (p *Pprof) Validate() error {
 	}
 	if p.Bind == "" {
 		return ErrPprofPortRequired
+	}
+	host, _, err := net.SplitHostPort(p.Bind)
+	if err != nil {
+		host = p.Bind
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || (!ip.IsLoopback() && host != "localhost") {
+		return ErrPprofLoopbackOnly
 	}
 	return nil
 }

@@ -3,9 +3,6 @@
 // platform-neutral signature defined here and is implemented in one or
 // more build-tagged files alongside it:
 //
-//	fs_unix.go    — non-Windows (Linux, macOS, BSD)
-//	fs_windows.go — Windows
-//
 // Contributors adding new platform-specific behaviour should follow the
 // same pattern: define the function signature and documentation here,
 // implement it in a build-tagged file, and add a stub for every other

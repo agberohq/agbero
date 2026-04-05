@@ -5,26 +5,27 @@ import (
 	"os"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
-	"github.com/agberohq/agbero/internal/pkg/orchestrator"
+	"github.com/agberohq/agbero/internal/core/expect"
+	orchestrator2 "github.com/agberohq/agbero/internal/hub/orchestrator"
+	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
 type WorkerConfig struct {
 	Resource  *resource.Resource
 	Route     alaye.Route
 	Work      alaye.Work
-	GlobalEnv map[string]alaye.Value
-	RouteEnv  map[string]alaye.Value
-	Orch      *orchestrator.Manager
+	GlobalEnv map[string]expect.Value
+	RouteEnv  map[string]expect.Value
+	Orch      *orchestrator2.Manager
 }
 
 type WorkerHandler struct {
 	res       *resource.Resource
 	route     alaye.Route
 	cfg       alaye.Work
-	globalEnv map[string]alaye.Value
-	routeEnv  map[string]alaye.Value
-	orch      *orchestrator.Manager
+	globalEnv map[string]expect.Value
+	routeEnv  map[string]expect.Value
+	orch      *orchestrator2.Manager
 }
 
 // NewWorker initializes a new worker handler with the given configuration.
@@ -59,9 +60,9 @@ func (h *WorkerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	env := alaye.CompileEnv(h.globalEnv, h.routeEnv, h.cfg.Env)
+	env := expect.CompileEnv(h.globalEnv, h.routeEnv, h.cfg.Env)
 
-	proc := &orchestrator.Process{
+	proc := &orchestrator2.Process{
 		Config: h.cfg,
 		Env:    env,
 		Dir:    dir,

@@ -9,12 +9,12 @@ import (
 	"sync/atomic"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/handlers/web"
 	"github.com/agberohq/agbero/internal/handlers/xhttp"
 	"github.com/agberohq/agbero/internal/handlers/xserverless"
+	resource2 "github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/middleware/attic"
 	"github.com/agberohq/agbero/internal/middleware/auth"
 	"github.com/agberohq/agbero/internal/middleware/compress"
@@ -34,13 +34,13 @@ type Route struct {
 	Proxy     *xhttp.Proxy
 	ipMgr     *zulu.IPManager
 	global    *alaye.Global
-	resource  *resource.Resource
+	resource  *resource2.Resource
 	lastTouch atomic.Int64
 }
 
 // NewRoute creates a new traffic handler based on the provided route configuration.
 // It determines if the route is a static web route, a proxy route, or a serverless function.
-func NewRoute(cfg resource.Proxy, route *alaye.Route) *Route {
+func NewRoute(cfg resource2.Proxy, route *alaye.Route) *Route {
 	if route == nil {
 		return FallbackRoute("nil route")
 	}
@@ -68,7 +68,7 @@ func NewRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 
 // wrapHandler applies the standard middleware chain to a primary route handler.
 // This includes authentication, rate limiting, security headers, and rewrite rules.
-func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *Route {
+func wrapHandler(cfg resource2.Proxy, route *alaye.Route, primary http.Handler) *Route {
 	chain := primary
 	ipMgr := zulu.NewIPManager(cfg.Global.Security.TrustedProxies)
 	if len(route.AllowedIPs) > 0 {
@@ -81,11 +81,12 @@ func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *
 	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, ipMgr, cfg.SharedState); rl != nil {
 		chain = rl.Handler(chain)
 	}
-	maxBody := int64(alaye.DefaultMaxBodySize)
-	if cfg.Host.Limits.MaxBodySize > 0 {
-		maxBody = cfg.Host.Limits.MaxBodySize
-	}
-	chain = http.MaxBytesHandler(chain, maxBody)
+	// dispatch.go wraps r.Body with http.MaxBytesReader(w, r.Body, maxBody) (host limit)
+	// maxBody := int64(alaye.DefaultMaxBodySize)
+	// if cfg.Discovery.Limits.MaxBodySize > 0 {
+	//	maxBody = cfg.Discovery.Limits.MaxBodySize
+	// }
+	// chain = http.MaxBytesHandler(chain, maxBody)
 	chain = headers.Headers(&route.Headers)(chain)
 	chain = compress.Compress(route)(chain)
 	chain = attic.New(&route.Cache, cfg.Resource.Logger)(chain)
@@ -108,7 +109,7 @@ func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *
 
 // newProxyRoute constructs a load-balanced proxy handler for a set of backends.
 // It supports health checking, circuit breaking, and customizable balancing strategies.
-func newProxyRoute(cfg resource.Proxy, route *alaye.Route) *Route {
+func newProxyRoute(cfg resource2.Proxy, route *alaye.Route) *Route {
 	var backends []*xhttp.Backend
 	for i, backendCfg := range route.Backends.Servers {
 		b, err := xhttp.NewBackend(xhttp.ConfigBackend{

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -14,9 +15,9 @@ import (
 	"github.com/agberohq/agbero/cmd/agbero/helper"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/pkg/installer"
-	"github.com/agberohq/agbero/internal/pkg/tlss"
+	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
+	"github.com/agberohq/agbero/internal/setup"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/jack"
@@ -54,6 +55,9 @@ func main() {
 
 	cmdInit := flaggy.NewSubcommand("init")
 	cmdInit.Description = "Scaffold configuration in current directory"
+
+	cmdInstall := flaggy.NewSubcommand("install")
+	cmdInstall.Description = "Scaffold configuration in current directory (alias for 'init')"
 
 	cmdConfig := flaggy.NewSubcommand("config")
 	cmdConfig.Description = "Configuration management"
@@ -112,6 +116,61 @@ func main() {
 	cmdSecret.AttachSubcommand(cmdSecretToken, 1)
 	cmdSecret.AttachSubcommand(cmdSecretHash, 1)
 	cmdSecret.AttachSubcommand(cmdSecretPassword, 1)
+
+	// keeper — secret store (encrypted bbolt)
+
+	cmdKeeper := flaggy.NewSubcommand("keeper")
+	cmdKeeper.Description = "Manage the encrypted secret store"
+
+	cmdKeeperList := flaggy.NewSubcommand("list")
+	cmdKeeperList.Description = "List all keys in the keeper"
+
+	cmdKeeperGet := flaggy.NewSubcommand("get")
+	cmdKeeperGet.Description = "Retrieve a value from the keeper"
+	cmdKeeperGet.AddPositionalValue(&cfg.KeeperKey, "key", 1, true, "Secret key name")
+
+	cmdKeeperSet := flaggy.NewSubcommand("set")
+	cmdKeeperSet.Description = "Store a value in the keeper"
+	cmdKeeperSet.AddPositionalValue(&cfg.KeeperKey, "key", 1, true, "Secret key name")
+	cmdKeeperSet.AddPositionalValue(&cfg.KeeperValue, "value", 2, false, "Plaintext value (omit to use --file)")
+	cmdKeeperSet.Bool(&cfg.KeeperB64, "b", "b64", "Value is already base64-encoded — decode before storing")
+	cmdKeeperSet.String(&cfg.KeeperFile, "f", "file", "Read value from file (e.g. a certificate)")
+
+	cmdKeeperDelete := flaggy.NewSubcommand("delete")
+	cmdKeeperDelete.Description = "Delete a key from the keeper"
+	cmdKeeperDelete.AddPositionalValue(&cfg.KeeperKey, "key", 1, true, "Secret key name")
+	cmdKeeperDelete.Bool(&cfg.KeeperForce, "f", "force", "Skip confirmation prompt")
+
+	cmdKeeperRotate := flaggy.NewSubcommand("rotate")
+	cmdKeeperRotate.Description = "Change the keeper master passphrase (re-encrypts all secrets)"
+
+	cmdKeeper.AttachSubcommand(cmdKeeperList, 1)
+	cmdKeeper.AttachSubcommand(cmdKeeperGet, 1)
+	cmdKeeper.AttachSubcommand(cmdKeeperSet, 1)
+	cmdKeeper.AttachSubcommand(cmdKeeperDelete, 1)
+	cmdKeeper.AttachSubcommand(cmdKeeperRotate, 1)
+
+	// admin — manage agbero admin state (TOTP, users)
+
+	cmdAdmin := flaggy.NewSubcommand("admin")
+	cmdAdmin.Description = "Manage admin users and authentication"
+
+	cmdAdminTOTP := flaggy.NewSubcommand("totp")
+	cmdAdminTOTP.Description = "Manage TOTP two-factor authentication"
+
+	cmdAdminTOTPSetup := flaggy.NewSubcommand("setup")
+	cmdAdminTOTPSetup.Description = "Generate and store a new TOTP secret for an admin user"
+	cmdAdminTOTPSetup.String(&cfg.KeeperUser, "u", "user", "Admin username")
+	cmdAdminTOTPSetup.String(&cfg.KeeperOutFile, "o", "out", "Write QR code PNG to this file")
+
+	cmdAdminTOTPQR := flaggy.NewSubcommand("qr")
+	cmdAdminTOTPQR.Description = "Re-display the TOTP QR code for an admin user"
+	cmdAdminTOTPQR.String(&cfg.KeeperUser, "u", "user", "Admin username")
+	cmdAdminTOTPQR.String(&cfg.KeeperOutFile, "o", "out", "Write QR code PNG to this file")
+
+	cmdAdminTOTP.AttachSubcommand(cmdAdminTOTPSetup, 1)
+	cmdAdminTOTP.AttachSubcommand(cmdAdminTOTPQR, 1)
+	cmdAdmin.AttachSubcommand(cmdAdminTOTP, 1)
 
 	cmdHost := flaggy.NewSubcommand("host")
 	cmdHost.Description = "Manage hosts and routes"
@@ -213,9 +272,16 @@ func main() {
 	cmdSystemRestore.String(&cfg.SystemIn, "i", "in", "Input zip file path")
 	cmdSystemRestore.String(&cfg.SystemPass, "p", "password", "Password for AES-256 decryption")
 	cmdSystemRestore.Bool(&cfg.SystemForce, "f", "force", "Force overwrite of existing files without prompting")
+	cmdSystemRestore.Bool(&cfg.SystemYes, "y", "yes", "Skip top-level confirmation prompt")
+
+	cmdSystemUpdate := flaggy.NewSubcommand("update")
+	cmdSystemUpdate.Description = "Download and apply the latest agbero release from GitHub"
+	cmdSystemUpdate.Bool(&cfg.SystemForce, "f", "force", "Apply even if already on latest version")
+	cmdSystemUpdate.Bool(&cfg.SystemYes, "y", "yes", "Skip confirmation prompt")
 
 	cmdSystem.AttachSubcommand(cmdSystemBackup, 1)
 	cmdSystem.AttachSubcommand(cmdSystemRestore, 1)
+	cmdSystem.AttachSubcommand(cmdSystemUpdate, 1)
 
 	cmdRun := flaggy.NewSubcommand("run")
 	cmdRun.Description = "Run agbero using the discovered config"
@@ -249,8 +315,11 @@ func main() {
 	cmdHelp.Description = "Show usage examples"
 
 	flaggy.AttachSubcommand(cmdInit, 1)
+	flaggy.AttachSubcommand(cmdInstall, 1)
 	flaggy.AttachSubcommand(cmdConfig, 1)
 	flaggy.AttachSubcommand(cmdSecret, 1)
+	flaggy.AttachSubcommand(cmdKeeper, 1)
+	flaggy.AttachSubcommand(cmdAdmin, 1)
 	flaggy.AttachSubcommand(cmdHost, 1)
 	flaggy.AttachSubcommand(cmdCert, 1)
 	flaggy.AttachSubcommand(cmdService, 1)
@@ -291,7 +360,11 @@ func main() {
 			return
 		}
 		if cmdSystemRestore.Used {
-			hel.System().Restore(cfg.SystemIn, cfg.SystemPass, cfg.SystemForce)
+			hel.System().Restore(cfg.SystemIn, cfg.SystemPass, cfg.SystemForce, cfg.SystemYes)
+			return
+		}
+		if cmdSystemUpdate.Used {
+			hel.System().Update(cfg.SystemForce, cfg.SystemYes)
 			return
 		}
 	}
@@ -325,7 +398,47 @@ func main() {
 		return
 	}
 
-	if cmdInit.Used {
+	if cmdKeeper.Used {
+		k := hel.Keeper()
+		resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
+		switch {
+		case cmdKeeperList.Used:
+			k.List(resolvedPath)
+		case cmdKeeperGet.Used:
+			k.Get(resolvedPath, cfg.KeeperKey)
+		case cmdKeeperSet.Used:
+			k.Set(resolvedPath, cfg.KeeperKey, cfg.KeeperValue, cfg.KeeperB64, cfg.KeeperFile)
+		case cmdKeeperDelete.Used:
+			k.Delete(resolvedPath, cfg.KeeperKey, cfg.KeeperForce)
+		case cmdKeeperRotate.Used:
+			k.Rotate(resolvedPath)
+		default:
+			flaggy.ShowHelpAndExit("keeper")
+		}
+		return
+	}
+
+	if cmdAdmin.Used {
+		a := hel.Admin()
+		resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
+		switch {
+		case cmdAdminTOTP.Used && cmdAdminTOTPSetup.Used:
+			a.TOTPSetup(resolvedPath, cfg.KeeperUser)
+			if cfg.KeeperOutFile != "" {
+				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
+			}
+		case cmdAdminTOTP.Used && cmdAdminTOTPQR.Used:
+			a.TOTPQR(resolvedPath, cfg.KeeperUser)
+			if cfg.KeeperOutFile != "" {
+				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
+			}
+		default:
+			flaggy.ShowHelpAndExit("admin")
+		}
+		return
+	}
+
+	if cmdInit.Used || cmdInstall.Used {
 		if _, err := helper.InitConfiguration(logger, ""); err != nil {
 			logger.Fatal("init failed: ", err)
 		}
@@ -342,18 +455,25 @@ func main() {
 				logger.Fatalf("provided config file not found: %s", cfg.ConfigPath)
 			}
 		} else {
-			path, err := helper.InstallConfiguration(logger, cfg.InstallHere)
-			if err != nil {
-				if strings.Contains(err.Error(), "already exists") {
-					logger.Info(err.Error() + " — skipping initialization.")
+
+			resolvedPath, configExists = helper.ResolveConfigPath(logger, "")
+			if configExists {
+				u := ui.New()
+				u.InfoLine(fmt.Sprintf("using existing configuration: %s", resolvedPath))
+			} else {
+				path, err := helper.InstallConfiguration(logger, cfg.InstallHere)
+				if err != nil {
+					if strings.Contains(err.Error(), "already exists") {
+						logger.Info(err.Error() + " — skipping initialization.")
+						resolvedPath = path
+						configExists = true
+					} else {
+						logger.Fatal("install failed: ", err)
+					}
+				} else {
 					resolvedPath = path
 					configExists = true
-				} else {
-					logger.Fatal("install failed: ", err)
 				}
-			} else {
-				resolvedPath = path
-				configExists = true
 			}
 		}
 	} else {
@@ -378,7 +498,7 @@ func main() {
 		if strings.TrimSpace(cfg.ConfigPath) != "" {
 			logger.Fatal("config file not found at: ", cfg.ConfigPath)
 		} else {
-			ctx := installer.NewContext(logger)
+			ctx := setup.NewContext(logger)
 			if ctx.Interactive {
 				var doInit bool
 				err := huh.NewConfirm().
@@ -507,7 +627,7 @@ func main() {
 		sh := hel.Service()
 		switch {
 		case cmdServiceInstall.Used:
-			sh.Install(svc, cfg.InstallHere)
+			sh.Install(svc, cfg.InstallHere, resolvedPath)
 		case cmdServiceUninstall.Used:
 			if cfg.UninstallAll {
 				hel.Home().Uninstall(svc, resolvedPath, cfg.UninstallForce)
@@ -603,7 +723,7 @@ func main() {
 
 func welcome() {
 	u := ui.New()
-	u.Welcome(woos.Name, woos.Description, woos.Version, woos.Date, installer.BannerTmpl)
+	u.Welcome(woos.Name, woos.Description, woos.Version, woos.Date, setup.BannerTmpl)
 }
 
 func showHelpExamples() {
@@ -667,6 +787,26 @@ func showHelpExamples() {
 			},
 		},
 		{
+			Title: "Keeper (secret store)",
+			Commands: []ui.HelpCmd{
+				{Cmd: exeName + " keeper list", Desc: "list all keys in the encrypted store"},
+				{Cmd: exeName + " keeper get <key>", Desc: "retrieve a secret value"},
+				{Cmd: exeName + " keeper set <key> <value>", Desc: "store a plain string secret"},
+				{Cmd: exeName + " keeper set <key> --file cert.pem", Desc: "store a certificate or binary file"},
+				{Cmd: exeName + " keeper set <key> <b64> --b64", Desc: "store pre-encoded base64 value"},
+				{Cmd: exeName + " keeper delete <key>", Desc: "delete a secret"},
+				{Cmd: exeName + " keeper rotate", Desc: "change master passphrase (re-encrypts all)"},
+			},
+		},
+		{
+			Title: "Admin",
+			Commands: []ui.HelpCmd{
+				{Cmd: exeName + " admin totp setup -u alice", Desc: "generate TOTP secret + print QR"},
+				{Cmd: exeName + " admin totp qr -u alice", Desc: "re-display TOTP QR for a user"},
+				{Cmd: exeName + " admin totp qr -u alice -o qr.png", Desc: "write QR code to PNG file"},
+			},
+		},
+		{
 			Title: "Hosts",
 			Commands: []ui.HelpCmd{
 				{Cmd: exeName + " host list", Desc: "list configured hosts"},
@@ -679,6 +819,8 @@ func showHelpExamples() {
 			Commands: []ui.HelpCmd{
 				{Cmd: exeName + " system backup -o backup.zip -p mypass", Desc: "create encrypted backup"},
 				{Cmd: exeName + " system restore -i backup.zip -p mypass", Desc: "restore from backup"},
+				{Cmd: exeName + " system update", Desc: "update to latest release from GitHub"},
+				{Cmd: exeName + " system update --force", Desc: "re-apply even if already on latest"},
 			},
 		},
 		{

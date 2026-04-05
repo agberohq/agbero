@@ -1,4 +1,3 @@
-// internal/pkg/health/abort.go
 package health
 
 import (

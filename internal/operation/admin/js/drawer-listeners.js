@@ -2,43 +2,41 @@
  * js/drawer-listeners.js
  *
  * Route and backend drawer wiring.
- * Each section of the drawer is a named builder function that returns an
- * HTML string. buildRouteHTML and buildBackendHTML compose those sections.
- * No addEventListener loops — all interaction uses on() delegation.
+ *
+ * TYPE MAP (from alaye Go structs — critical, do not mix):
+ *   Enabled fields → "on" | "off" | "unknown"   — check with isOn(v)
+ *   bool fields    → true | false                — check === true
+ *
+ *   Enabled:  .enabled, protected, web.markdown.enabled, web.markdown.toc,
+ *             web.markdown.unsafe, web.markdown.highlight.enabled,
+ *             web.git.enabled, web.php.enabled, serverless.enabled,
+ *             cache.enabled, cors.enabled, wasm.enabled, rate_limit.enabled,
+ *             firewall.status, fallback.enabled, basic_auth.enabled,
+ *             jwt_auth.enabled, forward_auth.enabled, oauth.enabled
+ *
+ *   bool:     web.listing, web.spa, web.no_cache, host.compression,
+ *             cors.allow_credentials, health_check.accelerated_probing,
+ *             health_check.synthetic_when_idle, rate_limit.ignore_global,
+ *             firewall.ignore_global, forward_auth.allow_private
  */
 
-import { listen, emit, on, clipboard, notify, query, queryAll } from '../lib/oja.full.esm.js';
+import { listen, emit, on, clipboard, notify, query, modal } from '../lib/oja.full.esm.js';
 import { store } from './store.js';
 import { fmtNum } from './api.js';
+import { isOn } from './utils.js';
 
-// ── Drawer open / close ────────────────────────────────────────────────────────
+// All opens/closes through Oja modal so the stack stays consistent and
+// the backdrop clears automatically when the stack empties.
 
-function openDrawer(id) {
-    query('#' + id)?.classList.add('active');
-    query('#drawerBackdrop')?.classList.add('active');
-}
-
-function closeDrawer(id) {
-    query('#' + id)?.classList.remove('active');
-    if (!query('.drawer.active')) {
-        query('#drawerBackdrop')?.classList.remove('active');
-    }
-}
+function openDrawer(id)  { modal.open(id); }
+function closeDrawer(id) { modal.closeById(id); }
 
 on('[data-action="close-drawer"]', 'click', (e, btn) => closeDrawer(btn.dataset.target));
 
-on('#drawerBackdrop', 'click', () => {
-    queryAll('.drawer.active').forEach(d => d.classList.remove('active'));
-    query('#drawerBackdrop')?.classList.remove('active');
-});
-
-// Performance button inside the route drawer
-on('#drawerPerfBtn', 'click', () => {
-    const hostname = query('#drawerHostName')?.innerText;
+on('#drawerPerfBtn', 'click', (e, btn) => {
+    const hostname = btn.dataset.hostname || query('#drawerHostName')?.dataset.host;
     if (hostname) emit('perf:open', { hostname });
 });
-
-// ── Delegated drawer interactions — registered once, work across re-renders ───
 
 on('[data-action="open-backend"]', 'click', (e, btn) => {
     emit('drawer:open-backend', {
@@ -56,13 +54,16 @@ on('[data-action="copy-url"]', 'click', (e, btn) => {
         .catch(() => {});
 });
 
-// ── Listen for drawer open events ─────────────────────────────────────────────
+on('[data-action="perf-node"]', 'click', (e, btn) => {
+    emit('perf:open', { hostname: btn.dataset.hostname });
+});
+
 
 listen('drawer:open-route', ({ host, idx, type }) => {
-    const hostCfg   = (store.get('lastConfig') || {}).hosts?.[host]         || {};
+    const hostCfg   = (store.get('lastConfig') || {}).hosts?.[host] || {};
     const hostStats = (store.get('hostsData')  || { stats: {} }).stats?.[host] || {};
 
-    const item      = type === 'proxy' ? hostCfg.proxies?.[idx]  : hostCfg.routes?.[idx];
+    const item      = type === 'proxy' ? hostCfg.proxies?.[idx] : hostCfg.routes?.[idx];
     if (!item) return;
     const itemStats = type === 'proxy' ? hostStats.proxies?.[idx] : hostStats.routes?.[idx];
 
@@ -70,7 +71,12 @@ listen('drawer:open-route', ({ host, idx, type }) => {
     const el   = query('#drawerRoutePath');
     const hn   = query('#drawerHostName');
     if (el) el.innerText = path;
-    if (hn) hn.innerText = host;
+    if (hn) {
+        hn.dataset.host = host;
+        const textNode = [...hn.childNodes].find(n => n.nodeType === Node.TEXT_NODE);
+        if (textNode) textNode.textContent = host + ' ';
+        else hn.firstChild && (hn.firstChild.textContent = host + ' ');
+    }
 
     const body = query('#drawerBody');
     if (body) body.innerHTML = buildRouteHTML(host, item, itemStats || {}, type, store.get('certificates') || [], idx);
@@ -79,15 +85,15 @@ listen('drawer:open-route', ({ host, idx, type }) => {
 });
 
 listen('drawer:open-backend', ({ host, routeIdx, backendIdx, type }) => {
-    const hostCfg   = (store.get('lastConfig') || {}).hosts?.[host]         || {};
+    const hostCfg   = (store.get('lastConfig') || {}).hosts?.[host] || {};
     const hostStats = (store.get('hostsData')  || { stats: {} }).stats?.[host] || {};
 
     const cfgItem = type === 'proxy'
         ? (hostCfg.proxies?.[routeIdx]?.backends?.[backendIdx]         || {})
         : (hostCfg.routes?.[routeIdx]?.backends?.servers?.[backendIdx] || {});
     const bStat = type === 'proxy'
-        ? (hostStats.proxies?.[routeIdx]?.backends?.[backendIdx]        || {})
-        : (hostStats.routes?.[routeIdx]?.backends?.[backendIdx]         || {});
+        ? (hostStats.proxies?.[routeIdx]?.backends?.[backendIdx] || {})
+        : (hostStats.routes?.[routeIdx]?.backends?.[backendIdx]  || {});
 
     const url = bStat.url || bStat.address || cfgItem.address || 'Unknown';
     const titleEl = query('#backendDrawerTitle');
@@ -101,9 +107,9 @@ listen('drawer:open-backend', ({ host, routeIdx, backendIdx, type }) => {
     openDrawer('backendDrawer');
 });
 
-// ── Section builders — each returns an HTML string, composable ────────────────
 
 function section(title, content) {
+    if (!content || content.trim() === '') return '';
     return `<div class="detail-section">
         <div class="detail-title">${title}</div>
         ${content}
@@ -112,10 +118,10 @@ function section(title, content) {
 
 function kvGrid(pairs) {
     const items = pairs
-        .filter(([, v]) => v !== null && v !== undefined && v !== '')
-        .map(([label, value]) =>
-            `<div class="kv-item"><label>${label}</label><div>${value}</div></div>`
-        ).join('');
+        .filter(p => p && p[1] !== null && p[1] !== undefined && p[1] !== '' && p[1] !== false && p[1] !== 0)
+        .map(([label, value]) => `<div class="kv-item"><label>${label}</label><div>${value}</div></div>`)
+        .join('');
+    if (!items) return '';
     return `<div class="kv-grid">${items}</div>`;
 }
 
@@ -123,9 +129,57 @@ function badge(text, cls = '') {
     return `<span class="badge ${cls}">${text}</span>`;
 }
 
-// ── Route section builders ─────────────────────────────────────────────────────
+// Guard: web block has meaningful data when it has a root path OR git is enabled.
+// DO NOT guard on web.enabled — that field defaults to "unknown" (not "on") in
+// most HCL configs, so checking isOn(web.enabled) silently hides everything.
+
+function webSection(web) {
+    if (!web) return '';
+    // Only render if there is actual web content
+    const hasRoot = !!web.root;
+    const hasGit  = isOn(web.git?.enabled);
+    if (!hasRoot && !hasGit) return '';
+
+    const pairs = [];
+
+    if (web.root)            pairs.push(['Root',    `<code class="mono" style="font-size:11px;word-break:break-all;">${web.root}</code>`]);
+    if (web.index?.length)   pairs.push(['Index',   web.index.map(i => `<code>${i}</code>`).join(' ')]);
+
+    // bool fields — check with === true
+    if (web.listing)         pairs.push(['Listing',     badge('Directory listing', 'success')]);
+    if (web.spa)             pairs.push(['SPA Mode',    badge('On', 'info')]);
+    if (web.no_cache)        pairs.push(['No-Cache',    badge('headers set', 'warning')]);
+
+    // Markdown — Enabled type
+    const md = web.markdown;
+    if (isOn(md?.enabled)) {
+        const isBrowse  = md.view === 'browse';
+        const mdParts   = [badge(isBrowse ? '📖 Browse' : '🌐 Website', isBrowse ? 'info' : '')];
+        if (isOn(md.toc))              mdParts.push(badge('TOC', ''));
+        if (isOn(md.unsafe))           mdParts.push(badge('Unsafe HTML', 'warning'));
+        if (isOn(md.highlight?.enabled)) {
+            mdParts.push(badge(md.highlight.theme || 'highlight', 'info'));
+        }
+        if (md.extensions?.length)     mdParts.push(`<span style="font-size:10px;color:var(--text-mute);">${md.extensions.join(', ')}</span>`);
+        if (md.template)               mdParts.push(`<span style="font-size:10px;color:var(--text-mute);">tpl: ${md.template}</span>`);
+        pairs.push(['Markdown', mdParts.join(' ')]);
+    }
+
+    // PHP — Enabled type
+    if (isOn(web.php?.enabled)) {
+        pairs.push(['PHP-FPM', badge(web.php.address || '127.0.0.1:9000', 'info')]);
+    }
+
+    const isBrowse = isOn(md?.enabled) && md?.view === 'browse';
+    const icon     = isBrowse ? '📖' : hasGit ? '🐙' : '📂';
+    const title    = hasGit ? 'Git · Static File Server' : 'Static File Server';
+
+    return section(`${icon} ${title}`, kvGrid(pairs));
+}
+
 
 function gitSection(git, hostname) {
+    if (!isOn(git?.enabled)) return '';
     const gitStats = store.get('gitStats') || {};
     const gs       = gitStats[git.id]      || {};
     const state    = gs.state  || 'unknown';
@@ -133,64 +187,86 @@ function gitSection(git, hostname) {
     const sCls     = state === 'healthy' ? 'success' : state === 'unavailable' ? 'warning' : 'error';
     const whUrl    = `${window.location.origin}/.well-known/agbero/webhook/git/${git.id}`;
 
-    return section('🐙 Git Deployment', `
-        <div class="handler-card">
-            <span class="handler-icon">📦</span>
-            <div class="handler-info" style="flex:1;">
-                <strong>${git.id}</strong>
-                <span>Branch: ${git.branch || 'main'}</span>
-                <div style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;">
-                    ${badge('State: ' + state, sCls)}
-                    ${badge('Commit: ' + commit, 'info')}
-                    ${badge('Deploys: ' + (gs.deployments || 0))}
-                </div>
-            </div>
-        </div>
-        <div class="kv-grid" style="margin-top:10px;">
-            <div class="kv-item" style="grid-column:span 2;">
-                <label>Webhook URL</label>
-                <div style="display:flex;gap:10px;align-items:center;">
-                    <span class="mono" style="font-size:10px;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;flex:1;overflow-x:auto;">${whUrl}</span>
-                    <button class="btn small" data-action="copy-url" data-url="${whUrl}">Copy</button>
-                </div>
-            </div>
-        </div>`);
+    const pairs = [
+        ['ID',       `<code>${git.id}</code>`],
+        ['URL',      `<a href="${git.url}" target="_blank" rel="noopener" style="color:var(--accent);word-break:break-all;font-size:11px;">${git.url}</a>`],
+        ['Branch',   git.branch || badge('default', '')],
+        ['Interval', git.interval && git.interval !== '0s' ? git.interval : badge('webhook only', '')],
+        ['State',    badge(state, sCls)],
+        ['Commit',   commit !== 'none' ? `<code>${commit}</code>` : badge('none yet', 'warning')],
+        ['Deploys',  gs.deployments || 0],
+        git.sub_dir    ? ['Sub Dir', `<code>${git.sub_dir}</code>`] : null,
+        git.auth?.type ? ['Auth',    badge(git.auth.type, 'info')]  : null,
+    ].filter(Boolean);
+
+    const whHtml = `<div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+        <code style="font-size:10px;padding:4px 6px;background:var(--panel-bg);border:1px solid var(--border);border-radius:4px;flex:1;overflow-x:auto;white-space:nowrap;">${whUrl}</code>
+        <button class="btn small" data-action="copy-url" data-url="${whUrl}" style="flex-shrink:0;">Copy</button>
+    </div>`;
+
+    return section('🐙 Git Deployment', kvGrid(pairs) +
+        `<div style="margin-top:8px;"><label style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;">Webhook URL</label>${whHtml}</div>`);
 }
 
-function staticSection(web) {
-    return section('📂 Static File Handler', `
-        <div class="handler-card">
-            <span class="handler-icon">📁</span>
-            <div class="handler-info">
-                <strong>File Server</strong>
-                <span>Root: ${web.root}</span>
-                <span>Listing: ${web.listing ? 'Enabled' : 'Disabled'}</span>
-                ${web.spa                          ? '<span>SPA mode: on</span>'  : ''}
-                ${web.markdown?.enabled === 'on'   ? '<span>Markdown: on</span>' : ''}
-            </div>
-        </div>
-        ${web.php?.enabled === 'on' ? `
-        <div class="handler-card" style="margin-top:8px;">
-            <span class="handler-icon">🐘</span>
-            <div class="handler-info">
-                <strong>PHP FastCGI</strong>
-                <span>${web.php.address || '127.0.0.1:9000'}</span>
-            </div>
-        </div>` : ''}`);
+
+function serverlessSection(serverless) {
+    if (!isOn(serverless?.enabled)) return '';
+    const workers = serverless.workers || [];
+    const rests   = serverless.rests   || [];
+    if (!workers.length && !rests.length) return '';
+
+    let html = '';
+
+    if (workers.length) {
+        html += `<div style="font-size:11px;font-weight:500;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Workers (${workers.length})</div>`;
+        html += workers.map(w => `
+            <div class="handler-card" style="margin-bottom:6px;">
+                <span class="handler-icon" style="font-size:16px;">⚙️</span>
+                <div class="handler-info">
+                    <strong>${w.name}</strong>
+                    <span style="font-family:var(--font-mono);font-size:11px;word-break:break-all;"><code>${(w.command || []).join(' ')}</code></span>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">
+                        ${w.background  ? badge('background', 'info') : ''}
+                        ${w.run_once    ? badge('run once', '') : ''}
+                        ${w.restart     ? badge('restart: ' + w.restart, '') : ''}
+                        ${w.schedule    ? badge('cron: ' + w.schedule, 'warning') : ''}
+                        ${w.timeout && w.timeout !== '0s' ? badge('timeout: ' + w.timeout, '') : ''}
+                    </div>
+                </div>
+            </div>`).join('');
+    }
+
+    if (rests.length) {
+        html += `<div style="font-size:11px;font-weight:500;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 6px;">REST Proxies (${rests.length})</div>`;
+        html += rests.map(r => `
+            <div class="handler-card" style="margin-bottom:6px;">
+                <span class="handler-icon" style="font-size:16px;">🔌</span>
+                <div class="handler-info">
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <strong>${r.name}</strong>
+                        ${badge(r.method || 'GET', 'info')}
+                    </div>
+                    <span style="font-size:11px;word-break:break-all;"><a href="${r.url}" target="_blank" rel="noopener" style="color:var(--accent);">${r.url}</a></span>
+                    ${r.timeout && r.timeout !== '0s' ? `<span style="font-size:10px;color:var(--text-mute);">timeout: ${r.timeout}</span>` : ''}
+                </div>
+            </div>`).join('');
+    }
+
+    return section('⚡ Serverless', html);
 }
+
 
 function backendRow(b, cfgB, bStat, hostname, routeIdx, bIdx, type) {
     const url  = bStat.url || bStat.address || cfgB.address || '';
     const w    = cfgB.weight !== undefined ? cfgB.weight : 1;
-    const has  = !!bStat.url || !!bStat.address;
     const hSt  = bStat.health?.status || 'Unknown';
 
     let dc = 'warn', dt = 'No data';
-    if (has) {
-        if      (!bStat.alive || hSt === 'Dead' || hSt === 'Unhealthy') { dc = 'down'; dt = hSt !== 'Unknown' ? hSt : 'Dead'; }
-        else if (hSt === 'Degraded')                                     { dc = 'warn'; dt = 'Degraded'; }
-        else if (hSt === 'Healthy')                                      { dc = 'ok';   dt = 'Healthy'; }
-        else                                                             { dc = bStat.alive ? 'info' : 'down'; dt = bStat.alive ? 'Unverified' : 'Dead'; }
+    if (bStat.url || bStat.address) {
+        if (!bStat.alive || hSt === 'Dead' || hSt === 'Unhealthy') { dc = 'down'; dt = hSt !== 'Unknown' ? hSt : 'Dead'; }
+        else if (hSt === 'Degraded')                                { dc = 'warn'; dt = 'Degraded'; }
+        else if (hSt === 'Healthy')                                 { dc = 'ok';   dt = 'Healthy'; }
+        else                                                        { dc = bStat.alive ? 'info' : 'down'; dt = bStat.alive ? 'Unverified' : 'Dead'; }
     }
 
     const p99  = bStat.latency_us?.p99 ? (bStat.latency_us.p99 / 1000).toFixed(0) + 'ms' : '';
@@ -205,7 +281,7 @@ function backendRow(b, cfgB, bStat, hostname, routeIdx, bIdx, type) {
         <div class="drawer-row-top">
             <div class="row-left">
                 <span class="dot ${dc}" title="${dt}"></span>
-                <span class="mono row-url">${url}</span>
+                <span class="mono row-url" style="font-size:11px;word-break:break-all;">${url}</span>
             </div>
             <div class="row-right">
                 ${inf  > 0 ? `<span class="be-tag be-tag-warn">⚡ ${inf} in flight</span>` : ''}
@@ -221,214 +297,311 @@ function backendRow(b, cfgB, bStat, hostname, routeIdx, bIdx, type) {
 }
 
 function upstreamsSection(hostname, item, itemStats, routeIdx, type) {
-    const configBEs  = item.backends?.servers || [];
-    const statBEs    = itemStats.backends     || [];
-    const displayBEs = configBEs.length > 0 ? configBEs : statBEs;
-    if (!displayBEs.length) return '';
+    const cfgBEs  = item.backends?.servers || [];
+    const statBEs = itemStats?.backends    || [];
+    const display = statBEs.length ? statBEs : cfgBEs;
+    if (!display.length) return '';
 
-    const rows = displayBEs.map((b, bIdx) =>
-        backendRow(b, configBEs[bIdx] || {}, statBEs[bIdx] || {}, hostname, routeIdx, bIdx, type)
+    const strategy  = item.backends?.strategy;
+    const stratLabel = strategy
+        ? strategy.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+        : 'Round Robin';
+
+    const rows = display.map((b, i) =>
+        backendRow(b, cfgBEs[i] || {}, statBEs[i] || {}, hostname, routeIdx, i, type)
     ).join('');
 
-    const lb  = (item.backends?.strategy || 'round_robin')
-        .split('_').map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
-    const hc  = item.health_check;
-    const cb  = item.circuit_breaker;
-    const to  = item.timeouts || {};
-    const fmt = v => v || 'inherit';
-    const isTCP     = type === 'proxy' || item.protocol === 'tcp';
-    const protoClass= isTCP ? 'info' : 'success';
-    const protoLabel= (isTCP ? '🔌 TCP' : '🌐 HTTP');
-
-    const hcBadge = hc?.enabled === 'on'
-        ? badge(`${hc.path || '/health'} | ${hc.interval || '10s'} | ${hc.timeout || '5s'}`, 'success')
-        : badge('Not Configured', 'error');
-    const cbPairs  = cb?.enabled === 'on'
-        ? [['Circuit Breaker', badge(`${cb.threshold || 5} fails → ${cb.duration || '30s'}`, 'warning')]]
-        : [];
-
-    return section(
-        `${badge(protoLabel, protoClass)} Upstreams &amp; Load Balancing`,
-        rows + kvGrid([
-            ['Strategy',      badge(lb, 'success')],
-            ['Health Check',  hcBadge],
-            ...cbPairs,
-            ['Read Timeout',  fmt(to.read)],
-            ['Write Timeout', fmt(to.write)],
-            ['Idle Timeout',  fmt(to.idle)],
-        ])
-    );
+    return section(`⬆️ Upstreams <span class="badge" style="margin-left:4px;">${stratLabel}</span>`, rows);
 }
+
 
 function httpFeaturesSection(item) {
-    const pairs = [];
-    const comp = item.compression_config || {};
-    if (comp.enabled === 'on')
-        pairs.push(['Compression', badge(`${comp.type || 'gzip'} lvl ${comp.level || 'auto'}`, 'info')]);
-    const rl = item.rate_limit;
-    if (rl?.enabled === 'on') {
-        const r = rl.rule || {};
-        pairs.push(['Rate Limit', badge(`${r.requests || 0} / ${r.window || '1m'} (${r.key || 'ip'})`, 'warning')]);
-    }
-    if (item.cors?.enabled === 'on')
-        pairs.push(['CORS', badge((item.cors.allowed_origins || []).join(', ') || '*', 'info')]);
-    if (item.strip_prefixes?.length)
-        pairs.push(['Strip Prefix', item.strip_prefixes.map(p => badge(p)).join(' ')]);
-    if (item.wasm?.enabled === 'on')
-        pairs.push(['WASM', badge(item.wasm.module?.split('/').pop() || 'filter.wasm', 'info')]);
-    if (item.headers?.enabled === 'on') {
-        const rh = item.headers.request || {}, rs = item.headers.response || {};
-        const n  = [rh.set, rh.add, rs.set, rs.add].filter(Boolean)
-                .reduce((a, o) => a + Object.keys(o).length, 0)
-            + (rh.remove?.length || 0) + (rs.remove?.length || 0);
-        if (n) pairs.push(['Header Rules', badge(n + ' modifications', 'info')]);
-    }
-    return pairs.length ? section('⚙️ HTTP Features', kvGrid(pairs)) : '';
-}
-
-function authSection(item) {
-    const cards = [];
-    if (item.basic_auth?.enabled === 'on')
-        cards.push(['Basic Auth',    `${item.basic_auth.users?.length || 0} users`,  `Realm: ${item.basic_auth.realm || 'Restricted'}`]);
-    if (item.jwt_auth?.enabled === 'on')
-        cards.push(['JWT Auth',      item.jwt_auth.issuer || 'No issuer',            `Audience: ${item.jwt_auth.audience || 'any'}`]);
-    if (item.oauth?.enabled === 'on')
-        cards.push(['OAuth',         item.oauth.provider || 'OIDC',                  (item.oauth.scopes || []).join(', ')]);
-    if (item.forward_auth?.enabled === 'on')
-        cards.push(['Forward Auth',  item.forward_auth.name || '',                   item.forward_auth.url || '']);
-    if (!cards.length) return '';
-
-    const html = cards.map(([head, body, sub]) =>
-        `<div class="mw-card security">
-            <div class="mw-head">${head}</div>
-            <div class="mw-body">${body}</div>
-            <div class="mw-sub">${sub}</div>
-        </div>`
-    ).join('');
-    return section('🔑 Authentication', `<div class="mw-grid">${html}</div>`);
-}
-
-function certsSection(certificates, hostname) {
-    const hostCerts = certificates.filter(c => c.host === hostname);
-    if (!hostCerts.length) return '';
-
-    const cards = hostCerts.map(cert => {
-        let cls = 'success', txt = cert.daysLeft + 'd';
-        if      (cert.daysLeft < 0) { cls = 'error';   txt = 'Expired'; }
-        else if (cert.daysLeft < 7) { cls = 'warning';  txt = cert.daysLeft + 'd left'; }
-        return `<div class="cert-card">
-            <div class="cert-domain">${cert.host}</div>
-            <div class="cert-expiry">
-                <span>${cert.issuer || "Let's Encrypt"}</span>
-                ${badge(txt, cls)}
-            </div>
-            <div style="font-size:9px;color:var(--text-mute);margin-top:4px;">
-                ${new Date(cert.expiry).toLocaleDateString()}
-            </div>
-        </div>`;
-    }).join('');
-    return section('🔐 TLS Certificates', `<div class="cert-grid">${cards}</div>`);
-}
-
-function rawSection(title, obj, maxHeight = '200px') {
-    return section(title,
-        `<div class="code-box" style="max-height:${maxHeight};">
-            <pre>${JSON.stringify(obj, null, 2)}</pre>
-        </div>`
-    );
-}
-
-// ── Top-level builders — compose sections ──────────────────────────────────────
-
-function buildRouteHTML(hostname, item, itemStats, type, certificates, routeIdx) {
-    const isTCP = type === 'proxy' || item.protocol === 'tcp';
     const parts = [];
 
-    // Web handler section (static / git)
-    if (!isTCP && item.web) {
-        const git = item.web.git;
-        if (git?.enabled === 'on' || git?.enabled === true) {
-            parts.push(gitSection(git, hostname));
-        } else if (item.web.root) {
-            parts.push(staticSection(item.web));
-        }
+    // Health check — Enabled type
+    if (isOn(item.health_check?.enabled)) {
+        const hc = item.health_check;
+        const rows = [
+            ['Path',     `<code>${hc.path}</code>`],
+            ['Interval', hc.interval || '—'],
+            ['Timeout',  hc.timeout  || '—'],
+            ['Threshold',hc.threshold || '—'],
+            ['Method',   hc.method   || 'GET'],
+            hc.expected_status?.length ? ['Expected', hc.expected_status.join(', ')] : null,
+            hc.accelerated_probing     ? ['Probing',  badge('Accelerated', 'info')] : null,
+            hc.synthetic_when_idle     ? ['Idle',     badge('Synthetic', '')]       : null,
+        ].filter(Boolean);
+        parts.push(section('🩺 Health Check', kvGrid(rows)));
     }
 
-    // Upstreams
-    parts.push(upstreamsSection(hostname, item, itemStats, routeIdx, type));
-
-    // HTTP-only features
-    if (!isTCP) {
-        parts.push(httpFeaturesSection(item));
-        parts.push(authSection(item));
+    // Circuit breaker — Enabled type
+    if (isOn(item.circuit_breaker?.enabled)) {
+        const cb = item.circuit_breaker;
+        parts.push(section('⚡ Circuit Breaker', kvGrid([
+            ['Threshold',   cb.threshold + ' failures'],
+            ['Reset after', cb.duration || '—'],
+        ])));
     }
 
-    // TLS certs
-    parts.push(certsSection(certificates, hostname));
+    // Timeouts — Enabled type
+    if (isOn(item.timeouts?.enabled) && item.timeouts?.request) {
+        parts.push(section('⏱️ Timeout', kvGrid([['Request', item.timeouts.request]])));
+    }
 
-    // Raw config
-    parts.push(rawSection('📜 Source (read-only)', item));
+    // Rate limit — Enabled type
+    if (isOn(item.rate_limit?.enabled)) {
+        const rl   = item.rate_limit;
+        const rule = rl.rule || {};
+        const rParts = [];
+        if (rl.use_policy)      rParts.push(badge('policy: ' + rl.use_policy, 'info'));
+        if (isOn(rule.enabled)) rParts.push(`${rule.requests}/${rule.window}${rule.burst > rule.requests ? ` burst ${rule.burst}` : ''}`);
+        if (rl.ignore_global)   rParts.push(badge('ignores global', 'warning'));
+        if (rParts.length) parts.push(section('🚦 Rate Limit', rParts.join(' ')));
+    }
 
-    return parts.filter(Boolean).join('');
+    // CORS — Enabled type
+    if (isOn(item.cors?.enabled)) {
+        const c = item.cors;
+        const origins = c.allowed_origins?.length
+            ? c.allowed_origins.slice(0, 3).join(', ') + (c.allowed_origins.length > 3 ? '…' : '')
+            : '*';
+        const corsParts = [badge('On', 'info')];
+        if (origins !== '*')     corsParts.push(`<code style="font-size:10px;">${origins}</code>`);
+        if (c.allow_credentials) corsParts.push(badge('credentials', 'warning'));
+        parts.push(section('🌐 CORS', corsParts.join(' ')));
+    }
+
+    // Cache — Enabled type
+    if (isOn(item.cache?.enabled)) {
+        const ca = item.cache;
+        parts.push(section('📦 Cache', [badge(ca.driver || 'memory', 'success'), ca.ttl ? `TTL ${ca.ttl}` : ''].filter(Boolean).join(' ')));
+    }
+
+    // Compression — Enabled type
+    if (isOn(item.compression_config?.enabled)) {
+        const cc = item.compression_config;
+        parts.push(section('🗜️ Compression', badge(cc.type || 'gzip', '') + (cc.level ? ` level ${cc.level}` : '')));
+    }
+
+    // Firewall — uses .status (Enabled type)
+    if (isOn(item.firewall?.status)) {
+        const fw = item.firewall;
+        const fwParts = [badge('Enabled', 'danger')];
+        if (fw.ignore_global)         fwParts.push(badge('ignores global', 'warning'));
+        if (fw.apply_rules?.length)   fwParts.push(`rules: ${fw.apply_rules.join(', ')}`);
+        parts.push(section('🛡️ Firewall', fwParts.join(' ')));
+    }
+
+    // Fallback — Enabled type
+    if (isOn(item.fallback?.enabled)) {
+        const fb = item.fallback;
+        parts.push(section('🔄 Fallback', badge(fb.type, '') + (fb.redirect_url ? ` → <code style="font-size:11px;">${fb.redirect_url}</code>` : '')));
+    }
+
+    // WASM — Enabled type
+    if (isOn(item.wasm?.enabled)) {
+        const wa = item.wasm;
+        parts.push(section('🔮 WASM', kvGrid([
+            ['Module', `<code style="font-size:10px;word-break:break-all;">${wa.module}</code>`],
+            ['Access', wa.access?.length ? wa.access.join(', ') : 'none'],
+        ])));
+    }
+
+    // Rewrites
+    if (item.rewrites?.length) {
+        const rws = item.rewrites.map(r =>
+            `<div style="font-size:11px;font-family:var(--font-mono);margin-bottom:3px;"><span style="color:var(--text-mute);">${r.pattern}</span> → <span style="color:var(--accent);">${r.target}</span></div>`
+        ).join('');
+        parts.push(section(`✏️ Rewrites (${item.rewrites.length})`, rws));
+    }
+
+    // Strip prefixes
+    if (item.strip_prefixes?.length) {
+        parts.push(section('✂️ Strip Prefixes', item.strip_prefixes.map(p => `<code>${p}</code>`).join(' ')));
+    }
+
+    // IP filter
+    if (item.allowed_ips?.length) {
+        parts.push(section('🔒 IP Filter', item.allowed_ips.map(ip => `<code>${ip}</code>`).join(' ')));
+    }
+
+    return parts.join('');
 }
 
-function buildBackendHTML(cfg, bStat) {
-    const p       = us => us ? (us / 1000).toFixed(1) + 'ms' : '—';
-    const lat     = bStat.latency_us || {};
-    const h       = bStat.health     || {};
-    const hScore  = h.score || (bStat.alive ? 100 : 0);
-    const state   = h.status || (bStat.alive ? 'Unverified' : 'Dead');
-    const sColor  = hScore > 80 ? 'var(--success)' : hScore > 50 ? 'var(--warning)' : 'var(--danger)';
-    const lastOk  = h.last_success ? new Date(h.last_success).toLocaleString() : 'Never';
-    const lastFail= h.last_failure ? new Date(h.last_failure).toLocaleString() : 'None';
 
-    const healthSection = section('🏥 Predictive Health', `
-        <div class="health-gauge">
-            <div class="gauge-circle" style="background:${sColor}">${hScore}</div>
-            <div class="gauge-info">
-                <div class="gauge-status">${state}</div>
-                <div class="gauge-sub">Consecutive Fails: ${h.consecutive_failures || 0}</div>
+function authSection(item) {
+    const parts = [];
+
+    if (isOn(item.basic_auth?.enabled)) {
+        const count = item.basic_auth.users?.length || 0;
+        parts.push(`<div class="mw-card security" style="margin-bottom:6px;">
+            <div class="mw-head">Basic Auth</div>
+            <div class="mw-body">${count} user${count !== 1 ? 's' : ''}</div>
+            ${item.basic_auth.realm ? `<div class="mw-sub">realm: ${item.basic_auth.realm}</div>` : ''}
+        </div>`);
+    }
+
+    if (isOn(item.jwt_auth?.enabled)) {
+        const j = item.jwt_auth;
+        parts.push(`<div class="mw-card security" style="margin-bottom:6px;">
+            <div class="mw-head">JWT Auth</div>
+            <div class="mw-body">${badge('Bearer token', 'info')}</div>
+            ${j.issuer ? `<div class="mw-sub">issuer: ${j.issuer}</div>` : ''}
+        </div>`);
+    }
+
+    if (isOn(item.forward_auth?.enabled)) {
+        const f = item.forward_auth;
+        parts.push(`<div class="mw-card security" style="margin-bottom:6px;">
+            <div class="mw-head">Forward Auth</div>
+            <div class="mw-body" style="font-size:11px;word-break:break-all;">${f.url}</div>
+            <div class="mw-sub">
+                ${badge('on_failure: ' + (f.on_failure || 'deny'), f.on_failure === 'allow' ? 'warning' : '')}
+                ${f.allow_private ? badge('allow_private', 'warning') : ''}
             </div>
-        </div>` +
-        kvGrid([
-            ['Last Success', lastOk],
-            ['Last Failure', lastFail],
-            ...(h.downtime ? [['Downtime', badge(h.downtime, 'error')]] : []),
-        ])
-    );
+        </div>`);
+    }
 
-    const latCard = `
-        <div class="handler-card" style="display:grid;grid-template-columns:repeat(4,1fr);text-align:center;padding:10px 15px;gap:5px;">
-            ${['Avg','p50','p90','p99'].map((label, i) => {
-        const val  = p([lat.avg_us, lat.p50, lat.p90, lat.p99][i]);
-        const color= i < 2 ? 'var(--fg)' : i === 2 ? 'var(--warning)' : 'var(--danger)';
-        return `<div>
-                    <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;">${label}</div>
-                    <div style="font-size:12px;font-family:monospace;margin-top:2px;color:${color};">${val}</div>
-                </div>`;
-    }).join('')}
-        </div>`;
+    if (isOn(item.oauth?.enabled)) {
+        const o = item.oauth;
+        parts.push(`<div class="mw-card security" style="margin-bottom:6px;">
+            <div class="mw-head">OAuth</div>
+            <div class="mw-body">${badge(o.provider || 'oidc', 'info')}</div>
+        </div>`);
+    }
 
-    const trafficSection = section('📊 Traffic &amp; Latency',
-        kvGrid([
-            ['Total Requests', fmtNum(bStat.total_reqs || 0)],
-            ['In-Flight',      badge(bStat.in_flight || 0, 'info')],
-            ['Failures',       bStat.failures > 0 ? badge(fmtNum(bStat.failures), 'error') : '0'],
-            ['Weight',         cfg.weight || 1],
-        ]) + latCard
-    );
+    if (!parts.length) return '';
+    return section('🔐 Authentication', `<div class="mw-grid">${parts.join('')}</div>`);
+}
 
-    const criteriaSection = (cfg.criteria?.source_ips?.length || cfg.criteria?.headers)
-        ? section('🎯 Routing Criteria', kvGrid([
-            ['Source IPs', cfg.criteria.source_ips?.join(', ') || 'Any'],
-            ['Headers',    cfg.criteria.headers ? JSON.stringify(cfg.criteria.headers) : 'None'],
-        ]))
-        : '';
 
+function certsSection(hostname, certificates) {
+    if (!certificates?.length) return '';
+    const cert = certificates.find(c => c.host === hostname);
+    if (!cert) return '';
+    const color = cert.daysLeft < 0 ? 'var(--danger)' : cert.daysLeft < 7 ? 'var(--warning)' : cert.daysLeft < 30 ? 'var(--info)' : 'var(--success)';
+    const label = cert.daysLeft < 0 ? 'Expired' : cert.daysLeft === 0 ? 'Today' : `${cert.daysLeft}d`;
+    return section('🔑 Certificate', kvGrid([
+        ['Issuer',  cert.issuer || "Let's Encrypt"],
+        ['Expiry',  `<span style="color:${color};">${label}</span>`],
+        ['Expires', new Date(cert.expiry).toLocaleDateString()],
+    ]));
+}
+
+
+function hostLevelSection(hostname) {
+    const hostCfg = (store.get('lastConfig') || {}).hosts?.[hostname] || {};
+    const items = [];
+
+    if (hostCfg.compression)                               items.push(['Compression', badge('Enabled', 'success')]);
+    if (hostCfg.limits?.max_body_size)                     items.push(['Max Body', hostCfg.limits.max_body_size + ' B']);
+    if (hostCfg.not_found_page)                            items.push(['404 Page', `<code style="font-size:10px;">${hostCfg.not_found_page}</code>`]);
+    if (Object.keys(hostCfg.error_pages?.pages || {}).length) {
+        items.push(['Error Pages', Object.keys(hostCfg.error_pages.pages).join(', ')]);
+    }
+    if (isOn(hostCfg.headers?.enabled)) {
+        const req = Object.keys(hostCfg.headers?.request?.set  || {}).length
+                  + Object.keys(hostCfg.headers?.request?.add  || {}).length;
+        const res = Object.keys(hostCfg.headers?.response?.set || {}).length
+                  + Object.keys(hostCfg.headers?.response?.add || {}).length;
+        if (req + res > 0) items.push(['Headers', `${req} req, ${res} resp`]);
+    }
+    if (hostCfg.bind?.length) items.push(['Bind', hostCfg.bind.map(b => `<code>${b}</code>`).join(' ')]);
+
+    if (!items.length) return '';
+    return section('🏠 Host Settings', kvGrid(items));
+}
+
+
+function rawSection(item) {
+    // Strip circular/redundant fields that would make the JSON too noisy
+    const clean = JSON.parse(JSON.stringify(item, (k, v) => {
+        // Skip zero-value Enabled fields and empty arrays/objects
+        if (v === 'unknown' || v === null) return undefined;
+        if (Array.isArray(v)   && v.length === 0)           return undefined;
+        if (typeof v === 'object' && v !== null && !Array.isArray(v) && Object.keys(v).length === 0) return undefined;
+        return v;
+    }));
+    const j = JSON.stringify(clean, null, 2);
+    return section('{ } Raw Config', `
+        <pre class="code-box" style="max-height:220px;overflow:auto;font-size:10px;line-height:1.55;margin:0;white-space:pre-wrap;word-break:break-all;">${j.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`);
+}
+
+
+function buildRouteHTML(hostname, item, itemStats, type, certificates, routeIdx) {
+    // TCP proxy
+    if (type === 'proxy') {
+        return [
+            section('📡 TCP Proxy', kvGrid([
+                ['Listen',   `<code>${item.listen}</code>`],
+                ['Strategy', item.strategy || 'round_robin'],
+                ['SNI',      item.sni ? `<code>${item.sni}</code>` : null],
+                ['Max Conn', item.max_connections || null],
+            ])),
+            upstreamsSection(hostname, item, itemStats, routeIdx, type),
+            rawSection(item),
+        ].filter(Boolean).join('');
+    }
+
+    // HTTP route — show everything, always
     return [
-        healthSection,
-        trafficSection,
-        criteriaSection,
-        rawSection('📜 Backend Config', cfg, '150px'),
+        hostLevelSection(hostname),
+        certsSection(hostname, certificates),
+        // Web engine — web section and git section are separate:
+        // webSection handles root/markdown/php/listing/spa
+        // gitSection handles git deployment details
+        webSection(item.web),
+        gitSection(item.web?.git, hostname),
+        serverlessSection(item.serverless),
+        upstreamsSection(hostname, item, itemStats, routeIdx, type),
+        httpFeaturesSection(item),
+        authSection(item),
+        // Raw config — always at bottom for power users and debugging
+        rawSection(item),
     ].filter(Boolean).join('');
+}
+
+
+function buildBackendHTML(cfg, stat) {
+    const parts = [];
+
+    if (stat.url || stat.address) {
+        const p50  = stat.latency_us?.p50  ? (stat.latency_us.p50  / 1000).toFixed(1) + 'ms' : null;
+        const p99  = stat.latency_us?.p99  ? (stat.latency_us.p99  / 1000).toFixed(1) + 'ms' : null;
+        const p999 = stat.latency_us?.p999 ? (stat.latency_us.p999 / 1000).toFixed(1) + 'ms' : null;
+        const hSt  = stat.health?.status || 'Unknown';
+        const dotCls = (!stat.alive || hSt === 'Dead' || hSt === 'Unhealthy') ? 'down'
+                     : hSt === 'Degraded' ? 'warn'
+                     : hSt === 'Healthy'  ? 'ok' : 'info';
+        const gaugeColor = dotCls === 'ok' ? 'var(--success)' : dotCls === 'down' ? 'var(--danger)' : 'var(--warning)';
+
+        parts.push(section('📊 Live Metrics', `
+            <div class="health-gauge">
+                <div class="gauge-circle" style="background:${gaugeColor};">
+                    ${stat.health?.score !== undefined ? stat.health.score : '?'}
+                </div>
+                <div>
+                    <div class="gauge-status"><span class="dot ${dotCls}"></span> ${hSt}</div>
+                    <div class="gauge-sub">${stat.total_reqs ? fmtNum(stat.total_reqs) + ' total requests' : 'No requests yet'}</div>
+                </div>
+            </div>
+            ${kvGrid([
+                ['p50',         p50],
+                ['p99',         p99],
+                ['p999',        p999],
+                ['In Flight',   stat.in_flight  > 0 ? badge(stat.in_flight,            'warning') : null],
+                ['Failures',    stat.failures   > 0 ? badge(fmtNum(stat.failures),     'error')   : null],
+                ['Consecutive', stat.health?.consecutive_failures > 0 ? stat.health.consecutive_failures + ' fails' : null],
+            ])}`));
+    }
+
+    parts.push(section('⚙️ Configuration', kvGrid([
+        ['Address',  `<code style="word-break:break-all;">${cfg.address || '—'}</code>`],
+        ['Weight',   cfg.weight || 1],
+        ['Max Conn', cfg.max_connections || null],
+        cfg.criteria?.source_ips?.length ? ['Source IPs', cfg.criteria.source_ips.map(ip => `<code>${ip}</code>`).join(' ')] : null,
+        cfg.streaming?.enabled ? ['Streaming', badge('Enabled', 'info')] : null,
+    ].filter(Boolean))));
+
+    return parts.join('');
 }

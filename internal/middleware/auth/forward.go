@@ -11,21 +11,14 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/resource"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/cespare/xxhash/v2"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/mappo"
 )
 
-// forwardAuthAllowedDenyHeaders is the explicit allowlist of auth backend headers
-// forwarded to the client on a non-2xx response. Functional headers (Content-Type,
-// WWW-Authenticate, Retry-After) are included so the client can parse the denial
-// body correctly. Security-policy headers (Set-Cookie, Content-Security-Policy,
-// Access-Control-Allow-Origin, Location, Strict-Transport-Security, X-Frame-Options)
-// are intentionally excluded to prevent the auth backend from overriding the
-// application's security posture or injecting cookies.
 var forwardAuthAllowedDenyHeaders = map[string]bool{
 	"Content-Type":     true,
 	"Content-Length":   true,
@@ -36,8 +29,9 @@ var forwardAuthAllowedDenyHeaders = map[string]bool{
 	"X-Auth-Message":   true,
 }
 
-// Forward returns middleware that delegates authentication to an external service.
-// On non-2xx responses only a safe allowlist of headers is forwarded to the client.
+// Forward returns middleware that authenticates each request by forwarding it
+// to an external auth service. The upstream request proceeds only when the
+// auth service responds with a 2xx status.
 func Forward(res *resource.Resource, cfg *alaye.ForwardAuth) func(http.Handler) http.Handler {
 	if cfg.Enabled.NotActive() {
 		return func(next http.Handler) http.Handler { return next }
@@ -56,7 +50,6 @@ func Forward(res *resource.Resource, cfg *alaye.ForwardAuth) func(http.Handler) 
 		cachePrefix = "default_" + cfg.URL
 	}
 
-	// Resolve timeout to time.Duration at construction time — not per-request.
 	timeout := cfg.Timeout.StdDuration()
 	if timeout <= 0 {
 		timeout = woos.DefaultForwardAuthTimeout
@@ -86,7 +79,6 @@ func Forward(res *resource.Resource, cfg *alaye.ForwardAuth) func(http.Handler) 
 		client = res.HTTPClient
 	}
 
-	// Resolve CacheTTL to time.Duration at construction time.
 	cacheTTL := cfg.Response.CacheTTL.StdDuration()
 
 	return func(next http.Handler) http.Handler {
@@ -211,7 +203,8 @@ func Forward(res *resource.Resource, cfg *alaye.ForwardAuth) func(http.Handler) 
 	}
 }
 
-// createTLSConfig builds a tls.Config from the forward auth TLS block.
+// createTLSConfig builds a tls.Config from the ForwardTLS block, loading
+// optional client certificates and a custom CA pool.
 func createTLSConfig(cfg alaye.ForwardTLS) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12,
@@ -236,7 +229,8 @@ func createTLSConfig(cfg alaye.ForwardTLS) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-// buildCacheKey produces a stable hash key for caching forward auth decisions.
+// buildCacheKey hashes the configured cache key headers together with the
+// request method, path, and query to produce a stable auth cache key.
 func buildCacheKey(r *http.Request, cacheKeyHeaders []string, prefix string) string {
 	h := xxhash.New()
 	if prefix != "" {
@@ -258,8 +252,8 @@ func buildCacheKey(r *http.Request, cacheKeyHeaders []string, prefix string) str
 	return strconv.FormatUint(h.Sum64(), 16)
 }
 
-// copyHeaders copies specific request headers from src to dst.
-// When keys is empty, only Authorization and Cookie are forwarded.
+// copyHeaders copies the specified headers from src to dst. When keys is
+// empty, Authorization and Cookie are forwarded by default.
 func copyHeaders(src http.Header, dst http.Header, keys []string) {
 	if len(keys) == 0 {
 		for _, key := range []string{"Authorization", "Cookie"} {
@@ -276,7 +270,8 @@ func copyHeaders(src http.Header, dst http.Header, keys []string) {
 	}
 }
 
-// copyHeadersToRequest copies specific headers from src into the outbound request.
+// copyHeadersToRequest copies the specified headers from the auth service
+// response into the upstream request so backends can read identity claims.
 func copyHeadersToRequest(src http.Header, r *http.Request, keys []string) {
 	for _, k := range keys {
 		if v := src.Get(k); v != "" {
@@ -285,7 +280,8 @@ func copyHeadersToRequest(src http.Header, r *http.Request, keys []string) {
 	}
 }
 
-// handleFailure either passes through to next or returns 403 depending on on_failure config.
+// handleFailure either calls next (on_failure = allow) or returns 403
+// with msg as the body (on_failure = deny).
 func handleFailure(w http.ResponseWriter, r *http.Request, onFailure string, next http.Handler, msg string) {
 	if onFailure == woos.Allow {
 		next.ServeHTTP(w, r)

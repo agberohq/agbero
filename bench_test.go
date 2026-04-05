@@ -16,7 +16,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	"github.com/agberohq/agbero/internal/discovery"
+	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -177,7 +177,7 @@ logging {
 	woos.DefaultApply(global, configFile)
 
 	// Create host manager with disabled logger
-	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(disabledLogger))
+	hm := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(disabledLogger))
 	if err := hm.ReloadFull(); err != nil {
 		b.Fatalf("Failed to reload hosts: %v", err)
 	}

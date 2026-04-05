@@ -14,13 +14,16 @@ type Host struct {
 	NotFoundPage string   `hcl:"not_found_page,attr" json:"not_found_page"`
 	Compression  bool     `hcl:"compression,attr" json:"compression"`
 
-	TLS        TLS        `hcl:"tls,block" json:"tls"`
-	Limits     Limit      `hcl:"limits,block" json:"limits"`
-	Headers    Headers    `hcl:"headers,block" json:"headers"`
-	ErrorPages ErrorPages `hcl:"error_pages,block" json:"error_pages"`
+	TLS        TLS        `hcl:"tls,block,omitempty" json:"tls"`
+	Limits     Limit      `hcl:"limits,block,omitempty" json:"limits"`
+	Headers    Headers    `hcl:"headers,block,omitempty" json:"headers"`
+	ErrorPages ErrorPages `hcl:"error_pages,block,omitempty" json:"error_pages"`
 
 	Routes  []Route `hcl:"route,block" json:"routes"`
 	Proxies []Proxy `hcl:"proxy,block" json:"proxies"`
+
+	// source
+	SourceFile string `hcl:"-" json:"source_file,omitempty"`
 }
 
 // Validate checks domains, bind ports, routes, and all nested blocks.
