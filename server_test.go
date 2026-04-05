@@ -26,7 +26,7 @@ import (
 )
 
 var (
-	testLogger = ll.New("test").Disable()
+	testLogger = ll.New("test").Enable()
 )
 
 // TestNewServer_Basic tests basic server initialization

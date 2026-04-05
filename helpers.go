@@ -48,9 +48,9 @@ func sanitizeAdminConfig(cfg *alaye.Admin) {
 	//		cfg.BasicAuth.Users[i] = "***"
 	//	}
 	//}
-	if cfg.JWTAuth.Enabled.Active() {
-		cfg.JWTAuth.Secret = "***"
-	}
+	//if cfg.JWTAuth.Enabled.Active() {
+	//	cfg.JWTAuth.Secret = "***"
+	//}
 	if cfg.ForwardAuth.Enabled.Active() {
 		cfg.ForwardAuth.URL = "***"
 	}

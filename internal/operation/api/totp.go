@@ -67,7 +67,17 @@ func (t *TOTP) setup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "TOTP not enabled in configuration", http.StatusNotImplemented)
 		return
 	}
-	if _, exists := cfg.GetUserSecret(user); exists {
+
+	var exists bool
+	var secret string
+	if t.shared.Keeper != nil {
+		secretBytes, err := t.shared.Keeper.Get(expect.Vault().AdminTOTP(user))
+		if err == nil && len(secretBytes) > 0 {
+			exists = true
+		}
+	}
+
+	if exists {
 		http.Error(w, "TOTP already configured for this user", http.StatusConflict)
 		return
 	}
@@ -173,7 +183,15 @@ func (t *TOTP) VerifyCode(username, code string) bool {
 	if !cfg.Enabled.Active() {
 		return false
 	}
-	secret, ok := cfg.GetUserSecret(username)
+	var ok bool
+	var secret string
+	if t.shared.Keeper != nil {
+		secretBytes, err := t.shared.Keeper.Get(expect.Vault().AdminTOTP(username))
+		if err == nil && len(secretBytes) > 0 {
+			secret = string(secretBytes)
+			ok = true
+		}
+	}
 	if !ok || secret == "" {
 		return false
 	}
@@ -189,7 +207,17 @@ func (t *TOTP) buildQR(w http.ResponseWriter, r *http.Request) (*ui.QRResult, bo
 	}
 
 	cfg := t.shared.State().Global.Admin.TOTP
-	secret, ok := cfg.GetUserSecret(user)
+	var ok bool
+	var secret string
+
+	if t.shared.Keeper != nil {
+		secretBytes, err := t.shared.Keeper.Get(expect.Vault().AdminTOTP(user))
+		if err == nil && len(secretBytes) > 0 {
+			secret = string(secretBytes)
+			ok = true
+		}
+	}
+
 	if !ok || secret == "" {
 		http.Error(w, "TOTP not configured for "+user, http.StatusNotFound)
 		return nil, false

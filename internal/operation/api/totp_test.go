@@ -16,11 +16,14 @@ import (
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/middleware/auth"
 	"github.com/agberohq/agbero/internal/pkg/security"
+	"github.com/agberohq/keeper"
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-func setupTestTOTPWithConfig(t *testing.T) (*Shared, func()) {
+// setupTestTOTPWithKeeper creates a test environment with an unlocked Keeper
+// instance pre-configured for TOTP tests.
+func setupTestTOTPWithKeeper(t *testing.T) (*Shared, *keeper.Keeper, func()) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts.d")
@@ -38,38 +41,57 @@ func setupTestTOTPWithConfig(t *testing.T) (*Shared, func()) {
 				Algorithm:  "SHA1",
 				Issuer:     "Agbero Test",
 				WindowSize: 1,
-				Users: []alaye.TOTPUser{
-					{
-						Username: "existinguser",
-						// Plain base32 literal — no keeper needed in tests.
-						Secret: expect.Value("JBSWY3DPEHPK3PXP"),
-					},
-				},
 			},
 		},
 	}
 
-	shared := &Shared{Logger: testLogger}
+	// Create and unlock a Keeper instance for testing
+	keeperPath := filepath.Join(tmpDir, "keeper.db")
+	store, err := keeper.New(keeper.Config{DBPath: keeperPath})
+	if err != nil {
+		t.Fatalf("keeper.New failed: %v", err)
+	}
+
+	passphrase := []byte("test-totp-passphrase")
+	if err := store.Unlock(passphrase); err != nil {
+		store.Close()
+		t.Fatalf("Unlock failed: %v", err)
+	}
+
+	// Create the vault:admin bucket for TOTP secrets
+	if err := store.CreateBucket("vault", "admin", keeper.LevelPasswordOnly, "test"); err != nil {
+		if !strings.Contains(err.Error(), "immutable") && !strings.Contains(err.Error(), "already exists") {
+			store.Close()
+			t.Fatalf("CreateBucket vault:admin failed: %v", err)
+		}
+	}
+
+	shared := &Shared{
+		Logger: testLogger,
+		Keeper: store,
+	}
 	shared.UpdateState(&ActiveState{Global: global})
 
-	return shared, func() { os.RemoveAll(tmpDir) }
+	cleanup := func() {
+		store.Close()
+		os.RemoveAll(tmpDir)
+	}
+
+	return shared, store, cleanup
 }
 
-// addTOTPUser adds a user with a plain-text secret directly to the shared state.
-// Used in tests where the secret is generated in-process and does not need keeper.
-func addTOTPUser(shared *Shared, username, secret string) {
-	state := shared.State()
-	cfg := state.Global.Admin.TOTP
-	cfg.Users = append(cfg.Users, alaye.TOTPUser{
-		Username: username,
-		Secret:   expect.Value(secret),
-	})
-	state.Global.Admin.TOTP = cfg
-	shared.UpdateState(state)
+// addTOTPUserInKeeper stores a TOTP secret for a user in the Keeper instance
+// at the canonical path: vault://admin/totp/<username>
+func addTOTPUserInKeeper(t *testing.T, store *keeper.Keeper, username, secret string) {
+	t.Helper()
+	key := expect.Vault().AdminTOTP(username)
+	if err := store.Set(key, []byte(secret)); err != nil {
+		t.Fatalf("Failed to store TOTP secret for %s: %v", username, err)
+	}
 }
 
 func TestTOTPHandler_Verify_ValidCode(t *testing.T) {
-	shared, cleanup := setupTestTOTPWithConfig(t)
+	shared, store, cleanup := setupTestTOTPWithKeeper(t)
 	defer cleanup()
 
 	cfg := shared.State().Global.Admin.TOTP
@@ -85,7 +107,7 @@ func TestTOTPHandler_Verify_ValidCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate secret: %v", err)
 	}
-	addTOTPUser(shared, "verifyuser", secret)
+	addTOTPUserInKeeper(t, store, "verifyuser", secret)
 
 	r := chi.NewRouter()
 	TOTPHandler(shared, r)
@@ -116,8 +138,20 @@ func TestTOTPHandler_Verify_ValidCode(t *testing.T) {
 }
 
 func TestTOTPHandler_Verify_InvalidCode(t *testing.T) {
-	shared, cleanup := setupTestTOTPWithConfig(t)
+	shared, store, cleanup := setupTestTOTPWithKeeper(t)
 	defer cleanup()
+
+	// Add a user with a secret so we test code validation, not user lookup
+	cfg := shared.State().Global.Admin.TOTP
+	gen := security.NewTOTPGenerator(&security.TOTPConfig{
+		Digits:    cfg.Digits,
+		Period:    cfg.Period,
+		Algorithm: cfg.Algorithm,
+		Window:    cfg.WindowSize,
+		Issuer:    cfg.Issuer,
+	})
+	secret, _ := gen.GenerateSecret()
+	addTOTPUserInKeeper(t, store, "existinguser", secret)
 
 	r := chi.NewRouter()
 	TOTPHandler(shared, r)
@@ -134,7 +168,7 @@ func TestTOTPHandler_Verify_InvalidCode(t *testing.T) {
 }
 
 func TestTOTPHandler_Verify_WithWindow(t *testing.T) {
-	shared, cleanup := setupTestTOTPWithConfig(t)
+	shared, store, cleanup := setupTestTOTPWithKeeper(t)
 	defer cleanup()
 
 	state := shared.State()
@@ -154,7 +188,7 @@ func TestTOTPHandler_Verify_WithWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate secret: %v", err)
 	}
-	addTOTPUser(shared, "windowuser", secret)
+	addTOTPUserInKeeper(t, store, "windowuser", secret)
 
 	// Code from 60 seconds ago — valid with window=2 (2 periods back).
 	code, err := gen.GenerateCode(secret, time.Now().Unix()-60)
@@ -177,7 +211,7 @@ func TestTOTPHandler_Verify_WithWindow(t *testing.T) {
 }
 
 func TestTOTPHandler_Verify_UserNotFound(t *testing.T) {
-	shared, cleanup := setupTestTOTPWithConfig(t)
+	shared, _, cleanup := setupTestTOTPWithKeeper(t)
 	defer cleanup()
 
 	r := chi.NewRouter()
@@ -195,7 +229,7 @@ func TestTOTPHandler_Verify_UserNotFound(t *testing.T) {
 }
 
 func TestTOTPHandler_Verify_MissingCode(t *testing.T) {
-	shared, cleanup := setupTestTOTPWithConfig(t)
+	shared, _, cleanup := setupTestTOTPWithKeeper(t)
 	defer cleanup()
 
 	r := chi.NewRouter()
@@ -212,7 +246,7 @@ func TestTOTPHandler_Verify_MissingCode(t *testing.T) {
 }
 
 func TestTOTPHandler_Setup(t *testing.T) {
-	shared, cleanup := setupTestTOTPWithConfig(t)
+	shared, store, cleanup := setupTestTOTPWithKeeper(t)
 	defer cleanup()
 
 	r := chi.NewRouter()
@@ -228,6 +262,7 @@ func TestTOTPHandler_Setup(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected 200, got %d — body: %s", w.Code, w.Body.String())
+		return
 	}
 
 	var resp map[string]string
@@ -243,15 +278,34 @@ func TestTOTPHandler_Setup(t *testing.T) {
 	if !strings.Contains(resp["uri"], "newuser") {
 		t.Errorf("Expected URI to contain newuser, got %s", resp["uri"])
 	}
-	// store_key should be the canonical keeper path
 	if resp["store_key"] != "vault://admin/totp/newuser" {
 		t.Errorf("Expected store_key=vault://admin/totp/newuser, got %s", resp["store_key"])
+	}
+
+	// Verify the secret was actually stored in Keeper
+	stored, err := store.Get(expect.Vault().AdminTOTP("newuser"))
+	if err != nil {
+		t.Errorf("Failed to retrieve stored secret from Keeper: %v", err)
+	}
+	if string(stored) != resp["secret"] {
+		t.Error("Secret in response does not match stored secret")
 	}
 }
 
 func TestTOTPHandler_Setup_AlreadyConfigured(t *testing.T) {
-	shared, cleanup := setupTestTOTPWithConfig(t)
+	shared, store, cleanup := setupTestTOTPWithKeeper(t)
 	defer cleanup()
+
+	// Pre-configure TOTP for this user
+	cfg := shared.State().Global.Admin.TOTP
+	gen := security.NewTOTPGenerator(&security.TOTPConfig{
+		Digits:    cfg.Digits,
+		Period:    cfg.Period,
+		Algorithm: cfg.Algorithm,
+		Issuer:    cfg.Issuer,
+	})
+	secret, _ := gen.GenerateSecret()
+	addTOTPUserInKeeper(t, store, "existinguser", secret)
 
 	r := chi.NewRouter()
 	TOTPHandler(shared, r)
@@ -270,7 +324,7 @@ func TestTOTPHandler_Setup_AlreadyConfigured(t *testing.T) {
 }
 
 func TestTOTPHandler_Setup_WithoutAuth(t *testing.T) {
-	shared, cleanup := setupTestTOTPWithConfig(t)
+	shared, _, cleanup := setupTestTOTPWithKeeper(t)
 	defer cleanup()
 
 	r := chi.NewRouter()
@@ -286,8 +340,19 @@ func TestTOTPHandler_Setup_WithoutAuth(t *testing.T) {
 }
 
 func TestTOTPHandler_QRCode(t *testing.T) {
-	shared, cleanup := setupTestTOTPWithConfig(t)
+	shared, store, cleanup := setupTestTOTPWithKeeper(t)
 	defer cleanup()
+
+	// Pre-configure TOTP for QR generation
+	cfg := shared.State().Global.Admin.TOTP
+	gen := security.NewTOTPGenerator(&security.TOTPConfig{
+		Digits:    cfg.Digits,
+		Period:    cfg.Period,
+		Algorithm: cfg.Algorithm,
+		Issuer:    cfg.Issuer,
+	})
+	secret, _ := gen.GenerateSecret()
+	addTOTPUserInKeeper(t, store, "existinguser", secret)
 
 	r := chi.NewRouter()
 	TOTPHandler(shared, r)
@@ -326,7 +391,7 @@ func TestTOTPHandler_QRCode(t *testing.T) {
 }
 
 func TestTOTPHandler_QRCode_UserNotFound(t *testing.T) {
-	shared, cleanup := setupTestTOTPWithConfig(t)
+	shared, _, cleanup := setupTestTOTPWithKeeper(t)
 	defer cleanup()
 
 	r := chi.NewRouter()
@@ -342,7 +407,7 @@ func TestTOTPHandler_QRCode_UserNotFound(t *testing.T) {
 }
 
 func TestTOTPHandler_VerifyCode_Integration(t *testing.T) {
-	shared, cleanup := setupTestTOTPWithConfig(t)
+	shared, store, cleanup := setupTestTOTPWithKeeper(t)
 	defer cleanup()
 
 	cfg := shared.State().Global.Admin.TOTP
@@ -358,7 +423,7 @@ func TestTOTPHandler_VerifyCode_Integration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate secret: %v", err)
 	}
-	addTOTPUser(shared, "integrationuser", secret)
+	addTOTPUserInKeeper(t, store, "integrationuser", secret)
 
 	totp := NewTOTP(shared)
 

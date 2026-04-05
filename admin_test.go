@@ -17,7 +17,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	discovery "github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/operation/api"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/keeper"
@@ -25,8 +25,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// initKeeperForTest correctly sets up the keeper store for tests.
 func initKeeperForTest(t *testing.T, dataDir string) {
+	t.Helper()
+
 	kConfig := keeper.Config{
 		DBPath: filepath.Join(dataDir, woos.DefaultKeeperName),
 		Logger: testLogger,
@@ -41,9 +42,8 @@ func initKeeperForTest(t *testing.T, dataDir string) {
 		t.Fatalf("TEST SETUP FAILED: Failed to unlock test keeper: %v", err)
 	}
 
-	// Create 'admin' namespace in the 'vault' scheme for admin user data.
 	if err := store.CreateBucket("vault", "admin", keeper.LevelPasswordOnly, "test"); err != nil {
-		if !strings.Contains(err.Error(), "immutable") { // Ignore "already exists" errors
+		if !strings.Contains(err.Error(), "immutable") {
 			t.Fatalf("failed to create vault:admin bucket: %v", err)
 		}
 	}
@@ -54,13 +54,11 @@ func initKeeperForTest(t *testing.T, dataDir string) {
 		}
 	}
 
-	// Store the internal auth key in `default:key/internal`.
 	_, ppkPEM, _ := security.GeneratePPK()
 	if err := store.Set("key/internal", ppkPEM); err != nil {
 		t.Fatalf("failed to set key/internal: %v", err)
 	}
 
-	// Store the admin user in `vault:admin/users/admin`.
 	p := security.NewPassword()
 	hash, err := p.HashWithCost("correct-password", bcrypt.MinCost)
 	if err != nil {
@@ -109,12 +107,8 @@ func newTestAdminServer(t *testing.T) (*Server, *http.Server, int, func()) {
 			Redirect: alaye.Inactive,
 		},
 		Admin: alaye.Admin{
-			Enabled: alaye.Active,
-			Address: fmt.Sprintf("127.0.0.1:%d", adminPort),
-			JWTAuth: alaye.JWTAuth{
-				Enabled: alaye.Active,
-				Secret:  "test-secret-key-32-bytes-minimum!",
-			},
+			Enabled:   alaye.Active,
+			Address:   fmt.Sprintf("127.0.0.1:%d", adminPort),
 			TOTP:      alaye.TOTP{Enabled: alaye.Inactive},
 			Telemetry: alaye.Telemetry{Enabled: alaye.Inactive},
 		},
@@ -156,9 +150,8 @@ func newTestAdminServer(t *testing.T) (*Server, *http.Server, int, func()) {
 	waitForPort(t, adminPort)
 	waitForPort(t, httpPort)
 
-	// Wait for the server to be ready
 	var ready bool
-	for i := 0; i < 200; i++ { // Increased timeout
+	for i := 0; i < 200; i++ {
 		s.mu.RLock()
 		if s.adminSrv != nil {
 			ready = true
@@ -175,7 +168,7 @@ func newTestAdminServer(t *testing.T) (*Server, *http.Server, int, func()) {
 
 	cleanup := func() {
 		shutdown.TriggerShutdown()
-		<-errCh // Wait for server goroutine to finish
+		<-errCh
 	}
 
 	return s, s.adminSrv, adminPort, cleanup
@@ -286,7 +279,6 @@ func TestAdminCoreEndpoints(t *testing.T) {
 			t.Errorf("expected status 200, got %d. Body: %s", resp.StatusCode, string(body))
 		}
 
-		// Give server time to process revocation
 		time.Sleep(100 * time.Millisecond)
 
 		resp2 := makeRequest(t, port, http.MethodGet, "/uptime", nil, token)
@@ -315,7 +307,7 @@ func newTestAdminServerWithTOTP(t *testing.T) (*Server, int, func()) {
 		t.Fatal(err)
 	}
 
-	initKeeperForTest(t, dataDir) // <-- This was missing
+	initKeeperForTest(t, dataDir)
 
 	adminPort := zulu.PortFree()
 	httpPort := zulu.PortFree()
@@ -336,18 +328,8 @@ func newTestAdminServerWithTOTP(t *testing.T) (*Server, int, func()) {
 		Admin: alaye.Admin{
 			Enabled: alaye.Active,
 			Address: fmt.Sprintf("127.0.0.1:%d", adminPort),
-			JWTAuth: alaye.JWTAuth{
-				Enabled: alaye.Active,
-				Secret:  "test-secret-key-32-bytes-minimum!",
-			},
 			TOTP: alaye.TOTP{
-				Enabled: alaye.Active,
-				Users: []alaye.TOTPUser{
-					{
-						Username: "admin",
-						Secret:   expect.Value("JBSWY3DPEHPK3PXP"), // base32 secret
-					},
-				},
+				Enabled:    alaye.Active,
 				Issuer:     "agbero-test",
 				Algorithm:  "SHA1",
 				Digits:     6,
@@ -414,7 +396,6 @@ func newTestAdminServerWithTOTP(t *testing.T) (*Server, int, func()) {
 		select {
 		case err := <-errCh:
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				// t.Logf("Server error: %v", err)
 			}
 		default:
 		}
@@ -485,8 +466,6 @@ func TestAdminTOTPChallengeFlow(t *testing.T) {
 			t.Errorf("expected 'totp' in requirements, got %v", requirements)
 		}
 
-		// Challenge tokens are signed with different secret - they fail signature validation (401)
-		// This is correct - challenge tokens only work with /login/challenge
 		resp2 := makeRequest(t, port, http.MethodGet, "/uptime", nil, token)
 		defer resp2.Body.Close()
 		if resp2.StatusCode != http.StatusUnauthorized {
@@ -504,7 +483,6 @@ func TestAdminTOTPChallengeFlow(t *testing.T) {
 	})
 
 	t.Run("POST /login/challenge - rejects invalid TOTP", func(t *testing.T) {
-		// First get challenge token
 		body := `{"username":"admin","password":"correct-password"}`
 		resp := makeRequest(t, port, http.MethodPost, "/login", []byte(body), "")
 		defer resp.Body.Close()
@@ -516,7 +494,6 @@ func TestAdminTOTPChallengeFlow(t *testing.T) {
 			t.Fatal("failed to get challenge token")
 		}
 
-		// Try challenge with invalid TOTP
 		challengeBody := `{"totp":"000000"}`
 		resp2 := makeRequest(t, port, http.MethodPost, "/login/challenge", []byte(challengeBody), challengeToken)
 		defer resp2.Body.Close()
@@ -526,7 +503,6 @@ func TestAdminTOTPChallengeFlow(t *testing.T) {
 	})
 
 	t.Run("POST /login/challenge - succeeds with valid TOTP", func(t *testing.T) {
-		// First get challenge token
 		body := `{"username":"admin","password":"correct-password"}`
 		resp := makeRequest(t, port, http.MethodPost, "/login", []byte(body), "")
 		defer resp.Body.Close()
@@ -538,14 +514,12 @@ func TestAdminTOTPChallengeFlow(t *testing.T) {
 			t.Fatal("failed to get challenge token")
 		}
 
-		// Generate valid TOTP code mirroring server config
 		gen := security.NewTOTPGenerator(security.DefaultTOTPConfig())
 		code, err := gen.Now("JBSWY3DPEHPK3PXP")
 		if err != nil {
 			t.Fatalf("failed to generate valid TOTP code: %v", err)
 		}
 
-		// Try challenge with valid TOTP
 		challengeBody := fmt.Sprintf(`{"totp":"%s"}`, code)
 		resp2 := makeRequest(t, port, http.MethodPost, "/login/challenge", []byte(challengeBody), challengeToken)
 		defer resp2.Body.Close()
@@ -783,7 +757,6 @@ func TestAdminKeeperAPI(t *testing.T) {
 		resp := makeRequest(t, port, http.MethodGet, basePath+"/secrets", nil, validToken)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusServiceUnavailable {
-			// t.Logf("Keeper not configured - got %d", resp.StatusCode)
 		}
 	})
 }
@@ -807,7 +780,6 @@ func TestAdminFirewallAPI(t *testing.T) {
 		resp := makeRequest(t, port, http.MethodPost, basePath, []byte(payload), validToken)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusNotImplemented {
-			// t.Logf("Firewall not enabled - got %d", resp.StatusCode)
 		}
 	})
 }

@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"charm.land/huh/v2"
 	"github.com/agberohq/agbero/cmd/agbero/helper"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -500,12 +499,13 @@ func main() {
 		} else {
 			ctx := setup.NewContext(logger)
 			if ctx.Interactive {
-				var doInit bool
-				err := huh.NewConfirm().
-					Title("Configuration Not Found").
-					Description("No agbero.hcl found. Would you like to initialize one?").
-					Value(&doInit).
-					Run()
+				u := ui.New()
+				doInit, err := u.ConfirmDefault(
+					"Configuration Not Found",
+					true,
+					"No agbero.hcl found. Would you like to initialize one?",
+				)
+
 				if err == nil && doInit {
 					path, err := helper.InitConfiguration(logger, "")
 					if err != nil {

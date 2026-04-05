@@ -160,7 +160,7 @@ func (k *Keeper) Rotate(configPath string) {
 	if err := store.Rotate(newPass); err != nil {
 		k.p.Logger.Fatal("rotation failed: ", err)
 	}
-	zero.Bytes(newPass)
 
+	zero.Bytes(newPass)
 	ui.New().SuccessLine("passphrase rotated — update keeper.passphrase in agbero.hcl if stored there")
 }

@@ -232,7 +232,7 @@ func defaultAdmin(a *alaye.Admin) {
 	}
 	if a.Enabled == alaye.Active {
 		// defaultBasicAuth(&a.BasicAuth)
-		defaultJWTAuth(&a.JWTAuth)
+		// defaultJWTAuth(&a.JWTAuth)
 		defaultForwardAuth(&a.ForwardAuth)
 		defaultOAuth(&a.OAuth)
 		defaultTelemetry(&a.Telemetry)
