@@ -166,8 +166,6 @@ func (s *Server) Start(configPath string) error {
 	}
 	s.resource.UpdateGlobal(s.global.Env)
 
-	// KEEPER BOOT & RESOLVER WIRING
-
 	var err error
 	s.keeperStore, err = secrets.OpenStore(s.global.Storage.DataDir, &s.global.Security.Keeper, s.logger)
 	if err != nil {

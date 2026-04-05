@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,29 +20,80 @@ import (
 	discovery "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/operation/api"
 	"github.com/agberohq/agbero/internal/pkg/security"
+	"github.com/agberohq/keeper"
 	"github.com/olekukonko/jack"
 	"golang.org/x/crypto/bcrypt"
 )
 
+// initKeeperForTest correctly sets up the keeper store for tests.
+func initKeeperForTest(t *testing.T, dataDir string) {
+	kConfig := keeper.Config{
+		DBPath: filepath.Join(dataDir, woos.DefaultKeeperName),
+		Logger: testLogger,
+	}
+	store, err := keeper.New(kConfig)
+	if err != nil {
+		t.Fatalf("TEST SETUP FAILED: Failed to create test keeper store: %v", err)
+	}
+	master, _ := store.DeriveMaster([]byte("test-passphrase"))
+	if err := store.UnlockDatabase(master); err != nil {
+		store.Close()
+		t.Fatalf("TEST SETUP FAILED: Failed to unlock test keeper: %v", err)
+	}
+
+	// Create 'admin' namespace in the 'vault' scheme for admin user data.
+	if err := store.CreateBucket("vault", "admin", keeper.LevelPasswordOnly, "test"); err != nil {
+		if !strings.Contains(err.Error(), "immutable") { // Ignore "already exists" errors
+			t.Fatalf("failed to create vault:admin bucket: %v", err)
+		}
+	}
+
+	if err := store.CreateBucket("default", "key", keeper.LevelPasswordOnly, "test"); err != nil {
+		if !strings.Contains(err.Error(), "immutable") {
+			t.Fatalf("failed to create default:key bucket: %v", err)
+		}
+	}
+
+	// Store the internal auth key in `default:key/internal`.
+	_, ppkPEM, _ := security.GeneratePPK()
+	if err := store.Set("key/internal", ppkPEM); err != nil {
+		t.Fatalf("failed to set key/internal: %v", err)
+	}
+
+	// Store the admin user in `vault:admin/users/admin`.
+	p := security.NewPassword()
+	hash, err := p.HashWithCost("correct-password", bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("failed to hash password for test: %v", err)
+	}
+	adminUser := alaye.AdminUser{
+		Username:     "admin",
+		PasswordHash: hash,
+	}
+	b, _ := json.Marshal(adminUser)
+	if err := store.SetNamespacedFull("vault", "admin", "users/admin", b); err != nil {
+		t.Fatalf("failed to set admin user: %v", err)
+	}
+
+	store.Close()
+}
+
 func newTestAdminServer(t *testing.T) (*Server, *http.Server, int, func()) {
 	t.Helper()
+
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts")
 	certsDir := filepath.Join(tmpDir, "certs")
 	dataDir := filepath.Join(tmpDir, "data")
 
-	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(certsDir, woos.DirPerm); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dataDir, woos.DirPerm); err != nil {
-		t.Fatal(err)
-	}
+	os.MkdirAll(hostsDir, woos.DirPerm)
+	os.MkdirAll(certsDir, woos.DirPerm)
+	os.MkdirAll(dataDir, woos.DirPerm)
 
 	adminPort := zulu.PortFree()
 	httpPort := zulu.PortFree()
+
+	initKeeperForTest(t, dataDir)
 
 	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
 
@@ -63,10 +115,6 @@ func newTestAdminServer(t *testing.T) (*Server, *http.Server, int, func()) {
 				Enabled: alaye.Active,
 				Secret:  "test-secret-key-32-bytes-minimum!",
 			},
-			//BasicAuth: alaye.BasicAuth{
-			//	Enabled: alaye.Active,
-			//	Users:   []string{bcryptEntry(t, "admin", "correct-password")},
-			//},
 			TOTP:      alaye.TOTP{Enabled: alaye.Inactive},
 			Telemetry: alaye.Telemetry{Enabled: alaye.Inactive},
 		},
@@ -79,6 +127,13 @@ func newTestAdminServer(t *testing.T) (*Server, *http.Server, int, func()) {
 		},
 		General: alaye.General{MaxHeaderBytes: alaye.DefaultMaxHeaderBytes},
 		Gossip:  alaye.Gossip{Enabled: alaye.Inactive},
+		Security: alaye.Security{
+			Enabled: alaye.Active,
+			Keeper: alaye.Keeper{
+				Enabled:    alaye.Active,
+				Passphrase: expect.Value("test-passphrase"),
+			},
+		},
 	}
 
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
@@ -101,36 +156,148 @@ func newTestAdminServer(t *testing.T) (*Server, *http.Server, int, func()) {
 	waitForPort(t, adminPort)
 	waitForPort(t, httpPort)
 
-	for i := 0; i < 100; i++ {
+	// Wait for the server to be ready
+	var ready bool
+	for i := 0; i < 200; i++ { // Increased timeout
 		s.mu.RLock()
-		ready := s.adminSrv != nil
+		if s.adminSrv != nil {
+			ready = true
+		}
 		s.mu.RUnlock()
 		if ready {
 			break
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
-	if s.adminSrv == nil {
-		t.Fatal("admin server failed to initialize")
+	if !ready {
+		t.Fatal("admin server failed to initialize in time")
 	}
 
 	cleanup := func() {
 		shutdown.TriggerShutdown()
-		time.Sleep(300 * time.Millisecond)
-
-		select {
-		case err := <-errCh:
-			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				// t.Logf("Server error during shutdown: %v", err)
-			}
-		default:
-		}
+		<-errCh // Wait for server goroutine to finish
 	}
 
 	return s, s.adminSrv, adminPort, cleanup
 }
 
-// newTestAdminServerWithTOTP creates server with TOTP enabled
+func makeRequest(t *testing.T, port int, method, path string, body []byte, token string) *http.Response {
+	t.Helper()
+	url := fmt.Sprintf("http://127.0.0.1:%d%s", port, path)
+	req, err := http.NewRequest(method, url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Failed to make request: %v", err)
+	}
+	return resp
+}
+
+func getToken(t *testing.T, port int) string {
+	t.Helper()
+	body := `{"username":"admin","password":"correct-password"}`
+	resp := makeRequest(t, port, http.MethodPost, "/login", []byte(body), "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Login failed to get token: wanted status 200, got %d. Body: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("Failed to decode login response: %v", err)
+	}
+	return result["token"]
+}
+
+func TestAdminCoreEndpoints(t *testing.T) {
+	_, _, port, cleanup := newTestAdminServer(t)
+	defer cleanup()
+
+	t.Run("GET /healthz - returns OK", func(t *testing.T) {
+		resp := makeRequest(t, port, http.MethodGet, "/healthz", nil, "")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("expected status 200, got %d. Body: %s", resp.StatusCode, string(body))
+		}
+	})
+
+	t.Run("GET /status - returns status with auth_state", func(t *testing.T) {
+		resp := makeRequest(t, port, http.MethodGet, "/status", nil, "")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("expected status 200, got %d. Body: %s", resp.StatusCode, string(body))
+		}
+		var result map[string]any
+		json.NewDecoder(resp.Body).Decode(&result)
+		if result["status"] != "ok" {
+			t.Error("status not ok")
+		}
+		if _, ok := result["auth_state"]; !ok {
+			t.Error("auth_state field missing from /status")
+		}
+	})
+
+	t.Run("POST /login - success without challenges", func(t *testing.T) {
+		body := `{"username":"admin","password":"correct-password"}`
+		resp := makeRequest(t, port, http.MethodPost, "/login", []byte(body), "")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("expected status 200, got %d. Body: %s", resp.StatusCode, string(body))
+		}
+		var result map[string]string
+		json.NewDecoder(resp.Body).Decode(&result)
+		if result["token"] == "" {
+			t.Error("token missing from response")
+		}
+		if result["expires"] == "" {
+			t.Error("expires missing from response")
+		}
+	})
+
+	t.Run("POST /login - invalid credentials", func(t *testing.T) {
+		body := `{"username":"admin","password":"wrong"}`
+		resp := makeRequest(t, port, http.MethodPost, "/login", []byte(body), "")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("expected status 401, got %d. Body: %s", resp.StatusCode, string(body))
+		}
+	})
+
+	t.Run("POST /logout - revokes token", func(t *testing.T) {
+		token := getToken(t, port)
+		resp := makeRequest(t, port, http.MethodPost, "/logout", nil, token)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("expected status 200, got %d. Body: %s", resp.StatusCode, string(body))
+		}
+
+		// Give server time to process revocation
+		time.Sleep(100 * time.Millisecond)
+
+		resp2 := makeRequest(t, port, http.MethodGet, "/uptime", nil, token)
+		defer resp2.Body.Close()
+		if resp2.StatusCode != http.StatusUnauthorized {
+			body, _ := io.ReadAll(resp2.Body)
+			t.Errorf("expected 401 after logout, got %d. Body: %s", resp2.StatusCode, string(body))
+		}
+	})
+}
+
 func newTestAdminServerWithTOTP(t *testing.T) (*Server, int, func()) {
 	t.Helper()
 	tmpDir := t.TempDir()
@@ -138,9 +305,17 @@ func newTestAdminServerWithTOTP(t *testing.T) (*Server, int, func()) {
 	certsDir := filepath.Join(tmpDir, "certs")
 	dataDir := filepath.Join(tmpDir, "data")
 
-	os.MkdirAll(hostsDir, woos.DirPerm)
-	os.MkdirAll(certsDir, woos.DirPerm)
-	os.MkdirAll(dataDir, woos.DirPerm)
+	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(certsDir, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dataDir, woos.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+
+	initKeeperForTest(t, dataDir) // <-- This was missing
 
 	adminPort := zulu.PortFree()
 	httpPort := zulu.PortFree()
@@ -165,10 +340,6 @@ func newTestAdminServerWithTOTP(t *testing.T) (*Server, int, func()) {
 				Enabled: alaye.Active,
 				Secret:  "test-secret-key-32-bytes-minimum!",
 			},
-			//BasicAuth: alaye.BasicAuth{
-			//	Enabled: alaye.Active,
-			//	Users:   []string{bcryptEntry(t, "admin", "correct-password")},
-			//},
 			TOTP: alaye.TOTP{
 				Enabled: alaye.Active,
 				Users: []alaye.TOTPUser{
@@ -194,6 +365,13 @@ func newTestAdminServerWithTOTP(t *testing.T) (*Server, int, func()) {
 		},
 		General: alaye.General{MaxHeaderBytes: alaye.DefaultMaxHeaderBytes},
 		Gossip:  alaye.Gossip{Enabled: alaye.Inactive},
+		Security: alaye.Security{
+			Enabled: alaye.Active,
+			Keeper: alaye.Keeper{
+				Enabled:    alaye.Active,
+				Passphrase: expect.Value("test-passphrase"),
+			},
+		},
 	}
 
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
@@ -243,245 +421,6 @@ func newTestAdminServerWithTOTP(t *testing.T) (*Server, int, func()) {
 	}
 
 	return s, adminPort, cleanup
-}
-
-// newTestAdminServerWithLockedKeeper creates server with Keeper enabled but locked
-// (no passphrase provided, simulating auto-locked or uninitialized state)
-//func newTestAdminServerWithLockedKeeper(t *testing.T) (*Server, int, func()) {
-//	t.Helper()
-//	tmpDir := t.TempDir()
-//	hostsDir := filepath.Join(tmpDir, "hosts")
-//	certsDir := filepath.Join(tmpDir, "certs")
-//	dataDir := filepath.Join(tmpDir, "data")
-//
-//	os.MkdirAll(hostsDir, woos.DirPerm)
-//	os.MkdirAll(certsDir, woos.DirPerm)
-//	os.MkdirAll(dataDir, woos.DirPerm)
-//
-//	// We MUST pre-initialize the Keeper database file. Otherwise `OpenExisting`
-//	// will fail entirely and `s.secret` will be nil, meaning the backend won't
-//	// demand a `keeper_unlock` requirement.
-//	dbPath := filepath.Join(dataDir, woos.DefaultKeeperName)
-//	store, err := security.NewStore(security.StoreConfig{DBPath: dbPath, Logger: testLogger})
-//	if err != nil {
-//		t.Fatalf("Failed to create test keeper store: %v", err)
-//	}
-//	if err := store.Unlock("test-passphrase"); err != nil {
-//		t.Fatalf("Failed to initialize test keeper passphrase: %v", err)
-//	}
-//	store.Close()
-//
-//	adminPort := zulu.PortFree()
-//	httpPort := zulu.PortFree()
-//
-//	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
-//
-//	global := &alaye.Global{
-//		Storage: alaye.Storage{
-//			HostsDir: hostsDir,
-//			CertsDir: certsDir,
-//			DataDir:  dataDir,
-//			WorkDir:  filepath.Join(tmpDir, "work"),
-//		},
-//		Bind: alaye.Bind{
-//			HTTP:     []string{fmt.Sprintf("127.0.0.1:%d", httpPort)},
-//			Redirect: alaye.Inactive,
-//		},
-//		Admin: alaye.Admin{
-//			Enabled: alaye.Active,
-//			Address: fmt.Sprintf("127.0.0.1:%d", adminPort),
-//			JWTAuth: alaye.JWTAuth{
-//				Enabled: alaye.Active,
-//				Secret:  "test-secret-key-32-bytes-minimum!",
-//			},
-//			BasicAuth: alaye.BasicAuth{
-//				Enabled: alaye.Active,
-//				Users:   []string{bcryptEntry(t, "admin", "correct-password")},
-//			},
-//			TOTP:      alaye.TOTP{Enabled: alaye.Inactive},
-//			Telemetry: alaye.Telemetry{Enabled: alaye.Inactive},
-//		},
-//		Security: alaye.Security{
-//			Enabled: alaye.Active,
-//			Keeper: alaye.Keeper{
-//				Enabled:    alaye.Active,
-//				AutoLock:   alaye.Duration(30 * time.Minute),
-//				Audit:      alaye.Inactive,
-//				Passphrase: alaye.Value(" "), // Empty - Keeper will be locked
-//			},
-//		},
-//		Logging: alaye.Logging{Enabled: alaye.Inactive},
-//		Timeouts: alaye.Timeout{
-//			Enabled: alaye.Active,
-//			Read:    alaye.Duration(5 * time.Second),
-//			Write:   alaye.Duration(5 * time.Second),
-//			Idle:    alaye.Duration(5 * time.Second),
-//		},
-//		General: alaye.General{MaxHeaderBytes: alaye.DefaultMaxHeaderBytes},
-//		Gossip:  alaye.Gossip{Enabled: alaye.Inactive},
-//	}
-//
-//	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
-//
-//	s := NewServer(
-//		WithHostManager(hm),
-//		WithGlobalConfig(global),
-//		WithLogger(testLogger),
-//		WithShutdownManager(shutdown),
-//	)
-//
-//	errCh := make(chan error, 1)
-//	go func() {
-//		if err := s.Start(""); err != nil && !errors.Is(err, http.ErrServerClosed) {
-//			errCh <- err
-//		}
-//		close(errCh)
-//	}()
-//
-//	waitForPort(t, adminPort)
-//
-//	for i := 0; i < 100; i++ {
-//		s.mu.RLock()
-//		ready := s.adminSrv != nil
-//		s.mu.RUnlock()
-//		if ready {
-//			break
-//		}
-//		time.Sleep(5 * time.Millisecond)
-//	}
-//
-//	cleanup := func() {
-//		shutdown.TriggerShutdown()
-//		time.Sleep(300 * time.Millisecond)
-//		select {
-//		case err := <-errCh:
-//			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-//				t.Logf("Server error: %v", err)
-//			}
-//		default:
-//		}
-//	}
-//
-//	return s, adminPort, cleanup
-//}
-
-func bcryptEntry(t *testing.T, username, password string) string {
-	t.Helper()
-	p := security.NewPassword()
-	hash, err := p.HashWithCost(password, bcrypt.MinCost)
-	if err != nil {
-		t.Fatalf("bcryptEntry: %v", err)
-	}
-	return fmt.Sprintf("%s:%s", username, hash)
-}
-
-func makeRequest(t *testing.T, port int, method, path string, body []byte, token string) *http.Response {
-	t.Helper()
-	url := fmt.Sprintf("http://127.0.0.1:%d%s", port, path)
-	req, err := http.NewRequest(method, url, bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("Failed to create request: %v", err)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("Failed to make request: %v", err)
-	}
-	return resp
-}
-
-func getToken(t *testing.T, port int) string {
-	t.Helper()
-	body := `{"username":"admin","password":"correct-password"}`
-	resp := makeRequest(t, port, http.MethodPost, "/login", []byte(body), "")
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes := make([]byte, 1024)
-		n, _ := resp.Body.Read(bodyBytes)
-		t.Fatalf("Login failed: %d - %s", resp.StatusCode, string(bodyBytes[:n]))
-	}
-
-	var result map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("Failed to decode login response: %v", err)
-	}
-	return result["token"]
-}
-
-func TestAdminCoreEndpoints(t *testing.T) {
-	_, _, port, cleanup := newTestAdminServer(t)
-	defer cleanup()
-
-	t.Run("GET /healthz - returns OK", func(t *testing.T) {
-		resp := makeRequest(t, port, http.MethodGet, "/healthz", nil, "")
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("expected 200, got %d", resp.StatusCode)
-		}
-	})
-
-	t.Run("GET /status - returns status with auth_state", func(t *testing.T) {
-		resp := makeRequest(t, port, http.MethodGet, "/status", nil, "")
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("expected 200, got %d", resp.StatusCode)
-		}
-		var result map[string]any
-		json.NewDecoder(resp.Body).Decode(&result)
-		if result["status"] != "ok" {
-			t.Error("status not ok")
-		}
-		if _, ok := result["auth_state"]; !ok {
-			t.Error("auth_state field missing from /status")
-		}
-	})
-
-	t.Run("POST /login - success without challenges", func(t *testing.T) {
-		body := `{"username":"admin","password":"correct-password"}`
-		resp := makeRequest(t, port, http.MethodPost, "/login", []byte(body), "")
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("expected 200, got %d", resp.StatusCode)
-		}
-		var result map[string]string
-		json.NewDecoder(resp.Body).Decode(&result)
-		if result["token"] == "" {
-			t.Error("token missing from response")
-		}
-		if result["expires"] == "" {
-			t.Error("expires missing from response")
-		}
-	})
-
-	t.Run("POST /login - invalid credentials", func(t *testing.T) {
-		body := `{"username":"admin","password":"wrong"}`
-		resp := makeRequest(t, port, http.MethodPost, "/login", []byte(body), "")
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("expected 401, got %d", resp.StatusCode)
-		}
-	})
-
-	t.Run("POST /logout - revokes token", func(t *testing.T) {
-		token := getToken(t, port)
-		resp := makeRequest(t, port, http.MethodPost, "/logout", nil, token)
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("expected 200, got %d", resp.StatusCode)
-		}
-		time.Sleep(100 * time.Millisecond)
-		resp2 := makeRequest(t, port, http.MethodGet, "/uptime", nil, token)
-		defer resp2.Body.Close()
-		if resp2.StatusCode != http.StatusUnauthorized {
-			t.Errorf("expected 401 after logout, got %d", resp2.StatusCode)
-		}
-	})
 }
 
 func TestAdminTwoTokenFlow(t *testing.T) {
@@ -623,100 +562,6 @@ func TestAdminTOTPChallengeFlow(t *testing.T) {
 		}
 	})
 }
-
-//func TestAdminKeeperChallengeFlow(t *testing.T) {
-//	// Create server with Keeper enabled but NO passphrase provided
-//	// This simulates the scenario where server starts but Keeper remains locked
-//	_, port, cleanup := newTestAdminServerWithLockedKeeper(t)
-//	defer cleanup()
-//
-//	t.Run("POST /login - returns challenge_required when Keeper locked", func(t *testing.T) {
-//		body := `{"username":"admin","password":"correct-password"}`
-//		resp := makeRequest(t, port, http.MethodPost, "/login", []byte(body), "")
-//		defer resp.Body.Close()
-//
-//		if resp.StatusCode != http.StatusAccepted {
-//			t.Errorf("expected 202 (challenge required), got %d", resp.StatusCode)
-//		}
-//
-//		var result map[string]any
-//		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-//			t.Fatalf("Failed to decode response: %v", err)
-//		}
-//
-//		if result["status"] != "challenge_required" {
-//			t.Errorf("expected status 'challenge_required', got %v", result["status"])
-//		}
-//
-//		requirements, ok := result["requirements"].([]any)
-//		if !ok || len(requirements) == 0 {
-//			t.Fatal("requirements missing from response")
-//		}
-//
-//		foundKeeper := false
-//		for _, r := range requirements {
-//			if r == "keeper_unlock" {
-//				foundKeeper = true
-//				break
-//			}
-//		}
-//		if !foundKeeper {
-//			t.Errorf("expected 'keeper_unlock' in requirements, got %v", requirements)
-//		}
-//	})
-//
-//	t.Run("POST /login/challenge - rejects without keeper_passphrase", func(t *testing.T) {
-//		// First get challenge token
-//		body := `{"username":"admin","password":"correct-password"}`
-//		resp := makeRequest(t, port, http.MethodPost, "/login", []byte(body), "")
-//		defer resp.Body.Close()
-//
-//		var loginResult map[string]any
-//		json.NewDecoder(resp.Body).Decode(&loginResult)
-//		challengeToken, ok := loginResult["token"].(string)
-//		if !ok {
-//			t.Fatal("failed to get challenge token")
-//		}
-//
-//		// Try challenge without passphrase
-//		challengeBody := `{}`
-//		resp2 := makeRequest(t, port, http.MethodPost, "/login/challenge", []byte(challengeBody), challengeToken)
-//		defer resp2.Body.Close()
-//		if resp2.StatusCode != http.StatusUnauthorized {
-//			t.Errorf("expected 401 for missing passphrase, got %d", resp2.StatusCode)
-//		}
-//	})
-//
-//	t.Run("POST /login/challenge - succeeds with valid keeper_passphrase", func(t *testing.T) {
-//		// First get challenge token
-//		body := `{"username":"admin","password":"correct-password"}`
-//		resp := makeRequest(t, port, http.MethodPost, "/login", []byte(body), "")
-//		defer resp.Body.Close()
-//
-//		var loginResult map[string]any
-//		json.NewDecoder(resp.Body).Decode(&loginResult)
-//		challengeToken, ok := loginResult["token"].(string)
-//		if !ok {
-//			t.Fatal("failed to get challenge token")
-//		}
-//
-//		// Try challenge with correct passphrase (set during `newTestAdminServerWithLockedKeeper`)
-//		challengeBody := `{"keeper_passphrase":"test-passphrase"}`
-//		resp2 := makeRequest(t, port, http.MethodPost, "/login/challenge", []byte(challengeBody), challengeToken)
-//		defer resp2.Body.Close()
-//
-//		if resp2.StatusCode != http.StatusOK {
-//			bodyBytes, _ := io.ReadAll(resp2.Body)
-//			t.Errorf("expected 200 for valid passphrase, got %d. Body: %s", resp2.StatusCode, string(bodyBytes))
-//		}
-//
-//		var result map[string]any
-//		json.NewDecoder(resp2.Body).Decode(&result)
-//		if result["token"] == nil {
-//			t.Error("expected final auth token in response")
-//		}
-//	})
-//}
 
 func TestAdminHostAPI(t *testing.T) {
 	_, _, port, cleanup := newTestAdminServer(t)
