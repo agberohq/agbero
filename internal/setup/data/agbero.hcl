@@ -48,27 +48,6 @@ admin {
 
 
   # ---------------------------------------------------------
-  # BASIC AUTH (for /login endpoint)
-  # ---------------------------------------------------------
-  basic_auth {
-    enabled = "on"
-    # Format: "username:bcrypt_hash"
-    users = [
-      "admin:{ADMIN_PASSWORD}"
-    ]
-  }
-
-  # ---------------------------------------------------------
-  # JWT AUTH (for API/programmatic access)
-  # ---------------------------------------------------------
-  jwt_auth {
-    enabled = "on"
-    # Secret for signing JWTs (base64, 16/24/32 bytes)
-    secret = "{ADMIN_SECRET}"
-  }
-
-
-  # ---------------------------------------------------------
   # TOTP TWO-FACTOR AUTHENTICATION
   # ---------------------------------------------------------
   # Uncomment and configure to enable TOTP 2FA for admin users
@@ -79,28 +58,7 @@ admin {
     digits = 6
     period = 30
     window_size = 1
-
-    # TOTP users - secrets are stored in the Keeper (ss:// references)
-    user {
-      username = "admin"
-      secret = "{TOTP_ADMIN_SECRECT}"
-    }
-    # example
-    # user {
-    #   username = "operator"
-    #   secret = "ss://internal/totp/admin"
-    # }
   }
-  
-  # ---------------------------------------------------------
-  # OAUTH / FORWARD AUTH (Examples)
-  # ---------------------------------------------------------
-  # forward_auth {
-  #   enabled = "off"
-  #   url     = "http://auth-service:8080/verify"
-  #   request { enabled = "on" }
-  #   response { enabled = "on" }
-  # }
 }
 
 # -------------------------------------------------------------
