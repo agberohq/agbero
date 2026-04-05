@@ -206,7 +206,7 @@ func (h *Home) setupAdmin(store *keeper.Keeper, sess *session) error {
 
 	username, err := h.u.Input(ui.InputConfig{
 		Title:       "Username",
-		Description: "Choose a username for admin access",
+		Description: "Choose a username for admin access\n'admin' will be chosen if no username is entered",
 		Placeholder: "admin",
 		Width:       60,
 	})

@@ -15,12 +15,10 @@ import (
 	"charm.land/lipgloss/v2/list"
 	"charm.land/lipgloss/v2/table"
 	"charm.land/lipgloss/v2/tree"
-	"github.com/agberohq/keeper/pkg/prompter"
 	"github.com/blacktop/go-termimg"
+	"github.com/olekukonko/prompter"
 	"golang.org/x/crypto/bcrypt"
 )
-
-//  Icon Set
 
 type IconSet struct {
 	Success         string
@@ -58,9 +56,6 @@ var DefaultIconSet = IconSet{
 	Pipe:            "│",
 }
 
-//  Theme
-
-// Theme uses compat.AdaptiveColor for automatic light/dark detection
 type Theme struct {
 	Primary   compat.AdaptiveColor
 	Secondary compat.AdaptiveColor
@@ -85,8 +80,6 @@ var DefaultTheme = Theme{
 	Border:    compat.AdaptiveColor{Dark: lipgloss.Color("#3A3A36"), Light: lipgloss.Color("#D1CFC8")},
 }
 
-//  UI
-
 type UI struct {
 	w                  io.Writer
 	theme              Theme
@@ -103,6 +96,8 @@ func WithTheme(t Theme) Option      { return func(u *UI) { u.theme = t } }
 func WithIcons(i IconSet) Option    { return func(u *UI) { u.icons = i } }
 func WithIndent(n int) Option       { return func(u *UI) { u.indent = n } }
 
+// New creates a new UI instance with optional configuration.
+// Defaults to stdout, default theme, default icons, and indent 3.
 func New(opts ...Option) *UI {
 	u := &UI{
 		w:      os.Stdout,
@@ -120,8 +115,6 @@ func New(opts ...Option) *UI {
 	return u
 }
 
-//  Internal helpers
-
 func (u *UI) s(c compat.AdaptiveColor) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(c)
 }
@@ -134,17 +127,23 @@ func (u *UI) line(s string)     { u.buf.WriteString(s + "\n") }
 func (u *UI) indented(s string) { u.line(u.padStyle().Render(s)) }
 func (u *UI) blank()            { u.line("") }
 
+// Flush writes all buffered content to the output writer.
+// Resets the internal buffer after writing.
 func (u *UI) Flush() {
 	lipgloss.Fprint(u.w, u.buf.String())
 	u.buf.Reset()
 }
 
+// String returns the current buffered content as a string.
+// Does not flush or modify the buffer.
 func (u *UI) String() string { return u.buf.String() }
-func (u *UI) Reset()         { u.buf.Reset() }
 
-//  Hyperlink (OSC 8)
+// Reset clears the internal buffer without flushing.
+// Discards any pending output.
+func (u *UI) Reset() { u.buf.Reset() }
 
-// Link creates an OSC 8 hyperlink. Falls back to plain text if unsupported.
+// Link creates an OSC 8 hyperlink with fallback to plain text.
+// Returns the text as a clickable link when terminal supports it.
 func (u *UI) Link(text, url string) string {
 	if !u.supportsHyperlinks {
 		return text
@@ -153,6 +152,7 @@ func (u *UI) Link(text, url string) string {
 }
 
 // LinkInline creates a styled hyperlink with accent color and underline.
+// Falls back to styled text without hyperlink if unsupported.
 func (u *UI) LinkInline(text, url string) string {
 	if !u.supportsHyperlinks {
 		return u.s(u.theme.Accent).Underline(true).Render(text)
@@ -161,6 +161,7 @@ func (u *UI) LinkInline(text, url string) string {
 }
 
 // FileLink creates a clickable file/directory link using file:// protocol.
+// Returns bold styling for directories, accent color for files.
 func (u *UI) FileLink(path string, isDir bool) string {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -180,6 +181,8 @@ func (u *UI) FileLink(path string, isDir bool) string {
 	return style.Hyperlink(url).Render(path)
 }
 
+// Welcome displays the application welcome banner with name and description.
+// Shows version, date, and optional ASCII art banner.
 func (u *UI) Welcome(name, description, version, date, banner string) {
 	if banner != "" {
 		u.line(u.s(u.theme.Accent).Bold(true).Render(banner))
@@ -193,8 +196,8 @@ func (u *UI) Welcome(name, description, version, date, banner string) {
 	u.Flush()
 }
 
-//  Section header
-
+// SectionHeader renders a visually distinct section title with accent bar.
+// Converts label to uppercase for emphasis.
 func (u *UI) SectionHeader(label string) {
 	bar := lipgloss.NewStyle().
 		Foreground(u.theme.Accent).
@@ -209,13 +212,13 @@ func (u *UI) SectionHeader(label string) {
 	u.Flush()
 }
 
-//  Key-value block
-
 type KV struct {
 	Label string
 	Value string
 }
 
+// KeyValueBlock renders a formatted block of key-value pairs.
+// Automatically aligns labels and adds visual separators.
 func (u *UI) KeyValueBlock(title string, pairs []KV) {
 	if len(pairs) == 0 {
 		return
@@ -244,23 +247,27 @@ func (u *UI) KeyValueBlock(title string, pairs []KV) {
 	u.Flush()
 }
 
+// KeyValue renders a single key-value pair.
+// Convenience wrapper around KeyValueBlock.
 func (u *UI) KeyValue(label, value string) {
 	u.KeyValueBlock("", []KV{{Label: label, Value: value}})
 }
 
+// KeyValueLink renders a key-value pair where the value is a clickable link.
+// Uses LinkInline for hyperlink styling.
 func (u *UI) KeyValueLink(label, text, url string) {
 	u.KeyValue(label, u.LinkInline(text, url))
 }
 
-// KeyValueFile shows a clickable file path.
+// KeyValueFile renders a key-value pair where the value is a clickable file path.
+// Uses FileLink for file:// protocol hyperlink.
 func (u *UI) KeyValueFile(label, path string, isDir bool) {
 	u.KeyValue(label, u.FileLink(path, isDir))
 }
 
-//  Secret box
-
+// SecretBox renders a sensitive value with a bordered box or plain display.
+// Long secrets (>60 chars) use plain display to avoid border breakage.
 func (u *UI) SecretBox(label, value string) {
-	// Long secrets: plain display (no border breakage)
 	if len(value) > 60 {
 		u.blank()
 		u.indented(u.s(u.theme.Accent).Bold(true).Render(u.icons.Key + " " + label))
@@ -271,7 +278,6 @@ func (u *UI) SecretBox(label, value string) {
 		return
 	}
 
-	// Short secrets: bordered box
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderTopForeground(u.theme.Accent).
@@ -290,8 +296,8 @@ func (u *UI) SecretBox(label, value string) {
 	u.Flush()
 }
 
-//  Status badge
-
+// StatusBadge renders a status indicator with colored dot and text.
+// Maps status strings to appropriate theme colors.
 func (u *UI) StatusBadge(status string) {
 	lower := strings.ToLower(strings.TrimSpace(status))
 	var dotStyle, textStyle lipgloss.Style
@@ -313,6 +319,8 @@ func (u *UI) StatusBadge(status string) {
 	u.Flush()
 }
 
+// ServiceStatus renders a complete service status section.
+// Includes status badge, PID, and config file path.
 func (u *UI) ServiceStatus(status, pid, configPath string) {
 	u.SectionHeader("Service status")
 	u.StatusBadge(status)
@@ -324,8 +332,8 @@ func (u *UI) ServiceStatus(status, pid, configPath string) {
 	}
 }
 
-//  Table
-
+// Table renders a formatted table with headers and rows.
+// Uses rounded borders and theme-appropriate colors.
 func (u *UI) Table(headers []string, rows [][]string) {
 	if len(headers) == 0 {
 		return
@@ -353,6 +361,8 @@ type LinkCell struct {
 	URL  string
 }
 
+// TableWithLinks renders a table where cells can be clickable hyperlinks.
+// Converts LinkCell types to styled hyperlinks automatically.
 func (u *UI) TableWithLinks(headers []string, rows [][]interface{}) {
 	if len(headers) == 0 {
 		return
@@ -374,8 +384,6 @@ func (u *UI) TableWithLinks(headers []string, rows [][]interface{}) {
 	u.Table(headers, strRows)
 }
 
-//  Help screen
-
 type HelpCmd struct {
 	Cmd  string
 	Desc string
@@ -387,6 +395,8 @@ type HelpSection struct {
 	Commands []HelpCmd
 }
 
+// HelpScreen renders an interactive help screen with categorized commands.
+// Automatically aligns command columns and adds hyperlinks when provided.
 func (u *UI) HelpScreen(sections []HelpSection) {
 	maxCmd := 0
 	for _, sec := range sections {
@@ -467,8 +477,6 @@ func (u *UI) HelpScreen(sections []HelpSection) {
 	u.Flush()
 }
 
-//  Directory tree
-
 type TreeNode struct {
 	Label    string
 	Value    string
@@ -477,6 +485,8 @@ type TreeNode struct {
 	Children []TreeNode
 }
 
+// Tree renders a hierarchical tree structure with optional icons and links.
+// Uses rounded enumerators and theme-appropriate styling.
 func (u *UI) Tree(root string, nodes []TreeNode) {
 	rootStyle := u.s(u.theme.Accent).Bold(true)
 	enumStyle := lipgloss.NewStyle().Foreground(u.theme.Border).MarginRight(1)
@@ -521,6 +531,7 @@ func (u *UI) Tree(root string, nodes []TreeNode) {
 }
 
 // TreeWithFiles renders a directory tree with clickable file links.
+// Each node becomes a clickable file:// hyperlink to the actual file path.
 func (u *UI) TreeWithFiles(rootPath string, nodes []TreeNode) {
 	rootStyle := u.s(u.theme.Accent).Bold(true)
 	enumStyle := lipgloss.NewStyle().Foreground(u.theme.Border).MarginRight(1)
@@ -572,20 +583,24 @@ func (u *UI) TreeWithFiles(rootPath string, nodes []TreeNode) {
 	u.Flush()
 }
 
-//  Feedback lines
-
+// SuccessLine renders a success message with a checkmark icon.
+// Uses theme success colors for emphasis.
 func (u *UI) SuccessLine(msg string) {
 	u.indented(u.s(u.theme.Success).Bold(true).Render(u.icons.Success) + "  " +
 		u.s(u.theme.Primary).Render(msg))
 	u.Flush()
 }
 
+// WarnLine renders a warning message with a warning icon.
+// Uses theme warn colors for visibility.
 func (u *UI) WarnLine(msg string) {
 	u.indented(u.s(u.theme.Warn).Render(u.icons.Warning) + "  " +
 		u.s(u.theme.Secondary).Render(msg))
 	u.Flush()
 }
 
+// ErrorHint renders an error message with an optional hint for resolution.
+// Shows problem prominently with a hint arrow on the next line.
 func (u *UI) ErrorHint(problem, hint string) {
 	u.blank()
 	u.indented(u.s(u.theme.Danger).Bold(true).Render(u.icons.Error) + "  " +
@@ -601,12 +616,16 @@ func (u *UI) ErrorHint(problem, hint string) {
 	u.Flush()
 }
 
+// InfoLine renders an informational message with an info icon.
+// Uses faint theme colors for subtle presentation.
 func (u *UI) InfoLine(msg string) {
 	u.indented(u.s(u.theme.Faint).Render(u.icons.Info) + "  " +
 		u.s(u.theme.Secondary).Render(msg))
 	u.Flush()
 }
 
+// Step renders a step status message with state-based icon and color.
+// States: ok, warn, fail, skip, or default bullet.
 func (u *UI) Step(state, msg string) {
 	var icon string
 	var iconStyle lipgloss.Style
@@ -626,6 +645,8 @@ func (u *UI) Step(state, msg string) {
 	u.Flush()
 }
 
+// StepWithLink renders a step status message where the text is a clickable link.
+// Combines step state styling with hyperlink functionality.
 func (u *UI) StepWithLink(state, msg, url string) {
 	var icon string
 	var iconStyle lipgloss.Style
@@ -645,8 +666,8 @@ func (u *UI) StepWithLink(state, msg, url string) {
 	u.Flush()
 }
 
-//  Init success
-
+// InitSuccess renders the post-initialization success screen.
+// Shows config file, admin credentials, and next steps.
 func (u *UI) InitSuccess(configFile, adminUser, adminPassword string, nextSteps []ListItem) {
 	u.SectionHeader("Configuration initialised")
 
@@ -666,8 +687,8 @@ func (u *UI) InitSuccess(configFile, adminUser, adminPassword string, nextSteps 
 	u.Flush()
 }
 
-//  Backup / restore
-
+// BackupStart indicates the start of a backup operation.
+// Shows encryption status if applicable.
 func (u *UI) BackupStart(encrypted bool) {
 	if encrypted {
 		u.InfoLine("creating AES-256 encrypted backup…")
@@ -676,51 +697,60 @@ func (u *UI) BackupStart(encrypted bool) {
 	}
 }
 
+// BackupDone renders completion status for a backup operation.
+// Shows file count and destination path.
 func (u *UI) BackupDone(path string, fileCount int) {
 	u.SuccessLine(fmt.Sprintf("backup complete — %d files → %s", fileCount, path))
 }
 
+// RestoreDone renders completion status for a restore operation.
+// Shows the number of files restored.
 func (u *UI) RestoreDone(count int) {
 	u.SuccessLine(fmt.Sprintf("restore complete — %d files restored", count))
 }
 
+// Blank outputs a single blank line.
+// Useful for adding spacing between UI sections.
 func (u *UI) Blank() {
 	u.blank()
 	u.Flush()
 }
 
+// Divider renders a horizontal divider line.
+// Uses theme faint color and dash icon repeated.
 func (u *UI) Divider() {
 	u.indented(u.s(u.theme.Faint).Render(strings.Repeat(u.icons.Dash, 40)))
 	u.Flush()
 }
 
+// Theme returns the current theme configuration.
+// Useful for accessing theme colors outside the UI.
 func (u *UI) Theme() Theme {
 	return u.theme
 }
 
-// Println renders a styled string directly (wrapper for lipgloss.Println).
+// Println renders a styled string directly using lipgloss.
+// Wrapper for lipgloss.Println with no indentation.
 func (u *UI) Println(s string) {
 	lipgloss.Println(s)
 }
 
-// Sprint renders a styled string to return as value.
+// Sprint renders a styled string and returns it as a value.
+// Useful for capturing styled output without printing.
 func (u *UI) Sprint(s string) string {
 	return lipgloss.Sprint(s)
 }
 
-// Image renders raw PNG bytes to the terminal using go-termimg's auto-detection.
+// Image renders raw PNG bytes to the terminal using go-termimg.
 // Falls back to half-block text if image protocols fail.
 func (u *UI) Image(pngData []byte) error {
 	u.Flush()
 
-	// Decode the PNG bytes into an image.Image
 	img, _, err := image.Decode(bytes.NewReader(pngData))
 	if err != nil {
 		return err
 	}
 
-	// Images are rendered directly without indentation (they ignore the buffer)
-	// Use termimg.New to create an Image from the decoded image
 	return termimg.New(img).
 		Width(40).
 		Height(40).
@@ -728,7 +758,8 @@ func (u *UI) Image(pngData []byte) error {
 		Print()
 }
 
-// QR generates a QR code, renders it via go-termimg, and returns all formats.
+// QR generates a QR code from content and renders it via go-termimg.
+// Returns QRResult with PNG and terminal fallback formats.
 func (u *UI) QR(content string) *QRResult {
 	qrCode, err := NewQr(content, QRLevelM)
 	if err != nil {
@@ -736,14 +767,11 @@ func (u *UI) QR(content string) *QRResult {
 		return nil
 	}
 
-	result := qrCode.Result(4) // scale=4 for crisp terminal display
-
+	result := qrCode.Result(4)
+	u.Println("")
 	if result != nil && len(result.PNG) > 0 {
 		if err := u.Image(result.PNG); err != nil {
-			// Graceful fallback to text rendering
 			u.WarnLine("Image rendering failed; using text QR fallback")
-
-			// Terminal fallback should be indented
 			indentedFallback := u.padStyle().Render(result.Terminal)
 			u.line(indentedFallback)
 			u.Flush()
@@ -753,15 +781,13 @@ func (u *UI) QR(content string) *QRResult {
 	return result
 }
 
-//  Link List
-
 type ListItem struct {
 	Text string
-	URL  string // optional; if set, renders as clickable link
+	URL  string
 }
 
 // LinkList renders a bulleted list with optional clickable links.
-// Items with a URL are rendered as OSC 8 hyperlinks (or styled fallback).
+// Items with URLs become OSC 8 hyperlinks.
 func (u *UI) LinkList(title string, items []ListItem) {
 	if len(items) == 0 {
 		return
@@ -794,8 +820,6 @@ func (u *UI) LinkList(title string, items []ListItem) {
 	u.Flush()
 }
 
-//  Dialog Box (Universal Warning/Info/Confirm)
-
 type DialogStyle int
 
 const (
@@ -805,7 +829,7 @@ const (
 	DialogSuccess
 )
 
-// DialogBox renders a bordered dialog with title, bulleted items, and optional footer.
+// DialogBox renders a bordered dialog with title, bulleted items, and footer.
 // Style controls border color, icon, and emphasis (Danger/Warning/Info/Success).
 func (u *UI) DialogBox(style DialogStyle, title string, items []string, footer string) {
 	var borderColor compat.AdaptiveColor
@@ -868,44 +892,47 @@ func (u *UI) DialogBox(style DialogStyle, title string, items []string, footer s
 	u.Flush()
 }
 
-// Confirm prompts for a yes/no confirmation with optional help text
-// Returns true if confirmed, false otherwise
+// Confirm prompts for a yes/no confirmation with left-aligned buttons.
+// Returns true if user confirms, false otherwise.
 func (u *UI) Confirm(prompt string, helpText ...string) (bool, error) {
-	u.Flush() // Flush any pending output before interactive prompt
+	u.Flush()
 
+	var value bool
 	confirm := huh.NewConfirm().
 		Title(prompt).
+		WithButtonAlignment(lipgloss.Left).
 		Affirmative("Yes").
-		Negative("No")
+		Negative("No").
+		Value(&value)
 
 	if len(helpText) > 0 && helpText[0] != "" {
 		confirm = confirm.Description(helpText[0])
 	}
 
-	var value bool
-	err := confirm.Value(&value).Run()
+	err := confirm.Run()
 	return value, err
 }
 
-// ConfirmDefault prompts with a default value (true = yes preselected)
+// ConfirmDefault prompts with a default value preselected.
+// DefaultYes=true preselects Yes, false preselects No.
 func (u *UI) ConfirmDefault(prompt string, defaultYes bool, helpText ...string) (bool, error) {
 	u.Flush()
 
+	var value bool = defaultYes
 	confirm := huh.NewConfirm().
 		Title(prompt).
+		WithButtonAlignment(lipgloss.Left).
 		Affirmative("Yes").
-		Negative("No")
+		Negative("No").
+		Value(&value)
 
 	if len(helpText) > 0 && helpText[0] != "" {
 		confirm = confirm.Description(helpText[0])
 	}
 
-	var value bool = defaultYes
-	err := confirm.Value(&value).Run()
+	err := confirm.Run()
 	return value, err
 }
-
-//  Simple Input (wraps huh.Input)
 
 type InputConfig struct {
 	Title       string
@@ -914,11 +941,8 @@ type InputConfig struct {
 	Width       int
 }
 
-// Input prompts for a single line of input
-//
-//	Simple Input (wraps huh.Input)
-//
-// Input prompts for a single line of input
+// Input prompts for a single line of text input.
+// Returns the entered string or error if cancelled.
 func (u *UI) Input(cfg InputConfig) (string, error) {
 	u.Flush()
 
@@ -938,123 +962,156 @@ func (u *UI) Input(cfg InputConfig) (string, error) {
 	return value, err
 }
 
-// Password prompts for a secure password with optional confirmation
-// Returns a prompter.Result that must be Zero()'d when done
-func (u *UI) Password(prompt string, opts ...func(*prompter.Input)) (*prompter.Result, error) {
-	// Create input using prompter.NewInput with the prompt
-	input := prompter.NewInput(prompt)
-
-	// Apply UI styling via custom prompt formatter
-	input.WithPromptFormatter(func(p string) string {
-		lockIcon := u.s(u.theme.Accent).Render(u.icons.Lock)
-		promptStyle := u.s(u.theme.Primary).Bold(true).Render(p)
-		return fmt.Sprintf("\n%s  %s: ", lockIcon, promptStyle)
-	})
-
-	// Apply any additional functional options from caller
-	for _, opt := range opts {
-		opt(input)
-	}
-
-	u.Flush() // Ensure any pending output is written before interactive prompt
-	return input.Run()
-}
-
-// PasswordConfirm prompts for password with confirmation using prompter.WithConfirm
-func (u *UI) PasswordConfirm(prompt string) (*prompter.Result, error) {
-	return u.Password(prompt, prompter.WithConfirm())
-}
-
-// PasswordRequired prompts for a non-empty password using prompter.WithRequired
-func (u *UI) PasswordRequired(prompt string) (*prompter.Result, error) {
-	return u.Password(prompt, prompter.WithRequired(true, "password cannot be empty"))
-}
-
-// PasswordMinLength prompts for a password with minimum length requirement
-func (u *UI) PasswordMinLength(prompt string, minLen int, errorMsg string) (*prompter.Result, error) {
-	return u.Password(prompt, prompter.WithMinLength(minLen, errorMsg))
-}
-
-// PasswordConfirmRequired combines confirmation and required validation
-func (u *UI) PasswordConfirmRequired(prompt string) (*prompter.Result, error) {
-	return u.Password(prompt,
-		prompter.WithConfirm(),
-		prompter.WithRequired(true, "password cannot be empty"),
-	)
-}
-
-// PasswordStyled is a flexible version allowing custom styling via formatter func
-func (u *UI) PasswordStyled(prompt string, styleFunc func(string) string, opts ...func(*prompter.Input)) (*prompter.Result, error) {
-	input := prompter.NewInput(prompt)
-
-	if styleFunc != nil {
-		input.WithPromptFormatter(styleFunc)
-	} else {
-		// Default UI styling with lock icon and themed colors
-		input.WithPromptFormatter(func(p string) string {
-			lockIcon := u.s(u.theme.Accent).Render(u.icons.Lock)
-			promptStyle := u.s(u.theme.Primary).Bold(true).Render(p)
-			return fmt.Sprintf("\n%s  %s: ", lockIcon, promptStyle)
-		})
-	}
-
-	for _, opt := range opts {
-		opt(input)
-	}
-
-	u.Flush()
-	return input.Run()
-}
-
-// PasswordWithHint prompts for a password with a hint/description
-// The hint appears below the prompt to guide the user
-func (u *UI) PasswordWithHint(prompt, hint string, opts ...func(*prompter.Input)) (*prompter.Result, error) {
-	input := prompter.NewInput(prompt)
-
-	// Create styled prompt with hint
-	input.WithPromptFormatter(func(p string) string {
-		lockIcon := u.s(u.theme.Accent).Render(u.icons.Lock)
-		promptStyle := u.s(u.theme.Primary).Bold(true).Render(p)
-
-		// If hint is provided, format it nicely below
-		if hint != "" {
-			hintStyle := u.s(u.theme.Secondary).Render(hint)
-			return fmt.Sprintf("\n%s  %s\n  %s  %s\n\n  %s",
-				lockIcon, promptStyle,
-				"", u.icons.Arrow, hintStyle)
+// withRequired returns a prompter.Option that rejects empty input with the given message.
+func withRequired(msg string) prompter.Option {
+	return prompter.WithValidator(func(b []byte) error {
+		if len(b) == 0 {
+			return prompter.ErrValidation{Msg: msg}
 		}
-
-		return fmt.Sprintf("\n%s  %s: ", lockIcon, promptStyle)
+		return nil
 	})
+}
 
-	for _, opt := range opts {
-		opt(input)
+// withMinLength returns a prompter.Option that rejects input shorter than min bytes.
+func withMinLength(min int, msg string) prompter.Option {
+	return prompter.WithValidator(func(b []byte) error {
+		if len(b) < min {
+			return prompter.ErrValidation{Msg: msg}
+		}
+		return nil
+	})
+}
+
+// buildSecret assembles a themed *prompter.Secret, optionally enabling confirmation mode.
+func (u *UI) buildSecret(prompt string, confirm bool, opts []prompter.Option) *prompter.Secret {
+	lockIcon := u.s(u.theme.Accent).Render(u.icons.Lock)
+	promptStyle := u.s(u.theme.Primary).Bold(true)
+
+	all := append([]prompter.Option{
+		prompter.WithFormatter(func(ctx prompter.Context) string {
+			p := promptStyle.Render(ctx.Prompt)
+			if ctx.IsConfirm {
+				p = promptStyle.Render(ctx.Prompt)
+			}
+			if ctx.IsRetry && ctx.LastError != nil {
+				errStr := u.s(u.theme.Danger).Render("(" + ctx.LastError.Error() + ")")
+				return fmt.Sprintf("\n%s  %s %s: ", lockIcon, p, errStr)
+			}
+			return fmt.Sprintf("\n%s  %s: ", lockIcon, p)
+		}),
+	}, opts...)
+
+	s := prompter.NewSecret(prompt, all...)
+	if confirm {
+		s.WithConfirmation("")
+	}
+	return s
+}
+
+// Password prompts for a hidden password with themed lock-icon formatting.
+// Returns a Result that must be Zero()'d by the caller when done.
+func (u *UI) Password(prompt string, opts ...prompter.Option) (*prompter.Result, error) {
+	u.Flush()
+	return u.buildSecret(prompt, false, opts).Run()
+}
+
+// PasswordConfirm prompts for a password and requires it to be entered twice.
+func (u *UI) PasswordConfirm(prompt string) (*prompter.Result, error) {
+	u.Flush()
+	return u.buildSecret(prompt, true, nil).Run()
+}
+
+// PasswordRequired prompts for a non-empty password.
+func (u *UI) PasswordRequired(prompt string) (*prompter.Result, error) {
+	return u.Password(prompt, withRequired("password cannot be empty"))
+}
+
+// PasswordMinLength prompts for a password with a minimum length requirement.
+func (u *UI) PasswordMinLength(prompt string, minLen int, errorMsg string) (*prompter.Result, error) {
+	return u.Password(prompt, withMinLength(minLen, errorMsg))
+}
+
+// PasswordConfirmRequired combines confirmation and required validation.
+func (u *UI) PasswordConfirmRequired(prompt string) (*prompter.Result, error) {
+	u.Flush()
+	return u.buildSecret(prompt, true, []prompter.Option{withRequired("password cannot be empty")}).Run()
+}
+
+// PasswordWithHint prompts for a password with hint lines below the prompt.
+// Pass confirm=true to require the user to enter the value twice.
+func (u *UI) PasswordWithHint(prompt, hint string, confirm bool, opts ...prompter.Option) (*prompter.Result, error) {
+	u.Flush()
+
+	lockIcon := u.s(u.theme.Accent).Render(u.icons.Lock)
+	promptStyle := u.s(u.theme.Primary).Bold(true)
+	arrow := u.s(u.theme.Faint).Render(u.icons.Arrow)
+
+	renderHint := func(h string) string {
+		lines := strings.Split(h, "\n")
+		out := make([]string, 0, len(lines))
+		for _, l := range lines {
+			l = strings.TrimSpace(l)
+			if l == "" {
+				continue
+			}
+			out = append(out, lipgloss.NewStyle().
+				PaddingLeft(4).
+				Foreground(u.theme.Secondary).
+				Render(arrow+"  "+l))
+		}
+		return strings.Join(out, "\n")
 	}
 
-	u.Flush()
-	return input.Run()
+	all := append([]prompter.Option{
+		prompter.WithFormatter(func(ctx prompter.Context) string {
+			p := promptStyle.Render(ctx.Prompt)
+			displayHint := hint
+			if ctx.IsConfirm {
+				p = promptStyle.Render(ctx.Prompt)
+				displayHint = "Re-enter to verify"
+			}
+			if ctx.IsRetry && ctx.LastError != nil {
+				errStr := u.s(u.theme.Danger).Render("(" + ctx.LastError.Error() + ")")
+				base := fmt.Sprintf("\n%s  %s %s", lockIcon, p, errStr)
+				if displayHint != "" {
+					return base + "\n" + renderHint(displayHint) + "\n"
+				}
+				return base + ": "
+			}
+			base := fmt.Sprintf("\n%s  %s", lockIcon, p)
+			if displayHint != "" {
+				return base + "\n" + renderHint(displayHint) + "\n"
+			}
+			return base + ": "
+		}),
+	}, opts...)
+
+	s := prompter.NewSecret(prompt, all...)
+	if confirm {
+		s.WithConfirmation("")
+	}
+	return s.Run()
 }
 
-// PasswordRequiredWithHint combines required validation with a hint
+// PasswordRequiredWithHint combines required validation with a descriptive hint.
 func (u *UI) PasswordRequiredWithHint(prompt, hint string) (*prompter.Result, error) {
-	return u.PasswordWithHint(prompt, hint,
-		prompter.WithRequired(true, "password cannot be empty"),
-	)
+	return u.PasswordWithHint(prompt, hint, false, withRequired("password cannot be empty"))
 }
 
-// PasswordConfirmWithHint adds confirmation with a hint
+// PasswordConfirmWithHint prompts for a password with confirmation and a hint.
+// Requires non-empty input before proceeding to confirmation.
 func (u *UI) PasswordConfirmWithHint(prompt, hint string) (*prompter.Result, error) {
-	return u.PasswordWithHint(prompt, hint, prompter.WithConfirm())
+	return u.PasswordWithHint(prompt, hint, true, withRequired("passphrase cannot be empty"))
 }
 
-// RegistrationForm collects username and password with confirmation
 type RegistrationResult struct {
 	Username     string
-	Password     string // plaintext password (use immediately, then zero)
+	Password     string
 	PasswordHash []byte
 }
 
-// RegistrationForm prompts for username and password with confirmation
+// RegistrationForm prompts for username and password with confirmation.
+// Returns registration result with plain password and bcrypt hash.
 func (u *UI) RegistrationForm(title, description string) (*RegistrationResult, error) {
 	u.Flush()
 
@@ -1075,10 +1132,9 @@ func (u *UI) RegistrationForm(title, description string) (*RegistrationResult, e
 	}
 
 	if username == "" {
-		username = "admin" // Default if empty
+		username = "admin"
 	}
 
-	// Prompt for password
 	passwordResult, err := u.PasswordConfirmWithHint(
 		"Password",
 		"Choose a strong password (minimum 8 characters)",
@@ -1093,7 +1149,6 @@ func (u *UI) RegistrationForm(title, description string) (*RegistrationResult, e
 		return nil, fmt.Errorf("password must be at least 8 characters")
 	}
 
-	// Hash the password
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash password: %w", err)
@@ -1106,7 +1161,8 @@ func (u *UI) RegistrationForm(title, description string) (*RegistrationResult, e
 	}, nil
 }
 
-// SimpleUserPass prompts for username and password separately
+// SimpleUserPass prompts for username and password separately.
+// Returns plaintext username and password (caller must zero password when done).
 func (u *UI) SimpleUserPass() (username, password string, err error) {
 	username, err = u.Input(InputConfig{
 		Title:       "Username",
