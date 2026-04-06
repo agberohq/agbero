@@ -2,6 +2,7 @@ package setup
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -399,14 +400,14 @@ func (h *Home) writeConfigFiles(store *keeper.Keeper, sess *session) error {
 		{"{DATA_DIR}", filepath.ToSlash(h.ctx.Paths.DataDir.Path())},
 		{"{LOGS_DIR}", filepath.ToSlash(h.ctx.Paths.LogsDir.Path())},
 		{"{WORK_DIR}", filepath.ToSlash(h.ctx.Paths.WorkDir.Path())},
-		{"{ADMIN_USERNAME}", sess.AdminUsername},
-		{"{ADMIN_SECRET}", expect.Vault().AdminJWT(sess.AdminUsername)},
+		//{"{ADMIN_USERNAME}", sess.AdminUsername},
+		//{"{ADMIN_SECRET}", expect.Vault().AdminJWT(sess.AdminUsername)},
 		{"{INTERNAL_AUTH_KEY}", expect.Vault().Key("internal")},
 		{"{LE_ENABLED}", leEnabled},
 		{"{LE_EMAIL}", sess.LEEmail},
 		{"{KEEPER_ENABLED}", woos.On},
 		{"{TOTP_ENABLED}", totpEnabled},
-		{"{TOTP_ADMIN_SECRECT}", expect.Vault().AdminTOTP(sess.AdminUsername)},
+		//{"{TOTP_ADMIN_SECRECT}", expect.Vault().AdminTOTP(sess.AdminUsername)},
 	}
 
 	content := ConfigTmpl
@@ -452,11 +453,5 @@ func (h *Home) displaySuccess(sess *session) {
 // isImmutablePolicyError returns true when err indicates a bucket policy
 // already exists — which is safe to ignore on re-runs.
 func isImmutablePolicyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "immutable") ||
-		strings.Contains(msg, "already exists") ||
-		strings.Contains(msg, "ErrPolicyImmutable")
+	return errors.Is(err, keeper.ErrPolicyImmutable)
 }

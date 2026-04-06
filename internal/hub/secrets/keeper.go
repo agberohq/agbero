@@ -50,6 +50,12 @@ func OpenStore(dataDir string, cfg *alaye.Keeper, logger *ll.Logger) (*keeper.Ke
 	}
 
 	if cfg != nil {
+
+		// disable logging if logging is disabled
+		if !cfg.Logging.Active() {
+			kConfig.Logger = ll.New("keeper").Disable()
+		}
+
 		if cfg.Enabled.Inactive() {
 			logger.Warn("keeper is marked disabled in config but is a compulsory component — proceeding")
 		}

@@ -268,6 +268,9 @@ type Keeper struct {
 	// Enabled indicates whether the secret store is active.
 	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
 
+	// Logging specifies whether logging is enabled or disabled for the secret store.
+	Logging Enabled `hcl:"logging,attr" json:"logging"`
+
 	// AutoLock is the duration after which the store auto-locks when idle (0 = disabled).
 	AutoLock Duration `hcl:"auto_lock,attr" json:"auto_lock"`
 

@@ -1,8 +1,12 @@
 package helper
 
 import (
+	"bufio"
 	"fmt"
+	"os"
+	"strings"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
@@ -19,11 +23,14 @@ type Keeper struct {
 // uiOutput implements keepcmd.Output by delegating to agbero's ui.UI.
 type uiOutput struct{ u *ui.UI }
 
-func (o *uiOutput) Table(headers []string, rows [][]string) { o.u.Table(headers, rows) }
-func (o *uiOutput) KeyValue(label, value string)            { o.u.KeyValue(label, value) }
-func (o *uiOutput) Success(msg string)                      { o.u.SuccessLine(msg) }
-func (o *uiOutput) Info(msg string)                         { o.u.InfoLine(msg) }
-func (o *uiOutput) Error(msg string)                        { o.u.WarnLine(msg) }
+func (o *uiOutput) Table(headers []string, rows [][]string) {
+	o.u.Println("")
+	o.u.Table(headers, rows)
+}
+func (o *uiOutput) KeyValue(label, value string) { o.u.Println(""); o.u.KeyValue(label, value) }
+func (o *uiOutput) Success(msg string)           { o.u.SuccessLine(msg) }
+func (o *uiOutput) Info(msg string)              { o.u.InfoLine(msg) }
+func (o *uiOutput) Error(msg string)             { o.u.WarnLine(msg) }
 
 // openStore opens an unlocked keeper.Keeper.
 //
@@ -68,35 +75,60 @@ func (k *Keeper) openStore(configPath string) *keeperlib.Keeper {
 	return store
 }
 
-// cmds returns keepcmd.Commands wired to openStore.
-// List, Get, Set, Delete, Backup, and Status all delegate here — no
-// duplicate implementations.
-func (k *Keeper) cmds(configPath string) *keepcmd.Commands {
+// cmds returns keepcmd.Commands wired to an already-open store.
+// Used only by REPL where one store is shared across many operations.
+func (k *Keeper) cmds(store *keeperlib.Keeper) *keepcmd.Commands {
 	return &keepcmd.Commands{
-		Store: func() (*keeperlib.Keeper, error) {
-			return k.openStore(configPath), nil
-		},
-		Out: &uiOutput{u: ui.New()},
+		Store:   func() (*keeperlib.Keeper, error) { return store, nil },
+		Out:     &uiOutput{u: ui.New()},
+		NoClose: true,
 	}
 }
 
 func (k *Keeper) List(configPath string) {
-	if err := k.cmds(configPath).List(); err != nil {
+	store := k.openStore(configPath)
+	defer store.Close()
+	if err := k.cmds(store).List(); err != nil {
 		k.p.Logger.Fatal(err)
 	}
 }
 
 func (k *Keeper) Get(configPath, key string) {
-	if err := k.cmds(configPath).Get(key); err != nil {
+	store := k.openStore(configPath)
+	defer store.Close()
+	// Normalise key — accept vault://, ss://, or plain ns/key.
+	key = normaliseKey(key)
+	if err := k.cmds(store).Get(key); err != nil {
 		k.p.Logger.Fatal(err)
 	}
 }
 
 func (k *Keeper) Set(configPath, key, value string, asB64 bool, fromFile string) {
-	if err := k.cmds(configPath).Set(key, value, keepcmd.SetOptions{Base64: asB64, FromFile: fromFile}); err != nil {
+	store := k.openStore(configPath)
+	defer store.Close()
+
+	u := ui.New()
+
+	// Normalise and resolve the key so vault://, ss://, plain ns/key all work.
+	rawKey := key
+	key = normaliseKey(key)
+
+	// Auto-provision the bucket if it does not exist yet.
+	if err := store.EnsureBucket(key); err != nil {
+		k.p.Logger.Fatal("failed to prepare bucket: ", err)
+	}
+
+	if err := k.cmds(store).Set(key, value, keepcmd.SetOptions{Base64: asB64, FromFile: fromFile}); err != nil {
 		k.p.Logger.Fatal(err)
 	}
-	ui.New().InfoLine("reference in agbero.hcl as:  ss://" + key)
+
+	// Show the canonical reference the operator should use in agbero.hcl.
+	// If they supplied a scheme prefix, preserve it; otherwise default to ss://.
+	ref := rawKey
+	if !strings.Contains(rawKey, "://") {
+		ref = "ss://" + key
+	}
+	u.InfoLine("reference in agbero.hcl as:  " + ref)
 }
 
 func (k *Keeper) Delete(configPath, key string, force bool) {
@@ -111,45 +143,53 @@ func (k *Keeper) Delete(configPath, key string, force bool) {
 			return
 		}
 	}
-	if err := k.cmds(configPath).Delete(key); err != nil {
+	store := k.openStore(configPath)
+	defer store.Close()
+	key = normaliseKey(key)
+	if err := k.cmds(store).Delete(key); err != nil {
 		k.p.Logger.Fatal(err)
 	}
 }
 
 func (k *Keeper) Backup(configPath, dest string) {
-	if err := k.cmds(configPath).Backup(keepcmd.BackupOptions{Dest: dest}); err != nil {
+	store := k.openStore(configPath)
+	defer store.Close()
+	if err := k.cmds(store).Backup(keepcmd.BackupOptions{Dest: dest}); err != nil {
 		k.p.Logger.Fatal(err)
 	}
 }
 
 func (k *Keeper) Status(configPath string) {
-	if err := k.cmds(configPath).Status(); err != nil {
+	store := k.openStore(configPath)
+	defer store.Close()
+	if err := k.cmds(store).Status(); err != nil {
 		k.p.Logger.Fatal(err)
 	}
 }
 
-// Rotate validates the current passphrase then rotates to a new one.
-// Kept manual (not delegated to keepcmd.Rotate) because we verify the
-// current passphrase before accepting a new one.
+// normaliseKey strips a scheme prefix and returns the plain namespace/key
+// form that keeper's Set/Get/Delete methods expect.
+// vault://admin/totp/alice  →  admin/totp/alice
+// ss://prod/db_pass         →  prod/db_pass
+// prod/db_pass              →  prod/db_pass  (unchanged)
+func normaliseKey(key string) string {
+	e := expect.NewRaw(key)
+	if ref, err := e.SecretRef(); err == nil {
+		return ref.WithoutScheme()
+	}
+	return key
+}
+
+// Rotate prompts for the current passphrase (via openStore), then prompts
+// for a new passphrase and re-encrypts everything under it.
 func (k *Keeper) Rotate(configPath string) {
+	// openStore prompts for and verifies the current passphrase.
+	// Lock it again so Rotate can re-derive the master key from scratch.
 	store := k.openStore(configPath)
 	defer store.Close()
+	store.Lock() //nolint:errcheck
 
 	u := ui.New()
-
-	currentResult, err := u.PasswordRequired("Current passphrase")
-	if err != nil {
-		k.p.Logger.Fatal("current passphrase required: ", err)
-	}
-	currentPass := currentResult.Bytes()
-	defer currentResult.Zero()
-
-	if err := store.Unlock(currentPass); err != nil {
-		k.p.Logger.Fatal("invalid current passphrase: ", err)
-	}
-	store.Lock()
-	zero.Bytes(currentPass)
-
 	newResult, err := u.PasswordConfirm("New passphrase")
 	if err != nil {
 		k.p.Logger.Fatal("new passphrase required: ", err)
@@ -163,4 +203,160 @@ func (k *Keeper) Rotate(configPath string) {
 
 	zero.Bytes(newPass)
 	ui.New().SuccessLine("passphrase rotated — update keeper.passphrase in agbero.hcl if stored there")
+}
+
+// REPL opens an interactive keeper session.
+//
+// If the store is locked, the passphrase is prompted transparently — the
+// operator never sees a "keeper is locked" error. Once unlocked the session
+// stays open until the operator types exit or quit (or sends EOF).
+//
+// Commands available inside the REPL:
+//
+//	list                  — list all keys
+//	get <key>             — retrieve a value
+//	set <key> <value>     — store a plain-text value
+//	set <key> --file <f>  — store a file's contents
+//	delete <key>          — delete a key (confirms interactively)
+//	delete <key> --force  — delete without confirmation
+//	status                — show locked/unlocked state
+//	help                  — show this help
+//	exit | quit           — leave the REPL
+func (k *Keeper) REPL(configPath string) {
+	store := k.openStore(configPath)
+	defer store.Close()
+
+	u := ui.New()
+	u.InfoLine("Keeper REPL — type 'help' for commands, 'exit' to quit")
+	u.Blank()
+
+	cmds := &keepcmd.Commands{
+		Store:   func() (*keeperlib.Keeper, error) { return store, nil },
+		Out:     &uiOutput{u: u},
+		NoClose: true,
+	}
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Print("keeper> ")
+		if !scanner.Scan() {
+			// EOF (Ctrl-D) — exit cleanly.
+			fmt.Println()
+			break
+		}
+
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		parts := strings.Fields(line)
+		cmd := strings.ToLower(parts[0])
+		args := parts[1:]
+
+		switch cmd {
+		case "exit", "quit":
+			u.InfoLine("bye")
+			return
+
+		case "help":
+			k.replHelp()
+
+		case "status":
+			if err := cmds.Status(); err != nil {
+				u.WarnLine(err.Error())
+			}
+
+		case "list", "ls":
+			if err := cmds.List(); err != nil {
+				u.WarnLine(err.Error())
+			}
+
+		case "get":
+			if len(args) == 0 {
+				u.WarnLine("usage: get <key>")
+				continue
+			}
+			if err := cmds.Get(normaliseKey(args[0])); err != nil {
+				u.WarnLine(err.Error())
+			}
+
+		case "set":
+			// set <key> <value>
+			// set <key> --file <path>
+			if len(args) < 1 {
+				u.WarnLine("usage: set <key> <value>  |  set <key> --file <path>")
+				continue
+			}
+			key := args[0]
+			opts := keepcmd.SetOptions{}
+			value := ""
+			rest := args[1:]
+			for i := 0; i < len(rest); i++ {
+				switch rest[i] {
+				case "--file", "-f":
+					if i+1 < len(rest) {
+						opts.FromFile = rest[i+1]
+						i++
+					}
+				default:
+					value = strings.Join(rest[i:], " ")
+					i = len(rest) // consumed all
+				}
+			}
+			if opts.FromFile == "" && value == "" {
+				u.WarnLine("usage: set <key> <value>  |  set <key> --file <path>")
+				continue
+			}
+			// Resolve the key via expect so vault://, ss:// etc. all work.
+			key = normaliseKey(key)
+			if err := store.EnsureBucket(key); err != nil {
+				u.WarnLine("bucket error: " + err.Error())
+				continue
+			}
+			if err := cmds.Set(key, value, opts); err != nil {
+				u.WarnLine(err.Error())
+			}
+
+		case "delete", "del", "rm":
+			if len(args) == 0 {
+				u.WarnLine("usage: delete <key> [--force]")
+				continue
+			}
+			key := normaliseKey(args[0])
+			force := len(args) > 1 && (args[1] == "--force" || args[1] == "-f")
+			if !force {
+				ok, err := u.Confirm(fmt.Sprintf("Delete %q?", key), "This cannot be undone.")
+				if err != nil || !ok {
+					u.InfoLine("aborted")
+					continue
+				}
+			}
+			if err := cmds.Delete(key); err != nil {
+				u.WarnLine(err.Error())
+			}
+
+		default:
+			u.WarnLine(fmt.Sprintf("unknown command %q — type 'help' for available commands", cmd))
+		}
+	}
+}
+
+func (k *Keeper) replHelp() {
+	u := ui.New()
+	u.Blank()
+	u.InfoLine("Keeper REPL commands:")
+	u.Blank()
+	u.KeyValue("list", "list all keys in the store")
+	u.KeyValue("get <key>", "retrieve a secret value")
+	u.KeyValue("set <key> <value>", "store a plain-text secret")
+	u.KeyValue("set <key> --file <path>", "store a file's contents as a secret")
+	u.KeyValue("delete <key>", "delete a secret (prompts for confirmation)")
+	u.KeyValue("delete <key> --force", "delete without confirmation prompt")
+	u.KeyValue("status", "show whether the store is locked or unlocked")
+	u.KeyValue("help", "show this help")
+	u.KeyValue("exit / quit", "leave the REPL")
+	u.Blank()
+	u.InfoLine("Keys accept any scheme: ss://ns/key, vault://ns/key, or plain ns/key")
+	u.Blank()
 }

@@ -143,11 +143,15 @@ func main() {
 	cmdKeeperRotate := flaggy.NewSubcommand("rotate")
 	cmdKeeperRotate.Description = "Change the keeper master passphrase (re-encrypts all secrets)"
 
+	cmdKeeperHelp := flaggy.NewSubcommand("help")
+	cmdKeeperHelp.Description = "Show keeper command reference"
+
 	cmdKeeper.AttachSubcommand(cmdKeeperList, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperGet, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperSet, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperDelete, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperRotate, 1)
+	cmdKeeper.AttachSubcommand(cmdKeeperHelp, 1)
 
 	// admin — manage agbero admin state (TOTP, users)
 
@@ -401,6 +405,8 @@ func main() {
 		k := hel.Keeper()
 		resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
 		switch {
+		case cmdKeeperHelp.Used:
+			flaggy.ShowHelpAndExit("keeper")
 		case cmdKeeperList.Used:
 			k.List(resolvedPath)
 		case cmdKeeperGet.Used:
@@ -412,7 +418,10 @@ func main() {
 		case cmdKeeperRotate.Used:
 			k.Rotate(resolvedPath)
 		default:
-			flaggy.ShowHelpAndExit("keeper")
+			// No subcommand — drop into the interactive REPL.
+			// openStore inside REPL prompts for the passphrase if the store
+			// is locked, so the operator never sees a confusing error here.
+			k.REPL(resolvedPath)
 		}
 		return
 	}
