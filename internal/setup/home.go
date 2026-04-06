@@ -17,7 +17,6 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/keeper"
-	"golang.org/x/crypto/bcrypt"
 )
 
 const name = "setup"
@@ -77,18 +76,21 @@ func (h *Home) initializeKeeper() (*keeper.Keeper, *session, error) {
 	h.u.SectionHeader("Keeper Setup")
 	h.u.InfoLine("Agbero requires an encrypted secret store. Let's set it up.")
 
-	if err := os.MkdirAll(h.ctx.Paths.DataDir.Path(), woos.DirPerm); err != nil {
-		return nil, nil, fmt.Errorf("failed to create data directory: %w", err)
-	}
+	// Open with nil cfg returns a locked store — caller unlocks.
+	store, err := secrets.Open(secrets.Config{
+		DataDir: h.ctx.Paths.DataDir,
+		Setting: &alaye.Keeper{
+			Enabled: alaye.Active,
+		},
+		Logger:      h.ctx.Logger,
+		Interactive: true,
+	})
 
-	// OpenStore with nil cfg returns a locked store — caller unlocks.
-	store, err := secrets.OpenStore(h.ctx.Paths.DataDir.Path(), nil, h.ctx.Logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open/create keeper: %w", err)
 	}
 
 	h.ctx.SetKeeper(store)
-
 	tlsStore, err := tlsstore.NewKeeper(store)
 	if err != nil {
 		store.Close()
@@ -156,6 +158,7 @@ func (h *Home) initializeKeeper() (*keeper.Keeper, *session, error) {
 		return nil, nil, fmt.Errorf("failed to save session state: %w", err)
 	}
 
+	h.u.Blank()
 	h.u.Step("ok", "Keeper initialised and unlocked")
 	return store, sess, nil
 }
@@ -201,45 +204,14 @@ func (h *Home) setupAdmin(store *keeper.Keeper, sess *session) error {
 		return nil
 	}
 
-	h.u.SectionHeader("Admin Account Setup")
-	h.u.InfoLine("Create the initial administrator account for your Agbero instance")
-	h.u.Blank()
-
-	username, err := h.u.Input(ui.InputConfig{
-		Title:       "Username",
-		Description: "Choose a username for admin access\n'admin' will be chosen if no username is entered",
-		Placeholder: "admin",
-		Width:       60,
-	})
+	reg, err := h.u.RegistrationForm("Admin Account Setup", "Create the initial administrator account for your Agbero instance")
 	if err != nil {
 		return err
-	}
-	if username == "" {
-		username = "admin"
-	}
-
-	passwordResult, err := h.u.PasswordConfirmWithHint(
-		"Password",
-		fmt.Sprintf("Choose a strong password (minimum %d characters)", woos.MinPasswordLength),
-	)
-	if err != nil {
-		return err
-	}
-	password := passwordResult.String()
-	defer passwordResult.Zero()
-
-	if len(password) < woos.MinPasswordLength {
-		return fmt.Errorf("password must be at least %d characters", woos.MinPasswordLength)
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return fmt.Errorf("failed to hash password: %w", err)
 	}
 
 	adminUser := alaye.AdminUser{
-		Username:     username,
-		PasswordHash: string(hash),
+		Username:     reg.Username,
+		PasswordHash: string(reg.PasswordHash),
 		TOTPEnabled:  false,
 		Role:         "superadmin",
 		CreatedAt:    time.Now(),
@@ -248,13 +220,13 @@ func (h *Home) setupAdmin(store *keeper.Keeper, sess *session) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal admin user: %w", err)
 	}
-	if err := store.Set(expect.Vault().AdminUser(username), adminUserJSON); err != nil {
+	if err := store.Set(expect.Vault().AdminUser(reg.Username), adminUserJSON); err != nil {
 		return fmt.Errorf("failed to store admin user: %w", err)
 	}
 
-	sess.AdminUsername = username
-	sess.AdminPasswordHash = hash
-	h.u.Step("ok", fmt.Sprintf("Created admin user: %s", username))
+	sess.AdminUsername = reg.Username
+	sess.AdminPasswordHash = reg.PasswordHash
+	h.u.Step("ok", fmt.Sprintf("Created admin user: %s", reg.Username))
 	return nil
 }
 
@@ -344,11 +316,13 @@ func (h *Home) setupTOTP(store *keeper.Keeper, sess *session) error {
 	uri := totpGen.GetProvisioningURI(totpSecret, sess.AdminUsername)
 	h.u.SectionHeader("Two-Factor Authentication")
 	h.u.InfoLine("Scan this QR code with Google Authenticator, Authy, or another TOTP app")
+	h.u.Blank()
 	h.u.QR(uri)
 	h.u.Blank()
 
 	sess.TOTPEnabled = true
 	sess.TOTPSecret = totpSecret
+
 	h.u.Step("ok", "TOTP enabled")
 	return nil
 }
@@ -400,14 +374,11 @@ func (h *Home) writeConfigFiles(store *keeper.Keeper, sess *session) error {
 		{"{DATA_DIR}", filepath.ToSlash(h.ctx.Paths.DataDir.Path())},
 		{"{LOGS_DIR}", filepath.ToSlash(h.ctx.Paths.LogsDir.Path())},
 		{"{WORK_DIR}", filepath.ToSlash(h.ctx.Paths.WorkDir.Path())},
-		//{"{ADMIN_USERNAME}", sess.AdminUsername},
-		//{"{ADMIN_SECRET}", expect.Vault().AdminJWT(sess.AdminUsername)},
 		{"{INTERNAL_AUTH_KEY}", expect.Vault().Key("internal")},
 		{"{LE_ENABLED}", leEnabled},
 		{"{LE_EMAIL}", sess.LEEmail},
 		{"{KEEPER_ENABLED}", woos.On},
 		{"{TOTP_ENABLED}", totpEnabled},
-		//{"{TOTP_ADMIN_SECRECT}", expect.Vault().AdminTOTP(sess.AdminUsername)},
 	}
 
 	content := ConfigTmpl
@@ -415,19 +386,27 @@ func (h *Home) writeConfigFiles(store *keeper.Keeper, sess *session) error {
 		content = strings.ReplaceAll(content, r.key, r.value)
 	}
 
-	if err := os.WriteFile(h.ctx.Paths.ConfigFile, []byte(content), woos.FilePermSecured); err != nil {
+	if err := os.WriteFile(h.ctx.Paths.ConfigFile, []byte(content), expect.FilePermSecured); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
+
 	h.u.Step("ok", "Written configuration to "+h.ctx.Paths.ConfigFile)
 
-	adminFile := filepath.Join(h.ctx.Paths.HostsDir.Path(), "admin.hcl")
-	if err := os.WriteFile(adminFile, TplAdminHcl, woos.FilePerm); err != nil {
-		return err
+	err := h.ctx.Paths.HostsDir.Make(true)
+	if err != nil {
+		return fmt.Errorf("failed to initialize host directory: %w", err)
 	}
-	webFile := filepath.Join(h.ctx.Paths.HostsDir.Path(), "web.hcl")
-	if err := os.WriteFile(webFile, TplWebHcl, woos.FilePerm); err != nil {
-		return err
+
+	err = h.ctx.Paths.HostsDir.Put("admin.hcl", TplAdminHcl, expect.FilePerm)
+	if err != nil {
+		return fmt.Errorf("failed to write admin host config: %w", err)
 	}
+
+	err = h.ctx.Paths.HostsDir.Put("web.hcl", TplWebHcl, expect.FilePerm)
+	if err != nil {
+		return fmt.Errorf("failed to write web host config: %w", err)
+	}
+
 	h.u.Step("ok", "Created example host configurations")
 	return nil
 }

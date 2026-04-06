@@ -167,9 +167,16 @@ func (s *Server) Start(configPath string) error {
 	s.resource.UpdateGlobal(s.global.Env)
 
 	var err error
-	s.keeperStore, err = secrets.OpenStore(s.global.Storage.DataDir, &s.global.Security.Keeper, s.logger)
-	if err != nil {
-		s.logger.Fatal("Keeper initialization failed. Cannot start: ", err)
+	if s.keeperStore == nil {
+		s.keeperStore, err = secrets.Open(secrets.Config{
+			DataDir:     s.global.Storage.DataDir,
+			Setting:     &s.global.Security.Keeper,
+			Logger:      s.logger,
+			Interactive: false,
+		})
+		if err != nil {
+			s.logger.Fatal("Keeper initialization failed. Cannot start: ", err)
+		}
 	}
 
 	if s.keeperStore.IsLocked() {
@@ -179,7 +186,6 @@ func (s *Server) Start(configPath string) error {
 	s.resource.Apply(resource.WithKeeper(s.keeperStore))
 	s.logger.Info("Keeper unlocked successfully")
 
-	// WIRE RESOLVER - now all vault:// and ss:// references resolve to Keeper
 	secrets.NewResolver(s.keeperStore).Wire()
 	s.logger.Info("Secret resolver wired")
 
@@ -687,7 +693,7 @@ func (s *Server) configComputeSHA() (string, error) {
 	configPath := s.configPath
 	var hostDir string
 	if s.global != nil {
-		hostDir = s.global.Storage.HostsDir
+		hostDir = s.global.Storage.HostsDir.Path()
 	}
 	s.mu.RUnlock()
 

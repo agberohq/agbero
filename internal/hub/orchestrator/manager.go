@@ -4,7 +4,6 @@ package orchestrator
 
 import (
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -25,14 +24,14 @@ type Manager struct {
 	pool      *jack.Pool
 	loopers   *mappo.Concurrent[string, *jack.Looper]
 	logger    *ll.Logger
-	workDir   string
+	workDir   expect.Folder
 	cookMgr   *cook.Manager
 	globalEnv map[string]expect.Value
 }
 
 // New constructs a new orchestrator Manager to handle background and ephemeral processes.
 // It requires a logger, working directory, and a reference to the cook manager for git-based roots.
-func New(logger *ll.Logger, workDir string, cookMgr *cook.Manager, globalEnv map[string]expect.Value) *Manager {
+func New(logger *ll.Logger, workDir expect.Folder, cookMgr *cook.Manager, globalEnv map[string]expect.Value) *Manager {
 	return &Manager{
 		pool:      jack.NewPool(defaultPoolSize),
 		loopers:   mappo.NewConcurrent[string, *jack.Looper](),
@@ -82,7 +81,7 @@ func (m *Manager) ResolveDir(host string, r alaye.Route, w alaye.Work) string {
 		return m.cookMgr.CurrentPath(r.Web.Git.ID)
 	}
 
-	return filepath.Join(m.workDir, workerSubDir, host, w.Name)
+	return m.workDir.FilePath(workerSubDir, host, w.Name)
 }
 
 // startLooper initiates a managed loop for background worker processes.

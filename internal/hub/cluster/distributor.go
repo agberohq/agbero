@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/olekukonko/ll"
 )
@@ -25,7 +26,7 @@ const (
 )
 
 type Distributor struct {
-	localDir  string
+	localDir  expect.Folder
 	logger    *ll.Logger
 	checksums map[string]string
 	mu        sync.RWMutex
@@ -33,7 +34,7 @@ type Distributor struct {
 
 // NewDistributor initializes the configuration synchronizer.
 // It populates the initial checksum cache from existing files on disk.
-func NewDistributor(logger *ll.Logger, localDir string) *Distributor {
+func NewDistributor(logger *ll.Logger, localDir expect.Folder) *Distributor {
 	cm := &Distributor{
 		localDir:  localDir,
 		logger:    logger.Namespace("config_sync"),
@@ -46,23 +47,26 @@ func NewDistributor(logger *ll.Logger, localDir string) *Distributor {
 // LoadExistingChecksums scans the local directory for configuration files.
 // It caches the checksums to prevent unnecessary synchronization loops on startup.
 func (c *Distributor) LoadExistingChecksums() {
-	entries, err := os.ReadDir(c.localDir)
+	files, err := c.localDir.ReadFiles()
 	if err != nil {
-		c.logger.Fields("err", err).Debug("config_sync: failed to read local dir for checksums")
+		c.logger.Fields("err", err).Debug("config_sync: failed to read local dir")
 		return
 	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), configHCLExtension) {
+
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), configHCLExtension) {
 			continue
 		}
-		path := filepath.Join(c.localDir, e.Name())
-		data, err := os.ReadFile(path)
+
+		data, err := os.ReadFile(c.localDir.FilePath(file.Name()))
 		if err != nil {
 			continue
 		}
-		domain := strings.TrimSuffix(e.Name(), configHCLExtension)
+
+		domain := strings.TrimSuffix(file.Name(), configHCLExtension)
 		c.checksums[domain] = c.calculateChecksum(data)
 	}
+
 	c.logger.Fields("count", len(c.checksums)).Debug("config_sync: loaded existing checksums")
 }
 
@@ -78,7 +82,7 @@ func (c *Distributor) Apply(payload ConfigPayload) {
 	}
 
 	if payload.Deleted {
-		configPath := filepath.Join(c.localDir, payload.Domain+configHCLExtension)
+		configPath := c.localDir.FilePath(payload.Domain + configHCLExtension)
 		_ = os.Remove(configPath)
 		delete(c.checksums, payload.Domain)
 		c.logger.Fields("domain", payload.Domain).Info("cluster config deleted")
@@ -90,7 +94,7 @@ func (c *Distributor) Apply(payload ConfigPayload) {
 		return
 	}
 
-	configPath := filepath.Join(c.localDir, payload.Domain+configHCLExtension)
+	configPath := c.localDir.FilePath(payload.Domain + configHCLExtension)
 
 	rawHCL, err := c.decompress(payload.RawHCL)
 	if err != nil {
@@ -280,7 +284,7 @@ func (c *Distributor) decompress(data []byte) ([]byte, error) {
 // validateDomain rejects domain values that could escape the localDir via path traversal.
 // A domain must contain no path separators, no ".." sequences, and the resolved path
 // must remain within localDir.
-func validateDomain(domain, localDir string) error {
+func validateDomain(domain string, localDir expect.Folder) error {
 	if domain == "" {
 		return fmt.Errorf("domain cannot be empty")
 	}
@@ -291,8 +295,8 @@ func validateDomain(domain, localDir string) error {
 		return fmt.Errorf("domain contains illegal path traversal sequence")
 	}
 
-	resolved := filepath.Join(localDir, domain+configHCLExtension)
-	rel, err := filepath.Rel(localDir, resolved)
+	resolved := localDir.FilePath(domain + configHCLExtension)
+	rel, err := filepath.Rel(localDir.Path(), resolved)
 	if err != nil || strings.HasPrefix(rel, "..") {
 		return fmt.Errorf("domain resolves outside the configured hosts directory")
 	}

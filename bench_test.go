@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
@@ -98,11 +99,11 @@ func benchmarkServerWithStrategy(b *testing.B, strategy string) *strategyResult 
 	// Create temporary config
 	tmpDir := b.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+	if err := os.MkdirAll(hostsDir, expect.DirPerm); err != nil {
 		b.Fatal(err)
 	}
-	certsDir := filepath.Join(tmpDir, "certs")
-	if err := os.MkdirAll(certsDir, woos.DirPerm); err != nil {
+	certsDir := expect.NewFolder(filepath.Join(tmpDir, "certs"))
+	if err := certsDir.Init(expect.DirPerm); err != nil {
 		b.Fatal(err)
 	}
 
@@ -136,7 +137,7 @@ route "/testing" {
 }
 `, strategy, strings.Join(backendAddrs, "\n"))
 
-	if err := os.WriteFile(hostFile, []byte(hostConfig), woos.FilePerm); err != nil {
+	if err := os.WriteFile(hostFile, []byte(hostConfig), expect.FilePerm); err != nil {
 		b.Fatal(err)
 	}
 
@@ -165,7 +166,7 @@ logging {
 }
 `, testPort, hostsDir, tmpDir, certsDir)
 
-	if err := os.WriteFile(configFile, []byte(mainConfig), woos.FilePerm); err != nil {
+	if err := os.WriteFile(configFile, []byte(mainConfig), expect.FilePerm); err != nil {
 		b.Fatal(err)
 	}
 
@@ -177,7 +178,7 @@ logging {
 	woos.DefaultApply(global, configFile)
 
 	// Create host manager with disabled logger
-	hm := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(disabledLogger))
+	hm := discovery2.NewHost(expect.NewFolder(hostsDir), discovery2.WithLogger(disabledLogger))
 	if err := hm.ReloadFull(); err != nil {
 		b.Fatalf("Failed to reload hosts: %v", err)
 	}

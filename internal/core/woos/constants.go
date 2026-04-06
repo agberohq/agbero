@@ -8,7 +8,9 @@
 // are exempt.
 package woos
 
-import "time"
+import (
+	"time"
+)
 
 const (
 	Name         = "agbero"
@@ -113,11 +115,11 @@ const (
 )
 
 const (
-	HostDir Folder = "hosts.d"
-	CertDir Folder = "certs.d"
-	DataDir Folder = "data.d"
-	LogDir  Folder = "logs.d"
-	WorkDir Folder = "work.d"
+	HostDir string = "hosts.d"
+	CertDir string = "certs.d"
+	DataDir string = "data.d"
+	LogDir  string = "logs.d"
+	WorkDir string = "work.d"
 
 	DefaultConfigName = "agbero.hcl"
 	DefaultLogName    = "agbero.log"
@@ -372,13 +374,6 @@ const (
 	AuthorizationHeaderKey     = "Authorization"
 	CookieHeaderKey            = "Cookie"
 	CacheSetTTL                = 10 * time.Second
-)
-
-const (
-	DirPerm         = 0755
-	FilePerm        = 0644
-	FilePermSecured = 0600
-	SecurePerm      = 0700
 )
 
 const (

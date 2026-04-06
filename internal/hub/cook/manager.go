@@ -10,13 +10,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -40,7 +40,7 @@ type WebhookPayload struct {
 }
 
 type ManagerConfig struct {
-	WorkDir string
+	WorkDir expect.Folder
 	Pool    *jack.Pool
 	Logger  *ll.Logger
 }
@@ -67,7 +67,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	if cfg.Pool == nil {
 		return nil, errors.New("worker pool is required")
 	}
-	if err := os.MkdirAll(cfg.WorkDir, defaultWorkDirPerm); err != nil {
+	if err := cfg.WorkDir.Init(defaultWorkDirPerm); err != nil {
 		return nil, fmt.Errorf("failed to create manager workdir: %w", err)
 	}
 	logger := cfg.Logger
@@ -79,7 +79,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	return &Manager{
 		entries: mappo.NewConcurrent[string, *Entry](),
 		logger:  logger,
-		workDir: cfg.WorkDir,
+		workDir: cfg.WorkDir.Path(),
 		pool:    cfg.Pool,
 	}, nil
 }
@@ -113,7 +113,7 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 
 	targetWorkDir := filepath.Join(m.workDir, routeKey)
 	if cfg.WorkDir != "" {
-		targetWorkDir = cfg.WorkDir
+		targetWorkDir = cfg.WorkDir.Path()
 	}
 
 	cookCfg := Config{

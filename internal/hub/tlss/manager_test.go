@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/olekukonko/ll"
 )
@@ -15,12 +15,12 @@ func setupManager(t *testing.T) (*Manager, string) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(ll.New("test").Disable(), hm, global, nil)
 	return mgr, tmpDir
 }

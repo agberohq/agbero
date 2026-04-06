@@ -6,11 +6,13 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/agberohq/agbero/internal/core/expect"
 )
 
 type Disk struct {
-	dataDir string // For CA, System certs (persistent)
-	certDir string // For domain certs (custom, ACME, local)
+	dataDir expect.Folder // For CA, System certs (persistent)
+	certDir expect.Folder // For domain certs (custom, ACME, local)
 	cipher  interface {
 		Encrypt([]byte) ([]byte, error)
 		Decrypt([]byte) ([]byte, error)
@@ -19,8 +21,8 @@ type Disk struct {
 }
 
 type DiskConfig struct {
-	DataDir string
-	CertDir string
+	DataDir expect.Folder
+	CertDir expect.Folder
 	Cipher  interface {
 		Encrypt([]byte) ([]byte, error)
 		Decrypt([]byte) ([]byte, error)
@@ -37,7 +39,7 @@ func NewDisk(cfg DiskConfig) (*Disk, error) {
 	if d.dataDir != "" {
 		// Create issuer subdirectories for data dir (CA and System)
 		for _, issuer := range []string{IssuerCA, IssuerSystem} {
-			path := filepath.Join(d.dataDir, issuer)
+			path := filepath.Join(d.dataDir.Path(), issuer)
 			if err := os.MkdirAll(path, 0700); err != nil {
 				return nil, fmt.Errorf("failed to create %s directory: %w", issuer, err)
 			}
@@ -47,7 +49,7 @@ func NewDisk(cfg DiskConfig) (*Disk, error) {
 	if d.certDir != "" {
 		// Create issuer subdirectories for cert dir (Custom, ACME, Local)
 		for _, issuer := range []string{IssuerCustom, IssuerACME, IssuerLocal} {
-			path := filepath.Join(d.certDir, issuer)
+			path := filepath.Join(d.certDir.FilePath(), issuer)
 			if err := os.MkdirAll(path, 0700); err != nil {
 				return nil, fmt.Errorf("failed to create %s directory: %w", issuer, err)
 			}
@@ -77,9 +79,9 @@ func (s *Disk) writeFileAtomic(targetPath string, data []byte, perm os.FileMode)
 	return os.Rename(tmpPath, targetPath)
 }
 
-func (s *Disk) getBaseDir(issuer string) string {
+func (s *Disk) getBaseDir(issuer string) expect.Folder {
 	// Determine preferred directory based on issuer type
-	var preferredDir string
+	var preferredDir expect.Folder
 	if issuer == IssuerCA || issuer == IssuerSystem {
 		preferredDir = s.dataDir
 	} else {
@@ -111,7 +113,7 @@ func (s *Disk) Save(issuer, domain string, certPEM, keyPEM []byte) error {
 		return fmt.Errorf("no directory configured for issuer %s (needs DataDir or CertDir)", issuer)
 	}
 
-	issuerDir := filepath.Join(baseDir, issuer)
+	issuerDir := filepath.Join(baseDir.Path(), issuer)
 	if err := os.MkdirAll(issuerDir, 0700); err != nil {
 		return fmt.Errorf("failed to create issuer directory: %w", err)
 	}
@@ -175,7 +177,7 @@ func (s *Disk) Load(domain string) ([]byte, []byte, error) {
 	for _, issuer := range []string{IssuerCustom, IssuerACME, IssuerLocal} {
 		// Try certDir first
 		if s.certDir != "" {
-			base := filepath.Join(s.certDir, issuer, safeDomain)
+			base := filepath.Join(s.certDir.Path(), issuer, safeDomain)
 			certPEM, certErr := os.ReadFile(base + ".crt")
 			keyPEM, keyErr := s.loadKey(base)
 			if certErr == nil && keyErr == nil {
@@ -185,7 +187,7 @@ func (s *Disk) Load(domain string) ([]byte, []byte, error) {
 
 		// Fallback to dataDir
 		if s.dataDir != "" {
-			base := filepath.Join(s.dataDir, issuer, safeDomain)
+			base := s.dataDir.FilePath(issuer, safeDomain)
 			certPEM, certErr := os.ReadFile(base + ".crt")
 			keyPEM, keyErr := s.loadKey(base)
 			if certErr == nil && keyErr == nil {
@@ -198,7 +200,7 @@ func (s *Disk) Load(domain string) ([]byte, []byte, error) {
 	for _, issuer := range []string{IssuerCA, IssuerSystem} {
 		// Try dataDir first for CA/System
 		if s.dataDir != "" {
-			base := filepath.Join(s.dataDir, issuer, safeDomain)
+			base := s.dataDir.FilePath(issuer, safeDomain)
 			keyPEM, keyErr := s.loadKey(base)
 			if keyErr == nil {
 				certPEM, _ := os.ReadFile(base + ".crt")
@@ -208,7 +210,7 @@ func (s *Disk) Load(domain string) ([]byte, []byte, error) {
 
 		// Fallback to certDir
 		if s.certDir != "" {
-			base := filepath.Join(s.certDir, issuer, safeDomain)
+			base := s.certDir.FilePath(issuer, safeDomain)
 			keyPEM, keyErr := s.loadKey(base)
 			if keyErr == nil {
 				certPEM, _ := os.ReadFile(base + ".crt")
@@ -248,8 +250,8 @@ func (s *Disk) List() ([]string, error) {
 	}
 
 	// Scan both directories
-	scanDir(s.certDir)
-	scanDir(s.dataDir)
+	scanDir(s.certDir.Path())
+	scanDir(s.dataDir.Path())
 
 	domains := make([]string, 0, len(domainMap))
 	for domain := range domainMap {
@@ -265,7 +267,7 @@ func (s *Disk) Delete(domain string) error {
 	safeDomain := s.safeName(domain)
 
 	// Delete from both directories
-	for _, baseDir := range []string{s.certDir, s.dataDir} {
+	for _, baseDir := range []string{s.certDir.Path(), s.dataDir.Path()} {
 		if baseDir == "" {
 			continue
 		}
@@ -280,6 +282,6 @@ func (s *Disk) Delete(domain string) error {
 	return nil
 }
 
-func (s *Disk) CertDir() string {
+func (s *Disk) CertDir() expect.Folder {
 	return s.certDir
 }

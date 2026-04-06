@@ -2,10 +2,10 @@ package helper
 
 import (
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
@@ -25,7 +25,7 @@ type Cert struct {
 // In ephemeral mode (serve/proxy) there is no keeper and this is always correct.
 // In full server mode the server's tlsstore (keeper-backed when keeper is
 // configured) handles cert management; cert CLI is for local CA trust only.
-func (c *Cert) newLocal(configPath string) (certsDir string, loc *tlss.Local) {
+func (c *Cert) newLocal(configPath string) (certsDir expect.Folder, loc *tlss.Local) {
 	if global, err := loadGlobal(configPath); err == nil && global.Storage.CertsDir != "" {
 		certsDir = global.Storage.CertsDir
 	}
@@ -37,7 +37,7 @@ func (c *Cert) newLocal(configPath string) (certsDir string, loc *tlss.Local) {
 // newDiskStore creates a tlsstore.Disk for the given certsDir.
 // On error or empty certsDir, falls back to memory so that read operations
 // on ephemeral/unconfigured installs still work gracefully.
-func newDiskStore(certsDir string) tlsstore.Store {
+func newDiskStore(certsDir expect.Folder) tlsstore.Store {
 	if certsDir != "" {
 		ds, err := tlsstore.NewDisk(tlsstore.DiskConfig{CertDir: certsDir})
 		if err == nil {
@@ -88,20 +88,22 @@ func (c *Cert) Uninstall(configPath string) {
 	}
 
 	// Clean up remaining PEM/key/crt files from the cert root directory.
-	files, err := os.ReadDir(certsDir)
+	files, err := certsDir.ReadFiles()
 	if err != nil {
 		c.p.Logger.Warnf("could not read dir: %v", err)
 		return
 	}
+
 	count := 0
 	for _, f := range files {
 		name := f.Name()
 		if strings.HasSuffix(name, ".pem") || strings.HasSuffix(name, ".key") || strings.HasSuffix(name, ".crt") {
-			if err := os.Remove(filepath.Join(certsDir, name)); err == nil {
+			if err := os.Remove(certsDir.FilePath(name)); err == nil {
 				count++
 			}
 		}
 	}
+
 	if count > 0 {
 		c.p.Logger.Infof("deleted %d certificate files from disk", count)
 	} else {
@@ -140,12 +142,12 @@ func (c *Cert) Info(configPath string) {
 		return
 	}
 
-	storageDir := woos.NewFolder(global.Storage.CertsDir)
+	storageDir := global.Storage.CertsDir
 	u := ui.New()
 	u.SectionHeader("Certificate store")
 	u.KeyValue("Directory", storageDir.Path())
 
-	if !storageDir.Exists("") {
+	if !storageDir.ExistsAbsolute() {
 		u.WarnLine("store directory does not exist")
 		return
 	}

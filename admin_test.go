@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,9 +14,9 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/operation/api"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/keeper"
@@ -25,37 +24,44 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func initKeeperForTest(t *testing.T, dataDir string) {
+var (
+	passphrase = []byte("test-passphrase")
+)
+
+func initKeeperForTest(t *testing.T, dataDir expect.Folder) {
 	t.Helper()
 
-	kConfig := keeper.Config{
-		DBPath: filepath.Join(dataDir, woos.DefaultKeeperName),
-		Logger: testLogger,
-	}
-	store, err := keeper.New(kConfig)
+	store, err := secrets.Open(secrets.Config{
+		DataDir:     dataDir,
+		Logger:      testLogger,
+		Interactive: false,
+		Setting: &alaye.Keeper{
+			Enabled:    alaye.Active,
+			Logging:    alaye.Active,
+			Passphrase: expect.Value(passphrase),
+		},
+	})
+
 	if err != nil {
 		t.Fatalf("TEST SETUP FAILED: Failed to create test keeper store: %v", err)
 	}
-	master, _ := store.DeriveMaster([]byte("test-passphrase"))
-	if err := store.UnlockDatabase(master); err != nil {
-		store.Close()
-		t.Fatalf("TEST SETUP FAILED: Failed to unlock test keeper: %v", err)
-	}
 
-	if err := store.CreateBucket("vault", "admin", keeper.LevelPasswordOnly, "test"); err != nil {
-		if !strings.Contains(err.Error(), "immutable") {
-			t.Fatalf("failed to create vault:admin bucket: %v", err)
-		}
-	}
-
-	if err := store.CreateBucket("default", "key", keeper.LevelPasswordOnly, "test"); err != nil {
-		if !strings.Contains(err.Error(), "immutable") {
-			t.Fatalf("failed to create default:key bucket: %v", err)
+	// Create all required buckets. EnsureBucket is idempotent so re-runs
+	// on an existing database are safe.
+	for _, bucket := range [][2]string{
+		{"vault", "admin"}, // admin users, JWT secrets, TOTP secrets
+		{"vault", "key"},   // internal PKI keys (expect.Vault().Key(...))
+		{"default", "key"}, // general key material
+	} {
+		if err := store.CreateBucket(bucket[0], bucket[1], keeper.LevelPasswordOnly, "test"); err != nil {
+			if !strings.Contains(err.Error(), "immutable") {
+				t.Fatalf("failed to create %s:%s bucket: %v", bucket[0], bucket[1], err)
+			}
 		}
 	}
 
 	_, ppkPEM, _ := security.GeneratePPK()
-	if err := store.Set("key/internal", ppkPEM); err != nil {
+	if err := store.Set(expect.Vault().Key("internal"), ppkPEM); err != nil {
 		t.Fatalf("failed to set key/internal: %v", err)
 	}
 
@@ -88,27 +94,37 @@ func newTestAdminServer(t *testing.T) (*Server, *http.Server, int, func()) {
 	t.Helper()
 
 	tmpDir := t.TempDir()
-	hostsDir := filepath.Join(tmpDir, "hosts")
-	certsDir := filepath.Join(tmpDir, "certs")
-	dataDir := filepath.Join(tmpDir, "data")
+	hostsDir := expect.NewFolder(filepath.Join(tmpDir, "hosts"))
+	certsDir := expect.NewFolder(filepath.Join(tmpDir, "certs"))
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	workDir := expect.NewFolder(filepath.Join(tmpDir, "work"))
 
-	os.MkdirAll(hostsDir, woos.DirPerm)
-	os.MkdirAll(certsDir, woos.DirPerm)
-	os.MkdirAll(dataDir, woos.DirPerm)
+	if err := hostsDir.Init(expect.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := certsDir.Init(expect.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := dataDir.Init(expect.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := workDir.Init(expect.DirPerm); err != nil {
+		t.Fatal(err)
+	}
 
 	adminPort := zulu.PortFree()
 	httpPort := zulu.PortFree()
 
 	initKeeperForTest(t, dataDir)
 
-	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
+	hm := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
 
 	global := &alaye.Global{
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
 			CertsDir: certsDir,
 			DataDir:  dataDir,
-			WorkDir:  filepath.Join(tmpDir, "work"),
+			WorkDir:  workDir,
 		},
 		Bind: alaye.Bind{
 			HTTP:     []string{fmt.Sprintf("127.0.0.1:%d", httpPort)},
@@ -140,11 +156,23 @@ func newTestAdminServer(t *testing.T) (*Server, *http.Server, int, func()) {
 
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 
+	store, err := secrets.Open(secrets.Config{
+		DataDir:     dataDir,
+		Setting:     &global.Security.Keeper,
+		Logger:      testLogger,
+		Interactive: false,
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	s := NewServer(
 		WithHostManager(hm),
 		WithGlobalConfig(global),
 		WithLogger(testLogger),
 		WithShutdownManager(shutdown),
+		WithKeeper(store),
 	)
 
 	errCh := make(chan error, 1)
@@ -180,6 +208,136 @@ func newTestAdminServer(t *testing.T) (*Server, *http.Server, int, func()) {
 	}
 
 	return s, s.adminSrv, adminPort, cleanup
+}
+
+func newTestAdminServerWithTOTP(t *testing.T) (*Server, int, func()) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	hostsDir := expect.NewFolder(filepath.Join(tmpDir, "hosts"))
+	certsDir := expect.NewFolder(filepath.Join(tmpDir, "certs"))
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	workDir := expect.NewFolder(filepath.Join(tmpDir, "work"))
+
+	if err := hostsDir.Init(expect.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := certsDir.Init(expect.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := dataDir.Init(expect.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := workDir.Init(expect.DirPerm); err != nil {
+		t.Fatal(err)
+	}
+
+	initKeeperForTest(t, dataDir)
+
+	adminPort := zulu.PortFree()
+	httpPort := zulu.PortFree()
+
+	hm := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
+
+	global := &alaye.Global{
+		Storage: alaye.Storage{
+			HostsDir: hostsDir,
+			CertsDir: certsDir,
+			DataDir:  dataDir,
+			WorkDir:  workDir,
+		},
+		Bind: alaye.Bind{
+			HTTP:     []string{fmt.Sprintf("127.0.0.1:%d", httpPort)},
+			Redirect: alaye.Inactive,
+		},
+		Admin: alaye.Admin{
+			Enabled: alaye.Active,
+			Address: fmt.Sprintf("127.0.0.1:%d", adminPort),
+			TOTP: alaye.TOTP{
+				Enabled:    alaye.Active,
+				Issuer:     "agbero-test",
+				Algorithm:  "SHA1",
+				Digits:     6,
+				Period:     30,
+				WindowSize: 1,
+			},
+			Telemetry: alaye.Telemetry{Enabled: alaye.Inactive},
+		},
+		Logging: alaye.Logging{Enabled: alaye.Inactive},
+		Timeouts: alaye.Timeout{
+			Enabled: alaye.Active,
+			Read:    alaye.Duration(5 * time.Second),
+			Write:   alaye.Duration(5 * time.Second),
+			Idle:    alaye.Duration(5 * time.Second),
+		},
+		General: alaye.General{MaxHeaderBytes: alaye.DefaultMaxHeaderBytes},
+		Gossip:  alaye.Gossip{Enabled: alaye.Inactive},
+		Security: alaye.Security{
+			Enabled: alaye.Active,
+			Keeper: alaye.Keeper{
+				Enabled:    alaye.Active,
+				Passphrase: expect.Value("test-passphrase"),
+			},
+		},
+	}
+
+	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
+
+	apiShared := &api.Shared{
+		Logger: testLogger,
+	}
+
+	store, err := secrets.Open(secrets.Config{
+		DataDir:     dataDir,
+		Setting:     &global.Security.Keeper,
+		Logger:      testLogger,
+		Interactive: false,
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewServer(
+		WithHostManager(hm),
+		WithGlobalConfig(global),
+		WithLogger(testLogger),
+		WithShutdownManager(shutdown),
+		WithAPIShared(apiShared),
+		WithKeeper(store),
+	)
+
+	errCh := make(chan error, 1)
+	go func() {
+		if err := s.Start(""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+
+	waitForPort(t, adminPort)
+
+	for i := 0; i < 100; i++ {
+		s.mu.RLock()
+		ready := s.adminSrv != nil
+		s.mu.RUnlock()
+		if ready {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	cleanup := func() {
+		shutdown.TriggerShutdown()
+		time.Sleep(300 * time.Millisecond)
+		select {
+		case err := <-errCh:
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			}
+		default:
+		}
+	}
+
+	return s, adminPort, cleanup
 }
 
 func makeRequest(t *testing.T, port int, method, path string, body []byte, token string) *http.Response {
@@ -296,120 +454,6 @@ func TestAdminCoreEndpoints(t *testing.T) {
 			t.Errorf("expected 401 after logout, got %d. Body: %s", resp2.StatusCode, string(body))
 		}
 	})
-}
-
-func newTestAdminServerWithTOTP(t *testing.T) (*Server, int, func()) {
-	t.Helper()
-	tmpDir := t.TempDir()
-	hostsDir := filepath.Join(tmpDir, "hosts")
-	certsDir := filepath.Join(tmpDir, "certs")
-	dataDir := filepath.Join(tmpDir, "data")
-
-	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(certsDir, woos.DirPerm); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dataDir, woos.DirPerm); err != nil {
-		t.Fatal(err)
-	}
-
-	initKeeperForTest(t, dataDir)
-
-	adminPort := zulu.PortFree()
-	httpPort := zulu.PortFree()
-
-	hm := discovery.NewHost(woos.NewFolder(hostsDir), discovery.WithLogger(testLogger))
-
-	global := &alaye.Global{
-		Storage: alaye.Storage{
-			HostsDir: hostsDir,
-			CertsDir: certsDir,
-			DataDir:  dataDir,
-			WorkDir:  filepath.Join(tmpDir, "work"),
-		},
-		Bind: alaye.Bind{
-			HTTP:     []string{fmt.Sprintf("127.0.0.1:%d", httpPort)},
-			Redirect: alaye.Inactive,
-		},
-		Admin: alaye.Admin{
-			Enabled: alaye.Active,
-			Address: fmt.Sprintf("127.0.0.1:%d", adminPort),
-			TOTP: alaye.TOTP{
-				Enabled:    alaye.Active,
-				Issuer:     "agbero-test",
-				Algorithm:  "SHA1",
-				Digits:     6,
-				Period:     30,
-				WindowSize: 1,
-			},
-			Telemetry: alaye.Telemetry{Enabled: alaye.Inactive},
-		},
-		Logging: alaye.Logging{Enabled: alaye.Inactive},
-		Timeouts: alaye.Timeout{
-			Enabled: alaye.Active,
-			Read:    alaye.Duration(5 * time.Second),
-			Write:   alaye.Duration(5 * time.Second),
-			Idle:    alaye.Duration(5 * time.Second),
-		},
-		General: alaye.General{MaxHeaderBytes: alaye.DefaultMaxHeaderBytes},
-		Gossip:  alaye.Gossip{Enabled: alaye.Inactive},
-		Security: alaye.Security{
-			Enabled: alaye.Active,
-			Keeper: alaye.Keeper{
-				Enabled:    alaye.Active,
-				Passphrase: expect.Value("test-passphrase"),
-			},
-		},
-	}
-
-	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
-
-	apiShared := &api.Shared{
-		Logger: testLogger,
-	}
-
-	s := NewServer(
-		WithHostManager(hm),
-		WithGlobalConfig(global),
-		WithLogger(testLogger),
-		WithShutdownManager(shutdown),
-		WithAPIShared(apiShared),
-	)
-
-	errCh := make(chan error, 1)
-	go func() {
-		if err := s.Start(""); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-		}
-		close(errCh)
-	}()
-
-	waitForPort(t, adminPort)
-
-	for i := 0; i < 100; i++ {
-		s.mu.RLock()
-		ready := s.adminSrv != nil
-		s.mu.RUnlock()
-		if ready {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-
-	cleanup := func() {
-		shutdown.TriggerShutdown()
-		time.Sleep(300 * time.Millisecond)
-		select {
-		case err := <-errCh:
-			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			}
-		default:
-		}
-	}
-
-	return s, adminPort, cleanup
 }
 
 func TestAdminTwoTokenFlow(t *testing.T) {

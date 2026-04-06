@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/orchestrator"
 	"github.com/agberohq/agbero/internal/hub/resource"
 )
@@ -29,7 +30,7 @@ func TestWorkerServeHTTP(t *testing.T) {
 	res := resource.New()
 	tempWork := t.TempDir()
 
-	orch := orchestrator.New(res.Logger, tempWork, nil, nil)
+	orch := orchestrator.New(res.Logger, expect.NewFolder(tempWork), nil, nil)
 
 	uniqueString := "agbero-test-token-" + fmt.Sprintf("%d", os.Getpid())
 	var cmd []string
@@ -82,7 +83,7 @@ func TestWorkerServeHTTP(t *testing.T) {
 // It confirms that an internal server error is returned to the client.
 func TestWorkerExecutionFailure(t *testing.T) {
 	res := resource.New()
-	orch := orchestrator.New(res.Logger, os.TempDir(), nil, nil)
+	orch := orchestrator.New(res.Logger, expect.NewFolder(t.TempDir()), nil, nil)
 
 	work := alaye.Work{
 		Name:    "fail-worker",

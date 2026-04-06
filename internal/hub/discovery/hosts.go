@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cluster"
@@ -44,7 +45,7 @@ type ClusterRouteWrapper struct {
 }
 
 type Host struct {
-	hostsDir woos.Folder
+	hostsDir expect.Folder
 
 	mu            sync.RWMutex
 	hosts         map[string]*alaye.Host
@@ -95,7 +96,7 @@ func (c *ConfigSync) ShouldBroadcastDeletion(domain string) bool {
 	return c.cluster.ConfigManager().ShouldBroadcastDeletion(domain)
 }
 
-func NewHost(hostsDir woos.Folder, opts ...Option) *Host {
+func NewHost(hostsDir expect.Folder, opts ...Option) *Host {
 	h := &Host{
 		hostsDir:      hostsDir,
 		hosts:         make(map[string]*alaye.Host),
@@ -835,7 +836,7 @@ func (hm *Host) CreateRaw(domain string, cfg *alaye.Host, raw []byte) error {
 	}
 	filePath := filepath.Join(hm.hostsDir.Path(), filename)
 	tmpPath := filePath + ".tmp"
-	if err := os.WriteFile(tmpPath, raw, woos.FilePerm); err != nil {
+	if err := os.WriteFile(tmpPath, raw, expect.FilePerm); err != nil {
 		return fmt.Errorf("write temp config: %w", err)
 	}
 	if err := os.Rename(tmpPath, filePath); err != nil {

@@ -63,12 +63,12 @@ func TestServer_Start_NoGlobalConfig(t *testing.T) {
 func TestServer_Start_Minimal(t *testing.T) {
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(100 * time.Millisecond))
 	tmpDir := t.TempDir()
-	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+	hostsDir := expect.NewFolder(filepath.Join(tmpDir, "hosts"))
+	if err := hostsDir.Init(expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
-	dataDir := filepath.Join(tmpDir, "data")
-	if err := os.MkdirAll(dataDir, woos.DirPerm); err != nil {
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	if err := dataDir.Init(expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -80,7 +80,7 @@ func TestServer_Start_Minimal(t *testing.T) {
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
 			DataDir:  dataDir,
-			CertsDir: filepath.Join(tmpDir, "certs"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
@@ -101,7 +101,7 @@ func TestServer_Start_Minimal(t *testing.T) {
 		},
 	}
 
-	hm := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
+	hm := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
 	s := NewServer(
 		WithGlobalConfig(global),
 		WithHostManager(hm),
@@ -110,7 +110,7 @@ func TestServer_Start_Minimal(t *testing.T) {
 	)
 
 	configPath := filepath.Join(tmpDir, "config.hcl")
-	_ = os.WriteFile(configPath, []byte(""), woos.FilePerm)
+	_ = os.WriteFile(configPath, []byte(""), expect.FilePerm)
 
 	errCh := make(chan error)
 	go func() {
@@ -140,19 +140,19 @@ func TestServer_Start_WithBackend(t *testing.T) {
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 
 	tmpDir := t.TempDir()
-	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+	hostsDir := expect.NewFolder(filepath.Join(tmpDir, "hosts"))
+	if err := hostsDir.Init(expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
-	dataDir := filepath.Join(tmpDir, "data")
-	if err := os.MkdirAll(dataDir, woos.DirPerm); err != nil {
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	if err := dataDir.Init(expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
 
 	// Initialize keeper for test
 	initKeeperForTest(t, dataDir)
 
-	hostFile := filepath.Join(hostsDir, "example.com.hcl")
+	hostFile := "example.com.hcl"
 	content := fmt.Sprintf(`
 domains = ["example.com"]
 route "/" {
@@ -163,7 +163,7 @@ route "/" {
   }
 }
 `, backend.URL)
-	if err := os.WriteFile(hostFile, []byte(content), woos.FilePerm); err != nil {
+	if err := hostsDir.Put(hostFile, []byte(content), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -173,7 +173,7 @@ route "/" {
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
 			DataDir:  dataDir,
-			CertsDir: filepath.Join(tmpDir, "certs"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
@@ -194,7 +194,7 @@ route "/" {
 		},
 	}
 
-	hm := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
+	hm := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
 	if err := hm.ReloadFull(); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ route "/" {
 	)
 
 	configPath := filepath.Join(tmpDir, "config.hcl")
-	_ = os.WriteFile(configPath, []byte(""), woos.FilePerm)
+	_ = os.WriteFile(configPath, []byte(""), expect.FilePerm)
 
 	errCh := make(chan error)
 	go func() {
@@ -257,24 +257,25 @@ func TestServer_Reload_DynamicBind(t *testing.T) {
 		w.Write([]byte("backend-ok"))
 	}))
 	defer backend.Close()
+
 	tmpDir := t.TempDir()
-	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, 0755); err != nil {
+	hostsDir := expect.NewFolder(filepath.Join(tmpDir, "hosts"))
+	if err := hostsDir.Init(0755); err != nil {
 		t.Fatal(err)
 	}
-	certsDir := filepath.Join(tmpDir, "certs")
-	if err := os.MkdirAll(certsDir, 0755); err != nil {
+	certsDir := expect.NewFolder(filepath.Join(tmpDir, "certs"))
+	if err := certsDir.Init(0755); err != nil {
 		t.Fatal(err)
 	}
-	dataDir := filepath.Join(tmpDir, "data")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	if err := dataDir.Init(0755); err != nil {
 		t.Fatal(err)
 	}
 
 	// Initialize keeper for test
 	initKeeperForTest(t, dataDir)
 
-	hostFile := filepath.Join(hostsDir, "dynamic.hcl")
+	hostFile := "dynamic.hcl"
 	initialHostConfig := fmt.Sprintf(`
 domains = ["localhost"]
 tls { mode = "none" }
@@ -284,7 +285,10 @@ route "/" {
   }
 }
 `, backend.URL)
-	writeSyncedFile(t, hostFile, []byte(initialHostConfig))
+	if err := hostsDir.Put(hostFile, []byte(initialHostConfig), expect.FilePerm); err != nil {
+		t.Fatal(err)
+	}
+
 	configFile := filepath.Join(tmpDir, "agbero.hcl")
 	mainPort := zulu.PortFree()
 	time.Sleep(100 * time.Millisecond)
@@ -312,8 +316,11 @@ security {
     passphrase = "test-passphrase"
   }
 }
-`, mainPort, hostsDir, certsDir, dataDir)
-	writeSyncedFile(t, configFile, []byte(initialGlobalConfig))
+`, mainPort, hostsDir.Path(), certsDir.Path(), dataDir.Path())
+	if err := os.WriteFile(configFile, []byte(initialGlobalConfig), expect.FilePerm); err != nil {
+		t.Fatal(err)
+	}
+
 	global, err := parser.LoadGlobal(configFile)
 	if err != nil {
 		t.Fatalf("Failed to parse initial config: %v", err)
@@ -321,7 +328,7 @@ security {
 	woos.DefaultApply(global, configFile)
 
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(10 * time.Second))
-	hm := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
+	hm := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
 
 	if err := hm.Watch(); err != nil {
 		t.Fatalf("Failed to start watcher: %v", err)
@@ -378,9 +385,13 @@ security {
     passphrase = "test-passphrase"
   }
 }
-`, targetPort, hostsDir, certsDir, dataDir)
-	writeSyncedFile(t, configFile, []byte(updatedGlobalConfig))
-	writeSyncedFile(t, hostFile, []byte(initialHostConfig+" # trigger reload"))
+`, targetPort, hostsDir.Path(), certsDir.Path(), dataDir.Path())
+	if err := os.WriteFile(configFile, []byte(updatedGlobalConfig), expect.FilePerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := hostsDir.Put(hostFile, []byte(initialHostConfig+" # trigger reload"), expect.FilePerm); err != nil {
+		t.Fatal(err)
+	}
 
 	waitForPort(t, targetPort)
 
@@ -409,30 +420,31 @@ security {
 // TestServer_Cluster_ConfigSync_RoutePropagation tests cluster route propagation
 func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 	tmpDir := t.TempDir()
-	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+	hostsDir := expect.NewFolder(filepath.Join(tmpDir, "hosts"))
+	if err := hostsDir.Init(expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
+
 	// Separate data dirs for each node to avoid bbolt lock conflicts
-	dataDir1 := filepath.Join(tmpDir, "data1")
-	dataDir2 := filepath.Join(tmpDir, "data2")
-	if err := os.MkdirAll(dataDir1, woos.DirPerm); err != nil {
+	dataDir1 := expect.NewFolder(filepath.Join(tmpDir, "data1"))
+	dataDir2 := expect.NewFolder(filepath.Join(tmpDir, "data2"))
+	if err := dataDir1.Init(expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(dataDir2, woos.DirPerm); err != nil {
+	if err := dataDir2.Init(expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
 
 	// Initialize keeper for node1
 	initKeeperForTest(t, dataDir1)
 	// Copy the seeded keeper DB to node2 so both have the PPK
-	srcDB := filepath.Join(dataDir1, woos.DefaultKeeperName)
-	dstDB := filepath.Join(dataDir2, woos.DefaultKeeperName)
+	srcDB := dataDir1.FilePath(woos.DefaultKeeperName)
+	dstDB := dataDir2.FilePath(woos.DefaultKeeperName)
 	srcData, err := os.ReadFile(srcDB)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dstDB, srcData, woos.FilePerm); err != nil {
+	if err := os.WriteFile(dstDB, srcData, expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -449,7 +461,7 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
 			DataDir:  dataDir1,
-			CertsDir: filepath.Join(tmpDir, "certs1"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs1")),
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
@@ -481,7 +493,7 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
 			DataDir:  dataDir2,
-			CertsDir: filepath.Join(tmpDir, "certs2"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs2")),
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
@@ -505,8 +517,8 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 	shutdown1 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 	shutdown2 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 
-	hm1 := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
-	hm2 := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
+	hm1 := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
+	hm2 := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
 
 	s1 := NewServer(
 		WithGlobalConfig(global1),
@@ -523,7 +535,7 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 	)
 
 	configPath := filepath.Join(tmpDir, "config.hcl")
-	_ = os.WriteFile(configPath, []byte(""), woos.FilePerm)
+	_ = os.WriteFile(configPath, []byte(""), expect.FilePerm)
 
 	var cm1, cm2 *cluster.Manager
 	var cmMu sync.Mutex
@@ -641,29 +653,30 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 // TestServer_Cluster_ConfigSync_TombstoneDeletion tests ephemeral route tombstone deletion
 func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 	tmpDir := t.TempDir()
-	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+	hostsDir := expect.NewFolder(filepath.Join(tmpDir, "hosts"))
+	if err := hostsDir.Init(expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
+
 	// Separate data dirs for each node
-	dataDir1 := filepath.Join(tmpDir, "data1")
-	dataDir2 := filepath.Join(tmpDir, "data2")
-	if err := os.MkdirAll(dataDir1, woos.DirPerm); err != nil {
+	dataDir1 := expect.NewFolder(filepath.Join(tmpDir, "data1"))
+	dataDir2 := expect.NewFolder(filepath.Join(tmpDir, "data2"))
+	if err := dataDir1.Init(expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(dataDir2, woos.DirPerm); err != nil {
+	if err := dataDir2.Init(expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
 
 	// Initialize keeper for node1 and copy to node2
 	initKeeperForTest(t, dataDir1)
-	srcDB := filepath.Join(dataDir1, woos.DefaultKeeperName)
-	dstDB := filepath.Join(dataDir2, woos.DefaultKeeperName)
+	srcDB := dataDir1.FilePath(woos.DefaultKeeperName)
+	dstDB := dataDir2.FilePath(woos.DefaultKeeperName)
 	srcData, err := os.ReadFile(srcDB)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dstDB, srcData, woos.FilePerm); err != nil {
+	if err := os.WriteFile(dstDB, srcData, expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -680,7 +693,7 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
 			DataDir:  dataDir1,
-			CertsDir: filepath.Join(tmpDir, "certs1"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs1")),
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
@@ -712,7 +725,7 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
 			DataDir:  dataDir2,
-			CertsDir: filepath.Join(tmpDir, "certs2"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs2")),
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
@@ -736,8 +749,8 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 	shutdown1 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 	shutdown2 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 
-	hm1 := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
-	hm2 := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
+	hm1 := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
+	hm2 := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
 
 	s1 := NewServer(
 		WithGlobalConfig(global1),
@@ -754,7 +767,7 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 	)
 
 	configPath := filepath.Join(tmpDir, "config.hcl")
-	_ = os.WriteFile(configPath, []byte(""), woos.FilePerm)
+	_ = os.WriteFile(configPath, []byte(""), expect.FilePerm)
 
 	var cm1, cm2 *cluster.Manager
 	var cmMu sync.Mutex
@@ -868,8 +881,8 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 // TestServer_WithFirewall tests firewall configuration
 func TestServer_WithFirewall(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	if err := dataDir.Init(0755); err != nil {
 		t.Fatal(err)
 	}
 	global := &alaye.Global{
@@ -932,16 +945,16 @@ func TestServer_Options(t *testing.T) {
 
 // TestServer_ClusterHandlers tests cluster integration handler methods
 func TestServer_ClusterHandlers(t *testing.T) {
-	tmpDir := t.TempDir()
-	hm := discovery2.NewHost(woos.NewFolder(tmpDir), discovery2.WithLogger(testLogger))
+	dataDir := expect.NewFolder(t.TempDir())
+	hostsDir := expect.NewFolder(t.TempDir())
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			HostsDir: tmpDir,
-			DataDir:  tmpDir,
+			HostsDir: hostsDir,
+			DataDir:  dataDir,
 		},
 	}
 	s := NewServer(
-		WithHostManager(hm),
+		WithHostManager(discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))),
 		WithGlobalConfig(global),
 		WithLogger(testLogger),
 	)
@@ -965,11 +978,11 @@ func TestServer_ClusterHandlers(t *testing.T) {
 func TestServer_configComputeSHA(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.hcl")
-	if err := os.WriteFile(configPath, []byte("test config"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(configPath, []byte("test config"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
-	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+	hostsDir := expect.NewFolder(filepath.Join(tmpDir, "hosts"))
+	if err := hostsDir.Init(expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -993,7 +1006,7 @@ func TestServer_configComputeSHA(t *testing.T) {
 	}
 
 	// Modify config and verify SHA changes
-	if err := os.WriteFile(configPath, []byte("modified config"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(configPath, []byte("modified config"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 	sha2, err := s.configComputeSHA()
@@ -1008,16 +1021,16 @@ func TestServer_configComputeSHA(t *testing.T) {
 // TestServer_shutdownImpl tests graceful shutdown
 func TestServer_shutdownImpl(t *testing.T) {
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(1 * time.Second))
-	tmpDir := t.TempDir()
-	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+	dataDir := expect.NewFolder(t.TempDir())
+	hostsDir := expect.NewFolder(t.TempDir())
+	if err := hostsDir.Init(expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
 	global := &alaye.Global{
 		Bind: alaye.Bind{HTTP: []string{":0"}},
 		Storage: alaye.Storage{
 			HostsDir: hostsDir,
-			DataDir:  tmpDir,
+			DataDir:  dataDir,
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    alaye.Active,
@@ -1028,7 +1041,7 @@ func TestServer_shutdownImpl(t *testing.T) {
 		},
 	}
 
-	hm := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
+	hm := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
 	s := NewServer(
 		WithGlobalConfig(global),
 		WithHostManager(hm),
@@ -1046,8 +1059,6 @@ func TestServer_shutdownImpl(t *testing.T) {
 	}
 }
 
-// TestServer_Reload_ZeroDowntime_And_NoRace verifies that Reload() gracefully drains
-// old connections asynchronously without blocking the launch of new listeners.
 // TestServer_Reload_ZeroDowntime_And_NoRace verifies that Reload() gracefully drains
 // old connections asynchronously without blocking the launch of new listeners.
 func TestServer_Reload_ZeroDowntime_And_NoRace(t *testing.T) {
@@ -1071,14 +1082,14 @@ func TestServer_Reload_ZeroDowntime_And_NoRace(t *testing.T) {
 	defer fastBackend.Close()
 
 	tmpDir := t.TempDir()
-	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, 0755); err != nil {
+	hostsDir := expect.NewFolder(filepath.Join(tmpDir, "hosts"))
+	if err := hostsDir.Init(0755); err != nil {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(tmpDir, "config.hcl")
-	hostPath := filepath.Join(hostsDir, "domain.hcl")
-	dataDir := filepath.Join(tmpDir, "data")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	hostPath := "domain.hcl"
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	if err := dataDir.Init(0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1109,8 +1120,11 @@ security {
     passphrase = "test-passphrase"
   }
 }
-`, port, hostsDir, dataDir)
-		writeSyncedFile(t, configPath, []byte(globalCfg))
+`, port, hostsDir.Path(), dataDir.Path())
+		if err := os.WriteFile(configPath, []byte(globalCfg), expect.FilePerm); err != nil {
+			t.Fatal(err)
+		}
+
 		hostCfg := fmt.Sprintf(`domains = ["localhost"]
 tls {
   mode = "none"
@@ -1123,7 +1137,9 @@ route "/" {
   }
 }
 `, backendURL)
-		writeSyncedFile(t, hostPath, []byte(hostCfg))
+		if err := hostsDir.Put(hostPath, []byte(hostCfg), expect.FilePerm); err != nil {
+			t.Fatal(err)
+		}
 	}
 	writeConfigs(proxyPort, slowBackend.URL)
 
@@ -1134,7 +1150,7 @@ route "/" {
 	woos.DefaultApply(global, configPath)
 
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(10 * time.Second))
-	hm := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
+	hm := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
 
 	if err := hm.Watch(); err != nil {
 		t.Fatalf("Failed to start watcher: %v", err)

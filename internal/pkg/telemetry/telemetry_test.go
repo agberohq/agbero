@@ -9,12 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/pkg/telemetry"
 )
 
 func TestNewStore_CreatesDB(t *testing.T) {
 	dir := t.TempDir()
-	s, err := telemetry.NewStore(dir)
+	s, err := telemetry.NewStore(expect.NewFolder(dir))
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -153,7 +154,7 @@ func TestStore_DownSampling(t *testing.T) {
 
 func TestStore_CloseTwiceNoPanic(t *testing.T) {
 	dir := t.TempDir()
-	store, err := telemetry.NewStore(dir)
+	store, err := telemetry.NewStore(expect.NewFolder(dir))
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -276,7 +277,7 @@ func TestHandler_ContentTypeIsJSON(t *testing.T) {
 
 func newTestStore(t *testing.T) *telemetry.Store {
 	t.Helper()
-	s, err := telemetry.NewStore(t.TempDir())
+	s, err := telemetry.NewStore(expect.NewFolder(t.TempDir()))
 	if err != nil {
 		t.Fatalf("newTestStore: %v", err)
 	}

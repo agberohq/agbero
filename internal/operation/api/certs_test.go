@@ -17,14 +17,14 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
-	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/go-chi/chi/v5"
 )
 
 type mockHostManagerForCerts struct {
-	*discovery2.Host
+	*discovery.Host
 }
 
 func newMockHostManagerForCerts(t *testing.T) *mockHostManagerForCerts {
@@ -34,7 +34,7 @@ func newMockHostManagerForCerts(t *testing.T) *mockHostManagerForCerts {
 	if err := os.MkdirAll(hostsDir, 0755); err != nil {
 		t.Fatalf("Failed to create hosts dir: %v", err)
 	}
-	h := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
+	h := discovery.NewHost(expect.NewFolder(hostsDir), discovery.WithLogger(testLogger))
 	return &mockHostManagerForCerts{Host: h}
 }
 
@@ -42,11 +42,11 @@ func setupTestCerts(t *testing.T) (*Shared, func()) {
 	t.Helper()
 	tmpDir := t.TempDir()
 
-	certsDir := filepath.Join(tmpDir, "certs")
-	dataDir := filepath.Join(tmpDir, "data")
-	hostsDir := filepath.Join(tmpDir, "hosts")
-	for _, d := range []string{certsDir, dataDir, hostsDir} {
-		if err := os.MkdirAll(d, 0755); err != nil {
+	certsDir := expect.NewFolder(filepath.Join(tmpDir, "certs"))
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	hostsDir := expect.NewFolder(filepath.Join(tmpDir, "hosts"))
+	for _, d := range []expect.Folder{certsDir, dataDir, hostsDir} {
+		if err := d.Init(0755); err != nil {
 			t.Fatalf("Failed to create dir %s: %v", d, err)
 		}
 	}

@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/ll"
 )
 
@@ -81,7 +81,7 @@ func handle_request() {
 
 func main() {}
 `
-	if err := os.WriteFile(goSrc, []byte(code), woos.FilePerm); err != nil {
+	if err := os.WriteFile(goSrc, []byte(code), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -190,7 +190,7 @@ func handle_request() {
 }
 func main() {}
 `
-	os.WriteFile(goSrc, []byte(code), woos.FilePerm)
+	os.WriteFile(goSrc, []byte(code), expect.FilePerm)
 	exec.Command("tinygo", "build", "-o", wasmOut, "-target=wasi", "-no-debug", goSrc).Run()
 
 	// Config with NO permissions

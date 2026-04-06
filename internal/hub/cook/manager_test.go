@@ -33,7 +33,7 @@ func TestManager_NewManager(t *testing.T) {
 	pool := jack.NewPool(testPoolSize)
 	t.Run("valid", func(t *testing.T) {
 		_, err := NewManager(ManagerConfig{
-			WorkDir: t.TempDir(),
+			WorkDir: expect.NewFolder(t.TempDir()),
 			Pool:    pool,
 			Logger:  logger,
 		})
@@ -53,7 +53,7 @@ func TestManager_NewManager(t *testing.T) {
 	})
 	t.Run("missing pool", func(t *testing.T) {
 		_, err := NewManager(ManagerConfig{
-			WorkDir: t.TempDir(),
+			WorkDir: expect.NewFolder(t.TempDir()),
 			Pool:    nil,
 			Logger:  logger,
 		})
@@ -67,12 +67,12 @@ func TestManager_NewManager(t *testing.T) {
 // Verifies successful cloning, valid signature processing, and invalid signature rejection
 func TestManager_Register_And_Webhook(t *testing.T) {
 	upstream := filepath.Join(t.TempDir(), "upstream")
-	workDir := t.TempDir()
+	//workDir := t.TempDir()
 	setupTestRepo(t, upstream)
 	logger := ll.New("test").Disable()
 	pool := jack.NewPool(testPoolSize)
 	mgr, err := NewManager(ManagerConfig{
-		WorkDir: workDir,
+		WorkDir: expect.NewFolder(t.TempDir()),
 		Pool:    pool,
 		Logger:  logger,
 	})
@@ -139,12 +139,11 @@ func TestManager_Register_And_Webhook(t *testing.T) {
 // Validates that active deployments reflect a healthy state dynamically
 func TestManager_Health(t *testing.T) {
 	upstream := filepath.Join(t.TempDir(), "upstream")
-	workDir := t.TempDir()
 	setupTestRepo(t, upstream)
 	logger := ll.New("test").Disable()
 	pool := jack.NewPool(testPoolSize)
 	mgr, _ := NewManager(ManagerConfig{
-		WorkDir: workDir,
+		WorkDir: expect.NewFolder(t.TempDir()),
 		Pool:    pool,
 		Logger:  logger,
 	})
@@ -180,14 +179,12 @@ func TestManager_Register_Update(t *testing.T) {
 	if os.Getenv("CI") != "" {
 		t.Skip("Skipping: CI environment Git cleanup issues")
 	}
-
 	upstream := filepath.Join(t.TempDir(), "upstream")
-	workDir := t.TempDir()
 	setupTestRepo(t, upstream)
 	logger := ll.New("test").Disable()
 	pool := jack.NewPool(testPoolSize)
 	mgr, _ := NewManager(ManagerConfig{
-		WorkDir: workDir,
+		WorkDir: expect.NewFolder(t.TempDir()),
 		Pool:    pool,
 		Logger:  logger,
 	})

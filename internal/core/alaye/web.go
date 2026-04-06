@@ -62,15 +62,15 @@ func (a *GitAuth) Validate() error {
 }
 
 type Git struct {
-	Enabled  Enabled      `hcl:"enabled,attr" json:"enabled"`
-	ID       string       `hcl:"id,attr" json:"id"`
-	URL      string       `hcl:"url,attr" json:"url"`
-	Branch   string       `hcl:"branch,attr" json:"branch"`
-	Secret   expect.Value `hcl:"secret,attr" json:"secret"`
-	Interval Duration     `hcl:"interval,attr" json:"interval"`
-	WorkDir  string       `hcl:"work_dir,attr" json:"work_dir"`
-	SubDir   string       `hcl:"sub_dir,attr" json:"sub_dir"`
-	Auth     GitAuth      `hcl:"auth,block" json:"auth"`
+	Enabled  Enabled       `hcl:"enabled,attr" json:"enabled"`
+	ID       string        `hcl:"id,attr" json:"id"`
+	URL      string        `hcl:"url,attr" json:"url"`
+	Branch   string        `hcl:"branch,attr" json:"branch"`
+	Secret   expect.Value  `hcl:"secret,attr" json:"secret"`
+	Interval Duration      `hcl:"interval,attr" json:"interval"`
+	WorkDir  expect.Folder `hcl:"work_dir,attr" json:"work_dir"`
+	SubDir   string        `hcl:"sub_dir,attr" json:"sub_dir"`
+	Auth     GitAuth       `hcl:"auth,block" json:"auth"`
 }
 
 // Validate checks that ID and URL are present when git serving is enabled.

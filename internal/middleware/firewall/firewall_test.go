@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/olekukonko/ll"
@@ -32,7 +33,7 @@ func createTestEngine(t *testing.T, cfg *alaye.Firewall) *Engine {
 	woos.D.Firewall(cfg)
 	e, err := New(Config{
 		Firewall: cfg,
-		DataDir:  woos.NewFolder(dir),
+		DataDir:  expect.NewFolder(dir),
 		Logger:   ll.New("test").Disable(),
 		IPMgr:    zulu.IP,
 	})
@@ -237,7 +238,7 @@ func TestPersistence(t *testing.T) {
 	woos.D.Firewall(cfg)
 	e1, err := New(Config{
 		Firewall: cfg,
-		DataDir:  woos.NewFolder(dir),
+		DataDir:  expect.NewFolder(dir),
 		Logger:   ll.New("test").Disable(),
 		IPMgr:    zulu.IP,
 	})
@@ -259,7 +260,7 @@ func TestPersistence(t *testing.T) {
 	e1.Close()
 	e2, _ := New(Config{
 		Firewall: cfg,
-		DataDir:  woos.NewFolder(dir),
+		DataDir:  expect.NewFolder(dir),
 		Logger:   ll.New("test").Disable(),
 		IPMgr:    zulu.IP,
 	})

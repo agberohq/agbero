@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/keeper"
 	"github.com/olekukonko/ll"
 )
@@ -29,7 +30,12 @@ func GetGlobalStore() *keeper.Keeper {
 
 // OpenAndSetGlobal opens the Keeper and sets it as the global instance
 func OpenAndSetGlobal(dataDir string, cfg *alaye.Keeper, logger *ll.Logger) (*keeper.Keeper, error) {
-	store, err := OpenStore(dataDir, cfg, logger)
+	store, err := Open(Config{
+		DataDir:     expect.Folder(dataDir),
+		Setting:     cfg,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err != nil {
 		return nil, err
 	}

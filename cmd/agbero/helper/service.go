@@ -13,6 +13,7 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
 	"github.com/kardianos/service"
+	"github.com/olekukonko/errors"
 )
 
 type Service struct {
@@ -27,18 +28,18 @@ func (s *Service) requiresRoot(cmd string) bool {
 		return true
 	}
 
-	exe := "agbero"
-	if len(os.Args) > 0 {
-		exe = filepath.Base(os.Args[0])
-	}
+	// Get the actual command the user ran
+	cmdPath := os.Args[0]
+	cmdName := filepath.Base(cmdPath)
+
 	ui.New().ErrorHint(
 		"this command requires root privileges",
-		"try:  sudo "+exe+" service "+cmd,
+		"try:  sudo "+cmdName+" service "+cmd,
 	)
 	return false
 }
 
-// preflightCheck simulates the critical boot steps to ensure the service won't crash on start
+// preflightCheck uses MustOpen (Interactive: false) - fails fast, no prompting
 func (s *Service) preflightCheck(configPath string) error {
 	global, err := loadGlobal(configPath)
 	if err != nil {
@@ -48,23 +49,20 @@ func (s *Service) preflightCheck(configPath string) error {
 	dataDir := global.Storage.DataDir
 	if dataDir == "" {
 		ctx := setup.NewContext(s.p.Logger)
-		dataDir = ctx.Paths.DataDir.Path()
+		dataDir = ctx.Paths.DataDir
 	}
 
-	store, err := secrets.OpenStore(dataDir, &global.Security.Keeper, s.p.Logger)
+	store, err := secrets.MustOpen(secrets.Config{
+		DataDir:     dataDir,
+		Setting:     &global.Security.Keeper,
+		Logger:      s.p.Logger,
+		Interactive: false,
+	})
 	if err != nil {
-		return fmt.Errorf("keeper validation failed (wrong passphrase?): %w", err)
+		return fmt.Errorf("keeper validation failed: %w", err)
 	}
 	defer store.Close()
 
-	if store.IsLocked() {
-		return fmt.Errorf(
-			"Keeper is locked. The service will crash on startup because it cannot decrypt its secrets.\n" +
-				"Hint: Ensure 'AGBERO_PASSPHRASE' is exported, or 'keeper.passphrase' is correctly configured in agbero.hcl.",
-		)
-	}
-
-	// Verify critical system secrets exist (ensures 'agbero init' was run successfully)
 	if _, err := store.GetNamespacedFull("vault", "system", "auth/ppk"); err != nil {
 		return fmt.Errorf("missing internal auth key. Did you run 'agbero init'?")
 	}
@@ -88,14 +86,14 @@ func (s *Service) Install(svc service.Service, installHere bool, configPath stri
 
 	u.Step("run", "Running pre-flight checks...")
 	if err := s.preflightCheck(configPath); err != nil {
-		s.p.Logger.Fatal("Pre-flight check failed! Fix the errors below before installing the service:\n\n", err)
+		s.p.Logger.Fatal("Pre-flight check failed:\n\n", err)
 		return
 	}
 	u.Step("ok", "Pre-flight checks passed")
 
 	u.Step("run", "installing system service")
 	if err := svc.Install(); err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "already exists") {
+		if errors.Is(err, woos.ErrAlreadyExists) {
 			u.WarnLine("service already exists")
 		} else {
 			s.p.Logger.Fatal(s.mapError(err, "install"))
@@ -177,7 +175,7 @@ func (s *Service) Status(svc service.Service, configPath string) {
 	var pid string
 	if status == service.StatusRunning {
 		if global, err := loadGlobal(configPath); err == nil && global.Storage.DataDir != "" {
-			pidFile := filepath.Join(global.Storage.DataDir, "agbero.pid")
+			pidFile := global.Storage.DataDir.FilePath("agbero.pid")
 			if data, err := os.ReadFile(pidFile); err == nil {
 				pid = strings.TrimSpace(string(data))
 			}

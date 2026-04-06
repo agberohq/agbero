@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/agberohq/agbero/cmd/agbero/helper"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
@@ -22,7 +20,6 @@ import (
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/ll/lh"
-	"github.com/olekukonko/ll/lx"
 )
 
 var logger *ll.Logger
@@ -116,8 +113,6 @@ func main() {
 	cmdSecret.AttachSubcommand(cmdSecretHash, 1)
 	cmdSecret.AttachSubcommand(cmdSecretPassword, 1)
 
-	// keeper — secret store (encrypted bbolt)
-
 	cmdKeeper := flaggy.NewSubcommand("keeper")
 	cmdKeeper.Description = "Manage the encrypted secret store"
 
@@ -152,8 +147,6 @@ func main() {
 	cmdKeeper.AttachSubcommand(cmdKeeperDelete, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperRotate, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperHelp, 1)
-
-	// admin — manage agbero admin state (TOTP, users)
 
 	cmdAdmin := flaggy.NewSubcommand("admin")
 	cmdAdmin.Description = "Manage admin users and authentication"
@@ -248,20 +241,6 @@ func main() {
 	cmdService.AttachSubcommand(cmdServiceRestart, 1)
 	cmdService.AttachSubcommand(cmdServiceStatus, 1)
 
-	cmdCluster := flaggy.NewSubcommand("cluster")
-	cmdCluster.Description = "Manage cluster settings"
-
-	cmdClusterStart := flaggy.NewSubcommand("start")
-	cmdClusterStart.Description = "Start agbero as a cluster seed node"
-
-	cmdClusterJoin := flaggy.NewSubcommand("join")
-	cmdClusterJoin.Description = "Join an existing agbero cluster"
-	cmdClusterJoin.AddPositionalValue(&cfg.ClusterJoinIP, "ip", 1, true, "IP address of the cluster seed")
-	cmdClusterJoin.String(&cfg.ClusterSecret, "s", "secret", "Cluster secret key")
-
-	cmdCluster.AttachSubcommand(cmdClusterStart, 1)
-	cmdCluster.AttachSubcommand(cmdClusterJoin, 1)
-
 	cmdSystem := flaggy.NewSubcommand("system")
 	cmdSystem.Description = "System-level operations (backup, restore, etc.)"
 
@@ -327,7 +306,6 @@ func main() {
 	flaggy.AttachSubcommand(cmdCert, 1)
 	flaggy.AttachSubcommand(cmdService, 1)
 	flaggy.AttachSubcommand(cmdUninstall, 1)
-	flaggy.AttachSubcommand(cmdCluster, 1)
 	flaggy.AttachSubcommand(cmdSystem, 1)
 	flaggy.AttachSubcommand(cmdRun, 1)
 	flaggy.AttachSubcommand(cmdHome, 1)
@@ -418,9 +396,6 @@ func main() {
 		case cmdKeeperRotate.Used:
 			k.Rotate(resolvedPath)
 		default:
-			// No subcommand — drop into the interactive REPL.
-			// openStore inside REPL prompts for the passphrase if the store
-			// is locked, so the operator never sees a confusing error here.
 			k.REPL(resolvedPath)
 		}
 		return
@@ -463,7 +438,6 @@ func main() {
 				logger.Fatalf("provided config file not found: %s", cfg.ConfigPath)
 			}
 		} else {
-
 			resolvedPath, configExists = helper.ResolveConfigPath(logger, "")
 			if configExists {
 				u := ui.New()
@@ -499,9 +473,7 @@ func main() {
 		return
 	}
 
-	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used ||
-		cmdServiceStart.Used || cmdClusterStart.Used || cmdClusterJoin.Used
-
+	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used || cmdServiceStart.Used
 	if needsConfig && !configExists {
 		if strings.TrimSpace(cfg.ConfigPath) != "" {
 			logger.Fatal("config file not found at: ", cfg.ConfigPath)
@@ -514,11 +486,10 @@ func main() {
 					true,
 					"No agbero.hcl found. Would you like to initialize one?",
 				)
-
 				if err == nil && doInit {
 					path, err := helper.InitConfiguration(logger, "")
 					if err != nil {
-						logger.Fatal("init failed: ", err)
+						logger.Fatal("init (config) failed: ", err)
 					}
 					resolvedPath = path
 					configExists = true
@@ -596,44 +567,32 @@ func main() {
 		return
 	}
 
-	svcConfig := &service.Config{
-		Name:             woos.Name,
-		DisplayName:      woos.Display,
-		Description:      woos.Description,
-		Arguments:        []string{"run", "-c", resolvedPath},
-		WorkingDirectory: filepath.Dir(resolvedPath),
-	}
-	if cfg.DevMode {
-		svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
-	}
-	if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
-		cwd, _ := os.Getwd()
-		if filepath.Dir(resolvedPath) == cwd {
-			svcConfig.Name = "net.agbero.dev"
-		} else {
-			svcConfig.Name = "net.agbero"
-		}
-		svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
-	} else if runtime.GOOS == woos.Linux && os.Geteuid() != 0 {
-		svcConfig.Option = service.KeyValue{"UserService": true}
-	}
-
-	prg := &program{
-		configPath:    resolvedPath,
-		devMode:       cfg.DevMode,
-		shutdown:      shutdown,
-		clusterStart:  cmdClusterStart.Used,
-		clusterJoinIP: cfg.ClusterJoinIP,
-		clusterSecret: cfg.ClusterSecret,
-	}
-
-	svc, err := service.New(prg, svcConfig)
-	if err != nil {
-		logger.Fatal("service init failed: ", err)
-	}
-
 	if cmdService.Used {
+		svcConfig := &service.Config{
+			Name:             woos.Name,
+			DisplayName:      woos.Display,
+			Description:      woos.Description,
+			Arguments:        []string{"run", "-c", resolvedPath},
+			WorkingDirectory: filepath.Dir(resolvedPath),
+		}
+		if cfg.DevMode {
+			svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
+		}
+		if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
+			cwd, _ := os.Getwd()
+			if filepath.Dir(resolvedPath) == cwd {
+				svcConfig.Name = "net.agbero.dev"
+			} else {
+				svcConfig.Name = "net.agbero"
+			}
+			svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
+		} else if runtime.GOOS == woos.Linux && os.Geteuid() != 0 {
+			svcConfig.Option = service.KeyValue{"UserService": true}
+		}
+
+		svc, _ := service.New(nil, svcConfig)
 		sh := hel.Service()
+
 		switch {
 		case cmdServiceInstall.Used:
 			sh.Install(svc, cfg.InstallHere, resolvedPath)
@@ -657,69 +616,9 @@ func main() {
 		return
 	}
 
-	if cmdRun.Used || cmdClusterStart.Used || cmdClusterJoin.Used {
-		global, err := loadConfig(resolvedPath)
-		if err != nil {
-			logger.Fatal("failed to load config: ", err)
-		}
-		newLogger, err := zulu.Logging(&global.Logging, cfg.DevMode, shutdown)
-		if err != nil {
-			logger.Warn("failed to setup advanced logging: ", err)
-		} else {
-			logger = newLogger
-		}
-
-		sighupCh := make(chan os.Signal, 1)
-		signal.Notify(sighupCh, syscall.SIGHUP)
-		go func() {
-			for range sighupCh {
-				logger.Info("received SIGHUP, initiating hot reload...")
-				if prg.server != nil {
-					prg.server.Reload()
-				}
-			}
-		}()
-
-		if cfg.DevMode {
-			logger.Level(lx.LevelDebug)
-			logger.Warn("development mode enabled")
-		}
-
-		u := ui.New()
-		switch {
-		case cmdClusterStart.Used:
-			u.SectionHeader("Cluster — seed node")
-			u.KeyValueBlock("", []ui.KV{
-				{Label: "Config", Value: resolvedPath},
-				{Label: "Mode", Value: "seed — this node is joinable"},
-			})
-		case cmdClusterJoin.Used:
-			u.SectionHeader("Cluster — joining")
-			u.KeyValueBlock("", []ui.KV{
-				{Label: "Config", Value: resolvedPath},
-				{Label: "Seed", Value: cfg.ClusterJoinIP},
-			})
-		default:
-			u.SectionHeader("Starting")
-			u.KeyValue("Config", resolvedPath)
-		}
-
-		isContainer := os.Getenv("AGBERO_CONTAINER") == "true" || os.Getenv("KUBERNETES_SERVICE_HOST") != ""
-		if !service.Interactive() && !isContainer {
-			errs := make(chan error, 5)
-			_, _ = svc.Logger(errs)
-			go func() {
-				for e := range errs {
-					logger.Errorf("service internal error: %v", e)
-				}
-			}()
-		}
-
-		if err := svc.Run(); err != nil {
-			logger.Error("service exited with error: ", err)
-			os.Exit(1)
-		}
-		return
+	if cmdRun.Used {
+		rr := hel.Run()
+		rr.Start(resolvedPath, cfg.DevMode)
 	}
 
 	if cmdHelp.Used {

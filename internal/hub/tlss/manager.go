@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
@@ -85,13 +86,13 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global, kee
 		}
 	}
 
-	dataDir := woos.NewFolder(global.Storage.DataDir)
+	dataDir := global.Storage.DataDir
 	if m.storage == nil && dataDir.IsSet() {
 		info, err := os.Stat(dataDir.Path())
 		if err == nil && info.IsDir() {
-			certDir := woos.NewFolder(global.Storage.CertsDir)
+			certDir := global.Storage.CertsDir
 			if !filepath.IsAbs(certDir.String()) {
-				certDir = woos.NewFolder(filepath.Join(dataDir.Path(), certDir.String()))
+				certDir = expect.NewFolder(filepath.Join(dataDir.Path(), certDir.String()))
 			}
 
 			var cipher *security.Cipher
@@ -100,8 +101,8 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global, kee
 			}
 
 			diskCfg := tlsstore.DiskConfig{
-				DataDir: dataDir.Path(),
-				CertDir: certDir.Path(),
+				DataDir: dataDir,
+				CertDir: certDir,
 			}
 
 			if cipher != nil {
@@ -156,8 +157,8 @@ func (m *Manager) LoadCertificate(domain string) (certPEM, keyPEM []byte, err er
 	return m.storage.Load(domain)
 }
 
-func (m *Manager) startWatcher(dir string) error {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+func (m *Manager) startWatcher(dir expect.Folder) error {
+	if err := dir.Init(0755); err != nil {
 		return err
 	}
 	watcher, err := fsnotify.NewWatcher()
@@ -166,7 +167,7 @@ func (m *Manager) startWatcher(dir string) error {
 	}
 	m.watcher = watcher
 
-	if err := m.watcher.Add(dir); err != nil {
+	if err := m.watcher.Add(dir.Path()); err != nil {
 		m.watcher.Close()
 		return err
 	}

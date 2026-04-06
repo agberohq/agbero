@@ -5,11 +5,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/ll"
 )
 
@@ -49,9 +49,7 @@ func TestProcess_Run(t *testing.T) {
 // TestManager_ResolveDir verifies the path resolution hierarchy of the orchestrator.
 // It ensures that explicit roots take precedence over default managed paths.
 func TestManager_ResolveDir(t *testing.T) {
-	tmpDir, _ := os.MkdirTemp("", "agbero-work-*")
-	defer os.RemoveAll(tmpDir)
-
+	tmpDir := expect.NewFolder(t.TempDir())
 	logger := ll.New("test").Disable()
 	mgr := New(logger, tmpDir, nil, nil)
 
@@ -61,7 +59,7 @@ func TestManager_ResolveDir(t *testing.T) {
 	// Case 1: Default managed path
 	routeDefault := alaye.Route{}
 	resolvedDefault := mgr.ResolveDir(host, routeDefault, work)
-	expectedDefault := filepath.Join(tmpDir, "workers", host, "worker1")
+	expectedDefault := tmpDir.FilePath("workers", host, "worker1")
 	if resolvedDefault != expectedDefault {
 		t.Errorf("Expected default path %q, got %q", expectedDefault, resolvedDefault)
 	}
@@ -79,10 +77,8 @@ func TestManager_ResolveDir(t *testing.T) {
 // TestManager_ProvisionRunOnce verifies that 'RunOnce' tasks are executed immediately.
 // It uses a temporary file to confirm that the command was actually run by the manager.
 func TestManager_ProvisionRunOnce(t *testing.T) {
-	tmpDir, _ := os.MkdirTemp("", "agbero-runonce-*")
-	defer os.RemoveAll(tmpDir)
-
-	markerFile := filepath.Join(tmpDir, "done.txt")
+	tmpDir := expect.NewFolder(t.TempDir())
+	markerFile := tmpDir.FilePath("done.txt")
 	logger := ll.New("test").Disable()
 	mgr := New(logger, tmpDir, nil, nil)
 
@@ -104,7 +100,7 @@ func TestManager_ProvisionRunOnce(t *testing.T) {
 		t.Fatalf("Provision failed: %v", err)
 	}
 
-	if _, err := os.Stat(markerFile); os.IsNotExist(err) {
+	if !tmpDir.FileExists("done.txt") {
 		t.Error("RunOnce task failed to execute: marker file not found")
 	}
 }
@@ -112,9 +108,7 @@ func TestManager_ProvisionRunOnce(t *testing.T) {
 // TestManager_Stop verifies that the orchestrator manager shuts down all loopers.
 // It ensures that the looper registry is empty after a stop signal is received.
 func TestManager_Stop(t *testing.T) {
-	tmpDir, _ := os.MkdirTemp("", "agbero-stop-*")
-	defer os.RemoveAll(tmpDir)
-
+	tmpDir := expect.NewFolder(t.TempDir())
 	logger := ll.New("test").Disable()
 	mgr := New(logger, tmpDir, nil, nil)
 

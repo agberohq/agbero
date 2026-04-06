@@ -3,12 +3,15 @@ package helper
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
-	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
+	discovery "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
@@ -24,8 +27,7 @@ func (c *Configuration) Validate(configFile string) error {
 	if err != nil {
 		return err
 	}
-	hostsFolder := woos.NewFolder(global.Storage.HostsDir)
-	hm := discovery2.NewHost(hostsFolder, discovery2.WithLogger(c.p.Logger))
+	hm := discovery.NewHost(global.Storage.HostsDir, discovery.WithLogger(c.p.Logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err
@@ -35,7 +37,7 @@ func (c *Configuration) Validate(configFile string) error {
 	u.SectionHeader("Config validation")
 	u.KeyValueBlock("", []ui.KV{
 		{Label: "Config file", Value: configFile},
-		{Label: "Hosts dir", Value: global.Storage.HostsDir},
+		{Label: "Hosts dir", Value: global.Storage.HostsDir.Path()},
 		{Label: "Hosts found", Value: fmt.Sprintf("%d", len(hosts))},
 	})
 	u.SuccessLine("configuration is valid")
@@ -51,7 +53,7 @@ func (c *Configuration) Reload(configFile string) error {
 		return fmt.Errorf("data_dir not configured")
 	}
 
-	pidFile := filepath.Join(global.Storage.DataDir, "agbero.pid")
+	pidFile := global.Storage.DataDir.FilePath("agbero.pid")
 	b, err := os.ReadFile(pidFile)
 	if err != nil {
 		return fmt.Errorf("could not read pid file %s: %w", pidFile, err)
@@ -92,12 +94,42 @@ func (c *Configuration) View(configFile, editor string) {
 	fmt.Println(string(content))
 }
 
-func (c *Configuration) Edit(configFile string) {
+func (c *Configuration) Edit(configFile string) error {
 	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vi"
+
+	// Build fallback chain
+	var candidates []string
+	if editor != "" {
+		candidates = append(candidates, editor)
 	}
-	runEditor(editor, configFile)
+
+	if runtime.GOOS == "windows" {
+		candidates = append(candidates, "notepad")
+	} else {
+		candidates = append(candidates, "nano", "vi", "vim")
+	}
+
+	// Find the first available editor
+	var cmd *exec.Cmd
+	for _, cand := range candidates {
+		parts := strings.Fields(cand)
+		if len(parts) == 0 {
+			continue
+		}
+		if _, err := exec.LookPath(parts[0]); err == nil {
+			cmd = exec.Command(parts[0], append(parts[1:], configFile)...)
+			break
+		}
+	}
+
+	if cmd == nil {
+		return fmt.Errorf("no suitable text editor found (tried: %s)", strings.Join(candidates, ", "))
+	}
+
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func ResolveConfigPath(logger *ll.Logger, flagPath string) (string, bool) {
@@ -129,14 +161,14 @@ func ResolveConfigPath(logger *ll.Logger, flagPath string) (string, bool) {
 func InitConfiguration(logger *ll.Logger, targetDir string) (string, error) {
 	ctx := setup.NewContext(logger)
 	if targetDir != "" {
-		base := woos.NewFolder(targetDir)
+		base := expect.NewFolder(targetDir)
 		ctx.Paths.BaseDir = base
-		ctx.Paths.ConfigFile = filepath.Join(base.Path(), woos.DefaultConfigName)
-		ctx.Paths.HostsDir = base.Join(woos.HostDir.Name())
-		ctx.Paths.CertsDir = base.Join(woos.CertDir.Name())
-		ctx.Paths.DataDir = base.Join(woos.DataDir.Name())
-		ctx.Paths.LogsDir = base.Join(woos.LogDir.Name())
-		ctx.Paths.WorkDir = base.Join(woos.WorkDir.Name())
+		ctx.Paths.ConfigFile = base.FilePath(woos.DefaultConfigName)
+		ctx.Paths.HostsDir = base.Sub(woos.HostDir)
+		ctx.Paths.CertsDir = base.Sub(woos.CertDir)
+		ctx.Paths.DataDir = base.Sub(woos.DataDir)
+		ctx.Paths.LogsDir = base.Sub(woos.LogDir)
+		ctx.Paths.WorkDir = base.Sub(woos.WorkDir)
 	}
 	err := setup.NewHome(ctx).Run()
 	return ctx.Paths.ConfigFile, err
@@ -177,7 +209,7 @@ func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 				}
 			}
 		}
-		return existing, fmt.Errorf("configuration already exists at %s", existing)
+		return existing, woos.ErrConfigExists
 	}
 
 	ctx := setup.NewContext(logger)

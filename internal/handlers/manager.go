@@ -95,11 +95,10 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	if cfg.Global.Security.Enabled.Active() {
 		fwConfig := cfg.Global.Security.Firewall
 		if fwConfig.Status.Active() {
-			dataDir := woos.NewFolder(cfg.Global.Storage.DataDir)
 			fw, err := firewall.New(firewall.Config{
 				Firewall:       &fwConfig,
 				TrustedProxies: cfg.Global.Security.TrustedProxies,
-				DataDir:        dataDir,
+				DataDir:        cfg.Global.Storage.DataDir,
 				Logger:         cfg.Resource.Logger,
 				IPMgr:          cfg.IPMgr,
 				SharedState:    cfg.SharedState,

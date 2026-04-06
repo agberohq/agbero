@@ -4,16 +4,18 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/agberohq/agbero/internal/core/expect"
 )
 
 type RuntimePaths struct {
-	BaseDir    Folder `json:"base_dir"`
-	ConfigFile string `json:"config_file"`
-	HostsDir   Folder `json:"hosts_dir"`
-	CertsDir   Folder `json:"certs_dir"`
-	DataDir    Folder `json:"data_dir"`
-	LogsDir    Folder `json:"logs_dir"`
-	WorkDir    Folder `json:"work_dir"`
+	BaseDir    expect.Folder `json:"base_dir"`
+	ConfigFile string        `json:"config_file"`
+	HostsDir   expect.Folder `json:"hosts_dir"`
+	CertsDir   expect.Folder `json:"certs_dir"`
+	DataDir    expect.Folder `json:"data_dir"`
+	LogsDir    expect.Folder `json:"logs_dir"`
+	WorkDir    expect.Folder `json:"work_dir"`
 }
 
 // GetUserDefaults returns defaults for the current user (~/.config/agbero)
@@ -31,43 +33,43 @@ func GetUserDefaults() (RuntimePaths, error) {
 		baseDir = filepath.Join(configDir, Name)
 	}
 
-	base := NewFolder(baseDir)
+	base := expect.NewFolder(baseDir)
 
 	return RuntimePaths{
 		BaseDir:    base,
-		ConfigFile: filepath.Join(base.Path(), DefaultConfigName),
-		HostsDir:   base.Join(HostDir.Name()),
-		CertsDir:   base.Join(CertDir.Name()),
-		DataDir:    base.Join(DataDir.Name()),
-		LogsDir:    base.Join(LogDir.Name()),
-		WorkDir:    base.Join(WorkDir.Name()),
+		ConfigFile: base.FilePath(DefaultConfigName),
+		HostsDir:   base.Sub(HostDir),
+		CertsDir:   base.Sub(CertDir),
+		DataDir:    base.Sub(DataDir),
+		LogsDir:    base.Sub(LogDir),
+		WorkDir:    base.Sub(WorkDir),
 	}, nil
 }
 
 // DefaultPaths returns the OS-specific default paths for system-wide installation.
 // It respects the AGBERO_HOME environment variable if set.
 func DefaultPaths() RuntimePaths {
-	var base string
+	var path string
 
 	if custom := os.Getenv("AGBERO_HOME"); custom != "" {
-		base = custom
+		path = custom
 	} else {
 		if runtime.GOOS == Windows || os.PathSeparator == WindowBackSlash {
-			base = filepath.Join(os.Getenv(ENVProgramData), Name)
+			path = filepath.Join(os.Getenv(ENVProgramData), Name)
 		} else {
-			base = filepath.Join(ETCPath, Name)
+			path = filepath.Join(ETCPath, Name)
 		}
 	}
 
-	baseFolder := NewFolder(base)
+	base := expect.NewFolder(path)
 
 	return RuntimePaths{
-		BaseDir:    baseFolder,
-		ConfigFile: filepath.Join(base, DefaultConfigName),
-		HostsDir:   baseFolder.Join(HostDir.Name()),
-		CertsDir:   baseFolder.Join(CertDir.Name()),
-		DataDir:    baseFolder.Join(DataDir.Name()),
-		LogsDir:    baseFolder.Join(LogDir.Name()),
-		WorkDir:    baseFolder.Join(WorkDir.Name()),
+		BaseDir:    base,
+		ConfigFile: base.FilePath(DefaultConfigName),
+		HostsDir:   base.Sub(HostDir),
+		CertsDir:   base.Sub(CertDir),
+		DataDir:    base.Sub(DataDir),
+		LogsDir:    base.Sub(LogDir),
+		WorkDir:    base.Sub(WorkDir),
 	}
 }

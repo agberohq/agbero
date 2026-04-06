@@ -4,10 +4,10 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"go.etcd.io/bbolt"
 )
 
@@ -40,8 +40,8 @@ type writeOp struct {
 }
 
 // NewStore opens (or creates) the telemetry database at dataDir/telemetry.db.
-func NewStore(dataDir string) (*Store, error) {
-	path := filepath.Join(dataDir, "telemetry.db")
+func NewStore(dataDir expect.Folder) (*Store, error) {
+	path := dataDir.FilePath("telemetry.db")
 	db, err := bbolt.Open(path, 0600, &bbolt.Options{Timeout: 3 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("telemetry: open db: %w", err)

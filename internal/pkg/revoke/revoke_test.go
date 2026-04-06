@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/ll"
 )
 
@@ -18,7 +19,7 @@ func TestNew(t *testing.T) {
 	t.Run("creates new store when file doesn't exist", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		store, err := New(tmpDir, logger)
+		store, err := New(expect.NewFolder(tmpDir), logger)
 		if err != nil {
 			t.Fatalf("failed to create store: %v", err)
 		}
@@ -42,7 +43,7 @@ func TestNew(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		store, err := New(tmpDir, logger)
+		store, err := New(expect.NewFolder(tmpDir), logger)
 		if err != nil {
 			t.Fatalf("failed to load store: %v", err)
 		}
@@ -64,7 +65,7 @@ func TestNew(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		store, err := New(tmpDir, logger)
+		store, err := New(expect.NewFolder(tmpDir), logger)
 		if err != nil {
 			t.Fatalf("failed to load store: %v", err)
 		}
@@ -82,7 +83,7 @@ func TestNew(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		store, err := New(tmpDir, logger)
+		store, err := New(expect.NewFolder(tmpDir), logger)
 		if err != nil {
 			t.Fatalf("should not error on corrupt json: %v", err)
 		}
@@ -95,7 +96,7 @@ func TestNew(t *testing.T) {
 func TestIsRevoked(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	store, err := New(tmpDir, logger)
+	store, err := New(expect.NewFolder(tmpDir), logger)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -148,7 +149,7 @@ func TestIsRevoked(t *testing.T) {
 func TestRevoke(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	store, err := New(tmpDir, logger)
+	store, err := New(expect.NewFolder(tmpDir), logger)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -230,7 +231,7 @@ func TestRevoke(t *testing.T) {
 		}
 
 		// Verify content by loading new store
-		store2, err := New(tmpDir, logger)
+		store2, err := New(expect.NewFolder(tmpDir), logger)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -244,7 +245,7 @@ func TestPrune(t *testing.T) {
 	t.Run("prune removes expired entries", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		store, err := New(tmpDir, logger)
+		store, err := New(expect.NewFolder(tmpDir), logger)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -284,7 +285,7 @@ func TestPrune(t *testing.T) {
 	t.Run("prune persists after cleanup", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		store, err := New(tmpDir, logger)
+		store, err := New(expect.NewFolder(tmpDir), logger)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -298,7 +299,7 @@ func TestPrune(t *testing.T) {
 		store.prune()
 
 		// Load fresh store
-		store2, err := New(tmpDir, logger)
+		store2, err := New(expect.NewFolder(tmpDir), logger)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -317,7 +318,7 @@ func TestConcurrency(t *testing.T) {
 
 	t.Run("concurrent revokes with retry", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		store, err := New(tmpDir, logger)
+		store, err := New(expect.NewFolder(tmpDir), logger)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -371,7 +372,7 @@ func TestConcurrency(t *testing.T) {
 	t.Run("concurrent read and write", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		store, err := New(tmpDir, logger)
+		store, err := New(expect.NewFolder(tmpDir), logger)
 		if err != nil {
 			t.Fatal(err)
 		}

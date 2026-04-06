@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -37,7 +36,7 @@ func HostHandler(s *Shared, r chi.Router) {
 // It encapsulates the discovery host ppk, storage directory, and logger for host operations.
 type Host struct {
 	discovery *discovery.Host
-	hostsDir  string
+	hostsDir  expect.Folder
 	logger    *ll.Logger
 }
 
@@ -185,7 +184,7 @@ func (h *Host) get(w http.ResponseWriter, r *http.Request) {
 			filename = zulu.NormalizeHost(domain) + woos.HCLSuffix
 		}
 
-		hclData, err := os.ReadFile(filepath.Join(h.hostsDir, filename))
+		hclData, err := os.ReadFile(h.hostsDir.FilePath(filename))
 		if err != nil {
 			http.Error(w, "Failed to read HCL file", http.StatusInternalServerError)
 			return

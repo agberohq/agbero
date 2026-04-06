@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 )
 
 // Defaults provides a zero-state receiver for applying configuration defaults.
@@ -203,27 +204,23 @@ func defaultStorage(s *alaye.Storage, configPath string) {
 	if configPath == "" || configPath == "disabled" || configPath == "." {
 		return
 	}
-	configDir := filepath.Dir(configPath)
-	if s.HostsDir == "" {
-		s.HostsDir = filepath.Join(configDir, HostDir.String())
-	} else if !filepath.IsAbs(s.HostsDir) {
-		s.HostsDir = filepath.Join(configDir, s.HostsDir)
+	configDir := expect.NewFolder(configPath)
+
+	// resolve returns an expect.Folder with the final path
+	resolve := func(field expect.Folder, defaultSub string) expect.Folder {
+		if !field.IsSet() {
+			return configDir.Sub(defaultSub)
+		}
+		if filepath.IsAbs(field.String()) {
+			return field
+		}
+		return configDir.Sub(field)
 	}
-	if s.CertsDir == "" {
-		s.CertsDir = filepath.Join(configDir, CertDir.String())
-	} else if !filepath.IsAbs(s.CertsDir) {
-		s.CertsDir = filepath.Join(configDir, s.CertsDir)
-	}
-	if s.DataDir == "" {
-		s.DataDir = filepath.Join(configDir, DataDir.String())
-	} else if !filepath.IsAbs(s.DataDir) {
-		s.DataDir = filepath.Join(configDir, s.DataDir)
-	}
-	if s.WorkDir == "" {
-		s.WorkDir = filepath.Join(configDir, WorkDir.String())
-	} else if !filepath.IsAbs(s.WorkDir) {
-		s.WorkDir = filepath.Join(configDir, s.WorkDir)
-	}
+
+	s.HostsDir = resolve(s.HostsDir, HostDir)
+	s.CertsDir = resolve(s.CertsDir, CertDir)
+	s.DataDir = resolve(s.DataDir, DataDir)
+	s.WorkDir = resolve(s.WorkDir, WorkDir)
 }
 
 func defaultAdmin(a *alaye.Admin) {

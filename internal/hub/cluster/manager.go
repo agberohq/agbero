@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/hashicorp/memberlist"
 	"github.com/olekukonko/ll"
@@ -26,7 +27,7 @@ type Config struct {
 	Secret   []byte
 	Name     string
 	Seeds    []string
-	HostsDir string
+	HostsDir expect.Folder
 }
 
 type Manager struct {

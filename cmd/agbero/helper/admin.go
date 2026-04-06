@@ -36,7 +36,7 @@ func (a *Admin) TOTPSetup(configPath, username string) {
 	}
 
 	k := &Keeper{p: a.p}
-	store := k.openStore(configPath)
+	store := k.p.openStore(configPath)
 	defer store.Close()
 
 	gen := security.NewTOTPGenerator(security.DefaultTOTPConfig())
@@ -62,7 +62,7 @@ func (a *Admin) TOTPQR(configPath, username string) {
 	}
 
 	k := &Keeper{p: a.p}
-	store := k.openStore(configPath)
+	store := k.p.openStore(configPath)
 	defer store.Close()
 
 	storeKey := expect.Vault().AdminTOTP(username)
@@ -83,7 +83,7 @@ func (a *Admin) TOTPQRPNGFile(configPath, username, outFile string) {
 	}
 
 	k := &Keeper{p: a.p}
-	store := k.openStore(configPath)
+	store := k.p.openStore(configPath)
 	defer store.Close()
 
 	storeKey := expect.Vault().AdminTOTP(username)

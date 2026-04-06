@@ -22,8 +22,8 @@ func NewCA(ctx *Context) *CA {
 	var store tlsstore.Store
 	// Always use disk store for CA - certificates need persistence
 	store, err := tlsstore.NewDisk(tlsstore.DiskConfig{
-		DataDir: ctx.Paths.DataDir.Path(),
-		CertDir: ctx.Paths.CertsDir.Path(),
+		DataDir: ctx.Paths.DataDir,
+		CertDir: ctx.Paths.CertsDir,
 	})
 	if err != nil {
 		ctx.Logger.Error("Failed to create disk store, using memory fallback: ", err)

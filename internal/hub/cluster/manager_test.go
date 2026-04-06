@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/olekukonko/ll"
@@ -318,7 +319,7 @@ func TestDelegate_LWW_and_Tombstones(t *testing.T) {
 func TestConfigManager_ChecksumEchoPrevention(t *testing.T) {
 	logger := ll.New("test").Disable()
 	tmpDir := t.TempDir()
-	cm := NewDistributor(logger, tmpDir)
+	cm := NewDistributor(logger, expect.NewFolder(tmpDir))
 
 	domain := "test"
 	content := []byte("route / { backend { address \"http://localhost:8080\" } }")
@@ -342,7 +343,7 @@ func TestConfigManager_ChecksumEchoPrevention(t *testing.T) {
 func TestConfigManager_ValidationRejectsBadHCL(t *testing.T) {
 	logger := ll.New("test").Disable()
 	tmpDir := t.TempDir()
-	cm := NewDistributor(logger, tmpDir)
+	cm := NewDistributor(logger, expect.NewFolder(tmpDir))
 
 	badHCL := []byte("invalid {{{ hcl syntax")
 	if err := cm.validateHCL(tmpDir+"/test.hcl", badHCL); err == nil {
@@ -369,7 +370,7 @@ route "/" {
 func TestConfigManager_DeletionHandling(t *testing.T) {
 	logger := ll.New("test").Disable()
 	tmpDir := t.TempDir()
-	cm := NewDistributor(logger, tmpDir)
+	cm := NewDistributor(logger, expect.NewFolder(tmpDir))
 
 	domain := "delete-test"
 	configPath := tmpDir + "/" + domain + ".hcl"

@@ -15,7 +15,6 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/agberohq/agbero/internal/hub/orchestrator"
@@ -41,7 +40,7 @@ func NewTestConfig(t *testing.T) resource2.Proxy {
 			MaxEntries: 10000,
 		},
 		Storage: alaye.Storage{
-			WorkDir: t.TempDir(),
+			WorkDir: expect.NewFolder(t.TempDir()),
 		},
 	}
 	host := &alaye.Host{
@@ -49,7 +48,7 @@ func NewTestConfig(t *testing.T) resource2.Proxy {
 	}
 	res := resource2.New()
 	cm, _ := cook.NewManager(cook.ManagerConfig{
-		WorkDir: t.TempDir(),
+		WorkDir: expect.NewFolder(t.TempDir()),
 		Logger:  ll.New("test").Disable(),
 	})
 	return resource2.Proxy{
@@ -627,10 +626,10 @@ func TestRouteHandler_Web_BasicFileServing(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("INDEX"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("INDEX"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "hello.html"), []byte("HELLO"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "hello.html"), []byte("HELLO"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -681,10 +680,10 @@ func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
 
 	root := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(root, "style.css"), []byte("/* regular */"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "style.css"), []byte("/* regular */"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "style.css.gz"), []byte("/* gzipped */"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "style.css.gz"), []byte("/* gzipped */"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -732,7 +731,7 @@ func TestRouteHandler_Web_CustomIndex(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "home.htm"), []byte("HOME"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "home.htm"), []byte("HOME"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -834,7 +833,7 @@ func TestRouteHandler_Web_PathTraversalPrevented(t *testing.T) {
 	root := t.TempDir()
 
 	outsideFile := filepath.Join(t.TempDir(), "secret.txt")
-	if err := os.WriteFile(outsideFile, []byte("SECRET"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(outsideFile, []byte("SECRET"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -866,7 +865,7 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "test.txt"), []byte("test"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "test.txt"), []byte("test"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -950,7 +949,7 @@ func TestRouteHandler_Validation(t *testing.T) {
 			prepare: func(t *testing.T, r *alaye.Route) {
 				t.Helper()
 				root := t.TempDir()
-				if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("OK"), woos.FilePerm); err != nil {
+				if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("OK"), expect.FilePerm); err != nil {
 					t.Fatal(err)
 				}
 				r.Web.Root = alaye.WebRoot(root)
@@ -1092,7 +1091,7 @@ func TestRouteHandler_WithCache(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "test.txt"), []byte("cached content"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "test.txt"), []byte("cached content"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1252,7 +1251,7 @@ func TestRouteHandler_WithWASM(t *testing.T) {
 
 	cfg := NewTestConfig(t)
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("INDEX"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("INDEX"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 	route := &alaye.Route{
@@ -1785,7 +1784,7 @@ func TestRouteHandler_Serverless_Selection(t *testing.T) {
 	}
 
 	cfg := NewTestConfig(t)
-	cfg.Orch = orchestrator.New(cfg.Resource.Logger, t.TempDir(), nil, nil)
+	cfg.Orch = orchestrator.New(cfg.Resource.Logger, expect.NewFolder(t.TempDir()), nil, nil)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -26,8 +26,8 @@ import (
 func setupTestTOTPWithKeeper(t *testing.T) (*Shared, *keeper.Keeper, func()) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	hostsDir := filepath.Join(tmpDir, "hosts.d")
-	if err := os.MkdirAll(hostsDir, 0755); err != nil {
+	hostsDir := expect.NewFolder(filepath.Join(tmpDir, "hosts.d"))
+	if err := hostsDir.Init(0755); err != nil {
 		t.Fatalf("Failed to create hosts dir: %v", err)
 	}
 

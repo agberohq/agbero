@@ -1,15 +1,11 @@
 package helper
 
 import (
-	"bufio"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/pkg/ui"
-	"github.com/agberohq/agbero/internal/setup"
 	keeperlib "github.com/agberohq/keeper"
 	"github.com/agberohq/keeper/x/keepcmd"
 	"github.com/olekukonko/zero"
@@ -23,57 +19,11 @@ type Keeper struct {
 // uiOutput implements keepcmd.Output by delegating to agbero's ui.UI.
 type uiOutput struct{ u *ui.UI }
 
-func (o *uiOutput) Table(headers []string, rows [][]string) {
-	o.u.Println("")
-	o.u.Table(headers, rows)
-}
-func (o *uiOutput) KeyValue(label, value string) { o.u.Println(""); o.u.KeyValue(label, value) }
-func (o *uiOutput) Success(msg string)           { o.u.SuccessLine(msg) }
-func (o *uiOutput) Info(msg string)              { o.u.InfoLine(msg) }
-func (o *uiOutput) Error(msg string)             { o.u.WarnLine(msg) }
-
-// openStore opens an unlocked keeper.Keeper.
-//
-// Resolution order (same as service.go::preflightCheck):
-// cfg.Passphrase in agbero.hcl (any expect.Value — env., vault://, b64. …)
-// AGBERO_PASSPHRASE environment variable
-// Interactive prompt — used in run mode; never in service mode.
-func (k *Keeper) openStore(configPath string) *keeperlib.Keeper {
-	global, err := loadGlobal(configPath)
-	if err != nil {
-		k.p.Logger.Fatal("failed to load config: ", err)
-	}
-
-	dataDir := global.Storage.DataDir
-	if dataDir == "" {
-		ctx := setup.NewContext(k.p.Logger)
-		dataDir = ctx.Paths.DataDir.Path()
-	}
-
-	store, openErr := secrets.OpenStore(dataDir, &global.Security.Keeper, k.p.Logger)
-	if openErr != nil {
-		k.p.Logger.Fatal("failed to open keeper: ", openErr)
-	}
-
-	if store.IsLocked() {
-		u := ui.New()
-		result, promptErr := u.PasswordRequired("Keeper passphrase")
-		if promptErr != nil {
-			store.Close()
-			k.p.Logger.Fatal("passphrase required: ", promptErr)
-		}
-		pass := result.Bytes()
-		unlockErr := store.Unlock(pass)
-		zero.Bytes(pass)
-		result.Zero()
-		if unlockErr != nil {
-			store.Close()
-			k.p.Logger.Fatal("invalid passphrase: ", unlockErr)
-		}
-	}
-
-	return store
-}
+func (o *uiOutput) Table(headers []string, rows [][]string) { o.u.Table(headers, rows) }
+func (o *uiOutput) KeyValue(label, value string)            { o.u.KeyValue(label, value) }
+func (o *uiOutput) Success(msg string)                      { o.u.SuccessLine(msg) }
+func (o *uiOutput) Info(msg string)                         { o.u.InfoLine(msg) }
+func (o *uiOutput) Error(msg string)                        { o.u.WarnLine(msg) }
 
 // cmds returns keepcmd.Commands wired to an already-open store.
 // Used only by REPL where one store is shared across many operations.
@@ -86,7 +36,7 @@ func (k *Keeper) cmds(store *keeperlib.Keeper) *keepcmd.Commands {
 }
 
 func (k *Keeper) List(configPath string) {
-	store := k.openStore(configPath)
+	store := k.p.openStore(configPath)
 	defer store.Close()
 	if err := k.cmds(store).List(); err != nil {
 		k.p.Logger.Fatal(err)
@@ -94,7 +44,7 @@ func (k *Keeper) List(configPath string) {
 }
 
 func (k *Keeper) Get(configPath, key string) {
-	store := k.openStore(configPath)
+	store := k.p.openStore(configPath)
 	defer store.Close()
 	// Normalise key — accept vault://, ss://, or plain ns/key.
 	key = normaliseKey(key)
@@ -104,7 +54,7 @@ func (k *Keeper) Get(configPath, key string) {
 }
 
 func (k *Keeper) Set(configPath, key, value string, asB64 bool, fromFile string) {
-	store := k.openStore(configPath)
+	store := k.p.openStore(configPath)
 	defer store.Close()
 
 	u := ui.New()
@@ -143,7 +93,7 @@ func (k *Keeper) Delete(configPath, key string, force bool) {
 			return
 		}
 	}
-	store := k.openStore(configPath)
+	store := k.p.openStore(configPath)
 	defer store.Close()
 	key = normaliseKey(key)
 	if err := k.cmds(store).Delete(key); err != nil {
@@ -152,7 +102,7 @@ func (k *Keeper) Delete(configPath, key string, force bool) {
 }
 
 func (k *Keeper) Backup(configPath, dest string) {
-	store := k.openStore(configPath)
+	store := k.p.openStore(configPath)
 	defer store.Close()
 	if err := k.cmds(store).Backup(keepcmd.BackupOptions{Dest: dest}); err != nil {
 		k.p.Logger.Fatal(err)
@@ -160,7 +110,7 @@ func (k *Keeper) Backup(configPath, dest string) {
 }
 
 func (k *Keeper) Status(configPath string) {
-	store := k.openStore(configPath)
+	store := k.p.openStore(configPath)
 	defer store.Close()
 	if err := k.cmds(store).Status(); err != nil {
 		k.p.Logger.Fatal(err)
@@ -185,7 +135,7 @@ func normaliseKey(key string) string {
 func (k *Keeper) Rotate(configPath string) {
 	// openStore prompts for and verifies the current passphrase.
 	// Lock it again so Rotate can re-derive the master key from scratch.
-	store := k.openStore(configPath)
+	store := k.p.openStore(configPath)
 	defer store.Close()
 	store.Lock() //nolint:errcheck
 
@@ -222,11 +172,14 @@ func (k *Keeper) Rotate(configPath string) {
 //	status                — show locked/unlocked state
 //	help                  — show this help
 //	exit | quit           — leave the REPL
+//
+// REPL opens an interactive keeper session.
 func (k *Keeper) REPL(configPath string) {
-	store := k.openStore(configPath)
+	store := k.p.openStore(configPath)
 	defer store.Close()
 
 	u := ui.New()
+	u.Blank()
 	u.InfoLine("Keeper REPL — type 'help' for commands, 'exit' to quit")
 	u.Blank()
 
@@ -236,27 +189,23 @@ func (k *Keeper) REPL(configPath string) {
 		NoClose: true,
 	}
 
-	scanner := bufio.NewScanner(os.Stdin)
 	for {
-		fmt.Print("keeper> ")
-		if !scanner.Scan() {
-			// EOF (Ctrl-D) — exit cleanly.
-			fmt.Println()
-			break
+		input := u.PromptInline("keeper")
+		if input == "" {
+			// Ctrl+C or empty input - exit cleanly
+			u.InfoLine("exiting REPL")
+			u.Blank()
+			return
 		}
 
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		parts := strings.Fields(line)
+		parts := strings.Fields(input)
 		cmd := strings.ToLower(parts[0])
 		args := parts[1:]
 
+		u.Blank()
 		switch cmd {
 		case "exit", "quit":
-			u.InfoLine("bye")
+			u.SuccessLine("bye")
 			return
 
 		case "help":
@@ -282,8 +231,6 @@ func (k *Keeper) REPL(configPath string) {
 			}
 
 		case "set":
-			// set <key> <value>
-			// set <key> --file <path>
 			if len(args) < 1 {
 				u.WarnLine("usage: set <key> <value>  |  set <key> --file <path>")
 				continue
@@ -301,14 +248,13 @@ func (k *Keeper) REPL(configPath string) {
 					}
 				default:
 					value = strings.Join(rest[i:], " ")
-					i = len(rest) // consumed all
+					i = len(rest)
 				}
 			}
 			if opts.FromFile == "" && value == "" {
 				u.WarnLine("usage: set <key> <value>  |  set <key> --file <path>")
 				continue
 			}
-			// Resolve the key via expect so vault://, ss:// etc. all work.
 			key = normaliseKey(key)
 			if err := store.EnsureBucket(key); err != nil {
 				u.WarnLine("bucket error: " + err.Error())
@@ -347,16 +293,19 @@ func (k *Keeper) replHelp() {
 	u.Blank()
 	u.InfoLine("Keeper REPL commands:")
 	u.Blank()
-	u.KeyValue("list", "list all keys in the store")
-	u.KeyValue("get <key>", "retrieve a secret value")
-	u.KeyValue("set <key> <value>", "store a plain-text secret")
-	u.KeyValue("set <key> --file <path>", "store a file's contents as a secret")
-	u.KeyValue("delete <key>", "delete a secret (prompts for confirmation)")
-	u.KeyValue("delete <key> --force", "delete without confirmation prompt")
-	u.KeyValue("status", "show whether the store is locked or unlocked")
-	u.KeyValue("help", "show this help")
-	u.KeyValue("exit / quit", "leave the REPL")
-	u.Blank()
+	u.KeyValueBlock("", []ui.KV{
+		{Label: "list", Value: "list all keys in the store"},
+		{Label: "list <scheme>", Value: "list all keys in a specific scheme"},
+		{Label: "list <scheme> <namespace>", Value: "list all keys in a specific bucket"},
+		{Label: "get <key>", Value: "retrieve a secret value"},
+		{Label: "set <key> <value>", Value: "store a plain-text secret"},
+		{Label: "set <key> --file <path>", Value: "store a file's contents as a secret"},
+		{Label: "delete <key>", Value: "delete a secret (prompts for confirmation)"},
+		{Label: "delete <key> --force", Value: "delete without confirmation prompt"},
+		{Label: "status", Value: "show whether the store is locked or unlocked"},
+		{Label: "help", Value: "show this help"},
+		{Label: "exit / quit", Value: "leave the REPL"},
+	})
 	u.InfoLine("Keys accept any scheme: ss://ns/key, vault://ns/key, or plain ns/key")
 	u.Blank()
 }

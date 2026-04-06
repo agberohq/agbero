@@ -94,10 +94,10 @@ func (g *General) Validate() error {
 // Storage defines the directory structure for Agbero's data persistence.
 // It points to where hosts, certificates, and internal data are stored.
 type Storage struct {
-	HostsDir string `hcl:"hosts_dir,attr" json:"hosts_dir"`
-	CertsDir string `hcl:"certs_dir,attr" json:"certs_dir"`
-	DataDir  string `hcl:"data_dir,attr" json:"data_dir"`
-	WorkDir  string `hcl:"work_dir,attr" json:"work_dir"`
+	HostsDir expect.Folder `hcl:"hosts_dir,attr" json:"hosts_dir"`
+	CertsDir expect.Folder `hcl:"certs_dir,attr" json:"certs_dir"`
+	DataDir  expect.Folder `hcl:"data_dir,attr" json:"data_dir"`
+	WorkDir  expect.Folder `hcl:"work_dir,attr" json:"work_dir"`
 }
 
 // Validate is a placeholder for future storage logic.

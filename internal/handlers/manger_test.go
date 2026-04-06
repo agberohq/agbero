@@ -5,13 +5,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cook"
 	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
@@ -33,7 +31,7 @@ func testCookManager(t *testing.T) *cook.Manager {
 
 	pool := jack.NewPool(2)
 	cfg := cook.ManagerConfig{
-		WorkDir: t.TempDir(),
+		WorkDir: expect.NewFolder(t.TempDir()),
 		Pool:    pool,
 		Logger:  testLogger,
 	}
@@ -56,7 +54,7 @@ func testHostManagerWithHosts(t *testing.T, hosts map[string]*alaye.Host) *disco
 	t.Helper()
 
 	hm := discovery2.NewHost(
-		woos.NewFolder(t.TempDir()),
+		expect.NewFolder(t.TempDir()),
 		discovery2.WithLogger(testLogger),
 	)
 
@@ -72,7 +70,7 @@ func testManagerConfig(t *testing.T) ManagerConfig {
 
 	return ManagerConfig{
 		Global:      &alaye.Global{},
-		HostManager: discovery2.NewHost(woos.NewFolder(t.TempDir()), discovery2.WithLogger(testLogger)),
+		HostManager: discovery2.NewHost(expect.NewFolder(t.TempDir()), discovery2.WithLogger(testLogger)),
 		Resource:    testResource,
 		IPMgr:       testIPManager,
 		CookManager: testCookManager(t),
@@ -106,7 +104,7 @@ func TestManager_Firewall(t *testing.T) {
 	cfg.Global.Security.Enabled = alaye.Active
 	cfg.Global.Security.Firewall.Status = alaye.Active
 	cfg.Global.Security.Firewall.Mode = "active"
-	cfg.Global.Storage.DataDir = t.TempDir()
+	cfg.Global.Storage.DataDir = expect.NewFolder(t.TempDir())
 
 	m, err := NewManager(cfg)
 	if err != nil {
@@ -480,8 +478,8 @@ func TestManager_handleRoute_WASM_InvalidModule(t *testing.T) {
 				MaxEntries: 10000,
 			},
 			Storage: alaye.Storage{
-				WorkDir: t.TempDir(),
-				DataDir: t.TempDir(),
+				WorkDir: expect.NewFolder(t.TempDir()),
+				DataDir: expect.NewFolder(t.TempDir()),
 			},
 			Bind: alaye.Bind{},
 		},
@@ -514,8 +512,8 @@ func TestManager_handleRoute_RateLimit_IgnoreGlobal(t *testing.T) {
 		Domains: []string{"example.com"},
 	}
 
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("OK"), woos.FilePerm); err != nil {
+	root := expect.NewFolder(t.TempDir())
+	if err := root.Put("index.html", []byte("OK"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 

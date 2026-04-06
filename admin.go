@@ -792,6 +792,13 @@ func (s *Server) getAdminJWTSecret(username string) (string, error) {
 	key := expect.Vault().AdminJWT(username)
 	secretBytes, err := s.keeperStore.Get(key)
 	if err != nil {
+		// Secret not yet stored — generate one and persist it.
+		// EnsureBucket guarantees the target bucket exists before Set;
+		// without it, Set fails with "bucket is locked" when the bucket
+		// has not been explicitly created yet.
+		if bErr := s.keeperStore.EnsureBucket(key); bErr != nil {
+			return "", fmt.Errorf("could not ensure bucket for %s: %w", key, bErr)
+		}
 		p := security.NewPassword()
 		secret, _ := p.Generate(woos.JWTSecretLength)
 		if setErr := s.keeperStore.Set(key, []byte(secret)); setErr == nil {

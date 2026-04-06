@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/olekukonko/ll"
 )
@@ -22,16 +22,16 @@ func SetupTestManager(t *testing.T, global *alaye.Global) (*Manager, string) {
 
 	// Set default values if not provided
 	if global.Storage.CertsDir == "" {
-		global.Storage.CertsDir = tmpDir
+		global.Storage.CertsDir = expect.NewFolder(tmpDir)
 	}
 	if global.Storage.DataDir == "" {
-		global.Storage.DataDir = tmpDir
+		global.Storage.DataDir = expect.NewFolder(tmpDir)
 	}
 	if global.Gossip.SecretKey == "" {
 		global.Gossip.SecretKey = "test-secret-1234567890123456"
 	}
 
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 
 	if mgr.installer != nil {
