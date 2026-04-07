@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 
 	"github.com/agberohq/agbero/internal/core/woos"
@@ -190,7 +191,7 @@ func (s *Server) Start(configPath string) error {
 	s.logger.Info("Secret resolver wired")
 
 	// Load PPK from Keeper (needed for API token verification)
-	ppkPEM, err := s.keeperStore.Get("key/internal")
+	ppkPEM, err := s.keeperStore.Get(expect.Vault().Key("internal"))
 	if err != nil {
 		s.logger.Fatal("Failed to load Internal Auth Key from Keeper. Run 'agbero init' first. Error: ", err)
 	}
@@ -199,8 +200,6 @@ func (s *Server) Start(configPath string) error {
 		s.logger.Fatal("Failed to parse Internal Auth Key: ", err)
 	}
 	s.logger.Info("Loaded Internal Auth Key (PPK)")
-
-	// REST OF SUBSYSTEM INITIALIZATION
 
 	if err := s.tlsValidate(); err != nil {
 		return err

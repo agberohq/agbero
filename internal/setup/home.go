@@ -76,18 +76,19 @@ func (h *Home) initializeKeeper() (*keeper.Keeper, *session, error) {
 	h.u.SectionHeader("Keeper Setup")
 	h.u.InfoLine("Agbero requires an encrypted secret store. Let's set it up.")
 
-	// Open with nil cfg returns a locked store — caller unlocks.
 	store, err := secrets.Open(secrets.Config{
-		DataDir: h.ctx.Paths.DataDir,
-		Setting: &alaye.Keeper{
-			Enabled: alaye.Active,
-		},
+		DataDir:     h.ctx.Paths.DataDir,
+		Setting:     &alaye.Keeper{Enabled: alaye.Active},
 		Logger:      h.ctx.Logger,
 		Interactive: true,
 	})
-
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open/create keeper: %w", err)
+	}
+
+	if store.IsLocked() {
+		store.Close()
+		return nil, nil, fmt.Errorf("keeper remains locked after interactive open")
 	}
 
 	h.ctx.SetKeeper(store)
@@ -98,50 +99,29 @@ func (h *Home) initializeKeeper() (*keeper.Keeper, *session, error) {
 	}
 	h.ctx.SetTLSStore(tlsStore)
 
-	// Try to load existing session state (will return ErrStoreLocked on first run — OK).
-	sess := &session{Step: woos.SetupStepInit, UpdatedAt: time.Now()}
-	if initData, err := store.Get(expect.Vault().Temp(name)); err == nil && len(initData) > 0 {
-		if err := json.Unmarshal(initData, &sess); err != nil {
-			h.u.WarnLine("Failed to parse saved setup state, starting fresh")
-		}
-	}
-
-	if !store.IsLocked() && sess.KeeperUnlocked {
-		return store, sess, nil
-	}
-
-	passphraseResult, err := h.u.PasswordConfirmWithHint(
-		"Keeper Master Passphrase",
-		"This passphrase encrypts ALL secrets. Choose a strong, memorable passphrase.\n"+
-			"⚠️  Losing this means losing access to ALL encrypted secrets!",
-	)
-	if err != nil {
-		store.Close()
-		return nil, nil, err
-	}
-	passphrase := passphraseResult.Bytes()
-	defer passphraseResult.Zero()
-
-	if err := store.Unlock(passphrase); err != nil {
-		store.Close()
-		return nil, nil, fmt.Errorf("failed to unlock keeper: %w", err)
-	}
-
-	// After Unlock only default:__default__ is seeded. Every vault:// key
-	// needs a policy registered. Create all required vault buckets here, once,
-	// immediately after unlock while the store is hot.
-	//
-	// Bucket mapping (parseKeyExtended splits on first "/" after scheme):
-	//   vault://admin/*  → bucket vault:admin  (users, totp, jwt)
-	//   vault://key/*    → bucket vault:key    (internal PPK, cluster secret)
-	//   vault://temp/*   → bucket vault:temp   (setup session state)
+	// FIX: Create ALL required buckets BEFORE attempting to read or write to them
 	for _, ns := range expect.VaultBuckets {
 		if err := store.CreateBucket("vault", ns, keeper.LevelPasswordOnly, "setup"); err != nil {
-			// ErrPolicyImmutable means the bucket already exists — fine on re-runs.
 			if !isImmutablePolicyError(err) {
 				store.Close()
 				return nil, nil, fmt.Errorf("failed to create vault:%s bucket: %w", ns, err)
 			}
+		}
+	}
+
+	// Explicitly ensure the bucket for the temp session state exists
+	// (EnsureBucket safely handles policy creation idempotently).
+	tempKey := expect.Vault().Temp(name)
+	if err := store.EnsureBucket(tempKey); err != nil {
+		store.Close()
+		return nil, nil, fmt.Errorf("failed to ensure temp bucket: %w", err)
+	}
+
+	// Load existing session (now safe because bucket exists)
+	sess := &session{Step: woos.SetupStepInit, UpdatedAt: time.Now()}
+	if initData, err := store.Get(tempKey); err == nil && len(initData) > 0 {
+		if err := json.Unmarshal(initData, &sess); err != nil {
+			h.u.WarnLine("Failed to parse saved setup state, starting fresh")
 		}
 	}
 
@@ -153,7 +133,9 @@ func (h *Home) initializeKeeper() (*keeper.Keeper, *session, error) {
 		store.Close()
 		return nil, nil, fmt.Errorf("failed to marshal session: %w", err)
 	}
-	if err := store.Set(expect.Vault().Temp(name), stateBytes); err != nil {
+
+	// Save session (now safe because bucket exists)
+	if err := store.Set(tempKey, stateBytes); err != nil {
 		store.Close()
 		return nil, nil, fmt.Errorf("failed to save session state: %w", err)
 	}

@@ -2,7 +2,6 @@ package helper
 
 import (
 	"github.com/agberohq/agbero"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 )
 
@@ -22,8 +21,8 @@ func (r *Run) Start(configPath string, devMode bool) error {
 	store := r.p.openStore(configPath)
 	defer store.Close()
 
-	hostFolder := global.Storage.HostsDir.Sub(woos.HostDir)
-	hm := discovery.NewHost(hostFolder, discovery.WithLogger(r.p.Logger))
+	//hostFolder := global.Storage.HostsDir
+	hm := discovery.NewHost(global.Storage.HostsDir, discovery.WithLogger(r.p.Logger))
 
 	if err := hm.Watch(); err != nil {
 		return err

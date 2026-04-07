@@ -8,9 +8,9 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
-	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/keeper"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/prompter"
 	"github.com/olekukonko/zero"
 )
 
@@ -84,12 +84,13 @@ func Open(kfg Config) (*keeper.Keeper, error) {
 		}
 	}
 
-	// Open or create the database
+	// Check if the database file is entirely new
 	isNew := false
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		isNew = true
 	}
 
+	// Open or create the database
 	if isNew {
 		store, err = keeper.New(kConfig)
 	} else {
@@ -104,21 +105,21 @@ func Open(kfg Config) (*keeper.Keeper, error) {
 		return store, nil
 	}
 
-	//  Try automatic unlock from config/env
+	// Try automatic unlock from config/env
 	passphrase := resolvePassphrase(kfg.Setting)
 
 	if passphrase != "" && passphrase != "dev" {
 		kfg.Logger.Debug("attempting to unlock keeper with configured passphrase")
 		passBytes := []byte(passphrase)
 		master, deriveErr := store.DeriveMaster(passBytes)
-		zero.Bytes(passBytes)
+		zero.Bytes(passBytes) // Wipe immediately after derivation
 		if deriveErr == nil {
 			if unlockErr := store.UnlockDatabase(master); unlockErr == nil {
 				kfg.Logger.Info("keeper unlocked successfully using configured passphrase")
 				return store, nil
 			}
 		}
-		// Passphrase was provided but failed to unlock - this is an error
+		// Passphrase was provided but failed to unlock - this is a hard error
 		store.Close()
 		return nil, fmt.Errorf("failed to unlock keeper database: invalid passphrase")
 	}
@@ -128,7 +129,7 @@ func Open(kfg Config) (*keeper.Keeper, error) {
 		kfg.Logger.Warn("keeper: opening in DEV mode — DO NOT use in production")
 		devPass := []byte("agbero-dev-mode-insecure-passphrase")
 		master, deriveErr := store.DeriveMaster(devPass)
-		zero.Bytes(devPass)
+		zero.Bytes(devPass) // Wipe immediately after derivation
 		if deriveErr != nil {
 			store.Close()
 			return nil, fmt.Errorf("failed to derive dev master key: %w", deriveErr)
@@ -141,19 +142,36 @@ func Open(kfg Config) (*keeper.Keeper, error) {
 		return store, nil
 	}
 
-	// SInteractive prompt (only if configured and store still locked)
+	// Interactive prompt (only if configured and store is still locked)
 	if store.IsLocked() && kfg.Interactive {
 		kfg.Logger.Debug("keeper locked, prompting user for passphrase")
-		u := ui.New()
-		result, promptErr := u.PasswordRequired("Keeper passphrase")
+
+		var result *prompter.Result
+		var promptErr error
+
+		// Force the user to confirm their password if creating a brand new database
+		if isNew {
+			result, promptErr = prompter.NewSecret("Create Keeper Master Passphrase",
+				prompter.WithRequired(true),
+			).WithConfirmation("Confirm Passphrase").Run()
+		} else {
+			result, promptErr = prompter.NewSecret("Keeper Passphrase",
+				prompter.WithRequired(true),
+			).Run()
+		}
+
 		if promptErr != nil {
 			store.Close()
 			return nil, fmt.Errorf("failed to prompt for passphrase: %w", promptErr)
 		}
+
 		pass := result.Bytes()
 		unlockErr := store.Unlock(pass)
+
+		// Securely wipe memory buffers
 		zero.Bytes(pass)
 		result.Zero()
+
 		if unlockErr != nil {
 			store.Close()
 			return nil, fmt.Errorf("failed to unlock keeper database: %w", unlockErr)
@@ -162,7 +180,7 @@ func Open(kfg Config) (*keeper.Keeper, error) {
 		return store, nil
 	}
 
-	// Return locked store for caller to handle (daemon mode)
+	// Return locked store for caller to handle (e.g. background daemon mode)
 	if store.IsLocked() {
 		kfg.Logger.Debug("keeper remains locked — caller must unlock via store.Unlock()")
 	}
