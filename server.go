@@ -1,5 +1,3 @@
-// Package agbero provides the main server implementation and lifecycle management.
-// It coordinates listeners, security managers, and traffic managers for proxy operations.
 package agbero
 
 import (
@@ -70,8 +68,6 @@ type Server struct {
 	telemetryStore     *telemetry.Store
 	telemetryCollector *telemetry.Collector
 
-	// adminSrv and pprofSrv are stored so they can be gracefully shut down
-	// via s.shutdown on process exit rather than being hard-killed.
 	adminSrv *http.Server
 	pprofSrv *http.Server
 
@@ -82,8 +78,6 @@ type Server struct {
 	apiShared   *api.Shared
 }
 
-// NewServer initializes a Server instance with the provided options.
-// It configures the core components before the start sequence is initiated.
 func NewServer(opts ...Option) *Server {
 	s := &Server{}
 	for _, opt := range opts {
@@ -108,16 +102,12 @@ func NewServer(opts ...Option) *Server {
 	return s
 }
 
-// OnClusterChange implements the cluster update handler for route modifications.
-// It signals the host manager to update internal routing tables based on peer updates.
 func (s *Server) OnClusterChange(key string, value []byte, deleted bool) {
 	if s.hostManager != nil {
 		s.hostManager.OnClusterChange(key, value, deleted)
 	}
 }
 
-// OnClusterCert handles the synchronization of certificates across the cluster.
-// It ensures that ACME certificates obtained by one node are available to all peers.
 func (s *Server) OnClusterCert(domain string, certPEM, keyPEM []byte) error {
 	if s.tlsManager != nil {
 		return s.tlsManager.ApplyClusterCertificate(domain, certPEM, keyPEM)
@@ -125,16 +115,12 @@ func (s *Server) OnClusterCert(domain string, certPEM, keyPEM []byte) error {
 	return nil
 }
 
-// OnClusterChallenge synchronizes ACME challenge tokens across cluster members.
-// It allows any node to fulfill a challenge request regardless of which node initiated it.
 func (s *Server) OnClusterChallenge(token, keyAuth string, deleted bool) {
 	if s.tlsManager != nil {
 		s.tlsManager.ApplyClusterChallenge(token, keyAuth, deleted)
 	}
 }
 
-// Start - boots up the server instance and all background dependencies
-// Initializes orchestrator, cache, clustering, and local listeners
 func (s *Server) Start(configPath string) error {
 	s.mu.Lock()
 	s.configPath = configPath
@@ -150,7 +136,6 @@ func (s *Server) Start(configPath string) error {
 		s.logger = ll.New(woos.Name).Enable()
 	}
 
-	// Load and normalize config
 	if configPath != "" {
 		absConfigPath, err := filepath.Abs(configPath)
 		if err != nil {
@@ -170,10 +155,11 @@ func (s *Server) Start(configPath string) error {
 	var err error
 	if s.keeperStore == nil {
 		s.keeperStore, err = secrets.Open(secrets.Config{
-			DataDir:     s.global.Storage.DataDir,
-			Setting:     &s.global.Security.Keeper,
-			Logger:      s.logger,
-			Interactive: false,
+			DataDir:         s.global.Storage.DataDir,
+			Setting:         &s.global.Security.Keeper,
+			Logger:          s.logger,
+			Interactive:     false,
+			DisableAutoLock: true, // server process must never auto-lock
 		})
 		if err != nil {
 			s.logger.Fatal("Keeper initialization failed. Cannot start: ", err)
@@ -190,7 +176,6 @@ func (s *Server) Start(configPath string) error {
 	secrets.NewResolver(s.keeperStore).Wire()
 	s.logger.Info("Secret resolver wired")
 
-	// Load PPK from Keeper (needed for API token verification)
 	ppkPEM, err := s.keeperStore.Get(expect.Vault().Key("internal"))
 	if err != nil {
 		s.logger.Fatal("Failed to load Internal Auth Key from Keeper. Run 'agbero init' first. Error: ", err)
@@ -261,7 +246,7 @@ func (s *Server) Start(configPath string) error {
 	}
 
 	if s.global.Gossip.Enabled.Active() {
-		// SecretKey is expect.Value - .String() triggers resolver via Wire()
+
 		cfg := cluster.Config{
 			Name:     s.global.Admin.Address,
 			BindPort: s.global.Gossip.Port,
@@ -318,6 +303,14 @@ func (s *Server) Start(configPath string) error {
 		})
 		s.tlsManager.SetCluster(s.clusterManager)
 	}
+
+	// Pre-generate local TLS certificates for all known ModeLocalAuto hosts
+	// before any listeners start.  This eliminates the first-request race where
+	// concurrent browser connections all miss the empty cache simultaneously,
+	// trigger parallel generation, and some receive nil while the first write
+	// is still in flight.  getCertificateLocal still uses localFlight as a
+	// safety net for hosts added dynamically after startup.
+	s.tlsManager.PreloadLocalCertificates(hosts)
 
 	var trustedProxies []string
 	if s.global.Security.Enabled.Active() {
@@ -400,8 +393,6 @@ func (s *Server) Start(configPath string) error {
 	return nil
 }
 
-// Reload applies an updated configuration without dropping active connections.
-// It builds new listeners and traffic managers before tearing down the old ones.
 func (s *Server) Reload() {
 	s.mu.RLock()
 	configPath := s.configPath
@@ -481,7 +472,6 @@ func (s *Server) Reload() {
 	oldTrafficManagerForFirewall := s.trafficManager
 	s.mu.RUnlock()
 
-	// Must close the old firewall first to release bbolt database locks
 	if oldTrafficManagerForFirewall != nil {
 		oldTrafficManagerForFirewall.CloseFirewall()
 	}
@@ -517,9 +507,6 @@ func (s *Server) Reload() {
 	s.listeners = newListeners
 	s.mu.Unlock()
 
-	// API SHARED STATE UPDATE (Lock-Free Push)
-
-	// Atomically push the new state down to the API handlers
 	s.apiShared.UpdateState(&api.ActiveState{
 		Global:   global,
 		Firewall: newTM.Firewall(),
@@ -590,7 +577,6 @@ func (s *Server) Reload() {
 		}
 	}
 
-	// Teardown old components safely in the background
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), woos.DefaultReloadTimeout)
 		defer cancel()
@@ -616,7 +602,6 @@ func (s *Server) Reload() {
 		}
 	}()
 
-	// Spin up the new listeners
 	for _, l := range newListeners {
 		go func(listener handlers.Listener) {
 			s.logger.Fields("bind", listener.Addr(), "proto", listener.Kind()).Info("reloaded listener")
@@ -625,7 +610,7 @@ func (s *Server) Reload() {
 				err = listener.Start()
 				if err != nil {
 					errStr := err.Error()
-					// If the port is still briefly held by the OS, backoff slightly and retry
+
 					if strings.Contains(errStr, "address already in use") || strings.Contains(errStr, "Only one usage") {
 						if i < woos.MaxPortRetries-1 {
 							time.Sleep(100 * time.Millisecond)
@@ -644,8 +629,6 @@ func (s *Server) Reload() {
 	s.logger.Info("configuration reloaded successfully")
 }
 
-// shutdownImpl performs the final listener termination during server shutdown.
-// It ensures all active connections are drained or timed out before process exit.
 func (s *Server) shutdownImpl(ctx context.Context) error {
 	if s.clusterManager != nil {
 		s.clusterManager.BroadcastStatus("draining")
@@ -683,8 +666,6 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 	return nil
 }
 
-// configComputeSHA calculates the SHA-256 fingerprint of the main config and host directory.
-// It is used to detect filesystem changes that trigger a hot reload.
 func (s *Server) configComputeSHA() (string, error) {
 	hasher := sha256.New()
 
@@ -724,8 +705,6 @@ func (s *Server) configComputeSHA() (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-// tlsValidate checks that every host configured with a local certificate can
-// load its key pair before the server binds any listeners.
 func (s *Server) tlsValidate() error {
 	hosts, _ := s.hostManager.LoadAll()
 	for domain, h := range hosts {
@@ -738,8 +717,6 @@ func (s *Server) tlsValidate() error {
 	return nil
 }
 
-// serverWatchConfig monitors the host manager for change events that require a reload.
-// It executes a full reload sequence whenever configuration updates are detected.
 func (s *Server) serverWatchConfig() {
 	for {
 		select {

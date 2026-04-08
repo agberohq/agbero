@@ -9,19 +9,15 @@ type Run struct {
 	p *Helper
 }
 
-// Start executes `agbero run` - runs the proxy in foreground
-// Uses openStore (Interactive: true) because it can prompt for passphrase
+// Start launches the agbero server.  The Keeper store must already be open
+// and unlocked — it is injected via r.p.Store by main() before this is called.
+// Run.Start never opens or closes the store itself; lifecycle is owned by main().
 func (r *Run) Start(configPath string, devMode bool) error {
 	global, err := loadGlobal(configPath)
 	if err != nil {
 		return err
 	}
 
-	// openStore uses Interactive: true - will prompt if needed
-	store := r.p.openStore(configPath)
-	defer store.Close()
-
-	//hostFolder := global.Storage.HostsDir
 	hm := discovery.NewHost(global.Storage.HostsDir, discovery.WithLogger(r.p.Logger))
 
 	if err := hm.Watch(); err != nil {
@@ -33,7 +29,7 @@ func (r *Run) Start(configPath string, devMode bool) error {
 		agbero.WithGlobalConfig(global),
 		agbero.WithLogger(r.p.Logger),
 		agbero.WithShutdownManager(r.p.Shutdown),
-		agbero.WithKeeper(store),
+		agbero.WithKeeper(r.p.Store),
 	)
 
 	return server.Start(configPath)

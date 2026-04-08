@@ -11,12 +11,10 @@ import (
 	"github.com/olekukonko/zero"
 )
 
-// Keeper handles all `agbero keeper` CLI commands.
 type Keeper struct {
 	p *Helper
 }
 
-// uiOutput implements keepcmd.Output by delegating to agbero's ui.UI.
 type uiOutput struct{ u *ui.UI }
 
 func (o *uiOutput) Table(headers []string, rows [][]string) { o.u.Table(headers, rows) }
@@ -25,8 +23,6 @@ func (o *uiOutput) Success(msg string)                      { o.u.SuccessLine(ms
 func (o *uiOutput) Info(msg string)                         { o.u.InfoLine(msg) }
 func (o *uiOutput) Error(msg string)                        { o.u.WarnLine(msg) }
 
-// cmds returns keepcmd.Commands wired to an already-open store.
-// Used only by REPL where one store is shared across many operations.
 func (k *Keeper) cmds(store *keeperlib.Keeper) *keepcmd.Commands {
 	return &keepcmd.Commands{
 		Store:   func() (*keeperlib.Keeper, error) { return store, nil },
@@ -35,35 +31,38 @@ func (k *Keeper) cmds(store *keeperlib.Keeper) *keepcmd.Commands {
 	}
 }
 
-func (k *Keeper) List(configPath string) {
-	store := k.p.openStore(configPath)
-	defer store.Close()
+// requireStore returns the injected store or fatals with a clear message.
+// All Keeper CLI methods call this first so the error is consistent.
+func (k *Keeper) requireStore() *keeperlib.Keeper {
+	if k.p.Store == nil {
+		k.p.Logger.Fatal("keeper store is not available — run 'agbero init' first or check AGBERO_PASSPHRASE")
+	}
+	return k.p.Store
+}
+
+func (k *Keeper) List(_ string) {
+	store := k.requireStore()
 	if err := k.cmds(store).List(); err != nil {
 		k.p.Logger.Fatal(err)
 	}
 }
 
-func (k *Keeper) Get(configPath, key string) {
-	store := k.p.openStore(configPath)
-	defer store.Close()
-	// Normalise key — accept vault://, ss://, or plain ns/key.
+func (k *Keeper) Get(_ string, key string) {
+	store := k.requireStore()
 	key = normaliseKey(key)
 	if err := k.cmds(store).Get(key); err != nil {
 		k.p.Logger.Fatal(err)
 	}
 }
 
-func (k *Keeper) Set(configPath, key, value string, asB64 bool, fromFile string) {
-	store := k.p.openStore(configPath)
-	defer store.Close()
+func (k *Keeper) Set(_ string, key, value string, asB64 bool, fromFile string) {
+	store := k.requireStore()
 
 	u := ui.New()
 
-	// Normalise and resolve the key so vault://, ss://, plain ns/key all work.
 	rawKey := key
 	key = normaliseKey(key)
 
-	// Auto-provision the bucket if it does not exist yet.
 	if err := store.EnsureBucket(key); err != nil {
 		k.p.Logger.Fatal("failed to prepare bucket: ", err)
 	}
@@ -72,8 +71,6 @@ func (k *Keeper) Set(configPath, key, value string, asB64 bool, fromFile string)
 		k.p.Logger.Fatal(err)
 	}
 
-	// Show the canonical reference the operator should use in agbero.hcl.
-	// If they supplied a scheme prefix, preserve it; otherwise default to ss://.
 	ref := rawKey
 	if !strings.Contains(rawKey, "://") {
 		ref = "ss://" + key
@@ -81,7 +78,7 @@ func (k *Keeper) Set(configPath, key, value string, asB64 bool, fromFile string)
 	u.InfoLine("reference in agbero.hcl as:  " + ref)
 }
 
-func (k *Keeper) Delete(configPath, key string, force bool) {
+func (k *Keeper) Delete(_ string, key string, force bool) {
 	if key == "" {
 		k.p.Logger.Fatal("key is required")
 	}
@@ -93,35 +90,27 @@ func (k *Keeper) Delete(configPath, key string, force bool) {
 			return
 		}
 	}
-	store := k.p.openStore(configPath)
-	defer store.Close()
+	store := k.requireStore()
 	key = normaliseKey(key)
 	if err := k.cmds(store).Delete(key); err != nil {
 		k.p.Logger.Fatal(err)
 	}
 }
 
-func (k *Keeper) Backup(configPath, dest string) {
-	store := k.p.openStore(configPath)
-	defer store.Close()
+func (k *Keeper) Backup(_ string, dest string) {
+	store := k.requireStore()
 	if err := k.cmds(store).Backup(keepcmd.BackupOptions{Dest: dest}); err != nil {
 		k.p.Logger.Fatal(err)
 	}
 }
 
-func (k *Keeper) Status(configPath string) {
-	store := k.p.openStore(configPath)
-	defer store.Close()
+func (k *Keeper) Status(_ string) {
+	store := k.requireStore()
 	if err := k.cmds(store).Status(); err != nil {
 		k.p.Logger.Fatal(err)
 	}
 }
 
-// normaliseKey strips a scheme prefix and returns the plain namespace/key
-// form that keeper's Set/Get/Delete methods expect.
-// vault://admin/totp/alice  →  admin/totp/alice
-// ss://prod/db_pass         →  prod/db_pass
-// prod/db_pass              →  prod/db_pass  (unchanged)
 func normaliseKey(key string) string {
 	e := expect.NewRaw(key)
 	if ref, err := e.SecretRef(); err == nil {
@@ -130,14 +119,10 @@ func normaliseKey(key string) string {
 	return key
 }
 
-// Rotate prompts for the current passphrase (via openStore), then prompts
-// for a new passphrase and re-encrypts everything under it.
-func (k *Keeper) Rotate(configPath string) {
-	// openStore prompts for and verifies the current passphrase.
-	// Lock it again so Rotate can re-derive the master key from scratch.
-	store := k.p.openStore(configPath)
-	defer store.Close()
-	store.Lock() //nolint:errcheck
+func (k *Keeper) Rotate(_ string) {
+	store := k.requireStore()
+	// store.Rotate requires the store to be unlocked — do NOT call store.Lock()
+	// before this. The store is already unlocked (injected from main).
 
 	u := ui.New()
 	newResult, err := u.PasswordConfirm("New passphrase")
@@ -155,28 +140,8 @@ func (k *Keeper) Rotate(configPath string) {
 	ui.New().SuccessLine("passphrase rotated — update keeper.passphrase in agbero.hcl if stored there")
 }
 
-// REPL opens an interactive keeper session.
-//
-// If the store is locked, the passphrase is prompted transparently — the
-// operator never sees a "keeper is locked" error. Once unlocked the session
-// stays open until the operator types exit or quit (or sends EOF).
-//
-// Commands available inside the REPL:
-//
-//	list                  — list all keys
-//	get <key>             — retrieve a value
-//	set <key> <value>     — store a plain-text value
-//	set <key> --file <f>  — store a file's contents
-//	delete <key>          — delete a key (confirms interactively)
-//	delete <key> --force  — delete without confirmation
-//	status                — show locked/unlocked state
-//	help                  — show this help
-//	exit | quit           — leave the REPL
-//
-// REPL opens an interactive keeper session.
-func (k *Keeper) REPL(configPath string) {
-	store := k.p.openStore(configPath)
-	defer store.Close()
+func (k *Keeper) REPL(_ string) {
+	store := k.requireStore()
 
 	u := ui.New()
 	u.Blank()
@@ -192,7 +157,6 @@ func (k *Keeper) REPL(configPath string) {
 	for {
 		input := u.PromptInline("keeper")
 		if input == "" {
-			// Ctrl+C or empty input - exit cleanly
 			u.InfoLine("exiting REPL")
 			u.Blank()
 			return

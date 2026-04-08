@@ -99,7 +99,7 @@ func (h *Home) initializeKeeper() (*keeper.Keeper, *session, error) {
 	}
 	h.ctx.SetTLSStore(tlsStore)
 
-	// FIX: Create ALL required buckets BEFORE attempting to read or write to them
+	// Create ALL required buckets BEFORE attempting to read or write to them
 	for _, ns := range expect.VaultBuckets {
 		if err := store.CreateBucket("vault", ns, keeper.LevelPasswordOnly, "setup"); err != nil {
 			if !isImmutablePolicyError(err) {

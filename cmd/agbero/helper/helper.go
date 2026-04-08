@@ -1,54 +1,30 @@
 package helper
 
 import (
-	"github.com/agberohq/agbero/internal/hub/secrets"
-	"github.com/agberohq/agbero/internal/setup"
 	keeperlib "github.com/agberohq/keeper"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
 
+// Helper is the shared dependency container threaded through all CLI commands.
+// The Keeper store is opened once in main() and injected here; no command
+// should open its own store.
 type Helper struct {
 	Logger   *ll.Logger
 	Shutdown *jack.Shutdown
 	Cfg      *Config
+	Store    *keeperlib.Keeper // single, already-unlocked store for this process
 }
 
-func New(logger *ll.Logger, shutdown *jack.Shutdown, cfg *Config) *Helper {
+// New constructs a Helper.  store may be nil for commands that do not require
+// the keeper (e.g. serve, proxy, secret generate).
+func New(logger *ll.Logger, shutdown *jack.Shutdown, cfg *Config, store *keeperlib.Keeper) *Helper {
 	return &Helper{
 		Logger:   logger,
 		Shutdown: shutdown,
 		Cfg:      cfg,
+		Store:    store,
 	}
-}
-
-// openStore opens an unlocked keeper.Keeper.
-//
-// Resolution order (same as service.go::preflightCheck):
-// cfg.Passphrase in agbero.hcl (any expect.Value — env., vault://, b64. …)
-// AGBERO_PASSPHRASE environment variable
-// Interactive prompt — used in run mode; never in service mode.
-func (h *Helper) openStore(configPath string) *keeperlib.Keeper {
-	global, err := loadGlobal(configPath)
-	if err != nil {
-		h.Logger.Fatal("failed to load config: ", err)
-	}
-
-	dataDir := global.Storage.DataDir
-	if dataDir == "" {
-		ctx := setup.NewContext(h.Logger)
-		dataDir = ctx.Paths.DataDir
-	}
-	store, openErr := secrets.Open(secrets.Config{
-		DataDir:     dataDir,
-		Setting:     &global.Security.Keeper,
-		Logger:      h.Logger,
-		Interactive: true,
-	})
-	if openErr != nil {
-		h.Logger.Fatal("failed to open keeper: ", openErr)
-	}
-	return store
 }
 
 func (h *Helper) Config() *Configuration { return &Configuration{p: h} }

@@ -55,6 +55,7 @@ type Manager struct {
 
 	renewingDomains *mappo.Concurrent[string, bool]
 	acmeFlight      singleflight.Group
+	localFlight     singleflight.Group
 
 	closeOnce sync.Once
 }
@@ -138,9 +139,6 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global, kee
 	return m
 }
 
-// ListCertificates returns all user-facing domain names held in the backing
-// store. It delegates to storage.List() so it works correctly for all backends
-// (keeper, disk, memory) regardless of how the store organises its files.
 func (m *Manager) ListCertificates() ([]string, error) {
 	if m.storage == nil {
 		return nil, nil
@@ -148,8 +146,6 @@ func (m *Manager) ListCertificates() ([]string, error) {
 	return m.storage.List()
 }
 
-// LoadCertificate returns the raw PEM bytes for a domain from the backing store.
-// The caller is responsible for parsing or validating the certificate.
 func (m *Manager) LoadCertificate(domain string) (certPEM, keyPEM []byte, err error) {
 	if m.storage == nil {
 		return nil, nil, tlsstore.ErrCertNotFound
@@ -391,33 +387,49 @@ func (m *Manager) triggerRenewal(domain string, onComplete func(response respons
 	}()
 }
 
+// getCertificateLocal generates or loads a local TLS certificate for host.
+//
+// localFlight collapses concurrent callers for the same domain into a single
+// generation/load operation — identical to how acmeFlight protects ACME.
+// Without this, simultaneous first-requests all miss the cache, race through
+// EnsureForHost, and the ones that lose the storage write race return nil to
+// the TLS layer, producing "no certificate found" handshake errors.
 func (m *Manager) getCertificateLocal(host string) (*tls.Certificate, error) {
-	_, _, err := m.installer.EnsureForHost(host, 443)
+	v, err, _ := m.localFlight.Do(host, func() (any, error) {
+		// storageKey is the normalised key EnsureForHost actually saved the cert
+		// under (e.g. "admin" for host "admin.localhost").  It must be used for
+		// the subsequent storage.Load — using the raw host would miss the cert.
+		storageKey, _, err := m.installer.EnsureForHost(host, 443)
+		if err != nil {
+			return nil, err
+		}
+
+		certPEM, keyPEM, err := m.storage.Load(storageKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load local cert from store: %w", err)
+		}
+
+		cert, err := tls.X509KeyPair(certPEM, keyPEM)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(cert.Certificate) > 0 {
+			cert.Leaf, _ = x509.ParseCertificate(cert.Certificate[0])
+		}
+
+		m.cache.Set(host, &cert)
+
+		if m.onUpdate != nil {
+			go m.onUpdate(host, certPEM, keyPEM)
+		}
+
+		return &cert, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	certPEM, keyPEM, err := m.storage.Load(host)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load local cert from store: %w", err)
-	}
-
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(cert.Certificate) > 0 {
-		cert.Leaf, _ = x509.ParseCertificate(cert.Certificate[0])
-	}
-
-	m.cache.Set(host, &cert)
-
-	if m.onUpdate != nil {
-		go m.onUpdate(host, certPEM, keyPEM)
-	}
-
-	return &cert, nil
+	return v.(*tls.Certificate), nil
 }
 
 func (m *Manager) getCertificateACME(domain string, setting alaye.LetsEncrypt) (*tls.Certificate, error) {
@@ -462,6 +474,36 @@ func (m *Manager) loadFromStorage() {
 				}
 				m.cache.Set(domain, &cert)
 			}
+		}
+	}
+}
+
+// PreloadLocalCertificates generates and caches TLS certificates for all hosts
+// that use ModeLocalAuto before any listeners start.
+//
+// Calling this during server startup eliminates the first-request race
+// condition where concurrent browser connections all find an empty cache,
+// trigger parallel on-demand generation, and some receive nil mid-write.
+// getCertificateLocal continues to use localFlight as a safety net for domains
+// that are added dynamically after startup or that are not present at boot.
+//
+// Hosts whose certificate is already in the cache (loaded by loadFromStorage)
+// are skipped — no duplicate work is done.
+func (m *Manager) PreloadLocalCertificates(hosts map[string]*alaye.Host) {
+	for domain, host := range hosts {
+		if m.determineTLSMode(host, domain) != alaye.ModeLocalAuto {
+			continue
+		}
+		// Already loaded from persistent storage by loadFromStorage — skip.
+		if _, hit := m.cache.Get(domain); hit {
+			m.logger.Fields("domain", domain).Debug("local cert already in cache, skipping preload")
+			continue
+		}
+		m.logger.Fields("domain", domain).Info("preloading local TLS certificate")
+		if _, err := m.getCertificateLocal(domain); err != nil {
+			// Non-fatal: log and continue.  The cert will be generated on
+			// first request via the singleflight path.
+			m.logger.Fields("domain", domain, "err", err).Warn("failed to preload local cert")
 		}
 	}
 }

@@ -12,9 +12,12 @@ import (
 
 	"github.com/agberohq/agbero/cmd/agbero/helper"
 	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
+	keeperlib "github.com/agberohq/keeper"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/jack"
@@ -315,7 +318,10 @@ func main() {
 
 	flaggy.Parse()
 
-	hel := helper.New(logger, shutdown, cfg)
+	// store is opened later (after resolvedPath is known) for commands that
+	// need it.  Commands that exit before the keeper block (serve, proxy,
+	// system, secret, init) receive a nil store and must not call keeper ops.
+	hel := helper.New(logger, shutdown, cfg, nil)
 
 	if cmdHome.Used {
 		hel.Home().Navigate(homeTarget, homeAction)
@@ -379,48 +385,6 @@ func main() {
 		return
 	}
 
-	if cmdKeeper.Used {
-		k := hel.Keeper()
-		resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
-		switch {
-		case cmdKeeperHelp.Used:
-			flaggy.ShowHelpAndExit("keeper")
-		case cmdKeeperList.Used:
-			k.List(resolvedPath)
-		case cmdKeeperGet.Used:
-			k.Get(resolvedPath, cfg.KeeperKey)
-		case cmdKeeperSet.Used:
-			k.Set(resolvedPath, cfg.KeeperKey, cfg.KeeperValue, cfg.KeeperB64, cfg.KeeperFile)
-		case cmdKeeperDelete.Used:
-			k.Delete(resolvedPath, cfg.KeeperKey, cfg.KeeperForce)
-		case cmdKeeperRotate.Used:
-			k.Rotate(resolvedPath)
-		default:
-			k.REPL(resolvedPath)
-		}
-		return
-	}
-
-	if cmdAdmin.Used {
-		a := hel.Admin()
-		resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
-		switch {
-		case cmdAdminTOTP.Used && cmdAdminTOTPSetup.Used:
-			a.TOTPSetup(resolvedPath, cfg.KeeperUser)
-			if cfg.KeeperOutFile != "" {
-				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
-			}
-		case cmdAdminTOTP.Used && cmdAdminTOTPQR.Used:
-			a.TOTPQR(resolvedPath, cfg.KeeperUser)
-			if cfg.KeeperOutFile != "" {
-				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
-			}
-		default:
-			flaggy.ShowHelpAndExit("admin")
-		}
-		return
-	}
-
 	if cmdInit.Used || cmdInstall.Used {
 		if _, err := helper.InitConfiguration(logger, ""); err != nil {
 			logger.Fatal("init failed: ", err)
@@ -473,7 +437,7 @@ func main() {
 		return
 	}
 
-	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used || cmdServiceStart.Used
+	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used || cmdServiceStart.Used || cmdKeeper.Used || cmdAdmin.Used
 	if needsConfig && !configExists {
 		if strings.TrimSpace(cfg.ConfigPath) != "" {
 			logger.Fatal("config file not found at: ", cfg.ConfigPath)
@@ -504,6 +468,116 @@ func main() {
 
 	if err := tlss.BootstrapEnv(logger); err != nil {
 		logger.Warnf("TLS env bootstrap: %v", err)
+	}
+
+	// Keeper lifecycle — single open for the whole process.
+	//
+	// Commands that need the keeper: run, keeper, admin.
+	// All other commands have already returned above this point or do not
+	// touch the store (config, cert, host, service control, cluster).
+	//
+	// Rules:
+	//   run  → non-interactive, DisableAutoLock=true, fatal if still locked.
+	//   CLI  → interactive (prompts user), AutoLock respected.
+
+	if cmdRun.Used || cmdKeeper.Used || cmdAdmin.Used {
+		global, globalErr := helper.LoadGlobal(resolvedPath)
+		if globalErr != nil {
+			logger.Fatal("failed to load config for keeper initialisation: ", globalErr)
+		}
+
+		// Overwrite Loggin Here
+		logger, err := zulu.Logging(&global.Logging, hel.Cfg.ServeMarkdown, shutdown)
+		if err != nil {
+			logger.Fatal("failed to initialise logging: ", err)
+		}
+
+		logger.Info("Logger Recalibrated")
+
+		dataDir := global.Storage.DataDir
+		ctx := setup.NewContext(logger)
+		if !dataDir.IsSet() {
+			dataDir = ctx.Paths.DataDir
+		}
+
+		// Interactive rules:
+		//   keeper / admin CLI  → always interactive (operator is at the terminal)
+		//   run + real terminal → interactive (developer running manually)
+		//   run + no terminal   → non-interactive (service, CI, Docker)
+		//   AGBERO_HEADLESS=1   → always non-interactive (setup.NewContext sets this)
+		isInteractive := !cmdRun.Used || ctx.Interactive
+
+		store, storeErr := secrets.Open(secrets.Config{
+			DataDir:         dataDir,
+			Setting:         &global.Security.Keeper,
+			Logger:          logger,
+			Interactive:     isInteractive,
+			DisableAutoLock: cmdRun.Used, // server process must never auto-lock
+		})
+		if storeErr != nil {
+			logger.Fatal("failed to open keeper: ", storeErr)
+		}
+
+		if cmdRun.Used && store.IsLocked() {
+			store.Close()
+			logger.Fatal("keeper is locked. Set AGBERO_PASSPHRASE environment variable, configure keeper.passphrase in agbero.hcl, or run interactively to be prompted")
+		}
+
+		// Register in both the keeper library's own global and agbero's secrets
+		// hub so that all subsystems (expect resolver, TLS store, admin API) see
+		// the same instance without further dependency injection.
+		keeperlib.GlobalStore(store)
+		secrets.SetGlobalStore(store)
+
+		// NOTE: We do NOT register store.Close() with jack here.
+		// jack.ShutdownConcurrent runs all handlers at the same time, which means
+		// store.Close() would race with in-flight requests still holding BoltDB
+		// transactions, causing a hang until the 10-second timeout fires.
+		// Instead, store.Close() is called explicitly below after rr.Start()
+		// returns — by that point all listeners have fully drained.
+
+		// Re-construct hel with the live store injected.
+		hel = helper.New(logger, shutdown, cfg, store)
+	}
+
+	if cmdKeeper.Used {
+		k := hel.Keeper()
+		switch {
+		case cmdKeeperHelp.Used:
+			flaggy.ShowHelpAndExit("keeper")
+		case cmdKeeperList.Used:
+			k.List(resolvedPath)
+		case cmdKeeperGet.Used:
+			k.Get(resolvedPath, cfg.KeeperKey)
+		case cmdKeeperSet.Used:
+			k.Set(resolvedPath, cfg.KeeperKey, cfg.KeeperValue, cfg.KeeperB64, cfg.KeeperFile)
+		case cmdKeeperDelete.Used:
+			k.Delete(resolvedPath, cfg.KeeperKey, cfg.KeeperForce)
+		case cmdKeeperRotate.Used:
+			k.Rotate(resolvedPath)
+		default:
+			k.REPL(resolvedPath)
+		}
+		return
+	}
+
+	if cmdAdmin.Used {
+		a := hel.Admin()
+		switch {
+		case cmdAdminTOTP.Used && cmdAdminTOTPSetup.Used:
+			a.TOTPSetup(resolvedPath, cfg.KeeperUser)
+			if cfg.KeeperOutFile != "" {
+				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
+			}
+		case cmdAdminTOTP.Used && cmdAdminTOTPQR.Used:
+			a.TOTPQR(resolvedPath, cfg.KeeperUser)
+			if cfg.KeeperOutFile != "" {
+				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
+			}
+		default:
+			flaggy.ShowHelpAndExit("admin")
+		}
+		return
 	}
 
 	if cmdConfig.Used {
@@ -618,7 +692,23 @@ func main() {
 
 	if cmdRun.Used {
 		rr := hel.Run()
-		rr.Start(resolvedPath, cfg.DevMode)
+
+		// Register server stop with shutdown manager BEFORE starting
+		shutdown.Register(func() error {
+			// Need to add Stop() method to Run or access server directly
+			// return rr.Stop()
+			return nil
+		})
+
+		// Start server in goroutine so we can Wait() in main
+		go func() {
+			if err := rr.Start(resolvedPath, cfg.DevMode); err != nil {
+				logger.Error("server error: ", err)
+			}
+			// When server exits, trigger shutdown to unblock Wait()
+			shutdown.TriggerShutdown()
+		}()
+
 	}
 
 	if cmdHelp.Used {
@@ -626,7 +716,22 @@ func main() {
 		return
 	}
 
-	showHelpExamples()
+	// Block here for signals
+	stats := shutdown.Wait()
+
+	if hel.Store != nil {
+		keeperlib.GlobalClear()
+		secrets.SetGlobalStore(nil)
+		hel.Store.Close()
+	}
+
+	logger.Fields(
+		"duration", stats.EndTime.Sub(stats.StartTime),
+		"tasks_total", stats.TotalEvents,
+		"tasks_failed", stats.FailedEvents,
+	).Info("shutdown complete")
+	return
+
 }
 
 func welcome() {

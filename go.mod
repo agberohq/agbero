@@ -6,7 +6,7 @@ require (
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.2
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
-	github.com/agberohq/keeper v0.0.2-0.20260407113214-ad5162c1030b
+	github.com/agberohq/keeper v0.0.2
 	github.com/alecthomas/chroma/v2 v2.23.1
 	github.com/andybalholm/brotli v1.2.1
 	github.com/blacktop/go-termimg v0.1.26

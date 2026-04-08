@@ -31,7 +31,10 @@ func runEditor(editor, filePath string) {
 	}
 }
 
-func loadGlobal(configFile string) (*alaye.Global, error) {
+// LoadGlobal parses configFile and applies woos defaults.
+// Exported so that main() can load the global config before constructing the
+// Helper (needed to resolve DataDir for the keeper open call).
+func LoadGlobal(configFile string) (*alaye.Global, error) {
 	global, err := parser.LoadGlobal(configFile)
 	if err != nil {
 		return nil, err
@@ -39,4 +42,10 @@ func loadGlobal(configFile string) (*alaye.Global, error) {
 	abs, _ := filepath.Abs(configFile)
 	woos.DefaultApply(global, abs)
 	return global, nil
+}
+
+// loadGlobal is the package-internal alias kept for callers inside the helper
+// package (configuration.go, host.go, etc.) that already use the unexported name.
+func loadGlobal(configFile string) (*alaye.Global, error) {
+	return LoadGlobal(configFile)
 }
