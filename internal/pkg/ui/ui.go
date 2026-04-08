@@ -1,32 +1,5 @@
 package ui
 
-// ui.go — terminal UI renderer for agbero.
-//
-// Design principles (mirrored from the oja web terminal):
-//
-// One indent level (default 3).  Every line of output is padded left by
-//      u.indent spaces via u.indented().  Nothing prints at column 0 except
-//      raw banners.
-//
-// Sections own their whitespace.  SectionHeader emits blank–header–blank.
-//      Leaf methods (SuccessLine, WarnLine, …) emit NO surrounding blank lines
-//      and NO flush — the caller decides when a section ends and calls Flush().
-//      This eliminates line-by-line flicker and gives callers full control over
-//      breathing room.
-//
-// Semantic color, not cosmetic color.
-//        success  → green   (✓)
-//        warn     → amber   (⚠)   — system/recoverable warnings only
-//        error    → red     (✗)   — user errors and store failures
-//        info     → faint   (ℹ)   — neutral context
-//        accent   → blue          — labels, section bars, prompts
-//
-// ui.UI is injected, not constructed per-callsite.  Callers hold one
-//      *ui.UI and pass it through; New() is called once at startup.
-//
-// io.Reader is injectable (WithReader) so Prompt/PromptInline are
-//      testable without os.Stdin.
-
 import (
 	"bufio"
 	"bytes"
@@ -48,8 +21,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
 )
-
-// Icon set
 
 type IconSet struct {
 	Success         string
@@ -87,8 +58,6 @@ var DefaultIconSet = IconSet{
 	Pipe:            "│",
 }
 
-// Theme
-
 type Theme struct {
 	Primary   compat.AdaptiveColor
 	Secondary compat.AdaptiveColor
@@ -101,10 +70,6 @@ type Theme struct {
 	Border    compat.AdaptiveColor
 }
 
-// DefaultTheme mirrors the token palette in style.css:
-//
-//	--accent  #3b82f6  --green #22c55e  --yellow #eab308
-//	--red     #ef4444  --text  #c9d8e8  --subtle #5a7490
 var DefaultTheme = Theme{
 	Primary:   compat.AdaptiveColor{Dark: lipgloss.Color("#c9d8e8"), Light: lipgloss.Color("#1e293b")},
 	Secondary: compat.AdaptiveColor{Dark: lipgloss.Color("#5a7490"), Light: lipgloss.Color("#64748b")},
@@ -116,8 +81,6 @@ var DefaultTheme = Theme{
 	Value:     compat.AdaptiveColor{Dark: lipgloss.Color("#e8f2ff"), Light: lipgloss.Color("#0f172a")},
 	Border:    compat.AdaptiveColor{Dark: lipgloss.Color("#1a2232"), Light: lipgloss.Color("#dde4ed")},
 }
-
-// UI struct
 
 type UI struct {
 	w                  io.Writer
@@ -137,8 +100,6 @@ func WithTheme(t Theme) Option      { return func(u *UI) { u.theme = t } }
 func WithIcons(i IconSet) Option    { return func(u *UI) { u.icons = i } }
 func WithIndent(n int) Option       { return func(u *UI) { u.indent = n } }
 
-// New creates a UI instance. Hold one per command surface and reuse it — do
-// not call New() inside individual methods.
 func New(opts ...Option) *UI {
 	u := &UI{
 		w:      os.Stdout,
@@ -157,11 +118,6 @@ func New(opts ...Option) *UI {
 	return u
 }
 
-// Buffer primitives
-//
-// These are the only methods that touch u.buf directly.  Everything else
-// builds a styled string and calls one of these.
-
 func (u *UI) s(c compat.AdaptiveColor) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(c)
 }
@@ -170,48 +126,30 @@ func (u *UI) padStyle() lipgloss.Style {
 	return lipgloss.NewStyle().PaddingLeft(u.indent)
 }
 
-// line appends a raw string + newline to the buffer.  Not for external use.
 func (u *UI) line(s string) { u.buf.WriteString(s + "\n") }
 
-// indented appends a left-padded line to the buffer.  This is the standard
-// output path — every visible line should flow through here or line().
 func (u *UI) indented(s string) { u.line(u.padStyle().Render(s)) }
 
-// blank appends one empty line.  Sections use this to breathe.
 func (u *UI) blank() { u.line("") }
 
-// Public flush / buffer control
-
-// Flush writes all buffered content to the output writer in one syscall,
-// then resets the buffer.  Callers invoke this once per command cycle — leaf
-// methods (SuccessLine, WarnLine, …) do NOT flush themselves.
 func (u *UI) Flush() {
 	lipgloss.Fprint(u.w, u.buf.String())
 	u.buf.Reset()
 }
 
-// FlushAfter executes fn(), then flushes.  Useful for grouping a block of
-// output into a single write:
-//
-//	u.FlushAfter(func() {
-//	    u.SuccessLine("stored key")
-//	    u.InfoLine("42 bytes")
-//	})
-func (u *UI) FlushAfter(fn func()) {
+func (u *UI) Render(fn func()) {
 	fn()
 	u.Flush()
 }
 
-// String returns the current buffered content without flushing.
+// FlushAfter is an alias for Render kept for backward compatibility.
+func (u *UI) FlushAfter(fn func()) { u.Render(fn) }
+
 func (u *UI) String() string { return u.buf.String() }
 
-// Reset discards pending output without writing it.
 func (u *UI) Reset() { u.buf.Reset() }
 
-// Theme returns the current theme.
 func (u *UI) Theme() Theme { return u.theme }
-
-// Hyperlinks
 
 func (u *UI) Link(text, url string) string {
 	if !u.supportsHyperlinks {
@@ -244,80 +182,58 @@ func (u *UI) FileLink(path string, isDir bool) string {
 	return style.Render(path)
 }
 
-// SectionHeader renders a visually distinct section opener and flushes.
-//
-//	▎ SECTION TITLE
-func (u *UI) SectionHeader(label string) {
+func (u *UI) SectionHeader(label string) *UI {
 	bar := u.s(u.theme.Accent).Bold(true).Render("▎")
 	text := u.s(u.theme.Secondary).Bold(true).Render(strings.ToUpper(label))
 	u.blank()
 	u.indented(bar + " " + text)
 	u.blank()
-	u.Flush()
+	return u
 }
 
-// Blank emits one blank line and flushes.  Use between sections or after the
-// last line of a command's output.
-func (u *UI) Blank() {
+func (u *UI) Blank() *UI {
 	u.blank()
-	u.Flush()
+	return u
 }
 
-// Divider renders a horizontal rule.
-func (u *UI) Divider() {
+func (u *UI) Divider() *UI {
 	u.indented(u.s(u.theme.Faint).Render(strings.Repeat(u.icons.Dash, 40)))
+	return u
 }
 
-// Status lines
-//
-// None of these call Flush.  The caller controls when to flush.
-
-// SuccessLine renders a green ✓ line.
-//
-//	✓  message
-func (u *UI) SuccessLine(msg string) {
+func (u *UI) SuccessLine(msg string) *UI {
 	u.indented(
 		u.s(u.theme.Success).Bold(true).Render(u.icons.Success) + "  " +
 			u.s(u.theme.Primary).Render(msg),
 	)
+	return u
 }
 
-// ErrorLine renders a red ✗ line.  Use for user errors and store failures.
-//
-//	✗  message
-func (u *UI) ErrorLine(msg string) {
+func (u *UI) ErrorLine(msg string) *UI {
 	u.indented(
 		u.s(u.theme.Danger).Bold(true).Render(u.icons.Error) + "  " +
 			u.s(u.theme.Primary).Render(msg),
 	)
+	return u
 }
 
-// WarnLine renders an amber ⚠ line.  Use for recoverable system warnings only
-// — not for user input errors (use ErrorLine/ErrorHint for those).
-//
-//	⚠  message
-func (u *UI) WarnLine(msg string) {
+func (u *UI) WarnLine(msg string) *UI {
 	u.indented(
 		u.s(u.theme.Warn).Render(u.icons.Warning) + "  " +
 			u.s(u.theme.Secondary).Render(msg),
 	)
+	return u
 }
 
-// InfoLine renders a faint ℹ line for neutral context.
-//
-//	ℹ  message
-func (u *UI) InfoLine(msg string) {
+func (u *UI) InfoLine(msg string) *UI {
 	u.indented(
 		u.s(u.theme.Faint).Render(u.icons.Info) + "  " +
 			u.s(u.theme.Secondary).Render(msg),
 	)
+	return u
 }
 
-// ErrorHint renders a red ✗ error with an indented → hint on the next line.
-//
-//	✗  problem
-//	     →  hint
-func (u *UI) ErrorHint(problem, hint string) {
+func (u *UI) ErrorHint(problem, hint string) *UI {
 	u.blank()
 	u.indented(
 		u.s(u.theme.Danger).Bold(true).Render(u.icons.Error) + "  " +
@@ -331,24 +247,19 @@ func (u *UI) ErrorHint(problem, hint string) {
 		))
 	}
 	u.blank()
+	return u
 }
 
-// Step renders a status step with a state-based icon.
-//
-//	ok   → ✓  green
-//	warn → ⚠  amber
-//	fail → ✗  red
-//	skip → ─  faint
-//	""   → •  accent
-func (u *UI) Step(state, msg string) {
+func (u *UI) Step(state, msg string) *UI {
 	icon, style := u.stepIconStyle(state)
 	u.indented(style.Render(icon) + "  " + u.s(u.theme.Secondary).Render(msg))
+	return u
 }
 
-// StepWithLink renders a step where the message is a clickable hyperlink.
-func (u *UI) StepWithLink(state, msg, url string) {
+func (u *UI) StepWithLink(state, msg, url string) *UI {
 	icon, style := u.stepIconStyle(state)
 	u.indented(style.Render(icon) + "  " + u.LinkInline(msg, url))
+	return u
 }
 
 func (u *UI) stepIconStyle(state string) (string, lipgloss.Style) {
@@ -366,8 +277,7 @@ func (u *UI) stepIconStyle(state string) (string, lipgloss.Style) {
 	}
 }
 
-// StatusBadge renders a coloured status dot + text.
-func (u *UI) StatusBadge(status string) {
+func (u *UI) StatusBadge(status string) *UI {
 	lower := strings.ToLower(strings.TrimSpace(status))
 	var dot, text lipgloss.Style
 	switch lower {
@@ -385,10 +295,10 @@ func (u *UI) StatusBadge(status string) {
 	u.blank()
 	u.indented(dot.Render(u.icons.Dot) + "  " + text.Render(lower))
 	u.blank()
+	return u
 }
 
-// ServiceStatus renders a complete service status block.
-func (u *UI) ServiceStatus(status, pid, configPath string) {
+func (u *UI) ServiceStatus(status, pid, configPath string) *UI {
 	u.SectionHeader("Service status")
 	u.StatusBadge(status)
 	if pid != "" {
@@ -397,23 +307,17 @@ func (u *UI) ServiceStatus(status, pid, configPath string) {
 	if configPath != "" {
 		u.KeyValueFile("Config file", configPath, false)
 	}
+	return u
 }
-
-// Key-value blocks
 
 type KV struct {
 	Label string
 	Value string
 }
 
-// KeyValueBlock renders a left-aligned table of label │ value pairs.
-// Labels are padded to the longest entry; Unicode widths are respected.
-//
-//	Config file  │  /etc/agbero.hcl
-//	Admin user   │  admin
-func (u *UI) KeyValueBlock(title string, pairs []KV) {
+func (u *UI) KeyValueBlock(title string, pairs []KV) *UI {
 	if len(pairs) == 0 {
-		return
+		return u
 	}
 	maxLen := 0
 	for _, kv := range pairs {
@@ -436,34 +340,32 @@ func (u *UI) KeyValueBlock(title string, pairs []KV) {
 		)
 	}
 	u.blank()
+	return u
 }
 
-// KeyValue renders a single key-value pair.
-func (u *UI) KeyValue(label, value string) {
+func (u *UI) KeyValue(label, value string) *UI {
 	u.KeyValueBlock("", []KV{{Label: label, Value: value}})
+	return u
 }
 
-func (u *UI) KeyValueLink(label, text, url string) {
+func (u *UI) KeyValueLink(label, text, url string) *UI {
 	u.KeyValue(label, u.LinkInline(text, url))
+	return u
 }
 
-func (u *UI) KeyValueFile(label, path string, isDir bool) {
+func (u *UI) KeyValueFile(label, path string, isDir bool) *UI {
 	u.KeyValue(label, u.FileLink(path, isDir))
+	return u
 }
 
-// Secret box
-
-// SecretBox renders a sensitive value.  Short values (≤60 chars) get a
-// rounded border; long values (tokens, hashes) use plain indented display to
-// avoid border-wrapping artefacts.
-func (u *UI) SecretBox(label, value string) {
+func (u *UI) SecretBox(label, value string) *UI {
 	if len(value) > 60 {
 		u.blank()
 		u.indented(u.s(u.theme.Accent).Bold(true).Render(u.icons.Key + " " + label))
 		u.line("")
 		u.indented(u.s(u.theme.Value).Render(value))
 		u.blank()
-		return
+		return u
 	}
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -478,16 +380,12 @@ func (u *UI) SecretBox(label, value string) {
 	u.blank()
 	u.indented(box.Render(content))
 	u.blank()
+	return u
 }
 
-// Table
-
-// Table renders a rounded-border table.  Use this for command references,
-// file lists, host tables, etc. — not KeyValueBlock, which is for
-// metadata-style pairs only.
-func (u *UI) Table(headers []string, rows [][]string) {
+func (u *UI) Table(headers []string, rows [][]string) *UI {
 	if len(headers) == 0 {
-		return
+		return u
 	}
 	t := table.New().
 		Border(lipgloss.RoundedBorder()).
@@ -503,6 +401,8 @@ func (u *UI) Table(headers []string, rows [][]string) {
 	u.blank()
 	u.indented(t.Render())
 	u.blank()
+
+	return u
 }
 
 type LinkCell struct {
@@ -510,10 +410,9 @@ type LinkCell struct {
 	URL  string
 }
 
-// TableWithLinks renders a table that supports LinkCell values.
-func (u *UI) TableWithLinks(headers []string, rows [][]interface{}) {
+func (u *UI) TableWithLinks(headers []string, rows [][]interface{}) *UI {
 	if len(headers) == 0 {
-		return
+		return u
 	}
 	strRows := make([][]string, len(rows))
 	for i, row := range rows {
@@ -530,9 +429,8 @@ func (u *UI) TableWithLinks(headers []string, rows [][]interface{}) {
 		}
 	}
 	u.Table(headers, strRows)
+	return u
 }
-
-// Help screen
 
 type HelpCmd struct {
 	Cmd  string
@@ -545,10 +443,7 @@ type HelpSection struct {
 	Commands []HelpCmd
 }
 
-// HelpScreen renders a two-column help layout using Table, not KeyValueBlock.
-// Each section gets its own header and table so columns are scoped to the
-// longest command in that section — not padded against every command globally.
-func (u *UI) HelpScreen(sections []HelpSection) {
+func (u *UI) HelpScreen(sections []HelpSection) *UI {
 	u.blank()
 	for _, sec := range sections {
 		bar := u.s(u.theme.Accent).Bold(true).Render("▎")
@@ -564,7 +459,7 @@ func (u *UI) HelpScreen(sections []HelpSection) {
 			}
 			rows = append(rows, []string{coloured, cmd.Desc})
 		}
-		// Render the table at indent+2 so commands sit visually inside the section.
+
 		t := table.New().
 			Border(lipgloss.HiddenBorder()).
 			StyleFunc(func(row, col int) lipgloss.Style {
@@ -578,14 +473,9 @@ func (u *UI) HelpScreen(sections []HelpSection) {
 		u.blank()
 	}
 	u.Flush()
+	return u
 }
 
-// colourCmd applies syntax-like colouring to a command string:
-//
-//	binary  → faint
-//	sub     → accent
-//	args    → primary bold
-//	flags   → warn
 func (u *UI) colourCmd(cmd string) string {
 	words := strings.Fields(cmd)
 	if len(words) == 0 {
@@ -617,8 +507,6 @@ func (u *UI) colourCmd(cmd string) string {
 	return strings.Join(out, " ")
 }
 
-// Tree
-
 type TreeNode struct {
 	Label    string
 	Value    string
@@ -627,7 +515,7 @@ type TreeNode struct {
 	Children []TreeNode
 }
 
-func (u *UI) Tree(root string, nodes []TreeNode) {
+func (u *UI) Tree(root string, nodes []TreeNode) *UI {
 	rootStyle := u.s(u.theme.Accent).Bold(true)
 	enumStyle := lipgloss.NewStyle().Foreground(u.theme.Border).MarginRight(1)
 	annotStyle := lipgloss.NewStyle().Foreground(u.theme.Secondary)
@@ -666,9 +554,10 @@ func (u *UI) Tree(root string, nodes []TreeNode) {
 	u.blank()
 	u.indented(t.String())
 	u.blank()
+	return u
 }
 
-func (u *UI) TreeWithFiles(rootPath string, nodes []TreeNode) {
+func (u *UI) TreeWithFiles(rootPath string, nodes []TreeNode) *UI {
 	rootStyle := u.s(u.theme.Accent).Bold(true)
 	enumStyle := lipgloss.NewStyle().Foreground(u.theme.Border).MarginRight(1)
 	annotStyle := lipgloss.NewStyle().Foreground(u.theme.Secondary)
@@ -710,16 +599,9 @@ func (u *UI) TreeWithFiles(rootPath string, nodes []TreeNode) {
 	u.blank()
 	u.indented(t.String())
 	u.blank()
+	return u
 }
 
-// Banner
-
-// Welcome renders the application startup banner.
-// Inspired by the oja banner: large brand name + subtitle on the same line,
-// version/date in faint below, then a blank separator.
-//
-//	agbero  — reverse proxy & secret store
-//	v0.3.0  ·  2025-01-15
 func (u *UI) Welcome(name, description, version, date, banner string) {
 	if banner != "" {
 		u.line(u.s(u.theme.Accent).Bold(true).Render(banner))
@@ -734,16 +616,11 @@ func (u *UI) Welcome(name, description, version, date, banner string) {
 	u.Flush()
 }
 
-// Init success
-
 type ListItem struct {
 	Text string
 	URL  string
 }
 
-// InitSuccess renders the post-initialisation screen.
-// If adminPassword is empty the password row is omitted entirely — an empty
-// highlighted field is more confusing than no field.
 func (u *UI) InitSuccess(configFile, adminUser, adminPassword string, nextSteps []ListItem) {
 	u.SectionHeader("Configuration initialised")
 
@@ -773,30 +650,28 @@ func (u *UI) InitSuccess(configFile, adminUser, adminPassword string, nextSteps 
 	u.Flush()
 }
 
-// Backup / restore
-
-func (u *UI) BackupStart(encrypted bool) {
+func (u *UI) BackupStart(encrypted bool) *UI {
 	if encrypted {
 		u.InfoLine("creating AES-256 encrypted backup…")
 	} else {
 		u.WarnLine("no password provided — creating unencrypted backup")
 	}
+	return u
 }
 
-func (u *UI) BackupDone(path string, fileCount int) {
+func (u *UI) BackupDone(path string, fileCount int) *UI {
 	u.SuccessLine(fmt.Sprintf("backup complete — %d files → %s", fileCount, path))
+	return u
 }
 
-func (u *UI) RestoreDone(count int) {
+func (u *UI) RestoreDone(count int) *UI {
 	u.SuccessLine(fmt.Sprintf("restore complete — %d files restored", count))
+	return u
 }
 
-// Link list
-
-// LinkList renders a bulleted list with optional hyperlinks.
-func (u *UI) LinkList(title string, items []ListItem) {
+func (u *UI) LinkList(title string, items []ListItem) *UI {
 	if len(items) == 0 {
-		return
+		return u
 	}
 	if title != "" {
 		u.blank()
@@ -822,9 +697,8 @@ func (u *UI) LinkList(title string, items []ListItem) {
 
 	u.indented(l.String())
 	u.blank()
+	return u
 }
-
-// Dialog box
 
 type DialogStyle int
 
@@ -835,8 +709,7 @@ const (
 	DialogSuccess
 )
 
-// DialogBox renders a bordered dialog with title, bulleted items, and footer.
-func (u *UI) DialogBox(style DialogStyle, title string, items []string, footer string) {
+func (u *UI) DialogBox(style DialogStyle, title string, items []string, footer string) *UI {
 	var borderColor compat.AdaptiveColor
 	var icon string
 	var iconStyle, footerStyle lipgloss.Style
@@ -880,9 +753,8 @@ func (u *UI) DialogBox(style DialogStyle, title string, items []string, footer s
 	u.blank()
 	u.indented(box.Render(content))
 	u.blank()
+	return u
 }
-
-// QR / image
 
 func (u *UI) Image(pngData []byte) error {
 	u.Flush()
@@ -910,15 +782,9 @@ func (u *UI) QR(content string) *QRResult {
 	return result
 }
 
-// Raw output
-
-func (u *UI) Println(s string)       { lipgloss.Println(s) }
+func (u *UI) Println(s string) *UI   { lipgloss.Println(s); return u }
 func (u *UI) Sprint(s string) string { return lipgloss.Sprint(s) }
 
-// Confirm / input
-
-// Confirm prompts for yes/no.  Always flush first so buffered output appears
-// before the interactive widget.
 func (u *UI) Confirm(prompt string, helpText ...string) (bool, error) {
 	u.Flush()
 	var value bool
@@ -972,15 +838,6 @@ func (u *UI) Input(cfg InputConfig) (string, error) {
 	return value, err
 }
 
-// REPL prompt
-//
-// Prompt and PromptInline both:
-//   - flush pending buffer before rendering the prompt
-//   - apply u.indent padding (no more column-0 prompts)
-//   - read from u.r (injectable, not hardcoded os.Stdin)
-
-// Prompt renders a full-line prompt with an optional description, reads a
-// line from u.r, and returns the trimmed input.
 func (u *UI) Prompt(prompt string, description ...string) string {
 	u.Flush()
 
@@ -1008,17 +865,12 @@ func (u *UI) Prompt(prompt string, description ...string) string {
 	return strings.TrimSpace(input)
 }
 
-// PromptInline renders the compact REPL prompt (keeper> style) at the correct
-// indent level and reads a line.  It supports basic line editing via raw mode
-// (backspace only — for full readline, replace PromptInline with a readline
-// library such as github.com/chzyer/readline).
 func (u *UI) PromptInline(prompt string) string {
 	u.Flush()
 
 	promptStyle := u.s(u.theme.Accent).Bold(true)
 	arrowStyle := u.s(u.theme.Faint)
 
-	// Apply indent padding — this is the fix for the column-0 misalignment.
 	styled := u.padStyle().Render(
 		promptStyle.Render(prompt) + " " + arrowStyle.Render(u.icons.Arrow) + " ",
 	)
@@ -1027,7 +879,7 @@ func (u *UI) PromptInline(prompt string) string {
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
-		// Not a TTY (test / pipe) — read from u.r directly.
+
 		reader := bufio.NewReader(u.r)
 		input, _ := reader.ReadString('\n')
 		return strings.TrimSpace(input)
@@ -1041,17 +893,14 @@ func (u *UI) PromptInline(prompt string) string {
 			return ""
 		}
 		switch b[0] {
-		case 3: // Ctrl+C
+		case 3:
 			fmt.Fprint(u.w, "^C\r\n")
 			return ""
 		case '\r', '\n':
-			// \r moves the cursor to column 0; \n advances to the next line.
-			// Without \r, the next indented() call starts at the column where
-			// the last typed character landed — producing the deep right-shift
-			// visible when the user types a long command.
+
 			fmt.Fprint(u.w, "\r\n")
 			return strings.TrimSpace(string(input))
-		case 127: // backspace
+		case 127:
 			if len(input) > 0 {
 				input = input[:len(input)-1]
 				fmt.Fprint(u.w, "\b \b")
@@ -1064,8 +913,6 @@ func (u *UI) PromptInline(prompt string) string {
 		}
 	}
 }
-
-// Password prompts
 
 func withRequired(msg string) prompter.Option {
 	return prompter.WithValidator(func(b []byte) error {
@@ -1190,8 +1037,6 @@ func (u *UI) PasswordRequiredWithHint(prompt, hint string) (*prompter.Result, er
 func (u *UI) PasswordConfirmWithHint(prompt, hint string) (*prompter.Result, error) {
 	return u.PasswordWithHint(prompt, hint, true, withRequired("passphrase cannot be empty"))
 }
-
-// Registration form
 
 type RegistrationResult struct {
 	Username     string

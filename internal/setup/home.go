@@ -73,8 +73,10 @@ func (h *Home) checkExistingConfig() error {
 }
 
 func (h *Home) initializeKeeper() (*keeper.Keeper, *session, error) {
-	h.u.SectionHeader("Keeper Setup")
-	h.u.InfoLine("Agbero requires an encrypted secret store. Let's set it up.")
+	h.u.Render(func() {
+		h.u.SectionHeader("Keeper Setup")
+		h.u.InfoLine("Agbero requires an encrypted secret store. Let's set it up.")
+	})
 
 	store, err := secrets.Open(secrets.Config{
 		DataDir:     h.ctx.Paths.DataDir,
@@ -99,7 +101,6 @@ func (h *Home) initializeKeeper() (*keeper.Keeper, *session, error) {
 	}
 	h.ctx.SetTLSStore(tlsStore)
 
-	// Create ALL required buckets BEFORE attempting to read or write to them
 	for _, ns := range expect.VaultBuckets {
 		if err := store.CreateBucket("vault", ns, keeper.LevelPasswordOnly, "setup"); err != nil {
 			if !isImmutablePolicyError(err) {
@@ -109,19 +110,16 @@ func (h *Home) initializeKeeper() (*keeper.Keeper, *session, error) {
 		}
 	}
 
-	// Explicitly ensure the bucket for the temp session state exists
-	// (EnsureBucket safely handles policy creation idempotently).
 	tempKey := expect.Vault().Temp(name)
 	if err := store.EnsureBucket(tempKey); err != nil {
 		store.Close()
 		return nil, nil, fmt.Errorf("failed to ensure temp bucket: %w", err)
 	}
 
-	// Load existing session (now safe because bucket exists)
 	sess := &session{Step: woos.SetupStepInit, UpdatedAt: time.Now()}
 	if initData, err := store.Get(tempKey); err == nil && len(initData) > 0 {
 		if err := json.Unmarshal(initData, &sess); err != nil {
-			h.u.WarnLine("Failed to parse saved setup state, starting fresh")
+			h.u.Render(func() { h.u.WarnLine("Failed to parse saved setup state, starting fresh") })
 		}
 	}
 
@@ -134,14 +132,13 @@ func (h *Home) initializeKeeper() (*keeper.Keeper, *session, error) {
 		return nil, nil, fmt.Errorf("failed to marshal session: %w", err)
 	}
 
-	// Save session (now safe because bucket exists)
 	if err := store.Set(tempKey, stateBytes); err != nil {
 		store.Close()
 		return nil, nil, fmt.Errorf("failed to save session state: %w", err)
 	}
 
 	h.u.Blank()
-	h.u.Step("ok", "Keeper initialised and unlocked")
+	h.u.Render(func() { h.u.Step("ok", "Keeper initialised and unlocked") })
 	return store, sess, nil
 }
 
@@ -176,13 +173,13 @@ func (h *Home) runSetupSteps(store *keeper.Keeper, sess *session) error {
 
 	sess.Step = woos.SetupStepDone
 	stateBytes, _ := json.Marshal(sess)
-	_ = store.Set(expect.Vault().Temp(name), stateBytes) // best-effort; non-fatal at completion
+	_ = store.Set(expect.Vault().Temp(name), stateBytes)
 	return nil
 }
 
 func (h *Home) setupAdmin(store *keeper.Keeper, sess *session) error {
 	if sess.AdminUsername != "" {
-		h.u.Step("ok", fmt.Sprintf("Admin user %s already configured", sess.AdminUsername))
+		h.u.Render(func() { h.u.Step("ok", fmt.Sprintf("Admin user %s already configured", sess.AdminUsername)) })
 		return nil
 	}
 
@@ -208,12 +205,12 @@ func (h *Home) setupAdmin(store *keeper.Keeper, sess *session) error {
 
 	sess.AdminUsername = reg.Username
 	sess.AdminPasswordHash = reg.PasswordHash
-	h.u.Step("ok", fmt.Sprintf("Created admin user: %s", reg.Username))
+	h.u.Render(func() { h.u.Step("ok", fmt.Sprintf("Created admin user: %s", reg.Username)) })
 	return nil
 }
 
 func (h *Home) setupKeeperSecrets(store *keeper.Keeper, sess *session) error {
-	h.u.Step("ok", "Generating system secrets")
+	h.u.Render(func() { h.u.Step("ok", "Generating system secrets") })
 
 	p := security.NewPassword()
 
@@ -224,7 +221,7 @@ func (h *Home) setupKeeperSecrets(store *keeper.Keeper, sess *session) error {
 	if err := store.Set(expect.Vault().AdminJWT(sess.AdminUsername), []byte(adminSecret)); err != nil {
 		return fmt.Errorf("failed to store JWT secret: %w", err)
 	}
-	h.u.Step("ok", "Stored JWT signing secret")
+	h.u.Render(func() { h.u.Step("ok", "Stored JWT signing secret") })
 
 	_, ppkPEM, err := security.GeneratePPK()
 	if err != nil {
@@ -233,7 +230,7 @@ func (h *Home) setupKeeperSecrets(store *keeper.Keeper, sess *session) error {
 	if err := store.Set(expect.Vault().Key("internal"), ppkPEM); err != nil {
 		return fmt.Errorf("failed to store PPK: %w", err)
 	}
-	h.u.Step("ok", "Stored internal auth key")
+	h.u.Render(func() { h.u.Step("ok", "Stored internal auth key") })
 
 	clusterSecret, err := p.Generate(woos.ClusterSecretLen)
 	if err != nil {
@@ -242,9 +239,9 @@ func (h *Home) setupKeeperSecrets(store *keeper.Keeper, sess *session) error {
 	if err := store.Set(expect.Vault().Key("cluster"), []byte(clusterSecret)); err != nil {
 		return fmt.Errorf("failed to store cluster secret: %w", err)
 	}
-	h.u.Step("ok", "Stored cluster gossip secret")
+	h.u.Render(func() { h.u.Step("ok", "Stored cluster gossip secret") })
 
-	h.u.WarnLine("⚠️  Keep your master passphrase safe – it is the only way to unlock Keeper")
+	h.u.Render(func() { h.u.WarnLine("⚠️  Keep your master passphrase safe – it is the only way to unlock Keeper") })
 	return nil
 }
 
@@ -253,7 +250,7 @@ func (h *Home) setupTOTP(store *keeper.Keeper, sess *session) error {
 		return nil
 	}
 	if sess.TOTPEnabled {
-		h.u.Step("ok", "TOTP already configured")
+		h.u.Render(func() { h.u.Step("ok", "TOTP already configured") })
 		return nil
 	}
 
@@ -275,13 +272,10 @@ func (h *Home) setupTOTP(store *keeper.Keeper, sess *session) error {
 		return fmt.Errorf("failed to generate TOTP secret: %w", err)
 	}
 
-	// Store the TOTP base32 secret at the canonical TOTP path.
 	if err := store.Set(expect.Vault().AdminTOTP(sess.AdminUsername), []byte(totpSecret)); err != nil {
 		return fmt.Errorf("failed to store TOTP secret: %w", err)
 	}
 
-	// Update the AdminUser record's TOTPEnabled flag.
-	// The AdminUser record lives at AdminUser(username) — NOT at AdminTOTP(username).
 	userKey := expect.Vault().AdminUser(sess.AdminUsername)
 	if userJSON, err := store.Get(userKey); err == nil {
 		var adminUser alaye.AdminUser
@@ -289,23 +283,25 @@ func (h *Home) setupTOTP(store *keeper.Keeper, sess *session) error {
 			adminUser.TOTPEnabled = true
 			if updatedJSON, err := json.Marshal(adminUser); err == nil {
 				if err := store.Set(userKey, updatedJSON); err != nil {
-					h.u.WarnLine("Failed to update TOTPEnabled flag on admin user record: " + err.Error())
+					h.u.Render(func() { h.u.WarnLine("Failed to update TOTPEnabled flag on admin user record: " + err.Error()) })
 				}
 			}
 		}
 	}
 
 	uri := totpGen.GetProvisioningURI(totpSecret, sess.AdminUsername)
-	h.u.SectionHeader("Two-Factor Authentication")
-	h.u.InfoLine("Scan this QR code with Google Authenticator, Authy, or another TOTP app")
-	h.u.Blank()
+	h.u.Render(func() {
+		h.u.SectionHeader("Two-Factor Authentication")
+		h.u.InfoLine("Scan this QR code with Google Authenticator, Authy, or another TOTP app")
+		h.u.Blank()
+	})
 	h.u.QR(uri)
 	h.u.Blank()
 
 	sess.TOTPEnabled = true
 	sess.TOTPSecret = totpSecret
 
-	h.u.Step("ok", "TOTP enabled")
+	h.u.Render(func() { h.u.Step("ok", "TOTP enabled") })
 	return nil
 }
 
@@ -314,13 +310,13 @@ func (h *Home) setupLetsEncrypt(store *keeper.Keeper, sess *session) error {
 		return nil
 	}
 	if sess.LEEmail != "" {
-		h.u.Step("ok", fmt.Sprintf("Let's Encrypt email: %s", sess.LEEmail))
+		h.u.Render(func() { h.u.Step("ok", fmt.Sprintf("Let\'s Encrypt email: %s", sess.LEEmail)) })
 		return nil
 	}
 
-	ca := NewCA(h.ctx)
+	ca := NewCAWithStore(h.ctx, h.ctx.TLSStore)
 	if err := ca.PromptAndInstall(); err != nil {
-		h.u.WarnLine("CA installation skipped: " + err.Error())
+		h.u.Render(func() { h.u.WarnLine("CA installation skipped: " + err.Error()) })
 	}
 	h.u.Blank()
 
@@ -335,7 +331,7 @@ func (h *Home) setupLetsEncrypt(store *keeper.Keeper, sess *session) error {
 	}
 	sess.LEEmail = leEmail
 	if leEmail != "" {
-		h.u.Step("ok", fmt.Sprintf("Let's Encrypt email: %s", leEmail))
+		h.u.Render(func() { h.u.Step("ok", fmt.Sprintf("Let\'s Encrypt email: %s", leEmail)) })
 	}
 	return nil
 }
@@ -372,7 +368,7 @@ func (h *Home) writeConfigFiles(store *keeper.Keeper, sess *session) error {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
-	h.u.Step("ok", "Written configuration to "+h.ctx.Paths.ConfigFile)
+	h.u.Render(func() { h.u.Step("ok", "Written configuration to "+h.ctx.Paths.ConfigFile) })
 
 	err := h.ctx.Paths.HostsDir.Make(true)
 	if err != nil {
@@ -389,7 +385,7 @@ func (h *Home) writeConfigFiles(store *keeper.Keeper, sess *session) error {
 		return fmt.Errorf("failed to write web host config: %w", err)
 	}
 
-	h.u.Step("ok", "Created example host configurations")
+	h.u.Render(func() { h.u.Step("ok", "Created example host configurations") })
 	return nil
 }
 
@@ -411,8 +407,6 @@ func (h *Home) displaySuccess(sess *session) {
 	h.u.InitSuccess(h.ctx.Paths.ConfigFile, sess.AdminUsername, "", nextSteps)
 }
 
-// isImmutablePolicyError returns true when err indicates a bucket policy
-// already exists — which is safe to ignore on re-runs.
 func isImmutablePolicyError(err error) bool {
 	return errors.Is(err, keeper.ErrPolicyImmutable)
 }

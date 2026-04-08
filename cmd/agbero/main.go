@@ -204,10 +204,15 @@ func main() {
 	cmdCertInfo.Description = "Show certificate store information"
 	cmdCertInfo.String(&cfg.CertDir, "d", "dir", "Cert directory")
 
+	cmdCertDelete := flaggy.NewSubcommand("delete")
+	cmdCertDelete.Description = "Delete a certificate for a domain from the store"
+	cmdCertDelete.AddPositionalValue(&cfg.CertDomain, "domain", 1, true, "Domain name (e.g. admin.localhost)")
+
 	cmdCert.AttachSubcommand(cmdCertInstall, 1)
 	cmdCert.AttachSubcommand(cmdCertUninstall, 1)
 	cmdCert.AttachSubcommand(cmdCertList, 1)
 	cmdCert.AttachSubcommand(cmdCertInfo, 1)
+	cmdCert.AttachSubcommand(cmdCertDelete, 1)
 
 	cmdService := flaggy.NewSubcommand("service")
 	cmdService.Description = "Manage the system service"
@@ -219,11 +224,11 @@ func main() {
 	cmdServiceUninstall := flaggy.NewSubcommand("uninstall")
 	cmdServiceUninstall.Description = "Uninstall system service (use --all to remove everything)"
 	cmdServiceUninstall.Bool(&cfg.UninstallAll, "", "all", "Remove service, CA, all data, and binary")
-	cmdServiceUninstall.Bool(&cfg.UninstallForce, "", "force", "Skip confirmation prompt")
+	cmdServiceUninstall.Bool(&cfg.UninstallForce, "", "force", "Skip confirmation and also remove the binary")
 
 	cmdUninstall := flaggy.NewSubcommand("uninstall")
 	cmdUninstall.Description = "Uninstall everything (service, CA, configurations, data, and binary)"
-	cmdUninstall.Bool(&cfg.UninstallForce, "", "force", "Skip confirmation prompt")
+	cmdUninstall.Bool(&cfg.UninstallForce, "", "force", "Skip confirmation and also remove the binary")
 
 	cmdServiceStart := flaggy.NewSubcommand("start")
 	cmdServiceStart.Description = "Start system service"
@@ -486,13 +491,9 @@ func main() {
 			logger.Fatal("failed to load config for keeper initialisation: ", globalErr)
 		}
 
-		// Overwrite Loggin Here
-		logger, err := zulu.Logging(&global.Logging, hel.Cfg.ServeMarkdown, shutdown)
-		if err != nil {
-			logger.Fatal("failed to initialise logging: ", err)
-		}
-
-		logger.Info("Logger Recalibrated")
+		// Recalibrate logger from config (file, level, format).
+		logger, _ = zulu.Logging(&global.Logging, hel.Cfg.ServeMarkdown, shutdown)
+		logger.Info("logger recalibrated")
 
 		dataDir := global.Storage.DataDir
 		ctx := setup.NewContext(logger)
@@ -635,6 +636,8 @@ func main() {
 			ch.List(resolvedPath)
 		case cmdCertInfo.Used:
 			ch.Info(resolvedPath)
+		case cmdCertDelete.Used:
+			ch.Delete(resolvedPath, cfg.CertDomain)
 		default:
 			flaggy.ShowHelpAndExit("cert")
 		}
@@ -693,22 +696,16 @@ func main() {
 	if cmdRun.Used {
 		rr := hel.Run()
 
-		// Register server stop with shutdown manager BEFORE starting
 		shutdown.Register(func() error {
-			// Need to add Stop() method to Run or access server directly
-			// return rr.Stop()
 			return nil
 		})
 
-		// Start server in goroutine so we can Wait() in main
 		go func() {
 			if err := rr.Start(resolvedPath, cfg.DevMode); err != nil {
 				logger.Error("server error: ", err)
 			}
-			// When server exits, trigger shutdown to unblock Wait()
 			shutdown.TriggerShutdown()
 		}()
-
 	}
 
 	if cmdHelp.Used {
@@ -716,7 +713,7 @@ func main() {
 		return
 	}
 
-	// Block here for signals
+	// Universal shutdown wait — all long-running commands fall through to here.
 	stats := shutdown.Wait()
 
 	if hel.Store != nil {
@@ -730,8 +727,6 @@ func main() {
 		"tasks_total", stats.TotalEvents,
 		"tasks_failed", stats.FailedEvents,
 	).Info("shutdown complete")
-	return
-
 }
 
 func welcome() {
@@ -784,9 +779,11 @@ func showHelpExamples() {
 			Title: "Certificates",
 			Commands: []ui.HelpCmd{
 				{Cmd: exeName + " cert install", Desc: "install local CA certificate"},
-				{Cmd: exeName + " cert uninstall", Desc: "uninstall local CA certificate"},
-				{Cmd: exeName + " cert list", Desc: "list managed certificates"},
-				{Cmd: exeName + " cert info", Desc: "show certificate store information"},
+				{Cmd: exeName + " cert install --force", Desc: "force reinstall CA certificate"},
+				{Cmd: exeName + " cert uninstall", Desc: "remove CA from system trust store"},
+				{Cmd: exeName + " cert list", Desc: "list certificates in store"},
+				{Cmd: exeName + " cert info", Desc: "show certificate details (backend, expiry, issuer)"},
+				{Cmd: exeName + " cert delete admin.localhost", Desc: "delete a domain certificate from store"},
 			},
 		},
 		{
@@ -861,8 +858,10 @@ func showHelpExamples() {
 				{Cmd: prefix + exeName + " service restart", Desc: "restart service"},
 				{Cmd: prefix + exeName + " service status", Desc: "check service status"},
 				{Cmd: prefix + exeName + " service uninstall", Desc: "uninstall service"},
-				{Cmd: prefix + exeName + " service uninstall --all", Desc: "remove everything agbero installed"},
-				{Cmd: prefix + exeName + " uninstall", Desc: "alias — remove everything"},
+				{Cmd: prefix + exeName + " service uninstall --all", Desc: "stop, uninstall CA, remove all data"},
+				{Cmd: prefix + exeName + " service uninstall --all --force", Desc: "same + remove binary"},
+				{Cmd: prefix + exeName + " uninstall", Desc: "confirm + remove everything (keeps binary)"},
+				{Cmd: prefix + exeName + " uninstall --force", Desc: "skip confirm + remove everything including binary"},
 			},
 		},
 	})

@@ -13,6 +13,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	discovery "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/tlss"
+	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
 	"github.com/olekukonko/ll"
@@ -35,12 +36,12 @@ func (c *Configuration) Validate(configFile string) error {
 
 	u := ui.New()
 	u.SectionHeader("Config validation")
-	u.KeyValueBlock("", []ui.KV{
+	u.PrintKeyValueBlock("", []ui.KV{
 		{Label: "Config file", Value: configFile},
 		{Label: "Hosts dir", Value: global.Storage.HostsDir.Path()},
 		{Label: "Hosts found", Value: fmt.Sprintf("%d", len(hosts))},
 	})
-	u.SuccessLine("configuration is valid")
+	u.PrintSuccessLine("configuration is valid")
 	return nil
 }
 
@@ -90,14 +91,13 @@ func (c *Configuration) View(configFile, editor string) {
 	}
 	u := ui.New()
 	u.SectionHeader("Config file")
-	u.KeyValue("Path", configFile)
+	u.PrintKeyValue("Path", configFile)
 	fmt.Println(string(content))
 }
 
 func (c *Configuration) Edit(configFile string) error {
 	editor := os.Getenv("EDITOR")
 
-	// Build fallback chain
 	var candidates []string
 	if editor != "" {
 		candidates = append(candidates, editor)
@@ -109,7 +109,6 @@ func (c *Configuration) Edit(configFile string) error {
 		candidates = append(candidates, "nano", "vi", "vim")
 	}
 
-	// Find the first available editor
 	var cmd *exec.Cmd
 	for _, cand := range candidates {
 		parts := strings.Fields(cand)
@@ -174,20 +173,6 @@ func InitConfiguration(logger *ll.Logger, targetDir string) (string, error) {
 	return ctx.Paths.ConfigFile, err
 }
 
-// InstallConfiguration prepares agbero for service registration. The decision
-// tree is:
-//
-// If an existing config is discoverable (cwd, AGBERO_HOME, or platform
-//
-//	home), load it and ensure the CA is installed against the certs_dir it
-//	declares. Return the existing path — no new installation is created.
-//
-// If here is true, scaffold a new installation in the current directory.
-//
-// Otherwise scaffold a new installation in the platform home directory.
-//
-// Returning an "already exists" error signals callers to reuse the path
-// without treating it as a failure.
 func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 	if here {
 		cwd, err := os.Getwd()
@@ -203,7 +188,11 @@ func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 		if err == nil && global.Storage.CertsDir != "" {
 			certsDir := global.Storage.CertsDir
 			if !tlss.IsCARootInstalled(certsDir) {
-				loc := tlss.NewLocal(logger, newDiskStore(certsDir))
+				store, err := tlsstore.NewDisk(tlsstore.DiskConfig{CertDir: certsDir})
+				if err != nil {
+					store = tlsstore.NewMemory()
+				}
+				loc := tlss.NewLocal(logger, store)
 				if err := loc.InstallCARootIfNeeded(); err != nil {
 					logger.Warn("CA install skipped: ", err)
 				}

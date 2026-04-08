@@ -28,7 +28,6 @@ func (s *Service) requiresRoot(cmd string) bool {
 		return true
 	}
 
-	// Get the actual command the user ran
 	cmdPath := os.Args[0]
 	cmdName := filepath.Base(cmdPath)
 
@@ -39,7 +38,6 @@ func (s *Service) requiresRoot(cmd string) bool {
 	return false
 }
 
-// preflightCheck uses MustOpen (Interactive: false) - fails fast, no prompting
 func (s *Service) preflightCheck(configPath string) error {
 	global, err := loadGlobal(configPath)
 	if err != nil {
@@ -77,30 +75,30 @@ func (s *Service) preflightCheck(configPath string) error {
 func (s *Service) Install(svc service.Service, installHere bool, configPath string) {
 	u := ui.New()
 	if installHere {
-		u.InfoLine("local mode — service registration skipped")
+		u.PrintInfoLine("local mode — service registration skipped")
 		return
 	}
 	if !s.requiresRoot("install") {
 		return
 	}
 
-	u.Step("run", "Running pre-flight checks...")
+	u.PrintStep("run", "Running pre-flight checks...")
 	if err := s.preflightCheck(configPath); err != nil {
 		s.p.Logger.Fatal("Pre-flight check failed:\n\n", err)
 		return
 	}
-	u.Step("ok", "Pre-flight checks passed")
+	u.PrintStep("ok", "Pre-flight checks passed")
 
-	u.Step("run", "installing system service")
+	u.PrintStep("run", "installing system service")
 	if err := svc.Install(); err != nil {
 		if errors.Is(err, woos.ErrAlreadyExists) {
-			u.WarnLine("service already exists")
+			u.PrintWarnLine("service already exists")
 		} else {
 			s.p.Logger.Fatal(s.mapError(err, "install"))
 		}
 		return
 	}
-	u.SuccessLine("service installed")
+	u.PrintSuccessLine("service installed")
 }
 
 func (s *Service) Uninstall(svc service.Service) {
@@ -108,11 +106,11 @@ func (s *Service) Uninstall(svc service.Service) {
 		return
 	}
 	u := ui.New()
-	u.Step("run", "uninstalling system service")
+	u.PrintStep("run", "uninstalling system service")
 	if err := svc.Uninstall(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "uninstall"))
 	}
-	u.SuccessLine("service uninstalled")
+	u.PrintSuccessLine("service uninstalled")
 }
 
 func (s *Service) Start(svc service.Service) {
@@ -120,11 +118,11 @@ func (s *Service) Start(svc service.Service) {
 		return
 	}
 	u := ui.New()
-	u.Step("run", "starting system service")
+	u.PrintStep("run", "starting system service")
 	if err := svc.Start(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "start"))
 	}
-	u.SuccessLine("service started")
+	u.PrintSuccessLine("service started")
 }
 
 func (s *Service) Stop(svc service.Service) {
@@ -132,11 +130,11 @@ func (s *Service) Stop(svc service.Service) {
 		return
 	}
 	u := ui.New()
-	u.Step("run", "stopping system service")
+	u.PrintStep("run", "stopping system service")
 	if err := svc.Stop(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "stop"))
 	}
-	u.SuccessLine("service stopped")
+	u.PrintSuccessLine("service stopped")
 }
 
 func (s *Service) Restart(svc service.Service) {
@@ -144,16 +142,16 @@ func (s *Service) Restart(svc service.Service) {
 		return
 	}
 	u := ui.New()
-	u.Step("run", "stopping system service")
+	u.PrintStep("run", "stopping system service")
 	if err := svc.Stop(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "stop"))
 	}
 	time.Sleep(2 * time.Second)
-	u.Step("run", "starting system service")
+	u.PrintStep("run", "starting system service")
 	if err := svc.Start(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "start"))
 	}
-	u.SuccessLine("service restarted")
+	u.PrintSuccessLine("service restarted")
 }
 
 func (s *Service) Status(svc service.Service, configPath string) {
@@ -183,7 +181,7 @@ func (s *Service) Status(svc service.Service, configPath string) {
 	}
 
 	u := ui.New()
-	u.ServiceStatus(statusStr, pid, configPath)
+	u.PrintServiceStatus(statusStr, pid, configPath)
 }
 
 func (s *Service) mapError(err error, cmd string) error {

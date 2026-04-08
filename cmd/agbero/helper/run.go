@@ -9,14 +9,14 @@ type Run struct {
 	p *Helper
 }
 
-// Start launches the agbero server.  The Keeper store must already be open
-// and unlocked — it is injected via r.p.Store by main() before this is called.
-// Run.Start never opens or closes the store itself; lifecycle is owned by main().
 func (r *Run) Start(configPath string, devMode bool) error {
 	global, err := loadGlobal(configPath)
 	if err != nil {
 		return err
 	}
+
+	store := r.p.openStore(configPath)
+	defer store.Close()
 
 	hm := discovery.NewHost(global.Storage.HostsDir, discovery.WithLogger(r.p.Logger))
 
@@ -29,7 +29,7 @@ func (r *Run) Start(configPath string, devMode bool) error {
 		agbero.WithGlobalConfig(global),
 		agbero.WithLogger(r.p.Logger),
 		agbero.WithShutdownManager(r.p.Shutdown),
-		agbero.WithKeeper(r.p.Store),
+		agbero.WithKeeper(store),
 	)
 
 	return server.Start(configPath)

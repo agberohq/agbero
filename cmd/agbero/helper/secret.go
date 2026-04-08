@@ -12,15 +12,10 @@ import (
 	"github.com/agberohq/agbero/internal/setup"
 )
 
-// Secret handles CLI commands under `agbero secret`.
-// Cryptographic primitives (hashing, generation) all delegate to
-// pkg/security so there is no duplicate crypto code here.
 type Secret struct {
 	p *Helper
 }
 
-// Cluster generates a random 32-byte AES-256 gossip key and prints it
-// in b64. format ready to paste into agbero.hcl.
 func (s *Secret) Cluster() {
 	pw := security.NewPassword()
 	key, err := pw.Generate(32)
@@ -29,11 +24,10 @@ func (s *Secret) Cluster() {
 	}
 
 	u := ui.New()
-	u.SecretBox("Cluster key", "b64."+key)
-	u.InfoLine(`add to agbero.hcl:  gossip { secret_key = "b64.` + key + `" }`)
+	u.PrintSecretBox("Cluster key", "b64."+key)
+	u.PrintInfoLine(`add to agbero.hcl:  gossip { secret_key = "b64.` + key + `" }`)
 }
 
-// KeyInit generates the ed25519 key used for internal service-to-service JWT auth.
 func (s *Secret) KeyInit(configPath string) {
 	global, err := loadGlobal(configPath)
 	var targetPath string
@@ -57,11 +51,10 @@ func (s *Secret) KeyInit(configPath string) {
 	}
 
 	u := ui.New()
-	u.SecretBox("Internal auth key", targetPath)
-	u.InfoLine(`add to agbero.hcl:  security { enabled = true  internal_auth_key = "` + targetPath + `" }`)
+	u.PrintSecretBox("Internal auth key", targetPath)
+	u.PrintInfoLine(`add to agbero.hcl:  security { enabled = true  internal_auth_key = "` + targetPath + `" }`)
 }
 
-// Token mints a signed JWT for a named service using the internal auth key.
 func (s *Secret) Token(configPath, svcName string, ttl time.Duration) {
 	if svcName == "" {
 		s.p.Logger.Fatal("--service name is required")
@@ -105,17 +98,15 @@ func (s *Secret) Token(configPath, svcName string, ttl time.Duration) {
 
 	expires := time.Now().Add(ttl)
 	u := ui.New()
-	u.SecretBox("API token — "+svcName, token)
-	u.KeyValueBlock("", []ui.KV{
+	u.PrintSecretBox("API token — "+svcName, token)
+	u.PrintKeyValueBlock("", []ui.KV{
 		{Label: "Service", Value: svcName},
 		{Label: "JTI", Value: verified.JTI},
 		{Label: "Expires", Value: expires.Format(time.RFC3339) + "  (" + ttl.String() + ")"},
 	})
-	u.InfoLine("Keep the JTI — you will need it to revoke this token via POST /api/v1/auto/revoke")
+	u.PrintInfoLine("Keep the JTI — you will need it to revoke this token via POST /api/v1/auto/revoke")
 }
 
-// Hash bcrypt-hashes a password and prints the hash.
-// If password is empty the user is prompted interactively.
 func (s *Secret) Hash(password string) {
 	if password == "" {
 		fmt.Print("Enter password: ")
@@ -129,11 +120,9 @@ func (s *Secret) Hash(password string) {
 	}
 
 	u := ui.New()
-	u.SecretBox("Bcrypt hash", hash)
+	u.PrintSecretBox("Bcrypt hash", hash)
 }
 
-// Password generates a random password and prints both the plaintext and
-// its bcrypt hash, ready to paste into a users = [...] block.
 func (s *Secret) Password(length int) {
 	if length <= 0 {
 		length = 32
@@ -146,6 +135,6 @@ func (s *Secret) Password(length int) {
 	}
 
 	u := ui.New()
-	u.SecretBox("Generated password", password)
-	u.SecretBox("Bcrypt hash", hash)
+	u.PrintSecretBox("Generated password", password)
+	u.PrintSecretBox("Bcrypt hash", hash)
 }

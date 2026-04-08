@@ -17,11 +17,11 @@ type Keeper struct {
 
 type uiOutput struct{ u *ui.UI }
 
-func (o *uiOutput) Table(headers []string, rows [][]string) { o.u.Table(headers, rows) }
-func (o *uiOutput) KeyValue(label, value string)            { o.u.KeyValue(label, value) }
-func (o *uiOutput) Success(msg string)                      { o.u.SuccessLine(msg) }
-func (o *uiOutput) Info(msg string)                         { o.u.InfoLine(msg) }
-func (o *uiOutput) Error(msg string)                        { o.u.WarnLine(msg) }
+func (o *uiOutput) Table(headers []string, rows [][]string) { o.u.PrintTable(headers, rows) }
+func (o *uiOutput) KeyValue(label, value string)            { o.u.PrintKeyValue(label, value) }
+func (o *uiOutput) Success(msg string)                      { o.u.PrintSuccessLine(msg) }
+func (o *uiOutput) Info(msg string)                         { o.u.PrintInfoLine(msg) }
+func (o *uiOutput) Error(msg string)                        { o.u.PrintWarnLine(msg) }
 
 func (k *Keeper) cmds(store *keeperlib.Keeper) *keepcmd.Commands {
 	return &keepcmd.Commands{
@@ -75,7 +75,7 @@ func (k *Keeper) Set(_ string, key, value string, asB64 bool, fromFile string) {
 	if !strings.Contains(rawKey, "://") {
 		ref = "ss://" + key
 	}
-	u.InfoLine("reference in agbero.hcl as:  " + ref)
+	u.PrintInfoLine("reference in agbero.hcl as:  " + ref)
 }
 
 func (k *Keeper) Delete(_ string, key string, force bool) {
@@ -137,7 +137,8 @@ func (k *Keeper) Rotate(_ string) {
 	}
 
 	zero.Bytes(newPass)
-	ui.New().SuccessLine("passphrase rotated — update keeper.passphrase in agbero.hcl if stored there")
+	ui.New().PrintSuccessLine("passphrase rotated — update keeper.passphrase in agbero.hcl if stored there")
+	ui.New().Blank()
 }
 
 func (k *Keeper) REPL(_ string) {
@@ -145,8 +146,7 @@ func (k *Keeper) REPL(_ string) {
 
 	u := ui.New()
 	u.Blank()
-	u.InfoLine("Keeper REPL — type 'help' for commands, 'exit' to quit")
-	u.Blank()
+	u.PrintInfoLine("Keeper REPL — type 'help' for commands, 'exit' to quit")
 
 	cmds := &keepcmd.Commands{
 		Store:   func() (*keeperlib.Keeper, error) { return store, nil },
@@ -157,8 +157,7 @@ func (k *Keeper) REPL(_ string) {
 	for {
 		input := u.PromptInline("keeper")
 		if input == "" {
-			u.InfoLine("exiting REPL")
-			u.Blank()
+			u.PrintInfoLine("exiting REPL")
 			return
 		}
 
@@ -169,7 +168,7 @@ func (k *Keeper) REPL(_ string) {
 		u.Blank()
 		switch cmd {
 		case "exit", "quit":
-			u.SuccessLine("bye")
+			u.PrintSuccessLine("bye")
 			return
 
 		case "help":
@@ -177,26 +176,26 @@ func (k *Keeper) REPL(_ string) {
 
 		case "status":
 			if err := cmds.Status(); err != nil {
-				u.WarnLine(err.Error())
+				u.PrintWarnLine(err.Error())
 			}
 
 		case "list", "ls":
 			if err := cmds.List(); err != nil {
-				u.WarnLine(err.Error())
+				u.PrintWarnLine(err.Error())
 			}
 
 		case "get":
 			if len(args) == 0 {
-				u.WarnLine("usage: get <key>")
+				u.PrintWarnLine("usage: get <key>")
 				continue
 			}
 			if err := cmds.Get(normaliseKey(args[0])); err != nil {
-				u.WarnLine(err.Error())
+				u.PrintWarnLine(err.Error())
 			}
 
 		case "set":
 			if len(args) < 1 {
-				u.WarnLine("usage: set <key> <value>  |  set <key> --file <path>")
+				u.PrintWarnLine("usage: set <key> <value>  |  set <key> --file <path>")
 				continue
 			}
 			key := args[0]
@@ -216,21 +215,21 @@ func (k *Keeper) REPL(_ string) {
 				}
 			}
 			if opts.FromFile == "" && value == "" {
-				u.WarnLine("usage: set <key> <value>  |  set <key> --file <path>")
+				u.PrintWarnLine("usage: set <key> <value>  |  set <key> --file <path>")
 				continue
 			}
 			key = normaliseKey(key)
 			if err := store.EnsureBucket(key); err != nil {
-				u.WarnLine("bucket error: " + err.Error())
+				u.PrintWarnLine("bucket error: " + err.Error())
 				continue
 			}
 			if err := cmds.Set(key, value, opts); err != nil {
-				u.WarnLine(err.Error())
+				u.PrintWarnLine(err.Error())
 			}
 
 		case "delete", "del", "rm":
 			if len(args) == 0 {
-				u.WarnLine("usage: delete <key> [--force]")
+				u.PrintWarnLine("usage: delete <key> [--force]")
 				continue
 			}
 			key := normaliseKey(args[0])
@@ -238,16 +237,16 @@ func (k *Keeper) REPL(_ string) {
 			if !force {
 				ok, err := u.Confirm(fmt.Sprintf("Delete %q?", key), "This cannot be undone.")
 				if err != nil || !ok {
-					u.InfoLine("aborted")
+					u.PrintInfoLine("aborted")
 					continue
 				}
 			}
 			if err := cmds.Delete(key); err != nil {
-				u.WarnLine(err.Error())
+				u.PrintWarnLine(err.Error())
 			}
 
 		default:
-			u.WarnLine(fmt.Sprintf("unknown command %q — type 'help' for available commands", cmd))
+			u.PrintWarnLine(fmt.Sprintf("unknown command %q — type 'help' for available commands", cmd))
 		}
 	}
 }
@@ -255,9 +254,8 @@ func (k *Keeper) REPL(_ string) {
 func (k *Keeper) replHelp() {
 	u := ui.New()
 	u.Blank()
-	u.InfoLine("Keeper REPL commands:")
-	u.Blank()
-	u.KeyValueBlock("", []ui.KV{
+	u.PrintInfoLine("Keeper REPL commands:")
+	u.PrintKeyValueBlock("", []ui.KV{
 		{Label: "list", Value: "list all keys in the store"},
 		{Label: "list <scheme>", Value: "list all keys in a specific scheme"},
 		{Label: "list <scheme> <namespace>", Value: "list all keys in a specific bucket"},
@@ -270,6 +268,5 @@ func (k *Keeper) replHelp() {
 		{Label: "help", Value: "show this help"},
 		{Label: "exit / quit", Value: "leave the REPL"},
 	})
-	u.InfoLine("Keys accept any scheme: ss://ns/key, vault://ns/key, or plain ns/key")
-	u.Blank()
+	u.PrintInfoLine("Keys accept any scheme: ss://ns/key, vault://ns/key, or plain ns/key")
 }

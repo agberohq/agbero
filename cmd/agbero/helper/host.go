@@ -51,7 +51,7 @@ func (h *Host) List(configPath string) error {
 	u.SectionHeader("Hosts")
 
 	if len(hosts) == 0 {
-		u.WarnLine("no hosts found")
+		u.PrintWarnLine("no hosts found")
 		return nil
 	}
 
@@ -75,7 +75,7 @@ func (h *Host) List(configPath string) error {
 		rows = append(rows, []string{name, domains, routes, tls})
 	}
 
-	u.Table([]string{"Host", "Domains", "Routes", "TLS"}, rows)
+	u.PrintTable([]string{"Host", "Domains", "Routes", "TLS"}, rows)
 	return nil
 }
 
@@ -84,7 +84,7 @@ func (h *Host) Add(configPath string) {
 
 	u := ui.New()
 	u.SectionHeader("Add host")
-	u.KeyValue("Hosts dir", hostsDir.Path())
+	u.PrintKeyValue("Hosts dir", hostsDir.Path())
 
 	var (
 		rType  string
@@ -102,7 +102,7 @@ func (h *Host) Add(configPath string) {
 		).
 		Value(&rType).
 		Run(); err != nil {
-		u.InfoLine("cancelled")
+		u.PrintInfoLine("cancelled")
 		return
 	}
 
@@ -156,7 +156,7 @@ func (h *Host) Add(configPath string) {
 		fields[i] = v
 	}
 	if err := huh.NewForm(huh.NewGroup(fields...)).Run(); err != nil {
-		u.InfoLine("cancelled")
+		u.PrintInfoLine("cancelled")
 		return
 	}
 
@@ -201,8 +201,8 @@ func (h *Host) Add(configPath string) {
 		h.p.Logger.Fatal("failed to write config: ", err)
 	}
 
-	u.SuccessLine("host created: " + filePath)
-	u.InfoLine("daemon will pick up changes automatically")
+	u.PrintSuccessLine("host created: " + filePath)
+	u.PrintInfoLine("daemon will pick up changes automatically")
 }
 
 func (h *Host) Remove(configPath string) {
@@ -224,7 +224,7 @@ func (h *Host) Remove(configPath string) {
 	u.SectionHeader("Remove host")
 
 	if len(fileNames) == 0 {
-		u.WarnLine("no host files found in " + hostsDir.Path())
+		u.PrintWarnLine("no host files found in " + hostsDir.Path())
 		return
 	}
 
@@ -237,7 +237,7 @@ func (h *Host) Remove(configPath string) {
 				Value(&selected),
 		),
 	).Run(); err != nil {
-		u.InfoLine("cancelled")
+		u.PrintInfoLine("cancelled")
 		return
 	}
 	if selected == "" {
@@ -248,8 +248,8 @@ func (h *Host) Remove(configPath string) {
 		h.p.Logger.Fatal("failed to delete file: ", err)
 	}
 
-	u.SuccessLine("removed: " + selected)
-	u.InfoLine("daemon will pick up changes automatically")
+	u.PrintSuccessLine("removed: " + selected)
+	u.PrintInfoLine("daemon will pick up changes automatically")
 }
 
 func (h *Host) resolveHostsDir(configPath string) expect.Folder {

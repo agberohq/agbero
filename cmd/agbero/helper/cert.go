@@ -1,7 +1,9 @@
 package helper
 
 import (
-	"os"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
 	"runtime"
 	"strings"
 
@@ -17,50 +19,57 @@ type Cert struct {
 	p *Helper
 }
 
-// newLocal builds a tlss.Local for CLI certificate operations (CA install,
-// uninstall, list). These operations manage the local development CA and are
-// disk-based by design: the CA must be accessible without keeper so that
-// agbero cert install can be run before keeper is configured.
-//
-// In ephemeral mode (serve/proxy) there is no keeper and this is always correct.
-// In full server mode the server's tlsstore (keeper-backed when keeper is
-// configured) handles cert management; cert CLI is for local CA trust only.
-func (c *Cert) newLocal(configPath string) (certsDir expect.Folder, loc *tlss.Local) {
-	if global, err := loadGlobal(configPath); err == nil && global.Storage.CertsDir != "" {
+// newStore returns a tlsstore.Store that uses the keeper when one is injected
+// into the Helper, falling back to a disk-backed store from the config file.
+// This ensures cert CLI commands always work against the same backend as the
+// running server regardless of whether certs are stored in keeper or on disk.
+func (c *Cert) newStore(configPath string) (tlsstore.Store, expect.Folder) {
+	var certsDir expect.Folder
+	var dataDir expect.Folder
+
+	if global, err := loadGlobal(configPath); err == nil {
 		certsDir = global.Storage.CertsDir
+		dataDir = global.Storage.DataDir
 	}
-	store := newDiskStore(certsDir)
-	loc = tlss.NewLocal(c.p.Logger, store)
-	return certsDir, loc
+
+	// Keeper takes priority — it is the post-migration backend.
+	if c.p.Store != nil {
+		store, err := tlsstore.NewKeeper(c.p.Store)
+		if err == nil {
+			return store, certsDir
+		}
+		c.p.Logger.Warnf("failed to create keeper TLS store, falling back to disk: %v", err)
+	}
+
+	store, err := tlsstore.NewDisk(tlsstore.DiskConfig{
+		DataDir: dataDir,
+		CertDir: certsDir,
+	})
+	if err == nil {
+		return store, certsDir
+	}
+	return tlsstore.NewMemory(), certsDir
 }
 
-// newDiskStore creates a tlsstore.Disk for the given certsDir.
-// On error or empty certsDir, falls back to memory so that read operations
-// on ephemeral/unconfigured installs still work gracefully.
-func newDiskStore(certsDir expect.Folder) tlsstore.Store {
-	if certsDir != "" {
-		ds, err := tlsstore.NewDisk(tlsstore.DiskConfig{CertDir: certsDir})
-		if err == nil {
-			return ds
-		}
-	}
-	return tlsstore.NewMemory()
+// newLocal returns a tlss.Local backed by the correct store (keeper or disk).
+func (c *Cert) newLocal(configPath string) *tlss.Local {
+	store, _ := c.newStore(configPath)
+	return tlss.NewLocal(c.p.Logger, store)
 }
 
 func (c *Cert) Install(configPath string, force bool) {
-	_, loc := c.newLocal(configPath)
+	loc := c.newLocal(configPath)
 
 	if force {
-		c.p.Logger.Info("Force flag detected. Removing existing CA and regenerating...")
+		c.p.Logger.Info("force flag: removing existing CA before reinstall")
 		_ = loc.UninstallCARoot()
 		loc.RemoveCA()
 	}
 
-	// InstallCARootIfNeeded is idempotent — safe to call unconditionally.
 	if err := loc.InstallCARootIfNeeded(); err != nil {
 		c.p.Logger.Fatal("failed to install CA: ", err)
 	}
-	c.p.Logger.Info("CA root installed successfully.")
+	c.p.Logger.Info("CA root installed successfully")
 	c.printNSSHint(loc)
 }
 
@@ -78,42 +87,42 @@ func (c *Cert) printNSSHint(loc *tlss.Local) {
 	}
 }
 
+// Uninstall removes the CA from the system trust store and deletes all
+// certificate data from the active store (keeper or disk).
 func (c *Cert) Uninstall(configPath string) {
-	certsDir, loc := c.newLocal(configPath)
-	c.p.Logger.Info("uninstalling CA...")
+	loc := c.newLocal(configPath)
+
+	c.p.Logger.Info("removing CA from system trust store")
 	if err := loc.UninstallCARoot(); err != nil {
-		c.p.Logger.Warnf("system trust store cleanup: %v (might already be removed)", err)
+		c.p.Logger.Warnf("system trust store cleanup: %v (may already be removed)", err)
 	} else {
-		c.p.Logger.Info("removed CA from system trust store")
+		c.p.Logger.Info("CA removed from system trust store")
 	}
 
-	// Clean up remaining PEM/key/crt files from the cert root directory.
-	files, err := certsDir.ReadFiles()
-	if err != nil {
-		c.p.Logger.Warnf("could not read dir: %v", err)
-		return
-	}
-
-	count := 0
-	for _, f := range files {
-		name := f.Name()
-		if strings.HasSuffix(name, ".pem") || strings.HasSuffix(name, ".key") || strings.HasSuffix(name, ".crt") {
-			if err := os.Remove(certsDir.FilePath(name)); err == nil {
-				count++
-			}
-		}
-	}
-
-	if count > 0 {
-		c.p.Logger.Infof("deleted %d certificate files from disk", count)
-	} else {
-		c.p.Logger.Warn("no certificate files found to delete")
-	}
-	c.p.Logger.Info("uninstall complete")
+	// Remove CA data from the store itself.
+	loc.RemoveCA()
+	c.p.Logger.Info("CA certificate removed from store")
 }
 
+// Delete removes a single domain's certificate from the active store.
+func (c *Cert) Delete(configPath, domain string) {
+	if domain == "" {
+		c.p.Logger.Fatal("domain is required")
+	}
+
+	store, _ := c.newStore(configPath)
+
+	u := ui.New()
+	if err := store.Delete(domain); err != nil {
+		c.p.Logger.Fatal("failed to delete certificate for ", domain, ": ", err)
+	}
+	u.PrintSuccessLine(fmt.Sprintf("certificate for %q deleted from store", domain))
+	u.Blank()
+}
+
+// List prints all certificates held in the active store.
 func (c *Cert) List(configPath string) {
-	_, loc := c.newLocal(configPath)
+	loc := c.newLocal(configPath)
 	certs, err := loc.ListCertificates()
 	if err != nil {
 		c.p.Logger.Fatal("failed to list certificates: ", err)
@@ -123,7 +132,7 @@ func (c *Cert) List(configPath string) {
 	u.SectionHeader("Certificates")
 
 	if len(certs) == 0 {
-		u.WarnLine("no certificates found")
+		u.PrintWarnLine("no certificates found")
 		return
 	}
 
@@ -132,49 +141,61 @@ func (c *Cert) List(configPath string) {
 		domain, kind := parseCertName(name)
 		rows = append(rows, []string{domain, kind, name})
 	}
-	u.Table([]string{"Domain", "Type", "File"}, rows)
+	u.PrintTable([]string{"Domain", "Type", "Key"}, rows)
 }
 
+// Info shows details about each certificate in the active store.
 func (c *Cert) Info(configPath string) {
-	global, err := loadGlobal(configPath)
-	if err != nil {
-		c.p.Logger.Warnf("could not load config: %v", err)
-		return
-	}
+	store, certsDir := c.newStore(configPath)
 
-	storageDir := global.Storage.CertsDir
 	u := ui.New()
 	u.SectionHeader("Certificate store")
-	u.KeyValue("Directory", storageDir.Path())
 
-	if !storageDir.ExistsAbsolute() {
-		u.WarnLine("store directory does not exist")
+	// Show storage backend.
+	if c.p.Store != nil {
+		u.PrintKeyValue("Backend", "keeper (encrypted)")
+	} else {
+		u.PrintKeyValue("Backend", "disk")
+		u.PrintKeyValue("Directory", certsDir.Path())
+	}
+
+	domains, err := store.List()
+	if err != nil {
+		u.ErrorHint("cannot read store", err.Error())
 		return
 	}
 
-	files, err := storageDir.ReadFiles()
-	if err != nil {
-		u.ErrorHint("cannot read directory", err.Error())
+	if len(domains) == 0 {
+		u.PrintWarnLine("no certificates found")
 		return
 	}
 
 	var rows [][]string
-	for _, file := range files {
-		if strings.HasSuffix(file.Name(), ".pem") {
-			info, _ := file.Info()
-			rows = append(rows, []string{
-				file.Name(),
-				humanize.Bytes(uint64(info.Size())),
-				info.ModTime().Format("2006-01-02"),
-			})
+	for _, domain := range domains {
+		certPEM, _, loadErr := store.Load(domain)
+		if loadErr != nil || len(certPEM) == 0 {
+			rows = append(rows, []string{domain, "—", "—", "unreadable"})
+			continue
 		}
+
+		block, _ := pem.Decode(certPEM)
+		if block == nil {
+			rows = append(rows, []string{domain, "—", "—", "invalid PEM"})
+			continue
+		}
+
+		cert, parseErr := x509.ParseCertificate(block.Bytes)
+		if parseErr != nil {
+			rows = append(rows, []string{domain, "—", "—", "parse error"})
+			continue
+		}
+
+		size := humanize.Bytes(uint64(len(certPEM)))
+		expiry := cert.NotAfter.Format("2006-01-02")
+		rows = append(rows, []string{domain, size, expiry, cert.Issuer.CommonName})
 	}
 
-	if len(rows) == 0 {
-		u.WarnLine("no certificates found")
-		return
-	}
-	u.Table([]string{"Certificate", "Size", "Modified"}, rows)
+	u.PrintTable([]string{"Domain", "Size", "Expires", "Issuer"}, rows)
 }
 
 func parseCertName(name string) (domain, kind string) {

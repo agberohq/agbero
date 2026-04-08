@@ -7,6 +7,8 @@ type Config struct {
 	DevMode     bool
 	InstallHere bool
 
+	// UninstallForce: skip confirmation prompt AND remove the binary.
+	// Without --force the confirmation is always shown and the binary is kept.
 	UninstallAll   bool
 	UninstallForce bool
 
@@ -15,6 +17,7 @@ type Config struct {
 
 	ForceCAInstall bool
 	CertDir        string
+	CertDomain     string // domain argument for cert delete
 
 	ClusterJoinIP string
 	ClusterSecret string
@@ -42,7 +45,6 @@ type Config struct {
 	SystemForce bool
 	SystemYes   bool
 
-	// Keeper subcommands
 	KeeperKey     string
 	KeeperValue   string
 	KeeperB64     bool
@@ -51,6 +53,5 @@ type Config struct {
 	KeeperUser    string
 	KeeperOutFile string
 
-	// Admin subcommands
 	AdminPassword string
 }
