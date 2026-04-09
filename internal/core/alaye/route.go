@@ -8,7 +8,6 @@ import (
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/cespare/xxhash/v2"
 	"github.com/olekukonko/errors"
-	"github.com/olekukonko/ll"
 )
 
 type Route struct {
@@ -58,8 +57,6 @@ func (r *Route) Validate() error {
 	isWeb := r.Web.Root.IsSet() || (r.Web.Git.Enabled.Active() && !r.Serverless.Enabled.Active())
 	isBackend := len(r.Backends.Servers) > 0
 	isServerless := r.Serverless.Enabled.Active()
-
-	ll.Output(r.Serverless, isServerless)
 
 	engines := 0
 	if isWeb {

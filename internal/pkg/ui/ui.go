@@ -787,7 +787,7 @@ func (u *UI) Sprint(s string) string { return lipgloss.Sprint(s) }
 
 func (u *UI) Confirm(prompt string, helpText ...string) (bool, error) {
 	u.Flush()
-	var value bool
+	value := true
 	c := huh.NewConfirm().
 		Title(prompt).
 		WithButtonAlignment(lipgloss.Left).
