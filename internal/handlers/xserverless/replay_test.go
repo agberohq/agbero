@@ -87,7 +87,7 @@ func TestFixedMode_QueryMerge(t *testing.T) {
 		Resource: resource.New(),
 		REST: alaye.Replay{
 			URL:          ts.URL,
-			ForwardQuery: alaye.NewEnabled(true),
+			ForwardQuery: expect.NewEnabled(true),
 			Query:        map[string]expect.Value{"static": expect.Value("value")},
 		},
 	})
@@ -367,7 +367,7 @@ func TestStripHeaders_RemovesUpstreamSecurityHeaders(t *testing.T) {
 		REST: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"127.0.0.1", "localhost"},
-			StripHeaders:   alaye.NewEnabled(true),
+			StripHeaders:   expect.NewEnabled(true),
 		},
 	})
 
@@ -403,7 +403,7 @@ func TestNoStripHeaders_ForwardsAll(t *testing.T) {
 		REST: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"127.0.0.1", "localhost"},
-			StripHeaders:   alaye.NewEnabled(false),
+			StripHeaders:   expect.NewEnabled(false),
 		},
 	})
 
@@ -433,7 +433,7 @@ func TestAuthMeta_ValidNonce(t *testing.T) {
 			URL:            "",
 			AllowedDomains: []string{"127.0.0.1", "localhost"},
 			Auth: alaye.RestAuth{
-				Enabled: alaye.NewEnabled(true),
+				Enabled: expect.NewEnabled(true),
 				Method:  "meta",
 			},
 		},
@@ -458,7 +458,7 @@ func TestAuthMeta_MissingNonce(t *testing.T) {
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 			Auth: alaye.RestAuth{
-				Enabled: alaye.NewEnabled(true),
+				Enabled: expect.NewEnabled(true),
 				Method:  "meta",
 			},
 		},
@@ -481,7 +481,7 @@ func TestAuthMeta_StoreNotInitialised(t *testing.T) {
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 			Auth: alaye.RestAuth{
-				Enabled: alaye.NewEnabled(true),
+				Enabled: expect.NewEnabled(true),
 				Method:  "meta",
 			},
 		},
@@ -510,7 +510,7 @@ func TestAuthDirect_ValidCookie(t *testing.T) {
 			URL:            "",
 			AllowedDomains: []string{"127.0.0.1", "localhost"},
 			Auth: alaye.RestAuth{
-				Enabled: alaye.NewEnabled(true),
+				Enabled: expect.NewEnabled(true),
 				Method:  "direct",
 			},
 		},
@@ -533,7 +533,7 @@ func TestAuthDirect_MissingCookie(t *testing.T) {
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 			Auth: alaye.RestAuth{
-				Enabled: alaye.NewEnabled(true),
+				Enabled: expect.NewEnabled(true),
 				Method:  "direct",
 			},
 		},
@@ -555,7 +555,7 @@ func TestAuthDirect_EmptyCookie(t *testing.T) {
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 			Auth: alaye.RestAuth{
-				Enabled: alaye.NewEnabled(true),
+				Enabled: expect.NewEnabled(true),
 				Method:  "direct",
 			},
 		},
@@ -585,7 +585,7 @@ func TestAuthToken_ValidWithSecret(t *testing.T) {
 			URL:            "",
 			AllowedDomains: []string{"127.0.0.1", "localhost"},
 			Auth: alaye.RestAuth{
-				Enabled: alaye.NewEnabled(true),
+				Enabled: expect.NewEnabled(true),
 				Method:  "token",
 				Secret:  expect.Value("my-secret-token"),
 			},
@@ -609,7 +609,7 @@ func TestAuthToken_InvalidWithSecret(t *testing.T) {
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 			Auth: alaye.RestAuth{
-				Enabled: alaye.NewEnabled(true),
+				Enabled: expect.NewEnabled(true),
 				Method:  "token",
 				Secret:  expect.Value("my-secret-token"),
 			},
@@ -633,7 +633,7 @@ func TestAuthToken_MissingHeader(t *testing.T) {
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 			Auth: alaye.RestAuth{
-				Enabled: alaye.NewEnabled(true),
+				Enabled: expect.NewEnabled(true),
 				Method:  "token",
 				Secret:  expect.Value("secret"),
 			},
@@ -656,7 +656,7 @@ func TestAuthToken_NoSecretConfigured(t *testing.T) {
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 			Auth: alaye.RestAuth{
-				Enabled: alaye.NewEnabled(true),
+				Enabled: expect.NewEnabled(true),
 				Method:  "token",
 				// Secret intentionally empty → should reject all tokens
 			},

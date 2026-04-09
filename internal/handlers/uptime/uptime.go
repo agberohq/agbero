@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/cluster"
 	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/agberohq/agbero/internal/hub/discovery"
@@ -218,7 +219,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 					Score:  100,
 				}
 
-				hasProber := route.HealthCheck.Enabled.Active() || (route.HealthCheck.Enabled == alaye.Unknown && route.HealthCheck.Path != "")
+				hasProber := route.HealthCheck.Enabled.Active() || (route.HealthCheck.Enabled == expect.Unknown && route.HealthCheck.Path != "")
 
 				if hScore, hasScore := res.Health.Get(statsKey); hasScore {
 					hSnapStruct.Score = int(hScore.Value())
@@ -312,7 +313,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 					Score:  100,
 				}
 
-				hasProber := proxy.HealthCheck.Enabled.Active() || (proxy.HealthCheck.Enabled == alaye.Unknown && (proxy.HealthCheck.Send != "" || proxy.HealthCheck.Expect != "")) || strings.HasSuffix(addressStr, ":6379")
+				hasProber := proxy.HealthCheck.Enabled.Active() || (proxy.HealthCheck.Enabled == expect.Unknown && (proxy.HealthCheck.Send != "" || proxy.HealthCheck.Expect != "")) || strings.HasSuffix(addressStr, ":6379")
 
 				if hScore, hasScore := res.Health.Get(statsKey); hasScore {
 					hSnapStruct.Score = int(hScore.Value())

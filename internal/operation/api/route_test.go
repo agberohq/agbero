@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cluster"
 	"github.com/go-chi/chi/v5"
@@ -93,7 +94,7 @@ func TestRouteAPI(t *testing.T) {
 	route := alaye.Route{
 		Path: "/api",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: []alaye.Server{{Address: "http://localhost:3000"}},
 		},
 	}

@@ -59,17 +59,17 @@ func TestPebbleIntegration(t *testing.T) {
 			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{
-			Enabled:   alaye.Inactive,
+			Enabled:   expect.Inactive,
 			SecretKey: "test-secret-1234567890123456",
 		},
 		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Email:   "test@pebble.local",
-			Staging: alaye.Inactive,
+			Staging: expect.Inactive,
 			Pebble: alaye.Pebble{
-				Enabled:  alaye.Active,
+				Enabled:  expect.Active,
 				URL:      pebbleURL,
-				Insecure: alaye.Active,
+				Insecure: expect.Active,
 			},
 		},
 	}
@@ -134,12 +134,12 @@ func TestPebbleWithCustomDomain(t *testing.T) {
 			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Email:   "test@pebble.local",
 			Pebble: alaye.Pebble{
-				Enabled:  alaye.Active,
+				Enabled:  expect.Active,
 				URL:      "https://localhost:14000/dir",
-				Insecure: alaye.Active,
+				Insecure: expect.Active,
 			},
 		},
 	}
@@ -193,12 +193,12 @@ func TestACMEProvider_PebbleIntegration(t *testing.T) {
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Email:   "test@pebble.local",
 			Pebble: alaye.Pebble{
-				Enabled:  alaye.Active,
+				Enabled:  expect.Active,
 				URL:      pebbleURL,
-				Insecure: alaye.Active,
+				Insecure: expect.Active,
 			},
 		},
 	}

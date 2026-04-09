@@ -14,8 +14,8 @@ var validHTTPMethods = map[string]struct{}{
 }
 
 type Replay struct {
-	Name    string  `hcl:"name,label"    json:"name"`
-	Enabled Enabled `hcl:"enabled,attr"  json:"enabled"`
+	Name    string        `hcl:"name,label"    json:"name"`
+	Enabled expect.Toggle `hcl:"enabled,attr"  json:"enabled"`
 
 	Env map[string]expect.Value `hcl:"env,attr" json:"env"`
 
@@ -23,14 +23,14 @@ type Replay struct {
 	Methods      []string                `hcl:"methods,attr"       json:"methods"`
 	Headers      map[string]string       `hcl:"headers,attr"       json:"headers"`
 	Query        map[string]expect.Value `hcl:"query,attr"         json:"query"`
-	ForwardQuery Enabled                 `hcl:"forward_query,attr" json:"forward_query"`
+	ForwardQuery expect.Toggle           `hcl:"forward_query,attr" json:"forward_query"`
 	Timeout      Duration                `hcl:"timeout,attr"       json:"timeout"`
 	Cache        Cache                   `hcl:"cache,block"        json:"cache"`
 
 	// Replay mode (url must be empty).
-	AllowedDomains []string `hcl:"allowed_domains,attr" json:"allowed_domains"`
-	StripHeaders   Enabled  `hcl:"strip_headers,attr"   json:"strip_headers"`
-	Auth           RestAuth `hcl:"auth,block"           json:"auth"`
+	AllowedDomains []string      `hcl:"allowed_domains,attr" json:"allowed_domains"`
+	StripHeaders   expect.Toggle `hcl:"strip_headers,attr"   json:"strip_headers"`
+	Auth           RestAuth      `hcl:"auth,block"           json:"auth"`
 
 	// Referer handling for upstream requests
 	RefererMode  string `hcl:"referer_mode,attr"  json:"referer_mode"`  // "auto" | "fixed" | "forward" | "none"
@@ -39,9 +39,9 @@ type Replay struct {
 
 // RestAuth configures the authentication guard for replay mode.
 type RestAuth struct {
-	Enabled Enabled      `hcl:"enabled,attr" json:"enabled"`
-	Method  string       `hcl:"method,attr"  json:"method"`
-	Secret  expect.Value `hcl:"secret,attr"  json:"secret"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Method  string        `hcl:"method,attr"  json:"method"`
+	Secret  expect.Value  `hcl:"secret,attr"  json:"secret"`
 }
 
 // IsReplayMode reports whether this Replay block is configured in replay mode

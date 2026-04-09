@@ -360,7 +360,7 @@ func TestHostHandler_ProtectedHost(t *testing.T) {
 	defer cleanup()
 
 	shared.Discovery.Set("protected.example.com", &alaye.Host{
-		Protected: alaye.Active,
+		Protected: expect.Active,
 		Domains:   []string{"protected.example.com"},
 		Routes: []alaye.Route{{
 			Path:     "/",

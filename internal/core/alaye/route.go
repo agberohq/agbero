@@ -12,8 +12,8 @@ import (
 )
 
 type Route struct {
-	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
-	Path    string  `hcl:"path,label" json:"path"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Path    string        `hcl:"path,label" json:"path"`
 
 	Env map[string]expect.Value `hcl:"env,attr" json:"env"`
 

@@ -3,11 +3,12 @@ package alaye
 import (
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
 type Wasm struct {
-	Enabled     Enabled           `hcl:"enabled,attr" json:"enabled"`
+	Enabled     expect.Toggle     `hcl:"enabled,attr" json:"enabled"`
 	Module      string            `hcl:"module,attr" json:"module"`
 	Config      map[string]string `hcl:"config,attr" json:"config"`
 	MaxBodySize int64             `hcl:"max_body_size,attr" json:"max_body_size"`

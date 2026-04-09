@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/ll"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -17,7 +18,7 @@ var (
 func TestBasic_SuccessHashed(t *testing.T) {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
 	cfg := &alaye.BasicAuth{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Users:   []string{"user:" + string(hash)},
 	}
 
@@ -39,7 +40,7 @@ func TestBasic_SuccessHashed(t *testing.T) {
 // in the users list is rejected with 401 — only bcrypt hashes are accepted.
 func TestBasic_PlaintextPasswordRejected(t *testing.T) {
 	cfg := &alaye.BasicAuth{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Users:   []string{"user:pass"},
 	}
 
@@ -60,7 +61,7 @@ func TestBasic_PlaintextPasswordRejected(t *testing.T) {
 func TestBasic_InvalidPassword(t *testing.T) {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
 	cfg := &alaye.BasicAuth{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Users:   []string{"user:" + string(hash)},
 	}
 
@@ -79,7 +80,7 @@ func TestBasic_InvalidPassword(t *testing.T) {
 func TestBasic_NoAuthHeader(t *testing.T) {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
 	cfg := &alaye.BasicAuth{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Users:   []string{"user:" + string(hash)},
 	}
 
@@ -100,7 +101,7 @@ func TestBasic_NoAuthHeader(t *testing.T) {
 func TestBasic_InvalidUser(t *testing.T) {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
 	cfg := &alaye.BasicAuth{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Users:   []string{"user:" + string(hash)},
 	}
 
@@ -118,7 +119,7 @@ func TestBasic_InvalidUser(t *testing.T) {
 
 func TestBasic_DisabledPassesThrough(t *testing.T) {
 	cfg := &alaye.BasicAuth{
-		Enabled: alaye.Inactive,
+		Enabled: expect.Inactive,
 	}
 
 	reached := false

@@ -8,16 +8,16 @@ import (
 )
 
 type Web struct {
-	Enabled  Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Root     WebRoot  `hcl:"root,attr" json:"root"`
-	Index    []string `hcl:"index,optional" json:"index"`
-	Listing  Enabled  `hcl:"listing,attr" json:"listing"`
-	SPA      Enabled  `hcl:"spa,attr" json:"spa"`
-	NoCache  Enabled  `hcl:"no_cache,attr" json:"no_cache"`
-	PHP      PHP      `hcl:"php,block" json:"php"`
-	Git      Git      `hcl:"git,block" json:"git"`
-	Markdown Markdown `hcl:"markdown,block" json:"markdown"`
-	Nonce    WebNonce `hcl:"nonce,block"    json:"nonce"`
+	Enabled  expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Root     WebRoot       `hcl:"root,attr" json:"root"`
+	Index    []string      `hcl:"index,optional" json:"index"`
+	Listing  expect.Toggle `hcl:"listing,attr" json:"listing"`
+	SPA      expect.Toggle `hcl:"spa,attr" json:"spa"`
+	NoCache  expect.Toggle `hcl:"no_cache,attr" json:"no_cache"`
+	PHP      PHP           `hcl:"php,block" json:"php"`
+	Git      Git           `hcl:"git,block" json:"git"`
+	Markdown Markdown      `hcl:"markdown,block" json:"markdown"`
+	Nonce    WebNonce      `hcl:"nonce,block"    json:"nonce"`
 }
 
 func (w *Web) Validate() error {
@@ -49,8 +49,8 @@ func (w *Web) Validate() error {
 // injects <meta name="agbero-replay-nonce" data-endpoint="…" content="…">
 // before </head> in every HTML response it serves.
 type WebNonce struct {
-	Enabled   Enabled  `hcl:"enabled,attr"   json:"enabled"`
-	Endpoints []string `hcl:"endpoints,attr" json:"endpoints"`
+	Enabled   expect.Toggle `hcl:"enabled,attr"   json:"enabled"`
+	Endpoints []string      `hcl:"endpoints,attr" json:"endpoints"`
 }
 
 type GitAuth struct {
@@ -73,7 +73,7 @@ func (a *GitAuth) Validate() error {
 }
 
 type Git struct {
-	Enabled  Enabled       `hcl:"enabled,attr" json:"enabled"`
+	Enabled  expect.Toggle `hcl:"enabled,attr" json:"enabled"`
 	ID       string        `hcl:"id,attr" json:"id"`
 	URL      string        `hcl:"url,attr" json:"url"`
 	Branch   string        `hcl:"branch,attr" json:"branch"`
@@ -111,16 +111,16 @@ func (w WebRoot) String() string {
 }
 
 type Markdown struct {
-	Enabled         Enabled   `hcl:"enabled,attr" json:"enabled"`
-	UnsafeHTML      Enabled   `hcl:"unsafe,attr" json:"unsafe"`
-	TableOfContents Enabled   `hcl:"toc,attr" json:"toc,omitempty"`
-	SyntaxHighlight Highlight `hcl:"highlight,block" json:"highlight"`
-	Extensions      []string  `hcl:"extensions,attr" json:"extensions,omitempty"`
-	Template        string    `hcl:"template,attr" json:"template,omitempty"`
-	View            string    `hcl:"view,attr" json:"view,omitempty"`
+	Enabled         expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	UnsafeHTML      expect.Toggle `hcl:"unsafe,attr" json:"unsafe"`
+	TableOfContents expect.Toggle `hcl:"toc,attr" json:"toc,omitempty"`
+	SyntaxHighlight Highlight     `hcl:"highlight,block" json:"highlight"`
+	Extensions      []string      `hcl:"extensions,attr" json:"extensions,omitempty"`
+	Template        string        `hcl:"template,attr" json:"template,omitempty"`
+	View            string        `hcl:"view,attr" json:"view,omitempty"`
 }
 
 type Highlight struct {
-	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
-	Theme   string  `hcl:"theme,attr" json:"theme,omitempty"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Theme   string        `hcl:"theme,attr" json:"theme,omitempty"`
 }

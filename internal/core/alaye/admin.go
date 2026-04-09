@@ -5,13 +5,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
 type Admin struct {
-	Enabled    Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Address    string   `hcl:"address,attr" json:"address"`
-	AllowedIPs []string `hcl:"allowed_ips,attr" json:"allowed_ips"`
+	Enabled    expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Address    string        `hcl:"address,attr" json:"address"`
+	AllowedIPs []string      `hcl:"allowed_ips,attr" json:"allowed_ips"`
 
 	TOTP TOTP `hcl:"totp,block" json:"totp"`
 
@@ -67,7 +68,7 @@ func (a *Admin) Validate() error {
 }
 
 type TOTP struct {
-	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
 	// Users      []TOTPUser `hcl:"user,block" json:"users"`
 	Issuer     string `hcl:"issuer,attr" json:"issuer"`
 	Algorithm  string `hcl:"algorithm,attr" json:"algorithm"`

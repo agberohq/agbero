@@ -101,8 +101,8 @@ func TestNewManager_MinimalConfig(t *testing.T) {
 
 func TestManager_Firewall(t *testing.T) {
 	cfg := testManagerConfig(t)
-	cfg.Global.Security.Enabled = alaye.Active
-	cfg.Global.Security.Firewall.Status = alaye.Active
+	cfg.Global.Security.Enabled = expect.Active
+	cfg.Global.Security.Firewall.Status = expect.Active
 	cfg.Global.Security.Firewall.Mode = "active"
 	cfg.Global.Storage.DataDir = expect.NewFolder(t.TempDir())
 
@@ -223,7 +223,7 @@ func TestManager_BuildListeners_TCPProxy(t *testing.T) {
 		Domains: []string{"example.com"},
 		Proxies: []alaye.Proxy{
 			{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Name:    "test-tcp",
 				Listen:  ":9999",
 				Backends: []alaye.Server{
@@ -264,7 +264,7 @@ func TestManager_BuildListeners_TCPProxy(t *testing.T) {
 
 func TestManager_chainBuild(t *testing.T) {
 	cfg := testManagerConfig(t)
-	cfg.Global.Logging.Prometheus.Enabled = alaye.Active
+	cfg.Global.Logging.Prometheus.Enabled = expect.Active
 
 	m, err := NewManager(cfg)
 	if err != nil {
@@ -451,11 +451,11 @@ func TestManager_handleRoute_WASM_InvalidModule(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(root),
 		},
 		Wasm: alaye.Wasm{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Module:  "/nonexistent.wasm",
 		},
 	}
@@ -469,11 +469,11 @@ func TestManager_handleRoute_WASM_InvalidModule(t *testing.T) {
 				ReadHeader: alaye.Duration(5 * time.Second),
 			},
 			Security: alaye.Security{
-				Enabled:        alaye.Inactive,
+				Enabled:        expect.Inactive,
 				TrustedProxies: []string{},
 			},
 			RateLimits: alaye.GlobalRate{
-				Enabled:    alaye.Inactive,
+				Enabled:    expect.Inactive,
 				TTL:        alaye.Duration(10 * time.Minute),
 				MaxEntries: 10000,
 			},
@@ -520,11 +520,11 @@ func TestManager_handleRoute_RateLimit_IgnoreGlobal(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(root),
 		},
 		RateLimit: alaye.RouteRate{
-			Enabled:      alaye.Active,
+			Enabled:      expect.Active,
 			IgnoreGlobal: true,
 		},
 	}
@@ -532,10 +532,10 @@ func TestManager_handleRoute_RateLimit_IgnoreGlobal(t *testing.T) {
 	cfg := ManagerConfig{
 		Global: &alaye.Global{
 			RateLimits: alaye.GlobalRate{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Rules: []alaye.RateRule{
 					{
-						Enabled:  alaye.Active,
+						Enabled:  expect.Active,
 						Requests: 1,
 						Window:   alaye.Duration(time.Second),
 					},
@@ -592,7 +592,7 @@ func TestManager_redirectToHTTPS(t *testing.T) {
 
 func TestManager_logRequest_SkipPath(t *testing.T) {
 	cfg := testManagerConfig(t)
-	cfg.Global.Logging.Enabled = alaye.Active
+	cfg.Global.Logging.Enabled = expect.Active
 	cfg.Global.Logging.Skip = []string{"/health"}
 
 	m, err := NewManager(cfg)
@@ -607,7 +607,7 @@ func TestManager_logRequest_SkipPath(t *testing.T) {
 
 func TestManager_logRequest_WithUserAgent(t *testing.T) {
 	cfg := testManagerConfig(t)
-	cfg.Global.Logging.Enabled = alaye.Active
+	cfg.Global.Logging.Enabled = expect.Active
 
 	m, err := NewManager(cfg)
 	if err != nil {
@@ -629,7 +629,7 @@ func TestManager_wasmManager_Cache(t *testing.T) {
 	defer m.Close()
 
 	wasmCfg := &alaye.Wasm{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Module:  "/nonexistent.wasm",
 	}
 
@@ -653,7 +653,7 @@ func TestManager_wasmCleanup(t *testing.T) {
 	defer m.Close()
 
 	wasmCfg := &alaye.Wasm{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Module:  "/nonexistent.wasm",
 	}
 	_, _ = m.wasmManager(wasmCfg, "key1")
@@ -703,7 +703,7 @@ func TestManager_buildGlobalRateLimiter_Nil(t *testing.T) {
 func TestManager_buildGlobalRateLimiter_Disabled(t *testing.T) {
 	global := &alaye.Global{
 		RateLimits: alaye.GlobalRate{
-			Enabled: alaye.Inactive,
+			Enabled: expect.Inactive,
 		},
 	}
 	result := buildGlobalRateLimiter(global, nil, nil)
@@ -715,10 +715,10 @@ func TestManager_buildGlobalRateLimiter_Disabled(t *testing.T) {
 func TestManager_buildGlobalRateLimiter_ACMEExcluded(t *testing.T) {
 	global := &alaye.Global{
 		RateLimits: alaye.GlobalRate{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Rules: []alaye.RateRule{
 				{
-					Enabled:  alaye.Active,
+					Enabled:  expect.Active,
 					Requests: 100,
 					Window:   alaye.Duration(time.Minute),
 				},

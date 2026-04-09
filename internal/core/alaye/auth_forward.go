@@ -10,12 +10,12 @@ import (
 )
 
 type ForwardAuth struct {
-	Enabled      Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Name         string   `hcl:"name,label" json:"name"`
-	URL          string   `hcl:"url,attr" json:"url"`
-	OnFailure    string   `hcl:"on_failure,attr" json:"on_failure"`
-	Timeout      Duration `hcl:"timeout,attr" json:"timeout"`
-	AllowPrivate bool     `hcl:"allow_private,attr" json:"allow_private"`
+	Enabled      expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Name         string        `hcl:"name,label" json:"name"`
+	URL          string        `hcl:"url,attr" json:"url"`
+	OnFailure    string        `hcl:"on_failure,attr" json:"on_failure"`
+	Timeout      Duration      `hcl:"timeout,attr" json:"timeout"`
+	AllowPrivate bool          `hcl:"allow_private,attr" json:"allow_private"`
 
 	TLS      ForwardTLS          `hcl:"tls,block" json:"tls,omitempty"`
 	Request  ForwardAuthRequest  `hcl:"request,block" json:"request"`
@@ -23,29 +23,29 @@ type ForwardAuth struct {
 }
 
 type ForwardTLS struct {
-	Enabled            Enabled      `hcl:"enabled,attr" json:"enabled"`
-	InsecureSkipVerify bool         `hcl:"insecure_skip_verify,attr" json:"insecure_skip_verify"`
-	ClientCert         expect.Value `hcl:"client_cert,attr" json:"client_cert"`
-	ClientKey          expect.Value `hcl:"client_key,attr" json:"client_key"`
-	CA                 expect.Value `hcl:"ca,attr" json:"ca"`
+	Enabled            expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	InsecureSkipVerify bool          `hcl:"insecure_skip_verify,attr" json:"insecure_skip_verify"`
+	ClientCert         expect.Value  `hcl:"client_cert,attr" json:"client_cert"`
+	ClientKey          expect.Value  `hcl:"client_key,attr" json:"client_key"`
+	CA                 expect.Value  `hcl:"ca,attr" json:"ca"`
 }
 
 type ForwardAuthRequest struct {
-	Enabled       Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Headers       []string `hcl:"headers,attr" json:"headers"`
-	Method        string   `hcl:"method,attr" json:"method"`
-	ForwardMethod bool     `hcl:"forward_method,attr" json:"forward_method"`
-	ForwardURI    bool     `hcl:"forward_uri,attr" json:"forward_uri"`
-	ForwardIP     bool     `hcl:"forward_ip,attr" json:"forward_ip"`
-	BodyMode      string   `hcl:"body_mode,attr" json:"body_mode"`
-	MaxBody       int64    `hcl:"max_body,attr" json:"max_body"`
-	CacheKey      []string `hcl:"cache_key,attr" json:"cache_key"`
+	Enabled       expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Headers       []string      `hcl:"headers,attr" json:"headers"`
+	Method        string        `hcl:"method,attr" json:"method"`
+	ForwardMethod bool          `hcl:"forward_method,attr" json:"forward_method"`
+	ForwardURI    bool          `hcl:"forward_uri,attr" json:"forward_uri"`
+	ForwardIP     bool          `hcl:"forward_ip,attr" json:"forward_ip"`
+	BodyMode      string        `hcl:"body_mode,attr" json:"body_mode"`
+	MaxBody       int64         `hcl:"max_body,attr" json:"max_body"`
+	CacheKey      []string      `hcl:"cache_key,attr" json:"cache_key"`
 }
 
 type ForwardAuthResponse struct {
-	Enabled     Enabled  `hcl:"enabled,attr" json:"enabled"`
-	CopyHeaders []string `hcl:"copy_headers,attr" json:"copy_headers"`
-	CacheTTL    Duration `hcl:"cache_ttl,attr" json:"cache_ttl"`
+	Enabled     expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	CopyHeaders []string      `hcl:"copy_headers,attr" json:"copy_headers"`
+	CacheTTL    Duration      `hcl:"cache_ttl,attr" json:"cache_ttl"`
 }
 
 // Validate checks that the forward_auth block is correctly configured.

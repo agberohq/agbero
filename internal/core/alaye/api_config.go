@@ -4,13 +4,14 @@ import (
 	"net"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
 type API struct {
-	Enabled    Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Address    string   `hcl:"address,attr" json:"address"`
-	AllowedIPs []string `hcl:"allowed_ips,attr" json:"allowed_ips"`
+	Enabled    expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Address    string        `hcl:"address,attr" json:"address"`
+	AllowedIPs []string      `hcl:"allowed_ips,attr" json:"allowed_ips"`
 }
 
 // Validate checks that the API block address is well-formed when enabled.

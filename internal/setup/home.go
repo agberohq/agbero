@@ -80,7 +80,7 @@ func (h *Home) initializeKeeper() (*keeper.Keeper, *session, error) {
 
 	store, err := secrets.Open(secrets.Config{
 		DataDir:     h.ctx.Paths.DataDir,
-		Setting:     &alaye.Keeper{Enabled: alaye.Active},
+		Setting:     &alaye.Keeper{Enabled: expect.Active},
 		Logger:      h.ctx.Logger,
 		Interactive: true,
 	})

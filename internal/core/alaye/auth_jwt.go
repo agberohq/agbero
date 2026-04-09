@@ -6,7 +6,7 @@ import (
 )
 
 type JWTAuth struct {
-	Enabled  Enabled           `hcl:"enabled,attr" json:"enabled"`
+	Enabled  expect.Toggle     `hcl:"enabled,attr" json:"enabled"`
 	Secret   expect.Value      `hcl:"secret,attr" json:"secret"`
 	ClaimMap map[string]string `hcl:"claims_to_headers,attr" json:"claim_map"`
 	Issuer   string            `hcl:"issuer,attr" json:"issuer"`

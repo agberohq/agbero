@@ -85,7 +85,7 @@ func TestManager_Register_And_Webhook(t *testing.T) {
 		time.Sleep(testCleanupSleep)
 	})
 	cfg := alaye.Git{
-		Enabled:  alaye.Active,
+		Enabled:  expect.Active,
 		URL:      upstream,
 		Branch:   "master",
 		Secret:   expect.Value("my_super_secret"),
@@ -149,7 +149,7 @@ func TestManager_Health(t *testing.T) {
 	})
 	defer mgr.Stop()
 	cfg := alaye.Git{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		URL:     upstream,
 		Branch:  "master",
 	}
@@ -183,17 +183,19 @@ func TestManager_Register_Update(t *testing.T) {
 	setupTestRepo(t, upstream)
 	logger := ll.New("test").Disable()
 	pool := jack.NewPool(testPoolSize)
+
+	workDir := expect.NewFolder(t.TempDir())
 	mgr, _ := NewManager(ManagerConfig{
-		WorkDir: expect.NewFolder(t.TempDir()),
+		WorkDir: workDir,
 		Pool:    pool,
 		Logger:  logger,
 	})
-	defer mgr.Stop()
 
 	cfg1 := alaye.Git{
-		Enabled: alaye.Active,
-		URL:     upstream,
-		Branch:  "master",
+		Enabled:  expect.Active,
+		URL:      upstream,
+		Branch:   "master",
+		Interval: alaye.Duration(50 * time.Millisecond), // Short interval to test
 	}
 
 	err := mgr.Register("update_route", cfg1)
@@ -201,8 +203,11 @@ func TestManager_Register_Update(t *testing.T) {
 		t.Fatalf("Register failed: %v", err)
 	}
 
+	// Give it time to start polling
+	time.Sleep(100 * time.Millisecond)
+
 	cfg2 := alaye.Git{
-		Enabled:  alaye.Active,
+		Enabled:  expect.Active,
 		URL:      upstream,
 		Branch:   "master",
 		Secret:   expect.Value("new_secret"),
@@ -224,4 +229,8 @@ func TestManager_Register_Update(t *testing.T) {
 	if entry.Config.Interval.StdDuration() != 1*time.Minute {
 		t.Errorf("expected interval to be updated to 1m, got %v", entry.Config.Interval.StdDuration())
 	}
+
+	// Stop before cleanup
+	mgr.Stop()
+	time.Sleep(testCleanupSleep)
 }

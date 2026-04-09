@@ -1,9 +1,11 @@
 package alaye
 
+import "github.com/agberohq/agbero/internal/core/expect"
+
 type CircuitBreaker struct {
-	Enabled   Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Threshold int      `hcl:"threshold,attr" json:"threshold"`
-	Duration  Duration `hcl:"duration,attr" json:"duration"`
+	Enabled   expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Threshold int           `hcl:"threshold,attr" json:"threshold"`
+	Duration  Duration      `hcl:"duration,attr" json:"duration"`
 }
 
 // Validate checks that threshold and duration are non-negative when circuit breaker is enabled.

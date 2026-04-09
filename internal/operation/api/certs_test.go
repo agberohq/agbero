@@ -57,8 +57,8 @@ func setupTestCerts(t *testing.T) (*Shared, func()) {
 			DataDir:  dataDir,
 			HostsDir: hostsDir,
 		},
-		LetsEncrypt: alaye.LetsEncrypt{Enabled: alaye.Inactive},
-		Gossip:      alaye.Gossip{Enabled: alaye.Inactive},
+		LetsEncrypt: alaye.LetsEncrypt{Enabled: expect.Inactive},
+		Gossip:      alaye.Gossip{Enabled: expect.Inactive},
 	}
 
 	hm := newMockHostManagerForCerts(t)

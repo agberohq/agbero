@@ -9,18 +9,18 @@ import (
 )
 
 type Gossip struct {
-	Enabled     Enabled      `hcl:"enabled,attr" json:"enabled"`
-	Port        int          `hcl:"port,attr" json:"port"`
-	SecretKey   expect.Value `hcl:"secret_key,attr" json:"secret-key"`
-	Seeds       []string     `hcl:"seeds,attr" json:"seeds"`
-	TTL         int          `hcl:"ttl,attr" json:"ttl"`
-	SharedState SharedState  `hcl:"shared_state,block" json:"shared_state"`
+	Enabled     expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Port        int           `hcl:"port,attr" json:"port"`
+	SecretKey   expect.Value  `hcl:"secret_key,attr" json:"secret-key"`
+	Seeds       []string      `hcl:"seeds,attr" json:"seeds"`
+	TTL         int           `hcl:"ttl,attr" json:"ttl"`
+	SharedState SharedState   `hcl:"shared_state,block" json:"shared_state"`
 }
 
 type SharedState struct {
-	Enabled Enabled     `hcl:"enabled,attr" json:"enabled"`
-	Driver  string      `hcl:"driver,attr" json:"driver"`
-	Redis   *RedisState `hcl:"redis,block" json:"redis,omitempty"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Driver  string        `hcl:"driver,attr" json:"driver"`
+	Redis   *RedisState   `hcl:"redis,block" json:"redis,omitempty"`
 }
 
 type RedisState struct {

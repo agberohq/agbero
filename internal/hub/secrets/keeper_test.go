@@ -21,7 +21,7 @@ func TestOpen_CreateNew(t *testing.T) {
 	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 
 	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		AutoLock:   alaye.Duration(5 * time.Minute),
 		Passphrase: expect.Value("test-passphrase-32-bytes-long!!"),
 	}
@@ -54,7 +54,7 @@ func TestOpen_ExistingDatabase(t *testing.T) {
 	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 
 	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value("test-passphrase-32-bytes-long!!"),
 	}
 	logger := ll.New("test").Disable()
@@ -107,7 +107,7 @@ func TestOpen_WrongPassphrase(t *testing.T) {
 
 	// Create the store with the correct passphrase.
 	cfg1 := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value("correct-passphrase-32-bytes!!"),
 	}
 	store1, err := Open(Config{
@@ -123,7 +123,7 @@ func TestOpen_WrongPassphrase(t *testing.T) {
 
 	// Attempt to reopen with a wrong passphrase.
 	cfg2 := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value("wrong-passphrase-32-bytes!!!!"),
 	}
 	_, err = Open(Config{
@@ -169,7 +169,7 @@ func TestOpen_EmptyPassphrase_ReturnsLocked(t *testing.T) {
 	logger := ll.New("test").Disable()
 
 	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value(""),
 	}
 
@@ -198,7 +198,7 @@ func TestOpen_DevMode(t *testing.T) {
 	logger := ll.New("test").Disable()
 
 	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value("dev"),
 	}
 
@@ -252,7 +252,7 @@ func TestOpen_WithEnvPassphrase(t *testing.T) {
 
 	t.Setenv("AGBERO_PASSPHRASE", "env-passphrase-32-bytes-long!!")
 
-	cfg := &alaye.Keeper{Enabled: alaye.Active}
+	cfg := &alaye.Keeper{Enabled: expect.Active}
 	logger := ll.New("test").Disable()
 
 	store, err := Open(Config{
@@ -280,7 +280,7 @@ func TestOpen_EnvPassphraseTakesPrecedenceOverEmpty(t *testing.T) {
 	t.Setenv("AGBERO_PASSPHRASE", "env-passphrase-32-bytes-long!!")
 
 	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value(""),
 	}
 	logger := ll.New("test").Disable()
@@ -310,7 +310,7 @@ func TestOpen_CallerCanUnlockAfterLockedReturn(t *testing.T) {
 
 	// First: establish the passphrase by opening with it explicitly.
 	setupCfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value("the-real-passphrase-32-bytes!!"),
 	}
 	setup, err := Open(Config{
@@ -356,7 +356,7 @@ func TestMustOpen_Success(t *testing.T) {
 	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 
 	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value("test-passphrase-32-bytes-long!!"),
 	}
 	logger := ll.New("test").Disable()
@@ -447,7 +447,7 @@ func TestOpen_CreatesBucketAndReadsBack(t *testing.T) {
 	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 
 	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value("test-passphrase-32-bytes-long!!"),
 	}
 	logger := ll.New("test").Disable()

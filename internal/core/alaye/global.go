@@ -109,8 +109,8 @@ func (s Storage) Validate() error {
 // Pprof enables the standard Go profiling endpoints.
 // It should only be used in internal or development environments.
 type Pprof struct {
-	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
-	Bind    string  `hcl:"bind,attr" json:"bind"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Bind    string        `hcl:"bind,attr" json:"bind"`
 }
 
 // Validate ensures the pprof configuration has a valid bind address.

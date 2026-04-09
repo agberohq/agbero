@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/markbates/goth"
 	"golang.org/x/oauth2"
@@ -97,7 +98,7 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 
 	t.Run("Handle Callback Active", func(t *testing.T) {
 		cfg := &alaye.OAuth{
-			Enabled:      alaye.Active,
+			Enabled:      expect.Active,
 			Provider:     "mock",
 			EmailDomains: []string{"example.com"},
 			RedirectURL:  "/callback",
@@ -137,7 +138,7 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 
 	t.Run("Handle Callback Domain Unknown", func(t *testing.T) {
 		cfg := &alaye.OAuth{
-			Enabled:      alaye.Active,
+			Enabled:      expect.Active,
 			Provider:     "mock",
 			EmailDomains: []string{"corp.com"},
 			RedirectURL:  "/callback",

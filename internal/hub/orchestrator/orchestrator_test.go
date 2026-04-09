@@ -84,7 +84,7 @@ func TestManager_ProvisionRunOnce(t *testing.T) {
 
 	route := alaye.Route{
 		Serverless: alaye.Serverless{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Workers: []alaye.Work{
 				{
 					Name:    "initializer",

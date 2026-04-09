@@ -7,12 +7,13 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 )
 
 func TestHeaders_RequestMods(t *testing.T) {
 	cfg := &alaye.Headers{
 		Request: alaye.Header{
-			Enabled: alaye.Active, // Added
+			Enabled: expect.Active, // Added
 			Set:     map[string]string{"X-Test": "set-value"},
 			Add:     map[string]string{"X-Multi": "add1"},
 			Remove:  []string{"User-Agent"},
@@ -49,7 +50,7 @@ func TestHeaders_RequestMods(t *testing.T) {
 func TestHeaders_ResponseMods(t *testing.T) {
 	cfg := &alaye.Headers{
 		Response: alaye.Header{
-			Enabled: alaye.Active, // Added
+			Enabled: expect.Active, // Added
 			Set:     map[string]string{"X-Resp": "resp-value"},
 			Add:     map[string]string{"X-Resp-Multi": "add2"},
 			Remove:  []string{"Content-Type"},
@@ -111,11 +112,11 @@ func TestHeaders_Disabled(t *testing.T) {
 	// Test that explicitly disabled headers don't apply
 	cfg := &alaye.Headers{
 		Request: alaye.Header{
-			Enabled: alaye.Inactive, // Explicitly disabled
+			Enabled: expect.Inactive, // Explicitly disabled
 			Set:     map[string]string{"X-Test": "should-not-appear"},
 		},
 		Response: alaye.Header{
-			Enabled: alaye.Inactive, // Explicitly disabled
+			Enabled: expect.Inactive, // Explicitly disabled
 			Set:     map[string]string{"X-Resp": "should-not-appear"},
 		},
 	}

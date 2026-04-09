@@ -83,7 +83,7 @@ func TestServer_Start_Minimal(t *testing.T) {
 			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
 		},
 		Timeouts: alaye.Timeout{
-			Enabled:    alaye.Active,
+			Enabled:    expect.Active,
 			Read:       alaye.Duration(10 * time.Second),
 			Write:      alaye.Duration(30 * time.Second),
 			Idle:       alaye.Duration(60 * time.Second),
@@ -93,9 +93,9 @@ func TestServer_Start_Minimal(t *testing.T) {
 			MaxHeaderBytes: 1048576,
 		},
 		Security: alaye.Security{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Keeper: alaye.Keeper{
-				Enabled:    alaye.Active,
+				Enabled:    expect.Active,
 				Passphrase: expect.Value("test-passphrase"),
 			},
 		},
@@ -176,7 +176,7 @@ route "/" {
 			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
 		},
 		Timeouts: alaye.Timeout{
-			Enabled:    alaye.Active,
+			Enabled:    expect.Active,
 			Read:       alaye.Duration(10 * time.Second),
 			Write:      alaye.Duration(30 * time.Second),
 			Idle:       alaye.Duration(60 * time.Second),
@@ -186,9 +186,9 @@ route "/" {
 			MaxHeaderBytes: 1048576,
 		},
 		Security: alaye.Security{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Keeper: alaye.Keeper{
-				Enabled:    alaye.Active,
+				Enabled:    expect.Active,
 				Passphrase: expect.Value("test-passphrase"),
 			},
 		},
@@ -454,7 +454,7 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 	global1 := &alaye.Global{
 		Bind: alaye.Bind{HTTP: []string{":0"}},
 		Gossip: alaye.Gossip{
-			Enabled:   alaye.Active,
+			Enabled:   expect.Active,
 			Port:      port1,
 			SecretKey: "0123456789abcdef0123456789abcdef",
 		},
@@ -464,7 +464,7 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs1")),
 		},
 		Timeouts: alaye.Timeout{
-			Enabled:    alaye.Active,
+			Enabled:    expect.Active,
 			Read:       alaye.Duration(10 * time.Second),
 			Write:      alaye.Duration(30 * time.Second),
 			Idle:       alaye.Duration(60 * time.Second),
@@ -474,9 +474,9 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 			MaxHeaderBytes: 1048576,
 		},
 		Security: alaye.Security{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Keeper: alaye.Keeper{
-				Enabled:    alaye.Active,
+				Enabled:    expect.Active,
 				Passphrase: expect.Value("test-passphrase"),
 			},
 		},
@@ -485,7 +485,7 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 	global2 := &alaye.Global{
 		Bind: alaye.Bind{HTTP: []string{":0"}},
 		Gossip: alaye.Gossip{
-			Enabled:   alaye.Active,
+			Enabled:   expect.Active,
 			Port:      port2,
 			Seeds:     []string{fmt.Sprintf("127.0.0.1:%d", port1)},
 			SecretKey: "0123456789abcdef0123456789abcdef",
@@ -496,7 +496,7 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs2")),
 		},
 		Timeouts: alaye.Timeout{
-			Enabled:    alaye.Active,
+			Enabled:    expect.Active,
 			Read:       alaye.Duration(10 * time.Second),
 			Write:      alaye.Duration(30 * time.Second),
 			Idle:       alaye.Duration(60 * time.Second),
@@ -506,9 +506,9 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 			MaxHeaderBytes: 1048576,
 		},
 		Security: alaye.Security{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Keeper: alaye.Keeper{
-				Enabled:    alaye.Active,
+				Enabled:    expect.Active,
 				Passphrase: expect.Value("test-passphrase"),
 			},
 		},
@@ -578,10 +578,10 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 	}
 
 	route := alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/api/v1/test",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers("http://localhost:9999"),
 		},
 	}
@@ -686,7 +686,7 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 	global1 := &alaye.Global{
 		Bind: alaye.Bind{HTTP: []string{":0"}},
 		Gossip: alaye.Gossip{
-			Enabled:   alaye.Active,
+			Enabled:   expect.Active,
 			Port:      port1,
 			SecretKey: "0123456789abcdef0123456789abcdef",
 		},
@@ -696,7 +696,7 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs1")),
 		},
 		Timeouts: alaye.Timeout{
-			Enabled:    alaye.Active,
+			Enabled:    expect.Active,
 			Read:       alaye.Duration(10 * time.Second),
 			Write:      alaye.Duration(30 * time.Second),
 			Idle:       alaye.Duration(60 * time.Second),
@@ -706,9 +706,9 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 			MaxHeaderBytes: 1048576,
 		},
 		Security: alaye.Security{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Keeper: alaye.Keeper{
-				Enabled:    alaye.Active,
+				Enabled:    expect.Active,
 				Passphrase: expect.Value("test-passphrase"),
 			},
 		},
@@ -717,7 +717,7 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 	global2 := &alaye.Global{
 		Bind: alaye.Bind{HTTP: []string{":0"}},
 		Gossip: alaye.Gossip{
-			Enabled:   alaye.Active,
+			Enabled:   expect.Active,
 			Port:      port2,
 			Seeds:     []string{fmt.Sprintf("127.0.0.1:%d", port1)},
 			SecretKey: "0123456789abcdef0123456789abcdef",
@@ -728,7 +728,7 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs2")),
 		},
 		Timeouts: alaye.Timeout{
-			Enabled:    alaye.Active,
+			Enabled:    expect.Active,
 			Read:       alaye.Duration(10 * time.Second),
 			Write:      alaye.Duration(30 * time.Second),
 			Idle:       alaye.Duration(60 * time.Second),
@@ -738,9 +738,9 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 			MaxHeaderBytes: 1048576,
 		},
 		Security: alaye.Security{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Keeper: alaye.Keeper{
-				Enabled:    alaye.Active,
+				Enabled:    expect.Active,
 				Passphrase: expect.Value("test-passphrase"),
 			},
 		},
@@ -809,10 +809,10 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 	}
 
 	route := alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/ephemeral",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers("http://localhost:8888"),
 		},
 	}
@@ -887,16 +887,16 @@ func TestServer_WithFirewall(t *testing.T) {
 	}
 	global := &alaye.Global{
 		Security: alaye.Security{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Firewall: alaye.Firewall{
-				Status: alaye.Active,
+				Status: expect.Active,
 				Mode:   "active",
 				Rules: []alaye.Rule{
 					{
 						Name: "block-localhost",
 						Type: "static",
 						Match: alaye.Match{
-							Enabled: alaye.Active,
+							Enabled: expect.Active,
 							IP:      []string{"127.0.0.1/32"},
 						},
 					},
@@ -1033,7 +1033,7 @@ func TestServer_shutdownImpl(t *testing.T) {
 			DataDir:  dataDir,
 		},
 		Timeouts: alaye.Timeout{
-			Enabled:    alaye.Active,
+			Enabled:    expect.Active,
 			Read:       alaye.Duration(10 * time.Second),
 			Write:      alaye.Duration(30 * time.Second),
 			Idle:       alaye.Duration(60 * time.Second),

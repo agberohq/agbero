@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/handlers/upstream"
@@ -115,7 +116,7 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 		cbThreshold = int64(route.CircuitBreaker.Threshold)
 	}
 
-	hasProber := route.HealthCheck.Enabled.Active() || (route.HealthCheck.Enabled == alaye.Unknown && route.HealthCheck.Path != "")
+	hasProber := route.HealthCheck.Enabled.Active() || (route.HealthCheck.Enabled == expect.Unknown && route.HealthCheck.Path != "")
 
 	baseCfg := upstream.Config{
 		Address:        xhttpCfg.Server.Address.String(),

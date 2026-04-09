@@ -3,15 +3,16 @@ package alaye
 import (
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
 type HealthCheck struct {
-	Enabled   Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Path      string   `hcl:"path,attr" json:"path"`
-	Interval  Duration `hcl:"interval,attr" json:"interval"`
-	Timeout   Duration `hcl:"timeout,attr" json:"timeout"`
-	Threshold int      `hcl:"threshold,attr" json:"threshold"`
+	Enabled   expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Path      string        `hcl:"path,attr" json:"path"`
+	Interval  Duration      `hcl:"interval,attr" json:"interval"`
+	Timeout   Duration      `hcl:"timeout,attr" json:"timeout"`
+	Threshold int           `hcl:"threshold,attr" json:"threshold"`
 
 	Method         string            `hcl:"method,attr" json:"method"`
 	Headers        map[string]string `hcl:"headers,attr" json:"headers"`

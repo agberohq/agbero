@@ -19,7 +19,7 @@ func setupTestFirewall(t *testing.T) (*Shared, func()) {
 
 	cfg := firewall.Config{
 		Firewall: &alaye.Firewall{
-			Status: alaye.Active,
+			Status: expect.Active,
 			Mode:   "active",
 			Rules:  []alaye.Rule{},
 		},

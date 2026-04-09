@@ -468,7 +468,7 @@ func TestNewManager_StorageInitFail(t *testing.T) {
 			DataDir:  expect.NewFolder(badPath),
 		},
 		Gossip: alaye.Gossip{
-			Enabled:   alaye.Inactive,
+			Enabled:   expect.Inactive,
 			SecretKey: "test-secret-1234567890123456",
 		},
 	}
@@ -545,9 +545,9 @@ func TestManager_EntryPoint_LocalhostVsPublic(t *testing.T) {
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Email:   "test@example.com",
-			Pebble:  alaye.Pebble{Enabled: alaye.Active, Insecure: alaye.Active},
+			Pebble:  alaye.Pebble{Enabled: expect.Active, Insecure: expect.Active},
 		},
 	}
 	mgr, _ := SetupTestManager(t, global)

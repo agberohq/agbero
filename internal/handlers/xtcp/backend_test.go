@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/health"
 	"github.com/olekukonko/jack"
@@ -63,7 +64,7 @@ func TestNewBackend_Valid(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
-			Enabled: alaye.Inactive,
+			Enabled: expect.Inactive,
 		},
 	}
 	testRes := resource.New()
@@ -113,7 +114,7 @@ func TestNewBackend_WithHealthCheck(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy-healthy",
 		HealthCheck: alaye.TCPHealthCheck{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			Interval: alaye.Duration(hcInterval),
 			Timeout:  alaye.Duration(hcTimeout),
 			Send:     pingMsg,
@@ -149,7 +150,7 @@ func TestNewBackend_HealthCheckFailure(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			Interval: alaye.Duration(hcInterval),
 			Timeout:  alaye.Duration(hcTimeout),
 			Send:     pingMsg,
@@ -177,7 +178,7 @@ func TestBackend_Status(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
-			Enabled: alaye.Inactive,
+			Enabled: expect.Inactive,
 		},
 	}
 	testRes := resource.New()
@@ -206,7 +207,7 @@ func TestBackend_Weight(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
-			Enabled: alaye.Inactive,
+			Enabled: expect.Inactive,
 		},
 	}
 	testRes := resource.New()
@@ -234,7 +235,7 @@ func TestBackend_Weight_HealthAdjusted(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
-			Enabled: alaye.Inactive,
+			Enabled: expect.Inactive,
 		},
 	}
 	testRes := resource.New()
@@ -266,7 +267,7 @@ func TestBackend_InFlight(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
-			Enabled: alaye.Inactive,
+			Enabled: expect.Inactive,
 		},
 	}
 	testRes := resource.New()
@@ -291,7 +292,7 @@ func TestBackend_ResponseTime(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
-			Enabled: alaye.Inactive,
+			Enabled: expect.Inactive,
 		},
 	}
 	testRes := resource.New()
@@ -317,7 +318,7 @@ func TestBackend_OnDialFailure(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
-			Enabled: alaye.Inactive,
+			Enabled: expect.Inactive,
 		},
 	}
 	testRes := resource.New()
@@ -341,7 +342,7 @@ func TestBackend_Uptime(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
-			Enabled: alaye.Inactive,
+			Enabled: expect.Inactive,
 		},
 	}
 	testRes := resource.New()
@@ -366,7 +367,7 @@ func TestBackend_LastRecovery(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
-			Enabled: alaye.Inactive,
+			Enabled: expect.Inactive,
 		},
 	}
 	testRes := resource.New()
@@ -390,7 +391,7 @@ func TestBackend_Snapshot(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
-			Enabled: alaye.Inactive,
+			Enabled: expect.Inactive,
 		},
 	}
 	testRes := resource.New()
@@ -419,7 +420,7 @@ func TestBackend_Stop(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
-			Enabled: alaye.Inactive,
+			Enabled: expect.Inactive,
 		},
 	}
 	testRes := resource.New()
@@ -444,7 +445,7 @@ func TestBackend_ConcurrentOperations(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
 		HealthCheck: alaye.TCPHealthCheck{
-			Enabled: alaye.Inactive,
+			Enabled: expect.Inactive,
 		},
 	}
 	testRes := resource.New()

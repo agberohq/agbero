@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/handlers/web"
@@ -190,7 +191,7 @@ func resolveFallback(routeFallback, globalFallback *alaye.Fallback) *alaye.Fallb
 	if routeFallback.Enabled.Active() {
 		return routeFallback
 	}
-	if routeFallback.Enabled == alaye.Unknown && globalFallback.IsActive() {
+	if routeFallback.Enabled == expect.Unknown && globalFallback.IsActive() {
 		return globalFallback
 	}
 	return routeFallback

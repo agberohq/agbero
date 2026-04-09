@@ -1,11 +1,14 @@
 package alaye
 
-import "github.com/olekukonko/errors"
+import (
+	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/olekukonko/errors"
+)
 
 type Headers struct {
-	Enabled  Enabled `hcl:"enabled,attr" json:"enabled"`
-	Request  Header  `hcl:"request,block" json:"request"`
-	Response Header  `hcl:"response,block" json:"response"`
+	Enabled  expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Request  Header        `hcl:"request,block" json:"request"`
+	Response Header        `hcl:"response,block" json:"response"`
 }
 
 // Validate checks that set and add header entries have non-empty keys and values.
@@ -23,7 +26,7 @@ func (h *Headers) Validate() error {
 }
 
 type Header struct {
-	Enabled Enabled           `hcl:"enabled,attr" json:"enabled"`
+	Enabled expect.Toggle     `hcl:"enabled,attr" json:"enabled"`
 	Set     map[string]string `hcl:"set,attr" json:"set"`
 	Add     map[string]string `hcl:"add,attr" json:"add"`
 	Remove  []string          `hcl:"remove,attr" json:"remove"`

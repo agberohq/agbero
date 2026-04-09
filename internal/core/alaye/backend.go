@@ -3,12 +3,14 @@ package alaye
 import (
 	"strconv"
 	"strings"
+
+	"github.com/agberohq/agbero/internal/core/expect"
 )
 
 type Backend struct {
-	Enabled  Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Strategy string   `hcl:"strategy,attr" json:"strategy"`
-	Keys     []string `hcl:"keys,attr" json:"keys"`
+	Enabled  expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Strategy string        `hcl:"strategy,attr" json:"strategy"`
+	Keys     []string      `hcl:"keys,attr" json:"keys"`
 
 	Servers []Server `hcl:"server,block" json:"servers"`
 }

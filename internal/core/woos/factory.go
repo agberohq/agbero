@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 )
 
 // NewEphemeralGlobal creates a minimal in-memory Global config for ephemeral/CLI use.
@@ -16,23 +17,23 @@ func NewEphemeralGlobal(port int, https bool) *alaye.Global {
 		Version:     2,
 		Development: true,
 		Timeouts: alaye.Timeout{
-			Enabled:    alaye.Active,
+			Enabled:    expect.Active,
 			Read:       alaye.Duration(10 * time.Second),
 			Write:      alaye.Duration(30 * time.Second),
 			Idle:       alaye.Duration(60 * time.Second),
 			ReadHeader: alaye.Duration(5 * time.Second),
 		},
 		Logging: alaye.Logging{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Level:   "info",
 		},
 		General: alaye.General{
 			MaxHeaderBytes: alaye.DefaultMaxHeaderBytes,
 		},
-		Admin:    alaye.Admin{Enabled: alaye.Inactive},
-		Gossip:   alaye.Gossip{Enabled: alaye.Inactive},
-		Security: alaye.Security{Enabled: alaye.Inactive},
-		Fallback: alaye.Fallback{Enabled: alaye.Inactive},
+		Admin:    alaye.Admin{Enabled: expect.Inactive},
+		Gossip:   alaye.Gossip{Enabled: expect.Inactive},
+		Security: alaye.Security{Enabled: expect.Inactive},
+		Fallback: alaye.Fallback{Enabled: expect.Inactive},
 	}
 
 	if https {
@@ -65,16 +66,16 @@ func NewStaticHost(c Static) *alaye.Host {
 		},
 	}
 
-	h.Headers.Enabled = alaye.Unknown
+	h.Headers.Enabled = expect.Unknown
 
 	route := alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 	}
 
 	if c.IsProxy {
 		route.Backends = alaye.Backend{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			Strategy: alaye.StrategyRoundRobin,
 			Servers: []alaye.Server{
 				{
@@ -83,24 +84,24 @@ func NewStaticHost(c Static) *alaye.Host {
 				},
 			},
 		}
-		route.Web.Enabled = alaye.Inactive
+		route.Web.Enabled = expect.Inactive
 	} else {
-		markdownToggle := alaye.Inactive
+		markdownToggle := expect.Inactive
 		if c.Markdown {
-			markdownToggle = alaye.Active
+			markdownToggle = expect.Active
 		}
 
-		phpToggle := alaye.Inactive
+		phpToggle := expect.Inactive
 		if c.PHP != "" {
-			markdownToggle = alaye.Active
+			markdownToggle = expect.Active
 		}
 
 		route.Web = alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(c.Target),
-			Listing: alaye.NewEnabled(true),
+			Listing: expect.NewEnabled(true),
 			Index:   []string{"index.html"},
-			SPA:     alaye.NewEnabled(c.SPA),
+			SPA:     expect.NewEnabled(c.SPA),
 			Markdown: alaye.Markdown{
 				Enabled: markdownToggle,
 				View:    "normal",
@@ -110,7 +111,7 @@ func NewStaticHost(c Static) *alaye.Host {
 				Address: c.PHP,
 			},
 		}
-		route.Backends.Enabled = alaye.Inactive
+		route.Backends.Enabled = expect.Inactive
 	}
 
 	h.Routes[0] = route

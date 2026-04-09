@@ -1,10 +1,14 @@
 package alaye
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/agberohq/agbero/internal/core/expect"
+)
 
 type PHP struct {
-	Enabled Enabled `hcl:"enabled,optional" json:"enabled"`
-	Address string  `hcl:"address,optional" json:"address"` // unix:/path/to.sock OR 127.0.0.1:9000
+	Enabled expect.Toggle `hcl:"enabled,optional" json:"enabled"`
+	Address string        `hcl:"address,optional" json:"address"` // unix:/path/to.sock OR 127.0.0.1:9000
 }
 
 func (p *PHP) Validate() error {

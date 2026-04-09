@@ -35,7 +35,7 @@ func setupTestTOTPWithKeeper(t *testing.T) (*Shared, *keeper.Keeper, func()) {
 		Storage: alaye.Storage{HostsDir: hostsDir},
 		Admin: alaye.Admin{
 			TOTP: alaye.TOTP{
-				Enabled:    alaye.Active,
+				Enabled:    expect.Active,
 				Digits:     6,
 				Period:     30,
 				Algorithm:  "SHA1",
@@ -444,7 +444,7 @@ func TestTOTPHandler_VerifyCode_Integration(t *testing.T) {
 
 	// Disable TOTP.
 	state := shared.State()
-	state.Global.Admin.TOTP.Enabled = alaye.Inactive
+	state.Global.Admin.TOTP.Enabled = expect.Inactive
 	shared.UpdateState(state)
 
 	if totp.VerifyCode("integrationuser", validCode) {

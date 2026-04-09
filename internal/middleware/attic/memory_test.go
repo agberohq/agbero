@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/ll"
 )
 
@@ -24,7 +25,7 @@ func TestCacheMiddleware(t *testing.T) {
 		{
 			name: "Cache Hit After Miss",
 			config: &alaye.Cache{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
 				TTL:     alaye.Duration(time.Minute),
@@ -39,7 +40,7 @@ func TestCacheMiddleware(t *testing.T) {
 		{
 			name: "Different Paths Different Cache",
 			config: &alaye.Cache{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
 				TTL:     alaye.Duration(time.Minute),
@@ -54,7 +55,7 @@ func TestCacheMiddleware(t *testing.T) {
 		{
 			name: "Query String Differentiation",
 			config: &alaye.Cache{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
 				TTL:     alaye.Duration(time.Minute),
@@ -69,7 +70,7 @@ func TestCacheMiddleware(t *testing.T) {
 		{
 			name: "POST Not Cached",
 			config: &alaye.Cache{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
 				TTL:     alaye.Duration(time.Minute),
@@ -84,7 +85,7 @@ func TestCacheMiddleware(t *testing.T) {
 		{
 			name: "Cache Control No-Store",
 			config: &alaye.Cache{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
 				TTL:     alaye.Duration(time.Minute),
@@ -108,7 +109,7 @@ func TestCacheMiddleware(t *testing.T) {
 		{
 			name: "Vary Header Respect",
 			config: &alaye.Cache{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
 				TTL:     alaye.Duration(time.Minute),
@@ -142,7 +143,7 @@ func TestCacheMiddleware(t *testing.T) {
 		{
 			name: "Conditional Request ETag",
 			config: &alaye.Cache{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
 				TTL:     alaye.Duration(time.Minute),
@@ -167,7 +168,7 @@ func TestCacheMiddleware(t *testing.T) {
 		{
 			name: "Max-Age Respect",
 			config: &alaye.Cache{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
 				TTL:     alaye.Duration(time.Hour),
@@ -186,7 +187,7 @@ func TestCacheMiddleware(t *testing.T) {
 		{
 			name: "Large Response Not Cached",
 			config: &alaye.Cache{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
 				TTL:     alaye.Duration(time.Minute),
@@ -252,7 +253,7 @@ func TestCacheMiddleware(t *testing.T) {
 func TestCacheDisabled(t *testing.T) {
 	logger := ll.New(" ").Disable()
 	cfg := &alaye.Cache{
-		Enabled: alaye.Inactive,
+		Enabled: expect.Inactive,
 	}
 	handler := New(cfg, logger)
 	if handler == nil {

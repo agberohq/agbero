@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/resource"
 )
@@ -21,7 +22,7 @@ func TestProxy_Pick_ReturnsCorrectType(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(server.URL),
 		},
 	}
@@ -67,7 +68,7 @@ func TestProxy_Pick_NoHealthyBackends(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(server.URL),
 		},
 	}
@@ -112,7 +113,7 @@ func TestProxy_ServeHTTP_NoHealthyBackends(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(server.URL),
 		},
 	}
@@ -163,7 +164,7 @@ func TestProxy_ServeHTTP_NoHealthyBackends_WithFallback(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(server.URL),
 		},
 	}
@@ -207,7 +208,7 @@ func TestProxy_ServeHTTP_WebSocket(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(server.URL),
 		},
 	}
@@ -251,7 +252,7 @@ func TestProxy_ServeHTTP_Timeout(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(server.URL),
 		},
 	}
@@ -300,7 +301,7 @@ func TestProxy_ServeHTTP_Adaptive(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(server1.URL, server2.URL),
 		},
 	}
@@ -367,7 +368,7 @@ func TestProxy_ServeHTTP_Sticky(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(server.URL),
 		},
 	}
@@ -416,7 +417,7 @@ func TestProxy_Update(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(server1.URL),
 		},
 	}
@@ -471,7 +472,7 @@ func TestProxy_Stop(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(server.URL),
 		},
 	}

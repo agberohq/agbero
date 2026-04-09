@@ -1,14 +1,15 @@
 package alaye
 
 import (
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
 type Cache struct {
-	Enabled Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Driver  string   `hcl:"driver,attr" json:"driver"`
-	TTL     Duration `hcl:"ttl,attr" json:"ttl"`
-	Methods []string `hcl:"methods,attr" json:"methods"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Driver  string        `hcl:"driver,attr" json:"driver"`
+	TTL     Duration      `hcl:"ttl,attr" json:"ttl"`
+	Methods []string      `hcl:"methods,attr" json:"methods"`
 
 	Memory *MemoryCache `hcl:"memory,block" json:"memory,omitempty"`
 	Redis  *RedisCache  `hcl:"redis,block" json:"redis,omitempty"`

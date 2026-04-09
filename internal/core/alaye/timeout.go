@@ -1,11 +1,13 @@
 package alaye
 
+import "github.com/agberohq/agbero/internal/core/expect"
+
 type Timeout struct {
-	Enabled    Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Read       Duration `hcl:"read,attr" json:"read"`
-	Write      Duration `hcl:"write,attr" json:"write"`
-	Idle       Duration `hcl:"idle,attr" json:"idle"`
-	ReadHeader Duration `hcl:"read_header,attr" json:"read_header"`
+	Enabled    expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Read       Duration      `hcl:"read,attr" json:"read"`
+	Write      Duration      `hcl:"write,attr" json:"write"`
+	Idle       Duration      `hcl:"idle,attr" json:"idle"`
+	ReadHeader Duration      `hcl:"read_header,attr" json:"read_header"`
 }
 
 // Validate checks that all timeout values are non-negative when timeouts are enabled.
@@ -29,8 +31,8 @@ func (t *Timeout) Validate() error {
 }
 
 type TimeoutRoute struct {
-	Enabled Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Request Duration `hcl:"request,attr" json:"request"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Request Duration      `hcl:"request,attr" json:"request"`
 }
 
 // Validate checks that the request timeout is non-negative when enabled.

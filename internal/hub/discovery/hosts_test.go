@@ -70,7 +70,7 @@ func TestOnClusterChange_Add(t *testing.T) {
 	route := alaye.Route{
 		Path: "/api",
 		Backends: alaye.Backend{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			Strategy: alaye.StrategyRandom,
 			Servers: []alaye.Server{
 				{Address: "http://127.0.0.1:8080", Weight: 1},
@@ -105,7 +105,7 @@ func TestOnClusterChange_Remove(t *testing.T) {
 	route := alaye.Route{
 		Path: "/api",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: []alaye.Server{
 				{Address: "http://127.0.0.1:8080"},
 			},
@@ -153,7 +153,7 @@ func TestHost_RouteExpiration(t *testing.T) {
 	hm := NewHost(expect.Folder("."), WithLogger(testLogger))
 	defer hm.Close()
 
-	route := alaye.Route{Path: "/expire", Enabled: alaye.Active}
+	route := alaye.Route{Path: "/expire", Enabled: expect.Active}
 	// Use longer TTL to ensure route exists after debounced rebuild
 	expiry := time.Now().Add(2 * time.Second)
 
@@ -428,10 +428,10 @@ func TestHost_OnClusterChange_RoutePropagation(t *testing.T) {
 	hm := NewHost(expect.NewFolder(hostsDir), WithLogger(logger))
 
 	route := alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/api/test",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers("http://localhost:9000"),
 		},
 	}
@@ -480,10 +480,10 @@ func TestHost_OnClusterChange_Deletion(t *testing.T) {
 	hm := NewHost(expect.NewFolder(hostsDir), WithLogger(logger))
 
 	route := alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/to-delete",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers("http://localhost:9001"),
 		},
 	}
@@ -595,10 +595,10 @@ func TestHost_OnClusterChange_WithTTL(t *testing.T) {
 	defer hm.Close()
 
 	route := alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/ephemeral",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers("http://localhost:9002"),
 		},
 	}

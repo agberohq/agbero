@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/ll"
 )
 
@@ -16,7 +17,7 @@ func TestRedisCache(t *testing.T) {
 	}
 	logger := ll.New("").Disable()
 	cfg := &alaye.Cache{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Driver:  "redis",
 		Methods: []string{"GET"},
 		TTL:     alaye.Duration(time.Minute),
@@ -198,7 +199,7 @@ func TestRedisCache(t *testing.T) {
 	t.Run("TTL Expiration", func(t *testing.T) {
 		shortTTL := 1 * time.Second
 		cfg := &alaye.Cache{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Driver:  "redis",
 			Methods: []string{"GET"},
 			TTL:     alaye.Duration(shortTTL),
@@ -287,7 +288,7 @@ func TestRedisStoreOptions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &alaye.Cache{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Driver:  "redis",
 				Methods: []string{"GET"},
 				TTL:     alaye.Duration(time.Minute),

@@ -1,9 +1,11 @@
 package alaye
 
+import "github.com/agberohq/agbero/internal/core/expect"
+
 // Serverless acts as a high-level container for logic-based request handling.
 // It groups labeled Replay proxies and managed OS processes within a single engine.
 type Serverless struct {
-	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
 
 	Root string `hcl:"root,attr" json:"root"`
 
