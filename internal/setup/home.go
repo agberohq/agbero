@@ -241,7 +241,9 @@ func (h *Home) setupKeeperSecrets(store *keeper.Keeper, sess *session) error {
 	}
 	h.u.Render(func() { h.u.Step("ok", "Stored cluster gossip secret") })
 
-	h.u.Render(func() { h.u.WarnLine("⚠️  Keep your master passphrase safe – it is the only way to unlock Keeper") })
+	h.u.Render(func() {
+		h.u.WarnLine("⚠️  Keep your master passphrase safe – it is the only way to unlock Keeper")
+	})
 	return nil
 }
 
@@ -310,7 +312,7 @@ func (h *Home) setupLetsEncrypt(store *keeper.Keeper, sess *session) error {
 		return nil
 	}
 	if sess.LEEmail != "" {
-		h.u.Render(func() { h.u.Step("ok", fmt.Sprintf("Let\'s Encrypt email: %s", sess.LEEmail)) })
+		h.u.Render(func() { h.u.Step("ok", fmt.Sprintf("Let's Encrypt email: %s", sess.LEEmail)) })
 		return nil
 	}
 
@@ -331,7 +333,7 @@ func (h *Home) setupLetsEncrypt(store *keeper.Keeper, sess *session) error {
 	}
 	sess.LEEmail = leEmail
 	if leEmail != "" {
-		h.u.Render(func() { h.u.Step("ok", fmt.Sprintf("Let\'s Encrypt email: %s", leEmail)) })
+		h.u.Render(func() { h.u.Step("ok", fmt.Sprintf("Let's Encrypt email: %s", leEmail)) })
 	}
 	return nil
 }

@@ -808,7 +808,7 @@ func TestRouteHandler_Web_DirectoryWithoutIndex(t *testing.T) {
 		Web: alaye.Web{
 			Enabled: alaye.Active,
 			Root:    alaye.WebRoot(root),
-			Listing: false,
+			Listing: alaye.Inactive,
 		},
 	}
 
@@ -1804,7 +1804,7 @@ func TestRouteHandler_Serverless_Selection(t *testing.T) {
 		Path: "/api",
 		Serverless: alaye.Serverless{
 			Enabled: alaye.Active,
-			RESTs: []alaye.REST{
+			Replay: []alaye.Replay{
 				{Name: "sms", URL: ts.URL, Enabled: alaye.Active},
 			},
 			Workers: []alaye.Work{

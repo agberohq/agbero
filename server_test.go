@@ -19,7 +19,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cluster"
-	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
+	discovery "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -51,7 +51,7 @@ func TestServer_Start_NoConfig(t *testing.T) {
 
 // TestServer_Start_NoGlobalConfig tests that Start requires global config
 func TestServer_Start_NoGlobalConfig(t *testing.T) {
-	hm := discovery2.NewHost("", discovery2.WithLogger(testLogger))
+	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 	s := NewServer(WithHostManager(hm))
 	err := s.Start("")
 	if err == nil || !strings.Contains(err.Error(), "global config") {
@@ -101,7 +101,7 @@ func TestServer_Start_Minimal(t *testing.T) {
 		},
 	}
 
-	hm := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
+	hm := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
 	s := NewServer(
 		WithGlobalConfig(global),
 		WithHostManager(hm),
@@ -194,7 +194,7 @@ route "/" {
 		},
 	}
 
-	hm := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
+	hm := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
 	if err := hm.ReloadFull(); err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ security {
 	woos.DefaultApply(global, configFile)
 
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(10 * time.Second))
-	hm := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
+	hm := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
 
 	if err := hm.Watch(); err != nil {
 		t.Fatalf("Failed to start watcher: %v", err)
@@ -517,8 +517,8 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 	shutdown1 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 	shutdown2 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 
-	hm1 := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
-	hm2 := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
+	hm1 := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
+	hm2 := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
 
 	s1 := NewServer(
 		WithGlobalConfig(global1),
@@ -597,7 +597,7 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		t.Fatalf("Failed to marshal route: %v", err)
 	}
 
-	key := fmt.Sprintf("%s%s|%s", discovery2.ClusterRoutePrefix, "test.example.com", "/api/v1/test")
+	key := fmt.Sprintf("%s%s|%s", discovery.ClusterRoutePrefix, "test.example.com", "/api/v1/test")
 	cm1.Set(key, val)
 
 	time.Sleep(1 * time.Second)
@@ -749,8 +749,8 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 	shutdown1 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 	shutdown2 := jack.NewShutdown(jack.ShutdownWithTimeout(5 * time.Second))
 
-	hm1 := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
-	hm2 := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
+	hm1 := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
+	hm2 := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
 
 	s1 := NewServer(
 		WithGlobalConfig(global1),
@@ -828,7 +828,7 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		t.Fatalf("Failed to marshal route: %v", err)
 	}
 
-	key := fmt.Sprintf("%s%s|%s", discovery2.ClusterRoutePrefix, "temp.example.com", "/ephemeral")
+	key := fmt.Sprintf("%s%s|%s", discovery.ClusterRoutePrefix, "temp.example.com", "/ephemeral")
 	cm1.Set(key, val)
 	time.Sleep(500 * time.Millisecond)
 
@@ -918,7 +918,7 @@ func TestServer_WithFirewall(t *testing.T) {
 
 // TestServer_Options tests the option pattern
 func TestServer_Options(t *testing.T) {
-	hm := discovery2.NewHost("", discovery2.WithLogger(testLogger))
+	hm := discovery.NewHost("", discovery.WithLogger(testLogger))
 	global := &alaye.Global{}
 	logger := ll.New("test").Disable()
 	shutdown := jack.NewShutdown()
@@ -954,7 +954,7 @@ func TestServer_ClusterHandlers(t *testing.T) {
 		},
 	}
 	s := NewServer(
-		WithHostManager(discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))),
+		WithHostManager(discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))),
 		WithGlobalConfig(global),
 		WithLogger(testLogger),
 	)
@@ -1041,7 +1041,7 @@ func TestServer_shutdownImpl(t *testing.T) {
 		},
 	}
 
-	hm := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
+	hm := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
 	s := NewServer(
 		WithGlobalConfig(global),
 		WithHostManager(hm),
@@ -1150,7 +1150,7 @@ route "/" {
 	woos.DefaultApply(global, configPath)
 
 	shutdown := jack.NewShutdown(jack.ShutdownWithTimeout(10 * time.Second))
-	hm := discovery2.NewHost(hostsDir, discovery2.WithLogger(testLogger))
+	hm := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
 
 	if err := hm.Watch(); err != nil {
 		t.Fatalf("Failed to start watcher: %v", err)

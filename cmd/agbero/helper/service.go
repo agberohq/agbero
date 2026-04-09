@@ -31,10 +31,12 @@ func (s *Service) requiresRoot(cmd string) bool {
 	cmdPath := os.Args[0]
 	cmdName := filepath.Base(cmdPath)
 
-	ui.New().ErrorHint(
-		"this command requires root privileges",
-		"try:  sudo "+cmdName+" service "+cmd,
-	)
+	ui.New().Render(func() {
+		ui.New().ErrorHint(
+			"this command requires root privileges",
+			"try:  sudo "+cmdName+" service "+cmd,
+		)
+	})
 	return false
 }
 
@@ -75,30 +77,35 @@ func (s *Service) preflightCheck(configPath string) error {
 func (s *Service) Install(svc service.Service, installHere bool, configPath string) {
 	u := ui.New()
 	if installHere {
-		u.PrintInfoLine("local mode — service registration skipped")
+		u.Render(func() {
+			u.InfoLine("local mode — service registration skipped")
+		})
 		return
 	}
 	if !s.requiresRoot("install") {
 		return
 	}
 
-	u.PrintStep("run", "Running pre-flight checks...")
+	u.Render(func() {
+		u.Step("run", "Running pre-flight checks...")
+	})
 	if err := s.preflightCheck(configPath); err != nil {
 		s.p.Logger.Fatal("Pre-flight check failed:\n\n", err)
 		return
 	}
-	u.PrintStep("ok", "Pre-flight checks passed")
-
-	u.PrintStep("run", "installing system service")
+	u.Render(func() {
+		u.Step("ok", "Pre-flight checks passed")
+		u.Step("run", "installing system service")
+	})
 	if err := svc.Install(); err != nil {
 		if errors.Is(err, woos.ErrAlreadyExists) {
-			u.PrintWarnLine("service already exists")
+			u.Render(func() { u.WarnLine("service already exists") })
 		} else {
 			s.p.Logger.Fatal(s.mapError(err, "install"))
 		}
 		return
 	}
-	u.PrintSuccessLine("service installed")
+	u.Render(func() { u.SuccessLine("service installed") })
 }
 
 func (s *Service) Uninstall(svc service.Service) {
@@ -106,11 +113,13 @@ func (s *Service) Uninstall(svc service.Service) {
 		return
 	}
 	u := ui.New()
-	u.PrintStep("run", "uninstalling system service")
+	u.Render(func() {
+		u.Step("run", "uninstalling system service")
+	})
 	if err := svc.Uninstall(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "uninstall"))
 	}
-	u.PrintSuccessLine("service uninstalled")
+	u.Render(func() { u.SuccessLine("service uninstalled") })
 }
 
 func (s *Service) Start(svc service.Service) {
@@ -118,11 +127,11 @@ func (s *Service) Start(svc service.Service) {
 		return
 	}
 	u := ui.New()
-	u.PrintStep("run", "starting system service")
+	u.Render(func() { u.Step("run", "starting system service") })
 	if err := svc.Start(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "start"))
 	}
-	u.PrintSuccessLine("service started")
+	u.Render(func() { u.SuccessLine("service started") })
 }
 
 func (s *Service) Stop(svc service.Service) {
@@ -130,11 +139,11 @@ func (s *Service) Stop(svc service.Service) {
 		return
 	}
 	u := ui.New()
-	u.PrintStep("run", "stopping system service")
+	u.Render(func() { u.Step("run", "stopping system service") })
 	if err := svc.Stop(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "stop"))
 	}
-	u.PrintSuccessLine("service stopped")
+	u.Render(func() { u.SuccessLine("service stopped") })
 }
 
 func (s *Service) Restart(svc service.Service) {
@@ -142,16 +151,20 @@ func (s *Service) Restart(svc service.Service) {
 		return
 	}
 	u := ui.New()
-	u.PrintStep("run", "stopping system service")
+	u.Render(func() {
+		u.Step("run", "stopping system service")
+	})
 	if err := svc.Stop(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "stop"))
 	}
 	time.Sleep(2 * time.Second)
-	u.PrintStep("run", "starting system service")
+	u.Render(func() {
+		u.Step("run", "starting system service")
+	})
 	if err := svc.Start(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "start"))
 	}
-	u.PrintSuccessLine("service restarted")
+	u.Render(func() { u.SuccessLine("service restarted") })
 }
 
 func (s *Service) Status(svc service.Service, configPath string) {
@@ -181,7 +194,9 @@ func (s *Service) Status(svc service.Service, configPath string) {
 	}
 
 	u := ui.New()
-	u.PrintServiceStatus(statusStr, pid, configPath)
+	u.Render(func() {
+		u.ServiceStatus(statusStr, pid, configPath)
+	})
 }
 
 func (s *Service) mapError(err error, cmd string) error {

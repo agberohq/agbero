@@ -73,8 +73,8 @@ func newHandler(t *testing.T, rootPath string, opts ...routeOpt) *web {
 	return NewWeb(res, route, nil)
 }
 
-func withListing() routeOpt  { return func(r *alaye.Route) { r.Web.Listing = true } }
-func withSPA() routeOpt      { return func(r *alaye.Route) { r.Web.SPA = true } }
+func withListing() routeOpt  { return func(r *alaye.Route) { r.Web.Listing = alaye.Active } }
+func withSPA() routeOpt      { return func(r *alaye.Route) { r.Web.SPA = alaye.Active } }
 func withMarkdown() routeOpt { return func(r *alaye.Route) { r.Web.Markdown.Enabled = alaye.Active } }
 func withMarkdownBrowse() routeOpt {
 	return func(r *alaye.Route) {

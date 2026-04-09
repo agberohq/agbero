@@ -243,7 +243,7 @@ func TestUnmarshalHost_webRoute(t *testing.T) {
 	if r.Web.Index[0] != "index.html" {
 		t.Errorf("Web.Index: got %q, want index.html", r.Web.Index)
 	}
-	if !r.Web.Listing {
+	if !r.Web.Listing.Active() {
 		t.Error("Web.Listing: got false, want true")
 	}
 }

@@ -59,10 +59,9 @@ var (
 // route
 
 var (
-	ErrRoutePathRequired      = errors.New("path is required")
-	ErrRouteInvalidPrefix     = errors.New("invalid path prefix")
-	ErrRouteNoBackendOrWeb    = errors.New("route must have either 'backend' blocks or a 'web' block")
-	ErrRouteBothBackendAndWeb = errors.New("route cannot have both 'backend' blocks and a 'web' block")
+	ErrRoutePathRequired   = errors.New("path is required")
+	ErrRouteInvalidPrefix  = errors.New("invalid path prefix")
+	ErrRouteNoBackendOrWeb = errors.New("route must have either 'backend', 'serverless` or a 'web' block")
 
 	ErrWebRouteStripPrefixes  = errors.New("web routes cannot have strip_prefixes")
 	ErrWebRouteUnsupportedLB  = errors.New("web routes only support default load balancing")

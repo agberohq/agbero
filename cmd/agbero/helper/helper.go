@@ -7,7 +7,7 @@ import (
 )
 
 // Helper is the shared dependency container threaded through all CLI commands.
-// The Keeper store is opened once in main() and injected here; no command
+// The Keeper store is opened onFce in main() and injected here; no command
 // should open its own store.
 type Helper struct {
 	Logger   *ll.Logger

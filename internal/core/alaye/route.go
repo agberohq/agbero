@@ -8,6 +8,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/cespare/xxhash/v2"
 	"github.com/olekukonko/errors"
+	"github.com/olekukonko/ll"
 )
 
 type Route struct {
@@ -44,7 +45,7 @@ type Route struct {
 	Fallback    Fallback      `hcl:"fallback,block,omitempty" json:"fallback"`
 }
 
-// Validates the route configuration to ensure correctness
+// Validate - Validates the route configuration to ensure correctness
 // Checks for conflicting handler engines and validates individual components
 func (r *Route) Validate() error {
 	if r.Path == "" {
@@ -57,6 +58,8 @@ func (r *Route) Validate() error {
 	isWeb := r.Web.Root.IsSet() || (r.Web.Git.Enabled.Active() && !r.Serverless.Enabled.Active())
 	isBackend := len(r.Backends.Servers) > 0
 	isServerless := r.Serverless.Enabled.Active()
+
+	ll.Output(r.Serverless, isServerless)
 
 	engines := 0
 	if isWeb {
@@ -72,6 +75,7 @@ func (r *Route) Validate() error {
 	if engines > 1 {
 		return fmt.Errorf("route %q: engine conflict. Choose one: web, backend, or serverless", r.Path)
 	}
+
 	if engines == 0 {
 		return ErrRouteNoBackendOrWeb
 	}
@@ -290,7 +294,7 @@ func (r *Route) Key() string {
 		for _, idx := range r.Web.Index {
 			w.WriteString(idx)
 		}
-		if r.Web.Listing {
+		if r.Web.Listing.Active() {
 			w.WriteString("ls")
 		}
 		if r.Web.PHP.Enabled.Active() {
@@ -368,7 +372,7 @@ func (r *Route) Key() string {
 	return fmt.Sprintf("%x", w.Sum64())
 }
 
-// Generates a struct identifier combining protocol, domain, path, and address
+// BackendKey - Generates a struct identifier combining protocol, domain, path, and address
 // Primarily used for referencing upstream targets consistently in metrics
 func (r *Route) BackendKey(domain, backendAddr string) BackendKey {
 	if domain == "" {

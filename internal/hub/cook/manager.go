@@ -219,14 +219,15 @@ func (m *Manager) GetCook(routeKey string) (*Cook, bool) {
 }
 
 func (m *Manager) Stop() {
+	// Cancel all entries first
 	m.entries.Range(func(key string, entry *Entry) bool {
 		if entry.cancel != nil {
 			entry.cancel()
 		}
 		return true
 	})
-	m.entries.Clear()
 
+	// Wait for pollers
 	done := make(chan struct{})
 	go func() {
 		m.wg.Wait()
@@ -236,8 +237,11 @@ func (m *Manager) Stop() {
 	select {
 	case <-done:
 	case <-time.After(defaultStopTimeout):
-		m.logger.Warn("timeout waiting for cook operations to complete")
+		m.logger.Warn("timeout waiting for pollers")
 	}
+
+	// Optional: Wait for pool to drain (if jack.Pool supports it)
+	// m.pool.Drain() // if available
 }
 
 func (m *Manager) poll(ctx context.Context, routeKey string, c *Cook, interval time.Duration) {

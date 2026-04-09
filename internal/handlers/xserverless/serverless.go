@@ -6,17 +6,25 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/resource"
+	"github.com/agberohq/agbero/internal/middleware/nonce"
 )
 
 type serverless struct {
-	mux *http.ServeMux
+	mux         *http.ServeMux
+	nonceStores map[string]*nonce.Store
 }
 
-// New - Instantiates a new serverless handler router that multiplexes mapped REST and Worker execution endpoints
-// Configures route-specific environments injected globally down to the handlers
+// New creates a serverless handler. Existing call sites remain unchanged.
 func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
+	return NewWithNonces(cfg, route, nil)
+}
+
+// NewWithNonces creates a serverless handler with pre-built nonce stores.
+// nonceStores maps rest endpoint name → Store; nil when not needed.
+func NewWithNonces(cfg resource.Proxy, route *alaye.Route, nonceStores map[string]*nonce.Store) http.Handler {
 	s := &serverless{
-		mux: http.NewServeMux(),
+		mux:         http.NewServeMux(),
+		nonceStores: nonceStores,
 	}
 
 	globalEnv := make(map[string]expect.Value)
@@ -27,8 +35,8 @@ func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
 
 	routeEnv := route.Env
 
-	validRests := make(map[string]alaye.REST)
-	for _, rest := range route.Serverless.RESTs {
+	validRests := make(map[string]alaye.Replay)
+	for _, rest := range route.Serverless.Replay {
 		if !rest.Enabled.Active() {
 			continue
 		}
@@ -39,11 +47,16 @@ func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
 	}
 
 	for name, rest := range validRests {
-		handler := NewRest(RestConfig{
-			Resource:  cfg.Resource,
-			REST:      rest,
-			GlobalEnv: globalEnv,
-			RouteEnv:  routeEnv,
+		var nonceStore *nonce.Store
+		if nonceStores != nil {
+			nonceStore = nonceStores[name]
+		}
+		handler := NewReplay(ReplayConfig{
+			Resource:   cfg.Resource,
+			REST:       rest,
+			GlobalEnv:  globalEnv,
+			RouteEnv:   routeEnv,
+			NonceStore: nonceStore,
 		})
 		s.mux.Handle("/"+name, handler)
 	}
@@ -71,12 +84,9 @@ func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
 		})
 		s.mux.Handle("/"+name, handler)
 	}
-
 	return s
 }
 
-// Proxies incoming serverless HTTP requests to the resolved multiplexer
-// Uses the registered URI path rules to identify target functions
 func (s *serverless) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }

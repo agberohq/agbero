@@ -117,23 +117,24 @@ func (h *Home) Navigate(target, action string) {
 // --force: skip confirmation AND remove the binary.
 func (h *Home) Uninstall(svc service.Service, configPath string, force bool) {
 	u := ui.New()
-
 	if !force {
-		u.DialogBox(ui.DialogDanger,
-			"DANGER — Complete uninstall",
-			[]string{
-				"stop and remove the system service",
-				"remove the local Certificate Authority from system trust",
-				"delete all configurations, host files, certificates, logs, and data",
-			},
-			"This action cannot be undone.  Pass --force to also remove the binary.",
-		)
+		u.Render(func() {
+			u.DialogBox(ui.DialogDanger,
+				"DANGER — Complete uninstall",
+				[]string{
+					"stop and remove the system service",
+					"remove the local Certificate Authority from system trust",
+					"delete all configurations, host files, certificates, logs, and data",
+				},
+				"This action cannot be undone.  Pass --force to also remove the binary.",
+			)
+		})
 		confirmed, err := u.Confirm(
 			"Confirm complete uninstall",
 			"Are you sure you want to remove agbero and all its data?",
 		)
 		if err != nil || !confirmed {
-			u.PrintInfoLine("uninstall cancelled")
+			u.Render(func() { u.InfoLine("uninstall cancelled") })
 			return
 		}
 	}
@@ -167,12 +168,12 @@ func (h *Home) Uninstall(svc service.Service, configPath string, force bool) {
 		h.deleteBinary()
 	} else {
 		execPath, _ := os.Executable()
-		u.PrintInfoLine(fmt.Sprintf("binary kept at %s — pass --force to remove it", execPath))
+		u.Render(func() { u.InfoLine(fmt.Sprintf("binary kept at %s — pass --force to remove it", execPath)) })
 		u.Blank()
 	}
 
 	u.Blank()
-	u.PrintSuccessLine("agbero uninstalled")
+	u.Render(func() { u.SuccessLine("agbero uninstalled") })
 }
 
 // promptBackup offers a backup before destructive removal.

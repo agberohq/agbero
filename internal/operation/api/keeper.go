@@ -37,7 +37,6 @@ func KeeperHandler(s *Shared, r chi.Router) {
 	})
 }
 
-// setRequest is the JSON body for POST /keeper/secrets.
 type setRequest struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
@@ -124,15 +123,21 @@ func (k *Keeper) lock(w http.ResponseWriter, r *http.Request) {
 		k.errorResponse(w, http.StatusServiceUnavailable, "keeper not configured")
 		return
 	}
+	// WARNING: locking the keeper unwires the global secret resolver. Every
+	// config value referencing ss:// or vault:// will return its raw key string
+	// until the keeper is unlocked via POST /keeper/unlock. Do not lock the
+	// keeper while the server is actively serving requests.
 	secrets.NewResolver(k.store).Unwire()
 	if err := k.store.Lock(); err != nil {
 		k.errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	k.jsonResponse(w, http.StatusOK, map[string]string{"status": "locked"})
+	k.jsonResponse(w, http.StatusOK, map[string]string{
+		"status":  "locked",
+		"warning": "secret resolution is suspended until unlock",
+	})
 }
 
-// status handles GET /keeper/status.
 func (k *Keeper) status(w http.ResponseWriter, r *http.Request) {
 	enabled := k.store != nil
 	locked := true
@@ -166,12 +171,12 @@ func (k *Keeper) list(w http.ResponseWriter, r *http.Request) {
 	var keys []string
 	for _, ns := range namespaces {
 		if ns == "__default__" {
-			// Skip the auto-created empty namespace.
+
 			continue
 		}
 		nsKeys, err := k.store.ListNamespacedFull("default", ns)
 		if err != nil {
-			continue // bucket may be locked; skip silently
+			continue
 		}
 		for _, key := range nsKeys {
 			keys = append(keys, ns+"/"+key)
@@ -183,7 +188,6 @@ func (k *Keeper) list(w http.ResponseWriter, r *http.Request) {
 	k.jsonResponse(w, http.StatusOK, map[string]any{"keys": keys})
 }
 
-// get handles GET /keeper/secrets/{key}.
 func (k *Keeper) get(w http.ResponseWriter, r *http.Request) {
 	if !k.guard(w) {
 		return
@@ -221,11 +225,6 @@ func (k *Keeper) get(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// set handles POST /keeper/secrets (JSON or multipart).
-//
-// User secrets go into the "default" keeper scheme. A LevelPasswordOnly bucket
-// is created for the namespace on first write — CreateBucket is idempotent
-// (returns ErrPolicyImmutable if the bucket already exists, which we ignore).
 func (k *Keeper) set(w http.ResponseWriter, r *http.Request) {
 	if !k.guard(w) {
 		return
@@ -309,7 +308,6 @@ func (k *Keeper) set(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// delete handles DELETE /keeper/secrets/{key}.
 func (k *Keeper) delete(w http.ResponseWriter, r *http.Request) {
 	if !k.guard(w) {
 		return
@@ -376,7 +374,7 @@ func (k *Keeper) errorResponse(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store, no-cache")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg}) //nolint:errcheck
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 func (k *Keeper) jsonResponse(w http.ResponseWriter, code int, data any) {

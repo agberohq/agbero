@@ -35,13 +35,15 @@ func (c *Configuration) Validate(configFile string) error {
 	}
 
 	u := ui.New()
-	u.SectionHeader("Config validation")
-	u.PrintKeyValueBlock("", []ui.KV{
-		{Label: "Config file", Value: configFile},
-		{Label: "Hosts dir", Value: global.Storage.HostsDir.Path()},
-		{Label: "Hosts found", Value: fmt.Sprintf("%d", len(hosts))},
+	u.Render(func() {
+		u.SectionHeader("Config validation")
+		u.KeyValueBlock("", []ui.KV{
+			{Label: "Config file", Value: configFile},
+			{Label: "Hosts dir", Value: global.Storage.HostsDir.Path()},
+			{Label: "Hosts found", Value: fmt.Sprintf("%d", len(hosts))},
+		})
+		u.SuccessLine("configuration is valid")
 	})
-	u.PrintSuccessLine("configuration is valid")
 	return nil
 }
 
@@ -76,23 +78,31 @@ func (c *Configuration) Reload(configFile string) error {
 }
 
 func (c *Configuration) Path(configFile string) {
-	fmt.Println(configFile)
+	u := ui.New()
+	u.SuccessLine(configFile)
+	u.Flush()
 }
 
 func (c *Configuration) View(configFile, editor string) {
+
+	u := ui.New()
 	if editor != "" {
 		runEditor(editor, configFile)
 		return
 	}
 	content, err := os.ReadFile(configFile)
 	if err != nil {
-		ui.New().ErrorHint("failed to read file", err.Error())
+		u.ErrorHint("failed to read file", err.Error())
+		u.Flush()
 		return
 	}
-	u := ui.New()
-	u.SectionHeader("Config file")
-	u.PrintKeyValue("Path", configFile)
-	fmt.Println(string(content))
+
+	u.Render(func() {
+		u.SectionHeader("Config file")
+		u.KeyValue("Path", configFile)
+	})
+	u.Println(string(content))
+	u.Flush()
 }
 
 func (c *Configuration) Edit(configFile string) error {
@@ -183,16 +193,17 @@ func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 	}
 
 	existing, found := ResolveConfigPath(logger, "")
+	var store tlsstore.Store
 	if found {
 		global, err := loadGlobal(existing)
 		if err == nil && global.Storage.CertsDir != "" {
 			certsDir := global.Storage.CertsDir
-			if !tlss.IsCARootInstalled(certsDir) {
-				store, err := tlsstore.NewDisk(tlsstore.DiskConfig{CertDir: certsDir})
-				if err != nil {
-					store = tlsstore.NewMemory()
-				}
-				loc := tlss.NewLocal(logger, store)
+			store, err = tlsstore.NewDisk(tlsstore.DiskConfig{CertDir: certsDir})
+			if err != nil {
+				store = tlsstore.NewMemory()
+			}
+			loc := tlss.NewLocal(logger, store)
+			if !loc.CAExists() {
 				if err := loc.InstallCARootIfNeeded(); err != nil {
 					logger.Warn("CA install skipped: ", err)
 				}

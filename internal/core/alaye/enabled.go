@@ -23,7 +23,7 @@ var (
 	_ json.Marshaler           = (*Enabled)(nil)
 )
 
-func NewStatus(v any) Enabled {
+func NewEnabled(v any) Enabled {
 	var s Enabled
 	_ = s.Set(v)
 	return s

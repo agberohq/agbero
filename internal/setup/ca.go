@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"runtime"
 
-	"charm.land/huh/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
@@ -108,14 +106,7 @@ func (c *CA) PromptAndInstall() error {
 		"please read the documentation for more information:",
 	)
 
-	var confirm bool
-	err := huh.NewConfirm().
-		Title("Local Certificate Authority").
-		Description("Would you like to install it now? (Requires admin/sudo password)").
-		WithButtonAlignment(lipgloss.Left).
-		Value(&confirm).
-		Run()
-
+	confirm, err := u.Confirm("Local Certificate Authority", "Would you like to install it now? (Requires admin/sudo password)")
 	if err != nil {
 		return err
 	}

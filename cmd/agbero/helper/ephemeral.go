@@ -90,7 +90,7 @@ func (e *Ephemeral) Serve() {
 	}
 	u.KeyValueBlock("", pairs)
 	u.InfoLine("press Ctrl+C to stop")
-
+	u.Flush()
 	e.run(global, hosts)
 }
 
@@ -159,7 +159,7 @@ func (e *Ephemeral) Proxy() {
 		{Label: "URL", Value: u.LinkInline(displayURL, displayURL)},
 	})
 	u.InfoLine("press Ctrl+C to stop")
-
+	u.Flush()
 	e.run(global, hosts)
 }
 

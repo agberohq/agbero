@@ -23,7 +23,7 @@ The same block also handles background workers, scheduled tasks, and on-demand s
 
 The `serverless` block inside any route gives you two primitives:
 
-**`rest` blocks** proxy outbound HTTP calls to external APIs. Agbero injects your credentials, forwards the request, and streams the response back. Your API key stays on the server.
+**`replay` blocks** proxy outbound HTTP calls to external APIs. Agbero injects your credentials, forwards the request, and streams the response back. Your API key stays on the server.
 
 **`work` blocks** run local commands — on a schedule, as a persistent background daemon, triggered on-demand by an HTTP request, or once at startup.
 
@@ -46,7 +46,7 @@ route "/api/payments" {
   serverless {
     enabled = true
 
-    rest "stripe" {
+    replay "stripe" {
       enabled = true
       url     = "https://api.stripe.com/v1/charges"
       method  = "POST"
@@ -82,7 +82,7 @@ GET  /api/data/weather?city=Lagos
 ### Forwarding query parameters from the client
 
 ```hcl
-rest "github-search" {
+replay "github-search" {
   enabled       = true
   url           = "https://api.github.com/search/repositories"
   method        = "GET"
@@ -98,7 +98,7 @@ rest "github-search" {
 ### Static query parameters (resolved server-side)
 
 ```hcl
-rest "weather" {
+replay "weather" {
   enabled       = true
   url           = "https://api.openweathermap.org/data/2.5/weather"
   method        = "GET"
@@ -116,7 +116,7 @@ rest "weather" {
 Avoid hammering an upstream on repeated identical requests:
 
 ```hcl
-rest "exchange-rates" {
+replay "exchange-rates" {
   enabled = true
   url     = "https://api.exchangerate.host/latest"
   method  = "GET"
@@ -147,14 +147,14 @@ route "/integrations" {
   serverless {
     enabled = true
 
-    rest "stripe" {
+    replay "stripe" {
       enabled = true
       url     = "https://api.stripe.com/v1/charges"
       method  = "POST"
       headers = { "Authorization" = "Bearer env.STRIPE_KEY" }
     }
 
-    rest "sendgrid" {
+    replay "sendgrid" {
       enabled = true
       url     = "https://api.sendgrid.com/v3/mail/send"
       method  = "POST"
@@ -164,7 +164,7 @@ route "/integrations" {
       }
     }
 
-    rest "slack" {
+    replay "slack" {
       enabled = true
       url     = "https://hooks.slack.com/services/env.SLACK_WEBHOOK_PATH"
       method  = "POST"
@@ -285,7 +285,7 @@ Environment variables are merged in this order, with later values winning:
 
 1. Global env — defined at the top of `agbero.hcl` in the `env = { }` map
 2. Route env — defined in `env = { }` inside the `route` block
-3. Worker env — defined in `env = { }` inside the individual `work` or `rest` block
+3. Worker env — defined in `env = { }` inside the individual `work` or `replay` block
 
 ```hcl
 # agbero.hcl
@@ -322,7 +322,7 @@ By default workers run from a directory under `work.d/` named after the host and
 ```hcl
 serverless {
   enabled = true
-  root    = "/opt/myapp"   # all workers and rest handlers run from here
+  root    = "/opt/myapp"   # all workers and replay handlers run from here
 }
 ```
 
@@ -373,7 +373,7 @@ route "/integrations" {
   serverless {
     enabled = true
 
-    rest "stripe-charge" {
+    replay "stripe-charge" {
       enabled = true
       url     = "https://api.stripe.com/v1/charges"
       method  = "POST"
@@ -385,7 +385,7 @@ route "/integrations" {
       }
     }
 
-    rest "send-email" {
+    replay "send-email" {
       enabled = true
       url     = "https://api.sendgrid.com/v3/mail/send"
       method  = "POST"
@@ -499,7 +499,7 @@ const url = URL.createObjectURL(blob)
 
 ## Reference
 
-### `rest` block fields
+### `replay` block fields
 
 | Field | Type | Description |
 |-------|------|-------------|

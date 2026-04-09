@@ -84,24 +84,27 @@ func (a *Admin) TOTPQRPNGFile(_ string, username, outFile string) {
 		a.p.Logger.Fatal("failed to write QR PNG: ", err)
 	}
 
-	u2 := ui.New()
-	u2.SuccessLine("QR code written to " + outFile)
-	u2.Blank()
+	u := ui.New()
+	u.Render(func() {
+		u.SuccessLine("QR code written to " + outFile)
+	})
 }
 
 func (a *Admin) renderTOTPQR(username, storeKey, uri string) {
 	u := ui.New()
-	u.SectionHeader("TOTP — " + username)
-	u.PrintKeyValue("Store key", storeKey)
-	u.QR(uri)
-	u.Blank()
-	u.PrintInfoLine("Add to agbero.hcl admin block:")
-	u.PrintInfoLine(`  totp {`)
-	u.PrintInfoLine(`    enabled = "on"`)
-	u.PrintInfoLine(`    user {`)
-	u.PrintInfoLine(`      username = "` + username + `"`)
-	u.PrintInfoLine(`      secret   = "` + storeKey + `"`)
-	u.PrintInfoLine(`    }`)
-	u.PrintInfoLine(`  }`)
-	u.PrintInfoLine("Or open the admin UI → Security → TOTP for a scannable QR.")
+	u.Render(func() {
+		u.SectionHeader("TOTP — " + username)
+		u.KeyValue("Store key", storeKey)
+		u.QR(uri)
+		u.Blank()
+		u.InfoLine("Add to agbero.hcl admin block:")
+		u.InfoLine(`  totp {`)
+		u.InfoLine(`    enabled = "on"`)
+		u.InfoLine(`    user {`)
+		u.InfoLine(`      username = "` + username + `"`)
+		u.InfoLine(`      secret   = "` + storeKey + `"`)
+		u.InfoLine(`    }`)
+		u.InfoLine(`  }`)
+		u.InfoLine("Or open the admin UI → Security → TOTP for a scannable QR.")
+	})
 }

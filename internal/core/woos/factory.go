@@ -98,9 +98,9 @@ func NewStaticHost(c Static) *alaye.Host {
 		route.Web = alaye.Web{
 			Enabled: alaye.Active,
 			Root:    alaye.WebRoot(c.Target),
-			Listing: true,
+			Listing: alaye.NewEnabled(true),
 			Index:   []string{"index.html"},
-			SPA:     c.SPA,
+			SPA:     alaye.NewEnabled(c.SPA),
 			Markdown: alaye.Markdown{
 				Enabled: markdownToggle,
 				View:    "normal",
