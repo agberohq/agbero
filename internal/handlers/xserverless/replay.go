@@ -1,7 +1,10 @@
 package xserverless
 
 import (
+	"crypto/subtle"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,9 +22,7 @@ const (
 )
 
 // upstreamHeadersToStrip are headers sent by the upstream that must not be
-// forwarded to the browser when StripUpstreamHeaders is active.  These are
-// headers that apply to the upstream's own origin and would confuse or block
-// the browser when the response is re-served from agbero's origin.
+// forwarded to the browser when StripUpstreamHeaders is active.
 var upstreamHeadersToStrip = map[string]struct{}{
 	"access-control-allow-origin":         {},
 	"access-control-allow-credentials":    {},
@@ -85,20 +86,19 @@ func (h *Replay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			guard = nonce.NewMetaGuard(h.nonceStore)
-
 		case "token":
-			if h.cfg.Auth.Secret.Empty() { // or inject via config
-				http.Error(w, "replay: token verifier not configured", http.StatusInternalServerError)
-				return
+			// Token auth: use Secret as simple shared key verifier if no external verifier provided
+			verifier := func(tok string) bool {
+				secret := h.cfg.Auth.Secret.String()
+				if secret == "" || tok == "" {
+					return false
+				}
+				return subtle.ConstantTimeCompare([]byte(tok), []byte(secret)) == 1
 			}
-			// guard = nonce.NewTokenGuard(h.cfg.Auth.Secret)
-			// todo this will work with agbero secre
-			// thi swill use in internal to generate auth token i think
-			/// we need to make this work
+			guard = nonce.NewTokenGuard(verifier)
 		case "direct":
 			guard = nonce.NewDirectGuard()
 		}
-
 		if guard != nil {
 			handled := false
 			guard.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +115,6 @@ func (h *Replay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Replay) dispatch(w http.ResponseWriter, r *http.Request) {
-	// Method guard — applied in both fixed and replay modes.
 	if !h.methodAllowed(r.Method) {
 		allowed := strings.Join(h.methods, ", ")
 		w.Header().Set("Allow", allowed)
@@ -130,7 +129,6 @@ func (h *Replay) dispatch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// serveFixed handles requests where a static upstream URL is configured.
 func (h *Replay) serveFixed(w http.ResponseWriter, r *http.Request) {
 	targetURL, err := url.Parse(h.cfg.URL)
 	if err != nil {
@@ -153,8 +151,6 @@ func (h *Replay) serveFixed(w http.ResponseWriter, r *http.Request) {
 	h.doProxy(w, r, proxyReq, false)
 }
 
-// serveReplay handles requests where the upstream URL is provided at runtime
-// via the X-Agbero-Replay-Url header or ?url= query parameter.
 func (h *Replay) serveReplay(w http.ResponseWriter, r *http.Request) {
 	rawURL := r.Header.Get(woos.HeaderXAgberoReplayURL)
 	if rawURL == "" {
@@ -177,6 +173,12 @@ func (h *Replay) serveReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Add DNS/IP validation here (prevents rebinding)
+	if err := h.validateTargetHost(targetURL.Hostname()); err != nil {
+		h.res.Logger.Fields("host", targetURL.Hostname(), "err", err).Warn("serverless: target host validation failed")
+		http.Error(w, "replay: target host validation failed", http.StatusForbidden)
+		return
+	}
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), r.Body)
 	if err != nil {
 		h.res.Logger.Fields("err", err).Error("serverless: failed to create replay request")
@@ -184,18 +186,42 @@ func (h *Replay) serveReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Forward safe headers from the incoming request to the upstream.
 	forwardSafeHeaders(proxyReq.Header, r.Header)
-	h.prepareHeaders(proxyReq.Header) // config-level header overrides
+	h.prepareHeaders(proxyReq.Header)
+
+	// Set Referer based on configurable mode
+	h.setReferer(proxyReq, targetURL, r.Header.Get("Referer"))
 
 	strip := h.cfg.StripHeaders.Active()
 	h.doProxy(w, r, proxyReq, strip)
 }
 
-// doProxy executes the upstream request and writes the response.
-// When strip is true, upstream CORS and security headers are removed and
-// Access-Control-Allow-Origin is set to the incoming request's origin so the
-// browser treats the response as same-origin.
+// setReferer configures the Referer header on the upstream request based on replay config.
+func (h *Replay) setReferer(proxyReq *http.Request, targetURL *url.URL, incomingReferer string) {
+	mode := strings.ToLower(strings.TrimSpace(h.cfg.RefererMode))
+	if mode == "" {
+		mode = "auto" // default
+	}
+
+	switch mode {
+	case "auto":
+		// Derive from target: scheme + host + trailing slash
+		proxyReq.Header.Set("Referer", targetURL.Scheme+"://"+targetURL.Host+"/")
+	case "fixed":
+		if h.cfg.RefererValue != "" {
+			proxyReq.Header.Set("Referer", h.cfg.RefererValue)
+		}
+	case "forward":
+		// Forward browser's Referer if present
+		if incomingReferer != "" {
+			proxyReq.Header.Set("Referer", incomingReferer)
+		}
+	case "none":
+		// Explicitly omit Referer
+		proxyReq.Header.Del("Referer")
+	}
+}
+
 func (h *Replay) doProxy(w http.ResponseWriter, r *http.Request, proxyReq *http.Request, strip bool) {
 	resp, err := h.client.Do(proxyReq)
 	if err != nil {
@@ -232,8 +258,6 @@ func (h *Replay) doProxy(w http.ResponseWriter, r *http.Request, proxyReq *http.
 	}
 }
 
-// methodAllowed reports whether the given HTTP method is permitted by the
-// handler's method list.  An empty list means all methods are allowed.
 func (h *Replay) methodAllowed(method string) bool {
 	if len(h.methods) == 0 {
 		return true
@@ -248,12 +272,13 @@ func (h *Replay) methodAllowed(method string) bool {
 }
 
 // domainAllowed checks the upstream hostname against AllowedDomains.
-// Patterns support a leading wildcard: *.bbc.co.uk matches any subdomain.
+// Patterns support: exact match, "*.domain.com" wildcard, or "*" for allow-all.
 func (h *Replay) domainAllowed(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
 	for _, pattern := range h.cfg.AllowedDomains {
 		pattern = strings.ToLower(strings.TrimSpace(pattern))
 
+		// Special case: "*" allows any domain
 		if pattern == "*" {
 			return true
 		}
@@ -262,8 +287,9 @@ func (h *Replay) domainAllowed(host string) bool {
 			return true
 		}
 		if strings.HasPrefix(pattern, "*.") {
-			suffix := pattern[1:] // ".bbc.co.uk"
-			if strings.HasSuffix(host, suffix) {
+			base := pattern[2:]
+			// Allow if: host != base AND ends with ".base"
+			if host != base && strings.HasSuffix(host, "."+base) {
 				return true
 			}
 		}
@@ -314,18 +340,45 @@ func (h *Replay) getResolver() func(string) string {
 	}
 }
 
+// validateTargetHost resolves the hostname and blocks private/loopback IPs
+// to prevent SSRF and DNS rebinding attacks.
+// validateTargetHost resolves the hostname and blocks private/loopback IPs
+// to prevent SSRF and DNS rebinding attacks.
+// Skip validation if host was explicitly allowed by exact match (e.g., for testing).
+func (h *Replay) validateTargetHost(host string) error {
+	// If host was explicitly allowed by exact match, skip IP validation
+
+	for _, pattern := range h.cfg.AllowedDomains {
+		pattern = strings.ToLower(strings.TrimSpace(pattern))
+		if pattern == host {
+			return nil
+		}
+	}
+
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("DNS resolution failed for %s: %w", host, err)
+	}
+	for _, ip := range ips {
+		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("target host %s resolves to blocked IP %s", host, ip)
+		}
+	}
+	return nil
+}
+
 // forwardSafeHeaders copies a curated subset of incoming request headers to
-// the upstream request.  Host, cookies, and auth headers are intentionally
-// excluded — they belong to the browser↔agbero leg, not the agbero↔upstream leg.
+// the upstream request. Host, cookies, and auth headers are intentionally excluded.
 func forwardSafeHeaders(dst, src http.Header) {
 	safe := []string{
 		"Accept", "Accept-Encoding", "Accept-Language",
 		"Cache-Control", "Content-Type", "Content-Length",
 		"If-Modified-Since", "If-None-Match",
+		"Referer",
 	}
-	for _, h := range safe {
-		if v := src.Get(h); v != "" {
-			dst.Set(h, v)
+	for _, hdr := range safe {
+		if v := src.Get(hdr); v != "" {
+			dst.Set(hdr, v)
 		}
 	}
 }

@@ -2,6 +2,9 @@ package xserverless
 
 import (
 	"net/http"
+	"path"
+	"regexp"
+	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
@@ -35,6 +38,7 @@ func NewWithNonces(cfg resource.Proxy, route *alaye.Route, nonceStores map[strin
 
 	routeEnv := route.Env
 
+	// Register replay endpoints
 	validRests := make(map[string]alaye.Replay)
 	for _, rest := range route.Serverless.Replay {
 		if !rest.Enabled.Active() {
@@ -47,9 +51,15 @@ func NewWithNonces(cfg resource.Proxy, route *alaye.Route, nonceStores map[strin
 	}
 
 	for name, rest := range validRests {
+		cleanName, ok := cleanRouteName(name)
+		if !ok {
+			cfg.Resource.Logger.Fields("name", name).Error("serverless: invalid route name, skipping registration")
+			continue
+		}
+
 		var nonceStore *nonce.Store
 		if nonceStores != nil {
-			nonceStore = nonceStores[name]
+			nonceStore = nonceStores[name] // use original name for lookup
 		}
 		handler := NewReplay(ReplayConfig{
 			Resource:   cfg.Resource,
@@ -58,9 +68,10 @@ func NewWithNonces(cfg resource.Proxy, route *alaye.Route, nonceStores map[strin
 			RouteEnv:   routeEnv,
 			NonceStore: nonceStore,
 		})
-		s.mux.Handle("/"+name, handler)
+		s.mux.Handle("/"+cleanName, handler) // ← restore leading slash
 	}
 
+	// Register worker endpoints
 	validWorkers := make(map[string]alaye.Work)
 	for _, worker := range route.Serverless.Workers {
 		if _, exists := validWorkers[worker.Name]; exists {
@@ -74,6 +85,13 @@ func NewWithNonces(cfg resource.Proxy, route *alaye.Route, nonceStores map[strin
 			cfg.Resource.Logger.Fields("name", name).Warn("serverless: Worker name collides with REST name, skipping worker registration")
 			continue
 		}
+
+		cleanName, ok := cleanRouteName(name)
+		if !ok {
+			cfg.Resource.Logger.Fields("name", name).Error("serverless: invalid worker name, skipping registration")
+			continue
+		}
+
 		handler := NewWorker(WorkerConfig{
 			Resource:  cfg.Resource,
 			Route:     *route,
@@ -82,11 +100,28 @@ func NewWithNonces(cfg resource.Proxy, route *alaye.Route, nonceStores map[strin
 			RouteEnv:  routeEnv,
 			Orch:      cfg.Orch,
 		})
-		s.mux.Handle("/"+name, handler)
+		s.mux.Handle("/"+cleanName, handler)
 	}
 	return s
 }
 
 func (s *serverless) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
+}
+
+var routeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+
+// cleanRouteName sanitizes and validates a route name to prevent path traversal
+// and HTTP mux poisoning. Returns cleaned name + true if valid.
+func cleanRouteName(name string) (string, bool) {
+	// Normalize slashes and resolve . / ..
+	clean := path.Clean("/" + name)[1:]
+	if clean == "" || clean == "." || strings.Contains(clean, "/") || strings.Contains(clean, "..") {
+		return "", false
+	}
+	// Strict allowlist: alphanumeric, dots, hyphens, underscores. Must start with alnum.
+	if !routeNameRe.MatchString(clean) {
+		return "", false
+	}
+	return clean, true
 }

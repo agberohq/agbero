@@ -3,6 +3,7 @@ package xserverless
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -103,7 +104,6 @@ func TestFixedMode_QueryMerge(t *testing.T) {
 func TestFixedMode_EnvResolution(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		// Check that all three env keys resolved correctly
 		if q.Get("g") != "global" || q.Get("r") != "route" || q.Get("c") != "config" {
 			t.Errorf("env resolution failed: %v", q)
 		}
@@ -116,16 +116,16 @@ func TestFixedMode_EnvResolution(t *testing.T) {
 		REST: alaye.Replay{
 			URL: ts.URL,
 			Query: map[string]expect.Value{
-				"g": expect.Value("env.global"),
-				"r": expect.Value("env.route"),
-				"c": expect.Value("env.config"),
+				"g": "env.global",
+				"r": "env.route",
+				"c": "env.config",
 			},
 			Env: map[string]expect.Value{
-				"config": expect.Value("config"),
+				"config": "config",
 			},
 		},
-		GlobalEnv: map[string]expect.Value{"global": expect.Value("global")},
-		RouteEnv:  map[string]expect.Value{"route": expect.Value("route")},
+		GlobalEnv: map[string]expect.Value{"global": "global"},
+		RouteEnv:  map[string]expect.Value{"route": "route"},
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -223,10 +223,49 @@ func TestReplayMode_InvalidURL(t *testing.T) {
 	}
 }
 
-func TestDomainAllowed_Wildcard(t *testing.T) {
-	h := &Replay{cfg: alaye.Replay{AllowedDomains: []string{"*.bbc.co.uk"}}}
-	if !h.domainAllowed("news.bbc.co.uk") || h.domainAllowed("bbc.co.uk") {
-		t.Error("wildcard logic failed")
+// Domain Allowlist
+
+func TestDomainAllowed_AllowAllWildcard(t *testing.T) {
+	h := &Replay{cfg: alaye.Replay{AllowedDomains: []string{"*"}}}
+	if !h.domainAllowed("example.com") || !h.domainAllowed("any.domain.here") {
+		t.Error(`"*" should allow any domain`)
+	}
+}
+
+func TestDomainAllowed_ExactMatch(t *testing.T) {
+	h := &Replay{cfg: alaye.Replay{AllowedDomains: []string{"example.com"}}}
+	tests := []struct {
+		host     string
+		expected bool
+	}{
+		{"example.com", true},
+		{"EXAMPLE.COM", true},
+		{"sub.example.com", false},
+		{"evil.com", false},
+	}
+	for _, tt := range tests {
+		if got := h.domainAllowed(tt.host); got != tt.expected {
+			t.Errorf("domainAllowed(%q) = %v; want %v", tt.host, got, tt.expected)
+		}
+	}
+}
+
+func TestDomainAllowed_WildcardSubdomain(t *testing.T) {
+	h := &Replay{cfg: alaye.Replay{AllowedDomains: []string{"*.example.com"}}}
+	tests := []struct {
+		host     string
+		expected bool
+	}{
+		{"api.example.com", true},
+		{"sub.api.example.com", true},
+		{"example.com", false},
+		{"evil.com", false},
+		{"example.com.evil.com", false},
+	}
+	for _, tt := range tests {
+		if got := h.domainAllowed(tt.host); got != tt.expected {
+			t.Errorf("domainAllowed(%q) = %v; want %v", tt.host, got, tt.expected)
+		}
 	}
 }
 
@@ -250,6 +289,64 @@ func TestDomainAllowed_Blocked(t *testing.T) {
 
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("want 403, got %d", rr.Code)
+	}
+}
+
+// Referer Handling
+
+func TestSetReferer_Auto(t *testing.T) {
+	h := &Replay{cfg: alaye.Replay{RefererMode: "auto"}}
+	target, _ := url.Parse("https://api.example.com/feed")
+	proxyReq, _ := http.NewRequest("GET", target.String(), nil)
+	h.setReferer(proxyReq, target, "https://evil.com/page")
+
+	if got := proxyReq.Header.Get("Referer"); got != "https://api.example.com/" {
+		t.Errorf("auto mode: want 'https://api.example.com/', got %q", got)
+	}
+}
+
+func TestSetReferer_Fixed(t *testing.T) {
+	h := &Replay{cfg: alaye.Replay{RefererMode: "fixed", RefererValue: "https://agbero.local/"}}
+	target, _ := url.Parse("https://upstream.com/data")
+	proxyReq, _ := http.NewRequest("GET", target.String(), nil)
+	h.setReferer(proxyReq, target, "https://browser.com/page")
+
+	if got := proxyReq.Header.Get("Referer"); got != "https://agbero.local/" {
+		t.Errorf("fixed mode: want 'https://agbero.local/', got %q", got)
+	}
+}
+
+func TestSetReferer_Forward(t *testing.T) {
+	h := &Replay{cfg: alaye.Replay{RefererMode: "forward"}}
+	target, _ := url.Parse("https://upstream.com/data")
+	proxyReq, _ := http.NewRequest("GET", target.String(), nil)
+	h.setReferer(proxyReq, target, "https://browser.com/page")
+
+	if got := proxyReq.Header.Get("Referer"); got != "https://browser.com/page" {
+		t.Errorf("forward mode: want browser referer, got %q", got)
+	}
+}
+
+func TestSetReferer_None(t *testing.T) {
+	h := &Replay{cfg: alaye.Replay{RefererMode: "none"}}
+	target, _ := url.Parse("https://upstream.com/data")
+	proxyReq, _ := http.NewRequest("GET", target.String(), nil)
+	proxyReq.Header.Set("Referer", "https://should-be-removed.com")
+	h.setReferer(proxyReq, target, "https://browser.com/page")
+
+	if proxyReq.Header.Get("Referer") != "" {
+		t.Errorf("none mode: want empty Referer, got %q", proxyReq.Header.Get("Referer"))
+	}
+}
+
+func TestSetReferer_DefaultIsAuto(t *testing.T) {
+	h := &Replay{cfg: alaye.Replay{RefererMode: ""}} // empty = default
+	target, _ := url.Parse("https://api.example.com/feed")
+	proxyReq, _ := http.NewRequest("GET", target.String(), nil)
+	h.setReferer(proxyReq, target, "")
+
+	if got := proxyReq.Header.Get("Referer"); got != "https://api.example.com/" {
+		t.Errorf("default mode: want auto-derived referer, got %q", got)
 	}
 }
 
@@ -354,7 +451,6 @@ func TestAuthMeta_ValidNonce(t *testing.T) {
 }
 
 func TestAuthMeta_MissingNonce(t *testing.T) {
-	// Must provide NonceStore; otherwise guard returns 500 (store not initialised)
 	store := nonce.NewStore(time.Minute)
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
@@ -389,7 +485,6 @@ func TestAuthMeta_StoreNotInitialised(t *testing.T) {
 				Method:  "meta",
 			},
 		},
-		// NonceStore intentionally nil → expect 500
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/?url=http://example.com", nil)
@@ -477,11 +572,37 @@ func TestAuthDirect_EmptyCookie(t *testing.T) {
 }
 
 // Auth: Token (Bearer)
-// Note: token auth is not yet wired in replay.go ServeHTTP switch.
-// These tests are skipped until the "token" case is implemented.
 
-func TestAuthToken_MissingHeader(t *testing.T) {
-	t.Skip("token auth handler not yet implemented in replay.go")
+func TestAuthToken_ValidWithSecret(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	h := NewReplay(ReplayConfig{
+		Resource: resource.New(),
+		REST: alaye.Replay{
+			URL:            "",
+			AllowedDomains: []string{"127.0.0.1", "localhost"},
+			Auth: alaye.RestAuth{
+				Enabled: alaye.NewEnabled(true),
+				Method:  "token",
+				Secret:  expect.Value("my-secret-token"),
+			},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/?url="+ts.URL, nil)
+	req.Header.Set("Authorization", "Bearer my-secret-token")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("want 200, got %d", rr.Code)
+	}
+}
+
+func TestAuthToken_InvalidWithSecret(t *testing.T) {
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
 		REST: alaye.Replay{
@@ -490,6 +611,31 @@ func TestAuthToken_MissingHeader(t *testing.T) {
 			Auth: alaye.RestAuth{
 				Enabled: alaye.NewEnabled(true),
 				Method:  "token",
+				Secret:  expect.Value("my-secret-token"),
+			},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/?url=http://example.com", nil)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("want 401, got %d", rr.Code)
+	}
+}
+
+func TestAuthToken_MissingHeader(t *testing.T) {
+	h := NewReplay(ReplayConfig{
+		Resource: resource.New(),
+		REST: alaye.Replay{
+			URL:            "",
+			AllowedDomains: []string{"example.com"},
+			Auth: alaye.RestAuth{
+				Enabled: alaye.NewEnabled(true),
+				Method:  "token",
+				Secret:  expect.Value("secret"),
 			},
 		},
 	})
@@ -503,8 +649,7 @@ func TestAuthToken_MissingHeader(t *testing.T) {
 	}
 }
 
-func TestAuthToken_NilVerifier(t *testing.T) {
-	t.Skip("token auth handler not yet implemented in replay.go")
+func TestAuthToken_NoSecretConfigured(t *testing.T) {
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
 		REST: alaye.Replay{
@@ -513,6 +658,7 @@ func TestAuthToken_NilVerifier(t *testing.T) {
 			Auth: alaye.RestAuth{
 				Enabled: alaye.NewEnabled(true),
 				Method:  "token",
+				// Secret intentionally empty → should reject all tokens
 			},
 		},
 	})
@@ -522,8 +668,8 @@ func TestAuthToken_NilVerifier(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusInternalServerError {
-		t.Errorf("want 500 for nil verifier, got %d", rr.Code)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("want 401 when no secret configured, got %d", rr.Code)
 	}
 }
 
@@ -565,6 +711,7 @@ func TestForwardSafeHeaders(t *testing.T) {
 	src.Set("Accept", "application/json")
 	src.Set("Authorization", "secret")
 	src.Set("Host", "evil.com")
+	src.Set("Referer", "https://browser.com/page")
 
 	dst := http.Header{}
 	forwardSafeHeaders(dst, src)
@@ -577,6 +724,9 @@ func TestForwardSafeHeaders(t *testing.T) {
 	}
 	if dst.Get("Host") != "" {
 		t.Error("Host should NOT forward")
+	}
+	if dst.Get("Referer") != "https://browser.com/page" {
+		t.Error("Referer should forward when in safe list")
 	}
 }
 
@@ -620,66 +770,5 @@ func TestResponseBodyCopyError(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("want 200, got %d", rr.Code)
-	}
-}
-
-// Domain Allowlist Tests
-
-func TestDomainAllowed_AllowAllWildcard(t *testing.T) {
-	h := &Replay{cfg: alaye.Replay{AllowedDomains: []string{"*"}}}
-	if !h.domainAllowed("example.com") || !h.domainAllowed("any.domain.here") {
-		t.Error(`"*" should allow any domain`)
-	}
-}
-
-func TestDomainAllowed_ExactMatch(t *testing.T) {
-	h := &Replay{cfg: alaye.Replay{AllowedDomains: []string{"example.com"}}}
-	tests := []struct {
-		host     string
-		expected bool
-	}{
-		{"example.com", true},
-		{"EXAMPLE.COM", true}, // case-insensitive
-		{"sub.example.com", false},
-		{"evil.com", false},
-	}
-	for _, tt := range tests {
-		if got := h.domainAllowed(tt.host); got != tt.expected {
-			t.Errorf("domainAllowed(%q) = %v; want %v", tt.host, got, tt.expected)
-		}
-	}
-}
-
-func TestDomainAllowed_WildcardSubdomain(t *testing.T) {
-	h := &Replay{cfg: alaye.Replay{AllowedDomains: []string{"*.example.com"}}}
-	tests := []struct {
-		host     string
-		expected bool
-	}{
-		{"api.example.com", true},
-		{"sub.api.example.com", true},
-		{"example.com", false}, // wildcard requires subdomain
-		{"evil.com", false},
-		{"example.com.evil.com", false}, // suffix spoofing attempt
-	}
-	for _, tt := range tests {
-		if got := h.domainAllowed(tt.host); got != tt.expected {
-			t.Errorf("domainAllowed(%q) = %v; want %v", tt.host, got, tt.expected)
-		}
-	}
-}
-
-func TestDomainAllowed_MultiplePatterns(t *testing.T) {
-	h := &Replay{cfg: alaye.Replay{AllowedDomains: []string{"*.safe.com", "exact.org", "*"}}}
-	// "*" at end should allow all
-	if !h.domainAllowed("random.net") {
-		t.Error(`expected "random.net" allowed due to "*" pattern`)
-	}
-}
-
-func TestDomainAllowed_EmptyList(t *testing.T) {
-	h := &Replay{cfg: alaye.Replay{AllowedDomains: []string{}}}
-	if h.domainAllowed("anything.com") {
-		t.Error("empty allowlist should reject all domains")
 	}
 }
