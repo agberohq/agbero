@@ -18,6 +18,7 @@ type WorkerConfig struct {
 	GlobalEnv map[string]expect.Value
 	RouteEnv  map[string]expect.Value
 	Orch      *orchestrator2.Manager
+	Domain    string
 }
 
 type WorkerHandler struct {
@@ -27,10 +28,13 @@ type WorkerHandler struct {
 	globalEnv map[string]expect.Value
 	routeEnv  map[string]expect.Value
 	orch      *orchestrator2.Manager
+	statsKey  alaye.BackendKey
 }
 
-// NewWorker initializes a new worker handler with the given configuration.
 func NewWorker(cfg WorkerConfig) *WorkerHandler {
+	key := cfg.Route.WorkerBackendKey(cfg.Domain, cfg.Work.Name)
+	// Pre-register so the key appears in metrics before first request
+	cfg.Resource.Metrics.GetOrRegister(key)
 	return &WorkerHandler{
 		res:       cfg.Resource,
 		route:     cfg.Route,
@@ -38,11 +42,10 @@ func NewWorker(cfg WorkerConfig) *WorkerHandler {
 		globalEnv: cfg.GlobalEnv,
 		routeEnv:  cfg.RouteEnv,
 		orch:      cfg.Orch,
+		statsKey:  key,
 	}
 }
 
-// ServeHTTP handles the incoming HTTP request by running the configured worker process.
-// It resolves the execution directory and returns 503 if a git deployment is pending.
 func (h *WorkerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
@@ -52,6 +55,13 @@ func (h *WorkerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.res.Logger.Fields("worker", h.cfg.Name, "method", r.Method, "remote", r.RemoteAddr).Info("serverless: worker request received")
+
+	activity := h.res.Metrics.GetOrRegister(h.statsKey).Activity
+	activity.StartRequest()
+	failed := false
+	defer func() {
+		activity.EndRequest(time.Since(start).Microseconds(), failed)
+	}()
 
 	var dir string
 	if h.orch != nil {
@@ -75,6 +85,7 @@ func (h *WorkerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := proc.Run(r.Context(), r.Body, w); err != nil {
+		failed = true
 		h.res.Logger.Fields("worker", h.cfg.Name, "err", err, "duration", time.Since(start)).Error("serverless: ephemeral execution failed")
 		http.Error(w, "Worker Execution Failed", http.StatusInternalServerError)
 		return

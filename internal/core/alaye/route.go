@@ -44,8 +44,6 @@ type Route struct {
 	Fallback    Fallback      `hcl:"fallback,block,omitempty" json:"fallback"`
 }
 
-// Validate - Validates the route configuration to ensure correctness
-// Checks for conflicting handler engines and validates individual components
 func (r *Route) Validate() error {
 	if r.Path == "" {
 		return ErrRoutePathRequired
@@ -121,8 +119,6 @@ func (r *Route) Validate() error {
 	return r.validateWebRoute()
 }
 
-// Validates all configured authentication plugins for the route
-// Returns the first error encountered, if any
 func (r *Route) validateAuth() error {
 	if err := r.BasicAuth.Validate(); err != nil {
 		return errors.Newf("basic_auth: %w", err)
@@ -139,8 +135,6 @@ func (r *Route) validateAuth() error {
 	return nil
 }
 
-// Validates routing plugins such as headers, compression, and Wasm modules
-// Returns an error if any of the configurations are invalid
 func (r *Route) validatePlugins() error {
 	if err := r.Headers.Validate(); err != nil {
 		return errors.Newf("headers: %w", err)
@@ -154,8 +148,6 @@ func (r *Route) validatePlugins() error {
 	return nil
 }
 
-// Verifies that web routing requirements are met, such as valid root paths
-// Ensures no conflicting proxy-only features like health checks are enabled
 func (r *Route) validateWebRoute() error {
 	if !r.Web.Root.IsSet() && !r.Web.Git.Enabled.Active() {
 		return ErrWebRouteRootRequired
@@ -183,8 +175,6 @@ func (r *Route) validateWebRoute() error {
 	return r.validatePlugins()
 }
 
-// Verifies that a proxy route has at least one backend server available
-// Validates path stripping, LB strategies, and circuit breakers
 func (r *Route) validateProxyRoute() error {
 	if len(r.Backends.Servers) == 0 {
 		return ErrProxyRouteNoBackends
@@ -220,8 +210,6 @@ func (r *Route) validateProxyRoute() error {
 	return r.validatePlugins()
 }
 
-// Computes a fast xxhash signature based on the route's configurations
-// Used primarily for caching optimized handler chains in memory
 func (r *Route) Key() string {
 	w := xxhash.New()
 
@@ -404,9 +392,19 @@ func (r *Route) Key() string {
 	return fmt.Sprintf("%x", w.Sum64())
 }
 
-// BackendKey - Generates a struct identifier combining protocol, domain, path, and address
-// Primarily used for referencing upstream targets consistently in metrics
 func (r *Route) BackendKey(domain, backendAddr string) BackendKey {
+	return r.backendKey("http", domain, backendAddr)
+}
+
+func (r *Route) ReplayBackendKey(domain, replayName string) BackendKey {
+	return r.backendKey("serverless", domain, replayName)
+}
+
+func (r *Route) WorkerBackendKey(domain, workerName string) BackendKey {
+	return r.backendKey("worker", domain, workerName)
+}
+
+func (r *Route) backendKey(protocol, domain, addr string) BackendKey {
 	if domain == "" {
 		domain = "*"
 	}
@@ -415,9 +413,9 @@ func (r *Route) BackendKey(domain, backendAddr string) BackendKey {
 		path = "/"
 	}
 	return BackendKey{
-		Protocol: "http",
+		Protocol: protocol,
 		Domain:   domain,
 		Path:     path,
-		Addr:     backendAddr,
+		Addr:     addr,
 	}
 }

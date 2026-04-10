@@ -159,7 +159,7 @@ func (s *Server) Start(configPath string) error {
 			Setting:         &s.global.Security.Keeper,
 			Logger:          s.logger,
 			Interactive:     false,
-			DisableAutoLock: true, // server process must never auto-lock
+			DisableAutoLock: true,
 		})
 		if err != nil {
 			s.logger.Fatal("Keeper initialization failed. Cannot start: ", err)
@@ -304,12 +304,6 @@ func (s *Server) Start(configPath string) error {
 		s.tlsManager.SetCluster(s.clusterManager)
 	}
 
-	// Pre-generate local TLS certificates for all known ModeLocalAuto hosts
-	// before any listeners start.  This eliminates the first-request race where
-	// concurrent browser connections all miss the empty cache simultaneously,
-	// trigger parallel generation, and some receive nil while the first write
-	// is still in flight.  getCertificateLocal still uses localFlight as a
-	// safety net for hosts added dynamically after startup.
 	s.tlsManager.PreloadLocalCertificates(hosts)
 
 	var trustedProxies []string
@@ -527,6 +521,15 @@ func (s *Server) Reload() {
 			if r.Backends.Enabled.Active() {
 				for _, srv := range r.Backends.Servers {
 					validKeys[r.BackendKey(domain, srv.Address.String())] = true
+				}
+			}
+			// Serverless: keep replay and worker metric keys alive across reloads
+			if r.Serverless.Enabled.Active() {
+				for _, rp := range r.Serverless.Replay {
+					validKeys[r.ReplayBackendKey(domain, rp.Name)] = true
+				}
+				for _, wk := range r.Serverless.Workers {
+					validKeys[r.WorkerBackendKey(domain, wk.Name)] = true
 				}
 			}
 		}

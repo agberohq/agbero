@@ -66,10 +66,20 @@ type HostSnapshot struct {
 }
 
 type RouteSnapshot struct {
-	Protocol string             `json:"protocol"`
-	Path     string             `json:"path"`
-	Strategy string             `json:"strategy"`
-	Backends []*BackendSnapshot `json:"backends"`
+	Protocol   string                `json:"protocol"`
+	Path       string                `json:"path"`
+	Strategy   string                `json:"strategy"`
+	Backends   []*BackendSnapshot    `json:"backends"`
+	Serverless []*ServerlessSnapshot `json:"serverless,omitempty"`
+}
+
+type ServerlessSnapshot struct {
+	Name      string                  `json:"name"`
+	Kind      string                  `json:"kind"` // "replay" or "worker"
+	InFlight  int64                   `json:"in_flight"`
+	TotalReqs uint64                  `json:"total_reqs"`
+	Failures  uint64                  `json:"failures"`
+	Latency   metrics.LatencySnapshot `json:"latency_us"`
 }
 
 type ProxySnapshot struct {
@@ -207,7 +217,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 			}
 
 			for _, srv := range route.Backends.Servers {
-				addressStr := srv.Address.String() // Upgraded to alaye.Address
+				addressStr := srv.Address.String()
 				statsKey := route.BackendKey(domain, addressStr)
 
 				var latSnap metrics.LatencySnapshot
@@ -280,6 +290,44 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 				rSnap.Backends = append(rSnap.Backends, bSnap)
 				totalReqs += uint64(reqs)
 			}
+			// Serverless: replay and worker metrics
+			for _, rp := range route.Serverless.Replay {
+				if !rp.Enabled.Active() {
+					continue
+				}
+				key := route.ReplayBackendKey(domain, rp.Name)
+				slSnap := &ServerlessSnapshot{Name: rp.Name, Kind: "replay"}
+				if stats := res.Metrics.Get(key); stats != nil {
+					snap := stats.Activity.Snapshot()
+					slSnap.InFlight = snap["in_flight"].(int64)
+					slSnap.TotalReqs = snap["requests"].(uint64)
+					slSnap.Failures = snap["failures"].(uint64)
+					slSnap.Latency = snap["latency"].(metrics.LatencySnapshot)
+					totalReqs += slSnap.TotalReqs
+					if slSnap.Latency.Count > 0 && slSnap.Latency.P99 > 0 {
+						val := float64(slSnap.Latency.P99)
+						sumAll += val
+						countAll++
+						sumHttp += val
+						countHttp++
+					}
+				}
+				rSnap.Serverless = append(rSnap.Serverless, slSnap)
+			}
+			for _, wk := range route.Serverless.Workers {
+				key := route.WorkerBackendKey(domain, wk.Name)
+				slSnap := &ServerlessSnapshot{Name: wk.Name, Kind: "worker"}
+				if stats := res.Metrics.Get(key); stats != nil {
+					snap := stats.Activity.Snapshot()
+					slSnap.InFlight = snap["in_flight"].(int64)
+					slSnap.TotalReqs = snap["requests"].(uint64)
+					slSnap.Failures = snap["failures"].(uint64)
+					slSnap.Latency = snap["latency"].(metrics.LatencySnapshot)
+					totalReqs += slSnap.TotalReqs
+				}
+				rSnap.Serverless = append(rSnap.Serverless, slSnap)
+			}
+
 			hSnap.Routes = append(hSnap.Routes, rSnap)
 		}
 
@@ -301,7 +349,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 			}
 
 			for _, srv := range proxy.Backends {
-				addressStr := srv.Address.String() // Upgraded to alaye.Address
+				addressStr := srv.Address.String()
 				statsKey := proxy.BackendKey(addressStr)
 
 				var latSnap metrics.LatencySnapshot

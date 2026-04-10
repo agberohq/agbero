@@ -23,8 +23,6 @@ const (
 	defaultRESTTimeout = 30 * time.Second
 )
 
-// upstreamHeadersToStrip are headers sent by the upstream that must not be
-// forwarded to the browser when StripUpstreamHeaders is active.
 var upstreamHeadersToStrip = map[string]struct{}{
 	"access-control-allow-origin":         {},
 	"access-control-allow-credentials":    {},
@@ -47,6 +45,8 @@ type ReplayConfig struct {
 	GlobalEnv  map[string]expect.Value
 	RouteEnv   map[string]expect.Value
 	NonceStore *nonce.Store
+	Domain     string
+	Route      alaye.Route
 }
 
 type Replay struct {
@@ -58,6 +58,7 @@ type Replay struct {
 	methods    []string
 	nonceStore *nonce.Store
 	cacheStore stash.Store
+	statsKey   alaye.BackendKey
 }
 
 func NewReplay(cfg ReplayConfig) *Replay {
@@ -97,6 +98,10 @@ func NewReplay(cfg ReplayConfig) *Replay {
 			r.cacheStore = store
 		}
 	}
+
+	r.statsKey = cfg.Route.ReplayBackendKey(cfg.Domain, cfg.Replay.Name)
+	// Pre-register so the key exists in metrics even before first request
+	cfg.Resource.Metrics.GetOrRegister(r.statsKey)
 
 	return r
 }
@@ -249,6 +254,13 @@ func (h *Replay) setReferer(proxyReq *http.Request, targetURL *url.URL, incoming
 }
 
 func (h *Replay) doProxyWithCache(w http.ResponseWriter, r *http.Request, proxyReq *http.Request, strip bool, start time.Time) {
+	activity := h.res.Metrics.GetOrRegister(h.statsKey).Activity
+	activity.StartRequest()
+	failed := false
+	defer func() {
+		activity.EndRequest(time.Since(start).Microseconds(), failed)
+	}()
+
 	shouldCache := h.shouldCacheRequest(r)
 	var cacheKey string
 
@@ -273,6 +285,7 @@ func (h *Replay) doProxyWithCache(w http.ResponseWriter, r *http.Request, proxyR
 
 	resp, err := h.client.Do(proxyReq)
 	if err != nil {
+		failed = true
 		h.res.Logger.Fields("url", proxyReq.URL.String(), "err", err).Error("serverless: upstream call failed")
 		http.Error(w, "Upstream Service Unavailable", http.StatusBadGateway)
 		return
@@ -328,6 +341,9 @@ func (h *Replay) doProxyWithCache(w http.ResponseWriter, r *http.Request, proxyR
 		w.Header().Set("X-Cache-Status", "MISS")
 	}
 
+	if resp.StatusCode >= 500 {
+		failed = true
+	}
 	h.res.Logger.Fields("replay", h.cfg.Name, "target", proxyReq.URL.Host, "status", resp.StatusCode, "duration", time.Since(start)).Info("serverless: replay done")
 
 	w.WriteHeader(resp.StatusCode)
