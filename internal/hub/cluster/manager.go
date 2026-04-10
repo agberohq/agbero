@@ -157,7 +157,7 @@ func (m *Manager) BroadcastReliable(op OpType, key string, value []byte) error {
 	if err != nil {
 		return err
 	}
-	// Defensive check for unit tests where memberlist isn't initialized
+
 	if m.list == nil {
 		return nil
 	}
@@ -169,8 +169,6 @@ func (m *Manager) BroadcastReliable(op OpType, key string, value []byte) error {
 	return nil
 }
 
-// BroadcastGossip disperses a payload through the cluster via UDP.
-// It is suitable for lightweight, eventually-consistent state updates.
 func (m *Manager) BroadcastGossip(op OpType, key string, value []byte) {
 	env := Envelope{
 		Op:        op,
@@ -190,17 +188,25 @@ func (m *Manager) TryAcquireLock(key string) bool {
 	if myID == "" {
 		myID, _ = os.Hostname()
 	}
+
+	// Reject immediately if another node holds a live lock.
 	if env, ok := m.delegate.getEnvelope(lockKey); ok {
 		if env.Owner != myID && time.Since(time.Unix(0, env.Timestamp)) < lockTTL {
 			return false
 		}
 	}
+
+	// Broadcast our claim, then wait for gossip to propagate so we can detect
+	// a concurrent claim from another node.
 	m.BroadcastGossip(OpLock, lockKey, []byte("claimed"))
 	time.Sleep(2 * time.Second)
+
+	// We win only if our envelope survived — last-writer-wins by timestamp means
+	// the node with the highest UnixNano claim time holds the lock.  If another
+	// node's envelope is present, they either claimed later (and won) or we never
+	// got our broadcast applied locally (pathological split — treat as lost).
 	if env, ok := m.delegate.getEnvelope(lockKey); ok {
-		if env.Owner == myID {
-			return true
-		}
+		return env.Owner == myID
 	}
 	return false
 }

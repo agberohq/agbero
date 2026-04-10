@@ -406,7 +406,7 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 		return
 	}
 
-	if hm.clusterMgr != nil {
+	if hm.clusterMgr != nil && hm.configSync != nil {
 		domain := strings.TrimSuffix(filepath.Base(event.Name), woos.HCLSuffix)
 
 		isRemove := event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)

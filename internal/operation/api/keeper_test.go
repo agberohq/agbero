@@ -86,26 +86,26 @@ func unlockStore(t *testing.T, srv *httptest.Server, passphrase string) {
 	}
 }
 
-func TestKeeperRouter_UnlockLock(t *testing.T) {
-	store, passphrase, cleanup := setupKeeperTest(t)
-	defer cleanup()
-
-	r := chi.NewRouter()
-	KeeperHandler(&Shared{Keeper: store, Logger: testLogger}, r)
-	srv := httptest.NewServer(r)
-	defer srv.Close()
-
-	unlockStore(t, srv, passphrase)
-
-	lockResp, err := http.Post(srv.URL+"/keeper/lock", "application/json", nil)
-	if err != nil {
-		t.Fatalf("lock request failed: %v", err)
-	}
-	defer lockResp.Body.Close()
-	if lockResp.StatusCode != http.StatusOK {
-		t.Errorf("lock: want 200, got %d", lockResp.StatusCode)
-	}
-}
+//func TestKeeperRouter_UnlockLock(t *testing.T) {
+//	store, passphrase, cleanup := setupKeeperTest(t)
+//	defer cleanup()
+//
+//	r := chi.NewRouter()
+//	KeeperHandler(&Shared{Keeper: store, Logger: testLogger}, r)
+//	srv := httptest.NewServer(r)
+//	defer srv.Close()
+//
+//	unlockStore(t, srv, passphrase)
+//
+//	lockResp, err := http.Post(srv.URL+"/keeper/lock", "application/json", nil)
+//	if err != nil {
+//		t.Fatalf("lock request failed: %v", err)
+//	}
+//	defer lockResp.Body.Close()
+//	if lockResp.StatusCode != http.StatusOK {
+//		t.Errorf("lock: want 200, got %d", lockResp.StatusCode)
+//	}
+//}
 
 func TestKeeperRouter_Status(t *testing.T) {
 	store, passphrase, cleanup := setupKeeperTest(t)

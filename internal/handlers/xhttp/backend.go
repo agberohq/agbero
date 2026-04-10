@@ -2,7 +2,6 @@ package xhttp
 
 import (
 	"context"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -62,7 +61,6 @@ type Backend struct {
 	stop     chan struct{}
 	stopOnce sync.Once
 	Cond     *Conditions
-	rnd      *rand.Rand
 	logger   *ll.Logger
 
 	hcConfig     *alaye.HealthCheck
@@ -261,7 +259,6 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	}
 
 	b.Proxy = rp
-	b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	if err := b.initHealth(xhttpCfg.Resource, u.ResolveReference(&url.URL{Path: b.hcConfig.Path}).String()); err != nil {
 		b.logger.Fields("backend", b.Address, "err", err).Warn("failed to initialize health check")

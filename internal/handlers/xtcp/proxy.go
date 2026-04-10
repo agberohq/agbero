@@ -182,11 +182,6 @@ func (p *Proxy) Start() error {
 				if errors.As(err, &opErr) && opErr.Timeout() {
 					continue
 				}
-				if p.MaxConns > 0 && p.connCnt.Load() >= p.MaxConns {
-					p.res.Logger.Fields("remote", conn.RemoteAddr().String(), "limit", p.MaxConns).Warn("tcp max connections reached, dropping")
-					conn.Close()
-					continue
-				}
 				if p.closing.Load() {
 					return
 				}
@@ -200,6 +195,11 @@ func (p *Proxy) Start() error {
 				}
 			}
 			bo.Reset()
+			if p.MaxConns > 0 && p.connCnt.Load() >= p.MaxConns {
+				p.res.Logger.Fields("remote", conn.RemoteAddr().String(), "limit", p.MaxConns).Warn("tcp max connections reached, dropping")
+				conn.Close()
+				continue
+			}
 			p.wg.Add(1)
 			go p.handle(conn)
 		}

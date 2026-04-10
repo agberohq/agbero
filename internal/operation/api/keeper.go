@@ -28,7 +28,6 @@ func KeeperHandler(s *Shared, r chi.Router) {
 		r.Get("/status", k.status)
 
 		r.Group(func(r chi.Router) {
-			r.Post("/lock", k.lock)
 			r.Get("/secrets", k.list)
 			r.Post("/secrets", k.set)
 			r.Delete("/secrets/*", k.delete)

@@ -471,6 +471,11 @@ func (h *Replay) validateTargetHost(host string) error {
 		}
 	}
 
+	// DNS rebinding note: LookupIP is called at validation time; the actual
+	// HTTP dial happens afterwards and may resolve to a different IP if the
+	// TTL is very short (DNS rebinding attack). A wildcard "*" in
+	// AllowedDomains bypasses this check entirely and must not be used in
+	// production replay configurations.
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return fmt.Errorf("DNS resolution failed for %s: %w", host, err)
