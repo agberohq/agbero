@@ -24,7 +24,6 @@ func sanitizeGlobalConfig(g *alaye.Global) *alaye.Global {
 	}
 
 	if clone.Security.Enabled.Active() {
-		clone.Security.InternalAuthKey = "***"
 		for i := range clone.Security.TrustedProxies {
 			clone.Security.TrustedProxies[i] = "***"
 		}

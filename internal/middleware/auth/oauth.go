@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -88,7 +89,11 @@ func getProvider(cfg *alaye.OAuth) (goth.Provider, error) {
 // startGothFlow initiates the OAuth redirect flow and stores the provider session in a cookie.
 // The state cookie is short-lived and HttpOnly to prevent CSRF.
 func startGothFlow(w http.ResponseWriter, r *http.Request, provider goth.Provider) {
-	state := generateState()
+	state, err := generateState()
+	if err != nil {
+		http.Error(w, "Failed to generate auth state", http.StatusInternalServerError)
+		return
+	}
 
 	sess, err := provider.BeginAuth(state)
 	if err != nil {
@@ -221,7 +226,6 @@ func isCallbackRequest(r *http.Request, redirectURL string) bool {
 	return strings.Contains(redirectURL, r.URL.Path) && r.URL.Query().Get(woos.CallBackCodeKey) != ""
 }
 
-// clearCookie expires a named cookie immediately.
 func clearCookie(w http.ResponseWriter, name string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
@@ -233,10 +237,12 @@ func clearCookie(w http.ResponseWriter, name string) {
 }
 
 // generateState produces a cryptographically random state string for CSRF protection.
-func generateState() string {
+func generateState() (string, error) {
 	b := make([]byte, woos.DefaultByteLen)
-	rand.Read(b)
-	return base64.URLEncoding.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generateState: %w", err)
+	}
+	return base64.URLEncoding.EncodeToString(b), nil
 }
 
 // isSecure returns true when the request was received over TLS.

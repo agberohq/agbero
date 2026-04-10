@@ -150,11 +150,8 @@ func (s *System) Backup(configPath, outPath, password string) error {
 	addPath(global.Storage.CertsDir.Path())
 	addPath(global.Storage.DataDir.Path())
 	addPath(global.Storage.WorkDir.Path())
-
-	if global.Security.InternalAuthKey != "" {
-		addPath(global.Security.InternalAuthKey)
-	}
 	addPath(global.ErrorPages.Default)
+
 	for _, p := range global.ErrorPages.Pages {
 		addPath(p)
 	}

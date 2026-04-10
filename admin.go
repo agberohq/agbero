@@ -287,6 +287,10 @@ func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Ha
 
 			jwtSecret, err := s.getAdminJWTSecret(claims.User)
 			if err != nil {
+				// Always perform a dummy bcrypt comparison so the response
+				// time is indistinguishable from a valid-but-wrong-password
+				// path — prevents timing-based username enumeration.
+				bcrypt.CompareHashAndPassword(dummyHash, []byte("dummy"))
 				http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
 				return
 			}
@@ -452,6 +456,16 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Consume the challenge JTI immediately — prevents replay within the 5-minute TTL window.
+	if claims.ID != "" {
+		if _, already := s.resource.TimeStore.Get(claims.ID); already {
+			addJitter(10 * time.Millisecond)
+			http.Error(w, "Challenge token already used", http.StatusUnauthorized)
+			return
+		}
+		s.resource.TimeStore.SetTTL(claims.ID, time.Now().Add(challengeTokenTTL), challengeTokenTTL)
+	}
+
 	var creds struct {
 		TOTP             string `json:"totp"`
 		KeeperPassphrase string `json:"keeper_passphrase"`
@@ -478,7 +492,9 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 		secrets.NewResolver(s.keeperStore).Wire()
 		s.logger.Info("keeper unlocked during admin challenge")
 
-		go s.Reload()
+		// Reload synchronously — the JTI is already consumed so this runs at most once
+		// per challenge token, preventing reload amplification from replayed requests.
+		s.Reload()
 	}
 
 	if cfg.TOTP.Enabled.Active() {
@@ -792,7 +808,7 @@ func (s *Server) getAdminJWTSecret(username string) (string, error) {
 	key := expect.Vault().AdminJWT(username)
 	secretBytes, err := s.keeperStore.Get(key)
 	if err != nil {
-		// FAIL CLOSED - do NOT generate
+
 		return "", fmt.Errorf("JWT secret not found or inaccessible for user %s: %w", username, err)
 	}
 	return string(secretBytes), nil

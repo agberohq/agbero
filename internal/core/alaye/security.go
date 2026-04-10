@@ -11,11 +11,10 @@ import (
 )
 
 type Security struct {
-	Enabled         expect.Toggle `hcl:"enabled,attr" json:"enabled"`
-	TrustedProxies  []string      `hcl:"trusted_proxies,attr" json:"trusted_proxies"`
-	InternalAuthKey string        `hcl:"internal_auth_key,attr" json:"internal_auth_key"`
-	Firewall        Firewall      `hcl:"firewall,block" json:"firewall"`
-	Keeper          Keeper        `hcl:"keeper,block" json:"keep"`
+	Enabled        expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	TrustedProxies []string      `hcl:"trusted_proxies,attr" json:"trusted_proxies"`
+	Firewall       Firewall      `hcl:"firewall,block" json:"firewall"`
+	Keeper         Keeper        `hcl:"keeper,block" json:"keep"`
 }
 
 // Validate checks trusted proxy formats and delegates to Firewall.Validate.

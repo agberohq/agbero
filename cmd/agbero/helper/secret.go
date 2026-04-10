@@ -2,22 +2,30 @@ package helper
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/ui"
-	"github.com/agberohq/agbero/internal/setup"
+	keeperlib "github.com/agberohq/keeper"
 )
 
 type Secret struct {
 	p *Helper
 }
 
-// Cluster generates a random gossip cluster secret key and prints it with
+// requireStore returns the injected keeper or fatals. Mirrors the pattern
+// used by the Keeper helper — all methods that need auth call this first.
+func (s *Secret) requireStore() *keeperlib.Keeper {
+	if s.p.Store == nil {
+		s.p.Logger.Fatal("keeper is not available — run 'agbero init' first or check AGBERO_PASSPHRASE")
+	}
+	return s.p.Store
+}
+
+// Cluster generates a random AES-256 gossip secret key and prints it with
 // the agbero.hcl snippet needed to activate it.
+// No keeper access required — this is a standalone random value.
 func (s *Secret) Cluster() {
 	pw := security.NewPassword()
 	key, err := pw.Generate(32)
@@ -32,64 +40,52 @@ func (s *Secret) Cluster() {
 	})
 }
 
-// KeyInit generates the internal PPK auth key on disk and prints the
-// agbero.hcl security block that references it.
-func (s *Secret) KeyInit(configPath string) {
-	global, err := loadGlobal(configPath)
-	var targetPath string
-	if err == nil && global.Security.InternalAuthKey != "" {
-		targetPath = global.Security.InternalAuthKey
-	} else {
-		ctx := setup.NewContext(s.p.Logger)
-		targetPath = filepath.Join(ctx.Paths.DataDir.Path(), woos.InternalAuthKeyName)
-	}
+// KeyInit generates a new Ed25519 internal auth key and stores it in the keeper
+// at vault://key/internal. Used to rotate the key after initial setup.
+// The key never touches the filesystem.
+func (s *Secret) KeyInit(_ string) {
+	store := s.requireStore()
 
-	if _, err := os.Stat(targetPath); err == nil {
-		s.p.Logger.Warn("key file already exists: ", targetPath)
+	existing, err := store.Get(expect.Vault().Key("internal"))
+	if err == nil && len(existing) > 0 {
+		s.p.Logger.Warn("internal auth key already exists in keeper — delete it first: agbero keeper delete vault://key/internal")
 		return
 	}
 
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
-		s.p.Logger.Fatal("failed to create directory: ", err)
+	_, pemBytes, err := security.GeneratePPK()
+	if err != nil {
+		s.p.Logger.Fatal("failed to generate internal auth key: ", err)
 	}
-	if err := security.NewPPK(targetPath); err != nil {
-		s.p.Logger.Fatal("failed to generate key: ", err)
+
+	if err := store.Set(expect.Vault().Key("internal"), pemBytes); err != nil {
+		s.p.Logger.Fatal("failed to store internal auth key in keeper: ", err)
 	}
 
 	u := ui.New()
 	u.Render(func() {
-		u.SecretBox("Internal auth key", targetPath)
-		u.InfoLine(`add to agbero.hcl:  security { enabled = true  internal_auth_key = "` + targetPath + `"  }`)
+		u.SuccessLine("internal auth key stored in keeper at vault://key/internal")
+		u.InfoLine("managed by keeper — no file path needed in agbero.hcl")
 	})
 }
 
-// Token mints a signed JWT for an external service and prints it along with
-// the JTI needed to revoke it later.
-func (s *Secret) Token(configPath, svcName string, ttl time.Duration) {
+// Token mints a signed JWT for an external service using the internal auth key
+// from the keeper (vault://key/internal). Prints the token and the JTI needed
+// to revoke it later via POST /api/v1/auto/revoke.
+func (s *Secret) Token(_ string, svcName string, ttl time.Duration) {
 	if svcName == "" {
 		s.p.Logger.Fatal("--service name is required")
 	}
 
-	global, err := loadGlobal(configPath)
-	if err != nil {
-		s.p.Logger.Fatal("failed to load config: ", err)
+	store := s.requireStore()
+
+	pemBytes, err := store.Get(expect.Vault().Key("internal"))
+	if err != nil || len(pemBytes) == 0 {
+		s.p.Logger.Fatal("internal auth key not found in keeper — run 'agbero secret key init' first")
 	}
 
-	keyPath := global.Security.InternalAuthKey
-	if keyPath == "" {
-		ctx := setup.NewContext(s.p.Logger)
-		defaultPath := filepath.Join(ctx.Paths.DataDir.Path(), woos.InternalAuthKeyName)
-		if _, err := os.Stat(defaultPath); err == nil {
-			keyPath = defaultPath
-		}
-	}
-	if keyPath == "" {
-		s.p.Logger.Fatal("security.internal_auth_key is not set and default key file not found")
-	}
-
-	tm, err := security.PPKLoad(keyPath)
+	tm, err := security.LoadPPKFromPEM(pemBytes)
 	if err != nil {
-		s.p.Logger.Fatal("failed to load private key: ", err)
+		s.p.Logger.Fatal("failed to load internal auth key: ", err)
 	}
 
 	if ttl == 0 {

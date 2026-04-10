@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/expect"
@@ -65,8 +66,6 @@ func (rt *AutoRoute) addRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enforce that the host matches the service identity from the token.
-	// auth.Internal sets X-Agbero-Service after verifying the PPK token.
 	serviceName := r.Header.Get(woos.HeaderXAgberoService)
 	if err := enforceServiceScope(serviceName, payload.Host); err != nil {
 		rt.logger.Fields("service", serviceName, "host", payload.Host).Warn("auto: scope violation on register")
@@ -116,7 +115,6 @@ func (rt *AutoRoute) deleteRoute(w http.ResponseWriter, r *http.Request) {
 		path = "/"
 	}
 
-	// A service may only deregister its own routes.
 	serviceName := r.Header.Get(woos.HeaderXAgberoService)
 	if err := enforceServiceScope(serviceName, host); err != nil {
 		rt.logger.Fields("service", serviceName, "host", host).Warn("auto: scope violation on deregister")
@@ -146,8 +144,13 @@ func enforceServiceScope(serviceName, host string) error {
 	if host == "" {
 		return fmt.Errorf("host is required")
 	}
-	// The host must begin with the service name to ensure a service can only
-	// register routes under its own identity namespace.
+
+	// Service names must be single labels — a dot in the service name would
+	// allow a token for "api.internal" to claim "api.internal.evil.com".
+	if strings.Contains(serviceName, ".") {
+		return fmt.Errorf("service name %q is invalid: must not contain dots", serviceName)
+	}
+
 	if !hasServicePrefix(host, serviceName) {
 		return fmt.Errorf("host %q is not within service scope %q", host, serviceName)
 	}
@@ -164,7 +167,11 @@ func hasServicePrefix(host, serviceName string) bool {
 		return false
 	}
 	sep := host[len(serviceName)]
-	return sep == '-' || sep == '.'
+	if sep != '-' && sep != '.' {
+		return false
+	}
+	// The remainder after the separator must be non-empty — rejects "api." or "api-".
+	return len(host) > len(serviceName)+1
 }
 
 func (rt *AutoRoute) errorResponse(w http.ResponseWriter, code int, msg string) {

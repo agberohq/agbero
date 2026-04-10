@@ -361,35 +361,6 @@ func main() {
 		}
 	}
 
-	if cmdSecret.Used {
-		s := hel.Secret()
-		switch {
-		case cmdSecretCluster.Used:
-			s.Cluster()
-		case cmdSecretKey.Used && cmdSecretKeyInit.Used:
-			resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
-			s.KeyInit(resolvedPath)
-		case cmdSecretToken.Used:
-			resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
-			s.Token(resolvedPath, cfg.KeyService, cfg.KeyTTL)
-		case cmdSecretHash.Used:
-			s.Hash(cfg.HashPassword)
-		case cmdSecretPassword.Used:
-			length := 0
-			if cfg.PasswordLength != "" {
-				if n, err := strconv.Atoi(cfg.PasswordLength); err == nil {
-					length = n
-				} else {
-					logger.Fatal("invalid length: must be a number")
-				}
-			}
-			s.Password(length)
-		default:
-			flaggy.ShowHelpAndExit("secret")
-		}
-		return
-	}
-
 	if cmdInit.Used || cmdInstall.Used {
 		if _, err := helper.InitConfiguration(logger, ""); err != nil {
 			logger.Fatal("init failed: ", err)
@@ -485,7 +456,8 @@ func main() {
 	//   run  → non-interactive, DisableAutoLock=true, fatal if still locked.
 	//   CLI  → interactive (prompts user), AutoLock respected.
 
-	if cmdRun.Used || cmdKeeper.Used || cmdAdmin.Used {
+	cmdSecretNeedsKeeper := cmdSecret.Used && (cmdSecretKeyInit.Used || cmdSecretToken.Used)
+	if cmdRun.Used || cmdKeeper.Used || cmdAdmin.Used || cmdSecretNeedsKeeper {
 		global, globalErr := helper.LoadGlobal(resolvedPath)
 		if globalErr != nil {
 			logger.Fatal("failed to load config for keeper initialisation: ", globalErr)
@@ -539,6 +511,33 @@ func main() {
 
 		// Re-construct hel with the live store injected.
 		hel = helper.New(logger, shutdown, cfg, store)
+	}
+
+	if cmdSecret.Used {
+		s := hel.Secret()
+		switch {
+		case cmdSecretCluster.Used:
+			s.Cluster()
+		case cmdSecretKey.Used && cmdSecretKeyInit.Used:
+			s.KeyInit(resolvedPath)
+		case cmdSecretToken.Used:
+			s.Token(resolvedPath, cfg.KeyService, cfg.KeyTTL)
+		case cmdSecretHash.Used:
+			s.Hash(cfg.HashPassword)
+		case cmdSecretPassword.Used:
+			length := 0
+			if cfg.PasswordLength != "" {
+				if n, err := strconv.Atoi(cfg.PasswordLength); err == nil {
+					length = n
+				} else {
+					logger.Fatal("invalid length: must be a number")
+				}
+			}
+			s.Password(length)
+		default:
+			flaggy.ShowHelpAndExit("secret")
+		}
+		return
 	}
 
 	if cmdKeeper.Used {
