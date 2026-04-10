@@ -83,10 +83,11 @@ type ServerlessSnapshot struct {
 }
 
 type ProxySnapshot struct {
-	Protocol string             `json:"protocol"`
-	Name     string             `json:"name"`
-	Strategy string             `json:"strategy"`
-	Backends []*BackendSnapshot `json:"backends"`
+	Protocol       string             `json:"protocol"`
+	Name           string             `json:"name"`
+	Strategy       string             `json:"strategy"`
+	Backends       []*BackendSnapshot `json:"backends"`
+	ActiveSessions int64              `json:"active_sessions,omitempty"` // UDP only
 }
 
 type HealthSnapshot struct {
@@ -337,9 +338,18 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 				sni = "*"
 			}
 
+			protocol := "tcp"
+			proxyName := proxy.Listen + " (" + sni + ")"
+			if proxy.IsUDP() {
+				protocol = "udp"
+				proxyName = proxy.Listen + " [" + proxy.Matcher + "]"
+				if proxy.Matcher == "" {
+					proxyName = proxy.Listen + " [src_port]"
+				}
+			}
 			pSnap := &ProxySnapshot{
-				Protocol: "tcp",
-				Name:     proxy.Listen + " (" + sni + ")",
+				Protocol: protocol,
+				Name:     proxyName,
 				Strategy: proxy.Strategy,
 				Backends: make([]*BackendSnapshot, 0),
 			}

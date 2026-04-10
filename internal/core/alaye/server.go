@@ -14,11 +14,12 @@ type Criteria struct {
 }
 
 type Server struct {
-	Address        Address   `hcl:"address,attr" json:"address"`
-	Weight         int       `hcl:"weight,attr" json:"weight"`
-	MaxConnections int64     `hcl:"max_connections,attr" json:"max_connections"`
-	Criteria       Criteria  `hcl:"criteria,block" json:"criteria"`
-	Streaming      Streaming `hcl:"streaming,block" json:"streaming"`
+	Enabled        expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Address        Address       `hcl:"address,attr" json:"address"`
+	Weight         int           `hcl:"weight,attr" json:"weight"`
+	MaxConnections int64         `hcl:"max_connections,attr" json:"max_connections"`
+	Criteria       Criteria      `hcl:"criteria,block" json:"criteria"`
+	Streaming      Streaming     `hcl:"streaming,block" json:"streaming"`
 }
 
 type Streaming struct {

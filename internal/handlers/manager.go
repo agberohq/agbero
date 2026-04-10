@@ -13,6 +13,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/handlers/xtcp"
+	"github.com/agberohq/agbero/internal/handlers/xudp"
 	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/orchestrator"
@@ -63,8 +64,6 @@ func (w *llWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-// NewManager ties together routes, firewalls, and proxy states.
-// Injects the shared distributed state to limiters.
 func NewManager(cfg ManagerConfig) (*Manager, error) {
 	if cfg.Global == nil {
 		return nil, errors.New("global config required")
@@ -132,9 +131,6 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	return m, nil
 }
 
-// CloseFirewall releases the firewall store's file lock without stopping
-// the rate limiter or wasm instances. Called during reload before creating
-// the new manager so the bbolt database file can be re-opened immediately.
 func (m *Manager) CloseFirewall() {
 	if m != nil && m.firewall != nil {
 		_ = m.firewall.Close()
@@ -142,7 +138,6 @@ func (m *Manager) CloseFirewall() {
 	}
 }
 
-// Close shuts down firewall, rate limiter, and wasm instances cleanly.
 func (m *Manager) Close() {
 	if m.firewall != nil {
 		_ = m.firewall.Close()
@@ -153,13 +148,10 @@ func (m *Manager) Close() {
 	m.wasmCleanup()
 }
 
-// Firewall returns the active firewall engine, or nil if not configured.
 func (m *Manager) Firewall() *firewall.Engine {
 	return m.firewall
 }
 
-// BuildListeners constructs all HTTP, HTTPS, H3, and TCP listeners from configuration.
-// Called after NewManager to produce the active listener set.
 func (m *Manager) BuildListeners() []Listener {
 	var listeners []Listener
 	hosts, _ := m.cfg.HostManager.LoadAll()
@@ -228,6 +220,27 @@ func (m *Manager) BuildListeners() []Listener {
 		}
 		tp.MaxConns = maxC
 		listeners = append(listeners, &TCPListener{Proxy: tp})
+	}
+
+	udpGroups := groupUDPRoutesByListen(hosts)
+	for listen, routes := range udpGroups {
+		up := xudp.NewProxy(m.cfg.Resource, listen)
+		var maxS int64
+		var sessionTTL alaye.Duration
+		for _, r := range routes {
+			up.AddRoute(r.Name, r)
+			if r.MaxSessions > maxS {
+				maxS = r.MaxSessions
+			}
+			if r.SessionTTL > sessionTTL {
+				sessionTTL = r.SessionTTL
+			}
+		}
+		up.MaxSess = maxS
+		if sessionTTL > 0 {
+			up.SetSessionTTL(sessionTTL.StdDuration())
+		}
+		listeners = append(listeners, &UDPListener{Proxy: up})
 	}
 
 	return listeners
@@ -349,14 +362,27 @@ func groupTCPRoutesByListen(hosts map[string]*alaye.Host) map[string][]alaye.Pro
 	for _, host := range hosts {
 		for i := range host.Proxies {
 			p := host.Proxies[i]
-			tcpGroups[p.Listen] = append(tcpGroups[p.Listen], p)
+			if !p.IsUDP() {
+				tcpGroups[p.Listen] = append(tcpGroups[p.Listen], p)
+			}
 		}
 	}
 	return tcpGroups
 }
 
-// buildGlobalRateLimiter constructs the process-wide rate limiter from global config.
-// Returns nil when rate limiting is not configured or not enabled.
+func groupUDPRoutesByListen(hosts map[string]*alaye.Host) map[string][]alaye.Proxy {
+	udpGroups := make(map[string][]alaye.Proxy)
+	for _, host := range hosts {
+		for i := range host.Proxies {
+			p := host.Proxies[i]
+			if p.IsUDP() {
+				udpGroups[p.Listen] = append(udpGroups[p.Listen], p)
+			}
+		}
+	}
+	return udpGroups
+}
+
 func buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedState woos.SharedState) *ratelimit.RateLimiter {
 	if global == nil || !global.RateLimits.Enabled.Active() || len(global.RateLimits.Rules) == 0 {
 		return nil

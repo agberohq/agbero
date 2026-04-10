@@ -56,6 +56,7 @@ const (
 
 	HCLSuffix = ".hcl"
 	TCP       = "tcp"
+	UDP       = "udp"
 )
 
 const (
