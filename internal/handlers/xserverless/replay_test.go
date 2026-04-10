@@ -32,12 +32,12 @@ func TestNewReplay(t *testing.T) {
 	res := resource.New()
 	cfg := alaye.Replay{URL: "http://localhost", Timeout: alaye.Duration(testTimeout)}
 
-	h := NewReplay(ReplayConfig{Resource: res, REST: cfg})
+	h := NewReplay(ReplayConfig{Resource: res, Replay: cfg})
 	if h.client.Timeout != testTimeout {
 		t.Errorf("timeout: want %v, got %v", testTimeout, h.client.Timeout)
 	}
 
-	hDefault := NewReplay(ReplayConfig{Resource: res, REST: alaye.Replay{URL: "http://localhost"}})
+	hDefault := NewReplay(ReplayConfig{Resource: res, Replay: alaye.Replay{URL: "http://localhost"}})
 	if hDefault.client.Timeout != defaultRESTTimeout {
 		t.Errorf("default timeout: want %v, got %v", defaultRESTTimeout, hDefault.client.Timeout)
 	}
@@ -57,7 +57,7 @@ func TestFixedMode_BasicProxy(t *testing.T) {
 
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:     ts.URL + testUpstreamPath,
 			Methods: []string{http.MethodGet},
 			Headers: map[string]string{testHeaderKey: testHeaderVal},
@@ -85,7 +85,7 @@ func TestFixedMode_QueryMerge(t *testing.T) {
 
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:          ts.URL,
 			ForwardQuery: expect.NewEnabled(true),
 			Query:        map[string]expect.Value{"static": expect.Value("value")},
@@ -113,7 +113,7 @@ func TestFixedMode_EnvResolution(t *testing.T) {
 
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL: ts.URL,
 			Query: map[string]expect.Value{
 				"g": "env.global",
@@ -147,7 +147,7 @@ func TestReplayMode_HeaderURL(t *testing.T) {
 
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"127.0.0.1", "localhost"},
 			Methods:        []string{http.MethodGet},
@@ -172,7 +172,7 @@ func TestReplayMode_QueryURL(t *testing.T) {
 
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"127.0.0.1", "localhost"},
 		},
@@ -190,7 +190,7 @@ func TestReplayMode_QueryURL(t *testing.T) {
 func TestReplayMode_MissingURL(t *testing.T) {
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 		},
@@ -208,7 +208,7 @@ func TestReplayMode_MissingURL(t *testing.T) {
 func TestReplayMode_InvalidURL(t *testing.T) {
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 		},
@@ -277,7 +277,7 @@ func TestDomainAllowed_Blocked(t *testing.T) {
 
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"allowed.com"},
 		},
@@ -340,7 +340,7 @@ func TestSetReferer_None(t *testing.T) {
 }
 
 func TestSetReferer_DefaultIsAuto(t *testing.T) {
-	h := &Replay{cfg: alaye.Replay{RefererMode: ""}} // empty = default
+	h := &Replay{cfg: alaye.Replay{RefererMode: ""}}
 	target, _ := url.Parse("https://api.example.com/feed")
 	proxyReq, _ := http.NewRequest("GET", target.String(), nil)
 	h.setReferer(proxyReq, target, "")
@@ -364,7 +364,7 @@ func TestStripHeaders_RemovesUpstreamSecurityHeaders(t *testing.T) {
 
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"127.0.0.1", "localhost"},
 			StripHeaders:   expect.NewEnabled(true),
@@ -400,7 +400,7 @@ func TestNoStripHeaders_ForwardsAll(t *testing.T) {
 
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"127.0.0.1", "localhost"},
 			StripHeaders:   expect.NewEnabled(false),
@@ -429,7 +429,7 @@ func TestAuthMeta_ValidNonce(t *testing.T) {
 
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"127.0.0.1", "localhost"},
 			Auth: alaye.RestAuth{
@@ -454,7 +454,7 @@ func TestAuthMeta_MissingNonce(t *testing.T) {
 	store := nonce.NewStore(time.Minute)
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 			Auth: alaye.RestAuth{
@@ -477,7 +477,7 @@ func TestAuthMeta_MissingNonce(t *testing.T) {
 func TestAuthMeta_StoreNotInitialised(t *testing.T) {
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 			Auth: alaye.RestAuth{
@@ -506,7 +506,7 @@ func TestAuthDirect_ValidCookie(t *testing.T) {
 
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"127.0.0.1", "localhost"},
 			Auth: alaye.RestAuth{
@@ -529,7 +529,7 @@ func TestAuthDirect_ValidCookie(t *testing.T) {
 func TestAuthDirect_MissingCookie(t *testing.T) {
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 			Auth: alaye.RestAuth{
@@ -551,7 +551,7 @@ func TestAuthDirect_MissingCookie(t *testing.T) {
 func TestAuthDirect_EmptyCookie(t *testing.T) {
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 			Auth: alaye.RestAuth{
@@ -581,7 +581,7 @@ func TestAuthToken_ValidWithSecret(t *testing.T) {
 
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"127.0.0.1", "localhost"},
 			Auth: alaye.RestAuth{
@@ -605,7 +605,7 @@ func TestAuthToken_ValidWithSecret(t *testing.T) {
 func TestAuthToken_InvalidWithSecret(t *testing.T) {
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 			Auth: alaye.RestAuth{
@@ -629,7 +629,7 @@ func TestAuthToken_InvalidWithSecret(t *testing.T) {
 func TestAuthToken_MissingHeader(t *testing.T) {
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 			Auth: alaye.RestAuth{
@@ -652,13 +652,12 @@ func TestAuthToken_MissingHeader(t *testing.T) {
 func TestAuthToken_NoSecretConfigured(t *testing.T) {
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST: alaye.Replay{
+		Replay: alaye.Replay{
 			URL:            "",
 			AllowedDomains: []string{"example.com"},
 			Auth: alaye.RestAuth{
 				Enabled: expect.NewEnabled(true),
 				Method:  "token",
-				// Secret intentionally empty → should reject all tokens
 			},
 		},
 	})
@@ -692,7 +691,7 @@ func TestMethodAllowed_ExplicitList(t *testing.T) {
 func TestMethodNotAllowed_Response(t *testing.T) {
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST:     alaye.Replay{URL: "http://example.com", Methods: []string{"GET"}},
+		Replay:   alaye.Replay{URL: "http://example.com", Methods: []string{"GET"}},
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
@@ -740,7 +739,7 @@ func TestUpstreamTimeout(t *testing.T) {
 
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST:     alaye.Replay{URL: slow.URL, Timeout: alaye.Duration(10 * time.Millisecond)},
+		Replay:   alaye.Replay{URL: slow.URL, Timeout: alaye.Duration(10 * time.Millisecond)},
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -761,7 +760,7 @@ func TestResponseBodyCopyError(t *testing.T) {
 
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		REST:     alaye.Replay{URL: ts.URL},
+		Replay:   alaye.Replay{URL: ts.URL},
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -770,5 +769,344 @@ func TestResponseBodyCopyError(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("want 200, got %d", rr.Code)
+	}
+}
+
+// TTL Policy Tests
+
+func TestTTLPolicy_CachingWithContentType(t *testing.T) {
+	cacheHits := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cacheHits++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"message":"test"}`))
+	}))
+	defer ts.Close()
+
+	h := NewReplay(ReplayConfig{
+		Resource: resource.New(),
+		Replay: alaye.Replay{
+			URL:            "",
+			AllowedDomains: []string{"127.0.0.1", "localhost"},
+			Cache: alaye.Cache{
+				Enabled: expect.Active,
+				Driver:  "memory",
+				TTL:     alaye.Duration(1 * time.Minute),
+				TTLPolicy: alaye.TTLPolicy{
+					Enabled: expect.Active,
+					Default: alaye.Duration(30 * time.Second),
+					ContentType: map[string]alaye.Duration{
+						"application/json": alaye.Duration(5 * time.Minute),
+					},
+				},
+				Methods: []string{"GET"},
+			},
+		},
+	})
+
+	// First request - cache miss
+	req1 := httptest.NewRequest(http.MethodGet, "/?url="+ts.URL, nil)
+	rr1 := httptest.NewRecorder()
+	h.ServeHTTP(rr1, req1)
+
+	// Second request - should be cache hit
+	req2 := httptest.NewRequest(http.MethodGet, "/?url="+ts.URL, nil)
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+
+	if cacheHits != 1 {
+		t.Errorf("expected 1 upstream call (cache hit), got %d", cacheHits)
+	}
+
+	if rr2.Header().Get("X-Cache-Status") != "HIT" {
+		t.Errorf("expected cache HIT, got %s", rr2.Header().Get("X-Cache-Status"))
+	}
+}
+
+func TestTTLPolicy_DisabledCache(t *testing.T) {
+	cacheHits := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cacheHits++
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("response"))
+	}))
+	defer ts.Close()
+
+	h := NewReplay(ReplayConfig{
+		Resource: resource.New(),
+		Replay: alaye.Replay{
+			URL:            "",
+			AllowedDomains: []string{"127.0.0.1", "localhost"},
+			Cache: alaye.Cache{
+				Enabled: expect.Inactive,
+				Driver:  "memory",
+				TTL:     alaye.Duration(1 * time.Minute),
+				Methods: []string{"GET"},
+			},
+		},
+	})
+
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/?url="+ts.URL, nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+	}
+
+	if cacheHits != 3 {
+		t.Errorf("expected 3 upstream calls (cache disabled), got %d", cacheHits)
+	}
+}
+
+func TestTTLPolicy_ZeroTTLNoCaching(t *testing.T) {
+	cacheHits := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cacheHits++
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("response"))
+	}))
+	defer ts.Close()
+
+	h := NewReplay(ReplayConfig{
+		Resource: resource.New(),
+		Replay: alaye.Replay{
+			URL:            "",
+			AllowedDomains: []string{"127.0.0.1", "localhost"},
+			Cache: alaye.Cache{
+				Enabled: expect.Active,
+				Driver:  "memory",
+				TTL:     alaye.Duration(0), // Zero TTL
+				TTLPolicy: alaye.TTLPolicy{
+					Enabled: expect.Active,
+					Default: alaye.Duration(0), // Zero default
+				},
+				Methods: []string{"GET"},
+			},
+		},
+	})
+
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/?url="+ts.URL, nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+	}
+
+	if cacheHits != 3 {
+		t.Errorf("expected 3 upstream calls (zero TTL), got %d", cacheHits)
+	}
+}
+
+func TestTTLPolicy_CacheKeyWithScope(t *testing.T) {
+	cacheHits := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cacheHits++
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("response for " + r.Header.Get("Accept-Language")))
+	}))
+	defer ts.Close()
+
+	h := NewReplay(ReplayConfig{
+		Resource: resource.New(),
+		Replay: alaye.Replay{
+			URL:            "",
+			AllowedDomains: []string{"127.0.0.1", "localhost"},
+			Cache: alaye.Cache{
+				Enabled: expect.Active,
+				Driver:  "memory",
+				TTL:     alaye.Duration(1 * time.Minute),
+				TTLPolicy: alaye.TTLPolicy{
+					Enabled:  expect.Active,
+					Default:  alaye.Duration(1 * time.Minute),
+					KeyScope: []string{"header:Accept-Language"},
+				},
+				Methods: []string{"GET"},
+			},
+		},
+	})
+
+	// Request with Accept-Language: en
+	req1 := httptest.NewRequest(http.MethodGet, "/?url="+ts.URL, nil)
+	req1.Header.Set("Accept-Language", "en")
+	rr1 := httptest.NewRecorder()
+	h.ServeHTTP(rr1, req1)
+
+	// Request with Accept-Language: fr (different cache key)
+	req2 := httptest.NewRequest(http.MethodGet, "/?url="+ts.URL, nil)
+	req2.Header.Set("Accept-Language", "fr")
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+
+	// Request with Accept-Language: en again (should be cache hit)
+	req3 := httptest.NewRequest(http.MethodGet, "/?url="+ts.URL, nil)
+	req3.Header.Set("Accept-Language", "en")
+	rr3 := httptest.NewRecorder()
+	h.ServeHTTP(rr3, req3)
+
+	if cacheHits != 2 {
+		t.Errorf("expected 2 upstream calls (different cache keys), got %d", cacheHits)
+	}
+
+	if rr3.Header().Get("X-Cache-Status") != "HIT" {
+		t.Errorf("expected cache HIT for same Accept-Language, got %s", rr3.Header().Get("X-Cache-Status"))
+	}
+}
+
+func TestTTLPolicy_CacheControlNoStore(t *testing.T) {
+	cacheHits := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cacheHits++
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("secret response"))
+	}))
+	defer ts.Close()
+
+	h := NewReplay(ReplayConfig{
+		Resource: resource.New(),
+		Replay: alaye.Replay{
+			URL:            "",
+			AllowedDomains: []string{"127.0.0.1", "localhost"},
+			Cache: alaye.Cache{
+				Enabled: expect.Active,
+				Driver:  "memory",
+				TTL:     alaye.Duration(1 * time.Minute),
+				Methods: []string{"GET"},
+			},
+		},
+	})
+
+	// First request - no-store response should NOT be cached
+	req1 := httptest.NewRequest(http.MethodGet, "/?url="+ts.URL, nil)
+	rr1 := httptest.NewRecorder()
+	h.ServeHTTP(rr1, req1)
+
+	// Second request - should hit upstream again because first wasn't cached
+	req2 := httptest.NewRequest(http.MethodGet, "/?url="+ts.URL, nil)
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+
+	// HTTP spec: no-store responses MUST NOT be cached
+	if cacheHits != 2 {
+		t.Errorf("HTTP spec violation: expected 2 upstream calls (no-store not cached), got %d", cacheHits)
+	}
+
+	// X-Cache-Status should be MISS for both (no caching)
+	if rr1.Header().Get("X-Cache-Status") == "HIT" {
+		t.Error("first request should not be HIT")
+	}
+	if rr2.Header().Get("X-Cache-Status") == "HIT" {
+		t.Error("second request should not be HIT (no-store prevented caching)")
+	}
+}
+
+func TestTTLPolicy_CacheControlMaxAge(t *testing.T) {
+	cacheHits := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cacheHits++
+		w.Header().Set("Cache-Control", "max-age=3600")
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("cachable response"))
+	}))
+	defer ts.Close()
+
+	h := NewReplay(ReplayConfig{
+		Resource: resource.New(),
+		Replay: alaye.Replay{
+			URL:            "",
+			AllowedDomains: []string{"127.0.0.1", "localhost"},
+			Cache: alaye.Cache{
+				Enabled: expect.Active,
+				Driver:  "memory",
+				TTL:     alaye.Duration(1 * time.Minute),
+				Methods: []string{"GET"},
+			},
+		},
+	})
+
+	req1 := httptest.NewRequest(http.MethodGet, "/?url="+ts.URL, nil)
+	rr1 := httptest.NewRecorder()
+	h.ServeHTTP(rr1, req1)
+
+	req2 := httptest.NewRequest(http.MethodGet, "/?url="+ts.URL, nil)
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+
+	if cacheHits != 1 {
+		t.Errorf("expected 1 upstream call (cache hit), got %d", cacheHits)
+	}
+
+	if rr2.Header().Get("X-Cache-Status") != "HIT" {
+		t.Errorf("expected cache HIT, got %s", rr2.Header().Get("X-Cache-Status"))
+	}
+}
+
+func TestTTLPolicy_PostMethodNotCached(t *testing.T) {
+	cacheHits := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cacheHits++
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("post response"))
+	}))
+	defer ts.Close()
+
+	h := NewReplay(ReplayConfig{
+		Resource: resource.New(),
+		Replay: alaye.Replay{
+			URL:            "",
+			AllowedDomains: []string{"127.0.0.1", "localhost"},
+			Cache: alaye.Cache{
+				Enabled: expect.Active,
+				Driver:  "memory",
+				TTL:     alaye.Duration(1 * time.Minute),
+				Methods: []string{"GET"}, // Only GET is cached
+			},
+		},
+	})
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/?url="+ts.URL, nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+	}
+
+	if cacheHits != 2 {
+		t.Errorf("expected 2 upstream calls (POST not cached), got %d", cacheHits)
+	}
+}
+
+func TestTTLPolicy_Non200StatusNotCached(t *testing.T) {
+	cacheHits := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cacheHits++
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("not found"))
+	}))
+	defer ts.Close()
+
+	h := NewReplay(ReplayConfig{
+		Resource: resource.New(),
+		Replay: alaye.Replay{
+			URL:            "",
+			AllowedDomains: []string{"127.0.0.1", "localhost"},
+			Cache: alaye.Cache{
+				Enabled: expect.Active,
+				Driver:  "memory",
+				TTL:     alaye.Duration(1 * time.Minute),
+				Methods: []string{"GET"},
+			},
+		},
+	})
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/?url="+ts.URL, nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+	}
+
+	if cacheHits != 2 {
+		t.Errorf("expected 2 upstream calls (404 not cached), got %d", cacheHits)
 	}
 }

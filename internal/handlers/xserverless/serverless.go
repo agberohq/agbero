@@ -63,7 +63,7 @@ func NewWithNonces(cfg resource.Proxy, route *alaye.Route, nonceStores map[strin
 		}
 		handler := NewReplay(ReplayConfig{
 			Resource:   cfg.Resource,
-			REST:       rest,
+			Replay:     rest,
 			GlobalEnv:  globalEnv,
 			RouteEnv:   routeEnv,
 			NonceStore: nonceStore,
