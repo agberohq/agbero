@@ -65,6 +65,10 @@ func (t *Proxy) Validate() error {
 		return errors.New("max_connections cannot be negative")
 	}
 
+	if t.ProxyProtocol && t.IsUDP() {
+		return errors.New("proxy_protocol is not supported for UDP — PROXY protocol requires a TCP connection")
+	}
+
 	for i := range t.Backends {
 		if err := t.Backends[i].Validate(); err != nil {
 			return errors.Newf("backend[%d]: %w", i, err)

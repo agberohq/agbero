@@ -205,7 +205,8 @@ func (p *Proxy) Start() error {
 		}
 	}()
 
-	p.res.Logger.Fields("bind", p.Listen).Info("tcp proxy started")
+	p.res.Logger.Fields("bind", p.Listen).Info("proxy started")
+
 	return nil
 }
 

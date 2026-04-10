@@ -39,9 +39,11 @@ type SystemStats struct {
 }
 
 type GlobalStats struct {
-	AvgP99  float64 `json:"avg_p99_ms"`
-	HttpP99 float64 `json:"http_p99_ms"`
-	TcpP99  float64 `json:"tcp_p99_ms"`
+	AvgP99    float64 `json:"avg_p99_ms"`
+	HttpP99   float64 `json:"http_p99_ms"`
+	TcpP99    float64 `json:"tcp_p99_ms"`
+	UdpP99    float64 `json:"udp_p99_ms"`
+	WorkerP99 float64 `json:"worker_p99_ms"` // local process execution P99
 }
 
 type ClusterStats struct {
@@ -192,8 +194,8 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 	}
 
 	var (
-		sumAll, sumHttp, sumTcp       float64
-		countAll, countHttp, countTcp int
+		sumAll, sumHttp, sumTcp, sumUdp, sumWorker           float64
+		countAll, countHttp, countTcp, countUdp, countWorker int
 	)
 
 	hosts, _ := hm.LoadAll()
@@ -325,6 +327,14 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 					slSnap.Failures = snap["failures"].(uint64)
 					slSnap.Latency = snap["latency"].(metrics.LatencySnapshot)
 					totalReqs += slSnap.TotalReqs
+					// Workers are local process execution — tracked separately from HTTP
+					if slSnap.Latency.Count > 0 && slSnap.Latency.P99 > 0 {
+						val := float64(slSnap.Latency.P99)
+						sumAll += val
+						countAll++
+						sumWorker += val
+						countWorker++
+					}
 				}
 				rSnap.Serverless = append(rSnap.Serverless, slSnap)
 			}
@@ -406,8 +416,13 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 						val := float64(latSnap.P99)
 						sumAll += val
 						countAll++
-						sumTcp += val
-						countTcp++
+						if proxy.IsUDP() {
+							sumUdp += val
+							countUdp++
+						} else {
+							sumTcp += val
+							countTcp++
+						}
 					}
 
 					if !hasProber && failures >= 2 {
@@ -440,9 +455,11 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 	}
 
 	sysSnap.Global = GlobalStats{
-		AvgP99:  calcAvg(sumAll, countAll),
-		HttpP99: calcAvg(sumHttp, countHttp),
-		TcpP99:  calcAvg(sumTcp, countTcp),
+		AvgP99:    calcAvg(sumAll, countAll),
+		HttpP99:   calcAvg(sumHttp, countHttp),
+		TcpP99:    calcAvg(sumTcp, countTcp),
+		UdpP99:    calcAvg(sumUdp, countUdp),
+		WorkerP99: calcAvg(sumWorker, countWorker),
 	}
 
 	return sysSnap

@@ -34,11 +34,11 @@ func startUDPBackend(t *testing.T, id string) (string, func()) {
 	return conn.LocalAddr().String(), func() { conn.Close() }
 }
 
-func newTestProxy(t *testing.T, backends []string) (*Proxy, string, func()) {
+func newTestProxy(t *testing.T, backends []string) (*Proxy, func()) {
 	t.Helper()
 	res := resource2.New()
 
-	p := NewProxy(res, "127.0.0.1:0")
+	prx := NewProxy(res, "127.0.0.1:0")
 
 	servers := make([]alaye.Server, len(backends))
 	for i, addr := range backends {
@@ -59,14 +59,14 @@ func newTestProxy(t *testing.T, backends []string) (*Proxy, string, func()) {
 		Backends:    servers,
 		Enabled:     expect.Active,
 	}
-	p.AddRoute("*", cfg)
-	p.SetSessionTTL(2 * time.Second)
+	prx.AddRoute("*", cfg)
+	prx.SetSessionTTL(2 * time.Second)
 
-	if err := p.Start(); err != nil {
+	if err := prx.Start(); err != nil {
 		t.Fatalf("proxy Start: %v", err)
 	}
 
-	return p, p.Listen, func() { p.Stop() }
+	return prx, func() { prx.Stop() }
 }
 
 func sendAndReceive(t *testing.T, listenAddr, payload string) (string, error) {
@@ -94,10 +94,10 @@ func TestProxy_ForwardAndReply(t *testing.T) {
 	backendAddr, stopBackend := startUDPBackend(t, "B1")
 	defer stopBackend()
 
-	proxy, listenAddr, stopProxy := newTestProxy(t, []string{backendAddr})
+	prx, stopProxy := newTestProxy(t, []string{backendAddr})
 	defer stopProxy()
 
-	reply, err := sendAndReceive(t, listenAddr, "hello")
+	reply, err := sendAndReceive(t, prx.Listen, "hello")
 	if err != nil {
 		t.Fatalf("sendAndReceive: %v", err)
 	}
@@ -113,12 +113,11 @@ func TestProxy_SessionStickiness(t *testing.T) {
 	defer stopB1()
 	defer stopB2()
 
-	proxy, listenAddr, stopProxy := newTestProxy(t, []string{b1Addr, b2Addr})
+	prx, stopProxy := newTestProxy(t, []string{b1Addr, b2Addr})
 	defer stopProxy()
-	_ = proxy
 
 	// Send from the same source address (same net.Conn = same src:port)
-	conn, err := net.DialTimeout("udp", listenAddr, time.Second)
+	conn, err := net.DialTimeout("udp", prx.Listen, time.Second)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -151,7 +150,7 @@ func TestProxy_DifferentClientsGetDifferentSessions(t *testing.T) {
 	defer stopB1()
 	defer stopB2()
 
-	_, listenAddr, stopProxy := newTestProxy(t, []string{b1Addr, b2Addr})
+	prx, stopProxy := newTestProxy(t, []string{b1Addr, b2Addr})
 	defer stopProxy()
 
 	// Multiple concurrent clients — should all get responses
@@ -162,7 +161,7 @@ func TestProxy_DifferentClientsGetDifferentSessions(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			reply, err := sendAndReceive(t, listenAddr, fmt.Sprintf("client%d", i))
+			reply, err := sendAndReceive(t, prx.Listen, fmt.Sprintf("client%d", i))
 			if err != nil {
 				errors <- err
 				return
@@ -266,7 +265,7 @@ func TestProxy_StopGraceful(t *testing.T) {
 	backendAddr, stopBackend := startUDPBackend(t, "B1")
 	defer stopBackend()
 
-	_, _, stopProxy := newTestProxy(t, []string{backendAddr})
+	_, stopProxy := newTestProxy(t, []string{backendAddr})
 
 	// Stop should not hang
 	done := make(chan struct{})
@@ -286,7 +285,7 @@ func TestProxy_StopIdempotent(t *testing.T) {
 	backendAddr, stopBackend := startUDPBackend(t, "B1")
 	defer stopBackend()
 
-	p, _, stopProxy := newTestProxy(t, []string{backendAddr})
+	p, stopProxy := newTestProxy(t, []string{backendAddr})
 	stopProxy()
 	p.Stop() // second stop must not panic
 }
@@ -295,7 +294,7 @@ func TestProxy_ActiveSessions_Initial(t *testing.T) {
 	backendAddr, stopBackend := startUDPBackend(t, "B1")
 	defer stopBackend()
 
-	p, _, stopProxy := newTestProxy(t, []string{backendAddr})
+	p, stopProxy := newTestProxy(t, []string{backendAddr})
 	defer stopProxy()
 
 	if p.ActiveSessions() != 0 {

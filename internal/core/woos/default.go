@@ -10,100 +10,87 @@ import (
 	"github.com/agberohq/agbero/internal/core/expect"
 )
 
-// Defaults provides a zero-state receiver for applying configuration defaults.
-// Use the package-level D variable: woos.D.Firewall(cfg), woos.D.Route(r), etc.
-// All methods are safe to call on a zero-value Defaults.
 type Defaults struct{}
 
-// D is the package-level Defaults receiver for applying configuration defaults.
 var D = Defaults{}
 
-// Global applies all global configuration defaults before validation.
 func (Defaults) Global(g *alaye.Global, configPath string) {
 	defaultGlobal(g, configPath)
 }
 
-// Host applies all host configuration defaults before validation.
 func (Defaults) Host(h *alaye.Host) {
 
 	if h.Protected == expect.Unknown {
 		h.Protected = expect.Inactive
 	}
-	defaultTLS(&h.TLS, h.Domains)
+	// Only apply TLS defaults when the host has HTTP routes.
+	// Pure L4 proxy hosts (only proxy blocks, no route blocks) do not
+	// serve HTTP so TLS mode is irrelevant and should not be auto-assigned.
+	if len(h.Routes) > 0 {
+		defaultTLS(&h.TLS, h.Domains)
+	}
 	defaultLimits(&h.Limits)
 	defaultHeaders(&h.Headers)
 	for i := range h.Routes {
 		defaultRouteAll(&h.Routes[i])
 	}
 	for i := range h.Proxies {
-		defaultTCPRoute(&h.Proxies[i])
+		if h.Proxies[i].IsUDP() {
+			defaultUDPProxy(&h.Proxies[i])
+		} else {
+			defaultTCPRoute(&h.Proxies[i])
+		}
 	}
 }
 
-// Route applies defaults to a single route and all its nested blocks.
 func (Defaults) Route(r *alaye.Route) {
 	defaultRouteAll(r)
 }
 
-// Firewall applies all firewall configuration defaults before validation.
 func (Defaults) Firewall(f *alaye.Firewall) {
 	defaultFirewall(f)
 }
 
-// Cache applies cache configuration defaults before validation.
 func (Defaults) Cache(c *alaye.Cache) {
 	defaultCache(c)
 }
 
-// BasicAuth applies basic auth configuration defaults before validation.
 func (Defaults) BasicAuth(ba *alaye.BasicAuth) {
 	defaultBasicAuth(ba)
 }
 
-// ForwardAuth applies forward auth configuration defaults before validation.
 func (Defaults) ForwardAuth(fa *alaye.ForwardAuth) {
 	defaultForwardAuth(fa)
 }
 
-// CORS applies CORS configuration defaults before validation.
 func (Defaults) CORS(c *alaye.CORS) {
 	defaultCORS(c)
 }
 
-// Compression applies compression configuration defaults before validation.
 func (Defaults) Compression(c *alaye.Compression) {
 	defaultCompression(c)
 }
 
-// RateLimit applies route rate limit configuration defaults before validation.
 func (Defaults) RateLimit(rl *alaye.RouteRate) {
 	defaultRateLimit(rl)
 }
 
-// Wasm applies wasm configuration defaults before validation.
 func (Defaults) Wasm(w *alaye.Wasm) {
 	defaultWasm(w)
 }
 
-// HealthCheck applies health check configuration defaults before validation.
 func (Defaults) HealthCheck(hc *alaye.HealthCheck) {
 	defaultHealthCheck(hc)
 }
 
-// DefaultApply applies all global configuration defaults before validation.
-// Kept for backwards compatibility with existing production call sites.
 func DefaultApply(g *alaye.Global, configPath string) {
 	D.Global(g, configPath)
 }
 
-// DefaultHost applies all host configuration defaults before validation.
-// Kept for backwards compatibility with existing production call sites.
 func DefaultHost(h *alaye.Host) {
 	D.Host(h)
 }
 
-// DefaultRoute applies defaults to a single route and all its nested blocks.
-// Kept for backwards compatibility with existing production call sites.
 func DefaultRoute(r *alaye.Route) {
 	D.Route(r)
 }
@@ -136,10 +123,14 @@ func defaultRouteAll(r *alaye.Route) {
 	}
 	hasWeb := r.Web.Root.IsSet() || r.Web.Git.Enabled.Active()
 	hasBackends := len(r.Backends.Servers) > 0
+	hasServerless := r.Serverless.Enabled.Active()
 	if hasWeb {
 		defaultWebRoute(r)
 	} else if hasBackends {
 		defaultProxyRoute(r)
+	}
+	if hasServerless {
+		defaultServerless(&r.Serverless)
 	}
 	defaultCORS(&r.CORS)
 	defaultCache(&r.Cache)
@@ -206,7 +197,6 @@ func defaultStorage(s *alaye.Storage, configPath string) {
 	}
 	configDir := expect.NewFolder(configPath)
 
-	// resolve returns an expect.Folder with the final path
 	resolve := func(field expect.Folder, defaultSub string) expect.Folder {
 		if !field.IsSet() {
 			return configDir.Sub(defaultSub)
@@ -228,8 +218,7 @@ func defaultAdmin(a *alaye.Admin) {
 		a.Enabled = expect.Active
 	}
 	if a.Enabled == expect.Active {
-		// defaultBasicAuth(&a.BasicAuth)
-		// defaultJWTAuth(&a.JWTAuth)
+
 		defaultForwardAuth(&a.ForwardAuth)
 		defaultOAuth(&a.OAuth)
 		defaultTelemetry(&a.Telemetry)
@@ -414,8 +403,6 @@ func defaultTLS(t *alaye.TLS, domains []string) {
 	}
 }
 
-// defaultLimits applies default values to the Limit configuration block.
-// MaxBodySize default is enforced at dispatch level via alaye.DefaultMaxBodySize; add per-field defaults here as alaye.Limit grows.
 func defaultLimits(_ *alaye.Limit) {}
 
 func defaultHeaders(h *alaye.Headers) {
@@ -600,11 +587,56 @@ func defaultTCPRoute(t *alaye.Proxy) {
 			t.Strategy = alaye.StrategyRoundRobin
 		}
 		for i := range t.Backends {
+			if t.Backends[i].Enabled == expect.Unknown {
+				t.Backends[i].Enabled = expect.Active
+			}
 			if t.Backends[i].Weight == 0 {
 				t.Backends[i].Weight = 1
 			}
 		}
 		defaultTCPHealthCheck(&t.HealthCheck)
+	}
+}
+
+func defaultUDPProxy(t *alaye.Proxy) {
+	if t.Enabled == expect.Unknown && t.Listen != "" {
+		t.Enabled = expect.Active
+	}
+	if t.Enabled == expect.Active {
+		if t.Strategy == "" {
+			t.Strategy = alaye.StrategyRoundRobin
+		}
+		// UDP sessions: apply safe defaults if not set
+		if t.SessionTTL == 0 {
+			t.SessionTTL = alaye.Duration(UDPDefaultSessionTTL)
+		}
+		if t.MaxSessions == 0 {
+			t.MaxSessions = UDPDefaultMaxSessions
+		}
+		for i := range t.Backends {
+			if t.Backends[i].Enabled == expect.Unknown {
+				t.Backends[i].Enabled = expect.Active
+			}
+			if t.Backends[i].Weight == 0 {
+				t.Backends[i].Weight = 1
+			}
+		}
+		defaultUDPHealthCheck(&t.HealthCheck)
+	}
+}
+
+func defaultUDPHealthCheck(thc *alaye.TCPHealthCheck) {
+	// Auto-enable when Send/Expect are configured — same pattern as TCP
+	if thc.Enabled == expect.Unknown && (thc.Send != "" || thc.Expect != "") {
+		thc.Enabled = expect.Active
+	}
+	if thc.Enabled == expect.Active {
+		if thc.Interval == 0 {
+			thc.Interval = alaye.Duration(UDPHealthCheckInterval)
+		}
+		if thc.Timeout == 0 {
+			thc.Timeout = alaye.Duration(UDPHealthCheckTimeout)
+		}
 	}
 }
 
@@ -618,6 +650,52 @@ func defaultTCPHealthCheck(thc *alaye.TCPHealthCheck) {
 		}
 		if thc.Timeout == 0 {
 			thc.Timeout = alaye.Duration(TCPHealthCheckTimeout)
+		}
+	}
+}
+
+func defaultServerless(s *alaye.Serverless) {
+	for i := range s.Replay {
+		defaultReplay(&s.Replay[i])
+	}
+	for i := range s.Workers {
+		defaultWorker(&s.Workers[i])
+	}
+}
+
+func defaultWorker(w *alaye.Work) {
+	// Default timeout so workers cannot hang indefinitely
+	if w.Timeout == 0 {
+		w.Timeout = alaye.Duration(DefaultWorkerTimeout)
+	}
+	// Default restart policy for persistent background workers
+	if w.Background && w.Restart == "" {
+		w.Restart = DefaultWorkerRestart
+	}
+	// Default cache driver when cache is enabled
+	if w.Cache.Enabled.Active() && w.Cache.Driver == "" {
+		w.Cache.Driver = "memory"
+	}
+}
+
+func defaultReplay(r *alaye.Replay) {
+	// Auto-enable when a URL is set or allowed_domains are configured
+	if r.Enabled == expect.Unknown && (r.URL != "" || len(r.AllowedDomains) > 0) {
+		r.Enabled = expect.Active
+	}
+	if r.Enabled == expect.Active {
+		// Apply default timeout so replay handlers never hang indefinitely
+		if r.Timeout == 0 {
+			r.Timeout = alaye.Duration(DefaultReplayTimeout)
+		}
+		// Default referer_mode to "auto" — sets Referer to the target origin,
+		// which makes most upstream APIs happy without exposing the client origin
+		if r.RefererMode == "" {
+			r.RefererMode = "auto"
+		}
+		// Default cache driver to memory when cache is enabled without a driver
+		if r.Cache.Enabled.Active() && r.Cache.Driver == "" {
+			r.Cache.Driver = "memory"
 		}
 	}
 }

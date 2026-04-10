@@ -135,6 +135,10 @@ func (p *Proxy) Start() error {
 		return fmt.Errorf("xudp: listen %q: %w", p.Listen, err)
 	}
 
+	// Update Listen to the real bound address — important when port 0
+	// is used (OS assigns a free port) so callers can read p.Listen.
+	p.Listen = conn.LocalAddr().String()
+
 	maxSess := p.MaxSess
 	if maxSess <= 0 {
 		maxSess = defaultMaxSessions

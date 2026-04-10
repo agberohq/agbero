@@ -205,6 +205,8 @@ func (m *Manager) BuildListeners() []Listener {
 	}
 
 	tcpGroups := groupTCPRoutesByListen(hosts)
+	// ll.Output("udp groups: %v", tcpGroups)
+
 	for listen, routes := range tcpGroups {
 		tp := xtcp.NewProxy(m.cfg.Resource, listen)
 		var maxC int64
@@ -223,6 +225,8 @@ func (m *Manager) BuildListeners() []Listener {
 	}
 
 	udpGroups := groupUDPRoutesByListen(hosts)
+	// ll.Output("udp groups: %v", udpGroups)
+
 	for listen, routes := range udpGroups {
 		up := xudp.NewProxy(m.cfg.Resource, listen)
 		var maxS int64
