@@ -1,35 +1,19 @@
 /**
- * js/utils.js
+ * js/utils.js - single canonical source for all shared helpers
  *
- * Shared utility helpers used across hosts.html, drawer-listeners.js and other pages.
- *
- * ─── CRITICAL: alaye Enabled type ────────────────────────────────────────────
- *
- * alaye serialises the custom Enabled int type as:
+ * CRITICAL: alaye Enabled type serialises as:
  *   "on"      (Active   = 1)
  *   "off"     (Inactive = -1)
  *   "unknown" (Unknown  = 0)
+ * Check with isOn(v). Never === true. Never truthiness.
  *
- * Check these with isOn(v) — never === true, never truthiness.
- *
- * Plain Go bool fields (web.listing, web.spa, web.no_cache, host.compression,
- * cors.allow_credentials, health_check.accelerated_probing, etc.) arrive as
- * actual booleans. Check these with isBool(v) or plain === true.
- *
- * Mixing the two causes silent missing badges / hidden sections.
+ * Plain Go bool fields (web.listing, web.spa, etc.) arrive as actual booleans.
+ * Check with isBool(v) or plain === true.
  */
 
-/** True only for alaye Enabled fields serialised as "on". */
-export const isOn = v => v === 'on';
-
-/** True for actual Go bool fields (true / false). */
+export const isOn   = v => v === 'on';
 export const isBool = v => v === true;
 
-/**
- * Broader check used for badge rendering where the field could be either type.
- * Accepts: "on", true, 1, "true", "enabled", "yes".
- * Use sparingly — prefer isOn() for Enabled fields and isBool() for bool fields.
- */
 export function isActive(v) {
     if (v === null || v === undefined) return false;
     if (typeof v === 'boolean') return v;
@@ -38,7 +22,6 @@ export function isActive(v) {
     return false;
 }
 
-/** Format bytes to human-readable string. */
 export function formatBytes(b) {
     if (!b) return '0 B';
     const k = 1024, sizes = ['B','KB','MB','GB','TB'];
@@ -46,7 +29,6 @@ export function formatBytes(b) {
     return parseFloat((b / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
-/** Format large numbers with k/M suffix. */
 export function fmtNum(n) {
     const v = Number(n || 0);
     if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M';
@@ -54,10 +36,29 @@ export function fmtNum(n) {
     return String(v);
 }
 
-/** Initials from a full name or username (up to 2 chars). */
+export function formatPercent(v) {
+    return Number(v || 0).toFixed(1) + '%';
+}
+
 export function initials(name) {
     if (!name) return '?';
     const parts = name.trim().split(/[\s._-]+/).filter(Boolean);
     if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
     return (name[0] || '?').toUpperCase();
+}
+
+/** Parse Go duration string "30m0s" → milliseconds */
+export function parseDuration(s) {
+    if (!s) return 0;
+    let ms = 0;
+    for (const m of (s.match(/(\d+(?:\.\d+)?)([hms])/g) || [])) {
+        const num = parseFloat(m), unit = m.slice(-1);
+        ms += unit === 'h' ? num*3_600_000 : unit === 'm' ? num*60_000 : num*1_000;
+    }
+    return ms || 0;
+}
+
+export function debounce(fn, ms) {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }

@@ -8,7 +8,7 @@
             <span class="legend-item"><span class="dot down"></span> Error/Dead</span>
         </div>
         <div class="graph-actions">
-            <button class="btn small" id="mapPauseBtn">Pause Updates</button>
+            <button class="btn small" id="mapPauseBtn">Resume Updates</button>
             <button class="btn small" id="resetZoomBtn">Reset View</button>
         </div>
     </div>
@@ -54,7 +54,7 @@
     }
 
     let graph     = null;
-    let paused    = false; // start live
+    let paused    = true; // start paused — map is view-only until user resumes
     let pollTimer = null;
 
     function hideLoading() {
@@ -70,7 +70,7 @@
             <span>Add a host to see the route graph</span>
             <button class="btn primary small" style="margin-top:12px;" id="mapAddHostBtn">+ Add Host</button>
         </div>`;
-        on('#mapAddHostBtn', 'click', () => emit('host:open-add-wizard'));
+        on('#mapAddHostBtn', 'click', () => emit('app:navigate', { path: '/add-host' }));
     }
 
     function buildNodeInfo(node) {
@@ -159,7 +159,11 @@
     const unsub = listen('metrics:updated', ({ hosts }) => {
         if (paused || !graph) return;
         const config = store.get('lastConfig');
-        if (config) graph.render(config, hosts || {});
+        if (config) {
+            // Use incremental update if available to avoid flicker; fall back to full render
+            if (typeof graph.update === 'function') graph.update(config, hosts || {});
+            else graph.render(config, hosts || {});
+        }
     });
 
     on('#mapPauseBtn', 'click', (e, el) => {
@@ -171,7 +175,7 @@
     on('#resetZoomBtn', 'click', () => graph?.resetZoom());
     on('#mapInfoClose', 'click', () => { query('#mapInfoPanel').style.display = 'none'; });
 
-    pollTimer = setInterval(() => { if (!paused) refresh(); }, 10_000);
+    pollTimer = setInterval(() => { if (!paused) refresh(); }, 30_000);
 
     component.onUnmount(() => {
         unsub?.();

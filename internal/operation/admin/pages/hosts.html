@@ -1,19 +1,19 @@
 <div class="page active">
-    <div class="flex-right">
-        <div style="position:relative;flex:1;max-width:340px;">
-            <input type="text" id="hostSearch" class="search-input" placeholder="Search hosts, paths, or backends…" autocomplete="off" style="width:100%;padding-right:28px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+        <div style="position:relative;flex:1;min-width:0;max-width:340px">
+            <input type="text" id="hostSearch" class="search-input" placeholder="Search hosts, paths, or backends…" autocomplete="off" style="width:100%;padding-right:28px;box-sizing:border-box;">
             <button id="hostSearchClear" title="Clear search"
                     style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text-mute);font-size:14px;padding:0;display:none;">✕</button>
         </div>
         <button class="btn primary" id="addHostBtn">+ Host</button>
-        <button class="btn small" id="refreshHostsBtn" style="width:var(--btn-h);padding:0;">⟳</button>
+        <button class="btn small" id="refreshHostsBtn" style="width:32px;height:32px;padding:0;flex-shrink:0;">⟳</button>
     </div>
     <div id="hostsContainer"></div>
     <div id="hostsPager"></div>
 </div>
 
 <script type="module">
-    import { component, on, emit, listen, modal, ui, clipboard, notify, query, queryAll, pagination, Search } from '../lib/oja.full.esm.js';
+    import { component, on, emit, listen, modal, ui, clipboard, notify, query, queryAll, pagination, Search, countdown } from '../lib/oja.full.esm.js';
     import { store } from '../js/store.js';
     import { fetchUptime, fmtNum, addHost, addHostHCL, getHostHCL, deleteHost } from '../js/api.js';
     import { isOn } from '../js/utils.js';
@@ -41,10 +41,10 @@
         const inflight = b.in_flight  > 0;
 
         const tags = [
-            score !== null ? `<span class="be-tag" title="Health score">${score}</span>` : null,
-            p99 ? `<span class="be-tag">p99 ${p99}</span>` : null,
-            `<span class="be-tag">W:${w}</span>`,
-            reqs ? `<span class="be-tag">${fmtNum(reqs)}</span>` : null,
+            score !== null ? `<span class="be-tag" style="color:${score>=80?'var(--success)':score>=50?'var(--warning)':'var(--danger)'}" title="Health score">${score}</span>` : null,
+            p99 ? `<span class="be-tag" style="color:var(--info)">p99 ${p99}</span>` : null,
+            `<span class="be-tag" style="color:var(--text-mute)">W:${w}</span>`,
+            reqs ? `<span class="be-tag" style="color:var(--text-main)">${fmtNum(reqs)}</span>` : null,
         ].filter(Boolean).join('');
 
         return `
@@ -63,7 +63,8 @@
         if (r.web) {
             if (r.web.root) {
                 // Show markdown view mode prominently — Browse vs Website are meaningfully different
-                if (isOn(r.web.markdown?.enabled)) {
+                if (isOn(r.web.git?.enabled))      t.push('<span class="badge info">GIT</span>');
+            if (isOn(r.web.markdown?.enabled)) {
                     const isBrowse = r.web.markdown?.view === 'browse';
                     t.push(`<span class="badge info">${isBrowse ? '📖 BROWSE' : 'MD'}</span>`);
                 } else {
@@ -95,8 +96,8 @@
         if (isOn(r.wasm?.enabled))                t.push('<span class="badge transform">WASM</span>');
         if (isOn(r.rate_limit?.enabled))          t.push('<span class="badge traffic">RATE LIMIT</span>');
         if (isOn(r.cors?.enabled))                t.push('<span class="badge">CORS</span>');
-        if (isOn(r.compression_config?.enabled))  t.push('<span class="badge">GZIP</span>');
-        if (isOn(r.firewall?.status))             t.push('<span class="badge danger">FIREWALL</span>');
+        if (isOn(r.compression?.enabled))  t.push('<span class="badge">GZIP</span>');
+        if (isOn(r.firewall?.enabled))             t.push('<span class="badge danger">FIREWALL</span>');
         if (r.allowed_ips?.length)                t.push('<span class="badge warn">IP FILTER</span>');
         if (isOn(r.fallback?.enabled))            t.push('<span class="badge">FALLBACK</span>');
         if (r.rewrites?.length)                   t.push(`<span class="badge">REWRITE (${r.rewrites.length})</span>`);
@@ -118,16 +119,18 @@
         const isProtected = isOn(cfgHost.protected);
 
         // TLS badge
-        const tlsMode = cfgHost.tls?.mode || 'auto';
+        const tlsMode = cfgHost.tls?.mode || '';
+        // empty string means HTTP-only — same as "none", NOT Auto-TLS
         let tlsText = 'Auto TLS', tlsClass = 'success', tlsTitle = 'Managed by Agbero';
-        if (tlsMode === 'none')             { tlsClass = 'error';   tlsText = 'No TLS'; }
-        else if (tlsMode.includes('local')) { tlsClass = 'warning'; tlsText = 'Local TLS'; }
-        const cert = certificates.find(c => c.host === hostname);
-        if (cert?.daysLeft !== undefined) {
-            tlsTitle = `Expires: ${new Date(cert.expiry).toLocaleDateString()} (${cert.daysLeft}d)`;
-            if (cert.daysLeft < 7) {
-                tlsClass = cert.daysLeft < 0 ? 'error' : 'warning';
-                tlsText  = cert.daysLeft < 0 ? 'Expired' : `${cert.daysLeft}d`;
+        if (tlsMode === '' || tlsMode === 'none') { tlsClass = 'error';   tlsText = 'No TLS'; tlsTitle = 'HTTP only'; }
+        else if (tlsMode.includes('local'))        { tlsClass = 'warning'; tlsText = 'Local TLS'; }
+        const cert = certificates.find(c => c.domain === hostname);
+        if (cert?.days_left !== null && cert?.days_left !== undefined) {
+            const expDate = cert.expires_at ? new Date(cert.expires_at).toLocaleDateString() : '—';
+            tlsTitle = `Expires: ${expDate} (${countdown.daysLabel(cert.days_left)})`;
+            if (cert.days_left < 7) {
+                tlsClass = cert.days_left < 0 ? 'error' : 'warning';
+                tlsText  = countdown.daysLabel(cert.days_left);
             }
         }
 
@@ -199,6 +202,7 @@
                         <span class="badge ${tlsClass}" title="${tlsTitle}">${tlsText}</span>
                         ${isProtected ? '<span class="badge" style="background:var(--hover-bg);color:var(--text-mute);border:1px solid var(--border);" title="Protected — managed by server">🔒</span>' : ''}
                         ${hStats.total_reqs ? `<span class="badge" style="background:var(--hover-bg);color:var(--text-mute);border:1px solid var(--border);">${fmtNum(hStats.total_reqs)} reqs</span>` : ''}
+                        ${cfgHost.source_file ? `<span class="host-source-file">${cfgHost.source_file}</span>` : ''}
                         ${hostMeta.join('')}
                     </div>
                     ${cfgHost.domains?.length > 1 ? `<div class="host-meta">${cfgHost.domains.join(', ')}</div>` : ''}
@@ -357,7 +361,7 @@
 
     if (savedTerm && query('#hostSearchClear')) query('#hostSearchClear').style.display = '';
 
-    on('#addHostBtn',      'click', () => emit('host:open-add-wizard'));
+    on('#addHostBtn',      'click', () => emit('app:navigate', { path: '/add-host' }));
     on('#refreshHostsBtn', 'click', refresh);
 
     on('[data-action="open-route"]', 'click', (e, btn) => {

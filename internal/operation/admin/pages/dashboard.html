@@ -72,7 +72,7 @@
 </div>
 
 <script type="module">
-    import { component, listen, emit, chart, on, query, queryAll, clickmenu } from '../lib/oja.full.esm.js';
+    import { component, listen, emit, chart, on, query, queryAll, clickmenu, countdown } from '../lib/oja.full.esm.js';
     import { store, getCreds } from '../js/store.js';
 
     let mainChart = null;
@@ -94,13 +94,6 @@
         return String(n);
     }
 
-    function daysColor(d) {
-        if (d < 0)  return 'var(--danger)';
-        if (d < 7)  return 'var(--warning)';
-        if (d < 30) return 'var(--info)';
-        return 'var(--success)';
-    }
-
     // Panel renderers
 
     function renderCerts(certs) {
@@ -115,16 +108,16 @@
         }
 
         // Sort: expired first, then soonest expiry
-        const sorted = [...certs].sort((a, b) => a.daysLeft - b.daysLeft);
-        const expiring = sorted.filter(c => c.daysLeft < 30).length;
+        const sorted = [...certs].sort((a, b) => (a.days_left ?? Infinity) - (b.days_left ?? Infinity));
+        const expiring = sorted.filter(c => c.days_left !== null && c.days_left < 30).length;
         if (sum) sum.textContent = expiring > 0 ? `${expiring} expiring soon` : `${certs.length} managed`;
 
         el.innerHTML = sorted.slice(0, 5).map(c => {
-            const color = daysColor(c.daysLeft);
-            const label = c.daysLeft < 0 ? 'Expired' : c.daysLeft === 0 ? 'Today' : `${c.daysLeft}d`;
+            const color = countdown.daysColor(c.days_left);
+            const label = countdown.daysLabel(c.days_left);
             return `<div class="brief-row">
                 <span class="dot" style="background:${color};flex-shrink:0;"></span>
-                <span class="brief-row-main">${c.host}</span>
+                <span class="brief-row-main">${c.domain}</span>
                 <span class="brief-row-sub" style="color:${color};font-family:var(--font-mono);">${label}</span>
             </div>`;
         }).join('');
@@ -259,8 +252,9 @@
 
         // Cert expiry warnings
         (certs || []).forEach(c => {
-            if (c.daysLeft < 0)  items.push({ icon: '🔴', msg: `Certificate expired: ${c.host}`, sev: 'danger' });
-            else if (c.daysLeft < 7)  items.push({ icon: '🟡', msg: `Certificate expiring in ${c.daysLeft}d: ${c.host}`, sev: 'warning' });
+            if (c.days_left === null || c.days_left === undefined) return;
+            if (c.is_expired || c.days_left < 0) items.push({ icon: '🔴', msg: `Certificate expired: ${c.domain}`, sev: 'danger' });
+            else if (c.days_left < 7)             items.push({ icon: '🟡', msg: `Certificate expiring in ${countdown.daysLabel(c.days_left)}: ${c.domain}`, sev: 'warning' });
         });
 
         // High error rate

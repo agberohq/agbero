@@ -16,9 +16,9 @@
     import { fetchUptime, fmtNum } from '../js/api.js';
 
     function render(clusterStats) {
-        const grid    = document.getElementById('clusterMetricsGrid');
-        const section = document.getElementById('clusterNodesSection');
-        const cards   = document.getElementById('clusterNodeCards');
+        const grid    = query('#clusterMetricsGrid');
+        const section = query('#clusterNodesSection');
+        const cards   = query('#clusterNodeCards');
         if (!grid || !cards) return;
 
         if (!clusterStats?.enabled) {

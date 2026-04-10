@@ -4,6 +4,7 @@ import { apiSetToken, apiClearToken, reinitApi } from './api.js';
 // prefer: 'session' — clears on tab close, correct for an admin UI.
 export const store = new Store('agbero-admin', { prefer: 'session' });
 
+// Auth
 // Tokens are stored in localStorage so they survive tab close (intentional).
 // Setting credentials also configures the shared Api instance immediately.
 
@@ -33,6 +34,7 @@ export function isLoggedIn() {
     return !!localStorage.getItem('ag_auth_token');
 }
 
+// Target node
 
 export function getHost() {
     return localStorage.getItem('ag_target_host') || '';
@@ -45,6 +47,7 @@ export function setHost(url) {
     reinitApi(); // point the Api instance at the new node
 }
 
+// Boot — restore Api token if already logged in
 const _boot = getCreds();
 if (_boot.token) apiSetToken(_boot.token);
 

@@ -96,13 +96,30 @@
             </div>
         </div>
 
+        <div class="config-section" style="margin-top:20px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                <h3 style="margin:0;font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);">Session Management</h3>
+            </div>
+            <div class="kv-grid" style="margin-bottom:14px;">
+                <div class="kv-item"><label>Current Session</label><div id="revokeCurrentSession" class="mono" style="font-size:11px;">—</div></div>
+                <div class="kv-item"><label>Token Expires</label><div id="revokeExpiry">—</div></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <button class="btn small" id="revokeCurrentBtn" style="color:var(--warning);border-color:var(--warning);">
+                    Revoke Current Session
+                </button>
+                <span style="font-size:11px;color:var(--text-mute);">Logs you out immediately and invalidates this token on the server.</span>
+            </div>
+            <div id="revokeError" style="color:var(--danger);font-size:11px;margin-top:8px;display:none;"></div>
+        </div>
+
     </div>
 </div>
 
 <script type="module">
-    import { component, on, notify, query } from '../lib/oja.full.esm.js';
-    import { store, getCreds }              from '../js/store.js';
-    import { setupTOTP, keeperTOTPSetup }   from '../js/api.js';
+    import { component, on, notify, query, emit } from '../lib/oja.full.esm.js';
+    import { store, getCreds, clearCredentials } from '../js/store.js';
+    import { setupTOTP, logout }   from '../js/api.js';
     import { isOn }                         from '../js/utils.js';
 
     let _pendingSecret  = '';
@@ -172,6 +189,41 @@
 
     boot();
 
+    // Revocation section boot
+    (function bootRevocation() {
+        const { token } = getCreds();
+        if (!token) return;
+        // Show truncated token as session ID
+        const sessionEl = query('#revokeCurrentSession');
+        if (sessionEl) sessionEl.textContent = token.length > 20 ? token.slice(0,8) + '…' + token.slice(-6) : token;
+        // Show expiry from JWT
+        try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            if (payload.exp) {
+                const exp = new Date(payload.exp * 1000);
+                const expEl = query('#revokeExpiry');
+                if (expEl) expEl.textContent = exp.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+            }
+        } catch {}
+    })();
+
+    on('#revokeCurrentBtn', 'click', async (e, btn) => {
+        const errEl = query('#revokeError');
+        if (errEl) errEl.style.display = 'none';
+        btn.disabled = true; btn.textContent = 'Revoking…';
+        try {
+            await logout();
+            clearCredentials();
+            store.set('auth.isLoggedIn', false);
+            window._isPolling = false;
+            notify.show('Session revoked — logging out', 'success');
+            setTimeout(() => emit('app:navigate', { path: '/' }), 800);
+        } catch(err) {
+            btn.disabled = false; btn.textContent = 'Revoke Current Session';
+            if (errEl) { errEl.textContent = err.message || 'Revocation failed'; errEl.style.display = 'block'; }
+        }
+    });
+
     // Setup
 
     on('#totpSetupBtn', 'click', async (e, btn) => {
@@ -217,12 +269,6 @@
     on('#totpCancelBtn', 'click', () => { showTOTPState('setup'); _pendingSecret = ''; });
 
     // Reset — uses keeper path so secret IS persisted
-    // setupTOTP() (POST /api/v1/totp/setup) explicitly warns it does NOT persist
-    // the secret — "use keeper set to make it durable". If we use the non-persisted
-    // path, the next login will fail because the server reads from the config file.
-    // Instead: keeperTOTPSetup(username) stores it in the encrypted keeper under
-    // totp/{username} which the server reads via ss://totp/{username} references.
-
     on('#totpResetBtn', 'click', () => {
         query('#totpResetConfirm').style.display = '';
     });
@@ -233,30 +279,13 @@
 
     on('#totpResetConfirmBtn', 'click', async (e, btn) => {
         btn.disabled = true; btn.textContent = 'Resetting…';
-
-        // Use keeper path — this persists the secret to the encrypted store
-        const res = await keeperTOTPSetup(_username);
+        const res = await setupTOTP();
         btn.disabled = false; btn.textContent = 'Yes, Reset Now';
-
         if (res?.uri) {
-            // Secret is now stored in keeper as ss://totp/{username}
-            // Server must have the TOTP secret configured as a keeper reference
             _showQR(res);
-            notify.show('New TOTP secret generated and saved to Keeper — scan the QR code', 'success');
-        } else if (res?.error) {
-            notify.show(res.error, 'error');
-            // If keeper is locked or not configured, fall back to the ephemeral setup
-            // and warn the user clearly about the persistence limitation
-            const fallback = await setupTOTP();
-            if (fallback?.uri) {
-                _showQR(fallback);
-                notify.show('⚠️ Keeper unavailable — secret not persisted. Server restart required to apply.', 'warning');
-            } else {
-                notify.show(fallback?.error || 'Reset failed', 'error');
-                query('#totpResetConfirm').style.display = 'none';
-            }
+            notify.show('New TOTP secret generated — scan the QR code and verify it', 'success');
         } else {
-            notify.show('Reset failed — check that Keeper is unlocked', 'error');
+            notify.show(res?.error || 'Reset failed', 'error');
             query('#totpResetConfirm').style.display = 'none';
         }
     });

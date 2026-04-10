@@ -15,7 +15,12 @@
     <div id="keeperLockedPanel">
         <div style="max-width:360px;margin:80px auto;text-align:center;">
             <div style="font-size:44px;margin-bottom:14px;line-height:1;">🔐</div>
-            <p style="color:var(--text-mute);font-size:13px;margin:0 0 20px;line-height:1.6;">Enter your passphrase to unlock the secret store.</p>
+            <p style="color:var(--text-mute);font-size:13px;margin:0 0 20px;line-height:1.6;">
+                Enter your passphrase to unlock the secret store.<br>
+                <span style="font-size:11px;">The store auto-locks after the timeout configured in <code>security.keep.auto_lock</code> (default 30 min).
+                While unlocked, the passphrase is held only in browser memory — never written to disk or storage.
+                Navigating away from this page clears it immediately.</span>
+            </p>
             <div style="display:flex;gap:8px;align-items:stretch;">
                 <input type="password" id="keeperPassphrase" class="search-input"
                        placeholder="Passphrase" style="flex:1;"
@@ -56,12 +61,78 @@
 </div>
 
 <script type="module">
-    import { component, on, ui, notify, query } from '../lib/oja.full.esm.js';
+    import { component, on, ui, notify, query, countdown } from '../lib/oja.full.esm.js';
     import { keeperUnlock, keeperLock, keeperList, keeperGet, keeperSet, keeperDelete } from '../js/api.js';
+    import { store } from '../js/store.js';
+    // Expose store globally for _scheduleAutoLock
+    window._agberoStore = store;
 
     let _unlocked = false;
     // Per-key reveal state: key → { timerId }
     const _revealed = new Map();
+
+    // Auto-lock
+    // Passphrase held in closure only — never written to storage
+    let _passphrase   = null;
+    let _autoLockCd   = null; // countdown.start handle for auto-lock
+
+    function _parseDuration(s) {
+        if (!s) return 0;
+        let ms = 0;
+        for (const m of (s.match(/(\d+(?:\.\d+)?)([hms])/g) || [])) {
+            const num = parseFloat(m), unit = m.slice(-1);
+            ms += unit === 'h' ? num*3_600_000 : unit === 'm' ? num*60_000 : num*1_000;
+        }
+        return ms || 1_800_000;
+    }
+
+    function _scheduleAutoLock(passphrase) {
+        if (_autoLockCd) { _autoLockCd.stop(); _autoLockCd = null; }
+
+        const cfg     = (window._agberoStore || { get: () => null }).get?.('lastConfig')?.global?.security?.keep?.auto_lock || '30m0s';
+        const totalMs = _parseDuration(cfg);
+        const expiresAt = Date.now() + totalMs;
+        const warnMs  = totalMs - 2 * 60_000;
+
+        _autoLockCd = countdown.start(expiresAt, {
+            onTick(msLeft) {
+                const bar = query('#keeperTimerBar');
+                if (!bar) return;
+                const m = Math.floor(msLeft / 60_000);
+                const s = Math.floor((msLeft % 60_000) / 1_000);
+                const textEl = bar.querySelector('#keeperTimerText');
+                if (textEl) textEl.textContent = `Auto-locks in ${m}m ${s}s`;
+            },
+            warn: warnMs > 0 ? warnMs : 0,
+            onWarn() {
+                notify.warn('🔐 Keeper locks in 2 minutes', {
+                    duration: 0, dismissible: true,
+                    action: { label: 'Renew', fn: () => { if (_passphrase) _doUnlock(_passphrase, true); } },
+                });
+            },
+            async onExpire() {
+                if (_passphrase) {
+                    await _doUnlock(_passphrase, true);
+                } else {
+                    _doLock();
+                }
+            },
+        });
+    }
+
+    async function _doUnlock(passphrase, silent = false) {
+        _passphrase = passphrase;
+        _scheduleAutoLock(passphrase);
+        if (!silent) {
+            showUnlocked();
+        }
+    }
+
+    function _doLock() {
+        _passphrase = null;
+        if (_autoLockCd) { _autoLockCd.stop(); _autoLockCd = null; }
+        showLocked();
+    }
 
     // SVG icon constants
     const _svgCopy    = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>`;
@@ -84,6 +155,15 @@
         query('#keeperUnlockedPanel').style.display = '';
         query('#keeperLockBtn').style.display       = '';
         query('#keeperAddBtn').style.display        = '';
+        // Show timer bar
+        const panel = query('#keeperUnlockedPanel');
+        if (panel && !query('#keeperTimerBar')) {
+            const bar = document.createElement('div');
+            bar.id = 'keeperTimerBar';
+            bar.className = 'keeper-timer-bar';
+            bar.innerHTML = '<span class="keeper-timer-dot"></span><span id="keeperTimerText">Unlocked</span>';
+            panel.insertBefore(bar, panel.firstChild);
+        }
         loadKeys();
     }
 
@@ -179,8 +259,12 @@
         ui.btn.loading(btn, 'Unlocking…');
         const res = await keeperUnlock(pass);
         ui.btn.reset(btn);
-        if (res?.status === 'unlocked') showUnlocked();
-        else { errEl.textContent = res?.error || 'Invalid passphrase'; errEl.style.display = 'block'; }
+        if (res?.status === 'unlocked') {
+            await _doUnlock(pass);
+        } else {
+            errEl.textContent = res?.error || 'Invalid passphrase';
+            errEl.style.display = 'block';
+        }
     }
 
     on('#keeperUnlockBtn',  'click',   doUnlock);
@@ -192,7 +276,7 @@
         await keeperLock();
         ui.btn.reset(btn);
         _revealed.clear();
-        showLocked();
+        _doLock();
         notify.show('Keeper locked', 'success');
     });
 
@@ -337,5 +421,7 @@
     component.onUnmount(() => {
         _revealed.forEach(({ timerId }) => clearTimeout(timerId));
         _revealed.clear();
+        _passphrase = null;
+        if (_autoLockCd) { _autoLockCd.stop(); _autoLockCd = null; }
     });
 </script>

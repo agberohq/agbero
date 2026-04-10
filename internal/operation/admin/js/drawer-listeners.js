@@ -20,11 +20,12 @@
  *             firewall.ignore_global, forward_auth.allow_private
  */
 
-import { listen, emit, on, clipboard, notify, query, modal } from '../lib/oja.full.esm.js';
+import { listen, emit, on, clipboard, notify, query, modal, countdown } from '../lib/oja.full.esm.js';
 import { store } from './store.js';
 import { fmtNum } from './api.js';
 import { isOn } from './utils.js';
 
+// Drawer open / close
 // All opens/closes through Oja modal so the stack stays consistent and
 // the backdrop clears automatically when the stack empties.
 
@@ -58,6 +59,7 @@ on('[data-action="perf-node"]', 'click', (e, btn) => {
     emit('perf:open', { hostname: btn.dataset.hostname });
 });
 
+// Listen for drawer open events
 
 listen('drawer:open-route', ({ host, idx, type }) => {
     const hostCfg   = (store.get('lastConfig') || {}).hosts?.[host] || {};
@@ -107,6 +109,7 @@ listen('drawer:open-backend', ({ host, routeIdx, backendIdx, type }) => {
     openDrawer('backendDrawer');
 });
 
+// Primitive builders
 
 function section(title, content) {
     if (!content || content.trim() === '') return '';
@@ -129,6 +132,7 @@ function badge(text, cls = '') {
     return `<span class="badge ${cls}">${text}</span>`;
 }
 
+// Web / static file section
 // Guard: web block has meaningful data when it has a root path OR git is enabled.
 // DO NOT guard on web.enabled — that field defaults to "unknown" (not "on") in
 // most HCL configs, so checking isOn(web.enabled) silently hides everything.
@@ -177,6 +181,7 @@ function webSection(web) {
     return section(`${icon} ${title}`, kvGrid(pairs));
 }
 
+// Git section
 
 function gitSection(git, hostname) {
     if (!isOn(git?.enabled)) return '';
@@ -208,6 +213,7 @@ function gitSection(git, hostname) {
         `<div style="margin-top:8px;"><label style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;">Webhook URL</label>${whHtml}</div>`);
 }
 
+// Serverless section
 
 function serverlessSection(serverless) {
     if (!isOn(serverless?.enabled)) return '';
@@ -255,10 +261,11 @@ function serverlessSection(serverless) {
     return section('⚡ Serverless', html);
 }
 
+// Upstreams section
 
 function backendRow(b, cfgB, bStat, hostname, routeIdx, bIdx, type) {
     const url  = bStat.url || bStat.address || cfgB.address || '';
-    const w    = cfgB.weight !== undefined ? cfgB.weight : 1;
+    const w    = cfgB.weight !== undefined ? cfgB.weight : (bStat.url || bStat.address ? '—' : 1);
     const hSt  = bStat.health?.status || 'Unknown';
 
     let dc = 'warn', dt = 'No data';
@@ -314,6 +321,7 @@ function upstreamsSection(hostname, item, itemStats, routeIdx, type) {
     return section(`⬆️ Upstreams <span class="badge" style="margin-left:4px;">${stratLabel}</span>`, rows);
 }
 
+// HTTP features section
 
 function httpFeaturesSection(item) {
     const parts = [];
@@ -378,13 +386,13 @@ function httpFeaturesSection(item) {
     }
 
     // Compression — Enabled type
-    if (isOn(item.compression_config?.enabled)) {
-        const cc = item.compression_config;
+    if (isOn(item.compression?.enabled)) {
+        const cc = item.compression;
         parts.push(section('🗜️ Compression', badge(cc.type || 'gzip', '') + (cc.level ? ` level ${cc.level}` : '')));
     }
 
     // Firewall — uses .status (Enabled type)
-    if (isOn(item.firewall?.status)) {
+    if (isOn(item.firewall?.enabled)) {
         const fw = item.firewall;
         const fwParts = [badge('Enabled', 'danger')];
         if (fw.ignore_global)         fwParts.push(badge('ignores global', 'warning'));
@@ -428,6 +436,7 @@ function httpFeaturesSection(item) {
     return parts.join('');
 }
 
+// Auth section
 
 function authSection(item) {
     const parts = [];
@@ -474,20 +483,22 @@ function authSection(item) {
     return section('🔐 Authentication', `<div class="mw-grid">${parts.join('')}</div>`);
 }
 
+// Cert section
 
 function certsSection(hostname, certificates) {
     if (!certificates?.length) return '';
-    const cert = certificates.find(c => c.host === hostname);
+    const cert = certificates.find(c => c.domain === hostname);
     if (!cert) return '';
-    const color = cert.daysLeft < 0 ? 'var(--danger)' : cert.daysLeft < 7 ? 'var(--warning)' : cert.daysLeft < 30 ? 'var(--info)' : 'var(--success)';
-    const label = cert.daysLeft < 0 ? 'Expired' : cert.daysLeft === 0 ? 'Today' : `${cert.daysLeft}d`;
+    const color   = countdown.daysColor(cert.days_left);
+    const label   = countdown.daysLabel(cert.days_left);
+    const expDate = cert.expires_at ? new Date(cert.expires_at).toLocaleDateString() : '—';
     return section('🔑 Certificate', kvGrid([
-        ['Issuer',  cert.issuer || "Let's Encrypt"],
         ['Expiry',  `<span style="color:${color};">${label}</span>`],
-        ['Expires', new Date(cert.expiry).toLocaleDateString()],
+        ['Expires', expDate],
     ]));
 }
 
+// Host-level section
 
 function hostLevelSection(hostname) {
     const hostCfg = (store.get('lastConfig') || {}).hosts?.[hostname] || {};
@@ -512,6 +523,7 @@ function hostLevelSection(hostname) {
     return section('🏠 Host Settings', kvGrid(items));
 }
 
+// Raw config section — always shown at the bottom
 
 function rawSection(item) {
     // Strip circular/redundant fields that would make the JSON too noisy
@@ -527,6 +539,7 @@ function rawSection(item) {
         <pre class="code-box" style="max-height:220px;overflow:auto;font-size:10px;line-height:1.55;margin:0;white-space:pre-wrap;word-break:break-all;">${j.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`);
 }
 
+// Main route drawer builder
 
 function buildRouteHTML(hostname, item, itemStats, type, certificates, routeIdx) {
     // TCP proxy
@@ -561,6 +574,7 @@ function buildRouteHTML(hostname, item, itemStats, type, certificates, routeIdx)
     ].filter(Boolean).join('');
 }
 
+// Backend drawer builder
 
 function buildBackendHTML(cfg, stat) {
     const parts = [];

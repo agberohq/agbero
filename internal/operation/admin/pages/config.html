@@ -198,9 +198,9 @@
         const el = query('#configTlsSummary');
         if (!el) return;
         const total = certificates.length;
-        const valid = certificates.filter(c => c.daysLeft > 0).length;
-        const expiring = certificates.filter(c => c.daysLeft > 0 && c.daysLeft < 7).length;
-        const expired = certificates.filter(c => c.daysLeft <= 0).length;
+        const valid    = certificates.filter(c => c.days_left > 0).length;
+        const expiring = certificates.filter(c => c.days_left > 0 && c.days_left < 7).length;
+        const expired  = certificates.filter(c => c.days_left !== null && c.days_left <= 0).length;
 
         el.innerHTML = [
             ['Total Certificates', total],['Valid', `<span class="badge success">${valid}</span>`],['Expiring Soon', `<span class="badge warning">${expiring}</span>`],
@@ -248,7 +248,7 @@
                 if (r.wasm?.enabled === 'on') hasWasm = true;
                 if (r.rate_limit?.enabled === 'on') hasRL = true;
                 if (r.basic_auth?.enabled === 'on' || r.jwt_auth?.enabled === 'on') hasAuth = true;
-                if (r.compression_config?.enabled === 'on') hasComp = true;
+                if (r.compression?.enabled === 'on') hasComp = true;
             });
         });
 

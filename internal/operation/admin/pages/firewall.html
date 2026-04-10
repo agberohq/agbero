@@ -29,7 +29,7 @@
 </div>
 
 <script type="module">
-    import { component, listen, on, notify, modal, query } from '../lib/oja.full.esm.js';
+    import { component, listen, on, notify, modal, query, countdown } from '../lib/oja.full.esm.js';
     import { fetchFirewall, deleteFirewallRule } from '../js/api.js';
 
     let _rules     = [];
@@ -48,22 +48,57 @@
         return r;
     }
 
+    const _countdownHandles = new Map();
+
+    function _attachCountdown(expiresAt) {
+        const id = `fw-cd-${expiresAt}`;
+        return { id, expiresAt };
+    }
+
     function ruleRow(r) {
         const created = r.created_at ? new Date(r.created_at) : null;
-        // toLocaleString preserves the time component — critical for incident response
         const dateStr = created && !isNaN(created)
             ? created.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
             : '—';
         const ip = r.ip || '0.0.0.0';
+        const expiresAt = (r.duration_sec && r.duration_sec > 0 && created)
+            ? created.getTime() + r.duration_sec * 1000 : null;
+        const expiryCell = expiresAt
+            ? `<span class="fw-countdown" data-expires="${expiresAt}"></span>`
+            : `<span style="color:var(--text-mute);font-size:11px;">Permanent</span>`;
         return `<tr>
             <td class="mono">${ip}</td>
             <td>${r.reason || '—'}</td>
             <td class="hide-mobile mono" style="font-size:11px;">${r.host || '*'} / ${r.path || '*'}</td>
-            <td class="hide-mobile" style="font-family:var(--font-mono);font-size:11px;">${dateStr}</td>
+            <td class="hide-mobile" style="font-family:var(--font-mono);font-size:11px;">${dateStr}<br>${expiryCell}</td>
             <td>
                 <button class="btn small error fw-unblock-btn" data-ip="${ip}" data-confirm="">Unblock</button>
             </td>
         </tr>`;
+    }
+
+    function _startCountdowns() {
+        // Destroy any existing handles
+        for (const handle of _countdownHandles.values()) handle.destroy();
+        _countdownHandles.clear();
+
+        document.querySelectorAll('.fw-countdown[data-expires]').forEach(el => {
+            const expiresAt = +el.dataset.expires;
+            if (!expiresAt) return;
+            const handle = countdown.attach(el, expiresAt, {
+                format: (ms) => {
+                    if (ms <= 0) return '<span style="color:var(--success)">expiring…</span>';
+                    const h = Math.floor(ms / 3_600_000);
+                    const m = Math.floor((ms % 3_600_000) / 60_000);
+                    const s = Math.floor((ms % 60_000) / 1_000);
+                    if (h > 0) return `<span style="color:var(--warning)">${h}h ${m}m left</span>`;
+                    if (m > 0) return `<span style="color:var(--warning)">${m}m ${s}s left</span>`;
+                    return `<span style="color:var(--danger)">${s}s left</span>`;
+                },
+                onExpire: () => { setTimeout(() => refresh(), 2000); },
+            });
+            _countdownHandles.set(expiresAt, handle);
+        });
     }
 
     function render(data) {
@@ -93,7 +128,7 @@
         tbody.innerHTML = sortRules(_rules).map(ruleRow).join('');
     }
 
-    async function refresh() { render(await fetchFirewall()); }
+    async function refresh() { render(await fetchFirewall()); _startCountdowns(); }
 
     // Events
 
@@ -149,5 +184,9 @@
 
     const unsubRefresh = listen('firewall:refresh', refresh);
     refresh();
-    component.onUnmount(() => unsubRefresh());
+    component.onUnmount(() => {
+        unsubRefresh();
+        for (const handle of _countdownHandles.values()) handle.destroy();
+        _countdownHandles.clear();
+    });
 </script>
