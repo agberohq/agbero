@@ -366,6 +366,41 @@ func (r *Route) Key() string {
 		w.WriteString(r.Cache.TTL.String())
 	}
 
+	if r.Serverless.Enabled.Active() {
+		w.WriteString("sl")
+		for _, rp := range r.Serverless.Replay {
+			w.WriteString(rp.Name)
+			w.WriteString(rp.URL)
+			for _, m := range rp.Methods {
+				w.WriteString(m)
+			}
+			for k, v := range rp.Headers {
+				w.WriteString(k)
+				w.WriteString(v)
+			}
+			for _, d := range rp.AllowedDomains {
+				w.WriteString(d)
+			}
+			w.WriteString(rp.Timeout.String())
+			w.WriteString(rp.RefererMode)
+			w.WriteString(fmt.Sprint(rp.StripHeaders))
+			if rp.Cache.Enabled.Active() {
+				w.WriteString(rp.Cache.Driver)
+				w.WriteString(rp.Cache.TTL.String())
+			}
+		}
+		for _, wk := range r.Serverless.Workers {
+			w.WriteString(wk.Name)
+			for _, c := range wk.Command {
+				w.WriteString(c)
+			}
+			w.WriteString(wk.Schedule)
+			w.WriteString(wk.Restart)
+			w.WriteString(fmt.Sprint(wk.Background))
+			w.WriteString(fmt.Sprint(wk.RunOnce))
+		}
+	}
+
 	return fmt.Sprintf("%x", w.Sum64())
 }
 

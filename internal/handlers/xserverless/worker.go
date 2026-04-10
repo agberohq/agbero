@@ -3,6 +3,7 @@ package xserverless
 import (
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
@@ -43,10 +44,14 @@ func NewWorker(cfg WorkerConfig) *WorkerHandler {
 // ServeHTTP handles the incoming HTTP request by running the configured worker process.
 // It resolves the execution directory and returns 503 if a git deployment is pending.
 func (h *WorkerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+
 	host := r.Host
 	if host == "" {
 		host = "default"
 	}
+
+	h.res.Logger.Fields("worker", h.cfg.Name, "method", r.Method, "remote", r.RemoteAddr).Info("serverless: worker request received")
 
 	var dir string
 	if h.orch != nil {
@@ -70,7 +75,9 @@ func (h *WorkerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := proc.Run(r.Context(), r.Body, w); err != nil {
-		h.res.Logger.Fields("worker", h.cfg.Name, "err", err).Error("serverless: ephemeral execution failed")
+		h.res.Logger.Fields("worker", h.cfg.Name, "err", err, "duration", time.Since(start)).Error("serverless: ephemeral execution failed")
 		http.Error(w, "Worker Execution Failed", http.StatusInternalServerError)
+		return
 	}
+	h.res.Logger.Fields("worker", h.cfg.Name, "duration", time.Since(start)).Info("serverless: worker done")
 }

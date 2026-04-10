@@ -2718,7 +2718,7 @@ textarea.wz-input { height: auto; min-height: 80px; }
     color: var(--danger);
     display: none;
 }
-.submit-error-box.visible { display: block;
+.submit-error-box.visible { display: block;}
 .keeper-timer-bar {
     display: flex;
     align-items: center;
