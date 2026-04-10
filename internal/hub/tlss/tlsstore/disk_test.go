@@ -4,12 +4,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/agberohq/agbero/internal/core/expect"
 )
 
 func TestDiskStorage_SeparateDirectories(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	certDir := filepath.Join(tmpDir, "certs")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	certDir := expect.NewFolder(filepath.Join(tmpDir, "certs"))
 
 	disk, err := NewDisk(DiskConfig{
 		DataDir: dataDir,
@@ -28,8 +30,8 @@ func TestDiskStorage_SeparateDirectories(t *testing.T) {
 	}
 
 	// Verify file exists in certDir
-	certPath := filepath.Join(certDir, IssuerACME, "example.com.crt")
-	if _, err := os.Stat(certPath); os.IsNotExist(err) {
+
+	if !certDir.FileExists(filepath.Join(IssuerACME, "example.com.crt")) {
 		t.Error("Certificate not saved in certDir")
 	}
 
@@ -39,8 +41,7 @@ func TestDiskStorage_SeparateDirectories(t *testing.T) {
 	}
 
 	// Verify CA file exists in dataDir
-	caPath := filepath.Join(dataDir, IssuerCA, "ca.crt")
-	if _, err := os.Stat(caPath); os.IsNotExist(err) {
+	if !dataDir.FileExists(IssuerCA, "ca.crt") {
 		t.Error("CA certificate not saved in dataDir")
 	}
 
@@ -60,7 +61,7 @@ func TestDiskStorage_SeparateDirectories(t *testing.T) {
 
 func TestDiskStorage_WithDataDirOnly(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 
 	disk, err := NewDisk(DiskConfig{
 		DataDir: dataDir,
@@ -78,8 +79,7 @@ func TestDiskStorage_WithDataDirOnly(t *testing.T) {
 	}
 
 	// Should be saved in dataDir since certDir not set
-	certPath := filepath.Join(dataDir, IssuerCustom, "test.com.crt")
-	if _, err := os.Stat(certPath); os.IsNotExist(err) {
+	if !dataDir.FileExists(IssuerCustom, "test.com.crt") {
 		t.Error("Certificate not saved in dataDir")
 	}
 
@@ -99,7 +99,7 @@ func TestDiskStorage_WithDataDirOnly(t *testing.T) {
 
 func TestDiskStorage_WithCertDirOnly(t *testing.T) {
 	tmpDir := t.TempDir()
-	certDir := filepath.Join(tmpDir, "certs")
+	certDir := expect.NewFolder(filepath.Join(tmpDir, "certs"))
 
 	disk, err := NewDisk(DiskConfig{
 		CertDir: certDir,
@@ -117,11 +117,9 @@ func TestDiskStorage_WithCertDirOnly(t *testing.T) {
 	}
 
 	// Should be saved in certDir since dataDir not set
-	caPath := filepath.Join(certDir, IssuerCA, "ca.crt")
-	if _, err := os.Stat(caPath); os.IsNotExist(err) {
+	if !certDir.FileExists(IssuerCA, "ca.crt") {
 		t.Error("CA certificate not saved")
 	}
-
 	// Load CA
 	loadedCert, loadedKey, err := disk.Load("ca")
 	if err != nil {
@@ -143,8 +141,8 @@ func TestDiskStorage_Encrypted(t *testing.T) {
 	mockCipher := &mockCipher{}
 
 	disk, err := NewDisk(DiskConfig{
-		DataDir: filepath.Join(tmpDir, "data"),
-		CertDir: filepath.Join(tmpDir, "certs"),
+		DataDir: expect.NewFolder(filepath.Join(tmpDir, "data")),
+		CertDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
 		Cipher:  mockCipher,
 	})
 	if err != nil {
@@ -185,7 +183,7 @@ func TestDiskStorage_Encrypted(t *testing.T) {
 
 func TestDiskStorage_Priority(t *testing.T) {
 	tmpDir := t.TempDir()
-	certDir := filepath.Join(tmpDir, "certs")
+	certDir := expect.NewFolder(filepath.Join(tmpDir, "certs"))
 
 	disk, err := NewDisk(DiskConfig{
 		CertDir: certDir,
@@ -223,7 +221,7 @@ func TestDiskStorage_Priority(t *testing.T) {
 
 func TestDiskStorage_List(t *testing.T) {
 	tmpDir := t.TempDir()
-	certDir := filepath.Join(tmpDir, "certs")
+	certDir := expect.NewFolder(filepath.Join(tmpDir, "certs"))
 
 	disk, err := NewDisk(DiskConfig{
 		CertDir: certDir,
@@ -262,8 +260,8 @@ func TestDiskStorage_List(t *testing.T) {
 
 func TestDiskStorage_Delete(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	certDir := filepath.Join(tmpDir, "certs")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	certDir := expect.NewFolder(filepath.Join(tmpDir, "certs"))
 
 	disk, err := NewDisk(DiskConfig{
 		DataDir: dataDir,
@@ -301,8 +299,8 @@ func TestDiskStorage_Delete(t *testing.T) {
 
 func TestDiskStorage_LoadFallback_FromDataDirToCertDir(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	certDir := filepath.Join(tmpDir, "certs")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	certDir := expect.NewFolder(filepath.Join(tmpDir, "certs"))
 
 	disk, err := NewDisk(DiskConfig{
 		DataDir: dataDir,
@@ -336,8 +334,8 @@ func TestDiskStorage_LoadFallback_FromDataDirToCertDir(t *testing.T) {
 
 func TestDiskStorage_LoadPreference_CertDirOverDataDir(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	certDir := filepath.Join(tmpDir, "certs")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	certDir := expect.NewFolder(filepath.Join(tmpDir, "certs"))
 
 	disk, err := NewDisk(DiskConfig{
 		DataDir: dataDir,

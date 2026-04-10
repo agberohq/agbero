@@ -9,29 +9,28 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 )
 
 func TestManager_RenewalLogic(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	os.MkdirAll(dataDir, 0755)
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	dataDir.Init(0755)
 
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
 			DataDir:  dataDir,
 		},
 	}
 
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	domain := "localhost"
 
 	hm.Set(domain, &alaye.Host{

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/middleware/firewall"
 	"github.com/go-chi/chi/v5"
 )
@@ -19,11 +19,11 @@ func setupTestFirewall(t *testing.T) (*Shared, func()) {
 
 	cfg := firewall.Config{
 		Firewall: &alaye.Firewall{
-			Status: alaye.Active,
+			Status: expect.Active,
 			Mode:   "active",
 			Rules:  []alaye.Rule{},
 		},
-		DataDir:        woos.NewFolder(tmpDir),
+		DataDir:        expect.NewFolder(tmpDir),
 		Logger:         testLogger,
 		TrustedProxies: []string{},
 	}

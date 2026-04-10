@@ -7,37 +7,26 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
+	keeperlib "github.com/agberohq/keeper"
 )
 
-// Admin handles `agbero admin` CLI commands.
-// These operations act on agbero-managed admin state in keeper (users, TOTP).
-// They are distinct from `agbero keeper` which manages user-supplied secrets.
 type Admin struct {
 	p *Helper
 }
 
-// TOTPSetup generates a new TOTP secret for a user and stores it at the
-// canonical keeper path vault://admin/totp/<user>.
-//
-// After running this, add to agbero.hcl:
-//
-//	admin {
-//	  totp {
-//	    enabled = "on"
-//	    user {
-//	      username = "alice"
-//	      secret   = "vault://admin/totp/alice"
-//	    }
-//	  }
-//	}
-func (a *Admin) TOTPSetup(configPath, username string) {
+// requireStore returns the injected store or fatals with a clear message.
+func (a *Admin) requireStore() *keeperlib.Keeper {
+	if a.p.Store == nil {
+		a.p.Logger.Fatal("keeper store is not available — run 'agbero init' first or check AGBERO_PASSPHRASE")
+	}
+	return a.p.Store
+}
+
+func (a *Admin) TOTPSetup(_ string, username string) {
 	if username == "" {
 		a.p.Logger.Fatal("--user is required")
 	}
-
-	k := &Keeper{p: a.p}
-	store := k.openStore(configPath)
-	defer store.Close()
+	store := a.requireStore()
 
 	gen := security.NewTOTPGenerator(security.DefaultTOTPConfig())
 	secret, err := gen.GenerateSecret()
@@ -45,7 +34,7 @@ func (a *Admin) TOTPSetup(configPath, username string) {
 		a.p.Logger.Fatal("failed to generate TOTP secret: ", err)
 	}
 
-	storeKey := expect.Vault().AdminTOTP(username) // vault://admin/totp/<user>
+	storeKey := expect.Vault().AdminTOTP(username)
 	if err := store.Set(storeKey, []byte(secret)); err != nil {
 		a.p.Logger.Fatal("failed to store TOTP secret: ", err)
 	}
@@ -54,16 +43,11 @@ func (a *Admin) TOTPSetup(configPath, username string) {
 	a.renderTOTPQR(username, storeKey, uri)
 }
 
-// TOTPQR re-displays the QR code for a user whose TOTP secret is already
-// stored in keeper at vault://admin/totp/<user>.
-func (a *Admin) TOTPQR(configPath, username string) {
+func (a *Admin) TOTPQR(_ string, username string) {
 	if username == "" {
 		a.p.Logger.Fatal("--user is required")
 	}
-
-	k := &Keeper{p: a.p}
-	store := k.openStore(configPath)
-	defer store.Close()
+	store := a.requireStore()
 
 	storeKey := expect.Vault().AdminTOTP(username)
 	secretBytes, err := store.Get(storeKey)
@@ -76,15 +60,11 @@ func (a *Admin) TOTPQR(configPath, username string) {
 	a.renderTOTPQR(username, storeKey, uri)
 }
 
-// TOTPQRPNGFile generates the QR code for a user and writes the PNG to outFile.
-func (a *Admin) TOTPQRPNGFile(configPath, username, outFile string) {
+func (a *Admin) TOTPQRPNGFile(_ string, username, outFile string) {
 	if username == "" {
 		a.p.Logger.Fatal("--user is required")
 	}
-
-	k := &Keeper{p: a.p}
-	store := k.openStore(configPath)
-	defer store.Close()
+	store := a.requireStore()
 
 	storeKey := expect.Vault().AdminTOTP(username)
 	secretBytes, err := store.Get(storeKey)
@@ -104,24 +84,27 @@ func (a *Admin) TOTPQRPNGFile(configPath, username, outFile string) {
 		a.p.Logger.Fatal("failed to write QR PNG: ", err)
 	}
 
-	ui.New().SuccessLine("QR code written to " + outFile)
+	u := ui.New()
+	u.Render(func() {
+		u.SuccessLine("QR code written to " + outFile)
+	})
 }
 
 func (a *Admin) renderTOTPQR(username, storeKey, uri string) {
 	u := ui.New()
-	u.SectionHeader("TOTP — " + username)
-	u.KeyValue("Store key", storeKey)
-	u.Blank()
-	u.QR(uri)
-	u.Blank()
-	u.InfoLine("Add to agbero.hcl admin block:")
-	u.InfoLine(`  totp {`)
-	u.InfoLine(`    enabled = "on"`)
-	u.InfoLine(`    user {`)
-	u.InfoLine(`      username = "` + username + `"`)
-	u.InfoLine(`      secret   = "` + storeKey + `"`)
-	u.InfoLine(`    }`)
-	u.InfoLine(`  }`)
-	u.Blank()
-	u.InfoLine("Or open the admin UI → Security → TOTP for a scannable QR.")
+	u.Render(func() {
+		u.SectionHeader("TOTP — " + username)
+		u.KeyValue("Store key", storeKey)
+		u.QR(uri)
+		u.Blank()
+		u.InfoLine("Add to agbero.hcl admin block:")
+		u.InfoLine(`  totp {`)
+		u.InfoLine(`    enabled = "on"`)
+		u.InfoLine(`    user {`)
+		u.InfoLine(`      username = "` + username + `"`)
+		u.InfoLine(`      secret   = "` + storeKey + `"`)
+		u.InfoLine(`    }`)
+		u.InfoLine(`  }`)
+		u.InfoLine("Or open the admin UI → Security → TOTP for a scannable QR.")
+	})
 }

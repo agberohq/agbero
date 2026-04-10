@@ -14,50 +14,60 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-// TestOpenStore_CreateNew verifies that OpenStore creates a new database and
+// TestOpen_CreateNew verifies that Open creates a new database and
 // unlocks it when a passphrase is supplied.
-func TestOpenStore_CreateNew(t *testing.T) {
+func TestOpen_CreateNew(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 
 	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		AutoLock:   alaye.Duration(5 * time.Minute),
 		Passphrase: expect.Value("test-passphrase-32-bytes-long!!"),
 	}
 	logger := ll.New("test").Disable()
 
-	store, err := OpenStore(dataDir, cfg, logger)
+	store, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     cfg,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err != nil {
-		t.Fatalf("OpenStore failed: %v", err)
+		t.Fatalf("Open failed: %v", err)
 	}
 	defer store.Close()
 
-	dbPath := filepath.Join(dataDir, woos.DefaultKeeperName)
+	dbPath := filepath.Join(dataDir.Path(), woos.DefaultKeeperName)
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		t.Error("keeper database was not created")
 	}
 	if store.IsLocked() {
-		t.Error("store should be unlocked after OpenStore with passphrase")
+		t.Error("store should be unlocked after Open with passphrase")
 	}
 }
 
-// TestOpenStore_ExistingDatabase verifies that a previously written value can
+// TestOpen_ExistingDatabase verifies that a previously written value can
 // be read back after closing and reopening the store with the same passphrase.
-func TestOpenStore_ExistingDatabase(t *testing.T) {
+func TestOpen_ExistingDatabase(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 
 	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value("test-passphrase-32-bytes-long!!"),
 	}
 	logger := ll.New("test").Disable()
 
 	// First open: create store and write a value.
-	store1, err := OpenStore(dataDir, cfg, logger)
+	store1, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     cfg,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err != nil {
-		t.Fatalf("first OpenStore failed: %v", err)
+		t.Fatalf("first Open failed: %v", err)
 	}
 
 	// The flat Set routes to the default scheme/namespace bucket which is
@@ -68,9 +78,14 @@ func TestOpenStore_ExistingDatabase(t *testing.T) {
 	store1.Close()
 
 	// Second open: reopen with same passphrase and read back the value.
-	store2, err := OpenStore(dataDir, cfg, logger)
+	store2, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     cfg,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err != nil {
-		t.Fatalf("second OpenStore failed: %v", err)
+		t.Fatalf("second Open failed: %v", err)
 	}
 	defer store2.Close()
 
@@ -83,46 +98,61 @@ func TestOpenStore_ExistingDatabase(t *testing.T) {
 	}
 }
 
-// TestOpenStore_WrongPassphrase verifies that opening an existing database
+// TestOpen_WrongPassphrase verifies that opening an existing database
 // with the wrong passphrase returns an error.
-func TestOpenStore_WrongPassphrase(t *testing.T) {
+func TestOpen_WrongPassphrase(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 	logger := ll.New("test").Disable()
 
 	// Create the store with the correct passphrase.
 	cfg1 := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value("correct-passphrase-32-bytes!!"),
 	}
-	store1, err := OpenStore(dataDir, cfg1, logger)
+	store1, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     cfg1,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err != nil {
-		t.Fatalf("first OpenStore failed: %v", err)
+		t.Fatalf("first Open failed: %v", err)
 	}
 	store1.Close()
 
 	// Attempt to reopen with a wrong passphrase.
 	cfg2 := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value("wrong-passphrase-32-bytes!!!!"),
 	}
-	_, err = OpenStore(dataDir, cfg2, logger)
+	_, err = Open(Config{
+		DataDir:     dataDir,
+		Setting:     cfg2,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err == nil {
 		t.Fatal("expected error with wrong passphrase, got nil")
 	}
 }
 
-// TestOpenStore_NilCfg_ReturnsLocked verifies that passing nil cfg returns a
+// TestOpen_NilCfg_ReturnsLocked verifies that passing nil cfg returns a
 // locked store so the caller can prompt for and supply the passphrase.
 // This is the contract required by setup/home.go::initializeKeeper.
-func TestOpenStore_NilCfg_ReturnsLocked(t *testing.T) {
+func TestOpen_NilCfg_ReturnsLocked(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 	logger := ll.New("test").Disable()
 
-	store, err := OpenStore(dataDir, nil, logger)
+	store, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     nil,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err != nil {
-		t.Fatalf("OpenStore(nil cfg) failed: %v", err)
+		t.Fatalf("Open(nil cfg) failed: %v", err)
 	}
 	defer store.Close()
 
@@ -131,21 +161,26 @@ func TestOpenStore_NilCfg_ReturnsLocked(t *testing.T) {
 	}
 }
 
-// TestOpenStore_EmptyPassphrase_ReturnsLocked verifies that an explicitly empty
+// TestOpen_EmptyPassphrase_ReturnsLocked verifies that an explicitly empty
 // passphrase in config also returns a locked store (caller must prompt or set env).
-func TestOpenStore_EmptyPassphrase_ReturnsLocked(t *testing.T) {
+func TestOpen_EmptyPassphrase_ReturnsLocked(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 	logger := ll.New("test").Disable()
 
 	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value(""),
 	}
 
-	store, err := OpenStore(dataDir, cfg, logger)
+	store, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     cfg,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err != nil {
-		t.Fatalf("OpenStore failed: %v", err)
+		t.Fatalf("Open failed: %v", err)
 	}
 	defer store.Close()
 
@@ -154,22 +189,27 @@ func TestOpenStore_EmptyPassphrase_ReturnsLocked(t *testing.T) {
 	}
 }
 
-// TestOpenStore_DevMode verifies that passphrase="dev" unlocks the store with a
+// TestOpen_DevMode verifies that passphrase="dev" unlocks the store with a
 // sentinel passphrase (the KDF rejects empty passwords) and that the same
 // store can be reopened consistently.
-func TestOpenStore_DevMode(t *testing.T) {
+func TestOpen_DevMode(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 	logger := ll.New("test").Disable()
 
 	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value("dev"),
 	}
 
-	store, err := OpenStore(dataDir, cfg, logger)
+	store, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     cfg,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err != nil {
-		t.Fatalf("OpenStore (dev mode) failed: %v", err)
+		t.Fatalf("Open (dev mode) failed: %v", err)
 	}
 
 	if store.IsLocked() {
@@ -184,9 +224,14 @@ func TestOpenStore_DevMode(t *testing.T) {
 	}
 	store.Close()
 
-	store2, err := OpenStore(dataDir, cfg, logger)
+	store2, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     cfg,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err != nil {
-		t.Fatalf("second OpenStore (dev mode) failed: %v", err)
+		t.Fatalf("second Open (dev mode) failed: %v", err)
 	}
 	defer store2.Close()
 
@@ -199,20 +244,25 @@ func TestOpenStore_DevMode(t *testing.T) {
 	}
 }
 
-// TestOpenStore_WithEnvPassphrase verifies that AGBERO_PASSPHRASE is used when
+// TestOpen_WithEnvPassphrase verifies that AGBERO_PASSPHRASE is used when
 // cfg carries no passphrase.
-func TestOpenStore_WithEnvPassphrase(t *testing.T) {
+func TestOpen_WithEnvPassphrase(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 
 	t.Setenv("AGBERO_PASSPHRASE", "env-passphrase-32-bytes-long!!")
 
-	cfg := &alaye.Keeper{Enabled: alaye.Active}
+	cfg := &alaye.Keeper{Enabled: expect.Active}
 	logger := ll.New("test").Disable()
 
-	store, err := OpenStore(dataDir, cfg, logger)
+	store, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     cfg,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err != nil {
-		t.Fatalf("OpenStore with env passphrase failed: %v", err)
+		t.Fatalf("Open with env passphrase failed: %v", err)
 	}
 	defer store.Close()
 
@@ -221,23 +271,28 @@ func TestOpenStore_WithEnvPassphrase(t *testing.T) {
 	}
 }
 
-// TestOpenStore_EnvPassphraseTakesPrecedenceOverEmpty verifies that
+// TestOpen_EnvPassphraseTakesPrecedenceOverEmpty verifies that
 // AGBERO_PASSPHRASE is used even when cfg.Passphrase is empty.
-func TestOpenStore_EnvPassphraseTakesPrecedenceOverEmpty(t *testing.T) {
+func TestOpen_EnvPassphraseTakesPrecedenceOverEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 
 	t.Setenv("AGBERO_PASSPHRASE", "env-passphrase-32-bytes-long!!")
 
 	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value(""),
 	}
 	logger := ll.New("test").Disable()
 
-	store, err := OpenStore(dataDir, cfg, logger)
+	store, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     cfg,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err != nil {
-		t.Fatalf("OpenStore failed: %v", err)
+		t.Fatalf("Open failed: %v", err)
 	}
 	defer store.Close()
 
@@ -246,28 +301,38 @@ func TestOpenStore_EnvPassphraseTakesPrecedenceOverEmpty(t *testing.T) {
 	}
 }
 
-// TestOpenStore_CallerCanUnlockAfterLockedReturn verifies that a caller
+// TestOpen_CallerCanUnlockAfterLockedReturn verifies that a caller
 // receiving a locked store can unlock it with the correct passphrase.
-func TestOpenStore_CallerCanUnlockAfterLockedReturn(t *testing.T) {
+func TestOpen_CallerCanUnlockAfterLockedReturn(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 	logger := ll.New("test").Disable()
 
 	// First: establish the passphrase by opening with it explicitly.
 	setupCfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value("the-real-passphrase-32-bytes!!"),
 	}
-	setup, err := OpenStore(dataDir, setupCfg, logger)
+	setup, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     setupCfg,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err != nil {
-		t.Fatalf("setup OpenStore failed: %v", err)
+		t.Fatalf("setup Open failed: %v", err)
 	}
 	setup.Close()
 
 	// Second: open without passphrase — caller gets a locked store.
-	store, err := OpenStore(dataDir, nil, logger)
+	store, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     nil,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err != nil {
-		t.Fatalf("OpenStore(nil) failed: %v", err)
+		t.Fatalf("Open(nil) failed: %v", err)
 	}
 	defer store.Close()
 
@@ -282,6 +347,66 @@ func TestOpenStore_CallerCanUnlockAfterLockedReturn(t *testing.T) {
 
 	if store.IsLocked() {
 		t.Error("store should be unlocked after caller Unlock")
+	}
+}
+
+// TestMustOpen_Success verifies MustOpen returns unlocked store.
+func TestMustOpen_Success(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+
+	cfg := &alaye.Keeper{
+		Enabled:    expect.Active,
+		Passphrase: expect.Value("test-passphrase-32-bytes-long!!"),
+	}
+	logger := ll.New("test").Disable()
+
+	store, err := MustOpen(Config{
+		DataDir:     dataDir,
+		Setting:     cfg,
+		Logger:      logger,
+		Interactive: false,
+	})
+	if err != nil {
+		t.Fatalf("MustOpen failed: %v", err)
+	}
+	defer store.Close()
+
+	if store.IsLocked() {
+		t.Error("MustOpen should return unlocked store")
+	}
+}
+
+// TestMustOpen_LockedReturnsError verifies MustOpen returns error when locked.
+func TestMustOpen_LockedReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	logger := ll.New("test").Disable()
+
+	// Create a locked store by opening with nil config
+	store, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     nil,
+		Logger:      logger,
+		Interactive: false,
+	})
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	store.Close()
+
+	// MustOpen should return error
+	_, err = MustOpen(Config{
+		DataDir:     dataDir,
+		Setting:     nil,
+		Logger:      logger,
+		Interactive: false,
+	})
+	if err == nil {
+		t.Fatal("MustOpen should return error for locked store")
+	}
+	if !strings.Contains(err.Error(), "keeper is locked") {
+		t.Errorf("expected 'keeper is locked' error, got: %v", err)
 	}
 }
 
@@ -315,21 +440,26 @@ func TestKeeperPath_Builders(t *testing.T) {
 	}
 }
 
-// TestOpenStore_CreatesBucketAndReadsBack verifies the full round-trip with an
+// TestOpen_CreatesBucketAndReadsBack verifies the full round-trip with an
 // explicit bucket creation and namespaced read.
-func TestOpenStore_CreatesBucketAndReadsBack(t *testing.T) {
+func TestOpen_CreatesBucketAndReadsBack(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
 
 	cfg := &alaye.Keeper{
-		Enabled:    alaye.Active,
+		Enabled:    expect.Active,
 		Passphrase: expect.Value("test-passphrase-32-bytes-long!!"),
 	}
 	logger := ll.New("test").Disable()
 
-	store, err := OpenStore(dataDir, cfg, logger)
+	store, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     cfg,
+		Logger:      logger,
+		Interactive: false,
+	})
 	if err != nil {
-		t.Fatalf("OpenStore failed: %v", err)
+		t.Fatalf("Open failed: %v", err)
 	}
 	defer store.Close()
 
@@ -352,6 +482,41 @@ func TestOpenStore_CreatesBucketAndReadsBack(t *testing.T) {
 	}
 	if string(val) != "s3cr3t" {
 		t.Errorf("got %q, want %q", string(val), "s3cr3t")
+	}
+}
+
+// TestResolvePassphrase verifies the passphrase resolution logic.
+func TestResolvePassphrase(t *testing.T) {
+	// Test with nil cfg
+	if got := resolvePassphrase(nil); got != "" {
+		t.Errorf("resolvePassphrase(nil) = %q, want empty", got)
+	}
+
+	// Test with cfg but empty passphrase
+	cfg := &alaye.Keeper{
+		Passphrase: expect.Value(""),
+	}
+	if got := resolvePassphrase(cfg); got != "" {
+		t.Errorf("resolvePassphrase(empty) = %q, want empty", got)
+	}
+
+	// Test with cfg and passphrase
+	cfg.Passphrase = expect.Value("my-passphrase")
+	if got := resolvePassphrase(cfg); got != "my-passphrase" {
+		t.Errorf("resolvePassphrase = %q, want 'my-passphrase'", got)
+	}
+
+	// Test env var works
+	t.Setenv("AGBERO_PASSPHRASE", "env-pass")
+	cfg.Passphrase = expect.Value("")
+	if got := resolvePassphrase(cfg); got != "env-pass" {
+		t.Errorf("resolvePassphrase with env = %q, want 'env-pass'", got)
+	}
+
+	// Test cfg takes precedence over env
+	cfg.Passphrase = expect.Value("cfg-pass")
+	if got := resolvePassphrase(cfg); got != "cfg-pass" {
+		t.Errorf("resolvePassphrase with cfg = %q, want 'cfg-pass'", got)
 	}
 }
 

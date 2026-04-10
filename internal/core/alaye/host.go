@@ -4,15 +4,16 @@ import (
 	"net"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
 type Host struct {
-	Protected    Enabled  `hcl:"protected,attr" json:"protected"`
-	Domains      []string `hcl:"domains,attr" json:"domains"`
-	Bind         []string `hcl:"bind,attr" json:"bind"`
-	NotFoundPage string   `hcl:"not_found_page,attr" json:"not_found_page"`
-	Compression  bool     `hcl:"compression,attr" json:"compression"`
+	Protected    expect.Toggle `hcl:"protected,attr" json:"protected"`
+	Domains      []string      `hcl:"domains,attr" json:"domains"`
+	Bind         []string      `hcl:"bind,attr" json:"bind"`
+	NotFoundPage string        `hcl:"not_found_page,attr" json:"not_found_page"`
+	Compression  bool          `hcl:"compression,attr" json:"compression"`
 
 	TLS        TLS        `hcl:"tls,block,omitempty" json:"tls"`
 	Limits     Limit      `hcl:"limits,block,omitempty" json:"limits"`

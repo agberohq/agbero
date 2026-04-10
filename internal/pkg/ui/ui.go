@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"image"
@@ -15,12 +16,11 @@ import (
 	"charm.land/lipgloss/v2/list"
 	"charm.land/lipgloss/v2/table"
 	"charm.land/lipgloss/v2/tree"
-	"github.com/agberohq/keeper/pkg/prompter"
 	"github.com/blacktop/go-termimg"
+	"github.com/olekukonko/prompter"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/term"
 )
-
-//  Icon Set
 
 type IconSet struct {
 	Success         string
@@ -58,9 +58,6 @@ var DefaultIconSet = IconSet{
 	Pipe:            "│",
 }
 
-//  Theme
-
-// Theme uses compat.AdaptiveColor for automatic light/dark detection
 type Theme struct {
 	Primary   compat.AdaptiveColor
 	Secondary compat.AdaptiveColor
@@ -74,21 +71,20 @@ type Theme struct {
 }
 
 var DefaultTheme = Theme{
-	Primary:   compat.AdaptiveColor{Dark: lipgloss.Color("#E2E0D9"), Light: lipgloss.Color("#2C2C2A")},
-	Secondary: compat.AdaptiveColor{Dark: lipgloss.Color("#9B9A94"), Light: lipgloss.Color("#5F5E5A")},
-	Faint:     compat.AdaptiveColor{Dark: lipgloss.Color("#4A4A46"), Light: lipgloss.Color("#C0BEB8")},
-	Accent:    compat.AdaptiveColor{Dark: lipgloss.Color("#7CAFC4"), Light: lipgloss.Color("#2B6CB0")},
-	Success:   compat.AdaptiveColor{Dark: lipgloss.Color("#7CB98A"), Light: lipgloss.Color("#276749")},
-	Warn:      compat.AdaptiveColor{Dark: lipgloss.Color("#C9A95C"), Light: lipgloss.Color("#975A16")},
-	Danger:    compat.AdaptiveColor{Dark: lipgloss.Color("#C07070"), Light: lipgloss.Color("#9B2C2C")},
-	Value:     compat.AdaptiveColor{Dark: lipgloss.Color("#D4D2CB"), Light: lipgloss.Color("#1A1A18")},
-	Border:    compat.AdaptiveColor{Dark: lipgloss.Color("#3A3A36"), Light: lipgloss.Color("#D1CFC8")},
+	Primary:   compat.AdaptiveColor{Dark: lipgloss.Color("#c9d8e8"), Light: lipgloss.Color("#1e293b")},
+	Secondary: compat.AdaptiveColor{Dark: lipgloss.Color("#5a7490"), Light: lipgloss.Color("#64748b")},
+	Faint:     compat.AdaptiveColor{Dark: lipgloss.Color("#3d5068"), Light: lipgloss.Color("#94a3b8")},
+	Accent:    compat.AdaptiveColor{Dark: lipgloss.Color("#3b82f6"), Light: lipgloss.Color("#2563eb")},
+	Success:   compat.AdaptiveColor{Dark: lipgloss.Color("#22c55e"), Light: lipgloss.Color("#16a34a")},
+	Warn:      compat.AdaptiveColor{Dark: lipgloss.Color("#eab308"), Light: lipgloss.Color("#ca8a04")},
+	Danger:    compat.AdaptiveColor{Dark: lipgloss.Color("#ef4444"), Light: lipgloss.Color("#dc2626")},
+	Value:     compat.AdaptiveColor{Dark: lipgloss.Color("#e8f2ff"), Light: lipgloss.Color("#0f172a")},
+	Border:    compat.AdaptiveColor{Dark: lipgloss.Color("#1a2232"), Light: lipgloss.Color("#dde4ed")},
 }
-
-//  UI
 
 type UI struct {
 	w                  io.Writer
+	r                  io.Reader
 	theme              Theme
 	icons              IconSet
 	indent             int
@@ -99,6 +95,7 @@ type UI struct {
 type Option func(*UI)
 
 func WithWriter(w io.Writer) Option { return func(u *UI) { u.w = w } }
+func WithReader(r io.Reader) Option { return func(u *UI) { u.r = r } }
 func WithTheme(t Theme) Option      { return func(u *UI) { u.theme = t } }
 func WithIcons(i IconSet) Option    { return func(u *UI) { u.icons = i } }
 func WithIndent(n int) Option       { return func(u *UI) { u.indent = n } }
@@ -106,6 +103,7 @@ func WithIndent(n int) Option       { return func(u *UI) { u.indent = n } }
 func New(opts ...Option) *UI {
 	u := &UI{
 		w:      os.Stdout,
+		r:      os.Stdin,
 		theme:  DefaultTheme,
 		icons:  DefaultIconSet,
 		indent: 3,
@@ -120,8 +118,6 @@ func New(opts ...Option) *UI {
 	return u
 }
 
-//  Internal helpers
-
 func (u *UI) s(c compat.AdaptiveColor) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(c)
 }
@@ -130,21 +126,31 @@ func (u *UI) padStyle() lipgloss.Style {
 	return lipgloss.NewStyle().PaddingLeft(u.indent)
 }
 
-func (u *UI) line(s string)     { u.buf.WriteString(s + "\n") }
+func (u *UI) line(s string) { u.buf.WriteString(s + "\n") }
+
 func (u *UI) indented(s string) { u.line(u.padStyle().Render(s)) }
-func (u *UI) blank()            { u.line("") }
+
+func (u *UI) blank() { u.line("") }
 
 func (u *UI) Flush() {
 	lipgloss.Fprint(u.w, u.buf.String())
 	u.buf.Reset()
 }
 
+func (u *UI) Render(fn func()) {
+	fn()
+	u.Flush()
+}
+
+// FlushAfter is an alias for Render kept for backward compatibility.
+func (u *UI) FlushAfter(fn func()) { u.Render(fn) }
+
 func (u *UI) String() string { return u.buf.String() }
-func (u *UI) Reset()         { u.buf.Reset() }
 
-//  Hyperlink (OSC 8)
+func (u *UI) Reset() { u.buf.Reset() }
 
-// Link creates an OSC 8 hyperlink. Falls back to plain text if unsupported.
+func (u *UI) Theme() Theme { return u.theme }
+
 func (u *UI) Link(text, url string) string {
 	if !u.supportsHyperlinks {
 		return text
@@ -152,73 +158,166 @@ func (u *UI) Link(text, url string) string {
 	return lipgloss.NewStyle().Hyperlink(url).Render(text)
 }
 
-// LinkInline creates a styled hyperlink with accent color and underline.
 func (u *UI) LinkInline(text, url string) string {
-	if !u.supportsHyperlinks {
-		return u.s(u.theme.Accent).Underline(true).Render(text)
+	style := u.s(u.theme.Accent).Underline(true)
+	if u.supportsHyperlinks {
+		return style.Hyperlink(url).Render(text)
 	}
-	return u.s(u.theme.Accent).Underline(true).Hyperlink(url).Render(text)
+	return style.Render(text)
 }
 
-// FileLink creates a clickable file/directory link using file:// protocol.
 func (u *UI) FileLink(path string, isDir bool) string {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		absPath = path
 	}
-
 	url := "file://" + filepath.ToSlash(absPath)
-
 	style := u.s(u.theme.Accent)
 	if isDir {
 		style = style.Bold(true)
 	}
-
-	if !u.supportsHyperlinks {
-		return style.Render(path)
+	if u.supportsHyperlinks {
+		return style.Hyperlink(url).Render(path)
 	}
-	return style.Hyperlink(url).Render(path)
+	return style.Render(path)
 }
 
-func (u *UI) Welcome(name, description, version, date, banner string) {
-	if banner != "" {
-		u.line(u.s(u.theme.Accent).Bold(true).Render(banner))
-	}
-	u.indented(
-		u.s(u.theme.Primary).Bold(true).Render(name) +
-			"  " + u.s(u.theme.Secondary).Render("— "+description),
-	)
-	u.indented(u.s(u.theme.Faint).Render(version + "  ·  " + date))
-	u.blank()
-	u.Flush()
-}
-
-//  Section header
-
-func (u *UI) SectionHeader(label string) {
-	bar := lipgloss.NewStyle().
-		Foreground(u.theme.Accent).
-		Bold(true).
-		Render("▎")
-	text := u.s(u.theme.Secondary).
-		Bold(true).
-		Render(strings.ToUpper(label))
+func (u *UI) SectionHeader(label string) *UI {
+	bar := u.s(u.theme.Accent).Bold(true).Render("▎")
+	text := u.s(u.theme.Secondary).Bold(true).Render(strings.ToUpper(label))
 	u.blank()
 	u.indented(bar + " " + text)
 	u.blank()
-	u.Flush()
+	return u
 }
 
-//  Key-value block
+func (u *UI) Blank() *UI {
+	u.blank()
+	return u
+}
+
+func (u *UI) Divider() *UI {
+	u.indented(u.s(u.theme.Faint).Render(strings.Repeat(u.icons.Dash, 40)))
+	return u
+}
+
+func (u *UI) SuccessLine(msg string) *UI {
+	u.indented(
+		u.s(u.theme.Success).Bold(true).Render(u.icons.Success) + "  " +
+			u.s(u.theme.Primary).Render(msg),
+	)
+	return u
+}
+
+func (u *UI) ErrorLine(msg string) *UI {
+	u.indented(
+		u.s(u.theme.Danger).Bold(true).Render(u.icons.Error) + "  " +
+			u.s(u.theme.Primary).Render(msg),
+	)
+	return u
+}
+
+func (u *UI) WarnLine(msg string) *UI {
+	u.indented(
+		u.s(u.theme.Warn).Render(u.icons.Warning) + "  " +
+			u.s(u.theme.Secondary).Render(msg),
+	)
+	return u
+}
+
+func (u *UI) InfoLine(msg string) *UI {
+	u.indented(
+		u.s(u.theme.Faint).Render(u.icons.Info) + "  " +
+			u.s(u.theme.Secondary).Render(msg),
+	)
+	return u
+}
+
+func (u *UI) ErrorHint(problem, hint string) *UI {
+	u.blank()
+	u.indented(
+		u.s(u.theme.Danger).Bold(true).Render(u.icons.Error) + "  " +
+			u.s(u.theme.Primary).Render(problem),
+	)
+	if hint != "" {
+		hintPad := lipgloss.NewStyle().PaddingLeft(u.indent + 3)
+		u.line(hintPad.Render(
+			u.s(u.theme.Faint).Render(u.icons.Arrow) + "  " +
+				u.s(u.theme.Secondary).Render(hint),
+		))
+	}
+	u.blank()
+	return u
+}
+
+func (u *UI) Step(state, msg string) *UI {
+	icon, style := u.stepIconStyle(state)
+	u.indented(style.Render(icon) + "  " + u.s(u.theme.Secondary).Render(msg))
+	return u
+}
+
+func (u *UI) StepWithLink(state, msg, url string) *UI {
+	icon, style := u.stepIconStyle(state)
+	u.indented(style.Render(icon) + "  " + u.LinkInline(msg, url))
+	return u
+}
+
+func (u *UI) stepIconStyle(state string) (string, lipgloss.Style) {
+	switch strings.ToLower(state) {
+	case "ok":
+		return u.icons.Success, u.s(u.theme.Success)
+	case "warn":
+		return u.icons.Warning, u.s(u.theme.Warn)
+	case "fail":
+		return u.icons.Error, u.s(u.theme.Danger)
+	case "skip":
+		return u.icons.Dash, u.s(u.theme.Faint)
+	default:
+		return u.icons.Bullet, u.s(u.theme.Accent)
+	}
+}
+
+func (u *UI) StatusBadge(status string) *UI {
+	lower := strings.ToLower(strings.TrimSpace(status))
+	var dot, text lipgloss.Style
+	switch lower {
+	case "running", "active", "ok":
+		dot, text = u.s(u.theme.Success), u.s(u.theme.Success)
+	case "stopped", "inactive", "disabled":
+		dot, text = u.s(u.theme.Secondary), u.s(u.theme.Secondary)
+	case "unknown", "pending", "starting":
+		dot, text = u.s(u.theme.Warn), u.s(u.theme.Warn)
+	case "error", "failed", "critical":
+		dot, text = u.s(u.theme.Danger), u.s(u.theme.Danger)
+	default:
+		dot, text = u.s(u.theme.Secondary), u.s(u.theme.Primary)
+	}
+	u.blank()
+	u.indented(dot.Render(u.icons.Dot) + "  " + text.Render(lower))
+	u.blank()
+	return u
+}
+
+func (u *UI) ServiceStatus(status, pid, configPath string) *UI {
+	u.SectionHeader("Service status")
+	u.StatusBadge(status)
+	if pid != "" {
+		u.KeyValue("Process ID", pid)
+	}
+	if configPath != "" {
+		u.KeyValueFile("Config file", configPath, false)
+	}
+	return u
+}
 
 type KV struct {
 	Label string
 	Value string
 }
 
-func (u *UI) KeyValueBlock(title string, pairs []KV) {
+func (u *UI) KeyValueBlock(title string, pairs []KV) *UI {
 	if len(pairs) == 0 {
-		return
+		return u
 	}
 	maxLen := 0
 	for _, kv := range pairs {
@@ -241,37 +340,33 @@ func (u *UI) KeyValueBlock(title string, pairs []KV) {
 		)
 	}
 	u.blank()
-	u.Flush()
+	return u
 }
 
-func (u *UI) KeyValue(label, value string) {
+func (u *UI) KeyValue(label, value string) *UI {
 	u.KeyValueBlock("", []KV{{Label: label, Value: value}})
+	return u
 }
 
-func (u *UI) KeyValueLink(label, text, url string) {
+func (u *UI) KeyValueLink(label, text, url string) *UI {
 	u.KeyValue(label, u.LinkInline(text, url))
+	return u
 }
 
-// KeyValueFile shows a clickable file path.
-func (u *UI) KeyValueFile(label, path string, isDir bool) {
+func (u *UI) KeyValueFile(label, path string, isDir bool) *UI {
 	u.KeyValue(label, u.FileLink(path, isDir))
+	return u
 }
 
-//  Secret box
-
-func (u *UI) SecretBox(label, value string) {
-	// Long secrets: plain display (no border breakage)
+func (u *UI) SecretBox(label, value string) *UI {
 	if len(value) > 60 {
 		u.blank()
 		u.indented(u.s(u.theme.Accent).Bold(true).Render(u.icons.Key + " " + label))
 		u.line("")
 		u.indented(u.s(u.theme.Value).Render(value))
 		u.blank()
-		u.Flush()
-		return
+		return u
 	}
-
-	// Short secrets: bordered box
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderTopForeground(u.theme.Accent).
@@ -279,56 +374,18 @@ func (u *UI) SecretBox(label, value string) {
 		BorderRightForeground(u.theme.Border).
 		BorderBottomForeground(u.theme.Border).
 		Padding(1)
-
 	content := u.s(u.theme.Accent).Bold(true).Render(u.icons.Key+" "+label) +
 		"\n\n" +
 		u.s(u.theme.Value).Render(value)
-
 	u.blank()
 	u.indented(box.Render(content))
 	u.blank()
-	u.Flush()
+	return u
 }
 
-//  Status badge
-
-func (u *UI) StatusBadge(status string) {
-	lower := strings.ToLower(strings.TrimSpace(status))
-	var dotStyle, textStyle lipgloss.Style
-	switch lower {
-	case "running", "active", "ok":
-		dotStyle, textStyle = u.s(u.theme.Success), u.s(u.theme.Success)
-	case "stopped", "inactive", "disabled":
-		dotStyle, textStyle = u.s(u.theme.Secondary), u.s(u.theme.Secondary)
-	case "unknown", "pending", "starting":
-		dotStyle, textStyle = u.s(u.theme.Warn), u.s(u.theme.Warn)
-	case "error", "failed", "critical":
-		dotStyle, textStyle = u.s(u.theme.Danger), u.s(u.theme.Danger)
-	default:
-		dotStyle, textStyle = u.s(u.theme.Secondary), u.s(u.theme.Primary)
-	}
-	u.blank()
-	u.indented(dotStyle.Render(u.icons.Dot) + "  " + textStyle.Render(lower))
-	u.blank()
-	u.Flush()
-}
-
-func (u *UI) ServiceStatus(status, pid, configPath string) {
-	u.SectionHeader("Service status")
-	u.StatusBadge(status)
-	if pid != "" {
-		u.KeyValue("Process ID", pid)
-	}
-	if configPath != "" {
-		u.KeyValueFile("Config file", configPath, false)
-	}
-}
-
-//  Table
-
-func (u *UI) Table(headers []string, rows [][]string) {
+func (u *UI) Table(headers []string, rows [][]string) *UI {
 	if len(headers) == 0 {
-		return
+		return u
 	}
 	t := table.New().
 		Border(lipgloss.RoundedBorder()).
@@ -341,11 +398,11 @@ func (u *UI) Table(headers []string, rows [][]string) {
 		}).
 		Headers(headers...).
 		Rows(rows...)
-
 	u.blank()
 	u.indented(t.Render())
 	u.blank()
-	u.Flush()
+
+	return u
 }
 
 type LinkCell struct {
@@ -353,9 +410,9 @@ type LinkCell struct {
 	URL  string
 }
 
-func (u *UI) TableWithLinks(headers []string, rows [][]interface{}) {
+func (u *UI) TableWithLinks(headers []string, rows [][]interface{}) *UI {
 	if len(headers) == 0 {
-		return
+		return u
 	}
 	strRows := make([][]string, len(rows))
 	for i, row := range rows {
@@ -372,9 +429,8 @@ func (u *UI) TableWithLinks(headers []string, rows [][]interface{}) {
 		}
 	}
 	u.Table(headers, strRows)
+	return u
 }
-
-//  Help screen
 
 type HelpCmd struct {
 	Cmd  string
@@ -387,87 +443,69 @@ type HelpSection struct {
 	Commands []HelpCmd
 }
 
-func (u *UI) HelpScreen(sections []HelpSection) {
-	maxCmd := 0
-	for _, sec := range sections {
-		for _, cmd := range sec.Commands {
-			if n := len([]rune(cmd.Cmd)); n > maxCmd {
-				maxCmd = n
-			}
-		}
-	}
-
-	sudoStyle := u.s(u.theme.Faint)
-	binStyle := u.s(u.theme.Faint)
-	subStyle := u.s(u.theme.Accent)
-	actStyle := u.s(u.theme.Primary).Bold(true)
-	flagStyle := u.s(u.theme.Warn)
-	descStyle := u.s(u.theme.Secondary)
-	sepStyle := u.s(u.theme.Faint)
-
-	sectionBar := u.s(u.theme.Accent).Bold(true).Render("▎")
-	sectionText := func(t string) string {
-		return u.s(u.theme.Primary).Bold(true).Render(strings.ToUpper(t))
-	}
-
-	colourCmd := func(cmd string) string {
-		words := strings.Fields(cmd)
-		if len(words) == 0 {
-			return cmd
-		}
-		out := make([]string, len(words))
-
-		binIdx := 0
-		if words[0] == "sudo" {
-			out[0] = sudoStyle.Render(words[0])
-			binIdx = 1
-		}
-
-		for i, w := range words {
-			if i < binIdx {
-				continue
-			}
-			switch i - binIdx {
-			case 0:
-				out[i] = binStyle.Render(w)
-			case 1:
-				out[i] = subStyle.Render(w)
-			default:
-				if strings.HasPrefix(w, "-") || w == "." || w == "@" || w == ":" {
-					out[i] = flagStyle.Render(w)
-				} else {
-					out[i] = actStyle.Render(w)
-				}
-			}
-		}
-		return strings.Join(out, " ")
-	}
-
+func (u *UI) HelpScreen(sections []HelpSection) *UI {
 	u.blank()
-
 	for _, sec := range sections {
-		u.indented(sectionBar + " " + sectionText(sec.Title))
+		bar := u.s(u.theme.Accent).Bold(true).Render("▎")
+		text := u.s(u.theme.Primary).Bold(true).Render(strings.ToUpper(sec.Title))
+		u.indented(bar + " " + text)
 		u.blank()
 
+		rows := make([][]string, 0, len(sec.Commands))
 		for _, cmd := range sec.Commands {
-			runes := []rune(cmd.Cmd)
-			padding := strings.Repeat(" ", maxCmd-len(runes))
-			coloured := colourCmd(cmd.Cmd) + padding
+			coloured := u.colourCmd(cmd.Cmd)
 			if cmd.URL != "" {
 				coloured = u.Link(coloured, cmd.URL)
 			}
-			line := coloured +
-				"  " + sepStyle.Render(u.icons.Bullet) + "  " +
-				descStyle.Render(cmd.Desc)
-			u.line(lipgloss.NewStyle().PaddingLeft(u.indent + 2).Render(line))
+			rows = append(rows, []string{coloured, cmd.Desc})
 		}
+
+		t := table.New().
+			Border(lipgloss.HiddenBorder()).
+			StyleFunc(func(row, col int) lipgloss.Style {
+				if col == 0 {
+					return lipgloss.NewStyle().PaddingRight(2)
+				}
+				return lipgloss.NewStyle().Foreground(u.theme.Secondary)
+			}).
+			Rows(rows...)
+		u.line(lipgloss.NewStyle().PaddingLeft(u.indent + 2).Render(t.Render()))
 		u.blank()
 	}
-
 	u.Flush()
+	return u
 }
 
-//  Directory tree
+func (u *UI) colourCmd(cmd string) string {
+	words := strings.Fields(cmd)
+	if len(words) == 0 {
+		return cmd
+	}
+	out := make([]string, len(words))
+	binIdx := 0
+	if words[0] == "sudo" {
+		out[0] = u.s(u.theme.Faint).Render(words[0])
+		binIdx = 1
+	}
+	for i, w := range words {
+		if i < binIdx {
+			continue
+		}
+		switch i - binIdx {
+		case 0:
+			out[i] = u.s(u.theme.Faint).Render(w)
+		case 1:
+			out[i] = u.s(u.theme.Accent).Render(w)
+		default:
+			if strings.HasPrefix(w, "-") {
+				out[i] = u.s(u.theme.Warn).Render(w)
+			} else {
+				out[i] = u.s(u.theme.Primary).Bold(true).Render(w)
+			}
+		}
+	}
+	return strings.Join(out, " ")
+}
 
 type TreeNode struct {
 	Label    string
@@ -477,10 +515,9 @@ type TreeNode struct {
 	Children []TreeNode
 }
 
-func (u *UI) Tree(root string, nodes []TreeNode) {
+func (u *UI) Tree(root string, nodes []TreeNode) *UI {
 	rootStyle := u.s(u.theme.Accent).Bold(true)
 	enumStyle := lipgloss.NewStyle().Foreground(u.theme.Border).MarginRight(1)
-	itemStyle := lipgloss.NewStyle().Foreground(u.theme.Primary)
 	annotStyle := lipgloss.NewStyle().Foreground(u.theme.Secondary)
 
 	var build func(nodes []TreeNode) *tree.Tree
@@ -511,46 +548,39 @@ func (u *UI) Tree(root string, nodes []TreeNode) {
 	t.Root(root).
 		Enumerator(tree.RoundedEnumerator).
 		EnumeratorStyle(enumStyle).
-		ItemStyle(itemStyle).
+		ItemStyle(lipgloss.NewStyle().Foreground(u.theme.Primary)).
 		RootStyle(rootStyle)
 
 	u.blank()
 	u.indented(t.String())
 	u.blank()
-	u.Flush()
+	return u
 }
 
-// TreeWithFiles renders a directory tree with clickable file links.
-func (u *UI) TreeWithFiles(rootPath string, nodes []TreeNode) {
+func (u *UI) TreeWithFiles(rootPath string, nodes []TreeNode) *UI {
 	rootStyle := u.s(u.theme.Accent).Bold(true)
 	enumStyle := lipgloss.NewStyle().Foreground(u.theme.Border).MarginRight(1)
-	itemStyle := lipgloss.NewStyle().Foreground(u.theme.Primary)
 	annotStyle := lipgloss.NewStyle().Foreground(u.theme.Secondary)
 
-	var build func(parentPath string, nodes []TreeNode) *tree.Tree
-	build = func(parentPath string, nodes []TreeNode) *tree.Tree {
+	var build func(parent string, nodes []TreeNode) *tree.Tree
+	build = func(parent string, nodes []TreeNode) *tree.Tree {
 		t := tree.New()
 		for _, n := range nodes {
-			fullPath := filepath.Join(parentPath, n.Label)
+			full := filepath.Join(parent, n.Label)
 			label := n.Label
-
 			if n.Icon != "" {
 				label = n.Icon + " " + label
 			}
-
-			isDir := len(n.Children) > 0
 			if n.URL != "" {
 				label = u.LinkInline(label, n.URL)
 			} else {
-				label = u.FileLink(fullPath, isDir)
+				label = u.FileLink(full, len(n.Children) > 0)
 			}
-
 			if n.Value != "" {
 				label += "  " + annotStyle.Render(n.Value)
 			}
-
 			if len(n.Children) > 0 {
-				sub := build(fullPath, n.Children)
+				sub := build(full, n.Children)
 				t.Child(sub.Root(label))
 			} else {
 				t.Child(label)
@@ -563,101 +593,55 @@ func (u *UI) TreeWithFiles(rootPath string, nodes []TreeNode) {
 	t.Root(u.FileLink(rootPath, true)).
 		Enumerator(tree.RoundedEnumerator).
 		EnumeratorStyle(enumStyle).
-		ItemStyle(itemStyle).
+		ItemStyle(lipgloss.NewStyle().Foreground(u.theme.Primary)).
 		RootStyle(rootStyle)
 
 	u.blank()
 	u.indented(t.String())
 	u.blank()
-	u.Flush()
+	return u
 }
 
-//  Feedback lines
-
-func (u *UI) SuccessLine(msg string) {
-	u.indented(u.s(u.theme.Success).Bold(true).Render(u.icons.Success) + "  " +
-		u.s(u.theme.Primary).Render(msg))
-	u.Flush()
-}
-
-func (u *UI) WarnLine(msg string) {
-	u.indented(u.s(u.theme.Warn).Render(u.icons.Warning) + "  " +
-		u.s(u.theme.Secondary).Render(msg))
-	u.Flush()
-}
-
-func (u *UI) ErrorHint(problem, hint string) {
-	u.blank()
-	u.indented(u.s(u.theme.Danger).Bold(true).Render(u.icons.Error) + "  " +
-		u.s(u.theme.Primary).Render(problem))
-	if hint != "" {
-		hintPad := lipgloss.NewStyle().PaddingLeft(u.indent + 3)
-		u.line(hintPad.Render(
-			u.s(u.theme.Faint).Render(u.icons.Arrow) + "  " +
-				u.s(u.theme.Secondary).Render(hint),
-		))
+func (u *UI) Welcome(name, description, version, date, banner string) {
+	if banner != "" {
+		u.line(u.s(u.theme.Accent).Bold(true).Render(banner))
 	}
+	u.indented(
+		u.s(u.theme.Accent).Bold(true).Render(name) +
+			"  " +
+			u.s(u.theme.Secondary).Render("— "+description),
+	)
+	u.indented(u.s(u.theme.Faint).Render(version + "  ·  " + date))
 	u.blank()
 	u.Flush()
 }
 
-func (u *UI) InfoLine(msg string) {
-	u.indented(u.s(u.theme.Faint).Render(u.icons.Info) + "  " +
-		u.s(u.theme.Secondary).Render(msg))
-	u.Flush()
+type ListItem struct {
+	Text string
+	URL  string
 }
-
-func (u *UI) Step(state, msg string) {
-	var icon string
-	var iconStyle lipgloss.Style
-	switch strings.ToLower(state) {
-	case "ok":
-		icon, iconStyle = u.icons.Success, u.s(u.theme.Success)
-	case "warn":
-		icon, iconStyle = u.icons.Warning, u.s(u.theme.Warn)
-	case "fail":
-		icon, iconStyle = u.icons.Error, u.s(u.theme.Danger)
-	case "skip":
-		icon, iconStyle = u.icons.Dash, u.s(u.theme.Faint)
-	default:
-		icon, iconStyle = u.icons.Bullet, u.s(u.theme.Accent)
-	}
-	u.indented(iconStyle.Render(icon) + "  " + u.s(u.theme.Secondary).Render(msg))
-	u.Flush()
-}
-
-func (u *UI) StepWithLink(state, msg, url string) {
-	var icon string
-	var iconStyle lipgloss.Style
-	switch strings.ToLower(state) {
-	case "ok":
-		icon, iconStyle = u.icons.Success, u.s(u.theme.Success)
-	case "warn":
-		icon, iconStyle = u.icons.Warning, u.s(u.theme.Warn)
-	case "fail":
-		icon, iconStyle = u.icons.Error, u.s(u.theme.Danger)
-	case "skip":
-		icon, iconStyle = u.icons.Dash, u.s(u.theme.Faint)
-	default:
-		icon, iconStyle = u.icons.Bullet, u.s(u.theme.Accent)
-	}
-	u.indented(iconStyle.Render(icon) + "  " + u.LinkInline(msg, url))
-	u.Flush()
-}
-
-//  Init success
 
 func (u *UI) InitSuccess(configFile, adminUser, adminPassword string, nextSteps []ListItem) {
 	u.SectionHeader("Configuration initialised")
 
-	u.KeyValueBlock("", []KV{
+	pairs := []KV{
 		{Label: "Config file", Value: u.FileLink(configFile, false)},
 		{Label: "Admin user", Value: adminUser},
-		{Label: "Admin password", Value: u.s(u.theme.Warn).Bold(true).Render(adminPassword)},
-	})
+	}
+	if adminPassword != "" {
+		pairs = append(pairs, KV{
+			Label: "Admin password",
+			Value: u.s(u.theme.Warn).Bold(true).Render(adminPassword),
+		})
+	}
+	u.KeyValueBlock("", pairs)
 
-	u.indented(u.s(u.theme.Warn).Render(u.icons.Warning + "  Save this password — it will not be shown again."))
-	u.blank()
+	if adminPassword != "" {
+		u.indented(u.s(u.theme.Warn).Render(
+			u.icons.Warning + "  Save this password — it will not be shown again.",
+		))
+		u.blank()
+	}
 
 	if len(nextSteps) > 0 {
 		u.LinkList("Next steps", nextSteps)
@@ -666,107 +650,29 @@ func (u *UI) InitSuccess(configFile, adminUser, adminPassword string, nextSteps 
 	u.Flush()
 }
 
-//  Backup / restore
-
-func (u *UI) BackupStart(encrypted bool) {
+func (u *UI) BackupStart(encrypted bool) *UI {
 	if encrypted {
 		u.InfoLine("creating AES-256 encrypted backup…")
 	} else {
 		u.WarnLine("no password provided — creating unencrypted backup")
 	}
+	return u
 }
 
-func (u *UI) BackupDone(path string, fileCount int) {
+func (u *UI) BackupDone(path string, fileCount int) *UI {
 	u.SuccessLine(fmt.Sprintf("backup complete — %d files → %s", fileCount, path))
+	return u
 }
 
-func (u *UI) RestoreDone(count int) {
+func (u *UI) RestoreDone(count int) *UI {
 	u.SuccessLine(fmt.Sprintf("restore complete — %d files restored", count))
+	return u
 }
 
-func (u *UI) Blank() {
-	u.blank()
-	u.Flush()
-}
-
-func (u *UI) Divider() {
-	u.indented(u.s(u.theme.Faint).Render(strings.Repeat(u.icons.Dash, 40)))
-	u.Flush()
-}
-
-func (u *UI) Theme() Theme {
-	return u.theme
-}
-
-// Println renders a styled string directly (wrapper for lipgloss.Println).
-func (u *UI) Println(s string) {
-	lipgloss.Println(s)
-}
-
-// Sprint renders a styled string to return as value.
-func (u *UI) Sprint(s string) string {
-	return lipgloss.Sprint(s)
-}
-
-// Image renders raw PNG bytes to the terminal using go-termimg's auto-detection.
-// Falls back to half-block text if image protocols fail.
-func (u *UI) Image(pngData []byte) error {
-	u.Flush()
-
-	// Decode the PNG bytes into an image.Image
-	img, _, err := image.Decode(bytes.NewReader(pngData))
-	if err != nil {
-		return err
-	}
-
-	// Images are rendered directly without indentation (they ignore the buffer)
-	// Use termimg.New to create an Image from the decoded image
-	return termimg.New(img).
-		Width(40).
-		Height(40).
-		Scale(termimg.ScaleFit).
-		Print()
-}
-
-// QR generates a QR code, renders it via go-termimg, and returns all formats.
-func (u *UI) QR(content string) *QRResult {
-	qrCode, err := NewQr(content, QRLevelM)
-	if err != nil {
-		u.ErrorHint("QR generation failed", err.Error())
-		return nil
-	}
-
-	result := qrCode.Result(4) // scale=4 for crisp terminal display
-
-	if result != nil && len(result.PNG) > 0 {
-		if err := u.Image(result.PNG); err != nil {
-			// Graceful fallback to text rendering
-			u.WarnLine("Image rendering failed; using text QR fallback")
-
-			// Terminal fallback should be indented
-			indentedFallback := u.padStyle().Render(result.Terminal)
-			u.line(indentedFallback)
-			u.Flush()
-		}
-	}
-
-	return result
-}
-
-//  Link List
-
-type ListItem struct {
-	Text string
-	URL  string // optional; if set, renders as clickable link
-}
-
-// LinkList renders a bulleted list with optional clickable links.
-// Items with a URL are rendered as OSC 8 hyperlinks (or styled fallback).
-func (u *UI) LinkList(title string, items []ListItem) {
+func (u *UI) LinkList(title string, items []ListItem) *UI {
 	if len(items) == 0 {
-		return
+		return u
 	}
-
 	if title != "" {
 		u.blank()
 		u.indented(u.s(u.theme.Secondary).Render(title))
@@ -791,10 +697,8 @@ func (u *UI) LinkList(title string, items []ListItem) {
 
 	u.indented(l.String())
 	u.blank()
-	u.Flush()
+	return u
 }
-
-//  Dialog Box (Universal Warning/Info/Confirm)
 
 type DialogStyle int
 
@@ -805,49 +709,33 @@ const (
 	DialogSuccess
 )
 
-// DialogBox renders a bordered dialog with title, bulleted items, and optional footer.
-// Style controls border color, icon, and emphasis (Danger/Warning/Info/Success).
-func (u *UI) DialogBox(style DialogStyle, title string, items []string, footer string) {
+func (u *UI) DialogBox(style DialogStyle, title string, items []string, footer string) *UI {
 	var borderColor compat.AdaptiveColor
 	var icon string
-	var iconStyle lipgloss.Style
-	var footerStyle lipgloss.Style
+	var iconStyle, footerStyle lipgloss.Style
 
 	switch style {
 	case DialogDanger:
-		borderColor = u.theme.Danger
-		icon = u.icons.Warning
-		iconStyle = u.s(u.theme.Danger)
+		borderColor, icon, iconStyle = u.theme.Danger, u.icons.Warning, u.s(u.theme.Danger)
 		footerStyle = u.s(u.theme.Danger)
 	case DialogWarning:
-		borderColor = u.theme.Warn
-		icon = u.icons.Warning
-		iconStyle = u.s(u.theme.Warn)
+		borderColor, icon, iconStyle = u.theme.Warn, u.icons.Warning, u.s(u.theme.Warn)
 		footerStyle = u.s(u.theme.Secondary)
 	case DialogInfo:
-		borderColor = u.theme.Accent
-		icon = u.icons.Info
-		iconStyle = u.s(u.theme.Accent)
+		borderColor, icon, iconStyle = u.theme.Accent, u.icons.Info, u.s(u.theme.Accent)
 		footerStyle = u.s(u.theme.Secondary)
 	case DialogSuccess:
-		borderColor = u.theme.Success
-		icon = u.icons.Success
-		iconStyle = u.s(u.theme.Success)
+		borderColor, icon, iconStyle = u.theme.Success, u.icons.Success, u.s(u.theme.Success)
 		footerStyle = u.s(u.theme.Secondary)
 	default:
-		borderColor = u.theme.Border
-		icon = u.icons.Bullet
-		iconStyle = u.s(u.theme.Primary)
+		borderColor, icon, iconStyle = u.theme.Border, u.icons.Bullet, u.s(u.theme.Primary)
 		footerStyle = u.s(u.theme.Secondary)
 	}
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(borderColor).
-		PaddingLeft(2).
-		PaddingRight(2).
-		PaddingTop(1).
-		PaddingBottom(1)
+		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
 
 	l := list.New().
 		Enumerator(func(_ list.Items, _ int) string { return u.icons.Bullet }).
@@ -865,47 +753,67 @@ func (u *UI) DialogBox(style DialogStyle, title string, items []string, footer s
 	u.blank()
 	u.indented(box.Render(content))
 	u.blank()
+	return u
+}
+
+func (u *UI) Image(pngData []byte) error {
 	u.Flush()
-}
-
-// Confirm prompts for a yes/no confirmation with optional help text
-// Returns true if confirmed, false otherwise
-func (u *UI) Confirm(prompt string, helpText ...string) (bool, error) {
-	u.Flush() // Flush any pending output before interactive prompt
-
-	confirm := huh.NewConfirm().
-		Title(prompt).
-		Affirmative("Yes").
-		Negative("No")
-
-	if len(helpText) > 0 && helpText[0] != "" {
-		confirm = confirm.Description(helpText[0])
+	img, _, err := image.Decode(bytes.NewReader(pngData))
+	if err != nil {
+		return err
 	}
-
-	var value bool
-	err := confirm.Value(&value).Run()
-	return value, err
+	return termimg.New(img).Width(40).Height(40).Scale(termimg.ScaleFit).Print()
 }
 
-// ConfirmDefault prompts with a default value (true = yes preselected)
+func (u *UI) QR(content string) *QRResult {
+	qrCode, err := NewQr(content, QRLevelM)
+	if err != nil {
+		u.ErrorHint("QR generation failed", err.Error())
+		return nil
+	}
+	result := qrCode.Result(4)
+	u.Println("")
+	if result != nil && len(result.PNG) > 0 {
+		if err := u.Image(result.PNG); err != nil {
+			u.WarnLine("image rendering failed — using text QR fallback")
+			u.line(u.padStyle().Render(result.Terminal))
+		}
+	}
+	return result
+}
+
+func (u *UI) Println(s string) *UI   { lipgloss.Println(s); return u }
+func (u *UI) Sprint(s string) string { return lipgloss.Sprint(s) }
+
+func (u *UI) Confirm(prompt string, helpText ...string) (bool, error) {
+	u.Flush()
+	value := true
+	c := huh.NewConfirm().
+		Title(prompt).
+		WithButtonAlignment(lipgloss.Left).
+		Affirmative("Yes").
+		Negative("No").
+		Value(&value)
+	if len(helpText) > 0 && helpText[0] != "" {
+		c = c.Description(helpText[0])
+	}
+	return value, c.Run()
+}
+
 func (u *UI) ConfirmDefault(prompt string, defaultYes bool, helpText ...string) (bool, error) {
 	u.Flush()
-
-	confirm := huh.NewConfirm().
+	value := defaultYes
+	c := huh.NewConfirm().
 		Title(prompt).
+		WithButtonAlignment(lipgloss.Left).
 		Affirmative("Yes").
-		Negative("No")
-
+		Negative("No").
+		Value(&value)
 	if len(helpText) > 0 && helpText[0] != "" {
-		confirm = confirm.Description(helpText[0])
+		c = c.Description(helpText[0])
 	}
-
-	var value bool = defaultYes
-	err := confirm.Value(&value).Run()
-	return value, err
+	return value, c.Run()
 }
-
-//  Simple Input (wraps huh.Input)
 
 type InputConfig struct {
 	Title       string
@@ -914,18 +822,11 @@ type InputConfig struct {
 	Width       int
 }
 
-// Input prompts for a single line of input
-//
-//	Simple Input (wraps huh.Input)
-//
-// Input prompts for a single line of input
 func (u *UI) Input(cfg InputConfig) (string, error) {
 	u.Flush()
-
 	if cfg.Width == 0 {
 		cfg.Width = 60
 	}
-
 	var value string
 	err := huh.NewInput().
 		Title(cfg.Title).
@@ -934,130 +835,217 @@ func (u *UI) Input(cfg InputConfig) (string, error) {
 		Value(&value).
 		WithWidth(cfg.Width).
 		Run()
-
 	return value, err
 }
 
-// Password prompts for a secure password with optional confirmation
-// Returns a prompter.Result that must be Zero()'d when done
-func (u *UI) Password(prompt string, opts ...func(*prompter.Input)) (*prompter.Result, error) {
-	// Create input using prompter.NewInput with the prompt
-	input := prompter.NewInput(prompt)
-
-	// Apply UI styling via custom prompt formatter
-	input.WithPromptFormatter(func(p string) string {
-		lockIcon := u.s(u.theme.Accent).Render(u.icons.Lock)
-		promptStyle := u.s(u.theme.Primary).Bold(true).Render(p)
-		return fmt.Sprintf("\n%s  %s: ", lockIcon, promptStyle)
-	})
-
-	// Apply any additional functional options from caller
-	for _, opt := range opts {
-		opt(input)
-	}
-
-	u.Flush() // Ensure any pending output is written before interactive prompt
-	return input.Run()
-}
-
-// PasswordConfirm prompts for password with confirmation using prompter.WithConfirm
-func (u *UI) PasswordConfirm(prompt string) (*prompter.Result, error) {
-	return u.Password(prompt, prompter.WithConfirm())
-}
-
-// PasswordRequired prompts for a non-empty password using prompter.WithRequired
-func (u *UI) PasswordRequired(prompt string) (*prompter.Result, error) {
-	return u.Password(prompt, prompter.WithRequired(true, "password cannot be empty"))
-}
-
-// PasswordMinLength prompts for a password with minimum length requirement
-func (u *UI) PasswordMinLength(prompt string, minLen int, errorMsg string) (*prompter.Result, error) {
-	return u.Password(prompt, prompter.WithMinLength(minLen, errorMsg))
-}
-
-// PasswordConfirmRequired combines confirmation and required validation
-func (u *UI) PasswordConfirmRequired(prompt string) (*prompter.Result, error) {
-	return u.Password(prompt,
-		prompter.WithConfirm(),
-		prompter.WithRequired(true, "password cannot be empty"),
-	)
-}
-
-// PasswordStyled is a flexible version allowing custom styling via formatter func
-func (u *UI) PasswordStyled(prompt string, styleFunc func(string) string, opts ...func(*prompter.Input)) (*prompter.Result, error) {
-	input := prompter.NewInput(prompt)
-
-	if styleFunc != nil {
-		input.WithPromptFormatter(styleFunc)
-	} else {
-		// Default UI styling with lock icon and themed colors
-		input.WithPromptFormatter(func(p string) string {
-			lockIcon := u.s(u.theme.Accent).Render(u.icons.Lock)
-			promptStyle := u.s(u.theme.Primary).Bold(true).Render(p)
-			return fmt.Sprintf("\n%s  %s: ", lockIcon, promptStyle)
-		})
-	}
-
-	for _, opt := range opts {
-		opt(input)
-	}
-
+func (u *UI) Prompt(prompt string, description ...string) string {
 	u.Flush()
-	return input.Run()
+
+	promptStyle := u.s(u.theme.Accent).Bold(true)
+	arrowStyle := u.s(u.theme.Faint)
+
+	var sb strings.Builder
+	sb.WriteString("\n")
+	sb.WriteString(u.padStyle().Render(
+		promptStyle.Render(prompt) + " " + arrowStyle.Render(u.icons.Arrow),
+	))
+
+	if len(description) > 0 && description[0] != "" {
+		sb.WriteString("\n")
+		sb.WriteString(u.padStyle().Render(
+			u.s(u.theme.Faint).Render("  " + description[0]),
+		))
+	}
+	sb.WriteString(" ")
+
+	lipgloss.Fprint(u.w, sb.String())
+
+	reader := bufio.NewReader(u.r)
+	input, _ := reader.ReadString('\n')
+	return strings.TrimSpace(input)
 }
 
-// PasswordWithHint prompts for a password with a hint/description
-// The hint appears below the prompt to guide the user
-func (u *UI) PasswordWithHint(prompt, hint string, opts ...func(*prompter.Input)) (*prompter.Result, error) {
-	input := prompter.NewInput(prompt)
+func (u *UI) PromptInline(prompt string) string {
+	u.Flush()
 
-	// Create styled prompt with hint
-	input.WithPromptFormatter(func(p string) string {
-		lockIcon := u.s(u.theme.Accent).Render(u.icons.Lock)
-		promptStyle := u.s(u.theme.Primary).Bold(true).Render(p)
+	promptStyle := u.s(u.theme.Accent).Bold(true)
+	arrowStyle := u.s(u.theme.Faint)
 
-		// If hint is provided, format it nicely below
-		if hint != "" {
-			hintStyle := u.s(u.theme.Secondary).Render(hint)
-			return fmt.Sprintf("\n%s  %s\n  %s  %s\n\n  %s",
-				lockIcon, promptStyle,
-				"", u.icons.Arrow, hintStyle)
+	styled := u.padStyle().Render(
+		promptStyle.Render(prompt) + " " + arrowStyle.Render(u.icons.Arrow) + " ",
+	)
+	lipgloss.Fprint(u.w, styled)
+
+	fd := int(os.Stdin.Fd())
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+
+		reader := bufio.NewReader(u.r)
+		input, _ := reader.ReadString('\n')
+		return strings.TrimSpace(input)
+	}
+	defer term.Restore(fd, oldState)
+
+	var input []byte
+	for {
+		var b [1]byte
+		if _, err := os.Stdin.Read(b[:]); err != nil {
+			return ""
 		}
+		switch b[0] {
+		case 3:
+			fmt.Fprint(u.w, "^C\r\n")
+			return ""
+		case '\r', '\n':
 
-		return fmt.Sprintf("\n%s  %s: ", lockIcon, promptStyle)
+			fmt.Fprint(u.w, "\r\n")
+			return strings.TrimSpace(string(input))
+		case 127:
+			if len(input) > 0 {
+				input = input[:len(input)-1]
+				fmt.Fprint(u.w, "\b \b")
+			}
+		default:
+			if b[0] >= 32 && b[0] <= 126 {
+				input = append(input, b[0])
+				fmt.Fprint(u.w, string(b[0]))
+			}
+		}
+	}
+}
+
+func withRequired(msg string) prompter.Option {
+	return prompter.WithValidator(func(b []byte) error {
+		if len(b) == 0 {
+			return prompter.ErrValidation{Msg: msg}
+		}
+		return nil
 	})
+}
 
-	for _, opt := range opts {
-		opt(input)
+func withMinLength(min int, msg string) prompter.Option {
+	return prompter.WithValidator(func(b []byte) error {
+		if len(b) < min {
+			return prompter.ErrValidation{Msg: msg}
+		}
+		return nil
+	})
+}
+
+func (u *UI) buildSecret(prompt string, confirm bool, opts []prompter.Option) *prompter.Secret {
+	lockIcon := u.s(u.theme.Accent).Render(u.icons.Lock)
+	promptStyle := u.s(u.theme.Primary).Bold(true)
+
+	all := append([]prompter.Option{
+		prompter.WithFormatter(func(ctx prompter.Context) string {
+			p := promptStyle.Render(ctx.Prompt)
+			if ctx.IsRetry && ctx.LastError != nil {
+				errStr := u.s(u.theme.Danger).Render("(" + ctx.LastError.Error() + ")")
+				return fmt.Sprintf("\n%s  %s %s: ", lockIcon, p, errStr)
+			}
+			return fmt.Sprintf("\n%s  %s: ", lockIcon, p)
+		}),
+	}, opts...)
+
+	s := prompter.NewSecret(prompt, all...)
+	if confirm {
+		s.WithConfirmation("")
+	}
+	return s
+}
+
+func (u *UI) Password(prompt string, opts ...prompter.Option) (*prompter.Result, error) {
+	u.Flush()
+	return u.buildSecret(prompt, false, opts).Run()
+}
+
+func (u *UI) PasswordConfirm(prompt string) (*prompter.Result, error) {
+	u.Flush()
+	return u.buildSecret(prompt, true, nil).Run()
+}
+
+func (u *UI) PasswordRequired(prompt string) (*prompter.Result, error) {
+	return u.Password(prompt, withRequired("password cannot be empty"))
+}
+
+func (u *UI) PasswordMinLength(prompt string, minLen int, errorMsg string) (*prompter.Result, error) {
+	return u.Password(prompt, withMinLength(minLen, errorMsg))
+}
+
+func (u *UI) PasswordConfirmRequired(prompt string) (*prompter.Result, error) {
+	u.Flush()
+	return u.buildSecret(prompt, true, []prompter.Option{withRequired("password cannot be empty")}).Run()
+}
+
+func (u *UI) PasswordWithHint(prompt, hint string, confirm bool, opts ...prompter.Option) (*prompter.Result, error) {
+	u.Flush()
+
+	lockIcon := u.s(u.theme.Accent).Render(u.icons.Lock)
+	promptStyle := u.s(u.theme.Primary).Bold(true)
+	arrow := u.s(u.theme.Faint).Render(u.icons.Arrow)
+
+	renderHint := func(h string) string {
+		lines := strings.Split(h, "\n")
+		out := make([]string, 0, len(lines))
+		for _, l := range lines {
+			l = strings.TrimSpace(l)
+			if l == "" {
+				continue
+			}
+			out = append(out, lipgloss.NewStyle().
+				PaddingLeft(4).
+				Foreground(u.theme.Secondary).
+				Render(arrow+"  "+l))
+		}
+		return strings.Join(out, "\n")
 	}
 
-	u.Flush()
-	return input.Run()
+	all := append([]prompter.Option{
+		prompter.WithFormatter(func(ctx prompter.Context) string {
+			p := promptStyle.Render(ctx.Prompt)
+			displayHint := hint
+			if ctx.IsConfirm {
+				displayHint = "Re-enter to verify"
+			}
+			if ctx.IsRetry && ctx.LastError != nil {
+				errStr := u.s(u.theme.Danger).Render("(" + ctx.LastError.Error() + ")")
+				base := fmt.Sprintf("\n%s  %s %s", lockIcon, p, errStr)
+				if displayHint != "" {
+					return base + "\n" + renderHint(displayHint) + "\n"
+				}
+				return base + ": "
+			}
+			base := fmt.Sprintf("\n%s  %s", lockIcon, p)
+			if displayHint != "" {
+				return base + "\n" + renderHint(displayHint) + "\n"
+			}
+			return base + ": "
+		}),
+	}, opts...)
+
+	s := prompter.NewSecret(prompt, all...)
+	if confirm {
+		s.WithConfirmation("")
+	}
+	return s.Run()
 }
 
-// PasswordRequiredWithHint combines required validation with a hint
 func (u *UI) PasswordRequiredWithHint(prompt, hint string) (*prompter.Result, error) {
-	return u.PasswordWithHint(prompt, hint,
-		prompter.WithRequired(true, "password cannot be empty"),
-	)
+	return u.PasswordWithHint(prompt, hint, false, withRequired("password cannot be empty"))
 }
 
-// PasswordConfirmWithHint adds confirmation with a hint
 func (u *UI) PasswordConfirmWithHint(prompt, hint string) (*prompter.Result, error) {
-	return u.PasswordWithHint(prompt, hint, prompter.WithConfirm())
+	return u.PasswordWithHint(prompt, hint, true, withRequired("passphrase cannot be empty"))
 }
 
-// RegistrationForm collects username and password with confirmation
 type RegistrationResult struct {
 	Username     string
-	Password     string // plaintext password (use immediately, then zero)
+	Password     string
 	PasswordHash []byte
 }
 
-// RegistrationForm prompts for username and password with confirmation
 func (u *UI) RegistrationForm(title, description string) (*RegistrationResult, error) {
 	u.Flush()
-
 	u.SectionHeader(title)
 	if description != "" {
 		u.InfoLine(description)
@@ -1073,12 +1061,10 @@ func (u *UI) RegistrationForm(title, description string) (*RegistrationResult, e
 	if err != nil {
 		return nil, err
 	}
-
 	if username == "" {
-		username = "admin" // Default if empty
+		username = "admin"
 	}
 
-	// Prompt for password
 	passwordResult, err := u.PasswordConfirmWithHint(
 		"Password",
 		"Choose a strong password (minimum 8 characters)",
@@ -1093,7 +1079,6 @@ func (u *UI) RegistrationForm(title, description string) (*RegistrationResult, e
 		return nil, fmt.Errorf("password must be at least 8 characters")
 	}
 
-	// Hash the password
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash password: %w", err)
@@ -1106,7 +1091,6 @@ func (u *UI) RegistrationForm(title, description string) (*RegistrationResult, e
 	}, nil
 }
 
-// SimpleUserPass prompts for username and password separately
 func (u *UI) SimpleUserPass() (username, password string, err error) {
 	username, err = u.Input(InputConfig{
 		Title:       "Username",
@@ -1116,7 +1100,6 @@ func (u *UI) SimpleUserPass() (username, password string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-
 	if username == "" {
 		username = "admin"
 	}

@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/handlers/web"
@@ -22,6 +23,7 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/errorpages"
 	"github.com/agberohq/agbero/internal/middleware/headers"
 	"github.com/agberohq/agbero/internal/middleware/ipallow"
+	"github.com/agberohq/agbero/internal/middleware/nonce"
 	"github.com/agberohq/agbero/internal/middleware/ratelimit"
 	"github.com/agberohq/agbero/internal/middleware/rewrite"
 	"github.com/agberohq/agbero/internal/pkg/wellknown"
@@ -38,8 +40,6 @@ type Route struct {
 	lastTouch atomic.Int64
 }
 
-// NewRoute creates a new traffic handler based on the provided route configuration.
-// It determines if the route is a static web route, a proxy route, or a serverless function.
 func NewRoute(cfg resource2.Proxy, route *alaye.Route) *Route {
 	if route == nil {
 		return FallbackRoute("nil route")
@@ -54,11 +54,13 @@ func NewRoute(cfg resource2.Proxy, route *alaye.Route) *Route {
 		return FallbackRoute("invalid route config: " + err.Error())
 	}
 
+	nonceStores := buildNonceStores(route)
+
 	var primary http.Handler
 	if route.Serverless.Enabled.Active() {
-		primary = xserverless.New(cfg, route)
+		primary = xserverless.NewWithNonces(cfg, route, nonceStores)
 	} else if route.Web.Root.IsSet() || route.Web.Git.Enabled.Active() {
-		primary = web.NewWeb(cfg.Resource, route, cfg.CookMgr)
+		primary = web.NewWebWithNonces(cfg.Resource, route, cfg.CookMgr, nonceStores)
 	} else {
 		return newProxyRoute(cfg, route)
 	}
@@ -66,8 +68,6 @@ func NewRoute(cfg resource2.Proxy, route *alaye.Route) *Route {
 	return wrapHandler(cfg, route, primary)
 }
 
-// wrapHandler applies the standard middleware chain to a primary route handler.
-// This includes authentication, rate limiting, security headers, and rewrite rules.
 func wrapHandler(cfg resource2.Proxy, route *alaye.Route, primary http.Handler) *Route {
 	chain := primary
 	ipMgr := zulu.NewIPManager(cfg.Global.Security.TrustedProxies)
@@ -81,12 +81,7 @@ func wrapHandler(cfg resource2.Proxy, route *alaye.Route, primary http.Handler) 
 	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, ipMgr, cfg.SharedState); rl != nil {
 		chain = rl.Handler(chain)
 	}
-	// dispatch.go wraps r.Body with http.MaxBytesReader(w, r.Body, maxBody) (host limit)
-	// maxBody := int64(alaye.DefaultMaxBodySize)
-	// if cfg.Discovery.Limits.MaxBodySize > 0 {
-	//	maxBody = cfg.Discovery.Limits.MaxBodySize
-	// }
-	// chain = http.MaxBytesHandler(chain, maxBody)
+
 	chain = headers.Headers(&route.Headers)(chain)
 	chain = compress.Compress(route)(chain)
 	chain = attic.New(&route.Cache, cfg.Resource.Logger)(chain)
@@ -107,8 +102,6 @@ func wrapHandler(cfg resource2.Proxy, route *alaye.Route, primary http.Handler) 
 	}
 }
 
-// newProxyRoute constructs a load-balanced proxy handler for a set of backends.
-// It supports health checking, circuit breaking, and customizable balancing strategies.
 func newProxyRoute(cfg resource2.Proxy, route *alaye.Route) *Route {
 	var backends []*xhttp.Backend
 	for i, backendCfg := range route.Backends.Servers {
@@ -161,8 +154,6 @@ func newProxyRoute(cfg resource2.Proxy, route *alaye.Route) *Route {
 	return wrapHandler(cfg, route, loadBalancer)
 }
 
-// ServeHTTP implements the http.Handler interface for the Route struct.
-// It forwards the incoming request to the pre-built middleware chain and primary handler.
 func (h *Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h == nil || h.handler == nil {
 		http.Error(w, "route handler not initialized", http.StatusBadGateway)
@@ -171,8 +162,6 @@ func (h *Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.handler.ServeHTTP(w, r)
 }
 
-// Close performs cleanup operations for the route, including closing idle backend connections.
-// It ensures that all active proxy listeners and workers are stopped gracefully.
 func (h *Route) Close() error {
 	if h.Proxy != nil {
 		h.Proxy.Stop()
@@ -198,20 +187,16 @@ func (h *Route) Close() error {
 	return nil
 }
 
-// resolveFallback determines which fallback configuration to use for a route.
-// It prioritizes route-specific fallbacks over global server fallbacks.
 func resolveFallback(routeFallback, globalFallback *alaye.Fallback) *alaye.Fallback {
 	if routeFallback.Enabled.Active() {
 		return routeFallback
 	}
-	if routeFallback.Enabled == alaye.Unknown && globalFallback.IsActive() {
+	if routeFallback.Enabled == expect.Unknown && globalFallback.IsActive() {
 		return globalFallback
 	}
 	return routeFallback
 }
 
-// buildFallbackHandler creates an http.Handler based on the specified fallback type.
-// It can serve static content, perform redirects, or proxy requests to a tertiary URL.
 func buildFallbackHandler(fallback *alaye.Fallback, logger *ll.Logger) http.Handler {
 	switch strings.ToLower(fallback.Type) {
 	case "static":
@@ -262,8 +247,6 @@ func buildFallbackHandler(fallback *alaye.Fallback, logger *ll.Logger) http.Hand
 	}
 }
 
-// FallbackRoute returns a Route that simply serves a fixed error message.
-// It is used as a safe default when route construction fails due to configuration errors.
 func FallbackRoute(msg string) *Route {
 	return &Route{
 		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -272,8 +255,6 @@ func FallbackRoute(msg string) *Route {
 	}
 }
 
-// buildRouteLimiter creates a rate limiter for specific routes based on ad-hoc rules or global policies.
-// It ignores ACME challenge paths to ensure certificate renewals are never blocked.
 func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate, ipMgr *zulu.IPManager, sharedState woos.SharedState) *ratelimit.RateLimiter {
 	if rlc == nil || (!rlc.Enabled.Active() && rlc.UsePolicy == "") {
 		return nil
@@ -355,4 +336,17 @@ func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate, ipMgr *zu
 		IPManager:   ipMgr,
 		SharedState: sharedState,
 	})
+}
+
+// buildNonceStores creates one nonce.Store per replay rest endpoint that uses
+// auth.method = "meta". Both the web handler (injection) and the serverless
+// handler (consumption) receive the same store instances via this map.
+func buildNonceStores(route *alaye.Route) map[string]*nonce.Store {
+	stores := make(map[string]*nonce.Store)
+	for _, r := range route.Serverless.Replay {
+		if r.Enabled.Active() && r.IsReplayMode() && r.Auth.Enabled.Active() && r.Auth.Method == "meta" {
+			stores[r.Name] = nonce.NewStore(0)
+		}
+	}
+	return stores
 }

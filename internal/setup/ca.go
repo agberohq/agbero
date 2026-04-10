@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"runtime"
 
-	"charm.land/huh/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
@@ -22,8 +20,8 @@ func NewCA(ctx *Context) *CA {
 	var store tlsstore.Store
 	// Always use disk store for CA - certificates need persistence
 	store, err := tlsstore.NewDisk(tlsstore.DiskConfig{
-		DataDir: ctx.Paths.DataDir.Path(),
-		CertDir: ctx.Paths.CertsDir.Path(),
+		DataDir: ctx.Paths.DataDir,
+		CertDir: ctx.Paths.CertsDir,
 	})
 	if err != nil {
 		ctx.Logger.Error("Failed to create disk store, using memory fallback: ", err)
@@ -108,14 +106,7 @@ func (c *CA) PromptAndInstall() error {
 		"please read the documentation for more information:",
 	)
 
-	var confirm bool
-	err := huh.NewConfirm().
-		Title("Local Certificate Authority").
-		Description("Would you like to install it now? (Requires admin/sudo password)").
-		WithButtonAlignment(lipgloss.Left).
-		Value(&confirm).
-		Run()
-
+	confirm, err := u.Confirm("Local Certificate Authority", "Would you like to install it now? (Requires admin/sudo password)")
 	if err != nil {
 		return err
 	}

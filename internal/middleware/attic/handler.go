@@ -8,59 +8,46 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/pkg/stash"
 	"github.com/olekukonko/ll"
 )
 
-type Entry struct {
-	Body        []byte
-	Headers     http.Header
-	Status      int
-	StoredAt    time.Time
-	CreatedAt   time.Time
-	VaryHeaders map[string]string
-}
-
-type CacheStore interface {
-	Get(key string) (*Entry, bool)
-	Set(key string, entry *Entry, ttl time.Duration)
-	Delete(key string)
-	Clear() error
-	Close() error
-}
-
 type CacheMiddleware struct {
-	store          CacheStore
+	store          stash.Store
 	logger         *ll.Logger
 	allowedMethods map[string]bool
 	enabled        bool
 	defaultTTL     time.Duration
+	keyScope       []string // For cache key generation
 }
 
 func New(cfg *alaye.Cache, logger *ll.Logger) func(http.Handler) http.Handler {
 	if !cfg.Enabled.Active() {
 		return func(next http.Handler) http.Handler { return next }
 	}
-	var store CacheStore
-	var err error
-	switch cfg.Driver {
-	case "memory", "":
-		store, err = NewMemoryStore(cfg)
-	case "redis":
-		store, err = NewRedis(cfg, logger)
-	default:
-		logger.Error("unknown cache driver", "driver", cfg.Driver)
-		return func(next http.Handler) http.Handler { return next }
+
+	// Use the unified NewStore function
+	storeCfg := &stash.Config{
+		Driver:     cfg.Driver,
+		DefaultTTL: cfg.TTL.StdDuration(),
+		MaxItems:   10000,
+		Redis:      cfg.Redis,
+		Policy:     &cfg.TTLPolicy,
 	}
+
+	store, err := stash.NewStore(storeCfg)
 	if err != nil {
 		logger.Error("failed to create cache store", "error", err)
 		return func(next http.Handler) http.Handler { return next }
 	}
+
 	mw := &CacheMiddleware{
 		store:          store,
 		logger:         logger,
 		allowedMethods: make(map[string]bool, len(cfg.Methods)),
 		enabled:        true,
 		defaultTTL:     cfg.TTL.StdDuration(),
+		keyScope:       cfg.TTLPolicy.KeyScope,
 	}
 	for _, m := range cfg.Methods {
 		mw.allowedMethods[strings.ToUpper(m)] = true
@@ -77,7 +64,7 @@ func (m *CacheMiddleware) Handler(next http.Handler) http.Handler {
 			return
 		}
 
-		key := generateKey(r)
+		key := stash.Key(r, m.keyScope)
 		if entry, ok := m.store.Get(key); ok {
 			if serveCachedResponse(w, r, entry, m.logger) {
 				return
@@ -92,7 +79,6 @@ func (m *CacheMiddleware) Handler(next http.Handler) http.Handler {
 			return
 		}
 
-		// Check if recorder successfully buffered the body (not truncated)
 		if !rec.Cacheable() {
 			m.logger.Debug("response body too large, skipping cache", "size_limit", woos.CacheMaxBodySize)
 			return
@@ -100,7 +86,7 @@ func (m *CacheMiddleware) Handler(next http.Handler) http.Handler {
 
 		varyHeaders := make(map[string]string)
 		if vary := rec.Header().Get("Vary"); vary != "" {
-			for field := range strings.SplitSeq(vary, ",") {
+			for _, field := range strings.Split(vary, ",") {
 				field = strings.TrimSpace(field)
 				if field != "*" && field != "" {
 					varyHeaders[field] = r.Header.Get(field)
@@ -108,13 +94,14 @@ func (m *CacheMiddleware) Handler(next http.Handler) http.Handler {
 			}
 		}
 
-		entry := &Entry{
+		entry := &stash.Entry{
 			Body:        rec.Body(),
 			Headers:     rec.Header().Clone(),
 			Status:      rec.StatusCode(),
 			CreatedAt:   time.Now(),
 			StoredAt:    time.Now(),
 			VaryHeaders: varyHeaders,
+			ContentType: rec.Header().Get("Content-Type"),
 		}
 		removeHopByHopHeaders(entry.Headers)
 		ttl := m.getEffectiveTTL(rec.Header(), m.defaultTTL)
@@ -142,7 +129,7 @@ func (m *CacheMiddleware) Close() error {
 	return nil
 }
 
-func serveCachedResponse(w http.ResponseWriter, r *http.Request, e *Entry, log *ll.Logger) bool {
+func serveCachedResponse(w http.ResponseWriter, r *http.Request, e *stash.Entry, log *ll.Logger) bool {
 	if !isResponseValidForRequest(e, r) {
 		return false
 	}
@@ -189,14 +176,14 @@ func isResponseCacheable(status int, hdr http.Header) bool {
 	return true
 }
 
-func isResponseValidForRequest(e *Entry, r *http.Request) bool {
+func isResponseValidForRequest(e *stash.Entry, r *http.Request) bool {
 	if v := e.Headers.Get("Vary"); v != "" {
-		for f := range strings.SplitSeq(v, ",") {
-			f = strings.TrimSpace(f)
-			if f == "*" {
+		for _, field := range strings.Split(v, ",") {
+			field = strings.TrimSpace(field)
+			if field == "*" {
 				return false
 			}
-			if r.Header.Get(f) != e.VaryHeaders[f] {
+			if r.Header.Get(field) != e.VaryHeaders[field] {
 				return false
 			}
 		}
@@ -204,7 +191,7 @@ func isResponseValidForRequest(e *Entry, r *http.Request) bool {
 	return true
 }
 
-func matchConditionalRequest(r *http.Request, e *Entry) bool {
+func matchConditionalRequest(r *http.Request, e *stash.Entry) bool {
 	if inm := r.Header.Get("If-None-Match"); inm != "" {
 		if etag := e.Headers.Get("ETag"); etag != "" && inm == etag {
 			return true
@@ -221,10 +208,10 @@ func matchConditionalRequest(r *http.Request, e *Entry) bool {
 }
 
 func parseMaxAge(cc string) time.Duration {
-	for p := range strings.SplitSeq(cc, ",") {
-		p = strings.TrimSpace(p)
-		if strings.HasPrefix(p, "max-age=") {
-			if s, err := strconv.Atoi(p[8:]); err == nil {
+	for _, part := range strings.Split(cc, ",") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "max-age=") {
+			if s, err := strconv.Atoi(part[8:]); err == nil {
 				return time.Duration(s) * time.Second
 			}
 		}

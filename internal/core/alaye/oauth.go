@@ -6,17 +6,17 @@ import (
 )
 
 type OAuth struct {
-	Enabled      Enabled      `hcl:"enabled,attr" json:"enabled"`
-	Provider     string       `hcl:"provider,attr" json:"provider"`
-	ClientID     string       `hcl:"client_id,attr" json:"client_id"`
-	ClientSecret expect.Value `hcl:"client_secret,attr" json:"client_secret"`
-	RedirectURL  string       `hcl:"redirect_url,attr" json:"redirect_url"`
-	AuthURL      string       `hcl:"auth_url,attr" json:"auth_url"`
-	TokenURL     string       `hcl:"token_url,attr" json:"token_url"`
-	UserApiURL   string       `hcl:"user_api_url,attr" json:"user_api_url"`
-	Scopes       []string     `hcl:"scopes,attr" json:"scopes"`
-	CookieSecret expect.Value `hcl:"cookie_secret,attr" json:"cookie_secret"`
-	EmailDomains []string     `hcl:"email_domains,attr" json:"email_domains"`
+	Enabled      expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Provider     string        `hcl:"provider,attr" json:"provider"`
+	ClientID     string        `hcl:"client_id,attr" json:"client_id"`
+	ClientSecret expect.Value  `hcl:"client_secret,attr" json:"client_secret"`
+	RedirectURL  string        `hcl:"redirect_url,attr" json:"redirect_url"`
+	AuthURL      string        `hcl:"auth_url,attr" json:"auth_url"`
+	TokenURL     string        `hcl:"token_url,attr" json:"token_url"`
+	UserApiURL   string        `hcl:"user_api_url,attr" json:"user_api_url"`
+	Scopes       []string      `hcl:"scopes,attr" json:"scopes"`
+	CookieSecret expect.Value  `hcl:"cookie_secret,attr" json:"cookie_secret"`
+	EmailDomains []string      `hcl:"email_domains,attr" json:"email_domains"`
 }
 
 // Validate checks required OAuth fields when enabled.

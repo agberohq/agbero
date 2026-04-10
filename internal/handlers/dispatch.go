@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,12 +56,12 @@ func (m *Manager) chainBuildFirewall(next http.Handler) http.Handler {
 func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	if r.URL.Path == "/favicon.ico" {
-		m.handleFavicon(w, r)
+	if m.wellKnownProcess(w, r) {
 		return
 	}
 
-	if m.wellKnownProcess(w, r) {
+	if r.URL.Path == "/favicon.ico" {
+		m.handleFavicon(w, r)
 		return
 	}
 
@@ -267,6 +268,9 @@ func (m *Manager) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 	if lctx, ok := r.Context().Value(woos.ListenerCtxKey).(woos.ListenerCtx); ok && lctx.Owner != nil {
 		for _, bindPort := range lctx.Owner.Bind {
 			if bindPort != "" {
+				if _, err := strconv.Atoi(bindPort); err != nil {
+					continue
+				}
 				target := fmt.Sprintf("https://%s:%s%s", host, bindPort, r.URL.RequestURI())
 				http.Redirect(w, r, target, http.StatusMovedPermanently)
 				return

@@ -1,11 +1,14 @@
 package alaye
 
-import "github.com/olekukonko/errors"
+import (
+	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/olekukonko/errors"
+)
 
 type Compression struct {
-	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
-	Level   int     `hcl:"level,attr" json:"level"`
-	Type    string  `hcl:"type,attr" json:"type"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Level   int           `hcl:"level,attr" json:"level"`
+	Type    string        `hcl:"type,attr" json:"type"`
 }
 
 // Validate checks compression level bounds and type value.

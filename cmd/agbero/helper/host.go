@@ -10,8 +10,9 @@ import (
 
 	"charm.land/huh/v2"
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
-	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
+	discovery "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 )
 
@@ -39,18 +40,17 @@ func (h *Host) List(configPath string) error {
 	if err != nil {
 		return err
 	}
-	hostsFolder := woos.NewFolder(global.Storage.HostsDir)
-	hm := discovery2.NewHost(hostsFolder, discovery2.WithLogger(h.p.Logger))
+
+	hm := discovery.NewHost(global.Storage.HostsDir, discovery.WithLogger(h.p.Logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		return err
 	}
 
 	u := ui.New()
-	u.SectionHeader("Hosts")
-
+	u.Render(func() { u.SectionHeader("Hosts") })
 	if len(hosts) == 0 {
-		u.WarnLine("no hosts found")
+		u.Render(func() { u.WarnLine("no hosts found") })
 		return nil
 	}
 
@@ -74,7 +74,9 @@ func (h *Host) List(configPath string) error {
 		rows = append(rows, []string{name, domains, routes, tls})
 	}
 
-	u.Table([]string{"Host", "Domains", "Routes", "TLS"}, rows)
+	u.Render(func() {
+		u.Table([]string{"Host", "Domains", "Routes", "TLS"}, rows)
+	})
 	return nil
 }
 
@@ -82,8 +84,9 @@ func (h *Host) Add(configPath string) {
 	hostsDir := h.resolveHostsDir(configPath)
 
 	u := ui.New()
-	u.SectionHeader("Add host")
-	u.KeyValue("Hosts dir", hostsDir)
+	u.Render(func() { u.SectionHeader("Add host") })
+	u.KeyValue("Hosts dir", hostsDir.Path())
+	u.Flush()
 
 	var (
 		rType  string
@@ -101,7 +104,7 @@ func (h *Host) Add(configPath string) {
 		).
 		Value(&rType).
 		Run(); err != nil {
-		u.InfoLine("cancelled")
+		u.Render(func() { u.InfoLine("cancelled") })
 		return
 	}
 
@@ -155,7 +158,7 @@ func (h *Host) Add(configPath string) {
 		fields[i] = v
 	}
 	if err := huh.NewForm(huh.NewGroup(fields...)).Run(); err != nil {
-		u.InfoLine("cancelled")
+		u.Render(func() { u.InfoLine("cancelled") })
 		return
 	}
 
@@ -188,7 +191,7 @@ func (h *Host) Add(configPath string) {
 
 	filename := strings.ReplaceAll(fmt.Sprintf("%s.hcl", domain), "*", "wildcard")
 	filename = strings.ReplaceAll(filename, ":", "-")
-	filePath := filepath.Join(hostsDir, filename)
+	filePath := hostsDir.FilePath(filename)
 
 	f, err := os.Create(filePath)
 	if err != nil {
@@ -200,30 +203,32 @@ func (h *Host) Add(configPath string) {
 		h.p.Logger.Fatal("failed to write config: ", err)
 	}
 
-	u.SuccessLine("host created: " + filePath)
-	u.InfoLine("daemon will pick up changes automatically")
+	u.Render(func() {
+		u.SuccessLine("host created: " + filePath)
+		u.InfoLine("daemon will pick up changes automatically")
+	})
 }
 
 func (h *Host) Remove(configPath string) {
 	hostsDir := h.resolveHostsDir(configPath)
 
-	entries, err := os.ReadDir(hostsDir)
+	files, err := hostsDir.ReadFiles()
 	if err != nil {
 		h.p.Logger.Fatal("failed to read hosts dir: ", err)
 	}
 
-	var files []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".hcl") {
-			files = append(files, e.Name())
+	var fileNames []string
+	for _, f := range files {
+		if strings.HasSuffix(f.Name(), ".hcl") {
+			fileNames = append(fileNames, f.Name())
 		}
 	}
 
 	u := ui.New()
-	u.SectionHeader("Remove host")
+	u.Render(func() { u.SectionHeader("Remove host") })
 
-	if len(files) == 0 {
-		u.WarnLine("no host files found in " + hostsDir)
+	if len(fileNames) == 0 {
+		u.Render(func() { u.WarnLine("no host files found in " + hostsDir.Path()) })
 		return
 	}
 
@@ -232,32 +237,35 @@ func (h *Host) Remove(configPath string) {
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Select Discovery to Remove").
-				Options(huh.NewOptions(files...)...).
+				Options(huh.NewOptions(fileNames...)...).
 				Value(&selected),
 		),
 	).Run(); err != nil {
-		u.InfoLine("cancelled")
+		u.Render(func() { u.InfoLine("cancelled") })
 		return
 	}
 	if selected == "" {
 		return
 	}
 
-	if err := os.Remove(filepath.Join(hostsDir, selected)); err != nil {
+	if err := os.Remove(hostsDir.FilePath(selected)); err != nil {
 		h.p.Logger.Fatal("failed to delete file: ", err)
 	}
 
-	u.SuccessLine("removed: " + selected)
-	u.InfoLine("daemon will pick up changes automatically")
+	u.Render(func() {
+		u.SuccessLine("removed: " + selected)
+		u.InfoLine("daemon will pick up changes automatically")
+	})
 }
 
-func (h *Host) resolveHostsDir(configPath string) string {
+func (h *Host) resolveHostsDir(configPath string) expect.Folder {
 	global, err := loadGlobal(configPath)
 	if err == nil && global.Storage.HostsDir != "" {
 		return global.Storage.HostsDir
 	}
-	hostsDir := filepath.Join(filepath.Dir(configPath), woos.HostDir.String())
-	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+	hostsDir := expect.NewFolder(filepath.Dir(configPath)).Sub(woos.HostDir)
+
+	if err := hostsDir.Init(expect.DirPerm); err != nil {
 		h.p.Logger.Fatal("failed to create hosts directory: ", err)
 	}
 	return hostsDir

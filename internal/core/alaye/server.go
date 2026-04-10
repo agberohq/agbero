@@ -4,6 +4,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
@@ -21,7 +22,7 @@ type Server struct {
 }
 
 type Streaming struct {
-	Enabled       Enabled       `hcl:"enabled,attr" json:"enabled"`
+	Enabled       expect.Toggle `hcl:"enabled,attr" json:"enabled"`
 	FlushInterval time.Duration `hcl:"flush_interval,attr" json:"flush_interval"`
 }
 

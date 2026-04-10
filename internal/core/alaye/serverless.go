@@ -1,24 +1,25 @@
 package alaye
 
+import "github.com/agberohq/agbero/internal/core/expect"
+
 // Serverless acts as a high-level container for logic-based request handling.
-// It groups labeled REST proxies and managed OS processes within a single engine.
+// It groups labeled Replay proxies and managed OS processes within a single engine.
 type Serverless struct {
-	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
 
 	Root string `hcl:"root,attr" json:"root"`
 
-	RESTs []REST `hcl:"rest,block" json:"rests"`
-
-	Workers []Work `hcl:"work,block" json:"workers"`
+	Replay  []Replay `hcl:"replay,block" json:"replay"`
+	Workers []Work   `hcl:"work,block" json:"workers"`
 }
 
 // Validate ensures all sub-components of the serverless engine are valid.
-// It iterates through grouped REST and Work blocks to verify individual settings.
+// It iterates through grouped Replay and Work blocks to verify individual settings.
 func (s *Serverless) Validate() error {
 	if s.Enabled.NotActive() {
 		return nil
 	}
-	for _, r := range s.RESTs {
+	for _, r := range s.Replay {
 		if err := r.Validate(); err != nil {
 			return err
 		}

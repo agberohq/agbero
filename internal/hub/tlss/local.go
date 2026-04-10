@@ -30,8 +30,6 @@ const (
 	caKey  = "ca-key.pem"
 )
 
-// Local manages local development certificates using the storage backend.
-// All certificates are stored exclusively in tlsstore.Store.
 type Local struct {
 	mu        sync.Mutex
 	logger    *ll.Logger
@@ -82,7 +80,6 @@ func (ci *Local) InstallCARootIfNeeded() error {
 	return ci.installToTrustStore()
 }
 
-// UninstallCARoot removes the CA root from system trust stores.
 func (ci *Local) UninstallCARoot() error {
 	if ci.mockMode {
 		ci.logger.Debug("mock mode: skipping CA uninstall")
@@ -160,13 +157,18 @@ func (ci *Local) ListCertificates() ([]string, error) {
 	return certs, nil
 }
 
-// caExists checks whether a CA certificate exists in storage.
 func (ci *Local) caExists() bool {
 	_, _, err := ci.store.Load("ca")
 	return err == nil
 }
 
-// generateAndInstallCA creates a new CA certificate and installs it to system trust stores.
+// CAExists reports whether a CA certificate is present in the store.
+// Unlike IsCARootInstalled which checks for a file on disk, this works
+// correctly with both the Keeper and Disk backends.
+func (ci *Local) CAExists() bool {
+	return ci.caExists()
+}
+
 func (ci *Local) generateAndInstallCA() error {
 	if err := ci.generateCAFilesOnly(); err != nil {
 		return err
@@ -416,7 +418,6 @@ func (ci *Local) validateCertificateBytes(certData, keyData []byte) error {
 	return nil
 }
 
-// certPrefix returns the first valid host for use as a certificate identifier.
 func (ci *Local) certPrefix() string {
 	if len(ci.certHosts) == 0 {
 		return woos.Localhost
@@ -440,7 +441,7 @@ func (ci *Local) certPrefix() string {
 }
 
 func (ci *Local) ensureLocalhostCertUnlocked() (string, string, error) {
-	// Deduplicate and sanitize hosts
+
 	seen := make(map[string]bool)
 	var out []string
 	for _, h := range ci.certHosts {
@@ -452,7 +453,6 @@ func (ci *Local) ensureLocalhostCertUnlocked() (string, string, error) {
 	}
 	ci.certHosts = out
 
-	// Add default SANs for localhost development
 	defaults := []string{woos.Localhost, woos.LocalhostWildcardSAN, woos.IPv4LoopbackSAN, woos.IPv6LoopbackSAN}
 	defaults = append(defaults, getLocalLANIPs()...)
 	for _, d := range defaults {
@@ -464,18 +464,16 @@ func (ci *Local) ensureLocalhostCertUnlocked() (string, string, error) {
 
 	domain := ci.certPrefix()
 
-	// Try to load existing cert from storage
 	certPEM, keyPEM, err := ci.store.Load(domain)
 	if err == nil {
 		if err := ci.validateCertificateBytes(certPEM, keyPEM); err == nil {
 			ci.logger.Fields("domain", domain).Info("using existing local certificate")
 			return domain, domain, nil
 		}
-		// Invalid cert, remove it
+
 		_ = ci.store.Delete(domain)
 	}
 
-	// Generate CA if missing
 	if !ci.caExists() {
 		ci.logger.Info("CA root not found, generating and installing local CA")
 		if err := ci.generateAndInstallCA(); err != nil {
@@ -483,7 +481,6 @@ func (ci *Local) ensureLocalhostCertUnlocked() (string, string, error) {
 		}
 	}
 
-	// Generate leaf certificate
 	if err := ci.generateLeaf(domain); err != nil {
 		return "", "", err
 	}
@@ -569,6 +566,3 @@ func parsePrivateKey(der []byte) (crypto.PrivateKey, error) {
 	}
 	return x509.ParseECPrivateKey(der)
 }
-
-// ensureLocalhostCertUnlocked is the internal implementation of EnsureLocalhostCert
-// without mutex locking. Must only be called when ci.mu is already held.

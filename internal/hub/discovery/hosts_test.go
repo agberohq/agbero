@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cluster"
 	"github.com/olekukonko/ll"
@@ -54,7 +54,7 @@ func assertNoChanged(t *testing.T, ch <-chan struct{}, timeout time.Duration) {
 }
 
 func TestNewHost_Basic(t *testing.T) {
-	h := NewHost(woos.NewFolder("/tmp"))
+	h := NewHost(expect.NewFolder("/tmp"))
 	if h.hosts == nil || h.lookupMap.Load() == nil || h.clusterRoutes == nil {
 		t.Fatal("maps not initialized")
 	}
@@ -64,13 +64,13 @@ func TestNewHost_Basic(t *testing.T) {
 }
 
 func TestOnClusterChange_Add(t *testing.T) {
-	h := NewHost(woos.NewFolder("/tmp"), WithLogger(testLogger))
+	h := NewHost(expect.NewFolder("/tmp"), WithLogger(testLogger))
 	defer h.Close()
 
 	route := alaye.Route{
 		Path: "/api",
 		Backends: alaye.Backend{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			Strategy: alaye.StrategyRandom,
 			Servers: []alaye.Server{
 				{Address: "http://127.0.0.1:8080", Weight: 1},
@@ -100,12 +100,12 @@ func TestOnClusterChange_Add(t *testing.T) {
 }
 
 func TestOnClusterChange_Remove(t *testing.T) {
-	h := NewHost(woos.NewFolder("/tmp"), WithLogger(testLogger))
+	h := NewHost(expect.NewFolder("/tmp"), WithLogger(testLogger))
 
 	route := alaye.Route{
 		Path: "/api",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: []alaye.Server{
 				{Address: "http://127.0.0.1:8080"},
 			},
@@ -129,7 +129,7 @@ func TestOnClusterChange_Remove(t *testing.T) {
 }
 
 func TestRouteExists(t *testing.T) {
-	hm := NewHost(woos.NewFolder(""), WithLogger(testLogger))
+	hm := NewHost(expect.NewFolder(""), WithLogger(testLogger))
 
 	route := alaye.Route{
 		Path: "/api",
@@ -150,10 +150,10 @@ func TestRouteExists(t *testing.T) {
 }
 
 func TestHost_RouteExpiration(t *testing.T) {
-	hm := NewHost(woos.Folder("."), WithLogger(testLogger))
+	hm := NewHost(expect.Folder("."), WithLogger(testLogger))
 	defer hm.Close()
 
-	route := alaye.Route{Path: "/expire", Enabled: alaye.Active}
+	route := alaye.Route{Path: "/expire", Enabled: expect.Active}
 	// Use longer TTL to ensure route exists after debounced rebuild
 	expiry := time.Now().Add(2 * time.Second)
 
@@ -185,11 +185,11 @@ func TestWatch_FileChange(t *testing.T) {
 	tmpDir := t.TempDir()
 	hclFile := filepath.Join(tmpDir, "test.hcl")
 
-	if err := os.WriteFile(hclFile, validHCL("example.com"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(hclFile, validHCL("example.com"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
-	h := NewHost(woos.NewFolder(tmpDir), WithLogger(testLogger))
+	h := NewHost(expect.NewFolder(tmpDir), WithLogger(testLogger))
 	if err := h.Watch(); err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestWatch_FileChange(t *testing.T) {
 		t.Fatal("initial load failed")
 	}
 
-	if err := os.WriteFile(hclFile, validHCL("updated.com"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(hclFile, validHCL("updated.com"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -222,11 +222,11 @@ func TestWatch_SubdirFileChange(t *testing.T) {
 	}
 
 	hclFile := filepath.Join(sub, "agbero.hcl")
-	if err := os.WriteFile(hclFile, validHCL("a.com"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(hclFile, validHCL("a.com"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
-	h := NewHost(woos.NewFolder(tmpDir), WithLogger(testLogger))
+	h := NewHost(expect.NewFolder(tmpDir), WithLogger(testLogger))
 	if err := h.Watch(); err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestWatch_SubdirFileChange(t *testing.T) {
 	default:
 	}
 
-	if err := os.WriteFile(hclFile, validHCL("b.com"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(hclFile, validHCL("b.com"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -260,11 +260,11 @@ func TestWatch_AtomicReplace(t *testing.T) {
 	tmpDir := t.TempDir()
 	hclFile := filepath.Join(tmpDir, "test.hcl")
 
-	if err := os.WriteFile(hclFile, validHCL("one.com"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(hclFile, validHCL("one.com"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
-	h := NewHost(woos.NewFolder(tmpDir), WithLogger(testLogger))
+	h := NewHost(expect.NewFolder(tmpDir), WithLogger(testLogger))
 	if err := h.Watch(); err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestWatch_AtomicReplace(t *testing.T) {
 	}
 
 	tmp := filepath.Join(tmpDir, "test.hcl.tmp")
-	if err := os.WriteFile(tmp, validHCL("two.com"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(tmp, validHCL("two.com"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Rename(tmp, hclFile); err != nil {
@@ -293,17 +293,17 @@ func TestWatch_NonHCL_DoesNotTriggerChanged(t *testing.T) {
 	tmpDir := t.TempDir()
 	txtFile := filepath.Join(tmpDir, "ignore.txt")
 
-	if err := os.WriteFile(txtFile, []byte("test"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(txtFile, []byte("test"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
-	h := NewHost(woos.NewFolder(tmpDir), WithLogger(testLogger))
+	h := NewHost(expect.NewFolder(tmpDir), WithLogger(testLogger))
 	if err := h.Watch(); err != nil {
 		t.Fatal(err)
 	}
 	defer h.Close()
 
-	if err := os.WriteFile(txtFile, []byte("updated"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(txtFile, []byte("updated"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -311,7 +311,7 @@ func TestWatch_NonHCL_DoesNotTriggerChanged(t *testing.T) {
 }
 
 func TestRebuildLookupLocked_MergeFileAndDynamicSamePath(t *testing.T) {
-	h := NewHost(woos.NewFolder("/tmp"))
+	h := NewHost(expect.NewFolder("/tmp"))
 	h.mu.Lock()
 
 	h.hosts["file"] = &alaye.Host{
@@ -358,7 +358,7 @@ func TestSortRoutes(t *testing.T) {
 		{Path: "/api/v1/users"},
 		{Path: "/"},
 	}
-	hm := NewHost(woos.NewFolder("/tmp"))
+	hm := NewHost(expect.NewFolder("/tmp"))
 	hm.sortRoutes(routes)
 	if routes[0].Path != "/api/v1/users" || routes[1].Path != "/api" || routes[2].Path != "/" {
 		t.Fatal("routes not sorted by length desc")
@@ -366,7 +366,7 @@ func TestSortRoutes(t *testing.T) {
 }
 
 func TestGet_WildcardResolution(t *testing.T) {
-	hm := NewHost(woos.NewFolder("/tmp"))
+	hm := NewHost(expect.NewFolder("/tmp"))
 
 	wildcardDomain := "*.localhost"
 
@@ -420,18 +420,18 @@ func TestGet_WildcardResolution(t *testing.T) {
 func TestHost_OnClusterChange_RoutePropagation(t *testing.T) {
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+	if err := os.MkdirAll(hostsDir, expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
 
 	logger := ll.New("test").Disable()
-	hm := NewHost(woos.NewFolder(hostsDir), WithLogger(logger))
+	hm := NewHost(expect.NewFolder(hostsDir), WithLogger(logger))
 
 	route := alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/api/test",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers("http://localhost:9000"),
 		},
 	}
@@ -472,18 +472,18 @@ func TestHost_OnClusterChange_RoutePropagation(t *testing.T) {
 func TestHost_OnClusterChange_Deletion(t *testing.T) {
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+	if err := os.MkdirAll(hostsDir, expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
 
 	logger := ll.New("test").Disable()
-	hm := NewHost(woos.NewFolder(hostsDir), WithLogger(logger))
+	hm := NewHost(expect.NewFolder(hostsDir), WithLogger(logger))
 
 	route := alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/to-delete",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers("http://localhost:9001"),
 		},
 	}
@@ -524,14 +524,14 @@ func TestHost_OnClusterChange_Deletion(t *testing.T) {
 func TestCluster_ConfigDeletionPropagation(t *testing.T) {
 	logger := ll.New("test").Disable()
 
-	tmpDir1 := t.TempDir()
-	tmpDir2 := t.TempDir()
+	tmpDir1 := expect.NewFolder(t.TempDir())
+	tmpDir2 := expect.NewFolder(t.TempDir())
 
 	port1 := zulu.PortFree()
 	port2 := zulu.PortFree()
 
 	// Node 1
-	h1 := NewHost(woos.NewFolder(tmpDir1), WithLogger(logger))
+	h1 := NewHost(tmpDir1, WithLogger(logger))
 	cm1, _ := cluster.NewManager(cluster.Config{
 		Name:     "node1",
 		BindAddr: "127.0.0.1",
@@ -543,7 +543,7 @@ func TestCluster_ConfigDeletionPropagation(t *testing.T) {
 	h1.configSync = NewConfigSync(h1.logger, cm1)
 
 	// Node 2
-	h2 := NewHost(woos.NewFolder(tmpDir2), WithLogger(logger))
+	h2 := NewHost(tmpDir2, WithLogger(logger))
 	cm2, _ := cluster.NewManager(cluster.Config{
 		Name:     "node2",
 		BindAddr: "127.0.0.1",
@@ -560,14 +560,14 @@ func TestCluster_ConfigDeletionPropagation(t *testing.T) {
 	// Create and broadcast config
 	domain := "delete-me.com"
 	content := validHCL(domain)
-	configPath := filepath.Join(tmpDir1, domain+".hcl")
-	os.WriteFile(configPath, content, woos.FilePerm)
+	configPath := tmpDir1.FilePath(domain + ".hcl")
+	os.WriteFile(configPath, content, expect.FilePerm)
 	cm1.BroadcastConfig(domain, content, false)
 
 	time.Sleep(2 * time.Second)
 
 	// Verify both nodes have the config
-	if _, err := os.Stat(filepath.Join(tmpDir2, domain+".hcl")); os.IsNotExist(err) {
+	if _, err := os.Stat(tmpDir2.FilePath(domain + ".hcl")); os.IsNotExist(err) {
 		t.Fatal("node2 should have config before deletion")
 	}
 
@@ -578,7 +578,7 @@ func TestCluster_ConfigDeletionPropagation(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	// Verify node 2 also deleted the config
-	if _, err := os.Stat(filepath.Join(tmpDir2, domain+".hcl")); !os.IsNotExist(err) {
+	if _, err := os.Stat(tmpDir2.FilePath(domain + ".hcl")); !os.IsNotExist(err) {
 		t.Error("node2 should have deleted config after cluster broadcast")
 	}
 }
@@ -586,19 +586,19 @@ func TestCluster_ConfigDeletionPropagation(t *testing.T) {
 func TestHost_OnClusterChange_WithTTL(t *testing.T) {
 	tmpDir := t.TempDir()
 	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+	if err := os.MkdirAll(hostsDir, expect.DirPerm); err != nil {
 		t.Fatal(err)
 	}
 
 	logger := ll.New("test").Disable()
-	hm := NewHost(woos.NewFolder(hostsDir), WithLogger(logger))
+	hm := NewHost(expect.NewFolder(hostsDir), WithLogger(logger))
 	defer hm.Close()
 
 	route := alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/ephemeral",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers("http://localhost:9002"),
 		},
 	}
@@ -642,9 +642,9 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 	logger := ll.New("test").Disable()
 
 	// Create 3 temp directories for 3 nodes
-	tmpDir1 := t.TempDir()
-	tmpDir2 := t.TempDir()
-	tmpDir3 := t.TempDir()
+	tmpDir1 := expect.NewFolder(t.TempDir())
+	tmpDir2 := expect.NewFolder(t.TempDir())
+	tmpDir3 := expect.NewFolder(t.TempDir())
 
 	// Get free ports
 	port1 := zulu.PortFree()
@@ -654,7 +654,7 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 	t.Logf("Node1 port: %d, Node2 port: %d, Node3 port: %d", port1, port2, port3)
 
 	// Create node 1 (seed)
-	h1 := NewHost(woos.NewFolder(tmpDir1), WithLogger(logger))
+	h1 := NewHost(tmpDir1, WithLogger(logger))
 	cm1, err := cluster.NewManager(cluster.Config{
 		Name:     "node1",
 		BindAddr: "127.0.0.1",
@@ -669,7 +669,7 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 	h1.configSync = NewConfigSync(h1.logger, cm1)
 
 	// Create node 2 (joins node 1)
-	h2 := NewHost(woos.NewFolder(tmpDir2), WithLogger(logger))
+	h2 := NewHost(tmpDir2, WithLogger(logger))
 	cm2, err := cluster.NewManager(cluster.Config{
 		Name:     "node2",
 		BindAddr: "127.0.0.1",
@@ -685,7 +685,7 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 	h2.configSync = NewConfigSync(h2.logger, cm2)
 
 	// Create node 3 (joins node 1)
-	h3 := NewHost(woos.NewFolder(tmpDir3), WithLogger(logger))
+	h3 := NewHost(tmpDir3, WithLogger(logger))
 	cm3, err := cluster.NewManager(cluster.Config{
 		Name:     "node3",
 		BindAddr: "127.0.0.1",
@@ -719,8 +719,8 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 	// Create a config file on node 1
 	domain := "shared.com"
 	content := validHCL(domain)
-	configPath := filepath.Join(tmpDir1, domain+".hcl")
-	if err := os.WriteFile(configPath, content, woos.FilePerm); err != nil {
+	configPath := tmpDir1.FilePath(domain + ".hcl")
+	if err := os.WriteFile(configPath, content, expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -739,8 +739,8 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 	// Wait for gossip propagation with timeout
 	propagationDeadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(propagationDeadline) {
-		configPath2 := filepath.Join(tmpDir2, domain+".hcl")
-		configPath3 := filepath.Join(tmpDir3, domain+".hcl")
+		configPath2 := tmpDir2.FilePath(domain + ".hcl")
+		configPath3 := tmpDir3.FilePath(domain + ".hcl")
 		_, err2 := os.Stat(configPath2)
 		_, err3 := os.Stat(configPath3)
 		if err2 == nil && err3 == nil {
@@ -751,7 +751,7 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 	}
 
 	// Verify node 2 received the config
-	configPath2 := filepath.Join(tmpDir2, domain+".hcl")
+	configPath2 := tmpDir2.FilePath(domain + ".hcl")
 	if _, err := os.Stat(configPath2); os.IsNotExist(err) {
 		t.Error("node2 did not receive config from cluster")
 	} else {
@@ -765,7 +765,7 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 	}
 
 	// Verify node 3 received the config
-	configPath3 := filepath.Join(tmpDir3, domain+".hcl")
+	configPath3 := tmpDir3.FilePath(domain + ".hcl")
 	if _, err := os.Stat(configPath3); os.IsNotExist(err) {
 		t.Error("node3 did not receive config from cluster")
 	} else {

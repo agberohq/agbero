@@ -5,10 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/cluster"
 	"github.com/go-chi/chi/v5"
 )
@@ -46,11 +45,10 @@ func (m *mockUpdateHandler) OnClusterChallenge(token, keyAuth string, deleted bo
 	}
 }
 
-func setupTestCluster(t *testing.T) (*cluster.Manager, string, func()) {
+func setupTestCluster(t *testing.T) (*cluster.Manager, expect.Folder, func()) {
 	t.Helper()
-	tmpDir := t.TempDir()
-	hostsDir := filepath.Join(tmpDir, "hosts")
-	if err := os.MkdirAll(hostsDir, 0755); err != nil {
+	hostsDir := expect.NewFolder(t.TempDir())
+	if err := hostsDir.Init(0755); err != nil {
 		t.Fatalf("Failed to create hosts dir: %v", err)
 	}
 
@@ -73,7 +71,6 @@ func setupTestCluster(t *testing.T) (*cluster.Manager, string, func()) {
 
 	cleanup := func() {
 		cMgr.Shutdown()
-		os.RemoveAll(tmpDir)
 	}
 
 	return cMgr, hostsDir, cleanup

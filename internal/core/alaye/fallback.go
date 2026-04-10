@@ -3,18 +3,19 @@ package alaye
 import (
 	"net/url"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
 type Fallback struct {
-	Enabled     Enabled `hcl:"enabled,attr" json:"enabled"`
-	Type        string  `hcl:"type,attr" json:"type"`
-	StatusCode  int     `hcl:"status_code,attr" json:"status_code"`
-	Body        string  `hcl:"body,attr" json:"body"`
-	ContentType string  `hcl:"content_type,attr" json:"content_type"`
-	RedirectURL string  `hcl:"redirect_url,attr" json:"redirect_url"`
-	ProxyURL    string  `hcl:"proxy_url,attr" json:"proxy_url"`
-	CacheTTL    int     `hcl:"cache_ttl,attr" json:"cache_ttl"`
+	Enabled     expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Type        string        `hcl:"type,attr" json:"type"`
+	StatusCode  int           `hcl:"status_code,attr" json:"status_code"`
+	Body        string        `hcl:"body,attr" json:"body"`
+	ContentType string        `hcl:"content_type,attr" json:"content_type"`
+	RedirectURL string        `hcl:"redirect_url,attr" json:"redirect_url"`
+	ProxyURL    string        `hcl:"proxy_url,attr" json:"proxy_url"`
+	CacheTTL    int           `hcl:"cache_ttl,attr" json:"cache_ttl"`
 }
 
 // Validate checks that the fallback type is valid and required fields are present.

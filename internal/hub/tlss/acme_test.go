@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
@@ -133,12 +134,12 @@ func TestManager_updateInternal_Notify(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	var called atomic.Bool
@@ -166,12 +167,12 @@ func TestManager_ApplyClusterCertificate(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	certPEM, keyPEM := generateACMETestCert(t, "cluster.com")
@@ -192,12 +193,12 @@ func TestManager_ApplyClusterChallenge(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	mgr.ApplyClusterChallenge("token1", "auth1", false)
@@ -214,18 +215,18 @@ func TestManager_ApplyClusterChallenge(t *testing.T) {
 
 func TestManager_loadFromStorage(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataDir := filepath.Join(tmpDir, "data")
-	os.MkdirAll(dataDir, 0755)
+	dataDir := expect.NewFolder(filepath.Join(tmpDir, "data"))
+	dataDir.Make(true)
 
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
 			DataDir:  dataDir,
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
 
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	// Register the host so GetCertificate knows what to do!
 	hm.Set("localhost", &alaye.Host{Domains: []string{"localhost"}})
 
@@ -256,12 +257,12 @@ func TestManager_loadFromStorage_NilStorage(t *testing.T) {
 	_ = os.WriteFile(badPath, []byte("x"), 0644)
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  badPath,
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(badPath),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	if mgr.storage == nil {
@@ -277,12 +278,12 @@ func TestManager_updateInternal_InvalidPEM(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	err := mgr.UpdateCertificate("bad.com", []byte("invalid"), []byte("invalid"))
@@ -295,12 +296,12 @@ func TestManager_GetCertificate_Wildcard(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	certPEM, keyPEM := generateACMETestCert(t, "*.example.com")
@@ -321,12 +322,12 @@ func TestManager_GetCertificate_Wildcard(t *testing.T) {
 //	tmpDir := t.TempDir()
 //	global := &alaye.Global{
 //		Storage: alaye.Storage{
-//			CertsDir: filepath.Join(tmpDir, "certs"),
-//			DataDir:  filepath.Join(tmpDir, "data"),
+//			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+//			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 //		},
 //		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 //	}
-//	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+//	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 //	mgr := NewManager(testLogger, hm, global, nil)
 //	defer mgr.Close()
 //
@@ -343,12 +344,12 @@ func TestManager_GetCertificate_EmptySNI(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	_, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: ""})
@@ -361,12 +362,12 @@ func TestManager_ACMEGetConfigForClient(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	cfg, err := mgr.GetConfigForClient(&tls.ClientHelloInfo{})
@@ -382,12 +383,12 @@ func TestManager_EnsureCertMagic(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
@@ -410,12 +411,12 @@ func TestManager_SetUpdateCallback(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	mgr.SetUpdateCallback(func(domain string, certPEM, keyPEM []byte) {})
@@ -428,12 +429,12 @@ func TestManager_SetCluster(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	cluster := &mockCluster{}
@@ -447,12 +448,12 @@ func TestManager_Close(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	mgr.Close()
 }
@@ -463,11 +464,11 @@ func TestNewManager_StorageInitFail(t *testing.T) {
 	_ = os.WriteFile(badPath, []byte("x"), 0644)
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  badPath,
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(badPath),
 		},
 		Gossip: alaye.Gossip{
-			Enabled:   alaye.Inactive,
+			Enabled:   expect.Inactive,
 			SecretKey: "test-secret-1234567890123456",
 		},
 	}
@@ -485,12 +486,12 @@ func TestManager_updateInternal_StorageSaveFail(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	certPEM, keyPEM := generateACMETestCert(t, "test.com")
@@ -508,12 +509,12 @@ func TestManager_loadFromStorage_InvalidCert(t *testing.T) {
 	os.WriteFile(keyPath, []byte("invalid key"), 0600)
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	mgr.loadFromStorage()
@@ -523,12 +524,12 @@ func TestManager_loadFromStorage_ListFail(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	os.RemoveAll(tmpDir)
@@ -539,14 +540,14 @@ func TestManager_EntryPoint_LocalhostVsPublic(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Email:   "test@example.com",
-			Pebble:  alaye.Pebble{Enabled: alaye.Active, Insecure: alaye.Active},
+			Pebble:  alaye.Pebble{Enabled: expect.Active, Insecure: expect.Active},
 		},
 	}
 	mgr, _ := SetupTestManager(t, global)

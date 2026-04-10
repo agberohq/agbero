@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/health"
 	"github.com/agberohq/agbero/internal/pkg/metrics"
@@ -44,7 +45,7 @@ func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb al
 		t.Fatalf("Failed to create backend: %v", err)
 	}
 	var doctor *jack.Doctor
-	if hc.Enabled.Active() || (hc.Enabled == alaye.Unknown && hc.Path != "") {
+	if hc.Enabled.Active() || (hc.Enabled == expect.Unknown && hc.Path != "") {
 		doctor = jack.NewDoctor(jack.DoctorWithLogger(testLogger))
 		u, _ := url.Parse(server.Address.String())
 		probePath := hc.Path
@@ -319,7 +320,7 @@ func TestNewBackend_StreamingEnabled(t *testing.T) {
 	defer server.Close()
 
 	srv := alaye.NewServer(server.URL)
-	srv.Streaming.Enabled = alaye.Active
+	srv.Streaming.Enabled = expect.Active
 	srv.Streaming.FlushInterval = 50 * time.Millisecond
 
 	b, err := NewBackend(ConfigBackend{
@@ -594,7 +595,7 @@ func TestHealthCheck_Failure(t *testing.T) {
 	defer server.Close()
 
 	hc := alaye.HealthCheck{
-		Enabled:   alaye.Active,
+		Enabled:   expect.Active,
 		Path:      "/health",
 		Interval:  alaye.Duration(50 * time.Millisecond),
 		Threshold: 2,
@@ -627,7 +628,7 @@ func TestHealthCheck_Recovery(t *testing.T) {
 	defer server.Close()
 
 	hc := alaye.HealthCheck{
-		Enabled:   alaye.Active,
+		Enabled:   expect.Active,
 		Path:      "/health",
 		Interval:  alaye.Duration(50 * time.Millisecond),
 		Threshold: 2,
@@ -672,7 +673,7 @@ func TestHealthCheck_Advanced(t *testing.T) {
 	defer server.Close()
 
 	hc := alaye.HealthCheck{
-		Enabled:        alaye.Active,
+		Enabled:        expect.Active,
 		Path:           "/health",
 		Method:         "POST",
 		Headers:        map[string]string{"X-Check": "true"},
@@ -703,7 +704,7 @@ func TestHealthCheck_Advanced_BodyMismatch(t *testing.T) {
 	defer server.Close()
 
 	hc := alaye.HealthCheck{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Path:         "/health",
 		ExpectedBody: `"status": "OK"`,
 		Interval:     alaye.Duration(50 * time.Millisecond),
@@ -734,7 +735,7 @@ func TestHealthCheck_HostHeader_From_Domains(t *testing.T) {
 	defer server.Close()
 
 	hc := alaye.HealthCheck{
-		Enabled:  alaye.Active,
+		Enabled:  expect.Active,
 		Path:     "/",
 		Interval: alaye.Duration(50 * time.Millisecond),
 		Timeout:  alaye.Duration(100 * time.Millisecond),
@@ -811,7 +812,7 @@ func TestHealthCheck_Jitter(t *testing.T) {
 	defer ts.Close()
 
 	hc := alaye.HealthCheck{
-		Enabled:  alaye.Active,
+		Enabled:  expect.Active,
 		Path:     "/",
 		Interval: alaye.Duration(20 * time.Millisecond),
 		Timeout:  alaye.Duration(100 * time.Millisecond),
@@ -838,7 +839,7 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 	defer server.Close()
 
 	hc := alaye.HealthCheck{
-		Enabled:   alaye.Active,
+		Enabled:   expect.Active,
 		Path:      "/health",
 		Interval:  alaye.Duration(50 * time.Millisecond),
 		Threshold: 1,

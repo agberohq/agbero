@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
@@ -73,26 +74,26 @@ func newHandler(t *testing.T, rootPath string, opts ...routeOpt) *web {
 	return NewWeb(res, route, nil)
 }
 
-func withListing() routeOpt  { return func(r *alaye.Route) { r.Web.Listing = true } }
-func withSPA() routeOpt      { return func(r *alaye.Route) { r.Web.SPA = true } }
-func withMarkdown() routeOpt { return func(r *alaye.Route) { r.Web.Markdown.Enabled = alaye.Active } }
+func withListing() routeOpt  { return func(r *alaye.Route) { r.Web.Listing = expect.Active } }
+func withSPA() routeOpt      { return func(r *alaye.Route) { r.Web.SPA = expect.Active } }
+func withMarkdown() routeOpt { return func(r *alaye.Route) { r.Web.Markdown.Enabled = expect.Active } }
 func withMarkdownBrowse() routeOpt {
 	return func(r *alaye.Route) {
-		r.Web.Markdown.Enabled = alaye.Active
+		r.Web.Markdown.Enabled = expect.Active
 		r.Web.Markdown.View = "browse"
 	}
 }
 func withSyntaxHighlight() routeOpt {
 	return func(r *alaye.Route) {
-		r.Web.Markdown.Enabled = alaye.Active
-		r.Web.Markdown.SyntaxHighlight.Enabled = alaye.Active
+		r.Web.Markdown.Enabled = expect.Active
+		r.Web.Markdown.SyntaxHighlight.Enabled = expect.Active
 		// Theme defaults to "github" when empty — no need to set it in tests.
 	}
 }
 func withTOC() routeOpt {
 	return func(r *alaye.Route) {
-		r.Web.Markdown.Enabled = alaye.Active
-		r.Web.Markdown.TableOfContents = alaye.Active
+		r.Web.Markdown.Enabled = expect.Active
+		r.Web.Markdown.TableOfContents = expect.Active
 	}
 }
 

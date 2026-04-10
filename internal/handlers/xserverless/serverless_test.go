@@ -17,11 +17,11 @@ func TestServerless_New_NoPanicOnCollision(t *testing.T) {
 	route := alaye.Route{
 		Env: map[string]expect.Value{},
 		Serverless: alaye.Serverless{
-			Enabled: alaye.Active,
-			RESTs: []alaye.REST{
-				{Name: "duplicate", Enabled: alaye.Active, URL: "http://first"},
-				{Name: "duplicate", Enabled: alaye.Active, URL: "http://second"},
-				{Name: "conflict", Enabled: alaye.Active, URL: "http://rest-wins"},
+			Enabled: expect.Active,
+			Replay: []alaye.Replay{
+				{Name: "duplicate", Enabled: expect.Active, URL: "http://first"},
+				{Name: "duplicate", Enabled: expect.Active, URL: "http://second"},
+				{Name: "conflict", Enabled: expect.Active, URL: "http://rest-wins"},
 			},
 			Workers: []alaye.Work{
 				{Name: "worker-dup", Command: []string{"echo", "1"}},

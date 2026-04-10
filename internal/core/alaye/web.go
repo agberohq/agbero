@@ -8,18 +8,18 @@ import (
 )
 
 type Web struct {
-	Enabled  Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Root     WebRoot  `hcl:"root,attr" json:"root"`
-	Index    []string `hcl:"index,optional" json:"index"`
-	Listing  bool     `hcl:"listing,attr" json:"listing"`
-	SPA      bool     `hcl:"spa,attr" json:"spa"`
-	NoCache  bool     `hcl:"no_cache,attr" json:"no_cache"`
-	PHP      PHP      `hcl:"php,block" json:"php"`
-	Git      Git      `hcl:"git,block" json:"git"`
-	Markdown Markdown `hcl:"markdown,block" json:"markdown"`
+	Enabled  expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Root     WebRoot       `hcl:"root,attr" json:"root"`
+	Index    []string      `hcl:"index,optional" json:"index"`
+	Listing  expect.Toggle `hcl:"listing,attr" json:"listing"`
+	SPA      expect.Toggle `hcl:"spa,attr" json:"spa"`
+	NoCache  expect.Toggle `hcl:"no_cache,attr" json:"no_cache"`
+	PHP      PHP           `hcl:"php,block" json:"php"`
+	Git      Git           `hcl:"git,block" json:"git"`
+	Markdown Markdown      `hcl:"markdown,block" json:"markdown"`
+	Nonce    WebNonce      `hcl:"nonce,block"    json:"nonce"`
 }
 
-// Validate checks root presence, index format, and delegates to PHP and Git validation.
 func (w *Web) Validate() error {
 	if w.Enabled.NotActive() {
 		return nil
@@ -38,7 +38,19 @@ func (w *Web) Validate() error {
 	if err := w.PHP.Validate(); err != nil {
 		return errors.Newf("php: %w", err)
 	}
+	if w.Nonce.Enabled.Active() && len(w.Nonce.Endpoints) == 0 {
+		return errors.New("web nonce: at least one endpoint name is required")
+	}
 	return nil
+}
+
+// WebNonce configures single-use nonce injection for replay authentication.
+// When enabled, the web handler generates one nonce per listed endpoint and
+// injects <meta name="agbero-replay-nonce" data-endpoint="…" content="…">
+// before </head> in every HTML response it serves.
+type WebNonce struct {
+	Enabled   expect.Toggle `hcl:"enabled,attr"   json:"enabled"`
+	Endpoints []string      `hcl:"endpoints,attr" json:"endpoints"`
 }
 
 type GitAuth struct {
@@ -49,7 +61,6 @@ type GitAuth struct {
 	SSHKeyPassphrase expect.Value `hcl:"ssh_key_passphrase,attr" json:"ssh_key_passphrase"`
 }
 
-// Validate checks that the auth type is one of the accepted values.
 func (a *GitAuth) Validate() error {
 	if a.Type != "" {
 		switch strings.ToLower(a.Type) {
@@ -62,18 +73,17 @@ func (a *GitAuth) Validate() error {
 }
 
 type Git struct {
-	Enabled  Enabled      `hcl:"enabled,attr" json:"enabled"`
-	ID       string       `hcl:"id,attr" json:"id"`
-	URL      string       `hcl:"url,attr" json:"url"`
-	Branch   string       `hcl:"branch,attr" json:"branch"`
-	Secret   expect.Value `hcl:"secret,attr" json:"secret"`
-	Interval Duration     `hcl:"interval,attr" json:"interval"`
-	WorkDir  string       `hcl:"work_dir,attr" json:"work_dir"`
-	SubDir   string       `hcl:"sub_dir,attr" json:"sub_dir"`
-	Auth     GitAuth      `hcl:"auth,block" json:"auth"`
+	Enabled  expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	ID       string        `hcl:"id,attr" json:"id"`
+	URL      string        `hcl:"url,attr" json:"url"`
+	Branch   string        `hcl:"branch,attr" json:"branch"`
+	Secret   expect.Value  `hcl:"secret,attr" json:"secret"`
+	Interval Duration      `hcl:"interval,attr" json:"interval"`
+	WorkDir  expect.Folder `hcl:"work_dir,attr" json:"work_dir"`
+	SubDir   string        `hcl:"sub_dir,attr" json:"sub_dir"`
+	Auth     GitAuth       `hcl:"auth,block" json:"auth"`
 }
 
-// Validate checks that ID and URL are present when git serving is enabled.
 func (g *Git) Validate() error {
 	if g.Enabled.NotActive() {
 		return nil
@@ -89,12 +99,10 @@ func (g *Git) Validate() error {
 
 type WebRoot string
 
-// IsSet reports whether the web root has been configured.
 func (w WebRoot) IsSet() bool {
 	return strings.TrimSpace(string(w)) != ""
 }
 
-// String returns the web root path, defaulting to "." when unset.
 func (w WebRoot) String() string {
 	if !w.IsSet() {
 		return "."
@@ -103,16 +111,16 @@ func (w WebRoot) String() string {
 }
 
 type Markdown struct {
-	Enabled         Enabled   `hcl:"enabled,attr" json:"enabled"`
-	UnsafeHTML      Enabled   `hcl:"unsafe,attr" json:"unsafe"`
-	TableOfContents Enabled   `hcl:"toc,attr" json:"toc,omitempty"`
-	SyntaxHighlight Highlight `hcl:"highlight,block" json:"highlight"`
-	Extensions      []string  `hcl:"extensions,attr" json:"extensions,omitempty"`
-	Template        string    `hcl:"template,attr" json:"template,omitempty"`
-	View            string    `hcl:"view,attr" json:"view,omitempty"`
+	Enabled         expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	UnsafeHTML      expect.Toggle `hcl:"unsafe,attr" json:"unsafe"`
+	TableOfContents expect.Toggle `hcl:"toc,attr" json:"toc,omitempty"`
+	SyntaxHighlight Highlight     `hcl:"highlight,block" json:"highlight"`
+	Extensions      []string      `hcl:"extensions,attr" json:"extensions,omitempty"`
+	Template        string        `hcl:"template,attr" json:"template,omitempty"`
+	View            string        `hcl:"view,attr" json:"view,omitempty"`
 }
 
 type Highlight struct {
-	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
-	Theme   string  `hcl:"theme,attr" json:"theme,omitempty"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Theme   string        `hcl:"theme,attr" json:"theme,omitempty"`
 }

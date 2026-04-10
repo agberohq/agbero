@@ -23,7 +23,7 @@ The same block also handles background workers, scheduled tasks, and on-demand s
 
 The `serverless` block inside any route gives you two primitives:
 
-**`rest` blocks** proxy outbound HTTP calls to external APIs. Agbero injects your credentials, forwards the request, and streams the response back. Your API key stays on the server.
+**`replay` blocks** proxy outbound HTTP calls to external APIs. Agbero injects your credentials, forwards the request, and streams the response back. Your API key stays on the server.
 
 **`work` blocks** run local commands — on a schedule, as a persistent background daemon, triggered on-demand by an HTTP request, or once at startup.
 
@@ -46,7 +46,7 @@ route "/api/payments" {
   serverless {
     enabled = true
 
-    rest "stripe" {
+    replay "stripe" {
       enabled = true
       url     = "https://api.stripe.com/v1/charges"
       method  = "POST"
@@ -69,6 +69,20 @@ export STRIPE_SECRET_KEY=sk_live_AbCdEf...
 
 The browser calls `POST /api/payments/stripe` with its payload. Agbero calls Stripe with your key attached. Done.
 
+Alternatively, store credentials in the keeper so they never appear in environment variables or config files at all:
+
+```bash
+# Store the key in the keeper
+agbero keeper set integrations/stripe-key "sk_live_AbCdEf..."
+```
+
+```hcl
+# Reference it in HCL using ss:// — resolved at request time, never logged
+headers = {
+  "Authorization" = "Bearer ss://integrations/stripe-key"
+}
+```
+
 ### URL structure
 
 REST endpoints are always reachable at `{route-path}/{name}`:
@@ -82,7 +96,7 @@ GET  /api/data/weather?city=Lagos
 ### Forwarding query parameters from the client
 
 ```hcl
-rest "github-search" {
+replay "github-search" {
   enabled       = true
   url           = "https://api.github.com/search/repositories"
   method        = "GET"
@@ -98,7 +112,7 @@ rest "github-search" {
 ### Static query parameters (resolved server-side)
 
 ```hcl
-rest "weather" {
+replay "weather" {
   enabled       = true
   url           = "https://api.openweathermap.org/data/2.5/weather"
   method        = "GET"
@@ -116,7 +130,7 @@ rest "weather" {
 Avoid hammering an upstream on repeated identical requests:
 
 ```hcl
-rest "exchange-rates" {
+replay "exchange-rates" {
   enabled = true
   url     = "https://api.exchangerate.host/latest"
   method  = "GET"
@@ -135,6 +149,71 @@ rest "exchange-rates" {
 }
 ```
 
+---
+
+### Restricting outbound domains (`allowed_domains`)
+
+When a `replay` block operates in relay mode — where the client supplies the target URL at request time via the `X-Agbero-Replay-Url` header or `?url=` query param — you **must** set `allowed_domains` to prevent SSRF attacks.
+
+Without this, a malicious client could target internal services (Redis, metadata APIs, internal HTTP servers).
+
+```hcl
+replay "safe-relay" {
+  enabled = true
+
+  # Only these domains are allowed as relay targets
+  allowed_domains = [
+    "api.stripe.com",      # exact match
+    "*.sendgrid.com",      # wildcard: matches mail.sendgrid.com, api.sendgrid.com, etc.
+    "api.github.com",
+  ]
+
+  # Note: private IPs (10.x, 192.168.x, 127.x, etc.) are ALWAYS blocked
+  # regardless of this list — it is a hard safety backstop
+}
+```
+
+> Setting `allowed_domains = ["*"]` disables SSRF protection — **never use `"*"` in production**.
+
+---
+
+### Controlling response headers (`strip_headers`)
+
+When relaying to an upstream that sets its own CORS or security headers, those headers can conflict with your application's policy. `strip_headers = true` removes them from the upstream response and adds permissive CORS headers instead:
+
+```hcl
+replay "cross-origin-api" {
+  enabled       = true
+  url           = "https://api.example.com/data"
+  strip_headers = true  # removes upstream CSP, X-Frame-Options, etc.
+                        # and sets Access-Control-Allow-Origin: <origin>
+}
+```
+
+---
+
+### Controlling the Referer header (`referer_mode`)
+
+Controls what `Referer` header is sent to the upstream:
+
+| Mode | Behaviour |
+|------|-----------|
+| `auto` *(default)* | Sets `Referer` to the target origin, e.g. `https://api.stripe.com/` |
+| `fixed` | Uses the value in `referer_value` |
+| `forward` | Passes the client's own `Referer` header through unchanged |
+| `none` | Omits the `Referer` header entirely |
+
+```hcl
+replay "partner-api" {
+  enabled       = true
+  url           = "https://partner.example.com/api"
+  referer_mode  = "fixed"
+  referer_value = "https://myapp.example.com"  # always sends this as Referer
+}
+```
+
+---
+
 ### Multiple REST endpoints on one route
 
 ```hcl
@@ -147,14 +226,14 @@ route "/integrations" {
   serverless {
     enabled = true
 
-    rest "stripe" {
+    replay "stripe" {
       enabled = true
       url     = "https://api.stripe.com/v1/charges"
       method  = "POST"
       headers = { "Authorization" = "Bearer env.STRIPE_KEY" }
     }
 
-    rest "sendgrid" {
+    replay "sendgrid" {
       enabled = true
       url     = "https://api.sendgrid.com/v3/mail/send"
       method  = "POST"
@@ -164,7 +243,7 @@ route "/integrations" {
       }
     }
 
-    rest "slack" {
+    replay "slack" {
       enabled = true
       url     = "https://hooks.slack.com/services/env.SLACK_WEBHOOK_PATH"
       method  = "POST"
@@ -285,7 +364,7 @@ Environment variables are merged in this order, with later values winning:
 
 1. Global env — defined at the top of `agbero.hcl` in the `env = { }` map
 2. Route env — defined in `env = { }` inside the `route` block
-3. Worker env — defined in `env = { }` inside the individual `work` or `rest` block
+3. Worker env — defined in `env = { }` inside the individual `work` or `replay` block
 
 ```hcl
 # agbero.hcl
@@ -322,7 +401,7 @@ By default workers run from a directory under `work.d/` named after the host and
 ```hcl
 serverless {
   enabled = true
-  root    = "/opt/myapp"   # all workers and rest handlers run from here
+  root    = "/opt/myapp"   # all workers and replay handlers run from here
 }
 ```
 
@@ -373,7 +452,7 @@ route "/integrations" {
   serverless {
     enabled = true
 
-    rest "stripe-charge" {
+    replay "stripe-charge" {
       enabled = true
       url     = "https://api.stripe.com/v1/charges"
       method  = "POST"
@@ -385,7 +464,7 @@ route "/integrations" {
       }
     }
 
-    rest "send-email" {
+    replay "send-email" {
       enabled = true
       url     = "https://api.sendgrid.com/v3/mail/send"
       method  = "POST"
@@ -499,7 +578,7 @@ const url = URL.createObjectURL(blob)
 
 ## Reference
 
-### `rest` block fields
+### `replay` block fields
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -507,12 +586,16 @@ const url = URL.createObjectURL(blob)
 | `enabled` | Enabled | Enable this endpoint |
 | `url` | string | Required. Target URL |
 | `method` | string | HTTP method to use |
-| `headers` | map[string]string | Static headers to add. Values support `env.VAR` |
-| `query` | map[string]Value | Static query parameters. Values support `env.VAR` |
+| `headers` | map[string]string | Static headers to add. Values support `env.VAR` and `ss://ns/key` for keeper secrets |
+| `query` | map[string]Value | Static query parameters. Values support `env.VAR` and `ss://ns/key` |
 | `forward_query` | bool | Pass incoming query parameters to the upstream |
 | `timeout` | duration | Request timeout (default: 30s) |
 | `cache` | Cache block | Cache upstream responses |
-| `env` | map[string]Value | Environment variables for value resolution |
+| `env` | map[string]Value | Environment variables for value resolution. Values support `env.VAR` and `ss://ns/key` |
+| `allowed_domains` | []string | Allowed outbound domains in relay mode. Supports `*.domain.com` wildcards. Private/loopback IPs always blocked. Never use `"*"` in production. |
+| `strip_headers` | Enabled | Strip upstream CORS/security headers from the response and re-add permissive CORS headers |
+| `referer_mode` | string | `auto` (default — target origin), `fixed` (use `referer_value`), `forward` (pass client referer), `none` (omit Referer entirely) |
+| `referer_value` | string | Fixed Referer value. Only used when `referer_mode = "fixed"` |
 
 ### `work` block fields
 
@@ -525,5 +608,5 @@ const url = URL.createObjectURL(blob)
 | `run_once` | bool | Run exactly once at startup |
 | `schedule` | string | Cron expression for periodic execution |
 | `timeout` | duration | Maximum execution time |
-| `env` | map[string]Value | Environment variables. Values support `env.VAR` |
+| `env` | map[string]Value | Environment variables. Values support `env.VAR` and `ss://ns/key` for keeper secrets |
 | `engine` | string | Runtime hint (informational only) |

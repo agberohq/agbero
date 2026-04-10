@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -11,19 +10,19 @@ import (
 	"syscall"
 	"time"
 
-	"charm.land/huh/v2"
 	"github.com/agberohq/agbero/cmd/agbero/helper"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
+	keeperlib "github.com/agberohq/keeper"
 	"github.com/integrii/flaggy"
 	"github.com/kardianos/service"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/ll/lh"
-	"github.com/olekukonko/ll/lx"
 )
 
 var logger *ll.Logger
@@ -117,8 +116,6 @@ func main() {
 	cmdSecret.AttachSubcommand(cmdSecretHash, 1)
 	cmdSecret.AttachSubcommand(cmdSecretPassword, 1)
 
-	// keeper — secret store (encrypted bbolt)
-
 	cmdKeeper := flaggy.NewSubcommand("keeper")
 	cmdKeeper.Description = "Manage the encrypted secret store"
 
@@ -144,13 +141,15 @@ func main() {
 	cmdKeeperRotate := flaggy.NewSubcommand("rotate")
 	cmdKeeperRotate.Description = "Change the keeper master passphrase (re-encrypts all secrets)"
 
+	cmdKeeperHelp := flaggy.NewSubcommand("help")
+	cmdKeeperHelp.Description = "Show keeper command reference"
+
 	cmdKeeper.AttachSubcommand(cmdKeeperList, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperGet, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperSet, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperDelete, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperRotate, 1)
-
-	// admin — manage agbero admin state (TOTP, users)
+	cmdKeeper.AttachSubcommand(cmdKeeperHelp, 1)
 
 	cmdAdmin := flaggy.NewSubcommand("admin")
 	cmdAdmin.Description = "Manage admin users and authentication"
@@ -205,10 +204,15 @@ func main() {
 	cmdCertInfo.Description = "Show certificate store information"
 	cmdCertInfo.String(&cfg.CertDir, "d", "dir", "Cert directory")
 
+	cmdCertDelete := flaggy.NewSubcommand("delete")
+	cmdCertDelete.Description = "Delete a certificate for a domain from the store"
+	cmdCertDelete.AddPositionalValue(&cfg.CertDomain, "domain", 1, true, "Domain name (e.g. admin.localhost)")
+
 	cmdCert.AttachSubcommand(cmdCertInstall, 1)
 	cmdCert.AttachSubcommand(cmdCertUninstall, 1)
 	cmdCert.AttachSubcommand(cmdCertList, 1)
 	cmdCert.AttachSubcommand(cmdCertInfo, 1)
+	cmdCert.AttachSubcommand(cmdCertDelete, 1)
 
 	cmdService := flaggy.NewSubcommand("service")
 	cmdService.Description = "Manage the system service"
@@ -220,11 +224,11 @@ func main() {
 	cmdServiceUninstall := flaggy.NewSubcommand("uninstall")
 	cmdServiceUninstall.Description = "Uninstall system service (use --all to remove everything)"
 	cmdServiceUninstall.Bool(&cfg.UninstallAll, "", "all", "Remove service, CA, all data, and binary")
-	cmdServiceUninstall.Bool(&cfg.UninstallForce, "", "force", "Skip confirmation prompt")
+	cmdServiceUninstall.Bool(&cfg.UninstallForce, "", "force", "Skip confirmation and also remove the binary")
 
 	cmdUninstall := flaggy.NewSubcommand("uninstall")
 	cmdUninstall.Description = "Uninstall everything (service, CA, configurations, data, and binary)"
-	cmdUninstall.Bool(&cfg.UninstallForce, "", "force", "Skip confirmation prompt")
+	cmdUninstall.Bool(&cfg.UninstallForce, "", "force", "Skip confirmation and also remove the binary")
 
 	cmdServiceStart := flaggy.NewSubcommand("start")
 	cmdServiceStart.Description = "Start system service"
@@ -244,20 +248,6 @@ func main() {
 	cmdService.AttachSubcommand(cmdServiceStop, 1)
 	cmdService.AttachSubcommand(cmdServiceRestart, 1)
 	cmdService.AttachSubcommand(cmdServiceStatus, 1)
-
-	cmdCluster := flaggy.NewSubcommand("cluster")
-	cmdCluster.Description = "Manage cluster settings"
-
-	cmdClusterStart := flaggy.NewSubcommand("start")
-	cmdClusterStart.Description = "Start agbero as a cluster seed node"
-
-	cmdClusterJoin := flaggy.NewSubcommand("join")
-	cmdClusterJoin.Description = "Join an existing agbero cluster"
-	cmdClusterJoin.AddPositionalValue(&cfg.ClusterJoinIP, "ip", 1, true, "IP address of the cluster seed")
-	cmdClusterJoin.String(&cfg.ClusterSecret, "s", "secret", "Cluster secret key")
-
-	cmdCluster.AttachSubcommand(cmdClusterStart, 1)
-	cmdCluster.AttachSubcommand(cmdClusterJoin, 1)
 
 	cmdSystem := flaggy.NewSubcommand("system")
 	cmdSystem.Description = "System-level operations (backup, restore, etc.)"
@@ -324,7 +314,6 @@ func main() {
 	flaggy.AttachSubcommand(cmdCert, 1)
 	flaggy.AttachSubcommand(cmdService, 1)
 	flaggy.AttachSubcommand(cmdUninstall, 1)
-	flaggy.AttachSubcommand(cmdCluster, 1)
 	flaggy.AttachSubcommand(cmdSystem, 1)
 	flaggy.AttachSubcommand(cmdRun, 1)
 	flaggy.AttachSubcommand(cmdHome, 1)
@@ -334,7 +323,10 @@ func main() {
 
 	flaggy.Parse()
 
-	hel := helper.New(logger, shutdown, cfg)
+	// store is opened later (after resolvedPath is known) for commands that
+	// need it.  Commands that exit before the keeper block (serve, proxy,
+	// system, secret, init) receive a nil store and must not call keeper ops.
+	hel := helper.New(logger, shutdown, cfg, nil)
 
 	if cmdHome.Used {
 		hel.Home().Navigate(homeTarget, homeAction)
@@ -369,75 +361,6 @@ func main() {
 		}
 	}
 
-	if cmdSecret.Used {
-		s := hel.Secret()
-		switch {
-		case cmdSecretCluster.Used:
-			s.Cluster()
-		case cmdSecretKey.Used && cmdSecretKeyInit.Used:
-			resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
-			s.KeyInit(resolvedPath)
-		case cmdSecretToken.Used:
-			resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
-			s.Token(resolvedPath, cfg.KeyService, cfg.KeyTTL)
-		case cmdSecretHash.Used:
-			s.Hash(cfg.HashPassword)
-		case cmdSecretPassword.Used:
-			length := 0
-			if cfg.PasswordLength != "" {
-				if n, err := strconv.Atoi(cfg.PasswordLength); err == nil {
-					length = n
-				} else {
-					logger.Fatal("invalid length: must be a number")
-				}
-			}
-			s.Password(length)
-		default:
-			flaggy.ShowHelpAndExit("secret")
-		}
-		return
-	}
-
-	if cmdKeeper.Used {
-		k := hel.Keeper()
-		resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
-		switch {
-		case cmdKeeperList.Used:
-			k.List(resolvedPath)
-		case cmdKeeperGet.Used:
-			k.Get(resolvedPath, cfg.KeeperKey)
-		case cmdKeeperSet.Used:
-			k.Set(resolvedPath, cfg.KeeperKey, cfg.KeeperValue, cfg.KeeperB64, cfg.KeeperFile)
-		case cmdKeeperDelete.Used:
-			k.Delete(resolvedPath, cfg.KeeperKey, cfg.KeeperForce)
-		case cmdKeeperRotate.Used:
-			k.Rotate(resolvedPath)
-		default:
-			flaggy.ShowHelpAndExit("keeper")
-		}
-		return
-	}
-
-	if cmdAdmin.Used {
-		a := hel.Admin()
-		resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
-		switch {
-		case cmdAdminTOTP.Used && cmdAdminTOTPSetup.Used:
-			a.TOTPSetup(resolvedPath, cfg.KeeperUser)
-			if cfg.KeeperOutFile != "" {
-				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
-			}
-		case cmdAdminTOTP.Used && cmdAdminTOTPQR.Used:
-			a.TOTPQR(resolvedPath, cfg.KeeperUser)
-			if cfg.KeeperOutFile != "" {
-				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
-			}
-		default:
-			flaggy.ShowHelpAndExit("admin")
-		}
-		return
-	}
-
 	if cmdInit.Used || cmdInstall.Used {
 		if _, err := helper.InitConfiguration(logger, ""); err != nil {
 			logger.Fatal("init failed: ", err)
@@ -455,7 +378,6 @@ func main() {
 				logger.Fatalf("provided config file not found: %s", cfg.ConfigPath)
 			}
 		} else {
-
 			resolvedPath, configExists = helper.ResolveConfigPath(logger, "")
 			if configExists {
 				u := ui.New()
@@ -491,25 +413,23 @@ func main() {
 		return
 	}
 
-	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used ||
-		cmdServiceStart.Used || cmdClusterStart.Used || cmdClusterJoin.Used
-
+	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used || cmdServiceStart.Used || cmdKeeper.Used || cmdAdmin.Used
 	if needsConfig && !configExists {
 		if strings.TrimSpace(cfg.ConfigPath) != "" {
 			logger.Fatal("config file not found at: ", cfg.ConfigPath)
 		} else {
 			ctx := setup.NewContext(logger)
 			if ctx.Interactive {
-				var doInit bool
-				err := huh.NewConfirm().
-					Title("Configuration Not Found").
-					Description("No agbero.hcl found. Would you like to initialize one?").
-					Value(&doInit).
-					Run()
+				u := ui.New()
+				doInit, err := u.ConfirmDefault(
+					"Configuration Not Found",
+					true,
+					"No agbero.hcl found. Would you like to initialize one?",
+				)
 				if err == nil && doInit {
 					path, err := helper.InitConfiguration(logger, "")
 					if err != nil {
-						logger.Fatal("init failed: ", err)
+						logger.Fatal("init (config) failed: ", err)
 					}
 					resolvedPath = path
 					configExists = true
@@ -524,6 +444,140 @@ func main() {
 
 	if err := tlss.BootstrapEnv(logger); err != nil {
 		logger.Warnf("TLS env bootstrap: %v", err)
+	}
+
+	// Keeper lifecycle — single open for the whole process.
+	//
+	// Commands that need the keeper: run, keeper, admin.
+	// All other commands have already returned above this point or do not
+	// touch the store (config, cert, host, service control, cluster).
+	//
+	// Rules:
+	//   run  → non-interactive, DisableAutoLock=true, fatal if still locked.
+	//   CLI  → interactive (prompts user), AutoLock respected.
+
+	cmdSecretNeedsKeeper := cmdSecret.Used && (cmdSecretKeyInit.Used || cmdSecretToken.Used)
+	if cmdRun.Used || cmdKeeper.Used || cmdAdmin.Used || cmdSecretNeedsKeeper {
+		global, globalErr := helper.LoadGlobal(resolvedPath)
+		if globalErr != nil {
+			logger.Fatal("failed to load config for keeper initialisation: ", globalErr)
+		}
+
+		// Recalibrate logger from config (file, level, format).
+		logger, _ = zulu.Logging(&global.Logging, hel.Cfg.ServeMarkdown, shutdown)
+		logger.Info("logger recalibrated")
+
+		dataDir := global.Storage.DataDir
+		ctx := setup.NewContext(logger)
+		if !dataDir.IsSet() {
+			dataDir = ctx.Paths.DataDir
+		}
+
+		// Interactive rules:
+		//   keeper / admin CLI  → always interactive (operator is at the terminal)
+		//   run + real terminal → interactive (developer running manually)
+		//   run + no terminal   → non-interactive (service, CI, Docker)
+		//   AGBERO_HEADLESS=1   → always non-interactive (setup.NewContext sets this)
+		isInteractive := !cmdRun.Used || ctx.Interactive
+
+		store, storeErr := secrets.Open(secrets.Config{
+			DataDir:         dataDir,
+			Setting:         &global.Security.Keeper,
+			Logger:          logger,
+			Interactive:     isInteractive,
+			DisableAutoLock: cmdRun.Used, // server process must never auto-lock
+		})
+		if storeErr != nil {
+			logger.Fatal("failed to open keeper: ", storeErr)
+		}
+
+		if cmdRun.Used && store.IsLocked() {
+			store.Close()
+			logger.Fatal("keeper is locked. Set AGBERO_PASSPHRASE environment variable, configure keeper.passphrase in agbero.hcl, or run interactively to be prompted")
+		}
+
+		// Register in both the keeper library's own global and agbero's secrets
+		// hub so that all subsystems (expect resolver, TLS store, admin API) see
+		// the same instance without further dependency injection.
+		keeperlib.GlobalStore(store)
+		secrets.SetGlobalStore(store)
+
+		// NOTE: We do NOT register store.Close() with jack here.
+		// jack.ShutdownConcurrent runs all handlers at the same time, which means
+		// store.Close() would race with in-flight requests still holding BoltDB
+		// transactions, causing a hang until the 10-second timeout fires.
+		// Instead, store.Close() is called explicitly below after rr.Start()
+		// returns — by that point all listeners have fully drained.
+
+		// Re-construct hel with the live store injected.
+		hel = helper.New(logger, shutdown, cfg, store)
+	}
+
+	if cmdSecret.Used {
+		s := hel.Secret()
+		switch {
+		case cmdSecretCluster.Used:
+			s.Cluster()
+		case cmdSecretKey.Used && cmdSecretKeyInit.Used:
+			s.KeyInit(resolvedPath)
+		case cmdSecretToken.Used:
+			s.Token(resolvedPath, cfg.KeyService, cfg.KeyTTL)
+		case cmdSecretHash.Used:
+			s.Hash(cfg.HashPassword)
+		case cmdSecretPassword.Used:
+			length := 0
+			if cfg.PasswordLength != "" {
+				if n, err := strconv.Atoi(cfg.PasswordLength); err == nil {
+					length = n
+				} else {
+					logger.Fatal("invalid length: must be a number")
+				}
+			}
+			s.Password(length)
+		default:
+			flaggy.ShowHelpAndExit("secret")
+		}
+		return
+	}
+
+	if cmdKeeper.Used {
+		k := hel.Keeper()
+		switch {
+		case cmdKeeperHelp.Used:
+			flaggy.ShowHelpAndExit("keeper")
+		case cmdKeeperList.Used:
+			k.List(resolvedPath)
+		case cmdKeeperGet.Used:
+			k.Get(resolvedPath, cfg.KeeperKey)
+		case cmdKeeperSet.Used:
+			k.Set(resolvedPath, cfg.KeeperKey, cfg.KeeperValue, cfg.KeeperB64, cfg.KeeperFile)
+		case cmdKeeperDelete.Used:
+			k.Delete(resolvedPath, cfg.KeeperKey, cfg.KeeperForce)
+		case cmdKeeperRotate.Used:
+			k.Rotate(resolvedPath)
+		default:
+			k.REPL(resolvedPath)
+		}
+		return
+	}
+
+	if cmdAdmin.Used {
+		a := hel.Admin()
+		switch {
+		case cmdAdminTOTP.Used && cmdAdminTOTPSetup.Used:
+			a.TOTPSetup(resolvedPath, cfg.KeeperUser)
+			if cfg.KeeperOutFile != "" {
+				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
+			}
+		case cmdAdminTOTP.Used && cmdAdminTOTPQR.Used:
+			a.TOTPQR(resolvedPath, cfg.KeeperUser)
+			if cfg.KeeperOutFile != "" {
+				a.TOTPQRPNGFile(resolvedPath, cfg.KeeperUser, cfg.KeeperOutFile)
+			}
+		default:
+			flaggy.ShowHelpAndExit("admin")
+		}
+		return
 	}
 
 	if cmdConfig.Used {
@@ -581,50 +635,40 @@ func main() {
 			ch.List(resolvedPath)
 		case cmdCertInfo.Used:
 			ch.Info(resolvedPath)
+		case cmdCertDelete.Used:
+			ch.Delete(resolvedPath, cfg.CertDomain)
 		default:
 			flaggy.ShowHelpAndExit("cert")
 		}
 		return
 	}
 
-	svcConfig := &service.Config{
-		Name:             woos.Name,
-		DisplayName:      woos.Display,
-		Description:      woos.Description,
-		Arguments:        []string{"run", "-c", resolvedPath},
-		WorkingDirectory: filepath.Dir(resolvedPath),
-	}
-	if cfg.DevMode {
-		svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
-	}
-	if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
-		cwd, _ := os.Getwd()
-		if filepath.Dir(resolvedPath) == cwd {
-			svcConfig.Name = "net.agbero.dev"
-		} else {
-			svcConfig.Name = "net.agbero"
-		}
-		svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
-	} else if runtime.GOOS == woos.Linux && os.Geteuid() != 0 {
-		svcConfig.Option = service.KeyValue{"UserService": true}
-	}
-
-	prg := &program{
-		configPath:    resolvedPath,
-		devMode:       cfg.DevMode,
-		shutdown:      shutdown,
-		clusterStart:  cmdClusterStart.Used,
-		clusterJoinIP: cfg.ClusterJoinIP,
-		clusterSecret: cfg.ClusterSecret,
-	}
-
-	svc, err := service.New(prg, svcConfig)
-	if err != nil {
-		logger.Fatal("service init failed: ", err)
-	}
-
 	if cmdService.Used {
+		svcConfig := &service.Config{
+			Name:             woos.Name,
+			DisplayName:      woos.Display,
+			Description:      woos.Description,
+			Arguments:        []string{"run", "-c", resolvedPath},
+			WorkingDirectory: filepath.Dir(resolvedPath),
+		}
+		if cfg.DevMode {
+			svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
+		}
+		if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
+			cwd, _ := os.Getwd()
+			if filepath.Dir(resolvedPath) == cwd {
+				svcConfig.Name = "net.agbero.dev"
+			} else {
+				svcConfig.Name = "net.agbero"
+			}
+			svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
+		} else if runtime.GOOS == woos.Linux && os.Geteuid() != 0 {
+			svcConfig.Option = service.KeyValue{"UserService": true}
+		}
+
+		svc, _ := service.New(nil, svcConfig)
 		sh := hel.Service()
+
 		switch {
 		case cmdServiceInstall.Used:
 			sh.Install(svc, cfg.InstallHere, resolvedPath)
@@ -648,69 +692,19 @@ func main() {
 		return
 	}
 
-	if cmdRun.Used || cmdClusterStart.Used || cmdClusterJoin.Used {
-		global, err := loadConfig(resolvedPath)
-		if err != nil {
-			logger.Fatal("failed to load config: ", err)
-		}
-		newLogger, err := zulu.Logging(&global.Logging, cfg.DevMode, shutdown)
-		if err != nil {
-			logger.Warn("failed to setup advanced logging: ", err)
-		} else {
-			logger = newLogger
-		}
+	if cmdRun.Used {
+		rr := hel.Run()
 
-		sighupCh := make(chan os.Signal, 1)
-		signal.Notify(sighupCh, syscall.SIGHUP)
+		shutdown.Register(func() error {
+			return nil
+		})
+
 		go func() {
-			for range sighupCh {
-				logger.Info("received SIGHUP, initiating hot reload...")
-				if prg.server != nil {
-					prg.server.Reload()
-				}
+			if err := rr.Start(resolvedPath, cfg.DevMode); err != nil {
+				logger.Error("server error: ", err)
 			}
+			shutdown.TriggerShutdown()
 		}()
-
-		if cfg.DevMode {
-			logger.Level(lx.LevelDebug)
-			logger.Warn("development mode enabled")
-		}
-
-		u := ui.New()
-		switch {
-		case cmdClusterStart.Used:
-			u.SectionHeader("Cluster — seed node")
-			u.KeyValueBlock("", []ui.KV{
-				{Label: "Config", Value: resolvedPath},
-				{Label: "Mode", Value: "seed — this node is joinable"},
-			})
-		case cmdClusterJoin.Used:
-			u.SectionHeader("Cluster — joining")
-			u.KeyValueBlock("", []ui.KV{
-				{Label: "Config", Value: resolvedPath},
-				{Label: "Seed", Value: cfg.ClusterJoinIP},
-			})
-		default:
-			u.SectionHeader("Starting")
-			u.KeyValue("Config", resolvedPath)
-		}
-
-		isContainer := os.Getenv("AGBERO_CONTAINER") == "true" || os.Getenv("KUBERNETES_SERVICE_HOST") != ""
-		if !service.Interactive() && !isContainer {
-			errs := make(chan error, 5)
-			_, _ = svc.Logger(errs)
-			go func() {
-				for e := range errs {
-					logger.Errorf("service internal error: %v", e)
-				}
-			}()
-		}
-
-		if err := svc.Run(); err != nil {
-			logger.Error("service exited with error: ", err)
-			os.Exit(1)
-		}
-		return
 	}
 
 	if cmdHelp.Used {
@@ -718,7 +712,20 @@ func main() {
 		return
 	}
 
-	showHelpExamples()
+	// Universal shutdown wait — all long-running commands fall through to here.
+	stats := shutdown.Wait()
+
+	if hel.Store != nil {
+		keeperlib.GlobalClear()
+		secrets.SetGlobalStore(nil)
+		hel.Store.Close()
+	}
+
+	logger.Fields(
+		"duration", stats.EndTime.Sub(stats.StartTime),
+		"tasks_total", stats.TotalEvents,
+		"tasks_failed", stats.FailedEvents,
+	).Info("shutdown complete")
 }
 
 func welcome() {
@@ -771,9 +778,11 @@ func showHelpExamples() {
 			Title: "Certificates",
 			Commands: []ui.HelpCmd{
 				{Cmd: exeName + " cert install", Desc: "install local CA certificate"},
-				{Cmd: exeName + " cert uninstall", Desc: "uninstall local CA certificate"},
-				{Cmd: exeName + " cert list", Desc: "list managed certificates"},
-				{Cmd: exeName + " cert info", Desc: "show certificate store information"},
+				{Cmd: exeName + " cert install --force", Desc: "force reinstall CA certificate"},
+				{Cmd: exeName + " cert uninstall", Desc: "remove CA from system trust store"},
+				{Cmd: exeName + " cert list", Desc: "list certificates in store"},
+				{Cmd: exeName + " cert info", Desc: "show certificate details (backend, expiry, issuer)"},
+				{Cmd: exeName + " cert delete admin.localhost", Desc: "delete a domain certificate from store"},
 			},
 		},
 		{
@@ -848,8 +857,10 @@ func showHelpExamples() {
 				{Cmd: prefix + exeName + " service restart", Desc: "restart service"},
 				{Cmd: prefix + exeName + " service status", Desc: "check service status"},
 				{Cmd: prefix + exeName + " service uninstall", Desc: "uninstall service"},
-				{Cmd: prefix + exeName + " service uninstall --all", Desc: "remove everything agbero installed"},
-				{Cmd: prefix + exeName + " uninstall", Desc: "alias — remove everything"},
+				{Cmd: prefix + exeName + " service uninstall --all", Desc: "stop, uninstall CA, remove all data"},
+				{Cmd: prefix + exeName + " service uninstall --all --force", Desc: "same + remove binary"},
+				{Cmd: prefix + exeName + " uninstall", Desc: "confirm + remove everything (keeps binary)"},
+				{Cmd: prefix + exeName + " uninstall --force", Desc: "skip confirm + remove everything including binary"},
 			},
 		},
 	})

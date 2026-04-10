@@ -6,9 +6,9 @@ require (
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.2
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
-	github.com/agberohq/keeper v0.0.2-0.20260404192611-1b6e0b2827fd
+	github.com/agberohq/keeper v0.0.2
 	github.com/alecthomas/chroma/v2 v2.23.1
-	github.com/andybalholm/brotli v1.2.0
+	github.com/andybalholm/brotli v1.2.1
 	github.com/blacktop/go-termimg v0.1.26
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/cespare/xxhash/v2 v2.3.0
@@ -16,8 +16,8 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-acme/lego/v4 v4.33.0
 	github.com/go-chi/chi/v5 v5.2.5
-	github.com/go-git/go-git/v6 v6.0.0-20260328145551-a93bccd59f82
-	github.com/go-playground/validator/v10 v10.30.1
+	github.com/go-git/go-git/v6 v6.0.0-alpha.1
+	github.com/go-playground/validator/v10 v10.30.2
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/hcl/v2 v2.24.0
@@ -28,9 +28,10 @@ require (
 	github.com/markbates/goth v1.82.0
 	github.com/minio/selfupdate v0.6.0
 	github.com/olekukonko/errors v1.2.0
-	github.com/olekukonko/jack v0.0.0-20260315063850-82b24943796a
+	github.com/olekukonko/jack v0.0.0-20260405213848-6393514abff0
 	github.com/olekukonko/ll v0.1.9-0.20260330210650-e52da6f04599
 	github.com/olekukonko/mappo v0.0.0-20260329141345-c5de61574284
+	github.com/olekukonko/prompter v0.0.0-20260405071459-26600f6d335b
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/olekukonko/zero v0.0.0-20260402164708-e3505a21b60e
 	github.com/pires/go-proxyproto v0.11.0
@@ -96,7 +97,7 @@ require (
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/go-git/gcfg/v2 v2.0.2 // indirect
-	github.com/go-git/go-billy/v6 v6.0.0-20260328065524-593ae452e14d // indirect
+	github.com/go-git/go-billy/v6 v6.0.0-20260406093858-f70eb2c33595 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
@@ -141,6 +142,7 @@ require (
 	github.com/puzpuzpuz/xsync/v3 v3.5.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/sean-/seed v0.0.0-20170313163322-e2103e2c3529 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect

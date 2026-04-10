@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
@@ -44,11 +45,11 @@ type Store struct {
 	quit    chan struct{}
 }
 
-func NewStore(dataDir woos.Folder, logger *ll.Logger) (*Store, error) {
+func NewStore(dataDir expect.Folder, logger *ll.Logger) (*Store, error) {
 	if !dataDir.IsSet() {
 		return nil, woos.ErrDataDirNotSet
 	}
-	if err := dataDir.Ensure(woos.Folder(""), true); err != nil {
+	if err := dataDir.Ensure("", true); err != nil {
 		return nil, err
 	}
 	dbPath := filepath.Join(dataDir.Path(), "firewall.db")

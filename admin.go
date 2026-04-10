@@ -225,43 +225,36 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-// handleStatus reports the admin server's current auth state.
-// Safe to poll without authentication — the frontend uses it to decide
-// whether to show the unlock modal or the login form.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	state := s.apiShared.State()
 
 	status := map[string]any{
 		"status":    "ok",
-		"auth":      state.Global.Admin.JWTAuth.Enabled.Active(),
+		"auth":      true,
 		"telemetry": state.Global.Admin.Telemetry.Enabled.Active(),
 	}
 
-	if state.Global.Admin.JWTAuth.Enabled.Active() {
-		authState := "ready"
+	authState := "ready"
 
-		var challenges []string
-		if s.keeperStore != nil && s.keeperStore.IsLocked() {
-			challenges = append(challenges, "keeper_unlock")
-		}
-		if state.Global.Admin.TOTP.Enabled.Active() {
-			challenges = append(challenges, "totp")
-		}
-		if len(challenges) > 0 {
-			authState = "challenge_required"
-			status["challenges"] = challenges
-		}
-
-		status["auth_state"] = authState
+	var challenges []string
+	if s.keeperStore != nil && s.keeperStore.IsLocked() {
+		challenges = append(challenges, "keeper_unlock")
 	}
+	if state.Global.Admin.TOTP.Enabled.Active() {
+		challenges = append(challenges, "totp")
+	}
+	if len(challenges) > 0 {
+		authState = "challenge_required"
+		status["challenges"] = challenges
+	}
+
+	status["auth_state"] = authState
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(status)
 }
 
-// buildAuthMiddleware returns the middleware chain for protected admin routes.
-// Only JWT is supported — basic_auth has been removed.
 func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Handler {
 	ipMgr := zulu.NewIPManager(nil)
 	isRevoked := func(jti string) bool {
@@ -270,36 +263,87 @@ func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Ha
 	}
 
 	return func(next http.Handler) http.Handler {
-		var handler http.Handler = next
+		authHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get(woos.AuthorizationHeaderKey)
+			if authHeader == "" {
+				http.Error(w, `{"error":"missing_authorization"}`, http.StatusUnauthorized)
+				return
+			}
+
+			tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
+
+			parser := new(jwt.Parser)
+			unverifiedToken, _, err := parser.ParseUnverified(tokenStr, &adminClaims{})
+			if err != nil {
+				http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+				return
+			}
+
+			claims, ok := unverifiedToken.Claims.(*adminClaims)
+			if !ok || claims.User == "" {
+				http.Error(w, `{"error":"invalid_claims"}`, http.StatusUnauthorized)
+				return
+			}
+
+			jwtSecret, err := s.getAdminJWTSecret(claims.User)
+			if err != nil {
+				// Always perform a dummy bcrypt comparison so the response
+				// time is indistinguishable from a valid-but-wrong-password
+				// path — prevents timing-based username enumeration.
+				bcrypt.CompareHashAndPassword(dummyHash, []byte("dummy"))
+				http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+				return
+			}
+
+			token, err := jwt.ParseWithClaims(tokenStr, &adminClaims{}, func(token *jwt.Token) (any, error) {
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method")
+				}
+				return []byte(jwtSecret), nil
+			})
+
+			if err != nil || !token.Valid {
+				http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+				return
+			}
+
+			validClaims, ok := token.Claims.(*adminClaims)
+			if !ok {
+				http.Error(w, `{"error":"invalid_claims"}`, http.StatusUnauthorized)
+				return
+			}
+
+			if validClaims.Issuer != woos.AdminTokenIssuer {
+				http.Error(w, `{"error":"invalid_issuer"}`, http.StatusUnauthorized)
+				return
+			}
+
+			if validClaims.Scope == "challenge" {
+				http.Error(w, `{"error":"insufficient_scope"}`, http.StatusForbidden)
+				return
+			}
+
+			if validClaims.ID != "" && isRevoked(validClaims.ID) {
+				http.Error(w, `{"error":"token_revoked"}`, http.StatusUnauthorized)
+				return
+			}
+
+			mapClaims := jwt.MapClaims{
+				"user":  validClaims.User,
+				"scope": validClaims.Scope,
+				"jti":   validClaims.ID,
+			}
+			ctx := context.WithValue(r.Context(), auth.ClaimsContextKey, mapClaims)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
 
 		if len(cfg.AllowedIPs) > 0 {
-			handler = ipallow.New(cfg.AllowedIPs, s.logger, ipMgr)(handler)
+			return ipallow.New(cfg.AllowedIPs, s.logger, ipMgr)(authHandler)
 		}
-
-		if cfg.JWTAuth.Enabled.Active() {
-			adminJWT := cfg.JWTAuth
-			adminJWT.Issuer = woos.AdminTokenIssuer
-			return auth.JWTWithRevocationAndScope(&adminJWT, isRevoked)(handler)
-		}
-
-		return handler
+		return authHandler
 	}
 }
 
-// handleLogin authenticates an admin user whose credentials are stored in
-// keeper at vault://admin/users/<username>. Basic auth from HCL is no longer
-// consulted.
-//
-// Flow:
-// Decode username + password from JSON body.
-// Load AdminUser JSON from keeper.
-// bcrypt-verify password against stored hash.
-// If keeper is locked or TOTP is enabled, issue a short-lived challenge
-//
-//	token (202 Accepted) so the client can complete those steps via
-//	POST /login/challenge.
-//
-// Otherwise issue a full JWT (200 OK).
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -318,8 +362,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Users live in keeper. If the store is locked we cannot verify credentials.
-	// Return a challenge so the client can unlock keeper first, then retry.
 	if s.keeperStore == nil || s.keeperStore.IsLocked() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
@@ -359,13 +401,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !cfg.JWTAuth.Enabled.Active() || cfg.JWTAuth.Secret.Empty() {
-		http.Error(w, "Server Config Error: 'jwt_auth.secret' is required for login", http.StatusForbidden)
-		return
-	}
-
-	jwtSecret := cfg.JWTAuth.Secret.String()
-	if jwtSecret == "" {
+	jwtSecret, err := s.getAdminJWTSecret(creds.Username)
+	if err != nil {
+		s.logger.Error("Failed to get admin JWT secret from keeper", "err", err, "user", creds.Username)
 		http.Error(w, "JWT secret not configured or inaccessible", http.StatusForbidden)
 		return
 	}
@@ -384,9 +422,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleLoginChallenge completes a two-step login when keeper unlock and/or
-// TOTP were required. The client must present the short-lived challenge token
-// issued by handleLogin.
 func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -421,6 +456,16 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Consume the challenge JTI immediately — prevents replay within the 5-minute TTL window.
+	if claims.ID != "" {
+		if _, already := s.resource.TimeStore.Get(claims.ID); already {
+			addJitter(10 * time.Millisecond)
+			http.Error(w, "Challenge token already used", http.StatusUnauthorized)
+			return
+		}
+		s.resource.TimeStore.SetTTL(claims.ID, time.Now().Add(challengeTokenTTL), challengeTokenTTL)
+	}
+
 	var creds struct {
 		TOTP             string `json:"totp"`
 		KeeperPassphrase string `json:"keeper_passphrase"`
@@ -430,7 +475,6 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// keeper unlock
 	if s.keeperStore != nil && s.keeperStore.IsLocked() {
 		if creds.KeeperPassphrase == "" {
 			addJitter(5 * time.Millisecond)
@@ -447,11 +491,12 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 		}
 		secrets.NewResolver(s.keeperStore).Wire()
 		s.logger.Info("keeper unlocked during admin challenge")
-		// Reload so that any config values referencing ss:// are now resolved.
-		go s.Reload()
+
+		// Reload synchronously — the JTI is already consumed so this runs at most once
+		// per challenge token, preventing reload amplification from replayed requests.
+		s.Reload()
 	}
 
-	// TOTP verification
 	if cfg.TOTP.Enabled.Active() {
 		if creds.TOTP == "" {
 			addJitter(5 * time.Millisecond)
@@ -465,9 +510,9 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// issue full JWT
-	jwtSecret := cfg.JWTAuth.Secret.String()
-	if jwtSecret == "" {
+	jwtSecret, err := s.getAdminJWTSecret(claims.User)
+	if err != nil {
+		s.logger.Error("Failed to get admin JWT secret from keeper", "err", err, "user", claims.User)
 		http.Error(w, "JWT secret not configured or inaccessible", http.StatusForbidden)
 		return
 	}
@@ -505,10 +550,9 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := s.apiShared.State()
-	cfg := state.Global.Admin
-	jwtSecret := cfg.JWTAuth.Secret.String()
-	if jwtSecret == "" {
+	jwtSecret, err := s.getAdminJWTSecret(user)
+	if err != nil {
+		s.logger.Error("Failed to get admin JWT secret from keeper", "err", err, "user", user)
 		http.Error(w, "JWT secret not configured or inaccessible", http.StatusForbidden)
 		return
 	}
@@ -540,33 +584,48 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
-	state := s.apiShared.State()
-	cfg := state.Global.Admin
+
+	parser := new(jwt.Parser)
+	unverifiedToken, _, err := parser.ParseUnverified(tokenStr, &adminClaims{})
+	if err != nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	claims, ok := unverifiedToken.Claims.(*adminClaims)
+	if !ok || claims.User == "" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	var secret []byte
+	if claims.Scope == "challenge" {
+		secret = challengeSecret
+	} else {
+		jwtSecret, err := s.getAdminJWTSecret(claims.User)
+		if err != nil {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		secret = []byte(jwtSecret)
+	}
 
 	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method")
 		}
-		return []byte(cfg.JWTAuth.Secret.String()), nil
+		return secret, nil
 	})
-	if err != nil || !token.Valid {
-		token, err = jwt.Parse(tokenStr, func(token *jwt.Token) (any, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method")
-			}
-			return challengeSecret, nil
-		})
-	}
 
 	if err != nil || !token.Valid {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	if claims, ok := token.Claims.(jwt.MapClaims); ok {
-		if jti, _ := claims["jti"].(string); jti != "" {
+	if mapClaims, ok := token.Claims.(jwt.MapClaims); ok {
+		if jti, _ := mapClaims["jti"].(string); jti != "" {
 			exp := adminTokenTTL
-			if expClaim, ok := claims["exp"].(float64); ok {
+			if expClaim, ok := mapClaims["exp"].(float64); ok {
 				if remaining := time.Until(time.Unix(int64(expClaim), 0)); remaining > 0 {
 					exp = remaining
 				}
@@ -612,18 +671,9 @@ func (s *Server) generateAdminToken(username, secret, scope string, ttl time.Dur
 	return tokenString, expirationTime, err
 }
 
-// verifyAdminUser loads the AdminUser record from keeper and bcrypt-verifies
-// the supplied password. The user record lives at:
-//
-//	vault://admin/users/<username>  →  JSON-encoded alaye.AdminUser
-//
-// A timing-safe dummy comparison is always performed so that missing users
-// take the same time as wrong-password users (preventing username enumeration).
 func (s *Server) verifyAdminUser(username, password string) bool {
 	userKey := expect.Vault().AdminUser(username)
 	data, err := s.keeperStore.Get(userKey)
-
-	// Always run bcrypt to prevent timing-based username enumeration.
 	hashToCompare := dummyHash
 	if err == nil && len(data) > 0 {
 		var user alaye.AdminUser
@@ -633,7 +683,7 @@ func (s *Server) verifyAdminUser(username, password string) bool {
 	}
 
 	inputUserHash := sha256.Sum256([]byte(username))
-	_ = inputUserHash // future use for constant-time username matching
+	_ = inputUserHash
 
 	found := int32(0)
 	if err == nil && len(data) > 0 {
@@ -644,11 +694,6 @@ func (s *Server) verifyAdminUser(username, password string) bool {
 	return subtle.ConstantTimeEq(found, 1) == 1 && bcryptErr == nil
 }
 
-// verifyCredentials is kept for any remaining callers that still use the old
-// HCL user list format ("username:bcrypt_hash"). It will be removed once all
-// callers migrate to verifyAdminUser.
-//
-// Deprecated: use verifyAdminUser — users are now stored in keeper.
 func (s *Server) verifyCredentials(users []string, username, password string) bool {
 	inputUserHash := sha256.Sum256([]byte(username))
 	foundHash := dummyHash
@@ -754,6 +799,19 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
+}
+
+func (s *Server) getAdminJWTSecret(username string) (string, error) {
+	if s.keeperStore == nil || s.keeperStore.IsLocked() {
+		return "", errors.New("keeper is locked or unavailable")
+	}
+	key := expect.Vault().AdminJWT(username)
+	secretBytes, err := s.keeperStore.Get(key)
+	if err != nil {
+
+		return "", fmt.Errorf("JWT secret not found or inaccessible for user %s: %w", username, err)
+	}
+	return string(secretBytes), nil
 }
 
 func addJitter(maxDelay time.Duration) {

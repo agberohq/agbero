@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 )
 
 func TestCORS(t *testing.T) {
@@ -22,7 +23,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Disabled",
 			config: alaye.CORS{
-				Enabled: alaye.Inactive,
+				Enabled: expect.Inactive,
 			},
 			reqMethod:  "GET",
 			reqHeaders: map[string]string{"Origin": "https://example.com"},
@@ -35,7 +36,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "No Origin Header",
 			config: alaye.CORS{
-				Enabled:        alaye.Active,
+				Enabled:        expect.Active,
 				AllowedOrigins: []string{"*"},
 			},
 			reqMethod:  "GET",
@@ -48,7 +49,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Origin Not Allowed",
 			config: alaye.CORS{
-				Enabled:        alaye.Active,
+				Enabled:        expect.Active,
 				AllowedOrigins: []string{"https://good.com"},
 			},
 			reqMethod:  "GET",
@@ -64,7 +65,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Origin Allowed Exact",
 			config: alaye.CORS{
-				Enabled:        alaye.Active,
+				Enabled:        expect.Active,
 				AllowedOrigins: []string{"https://good.com"},
 			},
 			reqMethod:  "GET",
@@ -78,7 +79,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Wildcard Origin",
 			config: alaye.CORS{
-				Enabled:        alaye.Active,
+				Enabled:        expect.Active,
 				AllowedOrigins: []string{"*"},
 			},
 			reqMethod:  "GET",
@@ -92,7 +93,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Wildcard With Credentials",
 			config: alaye.CORS{
-				Enabled:          alaye.Active,
+				Enabled:          expect.Active,
 				AllowedOrigins:   []string{"*"},
 				AllowCredentials: true,
 			},
@@ -108,7 +109,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Allow Credentials",
 			config: alaye.CORS{
-				Enabled:          alaye.Active,
+				Enabled:          expect.Active,
 				AllowedOrigins:   []string{"https://auth.com"},
 				AllowCredentials: true,
 			},
@@ -124,7 +125,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Preflight (OPTIONS) - Valid",
 			config: alaye.CORS{
-				Enabled:        alaye.Active,
+				Enabled:        expect.Active,
 				AllowedOrigins: []string{"https://api.com"},
 				AllowedMethods: []string{"GET", "POST", "PUT"},
 				AllowedHeaders: []string{"X-Custom", "Content-Type"},
@@ -147,7 +148,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Preflight (OPTIONS) - Missing Request Method",
 			config: alaye.CORS{
-				Enabled:        alaye.Active,
+				Enabled:        expect.Active,
 				AllowedOrigins: []string{"https://api.com"},
 				AllowedMethods: []string{"GET", "POST"},
 			},
@@ -165,7 +166,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Preflight (OPTIONS) - Origin Not Allowed",
 			config: alaye.CORS{
-				Enabled:        alaye.Active,
+				Enabled:        expect.Active,
 				AllowedOrigins: []string{"https://allowed.com"},
 				AllowedMethods: []string{"GET", "POST"},
 			},
@@ -186,7 +187,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Exposed Headers",
 			config: alaye.CORS{
-				Enabled:        alaye.Active,
+				Enabled:        expect.Active,
 				AllowedOrigins: []string{"https://api.com"},
 				ExposedHeaders: []string{"X-Trace-ID", "X-Request-ID"},
 			},
@@ -202,7 +203,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Multiple Allowed Origins",
 			config: alaye.CORS{
-				Enabled:        alaye.Active,
+				Enabled:        expect.Active,
 				AllowedOrigins: []string{"https://site1.com", "https://site2.com", "https://site3.com"},
 			},
 			reqMethod:  "GET",
@@ -216,7 +217,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Case Insensitive Origin Matching",
 			config: alaye.CORS{
-				Enabled:        alaye.Active,
+				Enabled:        expect.Active,
 				AllowedOrigins: []string{"https://Example.com"},
 			},
 			reqMethod:  "GET",
@@ -230,7 +231,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Wildcard Subdomain Match",
 			config: alaye.CORS{
-				Enabled:        alaye.Active,
+				Enabled:        expect.Active,
 				AllowedOrigins: []string{"https://*.localhost"},
 			},
 			reqMethod:  "GET",
@@ -244,7 +245,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Wildcard Subdomain Multiple Levels Match",
 			config: alaye.CORS{
-				Enabled:        alaye.Active,
+				Enabled:        expect.Active,
 				AllowedOrigins: []string{"https://*.example.com"},
 			},
 			reqMethod:  "GET",
@@ -258,7 +259,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Wildcard Subdomain Mismatch (Wrong Base Domain)",
 			config: alaye.CORS{
-				Enabled:        alaye.Active,
+				Enabled:        expect.Active,
 				AllowedOrigins: []string{"https://*.localhost"},
 			},
 			reqMethod:  "GET",
@@ -274,7 +275,7 @@ func TestCORS(t *testing.T) {
 		{
 			name: "Wildcard Subdomain Mismatch (Wrong Protocol)",
 			config: alaye.CORS{
-				Enabled:        alaye.Active,
+				Enabled:        expect.Active,
 				AllowedOrigins: []string{"https://*.localhost"},
 			},
 			reqMethod:  "GET",
@@ -326,7 +327,7 @@ func TestCORS(t *testing.T) {
 
 func TestCORSVaryHeader(t *testing.T) {
 	config := &alaye.CORS{
-		Enabled:        alaye.Active,
+		Enabled:        expect.Active,
 		AllowedOrigins: []string{"https://example.com"},
 	}
 

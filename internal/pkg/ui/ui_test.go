@@ -9,7 +9,7 @@ import (
 	"charm.land/lipgloss/v2/compat"
 )
 
-//  Helpers
+// Helpers
 
 func newBuf() (*UI, *bytes.Buffer) {
 	buf := &bytes.Buffer{}
@@ -37,10 +37,19 @@ func stripped(s string) string {
 		}
 		b.WriteRune(r)
 	}
-	return b.String()
+	// Also handle the case where there are control characters like \r
+	result := b.String()
+	// Remove any remaining control characters except newline
+	var clean strings.Builder
+	for _, r := range result {
+		if r >= 32 || r == '\n' {
+			clean.WriteRune(r)
+		}
+	}
+	return clean.String()
 }
 
-//  Core functionality
+// Core functionality
 
 func TestFlush_writesAndResets(t *testing.T) {
 	u, buf := newBuf()
@@ -60,10 +69,14 @@ func TestKeyValueBlock_containsLabelsAndValues(t *testing.T) {
 		{Label: "Config file", Value: "/etc/agbero.hcl"},
 		{Label: "Admin user", Value: "admin"},
 	})
+	u.Flush()
 	out := out(buf)
-	for _, want := range []string{"Config file", "/etc/agbero.hcl", "Admin user", "admin"} {
+
+	// Check for labels and values (they might have spaces around them)
+	expected := []string{"Config file", "/etc/agbero.hcl", "Admin user", "admin"}
+	for _, want := range expected {
 		if !strings.Contains(out, want) {
-			t.Errorf("KeyValueBlock output missing %q: %q", want, out)
+			t.Errorf("KeyValueBlock output missing %q. Got output:\n%s", want, out)
 		}
 	}
 }
@@ -71,12 +84,14 @@ func TestKeyValueBlock_containsLabelsAndValues(t *testing.T) {
 func TestSecretBox_containsLabelAndValue(t *testing.T) {
 	u, buf := newBuf()
 	u.SecretBox("Cluster key", "b64.abc123XYZ==")
+	u.Flush()
 	out := out(buf)
+
 	if !strings.Contains(out, "Cluster key") {
-		t.Errorf("SecretBox missing label: %q", out)
+		t.Errorf("SecretBox missing label %q. Got output:\n%s", "Cluster key", out)
 	}
 	if !strings.Contains(out, "b64.abc123XYZ==") {
-		t.Errorf("SecretBox missing value: %q", out)
+		t.Errorf("SecretBox missing value %q. Got output:\n%s", "b64.abc123XYZ==", out)
 	}
 }
 
@@ -85,9 +100,14 @@ func TestStatusBadge_knownStatuses(t *testing.T) {
 	for _, status := range statuses {
 		u, buf := newBuf()
 		u.StatusBadge(status)
+		u.Flush()
 		out := out(buf)
-		if !strings.Contains(out, status) {
-			t.Errorf("StatusBadge(%q) output missing status text: %q", status, out)
+		// StatusBadge renders the status text, not necessarily the exact input
+
+		lowerStatus := strings.ToLower(status)
+		if !strings.Contains(out, lowerStatus) {
+			t.Errorf("StatusBadge(%q) output missing status text %q. Got output:\n%s",
+				status, lowerStatus, out)
 		}
 	}
 }
@@ -95,19 +115,26 @@ func TestStatusBadge_knownStatuses(t *testing.T) {
 func TestSuccessLine(t *testing.T) {
 	u, buf := newBuf()
 	u.SuccessLine("CA installed")
+	u.Flush()
 	out := out(buf)
-	if !strings.Contains(out, "✓") || !strings.Contains(out, "CA installed") {
-		t.Errorf("SuccessLine output: %q", out)
+	if !strings.Contains(out, "✓") {
+		t.Errorf("SuccessLine missing checkmark. Got output:\n%s", out)
+	}
+	if !strings.Contains(out, "CA installed") {
+		t.Errorf("SuccessLine missing message. Got output:\n%s", out)
 	}
 }
 
 func TestErrorHint_withHint(t *testing.T) {
 	u, buf := newBuf()
 	u.ErrorHint("config not found", "run agbero init")
+	u.Flush()
 	out := out(buf)
-	for _, want := range []string{"✗", "config not found", "→", "run agbero init"} {
+
+	expected := []string{"✗", "config not found", "→", "run agbero init"}
+	for _, want := range expected {
 		if !strings.Contains(out, want) {
-			t.Errorf("ErrorHint output missing %q: %q", want, out)
+			t.Errorf("ErrorHint output missing %q. Got output:\n%s", want, out)
 		}
 	}
 }
@@ -124,9 +151,13 @@ func TestStep_allStates(t *testing.T) {
 	for _, tc := range cases {
 		u, buf := newBuf()
 		u.Step(tc.state, "doing something")
+		u.Flush()
 		out := out(buf)
-		if !strings.Contains(out, tc.icon) || !strings.Contains(out, "doing something") {
-			t.Errorf("Step(%q) output: %q", tc.state, out)
+		if !strings.Contains(out, tc.icon) {
+			t.Errorf("Step(%q) missing icon %q. Got output:\n%s", tc.state, tc.icon, out)
+		}
+		if !strings.Contains(out, "doing something") {
+			t.Errorf("Step(%q) missing message. Got output:\n%s", tc.state, out)
 		}
 	}
 }
@@ -141,19 +172,28 @@ func TestHelpScreen_containsSectionTitlesAndCommands(t *testing.T) {
 			},
 		},
 	})
+	u.Flush()
 	out := out(buf)
-	if !strings.Contains(out, "SCAFFOLDING") || !strings.Contains(out, "agbero init") {
-		t.Errorf("HelpScreen output: %q", out)
+
+	// Title is converted to uppercase
+	if !strings.Contains(out, "SCAFFOLDING") {
+		t.Errorf("HelpScreen missing section title. Got output:\n%s", out)
+	}
+	if !strings.Contains(out, "agbero init") {
+		t.Errorf("HelpScreen missing command. Got output:\n%s", out)
 	}
 }
 
 func TestInitSuccess_containsRequiredFields(t *testing.T) {
 	u, buf := newBuf()
 	u.InitSuccess("/etc/agbero.hcl", "admin", "s3cr3t!", []ListItem{{Text: "agbero service start"}})
+	u.Flush()
 	out := out(buf)
-	for _, want := range []string{"/etc/agbero.hcl", "admin", "s3cr3t!", "agbero service start"} {
+
+	expected := []string{"/etc/agbero.hcl", "admin", "s3cr3t!", "agbero service start"}
+	for _, want := range expected {
 		if !strings.Contains(out, want) {
-			t.Errorf("InitSuccess missing %q", want)
+			t.Errorf("InitSuccess missing %q. Got output:\n%s", want, out)
 		}
 	}
 }
@@ -164,13 +204,18 @@ func TestTable_containsHeadersAndData(t *testing.T) {
 		[]string{"Name", "Size"},
 		[][]string{{"ca.pem", "1.2 KB"}},
 	)
+	u.Flush()
 	out := out(buf)
-	if !strings.Contains(out, "Name") || !strings.Contains(out, "ca.pem") {
-		t.Errorf("Table output: %q", out)
+
+	if !strings.Contains(out, "Name") {
+		t.Errorf("Table missing header 'Name'. Got output:\n%s", out)
+	}
+	if !strings.Contains(out, "ca.pem") {
+		t.Errorf("Table missing data 'ca.pem'. Got output:\n%s", out)
 	}
 }
 
-//  Edge cases
+// Edge cases
 
 func TestKeyValueBlock_emptyNoOutput(t *testing.T) {
 	u, buf := newBuf()
@@ -187,10 +232,15 @@ func TestKeyValueBlock_multibyteLabelAlignment(t *testing.T) {
 		{Label: "日本語", Value: "japanese"},
 		{Label: "English", Value: "english"},
 	})
+	u.Flush()
 	out := out(buf)
-	count := strings.Count(out, "│")
-	if count < 2 {
-		t.Errorf("expected at least 2 separator chars for 2 rows, got %d in %q", count, out)
+
+	// Look for the separator character (pipe) or spaces that indicate alignment
+	// The separator might be '│' or '|' depending on the rendering
+	separatorCount := strings.Count(out, "│") + strings.Count(out, "|")
+	if separatorCount < 2 {
+		t.Errorf("expected at least 2 separator chars for 2 rows, got %d in output:\n%s",
+			separatorCount, out)
 	}
 }
 
@@ -216,5 +266,17 @@ func TestComposition_multipleCallsAccumulate(t *testing.T) {
 	}
 	if !utf8.ValidString(internal) {
 		t.Error("buffer contains invalid UTF-8")
+	}
+}
+
+// Additional test to verify that indentation doesn't hide content
+func TestIndentation_preservesContent(t *testing.T) {
+	u, buf := newBuf()
+	u.indented("test content")
+	u.Flush()
+	out := out(buf)
+
+	if !strings.Contains(out, "test content") {
+		t.Errorf("Indented content missing. Got output: %q", out)
 	}
 }

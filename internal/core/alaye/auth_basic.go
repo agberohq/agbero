@@ -3,13 +3,14 @@ package alaye
 import (
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
 type BasicAuth struct {
-	Enabled Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Users   []string `hcl:"users,attr" json:"users"`
-	Realm   string   `hcl:"realm,attr" json:"realm"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Users   []string      `hcl:"users,attr" json:"users"`
+	Realm   string        `hcl:"realm,attr" json:"realm"`
 }
 
 // Validate checks that users are present and formatted as username:password pairs.

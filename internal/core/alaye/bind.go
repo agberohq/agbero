@@ -4,13 +4,14 @@ import (
 	"net"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
 type Bind struct {
-	HTTP     []string `hcl:"http,attr" json:"http"`
-	HTTPS    []string `hcl:"https,attr" json:"https"`
-	Redirect Enabled  `hcl:"redirect,attr" json:"redirect"`
+	HTTP     []string      `hcl:"http,attr" json:"http"`
+	HTTPS    []string      `hcl:"https,attr" json:"https"`
+	Redirect expect.Toggle `hcl:"redirect,attr" json:"redirect"`
 }
 
 // Validate checks that at least one HTTP or HTTPS address is configured.

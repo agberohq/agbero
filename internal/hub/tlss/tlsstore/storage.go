@@ -3,6 +3,7 @@ package tlsstore
 import (
 	"errors"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/keeper"
 )
@@ -34,8 +35,8 @@ type Store interface {
 // Config holds configuration for storage backends
 type Config struct {
 	// For disk storage
-	DataDir string           // For CA and System certs (persistent, secure)
-	CertDir string           // For domain certs (can be ephemeral)
+	DataDir expect.Folder    // For CA and System certs (persistent, secure)
+	CertDir expect.Folder    // For domain certs (can be ephemeral)
 	Cipher  *security.Cipher // Use concrete type, not interface{}
 
 	// For Keeper storage

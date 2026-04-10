@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -81,11 +82,11 @@ func MarshalFile(path string, input any) error {
 		return fmt.Errorf("encode HCL: %w", err)
 	}
 	dir := filepath.Dir(abs)
-	if err := os.MkdirAll(dir, woos.DirPerm); err != nil {
+	if err := os.MkdirAll(dir, expect.DirPerm); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
 	tmpPath := abs + ".tmp"
-	if err := os.WriteFile(tmpPath, data, woos.FilePerm); err != nil {
+	if err := os.WriteFile(tmpPath, data, expect.FilePerm); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("write temp config: %w", err)
 	}

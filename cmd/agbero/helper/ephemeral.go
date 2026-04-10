@@ -10,9 +10,10 @@ import (
 
 	"github.com/agberohq/agbero"
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
-	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
+	discovery "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
 )
@@ -89,7 +90,7 @@ func (e *Ephemeral) Serve() {
 	}
 	u.KeyValueBlock("", pairs)
 	u.InfoLine("press Ctrl+C to stop")
-
+	u.Flush()
 	e.run(global, hosts)
 }
 
@@ -158,7 +159,7 @@ func (e *Ephemeral) Proxy() {
 		{Label: "URL", Value: u.LinkInline(displayURL, displayURL)},
 	})
 	u.InfoLine("press Ctrl+C to stop")
-
+	u.Flush()
 	e.run(global, hosts)
 }
 
@@ -173,15 +174,15 @@ func (e *Ephemeral) createGlobal(bindHost string, port int, useHTTPS bool, ctx *
 		}
 	}
 	if ctx != nil {
-		global.Storage.CertsDir = ctx.Paths.CertsDir.Path()
-		global.Storage.DataDir = ctx.Paths.DataDir.Path()
-		global.Storage.WorkDir = ctx.Paths.WorkDir.Path()
+		global.Storage.CertsDir = ctx.Paths.CertsDir
+		global.Storage.DataDir = ctx.Paths.DataDir
+		global.Storage.WorkDir = ctx.Paths.WorkDir
 	}
 	return global
 }
 
 func (e *Ephemeral) run(global *alaye.Global, hosts map[string]*alaye.Host) {
-	hm := discovery2.NewHost(woos.NewFolder(""), discovery2.WithLogger(e.p.Logger))
+	hm := discovery.NewHost(expect.NewFolder(""), discovery.WithLogger(e.p.Logger))
 	hm.LoadStatic(hosts)
 
 	l, _ := zulu.Logging(&global.Logging, e.p.Cfg.DevMode, e.p.Shutdown)

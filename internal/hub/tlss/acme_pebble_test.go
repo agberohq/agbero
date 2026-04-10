@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 )
 
@@ -55,26 +55,26 @@ func TestPebbleIntegration(t *testing.T) {
 
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{
-			Enabled:   alaye.Inactive,
+			Enabled:   expect.Inactive,
 			SecretKey: "test-secret-1234567890123456",
 		},
 		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Email:   "test@pebble.local",
-			Staging: alaye.Inactive,
+			Staging: expect.Inactive,
 			Pebble: alaye.Pebble{
-				Enabled:  alaye.Active,
+				Enabled:  expect.Active,
 				URL:      pebbleURL,
-				Insecure: alaye.Active,
+				Insecure: expect.Active,
 			},
 		},
 	}
 
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	testDomain := "example.pebble.local"
 	hm.Set(testDomain, &alaye.Host{
 		Domains: []string{testDomain},
@@ -130,21 +130,21 @@ func TestPebbleWithCustomDomain(t *testing.T) {
 	tmpDir := t.TempDir()
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Email:   "test@pebble.local",
 			Pebble: alaye.Pebble{
-				Enabled:  alaye.Active,
+				Enabled:  expect.Active,
 				URL:      "https://localhost:14000/dir",
-				Insecure: alaye.Active,
+				Insecure: expect.Active,
 			},
 		},
 	}
 
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	domains := []string{"test1.pebble.local", "test2.pebble.local"}
 
 	for _, domain := range domains {
@@ -188,21 +188,21 @@ func TestACMEProvider_PebbleIntegration(t *testing.T) {
 	}
 	global := &alaye.Global{
 		Storage: alaye.Storage{
-			CertsDir: filepath.Join(tmpDir, "certs"),
-			DataDir:  filepath.Join(tmpDir, "data"),
+			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
+			DataDir:  expect.NewFolder(filepath.Join(tmpDir, "data")),
 		},
 		Gossip: alaye.Gossip{SecretKey: "test-secret-1234567890123456"},
 		LetsEncrypt: alaye.LetsEncrypt{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Email:   "test@pebble.local",
 			Pebble: alaye.Pebble{
-				Enabled:  alaye.Active,
+				Enabled:  expect.Active,
 				URL:      pebbleURL,
-				Insecure: alaye.Active,
+				Insecure: expect.Active,
 			},
 		},
 	}
-	hm := discovery.NewHost(woos.NewFolder(tmpDir))
+	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	testDomain := "test.pebble.local"

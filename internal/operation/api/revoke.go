@@ -9,14 +9,11 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-// RevokeHandler registers the token revocation endpoint under /api/v1.
-// This is an admin-only endpoint — it must be called inside the admin auth group.
 func RevokeHandler(s *Shared, r chi.Router) {
 	rv := &Revoke{shared: s, logger: s.Logger.Namespace("api/revoke")}
 	r.Post("/auto/revoke", rv.revoke)
 }
 
-// Revoke handles admin requests to invalidate service tokens by JTI.
 type Revoke struct {
 	shared *Shared
 	logger *ll.Logger
@@ -46,13 +43,19 @@ func (rv *Revoke) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if time.Now().After(req.ExpiresAt) {
-		// Token already expired — nothing to revoke, treat as success.
+		// Token is already expired — nothing to revoke, treat as success.
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
 			"status":  "ok",
 			"message": "token already expired, no action needed",
 		})
 		return
+	}
+	// Cap expires_at to 400 days out — prevents permanent store bloat from
+	// a caller supplying a far-future timestamp.
+	maxExpiry := time.Now().Add(400 * 24 * time.Hour)
+	if req.ExpiresAt.After(maxExpiry) {
+		req.ExpiresAt = maxExpiry
 	}
 
 	if err := rv.shared.RevokeStore.Revoke(req.JTI, req.Service, req.ExpiresAt); err != nil {

@@ -11,11 +11,10 @@ import (
 )
 
 type Security struct {
-	Enabled         Enabled  `hcl:"enabled,attr" json:"enabled"`
-	TrustedProxies  []string `hcl:"trusted_proxies,attr" json:"trusted_proxies"`
-	InternalAuthKey string   `hcl:"internal_auth_key,attr" json:"internal_auth_key"`
-	Firewall        Firewall `hcl:"firewall,block" json:"firewall"`
-	Keeper          Keeper   `hcl:"keeper,block" json:"keep"`
+	Enabled        expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	TrustedProxies []string      `hcl:"trusted_proxies,attr" json:"trusted_proxies"`
+	Firewall       Firewall      `hcl:"firewall,block" json:"firewall"`
+	Keeper         Keeper        `hcl:"keeper,block" json:"keep"`
 }
 
 // Validate checks trusted proxy formats and delegates to Firewall.Validate.
@@ -73,15 +72,15 @@ func (r *Rule) Validate() error {
 }
 
 type Match struct {
-	Enabled   Enabled     `hcl:"enabled,attr" json:"enabled"`
-	IP        []string    `hcl:"ip,attr" json:"ip"`
-	Path      []string    `hcl:"path,attr" json:"path"`
-	Methods   []string    `hcl:"methods,attr" json:"methods"`
-	Any       []Condition `hcl:"any,block" json:"any"`
-	All       []Condition `hcl:"all,block" json:"all"`
-	None      []Condition `hcl:"none,block" json:"none"`
-	Extract   *Extract    `hcl:"extract,block" json:"extract,omitempty"`
-	Threshold *Threshold  `hcl:"threshold,block" json:"threshold,omitempty"`
+	Enabled   expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	IP        []string      `hcl:"ip,attr" json:"ip"`
+	Path      []string      `hcl:"path,attr" json:"path"`
+	Methods   []string      `hcl:"methods,attr" json:"methods"`
+	Any       []Condition   `hcl:"any,block" json:"any"`
+	All       []Condition   `hcl:"all,block" json:"all"`
+	None      []Condition   `hcl:"none,block" json:"none"`
+	Extract   *Extract      `hcl:"extract,block" json:"extract,omitempty"`
+	Threshold *Threshold    `hcl:"threshold,block" json:"threshold,omitempty"`
 }
 
 // Validate checks all condition groups, extract, and threshold blocks.
@@ -118,14 +117,14 @@ func (m *Match) Validate() error {
 }
 
 type Condition struct {
-	Enabled    Enabled `hcl:"enabled,attr" json:"enabled"`
-	Location   string  `hcl:"location,attr" json:"location"`
-	Key        string  `hcl:"key,attr" json:"key"`
-	Operator   string  `hcl:"operator,attr" json:"operator"`
-	Value      string  `hcl:"value,attr" json:"value"`
-	Pattern    string  `hcl:"pattern,attr" json:"pattern"`
-	Negate     bool    `hcl:"negate,attr" json:"negate"`
-	IgnoreCase bool    `hcl:"ignore_case,attr" json:"ignore_case"`
+	Enabled    expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Location   string        `hcl:"location,attr" json:"location"`
+	Key        string        `hcl:"key,attr" json:"key"`
+	Operator   string        `hcl:"operator,attr" json:"operator"`
+	Value      string        `hcl:"value,attr" json:"value"`
+	Pattern    string        `hcl:"pattern,attr" json:"pattern"`
+	Negate     bool          `hcl:"negate,attr" json:"negate"`
+	IgnoreCase bool          `hcl:"ignore_case,attr" json:"ignore_case"`
 
 	Compiled *regexp.Regexp `hcl:"-" json:"-"`
 }
@@ -151,10 +150,10 @@ func (c *Condition) Validate() error {
 }
 
 type Extract struct {
-	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
-	From    string  `hcl:"from,attr" json:"from"`
-	Pattern string  `hcl:"pattern,attr" json:"pattern"`
-	As      string  `hcl:"as,attr" json:"as"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	From    string        `hcl:"from,attr" json:"from"`
+	Pattern string        `hcl:"pattern,attr" json:"pattern"`
+	As      string        `hcl:"as,attr" json:"as"`
 
 	Regex *regexp.Regexp `hcl:"-" json:"-"`
 }
@@ -176,12 +175,12 @@ func (e *Extract) Validate() error {
 }
 
 type Threshold struct {
-	Enabled  Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Count    int      `hcl:"count,attr" json:"count"`
-	Window   Duration `hcl:"window,attr" json:"window"`
-	TrackBy  string   `hcl:"track_by,attr" json:"track_by"`
-	GroupBy  string   `hcl:"group_by,attr" json:"group_by"`
-	OnExceed string   `hcl:"on_exceed,attr" json:"on_exceed"`
+	Enabled  expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Count    int           `hcl:"count,attr" json:"count"`
+	Window   Duration      `hcl:"window,attr" json:"window"`
+	TrackBy  string        `hcl:"track_by,attr" json:"track_by"`
+	GroupBy  string        `hcl:"group_by,attr" json:"group_by"`
+	OnExceed string        `hcl:"on_exceed,attr" json:"on_exceed"`
 }
 
 // Validate checks that count and window are positive when threshold is enabled.
@@ -206,7 +205,7 @@ type Action struct {
 }
 
 type Response struct {
-	Status       Enabled           `hcl:"enabled,attr" json:"enabled"`
+	Status       expect.Toggle     `hcl:"enabled,attr" json:"enabled"`
 	ContentType  string            `hcl:"content_type,attr" json:"content_type"`
 	BodyTemplate string            `hcl:"body_template,attr" json:"body_template"`
 	Headers      map[string]string `hcl:"headers,attr" json:"headers"`
@@ -216,14 +215,14 @@ type Response struct {
 }
 
 type Firewall struct {
-	Status              Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Mode                string   `hcl:"mode,attr" json:"mode"`
-	InspectBody         bool     `hcl:"inspect_body,attr" json:"inspect_body"`
-	MaxInspectBytes     int64    `hcl:"max_inspect_bytes,attr" json:"max_inspect_bytes"`
-	InspectContentTypes []string `hcl:"inspect_content_types,attr" json:"inspect_content_types"`
-	Defaults            Defaults `hcl:"defaults,block" json:"defaults"`
-	Rules               []Rule   `hcl:"rule,block" json:"rules"`
-	Actions             []Action `hcl:"action,block" json:"actions"`
+	Status              expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Mode                string        `hcl:"mode,attr" json:"mode"`
+	InspectBody         bool          `hcl:"inspect_body,attr" json:"inspect_body"`
+	MaxInspectBytes     int64         `hcl:"max_inspect_bytes,attr" json:"max_inspect_bytes"`
+	InspectContentTypes []string      `hcl:"inspect_content_types,attr" json:"inspect_content_types"`
+	Defaults            Defaults      `hcl:"defaults,block" json:"defaults"`
+	Rules               []Rule        `hcl:"rule,block" json:"rules"`
+	Actions             []Action      `hcl:"action,block" json:"actions"`
 }
 
 // Validate checks firewall mode and delegates rule and action validation.
@@ -258,21 +257,24 @@ func (f *Firewall) Validate() error {
 }
 
 type FirewallRoute struct {
-	Status       Enabled  `hcl:"enabled,attr" json:"enabled"`
-	IgnoreGlobal bool     `hcl:"ignore_global,attr" json:"ignore_global"`
-	ApplyRules   []string `hcl:"apply_rules,attr" json:"apply_rules"`
-	Rules        []Rule   `hcl:"rule,block" json:"rules,omitempty"`
+	Status       expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	IgnoreGlobal bool          `hcl:"ignore_global,attr" json:"ignore_global"`
+	ApplyRules   []string      `hcl:"apply_rules,attr" json:"apply_rules"`
+	Rules        []Rule        `hcl:"rule,block" json:"rules,omitempty"`
 }
 
 type Keeper struct {
 	// Enabled indicates whether the secret store is active.
-	Enabled Enabled `hcl:"enabled,attr" json:"enabled"`
+	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+
+	// Logging specifies whether logging is enabled or disabled for the secret store.
+	Logging expect.Toggle `hcl:"logging,attr" json:"logging"`
 
 	// AutoLock is the duration after which the store auto-locks when idle (0 = disabled).
 	AutoLock Duration `hcl:"auto_lock,attr" json:"auto_lock"`
 
 	// Audit enables audit logging of all secret access (get/set/delete).
-	Audit Enabled `hcl:"audit,attr" json:"audit"`
+	Audit expect.Toggle `hcl:"audit,attr" json:"audit"`
 
 	// Passphrase is the master passphrase to unlock the store.
 	// This should be a secret reference (e.g., "env.SECRET_STORE_PASS") to avoid plaintext.

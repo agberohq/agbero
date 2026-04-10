@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/resource"
 )
@@ -19,7 +20,7 @@ import (
 var res = resource.New()
 
 func TestForward_Disabled(t *testing.T) {
-	cfg := &alaye.ForwardAuth{Enabled: alaye.Inactive}
+	cfg := &alaye.ForwardAuth{Enabled: expect.Inactive}
 	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("next-handler"))
@@ -39,7 +40,7 @@ func TestForward_Disabled(t *testing.T) {
 }
 
 func TestForward_EmptyURL(t *testing.T) {
-	cfg := &alaye.ForwardAuth{Enabled: alaye.Active, URL: ""}
+	cfg := &alaye.ForwardAuth{Enabled: expect.Active, URL: ""}
 	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -63,12 +64,12 @@ func TestForward_Success_AllowsRequest(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_success_allows",
 		URL:          authServer.URL,
 		AllowPrivate: true, // test server binds to loopback
 		Request: alaye.ForwardAuthRequest{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Headers: []string{"Authorization"},
 		},
 	}
@@ -106,7 +107,7 @@ func TestForward_Forbidden_BlocksRequest(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_forbidden_blocks",
 		URL:          authServer.URL,
 		AllowPrivate: true,
@@ -146,7 +147,7 @@ func TestForward_Unauthorized(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_unauthorized",
 		URL:          authServer.URL,
 		AllowPrivate: true,
@@ -177,7 +178,7 @@ func TestForward_DefaultHeaders(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_default_headers",
 		URL:          authServer.URL,
 		AllowPrivate: true,
@@ -212,12 +213,12 @@ func TestForward_CustomHeaders(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_custom_headers",
 		URL:          authServer.URL,
 		AllowPrivate: true,
 		Request: alaye.ForwardAuthRequest{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Headers: []string{"X-API-Key", "X-Tenant-ID"},
 		},
 	}
@@ -251,12 +252,12 @@ func TestForward_MetadataHeaders(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_metadata_headers",
 		URL:          authServer.URL,
 		AllowPrivate: true,
 		Request: alaye.ForwardAuthRequest{
-			Enabled:       alaye.Active,
+			Enabled:       expect.Active,
 			ForwardMethod: true,
 			ForwardURI:    true,
 			ForwardIP:     true,
@@ -293,12 +294,12 @@ func TestForward_CopyHeadersToBackend(t *testing.T) {
 
 	var receivedUserID, receivedEmail, receivedScopes string
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_copy_headers",
 		URL:          authServer.URL,
 		AllowPrivate: true,
 		Response: alaye.ForwardAuthResponse{
-			Enabled:     alaye.Active,
+			Enabled:     expect.Active,
 			CopyHeaders: []string{"X-User-ID", "X-User-Email", "X-User-Scopes"},
 		},
 	}
@@ -338,12 +339,12 @@ func TestForward_BodyMode_None(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_body_none",
 		URL:          authServer.URL,
 		AllowPrivate: true,
 		Request: alaye.ForwardAuthRequest{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			BodyMode: "none",
 		},
 	}
@@ -381,12 +382,12 @@ func TestForward_BodyMode_Metadata(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_body_metadata",
 		URL:          authServer.URL,
 		AllowPrivate: true,
 		Request: alaye.ForwardAuthRequest{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			BodyMode: "metadata",
 			Method:   http.MethodPost,
 		},
@@ -425,12 +426,12 @@ func TestForward_BodyMode_Limited(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_body_limited",
 		URL:          authServer.URL,
 		AllowPrivate: true,
 		Request: alaye.ForwardAuthRequest{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			BodyMode: "limited",
 			MaxBody:  100,
 		},
@@ -474,7 +475,7 @@ func TestForward_BodyMode_Limited(t *testing.T) {
 
 func TestForward_OnFailure_Allow(t *testing.T) {
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_failure_allow",
 		URL:          "http://127.0.0.1:1",
 		OnFailure:    "allow",
@@ -503,7 +504,7 @@ func TestForward_OnFailure_Allow(t *testing.T) {
 
 func TestForward_OnFailure_Deny(t *testing.T) {
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_failure_deny",
 		URL:          "http://127.0.0.1:1",
 		OnFailure:    "deny",
@@ -535,7 +536,7 @@ func TestForward_Timeout(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_timeout",
 		URL:          authServer.URL,
 		Timeout:      alaye.Duration(50 * time.Millisecond),
@@ -562,12 +563,12 @@ func TestForward_TLS_InsecureSkipVerify(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_tls_skip_verify",
 		URL:          authServer.URL,
 		AllowPrivate: true,
 		TLS: alaye.ForwardTLS{
-			Enabled:            alaye.Active,
+			Enabled:            expect.Active,
 			InsecureSkipVerify: true,
 		},
 	}
@@ -595,7 +596,7 @@ func TestForward_EmptyAuthorization(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_empty_auth",
 		URL:          authServer.URL,
 		AllowPrivate: true,
@@ -621,7 +622,7 @@ func TestForward_AuthService5xx(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_5xx",
 		URL:          authServer.URL,
 		OnFailure:    "deny",
@@ -650,16 +651,16 @@ func TestForward_ConcurrentRequests(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_concurrent",
 		URL:          authServer.URL,
 		AllowPrivate: true,
 		Request: alaye.ForwardAuthRequest{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			CacheKey: []string{"Authorization"},
 		},
 		Response: alaye.ForwardAuthResponse{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			CacheTTL: alaye.Duration(1 * time.Minute),
 		},
 	}
@@ -699,12 +700,12 @@ func TestForward_LargeResponseHeaders(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_large_headers",
 		URL:          authServer.URL,
 		AllowPrivate: true,
 		Response: alaye.ForwardAuthResponse{
-			Enabled:     alaye.Active,
+			Enabled:     expect.Active,
 			CopyHeaders: []string{"X-User-Token", "X-User-ID"},
 		},
 	}
@@ -733,12 +734,12 @@ func TestForward_SpecialCharactersInURI(t *testing.T) {
 	defer authServer.Close()
 
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_special_uri",
 		URL:          authServer.URL,
 		AllowPrivate: true,
 		Request: alaye.ForwardAuthRequest{
-			Enabled:    alaye.Active,
+			Enabled:    expect.Active,
 			ForwardURI: true,
 		},
 	}
@@ -759,7 +760,7 @@ func TestForward_SpecialCharactersInURI(t *testing.T) {
 // is rejected at Validate() time, not at request time.
 func TestForward_SSRF_Rejected(t *testing.T) {
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_ssrf",
 		URL:          "http://127.0.0.1:9999/",
 		OnFailure:    "deny",
@@ -775,7 +776,7 @@ func TestForward_SSRF_Rejected(t *testing.T) {
 // TestForward_SSRF_AllowPrivate verifies that allow_private = true passes Validate().
 func TestForward_SSRF_AllowPrivate(t *testing.T) {
 	cfg := &alaye.ForwardAuth{
-		Enabled:      alaye.Active,
+		Enabled:      expect.Active,
 		Name:         "test_ssrf_allow",
 		URL:          "http://127.0.0.1:9999/",
 		OnFailure:    "deny",

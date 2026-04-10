@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/ll"
 )
 
@@ -32,10 +32,10 @@ type Store struct {
 }
 
 // New loads or creates the revocation store at dataDir/revoked.json.
-func New(dataDir string, logger *ll.Logger) (*Store, error) {
+func New(dataDir expect.Folder, logger *ll.Logger) (*Store, error) {
 	s := &Store{
 		entries: make(map[string]entry),
-		path:    filepath.Join(dataDir, filename),
+		path:    dataDir.FilePath(filename),
 		logger:  logger.Namespace("revoke"),
 	}
 	if err := s.load(); err != nil {

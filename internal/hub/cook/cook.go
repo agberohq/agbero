@@ -149,7 +149,7 @@ func (c *Cook) Make(ctx context.Context) error {
 
 	start := time.Now()
 	var deployErr error
-	defer c.recordMetrics(start, deployErr)
+	defer func() { c.recordMetrics(start, deployErr) }()
 
 	if err := c.validate(); err != nil {
 		deployErr = err

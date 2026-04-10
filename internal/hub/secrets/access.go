@@ -1,38 +1,19 @@
 package secrets
 
 import (
-	"sync"
-
-	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/keeper"
-	"github.com/olekukonko/ll"
 )
 
-var (
-	globalStore *keeper.Keeper
-	globalMu    sync.RWMutex
-)
-
-// SetGlobalStore is called once when the Keeper is first opened
+// SetGlobalStore registers store as the process-wide default Keeper instance.
+// It delegates to keeper.GlobalStore so that both the keeper library's own
+// GlobalGet and this package's GetGlobalStore always return the same value.
+// Pass nil to clear the reference (e.g. during shutdown, before store.Close).
 func SetGlobalStore(store *keeper.Keeper) {
-	globalMu.Lock()
-	defer globalMu.Unlock()
-	globalStore = store
+	keeper.GlobalStore(store)
 }
 
-// GetGlobalStore returns the global Keeper instance (nil if not set)
+// GetGlobalStore returns the process-wide default Keeper instance, or nil if
+// none has been registered.
 func GetGlobalStore() *keeper.Keeper {
-	globalMu.RLock()
-	defer globalMu.RUnlock()
-	return globalStore
-}
-
-// OpenAndSetGlobal opens the Keeper and sets it as the global instance
-func OpenAndSetGlobal(dataDir string, cfg *alaye.Keeper, logger *ll.Logger) (*keeper.Keeper, error) {
-	store, err := OpenStore(dataDir, cfg, logger)
-	if err != nil {
-		return nil, err
-	}
-	SetGlobalStore(store)
-	return store, nil
+	return keeper.GlobalGet()
 }

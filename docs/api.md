@@ -17,7 +17,7 @@ Instead of manually creating HCL files for every new service deployment, you can
 ## How It Works
 
 ```
-┌─────────┐     POST /auto/v1/routes     ┌─────────┐
+┌─────────┐     POST /auto/v1/route      ┌─────────┐
 │ Service │─────────────────────────────►│ Agbero │
 │   API   │                              │ Cluster│
 └─────────┘                              └────┬────┘
@@ -47,22 +47,41 @@ First, ensure the admin API is enabled in your `agbero.hcl`:
 ```hcl
 admin {
   enabled = true
-  address = ":9090"
-
-  # Enable authentication for API access
-  jwt_auth {
-    enabled = true
-    secret = "${env.ADMIN_JWT_SECRET}"  # or use internal_auth_key
-  }
+  address = ":9090"  # bind address for the admin/API server
 }
 ```
 
-### 2. Generate Authentication Credentials
+### 2. Generate the Internal Auth Key (one-time setup)
 
-#### For JWT Authentication (Human Users)
+The `/auto/v1/` endpoints require an Ed25519 internal auth key stored in the keeper.
+Without this key, the auto API is silently disabled and requests return 404.
 
 ```bash
-# Get a JWT token (if using basic_auth)
+# Generate and store the master Ed25519 key in the keeper
+agbero secret key init
+```
+
+### 3. Generate a Service Token
+
+```bash
+# Generate a signed token for your service
+agbero secret token --service auto-scaler --ttl 8760h
+
+# The output shows the token and its JTI:
+# API Token for service: auto-scaler
+# JTI: abc123def456          ← keep this — needed for revocation
+# Expires: 2025-03-15T10:30:00Z (8760h0m0s)
+# eyJhbGciOiJFZERTQSIs...   ← use this as Bearer token
+```
+
+> **Service scope rule:** A token for service `"myapp"` can only register routes for hosts
+> that start with `myapp-` or `myapp.` — e.g. `myapp-123.internal` or `myapp.example.com`.
+> This prevents one service from hijacking another service's routes.
+
+### 4. Get an Admin Token (for the `/api/v1/` endpoints)
+
+```bash
+# Login to get an admin JWT (8-hour session)
 curl -X POST http://localhost:9090/login \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "your-password"}'
@@ -72,23 +91,6 @@ curl -X POST http://localhost:9090/login \
   "token": "eyJhbGciOiJIUzI1NiIs...",
   "expires": "2024-01-16T10:30:00Z"
 }
-```
-
-#### For Internal Auth Key (Service-to-Service)
-
-```bash
-# Generate internal auth key (one-time setup)
-agbero secret key init
-
-# Generate a token for your service
-agbero secret token --service auto-scaler --ttl 8760h
-
-# Response
-API Token for service: auto-scaler
-Expires: 2025-03-15T10:30:00Z (8760h0m0s)
-------------------------------------------------------------
-eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJzdmMiOiJhdXRvLXNjYWxlciIsImlhdCI6MTcxMDUwMTAwMCwiZXhwIjoxNzQyMDM3MDAwfQ...
-------------------------------------------------------------
 ```
 
 ---
@@ -117,9 +119,28 @@ Authorization: Bearer eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9...
 
 ---
 
+### Ping
+
+**`GET /auto/v1/ping`**
+
+Check that the API is reachable and your token is valid. Returns the service name from the token.
+
+```bash
+curl http://localhost:9090/auto/v1/ping \
+  -H "Authorization: Bearer <your-token>"
+
+# Response
+{
+  "status": "ok",
+  "service": "auto-scaler"
+}
+```
+
+---
+
 ### Create Ephemeral Route
 
-**`POST /auto/v1/routes`**
+**`POST /auto/v1/route`**
 
 Creates a new route that is broadcast to all cluster nodes. The route will automatically expire after `ttl_seconds`.
 
@@ -152,10 +173,10 @@ Creates a new route that is broadcast to all cluster nodes. The route will autom
 ```
 
 **What happens:**
-- Route is stored in cluster state with key `route:service-123.example.com|/auto/*`
-- All nodes receive the route within seconds via gossip
-- Traffic to `service-123.example.com/auto/*` is load-balanced to the specified backend
-- After 300 seconds, the route is automatically deleted from all nodes
+- Route is stored in cluster gossip state with key `route:service-123.example.com|/auto/*`
+- All nodes in the cluster receive the route within seconds automatically
+- Traffic to `service-123.example.com/auto/*` is immediately load-balanced to the specified backend
+- After 300 seconds, the route is automatically removed from all nodes — no cleanup needed
 
 **Supported route fields:**
 | Field | Description | Example |
@@ -169,7 +190,7 @@ Creates a new route that is broadcast to all cluster nodes. The route will autom
 
 ### Delete Ephemeral Route
 
-**`DELETE /auto/v1/routes`**
+**`DELETE /auto/v1/route`**
 
 Explicitly remove a route before its TTL expires.
 
@@ -181,7 +202,7 @@ Explicitly remove a route before its TTL expires.
 
 **Request:**
 ```bash
-curl -X DELETE "http://localhost:9090/auto/v1/routes?host=service-123.example.com&path=/auto/*" \
+curl -X DELETE "http://localhost:9090/auto/v1/route?host=service-123.example.com&path=/auto/*" \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -212,6 +233,46 @@ route:{host}|{path}
 ```
 
 Example: `route:service-123.example.com|/auto/*`
+
+---
+
+## Revoking a Service Token
+
+If a token is compromised or a service is decommissioned, revoke it immediately so it stops working even before it expires.
+
+**`POST /api/v1/auto/revoke`**
+
+This endpoint requires an **admin token** (from `POST /login`), not a service token.
+
+**Request body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `jti` | string | Yes | The JTI shown when the token was generated |
+| `service` | string | No | Service name (for audit log) |
+| `expires_at` | RFC3339 | Yes | The token's expiry time (shown at generation) |
+
+```bash
+curl -X POST http://localhost:9090/api/v1/auto/revoke \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jti": "abc123def456",
+    "service": "auto-scaler",
+    "expires_at": "2025-03-15T10:30:00Z"
+  }'
+
+# Response
+{
+  "status": "ok",
+  "jti": "abc123def456"
+}
+```
+
+> **Notes:**
+> - `expires_at` must be in the future. If the token is already expired, the call returns `200 ok` with a "already expired" message — no action needed.
+> - `expires_at` is capped at 400 days from now to prevent the revocation store from growing indefinitely.
+> - Revocation is checked on every request to `/auto/v1/` endpoints.
 
 ---
 
@@ -625,8 +686,9 @@ rate_limits {
 
 The API is implemented in:
 
-- `internal/operation/auto/router.go` - Main router and auth
-- `internal/operation/auto/handlers.go` - Route handlers
+- `internal/operation/api/auto.go` - Route and ping handlers
+- `internal/operation/api/revoke.go` - Token revocation handler
+- `internal/operation/api/api.go` - Router registration
 - `admin.go` - Admin server setup and authentication
 
 ### Key Components

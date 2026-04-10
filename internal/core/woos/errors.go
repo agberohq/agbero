@@ -20,6 +20,7 @@ var (
 	ErrPortConflict         = errors.New("port conflict")
 	ErrNoBindAddr           = errors.New("no http/https/tcp bind addresses configured")
 	ErrLoggerRequired       = errors.New("logger is required")
+	ErrConfigExists         = errors.New("configuration already exists")
 )
 
 // matcher

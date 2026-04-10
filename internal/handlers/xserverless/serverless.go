@@ -2,21 +2,32 @@ package xserverless
 
 import (
 	"net/http"
+	"path"
+	"regexp"
+	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/resource"
+	"github.com/agberohq/agbero/internal/middleware/nonce"
 )
 
 type serverless struct {
-	mux *http.ServeMux
+	mux         *http.ServeMux
+	nonceStores map[string]*nonce.Store
 }
 
-// New - Instantiates a new serverless handler router that multiplexes mapped REST and Worker execution endpoints
-// Configures route-specific environments injected globally down to the handlers
+// New creates a serverless handler. Existing call sites remain unchanged.
 func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
+	return NewWithNonces(cfg, route, nil)
+}
+
+// NewWithNonces creates a serverless handler with pre-built nonce stores.
+// nonceStores maps rest endpoint name → Store; nil when not needed.
+func NewWithNonces(cfg resource.Proxy, route *alaye.Route, nonceStores map[string]*nonce.Store) http.Handler {
 	s := &serverless{
-		mux: http.NewServeMux(),
+		mux:         http.NewServeMux(),
+		nonceStores: nonceStores,
 	}
 
 	globalEnv := make(map[string]expect.Value)
@@ -27,8 +38,9 @@ func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
 
 	routeEnv := route.Env
 
-	validRests := make(map[string]alaye.REST)
-	for _, rest := range route.Serverless.RESTs {
+	// Register replay endpoints
+	validRests := make(map[string]alaye.Replay)
+	for _, rest := range route.Serverless.Replay {
 		if !rest.Enabled.Active() {
 			continue
 		}
@@ -39,15 +51,27 @@ func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
 	}
 
 	for name, rest := range validRests {
-		handler := NewRest(RestConfig{
-			Resource:  cfg.Resource,
-			REST:      rest,
-			GlobalEnv: globalEnv,
-			RouteEnv:  routeEnv,
+		cleanName, ok := cleanRouteName(name)
+		if !ok {
+			cfg.Resource.Logger.Fields("name", name).Error("serverless: invalid route name, skipping registration")
+			continue
+		}
+
+		var nonceStore *nonce.Store
+		if nonceStores != nil {
+			nonceStore = nonceStores[name] // use original name for lookup
+		}
+		handler := NewReplay(ReplayConfig{
+			Resource:   cfg.Resource,
+			Replay:     rest,
+			GlobalEnv:  globalEnv,
+			RouteEnv:   routeEnv,
+			NonceStore: nonceStore,
 		})
-		s.mux.Handle("/"+name, handler)
+		s.mux.Handle("/"+cleanName, handler) // ← restore leading slash
 	}
 
+	// Register worker endpoints
 	validWorkers := make(map[string]alaye.Work)
 	for _, worker := range route.Serverless.Workers {
 		if _, exists := validWorkers[worker.Name]; exists {
@@ -61,6 +85,13 @@ func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
 			cfg.Resource.Logger.Fields("name", name).Warn("serverless: Worker name collides with REST name, skipping worker registration")
 			continue
 		}
+
+		cleanName, ok := cleanRouteName(name)
+		if !ok {
+			cfg.Resource.Logger.Fields("name", name).Error("serverless: invalid worker name, skipping registration")
+			continue
+		}
+
 		handler := NewWorker(WorkerConfig{
 			Resource:  cfg.Resource,
 			Route:     *route,
@@ -69,14 +100,28 @@ func New(cfg resource.Proxy, route *alaye.Route) http.Handler {
 			RouteEnv:  routeEnv,
 			Orch:      cfg.Orch,
 		})
-		s.mux.Handle("/"+name, handler)
+		s.mux.Handle("/"+cleanName, handler)
 	}
-
 	return s
 }
 
-// Proxies incoming serverless HTTP requests to the resolved multiplexer
-// Uses the registered URI path rules to identify target functions
 func (s *serverless) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
+}
+
+var routeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+
+// cleanRouteName sanitizes and validates a route name to prevent path traversal
+// and HTTP mux poisoning. Returns cleaned name + true if valid.
+func cleanRouteName(name string) (string, bool) {
+	// Normalize slashes and resolve . / ..
+	clean := path.Clean("/" + name)[1:]
+	if clean == "" || clean == "." || strings.Contains(clean, "/") || strings.Contains(clean, "..") {
+		return "", false
+	}
+	// Strict allowlist: alphanumeric, dots, hyphens, underscores. Must start with alnum.
+	if !routeNameRe.MatchString(clean) {
+		return "", false
+	}
+	return clean, true
 }

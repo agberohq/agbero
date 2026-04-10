@@ -1,9 +1,16 @@
-package woos
+package expect
 
 import (
 	"io/fs"
 	"os"
 	"path/filepath"
+)
+
+const (
+	DirPerm         = 0755
+	FilePerm        = 0644
+	FilePermSecured = 0600
+	SecurePerm      = 0700
 )
 
 type Folder string
@@ -12,11 +19,32 @@ func NewFolder(path string) Folder {
 	return Folder(path)
 }
 
-func MakeFolder(path string, defaultValue Folder) Folder {
+func NewFolderOr(path string, defaultValue Folder) Folder {
 	if path == "" {
 		return defaultValue
 	}
 	return NewFolder(path)
+}
+
+// Make ensures this folder exists with standard or secure permissions
+func (f Folder) Make(secure bool, sub ...string) error {
+	perm := DirPerm
+	if secure {
+		perm = SecurePerm
+	}
+	return f.Init(perm, sub...) // Reuse Init for path handling
+}
+
+// Init ensures this folder exists (creates it if missing)
+// perm should be passed as os.FileMode values, e.g., 0755, 0700
+func (f Folder) Init(perm int, sub ...string) error {
+	absPath := f.Path()
+	if len(sub) > 0 {
+		paths := append([]string{absPath}, sub...)
+		absPath = filepath.Join(paths...)
+	}
+
+	return os.MkdirAll(absPath, os.FileMode(perm))
 }
 
 func (f Folder) IsSet() bool {
@@ -148,19 +176,39 @@ func (f Folder) Exists(base Folder) bool {
 	return info.IsDir()
 }
 
-// Additional helper methods
-
-// Join creates a new Folder by joining paths to this folder
-func (f Folder) Join(paths ...string) Folder {
-	if len(paths) == 0 {
-		return f
+// ExistsAbsolute checks if the folder (as an absolute path) exists
+func (f Folder) ExistsAbsolute() bool {
+	absPath := f.Path()
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return false
 	}
+	return info.IsDir()
+}
 
-	// Start with this folder's absolute path
-	basePath := f.Path()
-	allPaths := append([]string{basePath}, paths...)
-	joined := filepath.Join(allPaths...)
-	return Folder(joined)
+// FileExists checks if a file exists at the path
+func (f Folder) FileExists(paths ...string) bool {
+	fullPath := f.FilePath(paths...)
+	_, err := os.Stat(fullPath)
+	return err == nil
+}
+
+// Sub creates a new Folder by joining paths to this folder
+func (f Folder) Sub(paths ...any) Folder {
+	result := f.Path() // always absolute
+	for _, p := range paths {
+		switch v := p.(type) {
+		case Folder:
+			if v.IsSet() {
+				result = filepath.Join(result, v.String())
+			}
+		case string:
+			if v != "" {
+				result = filepath.Join(result, v)
+			}
+		}
+	}
+	return Folder(filepath.Clean(result))
 }
 
 // Parent returns the parent folder
@@ -243,4 +291,23 @@ func (f Folder) IsEmpty() (bool, error) {
 		return false, err
 	}
 	return len(entries) == 0, nil
+}
+
+// Put writes data to a file within the folder
+func (f Folder) Put(filename string, data []byte, perm fs.FileMode) error {
+	fullPath := filepath.Join(f.String(), filename)
+	return os.WriteFile(fullPath, data, perm)
+}
+
+// FilePath creates a new Folder by joining paths to this folder
+func (f Folder) FilePath(paths ...string) string {
+	if len(paths) == 0 {
+		return f.Path()
+	}
+
+	// Start with this folder's absolute path
+	basePath := f.Path()
+	allPaths := append([]string{basePath}, paths...)
+	joined := filepath.Join(allPaths...)
+	return joined
 }

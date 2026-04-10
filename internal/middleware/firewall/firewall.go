@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/bot"
@@ -37,7 +38,7 @@ type readCloserWrapper struct {
 type Config struct {
 	Firewall       *alaye.Firewall
 	TrustedProxies []string
-	DataDir        woos.Folder
+	DataDir        expect.Folder
 	Logger         *ll.Logger
 	IPMgr          *zulu.IPManager
 	SharedState    woos.SharedState

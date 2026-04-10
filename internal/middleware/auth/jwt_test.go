@@ -29,19 +29,19 @@ func TestJWT(t *testing.T) {
 	}{
 		{
 			name:       "Missing Authorization Header",
-			cfg:        &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret},
+			cfg:        &alaye.JWTAuth{Enabled: expect.Active, Secret: secret},
 			authHeader: "",
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
 			name:       "Invalid Token Format",
-			cfg:        &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret},
+			cfg:        &alaye.JWTAuth{Enabled: expect.Active, Secret: secret},
 			authHeader: "Bearer invalid.token.string",
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
 			name: "Valid Token, Unknown Headers Mapped",
-			cfg:  &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret},
+			cfg:  &alaye.JWTAuth{Enabled: expect.Active, Secret: secret},
 			authHeader: "Bearer " + genToken(jwt.MapClaims{
 				"sub": "user123",
 				"exp": time.Now().Add(time.Hour).Unix(),
@@ -50,7 +50,7 @@ func TestJWT(t *testing.T) {
 		},
 		{
 			name: "Valid Token, Wrong Secret",
-			cfg:  &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret},
+			cfg:  &alaye.JWTAuth{Enabled: expect.Active, Secret: secret},
 			authHeader: "Bearer " + genToken(jwt.MapClaims{
 				"sub": "user123",
 			}, "wrong-secret"),
@@ -59,7 +59,7 @@ func TestJWT(t *testing.T) {
 		{
 			name: "Claims Mapping",
 			cfg: &alaye.JWTAuth{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Secret:  secret,
 				ClaimMap: map[string]string{
 					"sub":  "X-User-ID",
@@ -80,7 +80,7 @@ func TestJWT(t *testing.T) {
 		{
 			name: "Issuer Validation Active",
 			cfg: &alaye.JWTAuth{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Secret:  secret,
 				Issuer:  "auth.agbero.com",
 			},
@@ -93,7 +93,7 @@ func TestJWT(t *testing.T) {
 		{
 			name: "Issuer Validation Unknown",
 			cfg: &alaye.JWTAuth{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Secret:  secret,
 				Issuer:  "auth.agbero.com",
 			},
@@ -105,7 +105,7 @@ func TestJWT(t *testing.T) {
 		},
 		{
 			name: "Challenge Token Rejected - scope=challenge",
-			cfg:  &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret},
+			cfg:  &alaye.JWTAuth{Enabled: expect.Active, Secret: secret},
 			authHeader: "Bearer " + genToken(jwt.MapClaims{
 				"sub":   "user123",
 				"scope": "challenge",
@@ -115,7 +115,7 @@ func TestJWT(t *testing.T) {
 		},
 		{
 			name: "Full Token Accepted - scope=full",
-			cfg:  &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret},
+			cfg:  &alaye.JWTAuth{Enabled: expect.Active, Secret: secret},
 			authHeader: "Bearer " + genToken(jwt.MapClaims{
 				"sub":   "user123",
 				"scope": "full",
@@ -125,7 +125,7 @@ func TestJWT(t *testing.T) {
 		},
 		{
 			name: "Token Without Scope Accepted",
-			cfg:  &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret},
+			cfg:  &alaye.JWTAuth{Enabled: expect.Active, Secret: secret},
 			authHeader: "Bearer " + genToken(jwt.MapClaims{
 				"sub": "user123",
 				"exp": time.Now().Add(time.Hour).Unix(),
@@ -181,7 +181,7 @@ func TestJWTWithRevocation(t *testing.T) {
 		return s
 	}
 
-	cfg := &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret}
+	cfg := &alaye.JWTAuth{Enabled: expect.Active, Secret: secret}
 
 	t.Run("Valid token not revoked", func(t *testing.T) {
 		isRevoked := func(jti string) bool { return false }
@@ -310,7 +310,7 @@ func TestJWTWithRevocationAndScope(t *testing.T) {
 		return s
 	}
 
-	cfg := &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret}
+	cfg := &alaye.JWTAuth{Enabled: expect.Active, Secret: secret}
 	isRevoked := func(jti string) bool { return false }
 
 	t.Run("JWTWithRevocationAndScope rejects challenge tokens", func(t *testing.T) {
@@ -356,7 +356,7 @@ func TestGetClaims(t *testing.T) {
 		return s
 	}
 
-	cfg := &alaye.JWTAuth{Enabled: alaye.Active, Secret: secret}
+	cfg := &alaye.JWTAuth{Enabled: expect.Active, Secret: secret}
 	isRevoked := func(jti string) bool { return false }
 
 	t.Run("GetClaims returns claims from context", func(t *testing.T) {

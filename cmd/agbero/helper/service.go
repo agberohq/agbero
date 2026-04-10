@@ -13,6 +13,7 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
 	"github.com/kardianos/service"
+	"github.com/olekukonko/errors"
 )
 
 type Service struct {
@@ -27,18 +28,18 @@ func (s *Service) requiresRoot(cmd string) bool {
 		return true
 	}
 
-	exe := "agbero"
-	if len(os.Args) > 0 {
-		exe = filepath.Base(os.Args[0])
-	}
-	ui.New().ErrorHint(
-		"this command requires root privileges",
-		"try:  sudo "+exe+" service "+cmd,
-	)
+	cmdPath := os.Args[0]
+	cmdName := filepath.Base(cmdPath)
+
+	ui.New().Render(func() {
+		ui.New().ErrorHint(
+			"this command requires root privileges",
+			"try:  sudo "+cmdName+" service "+cmd,
+		)
+	})
 	return false
 }
 
-// preflightCheck simulates the critical boot steps to ensure the service won't crash on start
 func (s *Service) preflightCheck(configPath string) error {
 	global, err := loadGlobal(configPath)
 	if err != nil {
@@ -48,23 +49,20 @@ func (s *Service) preflightCheck(configPath string) error {
 	dataDir := global.Storage.DataDir
 	if dataDir == "" {
 		ctx := setup.NewContext(s.p.Logger)
-		dataDir = ctx.Paths.DataDir.Path()
+		dataDir = ctx.Paths.DataDir
 	}
 
-	store, err := secrets.OpenStore(dataDir, &global.Security.Keeper, s.p.Logger)
+	store, err := secrets.MustOpen(secrets.Config{
+		DataDir:     dataDir,
+		Setting:     &global.Security.Keeper,
+		Logger:      s.p.Logger,
+		Interactive: false,
+	})
 	if err != nil {
-		return fmt.Errorf("keeper validation failed (wrong passphrase?): %w", err)
+		return fmt.Errorf("keeper validation failed: %w", err)
 	}
 	defer store.Close()
 
-	if store.IsLocked() {
-		return fmt.Errorf(
-			"Keeper is locked. The service will crash on startup because it cannot decrypt its secrets.\n" +
-				"Hint: Ensure 'AGBERO_PASSPHRASE' is exported, or 'keeper.passphrase' is correctly configured in agbero.hcl.",
-		)
-	}
-
-	// Verify critical system secrets exist (ensures 'agbero init' was run successfully)
 	if _, err := store.GetNamespacedFull("vault", "system", "auth/ppk"); err != nil {
 		return fmt.Errorf("missing internal auth key. Did you run 'agbero init'?")
 	}
@@ -79,30 +77,35 @@ func (s *Service) preflightCheck(configPath string) error {
 func (s *Service) Install(svc service.Service, installHere bool, configPath string) {
 	u := ui.New()
 	if installHere {
-		u.InfoLine("local mode — service registration skipped")
+		u.Render(func() {
+			u.InfoLine("local mode — service registration skipped")
+		})
 		return
 	}
 	if !s.requiresRoot("install") {
 		return
 	}
 
-	u.Step("run", "Running pre-flight checks...")
+	u.Render(func() {
+		u.Step("run", "Running pre-flight checks...")
+	})
 	if err := s.preflightCheck(configPath); err != nil {
-		s.p.Logger.Fatal("Pre-flight check failed! Fix the errors below before installing the service:\n\n", err)
+		s.p.Logger.Fatal("Pre-flight check failed:\n\n", err)
 		return
 	}
-	u.Step("ok", "Pre-flight checks passed")
-
-	u.Step("run", "installing system service")
+	u.Render(func() {
+		u.Step("ok", "Pre-flight checks passed")
+		u.Step("run", "installing system service")
+	})
 	if err := svc.Install(); err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "already exists") {
-			u.WarnLine("service already exists")
+		if errors.Is(err, woos.ErrAlreadyExists) {
+			u.Render(func() { u.WarnLine("service already exists") })
 		} else {
 			s.p.Logger.Fatal(s.mapError(err, "install"))
 		}
 		return
 	}
-	u.SuccessLine("service installed")
+	u.Render(func() { u.SuccessLine("service installed") })
 }
 
 func (s *Service) Uninstall(svc service.Service) {
@@ -110,11 +113,13 @@ func (s *Service) Uninstall(svc service.Service) {
 		return
 	}
 	u := ui.New()
-	u.Step("run", "uninstalling system service")
+	u.Render(func() {
+		u.Step("run", "uninstalling system service")
+	})
 	if err := svc.Uninstall(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "uninstall"))
 	}
-	u.SuccessLine("service uninstalled")
+	u.Render(func() { u.SuccessLine("service uninstalled") })
 }
 
 func (s *Service) Start(svc service.Service) {
@@ -122,11 +127,11 @@ func (s *Service) Start(svc service.Service) {
 		return
 	}
 	u := ui.New()
-	u.Step("run", "starting system service")
+	u.Render(func() { u.Step("run", "starting system service") })
 	if err := svc.Start(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "start"))
 	}
-	u.SuccessLine("service started")
+	u.Render(func() { u.SuccessLine("service started") })
 }
 
 func (s *Service) Stop(svc service.Service) {
@@ -134,11 +139,11 @@ func (s *Service) Stop(svc service.Service) {
 		return
 	}
 	u := ui.New()
-	u.Step("run", "stopping system service")
+	u.Render(func() { u.Step("run", "stopping system service") })
 	if err := svc.Stop(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "stop"))
 	}
-	u.SuccessLine("service stopped")
+	u.Render(func() { u.SuccessLine("service stopped") })
 }
 
 func (s *Service) Restart(svc service.Service) {
@@ -146,16 +151,20 @@ func (s *Service) Restart(svc service.Service) {
 		return
 	}
 	u := ui.New()
-	u.Step("run", "stopping system service")
+	u.Render(func() {
+		u.Step("run", "stopping system service")
+	})
 	if err := svc.Stop(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "stop"))
 	}
 	time.Sleep(2 * time.Second)
-	u.Step("run", "starting system service")
+	u.Render(func() {
+		u.Step("run", "starting system service")
+	})
 	if err := svc.Start(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "start"))
 	}
-	u.SuccessLine("service restarted")
+	u.Render(func() { u.SuccessLine("service restarted") })
 }
 
 func (s *Service) Status(svc service.Service, configPath string) {
@@ -177,7 +186,7 @@ func (s *Service) Status(svc service.Service, configPath string) {
 	var pid string
 	if status == service.StatusRunning {
 		if global, err := loadGlobal(configPath); err == nil && global.Storage.DataDir != "" {
-			pidFile := filepath.Join(global.Storage.DataDir, "agbero.pid")
+			pidFile := global.Storage.DataDir.FilePath("agbero.pid")
 			if data, err := os.ReadFile(pidFile); err == nil {
 				pid = strings.TrimSpace(string(data))
 			}
@@ -185,7 +194,9 @@ func (s *Service) Status(svc service.Service, configPath string) {
 	}
 
 	u := ui.New()
-	u.ServiceStatus(statusStr, pid, configPath)
+	u.Render(func() {
+		u.ServiceStatus(statusStr, pid, configPath)
+	})
 }
 
 func (s *Service) mapError(err error, cmd string) error {

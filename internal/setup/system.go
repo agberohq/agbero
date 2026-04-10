@@ -19,8 +19,9 @@ import (
 
 	"charm.land/huh/v2"
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
-	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
+	discovery "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/pkg/version"
@@ -145,20 +146,17 @@ func (s *System) Backup(configPath, outPath, password string) error {
 	u.Step("run", "scanning configuration for associated files")
 
 	addPath(configPath)
-	addPath(global.Storage.HostsDir)
-	addPath(global.Storage.CertsDir)
-	addPath(global.Storage.DataDir)
-	addPath(global.Storage.WorkDir)
-
-	if global.Security.InternalAuthKey != "" {
-		addPath(global.Security.InternalAuthKey)
-	}
+	addPath(global.Storage.HostsDir.Path())
+	addPath(global.Storage.CertsDir.Path())
+	addPath(global.Storage.DataDir.Path())
+	addPath(global.Storage.WorkDir.Path())
 	addPath(global.ErrorPages.Default)
+
 	for _, p := range global.ErrorPages.Pages {
 		addPath(p)
 	}
 
-	hm := discovery2.NewHost(woos.NewFolder(global.Storage.HostsDir), discovery2.WithLogger(s.cfg.Logger))
+	hm := discovery.NewHost(global.Storage.HostsDir, discovery.WithLogger(s.cfg.Logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
 		u.WarnLine(fmt.Sprintf("failed to load some hosts: %v", err))
@@ -403,7 +401,7 @@ func (s *System) Restore(inPath, password string, force, autoYes bool) error {
 		}
 
 		destDir := filepath.Dir(fe.OriginalPath)
-		if err := os.MkdirAll(destDir, woos.DirPerm); err != nil {
+		if err := os.MkdirAll(destDir, expect.DirPerm); err != nil {
 			src.Close()
 			return fmt.Errorf("failed to create directories for %s: %w", fe.OriginalPath, err)
 		}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/handlers/upstream"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/health"
@@ -34,7 +35,7 @@ func NewBackend(cfg BackendConfig) (*Backend, error) {
 	statsKey := cfg.Proxy.BackendKey(addressStr)
 
 	hasProber := cfg.Proxy.HealthCheck.Enabled.Active() ||
-		(cfg.Proxy.HealthCheck.Enabled == alaye.Unknown && (cfg.Proxy.HealthCheck.Send != "" || cfg.Proxy.HealthCheck.Expect != "")) ||
+		(cfg.Proxy.HealthCheck.Enabled == expect.Unknown && (cfg.Proxy.HealthCheck.Send != "" || cfg.Proxy.HealthCheck.Expect != "")) ||
 		strings.HasSuffix(addressStr, ":6379")
 
 	baseCfg := upstream.Config{

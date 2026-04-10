@@ -15,7 +15,6 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/agberohq/agbero/internal/hub/orchestrator"
@@ -32,16 +31,16 @@ func NewTestConfig(t *testing.T) resource2.Proxy {
 			Idle:  alaye.Duration(120 * time.Second),
 		},
 		Security: alaye.Security{
-			Enabled:        alaye.Inactive,
+			Enabled:        expect.Inactive,
 			TrustedProxies: []string{},
 		},
 		RateLimits: alaye.GlobalRate{
-			Enabled:    alaye.Inactive,
+			Enabled:    expect.Inactive,
 			TTL:        alaye.Duration(10 * time.Minute),
 			MaxEntries: 10000,
 		},
 		Storage: alaye.Storage{
-			WorkDir: t.TempDir(),
+			WorkDir: expect.NewFolder(t.TempDir()),
 		},
 	}
 	host := &alaye.Host{
@@ -49,7 +48,7 @@ func NewTestConfig(t *testing.T) resource2.Proxy {
 	}
 	res := resource2.New()
 	cm, _ := cook.NewManager(cook.ManagerConfig{
-		WorkDir: t.TempDir(),
+		WorkDir: expect.NewFolder(t.TempDir()),
 		Logger:  ll.New("test").Disable(),
 	})
 	return resource2.Proxy{
@@ -175,11 +174,11 @@ func TestNewRoute_WebAndBackendConflict(t *testing.T) {
 	route := NewRoute(cfg, &alaye.Route{
 		Path: "/",
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(root),
 		},
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers("http://example.com"),
 		},
 	})
@@ -238,7 +237,7 @@ func TestRoute_Close_WithBackends(t *testing.T) {
 	route := NewRoute(cfg, &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 	})
@@ -259,7 +258,7 @@ func TestRoute_Close_WithProxy(t *testing.T) {
 	route := NewRoute(cfg, &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 	})
@@ -275,7 +274,7 @@ func TestRoute_RegisterPatients_NilDoctor(t *testing.T) {
 	route := NewRoute(cfg, &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers("http://example.com"),
 		},
 	})
@@ -289,11 +288,11 @@ func TestRoute_RegisterPatients_InvalidBackendURL(t *testing.T) {
 	route := NewRoute(cfg, &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers("://invalid"),
 		},
 		HealthCheck: alaye.HealthCheck{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Path:    "/health",
 		},
 	})
@@ -311,11 +310,11 @@ func TestRoute_RegisterPatients_Success(t *testing.T) {
 	route := NewRoute(cfg, &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 		HealthCheck: alaye.HealthCheck{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			Path:     "/health",
 			Interval: alaye.Duration(50 * time.Millisecond),
 			Timeout:  alaye.Duration(100 * time.Millisecond),
@@ -336,7 +335,7 @@ func TestRoute_GetBackendKeys(t *testing.T) {
 	route := NewRoute(cfg, &alaye.Route{
 		Path: "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 	})
@@ -359,10 +358,10 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 	defer srv2.Close()
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Backends: alaye.Backend{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			Strategy: alaye.StrategyRoundRobin,
 			Servers:  alaye.NewServers(srv1.URL, srv2.URL),
 		},
@@ -397,16 +396,16 @@ func TestRouteHandler_Proxy_RateLimit(t *testing.T) {
 	defer srv.Close()
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 		RateLimit: alaye.RouteRate{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Rule: alaye.RateRule{
-				Enabled:  alaye.Active,
+				Enabled:  expect.Active,
 				Requests: 1,
 				Window:   alaye.Duration(time.Minute),
 				Key:      "ip",
@@ -447,16 +446,16 @@ func TestRouteHandler_Proxy_HeadersMiddleware(t *testing.T) {
 	defer srv.Close()
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 		Headers: alaye.Headers{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Request: alaye.Header{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Set:     map[string]string{"X-Test": "Added"},
 			},
 		},
@@ -481,10 +480,10 @@ func TestRouteHandler_Proxy_NoHealthyBackends(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers("http://127.0.0.1:54321"),
 		},
 	}
@@ -520,14 +519,14 @@ func TestRouteHandler_Proxy_Timeout(t *testing.T) {
 	defer srv.Close()
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 		Timeouts: alaye.TimeoutRoute{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Request: alaye.Duration(10 * time.Millisecond),
 		},
 	}
@@ -559,10 +558,10 @@ func TestRouteHandler_Proxy_StripPrefix(t *testing.T) {
 	defer srv.Close()
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/api",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 		StripPrefixes: []string{"/api"},
@@ -587,14 +586,14 @@ func TestRouteHandler_Proxy_WithFallback(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers("http://127.0.0.1:54321"),
 		},
 		Fallback: alaye.Fallback{
-			Enabled:     alaye.Active,
+			Enabled:     expect.Active,
 			Type:        "static",
 			Body:        "Fallback content",
 			StatusCode:  http.StatusServiceUnavailable,
@@ -627,18 +626,18 @@ func TestRouteHandler_Web_BasicFileServing(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("INDEX"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("INDEX"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "hello.html"), []byte("HELLO"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "hello.html"), []byte("HELLO"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(root),
 			Index:   []string{"index.html"},
 		},
@@ -681,22 +680,22 @@ func TestRouteHandler_Web_GzipPreCompressed(t *testing.T) {
 
 	root := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(root, "style.css"), []byte("/* regular */"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "style.css"), []byte("/* regular */"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "style.css.gz"), []byte("/* gzipped */"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "style.css.gz"), []byte("/* gzipped */"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(root),
 		},
 		Compression: alaye.Compression{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Type:    "gzip",
 			Level:   5,
 		},
@@ -732,15 +731,15 @@ func TestRouteHandler_Web_CustomIndex(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "home.htm"), []byte("HOME"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "home.htm"), []byte("HOME"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(root),
 			Index:   []string{"home.htm"},
 		},
@@ -772,10 +771,10 @@ func TestRouteHandler_Web_MethodNotAllowed(t *testing.T) {
 
 	root := t.TempDir()
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(root),
 		},
 	}
@@ -804,12 +803,12 @@ func TestRouteHandler_Web_DirectoryWithoutIndex(t *testing.T) {
 	}
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(root),
-			Listing: false,
+			Listing: expect.Inactive,
 		},
 	}
 
@@ -834,15 +833,15 @@ func TestRouteHandler_Web_PathTraversalPrevented(t *testing.T) {
 	root := t.TempDir()
 
 	outsideFile := filepath.Join(t.TempDir(), "secret.txt")
-	if err := os.WriteFile(outsideFile, []byte("SECRET"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(outsideFile, []byte("SECRET"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/files",
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(root),
 		},
 	}
@@ -866,26 +865,26 @@ func TestRouteHandler_Web_WithMiddleware(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "test.txt"), []byte("test"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "test.txt"), []byte("test"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(root),
 		},
 		Compression: alaye.Compression{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Type:    "gzip",
 			Level:   5,
 		},
 		Headers: alaye.Headers{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Response: alaye.Header{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Set: map[string]string{
 					"X-Custom-Header": "TestValue",
 					"Cache-Control":   "public, max-age=3600",
@@ -931,10 +930,10 @@ func TestRouteHandler_Validation(t *testing.T) {
 		{
 			name: "valid proxy route",
 			route: &alaye.Route{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Path:    "/api",
 				Backends: alaye.Backend{
-					Enabled: alaye.Active,
+					Enabled: expect.Active,
 					Servers: alaye.NewServers("http://127.0.0.1:59999"),
 				},
 			},
@@ -943,33 +942,33 @@ func TestRouteHandler_Validation(t *testing.T) {
 		{
 			name: "valid web route",
 			route: &alaye.Route{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Path:    "/",
 				Web:     alaye.Web{},
 			},
 			prepare: func(t *testing.T, r *alaye.Route) {
 				t.Helper()
 				root := t.TempDir()
-				if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("OK"), woos.FilePerm); err != nil {
+				if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("OK"), expect.FilePerm); err != nil {
 					t.Fatal(err)
 				}
 				r.Web.Root = alaye.WebRoot(root)
 				r.Web.Index = []string{"index.html"}
-				r.Web.Enabled = alaye.Active
+				r.Web.Enabled = expect.Active
 			},
 			wantStatus: http.StatusOK,
 		},
 		{
 			name: "invalid: both web and backends",
 			route: &alaye.Route{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Path:    "/",
 				Backends: alaye.Backend{
-					Enabled: alaye.Active,
+					Enabled: expect.Active,
 					Servers: alaye.NewServers("http://localhost:3000"),
 				},
 				Web: alaye.Web{
-					Enabled: alaye.Active,
+					Enabled: expect.Active,
 					Root:    alaye.WebRoot("/tmp"),
 				},
 			},
@@ -983,11 +982,11 @@ func TestRouteHandler_Validation(t *testing.T) {
 		{
 			name: "route with allowed IPs",
 			route: &alaye.Route{
-				Enabled:    alaye.Active,
+				Enabled:    expect.Active,
 				Path:       "/",
 				AllowedIPs: []string{"127.0.0.1/32"},
 				Web: alaye.Web{
-					Enabled: alaye.Active,
+					Enabled: expect.Active,
 				},
 			},
 			prepare: func(t *testing.T, r *alaye.Route) {
@@ -1029,14 +1028,14 @@ func TestRouteHandler_WithJWTAuth(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		JWTAuth: alaye.JWTAuth{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Secret:  "test-secret",
 		},
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(t.TempDir()),
 		},
 	}
@@ -1060,15 +1059,15 @@ func TestRouteHandler_WithBasicAuth(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		BasicAuth: alaye.BasicAuth{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Realm:   "test",
 			Users:   []string{"user:pass"},
 		},
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(t.TempDir()),
 		},
 	}
@@ -1092,19 +1091,19 @@ func TestRouteHandler_WithCache(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "test.txt"), []byte("cached content"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "test.txt"), []byte("cached content"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Cache: alaye.Cache{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			TTL:     alaye.Duration(5 * time.Minute),
 		},
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(root),
 		},
 	}
@@ -1132,15 +1131,15 @@ func TestRouteHandler_WithCORS(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		CORS: alaye.CORS{
-			Enabled:        alaye.Active,
+			Enabled:        expect.Active,
 			AllowedOrigins: []string{"*"},
 			AllowedMethods: []string{"GET", "POST"},
 		},
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(t.TempDir()),
 		},
 	}
@@ -1170,10 +1169,10 @@ func TestRouteHandler_WithOAuth(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		OAuth: alaye.OAuth{
-			Enabled:      alaye.Active,
+			Enabled:      expect.Active,
 			Provider:     "google",
 			ClientID:     "test-client-id",
 			ClientSecret: "test-client-secret",
@@ -1181,7 +1180,7 @@ func TestRouteHandler_WithOAuth(t *testing.T) {
 			CookieSecret: "16-char-secret!!!",
 		},
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(t.TempDir()),
 		},
 	}
@@ -1213,18 +1212,18 @@ func TestRouteHandler_WithForwardAuth(t *testing.T) {
 	defer authServer.Close()
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		ForwardAuth: alaye.ForwardAuth{
-			Enabled:      alaye.Active,
+			Enabled:      expect.Active,
 			AllowPrivate: true,
 			URL:          authServer.URL,
 			Request: alaye.ForwardAuthRequest{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 			},
 		},
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(root),
 			Index:   []string{"index.html"},
 		},
@@ -1252,19 +1251,19 @@ func TestRouteHandler_WithWASM(t *testing.T) {
 
 	cfg := NewTestConfig(t)
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("INDEX"), woos.FilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("INDEX"), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Web: alaye.Web{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Root:    alaye.WebRoot(root),
 			Index:   []string{"index.html"},
 		},
 		Wasm: alaye.Wasm{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Module:  "/nonexistent/module.wasm",
 		},
 	}
@@ -1296,14 +1295,14 @@ func TestRouteHandler_WithFirewall(t *testing.T) {
 	}))
 	defer srv.Close()
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 		Firewall: alaye.FirewallRoute{
-			Status: alaye.Active,
+			Status: expect.Active,
 			Rules: []alaye.Rule{
 				{
 					Name:   "test-rule",
@@ -1340,7 +1339,7 @@ func TestResolveFallback(t *testing.T) {
 		{
 			name: "route fallback active",
 			routeFallback: &alaye.Fallback{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Type:    "static",
 			},
 			globalFallback: nil,
@@ -1349,10 +1348,10 @@ func TestResolveFallback(t *testing.T) {
 		{
 			name: "route fallback unknown, global active",
 			routeFallback: &alaye.Fallback{
-				Enabled: alaye.Unknown,
+				Enabled: expect.Unknown,
 			},
 			globalFallback: &alaye.Fallback{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Type:    "static",
 			},
 			wantActive: true,
@@ -1360,10 +1359,10 @@ func TestResolveFallback(t *testing.T) {
 		{
 			name: "route fallback inactive",
 			routeFallback: &alaye.Fallback{
-				Enabled: alaye.Inactive,
+				Enabled: expect.Inactive,
 			},
 			globalFallback: &alaye.Fallback{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 			},
 			wantActive: false,
 		},
@@ -1498,7 +1497,7 @@ func TestBuildRouteLimiter_Nil(t *testing.T) {
 
 func TestBuildRouteLimiter_Disabled(t *testing.T) {
 	rlc := &alaye.RouteRate{
-		Enabled: alaye.Inactive,
+		Enabled: expect.Inactive,
 	}
 	result := buildRouteLimiter(rlc, nil, nil, nil)
 	if result != nil {
@@ -1508,18 +1507,18 @@ func TestBuildRouteLimiter_Disabled(t *testing.T) {
 
 func TestBuildRouteLimiter_ACMEChallenge(t *testing.T) {
 	rlc := &alaye.RouteRate{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Rule: alaye.RateRule{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			Requests: 100,
 			Window:   alaye.Duration(time.Minute),
 		},
 	}
 	global := &alaye.GlobalRate{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Rules: []alaye.RateRule{
 			{
-				Enabled:  alaye.Active,
+				Enabled:  expect.Active,
 				Prefixes: []string{"/.well-known/acme-challenge/"},
 				Requests: 1000,
 				Window:   alaye.Duration(time.Minute),
@@ -1547,9 +1546,9 @@ func TestBuildRouteLimiter_ACMEChallenge(t *testing.T) {
 
 func TestBuildRouteLimiter_MethodMatch(t *testing.T) {
 	rlc := &alaye.RouteRate{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Rule: alaye.RateRule{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			Methods:  []string{"POST"},
 			Requests: 10,
 			Window:   alaye.Duration(time.Minute),
@@ -1580,9 +1579,9 @@ func TestBuildRouteLimiter_MethodMatch(t *testing.T) {
 
 func TestBuildRouteLimiter_PrefixMatch(t *testing.T) {
 	rlc := &alaye.RouteRate{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Rule: alaye.RateRule{
-			Enabled:  alaye.Active,
+			Enabled:  expect.Active,
 			Prefixes: []string{"/api/"},
 			Requests: 100,
 			Window:   alaye.Duration(time.Minute),
@@ -1613,11 +1612,11 @@ func TestBuildRouteLimiter_PrefixMatch(t *testing.T) {
 
 func TestBuildRouteLimiter_GlobalPolicy(t *testing.T) {
 	rlc := &alaye.RouteRate{
-		Enabled:   alaye.Active,
+		Enabled:   expect.Active,
 		UsePolicy: "api-policy",
 	}
 	global := &alaye.GlobalRate{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Policies: []alaye.RatePolicy{
 			{
 				Name:     "api-policy",
@@ -1674,10 +1673,10 @@ func TestRouteHandler_ConcurrentRequests(t *testing.T) {
 	defer srv.Close()
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 	}
@@ -1721,10 +1720,10 @@ func TestRouteHandler_RequestContextPropagation(t *testing.T) {
 	defer srv.Close()
 
 	route := &alaye.Route{
-		Enabled: alaye.Active,
+		Enabled: expect.Active,
 		Path:    "/api",
 		Backends: alaye.Backend{
-			Enabled: alaye.Active,
+			Enabled: expect.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
 		StripPrefixes: []string{"/api"},
@@ -1785,7 +1784,7 @@ func TestRouteHandler_Serverless_Selection(t *testing.T) {
 	}
 
 	cfg := NewTestConfig(t)
-	cfg.Orch = orchestrator.New(cfg.Resource.Logger, t.TempDir(), nil, nil)
+	cfg.Orch = orchestrator.New(cfg.Resource.Logger, expect.NewFolder(t.TempDir()), nil, nil)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -1804,9 +1803,9 @@ func TestRouteHandler_Serverless_Selection(t *testing.T) {
 	route := &alaye.Route{
 		Path: "/api",
 		Serverless: alaye.Serverless{
-			Enabled: alaye.Active,
-			RESTs: []alaye.REST{
-				{Name: "sms", URL: ts.URL, Enabled: alaye.Active},
+			Enabled: expect.Active,
+			Replay: []alaye.Replay{
+				{Name: "sms", URL: ts.URL, Enabled: expect.Active},
 			},
 			Workers: []alaye.Work{
 				{
@@ -1858,7 +1857,7 @@ func TestRouteHandler_Serverless_NotFound(t *testing.T) {
 	cfg := NewTestConfig(t)
 	route := &alaye.Route{
 		Path:       "/api",
-		Serverless: alaye.Serverless{Enabled: alaye.Active},
+		Serverless: alaye.Serverless{Enabled: expect.Active},
 	}
 
 	h := NewRoute(cfg, route)

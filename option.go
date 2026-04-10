@@ -5,6 +5,7 @@ import (
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/operation/api"
+	"github.com/agberohq/keeper"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 )
@@ -45,5 +46,10 @@ func WithAPIShared(shared *api.Shared) Option {
 	return func(server *Server) {
 		server.apiShared = shared
 	}
+}
 
+func WithKeeper(store *keeper.Keeper) Option {
+	return func(server *Server) {
+		server.keeperStore = store
+	}
 }

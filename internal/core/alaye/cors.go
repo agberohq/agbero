@@ -1,15 +1,18 @@
 package alaye
 
-import "github.com/olekukonko/errors"
+import (
+	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/olekukonko/errors"
+)
 
 type CORS struct {
-	Enabled          Enabled  `hcl:"enabled,attr" json:"enabled"`
-	AllowedOrigins   []string `hcl:"allowed_origins,attr" json:"allowed_origins"`
-	AllowedMethods   []string `hcl:"allowed_methods,attr" json:"allowed_methods"`
-	AllowedHeaders   []string `hcl:"allowed_headers,attr" json:"allowed_headers"`
-	ExposedHeaders   []string `hcl:"exposed_headers,attr" json:"exposed_headers"`
-	AllowCredentials bool     `hcl:"allow_credentials,attr" json:"allow_credentials"`
-	MaxAge           int      `hcl:"max_age,attr" json:"max_age"`
+	Enabled          expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	AllowedOrigins   []string      `hcl:"allowed_origins,attr" json:"allowed_origins"`
+	AllowedMethods   []string      `hcl:"allowed_methods,attr" json:"allowed_methods"`
+	AllowedHeaders   []string      `hcl:"allowed_headers,attr" json:"allowed_headers"`
+	ExposedHeaders   []string      `hcl:"exposed_headers,attr" json:"exposed_headers"`
+	AllowCredentials bool          `hcl:"allow_credentials,attr" json:"allow_credentials"`
+	MaxAge           int           `hcl:"max_age,attr" json:"max_age"`
 }
 
 // Validate checks that wildcard origins are not combined with allow_credentials.

@@ -3,8 +3,8 @@ package tlss
 import (
 	"os"
 	"os/user"
-	"path/filepath"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/ll"
 )
@@ -34,11 +34,9 @@ func BootstrapEnv(logger *ll.Logger) error {
 	return nil
 }
 
-func IsCARootInstalled(certDir string) bool {
+func IsCARootInstalled(certDir expect.Folder) bool {
 	if certDir == "" {
 		return false
 	}
-	caPath := filepath.Join(certDir, "ca-cert.pem")
-	_, err := os.Stat(caPath)
-	return err == nil
+	return certDir.FileExists("ca-cert.pem")
 }

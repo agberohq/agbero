@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/pkg/revoke"
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
@@ -39,7 +40,7 @@ func TestRevokeHandler(t *testing.T) {
 	})
 
 	t.Run("missing jti", func(t *testing.T) {
-		tmpDir := t.TempDir()
+		tmpDir := expect.NewFolder(t.TempDir())
 		store, err := revoke.New(tmpDir, logger)
 		if err != nil {
 			t.Fatal(err)
@@ -67,7 +68,7 @@ func TestRevokeHandler(t *testing.T) {
 	})
 
 	t.Run("missing expires_at", func(t *testing.T) {
-		tmpDir := t.TempDir()
+		tmpDir := expect.NewFolder(t.TempDir())
 		store, err := revoke.New(tmpDir, logger)
 		if err != nil {
 			t.Fatal(err)
@@ -95,7 +96,7 @@ func TestRevokeHandler(t *testing.T) {
 	})
 
 	t.Run("already expired token", func(t *testing.T) {
-		tmpDir := t.TempDir()
+		tmpDir := expect.NewFolder(t.TempDir())
 		store, err := revoke.New(tmpDir, logger)
 		if err != nil {
 			t.Fatal(err)
@@ -128,7 +129,7 @@ func TestRevokeHandler(t *testing.T) {
 	})
 
 	t.Run("successful revoke", func(t *testing.T) {
-		tmpDir := t.TempDir()
+		tmpDir := expect.NewFolder(t.TempDir())
 		store, err := revoke.New(tmpDir, logger)
 		if err != nil {
 			t.Fatal(err)
@@ -170,10 +171,12 @@ func TestRevokeHandler(t *testing.T) {
 
 	t.Run("store error", func(t *testing.T) {
 		// Create a store with a read-only directory to force errors
-		tmpDir := t.TempDir()
+		tmpDir := expect.NewFolder(t.TempDir())
 		// Make directory read-only (this works on Unix systems)
-		os.Chmod(tmpDir, 0555)
-		defer os.Chmod(tmpDir, 0755) // Restore for cleanup
+		if err := os.Chmod(tmpDir.Path(), 0555); err != nil {
+			t.Skip("cannot set read-only permission on this system")
+		}
+		defer os.Chmod(tmpDir.Path(), 0755) // Restore for cleanup
 
 		store, err := revoke.New(tmpDir, logger)
 		if err != nil {

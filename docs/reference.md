@@ -6,15 +6,28 @@ The main configuration file is typically named `agbero.hcl`. Host-specific confi
 
 ---
 
-## Environment Variable Interpolation
+## Value Interpolation
 
-Any `string` or `Value` type field can reference an environment variable:
+Any `Value`-typed field supports three resolution forms:
+
+| Form | Example | Resolves to |
+|------|---------|-------------|
+| Plain string | `"hello"` | The literal string `"hello"` |
+| Environment variable | `"env.MY_VAR"` | The value of `$MY_VAR` at runtime |
+| Keeper secret | `"ss://namespace/key"` | The secret stored in the keeper under `namespace/key` |
 
 ```hcl
-secret = "env:MY_SECRET_VAR"
+# All three forms work anywhere a Value is accepted
+headers = {
+  "X-Static"  = "my-fixed-value"              # plain string
+  "X-Env"     = "env.API_KEY"                 # from environment
+  "X-Secret"  = "ss://integrations/api-key"   # from keeper
+}
 ```
 
-If the variable is not set, the string literal `"env:MY_SECRET_VAR"` is used as-is.
+> **Backwards compatibility:** The legacy `env:VAR` form (colon syntax) is also accepted.
+
+If an environment variable is not set, the literal string is used as-is. If a keeper secret key does not exist, the raw `ss://` reference is used and a warning is logged.
 
 ---
 
@@ -63,7 +76,7 @@ Global default timeouts (can be overridden per-route).
 |-------|------|-------------|
 | `hosts_dir` | `string` | Directory containing host config files |
 | `certs_dir` | `string` | Directory for certificate storage |
-| `data_dir` | `string` | Directory for runtime data (PID file, etc.) |
+| `data_dir` | `string` | Directory for runtime data (keeper.db, firewall.db, telemetry store, revocation store, etc.) |
 | `work_dir` | `string` | Working directory for workers and git repos |
 
 ### `admin` block
@@ -297,23 +310,27 @@ Runs local functions as HTTP endpoints or background workers.
 |-------|------|---------|-------------|
 | `enabled` | `Enabled` | `enabled` | Enable serverless mode |
 | `root` | `string` | `root` | Root directory for function files |
-| `rests` | `[]REST` | `rest` blocks | REST endpoint definitions |
+| `replays` | `[]Replay` | `replay` blocks | Outbound HTTP proxy endpoint definitions |
 | `workers` | `[]Work` | `work` blocks | Background worker definitions |
 
-### `rest` block (inside `serverless`)
+### `replay` block (inside `serverless`)
 
 | Field | Type | HCL key | Description |
 |-------|------|---------|-------------|
-| `name` | `string` | *(label)* | **Required.** Endpoint name |
+| `name` | `string` | *(label)* | **Required.** Endpoint name. Reachable at `{route-path}/{name}` |
 | `enabled` | `Enabled` | `enabled` | Enable this endpoint |
 | `url` | `string` | `url` | **Required.** Target URL |
 | `method` | `string` | `method` | HTTP method |
-| `headers` | `map[string]string` | `headers` | Static request headers |
-| `query` | `map[string]Value` | `query` | Static query parameters |
-| `forward_query` | `bool` | `forward_query` | Forward incoming query params |
-| `timeout` | `Duration` | `timeout` | Request timeout |
-| `cache` | `Cache` | `cache` block | Response caching |
-| `env` | `map[string]Value` | `env` | Environment variables |
+| `headers` | `map[string]string` | `headers` | Static request headers. Values support `env.VAR` and `ss://ns/key` for keeper secrets |
+| `query` | `map[string]Value` | `query` | Static query parameters. Values support `env.VAR` and `ss://ns/key` |
+| `forward_query` | `bool` | `forward_query` | Forward incoming query params to the upstream |
+| `timeout` | `Duration` | `timeout` | Request timeout (default: `30s`) |
+| `cache` | `Cache` | `cache` block | Cache upstream responses |
+| `env` | `map[string]Value` | `env` | Environment variables for value resolution |
+| `allowed_domains` | `[]string` | `allowed_domains` | Allowed outbound domains in relay mode. Supports `*.domain.com` wildcards. Private/loopback IPs always blocked. Never use `"*"` in production. |
+| `strip_headers` | `Enabled` | `strip_headers` | Strip upstream CORS and security headers, re-add permissive CORS |
+| `referer_mode` | `string` | `referer_mode` | `auto` (default — target origin), `fixed` (use `referer_value`), `forward` (pass client referer), `none` (omit) |
+| `referer_value` | `string` | `referer_value` | Fixed Referer value used when `referer_mode = "fixed"` |
 
 ### `work` block (inside `serverless`)
 
@@ -743,8 +760,17 @@ Same as `rule` but named (via label) for reuse across routes via `use_policy`.
 | `forward_auth` | `ForwardAuth` | `forward_auth` block | Forward auth for admin |
 | `jwt_auth` | `JWTAuth` | `jwt_auth` block | JWT auth for admin |
 | `o_auth` | `OAuth` | `o_auth` block | OAuth for admin |
+| `totp` | `TOTP` | `totp` block | TOTP two-factor authentication for admin logins |
 | `pprof` | `Pprof` | `pprof` block | Go pprof server |
 | `telemetry` | `Telemetry` | `telemetry` block | Telemetry export |
+
+### `totp` block
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | `Enabled` | Require TOTP code during admin login |
+
+Setup with `agbero admin totp setup --user <username>`. See [Security Guide](./security.md).
 
 ### `pprof` block
 
@@ -803,8 +829,18 @@ Same as `rule` but named (via label) for reuse across routes via `use_policy`.
 |-------|------|---------|-------------|
 | `enabled` | `Enabled` | `enabled` | Enable security features |
 | `trusted_proxies` | `[]string` | `trusted_proxies` | Trusted upstream proxy IPs/CIDRs for real IP extraction |
-| `internal_auth_key` | `string` | `internal_auth_key` | Key for internal service-to-service auth |
 | `firewall` | `Firewall` | `firewall` block | Global firewall configuration |
+| `keeper` | `Keeper` | `keeper` block | Keeper (encrypted secret store) configuration |
+
+### `security.keeper` block
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | `Enabled` | Keeper is a required component; this is advisory only |
+| `passphrase` | `Value` | Master passphrase to unlock the keeper. Use `"env.AGBERO_PASSPHRASE"` in production to avoid plaintext in config. |
+| `auto_lock` | `Duration` | Automatically lock the keeper after this period of inactivity |
+| `logging` | `Enabled` | Enable keeper operation logging |
+| `audit` | `Enabled` | Enable detailed audit trail for all secret reads and writes |
 
 ---
 
@@ -854,7 +890,7 @@ Same as `rule` but named (via label) for reuse across routes via `use_policy`.
 | Type | Description |
 |------|-------------|
 | `Enabled` | Boolean-like: `true`/`false` or `"active"`/`"inactive"` |
-| `Value` | String that supports `"env:VAR"` interpolation |
+| `Value` | String supporting `"env.VAR"` (environment variable), `"ss://ns/key"` (keeper secret), or a plain literal. Legacy `"env:VAR"` colon form also accepted. |
 | `Duration` | Go duration string: `"10s"`, `"5m"`, `"1h30m"` |
 | `Address` | `[scheme://]host[:port]` — scheme: `http`, `https`, `tcp` |
 | `WebRoot` | Directory path string |

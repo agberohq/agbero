@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 )
 
@@ -98,7 +99,7 @@ func TestUnmarshalGlobal_full(t *testing.T) {
 	if !g.Development {
 		t.Error("Development: got false, want true")
 	}
-	if g.Bind.Redirect != alaye.Active {
+	if g.Bind.Redirect != expect.Active {
 		t.Errorf("Bind.Redirect: got %v, want Active", g.Bind.Redirect)
 	}
 	// Fields below compare alaye.Duration to alaye.Duration(time.Second constants).
@@ -118,13 +119,13 @@ func TestUnmarshalGlobal_full(t *testing.T) {
 	if g.Storage.HostsDir != "/etc/agbero/hosts.d" {
 		t.Errorf("Storage.HostsDir: got %q", g.Storage.HostsDir)
 	}
-	if g.Logging.Enabled != alaye.Active {
+	if g.Logging.Enabled != expect.Active {
 		t.Errorf("Logging.Enabled: got %v, want Active", g.Logging.Enabled)
 	}
 	if g.Logging.Level != "info" {
 		t.Errorf("Logging.Level: got %q, want info", g.Logging.Level)
 	}
-	if g.Admin.Enabled != alaye.Inactive {
+	if g.Admin.Enabled != expect.Inactive {
 		t.Errorf("Admin.Enabled: got %v, want Inactive", g.Admin.Enabled)
 	}
 }
@@ -183,7 +184,7 @@ func TestUnmarshalHost_proxyRoute(t *testing.T) {
 	if r.Path != "/" {
 		t.Errorf("Route.Path: got %q, want /", r.Path)
 	}
-	if r.Backends.Enabled != alaye.Active {
+	if r.Backends.Enabled != expect.Active {
 		t.Errorf("Backends.Enabled: got %v, want Active", r.Backends.Enabled)
 	}
 	if r.Backends.Strategy != "round_robin" {
@@ -195,7 +196,7 @@ func TestUnmarshalHost_proxyRoute(t *testing.T) {
 	if r.Backends.Servers[1].Weight != 2 {
 		t.Errorf("Server[1].Weight: got %d, want 2", r.Backends.Servers[1].Weight)
 	}
-	if r.HealthCheck.Enabled != alaye.Active {
+	if r.HealthCheck.Enabled != expect.Active {
 		t.Errorf("HealthCheck.Enabled: got %v, want Active", r.HealthCheck.Enabled)
 	}
 	if r.HealthCheck.Path != "/health" {
@@ -234,7 +235,7 @@ func TestUnmarshalHost_webRoute(t *testing.T) {
 		t.Fatalf("Routes: got %d, want 1", len(h.Routes))
 	}
 	r := h.Routes[0]
-	if r.Web.Enabled != alaye.Active {
+	if r.Web.Enabled != expect.Active {
 		t.Errorf("Web.Enabled: got %v, want Active", r.Web.Enabled)
 	}
 	if r.Web.Root.String() != "/var/www/html" {
@@ -243,7 +244,7 @@ func TestUnmarshalHost_webRoute(t *testing.T) {
 	if r.Web.Index[0] != "index.html" {
 		t.Errorf("Web.Index: got %q, want index.html", r.Web.Index)
 	}
-	if !r.Web.Listing {
+	if !r.Web.Listing.Active() {
 		t.Error("Web.Listing: got false, want true")
 	}
 }
@@ -265,7 +266,7 @@ route "/" {
 	if err := NewParser(path).Unmarshal(&h); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if h.Routes[0].Web.Enabled != alaye.Active {
+	if h.Routes[0].Web.Enabled != expect.Active {
 		t.Errorf("Enabled from bool true: got %v, want Active", h.Routes[0].Web.Enabled)
 	}
 }
@@ -285,7 +286,7 @@ route "/" {
 	if err := NewParser(path).Unmarshal(&h); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if h.Routes[0].Web.Enabled != alaye.Inactive {
+	if h.Routes[0].Web.Enabled != expect.Inactive {
 		t.Errorf("Enabled from bool false: got %v, want Inactive", h.Routes[0].Web.Enabled)
 	}
 }
@@ -304,7 +305,7 @@ admin {
 	if err := NewParser(path).Unmarshal(&g); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if g.Admin.Enabled != alaye.Active {
+	if g.Admin.Enabled != expect.Active {
 		t.Errorf("Enabled from string 'on': got %v, want Active", g.Admin.Enabled)
 	}
 }
@@ -323,7 +324,7 @@ admin {
 	if err := NewParser(path).Unmarshal(&g); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if g.Admin.Enabled != alaye.Inactive {
+	if g.Admin.Enabled != expect.Inactive {
 		t.Errorf("Enabled from string 'off': got %v, want Inactive", g.Admin.Enabled)
 	}
 }
@@ -342,7 +343,7 @@ admin {
 	if err := NewParser(path).Unmarshal(&g); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if g.Admin.Enabled != alaye.Active {
+	if g.Admin.Enabled != expect.Active {
 		t.Errorf("Enabled from int 1: got %v, want Active", g.Admin.Enabled)
 	}
 }
@@ -684,7 +685,7 @@ route "/backend" {
 	if webRoute.Path != "/web" {
 		t.Errorf("Expected path '/web', got %q", webRoute.Path)
 	}
-	if webRoute.Web.Enabled != alaye.Active {
+	if webRoute.Web.Enabled != expect.Active {
 		t.Errorf("Expected Web.Enabled to be Active, got %v", webRoute.Web.Enabled)
 	}
 	if webRoute.Web.Root.String() != "/var/www/html" {
@@ -696,7 +697,7 @@ route "/backend" {
 	if backendRoute.Path != "/backend" {
 		t.Errorf("Expected path '/backend', got %q", backendRoute.Path)
 	}
-	if backendRoute.Backends.Enabled != alaye.Active {
+	if backendRoute.Backends.Enabled != expect.Active {
 		t.Errorf("Expected Backends.Enabled to be Active, got %v", backendRoute.Backends.Enabled)
 	}
 	if len(backendRoute.Backends.Servers) == 0 || backendRoute.Backends.Servers[0].Address.String() != "http://127.0.0.1:8080" {

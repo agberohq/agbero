@@ -1,4 +1,4 @@
-package alaye
+package expect
 
 import (
 	"encoding"
@@ -8,33 +8,33 @@ import (
 	"strings"
 )
 
-type Enabled int
+type Toggle int
 
 const (
-	Active   Enabled = 1
-	Inactive Enabled = -1
-	Unknown  Enabled = 0
+	Active   Toggle = 1
+	Inactive Toggle = -1
+	Unknown  Toggle = 0
 )
 
 var (
-	_ encoding.TextUnmarshaler = (*Enabled)(nil)
-	_ encoding.TextMarshaler   = (*Enabled)(nil)
-	_ json.Unmarshaler         = (*Enabled)(nil)
-	_ json.Marshaler           = (*Enabled)(nil)
+	_ encoding.TextUnmarshaler = (*Toggle)(nil)
+	_ encoding.TextMarshaler   = (*Toggle)(nil)
+	_ json.Unmarshaler         = (*Toggle)(nil)
+	_ json.Marshaler           = (*Toggle)(nil)
 )
 
-func NewStatus(v any) Enabled {
-	var s Enabled
+func NewEnabled(v any) Toggle {
+	var s Toggle
 	_ = s.Set(v)
 	return s
 }
 
-func (s *Enabled) Set(v any) error {
+func (s *Toggle) Set(v any) error {
 	switch val := v.(type) {
-	case Enabled:
+	case Toggle:
 		*s = val
 	case int:
-		*s = Enabled(val)
+		*s = Toggle(val)
 	case bool:
 		if val {
 			*s = Active
@@ -49,22 +49,22 @@ func (s *Enabled) Set(v any) error {
 	return nil
 }
 
-func (s Enabled) Active() bool    { return s == Active }
-func (s Enabled) Inactive() bool  { return s == Inactive }
-func (s Enabled) NotActive() bool { return s != Active }
+func (s Toggle) Active() bool    { return s == Active }
+func (s Toggle) Inactive() bool  { return s == Inactive }
+func (s Toggle) NotActive() bool { return s != Active }
 
-func (s Enabled) Default() bool { return s == Unknown }
-func (s Enabled) Int() int      { return int(s) }
-func (s Enabled) Bool() bool    { return s == Active }
+func (s Toggle) Default() bool { return s == Unknown }
+func (s Toggle) Int() int      { return int(s) }
+func (s Toggle) Bool() bool    { return s == Active }
 
-func (s Enabled) Toggle() Enabled {
+func (s Toggle) Toggle() Toggle {
 	if s.Inactive() {
 		return Active
 	}
 	return Inactive
 }
 
-func (s Enabled) String() string {
+func (s Toggle) String() string {
 	switch s {
 	case Active:
 		return "on"
@@ -75,7 +75,7 @@ func (s Enabled) String() string {
 	}
 }
 
-func (s *Enabled) UnmarshalText(text []byte) error {
+func (s *Toggle) UnmarshalText(text []byte) error {
 	raw := strings.ToLower(strings.TrimSpace(string(text)))
 
 	switch raw {
@@ -91,22 +91,22 @@ func (s *Enabled) UnmarshalText(text []byte) error {
 	}
 
 	if i, err := strconv.Atoi(raw); err == nil {
-		*s = Enabled(i)
+		*s = Toggle(i)
 		return nil
 	}
 
 	return fmt.Errorf("invalid status value: %s", raw)
 }
 
-func (s Enabled) MarshalText() ([]byte, error) {
+func (s Toggle) MarshalText() ([]byte, error) {
 	return []byte(s.String()), nil
 }
 
-func (s Enabled) MarshalJSON() ([]byte, error) {
+func (s Toggle) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s.String())
 }
 
-func (s *Enabled) UnmarshalJSON(data []byte) error {
+func (s *Toggle) UnmarshalJSON(data []byte) error {
 	var str string
 	if err := json.Unmarshal(data, &str); err == nil {
 		return s.UnmarshalText([]byte(str))
@@ -114,7 +114,7 @@ func (s *Enabled) UnmarshalJSON(data []byte) error {
 
 	var i int
 	if err := json.Unmarshal(data, &i); err == nil {
-		*s = Enabled(i)
+		*s = Toggle(i)
 		return nil
 	}
 
@@ -131,7 +131,7 @@ func (s *Enabled) UnmarshalJSON(data []byte) error {
 	return fmt.Errorf("invalid JSON status: %s", string(data))
 }
 
-func (s *Enabled) Ensure(def Enabled) {
+func (s *Toggle) Ensure(def Toggle) {
 	if *s == Unknown {
 		*s = def
 	}

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/agberohq/agbero/internal/hub/resource"
+	"github.com/agberohq/agbero/internal/middleware/nonce"
 	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
 	"github.com/dustin/go-humanize"
 	"github.com/olekukonko/ll"
@@ -120,15 +122,22 @@ type web struct {
 	phpClientFactory gofast.ClientFactory
 	mdConverter      goldmark.Markdown
 	mdBrowse         bool
+	nonceStores      map[string]*nonce.Store
 }
 
-// NewWeb constructs a web handler for the given route.
-// Logger is sourced from res.Logger; no separate logger parameter is needed.
+// NewWeb creates a web handler. Existing call sites remain unchanged.
 func NewWeb(res *resource.Resource, route *alaye.Route, cookMgr *cook.Manager) *web {
+	return NewWebWithNonces(res, route, cookMgr, nil)
+}
+
+// NewWebWithNonces creates a web handler with nonce stores for replay auth.
+// nonceStores maps replay endpoint name → Store; nil disables injection.
+func NewWebWithNonces(res *resource.Resource, route *alaye.Route, cookMgr *cook.Manager, nonceStores map[string]*nonce.Store) *web {
 	h := &web{
-		route:   route,
-		res:     res,
-		cookMgr: cookMgr,
+		route:       route,
+		res:         res,
+		cookMgr:     cookMgr,
+		nonceStores: nonceStores,
 	}
 
 	logger := res.Logger.Namespace("web")
@@ -165,10 +174,7 @@ func NewWeb(res *resource.Resource, route *alaye.Route, cookMgr *cook.Manager) *
 			exts = append(exts, highlighting.NewHighlighting(
 				highlighting.WithStyle(theme),
 				highlighting.WithGuessLanguage(true),
-				// WithPreWrapper intercepts Chroma's <pre> at the formatter level.
-				// Chroma passes the inline styleAttr it would have written to Start();
-				// chromaPreWrapper discards it and emits a plain class-only element,
-				// so background and color are fully owned by the template CSS variables.
+
 				highlighting.WithFormatOptions(
 					chromahtml.WithPreWrapper(chromaPreWrapper{}),
 				),
@@ -208,8 +214,47 @@ func (h *web) logger() *ll.Logger {
 	return h.res.Logger.Namespace("web")
 }
 
-// ServeHTTP - handles web route requests including static files, php, and markdown
-// Bypasses caches automatically if NoCache is enabled or a refresh query is provided
+// injectNonces generates one nonce per configured endpoint and injects
+// <meta name="agbero-replay-nonce" data-endpoint="…" content="…"> before
+// </head>. Returns buf unchanged when nonce injection is not configured.
+func (h *web) injectNonces(buf *bytes.Buffer) *bytes.Buffer {
+	if !h.route.Web.Nonce.Enabled.Active() || len(h.nonceStores) == 0 {
+		return buf
+	}
+	var tags bytes.Buffer
+	for _, endpoint := range h.route.Web.Nonce.Endpoints {
+		store, ok := h.nonceStores[endpoint]
+		if !ok {
+			continue
+		}
+		nonce, err := store.Generate()
+		if err != nil {
+			h.res.Logger.Fields("endpoint", endpoint, "err", err).Warn("nonce: generate failed")
+			continue
+		}
+		tags.WriteString(`<meta name="agbero-replay-nonce" data-endpoint="`)
+		tags.WriteString(endpoint)
+		tags.WriteString(`" content="`)
+		tags.WriteString(nonce)
+		tags.WriteString(`">`)
+		tags.WriteByte('\n')
+	}
+	if tags.Len() == 0 {
+		return buf
+	}
+	body := buf.Bytes()
+	idx := bytes.Index(bytes.ToLower(body), []byte("</head>"))
+	if idx < 0 {
+		buf.Write(tags.Bytes())
+		return buf
+	}
+	var out bytes.Buffer
+	out.Write(body[:idx])
+	out.Write(tags.Bytes())
+	out.Write(body[idx:])
+	return &out
+}
+
 func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -262,7 +307,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	reqPath = cleanedPath
 	wantsDownload := r.URL.Query().Has("download")
 
-	if r.URL.Query().Has("refresh") || h.route.Web.NoCache {
+	if r.URL.Query().Has("refresh") || h.route.Web.NoCache.Active() {
 		dynamicGzCache.Delete(reqPath)
 	}
 
@@ -379,11 +424,25 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", mt)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	if h.route.Web.Nonce.Enabled.Active() && len(h.nonceStores) > 0 &&
+		(mt == "text/html" || mt == "text/html; charset=utf-8") {
+		var buf bytes.Buffer
+		if _, copyErr := io.Copy(&buf, f); copyErr != nil {
+			h.res.Logger.Fields("err", copyErr, "path", reqPath).Error("nonce: read html failed")
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		buf = *h.injectNonces(&buf)
+		w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(buf.Bytes())
+		return
+	}
+
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }
 
-// serveDynamicGzip - handles on-the-fly compression for large text files
-// Validates file modification time against the cache entry to ensure freshness
 func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath string, f *os.File, info fs.FileInfo, mimeType string) bool {
 	if info.Size() > woos.DynamicGzMaxSize {
 		return false
@@ -449,10 +508,8 @@ func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath s
 	return true
 }
 
-// setCommonHeaders - assigns cache headers and checks etags
-// Checks if client requested refresh or if route disables cache completely
 func (h *web) setCommonHeaders(w http.ResponseWriter, r *http.Request, reqPath string, modTime time.Time, size int64, isGzipVariant bool) (notModified bool) {
-	if r.URL.Query().Has("refresh") || h.route.Web.NoCache {
+	if r.URL.Query().Has("refresh") || h.route.Web.NoCache.Active() {
 		w.Header().Set("Cache-Control", "no-store")
 		if isGzipVariant {
 			w.Header().Add("Vary", "Accept-Encoding")
@@ -487,8 +544,6 @@ func (h *web) setCommonHeaders(w http.ResponseWriter, r *http.Request, reqPath s
 	return false
 }
 
-// serveMarkdown converts a Markdown file to HTML and writes the response.
-// Output is fully buffered before writing so template failures return a clean 500.
 func (h *web) serveMarkdown(w http.ResponseWriter, r *http.Request, root *os.Root, reqPath, browserPath string, info fs.FileInfo) {
 	f, err := root.Open(reqPath)
 	if err != nil {
@@ -527,7 +582,7 @@ func (h *web) serveMarkdown(w http.ResponseWriter, r *http.Request, root *os.Roo
 		Breadcrumb []crumb
 	}{
 		Title:      filepath.Base(reqPath),
-		Content:    template.HTML(mdBuf.String()), //nolint:gosec
+		Content:    template.HTML(mdBuf.String()),
 		ModTime:    info.ModTime().Format("2006-01-02 15:04:05"),
 		Breadcrumb: h.buildBreadcrumbs(browserPath),
 	}
@@ -555,8 +610,6 @@ func (h *web) serveMarkdown(w http.ResponseWriter, r *http.Request, root *os.Roo
 	_, _ = w.Write(out.Bytes())
 }
 
-// serveMarkdownWithTemplate renders converted Markdown using an operator-supplied template.
-// Returns true only when the response was written successfully.
 func (h *web) serveMarkdownWithTemplate(w http.ResponseWriter, root *os.Root, reqPath string, info fs.FileInfo, htmlContent string) bool {
 	tf, err := root.Open(h.route.Web.Markdown.Template)
 	if err != nil {
@@ -587,7 +640,7 @@ func (h *web) serveMarkdownWithTemplate(w http.ResponseWriter, root *os.Root, re
 		ModTime string
 	}{
 		Title:   filepath.Base(reqPath),
-		Content: template.HTML(htmlContent), //nolint:gosec
+		Content: template.HTML(htmlContent),
 		Path:    reqPath,
 		ModTime: info.ModTime().Format("2006-01-02 15:04:05"),
 	}
@@ -607,7 +660,6 @@ func (h *web) serveMarkdownWithTemplate(w http.ResponseWriter, root *os.Root, re
 	return true
 }
 
-// serveDir handles directory requests: index file loop, listing, or 403.
 func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, f *os.File, reqPath, browserPath string) {
 	if !strings.HasSuffix(browserPath, "/") {
 		http.Redirect(w, r, browserPath+"/", http.StatusMovedPermanently)
@@ -619,7 +671,6 @@ func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, f 
 	var indexName string
 	var indexPath string
 
-	// Iterate over configured indices
 	for _, idx := range h.getIndices() {
 		p := filepath.Join(reqPath, idx)
 		if idxF, err := root.Open(p); err == nil {
@@ -684,7 +735,7 @@ func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, f 
 		return
 	}
 
-	if h.route.Web.Listing {
+	if h.route.Web.Listing.Active() {
 		h.serveDirectoryListing(w, r, f, browserPath)
 		return
 	}
@@ -692,8 +743,6 @@ func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, f 
 	http.Error(w, "Forbidden", http.StatusForbidden)
 }
 
-// serveDirectoryListing renders the directory index into a buffer before writing,
-// ensuring a template failure can still return a clean HTTP 500.
 func (h *web) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *os.File, displayPath string) {
 	entries, err := f.ReadDir(-1)
 	if err != nil {
@@ -779,18 +828,16 @@ func (h *web) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *o
 	_, _ = w.Write(buf.Bytes())
 }
 
-// handleOpenError maps os.Root.Open failures to HTTP responses with tiered logging.
-// If SPA routing is enabled, it iterates through the configured indices and serves the first match.
 func (h *web) handleOpenError(w http.ResponseWriter, r *http.Request, root *os.Root, reqPath string, err error) {
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		if h.route.Web.SPA {
+		if h.route.Web.SPA.Active() {
 			for _, idxName := range h.getIndices() {
 				indexFile, iErr := root.Open(idxName)
 				if iErr == nil {
 					iInfo, sErr := indexFile.Stat()
 					if sErr == nil && !iInfo.IsDir() {
-						defer indexFile.Close() // Safe: we return immediately after
+						defer indexFile.Close()
 						mt := getMimeType(idxName)
 						if mt == "" {
 							mt = "text/html; charset=utf-8"
@@ -800,7 +847,7 @@ func (h *web) handleOpenError(w http.ResponseWriter, r *http.Request, root *os.R
 						http.ServeContent(w, r, idxName, iInfo.ModTime(), indexFile)
 						return
 					}
-					indexFile.Close() // Close it since we didn't use it
+					indexFile.Close()
 				}
 			}
 		}
@@ -818,8 +865,6 @@ func (h *web) handleOpenError(w http.ResponseWriter, r *http.Request, root *os.R
 	}
 }
 
-// getIndices returns the configured index slice, falling back to smart defaults
-// to ensure resilience during direct unit test instantiation.
 func (h *web) getIndices() []string {
 	if len(h.route.Web.Index) > 0 {
 		return h.route.Web.Index
@@ -837,8 +882,6 @@ func (h *web) resolveRootPath() string {
 	return h.route.Web.Root.String()
 }
 
-// gzMayExist returns true when the cache holds no confirmed-negative entry.
-// Unknown keys default to true so the file open is always attempted first.
 func (h *web) gzMayExist(gzPath string) bool {
 	it, ok := gzExistsCache.Load(gzPath)
 	if !ok {
@@ -851,8 +894,6 @@ func (h *web) gzMayExist(gzPath string) bool {
 	return v
 }
 
-// gzSetExists records the confirmed existence state for a pre-compressed sidecar.
-// TTL is jittered ±2.5 s to prevent thundering-herd on cache expiry.
 func (h *web) gzSetExists(gzPath string, exists bool) {
 	jitter := time.Duration(time.Now().UnixNano()%int64(5*time.Second)) - 2500*time.Millisecond
 	ttl := max(gzCacheTTL+jitter, time.Second)
@@ -878,10 +919,6 @@ func (h *web) buildBreadcrumbs(displayPath string) []crumb {
 	return out
 }
 
-// chromaPreWrapper implements chromahtml.PreWrapper, replacing Chroma's default
-// <pre style="color:...;background-color:..."> with a plain class-only element.
-// Inline styles on <pre> cannot be overridden by CSS variables even with !important,
-// so discarding styleAttr gives the template's pre.chroma rule full control.
 type chromaPreWrapper struct{}
 
 func (chromaPreWrapper) Start(code bool, _ string) string {

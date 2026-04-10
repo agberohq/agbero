@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/olekukonko/ll"
@@ -32,7 +33,7 @@ func createTestEngine(t *testing.T, cfg *alaye.Firewall) *Engine {
 	woos.D.Firewall(cfg)
 	e, err := New(Config{
 		Firewall: cfg,
-		DataDir:  woos.NewFolder(dir),
+		DataDir:  expect.NewFolder(dir),
 		Logger:   ll.New("test").Disable(),
 		IPMgr:    zulu.IP,
 	})
@@ -44,13 +45,13 @@ func createTestEngine(t *testing.T, cfg *alaye.Firewall) *Engine {
 
 func TestStaticRules(t *testing.T) {
 	cfg := &alaye.Firewall{
-		Status: alaye.Active,
+		Status: expect.Active,
 		Rules: []alaye.Rule{
 			{
 				Name: "whitelist_admin",
 				Type: "whitelist",
 				Match: alaye.Match{
-					Enabled: alaye.Active,
+					Enabled: expect.Active,
 					IP:      []string{"10.0.0.5"},
 				},
 			},
@@ -58,7 +59,7 @@ func TestStaticRules(t *testing.T) {
 				Name: "blacklist_bot",
 				Type: "static",
 				Match: alaye.Match{
-					Enabled: alaye.Active,
+					Enabled: expect.Active,
 					IP:      []string{"1.2.3.4", "5.0.0.0/8"},
 				},
 			},
@@ -89,16 +90,16 @@ func TestStaticRules(t *testing.T) {
 
 func TestDynamicRules_Logic(t *testing.T) {
 	cfg := &alaye.Firewall{
-		Status: alaye.Active,
+		Status: expect.Active,
 		Rules: []alaye.Rule{
 			{
 				Name: "bad_req",
 				Type: "dynamic",
 				Match: alaye.Match{
-					Enabled: alaye.Active,
+					Enabled: expect.Active,
 					Any: []alaye.Condition{
-						{Enabled: alaye.Active, Location: "header", Key: "X-Test", Value: "BlockMe"},
-						{Enabled: alaye.Active, Location: "query", Key: "evil", Value: "true"},
+						{Enabled: expect.Active, Location: "header", Key: "X-Test", Value: "BlockMe"},
+						{Enabled: expect.Active, Location: "query", Key: "evil", Value: "true"},
 					},
 				},
 			},
@@ -133,7 +134,7 @@ func TestDynamicRules_Logic(t *testing.T) {
 
 func TestBodyInspection(t *testing.T) {
 	cfg := &alaye.Firewall{
-		Status:              alaye.Active,
+		Status:              expect.Active,
 		InspectBody:         true,
 		MaxInspectBytes:     1024,
 		InspectContentTypes: []string{"application/json"},
@@ -142,9 +143,9 @@ func TestBodyInspection(t *testing.T) {
 				Name: "sql_injection",
 				Type: "dynamic",
 				Match: alaye.Match{
-					Enabled: alaye.Active,
+					Enabled: expect.Active,
 					Any: []alaye.Condition{
-						{Enabled: alaye.Active, Location: "body", Pattern: "(?i)union.*select"},
+						{Enabled: expect.Active, Location: "body", Pattern: "(?i)union.*select"},
 					},
 				},
 			},
@@ -184,16 +185,16 @@ func TestBodyInspection(t *testing.T) {
 
 func TestThresholds(t *testing.T) {
 	cfg := &alaye.Firewall{
-		Status: alaye.Active,
+		Status: expect.Active,
 		Rules: []alaye.Rule{
 			{
 				Name: "rate_limit",
 				Type: "dynamic",
 				Match: alaye.Match{
-					Enabled: alaye.Active,
-					Any:     []alaye.Condition{{Enabled: alaye.Active, Location: "path", Operator: "prefix", Value: "/"}},
+					Enabled: expect.Active,
+					Any:     []alaye.Condition{{Enabled: expect.Active, Location: "path", Operator: "prefix", Value: "/"}},
 					Threshold: &alaye.Threshold{
-						Enabled: alaye.Active,
+						Enabled: expect.Active,
 						Count:   3,
 						Window:  alaye.Duration(1 * time.Minute),
 						TrackBy: "ip",
@@ -233,11 +234,11 @@ func TestThresholds(t *testing.T) {
 func TestPersistence(t *testing.T) {
 	dir, _ := os.MkdirTemp("", "persist")
 	defer os.RemoveAll(dir)
-	cfg := &alaye.Firewall{Status: alaye.Active}
+	cfg := &alaye.Firewall{Status: expect.Active}
 	woos.D.Firewall(cfg)
 	e1, err := New(Config{
 		Firewall: cfg,
-		DataDir:  woos.NewFolder(dir),
+		DataDir:  expect.NewFolder(dir),
 		Logger:   ll.New("test").Disable(),
 		IPMgr:    zulu.IP,
 	})
@@ -259,7 +260,7 @@ func TestPersistence(t *testing.T) {
 	e1.Close()
 	e2, _ := New(Config{
 		Firewall: cfg,
-		DataDir:  woos.NewFolder(dir),
+		DataDir:  expect.NewFolder(dir),
 		Logger:   ll.New("test").Disable(),
 		IPMgr:    zulu.IP,
 	})
@@ -275,13 +276,13 @@ func TestPersistence(t *testing.T) {
 
 func TestRouteOverrides(t *testing.T) {
 	globalCfg := &alaye.Firewall{
-		Status: alaye.Active,
+		Status: expect.Active,
 		Rules: []alaye.Rule{
 			{
 				Name: "block_admin",
 				Type: "dynamic",
 				Match: alaye.Match{
-					Enabled: alaye.Active,
+					Enabled: expect.Active,
 					Path:    []string{"/admin"},
 				},
 			},
@@ -297,7 +298,7 @@ func TestRouteOverrides(t *testing.T) {
 		t.Error("Global rule should apply")
 	}
 	routeFW := &alaye.FirewallRoute{
-		Status:       alaye.Active,
+		Status:       expect.Active,
 		IgnoreGlobal: true,
 	}
 	req = httptest.NewRequest("GET", "/admin", nil)
@@ -312,7 +313,7 @@ func TestRouteOverrides(t *testing.T) {
 			Name: "route_block",
 			Type: "dynamic",
 			Match: alaye.Match{
-				Enabled: alaye.Active,
+				Enabled: expect.Active,
 				Path:    []string{"/secret"},
 			},
 		},
@@ -337,58 +338,58 @@ func TestConditions_Table(t *testing.T) {
 	}{
 		{
 			name:   "Prefix Match",
-			cond:   alaye.Condition{Enabled: alaye.Active, Location: "path", Operator: "prefix", Value: "/api"},
+			cond:   alaye.Condition{Enabled: expect.Active, Location: "path", Operator: "prefix", Value: "/api"},
 			reqURL: "/api/v1/users",
 			want:   true,
 		},
 		{
 			name:   "Suffix Match",
-			cond:   alaye.Condition{Enabled: alaye.Active, Location: "path", Operator: "suffix", Value: ".php"},
+			cond:   alaye.Condition{Enabled: expect.Active, Location: "path", Operator: "suffix", Value: ".php"},
 			reqURL: "/index.php",
 			want:   true,
 		},
 		{
 			name:   "Contains Match",
-			cond:   alaye.Condition{Enabled: alaye.Active, Location: "path", Operator: "contains", Value: "admin"},
+			cond:   alaye.Condition{Enabled: expect.Active, Location: "path", Operator: "contains", Value: "admin"},
 			reqURL: "/v1/admin/login",
 			want:   true,
 		},
 		{
 			name:      "Header Missing (True)",
-			cond:      alaye.Condition{Enabled: alaye.Active, Location: "header", Key: "X-Auth", Operator: "missing"},
+			cond:      alaye.Condition{Enabled: expect.Active, Location: "header", Key: "X-Auth", Operator: "missing"},
 			reqURL:    "/",
 			reqHeader: map[string]string{},
 			want:      true,
 		},
 		{
 			name:      "Header Missing (NotActive)",
-			cond:      alaye.Condition{Enabled: alaye.Active, Location: "header", Key: "X-Auth", Operator: "missing"},
+			cond:      alaye.Condition{Enabled: expect.Active, Location: "header", Key: "X-Auth", Operator: "missing"},
 			reqURL:    "/",
 			reqHeader: map[string]string{"X-Auth": "123"},
 			want:      false,
 		},
 		{
 			name:      "Method Exact",
-			cond:      alaye.Condition{Enabled: alaye.Active, Location: "method", Value: "POST"},
+			cond:      alaye.Condition{Enabled: expect.Active, Location: "method", Value: "POST"},
 			reqURL:    "/",
 			reqMethod: "POST",
 			want:      true,
 		},
 		{
 			name:      "Method IgnoreCase",
-			cond:      alaye.Condition{Enabled: alaye.Active, Location: "method", Value: "post", IgnoreCase: true},
+			cond:      alaye.Condition{Enabled: expect.Active, Location: "method", Value: "post", IgnoreCase: true},
 			reqURL:    "/",
 			reqMethod: "POST",
 			want:      true,
 		},
 		{
 			name:   "Negate Match",
-			cond:   alaye.Condition{Enabled: alaye.Active, Location: "path", Value: "/safe", Negate: true},
+			cond:   alaye.Condition{Enabled: expect.Active, Location: "path", Value: "/safe", Negate: true},
 			reqURL: "/safe",
 			want:   false,
 		},
 	}
-	cfg := &alaye.Firewall{Status: alaye.Active}
+	cfg := &alaye.Firewall{Status: expect.Active}
 	e := createTestEngine(t, cfg)
 	defer e.Close()
 	for _, tc := range tests {

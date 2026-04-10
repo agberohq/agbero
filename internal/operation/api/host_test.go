@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
-	discovery2 "github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/core/expect"
+	discovery "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
 )
@@ -59,15 +59,15 @@ func validWebPayload(domain, root string) []byte {
 
 // setupTestHost creates a temp hosts dir, a discovery instance, and a Shared
 // wired for host handler tests. Returns cleanup to defer.
-func setupTestHost(t *testing.T) (*discovery2.Host, string, *Shared, func()) {
+func setupTestHost(t *testing.T) (*discovery.Host, expect.Folder, *Shared, func()) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	hostsDir := filepath.Join(tmpDir, "hosts.d")
-	if err := os.MkdirAll(hostsDir, woos.DirPerm); err != nil {
+	hostsDir := expect.NewFolder(filepath.Join(tmpDir, "hosts.d"))
+	if err := hostsDir.Init(expect.DirPerm); err != nil {
 		t.Fatalf("failed to create hosts dir: %v", err)
 	}
 
-	hosts := discovery2.NewHost(woos.NewFolder(hostsDir), discovery2.WithLogger(testLogger))
+	hosts := discovery.NewHost(hostsDir, discovery.WithLogger(testLogger))
 	global := &alaye.Global{
 		Storage: alaye.Storage{HostsDir: hostsDir},
 	}
@@ -88,14 +88,13 @@ func TestHostHandler_List(t *testing.T) {
 	_, hostsDir, shared, cleanup := setupTestHost(t)
 	defer cleanup()
 
-	hostFile := filepath.Join(hostsDir, "test.example.com.hcl")
-	if err := os.WriteFile(hostFile, []byte(`domains = ["test.example.com"]
+	if err := hostsDir.Put("test.example.com.hcl", []byte(`domains = ["test.example.com"]
 route "/" {
   backend {
     server { address = "http://127.0.0.1:8080" }
   }
 }
-`), woos.FilePerm); err != nil {
+`), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 	if err := shared.Discovery.ReloadFull(); err != nil {
@@ -125,14 +124,13 @@ func TestHostHandler_Get(t *testing.T) {
 	_, hostsDir, shared, cleanup := setupTestHost(t)
 	defer cleanup()
 
-	hostFile := filepath.Join(hostsDir, "get-test.example.com.hcl")
-	if err := os.WriteFile(hostFile, []byte(`domains = ["get-test.example.com"]
+	if err := hostsDir.Put("get-test.example.com.hcl", []byte(`domains = ["get-test.example.com"]
 route "/" {
   backend {
     server { address = "http://127.0.0.1:8080" }
   }
 }
-`), woos.FilePerm); err != nil {
+`), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 	if err := shared.Discovery.ReloadFull(); err != nil {
@@ -267,11 +265,11 @@ route "/" {
 	}
 
 	// Verify comments are preserved on disk
-	files, _ := os.ReadDir(hostsDir)
+	files, _ := hostsDir.ReadFiles()
 	found := false
 	for _, f := range files {
 		if filepath.Ext(f.Name()) == ".hcl" {
-			data, _ := os.ReadFile(filepath.Join(hostsDir, f.Name()))
+			data, _ := os.ReadFile(hostsDir.FilePath(f.Name()))
 			if bytes.Contains(data, []byte("# backend service config")) {
 				found = true
 				break
@@ -320,14 +318,14 @@ func TestHostHandler_Delete(t *testing.T) {
 	_, hostsDir, shared, cleanup := setupTestHost(t)
 	defer cleanup()
 
-	hostFile := filepath.Join(hostsDir, "delete-test.example.com.hcl")
-	if err := os.WriteFile(hostFile, []byte(`domains = ["delete-test.example.com"]
+	hostFile := "delete-test.example.com.hcl"
+	if err := hostsDir.Put(hostFile, []byte(`domains = ["delete-test.example.com"]
 route "/" {
   backend {
     server { address = "http://127.0.0.1:8080" }
   }
 }
-`), woos.FilePerm); err != nil {
+`), expect.FilePerm); err != nil {
 		t.Fatal(err)
 	}
 	if err := shared.Discovery.ReloadFull(); err != nil {
@@ -350,8 +348,10 @@ route "/" {
 	if shared.Discovery.Get("delete-test.example.com") != nil {
 		t.Error("host still present after DELETE")
 	}
-	if _, err := os.Stat(hostFile); !os.IsNotExist(err) {
-		t.Error("host file still on disk after DELETE")
+	if !hostsDir.FileExists(hostFile) {
+		if _, err := os.Stat(hostsDir.FilePath(hostFile)); !os.IsNotExist(err) {
+			t.Error("host file still on disk after DELETE")
+		}
 	}
 }
 
@@ -360,7 +360,7 @@ func TestHostHandler_ProtectedHost(t *testing.T) {
 	defer cleanup()
 
 	shared.Discovery.Set("protected.example.com", &alaye.Host{
-		Protected: alaye.Active,
+		Protected: expect.Active,
 		Domains:   []string{"protected.example.com"},
 		Routes: []alaye.Route{{
 			Path:     "/",

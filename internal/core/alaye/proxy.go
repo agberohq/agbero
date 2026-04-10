@@ -4,11 +4,12 @@ import (
 	"net"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
 type Proxy struct {
-	Enabled        Enabled        `hcl:"enabled,attr" json:"enabled"`
+	Enabled        expect.Toggle  `hcl:"enabled,attr" json:"enabled"`
 	Name           string         `hcl:"name,label" json:"name"`
 	Listen         string         `hcl:"listen,attr" json:"listen"`
 	SNI            string         `hcl:"sni,attr" json:"sni"`
@@ -68,11 +69,11 @@ func (t *Proxy) Validate() error {
 }
 
 type TCPHealthCheck struct {
-	Enabled  Enabled  `hcl:"enabled,attr" json:"enabled"`
-	Interval Duration `hcl:"interval,attr" json:"interval"`
-	Timeout  Duration `hcl:"timeout,attr" json:"timeout"`
-	Send     string   `hcl:"send,attr" json:"send"`
-	Expect   string   `hcl:"expect,attr" json:"expect"`
+	Enabled  expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Interval Duration      `hcl:"interval,attr" json:"interval"`
+	Timeout  Duration      `hcl:"timeout,attr" json:"timeout"`
+	Send     string        `hcl:"send,attr" json:"send"`
+	Expect   string        `hcl:"expect,attr" json:"expect"`
 }
 
 // Validate checks that interval and timeout are non-negative when TCP health check is enabled.

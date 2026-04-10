@@ -2,7 +2,6 @@ package xhttp
 
 import (
 	"context"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/handlers/upstream"
@@ -61,7 +61,6 @@ type Backend struct {
 	stop     chan struct{}
 	stopOnce sync.Once
 	Cond     *Conditions
-	rnd      *rand.Rand
 	logger   *ll.Logger
 
 	hcConfig     *alaye.HealthCheck
@@ -115,7 +114,7 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 		cbThreshold = int64(route.CircuitBreaker.Threshold)
 	}
 
-	hasProber := route.HealthCheck.Enabled.Active() || (route.HealthCheck.Enabled == alaye.Unknown && route.HealthCheck.Path != "")
+	hasProber := route.HealthCheck.Enabled.Active() || (route.HealthCheck.Enabled == expect.Unknown && route.HealthCheck.Path != "")
 
 	baseCfg := upstream.Config{
 		Address:        xhttpCfg.Server.Address.String(),
@@ -260,7 +259,6 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	}
 
 	b.Proxy = rp
-	b.rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	if err := b.initHealth(xhttpCfg.Resource, u.ResolveReference(&url.URL{Path: b.hcConfig.Path}).String()); err != nil {
 		b.logger.Fields("backend", b.Address, "err", err).Warn("failed to initialize health check")

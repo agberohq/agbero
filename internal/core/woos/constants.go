@@ -1,14 +1,8 @@
-// Package woos is the single source of truth for all constants that control
-// server behaviour: timeouts, size limits, cache capacities, retry counts,
-// protocol defaults, and directory names.
-//
-// Rule: no bare integer literal, duration, or string constant may appear in
-// non-woos packages to represent any of the above. Reference a named constant
-// here instead. Local string constants used only as map keys or enum selectors
-// are exempt.
 package woos
 
-import "time"
+import (
+	"time"
+)
 
 const (
 	Name         = "agbero"
@@ -30,7 +24,6 @@ const (
 	MaxPortRetries      = 10
 )
 
-// Setup steps
 const (
 	SetupStepInit          = "init"
 	SetupStepAdmin         = "admin"
@@ -40,7 +33,6 @@ const (
 	SetupStepDone          = "done"
 )
 
-// Password defaults
 const (
 	MinPasswordLength = 8
 	JWTSecretLength   = 128
@@ -67,15 +59,17 @@ const (
 )
 
 const (
-	HeaderContentType     = "Content-Type"
-	HeaderContentEnc      = "Content-Encoding"
-	HeaderXForwardedFor   = "X-Forwarded-For"
-	HeaderXOriginalURI    = "X-Original-URI"
-	HeaderXOriginalMethod = "X-Original-Method"
-	HeaderXRealIP         = "X-Real-IP"
-	HeaderXAgberoService  = "X-Agbero-Service"
-	HeaderXAgberoJTI      = "X-Agbero-JTI"
-	HeaderServer          = "Server"
+	HeaderContentType        = "Content-Type"
+	HeaderContentEnc         = "Content-Encoding"
+	HeaderXForwardedFor      = "X-Forwarded-For"
+	HeaderXOriginalURI       = "X-Original-URI"
+	HeaderXOriginalMethod    = "X-Original-Method"
+	HeaderXRealIP            = "X-Real-IP"
+	HeaderXAgberoService     = "X-Agbero-Service"
+	HeaderXAgberoJTI         = "X-Agbero-JTI"
+	HeaderXAgberoReplayURL   = "X-Agbero-Replay-Url"
+	HeaderXAgberoReplayNonce = "X-Agbero-Replay-Nonce"
+	HeaderServer             = "Server"
 
 	HeaderXForwardedHost   = "X-Forwarded-Discovery"
 	HeaderXForwardedProto  = "X-Forwarded-Proto"
@@ -113,11 +107,11 @@ const (
 )
 
 const (
-	HostDir Folder = "hosts.d"
-	CertDir Folder = "certs.d"
-	DataDir Folder = "data.d"
-	LogDir  Folder = "logs.d"
-	WorkDir Folder = "work.d"
+	HostDir string = "hosts.d"
+	CertDir string = "certs.d"
+	DataDir string = "data.d"
+	LogDir  string = "logs.d"
+	WorkDir string = "work.d"
 
 	DefaultConfigName = "agbero.hcl"
 	DefaultLogName    = "agbero.log"
@@ -375,13 +369,6 @@ const (
 )
 
 const (
-	DirPerm         = 0755
-	FilePerm        = 0644
-	FilePermSecured = 0600
-	SecurePerm      = 0700
-)
-
-const (
 	SessionCookieName = "agbero_sess"
 	GothSessionCookie = "agbero_oauth_state"
 	StateTTL          = 10 * time.Minute
@@ -483,33 +470,27 @@ const (
 	WebCacheDefaultMaxAge   = 300
 )
 
-// Discovery trash constants control soft-delete retention for host configurations
-// deleted via the admin API.
 const (
 	TrashDirName   = ".trash"
 	TrashRetention = 7 * 24 * time.Hour
 )
 
-// WASM execution constants bound how long a WebAssembly module may run per request.
 const (
 	DefaultWasmTimeout = 30 * time.Second
 )
 
-// Cluster and internal security constants.
 const (
 	MinGossipSecretLen = 16
 
 	DefaultRegexTimeout = 100 * time.Millisecond
 )
 
-// GitHub release constants are used by the system update command.
 const (
 	GitHubReleaseAPIURL   = "https://api.github.com/repos/agberohq/agbero/releases/latest"
 	UpdateFetchTimeout    = 30 * time.Second
 	UpdateDownloadTimeout = 120 * time.Second
 )
 
-// Admin
 const (
 	DefaultAdminLogLimit    = 50
 	DefaultAdminLogMaxLimit = 1000
