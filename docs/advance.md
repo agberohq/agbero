@@ -13,7 +13,7 @@ Agbero uses a hybrid clustering approach. It leverages HashiCorp's memberlist fo
 gossip {
   enabled    = true
   port       = 7946                           # UDP/TCP cluster port
-  secret_key = "env.GOSSIP_SECRET"               # 16, 24, or 32 raw bytes
+  secret_key = "env.GOSSIP_SECRET"               # must be 16, 24, or 32 bytes — generate with: agbero secret cluster
   seeds      = ["node2:7946", "node3:7946"]   # Initial peers
   ttl        = 30                             # Seconds before dead node removal
 
@@ -53,7 +53,7 @@ agbero secret cluster
 
 ### Cluster Manager Implementation
 
-The cluster manager is implemented in `internal/cluster/` and provides:
+The cluster manager is implemented in `internal/hub/cluster/` and provides:
 
 - **Delegate**: Handles gossip events and state merging
 - **Distributor**: Manages configuration file synchronization
@@ -62,7 +62,74 @@ The cluster manager is implemented in `internal/cluster/` and provides:
 
 ---
 
-## 2. Git-Based Deployments (Cook)
+---
+
+## 2. Keeper — Encrypted Secret Store
+
+The keeper is an encrypted, passphrase-protected database (`data.d/keeper.db`) that stores secrets, TLS certificates, the internal Ed25519 auth key, admin user credentials, and TOTP seeds. It is a required component — Agbero will not start if the keeper cannot be opened.
+
+### Unlocking the Keeper
+
+Agbero resolves the master passphrase in this order at startup:
+
+1. `keeper.passphrase` in `agbero.hcl`
+2. `AGBERO_PASSPHRASE` environment variable
+3. Interactive terminal prompt (if running in a terminal)
+
+For non-interactive environments (system service, container, CI):
+
+```bash
+# Set the passphrase as an environment variable
+AGBERO_PASSPHRASE=mypassphrase agbero run
+
+# Or configure it in agbero.hcl (use env var to avoid plaintext in file)
+security {
+  keeper {
+    passphrase = "env.AGBERO_PASSPHRASE"  # reads from the environment
+  }
+}
+```
+
+### Secret References in Configuration
+
+Any `Value`-typed field in your HCL can reference a keeper secret using the `ss://` scheme:
+
+```hcl
+# Instead of putting credentials directly in your config:
+# headers = { "Authorization" = "Bearer sk_live_AbCdEf..." }  # BAD
+
+# Reference them from the keeper:
+headers = {
+  "Authorization" = "Bearer ss://integrations/stripe-key"  # GOOD
+}
+```
+
+Store the secret in the keeper:
+
+```bash
+agbero keeper set integrations/stripe-key "sk_live_AbCdEf..."
+```
+
+The `ss://namespace/key` reference is resolved at request time — the secret never appears in your config file, logs, or process arguments.
+
+### First-time Setup
+
+```bash
+# 1. Scaffold the config directory
+agbero init
+
+# 2. Start Agbero — you will be prompted to create the master passphrase
+agbero run
+
+# 3. In subsequent runs, supply the passphrase via environment
+AGBERO_PASSPHRASE=mypassphrase agbero run
+```
+
+See [Command Guide](./command.md#keeper--encrypted-secret-store) for all keeper CLI operations.
+
+---
+
+## 3. Git-Based Deployments (Cook)
 
 Agbero includes "Cook" - an embedded GitOps engine for atomic static site deployments.
 
@@ -131,7 +198,7 @@ curl http://localhost:9090/uptime | jq '.git'
 
 ### Manager Implementation
 
-The cook manager (`internal/pkg/cook/`) provides:
+The cook manager (`internal/hub/cook/`) provides:
 - Atomic symlink switching
 - Webhook handling with HMAC verification
 - Scheduled polling
@@ -342,7 +409,7 @@ gossip {
 
 ### Implementation
 
-The Redis shared state (`internal/cluster/state.go`) provides:
+The Redis shared state (`internal/hub/cluster/state.go`) provides:
 
 - **Atomic counters** using Redis INCR with Lua scripts
 - **Token bucket rate limiting** with Redis
@@ -426,7 +493,7 @@ route "/" {
 
 ### Implementation
 
-The TLS manager (`internal/pkg/tlss/manager.go`) handles:
+The TLS manager (`internal/hub/tlss/manager.go`) handles:
 - **Dynamic certificate selection** based on SNI
 - **mTLS configuration** per host
 - **Certificate caching** with LRU
@@ -695,6 +762,41 @@ type Executor interface {
     Probe(ctx context.Context) (success bool, latency time.Duration, err error)
 }
 ```
+
+---
+
+---
+
+## 13. Replay — Outbound Domain Security (`allowed_domains`)
+
+When using `replay` blocks in relay mode (where the target URL is supplied by the client at request time via the `X-Agbero-Replay-Url` header or `?url=` query parameter), you **must** configure `allowed_domains` to prevent Server-Side Request Forgery (SSRF).
+
+Without `allowed_domains`, a malicious client could pass any URL — including internal services like `http://169.254.169.254/` (cloud metadata), `http://localhost:6379/` (Redis), or other private network addresses.
+
+```hcl
+route "/proxy" {
+  serverless {
+    enabled = true
+
+    replay "safe-proxy" {
+      enabled = true
+
+      # Only allow requests to these domains — blocks everything else
+      allowed_domains = [
+        "api.stripe.com",          # exact match
+        "*.sendgrid.com",          # wildcard subdomain
+        "api.github.com",
+      ]
+
+      # Private and loopback IPs (127.x, 10.x, 192.168.x, etc.) are
+      # ALWAYS blocked regardless of this list — this is a safety backstop
+    }
+  }
+}
+```
+
+> **Warning:** Setting `allowed_domains = ["*"]` allows all external domains.
+> This defeats the SSRF protection — **never use `"*"` in production**.
 
 ---
 
