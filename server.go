@@ -226,9 +226,18 @@ func (s *Server) Start(configPath string) error {
 				}
 			}
 		}
+	} else {
+		s.logger.Fields("err", err).Error("failed to initialize git cook manager on boot")
 	}
 
-	s.orchManager = orchestrator.New(s.logger, s.global.Storage.WorkDir, s.cookManager, s.global.Env)
+	s.orchManager = orchestrator.New(orchestrator.Config{
+		Logger:          s.logger,
+		WorkDir:         s.global.Storage.WorkDir,
+		CookMgr:         s.cookManager,
+		GlobalEnv:       s.global.Env,
+		AllowedCommands: s.global.Security.AllowedCommands,
+		DropPrivileges:  !s.global.Development,
+	})
 
 	if s.global.Gossip.SharedState.Enabled.Active() {
 		if s.global.Gossip.SharedState.Driver == "redis" {

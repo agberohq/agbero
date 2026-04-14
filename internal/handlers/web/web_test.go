@@ -14,6 +14,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
@@ -965,5 +966,94 @@ func TestServeHTTP_HiddenDirBlocked(t *testing.T) {
 	rr := do(t, newHandler(t, root), http.MethodGet, "/.git/config")
 	if rr.Code == http.StatusOK {
 		t.Error(".git/config must not be accessible")
+	}
+}
+
+// Git / Cook Integration Tests
+
+func TestServeHTTP_GitDeploymentInProgress(t *testing.T) {
+	// Setup an empty resource and cook manager
+	res := resource.New()
+
+	cookWorkDir := expect.NewFolder(filepath.Join(t.TempDir(), "work.d"))
+	cookMgr, err := cook.NewManager(cook.ManagerConfig{
+		WorkDir: cookWorkDir,
+		Pool:    res.Background,
+		Logger:  res.Logger,
+	})
+	if err != nil {
+		t.Fatalf("failed to create cook manager: %v", err)
+	}
+
+	// Create a route with Git enabled but no explicit Root path.
+	// We intentionally DO NOT register the repository with the cook manager,
+	// meaning cookMgr.CurrentPath() will instantly return "" (simulating a pending clone).
+	route := &alaye.Route{
+		Path: "/",
+		Web: alaye.Web{
+			Git: alaye.Git{
+				Enabled: expect.Active,
+				ID:      "pending-repo-id",
+			},
+			Listing: expect.Active, // Enable listing to ensure we don't leak directories
+		},
+	}
+
+	// Initialize the Web handler
+	h := NewWeb(res, route, cookMgr)
+
+	// Execute the request
+	rr := do(t, h, http.MethodGet, "/")
+
+	// Verify the fix: It MUST return 503, NOT 200/403 with the binary directory
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("Git deployment pending: want 503 Service Unavailable, got %d", rr.Code)
+	}
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "Deployment in progress") {
+		t.Errorf("Expected 'Deployment in progress' message, got: %s", body)
+	}
+}
+
+func TestServeHTTP_GitDeploymentReady(t *testing.T) {
+	// Setup an empty resource
+	res := resource.New()
+
+	// Create a simulated "deployed" Git repository path
+	deployedRepoDir := filepath.Join(t.TempDir(), "deployed-repo")
+	if err := os.MkdirAll(deployedRepoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, deployedRepoDir, "index.html", "<html>Git Repo Ready</html>")
+
+	// Register a fake route configuration.
+	route := &alaye.Route{
+		Path: "/",
+		Web: alaye.Web{
+			Git: alaye.Git{
+				Enabled: expect.Active,
+				ID:      "ready-repo-id",
+			},
+		},
+	}
+
+	// Explicitly set the Root fallback for testing purposes
+	route.Web.Root = alaye.WebRoot(deployedRepoDir)
+
+	// Initialize the Web handler
+	// Pass `nil` for the cook manager so it falls back to the explicitly set Web.Root
+	h := NewWeb(res, route, nil)
+
+	// Execute the request
+	rr := do(t, h, http.MethodGet, "/")
+
+	// Verify it successfully serves the deployed repo file
+	if rr.Code != http.StatusOK {
+		t.Errorf("Git deployment ready: want 200 OK, got %d", rr.Code)
+	}
+
+	if !strings.Contains(rr.Body.String(), "Git Repo Ready") {
+		t.Errorf("Expected to serve Git repo content, got: %s", rr.Body.String())
 	}
 }

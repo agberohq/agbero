@@ -195,7 +195,7 @@ func defaultStorage(s *alaye.Storage, configPath string) {
 	if configPath == "" || configPath == "disabled" || configPath == "." {
 		return
 	}
-	configDir := expect.NewFolder(configPath)
+	configDir := expect.NewFolder(filepath.Dir(configPath))
 
 	resolve := func(field expect.Folder, defaultSub string) expect.Folder {
 		if !field.IsSet() {
@@ -295,6 +295,14 @@ func defaultSecurity(s *alaye.Security) {
 		s.Enabled = expect.Active
 	}
 	defaultFirewall(&s.Firewall)
+
+	// Seed a minimal safe default so a fresh config can run basic workers.
+	// Operators extend this list explicitly — entries here are the floor,
+	// not a ceiling. Production deployments should set allowed_commands
+	// explicitly and remove anything not needed.
+	if len(s.AllowedCommands) == 0 {
+		s.AllowedCommands = []string{"echo"}
+	}
 }
 
 func defaultFirewall(f *alaye.Firewall) {
@@ -664,10 +672,20 @@ func defaultServerless(s *alaye.Serverless) {
 }
 
 func defaultWorker(w *alaye.Work) {
+
+	if w.Enabled == expect.Unknown {
+		w.Enabled = expect.Active
+	}
+
 	// Default timeout so workers cannot hang indefinitely
 	if w.Timeout == 0 {
 		w.Timeout = alaye.Duration(DefaultWorkerTimeout)
 	}
+
+	if w.Landlock == expect.Unknown {
+		w.Landlock = expect.Active
+	}
+
 	// Default restart policy for persistent background workers
 	if w.Background && w.Restart == "" {
 		w.Restart = DefaultWorkerRestart

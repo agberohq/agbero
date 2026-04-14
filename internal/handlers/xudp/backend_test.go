@@ -5,11 +5,11 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
-	resource2 "github.com/agberohq/agbero/internal/hub/resource"
+	resource "github.com/agberohq/agbero/internal/hub/resource"
 )
 
 func testBackendConfig(addr string) BackendConfig {
-	res := resource2.New()
+	res := resource.New()
 	return BackendConfig{
 		Server: alaye.Server{
 			Address: alaye.Address(addr),
@@ -45,7 +45,7 @@ func TestNewBackend_WithHealthCheck(t *testing.T) {
 	addr, stop := startEchoServer(t)
 	defer stop()
 
-	res := resource2.New()
+	res := resource.New()
 	cfg := BackendConfig{
 		Server: alaye.Server{
 			Address: alaye.Address(addr),

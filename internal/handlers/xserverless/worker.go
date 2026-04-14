@@ -2,12 +2,11 @@ package xserverless
 
 import (
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
-	orchestrator2 "github.com/agberohq/agbero/internal/hub/orchestrator"
+	"github.com/agberohq/agbero/internal/hub/orchestrator"
 	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
@@ -17,7 +16,7 @@ type WorkerConfig struct {
 	Work      alaye.Work
 	GlobalEnv map[string]expect.Value
 	RouteEnv  map[string]expect.Value
-	Orch      *orchestrator2.Manager
+	Orch      *orchestrator.Manager
 	Domain    string
 }
 
@@ -27,13 +26,12 @@ type WorkerHandler struct {
 	cfg       alaye.Work
 	globalEnv map[string]expect.Value
 	routeEnv  map[string]expect.Value
-	orch      *orchestrator2.Manager
+	orch      *orchestrator.Manager
 	statsKey  alaye.BackendKey
 }
 
 func NewWorker(cfg WorkerConfig) *WorkerHandler {
 	key := cfg.Route.WorkerBackendKey(cfg.Domain, cfg.Work.Name)
-	// Pre-register so the key appears in metrics before first request
 	cfg.Resource.Metrics.GetOrRegister(key)
 	return &WorkerHandler{
 		res:       cfg.Resource,
@@ -63,26 +61,34 @@ func (h *WorkerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		activity.EndRequest(time.Since(start).Microseconds(), failed)
 	}()
 
-	var dir string
-	if h.orch != nil {
-		dir = h.orch.ResolveDir(host, h.route, h.cfg)
-	} else {
-		dir = os.TempDir()
+	// orch is required — it owns the allowlist, privilege config, and
+	// directory resolution. A nil orch means server misconfiguration;
+	// refuse rather than execute without any security controls.
+	if h.orch == nil {
+		failed = true
+		h.res.Logger.Fields("worker", h.cfg.Name).Error("serverless: no orchestrator configured, refusing execution")
+		http.Error(w, "Worker Execution Failed", http.StatusInternalServerError)
+		return
 	}
 
-	if dir == "" && h.route.Web.Git.Enabled.Active() {
+	dir := h.orch.ResolveDir(host, h.route, h.cfg)
+
+	// dir can only be empty if serverless.git is enabled but the cook
+	// manager has not yet completed the initial clone.
+	if dir == "" {
+		h.res.Logger.Fields("worker", h.cfg.Name).Warn("serverless: git deployment pending, no checkout available")
 		http.Error(w, "Deployment in progress...", http.StatusServiceUnavailable)
 		return
 	}
 
 	env := expect.CompileEnv(h.globalEnv, h.routeEnv, h.cfg.Env)
 
-	proc := &orchestrator2.Process{
-		Config: h.cfg,
-		Env:    env,
-		Dir:    dir,
-		Logger: h.res.Logger.Namespace("worker").Namespace(h.cfg.Name),
-	}
+	proc := h.orch.NewProcess(
+		h.cfg,
+		env,
+		dir,
+		h.res.Logger.Namespace("worker").Namespace(h.cfg.Name),
+	)
 
 	if err := proc.Run(r.Context(), r.Body, w); err != nil {
 		failed = true

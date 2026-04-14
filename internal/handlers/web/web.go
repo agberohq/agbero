@@ -269,7 +269,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rootPath := h.resolveRootPath()
-	if rootPath == "" {
+	if rootPath == "" && h.route.Web.Git.Enabled.Active() {
 		http.Error(w, "Deployment in progress...", http.StatusServiceUnavailable)
 		return
 	}
@@ -877,8 +877,17 @@ func (h *web) getIndices() []string {
 
 func (h *web) resolveRootPath() string {
 	if h.route.Web.Git.Enabled.Active() && h.cookMgr != nil {
+		// If Git is enabled, strictly rely on the Cook Manager.
+		// If it returns "", it means deployment is still in progress.
 		return h.cookMgr.CurrentPath(h.route.Web.Git.ID)
 	}
+
+	// If neither Git nor a Root path is configured, return empty
+	// to trigger the 503 "Deployment in progress" rather than leaking "."
+	if !h.route.Web.Root.IsSet() {
+		return ""
+	}
+
 	return h.route.Web.Root.String()
 }
 

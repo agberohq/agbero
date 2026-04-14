@@ -14,10 +14,9 @@ var validHTTPMethods = map[string]struct{}{
 }
 
 type Replay struct {
-	Name    string        `hcl:"name,label"    json:"name"`
-	Enabled expect.Toggle `hcl:"enabled,attr"  json:"enabled"`
-
-	Env map[string]expect.Value `hcl:"env,attr" json:"env"`
+	Enabled expect.Toggle           `hcl:"enabled,attr"  json:"enabled"`
+	Name    string                  `hcl:"name,label"    json:"name"`
+	Env     map[string]expect.Value `hcl:"env,attr" json:"env"`
 
 	URL          string                  `hcl:"url,attr"           json:"url"`
 	Methods      []string                `hcl:"methods,attr"       json:"methods"`

@@ -6,11 +6,10 @@ import "github.com/agberohq/agbero/internal/core/expect"
 // It groups labeled Replay proxies and managed OS processes within a single engine.
 type Serverless struct {
 	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
-
-	Root string `hcl:"root,attr" json:"root"`
-
-	Replay  []Replay `hcl:"replay,block" json:"replay"`
-	Workers []Work   `hcl:"work,block" json:"workers"`
+	Root    string        `hcl:"root,attr" json:"root"`
+	Git     Git           `hcl:"git,block" json:"git"`
+	Replay  []Replay      `hcl:"replay,block" json:"replay"`
+	Workers []Work        `hcl:"work,block" json:"workers"`
 }
 
 // Validate ensures all sub-components of the serverless engine are valid.
@@ -29,5 +28,5 @@ func (s *Serverless) Validate() error {
 			return err
 		}
 	}
-	return nil
+	return s.Git.Validate()
 }

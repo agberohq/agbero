@@ -274,17 +274,55 @@ func (r *Route) Key() string {
 		w.WriteString(r.OAuth.ClientID)
 	}
 
-	if r.Web.Root.IsSet() {
+	// Check if the web block is active in any form (Root or Git)
+	if r.Web.Root.IsSet() || r.Web.Git.Enabled.Active() || r.Web.Enabled.Active() {
 		w.WriteString(r.Web.Root.String())
+
 		for _, idx := range r.Web.Index {
 			w.WriteString(idx)
 		}
+
 		if r.Web.Listing.Active() {
 			w.WriteString("ls")
 		}
+		if r.Web.SPA.Active() {
+			w.WriteString("spa")
+		}
+		if r.Web.NoCache.Active() {
+			w.WriteString("nocache")
+		}
+
 		if r.Web.PHP.Enabled.Active() {
 			w.WriteString("php")
 			w.WriteString(r.Web.PHP.Address)
+		}
+
+		// Add Git configurations to the cache hash
+		if r.Web.Git.Enabled.Active() {
+			w.WriteString("git")
+			w.WriteString(r.Web.Git.ID)
+			w.WriteString(r.Web.Git.URL)
+			w.WriteString(r.Web.Git.Branch)
+			w.WriteString(r.Web.Git.WorkDir.String())
+			w.WriteString(r.Web.Git.SubDir)
+			w.WriteString(r.Web.Git.Interval.String())
+		}
+
+		// Add Markdown configurations to the cache hash
+		if r.Web.Markdown.Enabled.Active() {
+			w.WriteString("md")
+			w.WriteString(r.Web.Markdown.View)
+			w.WriteString(r.Web.Markdown.Template)
+			if r.Web.Markdown.UnsafeHTML.Active() {
+				w.WriteString("unsafe")
+			}
+			if r.Web.Markdown.TableOfContents.Active() {
+				w.WriteString("toc")
+			}
+			if r.Web.Markdown.SyntaxHighlight.Enabled.Active() {
+				w.WriteString("hl")
+				w.WriteString(r.Web.Markdown.SyntaxHighlight.Theme)
+			}
 		}
 	}
 

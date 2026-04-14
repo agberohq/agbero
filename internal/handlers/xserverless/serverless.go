@@ -79,6 +79,10 @@ func NewWithNonces(cfg resource.Proxy, route *alaye.Route, nonceStores map[strin
 
 	validWorkers := make(map[string]alaye.Work)
 	for _, worker := range route.Serverless.Workers {
+		if !worker.Enabled.Active() {
+			continue
+		}
+
 		if _, exists := validWorkers[worker.Name]; exists {
 			cfg.Resource.Logger.Fields("name", worker.Name).Warn("serverless: duplicate Worker name detected, overwriting previous registration")
 		}

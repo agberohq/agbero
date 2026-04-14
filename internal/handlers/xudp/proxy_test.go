@@ -9,7 +9,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
-	resource2 "github.com/agberohq/agbero/internal/hub/resource"
+	resource "github.com/agberohq/agbero/internal/hub/resource"
 )
 
 // startUDPBackend starts a UDP server that responds with a fixed reply prefix
@@ -36,7 +36,7 @@ func startUDPBackend(t *testing.T, id string) (string, func()) {
 
 func newTestProxy(t *testing.T, backends []string) (*Proxy, func()) {
 	t.Helper()
-	res := resource2.New()
+	res := resource.New()
 
 	prx := NewProxy(res, "127.0.0.1:0")
 
@@ -184,7 +184,7 @@ func TestProxy_MaxSessionsDropsNew(t *testing.T) {
 	backendAddr, stopBackend := startUDPBackend(t, "B1")
 	defer stopBackend()
 
-	res := resource2.New()
+	res := resource.New()
 	p := NewProxy(res, "127.0.0.1:0")
 	p.MaxSess = 1 // Only 1 session allowed
 
@@ -227,7 +227,7 @@ func TestProxy_SessionTTLExpiry(t *testing.T) {
 	backendAddr, stopBackend := startUDPBackend(t, "B1")
 	defer stopBackend()
 
-	res := resource2.New()
+	res := resource.New()
 	p := NewProxy(res, "127.0.0.1:0")
 	p.SetSessionTTL(100 * time.Millisecond)
 
@@ -303,7 +303,7 @@ func TestProxy_ActiveSessions_Initial(t *testing.T) {
 }
 
 func TestProxy_NoRoute_DropsPacket(t *testing.T) {
-	res := resource2.New()
+	res := resource.New()
 	p := NewProxy(res, "127.0.0.1:0")
 	// No route added — proxy has no backends
 	if err := p.Start(); err != nil {
