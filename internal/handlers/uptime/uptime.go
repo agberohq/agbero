@@ -43,7 +43,7 @@ type GlobalStats struct {
 	HttpP99   float64 `json:"http_p99_ms"`
 	TcpP99    float64 `json:"tcp_p99_ms"`
 	UdpP99    float64 `json:"udp_p99_ms"`
-	WorkerP99 float64 `json:"worker_p99_ms"` // local process execution P99
+	WorkerP99 float64 `json:"worker_p99_ms"`
 }
 
 type ClusterStats struct {
@@ -77,7 +77,7 @@ type RouteSnapshot struct {
 
 type ServerlessSnapshot struct {
 	Name      string                  `json:"name"`
-	Kind      string                  `json:"kind"` // "replay" or "worker"
+	Kind      string                  `json:"kind"`
 	InFlight  int64                   `json:"in_flight"`
 	TotalReqs uint64                  `json:"total_reqs"`
 	Failures  uint64                  `json:"failures"`
@@ -89,7 +89,7 @@ type ProxySnapshot struct {
 	Name           string             `json:"name"`
 	Strategy       string             `json:"strategy"`
 	Backends       []*BackendSnapshot `json:"backends"`
-	ActiveSessions int64              `json:"active_sessions,omitempty"` // UDP only
+	ActiveSessions int64              `json:"active_sessions,omitempty"`
 }
 
 type HealthSnapshot struct {
@@ -293,7 +293,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 				rSnap.Backends = append(rSnap.Backends, bSnap)
 				totalReqs += uint64(reqs)
 			}
-			// Serverless: replay and worker metrics
+
 			for _, rp := range route.Serverless.Replay {
 				if !rp.Enabled.Active() {
 					continue
@@ -327,7 +327,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 					slSnap.Failures = snap["failures"].(uint64)
 					slSnap.Latency = snap["latency"].(metrics.LatencySnapshot)
 					totalReqs += slSnap.TotalReqs
-					// Workers are local process execution — tracked separately from HTTP
+
 					if slSnap.Latency.Count > 0 && slSnap.Latency.P99 > 0 {
 						val := float64(slSnap.Latency.P99)
 						sumAll += val
@@ -432,6 +432,14 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 
 				if hSnapStruct.Status != health.StatusHealthy && hSnapStruct.Status != health.StatusUnknown && hSnapStruct.LastSuccess != nil {
 					hSnapStruct.Downtime = time.Since(*hSnapStruct.LastSuccess).Round(time.Second).String()
+				}
+
+				// Reconcile: alive=false overrides a stale Healthy probe result.
+				// TCP/UDP backends have no HTTP prober so the health score can
+				// show Healthy based on a previous check while the backend is
+				// currently not accepting connections.
+				if !alive && hSnapStruct.Status == health.StatusHealthy {
+					hSnapStruct.Status = health.StatusUnhealthy
 				}
 
 				bSnap := &BackendSnapshot{

@@ -329,9 +329,11 @@ func TestManager_PushOnly_Webhook_WritesPayload(t *testing.T) {
 	}
 
 	workDir := mgr.CurrentPath("push-only-write")
-	written, err := os.ReadFile(filepath.Join(workDir, "payload.json"))
+
+	// Update the assertion to look for the hidden file ".payload.json"
+	written, err := os.ReadFile(filepath.Join(workDir, ".payload.json"))
 	if err != nil {
-		t.Fatalf("payload.json not written: %v", err)
+		t.Fatalf(".payload.json not written: %v", err)
 	}
 	if !bytes.Equal(written, body) {
 		t.Errorf("payload mismatch: got %q, want %q", written, body)

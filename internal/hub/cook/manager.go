@@ -31,7 +31,6 @@ const (
 	defaultStopTimeout    = 30 * time.Second
 )
 
-// WebhookPayload is the subset of a GitHub/GitLab push payload that agbero uses.
 type WebhookPayload struct {
 	Ref        string `json:"ref"`
 	Before     string `json:"before"`
@@ -41,14 +40,12 @@ type WebhookPayload struct {
 	} `json:"repository"`
 }
 
-// ManagerConfig holds construction-time configuration for the Manager.
 type ManagerConfig struct {
 	WorkDir expect.Folder
 	Pool    *jack.Pool
 	Logger  *ll.Logger
 }
 
-// Manager owns all registered git integrations and routes webhook requests.
 type Manager struct {
 	entries *mappo.Concurrent[string, *Entry]
 	logger  *ll.Logger
@@ -57,7 +54,6 @@ type Manager struct {
 	wg      sync.WaitGroup
 }
 
-// Entry holds a running git integration and its cancellation handle.
 type Entry struct {
 	Cook   *Cook
 	Config alaye.Git
@@ -65,7 +61,6 @@ type Entry struct {
 	cancel context.CancelFunc
 }
 
-// NewManager constructs a Manager. Both WorkDir and Pool are required.
 func NewManager(cfg ManagerConfig) (*Manager, error) {
 	if cfg.WorkDir == "" {
 		return nil, errors.New("work directory is required")
@@ -90,13 +85,6 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	}, nil
 }
 
-// Register adds or updates a git integration.
-//
-// Mode is determined by the Git config:
-//   - URL set, interval set           → pull (poll only)
-//   - URL set, secret set             → push (webhook triggers Make)
-//   - URL set, both interval + secret → both (poll + webhook)
-//   - URL empty, secret set           → push-only (no clone; webhook writes content)
 func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 	if cfg.URL == "" {
 		return m.registerPushOnly(routeKey, cfg)
@@ -152,7 +140,6 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 		"webhook", "/.well-known/agbero/webhook/git/"+routeKey,
 	).Info("git integration configured")
 
-	// Always submit an initial clone/pull.
 	if err := m.pool.Submit(jack.Func(func() error {
 		if err := c.Make(ctx); err != nil {
 			if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context canceled") {
@@ -164,7 +151,6 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 		m.logger.Fields("route", routeKey, "err", err).Warn("failed to queue initial deployment")
 	}
 
-	// Start interval poller only for pull/both modes.
 	if cfg.IsPull() && cfg.Interval > 0 {
 		m.wg.Add(1)
 		go m.poll(ctx, routeKey, c, cfg.Interval.StdDuration())
@@ -173,9 +159,6 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 	return nil
 }
 
-// registerPushOnly handles git blocks with no URL — content arrives via webhook only.
-// The work directory is created immediately so the web handler serves content
-// without waiting for a clone that will never happen.
 func (m *Manager) registerPushOnly(routeKey string, cfg alaye.Git) error {
 	if cfg.Secret.String() == "" {
 		return errors.New("git: push-only mode (no url) requires a secret")
@@ -202,7 +185,7 @@ func (m *Manager) registerPushOnly(routeKey string, cfg alaye.Git) error {
 
 	c, err := New(Config{
 		ID:      routeKey,
-		URL:     "", // no clone
+		URL:     "",
 		WorkDir: targetWorkDir,
 		Logger:  m.logger,
 	})
@@ -210,7 +193,6 @@ func (m *Manager) registerPushOnly(routeKey string, cfg alaye.Git) error {
 		return fmt.Errorf("push-only cook for %s: %w", routeKey, err)
 	}
 
-	// Mark the work directory as ready so CurrentPath returns immediately.
 	c.SetCurrentPath(targetWorkDir)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -225,7 +207,6 @@ func (m *Manager) registerPushOnly(routeKey string, cfg alaye.Git) error {
 	return nil
 }
 
-// Prune stops and removes any git integration whose key is not in activeIDs.
 func (m *Manager) Prune(activeIDs map[string]bool) {
 	var toDelete []string
 	m.entries.Range(func(key string, _ *Entry) bool {
@@ -240,7 +221,6 @@ func (m *Manager) Prune(activeIDs map[string]bool) {
 	}
 }
 
-// Unregister stops and removes a single git integration.
 func (m *Manager) Unregister(routeKey string) {
 	if entry, ok := m.entries.Get(routeKey); ok {
 		m.entries.Delete(routeKey)
@@ -250,7 +230,6 @@ func (m *Manager) Unregister(routeKey string) {
 	}
 }
 
-// CurrentPath returns the filesystem path currently being served for routeKey.
 func (m *Manager) CurrentPath(routeKey string) string {
 	entry, ok := m.entries.Get(routeKey)
 	if !ok {
@@ -266,7 +245,6 @@ func (m *Manager) CurrentPath(routeKey string) string {
 	return basePath
 }
 
-// GetCook returns the Cook for a given route key.
 func (m *Manager) GetCook(routeKey string) (*Cook, bool) {
 	entry, ok := m.entries.Get(routeKey)
 	if !ok {
@@ -275,7 +253,6 @@ func (m *Manager) GetCook(routeKey string) (*Cook, bool) {
 	return entry.Cook, true
 }
 
-// Stop cancels all integrations and waits for pollers to exit.
 func (m *Manager) Stop() {
 	m.entries.Range(func(_ string, entry *Entry) bool {
 		if entry.cancel != nil {
@@ -297,11 +274,6 @@ func (m *Manager) Stop() {
 	}
 }
 
-// HandleWebhook processes an inbound webhook for the given route key.
-//
-// Pull-only entries return 405. Push and push-only entries validate the
-// HMAC signature, then either trigger Make (pull/both) or write the
-// payload directly to the work directory (push-only).
 func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey string) {
 	entry, ok := m.entries.Get(routeKey)
 	if !ok {
@@ -309,7 +281,6 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		return
 	}
 
-	// Pull-only: webhook endpoint exists but is not active.
 	if entry.Config.Mode == alaye.GitModePull {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
@@ -323,7 +294,6 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		return
 	}
 
-	// Validate HMAC signature when a secret is configured.
 	if entry.Config.Secret.String() != "" {
 		sig := r.Header.Get("X-Hub-Signature-256")
 		if sig == "" {
@@ -339,7 +309,16 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		}
 	}
 
-	// Push-only mode: write payload to work directory, no git pull.
+	var payload WebhookPayload
+	_ = json.Unmarshal(body, &payload)
+
+	if entry.Config.URL == "" && payload.Repository.CloneURL != "" {
+		m.logger.Fields("route", routeKey, "clone_url", payload.Repository.CloneURL).Info("upgrading push-only git to cloned git via webhook payload")
+		entry.Config.URL = payload.Repository.CloneURL
+		entry.Cook.config.URL = payload.Repository.CloneURL
+		entry.Cook.SetCurrentPath("")
+	}
+
 	if entry.Config.URL == "" {
 		if err := m.writePushPayload(entry, body); err != nil {
 			m.logger.Fields("route", routeKey, "err", err).Error("push-only write failed")
@@ -351,18 +330,14 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		return
 	}
 
-	// Pull/both mode: check branch filter then trigger Make.
-	var payload WebhookPayload
-	if err := json.Unmarshal(body, &payload); err == nil {
-		if entry.Config.Branch != "" && payload.Ref != "" {
-			expected := "refs/heads/" + entry.Config.Branch
-			if payload.Ref != expected {
-				m.logger.Fields("route", routeKey, "ref", payload.Ref, "expected", expected).
-					Info("ignoring webhook for different branch")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte("Ignored: branch mismatch"))
-				return
-			}
+	if entry.Config.Branch != "" && payload.Ref != "" {
+		expected := "refs/heads/" + entry.Config.Branch
+		if payload.Ref != expected {
+			m.logger.Fields("route", routeKey, "ref", payload.Ref, "expected", expected).
+				Info("ignoring webhook for different branch")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ignored: branch mismatch"))
+			return
 		}
 	}
 
@@ -389,17 +364,14 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 	_, _ = w.Write([]byte("Deployment Triggered"))
 }
 
-// writePushPayload writes the raw webhook body to payload.json in the
-// push-only work directory. The web handler then serves from that directory.
 func (m *Manager) writePushPayload(entry *Entry, body []byte) error {
 	workDir := entry.Cook.CurrentPath()
 	if workDir == "" {
 		return errors.New("push-only work directory not available")
 	}
-	return os.WriteFile(filepath.Join(workDir, "payload.json"), body, 0644)
+	return os.WriteFile(filepath.Join(workDir, ".payload.json"), body, 0644)
 }
 
-// WebhookHandler returns an http.HandlerFunc for a specific route key.
 func (m *Manager) WebhookHandler(routeKey string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -410,7 +382,6 @@ func (m *Manager) WebhookHandler(routeKey string) http.HandlerFunc {
 	}
 }
 
-// Health returns a status summary of all registered integrations.
 func (m *Manager) Health() map[string]HealthStatus {
 	status := make(map[string]HealthStatus)
 	m.entries.Range(func(key string, entry *Entry) bool {
@@ -431,7 +402,6 @@ func (m *Manager) Health() map[string]HealthStatus {
 	return status
 }
 
-// poll submits periodic Make calls for pull/both mode integrations.
 func (m *Manager) poll(ctx context.Context, routeKey string, c *Cook, interval time.Duration) {
 	defer m.wg.Done()
 
@@ -460,7 +430,6 @@ func (m *Manager) poll(ctx context.Context, routeKey string, c *Cook, interval t
 	}
 }
 
-// HealthStatus summarises the state of a single git integration.
 type HealthStatus struct {
 	State       string `json:"state"`
 	CurrentPath string `json:"current_path"`

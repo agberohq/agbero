@@ -169,14 +169,13 @@ func (m *Manager) NewProcess(cfg alaye.Work, env []string, dir string, logger *l
 // ResolveDir determines the working directory for a worker.
 //
 // Resolution order:
-// serverless.git — if the serverless block has its own git config and the
+
 //
 //	cook manager has a deployed checkout, use that. Serverless git is
 //	intentionally separate from web.git so that executed scripts are never
 //	co-located with publicly served files.
 //
-// serverless.root — an explicit absolute or relative path set by the
-//
+
 //	operator. Relative paths are anchored to workDir. The resolved path is
 //	validated to stay within workDir to prevent traversal.
 //

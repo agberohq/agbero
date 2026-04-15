@@ -106,7 +106,6 @@ func TestCircuitBreaker_StunLock(t *testing.T) {
 
 	b := newTestBackend(t, srv, cbThreshold, "")
 
-	// Phase 1: trip the circuit.
 	tripCircuit(b)
 
 	if b.IsUsable() {
@@ -117,7 +116,6 @@ func TestCircuitBreaker_StunLock(t *testing.T) {
 		)
 	}
 
-	// Phase 2: keep firing dial failures for 3 s — this is the stun-lock.
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Go(func() {
@@ -135,7 +133,6 @@ func TestCircuitBreaker_StunLock(t *testing.T) {
 	close(stop)
 	wg.Wait()
 
-	// Phase 3: silence — recovery must happen within DefaultHalfOpenCooldown + buffer.
 	const waitBudget = 8 * time.Second
 	if !waitUsable(b, waitBudget) {
 		t.Fatalf(
@@ -345,12 +342,10 @@ func TestDeathSpiral_FullRecovery(t *testing.T) {
 	}
 	defer b.Stop()
 
-	// Phase 1: baseline.
 	if !b.IsUsable() {
 		t.Fatal("phase 1: backend should be usable before burst")
 	}
 
-	// Phase 2: close server + trip circuit via dial failures.
 	t.Log("phase 2: closing server, tripping circuit")
 	srv.Close()
 	tripCircuit(b)
@@ -363,7 +358,6 @@ func TestDeathSpiral_FullRecovery(t *testing.T) {
 			b.Activity.Failures.Load(), b.CBThreshold)
 	}
 
-	// Phase 3: restart the server on the same address.
 	listener, err := net.Listen("tcp", srvAddr)
 	if err != nil {
 		t.Fatalf("could not re-listen on %s: %v", srvAddr, err)
@@ -393,7 +387,6 @@ func TestDeathSpiral_FullRecovery(t *testing.T) {
 	t.Logf("phase 3: recovered — score=%d state=%s failures=%d",
 		b.HealthScore.Value(), b.HealthScore.State(), b.Activity.Failures.Load())
 
-	// Phase 4: normal traffic flows cleanly.
 	failures := hammer(b, 100)
 	if failures > 0 {
 		t.Fatalf("phase 4: expected 0 failures after recovery, got %d/100", failures)

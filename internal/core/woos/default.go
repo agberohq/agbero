@@ -23,9 +23,7 @@ func (Defaults) Host(h *alaye.Host) {
 	if h.Protected == expect.Unknown {
 		h.Protected = expect.Inactive
 	}
-	// Only apply TLS defaults when the host has HTTP routes.
-	// Pure L4 proxy hosts (only proxy blocks, no route blocks) do not
-	// serve HTTP so TLS mode is irrelevant and should not be auto-assigned.
+
 	if len(h.Routes) > 0 {
 		defaultTLS(&h.TLS, h.Domains)
 	}
@@ -141,6 +139,7 @@ func defaultWebRoute(r *alaye.Route) {
 	if r.Web.Enabled == expect.Unknown {
 		r.Web.Enabled = expect.Active
 	}
+	defaultGit(&r.Web.Git)
 	if len(r.Web.Index) == 0 {
 		r.Web.Index = []string{"index.html"}
 	}
@@ -151,7 +150,6 @@ func defaultWebRoute(r *alaye.Route) {
 	defaultJWTAuth(&r.JWTAuth)
 	defaultForwardAuth(&r.ForwardAuth)
 	defaultOAuth(&r.OAuth)
-	defaultGit(&r.Web.Git)
 }
 
 func defaultProxyRoute(r *alaye.Route) {
@@ -297,10 +295,6 @@ func defaultSecurity(s *alaye.Security) {
 	}
 	defaultFirewall(&s.Firewall)
 
-	// Seed a minimal safe default so a fresh config can run basic workers.
-	// Operators extend this list explicitly — entries here are the floor,
-	// not a ceiling. Production deployments should set allowed_commands
-	// explicitly and remove anything not needed.
 	if len(s.AllowedCommands) == 0 {
 		s.AllowedCommands = []string{"echo"}
 	}
@@ -615,7 +609,7 @@ func defaultUDPProxy(t *alaye.Proxy) {
 		if t.Strategy == "" {
 			t.Strategy = alaye.StrategyRoundRobin
 		}
-		// UDP sessions: apply safe defaults if not set
+
 		if t.SessionTTL == 0 {
 			t.SessionTTL = alaye.Duration(UDPDefaultSessionTTL)
 		}
@@ -635,7 +629,7 @@ func defaultUDPProxy(t *alaye.Proxy) {
 }
 
 func defaultUDPHealthCheck(thc *alaye.TCPHealthCheck) {
-	// Auto-enable when Send/Expect are configured — same pattern as TCP
+
 	if thc.Enabled == expect.Unknown && (thc.Send != "" || thc.Expect != "") {
 		thc.Enabled = expect.Active
 	}
@@ -679,7 +673,6 @@ func defaultWorker(w *alaye.Work) {
 		w.Enabled = expect.Active
 	}
 
-	// Default timeout so workers cannot hang indefinitely
 	if w.Timeout == 0 {
 		w.Timeout = alaye.Duration(DefaultWorkerTimeout)
 	}
@@ -688,32 +681,52 @@ func defaultWorker(w *alaye.Work) {
 		w.Landlock = expect.Active
 	}
 
-	// Default restart policy for persistent background workers
 	if w.Background && w.Restart == "" {
 		w.Restart = DefaultWorkerRestart
 	}
-	// Default cache driver when cache is enabled
+
 	if w.Cache.Enabled.Active() && w.Cache.Driver == "" {
 		w.Cache.Driver = "memory"
 	}
 }
 
+func defaultGit(g *alaye.Git) {
+	if g.Enabled == expect.Unknown && g.URL != "" {
+		g.Enabled = expect.Active
+	}
+	if g.Enabled.NotActive() {
+		return
+	}
+	if g.Branch == "" {
+		g.Branch = "main"
+	}
+	hasPull := g.Interval > 0
+	hasPush := g.Secret.String() != ""
+	switch {
+	case hasPull && hasPush:
+		g.Mode = alaye.GitModeBoth
+	case hasPush:
+		g.Mode = alaye.GitModePush
+	case hasPull:
+		g.Mode = alaye.GitModePull
+	}
+}
+
 func defaultReplay(r *alaye.Replay) {
-	// Auto-enable when a URL is set or allowed_domains are configured
+
 	if r.Enabled == expect.Unknown && (r.URL != "" || len(r.AllowedDomains) > 0) {
 		r.Enabled = expect.Active
 	}
 	if r.Enabled == expect.Active {
-		// Apply default timeout so replay handlers never hang indefinitely
+
 		if r.Timeout == 0 {
 			r.Timeout = alaye.Duration(DefaultReplayTimeout)
 		}
-		// Default referer_mode to "auto" — sets Referer to the target origin,
-		// which makes most upstream APIs happy without exposing the client origin
+
 		if r.RefererMode == "" {
 			r.RefererMode = "auto"
 		}
-		// Default cache driver to memory when cache is enabled without a driver
+
 		if r.Cache.Enabled.Active() && r.Cache.Driver == "" {
 			r.Cache.Driver = "memory"
 		}
@@ -803,40 +816,5 @@ func defaultTelemetry(t *alaye.Telemetry) {
 
 	if t.Enabled == expect.Unknown {
 		t.Enabled = expect.Inactive
-	}
-}
-
-func defaultGit(g *alaye.Git) {
-	if g.Enabled == expect.Unknown && g.URL != "" {
-		g.Enabled = expect.Active
-	}
-	if g.Enabled.NotActive() {
-		return
-	}
-
-	// Default branch — "main" is the modern default; operators override for legacy repos.
-	if g.Branch == "" {
-		g.Branch = "main"
-	}
-
-	// Infer mode from what is configured.
-	hasPull := g.Interval > 0
-	hasPush := g.Secret.String() != ""
-
-	switch {
-	case hasPull && hasPush:
-		g.Mode = alaye.GitModeBoth
-	case hasPush:
-		g.Mode = alaye.GitModePush
-	case hasPull:
-		g.Mode = alaye.GitModePull
-		// neither — leave Mode empty; Validate() will catch it
-	}
-
-	// Default poll interval only makes sense for pull/both.
-	// 30 minutes is a reasonable default — operators reduce for
-	// fast-moving repos, increase for stable ones.
-	if g.IsPull() && g.Interval == 0 {
-		g.Interval = alaye.Duration(DefaultGitInterval)
 	}
 }
