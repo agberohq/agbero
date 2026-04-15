@@ -464,7 +464,7 @@ func main() {
 		}
 
 		// Recalibrate logger from config (file, level, format).
-		logger, _ = zulu.Logging(&global.Logging, hel.Cfg.ServeMarkdown, shutdown)
+		logger, _ = zulu.Logging(&global.Logging, hel.Cfg.DevMode, shutdown)
 		logger.Info("logger recalibrated")
 
 		dataDir := global.Storage.DataDir

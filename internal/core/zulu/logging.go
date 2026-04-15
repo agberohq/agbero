@@ -125,6 +125,7 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 	default:
 		l.Level(lx.LevelInfo)
 	}
+
 	if devMode {
 		l.Level(lx.LevelDebug)
 	}

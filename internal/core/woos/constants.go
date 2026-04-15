@@ -47,6 +47,7 @@ const (
 	LocalhostSuffixDotLocal     = ".local"
 	LocalhostSuffixDotLocalhost = ".localhost"
 	LocalhostSuffixDotTest      = ".test"
+	LocalhostSuffixDotInternal  = ".internal"
 
 	Http  = "http"
 	Https = "https"
