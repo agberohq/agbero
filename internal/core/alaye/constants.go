@@ -156,3 +156,9 @@ const (
 	ScopeProfile = "profile"
 	ScopeEmail   = "email"
 )
+
+const (
+	GitModePull = "pull"
+	GitModePush = "push"
+	GitModeBoth = "both"
+)

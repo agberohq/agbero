@@ -421,6 +421,7 @@ const (
 	DefaultReloadTimeout   = 30 * time.Second
 	DefaultShutdownTimeout = 5 * time.Second
 	DefaultGitPoolTimeout  = 1 * time.Second
+	DefaultGitInterval     = 30 * time.Minute
 
 	AdminTokenTTL = 8 * time.Hour
 

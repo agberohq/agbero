@@ -82,6 +82,12 @@ type Git struct {
 	WorkDir  expect.Folder `hcl:"work_dir,attr" json:"work_dir"`
 	SubDir   string        `hcl:"sub_dir,attr" json:"sub_dir"`
 	Auth     GitAuth       `hcl:"auth,block" json:"auth"`
+
+	// Populated by defaultGit():
+	//   "pull"  — interval is set, no secret
+	//   "push"  — secret is set, no interval
+	//   "both"  — both interval and secret are set
+	Mode string `hcl:"-" json:"mode,omitempty"`
 }
 
 func (g *Git) Validate() error {
@@ -89,13 +95,25 @@ func (g *Git) Validate() error {
 		return nil
 	}
 	if g.ID == "" {
-		return errors.New("git id is required when git is enabled")
+		return errors.New("git: id is required when git is enabled")
 	}
-	if g.URL == "" {
-		return errors.New("git url is required when git is enabled")
+	// pull and both modes need a URL to clone from
+	if g.IsPull() && g.URL == "" {
+		return errors.New("git: url is required for pull mode")
+	}
+
+	// must declare at least one mode
+	if g.Interval == 0 && g.Secret.String() == "" {
+		return errors.New("git: must set interval (pull), secret (push), or both")
 	}
 	return g.Auth.Validate()
 }
+
+// IsPull reports whether polling is active for this git config.
+func (g *Git) IsPull() bool { return g.Mode == GitModePull || g.Mode == GitModeBoth }
+
+// IsPush reports whether webhook delivery is active for this git config.
+func (g *Git) IsPush() bool { return g.Mode == GitModePush || g.Mode == GitModeBoth }
 
 type WebRoot string
 

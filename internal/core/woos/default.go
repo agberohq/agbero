@@ -151,6 +151,7 @@ func defaultWebRoute(r *alaye.Route) {
 	defaultJWTAuth(&r.JWTAuth)
 	defaultForwardAuth(&r.ForwardAuth)
 	defaultOAuth(&r.OAuth)
+	defaultGit(&r.Web.Git)
 }
 
 func defaultProxyRoute(r *alaye.Route) {
@@ -663,6 +664,7 @@ func defaultTCPHealthCheck(thc *alaye.TCPHealthCheck) {
 }
 
 func defaultServerless(s *alaye.Serverless) {
+	defaultGit(&s.Git)
 	for i := range s.Replay {
 		defaultReplay(&s.Replay[i])
 	}
@@ -801,5 +803,40 @@ func defaultTelemetry(t *alaye.Telemetry) {
 
 	if t.Enabled == expect.Unknown {
 		t.Enabled = expect.Inactive
+	}
+}
+
+func defaultGit(g *alaye.Git) {
+	if g.Enabled == expect.Unknown && g.URL != "" {
+		g.Enabled = expect.Active
+	}
+	if g.Enabled.NotActive() {
+		return
+	}
+
+	// Default branch — "main" is the modern default; operators override for legacy repos.
+	if g.Branch == "" {
+		g.Branch = "main"
+	}
+
+	// Infer mode from what is configured.
+	hasPull := g.Interval > 0
+	hasPush := g.Secret.String() != ""
+
+	switch {
+	case hasPull && hasPush:
+		g.Mode = alaye.GitModeBoth
+	case hasPush:
+		g.Mode = alaye.GitModePush
+	case hasPull:
+		g.Mode = alaye.GitModePull
+		// neither — leave Mode empty; Validate() will catch it
+	}
+
+	// Default poll interval only makes sense for pull/both.
+	// 30 minutes is a reasonable default — operators reduce for
+	// fast-moving repos, increase for stable ones.
+	if g.IsPull() && g.Interval == 0 {
+		g.Interval = alaye.Duration(DefaultGitInterval)
 	}
 }

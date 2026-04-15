@@ -210,19 +210,14 @@ func (s *Server) Start(configPath string) error {
 		seenGitConfigs := make(map[string]alaye.Git)
 		for _, hcfg := range hosts {
 			for _, r := range hcfg.Routes {
+				// Register web.git
 				if r.Web.Git.Enabled.Active() {
-					gitID := r.Web.Git.ID
-					if existing, exists := seenGitConfigs[gitID]; exists {
-						if existing.URL != r.Web.Git.URL || existing.Branch != r.Web.Git.Branch || existing.WorkDir != r.Web.Git.WorkDir {
-							s.logger.Fields("id", gitID).Warn("server: Git ID collision with differing configurations detected, skipping duplicate")
-						}
-						continue
-					}
-					seenGitConfigs[gitID] = r.Web.Git
-					err = s.cookManager.Register(gitID, r.Web.Git)
-					if err != nil {
-						s.logger.Error("failed to register cook", "id", gitID, "err", err)
-					}
+					s.registerGitConfig(r.Web.Git, seenGitConfigs)
+				}
+				// Register serverless.git — separate from web.git by design.
+				// Serverless workers must never share a directory with served files.
+				if r.Serverless.Git.Enabled.Active() {
+					s.registerGitConfig(r.Serverless.Git, seenGitConfigs)
 				}
 			}
 		}
@@ -557,18 +552,12 @@ func (s *Server) Reload() {
 		for _, hcfg := range hosts {
 			for _, r := range hcfg.Routes {
 				if r.Web.Git.Enabled.Active() {
-					gitID := r.Web.Git.ID
-					validGitIDs[gitID] = true
-					if existing, exists := seenGitConfigs[gitID]; exists {
-						if existing.URL != r.Web.Git.URL || existing.Branch != r.Web.Git.Branch || existing.WorkDir != r.Web.Git.WorkDir {
-							s.logger.Fields("id", gitID).Warn("server: Git ID collision with differing configurations detected, skipping duplicate")
-						}
-						continue
-					}
-					seenGitConfigs[gitID] = r.Web.Git
-					if err := s.cookManager.Register(gitID, r.Web.Git); err != nil {
-						s.logger.Error("failed to register/update cook", "id", gitID, "err", err)
-					}
+					validGitIDs[r.Web.Git.ID] = true
+					s.registerGitConfig(r.Web.Git, seenGitConfigs)
+				}
+				if r.Serverless.Git.Enabled.Active() {
+					validGitIDs[r.Serverless.Git.ID] = true
+					s.registerGitConfig(r.Serverless.Git, seenGitConfigs)
 				}
 			}
 		}
@@ -737,5 +726,20 @@ func (s *Server) serverWatchConfig() {
 		case <-s.shutdown.Done():
 			return
 		}
+	}
+}
+
+func (s *Server) registerGitConfig(cfg alaye.Git, seen map[string]alaye.Git) {
+	gitID := cfg.ID
+	if existing, exists := seen[gitID]; exists {
+		// Same ID with different clone config is a misconfiguration — warn once.
+		if existing.URL != cfg.URL || existing.Branch != cfg.Branch || existing.WorkDir != cfg.WorkDir {
+			s.logger.Fields("id", gitID).Warn("server: git ID collision with differing configurations, skipping duplicate")
+		}
+		return
+	}
+	seen[gitID] = cfg
+	if err := s.cookManager.Register(gitID, cfg); err != nil {
+		s.logger.Fields("id", gitID, "err", err).Error("failed to register git cook")
 	}
 }
