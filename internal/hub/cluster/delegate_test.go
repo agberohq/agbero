@@ -512,6 +512,158 @@ func TestLocalState_PlaintextNotLeaked(t *testing.T) {
 	}
 }
 
+// TestApply_OpSecret_WritesToKeeper verifies that when an OpSecret envelope
+// arrives via apply() (the gossip broadcast path, not join-time MergeRemoteState),
+// the delegate decrypts it and calls keeperWrite with the plaintext.
+//
+// This covers the runtime case: admin writes a secret on node1 via
+// POST /api/v1/keeper/secrets → BroadcastSecret → peers receive OpSecret
+// in NotifyMsg → apply() → handleSecretUpdate → keeperWrite.
+func TestApply_OpSecret_WritesToKeeper(t *testing.T) {
+	cipher, _ := security.NewCipher("12345678901234567890123456789012")
+	secretKey := "ss://prod/db_pass"
+	secretVal := []byte("correct-horse-battery-staple")
+
+	encrypted, err := cipher.Encrypt(secretVal)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	var mu sync.Mutex
+	written := make(map[string][]byte)
+
+	cfg := Config{
+		KeeperWrite: func(key string, value []byte) {
+			mu.Lock()
+			written[key] = append([]byte(nil), value...)
+			mu.Unlock()
+		},
+	}
+	d := newDelegate(cfg, nil, logger, &RealMetrics{}, cipher, nil)
+
+	env := Envelope{
+		Key:       secretKey,
+		Op:        OpSecret,
+		Value:     encrypted,
+		Timestamp: time.Now().UnixNano(),
+	}
+	d.apply(env, false)
+
+	mu.Lock()
+	got, ok := written[secretKey]
+	mu.Unlock()
+
+	if !ok {
+		t.Fatal("keeperWrite was not called after apply() received OpSecret")
+	}
+	if string(got) != string(secretVal) {
+		t.Errorf("keeperWrite got wrong plaintext: got %q, want %q", got, secretVal)
+	}
+
+	// OpSecret must NOT be stored in the gossip store — it carries key material
+	// that must not be replayed or exposed via LocalState.
+	d.mu.RLock()
+	_, inStore := d.store[secretKey]
+	d.mu.RUnlock()
+	if inStore {
+		t.Error("OpSecret must not be persisted in the gossip store")
+	}
+}
+
+// TestApply_OpSecret_DeleteCallsKeeperWrite_Nil verifies that an OpSecret
+// envelope with an empty Value (the deletion signal from BroadcastSecret(key, nil))
+// calls keeperWrite with a nil value so the receiving node deletes the key.
+func TestApply_OpSecret_DeleteCallsKeeperWrite_Nil(t *testing.T) {
+	cipher, _ := security.NewCipher("12345678901234567890123456789012")
+
+	var mu sync.Mutex
+	written := make(map[string][]byte)
+	deleteCalled := false
+
+	cfg := Config{
+		KeeperWrite: func(key string, value []byte) {
+			mu.Lock()
+			if value == nil {
+				deleteCalled = true
+			}
+			written[key] = value
+			mu.Unlock()
+		},
+	}
+	d := newDelegate(cfg, nil, logger, &RealMetrics{}, cipher, nil)
+
+	env := Envelope{
+		Key:       "ss://prod/old_key",
+		Op:        OpSecret,
+		Value:     nil, // nil = deletion signal
+		Timestamp: time.Now().UnixNano(),
+	}
+	d.apply(env, false)
+
+	mu.Lock()
+	called := deleteCalled
+	mu.Unlock()
+
+	if !called {
+		t.Error("keeperWrite must be called with nil value for OpSecret deletion")
+	}
+}
+
+// TestApply_OpSecret_NoCipher_Drops verifies that an OpSecret envelope
+// received via apply() is silently dropped (no panic) when the delegate
+// has no cipher configured.
+func TestApply_OpSecret_NoCipher_Drops(t *testing.T) {
+	var mu sync.Mutex
+	writeCalled := false
+
+	cfg := Config{
+		KeeperWrite: func(key string, value []byte) {
+			mu.Lock()
+			writeCalled = true
+			mu.Unlock()
+		},
+	}
+	// cipher intentionally nil
+	d := newDelegate(cfg, nil, logger, &RealMetrics{}, nil, nil)
+
+	env := Envelope{
+		Key:       "ss://prod/db_pass",
+		Op:        OpSecret,
+		Value:     []byte("looks-encrypted-but-cipher-is-nil"),
+		Timestamp: time.Now().UnixNano(),
+	}
+	// Must not panic.
+	d.apply(env, false)
+
+	mu.Lock()
+	called := writeCalled
+	mu.Unlock()
+
+	if called {
+		t.Error("keeperWrite must not be called when cipher is nil")
+	}
+}
+
+// TestApply_OpSecret_NoKeeperWrite_Drops verifies that an OpSecret envelope
+// is safely dropped when keeperWrite is nil (e.g. seed node that has no
+// keeper wired in tests).
+func TestApply_OpSecret_NoKeeperWrite_Drops(t *testing.T) {
+	cipher, _ := security.NewCipher("12345678901234567890123456789012")
+	encrypted, _ := cipher.Encrypt([]byte("secret"))
+
+	// keeperWrite intentionally absent
+	d := newDelegate(Config{}, nil, logger, &RealMetrics{}, cipher, nil)
+
+	env := Envelope{
+		Key:       "ss://prod/db_pass",
+		Op:        OpSecret,
+		Value:     encrypted,
+		Timestamp: time.Now().UnixNano(),
+	}
+	// Must not panic.
+	d.apply(env, false)
+}
+
 // containsSubslice reports whether needle appears verbatim in haystack.
 func containsSubslice(haystack, needle []byte) bool {
 	if len(needle) == 0 || len(needle) > len(haystack) {

@@ -71,8 +71,6 @@ func (e *eventDelegate) NotifyLeave(n *memberlist.Node) {
 
 func (e *eventDelegate) NotifyUpdate(n *memberlist.Node) {}
 
-// NewManager initializes the cluster manager with memberlist and delegates.
-// Sets up encryption, config management, and starts background maintenance.
 func NewManager(cfg Config, handler UpdateHandler, logger *ll.Logger) (*Manager, error) {
 	mConfig := memberlist.DefaultLANConfig()
 	mConfig.Name = cfg.Name
@@ -178,6 +176,27 @@ func (m *Manager) BroadcastReliable(op OpType, key string, value []byte) error {
 			_ = m.list.SendReliable(node, data)
 		}
 	}
+	return nil
+}
+
+// BroadcastSecret encrypts plaintext with the cluster cipher and broadcasts
+// it to all peers as an OpSecret envelope. Peers handle it in apply() and
+// write it to their local keeper via keeperWrite.
+// This is called by the keeper API handler after any write or delete so that
+// runtime secret changes propagate to all cluster nodes.
+func (m *Manager) BroadcastSecret(key string, plaintext []byte) error {
+	if m.delegate.cipher == nil {
+		return fmt.Errorf("cluster: no cipher configured — secret_key missing from gossip block")
+	}
+	var value []byte
+	if len(plaintext) > 0 {
+		encrypted, err := m.delegate.cipher.Encrypt(plaintext)
+		if err != nil {
+			return fmt.Errorf("cluster: encrypt secret %q: %w", key, err)
+		}
+		value = encrypted
+	}
+	m.BroadcastGossip(OpSecret, key, value)
 	return nil
 }
 

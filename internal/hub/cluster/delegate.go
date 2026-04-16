@@ -82,9 +82,7 @@ func (d *delegate) GetBroadcasts(overhead, limit int) [][]byte {
 // LocalState generates a complete snapshot of local state.
 // Triggered when a new node attempts a full sync during join.
 func (d *delegate) LocalState(join bool) []byte {
-	// Snapshot the gossip store under the read lock, then release before doing
-	// anything that touches external state (keeper). Holding d.mu across a keeper
-	// call would risk a cross-lock deadlock if keeper ever calls back into cluster.
+
 	d.mu.RLock()
 	storeCopy := make(map[string]Envelope, len(d.store))
 	for k, v := range d.store {
@@ -99,8 +97,6 @@ func (d *delegate) LocalState(join bool) []byte {
 
 	doc := stateDoc{Store: storeCopy}
 
-	// When a new node is joining, include encrypted keeper secrets so it is
-	// immediately authentication-compatible without any operator intervention.
 	if join && d.keeperSnapshot != nil && d.cipher != nil {
 		snapshot := d.keeperSnapshot()
 		now := time.Now().UnixNano()
@@ -149,9 +145,6 @@ func (d *delegate) MergeRemoteState(buf []byte, join bool) {
 		return
 	}
 
-	// Backward compatibility: nodes running the old code send a flat map
-	// {"key": Envelope, ...} rather than {"store": {...}, "secrets": [...]}.
-	// When doc.Store is nil but the buffer is non-empty JSON, try the old format.
 	if doc.Store == nil && len(doc.Secrets) == 0 {
 		var legacy map[string]Envelope
 		if err := json.Unmarshal(buf, &legacy); err == nil && len(legacy) > 0 {
@@ -162,7 +155,6 @@ func (d *delegate) MergeRemoteState(buf []byte, join bool) {
 		}
 	}
 
-	// Apply regular gossip state entries.
 	for _, env := range doc.Store {
 		d.apply(env, false)
 	}
@@ -230,6 +222,14 @@ func (d *delegate) apply(env Envelope, local bool) {
 		env.Value = nil
 		d.metrics.IncDeletes()
 	}
+	// OpSecret carries key material — must not be stored in the gossip map
+	// (where it would be replayed via LocalState or exposed in state dumps).
+	// Handle it directly and return before the store write.
+	if env.Op == OpSecret {
+		d.handleSecretUpdate(env)
+		return
+	}
+
 	d.store[env.Key] = env
 	if d.handler != nil {
 		switch env.Op {
@@ -308,6 +308,31 @@ func (d *delegate) handleConfigUpdate(env Envelope) {
 
 // pruneTombstones clears expired state records from memory.
 // Prevents indefinitely growing state trees from removed or temporary data.
+func (d *delegate) handleSecretUpdate(env Envelope) {
+	if d.keeperWrite == nil {
+		d.logger.Warn("cluster: received OpSecret but no keeper write handler wired")
+		return
+	}
+	if len(env.Value) == 0 {
+		// nil/empty value = deletion signal from BroadcastSecret(key, nil)
+		d.keeperWrite(env.Key, nil)
+		d.logger.Fields("key", env.Key).Debug("cluster: keeper secret deleted from peer broadcast")
+		return
+	}
+	if d.cipher == nil {
+		d.logger.Warn("cluster: received OpSecret but no cipher available — secret dropped")
+		return
+	}
+	plaintext, err := d.cipher.Decrypt(env.Value)
+	if err != nil {
+		d.logger.Fields("key", env.Key, "err", err).Error("cluster: failed to decrypt peer secret")
+		return
+	}
+	d.keeperWrite(env.Key, plaintext)
+	zero.Bytes(plaintext)
+	d.logger.Fields("key", env.Key).Debug("cluster: keeper secret synced from peer broadcast")
+}
+
 func (d *delegate) pruneTombstones() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
