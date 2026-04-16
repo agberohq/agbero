@@ -22,7 +22,7 @@
 
 import { listen, emit, on, clipboard, notify, query, modal, countdown } from '../lib/oja.full.esm.js';
 import { store } from './store.js';
-import { fmtNum } from './api.js';
+import { fmtNum, getHostHCL } from './api.js';
 import { isOn } from './utils.js';
 
 // Drawer open / close
@@ -190,27 +190,40 @@ function gitSection(git, hostname) {
     const state    = gs.state  || 'unknown';
     const commit   = gs.commit ? gs.commit.substring(0, 8) : 'none';
     const sCls     = state === 'healthy' ? 'success' : state === 'unavailable' ? 'warning' : 'error';
-    const whUrl    = `${window.location.origin}/.well-known/agbero/webhook/git/${git.id}`;
+
+    const mode = git.mode || (
+        (git.interval && git.interval !== '0s') && git.secret?.value ? 'both'
+            : (git.interval && git.interval !== '0s') ? 'pull'
+                : 'push'
+    );
+    const modeColor = mode === 'pull' ? 'info' : mode === 'push' ? 'warning' : 'success';
 
     const pairs = [
-        ['ID',       `<code>${git.id}</code>`],
-        ['URL',      `<a href="${git.url}" target="_blank" rel="noopener" style="color:var(--accent);word-break:break-all;font-size:11px;">${git.url}</a>`],
-        ['Branch',   git.branch || badge('default', '')],
-        ['Interval', git.interval && git.interval !== '0s' ? git.interval : badge('webhook only', '')],
-        ['State',    badge(state, sCls)],
-        ['Commit',   commit !== 'none' ? `<code>${commit}</code>` : badge('none yet', 'warning')],
-        ['Deploys',  gs.deployments || 0],
+        ['ID',      `<code>${git.id}</code>`],
+        ['Mode',    badge(mode.toUpperCase(), modeColor)],
+        ['URL',     git.url ? `<a href="${git.url}" target="_blank" rel="noopener" style="color:var(--accent);word-break:break-all;font-size:11px;">${git.url}</a>` : '—'],
+        ['Branch',  git.branch || badge('default', '')],
+        mode !== 'push' ? ['Interval', git.interval && git.interval !== '0s' ? git.interval : '—'] : null,
+        ['State',   badge(state, sCls)],
+        ['Commit',  commit !== 'none' ? `<code>${commit}</code>` : badge('none yet', 'warning')],
+        ['Deploys', gs.deployments || 0],
         git.sub_dir    ? ['Sub Dir', `<code>${git.sub_dir}</code>`] : null,
         git.auth?.type ? ['Auth',    badge(git.auth.type, 'info')]  : null,
     ].filter(Boolean);
 
-    const whHtml = `<div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
-        <code style="font-size:10px;padding:4px 6px;background:var(--panel-bg);border:1px solid var(--border);border-radius:4px;flex:1;overflow-x:auto;white-space:nowrap;">${whUrl}</code>
-        <button class="btn small" data-action="copy-url" data-url="${whUrl}" style="flex-shrink:0;">Copy</button>
-    </div>`;
+    // Webhook URL: host domain (not admin), only for push/both modes
+    const showWebhook = mode === 'push' || mode === 'both';
+    const whUrl = `${window.location.protocol}//${hostname}/.well-known/agbero/webhook/git/${git.id}`;
+    const whHtml = showWebhook ? `
+        <div style="margin-top:8px;">
+            <label style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;">Webhook URL</label>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+                <code style="font-size:10px;padding:4px 6px;background:var(--panel-bg);border:1px solid var(--border);border-radius:4px;flex:1;overflow-x:auto;white-space:nowrap;">${whUrl}</code>
+                <button class="btn small" data-action="copy-url" data-url="${whUrl}" style="flex-shrink:0;">Copy</button>
+            </div>
+        </div>` : '';
 
-    return section('🐙 Git Deployment', kvGrid(pairs) +
-        `<div style="margin-top:8px;"><label style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;">Webhook URL</label>${whHtml}</div>`);
+    return section('🐙 Git Deployment', kvGrid(pairs) + whHtml);
 }
 
 // Serverless section
@@ -218,8 +231,8 @@ function gitSection(git, hostname) {
 function serverlessSection(serverless) {
     if (!isOn(serverless?.enabled)) return '';
     const workers = serverless.workers || [];
-    const rests   = serverless.rests   || [];
-    if (!workers.length && !rests.length) return '';
+    const replay  = serverless.replay  || [];  // correct field name
+    if (!workers.length && !replay.length) return '';
 
     let html = '';
 
@@ -237,23 +250,30 @@ function serverlessSection(serverless) {
                         ${w.restart     ? badge('restart: ' + w.restart, '') : ''}
                         ${w.schedule    ? badge('cron: ' + w.schedule, 'warning') : ''}
                         ${w.timeout && w.timeout !== '0s' ? badge('timeout: ' + w.timeout, '') : ''}
+                        ${w.engine      ? badge('engine: ' + w.engine, '') : ''}
+                        ${w.landlock === 'on' || w.landlock === true ? badge('landlock', 'info') : ''}
                     </div>
                 </div>
             </div>`).join('');
     }
 
-    if (rests.length) {
-        html += `<div style="font-size:11px;font-weight:500;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 6px;">REST Proxies (${rests.length})</div>`;
-        html += rests.map(r => `
+    if (replay.length) {
+        html += `<div style="font-size:11px;font-weight:500;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 6px;">Replay Proxies (${replay.length})</div>`;
+        html += replay.map(r => `
             <div class="handler-card" style="margin-bottom:6px;">
                 <span class="handler-icon" style="font-size:16px;">🔌</span>
                 <div class="handler-info">
                     <div style="display:flex;align-items:center;gap:6px;">
                         <strong>${r.name}</strong>
-                        ${badge(r.method || 'GET', 'info')}
+                        ${(r.methods||[]).length ? badge((r.methods||[]).join('/'), 'info') : badge('ANY', 'info')}
                     </div>
-                    <span style="font-size:11px;word-break:break-all;"><a href="${r.url}" target="_blank" rel="noopener" style="color:var(--accent);">${r.url}</a></span>
-                    ${r.timeout && r.timeout !== '0s' ? `<span style="font-size:10px;color:var(--text-mute);">timeout: ${r.timeout}</span>` : ''}
+                    ${r.url ? `<span style="font-size:11px;word-break:break-all;"><a href="${r.url}" target="_blank" rel="noopener" style="color:var(--accent);">${r.url}</a></span>` : badge('relay mode', 'warning')}
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">
+                        ${r.timeout && r.timeout !== '0s' ? badge('timeout: ' + r.timeout, '') : ''}
+                        ${isOn(r.forward_query) ? badge('fwd query', '') : ''}
+                        ${isOn(r.strip_headers) ? badge('strip headers', '') : ''}
+                        ${r.referer_mode && r.referer_mode !== 'auto' ? badge('referer: ' + r.referer_mode, '') : ''}
+                    </div>
                 </div>
             </div>`).join('');
     }
@@ -304,12 +324,15 @@ function backendRow(b, cfgB, bStat, hostname, routeIdx, bIdx, type) {
 }
 
 function upstreamsSection(hostname, item, itemStats, routeIdx, type) {
-    const cfgBEs  = item.backends?.servers || [];
-    const statBEs = itemStats?.backends    || [];
+    // Proxy backends are a flat array; route backends are under .servers
+    const cfgBEs  = type === 'proxy'
+        ? (item.backends || [])
+        : (item.backends?.servers || []);
+    const statBEs = itemStats?.backends || [];
     const display = statBEs.length ? statBEs : cfgBEs;
     if (!display.length) return '';
 
-    const strategy  = item.backends?.strategy;
+    const strategy  = item.backends?.strategy || item.strategy;
     const stratLabel = strategy
         ? strategy.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
         : 'Round Robin';
@@ -512,9 +535,9 @@ function hostLevelSection(hostname) {
     }
     if (isOn(hostCfg.headers?.enabled)) {
         const req = Object.keys(hostCfg.headers?.request?.set  || {}).length
-                  + Object.keys(hostCfg.headers?.request?.add  || {}).length;
+            + Object.keys(hostCfg.headers?.request?.add  || {}).length;
         const res = Object.keys(hostCfg.headers?.response?.set || {}).length
-                  + Object.keys(hostCfg.headers?.response?.add || {}).length;
+            + Object.keys(hostCfg.headers?.response?.add || {}).length;
         if (req + res > 0) items.push(['Headers', `${req} req, ${res} resp`]);
     }
     if (hostCfg.bind?.length) items.push(['Bind', hostCfg.bind.map(b => `<code>${b}</code>`).join(' ')]);
@@ -525,34 +548,86 @@ function hostLevelSection(hostname) {
 
 // Raw config section — always shown at the bottom
 
-function rawSection(item) {
-    // Strip circular/redundant fields that would make the JSON too noisy
+function rawSection(item, hostname) {
+    const uid    = 'raw-' + Math.random().toString(36).slice(2, 8);
+    const copyId = 'cp-'  + uid;
+
     const clean = JSON.parse(JSON.stringify(item, (k, v) => {
-        // Skip zero-value Enabled fields and empty arrays/objects
         if (v === 'unknown' || v === null) return undefined;
         if (Array.isArray(v)   && v.length === 0)           return undefined;
         if (typeof v === 'object' && v !== null && !Array.isArray(v) && Object.keys(v).length === 0) return undefined;
         return v;
     }));
-    const j = JSON.stringify(clean, null, 2);
-    return section('{ } Raw Config', `
-        <pre class="code-box" style="max-height:220px;overflow:auto;font-size:10px;line-height:1.55;margin:0;white-space:pre-wrap;word-break:break-all;">${j.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`);
+    const fallback = JSON.stringify(clean, null, 2);
+
+    const header = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:10px;color:var(--text-mute);font-family:var(--font-mono);" id="${uid}-lbl">JSON</span>
+        <button class="btn small" id="${copyId}">Copy</button>
+    </div>`;
+    const pre = `<pre id="${uid}" class="code-box" style="max-height:260px;overflow:auto;font-size:10px;line-height:1.55;margin:0;white-space:pre;word-break:normal;">${fallback.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
+
+    let _rawText = fallback;
+    setTimeout(async () => {
+        const preEl   = document.getElementById(uid);
+        const copyBtn = document.getElementById(copyId);
+        const lblEl   = document.getElementById(uid + '-lbl');
+        if (!preEl) return;
+
+        if (hostname) {
+            try {
+                const hcl = await getHostHCL(hostname);
+                if (hcl && preEl.isConnected) {
+                    _rawText = hcl;
+                    preEl.textContent = hcl;
+                    if (lblEl) lblEl.textContent = 'HCL';
+                }
+            } catch { /* keep JSON fallback */ }
+        }
+
+        if (copyBtn) {
+            copyBtn.addEventListener('click', () => {
+                clipboard.write(_rawText).then(() => {
+                    copyBtn.textContent = 'Copied';
+                    setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+                }).catch(() => {
+                    copyBtn.textContent = 'Failed';
+                    setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+                });
+            });
+        }
+    }, 0);
+
+    return section('{ } Config', header + pre);
 }
 
 // Main route drawer builder
 
 function buildRouteHTML(hostname, item, itemStats, type, certificates, routeIdx) {
-    // TCP proxy
+    // TCP or UDP proxy
     if (type === 'proxy') {
+        const isUDP = (item.protocol || itemStats?.protocol || '').toLowerCase() === 'udp';
+        const protoLabel = isUDP ? '📡 UDP Proxy' : '📡 TCP Proxy';
+        const proxyPairs = [
+            ['Listen',        `<code>${item.listen}</code>`],
+            ['Strategy',      item.strategy || 'round_robin'],
+            ['SNI',           item.sni ? `<code>${item.sni}</code>` : null],
+            ['Max Conn',      item.max_connections || null],
+            ['Proxy Protocol',item.proxy_protocol ? badge('Enabled', 'info') : null],
+        ];
+        if (isUDP) {
+            proxyPairs.push(
+                ['Matcher',       item.matcher ? badge(item.matcher, 'info') : badge('src_port', '')],
+                ['Session TTL',   item.session_ttl && item.session_ttl !== '0s' ? item.session_ttl : null],
+                ['Max Sessions',  item.max_sessions ? fmtNum(item.max_sessions) : null],
+            );
+            if (itemStats?.active_sessions > 0) {
+                proxyPairs.push(['Active Sessions', badge(fmtNum(itemStats.active_sessions), 'warning')]);
+            }
+        }
         return [
-            section('📡 TCP Proxy', kvGrid([
-                ['Listen',   `<code>${item.listen}</code>`],
-                ['Strategy', item.strategy || 'round_robin'],
-                ['SNI',      item.sni ? `<code>${item.sni}</code>` : null],
-                ['Max Conn', item.max_connections || null],
-            ])),
+            section(protoLabel, kvGrid(proxyPairs)),
             upstreamsSection(hostname, item, itemStats, routeIdx, type),
-            rawSection(item),
+            rawSection(item, hostname),
         ].filter(Boolean).join('');
     }
 
@@ -564,13 +639,13 @@ function buildRouteHTML(hostname, item, itemStats, type, certificates, routeIdx)
         // webSection handles root/markdown/php/listing/spa
         // gitSection handles git deployment details
         webSection(item.web),
-        gitSection(item.web?.git, hostname),
+        gitSection(isOn(item.web?.git?.enabled) ? item.web.git : isOn(item.serverless?.git?.enabled) ? item.serverless.git : null, hostname),
         serverlessSection(item.serverless),
         upstreamsSection(hostname, item, itemStats, routeIdx, type),
         httpFeaturesSection(item),
         authSection(item),
         // Raw config — always at bottom for power users and debugging
-        rawSection(item),
+        rawSection(item, hostname),
     ].filter(Boolean).join('');
 }
 
@@ -585,8 +660,8 @@ function buildBackendHTML(cfg, stat) {
         const p999 = stat.latency_us?.p999 ? (stat.latency_us.p999 / 1000).toFixed(1) + 'ms' : null;
         const hSt  = stat.health?.status || 'Unknown';
         const dotCls = (!stat.alive || hSt === 'Dead' || hSt === 'Unhealthy') ? 'down'
-                     : hSt === 'Degraded' ? 'warn'
-                     : hSt === 'Healthy'  ? 'ok' : 'info';
+            : hSt === 'Degraded' ? 'warn'
+                : hSt === 'Healthy'  ? 'ok' : 'info';
         const gaugeColor = dotCls === 'ok' ? 'var(--success)' : dotCls === 'down' ? 'var(--danger)' : 'var(--warning)';
 
         parts.push(section('📊 Live Metrics', `
@@ -600,13 +675,13 @@ function buildBackendHTML(cfg, stat) {
                 </div>
             </div>
             ${kvGrid([
-                ['p50',         p50],
-                ['p99',         p99],
-                ['p999',        p999],
-                ['In Flight',   stat.in_flight  > 0 ? badge(stat.in_flight,            'warning') : null],
-                ['Failures',    stat.failures   > 0 ? badge(fmtNum(stat.failures),     'error')   : null],
-                ['Consecutive', stat.health?.consecutive_failures > 0 ? stat.health.consecutive_failures + ' fails' : null],
-            ])}`));
+            ['p50',         p50],
+            ['p99',         p99],
+            ['p999',        p999],
+            ['In Flight',   stat.in_flight  > 0 ? badge(stat.in_flight,            'warning') : null],
+            ['Failures',    stat.failures   > 0 ? badge(fmtNum(stat.failures),     'error')   : null],
+            ['Consecutive', stat.health?.consecutive_failures > 0 ? stat.health.consecutive_failures + ' fails' : null],
+        ])}`));
     }
 
     parts.push(section('⚙️ Configuration', kvGrid([

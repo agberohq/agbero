@@ -1,54 +1,36 @@
+/**
+ * js/store.js — All store instances for agbero-ui.
+ *
+ * Three tiers, all backed by Oja Store. Never use raw localStorage/sessionStorage.
+ *
+ *   storeSession — tab-scoped plain sessionStorage  (metrics, UI state, config cache)
+ *   storeLocal   — persistent plain localStorage    (user preferences, node list, theme)
+ *   storeSecure  — AES-GCM encrypted sessionStorage (auth tokens — handled by auth.session)
+ *
+ * The default export `store` is storeSession — used throughout the app for runtime state.
+ */
 import { Store } from '../lib/oja.full.esm.js';
-import { apiSetToken, apiClearToken, reinitApi } from './api.js';
+import { reinitApi } from './api.js';
 
-// prefer: 'session' — clears on tab close, correct for an admin UI.
-export const store = new Store('agbero-admin', { prefer: 'session' });
+export const storeSession = new Store('agbero',        { prefer: 'session' });
+export const storeLocal   = new Store('agbero-prefs',  { prefer: 'local'   });
+export const storeSecure  = new Store('agbero-secure', { prefer: 'session', encrypt: true });
 
-// Auth
-// Tokens are stored in localStorage so they survive tab close (intentional).
-// Setting credentials also configures the shared Api instance immediately.
+// Canonical alias — most files just import { store }
+export const store = storeSession;
 
-export function getCreds() {
-    return {
-        type:  localStorage.getItem('ag_auth_type'),
-        token: localStorage.getItem('ag_auth_token'),
-    };
-}
-
-export function setCredentials(type, token) {
-    localStorage.setItem('ag_auth_type',  type);
-    localStorage.setItem('ag_auth_token', token);
-    // Keep Oja Api instance in sync — no more threading creds through every call
-    if (type === 'jwt' || type === 'bearer') {
-        apiSetToken(token);
-    }
-}
-
-export function clearCredentials() {
-    localStorage.removeItem('ag_auth_type');
-    localStorage.removeItem('ag_auth_token');
-    apiClearToken();
-}
-
-export function isLoggedIn() {
-    return !!localStorage.getItem('ag_auth_token');
-}
-
-// Target node
+// Target node preference (persists across tabs, never sensitive)
 
 export function getHost() {
-    return localStorage.getItem('ag_target_host') || '';
+    return storeLocal.get('targetHost') || '';
 }
 
 export function setHost(url) {
     const clean = url ? url.replace(/\/+$/, '') : '';
-    localStorage.setItem('ag_target_host', clean);
+    storeLocal.set('targetHost', clean);
     store.set('sys.targetHost', clean || 'local');
-    reinitApi(); // point the Api instance at the new node
+    reinitApi();
 }
 
-// Boot — restore Api token if already logged in
-const _boot = getCreds();
-if (_boot.token) apiSetToken(_boot.token);
-
+// Boot — restore target host display label
 store.set('sys.targetHost', getHost() || 'local');

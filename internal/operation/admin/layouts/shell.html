@@ -1,35 +1,22 @@
+<style>
+    .node-row { display:flex; align-items:center; justify-content:space-between; gap:8px;
+        padding:8px 10px; border:1px solid var(--border); border-radius:6px;
+        background:var(--panel-bg); }
+    .node-row.active { border-color:var(--accent); background:rgba(var(--accent-rgb,79,142,247),0.06); }
+    .node-row-info { display:flex; flex-direction:column; gap:2px; min-width:0; flex:1; }
+    .node-row-label { font-size:12px; font-weight:500; color:var(--text-main); }
+    .node-row-url { font-size:10px; color:var(--text-mute); font-family:var(--font-mono);
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .node-row-actions { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+</style>
 <!-- ── Navbar (U-02: 4 text links + icon links) ────────────────────────── -->
 <nav class="navbar">
     <a href="#/" class="brand" style="text-decoration:none;">AGBERO <span>ADMIN</span></a>
 
     <div style="flex:1;min-width:0;"></div>
 
-    <!-- Primary text links — always visible on desktop -->
-    <div class="menu" id="navMenu">
-        <a href="#/"        class="nav-link" data-page="/">dashboard</a>
-        <a href="#/hosts"   class="nav-link" data-page="/hosts">hosts</a>
-        <a href="#/logs"    class="nav-link" data-page="/logs">logs</a>
-        <a href="#/config"  class="nav-link" data-page="/config">config</a>
-
-        <!-- Icon links for secondary pages -->
-        <div class="nav-icon-group" style="display:flex;align-items:center;gap:2px;margin-left:4px;padding-left:8px;border-left:1px solid var(--border);">
-            <a href="#/map"      class="nav-icon-link" data-page="/map"      title="Map">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
-            </a>
-            <a href="#/firewall" class="nav-icon-link" data-page="/firewall" title="Firewall">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            </a>
-            <a href="#/cluster"  class="nav-icon-link" data-page="/cluster"  title="Cluster">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-            </a>
-            <a href="#/keeper"   class="nav-icon-link" data-page="/keeper"   title="Keeper">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            </a>
-            <a href="#/certs"    class="nav-icon-link" data-page="/certs"    title="Certificates">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg>
-            </a>
-        </div>
-    </div>
+    <!-- Desktop nav — rendered from NAV_LINKS by buildNav() in shell script -->
+    <div class="menu" id="navMenu"></div>
 
     <!-- Right cluster -->
     <div class="nav-right">
@@ -76,20 +63,10 @@
     </div>
 </nav>
 
-<!-- Mobile drawer -->
+<!-- Mobile drawer — rendered from NAV_LINKS by buildNav() in shell script -->
 <div class="nav-mobile-drawer" id="navMobileDrawer">
     <button class="nav-mobile-close" id="navMobileClose" aria-label="Close">✕</button>
-    <a href="#/"         class="nav-mobile-link" data-page="/"><svg class="nav-mobile-icon" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Dashboard</a>
-    <a href="#/hosts"    class="nav-mobile-link" data-page="/hosts"><svg class="nav-mobile-icon" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Hosts</a>
-    <a href="#/logs"     class="nav-mobile-link" data-page="/logs"><svg class="nav-mobile-icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>Logs</a>
-    <a href="#/cluster"  class="nav-mobile-link" data-page="/cluster"><svg class="nav-mobile-icon" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>Cluster</a>
-    <a href="#/map"      class="nav-mobile-link" data-page="/map"><svg class="nav-mobile-icon" viewBox="0 0 24 24"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>Map</a>
-    <a href="#/firewall" class="nav-mobile-link" data-page="/firewall"><svg class="nav-mobile-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Firewall</a>
-    <a href="#/config"   class="nav-mobile-link" data-page="/config"><svg class="nav-mobile-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>Config</a>
-    <a href="#/keeper"   class="nav-mobile-link" data-page="/keeper"><svg class="nav-mobile-icon" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Keeper</a>
-    <a href="#/certs"    class="nav-mobile-link" data-page="/certs"><svg class="nav-mobile-icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg>Certificates</a>
-    <a href="#/profile"  class="nav-mobile-link" data-page="/profile"><svg class="nav-mobile-icon" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Profile</a>
-    <a href="#/add-host" class="nav-mobile-link" data-page="/add-host"><svg class="nav-mobile-icon" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Host</a>
+    <div id="navMobileLinks"></div>
 </div>
 
 <div id="offlineBanner" class="offline-banner" style="display:none;background:var(--danger,#ff3b30);color:#fff;text-align:center;padding:10px;font-size:13px;font-weight:500;letter-spacing:0.4px;z-index:9999;position:relative;">
@@ -101,8 +78,8 @@
 <!-- SYSTEM STATS BAR -->
 <div class="sys-bar" id="sysBar" title="Click to expand system stats" style="cursor:pointer;">
     <div class="sys-bar-left">
-        <span class="sys-item" title="Memory RSS">rss <span data-oja-bind="sys.memRss" data-oja-transform="formatBytes">—</span></span>
-        <span class="sys-item hide-mobile" title="Memory Allocated">alloc <span data-oja-bind="sys.memAlloc" data-oja-transform="formatBytes">—</span></span>
+        <span class="sys-item" title="Go Heap (HeapSys)">heap <span data-oja-bind="sys.memRss" data-oja-transform="formatBytes">—</span></span>
+        <span class="sys-item hide-mobile" title="Go Memory Allocated">alloc <span data-oja-bind="sys.memAlloc" data-oja-transform="formatBytes">—</span></span>
         <span class="sys-divider hide-mobile">·</span>
         <span class="sys-item hide-mobile" title="Goroutines">goroutines <span data-oja-bind="sys.goroutines" data-oja-transform="fmtNum">—</span></span>
         <span class="sys-divider">·</span>
@@ -126,96 +103,133 @@
 <!-- STATS FOOTER -->
 <div class="stats-footer">
     <div class="stat-item"><label>Uptime</label><span data-oja-bind="stats.uptime">100%</span></div>
-    <div class="stat-item"><label>Req / Sec</label><span data-oja-bind="stats.rps" style="color:#00c770">0.0</span></div>
+    <div class="stat-item"><label>Req / Sec</label><span data-oja-bind="stats.rps" style="color:var(--success)">0.0</span></div>
     <div class="stat-item"><label>Total Reqs</label><span data-oja-bind="stats.total" data-oja-transform="fmtNum">0</span></div>
     <div class="stat-item"><label>p99 Latency</label><span data-oja-bind="stats.avgMs">0ms</span></div>
     <div class="stat-item"><label>Apdex</label><span data-oja-bind="stats.apdex">1.0</span></div>
-    <div class="stat-item"><label>Errors</label><span data-oja-bind="stats.errors" data-oja-transform="fmtNum" style="color:#ff3b30">0</span></div>
+    <div class="stat-item"><label>Errors</label><span data-oja-bind="stats.errors" data-oja-transform="fmtNum" style="color:var(--danger)">0</span></div>
     <div class="stat-item"><label>Backends</label><span data-oja-bind="stats.activeBackends" data-oja-transform="fmtNum">0</span></div>
 </div>
 
 <!-- MODALS -->
 <div class="modal-overlay" id="targetHostModal">
-    <div class="modal">
-        <h3>Target Node</h3>
-        <p style="font-size:11px;color:var(--text-mute);margin-bottom:15px;">Connect to a different Agbero node. Leave empty for local.</p>
-        <form id="targetHostForm">
-            <input type="url" id="targetHostInput" placeholder="http://10.0.0.5:9090" autocomplete="off">
-            <button type="submit" class="primary">Connect</button>
-            <button type="button" class="btn close-modal" style="margin-top:5px;">Cancel</button>
-        </form>
+    <div class="modal" style="max-width:480px;">
+        <h3 style="margin:0 0 6px;">Node Manager</h3>
+        <p style="font-size:11px;color:var(--text-mute);margin:0 0 16px;">
+            Switch between Agbero nodes. The selected node is used for all API calls.
+        </p>
+
+        <!-- Saved nodes list -->
+        <div id="nodeList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:18px;min-height:32px;"></div>
+
+        <!-- Local shortcut -->
+        <button id="switchLocalBtn" class="btn small" style="width:100%;margin-bottom:16px;justify-content:center;">
+            ⬡ Use local node (same host)
+        </button>
+
+        <!-- Add node form -->
+        <div style="border-top:1px solid var(--border);padding-top:14px;">
+            <div style="font-size:12px;font-weight:500;margin-bottom:8px;color:var(--text-main);">Add node</div>
+            <form id="addNodeForm" style="display:flex;flex-direction:column;gap:8px;">
+                <input type="url" id="addNodeUrl" placeholder="http://10.0.0.5:9090" autocomplete="off"
+                       style="width:100%;box-sizing:border-box;">
+                <input type="text" id="addNodeLabel" placeholder="Label (optional, e.g. prod-eu)" autocomplete="off"
+                       style="width:100%;box-sizing:border-box;">
+                <div style="display:flex;gap:8px;">
+                    <button type="submit" class="btn primary" style="flex:1;">Add & Switch</button>
+                    <button type="button" class="btn close-modal" style="flex:0 0 auto;">Cancel</button>
+                </div>
+            </form>
+        </div>
     </div>
+</div>
+
 </div>
 
 <div class="modal-overlay" id="loginModal">
     <div class="modal modal-login">
+
         <div class="login-brand">AGBERO <span>ADMIN</span></div>
         <div class="login-sub">Admin Console</div>
 
-        <!-- Node selector -->
+        <!-- Node row — always visible -->
         <div class="login-node" id="loginNodeRow">
             <span class="login-node-label">NODE</span>
             <span class="login-node-value" id="loginNodeDisplay">local</span>
             <button type="button" id="loginEditNodeBtn" class="btn-link">change</button>
-            <span id="loginServerDot" title="Server reachability" style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:10px;color:var(--text-mute);">
-                <span id="loginServerDotCircle" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--text-mute);"></span>
-                <span id="loginServerDotLabel">checking…</span>
+            <span id="loginServerDot" style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:10px;color:var(--text-mute);">
+                <span id="loginServerDotCircle" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--text-mute);transition:background .3s;"></span>
+                <span id="loginServerDotLabel"></span>
             </span>
         </div>
-        <div class="login-node-edit" id="loginNodeEdit" style="display:none;">
-            <input type="url" id="loginTargetHost" placeholder="http://10.0.0.5:9090" autocomplete="off">
-            <button type="button" id="loginSaveHostBtn" class="btn-icon-save" title="Save">↵</button>
-            <button type="button" id="loginResetHostBtn" class="btn small">local</button>
+
+        <!-- Node panel — hidden until "change" clicked -->
+        <div id="loginNodeEdit" class="login-node-panel">
+            <div id="loginNodeList" class="login-node-list"></div>
+            <div class="login-node-add">
+                <input type="text" id="loginNodeLabel"
+                       placeholder="Label (e.g. Production)"
+                       autocomplete="off" class="login-node-add-label">
+                <input type="url" id="loginTargetHost"
+                       placeholder="https://10.0.0.5:9090"
+                       autocomplete="off" class="login-node-add-url">
+                <div class="login-node-add-actions">
+                    <button type="button" id="loginSaveHostBtn" class="btn small">Add</button>
+                    <button type="button" id="loginResetHostBtn" class="btn small">Use local</button>
+                </div>
+            </div>
         </div>
 
-        <!-- Step 1: credentials -->
-        <form id="loginForm" autocomplete="on">
-            <div id="loginStepCreds">
-                <input type="text"     id="username" placeholder="Username" autocomplete="username" required>
-                <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
-                <button type="submit" class="btn primary" style="width:100%;margin-top:4px;">Sign In</button>
+        <!-- View: probing — shown while GET /status is in flight -->
+        <div id="loginViewProbing" style="display:none;text-align:center;padding:24px 0;">
+            <div class="login-spinner"></div>
+            <div style="font-size:12px;color:var(--text-mute);margin-top:12px;" id="loginProbingLabel">Checking node…</div>
+        </div>
+
+        <!-- View: locked — keeper is locked, admin unavailable -->
+        <div id="loginViewLocked" style="display:none;text-align:center;padding:16px 0;">
+            <div style="font-size:28px;margin-bottom:10px;">🔒</div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-bottom:6px;">Secret store is locked</div>
+            <div style="font-size:11px;color:var(--text-mute);margin-bottom:20px;line-height:1.5;">
+                An administrator must unlock the secret store before login is available.
             </div>
+            <div style="font-size:11px;color:var(--text-mute);margin-bottom:16px;" id="loginRetryLabel"></div>
+            <button type="button" id="loginRetryBtn" class="btn" style="width:100%;">Retry now</button>
+        </div>
+
+        <!-- View: credentials form -->
+        <form id="loginViewCreds" autocomplete="on" style="display:none;">
+            <input type="text"     id="username" placeholder="Username" autocomplete="username"         required>
+            <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
+            <button type="submit" id="loginSubmitBtn" class="btn primary" style="width:100%;margin-top:4px;">Sign In</button>
         </form>
 
-        <!-- Step 2: challenge wizard — one step per requirement -->
-        <form id="loginChallengeForm" style="display:none;">
-            <!-- Progress dots shown when >1 challenge -->
-            <div id="challengeProgress" style="display:none;text-align:center;margin-bottom:14px;gap:6px;justify-content:center;align-items:center;"></div>
+        <!-- View: challenge — dynamically populated per requirement -->
+        <div id="loginViewChallenge" style="display:none;">
+            <div id="challengeSegments"></div>
+            <button type="button" id="challengeVerifyBtn" class="btn primary" style="width:100%;margin-top:8px;">Verify</button>
+            <button type="button" id="challengeBackBtn"   class="btn"         style="width:100%;margin-top:6px;font-size:12px;color:var(--text-mute);">Back to login</button>
+        </div>
 
-            <!-- Keeper unlock step -->
-            <div id="challengeStepKeeper" style="display:none;">
-                <div style="font-size:13px;font-weight:500;color:var(--text-main);margin-bottom:4px;">🔐 Unlock Secret Store</div>
-                <div style="font-size:11px;color:var(--text-mute);margin-bottom:14px;">The keeper secret store must be unlocked before you can sign in.</div>
-                <label style="font-size:11px;color:var(--text-mute);display:block;margin-bottom:4px;">Passphrase</label>
-                <input type="password" id="keeperPassphraseInput" placeholder="Store passphrase"
-                       autocomplete="current-password" style="width:100%;box-sizing:border-box;">
-            </div>
+        <div id="loginError" style="color:var(--danger);font-size:12px;margin-top:10px;display:none;text-align:center;padding:8px;background:rgba(255,59,48,0.08);border-radius:6px;"></div>
 
-            <!-- TOTP step -->
-            <div id="challengeStepTOTP" style="display:none;">
-                <div style="font-size:13px;font-weight:500;color:var(--text-main);margin-bottom:4px;">🔑 Authenticator Code</div>
-                <div style="font-size:11px;color:var(--text-mute);margin-bottom:14px;">Open your authenticator app and enter the 6-digit code.</div>
-                <input type="text" id="totp" placeholder="000000"
-                       autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" maxlength="6"
-                       style="text-align:center;letter-spacing:0.35em;font-size:28px;font-family:var(--font-mono);width:100%;padding:12px 0;box-sizing:border-box;border-radius:8px;">
-            </div>
-
-            <button type="submit" id="challengeNextBtn" class="btn primary" style="width:100%;margin-top:14px;">Next →</button>
-            <button type="button" id="loginChallengeBack" class="btn" style="width:100%;margin-top:6px;font-size:11px;">← Back</button>
-        </form>
-
-        <div id="loginError" style="color:var(--danger);font-size:11px;margin-top:10px;display:none;text-align:center;"></div>
     </div>
 </div>
+
+
+<!-- certDetailModal and gitDetailModal live in dashboard.html — only used from that page -->
 
 <div class="modal-overlay" id="ruleModal">
     <div class="modal">
         <h3>Firewall Rule</h3>
         <form id="ruleForm">
-            <input type="text" id="fwIp"       placeholder="IP Address or CIDR" required>
-            <input type="text" id="fwReason"   placeholder="Reason (e.g. Abuse)" required>
-            <input type="text" id="fwPath"     placeholder="Path (Optional, e.g. /admin)">
-            <select id="fwDuration">
+            <input type="text" id="ruleIp"     placeholder="IP Address or CIDR" required style="margin-bottom:8px;">
+            <input type="text" id="ruleReason" placeholder="Reason (e.g. Abuse)" required style="margin-bottom:8px;">
+            <div style="position:relative;margin-bottom:8px;">
+                <input type="text" id="ruleHost" placeholder="Host (optional)" autocomplete="off" style="width:100%;box-sizing:border-box;">
+            </div>
+            <input type="text" id="rulePath"   placeholder="Path (optional, e.g. /admin)" style="margin-bottom:8px;">
+            <select id="ruleDuration" style="margin-bottom:8px;">
                 <option value="0">Permanent</option>
                 <option value="3600">1 Hour</option>
                 <option value="10800">3 Hours</option>
@@ -235,21 +249,21 @@
         <h3>Broadcast Dynamic Route</h3>
         <p style="font-size:11px;color:var(--text-mute);margin-bottom:15px;">Inject an ephemeral routing rule into the cluster gossip mesh.</p>
         <form id="clusterRouteForm">
-            <input type="text"   id="crHost"   placeholder="Hostname (e.g. api.example.com)" required>
-            <input type="text"   id="crPath"   placeholder="Path (e.g. /v1/temp)" required>
-            <input type="text"   id="crTarget" placeholder="Target URL (e.g. http://10.0.0.5:8080)" required>
-            <input type="number" id="crTTL"    placeholder="TTL seconds (0 = permanent)" value="3600">
+            <input type="text"   id="clusterRouteHost"   placeholder="Hostname (e.g. api.example.com)" required>
+            <input type="text"   id="clusterRoutePath"   placeholder="Path (e.g. /v1/temp)" required>
+            <input type="text"   id="clusterRouteTarget" placeholder="Target URL (e.g. http://10.0.0.5:8080)" required>
+            <input type="number" id="crTTL"              placeholder="TTL seconds (0 = permanent)" value="3600">
             <button type="submit" class="primary">Broadcast</button>
             <button type="button" class="btn close-modal" style="margin-top:5px;">Cancel</button>
         </form>
     </div>
 </div>
 
-<!-- STRICT DELETE MODAL — with TOTP gate (Part 7) -->
+<!-- STRICT DELETE MODAL -->
 <div class="modal-overlay" id="strictDeleteModal">
     <div class="modal">
         <h3 style="color:var(--danger);">⚠️ Danger Zone</h3>
-        <p id="strictDeleteText"   style="font-size:13px;margin-bottom:10px;"></p>
+        <p id="strictDeleteMessage" style="font-size:13px;margin-bottom:10px;"></p>
         <p style="font-size:11px;color:var(--text-mute);margin-bottom:15px;">
             To confirm, type <strong id="strictDeleteTarget" style="color:var(--fg);"></strong> below:
         </p>
@@ -261,30 +275,64 @@
                    maxlength="6" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*"
                    placeholder="000000">
         </div>
-        <div style="display:flex;gap:10px;margin-top:20px;">
-            <button id="strictDeleteBtn" class="btn error" style="flex:1;" disabled>Delete Forever</button>
-            <button class="btn close-modal" style="flex:1;">Cancel</button>
+        <div id="strictDeleteError" style="color:var(--danger);font-size:12px;margin-top:8px;display:none;background:rgba(255,59,48,0.08);padding:8px;border-radius:4px;"></div>
+        <div style="display:flex;gap:10px;margin-top:16px;">
+            <button id="strictDeleteConfirmBtn" class="btn error" style="flex:1;" disabled>Delete Forever</button>
+            <button id="strictDeleteCancelBtn"  class="btn close-modal" style="flex:1;">Cancel</button>
         </div>
     </div>
 </div>
 
 <!-- EDIT HCL MODAL -->
-<div class="modal-overlay" id="editHostJsonModal">
-    <div class="modal" style="max-width:650px;width:95vw;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-            <h3 style="margin:0;font-size:15px;">Edit: <span id="editHostTitle" class="mono" style="font-size:14px;"></span></h3>
-            <div style="display:flex;gap:6px;align-items:center;">
-                <span style="font-size:11px;color:var(--text-mute);background:var(--hover-bg);padding:2px 8px;border-radius:3px;font-family:var(--font-mono);">HCL</span>
-                <button id="formatHostJsonBtn" type="button" class="btn small">Format</button>
+<div class="modal-overlay" id="hclEditorModal">
+    <div class="modal" style="max-width:700px;width:95vw;display:flex;flex-direction:column;max-height:90vh;">
+
+        <!-- ── EDIT VIEW ─────────────────────────────────────────────────── -->
+        <div id="hclEditView">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <h3 style="margin:0;font-size:15px;" id="hclEditorTitle">Edit Host</h3>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <span style="font-size:11px;color:var(--text-mute);background:var(--hover-bg);padding:2px 8px;border-radius:3px;font-family:var(--font-mono);">HCL</span>
+                    <button id="formatHostJsonBtn" type="button" class="btn small">Format</button>
+                </div>
+            </div>
+
+            <!-- Filename row — shown in create mode only -->
+            <div id="hclFilenameRow" style="display:none;margin-bottom:10px;">
+                <label style="font-size:11px;color:var(--text-mute);display:block;margin-bottom:4px;">FILENAME</label>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <input type="text" id="hclFilenameInput" class="search-input"
+                           style="width:200px;font-family:var(--font-mono);font-size:12px;"
+                           placeholder="e.g. myapp" autocomplete="off" spellcheck="false">
+                    <span style="font-size:12px;color:var(--text-mute);font-family:var(--font-mono);">.hcl</span>
+                    <span style="font-size:11px;color:var(--text-mute);margin-left:4px;">Set <code>domains</code> in the HCL to match your hostname.</span>
+                </div>
+            </div>
+
+            <p id="hclEditorHint" style="font-size:11px;color:var(--text-mute);margin:0 0 10px;"></p>
+            <div id="hclEditorError" style="color:var(--danger);font-size:12px;margin-bottom:8px;display:none;background:rgba(255,59,48,0.1);padding:8px;border-radius:4px;"></div>
+            <textarea id="hclEditorTextarea" spellcheck="false" class="json-editor"
+                      style="width:100%;height:340px;font-size:12px;font-family:var(--font-mono);line-height:1.6;box-sizing:border-box;tab-size:2;resize:vertical;"></textarea>
+            <div style="display:flex;gap:10px;margin-top:12px;">
+                <button id="hclReviewBtn" class="btn primary" style="flex:1;">Review changes</button>
+                <button class="btn close-modal" style="width:100px;">Cancel</button>
             </div>
         </div>
-        <p style="font-size:11px;color:var(--text-mute);margin:0 0 10px;">Edit raw HCL — comments and formatting are preserved. Changes save to disk and hot-reload.</p>
-        <div id="editHostError" style="color:var(--danger);font-size:12px;margin-bottom:10px;display:none;background:rgba(255,59,48,0.1);padding:8px;border-radius:4px;"></div>
-        <textarea id="editHostJsonTextarea" class="json-editor" spellcheck="false"></textarea>
-        <div style="display:flex;gap:10px;margin-top:15px;">
-            <button id="saveHostJsonBtn" class="btn primary" style="flex:1;">Save</button>
-            <button class="btn close-modal" style="width:100px;">Cancel</button>
+
+        <!-- ── DIFF / REVIEW VIEW ────────────────────────────────────────── -->
+        <div id="hclDiffView" style="display:none;flex-direction:column;flex:1;min-height:0;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <h3 style="margin:0;font-size:15px;">Review: <span id="hclDiffTitle" class="mono" style="font-size:14px;"></span></h3>
+                <span id="hclDiffStats" style="font-size:11px;color:var(--text-mute);font-family:var(--font-mono);"></span>
+            </div>
+            <div id="hclDiffBody" style="flex:1;overflow:auto;border:1px solid var(--border);border-radius:6px;font-size:11px;font-family:var(--font-mono);min-height:200px;max-height:calc(90vh - 160px);"></div>
+            <div id="hclDiffError" style="color:var(--danger);font-size:12px;margin-top:8px;display:none;background:rgba(255,59,48,0.1);padding:8px;border-radius:4px;"></div>
+            <div style="display:flex;gap:10px;margin-top:12px;">
+                <button id="hclBackBtn" class="btn" style="width:120px;">← Back to edit</button>
+                <button id="hclConfirmBtn" class="btn primary" style="flex:1;">Confirm &amp; Save</button>
+            </div>
         </div>
+
     </div>
 </div>
 
@@ -318,17 +366,9 @@
 </div>
 
 <!-- Command palette — Ctrl+K -->
-<div class="modal-overlay" id="commandPaletteModal" style="align-items:flex-start;padding-top:80px;">
-    <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;width:100%;max-width:480px;box-shadow:0 16px 40px rgba(0,0,0,.2);overflow:hidden;">
-        <div style="display:flex;align-items:center;padding:0 14px;border-bottom:1px solid var(--border);">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-mute)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="text" id="cmdPaletteInput" placeholder="Go to page…"
-                   autocomplete="off" spellcheck="false"
-                   style="flex:1;border:none;background:none;padding:14px 10px;font-size:14px;color:var(--text-main);outline:none;font-family:var(--font-sans);">
-            <kbd style="font-size:10px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;color:var(--text-mute);font-family:var(--font-mono);">Esc</kbd>
-        </div>
-        <div id="cmdPaletteResults" style="max-height:320px;overflow-y:auto;padding:4px;"></div>
-    </div>
+<!-- command palette removed — handled by hotkeys.register() in main.js -->
+<div id="cmdPaletteResults" style="max-height:320px;overflow-y:auto;padding:4px;"></div>
+</div>
 </div>
 
 <!-- Keyboard shortcuts help -->
@@ -385,415 +425,4 @@
     <div class="drawer-content" id="backendDrawerBody"></div>
 </div>
 
-<script type="module">
-import { modal, layout, emit, listen, on, auth, ui, query, queryAll, notify, collapse } from '../lib/oja.full.esm.js';
-import { store, isLoggedIn, clearCredentials, getCreds, getHost, setHost } from '../js/store.js';
-import { fetchTelemetry, logout, fetchStatus, addFirewallRule, broadcastClusterRoute,
-    updateHost, updateHostHCL, deleteHost, getHostHCL } from '../js/api.js';
-import { formatHCL, validateHCL } from '../js/hcl.js';
-import { initials, debounce } from '../js/utils.js';
-import { initLogin, updateNodeDisplay, _loginReset, checkServerStatus } from '../js/login.js';
-
-layout.onUnmount(() => { emit('app:layout-unmount'); });
-
-// JSON Syntax Highlighter
-window.app = window.app || {};
-window.app.syntaxHighlight = function(json) {
-    if (typeof json != 'string') { json = JSON.stringify(json, undefined, 4); }
-    json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    return '<pre class="syntax-box">' + json.replace(/(\"(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*\"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function(match) {
-        let cls = 'json-number';
-        if (/^"/.test(match)) { if (/:$/.test(match)) cls = 'json-key'; else cls = 'json-string'; }
-        else if (/true|false/.test(match)) cls = 'json-boolean';
-        else if (/null/.test(match)) cls = 'json-null';
-        return '<span class="' + cls + '">' + match + '</span>';
-    }) + '</pre>';
-};
-
-// Node display
-updateNodeDisplay();
-on('#targetHostBtn', 'click', () => { query('#targetHostInput').value = getHost(); modal.open('targetHostModal'); });
-on('#targetHostForm', 'submit', (e, el) => {
-    e.preventDefault();
-    setHost(el.querySelector('#targetHostInput').value.trim());
-    modal.closeAll();
-    window.location.reload();
-});
-
-// Avatar
-function _updateAvatar() {
-    const { token } = getCreds();
-    let name = 'A';
-    try { if (token) { const p = JSON.parse(atob(token.split('.')[1])); name = p.user || p.sub || p.username || 'A'; } } catch {}
-    const avatar = query('#profileNavLink');
-    if (avatar) avatar.textContent = initials(name);
-}
-_updateAvatar();
-listen('auth:login:success', () => { _setAuthIcon(true); _updateAvatar(); });
-listen('auth:expired',       () => _setAuthIcon(false));
-// sync icon on api:unauthorized
-listen('auth:icon:update',   ({ loggedIn }) => _setAuthIcon(loggedIn));
-
-// Theme (key is now 'ag-theme')
-const THEMES = ['light','dark','dracula','monokai','soft','ayu','tokyo-night','catppuccin','solarized','gruvbox','one-dark','github-dark','rose-pine'];
-
-function _applyTheme(name) {
-    document.documentElement.setAttribute('data-theme', name);
-    localStorage.setItem('ag-theme', name);  // unified key
-    document.querySelectorAll('[data-theme-pick]').forEach(btn => {
-        btn.style.fontWeight = btn.dataset.themePick === name ? '600' : '';
-    });
-}
-
-const _savedTheme = localStorage.getItem('ag-theme');
-if (_savedTheme && THEMES.includes(_savedTheme)) _applyTheme(_savedTheme);
-else _applyTheme(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-
-on('#themeToggle', 'click', (e) => { e.stopPropagation(); query('#themeOverflow')?.classList.toggle('open'); });
-on('[data-theme-pick]', 'click', (e, btn) => {
-    _applyTheme(btn.dataset.themePick);
-    query('#themeOverflow')?.classList.remove('open');
-});
-
-// Mobile hamburger
-on('#navHamburger',   'click', () => query('#navMobileDrawer')?.classList.add('open'));
-on('#navMobileClose', 'click', () => query('#navMobileDrawer')?.classList.remove('open'));
-on('.nav-mobile-link', 'click', () => query('#navMobileDrawer')?.classList.remove('open'));
-document.addEventListener('click', (e) => {
-    const drawer = query('#navMobileDrawer');
-    if (drawer?.classList.contains('open') && !drawer.contains(e.target) && e.target !== query('#navHamburger')) {
-        drawer.classList.remove('open');
-    }
-});
-
-// Close overflow menus on outside click
-document.addEventListener('click', () => {
-    document.querySelectorAll('.nav-overflow.open').forEach(el => el.classList.remove('open'));
-});
-
-// Active nav link highlighting
-function _updateActiveNav(path) {
-    document.querySelectorAll('.nav-link, .nav-icon-link, .nav-mobile-link').forEach(el => {
-        const page = el.dataset.page || '';
-        const isActive = page === path || (page !== '/' && path.startsWith(page));
-        el.classList.toggle('active', isActive);
-        el.dataset.active = isActive ? 'true' : 'false';
-    });
-}
-listen('router:navigate', ({ path }) => _updateActiveNav(path));
-
-// Auth icon
-function _setAuthIcon(loggedIn) {
-    const btn = query('#loginBtn');
-    if (!btn) return;
-    if (loggedIn) {
-        btn.title = 'Logout';
-        btn.setAttribute('data-logged-in', 'true');
-        btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 0 9.9-1"/></svg>`;
-    } else {
-        btn.title = 'Login';
-        btn.setAttribute('data-logged-in', 'false');
-        btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
-    }
-}
-_setAuthIcon(isLoggedIn());
-
-on('#loginBtn', 'click', async e => {
-    e.preventDefault();
-    if (isLoggedIn()) {
-        await logout();
-        clearCredentials();
-        await auth.session.end();
-        store.set('auth.isLoggedIn', false);
-        window._isPolling = false;
-        window._latencyStarted = false;
-        _setAuthIcon(false);
-        return;
-    }
-    updateNodeDisplay();
-    _loginReset();
-    modal.open('loginModal');
-    checkServerStatus();
-    requestAnimationFrame(() => query('#username')?.focus());
-});
-
-// Init login state machine (S-04)
-initLogin();
-
-// Ctrl+? help
-document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === '?') { e.preventDefault(); modal.open('shortcutsModal'); }
-});
-on('[data-modal="shortcutsModal"]', 'click', () => modal.closeById('shortcutsModal'));
-
-// Firewall rule form
-on('#ruleForm', 'submit', async (e, form) => {
-    e.preventDefault();
-    const errEl = query('#ruleError');
-    errEl.style.display = 'none';
-    const submitBtn = form.querySelector('[type="submit"]');
-    ui.btn.loading(submitBtn, 'Blocking…');
-    try {
-        await addFirewallRule({
-            ip:           form.querySelector('#fwIp').value.trim(),
-            reason:       form.querySelector('#fwReason').value.trim(),
-            path:         form.querySelector('#fwPath').value.trim(),
-            host:         '',
-            duration_sec: parseInt(form.querySelector('#fwDuration').value, 10) || 0,
-        });
-        ui.btn.done(submitBtn, 'Blocked ✓');
-        setTimeout(() => modal.closeAll(), 800);
-        emit('firewall:refresh');
-    } catch(err) {
-        ui.btn.reset(submitBtn);
-        errEl.textContent = err.message || 'Failed to block IP.';
-        errEl.style.display = 'block';
-    }
-});
-
-// Cluster route broadcast
-on('#clusterRouteForm', 'submit', async (e, form) => {
-    e.preventDefault();
-    const errEl = form.querySelector('#clusterRouteError') || (() => {
-        const d = document.createElement('div');
-        d.id = 'clusterRouteError';
-        d.style.cssText = 'color:var(--danger);font-size:12px;margin-bottom:8px;display:none;background:rgba(255,59,48,0.08);padding:8px;border-radius:4px;';
-        form.insertBefore(d, form.querySelector('button[type="submit"]'));
-        return d;
-    })();
-    errEl.style.display = 'none';
-    const submitBtn = form.querySelector('[type="submit"]');
-    ui.btn.loading(submitBtn, 'Broadcasting…');
-    try {
-        const result = await broadcastClusterRoute({
-            host:  form.querySelector('#crHost').value.trim(),
-            route: {
-                path:    form.querySelector('#crPath').value.trim() || '/',
-                enabled: 'on',
-                backends: { enabled: 'on', servers: [{ address: form.querySelector('#crTarget').value.trim(), weight: 1 }] }
-            },
-            ttl_seconds: parseInt(form.querySelector('#crTTL').value, 10) || 0,
-        });
-        if (result?.error) throw new Error(result.error);
-        ui.btn.done(submitBtn, 'Broadcast ✓');
-        setTimeout(() => modal.closeAll(), 800);
-    } catch(err) {
-        ui.btn.reset(submitBtn);
-        errEl.textContent = err.message || 'Broadcast failed';
-        errEl.style.display = 'block';
-    }
-});
-
-// Edit HCL modal
-listen('host:open-edit-hcl', ({ domain, hcl }) => {
-    query('#editHostTitle').innerText          = domain;
-    query('#editHostError').style.display      = 'none';
-    query('#editHostJsonTextarea').value       = hcl;
-    query('#saveHostJsonBtn').dataset.hostname = domain;
-    modal.open('editHostJsonModal');
-});
-
-listen('host:open-edit', async ({ domain }) => {
-    query('#editHostTitle').innerText          = domain;
-    query('#editHostError').style.display      = 'none';
-    query('#editHostJsonTextarea').value       = 'Loading…';
-    query('#saveHostJsonBtn').dataset.hostname = domain;
-    modal.open('editHostJsonModal');
-    const hcl = await getHostHCL(domain);
-    if (hcl) {
-        query('#editHostJsonTextarea').value = hcl;
-    } else {
-        const config = store.get('lastConfig')?.hosts?.[domain];
-        query('#editHostJsonTextarea').value = config ? JSON.stringify(config, null, 2) : '';
-        const errEl = query('#editHostError');
-        errEl.innerText = 'ℹ️ Could not load HCL — showing JSON. Save will send as JSON.';
-        errEl.style.cssText = 'color:var(--text-mute);font-size:11px;margin-bottom:8px;background:var(--panel-bg);padding:7px 10px;border-radius:5px;border:1px solid var(--border);display:block;';
-    }
-});
-
-on('#formatHostJsonBtn', 'click', () => {
-    const el    = query('#editHostJsonTextarea');
-    const errEl = query('#editHostError');
-    errEl.style.display = 'none';
-    try { el.value = formatHCL(el.value); }
-    catch(err) { errEl.innerText = 'Format error: ' + err.message; errEl.style.cssText = ''; errEl.style.display = 'block'; }
-});
-
-on('#saveHostJsonBtn', 'click', async (e, btn) => {
-    const hostname = btn.dataset.hostname;
-    const errEl    = query('#editHostError');
-    const ta       = query('#editHostJsonTextarea');
-    errEl.style.display = 'none';
-    ui.btn.loading(btn, 'Saving…');
-    try {
-        const result = await updateHostHCL(hostname, ta.value);
-        if (result?.error) throw new Error(result.error);
-        ui.btn.done(btn, 'Saved ✓');
-        setTimeout(() => { modal.closeAll(); ui.btn.reset(btn); }, 800);
-        emit('hosts:refresh');
-        emit('config:reload');
-    } catch(err) {
-        ui.btn.reset(btn);
-        errEl.innerText = err.message || 'Save failed';
-        errEl.style.cssText = '';
-        errEl.style.display = 'block';
-    }
-});
-
-// Strict delete + TOTP gate (Part 7)
-let _pendingDelete = null;
-listen('app:strict-delete', ({ message, targetText, onConfirm }) => {
-    query('#strictDeleteText').innerHTML    = message;
-    query('#strictDeleteTarget').innerText  = targetText;
-    const input  = query('#strictDeleteInput');
-    const otp    = query('#strictDeleteOTP');
-    const btn    = query('#strictDeleteBtn');
-    const totpDiv = query('#strictDeleteTOTP');
-    input.value = ''; if (otp) otp.value = '';
-    btn.disabled = true;
-    _pendingDelete = onConfirm;
-
-    // Show TOTP field only when TOTP is enabled in config
-    const totpEnabled = store.get('lastConfig')?.global?.admin?.totp?.enabled === 'on';
-    if (totpDiv) totpDiv.style.display = totpEnabled ? '' : 'none';
-
-    // use addEventListener, not oninput — avoid handler leaks
-    const oldInput = input.cloneNode(true);
-    input.parentNode.replaceChild(oldInput, input);
-    oldInput.addEventListener('input', () => {
-        btn.disabled = (oldInput.value !== targetText);
-    });
-
-    modal.open('strictDeleteModal');
-});
-
-on('#strictDeleteBtn', 'click', () => {
-    const otp = query('#strictDeleteOTP')?.value || '';
-    if (_pendingDelete) _pendingDelete(otp);
-    modal.closeAll();
-});
-
-// Drawer sparkline
-function buildSparklineSVG(vals, W = 84, H = 28) {
-    if (!vals || vals.length < 2) return '';
-    const P = 3, iW = W - P * 2, iH = H - P * 2;
-    const max = Math.max(...vals, 0.001), n = vals.length;
-    const xS = i => (P + (i / Math.max(n - 1, 1)) * iW).toFixed(1);
-    const yS = v => (P + iH - (v / max) * iH).toFixed(1);
-    const pts  = vals.map((v, i) => `${xS(i)},${yS(v)}`).join(' ');
-    const fX   = xS(0), lX = xS(n - 1), bY = (P + iH).toFixed(1);
-    const area = `M${fX},${bY} ` + vals.map((v, i) => `L${xS(i)},${yS(v)}`).join(' ') + ` L${lX},${bY} Z`;
-    const color = vals.some(v => v > 0) ? 'var(--accent)' : 'var(--text-mute)';
-    const gid   = 'sk_d' + Math.random().toString(36).slice(2, 8);
-    return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block;overflow:visible;">
-        <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="${color}" stop-opacity="0.25"/>
-            <stop offset="100%" stop-color="${color}" stop-opacity="0.02"/>
-        </linearGradient></defs>
-        <path d="${area}" fill="url(#${gid})"/>
-        <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
-        <circle cx="${xS(n-1)}" cy="${yS(vals[n-1])}" r="2.5" fill="${color}" stroke="var(--bg)" stroke-width="1.5"/>
-    </svg>`;
-}
-
-listen('drawer:open-route', ({ host }) => {
-    const nameEl = query('#drawerHostName');
-    if (nameEl) { nameEl.textContent = host; nameEl.dataset.host = host; }
-    const perfBtn = query('#drawerPerfBtn');
-    if (perfBtn) perfBtn.dataset.hostname = host;
-    requestAnimationFrame(() => {
-        const el = query('#drawerSparkline');
-        if (!el) return;
-        const spark = store.get('sparklines.' + host);
-        if (spark?.rps?.length >= 2) el.innerHTML = buildSparklineSVG(spark.rps, 100, 32);
-    });
-});
-
-on('#drawerHostName', 'click', (e, el) => {
-    const host = el.dataset.host || el.textContent.trim();
-    if (!host) return;
-    const cfg  = store.get('lastConfig')?.hosts?.[host];
-    const tls  = cfg?.tls?.mode;
-    const proto = (!tls || tls === 'none' || tls === '') ? 'http' : 'https';
-    window.open(`${proto}://${host}`, '_blank', 'noopener');
-});
-
-on('#drawerPerfBtn', 'click', (e, btn) => {
-    const hostname = btn.dataset.hostname;
-    if (hostname) emit('perf:open', { hostname });
-});
-
-// Sys-bar expand
-on('#sysBar', 'click', () => {
-    const bar  = query('#sysBar');
-    const hint = query('.sys-bar-expand-hint');
-    const expanded = bar?.classList.toggle('sys-bar-expanded');
-    if (hint) hint.textContent = expanded ? '▼' : '▲';
-});
-
-// Connection indicator
-// plain object in store, not raw HTML
-const LATENCY_ONLINE_MS  = 30_000;
-const LATENCY_OFFLINE_MS =  5_000;
-let _latencyTimer      = null;
-let _latencyController = null;
-
-function _connDot(color, label) {
-    const el = query('#connectionIndicator');
-    if (!el) return;
-    el.innerHTML = `<span class="conn-dot"><span class="conn-dot-circle" style="background:${color}"></span><span>${label}</span></span>`;
-}
-
-function _loginDot(color, label) {
-    const circle = query('#loginServerDotCircle');
-    const lbl    = query('#loginServerDotLabel');
-    if (circle) circle.style.background = color;
-    if (lbl)    lbl.textContent = label;
-}
-
-function _scheduleLatency(ms) {
-    clearTimeout(_latencyTimer);
-    _latencyTimer = setTimeout(checkLatency, ms);
-}
-
-async function checkLatency() {
-    if (!navigator.onLine) {
-        _connDot('var(--danger)', 'offline');
-        _loginDot('var(--danger)', 'offline');
-        _scheduleLatency(LATENCY_OFFLINE_MS);
-        return;
-    }
-    if (_latencyController) _latencyController.abort();
-    _latencyController = new AbortController();
-    const start = Date.now();
-    try {
-        const base    = getHost() || window.location.origin;
-        // clearTimeout handled by _scheduleLatency before this call
-        const timeout = setTimeout(() => _latencyController.abort(), 5000);
-        const res = await fetch(base + '/healthz', { method: 'GET', cache: 'no-store', signal: _latencyController.signal });
-        clearTimeout(timeout);
-        if (!res.ok) throw new Error('non-ok');
-        const ms    = Date.now() - start;
-        const color = ms < 100 ? 'var(--success)' : ms < 300 ? 'var(--info)' : ms < 1000 ? 'var(--warning)' : 'var(--danger)';
-        _connDot(color, ms + 'ms');
-        _loginDot('var(--success)', ms + 'ms');
-        _scheduleLatency(LATENCY_ONLINE_MS);
-    } catch(e) {
-        if (e.name !== 'AbortError') {
-            _connDot('var(--danger)', 'offline');
-            _loginDot('var(--danger)', 'offline');
-            _scheduleLatency(LATENCY_OFFLINE_MS);
-        } else {
-            _scheduleLatency(LATENCY_ONLINE_MS);
-        }
-    }
-}
-
-window.addEventListener('offline', () => { _connDot('var(--danger)', 'offline'); _scheduleLatency(LATENCY_OFFLINE_MS); });
-window.addEventListener('online',  checkLatency);
-if (!window._latencyStarted) { window._latencyStarted = true; checkLatency(); }
-
-// debounced resize handler for nav (no overflow menu but kept for future use)
-// M-01 note: the overflow menu is removed — this is now a no-op placeholder
-
-</script>
+<script type="module" src="shell.js"> </script>
