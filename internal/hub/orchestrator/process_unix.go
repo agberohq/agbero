@@ -1,4 +1,4 @@
-//go:build !windows && !darwin
+//go:build linux || freebsd || openbsd || netbsd || solaris
 
 package orchestrator
 
@@ -18,7 +18,7 @@ import (
 
 const (
 	cgroupBase       = "/sys/fs/cgroup/agbero"
-	maxMemoryDefault = 512 * 1024 * 1024 // 512MB
+	maxMemoryDefault = 512 * 1024 * 1024
 	maxPidsDefault   = 32
 	cpuWeightDefault = 100
 )
@@ -28,8 +28,6 @@ type jobLimits struct{}
 func assignToJob(_ *jobLimits, _ int) error { return nil }
 func cleanupJob(_ *jobLimits)               {}
 
-// setupProcessGroup mirrors the darwin signature. dropPrivileges=true
-// requires the parent process to be root.
 func setupProcessGroup(cmd *exec.Cmd, dropPrivileges bool) (*jobLimits, error) {
 	attr := &syscall.SysProcAttr{Setpgid: true}
 	if dropPrivileges {

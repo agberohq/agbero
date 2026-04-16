@@ -16,10 +16,6 @@ type jobLimits struct {
 	handle windows.Handle
 }
 
-// setupProcessGroup creates a Windows Job Object with memory and process
-// limits. dropPrivileges is accepted for signature parity with the unix/darwin
-// builds but has no effect on Windows — Job Object limits serve the same
-// containment purpose.
 func setupProcessGroup(_ *exec.Cmd, _ bool) (*jobLimits, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
@@ -34,8 +30,8 @@ func setupProcessGroup(_ *exec.Cmd, _ bool) (*jobLimits, error) {
 				windows.JOB_OBJECT_LIMIT_JOB_MEMORY,
 			ActiveProcessLimit: 32,
 		},
-		ProcessMemoryLimit: 512 * 1024 * 1024,  // 512MB per process
-		JobMemoryLimit:     1024 * 1024 * 1024, // 1GB total
+		ProcessMemoryLimit: 512 * 1024 * 1024,
+		JobMemoryLimit:     1024 * 1024 * 1024,
 	}
 
 	_, err = windows.SetInformationJobObject(
@@ -88,8 +84,7 @@ func cleanupJob(limits *jobLimits) {
 }
 
 func applySandbox(_ string, _ *ll.Logger) error {
-	// Sandboxing on Windows is handled structurally via Job Objects in
-	// setupProcessGroup. No additional action needed here.
+
 	return nil
 }
 

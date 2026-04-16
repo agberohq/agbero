@@ -39,10 +39,6 @@ type jobLimits struct{}
 func assignToJob(_ *jobLimits, _ int) error { return nil }
 func cleanupJob(_ *jobLimits)               {}
 
-// setupProcessGroup configures the command's process group.  When
-// dropPrivileges is true the child runs as uid/gid 65534 (nobody),
-// which requires the parent to be root.  Pass false in tests and
-// non-root development environments.
 func setupProcessGroup(cmd *exec.Cmd, dropPrivileges bool) (*jobLimits, error) {
 	attr := &syscall.SysProcAttr{Setpgid: true}
 	if dropPrivileges {
@@ -110,5 +106,5 @@ func applySandbox(workDir string, logger *ll.Logger) error {
 }
 
 func applyCgroups(_ int, _ string, _ *ll.Logger) error {
-	return nil // not available on Darwin
+	return nil
 }
