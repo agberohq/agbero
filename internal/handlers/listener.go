@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/agberohq/agbero/internal/handlers/xtcp"
+	"github.com/agberohq/agbero/internal/handlers/xudp"
 	"github.com/quic-go/quic-go/http3"
 )
 
@@ -14,8 +15,6 @@ type Listener interface {
 	Addr() string
 	Kind() string
 }
-
-// HTTP Listener
 
 type HTTPListener struct {
 	Srv     *http.Server
@@ -44,8 +43,6 @@ func (h *HTTPListener) Kind() string {
 	return "http"
 }
 
-// HTTP/3 (QUIC) Listener
-
 type H3Listener struct {
 	Srv *http3.Server
 }
@@ -64,8 +61,6 @@ func (h *H3Listener) Stop(ctx context.Context) error {
 
 func (h *H3Listener) Addr() string { return h.Srv.Addr }
 func (h *H3Listener) Kind() string { return "h3" }
-
-// TCP Proxy Listener
 
 type TCPListener struct {
 	Proxy *xtcp.Proxy
@@ -91,3 +86,29 @@ func (t *TCPListener) Stop(ctx context.Context) error {
 
 func (t *TCPListener) Addr() string { return t.Proxy.Listen }
 func (t *TCPListener) Kind() string { return "tcp" }
+
+// UDPListener wraps an xudp.Proxy and implements the Listener interface.
+type UDPListener struct {
+	Proxy *xudp.Proxy
+}
+
+func (u *UDPListener) Start() error {
+	return u.Proxy.Start()
+}
+
+func (u *UDPListener) Stop(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		u.Proxy.Stop()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (u *UDPListener) Addr() string { return u.Proxy.Listen }
+func (u *UDPListener) Kind() string { return "udp" }

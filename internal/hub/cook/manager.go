@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -84,27 +85,23 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	}, nil
 }
 
-// Registers a new Git repository configuration for background polling and webhooks
-// Merges intervals and secrets if an identical repository clone is already active
 func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
-
 	if cfg.URL == "" {
-		return errors.New("git URL is required")
+		return m.registerPushOnly(routeKey, cfg)
 	}
 
 	if existing, ok := m.entries.Get(routeKey); ok {
-		if existing.Config.URL == cfg.URL &&
+		unchanged := existing.Config.URL == cfg.URL &&
 			existing.Config.Branch == cfg.Branch &&
 			existing.Config.WorkDir == cfg.WorkDir &&
 			existing.Config.Interval == cfg.Interval &&
 			existing.Config.Secret == cfg.Secret &&
 			existing.Config.Auth.Type == cfg.Auth.Type &&
-			existing.Config.Auth.Username == cfg.Auth.Username {
-
-			m.logger.Fields("route_key", routeKey).Debug("git integration already configured for this repository, skipping clone")
+			existing.Config.Auth.Username == cfg.Auth.Username
+		if unchanged {
+			m.logger.Fields("route_key", routeKey).Debug("git integration already configured, skipping")
 			return nil
 		}
-
 		m.logger.Fields("route_key", routeKey).Info("git integration configuration changed, reloading")
 		if existing.cancel != nil {
 			existing.cancel()
@@ -116,7 +113,7 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 		targetWorkDir = cfg.WorkDir.Path()
 	}
 
-	cookCfg := Config{
+	c, err := New(Config{
 		ID:       routeKey,
 		URL:      cfg.URL,
 		Branch:   cfg.Branch,
@@ -130,40 +127,31 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 			SSHKey:           cfg.Auth.SSHKey.String(),
 			SSHKeyPassphrase: cfg.Auth.SSHKeyPassphrase.String(),
 		},
-	}
-
-	c, err := New(cookCfg)
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create cook for %s: %w", routeKey, err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	entry := &Entry{
-		Cook:   c,
-		Config: cfg,
-		ctx:    ctx,
-		cancel: cancel,
-	}
+	m.entries.Set(routeKey, &Entry{Cook: c, Config: cfg, ctx: ctx, cancel: cancel})
+	m.logger.Fields(
+		"route_key", routeKey,
+		"mode", cfg.Mode,
+		"webhook", "/.well-known/agbero/webhook/git/"+routeKey,
+	).Info("git integration configured")
 
-	m.entries.Set(routeKey, entry)
-
-	m.logger.Fields("route_key", routeKey, "webhook", "/.well-known/agbero/webhook/git/"+routeKey).Info("git integration configured")
-
-	err = m.pool.Submit(jack.Func(func() error {
+	if err := m.pool.Submit(jack.Func(func() error {
 		if err := c.Make(ctx); err != nil {
-			// Suppress context canceled errors so it doesn't look like a bug during overwrites
 			if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context canceled") {
 				m.logger.Fields("route", routeKey, "err", err).Error("initial git pull failed")
 			}
 		}
 		return nil
-	}))
-
-	if err != nil {
+	})); err != nil {
 		m.logger.Fields("route", routeKey, "err", err).Warn("failed to queue initial deployment")
 	}
 
-	if cfg.Interval > 0 {
+	if cfg.IsPull() && cfg.Interval > 0 {
 		m.wg.Add(1)
 		go m.poll(ctx, routeKey, c, cfg.Interval.StdDuration())
 	}
@@ -171,15 +159,62 @@ func (m *Manager) Register(routeKey string, cfg alaye.Git) error {
 	return nil
 }
 
+func (m *Manager) registerPushOnly(routeKey string, cfg alaye.Git) error {
+	if cfg.Secret.String() == "" {
+		return errors.New("git: push-only mode (no url) requires a secret")
+	}
+
+	if existing, ok := m.entries.Get(routeKey); ok {
+		if existing.Config.Secret == cfg.Secret {
+			m.logger.Fields("route_key", routeKey).Debug("push-only git already registered, skipping")
+			return nil
+		}
+		if existing.cancel != nil {
+			existing.cancel()
+		}
+	}
+
+	targetWorkDir := filepath.Join(m.workDir, routeKey)
+	if cfg.WorkDir != "" {
+		targetWorkDir = cfg.WorkDir.Path()
+	}
+
+	if err := os.MkdirAll(targetWorkDir, defaultWorkDirPerm); err != nil {
+		return fmt.Errorf("push-only: create work dir: %w", err)
+	}
+
+	c, err := New(Config{
+		ID:      routeKey,
+		URL:     "",
+		WorkDir: targetWorkDir,
+		Logger:  m.logger,
+	})
+	if err != nil {
+		return fmt.Errorf("push-only cook for %s: %w", routeKey, err)
+	}
+
+	c.SetCurrentPath(targetWorkDir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.entries.Set(routeKey, &Entry{Cook: c, Config: cfg, ctx: ctx, cancel: cancel})
+	m.logger.Fields(
+		"route_key", routeKey,
+		"mode", "push-only",
+		"work_dir", targetWorkDir,
+		"webhook", "/.well-known/agbero/webhook/git/"+routeKey,
+	).Info("push-only git integration configured")
+
+	return nil
+}
+
 func (m *Manager) Prune(activeIDs map[string]bool) {
 	var toDelete []string
-	m.entries.Range(func(key string, entry *Entry) bool {
+	m.entries.Range(func(key string, _ *Entry) bool {
 		if !activeIDs[key] {
 			toDelete = append(toDelete, key)
 		}
 		return true
 	})
-
 	for _, key := range toDelete {
 		m.logger.Fields("route_key", key).Info("git integration removed from config, stopping")
 		m.Unregister(key)
@@ -219,15 +254,13 @@ func (m *Manager) GetCook(routeKey string) (*Cook, bool) {
 }
 
 func (m *Manager) Stop() {
-	// Cancel all entries first
-	m.entries.Range(func(key string, entry *Entry) bool {
+	m.entries.Range(func(_ string, entry *Entry) bool {
 		if entry.cancel != nil {
 			entry.cancel()
 		}
 		return true
 	})
 
-	// Wait for pollers
 	done := make(chan struct{})
 	go func() {
 		m.wg.Wait()
@@ -239,45 +272,17 @@ func (m *Manager) Stop() {
 	case <-time.After(defaultStopTimeout):
 		m.logger.Warn("timeout waiting for pollers")
 	}
-
-	// Optional: Wait for pool to drain (if jack.Pool supports it)
-	// m.pool.Drain() // if available
-}
-
-func (m *Manager) poll(ctx context.Context, routeKey string, c *Cook, interval time.Duration) {
-	defer m.wg.Done()
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			err := m.pool.Submit(jack.Func(func() error {
-				if _, exists := m.entries.Get(routeKey); !exists {
-					return nil
-				}
-
-				if err := c.Make(ctx); err != nil {
-					if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context canceled") {
-						m.logger.Fields("route", routeKey, "err", err).Error("scheduled git pull failed")
-					}
-				}
-				return nil
-			}))
-			if err != nil {
-				m.logger.Fields("route", routeKey, "err", err).Warn("failed to queue scheduled deployment")
-			}
-		case <-ctx.Done():
-			return
-		}
-	}
 }
 
 func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey string) {
 	entry, ok := m.entries.Get(routeKey)
 	if !ok {
 		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+
+	if entry.Config.Mode == alaye.GitModePull {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -289,15 +294,15 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		return
 	}
 
-	if entry.Config.Secret != "" {
-		signature := r.Header.Get("X-Hub-Signature-256")
-		if signature == "" {
-			signature = r.Header.Get("X-Hub-Signature")
+	if entry.Config.Secret.String() != "" {
+		sig := r.Header.Get("X-Hub-Signature-256")
+		if sig == "" {
+			sig = r.Header.Get("X-Hub-Signature")
 		}
 		mac := hmac.New(sha256.New, []byte(entry.Config.Secret.String()))
 		mac.Write(body)
-		expectedMAC := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-		if subtle.ConstantTimeCompare([]byte(signature), []byte(expectedMAC)) != 1 {
+		expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+		if subtle.ConstantTimeCompare([]byte(sig), []byte(expected)) != 1 {
 			m.logger.Fields("route", routeKey).Warn("invalid webhook signature")
 			http.Error(w, "Invalid signature", http.StatusForbidden)
 			return
@@ -305,24 +310,42 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 	}
 
 	var payload WebhookPayload
-	if err := json.Unmarshal(body, &payload); err == nil {
-		if entry.Config.Branch != "" && payload.Ref != "" {
-			expectedRef := "refs/heads/" + entry.Config.Branch
-			if payload.Ref != expectedRef {
-				m.logger.Fields("route", routeKey, "ref", payload.Ref, "expected", expectedRef).Info("ignoring webhook for different branch")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte("Ignored: branch mismatch"))
-				return
-			}
+	_ = json.Unmarshal(body, &payload)
+
+	if entry.Config.URL == "" && payload.Repository.CloneURL != "" {
+		m.logger.Fields("route", routeKey, "clone_url", payload.Repository.CloneURL).Info("upgrading push-only git to cloned git via webhook payload")
+		entry.Config.URL = payload.Repository.CloneURL
+		entry.Cook.config.URL = payload.Repository.CloneURL
+		entry.Cook.SetCurrentPath("")
+	}
+
+	if entry.Config.URL == "" {
+		if err := m.writePushPayload(entry, body); err != nil {
+			m.logger.Fields("route", routeKey, "err", err).Error("push-only write failed")
+			http.Error(w, "Write Failed", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("Content Received"))
+		return
+	}
+
+	if entry.Config.Branch != "" && payload.Ref != "" {
+		expected := "refs/heads/" + entry.Config.Branch
+		if payload.Ref != expected {
+			m.logger.Fields("route", routeKey, "ref", payload.Ref, "expected", expected).
+				Info("ignoring webhook for different branch")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ignored: branch mismatch"))
+			return
 		}
 	}
 
-	err = m.pool.Submit(jack.Func(func() error {
+	if err := m.pool.Submit(jack.Func(func() error {
 		if _, exists := m.entries.Get(routeKey); !exists {
 			m.logger.Fields("route", routeKey).Info("ghost deployment prevented: route unregistered")
 			return nil
 		}
-
 		ctx, cancel := context.WithTimeout(context.Background(), defaultWebhookTimeout)
 		defer cancel()
 		if err := entry.Cook.Make(ctx); err != nil {
@@ -331,9 +354,7 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 			}
 		}
 		return nil
-	}))
-
-	if err != nil {
+	})); err != nil {
 		m.logger.Fields("route", routeKey, "err", err).Warn("failed to queue webhook deployment")
 		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
 		return
@@ -341,6 +362,14 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = w.Write([]byte("Deployment Triggered"))
+}
+
+func (m *Manager) writePushPayload(entry *Entry, body []byte) error {
+	workDir := entry.Cook.CurrentPath()
+	if workDir == "" {
+		return errors.New("push-only work directory not available")
+	}
+	return os.WriteFile(filepath.Join(workDir, ".payload.json"), body, 0644)
 }
 
 func (m *Manager) WebhookHandler(routeKey string) http.HandlerFunc {
@@ -371,6 +400,34 @@ func (m *Manager) Health() map[string]HealthStatus {
 		return true
 	})
 	return status
+}
+
+func (m *Manager) poll(ctx context.Context, routeKey string, c *Cook, interval time.Duration) {
+	defer m.wg.Done()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := m.pool.Submit(jack.Func(func() error {
+				if _, exists := m.entries.Get(routeKey); !exists {
+					return nil
+				}
+				if err := c.Make(ctx); err != nil {
+					if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context canceled") {
+						m.logger.Fields("route", routeKey, "err", err).Error("scheduled git pull failed")
+					}
+				}
+				return nil
+			})); err != nil {
+				m.logger.Fields("route", routeKey, "err", err).Warn("failed to queue scheduled deployment")
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 type HealthStatus struct {

@@ -74,7 +74,7 @@ func (k *Keeper) Set(_ string, key, value string, asB64 bool, fromFile string) {
 
 	ref := rawKey
 	if !strings.Contains(rawKey, "://") {
-		ref = "ss://" + key
+		ref = "ss://" + normaliseKey(rawKey)
 	}
 	u.Render(func() {
 		u.InfoLine("reference in agbero.hcl as:  " + ref)
@@ -124,8 +124,6 @@ func normaliseKey(key string) string {
 
 func (k *Keeper) Rotate(_ string) {
 	store := k.requireStore()
-	// store.Rotate requires the store to be unlocked — do NOT call store.Lock()
-	// before this. The store is already unlocked (injected from main).
 
 	u := ui.New()
 	newResult, err := u.PasswordConfirm("New passphrase")

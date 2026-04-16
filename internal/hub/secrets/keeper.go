@@ -21,10 +21,6 @@ type Config struct {
 	Setting     *alaye.Keeper
 	Interactive bool
 
-	// DisableAutoLock forces AutoLockInterval to zero regardless of what is
-	// configured in alaye.Keeper.AutoLock.  Set this to true for the server
-	// process: a running server cannot tolerate the keeper auto-locking mid-
-	// operation (secret resolution, TLS saves, auth, TOTP all break silently).
 	DisableAutoLock bool
 }
 
@@ -70,9 +66,6 @@ func Open(kfg Config) (*keeper.Keeper, error) {
 			kfg.Logger.Warn("keeper is marked disabled in config but is a compulsory component — proceeding")
 		}
 
-		// Only honour AutoLock when the caller has not explicitly disabled it.
-		// The server process must never auto-lock: every subsystem (secret
-		// resolution, TLS, auth) would silently break.
 		if !kfg.DisableAutoLock && kfg.Setting.AutoLock > 0 {
 			kConfig.AutoLockInterval = kfg.Setting.AutoLock.StdDuration()
 		}
@@ -105,17 +98,16 @@ func Open(kfg Config) (*keeper.Keeper, error) {
 	if passphrase != "" && passphrase != "dev" {
 		kfg.Logger.Debug("attempting to unlock keeper with configured passphrase")
 		passBytes := []byte(passphrase)
-		master, deriveErr := store.DeriveMaster(passBytes)
+		unlockErr := store.Unlock(passBytes)
 		zero.Bytes(passBytes)
-		if deriveErr == nil {
-			if unlockErr := store.UnlockDatabase(master); unlockErr == nil {
-				kfg.Logger.Info("keeper unlocked successfully using configured passphrase")
-				return store, nil
-			}
+
+		if unlockErr == nil {
+			kfg.Logger.Info("keeper unlocked successfully using configured passphrase")
+			return store, nil
 		}
 
 		store.Close()
-		return nil, fmt.Errorf("failed to unlock keeper database: invalid passphrase")
+		return nil, fmt.Errorf("failed to unlock keeper database: %w", unlockErr)
 	}
 
 	if passphrase == "dev" {

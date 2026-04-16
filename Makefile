@@ -131,16 +131,26 @@ clean:
 
 
 # Pull and filter specific assets
-ui: $(MINIFY_BIN)
-	@echo "Fetching clean assets from $(REPO_URL)..."
+ui:
+	@echo "Fetching raw assets from $(REPO_URL)..."
 	@mkdir -p $(TARGET_DIR) $(TEMP_DIR)
-	# 1. Clone only the latest commit to a temp folder (still has .git)
 	git clone --depth 1 $(REPO_URL) $(TEMP_DIR)
-	# 2. Sync ONLY html, css, js into your target dir (this ignores .git and README)
 	rsync -avm --delete --include='*/' --include='*.html' --include='*.css' --include='*.js' --exclude='*' $(TEMP_DIR)/ $(TARGET_DIR)/
-	# 3. Cleanup temp folder
 	@rm -rf $(TEMP_DIR)
-	@echo "UI Assets successfully updated in $(TARGET_DIR)"
+	@echo "Raw UI assets successfully updated in $(TARGET_DIR)"
+
+ui-build: $(MINIFY_BIN)
+	@echo "Fetching and minifying assets from $(REPO_URL)..."
+	@mkdir -p $(TARGET_DIR) $(TEMP_DIR)
+	git clone --depth 1 $(REPO_URL) $(TEMP_DIR)
+	@echo "Minifying CSS..."
+	@find $(TEMP_DIR) -type f -name "*.css" -exec $(MINIFY_BIN) --type=css -o {} {} \;
+	@echo "Minifying JavaScript..."
+	@find $(TEMP_DIR) -type f -name "*.js" -exec $(MINIFY_BIN) --type=js -o {} {} \;
+	rsync -avm --delete --include='*/' --include='*.html' --include='*.css' --include='*.js' --exclude='*' $(TEMP_DIR)/ $(TARGET_DIR)/
+	@rm -rf $(TEMP_DIR)
+	@echo "Minified UI assets successfully updated in $(TARGET_DIR)"
+
 
 # Cross-compile for release (matching GoReleaser targets)
 build-all: clean

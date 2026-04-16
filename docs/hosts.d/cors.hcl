@@ -1,72 +1,54 @@
-# RSS Proxy Replay Configuration
-# Replaces the Go-based RSS proxy server with declarative HCL
-
+# RSS Proxy — relay mode: client passes ?url= and agbero forwards it
 domains = ["cors.localhost"]
 
 route "/*" {
   serverless {
     enabled = true
 
-    replay "rss_proxy" {
-      name    = "rss_proxy"
+    replay "rss" {
+      # Name comes from the label above ("rss") — endpoint is reachable at /rss
+      # URL is empty = relay mode: target URL comes from X-Agbero-Replay-Url header
+      # or ?url= query parameter
       enabled = true
+      url     = ""
 
-      # === Mode Configuration ===
-      # Empty URL enables replay mode (dynamic upstream from request)
-      url = ""
+      # Security: only allow these outbound domains (prevents SSRF)
+      # WARNING: "*" allows all external domains — use only for development
+      allowed_domains = ["*"]
 
-      # === Security & Domain Allowlist ===
-      # Restrict proxy targets to prevent SSRF
-      allowed_domains = [
-        "*.rss.example.com",
-        "feeds.example.org",
-        "*.news-api.com"
-        # "*" # Uncomment only for unrestricted testing
-      ]
+      # Only accept GET requests — RSS feeds don't need POST
+      methods = ["GET"]
 
-      # === Request Handling ===
-      methods = ["GET"]  # RSS feeds are GET-only
+      # Forward the ?url= query param to... actually in relay mode the url
+      # param is consumed by agbero to determine the target — not forwarded
+      # forward_query only forwards OTHER query params to the upstream
+      forward_query = false
 
-      # Browser-like headers for feed compatibility
+      # Browser-like headers so feed servers don't reject the request
       headers = {
         "User-Agent"      = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         "Accept"          = "application/rss+xml, application/xml, text/xml, */*"
         "Accept-Language" = "en-US,en;q=0.9"
       }
 
-      # Forward incoming query params (enables ?url= parameter)
-      forward_query = true
-
-      # === Referer Handling ===
-      # Auto-derive Referer from target URL (matches Go proxy behavior)
+      # Set Referer to the target's own origin (mimics browser behaviour)
       referer_mode = "auto"
 
-      # === Response Processing ===
-      # Strip upstream CORS/security headers that conflict with proxy responses
+      # Strip upstream CORS/security headers — agbero will re-add CORS
       strip_headers = true
 
-      # === Performance ===
       timeout = "20s"
 
-      # === Optional Endpoint Authentication ===
-      # auth {
-      #   enabled = false
-      #   method = "token"  # meta | token | direct
-      #   secret  = "${env.REPLAY_SECRET}"
-      # }
-
-      # === Caching ===
-      # Mirrors Go proxy TTL logic: short for feeds, longer for media
       cache {
         enabled = true
-        ttl     = "2m"  # Default fallback
+        driver  = "memory"
+        ttl     = "2m"
+        methods = ["GET"]
 
-        # Resource limits (match Go mappo.Cache)
-        max_items = 10000
+        memory {
+          max_items = 10000   # must be inside memory block, not at cache level
+        }
       }
     }
-
   }
 }
-
-

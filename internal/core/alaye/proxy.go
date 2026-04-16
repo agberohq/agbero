@@ -18,6 +18,12 @@ type Proxy struct {
 	MaxConnections int64          `hcl:"max_connections,attr" json:"max_connections"`
 	Backends       []Server       `hcl:"backend,block" json:"backends"`
 	HealthCheck    TCPHealthCheck `hcl:"health_check,block" json:"health_check"`
+
+	// UDP-specific fields. Ignored when Protocol is "tcp" (default).
+	Protocol    string   `hcl:"protocol,attr"    json:"protocol"`      // "tcp" (default) or "udp"
+	Matcher     string   `hcl:"matcher,attr"     json:"matcher"`       // "stun", "dns", "sip", "" (src:port)
+	SessionTTL  Duration `hcl:"session_ttl,attr" json:"session_ttl"`   // UDP session idle timeout
+	MaxSessions int64    `hcl:"max_sessions,attr" json:"max_sessions"` // max concurrent UDP sessions
 }
 
 // Validate checks listen address, SNI pattern, strategy, and backends.
@@ -59,6 +65,10 @@ func (t *Proxy) Validate() error {
 		return errors.New("max_connections cannot be negative")
 	}
 
+	if t.ProxyProtocol && t.IsUDP() {
+		return errors.New("proxy_protocol is not supported for UDP — PROXY protocol requires a TCP connection")
+	}
+
 	for i := range t.Backends {
 		if err := t.Backends[i].Validate(); err != nil {
 			return errors.Newf("backend[%d]: %w", i, err)
@@ -76,7 +86,6 @@ type TCPHealthCheck struct {
 	Expect   string        `hcl:"expect,attr" json:"expect"`
 }
 
-// Validate checks that interval and timeout are non-negative when TCP health check is enabled.
 func (t *TCPHealthCheck) Validate() error {
 	if t.Enabled.NotActive() {
 		return nil
@@ -90,8 +99,20 @@ func (t *TCPHealthCheck) Validate() error {
 	return nil
 }
 
-// BackendKey provides a deterministic identifier for routing observability.
+// IsUDP returns true when this proxy is configured for UDP transport.
+func (t *Proxy) IsUDP() bool {
+	return strings.EqualFold(t.Protocol, "udp")
+}
+
 func (t *Proxy) BackendKey(backendAddr string) BackendKey {
+	if t.IsUDP() {
+		return BackendKey{
+			Protocol: "udp",
+			Domain:   t.Listen,
+			Path:     t.Name,
+			Addr:     backendAddr,
+		}
+	}
 	sni := t.SNI
 	if sni == "" {
 		sni = "*"

@@ -46,7 +46,25 @@ func (c *Cluster) addRoute(w http.ResponseWriter, r *http.Request) {
 		c.errorResponse(w, http.StatusServiceUnavailable, "cluster mode disabled")
 		return
 	}
-	// TODO: parse request body, validate input, call c.cluster.AddRoute(...)
+
+	var req struct {
+		Host string `json:"host"`
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.errorResponse(w, http.StatusBadRequest, "invalid JSON payload")
+		return
+	}
+	if req.Host == "" {
+		c.errorResponse(w, http.StatusBadRequest, "host is required")
+		return
+	}
+
+	key := "route:" + req.Host + req.Path
+	value, _ := json.Marshal(req)
+	c.cluster.BroadcastRoute(key, value)
+
+	c.logger.Fields("host", req.Host, "path", req.Path).Info("cluster route added")
 	c.jsonResponse(w, http.StatusOK, map[string]string{"status": "route added"})
 }
 
@@ -57,7 +75,24 @@ func (c *Cluster) deleteRoute(w http.ResponseWriter, r *http.Request) {
 		c.errorResponse(w, http.StatusServiceUnavailable, "cluster mode disabled")
 		return
 	}
-	// TODO: parse request body, validate input, call c.cluster.RemoveRoute(...)
+
+	var req struct {
+		Host string `json:"host"`
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.errorResponse(w, http.StatusBadRequest, "invalid JSON payload")
+		return
+	}
+	if req.Host == "" {
+		c.errorResponse(w, http.StatusBadRequest, "host is required")
+		return
+	}
+
+	key := "route:" + req.Host + req.Path
+	c.cluster.Delete(key)
+
+	c.logger.Fields("host", req.Host, "path", req.Path).Info("cluster route deleted")
 	c.jsonResponse(w, http.StatusOK, map[string]string{"status": "route deleted"})
 }
 

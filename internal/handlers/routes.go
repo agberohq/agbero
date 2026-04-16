@@ -15,7 +15,7 @@ import (
 	"github.com/agberohq/agbero/internal/handlers/web"
 	"github.com/agberohq/agbero/internal/handlers/xhttp"
 	"github.com/agberohq/agbero/internal/handlers/xserverless"
-	resource2 "github.com/agberohq/agbero/internal/hub/resource"
+	resource "github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/middleware/attic"
 	"github.com/agberohq/agbero/internal/middleware/auth"
 	"github.com/agberohq/agbero/internal/middleware/compress"
@@ -36,11 +36,11 @@ type Route struct {
 	Proxy     *xhttp.Proxy
 	ipMgr     *zulu.IPManager
 	global    *alaye.Global
-	resource  *resource2.Resource
+	resource  *resource.Resource
 	lastTouch atomic.Int64
 }
 
-func NewRoute(cfg resource2.Proxy, route *alaye.Route) *Route {
+func NewRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 	if route == nil {
 		return FallbackRoute("nil route")
 	}
@@ -68,7 +68,7 @@ func NewRoute(cfg resource2.Proxy, route *alaye.Route) *Route {
 	return wrapHandler(cfg, route, primary)
 }
 
-func wrapHandler(cfg resource2.Proxy, route *alaye.Route, primary http.Handler) *Route {
+func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *Route {
 	chain := primary
 	ipMgr := zulu.NewIPManager(cfg.Global.Security.TrustedProxies)
 	if len(route.AllowedIPs) > 0 {
@@ -102,7 +102,7 @@ func wrapHandler(cfg resource2.Proxy, route *alaye.Route, primary http.Handler) 
 	}
 }
 
-func newProxyRoute(cfg resource2.Proxy, route *alaye.Route) *Route {
+func newProxyRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 	var backends []*xhttp.Backend
 	for i, backendCfg := range route.Backends.Servers {
 		b, err := xhttp.NewBackend(xhttp.ConfigBackend{

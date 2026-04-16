@@ -17,6 +17,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/secrets"
+	"github.com/agberohq/agbero/internal/pkg/update"
 
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -71,8 +72,9 @@ type Server struct {
 	adminSrv *http.Server
 	pprofSrv *http.Server
 
-	keeperStore *keeper.Keeper
-	revokeStore *revoke.Store
+	keeperStore   *keeper.Keeper
+	revokeStore   *revoke.Store
+	updateChecker *update.Checker
 
 	totpHandler *api.TOTP
 	apiShared   *api.Shared
@@ -159,7 +161,7 @@ func (s *Server) Start(configPath string) error {
 			Setting:         &s.global.Security.Keeper,
 			Logger:          s.logger,
 			Interactive:     false,
-			DisableAutoLock: true, // server process must never auto-lock
+			DisableAutoLock: true,
 		})
 		if err != nil {
 			s.logger.Fatal("Keeper initialization failed. Cannot start: ", err)
@@ -172,6 +174,12 @@ func (s *Server) Start(configPath string) error {
 
 	s.resource.Apply(resource.WithKeeper(s.keeperStore))
 	s.logger.Info("Keeper unlocked successfully")
+
+	// Start background update check once — non-blocking, result served via /uptime.
+	if s.updateChecker == nil {
+		s.updateChecker = update.New(woos.Version, "https://api.github.com/repos/agberohq/agbero/releases/latest")
+		s.updateChecker.Start()
+	}
 
 	secrets.NewResolver(s.keeperStore).Wire()
 	s.logger.Info("Secret resolver wired")
@@ -210,25 +218,28 @@ func (s *Server) Start(configPath string) error {
 		seenGitConfigs := make(map[string]alaye.Git)
 		for _, hcfg := range hosts {
 			for _, r := range hcfg.Routes {
+
 				if r.Web.Git.Enabled.Active() {
-					gitID := r.Web.Git.ID
-					if existing, exists := seenGitConfigs[gitID]; exists {
-						if existing.URL != r.Web.Git.URL || existing.Branch != r.Web.Git.Branch || existing.WorkDir != r.Web.Git.WorkDir {
-							s.logger.Fields("id", gitID).Warn("server: Git ID collision with differing configurations detected, skipping duplicate")
-						}
-						continue
-					}
-					seenGitConfigs[gitID] = r.Web.Git
-					err = s.cookManager.Register(gitID, r.Web.Git)
-					if err != nil {
-						s.logger.Error("failed to register cook", "id", gitID, "err", err)
-					}
+					s.registerGitConfig(r.Web.Git, seenGitConfigs)
+				}
+
+				if r.Serverless.Git.Enabled.Active() {
+					s.registerGitConfig(r.Serverless.Git, seenGitConfigs)
 				}
 			}
 		}
+	} else {
+		s.logger.Fields("err", err).Error("failed to initialize git cook manager on boot")
 	}
 
-	s.orchManager = orchestrator.New(s.logger, s.global.Storage.WorkDir, s.cookManager, s.global.Env)
+	s.orchManager = orchestrator.New(orchestrator.Config{
+		Logger:          s.logger,
+		WorkDir:         s.global.Storage.WorkDir,
+		CookMgr:         s.cookManager,
+		GlobalEnv:       s.global.Env,
+		AllowedCommands: s.global.Security.AllowedCommands,
+		DropPrivileges:  !s.global.Development,
+	})
 
 	if s.global.Gossip.SharedState.Enabled.Active() {
 		if s.global.Gossip.SharedState.Driver == "redis" {
@@ -258,6 +269,12 @@ func (s *Server) Start(configPath string) error {
 			hostname, _ := os.Hostname()
 			cfg.Name = fmt.Sprintf("agbero-%s-%d", hostname, s.global.Gossip.Port)
 		}
+
+		if s.keeperStore != nil {
+			cfg.KeeperSnapshot = s.keeperSnapshot
+			cfg.KeeperWrite = s.keeperWrite
+		}
+
 		if cm, err := cluster.NewManager(cfg, s, s.logger); err == nil {
 			s.clusterManager = cm
 			if s.shutdown != nil {
@@ -304,12 +321,6 @@ func (s *Server) Start(configPath string) error {
 		s.tlsManager.SetCluster(s.clusterManager)
 	}
 
-	// Pre-generate local TLS certificates for all known ModeLocalAuto hosts
-	// before any listeners start.  This eliminates the first-request race where
-	// concurrent browser connections all miss the empty cache simultaneously,
-	// trigger parallel generation, and some receive nil while the first write
-	// is still in flight.  getCertificateLocal still uses localFlight as a
-	// safety net for hosts added dynamically after startup.
 	s.tlsManager.PreloadLocalCertificates(hosts)
 
 	var trustedProxies []string
@@ -341,13 +352,14 @@ func (s *Server) Start(configPath string) error {
 	}
 
 	s.apiShared = &api.Shared{
-		Logger:      s.logger,
-		Cluster:     s.clusterManager,
-		Keeper:      s.keeperStore,
-		Discovery:   s.hostManager,
-		PPK:         s.securityManager,
-		Telemetry:   s.telemetryStore,
-		RevokeStore: s.revokeStore,
+		Logger:        s.logger,
+		Cluster:       s.clusterManager,
+		Keeper:        s.keeperStore,
+		Discovery:     s.hostManager,
+		PPK:           s.securityManager,
+		Telemetry:     s.telemetryStore,
+		RevokeStore:   s.revokeStore,
+		UpdateChecker: s.updateChecker,
 	}
 
 	s.apiShared.UpdateState(&api.ActiveState{
@@ -529,6 +541,15 @@ func (s *Server) Reload() {
 					validKeys[r.BackendKey(domain, srv.Address.String())] = true
 				}
 			}
+
+			if r.Serverless.Enabled.Active() {
+				for _, rp := range r.Serverless.Replay {
+					validKeys[r.ReplayBackendKey(domain, rp.Name)] = true
+				}
+				for _, wk := range r.Serverless.Workers {
+					validKeys[r.WorkerBackendKey(domain, wk.Name)] = true
+				}
+			}
 		}
 		for _, proxy := range h.Proxies {
 			for _, srv := range proxy.Backends {
@@ -545,18 +566,12 @@ func (s *Server) Reload() {
 		for _, hcfg := range hosts {
 			for _, r := range hcfg.Routes {
 				if r.Web.Git.Enabled.Active() {
-					gitID := r.Web.Git.ID
-					validGitIDs[gitID] = true
-					if existing, exists := seenGitConfigs[gitID]; exists {
-						if existing.URL != r.Web.Git.URL || existing.Branch != r.Web.Git.Branch || existing.WorkDir != r.Web.Git.WorkDir {
-							s.logger.Fields("id", gitID).Warn("server: Git ID collision with differing configurations detected, skipping duplicate")
-						}
-						continue
-					}
-					seenGitConfigs[gitID] = r.Web.Git
-					if err := s.cookManager.Register(gitID, r.Web.Git); err != nil {
-						s.logger.Error("failed to register/update cook", "id", gitID, "err", err)
-					}
+					validGitIDs[r.Web.Git.ID] = true
+					s.registerGitConfig(r.Web.Git, seenGitConfigs)
+				}
+				if r.Serverless.Git.Enabled.Active() {
+					validGitIDs[r.Serverless.Git.ID] = true
+					s.registerGitConfig(r.Serverless.Git, seenGitConfigs)
 				}
 			}
 		}
@@ -726,4 +741,75 @@ func (s *Server) serverWatchConfig() {
 			return
 		}
 	}
+}
+
+func (s *Server) registerGitConfig(cfg alaye.Git, seen map[string]alaye.Git) {
+	gitID := cfg.ID
+	if existing, exists := seen[gitID]; exists {
+
+		if existing.URL != cfg.URL || existing.Branch != cfg.Branch || existing.WorkDir != cfg.WorkDir {
+			s.logger.Fields("id", gitID).Warn("server: git ID collision with differing configurations, skipping duplicate")
+		}
+		return
+	}
+	seen[gitID] = cfg
+	if err := s.cookManager.Register(gitID, cfg); err != nil {
+		s.logger.Fields("id", gitID, "err", err).Error("failed to register git cook")
+	}
+}
+
+func (s *Server) keeperSnapshot() map[string][]byte {
+	out := make(map[string][]byte)
+	for _, scheme := range []string{"vault", "default"} {
+		namespaces, err := s.keeperStore.ListNamespacesInSchemeFull(scheme)
+		if err != nil {
+			s.logger.Fields("scheme", scheme, "err", err).Warn("cluster: keeper snapshot could not list namespaces")
+			continue
+		}
+		for _, ns := range namespaces {
+			if ns == "__default__" {
+				continue
+			}
+			keys, err := s.keeperStore.ListNamespacedFull(scheme, ns)
+			if err != nil {
+				s.logger.Fields("scheme", scheme, "ns", ns, "err", err).Warn("cluster: keeper snapshot could not list keys")
+				continue
+			}
+			for _, k := range keys {
+				fullKey := ns + "/" + k
+				if scheme == "vault" {
+					fullKey = "vault://" + fullKey
+				}
+				val, err := s.keeperStore.Get(fullKey)
+				if err != nil {
+					s.logger.Fields("key", fullKey, "err", err).Warn("cluster: keeper snapshot skipping unreadable key")
+					continue
+				}
+				out[fullKey] = val
+			}
+		}
+	}
+	s.logger.Fields("keys", len(out)).Info("cluster: keeper snapshot prepared for join sync")
+	return out
+}
+
+func (s *Server) keeperWrite(key string, value []byte) {
+	if value == nil {
+		// nil signals deletion — propagated from OpSecret delete broadcast.
+		if err := s.keeperStore.Delete(key); err != nil {
+			s.logger.Fields("key", key, "err", err).Warn("cluster: keeper sync could not delete key")
+		} else {
+			s.logger.Fields("key", key).Debug("cluster: keeper secret deleted from peer broadcast")
+		}
+		return
+	}
+	if err := s.keeperStore.EnsureBucket(key); err != nil {
+		s.logger.Fields("key", key, "err", err).Warn("cluster: keeper sync could not ensure bucket")
+		return
+	}
+	if err := s.keeperStore.Set(key, value); err != nil {
+		s.logger.Fields("key", key, "err", err).Error("cluster: keeper sync failed to write secret")
+		return
+	}
+	s.logger.Fields("key", key).Debug("cluster: keeper secret synced from join")
 }

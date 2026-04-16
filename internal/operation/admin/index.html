@@ -8,14 +8,14 @@
     <link rel="stylesheet" href="css/styles.css">
     <script>
         // Polyfill: prevents Oja event delegation crashes on non-element targets.
-        // Safely stubs closest() for Document, Window, and Text nodes.
         [Document, Window, Text].forEach(function(type) {
             if (typeof type !== 'undefined' && type.prototype && !type.prototype.closest) {
                 type.prototype.closest = function() { return null; };
             }
         });
+        // unified theme key — was 'theme', now 'ag-theme' everywhere
         document.documentElement.setAttribute(
-            'data-theme', localStorage.getItem('theme') || 'light'
+            'data-theme', localStorage.getItem('ag-theme') || 'light'
         );
     </script>
 </head>

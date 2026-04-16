@@ -78,21 +78,32 @@ func isReserved(s *expect.Secret) bool {
 	return s.IsInternal() || s.Scheme == expect.SchemeVault
 }
 
-// Keeper holds the HTTP handlers for secret management.
+type clusterBroadcaster interface {
+	BroadcastSecret(key string, plaintext []byte) error
+}
+
 type Keeper struct {
-	store  *keeper.Keeper
-	logger *ll.Logger
+	store   *keeper.Keeper
+	cluster clusterBroadcaster
+	logger  *ll.Logger
 }
 
 // NewKeeper constructs a Keeper handler from shared application state.
 func NewKeeper(cfg *Shared) *Keeper {
-	return &Keeper{
+	k := &Keeper{
 		store:  cfg.Keeper,
 		logger: cfg.Logger.Namespace("api/keeper"),
 	}
+	// Only assign the cluster interface when the concrete pointer is non-nil.
+	// Assigning a nil *cluster.Manager directly to the clusterBroadcaster
+	// interface produces a non-nil interface value whose underlying pointer is
+	// nil, causing a nil-pointer panic when any method is called on it.
+	if cfg.Cluster != nil {
+		k.cluster = cfg.Cluster
+	}
+	return k
 }
 
-// unlock handles POST /keeper/unlock.
 func (k *Keeper) unlock(w http.ResponseWriter, r *http.Request) {
 	if k.store == nil {
 		k.errorResponse(w, http.StatusServiceUnavailable, "keeper not configured")
@@ -116,16 +127,12 @@ func (k *Keeper) unlock(w http.ResponseWriter, r *http.Request) {
 	k.jsonResponse(w, http.StatusOK, map[string]string{"status": "unlocked"})
 }
 
-// lock handles POST /keeper/lock.
 func (k *Keeper) lock(w http.ResponseWriter, r *http.Request) {
 	if k.store == nil {
 		k.errorResponse(w, http.StatusServiceUnavailable, "keeper not configured")
 		return
 	}
-	// WARNING: locking the keeper unwires the global secret resolver. Every
-	// config value referencing ss:// or vault:// will return its raw key string
-	// until the keeper is unlocked via POST /keeper/unlock. Do not lock the
-	// keeper while the server is actively serving requests.
+
 	secrets.NewResolver(k.store).Unwire()
 	if err := k.store.Lock(); err != nil {
 		k.errorResponse(w, http.StatusInternalServerError, err.Error())
@@ -300,6 +307,13 @@ func (k *Keeper) set(w http.ResponseWriter, r *http.Request) {
 		k.errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	if k.cluster != nil {
+		if err := k.cluster.BroadcastSecret(key, data); err != nil {
+			k.logger.Fields("key", key, "err", err).Warn("keeper: secret written locally but cluster broadcast failed")
+		}
+	}
+
 	k.jsonResponse(w, http.StatusOK, map[string]any{
 		"key":   key,
 		"bytes": len(data),
@@ -336,6 +350,13 @@ func (k *Keeper) delete(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	if k.cluster != nil {
+		if err := k.cluster.BroadcastSecret(normalizedKey, nil); err != nil {
+			k.logger.Fields("key", normalizedKey, "err", err).Warn("keeper: secret deleted locally but cluster broadcast failed")
+		}
+	}
+
 	k.jsonResponse(w, http.StatusOK, map[string]string{"deleted": normalizedKey})
 }
 

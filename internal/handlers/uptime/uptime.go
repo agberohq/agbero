@@ -39,9 +39,11 @@ type SystemStats struct {
 }
 
 type GlobalStats struct {
-	AvgP99  float64 `json:"avg_p99_ms"`
-	HttpP99 float64 `json:"http_p99_ms"`
-	TcpP99  float64 `json:"tcp_p99_ms"`
+	AvgP99    float64 `json:"avg_p99_ms"`
+	HttpP99   float64 `json:"http_p99_ms"`
+	TcpP99    float64 `json:"tcp_p99_ms"`
+	UdpP99    float64 `json:"udp_p99_ms"`
+	WorkerP99 float64 `json:"worker_p99_ms"`
 }
 
 type ClusterStats struct {
@@ -66,17 +68,28 @@ type HostSnapshot struct {
 }
 
 type RouteSnapshot struct {
-	Protocol string             `json:"protocol"`
-	Path     string             `json:"path"`
-	Strategy string             `json:"strategy"`
-	Backends []*BackendSnapshot `json:"backends"`
+	Protocol   string                `json:"protocol"`
+	Path       string                `json:"path"`
+	Strategy   string                `json:"strategy"`
+	Backends   []*BackendSnapshot    `json:"backends"`
+	Serverless []*ServerlessSnapshot `json:"serverless,omitempty"`
+}
+
+type ServerlessSnapshot struct {
+	Name      string                  `json:"name"`
+	Kind      string                  `json:"kind"`
+	InFlight  int64                   `json:"in_flight"`
+	TotalReqs uint64                  `json:"total_reqs"`
+	Failures  uint64                  `json:"failures"`
+	Latency   metrics.LatencySnapshot `json:"latency_us"`
 }
 
 type ProxySnapshot struct {
-	Protocol string             `json:"protocol"`
-	Name     string             `json:"name"`
-	Strategy string             `json:"strategy"`
-	Backends []*BackendSnapshot `json:"backends"`
+	Protocol       string             `json:"protocol"`
+	Name           string             `json:"name"`
+	Strategy       string             `json:"strategy"`
+	Backends       []*BackendSnapshot `json:"backends"`
+	ActiveSessions int64              `json:"active_sessions,omitempty"`
 }
 
 type HealthSnapshot struct {
@@ -181,8 +194,8 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 	}
 
 	var (
-		sumAll, sumHttp, sumTcp       float64
-		countAll, countHttp, countTcp int
+		sumAll, sumHttp, sumTcp, sumUdp, sumWorker           float64
+		countAll, countHttp, countTcp, countUdp, countWorker int
 	)
 
 	hosts, _ := hm.LoadAll()
@@ -207,7 +220,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 			}
 
 			for _, srv := range route.Backends.Servers {
-				addressStr := srv.Address.String() // Upgraded to alaye.Address
+				addressStr := srv.Address.String()
 				statsKey := route.BackendKey(domain, addressStr)
 
 				var latSnap metrics.LatencySnapshot
@@ -280,6 +293,52 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 				rSnap.Backends = append(rSnap.Backends, bSnap)
 				totalReqs += uint64(reqs)
 			}
+
+			for _, rp := range route.Serverless.Replay {
+				if !rp.Enabled.Active() {
+					continue
+				}
+				key := route.ReplayBackendKey(domain, rp.Name)
+				slSnap := &ServerlessSnapshot{Name: rp.Name, Kind: "replay"}
+				if stats := res.Metrics.Get(key); stats != nil {
+					snap := stats.Activity.Snapshot()
+					slSnap.InFlight = snap["in_flight"].(int64)
+					slSnap.TotalReqs = snap["requests"].(uint64)
+					slSnap.Failures = snap["failures"].(uint64)
+					slSnap.Latency = snap["latency"].(metrics.LatencySnapshot)
+					totalReqs += slSnap.TotalReqs
+					if slSnap.Latency.Count > 0 && slSnap.Latency.P99 > 0 {
+						val := float64(slSnap.Latency.P99)
+						sumAll += val
+						countAll++
+						sumHttp += val
+						countHttp++
+					}
+				}
+				rSnap.Serverless = append(rSnap.Serverless, slSnap)
+			}
+			for _, wk := range route.Serverless.Workers {
+				key := route.WorkerBackendKey(domain, wk.Name)
+				slSnap := &ServerlessSnapshot{Name: wk.Name, Kind: "worker"}
+				if stats := res.Metrics.Get(key); stats != nil {
+					snap := stats.Activity.Snapshot()
+					slSnap.InFlight = snap["in_flight"].(int64)
+					slSnap.TotalReqs = snap["requests"].(uint64)
+					slSnap.Failures = snap["failures"].(uint64)
+					slSnap.Latency = snap["latency"].(metrics.LatencySnapshot)
+					totalReqs += slSnap.TotalReqs
+
+					if slSnap.Latency.Count > 0 && slSnap.Latency.P99 > 0 {
+						val := float64(slSnap.Latency.P99)
+						sumAll += val
+						countAll++
+						sumWorker += val
+						countWorker++
+					}
+				}
+				rSnap.Serverless = append(rSnap.Serverless, slSnap)
+			}
+
 			hSnap.Routes = append(hSnap.Routes, rSnap)
 		}
 
@@ -289,9 +348,18 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 				sni = "*"
 			}
 
+			protocol := "tcp"
+			proxyName := proxy.Listen + " (" + sni + ")"
+			if proxy.IsUDP() {
+				protocol = "udp"
+				proxyName = proxy.Listen + " [" + proxy.Matcher + "]"
+				if proxy.Matcher == "" {
+					proxyName = proxy.Listen + " [src_port]"
+				}
+			}
 			pSnap := &ProxySnapshot{
-				Protocol: "tcp",
-				Name:     proxy.Listen + " (" + sni + ")",
+				Protocol: protocol,
+				Name:     proxyName,
 				Strategy: proxy.Strategy,
 				Backends: make([]*BackendSnapshot, 0),
 			}
@@ -301,7 +369,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 			}
 
 			for _, srv := range proxy.Backends {
-				addressStr := srv.Address.String() // Upgraded to alaye.Address
+				addressStr := srv.Address.String()
 				statsKey := proxy.BackendKey(addressStr)
 
 				var latSnap metrics.LatencySnapshot
@@ -348,8 +416,13 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 						val := float64(latSnap.P99)
 						sumAll += val
 						countAll++
-						sumTcp += val
-						countTcp++
+						if proxy.IsUDP() {
+							sumUdp += val
+							countUdp++
+						} else {
+							sumTcp += val
+							countTcp++
+						}
 					}
 
 					if !hasProber && failures >= 2 {
@@ -359,6 +432,14 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 
 				if hSnapStruct.Status != health.StatusHealthy && hSnapStruct.Status != health.StatusUnknown && hSnapStruct.LastSuccess != nil {
 					hSnapStruct.Downtime = time.Since(*hSnapStruct.LastSuccess).Round(time.Second).String()
+				}
+
+				// Reconcile: alive=false overrides a stale Healthy probe result.
+				// TCP/UDP backends have no HTTP prober so the health score can
+				// show Healthy based on a previous check while the backend is
+				// currently not accepting connections.
+				if !alive && hSnapStruct.Status == health.StatusHealthy {
+					hSnapStruct.Status = health.StatusUnhealthy
 				}
 
 				bSnap := &BackendSnapshot{
@@ -382,9 +463,11 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 	}
 
 	sysSnap.Global = GlobalStats{
-		AvgP99:  calcAvg(sumAll, countAll),
-		HttpP99: calcAvg(sumHttp, countHttp),
-		TcpP99:  calcAvg(sumTcp, countTcp),
+		AvgP99:    calcAvg(sumAll, countAll),
+		HttpP99:   calcAvg(sumHttp, countHttp),
+		TcpP99:    calcAvg(sumTcp, countTcp),
+		UdpP99:    calcAvg(sumUdp, countUdp),
+		WorkerP99: calcAvg(sumWorker, countWorker),
 	}
 
 	return sysSnap

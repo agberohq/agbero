@@ -96,170 +96,22 @@
             </div>
         </div>
 
+        <div class="config-section" style="margin-top:20px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                <h3 style="margin:0;font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-mute);">Session Management</h3>
+            </div>
+            <div class="kv-grid" style="margin-bottom:14px;">
+                <div class="kv-item"><label>Current Session</label><div id="revokeCurrentSession" class="mono" style="font-size:11px;">—</div></div>
+                <div class="kv-item"><label>Token Expires</label><div id="revokeExpiry">—</div></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <button class="btn small" id="revokeCurrentBtn" style="color:var(--warning);border-color:var(--warning);">
+                    Revoke Current Session
+                </button>
+                <span style="font-size:11px;color:var(--text-mute);">Logs you out immediately and invalidates this token on the server.</span>
+            </div>
+            <div id="revokeError" style="color:var(--danger);font-size:11px;margin-top:8px;display:none;"></div>
+        </div>
+
     </div>
 </div>
-
-<script type="module">
-    import { component, on, notify, query } from '../lib/oja.full.esm.js';
-    import { store, getCreds }              from '../js/store.js';
-    import { setupTOTP, keeperTOTPSetup }   from '../js/api.js';
-    import { isOn }                         from '../js/utils.js';
-
-    let _pendingSecret  = '';
-    let _secretRevealed = false;
-    let _username       = 'admin';
-
-    // Boot
-
-    function boot() {
-        const { token } = getCreds();
-        try {
-            if (token) {
-                const p = JSON.parse(atob(token.split('.')[1]));
-                _username = p.user || p.sub || 'admin';
-            }
-        } catch {}
-
-        query('#profileUsername').textContent = _username;
-
-        const uptime = store.get('lastUptime');
-        if (uptime?.system?.uptime) query('#profileSession').textContent = 'Active · ' + uptime.system.uptime;
-        query('#profileAuthMethod').textContent = 'Basic Auth + JWT';
-
-        const cfg    = store.get('lastConfig');
-        const totp   = cfg?.global?.admin?.totp;
-        const users  = totp?.users || [];
-        const hasTotp = isOn(totp?.enabled) && users.some(u => u.username === _username && u.secret);
-        showTOTPState(hasTotp ? 'configured' : 'setup');
-    }
-
-    function showTOTPState(state) {
-        query('#totpSetupPanel').style.display      = state === 'setup'      ? '' : 'none';
-        query('#totpQRPanel').style.display         = state === 'qr'         ? '' : 'none';
-        query('#totpConfiguredPanel').style.display = state === 'configured' ? '' : 'none';
-        const badge = query('#totpStatusBadge');
-        if (badge) {
-            badge.textContent = state === 'configured' ? 'Active' : 'Not set up';
-            badge.className   = 'badge ' + (state === 'configured' ? 'success' : '');
-        }
-        if (query('#totpResetConfirm')) query('#totpResetConfirm').style.display = 'none';
-    }
-
-    function _showQR(res) {
-        _pendingSecret  = res.secret || '';
-        _secretRevealed = false;
-
-        const qrEl = query('#totpQRCode');
-        if (qrEl) {
-            if (res.qr_svg) {
-                qrEl.innerHTML = res.qr_svg;
-                const svg = qrEl.querySelector('svg');
-                if (svg) { svg.style.width = '160px'; svg.style.height = '160px'; }
-            } else {
-                qrEl.innerHTML = `<div style="font-size:10px;word-break:break-all;max-width:160px;color:var(--text-mute);">QR unavailable — use manual key</div>`;
-            }
-        }
-
-        const secretEl = query('#totpSecretText');
-        if (secretEl) {
-            secretEl.textContent = _pendingSecret;
-            secretEl.style.filter = 'blur(5px)';
-        }
-
-        showTOTPState('qr');
-        query('#totpVerifyCode')?.focus();
-    }
-
-    boot();
-
-    // Setup
-
-    on('#totpSetupBtn', 'click', async (e, btn) => {
-        btn.disabled = true; btn.textContent = 'Generating…';
-        const res = await setupTOTP();
-        btn.disabled = false; btn.textContent = 'Set Up Authenticator';
-        if (!res?.uri) { notify.show(res?.error || 'Failed to generate secret', 'error'); return; }
-        _showQR(res);
-    });
-
-    on('#totpRevealSecret', 'click', (e, btn) => {
-        const el = query('#totpSecretText');
-        if (!el) return;
-        _secretRevealed = !_secretRevealed;
-        el.style.filter = _secretRevealed ? 'none' : 'blur(5px)';
-        btn.textContent = _secretRevealed ? 'Hide' : 'Reveal';
-    });
-
-    on('#totpVerifyCode', 'input', (e, el) => {
-        el.value = el.value.replace(/\D/g, '').slice(0, 6);
-        if (el.value.length === 6) query('#totpVerifyBtn')?.click();
-    });
-
-    on('#totpVerifyBtn', 'click', () => {
-        const code  = query('#totpVerifyCode').value.trim();
-        const errEl = query('#totpVerifyError');
-        errEl.style.display = 'none';
-        if (code.length !== 6) {
-            errEl.textContent = 'Enter the 6-digit code from your app';
-            errEl.style.display = 'block';
-            return;
-        }
-        notify.show('TOTP saved — will be required on your next login', 'success');
-        showTOTPState('configured');
-    });
-
-    on('#totpCopySecret', 'click', () => {
-        navigator.clipboard?.writeText(_pendingSecret)
-            .then(() => notify.show('Secret key copied', 'success'))
-            .catch(() => notify.show('Copy failed — select the key manually', 'error'));
-    });
-
-    on('#totpCancelBtn', 'click', () => { showTOTPState('setup'); _pendingSecret = ''; });
-
-    // Reset — uses keeper path so secret IS persisted
-    // setupTOTP() (POST /api/v1/totp/setup) explicitly warns it does NOT persist
-    // the secret — "use keeper set to make it durable". If we use the non-persisted
-    // path, the next login will fail because the server reads from the config file.
-    // Instead: keeperTOTPSetup(username) stores it in the encrypted keeper under
-    // totp/{username} which the server reads via ss://totp/{username} references.
-
-    on('#totpResetBtn', 'click', () => {
-        query('#totpResetConfirm').style.display = '';
-    });
-
-    on('#totpResetCancelBtn', 'click', () => {
-        query('#totpResetConfirm').style.display = 'none';
-    });
-
-    on('#totpResetConfirmBtn', 'click', async (e, btn) => {
-        btn.disabled = true; btn.textContent = 'Resetting…';
-
-        // Use keeper path — this persists the secret to the encrypted store
-        const res = await keeperTOTPSetup(_username);
-        btn.disabled = false; btn.textContent = 'Yes, Reset Now';
-
-        if (res?.uri) {
-            // Secret is now stored in keeper as ss://totp/{username}
-            // Server must have the TOTP secret configured as a keeper reference
-            _showQR(res);
-            notify.show('New TOTP secret generated and saved to Keeper — scan the QR code', 'success');
-        } else if (res?.error) {
-            notify.show(res.error, 'error');
-            // If keeper is locked or not configured, fall back to the ephemeral setup
-            // and warn the user clearly about the persistence limitation
-            const fallback = await setupTOTP();
-            if (fallback?.uri) {
-                _showQR(fallback);
-                notify.show('⚠️ Keeper unavailable — secret not persisted. Server restart required to apply.', 'warning');
-            } else {
-                notify.show(fallback?.error || 'Reset failed', 'error');
-                query('#totpResetConfirm').style.display = 'none';
-            }
-        } else {
-            notify.show('Reset failed — check that Keeper is unlocked', 'error');
-            query('#totpResetConfirm').style.display = 'none';
-        }
-    });
-
-    component.onUnmount(() => {});
-</script>

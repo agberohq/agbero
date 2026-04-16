@@ -25,6 +25,11 @@ func IsLocalhost(host string) bool {
 	if strings.HasSuffix(host, LocalhostSuffixDotTest) {
 		return true
 	}
+
+	if strings.HasSuffix(host, LocalhostSuffixDotInternal) { // ADD THIS
+		return true
+	}
+
 	// Check loopback IPs
 	if ip := net.ParseIP(host); ip != nil {
 		return ip.IsLoopback()

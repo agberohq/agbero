@@ -1,6 +1,9 @@
 package api
 
 import (
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -58,10 +61,18 @@ func (c *Certs) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type CertInfo struct {
-		Domain    string    `json:"domain"`
-		ExpiresAt time.Time `json:"expires_at"`
-		IsExpired bool      `json:"is_expired"`
-		DaysLeft  int       `json:"days_left"`
+		Domain       string    `json:"domain"`
+		IssuedAt     time.Time `json:"issued_at"`
+		ExpiresAt    time.Time `json:"expires_at"`
+		IsExpired    bool      `json:"is_expired"`
+		DaysLeft     int       `json:"days_left"`
+		Issuer       string    `json:"issuer"`
+		Subject      string    `json:"subject"`
+		SANs         []string  `json:"sans"`
+		KeyType      string    `json:"key_type"`
+		KeyBits      int       `json:"key_bits,omitempty"`
+		SerialNumber string    `json:"serial_number"`
+		Source       string    `json:"source"` // "local_auto" | "letsencrypt" | "custom"
 	}
 
 	now := time.Now()
@@ -89,21 +100,74 @@ func (c *Certs) list(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		expiresAt := cert.NotAfter
+		// SANs: DNS names + IP addresses
+		sans := make([]string, 0, len(cert.DNSNames)+len(cert.IPAddresses))
+		sans = append(sans, cert.DNSNames...)
+		for _, ip := range cert.IPAddresses {
+			sans = append(sans, ip.String())
+		}
+
+		// Key type and size
+		keyType, keyBits := certKeyInfo(cert)
+
+		// Source heuristic based on issuer
+		source := certSource(cert)
+
 		certs = append(certs, CertInfo{
-			Domain:    domain,
-			ExpiresAt: expiresAt,
-			IsExpired: now.After(expiresAt),
-			DaysLeft:  int(expiresAt.Sub(now).Hours() / 24),
+			Domain:       domain,
+			IssuedAt:     cert.NotBefore,
+			ExpiresAt:    cert.NotAfter,
+			IsExpired:    now.After(cert.NotAfter),
+			DaysLeft:     int(cert.NotAfter.Sub(now).Hours() / 24),
+			Issuer:       cert.Issuer.CommonName,
+			Subject:      cert.Subject.CommonName,
+			SANs:         sans,
+			KeyType:      keyType,
+			KeyBits:      keyBits,
+			SerialNumber: fmt.Sprintf("%X", cert.SerialNumber),
+			Source:       source,
 		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"certificates": certs}) //nolint:errcheck
+	json.NewEncoder(w).Encode(map[string]any{"certificates": certs})
 }
 
-// upload handles POST /certs.
-// Body: {"domain":"...","cert":"<PEM>","key":"<PEM>"}
+// certKeyInfo returns the key algorithm and bit size from a certificate's public key.
+func certKeyInfo(cert *x509.Certificate) (string, int) {
+	switch pub := cert.PublicKey.(type) {
+	case *rsa.PublicKey:
+		return "RSA", pub.Size() * 8
+	case *ecdsa.PublicKey:
+		return "ECDSA", pub.Curve.Params().BitSize
+	case ed25519.PublicKey:
+		return "Ed25519", 256
+	default:
+		return "unknown", 0
+	}
+}
+
+// certSource identifies how a cert was issued based on issuer fields.
+func certSource(cert *x509.Certificate) string {
+	issuerCN := strings.ToLower(cert.Issuer.CommonName)
+	issuerOrg := ""
+	if len(cert.Issuer.Organization) > 0 {
+		issuerOrg = strings.ToLower(cert.Issuer.Organization[0])
+	}
+	switch {
+	case strings.Contains(issuerCN, "let's encrypt") ||
+		strings.Contains(issuerOrg, "let's encrypt") ||
+		strings.Contains(issuerCN, "letsencrypt") ||
+		strings.Contains(issuerOrg, "letsencrypt"):
+		return "letsencrypt"
+	case strings.Contains(issuerCN, "development ca") ||
+		strings.Contains(issuerOrg, "agbero"):
+		return "local_auto"
+	default:
+		return "custom"
+	}
+}
+
 func (c *Certs) upload(w http.ResponseWriter, r *http.Request) {
 	ts := c.shared.State().TLSS
 	if ts == nil {
@@ -140,7 +204,7 @@ func (c *Certs) upload(w http.ResponseWriter, r *http.Request) {
 	c.logger.Fields("domain", domain).Info("custom certificate uploaded via API")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"ok","message":"Certificate saved and applied successfully"}`)) //nolint:errcheck
+	w.Write([]byte(`{"status":"ok","message":"Certificate saved and applied successfully"}`))
 }
 
 // delete handles DELETE /certs/{domain}.
@@ -171,5 +235,5 @@ func (c *Certs) delete(w http.ResponseWriter, r *http.Request) {
 
 	c.logger.Fields("domain", domain).Info("certificate deleted via API")
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"ok","message":"Certificate deleted"}`)) //nolint:errcheck
+	w.Write([]byte(`{"status":"ok","message":"Certificate deleted"}`))
 }

@@ -656,6 +656,11 @@ func (m *Manager) determineTLSMode(host *alaye.Host, domain string) alaye.TlsMod
 		return alaye.ModeLetsEncrypt
 	}
 
+	// no need to generate tls for internal names
+	if strings.HasSuffix(strings.ToLower(domain), ".internal") {
+		return alaye.ModeLocalNone
+	}
+
 	if woos.IsLocalhost(domain) {
 		return alaye.ModeLocalAuto
 	}

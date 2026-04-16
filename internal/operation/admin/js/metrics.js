@@ -99,11 +99,17 @@ export function startMetricsPolling(store) {
                     ? ((curReqs - existing.lastReqs) / elapsed)
                     : 0;
 
-                // Avg p99 across all routes for this host
+                // Avg p99 across all routes + serverless for this host
                 let p99sum = 0, p99cnt = 0;
                 for (const r of (host.routes || [])) {
                     for (const b of (r.backends || [])) {
                         const v = b.latency_us?.p99;
+                        if (v > 0) { p99sum += v / 1000; p99cnt++; }
+                    }
+                    // Serverless (replay + worker) latency — these are the only
+                    // traffic sources on hosts with no HTTP backends (e.g. cors.localhost)
+                    for (const sl of (r.serverless || [])) {
+                        const v = sl.latency_us?.p99;
                         if (v > 0) { p99sum += v / 1000; p99cnt++; }
                     }
                 }
@@ -120,12 +126,21 @@ export function startMetricsPolling(store) {
             }
 
             // Response time history for dashboard chart
-            const history = store.get('metricsHistory') || { all: [], http: [], tcp: [] };
-            history.all.push(data.global?.avg_p99_ms  ?? 0);
-            history.http.push(data.global?.http_p99_ms ?? 0);
-            history.tcp.push(data.global?.tcp_p99_ms  ?? 0);
+            const history = store.get('metricsHistory') || {};
+            if (!history.all)        history.all        = [];
+            if (!history.http)       history.http       = [];
+            if (!history.tcp)        history.tcp        = [];
+            if (!history.udp)        history.udp        = [];
+            if (!history.worker)     history.worker     = [];
+            if (!history.timestamps) history.timestamps = [];
+            history.all.push(data.global?.avg_p99_ms    ?? 0);
+            history.http.push(data.global?.http_p99_ms  ?? 0);
+            history.tcp.push(data.global?.tcp_p99_ms    ?? 0);
+            history.udp.push(data.global?.udp_p99_ms    ?? 0);
+            history.worker.push(data.global?.worker_p99_ms ?? 0);
+            history.timestamps.push(Math.floor(Date.now() / 1000));
 
-            for (const k of ['all', 'http', 'tcp']) {
+            for (const k of ['all', 'http', 'tcp', 'udp', 'worker', 'timestamps']) {
                 if (history[k].length > MAX_HISTORY_POINTS) history[k].shift();
             }
             store.set('metricsHistory', history);
@@ -133,15 +148,19 @@ export function startMetricsPolling(store) {
             // Git state
             if (data.git) store.set('gitStats', data.git);
 
+            // Cluster state — stored separately so cluster.js can read it on mount
+            store.set('lastCluster', data.cluster || { enabled: false });
+
             emit('metrics:updated', {
                 stats:  { totalReqs, activeBackends, totalErrors, rps, apdex, p99 },
                 system: sys,
                 history,
                 hosts,
                 git:    data.git || {},
+                cluster: data.cluster || { enabled: false },
             });
 
-            emit('cluster:updated', { clusterStats: data.cluster });
+            emit('cluster:updated', { clusterStats: data.cluster || { enabled: false } });
 
         } catch (err) {
             // Log but don't crash the poll loop — Api errors are handled centrally

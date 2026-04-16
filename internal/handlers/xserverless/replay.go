@@ -23,8 +23,6 @@ const (
 	defaultRESTTimeout = 30 * time.Second
 )
 
-// upstreamHeadersToStrip are headers sent by the upstream that must not be
-// forwarded to the browser when StripUpstreamHeaders is active.
 var upstreamHeadersToStrip = map[string]struct{}{
 	"access-control-allow-origin":         {},
 	"access-control-allow-credentials":    {},
@@ -47,6 +45,8 @@ type ReplayConfig struct {
 	GlobalEnv  map[string]expect.Value
 	RouteEnv   map[string]expect.Value
 	NonceStore *nonce.Store
+	Domain     string
+	Route      alaye.Route
 }
 
 type Replay struct {
@@ -58,6 +58,7 @@ type Replay struct {
 	methods    []string
 	nonceStore *nonce.Store
 	cacheStore stash.Store
+	statsKey   alaye.BackendKey
 }
 
 func NewReplay(cfg ReplayConfig) *Replay {
@@ -76,9 +77,8 @@ func NewReplay(cfg ReplayConfig) *Replay {
 		client:     &http.Client{Timeout: timeout},
 	}
 
-	// Initialize stash cache if enabled
 	if cfg.Replay.Cache.Enabled.Active() {
-		maxItems := 10000 // default
+		maxItems := 10000
 		if cfg.Replay.Cache.Memory != nil && cfg.Replay.Cache.Memory.MaxItems > 0 {
 			maxItems = cfg.Replay.Cache.Memory.MaxItems
 		}
@@ -98,6 +98,10 @@ func NewReplay(cfg ReplayConfig) *Replay {
 			r.cacheStore = store
 		}
 	}
+
+	r.statsKey = cfg.Route.ReplayBackendKey(cfg.Domain, cfg.Replay.Name)
+	// Pre-register so the key exists in metrics even before first request
+	cfg.Resource.Metrics.GetOrRegister(r.statsKey)
 
 	return r
 }
@@ -143,9 +147,12 @@ func (h *Replay) dispatch(w http.ResponseWriter, r *http.Request) {
 	if !h.methodAllowed(r.Method) {
 		allowed := strings.Join(h.methods, ", ")
 		w.Header().Set("Allow", allowed)
+		h.res.Logger.Fields("replay", h.cfg.Name, "method", r.Method, "allowed", allowed, "remote", r.RemoteAddr).Warn("serverless: method not allowed")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	h.res.Logger.Fields("replay", h.cfg.Name, "method", r.Method, "remote", r.RemoteAddr, "path", r.URL.Path).Debug("serverless: replay dispatch")
 
 	if h.cfg.IsReplayMode() {
 		h.serveReplay(w, r)
@@ -173,18 +180,23 @@ func (h *Replay) serveFixed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.prepareHeaders(proxyReq.Header)
-	h.doProxyWithCache(w, r, proxyReq, false)
+	h.doProxyWithCache(w, r, proxyReq, false, time.Now())
 }
 
 func (h *Replay) serveReplay(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+
 	rawURL := r.Header.Get(woos.HeaderXAgberoReplayURL)
 	if rawURL == "" {
 		rawURL = r.URL.Query().Get("url")
 	}
 	if rawURL == "" {
+		h.res.Logger.Fields("replay", h.cfg.Name, "remote", r.RemoteAddr).Warn("serverless: replay missing target url")
 		http.Error(w, "replay: missing target url — set X-Agbero-Replay-Url header or ?url= param", http.StatusBadRequest)
 		return
 	}
+
+	h.res.Logger.Fields("replay", h.cfg.Name, "method", r.Method, "target", rawURL, "remote", r.RemoteAddr).Info("serverless: replay request")
 
 	targetURL, err := url.Parse(rawURL)
 	if err != nil || (targetURL.Scheme != "http" && targetURL.Scheme != "https") {
@@ -216,7 +228,7 @@ func (h *Replay) serveReplay(w http.ResponseWriter, r *http.Request) {
 	h.setReferer(proxyReq, targetURL, r.Header.Get("Referer"))
 
 	strip := h.cfg.StripHeaders.Active()
-	h.doProxyWithCache(w, r, proxyReq, strip)
+	h.doProxyWithCache(w, r, proxyReq, strip, start)
 }
 
 func (h *Replay) setReferer(proxyReq *http.Request, targetURL *url.URL, incomingReferer string) {
@@ -241,7 +253,14 @@ func (h *Replay) setReferer(proxyReq *http.Request, targetURL *url.URL, incoming
 	}
 }
 
-func (h *Replay) doProxyWithCache(w http.ResponseWriter, r *http.Request, proxyReq *http.Request, strip bool) {
+func (h *Replay) doProxyWithCache(w http.ResponseWriter, r *http.Request, proxyReq *http.Request, strip bool, start time.Time) {
+	activity := h.res.Metrics.GetOrRegister(h.statsKey).Activity
+	activity.StartRequest()
+	failed := false
+	defer func() {
+		activity.EndRequest(time.Since(start).Microseconds(), failed)
+	}()
+
 	shouldCache := h.shouldCacheRequest(r)
 	var cacheKey string
 
@@ -266,6 +285,7 @@ func (h *Replay) doProxyWithCache(w http.ResponseWriter, r *http.Request, proxyR
 
 	resp, err := h.client.Do(proxyReq)
 	if err != nil {
+		failed = true
 		h.res.Logger.Fields("url", proxyReq.URL.String(), "err", err).Error("serverless: upstream call failed")
 		http.Error(w, "Upstream Service Unavailable", http.StatusBadGateway)
 		return
@@ -274,10 +294,10 @@ func (h *Replay) doProxyWithCache(w http.ResponseWriter, r *http.Request, proxyR
 
 	var body []byte
 	if shouldCache && resp.StatusCode == http.StatusOK {
-		// Check if response allows caching
+
 		cc := resp.Header.Get("Cache-Control")
 		if strings.Contains(cc, "no-store") {
-			// Don't cache this response
+
 			shouldCache = false
 		} else {
 			body, err = io.ReadAll(resp.Body)
@@ -320,6 +340,11 @@ func (h *Replay) doProxyWithCache(w http.ResponseWriter, r *http.Request, proxyR
 	if shouldCache {
 		w.Header().Set("X-Cache-Status", "MISS")
 	}
+
+	if resp.StatusCode >= 500 {
+		failed = true
+	}
+	h.res.Logger.Fields("replay", h.cfg.Name, "target", proxyReq.URL.Host, "status", resp.StatusCode, "duration", time.Since(start)).Info("serverless: replay done")
 
 	w.WriteHeader(resp.StatusCode)
 	if body != nil {
@@ -473,12 +498,15 @@ func (h *Replay) validateTargetHost(host string) error {
 
 	// DNS rebinding note: LookupIP is called at validation time; the actual
 	// HTTP dial happens afterwards and may resolve to a different IP if the
-	// TTL is very short (DNS rebinding attack). A wildcard "*" in
+	// TTL is very short (DNS rebinding attack).  A wildcard "*" in
 	// AllowedDomains bypasses this check entirely and must not be used in
 	// production replay configurations.
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return fmt.Errorf("DNS resolution failed for %s: %w", host, err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("DNS resolution returned no addresses for %s", host)
 	}
 	for _, ip := range ips {
 		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() {

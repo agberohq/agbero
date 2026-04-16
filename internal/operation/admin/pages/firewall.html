@@ -1,4 +1,26 @@
 <div class="page active">
+    <!-- Global firewall status bar (Phase 7 #47) -->
+    <div id="fwStatusBar" style="display:none;margin-bottom:16px;padding:10px 14px;background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;">
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.4px;">Mode</span>
+                <span id="fwMode" class="badge">—</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.4px;">Inspect Body</span>
+                <span id="fwInspectBody" class="badge">—</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.4px;">Default Dynamic</span>
+                <span id="fwDefaultDynamic" class="badge">—</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.4px;">Default Static</span>
+                <span id="fwDefaultStatic" class="badge">—</span>
+            </div>
+        </div>
+    </div>
+
     <div class="flex-right" style="align-items:center;">
         <div style="display:flex;align-items:center;gap:8px;">
             <span style="font-size:12px;color:var(--text-mute);">Blocked IPs:</span>
@@ -12,6 +34,7 @@
         </select>
         <button class="btn primary" id="addRuleBtn">Block IP</button>
     </div>
+
     <div class="table-responsive">
         <table class="simple-table">
             <thead>
@@ -27,127 +50,3 @@
         </table>
     </div>
 </div>
-
-<script type="module">
-    import { component, listen, on, notify, modal, query } from '../lib/oja.full.esm.js';
-    import { fetchFirewall, deleteFirewallRule } from '../js/api.js';
-
-    let _rules     = [];
-    let _sortKey   = 'created_desc';
-    let _confirmIp = null;
-
-    function emptyRow(html) {
-        return `<tr><td colspan="5" style="padding:20px;"><div class="empty-state">${html}</div></td></tr>`;
-    }
-
-    function sortRules(rules) {
-        const r = [...rules];
-        if (_sortKey === 'ip')          r.sort((a,b) => (a.ip||'').localeCompare(b.ip||''));
-        else if (_sortKey === 'created_asc') r.sort((a,b) => new Date(a.created_at||0) - new Date(b.created_at||0));
-        else                            r.sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
-        return r;
-    }
-
-    function ruleRow(r) {
-        const created = r.created_at ? new Date(r.created_at) : null;
-        // toLocaleString preserves the time component — critical for incident response
-        const dateStr = created && !isNaN(created)
-            ? created.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-            : '—';
-        const ip = r.ip || '0.0.0.0';
-        return `<tr>
-            <td class="mono">${ip}</td>
-            <td>${r.reason || '—'}</td>
-            <td class="hide-mobile mono" style="font-size:11px;">${r.host || '*'} / ${r.path || '*'}</td>
-            <td class="hide-mobile" style="font-family:var(--font-mono);font-size:11px;">${dateStr}</td>
-            <td>
-                <button class="btn small error fw-unblock-btn" data-ip="${ip}" data-confirm="">Unblock</button>
-            </td>
-        </tr>`;
-    }
-
-    function render(data) {
-        const tbody   = query('#firewallTable');
-        const countEl = query('#fwCount');
-        if (!tbody) return;
-
-        if (!data) {
-            tbody.innerHTML = emptyRow('⚠️ Firewall unavailable');
-            if (countEl) countEl.textContent = '—';
-            return;
-        }
-        if (data.enabled === false) {
-            tbody.innerHTML = emptyRow('<span>🛡️ Firewall disabled</span><span>Enable in agbero.hcl to use this feature</span>');
-            if (countEl) countEl.textContent = '0';
-            return;
-        }
-
-        _rules = data.rules || [];
-        if (countEl) countEl.textContent = String(_rules.length);
-
-        if (!_rules.length) {
-            tbody.innerHTML = emptyRow('<span>✅ No blocked IPs</span><span>All traffic is currently allowed</span>');
-            return;
-        }
-
-        tbody.innerHTML = sortRules(_rules).map(ruleRow).join('');
-    }
-
-    async function refresh() { render(await fetchFirewall()); }
-
-    // Events
-
-    on('#addRuleBtn',  'click', () => modal.open('ruleModal'));
-    on('#fwSortSel',   'change', (e, el) => { _sortKey = el.value; render({ enabled: true, rules: _rules }); });
-
-    // Two-step inline confirm — no native dialog, no blocking overlay
-    on('.fw-unblock-btn', 'click', async (e, btn) => {
-        const ip = btn.dataset.ip;
-        if (!ip) return;
-
-        if (btn.dataset.confirm === '1') {
-            // Confirmed — execute
-            _confirmIp = null;
-            btn.disabled = true;
-            btn.textContent = '…';
-            try {
-                await deleteFirewallRule(ip);
-                notify.show(`${ip} unblocked`, 'success');
-                refresh();
-            } catch {
-                btn.disabled = false;
-                btn.textContent = 'Unblock';
-                btn.className = 'btn small error fw-unblock-btn';
-                btn.dataset.confirm = '';
-                notify.show('Failed to unblock', 'error');
-            }
-        } else {
-            // Reset any other pending confirm
-            if (_confirmIp && _confirmIp !== ip) {
-                const prev = query(`.fw-unblock-btn[data-ip="${_confirmIp}"]`);
-                if (prev) { prev.textContent = 'Unblock'; prev.className = 'btn small error fw-unblock-btn'; prev.dataset.confirm = ''; }
-            }
-            _confirmIp = ip;
-            btn.dataset.confirm = '1';
-            btn.textContent = 'Sure?';
-            btn.className = 'btn small fw-unblock-btn';
-            btn.style.background = 'var(--warning)';
-            btn.style.color = '#fff';
-            btn.style.borderColor = 'var(--warning)';
-            // Auto-cancel after 3s
-            setTimeout(() => {
-                if (btn.dataset.confirm === '1') {
-                    btn.dataset.confirm = '';
-                    btn.textContent = 'Unblock';
-                    btn.className = 'btn small error fw-unblock-btn';
-                    btn.style.cssText = '';
-                    _confirmIp = null;
-                }
-            }, 3000);
-        }
-    });
-
-    const unsubRefresh = listen('firewall:refresh', refresh);
-    refresh();
-    component.onUnmount(() => unsubRefresh());
-</script>

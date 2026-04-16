@@ -47,6 +47,7 @@ const (
 	LocalhostSuffixDotLocal     = ".local"
 	LocalhostSuffixDotLocalhost = ".localhost"
 	LocalhostSuffixDotTest      = ".test"
+	LocalhostSuffixDotInternal  = ".internal"
 
 	Http  = "http"
 	Https = "https"
@@ -56,6 +57,7 @@ const (
 
 	HCLSuffix = ".hcl"
 	TCP       = "tcp"
+	UDP       = "udp"
 )
 
 const (
@@ -313,6 +315,15 @@ const (
 	TCPHealthCheckInterval = 5 * time.Second
 	TCPHealthCheckTimeout  = 2 * time.Second
 
+	// UDP proxy defaults
+	UDPDefaultSessionTTL   = 30 * time.Second
+	UDPDefaultMaxSessions  = int64(100_000)
+	UDPHealthCheckInterval = 5 * time.Second
+	UDPHealthCheckTimeout  = 2 * time.Second
+
+	// Replay (serverless outbound proxy) defaults
+	DefaultReplayTimeout = 30 * time.Second
+
 	RecordTypeHandshake      = 0x16
 	HandshakeTypeClientHello = 0x01
 
@@ -411,6 +422,7 @@ const (
 	DefaultReloadTimeout   = 30 * time.Second
 	DefaultShutdownTimeout = 5 * time.Second
 	DefaultGitPoolTimeout  = 1 * time.Second
+	DefaultGitInterval     = 30 * time.Minute
 
 	AdminTokenTTL = 8 * time.Hour
 
@@ -476,7 +488,9 @@ const (
 )
 
 const (
-	DefaultWasmTimeout = 30 * time.Second
+	DefaultWasmTimeout   = 30 * time.Second
+	DefaultWorkerTimeout = 30 * time.Second
+	DefaultWorkerRestart = "on-failure"
 )
 
 const (

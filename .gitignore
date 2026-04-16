@@ -8,6 +8,7 @@ bin
 tmp
 _lab
 dist
+_*
 
 cmd/agbero/server.log
 cmd/agbero/agbero

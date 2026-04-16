@@ -6,7 +6,7 @@
         <div class="welcome-meta" id="welcomeMeta">—</div>
     </div>
 
-    <!-- Ops briefing: certs · top hosts · error hotspots -->
+    <!-- Ops briefing: certs · top hosts · error hotspots · git deploys -->
     <div class="briefing-grid">
 
         <div class="brief-panel">
@@ -31,7 +31,7 @@
 
         <div class="brief-panel">
             <div class="brief-panel-header">
-                <span class="brief-panel-title">Error Hotspots</span>
+                <span class="brief-panel-title">Slowest Endpoints</span>
                 <span id="errorBriefSub" style="font-size:10px;color:var(--text-mute);font-family:var(--font-mono);"></span>
             </div>
             <div class="brief-panel-body" id="errorBriefing">
@@ -39,18 +39,37 @@
             </div>
         </div>
 
+        <div class="brief-panel">
+            <div class="brief-panel-header">
+                <span class="brief-panel-title">Git Deploys</span>
+                <span id="gitBriefSub" style="font-size:10px;color:var(--text-mute);font-family:var(--font-mono);"></span>
+            </div>
+            <div class="brief-panel-body" id="gitBriefing">
+                <div class="brief-empty">No git deploys configured</div>
+            </div>
+        </div>
+
     </div>
 
-    <!-- Health bar -->
-    <div class="health-row" style="margin-bottom:12px;">
-        <div class="health-bar" id="globalHealthBar">
-            <div class="hb-seg hb-ok" style="width:100%"></div>
-            <div class="hb-seg hb-err" style="width:0%"></div>
+    <!-- Health bar — click to expand -->
+    <div class="health-section" id="healthSection">
+        <div class="health-bar-row" id="healthBarRow" title="Click to expand">
+            <div class="health-bar" id="globalHealthBar">
+                <div class="hb-seg hb-ok"  style="width:100%"></div>
+                <div class="hb-seg hb-err" style="width:0%"></div>
+            </div>
+            <div class="health-bar-summary">
+                <span id="errorRateText"   class="health-bar-stat">0.0% errors</span>
+                <span id="latencyHttpText" class="health-bar-stat"></span>
+                <span id="latencyTcpText"  class="health-bar-stat"></span>
+                <span id="latencyUdpText"  class="health-bar-stat"></span>
+                <span id="latencyWorkerText" class="health-bar-stat"></span>
+                <span id="lastUpdatedText" class="health-bar-updated">—</span>
+                <span class="health-bar-expand-icon">›</span>
+            </div>
         </div>
-        <div class="health-meta">
-            <span><span class="dot ok"></span> Success</span>
-            <span class="error-rate" id="errorRateText">0.0% errors</span>
-            <span class="last-updated" id="lastUpdatedText">—</span>
+        <div class="health-detail" id="healthDetail" style="display:none;">
+            <div class="health-detail-grid" id="healthDetailGrid"></div>
         </div>
     </div>
 
@@ -60,348 +79,42 @@
             <span class="chart-tab active" data-type="all">ALL</span>
             <span class="chart-tab" data-type="http">HTTP</span>
             <span class="chart-tab" data-type="tcp">TCP</span>
+            <span class="chart-tab" data-type="udp">UDP</span>
+            <span class="chart-tab" data-type="worker">WORKER</span>
         </div>
         <div id="responseGraph" style="width:100%;height:100%;"></div>
     </div>
 
-    <!-- Notifications / activity feed -->
-    <div class="notif-bar" id="notifBar">
-        <span class="notif-bar-icon">🔔</span>
-        <span class="notif-bar-text" id="notifText">No notifications yet</span>
+    <!-- Notifications -->
+    <div class="notif-panel" id="notifPanel">
+        <div class="notif-panel-header">
+            <span class="notif-panel-title">🔔 Alerts</span>
+            <span id="notifCount" class="notif-count" style="display:none;"></span>
+        </div>
+        <div id="notifList" class="notif-list">
+            <div class="notif-empty">No alerts — everything looks healthy</div>
+        </div>
     </div>
 </div>
 
-<script type="module">
-    import { component, listen, emit, chart, on, query, queryAll, clickmenu } from '../lib/oja.full.esm.js';
-    import { store, getCreds } from '../js/store.js';
+<!-- Cert detail modal — scoped to dashboard, only used from this page -->
+<div class="modal-overlay" id="certDetailModal">
+    <div class="modal" style="max-width:420px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+            <h3 style="margin:0;font-size:14px;" id="certDetailTitle">Certificate</h3>
+            <button class="close-modal" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--text-mute);padding:0 4px;">✕</button>
+        </div>
+        <div id="certDetailBody" class="detail-grid"></div>
+    </div>
+</div>
 
-    let mainChart = null;
-    let unsub     = null;
-
-    // Helpers
-
-    function buildTimeGradient(n) {
-        return Array.from({ length: n }, (_, i) => {
-            const t = i / Math.max(n - 1, 1);
-            return `rgba(59,130,246,${(0.18 + t * 0.82).toFixed(2)})`;
-        });
-    }
-
-    function fmtReqs(n) {
-        if (!n) return '0';
-        if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-        if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'k';
-        return String(n);
-    }
-
-    function daysColor(d) {
-        if (d < 0)  return 'var(--danger)';
-        if (d < 7)  return 'var(--warning)';
-        if (d < 30) return 'var(--info)';
-        return 'var(--success)';
-    }
-
-    // Panel renderers
-
-    function renderCerts(certs) {
-        const el = query('#certBriefing');
-        const sum = query('#certSummary');
-        if (!el) return;
-
-        if (!certs || !certs.length) {
-            el.innerHTML = '<div class="brief-empty">No certificates tracked</div>';
-            if (sum) sum.textContent = '';
-            return;
-        }
-
-        // Sort: expired first, then soonest expiry
-        const sorted = [...certs].sort((a, b) => a.daysLeft - b.daysLeft);
-        const expiring = sorted.filter(c => c.daysLeft < 30).length;
-        if (sum) sum.textContent = expiring > 0 ? `${expiring} expiring soon` : `${certs.length} managed`;
-
-        el.innerHTML = sorted.slice(0, 5).map(c => {
-            const color = daysColor(c.daysLeft);
-            const label = c.daysLeft < 0 ? 'Expired' : c.daysLeft === 0 ? 'Today' : `${c.daysLeft}d`;
-            return `<div class="brief-row">
-                <span class="dot" style="background:${color};flex-shrink:0;"></span>
-                <span class="brief-row-main">${c.host}</span>
-                <span class="brief-row-sub" style="color:${color};font-family:var(--font-mono);">${label}</span>
-            </div>`;
-        }).join('');
-    }
-
-    function renderTopHosts(hosts) {
-        const el  = query('#hostBriefing');
-        const sub = query('#hostBriefSub');
-        if (!el) return;
-
-        const entries = Object.entries(hosts || {})
-            .map(([name, h]) => ({ name, reqs: h.total_reqs || 0 }))
-            .filter(h => h.reqs > 0)
-            .sort((a, b) => b.reqs - a.reqs);
-
-        if (sub) sub.textContent = entries.length ? `${entries.length} hosts` : '';
-
-        if (!entries.length) {
-            el.innerHTML = '<div class="brief-empty">No traffic yet</div>';
-            return;
-        }
-
-        const maxReqs = entries[0].reqs;
-        el.innerHTML = entries.slice(0, 5).map((h, i) => {
-            const pct  = maxReqs > 0 ? Math.round((h.reqs / maxReqs) * 100) : 0;
-            const rank = i === 0 ? 'var(--accent)' : i === 1 ? 'var(--info)' : 'var(--border)';
-            return `<div class="brief-row" data-hostname="${h.name}"
-                style="flex-direction:column;align-items:stretch;gap:4px;cursor:pointer;">
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span class="brief-row-main">${h.name}</span>
-                    <span class="brief-row-sub" style="font-family:var(--font-mono);">${fmtReqs(h.reqs)}</span>
-                </div>
-                <div style="height:2px;background:var(--border);border-radius:1px;overflow:hidden;">
-                    <div style="width:${pct}%;height:100%;background:${rank};transition:width 0.4s;"></div>
-                </div>
-            </div>`;
-        }).join('');
-    }
-
-    function renderErrorHotspots(hosts) {
-        const el  = query('#errorBriefing');
-        const sub = query('#errorBriefSub');
-        if (!el) return;
-
-        // Collect per-backend failure counts across all hosts/routes
-        const hotspots = [];
-        for (const [hostname, h] of Object.entries(hosts || {})) {
-            for (const route of (h.routes || [])) {
-                for (const b of (route.backends || [])) {
-                    if ((b.failures || 0) > 0) {
-                        hotspots.push({
-                            url:      b.url || '?',
-                            host:     hostname,
-                            failures: b.failures,
-                            alive:    b.alive,
-                        });
-                    }
-                }
-            }
-        }
-        hotspots.sort((a, b) => b.failures - a.failures);
-
-        const totalErrors = hotspots.reduce((s, h) => s + h.failures, 0);
-        if (sub) sub.textContent = totalErrors > 0 ? `${fmtReqs(totalErrors)} total` : '';
-
-        if (!hotspots.length) {
-            el.innerHTML = '<div class="brief-empty" style="color:var(--success);">✓ No errors recorded</div>';
-            return;
-        }
-
-        el.innerHTML = hotspots.slice(0, 5).map(h => {
-            const dot = h.alive ? 'warn' : 'down';
-            return `<div class="brief-row">
-                <span class="dot ${dot}" style="flex-shrink:0;"></span>
-                <span class="brief-row-main">${h.url}</span>
-                <span class="brief-row-sub" style="color:var(--danger);font-family:var(--font-mono);">${fmtReqs(h.failures)} fail</span>
-            </div>`;
-        }).join('');
-    }
-
-    // Full update
-
-    function processMetrics(payload) {
-        const hosts = payload.hosts || {};
-
-        // Welcome meta: version + host count + route count
-        const version = store.get('sys.version') || '';
-        let hc = 0, rc = 0, tReqs = 0, tErrs = 0;
-        for (const h of Object.values(hosts)) {
-            hc++;
-            rc += (h.routes || []).length + (h.proxies || []).length;
-            tReqs += h.total_reqs || 0;
-            (h.routes  || []).forEach(r => (r.backends || []).forEach(b => tErrs += b.failures || 0));
-            (h.proxies || []).forEach(p => (p.backends || []).forEach(b => tErrs += b.failures || 0));
-        }
-
-        const metaEl = query('#welcomeMeta');
-        if (metaEl) metaEl.textContent = [
-            version,
-            payload.system?.uptime || '',
-            `${hc} host${hc !== 1 ? 's' : ''}`,
-            `${rc} route${rc !== 1 ? 's' : ''}`,
-        ].filter(Boolean).join(' · ');
-
-        // Health bar
-        const bar = query('#globalHealthBar');
-        if (bar) {
-            const errPct  = tReqs > 0 ? (tErrs / tReqs) * 100 : 0;
-            const succPct = Math.max(0, 100 - errPct);
-            bar.innerHTML = `<div class="hb-seg hb-ok" style="width:${succPct}%"></div><div class="hb-seg hb-err" style="width:${errPct}%"></div>`;
-            const errText = query('#errorRateText');
-            if (errText) errText.textContent = `${tReqs > 0 ? ((tErrs / tReqs) * 100).toFixed(1) : '0.0'}% errors`;
-        }
-
-        const timeEl = query('#lastUpdatedText');
-        if (timeEl) timeEl.textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-        // Three panels — all different data from the footer
-        renderCerts(store.get('certificates') || []);
-        renderTopHosts(hosts);
-        renderErrorHotspots(hosts);
-        renderNotifications(hosts, store.get('certificates') || []);
-
-        // Chart
-        refreshChart(payload.history);
-    }
-
-    function renderNotifications(hosts, certs) {
-        const el = query('#notifText');
-        if (!el) return;
-        const items = [];
-
-        // Cert expiry warnings
-        (certs || []).forEach(c => {
-            if (c.daysLeft < 0)  items.push({ icon: '🔴', msg: `Certificate expired: ${c.host}`, sev: 'danger' });
-            else if (c.daysLeft < 7)  items.push({ icon: '🟡', msg: `Certificate expiring in ${c.daysLeft}d: ${c.host}`, sev: 'warning' });
-        });
-
-        // High error rate
-        let tReqs = 0, tErrs = 0;
-        for (const h of Object.values(hosts || {})) {
-            tReqs += h.total_reqs || 0;
-            (h.routes || []).forEach(r => (r.backends || []).forEach(b => tErrs += b.failures || 0));
-        }
-        if (tReqs > 50 && tErrs / tReqs > 0.05) {
-            items.push({ icon: '🔴', msg: `High error rate: ${((tErrs/tReqs)*100).toFixed(1)}% (${tErrs} failures)`, sev: 'danger' });
-        }
-
-        // Dead backends
-        for (const [hostname, h] of Object.entries(hosts || {})) {
-            for (const route of (h.routes || [])) {
-                for (const b of (route.backends || [])) {
-                    if (b.alive === false) {
-                        items.push({ icon: '⚠️', msg: `Dead backend: ${b.url || b.address || '?'} on ${hostname}`, sev: 'warning' });
-                    }
-                }
-            }
-        }
-
-        if (!items.length) {
-            el.textContent = 'No alerts — everything looks healthy';
-            el.parentElement?.style.setProperty('border-color', '');
-            return;
-        }
-
-        // Show most severe first
-        items.sort((a, b) => (a.sev === 'danger' ? -1 : 1));
-        el.innerHTML = items.map(i => `<span style="margin-right:16px;">${i.icon} ${i.msg}</span>`).join('');
-
-        const bar = el.parentElement;
-        if (bar) bar.style.borderColor = items.some(i => i.sev === 'danger') ? 'rgba(255,59,48,0.3)' : 'rgba(245,166,35,0.3)';
-    }
-
-    function refreshChart(history) {
-        const h   = history || store.get('metricsHistory') || { all: [], http: [], tcp: [] };
-        const key  = store.get('activeChart') || 'all';
-        const vals = [...(h[key] || [])];
-        if (vals.length === 0) vals.push(0);
-
-        if (!mainChart) {
-            mainChart = chart.bar('#responseGraph', vals, {
-                unit: 'ms', warnAt: 500,
-                colors: buildTimeGradient(vals.length),
-                label: key.toUpperCase(),
-            });
-        } else {
-            mainChart.update(vals, { colors: buildTimeGradient(vals.length), label: key.toUpperCase() });
-        }
-    }
-
-    // Boot
-
-    // Welcome: extract username from JWT using getCreds() — never raw localStorage
-    (function setWelcomeName() {
-        const el = query('#welcomeName');
-        if (!el) return;
-        try {
-            const { token } = getCreds();
-            if (!token) { el.textContent = 'ADMIN'; return; }
-            const payload = JSON.parse(atob(token.split('.')[1]));
-            el.textContent = (payload.user || 'ADMIN').toUpperCase();
-        } catch { el.textContent = 'ADMIN'; }
-    })();
-
-    // Paint certs immediately from store (populated at boot by loadConfigData)
-    renderCerts(store.get('certificates') || []);
-
-    // Paint chart from cached history, and welcome meta from cached system
-    const cachedHistory = store.get('metricsHistory');
-    if (cachedHistory) refreshChart(cachedHistory);
-
-    const cachedSystem = store.get('lastUptime')?.system;
-    if (cachedSystem) {
-        const metaEl = query('#welcomeMeta');
-        if (metaEl && metaEl.textContent === '—') {
-            const version = store.get('sys.version') || '';
-            metaEl.textContent = [version, cachedSystem.uptime || ''].filter(Boolean).join(' · ');
-        }
-    }
-
-    // Subscribe to global metrics — no independent poll
-    unsub = listen('metrics:updated', processMetrics);
-
-    // Top host — left-click: open route drawer for the first route of this host
-    on('#hostBriefing', 'click', (e) => {
-        const row = e.target.closest('[data-hostname]');
-        if (!row) return;
-        const domain = row.dataset.hostname;
-        // Open the first route in the drawer — gives instant detail without navigating away
-        emit('drawer:open-route', { host: domain, idx: 0, type: 'route' });
-    });
-
-    // Top host — right-click context menu
-    on('#hostBriefing', 'contextmenu', (e) => {
-        const row = e.target.closest('[data-hostname]');
-        if (!row) return;
-        e.preventDefault();
-        const domain = row.dataset.hostname;
-        clickmenu.show(e.clientX, e.clientY, [
-            {
-                label:  'Go to host',
-                icon:   '🔗',
-                action: () => {
-                    store.set('searchTerm', domain);
-                    emit('app:navigate', { path: '/hosts' });
-                },
-            },
-            {
-                label:  'Performance',
-                icon:   '📈',
-                action: () => emit('perf:open', { hostname: domain }),
-            },
-            { separator: true },
-            {
-                label:  'Edit config',
-                icon:   '✏️',
-                action: () => {
-                    store.set('searchTerm', domain);
-                    emit('app:navigate', { path: '/hosts' });
-                    setTimeout(() => emit('host:open-edit', { domain }), 150);
-                },
-            },
-        ]);
-    });
-
-    // Chart tabs
-    on('.chart-tab', 'click', (e, tab) => {
-        queryAll('.chart-tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        store.set('activeChart', tab.dataset.type);
-        refreshChart();
-    });
-
-    component.onUnmount(() => {
-        if (unsub) unsub();
-        if (mainChart) mainChart.destroy?.();
-        mainChart = null;
-        unsub = null;
-    });
-</script>
+<!-- Git deploy detail modal — scoped to dashboard, only used from this page -->
+<div class="modal-overlay" id="gitDetailModal">
+    <div class="modal" style="max-width:420px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+            <h3 style="margin:0;font-size:14px;" id="gitDetailTitle">Git Deploy</h3>
+            <button class="close-modal" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--text-mute);padding:0 4px;">✕</button>
+        </div>
+        <div id="gitDetailBody" class="detail-grid"></div>
+    </div>
+</div>

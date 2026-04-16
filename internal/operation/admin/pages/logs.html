@@ -1,7 +1,7 @@
 <div class="page active" style="max-width:100%;">
 
     <div class="logs-toolbar">
-        <!-- Group 1: filter + tail -->
+        <!-- Group 1: level filter + tail + search -->
         <div class="logs-toolbar-left">
             <div class="filter-chips">
                 <span class="chip active" data-level="ALL">ALL</span>
@@ -17,6 +17,17 @@
                 <option value="500">Last 500</option>
                 <option value="1000">Last 1000</option>
             </select>
+            <span class="divider-v hide-mobile"></span>
+            <select id="logsHostFilter" style="width:auto;margin:0;font-size:11px;">
+                <option value="">All hosts</option>
+            </select>
+            <span class="divider-v hide-mobile"></span>
+            <div style="position:relative;">
+                <input type="text" id="logsSearch" placeholder="Search logs…"
+                       class="search-input" style="width:160px;height:var(--btn-h-sm);padding:0 26px 0 8px;font-size:12px;box-sizing:border-box;"
+                       autocomplete="off" spellcheck="false">
+                <button id="logsSearchClear" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text-mute);font-size:12px;padding:0;line-height:1;display:none;">✕</button>
+            </div>
         </div>
 
         <!-- Group 2: icon action buttons -->
@@ -69,179 +80,3 @@
 
     <div id="logsList" class="logs-console"></div>
 </div>
-
-<script type="module">
-    import { component, on, ui, query, queryAll } from '../lib/oja.full.esm.js';
-    import { store } from '../js/store.js';
-    import { fetchLogs } from '../js/api.js';
-
-    // SVGs for pause and resume ▶ — swapped on toggle
-    const ICON_PAUSE  = `<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>`;
-    const ICON_RESUME = `<polygon points="5 3 19 12 5 21 5 3"/>`;
-
-    let paused        = false;
-    let filter        = store.get('logFilter') || 'ALL';
-    let logs          = [];
-    let pollTimer     = null;
-    let isAllExpanded = false;
-
-    // Log parsing
-
-    function parseEntry(l) {
-        let lvl = 'INFO', msg = '', ts = '', fields = {};
-
-        if (typeof l === 'string') {
-            try {
-                const p = JSON.parse(l);
-                lvl    = p.lvl || p.level || 'INFO';
-                msg    = p.msg || p.message || l;
-                ts     = p.ts  || p.time   || '';
-                fields = p.fields ? { ...p.fields } : {};
-            } catch { msg = l; }
-        } else if (l && typeof l === 'object') {
-            lvl    = l.lvl || l.level || 'INFO';
-            msg    = l.msg || l.message || '';
-            ts     = l.ts  || l.time   || '';
-            fields = l.fields ? { ...l.fields } : {};
-        }
-
-        if (ts?.includes('T')) ts = ts.split('T')[1]?.split('.')[0] || ts;
-
-        // Promote common fields into the message line
-        let full = msg;
-        if (fields.method && fields.path) { full += ` ${fields.method} ${fields.path}`; delete fields.method; delete fields.path; }
-        if (fields.status)   { full += ` [${fields.status}]`;                              delete fields.status;   }
-        if (fields.duration) { full += ` (${(fields.duration / 1e6).toFixed(2)}ms)`;       delete fields.duration; }
-
-        return { lvl, ts, full, fields };
-    }
-
-    // Render
-
-    function renderLogs() {
-        const el = query('#logsList');
-        if (!el) return;
-
-        if (!logs.length) {
-            el.innerHTML = `<div style="color:var(--text-mute);text-align:center;padding:40px;">
-                <span style="display:block;font-size:24px;margin-bottom:10px;">📭</span>
-                No logs yet. Waiting for traffic...
-            </div>`;
-            return;
-        }
-
-        const filtered = logs.filter(l => {
-            if (filter === 'ALL') return true;
-            return parseEntry(l).lvl === filter;
-        });
-
-        if (!filtered.length) {
-            el.innerHTML = `<div style="color:var(--text-mute);text-align:center;padding:20px;">No ${filter} logs</div>`;
-            return;
-        }
-
-        el.innerHTML = filtered.map(l => {
-            const { lvl, ts, full, fields } = parseEntry(l);
-            const color   = lvl === 'ERROR' ? 'var(--danger)' : lvl === 'WARN' ? 'var(--warning)' : 'var(--text-mute)';
-            const hasJson = Object.keys(fields).length > 0 && window.app?.syntaxHighlight;
-
-            const jsonToggle = hasJson
-                ? `<details class="log-details"${isAllExpanded ? ' open' : ''}>` +
-                `<summary class="log-json-toggle">{…}</summary>` +
-                `<div class="log-json-body">${window.app.syntaxHighlight(fields)}</div>` +
-                `</details>`
-                : '';
-
-            return `<div class="log-entry">` +
-                `<span class="log-ts">${ts}</span>` +
-                `<span class="log-lvl" style="color:${color};">${lvl}</span>` +
-                `<span class="log-msg">${full} ${jsonToggle}</span>` +
-                `</div>`;
-        }).join('');
-    }
-
-    // Fetch
-
-    async function fetchAndRender() {
-        if (paused) return;
-        const lines = query('#logsTailSelect')?.value || '100';
-        const data  = await fetchLogs(lines);
-        if (data && Array.isArray(data)) {
-            logs = [...data].reverse();
-            renderLogs();
-        }
-    }
-
-    // Export — clean JSON array, jq-compatible
-
-    async function exportLogs() {
-        const btn   = query('#logsExportBtn');
-        const lines = query('#logsTailSelect')?.value || '100';
-        ui.btn.loading(btn);
-
-        const data = await fetchLogs(lines);
-        if (!data || !Array.isArray(data)) { ui.btn.reset(btn); return; }
-
-        const out = data.map(l => {
-            if (typeof l === 'string') {
-                try { return JSON.parse(l); } catch { return { raw: l }; }
-            }
-            return l;
-        });
-
-        const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
-        const a    = Object.assign(document.createElement('a'), {
-            href:     URL.createObjectURL(blob),
-            download: `agbero-logs-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`,
-        });
-        a.click();
-        URL.revokeObjectURL(a.href);
-        ui.btn.done(btn, '✓');
-    }
-
-    // Boot
-
-    queryAll('.chip').forEach(c => c.classList.remove('active'));
-    const activeChip = query(`.chip[data-level="${filter}"]`);
-    if (activeChip) activeChip.classList.add('active');
-
-    fetchAndRender();
-    pollTimer = setInterval(fetchAndRender, 2000);
-
-    // Events
-
-    on('#logsPauseBtn', 'click', (e, btn) => {
-        paused = !paused;
-        btn.title = paused ? 'Resume live updates' : 'Pause live updates';
-        const svg = query('#logsPauseIcon');
-        if (svg) svg.innerHTML = paused ? ICON_RESUME : ICON_PAUSE;
-    });
-
-    on('#logsExpandAllBtn', 'click', () => {
-        isAllExpanded = true;
-        queryAll('.log-details').forEach(el => el.open = true);
-    });
-
-    on('#logsCollapseAllBtn', 'click', () => {
-        isAllExpanded = false;
-        queryAll('.log-details').forEach(el => el.open = false);
-    });
-
-    on('#logsExportBtn',  'click', exportLogs);
-    on('#logsClearBtn',   'click', () => { logs = []; renderLogs(); });
-    on('#logsTailSelect', 'change', fetchAndRender);
-
-    on('.chip', 'click', (e, chip) => {
-        queryAll('.chip').forEach(c => c.classList.remove('active'));
-        chip.classList.add('active');
-        filter = chip.dataset.level;
-        store.set('logFilter', filter);
-        renderLogs();
-    });
-
-    component.onUnmount(() => {
-        if (pollTimer) clearInterval(pollTimer);
-        paused = false;
-        logs   = [];
-    });
-</script>

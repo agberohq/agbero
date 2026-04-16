@@ -44,14 +44,25 @@ Agbero solves these challenges natively:
 # Install
 curl -fsSL https://github.com/agberohq/agbero/releases/latest/download/install.sh | sh
 
+# Setup
+agbero init
+
+# Quick Run
+agbero run --dev 
+
+# Quick run with specific config
+agbero run --config agbero.hcl
+
 # Install as a system service with default configuration
 sudo agbero service install
 
-# Or run directly against a config file
-agbero run --config agbero.hcl
-
 # Develop locally — serve any directory with trusted HTTPS in one command
 agbero cert install
+
+# Quick serve dir
+agbero serve .
+
+# Quick serve with https
 agbero serve . --https
 ```
 

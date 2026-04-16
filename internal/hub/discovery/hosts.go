@@ -406,8 +406,13 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 		return
 	}
 
+	base := filepath.Base(event.Name)
+	if strings.HasPrefix(base, ".") {
+		return
+	}
+
 	if hm.clusterMgr != nil && hm.configSync != nil {
-		domain := strings.TrimSuffix(filepath.Base(event.Name), woos.HCLSuffix)
+		domain := strings.TrimSuffix(base, woos.HCLSuffix)
 
 		isRemove := event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)
 		isWrite := event.Has(fsnotify.Write) || event.Has(fsnotify.Create)
@@ -890,6 +895,17 @@ func (hm *Host) LikelyInternal(name string) bool {
 		return true
 	}
 	return false
+}
+
+func (hm *Host) SetClusterManager(cm *cluster.Manager) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+	hm.clusterMgr = cm
+	if cm != nil {
+		hm.configSync = NewConfigSync(hm.logger, cm)
+	} else {
+		hm.configSync = nil
+	}
 }
 
 // validatePathSegment rejects values that could escape a base directory via path traversal.

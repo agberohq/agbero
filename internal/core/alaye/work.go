@@ -9,6 +9,9 @@ import (
 // Work defines a managed external OS process that acts as a handler or sidecar.
 // It handles process execution, environment merging, and lifecycle management via jack.
 type Work struct {
+	Enabled  expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Landlock expect.Toggle `hcl:"landlock,attr" json:"landlock"`
+
 	Name string `hcl:"name,label" json:"name"`
 
 	Engine string `hcl:"engine,attr" json:"engine"`

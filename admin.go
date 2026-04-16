@@ -228,27 +228,17 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	state := s.apiShared.State()
 
+	clusterMembers := 0
+	if s.clusterManager != nil {
+		clusterMembers = len(s.clusterManager.Members())
+	}
+
 	status := map[string]any{
-		"status":    "ok",
-		"auth":      true,
-		"telemetry": state.Global.Admin.Telemetry.Enabled.Active(),
+		"status":          "ok",
+		"locked":          s.keeperStore == nil || s.keeperStore.IsLocked(),
+		"telemetry":       state.Global.Admin.Telemetry.Enabled.Active(),
+		"cluster_members": clusterMembers,
 	}
-
-	authState := "ready"
-
-	var challenges []string
-	if s.keeperStore != nil && s.keeperStore.IsLocked() {
-		challenges = append(challenges, "keeper_unlock")
-	}
-	if state.Global.Admin.TOTP.Enabled.Active() {
-		challenges = append(challenges, "totp")
-	}
-	if len(challenges) > 0 {
-		authState = "challenge_required"
-		status["challenges"] = challenges
-	}
-
-	status["auth_state"] = authState
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -362,12 +352,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Keeper must be unlocked for admin to function. There is no login
+	// challenge for keeper unlock — the keeper is an infrastructure
+	// concern unlocked out-of-band, not via the admin login flow.
 	if s.keeperStore == nil || s.keeperStore.IsLocked() {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
+		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]any{
-			"status":       "challenge_required",
-			"requirements": []string{"keeper_unlock"},
+			"error":   "keeper_locked",
+			"message": "The secret store is locked. An administrator must unlock it before login is available.",
 		})
 		return
 	}
@@ -378,6 +371,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Collect any additional challenges required after credential verification.
+	// Each challenge type is independent — new types can be added here without
+	// changing the client contract: 202 always means {status, token, requirements}.
 	var requirements []string
 	if cfg.TOTP.Enabled.Active() {
 		requirements = append(requirements, "totp")

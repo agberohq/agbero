@@ -31,8 +31,6 @@ type RedisState struct {
 	KeyPrefix string `hcl:"key_prefix,attr" json:"key_prefix"`
 }
 
-// Validate checks port range, secret key length, seed formats, and shared state driver.
-// It does not set defaults — all defaults are applied by woos.defaultGossip.
 func (g *Gossip) Validate() error {
 	if g.Enabled.NotActive() {
 		return nil
@@ -43,9 +41,15 @@ func (g *Gossip) Validate() error {
 	}
 
 	if g.SecretKey != "" {
-		keyLen := len(g.SecretKey)
-		if keyLen != SecretKeyLen16 && keyLen != SecretKeyLen24 && keyLen != SecretKeyLen32 {
-			return ErrInvalidSecretKey
+		// Only validate the byte length when the value is a plain literal.
+		// Refs (keeper, env, b64) are resolved at runtime after the store is open —
+		// Validate() runs before that and has no business trying to resolve them.
+		isRef := g.SecretKey.IsSecretStoreRef() || g.SecretKey.IsEnvRef() || g.SecretKey.IsBase64()
+		if !isRef {
+			keyLen := len(g.SecretKey)
+			if keyLen != SecretKeyLen16 && keyLen != SecretKeyLen24 && keyLen != SecretKeyLen32 {
+				return ErrInvalidSecretKey
+			}
 		}
 	}
 

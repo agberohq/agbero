@@ -21,7 +21,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
-	discovery "github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/pkg/version"

@@ -28,6 +28,18 @@ type Config struct {
 	Name     string
 	Seeds    []string
 	HostsDir expect.Folder
+
+	// KeeperSnapshot is called by the seed node during LocalState(join=true) to
+	// collect all keeper secrets that should be pushed to the joining node.
+	// The returned map is key -> plaintext bytes; values are zeroed after use.
+	// Nil means no keeper sync.
+	KeeperSnapshot func() map[string][]byte
+
+	// KeeperWrite is called on the joining node when an OpSecret envelope arrives
+	// via MergeRemoteState. It must write key -> value into the local keeper store.
+	// The value slice is zeroed by the caller immediately after KeeperWrite returns.
+	// Nil means incoming OpSecret envelopes are dropped.
+	KeeperWrite func(key string, value []byte)
 }
 
 type Manager struct {
@@ -59,8 +71,6 @@ func (e *eventDelegate) NotifyLeave(n *memberlist.Node) {
 
 func (e *eventDelegate) NotifyUpdate(n *memberlist.Node) {}
 
-// NewManager initializes the cluster manager with memberlist and delegates.
-// Sets up encryption, config management, and starts background maintenance.
 func NewManager(cfg Config, handler UpdateHandler, logger *ll.Logger) (*Manager, error) {
 	mConfig := memberlist.DefaultLANConfig()
 	mConfig.Name = cfg.Name
@@ -82,7 +92,7 @@ func NewManager(cfg Config, handler UpdateHandler, logger *ll.Logger) (*Manager,
 
 	configMgr := NewDistributor(logger, cfg.HostsDir)
 	metrics := NewMetrics()
-	del := newDelegate(handler, logger, metrics, cipher, configMgr)
+	del := newDelegate(cfg, handler, logger, metrics, cipher, configMgr)
 	events := &eventDelegate{logger: logger, metrics: metrics}
 	mConfig.Delegate = del
 	mConfig.Events = events
@@ -169,6 +179,27 @@ func (m *Manager) BroadcastReliable(op OpType, key string, value []byte) error {
 	return nil
 }
 
+// BroadcastSecret encrypts plaintext with the cluster cipher and broadcasts
+// it to all peers as an OpSecret envelope. Peers handle it in apply() and
+// write it to their local keeper via keeperWrite.
+// This is called by the keeper API handler after any write or delete so that
+// runtime secret changes propagate to all cluster nodes.
+func (m *Manager) BroadcastSecret(key string, plaintext []byte) error {
+	if m.delegate.cipher == nil {
+		return fmt.Errorf("cluster: no cipher configured — secret_key missing from gossip block")
+	}
+	var value []byte
+	if len(plaintext) > 0 {
+		encrypted, err := m.delegate.cipher.Encrypt(plaintext)
+		if err != nil {
+			return fmt.Errorf("cluster: encrypt secret %q: %w", key, err)
+		}
+		value = encrypted
+	}
+	m.BroadcastGossip(OpSecret, key, value)
+	return nil
+}
+
 func (m *Manager) BroadcastGossip(op OpType, key string, value []byte) {
 	env := Envelope{
 		Op:        op,
@@ -196,15 +227,9 @@ func (m *Manager) TryAcquireLock(key string) bool {
 		}
 	}
 
-	// Broadcast our claim, then wait for gossip to propagate so we can detect
-	// a concurrent claim from another node.
 	m.BroadcastGossip(OpLock, lockKey, []byte("claimed"))
 	time.Sleep(2 * time.Second)
 
-	// We win only if our envelope survived — last-writer-wins by timestamp means
-	// the node with the highest UnixNano claim time holds the lock.  If another
-	// node's envelope is present, they either claimed later (and won) or we never
-	// got our broadcast applied locally (pathological split — treat as lost).
 	if env, ok := m.delegate.getEnvelope(lockKey); ok {
 		return env.Owner == myID
 	}
@@ -214,6 +239,10 @@ func (m *Manager) TryAcquireLock(key string) bool {
 // BroadcastCert encrypts and disseminates new SSL certificates reliably.
 // Prevents multiple nodes from hammering Let's Encrypt simultaneously.
 func (m *Manager) BroadcastCert(domain string, certPEM, keyPEM []byte) error {
+	if m == nil {
+		return nil
+	}
+
 	if m.cipher == nil {
 		return fmt.Errorf("cluster encryption not enabled, cannot broadcast certs")
 	}
@@ -302,7 +331,6 @@ func (m *Manager) Metrics() map[string]uint64 {
 	return m.metrics.Snapshot()
 }
 
-// Distributor returns the underlying sync controller for local integration.
 func (m *Manager) ConfigManager() *Distributor {
 	return m.configMgr
 }

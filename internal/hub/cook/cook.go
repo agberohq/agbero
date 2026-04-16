@@ -31,13 +31,13 @@ var (
 // Config defines the configuration for a Cook instance.
 type Config struct {
 	ID       string
-	URL      string
+	URL      string // empty for push-only mode
 	Branch   string
 	WorkDir  string
 	Logger   *ll.Logger
-	Auth     AuthConfig // Optional: authentication configuration
-	Metrics  *Metrics   // Optional: metrics collection
-	KeepLast int        // Number of deployments to keep (default: 2)
+	Auth     AuthConfig
+	Metrics  *Metrics
+	KeepLast int
 }
 
 // AuthConfig defines authentication options for git operations.
@@ -53,40 +53,45 @@ type AuthConfig struct {
 type Metrics struct {
 	DeploymentsTotal   atomic.Int64
 	DeploymentErrors   atomic.Int64
-	DeploymentDuration atomic.Int64 // nanoseconds
-	LastDeploymentTime atomic.Value // time.Time
+	DeploymentDuration atomic.Int64
+	LastDeploymentTime atomic.Value
 }
 
 // Cook handles atomic git-based deployments with zero downtime.
+// In push-only mode (URL == ""), Cook does not clone — it serves
+// content written directly to the work directory via webhook.
 type Cook struct {
 	config   Config
 	logger   *ll.Logger
-	repoMu   sync.Mutex // Prevents concurrent operations on same repo
-	deployMu sync.Mutex // Protects deployment operations
+	repoMu   sync.Mutex
+	deployMu sync.Mutex
 
 	mu      sync.RWMutex
-	current string // commit hash of active deployment
+	current string // commit hash of active deployment; empty in push-only mode
+
+	// pushPath holds the serving directory for push-only mode.
+	// Set once by SetCurrentPath and never changed thereafter.
+	pushPath string
 }
 
-// New creates a Cook instance with the provided configuration.
-// It establishes the precise working directory required for the deployment lifecycle.
+// New creates a Cook instance. URL may be empty for push-only mode,
+// in which case Make must never be called.
 func New(cfg Config) (*Cook, error) {
 	if cfg.ID == "" {
 		return nil, errors.New("cook ID is required")
-	}
-	if cfg.URL == "" {
-		return nil, ErrRepositoryNotSet
 	}
 	if cfg.WorkDir == "" {
 		return nil, ErrWorkDirNotSet
 	}
 
-	if cfg.KeepLast <= 0 {
-		cfg.KeepLast = 2
-	}
-
-	if err := os.MkdirAll(cfg.WorkDir, 0750); err != nil {
-		return nil, fmt.Errorf("failed to create work directory: %w", err)
+	// push-only: skip URL requirement and clone setup
+	if cfg.URL != "" {
+		if cfg.KeepLast <= 0 {
+			cfg.KeepLast = 2
+		}
+		if err := os.MkdirAll(cfg.WorkDir, 0750); err != nil {
+			return nil, fmt.Errorf("failed to create work directory: %w", err)
+		}
 	}
 
 	logger := cfg.Logger
@@ -101,12 +106,30 @@ func New(cfg Config) (*Cook, error) {
 	}, nil
 }
 
-// CurrentPath returns the filesystem path to the currently active deployment.
+// SetCurrentPath sets the serving path directly without a deployment.
+// Used exclusively by push-only mode so CurrentPath returns immediately
+// rather than blocking on a clone that will never happen.
+func (c *Cook) SetCurrentPath(path string) {
+	c.mu.Lock()
+	c.pushPath = path
+	c.mu.Unlock()
+}
+
+// CurrentPath returns the filesystem path currently being served.
+// For pull/both mode this is the most recent deployment directory.
+// For push-only mode this is the work directory set by SetCurrentPath.
 func (c *Cook) CurrentPath() string {
 	c.mu.RLock()
+	pushPath := c.pushPath
 	current := c.current
 	c.mu.RUnlock()
 
+	// push-only mode
+	if pushPath != "" {
+		return pushPath
+	}
+
+	// pull/both mode — check in-memory commit first
 	if current != "" {
 		path := c.deployPath(current)
 		if _, err := os.Stat(path); err == nil {
@@ -114,24 +137,23 @@ func (c *Cook) CurrentPath() string {
 		}
 	}
 
-	// Fallback: read from symlink
+	// fallback: read from symlink (e.g. after restart)
 	linkPath := filepath.Join(c.workDir(), "current")
 	target, err := os.Readlink(linkPath)
 	if err != nil {
 		return ""
 	}
-
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(c.workDir(), target)
 	}
 	if _, err := os.Stat(target); err != nil {
 		return ""
 	}
-
 	return target
 }
 
 // CurrentCommit returns the commit hash of the active deployment.
+// Returns empty string in push-only mode.
 func (c *Cook) CurrentCommit() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -139,8 +161,8 @@ func (c *Cook) CurrentCommit() string {
 }
 
 // Make performs an atomic deployment from the configured repository.
+// Must not be called in push-only mode (URL == "").
 func (c *Cook) Make(ctx context.Context) error {
-	// Prevent concurrent operations on the same repository
 	c.repoMu.Lock()
 	defer c.repoMu.Unlock()
 
@@ -162,7 +184,6 @@ func (c *Cook) Make(ctx context.Context) error {
 		return deployErr
 	}
 
-	// Create temp directory for clone
 	tmpDir, err := os.MkdirTemp(deployBase, "tmp_")
 	if err != nil {
 		deployErr = fmt.Errorf("failed to create temp directory: %w", err)
@@ -183,7 +204,6 @@ func (c *Cook) Make(ctx context.Context) error {
 		Progress:     io.Discard,
 		Auth:         c.getAuth(),
 	}
-
 	if c.config.Branch != "" {
 		cloneOpts.ReferenceName = plumbing.NewBranchReferenceName(c.config.Branch)
 	}
@@ -208,19 +228,14 @@ func (c *Cook) Make(ctx context.Context) error {
 
 	deployDir := c.deployPath(commitHash)
 
-	// Check if this commit is already deployed
 	if _, err := os.Stat(deployDir); err == nil {
 		c.logger.Fields("hash", commitHash).Infof("commit %s already deployed, switching", commitHash[:8])
 		_ = os.RemoveAll(tmpDir)
 		tmpDir = ""
 	} else {
-		// Remove .git to save space
-		gitDir := filepath.Join(tmpDir, ".git")
-		if err := os.RemoveAll(gitDir); err != nil {
+		if err := os.RemoveAll(filepath.Join(tmpDir, ".git")); err != nil {
 			c.logger.Warnf("failed to remove .git directory: %v", err)
 		}
-
-		// Atomic move from temp to final location
 		if err := os.Rename(tmpDir, deployDir); err != nil {
 			deployErr = fmt.Errorf("failed to finalize deployment: %w", err)
 			return deployErr
@@ -228,7 +243,6 @@ func (c *Cook) Make(ctx context.Context) error {
 		tmpDir = ""
 	}
 
-	// Atomic symlink switch for zero-downtime deployment
 	if err := c.atomicSwitch(deployDir, commitHash); err != nil {
 		deployErr = fmt.Errorf("failed to activate deployment: %w", err)
 		return deployErr
@@ -236,14 +250,11 @@ func (c *Cook) Make(ctx context.Context) error {
 
 	c.logger.Infof("activated commit %s", commitHash[:8])
 
-	// Update in-memory state
 	c.mu.Lock()
 	c.current = commitHash
 	c.mu.Unlock()
 
-	// Cleanup old deployments in background
 	go c.cleanupDeployments(commitHash)
-
 	return nil
 }
 
@@ -276,7 +287,7 @@ func (c *Cook) Rollback(commitHash string) error {
 	return nil
 }
 
-// ListDeployments returns all available deployment commits sorted by time (newest first).
+// ListDeployments returns all available deployment commits sorted newest first.
 func (c *Cook) ListDeployments() ([]Deployment, error) {
 	deployBase := c.deployBase()
 	entries, err := os.ReadDir(deployBase)
@@ -292,12 +303,10 @@ func (c *Cook) ListDeployments() ([]Deployment, error) {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), "tmp_") {
 			continue
 		}
-
 		info, err := e.Info()
 		if err != nil {
 			continue
 		}
-
 		deps = append(deps, Deployment{
 			Commit:    e.Name(),
 			Path:      filepath.Join(deployBase, e.Name()),
@@ -305,7 +314,6 @@ func (c *Cook) ListDeployments() ([]Deployment, error) {
 		})
 	}
 
-	// Sort by time descending (newest first)
 	for i := 0; i < len(deps)-1; i++ {
 		for j := i + 1; j < len(deps); j++ {
 			if deps[i].CreatedAt.Before(deps[j].CreatedAt) {
@@ -313,7 +321,6 @@ func (c *Cook) ListDeployments() ([]Deployment, error) {
 			}
 		}
 	}
-
 	return deps, nil
 }
 
@@ -335,13 +342,9 @@ func (c *Cook) Cleanup(keep int) error {
 
 	var items []deployInfo
 	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), "tmp_") {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), "tmp_") || e.Name() == current {
 			continue
 		}
-		if e.Name() == current {
-			continue
-		}
-
 		info, err := e.Info()
 		if err != nil {
 			continue
@@ -357,7 +360,6 @@ func (c *Cook) Cleanup(keep int) error {
 		return nil
 	}
 
-	// Sort oldest first
 	for i := 0; i < len(items)-1; i++ {
 		for j := i + 1; j < len(items); j++ {
 			if items[i].time.After(items[j].time) {
@@ -373,24 +375,19 @@ func (c *Cook) Cleanup(keep int) error {
 			c.logger.Warnf("failed to remove %s: %v", items[i].commit[:8], err)
 		}
 	}
-
 	return nil
 }
 
-// Metrics returns current metrics snapshot (if configured).
-func (c *Cook) Metrics() Metrics {
+// CollectMetrics returns a snapshot of current metrics (if configured).
+func (c *Cook) CollectMetrics() Metrics {
 	if c.config.Metrics == nil {
 		return Metrics{}
 	}
-	return Metrics{
-		DeploymentsTotal:   atomic.Int64{},
-		DeploymentErrors:   atomic.Int64{},
-		DeploymentDuration: atomic.Int64{},
-		LastDeploymentTime: atomic.Value{},
-	}
+	return *c.config.Metrics
 }
 
-// validate checks configuration.
+// internal helpers
+
 func (c *Cook) validate() error {
 	if c.config.URL == "" {
 		return ErrRepositoryNotSet
@@ -401,104 +398,80 @@ func (c *Cook) validate() error {
 	return nil
 }
 
-// workDir returns the exact absolute path to the active workspace.
-// It returns the configuration value directly without modification.
 func (c *Cook) workDir() string {
 	return c.config.WorkDir
 }
 
-// deployBase returns the base directory for all deployments.
 func (c *Cook) deployBase() string {
 	return filepath.Join(c.workDir(), "deploy")
 }
 
-// deployPath returns the path for a specific commit deployment.
 func (c *Cook) deployPath(commit string) string {
 	return filepath.Join(c.deployBase(), commit)
 }
 
-// atomicSwitch performs an atomic symlink switch.
 func (c *Cook) atomicSwitch(deployDir, commitHash string) error {
 	linkPath := filepath.Join(c.workDir(), "current")
 	tmpLink := linkPath + ".tmp"
-
 	_ = os.Remove(tmpLink)
 
 	relPath, err := filepath.Rel(c.workDir(), deployDir)
 	if err != nil {
 		relPath = deployDir
 	}
-
 	if err := os.Symlink(relPath, tmpLink); err != nil {
 		return fmt.Errorf("failed to create temp symlink: %w", err)
 	}
-
 	if err := os.Rename(tmpLink, linkPath); err != nil {
 		_ = os.Remove(tmpLink)
 		return fmt.Errorf("failed to swap symlink: %w", err)
 	}
-
 	return nil
 }
 
-// cleanupDeployments removes old deployments.
-func (c *Cook) cleanupDeployments(currentCommit string) {
+func (c *Cook) cleanupDeployments(_ string) {
 	_ = c.Cleanup(c.config.KeepLast)
 }
 
-// getAuth returns transport.AuthMethod based on configuration.
 func (c *Cook) getAuth() transport.AuthMethod {
 	auth := c.config.Auth
-
 	switch auth.Type {
 	case "basic":
 		if auth.Username != "" {
-			return &http.BasicAuth{
-				Username: auth.Username,
-				Password: auth.Password,
-			}
+			return &http.BasicAuth{Username: auth.Username, Password: auth.Password}
 		}
 	case "ssh-key":
 		if auth.SSHKey != "" {
-			publicKey, err := ssh.NewPublicKeys("git", []byte(auth.SSHKey), auth.SSHKeyPassphrase)
+			pk, err := ssh.NewPublicKeys("git", []byte(auth.SSHKey), auth.SSHKeyPassphrase)
 			if err != nil {
 				c.logger.Warnf("failed to parse SSH key: %v", err)
 				return nil
 			}
-			return publicKey
+			return pk
 		}
 	case "ssh-agent":
-		// Use SSH agent authentication
-		authMethod, err := ssh.NewSSHAgentAuth("git")
+		am, err := ssh.NewSSHAgentAuth("git")
 		if err != nil {
 			c.logger.Warnf("failed to connect to SSH agent: %v", err)
 			return nil
 		}
-		return authMethod
+		return am
 	}
-
 	return nil
 }
 
-// recordMetrics updates metrics if configured.
 func (c *Cook) recordMetrics(start time.Time, err error) {
 	if c.config.Metrics == nil {
 		return
 	}
-
 	duration := time.Since(start)
 	c.config.Metrics.DeploymentsTotal.Add(1)
 	c.config.Metrics.DeploymentDuration.Add(duration.Nanoseconds())
 	c.config.Metrics.LastDeploymentTime.Store(time.Now())
-
 	if err != nil {
 		c.config.Metrics.DeploymentErrors.Add(1)
 	}
-
-	c.logger.Fields(
-		"duration_ms", duration.Milliseconds(),
-		"error", err != nil,
-	).Debug("deployment completed")
+	c.logger.Fields("duration_ms", duration.Milliseconds(), "error", err != nil).Debug("deployment completed")
 }
 
 // Deployment represents a single deployed version.

@@ -5,13 +5,13 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
-	resource2 "github.com/agberohq/agbero/internal/hub/resource"
+	resource "github.com/agberohq/agbero/internal/hub/resource"
 )
 
 // TestServerless_New_NoPanicOnCollision verifies that duplicate registrations do not cause a ServeMux panic.
 // It ensures that REST and Worker name collisions are handled gracefully based on priority rules.
 func TestServerless_New_NoPanicOnCollision(t *testing.T) {
-	res := resource2.New()
+	res := resource.New()
 	defer res.Close()
 
 	route := alaye.Route{
@@ -37,7 +37,7 @@ func TestServerless_New_NoPanicOnCollision(t *testing.T) {
 		}
 	}()
 
-	handler := New(resource2.Proxy{Resource: res}, &route)
+	handler := New(resource.Proxy{Resource: res}, &route)
 	if handler == nil {
 		t.Fatal("expected handler, got nil")
 	}

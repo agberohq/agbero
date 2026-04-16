@@ -44,8 +44,6 @@ type Route struct {
 	Fallback    Fallback      `hcl:"fallback,block,omitempty" json:"fallback"`
 }
 
-// Validate - Validates the route configuration to ensure correctness
-// Checks for conflicting handler engines and validates individual components
 func (r *Route) Validate() error {
 	if r.Path == "" {
 		return ErrRoutePathRequired
@@ -121,8 +119,6 @@ func (r *Route) Validate() error {
 	return r.validateWebRoute()
 }
 
-// Validates all configured authentication plugins for the route
-// Returns the first error encountered, if any
 func (r *Route) validateAuth() error {
 	if err := r.BasicAuth.Validate(); err != nil {
 		return errors.Newf("basic_auth: %w", err)
@@ -139,8 +135,6 @@ func (r *Route) validateAuth() error {
 	return nil
 }
 
-// Validates routing plugins such as headers, compression, and Wasm modules
-// Returns an error if any of the configurations are invalid
 func (r *Route) validatePlugins() error {
 	if err := r.Headers.Validate(); err != nil {
 		return errors.Newf("headers: %w", err)
@@ -154,8 +148,6 @@ func (r *Route) validatePlugins() error {
 	return nil
 }
 
-// Verifies that web routing requirements are met, such as valid root paths
-// Ensures no conflicting proxy-only features like health checks are enabled
 func (r *Route) validateWebRoute() error {
 	if !r.Web.Root.IsSet() && !r.Web.Git.Enabled.Active() {
 		return ErrWebRouteRootRequired
@@ -183,8 +175,6 @@ func (r *Route) validateWebRoute() error {
 	return r.validatePlugins()
 }
 
-// Verifies that a proxy route has at least one backend server available
-// Validates path stripping, LB strategies, and circuit breakers
 func (r *Route) validateProxyRoute() error {
 	if len(r.Backends.Servers) == 0 {
 		return ErrProxyRouteNoBackends
@@ -220,8 +210,6 @@ func (r *Route) validateProxyRoute() error {
 	return r.validatePlugins()
 }
 
-// Computes a fast xxhash signature based on the route's configurations
-// Used primarily for caching optimized handler chains in memory
 func (r *Route) Key() string {
 	w := xxhash.New()
 
@@ -286,17 +274,55 @@ func (r *Route) Key() string {
 		w.WriteString(r.OAuth.ClientID)
 	}
 
-	if r.Web.Root.IsSet() {
+	// Check if the web block is active in any form (Root or Git)
+	if r.Web.Root.IsSet() || r.Web.Git.Enabled.Active() || r.Web.Enabled.Active() {
 		w.WriteString(r.Web.Root.String())
+
 		for _, idx := range r.Web.Index {
 			w.WriteString(idx)
 		}
+
 		if r.Web.Listing.Active() {
 			w.WriteString("ls")
 		}
+		if r.Web.SPA.Active() {
+			w.WriteString("spa")
+		}
+		if r.Web.NoCache.Active() {
+			w.WriteString("nocache")
+		}
+
 		if r.Web.PHP.Enabled.Active() {
 			w.WriteString("php")
 			w.WriteString(r.Web.PHP.Address)
+		}
+
+		// Add Git configurations to the cache hash
+		if r.Web.Git.Enabled.Active() {
+			w.WriteString("git")
+			w.WriteString(r.Web.Git.ID)
+			w.WriteString(r.Web.Git.URL)
+			w.WriteString(r.Web.Git.Branch)
+			w.WriteString(r.Web.Git.WorkDir.String())
+			w.WriteString(r.Web.Git.SubDir)
+			w.WriteString(r.Web.Git.Interval.String())
+		}
+
+		// Add Markdown configurations to the cache hash
+		if r.Web.Markdown.Enabled.Active() {
+			w.WriteString("md")
+			w.WriteString(r.Web.Markdown.View)
+			w.WriteString(r.Web.Markdown.Template)
+			if r.Web.Markdown.UnsafeHTML.Active() {
+				w.WriteString("unsafe")
+			}
+			if r.Web.Markdown.TableOfContents.Active() {
+				w.WriteString("toc")
+			}
+			if r.Web.Markdown.SyntaxHighlight.Enabled.Active() {
+				w.WriteString("hl")
+				w.WriteString(r.Web.Markdown.SyntaxHighlight.Theme)
+			}
 		}
 	}
 
@@ -366,12 +392,57 @@ func (r *Route) Key() string {
 		w.WriteString(r.Cache.TTL.String())
 	}
 
+	if r.Serverless.Enabled.Active() {
+		w.WriteString("sl")
+		for _, rp := range r.Serverless.Replay {
+			w.WriteString(rp.Name)
+			w.WriteString(rp.URL)
+			for _, m := range rp.Methods {
+				w.WriteString(m)
+			}
+			for k, v := range rp.Headers {
+				w.WriteString(k)
+				w.WriteString(v)
+			}
+			for _, d := range rp.AllowedDomains {
+				w.WriteString(d)
+			}
+			w.WriteString(rp.Timeout.String())
+			w.WriteString(rp.RefererMode)
+			w.WriteString(fmt.Sprint(rp.StripHeaders))
+			if rp.Cache.Enabled.Active() {
+				w.WriteString(rp.Cache.Driver)
+				w.WriteString(rp.Cache.TTL.String())
+			}
+		}
+		for _, wk := range r.Serverless.Workers {
+			w.WriteString(wk.Name)
+			for _, c := range wk.Command {
+				w.WriteString(c)
+			}
+			w.WriteString(wk.Schedule)
+			w.WriteString(wk.Restart)
+			w.WriteString(fmt.Sprint(wk.Background))
+			w.WriteString(fmt.Sprint(wk.RunOnce))
+		}
+	}
+
 	return fmt.Sprintf("%x", w.Sum64())
 }
 
-// BackendKey - Generates a struct identifier combining protocol, domain, path, and address
-// Primarily used for referencing upstream targets consistently in metrics
 func (r *Route) BackendKey(domain, backendAddr string) BackendKey {
+	return r.backendKey("http", domain, backendAddr)
+}
+
+func (r *Route) ReplayBackendKey(domain, replayName string) BackendKey {
+	return r.backendKey("serverless", domain, replayName)
+}
+
+func (r *Route) WorkerBackendKey(domain, workerName string) BackendKey {
+	return r.backendKey("worker", domain, workerName)
+}
+
+func (r *Route) backendKey(protocol, domain, addr string) BackendKey {
 	if domain == "" {
 		domain = "*"
 	}
@@ -380,9 +451,9 @@ func (r *Route) BackendKey(domain, backendAddr string) BackendKey {
 		path = "/"
 	}
 	return BackendKey{
-		Protocol: "http",
+		Protocol: protocol,
 		Domain:   domain,
 		Path:     path,
-		Addr:     backendAddr,
+		Addr:     addr,
 	}
 }

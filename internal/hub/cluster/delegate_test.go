@@ -2,9 +2,11 @@ package cluster
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/olekukonko/ll"
 )
 
@@ -13,10 +15,10 @@ var (
 )
 
 // newTestDelegate returns a minimal delegate suitable for unit tests.
-// No handler, cipher, queue, or configMgr are wired — tests that need
-// them should set fields directly on the returned struct.
+// No handler, cipher, queue, configMgr, or keeper callbacks are wired —
+// tests that need them pass a Config with the relevant fields set.
 func newTestDelegate() *delegate {
-	return newDelegate(nil, logger, &RealMetrics{}, nil, nil)
+	return newDelegate(Config{}, nil, logger, &RealMetrics{}, nil, nil)
 }
 
 // envelope builds a test Envelope with the given key, op, and timestamp offset
@@ -29,8 +31,6 @@ func envelope(key string, op OpType, offset time.Duration) Envelope {
 		Timestamp: time.Now().Add(offset).UnixNano(),
 	}
 }
-
-// SEC-06 — stale envelope rejection
 
 // TestApply_StaleEnvelope_Rejected verifies that an envelope older than
 // tombstoneTTL is discarded even when the delegate store is empty (no existing
@@ -98,7 +98,8 @@ func TestApply_FreshEnvelope_Accepted(t *testing.T) {
 
 // TestMergeRemoteState_StaleRejected verifies the stale check fires when
 // envelopes arrive via MergeRemoteState (node join path), which is the exact
-// attack vector SEC-06 protects against.
+// attack vector SEC-06 protects against. Uses the legacy flat-map wire format
+// to confirm backward compatibility is also covered.
 func TestMergeRemoteState_StaleRejected(t *testing.T) {
 	d := newTestDelegate()
 
@@ -108,6 +109,7 @@ func TestMergeRemoteState_StaleRejected(t *testing.T) {
 		Value:     []byte("v"),
 		Timestamp: time.Now().Add(-25 * time.Hour).UnixNano(),
 	}
+	// Legacy flat-map format — pre-OpSecret nodes send this.
 	buf, _ := json.Marshal(map[string]Envelope{stale.Key: stale})
 
 	d.MergeRemoteState(buf, true)
@@ -252,4 +254,432 @@ func TestPruneTombstones(t *testing.T) {
 	if still {
 		t.Error("pruneTombstones must remove expired OpDel entries")
 	}
+}
+
+// OpSecret / keeper sync
+
+// TestLocalState_NoSecrets_WhenNotJoin verifies that LocalState does not
+// include any secrets payload when join=false (periodic full-state exchange).
+func TestLocalState_NoSecrets_WhenNotJoin(t *testing.T) {
+	called := false
+	cipher, _ := security.NewCipher("12345678901234567890123456789012")
+	cfg := Config{
+		KeeperSnapshot: func() map[string][]byte {
+			called = true
+			return map[string][]byte{"vault://key/cluster": []byte("secret")}
+		},
+	}
+	d := newDelegate(cfg, nil, logger, &RealMetrics{}, cipher, nil)
+
+	_ = d.LocalState(false)
+
+	if called {
+		t.Error("keeperSnapshot must not be called when join=false")
+	}
+}
+
+// TestLocalState_IncludesSecrets_WhenJoin verifies that LocalState includes
+// encrypted OpSecret envelopes when join=true and both cipher and
+// keeperSnapshot are set.
+func TestLocalState_IncludesSecrets_WhenJoin(t *testing.T) {
+	secretVal := []byte("my-secret-value")
+	cipher, _ := security.NewCipher("12345678901234567890123456789012")
+
+	cfg := Config{
+		KeeperSnapshot: func() map[string][]byte {
+			return map[string][]byte{"vault://key/internal": append([]byte(nil), secretVal...)}
+		},
+	}
+	d := newDelegate(cfg, nil, logger, &RealMetrics{}, cipher, nil)
+
+	buf := d.LocalState(true)
+
+	type stateDoc struct {
+		Store   map[string]Envelope `json:"store"`
+		Secrets []Envelope          `json:"secrets,omitempty"`
+	}
+	var doc stateDoc
+	if err := json.Unmarshal(buf, &doc); err != nil {
+		t.Fatalf("LocalState output is not valid JSON: %v", err)
+	}
+	if len(doc.Secrets) != 1 {
+		t.Fatalf("expected 1 secret envelope, got %d", len(doc.Secrets))
+	}
+
+	env := doc.Secrets[0]
+	if env.Op != OpSecret {
+		t.Errorf("secret envelope Op must be OpSecret, got %d", env.Op)
+	}
+	if env.Key != "vault://key/internal" {
+		t.Errorf("secret envelope Key mismatch: got %q", env.Key)
+	}
+
+	// Value must be encrypted — not the raw plaintext.
+	if string(env.Value) == string(secretVal) {
+		t.Error("secret envelope Value must be ciphertext, not plaintext")
+	}
+
+	// Decrypt and verify.
+	plain, err := cipher.Decrypt(env.Value)
+	if err != nil {
+		t.Fatalf("could not decrypt secret envelope: %v", err)
+	}
+	if string(plain) != string(secretVal) {
+		t.Errorf("decrypted value mismatch: got %q, want %q", plain, secretVal)
+	}
+}
+
+// TestLocalState_NoCipher_SkipsSecrets verifies that when cipher is nil
+// (no secret_key configured), the secrets block is omitted even on join.
+func TestLocalState_NoCipher_SkipsSecrets(t *testing.T) {
+	called := false
+	cfg := Config{
+		KeeperSnapshot: func() map[string][]byte {
+			called = true
+			return map[string][]byte{"vault://key/cluster": []byte("secret")}
+		},
+	}
+	// cipher intentionally nil
+	d := newDelegate(cfg, nil, logger, &RealMetrics{}, nil, nil)
+
+	buf := d.LocalState(true)
+
+	type stateDoc struct {
+		Secrets []Envelope `json:"secrets,omitempty"`
+	}
+	var doc stateDoc
+	json.Unmarshal(buf, &doc)
+
+	if called {
+		t.Error("keeperSnapshot must not be called when cipher is nil")
+	}
+	if len(doc.Secrets) != 0 {
+		t.Errorf("expected no secrets when cipher is nil, got %d", len(doc.Secrets))
+	}
+}
+
+// TestMergeRemoteState_AppliesSecrets verifies that the joining node
+// decrypts OpSecret envelopes and writes them to the keeper via keeperWrite.
+func TestMergeRemoteState_AppliesSecrets(t *testing.T) {
+	cipher, _ := security.NewCipher("12345678901234567890123456789012")
+	secretKey := "vault://key/internal"
+	secretVal := []byte("ppk-pem-data")
+
+	encrypted, err := cipher.Encrypt(secretVal)
+	if err != nil {
+		t.Fatalf("failed to encrypt test secret: %v", err)
+	}
+
+	var mu sync.Mutex
+	written := make(map[string][]byte)
+
+	cfg := Config{
+		KeeperWrite: func(key string, value []byte) {
+			mu.Lock()
+			written[key] = append([]byte(nil), value...)
+			mu.Unlock()
+		},
+	}
+	d := newDelegate(cfg, nil, logger, &RealMetrics{}, cipher, nil)
+
+	type stateDoc struct {
+		Store   map[string]Envelope `json:"store"`
+		Secrets []Envelope          `json:"secrets,omitempty"`
+	}
+	doc := stateDoc{
+		Store: map[string]Envelope{},
+		Secrets: []Envelope{
+			{Op: OpSecret, Key: secretKey, Value: encrypted, Timestamp: time.Now().UnixNano()},
+		},
+	}
+	buf, _ := json.Marshal(doc)
+
+	d.MergeRemoteState(buf, true)
+
+	mu.Lock()
+	got, ok := written[secretKey]
+	mu.Unlock()
+
+	if !ok {
+		t.Fatal("keeperWrite was not called for the synced secret")
+	}
+	if string(got) != string(secretVal) {
+		t.Errorf("keeperWrite received wrong value: got %q, want %q", got, secretVal)
+	}
+
+	// OpSecret envelopes must NOT be stored in the gossip state map.
+	d.mu.RLock()
+	_, inStore := d.store[secretKey]
+	d.mu.RUnlock()
+	if inStore {
+		t.Error("OpSecret envelope must not persist in the gossip store")
+	}
+}
+
+// TestMergeRemoteState_NilKeeperWrite_DropsSecrets verifies that when
+// keeperWrite is nil (seed node receiving its own join broadcast), incoming
+// OpSecret envelopes are silently dropped — not panicked on.
+func TestMergeRemoteState_NilKeeperWrite_DropsSecrets(t *testing.T) {
+	cipher, _ := security.NewCipher("12345678901234567890123456789012")
+	encrypted, _ := cipher.Encrypt([]byte("secret"))
+
+	// keeperWrite intentionally absent
+	d := newDelegate(Config{}, nil, logger, &RealMetrics{}, cipher, nil)
+
+	type stateDoc struct {
+		Store   map[string]Envelope `json:"store"`
+		Secrets []Envelope          `json:"secrets,omitempty"`
+	}
+	doc := stateDoc{
+		Secrets: []Envelope{
+			{Op: OpSecret, Key: "vault://key/cluster", Value: encrypted, Timestamp: time.Now().UnixNano()},
+		},
+	}
+	buf, _ := json.Marshal(doc)
+
+	// Must not panic.
+	d.MergeRemoteState(buf, true)
+}
+
+// TestMergeRemoteState_NilCipher_DropsSecrets verifies that when cipher is
+// nil (no secret_key on the joining node's config), OpSecret envelopes are
+// dropped with a warning and no panic.
+func TestMergeRemoteState_NilCipher_DropsSecrets(t *testing.T) {
+	// Manually build a valid ciphertext using a separate cipher so the
+	// envelope looks real, but the receiving delegate has no cipher.
+	tmpCipher, _ := security.NewCipher("12345678901234567890123456789012")
+	encrypted, _ := tmpCipher.Encrypt([]byte("secret"))
+
+	d := newDelegate(Config{}, nil, logger, &RealMetrics{}, nil, nil)
+
+	type stateDoc struct {
+		Store   map[string]Envelope `json:"store"`
+		Secrets []Envelope          `json:"secrets,omitempty"`
+	}
+	doc := stateDoc{
+		Secrets: []Envelope{
+			{Op: OpSecret, Key: "vault://key/cluster", Value: encrypted, Timestamp: time.Now().UnixNano()},
+		},
+	}
+	buf, _ := json.Marshal(doc)
+
+	// Must not panic.
+	d.MergeRemoteState(buf, true)
+}
+
+// TestMergeRemoteState_LegacyFlatMap_BackwardCompat verifies that a state
+// blob in the pre-OpSecret flat-map format is still correctly applied.
+// This covers rolling upgrades where older nodes are still in the cluster.
+func TestMergeRemoteState_LegacyFlatMap_BackwardCompat(t *testing.T) {
+	d := newTestDelegate()
+
+	env := Envelope{
+		Key:       "route:legacy",
+		Op:        OpSet,
+		Value:     []byte("old-format"),
+		Timestamp: time.Now().Add(-1 * time.Minute).UnixNano(),
+	}
+	// Old format: flat map, no "store" wrapper.
+	buf, _ := json.Marshal(map[string]Envelope{env.Key: env})
+
+	d.MergeRemoteState(buf, false)
+
+	val, ok := d.get("route:legacy")
+	if !ok || string(val) != "old-format" {
+		t.Errorf("legacy flat-map format must still be applied, got ok=%v val=%q", ok, val)
+	}
+}
+
+// TestLocalState_PlaintextNotLeaked verifies that after LocalState(true)
+// returns, none of the snapshot map values remain readable as plaintext
+// in the returned JSON blob.
+func TestLocalState_PlaintextNotLeaked(t *testing.T) {
+	plain := []byte("super-secret-ppk-pem")
+	cipher, _ := security.NewCipher("12345678901234567890123456789012")
+
+	cfg := Config{
+		KeeperSnapshot: func() map[string][]byte {
+			return map[string][]byte{"vault://key/internal": append([]byte(nil), plain...)}
+		},
+	}
+	d := newDelegate(cfg, nil, logger, &RealMetrics{}, cipher, nil)
+
+	buf := d.LocalState(true)
+
+	// The raw plaintext must not appear verbatim anywhere in the output.
+	if containsSubslice(buf, plain) {
+		t.Error("LocalState output must not contain plaintext secret value")
+	}
+}
+
+// TestApply_OpSecret_WritesToKeeper verifies that when an OpSecret envelope
+// arrives via apply() (the gossip broadcast path, not join-time MergeRemoteState),
+// the delegate decrypts it and calls keeperWrite with the plaintext.
+//
+// This covers the runtime case: admin writes a secret on node1 via
+// POST /api/v1/keeper/secrets → BroadcastSecret → peers receive OpSecret
+// in NotifyMsg → apply() → handleSecretUpdate → keeperWrite.
+func TestApply_OpSecret_WritesToKeeper(t *testing.T) {
+	cipher, _ := security.NewCipher("12345678901234567890123456789012")
+	secretKey := "ss://prod/db_pass"
+	secretVal := []byte("correct-horse-battery-staple")
+
+	encrypted, err := cipher.Encrypt(secretVal)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	var mu sync.Mutex
+	written := make(map[string][]byte)
+
+	cfg := Config{
+		KeeperWrite: func(key string, value []byte) {
+			mu.Lock()
+			written[key] = append([]byte(nil), value...)
+			mu.Unlock()
+		},
+	}
+	d := newDelegate(cfg, nil, logger, &RealMetrics{}, cipher, nil)
+
+	env := Envelope{
+		Key:       secretKey,
+		Op:        OpSecret,
+		Value:     encrypted,
+		Timestamp: time.Now().UnixNano(),
+	}
+	d.apply(env, false)
+
+	mu.Lock()
+	got, ok := written[secretKey]
+	mu.Unlock()
+
+	if !ok {
+		t.Fatal("keeperWrite was not called after apply() received OpSecret")
+	}
+	if string(got) != string(secretVal) {
+		t.Errorf("keeperWrite got wrong plaintext: got %q, want %q", got, secretVal)
+	}
+
+	// OpSecret must NOT be stored in the gossip store — it carries key material
+	// that must not be replayed or exposed via LocalState.
+	d.mu.RLock()
+	_, inStore := d.store[secretKey]
+	d.mu.RUnlock()
+	if inStore {
+		t.Error("OpSecret must not be persisted in the gossip store")
+	}
+}
+
+// TestApply_OpSecret_DeleteCallsKeeperWrite_Nil verifies that an OpSecret
+// envelope with an empty Value (the deletion signal from BroadcastSecret(key, nil))
+// calls keeperWrite with a nil value so the receiving node deletes the key.
+func TestApply_OpSecret_DeleteCallsKeeperWrite_Nil(t *testing.T) {
+	cipher, _ := security.NewCipher("12345678901234567890123456789012")
+
+	var mu sync.Mutex
+	written := make(map[string][]byte)
+	deleteCalled := false
+
+	cfg := Config{
+		KeeperWrite: func(key string, value []byte) {
+			mu.Lock()
+			if value == nil {
+				deleteCalled = true
+			}
+			written[key] = value
+			mu.Unlock()
+		},
+	}
+	d := newDelegate(cfg, nil, logger, &RealMetrics{}, cipher, nil)
+
+	env := Envelope{
+		Key:       "ss://prod/old_key",
+		Op:        OpSecret,
+		Value:     nil, // nil = deletion signal
+		Timestamp: time.Now().UnixNano(),
+	}
+	d.apply(env, false)
+
+	mu.Lock()
+	called := deleteCalled
+	mu.Unlock()
+
+	if !called {
+		t.Error("keeperWrite must be called with nil value for OpSecret deletion")
+	}
+}
+
+// TestApply_OpSecret_NoCipher_Drops verifies that an OpSecret envelope
+// received via apply() is silently dropped (no panic) when the delegate
+// has no cipher configured.
+func TestApply_OpSecret_NoCipher_Drops(t *testing.T) {
+	var mu sync.Mutex
+	writeCalled := false
+
+	cfg := Config{
+		KeeperWrite: func(key string, value []byte) {
+			mu.Lock()
+			writeCalled = true
+			mu.Unlock()
+		},
+	}
+	// cipher intentionally nil
+	d := newDelegate(cfg, nil, logger, &RealMetrics{}, nil, nil)
+
+	env := Envelope{
+		Key:       "ss://prod/db_pass",
+		Op:        OpSecret,
+		Value:     []byte("looks-encrypted-but-cipher-is-nil"),
+		Timestamp: time.Now().UnixNano(),
+	}
+	// Must not panic.
+	d.apply(env, false)
+
+	mu.Lock()
+	called := writeCalled
+	mu.Unlock()
+
+	if called {
+		t.Error("keeperWrite must not be called when cipher is nil")
+	}
+}
+
+// TestApply_OpSecret_NoKeeperWrite_Drops verifies that an OpSecret envelope
+// is safely dropped when keeperWrite is nil (e.g. seed node that has no
+// keeper wired in tests).
+func TestApply_OpSecret_NoKeeperWrite_Drops(t *testing.T) {
+	cipher, _ := security.NewCipher("12345678901234567890123456789012")
+	encrypted, _ := cipher.Encrypt([]byte("secret"))
+
+	// keeperWrite intentionally absent
+	d := newDelegate(Config{}, nil, logger, &RealMetrics{}, cipher, nil)
+
+	env := Envelope{
+		Key:       "ss://prod/db_pass",
+		Op:        OpSecret,
+		Value:     encrypted,
+		Timestamp: time.Now().UnixNano(),
+	}
+	// Must not panic.
+	d.apply(env, false)
+}
+
+// containsSubslice reports whether needle appears verbatim in haystack.
+func containsSubslice(haystack, needle []byte) bool {
+	if len(needle) == 0 || len(needle) > len(haystack) {
+		return false
+	}
+	for i := 0; i <= len(haystack)-len(needle); i++ {
+		match := true
+		for j := range needle {
+			if haystack[i+j] != needle[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }

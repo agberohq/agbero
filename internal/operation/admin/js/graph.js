@@ -10,6 +10,7 @@ class RouteGraph {
 
     render(config, stats) {
         if (!config || !this.container) return;
+        this._hostsData = stats || {};           // raw stats kept for tooltip lookups
         this.data = this.processData(config, stats);
 
         this.container.innerHTML = "";
@@ -55,6 +56,16 @@ class RouteGraph {
 
         const g = this.svg.append("g");
 
+        // Tooltip element — one per graph instance, attached to container
+        let _tooltip = this.container.querySelector('.graph-node-tooltip');
+        if (!_tooltip) {
+            _tooltip = document.createElement('div');
+            _tooltip.className = 'graph-node-tooltip';
+            _tooltip.style.display = 'none';
+            this.container.appendChild(_tooltip);
+        }
+        this._tooltip = _tooltip;
+
         const zoom = d3.zoom()
             .scaleExtent([0.1, 4])
             .on("zoom", (event) => {
@@ -83,6 +94,7 @@ class RouteGraph {
             .attr("marker-end",     d => this.getLinkArrow(d));
 
         // Node groups
+        const self = this;
         const node = g.append("g")
             .selectAll("g")
             .data(this.data.nodes)
@@ -95,19 +107,100 @@ class RouteGraph {
                 if (event.defaultPrevented) return;
                 if (typeof this._onClick === 'function') this._onClick(d);
             })
-            .on("mouseenter", function(event, d) {
+            .on("contextmenu", (event, d) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (typeof this._onRightClick === 'function') this._onRightClick(event, d);
+            })
+            .on("mouseenter", (event, d) => {
                 if (d.type === "root") return;
-                d3.select(this).select("circle")
+                d3.select(event.currentTarget).select("circle")
                     .transition().duration(150)
                     .attr("r", self.getNodeRadius(d.type) * 1.4);
+                // Build tooltip content
+                const lines = [];
+                const push = (label, val) => { if (val !== null && val !== undefined && val !== '' && val !== '—') lines.push(`<div class="gtt-row"><span class="gtt-label">${label}</span><span class="gtt-val">${val}</span></div>`); };
+                // Type badge
+                const typeLabel = d.protocol ? `${d.type} · ${d.protocol.toUpperCase()}` : d.type;
+                lines.push(`<div class="gtt-title">${d.label}</div><div class="gtt-type">${typeLabel}</div>`);
+                // Status
+                if (d.status && d.status !== 'ok') {
+                    const sc = d.status === 'dead' ? '#ff3b30' : d.status === 'degraded' ? '#ffcc00' : '#aaa';
+                    lines.push(`<div class="gtt-row"><span class="gtt-label">Status</span><span class="gtt-val" style="color:${sc};font-weight:500;">${d.status}</span></div>`);
+                }
+                // Host-level stats from hostsData
+                if (d.type === 'host' && d.meta?.hostname) {
+                    const hStat = self._hostsData?.[d.meta.hostname] || {};
+                    push('Total Reqs', hStat.total_reqs ? hStat.total_reqs.toLocaleString() : null);
+                    push('Routes',     (hStat.routes?.length || 0) + (hStat.proxies?.length || 0) || null);
+                }
+                // Route/proxy node — show path or listen
+                if (d.type === 'route' && d.meta?.hostname) {
+                    const hStat  = self._hostsData?.[d.meta.hostname] || {};
+                    const rIdx   = d.meta.routeIdx;
+                    if (d.meta.routeType === 'route') {
+                        const r      = hStat.routes?.[rIdx];
+                        if (r) {
+                            push('Path',      r.path);
+                            push('Reqs',      r.total_reqs?.toLocaleString());
+                            const bAlive  = (r.backends || []).filter(b => b.alive !== false).length;
+                            const bTotal  = (r.backends || []).length;
+                            if (bTotal) push('Backends', `${bAlive}/${bTotal} alive`);
+                        }
+                    } else {
+                        const p = hStat.proxies?.[rIdx];
+                        if (p) {
+                            push('Listen',   p.name);
+                            push('Sessions', p.active_sessions > 0 ? p.active_sessions : null);
+                        }
+                    }
+                }
+                // Backend node — health + latency
+                if (d.type === 'backend' && d.meta?.hostname) {
+                    const hStat  = self._hostsData?.[d.meta.hostname] || {};
+                    const isProxy = d.meta.routeType === 'proxy';
+                    const rArr   = isProxy ? (hStat.proxies || []) : (hStat.routes || []);
+                    const r      = rArr[d.meta.routeIdx];
+                    const b      = r?.backends?.[d.meta.backendIdx];
+                    if (b) {
+                        push('Health',   b.health?.status);
+                        push('Score',    b.health?.score !== undefined ? b.health.score.toFixed(2) : null);
+                        push('Reqs',     b.total_reqs?.toLocaleString());
+                        push('Failures', b.failures > 0 ? `<span style="color:#ff3b30">${b.failures}</span>` : null);
+                        if (b.latency_us?.p99) push('p99', (b.latency_us.p99 / 1000).toFixed(1) + 'ms');
+                        if (b.latency_us?.p50) push('p50', (b.latency_us.p50 / 1000).toFixed(1) + 'ms');
+                    }
+                }
+                if (lines.length === 0) return;
+                self._tooltip.innerHTML = lines.join('');
+                self._tooltip.style.display = 'block';
+                // Position near cursor inside container
+                const rect = self.container.getBoundingClientRect();
+                let tx = event.clientX - rect.left + 14;
+                let ty = event.clientY - rect.top  - 10;
+                // Keep inside container
+                self._tooltip.style.left = tx + 'px';
+                self._tooltip.style.top  = ty + 'px';
             })
-            .on("mouseleave", function(event, d) {
-                d3.select(this).select("circle")
+            .on("mousemove", (event) => {
+                if (!self._tooltip || self._tooltip.style.display === 'none') return;
+                const rect = self.container.getBoundingClientRect();
+                const ttW  = self._tooltip.offsetWidth  || 180;
+                const ttH  = self._tooltip.offsetHeight || 80;
+                let tx = event.clientX - rect.left + 14;
+                let ty = event.clientY - rect.top  - 10;
+                if (tx + ttW > rect.width  - 8) tx = event.clientX - rect.left - ttW - 14;
+                if (ty + ttH > rect.height - 8) ty = event.clientY - rect.top  - ttH - 10;
+                self._tooltip.style.left = tx + 'px';
+                self._tooltip.style.top  = ty + 'px';
+            })
+            .on("mouseleave", (event, d) => {
+                d3.select(event.currentTarget).select("circle")
                     .transition().duration(150)
                     .attr("r", self.getNodeRadius(d.type));
+                if (self._tooltip) self._tooltip.style.display = 'none';
             });
 
-        const self = this;
         node.style("cursor", d => d.type === "root" ? "default" : "pointer");
 
         // Status ring (outer pulse for dead nodes)
@@ -186,45 +279,57 @@ class RouteGraph {
 
     getNodeRadius(type) {
         switch (type) {
-            case "root":    return 14;
-            case "host":    return 10;
-            case "route":   return 7;
-            case "backend": return 5;
-            default:        return 5;
+            case "root":       return 14;
+            case "host":       return 10;
+            case "route":      return 7;
+            case "serverless": return 6;
+            case "backend":    return 5;
+            default:           return 5;
         }
     }
 
     getLabelSize(type) {
         switch (type) {
-            case "root":    return "11px";
-            case "host":    return "11px";
-            case "route":   return "10px";
-            case "backend": return "9px";
-            default:        return "10px";
+            case "root":       return "11px";
+            case "host":       return "11px";
+            case "route":      return "10px";
+            case "serverless": return "9px";
+            case "backend":    return "9px";
+            default:           return "10px";
         }
     }
 
     getLabelColor(d) {
         if (d.status === "dead")      return "var(--danger)";
         if (d.status === "degraded")  return "var(--warning)";
-        if (d.type   === "root")      return "var(--fg)";
         return "var(--fg)";
     }
 
     getNodeFill(d) {
-        if (d.status === "dead") return "var(--danger)";
+        if (d.status === "dead")      return "var(--danger)";
+        if (d.status === "degraded")  return "var(--warning)";
         switch (d.type) {
-            case "root":    return "var(--fg)";
-            case "host":    return "var(--accent)";
-            case "route":   return "var(--success)";
-            case "backend": return "var(--text-mute)";
-            default:        return "#999";
+            case "root":       return "var(--fg)";
+            case "host":       return "var(--accent)";
+            case "route": {
+                // UDP gets a distinct color; TCP/HTTP default green
+                if (d.protocol === "udp")    return "#ff9500";   // orange
+                if (d.protocol === "tcp")    return "#5ac8fa";   // blue
+                return "var(--success)";
+            }
+            case "serverless": {
+                if (d.kind === "worker")  return "#af52de";  // purple
+                if (d.kind === "replay")  return "#34c759";  // green
+                return "var(--info)";
+            }
+            case "backend":    return "var(--text-mute)";
+            default:           return "#999";
         }
     }
 
     getNodeRingColor(d) {
-        if (d.status === "dead")      return "var(--danger)";
-        if (d.status === "degraded")  return "var(--warning)";
+        if (d.status === "dead")       return "var(--danger)";
+        if (d.status === "degraded")   return "var(--warning)";
         if (d.status === "unverified") return "var(--info)";
         return "var(--bg)";
     }
@@ -236,28 +341,36 @@ class RouteGraph {
     }
 
     getLinkColor(d) {
-        const status = d.target?.status;
+        // Use the link's own status (from addLink) rather than target node status
+        const status = d.status || d.target?.status;
         if (status === "dead")     return "#ff3b30";
         if (status === "degraded") return "#ffcc00";
         return "#cccccc";
     }
 
     getLinkOpacity(d) {
-        const status = d.target?.status;
+        const status = d.status || d.target?.status;
         if (status === "dead")     return 0.9;
         if (status === "degraded") return 0.8;
-        return 0.7;
+        return 0.5;
     }
 
     getLinkWidth(d) {
-        const type = d.source?.type;
+
+        const type = d.source?.type || d.source;
         if (type === "root") return 2;
         if (type === "host") return 1.5;
+        // Scale weight logarithmically: 0 reqs = 1px, high traffic = up to 4px
+        const w = d.weight || 0;
+        if (w > 0) {
+            const scaled = 1 + Math.min(Math.log10(w + 1) * 1.2, 3);
+            return scaled;
+        }
         return 1;
     }
 
     getLinkArrow(d) {
-        const status = d.target?.status;
+        const status = d.status || d.target?.status;
         if (status === "dead")     return "url(#arrow-dead)";
         if (status === "degraded") return "url(#arrow-degraded)";
         return "url(#arrow-default)";
@@ -274,15 +387,29 @@ class RouteGraph {
     // Data processing (unchanged)
 
     processData(config, stats) {
-        const nodes  =[];
-        const links  =[];
+        const nodes   = [];
+        const links   = [];
         const nodeSet = new Set();
 
-        const addNode = (id, label, type, status = "ok", meta = null) => {
+        const addNode = (id, label, type, status = "ok", meta = null, extra = {}) => {
             if (!nodeSet.has(id)) {
-                nodes.push({ id, label, type, status, meta });
+                nodes.push({ id, label, type, status, meta, ...extra });
                 nodeSet.add(id);
             }
+        };
+
+        const addLink = (source, target, weight = 0, status = "ok") => {
+            links.push({ source, target, weight, status });
+        };
+
+        const beStatus = (backendStats, bIdx) => {
+            if (!backendStats[bIdx]) return "unverified";
+            const bStat = backendStats[bIdx];
+            const hStat = bStat.health?.status || "Unknown";
+            if (bStat.alive === false || hStat === "Dead" || hStat === "Unhealthy") return "dead";
+            if (hStat === "Degraded") return "degraded";
+            if (hStat === "Healthy") return "ok";
+            return bStat.alive ? "unverified" : "dead";
         };
 
         const rootId = "AGBERO";
@@ -290,84 +417,94 @@ class RouteGraph {
 
         if (config.hosts) {
             Object.entries(config.hosts).forEach(([hostname, hostCfg]) => {
-                const hostStats = stats && stats[hostname] ? stats[hostname] : {};
+                const hostStats = (stats && stats[hostname]) ? stats[hostname] : {};
 
                 addNode(hostname, hostname, "host", "ok", { hostname });
-                links.push({ source: rootId, target: hostname });
+                addLink(rootId, hostname);
 
+                // HTTP routes
                 if (hostCfg.routes) {
                     hostCfg.routes.forEach((route, rIdx) => {
-                        const path    = route.path || "/";
-                        const routeId = `${hostname}|${path}`;
+                        const path       = route.path || "/";
+                        const routeId    = `${hostname}|${path}`;
+                        const routeStats = hostStats.routes ? hostStats.routes[rIdx] : {};
+                        const bkStats    = routeStats?.backends || [];
+
                         addNode(routeId, path, "route", "ok", { hostname, routeIdx: rIdx, routeType: "route" });
-                        links.push({ source: hostname, target: routeId });
+                        addLink(hostname, routeId);
 
-                        const routeStats   = hostStats.routes ? hostStats.routes[rIdx] : {};
-                        const backendStats = routeStats.backends ||[];
-
-                        if (route.backends && route.backends.servers) {
+                        // HTTP backends
+                        if (route.backends?.servers) {
                             route.backends.servers.forEach((srv, bIdx) => {
-                                const beUrl = srv.address || srv.url;
+                                const beUrl  = srv.address || srv.url;
                                 if (!beUrl) return;
-                                const beId      = `${routeId}|${beUrl}`;
-                                const displayUrl = beUrl.replace(/^https?:\/\//, "");
-                                let   status    = "unverified";
+                                const beId   = `${routeId}|${beUrl}`;
+                                const status = beStatus(bkStats, bIdx);
+                                const reqs   = bkStats[bIdx]?.total_reqs || 0;
+                                addNode(beId, beUrl.replace(/^https?:\/\//, ""), "backend", status,
+                                    { hostname, routeIdx: rIdx, backendIdx: bIdx, routeType: "route" },
+                                    { protocol: "http" });
+                                addLink(routeId, beId, reqs, status);
+                            });
+                        }
 
-                                if (backendStats[bIdx]) {
-                                    const bStat = backendStats[bIdx];
-                                    const hStat = bStat.health?.status || "Unknown";
-                                    if (bStat.alive === false || hStat === "Dead" || hStat === "Unhealthy") {
-                                        status = "dead";
-                                    } else if (hStat === "Degraded") {
-                                        status = "degraded";
-                                    } else if (hStat === "Healthy") {
-                                        status = "ok";
-                                    } else {
-                                        status = bStat.alive ? "unverified" : "dead";
-                                    }
-                                }
+                        // Serverless — replay nodes
+                        if (route.serverless?.replay?.length) {
+                            route.serverless.replay.forEach((rp) => {
+                                const slId    = `${routeId}|replay|${rp.name}`;
+                                const slStats = (routeStats?.serverless || []).find(s => s.name === rp.name && s.kind === "replay");
+                                const status  = slStats?.failures > 0 ? "degraded" : "ok";
+                                const reqs    = slStats?.total_reqs || 0;
+                                addNode(slId, `\u21bb ${rp.name}`, "serverless", status,
+                                    { hostname, routeIdx: rIdx, routeType: "route" },
+                                    { protocol: "replay", kind: "replay" });
+                                addLink(routeId, slId, reqs, status);
+                            });
+                        }
 
-                                addNode(beId, displayUrl, "backend", status, { hostname, routeIdx: rIdx, backendIdx: bIdx, routeType: "route" });
-                                links.push({ source: routeId, target: beId });
+                        // Serverless — worker nodes
+                        if (route.serverless?.workers?.length) {
+                            route.serverless.workers.forEach((wk) => {
+                                const wkId    = `${routeId}|worker|${wk.name}`;
+                                const wkStats = (routeStats?.serverless || []).find(s => s.name === wk.name && s.kind === "worker");
+                                const status  = wkStats?.failures > 0 ? "degraded" : "ok";
+                                const reqs    = wkStats?.total_reqs || 0;
+                                addNode(wkId, `\u2699 ${wk.name}`, "serverless", status,
+                                    { hostname, routeIdx: rIdx, routeType: "route" },
+                                    { protocol: "worker", kind: "worker" });
+                                addLink(routeId, wkId, reqs, status);
                             });
                         }
                     });
                 }
 
+                // TCP and UDP proxies
                 if (hostCfg.proxies) {
                     hostCfg.proxies.forEach((proxy, pIdx) => {
-                        const name    = proxy.name || proxy.listen;
-                        const proxyId = `${hostname}|tcp|${name}`;
-                        addNode(proxyId, `TCP:${name}`, "route", "ok", { hostname, routeIdx: pIdx, routeType: "proxy" });
-                        links.push({ source: hostname, target: proxyId });
+                        const name       = proxy.name || proxy.listen;
+                        const isUDP      = (proxy.protocol || "").toLowerCase() === "udp";
+                        const proto      = isUDP ? "UDP" : "TCP";
+                        const proxyId    = `${hostname}|${proto.toLowerCase()}|${name}`;
+                        const proxyStats = hostStats.proxies ? hostStats.proxies[pIdx] : {};
+                        const bkStats    = proxyStats?.backends || [];
+                        const matcher    = isUDP && proxy.matcher ? `:${proxy.matcher}` : "";
 
-                        const proxyStats   = hostStats.proxies ? hostStats.proxies[pIdx] : {};
-                        const backendStats = proxyStats.backends ||[];
+                        addNode(proxyId, `${proto}${matcher}:${name}`, "route", "ok",
+                            { hostname, routeIdx: pIdx, routeType: "proxy" },
+                            { protocol: isUDP ? "udp" : "tcp" });
+                        addLink(hostname, proxyId);
 
-                        if (proxy.backends) {
-                            proxy.backends.forEach((srv, bIdx) => {
-                                const beUrl = srv.address;
-                                const beId  = `${proxyId}|${beUrl}`;
-                                let   status = "unverified";
-
-                                if (backendStats[bIdx]) {
-                                    const bStat = backendStats[bIdx];
-                                    const hStat = bStat.health?.status || "Unknown";
-                                    if (bStat.alive === false || hStat === "Dead" || hStat === "Unhealthy") {
-                                        status = "dead";
-                                    } else if (hStat === "Degraded") {
-                                        status = "degraded";
-                                    } else if (hStat === "Healthy") {
-                                        status = "ok";
-                                    } else {
-                                        status = bStat.alive ? "unverified" : "dead";
-                                    }
-                                }
-
-                                addNode(beId, beUrl, "backend", status, { hostname, routeIdx: pIdx, backendIdx: bIdx, routeType: "proxy" });
-                                links.push({ source: proxyId, target: beId });
-                            });
-                        }
+                        (proxy.backends || []).forEach((srv, bIdx) => {
+                            const beUrl  = srv.address;
+                            if (!beUrl) return;
+                            const beId   = `${proxyId}|${beUrl}`;
+                            const status = beStatus(bkStats, bIdx);
+                            const reqs   = bkStats[bIdx]?.total_reqs || 0;
+                            addNode(beId, beUrl, "backend", status,
+                                { hostname, routeIdx: pIdx, backendIdx: bIdx, routeType: "proxy" },
+                                { protocol: isUDP ? "udp" : "tcp" });
+                            addLink(proxyId, beId, reqs, status);
+                        });
                     });
                 }
             });

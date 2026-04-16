@@ -47,8 +47,18 @@ func extractIP(addr string) string {
 	}
 	ip := addr[:idx]
 	if len(ip) > 0 && ip[0] == '[' && ip[len(ip)-1] == ']' {
-		return ip[1 : len(ip)-1]
+		ip = ip[1 : len(ip)-1]
 	}
+
+	// Normalize IPv4-mapped IPv6 addresses so ::ffff:127.0.0.1 becomes 127.0.0.1
+	// This ensures exact string matching works in the firewall and rate limiters.
+	if parsedIP := net.ParseIP(ip); parsedIP != nil {
+		if v4 := parsedIP.To4(); v4 != nil {
+			return v4.String()
+		}
+		return parsedIP.String()
+	}
+
 	return ip
 }
 

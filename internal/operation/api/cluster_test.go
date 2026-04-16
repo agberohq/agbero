@@ -230,10 +230,16 @@ func TestClusterHandler_InvalidJSON(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	// The handler currently doesn't parse JSON, but when implemented should return 400
-	// For now, it returns 200 because the handler doesn't parse the body
-	// This test will pass once JSON parsing is implemented
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected 200 (until parsing implemented), got %d", w.Code)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if resp["error"] != "invalid JSON payload" {
+		t.Errorf("Expected error 'invalid JSON payload', got %s", resp["error"])
 	}
 }

@@ -403,8 +403,8 @@ func TestAdminCoreEndpoints(t *testing.T) {
 		if result["status"] != "ok" {
 			t.Error("status not ok")
 		}
-		if _, ok := result["auth_state"]; !ok {
-			t.Error("auth_state field missing from /status")
+		if _, ok := result["locked"]; !ok {
+			t.Error("keeper not opened status")
 		}
 	})
 

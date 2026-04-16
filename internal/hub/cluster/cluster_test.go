@@ -54,7 +54,7 @@ func (m *MockHandler) OnClusterChallenge(token, keyAuth string, deleted bool) {
 func TestDelegate_Apply_LWW(t *testing.T) {
 	h := NewMockHandler()
 	configMgr := NewDistributor(testLoogerCluster, "")
-	d := newDelegate(h, ll.New("test").Disable(), nil, nil, configMgr)
+	d := newDelegate(Config{}, h, ll.New("test").Disable(), nil, nil, configMgr)
 
 	now := time.Now().UnixNano()
 
@@ -79,7 +79,7 @@ func TestDelegate_CertEncryption(t *testing.T) {
 	cipher, _ := security.NewCipher(secret)
 	h := NewMockHandler()
 	configMgr := NewDistributor(testLoogerCluster, "")
-	d := newDelegate(h, ll.New("test").Disable(), nil, cipher, configMgr)
+	d := newDelegate(Config{}, h, ll.New("test").Disable(), nil, cipher, configMgr)
 
 	domain := "test.com"
 	keyData := []byte("private-key-data")
@@ -105,7 +105,7 @@ func TestManager_BroadcastCert(t *testing.T) {
 	h := NewMockHandler()
 	cipher, _ := security.NewCipher(string(secret))
 	configMgr := NewDistributor(testLoogerCluster, "")
-	del := newDelegate(h, ll.New("test").Disable(), nil, cipher, configMgr)
+	del := newDelegate(Config{}, h, ll.New("test").Disable(), nil, cipher, configMgr)
 
 	m := &Manager{
 		delegate: del,

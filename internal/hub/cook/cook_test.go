@@ -2,6 +2,7 @@ package cook
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -115,17 +116,20 @@ func TestNew(t *testing.T) {
 			t.Error("expected error for missing ID")
 		}
 	})
-	t.Run("missing URL", func(t *testing.T) {
+	t.Run("missing URL is valid for push-only mode", func(t *testing.T) {
 		cfg := Config{
 			ID:      "test",
-			URL:     "",
-			Branch:  "main",
+			URL:     "", // push-only — no clone
 			WorkDir: t.TempDir(),
 			Logger:  logger,
 		}
-		_, err := New(cfg)
-		if err != ErrRepositoryNotSet {
-			t.Errorf("expected ErrRepositoryNotSet, got %v", err)
+		c, err := New(cfg)
+		if err != nil {
+			t.Fatalf("New with empty URL should succeed for push-only, got: %v", err)
+		}
+		// Make must fail — push-only entries must not clone.
+		if err := c.Make(context.Background()); !errors.Is(err, ErrRepositoryNotSet) {
+			t.Errorf("Make on push-only cook should return ErrRepositoryNotSet, got: %v", err)
 		}
 	})
 	t.Run("missing workDir", func(t *testing.T) {

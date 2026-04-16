@@ -22,14 +22,23 @@ type ActiveState struct {
 	TLSS     *tlss.Manager
 }
 
+// UpdateChecker is implemented by update.Checker — defined as an interface
+// here so the api package does not import the update package directly.
+type UpdateChecker interface {
+	GetCurrent() string
+	GetLatest() string
+	IsAvailable() bool
+}
+
 type Shared struct {
-	Logger      *ll.Logger
-	Cluster     *cluster.Manager
-	Keeper      *keeper.Keeper
-	Discovery   *discovery.Host
-	PPK         *security.PPK
-	Telemetry   *telemetry.Store
-	RevokeStore *revoke.Store
+	Logger        *ll.Logger
+	Cluster       *cluster.Manager
+	Keeper        *keeper.Keeper
+	Discovery     *discovery.Host
+	PPK           *security.PPK
+	Telemetry     *telemetry.Store
+	RevokeStore   *revoke.Store
+	UpdateChecker UpdateChecker
 
 	state atomic.Value
 }
@@ -45,8 +54,6 @@ func (s *Shared) UpdateState(newState *ActiveState) {
 	s.state.Store(newState)
 }
 
-// AdminHandler registers all /api/v1 routes. Must be called inside an
-// admin-auth middleware group — these routes require a valid admin token.
 func AdminHandler(shared *Shared, r chi.Router) {
 	r.Route("/api/v1", func(r chi.Router) {
 		if shared.Cluster != nil && shared.PPK != nil {
@@ -63,6 +70,7 @@ func AdminHandler(shared *Shared, r chi.Router) {
 			r.Mount("/telemetry", telemetry.Handler(shared.Telemetry))
 		}
 
+		SystemHandler(shared, r)
 		CertsHandler(shared, r)
 		RouterHandler(shared, r)
 		KeeperHandler(shared, r)
@@ -75,9 +83,6 @@ func AdminHandler(shared *Shared, r chi.Router) {
 	})
 }
 
-// AutoHandler registers all /auto/v1 routes. Must be called inside a
-// service-token (PPK/Internal) middleware group — admin tokens are not
-// valid here. Services may only register and deregister themselves.
 func AutoHandler(shared *Shared, r chi.Router) {
 	r.Route("/auto/v1", func(r chi.Router) {
 		AutoRouteHandler(shared, r)

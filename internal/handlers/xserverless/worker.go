@@ -2,11 +2,11 @@ package xserverless
 
 import (
 	"net/http"
-	"os"
+	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
-	orchestrator2 "github.com/agberohq/agbero/internal/hub/orchestrator"
+	"github.com/agberohq/agbero/internal/hub/orchestrator"
 	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
@@ -16,61 +16,85 @@ type WorkerConfig struct {
 	Work      alaye.Work
 	GlobalEnv map[string]expect.Value
 	RouteEnv  map[string]expect.Value
-	Orch      *orchestrator2.Manager
+	Orch      *orchestrator.Manager
+	Domain    string
 }
 
-type WorkerHandler struct {
+type Worker struct {
 	res       *resource.Resource
 	route     alaye.Route
 	cfg       alaye.Work
 	globalEnv map[string]expect.Value
 	routeEnv  map[string]expect.Value
-	orch      *orchestrator2.Manager
+	orch      *orchestrator.Manager
+	statsKey  alaye.BackendKey
 }
 
-// NewWorker initializes a new worker handler with the given configuration.
-func NewWorker(cfg WorkerConfig) *WorkerHandler {
-	return &WorkerHandler{
+func NewWorker(cfg WorkerConfig) *Worker {
+	key := cfg.Route.WorkerBackendKey(cfg.Domain, cfg.Work.Name)
+	cfg.Resource.Metrics.GetOrRegister(key)
+	return &Worker{
 		res:       cfg.Resource,
 		route:     cfg.Route,
 		cfg:       cfg.Work,
 		globalEnv: cfg.GlobalEnv,
 		routeEnv:  cfg.RouteEnv,
 		orch:      cfg.Orch,
+		statsKey:  key,
 	}
 }
 
-// ServeHTTP handles the incoming HTTP request by running the configured worker process.
-// It resolves the execution directory and returns 503 if a git deployment is pending.
-func (h *WorkerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *Worker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+
 	host := r.Host
 	if host == "" {
 		host = "default"
 	}
 
-	var dir string
-	if h.orch != nil {
-		dir = h.orch.ResolveDir(host, h.route, h.cfg)
-	} else {
-		dir = os.TempDir()
+	h.res.Logger.Fields("worker", h.cfg.Name, "method", r.Method, "remote", r.RemoteAddr).Info("serverless: worker request received")
+
+	activity := h.res.Metrics.GetOrRegister(h.statsKey).Activity
+	activity.StartRequest()
+	failed := false
+	defer func() {
+		activity.EndRequest(time.Since(start).Microseconds(), failed)
+	}()
+
+	// orch is required — it owns the allowlist, privilege config, and
+	// directory resolution. A nil orch means server misconfiguration;
+	// refuse rather than execute without any security controls.
+	if h.orch == nil {
+		failed = true
+		h.res.Logger.Fields("worker", h.cfg.Name).Error("serverless: no orchestrator configured, refusing execution")
+		http.Error(w, "Worker Execution Failed", http.StatusInternalServerError)
+		return
 	}
 
-	if dir == "" && h.route.Web.Git.Enabled.Active() {
+	dir := h.orch.ResolveDir(host, h.route, h.cfg)
+
+	// dir can only be empty if serverless.git is enabled but the cook
+	// manager has not yet completed the initial clone.
+	if dir == "" {
+		h.res.Logger.Fields("worker", h.cfg.Name).Warn("serverless: git deployment pending, no checkout available")
 		http.Error(w, "Deployment in progress...", http.StatusServiceUnavailable)
 		return
 	}
 
 	env := expect.CompileEnv(h.globalEnv, h.routeEnv, h.cfg.Env)
 
-	proc := &orchestrator2.Process{
-		Config: h.cfg,
-		Env:    env,
-		Dir:    dir,
-		Logger: h.res.Logger.Namespace("worker").Namespace(h.cfg.Name),
-	}
+	proc := h.orch.NewProcess(
+		h.cfg,
+		env,
+		dir,
+		h.res.Logger.Namespace("worker").Namespace(h.cfg.Name),
+	)
 
 	if err := proc.Run(r.Context(), r.Body, w); err != nil {
-		h.res.Logger.Fields("worker", h.cfg.Name, "err", err).Error("serverless: ephemeral execution failed")
+		failed = true
+		h.res.Logger.Fields("worker", h.cfg.Name, "err", err, "duration", time.Since(start)).Error("serverless: ephemeral execution failed")
 		http.Error(w, "Worker Execution Failed", http.StatusInternalServerError)
+		return
 	}
+	h.res.Logger.Fields("worker", h.cfg.Name, "duration", time.Since(start)).Info("serverless: worker done")
 }

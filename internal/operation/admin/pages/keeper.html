@@ -1,341 +1,126 @@
 <div class="page active">
 
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;">
+    <!-- Header -->
+    <div class="flex-right" style="margin-bottom:24px;">
         <div>
             <h2 style="margin:0;font-size:17px;font-weight:400;">Keeper</h2>
-            <p style="margin:3px 0 0;font-size:12px;color:var(--text-mute);">Encrypted secret store. Reference secrets in config as <code>ss://key-name</code></p>
+            <p style="margin:3px 0 0;font-size:12px;color:var(--text-mute);">Encrypted secret store — reference as <code>ss://namespace/key</code></p>
         </div>
-        <div style="display:flex;gap:8px;" id="keeperActions">
-            <button class="btn small" id="keeperLockBtn" style="display:none;color:var(--danger);border-color:var(--danger);">🔒 Lock</button>
-            <button class="btn primary small" id="keeperAddBtn" style="display:none;">+ Secret</button>
+        <div style="flex:1;"></div>
+        <button class="btn small" id="keeperRefreshBtn" title="Refresh">⟳</button>
+        <button class="btn primary small" id="keeperAddBtn" style="display:none;">+ Secret</button>
+    </div>
+
+    <!-- State A: not configured -->
+    <div id="keeperNotConfiguredPanel" style="display:none;">
+        <div class="empty-state" style="max-width:500px;margin:80px auto;text-align:center;">
+            <span style="font-size:40px;display:block;margin-bottom:12px;">🗄️</span>
+            <span style="font-size:14px;font-weight:500;margin-bottom:8px;">Keeper not configured</span>
+            <span style="color:var(--text-mute);line-height:1.7;">Add a <code>keeper</code> block inside <code>security { }</code> in your global config to enable encrypted secret storage.</span>
+            <pre style="text-align:left;background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-size:11px;font-family:var(--font-mono);margin-top:16px;overflow-x:auto;">security {
+  keeper {
+    enabled    = "on"
+    passphrase = env.KEEPER_PASS
+    auto_lock  = "30m"
+    audit      = "on"
+  }
+}</pre>
         </div>
     </div>
 
-    <!-- Locked state -->
-    <div id="keeperLockedPanel">
-        <div style="max-width:360px;margin:80px auto;text-align:center;">
-            <div style="font-size:44px;margin-bottom:14px;line-height:1;">🔐</div>
-            <p style="color:var(--text-mute);font-size:13px;margin:0 0 20px;line-height:1.6;">Enter your passphrase to unlock the secret store.</p>
-            <div style="display:flex;gap:8px;align-items:stretch;">
-                <input type="password" id="keeperPassphrase" class="search-input"
-                       placeholder="Passphrase" style="flex:1;"
-                       autocomplete="current-password">
-                <button class="btn primary" id="keeperUnlockBtn">Unlock</button>
-            </div>
-            <div id="keeperUnlockError" style="color:var(--danger);font-size:11px;margin-top:8px;display:none;text-align:left;"></div>
-        </div>
-    </div>
-
-    <!-- Unlocked state -->
-    <div id="keeperUnlockedPanel" style="display:none;">
-
-        <!-- Add secret inline form -->
-        <div id="keeperAddForm" style="display:none;background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px;">
-            <div style="font-size:13px;font-weight:500;margin-bottom:12px;">New Secret</div>
-            <div style="display:grid;grid-template-columns:1fr 2fr;gap:8px;margin-bottom:8px;">
-                <input type="text" id="keeperNewKey" class="search-input"
-                       placeholder="key-name" autocomplete="off" spellcheck="false">
-                <input type="text" id="keeperNewValue" class="search-input"
-                       placeholder="value, env.VAR, or b64.…" autocomplete="off">
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span style="font-size:11px;color:var(--text-mute);">Use <code>env.VAR</code> for environment variables or <code>b64.XXX</code> for base64-encoded values.</span>
-                <div style="display:flex;gap:6px;">
-                    <button class="btn small" id="keeperCancelAddBtn">Cancel</button>
-                    <button class="btn primary small" id="keeperSaveBtn">Save Secret</button>
+    <!-- State B: locked -->
+    <div id="keeperLockedPanel" style="display:none;">
+        <div style="max-width:420px;margin:60px auto;">
+            <div style="background:var(--panel-bg);border:1px solid var(--border);border-radius:10px;text-align:center;padding:36px 28px;">
+                <div style="font-size:40px;margin-bottom:16px;">🔐</div>
+                <div style="font-size:15px;font-weight:500;margin-bottom:8px;">Keeper is locked</div>
+                <div style="font-size:12px;color:var(--text-mute);line-height:1.7;margin-bottom:20px;">
+                    Secrets referenced as <code>ss://namespace/key</code> cannot be resolved until the keeper is unlocked.
+                    The keeper auto-locks after the timeout set in <code>security.keeper.auto_lock</code>.
+                </div>
+                <div style="background:var(--hover-bg);border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-size:11px;color:var(--text-mute);text-align:left;">
+                    To unlock, restart agbero with the correct passphrase set in the environment, or use the CLI.
                 </div>
             </div>
-            <div id="keeperAddError" style="color:var(--danger);font-size:11px;margin-top:6px;display:none;"></div>
         </div>
+    </div>
 
-        <!-- Keys list -->
-        <div id="keeperList">
+    <!-- State C: unlocked -->
+    <div id="keeperUnlockedPanel" style="display:none;">
+        <!-- Auto-lock timer -->
+        <div id="keeperTimerBar" class="keeper-timer-bar">
+            <span class="keeper-timer-dot"></span>
+            <span id="keeperTimerText">Unlocked</span>
+        </div>
+        <!-- Secrets list grouped by namespace -->
+        <div id="keeperList" style="margin-top:16px;">
             <div class="loading-rows"><div class="loading-row"></div><div class="loading-row"></div></div>
         </div>
     </div>
+
+    <!-- Add Secret Modal -->
+    <div class="modal-overlay" id="keeperAddModal">
+        <div class="modal" style="max-width:520px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+                <h3 style="margin:0;font-size:15px;">New Secret</h3>
+                <button class="close-modal" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--text-mute);padding:0 4px;">✕</button>
+            </div>
+
+            <!-- Namespace + key shared across both tabs -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px;">
+                <div>
+                    <label style="font-size:11px;color:var(--text-mute);display:block;margin-bottom:4px;">NAMESPACE</label>
+                    <input type="text" id="keeperNewNs" class="search-input" style="width:100%;box-sizing:border-box;"
+                           placeholder="e.g. prod, db, tls" autocomplete="off" spellcheck="false">
+                </div>
+                <div>
+                    <label style="font-size:11px;color:var(--text-mute);display:block;margin-bottom:4px;">KEY / PATH</label>
+                    <input type="text" id="keeperNewPath" class="search-input" style="width:100%;box-sizing:border-box;"
+                           placeholder="e.g. password, certs/server" autocomplete="off" spellcheck="false">
+                </div>
+            </div>
+            <div id="keeperRefPreview" style="font-size:11px;font-family:var(--font-mono);color:var(--accent);min-height:18px;margin-bottom:14px;"></div>
+
+            <!-- Tabs: Enter / Upload -->
+            <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px;">
+                <button id="keeperTabEnter"  class="keeper-tab keeper-tab-active">Enter value</button>
+                <button id="keeperTabUpload" class="keeper-tab">Upload file</button>
+            </div>
+
+            <!-- Tab: Enter -->
+            <div id="keeperPanelEnter">
+                <label style="font-size:11px;color:var(--text-mute);display:block;margin-bottom:4px;">VALUE</label>
+                <textarea id="keeperNewValue" class="json-editor"
+                          style="width:100%;height:100px;font-size:12px;font-family:var(--font-mono);box-sizing:border-box;resize:vertical;"
+                          placeholder="secret value, or env.VAR_NAME for environment variable"
+                          autocomplete="off" spellcheck="false"></textarea>
+                <div style="font-size:11px;color:var(--text-mute);margin-top:5px;">
+                    Use <code>env.VAR</code> to reference an environment variable by name.
+                </div>
+            </div>
+
+            <!-- Tab: Upload -->
+            <div id="keeperPanelUpload" style="display:none;">
+                <label style="font-size:11px;color:var(--text-mute);display:block;margin-bottom:8px;">FILE</label>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <label class="btn small" style="cursor:pointer;flex-shrink:0;">
+                        Choose file
+                        <input type="file" id="keeperFileInput" style="display:none;">
+                    </label>
+                    <span id="keeperFileName" style="font-size:12px;color:var(--text-mute);font-family:var(--font-mono);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">No file chosen</span>
+                </div>
+                <div style="font-size:11px;color:var(--text-mute);margin-top:8px;">
+                    Suitable for PEM certificates, SSH keys, and binary blobs.
+                </div>
+            </div>
+
+            <div id="keeperModalError" style="color:var(--danger);font-size:12px;margin-top:10px;display:none;background:rgba(255,59,48,0.08);padding:8px;border-radius:4px;"></div>
+
+            <div style="display:flex;gap:8px;margin-top:16px;">
+                <button id="keeperSaveBtn" class="btn primary" style="flex:1;">Save Secret</button>
+                <button class="btn close-modal" style="width:90px;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
 </div>
-
-<script type="module">
-    import { component, on, ui, notify, query } from '../lib/oja.full.esm.js';
-    import { keeperUnlock, keeperLock, keeperList, keeperGet, keeperSet, keeperDelete } from '../js/api.js';
-
-    let _unlocked = false;
-    // Per-key reveal state: key → { timerId }
-    const _revealed = new Map();
-
-    // SVG icon constants
-    const _svgCopy    = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>`;
-    const _eyeOpen    = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
-    const _eyeClosed  = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
-
-    function showLocked() {
-        _unlocked = false;
-        query('#keeperLockedPanel').style.display   = '';
-        query('#keeperUnlockedPanel').style.display = 'none';
-        query('#keeperLockBtn').style.display       = 'none';
-        query('#keeperAddBtn').style.display        = 'none';
-        query('#keeperPassphrase').value            = '';
-        query('#keeperAddForm').style.display       = 'none';
-    }
-
-    function showUnlocked() {
-        _unlocked = true;
-        query('#keeperLockedPanel').style.display   = 'none';
-        query('#keeperUnlockedPanel').style.display = '';
-        query('#keeperLockBtn').style.display       = '';
-        query('#keeperAddBtn').style.display        = '';
-        loadKeys();
-    }
-
-    function renderKeys(keys) {
-        const el = query('#keeperList');
-        if (!el) return;
-
-        if (!keys?.length) {
-            el.innerHTML = `<div class="empty-state">
-                <span>🗝️ No secrets yet</span>
-                <span>Click <strong>+ Secret</strong> to add your first entry</span>
-            </div>`;
-            return;
-        }
-
-        el.innerHTML = `<div class="host-row" style="overflow:visible;">
-            <table style="width:100%;border-collapse:collapse;">
-                <thead>
-                    <tr style="border-bottom:1px solid var(--border);">
-                        <th style="text-align:left;padding:9px 16px;font-size:11px;color:var(--text-mute);font-weight:500;text-transform:uppercase;letter-spacing:.5px;width:25%;">Key</th>
-                        <th style="text-align:left;padding:9px 16px;font-size:11px;color:var(--text-mute);font-weight:500;text-transform:uppercase;letter-spacing:.5px;width:25%;">Reference</th>
-                        <th style="text-align:left;padding:9px 16px;font-size:11px;color:var(--text-mute);font-weight:500;text-transform:uppercase;letter-spacing:.5px;">Value</th>
-                        <th style="width:76px;padding:9px 16px;"></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${keys.map(k => `
-                    <tr style="border-bottom:1px solid var(--border);vertical-align:top;" data-key="${k}">
-                        <td style="padding:12px 16px;font-family:var(--font-mono);font-size:12px;color:var(--fg);word-break:break-all;">${k}</td>
-                        <td style="padding:12px 16px;">
-                            <div style="display:flex;align-items:center;gap:5px;">
-                                <code style="font-size:11px;background:var(--hover-bg);padding:3px 7px;border-radius:3px;border:1px solid var(--border);color:var(--accent);white-space:nowrap;">ss://${k}</code>
-                                <button class="keeper-icon-btn" data-action="copy-ref" data-ref="ss://${k}" title="Copy ss:// reference">
-                                    ${_svgCopy}
-                                </button>
-                            </div>
-                        </td>
-                        <td style="padding:12px 16px;">
-                            <!-- Hidden until revealed. Textarea so long values (JWT etc.) are scrollable + selectable -->
-                            <div class="keeper-value-wrap" data-key="${k}" style="display:none;">
-                                <textarea class="keeper-value" data-key="${k}" readonly
-                                    style="width:100%;min-height:38px;max-height:120px;resize:vertical;
-                                           font-family:var(--font-mono);font-size:11px;color:var(--text-main);
-                                           background:var(--panel-bg);border:1px solid var(--border);border-radius:4px;
-                                           padding:6px 8px;line-height:1.5;overflow-y:auto;word-break:break-all;
-                                           white-space:pre-wrap;cursor:text;outline:none;margin:0;"></textarea>
-                                <div style="margin-top:4px;text-align:right;">
-                                    <button class="keeper-icon-btn keeper-copy-value-btn" data-action="copy-value" data-key="${k}" title="Copy value">
-                                        ${_svgCopy}
-                                    </button>
-                                </div>
-                            </div>
-                        </td>
-                        <td style="padding:12px 16px;text-align:right;">
-                            <div style="display:flex;align-items:center;gap:4px;justify-content:flex-end;">
-                                <button class="btn small keeper-reveal-btn" data-action="reveal-secret" data-key="${k}" title="Reveal value" style="padding:0;width:var(--btn-h-sm);justify-content:center;">
-                                    ${_eyeOpen}
-                                </button>
-                                <button class="btn small" data-action="delete-key" data-key="${k}"
-                                        style="color:var(--danger);border-color:rgba(255,59,48,0.4);">
-                                    Delete
-                                </button>
-                            </div>
-                        </td>
-                    </tr>`).join('')}
-                </tbody>
-            </table>
-        </div>`;
-    }
-
-    async function loadKeys() {
-        const el = query('#keeperList');
-        if (el) el.innerHTML = '<div class="loading-rows"><div class="loading-row"></div><div class="loading-row"></div></div>';
-        const data = await keeperList();
-        if (data?.keys !== undefined) renderKeys(data.keys);
-        else showLocked();
-    }
-
-    // Boot
-    (async () => {
-        const data = await keeperList();
-        if (data?.keys !== undefined) showUnlocked();
-        else showLocked();
-    })();
-
-    // Unlock
-    async function doUnlock() {
-        const pass  = query('#keeperPassphrase').value.trim();
-        const errEl = query('#keeperUnlockError');
-        const btn   = query('#keeperUnlockBtn');
-        if (!pass) return;
-        errEl.style.display = 'none';
-        ui.btn.loading(btn, 'Unlocking…');
-        const res = await keeperUnlock(pass);
-        ui.btn.reset(btn);
-        if (res?.status === 'unlocked') showUnlocked();
-        else { errEl.textContent = res?.error || 'Invalid passphrase'; errEl.style.display = 'block'; }
-    }
-
-    on('#keeperUnlockBtn',  'click',   doUnlock);
-    on('#keeperPassphrase', 'keydown', (e) => { if (e.key === 'Enter') doUnlock(); });
-
-    // Lock
-    on('#keeperLockBtn', 'click', async (e, btn) => {
-        ui.btn.loading(btn, 'Locking…');
-        await keeperLock();
-        ui.btn.reset(btn);
-        _revealed.clear();
-        showLocked();
-        notify.show('Keeper locked', 'success');
-    });
-
-    // Reveal secret value — fetches live from API, auto-obscures after 30s
-    on('[data-action="reveal-secret"]', 'click', async (e, btn) => {
-        e.stopPropagation();
-        const key     = btn.dataset.key;
-        const wrap    = query(`.keeper-value-wrap[data-key="${key}"]`);
-        const ta      = query(`.keeper-value[data-key="${key}"]`);
-        if (!wrap || !ta) return;
-
-        // If already revealed, hide it
-        if (_revealed.has(key)) {
-            const { timerId } = _revealed.get(key);
-            clearTimeout(timerId);
-            _revealed.delete(key);
-            wrap.style.display = 'none';
-            ta.value = '';
-            btn.innerHTML = _eyeOpen;
-            btn.title = 'Reveal value';
-            return;
-        }
-
-        btn.disabled = true;
-        const res = await keeperGet(key);
-        btn.disabled = false;
-
-        if (!res?.value) {
-            notify.show('Could not fetch secret value', 'error');
-            return;
-        }
-
-        // Show in textarea — long values (JWT, PEM) are scrollable and selectable
-        ta.value = res.value;
-        // Auto-size rows based on content length
-        const lines = res.value.split('\n').length;
-        ta.rows = Math.min(Math.max(2, lines), 6);
-        wrap.style.display = '';
-        btn.innerHTML = _eyeClosed;
-        btn.title = 'Hide value (auto-hides in 30s)';
-
-        // Auto-obscure after 30 seconds
-        const timerId = setTimeout(() => {
-            wrap.style.display = 'none';
-            ta.value = '';
-            btn.innerHTML = _eyeOpen;
-            btn.title = 'Reveal value';
-            _revealed.delete(key);
-        }, 30_000);
-
-        _revealed.set(key, { timerId });
-    });
-
-    // Copy ref
-    on('[data-action="copy-ref"]', 'click', (e, btn) => {
-        e.stopPropagation();
-        navigator.clipboard?.writeText(btn.dataset.ref)
-            .then(() => notify.show('Reference copied', 'success'))
-            .catch(() => {});
-    });
-
-    // Copy revealed value
-    on('[data-action="copy-value"]', 'click', (e, btn) => {
-        e.stopPropagation();
-        const key = btn.dataset.key;
-        const ta  = query(`.keeper-value[data-key="${key}"]`);
-        if (!ta?.value) { notify.show('Reveal the value first', 'info'); return; }
-        navigator.clipboard?.writeText(ta.value)
-            .then(() => notify.show('Value copied', 'success'))
-            .catch(() => {});
-    });
-
-    // Add
-    on('#keeperAddBtn', 'click', () => {
-        query('#keeperAddForm').style.display = '';
-        query('#keeperNewKey')?.focus();
-    });
-
-    on('#keeperCancelAddBtn', 'click', () => {
-        query('#keeperAddForm').style.display = 'none';
-        query('#keeperNewKey').value = '';
-        query('#keeperNewValue').value = '';
-        query('#keeperAddError').style.display = 'none';
-    });
-
-    on('#keeperSaveBtn', 'click', async (e, btn) => {
-        const key   = (query('#keeperNewKey').value   || '').trim();
-        const value = (query('#keeperNewValue').value || '').trim();
-        const errEl = query('#keeperAddError');
-        errEl.style.display = 'none';
-        if (!key)          { errEl.textContent = 'Key is required';           errEl.style.display = 'block'; return; }
-        if (!value)        { errEl.textContent = 'Value is required';         errEl.style.display = 'block'; return; }
-        if (/\s/.test(key)) { errEl.textContent = 'Key cannot contain spaces'; errEl.style.display = 'block'; return; }
-
-        ui.btn.loading(btn, 'Saving…');
-        const res = await keeperSet(key, value);
-        ui.btn.reset(btn);
-        if (res?.key || res?.bytes !== undefined) {
-            notify.show(`"${key}" saved`, 'success');
-            query('#keeperAddForm').style.display = 'none';
-            query('#keeperNewKey').value = '';
-            query('#keeperNewValue').value = '';
-            loadKeys();
-        } else {
-            errEl.textContent = res?.error || 'Save failed';
-            errEl.style.display = 'block';
-        }
-    });
-
-    // Delete — two-step inline confirm
-    on('[data-action="delete-key"]', 'click', async (e, btn) => {
-        e.stopPropagation();
-        const key = btn.dataset.key;
-        if (btn.dataset.confirm === '1') {
-            ui.btn.loading(btn, '…');
-            const res = await keeperDelete(key);
-            if (res?.deleted) {
-                notify.show(`"${key}" deleted`, 'success');
-                _revealed.delete(key);
-                loadKeys();
-            } else {
-                ui.btn.reset(btn);
-                btn.dataset.confirm = '';
-                notify.show(res?.error || 'Delete failed', 'error');
-            }
-        } else {
-            btn.dataset.confirm = '1';
-            btn.textContent = 'Sure?';
-            btn.style.background = 'var(--danger)';
-            btn.style.color = '#fff';
-            btn.style.borderColor = 'var(--danger)';
-            setTimeout(() => {
-                if (btn.dataset.confirm === '1') {
-                    btn.dataset.confirm = '';
-                    btn.textContent = 'Delete';
-                    btn.style.cssText = 'color:var(--danger);border-color:rgba(255,59,48,0.4);';
-                }
-            }, 2500);
-        }
-    });
-
-    component.onUnmount(() => {
-        _revealed.forEach(({ timerId }) => clearTimeout(timerId));
-        _revealed.clear();
-    });
-</script>
