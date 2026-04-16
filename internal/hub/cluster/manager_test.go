@@ -256,7 +256,7 @@ func TestDelegate_LWW_and_Tombstones(t *testing.T) {
 	metrics := &RealMetrics{}
 	cipher, _ := security.NewCipher("test-secret-key-1234567890123456")
 	configMgr := NewDistributor(logger, "")
-	del := newDelegate(nil, logger, metrics, cipher, configMgr)
+	del := newDelegate(Config{}, nil, logger, metrics, cipher, configMgr)
 
 	ts1 := time.Now().UnixNano()
 	env1 := Envelope{Key: "foo", Op: OpSet, Value: []byte("v1"), Timestamp: ts1}

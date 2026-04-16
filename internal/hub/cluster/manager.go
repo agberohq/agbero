@@ -28,6 +28,18 @@ type Config struct {
 	Name     string
 	Seeds    []string
 	HostsDir expect.Folder
+
+	// KeeperSnapshot is called by the seed node during LocalState(join=true) to
+	// collect all keeper secrets that should be pushed to the joining node.
+	// The returned map is key -> plaintext bytes; values are zeroed after use.
+	// Nil means no keeper sync.
+	KeeperSnapshot func() map[string][]byte
+
+	// KeeperWrite is called on the joining node when an OpSecret envelope arrives
+	// via MergeRemoteState. It must write key -> value into the local keeper store.
+	// The value slice is zeroed by the caller immediately after KeeperWrite returns.
+	// Nil means incoming OpSecret envelopes are dropped.
+	KeeperWrite func(key string, value []byte)
 }
 
 type Manager struct {
@@ -82,7 +94,7 @@ func NewManager(cfg Config, handler UpdateHandler, logger *ll.Logger) (*Manager,
 
 	configMgr := NewDistributor(logger, cfg.HostsDir)
 	metrics := NewMetrics()
-	del := newDelegate(handler, logger, metrics, cipher, configMgr)
+	del := newDelegate(cfg, handler, logger, metrics, cipher, configMgr)
 	events := &eventDelegate{logger: logger, metrics: metrics}
 	mConfig.Delegate = del
 	mConfig.Events = events
@@ -196,15 +208,9 @@ func (m *Manager) TryAcquireLock(key string) bool {
 		}
 	}
 
-	// Broadcast our claim, then wait for gossip to propagate so we can detect
-	// a concurrent claim from another node.
 	m.BroadcastGossip(OpLock, lockKey, []byte("claimed"))
 	time.Sleep(2 * time.Second)
 
-	// We win only if our envelope survived — last-writer-wins by timestamp means
-	// the node with the highest UnixNano claim time holds the lock.  If another
-	// node's envelope is present, they either claimed later (and won) or we never
-	// got our broadcast applied locally (pathological split — treat as lost).
 	if env, ok := m.delegate.getEnvelope(lockKey); ok {
 		return env.Owner == myID
 	}
@@ -302,7 +308,6 @@ func (m *Manager) Metrics() map[string]uint64 {
 	return m.metrics.Snapshot()
 }
 
-// Distributor returns the underlying sync controller for local integration.
 func (m *Manager) ConfigManager() *Distributor {
 	return m.configMgr
 }

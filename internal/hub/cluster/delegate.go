@@ -8,6 +8,7 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/hashicorp/memberlist"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/zero"
 )
 
 const (
@@ -17,29 +18,33 @@ const (
 )
 
 type delegate struct {
-	mu        sync.RWMutex
-	store     map[string]Envelope
-	queue     *memberlist.TransmitLimitedQueue
-	handler   UpdateHandler
-	logger    *ll.Logger
-	metrics   Metrics
-	cipher    *security.Cipher
-	configMgr *Distributor
+	mu             sync.RWMutex
+	store          map[string]Envelope
+	queue          *memberlist.TransmitLimitedQueue
+	handler        UpdateHandler
+	logger         *ll.Logger
+	metrics        Metrics
+	cipher         *security.Cipher
+	configMgr      *Distributor
+	keeperSnapshot func() map[string][]byte
+	keeperWrite    func(key string, value []byte)
 }
 
 // newDelegate initializes the state manager for gossip events.
 // It handles conflict resolution, payload decryption, and local application.
-func newDelegate(handler UpdateHandler, logger *ll.Logger, metrics Metrics, cipher *security.Cipher, configMgr *Distributor) *delegate {
+func newDelegate(cfg Config, handler UpdateHandler, logger *ll.Logger, metrics Metrics, cipher *security.Cipher, configMgr *Distributor) *delegate {
 	if metrics == nil {
 		metrics = &RealMetrics{}
 	}
 	return &delegate{
-		store:     make(map[string]Envelope),
-		handler:   handler,
-		logger:    logger,
-		metrics:   metrics,
-		cipher:    cipher,
-		configMgr: configMgr,
+		store:          make(map[string]Envelope),
+		handler:        handler,
+		logger:         logger,
+		metrics:        metrics,
+		cipher:         cipher,
+		configMgr:      configMgr,
+		keeperSnapshot: cfg.KeeperSnapshot,
+		keeperWrite:    cfg.KeeperWrite,
 	}
 }
 
@@ -77,9 +82,48 @@ func (d *delegate) GetBroadcasts(overhead, limit int) [][]byte {
 // LocalState generates a complete snapshot of local state.
 // Triggered when a new node attempts a full sync during join.
 func (d *delegate) LocalState(join bool) []byte {
+	// Snapshot the gossip store under the read lock, then release before doing
+	// anything that touches external state (keeper). Holding d.mu across a keeper
+	// call would risk a cross-lock deadlock if keeper ever calls back into cluster.
 	d.mu.RLock()
-	defer d.mu.RUnlock()
-	b, err := json.Marshal(d.store)
+	storeCopy := make(map[string]Envelope, len(d.store))
+	for k, v := range d.store {
+		storeCopy[k] = v
+	}
+	d.mu.RUnlock()
+
+	type stateDoc struct {
+		Store   map[string]Envelope `json:"store"`
+		Secrets []Envelope          `json:"secrets,omitempty"`
+	}
+
+	doc := stateDoc{Store: storeCopy}
+
+	// When a new node is joining, include encrypted keeper secrets so it is
+	// immediately authentication-compatible without any operator intervention.
+	if join && d.keeperSnapshot != nil && d.cipher != nil {
+		snapshot := d.keeperSnapshot()
+		now := time.Now().UnixNano()
+		for key, plaintext := range snapshot {
+			encrypted, err := d.cipher.Encrypt(plaintext)
+			zero.Bytes(plaintext)
+			if err != nil {
+				d.logger.Error("cluster: failed to encrypt secret for join sync", "key", key, "err", err)
+				continue
+			}
+			doc.Secrets = append(doc.Secrets, Envelope{
+				Op:        OpSecret,
+				Key:       key,
+				Value:     encrypted,
+				Timestamp: now,
+			})
+		}
+		if len(doc.Secrets) > 0 {
+			d.logger.Info("cluster: including keeper secrets in join state", "count", len(doc.Secrets))
+		}
+	}
+
+	b, err := json.Marshal(doc)
 	if err != nil {
 		d.logger.Error("cluster: failed to marshal local state", "err", err)
 		return []byte("{}")
@@ -93,24 +137,67 @@ func (d *delegate) MergeRemoteState(buf []byte, join bool) {
 	if len(buf) == 0 {
 		return
 	}
-	var remote map[string]Envelope
-	if err := json.Unmarshal(buf, &remote); err != nil {
+
+	type stateDoc struct {
+		Store   map[string]Envelope `json:"store"`
+		Secrets []Envelope          `json:"secrets,omitempty"`
+	}
+
+	var doc stateDoc
+	if err := json.Unmarshal(buf, &doc); err != nil {
 		d.logger.Error("cluster: failed to unmarshal remote state", "err", err)
 		return
 	}
-	for _, env := range remote {
+
+	// Backward compatibility: nodes running the old code send a flat map
+	// {"key": Envelope, ...} rather than {"store": {...}, "secrets": [...]}.
+	// When doc.Store is nil but the buffer is non-empty JSON, try the old format.
+	if doc.Store == nil && len(doc.Secrets) == 0 {
+		var legacy map[string]Envelope
+		if err := json.Unmarshal(buf, &legacy); err == nil && len(legacy) > 0 {
+			for _, env := range legacy {
+				d.apply(env, false)
+			}
+			return
+		}
+	}
+
+	// Apply regular gossip state entries.
+	for _, env := range doc.Store {
 		d.apply(env, false)
+	}
+
+	// Apply encrypted keeper secrets — only present on join from a new-format node.
+	if len(doc.Secrets) > 0 {
+		if d.cipher == nil {
+			d.logger.Warn("cluster: received keeper secrets but no cipher available — secrets dropped; ensure secret_key is configured")
+		} else if d.keeperWrite == nil {
+			d.logger.Warn("cluster: received keeper secrets but no keeper write handler — secrets dropped")
+		} else {
+			applied := 0
+			for _, env := range doc.Secrets {
+				if env.Op != OpSecret || len(env.Value) == 0 {
+					continue
+				}
+				plaintext, err := d.cipher.Decrypt(env.Value)
+				if err != nil {
+					d.logger.Error("cluster: failed to decrypt secret", "key", env.Key, "err", err)
+					continue
+				}
+				d.keeperWrite(env.Key, plaintext)
+				zero.Bytes(plaintext)
+				applied++
+			}
+			d.logger.Info("cluster: applied keeper secrets from join sync", "count", applied)
+		}
 	}
 }
 
-// apply processes an incoming envelope and mutates the local state.
-// It ensures reliable operations (Configs, Certs) bypass the unreliable UDP queue.
 func (d *delegate) apply(env Envelope, local bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.metrics.IncUpdatesReceived()
 
-	// Reject envelopes older than tombstoneTTL regardless
 	age := time.Duration(time.Now().UnixNano() - env.Timestamp)
 	if age > tombstoneTTL {
 		d.logger.Debug("cluster: discarding stale envelope", "key", env.Key, "age", age)

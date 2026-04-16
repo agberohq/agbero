@@ -33,6 +33,7 @@ const (
 	OpStatus    OpType = 6
 	OpChallenge OpType = 7
 	OpConfig    OpType = 8
+	OpSecret    OpType = 9
 )
 
 type Envelope struct {
