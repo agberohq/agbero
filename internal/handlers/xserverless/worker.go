@@ -20,7 +20,7 @@ type WorkerConfig struct {
 	Domain    string
 }
 
-type WorkerHandler struct {
+type Worker struct {
 	res       *resource.Resource
 	route     alaye.Route
 	cfg       alaye.Work
@@ -30,10 +30,10 @@ type WorkerHandler struct {
 	statsKey  alaye.BackendKey
 }
 
-func NewWorker(cfg WorkerConfig) *WorkerHandler {
+func NewWorker(cfg WorkerConfig) *Worker {
 	key := cfg.Route.WorkerBackendKey(cfg.Domain, cfg.Work.Name)
 	cfg.Resource.Metrics.GetOrRegister(key)
-	return &WorkerHandler{
+	return &Worker{
 		res:       cfg.Resource,
 		route:     cfg.Route,
 		cfg:       cfg.Work,
@@ -44,7 +44,7 @@ func NewWorker(cfg WorkerConfig) *WorkerHandler {
 	}
 }
 
-func (h *WorkerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *Worker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	host := r.Host

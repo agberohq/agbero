@@ -355,6 +355,7 @@ func (h *Home) writeConfigFiles(store *keeper.Keeper, sess *session) error {
 		{"{LOGS_DIR}", filepath.ToSlash(h.ctx.Paths.LogsDir.Path())},
 		{"{WORK_DIR}", filepath.ToSlash(h.ctx.Paths.WorkDir.Path())},
 		{"{INTERNAL_AUTH_KEY}", expect.Vault().Key("internal")},
+		{"{CLUSTER_SECRET_KEY}", expect.Vault().Key("cluster")},
 		{"{LE_ENABLED}", leEnabled},
 		{"{LE_EMAIL}", sess.LEEmail},
 		{"{KEEPER_ENABLED}", woos.On},

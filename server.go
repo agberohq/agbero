@@ -210,12 +210,11 @@ func (s *Server) Start(configPath string) error {
 		seenGitConfigs := make(map[string]alaye.Git)
 		for _, hcfg := range hosts {
 			for _, r := range hcfg.Routes {
-				// Register web.git
+
 				if r.Web.Git.Enabled.Active() {
 					s.registerGitConfig(r.Web.Git, seenGitConfigs)
 				}
-				// Register serverless.git — separate from web.git by design.
-				// Serverless workers must never share a directory with served files.
+
 				if r.Serverless.Git.Enabled.Active() {
 					s.registerGitConfig(r.Serverless.Git, seenGitConfigs)
 				}
@@ -262,12 +261,25 @@ func (s *Server) Start(configPath string) error {
 			hostname, _ := os.Hostname()
 			cfg.Name = fmt.Sprintf("agbero-%s-%d", hostname, s.global.Gossip.Port)
 		}
+
+		// Wire keeper sync so secrets are pushed to any node that joins.
+		// KeeperSnapshot runs on the seed side (LocalState join=true).
+		// KeeperWrite runs on the joining side (MergeRemoteState OpSecret).
+		if s.keeperStore != nil {
+			cfg.KeeperSnapshot = s.keeperSnapshot
+			cfg.KeeperWrite = s.keeperWrite
+		}
+
 		if cm, err := cluster.NewManager(cfg, s, s.logger); err == nil {
 			s.clusterManager = cm
 			if s.shutdown != nil {
 				s.shutdown.RegisterFunc("ClusterHandler", func() { _ = s.clusterManager.Shutdown() })
 			}
+
+			s.hostManager.SetClusterManager(s.clusterManager)
+			s.logger.Info("cluster manager wired into host discovery")
 		}
+
 	}
 
 	if s.global.Storage.DataDir != "" {
@@ -527,7 +539,7 @@ func (s *Server) Reload() {
 					validKeys[r.BackendKey(domain, srv.Address.String())] = true
 				}
 			}
-			// Serverless: keep replay and worker metric keys alive across reloads
+
 			if r.Serverless.Enabled.Active() {
 				for _, rp := range r.Serverless.Replay {
 					validKeys[r.ReplayBackendKey(domain, rp.Name)] = true
@@ -732,7 +744,7 @@ func (s *Server) serverWatchConfig() {
 func (s *Server) registerGitConfig(cfg alaye.Git, seen map[string]alaye.Git) {
 	gitID := cfg.ID
 	if existing, exists := seen[gitID]; exists {
-		// Same ID with different clone config is a misconfiguration — warn once.
+
 		if existing.URL != cfg.URL || existing.Branch != cfg.Branch || existing.WorkDir != cfg.WorkDir {
 			s.logger.Fields("id", gitID).Warn("server: git ID collision with differing configurations, skipping duplicate")
 		}
@@ -742,4 +754,58 @@ func (s *Server) registerGitConfig(cfg alaye.Git, seen map[string]alaye.Git) {
 	if err := s.cookManager.Register(gitID, cfg); err != nil {
 		s.logger.Fields("id", gitID, "err", err).Error("failed to register git cook")
 	}
+}
+
+// keeperSnapshot returns all secrets from the keeper store across both the vault
+// (system: PPK, JWT signing keys, admin users, cluster key) and default (user)
+// schemes. Called on the seed node during LocalState(join=true) to populate a
+// joining node. Values must be zeroed by the caller after use.
+func (s *Server) keeperSnapshot() map[string][]byte {
+	out := make(map[string][]byte)
+	for _, scheme := range []string{"vault", "default"} {
+		namespaces, err := s.keeperStore.ListNamespacesInSchemeFull(scheme)
+		if err != nil {
+			s.logger.Fields("scheme", scheme, "err", err).Warn("cluster: keeper snapshot could not list namespaces")
+			continue
+		}
+		for _, ns := range namespaces {
+			if ns == "__default__" {
+				continue
+			}
+			keys, err := s.keeperStore.ListNamespacedFull(scheme, ns)
+			if err != nil {
+				s.logger.Fields("scheme", scheme, "ns", ns, "err", err).Warn("cluster: keeper snapshot could not list keys")
+				continue
+			}
+			for _, k := range keys {
+				fullKey := ns + "/" + k
+				if scheme == "vault" {
+					fullKey = "vault://" + fullKey
+				}
+				val, err := s.keeperStore.Get(fullKey)
+				if err != nil {
+					s.logger.Fields("key", fullKey, "err", err).Warn("cluster: keeper snapshot skipping unreadable key")
+					continue
+				}
+				out[fullKey] = val
+			}
+		}
+	}
+	s.logger.Fields("keys", len(out)).Info("cluster: keeper snapshot prepared for join sync")
+	return out
+}
+
+// keeperWrite writes a single synced secret into the local keeper store.
+// Called on the joining node for each OpSecret envelope received on join.
+// The caller zeroes the value slice immediately after this returns.
+func (s *Server) keeperWrite(key string, value []byte) {
+	if err := s.keeperStore.EnsureBucket(key); err != nil {
+		s.logger.Fields("key", key, "err", err).Warn("cluster: keeper sync could not ensure bucket")
+		return
+	}
+	if err := s.keeperStore.Set(key, value); err != nil {
+		s.logger.Fields("key", key, "err", err).Error("cluster: keeper sync failed to write secret")
+		return
+	}
+	s.logger.Fields("key", key).Debug("cluster: keeper secret synced from join")
 }

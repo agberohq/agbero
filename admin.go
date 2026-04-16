@@ -228,10 +228,16 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	state := s.apiShared.State()
 
+	clusterMembers := 0
+	if s.clusterManager != nil {
+		clusterMembers = len(s.clusterManager.Members())
+	}
+
 	status := map[string]any{
-		"status":    "ok",
-		"locked":    s.keeperStore == nil || s.keeperStore.IsLocked(),
-		"telemetry": state.Global.Admin.Telemetry.Enabled.Active(),
+		"status":          "ok",
+		"locked":          s.keeperStore == nil || s.keeperStore.IsLocked(),
+		"telemetry":       state.Global.Admin.Telemetry.Enabled.Active(),
+		"cluster_members": clusterMembers,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -28,6 +28,11 @@ func (c *Configuration) Validate(configFile string) error {
 	if err != nil {
 		return err
 	}
+
+	if err := global.Validate(); err != nil {
+		return fmt.Errorf("global config invalid: %w", err)
+	}
+
 	hm := discovery.NewHost(global.Storage.HostsDir, discovery.WithLogger(c.p.Logger))
 	hosts, err := hm.LoadAll()
 	if err != nil {
@@ -203,7 +208,7 @@ func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 				store = tlsstore.NewMemory()
 			}
 			loc := tlss.NewLocal(logger, store)
-			if !loc.CAExists() {
+			if !loc.CAExistsInSystem() {
 				if err := loc.InstallCARootIfNeeded(); err != nil {
 					logger.Warn("CA install skipped: ", err)
 				}

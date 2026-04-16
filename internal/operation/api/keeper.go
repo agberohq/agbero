@@ -10,11 +10,9 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/keeper"
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
-	"github.com/olekukonko/zero"
 )
 
 // KeeperHandler registers all keeper API endpoints under /keeper.
@@ -24,7 +22,6 @@ func KeeperHandler(s *Shared, r chi.Router) {
 	k := NewKeeper(s)
 
 	r.Route("/keeper", func(r chi.Router) {
-		r.Post("/unlock", k.unlock)
 		r.Get("/status", k.status)
 
 		r.Group(func(r chi.Router) {
@@ -90,51 +87,6 @@ func NewKeeper(cfg *Shared) *Keeper {
 		store:  cfg.Keeper,
 		logger: cfg.Logger.Namespace("api/keeper"),
 	}
-}
-
-// unlock handles POST /keeper/unlock.
-func (k *Keeper) unlock(w http.ResponseWriter, r *http.Request) {
-	if k.store == nil {
-		k.errorResponse(w, http.StatusServiceUnavailable, "keeper not configured")
-		return
-	}
-	var body struct {
-		Passphrase string `json:"passphrase"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Passphrase == "" {
-		k.errorResponse(w, http.StatusBadRequest, "passphrase required")
-		return
-	}
-	pass := []byte(body.Passphrase)
-	err := k.store.Unlock(pass)
-	zero.Bytes(pass)
-	if err != nil {
-		k.errorResponse(w, http.StatusUnauthorized, "invalid passphrase")
-		return
-	}
-	secrets.NewResolver(k.store).Wire()
-	k.jsonResponse(w, http.StatusOK, map[string]string{"status": "unlocked"})
-}
-
-// lock handles POST /keeper/lock.
-func (k *Keeper) lock(w http.ResponseWriter, r *http.Request) {
-	if k.store == nil {
-		k.errorResponse(w, http.StatusServiceUnavailable, "keeper not configured")
-		return
-	}
-	// WARNING: locking the keeper unwires the global secret resolver. Every
-	// config value referencing ss:// or vault:// will return its raw key string
-	// until the keeper is unlocked via POST /keeper/unlock. Do not lock the
-	// keeper while the server is actively serving requests.
-	secrets.NewResolver(k.store).Unwire()
-	if err := k.store.Lock(); err != nil {
-		k.errorResponse(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	k.jsonResponse(w, http.StatusOK, map[string]string{
-		"status":  "locked",
-		"warning": "secret resolution is suspended until unlock",
-	})
 }
 
 func (k *Keeper) status(w http.ResponseWriter, r *http.Request) {

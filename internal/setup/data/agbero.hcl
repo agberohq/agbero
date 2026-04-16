@@ -206,13 +206,13 @@ gossip {
 
   # Secret key for encrypting gossip traffic (16, 24, or 32 bytes decoded)
   # Generate: agbero cluster secret
-  # secret_key = "b64.xVZ9k2mN8pQrS4tU6vW8xY0zA1bC3dE5fG7hI9jK="
+  secret_key = "{CLUSTER_SECRET_KEY}"
 
   # Initial seed nodes to join (host:port format)
   # seeds = ["10.0.0.2:7946", "10.0.0.3:7946"]
 
   # TTL for cluster route entries in seconds
-  # ttl = 30
+  ttl = 30
 }
 
 # -------------------------------------------------------------

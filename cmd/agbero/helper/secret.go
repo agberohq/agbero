@@ -1,7 +1,6 @@
 package helper
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/expect"
@@ -55,6 +54,10 @@ func (s *Secret) KeyInit(_ string) {
 	_, pemBytes, err := security.GeneratePPK()
 	if err != nil {
 		s.p.Logger.Fatal("failed to generate internal auth key: ", err)
+	}
+
+	if err := store.EnsureBucket(expect.Vault().Key("internal")); err != nil {
+		s.p.Logger.Fatal("failed to ensure vault key bucket in keeper: ", err)
 	}
 
 	if err := store.Set(expect.Vault().Key("internal"), pemBytes); err != nil {
@@ -118,8 +121,13 @@ func (s *Secret) Token(_ string, svcName string, ttl time.Duration) {
 // Hash bcrypt-hashes a password and prints the result.
 func (s *Secret) Hash(password string) {
 	if password == "" {
-		fmt.Print("Enter password: ")
-		fmt.Scanln(&password)
+		u := ui.New()
+		result, err := u.PasswordConfirm("Password to hash")
+		if err != nil {
+			s.p.Logger.Fatal("password required: ", err)
+		}
+		password = string(result.Bytes())
+		defer result.Zero()
 	}
 
 	pw := security.NewPassword()

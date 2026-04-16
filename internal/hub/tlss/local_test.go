@@ -22,15 +22,6 @@ import (
 	"github.com/olekukonko/ll"
 )
 
-func setupLocalTest(t *testing.T, tmpDir string) *Local {
-	t.Helper()
-	logger := ll.New("test").Disable()
-	store := tlsstore.NewMemory()
-	ci := NewLocal(logger, store)
-	ci.SetMockMode(true)
-	return ci
-}
-
 func writeSelfSignedCert(t *testing.T, store tlsstore.Store, domain string, hosts []string) {
 	t.Helper()
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)

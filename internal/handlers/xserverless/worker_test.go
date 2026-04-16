@@ -78,7 +78,7 @@ func rootRoute(t *testing.T) alaye.Route {
 	}
 }
 
-func testHandler(t *testing.T, work alaye.Work, route alaye.Route, orch *orchestrator.Manager) *WorkerHandler {
+func testHandler(t *testing.T, work alaye.Work, route alaye.Route, orch *orchestrator.Manager) *Worker {
 	t.Helper()
 	return NewWorker(WorkerConfig{
 		Resource: testResource(t),
@@ -88,7 +88,7 @@ func testHandler(t *testing.T, work alaye.Work, route alaye.Route, orch *orchest
 	})
 }
 
-func serve(t *testing.T, h *WorkerHandler) *httptest.ResponseRecorder {
+func serve(t *testing.T, h *Worker) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()

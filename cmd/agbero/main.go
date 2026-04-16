@@ -277,6 +277,19 @@ func main() {
 	cmdRun.Description = "Run agbero using the discovered config"
 	cmdRun.Bool(&cfg.DevMode, "d", "dev", "Enable development mode")
 
+	cmdCluster := flaggy.NewSubcommand("cluster")
+	cmdCluster.Description = "Manage cluster membership"
+
+	cmdClusterStart := flaggy.NewSubcommand("start")
+	cmdClusterStart.Description = "Pre-flight check and configure this node as a cluster seed"
+
+	cmdClusterJoin := flaggy.NewSubcommand("join")
+	cmdClusterJoin.Description = "Pre-flight check and configure this node to join a cluster"
+	cmdClusterJoin.AddPositionalValue(&cfg.ClusterJoinIP, "peer", 1, true, "Seed node address (host or host:port)")
+
+	cmdCluster.AttachSubcommand(cmdClusterStart, 1)
+	cmdCluster.AttachSubcommand(cmdClusterJoin, 1)
+
 	cmdHome := flaggy.NewSubcommand("home")
 	cmdHome.Description = "Print or navigate to the agbero configuration directory"
 	var homeTarget, homeAction string
@@ -316,6 +329,7 @@ func main() {
 	flaggy.AttachSubcommand(cmdUninstall, 1)
 	flaggy.AttachSubcommand(cmdSystem, 1)
 	flaggy.AttachSubcommand(cmdRun, 1)
+	flaggy.AttachSubcommand(cmdCluster, 1)
 	flaggy.AttachSubcommand(cmdHome, 1)
 	flaggy.AttachSubcommand(cmdServe, 1)
 	flaggy.AttachSubcommand(cmdProxy, 1)
@@ -463,7 +477,6 @@ func main() {
 			logger.Fatal("failed to load config for keeper initialisation: ", globalErr)
 		}
 
-		// Recalibrate logger from config (file, level, format).
 		logger, _ = zulu.Logging(&global.Logging, hel.Cfg.DevMode, shutdown)
 		logger.Info("logger recalibrated")
 
@@ -473,19 +486,25 @@ func main() {
 			dataDir = ctx.Paths.DataDir
 		}
 
-		// Interactive rules:
-		//   keeper / admin CLI  → always interactive (operator is at the terminal)
-		//   run + real terminal → interactive (developer running manually)
-		//   run + no terminal   → non-interactive (service, CI, Docker)
-		//   AGBERO_HEADLESS=1   → always non-interactive (setup.NewContext sets this)
-		isInteractive := !cmdRun.Used || ctx.Interactive
+		// isInteractive controls whether secrets.Open() may prompt via /dev/tty.
+		// We must suppress it whenever a passphrase is already available — either
+		// from the AGBERO_PASSPHRASE environment variable or from the keeper.passphrase
+		// field in the HCL config — because subprocess invocations (e.g. cluster.go
+		// calling "agbero secret key init") have no TTY and the prompt blocks/fails.
+		//
+		// Original: isInteractive := !cmdRun.Used || ctx.Interactive
+		// That made isInteractive always true for non-run commands, causing every
+		// non-run subcommand (keeper set/get, secret key init, etc.) to attempt a
+		// TTY prompt even when AGBERO_PASSPHRASE was set.
+		passphraseAvailable := os.Getenv("AGBERO_PASSPHRASE") != "" || global.Security.Keeper.Passphrase != ""
+		isInteractive := !passphraseAvailable && (!cmdRun.Used || ctx.Interactive)
 
 		store, storeErr := secrets.Open(secrets.Config{
 			DataDir:         dataDir,
 			Setting:         &global.Security.Keeper,
 			Logger:          logger,
 			Interactive:     isInteractive,
-			DisableAutoLock: cmdRun.Used, // server process must never auto-lock
+			DisableAutoLock: cmdRun.Used,
 		})
 		if storeErr != nil {
 			logger.Fatal("failed to open keeper: ", storeErr)
@@ -688,6 +707,19 @@ func main() {
 			sh.Status(svc, resolvedPath)
 		default:
 			flaggy.ShowHelpAndExit("service")
+		}
+		return
+	}
+
+	if cmdCluster.Used {
+		ch := hel.Cluster()
+		switch {
+		case cmdClusterStart.Used:
+			ch.Start(resolvedPath)
+		case cmdClusterJoin.Used:
+			ch.Join(resolvedPath, cfg.ClusterJoinIP)
+		default:
+			flaggy.ShowHelpAndExit("cluster")
 		}
 		return
 	}

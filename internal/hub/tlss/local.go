@@ -72,11 +72,20 @@ func (ci *Local) InstallCARootIfNeeded() error {
 	_ = BootstrapEnv(ci.logger)
 
 	if !ci.caExists() {
+		// No CA in storage — generate fresh and install to system trust store.
 		ci.logger.Info("generating and installing local CA root")
 		return ci.generateAndInstallCA()
 	}
 
-	ci.logger.Info("CA root already exists, synchronizing with system trust stores")
+	if ci.caExistsInSystem() {
+		// CA is in storage and already trusted by the OS — nothing to do.
+		ci.logger.Info("CA root already exists and is trusted by system")
+		return nil
+	}
+
+	// CA is in storage but not in the system trust store (e.g. OS upgrade,
+	// new user profile, or mock mode). Sync to trust store.
+	ci.logger.Info("CA root exists in storage, synchronizing with system trust stores")
 	return ci.installToTrustStore()
 }
 
@@ -143,7 +152,6 @@ func (ci *Local) EnsureForHost(host string, port int) (certFile, keyFile string,
 	return ci.ensureLocalhostCertUnlocked()
 }
 
-// ListCertificates returns all certificate domains stored in the local issuer namespace.
 func (ci *Local) ListCertificates() ([]string, error) {
 	all, err := ci.store.List()
 	if err != nil {
@@ -157,16 +165,70 @@ func (ci *Local) ListCertificates() ([]string, error) {
 	return certs, nil
 }
 
+// caExists reports whether a valid CA certificate is present in the store.
+// This is the storage check — it answers "do we have a CA saved?"
+// It does NOT check whether the CA is trusted by the OS.
 func (ci *Local) caExists() bool {
-	_, _, err := ci.store.Load("ca")
-	return err == nil
+	certPEM, _, err := ci.store.Load("ca")
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return false
+	}
+	cert, parseErr := x509.ParseCertificate(block.Bytes)
+	if parseErr != nil {
+		return false
+	}
+	return cert.IsCA
 }
 
-// CAExists reports whether a CA certificate is present in the store.
-// Unlike IsCARootInstalled which checks for a file on disk, this works
-// correctly with both the Keeper and Disk backends.
+// caExistsInSystem reports whether the CA is in the store AND trusted by the
+// OS system certificate pool. Used at runtime (non-mock) to decide whether to
+// re-run trust store installation — e.g. after an OS upgrade wiped the pool.
+//
+// Returns true if the system pool is unavailable (sandboxed environments).
+// Always returns false in mock mode since installToTrustStore is skipped.
+func (ci *Local) caExistsInSystem() bool {
+	if !ci.caExists() {
+		return false
+	}
+	if ci.mockMode {
+		return false
+	}
+	certPEM, _, err := ci.store.Load("ca")
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return false
+	}
+	cert, parseErr := x509.ParseCertificate(block.Bytes)
+	if parseErr != nil {
+		return false
+	}
+	pool, poolErr := x509.SystemCertPool()
+	if poolErr != nil {
+		return true // pool unavailable — assume trusted if stored
+	}
+	opts := x509.VerifyOptions{
+		Roots:       pool,
+		CurrentTime: cert.NotBefore.Add(time.Second),
+	}
+	_, verifyErr := cert.Verify(opts)
+	return verifyErr == nil
+}
+
+// CAExists is the public API for checking CA presence in storage.
 func (ci *Local) CAExists() bool {
 	return ci.caExists()
+}
+
+// CAExistsInSystem is the public API for checking CA trust store presence.
+func (ci *Local) CAExistsInSystem() bool {
+	return ci.caExistsInSystem()
 }
 
 func (ci *Local) generateAndInstallCA() error {
