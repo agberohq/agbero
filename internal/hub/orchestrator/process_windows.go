@@ -84,7 +84,6 @@ func cleanupJob(limits *jobLimits) {
 }
 
 func applySandbox(_ string, _ *ll.Logger) error {
-
 	return nil
 }
 
