@@ -239,6 +239,10 @@ func (m *Manager) TryAcquireLock(key string) bool {
 // BroadcastCert encrypts and disseminates new SSL certificates reliably.
 // Prevents multiple nodes from hammering Let's Encrypt simultaneously.
 func (m *Manager) BroadcastCert(domain string, certPEM, keyPEM []byte) error {
+	if m == nil {
+		return nil
+	}
+
 	if m.cipher == nil {
 		return fmt.Errorf("cluster encryption not enabled, cannot broadcast certs")
 	}

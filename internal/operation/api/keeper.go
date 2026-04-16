@@ -10,9 +10,11 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/keeper"
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
+	"github.com/olekukonko/zero"
 )
 
 // KeeperHandler registers all keeper API endpoints under /keeper.
@@ -22,6 +24,7 @@ func KeeperHandler(s *Shared, r chi.Router) {
 	k := NewKeeper(s)
 
 	r.Route("/keeper", func(r chi.Router) {
+		r.Post("/unlock", k.unlock)
 		r.Get("/status", k.status)
 
 		r.Group(func(r chi.Router) {
@@ -75,18 +78,70 @@ func isReserved(s *expect.Secret) bool {
 	return s.IsInternal() || s.Scheme == expect.SchemeVault
 }
 
-// Keeper holds the HTTP handlers for secret management.
+type clusterBroadcaster interface {
+	BroadcastSecret(key string, plaintext []byte) error
+}
+
 type Keeper struct {
-	store  *keeper.Keeper
-	logger *ll.Logger
+	store   *keeper.Keeper
+	cluster clusterBroadcaster
+	logger  *ll.Logger
 }
 
 // NewKeeper constructs a Keeper handler from shared application state.
 func NewKeeper(cfg *Shared) *Keeper {
-	return &Keeper{
+	k := &Keeper{
 		store:  cfg.Keeper,
 		logger: cfg.Logger.Namespace("api/keeper"),
 	}
+	// Only assign the cluster interface when the concrete pointer is non-nil.
+	// Assigning a nil *cluster.Manager directly to the clusterBroadcaster
+	// interface produces a non-nil interface value whose underlying pointer is
+	// nil, causing a nil-pointer panic when any method is called on it.
+	if cfg.Cluster != nil {
+		k.cluster = cfg.Cluster
+	}
+	return k
+}
+
+func (k *Keeper) unlock(w http.ResponseWriter, r *http.Request) {
+	if k.store == nil {
+		k.errorResponse(w, http.StatusServiceUnavailable, "keeper not configured")
+		return
+	}
+	var body struct {
+		Passphrase string `json:"passphrase"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Passphrase == "" {
+		k.errorResponse(w, http.StatusBadRequest, "passphrase required")
+		return
+	}
+	pass := []byte(body.Passphrase)
+	err := k.store.Unlock(pass)
+	zero.Bytes(pass)
+	if err != nil {
+		k.errorResponse(w, http.StatusUnauthorized, "invalid passphrase")
+		return
+	}
+	secrets.NewResolver(k.store).Wire()
+	k.jsonResponse(w, http.StatusOK, map[string]string{"status": "unlocked"})
+}
+
+func (k *Keeper) lock(w http.ResponseWriter, r *http.Request) {
+	if k.store == nil {
+		k.errorResponse(w, http.StatusServiceUnavailable, "keeper not configured")
+		return
+	}
+
+	secrets.NewResolver(k.store).Unwire()
+	if err := k.store.Lock(); err != nil {
+		k.errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	k.jsonResponse(w, http.StatusOK, map[string]string{
+		"status":  "locked",
+		"warning": "secret resolution is suspended until unlock",
+	})
 }
 
 func (k *Keeper) status(w http.ResponseWriter, r *http.Request) {
@@ -252,6 +307,13 @@ func (k *Keeper) set(w http.ResponseWriter, r *http.Request) {
 		k.errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	if k.cluster != nil {
+		if err := k.cluster.BroadcastSecret(key, data); err != nil {
+			k.logger.Fields("key", key, "err", err).Warn("keeper: secret written locally but cluster broadcast failed")
+		}
+	}
+
 	k.jsonResponse(w, http.StatusOK, map[string]any{
 		"key":   key,
 		"bytes": len(data),
@@ -288,6 +350,13 @@ func (k *Keeper) delete(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	if k.cluster != nil {
+		if err := k.cluster.BroadcastSecret(normalizedKey, nil); err != nil {
+			k.logger.Fields("key", normalizedKey, "err", err).Warn("keeper: secret deleted locally but cluster broadcast failed")
+		}
+	}
+
 	k.jsonResponse(w, http.StatusOK, map[string]string{"deleted": normalizedKey})
 }
 

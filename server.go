@@ -17,6 +17,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/secrets"
+	"github.com/agberohq/agbero/internal/pkg/update"
 
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -71,8 +72,9 @@ type Server struct {
 	adminSrv *http.Server
 	pprofSrv *http.Server
 
-	keeperStore *keeper.Keeper
-	revokeStore *revoke.Store
+	keeperStore   *keeper.Keeper
+	revokeStore   *revoke.Store
+	updateChecker *update.Checker
 
 	totpHandler *api.TOTP
 	apiShared   *api.Shared
@@ -173,6 +175,12 @@ func (s *Server) Start(configPath string) error {
 	s.resource.Apply(resource.WithKeeper(s.keeperStore))
 	s.logger.Info("Keeper unlocked successfully")
 
+	// Start background update check once — non-blocking, result served via /uptime.
+	if s.updateChecker == nil {
+		s.updateChecker = update.New(woos.Version, "https://api.github.com/repos/agberohq/agbero/releases/latest")
+		s.updateChecker.Start()
+	}
+
 	secrets.NewResolver(s.keeperStore).Wire()
 	s.logger.Info("Secret resolver wired")
 
@@ -262,9 +270,6 @@ func (s *Server) Start(configPath string) error {
 			cfg.Name = fmt.Sprintf("agbero-%s-%d", hostname, s.global.Gossip.Port)
 		}
 
-		// Wire keeper sync so secrets are pushed to any node that joins.
-		// KeeperSnapshot runs on the seed side (LocalState join=true).
-		// KeeperWrite runs on the joining side (MergeRemoteState OpSecret).
 		if s.keeperStore != nil {
 			cfg.KeeperSnapshot = s.keeperSnapshot
 			cfg.KeeperWrite = s.keeperWrite
@@ -275,11 +280,7 @@ func (s *Server) Start(configPath string) error {
 			if s.shutdown != nil {
 				s.shutdown.RegisterFunc("ClusterHandler", func() { _ = s.clusterManager.Shutdown() })
 			}
-
-			s.hostManager.SetClusterManager(s.clusterManager)
-			s.logger.Info("cluster manager wired into host discovery")
 		}
-
 	}
 
 	if s.global.Storage.DataDir != "" {
@@ -351,13 +352,14 @@ func (s *Server) Start(configPath string) error {
 	}
 
 	s.apiShared = &api.Shared{
-		Logger:      s.logger,
-		Cluster:     s.clusterManager,
-		Keeper:      s.keeperStore,
-		Discovery:   s.hostManager,
-		PPK:         s.securityManager,
-		Telemetry:   s.telemetryStore,
-		RevokeStore: s.revokeStore,
+		Logger:        s.logger,
+		Cluster:       s.clusterManager,
+		Keeper:        s.keeperStore,
+		Discovery:     s.hostManager,
+		PPK:           s.securityManager,
+		Telemetry:     s.telemetryStore,
+		RevokeStore:   s.revokeStore,
+		UpdateChecker: s.updateChecker,
 	}
 
 	s.apiShared.UpdateState(&api.ActiveState{
@@ -756,10 +758,6 @@ func (s *Server) registerGitConfig(cfg alaye.Git, seen map[string]alaye.Git) {
 	}
 }
 
-// keeperSnapshot returns all secrets from the keeper store across both the vault
-// (system: PPK, JWT signing keys, admin users, cluster key) and default (user)
-// schemes. Called on the seed node during LocalState(join=true) to populate a
-// joining node. Values must be zeroed by the caller after use.
 func (s *Server) keeperSnapshot() map[string][]byte {
 	out := make(map[string][]byte)
 	for _, scheme := range []string{"vault", "default"} {
@@ -795,10 +793,16 @@ func (s *Server) keeperSnapshot() map[string][]byte {
 	return out
 }
 
-// keeperWrite writes a single synced secret into the local keeper store.
-// Called on the joining node for each OpSecret envelope received on join.
-// The caller zeroes the value slice immediately after this returns.
 func (s *Server) keeperWrite(key string, value []byte) {
+	if value == nil {
+		// nil signals deletion — propagated from OpSecret delete broadcast.
+		if err := s.keeperStore.Delete(key); err != nil {
+			s.logger.Fields("key", key, "err", err).Warn("cluster: keeper sync could not delete key")
+		} else {
+			s.logger.Fields("key", key).Debug("cluster: keeper secret deleted from peer broadcast")
+		}
+		return
+	}
 	if err := s.keeperStore.EnsureBucket(key); err != nil {
 		s.logger.Fields("key", key, "err", err).Warn("cluster: keeper sync could not ensure bucket")
 		return
