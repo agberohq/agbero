@@ -1,0 +1,22 @@
+<p id="wzReviewHint" style="font-size:13px;color:var(--text-mute);margin:0 0 12px;line-height:1.6;"></p>
+
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+    <button id="wzFormatBtn" class="btn small" disabled>✨ Format</button>
+    <span id="wzReviewMode"
+          style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--accent-mute,rgba(99,102,241,.12));color:var(--accent);font-weight:500;"></span>
+    <span style="flex:1;"></span>
+    <span id="wzReviewToggle"
+          style="font-size:11px;color:var(--text-mute);cursor:pointer;text-decoration:underline;user-select:none;">
+        Switch to JSON
+    </span>
+</div>
+
+<div id="submitErrorBox" class="submit-error-box"></div>
+
+<textarea id="wzReviewEditor" class="json-editor" spellcheck="false"
+          style="min-height:340px;width:100%;box-sizing:border-box;font-family:var(--font-mono);font-size:12px;"
+          placeholder="Generating preview…" disabled></textarea>
+
+<div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end;">
+    <button id="wzSubmitBtn" class="btn primary" style="min-width:140px;" disabled>Create Host</button>
+</div>

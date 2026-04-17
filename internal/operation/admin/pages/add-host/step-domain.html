@@ -1,0 +1,118 @@
+<!-- Domain -->
+<div class="wz-field-group">
+    <label class="wz-label">Domain <span style="color:var(--danger)">*</span></label>
+    <div style="position:relative;">
+        <input type="text" id="wzDomainInput" class="wz-input"
+               placeholder="app.example.com" autocomplete="off" spellcheck="false">
+        <span id="wzDomainStatus" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11px;"></span>
+    </div>
+    <div class="wz-hint">No protocol prefix — e.g. <code>app.example.com</code> or <code>localhost</code></div>
+</div>
+
+<!-- TLS section — shown/collapsed based on domain type -->
+<div class="wz-field-group wz-collapsible wz-collapsed" id="wzTLSSection">
+    <label class="wz-label">TLS / HTTPS</label>
+    <div class="wz-radio-group" id="wzTLSModeGroup">
+        <label class="wz-radio"><input type="radio" name="tls_mode" value="auto" checked>
+            <span>Auto — Let's Encrypt (recommended)</span></label>
+        <label class="wz-radio"><input type="radio" name="tls_mode" value="local">
+            <span>Local certificate (provide cert + key paths)</span></label>
+        <label class="wz-radio"><input type="radio" name="tls_mode" value="custom_ca">
+            <span>Custom CA (internal PKI)</span></label>
+        <label class="wz-radio"><input type="radio" name="tls_mode" value="none">
+            <span>None — HTTP only</span></label>
+    </div>
+    <div class="wz-hint">Local/dev domains (*.localhost, .local, IPs) use no TLS block — global config applies.</div>
+
+    <!-- Let's Encrypt options -->
+    <div id="wzLEFields" style="margin-top:10px;">
+        <label class="wz-label">Email <span style="color:var(--danger)">*</span></label>
+        <input type="email" id="wzLEEmail" class="wz-input" placeholder="admin@example.com">
+        <div class="wz-hint">Required by Let's Encrypt for cert expiry notifications.</div>
+        <label class="wz-check" style="margin-top:8px;">
+            <input type="checkbox" id="wzLEStaging"> Use LE staging server (for testing — cert not trusted by browsers)
+        </label>
+    </div>
+
+    <!-- Local cert fields -->
+    <div id="wzLocalCertFields" style="display:none;margin-top:10px;">
+        <label class="wz-label">Certificate file <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="wzTLSCert" class="wz-input" placeholder="/etc/ssl/certs/example.pem">
+        <label class="wz-label" style="margin-top:8px;">Key file <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="wzTLSKey" class="wz-input" placeholder="/etc/ssl/private/example.key">
+        <div class="wz-hint" style="margin-top:6px;">Both paths must be absolute and readable by the Agbero process.</div>
+    </div>
+
+    <!-- Custom CA fields -->
+    <div id="wzCustomCAFields" style="display:none;margin-top:10px;">
+        <label class="wz-label">CA root path <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="wzCARoot" class="wz-input" placeholder="/etc/ssl/ca/root.pem">
+        <div class="wz-hint">Absolute path to the CA certificate file used to sign host certs.</div>
+    </div>
+
+    <!-- mTLS options (collapsible) -->
+    <details style="margin-top:12px;">
+        <summary style="font-size:12px;color:var(--text-mute);cursor:pointer;user-select:none;">
+            mTLS — Client certificate authentication
+        </summary>
+        <div style="padding-top:10px;">
+            <label class="wz-label">Client auth mode</label>
+            <select id="wzClientAuth" class="wz-select-inline">
+                <option value="">None</option>
+                <option value="request">Request (optional)</option>
+                <option value="require">Require</option>
+                <option value="require_and_verify">Require + Verify</option>
+                <option value="verify_if_given">Verify if given</option>
+            </select>
+            <label class="wz-label" style="margin-top:8px;">Client CA files (one path per line)</label>
+            <textarea id="wzClientCAs" class="wz-input" rows="3"
+                      placeholder="/etc/ssl/ca/clients.pem" style="resize:vertical;font-family:var(--font-mono);font-size:11px;"></textarea>
+            <div class="wz-hint">Absolute paths to CA certs used to verify client certificates.</div>
+        </div>
+    </details>
+</div>
+
+<!-- Host Options accordion -->
+<details class="wz-field-group" id="wzHostOptions" style="margin-top:16px;">
+    <summary style="font-size:13px;font-weight:500;cursor:pointer;user-select:none;padding:8px 0;">
+        Host Options <span style="font-size:11px;font-weight:400;color:var(--text-mute);">— protected status, ports, error pages</span>
+    </summary>
+    <div style="padding-top:12px;display:flex;flex-direction:column;gap:12px;">
+
+        <div>
+            <label class="wz-label">Protected <span style="font-size:10px;font-weight:400;color:var(--text-mute);">— prevents API modification</span></label>
+            <div class="wz-tristate" data-field="host_protected">
+                <button class="wz-ts-opt active" data-val="unknown">Default</button>
+                <button class="wz-ts-opt" data-val="on">On</button>
+                <button class="wz-ts-opt" data-val="off">Off</button>
+            </div>
+            <div class="wz-hint">When On, this host cannot be modified or deleted via the API. Managed by config file only.</div>
+        </div>
+
+        <div>
+            <label class="wz-label">Custom 404 page</label>
+            <input type="text" id="wzNotFoundPage" class="wz-input" placeholder="/var/www/errors/404.html">
+            <div class="wz-hint">Absolute path to a custom HTML file served on 404. Leave blank to use the global default.</div>
+        </div>
+
+        <div>
+            <label class="wz-label">Port binding <span style="font-size:10px;font-weight:400;color:var(--text-mute);">— override default ports</span></label>
+            <input type="text" id="wzBind" class="wz-input" placeholder="80, 443  or leave blank for global defaults">
+            <div class="wz-hint">Comma-separated ports. Leave blank to inherit from global <code>bind</code> config.</div>
+        </div>
+
+        <div>
+            <label class="wz-label">Host-level compression</label>
+            <label class="wz-check">
+                <input type="checkbox" id="wzHostCompression"> Enable gzip/brotli compression for all routes on this host
+            </label>
+        </div>
+
+        <div>
+            <label class="wz-label">Max header bytes</label>
+            <input type="number" id="wzMaxHeaderBytes" class="wz-input" placeholder="0 = global default" min="0">
+            <div class="wz-hint">Maximum size of request headers in bytes. 0 uses the global setting.</div>
+        </div>
+
+    </div>
+</details>

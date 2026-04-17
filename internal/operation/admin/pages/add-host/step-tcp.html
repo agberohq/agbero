@@ -1,0 +1,103 @@
+<!-- TCP / UDP Proxy configuration -->
+<div class="wz-field-group">
+    <label class="wz-label">Protocol</label>
+    <div class="wz-radio-group" style="flex-direction:row;gap:20px;">
+        <label class="wz-radio"><input type="radio" name="wzTcpProtocol" id="wzProtoTcp" value="" checked> <span><strong>TCP</strong> — stream proxy, TLS passthrough, databases, Redis, etc.</span></label>
+        <label class="wz-radio"><input type="radio" name="wzTcpProtocol" id="wzProtoUdp" value="udp"> <span><strong>UDP</strong> — DNS, STUN/TURN, game servers, media streams</span></label>
+    </div>
+</div>
+
+<div class="wz-field-group">
+    <label class="wz-label">Proxy name <span style="color:var(--danger)">*</span></label>
+    <input type="text" id="wzTcpName" class="wz-input" placeholder="redis-proxy">
+    <div class="wz-hint">Used as the HCL block label — alphanumeric and hyphens only.</div>
+</div>
+
+<div class="wz-field-group">
+    <label class="wz-label">Listen address <span style="color:var(--danger)">*</span></label>
+    <input type="text" id="wzTcpListen" class="wz-input" placeholder="0.0.0.0:6379">
+    <div class="wz-hint">host:port — the address Agbero listens on for connections.</div>
+</div>
+
+<!-- TCP-only fields -->
+<div id="wzTcpOnlyFields">
+    <div class="wz-field-group">
+        <label class="wz-label">SNI pattern <span style="font-size:10px;font-weight:400;color:var(--text-mute);">— optional TLS routing</span></label>
+        <input type="text" id="wzTcpSNI" class="wz-input" placeholder="*.internal  or leave blank">
+        <div class="wz-hint">Route only connections matching this SNI hostname. Wildcards: <code>*.example.com</code></div>
+    </div>
+    <div class="wz-field-group">
+        <label class="wz-check">
+            <input type="checkbox" id="wzTcpProxyProtocol"> Proxy Protocol (PROXY header from upstream)
+        </label>
+        <div class="wz-hint" style="margin-top:4px;">Enable if the upstream load balancer sends PROXY protocol headers.</div>
+    </div>
+</div>
+
+<!-- UDP-only fields -->
+<div id="wzUdpOnlyFields" style="display:none;">
+    <div class="wz-field-group">
+        <label class="wz-label">Matcher</label>
+        <select id="wzUdpMatcher" class="wz-select-inline">
+            <option value="">src_port (default — one session per client port)</option>
+            <option value="dns">dns — DNS query/response matching</option>
+            <option value="stun">stun — STUN/TURN protocol matching</option>
+            <option value="sip">sip — SIP VoIP session matching</option>
+        </select>
+        <div class="wz-hint">Controls how UDP sessions are identified and routed.</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="wz-field-group">
+            <label class="wz-label">Session TTL</label>
+            <input type="text" id="wzUdpSessionTTL" class="wz-input" placeholder="30s">
+            <div class="wz-hint">Idle session expiry. Default: 30s.</div>
+        </div>
+        <div class="wz-field-group">
+            <label class="wz-label">Max sessions</label>
+            <input type="number" id="wzUdpMaxSessions" class="wz-input" placeholder="100000" min="0">
+            <div class="wz-hint">Concurrent UDP session limit.</div>
+        </div>
+    </div>
+</div>
+
+<div class="wz-field-group">
+    <label class="wz-label">Load balancing strategy</label>
+    <div class="wz-strategy-grid" id="wzTcpStrategyGrid">
+        <!-- Rendered by step-tcp.js -->
+    </div>
+</div>
+
+<div class="wz-field-group">
+    <label class="wz-label">Max connections</label>
+    <input type="number" id="wzTcpMaxConn" class="wz-input" placeholder="0 = unlimited" min="0">
+</div>
+
+<!-- Backends -->
+<div class="wz-section-heading" style="margin-top:16px;">Backends</div>
+<div id="wzTcpBackends" class="wz-backend-list"></div>
+<button type="button" class="btn small" id="wzTcpAddBackend" style="margin-top:8px;">+ Add Backend</button>
+
+<!-- Health Check -->
+<details class="wz-field-group" style="margin-top:16px;">
+    <summary style="font-size:13px;font-weight:500;cursor:pointer;user-select:none;padding:4px 0;">
+        Health Check <span style="font-size:11px;font-weight:400;color:var(--text-mute);">(optional)</span>
+    </summary>
+    <div style="padding-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div>
+            <label class="wz-label">Interval</label>
+            <input type="text" id="wzTcpHcInterval" class="wz-input" placeholder="10s">
+        </div>
+        <div>
+            <label class="wz-label">Timeout</label>
+            <input type="text" id="wzTcpHcTimeout" class="wz-input" placeholder="5s">
+        </div>
+        <div>
+            <label class="wz-label">Send probe <span style="font-size:10px;color:var(--text-mute);">optional</span></label>
+            <input type="text" id="wzTcpHcSend" class="wz-input" placeholder="PING\r\n">
+        </div>
+        <div>
+            <label class="wz-label">Expect response <span style="font-size:10px;color:var(--text-mute);">optional</span></label>
+            <input type="text" id="wzTcpHcExpect" class="wz-input" placeholder="+PONG">
+        </div>
+    </div>
+</details>
