@@ -254,7 +254,7 @@ func TestManager_loadFromStorage(t *testing.T) {
 func TestManager_loadFromStorage_NilStorage(t *testing.T) {
 	tmpDir := t.TempDir()
 	badPath := filepath.Join(tmpDir, "not-a-dir")
-	_ = os.WriteFile(badPath, []byte("x"), 0644)
+	_ = os.WriteFile(badPath, []byte("x"), def.ConfigFilePerm)
 	global := &alaye.Global{
 		Storage: alaye.Storage{
 			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
@@ -461,7 +461,7 @@ func TestManager_Close(t *testing.T) {
 func TestNewManager_StorageInitFail(t *testing.T) {
 	tmpDir := t.TempDir()
 	badPath := filepath.Join(tmpDir, "not-a-dir")
-	_ = os.WriteFile(badPath, []byte("x"), 0644)
+	_ = os.WriteFile(badPath, []byte("x"), def.ConfigFilePerm)
 	global := &alaye.Global{
 		Storage: alaye.Storage{
 			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
@@ -505,7 +505,7 @@ func TestManager_loadFromStorage_InvalidCert(t *testing.T) {
 	tmpDir := t.TempDir()
 	certPath := filepath.Join(tmpDir, "bad.com.crt")
 	keyPath := filepath.Join(tmpDir, "bad.com.key")
-	os.WriteFile(certPath, []byte("invalid cert"), 0644)
+	os.WriteFile(certPath, []byte("invalid cert"), def.ConfigFilePerm)
 	os.WriteFile(keyPath, []byte("invalid key"), 0600)
 	global := &alaye.Global{
 		Storage: alaye.Storage{

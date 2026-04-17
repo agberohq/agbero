@@ -355,7 +355,7 @@ func (p *Proxy) handle(src net.Conn) {
 		err     error
 	)
 
-	maxAttempts := def.BackendRetry
+	maxAttempts := def.BackendRetryCount
 	if c := len(route.selector.Backends()); c > 0 && c < maxAttempts {
 		maxAttempts = c
 	}
@@ -545,10 +545,10 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 			if listEnd > pos+extSize-2 {
 				return "", def.ErrShortSNIList
 			}
-			for pos+3 <= listEnd {
+			for pos+def.BackendRetryCount <= listEnd {
 				nameType := data[pos]
 				nameLen := int(binary.BigEndian.Uint16(data[pos+1:]))
-				pos += 3
+				pos += def.BackendRetryCount
 				if pos+nameLen > listEnd {
 					return "", def.ErrShortName
 				}

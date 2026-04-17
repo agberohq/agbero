@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 func TestTCPExecutor_Probe_Success(t *testing.T) {
@@ -31,7 +33,7 @@ func TestTCPExecutor_Probe_Success(t *testing.T) {
 		}
 	}()
 
-	pool := newConnPool(ln.Addr().String(), 3, 5*time.Second)
+	pool := newConnPool(ln.Addr().String(), def.BackendRetryCount, 5*time.Second)
 	defer pool.close()
 
 	executor := &TCPExecutor{
@@ -73,7 +75,7 @@ func TestTCPExecutor_Probe_ExpectMismatch(t *testing.T) {
 		conn.Write([]byte("WRONG_RESPONSE"))
 	}()
 
-	pool := newConnPool(ln.Addr().String(), 3, 5*time.Second)
+	pool := newConnPool(ln.Addr().String(), def.BackendRetryCount, 5*time.Second)
 	defer pool.close()
 
 	executor := &TCPExecutor{
@@ -99,7 +101,7 @@ func TestTCPExecutor_Probe_ExpectMismatch(t *testing.T) {
 
 func TestTCPExecutor_Probe_ConnectionRefused(t *testing.T) {
 	port := getFreePort(t)
-	pool := newConnPool(port, 3, 500*time.Millisecond)
+	pool := newConnPool(port, def.BackendRetryCount, 500*time.Millisecond)
 	defer pool.close()
 
 	executor := &TCPExecutor{
@@ -142,7 +144,7 @@ func TestTCPExecutor_Probe_ContextTimeout(t *testing.T) {
 		conn.Write([]byte("PONG"))
 	}()
 
-	pool := newConnPool(ln.Addr().String(), 3, 5*time.Second)
+	pool := newConnPool(ln.Addr().String(), def.BackendRetryCount, 5*time.Second)
 	defer pool.close()
 
 	executor := &TCPExecutor{
@@ -182,7 +184,7 @@ func TestTCPExecutor_Probe_EmptySend(t *testing.T) {
 		conn.Write([]byte("HELLO"))
 	}()
 
-	pool := newConnPool(ln.Addr().String(), 3, 5*time.Second)
+	pool := newConnPool(ln.Addr().String(), def.BackendRetryCount, 5*time.Second)
 	defer pool.close()
 
 	executor := &TCPExecutor{
@@ -224,7 +226,7 @@ func TestTCPExecutor_Probe_EmptyExpect(t *testing.T) {
 		conn.Write([]byte("ANY_RESPONSE"))
 	}()
 
-	pool := newConnPool(ln.Addr().String(), 3, 5*time.Second)
+	pool := newConnPool(ln.Addr().String(), def.BackendRetryCount, 5*time.Second)
 	defer pool.close()
 
 	executor := &TCPExecutor{
@@ -264,7 +266,7 @@ func TestTCPExecutor_Probe_EmptySendAndExpect(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}()
 
-	pool := newConnPool(ln.Addr().String(), 3, 5*time.Second)
+	pool := newConnPool(ln.Addr().String(), def.BackendRetryCount, 5*time.Second)
 	defer pool.close()
 
 	executor := &TCPExecutor{
@@ -303,7 +305,7 @@ func TestTCPExecutor_Probe_ConnectionMarkedFailed(t *testing.T) {
 		conn.Close()
 	}()
 
-	pool := newConnPool(ln.Addr().String(), 3, 5*time.Second)
+	pool := newConnPool(ln.Addr().String(), def.BackendRetryCount, 5*time.Second)
 	defer pool.close()
 
 	executor := &TCPExecutor{
@@ -363,7 +365,7 @@ func TestTCPExecutor_Probe_ConnectionReuse(t *testing.T) {
 		}
 	}()
 
-	pool := newConnPool(ln.Addr().String(), 3, 5*time.Second)
+	pool := newConnPool(ln.Addr().String(), def.BackendRetryCount, 5*time.Second)
 	defer pool.close()
 
 	executor := &TCPExecutor{
@@ -373,7 +375,7 @@ func TestTCPExecutor_Probe_ConnectionReuse(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	for i := range 3 {
+	for i := range def.BackendRetryCount {
 		success, _, err := executor.Probe(ctx)
 		if err != nil {
 			t.Fatalf("probe %d: unexpected error: %v", i+1, err)
@@ -416,7 +418,7 @@ func TestTCPExecutor_Probe_PartialExpectMatch(t *testing.T) {
 		conn.Write([]byte("PREFIX_PONG_SUFFIX"))
 	}()
 
-	pool := newConnPool(ln.Addr().String(), 3, 5*time.Second)
+	pool := newConnPool(ln.Addr().String(), def.BackendRetryCount, 5*time.Second)
 	defer pool.close()
 
 	executor := &TCPExecutor{
@@ -454,7 +456,7 @@ func TestTCPExecutor_Probe_ReadError(t *testing.T) {
 		conn.Close()
 	}()
 
-	pool := newConnPool(ln.Addr().String(), 3, 5*time.Second)
+	pool := newConnPool(ln.Addr().String(), def.BackendRetryCount, 5*time.Second)
 	defer pool.close()
 
 	executor := &TCPExecutor{
@@ -493,7 +495,7 @@ func TestTCPExecutor_Probe_WriteError(t *testing.T) {
 		conn.Close()
 	}()
 
-	pool := newConnPool(ln.Addr().String(), 3, 5*time.Second)
+	pool := newConnPool(ln.Addr().String(), def.BackendRetryCount, 5*time.Second)
 	defer pool.close()
 
 	executor := &TCPExecutor{
@@ -591,7 +593,7 @@ func TestTCPExecutor_Probe_LatencyMeasurement(t *testing.T) {
 		conn.Write([]byte("PONG"))
 	}()
 
-	pool := newConnPool(ln.Addr().String(), 3, 5*time.Second)
+	pool := newConnPool(ln.Addr().String(), def.BackendRetryCount, 5*time.Second)
 	defer pool.close()
 
 	executor := &TCPExecutor{
@@ -644,7 +646,7 @@ func TestTCPExecutor_Probe_BufferPool(t *testing.T) {
 		}
 	}()
 
-	pool := newConnPool(ln.Addr().String(), 3, 5*time.Second)
+	pool := newConnPool(ln.Addr().String(), def.BackendRetryCount, 5*time.Second)
 	defer pool.close()
 
 	executor := &TCPExecutor{
@@ -683,7 +685,7 @@ func TestTCPExecutor_Probe_DeadlinePropagation(t *testing.T) {
 		conn.Write([]byte("PONG"))
 	}()
 
-	pool := newConnPool(ln.Addr().String(), 3, 5*time.Second)
+	pool := newConnPool(ln.Addr().String(), def.BackendRetryCount, 5*time.Second)
 	defer pool.close()
 
 	executor := &TCPExecutor{

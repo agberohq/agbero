@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/ll/lx"
@@ -48,7 +49,7 @@ func (p *Process) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) er
 		return fmt.Errorf("command not allowed: %s", cmdName)
 	}
 
-	if err := os.MkdirAll(p.Dir, 0750); err != nil {
+	if err := os.MkdirAll(p.Dir, def.WorkDirPerm); err != nil {
 		return fmt.Errorf("create workdir: %w", err)
 	}
 

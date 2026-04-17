@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/mappo"
 )
@@ -64,10 +65,10 @@ type sessionTable struct {
 
 func newSessionTable(ttl time.Duration, maxSessions int64) *sessionTable {
 	if ttl <= 0 {
-		ttl = time.Duration(defaultSessionTTLSeconds) * time.Second
+		ttl = def.UDPDefaultSessionTTL
 	}
 	if maxSessions <= 0 {
-		maxSessions = defaultMaxSessions
+		maxSessions = def.UDPMaxSessions
 	}
 
 	t := &sessionTable{
@@ -78,9 +79,9 @@ func newSessionTable(ttl time.Duration, maxSessions int64) *sessionTable {
 
 	// Schedule periodic TTL sweep using jack.Scheduler — same pattern as xtcp pool.
 	sched, _ := jack.NewScheduler(
-		sweepRoutineName,
-		jack.NewPool(sweepPoolSize),
-		jack.Routine{Interval: time.Duration(sweepIntervalSeconds) * time.Second},
+		def.UDPSweepRoutineName,
+		jack.NewPool(def.UDPSweepPoolSize),
+		jack.Routine{Interval: def.UDPSweepIntervalSeconds},
 	)
 	_ = sched.Do(jack.Do(t.sweep))
 	t.sweeper = sched

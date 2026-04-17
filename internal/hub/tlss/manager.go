@@ -66,7 +66,7 @@ func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global, kee
 		logger:          logger.Namespace("tls"),
 		hostManager:     hm,
 		global:          global,
-		cache:           mappo.NewLRU[string, *tls.Certificate](10000),
+		cache:           mappo.NewLRU[string, *tls.Certificate](def.DefaultCacheMaxItems),
 		Challenges:      NewChallengeStore(logger),
 		quit:            make(chan struct{}),
 		pendingDomains:  mappo.NewConcurrent[string, bool](),

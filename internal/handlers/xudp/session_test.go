@@ -1,6 +1,7 @@
 package xudp
 
 import (
+	"github.com/agberohq/agbero/internal/core/def"
 	"net"
 	"sync"
 	"testing"
@@ -177,7 +178,7 @@ func TestSessionTable_CloseAllClosesConns(t *testing.T) {
 }
 
 func TestSessionTable_ConcurrentAccess(t *testing.T) {
-	tbl := newSessionTable(30*time.Second, 10000)
+	tbl := newSessionTable(30*time.Second, def.DefaultCacheMaxItems)
 	defer tbl.closeAll()
 
 	var wg sync.WaitGroup

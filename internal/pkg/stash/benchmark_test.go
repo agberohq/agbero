@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 )
 
@@ -41,7 +42,7 @@ func BenchmarkMemoryStoreSet(b *testing.B) {
 	cfg := &Config{
 		Driver:     "memory",
 		DefaultTTL: 5 * time.Minute,
-		MaxItems:   10000,
+		MaxItems:   def.DefaultCacheMaxItems,
 	}
 
 	store, _ := NewStore(cfg)
@@ -65,7 +66,7 @@ func BenchmarkMemoryStoreGet(b *testing.B) {
 	cfg := &Config{
 		Driver:     "memory",
 		DefaultTTL: 5 * time.Minute,
-		MaxItems:   10000,
+		MaxItems:   def.DefaultCacheMaxItems,
 	}
 
 	store, _ := NewStore(cfg)

@@ -1,6 +1,7 @@
 package lb
 
 import (
+	"github.com/agberohq/agbero/internal/core/def"
 	"math"
 	"math/rand/v2"
 	"testing"
@@ -109,7 +110,7 @@ func TestConsistentHashRingGet(t *testing.T) {
 		counts := make(map[int]int)
 
 		// Test many random keys
-		for range 10000 {
+		for range def.DefaultCacheMaxItems {
 			key := rand.Uint64()
 			idx := r.Get(key)
 			counts[idx]++
@@ -123,7 +124,7 @@ func TestConsistentHashRingGet(t *testing.T) {
 		}
 
 		// Check rough uniformity (within 50% of average)
-		avg := 10000 / 5
+		avg := def.DefaultCacheMaxItems / 5
 		for i := range 5 {
 			if counts[i] < avg/2 || counts[i] > avg*3/2 {
 				t.Logf("Warning: backend %d has %d hits (avg %d)", i, counts[i], avg)

@@ -12,17 +12,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/olekukonko/ll"
-)
-
-const (
-	configFilePerm            = 0644
-	configTempSuffix          = ".tmp"
-	configHCLExtension        = ".hcl"
-	MaxReliablePayloadSize    = 5 * 1024 * 1024
-	maxDecompressedConfigSize = 10 * 1024 * 1024
 )
 
 type Distributor struct {
@@ -54,7 +47,7 @@ func (c *Distributor) LoadExistingChecksums() {
 	}
 
 	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), configHCLExtension) {
+		if !strings.HasSuffix(file.Name(), def.ConfigHCLExtension) {
 			continue
 		}
 
@@ -63,7 +56,7 @@ func (c *Distributor) LoadExistingChecksums() {
 			continue
 		}
 
-		domain := strings.TrimSuffix(file.Name(), configHCLExtension)
+		domain := strings.TrimSuffix(file.Name(), def.ConfigHCLExtension)
 		c.checksums[domain] = c.calculateChecksum(data)
 	}
 
@@ -82,7 +75,7 @@ func (c *Distributor) Apply(payload ConfigPayload) {
 	}
 
 	if payload.Deleted {
-		configPath := c.localDir.FilePath(payload.Domain + configHCLExtension)
+		configPath := c.localDir.FilePath(payload.Domain + def.ConfigHCLExtension)
 		_ = os.Remove(configPath)
 		delete(c.checksums, payload.Domain)
 		c.logger.Fields("domain", payload.Domain).Info("cluster config deleted")
@@ -94,7 +87,7 @@ func (c *Distributor) Apply(payload ConfigPayload) {
 		return
 	}
 
-	configPath := c.localDir.FilePath(payload.Domain + configHCLExtension)
+	configPath := c.localDir.FilePath(payload.Domain + def.ConfigHCLExtension)
 
 	rawHCL, err := c.decompress(payload.RawHCL)
 	if err != nil {
@@ -143,8 +136,8 @@ func (c *Distributor) PreparePayload(domain string, rawHCL []byte, deleted bool,
 		if err != nil {
 			return nil, err
 		}
-		if len(compressed) > MaxReliablePayloadSize {
-			c.logger.Fields("domain", domain, "size", len(compressed), "limit", MaxReliablePayloadSize).Warn("config too large for tcp sync, skipped")
+		if len(compressed) > def.MaxReliablePayloadSize {
+			c.logger.Fields("domain", domain, "size", len(compressed), "limit", def.MaxReliablePayloadSize).Warn("config too large for tcp sync, skipped")
 			return nil, nil
 		}
 	}
@@ -201,7 +194,7 @@ func (c *Distributor) validateHCL(targetPath string, rawHCL []byte) error {
 	}
 
 	tempPath := filepath.Join(dir, ".validate.tmp.hcl")
-	if err := os.WriteFile(tempPath, rawHCL, configFilePerm); err != nil {
+	if err := os.WriteFile(tempPath, rawHCL, def.ConfigFilePerm); err != nil {
 		return fmt.Errorf("write temp file: %w", err)
 	}
 	defer os.Remove(tempPath)
@@ -225,8 +218,8 @@ func (c *Distributor) writeAtomic(targetPath string, data []byte) error {
 		return err
 	}
 
-	tempPath := targetPath + configTempSuffix
-	if err := os.WriteFile(tempPath, data, configFilePerm); err != nil {
+	tempPath := targetPath + def.ConfigTempSuffix
+	if err := os.WriteFile(tempPath, data, def.ConfigFilePerm); err != nil {
 		return err
 	}
 	return os.Rename(tempPath, targetPath)
@@ -260,7 +253,7 @@ func (c *Distributor) compress(data []byte) ([]byte, error) {
 }
 
 // decompress inflates configuration data received from the cluster.
-// Decompressed output is capped at maxDecompressedConfigSize to prevent memory exhaustion.
+// Decompressed output is capped at def.MaxDecompressedConfigSize to prevent memory exhaustion.
 func (c *Distributor) decompress(data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, nil
@@ -271,12 +264,12 @@ func (c *Distributor) decompress(data []byte) ([]byte, error) {
 	}
 	defer reader.Close()
 
-	result, err := io.ReadAll(io.LimitReader(reader, maxDecompressedConfigSize+1))
+	result, err := io.ReadAll(io.LimitReader(reader, def.MaxDecompressedConfigSize+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(result) > maxDecompressedConfigSize {
-		return nil, fmt.Errorf("decompressed config exceeds maximum allowed size of %d bytes", maxDecompressedConfigSize)
+	if len(result) > def.MaxDecompressedConfigSize {
+		return nil, fmt.Errorf("decompressed config exceeds maximum allowed size of %d bytes", def.MaxDecompressedConfigSize)
 	}
 	return result, nil
 }
@@ -295,7 +288,7 @@ func validateDomain(domain string, localDir expect.Folder) error {
 		return fmt.Errorf("domain contains illegal path traversal sequence")
 	}
 
-	resolved := localDir.FilePath(domain + configHCLExtension)
+	resolved := localDir.FilePath(domain + def.ConfigHCLExtension)
 	rel, err := filepath.Rel(localDir.Path(), resolved)
 	if err != nil || strings.HasPrefix(rel, "..") {
 		return fmt.Errorf("domain resolves outside the configured hosts directory")

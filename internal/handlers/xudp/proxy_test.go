@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	resource "github.com/agberohq/agbero/internal/hub/resource"
 )
@@ -21,7 +22,7 @@ func startUDPBackend(t *testing.T, id string) (string, func()) {
 		t.Fatalf("startUDPBackend %s: %v", id, err)
 	}
 	go func() {
-		buf := make([]byte, udpBufSize)
+		buf := make([]byte, def.UDPBufSize)
 		for {
 			n, addr, err := conn.ReadFromUDP(buf)
 			if err != nil {

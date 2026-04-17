@@ -13,6 +13,7 @@ import (
 
 	"github.com/olekukonko/errors"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/transport"
@@ -90,7 +91,7 @@ func New(cfg Config) (*Cook, error) {
 		if cfg.KeepLast <= 0 {
 			cfg.KeepLast = 2
 		}
-		if err := os.MkdirAll(cfg.WorkDir, 0750); err != nil {
+		if err := os.MkdirAll(cfg.WorkDir, def.WorkDirPerm); err != nil {
 			return nil, fmt.Errorf("failed to create work directory: %w", err)
 		}
 	}
@@ -180,7 +181,7 @@ func (c *Cook) Make(ctx context.Context) error {
 	}
 
 	deployBase := c.deployBase()
-	if err := os.MkdirAll(deployBase, 0750); err != nil {
+	if err := os.MkdirAll(deployBase, def.WorkDirPerm); err != nil {
 		deployErr = fmt.Errorf("failed to create deploy base: %w", err)
 		return deployErr
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/lb"
 	"github.com/olekukonko/mappo"
@@ -141,13 +142,13 @@ func (p *Proxy) Start() error {
 
 	maxSess := p.MaxSess
 	if maxSess <= 0 {
-		maxSess = defaultMaxSessions
+		maxSess = def.UDPMaxSessions
 	}
 
 	p.mu.Lock()
 	ttl := p.sessionTTL
 	if ttl <= 0 {
-		ttl = time.Duration(defaultSessionTTLSeconds) * time.Second
+		ttl = def.UDPDefaultSessionTTL
 	}
 	p.sessions = newSessionTable(ttl, maxSess)
 
@@ -251,7 +252,7 @@ func (p *Proxy) handleDatagram(listenConn *net.UDPConn, clientAddr *net.UDPAddr,
 	}
 
 	// Dial a dedicated UDP conn to the backend for this session
-	backendConn, err := net.DialTimeout("udp", backend.Address, time.Duration(dialTimeoutSeconds)*time.Second)
+	backendConn, err := net.DialTimeout("udp", backend.Address, def.UDPDialTimeout)
 	if err != nil {
 		p.res.Logger.Fields("backend", backend.Address, "err", err).Error("xudp: dial backend failed")
 		backend.OnDialFailure(err)
@@ -358,7 +359,7 @@ func (p *Proxy) pickBackend(route *udpRoute) *Backend {
 		return uint64(rand.Uint32())<<32 | uint64(rand.Uint32())
 	}
 
-	for i := 0; i < backendRetry; i++ {
+	for i := 0; i < def.BackendRetryCount; i++ {
 		picked := route.selector.Pick(nil, keyFunc)
 		if picked == nil {
 			break
@@ -442,7 +443,7 @@ func (p *Proxy) ActiveSessions() int64 {
 
 func matcherName(m Matcher) string {
 	if m == nil {
-		return "src_port"
+		return def.DefaultUDPMatcher
 	}
 	return m.Name()
 }

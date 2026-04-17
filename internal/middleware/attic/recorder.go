@@ -23,7 +23,7 @@ func newRecorder(w http.ResponseWriter) *recorder {
 	return &recorder{
 		ResponseWriter: w,
 		headers:        make(http.Header),
-		buf:            bytes.NewBuffer(make([]byte, 0, 4096)),
+		buf:            bytes.NewBuffer(make([]byte, 0, def.CacheBufferSize)),
 		status:         http.StatusOK,
 		cacheable:      true,
 	}

@@ -1266,7 +1266,7 @@ route "/" {
 // Helper functions
 func writeSyncedFile(t *testing.T, path string, data []byte) {
 	t.Helper()
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, def.ConfigFilePerm)
 	if err != nil {
 		t.Fatal(err)
 	}

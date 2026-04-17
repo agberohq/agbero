@@ -3,10 +3,12 @@ package ahash
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 const (
-	testIterations = 10000
+	testIterations = def.DefaultCacheMaxItems
 	maxCollisions  = 5
 	randStrMaxLen  = 128
 )

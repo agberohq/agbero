@@ -151,7 +151,7 @@ func (hm *Host) OnClusterCert(domain string, certPEM, keyPEM []byte) error {
 	certPath := filepath.Join(certDir, domain+".crt")
 	keyPath := filepath.Join(certDir, domain+".key")
 
-	if err := os.WriteFile(certTmp, certPEM, 0644); err != nil {
+	if err := os.WriteFile(certTmp, certPEM, def.ConfigFilePerm); err != nil {
 		return fmt.Errorf("write cert tmp: %w", err)
 	}
 	if err := os.WriteFile(keyTmp, keyPEM, 0600); err != nil {
@@ -194,7 +194,7 @@ func (hm *Host) OnClusterChallenge(token, keyAuth string, deleted bool) {
 	}
 
 	challengePath := filepath.Join(challengeDir, token)
-	if err := os.WriteFile(challengePath, []byte(keyAuth), 0644); err != nil {
+	if err := os.WriteFile(challengePath, []byte(keyAuth), def.ConfigFilePerm); err != nil {
 		hm.logger.Fields("token", token, "err", err).Error("failed to write cluster challenge")
 		return
 	}

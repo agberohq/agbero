@@ -73,8 +73,8 @@ var (
 const (
 	gzCacheTTL            = 60 * time.Second
 	phpTimeout            = 30 * time.Second
-	dynamicGzMinSize      = 1024
-	dynamicGzMaxCacheSize = 512 * 1024
+	dynamicGzMinSize      = def.WebDynamicGzMinBytes
+	dynamicGzMaxCacheSize = 512 * def.WebDynamicGzMinBytes
 	dynamicGzTTL          = 60 * time.Second
 )
 

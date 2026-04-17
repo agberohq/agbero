@@ -37,13 +37,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const (
-	adminTokenTTL        = def.AdminTokenTTL
-	adminTokenIssuer     = def.AdminTokenIssuer
-	challengeTokenTTL    = 5 * time.Minute
-	challengeTokenIssuer = "agbero-challenge"
-)
-
 var (
 	dummyHash       []byte
 	challengeSecret = make([]byte, 32)
@@ -384,7 +377,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if len(requirements) > 0 {
-		tokenString, _, err := s.generateAdminToken(creds.Username, string(challengeSecret), "challenge", challengeTokenTTL)
+		tokenString, _, err := s.generateAdminToken(creds.Username, string(challengeSecret), "challenge", def.ChallengeTokenTTL)
 		if err != nil {
 			s.logger.Error("Failed to sign challenge token", "err", err)
 			http.Error(w, "Internal Signing Error", http.StatusInternalServerError)
@@ -406,7 +399,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenString, expirationTime, err := s.generateAdminToken(creds.Username, jwtSecret, "full", adminTokenTTL)
+	tokenString, expirationTime, err := s.generateAdminToken(creds.Username, jwtSecret, "full", def.AdminTokenTTL)
 	if err != nil {
 		s.logger.Error("Failed to sign admin token", "err", err)
 		http.Error(w, "Internal Signing Error", http.StatusInternalServerError)
@@ -461,7 +454,7 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Challenge token already used", http.StatusUnauthorized)
 			return
 		}
-		s.resource.TimeStore.SetTTL(claims.ID, time.Now().Add(challengeTokenTTL), challengeTokenTTL)
+		s.resource.TimeStore.SetTTL(claims.ID, time.Now().Add(def.ChallengeTokenTTL), def.ChallengeTokenTTL)
 	}
 
 	var creds struct {
@@ -515,7 +508,7 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenString, expirationTime, err := s.generateAdminToken(claims.User, jwtSecret, "full", adminTokenTTL)
+	tokenString, expirationTime, err := s.generateAdminToken(claims.User, jwtSecret, "full", def.AdminTokenTTL)
 	if err != nil {
 		s.logger.Error("Failed to sign admin token", "err", err)
 		http.Error(w, "Internal Signing Error", http.StatusInternalServerError)
@@ -555,7 +548,7 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenString, expirationTime, err := s.generateAdminToken(user, jwtSecret, "full", adminTokenTTL)
+	tokenString, expirationTime, err := s.generateAdminToken(user, jwtSecret, "full", def.AdminTokenTTL)
 	if err != nil {
 		s.logger.Error("Failed to sign admin token", "err", err)
 		http.Error(w, "Internal Signing Error", http.StatusInternalServerError)
@@ -622,7 +615,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	if mapClaims, ok := token.Claims.(jwt.MapClaims); ok {
 		if jti, _ := mapClaims["jti"].(string); jti != "" {
-			exp := adminTokenTTL
+			exp := def.AdminTokenTTL
 			if expClaim, ok := mapClaims["exp"].(float64); ok {
 				if remaining := time.Until(time.Unix(int64(expClaim), 0)); remaining > 0 {
 					exp = remaining
@@ -648,9 +641,9 @@ func (s *Server) generateAdminToken(username, secret, scope string, ttl time.Dur
 	now := time.Now()
 	expirationTime := now.Add(ttl)
 
-	issuer := adminTokenIssuer
+	issuer := def.AdminTokenIssuer
 	if scope == "challenge" {
-		issuer = challengeTokenIssuer
+		issuer = def.ChallengeTokenIssuer
 	}
 
 	claims := &adminClaims{

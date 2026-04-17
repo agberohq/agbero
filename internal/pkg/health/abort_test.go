@@ -3,6 +3,8 @@ package health
 import (
 	"testing"
 	"time"
+
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 func TestEffectiveWeightHealthy(t *testing.T) {
@@ -51,7 +53,7 @@ func TestEffectiveWeightDead(t *testing.T) {
 	rw := DefaultRoutingMultiplier()
 	score := NewScore(DefaultThresholds(), DefaultScoringWeights(), DefaultLatencyThresholds(), nil)
 
-	score.Update(Record{ProbeLatency: 10000 * time.Millisecond, ProbeSuccess: false, StatusCode: 500, PassiveRate: 1.0, ConnHealth: 0})
+	score.Update(Record{ProbeLatency: def.DefaultCacheMaxItems * time.Millisecond, ProbeSuccess: false, StatusCode: 500, PassiveRate: 1.0, ConnHealth: 0})
 
 	weight := rw.EffectiveWeight(100, score)
 

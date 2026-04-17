@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/handlers/upstream"
 	"github.com/agberohq/agbero/internal/hub/resource"
@@ -36,7 +37,7 @@ func NewBackend(cfg BackendConfig) (*Backend, error) {
 
 	hasProber := cfg.Proxy.HealthCheck.Enabled.Active() ||
 		(cfg.Proxy.HealthCheck.Enabled == expect.Unknown && (cfg.Proxy.HealthCheck.Send.NotEmpty() || cfg.Proxy.HealthCheck.Expect.NotEmpty())) ||
-		strings.HasSuffix(addressStr, ":6379")
+		strings.HasSuffix(addressStr, ":6def.BackendRetryCount79")
 
 	baseCfg := upstream.Config{
 		Address:        addressStr,
@@ -93,7 +94,7 @@ func (b *Backend) initHealth(cfg BackendConfig) error {
 	if cfg.Proxy.HealthCheck.Expect.NotEmpty() {
 		expectBytes = cfg.Proxy.HealthCheck.Expect
 	}
-	pool := newConnPool(cfg.Server.Address.HostPort(), 3, probeCfg.Timeout)
+	pool := newConnPool(cfg.Server.Address.HostPort(), def.BackendRetryCount, probeCfg.Timeout)
 	executor := &TCPExecutor{
 		Pool:   pool,
 		Send:   sendBytes,

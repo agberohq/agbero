@@ -30,7 +30,7 @@ func New(cfg *alaye.Cache, logger *ll.Logger) func(http.Handler) http.Handler {
 	storeCfg := &stash.Config{
 		Driver:     cfg.Driver,
 		DefaultTTL: cfg.TTL.StdDuration(),
-		MaxItems:   10000,
+		MaxItems:   def.DefaultCacheMaxItems,
 		Redis:      cfg.Redis,
 		Policy:     &cfg.TTLPolicy,
 	}

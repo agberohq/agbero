@@ -8,6 +8,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/olekukonko/ll"
 	"golang.org/x/sys/windows"
 )
@@ -71,7 +72,7 @@ func killProcessGroup(pid int) error {
 	}
 	defer windows.CloseHandle(h)
 	windows.GenerateConsoleCtrlEvent(windows.CTRL_BREAK_EVENT, uint32(pid))
-	time.AfterFunc(10*time.Second, func() {
+	time.AfterFunc(def.DefaultWorkerPoolSize*time.Second, func() {
 		windows.TerminateProcess(h, 1)
 	})
 	return nil

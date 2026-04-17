@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/agberohq/agbero/internal/hub/orchestrator"
@@ -35,7 +36,7 @@ func setupTestRepo(t *testing.T, path string) {
 		t.Fatalf("worktree failed: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(path, "script.sh"), []byte(`#!/bin/sh
-		echo hello`), 0644); err != nil {
+		echo hello`), def.ConfigFilePerm); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
 	if _, err := w.Add("script.sh"); err != nil {

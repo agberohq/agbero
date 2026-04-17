@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 // BenchmarkLatencyRecordOnly - baseline mutex contention
@@ -46,7 +47,7 @@ func BenchmarkLatencySnapshot(b *testing.B) {
 	lt := NewLatency()
 	defer lt.Close()
 
-	for i := range 10000 {
+	for i := range def.DefaultCacheMaxItems {
 		lt.Record(int64(100 + i%900))
 	}
 

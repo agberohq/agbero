@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/zulu"
 )
 
@@ -406,14 +407,14 @@ func TestConnPoolSweepWithActiveConnections(t *testing.T) {
 	server := newTestServer(t)
 	defer server.close()
 
-	pool := newConnPool(server.addr, 3, time.Second)
+	pool := newConnPool(server.addr, def.BackendRetryCount, time.Second)
 	defer pool.close()
 
 	ctx := context.Background()
 
 	// Create connections
-	conns := make([]*pooledConn, 3)
-	for i := 0; i < 3; i++ {
+	conns := make([]*pooledConn, def.BackendRetryCount)
+	for i := 0; i < def.BackendRetryCount; i++ {
 		conn, err := pool.get(ctx)
 		if err != nil {
 			t.Fatalf("Failed to get connection %d: %v", i, err)

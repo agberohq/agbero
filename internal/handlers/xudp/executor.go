@@ -5,6 +5,8 @@ import (
 	"context"
 	"net"
 	"time"
+
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 // UDPExecutor implements health probing for UDP backends.
@@ -29,7 +31,7 @@ func (u *UDPExecutor) Probe(ctx context.Context) (bool, time.Duration, error) {
 
 	timeout := u.Timeout
 	if timeout <= 0 {
-		timeout = time.Duration(healthProbeTimeoutSeconds) * time.Second
+		timeout = def.UDPHealthCheckTimeout
 	}
 
 	// Use context deadline if tighter

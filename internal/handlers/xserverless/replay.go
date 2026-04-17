@@ -78,7 +78,7 @@ func NewReplay(cfg ReplayConfig) *Replay {
 	}
 
 	if cfg.Replay.Cache.Enabled.Active() {
-		maxItems := 10000
+		maxItems := def.DefaultCacheMaxItems
 		if cfg.Replay.Cache.Memory != nil && cfg.Replay.Cache.Memory.MaxItems > 0 {
 			maxItems = cfg.Replay.Cache.Memory.MaxItems
 		}

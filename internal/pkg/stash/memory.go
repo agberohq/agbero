@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/cespare/xxhash/v2"
 	"github.com/olekukonko/mappo"
 )
@@ -20,7 +21,7 @@ type MemoryStore struct {
 func NewMemoryStore(cfg *Config) (*MemoryStore, error) {
 	maxItems := cfg.MaxItems
 	if maxItems <= 0 {
-		maxItems = 10000
+		maxItems = def.DefaultCacheMaxItems
 	}
 
 	return &MemoryStore{

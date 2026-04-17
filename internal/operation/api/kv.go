@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
@@ -34,7 +35,7 @@ type KV struct {
 func NewKV(cfg *Shared) *KV {
 	return &KV{
 		cache: mappo.NewCache(mappo.CacheOptions{
-			MaximumSize: 100_000, // ~12MB max with 120KB histograms, but KV items are smaller
+			MaximumSize: def.UDPMaxSessions, // ~12MB max with 120KB histograms, but KV items are smaller
 			OnDelete: func(key string, it *mappo.Item) {
 				// Optional: log evictions or persist to disk
 			},

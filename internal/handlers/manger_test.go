@@ -476,7 +476,7 @@ func TestManager_handleRoute_WASM_InvalidModule(t *testing.T) {
 			RateLimits: alaye.RateGlobal{
 				Enabled:    expect.Inactive,
 				TTL:        expect.Duration(10 * time.Minute),
-				MaxEntries: 10000,
+				MaxEntries: def.DefaultCacheMaxItems,
 			},
 			Storage: alaye.Storage{
 				WorkDir: expect.NewFolder(t.TempDir()),

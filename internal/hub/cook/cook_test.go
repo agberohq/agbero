@@ -12,6 +12,7 @@ import (
 
 	"github.com/olekukonko/errors"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/olekukonko/ll"
@@ -34,7 +35,7 @@ func setupTestRepo(tb testingTB, path string) string {
 	if err != nil {
 		tb.Fatalf("failed to get worktree: %v", err)
 	}
-	err = os.WriteFile(filepath.Join(path, "index.html"), []byte("<h1>Hello World</h1>"), 0644)
+	err = os.WriteFile(filepath.Join(path, "index.html"), []byte("<h1>Hello World</h1>"), def.ConfigFilePerm)
 	if err != nil {
 		tb.Fatalf("failed to write file: %v", err)
 	}
@@ -65,7 +66,7 @@ func addCommit(t *testing.T, path string, content string) string {
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
 	}
-	err = os.WriteFile(filepath.Join(path, "index.html"), []byte(content), 0644)
+	err = os.WriteFile(filepath.Join(path, "index.html"), []byte(content), def.ConfigFilePerm)
 	if err != nil {
 		t.Fatalf("failed to write file: %v", err)
 	}

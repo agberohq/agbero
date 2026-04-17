@@ -3,6 +3,7 @@ package helper
 import (
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/ui"
@@ -27,7 +28,7 @@ func (s *Secret) requireStore() *keeperlib.Keeper {
 // No keeper access required — this is a standalone random value.
 func (s *Secret) Cluster() {
 	pw := security.NewPassword()
-	key, err := pw.Generate(32)
+	key, err := pw.Generate(def.DefaultPasswordLength)
 	if err != nil {
 		s.p.Logger.Fatal("random generation failed: ", err)
 	}
@@ -145,7 +146,7 @@ func (s *Secret) Hash(password string) {
 // Password generates a random password, hashes it, and prints both.
 func (s *Secret) Password(length int) {
 	if length <= 0 {
-		length = 32
+		length = def.DefaultPasswordLength
 	}
 
 	pw := security.NewPassword()

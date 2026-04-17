@@ -38,7 +38,7 @@ func NewTestConfig(t *testing.T) resource.Proxy {
 		RateLimits: alaye.RateGlobal{
 			Enabled:    expect.Inactive,
 			TTL:        expect.Duration(10 * time.Minute),
-			MaxEntries: 10000,
+			MaxEntries: def.DefaultCacheMaxItems,
 		},
 		Storage: alaye.Storage{
 			WorkDir: expect.NewFolder(t.TempDir()),
@@ -1004,7 +1004,7 @@ func TestRouteHandler_Validation(t *testing.T) {
 			},
 			prepare: func(t *testing.T, r *alaye.Route) {
 				root := t.TempDir()
-				os.WriteFile(filepath.Join(root, "index.html"), []byte("ok"), 0644)
+				os.WriteFile(filepath.Join(root, "index.html"), []byte("ok"), def.ConfigFilePerm)
 				r.Web.Root = alaye.WebRoot(root)
 				r.Web.Index = []string{"index.html"}
 			},
@@ -1217,7 +1217,7 @@ func TestRouteHandler_WithForwardAuth(t *testing.T) {
 	cfg := NewTestConfig(t)
 
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "index.html"), []byte("ok"), 0644)
+	os.WriteFile(filepath.Join(root, "index.html"), []byte("ok"), def.ConfigFilePerm)
 
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
