@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 // AdvertiseHTTP3 adds the Alt-Svc header to advertise HTTP/3 support.
@@ -17,7 +17,7 @@ func AdvertiseHTTP3(port string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Advertise HTTP/3 availability
-			w.Header().Set(woos.HeaderKeyAltSvc, altSvcValue)
+			w.Header().Set(def.HeaderKeyAltSvc, altSvcValue)
 			next.ServeHTTP(w, r)
 		})
 	}

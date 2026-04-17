@@ -27,3 +27,13 @@ func (c *CORS) Validate() error {
 	}
 	return nil
 }
+
+func (c CORS) IsZero() bool {
+	return c.Enabled.IsZero() &&
+		len(c.AllowedOrigins) == 0 &&
+		len(c.AllowedMethods) == 0 &&
+		len(c.AllowedHeaders) == 0 &&
+		len(c.ExposedHeaders) == 0 &&
+		!c.AllowCredentials &&
+		c.MaxAge == 0
+}

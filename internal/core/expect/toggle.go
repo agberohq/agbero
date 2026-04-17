@@ -56,6 +56,7 @@ func (s Toggle) NotActive() bool { return s != Active }
 func (s Toggle) Default() bool { return s == Unknown }
 func (s Toggle) Int() int      { return int(s) }
 func (s Toggle) Bool() bool    { return s == Active }
+func (s Toggle) IsZero() bool  { return s == Unknown }
 
 func (s Toggle) Toggle() Toggle {
 	if s.Inactive() {

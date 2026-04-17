@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/go-acme/lego/v4/registration"
@@ -353,7 +353,7 @@ func TestManager_GetCertificate_EmptySNI(t *testing.T) {
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	_, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: ""})
-	if err != woos.ErrMissingSNI {
+	if err != def.ErrMissingSNI {
 		t.Fatalf("expected ErrMissingSNI, got: %v", err)
 	}
 }
@@ -566,7 +566,7 @@ func TestManager_EntryPoint_LocalhostVsPublic(t *testing.T) {
 		t.Logf("got localhost cert with CN: %s", leaf.Subject.CommonName)
 	}
 	_, err = mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: "public.example.com"})
-	if err != woos.ErrCertNotfound {
+	if err != def.ErrCertNotfound {
 		t.Logf("public domain result: %v", err)
 	}
 }

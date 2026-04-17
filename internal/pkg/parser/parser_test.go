@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 )
 
 // writeTemp writes content to a temp file and returns its path.
@@ -104,16 +104,16 @@ func TestUnmarshalGlobal_full(t *testing.T) {
 	}
 	// Fields below compare alaye.Duration to alaye.Duration(time.Second constants).
 	// After Step 6 these become direct == comparisons unchanged.
-	if g.Timeouts.Read != alaye.Duration(10*time.Second) {
+	if g.Timeouts.Read != expect.Duration(10*time.Second) {
 		t.Errorf("Timeouts.Read: got %v, want 10s", g.Timeouts.Read)
 	}
-	if g.Timeouts.Write != alaye.Duration(30*time.Second) {
+	if g.Timeouts.Write != expect.Duration(30*time.Second) {
 		t.Errorf("Timeouts.Write: got %v, want 30s", g.Timeouts.Write)
 	}
-	if g.Timeouts.Idle != alaye.Duration(120*time.Second) {
+	if g.Timeouts.Idle != expect.Duration(120*time.Second) {
 		t.Errorf("Timeouts.Idle: got %v, want 120s", g.Timeouts.Idle)
 	}
-	if g.Timeouts.ReadHeader != alaye.Duration(5*time.Second) {
+	if g.Timeouts.ReadHeader != expect.Duration(5*time.Second) {
 		t.Errorf("Timeouts.ReadHeader: got %v, want 5s", g.Timeouts.ReadHeader)
 	}
 	if g.Storage.HostsDir != "/etc/agbero/hosts.d" {
@@ -202,7 +202,7 @@ func TestUnmarshalHost_proxyRoute(t *testing.T) {
 	if r.HealthCheck.Path != "/health" {
 		t.Errorf("HealthCheck.Path: got %q, want /health", r.HealthCheck.Path)
 	}
-	if r.HealthCheck.Interval != alaye.Duration(10*time.Second) {
+	if r.HealthCheck.Interval != expect.Duration(10*time.Second) {
 		t.Errorf("HealthCheck.Interval: got %v, want 10s", r.HealthCheck.Interval)
 	}
 	if r.HealthCheck.Threshold != 3 {
@@ -370,10 +370,10 @@ route "/" {
 	if err := NewParser(path).Unmarshal(&h); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if h.Routes[0].HealthCheck.Interval != alaye.Duration(30*time.Second) {
+	if h.Routes[0].HealthCheck.Interval != expect.Duration(30*time.Second) {
 		t.Errorf("Interval: got %v, want 30s", h.Routes[0].HealthCheck.Interval)
 	}
-	if h.Routes[0].HealthCheck.Timeout != alaye.Duration(5*time.Second) {
+	if h.Routes[0].HealthCheck.Timeout != expect.Duration(5*time.Second) {
 		t.Errorf("Timeout: got %v, want 5s", h.Routes[0].HealthCheck.Timeout)
 	}
 }
@@ -397,7 +397,7 @@ route "/" {
 	if err := NewParser(path).Unmarshal(&h); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if h.Routes[0].HealthCheck.Interval != alaye.Duration(30*time.Second) {
+	if h.Routes[0].HealthCheck.Interval != expect.Duration(30*time.Second) {
 		t.Errorf("Interval from bare int: got %v, want 30s", h.Routes[0].HealthCheck.Interval)
 	}
 }
@@ -553,8 +553,8 @@ bind { http = [":8080"] }
 	if err != nil {
 		t.Fatalf("LoadGlobal: %v", err)
 	}
-	if g.Version != woos.ConfigFormatVersion {
-		t.Errorf("Version: got %d, want %d", g.Version, woos.ConfigFormatVersion)
+	if g.Version != def.ConfigFormatVersion {
+		t.Errorf("Version: got %d, want %d", g.Version, def.ConfigFormatVersion)
 	}
 }
 
@@ -702,5 +702,97 @@ route "/backend" {
 	}
 	if len(backendRoute.Backends.Servers) == 0 || backendRoute.Backends.Servers[0].Address.String() != "http://127.0.0.1:8080" {
 		t.Errorf("Expected backend server address 'http://127.0.0.1:8080', got %v", backendRoute.Backends.Servers)
+	}
+}
+
+// TestMarshal_omitemptyBlocksSuppressed proves that blocks tagged
+// `hcl:"...,block,omitempty"` are not written when they contain no data.
+func TestMarshal_omitemptyBlocksSuppressed(t *testing.T) {
+	// Only set the minimum required to make a valid host.
+	// All omitempty blocks (health_check, circuit_breaker, basic_auth, etc.)
+	// are left at their zero value.
+	h := alaye.Host{
+		Domains: []string{"test.localhost"},
+		Routes: []alaye.Route{
+			{
+				Enabled: expect.Active,
+				Path:    "/",
+				Web: alaye.Web{
+					Enabled: expect.Active,
+					Root:    alaye.WebRoot("/var/www"),
+				},
+			},
+		},
+	}
+
+	data, err := MarshalBytes(&h)
+	if err != nil {
+		t.Fatalf("MarshalBytes: %v", err)
+	}
+
+	output := string(data)
+	t.Logf("encoded output:\n%s", output)
+
+	// These blocks are tagged omitempty and are all zero — must NOT appear
+	for _, block := range []string{
+		"health_check",
+		"circuit_breaker",
+		"timeouts",
+		"basic_auth",
+		"forward_auth",
+		"jwt_auth",
+		"o_auth",
+		"cors",
+		"rate_limit",
+		"firewall",
+		"compression",
+		"fallback",
+		"serverless",
+		"backend",
+	} {
+		if strings.Contains(output, block+" {") || strings.Contains(output, block+"{") {
+			t.Errorf("block %q should be suppressed (omitempty) but appeared in output", block)
+		}
+	}
+
+	// The web block IS set — must appear
+	if !strings.Contains(output, "web {") {
+		t.Error("web block should appear but was missing")
+	}
+}
+
+// TestMarshal_omitemptyBlocksPreservedWhenSet proves that a populated
+// omitempty block still gets written after the fix.
+func TestMarshal_omitemptyBlocksPreservedWhenSet(t *testing.T) {
+	h := alaye.Host{
+		Domains: []string{"test.localhost"},
+		Routes: []alaye.Route{
+			{
+				Enabled: expect.Active,
+				Path:    "/",
+				Web: alaye.Web{
+					Enabled: expect.Active,
+					Root:    alaye.WebRoot("/var/www"),
+				},
+				HealthCheck: alaye.HealthCheck{
+					Enabled:  expect.Active,
+					Path:     "/health",
+					Interval: expect.Duration(10 * time.Second),
+				},
+			},
+		},
+	}
+
+	data, err := MarshalBytes(&h)
+	if err != nil {
+		t.Fatalf("MarshalBytes: %v", err)
+	}
+
+	output := string(data)
+	if !strings.Contains(output, "health_check {") {
+		t.Error("health_check block should appear when populated, but was missing")
+	}
+	if !strings.Contains(output, "/health") {
+		t.Error("health_check path should appear in output")
 	}
 }

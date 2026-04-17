@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -108,7 +109,7 @@ func NewHost(hostsDir expect.Folder, opts ...Option) *Host {
 		opt(h)
 	}
 	if h.logger == nil {
-		h.logger = ll.New(woos.Name).Disable()
+		h.logger = ll.New(def.Name).Disable()
 	}
 
 	h.lookupMap.Store(make(map[string]*alaye.Host))
@@ -118,7 +119,7 @@ func NewHost(hostsDir expect.Folder, opts ...Option) *Host {
 	if h.lifetimes == nil {
 		h.lifetimes = jack.NewLifetime(
 			jack.LifetimeWithLogger(h.logger),
-			jack.LifetimeWithShards(woos.LifetimeShards),
+			jack.LifetimeWithShards(def.LifetimeShards),
 		)
 
 		// internal lifetimes are not subject to cluster expiration
@@ -312,7 +313,7 @@ func (hm *Host) RouteExists(host, path string) bool {
 	for _, r := range cfg.Routes {
 		p := r.Path
 		if p == emptyString {
-			p = woos.Slash
+			p = def.Slash
 		}
 		if p == path {
 			return true
@@ -402,7 +403,7 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 	}
 
 	name := strings.ToLower(event.Name)
-	if !strings.HasSuffix(name, woos.HCLSuffix) {
+	if !strings.HasSuffix(name, def.HCLSuffix) {
 		return
 	}
 
@@ -412,7 +413,7 @@ func (hm *Host) handleEvent(event fsnotify.Event, debouncedReload func()) {
 	}
 
 	if hm.clusterMgr != nil && hm.configSync != nil {
-		domain := strings.TrimSuffix(base, woos.HCLSuffix)
+		domain := strings.TrimSuffix(base, def.HCLSuffix)
 
 		isRemove := event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)
 		isWrite := event.Has(fsnotify.Write) || event.Has(fsnotify.Create)
@@ -493,7 +494,7 @@ func (hm *Host) scanFromDisk() (map[string]*alaye.Host, struct{ TotalFiles int }
 		}
 
 		name := d.Name()
-		if !strings.HasSuffix(strings.ToLower(name), woos.HCLSuffix) {
+		if !strings.HasSuffix(strings.ToLower(name), def.HCLSuffix) {
 			return nil
 		}
 
@@ -517,8 +518,8 @@ func (hm *Host) scanFromDisk() (map[string]*alaye.Host, struct{ TotalFiles int }
 
 		cfg.SourceFile = rel
 
-		hostID := strings.TrimSuffix(rel, woos.HCLSuffix)
-		hostID = strings.ReplaceAll(hostID, string(filepath.Separator), woos.Slash)
+		hostID := strings.TrimSuffix(rel, def.HCLSuffix)
+		hostID = strings.ReplaceAll(hostID, string(filepath.Separator), def.Slash)
 
 		out[hostID] = cfg
 		return nil
@@ -659,7 +660,7 @@ func (hm *Host) rebuildLookupLocked() {
 			route.Path = parts[1]
 		}
 		if route.Path == emptyString {
-			route.Path = woos.Slash
+			route.Path = def.Slash
 		}
 
 		domainToRoutes[host] = append(domainToRoutes[host], route)
@@ -668,11 +669,11 @@ func (hm *Host) rebuildLookupLocked() {
 
 			defaultHost := &alaye.Host{
 				Domains: []string{host},
-				TLS:     alaye.TLS{Mode: alaye.ModeLocalAuto},
+				TLS:     alaye.TLS{Mode: def.ModeLocalAuto},
 			}
 
 			if !woos.IsLocalContext(host) {
-				defaultHost.TLS.Mode = alaye.ModeLetsEncrypt
+				defaultHost.TLS.Mode = def.ModeLetsEncrypt
 			}
 			woos.DefaultHost(defaultHost)
 			domainToConfig[host] = defaultHost
@@ -774,17 +775,17 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 	if cfg == nil {
 		m := hm.lookupMap.Load().(map[string]*alaye.Host)
 		if existing := m[domain]; existing != nil && existing.SourceFile != "" {
-			hostID := strings.TrimSuffix(existing.SourceFile, woos.HCLSuffix)
+			hostID := strings.TrimSuffix(existing.SourceFile, def.HCLSuffix)
 			delete(hm.hosts, hostID)
 		} else {
 			delete(hm.hosts, domain)
 		}
 	} else {
 
-		hostID := strings.TrimSuffix(cfg.SourceFile, woos.HCLSuffix)
+		hostID := strings.TrimSuffix(cfg.SourceFile, def.HCLSuffix)
 		if hostID == "" {
 			hostID = zulu.NormalizeHost(domain)
-			cfg.SourceFile = hostID + woos.HCLSuffix
+			cfg.SourceFile = hostID + def.HCLSuffix
 		}
 		hm.hosts[hostID] = cfg
 	}
@@ -808,7 +809,7 @@ func (hm *Host) Save(domain string) error {
 
 	filename := cfg.SourceFile
 	if filename == "" {
-		filename = zulu.NormalizeHost(domain) + woos.HCLSuffix
+		filename = zulu.NormalizeHost(domain) + def.HCLSuffix
 	}
 	filePath := filepath.Join(hm.hostsDir.Path(), filename)
 
@@ -821,7 +822,7 @@ func (hm *Host) Save(domain string) error {
 func (hm *Host) Create(domain string, cfg *alaye.Host) error {
 	filename := cfg.SourceFile
 	if filename == "" {
-		filename = zulu.NormalizeHost(domain) + woos.HCLSuffix
+		filename = zulu.NormalizeHost(domain) + def.HCLSuffix
 		cfg.SourceFile = filename
 	}
 	filePath := filepath.Join(hm.hostsDir.Path(), filename)
@@ -836,7 +837,7 @@ func (hm *Host) Create(domain string, cfg *alaye.Host) error {
 func (hm *Host) CreateRaw(domain string, cfg *alaye.Host, raw []byte) error {
 	filename := cfg.SourceFile
 	if filename == "" {
-		filename = zulu.NormalizeHost(domain) + woos.HCLSuffix
+		filename = zulu.NormalizeHost(domain) + def.HCLSuffix
 		cfg.SourceFile = filename
 	}
 	filePath := filepath.Join(hm.hostsDir.Path(), filename)
@@ -873,10 +874,10 @@ func (hm *Host) DeleteFile(domain string) error {
 
 	filename := cfg.SourceFile
 	if filename == "" {
-		filename = domain + woos.HCLSuffix
+		filename = domain + def.HCLSuffix
 	}
 
-	hostID := strings.TrimSuffix(filename, woos.HCLSuffix)
+	hostID := strings.TrimSuffix(filename, def.HCLSuffix)
 	delete(hm.hosts, hostID)
 	hm.rebuildLookupLocked()
 
@@ -943,10 +944,10 @@ func validateACMEToken(token string) error {
 func normalizeHostPath(host, path string) (string, string) {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if path == emptyString {
-		path = woos.Slash
+		path = def.Slash
 	}
-	if !strings.HasPrefix(path, woos.Slash) {
-		path = woos.Slash + path
+	if !strings.HasPrefix(path, def.Slash) {
+		path = def.Slash + path
 	}
 	return host, path
 }

@@ -3,7 +3,6 @@ package xhttp
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/olekukonko/errors"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
@@ -32,7 +33,7 @@ func setupBackend(t *testing.T, server alaye.Server, hc alaye.HealthCheck, cb al
 	}
 	testRes := resource.New()
 	domain := "example.com"
-	statsKey := route.BackendKey(domain, server.Address.String())
+	statsKey := route.KeyBackend(domain, server.Address.String())
 	hScore := testRes.Health.GetOrSet(statsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
 	b, err := NewBackend(ConfigBackend{
 		Server:  server,
@@ -444,7 +445,7 @@ func TestServeHTTP_CircuitBreakerOpen_WithFallback(t *testing.T) {
 			Threshold: 2,
 		},
 	}
-	statsKey := route.BackendKey("example.com", server.URL)
+	statsKey := route.KeyBackend("example.com", server.URL)
 	hScore := health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil)
 	testRes.Health.Set(statsKey, hScore)
 	b, err := NewBackend(ConfigBackend{
@@ -597,9 +598,9 @@ func TestHealthCheck_Failure(t *testing.T) {
 	hc := alaye.HealthCheck{
 		Enabled:   expect.Active,
 		Path:      "/health",
-		Interval:  alaye.Duration(50 * time.Millisecond),
+		Interval:  expect.Duration(50 * time.Millisecond),
 		Threshold: 2,
-		Timeout:   alaye.Duration(100 * time.Millisecond),
+		Timeout:   expect.Duration(100 * time.Millisecond),
 	}
 
 	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
@@ -630,9 +631,9 @@ func TestHealthCheck_Recovery(t *testing.T) {
 	hc := alaye.HealthCheck{
 		Enabled:   expect.Active,
 		Path:      "/health",
-		Interval:  alaye.Duration(50 * time.Millisecond),
+		Interval:  expect.Duration(50 * time.Millisecond),
 		Threshold: 2,
-		Timeout:   alaye.Duration(100 * time.Millisecond),
+		Timeout:   expect.Duration(100 * time.Millisecond),
 	}
 
 	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
@@ -679,9 +680,9 @@ func TestHealthCheck_Advanced(t *testing.T) {
 		Headers:        map[string]string{"X-Check": "true"},
 		ExpectedStatus: []int{201},
 		ExpectedBody:   `"status": "OK"`,
-		Interval:       alaye.Duration(50 * time.Millisecond),
+		Interval:       expect.Duration(50 * time.Millisecond),
 		Threshold:      1,
-		Timeout:        alaye.Duration(100 * time.Millisecond),
+		Timeout:        expect.Duration(100 * time.Millisecond),
 	}
 
 	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
@@ -707,9 +708,9 @@ func TestHealthCheck_Advanced_BodyMismatch(t *testing.T) {
 		Enabled:      expect.Active,
 		Path:         "/health",
 		ExpectedBody: `"status": "OK"`,
-		Interval:     alaye.Duration(50 * time.Millisecond),
+		Interval:     expect.Duration(50 * time.Millisecond),
 		Threshold:    1,
-		Timeout:      alaye.Duration(100 * time.Millisecond),
+		Timeout:      expect.Duration(100 * time.Millisecond),
 	}
 
 	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
@@ -737,8 +738,8 @@ func TestHealthCheck_HostHeader_From_Domains(t *testing.T) {
 	hc := alaye.HealthCheck{
 		Enabled:  expect.Active,
 		Path:     "/",
-		Interval: alaye.Duration(50 * time.Millisecond),
-		Timeout:  alaye.Duration(100 * time.Millisecond),
+		Interval: expect.Duration(50 * time.Millisecond),
+		Timeout:  expect.Duration(100 * time.Millisecond),
 	}
 
 	route := &alaye.Route{
@@ -748,7 +749,7 @@ func TestHealthCheck_HostHeader_From_Domains(t *testing.T) {
 
 	domain := "api.example.com"
 	testRes := resource.New()
-	statsKey := route.BackendKey(domain, server.URL)
+	statsKey := route.KeyBackend(domain, server.URL)
 	hScore := health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil)
 	testRes.Health.Set(statsKey, hScore)
 
@@ -814,8 +815,8 @@ func TestHealthCheck_Jitter(t *testing.T) {
 	hc := alaye.HealthCheck{
 		Enabled:  expect.Active,
 		Path:     "/",
-		Interval: alaye.Duration(20 * time.Millisecond),
-		Timeout:  alaye.Duration(100 * time.Millisecond),
+		Interval: expect.Duration(20 * time.Millisecond),
+		Timeout:  expect.Duration(100 * time.Millisecond),
 	}
 
 	b, _, doctor := setupBackend(t, alaye.NewServer(ts.URL), hc, alaye.CircuitBreaker{})
@@ -841,9 +842,9 @@ func TestStop_HealthCheckLoop(t *testing.T) {
 	hc := alaye.HealthCheck{
 		Enabled:   expect.Active,
 		Path:      "/health",
-		Interval:  alaye.Duration(50 * time.Millisecond),
+		Interval:  expect.Duration(50 * time.Millisecond),
 		Threshold: 1,
-		Timeout:   alaye.Duration(100 * time.Millisecond),
+		Timeout:   expect.Duration(100 * time.Millisecond),
 	}
 
 	b, _, doctor := setupBackend(t, alaye.NewServer(server.URL), hc, alaye.CircuitBreaker{})
@@ -1010,7 +1011,7 @@ func TestDrain_Timeout(t *testing.T) {
 func TestActivitySnapshot(t *testing.T) {
 	testRes := resource.New()
 	route := &alaye.Route{Path: "/"}
-	statsKey := route.BackendKey("example.com", "http://example.com")
+	statsKey := route.KeyBackend("example.com", "http://example.com")
 	hScore := health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil)
 	testRes.Health.Set(statsKey, hScore)
 

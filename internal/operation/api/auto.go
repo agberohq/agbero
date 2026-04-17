@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
@@ -42,7 +42,7 @@ func NewAutoRoute(cfg *Shared) *AutoRoute {
 // ping confirms the token is valid and returns the verified service identity.
 // Useful for healthcheck and token validation without side effects.
 func (rt *AutoRoute) ping(w http.ResponseWriter, r *http.Request) {
-	serviceName := r.Header.Get(woos.HeaderXAgberoService)
+	serviceName := r.Header.Get(def.HeaderXAgberoService)
 	rt.jsonResponse(w, http.StatusOK, map[string]string{
 		"status":  "ok",
 		"service": serviceName,
@@ -66,7 +66,7 @@ func (rt *AutoRoute) addRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	serviceName := r.Header.Get(woos.HeaderXAgberoService)
+	serviceName := r.Header.Get(def.HeaderXAgberoService)
 	if err := enforceServiceScope(serviceName, payload.Host); err != nil {
 		rt.logger.Fields("service", serviceName, "host", payload.Host).Warn("auto: scope violation on register")
 		rt.errorResponse(w, http.StatusForbidden, err.Error())
@@ -115,7 +115,7 @@ func (rt *AutoRoute) deleteRoute(w http.ResponseWriter, r *http.Request) {
 		path = "/"
 	}
 
-	serviceName := r.Header.Get(woos.HeaderXAgberoService)
+	serviceName := r.Header.Get(def.HeaderXAgberoService)
 	if err := enforceServiceScope(serviceName, host); err != nil {
 		rt.logger.Fields("service", serviceName, "host", host).Warn("auto: scope violation on deregister")
 		rt.errorResponse(w, http.StatusForbidden, err.Error())

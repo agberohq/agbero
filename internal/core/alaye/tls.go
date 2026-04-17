@@ -4,13 +4,14 @@ import (
 	"net/mail"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
 type TLS struct {
 	Enabled     expect.Toggle `hcl:"enabled,attr" json:"enabled"`
-	Mode        TlsMode       `hcl:"mode,attr" json:"mode"`
+	Mode        def.TlsMode   `hcl:"mode,attr" json:"mode"`
 	ClientAuth  string        `hcl:"client_auth,attr" json:"client_auth"`
 	ClientCAs   []string      `hcl:"client_cas,attr" json:"client_cas"`
 	Local       LocalCert     `hcl:"local,block" json:"local"`
@@ -22,43 +23,53 @@ type TLS struct {
 func (t *TLS) Validate() error {
 	if t.Mode != "" {
 		switch t.Mode {
-		case ModeLocalAuto:
+		case def.ModeLocalAuto:
 			return nil
-		case ModeLocalNone, ModeLocalCert, ModeLetsEncrypt, ModeCustomCA:
+		case def.ModeLocalNone, def.ModeLocalCert, def.ModeLetsEncrypt, def.ModeCustomCA:
 		default:
 			return errors.Newf("%w: %q must be one of: %s, %s, %s, %s",
-				ErrInvalidTLSMode, t.Mode, ModeLocalNone, ModeLocalCert, ModeLetsEncrypt, ModeCustomCA)
+				def.ErrInvalidTLSMode, t.Mode, def.ModeLocalNone, def.ModeLocalCert, def.ModeLetsEncrypt, def.ModeCustomCA)
 		}
 	} else {
-		t.Mode = ModeLetsEncrypt
+		t.Mode = def.ModeLetsEncrypt
 	}
 
 	if t.ClientAuth != "" {
 		switch strings.ToLower(t.ClientAuth) {
-		case TlsNone, TlsRequest, TlsRequire, TlsRequireAndVerify, TlsVerifyIfGiven:
+		case def.TlsNone, def.TlsRequest, def.TlsRequire, def.TlsRequireAndVerify, def.TlsVerifyIfGiven:
 		default:
 			return errors.Newf("invalid client_auth mode: %s", t.ClientAuth)
 		}
 	}
 
 	for _, ca := range t.ClientCAs {
-		if !strings.HasPrefix(ca, Slash) {
+		if !strings.HasPrefix(ca, def.Slash) {
 			return errors.Newf("client_ca path must be absolute: %s", ca)
 		}
 	}
 
 	switch t.Mode {
-	case ModeLocalCert:
+	case def.ModeLocalCert:
 		return t.Local.Validate()
-	case ModeLetsEncrypt:
+	case def.ModeLetsEncrypt:
 		return t.LetsEncrypt.Validate()
-	case ModeCustomCA:
+	case def.ModeCustomCA:
 		return t.CustomCA.Validate()
-	case ModeLocalNone:
+	case def.ModeLocalNone:
 		return nil
 	default:
-		return errors.Newf("%w: %s", ErrUnsupportedTLSMode, t.Mode)
+		return errors.Newf("%w: %s", def.ErrUnsupportedTLSMode, t.Mode)
 	}
+}
+
+func (t TLS) IsZero() bool {
+	return t.Enabled.IsZero() &&
+		t.Mode == "" &&
+		t.ClientAuth == "" &&
+		len(t.ClientCAs) == 0 &&
+		t.Local.IsZero() &&
+		t.LetsEncrypt.IsZero() &&
+		t.CustomCA.IsZero()
 }
 
 type LocalCert struct {
@@ -73,18 +84,22 @@ func (l *LocalCert) Validate() error {
 		return nil
 	}
 	if l.CertFile == "" {
-		return ErrCertFileRequired
+		return def.ErrCertFileRequired
 	}
-	if !strings.HasPrefix(l.CertFile, Slash) {
-		return ErrCertFileAbsolute
+	if !strings.HasPrefix(l.CertFile, def.Slash) {
+		return def.ErrCertFileAbsolute
 	}
 	if l.KeyFile == "" {
-		return ErrKeyFileRequired
+		return def.ErrKeyFileRequired
 	}
-	if !strings.HasPrefix(l.KeyFile, Slash) {
-		return ErrKeyFileAbsolute
+	if !strings.HasPrefix(l.KeyFile, def.Slash) {
+		return def.ErrKeyFileAbsolute
 	}
 	return nil
+}
+
+func (l LocalCert) IsZero() bool {
+	return l.Enabled.IsZero() && l.CertFile == "" && l.KeyFile == ""
 }
 
 type Pebble struct {
@@ -112,6 +127,14 @@ func (p *Pebble) Validate() error {
 	return nil
 }
 
+func (p Pebble) IsZero() bool {
+	return p.Enabled.IsZero() &&
+		p.URL == "" &&
+		p.Insecure.IsZero() &&
+		p.ChallSrv == "" &&
+		p.MgmtServer == ""
+}
+
 type LetsEncrypt struct {
 	Enabled    expect.Toggle `hcl:"enabled,attr" json:"enabled"`
 	Staging    expect.Toggle `hcl:"staging,attr" json:"staging"`
@@ -128,14 +151,14 @@ func (l *LetsEncrypt) Validate() error {
 
 	l.Email = strings.TrimSpace(l.Email)
 	if l.Email == "" {
-		return ErrInvalidEmail
+		return def.ErrInvalidEmail
 	}
 
 	// err == nil means the format is valid according to RFC 5322
 	// emailAddress.Address == email ensures there wasn't a display name component
 	_, err := mail.ParseAddress(l.Email)
 	if err != nil {
-		return ErrInvalidEmail
+		return def.ErrInvalidEmail
 	}
 
 	if l.Pebble.Enabled.Active() {
@@ -143,6 +166,14 @@ func (l *LetsEncrypt) Validate() error {
 	}
 
 	return nil
+}
+
+func (l LetsEncrypt) IsZero() bool {
+	return l.Enabled.IsZero() &&
+		l.Staging.IsZero() &&
+		l.Email == "" &&
+		!l.ShortLived &&
+		l.Pebble.IsZero()
 }
 
 type CustomCA struct {
@@ -156,10 +187,14 @@ func (c *CustomCA) Validate() error {
 		return nil
 	}
 	if c.Root == "" {
-		return ErrRootRequiredCustomCA
+		return def.ErrRootRequiredCustomCA
 	}
-	if !strings.HasPrefix(c.Root, Slash) {
-		return ErrRootAbsolute
+	if !strings.HasPrefix(c.Root, def.Slash) {
+		return def.ErrRootAbsolute
 	}
 	return nil
+}
+
+func (c CustomCA) IsZero() bool {
+	return c.Enabled.IsZero() && c.Root == ""
 }

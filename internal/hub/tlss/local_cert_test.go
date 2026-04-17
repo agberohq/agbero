@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 )
@@ -25,7 +26,7 @@ func setupLocalManager(t *testing.T, domain string) *Manager {
 	hm := discovery.NewHost(expect.NewFolder(tmpDir))
 	hm.Set(domain, &alaye.Host{
 		Domains: []string{domain},
-		TLS:     alaye.TLS{Mode: alaye.ModeLocalAuto},
+		TLS:     alaye.TLS{Mode: def.ModeLocalAuto},
 	})
 	mgr := NewManager(testLogger, hm, global, nil)
 	if mgr.installer != nil {
@@ -166,7 +167,7 @@ func TestPreloadLocalCertificates_CacheWarm(t *testing.T) {
 	hosts := map[string]*alaye.Host{
 		domain: {
 			Domains: []string{domain},
-			TLS:     alaye.TLS{Mode: alaye.ModeLocalAuto},
+			TLS:     alaye.TLS{Mode: def.ModeLocalAuto},
 		},
 	}
 
@@ -211,12 +212,12 @@ func TestPreloadLocalCertificates_SkipsNonLocal(t *testing.T) {
 	hosts := map[string]*alaye.Host{
 		"public.example.com": {
 			Domains: []string{"public.example.com"},
-			TLS:     alaye.TLS{Mode: alaye.ModeLetsEncrypt},
+			TLS:     alaye.TLS{Mode: def.ModeLetsEncrypt},
 		},
 		"manual.example.com": {
 			Domains: []string{"manual.example.com"},
 			TLS: alaye.TLS{
-				Mode: alaye.ModeLocalCert,
+				Mode: def.ModeLocalCert,
 				Local: alaye.LocalCert{
 					CertFile: "/nonexistent/cert.pem",
 					KeyFile:  "/nonexistent/key.pem",
@@ -254,7 +255,7 @@ func TestPreloadLocalCertificates_SkipsAlreadyCached(t *testing.T) {
 	hosts := map[string]*alaye.Host{
 		domain: {
 			Domains: []string{domain},
-			TLS:     alaye.TLS{Mode: alaye.ModeLocalAuto},
+			TLS:     alaye.TLS{Mode: def.ModeLocalAuto},
 		},
 	}
 	mgr.PreloadLocalCertificates(hosts)

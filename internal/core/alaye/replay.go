@@ -23,7 +23,7 @@ type Replay struct {
 	Headers      map[string]string       `hcl:"headers,attr"       json:"headers"`
 	Query        map[string]expect.Value `hcl:"query,attr"         json:"query"`
 	ForwardQuery expect.Toggle           `hcl:"forward_query,attr" json:"forward_query"`
-	Timeout      Duration                `hcl:"timeout,attr"       json:"timeout"`
+	Timeout      expect.Duration         `hcl:"timeout,attr"       json:"timeout"`
 	Cache        Cache                   `hcl:"cache,block"        json:"cache"`
 
 	// Replay mode (url must be empty).

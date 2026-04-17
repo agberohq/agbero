@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 // recorder captures HTTP response for caching
@@ -66,7 +66,7 @@ func (r *recorder) Write(b []byte) (int, error) {
 	if cacheable {
 		r.mu.Lock()
 		if r.cacheable {
-			if r.buf.Len()+len(b) > woos.CacheMaxBodySize {
+			if r.buf.Len()+len(b) > def.CacheMaxBodySize {
 				// Response too large: stop buffering and free memory
 				r.cacheable = false
 				r.buf = nil

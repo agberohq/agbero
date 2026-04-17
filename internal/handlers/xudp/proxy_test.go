@@ -54,7 +54,7 @@ func newTestProxy(t *testing.T, backends []string) (*Proxy, func()) {
 		Listen:      "127.0.0.1:0",
 		Protocol:    "udp",
 		Strategy:    "round_robin",
-		SessionTTL:  alaye.Duration(int64(2 * time.Second)),
+		SessionTTL:  expect.Duration(int64(2 * time.Second)),
 		MaxSessions: 1000,
 		Backends:    servers,
 		Enabled:     expect.Active,

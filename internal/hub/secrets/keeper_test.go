@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/keeper"
 	"github.com/olekukonko/ll"
 )
@@ -22,7 +22,7 @@ func TestOpen_CreateNew(t *testing.T) {
 
 	cfg := &alaye.Keeper{
 		Enabled:    expect.Active,
-		AutoLock:   alaye.Duration(5 * time.Minute),
+		AutoLock:   expect.Duration(5 * time.Minute),
 		Passphrase: expect.Value("test-passphrase-32-bytes-long!!"),
 	}
 	logger := ll.New("test").Disable()
@@ -38,7 +38,7 @@ func TestOpen_CreateNew(t *testing.T) {
 	}
 	defer store.Close()
 
-	dbPath := filepath.Join(dataDir.Path(), woos.DefaultKeeperName)
+	dbPath := filepath.Join(dataDir.Path(), def.DefaultKeeperName)
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		t.Error("keeper database was not created")
 	}

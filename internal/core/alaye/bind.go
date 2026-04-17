@@ -4,6 +4,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
@@ -18,7 +19,7 @@ type Bind struct {
 // Each address must be a valid host:port or port-only string.
 func (b *Bind) Validate() error {
 	if len(b.HTTP) == 0 && len(b.HTTPS) == 0 {
-		return ErrNoBindAddresses
+		return def.ErrNoBindAddresses
 	}
 
 	for i, addr := range b.HTTP {
@@ -38,10 +39,10 @@ func (b *Bind) Validate() error {
 
 func (b *Bind) validateAddress(addr string) error {
 	if addr == "" {
-		return ErrEmptyAddress
+		return def.ErrEmptyAddress
 	}
 	if strings.HasPrefix(addr, ":") {
-		if _, err := net.LookupPort(TCP, addr[1:]); err != nil {
+		if _, err := net.LookupPort(def.TCP, addr[1:]); err != nil {
 			return err
 		}
 		return nil

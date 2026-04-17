@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -84,10 +85,10 @@ func TestServer_Start_Minimal(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    expect.Active,
-			Read:       alaye.Duration(10 * time.Second),
-			Write:      alaye.Duration(30 * time.Second),
-			Idle:       alaye.Duration(60 * time.Second),
-			ReadHeader: alaye.Duration(5 * time.Second),
+			Read:       expect.Duration(10 * time.Second),
+			Write:      expect.Duration(30 * time.Second),
+			Idle:       expect.Duration(60 * time.Second),
+			ReadHeader: expect.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -177,10 +178,10 @@ route "/" {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    expect.Active,
-			Read:       alaye.Duration(10 * time.Second),
-			Write:      alaye.Duration(30 * time.Second),
-			Idle:       alaye.Duration(60 * time.Second),
-			ReadHeader: alaye.Duration(5 * time.Second),
+			Read:       expect.Duration(10 * time.Second),
+			Write:      expect.Duration(30 * time.Second),
+			Idle:       expect.Duration(60 * time.Second),
+			ReadHeader: expect.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -438,8 +439,8 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 	// Initialize keeper for node1
 	initKeeperForTest(t, dataDir1)
 	// Copy the seeded keeper DB to node2 so both have the PPK
-	srcDB := dataDir1.FilePath(woos.DefaultKeeperName)
-	dstDB := dataDir2.FilePath(woos.DefaultKeeperName)
+	srcDB := dataDir1.FilePath(def.DefaultKeeperName)
+	dstDB := dataDir2.FilePath(def.DefaultKeeperName)
 	srcData, err := os.ReadFile(srcDB)
 	if err != nil {
 		t.Fatal(err)
@@ -465,10 +466,10 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    expect.Active,
-			Read:       alaye.Duration(10 * time.Second),
-			Write:      alaye.Duration(30 * time.Second),
-			Idle:       alaye.Duration(60 * time.Second),
-			ReadHeader: alaye.Duration(5 * time.Second),
+			Read:       expect.Duration(10 * time.Second),
+			Write:      expect.Duration(30 * time.Second),
+			Idle:       expect.Duration(60 * time.Second),
+			ReadHeader: expect.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -497,10 +498,10 @@ func TestServer_Cluster_ConfigSync_RoutePropagation(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    expect.Active,
-			Read:       alaye.Duration(10 * time.Second),
-			Write:      alaye.Duration(30 * time.Second),
-			Idle:       alaye.Duration(60 * time.Second),
-			ReadHeader: alaye.Duration(5 * time.Second),
+			Read:       expect.Duration(10 * time.Second),
+			Write:      expect.Duration(30 * time.Second),
+			Idle:       expect.Duration(60 * time.Second),
+			ReadHeader: expect.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -670,8 +671,8 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 
 	// Initialize keeper for node1 and copy to node2
 	initKeeperForTest(t, dataDir1)
-	srcDB := dataDir1.FilePath(woos.DefaultKeeperName)
-	dstDB := dataDir2.FilePath(woos.DefaultKeeperName)
+	srcDB := dataDir1.FilePath(def.DefaultKeeperName)
+	dstDB := dataDir2.FilePath(def.DefaultKeeperName)
 	srcData, err := os.ReadFile(srcDB)
 	if err != nil {
 		t.Fatal(err)
@@ -697,10 +698,10 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    expect.Active,
-			Read:       alaye.Duration(10 * time.Second),
-			Write:      alaye.Duration(30 * time.Second),
-			Idle:       alaye.Duration(60 * time.Second),
-			ReadHeader: alaye.Duration(5 * time.Second),
+			Read:       expect.Duration(10 * time.Second),
+			Write:      expect.Duration(30 * time.Second),
+			Idle:       expect.Duration(60 * time.Second),
+			ReadHeader: expect.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -729,10 +730,10 @@ func TestServer_Cluster_ConfigSync_TombstoneDeletion(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    expect.Active,
-			Read:       alaye.Duration(10 * time.Second),
-			Write:      alaye.Duration(30 * time.Second),
-			Idle:       alaye.Duration(60 * time.Second),
-			ReadHeader: alaye.Duration(5 * time.Second),
+			Read:       expect.Duration(10 * time.Second),
+			Write:      expect.Duration(30 * time.Second),
+			Idle:       expect.Duration(60 * time.Second),
+			ReadHeader: expect.Duration(5 * time.Second),
 		},
 		General: alaye.General{
 			MaxHeaderBytes: 1048576,
@@ -1034,10 +1035,10 @@ func TestServer_shutdownImpl(t *testing.T) {
 		},
 		Timeouts: alaye.Timeout{
 			Enabled:    expect.Active,
-			Read:       alaye.Duration(10 * time.Second),
-			Write:      alaye.Duration(30 * time.Second),
-			Idle:       alaye.Duration(60 * time.Second),
-			ReadHeader: alaye.Duration(5 * time.Second),
+			Read:       expect.Duration(10 * time.Second),
+			Write:      expect.Duration(30 * time.Second),
+			Idle:       expect.Duration(60 * time.Second),
+			ReadHeader: expect.Duration(5 * time.Second),
 		},
 	}
 

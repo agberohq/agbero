@@ -3,6 +3,7 @@ package alaye
 import (
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 )
 
@@ -22,17 +23,19 @@ func (p *PHP) Validate() error {
 	}
 
 	// Accept either unix:/path.sock or host:port
-	if after, ok := strings.CutPrefix(addr, UNIXPrefix); ok {
+	if after, ok := strings.CutPrefix(addr, def.UNIXPrefix); ok {
 		if len(strings.TrimSpace(after)) == 0 {
-			return ErrNoAddress
+			return def.ErrNoAddress
 		}
 		return nil
 	}
 
 	// Very light check; real dial will validate host:port
 	if !strings.Contains(addr, ":") {
-		return ErrBadAddress
+		return def.ErrBadAddress
 	}
 
 	return nil
 }
+
+func (p PHP) IsZero() bool { return p.Enabled.IsZero() && p.Address == "" }

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/pkg/stash"
 	"github.com/olekukonko/ll"
 )
@@ -80,7 +80,7 @@ func (m *CacheMiddleware) Handler(next http.Handler) http.Handler {
 		}
 
 		if !rec.Cacheable() {
-			m.logger.Debug("response body too large, skipping cache", "size_limit", woos.CacheMaxBodySize)
+			m.logger.Debug("response body too large, skipping cache", "size_limit", def.CacheMaxBodySize)
 			return
 		}
 

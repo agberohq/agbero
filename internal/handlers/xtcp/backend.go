@@ -35,7 +35,7 @@ func NewBackend(cfg BackendConfig) (*Backend, error) {
 	statsKey := cfg.Proxy.BackendKey(addressStr)
 
 	hasProber := cfg.Proxy.HealthCheck.Enabled.Active() ||
-		(cfg.Proxy.HealthCheck.Enabled == expect.Unknown && (cfg.Proxy.HealthCheck.Send != "" || cfg.Proxy.HealthCheck.Expect != "")) ||
+		(cfg.Proxy.HealthCheck.Enabled == expect.Unknown && (cfg.Proxy.HealthCheck.Send.NotEmpty() || cfg.Proxy.HealthCheck.Expect.NotEmpty())) ||
 		strings.HasSuffix(addressStr, ":6379")
 
 	baseCfg := upstream.Config{
@@ -85,13 +85,13 @@ func (b *Backend) initHealth(cfg BackendConfig) error {
 		probeCfg.Timeout = cfg.Proxy.HealthCheck.Timeout.StdDuration()
 	}
 	var sendBytes, expectBytes []byte
-	if cfg.Proxy.HealthCheck.Send != "" {
-		s := strings.ReplaceAll(cfg.Proxy.HealthCheck.Send, "\\r", "\r")
+	if cfg.Proxy.HealthCheck.Send.NotEmpty() {
+		s := strings.ReplaceAll(cfg.Proxy.HealthCheck.Send.Get(), "\\r", "\r")
 		s = strings.ReplaceAll(s, "\\n", "\n")
 		sendBytes = []byte(s)
 	}
-	if cfg.Proxy.HealthCheck.Expect != "" {
-		expectBytes = []byte(cfg.Proxy.HealthCheck.Expect)
+	if cfg.Proxy.HealthCheck.Expect.NotEmpty() {
+		expectBytes = cfg.Proxy.HealthCheck.Expect
 	}
 	pool := newConnPool(cfg.Server.Address.HostPort(), 3, probeCfg.Timeout)
 	executor := &TCPExecutor{

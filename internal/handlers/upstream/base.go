@@ -21,7 +21,7 @@ type Config struct {
 	MaxConnections int64
 	CBThreshold    int64
 	HasProber      bool
-	StatsKey       alaye.BackendKey
+	StatsKey       alaye.Key
 	Resource       *resource.Resource
 }
 
@@ -44,7 +44,7 @@ type Base struct {
 	MaxConns    int64
 	CBThreshold int64
 	HasProber   bool
-	StatsKey    alaye.BackendKey
+	StatsKey    alaye.Key
 
 	Activity    *metrics.Activity
 	HealthScore *health.Score

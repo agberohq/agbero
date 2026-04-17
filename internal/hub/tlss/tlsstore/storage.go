@@ -1,7 +1,7 @@
 package tlsstore
 
 import (
-	"errors"
+	"github.com/olekukonko/errors"
 
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/pkg/security"

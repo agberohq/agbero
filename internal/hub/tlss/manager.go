@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/discovery"
@@ -276,7 +277,7 @@ func (m *Manager) EnsureCertMagic(next http.Handler) (http.Handler, error) {
 func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	name := chi.ServerName
 	if name == "" {
-		return nil, woos.ErrMissingSNI
+		return nil, def.ErrMissingSNI
 	}
 
 	if cert, hit := m.cache.Get(name); hit {
@@ -289,8 +290,8 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 	host := m.hostManager.Get(name)
 	mode := m.determineTLSMode(host, name)
 
-	if host == nil && mode == alaye.ModeLocalNone {
-		return nil, woos.ErrCertNotfound
+	if host == nil && mode == def.ModeLocalNone {
+		return nil, def.ErrCertNotfound
 	}
 
 	settings := m.global.LetsEncrypt
@@ -299,10 +300,10 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 	}
 
 	switch mode {
-	case alaye.ModeLocalAuto:
+	case def.ModeLocalAuto:
 		return m.getCertificateLocal(name)
 
-	case alaye.ModeLocalCert:
+	case def.ModeLocalCert:
 		if host != nil {
 			if c, err := tls.LoadX509KeyPair(host.TLS.Local.CertFile, host.TLS.Local.KeyFile); err == nil {
 				if len(c.Certificate) > 0 {
@@ -313,11 +314,11 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		}
 		return nil, fmt.Errorf("failed to load manual certs for %s", name)
 
-	case alaye.ModeLetsEncrypt:
+	case def.ModeLetsEncrypt:
 		return m.getCertificateACME(name, settings)
 	}
 
-	return nil, woos.ErrCertNotfound
+	return nil, def.ErrCertNotfound
 }
 
 func (m *Manager) needsRenewal(cert *tls.Certificate) bool {
@@ -351,10 +352,10 @@ func (m *Manager) renewCertificateSync(domain string) error {
 	host := m.hostManager.Get(domain)
 	mode := m.determineTLSMode(host, domain)
 	switch mode {
-	case alaye.ModeLocalAuto:
+	case def.ModeLocalAuto:
 		_, err := m.getCertificateLocal(domain)
 		return err
-	case alaye.ModeLetsEncrypt:
+	case def.ModeLetsEncrypt:
 		if host == nil {
 			return fmt.Errorf("host configuration not found for domain %s", domain)
 		}
@@ -491,7 +492,7 @@ func (m *Manager) loadFromStorage() {
 // are skipped — no duplicate work is done.
 func (m *Manager) PreloadLocalCertificates(hosts map[string]*alaye.Host) {
 	for domain, host := range hosts {
-		if m.determineTLSMode(host, domain) != alaye.ModeLocalAuto {
+		if m.determineTLSMode(host, domain) != def.ModeLocalAuto {
 			continue
 		}
 		// Already loaded from persistent storage by loadFromStorage — skip.
@@ -519,11 +520,11 @@ func (m *Manager) GetConfigForClient(chi *tls.ClientHelloInfo) (*tls.Config, err
 	host := m.hostManager.Get(chi.ServerName)
 	if host != nil && host.TLS.ClientAuth != "" {
 		switch strings.ToLower(host.TLS.ClientAuth) {
-		case alaye.TlsRequireAndVerify:
+		case def.TlsRequireAndVerify:
 			cfg.ClientAuth = tls.RequireAndVerifyClientCert
-		case alaye.TlsRequire:
+		case def.TlsRequire:
 			cfg.ClientAuth = tls.RequireAnyClientCert
-		case alaye.TlsRequest:
+		case def.TlsRequest:
 			cfg.ClientAuth = tls.RequestClientCert
 		default:
 			cfg.ClientAuth = tls.NoClientCert
@@ -639,9 +640,9 @@ func (m *Manager) LikelyInternal(name string) bool {
 	return false
 }
 
-func (m *Manager) determineTLSMode(host *alaye.Host, domain string) alaye.TlsMode {
+func (m *Manager) determineTLSMode(host *alaye.Host, domain string) def.TlsMode {
 	if host == nil {
-		return alaye.ModeLocalNone
+		return def.ModeLocalNone
 	}
 
 	if host.TLS.Mode != "" {
@@ -649,25 +650,25 @@ func (m *Manager) determineTLSMode(host *alaye.Host, domain string) alaye.TlsMod
 	}
 
 	if host.TLS.Local.CertFile != "" && host.TLS.Local.KeyFile != "" {
-		return alaye.ModeLocalCert
+		return def.ModeLocalCert
 	}
 
 	if host.TLS.LetsEncrypt.Enabled.Active() {
-		return alaye.ModeLetsEncrypt
+		return def.ModeLetsEncrypt
 	}
 
 	// no need to generate tls for internal names
 	if strings.HasSuffix(strings.ToLower(domain), ".internal") {
-		return alaye.ModeLocalNone
+		return def.ModeLocalNone
 	}
 
 	if woos.IsLocalhost(domain) {
-		return alaye.ModeLocalAuto
+		return def.ModeLocalAuto
 	}
 
 	if m.global.LetsEncrypt.Enabled.Active() {
-		return alaye.ModeLetsEncrypt
+		return def.ModeLetsEncrypt
 	}
 
-	return alaye.ModeLocalNone
+	return def.ModeLocalNone
 }

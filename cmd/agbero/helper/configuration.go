@@ -9,8 +9,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	discovery "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
@@ -159,7 +159,7 @@ func ResolveConfigPath(logger *ll.Logger, flagPath string) (string, bool) {
 	}
 
 	cwd, _ := os.Getwd()
-	cwdPath := filepath.Join(cwd, woos.DefaultConfigName)
+	cwdPath := filepath.Join(cwd, def.DefaultConfigName)
 	if _, err := os.Stat(cwdPath); err == nil {
 		return cwdPath, true
 	}
@@ -177,12 +177,12 @@ func InitConfiguration(logger *ll.Logger, targetDir string) (string, error) {
 	if targetDir != "" {
 		base := expect.NewFolder(targetDir)
 		ctx.Paths.BaseDir = base
-		ctx.Paths.ConfigFile = base.FilePath(woos.DefaultConfigName)
-		ctx.Paths.HostsDir = base.Sub(woos.HostDir)
-		ctx.Paths.CertsDir = base.Sub(woos.CertDir)
-		ctx.Paths.DataDir = base.Sub(woos.DataDir)
-		ctx.Paths.LogsDir = base.Sub(woos.LogDir)
-		ctx.Paths.WorkDir = base.Sub(woos.WorkDir)
+		ctx.Paths.ConfigFile = base.FilePath(def.DefaultConfigName)
+		ctx.Paths.HostsDir = base.Sub(def.HostDir)
+		ctx.Paths.CertsDir = base.Sub(def.CertDir)
+		ctx.Paths.DataDir = base.Sub(def.DataDir)
+		ctx.Paths.LogsDir = base.Sub(def.LogDir)
+		ctx.Paths.WorkDir = base.Sub(def.WorkDir)
 	}
 	err := setup.NewHome(ctx).Run()
 	return ctx.Paths.ConfigFile, err
@@ -214,7 +214,7 @@ func InstallConfiguration(logger *ll.Logger, here bool) (string, error) {
 				}
 			}
 		}
-		return existing, woos.ErrConfigExists
+		return existing, def.ErrConfigExists
 	}
 
 	ctx := setup.NewContext(logger)

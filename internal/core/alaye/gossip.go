@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
@@ -36,8 +37,8 @@ func (g *Gossip) Validate() error {
 		return nil
 	}
 
-	if g.Port < MinPort || g.Port > MaxPort {
-		return errors.Newf("%w: port must be between 0 and 65535", ErrInvalidPort)
+	if g.Port < def.MinPort || g.Port > def.MaxPort {
+		return errors.Newf("%w: port must be between 0 and 65535", def.ErrInvalidPort)
 	}
 
 	if g.SecretKey != "" {
@@ -47,19 +48,19 @@ func (g *Gossip) Validate() error {
 		isRef := g.SecretKey.IsSecretStoreRef() || g.SecretKey.IsEnvRef() || g.SecretKey.IsBase64()
 		if !isRef {
 			keyLen := len(g.SecretKey)
-			if keyLen != SecretKeyLen16 && keyLen != SecretKeyLen24 && keyLen != SecretKeyLen32 {
-				return ErrInvalidSecretKey
+			if keyLen != def.SecretKeyLen16 && keyLen != def.SecretKeyLen24 && keyLen != def.SecretKeyLen32 {
+				return def.ErrInvalidSecretKey
 			}
 		}
 	}
 
 	for i, seed := range g.Seeds {
 		if seed == "" {
-			return errors.Newf("seeds[%d]: %w", i, ErrSeedEmpty)
+			return errors.Newf("seeds[%d]: %w", i, def.ErrSeedEmpty)
 		}
 		if _, _, err := net.SplitHostPort(seed); err != nil {
-			if _, _, err := net.SplitHostPort(fmt.Sprintf("%s:%d", seed, DefaultGossipPort)); err != nil {
-				return errors.Newf("%w: seeds[%d]: %q is not a valid host:port", ErrInvalidSeedFormat, i, seed)
+			if _, _, err := net.SplitHostPort(fmt.Sprintf("%s:%d", seed, def.DefaultGossipPort)); err != nil {
+				return errors.Newf("%w: seeds[%d]: %q is not a valid host:port", def.ErrInvalidSeedFormat, i, seed)
 			}
 		}
 	}

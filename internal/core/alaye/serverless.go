@@ -30,3 +30,11 @@ func (s *Serverless) Validate() error {
 	}
 	return s.Git.Validate()
 }
+
+func (s Serverless) IsZero() bool {
+	return s.Enabled.IsZero() &&
+		s.Root == "" &&
+		s.Git.IsZero() &&
+		len(s.Replay) == 0 &&
+		len(s.Workers) == 0
+}

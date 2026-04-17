@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cook"
@@ -26,17 +27,17 @@ func NewTestConfig(t *testing.T) resource.Proxy {
 	t.Helper()
 	global := &alaye.Global{
 		Timeouts: alaye.Timeout{
-			Read:  alaye.Duration(30 * time.Second),
-			Write: alaye.Duration(30 * time.Second),
-			Idle:  alaye.Duration(120 * time.Second),
+			Read:  expect.Duration(30 * time.Second),
+			Write: expect.Duration(30 * time.Second),
+			Idle:  expect.Duration(120 * time.Second),
 		},
 		Security: alaye.Security{
 			Enabled:        expect.Inactive,
 			TrustedProxies: []string{},
 		},
-		RateLimits: alaye.GlobalRate{
+		RateLimits: alaye.RateGlobal{
 			Enabled:    expect.Inactive,
-			TTL:        alaye.Duration(10 * time.Minute),
+			TTL:        expect.Duration(10 * time.Minute),
 			MaxEntries: 10000,
 		},
 		Storage: alaye.Storage{
@@ -328,8 +329,8 @@ func TestRoute_RegisterPatients_Success(t *testing.T) {
 		HealthCheck: alaye.HealthCheck{
 			Enabled:  expect.Active,
 			Path:     "/health",
-			Interval: alaye.Duration(50 * time.Millisecond),
-			Timeout:  alaye.Duration(100 * time.Millisecond),
+			Interval: expect.Duration(50 * time.Millisecond),
+			Timeout:  expect.Duration(100 * time.Millisecond),
 		},
 	})
 	if route == nil {
@@ -374,7 +375,7 @@ func TestRouteHandler_Proxy_RoundRobin(t *testing.T) {
 		Path:    "/",
 		Backends: alaye.Backend{
 			Enabled:  expect.Active,
-			Strategy: alaye.StrategyRoundRobin,
+			Strategy: def.StrategyRoundRobin,
 			Servers:  alaye.NewServers(srv1.URL, srv2.URL),
 		},
 	}
@@ -414,12 +415,12 @@ func TestRouteHandler_Proxy_RateLimit(t *testing.T) {
 			Enabled: expect.Active,
 			Servers: alaye.NewServers(srv.URL),
 		},
-		RateLimit: alaye.RouteRate{
+		RateLimit: alaye.RateRoute{
 			Enabled: expect.Active,
 			Rule: alaye.RateRule{
 				Enabled:  expect.Active,
 				Requests: 1,
-				Window:   alaye.Duration(time.Minute),
+				Window:   expect.Duration(time.Minute),
 				Key:      "ip",
 			},
 		},
@@ -539,7 +540,7 @@ func TestRouteHandler_Proxy_Timeout(t *testing.T) {
 		},
 		Timeouts: alaye.TimeoutRoute{
 			Enabled: expect.Active,
-			Request: alaye.Duration(10 * time.Millisecond),
+			Request: expect.Duration(10 * time.Millisecond),
 		},
 	}
 
@@ -1112,7 +1113,7 @@ func TestRouteHandler_WithCache(t *testing.T) {
 		Path:    "/",
 		Cache: alaye.Cache{
 			Enabled: expect.Active,
-			TTL:     alaye.Duration(5 * time.Minute),
+			TTL:     expect.Duration(5 * time.Minute),
 		},
 		Web: alaye.Web{
 			Enabled: expect.Active,
@@ -1508,7 +1509,7 @@ func TestBuildRouteLimiter_Nil(t *testing.T) {
 }
 
 func TestBuildRouteLimiter_Disabled(t *testing.T) {
-	rlc := &alaye.RouteRate{
+	rlc := &alaye.RateRoute{
 		Enabled: expect.Inactive,
 	}
 	result := buildRouteLimiter(rlc, nil, nil, nil)
@@ -1518,22 +1519,22 @@ func TestBuildRouteLimiter_Disabled(t *testing.T) {
 }
 
 func TestBuildRouteLimiter_ACMEChallenge(t *testing.T) {
-	rlc := &alaye.RouteRate{
+	rlc := &alaye.RateRoute{
 		Enabled: expect.Active,
 		Rule: alaye.RateRule{
 			Enabled:  expect.Active,
 			Requests: 100,
-			Window:   alaye.Duration(time.Minute),
+			Window:   expect.Duration(time.Minute),
 		},
 	}
-	global := &alaye.GlobalRate{
+	global := &alaye.RateGlobal{
 		Enabled: expect.Active,
 		Rules: []alaye.RateRule{
 			{
 				Enabled:  expect.Active,
 				Prefixes: []string{"/.well-known/acme-challenge/"},
 				Requests: 1000,
-				Window:   alaye.Duration(time.Minute),
+				Window:   expect.Duration(time.Minute),
 			},
 		},
 	}
@@ -1557,13 +1558,13 @@ func TestBuildRouteLimiter_ACMEChallenge(t *testing.T) {
 }
 
 func TestBuildRouteLimiter_MethodMatch(t *testing.T) {
-	rlc := &alaye.RouteRate{
+	rlc := &alaye.RateRoute{
 		Enabled: expect.Active,
 		Rule: alaye.RateRule{
 			Enabled:  expect.Active,
 			Methods:  []string{"POST"},
 			Requests: 10,
-			Window:   alaye.Duration(time.Minute),
+			Window:   expect.Duration(time.Minute),
 		},
 	}
 	ipMgr := zulu.NewIPManager(nil)
@@ -1590,13 +1591,13 @@ func TestBuildRouteLimiter_MethodMatch(t *testing.T) {
 }
 
 func TestBuildRouteLimiter_PrefixMatch(t *testing.T) {
-	rlc := &alaye.RouteRate{
+	rlc := &alaye.RateRoute{
 		Enabled: expect.Active,
 		Rule: alaye.RateRule{
 			Enabled:  expect.Active,
 			Prefixes: []string{"/api/"},
 			Requests: 100,
-			Window:   alaye.Duration(time.Minute),
+			Window:   expect.Duration(time.Minute),
 		},
 	}
 	ipMgr := zulu.NewIPManager(nil)
@@ -1623,17 +1624,17 @@ func TestBuildRouteLimiter_PrefixMatch(t *testing.T) {
 }
 
 func TestBuildRouteLimiter_GlobalPolicy(t *testing.T) {
-	rlc := &alaye.RouteRate{
+	rlc := &alaye.RateRoute{
 		Enabled:   expect.Active,
 		UsePolicy: "api-policy",
 	}
-	global := &alaye.GlobalRate{
+	global := &alaye.RateGlobal{
 		Enabled: expect.Active,
 		Policies: []alaye.RatePolicy{
 			{
 				Name:     "api-policy",
 				Requests: 50,
-				Window:   alaye.Duration(time.Minute),
+				Window:   expect.Duration(time.Minute),
 				Burst:    10,
 				Key:      "header:X-API-Key",
 			},

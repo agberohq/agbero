@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/olekukonko/ll"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -19,13 +19,13 @@ func Basic(cfg *alaye.BasicAuth, logger *ll.Logger) func(http.Handler) http.Hand
 
 	secrets := make(map[string][]byte)
 	for _, u := range cfg.Users {
-		parts := strings.SplitN(u, woos.Colon, 2)
+		parts := strings.SplitN(u, def.Colon, 2)
 		if len(parts) == 2 {
 			secrets[parts[0]] = []byte(parts[1])
 		}
 	}
 
-	realm := woos.Realm
+	realm := def.Realm
 	if cfg.Realm != "" {
 		realm = cfg.Realm
 	}
@@ -64,6 +64,6 @@ func Basic(cfg *alaye.BasicAuth, logger *ll.Logger) func(http.Handler) http.Hand
 
 // unauthorized writes a 401 response with the WWW-Authenticate challenge header.
 func unauthorized(w http.ResponseWriter, realm string) {
-	w.Header().Set(woos.HeaderWWWAuthenticate, `Basic realm="`+realm+`"`)
+	w.Header().Set(def.HeaderWWWAuthenticate, `Basic realm="`+realm+`"`)
 	http.Error(w, "Unauthorized", http.StatusUnauthorized)
 }

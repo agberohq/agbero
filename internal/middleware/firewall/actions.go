@@ -9,7 +9,7 @@ import (
 )
 
 func (e *Engine) handleAction(w http.ResponseWriter, r *http.Request, rule alaye.Rule, ruleName, reason string) {
-	var actionDef alaye.Action
+	var actionDef alaye.FirewallAction
 	actionName := "ban"
 	if rule.Action != "" {
 		actionName = rule.Action
@@ -25,7 +25,7 @@ func (e *Engine) handleAction(w http.ResponseWriter, r *http.Request, rule alaye
 	}
 
 	if actionDef.Name == "" {
-		actionDef = alaye.Action{
+		actionDef = alaye.FirewallAction{
 			Mitigation: "add",
 			Response:   alaye.Response{StatusCode: 403},
 		}

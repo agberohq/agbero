@@ -95,9 +95,9 @@ func BenchmarkRegistryGetOrRegister(b *testing.B) {
 	reg := NewRegistry()
 	defer reg.Close()
 
-	keys := make([]alaye.BackendKey, 100)
+	keys := make([]alaye.Key, 100)
 	for i := range keys {
-		keys[i] = alaye.BackendKey{Addr: fmt.Sprintf("host:%d", i)}
+		keys[i] = alaye.Key{Addr: fmt.Sprintf("host:%d", i)}
 	}
 
 	b.ResetTimer()
@@ -116,7 +116,7 @@ func BenchmarkEndToEnd(b *testing.B) {
 	reg := NewRegistry()
 	defer reg.Close()
 
-	key := alaye.BackendKey{Addr: "backend1:8080"}
+	key := alaye.Key{Addr: "backend1:8080"}
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {

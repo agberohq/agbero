@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	_ "embed"
-	"errors"
 	"html/template"
 	"io"
 	"io/fs"
@@ -20,8 +19,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/olekukonko/errors"
+
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/agberohq/agbero/internal/hub/resource"
@@ -54,7 +55,7 @@ var (
 	mdBrowseTmpl = template.Must(template.New("md-browse").Parse(mdBrowseHTML))
 
 	gzExistsCache = mappo.NewCache(mappo.CacheOptions{
-		MaximumSize: woos.CacheMax,
+		MaximumSize: def.CacheMax,
 	})
 
 	dynamicGzCache = mappo.NewCache(mappo.CacheOptions{MaximumSize: 256})
@@ -262,7 +263,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	browserPath := r.URL.Path
-	if v := r.Context().Value(woos.CtxOriginalPath); v != nil {
+	if v := r.Context().Value(def.CtxOriginalPath); v != nil {
 		if s, ok := v.(string); ok {
 			browserPath = s
 		}
@@ -444,7 +445,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath string, f *os.File, info fs.FileInfo, mimeType string) bool {
-	if info.Size() > woos.DynamicGzMaxSize {
+	if info.Size() > def.DynamicGzMaxSize {
 		return false
 	}
 
@@ -760,7 +761,7 @@ func (h *web) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *o
 		if entry.IsDir() && strings.HasSuffix(name, ".d") {
 			continue
 		}
-		if name == woos.DefaultConfigName {
+		if name == def.DefaultConfigName {
 			continue
 		}
 

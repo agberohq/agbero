@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/ll"
 	"github.com/yeka/zip"
@@ -143,8 +144,8 @@ func writeTarGz(t *testing.T, dst string, content []byte) {
 	gw := gzip.NewWriter(f)
 	tw := tar.NewWriter(gw)
 
-	binaryName := woos.Name
-	if runtime.GOOS == woos.Windows {
+	binaryName := def.Name
+	if runtime.GOOS == def.Windows {
 		binaryName += ".exe"
 	}
 	hdr := &tar.Header{
@@ -611,10 +612,10 @@ func TestBuildAssetName(t *testing.T) {
 	if !strings.HasPrefix(name, expected) {
 		t.Errorf("unexpected asset name: got %q, want prefix %q", name, expected)
 	}
-	if runtime.GOOS != woos.Windows && !strings.HasSuffix(name, ".tar.gz") {
+	if runtime.GOOS != def.Windows && !strings.HasSuffix(name, ".tar.gz") {
 		t.Errorf("non-Windows asset must end in .tar.gz: %q", name)
 	}
-	if runtime.GOOS == woos.Windows && !strings.HasSuffix(name, ".zip") {
+	if runtime.GOOS == def.Windows && !strings.HasSuffix(name, ".zip") {
 		t.Errorf("Windows asset must end in .zip: %q", name)
 	}
 }

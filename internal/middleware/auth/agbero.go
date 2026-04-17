@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/olekukonko/ll"
 )
@@ -16,7 +16,7 @@ import (
 func Internal(tm *security.PPK, logger *ll.Logger, isRevoked func(jti string) bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get(woos.AuthorizationHeaderKey)
+			authHeader := r.Header.Get(def.AuthorizationHeaderKey)
 			if authHeader == "" {
 				http.Error(w, `{"error": "authorization header required"}`, http.StatusUnauthorized)
 				return
@@ -41,8 +41,8 @@ func Internal(tm *security.PPK, logger *ll.Logger, isRevoked func(jti string) bo
 				return
 			}
 
-			r.Header.Set(woos.HeaderXAgberoService, verified.Service)
-			r.Header.Set(woos.HeaderXAgberoJTI, verified.JTI)
+			r.Header.Set(def.HeaderXAgberoService, verified.Service)
+			r.Header.Set(def.HeaderXAgberoJTI, verified.JTI)
 			next.ServeHTTP(w, r)
 		})
 	}

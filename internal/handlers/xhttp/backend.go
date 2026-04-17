@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -76,15 +77,15 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 		return nil, err
 	}
 	if u.Scheme == "" {
-		return nil, errors.Newf("%w :(http or https)", woos.ErrBackendMissingScheme)
+		return nil, errors.Newf("%w :(http or https)", def.ErrBackendMissingScheme)
 	}
 	if u.Host == "" {
-		return nil, woos.ErrBackendMissingHost
+		return nil, def.ErrBackendMissingHost
 	}
 	switch u.Scheme {
-	case woos.Http, woos.Https:
+	case def.Http, def.Https:
 	default:
-		return nil, errors.Newf("%w: %q", woos.ErrBackendBadScheme, u.Scheme)
+		return nil, errors.Newf("%w: %q", def.ErrBackendBadScheme, u.Scheme)
 	}
 
 	cond, err := NewConditions(xhttpCfg.Server.Criteria)
@@ -107,9 +108,9 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 		domain = xhttpCfg.Domains[0]
 	}
 
-	statsKey := route.BackendKey(domain, xhttpCfg.Server.Address.String())
+	statsKey := route.KeyBackend(domain, xhttpCfg.Server.Address.String())
 
-	cbThreshold := int64(woos.DefaultCircuitBreakerThreshold)
+	cbThreshold := int64(def.DefaultCircuitBreakerThreshold)
 	if route.CircuitBreaker.Threshold > 0 {
 		cbThreshold = int64(route.CircuitBreaker.Threshold)
 	}
@@ -237,7 +238,7 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 			pr.Out.Header.Set("Upgrade", "websocket")
 			pr.Out.Header.Set("Connection", "Upgrade")
 			for _, h := range hopHeaders {
-				if h != woos.HeaderKeyUpgrade && h != woos.HeaderKeyConnection {
+				if h != def.HeaderKeyUpgrade && h != def.HeaderKeyConnection {
 					pr.Out.Header.Del(h)
 				}
 			}
@@ -246,13 +247,13 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 				pr.Out.Header.Del(h)
 			}
 		}
-		proto := woos.Http
+		proto := def.Http
 		if pr.In.TLS != nil {
-			proto = woos.Https
+			proto = def.Https
 		}
-		pr.Out.Header.Set(woos.HeaderXForwardedHost, pr.In.Host)
-		pr.Out.Header.Set(woos.HeaderXForwardedProto, proto)
-		pr.Out.Header.Set(woos.HeaderXForwardedServer, woos.Name)
+		pr.Out.Header.Set(def.HeaderXForwardedHost, pr.In.Host)
+		pr.Out.Header.Set(def.HeaderXForwardedProto, proto)
+		pr.Out.Header.Set(def.HeaderXForwardedServer, def.Name)
 		if lctx, ok := pr.Out.Context().Value(woos.ListenerCtxKey).(woos.ListenerCtx); ok && lctx.Port != "" {
 			pr.Out.Header.Set("X-Forwarded-Port", lctx.Port)
 		}

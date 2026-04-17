@@ -10,6 +10,7 @@ import (
 
 	"github.com/agberohq/agbero"
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -40,7 +41,7 @@ func (e *Ephemeral) Serve() {
 		os.Exit(1)
 	}
 
-	finalPort, err := zulu.PortScan(cfg.ServeBind, cfg.ServePort, woos.MaxPortRetries)
+	finalPort, err := zulu.PortScan(cfg.ServeBind, cfg.ServePort, def.MaxPortRetries)
 	if err != nil {
 		e.p.Logger.Errorf("error: %v\n", err)
 		os.Exit(1)
@@ -125,7 +126,7 @@ func (e *Ephemeral) Proxy() {
 		}
 	}
 
-	finalPort, err := zulu.PortScan(cfg.ProxyBind, port, woos.MaxPortRetries)
+	finalPort, err := zulu.PortScan(cfg.ProxyBind, port, def.MaxPortRetries)
 	if err != nil {
 		e.p.Logger.Errorf("error: %v\n", err)
 		os.Exit(1)

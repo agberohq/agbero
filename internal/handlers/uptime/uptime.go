@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/cluster"
 	"github.com/agberohq/agbero/internal/hub/cook"
@@ -216,12 +216,12 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 			}
 
 			if rSnap.Strategy == "" {
-				rSnap.Strategy = alaye.StrategyRoundRobin
+				rSnap.Strategy = def.StrategyRoundRobin
 			}
 
 			for _, srv := range route.Backends.Servers {
 				addressStr := srv.Address.String()
-				statsKey := route.BackendKey(domain, addressStr)
+				statsKey := route.KeyBackend(domain, addressStr)
 
 				var latSnap metrics.LatencySnapshot
 				var failures, reqs, inFlight int64
@@ -298,7 +298,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 				if !rp.Enabled.Active() {
 					continue
 				}
-				key := route.ReplayBackendKey(domain, rp.Name)
+				key := route.KeyReplay(domain, rp.Name)
 				slSnap := &ServerlessSnapshot{Name: rp.Name, Kind: "replay"}
 				if stats := res.Metrics.Get(key); stats != nil {
 					snap := stats.Activity.Snapshot()
@@ -318,7 +318,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 				rSnap.Serverless = append(rSnap.Serverless, slSnap)
 			}
 			for _, wk := range route.Serverless.Workers {
-				key := route.WorkerBackendKey(domain, wk.Name)
+				key := route.KeyWorker(domain, wk.Name)
 				slSnap := &ServerlessSnapshot{Name: wk.Name, Kind: "worker"}
 				if stats := res.Metrics.Get(key); stats != nil {
 					snap := stats.Activity.Snapshot()
@@ -365,7 +365,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 			}
 
 			if pSnap.Strategy == "" {
-				pSnap.Strategy = alaye.StrategyRoundRobin
+				pSnap.Strategy = def.StrategyRoundRobin
 			}
 
 			for _, srv := range proxy.Backends {
@@ -381,7 +381,7 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 					Score:  100,
 				}
 
-				hasProber := proxy.HealthCheck.Enabled.Active() || (proxy.HealthCheck.Enabled == expect.Unknown && (proxy.HealthCheck.Send != "" || proxy.HealthCheck.Expect != "")) || strings.HasSuffix(addressStr, ":6379")
+				hasProber := proxy.HealthCheck.Enabled.Active() || (proxy.HealthCheck.Enabled == expect.Unknown && (!proxy.HealthCheck.Send.Empty() || !proxy.HealthCheck.Expect.Empty())) || strings.HasSuffix(addressStr, ":6379")
 
 				if hScore, hasScore := res.Health.Get(statsKey); hasScore {
 					hSnapStruct.Score = int(hScore.Value())

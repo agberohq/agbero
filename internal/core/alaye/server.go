@@ -4,39 +4,18 @@ import (
 	"net"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
-type Criteria struct {
-	SourceIPs []string          `hcl:"source_ips,attr" json:"source_ips"`
-	Headers   map[string]string `hcl:"headers,attr" json:"headers"`
-}
-
 type Server struct {
 	Enabled        expect.Toggle `hcl:"enabled,attr" json:"enabled"`
 	Address        Address       `hcl:"address,attr" json:"address"`
-	Weight         int           `hcl:"weight,attr" json:"weight"`
-	MaxConnections int64         `hcl:"max_connections,attr" json:"max_connections"`
-	Criteria       Criteria      `hcl:"criteria,block" json:"criteria"`
-	Streaming      Streaming     `hcl:"streaming,block" json:"streaming"`
-}
-
-type Streaming struct {
-	Enabled       expect.Toggle `hcl:"enabled,attr" json:"enabled"`
-	FlushInterval time.Duration `hcl:"flush_interval,attr" json:"flush_interval"`
-}
-
-// EffectiveFlushInterval returns the configured flush interval or the default.
-// Returns -1 when streaming is disabled to signal buffered mode to the transport.
-func (s *Streaming) EffectiveFlushInterval() time.Duration {
-	if s == nil || !s.Enabled.Active() {
-		return -1
-	}
-	if s.FlushInterval <= 0 {
-		return DefaultProxyFlushInterval
-	}
-	return s.FlushInterval
+	Weight         int           `hcl:"weight,attr,omitempty" json:"weight,omitempty"`
+	MaxConnections int64         `hcl:"max_connections,attr,omitempty" json:"max_connections,omitempty"`
+	Criteria       Criteria      `hcl:"criteria,block,omitempty" json:"criteria,omitempty"`
+	Streaming      Streaming     `hcl:"streaming,block,omitempty" json:"streaming,omitempty"`
 }
 
 // NewServer constructs a Server with the given address and a default weight of zero.
@@ -76,10 +55,10 @@ func (b Server) String() string {
 // Validate checks that the address is non-empty, weight is non-negative, and source IPs are valid.
 func (b *Server) Validate() error {
 	if err := b.Address.Validate(); err != nil {
-		return ErrBackendAddressRequired
+		return def.ErrBackendAddressRequired
 	}
 	if b.Weight < 0 {
-		return ErrBackendNegativeWeight
+		return def.ErrBackendNegativeWeight
 	}
 	if b.Weight == 0 {
 		b.Weight = 1
@@ -87,9 +66,35 @@ func (b *Server) Validate() error {
 	for _, ip := range b.Criteria.SourceIPs {
 		if _, _, err := net.ParseCIDR(ip); err != nil {
 			if net.ParseIP(ip) == nil {
-				return errors.Newf("%w: %s", ErrBackendInvalidSourceIP, ip)
+				return errors.Newf("%w: %s", def.ErrBackendInvalidSourceIP, ip)
 			}
 		}
 	}
 	return nil
+}
+
+type Criteria struct {
+	SourceIPs []string          `hcl:"source_ips,attr" json:"source_ips"`
+	Headers   map[string]string `hcl:"headers,attr" json:"headers"`
+}
+
+func (c Criteria) IsZero() bool { return len(c.SourceIPs) == 0 && len(c.Headers) == 0 }
+
+type Streaming struct {
+	Enabled       expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	FlushInterval time.Duration `hcl:"flush_interval,attr" json:"flush_interval"`
+}
+
+func (s Streaming) IsZero() bool { return s.Enabled.IsZero() && s.FlushInterval == 0 }
+
+// EffectiveFlushInterval returns the configured flush interval or the default.
+// Returns -1 when streaming is disabled to signal buffered mode to the transport.
+func (s *Streaming) EffectiveFlushInterval() time.Duration {
+	if s == nil || !s.Enabled.Active() {
+		return -1
+	}
+	if s.FlushInterval <= 0 {
+		return def.DefaultProxyFlushInterval
+	}
+	return s.FlushInterval
 }

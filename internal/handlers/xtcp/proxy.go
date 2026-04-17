@@ -2,7 +2,6 @@ package xtcp
 
 import (
 	"encoding/binary"
-	"errors"
 	"io"
 	"math/rand/v2"
 	"net"
@@ -11,8 +10,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/olekukonko/errors"
+
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/lb"
@@ -100,7 +101,7 @@ func (p *Proxy) buildRoute(cfg alaye.Proxy) *tcpRoute {
 	strategy := lb.ParseStrategy(cfg.Strategy)
 	stratName := cfg.Strategy
 	if stratName == "" {
-		stratName = alaye.StrategyRoundRobin
+		stratName = def.StrategyRoundRobin
 	}
 	selector := lb.NewSelector(backends, strategy)
 	return &tcpRoute{
@@ -146,7 +147,7 @@ func (p *Proxy) UpdateRoutes(newRoutes map[string]*tcpRoute, newDefault *tcpRout
 // Opens the TCP listener and spawns a goroutine to accept connections
 // Enforces maximum connection limits and handles transient accept errors
 func (p *Proxy) Start() error {
-	l, err := net.Listen(woos.TCP, p.Listen)
+	l, err := net.Listen(def.TCP, p.Listen)
 	if err != nil {
 		return err
 	}
@@ -173,7 +174,7 @@ func (p *Proxy) Start() error {
 			}
 
 			if t, ok := l.(*net.TCPListener); ok {
-				_ = t.SetDeadline(time.Now().Add(woos.AcceptLoopDeadline))
+				_ = t.SetDeadline(time.Now().Add(def.AcceptLoopDeadline))
 			}
 
 			conn, err := l.Accept()
@@ -304,8 +305,8 @@ func (p *Proxy) handle(src net.Conn) {
 	)
 
 	if needSNI {
-		peekBuf = make([]byte, woos.PeekBufferSize)
-		_ = src.SetReadDeadline(time.Now().Add(woos.InitialReadTimeout))
+		peekBuf = make([]byte, def.PeekBufferSize)
+		_ = src.SetReadDeadline(time.Now().Add(def.InitialReadTimeout))
 		n0, err := io.ReadAtLeast(src, peekBuf, 1)
 		_ = src.SetReadDeadline(time.Time{})
 
@@ -354,7 +355,7 @@ func (p *Proxy) handle(src net.Conn) {
 		err     error
 	)
 
-	maxAttempts := woos.BackendRetry
+	maxAttempts := def.BackendRetry
 	if c := len(route.selector.Backends()); c > 0 && c < maxAttempts {
 		maxAttempts = c
 	}
@@ -379,7 +380,7 @@ func (p *Proxy) handle(src net.Conn) {
 		}
 		tried[picked] = true
 		backend = picked.(*Backend)
-		dst, err = net.DialTimeout(woos.TCP, backend.Address, woos.BackendDialTimeout)
+		dst, err = net.DialTimeout(def.TCP, backend.Address, def.BackendDialTimeout)
 		if err == nil {
 			break
 		}
@@ -453,7 +454,7 @@ func (p *Proxy) pickRoute(sni string) *tcpRoute {
 func (p *Proxy) pipe(client, backend net.Conn) {
 	timeout := p.IdleTimeout
 	if timeout == 0 {
-		timeout = woos.IdleTimeoutDeadline
+		timeout = def.IdleTimeoutDeadline
 	}
 
 	cWrapped := &deadlineConn{Conn: client, timeout: timeout}
@@ -489,42 +490,42 @@ func (p *Proxy) pipe(client, backend net.Conn) {
 // Parses a raw TLS byte buffer to extract the Server Name Indication
 // Returns an error if the payload is too short or not a valid ClientHello
 func (p *Proxy) readClientHello(data []byte) (string, error) {
-	if len(data) < woos.MinClientHelloLen {
-		return "", woos.ErrShortData
+	if len(data) < def.MinClientHelloLen {
+		return "", def.ErrShortData
 	}
-	if data[0] != woos.RecordTypeHandshake {
-		return "", woos.ErrNotTLS
+	if data[0] != def.RecordTypeHandshake {
+		return "", def.ErrNotTLS
 	}
 	pos := 5
 	if pos >= len(data) {
-		return "", woos.ErrShort
+		return "", def.ErrShort
 	}
-	if data[pos] != woos.HandshakeTypeClientHello {
-		return "", woos.ErrNotClientHello
+	if data[pos] != def.HandshakeTypeClientHello {
+		return "", def.ErrNotClientHello
 	}
 	pos += 38
 	if pos >= len(data) {
-		return "", woos.ErrShort
+		return "", def.ErrShort
 	}
 	sessionIdLen := int(data[pos])
 	pos += 1 + sessionIdLen
 	if pos+2 > len(data) {
-		return "", woos.ErrShort
+		return "", def.ErrShort
 	}
 	cipherLen := int(binary.BigEndian.Uint16(data[pos:]))
 	pos += 2 + cipherLen
 	if pos+1 > len(data) {
-		return "", woos.ErrShort
+		return "", def.ErrShort
 	}
 	compLen := int(data[pos])
 	pos += 1 + compLen
 	if pos+2 > len(data) {
-		return "", woos.ErrShort
+		return "", def.ErrShort
 	}
 	extLen := int(binary.BigEndian.Uint16(data[pos:]))
 	pos += 2
 	if pos+extLen > len(data) {
-		return "", woos.ErrShortExt
+		return "", def.ErrShortExt
 	}
 	end := pos + extLen
 	for pos+4 <= end {
@@ -532,26 +533,26 @@ func (p *Proxy) readClientHello(data []byte) (string, error) {
 		extSize := int(binary.BigEndian.Uint16(data[pos+2:]))
 		pos += 4
 		if pos+extSize > end {
-			return "", woos.ErrShortExt
+			return "", def.ErrShortExt
 		}
-		if extType == woos.ExtTypeServerName {
+		if extType == def.ExtTypeServerName {
 			if extSize < 2 {
-				return "", woos.ErrShortSNI
+				return "", def.ErrShortSNI
 			}
 			listLen := int(binary.BigEndian.Uint16(data[pos:]))
 			pos += 2
 			listEnd := pos + listLen
 			if listEnd > pos+extSize-2 {
-				return "", woos.ErrShortSNIList
+				return "", def.ErrShortSNIList
 			}
 			for pos+3 <= listEnd {
 				nameType := data[pos]
 				nameLen := int(binary.BigEndian.Uint16(data[pos+1:]))
 				pos += 3
 				if pos+nameLen > listEnd {
-					return "", woos.ErrShortName
+					return "", def.ErrShortName
 				}
-				if nameType == woos.NameTypeHostName {
+				if nameType == def.NameTypeHostName {
 					return string(data[pos : pos+nameLen]), nil
 				}
 				pos += nameLen

@@ -42,3 +42,17 @@ func (o *OAuth) Validate() error {
 	}
 	return nil
 }
+
+func (o OAuth) IsZero() bool {
+	return o.Enabled.IsZero() &&
+		o.Provider == "" &&
+		o.ClientID == "" &&
+		o.ClientSecret == "" &&
+		o.RedirectURL == "" &&
+		o.AuthURL == "" &&
+		o.TokenURL == "" &&
+		o.UserApiURL == "" &&
+		len(o.Scopes) == 0 &&
+		o.CookieSecret == "" &&
+		len(o.EmailDomains) == 0
+}

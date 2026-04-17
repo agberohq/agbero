@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/middleware/nonce"
 	"github.com/agberohq/agbero/internal/pkg/stash"
@@ -58,7 +58,7 @@ type Replay struct {
 	methods    []string
 	nonceStore *nonce.Store
 	cacheStore stash.Store
-	statsKey   alaye.BackendKey
+	statsKey   alaye.Key
 }
 
 func NewReplay(cfg ReplayConfig) *Replay {
@@ -99,7 +99,7 @@ func NewReplay(cfg ReplayConfig) *Replay {
 		}
 	}
 
-	r.statsKey = cfg.Route.ReplayBackendKey(cfg.Domain, cfg.Replay.Name)
+	r.statsKey = cfg.Route.KeyReplay(cfg.Domain, cfg.Replay.Name)
 	// Pre-register so the key exists in metrics even before first request
 	cfg.Resource.Metrics.GetOrRegister(r.statsKey)
 
@@ -186,7 +186,7 @@ func (h *Replay) serveFixed(w http.ResponseWriter, r *http.Request) {
 func (h *Replay) serveReplay(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	rawURL := r.Header.Get(woos.HeaderXAgberoReplayURL)
+	rawURL := r.Header.Get(def.HeaderXAgberoReplayURL)
 	if rawURL == "" {
 		rawURL = r.URL.Query().Get("url")
 	}

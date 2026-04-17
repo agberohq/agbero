@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/cespare/xxhash/v2"
 	"github.com/olekukonko/errors"
@@ -14,42 +15,42 @@ type Route struct {
 	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
 	Path    string        `hcl:"path,label" json:"path"`
 
-	Env map[string]expect.Value `hcl:"env,attr" json:"env"`
+	Env map[string]expect.Value `hcl:"env,attr" json:"env,omitempty"`
 
-	StripPrefixes []string  `hcl:"strip_prefixes,attr" json:"strip_prefixes"`
-	AllowedIPs    []string  `hcl:"allowed_ips,attr" json:"allowed_ips"`
-	Rewrites      []Rewrite `hcl:"rewrite,block" json:"rewrites"`
+	StripPrefixes []string  `hcl:"strip_prefixes,attr" json:"strip_prefixes,omitempty"`
+	AllowedIPs    []string  `hcl:"allowed_ips,attr" json:"allowed_ips,omitempty"`
+	Rewrites      []Rewrite `hcl:"rewrite,block" json:"rewrites,omitempty"`
 
-	Web        Web        `hcl:"web,block,omitempty" json:"web"`
-	Backends   Backend    `hcl:"backend,block,omitempty" json:"backends"`
-	Serverless Serverless `hcl:"serverless,block,omitempty" json:"serverless"`
+	Web        Web        `hcl:"web,block,omitempty" json:"web,omitempty"`
+	Backends   Backend    `hcl:"backend,block,omitempty" json:"backends,omitempty"`
+	Serverless Serverless `hcl:"serverless,block,omitempty" json:"serverless,omitempty"`
 
-	HealthCheck    HealthCheck    `hcl:"health_check,block,omitempty" json:"health_check"`
-	CircuitBreaker CircuitBreaker `hcl:"circuit_breaker,block,omitempty" json:"circuit_breaker"`
-	Timeouts       TimeoutRoute   `hcl:"timeouts,block,omitempty" json:"timeouts"`
+	HealthCheck    HealthCheck    `hcl:"health_check,block,omitempty" json:"health_check,omitempty"`
+	CircuitBreaker CircuitBreaker `hcl:"circuit_breaker,block,omitempty" json:"circuit_breaker,omitempty"`
+	Timeouts       TimeoutRoute   `hcl:"timeouts,block,omitempty" json:"timeouts,omitempty"`
 
-	BasicAuth   BasicAuth   `hcl:"basic_auth,block,omitempty" json:"basic_auth"`
-	ForwardAuth ForwardAuth `hcl:"forward_auth,block,omitempty" json:"forward_auth"`
-	JWTAuth     JWTAuth     `hcl:"jwt_auth,block,omitempty" json:"jwt_auth"`
-	OAuth       OAuth       `hcl:"o_auth,block,omitempty" json:"oauth"`
+	BasicAuth   BasicAuth   `hcl:"basic_auth,block,omitempty" json:"basic_auth,omitempty"`
+	ForwardAuth ForwardAuth `hcl:"forward_auth,block,omitempty" json:"forward_auth,omitempty"`
+	JWTAuth     JWTAuth     `hcl:"jwt_auth,block,omitempty" json:"jwt_auth,omitempty"`
+	OAuth       OAuth       `hcl:"o_auth,block,omitempty" json:"oauth,omitempty"`
 
-	Headers     Headers       `hcl:"headers,block,omitempty" json:"headers"`
-	CORS        CORS          `hcl:"cors,block,omitempty" json:"cors"`
-	Cache       Cache         `hcl:"cache,block,omitempty" json:"cache"`
-	ErrorPages  ErrorPages    `hcl:"error_pages,block,omitempty" json:"error_pages"`
-	Wasm        Wasm          `hcl:"wasm,block,omitempty" json:"wasm"`
-	RateLimit   RouteRate     `hcl:"rate_limit,block,omitempty" json:"rate_limit"`
-	Firewall    FirewallRoute `hcl:"firewall,block,omitempty" json:"firewall"`
-	Compression Compression   `hcl:"compression,block,omitempty" json:"compression"`
-	Fallback    Fallback      `hcl:"fallback,block,omitempty" json:"fallback"`
+	Headers     Headers       `hcl:"headers,block,omitempty" json:"headers,omitempty"`
+	CORS        CORS          `hcl:"cors,block,omitempty" json:"cors,omitempty"`
+	Cache       Cache         `hcl:"cache,block,omitempty" json:"cache,omitempty"`
+	ErrorPages  ErrorPages    `hcl:"error_pages,block,omitempty" json:"error_pages,omitempty"`
+	Wasm        Wasm          `hcl:"wasm,block,omitempty" json:"wasm,omitempty"`
+	RateLimit   RateRoute     `hcl:"rate_limit,block,omitempty" json:"rate_limit,omitempty"`
+	Firewall    FirewallRoute `hcl:"firewall,block,omitempty" json:"firewall,omitempty"`
+	Compression Compression   `hcl:"compression,block,omitempty" json:"compression,omitempty"`
+	Fallback    Fallback      `hcl:"fallback,block,omitempty" json:"fallback,omitempty"`
 }
 
 func (r *Route) Validate() error {
 	if r.Path == "" {
-		return ErrRoutePathRequired
+		return def.ErrRoutePathRequired
 	}
-	if !strings.HasPrefix(r.Path, Slash) {
-		return errors.Newf("%w: path %q must start with '/'", ErrRouteInvalidPrefix, r.Path)
+	if !strings.HasPrefix(r.Path, def.Slash) {
+		return errors.Newf("%w: path %q must start with '/'", def.ErrRouteInvalidPrefix, r.Path)
 	}
 
 	isWeb := r.Web.Root.IsSet() || (r.Web.Git.Enabled.Active() && !r.Serverless.Enabled.Active())
@@ -72,7 +73,7 @@ func (r *Route) Validate() error {
 	}
 
 	if engines == 0 {
-		return ErrRouteNoBackendOrWeb
+		return def.ErrRouteNoBackendOrWeb
 	}
 
 	if err := r.RateLimit.Validate(); err != nil {
@@ -150,19 +151,19 @@ func (r *Route) validatePlugins() error {
 
 func (r *Route) validateWebRoute() error {
 	if !r.Web.Root.IsSet() && !r.Web.Git.Enabled.Active() {
-		return ErrWebRouteRootRequired
+		return def.ErrWebRouteRootRequired
 	}
 	if err := r.Web.Validate(); err != nil {
 		return errors.Newf("web: %w", err)
 	}
-	if r.Backends.Strategy != "" && r.Backends.Strategy != StrategyRoundRobin {
-		return ErrWebRouteUnsupportedLB
+	if r.Backends.Strategy != "" && r.Backends.Strategy != def.StrategyRoundRobin {
+		return def.ErrWebRouteUnsupportedLB
 	}
 	if r.HealthCheck.Enabled.Active() {
-		return ErrWebRouteHealthCheck
+		return def.ErrWebRouteHealthCheck
 	}
 	if r.CircuitBreaker.Enabled.Active() {
-		return ErrWebRouteCircuitBreaker
+		return def.ErrWebRouteCircuitBreaker
 	}
 	if r.Timeouts.Enabled.Active() {
 		if err := r.Timeouts.Validate(); err != nil {
@@ -177,7 +178,7 @@ func (r *Route) validateWebRoute() error {
 
 func (r *Route) validateProxyRoute() error {
 	if len(r.Backends.Servers) == 0 {
-		return ErrProxyRouteNoBackends
+		return def.ErrProxyRouteNoBackends
 	}
 	for i, b := range r.Backends.Servers {
 		if err := b.Validate(); err != nil {
@@ -186,10 +187,10 @@ func (r *Route) validateProxyRoute() error {
 	}
 	for i, prefix := range r.StripPrefixes {
 		if prefix == "" {
-			return errors.Newf("%w [%d]: cannot be empty", ErrProxyRouteInvalidStrip, i)
+			return errors.Newf("%w [%d]: cannot be empty", def.ErrProxyRouteInvalidStrip, i)
 		}
-		if !strings.HasPrefix(prefix, Slash) {
-			return errors.Newf("%w [%d]: %q must start with '/'", ErrProxyRouteInvalidStrip, i, prefix)
+		if !strings.HasPrefix(prefix, def.Slash) {
+			return errors.Newf("%w [%d]: %q must start with '/'", def.ErrProxyRouteInvalidStrip, i, prefix)
 		}
 	}
 	if r.Backends.Strategy != "" && !ValidateStrategy(r.Backends.Strategy) {
@@ -430,19 +431,19 @@ func (r *Route) Key() string {
 	return fmt.Sprintf("%x", w.Sum64())
 }
 
-func (r *Route) BackendKey(domain, backendAddr string) BackendKey {
+func (r *Route) KeyBackend(domain, backendAddr string) Key {
 	return r.backendKey("http", domain, backendAddr)
 }
 
-func (r *Route) ReplayBackendKey(domain, replayName string) BackendKey {
+func (r *Route) KeyReplay(domain, replayName string) Key {
 	return r.backendKey("serverless", domain, replayName)
 }
 
-func (r *Route) WorkerBackendKey(domain, workerName string) BackendKey {
+func (r *Route) KeyWorker(domain, workerName string) Key {
 	return r.backendKey("worker", domain, workerName)
 }
 
-func (r *Route) backendKey(protocol, domain, addr string) BackendKey {
+func (r *Route) backendKey(protocol, domain, addr string) Key {
 	if domain == "" {
 		domain = "*"
 	}
@@ -450,7 +451,7 @@ func (r *Route) backendKey(protocol, domain, addr string) BackendKey {
 	if path == "" {
 		path = "/"
 	}
-	return BackendKey{
+	return Key{
 		Protocol: protocol,
 		Domain:   domain,
 		Path:     path,

@@ -1,6 +1,7 @@
 package alaye
 
 import (
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
@@ -17,11 +18,15 @@ func (c *Compression) Validate() error {
 	if c.Enabled.NotActive() {
 		return nil
 	}
-	if c.Level < MinCompressionLevel || c.Level > MaxCompressionLevel {
-		return ErrInvalidCompressionLevel
+	if c.Level < def.MinCompressionLevel || c.Level > def.MaxCompressionLevel {
+		return def.ErrInvalidCompressionLevel
 	}
-	if c.Type != CompressionGzip && c.Type != CompressionBrotli {
+	if c.Type != def.CompressionGzip && c.Type != def.CompressionBrotli {
 		return errors.Newf("compression: unsupported type %q", c.Type)
 	}
 	return nil
+}
+
+func (c Compression) IsZero() bool {
+	return c.Enabled.IsZero() && c.Level == 0 && c.Type == ""
 }

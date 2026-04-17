@@ -9,9 +9,8 @@ import (
 	"text/template"
 
 	"charm.land/huh/v2"
-	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	discovery "github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 )
@@ -66,7 +65,7 @@ func (h *Host) List(configPath string) error {
 		domains := strings.Join(c.Domains, ", ")
 		routes := fmt.Sprintf("%d", len(c.Routes))
 		tls := "—"
-		if c.TLS.Mode == alaye.ModeLocalAuto {
+		if c.TLS.Mode == def.ModeLocalAuto {
 			tls = "auto"
 		} else if c.TLS.Local.CertFile != "" {
 			tls = "local"
@@ -263,7 +262,7 @@ func (h *Host) resolveHostsDir(configPath string) expect.Folder {
 	if err == nil && global.Storage.HostsDir != "" {
 		return global.Storage.HostsDir
 	}
-	hostsDir := expect.NewFolder(filepath.Dir(configPath)).Sub(woos.HostDir)
+	hostsDir := expect.NewFolder(filepath.Dir(configPath)).Sub(def.HostDir)
 
 	if err := hostsDir.Init(expect.DirPerm); err != nil {
 		h.p.Logger.Fatal("failed to create hosts directory: ", err)

@@ -3,7 +3,7 @@ package zulu
 import (
 	"sync"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 type BufferPool struct {
@@ -14,7 +14,7 @@ func NewBufferPool() *BufferPool {
 	return &BufferPool{
 		pool: sync.Pool{
 			New: func() any {
-				return make([]byte, woos.BufferSize)
+				return make([]byte, def.BufferSize)
 			},
 		},
 	}
@@ -26,7 +26,7 @@ func (b *BufferPool) Get() []byte {
 }
 
 func (b *BufferPool) Put(x []byte) {
-	if cap(x) >= woos.BufferSize {
+	if cap(x) >= def.BufferSize {
 		b.pool.Put(x)
 	}
 }

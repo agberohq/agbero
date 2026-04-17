@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
@@ -281,7 +282,7 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		return
 	}
 
-	if entry.Config.Mode == alaye.GitModePull {
+	if entry.Config.Mode == def.GitModePull {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}

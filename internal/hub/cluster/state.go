@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/go-redis/redis/v8"
 )
@@ -20,14 +21,14 @@ type RedisSharedState struct {
 // NewRedisSharedState connects to Redis to provide distributed consistency.
 // Exposes atomic scripts for precise limits across independent proxies.
 func NewRedisSharedState(cfg *alaye.RedisState) (*RedisSharedState, error) {
-	addr := fmt.Sprintf("%s:%d", woos.LocalhostIPv4, woos.DefaultRedisPort)
+	addr := fmt.Sprintf("%s:%d", def.LocalhostIPv4, def.DefaultRedisPort)
 	password := ""
 	db := 0
 	prefix := "agbero:state:"
 
 	if cfg != nil {
 		if cfg.Host != "" {
-			port := woos.DefaultRedisPort
+			port := def.DefaultRedisPort
 			if cfg.Port > 0 {
 				port = cfg.Port
 			}
@@ -50,7 +51,7 @@ func NewRedisSharedState(cfg *alaye.RedisState) (*RedisSharedState, error) {
 		DB:       db,
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), woos.DefaultAuthTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), def.DefaultAuthTimeout)
 	defer cancel()
 
 	if err := client.Ping(ctx).Err(); err != nil {

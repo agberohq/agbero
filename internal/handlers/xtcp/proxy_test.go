@@ -3,11 +3,12 @@ package xtcp
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"io"
 	"net"
 	"testing"
 	"time"
+
+	"github.com/olekukonko/errors"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/hub/resource"

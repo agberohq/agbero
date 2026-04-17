@@ -1,8 +1,7 @@
-package alaye
+// Constants used during configuration parsing and validation.
+package def
 
-import (
-	"time"
-)
+import "time"
 
 const (
 	ModeLocalAuto = "auto" // Auto-generate local certificates
@@ -23,7 +22,7 @@ const (
 	StrategySticky            = "sticky"
 )
 
-var validStrategies = map[string]bool{
+var ValidStrategies = map[string]bool{
 	StrategyRandom:            true,
 	StrategyLeastConn:         true,
 	StrategyRoundRobin:        true,
@@ -37,21 +36,7 @@ var validStrategies = map[string]bool{
 	StrategySticky:            true,
 }
 
-// Default Timeouts
-const (
-	DefaultReadTimeout        = 10 * time.Second
-	DefaultWriteTimeout       = 30 * time.Second
-	DefaultIdleTimeout        = 120 * time.Second
-	DefaultReadHeaderTimeout  = 5 * time.Second
-	DefaultProxyFlushInterval = 100 * time.Millisecond
-)
-
-// Default Limits
-const (
-	DefaultMaxHeaderBytes = 1 << 20 // 1MB
-	DefaultMaxBodySize    = 2 << 20 // 2MB
-)
-
+// TLS modes
 type TlsMode string
 
 const (
@@ -67,7 +52,22 @@ const (
 	TlsRequireAndVerify = "require_and_verify"
 )
 
-// wasm
+// Default timeouts
+const (
+	DefaultReadTimeout        = 10 * time.Second
+	DefaultWriteTimeout       = 30 * time.Second
+	DefaultIdleTimeout        = 120 * time.Second
+	DefaultReadHeaderTimeout  = 5 * time.Second
+	DefaultProxyFlushInterval = 100 * time.Millisecond
+)
+
+// Default limits
+const (
+	DefaultMaxHeaderBytes = 1 << 20 // 1MB
+	DefaultMaxBodySize    = 2 << 20 // 2MB
+)
+
+// Wasm access capabilities
 const (
 	AccessHeaders = "headers"
 	AccessBody    = "body"
@@ -76,14 +76,14 @@ const (
 	AccessConfig  = "config"
 )
 
-// health
+// Health check defaults
 const (
 	DefaultHealthInterval  = 10 * time.Second
 	DefaultHealthTimeout   = 5 * time.Second
 	DefaultHealthThreshold = 3
 )
 
-// gossip
+// Gossip config
 const (
 	DefaultGossipPort = 7946
 
@@ -95,39 +95,26 @@ const (
 	SecretKeyLen32 = 32
 )
 
-// compression
-
+// Compression
 const (
 	DefaultCompressionType = "gzip"
 	MinCompressionLevel    = 0
 	MaxCompressionLevel    = 11
 )
 
-// circuit breaker
+// Circuit breaker
 const (
 	DefaultCircuitBreakerThreshold = 5
 	DefaultCircuitBreakerDuration  = 30 * time.Second
 )
 
-// auth-forward
+// Auth-forward
 const (
 	DefaultForwardAuthOnFailure = "deny"
 )
 
+// Path / routing primitives
 const (
-	TCP         = "tcp"
-	HTTPPrefix  = "http://"
-	HTTPSPrefix = "https://"
-	TCPPrefix   = "tcp://"
-
-	UNIXPrefix = "unix:"
-
-	CompressionGzip   = "gzip"
-	CompressionBrotli = "brotli"
-)
-
-const (
-	Empty               = ""
 	Slash               = "/"
 	Star                = "*"
 	SlashStar           = "/*"
@@ -139,24 +126,15 @@ const (
 	TemplateWildcardKey = "*"
 )
 
+// Scheme prefixes
 const (
-	WindowBackSlash = '\\'
-	ENVProgramData  = "ProgramData"
-	ETCPath         = "/etc"
+	HTTPPrefix  = "http://"
+	HTTPSPrefix = "https://"
+	TCPPrefix   = "tcp://"
+	UNIXPrefix  = "unix:"
 )
 
-const (
-	ProtocolSeparator = "://"
-
-	ProviderGoogle = "google"
-	ProviderOIDC   = "oidc"
-	ProviderGitHub = "github"
-
-	ScopeOpenID  = "openid"
-	ScopeProfile = "profile"
-	ScopeEmail   = "email"
-)
-
+// Git
 const (
 	GitModePull = "pull"
 	GitModePush = "push"

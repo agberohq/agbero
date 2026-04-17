@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 func getSnapshotEventually(lt *Latency, condition func(s LatencySnapshot) bool) LatencySnapshot {
@@ -84,8 +84,8 @@ func TestRecord_OutOfBounds(t *testing.T) {
 		t.Errorf("Expected count 1, got %d", snap.Count)
 	}
 	// Out of bounds gets clamped to MaxUS
-	if snap.Max < woos.MaxUS {
-		t.Errorf("Max should be at least %d, got %d", woos.MaxUS, snap.Max)
+	if snap.Max < def.MaxUS {
+		t.Errorf("Max should be at least %d, got %d", def.MaxUS, snap.Max)
 	}
 }
 
@@ -117,7 +117,7 @@ func TestRotation(t *testing.T) {
 
 	// Force rotation on the specific shard we wrote to
 	lt.shards[targetShard].mu.Lock()
-	lt.shards[targetShard].lastRotation = time.Now().Add(-woos.HistogramWindow - time.Second).UnixNano()
+	lt.shards[targetShard].lastRotation = time.Now().Add(-def.HistogramWindow - time.Second).UnixNano()
 	lt.shards[targetShard].mu.Unlock()
 
 	// Record again - should trigger rotation on that shard
@@ -240,8 +240,8 @@ func TestRecord_Negative(t *testing.T) {
 		t.Errorf("Should record negative, count: %d", snap.Count)
 	}
 	// Negative values are clamped to MinUS (1)
-	if snap.Max < woos.MinUS {
-		t.Errorf("Negative should be clamped to MinUS (%d), got %d", woos.MinUS, snap.Max)
+	if snap.Max < def.MinUS {
+		t.Errorf("Negative should be clamped to MinUS (%d), got %d", def.MinUS, snap.Max)
 	}
 }
 
@@ -261,16 +261,16 @@ func TestRecord_MinBoundary(t *testing.T) {
 	lt := NewLatency()
 	defer lt.Close()
 
-	lt.Record(woos.MinUS)
+	lt.Record(def.MinUS)
 
 	snap := getSnapshotEventually(lt, func(s LatencySnapshot) bool {
 		return s.Count == 1
 	})
 
-	if snap.Max != woos.MinUS {
+	if snap.Max != def.MinUS {
 		t.Errorf("MinUS should record exactly, got %d", snap.Max)
 	}
-	if snap.Sum != int64(woos.MinUS) {
+	if snap.Sum != int64(def.MinUS) {
 		t.Errorf("Sum should be MinUS, got %d", snap.Sum)
 	}
 }

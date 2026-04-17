@@ -6,20 +6,20 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/olekukonko/errors"
 )
 
 var hopHeaders = []string{
-	woos.HeaderKeyConnection,
-	woos.HeaderKeepAlive,
-	woos.HeaderProxyAuthenticate,
-	woos.HeaderProxyAuthorization,
-	woos.HeaderTE,
-	woos.HeaderTrailers,
-	woos.HeaderTransferEncoding,
-	woos.HeaderKeyUpgrade,
+	def.HeaderKeyConnection,
+	def.HeaderKeepAlive,
+	def.HeaderProxyAuthenticate,
+	def.HeaderProxyAuthorization,
+	def.HeaderTE,
+	def.HeaderTrailers,
+	def.HeaderTransferEncoding,
+	def.HeaderKeyUpgrade,
 }
 
 type ConfigProxy struct {

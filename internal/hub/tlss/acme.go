@@ -13,7 +13,7 @@ import (
 	"sync"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/go-acme/lego/v4/certcrypto"
 	"github.com/go-acme/lego/v4/certificate"
@@ -105,10 +105,10 @@ func (p *ACMEProvider) setupLegoClient(setting alaye.LetsEncrypt) (*lego.Client,
 		}
 	} else {
 		if setting.Staging.Active() {
-			config.CADirURL = woos.LetsEncryptStagingDir
+			config.CADirURL = def.LetsEncryptStagingDir
 			p.logger.Warn("staging Let's Encrypt is enabled, this is not recommended for production")
 		} else {
-			config.CADirURL = woos.LetsEncryptProdDir
+			config.CADirURL = def.LetsEncryptProdDir
 		}
 	}
 

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/olekukonko/ll"
 )
@@ -19,7 +19,7 @@ func New(allowed []string, logger *ll.Logger, ipMgr *zulu.IPManager) func(http.H
 	var singleIPs []net.IP
 
 	for _, s := range allowed {
-		if strings.Contains(s, woos.Slash) {
+		if strings.Contains(s, def.Slash) {
 			_, n, err := net.ParseCIDR(s)
 			if err == nil {
 				ipNets = append(ipNets, n)

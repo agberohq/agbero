@@ -39,7 +39,7 @@ func NewBackend(cfg BackendConfig) (*Backend, error) {
 	addressStr := cfg.Server.Address.String()
 
 	// Build the BackendKey with protocol "udp".
-	statsKey := alaye.BackendKey{
+	statsKey := alaye.Key{
 		Protocol: "udp",
 		Domain:   cfg.Proxy.Listen,
 		Path:     cfg.Proxy.Name,
@@ -50,7 +50,7 @@ func NewBackend(cfg BackendConfig) (*Backend, error) {
 	// Send/Expect are set (implicit enable — mirrors xtcp behaviour).
 	hasProber := cfg.Proxy.HealthCheck.Enabled.Active() ||
 		(cfg.Proxy.HealthCheck.Enabled == expect.Unknown &&
-			(cfg.Proxy.HealthCheck.Send != "" || cfg.Proxy.HealthCheck.Expect != ""))
+			(!cfg.Proxy.HealthCheck.Send.Empty() || !cfg.Proxy.HealthCheck.Expect.Empty()))
 
 	baseCfg := upstream.Config{
 		Address:        addressStr,
@@ -104,12 +104,12 @@ func (b *Backend) initHealth(cfg BackendConfig) error {
 	// Unescape \r\n sequences in the Send/Expect strings, consistent
 	// with how xtcp handles them.
 	var sendBytes, expectBytes []byte
-	if cfg.Proxy.HealthCheck.Send != "" {
-		s := strings.ReplaceAll(cfg.Proxy.HealthCheck.Send, `\r`, "\r")
+	if !cfg.Proxy.HealthCheck.Send.Empty() {
+		s := strings.ReplaceAll(cfg.Proxy.HealthCheck.Send.Get(), `\r`, "\r")
 		s = strings.ReplaceAll(s, `\n`, "\n")
 		sendBytes = []byte(s)
 	}
-	if cfg.Proxy.HealthCheck.Expect != "" {
+	if !cfg.Proxy.HealthCheck.Expect.Empty() {
 		expectBytes = []byte(cfg.Proxy.HealthCheck.Expect)
 	}
 

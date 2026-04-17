@@ -7,7 +7,6 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	mtrand "math/rand"
 	"net/http"
@@ -16,7 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/olekukonko/errors"
+
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -36,8 +38,8 @@ import (
 )
 
 const (
-	adminTokenTTL        = woos.AdminTokenTTL
-	adminTokenIssuer     = woos.AdminTokenIssuer
+	adminTokenTTL        = def.AdminTokenTTL
+	adminTokenIssuer     = def.AdminTokenIssuer
 	challengeTokenTTL    = 5 * time.Minute
 	challengeTokenIssuer = "agbero-challenge"
 )
@@ -74,9 +76,9 @@ func (s *Server) startAdminServer() {
 	s.adminSrv = &http.Server{
 		Addr:         state.Global.Admin.Address,
 		Handler:      r,
-		ReadTimeout:  woos.DefaultAdminReadTimeout,
-		WriteTimeout: woos.DefaultAdminWriteTimeout,
-		IdleTimeout:  woos.DefaultAdminIdleTimeout,
+		ReadTimeout:  def.DefaultAdminReadTimeout,
+		WriteTimeout: def.DefaultAdminWriteTimeout,
+		IdleTimeout:  def.DefaultAdminIdleTimeout,
 	}
 	s.mu.Unlock()
 
@@ -121,9 +123,9 @@ func (s *Server) startPprofServer() {
 	s.pprofSrv = &http.Server{
 		Addr:         addr,
 		Handler:      r,
-		ReadTimeout:  woos.DefaultAdminReadTimeout,
-		WriteTimeout: woos.DefaultAdminWriteTimeout,
-		IdleTimeout:  woos.DefaultAdminIdleTimeout,
+		ReadTimeout:  def.DefaultAdminReadTimeout,
+		WriteTimeout: def.DefaultAdminWriteTimeout,
+		IdleTimeout:  def.DefaultAdminIdleTimeout,
 	}
 	s.mu.Unlock()
 
@@ -254,13 +256,13 @@ func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Ha
 
 	return func(next http.Handler) http.Handler {
 		authHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get(woos.AuthorizationHeaderKey)
+			authHeader := r.Header.Get(def.AuthorizationHeaderKey)
 			if authHeader == "" {
 				http.Error(w, `{"error":"missing_authorization"}`, http.StatusUnauthorized)
 				return
 			}
 
-			tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
+			tokenStr := strings.TrimPrefix(authHeader, def.HeaderKeyBearer+" ")
 
 			parser := new(jwt.Parser)
 			unverifiedToken, _, err := parser.ParseUnverified(tokenStr, &adminClaims{})
@@ -303,7 +305,7 @@ func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Ha
 				return
 			}
 
-			if validClaims.Issuer != woos.AdminTokenIssuer {
+			if validClaims.Issuer != def.AdminTokenIssuer {
 				http.Error(w, `{"error":"invalid_issuer"}`, http.StatusUnauthorized)
 				return
 			}
@@ -427,13 +429,13 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 	state := s.apiShared.State()
 	cfg := state.Global.Admin
 
-	authHeader := r.Header.Get(woos.AuthorizationHeaderKey)
+	authHeader := r.Header.Get(def.AuthorizationHeaderKey)
 	if authHeader == "" {
 		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
 		return
 	}
 
-	tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
+	tokenStr := strings.TrimPrefix(authHeader, def.HeaderKeyBearer+" ")
 
 	token, err := jwt.ParseWithClaims(tokenStr, &adminClaims{}, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -573,13 +575,13 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authHeader := r.Header.Get(woos.AuthorizationHeaderKey)
+	authHeader := r.Header.Get(def.AuthorizationHeaderKey)
 	if authHeader == "" {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
+	tokenStr := strings.TrimPrefix(authHeader, def.HeaderKeyBearer+" ")
 
 	parser := new(jwt.Parser)
 	unverifiedToken, _, err := parser.ParseUnverified(tokenStr, &adminClaims{})
@@ -672,7 +674,7 @@ func (s *Server) verifyAdminUser(username, password string) bool {
 	data, err := s.keeperStore.Get(userKey)
 	hashToCompare := dummyHash
 	if err == nil && len(data) > 0 {
-		var user alaye.AdminUser
+		var user alaye.User
 		if jsonErr := json.Unmarshal(data, &user); jsonErr == nil && user.PasswordHash != "" {
 			hashToCompare = []byte(user.PasswordHash)
 		}
@@ -773,12 +775,12 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "File logging disabled", http.StatusNotImplemented)
 		return
 	}
-	limit := woos.DefaultAdminLogLimit
+	limit := def.DefaultAdminLogLimit
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
 			limit = parsed
-			if limit > woos.DefaultAdminLogMaxLimit {
-				limit = woos.DefaultAdminLogMaxLimit
+			if limit > def.DefaultAdminLogMaxLimit {
+				limit = def.DefaultAdminLogMaxLimit
 			}
 		}
 	}
@@ -860,8 +862,8 @@ func buildAdminRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedSt
 		}
 		return "", ratelimit.RatePolicy{}, false
 	}
-	ttl := woos.DefaultRateTTL
-	maxEntries := woos.DefaultRateMaxEntries
+	ttl := def.DefaultRateTTL
+	maxEntries := def.DefaultRateMaxEntries
 	if rlc.TTL > 0 {
 		ttl = rlc.TTL.StdDuration()
 	}

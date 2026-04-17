@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/health"
 	"github.com/agberohq/agbero/internal/pkg/metrics"
@@ -326,8 +327,8 @@ func TestDeathSpiral_FullRecovery(t *testing.T) {
 		Path: "/",
 		HealthCheck: alaye.HealthCheck{
 			Path:     "/health",
-			Interval: alaye.Duration(2 * time.Second),
-			Timeout:  alaye.Duration(time.Second),
+			Interval: expect.Duration(2 * time.Second),
+			Timeout:  expect.Duration(time.Second),
 		},
 	}
 

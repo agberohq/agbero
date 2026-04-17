@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
 	"go.etcd.io/bbolt"
@@ -47,7 +47,7 @@ type Store struct {
 
 func NewStore(dataDir expect.Folder, logger *ll.Logger) (*Store, error) {
 	if !dataDir.IsSet() {
-		return nil, woos.ErrDataDirNotSet
+		return nil, def.ErrDataDirNotSet
 	}
 	if err := dataDir.Ensure("", true); err != nil {
 		return nil, err

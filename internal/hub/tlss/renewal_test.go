@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 )
@@ -35,7 +36,7 @@ func TestManager_RenewalLogic(t *testing.T) {
 
 	hm.Set(domain, &alaye.Host{
 		Domains: []string{domain},
-		TLS:     alaye.TLS{Mode: alaye.ModeLocalAuto},
+		TLS:     alaye.TLS{Mode: def.ModeLocalAuto},
 	})
 
 	mgr := NewManager(testLogger, hm, global, nil)

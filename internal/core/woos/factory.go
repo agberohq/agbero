@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 )
 
@@ -18,17 +19,17 @@ func NewEphemeralGlobal(port int, https bool) *alaye.Global {
 		Development: true,
 		Timeouts: alaye.Timeout{
 			Enabled:    expect.Active,
-			Read:       alaye.Duration(10 * time.Second),
-			Write:      alaye.Duration(30 * time.Second),
-			Idle:       alaye.Duration(60 * time.Second),
-			ReadHeader: alaye.Duration(5 * time.Second),
+			Read:       expect.Duration(10 * time.Second),
+			Write:      expect.Duration(30 * time.Second),
+			Idle:       expect.Duration(60 * time.Second),
+			ReadHeader: expect.Duration(5 * time.Second),
 		},
 		Logging: alaye.Logging{
 			Enabled: expect.Active,
 			Level:   "info",
 		},
 		General: alaye.General{
-			MaxHeaderBytes: alaye.DefaultMaxHeaderBytes,
+			MaxHeaderBytes: def.DefaultMaxHeaderBytes,
 		},
 		Admin:    alaye.Admin{Enabled: expect.Inactive},
 		Gossip:   alaye.Gossip{Enabled: expect.Inactive},
@@ -62,7 +63,7 @@ func NewStaticHost(c Static) *alaye.Host {
 		Domains: []string{c.Domain},
 		Routes:  make([]alaye.Route, 1),
 		TLS: alaye.TLS{
-			Mode: alaye.ModeLocalAuto,
+			Mode: def.ModeLocalAuto,
 		},
 	}
 
@@ -76,7 +77,7 @@ func NewStaticHost(c Static) *alaye.Host {
 	if c.IsProxy {
 		route.Backends = alaye.Backend{
 			Enabled:  expect.Active,
-			Strategy: alaye.StrategyRoundRobin,
+			Strategy: def.StrategyRoundRobin,
 			Servers: []alaye.Server{
 				{
 					Address: c.Target,

@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/pkg/health"
 	"github.com/agberohq/agbero/internal/pkg/metrics"
 	"github.com/agberohq/keeper"
@@ -49,7 +49,7 @@ func WithReaper(reapHandler func(context.Context, string)) Option {
 
 		if reapHandler != nil {
 			m.Reaper = jack.NewReaper(
-				woos.RouteCacheTTL,
+				def.RouteCacheTTL,
 				jack.ReaperWithLogger(m.Logger),
 				jack.ReaperWithHandler(reapHandler),
 			)
@@ -280,10 +280,10 @@ func New(opts ...Option) *Resource {
 	m := &Resource{
 		Metrics:    metrics.NewRegistry(),
 		Health:     health.NewRegistry(),
-		RouteCache: mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMax, OnDelete: mappo.CloserDelete}),
-		TCPCache:   mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMax, OnDelete: mappo.CloserDelete}),
-		AuthCache:  mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMaxBig, OnDelete: mappo.CloserDelete}),
-		GzCache:    mappo.NewCache(mappo.CacheOptions{MaximumSize: woos.CacheMax}),
+		RouteCache: mappo.NewCache(mappo.CacheOptions{MaximumSize: def.CacheMax, OnDelete: mappo.CloserDelete}),
+		TCPCache:   mappo.NewCache(mappo.CacheOptions{MaximumSize: def.CacheMax, OnDelete: mappo.CloserDelete}),
+		AuthCache:  mappo.NewCache(mappo.CacheOptions{MaximumSize: def.CacheMaxBig, OnDelete: mappo.CloserDelete}),
+		GzCache:    mappo.NewCache(mappo.CacheOptions{MaximumSize: def.CacheMax}),
 		TimeStore:  mappo.NewConcurrent[string, time.Time](),
 		counter:    new(atomic.Uint64),
 		Env: &Env{
@@ -325,18 +325,18 @@ func (m *Resource) setDefaults() {
 		m.Transport = &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
-				Timeout:   woos.DefaultTransportDialTimeout,
-				KeepAlive: woos.DefaultTransportKeepAlive,
+				Timeout:   def.DefaultTransportDialTimeout,
+				KeepAlive: def.DefaultTransportKeepAlive,
 			}).DialContext,
 			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          woos.DefaultTransportMaxIdleConns,
-			MaxIdleConnsPerHost:   woos.DefaultTransportMaxIdleConnsPerHost,
-			IdleConnTimeout:       woos.DefaultTransportIdleConnTimeout,
-			TLSHandshakeTimeout:   woos.DefaultTransportTLSHandshakeTimeout,
-			ResponseHeaderTimeout: woos.DefaultTransportResponseHeaderTimeout,
+			MaxIdleConns:          def.DefaultTransportMaxIdleConns,
+			MaxIdleConnsPerHost:   def.DefaultTransportMaxIdleConnsPerHost,
+			IdleConnTimeout:       def.DefaultTransportIdleConnTimeout,
+			TLSHandshakeTimeout:   def.DefaultTransportTLSHandshakeTimeout,
+			ResponseHeaderTimeout: def.DefaultTransportResponseHeaderTimeout,
 			ExpectContinueTimeout: 0,
-			WriteBufferSize:       woos.BufferSize,
-			ReadBufferSize:        woos.BufferSize,
+			WriteBufferSize:       def.BufferSize,
+			ReadBufferSize:        def.BufferSize,
 		}
 	}
 
@@ -354,16 +354,16 @@ func (m *Resource) setDefaults() {
 	if m.Lifetime == nil {
 		m.Lifetime = jack.NewLifetime(
 			jack.LifetimeWithLogger(m.Logger),
-			jack.LifetimeWithShards(woos.LifetimeShards),
+			jack.LifetimeWithShards(def.LifetimeShards),
 		)
 	}
 
 	if m.Background == nil {
-		m.Background = jack.NewPool(woos.PoolWorkers, jack.PoolingWithQueueSize(woos.PoolQueueSize))
+		m.Background = jack.NewPool(def.PoolWorkers, jack.PoolingWithQueueSize(def.PoolQueueSize))
 	}
 
 	if m.Janitor == nil {
-		m.Janitor = jack.NewPool(woos.PoolWorkers, jack.PoolingWithQueueSize(woos.PoolQueueSize))
+		m.Janitor = jack.NewPool(def.PoolWorkers, jack.PoolingWithQueueSize(def.PoolQueueSize))
 	}
 }
 

@@ -130,9 +130,9 @@ func TestRedisStore(t *testing.T) {
 	t.Run("SetWithPolicy", func(t *testing.T) {
 		policy := &alaye.TTLPolicy{
 			Enabled: expect.Active,
-			Default: alaye.Duration(30 * time.Second),
-			ContentType: map[string]alaye.Duration{
-				"text/html": alaye.Duration(5 * time.Minute),
+			Default: expect.Duration(30 * time.Second),
+			ContentType: map[string]expect.Duration{
+				"text/html": expect.Duration(5 * time.Minute),
 			},
 		}
 

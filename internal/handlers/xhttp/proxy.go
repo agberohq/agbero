@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/lb"
 	"github.com/cespare/xxhash/v2"
@@ -33,11 +33,11 @@ func NewProxy(cfg ConfigProxy, backends []*Backend, ipManager *zulu.IPManager) *
 	var root lb.Balancer = baseSelector
 	var adaptiveRef *lb.Adaptive
 	s := strings.ToLower(cfg.Strategy)
-	if strings.Contains(s, alaye.StrategyAdaptive) || strings.Contains(s, alaye.StrategyLeastResponseTime) {
+	if strings.Contains(s, def.StrategyAdaptive) || strings.Contains(s, def.StrategyLeastResponseTime) {
 		adaptiveRef = lb.NewAdaptive(root, 0.15)
 		root = adaptiveRef
 	}
-	if strings.Contains(s, alaye.StrategySticky) {
+	if strings.Contains(s, def.StrategySticky) {
 		root = lb.NewSticky(root, 30*time.Minute, zulu.Extractor(cfg.Keys))
 	}
 	// Initialize the balancer with backends so Adaptive has allBackends populated

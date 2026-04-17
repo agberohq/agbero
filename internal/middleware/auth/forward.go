@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/cespare/xxhash/v2"
@@ -41,8 +41,8 @@ func Forward(res *resource.Resource, cfg *alaye.ForwardAuth) func(http.Handler) 
 	}
 
 	onFailure := strings.ToLower(cfg.OnFailure)
-	if onFailure != woos.Allow {
-		onFailure = woos.Deny
+	if onFailure != def.Allow {
+		onFailure = def.Deny
 	}
 
 	cachePrefix := cfg.Name
@@ -52,7 +52,7 @@ func Forward(res *resource.Resource, cfg *alaye.ForwardAuth) func(http.Handler) 
 
 	timeout := cfg.Timeout.StdDuration()
 	if timeout <= 0 {
-		timeout = woos.DefaultForwardAuthTimeout
+		timeout = def.DefaultForwardAuthTimeout
 	}
 
 	var client *http.Client
@@ -68,9 +68,9 @@ func Forward(res *resource.Resource, cfg *alaye.ForwardAuth) func(http.Handler) 
 		client = &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
-				MaxIdleConns:        woos.CacheClientMaxIdleCons,
-				MaxIdleConnsPerHost: woos.CacheClientMaxIdleCons,
-				IdleConnTimeout:     woos.CacheClientMaxIdleTimeOuts,
+				MaxIdleConns:        def.CacheClientMaxIdleCons,
+				MaxIdleConnsPerHost: def.CacheClientMaxIdleCons,
+				IdleConnTimeout:     def.CacheClientMaxIdleTimeOuts,
 				DisableCompression:  true,
 				TLSClientConfig:     tlsConfig,
 			},
@@ -122,13 +122,13 @@ func Forward(res *resource.Resource, cfg *alaye.ForwardAuth) func(http.Handler) 
 			if cfg.Request.Enabled.Active() {
 				ipMgr := zulu.NewIP()
 				if cfg.Request.ForwardMethod {
-					authReq.Header.Set(woos.HeaderXOriginalMethod, r.Method)
+					authReq.Header.Set(def.HeaderXOriginalMethod, r.Method)
 				}
 				if cfg.Request.ForwardURI {
-					authReq.Header.Set(woos.HeaderXOriginalURI, r.URL.RequestURI())
+					authReq.Header.Set(def.HeaderXOriginalURI, r.URL.RequestURI())
 				}
 				if cfg.Request.ForwardIP {
-					authReq.Header.Set(woos.HeaderXForwardedFor, ipMgr.ClientIP(r))
+					authReq.Header.Set(def.HeaderXForwardedFor, ipMgr.ClientIP(r))
 				}
 			}
 
@@ -146,7 +146,7 @@ func Forward(res *resource.Resource, cfg *alaye.ForwardAuth) func(http.Handler) 
 				case "limited":
 					maxBody := cfg.Request.MaxBody
 					if maxBody <= 0 {
-						maxBody = woos.ForwardAuthMaxBodyDefault
+						maxBody = def.ForwardAuthMaxBodyDefault
 					}
 					body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
 					if err != nil {
@@ -283,7 +283,7 @@ func copyHeadersToRequest(src http.Header, r *http.Request, keys []string) {
 // handleFailure either calls next (on_failure = allow) or returns 403
 // with msg as the body (on_failure = deny).
 func handleFailure(w http.ResponseWriter, r *http.Request, onFailure string, next http.Handler, msg string) {
-	if onFailure == woos.Allow {
+	if onFailure == def.Allow {
 		next.ServeHTTP(w, r)
 		return
 	}

@@ -3,6 +3,7 @@ package alaye
 import (
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
@@ -21,17 +22,17 @@ func (w *Wasm) Validate() error {
 		return nil
 	}
 	if w.Module == "" {
-		return ErrModulePathRequired
+		return def.ErrModulePathRequired
 	}
 	for _, a := range w.Access {
 		switch strings.ToLower(a) {
-		case AccessHeaders, AccessBody, AccessMethod, AccessURI, AccessConfig:
+		case def.AccessHeaders, def.AccessBody, def.AccessMethod, def.AccessURI, def.AccessConfig:
 		default:
-			return errors.Newf("%w %q", ErrUnknownCapability, a)
+			return errors.Newf("%w %q", def.ErrUnknownCapability, a)
 		}
 	}
 	if w.MaxBodySize < 0 {
-		return ErrNegativeBodySize
+		return def.ErrNegativeBodySize
 	}
 	return nil
 }
@@ -44,4 +45,12 @@ func (w *Wasm) HasAccess(capability string) bool {
 		}
 	}
 	return false
+}
+
+func (w Wasm) IsZero() bool {
+	return w.Enabled.IsZero() &&
+		w.Module == "" &&
+		len(w.Config) == 0 &&
+		w.MaxBodySize == 0 &&
+		len(w.Access) == 0
 }

@@ -3,7 +3,6 @@ package agbero
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olekukonko/errors"
+
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/discovery"
@@ -70,7 +72,7 @@ func initKeeperForTest(t *testing.T, dataDir expect.Folder) {
 	if err != nil {
 		t.Fatalf("failed to hash password for test: %v", err)
 	}
-	adminUser := alaye.AdminUser{
+	adminUser := alaye.User{
 		Username:     "admin",
 		PasswordHash: hash,
 	}
@@ -139,11 +141,11 @@ func newTestAdminServer(t *testing.T) (*Server, *http.Server, int, func()) {
 		Logging: alaye.Logging{Enabled: expect.Inactive},
 		Timeouts: alaye.Timeout{
 			Enabled: expect.Active,
-			Read:    alaye.Duration(5 * time.Second),
-			Write:   alaye.Duration(5 * time.Second),
-			Idle:    alaye.Duration(5 * time.Second),
+			Read:    expect.Duration(5 * time.Second),
+			Write:   expect.Duration(5 * time.Second),
+			Idle:    expect.Duration(5 * time.Second),
 		},
-		General: alaye.General{MaxHeaderBytes: alaye.DefaultMaxHeaderBytes},
+		General: alaye.General{MaxHeaderBytes: def.DefaultMaxHeaderBytes},
 		Gossip:  alaye.Gossip{Enabled: expect.Inactive},
 		Security: alaye.Security{
 			Enabled: expect.Active,
@@ -265,11 +267,11 @@ func newTestAdminServerWithTOTP(t *testing.T) (*Server, int, func()) {
 		Logging: alaye.Logging{Enabled: expect.Inactive},
 		Timeouts: alaye.Timeout{
 			Enabled: expect.Active,
-			Read:    alaye.Duration(5 * time.Second),
-			Write:   alaye.Duration(5 * time.Second),
-			Idle:    alaye.Duration(5 * time.Second),
+			Read:    expect.Duration(5 * time.Second),
+			Write:   expect.Duration(5 * time.Second),
+			Idle:    expect.Duration(5 * time.Second),
 		},
-		General: alaye.General{MaxHeaderBytes: alaye.DefaultMaxHeaderBytes},
+		General: alaye.General{MaxHeaderBytes: def.DefaultMaxHeaderBytes},
 		Gossip:  alaye.Gossip{Enabled: expect.Inactive},
 		Security: alaye.Security{
 			Enabled: expect.Active,

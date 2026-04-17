@@ -1,6 +1,7 @@
 package xtcp
 
 import (
+	"bytes"
 	"net"
 	"testing"
 	"time"
@@ -18,13 +19,16 @@ var testLogger = ll.New("xtcp").Disable()
 const (
 	tcpNetwork     = "tcp"
 	localHostAddr  = "127.0.0.1:0"
-	pingMsg        = "PING\r\n"
-	pongMsg        = "PONG"
 	bufferSize     = 1024
 	hcInterval     = 50 * time.Millisecond
 	hcTimeout      = 100 * time.Millisecond
 	sleepWait      = 300 * time.Millisecond
 	docStopTimeout = 1 * time.Second
+)
+
+var (
+	pingMsg = []byte("PING\r\n")
+	pongMsg = []byte("PONG")
 )
 
 func TestBackendConfig_Validate(t *testing.T) {
@@ -63,7 +67,7 @@ func TestBackendConfig_Validate(t *testing.T) {
 func TestNewBackend_Valid(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
-		HealthCheck: alaye.TCPHealthCheck{
+		HealthCheck: alaye.HealthCheckProtocol{
 			Enabled: expect.Inactive,
 		},
 	}
@@ -104,8 +108,8 @@ func TestNewBackend_WithHealthCheck(t *testing.T) {
 				if rerr != nil {
 					return
 				}
-				if string(buf[:n]) == pingMsg {
-					_, _ = c.Write([]byte(pongMsg))
+				if bytes.Equal(buf[:n], pingMsg) {
+					_, _ = c.Write(pongMsg)
 				}
 			}(conn)
 		}
@@ -113,10 +117,10 @@ func TestNewBackend_WithHealthCheck(t *testing.T) {
 
 	proxy := alaye.Proxy{
 		Name: "test-proxy-healthy",
-		HealthCheck: alaye.TCPHealthCheck{
+		HealthCheck: alaye.HealthCheckProtocol{
 			Enabled:  expect.Active,
-			Interval: alaye.Duration(hcInterval),
-			Timeout:  alaye.Duration(hcTimeout),
+			Interval: expect.Duration(hcInterval),
+			Timeout:  expect.Duration(hcTimeout),
 			Send:     pingMsg,
 			Expect:   pongMsg,
 		},
@@ -149,10 +153,10 @@ func TestNewBackend_WithHealthCheck(t *testing.T) {
 func TestNewBackend_HealthCheckFailure(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
-		HealthCheck: alaye.TCPHealthCheck{
+		HealthCheck: alaye.HealthCheckProtocol{
 			Enabled:  expect.Active,
-			Interval: alaye.Duration(hcInterval),
-			Timeout:  alaye.Duration(hcTimeout),
+			Interval: expect.Duration(hcInterval),
+			Timeout:  expect.Duration(hcTimeout),
 			Send:     pingMsg,
 			Expect:   pongMsg,
 		},
@@ -177,7 +181,7 @@ func TestNewBackend_HealthCheckFailure(t *testing.T) {
 func TestBackend_Status(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
-		HealthCheck: alaye.TCPHealthCheck{
+		HealthCheck: alaye.HealthCheckProtocol{
 			Enabled: expect.Inactive,
 		},
 	}
@@ -206,7 +210,7 @@ func TestBackend_Status(t *testing.T) {
 func TestBackend_Weight(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
-		HealthCheck: alaye.TCPHealthCheck{
+		HealthCheck: alaye.HealthCheckProtocol{
 			Enabled: expect.Inactive,
 		},
 	}
@@ -234,7 +238,7 @@ func TestBackend_Weight(t *testing.T) {
 func TestBackend_Weight_HealthAdjusted(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
-		HealthCheck: alaye.TCPHealthCheck{
+		HealthCheck: alaye.HealthCheckProtocol{
 			Enabled: expect.Inactive,
 		},
 	}
@@ -266,7 +270,7 @@ func TestBackend_Weight_HealthAdjusted(t *testing.T) {
 func TestBackend_InFlight(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
-		HealthCheck: alaye.TCPHealthCheck{
+		HealthCheck: alaye.HealthCheckProtocol{
 			Enabled: expect.Inactive,
 		},
 	}
@@ -291,7 +295,7 @@ func TestBackend_InFlight(t *testing.T) {
 func TestBackend_ResponseTime(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
-		HealthCheck: alaye.TCPHealthCheck{
+		HealthCheck: alaye.HealthCheckProtocol{
 			Enabled: expect.Inactive,
 		},
 	}
@@ -317,7 +321,7 @@ func TestBackend_ResponseTime(t *testing.T) {
 func TestBackend_OnDialFailure(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
-		HealthCheck: alaye.TCPHealthCheck{
+		HealthCheck: alaye.HealthCheckProtocol{
 			Enabled: expect.Inactive,
 		},
 	}
@@ -341,7 +345,7 @@ func TestBackend_OnDialFailure(t *testing.T) {
 func TestBackend_Uptime(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
-		HealthCheck: alaye.TCPHealthCheck{
+		HealthCheck: alaye.HealthCheckProtocol{
 			Enabled: expect.Inactive,
 		},
 	}
@@ -366,7 +370,7 @@ func TestBackend_Uptime(t *testing.T) {
 func TestBackend_LastRecovery(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
-		HealthCheck: alaye.TCPHealthCheck{
+		HealthCheck: alaye.HealthCheckProtocol{
 			Enabled: expect.Inactive,
 		},
 	}
@@ -390,7 +394,7 @@ func TestBackend_LastRecovery(t *testing.T) {
 func TestBackend_Snapshot(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
-		HealthCheck: alaye.TCPHealthCheck{
+		HealthCheck: alaye.HealthCheckProtocol{
 			Enabled: expect.Inactive,
 		},
 	}
@@ -419,7 +423,7 @@ func TestBackend_Snapshot(t *testing.T) {
 func TestBackend_Stop(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
-		HealthCheck: alaye.TCPHealthCheck{
+		HealthCheck: alaye.HealthCheckProtocol{
 			Enabled: expect.Inactive,
 		},
 	}
@@ -444,7 +448,7 @@ func TestBackend_Stop(t *testing.T) {
 func TestBackend_ConcurrentOperations(t *testing.T) {
 	proxy := alaye.Proxy{
 		Name: "test-proxy",
-		HealthCheck: alaye.TCPHealthCheck{
+		HealthCheck: alaye.HealthCheckProtocol{
 			Enabled: expect.Inactive,
 		},
 	}

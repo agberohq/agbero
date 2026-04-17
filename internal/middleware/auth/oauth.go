@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/providers/github"
 	"github.com/markbates/goth/providers/gitlab"
@@ -47,13 +47,13 @@ func OAuth(cfg *alaye.OAuth) func(http.Handler) http.Handler {
 				return
 			}
 
-			cookie, err := r.Cookie(woos.SessionCookieName)
+			cookie, err := r.Cookie(def.SessionCookieName)
 			if err == nil && cookie.Value != "" {
 				if verifySessionCookie(cookie.Value, secret) {
 					next.ServeHTTP(w, r)
 					return
 				}
-				clearCookie(w, woos.SessionCookieName)
+				clearCookie(w, def.SessionCookieName)
 			}
 
 			startGothFlow(w, r, provider)
@@ -70,19 +70,19 @@ func getProvider(cfg *alaye.OAuth) (goth.Provider, error) {
 	scopes := cfg.Scopes
 
 	switch strings.ToLower(cfg.Provider) {
-	case woos.ProviderGoogle:
+	case def.ProviderGoogle:
 		return google.New(key, secret, callback, scopes...), nil
-	case woos.ProviderGitHub:
+	case def.ProviderGitHub:
 		return github.New(key, secret, callback, scopes...), nil
-	case woos.ProviderGitLab:
+	case def.ProviderGitLab:
 		return gitlab.New(key, secret, callback, scopes...), nil
-	case woos.ProviderOIDC, woos.ProviderGeneric:
+	case def.ProviderOIDC, def.ProviderGeneric:
 		if cfg.AuthURL == "" {
-			return nil, woos.ErrInvalidAuthURL
+			return nil, def.ErrInvalidAuthURL
 		}
 		return openidConnect.New(key, secret, callback, cfg.AuthURL, scopes...)
 	default:
-		return nil, errors.Newf("%w: %s", woos.ErrUnsupportedProvider, cfg.Provider)
+		return nil, errors.Newf("%w: %s", def.ErrUnsupportedProvider, cfg.Provider)
 	}
 }
 
@@ -111,12 +111,12 @@ func startGothFlow(w http.ResponseWriter, r *http.Request, provider goth.Provide
 	encodedSess := base64.StdEncoding.EncodeToString([]byte(sessData))
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     woos.GothSessionCookie,
+		Name:     def.GothSessionCookie,
 		Value:    encodedSess,
-		Path:     woos.Slash,
+		Path:     def.Slash,
 		HttpOnly: true,
 		Secure:   isSecure(r),
-		Expires:  time.Now().Add(woos.StateTTL),
+		Expires:  time.Now().Add(def.StateTTL),
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -126,7 +126,7 @@ func startGothFlow(w http.ResponseWriter, r *http.Request, provider goth.Provide
 // handleGothCallback completes the OAuth flow, validates the email domain if configured,
 // and writes a signed session cookie on success.
 func handleGothCallback(w http.ResponseWriter, r *http.Request, provider goth.Provider, cfg *alaye.OAuth, secret []byte) {
-	cookie, err := r.Cookie(woos.GothSessionCookie)
+	cookie, err := r.Cookie(def.GothSessionCookie)
 	if err != nil {
 		http.Error(w, "Session expired or missing", http.StatusBadRequest)
 		return
@@ -146,7 +146,7 @@ func handleGothCallback(w http.ResponseWriter, r *http.Request, provider goth.Pr
 
 	user, err := provider.FetchUser(sess)
 	if err != nil {
-		clearCookie(w, woos.GothSessionCookie)
+		clearCookie(w, def.GothSessionCookie)
 
 		params := r.URL.Query()
 		if _, err := sess.Authorize(provider, params); err != nil {
@@ -170,27 +170,27 @@ func handleGothCallback(w http.ResponseWriter, r *http.Request, provider goth.Pr
 			}
 		}
 		if !valid {
-			clearCookie(w, woos.GothSessionCookie)
+			clearCookie(w, def.GothSessionCookie)
 			http.Error(w, "Email domain not allowed", http.StatusForbidden)
 			return
 		}
 	}
 
-	clearCookie(w, woos.GothSessionCookie)
+	clearCookie(w, def.GothSessionCookie)
 
 	signed := signSessionCookie(user.AccessToken, secret)
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     woos.SessionCookieName,
+		Name:     def.SessionCookieName,
 		Value:    signed,
-		Path:     woos.Slash,
+		Path:     def.Slash,
 		HttpOnly: true,
 		Secure:   isSecure(r),
 		Expires:  user.ExpiresAt,
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	http.Redirect(w, r, woos.Slash, http.StatusFound)
+	http.Redirect(w, r, def.Slash, http.StatusFound)
 }
 
 // signSessionCookie returns "<base64(token)>.<base64(hmac)>" so the token
@@ -223,14 +223,14 @@ func computeHMAC(data string, key []byte) string {
 
 // isCallbackRequest returns true when the current request looks like an OAuth callback.
 func isCallbackRequest(r *http.Request, redirectURL string) bool {
-	return strings.Contains(redirectURL, r.URL.Path) && r.URL.Query().Get(woos.CallBackCodeKey) != ""
+	return strings.Contains(redirectURL, r.URL.Path) && r.URL.Query().Get(def.CallBackCodeKey) != ""
 }
 
 func clearCookie(w http.ResponseWriter, name string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
 		Value:    "",
-		Path:     woos.Slash,
+		Path:     def.Slash,
 		MaxAge:   -1,
 		HttpOnly: true,
 	})
@@ -238,7 +238,7 @@ func clearCookie(w http.ResponseWriter, name string) {
 
 // generateState produces a cryptographically random state string for CSRF protection.
 func generateState() (string, error) {
-	b := make([]byte, woos.DefaultByteLen)
+	b := make([]byte, def.DefaultByteLen)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("generateState: %w", err)
 	}

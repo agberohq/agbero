@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -68,7 +69,7 @@ func New(cfg Config) (*Engine, error) {
 		return nil, err
 	}
 	if !cfg.DataDir.IsSet() {
-		return nil, woos.ErrDataDirNotSet
+		return nil, def.ErrDataDirNotSet
 	}
 	store, err := NewStore(cfg.DataDir, cfg.Logger)
 	if err != nil {

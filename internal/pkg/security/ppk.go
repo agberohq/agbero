@@ -11,7 +11,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/olekukonko/errors"
 )
@@ -90,7 +90,7 @@ func (m *PPK) Mint(service string, ttl time.Duration) (string, error) {
 		Service: service,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        jti,
-			Issuer:    woos.Issuer,
+			Issuer:    def.Issuer,
 			Subject:   service,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),

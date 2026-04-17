@@ -3,16 +3,17 @@ package alaye
 import (
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
 
 type HealthCheck struct {
-	Enabled   expect.Toggle `hcl:"enabled,attr" json:"enabled"`
-	Path      string        `hcl:"path,attr" json:"path"`
-	Interval  Duration      `hcl:"interval,attr" json:"interval"`
-	Timeout   Duration      `hcl:"timeout,attr" json:"timeout"`
-	Threshold int           `hcl:"threshold,attr" json:"threshold"`
+	Enabled   expect.Toggle   `hcl:"enabled,attr" json:"enabled"`
+	Path      string          `hcl:"path,attr" json:"path"`
+	Interval  expect.Duration `hcl:"interval,attr" json:"interval"`
+	Timeout   expect.Duration `hcl:"timeout,attr" json:"timeout"`
+	Threshold int             `hcl:"threshold,attr" json:"threshold"`
 
 	Method         string            `hcl:"method,attr" json:"method"`
 	Headers        map[string]string `hcl:"headers,attr" json:"headers"`
@@ -33,22 +34,22 @@ func (h *HealthCheck) Validate() error {
 	}
 
 	if h.Path == "" {
-		return ErrHealthPathRequired
+		return def.ErrHealthPathRequired
 	}
-	if !strings.HasPrefix(h.Path, Slash) {
-		return errors.Newf(" %w: path %q must start with '/'", ErrHealthPathInvalid, h.Path)
+	if !strings.HasPrefix(h.Path, def.Slash) {
+		return errors.Newf(" %w: path %q must start with '/'", def.ErrHealthPathInvalid, h.Path)
 	}
 	if h.Interval < 0 {
-		return ErrNegativeInterval
+		return def.ErrNegativeInterval
 	}
 	if h.Timeout < 0 {
-		return ErrNegativeTimeout
+		return def.ErrNegativeTimeout
 	}
 	if h.Timeout > h.Interval {
-		return ErrTimeoutExceedsInterval
+		return def.ErrTimeoutExceedsInterval
 	}
 	if h.Threshold < 0 {
-		return ErrNegativeThreshold
+		return def.ErrNegativeThreshold
 	}
 
 	if h.Method != "" {
@@ -60,4 +61,49 @@ func (h *HealthCheck) Validate() error {
 	}
 
 	return nil
+}
+
+func (h HealthCheck) IsZero() bool {
+	return h.Enabled.IsZero() &&
+		h.Path == "" &&
+		h.Interval == 0 &&
+		h.Timeout == 0 &&
+		h.Threshold == 0 &&
+		h.Method == "" &&
+		len(h.Headers) == 0 &&
+		len(h.ExpectedStatus) == 0 &&
+		h.ExpectedBody == "" &&
+		h.LatencyBaselineMs == 0 &&
+		h.LatencyDegradedFactor == 0 &&
+		!h.AcceleratedProbing &&
+		!h.SyntheticWhenIdle
+}
+
+type HealthCheckProtocol struct {
+	Enabled  expect.Toggle   `hcl:"enabled,attr" json:"enabled"`
+	Interval expect.Duration `hcl:"interval,attr" json:"interval"`
+	Timeout  expect.Duration `hcl:"timeout,attr" json:"timeout"`
+	Send     expect.Encoded  `hcl:"send,attr" json:"send"`
+	Expect   expect.Encoded  `hcl:"expect,attr" json:"expect"`
+}
+
+func (t *HealthCheckProtocol) Validate() error {
+	if t.Enabled.NotActive() {
+		return nil
+	}
+	switch {
+	case t.Interval < 0:
+		return errors.New("health_check.interval cannot be negative")
+	case t.Timeout < 0:
+		return errors.New("health_check.timeout cannot be negative")
+	}
+	return nil
+}
+
+func (t HealthCheckProtocol) IsZero() bool {
+	return t.Enabled.IsZero() &&
+		t.Interval == 0 &&
+		t.Timeout == 0 &&
+		t.Send.Empty() &&
+		t.Expect.Empty()
 }

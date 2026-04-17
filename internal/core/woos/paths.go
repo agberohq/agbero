@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 )
 
@@ -30,19 +31,19 @@ func GetUserDefaults() (RuntimePaths, error) {
 		if err != nil {
 			return RuntimePaths{}, err
 		}
-		baseDir = filepath.Join(configDir, Name)
+		baseDir = filepath.Join(configDir, def.Name)
 	}
 
 	base := expect.NewFolder(baseDir)
 
 	return RuntimePaths{
 		BaseDir:    base,
-		ConfigFile: base.FilePath(DefaultConfigName),
-		HostsDir:   base.Sub(HostDir),
-		CertsDir:   base.Sub(CertDir),
-		DataDir:    base.Sub(DataDir),
-		LogsDir:    base.Sub(LogDir),
-		WorkDir:    base.Sub(WorkDir),
+		ConfigFile: base.FilePath(def.DefaultConfigName),
+		HostsDir:   base.Sub(def.HostDir),
+		CertsDir:   base.Sub(def.CertDir),
+		DataDir:    base.Sub(def.DataDir),
+		LogsDir:    base.Sub(def.LogDir),
+		WorkDir:    base.Sub(def.WorkDir),
 	}, nil
 }
 
@@ -54,10 +55,10 @@ func DefaultPaths() RuntimePaths {
 	if custom := os.Getenv("AGBERO_HOME"); custom != "" {
 		path = custom
 	} else {
-		if runtime.GOOS == Windows || os.PathSeparator == WindowBackSlash {
-			path = filepath.Join(os.Getenv(ENVProgramData), Name)
+		if runtime.GOOS == def.Windows || os.PathSeparator == def.WindowBackSlash {
+			path = filepath.Join(os.Getenv(def.ENVProgramData), def.Name)
 		} else {
-			path = filepath.Join(ETCPath, Name)
+			path = filepath.Join(def.ETCPath, def.Name)
 		}
 	}
 
@@ -65,11 +66,11 @@ func DefaultPaths() RuntimePaths {
 
 	return RuntimePaths{
 		BaseDir:    base,
-		ConfigFile: base.FilePath(DefaultConfigName),
-		HostsDir:   base.Sub(HostDir),
-		CertsDir:   base.Sub(CertDir),
-		DataDir:    base.Sub(DataDir),
-		LogsDir:    base.Sub(LogDir),
-		WorkDir:    base.Sub(WorkDir),
+		ConfigFile: base.FilePath(def.DefaultConfigName),
+		HostsDir:   base.Sub(def.HostDir),
+		CertsDir:   base.Sub(def.CertDir),
+		DataDir:    base.Sub(def.DataDir),
+		LogsDir:    base.Sub(def.LogDir),
+		WorkDir:    base.Sub(def.WorkDir),
 	}
 }

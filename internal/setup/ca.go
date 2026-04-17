@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/agberohq/agbero/internal/pkg/ui"
@@ -77,12 +77,12 @@ func (c *CA) printNSSHint(loc *tlss.Local) {
 		return
 	}
 	switch runtime.GOOS {
-	case woos.Darwin:
-		c.ctx.Logger.Warn(woos.NSSInstallHintDarwin)
-	case woos.Linux:
-		c.ctx.Logger.Warn(woos.NSSInstallHintLinux)
+	case def.Darwin:
+		c.ctx.Logger.Warn(def.NSSInstallHintDarwin)
+	case def.Linux:
+		c.ctx.Logger.Warn(def.NSSInstallHintLinux)
 	default:
-		c.ctx.Logger.Warn(woos.NSSInstallHintOther)
+		c.ctx.Logger.Warn(def.NSSInstallHintOther)
 	}
 }
 

@@ -89,11 +89,11 @@ func BenchmarkMemoryStoreGet(b *testing.B) {
 func BenchmarkTTLPolicyGetTTL(b *testing.B) {
 	policy := &alaye.TTLPolicy{
 		Enabled: expect.Active,
-		Default: alaye.Duration(10 * time.Minute),
-		ContentType: map[string]alaye.Duration{
-			"text/html":      alaye.Duration(1 * time.Hour),
-			"application/js": alaye.Duration(30 * time.Minute),
-			"image/png":      alaye.Duration(24 * time.Hour),
+		Default: expect.Duration(10 * time.Minute),
+		ContentType: map[string]expect.Duration{
+			"text/html":      expect.Duration(1 * time.Hour),
+			"application/js": expect.Duration(30 * time.Minute),
+			"image/png":      expect.Duration(24 * time.Hour),
 		},
 	}
 	defaultTTL := 5 * time.Minute

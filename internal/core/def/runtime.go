@@ -1,9 +1,9 @@
-package woos
+// Constants used during proxy operation and runtime subsystems.
+package def
 
-import (
-	"time"
-)
+import "time"
 
+// Application identity
 const (
 	Name         = "agbero"
 	Issuer       = "agbero"
@@ -15,15 +15,18 @@ const (
 const (
 	InternalAuthKeyName = "internal_auth.key"
 )
+
 const (
 	On  = "on"
 	Off = "off"
 )
+
 const (
 	ConfigFormatVersion = 1
 	MaxPortRetries      = 10
 )
 
+// Setup steps
 const (
 	SetupStepInit          = "init"
 	SetupStepAdmin         = "admin"
@@ -39,6 +42,7 @@ const (
 	ClusterSecretLen  = 32
 )
 
+// Localhost / local domain patterns
 const (
 	Localhost     = "localhost"
 	LocalhostIPv4 = "127.0.0.1"
@@ -48,18 +52,24 @@ const (
 	LocalhostSuffixDotLocalhost = ".localhost"
 	LocalhostSuffixDotTest      = ".test"
 	LocalhostSuffixDotInternal  = ".internal"
+)
 
+// Protocol identifiers
+const (
 	Http  = "http"
 	Https = "https"
+	TCP   = "tcp"
+	UDP   = "udp"
 
 	SchemeHTTP  = "http@"
 	SchemeHTTPS = "https@"
 
-	HCLSuffix = ".hcl"
-	TCP       = "tcp"
-	UDP       = "udp"
+	ProtocolSeparator = "://"
 )
 
+const HCLSuffix = ".hcl"
+
+// HTTP headers
 const (
 	HeaderContentType        = "Content-Type"
 	HeaderContentEnc         = "Content-Encoding"
@@ -96,18 +106,21 @@ const (
 	HeaderKeyAltSvc       = "Alt-Svc"
 )
 
+// MIME types
 const (
 	MimeJSON = "application/json"
 	MimeHTML = "text/html; charset=utf-8"
 	MimeText = "text/plain; charset=utf-8"
 )
 
+// Request context keys
 const (
 	CtxPort         = "local-port"
 	CtxIP           = "client-ip"
 	CtxOriginalPath = "original-path"
 )
 
+// Directory and file names
 const (
 	HostDir string = "hosts.d"
 	CertDir string = "certs.d"
@@ -120,14 +133,22 @@ const (
 	DefaultKeeperName = "keeper.db"
 )
 
+// OS identifiers
 const (
 	Darwin  = "darwin"
 	Linux   = "linux"
 	Windows = "windows"
 )
 
+const (
+	WindowBackSlash = '\\'
+	ENVProgramData  = "ProgramData"
+	ETCPath         = "/etc"
+)
+
 const User = "user"
 
+// Server / routing runtime
 const (
 	DefaultConfigAddr          = "disabled"
 	DefaultHTTPSPort           = 443
@@ -151,26 +172,20 @@ const (
 	AlpnTls = "acme-tls/1"
 )
 
+// Shared string primitives
 const (
-	Empty               = ""
-	Slash               = "/"
-	Star                = "*"
-	SlashStar           = "/*"
-	SlashByte           = '/'
-	RegexPrefix         = "~"
-	TemplateOpen        = "{"
-	TemplateClose       = "}"
-	TemplateSep         = ":"
-	TemplateWildcardKey = "*"
-	Straight            = "|"
+	Empty    = ""
+	Straight = "|"
 )
 
+// Cache sizes
 const (
 	CacheMax         = 10_000
 	CacheMaxBig      = 100_000
 	CacheMaxBodySize = 5 * 1024 * 1024
 )
 
+// Route kind
 type Kind uint8
 
 const (
@@ -180,12 +195,14 @@ const (
 	KindCatchAll
 )
 
+// Histogram / metrics
 const (
 	HistogramWindow = 60 * time.Second
 	MinUS           = int64(1)
 	MaxUS           = int64(60_000_000)
 )
 
+// Token / signing
 const (
 	BlockPrivateKey = "PRIVATE KEY"
 	DefaultIssuer   = "agbero"
@@ -193,6 +210,7 @@ const (
 	TokenAlg        = "alg"
 )
 
+// Logging
 const (
 	DefaultFilePermFile  = 0o666
 	DefaultFilePermDir   = 0o755
@@ -210,6 +228,7 @@ const (
 	LogLevelError = "error"
 )
 
+// mkcert / TLS installer
 const (
 	MkCertBinary        = "mkcert"
 	MkCertWindowsExe    = "mkcert.exe"
@@ -240,6 +259,7 @@ const (
 	MkcertNotFoundMsg = "mkcert is required to install the local CA root but was not found. macOS: 'brew install mkcert' then 'mkcert -install'"
 )
 
+// Certificate handling
 const (
 	HomeDirPrefix        = "~/"
 	LocalhostWildcardSAN = "*.localhost"
@@ -259,20 +279,40 @@ const (
 	Dot              = "."
 )
 
+// NSS / certutil
+const (
+	CertutilBinary = "certutil"
+
+	NSSPathLinuxUsrBin      = "/usr/bin/certutil"
+	NSSPathLinuxUsrLocalBin = "/usr/local/bin/certutil"
+	NSSPathLinuxSnapBin     = "/snap/bin/certutil"
+
+	NSSPathDarwinHomebrewBin   = "/opt/homebrew/bin/certutil"
+	NSSPathDarwinUsrLocalBin   = "/usr/local/bin/certutil"
+	NSSPathDarwinMozillaNSS    = "/opt/homebrew/opt/nss/bin/certutil"
+	NSSPathDarwinMozillaNSSAlt = "/usr/local/opt/nss/bin/certutil"
+
+	NSSInstallHintLinux  = "NSS certutil not found. Firefox trust store will not be updated. Install with: sudo apt-get install libnss3-tools  (Debian/Ubuntu)  or  sudo dnf install nss-tools  (Fedora/RHEL)"
+	NSSInstallHintDarwin = "NSS certutil not found. Firefox trust store will not be updated. Install with: brew install nss"
+	NSSInstallHintOther  = "NSS certutil not found. Firefox trust store may not be updated automatically."
+)
+
+// ACME / Let's Encrypt
 const (
 	LetsEncryptProdDir    = "https://acme-v02.api.letsencrypt.org/directory"
 	LetsEncryptStagingDir = "https://acme-staging-v02.api.letsencrypt.org/directory"
 	AcmeProfileShortLived = "shortlived"
 )
 
+// Internal auth / cluster
 const (
 	DefaultAuthPath = "/.well-known/agbero"
 	URLFormat       = "http://%s:%d%s"
 	URLPrefixFormat = "http://%s:%d"
 )
 
+// Gossip / memberlist runtime
 const (
-	DefaultGossipPort       = 7946
 	DefaultGossipTTL        = 30
 	DefaultPushPullInterval = 60 * time.Second
 	DefaultAuthTimeout      = 2 * time.Second
@@ -287,15 +327,16 @@ const (
 	LogErr   = "[ERR]"
 )
 
+// Health check runtime
 const (
-	DefaultCircuitBreakerThreshold = 5
-	HealthCheckJitterFraction      = 2
+	HealthCheckJitterFraction = 2
 
 	DefaultHealthCheckInterval  = 10 * time.Second
 	DefaultHealthCheckTimeout   = 5 * time.Second
 	DefaultHealthCheckThreshold = 3
 )
 
+// Load balancer strategy codes
 const (
 	StRoundRobin uint8 = iota
 	StIPHash
@@ -305,6 +346,7 @@ const (
 	StWeightedLeastConn
 )
 
+// TCP / UDP proxy
 const (
 	AcceptLoopDeadline = 500 * time.Millisecond
 	PeekBufferSize     = 4096
@@ -315,13 +357,11 @@ const (
 	TCPHealthCheckInterval = 5 * time.Second
 	TCPHealthCheckTimeout  = 2 * time.Second
 
-	// UDP proxy defaults
 	UDPDefaultSessionTTL   = 30 * time.Second
 	UDPDefaultMaxSessions  = int64(100_000)
 	UDPHealthCheckInterval = 5 * time.Second
 	UDPHealthCheckTimeout  = 2 * time.Second
 
-	// Replay (serverless outbound proxy) defaults
 	DefaultReplayTimeout = 30 * time.Second
 
 	RecordTypeHandshake      = 0x16
@@ -343,12 +383,7 @@ const (
 	MinClientHelloLen = 6
 )
 
-const (
-	WindowBackSlash = '\\'
-	ENVProgramData  = "ProgramData"
-	ETCPath         = "/etc"
-)
-
+// Transport defaults
 const (
 	DefaultTransportDialTimeout           = 3 * time.Second
 	DefaultTransportKeepAlive             = 30 * time.Second
@@ -361,11 +396,13 @@ const (
 	DefaultTransportDrainTimeout          = 30 * time.Second
 )
 
+// Rate limiting runtime
 const (
 	DefaultRateTTL        = 30 * time.Minute
 	DefaultRateMaxEntries = 100_000
 )
 
+// Auth / access control runtime
 const (
 	Realm                  = "Restricted"
 	MaxSizeCache           = 10_000
@@ -379,6 +416,7 @@ const (
 	CacheSetTTL                = 10 * time.Second
 )
 
+// OAuth / session
 const (
 	SessionCookieName = "agbero_sess"
 	GothSessionCookie = "agbero_oauth_state"
@@ -387,9 +425,8 @@ const (
 	CallBackCodeKey   = "code"
 )
 
+// OAuth providers
 const (
-	ProtocolSeparator = "://"
-
 	ProviderGoogle  = "google"
 	ProviderOIDC    = "oidc"
 	ProviderGitHub  = "github"
@@ -401,16 +438,16 @@ const (
 	ScopeEmail   = "email"
 )
 
+// Compression runtime
 const (
-	MinCompressionLevel = 0
-	MaxCompressionLevel = 11
-	CompressionGzip     = "gzip"
-	GzipEncodingType    = "gzip"
-	CompressionBrotli   = "brotli"
-	BrotliEncodingType  = "br"
-	DynamicGzMaxSize    = 10 * 1024 * 1024
+	CompressionGzip    = "gzip"
+	GzipEncodingType   = "gzip"
+	CompressionBrotli  = "brotli"
+	BrotliEncodingType = "br"
+	DynamicGzMaxSize   = 10 * 1024 * 1024
 )
 
+// Worker pool
 const (
 	PoolWorkers        = 8
 	PoolQueueSize      = 10240
@@ -418,14 +455,14 @@ const (
 	LifetimeHostShards = 4
 )
 
+// Admin / reload / shutdown
 const (
 	DefaultReloadTimeout   = 30 * time.Second
 	DefaultShutdownTimeout = 5 * time.Second
 	DefaultGitPoolTimeout  = 1 * time.Second
 	DefaultGitInterval     = 30 * time.Minute
 
-	AdminTokenTTL = 8 * time.Hour
-
+	AdminTokenTTL    = 8 * time.Hour
 	AdminTokenIssuer = "agbero-admin"
 
 	DefaultAdminReadTimeout  = 10 * time.Second
@@ -433,6 +470,7 @@ const (
 	DefaultAdminIdleTimeout  = 120 * time.Second
 )
 
+// Middleware runtime defaults
 const (
 	DefaultForwardAuthTimeout      = 5 * time.Second
 	DefaultFirewallMaxInspectBytes = int64(8192)
@@ -447,29 +485,13 @@ const (
 	ForwardAuthMaxBodyDefault      = int64(64 * 1024)
 )
 
-const (
-	CertutilBinary = "certutil"
-
-	NSSPathLinuxUsrBin      = "/usr/bin/certutil"
-	NSSPathLinuxUsrLocalBin = "/usr/local/bin/certutil"
-	NSSPathLinuxSnapBin     = "/snap/bin/certutil"
-
-	NSSPathDarwinHomebrewBin   = "/opt/homebrew/bin/certutil"
-	NSSPathDarwinUsrLocalBin   = "/usr/local/bin/certutil"
-	NSSPathDarwinMozillaNSS    = "/opt/homebrew/opt/nss/bin/certutil"
-	NSSPathDarwinMozillaNSSAlt = "/usr/local/opt/nss/bin/certutil"
-
-	NSSInstallHintLinux  = "NSS certutil not found. Firefox trust store will not be updated. Install with: sudo apt-get install libnss3-tools  (Debian/Ubuntu)  or  sudo dnf install nss-tools  (Fedora/RHEL)"
-	NSSInstallHintDarwin = "NSS certutil not found. Firefox trust store will not be updated. Install with: brew install nss"
-	NSSInstallHintOther  = "NSS certutil not found. Firefox trust store may not be updated automatically."
-)
-
+// Logging / user-agent
 const (
 	LogUATruncateLen = 50
-
-	LogMaxLineBytes = 64 * 1024
+	LogMaxLineBytes  = 64 * 1024
 )
 
+// Web / static file serving
 const (
 	WebGzCacheTTL           = 60 * time.Second
 	WebPHPTimeout           = 30 * time.Second
@@ -482,29 +504,33 @@ const (
 	WebCacheDefaultMaxAge   = 300
 )
 
+// Trash / retention
 const (
 	TrashDirName   = ".trash"
 	TrashRetention = 7 * 24 * time.Hour
 )
 
+// Wasm / worker
 const (
 	DefaultWasmTimeout   = 30 * time.Second
 	DefaultWorkerTimeout = 30 * time.Second
 	DefaultWorkerRestart = "on-failure"
 )
 
+// Miscellaneous runtime
 const (
-	MinGossipSecretLen = 16
-
+	MinGossipSecretLen  = 16
 	DefaultRegexTimeout = 100 * time.Millisecond
 )
 
+// Update / self-upgrade
 const (
 	GitHubReleaseAPIURL   = "https://api.github.com/repos/agberohq/agbero/releases/latest"
 	UpdateFetchTimeout    = 30 * time.Second
 	UpdateDownloadTimeout = 120 * time.Second
 )
 
+// Admin log limits
 const (
 	DefaultAdminLogLimit    = 50
 	DefaultAdminLogMaxLimit = 1000

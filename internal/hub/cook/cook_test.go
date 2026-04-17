@@ -2,7 +2,6 @@ package cook
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/olekukonko/errors"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing/object"
