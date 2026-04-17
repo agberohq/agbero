@@ -29,7 +29,7 @@ tls {
   }
 
   # For mode = "letsencrypt"
-  lets_encrypt {
+  letsencrypt {
     enabled     = "on"
     email       = "admin@example.com"
     staging     = false
@@ -53,7 +53,6 @@ headers {
   request {
     enabled = "on"
     set     = { "X-Host-ID" = "primary" }
-    add     = { "X-Trace" = "${request_id}" }
     remove  = ["X-Powered-By"]
   }
   response {
@@ -72,9 +71,9 @@ error_pages {
 # =============================================================================
 
 # --- A. Reverse Proxy Route ---
-route {
+# Note: routes use a path label, not path = "..." attribute syntax
+route "/api" {
   enabled = "on"
-  path    = "/api"
 
   # Strip prefix before sending to backend
   strip_prefixes = ["/api"]
@@ -91,7 +90,7 @@ route {
       address = "http://backend-1:8080"
       weight  = 10
 
-      # Health criteria for this specific backend
+      # Route only internal traffic to this server
       criteria {
         source_ips = ["10.0.0.0/8"]
       }
@@ -111,11 +110,11 @@ route {
 
   # Active Health Checks
   health_check {
-    enabled   = "on"
-    path      = "/health"
-    interval  = "10s"
-    timeout   = "5s"
-    threshold = 3
+    enabled         = "on"
+    path            = "/health"
+    interval        = "10s"
+    timeout         = "5s"
+    threshold       = 3
     expected_status = [200, 204]
   }
 
@@ -126,10 +125,11 @@ route {
     duration  = "30s"
   }
 
-  # Authentication: JWT
+  # Authentication: JWT (secret from keeper — recommended)
   jwt_auth {
     enabled = "on"
-    secret  = "env.JWT_SECRET"
+    secret  = "ss://auth/jwt-secret"     # stored in keeper
+    # secret = "env.JWT_SECRET"          # or from environment
     claims_to_headers = { "sub" = "X-User" }
   }
 
@@ -140,7 +140,7 @@ route {
       enabled  = "on"
       requests = 100
       window   = "1m"
-      key      = "header:Authorization"
+      key      = "Authorization"    # rate-limit by header value
     }
   }
 
@@ -153,15 +153,14 @@ route {
 }
 
 # --- B. Static Web Route ---
-route {
+route "/" {
   enabled = "on"
-  path    = "/"
 
   web {
     enabled = "on"
     root    = "/var/www/html"
     index   = ["index.html"]
-    listing = true # Enable directory listing
+    listing = true  # Enable directory listing
     spa     = false # SPA mode (redirect 404 to index)
 
     # PHP Integration
@@ -171,15 +170,15 @@ route {
     }
   }
 
-  # Authentication: Basic
+  # Authentication: Basic (hash from keeper — recommended)
   basic_auth {
     enabled = "on"
-    users   = ["admin:$2a$10$..."] # bcrypt hash
+    users   = ["admin:ss://auth/admin-bcrypt-hash"]
     realm   = "Admin Area"
   }
 
   # Compression
-  compression_config {
+  compression {
     enabled = "on"
     type    = "brotli"
     level   = 4
@@ -195,14 +194,14 @@ route {
 
 # =============================================================================
 # 5. TCP PROXY (Layer 4)
+# Note: TCP proxies also use a name label, not name = "..." attribute syntax
 # =============================================================================
-proxy {
-  enabled = "on"
-  name    = "database"
-  listen  = ":5432"
+proxy "database" {
+  enabled        = "on"
+  listen         = ":5432"
 
   # Routing based on TLS SNI
-  sni     = "db.internal"
+  sni            = "db.internal"
 
   strategy       = "least_conn"
   proxy_protocol = true # Send PROXY v2 header
@@ -215,6 +214,6 @@ proxy {
   health_check {
     enabled  = "on"
     interval = "5s"
-    # Plain TCP connect check
+    # Plain TCP connect check — no send/expect needed for basic connectivity
   }
 }

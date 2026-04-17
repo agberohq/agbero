@@ -140,7 +140,12 @@ route "/" {
       auth {
         type = "ssh-key"           # "basic", "ssh-key", "ssh-agent"
         username = "git"
-        ssh_key = "env.PRIVATE_KEY"   # set env var to the raw PEM key content
+        # From environment variable (set env var to the raw PEM content)
+        ssh_key = "env.PRIVATE_KEY"
+
+        # From keeper (recommended — keep private keys out of env entirely)
+        # ssh_key = "ss://deploy/github-ssh-key"
+        # Store with: agbero keeper set deploy/github-ssh-key --file ~/.ssh/id_ed25519
       }
     }
   }
@@ -306,8 +311,15 @@ route "/admin" {
     enabled = true
     realm   = "Admin Area"
     users   = [
-      "admin:$2a$10$K2ul0gaUotcRRqTWnq4TRu06nxRo0yyO.ky8k..vpu2MgedAFLX4K",  # bcrypt hash
-      "editor:${env.EDITOR_HASH}"
+      # Inline bcrypt hash — fine for single-server setups
+      "admin:$2a$10$K2ul0gaUotcRRqTWnq4TRu06nxRo0yyO.ky8k..vpu2MgedAFLX4K",
+
+      # From environment variable
+      "editor:${env.EDITOR_HASH}",
+
+      # From keeper (recommended — rotate without touching config files)
+      # "ops:ss://auth/ops-bcrypt-hash",
+      # Store with: agbero keeper set auth/ops-bcrypt-hash "$(agbero secret hash -p mypass)"
     ]
   }
   
@@ -321,9 +333,16 @@ route "/admin" {
 route "/api/secure" {
   jwt_auth {
     enabled = true
-    secret  = "${env.JWT_SECRET}"
+
+    # Option A: read secret from environment variable
+    secret = "${env.JWT_SECRET}"
+
+    # Option B (recommended for production): read from keeper — never in env or config
+    # secret = "ss://auth/jwt-secret"
+    # Store with: agbero keeper set auth/jwt-secret "my-jwt-key"
+
     issuer  = "auth.example.com"     # Optional: validate issuer
-    
+
     # Map JWT claims to upstream request headers
     claims_to_headers = {
       "sub"   = "X-User-ID"
@@ -331,7 +350,7 @@ route "/api/secure" {
       "role"  = "X-User-Role"
     }
   }
-  
+
   backend {
     server { address = "http://api:8080" }
   }
@@ -345,11 +364,17 @@ route "/" {
   o_auth {
     enabled       = true
     provider      = "github"  # google, github, gitlab, oidc
-    client_id     = "${env.GITHUB_CLIENT_ID}"
-    client_secret = "${env.GITHUB_CLIENT_SECRET}"
+    client_id     = "${env.GITHUB_CLIENT_ID}"         # ID is not sensitive, env var is fine
+
+    # client_secret and cookie_secret are sensitive — keeper is recommended:
+    client_secret = "${env.GITHUB_CLIENT_SECRET}"       # env var
+    # client_secret = "ss://oauth/github-client-secret" # keeper (recommended)
+
     redirect_url  = "https://app.example.com/auth/callback"
-    
-    cookie_secret = "${env.OAUTH_COOKIE_SECRET}"  # 16+ chars
+
+    cookie_secret = "${env.OAUTH_COOKIE_SECRET}"         # env var
+    # cookie_secret = "ss://oauth/cookie-secret"         # keeper (recommended)
+    # Generate with: agbero secret password 32
     email_domains = ["yourcompany.com"]  # Restrict by email domain
     scopes        = ["user:email"]
     
@@ -433,7 +458,7 @@ route "/api/public" {
       requests = 50
       window   = "1m"
       burst    = 75
-      key      = "header:X-API-Key"  # ip, header:X, cookie:X, query:X
+      key      = "X-API-Key"  # plain header name, or omit for IP-based limiting
     }
   }
   
@@ -864,7 +889,7 @@ route "/api" {
   
   jwt_auth {
     enabled = true
-    secret = "${env.JWT_SECRET}"
+    secret  = "ss://auth/jwt-secret"  # stored in keeper
     claims_to_headers = { "sub" = "X-User-ID" }
   }
   
@@ -929,7 +954,7 @@ route "/admin" {
   
   basic_auth {
     enabled = true
-    users = ["admin:${env.ADMIN_HASH}"]
+    users = ["admin:ss://auth/admin-bcrypt-hash"]  # bcrypt hash stored in keeper
   }
   
   backend {
@@ -971,17 +996,43 @@ X-GitLab-Event: Push Hook
 
 ---
 
-## Environment Variables in Configuration
+## Value References in Configuration
+
+Agbero supports three forms for any sensitive field:
 
 ```hcl
+# 1. Plain string — use for non-sensitive, fixed values
+content_type = "application/json"
+
+# 2. Environment variable — resolved from process environment at startup
 secret = "${env.JWT_SECRET}"
 path   = "${env.CONFIG_DIR}/certs"
 users  = ["admin:${env.ADMIN_HASH}"]
+
+# 3. Keeper secret (ss://) — resolved from encrypted store at request time
+# This is the recommended approach for all sensitive values in production.
+# Secrets are never logged, never in config files, and can be rotated live.
+secret        = "ss://auth/jwt-secret"
+client_secret = "ss://oauth/github-client-secret"
+users         = ["admin:ss://auth/admin-bcrypt-hash"]
 ```
 
-Base64-encoded secrets: store the literal base64 string with the `b64.` prefix so Agbero decodes it at load time:
+Store keeper secrets with the CLI:
+```bash
+agbero keeper set auth/jwt-secret "my-jwt-key"
+agbero keeper set oauth/github-client-secret "ghp_AbCdEf..."
+agbero keeper set auth/admin-bcrypt-hash "$(agbero secret hash --password mypassword)"
+```
+
+For binary or multi-line values (certificates, SSH keys), use the `b64.` prefix or upload via the Keeper API:
 ```hcl
+# Base64 prefix — Agbero decodes it before use
 ssh_key = "b64.LS0tLS1CRUdJTiBPUEVOU1NIIFBSSVZBVEUgS0VZLS0tLS0..."
+```
+
+```bash
+# Or store the file directly via CLI or API
+agbero keeper set deploy/ssh-key --file ~/.ssh/id_ed25519
 ```
 
 ---

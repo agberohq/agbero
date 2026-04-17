@@ -567,7 +567,7 @@ await fetch("/integrations/send-email", {
 })
 
 // PDF — send HTML, receive PDF stream
-const pdf = await fetch("/export/work/pdf", {
+const pdf = await fetch("/export/pdf", {
   method: "POST",
   headers: { "Authorization": `Bearer ${userJWT}` },
   body: document.documentElement.outerHTML

@@ -157,7 +157,7 @@ Running `agbero keeper` with no subcommand opens an interactive REPL.
 | `keeper get <key>` | Retrieve a value from the keeper |
 | `keeper set <key> [value]` | Store a value in the keeper |
 | `keeper delete <key>` | Delete a key from the keeper |
-| `keeper rotate` | Change the master passphrase (re-encrypts all secrets) |
+| `keeper rotate` | Change the master passphrase (re-encrypts all secrets in place) |
 | `keeper help` | Show keeper command reference |
 
 **Usage:**
@@ -202,6 +202,32 @@ agbero keeper delete myapp/db-password
 # Change the master passphrase (re-encrypts everything)
 agbero keeper rotate
 ```
+### Rotating the Master Passphrase
+
+`agbero keeper rotate` changes the master passphrase and re-encrypts all stored secrets with the new passphrase. Here is the safe procedure:
+
+```bash
+# 1. Stop the running Agbero instance first
+sudo agbero service stop
+
+# 2. Run the rotation (prompts for current passphrase, then new passphrase twice)
+agbero keeper rotate
+
+# 3. Update your passphrase wherever it is stored:
+#    - Update AGBERO_PASSPHRASE in your system service environment
+#    - Update the secret in your secrets manager / CI environment
+#    - Update agbero.hcl if you hardcoded it (please don't)
+
+# 4. Restart Agbero with the new passphrase
+AGBERO_PASSPHRASE=newpassphrase sudo agbero service start
+```
+
+> **Important notes:**
+> - Stop Agbero before rotating. Rotating while the server is running is safe from a data perspective (it uses a transaction) but the running process holds the old passphrase in memory and will fail on the next unlock cycle.
+> - In a cluster, run rotation on each node separately while that node is stopped. Nodes do not automatically share passphrase changes — each node's `keeper.db` is encrypted with its own passphrase. After rotation on all nodes, bring them back up one at a time.
+> - If rotation fails partway through (power loss, crash), the database is left in a consistent state on the old passphrase. Re-run `agbero keeper rotate` to complete it.
+
+
 
 ---
 

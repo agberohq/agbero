@@ -29,7 +29,7 @@ route "/support" {
 
 route "/" {
   web {
-    root = "/Users/oleku/www/tmp/ludo"
+    root    = "/var/www/imigify"
     listing = true
   }
 }

@@ -225,3 +225,30 @@ Navigate through the documentation to master Agbero:
 - [**Plugin Guide**](./plugin.md) - Write custom high-performance middleware using WebAssembly.
 - [**API Reference**](./api.md) - Dynamic route management via the cluster API.
 - [**Contributor Guide**](./contributor.md) - Architecture overview and guidelines for contributing to Agbero.
+## First Run — Keeper Initialisation
+
+On the very first `agbero run`, if no keeper database exists at `data.d/keeper.db`, Agbero walks you through creating one interactively. Here is what that looks like in your terminal:
+
+```
+$ agbero run
+[INFO] No keeper database found — creating a new one.
+
+Enter master passphrase: ████████
+Confirm master passphrase: ████████
+
+[INFO] Keeper created and unlocked.
+[INFO] Admin user setup...
+Admin username: admin
+Admin password: ████████
+
+[INFO] Internal Ed25519 auth key generated and stored in keeper.
+[INFO] Agbero is ready — listening on :80 and :443
+```
+
+For non-interactive environments (system service, Docker, CI), set `AGBERO_PASSPHRASE` before starting so Agbero can unlock without prompting:
+
+```bash
+AGBERO_PASSPHRASE=mypassphrase agbero run
+```
+
+> **Important:** The keeper database (`data.d/keeper.db`) is encrypted at rest. Without the correct passphrase, Agbero cannot start. Store your passphrase securely — in a secrets manager, a `.env` file outside version control, or your system's service environment. If you lose the passphrase, you lose all stored secrets.

@@ -16,6 +16,22 @@ Any `Value`-typed field supports three resolution forms:
 | Environment variable | `"env.MY_VAR"` | The value of `$MY_VAR` at runtime |
 | Keeper secret | `"ss://namespace/key"` | The secret stored in the keeper under `namespace/key` |
 
+**Namespace and key naming rules:**
+
+| Part | Valid characters | Length |
+|------|-----------------|--------|
+| Namespace | `a-z A-Z 0-9 _ -` | 3–64 characters |
+| Key | `a-z A-Z 0-9 _ . -` | 1–128 characters |
+
+**Reserved namespaces** — cannot be accessed via user config or the Keeper API:
+
+| Namespace | Used for |
+|-----------|----------|
+| `internal` and `internal/*` | Agbero's internal keys (Ed25519 auth key, admin secrets, TOTP seeds) |
+| `vault://` scheme | Internally managed vault secrets |
+
+Attempting to set a key in a reserved namespace via the API returns `403 Forbidden`.
+
 ```hcl
 # All three forms work anywhere a Value is accepted
 headers = {
@@ -836,11 +852,10 @@ Setup with `agbero admin totp setup --user <username>`. See [Security Guide](./s
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `enabled` | `Enabled` | Keeper is a required component; this is advisory only |
-| `passphrase` | `Value` | Master passphrase to unlock the keeper. Use `"env.AGBERO_PASSPHRASE"` in production to avoid plaintext in config. |
-| `auto_lock` | `Duration` | Automatically lock the keeper after this period of inactivity |
-| `logging` | `Enabled` | Enable keeper operation logging |
-| `audit` | `Enabled` | Enable detailed audit trail for all secret reads and writes |
+| `passphrase` | `Value` | Master passphrase to unlock the keeper. Use `"env.AGBERO_PASSPHRASE"` in production to avoid plaintext in config. This is a required field in non-interactive environments. |
+| `auto_lock` | `Duration` | Automatically lock the keeper after this period of inactivity. When locked, all `ss://` references return their literal string until unlocked via `POST /api/v1/keeper/unlock`. |
+| `logging` | `Enabled` | Log every keeper open, read, write, and delete at INFO level. |
+| `audit` | `Enabled` | Detailed audit trail: logs the key name on every secret read and write. Higher log volume but useful for compliance. |
 
 ---
 
