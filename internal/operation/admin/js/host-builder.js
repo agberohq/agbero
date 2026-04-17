@@ -25,9 +25,11 @@ export function buildHostConfig(data) {
 
     const isLocalDomain = (d) => {
         const h = (d || '').trim().toLowerCase();
-        return !h || /^\d+\.\d+\.\d+\.\d+$/.test(h) ||
-            ['localhost', '.localhost', '.local', '.internal', '.test', '.example']
-                .some(s => h === s.replace('.', '') || h.endsWith(s));
+        if (!h) return true;
+        if (/^\d+\.\d+\.\d+\.\d+$/.test(h)) return true;
+        const exact = ['localhost'];
+        const suffixes = ['.localhost', '.local', '.internal', '.test', '.example'];
+        return exact.includes(h) || suffixes.some(s => h === s.slice(1) || h.endsWith(s));
     };
 
     let tls = null;
@@ -66,7 +68,7 @@ export function buildHostConfig(data) {
     const routesInput = data.routes;
     if (Array.isArray(routesInput) && routesInput.length > 0) {
         host.routes = routesInput.map(r => buildRoute(r, data.host_type));
-    } else {
+    } else if (data.host_type !== 'tcp') {
         host.routes = [buildLegacyRoute(data)];
     }
 
@@ -237,6 +239,7 @@ function buildServerlessBlock(data) {
             ? (() => { try { return JSON.parse(cmdRaw); } catch { return cmdRaw.split(/\s+/); } })()
             : cmdRaw.split(/\s+/);
         const entry = { name: w.name.trim(), command };
+        if (w.landlock !== false)    entry.landlock  = 'on';
         if (w.background)       entry.background = true;
         if (w.run_once)         entry.run_once   = true;
         if (w.restart?.trim())  entry.restart    = w.restart.trim();
@@ -373,4 +376,387 @@ function buildLegacyRoute(data) {
     applyAuth   (route, data);
     applyHeaders(route, data);
     return route;
+}
+
+// HCL SERIALISER
+// Converts a buildHostConfig() output object → HCL string the server can parse.
+//
+// HCL format rules (from _hclTemplate, live .hcl files, and parser source):
+//   - Top-level scalars:  key = "value"  or  key = true  or  key = 123
+//   - Top-level arrays:   key = ["a", "b"]
+//   - Named blocks:       block_type "label" { ... }
+//   - Unnamed blocks:     block_type { ... }
+//   - route paths are block labels:  route "/" { ... }
+//   - proxy name is a block label:   proxy "name" { ... }
+//   - server address is a block label: server "http://..." { weight = 1 }
+
+export function buildHostHCL(data) {
+    const config = buildHostConfig(data);
+    return _hostToHCL(config);
+}
+
+// Escape a string for HCL double-quoted strings
+function _hq(s) {
+    return '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r') + '"';
+}
+
+// Render a string list as HCL array literal
+function _strList(arr) {
+    return '[' + arr.map(_hq).join(', ') + ']';
+}
+
+// Indent every line of a block body
+function _indent(s, n = 2) {
+    const pad = ' '.repeat(n);
+    return s.split('\n').map(l => (l.trim() ? pad + l : '')).join('\n');
+}
+
+// Render a simple scalar value
+function _scalar(v) {
+    if (v === true  || v === 'on')  return '"on"';
+    if (v === false || v === 'off') return '"off"';
+    if (typeof v === 'number')      return String(v);
+    return _hq(v);
+}
+
+function _hostToHCL(host) {
+    const lines = [];
+
+    // domains = [...]
+    if (Array.isArray(host.domains) && host.domains.length)
+        lines.push(`domains = ${_strList(host.domains)}`);
+
+    // protected / not_found_page / compression / bind
+    if (host.protected && host.protected !== 'unknown')
+        lines.push(`protected = ${_scalar(host.protected)}`);
+    if (host.not_found_page)
+        lines.push(`not_found_page = ${_hq(host.not_found_page)}`);
+    if (host.compression === true)
+        lines.push(`compression = true`);
+    if (Array.isArray(host.bind) && host.bind.length)
+        lines.push(`bind = ${_strList(host.bind)}`);
+
+    // limits block
+    if (host.limits?.max_header_bytes > 0) {
+        lines.push('', 'limits {', `  max_header_bytes = ${host.limits.max_header_bytes}`, '}');
+    }
+
+    // tls block
+    if (host.tls) lines.push('', _tlsBlock(host.tls));
+
+    // route blocks
+    for (const route of (host.routes || [])) {
+        lines.push('', _routeBlock(route));
+    }
+
+    // proxy blocks (TCP/UDP)
+    for (const proxy of (host.proxies || [])) {
+        lines.push('', _proxyBlock(proxy));
+    }
+
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trimStart() + '\n';
+}
+
+function _tlsBlock(tls) {
+    const inner = [];
+    if (tls.mode) inner.push(`mode = ${_hq(tls.mode)}`);
+    if (tls.client_auth) inner.push(`client_auth = ${_hq(tls.client_auth)}`);
+    if (Array.isArray(tls.client_cas) && tls.client_cas.length)
+        inner.push(`client_cas = ${_strList(tls.client_cas)}`);
+    if (tls.letsencrypt) {
+        const le = tls.letsencrypt;
+        const sub = [`enabled = "on"`, `email   = ${_hq(le.email || '')}`];
+        if (le.staging === 'on') sub.push(`staging = "on"`);
+        inner.push('', 'lets_encrypt {', ...sub.map(l => '  ' + l), '}');
+    }
+    if (tls.local) {
+        inner.push('', 'local {',
+            `  enabled   = "on"`,
+            `  cert_file = ${_hq(tls.local.cert_file || '')}`,
+            `  key_file  = ${_hq(tls.local.key_file  || '')}`,
+            '}');
+    }
+    if (tls.custom_ca) {
+        inner.push('', 'custom_ca {', `  enabled = "on"`, `  root = ${_hq(tls.custom_ca.root || '')}`, '}');
+    }
+    const body = inner.filter((l, i) => !(i === 0 && l === '')).join('\n');
+    return 'tls {\n' + _indent(body) + '\n}';
+}
+
+function _routeBlock(route) {
+    const inner = [];
+
+    // web block
+    if (route.web) {
+        const w = route.web;
+        const wb = [];
+        if (w.root)     wb.push(`root     = ${_hq(w.root)}`);
+        if (w.spa === 'on')     wb.push(`spa      = "on"`);
+        if (w.listing === 'on') wb.push(`listing  = "on"`);
+        if (w.no_cache === 'on')wb.push(`no_cache = "on"`);
+        if (Array.isArray(w.index) && w.index.length)
+            wb.push(`index    = ${_strList(w.index)}`);
+        if (w.php) {
+            wb.push('', `php {`, `  enabled = "on"`, `  address = ${_hq(w.php.address || '')}`, `}`);
+        }
+        if (w.git) {
+            const g = w.git;
+            const gb = [`enabled = "on"`, `url     = ${_hq(g.url || '')}`, `branch  = ${_hq(g.branch || 'main')}`];
+            if (g.id)       gb.push(`id       = ${_hq(g.id)}`);
+            if (g.interval) gb.push(`interval = ${_hq(g.interval)}`);
+            if (g.secret)   gb.push(`secret   = ${_hq(g.secret)}`);
+            if (g.work_dir) gb.push(`work_dir = ${_hq(g.work_dir)}`);
+            if (g.sub_dir)  gb.push(`sub_dir  = ${_hq(g.sub_dir)}`);
+            if (g.auth?.type) {
+                const ab = [`type = ${_hq(g.auth.type)}`];
+                if (g.auth.username) ab.push(`username = ${_hq(g.auth.username)}`);
+                if (g.auth.password) ab.push(`password = ${_hq(g.auth.password)}`);
+                if (g.auth.ssh_key)  ab.push(`ssh_key  = ${_hq(g.auth.ssh_key)}`);
+                gb.push('', 'auth {', ...ab.map(l => '  ' + l), '}');
+            }
+            wb.push('', 'git {', ...gb.map(l => '  ' + l), '}');
+        }
+        if (w.markdown) {
+            const md = w.markdown;
+            const mb = [`enabled = "on"`];
+            if (md.view)    mb.push(`view    = ${_hq(md.view)}`);
+            if (md.unsafe === 'on') mb.push(`unsafe  = "on"`);
+            if (md.toc === 'on')    mb.push(`toc     = "on"`);
+            if (md.highlight) {
+                const hb = [`enabled = "on"`];
+                if (md.highlight.theme) hb.push(`theme = ${_hq(md.highlight.theme)}`);
+                mb.push('', 'highlight {', ...hb.map(l => '  ' + l), '}');
+            }
+            wb.push('', 'markdown {', ...mb.map(l => '  ' + l), '}');
+        }
+        inner.push('web {', ...wb.map(l => '  ' + l), '}');
+    }
+
+    // backends block
+    if (route.backends) {
+        const be = route.backends;
+        const bb = [];
+        if (be.strategy && be.strategy !== 'round_robin') bb.push(`strategy = ${_hq(be.strategy)}`);
+        if (Array.isArray(be.keys) && be.keys.length) bb.push(`keys = ${_strList(be.keys)}`);
+        for (const s of (be.servers || [])) {
+            const sw = s.weight && s.weight !== 1 ? `weight = ${s.weight}` : '';
+            bb.push(sw ? `server ${_hq(s.address)} { ${sw} }` : `server ${_hq(s.address)} {}`);
+        }
+        inner.push('backends {', ...bb.map(l => '  ' + l), '}');
+    }
+
+    // serverless block
+    if (route.serverless) {
+        const sl = route.serverless;
+        const sb = [];
+        if (sl.git) {
+            const g = sl.git;
+            const gb = [`enabled  = "on"`, `url      = ${_hq(g.url || '')}`, `id       = ${_hq(g.id || '')}`];
+            if (g.branch)   gb.push(`branch   = ${_hq(g.branch)}`);
+            if (g.interval) gb.push(`interval = ${_hq(g.interval)}`);
+            sb.push('git {', ...gb.map(l => '  ' + l), '}');
+        }
+        for (const w of (sl.workers || [])) {
+            const wb = [`enabled  = "on"`, `command  = ${_strList(Array.isArray(w.command) ? w.command : [w.command])}`];
+            if (w.landlock === 'on') wb.push(`landlock = "on"`);
+            if (w.engine)    wb.push(`engine   = ${_hq(w.engine)}`);
+            if (w.background) wb.push(`background = true`);
+            if (w.run_once)   wb.push(`run_once   = true`);
+            if (w.restart)    wb.push(`restart    = ${_hq(w.restart)}`);
+            if (w.schedule)   wb.push(`schedule   = ${_hq(w.schedule)}`);
+            if (w.timeout)    wb.push(`timeout    = ${_hq(w.timeout)}`);
+            sb.push('', `worker ${_hq(w.name)} {`, ...wb.map(l => '  ' + l), '}');
+        }
+        for (const r of (sl.replay || [])) {
+            const rb = [`enabled = "on"`];
+            if (r.url)            rb.push(`url            = ${_hq(r.url)}`);
+            if (r.timeout)        rb.push(`timeout        = ${_hq(r.timeout)}`);
+            if (r.referer_mode)   rb.push(`referer_mode   = ${_hq(r.referer_mode)}`);
+            if (r.referer_value)  rb.push(`referer_value  = ${_hq(r.referer_value)}`);
+            if (r.forward_query === 'on') rb.push(`forward_query  = "on"`);
+            if (r.strip_headers === 'on') rb.push(`strip_headers  = "on"`);
+            if (Array.isArray(r.methods) && r.methods.length)
+                rb.push(`methods = ${_strList(r.methods)}`);
+            if (Array.isArray(r.allowed_domains) && r.allowed_domains.length)
+                rb.push(`allowed_domains = ${_strList(r.allowed_domains)}`);
+            sb.push('', `replay ${_hq(r.name)} {`, ...rb.map(l => '  ' + l), '}');
+        }
+        inner.push('serverless {', ...sb.map(l => '  ' + l), '}');
+    }
+
+    // extras: health_check, circuit_breaker, rate_limit, cors, cache, timeouts, compression, firewall
+    if (route.health_check) {
+        const hc = route.health_check;
+        const hb = [`enabled  = "on"`, `path     = ${_hq(hc.path || '/health')}`, `interval = ${_hq(hc.interval || '10s')}`, `timeout  = ${_hq(hc.timeout || '5s')}`];
+        if (hc.threshold > 0)             hb.push(`threshold = ${hc.threshold}`);
+        if (hc.accelerated_probing)       hb.push(`accelerated_probing  = true`);
+        if (hc.synthetic_when_idle)       hb.push(`synthetic_when_idle  = true`);
+        inner.push('', 'health_check {', ...hb.map(l => '  ' + l), '}');
+    }
+    if (route.circuit_breaker) {
+        const cb = route.circuit_breaker;
+        inner.push('', 'circuit_breaker {',
+            `  enabled   = "on"`,
+            `  threshold = ${cb.threshold || 5}`,
+            `  duration  = ${_hq(cb.duration || '30s')}`,
+            '}');
+    }
+    if (route.rate_limit) {
+        const rl = route.rate_limit;
+        const rb = [`enabled = "on"`];
+        if (rl.ignore_global) rb.push(`ignore_global = true`);
+        if (rl.use_policy)    rb.push(`use_policy    = ${_hq(rl.use_policy)}`);
+        if (rl.rule) {
+            const r = rl.rule;
+            rb.push('', 'rule {',
+                `  enabled  = "on"`,
+                `  requests = ${r.requests || 100}`,
+                `  window   = ${_hq(r.window || '1m')}`,
+                ...(r.burst ? [`  burst    = ${r.burst}`] : []),
+                ...(r.key   ? [`  key      = ${_hq(r.key)}`] : []),
+                '}');
+        }
+        inner.push('', 'rate_limit {', ...rb.map(l => '  ' + l), '}');
+    }
+    if (route.cors) {
+        const c = route.cors;
+        const cb = [`enabled = "on"`];
+        if (Array.isArray(c.allowed_origins) && c.allowed_origins.length)
+            cb.push(`allowed_origins = ${_strList(c.allowed_origins)}`);
+        if (Array.isArray(c.allowed_methods) && c.allowed_methods.length)
+            cb.push(`allowed_methods = ${_strList(c.allowed_methods)}`);
+        if (Array.isArray(c.allowed_headers) && c.allowed_headers.length)
+            cb.push(`allowed_headers = ${_strList(c.allowed_headers)}`);
+        if (c.allow_credentials) cb.push(`allow_credentials = true`);
+        inner.push('', 'cors {', ...cb.map(l => '  ' + l), '}');
+    }
+    if (route.cache) {
+        inner.push('', 'cache {',
+            `  enabled = "on"`,
+            `  driver  = ${_hq(route.cache.driver || 'memory')}`,
+            `  ttl     = ${_hq(route.cache.ttl || '5m')}`,
+            '}');
+    }
+    if (route.timeouts) {
+        const tb = [`enabled = "on"`];
+        if (route.timeouts.request) tb.push(`request = ${_hq(route.timeouts.request)}`);
+        inner.push('', 'timeouts {', ...tb.map(l => '  ' + l), '}');
+    }
+    if (route.compression) {
+        inner.push('', 'compression {',
+            `  enabled = "on"`,
+            `  type    = ${_hq(route.compression.type || 'gzip')}`,
+            '}');
+    }
+    if (route.firewall) inner.push('', 'firewall {', '  enabled = "on"', '}');
+    if (route.fallback) {
+        const fb = [`enabled = "on"`];
+        if (route.fallback.redirect_url) fb.push(`redirect_url = ${_hq(route.fallback.redirect_url)}`);
+        if (route.fallback.timeout)      fb.push(`timeout      = ${_hq(route.fallback.timeout)}`);
+        inner.push('', 'fallback {', ...fb.map(l => '  ' + l), '}');
+    }
+    if (route.wasm) {
+        const wb = [`enabled = "on"`, `module  = ${_hq(route.wasm.module || '')}`];
+        if (route.wasm.max_body_size > 0) wb.push(`max_body_size = ${route.wasm.max_body_size}`);
+        if (Array.isArray(route.wasm.access) && route.wasm.access.length)
+            wb.push(`access = ${_strList(route.wasm.access)}`);
+        inner.push('', 'wasm {', ...wb.map(l => '  ' + l), '}');
+    }
+
+    // allowed_ips / strip_prefixes / rewrites
+    if (Array.isArray(route.allowed_ips) && route.allowed_ips.length)
+        inner.push('', `allowed_ips = ${_strList(route.allowed_ips)}`);
+    if (Array.isArray(route.strip_prefixes) && route.strip_prefixes.length)
+        inner.push(`strip_prefixes = ${_strList(route.strip_prefixes)}`);
+    if (Array.isArray(route.rewrites) && route.rewrites.length) {
+        for (const rw of route.rewrites) {
+            inner.push('', `rewrite {`, `  pattern = ${_hq(rw.pattern)}`, `  target  = ${_hq(rw.target)}`, `}`);
+        }
+    }
+
+    // auth blocks
+    if (route.basic_auth) {
+        const users = Array.isArray(route.basic_auth.users) ? route.basic_auth.users : [];
+        inner.push('', 'basic_auth {',
+            `  enabled = "on"`,
+            ...users.map(u => `  user = ${_hq(u)}`),
+            '}');
+    }
+    if (route.jwt_auth) {
+        const jb = [`enabled = "on"`, `secret  = ${_hq(route.jwt_auth.secret || '')}`];
+        if (route.jwt_auth.issuer) jb.push(`issuer  = ${_hq(route.jwt_auth.issuer)}`);
+        inner.push('', 'jwt_auth {', ...jb.map(l => '  ' + l), '}');
+    }
+    if (route.forward_auth) {
+        inner.push('', 'forward_auth {',
+            `  enabled    = "on"`,
+            `  url        = ${_hq(route.forward_auth.url || '')}`,
+            `  on_failure = ${_hq(route.forward_auth.on_failure || 'deny')}`,
+            '}');
+    }
+    if (route.o_auth) {
+        const oa = route.o_auth;
+        const ob = [`enabled       = "on"`, `provider      = ${_hq(oa.provider || '')}`, `client_id     = ${_hq(oa.client_id || '')}`, `client_secret = ${_hq(oa.client_secret || '')}`, `redirect_url  = ${_hq(oa.redirect_url || '')}`, `cookie_secret = ${_hq(oa.cookie_secret || '')}`];
+        if (oa.auth_url)     ob.push(`auth_url     = ${_hq(oa.auth_url)}`);
+        if (oa.token_url)    ob.push(`token_url    = ${_hq(oa.token_url)}`);
+        if (oa.user_api_url) ob.push(`user_api_url = ${_hq(oa.user_api_url)}`);
+        if (Array.isArray(oa.scopes) && oa.scopes.length)        ob.push(`scopes       = ${_strList(oa.scopes)}`);
+        if (Array.isArray(oa.email_domains) && oa.email_domains.length) ob.push(`email_domains = ${_strList(oa.email_domains)}`);
+        inner.push('', 'o_auth {', ...ob.map(l => '  ' + l), '}');
+    }
+
+    // headers block
+    if (route.headers) {
+        const hlines = _headersBlock(route.headers);
+        if (hlines) inner.push('', hlines);
+    }
+
+    // Clean up leading blank lines inside the block
+    const body = inner.join('\n').replace(/^\n+/, '');
+    return `route ${_hq(route.path || '/')} {\n${_indent(body)}\n}`;
+}
+
+function _headersBlock(h) {
+    const lines = [];
+    const _section = (title, sec) => {
+        if (!sec) return;
+        const sl = [];
+        for (const [k, v] of Object.entries(sec.set  || {})) sl.push(`set    = { ${_hq(k)}: ${_hq(v)} }`);
+        for (const [k, v] of Object.entries(sec.add  || {})) sl.push(`add    = { ${_hq(k)}: ${_hq(v)} }`);
+        for (const name    of (sec.remove || []))             sl.push(`remove = ${_hq(name)}`);
+        if (!sl.length) return;
+        lines.push(`${title} {`, ...sl.map(l => '  ' + l), '}');
+    };
+    _section('request',  h.request);
+    _section('response', h.response);
+    if (!lines.length) return '';
+    return 'headers {\n' + _indent(lines.join('\n')) + '\n}';
+}
+
+function _proxyBlock(proxy) {
+    const inner = [];
+    inner.push(`enabled  = "on"`);
+    inner.push(`listen   = ${_hq(proxy.listen || '')}`);
+    if (proxy.strategy)        inner.push(`strategy = ${_hq(proxy.strategy)}`);
+    if (proxy.protocol)        inner.push(`protocol = ${_hq(proxy.protocol)}`);
+    if (proxy.matcher)         inner.push(`matcher  = ${_hq(proxy.matcher)}`);
+    if (proxy.sni)             inner.push(`sni      = ${_hq(proxy.sni)}`);
+    if (proxy.max_connections) inner.push(`max_connections = ${proxy.max_connections}`);
+    if (proxy.proxy_protocol)  inner.push(`proxy_protocol  = true`);
+    if (proxy.session_ttl)     inner.push(`session_ttl     = ${_hq(proxy.session_ttl)}`);
+    if (proxy.max_sessions)    inner.push(`max_sessions    = ${proxy.max_sessions}`);
+    for (const s of (proxy.backends || [])) {
+        const sw = s.weight && s.weight !== 1 ? ` weight = ${s.weight}` : '';
+        inner.push(`server ${_hq(s.address)} {${sw ? ' ' + sw + ' ' : ''}}`);
+    }
+    if (proxy.health_check) {
+        const hc = proxy.health_check;
+        const hb = [`enabled = "on"`];
+        if (hc.interval) hb.push(`interval = ${_hq(hc.interval)}`);
+        if (hc.timeout)  hb.push(`timeout  = ${_hq(hc.timeout)}`);
+        if (hc.send)     hb.push(`send     = ${_hq(hc.send)}`);
+        if (hc.expect)   hb.push(`expect   = ${_hq(hc.expect)}`);
+        inner.push('', 'health_check {', ...hb.map(l => '  ' + l), '}');
+    }
+    return `proxy ${_hq(proxy.name || '')} {\n${_indent(inner.join('\n'))}\n}`;
 }

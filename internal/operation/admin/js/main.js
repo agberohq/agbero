@@ -12,7 +12,7 @@ import {
     getApi, apiSetToken, apiClearToken, reinitApi,
     fetchStatus, logout,
     fetchFirewall, addFirewallRule, deleteFirewallRule,
-    addHost, addHostHCL, deleteHost, updateHost, updateHostHCL, getHostHCL, checkHostExists,
+    addHost, addHostHCL, previewHost, deleteHost, updateHost, updateHostHCL, getHostHCL, checkHostExists,
     fetchLogs, uploadCert, deleteCert,
     keeperStatus, keeperUnlock, keeperLock, keeperList, keeperGet,
     keeperSet, keeperSetFile, keeperDelete,
@@ -27,7 +27,7 @@ import './drawer-listeners.js';
 import { initPerfListeners } from './perf.js';
 import { initLogin, updateNodeDisplay, _loginReset, checkServerStatus } from './login.js';
 import { formatHCL, highlightHCL, HCL_CSS } from './hcl.js';
-import { buildHostConfig } from './host-builder.js';
+import { buildHostConfig, buildHostHCL } from './host-builder.js';
 
 const ERR = (...a) => {
     console.error('[agbero]', ...a);
@@ -110,7 +110,7 @@ async function bootstrapApp() {
         store,
         api: {
             fetchUptime, fetchConfig, fetchCerts, fetchFirewall, fetchLogs, fetchStatus,
-            addHost, addHostHCL, deleteHost, updateHost, updateHostHCL, getHostHCL, checkHostExists,
+            addHost, addHostHCL, previewHost, deleteHost, updateHost, updateHostHCL, getHostHCL, checkHostExists,
             uploadCert, deleteCert, addFirewallRule, deleteFirewallRule,
             broadcastClusterRoute,
             keeperStatus, keeperUnlock, keeperLock, keeperList,
@@ -124,13 +124,13 @@ async function bootstrapApp() {
             splitKeeperKey, decodeKeeperValue,
         },
         hcl:         { formatHCL, highlightHCL, HCL_CSS },
-        hostBuilder: { buildHostConfig },
+        hostBuilder: { buildHostConfig, buildHostHCL },
         writeQueue,
         logger,
         progress:    (channel) => progress(channel),
         oja:         { modal, emit, listen, notify, auth, query, make,
-                       chart, countdown, clickmenu, pagination, Search, tabs, ui,
-                       clipboard, wizard, collapse, hotkeys, Out },
+            chart, countdown, clickmenu, pagination, Search, tabs, ui,
+            clipboard, wizard, collapse, hotkeys, Out },
     };
 
     auth.session.OnStart(async (token) => {
