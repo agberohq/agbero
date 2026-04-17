@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/agberohq/agbero/internal/pkg/ui"
@@ -85,7 +85,7 @@ func (h *Home) Navigate(target, action string) {
 		h.viewer.Show(dir, false)
 		shell := os.Getenv("SHELL")
 		if shell == "" {
-			if runtime.GOOS == woos.Windows {
+			if runtime.GOOS == def.Windows {
 				shell = "cmd.exe"
 			} else {
 				shell = "/bin/sh"

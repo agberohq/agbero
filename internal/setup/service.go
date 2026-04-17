@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/kardianos/service"
 )
 
@@ -96,15 +96,15 @@ func (s *Service) MapError(err error, cmd string) error {
 	errStr := err.Error()
 	exeName := s.getExecutableName()
 
-	if runtime.GOOS == woos.Darwin && strings.Contains(errStr, "launchctl") {
+	if runtime.GOOS == def.Darwin && strings.Contains(errStr, "launchctl") {
 		if strings.Contains(errStr, "Expecting a LaunchAgents path") {
 			return fmt.Errorf("requires root: sudo %s service %s", exeName, cmd)
 		}
 	}
-	if runtime.GOOS == woos.Linux && strings.Contains(errStr, "systemctl") {
+	if runtime.GOOS == def.Linux && strings.Contains(errStr, "systemctl") {
 		return fmt.Errorf("requires root: sudo %s service %s", exeName, cmd)
 	}
-	if runtime.GOOS == woos.Windows && strings.Contains(errStr, "access is denied") {
+	if runtime.GOOS == def.Windows && strings.Contains(errStr, "access is denied") {
 		return fmt.Errorf("requires administrator privileges: run as Administrator")
 	}
 
@@ -115,5 +115,5 @@ func (s *Service) getExecutableName() string {
 	if len(os.Args) > 0 {
 		return filepath.Base(os.Args[0])
 	}
-	return woos.Name
+	return def.Name
 }

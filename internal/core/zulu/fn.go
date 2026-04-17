@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/cespare/xxhash/v2"
 	"github.com/r3labs/diff/v3"
 )
@@ -22,26 +22,26 @@ func NormalizeHost(hostport string) string {
 
 func ServerKey(addr string, tls bool) string {
 	if tls {
-		return woos.SchemeHTTPS + addr
+		return def.SchemeHTTPS + addr
 	}
-	return woos.SchemeHTTP + addr
+	return def.SchemeHTTP + addr
 }
 
 func IsServerKeyTLS(key string) bool {
-	return strings.HasPrefix(key, woos.SchemeHTTPS)
+	return strings.HasPrefix(key, def.SchemeHTTPS)
 }
 
 func NormalizeSubject(s string) string {
 	s = strings.TrimSpace(s)
-	s = strings.TrimSuffix(s, woos.Dot)
+	s = strings.TrimSuffix(s, def.Dot)
 	s = strings.ToLower(s)
 
 	if h, _, err := net.SplitHostPort(s); err == nil {
 		s = h
 	}
 
-	s = strings.TrimPrefix(s, woos.IPv6BracketOpen)
-	s = strings.TrimSuffix(s, woos.IPv6BracketClose)
+	s = strings.TrimPrefix(s, def.IPv6BracketOpen)
+	s = strings.TrimSuffix(s, def.IPv6BracketClose)
 
 	return s
 }

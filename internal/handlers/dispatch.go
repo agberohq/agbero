@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/resource"
@@ -75,7 +76,7 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if len(hcfg.Domains) > 0 {
 			host = hcfg.Domains[0]
 		} else {
-			host = woos.PrivateBindingHost
+			host = def.PrivateBindingHost
 		}
 	} else {
 		host = zulu.NormalizeHost(r.Host)
@@ -94,7 +95,7 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	maxBody := int64(alaye.DefaultMaxBodySize)
+	maxBody := int64(def.DefaultMaxBodySize)
 	if hcfg.Limits.MaxBodySize > 0 {
 		maxBody = hcfg.Limits.MaxBodySize
 	}
@@ -144,7 +145,7 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 // handleRoute prepares the request context and applies route-specific middleware before delegation.
 // It handles path prefix stripping, optional WASM middleware injection, rate limiting, and invokes the route handler.
 func (m *Manager) handleRoute(w http.ResponseWriter, r *http.Request, route *alaye.Route, host *alaye.Host) {
-	ctx := context.WithValue(r.Context(), woos.CtxOriginalPath, r.URL.Path)
+	ctx := context.WithValue(r.Context(), def.CtxOriginalPath, r.URL.Path)
 	reqOut := r.WithContext(ctx)
 
 	if r.URL != nil {
@@ -278,7 +279,7 @@ func (m *Manager) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	targetPort := woos.DefaultHTTPSPortInt
+	targetPort := def.DefaultHTTPSPortInt
 	if len(m.cfg.Global.Bind.HTTPS) > 0 {
 		_, port, err := net.SplitHostPort(m.cfg.Global.Bind.HTTPS[0])
 		if err == nil {
@@ -286,7 +287,7 @@ func (m *Manager) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var target string
-	if targetPort == woos.DefaultHTTPSPortInt {
+	if targetPort == def.DefaultHTTPSPortInt {
 		target = fmt.Sprintf("https://%s%s", host, r.URL.RequestURI())
 	} else {
 		target = fmt.Sprintf("https://%s:%s%s", host, targetPort, r.URL.RequestURI())
@@ -329,7 +330,7 @@ func (m *Manager) logRequest(host string, r *http.Request, start time.Time, stat
 	if m.cfg.Global != nil {
 		ua := r.UserAgent()
 		if m.cfg.Global.Logging.Truncate.Active() {
-			args = append(args, "ua", zulu.Truncate(ua, woos.LogUATruncateLen))
+			args = append(args, "ua", zulu.Truncate(ua, def.LogUATruncateLen))
 		} else {
 			args = append(args, "ua", ua)
 		}

@@ -1,6 +1,7 @@
 package alaye
 
 import (
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
@@ -25,6 +26,10 @@ func (h *Headers) Validate() error {
 	return nil
 }
 
+func (h Headers) IsZero() bool {
+	return h.Enabled.IsZero() && h.Request.IsZero() && h.Response.IsZero()
+}
+
 type Header struct {
 	Enabled expect.Toggle     `hcl:"enabled,attr" json:"enabled"`
 	Set     map[string]string `hcl:"set,attr" json:"set"`
@@ -39,24 +44,31 @@ func (h *Header) Validate() error {
 	}
 	for k, v := range h.Set {
 		if k == "" {
-			return ErrSetHeaderKeyEmpty
+			return def.ErrSetHeaderKeyEmpty
 		}
 		if v == "" {
-			return errors.Newf("%w: %q value cannot be empty", ErrSetHeaderValueEmpty, k)
+			return errors.Newf("%w: %q value cannot be empty", def.ErrSetHeaderValueEmpty, k)
 		}
 	}
 	for k, v := range h.Add {
 		if k == "" {
-			return ErrAddHeaderKeyEmpty
+			return def.ErrAddHeaderKeyEmpty
 		}
 		if v == "" {
-			return errors.Newf("%w: %q value cannot be empty", ErrAddHeaderValueEmpty, k)
+			return errors.Newf("%w: %q value cannot be empty", def.ErrAddHeaderValueEmpty, k)
 		}
 	}
 	for i, name := range h.Remove {
 		if name == "" {
-			return errors.Newf("remove[%d]: %w", i, ErrHeaderNameEmpty)
+			return errors.Newf("remove[%d]: %w", i, def.ErrHeaderNameEmpty)
 		}
 	}
 	return nil
+}
+
+func (h Header) IsZero() bool {
+	return h.Enabled.IsZero() &&
+		len(h.Set) == 0 &&
+		len(h.Add) == 0 &&
+		len(h.Remove) == 0
 }

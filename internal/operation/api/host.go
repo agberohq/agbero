@@ -9,10 +9,12 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/go-chi/chi/v5"
 	"github.com/olekukonko/ll"
@@ -26,6 +28,7 @@ func HostHandler(s *Shared, r chi.Router) {
 	r.Route("/discovery", func(r chi.Router) {
 		r.Get("/", h.list)
 		r.Post("/", h.create)
+		r.Post("/preview", h.preview) // ← add this line
 		r.With(ValidateDomainParam).Get("/{domain}", h.get)
 		r.With(ValidateDomainParam).Put("/{domain}", h.update)
 		r.With(ValidateDomainParam).Delete("/{domain}", h.delete)
@@ -38,6 +41,7 @@ type Host struct {
 	discovery *discovery.Host
 	hostsDir  expect.Folder
 	logger    *ll.Logger
+	tls       *tlss.Manager
 }
 
 // NewHost initializes a Host instance with shared application dependencies.
@@ -47,6 +51,7 @@ func NewHost(cfg *Shared) *Host {
 		discovery: cfg.Discovery,
 		hostsDir:  cfg.State().Global.Storage.HostsDir,
 		logger:    cfg.Logger.Namespace("api"),
+		tls:       cfg.State().TLSS,
 	}
 }
 
@@ -181,7 +186,7 @@ func (h *Host) get(w http.ResponseWriter, r *http.Request) {
 	if detectFormat(r) == "hcl" {
 		filename := existingCfg.SourceFile
 		if filename == "" {
-			filename = zulu.NormalizeHost(domain) + woos.HCLSuffix
+			filename = zulu.NormalizeHost(domain) + def.HCLSuffix
 		}
 
 		hclData, err := os.ReadFile(h.hostsDir.FilePath(filename))
@@ -464,10 +469,66 @@ func (h *Host) deleteByDomain(w http.ResponseWriter, r *http.Request, domain str
 		return
 	}
 
+	// Clean up the TLS cert so nothing is left orphaned on disk or in cache.
+	if h.tls != nil {
+		if err := h.tls.DeleteCertificate(domain); err != nil {
+			// Non-fatal — host is already gone, log and continue.
+			h.logger.Fields("domain", domain, "err", err).Warn("admin: failed to clean up certificate after host delete")
+		}
+	}
+
 	h.logger.Fields("domain", domain).Info("admin: host deleted via api")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok", "message":"Discovery deleted successfully"}`))
+}
+
+// preview handles POST /discovery/preview.
+// Accepts a JSON host config, applies defaults, validates it fully, and returns
+// the resolved config rendered as HCL — exactly what would be written to disk.
+// Nothing is persisted. Use this as a dry-run before create/update.
+func (h *Host) preview(w http.ResponseWriter, r *http.Request) {
+	var req hostCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	if req.Config == nil {
+		http.Error(w, "config is required", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve domain the same way create does.
+	domain := strings.ToLower(strings.TrimSpace(req.Domain))
+	if domain == "" && len(req.Config.Domains) > 0 {
+		domain = strings.ToLower(strings.TrimSpace(req.Config.Domains[0]))
+	}
+	req.Config.Domains = []string{domain}
+
+	// Apply defaults so the preview reflects what would actually be stored.
+	woos.DefaultHost(req.Config)
+
+	// Full validation — same rules as create.
+	if err := req.Validate(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]string{
+			"status": "invalid",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	// Render to HCL — this is what would land on disk.
+	hclBytes, err := parser.MarshalBytes(req.Config)
+	if err != nil {
+		http.Error(w, "Failed to render HCL", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/hcl")
+	w.Write(hclBytes)
 }
 
 // sanitizeHostConfigs redacts sensitive fields from host configurations before JSON serialization.
@@ -515,7 +576,6 @@ func detectFormat(r *http.Request) string {
 func ValidateDomainParam(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if domain := chi.URLParam(r, "domain"); domain != "" {
-
 			e := expect.NewRaw(domain)
 			if _, err := e.Domain(); err != nil && domain != "localhost" {
 				http.Error(w, "Invalid domain format", http.StatusBadRequest)

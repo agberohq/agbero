@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 )
 
@@ -69,7 +70,7 @@ func (Defaults) Compression(c *alaye.Compression) {
 	defaultCompression(c)
 }
 
-func (Defaults) RateLimit(rl *alaye.RouteRate) {
+func (Defaults) RateLimit(rl *alaye.RateRoute) {
 	defaultRateLimit(rl)
 }
 
@@ -95,10 +96,10 @@ func DefaultRoute(r *alaye.Route) {
 
 func defaultGlobal(g *alaye.Global, configPath string) {
 	if g.Version == 0 {
-		g.Version = ConfigFormatVersion
+		g.Version = def.ConfigFormatVersion
 	}
 	if g.General.MaxHeaderBytes == 0 {
-		g.General.MaxHeaderBytes = alaye.DefaultMaxHeaderBytes
+		g.General.MaxHeaderBytes = def.DefaultMaxHeaderBytes
 	}
 	if g.Bind.Redirect == expect.Unknown && len(g.Bind.HTTPS) > 0 {
 		g.Bind.Redirect = expect.Active
@@ -176,16 +177,16 @@ func defaultTimeout(t *alaye.Timeout) {
 	if t.Enabled == expect.Active || t.Enabled == expect.Unknown {
 		t.Enabled = expect.Active
 		if t.Read == 0 {
-			t.Read = alaye.Duration(alaye.DefaultReadTimeout)
+			t.Read = expect.Duration(def.DefaultReadTimeout)
 		}
 		if t.Write == 0 {
-			t.Write = alaye.Duration(alaye.DefaultWriteTimeout)
+			t.Write = expect.Duration(def.DefaultWriteTimeout)
 		}
 		if t.Idle == 0 {
-			t.Idle = alaye.Duration(alaye.DefaultIdleTimeout)
+			t.Idle = expect.Duration(def.DefaultIdleTimeout)
 		}
 		if t.ReadHeader == 0 {
-			t.ReadHeader = alaye.Duration(alaye.DefaultReadHeaderTimeout)
+			t.ReadHeader = expect.Duration(def.DefaultReadHeaderTimeout)
 		}
 	}
 }
@@ -206,10 +207,10 @@ func defaultStorage(s *alaye.Storage, configPath string) {
 		return configDir.Sub(field)
 	}
 
-	s.HostsDir = resolve(s.HostsDir, HostDir)
-	s.CertsDir = resolve(s.CertsDir, CertDir)
-	s.DataDir = resolve(s.DataDir, DataDir)
-	s.WorkDir = resolve(s.WorkDir, WorkDir)
+	s.HostsDir = resolve(s.HostsDir, def.HostDir)
+	s.CertsDir = resolve(s.CertsDir, def.CertDir)
+	s.DataDir = resolve(s.DataDir, def.DataDir)
+	s.WorkDir = resolve(s.WorkDir, def.WorkDir)
 }
 
 func defaultAdmin(a *alaye.Admin) {
@@ -226,7 +227,7 @@ func defaultAdmin(a *alaye.Admin) {
 	if a.TOTP.Enabled.Active() {
 
 		if a.TOTP.Issuer == "" {
-			a.TOTP.Issuer = strings.ToUpper(Name)
+			a.TOTP.Issuer = strings.ToUpper(def.Name)
 		}
 
 		if a.TOTP.Digits == 0 {
@@ -270,16 +271,16 @@ func defaultLogging(l *alaye.Logging) {
 		l.File.Enabled = expect.Active
 	}
 	if l.File.BatchSize <= 0 {
-		l.File.BatchSize = DefaultVictoriaBatch
+		l.File.BatchSize = def.DefaultVictoriaBatch
 	}
 	if l.File.RotateSize <= 0 {
-		l.File.RotateSize = DefaultLogRotateSize
+		l.File.RotateSize = def.DefaultLogRotateSize
 	}
 	if l.Victoria.Enabled == expect.Unknown && l.Victoria.URL != "" {
 		l.Victoria.Enabled = expect.Active
 	}
 	if l.Victoria.BatchSize <= 0 {
-		l.Victoria.BatchSize = DefaultVictoriaBatch
+		l.Victoria.BatchSize = def.DefaultVictoriaBatch
 	}
 	if l.Prometheus.Enabled == expect.Unknown {
 		l.Prometheus.Enabled = expect.Inactive
@@ -308,7 +309,7 @@ func defaultFirewall(f *alaye.Firewall) {
 		f.Mode = "active"
 	}
 	if f.MaxInspectBytes == 0 {
-		f.MaxInspectBytes = DefaultFirewallMaxInspectBytes
+		f.MaxInspectBytes = def.DefaultFirewallMaxInspectBytes
 	}
 	if len(f.InspectContentTypes) == 0 {
 		f.InspectContentTypes = []string{
@@ -339,16 +340,16 @@ func defaultFirewall(f *alaye.Firewall) {
 	}
 }
 
-func defaultRateLimits(rl *alaye.GlobalRate) {
+func defaultRateLimits(rl *alaye.RateGlobal) {
 	hasConfig := len(rl.Policies) > 0 || len(rl.Rules) > 0
 	if rl.Enabled == expect.Unknown && hasConfig {
 		rl.Enabled = expect.Active
 	}
 	if rl.TTL == 0 {
-		rl.TTL = alaye.Duration(DefaultRateLimitTTL)
+		rl.TTL = expect.Duration(def.DefaultRateLimitTTL)
 	}
 	if rl.MaxEntries == 0 {
-		rl.MaxEntries = DefaultRateLimitMaxEntries
+		rl.MaxEntries = def.DefaultRateLimitMaxEntries
 	}
 	for i := range rl.Policies {
 		if rl.Policies[i].Burst == 0 {
@@ -366,10 +367,10 @@ func defaultGossip(g *alaye.Gossip) {
 	}
 	if g.Enabled == expect.Active {
 		if g.Port == 0 {
-			g.Port = alaye.DefaultGossipPort
+			g.Port = def.DefaultGossipPort
 		}
 		if g.TTL == 0 {
-			g.TTL = DefaultGossipTTL
+			g.TTL = def.DefaultGossipTTL
 		}
 	}
 }
@@ -390,16 +391,16 @@ func defaultTLS(t *alaye.TLS, domains []string) {
 			}
 		}
 		if allLocal {
-			t.Mode = alaye.ModeLocalAuto
+			t.Mode = def.ModeLocalAuto
 		} else {
-			t.Mode = alaye.ModeLetsEncrypt
+			t.Mode = def.ModeLetsEncrypt
 		}
 	}
 	switch t.Mode {
-	case alaye.ModeLocalCert:
-	case alaye.ModeLetsEncrypt:
+	case def.ModeLocalCert:
+	case def.ModeLetsEncrypt:
 		defaultLetsEncrypt(&t.LetsEncrypt)
-	case alaye.ModeCustomCA:
+	case def.ModeCustomCA:
 		if t.CustomCA.Enabled == expect.Unknown && t.CustomCA.Root != "" {
 			t.CustomCA.Enabled = expect.Active
 		}
@@ -427,7 +428,7 @@ func defaultBackend(b *alaye.Backend) {
 		b.Enabled = expect.Active
 	}
 	if b.Strategy == "" && len(b.Servers) > 1 {
-		b.Strategy = alaye.StrategyRoundRobin
+		b.Strategy = def.StrategyRoundRobin
 	}
 	for i := range b.Servers {
 		if b.Servers[i].Weight == 0 {
@@ -442,13 +443,13 @@ func defaultHealthCheck(hc *alaye.HealthCheck) {
 	}
 	if hc.Enabled == expect.Active {
 		if hc.Interval == 0 {
-			hc.Interval = alaye.Duration(alaye.DefaultHealthInterval)
+			hc.Interval = expect.Duration(def.DefaultHealthInterval)
 		}
 		if hc.Timeout == 0 {
-			hc.Timeout = alaye.Duration(alaye.DefaultHealthTimeout)
+			hc.Timeout = expect.Duration(def.DefaultHealthTimeout)
 		}
 		if hc.Threshold == 0 {
-			hc.Threshold = alaye.DefaultHealthThreshold
+			hc.Threshold = def.DefaultHealthThreshold
 		}
 		if hc.Method == "" {
 			hc.Method = "GET"
@@ -462,10 +463,10 @@ func defaultCircuitBreaker(cb *alaye.CircuitBreaker) {
 	}
 	if cb.Enabled == expect.Active {
 		if cb.Threshold == 0 {
-			cb.Threshold = alaye.DefaultCircuitBreakerThreshold
+			cb.Threshold = def.DefaultCircuitBreakerThreshold
 		}
 		if cb.Duration == 0 {
-			cb.Duration = alaye.Duration(alaye.DefaultCircuitBreakerDuration)
+			cb.Duration = expect.Duration(def.DefaultCircuitBreakerDuration)
 		}
 	}
 }
@@ -482,10 +483,10 @@ func defaultCompression(c *alaye.Compression) {
 	}
 	if c.Enabled == expect.Active {
 		if c.Type == "" {
-			c.Type = alaye.CompressionGzip
+			c.Type = def.CompressionGzip
 		}
 		if c.Level == 0 {
-			c.Level = DefaultCompressionLevel
+			c.Level = def.DefaultCompressionLevel
 		}
 	}
 }
@@ -495,7 +496,7 @@ func defaultBasicAuth(ba *alaye.BasicAuth) {
 		ba.Enabled = expect.Active
 	}
 	if ba.Realm == "" {
-		ba.Realm = Realm
+		ba.Realm = def.Realm
 	}
 }
 
@@ -511,10 +512,10 @@ func defaultForwardAuth(fa *alaye.ForwardAuth) {
 	}
 	if fa.Enabled == expect.Active {
 		if fa.Timeout == 0 {
-			fa.Timeout = alaye.Duration(DefaultForwardAuthTimeout)
+			fa.Timeout = expect.Duration(def.DefaultForwardAuthTimeout)
 		}
 		if fa.OnFailure == "" {
-			fa.OnFailure = Allow
+			fa.OnFailure = def.Allow
 		}
 		if fa.Request.Enabled == expect.Unknown {
 			if len(fa.Request.Headers) > 0 || fa.Request.ForwardMethod || fa.Request.ForwardURI || fa.Request.ForwardIP {
@@ -537,9 +538,9 @@ func defaultOAuth(oa *alaye.OAuth) {
 	if oa.Enabled == expect.Active {
 		if len(oa.Scopes) == 0 {
 			switch oa.Provider {
-			case alaye.ProviderGoogle, alaye.ProviderOIDC:
-				oa.Scopes = []string{alaye.ScopeOpenID, alaye.ScopeProfile, alaye.ScopeEmail}
-			case alaye.ProviderGitHub:
+			case def.ProviderGoogle, def.ProviderOIDC:
+				oa.Scopes = []string{def.ScopeOpenID, def.ScopeProfile, def.ScopeEmail}
+			case def.ProviderGitHub:
 				oa.Scopes = []string{"user:email"}
 			}
 		}
@@ -552,7 +553,7 @@ func defaultPHP(p *alaye.PHP) {
 	}
 }
 
-func defaultRateLimit(rl *alaye.RouteRate) {
+func defaultRateLimit(rl *alaye.RateRoute) {
 	if rl.Enabled == expect.Unknown && (rl.UsePolicy != "" || rl.Rule.Requests > 0) {
 		rl.Enabled = expect.Active
 	}
@@ -587,7 +588,7 @@ func defaultTCPRoute(t *alaye.Proxy) {
 	}
 	if t.Enabled == expect.Active {
 		if t.Strategy == "" {
-			t.Strategy = alaye.StrategyRoundRobin
+			t.Strategy = def.StrategyRoundRobin
 		}
 		for i := range t.Backends {
 			if t.Backends[i].Enabled == expect.Unknown {
@@ -607,14 +608,14 @@ func defaultUDPProxy(t *alaye.Proxy) {
 	}
 	if t.Enabled == expect.Active {
 		if t.Strategy == "" {
-			t.Strategy = alaye.StrategyRoundRobin
+			t.Strategy = def.StrategyRoundRobin
 		}
 
 		if t.SessionTTL == 0 {
-			t.SessionTTL = alaye.Duration(UDPDefaultSessionTTL)
+			t.SessionTTL = expect.Duration(def.UDPDefaultSessionTTL)
 		}
 		if t.MaxSessions == 0 {
-			t.MaxSessions = UDPDefaultMaxSessions
+			t.MaxSessions = def.UDPDefaultMaxSessions
 		}
 		for i := range t.Backends {
 			if t.Backends[i].Enabled == expect.Unknown {
@@ -628,31 +629,31 @@ func defaultUDPProxy(t *alaye.Proxy) {
 	}
 }
 
-func defaultUDPHealthCheck(thc *alaye.TCPHealthCheck) {
+func defaultUDPHealthCheck(thc *alaye.HealthCheckProtocol) {
 
-	if thc.Enabled == expect.Unknown && (thc.Send != "" || thc.Expect != "") {
+	if thc.Enabled == expect.Unknown && (!thc.Send.Empty() || !thc.Expect.Empty()) {
 		thc.Enabled = expect.Active
 	}
 	if thc.Enabled == expect.Active {
 		if thc.Interval == 0 {
-			thc.Interval = alaye.Duration(UDPHealthCheckInterval)
+			thc.Interval = expect.Duration(def.UDPHealthCheckInterval)
 		}
 		if thc.Timeout == 0 {
-			thc.Timeout = alaye.Duration(UDPHealthCheckTimeout)
+			thc.Timeout = expect.Duration(def.UDPHealthCheckTimeout)
 		}
 	}
 }
 
-func defaultTCPHealthCheck(thc *alaye.TCPHealthCheck) {
-	if thc.Enabled == expect.Unknown && (thc.Send != "" || thc.Expect != "") {
+func defaultTCPHealthCheck(thc *alaye.HealthCheckProtocol) {
+	if thc.Enabled == expect.Unknown && (!thc.Send.Empty() || !thc.Expect.Empty()) {
 		thc.Enabled = expect.Active
 	}
 	if thc.Enabled == expect.Active {
 		if thc.Interval == 0 {
-			thc.Interval = alaye.Duration(TCPHealthCheckInterval)
+			thc.Interval = expect.Duration(def.TCPHealthCheckInterval)
 		}
 		if thc.Timeout == 0 {
-			thc.Timeout = alaye.Duration(TCPHealthCheckTimeout)
+			thc.Timeout = expect.Duration(def.TCPHealthCheckTimeout)
 		}
 	}
 }
@@ -674,7 +675,7 @@ func defaultWorker(w *alaye.Work) {
 	}
 
 	if w.Timeout == 0 {
-		w.Timeout = alaye.Duration(DefaultWorkerTimeout)
+		w.Timeout = expect.Duration(def.DefaultWorkerTimeout)
 	}
 
 	if w.Landlock == expect.Unknown {
@@ -682,7 +683,7 @@ func defaultWorker(w *alaye.Work) {
 	}
 
 	if w.Background && w.Restart == "" {
-		w.Restart = DefaultWorkerRestart
+		w.Restart = def.DefaultWorkerRestart
 	}
 
 	if w.Cache.Enabled.Active() && w.Cache.Driver == "" {
@@ -704,11 +705,11 @@ func defaultGit(g *alaye.Git) {
 	hasPush := g.Secret.String() != ""
 	switch {
 	case hasPull && hasPush:
-		g.Mode = alaye.GitModeBoth
+		g.Mode = def.GitModeBoth
 	case hasPush:
-		g.Mode = alaye.GitModePush
+		g.Mode = def.GitModePush
 	case hasPull:
-		g.Mode = alaye.GitModePull
+		g.Mode = def.GitModePull
 	}
 }
 
@@ -720,7 +721,7 @@ func defaultReplay(r *alaye.Replay) {
 	if r.Enabled == expect.Active {
 
 		if r.Timeout == 0 {
-			r.Timeout = alaye.Duration(DefaultReplayTimeout)
+			r.Timeout = expect.Duration(def.DefaultReplayTimeout)
 		}
 
 		if r.RefererMode == "" {
@@ -744,15 +745,15 @@ func defaultFallback(f *alaye.Fallback) {
 		if f.StatusCode == 0 {
 			switch f.Type {
 			case "redirect":
-				f.StatusCode = DefaultFallbackRedirectCode
+				f.StatusCode = def.DefaultFallbackRedirectCode
 			case "proxy":
-				f.StatusCode = DefaultFallbackProxyCode
+				f.StatusCode = def.DefaultFallbackProxyCode
 			default:
-				f.StatusCode = DefaultFallbackStaticCode
+				f.StatusCode = def.DefaultFallbackStaticCode
 			}
 		}
 		if f.ContentType == "" && f.Type == "static" {
-			f.ContentType = MimeJSON
+			f.ContentType = def.MimeJSON
 		}
 	}
 }
@@ -775,7 +776,7 @@ func defaultCORS(c *alaye.CORS) {
 		c.AllowedHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With"}
 	}
 	if c.MaxAge == 0 {
-		c.MaxAge = DefaultCORSMaxAge
+		c.MaxAge = def.DefaultCORSMaxAge
 	}
 }
 
@@ -784,7 +785,7 @@ func defaultCache(c *alaye.Cache) {
 		return
 	}
 	if c.TTL == 0 {
-		c.TTL = alaye.Duration(DefaultCacheTTL)
+		c.TTL = expect.Duration(def.DefaultCacheTTL)
 	}
 	if len(c.Methods) == 0 {
 		c.Methods = []string{"GET", "HEAD"}
@@ -793,10 +794,10 @@ func defaultCache(c *alaye.Cache) {
 		c.Driver = "memory"
 	}
 	if c.Driver == "memory" && c.Memory == nil {
-		c.Memory = &alaye.MemoryCache{MaxItems: DefaultCacheMaxItems}
+		c.Memory = &alaye.MemoryCache{MaxItems: def.DefaultCacheMaxItems}
 	}
 	if c.Driver == "redis" && c.Redis == nil {
-		c.Redis = &alaye.RedisCache{Host: LocalhostIPv4, Port: DefaultRedisPort}
+		c.Redis = &alaye.RedisCache{Host: def.LocalhostIPv4, Port: def.DefaultRedisPort}
 	}
 }
 

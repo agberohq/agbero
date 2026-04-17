@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cluster"
 	"github.com/go-chi/chi/v5"
@@ -53,7 +53,7 @@ func requestWithService(method, url string, body []byte, service string) *http.R
 	} else {
 		req = httptest.NewRequest(method, url, nil)
 	}
-	req.Header.Set(woos.HeaderXAgberoService, service)
+	req.Header.Set(def.HeaderXAgberoService, service)
 	return req
 }
 

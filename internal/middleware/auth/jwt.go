@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/olekukonko/errors"
 )
@@ -25,17 +25,17 @@ func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get(woos.AuthorizationHeaderKey)
+			authHeader := r.Header.Get(def.AuthorizationHeaderKey)
 			if authHeader == "" {
 				http.Error(w, `{"error":"missing_authorization"}`, http.StatusUnauthorized)
 				return
 			}
 
-			tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
+			tokenStr := strings.TrimPrefix(authHeader, def.HeaderKeyBearer+" ")
 
 			token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (any, error) {
 				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, errors.Newf("%w: %v", woos.ErrUnexpectedSigningMethod, token.Header["alg"])
+					return nil, errors.Newf("%w: %v", def.ErrUnexpectedSigningMethod, token.Header["alg"])
 				}
 				return secretBytes, nil
 			})
@@ -90,17 +90,17 @@ func JWTWithRevocation(cfg *alaye.JWTAuth, isRevoked func(jti string) bool) func
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get(woos.AuthorizationHeaderKey)
+			authHeader := r.Header.Get(def.AuthorizationHeaderKey)
 			if authHeader == "" {
 				http.Error(w, `{"error":"missing_authorization"}`, http.StatusUnauthorized)
 				return
 			}
 
-			tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
+			tokenStr := strings.TrimPrefix(authHeader, def.HeaderKeyBearer+" ")
 
 			token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (any, error) {
 				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, errors.Newf("%w: %v", woos.ErrUnexpectedSigningMethod, token.Header["alg"])
+					return nil, errors.Newf("%w: %v", def.ErrUnexpectedSigningMethod, token.Header["alg"])
 				}
 				return secretBytes, nil
 			})

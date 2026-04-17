@@ -5,8 +5,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"io"
+
+	"github.com/olekukonko/errors"
 
 	"golang.org/x/crypto/chacha20poly1305"
 )

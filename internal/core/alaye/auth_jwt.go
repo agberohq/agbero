@@ -1,6 +1,7 @@
 package alaye
 
 import (
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
@@ -20,7 +21,15 @@ func (j *JWTAuth) Validate() error {
 	}
 
 	if j.Secret == "" {
-		return errors.Newf("jwt_auth: %w", ErrSecretRequired)
+		return errors.Newf("jwt_auth: %w", def.ErrSecretRequired)
 	}
 	return nil
+}
+
+func (j JWTAuth) IsZero() bool {
+	return j.Enabled.IsZero() &&
+		j.Secret == "" &&
+		len(j.ClaimMap) == 0 &&
+		j.Issuer == "" &&
+		j.Audience == ""
 }

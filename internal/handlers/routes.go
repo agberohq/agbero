@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -167,11 +168,11 @@ func (h *Route) Close() error {
 		h.Proxy.Stop()
 	}
 	if len(h.Backends) > 0 {
-		drainTimeout := woos.DefaultTransportDrainTimeout
+		drainTimeout := def.DefaultTransportDrainTimeout
 		if h.global != nil && h.global.Timeouts.Read > 0 {
 			drainTimeout = max(
-				h.global.Timeouts.Read.StdDuration()+woos.DefaultTransportResponseHeaderTimeout,
-				woos.DefaultTransportDrainTimeout,
+				h.global.Timeouts.Read.StdDuration()+def.DefaultTransportResponseHeaderTimeout,
+				def.DefaultTransportDrainTimeout,
 			)
 		}
 		for _, b := range h.Backends {
@@ -255,12 +256,12 @@ func FallbackRoute(msg string) *Route {
 	}
 }
 
-func buildRouteLimiter(rlc *alaye.RouteRate, global *alaye.GlobalRate, ipMgr *zulu.IPManager, sharedState woos.SharedState) *ratelimit.RateLimiter {
+func buildRouteLimiter(rlc *alaye.RateRoute, global *alaye.RateGlobal, ipMgr *zulu.IPManager, sharedState woos.SharedState) *ratelimit.RateLimiter {
 	if rlc == nil || (!rlc.Enabled.Active() && rlc.UsePolicy == "") {
 		return nil
 	}
-	ttl := woos.DefaultRateTTL
-	maxEntries := woos.DefaultRateMaxEntries
+	ttl := def.DefaultRateTTL
+	maxEntries := def.DefaultRateMaxEntries
 	if global != nil {
 		if global.TTL > 0 {
 			ttl = global.TTL.StdDuration()

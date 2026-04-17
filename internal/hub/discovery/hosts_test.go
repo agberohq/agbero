@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cluster"
@@ -71,7 +72,7 @@ func TestOnClusterChange_Add(t *testing.T) {
 		Path: "/api",
 		Backends: alaye.Backend{
 			Enabled:  expect.Active,
-			Strategy: alaye.StrategyRandom,
+			Strategy: def.StrategyRandom,
 			Servers: []alaye.Server{
 				{Address: "http://127.0.0.1:8080", Weight: 1},
 			},
@@ -320,7 +321,7 @@ func TestRebuildLookupLocked_MergeFileAndDynamicSamePath(t *testing.T) {
 			{
 				Path: "/api",
 				Backends: alaye.Backend{
-					Strategy: alaye.StrategyRoundRobin,
+					Strategy: def.StrategyRoundRobin,
 					Servers: []alaye.Server{
 						{Address: "http://127.0.0.1:7000", Weight: 1},
 					},
@@ -332,7 +333,7 @@ func TestRebuildLookupLocked_MergeFileAndDynamicSamePath(t *testing.T) {
 	h.clusterRoutes["example.com"] = alaye.Route{
 		Path: "/api",
 		Backends: alaye.Backend{
-			Strategy: alaye.StrategyRandom,
+			Strategy: def.StrategyRandom,
 			Servers: []alaye.Server{
 				{Address: "http://127.0.0.1:8000", Weight: 1},
 			},

@@ -1,10 +1,12 @@
-package woos
+// Errors raised during proxy operation, server startup, and runtime subsystems.
+package def
 
 import (
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/errors/errmgr"
 )
 
+// general
 var (
 	ErrDefined = errmgr.Define("ErrDefined,", "error occurred with (%s): %s")
 )
@@ -24,7 +26,6 @@ var (
 )
 
 // matcher
-
 var (
 	ErrEmptyPattern         = errors.New("empty pattern")
 	ErrMultipleCatchAllsMsg = errors.New("multiple catch-alls not allowed")
@@ -46,14 +47,12 @@ var (
 )
 
 // security
-
 var (
 	ErrInvalidPEMFile = errors.New("invalid pem file")
 	ErrNotEd25519Key  = errors.New("key is not ed25519")
 )
 
 // token
-
 var (
 	ErrInvalidToken        = errors.New("invalid token")
 	ErrInvalidClaims       = errors.New("invalid claims")
@@ -61,7 +60,6 @@ var (
 )
 
 // mkcert
-
 var (
 	ErrMkCertCAROOTFail  = errors.New("mkcert -CAROOT failed")
 	ErrMkCertEmptyCAROOT = errors.New("mkcert returned empty CAROOT")
@@ -72,7 +70,7 @@ var (
 	ErrEmptyConfigPath = errors.New("config path is empty")
 )
 
-// manager
+// tls manager
 var (
 	ErrEmptyLEEmail         = errors.New("le_email is empty")
 	ErrEmptyCertFile        = errors.New("cert_dir is empty")
@@ -97,7 +95,7 @@ var (
 	ErrStorageDirCreateFail = errors.New("failed to create storage directory")
 )
 
-// Installer
+// tls installer
 var (
 	ErrMkCertRequired        = errors.New("mkcert is required for development TLS")
 	ErrMkCertInstalledFailed = errors.New("mkcert -install failed")
@@ -115,10 +113,10 @@ var (
 )
 
 // gossip
+// Note: ErrInvalidSecretKey for config validation lives in errors_config.go.
 var (
-	ErrAuthEndpoint     = errors.New("auth endpoint returned non-OK status")
-	ErrEmptyToken       = errors.New("empty token received from auth endpoint")
-	ErrInvalidSecretKey = errors.New("gossip secret key must be 16, 24, or 32 bytes")
+	ErrAuthEndpoint = errors.New("auth endpoint returned non-OK status")
+	ErrEmptyToken   = errors.New("empty token received from auth endpoint")
 )
 
 // backend
@@ -130,7 +128,6 @@ var (
 )
 
 // tcp
-
 var (
 	ErrShortData      = errors.New("short data")
 	ErrNotTLS         = errors.New("not tls")
@@ -142,8 +139,7 @@ var (
 	ErrShortExt       = errors.New("short ext")
 )
 
-//jwt
-
+// jwt
 var (
 	ErrUnexpectedSigningMethod = errors.New("unexpected signing method")
 	ErrUnsupportedProvider     = errors.New("unsupported provider")
@@ -151,7 +147,6 @@ var (
 )
 
 // firewall
-
 var (
 	ErrDataDirNotSet  = errors.New("data directory not set")
 	ErrFailedToOpenDB = errors.New("failed to open firewall db")

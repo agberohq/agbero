@@ -25,3 +25,7 @@ func (e *ErrorPages) Validate() error {
 	}
 	return nil
 }
+
+func (e ErrorPages) IsZero() bool {
+	return len(e.Pages) == 0 && e.Default == ""
+}

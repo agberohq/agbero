@@ -27,11 +27,11 @@ type Worker struct {
 	globalEnv map[string]expect.Value
 	routeEnv  map[string]expect.Value
 	orch      *orchestrator.Manager
-	statsKey  alaye.BackendKey
+	statsKey  alaye.Key
 }
 
 func NewWorker(cfg WorkerConfig) *Worker {
-	key := cfg.Route.WorkerBackendKey(cfg.Domain, cfg.Work.Name)
+	key := cfg.Route.KeyWorker(cfg.Domain, cfg.Work.Name)
 	cfg.Resource.Metrics.GetOrRegister(key)
 	return &Worker{
 		res:       cfg.Resource,

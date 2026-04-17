@@ -3,6 +3,7 @@ package alaye
 import (
 	"net/url"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
@@ -28,24 +29,24 @@ func (f *Fallback) Validate() error {
 	switch f.Type {
 	case "static":
 		if f.Body == "" {
-			return ErrFallbackBodyRequired
+			return def.ErrFallbackBodyRequired
 		}
 	case "redirect":
 		if f.RedirectURL == "" {
-			return ErrFallbackRedirectURLRequired
+			return def.ErrFallbackRedirectURLRequired
 		}
 		if _, err := url.Parse(f.RedirectURL); err != nil {
 			return errors.Newf("fallback: invalid redirect_url: %w", err)
 		}
 	case "proxy":
 		if f.ProxyURL == "" {
-			return ErrFallbackProxyURLRequired
+			return def.ErrFallbackProxyURLRequired
 		}
 		if _, err := url.Parse(f.ProxyURL); err != nil {
 			return errors.Newf("fallback: invalid proxy_url: %w", err)
 		}
 	default:
-		return ErrFallbackTypeInvalid
+		return def.ErrFallbackTypeInvalid
 	}
 
 	if f.CacheTTL < 0 {
@@ -57,4 +58,15 @@ func (f *Fallback) Validate() error {
 // IsActive returns true if fallback is enabled and a type has been configured.
 func (f *Fallback) IsActive() bool {
 	return f.Enabled.Active() && f.Type != ""
+}
+
+func (f Fallback) IsZero() bool {
+	return f.Enabled.IsZero() &&
+		f.Type == "" &&
+		f.StatusCode == 0 &&
+		f.Body == "" &&
+		f.ContentType == "" &&
+		f.RedirectURL == "" &&
+		f.ProxyURL == "" &&
+		f.CacheTTL == 0
 }

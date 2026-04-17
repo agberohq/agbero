@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"runtime"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/agberohq/agbero/internal/pkg/ui"
@@ -78,12 +78,12 @@ func (c *Cert) printNSSHint(loc *tlss.Local) {
 		return
 	}
 	switch runtime.GOOS {
-	case woos.Darwin:
-		c.p.Logger.Warn(woos.NSSInstallHintDarwin)
-	case woos.Linux:
-		c.p.Logger.Warn(woos.NSSInstallHintLinux)
+	case def.Darwin:
+		c.p.Logger.Warn(def.NSSInstallHintDarwin)
+	case def.Linux:
+		c.p.Logger.Warn(def.NSSInstallHintLinux)
 	default:
-		c.p.Logger.Warn(woos.NSSInstallHintOther)
+		c.p.Logger.Warn(def.NSSInstallHintOther)
 	}
 }
 
@@ -202,7 +202,7 @@ func (c *Cert) Info(configPath string) {
 
 func parseCertName(name string) (domain, kind string) {
 	switch {
-	case name == woos.InternalAuthKeyName:
+	case name == def.InternalAuthKeyName:
 		return "internal", "auth key"
 	default:
 		return name, "—"

@@ -1,8 +1,12 @@
 package alaye
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/agberohq/agbero/internal/core/def"
+)
 
 // ValidateStrategy returns true if the strategy is valid
 func ValidateStrategy(s string) bool {
-	return validStrategies[strings.ToLower(s)]
+	return def.ValidStrategies[strings.ToLower(s)]
 }

@@ -8,6 +8,11 @@ import (
 	resource "github.com/agberohq/agbero/internal/hub/resource"
 )
 
+var (
+	pingMsg = []byte("PING\r\n")
+	pongMsg = []byte("PONG")
+)
+
 func testBackendConfig(addr string) BackendConfig {
 	res := resource.New()
 	return BackendConfig{
@@ -55,12 +60,12 @@ func TestNewBackend_WithHealthCheck(t *testing.T) {
 			Name:     "test-proxy",
 			Listen:   ":3478",
 			Protocol: "udp",
-			HealthCheck: alaye.TCPHealthCheck{
+			HealthCheck: alaye.HealthCheckProtocol{
 				Enabled:  expect.Active,
-				Send:     "ping",
-				Expect:   "ping",
-				Interval: alaye.Duration(500_000_000), // 500ms
-				Timeout:  alaye.Duration(200_000_000), // 200ms
+				Send:     pingMsg,
+				Expect:   pongMsg,
+				Interval: expect.Duration(500_000_000), // 500ms
+				Timeout:  expect.Duration(200_000_000), // 200ms
 			},
 		},
 		Resource: res,

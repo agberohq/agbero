@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 )
 
@@ -121,7 +122,7 @@ func (s *Disk) Save(issuer, domain string, certPEM, keyPEM []byte) error {
 	base := filepath.Join(issuerDir, s.safeName(domain))
 
 	if len(certPEM) > 0 {
-		if err := s.writeFileAtomic(base+".crt", certPEM, 0644); err != nil {
+		if err := s.writeFileAtomic(base+".crt", certPEM, def.ConfigFilePerm); err != nil {
 			return fmt.Errorf("failed to save certificate: %w", err)
 		}
 	}

@@ -2,9 +2,11 @@
 
 Deep dive into Agbero's advanced features: clustering, Git-based deployments, distributed state, and custom health scoring.
 
+---
+
 ## 1. Clustering & Gossip
 
-Agbero uses a hybrid clustering approach. It leverages HashiCorp's memberlist for UDP gossip (node discovery, status, locks, ACME challenges) and reliable TCP streams for large payloads (host configurations, TLS certificates).
+Agbero uses a hybrid clustering approach. It leverages HashiCorp's memberlist for UDP gossip (node discovery, status, locks, ACME challenges) and reliable TCP streams for large payloads (host configurations, TLS certificates). Keeper secrets are synchronised over the same encrypted gossip channel.
 
 ### Configuration
 
@@ -13,8 +15,8 @@ Agbero uses a hybrid clustering approach. It leverages HashiCorp's memberlist fo
 gossip {
   enabled    = true
   port       = 7946                           # UDP/TCP cluster port
-  secret_key = "env.GOSSIP_SECRET"               # must be 16, 24, or 32 bytes — generate with: agbero secret cluster
-  seeds      = ["node2:7946", "node3:7946"]   # Initial peers
+  secret_key = "env.GOSSIP_SECRET"            # must be 16, 24, or 32 bytes — generate with: agbero secret cluster
+  seeds      = ["node2:7946", "node3:7946"]   # Initial peers to join on startup
   ttl        = 30                             # Seconds before dead node removal
 
   # Shared state for distributed rate limiting & firewalls
@@ -24,7 +26,7 @@ gossip {
     redis {
       host       = "redis.internal"
       port       = 6379
-      password   = "${env.REDIS_PASS}"
+      password   = "env.REDIS_PASS"
       db         = 0
       key_prefix = "agbero:state:"
     }
@@ -41,12 +43,15 @@ agbero secret cluster
 # Output: b64.xVZ9k2mN8pQrS4tU6vW8xY0zA1bC3dE5fG7hI9jK=
 ```
 
+Copy this value to `secret_key` in `agbero.hcl` on **every node**. All nodes in a cluster must use the same key.
+
 ### What Gets Synchronized
 
 | Type | Protocol | Description |
 |------|----------|-------------|
 | Host Configs (`.hcl`) | TCP | Dynamic route definitions synced to `hosts.d/` |
 | Certificates (`.crt`, `.key`) | TCP | Valid TLS certificates and encrypted private keys |
+| Keeper Secrets | UDP gossip | Encrypted secrets broadcast when written on any node |
 | ACME Challenges | UDP | Let's Encrypt HTTP-01 challenge tokens |
 | Node Status | UDP | Node health, liveness, and draining status |
 | Distributed Locks | UDP | Coordination primitives for single-node executions |
@@ -62,11 +67,9 @@ The cluster manager is implemented in `internal/hub/cluster/` and provides:
 
 ---
 
----
-
 ## 2. Keeper — Encrypted Secret Store
 
-The keeper is an encrypted, passphrase-protected database (`data.d/keeper.db`) that stores secrets, TLS certificates, the internal Ed25519 auth key, admin user credentials, and TOTP seeds. It is a required component — Agbero will not start if the keeper cannot be opened.
+The keeper is an encrypted, passphrase-protected database (`data.d/keeper.db`) that stores secrets, TLS certificates, the internal Ed25519 auth key, admin user credentials, and TOTP seeds. **It is a required component — Agbero will not start if the keeper cannot be opened.**
 
 ### Unlocking the Keeper
 
@@ -86,6 +89,9 @@ AGBERO_PASSPHRASE=mypassphrase agbero run
 security {
   keeper {
     passphrase = "env.AGBERO_PASSPHRASE"  # reads from the environment
+    auto_lock  = "2h"                      # lock after 2 hours of inactivity
+    logging    = true                      # log keeper operations
+    audit      = true                      # detailed audit trail
   }
 }
 ```
@@ -98,9 +104,12 @@ Any `Value`-typed field in your HCL can reference a keeper secret using the `ss:
 # Instead of putting credentials directly in your config:
 # headers = { "Authorization" = "Bearer sk_live_AbCdEf..." }  # BAD
 
+# Or even in environment variables:
+# headers = { "Authorization" = "Bearer env.STRIPE_KEY" }     # BETTER but still in process env
+
 # Reference them from the keeper:
 headers = {
-  "Authorization" = "Bearer ss://integrations/stripe-key"  # GOOD
+  "Authorization" = "Bearer ss://integrations/stripe-key"    # BEST
 }
 ```
 
@@ -110,7 +119,7 @@ Store the secret in the keeper:
 agbero keeper set integrations/stripe-key "sk_live_AbCdEf..."
 ```
 
-The `ss://namespace/key` reference is resolved at request time — the secret never appears in your config file, logs, or process arguments.
+The `ss://namespace/key` reference is resolved at **request time** — the secret never appears in your config file, logs, or process arguments. This also means rotating a secret takes effect immediately on the next request without any reload or restart.
 
 ### First-time Setup
 
@@ -125,17 +134,71 @@ agbero run
 AGBERO_PASSPHRASE=mypassphrase agbero run
 ```
 
-See [Command Guide](./command.md#keeper--encrypted-secret-store) for all keeper CLI operations.
+See [Security Guide](./security.md) for the full Keeper REST API reference and [Command Guide](./command.md#keeper--encrypted-secret-store) for all keeper CLI operations.
+
+---
+
+### Secrets in a Cluster — Automatic Synchronisation
+
+This is one of the most important things to understand when running Agbero in cluster mode: **keeper secrets are automatically synchronised across all nodes.**
+
+#### How It Works
+
+**On node join:** When a new node joins an existing cluster, the existing member includes an encrypted snapshot of all keeper secrets in its join state message. The joining node receives and decrypts the snapshot, writing every secret into its own local keeper. After joining, the new node has a complete copy of all secrets without any manual intervention.
+
+**On secret write:** When any node writes a secret via `agbero keeper set` or `POST /api/v1/keeper/secrets`, the secret is immediately broadcast to all cluster peers via gossip as an `OpSecret` message. Each peer receives the encrypted message, decrypts it using the shared gossip cipher, and writes it to its local keeper. The deletion of a secret (`agbero keeper delete`, `DELETE /api/v1/keeper/secrets/...`) is similarly broadcast — every node removes the key from its local keeper.
+
+**Propagation model:** Secret sync is eventually consistent (gossip, not Raft). There is a brief window (typically under a second on a LAN) after a write where other nodes may not yet have the new value. In practice this is not noticeable because secret reads happen from the local keeper on each node, not over the network.
+
+#### Requirement: `secret_key` Must Be Set
+
+Keeper secret synchronisation **requires** `secret_key` to be configured in the `gossip` block. Without a cipher, `BroadcastSecret` returns an error and secrets are only written locally — they do not propagate.
+
+```hcl
+gossip {
+  enabled    = true
+  secret_key = "env.GOSSIP_SECRET"   # REQUIRED for secret sync
+  seeds      = ["node2:7946"]
+}
+```
+
+If you write a secret and it doesn't appear on other nodes, check:
+1. Is `secret_key` set on all nodes?
+2. Is the key the same value on all nodes?
+3. Check logs for `keeper: secret written locally but cluster broadcast failed`
+
+#### Cluster Secret Sync Diagram
+
+```
+Node 1 (existing)          Node 2 (joining)
+─────────────────          ────────────────
+keeper.db:                 keeper.db: (empty)
+  auth/jwt = "abc"
+  stripe/key = "sk_..."
+
+Node 2 joins →
+  Node 1 sends encrypted
+  keeper snapshot →         Receives snapshot
+                            Decrypts with gossip key
+                            Writes to local keeper.db:
+                              auth/jwt = "abc"
+                              stripe/key = "sk_..."
+
+Later: agbero keeper set newns/newkey "value" (on Node 1)
+  BroadcastSecret →         Receives OpSecret
+                            Decrypts, writes to keeper.db:
+                              newns/newkey = "value"
+```
 
 ---
 
 ## 3. Git-Based Deployments (Cook)
 
-Agbero includes "Cook" - an embedded GitOps engine for atomic static site deployments.
+Agbero includes "Cook" — an embedded GitOps engine for atomic static site deployments.
 
 ### How It Works
 
-Agbero clones your repository to `work.d/{id}/deploy/{commit}`. It performs an atomic symlink swap to the `current` deployment, ensuring zero-downtime rollouts and instant rollbacks.
+Agbero clones your repository to `work.d/{id}/deploy/{commit}`. It performs an atomic symlink swap to the `current` deployment, ensuring zero-downtime rollouts and instant rollbacks. The previous deployment is retained so a rollback is just swapping the symlink back.
 
 ### Configuration
 
@@ -149,16 +212,16 @@ route "/" {
       url      = "git@github.com:org/frontend.git"
       branch   = "main"
       sub_dir  = "dist"          # Serve a specific folder inside the repo
-      interval = "30s"           # Polling interval fallback
-      
-      # Webhook secret (for push-to-deploy verification)
-      secret = "${env.GITHUB_WEBHOOK_SECRET}"
-      
+      interval = "5m"            # Polling interval fallback (when no webhook)
+
+      # Webhook secret (for push-to-deploy verification via HMAC)
+      secret = "env.GITHUB_WEBHOOK_SECRET"
+
       auth {
-        type = "ssh-key"         # "basic", "ssh-key", "ssh-agent"
-        username = "git"
-        ssh_key = "env.PRIVATE_KEY"
-        ssh_key_passphrase = "env.SSH_PASSPHRASE"
+        type               = "ssh-key"   # "basic", "ssh-key", "ssh-agent"
+        username           = "git"
+        ssh_key            = "ss://deploy/ssh-key"        # stored in keeper
+        ssh_key_passphrase = "ss://deploy/ssh-passphrase" # stored in keeper
       }
     }
   }
@@ -176,6 +239,8 @@ Headers:
   X-GitHub-Event: push
 ```
 
+GitHub and GitLab both send compatible HMAC signatures. Point your webhook at this URL and set the same secret you configured in `secret`.
+
 ### Deployment Status
 
 Check deployment health and current active commits via the uptime API:
@@ -188,10 +253,10 @@ curl http://localhost:9090/uptime | jq '.git'
 ```json
 {
   "frontend_app": {
-    "state": "healthy",
+    "state":        "healthy",
     "current_path": "/var/lib/agbero/work.d/frontend_app/deploy/a1b2c3d4/dist",
-    "commit": "a1b2c3d4e5f6g7h8i9j0",
-    "deployments": 3
+    "commit":       "a1b2c3d4e5f6g7h8i9j0",
+    "deployments":  3
   }
 }
 ```
@@ -207,18 +272,18 @@ The cook manager (`internal/hub/cook/`) provides:
 
 ---
 
-## 3. Health Scoring System
+## 4. Health Scoring System
 
-Unlike simple up/down binary checks, Agbero uses a 0-100 health score with four states to intelligently route traffic and drain failing backends.
+Unlike simple up/down binary checks, Agbero uses a 0–100 health score with four states to intelligently route traffic and drain failing backends.
 
 ### Health States
 
 | State | Score Range | Traffic Weight | Description |
 |-------|-------------|----------------|-------------|
-| Healthy | 80-100 | 100% | Fully operational |
-| Degraded | 50-79 | 50% | Performance issues |
-| Unhealthy | 10-49 | 10% | Partial availability |
-| Dead | 0-9 | 0% | Circuit broken |
+| Healthy | 80–100 | 100% | Fully operational |
+| Degraded | 50–79 | 50% | Performance issues detected |
+| Unhealthy | 10–49 | 10% | Partial availability |
+| Dead | 0–9 | 0% | Circuit broken, no traffic sent |
 
 ### Configuration
 
@@ -231,16 +296,16 @@ route "/api" {
 
   health_check {
     enabled = true
-    path = "/health"
+    path    = "/health"
     interval = "10s"
-    
+
     # Custom thresholds
-    latency_baseline_ms = 50      # 50ms baseline is 100% healthy
-    latency_degraded_factor = 2.5 # >125ms reduces score
-    
+    latency_baseline_ms     = 50    # 50ms baseline = 100% healthy
+    latency_degraded_factor = 2.5   # >125ms (2.5×) reduces score
+
     # Advanced probing behavior
-    accelerated_probing = true    # Probe aggressively when unhealthy
-    synthetic_when_idle = true    # Probe even when no active traffic
+    accelerated_probing = true      # Probe aggressively when unhealthy
+    synthetic_when_idle = true      # Probe even when no active traffic
   }
 }
 ```
@@ -252,9 +317,15 @@ The health score combines multiple factors:
 | Factor | Weight | Description |
 |--------|--------|-------------|
 | Latency | 40% | Response time relative to baseline |
-| Success Rate | 30% | Active probe success/failure |
+| Success Rate | 30% | Active probe success/failure ratio |
 | Passive Rate | 20% | Real request success rate |
 | Connection Health | 10% | Connection pool health |
+
+**Concrete example:** With `latency_baseline_ms = 50` and `latency_degraded_factor = 2.5`:
+- A backend at 50ms → score ~100 (Healthy) → 100% of traffic
+- A backend at 125ms (2.5×) → score ~65 (Degraded) → 50% of traffic
+- A backend at 300ms (6×) → score ~30 (Unhealthy) → 10% of traffic
+- A backend timing out → score ~5 (Dead) → 0% of traffic
 
 ### Early Abort Controller
 
@@ -270,7 +341,7 @@ if score.IsRapidDeterioration() {
 
 ---
 
-## 4. Firewall & Rate Limiting
+## 5. Firewall & Rate Limiting
 
 Agbero includes a robust Web Application Firewall (WAF) and Rate Limiter capable of using memory or distributed Redis for global enforcement.
 
@@ -303,39 +374,39 @@ security {
   enabled = true
   firewall {
     enabled = true
-    mode = "active"  # "active", "verbose", "monitor"
-    
-    inspect_body = true
+    mode    = "active"  # "active", "verbose", "monitor"
+
+    inspect_body      = true
     max_inspect_bytes = 8192
-    
+
     rule "rate-limit-abuse" {
-      type = "dynamic"
+      type   = "dynamic"
       action = "ban"
       duration = "24h"
-      
+
       match {
         threshold {
-          enabled = true
-          count = 100
-          window = "1m"
+          enabled  = true
+          count    = 100
+          window   = "1m"
           track_by = "ip"
         }
       }
     }
-    
+
     rule "block-scanners" {
-      type = "static"
+      type   = "static"
       action = "ban"
-      
+
       match {
         any {
           location = "path"
-          pattern = ".*\\.(php|asp|aspx|jsp)$"
+          pattern  = ".*\\.(php|asp|aspx|jsp)$"
         }
         any {
           location = "header"
-          key = "User-Agent"
-          pattern = "(?i)(nikto|nmap|sqlmap)"
+          key      = "User-Agent"
+          pattern  = "(?i)(nikto|nmap|sqlmap)"
         }
       }
     }
@@ -349,8 +420,8 @@ security {
 action "ban" {
   mitigation = "add"  # "add" adds to persistent ban store
   response {
-    enabled = true
-    status_code = 403
+    enabled      = true
+    status_code  = 403
     content_type = "application/json"
     body_template = "{\"error\": \"Access Denied\"}"
     headers = {
@@ -364,30 +435,33 @@ action "ban" {
 
 ```bash
 # List active bans
-curl http://localhost:9090/firewall
+curl http://localhost:9090/api/v1/firewall \
+  -H "Authorization: Bearer ${TOKEN}"
 
 # Manually ban an IP
-curl -X POST http://localhost:9090/firewall \
+curl -X POST http://localhost:9090/api/v1/firewall \
   -H "Authorization: Bearer ${TOKEN}" \
+  -H "Content-Type: application/json" \
   -d '{"ip": "1.2.3.4", "reason": "abuse", "duration_sec": 3600}'
 
 # Unban an IP
-curl -X DELETE "http://localhost:9090/firewall?ip=1.2.3.4"
+curl -X DELETE "http://localhost:9090/api/v1/firewall?ip=1.2.3.4" \
+  -H "Authorization: Bearer ${TOKEN}"
 ```
 
 ### Store Implementation
 
 The firewall store (`internal/middleware/firewall/store.go`) uses:
-- **bbolt** for persistent storage
-- **In-memory cache** for fast lookups
+- **bbolt** for persistent storage (bans survive restarts)
+- **In-memory cache** for fast lookups on every request
 - **Async writes** with batching for performance
 - **Automatic expiration** of bans
 
 ---
 
-## 5. Distributed Shared State
+## 6. Distributed Shared State
 
-Agbero supports distributed rate limiting and firewalls using Redis.
+Agbero supports distributed rate limiting and firewalls using Redis so that limits are enforced globally across your cluster — not just per-node.
 
 ### Redis Configuration
 
@@ -395,12 +469,12 @@ Agbero supports distributed rate limiting and firewalls using Redis.
 gossip {
   shared_state {
     enabled = true
-    driver = "redis"
+    driver  = "redis"
     redis {
-      host = "redis.example.com"
-      port = 6379
-      password = "${env.REDIS_PASSWORD}"
-      db = 0
+      host       = "redis.example.com"
+      port       = 6379
+      password   = "env.REDIS_PASSWORD"
+      db         = 0
       key_prefix = "agbero:"
     }
   }
@@ -416,43 +490,43 @@ The Redis shared state (`internal/hub/cluster/state.go`) provides:
 - **Prefix support** for multi-tenant deployments
 - **Automatic connection pooling**
 
-### Lua Script for Rate Limiting
+### Token Bucket Lua Script
 
 ```lua
-local key = KEYS[1]
-local rate = tonumber(ARGV[1])
-local capacity = tonumber(ARGV[2])
-local now = tonumber(ARGV[3])
+local key          = KEYS[1]
+local rate         = tonumber(ARGV[1])   -- tokens per second
+local capacity     = tonumber(ARGV[2])   -- bucket capacity
+local now          = tonumber(ARGV[3])   -- current time in seconds
 
-local info = redis.call("HMGET", key, "tokens", "last_refresh")
-local tokens = tonumber(info[1])
+local info         = redis.call("HMGET", key, "tokens", "last_refresh")
+local tokens       = tonumber(info[1])
 local last_refresh = tonumber(info[2])
 
 if not tokens then
-    tokens = capacity
-    last_refresh = now
+  tokens       = capacity
+  last_refresh = now
 end
 
-local delta = math.max(0, now - last_refresh)
+local delta     = math.max(0, now - last_refresh)
 local generated = delta * rate
-tokens = math.min(capacity, tokens + generated)
+tokens          = math.min(capacity, tokens + generated)
 
 if tokens >= 1 then
-    tokens = tokens - 1
-    redis.call("HMSET", key, "tokens", tokens, "last_refresh", now)
-    local ttl = math.ceil(capacity / rate)
-    if ttl > 0 then
-        redis.call("PEXPIRE", key, ttl)
-    end
-    return 1
+  tokens = tokens - 1
+  redis.call("HMSET", key, "tokens", tokens, "last_refresh", now)
+  local ttl = math.ceil(capacity / rate) * 1000  -- convert to milliseconds for PEXPIRE
+  if ttl > 0 then
+    redis.call("PEXPIRE", key, ttl)
+  end
+  return 1
 else
-    return 0
+  return 0
 end
 ```
 
 ---
 
-## 6. Advanced TLS & Client Auth (mTLS)
+## 7. Advanced TLS & Client Auth (mTLS)
 
 Require and verify client certificates before allowing traffic to your backends.
 
@@ -468,9 +542,9 @@ tls {
     cert_file = "/etc/certs/server.crt"
     key_file  = "/etc/certs/server.key"
   }
-  
+
   client_auth = "require_and_verify"  # "none", "request", "require",
-                                      # "verify_if_given", "require_and_verify"
+                                       # "verify_if_given", "require_and_verify"
   client_cas  = ["/etc/certs/ca.crt"]  # Absolute paths to CA certificates
 }
 
@@ -486,10 +560,10 @@ route "/" {
 | Mode | Description |
 |------|-------------|
 | `none` | No client certificate requested |
-| `request` | Request client cert, but don't require |
-| `require` | Require client cert, but don't verify |
+| `request` | Request client cert, but don't require it |
+| `require` | Require client cert, but don't verify against CA |
 | `verify_if_given` | Verify if provided, but don't require |
-| `require_and_verify` | Require and verify client cert |
+| `require_and_verify` | Require and verify client cert against CA |
 
 ### Implementation
 
@@ -498,16 +572,16 @@ The TLS manager (`internal/hub/tlss/manager.go`) handles:
 - **mTLS configuration** per host
 - **Certificate caching** with LRU
 - **Automatic renewal** for expiring certs
-- **Cluster synchronization** of certificates
+- **Cluster synchronisation** of certificates
 
 ---
 
-## 7. Certificate Management
+## 8. Certificate Management
 
 ### Local Development CA
 
 ```bash
-# Install local CA for development
+# Install local CA for development (trusted by browsers)
 agbero cert install
 
 # List managed certificates
@@ -524,10 +598,10 @@ agbero cert uninstall
 
 ```hcl
 letsencrypt {
-  enabled = true
-  email = "admin@example.com"
-  staging = false  # Use staging CA for testing
-  short_lived = false  # Request short-lived certs
+  enabled     = true
+  email       = "admin@example.com"
+  staging     = false        # Use staging CA for testing
+  short_lived = false        # Request short-lived certs
 }
 ```
 
@@ -535,11 +609,11 @@ letsencrypt {
 
 Certificates are stored in `certs.d/` with optional encryption:
 
-- `domain.crt` - Public certificate
-- `domain.key` - Private key (plaintext or encrypted with `.enc` suffix)
-- `ca-cert.pem` - Local CA certificate
-- `ca-key.pem` - Local CA private key
-- `acme_account` - ACME account key
+- `domain.crt` — Public certificate
+- `domain.key` — Private key (encrypted when keeper is configured)
+- `ca-cert.pem` — Local CA certificate
+- `ca-key.pem` — Local CA private key
+- `acme_account` — ACME account key
 
 ### Cluster Certificate Sync
 
@@ -547,7 +621,7 @@ When clustering is enabled, certificates are automatically synchronized across a
 
 ---
 
-## 8. Performance Tuning
+## 9. Performance Tuning
 
 ### Global Settings
 
@@ -558,15 +632,15 @@ general {
 }
 
 timeouts {
-  read = "60s"
+  read  = "60s"
   write = "60s"
-  idle = "300s"  # Longer keep-alive
+  idle  = "300s"  # Longer keep-alive for persistent connections
 }
 ```
 
 ### Transport Configuration
 
-The HTTP transport is configured in `internal/core/resource/manager.go` with high-throughput defaults:
+The HTTP transport is configured in `internal/hub/resource/manager.go` with high-throughput defaults:
 
 ```go
 &http.Transport{
@@ -579,19 +653,9 @@ The HTTP transport is configured in `internal/core/resource/manager.go` with hig
 }
 ```
 
-### Cache Sizes
-
-```hcl
-# Resource manager cache sizes (internal - not configurable in HCL)
-route_cache_size = 10000
-tcp_cache_size   = 10000
-auth_cache_size  = 100000
-gz_cache_size    = 256
-```
-
 ---
 
-## 9. Telemetry & Monitoring
+## 10. Telemetry & Monitoring
 
 ### Built-in Telemetry
 
@@ -605,20 +669,21 @@ When enabled, samples metrics every 60 seconds and retains 24 hours of history:
 
 ```bash
 # Query telemetry data
-curl "http://localhost:9090/telemetry/history?host=example.com&range=1h"
+curl "http://localhost:9090/api/v1/telemetry/history?host=example.com&range=1h" \
+  -H "Authorization: Bearer ${TOKEN}"
 ```
 
 **Response:**
 ```json
 {
-  "host": "example.com",
+  "host":  "example.com",
   "range": "1 hour",
   "samples": [
     {
-      "ts": 1710501000,
-      "requests_sec": 1250.5,
-      "p99_ms": 45.2,
-      "error_rate": 0.5,
+      "ts":              1710501000,
+      "requests_sec":    1250.5,
+      "p99_ms":          45.2,
+      "error_rate":      0.5,
       "active_backends": 3
     }
   ]
@@ -631,7 +696,7 @@ curl "http://localhost:9090/telemetry/history?host=example.com&range=1h"
 logging {
   prometheus {
     enabled = true
-    path = "/metrics"
+    path    = "/metrics"
   }
 }
 ```
@@ -648,8 +713,8 @@ Available metrics:
 ```hcl
 logging {
   victoria {
-    enabled = true
-    url = "http://victoria:8428/api/v1/write"
+    enabled    = true
+    url        = "http://victoria:8428/api/v1/write"
     batch_size = 500
   }
 }
@@ -657,7 +722,7 @@ logging {
 
 ---
 
-## 10. Advanced Load Balancing Strategies
+## 11. Advanced Load Balancing Strategies
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
@@ -679,8 +744,8 @@ logging {
 route "/cache" {
   backend {
     strategy = "consistent_hash"
-    keys = ["header:X-API-Key", "ip"]  # Fallback keys
-    
+    keys     = ["header:X-API-Key", "ip"]  # Fallback keys in order
+
     server { address = "http://cache-1:8080" }
     server { address = "http://cache-2:8080" }
     server { address = "http://cache-3:8080" }
@@ -690,17 +755,17 @@ route "/cache" {
 
 ### Adaptive Load Balancing
 
-The adaptive strategy uses epsilon-greedy exploration to learn optimal backend selection:
+The adaptive strategy uses epsilon-greedy exploration to learn which backend performs best over time. It tracks response time and in-flight requests to calculate a score. Lower score wins:
 
-```go
-// From internal/pkg/lb/adaptive.go
-score := responseTime * (1.0 + inflight*0.1)
-// Lower score wins
 ```
+score = responseTime × (1.0 + inflight × 0.1)
+```
+
+Over time, the strategy naturally routes more traffic to faster backends while still occasionally probing slower ones in case they recover.
 
 ---
 
-## 11. Path Matching & Routing
+## 12. Path Matching & Routing
 
 Agbero uses a radix tree for high-performance path matching with support for:
 
@@ -712,12 +777,12 @@ route "/users/profile" { ... }
 ### Template Parameters
 ```hcl
 route "/users/{id}" { ... }
-route "/users/{id:[0-9]+}" { ... }  # With regex
+route "/users/{id:[0-9]+}" { ... }  # With inline regex constraint
 ```
 
 ### Wildcard/Catch-all
 ```hcl
-route "/*" { ... }  # Catch-all at end
+route "/*" { ... }  # Catch-all — must be last
 ```
 
 ### Regex Patterns
@@ -726,52 +791,41 @@ route "~ ^/api/v[0-9]/.*$" { ... }  # Regex with ~ prefix
 ```
 
 ### Priority Order
-1. Literal paths (highest)
+1. Literal paths (highest priority)
 2. Template parameters
 3. Regex patterns
-4. Catch-all (lowest)
+4. Catch-all (lowest priority)
 
 ---
 
-## 12. Health Check Executors
+## 13. TCP Health Checks
 
 Implement custom health check logic for non-HTTP backends:
 
-### TCP Health Check
-
 ```hcl
 proxy "redis" {
-  listen = ":6379"
-  
+  enabled  = true
+  listen   = ":6379"
+
   health_check {
-    enabled = true
+    enabled  = true
     interval = "5s"
-    timeout = "1s"
-    send = "PING\r\n"
-    expect = "+PONG"
+    timeout  = "1s"
+    send     = "PING\r\n"
+    expect   = "+PONG"
   }
-  
+
   backend { address = "tcp://redis-1:6379" }
 }
 ```
 
-### Custom Executor Interface
-
-```go
-type Executor interface {
-    Probe(ctx context.Context) (success bool, latency time.Duration, err error)
-}
-```
-
 ---
 
----
-
-## 13. Replay — Outbound Domain Security (`allowed_domains`)
+## 14. Replay — Outbound Domain Security (`allowed_domains`)
 
 When using `replay` blocks in relay mode (where the target URL is supplied by the client at request time via the `X-Agbero-Replay-Url` header or `?url=` query parameter), you **must** configure `allowed_domains` to prevent Server-Side Request Forgery (SSRF).
 
-Without `allowed_domains`, a malicious client could pass any URL — including internal services like `http://169.254.169.254/` (cloud metadata), `http://localhost:6379/` (Redis), or other private network addresses.
+**The attack without protection:** A malicious client or an XSS victim's browser could send `POST /proxy?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/role-name` and receive your cloud provider's IAM credentials in the response. Private IPs (127.x, 10.x, 192.168.x, 172.16–31.x) are always blocked as a backstop, but external attacker-controlled domains are not — hence `allowed_domains`.
 
 ```hcl
 route "/proxy" {
@@ -783,8 +837,8 @@ route "/proxy" {
 
       # Only allow requests to these domains — blocks everything else
       allowed_domains = [
-        "api.stripe.com",          # exact match
-        "*.sendgrid.com",          # wildcard subdomain
+        "api.stripe.com",     # exact match
+        "*.sendgrid.com",     # wildcard subdomain
         "api.github.com",
       ]
 
@@ -795,13 +849,12 @@ route "/proxy" {
 }
 ```
 
-> **Warning:** Setting `allowed_domains = ["*"]` allows all external domains.
-> This defeats the SSRF protection — **never use `"*"` in production**.
+> **Warning:** Setting `allowed_domains = ["*"]` allows all external domains. This defeats the SSRF protection — **never use `"*"` in production**.
 
 ---
 
 ## Next Steps
 
-- **API Reference**: See [API Guide](./api.md) for dynamic route management
+- **API Reference**: See [API Guide](./api.md) for dynamic route management and the full Keeper API
 - **Plugin Development**: See [Plugin Guide](./plugin.md) for WASM
 - **Contributing**: See [Contributor Guide](./contributor.md) for development

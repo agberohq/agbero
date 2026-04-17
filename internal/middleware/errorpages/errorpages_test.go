@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 func TestNew(t *testing.T) {
@@ -18,9 +19,9 @@ func TestNew(t *testing.T) {
 	host500 := filepath.Join(tmpDir, "host500.html")
 	globalDefault := filepath.Join(tmpDir, "global.html")
 
-	os.WriteFile(route404, []byte("route 404"), 0644)
-	os.WriteFile(host500, []byte("host 500"), 0644)
-	os.WriteFile(globalDefault, []byte("global default"), 0644)
+	os.WriteFile(route404, []byte("route 404"), def.ConfigFilePerm)
+	os.WriteFile(host500, []byte("host 500"), def.ConfigFilePerm)
+	os.WriteFile(globalDefault, []byte("global default"), def.ConfigFilePerm)
 
 	cfg := Config{
 		RoutePages: alaye.ErrorPages{
@@ -238,7 +239,7 @@ func TestFindErrorPagePath(t *testing.T) {
 func TestCache(t *testing.T) {
 	tmpDir := t.TempDir()
 	errorPage := filepath.Join(tmpDir, "error.html")
-	os.WriteFile(errorPage, []byte("cached content"), 0644)
+	os.WriteFile(errorPage, []byte("cached content"), def.ConfigFilePerm)
 
 	cfg := Config{
 		EnableCache: true,
@@ -264,7 +265,7 @@ func TestCache(t *testing.T) {
 		}
 
 		// Modify file
-		os.WriteFile(errorPage, []byte("modified content"), 0644)
+		os.WriteFile(errorPage, []byte("modified content"), def.ConfigFilePerm)
 
 		// Second request - should still serve cached content (stale cache)
 		req2 := httptest.NewRequest("GET", "/test", nil)
@@ -285,7 +286,7 @@ func TestCache(t *testing.T) {
 
 		// Wait and modify file
 		time.Sleep(10 * time.Millisecond)
-		os.WriteFile(errorPage, []byte("new version"), 0644)
+		os.WriteFile(errorPage, []byte("new version"), def.ConfigFilePerm)
 
 		req := httptest.NewRequest("GET", "/test", nil)
 		rr := httptest.NewRecorder()
@@ -304,7 +305,7 @@ func TestReadFile(t *testing.T) {
 	t.Run("reads existing file", func(t *testing.T) {
 		path := filepath.Join(tmpDir, "test.html")
 		content := []byte("<html>test</html>")
-		os.WriteFile(path, content, 0644)
+		os.WriteFile(path, content, def.ConfigFilePerm)
 
 		ew := &errorWriter{}
 		result, ok := ew.readFile(path)
@@ -328,7 +329,7 @@ func TestReadFile(t *testing.T) {
 		path := filepath.Join(tmpDir, "large.html")
 		// Create 15MB file (over 10MB cap)
 		largeContent := make([]byte, 15*1024*1024)
-		os.WriteFile(path, largeContent, 0644)
+		os.WriteFile(path, largeContent, def.ConfigFilePerm)
 
 		ew := &errorWriter{}
 		result, ok := ew.readFile(path)
@@ -364,7 +365,7 @@ func TestStatusStrings(t *testing.T) {
 func BenchmarkErrorPages(b *testing.B) {
 	tmpDir := b.TempDir()
 	errorPage := filepath.Join(tmpDir, "error.html")
-	os.WriteFile(errorPage, []byte("<html><body>Error</body></html>"), 0644)
+	os.WriteFile(errorPage, []byte("<html><body>Error</body></html>"), def.ConfigFilePerm)
 
 	cfg := Config{
 		EnableCache: true,
@@ -391,7 +392,7 @@ func BenchmarkErrorPages(b *testing.B) {
 func BenchmarkErrorPagesNoCache(b *testing.B) {
 	tmpDir := b.TempDir()
 	errorPage := filepath.Join(tmpDir, "error.html")
-	os.WriteFile(errorPage, []byte("<html><body>Error</body></html>"), 0644)
+	os.WriteFile(errorPage, []byte("<html><body>Error</body></html>"), def.ConfigFilePerm)
 
 	cfg := Config{
 		EnableCache: false,

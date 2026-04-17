@@ -1,0 +1,15 @@
+<div class="page active">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+        <div style="position:relative;width:320px;flex-shrink:0;">
+            <input type="text" id="hostSearch" class="search-input" placeholder="Search hosts…" autocomplete="off" style="width:100%;padding-right:30px;box-sizing:border-box;">
+            <button id="hostSearchClear" title="Clear search"
+                    style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text-mute);font-size:13px;padding:0;line-height:1;display:none;">✕</button>
+        </div>
+        <div style="flex:1;"></div>
+        <button class="btn small" id="refreshHostsBtn" title="Refresh" style="width:32px;height:32px;padding:0;flex-shrink:0;">⟳</button>
+        <button class="btn" id="addHostAdvancedBtn" title="Add host using HCL editor">Advanced</button>
+        <button class="btn primary" id="addHostBtn">+ Host</button>
+    </div>
+    <div id="hostsContainer"></div>
+    <div id="hostsPager"></div>
+</div>

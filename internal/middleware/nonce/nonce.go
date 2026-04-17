@@ -28,7 +28,7 @@ package nonce
 import (
 	"net/http"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 // Guard enforces replay authentication using one of three methods.
@@ -60,7 +60,7 @@ func (g *Guard) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch g.method {
 		case "meta":
-			nonce := r.Header.Get(woos.HeaderXAgberoReplayNonce)
+			nonce := r.Header.Get(def.HeaderXAgberoReplayNonce)
 			if !g.store.Consume(nonce) {
 				http.Error(w, "replay: invalid or expired nonce", http.StatusUnauthorized)
 				return
@@ -81,7 +81,7 @@ func (g *Guard) Middleware(next http.Handler) http.Handler {
 				return
 			}
 		case "direct":
-			cookie, err := r.Cookie(woos.SessionCookieName)
+			cookie, err := r.Cookie(def.SessionCookieName)
 			if err != nil || cookie.Value == "" {
 				http.Error(w, "replay: session cookie required", http.StatusUnauthorized)
 				return

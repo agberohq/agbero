@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/olekukonko/ll"
 	"github.com/yeka/zip"
@@ -67,7 +68,7 @@ func writeTestZip(t *testing.T, path, password string, files map[string]string, 
 			ArchivePath:  archivePath,
 			SHA256:       hex.EncodeToString(h[:]),
 			Size:         int64(len(content)),
-			Mode:         0644,
+			Mode:         def.ConfigFilePerm,
 		})
 
 		var (
@@ -143,8 +144,8 @@ func writeTarGz(t *testing.T, dst string, content []byte) {
 	gw := gzip.NewWriter(f)
 	tw := tar.NewWriter(gw)
 
-	binaryName := woos.Name
-	if runtime.GOOS == woos.Windows {
+	binaryName := def.Name
+	if runtime.GOOS == def.Windows {
 		binaryName += ".exe"
 	}
 	hdr := &tar.Header{
@@ -311,7 +312,7 @@ func TestRestore_ZipSlip_archivePath(t *testing.T) {
 			ArchivePath:  "../../../etc/evil",
 			SHA256:       hex.EncodeToString(h[:]),
 			Size:         7,
-			Mode:         0644,
+			Mode:         def.ConfigFilePerm,
 		}},
 	}
 	manifestBytes, _ := json.MarshalIndent(manifest, "", "  ")
@@ -353,7 +354,7 @@ func TestRestore_ZipSlip_originalPath(t *testing.T) {
 
 	// Legitimate file establishes hostsDir as the only allowed root.
 	legitFile := filepath.Join(hostsDir, "real.hcl")
-	_ = os.WriteFile(legitFile, []byte("real"), 0644)
+	_ = os.WriteFile(legitFile, []byte("real"), def.ConfigFilePerm)
 
 	// Attacker entry: claims to restore to a completely different directory
 	// not related to hostsDir. Use a path that is a sibling of tmpDir so it
@@ -375,7 +376,7 @@ func TestRestore_ZipSlip_originalPath(t *testing.T) {
 				ArchivePath:  "files/0",
 				SHA256:       sha256Hex([]byte("real")),
 				Size:         4,
-				Mode:         0644,
+				Mode:         def.ConfigFilePerm,
 			},
 		},
 	}
@@ -395,7 +396,7 @@ func TestRestore_ZipSlip_originalPath(t *testing.T) {
 		ArchivePath:  "files/1",
 		SHA256:       hex.EncodeToString(h[:]),
 		Size:         5,
-		Mode:         0644,
+		Mode:         def.ConfigFilePerm,
 	})
 	tamperedManifestBytes, _ := json.MarshalIndent(manifest, "", "  ")
 
@@ -453,7 +454,7 @@ func TestRestore_TamperedSignature(t *testing.T) {
 			ArchivePath:  "files/0",
 			SHA256:       hex.EncodeToString(h[:]),
 			Size:         12,
-			Mode:         0644,
+			Mode:         def.ConfigFilePerm,
 		}},
 	}
 	manifestBytes, _ := json.MarshalIndent(manifest, "", "  ")
@@ -491,7 +492,7 @@ func TestRestore_EncryptedRoundTrip(t *testing.T) {
 
 	target := filepath.Join(hostsDir, "test.hcl")
 	content := `domains = ["test.local"]`
-	_ = os.WriteFile(target, []byte(content), 0644)
+	_ = os.WriteFile(target, []byte(content), def.ConfigFilePerm)
 
 	zipPath := filepath.Join(tmpDir, "backup_enc.zip")
 	writeTestZip(t, zipPath, "super_secure_password_123", map[string]string{target: content}, false)
@@ -547,7 +548,7 @@ func TestRestore_HashMismatch(t *testing.T) {
 			ArchivePath:  "files/0",
 			SHA256:       strings.Repeat("0", 64),
 			Size:         7,
-			Mode:         0644,
+			Mode:         def.ConfigFilePerm,
 		}},
 	}
 	manifestBytes, _ := json.MarshalIndent(manifest, "", "  ")
@@ -587,7 +588,7 @@ func TestRestore_OverwriteTamperedFile(t *testing.T) {
 
 	zipPath := filepath.Join(tmpDir, "backup.zip")
 	writeTestZip(t, zipPath, "", map[string]string{target: original}, false)
-	_ = os.WriteFile(target, []byte("tampered"), 0644)
+	_ = os.WriteFile(target, []byte("tampered"), def.ConfigFilePerm)
 
 	if err := newTestSystem(t).Restore(zipPath, "", true, true); err != nil {
 		t.Fatalf("restore failed: %v", err)
@@ -611,10 +612,10 @@ func TestBuildAssetName(t *testing.T) {
 	if !strings.HasPrefix(name, expected) {
 		t.Errorf("unexpected asset name: got %q, want prefix %q", name, expected)
 	}
-	if runtime.GOOS != woos.Windows && !strings.HasSuffix(name, ".tar.gz") {
+	if runtime.GOOS != def.Windows && !strings.HasSuffix(name, ".tar.gz") {
 		t.Errorf("non-Windows asset must end in .tar.gz: %q", name)
 	}
-	if runtime.GOOS == woos.Windows && !strings.HasSuffix(name, ".zip") {
+	if runtime.GOOS == def.Windows && !strings.HasSuffix(name, ".zip") {
 		t.Errorf("Windows asset must end in .zip: %q", name)
 	}
 }
@@ -679,7 +680,7 @@ func TestUpdate_ChecksumMismatch_Aborts(t *testing.T) {
 
 	checksumContent := fmt.Sprintf("%s  %s\n", strings.Repeat("0", 64), assetName)
 	checksumPath := filepath.Join(tmpDir, "checksums.txt")
-	_ = os.WriteFile(checksumPath, []byte(checksumContent), 0644)
+	_ = os.WriteFile(checksumPath, []byte(checksumContent), def.ConfigFilePerm)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		base := "http://" + r.Host
@@ -742,7 +743,7 @@ func TestUpdate_ValidChecksum_Applies(t *testing.T) {
 	correctHash := sha256Hex(archiveBytes)
 	checksumContent := fmt.Sprintf("%s  %s\n", correctHash, assetName)
 	checksumPath := filepath.Join(tmpDir, "checksums.txt")
-	_ = os.WriteFile(checksumPath, []byte(checksumContent), 0644)
+	_ = os.WriteFile(checksumPath, []byte(checksumContent), def.ConfigFilePerm)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		base := "http://" + r.Host

@@ -1,4 +1,5 @@
-package alaye
+// Errors raised during configuration parsing and validation.
+package def
 
 import (
 	"github.com/olekukonko/errors"
@@ -9,6 +10,7 @@ var (
 	ErrCannotBeEmpty = errors.New("cannot be empty")
 )
 
+// web
 var (
 	ErrRootRequired      = errors.New("root is required for web block")
 	ErrIndexPath         = errors.New("index cannot contain path separators")
@@ -39,7 +41,6 @@ var (
 )
 
 // timeout
-
 var (
 	ErrNegativeReadTimeout       = errors.New("read timeout cannot be negative")
 	ErrNegativeWriteTimeout      = errors.New("write timeout cannot be negative")
@@ -48,7 +49,7 @@ var (
 	ErrNegativeRequestTimeout    = errors.New("request timeout cannot be negative")
 )
 
-// server
+// backend
 var (
 	ErrBackendAddressRequired = errors.New("backend address is required")
 	ErrBackendInvalidScheme   = errors.New("invalid scheme")
@@ -57,7 +58,6 @@ var (
 )
 
 // route
-
 var (
 	ErrRoutePathRequired   = errors.New("path is required")
 	ErrRouteInvalidPrefix  = errors.New("invalid path prefix")
@@ -92,8 +92,7 @@ var (
 	ErrNegativeMacBodySize = errors.New("max_body_size cannot be negative")
 )
 
-//host
-
+// host
 var (
 	ErrNoDomains = errors.New("host must have at least one domain")
 
@@ -102,8 +101,7 @@ var (
 	ErrNoRoutes          = errors.New("host must have at least one route")
 )
 
-//health
-
+// health
 var (
 	ErrHealthPathRequired = errors.New("path is required for health_check")
 	ErrHealthPathInvalid  = errors.New("invalid health path")
@@ -144,10 +142,8 @@ var (
 	ErrInvalidCompressionType  = errors.New("compression type must be 'gzip' or 'brotli'")
 )
 
-// circuitBreaker
+// circuit breaker
 var (
-	//ErrNegativeThreshold = errors.New("threshold cannot be negative")
-
 	ErrNegativeDuration = errors.New("duration cannot be negative")
 )
 
@@ -158,12 +154,11 @@ var (
 )
 
 // jwt
-
 var (
 	ErrSecretRequired = errors.New("secret is required")
 )
 
-// auth-fwd
+// auth-forward
 var (
 	ErrForwardAuthURLRequired      = errors.New("url is required for forward_auth")
 	ErrForwardAuthURLInvalid       = errors.New("url must start with http:// or https://")
@@ -187,6 +182,7 @@ var (
 	ErrPprofLoopbackOnly = errors.New("pprof bind address must be a loopback address")
 )
 
+// fallback
 var (
 	ErrFallbackRedirectURLRequired = errors.New("fallback: redirect_url required for type=redirect")
 	ErrFallbackProxyURLRequired    = errors.New("fallback: proxy_url required for type=proxy")

@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/gzip"
 )
@@ -50,8 +50,8 @@ var brotliWriterPool = sync.Pool{
 func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.EqualFold(r.Header.Get(woos.HeaderKeyConnection), woos.HeaderKeyUpgrade) &&
-				strings.EqualFold(r.Header.Get(woos.HeaderKeyUpgrade), "websocket") {
+			if strings.EqualFold(r.Header.Get(def.HeaderKeyConnection), def.HeaderKeyUpgrade) &&
+				strings.EqualFold(r.Header.Get(def.HeaderKeyUpgrade), "websocket") {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -62,21 +62,21 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 				return
 			}
 
-			ae := r.Header.Get(woos.HeaderAcceptEncoding)
+			ae := r.Header.Get(def.HeaderAcceptEncoding)
 			compType := strings.ToLower(cc.Type)
 			if compType == "" {
-				compType = woos.CompressionGzip
+				compType = def.CompressionGzip
 			}
 
 			var useComp bool
 			var encoding string
 			switch compType {
-			case woos.CompressionBrotli:
+			case def.CompressionBrotli:
 				useComp = strings.Contains(ae, "br")
-				encoding = woos.BrotliEncodingType
-			case woos.CompressionGzip:
+				encoding = def.BrotliEncodingType
+			case def.CompressionGzip:
 				useComp = strings.Contains(ae, "gzip")
-				encoding = woos.GzipEncodingType
+				encoding = def.GzipEncodingType
 			default:
 				next.ServeHTTP(w, r)
 				return
@@ -92,7 +92,7 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 				level = 5
 			}
 
-			w.Header().Add(woos.HeaderKeyVary, woos.HeaderAcceptEncoding)
+			w.Header().Add(def.HeaderKeyVary, def.HeaderAcceptEncoding)
 
 			cw := &compressWriter{
 				ResponseWriter: w,
@@ -126,7 +126,7 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 			}()
 
 			// Initialize writer
-			if compType == woos.CompressionBrotli {
+			if compType == def.CompressionBrotli {
 				brw := brotliWriterPool.Get().(*brotli.Writer)
 				brw.Reset(w)
 				cw.w = brw

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/pkg/ui"
@@ -54,7 +55,7 @@ func (c *Cluster) Start(configPath string) {
 
 	port := global.Gossip.Port
 	if port == 0 {
-		port = alaye.DefaultGossipPort
+		port = def.DefaultGossipPort
 	}
 	hostname, _ := os.Hostname()
 	u.Render(func() {
@@ -271,7 +272,7 @@ func (c *Cluster) normalisePeer(addr string) string {
 	if _, _, err := net.SplitHostPort(addr); err == nil {
 		return addr
 	}
-	return fmt.Sprintf("%s:%d", addr, alaye.DefaultGossipPort)
+	return fmt.Sprintf("%s:%d", addr, def.DefaultGossipPort)
 }
 
 // removeHCLBlock strips the first top-level block named blockName from content

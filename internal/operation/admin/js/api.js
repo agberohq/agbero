@@ -126,16 +126,21 @@ export async function fetchLogs(lines)   { return _safe(() => getApi().get(`/log
 
 // Host management  /api/v1/discovery
 
-// Issue 6: checkHostExists no longer reads getApi()._token — uses getApi() directly
+// checkHostExists uses raw fetch because the oja Api client hard-returns null on 404
+// before any caller can inspect the status code — we need the actual status.
 export async function checkHostExists(domain) {
-    return _safe(async () => {
-        const res = await getApi().get(
-            `/api/v1/discovery/${encodeURIComponent(domain)}`,
-            { returnResponse: true }
+    try {
+        const api    = getApi();
+        const base   = api._base   || window.location.origin;
+        const token  = api._token  || '';
+        const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+        const res = await fetch(
+            `${base}/api/v1/discovery/${encodeURIComponent(domain)}`,
+            { method: 'HEAD', headers }
         );
-        if (res?.status === 404) return false;
-        return res?.ok !== false;
-    });
+        // 404 = does not exist, 200/409 = exists, anything else treat as unknown (false)
+        return res.status === 200 || res.status === 409;
+    } catch { return false; }
 }
 
 export async function addHost(domain, config) {
@@ -148,6 +153,40 @@ export async function addHostHCL(hclText, filename = '') {
         raw:     true,
         headers: { 'Content-Type': 'text/plain; charset=utf-8' },
     }));
+}
+
+// previewHost POSTs a JSON config to /discovery/preview and returns the
+// server-rendered HCL string — exactly what would land on disk.
+// Returns { hcl: string } on success, { error: string, status: 'invalid'|'error' } on failure.
+// Uses raw fetch because the oja client swallows non-2xx bodies.
+export async function previewHost(domain, config) {
+    try {
+        const api    = getApi();
+        const base   = api._base  || window.location.origin;
+        const token  = api._token || '';
+        const headers = {
+            'Content-Type':  'application/json',
+            ...(token ? { 'Authorization': 'Bearer ' + token } : {}),
+        };
+        const res = await fetch(`${base}/api/v1/discovery/preview`, {
+            method:  'POST',
+            headers,
+            body:    JSON.stringify({ domain, config }),
+        });
+        if (res.status === 422) {
+            // Validation error — server returns JSON {status, error}
+            const body = await res.json().catch(() => ({}));
+            return { error: body.error || 'Validation failed', status: 'invalid' };
+        }
+        if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            return { error: text || `Server error ${res.status}`, status: 'error' };
+        }
+        const hcl = await res.text();
+        return { hcl };
+    } catch (err) {
+        return { error: err.message || 'Preview request failed', status: 'error' };
+    }
 }
 
 export async function updateHost(domain, config) {

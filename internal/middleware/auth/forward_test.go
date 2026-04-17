@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
@@ -271,14 +271,14 @@ func TestForward_MetadataHeaders(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	if receivedHeaders.Get(woos.HeaderXOriginalMethod) != "POST" {
-		t.Errorf("Expected method POST, got %s", receivedHeaders.Get(woos.HeaderXOriginalMethod))
+	if receivedHeaders.Get(def.HeaderXOriginalMethod) != "POST" {
+		t.Errorf("Expected method POST, got %s", receivedHeaders.Get(def.HeaderXOriginalMethod))
 	}
-	if receivedHeaders.Get(woos.HeaderXOriginalURI) != "/api/v1/users?page=2" {
-		t.Errorf("Expected URI /api/v1/users?page=2, got %s", receivedHeaders.Get(woos.HeaderXOriginalURI))
+	if receivedHeaders.Get(def.HeaderXOriginalURI) != "/api/v1/users?page=2" {
+		t.Errorf("Expected URI /api/v1/users?page=2, got %s", receivedHeaders.Get(def.HeaderXOriginalURI))
 	}
-	if receivedHeaders.Get(woos.HeaderXForwardedFor) != "192.168.1.100" {
-		t.Errorf("Expected IP 192.168.1.100, got %s", receivedHeaders.Get(woos.HeaderXForwardedFor))
+	if receivedHeaders.Get(def.HeaderXForwardedFor) != "192.168.1.100" {
+		t.Errorf("Expected IP 192.168.1.100, got %s", receivedHeaders.Get(def.HeaderXForwardedFor))
 	}
 }
 
@@ -479,7 +479,7 @@ func TestForward_OnFailure_Allow(t *testing.T) {
 		Name:         "test_failure_allow",
 		URL:          "http://127.0.0.1:1",
 		OnFailure:    "allow",
-		Timeout:      alaye.Duration(100 * time.Millisecond),
+		Timeout:      expect.Duration(100 * time.Millisecond),
 		AllowPrivate: true,
 	}
 
@@ -508,7 +508,7 @@ func TestForward_OnFailure_Deny(t *testing.T) {
 		Name:         "test_failure_deny",
 		URL:          "http://127.0.0.1:1",
 		OnFailure:    "deny",
-		Timeout:      alaye.Duration(100 * time.Millisecond),
+		Timeout:      expect.Duration(100 * time.Millisecond),
 		AllowPrivate: true,
 	}
 
@@ -539,7 +539,7 @@ func TestForward_Timeout(t *testing.T) {
 		Enabled:      expect.Active,
 		Name:         "test_timeout",
 		URL:          authServer.URL,
-		Timeout:      alaye.Duration(50 * time.Millisecond),
+		Timeout:      expect.Duration(50 * time.Millisecond),
 		OnFailure:    "deny",
 		AllowPrivate: true,
 	}
@@ -661,7 +661,7 @@ func TestForward_ConcurrentRequests(t *testing.T) {
 		},
 		Response: alaye.ForwardAuthResponse{
 			Enabled:  expect.Active,
-			CacheTTL: alaye.Duration(1 * time.Minute),
+			CacheTTL: expect.Duration(1 * time.Minute),
 		},
 	}
 	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -728,7 +728,7 @@ func TestForward_LargeResponseHeaders(t *testing.T) {
 func TestForward_SpecialCharactersInURI(t *testing.T) {
 	receivedURI := ""
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedURI = r.Header.Get(woos.HeaderXOriginalURI)
+		receivedURI = r.Header.Get(def.HeaderXOriginalURI)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer authServer.Close()
@@ -764,7 +764,7 @@ func TestForward_SSRF_Rejected(t *testing.T) {
 		Name:         "test_ssrf",
 		URL:          "http://127.0.0.1:9999/",
 		OnFailure:    "deny",
-		Timeout:      alaye.Duration(woos.DefaultForwardAuthTimeout),
+		Timeout:      expect.Duration(def.DefaultForwardAuthTimeout),
 		AllowPrivate: false,
 	}
 	// Config-time check is where the SSRF guard fires.
@@ -780,7 +780,7 @@ func TestForward_SSRF_AllowPrivate(t *testing.T) {
 		Name:         "test_ssrf_allow",
 		URL:          "http://127.0.0.1:9999/",
 		OnFailure:    "deny",
-		Timeout:      alaye.Duration(woos.DefaultForwardAuthTimeout),
+		Timeout:      expect.Duration(def.DefaultForwardAuthTimeout),
 		AllowPrivate: true,
 	}
 	if err := cfg.Validate(); err != nil {

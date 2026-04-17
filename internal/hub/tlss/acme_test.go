@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/go-acme/lego/v4/registration"
@@ -254,7 +254,7 @@ func TestManager_loadFromStorage(t *testing.T) {
 func TestManager_loadFromStorage_NilStorage(t *testing.T) {
 	tmpDir := t.TempDir()
 	badPath := filepath.Join(tmpDir, "not-a-dir")
-	_ = os.WriteFile(badPath, []byte("x"), 0644)
+	_ = os.WriteFile(badPath, []byte("x"), def.ConfigFilePerm)
 	global := &alaye.Global{
 		Storage: alaye.Storage{
 			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
@@ -353,7 +353,7 @@ func TestManager_GetCertificate_EmptySNI(t *testing.T) {
 	mgr := NewManager(testLogger, hm, global, nil)
 	defer mgr.Close()
 	_, err := mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: ""})
-	if err != woos.ErrMissingSNI {
+	if err != def.ErrMissingSNI {
 		t.Fatalf("expected ErrMissingSNI, got: %v", err)
 	}
 }
@@ -461,7 +461,7 @@ func TestManager_Close(t *testing.T) {
 func TestNewManager_StorageInitFail(t *testing.T) {
 	tmpDir := t.TempDir()
 	badPath := filepath.Join(tmpDir, "not-a-dir")
-	_ = os.WriteFile(badPath, []byte("x"), 0644)
+	_ = os.WriteFile(badPath, []byte("x"), def.ConfigFilePerm)
 	global := &alaye.Global{
 		Storage: alaye.Storage{
 			CertsDir: expect.NewFolder(filepath.Join(tmpDir, "certs")),
@@ -505,7 +505,7 @@ func TestManager_loadFromStorage_InvalidCert(t *testing.T) {
 	tmpDir := t.TempDir()
 	certPath := filepath.Join(tmpDir, "bad.com.crt")
 	keyPath := filepath.Join(tmpDir, "bad.com.key")
-	os.WriteFile(certPath, []byte("invalid cert"), 0644)
+	os.WriteFile(certPath, []byte("invalid cert"), def.ConfigFilePerm)
 	os.WriteFile(keyPath, []byte("invalid key"), 0600)
 	global := &alaye.Global{
 		Storage: alaye.Storage{
@@ -566,7 +566,7 @@ func TestManager_EntryPoint_LocalhostVsPublic(t *testing.T) {
 		t.Logf("got localhost cert with CN: %s", leaf.Subject.CommonName)
 	}
 	_, err = mgr.GetCertificate(&tls.ClientHelloInfo{ServerName: "public.example.com"})
-	if err != woos.ErrCertNotfound {
+	if err != def.ErrCertNotfound {
 		t.Logf("public domain result: %v", err)
 	}
 }

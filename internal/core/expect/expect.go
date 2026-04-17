@@ -1,12 +1,13 @@
 package expect
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/olekukonko/errors"
 
 	"github.com/go-playground/validator/v10"
 )

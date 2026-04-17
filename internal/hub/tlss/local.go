@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
@@ -250,12 +250,12 @@ func (ci *Local) generateCAFilesOnly() error {
 		return errors.Newf("generate serial: %w", err)
 	}
 
-	commonName := fmt.Sprintf("%s Development CA", woos.Name)
+	commonName := fmt.Sprintf("%s Development CA", def.Name)
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			Organization:       []string{woos.Organization},
-			OrganizationalUnit: []string{fmt.Sprintf("%s Development", woos.Name)},
+			Organization:       []string{def.Organization},
+			OrganizationalUnit: []string{fmt.Sprintf("%s Development", def.Name)},
 			CommonName:         commonName,
 			Country:            []string{"NG"},
 		},
@@ -362,12 +362,12 @@ func (ci *Local) generateLeaf(domain string) error {
 		"ip_addresses", ipAddresses,
 	).Debug("generating local leaf certificate SANs")
 
-	commonName := fmt.Sprintf("%s Development CA", woos.Name)
+	commonName := fmt.Sprintf("%s Development CA", def.Name)
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			Organization:       []string{woos.Organization},
-			OrganizationalUnit: []string{fmt.Sprintf("%s Development", woos.Name)},
+			Organization:       []string{def.Organization},
+			OrganizationalUnit: []string{fmt.Sprintf("%s Development", def.Name)},
 			CommonName:         commonName,
 			Country:            []string{"NG"},
 		},
@@ -443,7 +443,7 @@ func (ci *Local) validateCertificateBytes(certData, keyData []byte) error {
 	pair, err := tls.X509KeyPair(certData, keyData)
 	if err != nil || len(pair.Certificate) == 0 {
 		if err == nil {
-			err = woos.ErrNoCertificate
+			err = def.ErrNoCertificate
 		}
 		return errors.Newf("x509 key pair: %w", err)
 	}
@@ -455,10 +455,10 @@ func (ci *Local) validateCertificateBytes(certData, keyData []byte) error {
 
 	now := time.Now()
 	if now.After(leaf.NotAfter) {
-		return errors.Newf("%w: notAfter=%s", woos.ErrExpired, leaf.NotAfter)
+		return errors.Newf("%w: notAfter=%s", def.ErrExpired, leaf.NotAfter)
 	}
 	if now.Before(leaf.NotBefore.Add(-2 * time.Minute)) {
-		return errors.Newf("%s: notBefore=%s", woos.ErrNotYetValid, leaf.NotBefore)
+		return errors.Newf("%s: notBefore=%s", def.ErrNotYetValid, leaf.NotBefore)
 	}
 
 	for _, raw := range ci.certHosts {
@@ -482,15 +482,15 @@ func (ci *Local) validateCertificateBytes(certData, keyData []byte) error {
 
 func (ci *Local) certPrefix() string {
 	if len(ci.certHosts) == 0 {
-		return woos.Localhost
+		return def.Localhost
 	}
 	raw := strings.TrimSpace(ci.certHosts[0])
 	if raw == "" {
-		return woos.Localhost
+		return def.Localhost
 	}
 	host, ok := normalizeHostForVerify(raw)
 	if !ok || host == "" {
-		return woos.Localhost
+		return def.Localhost
 	}
 	if net.ParseIP(host) != nil {
 		return host
@@ -499,7 +499,7 @@ func (ci *Local) certPrefix() string {
 	if len(parts) > 0 && parts[0] != "" && parts[0] != "*" {
 		return parts[0]
 	}
-	return woos.Localhost
+	return def.Localhost
 }
 
 func (ci *Local) ensureLocalhostCertUnlocked() (string, string, error) {
@@ -515,7 +515,7 @@ func (ci *Local) ensureLocalhostCertUnlocked() (string, string, error) {
 	}
 	ci.certHosts = out
 
-	defaults := []string{woos.Localhost, woos.LocalhostWildcardSAN, woos.IPv4LoopbackSAN, woos.IPv6LoopbackSAN}
+	defaults := []string{def.Localhost, def.LocalhostWildcardSAN, def.IPv4LoopbackSAN, def.IPv6LoopbackSAN}
 	defaults = append(defaults, getLocalLANIPs()...)
 	for _, d := range defaults {
 		if !seen[d] {
@@ -564,18 +564,18 @@ func hasCertutil() bool {
 // certutilPaths returns platform-specific paths where certutil may be installed.
 func certutilPaths() []string {
 	switch runtime.GOOS {
-	case woos.Darwin:
+	case def.Darwin:
 		return []string{
-			woos.NSSPathDarwinHomebrewBin,
-			woos.NSSPathDarwinUsrLocalBin,
-			woos.NSSPathDarwinMozillaNSS,
-			woos.NSSPathDarwinMozillaNSSAlt,
+			def.NSSPathDarwinHomebrewBin,
+			def.NSSPathDarwinUsrLocalBin,
+			def.NSSPathDarwinMozillaNSS,
+			def.NSSPathDarwinMozillaNSSAlt,
 		}
-	case woos.Linux:
+	case def.Linux:
 		return []string{
-			woos.NSSPathLinuxUsrBin,
-			woos.NSSPathLinuxUsrLocalBin,
-			woos.NSSPathLinuxSnapBin,
+			def.NSSPathLinuxUsrBin,
+			def.NSSPathLinuxUsrLocalBin,
+			def.NSSPathLinuxSnapBin,
 		}
 	default:
 		return nil
@@ -588,15 +588,15 @@ func normalizeHostForVerify(raw string) (string, bool) {
 	if s == "" {
 		return "", false
 	}
-	if strings.HasPrefix(s, woos.IPv6BracketOpen) && strings.Contains(s, woos.IPv6BracketClose) {
+	if strings.HasPrefix(s, def.IPv6BracketOpen) && strings.Contains(s, def.IPv6BracketClose) {
 		if h, _, err := net.SplitHostPort(s); err == nil && h != "" {
 			return h, true
 		}
-		s = strings.TrimPrefix(s, woos.IPv6BracketOpen)
-		s = strings.TrimSuffix(s, woos.IPv6BracketClose)
+		s = strings.TrimPrefix(s, def.IPv6BracketOpen)
+		s = strings.TrimSuffix(s, def.IPv6BracketClose)
 		return s, s != ""
 	}
-	if strings.Count(s, woos.Colon) == 1 {
+	if strings.Count(s, def.Colon) == 1 {
 		if h, p, err := net.SplitHostPort(s); err == nil && h != "" && p != "" {
 			return h, true
 		}

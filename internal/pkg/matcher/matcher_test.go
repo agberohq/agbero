@@ -6,12 +6,12 @@ import (
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 // paths
 const (
-	pSlash     = woos.Slash
+	pSlash     = def.Slash
 	pApi       = "/api"
 	pApi2      = "/api2"
 	pApiID     = "/api/id"
@@ -185,8 +185,8 @@ func TestMatcher_CatchAll(t *testing.T) {
 		t.Fatalf("catch-all params missing: path=%q", pHit)
 	}
 
-	v, ok := got.Params[woos.TemplateWildcardKey]
-	if !ok || v == woos.Empty {
+	v, ok := got.Params[def.TemplateWildcardKey]
+	if !ok || v == def.Empty {
 		t.Fatalf("catch-all wildcard missing/Empty: path=%q params=%v", pHit, got.Params)
 	}
 
@@ -205,11 +205,11 @@ func TestMatcher_CatchAll(t *testing.T) {
 
 // Old matcher (your deprecated code)
 func oldMatch(requestPath, pattern string) bool {
-	if pattern == woos.Star {
+	if pattern == def.Star {
 		return true
 	}
 
-	if before, ok := strings.CutSuffix(pattern, woos.Star); ok {
+	if before, ok := strings.CutSuffix(pattern, def.Star); ok {
 		prefix := before
 		return strings.HasPrefix(requestPath, prefix)
 	}
@@ -219,7 +219,7 @@ func oldMatch(requestPath, pattern string) bool {
 
 // Old-router-style scan: check all patterns, pick the longest match.
 func oldRouterFind(requestPath string, patterns []string) string {
-	best := woos.Empty
+	best := def.Empty
 	bestLen := -1
 
 	for _, p := range patterns {

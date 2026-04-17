@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/ll/l3rd/victoria"
@@ -26,19 +26,19 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 	if cfg.File.Enabled.Active() && cfg.File.Path != "" {
 		logPath := cfg.File.Path
 		logDir := filepath.Dir(logPath)
-		if err := os.MkdirAll(logDir, woos.DefaultFilePermDir); err != nil {
+		if err := os.MkdirAll(logDir, def.DefaultFilePermDir); err != nil {
 			return nil, fmt.Errorf("failed to create log dir %s: %w", logDir, err)
 		}
 
 		// Use configured rotation size or default
 		rotateSize := cfg.File.RotateSize
 		if rotateSize <= 0 {
-			rotateSize = woos.DefaultLogRotateSize
+			rotateSize = def.DefaultLogRotateSize
 		}
 
 		src := lh.RotateSource{
 			Open: func() (io.WriteCloser, error) {
-				return os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, woos.DefaultFilePermFile)
+				return os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, def.DefaultFilePermFile)
 			},
 			Size: func() (int64, error) {
 				fi, err := os.Stat(logPath)
@@ -91,13 +91,13 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 
 		batchSize := cfg.Victoria.BatchSize
 		if batchSize <= 0 {
-			batchSize = woos.DefaultVictoriaBatch
+			batchSize = def.DefaultVictoriaBatch
 		}
 
 		buffered := lh.NewBuffered(vl,
 			lh.WithBatchSize(batchSize),
-			lh.WithFlushInterval(woos.DefaultFlushInterval),
-			lh.WithMaxBuffer(woos.DefaultMaxBuffer),
+			lh.WithFlushInterval(def.DefaultFlushInterval),
+			lh.WithMaxBuffer(def.DefaultMaxBuffer),
 		)
 
 		handlers = append(handlers, buffered)
@@ -113,14 +113,14 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 		final = multi
 	}
 	_ = sm.Register(final)
-	l := ll.New(woos.Name, ll.WithHandler(final), ll.WithFatalExits(true))
+	l := ll.New(def.Name, ll.WithHandler(final), ll.WithFatalExits(true))
 
 	switch cfg.Level {
-	case woos.LogLevelDebug:
+	case def.LogLevelDebug:
 		l.Level(lx.LevelDebug)
-	case woos.LogLevelWarn:
+	case def.LogLevelWarn:
 		l.Level(lx.LevelWarn)
-	case woos.LogLevelError:
+	case def.LogLevelError:
 		l.Level(lx.LevelError)
 	default:
 		l.Level(lx.LevelInfo)

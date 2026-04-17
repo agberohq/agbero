@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/HdrHistogram/hdrhistogram-go"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 const (
@@ -26,7 +26,7 @@ const (
 
 var snapshotHistogramPool = sync.Pool{
 	New: func() any {
-		return hdrhistogram.New(woos.MinUS, woos.MaxUS, sigFigPrecision)
+		return hdrhistogram.New(def.MinUS, def.MaxUS, sigFigPrecision)
 	},
 }
 
@@ -132,8 +132,8 @@ func (lt *Latency) Record(microseconds int64) {
 	}
 
 	v := microseconds
-	if v < woos.MinUS || v > woos.MaxUS {
-		v = woos.MaxUS
+	if v < def.MinUS || v > def.MaxUS {
+		v = def.MaxUS
 	}
 
 	shardMask := lt.numShards - 1
@@ -146,12 +146,12 @@ func (lt *Latency) Record(microseconds int64) {
 
 	// Lazy allocation: create histogram only on first Record to this shard
 	if s.histogram == nil {
-		s.histogram = hdrhistogram.New(woos.MinUS, woos.MaxUS, sigFigPrecision)
+		s.histogram = hdrhistogram.New(def.MinUS, def.MaxUS, sigFigPrecision)
 		s.lastRotation = now
 	}
 
 	// Time-based rotation for fresh histogram windows
-	if now-s.lastRotation > int64(woos.HistogramWindow) {
+	if now-s.lastRotation > int64(def.HistogramWindow) {
 		s.histogram.Reset()
 		s.count = 0
 		s.sum = 0

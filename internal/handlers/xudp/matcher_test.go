@@ -1,6 +1,9 @@
 package xudp
 
-import "testing"
+import (
+	"github.com/agberohq/agbero/internal/core/def"
+	"testing"
+)
 
 func TestLookupMatcher_Empty(t *testing.T) {
 	if lookupMatcher("") != nil {
@@ -37,7 +40,7 @@ func TestLookupMatcher_AllRegistered(t *testing.T) {
 }
 
 func TestMatcherName_Nil(t *testing.T) {
-	if matcherName(nil) != "src_port" {
+	if matcherName(nil) != def.DefaultUDPMatcher {
 		t.Fatal("nil matcher should return src_port")
 	}
 }

@@ -3,6 +3,7 @@ package alaye
 import (
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
@@ -21,18 +22,22 @@ func (b *BasicAuth) Validate() error {
 	}
 
 	if len(b.Users) == 0 {
-		return ErrEmptyUsers
+		return def.ErrEmptyUsers
 	}
 	for i, user := range b.Users {
 		user = strings.TrimSpace(user)
 		if user == "" {
-			return errors.Newf("users[%d]: %w", i, ErrCannotBeEmpty)
+			return errors.Newf("users[%d]: %w", i, def.ErrCannotBeEmpty)
 		}
 		if !strings.Contains(user, ":") {
-			return errors.Newf("%w: users[%d]: %q must be in format 'username:password'", ErrInvaliFormat, i, user)
+			return errors.Newf("%w: users[%d]: %q must be in format 'username:password'", def.ErrInvaliFormat, i, user)
 		}
 		b.Users[i] = user
 	}
 
 	return nil
+}
+
+func (b BasicAuth) IsZero() bool {
+	return b.Enabled.IsZero() && len(b.Users) == 0 && b.Realm == ""
 }

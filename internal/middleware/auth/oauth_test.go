@@ -4,16 +4,17 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/olekukonko/errors"
+
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/markbates/goth"
 	"golang.org/x/oauth2"
 )
@@ -86,7 +87,7 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 		cookies := rec.Result().Cookies()
 		found := false
 		for _, c := range cookies {
-			if c.Name == woos.GothSessionCookie && c.Value == validSessionB64 {
+			if c.Name == def.GothSessionCookie && c.Value == validSessionB64 {
 				found = true
 				break
 			}
@@ -105,7 +106,7 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 		}
 
 		req := httptest.NewRequest("GET", "/callback?code=123&state=xyz", nil)
-		req.AddCookie(&http.Cookie{Name: woos.GothSessionCookie, Value: validSessionB64})
+		req.AddCookie(&http.Cookie{Name: def.GothSessionCookie, Value: validSessionB64})
 
 		rec := httptest.NewRecorder()
 
@@ -118,7 +119,7 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 		cookies := rec.Result().Cookies()
 		found := false
 		for _, c := range cookies {
-			if c.Name == woos.SessionCookieName {
+			if c.Name == def.SessionCookieName {
 				// Verify the cookie value is properly signed: <base64(token)>.<base64(hmac)>
 				parts := strings.Split(c.Value, cookieValueSeparator)
 				if len(parts) == 2 {
@@ -145,7 +146,7 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 		}
 
 		req := httptest.NewRequest("GET", "/callback?code=123&state=xyz", nil)
-		req.AddCookie(&http.Cookie{Name: woos.GothSessionCookie, Value: validSessionB64})
+		req.AddCookie(&http.Cookie{Name: def.GothSessionCookie, Value: validSessionB64})
 
 		rec := httptest.NewRecorder()
 

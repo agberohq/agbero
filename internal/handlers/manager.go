@@ -10,6 +10,8 @@ import (
 	"sync"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/handlers/xtcp"
@@ -124,7 +126,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 		m.tlsConfig = &tls.Config{
 			MinVersion:         tls.VersionTLS12,
 			MaxVersion:         tls.VersionTLS13,
-			NextProtos:         []string{woos.AlpnTls, woos.AlpnH3, woos.AlpnH2, woos.AlpnH11},
+			NextProtos:         []string{def.AlpnTls, def.AlpnH3, def.AlpnH2, def.AlpnH11},
 			GetConfigForClient: cfg.TLSManager.GetConfigForClient,
 		}
 	}
@@ -194,7 +196,7 @@ func (m *Manager) BuildListeners() []Listener {
 			if !strings.Contains(port, ":") {
 				addr = ":" + port
 			}
-			isTLS := h.TLS.Mode != alaye.ModeLocalNone
+			isTLS := h.TLS.Mode != def.ModeLocalNone
 			listeners = append(listeners, m.createHTTPListener(addr, port, isTLS))
 			if isTLS {
 				if h3 := m.createH3Listener(addr, port); h3 != nil {
@@ -230,7 +232,7 @@ func (m *Manager) BuildListeners() []Listener {
 	for listen, routes := range udpGroups {
 		up := xudp.NewProxy(m.cfg.Resource, listen)
 		var maxS int64
-		var sessionTTL alaye.Duration
+		var sessionTTL expect.Duration
 		for _, r := range routes {
 			up.AddRoute(r.Name, r)
 			if r.MaxSessions > maxS {
@@ -395,7 +397,7 @@ func buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedS
 	policy := func(r *http.Request) (bucket string, pol ratelimit.RatePolicy, ok bool) {
 		p := r.URL.Path
 		if strings.HasPrefix(p, "/.well-known/acme-challenge/") {
-			return woos.BucketACME, ratelimit.RatePolicy{}, false
+			return def.BucketACME, ratelimit.RatePolicy{}, false
 		}
 		for _, rule := range rlc.Rules {
 			if len(rule.Methods) > 0 {

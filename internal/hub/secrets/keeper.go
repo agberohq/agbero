@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/keeper"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/prompter"
@@ -49,7 +49,7 @@ func Open(kfg Config) (*keeper.Keeper, error) {
 		return nil, fmt.Errorf("failed to initialize data directory: %w", err)
 	}
 
-	dbPath := filepath.Join(kfg.DataDir.Path(), woos.DefaultKeeperName)
+	dbPath := filepath.Join(kfg.DataDir.Path(), def.DefaultKeeperName)
 
 	kConfig := keeper.Config{
 		DBPath:      dbPath,

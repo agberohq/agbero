@@ -4,6 +4,7 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/agberohq/keeper"
@@ -62,7 +63,7 @@ func (c *Context) SetTLSStore(store tlsstore.Store) {
 }
 
 func checkIsRoot() bool {
-	if runtime.GOOS == woos.Windows {
+	if runtime.GOOS == def.Windows {
 		return false
 	}
 	return os.Geteuid() == 0

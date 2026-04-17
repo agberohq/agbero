@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/pkg/raw/afs"
 	"github.com/olekukonko/jack"
 )
@@ -185,7 +185,7 @@ func (p *connPool) dial(ctx context.Context) (net.Conn, error) {
 	dialer := net.Dialer{Timeout: p.timeout}
 
 	if resolved.IsValid() {
-		conn, err := dialer.DialContext(ctx, woos.TCP, resolved.String())
+		conn, err := dialer.DialContext(ctx, def.TCP, resolved.String())
 		if err == nil {
 			return conn, nil
 		}
@@ -200,7 +200,7 @@ func (p *connPool) dial(ctx context.Context) (net.Conn, error) {
 
 	portNum, err := strconv.ParseUint(port, 10, 16)
 	if err != nil {
-		return dialer.DialContext(ctx, woos.TCP, p.addr)
+		return dialer.DialContext(ctx, def.TCP, p.addr)
 	}
 
 	resolver := &net.Resolver{
@@ -211,12 +211,12 @@ func (p *connPool) dial(ctx context.Context) (net.Conn, error) {
 	}
 	addrs, err := resolver.LookupNetIP(ctx, networkTypeIPv4, host)
 	if err != nil || len(addrs) == 0 {
-		return dialer.DialContext(ctx, woos.TCP, p.addr)
+		return dialer.DialContext(ctx, def.TCP, p.addr)
 	}
 	var lastErr error
 	for _, addr := range addrs {
 		addrPort := netip.AddrPortFrom(addr, uint16(portNum))
-		conn, err := dialer.DialContext(ctx, woos.TCP, addrPort.String())
+		conn, err := dialer.DialContext(ctx, def.TCP, addrPort.String())
 		if err == nil {
 			p.mu.Lock()
 			p.resolved = addrPort

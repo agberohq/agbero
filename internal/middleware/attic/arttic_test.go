@@ -28,7 +28,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     alaye.Duration(time.Minute),
+				TTL:     expect.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{method: "GET", path: "/test", body: "response1"},
@@ -43,7 +43,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     alaye.Duration(time.Minute),
+				TTL:     expect.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{method: "GET", path: "/a", body: "a-response"},
@@ -58,7 +58,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     alaye.Duration(time.Minute),
+				TTL:     expect.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{method: "GET", path: "/search?q=foo", body: "foo results"},
@@ -73,7 +73,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     alaye.Duration(time.Minute),
+				TTL:     expect.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{method: "POST", path: "/test", body: "post1"},
@@ -88,7 +88,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     alaye.Duration(time.Minute),
+				TTL:     expect.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{
@@ -112,7 +112,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     alaye.Duration(time.Minute),
+				TTL:     expect.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{
@@ -146,7 +146,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     alaye.Duration(time.Minute),
+				TTL:     expect.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{
@@ -171,7 +171,7 @@ func TestCacheMiddleware(t *testing.T) {
 				Enabled: expect.Active,
 				Driver:  "memory",
 				Methods: []string{"GET"},
-				TTL:     alaye.Duration(time.Minute),
+				TTL:     expect.Duration(time.Minute),
 			},
 			requests: []testRequest{
 				{method: "GET", path: "/large", body: strings.Repeat("x", 6*1024*1024)},

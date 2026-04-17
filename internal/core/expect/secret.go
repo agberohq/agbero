@@ -1,11 +1,12 @@
 package expect
 
 import (
-	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/olekukonko/errors"
 )
 
 // Secret represents a parsed secret reference supporting both

@@ -2,6 +2,7 @@ package xtcp
 
 import (
 	"bytes"
+	"github.com/agberohq/agbero/internal/core/def"
 	"io"
 	"net"
 	"strings"
@@ -106,16 +107,16 @@ func TestPeekedConn_Read_FromPeekOnly(t *testing.T) {
 	mock := &mockConn{readData: []byte("never read")}
 	pc := newPeekedConn(mock, []byte("hello"))
 
-	buf := make([]byte, 3)
+	buf := make([]byte, def.BackendRetryCount)
 	n, err := pc.Read(buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if n != 3 || string(buf) != "hel" {
+	if n != def.BackendRetryCount || string(buf) != "hel" {
 		t.Errorf("expected 'hel', got %q", string(buf[:n]))
 	}
 
-	buf = make([]byte, 3)
+	buf = make([]byte, def.BackendRetryCount)
 	n, err = pc.Read(buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

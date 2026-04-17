@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/landlock-lsm/go-landlock/landlock"
 	"github.com/olekukonko/ll"
 )
@@ -43,7 +44,7 @@ func setupProcessGroup(cmd *exec.Cmd, dropPrivileges bool) (*jobLimits, error) {
 func killProcessGroup(pid int) error {
 	syscall.Kill(-pid, syscall.SIGTERM)
 	go func() {
-		<-time.After(10 * time.Second)
+		<-time.After(def.DefaultWorkerPoolSize * time.Second)
 		syscall.Kill(-pid, syscall.SIGKILL)
 	}()
 	return nil
@@ -70,29 +71,29 @@ func applySandbox(workDir string, logger *ll.Logger) error {
 }
 
 func applyCgroups(pid int, workerName string, logger *ll.Logger) error {
-	if err := os.MkdirAll(cgroupBase, 0750); err != nil {
+	if err := os.MkdirAll(cgroupBase, def.WorkDirPerm); err != nil {
 		return err
 	}
 
 	cgroupPath := filepath.Join(cgroupBase, workerName)
-	if err := os.MkdirAll(cgroupPath, 0750); err != nil {
+	if err := os.MkdirAll(cgroupPath, def.WorkDirPerm); err != nil {
 		return err
 	}
 
 	limits := map[string]string{
-		"memory.max": strconv.FormatInt(maxMemoryDefault, 10),
+		"memory.max": strconv.FormatInt(maxMemoryDefault, def.DefaultWorkerPoolSize),
 		"pids.max":   strconv.Itoa(maxPidsDefault),
 		"cpu.weight": strconv.Itoa(cpuWeightDefault),
 	}
 	for file, value := range limits {
 		path := filepath.Join(cgroupPath, file)
-		if err := os.WriteFile(path, []byte(value), 0644); err != nil {
+		if err := os.WriteFile(path, []byte(value), def.ConfigFilePerm); err != nil {
 			logger.Fields("file", file, "err", err).Error("cgroup limit failed")
 		}
 	}
 
 	procsPath := filepath.Join(cgroupPath, "cgroup.procs")
-	if err := os.WriteFile(procsPath, []byte(strconv.Itoa(pid)), 0644); err != nil {
+	if err := os.WriteFile(procsPath, []byte(strconv.Itoa(pid)), def.ConfigFilePerm); err != nil {
 		return fmt.Errorf("failed to add process to cgroup: %w", err)
 	}
 	return nil

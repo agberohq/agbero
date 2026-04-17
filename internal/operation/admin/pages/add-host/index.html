@@ -1,0 +1,41 @@
+<div class="page active add-host-page">
+
+    <!-- Header -->
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+        <button class="btn small" id="addHostBackBtn" style="color:var(--text-mute);">← Hosts</button>
+        <div>
+            <h2 style="margin:0;font-size:17px;font-weight:400;">Add New Host</h2>
+            <p style="margin:3px 0 0;font-size:12px;color:var(--text-mute);">Configure a new virtual host on this Agbero node.</p>
+        </div>
+    </div>
+
+    <!-- Progress bar (driven by progress('wizard') in index.js) -->
+    <div id="addHostProgress" style="height:2px;background:var(--border);border-radius:1px;margin-bottom:18px;overflow:hidden;">
+        <div id="addHostProgressBar" style="height:100%;width:0%;background:var(--accent);border-radius:1px;transition:width 0.3s ease;"></div>
+    </div>
+
+    <!-- Step breadcrumb -->
+    <div class="add-host-steps" id="addHostSteps"></div>
+
+    <!-- Draft resume banner -->
+    <div id="draftResumeBanner" class="draft-resume-banner" style="display:none;">
+        <span style="font-size:18px;">📋</span>
+        <div style="flex:1;">
+            <div style="font-weight:500;">You have an unfinished host configuration</div>
+            <div id="draftResumeDesc" style="font-size:12px;color:var(--text-mute);margin-top:2px;"></div>
+        </div>
+        <button class="btn primary small" id="draftResumeBtn">Resume</button>
+        <button class="btn small" id="draftDiscardBtn">Start fresh</button>
+    </div>
+
+    <!-- Step content outlet -->
+    <div id="addHostContent"></div>
+
+    <!-- Navigation buttons (hidden on step 0) -->
+    <div id="addHostNav" style="display:none;justify-content:space-between;align-items:center;margin-top:24px;padding-top:16px;border-top:1px solid var(--border);">
+        <button class="btn" id="addHostPrevBtn">← Back</button>
+        <div id="addHostValidError" style="color:var(--danger);font-size:12px;flex:1;text-align:center;padding:0 12px;display:none;"></div>
+        <button class="btn primary" id="addHostNextBtn">Continue →</button>
+    </div>
+
+</div>

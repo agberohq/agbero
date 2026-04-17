@@ -7,28 +7,28 @@ import (
 
 // Registry provides a high-performance, lock-free global store for backend health scores.
 type Registry struct {
-	scores *mappo.Concurrent[alaye.BackendKey, *Score]
+	scores *mappo.Concurrent[alaye.Key, *Score]
 }
 
 // NewRegistry initializes an empty Registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		scores: mappo.NewConcurrent[alaye.BackendKey, *Score](),
+		scores: mappo.NewConcurrent[alaye.Key, *Score](),
 	}
 }
 
 // Set stores a health score at the given key, overwriting any existing value.
-func (r *Registry) Set(key alaye.BackendKey, score *Score) {
+func (r *Registry) Set(key alaye.Key, score *Score) {
 	r.scores.Set(key, score)
 }
 
 // Get retrieves a health score by its key.
-func (r *Registry) Get(key alaye.BackendKey) (*Score, bool) {
+func (r *Registry) Get(key alaye.Key) (*Score, bool) {
 	return r.scores.Get(key)
 }
 
 // GetOrSet retrieves an existing score or atomically sets a new one if it doesn't exist.
-func (r *Registry) GetOrSet(key alaye.BackendKey, score *Score) *Score {
+func (r *Registry) GetOrSet(key alaye.Key, score *Score) *Score {
 	s := r.scores.Compute(key, func(current *Score, exists bool) (newValue *Score, keep bool) {
 		if exists {
 			return current, true
@@ -39,7 +39,7 @@ func (r *Registry) GetOrSet(key alaye.BackendKey, score *Score) *Score {
 }
 
 // Delete removes a score from the registry.
-func (r *Registry) Delete(key alaye.BackendKey) {
+func (r *Registry) Delete(key alaye.Key) {
 	r.scores.Delete(key)
 }
 

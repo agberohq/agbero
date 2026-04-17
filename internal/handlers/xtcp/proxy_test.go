@@ -3,13 +3,15 @@ package xtcp
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"io"
 	"net"
 	"testing"
 	"time"
 
+	"github.com/olekukonko/errors"
+
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
@@ -126,9 +128,9 @@ func makeSNIClientHello(sni string) []byte {
 	sniLen := len(sniBytes)
 	extDataLen := 2 + 1 + 2 + sniLen
 	extData := make([]byte, extDataLen)
-	binary.BigEndian.PutUint16(extData[0:], uint16(sniLen+3))
+	binary.BigEndian.PutUint16(extData[0:], uint16(sniLen+def.BackendRetryCount))
 	extData[2] = 0x00
-	binary.BigEndian.PutUint16(extData[3:], uint16(sniLen))
+	binary.BigEndian.PutUint16(extData[def.BackendRetryCount:], uint16(sniLen))
 	copy(extData[5:], sniBytes)
 	extBlockLen := 2 + 2 + extDataLen
 	extBlock := make([]byte, extBlockLen)
@@ -155,11 +157,11 @@ func makeSNIClientHello(sni string) []byte {
 	binary.BigEndian.PutUint16(body[pos:], uint16(allExtLen))
 	pos += 2
 	copy(body[pos:], extBlock)
-	recordLen := 1 + 3 + handshakeBodyLen
+	recordLen := 1 + def.BackendRetryCount + handshakeBodyLen
 	pkt := make([]byte, 5+recordLen)
 	pkt[0] = 0x16
 	pkt[1], pkt[2] = 0x03, 0x01
-	binary.BigEndian.PutUint16(pkt[3:], uint16(recordLen))
+	binary.BigEndian.PutUint16(pkt[def.BackendRetryCount:], uint16(recordLen))
 	pkt[5] = 0x01
 	l := uint32(handshakeBodyLen)
 	pkt[6], pkt[7], pkt[8] = byte(l>>16), byte(l>>8), byte(l)
@@ -348,7 +350,7 @@ func TestProxy_UpdateRoutes(t *testing.T) {
 	}
 	defer conn.Close()
 
-	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(def.BackendRetryCount * time.Second))
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err != nil {
@@ -379,7 +381,7 @@ func TestProxy_Stop_ClosesConnections(t *testing.T) {
 	}
 	defer conn.Close()
 
-	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(def.BackendRetryCount * time.Second))
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err != nil {
@@ -391,7 +393,7 @@ func TestProxy_Stop_ClosesConnections(t *testing.T) {
 
 	p.Stop()
 
-	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(def.BackendRetryCount * time.Second))
 	_, err = conn.Read(buf)
 	if err == nil {
 		t.Error("expected connection to be closed or timeout after proxy stop")

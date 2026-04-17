@@ -9,21 +9,20 @@ import (
 )
 
 type Proxy struct {
-	Enabled        expect.Toggle  `hcl:"enabled,attr" json:"enabled"`
-	Name           string         `hcl:"name,label" json:"name"`
-	Listen         string         `hcl:"listen,attr" json:"listen"`
-	SNI            string         `hcl:"sni,attr" json:"sni"`
-	Strategy       string         `hcl:"strategy,attr" json:"strategy"`
-	ProxyProtocol  bool           `hcl:"proxy_protocol,attr" json:"proxy_protocol"`
-	MaxConnections int64          `hcl:"max_connections,attr" json:"max_connections"`
-	Backends       []Server       `hcl:"backend,block" json:"backends"`
-	HealthCheck    TCPHealthCheck `hcl:"health_check,block" json:"health_check"`
+	Enabled        expect.Toggle       `hcl:"enabled,attr" json:"enabled"`
+	Name           string              `hcl:"name,label" json:"name"`
+	Listen         string              `hcl:"listen,attr" json:"listen"`
+	SNI            string              `hcl:"sni,attr,omitempty" json:"sni,omitempty"`
+	Strategy       string              `hcl:"strategy,attr,omitempty" json:"strategy,omitempty"`
+	ProxyProtocol  bool                `hcl:"proxy_protocol,attr,omitempty" json:"proxy_protocol,omitempty"`
+	MaxConnections int64               `hcl:"max_connections,attr,omitempty" json:"max_connections,omitempty"`
+	Backends       []Server            `hcl:"backend,block,omitempty" json:"backends,omitempty"`
+	HealthCheck    HealthCheckProtocol `hcl:"health_check,block,omitempty" json:"health_check,omitempty"`
 
-	// UDP-specific fields. Ignored when Protocol is "tcp" (default).
-	Protocol    string   `hcl:"protocol,attr"    json:"protocol"`      // "tcp" (default) or "udp"
-	Matcher     string   `hcl:"matcher,attr"     json:"matcher"`       // "stun", "dns", "sip", "" (src:port)
-	SessionTTL  Duration `hcl:"session_ttl,attr" json:"session_ttl"`   // UDP session idle timeout
-	MaxSessions int64    `hcl:"max_sessions,attr" json:"max_sessions"` // max concurrent UDP sessions
+	Protocol    string          `hcl:"protocol,attr,omitempty" json:"protocol,omitempty"`
+	Matcher     string          `hcl:"matcher,attr,omitempty" json:"matcher,omitempty"`
+	SessionTTL  expect.Duration `hcl:"session_ttl,attr,omitempty" json:"session_ttl,omitempty"`
+	MaxSessions int64           `hcl:"max_sessions,attr,omitempty" json:"max_sessions,omitempty"`
 }
 
 // Validate checks listen address, SNI pattern, strategy, and backends.
@@ -78,35 +77,30 @@ func (t *Proxy) Validate() error {
 	return t.HealthCheck.Validate()
 }
 
-type TCPHealthCheck struct {
-	Enabled  expect.Toggle `hcl:"enabled,attr" json:"enabled"`
-	Interval Duration      `hcl:"interval,attr" json:"interval"`
-	Timeout  Duration      `hcl:"timeout,attr" json:"timeout"`
-	Send     string        `hcl:"send,attr" json:"send"`
-	Expect   string        `hcl:"expect,attr" json:"expect"`
-}
-
-func (t *TCPHealthCheck) Validate() error {
-	if t.Enabled.NotActive() {
-		return nil
-	}
-	switch {
-	case t.Interval < 0:
-		return errors.New("health_check.interval cannot be negative")
-	case t.Timeout < 0:
-		return errors.New("health_check.timeout cannot be negative")
-	}
-	return nil
-}
-
 // IsUDP returns true when this proxy is configured for UDP transport.
 func (t *Proxy) IsUDP() bool {
 	return strings.EqualFold(t.Protocol, "udp")
 }
 
-func (t *Proxy) BackendKey(backendAddr string) BackendKey {
+func (t *Proxy) IsTCP() bool {
+	return !t.IsUDP()
+}
+
+func (t *Proxy) IsZero() bool {
+	return t.Enabled.IsZero() &&
+		t.Name == "" &&
+		t.Listen == "" &&
+		t.SNI == "" &&
+		t.Strategy == "" &&
+		t.ProxyProtocol == false &&
+		t.MaxConnections == 0 &&
+		len(t.Backends) == 0 &&
+		t.HealthCheck.IsZero()
+}
+
+func (t *Proxy) BackendKey(backendAddr string) Key {
 	if t.IsUDP() {
-		return BackendKey{
+		return Key{
 			Protocol: "udp",
 			Domain:   t.Listen,
 			Path:     t.Name,
@@ -117,7 +111,7 @@ func (t *Proxy) BackendKey(backendAddr string) BackendKey {
 	if sni == "" {
 		sni = "*"
 	}
-	return BackendKey{
+	return Key{
 		Protocol: "tcp",
 		Domain:   t.Listen,
 		Path:     sni,

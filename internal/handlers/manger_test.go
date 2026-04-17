@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cook"
@@ -192,7 +193,7 @@ func TestManager_BuildListeners_HostBind(t *testing.T) {
 		Domains: []string{"example.com"},
 		Bind:    []string{"9090"},
 		TLS: alaye.TLS{
-			Mode: alaye.ModeLocalNone,
+			Mode: def.ModeLocalNone,
 		},
 	}
 
@@ -463,19 +464,19 @@ func TestManager_handleRoute_WASM_InvalidModule(t *testing.T) {
 	cfg := ManagerConfig{
 		Global: &alaye.Global{
 			Timeouts: alaye.Timeout{
-				Read:       alaye.Duration(30 * time.Second),
-				Write:      alaye.Duration(30 * time.Second),
-				Idle:       alaye.Duration(120 * time.Second),
-				ReadHeader: alaye.Duration(5 * time.Second),
+				Read:       expect.Duration(30 * time.Second),
+				Write:      expect.Duration(30 * time.Second),
+				Idle:       expect.Duration(120 * time.Second),
+				ReadHeader: expect.Duration(5 * time.Second),
 			},
 			Security: alaye.Security{
 				Enabled:        expect.Inactive,
 				TrustedProxies: []string{},
 			},
-			RateLimits: alaye.GlobalRate{
+			RateLimits: alaye.RateGlobal{
 				Enabled:    expect.Inactive,
-				TTL:        alaye.Duration(10 * time.Minute),
-				MaxEntries: 10000,
+				TTL:        expect.Duration(10 * time.Minute),
+				MaxEntries: def.DefaultCacheMaxItems,
 			},
 			Storage: alaye.Storage{
 				WorkDir: expect.NewFolder(t.TempDir()),
@@ -523,7 +524,7 @@ func TestManager_handleRoute_RateLimit_IgnoreGlobal(t *testing.T) {
 			Enabled: expect.Active,
 			Root:    alaye.WebRoot(root),
 		},
-		RateLimit: alaye.RouteRate{
+		RateLimit: alaye.RateRoute{
 			Enabled:      expect.Active,
 			IgnoreGlobal: true,
 		},
@@ -531,13 +532,13 @@ func TestManager_handleRoute_RateLimit_IgnoreGlobal(t *testing.T) {
 
 	cfg := ManagerConfig{
 		Global: &alaye.Global{
-			RateLimits: alaye.GlobalRate{
+			RateLimits: alaye.RateGlobal{
 				Enabled: expect.Active,
 				Rules: []alaye.RateRule{
 					{
 						Enabled:  expect.Active,
 						Requests: 1,
-						Window:   alaye.Duration(time.Second),
+						Window:   expect.Duration(time.Second),
 					},
 				},
 			},
@@ -702,7 +703,7 @@ func TestManager_buildGlobalRateLimiter_Nil(t *testing.T) {
 
 func TestManager_buildGlobalRateLimiter_Disabled(t *testing.T) {
 	global := &alaye.Global{
-		RateLimits: alaye.GlobalRate{
+		RateLimits: alaye.RateGlobal{
 			Enabled: expect.Inactive,
 		},
 	}
@@ -714,13 +715,13 @@ func TestManager_buildGlobalRateLimiter_Disabled(t *testing.T) {
 
 func TestManager_buildGlobalRateLimiter_ACMEExcluded(t *testing.T) {
 	global := &alaye.Global{
-		RateLimits: alaye.GlobalRate{
+		RateLimits: alaye.RateGlobal{
 			Enabled: expect.Active,
 			Rules: []alaye.RateRule{
 				{
 					Enabled:  expect.Active,
 					Requests: 100,
-					Window:   alaye.Duration(time.Minute),
+					Window:   expect.Duration(time.Minute),
 				},
 			},
 		},
@@ -747,10 +748,10 @@ func TestManager_buildGlobalRateLimiter_ACMEExcluded(t *testing.T) {
 
 func TestManager_createHTTPListener_TLSConfig(t *testing.T) {
 	cfg := testManagerConfig(t)
-	cfg.Global.Timeouts.Read = alaye.Duration(10 * time.Second)
-	cfg.Global.Timeouts.Write = alaye.Duration(30 * time.Second)
-	cfg.Global.Timeouts.Idle = alaye.Duration(120 * time.Second)
-	cfg.Global.Timeouts.ReadHeader = alaye.Duration(5 * time.Second)
+	cfg.Global.Timeouts.Read = expect.Duration(10 * time.Second)
+	cfg.Global.Timeouts.Write = expect.Duration(30 * time.Second)
+	cfg.Global.Timeouts.Idle = expect.Duration(120 * time.Second)
+	cfg.Global.Timeouts.ReadHeader = expect.Duration(5 * time.Second)
 	cfg.Global.General.MaxHeaderBytes = 1 << 20
 
 	m, err := NewManager(cfg)

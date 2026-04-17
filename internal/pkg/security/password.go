@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -72,7 +73,7 @@ func (g *Password) Verify(password, hash string) bool {
 
 // Dummy returns a dummy bcrypt hash for timing attack resistance
 func (g *Password) Dummy() []byte {
-	hash, _ := bcrypt.GenerateFromPassword([]byte("dummy-password-for-timing"), bcrypt.DefaultCost)
+	hash, _ := bcrypt.GenerateFromPassword([]byte(def.DummyPassword), bcrypt.DefaultCost)
 	return hash
 }
 

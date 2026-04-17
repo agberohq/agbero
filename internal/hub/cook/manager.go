@@ -17,18 +17,12 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
-)
-
-const (
-	defaultWebhookTimeout = 5 * time.Minute
-	maxWebhookBodySize    = 1 << 20
-	defaultWorkDirPerm    = 0750
-	defaultStopTimeout    = 30 * time.Second
 )
 
 type WebhookPayload struct {
@@ -68,7 +62,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	if cfg.Pool == nil {
 		return nil, errors.New("worker pool is required")
 	}
-	if err := cfg.WorkDir.Init(defaultWorkDirPerm); err != nil {
+	if err := cfg.WorkDir.Init(def.WorkDirPerm); err != nil {
 		return nil, fmt.Errorf("failed to create manager workdir: %w", err)
 	}
 	logger := cfg.Logger
@@ -179,7 +173,7 @@ func (m *Manager) registerPushOnly(routeKey string, cfg alaye.Git) error {
 		targetWorkDir = cfg.WorkDir.Path()
 	}
 
-	if err := os.MkdirAll(targetWorkDir, defaultWorkDirPerm); err != nil {
+	if err := os.MkdirAll(targetWorkDir, def.WorkDirPerm); err != nil {
 		return fmt.Errorf("push-only: create work dir: %w", err)
 	}
 
@@ -269,7 +263,7 @@ func (m *Manager) Stop() {
 
 	select {
 	case <-done:
-	case <-time.After(defaultStopTimeout):
+	case <-time.After(def.CookTimeoutStop):
 		m.logger.Warn("timeout waiting for pollers")
 	}
 }
@@ -281,12 +275,12 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 		return
 	}
 
-	if entry.Config.Mode == alaye.GitModePull {
+	if entry.Config.Mode == def.GitModePull {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBodySize)
+	r.Body = http.MaxBytesReader(w, r.Body, def.CookWebhookBodySize)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		m.logger.Fields("route", routeKey, "err", err).Warn("failed to read webhook body")
@@ -346,7 +340,7 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 			m.logger.Fields("route", routeKey).Info("ghost deployment prevented: route unregistered")
 			return nil
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), defaultWebhookTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), def.CookTimeoutStop)
 		defer cancel()
 		if err := entry.Cook.Make(ctx); err != nil {
 			if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context canceled") {
@@ -369,7 +363,7 @@ func (m *Manager) writePushPayload(entry *Entry, body []byte) error {
 	if workDir == "" {
 		return errors.New("push-only work directory not available")
 	}
-	return os.WriteFile(filepath.Join(workDir, ".payload.json"), body, 0644)
+	return os.WriteFile(filepath.Join(workDir, ".payload.json"), body, def.ConfigFilePerm)
 }
 
 func (m *Manager) WebhookHandler(routeKey string) http.HandlerFunc {

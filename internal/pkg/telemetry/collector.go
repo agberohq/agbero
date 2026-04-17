@@ -90,7 +90,7 @@ func (c *Collector) collect() {
 
 		for _, route := range hcfg.Routes {
 			for _, srv := range route.Backends.Servers {
-				statsKey := route.BackendKey(domain, srv.Address.String())
+				statsKey := route.KeyBackend(domain, srv.Address.String())
 				stats := c.res.Metrics.Get(statsKey)
 				if stats == nil {
 					continue

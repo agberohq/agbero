@@ -27,7 +27,7 @@ require (
 	github.com/klauspost/compress v1.18.5
 	github.com/markbates/goth v1.82.0
 	github.com/minio/selfupdate v0.6.0
-	github.com/olekukonko/errors v1.2.0
+	github.com/olekukonko/errors v1.2.1-0.20260417163048-247ae3bdc11b
 	github.com/olekukonko/jack v0.0.0-20260405213848-6393514abff0
 	github.com/olekukonko/ll v0.1.9-0.20260330210650-e52da6f04599
 	github.com/olekukonko/mappo v0.0.0-20260329141345-c5de61574284

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/cmd/agbero/helper"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/secrets"
@@ -28,7 +29,7 @@ import (
 var logger *ll.Logger
 
 func main() {
-	logger = ll.New(woos.Name,
+	logger = ll.New(def.Name,
 		ll.WithHandler(lh.NewColorizedHandler(os.Stdout)),
 		ll.WithFatalExits(true),
 	).Enable()
@@ -40,8 +41,8 @@ func main() {
 		jack.ShutdownConcurrent(),
 	)
 
-	flaggy.SetName(woos.Name)
-	flaggy.SetDescription(woos.Description)
+	flaggy.SetName(def.Name)
+	flaggy.SetDescription(def.Description)
 	flaggy.SetVersion(woos.Version)
 
 	cfg := &helper.Config{
@@ -418,9 +419,9 @@ func main() {
 
 	if cmdUninstall.Used {
 		svcConfig := &service.Config{
-			Name:        woos.Name,
-			DisplayName: woos.Display,
-			Description: woos.Description,
+			Name:        def.Name,
+			DisplayName: def.Display,
+			Description: def.Description,
 		}
 		svc, _ := service.New(nil, svcConfig)
 		hel.Home().Uninstall(svc, resolvedPath, cfg.UninstallForce)
@@ -664,16 +665,16 @@ func main() {
 
 	if cmdService.Used {
 		svcConfig := &service.Config{
-			Name:             woos.Name,
-			DisplayName:      woos.Display,
-			Description:      woos.Description,
+			Name:             def.Name,
+			DisplayName:      def.Display,
+			Description:      def.Description,
 			Arguments:        []string{"run", "-c", resolvedPath},
 			WorkingDirectory: filepath.Dir(resolvedPath),
 		}
 		if cfg.DevMode {
 			svcConfig.Arguments = append(svcConfig.Arguments, "--dev")
 		}
-		if runtime.GOOS == woos.Darwin && os.Geteuid() != 0 {
+		if runtime.GOOS == def.Darwin && os.Geteuid() != 0 {
 			cwd, _ := os.Getwd()
 			if filepath.Dir(resolvedPath) == cwd {
 				svcConfig.Name = "net.agbero.dev"
@@ -681,7 +682,7 @@ func main() {
 				svcConfig.Name = "net.agbero"
 			}
 			svcConfig.Option = service.KeyValue{"RunAtLoad": true, "UserService": true}
-		} else if runtime.GOOS == woos.Linux && os.Geteuid() != 0 {
+		} else if runtime.GOOS == def.Linux && os.Geteuid() != 0 {
 			svcConfig.Option = service.KeyValue{"UserService": true}
 		}
 
@@ -762,16 +763,16 @@ func main() {
 
 func welcome() {
 	u := ui.New()
-	u.Welcome(woos.Name, woos.Description, woos.Version, woos.Date, setup.BannerTmpl)
+	u.Welcome(def.Name, def.Description, woos.Version, woos.Date, setup.BannerTmpl)
 }
 
 func showHelpExamples() {
-	exeName := woos.Name
+	exeName := def.Name
 	if len(os.Args) > 0 {
 		exeName = filepath.Base(os.Args[0])
 	}
 	prefix := "sudo "
-	if runtime.GOOS == woos.Windows {
+	if runtime.GOOS == def.Windows {
 		prefix = ""
 	}
 

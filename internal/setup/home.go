@@ -2,16 +2,17 @@ package setup
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/olekukonko/errors"
+
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/agberohq/agbero/internal/pkg/security"
@@ -116,7 +117,7 @@ func (h *Home) initializeKeeper() (*keeper.Keeper, *session, error) {
 		return nil, nil, fmt.Errorf("failed to ensure temp bucket: %w", err)
 	}
 
-	sess := &session{Step: woos.SetupStepInit, UpdatedAt: time.Now()}
+	sess := &session{Step: def.SetupStepInit, UpdatedAt: time.Now()}
 	if initData, err := store.Get(tempKey); err == nil && len(initData) > 0 {
 		if err := json.Unmarshal(initData, &sess); err != nil {
 			h.u.Render(func() { h.u.WarnLine("Failed to parse saved setup state, starting fresh") })
@@ -147,10 +148,10 @@ func (h *Home) runSetupSteps(store *keeper.Keeper, sess *session) error {
 		name string
 		fn   func(*keeper.Keeper, *session) error
 	}{
-		{woos.SetupStepAdmin, h.setupAdmin},
-		{woos.SetupStepKeeperSecrets, h.setupKeeperSecrets},
-		{woos.SetupStepTOTP, h.setupTOTP},
-		{woos.SetupStepLetsEncrypt, h.setupLetsEncrypt},
+		{def.SetupStepAdmin, h.setupAdmin},
+		{def.SetupStepKeeperSecrets, h.setupKeeperSecrets},
+		{def.SetupStepTOTP, h.setupTOTP},
+		{def.SetupStepLetsEncrypt, h.setupLetsEncrypt},
 	}
 
 	for _, step := range steps {
@@ -171,7 +172,7 @@ func (h *Home) runSetupSteps(store *keeper.Keeper, sess *session) error {
 		}
 	}
 
-	sess.Step = woos.SetupStepDone
+	sess.Step = def.SetupStepDone
 	stateBytes, _ := json.Marshal(sess)
 	_ = store.Set(expect.Vault().Temp(name), stateBytes)
 	return nil
@@ -188,7 +189,7 @@ func (h *Home) setupAdmin(store *keeper.Keeper, sess *session) error {
 		return err
 	}
 
-	adminUser := alaye.AdminUser{
+	adminUser := alaye.User{
 		Username:     reg.Username,
 		PasswordHash: string(reg.PasswordHash),
 		TOTPEnabled:  false,
@@ -214,7 +215,7 @@ func (h *Home) setupKeeperSecrets(store *keeper.Keeper, sess *session) error {
 
 	p := security.NewPassword()
 
-	adminSecret, err := p.Generate(woos.JWTSecretLength)
+	adminSecret, err := p.Generate(def.JWTSecretLength)
 	if err != nil {
 		return fmt.Errorf("failed to generate admin secret: %w", err)
 	}
@@ -232,7 +233,7 @@ func (h *Home) setupKeeperSecrets(store *keeper.Keeper, sess *session) error {
 	}
 	h.u.Render(func() { h.u.Step("ok", "Stored internal auth key") })
 
-	clusterSecret, err := p.Generate(woos.ClusterSecretLen)
+	clusterSecret, err := p.Generate(def.ClusterSecretLen)
 	if err != nil {
 		return fmt.Errorf("failed to generate cluster secret: %w", err)
 	}
@@ -280,7 +281,7 @@ func (h *Home) setupTOTP(store *keeper.Keeper, sess *session) error {
 
 	userKey := expect.Vault().AdminUser(sess.AdminUsername)
 	if userJSON, err := store.Get(userKey); err == nil {
-		var adminUser alaye.AdminUser
+		var adminUser alaye.User
 		if json.Unmarshal(userJSON, &adminUser) == nil {
 			adminUser.TOTPEnabled = true
 			if updatedJSON, err := json.Marshal(adminUser); err == nil {
@@ -339,13 +340,13 @@ func (h *Home) setupLetsEncrypt(store *keeper.Keeper, sess *session) error {
 }
 
 func (h *Home) writeConfigFiles(store *keeper.Keeper, sess *session) error {
-	leEnabled := woos.Off
+	leEnabled := def.Off
 	if sess.LEEmail != "" {
-		leEnabled = woos.On
+		leEnabled = def.On
 	}
-	totpEnabled := woos.Off
+	totpEnabled := def.Off
 	if sess.TOTPEnabled {
-		totpEnabled = woos.On
+		totpEnabled = def.On
 	}
 
 	replacements := []struct{ key, value string }{
@@ -358,7 +359,7 @@ func (h *Home) writeConfigFiles(store *keeper.Keeper, sess *session) error {
 		{"{CLUSTER_SECRET_KEY}", expect.Vault().Key("cluster")},
 		{"{LE_ENABLED}", leEnabled},
 		{"{LE_EMAIL}", sess.LEEmail},
-		{"{KEEPER_ENABLED}", woos.On},
+		{"{KEEPER_ENABLED}", def.On},
 		{"{TOTP_ENABLED}", totpEnabled},
 	}
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -120,8 +121,8 @@ func TestManager_PullMode_Register_And_Clone(t *testing.T) {
 		ID:       "pull-route",
 		URL:      upstream,
 		Branch:   "master",
-		Interval: alaye.Duration(30 * time.Minute), // pull mode
-		Mode:     alaye.GitModePull,
+		Interval: expect.Duration(30 * time.Minute), // pull mode
+		Mode:     def.GitModePull,
 	}
 	if err := mgr.Register("pull-route", cfg); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -143,8 +144,8 @@ func TestManager_PullMode_WebhookReturns405(t *testing.T) {
 		ID:       "pull-only",
 		URL:      upstream,
 		Branch:   "master",
-		Interval: alaye.Duration(30 * time.Minute),
-		Mode:     alaye.GitModePull,
+		Interval: expect.Duration(30 * time.Minute),
+		Mode:     def.GitModePull,
 	}
 	if err := mgr.Register("pull-only", cfg); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -173,7 +174,7 @@ func TestManager_PushMode_Webhook_ValidSignature(t *testing.T) {
 		URL:     upstream,
 		Branch:  "master",
 		Secret:  expect.Value(secret),
-		Mode:    alaye.GitModePush,
+		Mode:    def.GitModePush,
 	}
 	if err := mgr.Register("push-route", cfg); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -199,7 +200,7 @@ func TestManager_PushMode_Webhook_InvalidSignature(t *testing.T) {
 		URL:     upstream,
 		Branch:  "master",
 		Secret:  expect.Value("correct-secret"),
-		Mode:    alaye.GitModePush,
+		Mode:    def.GitModePush,
 	}
 	if err := mgr.Register("push-sig", cfg); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -227,7 +228,7 @@ func TestManager_PushMode_Webhook_BranchMismatch(t *testing.T) {
 		URL:     upstream,
 		Branch:  "master",
 		Secret:  expect.Value(secret),
-		Mode:    alaye.GitModePush,
+		Mode:    def.GitModePush,
 	}
 	if err := mgr.Register("push-branch", cfg); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -256,8 +257,8 @@ func TestManager_BothMode_PollsAndAcceptsWebhook(t *testing.T) {
 		URL:      upstream,
 		Branch:   "master",
 		Secret:   expect.Value(secret),
-		Interval: alaye.Duration(30 * time.Minute),
-		Mode:     alaye.GitModeBoth,
+		Interval: expect.Duration(30 * time.Minute),
+		Mode:     def.GitModeBoth,
 	}
 	if err := mgr.Register("both-route", cfg); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -282,7 +283,7 @@ func TestManager_PushOnly_Register(t *testing.T) {
 		ID:      "push-only-route",
 		URL:     "", // no clone
 		Secret:  expect.Value("push-secret"),
-		Mode:    alaye.GitModePush,
+		Mode:    def.GitModePush,
 	}
 	if err := mgr.Register("push-only-route", cfg); err != nil {
 		t.Fatalf("Register push-only: %v", err)
@@ -299,7 +300,7 @@ func TestManager_PushOnly_RequiresSecret(t *testing.T) {
 		Enabled: expect.Active,
 		ID:      "no-secret",
 		URL:     "",
-		Mode:    alaye.GitModePush,
+		Mode:    def.GitModePush,
 	}
 	if err := mgr.Register("no-secret", cfg); err == nil {
 		t.Error("expected error for push-only mode without secret")
@@ -314,7 +315,7 @@ func TestManager_PushOnly_Webhook_WritesPayload(t *testing.T) {
 		ID:      "push-only-write",
 		URL:     "",
 		Secret:  expect.Value(secret),
-		Mode:    alaye.GitModePush,
+		Mode:    def.GitModePush,
 	}
 	if err := mgr.Register("push-only-write", cfg); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -347,7 +348,7 @@ func TestManager_PushOnly_Webhook_InvalidSignature(t *testing.T) {
 		ID:      "push-only-sig",
 		URL:     "",
 		Secret:  expect.Value("correct"),
-		Mode:    alaye.GitModePush,
+		Mode:    def.GitModePush,
 	}
 	if err := mgr.Register("push-only-sig", cfg); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -386,8 +387,8 @@ func TestManager_Health(t *testing.T) {
 		ID:       "healthy-route",
 		URL:      upstream,
 		Branch:   "master",
-		Interval: alaye.Duration(30 * time.Minute),
-		Mode:     alaye.GitModePull,
+		Interval: expect.Duration(30 * time.Minute),
+		Mode:     def.GitModePull,
 	}
 	if err := mgr.Register("healthy-route", cfg); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -416,8 +417,8 @@ func TestManager_Prune(t *testing.T) {
 			ID:       id,
 			URL:      upstream,
 			Branch:   "master",
-			Interval: alaye.Duration(30 * time.Minute),
-			Mode:     alaye.GitModePull,
+			Interval: expect.Duration(30 * time.Minute),
+			Mode:     def.GitModePull,
 		}
 		if err := mgr.Register(id, cfg); err != nil {
 			t.Fatalf("Register %s: %v", id, err)

@@ -19,6 +19,7 @@ import (
 
 	"charm.land/huh/v2"
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/discovery"
@@ -213,9 +214,9 @@ func (s *System) Backup(configPath, outPath, password string) error {
 		}
 		file, err := os.Open(absPath)
 		if err != nil {
-			if strings.Contains(absPath, woos.DefaultKeeperName) {
-				u.Step("fail", fmt.Sprintf("%s is locked. You MUST stop the Agbero service before taking a system backup.", woos.DefaultKeeperName))
-				return fmt.Errorf("failed to backup %s: file is locked", woos.DefaultKeeperName)
+			if strings.Contains(absPath, def.DefaultKeeperName) {
+				u.Step("fail", fmt.Sprintf("%s is locked. You MUST stop the Agbero service before taking a system backup.", def.DefaultKeeperName))
+				return fmt.Errorf("failed to backup %s: file is locked", def.DefaultKeeperName)
 			}
 			u.Step("warn", fmt.Sprintf("open failed: %s", filepath.Base(absPath)))
 			continue
@@ -507,14 +508,14 @@ func (s *System) Update(force, autoYes bool) error {
 	}
 
 	u.Step("run", "downloading binary")
-	tmpArchive, err := s.downloadArchive(binaryAsset.BrowserDownloadURL, assetName, woos.UpdateDownloadTimeout)
+	tmpArchive, err := s.downloadArchive(binaryAsset.BrowserDownloadURL, assetName, def.UpdateDownloadTimeout)
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
 	defer os.Remove(tmpArchive)
 
 	u.Step("run", "downloading checksums")
-	checksumBody, err := s.downloadBytes(checksumAsset.BrowserDownloadURL, woos.UpdateFetchTimeout)
+	checksumBody, err := s.downloadBytes(checksumAsset.BrowserDownloadURL, def.UpdateFetchTimeout)
 	if err != nil {
 		return fmt.Errorf("checksum download failed: %w", err)
 	}
@@ -618,11 +619,11 @@ func (s *System) readAndVerifyManifest(zr *zip.ReadCloser, password string) (Bac
 
 // fetchLatestRelease queries the GitHub Releases API for the most recent release.
 func (s *System) fetchLatestRelease() (*githubRelease, error) {
-	apiURL := woos.GitHubReleaseAPIURL
+	apiURL := def.GitHubReleaseAPIURL
 	if s.cfg.githubAPIURL != "" {
 		apiURL = s.cfg.githubAPIURL
 	}
-	client := &http.Client{Timeout: woos.UpdateFetchTimeout}
+	client := &http.Client{Timeout: def.UpdateFetchTimeout}
 	if s.cfg.httpClient != nil {
 		client = s.cfg.httpClient
 	}
@@ -646,7 +647,7 @@ func (s *System) fetchLatestRelease() (*githubRelease, error) {
 // agbero-{os}-{arch}.tar.gz  (or .zip on Windows)
 func (s *System) buildAssetName(tagName string) string {
 	_ = tagName // version is not included in the filename
-	if runtime.GOOS == woos.Windows {
+	if runtime.GOOS == def.Windows {
 		return fmt.Sprintf("agbero-%s-%s.zip", runtime.GOOS, runtime.GOARCH)
 	}
 	return fmt.Sprintf("agbero-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
@@ -777,9 +778,9 @@ func extractBinaryFromTarGz(r io.Reader, dst *os.File) error {
 	}
 	defer gz.Close()
 
-	binaryName := woos.Name
-	if runtime.GOOS == woos.Windows {
-		binaryName = woos.Name + ".exe"
+	binaryName := def.Name
+	if runtime.GOOS == def.Windows {
+		binaryName = def.Name + ".exe"
 	}
 
 	tr := tar.NewReader(gz)
@@ -860,7 +861,7 @@ func rejectInsecureURL(rawURL string) error {
 	if err != nil {
 		return fmt.Errorf("invalid URL %q: %w", rawURL, err)
 	}
-	if !strings.EqualFold(u.Scheme, woos.Https) {
+	if !strings.EqualFold(u.Scheme, def.Https) {
 		return fmt.Errorf("refusing insecure URL %q — only HTTPS is accepted for updates", rawURL)
 	}
 	return nil

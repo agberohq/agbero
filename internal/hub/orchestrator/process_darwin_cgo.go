@@ -31,6 +31,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/olekukonko/ll"
 )
 
@@ -54,7 +55,7 @@ func setupProcessGroup(cmd *exec.Cmd, dropPrivileges bool) (*jobLimits, error) {
 func killProcessGroup(pid int) error {
 	syscall.Kill(-pid, syscall.SIGTERM)
 	go func() {
-		<-time.After(10 * time.Second)
+		<-time.After(def.DefaultWorkerPoolSize * time.Second)
 		syscall.Kill(-pid, syscall.SIGKILL)
 	}()
 	return nil

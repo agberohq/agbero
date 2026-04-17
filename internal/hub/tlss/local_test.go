@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/olekukonko/ll"
 )
@@ -549,11 +549,11 @@ func TestCertLocal_HasCertutil(t *testing.T) {
 func TestCertutilPaths(t *testing.T) {
 	paths := certutilPaths()
 	switch runtime.GOOS {
-	case woos.Darwin:
+	case def.Darwin:
 		if len(paths) == 0 {
 			t.Error("certutilPaths should return paths for Darwin")
 		}
-	case woos.Linux:
+	case def.Linux:
 		if len(paths) == 0 {
 			t.Error("certutilPaths should return paths for Linux")
 		}

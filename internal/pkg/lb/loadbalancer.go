@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"net/http"
 
-	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/pkg/raw/ahash"
 	"github.com/cespare/xxhash/v2"
 )
@@ -67,21 +67,21 @@ func HashUint64(x uint64) uint64 {
 // Assigns the standard RoundRobin approach if matching configurations fail.
 func ParseStrategy(s string) Strategy {
 	switch s {
-	case alaye.StrategyLeastConn:
+	case def.StrategyLeastConn:
 		return StrategyLeastConn
-	case alaye.StrategyRandom:
+	case def.StrategyRandom:
 		return StrategyRandom
-	case alaye.StrategyWeightedLeastConn:
+	case def.StrategyWeightedLeastConn:
 		return StrategyWeightedLeastConn
-	case alaye.StrategyIPHash:
+	case def.StrategyIPHash:
 		return StrategyIPHash
-	case alaye.StrategyURLHash:
+	case def.StrategyURLHash:
 		return StrategyURLHash
-	case alaye.StrategyLeastResponseTime:
+	case def.StrategyLeastResponseTime:
 		return StrategyLeastResponseTime
-	case alaye.StrategyPowerOfTwoChoices:
+	case def.StrategyPowerOfTwoChoices:
 		return StrategyPowerOfTwoChoices
-	case alaye.StrategyConsistentHash:
+	case def.StrategyConsistentHash:
 		return StrategyConsistentHash
 	default:
 		return StrategyRoundRobin

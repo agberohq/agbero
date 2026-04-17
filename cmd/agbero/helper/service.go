@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
@@ -21,7 +21,7 @@ type Service struct {
 }
 
 func (s *Service) requiresRoot(cmd string) bool {
-	if runtime.GOOS == woos.Windows {
+	if runtime.GOOS == def.Windows {
 		return true
 	}
 	if os.Geteuid() == 0 {
@@ -98,7 +98,7 @@ func (s *Service) Install(svc service.Service, installHere bool, configPath stri
 		u.Step("run", "installing system service")
 	})
 	if err := svc.Install(); err != nil {
-		if errors.Is(err, woos.ErrAlreadyExists) {
+		if errors.Is(err, def.ErrAlreadyExists) {
 			u.Render(func() { u.WarnLine("service already exists") })
 		} else {
 			s.p.Logger.Fatal(s.mapError(err, "install"))

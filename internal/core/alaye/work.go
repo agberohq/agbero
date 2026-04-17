@@ -28,7 +28,7 @@ type Work struct {
 
 	Schedule string `hcl:"schedule,attr" json:"schedule"`
 
-	Timeout Duration `hcl:"timeout,attr" json:"timeout"`
+	Timeout expect.Duration `hcl:"timeout,attr" json:"timeout"`
 
 	Cache Cache `hcl:"cache,block" json:"cache"`
 }

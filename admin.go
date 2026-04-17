@@ -7,7 +7,6 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	mtrand "math/rand"
 	"net/http"
@@ -16,7 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/olekukonko/errors"
+
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -33,13 +35,6 @@ import (
 	"github.com/olekukonko/zero"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/crypto/bcrypt"
-)
-
-const (
-	adminTokenTTL        = woos.AdminTokenTTL
-	adminTokenIssuer     = woos.AdminTokenIssuer
-	challengeTokenTTL    = 5 * time.Minute
-	challengeTokenIssuer = "agbero-challenge"
 )
 
 var (
@@ -74,9 +69,9 @@ func (s *Server) startAdminServer() {
 	s.adminSrv = &http.Server{
 		Addr:         state.Global.Admin.Address,
 		Handler:      r,
-		ReadTimeout:  woos.DefaultAdminReadTimeout,
-		WriteTimeout: woos.DefaultAdminWriteTimeout,
-		IdleTimeout:  woos.DefaultAdminIdleTimeout,
+		ReadTimeout:  def.DefaultAdminReadTimeout,
+		WriteTimeout: def.DefaultAdminWriteTimeout,
+		IdleTimeout:  def.DefaultAdminIdleTimeout,
 	}
 	s.mu.Unlock()
 
@@ -121,9 +116,9 @@ func (s *Server) startPprofServer() {
 	s.pprofSrv = &http.Server{
 		Addr:         addr,
 		Handler:      r,
-		ReadTimeout:  woos.DefaultAdminReadTimeout,
-		WriteTimeout: woos.DefaultAdminWriteTimeout,
-		IdleTimeout:  woos.DefaultAdminIdleTimeout,
+		ReadTimeout:  def.DefaultAdminReadTimeout,
+		WriteTimeout: def.DefaultAdminWriteTimeout,
+		IdleTimeout:  def.DefaultAdminIdleTimeout,
 	}
 	s.mu.Unlock()
 
@@ -254,13 +249,13 @@ func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Ha
 
 	return func(next http.Handler) http.Handler {
 		authHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get(woos.AuthorizationHeaderKey)
+			authHeader := r.Header.Get(def.AuthorizationHeaderKey)
 			if authHeader == "" {
 				http.Error(w, `{"error":"missing_authorization"}`, http.StatusUnauthorized)
 				return
 			}
 
-			tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
+			tokenStr := strings.TrimPrefix(authHeader, def.HeaderKeyBearer+" ")
 
 			parser := new(jwt.Parser)
 			unverifiedToken, _, err := parser.ParseUnverified(tokenStr, &adminClaims{})
@@ -303,7 +298,7 @@ func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Ha
 				return
 			}
 
-			if validClaims.Issuer != woos.AdminTokenIssuer {
+			if validClaims.Issuer != def.AdminTokenIssuer {
 				http.Error(w, `{"error":"invalid_issuer"}`, http.StatusUnauthorized)
 				return
 			}
@@ -382,7 +377,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if len(requirements) > 0 {
-		tokenString, _, err := s.generateAdminToken(creds.Username, string(challengeSecret), "challenge", challengeTokenTTL)
+		tokenString, _, err := s.generateAdminToken(creds.Username, string(challengeSecret), "challenge", def.ChallengeTokenTTL)
 		if err != nil {
 			s.logger.Error("Failed to sign challenge token", "err", err)
 			http.Error(w, "Internal Signing Error", http.StatusInternalServerError)
@@ -404,7 +399,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenString, expirationTime, err := s.generateAdminToken(creds.Username, jwtSecret, "full", adminTokenTTL)
+	tokenString, expirationTime, err := s.generateAdminToken(creds.Username, jwtSecret, "full", def.AdminTokenTTL)
 	if err != nil {
 		s.logger.Error("Failed to sign admin token", "err", err)
 		http.Error(w, "Internal Signing Error", http.StatusInternalServerError)
@@ -427,13 +422,13 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 	state := s.apiShared.State()
 	cfg := state.Global.Admin
 
-	authHeader := r.Header.Get(woos.AuthorizationHeaderKey)
+	authHeader := r.Header.Get(def.AuthorizationHeaderKey)
 	if authHeader == "" {
 		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
 		return
 	}
 
-	tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
+	tokenStr := strings.TrimPrefix(authHeader, def.HeaderKeyBearer+" ")
 
 	token, err := jwt.ParseWithClaims(tokenStr, &adminClaims{}, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -459,7 +454,7 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Challenge token already used", http.StatusUnauthorized)
 			return
 		}
-		s.resource.TimeStore.SetTTL(claims.ID, time.Now().Add(challengeTokenTTL), challengeTokenTTL)
+		s.resource.TimeStore.SetTTL(claims.ID, time.Now().Add(def.ChallengeTokenTTL), def.ChallengeTokenTTL)
 	}
 
 	var creds struct {
@@ -513,7 +508,7 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenString, expirationTime, err := s.generateAdminToken(claims.User, jwtSecret, "full", adminTokenTTL)
+	tokenString, expirationTime, err := s.generateAdminToken(claims.User, jwtSecret, "full", def.AdminTokenTTL)
 	if err != nil {
 		s.logger.Error("Failed to sign admin token", "err", err)
 		http.Error(w, "Internal Signing Error", http.StatusInternalServerError)
@@ -553,7 +548,7 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenString, expirationTime, err := s.generateAdminToken(user, jwtSecret, "full", adminTokenTTL)
+	tokenString, expirationTime, err := s.generateAdminToken(user, jwtSecret, "full", def.AdminTokenTTL)
 	if err != nil {
 		s.logger.Error("Failed to sign admin token", "err", err)
 		http.Error(w, "Internal Signing Error", http.StatusInternalServerError)
@@ -573,13 +568,13 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authHeader := r.Header.Get(woos.AuthorizationHeaderKey)
+	authHeader := r.Header.Get(def.AuthorizationHeaderKey)
 	if authHeader == "" {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	tokenStr := strings.TrimPrefix(authHeader, woos.HeaderKeyBearer+" ")
+	tokenStr := strings.TrimPrefix(authHeader, def.HeaderKeyBearer+" ")
 
 	parser := new(jwt.Parser)
 	unverifiedToken, _, err := parser.ParseUnverified(tokenStr, &adminClaims{})
@@ -620,7 +615,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	if mapClaims, ok := token.Claims.(jwt.MapClaims); ok {
 		if jti, _ := mapClaims["jti"].(string); jti != "" {
-			exp := adminTokenTTL
+			exp := def.AdminTokenTTL
 			if expClaim, ok := mapClaims["exp"].(float64); ok {
 				if remaining := time.Until(time.Unix(int64(expClaim), 0)); remaining > 0 {
 					exp = remaining
@@ -646,9 +641,9 @@ func (s *Server) generateAdminToken(username, secret, scope string, ttl time.Dur
 	now := time.Now()
 	expirationTime := now.Add(ttl)
 
-	issuer := adminTokenIssuer
+	issuer := def.AdminTokenIssuer
 	if scope == "challenge" {
-		issuer = challengeTokenIssuer
+		issuer = def.ChallengeTokenIssuer
 	}
 
 	claims := &adminClaims{
@@ -672,7 +667,7 @@ func (s *Server) verifyAdminUser(username, password string) bool {
 	data, err := s.keeperStore.Get(userKey)
 	hashToCompare := dummyHash
 	if err == nil && len(data) > 0 {
-		var user alaye.AdminUser
+		var user alaye.User
 		if jsonErr := json.Unmarshal(data, &user); jsonErr == nil && user.PasswordHash != "" {
 			hashToCompare = []byte(user.PasswordHash)
 		}
@@ -773,12 +768,12 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "File logging disabled", http.StatusNotImplemented)
 		return
 	}
-	limit := woos.DefaultAdminLogLimit
+	limit := def.DefaultAdminLogLimit
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
 			limit = parsed
-			if limit > woos.DefaultAdminLogMaxLimit {
-				limit = woos.DefaultAdminLogMaxLimit
+			if limit > def.DefaultAdminLogMaxLimit {
+				limit = def.DefaultAdminLogMaxLimit
 			}
 		}
 	}
@@ -860,8 +855,8 @@ func buildAdminRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedSt
 		}
 		return "", ratelimit.RatePolicy{}, false
 	}
-	ttl := woos.DefaultRateTTL
-	maxEntries := woos.DefaultRateMaxEntries
+	ttl := def.DefaultRateTTL
+	maxEntries := def.DefaultRateMaxEntries
 	if rlc.TTL > 0 {
 		ttl = rlc.TTL.StdDuration()
 	}

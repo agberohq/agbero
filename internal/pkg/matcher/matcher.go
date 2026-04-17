@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/mappo"
 )
@@ -23,7 +23,7 @@ type Result struct {
 // Node — single segment in the tree
 type Node struct {
 	prefix   string
-	kind     woos.Kind
+	kind     def.Kind
 	re       *regexp.Regexp
 	paramKey string
 	children []*Node
@@ -49,11 +49,11 @@ type Tree struct {
 // NewTree returns an empty Tree
 func NewTree() *Tree {
 	t := &Tree{
-		cache:     mappo.NewLRU[string, Result](woos.CacheMax),
+		cache:     mappo.NewLRU[string, Result](def.CacheMax),
 		fastPaths: mappo.NewShardedWithConfig[string, *Node](mappo.ShardedConfig{ShardCount: 16}),
 	}
 
-	root := &Node{prefix: woos.Empty, kind: woos.KindLiteral}
+	root := &Node{prefix: def.Empty, kind: def.KindLiteral}
 	t.root.Store(root)
 
 	return t
@@ -64,8 +64,8 @@ func (t *Tree) Insert(pattern string, route *alaye.Route) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if pattern == woos.SlashStar {
-		pattern = woos.Slash
+	if pattern == def.SlashStar {
+		pattern = def.Slash
 	}
 
 	if err := t.validatePattern(pattern); err != nil {
@@ -77,7 +77,7 @@ func (t *Tree) Insert(pattern string, route *alaye.Route) error {
 	t.clearCacheForPattern(pattern)
 
 	if t.isFastPath(pattern) {
-		t.fastPaths.Set(pattern, &Node{prefix: pattern, kind: woos.KindLiteral, route: route})
+		t.fastPaths.Set(pattern, &Node{prefix: pattern, kind: def.KindLiteral, route: route})
 	}
 
 	return t.insertRecursive(t.root.Load(), pattern, route)
@@ -89,7 +89,7 @@ func (t *Tree) Find(path string) Result {
 
 	// Root exact match
 	root := t.root.Load()
-	if path == woos.Slash {
+	if path == def.Slash {
 		return Result{Route: root.route, Params: nil}
 	}
 
@@ -155,7 +155,7 @@ func (t *Tree) GetPatterns() []string {
 	defer t.mu.RUnlock()
 
 	var patterns []string
-	t.collectPatterns(t.root.Load(), woos.Empty, &patterns)
+	t.collectPatterns(t.root.Load(), def.Empty, &patterns)
 	return patterns
 }
 
@@ -164,7 +164,7 @@ func (t *Tree) Rebuild(routes []alaye.Route) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	root := &Node{prefix: woos.Empty, kind: woos.KindLiteral}
+	root := &Node{prefix: def.Empty, kind: def.KindLiteral}
 	t.root.Store(root)
 
 	t.fastPaths.Clear()
@@ -187,16 +187,16 @@ func (t *Tree) insertLocked(pattern string, route *alaye.Route) error {
 	t.clearCacheForPattern(pattern)
 
 	if t.isFastPath(pattern) {
-		t.fastPaths.Set(pattern, &Node{prefix: pattern, kind: woos.KindLiteral, route: route})
+		t.fastPaths.Set(pattern, &Node{prefix: pattern, kind: def.KindLiteral, route: route})
 	}
 
 	return t.insertRecursive(t.root.Load(), pattern, route)
 }
 
 func (t *Tree) insertRecursive(parent *Node, path string, route *alaye.Route) error {
-	if path == woos.Slash || path == woos.Empty {
+	if path == def.Slash || path == def.Empty {
 		if parent.route != nil {
-			return errors.Newf("%w for pattern %q", woos.ErrDuplicateRoute, path)
+			return errors.Newf("%w for pattern %q", def.ErrDuplicateRoute, path)
 		}
 		parent.route = route
 		return nil
@@ -207,9 +207,9 @@ func (t *Tree) insertRecursive(parent *Node, path string, route *alaye.Route) er
 		return errors.Newf("failed to parse segment in %q: %w", path, err)
 	}
 
-	if segKind == woos.KindCatchAll {
+	if segKind == def.KindCatchAll {
 		parent.hasCatchAll = true
-	} else if segKind == woos.KindTemplate || segKind == woos.KindRegex {
+	} else if segKind == def.KindTemplate || segKind == def.KindRegex {
 		parent.hasParams = true
 	}
 
@@ -225,9 +225,9 @@ func (t *Tree) insertRecursive(parent *Node, path string, route *alaye.Route) er
 		})
 	}
 
-	if segKind == woos.KindCatchAll {
+	if segKind == def.KindCatchAll {
 		if child.route != nil {
-			return errors.Newf("%w for pattern %q", woos.ErrDuplicateRoute, seg)
+			return errors.Newf("%w for pattern %q", def.ErrDuplicateRoute, seg)
 		}
 		child.route = route
 		return nil
@@ -238,7 +238,7 @@ func (t *Tree) insertRecursive(parent *Node, path string, route *alaye.Route) er
 
 func (t *Tree) findWithBacktrack(node *Node, remaining string, params map[string]string) Result {
 	best := Result{Route: node.route, Params: params}
-	if remaining == woos.Empty {
+	if remaining == def.Empty {
 		return best
 	}
 
@@ -269,14 +269,14 @@ func (t *Tree) findWithBacktrack(node *Node, remaining string, params map[string
 
 	if node.hasCatchAll {
 		for _, child := range node.children {
-			if child.kind == woos.KindCatchAll && child.route != nil {
+			if child.kind == def.KindCatchAll && child.route != nil {
 				var out map[string]string
 				if params == nil {
-					out = map[string]string{woos.TemplateWildcardKey: remaining}
+					out = map[string]string{def.TemplateWildcardKey: remaining}
 				} else {
 					out = make(map[string]string, len(params)+1)
 					maps.Copy(out, params)
-					out[woos.TemplateWildcardKey] = remaining
+					out[def.TemplateWildcardKey] = remaining
 				}
 				return Result{Route: child.route, Params: out}
 			}
@@ -291,13 +291,13 @@ func (t *Tree) clearCacheForPattern(pattern string) {
 	t.cache.Clear()
 }
 
-func (t *Tree) createNode(seg string, k woos.Kind) (*Node, error) {
+func (t *Tree) createNode(seg string, k def.Kind) (*Node, error) {
 	n := &Node{prefix: seg, kind: k}
 	switch k {
-	case woos.KindRegex:
-		expr := strings.TrimPrefix(seg, woos.Slash+woos.RegexPrefix)
-		if expr == woos.Empty {
-			return nil, errors.Newf("%w: %q", woos.ErrEmptyRegexPatternSegment, seg)
+	case def.KindRegex:
+		expr := strings.TrimPrefix(seg, def.Slash+def.RegexPrefix)
+		if expr == def.Empty {
+			return nil, errors.Newf("%w: %q", def.ErrEmptyRegexPatternSegment, seg)
 		}
 		expr = ensureAnchors(expr)
 		re, err := regexp.Compile(expr)
@@ -305,74 +305,74 @@ func (t *Tree) createNode(seg string, k woos.Kind) (*Node, error) {
 			return nil, errors.Newf("invalid regex %q: %w", expr, err)
 		}
 		n.re = re
-	case woos.KindTemplate:
-		content := strings.TrimPrefix(seg, woos.Slash+woos.TemplateOpen)
-		content = strings.TrimSuffix(content, woos.TemplateClose)
-		if content == woos.Empty {
-			return nil, errors.Newf("%w in segment %q", woos.ErrEmptyTemplateParam, seg)
+	case def.KindTemplate:
+		content := strings.TrimPrefix(seg, def.Slash+def.TemplateOpen)
+		content = strings.TrimSuffix(content, def.TemplateClose)
+		if content == def.Empty {
+			return nil, errors.Newf("%w in segment %q", def.ErrEmptyTemplateParam, seg)
 		}
-		parts := strings.SplitN(content, woos.TemplateSep, 2)
+		parts := strings.SplitN(content, def.TemplateSep, 2)
 		n.paramKey = parts[0]
-		if n.paramKey == woos.Empty {
-			return nil, errors.Newf("%w in template %q", woos.ErrEmptyParamName, seg)
+		if n.paramKey == def.Empty {
+			return nil, errors.Newf("%w in template %q", def.ErrEmptyParamName, seg)
 		}
-		if len(parts) == 2 && parts[1] != woos.Empty {
+		if len(parts) == 2 && parts[1] != def.Empty {
 			re, err := regexp.Compile(ensureAnchors(parts[1]))
 			if err != nil {
 				return nil, errors.Newf("invalid regex in template %q: %w", seg, err)
 			}
 			n.re = re
 		}
-	case woos.KindCatchAll:
-		n.prefix = woos.SlashStar
+	case def.KindCatchAll:
+		n.prefix = def.SlashStar
 		n.hasCatchAll = true
 	}
 	return n, nil
 }
 
 func (n *Node) match(path string) (bool, int, map[string]string) {
-	if path == woos.Empty || path[0] != woos.SlashByte {
+	if path == def.Empty || path[0] != def.SlashByte {
 		return false, 0, nil
 	}
 
 	switch n.kind {
-	case woos.KindLiteral:
+	case def.KindLiteral:
 		if !strings.HasPrefix(path, n.prefix) {
 			return false, 0, nil
 		}
 		consumed := len(n.prefix)
-		if len(path) == consumed || path[consumed] == woos.SlashByte {
+		if len(path) == consumed || path[consumed] == def.SlashByte {
 			return true, consumed, nil
 		}
 		return false, 0, nil
-	case woos.KindTemplate, woos.KindRegex:
+	case def.KindTemplate, def.KindRegex:
 		end := len(path)
-		if idx := strings.IndexByte(path[1:], woos.SlashByte); idx >= 0 {
+		if idx := strings.IndexByte(path[1:], def.SlashByte); idx >= 0 {
 			end = 1 + idx
 		}
 		value := path[1:end]
-		if value == woos.Empty {
+		if value == def.Empty {
 			return false, 0, nil
 		}
 		if n.re != nil && !n.re.MatchString(value) {
 			return false, 0, nil
 		}
 		consumed := end
-		if n.kind == woos.KindTemplate {
+		if n.kind == def.KindTemplate {
 			return true, consumed, map[string]string{n.paramKey: value}
 		}
 		return true, consumed, nil
-	case woos.KindCatchAll:
+	case def.KindCatchAll:
 		rest := path
-		if strings.HasPrefix(rest, woos.Slash) {
+		if strings.HasPrefix(rest, def.Slash) {
 			rest = rest[1:]
 		}
-		return true, len(path), map[string]string{woos.TemplateWildcardKey: rest}
+		return true, len(path), map[string]string{def.TemplateWildcardKey: rest}
 	}
 	return false, 0, nil
 }
 
-func (n *Node) findChild(seg string, k woos.Kind) *Node {
+func (n *Node) findChild(seg string, k def.Kind) *Node {
 	for _, c := range n.children {
 		if c.kind == k && c.prefix == seg {
 			return c
@@ -409,42 +409,42 @@ func (t *Tree) collectPatterns(n *Node, current string, patterns *[]string) {
 	}
 }
 
-func (t *Tree) parseSegment(path string) (seg, rest string, k woos.Kind, err error) {
-	if path == woos.Empty || path[0] != woos.SlashByte {
-		return woos.Empty, woos.Empty, 0, errors.Newf("%w: must start with /", woos.ErrInvalidPath)
+func (t *Tree) parseSegment(path string) (seg, rest string, k def.Kind, err error) {
+	if path == def.Empty || path[0] != def.SlashByte {
+		return def.Empty, def.Empty, 0, errors.Newf("%w: must start with /", def.ErrInvalidPath)
 	}
-	if path == woos.SlashStar || strings.HasPrefix(path, woos.SlashStar) {
-		return woos.SlashStar, woos.Empty, woos.KindCatchAll, nil
+	if path == def.SlashStar || strings.HasPrefix(path, def.SlashStar) {
+		return def.SlashStar, def.Empty, def.KindCatchAll, nil
 	}
 	end := len(path)
-	if idx := strings.IndexByte(path[1:], woos.SlashByte); idx >= 0 {
+	if idx := strings.IndexByte(path[1:], def.SlashByte); idx >= 0 {
 		end = 1 + idx
 	}
 	seg = path[:end]
 	rest = path[end:]
 	switch {
-	case strings.HasPrefix(seg, woos.Slash+woos.RegexPrefix):
-		k = woos.KindRegex
-	case strings.Contains(seg, woos.TemplateOpen):
-		if strings.Count(seg, woos.TemplateOpen) != 1 || strings.Count(seg, woos.TemplateClose) != 1 {
-			return woos.Empty, woos.Empty, 0, errors.Newf("%w in segment %q", woos.ErrInvalidTemplateBraces, seg)
+	case strings.HasPrefix(seg, def.Slash+def.RegexPrefix):
+		k = def.KindRegex
+	case strings.Contains(seg, def.TemplateOpen):
+		if strings.Count(seg, def.TemplateOpen) != 1 || strings.Count(seg, def.TemplateClose) != 1 {
+			return def.Empty, def.Empty, 0, errors.Newf("%w in segment %q", def.ErrInvalidTemplateBraces, seg)
 		}
-		k = woos.KindTemplate
+		k = def.KindTemplate
 	default:
-		k = woos.KindLiteral
+		k = def.KindLiteral
 	}
 	return
 }
 
 func (t *Tree) validatePattern(pattern string) error {
-	if pattern == woos.Empty {
-		return woos.ErrEmptyPattern
+	if pattern == def.Empty {
+		return def.ErrEmptyPattern
 	}
-	if strings.Count(pattern, woos.SlashStar) > 1 {
-		return woos.ErrMultipleCatchAllsMsg
+	if strings.Count(pattern, def.SlashStar) > 1 {
+		return def.ErrMultipleCatchAllsMsg
 	}
-	if strings.Contains(pattern, woos.SlashStar) && !strings.HasSuffix(pattern, woos.SlashStar) {
-		return woos.ErrCatchAllNotAtEndMsg
+	if strings.Contains(pattern, def.SlashStar) && !strings.HasSuffix(pattern, def.SlashStar) {
+		return def.ErrCatchAllNotAtEndMsg
 	}
 	return t.validateParamNames(pattern)
 }
@@ -452,11 +452,11 @@ func (t *Tree) validatePattern(pattern string) error {
 func (t *Tree) validateParamNames(pattern string) error {
 	seen := make(map[string]bool)
 	for _, name := range t.extractParamNames(pattern) {
-		if name == woos.Empty {
-			return woos.ErrEmptyParamName
+		if name == def.Empty {
+			return def.ErrEmptyParamName
 		}
 		if seen[name] {
-			return errors.Newf("%w: %q", woos.ErrDuplicateParamName, name)
+			return errors.Newf("%w: %q", def.ErrDuplicateParamName, name)
 		}
 		seen[name] = true
 	}
@@ -468,15 +468,15 @@ func (t *Tree) extractParamNames(pattern string) []string {
 	start := -1
 	for i := 0; i < len(pattern); i++ {
 		switch pattern[i] {
-		case woos.TemplateOpen[0]:
+		case def.TemplateOpen[0]:
 			start = i + 1
-		case woos.TemplateClose[0]:
+		case def.TemplateClose[0]:
 			if start != -1 {
 				param := pattern[start:i]
-				if idx := strings.Index(param, woos.TemplateSep); idx >= 0 {
+				if idx := strings.Index(param, def.TemplateSep); idx >= 0 {
 					param = param[:idx]
 				}
-				if param != woos.Empty {
+				if param != def.Empty {
 					names = append(names, param)
 				}
 				start = -1
@@ -487,31 +487,31 @@ func (t *Tree) extractParamNames(pattern string) []string {
 }
 
 func (t *Tree) isFastPath(pattern string) bool {
-	return !strings.Contains(pattern, woos.TemplateOpen) &&
-		!strings.Contains(pattern, woos.RegexPrefix) &&
-		!strings.Contains(pattern, woos.Star)
+	return !strings.Contains(pattern, def.TemplateOpen) &&
+		!strings.Contains(pattern, def.RegexPrefix) &&
+		!strings.Contains(pattern, def.Star)
 }
 
 func cleanPattern(p string) string {
 	p = strings.TrimSpace(p)
-	if p == woos.Empty || p == woos.Slash {
-		return woos.Slash
+	if p == def.Empty || p == def.Slash {
+		return def.Slash
 	}
-	if !strings.HasPrefix(p, woos.Slash) {
-		p = woos.Slash + p
+	if !strings.HasPrefix(p, def.Slash) {
+		p = def.Slash + p
 	}
 	return p
 }
 
-func scoreKind(k woos.Kind) int {
+func scoreKind(k def.Kind) int {
 	switch k {
-	case woos.KindLiteral:
+	case def.KindLiteral:
 		return 4
-	case woos.KindTemplate:
+	case def.KindTemplate:
 		return 3
-	case woos.KindRegex:
+	case def.KindRegex:
 		return 2
-	case woos.KindCatchAll:
+	case def.KindCatchAll:
 		return 1
 	default:
 		return 0

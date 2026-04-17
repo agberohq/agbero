@@ -332,10 +332,6 @@ security {
     "::1/128"           # IPv6 localhost
   ]
 
-  # Path to internal auth key for service-to-service authentication
-  # Generate with: agbero secret key init
-  internal_auth_key = "/etc/agbero/data.d/internal_auth.key"
-
   # Web Application Firewall
   firewall {
     enabled = "on"
@@ -608,6 +604,92 @@ telemetry {
 ```
 
 When enabled, samples key metrics every 60 seconds and retains up to 24 hours of history. Accessible via protected admin endpoint `/telemetry/history`.
+
+---
+
+---
+
+## 16. KEEPER — Encrypted Secret Store
+
+The keeper is Agbero's built-in encrypted secret store. It is a **required component** — Agbero will not start if the keeper cannot be opened. Configure it under the `security` block.
+
+```hcl
+security {
+  keeper {
+    # Master passphrase used to encrypt/decrypt keeper.db.
+    # Use an env var reference to keep the actual value out of the config file.
+    passphrase = "env.AGBERO_PASSPHRASE"
+
+    # Automatically lock the keeper after this period of inactivity.
+    # Once locked, ss:// references return their literal string and a warning
+    # is logged until you unlock via POST /api/v1/keeper/unlock.
+    # Remove or set to "0" to disable auto-locking.
+    auto_lock = "2h"
+
+    # Log every keeper open, read, write, and delete operation at INFO level.
+    logging = true
+
+    # Detailed audit trail: logs the key name on every secret read and write.
+    # Useful for compliance environments. Adds modest log volume.
+    audit = true
+  }
+}
+```
+
+### Supplying the Passphrase
+
+Agbero resolves the passphrase in this order:
+
+1. `keeper.passphrase` in `agbero.hcl` — can reference an env var: `"env.AGBERO_PASSPHRASE"`
+2. `AGBERO_PASSPHRASE` environment variable
+3. Interactive terminal prompt (only when running attached to a terminal)
+
+For system services, Docker containers, and CI pipelines where there is no terminal, you **must** supply the passphrase via one of the first two methods. Agbero will fail to start if it cannot resolve the passphrase in a non-terminal context.
+
+```bash
+# Service unit file example (systemd)
+Environment=AGBERO_PASSPHRASE=mypassphrase
+
+# Docker example
+docker run -e AGBERO_PASSPHRASE=mypassphrase agbero/agbero run
+
+# Docker Compose example
+environment:
+  AGBERO_PASSPHRASE: mypassphrase
+```
+
+### Referencing Keeper Secrets in Configuration
+
+Any `Value`-typed field in your HCL can reference a secret stored in the keeper using `ss://namespace/key`. The reference is resolved at request time — the secret never appears in any log or config file.
+
+```hcl
+# JWT secret from keeper
+jwt_auth {
+  secret = "ss://auth/jwt-secret"
+}
+
+# OAuth client secret from keeper
+o_auth {
+  client_secret = "ss://oauth/github-client-secret"
+}
+
+# Upstream API key from keeper
+serverless {
+  replay "stripe" {
+    headers = {
+      "Authorization" = "Bearer ss://integrations/stripe-key"
+    }
+  }
+}
+```
+
+Store secrets with the CLI or the Keeper REST API:
+```bash
+agbero keeper set auth/jwt-secret "my-jwt-key"
+agbero keeper set integrations/stripe-key "sk_live_..."
+```
+
+See [Security Guide](./security.md) for the full Keeper REST API reference.
 
 ---
 

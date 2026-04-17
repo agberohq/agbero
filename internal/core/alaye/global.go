@@ -3,6 +3,7 @@ package alaye
 import (
 	"net"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
@@ -26,7 +27,7 @@ type Global struct {
 	API         API         `hcl:"api,block" json:"api"`
 	Logging     Logging     `hcl:"logging,block" json:"logging"`
 	Security    Security    `hcl:"security,block" json:"security"`
-	RateLimits  GlobalRate  `hcl:"rate_limits,block" json:"rateLimits"`
+	RateLimits  RateGlobal  `hcl:"rate_limits,block" json:"rateLimits"`
 	Gossip      Gossip      `hcl:"gossip,block" json:"gossip"`
 	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt"`
 	Fallback    Fallback    `hcl:"fallback,block" json:"fallback"`
@@ -86,7 +87,7 @@ type General struct {
 // It ensures that header limits are non-negative.
 func (g *General) Validate() error {
 	if g.MaxHeaderBytes < 0 {
-		return ErrNegativeMaxHeaderBytes
+		return def.ErrNegativeMaxHeaderBytes
 	}
 	return nil
 }
@@ -120,7 +121,7 @@ func (p *Pprof) Validate() error {
 		return nil
 	}
 	if p.Bind == "" {
-		return ErrPprofPortRequired
+		return def.ErrPprofPortRequired
 	}
 	host, _, err := net.SplitHostPort(p.Bind)
 	if err != nil {
@@ -128,7 +129,7 @@ func (p *Pprof) Validate() error {
 	}
 	ip := net.ParseIP(host)
 	if ip == nil || (!ip.IsLoopback() && host != "localhost") {
-		return ErrPprofLoopbackOnly
+		return def.ErrPprofLoopbackOnly
 	}
 	return nil
 }

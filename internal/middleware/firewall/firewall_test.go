@@ -196,7 +196,7 @@ func TestThresholds(t *testing.T) {
 					Threshold: &alaye.Threshold{
 						Enabled: expect.Active,
 						Count:   3,
-						Window:  alaye.Duration(1 * time.Minute),
+						Window:  expect.Duration(1 * time.Minute),
 						TrackBy: "ip",
 					},
 				},

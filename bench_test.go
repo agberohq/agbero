@@ -13,7 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
@@ -55,10 +55,10 @@ func BenchmarkServerStrategies(b *testing.B) {
 		name  string
 		start string
 	}{
-		{"round_robin", alaye.StrategyRoundRobin},
-		{"least_conn", alaye.StrategyLeastConn},
+		{"round_robin", def.StrategyRoundRobin},
+		{"least_conn", def.StrategyLeastConn},
 		{"least_response_time", "least_response_time"},
-		{"random", alaye.StrategyRandom},
+		{"random", def.StrategyRandom},
 		{"power_of_two", "power_of_two"},
 	}
 

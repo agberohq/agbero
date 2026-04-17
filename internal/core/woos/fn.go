@@ -3,6 +3,8 @@ package woos
 import (
 	"net"
 	"strings"
+
+	"github.com/agberohq/agbero/internal/core/def"
 )
 
 // IsLocalContext returns true if the host is either loopback or a private LAN IP.
@@ -13,20 +15,20 @@ func IsLocalContext(host string) bool {
 // IsLocalhost determines if a hostname implies the machine itself.
 func IsLocalhost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
-	if host == LocalhostExact {
+	if host == def.LocalhostExact {
 		return true
 	}
-	if strings.HasSuffix(host, LocalhostSuffixDotLocalhost) {
+	if strings.HasSuffix(host, def.LocalhostSuffixDotLocalhost) {
 		return true
 	}
-	if strings.HasSuffix(host, LocalhostSuffixDotLocal) {
+	if strings.HasSuffix(host, def.LocalhostSuffixDotLocal) {
 		return true
 	}
-	if strings.HasSuffix(host, LocalhostSuffixDotTest) {
+	if strings.HasSuffix(host, def.LocalhostSuffixDotTest) {
 		return true
 	}
 
-	if strings.HasSuffix(host, LocalhostSuffixDotInternal) { // ADD THIS
+	if strings.HasSuffix(host, def.LocalhostSuffixDotInternal) { // ADD THIS
 		return true
 	}
 
@@ -51,7 +53,7 @@ func IsLocalArea(host string) bool {
 func Port(addr string) string {
 	_, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return DefaultHTTPSPortInt
+		return def.DefaultHTTPSPortInt
 	}
 	return port
 }

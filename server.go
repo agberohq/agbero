@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/pkg/update"
@@ -129,13 +130,13 @@ func (s *Server) Start(configPath string) error {
 	s.mu.Unlock()
 
 	if s.hostManager == nil {
-		return woos.ErrHostManagerRequired
+		return def.ErrHostManagerRequired
 	}
 	if s.global == nil {
-		return woos.ErrGlobalConfigRequired
+		return def.ErrGlobalConfigRequired
 	}
 	if s.logger == nil {
-		s.logger = ll.New(woos.Name).Enable()
+		s.logger = ll.New(def.Name).Enable()
 	}
 
 	if configPath != "" {
@@ -378,7 +379,7 @@ func (s *Server) Start(configPath string) error {
 	s.mu.Unlock()
 
 	if len(listeners) == 0 {
-		return woos.ErrNoBindAddr
+		return def.ErrNoBindAddr
 	}
 
 	for _, l := range listeners {
@@ -530,7 +531,7 @@ func (s *Server) Reload() {
 	}
 
 	hosts, _ := s.hostManager.LoadAll()
-	validKeys := make(map[alaye.BackendKey]bool)
+	validKeys := make(map[alaye.Key]bool)
 	validRouteKeys := make(map[string]bool)
 
 	for domain, h := range hosts {
@@ -538,16 +539,16 @@ func (s *Server) Reload() {
 			validRouteKeys[r.Key()] = true
 			if r.Backends.Enabled.Active() {
 				for _, srv := range r.Backends.Servers {
-					validKeys[r.BackendKey(domain, srv.Address.String())] = true
+					validKeys[r.KeyBackend(domain, srv.Address.String())] = true
 				}
 			}
 
 			if r.Serverless.Enabled.Active() {
 				for _, rp := range r.Serverless.Replay {
-					validKeys[r.ReplayBackendKey(domain, rp.Name)] = true
+					validKeys[r.KeyReplay(domain, rp.Name)] = true
 				}
 				for _, wk := range r.Serverless.Workers {
-					validKeys[r.WorkerBackendKey(domain, wk.Name)] = true
+					validKeys[r.KeyWorker(domain, wk.Name)] = true
 				}
 			}
 		}
@@ -593,7 +594,7 @@ func (s *Server) Reload() {
 	}
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), woos.DefaultReloadTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), def.DefaultReloadTimeout)
 		defer cancel()
 
 		var wg sync.WaitGroup
@@ -621,13 +622,13 @@ func (s *Server) Reload() {
 		go func(listener handlers.Listener) {
 			s.logger.Fields("bind", listener.Addr(), "proto", listener.Kind()).Info("reloaded listener")
 			var err error
-			for i := 0; i < woos.MaxPortRetries; i++ {
+			for i := 0; i < def.MaxPortRetries; i++ {
 				err = listener.Start()
 				if err != nil {
 					errStr := err.Error()
 
 					if strings.Contains(errStr, "address already in use") || strings.Contains(errStr, "Only one usage") {
-						if i < woos.MaxPortRetries-1 {
+						if i < def.MaxPortRetries-1 {
 							time.Sleep(100 * time.Millisecond)
 							continue
 						}
@@ -723,7 +724,7 @@ func (s *Server) configComputeSHA() (string, error) {
 func (s *Server) tlsValidate() error {
 	hosts, _ := s.hostManager.LoadAll()
 	for domain, h := range hosts {
-		if h.TLS.Mode == alaye.ModeLocalCert && h.TLS.Local.Enabled.Active() {
+		if h.TLS.Mode == def.ModeLocalCert && h.TLS.Local.Enabled.Active() {
 			if _, err := tls.LoadX509KeyPair(h.TLS.Local.CertFile, h.TLS.Local.KeyFile); err != nil {
 				return fmt.Errorf("tls: host %q: %w", domain, err)
 			}

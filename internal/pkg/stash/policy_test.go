@@ -29,7 +29,7 @@ func TestTTLPolicyGetTTL(t *testing.T) {
 			name: "disabled policy returns default",
 			policy: &alaye.TTLPolicy{
 				Enabled: expect.Inactive,
-				Default: alaye.Duration(10 * time.Minute),
+				Default: expect.Duration(10 * time.Minute),
 			},
 			contentType: "text/html",
 			expected:    defaultTTL,
@@ -38,7 +38,7 @@ func TestTTLPolicyGetTTL(t *testing.T) {
 			name: "policy default used when no match",
 			policy: &alaye.TTLPolicy{
 				Enabled: expect.Active,
-				Default: alaye.Duration(10 * time.Minute),
+				Default: expect.Duration(10 * time.Minute),
 			},
 			contentType: "text/html",
 			expected:    10 * time.Minute,
@@ -47,9 +47,9 @@ func TestTTLPolicyGetTTL(t *testing.T) {
 			name: "content-type match",
 			policy: &alaye.TTLPolicy{
 				Enabled: expect.Active,
-				Default: alaye.Duration(10 * time.Minute),
-				ContentType: map[string]alaye.Duration{
-					"text/html": alaye.Duration(1 * time.Hour),
+				Default: expect.Duration(10 * time.Minute),
+				ContentType: map[string]expect.Duration{
+					"text/html": expect.Duration(1 * time.Hour),
 				},
 			},
 			contentType: "text/html",
@@ -59,9 +59,9 @@ func TestTTLPolicyGetTTL(t *testing.T) {
 			name: "content-type prefix match",
 			policy: &alaye.TTLPolicy{
 				Enabled: expect.Active,
-				Default: alaye.Duration(10 * time.Minute),
-				ContentType: map[string]alaye.Duration{
-					"application/json": alaye.Duration(30 * time.Minute),
+				Default: expect.Duration(10 * time.Minute),
+				ContentType: map[string]expect.Duration{
+					"application/json": expect.Duration(30 * time.Minute),
 				},
 			},
 			contentType: "application/json; charset=utf-8",
@@ -71,7 +71,7 @@ func TestTTLPolicyGetTTL(t *testing.T) {
 			name: "zero TTL in policy returns zero",
 			policy: &alaye.TTLPolicy{
 				Enabled: expect.Active,
-				Default: alaye.Duration(0),
+				Default: expect.Duration(0),
 			},
 			contentType: "text/html",
 			expected:    0,
@@ -80,7 +80,7 @@ func TestTTLPolicyGetTTL(t *testing.T) {
 			name: "empty content type uses default",
 			policy: &alaye.TTLPolicy{
 				Enabled: expect.Active,
-				Default: alaye.Duration(10 * time.Minute),
+				Default: expect.Duration(10 * time.Minute),
 			},
 			contentType: "",
 			expected:    10 * time.Minute,
@@ -116,12 +116,12 @@ func TestTTLPolicyGetTTLWithExtension(t *testing.T) {
 			name: "extension match takes priority",
 			policy: &alaye.TTLPolicy{
 				Enabled: expect.Active,
-				Default: alaye.Duration(10 * time.Minute),
-				Extension: map[string]alaye.Duration{
-					".rss": alaye.Duration(1 * time.Minute),
+				Default: expect.Duration(10 * time.Minute),
+				Extension: map[string]expect.Duration{
+					".rss": expect.Duration(1 * time.Minute),
 				},
-				ContentType: map[string]alaye.Duration{
-					"application/xml": alaye.Duration(1 * time.Hour),
+				ContentType: map[string]expect.Duration{
+					"application/xml": expect.Duration(1 * time.Hour),
 				},
 			},
 			contentType: "application/xml",
@@ -132,12 +132,12 @@ func TestTTLPolicyGetTTLWithExtension(t *testing.T) {
 			name: "content-type match when no extension match",
 			policy: &alaye.TTLPolicy{
 				Enabled: expect.Active,
-				Default: alaye.Duration(10 * time.Minute),
-				Extension: map[string]alaye.Duration{
-					".pdf": alaye.Duration(1 * time.Hour),
+				Default: expect.Duration(10 * time.Minute),
+				Extension: map[string]expect.Duration{
+					".pdf": expect.Duration(1 * time.Hour),
 				},
-				ContentType: map[string]alaye.Duration{
-					"application/json": alaye.Duration(30 * time.Minute),
+				ContentType: map[string]expect.Duration{
+					"application/json": expect.Duration(30 * time.Minute),
 				},
 			},
 			contentType: "application/json",
@@ -148,7 +148,7 @@ func TestTTLPolicyGetTTLWithExtension(t *testing.T) {
 			name: "fallback to default",
 			policy: &alaye.TTLPolicy{
 				Enabled: expect.Active,
-				Default: alaye.Duration(10 * time.Minute),
+				Default: expect.Duration(10 * time.Minute),
 			},
 			contentType: "text/html",
 			extension:   "",
@@ -165,7 +165,7 @@ func TestTTLPolicyGetTTLWithExtension(t *testing.T) {
 			name: "disabled policy returns default",
 			policy: &alaye.TTLPolicy{
 				Enabled: expect.Inactive,
-				Default: alaye.Duration(10 * time.Minute),
+				Default: expect.Duration(10 * time.Minute),
 			},
 			contentType: "text/html",
 			extension:   ".html",

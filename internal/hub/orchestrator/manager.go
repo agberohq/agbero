@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/olekukonko/jack"
@@ -18,8 +19,8 @@ import (
 const (
 	defaultRestartDelay = 5 * time.Second
 	workerSubDir        = "workers"
-	defaultPoolSize     = 10
-	maxWorkerNameLen    = 64
+	defaultPoolSize     = def.DefaultWorkerPoolSize
+	maxWorkerNameLen    = def.MaxWorkerNameLen
 )
 
 // Config holds all construction-time configuration for a Manager.

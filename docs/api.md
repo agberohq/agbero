@@ -318,7 +318,7 @@ class ServiceRegistry:
         }
 
         response = requests.post(
-            f"{API_URL}/routes",
+            f"{API_URL}/route",
             headers={"Authorization": f"Bearer {TOKEN}"},
             json=payload
         )
@@ -359,7 +359,7 @@ API="http://localhost:9090/auto/v1"
 TOKEN="your-token-here"
 
 # Deploy v2 with 10% traffic
-curl -X POST "$API/routes" \
+curl -X POST "$API/route" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -378,7 +378,7 @@ curl -X POST "$API/routes" \
   }'
 
 # After monitoring, shift to 50/50
-curl -X POST "$API/routes" \
+curl -X POST "$API/route" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
     "host": "api.example.com",
@@ -395,7 +395,7 @@ curl -X POST "$API/routes" \
   }'
 
 # Finally, full v2
-curl -X POST "$API/routes" \
+curl -X POST "$API/route" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
     "host": "api.example.com",
@@ -469,7 +469,7 @@ func createPreviewRoute(prNumber, commitHash string) error {
 	}
 
 	data, _ := json.Marshal(route)
-	req, _ := http.NewRequest("POST", apiURL+"/routes", bytes.NewReader(data))
+	req, _ := http.NewRequest("POST", apiURL+"/route", bytes.NewReader(data))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -534,7 +534,7 @@ class ServiceRegistry {
 
         try {
             const response = await axios.post(
-                `${this.apiUrl}/routes`,
+                `${this.apiUrl}/route`,
                 payload,
                 { headers: { Authorization: `Bearer ${this.token}` } }
             );
@@ -716,3 +716,206 @@ TTLSeconds int         `json:"ttl_seconds"`
 - **Authentication**: See [Global Configuration](./global.md) for admin auth setup
 - **Route Options**: See [Host Configuration](./host.md) for all route parameters
 - **CLI Reference**: See [Command Guide](./command.md) for generating tokens
+---
+
+## Keeper API — Managing Secrets at Runtime
+
+The Keeper API lets you manage the encrypted secret store while Agbero is running — no CLI access required. This is the primary management interface for production deployments running as a system service. All endpoints are under `/api/v1/keeper/` and require an admin JWT from `POST /login`.
+
+### Why Use the Keeper API?
+
+When Agbero runs as a system service or in a container, you often cannot run `agbero keeper set` on the command line. The REST API gives you the same capabilities from anywhere:
+
+- Rotate API keys without restarting
+- Store TLS certificates and SSH keys
+- Check whether the keeper is locked after a restart
+- Unlock the keeper remotely if `auto_lock` fired
+
+### Keeper Status
+
+Check whether the keeper is enabled and whether it is currently locked.
+
+```bash
+curl http://localhost:9090/api/v1/keeper/status \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+Response when running normally:
+```json
+{"enabled": true, "locked": false}
+```
+
+Response when locked (e.g. after `auto_lock` fired or a restart without `AGBERO_PASSPHRASE`):
+```json
+{"enabled": true, "locked": true}
+```
+
+When `locked` is `true`, all `ss://` references in your config silently fall back to their literal string values and log a warning. Traffic continues but credentials are not being injected. Unlock before investigating failed auth errors.
+
+### Unlock the Keeper
+
+```bash
+curl -X POST http://localhost:9090/api/v1/keeper/unlock \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"passphrase": "mypassphrase"}'
+```
+
+Success:
+```json
+{"status": "unlocked"}
+```
+
+Wrong passphrase:
+```json
+{"error": "invalid passphrase"}   ← 401 Unauthorized
+```
+
+### List All Keys
+
+```bash
+curl http://localhost:9090/api/v1/keeper/secrets \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+```json
+{
+  "keys": [
+    "auth/jwt-secret",
+    "integrations/stripe-key",
+    "oauth/github-secret",
+    "ssl/example-cert"
+  ]
+}
+```
+
+Reserved namespaces (`internal`, `vault://`) are excluded from the listing — they are managed by Agbero itself.
+
+### Store a Secret (Plain Text)
+
+```bash
+curl -X POST http://localhost:9090/api/v1/keeper/secrets \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key":   "integrations/stripe-key",
+    "value": "sk_live_AbCdEf..."
+  }'
+```
+
+Response:
+```json
+{
+  "key":   "integrations/stripe-key",
+  "bytes": 24,
+  "ref":   "ss://integrations/stripe-key"
+}
+```
+
+The `ref` field is exactly what you paste into your HCL config:
+```hcl
+headers = { "Authorization" = "Bearer ss://integrations/stripe-key" }
+```
+
+In cluster mode, the secret is automatically broadcast to all peer nodes immediately after being stored locally.
+
+### Store a Pre-encoded Base64 Value
+
+If your value is binary or already base64-encoded, set `"b64": true` and Agbero will decode it before storing:
+
+```bash
+curl -X POST http://localhost:9090/api/v1/keeper/secrets \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key":   "crypto/signing-key",
+    "value": "dGhpcyBpcyBhIDMyLWJ5dGUga2V5ISEhISEhISE=",
+    "b64":   true
+  }'
+```
+
+### Store a File (Certificate, Private Key, PEM)
+
+For multi-line or binary values like TLS certificates, SSH private keys, or PEM files, use `multipart/form-data`:
+
+```bash
+# Store a TLS certificate
+curl -X POST http://localhost:9090/api/v1/keeper/secrets \
+  -H "Authorization: Bearer <admin-token>" \
+  -F "key=ssl/example-cert" \
+  -F "file=@/path/to/example.crt"
+
+# Store an SSH deploy key
+curl -X POST http://localhost:9090/api/v1/keeper/secrets \
+  -H "Authorization: Bearer <admin-token>" \
+  -F "key=deploy/github-ssh-key" \
+  -F "file=@~/.ssh/deploy_ed25519"
+```
+
+Then reference in your host config:
+```hcl
+git {
+  auth {
+    type    = "ssh-key"
+    ssh_key = "ss://deploy/github-ssh-key"
+  }
+}
+```
+
+### Retrieve a Secret
+
+The returned value is always base64-encoded. Decode it to get the raw bytes.
+
+```bash
+curl http://localhost:9090/api/v1/keeper/secrets/integrations/stripe-key \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+Response:
+```json
+{
+  "key":      "integrations/stripe-key",
+  "value":    "c2tfbGl2ZV9BYkNkRWYuLi4=",
+  "encoding": "base64"
+}
+```
+
+Decode on the command line:
+```bash
+echo "c2tfbGl2ZV9BYkNkRWYuLi4=" | base64 -d
+# sk_live_AbCdEf...
+```
+
+You can use either the bare path or the `ss://` form in the URL — both work:
+```bash
+# These are equivalent:
+curl .../api/v1/keeper/secrets/integrations/stripe-key
+curl .../api/v1/keeper/secrets/ss://integrations/stripe-key
+```
+
+### Delete a Secret
+
+```bash
+curl -X DELETE http://localhost:9090/api/v1/keeper/secrets/integrations/stripe-key \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+Response:
+```json
+{"deleted": "integrations/stripe-key"}
+```
+
+In cluster mode, the deletion is broadcast to all nodes — every node removes the key from its local keeper immediately.
+
+### Keeper API Error Reference
+
+| HTTP Status | Meaning | What to do |
+|-------------|---------|------------|
+| `200 OK` | Success | — |
+| `400 Bad Request` | Invalid key format, missing field, bad base64 | Check request format |
+| `401 Unauthorized` | Wrong passphrase (unlock endpoint only) | Use the correct passphrase |
+| `403 Forbidden` | Key is in a reserved namespace (`internal`, `vault://`) | Use a different namespace |
+| `404 Not Found` | Key does not exist | Check the key path |
+| `423 Locked` | Keeper is locked | `POST /api/v1/keeper/unlock` first |
+| `503 Service Unavailable` | Keeper not configured | Check `security.keeper` in `agbero.hcl` |
+

@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
-	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/middleware/nonce"
 )
@@ -30,7 +30,7 @@ const (
 
 func TestNewReplay(t *testing.T) {
 	res := resource.New()
-	cfg := alaye.Replay{URL: "http://localhost", Timeout: alaye.Duration(testTimeout)}
+	cfg := alaye.Replay{URL: "http://localhost", Timeout: expect.Duration(testTimeout)}
 
 	h := NewReplay(ReplayConfig{Resource: res, Replay: cfg})
 	if h.client.Timeout != testTimeout {
@@ -155,7 +155,7 @@ func TestReplayMode_HeaderURL(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set(woos.HeaderXAgberoReplayURL, ts.URL)
+	req.Header.Set(def.HeaderXAgberoReplayURL, ts.URL)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
@@ -739,7 +739,7 @@ func TestUpstreamTimeout(t *testing.T) {
 
 	h := NewReplay(ReplayConfig{
 		Resource: resource.New(),
-		Replay:   alaye.Replay{URL: slow.URL, Timeout: alaye.Duration(10 * time.Millisecond)},
+		Replay:   alaye.Replay{URL: slow.URL, Timeout: expect.Duration(10 * time.Millisecond)},
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -792,12 +792,12 @@ func TestTTLPolicy_CachingWithContentType(t *testing.T) {
 			Cache: alaye.Cache{
 				Enabled: expect.Active,
 				Driver:  "memory",
-				TTL:     alaye.Duration(1 * time.Minute),
+				TTL:     expect.Duration(1 * time.Minute),
 				TTLPolicy: alaye.TTLPolicy{
 					Enabled: expect.Active,
-					Default: alaye.Duration(30 * time.Second),
-					ContentType: map[string]alaye.Duration{
-						"application/json": alaye.Duration(5 * time.Minute),
+					Default: expect.Duration(30 * time.Second),
+					ContentType: map[string]expect.Duration{
+						"application/json": expect.Duration(5 * time.Minute),
 					},
 				},
 				Methods: []string{"GET"},
@@ -841,7 +841,7 @@ func TestTTLPolicy_DisabledCache(t *testing.T) {
 			Cache: alaye.Cache{
 				Enabled: expect.Inactive,
 				Driver:  "memory",
-				TTL:     alaye.Duration(1 * time.Minute),
+				TTL:     expect.Duration(1 * time.Minute),
 				Methods: []string{"GET"},
 			},
 		},
@@ -876,10 +876,10 @@ func TestTTLPolicy_ZeroTTLNoCaching(t *testing.T) {
 			Cache: alaye.Cache{
 				Enabled: expect.Active,
 				Driver:  "memory",
-				TTL:     alaye.Duration(0), // Zero TTL
+				TTL:     expect.Duration(0), // Zero TTL
 				TTLPolicy: alaye.TTLPolicy{
 					Enabled: expect.Active,
-					Default: alaye.Duration(0), // Zero default
+					Default: expect.Duration(0), // Zero default
 				},
 				Methods: []string{"GET"},
 			},
@@ -915,10 +915,10 @@ func TestTTLPolicy_CacheKeyWithScope(t *testing.T) {
 			Cache: alaye.Cache{
 				Enabled: expect.Active,
 				Driver:  "memory",
-				TTL:     alaye.Duration(1 * time.Minute),
+				TTL:     expect.Duration(1 * time.Minute),
 				TTLPolicy: alaye.TTLPolicy{
 					Enabled:  expect.Active,
-					Default:  alaye.Duration(1 * time.Minute),
+					Default:  expect.Duration(1 * time.Minute),
 					KeyScope: []string{"header:Accept-Language"},
 				},
 				Methods: []string{"GET"},
@@ -971,7 +971,7 @@ func TestTTLPolicy_CacheControlNoStore(t *testing.T) {
 			Cache: alaye.Cache{
 				Enabled: expect.Active,
 				Driver:  "memory",
-				TTL:     alaye.Duration(1 * time.Minute),
+				TTL:     expect.Duration(1 * time.Minute),
 				Methods: []string{"GET"},
 			},
 		},
@@ -1020,7 +1020,7 @@ func TestTTLPolicy_CacheControlMaxAge(t *testing.T) {
 			Cache: alaye.Cache{
 				Enabled: expect.Active,
 				Driver:  "memory",
-				TTL:     alaye.Duration(1 * time.Minute),
+				TTL:     expect.Duration(1 * time.Minute),
 				Methods: []string{"GET"},
 			},
 		},
@@ -1060,7 +1060,7 @@ func TestTTLPolicy_PostMethodNotCached(t *testing.T) {
 			Cache: alaye.Cache{
 				Enabled: expect.Active,
 				Driver:  "memory",
-				TTL:     alaye.Duration(1 * time.Minute),
+				TTL:     expect.Duration(1 * time.Minute),
 				Methods: []string{"GET"}, // Only GET is cached
 			},
 		},
@@ -1094,7 +1094,7 @@ func TestTTLPolicy_Non200StatusNotCached(t *testing.T) {
 			Cache: alaye.Cache{
 				Enabled: expect.Active,
 				Driver:  "memory",
-				TTL:     alaye.Duration(1 * time.Minute),
+				TTL:     expect.Duration(1 * time.Minute),
 				Methods: []string{"GET"},
 			},
 		},

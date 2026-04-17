@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
-	"github.com/agberohq/agbero/internal/core/woos"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/olekukonko/errors"
 )
@@ -30,10 +30,10 @@ func NewConditions(c alaye.Criteria) (*Conditions, error) {
 			continue
 		}
 
-		if strings.Contains(s, woos.Slash) {
+		if strings.Contains(s, def.Slash) {
 			_, n, err := net.ParseCIDR(s)
 			if err != nil {
-				return nil, errors.Newf("%w: %s", woos.ErrInvalidSrcCond, s)
+				return nil, errors.Newf("%w: %s", def.ErrInvalidSrcCond, s)
 			}
 			out.ips = append(out.ips, ipRule{cidr: n})
 			out.hasRules = true
@@ -42,7 +42,7 @@ func NewConditions(c alaye.Criteria) (*Conditions, error) {
 
 		ip := net.ParseIP(s)
 		if ip == nil {
-			return nil, errors.Newf("%w: %s", woos.ErrInvalidSrcCond, s)
+			return nil, errors.Newf("%w: %s", def.ErrInvalidSrcCond, s)
 		}
 		out.ips = append(out.ips, ipRule{ip: ip})
 		out.hasRules = true
