@@ -246,6 +246,8 @@ func (p *Proxy) Stop() {
 		r.Stop()
 	}
 	p.wg.Wait()
+
+	p.res.Logger.Fields("bind", p.Listen).Info("xtcp: proxy stopped")
 }
 
 // Safely tracks or untracks active connections in the concurrent map

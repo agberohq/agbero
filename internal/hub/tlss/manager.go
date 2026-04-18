@@ -63,7 +63,7 @@ type Manager struct {
 
 func NewManager(logger *ll.Logger, hm *discovery.Host, global *alaye.Global, keeperStore *keeper.Keeper) *Manager {
 	m := &Manager{
-		logger:          logger.Namespace("tls"),
+		logger:          logger.Namespace("tlss"),
 		hostManager:     hm,
 		global:          global,
 		cache:           mappo.NewLRU[string, *tls.Certificate](def.DefaultCacheMaxItems),
@@ -500,7 +500,7 @@ func (m *Manager) PreloadLocalCertificates(hosts map[string]*alaye.Host) {
 			m.logger.Fields("domain", domain).Debug("local cert already in cache, skipping preload")
 			continue
 		}
-		m.logger.Fields("domain", domain).Info("preloading local TLS certificate")
+		m.logger.Fields("domain", domain).Debug("preloading local TLS certificate")
 		if _, err := m.getCertificateLocal(domain); err != nil {
 			// Non-fatal: log and continue.  The cert will be generated on
 			// first request via the singleflight path.

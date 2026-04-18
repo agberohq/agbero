@@ -231,7 +231,7 @@ func (c *Cook) Make(ctx context.Context) error {
 	deployDir := c.deployPath(commitHash)
 
 	if _, err := os.Stat(deployDir); err == nil {
-		c.logger.Fields("hash", commitHash).Infof("commit %s already deployed, switching", commitHash[:8])
+		c.logger.Fields("hash", commitHash).Debugf("commit %s already deployed, switching", commitHash[:8])
 		_ = os.RemoveAll(tmpDir)
 		tmpDir = ""
 	} else {
@@ -250,7 +250,7 @@ func (c *Cook) Make(ctx context.Context) error {
 		return deployErr
 	}
 
-	c.logger.Infof("activated commit %s", commitHash[:8])
+	c.logger.Debugf("activated commit %s", commitHash[:8])
 
 	c.mu.Lock()
 	c.current = commitHash

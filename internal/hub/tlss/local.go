@@ -47,7 +47,7 @@ func NewLocal(logger *ll.Logger, store tlsstore.Store) *Local {
 	mockMode := os.Getenv("AGBERO_TEST_MODE") == "1" || os.Getenv("PEBBLE_TEST") != ""
 
 	return &Local{
-		logger:   logger,
+		logger:   logger.Namespace("local"),
 		store:    store,
 		mockMode: mockMode,
 	}
@@ -529,7 +529,7 @@ func (ci *Local) ensureLocalhostCertUnlocked() (string, string, error) {
 	certPEM, keyPEM, err := ci.store.Load(domain)
 	if err == nil {
 		if err := ci.validateCertificateBytes(certPEM, keyPEM); err == nil {
-			ci.logger.Fields("domain", domain).Info("using existing local certificate")
+			ci.logger.Fields("domain", domain).Debug("using existing local certificate")
 			return domain, domain, nil
 		}
 

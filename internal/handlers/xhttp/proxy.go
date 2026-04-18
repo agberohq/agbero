@@ -105,4 +105,5 @@ func (b *Proxy) Stop() {
 	if b.adaptive != nil {
 		b.adaptive.Stop()
 	}
+
 }

@@ -205,7 +205,7 @@ func NewWebWithNonces(res *resource.Resource, route *alaye.Route, cookMgr *cook.
 			"highlight", route.Web.Markdown.SyntaxHighlight.Enabled.Active(),
 			"theme", route.Web.Markdown.SyntaxHighlight.Theme,
 			"unsafe_html", route.Web.Markdown.UnsafeHTML.Active(),
-		).Info("markdown renderer configured")
+		).Debug("markdown renderer configured")
 	}
 
 	return h
