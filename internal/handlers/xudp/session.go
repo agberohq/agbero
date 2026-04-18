@@ -18,9 +18,10 @@ import (
 // writes them back to the client via the shared listen conn.
 type session struct {
 	backend     *Backend
-	backendConn net.Conn     // dialed UDP conn to backend — owned by this session
-	lastSeen    atomic.Int64 // unix nano of last datagram in either direction
+	backendConn net.Conn
+	lastSeen    atomic.Int64
 	closeOnce   sync.Once
+	removed     atomic.Bool // Ensures deletion only happens once
 }
 
 func newSession(b *Backend, bc net.Conn) *session {
@@ -105,7 +106,11 @@ func (t *sessionTable) create(key string, s *session) bool {
 	if t.count.Load() >= t.maxSess {
 		return false
 	}
-	t.sessions.Set(key, s)
+	// Use SetIfAbsent to prevent concurrent session creations
+	// from double-counting the session map size.
+	if _, loaded := t.sessions.SetIfAbsent(key, s); loaded {
+		return false
+	}
 	t.count.Add(1)
 	return true
 }
@@ -113,9 +118,13 @@ func (t *sessionTable) create(key string, s *session) bool {
 // delete removes a session by key and closes its backend conn.
 func (t *sessionTable) delete(key string) {
 	if s, ok := t.sessions.Get(key); ok {
-		s.close()
-		t.sessions.Delete(key)
-		t.count.Add(-1)
+		// Prevent double-decrementing if replyLoop and sweeper
+		// trigger a delete at the exact same moment.
+		if s.removed.CompareAndSwap(false, true) {
+			s.close()
+			t.sessions.Delete(key)
+			t.count.Add(-1)
+		}
 	}
 }
 
