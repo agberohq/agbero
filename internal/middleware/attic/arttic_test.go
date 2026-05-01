@@ -2,6 +2,7 @@ package attic
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,16 @@ import (
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/ll"
 )
+
+type testRequest struct {
+	method       string
+	path         string
+	body         string
+	reqHeaders   map[string]string
+	respHeaders  map[string]string
+	respStatus   int
+	expectStatus int
+}
 
 func TestCacheMiddleware(t *testing.T) {
 	logger := ll.New(" ").Disable()
@@ -267,12 +278,261 @@ func TestCacheDisabled(t *testing.T) {
 	}
 }
 
-type testRequest struct {
-	method       string
-	path         string
-	body         string
-	reqHeaders   map[string]string
-	respHeaders  map[string]string
-	respStatus   int
-	expectStatus int
+// Helpers
+
+func enabledCache(driver string) *alaye.Cache {
+	return &alaye.Cache{
+		Enabled: expect.Active,
+		Driver:  driver,
+		TTL:     expect.Duration(5 * time.Minute),
+		Methods: []string{"GET"},
+	}
+}
+
+func backendWith(status int, body, ct string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", ct)
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	})
+}
+
+func doGET(handler http.Handler, path string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodGet, path, nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	return w
+}
+
+// X-Cache-Status header (CDN: HIT / MISS / BYPASS / STALE)
+
+func TestHandler_XCacheStatus_Miss(t *testing.T) {
+	mw := New(enabledCache("memory"), nil)
+	h := mw(backendWith(200, "hello", "text/plain"))
+
+	w := doGET(h, "/test")
+	if got := w.Header().Get("X-Cache-Status"); got != "MISS" {
+		t.Errorf("first request: want X-Cache-Status=MISS, got %q", got)
+	}
+}
+
+func TestHandler_XCacheStatus_Hit(t *testing.T) {
+	mw := New(enabledCache("memory"), nil)
+	h := mw(backendWith(200, "hello", "text/plain"))
+
+	doGET(h, "/hit-test") // prime
+	w := doGET(h, "/hit-test")
+	if got := w.Header().Get("X-Cache-Status"); got != "HIT" {
+		t.Errorf("second request: want X-Cache-Status=HIT, got %q", got)
+	}
+}
+
+func TestHandler_XCacheStatus_Bypass_LargeBody(t *testing.T) {
+	cfg := enabledCache("memory")
+	cfg.MaxCacheableSize = 10 // 10 bytes — tiny limit to force bypass
+
+	mw := New(cfg, nil)
+	h := mw(backendWith(200, strings.Repeat("X", 100), "text/plain"))
+
+	w := doGET(h, "/large")
+	if got := w.Header().Get("X-Cache-Status"); got != "BYPASS" {
+		t.Errorf("oversized response: want X-Cache-Status=BYPASS, got %q", got)
+	}
+
+	// Second request should also be BYPASS (not cached)
+	w2 := doGET(h, "/large")
+	if got := w2.Header().Get("X-Cache-Status"); got != "BYPASS" {
+		t.Errorf("second oversized request: want X-Cache-Status=BYPASS, got %q", got)
+	}
+}
+
+func TestHandler_XCacheStatus_NotSetWhenCacheDisabled(t *testing.T) {
+	cfg := &alaye.Cache{Enabled: expect.Inactive}
+	mw := New(cfg, nil)
+	h := mw(backendWith(200, "ok", "text/plain"))
+
+	w := doGET(h, "/disabled")
+	// When cache is off the middleware is a passthrough — no X-Cache-Status
+	if got := w.Header().Get("X-Cache-Status"); got != "" {
+		t.Errorf("disabled cache should not set X-Cache-Status, got %q", got)
+	}
+}
+
+// MaxCacheableSize — bypass logic
+
+func TestHandler_MaxCacheableSize_BelowLimit_IsCached(t *testing.T) {
+	cfg := enabledCache("memory")
+	cfg.MaxCacheableSize = 1024 // 1KB
+
+	mw := New(cfg, nil)
+	h := mw(backendWith(200, "small", "text/plain"))
+
+	doGET(h, "/small") // prime
+	w := doGET(h, "/small")
+	if got := w.Header().Get("X-Cache-Status"); got != "HIT" {
+		t.Errorf("small response should be cached: want HIT, got %q", got)
+	}
+}
+
+func TestHandler_MaxCacheableSize_ZeroMeansDefaultLimit(t *testing.T) {
+	cfg := enabledCache("memory")
+	cfg.MaxCacheableSize = 0 // 0 = use built-in default
+
+	mw := New(cfg, nil)
+	h := mw(backendWith(200, "body", "text/plain"))
+
+	doGET(h, "/default-limit") // prime
+	w := doGET(h, "/default-limit")
+	if got := w.Header().Get("X-Cache-Status"); got != "HIT" {
+		t.Errorf("zero MaxCacheableSize should fall back to default: want HIT, got %q", got)
+	}
+}
+
+// Surrogate tag extraction from Surrogate-Key / Cache-Tag headers
+
+func backendWithTags(tags string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Surrogate-Key", tags)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, "tagged content")
+	})
+}
+
+func TestHandler_SurrogateTags_ParsedOnStore(t *testing.T) {
+	mw := New(enabledCache("memory"), nil)
+	h := mw(backendWithTags("product:1 category:books"))
+
+	doGET(h, "/tagged") // caches entry with tags
+	w := doGET(h, "/tagged")
+	if got := w.Header().Get("X-Cache-Status"); got != "HIT" {
+		t.Errorf("tagged entry should be cached: want HIT, got %q", got)
+	}
+	// Surrogate-Key header should be forwarded to the client
+	if got := w.Header().Get("Surrogate-Key"); got == "" {
+		t.Error("Surrogate-Key header should be forwarded on HIT")
+	}
+}
+
+// Age header on HIT
+
+func TestHandler_AgeHeader_OnHit(t *testing.T) {
+	mw := New(enabledCache("memory"), nil)
+	h := mw(backendWith(200, "body", "text/plain"))
+
+	doGET(h, "/age-test") // prime
+	w := doGET(h, "/age-test")
+
+	// Age must be a non-negative integer string
+	age := w.Header().Get("Age")
+	if age == "" {
+		t.Error("HIT response should include Age header")
+	}
+}
+
+// Stale-while-revalidate — serve stale immediately, refresh in background
+
+func TestHandler_StaleWhileRevalidate_ServesStaleImmediately(t *testing.T) {
+	cfg := enabledCache("memory")
+	cfg.TTLPolicy = alaye.TTLPolicy{
+		Enabled:              expect.Active,
+		Default:              expect.Duration(10 * time.Millisecond), // tiny TTL
+		StaleWhileRevalidate: expect.Duration(5 * time.Second),
+	}
+
+	calls := 0
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, "v1")
+	})
+
+	mw := New(cfg, nil)
+	h := mw(backend)
+
+	doGET(h, "/swr") // prime (call 1)
+
+	// Wait for TTL to expire
+	time.Sleep(20 * time.Millisecond)
+
+	w := doGET(h, "/swr") // should serve stale while revalidating in bg
+	if got := w.Header().Get("X-Cache-Status"); got != "STALE" {
+		t.Errorf("expired entry within swr window: want STALE, got %q", got)
+	}
+	if body := w.Body.String(); body != "v1" {
+		t.Errorf("stale body: want v1, got %q", body)
+	}
+}
+
+// Conditional requests — If-None-Match on cached entry
+
+func TestHandler_ConditionalRequest_IfNoneMatch_Returns304(t *testing.T) {
+	mw := New(enabledCache("memory"), nil)
+
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"abc123"`)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, "body")
+	})
+
+	h := mw(backend)
+	doGET(h, "/etag") // prime
+
+	r := httptest.NewRequest(http.MethodGet, "/etag", nil)
+	r.Header.Set("If-None-Match", `"abc123"`)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusNotModified {
+		t.Errorf("matching ETag: want 304, got %d", w.Code)
+	}
+}
+
+// Cache-Control: no-store on request bypasses cache read
+
+func TestHandler_RequestNoStore_BypassesCache(t *testing.T) {
+	mw := New(enabledCache("memory"), nil)
+	h := mw(backendWith(200, "fresh", "text/plain"))
+
+	doGET(h, "/nocache") // prime cache
+
+	r := httptest.NewRequest(http.MethodGet, "/nocache", nil)
+	r.Header.Set("Cache-Control", "no-store")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if got := w.Header().Get("X-Cache-Status"); got == "HIT" {
+		t.Error("no-store request should not serve from cache")
+	}
+}
+
+// Non-GET method — not cached
+
+func TestHandler_PostNotCached(t *testing.T) {
+	mw := New(enabledCache("memory"), nil)
+	h := mw(backendWith(200, "ok", "text/plain"))
+
+	for i := 0; i < 2; i++ {
+		r := httptest.NewRequest(http.MethodPost, "/post", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if got := w.Header().Get("X-Cache-Status"); got == "HIT" {
+			t.Errorf("POST request %d should not be served from cache", i+1)
+		}
+	}
+}
+
+// 5xx response — not cached
+
+func TestHandler_5xxNotCached(t *testing.T) {
+	mw := New(enabledCache("memory"), nil)
+	h := mw(backendWith(500, "error", "text/plain"))
+
+	doGET(h, "/err") // attempt to cache 500
+	w := doGET(h, "/err")
+	if got := w.Header().Get("X-Cache-Status"); got == "HIT" {
+		t.Error("500 response should not be cached")
+	}
 }
