@@ -1,3 +1,4 @@
+// internal/setup/system.go
 package setup
 
 import (
@@ -646,7 +647,7 @@ func (s *System) fetchLatestRelease() (*githubRelease, error) {
 // platform matching the release workflow naming convention:
 // agbero-{os}-{arch}.tar.gz  (or .zip on Windows)
 func (s *System) buildAssetName(tagName string) string {
-	_ = tagName // version is not included in the filename
+	_ = tagName
 	if runtime.GOOS == def.Windows {
 		return fmt.Sprintf("agbero-%s-%s.zip", runtime.GOOS, runtime.GOARCH)
 	}
@@ -706,9 +707,6 @@ func (s *System) downloadArchive(rawURL, assetName string, timeout time.Duration
 	return tmp.Name(), nil
 }
 
-// extractBinary opens archivePath and extracts the agbero binary into a new
-// temp file. The archive must have already been checksum-verified before this
-// is called. The caller is responsible for closing and removing the returned file.
 func (s *System) extractBinary(archivePath, assetName string) (*os.File, error) {
 	tmp, err := os.CreateTemp("", "agbero_binary_*")
 	if err != nil {
@@ -724,6 +722,13 @@ func (s *System) extractBinary(archivePath, assetName string) (*os.File, error) 
 		}
 		defer src.Close()
 		if err := extractBinaryFromTarGz(src, tmp); err != nil {
+			tmp.Close()
+			os.Remove(tmp.Name())
+			return nil, fmt.Errorf("extraction failed: %w", err)
+		}
+	} else if strings.HasSuffix(strings.ToLower(assetName), ".zip") {
+		// Correctly extract .zip files (Windows) instead of raw copying
+		if err := extractBinaryFromZip(archivePath, tmp); err != nil {
 			tmp.Close()
 			os.Remove(tmp.Name())
 			return nil, fmt.Errorf("extraction failed: %w", err)
@@ -752,25 +757,6 @@ func (s *System) extractBinary(archivePath, assetName string) (*os.File, error) 
 	return tmp, nil
 }
 
-// downloadBytes downloads rawURL and returns the response body in full.
-func (s *System) downloadBytes(rawURL string, timeout time.Duration) ([]byte, error) {
-	client := &http.Client{Timeout: timeout}
-	if s.cfg.httpClient != nil {
-		client = s.cfg.httpClient
-	}
-	resp, err := client.Get(rawURL)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download returned HTTP %d", resp.StatusCode)
-	}
-	return io.ReadAll(resp.Body)
-}
-
-// extractBinaryFromTarGz reads r as a .tar.gz stream and writes the agbero
-// binary entry to dst. Returns an error if the binary is not found.
 func extractBinaryFromTarGz(r io.Reader, dst *os.File) error {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
@@ -803,9 +789,48 @@ func extractBinaryFromTarGz(r io.Reader, dst *os.File) error {
 	return fmt.Errorf("binary %q not found in archive", binaryName)
 }
 
-// computeManifestHMAC derives HMAC-SHA256 over manifestBytes. When password is
-// empty the key is derived from the backup timestamp so the signature remains
-// tamper-evident without a user-supplied secret.
+func extractBinaryFromZip(archivePath string, dst *os.File) error {
+	zr, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return err
+	}
+	defer zr.Close()
+
+	binaryName := def.Name
+	if runtime.GOOS == def.Windows {
+		binaryName = def.Name + ".exe"
+	}
+
+	for _, f := range zr.File {
+		if filepath.Base(f.Name) == binaryName {
+			rc, err := f.Open()
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(dst, rc)
+			rc.Close()
+			return err
+		}
+	}
+	return fmt.Errorf("binary %q not found in zip archive", binaryName)
+}
+
+func (s *System) downloadBytes(rawURL string, timeout time.Duration) ([]byte, error) {
+	client := &http.Client{Timeout: timeout}
+	if s.cfg.httpClient != nil {
+		client = s.cfg.httpClient
+	}
+	resp, err := client.Get(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
+}
+
 func computeManifestHMAC(manifestBytes []byte, password string, ts time.Time) string {
 	var key []byte
 	if password != "" {
@@ -886,7 +911,6 @@ func parseChecksumFile(data []byte, assetName string) (string, error) {
 	return "", fmt.Errorf("no checksum found for %q in checksums file", assetName)
 }
 
-// hashFile returns the SHA-256 hex digest of the file at path.
 func hashFile(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
