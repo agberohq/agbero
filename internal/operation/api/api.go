@@ -10,6 +10,7 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/firewall"
 	"github.com/agberohq/agbero/internal/pkg/revoke"
 	"github.com/agberohq/agbero/internal/pkg/security"
+	"github.com/agberohq/agbero/internal/pkg/stash"
 	"github.com/agberohq/agbero/internal/pkg/telemetry"
 	"github.com/agberohq/keeper"
 	"github.com/go-chi/chi/v5"
@@ -22,8 +23,6 @@ type ActiveState struct {
 	TLSS     *tlss.Manager
 }
 
-// UpdateChecker is implemented by update.Checker — defined as an interface
-// here so the api package does not import the update package directly.
 type UpdateChecker interface {
 	GetCurrent() string
 	GetLatest() string
@@ -39,6 +38,10 @@ type Shared struct {
 	Telemetry     *telemetry.Store
 	RevokeStore   *revoke.Store
 	UpdateChecker UpdateChecker
+
+	// CacheStore is the active cache backend, wired in from admin.go at startup.
+	// Used by CacheHandler for purge-by-tag and clear-all operations.
+	CacheStore stash.Store
 
 	state atomic.Value
 }
@@ -80,6 +83,7 @@ func AdminHandler(shared *Shared, r chi.Router) {
 		HostHandler(shared, r)
 		RevokeHandler(shared, r)
 		KVHandler(shared, r)
+		CacheHandler(shared, r) // CDN cache management
 	})
 }
 
