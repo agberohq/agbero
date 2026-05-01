@@ -1,75 +1,17 @@
 package web
 
 import (
+	"fmt"
 	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/agberohq/agbero/internal/pkg/raw/afs"
 	"github.com/agberohq/agbero/internal/pkg/raw/ahash"
-)
-
-const (
-	baseDecimalFormat = 10
-	hexDecimalFormat  = 16
-)
-
-func init() {
-	types := map[string]string{
-		// Text / markup
-		".html": "text/html; charset=utf-8",
-		".css":  "text/css; charset=utf-8",
-		".js":   "application/javascript; charset=utf-8",
-		".mjs":  "text/javascript; charset=utf-8",
-		".json": "application/json; charset=utf-8",
-		".xml":  "text/xml; charset=utf-8",
-		".txt":  "text/plain; charset=utf-8",
-		".csv":  "text/csv; charset=utf-8",
-		".md":   "text/markdown",
-		// Images
-		".svg":  "image/svg+xml",
-		".png":  "image/png",
-		".jpg":  "image/jpeg",
-		".jpeg": "image/jpeg",
-		".gif":  "image/gif",
-		".webp": "image/webp",
-		".avif": "image/avif",
-		".ico":  "image/x-icon",
-		// Fonts
-		".woff":  "font/woff",
-		".woff2": "font/woff2",
-		// Application
-		".wasm":        "application/wasm",
-		".pdf":         "application/pdf",
-		".zip":         "application/zip",
-		".webmanifest": "application/manifest+json",
-		// Video — CDN large-file support
-		".mp4":  "video/mp4",
-		".webm": "video/webm",
-		".ogg":  "video/ogg",
-		".avi":  "video/x-msvideo",
-		".mov":  "video/quicktime",
-		".mkv":  "video/x-matroska",
-		// Audio — CDN large-file support
-		".mp3":  "audio/mpeg",
-		".flac": "audio/flac",
-		".aac":  "audio/aac",
-		".wav":  "audio/wav",
-		".opus": "audio/ogg",
-	}
-
-	for ext, mimeType := range types {
-		_ = mime.AddExtensionType(ext, mimeType)
-	}
-}
-
-var (
-	mimeCache sync.Map
 )
 
 // getMimeType determines the appropriate Content-Type for requested assets safely.
@@ -149,4 +91,42 @@ func weakETag(path string, size int64, modTime time.Time) string {
 // Constrains goldmark execution preventing unnecessary load against foreign inputs.
 func isMarkdownPath(path string) bool {
 	return markdownExts[strings.ToLower(filepath.Ext(path))]
+}
+
+// isSafeRedirectPath rejects protocol-relative URLs and any path containing
+// CR/LF characters that could be used for response splitting.
+func isSafeRedirectPath(p string) bool {
+	if strings.HasPrefix(p, "//") {
+		return false
+	}
+	if strings.ContainsAny(p, "\r\n") {
+		return false
+	}
+	return true
+}
+
+// formatContentDisposition returns a properly quoted and escaped
+// Content-Disposition header value per RFC 6266.
+func formatContentDisposition(filename string) string {
+	escaped := strings.ReplaceAll(filename, `"`, `\"`)
+	return fmt.Sprintf(`attachment; filename="%s"`, escaped)
+}
+
+// sanitizePHPHeaders returns a new Header with dangerous/poisonous headers
+// removed so they cannot override FastCGI variables.
+func sanitizePHPHeaders(r *http.Request) http.Header {
+	safe := make(http.Header)
+	for key, values := range r.Header {
+		lower := strings.ToLower(key)
+		if dangerousPHPHeaders[lower] {
+			continue
+		}
+		if strings.HasPrefix(lower, "http_") && len(lower) > 5 {
+			continue
+		}
+		for _, v := range values {
+			safe.Add(key, v)
+		}
+	}
+	return safe
 }

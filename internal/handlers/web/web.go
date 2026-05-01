@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	_ "embed"
+	"html"
 	"html/template"
 	"io"
 	"io/fs"
@@ -12,11 +13,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/olekukonko/errors"
@@ -40,82 +39,6 @@ import (
 	goldtoc "go.abhg.dev/goldmark/toc"
 )
 
-//go:embed html/dir.html
-var webDirHTML string
-
-//go:embed html/md.html
-var mdPageHTML string
-
-//go:embed html/md_browse.html
-var mdBrowseHTML string
-
-var (
-	dirTmpl      = template.Must(template.New("dir").Parse(webDirHTML))
-	mdPageTmpl   = template.Must(template.New("md").Parse(mdPageHTML))
-	mdBrowseTmpl = template.Must(template.New("md-browse").Parse(mdBrowseHTML))
-
-	gzExistsCache = mappo.NewCache(mappo.CacheOptions{
-		MaximumSize: def.CacheMax,
-	})
-
-	dynamicGzCache = mappo.NewCache(mappo.CacheOptions{MaximumSize: 256})
-
-	fingerprintRe = regexp.MustCompile(`(?i)(?:[._-])[a-f0-9]{8,}(?:[._-])`)
-
-	gzWriterPool = sync.Pool{
-		New: func() any {
-			w, _ := gzip.NewWriterLevel(nil, gzip.BestSpeed)
-			return w
-		},
-	}
-)
-
-const (
-	gzCacheTTL            = 60 * time.Second
-	phpTimeout            = 30 * time.Second
-	dynamicGzMinSize      = def.WebDynamicGzMinBytes
-	dynamicGzMaxCacheSize = 512 * def.WebDynamicGzMinBytes
-	dynamicGzTTL          = 60 * time.Second
-)
-
-var compressibleMIME = []string{
-	"text/",
-	"application/javascript",
-	"application/json",
-	"application/xml",
-	"application/xhtml+xml",
-	"application/wasm",
-	"image/svg+xml",
-}
-
-var markdownExts = map[string]bool{
-	".md":       true,
-	".markdown": true,
-	".mdown":    true,
-	".mkd":      true,
-}
-
-type dirItem struct {
-	Name    string
-	IsDir   bool
-	Size    string
-	ModTime string
-	URL     string
-	Ext     string
-	MIME    string
-}
-
-type crumb struct {
-	Name string
-	Href string
-}
-
-type dynamicGzEntry struct {
-	data    []byte
-	modTime time.Time
-	size    int64
-}
-
 type web struct {
 	route            *alaye.Route
 	res              *resource.Resource
@@ -132,7 +55,7 @@ func NewWeb(res *resource.Resource, route *alaye.Route, cookMgr *cook.Manager) *
 }
 
 // NewWebWithNonces creates a web handler with nonce stores for replay auth.
-// nonceStores maps replay endpoint name → Store; nil disables injection.
+// nonceStores maps replay endpoint name -> Store; nil disables injection.
 func NewWebWithNonces(res *resource.Resource, route *alaye.Route, cookMgr *cook.Manager, nonceStores map[string]*nonce.Store) *web {
 	h := &web{
 		route:       route,
@@ -215,7 +138,7 @@ func (h *web) logger() *ll.Logger {
 }
 
 // injectNonces generates one nonce per configured endpoint and injects
-// <meta name="agbero-replay-nonce" data-endpoint="…" content="…"> before
+// <meta name="agbero-replay-nonce" data-endpoint="..." content="..."> before
 // </head>. Returns buf unchanged when nonce injection is not configured.
 func (h *web) injectNonces(buf *bytes.Buffer) *bytes.Buffer {
 	if !h.route.Web.Nonce.Enabled.Active() || len(h.nonceStores) == 0 {
@@ -233,9 +156,9 @@ func (h *web) injectNonces(buf *bytes.Buffer) *bytes.Buffer {
 			continue
 		}
 		tags.WriteString(`<meta name="agbero-replay-nonce" data-endpoint="`)
-		tags.WriteString(endpoint)
+		tags.WriteString(html.EscapeString(endpoint))
 		tags.WriteString(`" content="`)
-		tags.WriteString(nonce)
+		tags.WriteString(html.EscapeString(nonce))
 		tags.WriteString(`">`)
 		tags.WriteByte('\n')
 	}
@@ -324,7 +247,9 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if serr == nil && !info.IsDir() {
 				ctx, cancel := context.WithTimeout(r.Context(), phpTimeout)
 				defer cancel()
-				rWithCtx := r.WithContext(ctx)
+
+				safeReq := r.WithContext(ctx)
+				safeReq.Header = sanitizePHPHeaders(r)
 
 				sess := gofast.Chain(
 					gofast.BasicParamsMap,
@@ -333,7 +258,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					gofast.NewPHPFS(rootPath),
 				)(gofast.BasicSession)
 
-				gofast.NewHandler(sess, h.phpClientFactory).ServeHTTP(w, rWithCtx)
+				gofast.NewHandler(sess, h.phpClientFactory).ServeHTTP(w, safeReq)
 
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					h.logger().Fields("path", reqPath, "err", ctxErr,
@@ -399,7 +324,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if wantsDownload {
-		w.Header().Set("Content-Disposition", "attachment; filename="+url.PathEscape(filepath.Base(reqPath)))
+		w.Header().Set("Content-Disposition", formatContentDisposition(filepath.Base(reqPath)))
 	}
 
 	if !wantsDownload && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && info.Size() >= dynamicGzMinSize {
@@ -457,7 +382,7 @@ func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath, 
 	var entry *dynamicGzEntry
 	if ok {
 		if e, valid := zulu.GetCache[*dynamicGzEntry](cached); valid {
-			if e.modTime.Equal(info.ModTime()) || e.modTime.After(info.ModTime()) {
+			if e.modTime.Equal(info.ModTime()) {
 				entry = e
 			}
 		}
@@ -672,6 +597,10 @@ func (h *web) serveMarkdownWithTemplate(w http.ResponseWriter, root *os.Root, re
 
 func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, rootPath string, f *os.File, reqPath, browserPath string) {
 	if !strings.HasSuffix(browserPath, "/") {
+		if !isSafeRedirectPath(browserPath) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 		http.Redirect(w, r, browserPath+"/", http.StatusMovedPermanently)
 		return
 	}
@@ -934,20 +863,4 @@ func (h *web) buildBreadcrumbs(displayPath string) []crumb {
 		out = append(out, crumb{Name: part, Href: cur.String() + "/"})
 	}
 	return out
-}
-
-type chromaPreWrapper struct{}
-
-func (chromaPreWrapper) Start(code bool, _ string) string {
-	if code {
-		return `<pre class="chroma"><code>`
-	}
-	return `<pre class="chroma">`
-}
-
-func (chromaPreWrapper) End(code bool) string {
-	if code {
-		return `</code></pre>`
-	}
-	return `</pre>`
 }

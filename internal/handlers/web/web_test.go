@@ -960,6 +960,7 @@ func TestServeHTTP_Refresh_Markdown(t *testing.T) {
 		t.Error("?refresh on md: content must still be rendered")
 	}
 }
+
 func TestServeHTTP_HiddenDirBlocked(t *testing.T) {
 	root := newTestRoot(t)
 	writeFile(t, root, ".git/config", "[core]")
