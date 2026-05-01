@@ -1,84 +1,65 @@
 package bot
 
 import (
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/olekukonko/mappo"
-)
-
-const (
-	cacheTTLBot    = 1 * time.Hour
-	cacheTTLNotBot = 24 * time.Hour
-	maxUALength    = 200
+	"github.com/ua-parser/uap-go/uaparser"
 )
 
 type Checker struct {
-	cache          *mappo.Concurrent[string, bool]
-	combinedRegex  *regexp.Regexp
-	fastIndicators []string
+	cache  *mappo.LRU[string, bool]
+	parser *uaparser.Parser
 }
 
-// NewChecker initializes a BotChecker with pre-compiled patterns and indicators.
-// All bot detection patterns are combined into a single regex for optimal performance.
-func NewChecker() *Checker {
-	patterns := []string{
-		`googlebot`, `bingbot`, `slurp`, `duckduckbot`,
-		`baiduspider`, `yandexbot`, `facebookexternalhit`,
-		`twitterbot`, `linkedinbot`, `whatsapp`,
-		`telegrambot`, `slackbot`, `discordbot`,
-		`bot`, `crawl`, `spider`, `scrape`, `scan`, `fetcher`,
-	}
-
-	indicators := []string{
-		"bot", "crawl", "spider", "scrape", "scan", "fetcher",
+func NewChecker(maxCacheSize int) (*Checker, error) {
+	parser, err := uaparser.New()
+	if err != nil {
+		return nil, err
 	}
 
 	return &Checker{
-		cache:          mappo.NewConcurrent[string, bool](),
-		combinedRegex:  regexp.MustCompile(`(?i)` + strings.Join(patterns, `|`)),
-		fastIndicators: indicators,
-	}
+		cache: mappo.NewLRUWithConfig[string, bool](mappo.LRUConfig[string, bool]{
+			MaxSize: maxCacheSize,
+		}),
+		parser: parser,
+	}, nil
 }
 
-// IsBot determines if a User-Agent string belongs to a bot or crawler.
-// Results are cached with TTL to minimize repeated evaluation on hot paths.
 func (b *Checker) IsBot(ua string) bool {
 	if ua == "" {
 		return false
 	}
 
-	if isBot, found := b.cache.Get(ua); found {
-		return isBot
-	}
+	val := b.cache.GetOrCompute(ua, func() (bool, time.Duration) {
+		client := b.parser.Parse(ua)
+		family := strings.ToLower(client.UserAgent.Family)
+		uaLower := strings.ToLower(ua)
 
-	if len(ua) > maxUALength {
-		b.cache.SetTTL(ua, true, cacheTTLBot)
-		return true
-	}
+		isBot := family == "googlebot" ||
+			family == "bingbot" ||
+			family == "baiduspider" ||
+			family == "yandexbot" ||
+			family == "duckduckbot" ||
+			family == "twitterbot" ||
+			family == "facebookexternalhit" ||
+			family == "linkedinbot" ||
+			family == "whatsapp" ||
+			family == "telegrambot" ||
+			family == "slackbot" ||
+			family == "discordbot" ||
+			strings.Contains(family, "bot") ||
+			strings.Contains(family, "crawler") ||
+			strings.Contains(family, "spider") ||
+			strings.Contains(uaLower, "googlebot") ||
+			strings.Contains(uaLower, "bingbot")
 
-	uaLower := strings.ToLower(ua)
-	for _, indicator := range b.fastIndicators {
-		if strings.Contains(uaLower, indicator) {
-			b.cache.SetTTL(ua, true, cacheTTLBot)
-			return true
+		if isBot {
+			return true, 1 * time.Hour
 		}
-	}
+		return false, 24 * time.Hour
+	})
 
-	if b.combinedRegex.MatchString(ua) {
-		b.cache.SetTTL(ua, true, cacheTTLBot)
-		return true
-	}
-
-	b.cache.SetTTL(ua, false, cacheTTLNotBot)
-	return false
-}
-
-// AddPattern extends the bot detection with a custom regex pattern.
-// Note: Runtime pattern updates are not concurrency-safe; prefer initialization at startup.
-func (b *Checker) AddPattern(pattern string) {
-	base := strings.TrimPrefix(b.combinedRegex.String(), `(?i)`)
-	updated := `(?i)` + base + `|` + regexp.QuoteMeta(pattern)
-	b.combinedRegex = regexp.MustCompile(updated)
+	return val
 }
