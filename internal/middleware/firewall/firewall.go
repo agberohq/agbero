@@ -81,7 +81,10 @@ func New(cfg Config) (*Engine, error) {
 	}
 	botChecker := cfg.BotChecker
 	if botChecker == nil {
-		botChecker = bot.NewChecker()
+		botChecker, err = bot.NewChecker(def.CacheMaxBot)
+		if err != nil {
+			return nil, fmt.Errorf("firewall bot checker init: %w", err)
+		}
 	}
 	e := &Engine{
 		cfg:             cfg.Firewall,

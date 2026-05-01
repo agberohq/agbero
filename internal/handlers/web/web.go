@@ -2,7 +2,6 @@ package web
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	_ "embed"
 	"html"
@@ -18,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/klauspost/compress/gzip"
 	"github.com/olekukonko/errors"
 
 	"github.com/agberohq/agbero/internal/core/alaye"

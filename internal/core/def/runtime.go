@@ -335,11 +335,10 @@ const (
 // Auth / access control
 
 const (
-	Realm        = "Restricted"
-	Allow        = "allow"
-	Deny         = "deny"
-	User         = "user"
-	MaxSizeCache = 10_000
+	Realm = "Restricted"
+	Allow = "allow"
+	Deny  = "deny"
+	User  = "user"
 
 	CacheClientMaxIdleCons     = 100
 	CacheClientMaxIdleTimeOuts = 90 * time.Second
@@ -460,6 +459,7 @@ const (
 
 const (
 	CacheMax         = 10_000
+	CacheMaxBot      = 2_000
 	CacheMaxBig      = 100_000
 	CacheMaxBodySize = 5 * 1024 * 1024
 

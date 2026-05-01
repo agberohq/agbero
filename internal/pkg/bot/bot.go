@@ -2,6 +2,7 @@ package bot
 
 import (
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,6 +23,19 @@ const (
 	cacheTTLNotBot  = 24 * time.Hour
 )
 
+var (
+	parserOnce sync.Once
+	parser     *uaparser.Parser
+	parserErr  error
+)
+
+func getParser() (*uaparser.Parser, error) {
+	parserOnce.Do(func() {
+		parser, parserErr = uaparser.New()
+	})
+	return parser, parserErr
+}
+
 type Checker struct {
 	cache  *mappo.LRU[string, bool]
 	parser *uaparser.Parser
@@ -35,7 +49,7 @@ type Checker struct {
 }
 
 func NewChecker(initialMaxSize int) (*Checker, error) {
-	parser, err := uaparser.New()
+	parser, err := getParser()
 	if err != nil {
 		return nil, err
 	}
