@@ -85,6 +85,15 @@ func Forward(res *resource.Resource, cfg *alaye.ForwardAuth) func(http.Handler) 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			cacheKey := buildCacheKey(r, cfg.Request.CacheKey, cachePrefix)
 
+			// Prevent Header Spoofing (Privilege Escalation)
+			// We must strip any headers that the backend expects to be populated
+			// strictly by the Forward Auth service to prevent an attacker from injecting them.
+			if cfg.Response.Enabled.Active() {
+				for _, h := range cfg.Response.CopyHeaders {
+					r.Header.Del(h)
+				}
+			}
+
 			if cached, ok := res.AuthCache.Load(cacheKey); ok {
 				if allowed, ok := mappo.GetTyped[bool](cached); ok && allowed {
 					if cfg.Response.Enabled.Active() {
@@ -170,9 +179,12 @@ func Forward(res *resource.Resource, cfg *alaye.ForwardAuth) func(http.Handler) 
 				if cfg.Response.Enabled.Active() {
 					headersToCopy := make(http.Header)
 					for _, h := range cfg.Response.CopyHeaders {
-						if v := resp.Header.Get(h); v != "" {
-							headersToCopy.Set(h, v)
-							r.Header.Set(h, v)
+						// Use .Values() instead of .Get() to support multi-value headers
+						if vv := resp.Header.Values(h); len(vv) > 0 {
+							for _, v := range vv {
+								headersToCopy.Add(h, v)
+								r.Header.Add(h, v)
+							}
 						}
 					}
 					if cacheTTL > 0 {
@@ -256,16 +268,14 @@ func buildCacheKey(r *http.Request, cacheKeyHeaders []string, prefix string) str
 // empty, Authorization and Cookie are forwarded by default.
 func copyHeaders(src http.Header, dst http.Header, keys []string) {
 	if len(keys) == 0 {
-		for _, key := range []string{"Authorization", "Cookie"} {
-			if v := src.Get(key); v != "" {
-				dst.Set(key, v)
-			}
-		}
-		return
+		keys = []string{"Authorization", "Cookie"}
 	}
 	for _, k := range keys {
-		if v := src.Get(k); v != "" {
-			dst.Set(k, v)
+		// FIX: Correctly transfer multiple header entries (e.g. Set-Cookie)
+		if vv := src.Values(k); len(vv) > 0 {
+			for _, v := range vv {
+				dst.Add(k, v)
+			}
 		}
 	}
 }
@@ -274,8 +284,10 @@ func copyHeaders(src http.Header, dst http.Header, keys []string) {
 // response into the upstream request so backends can read identity claims.
 func copyHeadersToRequest(src http.Header, r *http.Request, keys []string) {
 	for _, k := range keys {
-		if v := src.Get(k); v != "" {
-			r.Header.Set(k, v)
+		if vv := src.Values(k); len(vv) > 0 {
+			for _, v := range vv {
+				r.Header.Add(k, v)
+			}
 		}
 	}
 }
