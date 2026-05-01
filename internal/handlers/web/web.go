@@ -175,7 +175,6 @@ func NewWebWithNonces(res *resource.Resource, route *alaye.Route, cookMgr *cook.
 			exts = append(exts, highlighting.NewHighlighting(
 				highlighting.WithStyle(theme),
 				highlighting.WithGuessLanguage(true),
-
 				highlighting.WithFormatOptions(
 					chromahtml.WithPreWrapper(chromaPreWrapper{}),
 				),
@@ -309,7 +308,8 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wantsDownload := r.URL.Query().Has("download")
 
 	if r.URL.Query().Has("refresh") || h.route.Web.NoCache.Active() {
-		dynamicGzCache.Delete(reqPath)
+		cacheKey := filepath.Join(rootPath, reqPath)
+		dynamicGzCache.Delete(cacheKey)
 	}
 
 	if strings.HasSuffix(strings.ToLower(reqPath), ".php") {
@@ -346,11 +346,13 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if !wantsDownload && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 		gzPath := reqPath + ".gz"
-		if h.gzMayExist(gzPath) {
+		gzCacheKey := filepath.Join(rootPath, gzPath)
+
+		if h.gzMayExist(gzCacheKey) {
 			if fGz, err := root.Open(gzPath); err == nil {
 				if infoGz, statErr := fGz.Stat(); statErr == nil && !infoGz.IsDir() {
 					defer fGz.Close()
-					h.gzSetExists(gzPath, true)
+					h.gzSetExists(gzCacheKey, true)
 					if h.setCommonHeaders(w, r, reqPath, infoGz.ModTime(), infoGz.Size(), true) {
 						return
 					}
@@ -367,7 +369,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				fGz.Close()
 			} else if errors.Is(err, fs.ErrNotExist) {
-				h.gzSetExists(gzPath, false)
+				h.gzSetExists(gzCacheKey, false)
 			}
 		}
 	}
@@ -387,7 +389,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if info.IsDir() {
-		h.serveDir(w, r, root, f, reqPath, browserPath)
+		h.serveDir(w, r, root, rootPath, f, reqPath, browserPath)
 		return
 	}
 
@@ -402,7 +404,8 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if !wantsDownload && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && info.Size() >= dynamicGzMinSize {
 		if mt := getMimeType(reqPath); isCompressibleMIME(mt) {
-			if h.serveDynamicGzip(w, r, reqPath, f, info, mt) {
+			cacheKey := filepath.Join(rootPath, reqPath)
+			if h.serveDynamicGzip(w, r, reqPath, cacheKey, f, info, mt) {
 				return
 			}
 			f.Close()
@@ -444,12 +447,12 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }
 
-func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath string, f *os.File, info fs.FileInfo, mimeType string) bool {
+func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath, cacheKey string, f *os.File, info fs.FileInfo, mimeType string) bool {
 	if info.Size() > def.DynamicGzMaxSize {
 		return false
 	}
 
-	cached, ok := dynamicGzCache.Load(reqPath)
+	cached, ok := dynamicGzCache.Load(cacheKey)
 
 	var entry *dynamicGzEntry
 	if ok {
@@ -490,7 +493,7 @@ func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath s
 		}
 
 		if len(entry.data) <= dynamicGzMaxCacheSize {
-			dynamicGzCache.StoreTTL(reqPath, &mappo.Item{Value: entry}, dynamicGzTTL)
+			dynamicGzCache.StoreTTL(cacheKey, &mappo.Item{Value: entry}, dynamicGzTTL)
 		}
 	}
 
@@ -510,7 +513,7 @@ func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath s
 }
 
 func (h *web) setCommonHeaders(w http.ResponseWriter, r *http.Request, reqPath string, modTime time.Time, size int64, isGzipVariant bool) (notModified bool) {
-	// Accept-Ranges is required for video seeking and download resume (CDN).
+
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	if r.URL.Query().Has("refresh") || h.route.Web.NoCache.Active() {
@@ -526,7 +529,7 @@ func (h *web) setCommonHeaders(w http.ResponseWriter, r *http.Request, reqPath s
 	var cacheControl string
 	switch {
 	case h.route.Web.CacheControl != "":
-		// Explicit per-route override takes priority over all built-in logic.
+
 		cacheControl = h.route.Web.CacheControl
 	case ext == ".html" || ext == "" || strings.HasSuffix(r.URL.Path, "/"):
 		cacheControl = "public, max-age=0, must-revalidate"
@@ -667,7 +670,7 @@ func (h *web) serveMarkdownWithTemplate(w http.ResponseWriter, root *os.Root, re
 	return true
 }
 
-func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, f *os.File, reqPath, browserPath string) {
+func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, rootPath string, f *os.File, reqPath, browserPath string) {
 	if !strings.HasSuffix(browserPath, "/") {
 		http.Redirect(w, r, browserPath+"/", http.StatusMovedPermanently)
 		return
@@ -703,11 +706,13 @@ func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, f 
 
 		if !wantsDownload && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 			gzPath := indexPath + ".gz"
-			if h.gzMayExist(gzPath) {
+			gzCacheKey := filepath.Join(rootPath, gzPath)
+
+			if h.gzMayExist(gzCacheKey) {
 				if fGz, err := root.Open(gzPath); err == nil {
 					if infoGz, statErr := fGz.Stat(); statErr == nil && !infoGz.IsDir() {
 						defer fGz.Close()
-						h.gzSetExists(gzPath, true)
+						h.gzSetExists(gzCacheKey, true)
 						if h.setCommonHeaders(w, r, indexPath, infoGz.ModTime(), infoGz.Size(), true) {
 							return
 						}
@@ -724,7 +729,7 @@ func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, f 
 					}
 					fGz.Close()
 				} else if errors.Is(err, fs.ErrNotExist) {
-					h.gzSetExists(gzPath, false)
+					h.gzSetExists(gzCacheKey, false)
 				}
 			}
 		}
@@ -884,13 +889,9 @@ func (h *web) getIndices() []string {
 
 func (h *web) resolveRootPath() string {
 	if h.route.Web.Git.Enabled.Active() && h.cookMgr != nil {
-		// If Git is enabled, strictly rely on the Cook Manager.
-		// If it returns "", it means deployment is still in progress.
 		return h.cookMgr.CurrentPath(h.route.Web.Git.ID)
 	}
 
-	// If neither Git nor a Root path is configured, return empty
-	// to trigger the 503 "Deployment in progress" rather than leaking "."
 	if !h.route.Web.Root.IsSet() {
 		return ""
 	}
@@ -898,8 +899,8 @@ func (h *web) resolveRootPath() string {
 	return h.route.Web.Root.String()
 }
 
-func (h *web) gzMayExist(gzPath string) bool {
-	it, ok := gzExistsCache.Load(gzPath)
+func (h *web) gzMayExist(cacheKey string) bool {
+	it, ok := gzExistsCache.Load(cacheKey)
 	if !ok {
 		return true
 	}
@@ -910,10 +911,10 @@ func (h *web) gzMayExist(gzPath string) bool {
 	return v
 }
 
-func (h *web) gzSetExists(gzPath string, exists bool) {
+func (h *web) gzSetExists(cacheKey string, exists bool) {
 	jitter := time.Duration(time.Now().UnixNano()%int64(5*time.Second)) - 2500*time.Millisecond
 	ttl := max(gzCacheTTL+jitter, time.Second)
-	gzExistsCache.StoreTTL(gzPath, &mappo.Item{Value: exists}, ttl)
+	gzExistsCache.StoreTTL(cacheKey, &mappo.Item{Value: exists}, ttl)
 }
 
 func (h *web) buildBreadcrumbs(displayPath string) []crumb {
