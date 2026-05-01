@@ -9,11 +9,12 @@ import (
 )
 
 type Security struct {
-	Enabled         expect.Toggle `hcl:"enabled,attr" json:"enabled"`
-	TrustedProxies  []string      `hcl:"trusted_proxies,attr" json:"trusted_proxies"`
+	Enabled         expect.Toggle `hcl:"enabled,attr"          json:"enabled"`
+	TrustedProxies  []string      `hcl:"trusted_proxies,attr"  json:"trusted_proxies"`
 	AllowedCommands []string      `hcl:"allowed_commands,attr" json:"allowed_commands"`
-	Firewall        Firewall      `hcl:"firewall,block" json:"firewall"`
-	Keeper          Keeper        `hcl:"keeper,block" json:"keep"`
+	Firewall        Firewall      `hcl:"firewall,block"        json:"firewall"`
+	WAF             WAF           `hcl:"waf,block"             json:"waf"`
+	Keeper          Keeper        `hcl:"keeper,block"          json:"keep"`
 }
 
 // Validate checks trusted proxy formats and delegates to Firewall.Validate.
@@ -31,7 +32,10 @@ func (s *Security) Validate() error {
 			}
 		}
 	}
-	return s.Firewall.Validate()
+	if err := s.Firewall.Validate(); err != nil {
+		return err
+	}
+	return s.WAF.Validate()
 }
 
 var allowedCommandRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
