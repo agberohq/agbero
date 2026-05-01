@@ -19,7 +19,7 @@ const headerXCacheStatus = "X-Cache-Status"
 type CacheMiddleware struct {
 	store            stash.Store
 	logger           *ll.Logger
-	pool             *jack.Pool // nil = no background revalidation
+	pool             *jack.Pool
 	allowedMethods   map[string]bool
 	enabled          bool
 	defaultTTL       time.Duration
@@ -156,7 +156,7 @@ func (m *CacheMiddleware) Handler(next http.Handler) http.Handler {
 			SurrogateTags: parseSurrogateTags(rec.Header()),
 		}
 		removeHopByHopHeaders(entry.Headers)
-		m.store.Set(key, entry, ttl)
+		m.store.SetWithPolicy(key, entry, m.policy, ttl)
 	})
 }
 
@@ -195,7 +195,7 @@ func (m *CacheMiddleware) revalidate(key string, r *http.Request, next http.Hand
 			SurrogateTags: parseSurrogateTags(rec.Header()),
 		}
 		removeHopByHopHeaders(fresh.Headers)
-		store.Set(key, fresh, ttl)
+		store.SetWithPolicy(key, fresh, m.policy, ttl)
 		if logger != nil {
 			logger.Debug("stale-while-revalidate: refreshed", "key", key)
 		}

@@ -1,9 +1,7 @@
-// internal/setup/system.go
 package setup
 
 import (
 	"archive/tar"
-	"compress/gzip"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -28,6 +26,7 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/pkg/version"
 	"github.com/dustin/go-humanize"
+	"github.com/klauspost/compress/gzip"
 	"github.com/minio/selfupdate"
 	"github.com/olekukonko/ll"
 	"github.com/yeka/zip"
@@ -757,6 +756,22 @@ func (s *System) extractBinary(archivePath, assetName string) (*os.File, error) 
 	return tmp, nil
 }
 
+func (s *System) downloadBytes(rawURL string, timeout time.Duration) ([]byte, error) {
+	client := &http.Client{Timeout: timeout}
+	if s.cfg.httpClient != nil {
+		client = s.cfg.httpClient
+	}
+	resp, err := client.Get(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
+}
+
 func extractBinaryFromTarGz(r io.Reader, dst *os.File) error {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
@@ -813,22 +828,6 @@ func extractBinaryFromZip(archivePath string, dst *os.File) error {
 		}
 	}
 	return fmt.Errorf("binary %q not found in zip archive", binaryName)
-}
-
-func (s *System) downloadBytes(rawURL string, timeout time.Duration) ([]byte, error) {
-	client := &http.Client{Timeout: timeout}
-	if s.cfg.httpClient != nil {
-		client = s.cfg.httpClient
-	}
-	resp, err := client.Get(rawURL)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download returned HTTP %d", resp.StatusCode)
-	}
-	return io.ReadAll(resp.Body)
 }
 
 func computeManifestHMAC(manifestBytes []byte, password string, ts time.Time) string {

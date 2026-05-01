@@ -271,7 +271,7 @@ func copyHeaders(src http.Header, dst http.Header, keys []string) {
 		keys = []string{"Authorization", "Cookie"}
 	}
 	for _, k := range keys {
-		// FIX: Correctly transfer multiple header entries (e.g. Set-Cookie)
+		// Correctly transfer multiple header entries (e.g. Set-Cookie)
 		if vv := src.Values(k); len(vv) > 0 {
 			for _, v := range vv {
 				dst.Add(k, v)
