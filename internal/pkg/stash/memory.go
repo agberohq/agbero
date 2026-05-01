@@ -51,8 +51,21 @@ func (s *MemoryStore) Set(key string, entry *Entry, ttl time.Duration) {
 	if ttl <= 0 {
 		return
 	}
+
+	// entry.TTL records the real cache TTL so IsStale() can evaluate expiry.
+	entry.TTL = ttl
+
+	// mappo evicts at StoreTTL deadline. To support stale-while-revalidate,
+	// keep the entry alive in mappo for TTL + stale window so it can still be
+	// retrieved and served as STALE. Without the stale extension mappo evicts
+	// the entry before the stale request arrives and the entry is unfindable.
+	evictAfter := ttl
+	if s.policy != nil && s.policy.IsStaleWhileRevalidate() {
+		evictAfter = ttl + s.policy.StaleWindow()
+	}
+
 	item := &mappo.Item{Value: entry}
-	s.cache.StoreTTL(key, item, ttl)
+	s.cache.StoreTTL(key, item, evictAfter)
 }
 
 func (s *MemoryStore) SetWithPolicy(key string, entry *Entry, policy *alaye.TTLPolicy, defaultTTL time.Duration) {
@@ -70,9 +83,7 @@ func (s *MemoryStore) SetWithPolicy(key string, entry *Entry, policy *alaye.TTLP
 	if ttl <= 0 {
 		return
 	}
-
-	item := &mappo.Item{Value: entry}
-	s.cache.StoreTTL(key, item, ttl)
+	s.Set(key, entry, ttl)
 }
 
 func (s *MemoryStore) Delete(key string) {
@@ -88,7 +99,24 @@ func (s *MemoryStore) Close() error {
 	return s.cache.Close()
 }
 
-// Key generates a cache key from request with optional scope support
+// PurgeByTag removes all entries whose SurrogateTags contain the given tag.
+func (s *MemoryStore) Purge(tag string) error {
+	var toDelete []string
+	s.cache.Range(func(key string, item *mappo.Item) bool {
+		entry, valid := mappo.GetTyped[*Entry](item)
+		if valid && entry.HasTag(tag) {
+			toDelete = append(toDelete, key)
+		}
+		return true
+	})
+	for _, k := range toDelete {
+		s.cache.Delete(k)
+	}
+	return nil
+}
+
+// Key builds a cache key from the request, incorporating standard Vary headers
+// and any additional scope specifiers.
 func Key(r *http.Request, scope []string) string {
 	h := xxhash.New()
 	h.WriteString(r.Host)
@@ -118,13 +146,14 @@ func Key(r *http.Request, scope []string) string {
 					h.WriteString(id)
 				}
 			}
-			// "query" case is intentionally omitted - RawQuery already includes it
 		}
 	}
 
 	return strconv.FormatUint(h.Sum64(), 36)
 }
 
+// KeyWithCustomHeaders builds a cache key including arbitrary request headers,
+// useful for CDN Vary expansion (e.g. CF-IPCountry, X-Tenant).
 func KeyWithCustomHeaders(r *http.Request, scope []string, additionalHeaders []string) string {
 	h := xxhash.New()
 	h.WriteString(r.Host)
