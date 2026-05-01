@@ -27,6 +27,7 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/nonce"
 	"github.com/agberohq/agbero/internal/middleware/ratelimit"
 	"github.com/agberohq/agbero/internal/middleware/rewrite"
+	"github.com/agberohq/agbero/internal/middleware/waf"
 	"github.com/agberohq/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/ll"
 )
@@ -72,6 +73,7 @@ func NewRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *Route {
 	chain := primary
 	ipMgr := zulu.NewIPManager(cfg.Global.Security.TrustedProxies)
+
 	if len(route.AllowedIPs) > 0 {
 		chain = ipallow.New(route.AllowedIPs, cfg.Resource.Logger, ipMgr)(chain)
 	}
@@ -79,13 +81,31 @@ func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *
 	chain = auth.Basic(&route.BasicAuth, cfg.Resource.Logger)(chain)
 	chain = auth.Forward(cfg.Resource, &route.ForwardAuth)(chain)
 	chain = auth.OAuth(&route.OAuth)(chain)
+
 	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, ipMgr, cfg.SharedState); rl != nil {
 		chain = rl.Handler(chain)
 	}
 
+	// WAF: after rate limiting, before cache. Blocked requests never hit the backend or cache.
+	wafEngine, err := waf.NewForRoute(waf.RouteConfig{
+		Global: &cfg.Global.Security.WAF,
+		Route:  &route.WAF,
+		Logger: cfg.Resource.Logger,
+	})
+	if err != nil {
+		cfg.Resource.Logger.Fields("path", route.Path, "err", err).Error("waf: failed to build engine, skipping")
+	}
+	chain = wafEngine.Middleware(chain) // nil-safe: no-op when wafEngine is nil
+
 	chain = headers.Headers(&route.Headers)(chain)
 	chain = compress.Compress(route)(chain)
-	chain = attic.New(&route.Cache, cfg.Resource.Logger)(chain)
+
+	// Pass resource.Background pool so stale-while-revalidate revalidation
+	// is submitted to an accountable pool that drains cleanly on shutdown.
+	chain = attic.New(&route.Cache, cfg.Resource.Logger,
+		attic.WithPool(cfg.Resource.Background),
+	)(chain)
+
 	errCfg := errorpages.Config{
 		RoutePages:  route.ErrorPages,
 		HostPages:   cfg.Host.ErrorPages,
@@ -119,11 +139,13 @@ func newProxyRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 		}
 		backends = append(backends, b)
 	}
+
 	fallbackCfg := resolveFallback(&route.Fallback, &cfg.Global.Fallback)
 	var fallbackHandler http.Handler
 	if fallbackCfg.IsActive() {
 		fallbackHandler = buildFallbackHandler(fallbackCfg, cfg.Resource.Logger)
 	}
+
 	if len(backends) == 0 {
 		if fallbackHandler != nil {
 			return &Route{
@@ -136,15 +158,18 @@ func newProxyRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 		}
 		return FallbackRoute("proxy route missing backends")
 	}
+
 	if fallbackHandler != nil {
 		for _, b := range backends {
 			b.Fallback = fallbackHandler
 		}
 	}
+
 	timeout := cfg.Global.Timeouts.Read.StdDuration()
 	if route.Timeouts.Request != 0 {
 		timeout = route.Timeouts.Request.StdDuration()
 	}
+
 	balancerCfg := xhttp.ConfigProxy{
 		Strategy: route.Backends.Strategy,
 		Keys:     route.Backends.Keys,
@@ -339,9 +364,6 @@ func buildRouteLimiter(rlc *alaye.RateRoute, global *alaye.RateGlobal, ipMgr *zu
 	})
 }
 
-// buildNonceStores creates one nonce.Store per replay rest endpoint that uses
-// auth.method = "meta". Both the web handler (injection) and the serverless
-// handler (consumption) receive the same store instances via this map.
 func buildNonceStores(route *alaye.Route) map[string]*nonce.Store {
 	stores := make(map[string]*nonce.Store)
 	for _, r := range route.Serverless.Replay {
