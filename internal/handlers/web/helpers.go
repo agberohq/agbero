@@ -21,31 +21,46 @@ const (
 
 func init() {
 	types := map[string]string{
-		".html":        "text/html; charset=utf-8",
-		".css":         "text/css; charset=utf-8",
-		".js":          "application/javascript; charset=utf-8",
-		".json":        "application/json; charset=utf-8",
-		".xml":         "text/xml; charset=utf-8",
-		".svg":         "image/svg+xml",
-		".txt":         "text/plain; charset=utf-8",
-		".png":         "image/png",
-		".jpg":         "image/jpeg",
-		".jpeg":        "image/jpeg",
-		".gif":         "image/gif",
-		".webp":        "image/webp",
-		".ico":         "image/x-icon",
-		".woff2":       "font/woff2",
+		// Text / markup
+		".html": "text/html; charset=utf-8",
+		".css":  "text/css; charset=utf-8",
+		".js":   "application/javascript; charset=utf-8",
+		".mjs":  "text/javascript; charset=utf-8",
+		".json": "application/json; charset=utf-8",
+		".xml":  "text/xml; charset=utf-8",
+		".txt":  "text/plain; charset=utf-8",
+		".csv":  "text/csv; charset=utf-8",
+		".md":   "text/markdown",
+		// Images
+		".svg":  "image/svg+xml",
+		".png":  "image/png",
+		".jpg":  "image/jpeg",
+		".jpeg": "image/jpeg",
+		".gif":  "image/gif",
+		".webp": "image/webp",
+		".avif": "image/avif",
+		".ico":  "image/x-icon",
+		// Fonts
+		".woff":  "font/woff",
+		".woff2": "font/woff2",
+		// Application
 		".wasm":        "application/wasm",
-		".md":          "text/markdown",
-		".mjs":         "text/javascript; charset=utf-8",
-		".webmanifest": "application/manifest+json",
 		".pdf":         "application/pdf",
-		".csv":         "text/csv; charset=utf-8",
-		".avif":        "image/avif",
-		".mp4":         "video/mp4",
-		".mp3":         "audio/mpeg",
-		".woff":        "font/woff",
 		".zip":         "application/zip",
+		".webmanifest": "application/manifest+json",
+		// Video — CDN large-file support
+		".mp4":  "video/mp4",
+		".webm": "video/webm",
+		".ogg":  "video/ogg",
+		".avi":  "video/x-msvideo",
+		".mov":  "video/quicktime",
+		".mkv":  "video/x-matroska",
+		// Audio — CDN large-file support
+		".mp3":  "audio/mpeg",
+		".flac": "audio/flac",
+		".aac":  "audio/aac",
+		".wav":  "audio/wav",
+		".opus": "audio/ogg",
 	}
 
 	for ext, mimeType := range types {

@@ -510,6 +510,9 @@ func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath s
 }
 
 func (h *web) setCommonHeaders(w http.ResponseWriter, r *http.Request, reqPath string, modTime time.Time, size int64, isGzipVariant bool) (notModified bool) {
+	// Accept-Ranges is required for video seeking and download resume (CDN).
+	w.Header().Set("Accept-Ranges", "bytes")
+
 	if r.URL.Query().Has("refresh") || h.route.Web.NoCache.Active() {
 		w.Header().Set("Cache-Control", "no-store")
 		if isGzipVariant {
@@ -522,6 +525,9 @@ func (h *web) setCommonHeaders(w http.ResponseWriter, r *http.Request, reqPath s
 
 	var cacheControl string
 	switch {
+	case h.route.Web.CacheControl != "":
+		// Explicit per-route override takes priority over all built-in logic.
+		cacheControl = h.route.Web.CacheControl
 	case ext == ".html" || ext == "" || strings.HasSuffix(r.URL.Path, "/"):
 		cacheControl = "public, max-age=0, must-revalidate"
 	case fingerprintRe.FindStringIndex(filepath.Base(reqPath)) != nil:
