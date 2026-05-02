@@ -188,18 +188,18 @@ func TestConnPoolIdleTimeout(t *testing.T) {
 
 	// Manually set lastUsed to simulate idle timeout
 	pool.mu.Lock()
-	pc.lastUsed = time.Now().Add(-(idleTimeoutLimit + time.Minute))
+	pc.lastUsed.Store(time.Now().Add(-(idleTimeoutLimit + time.Minute)).UnixNano())
 	pool.mu.Unlock()
 
 	// Run sweeper manually
 	pool.sweep()
 
 	// Pool should be empty
-	pool.mu.RLock()
-	if len(pool.conns) != 0 {
-		t.Errorf("Expected 0 connections after sweep, got %d", len(pool.conns))
+	pool.mu.Lock()
+	if len(pool.all) != 0 {
+		t.Errorf("Expected 0 connections after sweep, got %d", len(pool.all))
 	}
-	pool.mu.RUnlock()
+	pool.mu.Unlock()
 
 	// Should create new connection
 	pc2, err := pool.get(ctx)
@@ -272,11 +272,11 @@ func TestConnPoolConcurrent(t *testing.T) {
 	}
 
 	// Verify pool state
-	pool.mu.RLock()
-	defer pool.mu.RUnlock()
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
 
-	if len(pool.conns) > pool.maxSize {
-		t.Errorf("Pool size %d exceeds max %d", len(pool.conns), pool.maxSize)
+	if len(pool.all) > pool.maxSize {
+		t.Errorf("Pool size %d exceeds max %d", len(pool.all), pool.maxSize)
 	}
 }
 
@@ -396,11 +396,11 @@ func TestConnPoolSweepEmpty(t *testing.T) {
 	// Sweep empty pool
 	pool.sweep()
 
-	pool.mu.RLock()
-	if len(pool.conns) != 0 {
-		t.Errorf("Expected empty pool, got %d", len(pool.conns))
+	pool.mu.Lock()
+	if len(pool.all) != 0 {
+		t.Errorf("Expected empty pool, got %d", len(pool.all))
 	}
-	pool.mu.RUnlock()
+	pool.mu.Unlock()
 }
 
 func TestConnPoolSweepWithActiveConnections(t *testing.T) {
@@ -435,18 +435,18 @@ func TestConnPoolSweepWithActiveConnections(t *testing.T) {
 
 	// Set one as expired
 	pool.mu.Lock()
-	conns[2].lastUsed = time.Now().Add(-(idleTimeoutLimit + time.Hour))
+	conns[2].lastUsed.Store(time.Now().Add(-(idleTimeoutLimit + time.Hour)).UnixNano())
 	pool.mu.Unlock()
 
 	// Sweep
 	pool.sweep()
 
 	// Failed and expired connections should be removed, active should remain
-	pool.mu.RLock()
-	defer pool.mu.RUnlock()
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
 
 	found := make(map[*pooledConn]bool)
-	for _, c := range pool.conns {
+	for _, c := range pool.all {
 		found[c] = true
 	}
 
@@ -483,7 +483,7 @@ func TestConnPoolReplaceDuringGet(t *testing.T) {
 	// Return both but mark one as expired
 	pool.put(conns[0])
 	pool.mu.Lock()
-	conns[0].lastUsed = time.Now().Add(-(idleTimeoutLimit + time.Hour))
+	conns[0].lastUsed.Store(time.Now().Add(-(idleTimeoutLimit + time.Hour)).UnixNano())
 	pool.mu.Unlock()
 	pool.put(conns[1])
 
@@ -534,4 +534,67 @@ func BenchmarkConnPoolConcurrent(b *testing.B) {
 			pool.put(pc)
 		}
 	})
+}
+
+func startTCPServer(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// keep connection open so it stays usable
+			go func(c net.Conn) { buf := make([]byte, 1); c.Read(buf); c.Close() }(c)
+		}
+	}()
+	t.Cleanup(func() { ln.Close() })
+	return ln.Addr().String()
+}
+
+// TestSweep_ClosesInUseConnection proves that sweep() closes a connection
+// that get() has already acquired and marked inUse=true.
+//
+// The race window: sweep reads inUse=false under RLock and adds the conn to
+// its expired list. get() then wins the CAS and marks inUse=true. sweep
+// acquires WLock and closes the conn without re-checking inUse. The caller
+// of get() now holds a closed net.Conn.
+func TestSweep_ClosesInUseConnection(t *testing.T) {
+	addr := startTCPServer(t)
+	p := newConnPool(addr, 4, 2*time.Second)
+	defer p.close()
+
+	// Get a connection and immediately return it so it sits idle.
+	pc, err := p.get(context.Background())
+	if err != nil {
+		t.Fatalf("initial get: %v", err)
+	}
+	p.put(pc) // inUse=false, lastUsed=now
+
+	// Backdate lastUsed so sweep classifies it as expired.
+	p.mu.Lock()
+	pc.lastUsed.Store(time.Now().Add(-idleTimeoutLimit - time.Second).UnixNano())
+	p.mu.Unlock()
+
+	// Manually acquire the connection (CAS inUse false→true) BEFORE sweep
+	// gets the write lock — simulating get() winning the race.
+	if !pc.inUse.CompareAndSwap(false, true) {
+		t.Fatal("expected to acquire inUse CAS")
+	}
+
+	// Now run sweep. It already has pc in its expired snapshot (from the
+	// backdated lastUsed). It should NOT close pc because inUse=true.
+	// If the bug is present, it closes it anyway.
+	p.sweep()
+
+	// Verify: pc must still be open. Write one byte; if closed we get an error.
+	pc.inUse.Store(false) // release so the conn can be inspected
+	err = pc.Conn.SetDeadline(time.Now().Add(100 * time.Millisecond))
+	if err != nil {
+		t.Fatalf("SetDeadline failed — connection was closed by sweep: %v", err)
+	}
 }

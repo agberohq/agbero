@@ -25,33 +25,40 @@ const (
 
 var errPoolFull = fmt.Errorf("connection pool full")
 
+// pooledConn wraps a net.Conn with lock-free lifecycle tracking.
+// next is used only when the connection sits on the idle Treiber stack.
 type pooledConn struct {
 	net.Conn
-	lastUsed time.Time
+	next     atomic.Pointer[pooledConn]
+	lastUsed atomic.Int64 // unix nanoseconds
 	inUse    atomic.Bool
 	failed   atomic.Bool
 }
 
 type connPool struct {
-	mu        sync.RWMutex
-	conns     []*pooledConn
-	maxSize   int
-	timeout   time.Duration
-	addr      string
-	resolved  netip.AddrPort
+	// hot path: lock-free Treiber stack of idle connections
+	head atomic.Pointer[pooledConn]
+
+	// cold path: protects all[] (ownership), maxSize accounting, and dial fallbacks
+	mu      sync.Mutex
+	all     []*pooledConn
+	maxSize int
+	timeout time.Duration
+	addr    string
+
+	resolved  atomic.Pointer[netip.AddrPort]
 	scheduler *jack.Scheduler
 	quit      chan struct{}
 	once      sync.Once
 }
 
-// newConnPool creates a managed pool for reusing TCP connections
-// Configures bounds and timeouts to prevent socket exhaustion
+// newConnPool creates a managed pool for reusing TCP connections.
 func newConnPool(addr string, maxSize int, timeout time.Duration) *connPool {
 	p := &connPool{
 		addr:    addr,
 		maxSize: maxSize,
 		timeout: timeout,
-		conns:   make([]*pooledConn, 0, maxSize),
+		all:     make([]*pooledConn, 0, maxSize),
 		quit:    make(chan struct{}),
 	}
 
@@ -64,8 +71,34 @@ func newConnPool(addr string, maxSize int, timeout time.Duration) *connPool {
 	return p
 }
 
-// sweep periodically removes idle and failed connections that have exceeded timeout
-// Runs in background to prevent file descriptor leaks during low traffic
+// pushFree adds a connection to the lock-free idle stack.
+func (p *connPool) pushFree(pc *pooledConn) {
+	for {
+		old := p.head.Load()
+		pc.next.Store(old)
+		if p.head.CompareAndSwap(old, pc) {
+			return
+		}
+	}
+}
+
+// popFree removes and returns the top idle connection, or nil if empty.
+func (p *connPool) popFree() *pooledConn {
+	for {
+		old := p.head.Load()
+		if old == nil {
+			return nil
+		}
+		next := old.next.Load()
+		if p.head.CompareAndSwap(old, next) {
+			old.next.Store(nil)
+			return old
+		}
+	}
+}
+
+// sweep reaps idle and failed connections under one exclusive lock.
+// The single-pass filter eliminates the prior RLock→Lock TOCTOU window.
 func (p *connPool) sweep() {
 	select {
 	case <-p.quit:
@@ -73,100 +106,75 @@ func (p *connPool) sweep() {
 	default:
 	}
 
-	now := time.Now()
-	var expired []*pooledConn
-
-	p.mu.RLock()
-	for _, c := range p.conns {
-		if !c.inUse.Load() && (c.failed.Load() || now.Sub(c.lastUsed) > idleTimeoutLimit) {
-			expired = append(expired, c)
-		}
-	}
-	p.mu.RUnlock()
-
-	if len(expired) == 0 {
-		return
-	}
-
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	newConns := make([]*pooledConn, 0, len(p.conns))
-	for _, c := range p.conns {
-		shouldRemove := false
-		for _, e := range expired {
-			if c == e {
-				shouldRemove = true
-				break
-			}
-		}
+	now := time.Now().UnixNano()
+	expireNano := int64(idleTimeoutLimit)
 
-		if shouldRemove {
-			_ = c.Conn.Close()
-		} else {
-			newConns = append(newConns, c)
+	alive := p.all[:0]
+	for _, c := range p.all {
+		if c.inUse.Load() {
+			alive = append(alive, c)
+			continue
 		}
+		if c.failed.Load() || now-c.lastUsed.Load() > expireNano {
+			_ = c.Conn.Close()
+			continue
+		}
+		alive = append(alive, c)
 	}
-	p.conns = newConns
+	p.all = alive
 }
 
-// get acquires a healthy connection from the pool or establishes a new one
-// Uses CAS-first pattern to avoid holding locks during syscalls
+// get acquires a healthy connection from the idle stack or dials a new one.
+// The fast path (reuse) is fully lock-free.
 func (p *connPool) get(ctx context.Context) (*pooledConn, error) {
-	for {
-		now := time.Now()
-		p.mu.RLock()
-		var candidate *pooledConn
-		for _, c := range p.conns {
-			if !c.inUse.Load() && !c.failed.Load() && now.Sub(c.lastUsed) <= idleTimeoutLimit {
-				candidate = c
-				break
-			}
-		}
-		p.mu.RUnlock()
+	now := time.Now().UnixNano()
+	expireNano := int64(idleTimeoutLimit)
 
-		if candidate == nil {
+	// Lock-free pop from idle stack
+	for {
+		pc := p.popFree()
+		if pc == nil {
 			break
 		}
 
-		if !candidate.inUse.CompareAndSwap(false, true) {
-			continue
+		// Mark in-use immediately so concurrent sweep does not reap it.
+		pc.inUse.Store(true)
+
+		if !pc.failed.Load() && now-pc.lastUsed.Load() <= expireNano && p.isAlive(pc.Conn) {
+			pc.lastUsed.Store(now)
+			return pc, nil
 		}
 
-		if p.isAlive(candidate.Conn) {
-			p.mu.Lock()
-			candidate.lastUsed = time.Now()
-			p.mu.Unlock()
-			return candidate, nil
-		}
-
-		candidate.failed.Store(true)
-		candidate.inUse.Store(false)
+		pc.failed.Store(true)
+		pc.inUse.Store(false)
 	}
 
+	// No idle connection available — dial new
 	conn, err := p.dial(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	pc := &pooledConn{
-		Conn:     conn,
-		lastUsed: time.Now(),
-	}
+	pc := &pooledConn{Conn: conn}
 	pc.inUse.Store(true)
+	pc.lastUsed.Store(now)
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if len(p.conns) < p.maxSize {
-		p.conns = append(p.conns, pc)
+	if len(p.all) < p.maxSize {
+		p.all = append(p.all, pc)
 		return pc, nil
 	}
 
-	for i, c := range p.conns {
-		if c.failed.Load() || (!c.inUse.Load() && time.Since(c.lastUsed) > idleTimeoutLimit) {
+	// At capacity: evict a dead or expired entry
+	for i, c := range p.all {
+		if c.failed.Load() || (!c.inUse.Load() && now-c.lastUsed.Load() > expireNano) {
 			_ = c.Conn.Close()
-			p.conns[i] = pc
+			p.all[i] = pc
 			return pc, nil
 		}
 	}
@@ -175,27 +183,22 @@ func (p *connPool) get(ctx context.Context) (*pooledConn, error) {
 	return nil, errPoolFull
 }
 
-// dial negotiates a new network connection to the target backend
-// Uses the parent context to securely terminate hanging DNS resolutions
+// dial negotiates a new network connection, caching the resolved address
+// in an atomic pointer to avoid repeated DNS lookups on the hot path.
 func (p *connPool) dial(ctx context.Context) (net.Conn, error) {
-	p.mu.RLock()
-	resolved := p.resolved
-	p.mu.RUnlock()
-
 	dialer := net.Dialer{Timeout: p.timeout}
 
-	if resolved.IsValid() {
-		conn, err := dialer.DialContext(ctx, def.TCP, resolved.String())
+	if ptr := p.resolved.Load(); ptr != nil && ptr.IsValid() {
+		conn, err := dialer.DialContext(ctx, def.TCP, ptr.String())
 		if err == nil {
 			return conn, nil
 		}
-		p.mu.Lock()
-		p.resolved = netip.AddrPort{}
-		p.mu.Unlock()
+		p.resolved.Store(nil)
 	}
+
 	host, port, err := net.SplitHostPort(p.addr)
 	if err != nil {
-		return nil, err
+		return dialer.DialContext(ctx, def.TCP, p.addr)
 	}
 
 	portNum, err := strconv.ParseUint(port, 10, 16)
@@ -213,14 +216,14 @@ func (p *connPool) dial(ctx context.Context) (net.Conn, error) {
 	if err != nil || len(addrs) == 0 {
 		return dialer.DialContext(ctx, def.TCP, p.addr)
 	}
+
 	var lastErr error
 	for _, addr := range addrs {
-		addrPort := netip.AddrPortFrom(addr, uint16(portNum))
-		conn, err := dialer.DialContext(ctx, def.TCP, addrPort.String())
+		ap := netip.AddrPortFrom(addr, uint16(portNum))
+		conn, err := dialer.DialContext(ctx, def.TCP, ap.String())
 		if err == nil {
-			p.mu.Lock()
-			p.resolved = addrPort
-			p.mu.Unlock()
+			copy := ap
+			p.resolved.Store(&copy)
 			return conn, nil
 		}
 		lastErr = err
@@ -228,20 +231,22 @@ func (p *connPool) dial(ctx context.Context) (net.Conn, error) {
 	return nil, lastErr
 }
 
-// put returns an active connection to the reusable pool
-// Flags the object as available and refreshes its tracking timestamp
+// put returns an active connection to the reusable pool.
+// Failed connections are dropped on the floor and reclaimed by sweep.
 func (p *connPool) put(pc *pooledConn) {
 	if pc == nil {
 		return
 	}
+	if pc.failed.Load() {
+		pc.inUse.Store(false)
+		return
+	}
+	pc.lastUsed.Store(time.Now().UnixNano())
 	pc.inUse.Store(false)
-	p.mu.Lock()
-	pc.lastUsed = time.Now()
-	p.mu.Unlock()
+	p.pushFree(pc)
 }
 
-// close terminates all active sockets within the pool
-// Executed during graceful shutdown sweeps
+// close terminates all sockets and background tasks.
 func (p *connPool) close() {
 	p.once.Do(func() {
 		close(p.quit)
@@ -250,17 +255,20 @@ func (p *connPool) close() {
 		}
 	})
 
+	// Drain the lock-free stack so nothing lingers.
+	for p.popFree() != nil {
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	for _, c := range p.conns {
+	for _, c := range p.all {
 		_ = c.Conn.Close()
 	}
-	p.conns = p.conns[:0]
+	p.all = p.all[:0]
 }
 
-// isAlive checks the platform-specific socket status to ensure usability
-// Filters out connections dropped silently by the remote peer
+// isAlive checks the platform-specific socket status.
 func (p *connPool) isAlive(conn net.Conn) bool {
 	return afs.ConnAlive(conn)
 }

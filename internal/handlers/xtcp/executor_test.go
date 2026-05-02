@@ -1,6 +1,7 @@
 package xtcp
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"sync"
@@ -319,15 +320,15 @@ func TestTCPExecutor_Probe_ConnectionMarkedFailed(t *testing.T) {
 
 	_, _, _ = executor.Probe(ctx)
 
-	pool.mu.RLock()
+	pool.mu.Lock()
 	markedFailed := false
-	for _, c := range pool.conns {
+	for _, c := range pool.all {
 		if c.failed.Load() {
 			markedFailed = true
 			break
 		}
 	}
-	pool.mu.RUnlock()
+	pool.mu.Unlock()
 
 	if !markedFailed {
 		t.Error("expected connection to be marked as failed")
@@ -386,14 +387,14 @@ func TestTCPExecutor_Probe_ConnectionReuse(t *testing.T) {
 	}
 
 	// Verify connection was reused by checking pool state
-	pool.mu.RLock()
+	pool.mu.Lock()
 	usedConns := 0
-	for _, pc := range pool.conns {
+	for _, pc := range pool.all {
 		if !pc.failed.Load() {
 			usedConns++
 		}
 	}
-	pool.mu.RUnlock()
+	pool.mu.Unlock()
 
 	if usedConns > 1 {
 		t.Errorf("expected single reused connection, got %d active conns", usedConns)
@@ -555,7 +556,9 @@ func TestTCPExecutor_Probe_Concurrent(t *testing.T) {
 	var mu sync.Mutex
 
 	for range 10 {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			success, _, err := executor.Probe(ctx)
@@ -564,7 +567,7 @@ func TestTCPExecutor_Probe_Concurrent(t *testing.T) {
 				successes++
 				mu.Unlock()
 			}
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -719,8 +722,15 @@ func BenchmarkTCPExecutor_Probe(b *testing.B) {
 			go func(c net.Conn) {
 				defer c.Close()
 				buf := make([]byte, 1024)
-				_, _ = c.Read(buf)
-				c.Write([]byte("PONG"))
+				for {
+					n, err := c.Read(buf)
+					if err != nil || n == 0 {
+						return
+					}
+					if bytes.Equal(buf[:n], []byte("PING")) {
+						c.Write([]byte("PONG"))
+					}
+				}
 			}(conn)
 		}
 	}()
@@ -761,8 +771,15 @@ func BenchmarkTCPExecutor_Probe_Parallel(b *testing.B) {
 			go func(c net.Conn) {
 				defer c.Close()
 				buf := make([]byte, 1024)
-				_, _ = c.Read(buf)
-				c.Write([]byte("PONG"))
+				for {
+					n, err := c.Read(buf)
+					if err != nil || n == 0 {
+						return
+					}
+					if bytes.Equal(buf[:n], []byte("PING")) {
+						c.Write([]byte("PONG"))
+					}
+				}
 			}(conn)
 		}
 	}()
