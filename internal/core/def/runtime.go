@@ -84,10 +84,11 @@ const (
 )
 
 const (
-	Http  = "http"
-	Https = "https"
-	TCP   = "tcp"
-	UDP   = "udp"
+	Http    = "http"
+	Https   = "https"
+	TCP     = "tcp"
+	UDP     = "udp"
+	FastCGI = "cgi" // cgi:// backend scheme — proxy-to-backend via FastCGI protocol
 
 	SchemeHTTP  = "http@"
 	SchemeHTTPS = "https@"

@@ -814,7 +814,7 @@ func (hm *Host) Save(domain string) error {
 	filePath := filepath.Join(hm.hostsDir.Path(), filename)
 
 	p := parser.NewParser(filePath)
-	return p.MarshalFile(cfg)
+	return p.Marshal(cfg)
 }
 
 // Create writes cfg to disk for domain without requiring the host to be present
@@ -825,9 +825,22 @@ func (hm *Host) Create(domain string, cfg *alaye.Host) error {
 		filename = zulu.NormalizeHost(domain) + def.HCLSuffix
 		cfg.SourceFile = filename
 	}
-	filePath := filepath.Join(hm.hostsDir.Path(), filename)
-	p := parser.NewParser(filePath)
-	return p.MarshalFile(cfg)
+
+	// Open the hosts directory as a root to prevent path traversal
+	root, err := os.OpenRoot(hm.hostsDir.Path())
+	if err != nil {
+		return fmt.Errorf("open hosts root: %w", err)
+	}
+	defer root.Close()
+
+	// Create file safely within the root
+	f, err := root.Create(filename)
+	if err != nil {
+		return fmt.Errorf("create file in root: %w", err)
+	}
+	defer f.Close()
+
+	return parser.Marshal(f, cfg)
 }
 
 // CreateRaw writes raw HCL bytes directly to disk for a domain, bypassing

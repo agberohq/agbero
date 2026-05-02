@@ -48,8 +48,8 @@ func (p *Parser) Unmarshal(output any) error {
 	return newDecoder().decodeHCL(data, filepath.Base(abs), output)
 }
 
-// MarshalFile encodes input as HCL and writes it atomically to p.path.
-func (p *Parser) MarshalFile(input any) error {
+// Marshal encodes input as HCL and writes it atomically to p.path.
+func (p *Parser) Marshal(input any) error {
 	return MarshalFile(p.path, input)
 }
 

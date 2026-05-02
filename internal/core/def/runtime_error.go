@@ -125,6 +125,8 @@ var (
 	ErrBackendMissingHost   = errors.New("backend address is missing host")
 	ErrBackendBadScheme     = errors.New("unsupported backend scheme")
 	ErrInvalidSrcCond       = errors.New("invalid source ip/cidr condition")
+	ErrFastCGIMissingHost   = errors.New("cgi:// backend address is missing host or socket path")
+	ErrFastCGINoWebSockets  = errors.New("cgi:// backends do not support WebSocket upgrades")
 )
 
 // tcp
