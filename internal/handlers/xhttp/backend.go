@@ -45,6 +45,8 @@ type basicStatusWriter struct {
 	code int
 }
 
+var basicStatusWriterPool = sync.Pool{New: func() any { return &basicStatusWriter{} }}
+
 func (b *basicStatusWriter) WriteHeader(code int) {
 	b.code = code
 	b.ResponseWriter.WriteHeader(code)
@@ -300,12 +302,11 @@ func newHTTPBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 //
 // FastCGI provides two security properties that HTTP reverse proxying cannot:
 //
-// Explicit message framing — no request-smuggling / desync attacks.
-// Structural parameter separation — proxy-injected values (REMOTE_ADDR,
-//
-//	HTTPS, SERVER_NAME, …) are sent as plain FastCGI params; client-supplied
-//	HTTP headers are always prefixed with HTTP_, making header injection
-//	structurally impossible rather than something to be blocked by a blocklist.
+//  1. Explicit message framing — no request-smuggling / desync attacks.
+//  2. Structural parameter separation — proxy-injected values (REMOTE_ADDR,
+//     HTTPS, SERVER_NAME, …) are sent as plain FastCGI params; client-supplied
+//     HTTP headers are always prefixed with HTTP_, making header injection
+//     structurally impossible rather than something to be blocked by a blocklist.
 //
 // The gofast session chain used here mirrors the PHP chain in the web handler
 // (BasicParamsMap → MapHeader → MapRemoteHost) but intentionally omits
@@ -554,7 +555,9 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var sw *basicStatusWriter
 
 	if _, ok := w.(*zulu.ResponseWriter); !ok {
-		sw = &basicStatusWriter{ResponseWriter: w, code: 200}
+		sw = basicStatusWriterPool.Get().(*basicStatusWriter)
+		sw.ResponseWriter = w
+		sw.code = 200
 		actualWriter = sw
 	}
 
@@ -574,6 +577,11 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				sw.code == http.StatusGatewayTimeout {
 				failed = true
 			}
+		}
+		if sw != nil {
+			sw.ResponseWriter = nil // release reference before pool return
+			basicStatusWriterPool.Put(sw)
+			sw = nil
 		}
 		b.Activity.EndRequest(dur.Microseconds(), failed)
 		if b.HealthScore != nil {
