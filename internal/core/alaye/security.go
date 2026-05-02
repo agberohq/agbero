@@ -12,9 +12,19 @@ type Security struct {
 	Enabled         expect.Toggle `hcl:"enabled,attr"          json:"enabled"`
 	TrustedProxies  []string      `hcl:"trusted_proxies,attr"  json:"trusted_proxies"`
 	AllowedCommands []string      `hcl:"allowed_commands,attr" json:"allowed_commands"`
-	Firewall        Firewall      `hcl:"firewall,block"        json:"firewall"`
-	WAF             WAF           `hcl:"waf,block"             json:"waf"`
-	Keeper          Keeper        `hcl:"keeper,block"          json:"keep"`
+
+	// AllowServerlessGit opts in to git-backed serverless workers.
+	// Disabled by default: a compromised repository grants arbitrary code
+	// execution on the host — the command allowlist cannot protect against
+	// malicious scripts run by an allowed binary (e.g. "node evil.js").
+	// Enable only when you trust every repository wired to a serverless git
+	// block. A loud warning is printed at startup whenever this is active.
+
+	AllowServerlessGit bool `hcl:"allow_serverless_git,attr" json:"allow_serverless_git"`
+
+	Firewall Firewall `hcl:"firewall,block"            json:"firewall"`
+	WAF      WAF      `hcl:"waf,block"                 json:"waf"`
+	Keeper   Keeper   `hcl:"keeper,block"              json:"keep"`
 }
 
 // Validate checks trusted proxy formats and delegates to Firewall.Validate.

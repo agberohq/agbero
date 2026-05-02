@@ -43,7 +43,16 @@ func (p *Process) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) er
 		return fmt.Errorf("empty command")
 	}
 
-	cmdName := filepath.Base(p.Config.Command[0])
+	// Reject any command that contains a path separator. filepath.Base would
+	// silently strip it, allowing a tenant to execute ./malicious-binary while
+	// the allowlist check passes against the bare name. Bare names only — the
+	// OS will resolve them safely via $PATH.
+	if strings.ContainsRune(p.Config.Command[0], filepath.Separator) {
+		p.Logger.Fields("command", p.Config.Command[0], "worker", p.Config.Name).Error("path separator in command is not allowed")
+		return fmt.Errorf("command not allowed: path separators are forbidden in command name")
+	}
+
+	cmdName := p.Config.Command[0]
 	if !p.isAllowed(cmdName) {
 		p.Logger.Fields("command", cmdName, "worker", p.Config.Name).Error("command not in allowlist")
 		return fmt.Errorf("command not allowed: %s", cmdName)

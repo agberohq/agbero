@@ -225,6 +225,20 @@ func (s *Server) Start(configPath string) error {
 				}
 
 				if r.Serverless.Git.Enabled.Active() {
+					if !s.global.Security.AllowServerlessGit {
+						return fmt.Errorf(
+							"serverless git is disabled by default due to RCE risk: "+
+								"a compromised repository grants arbitrary code execution on this host. "+
+								"Set 'allow_serverless_git = true' in your security block to opt in. "+
+								"Offending git id: %q",
+							r.Serverless.Git.ID,
+						)
+					}
+					s.logger.Warn(
+						"\u26a0\ufe0f  SECURITY WARNING: serverless git is enabled. " +
+							"A compromised repository is equivalent to remote code execution on this host. " +
+							"Ensure all wired repositories are trusted and access-controlled.",
+					)
 					s.registerGitConfig(r.Serverless.Git, seenGitConfigs)
 				}
 			}
@@ -571,8 +585,14 @@ func (s *Server) Reload() {
 					s.registerGitConfig(r.Web.Git, seenGitConfigs)
 				}
 				if r.Serverless.Git.Enabled.Active() {
-					validGitIDs[r.Serverless.Git.ID] = true
-					s.registerGitConfig(r.Serverless.Git, seenGitConfigs)
+					if !s.global.Security.AllowServerlessGit {
+						s.logger.Fields("git_id", r.Serverless.Git.ID).Error(
+							"serverless git route ignored: allow_serverless_git is not set in security block",
+						)
+					} else {
+						validGitIDs[r.Serverless.Git.ID] = true
+						s.registerGitConfig(r.Serverless.Git, seenGitConfigs)
+					}
 				}
 			}
 		}

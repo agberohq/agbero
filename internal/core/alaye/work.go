@@ -2,6 +2,8 @@ package alaye
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/agberohq/agbero/internal/core/expect"
 )
@@ -41,6 +43,13 @@ func (w *Work) Validate() error {
 	}
 	if len(w.Command) == 0 {
 		return fmt.Errorf("worker %s: command is required", w.Name)
+	}
+	// Enforce bare command names — no path separators allowed. This mirrors
+	// the runtime check in Process.Run and catches misconfiguration early,
+	// before any process is ever started.
+	cmd := w.Command[0]
+	if strings.ContainsRune(cmd, filepath.Separator) {
+		return fmt.Errorf("worker %s: command %q must be a bare executable name (no path separators)", w.Name, cmd)
 	}
 	return w.Cache.Validate()
 }
