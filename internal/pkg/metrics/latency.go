@@ -17,16 +17,14 @@ const (
 	percentile90     = 90
 	percentile99     = 99
 	emptyCount       = 0
-	emptySum         = 0
 	cacheLinePadding = 40
-	sigFigPrecision  = 3
 	shardIdleTimeout = 5 * time.Minute // Evict histogram after idle period
 	evictionInterval = 1 * time.Minute // How often to check for idle shards
 )
 
 var snapshotHistogramPool = sync.Pool{
 	New: func() any {
-		return hdrhistogram.New(def.MinUS, def.MaxUS, sigFigPrecision)
+		return hdrhistogram.New(def.MinUS, def.MaxUS, def.HistogramSigFigs)
 	},
 }
 
@@ -146,7 +144,7 @@ func (lt *Latency) Record(microseconds int64) {
 
 	// Lazy allocation: create histogram only on first Record to this shard
 	if s.histogram == nil {
-		s.histogram = hdrhistogram.New(def.MinUS, def.MaxUS, sigFigPrecision)
+		s.histogram = hdrhistogram.New(def.MinUS, def.MaxUS, def.HistogramSigFigs)
 		s.lastRotation = now
 	}
 

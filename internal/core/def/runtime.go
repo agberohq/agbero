@@ -495,9 +495,10 @@ type QueryRange struct {
 }
 
 const (
-	HistogramWindow = 60 * time.Second
-	MinUS           = int64(1)
-	MaxUS           = int64(60_000_000)
+	HistogramWindow  = 60 * time.Second
+	MinUS            = int64(1)
+	MaxUS            = int64(60_000_000)
+	HistogramSigFigs = 3
 )
 
 const (

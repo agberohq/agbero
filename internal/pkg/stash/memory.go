@@ -117,17 +117,27 @@ func (s *MemoryStore) Purge(tag string) error {
 
 // Key builds a cache key from the request, incorporating standard Vary headers
 // and any additional scope specifiers.
+//
+// Every field is followed by a "|" delimiter to prevent boundary-shifting
+// collisions (e.g. Path="/api/useri" Query="d=123" must not hash identically
+// to Path="/api/user" Query="id=123").
 func Key(r *http.Request, scope []string) string {
 	h := xxhash.New()
 	h.WriteString(r.Host)
+	h.WriteString("|")
 	h.WriteString(r.Method)
+	h.WriteString("|")
 	h.WriteString(r.URL.Path)
+	h.WriteString("|")
 	h.WriteString(r.URL.RawQuery)
+	h.WriteString("|")
 
 	for _, header := range []string{"Accept-Language", "Accept-Encoding", "Accept"} {
 		if v := r.Header.Get(header); v != "" {
 			h.WriteString(header)
+			h.WriteString("|")
 			h.WriteString(v)
+			h.WriteString("|")
 		}
 	}
 
@@ -137,13 +147,17 @@ func Key(r *http.Request, scope []string) string {
 			header := strings.TrimPrefix(s, "header:")
 			if v := r.Header.Get(header); v != "" {
 				h.WriteString(header)
+				h.WriteString("|")
 				h.WriteString(v)
+				h.WriteString("|")
 			}
 		case s == "auth":
 			if authID := r.Context().Value("auth_id"); authID != nil {
 				if id, ok := authID.(string); ok {
 					h.WriteString("auth")
+					h.WriteString("|")
 					h.WriteString(id)
+					h.WriteString("|")
 				}
 			}
 		}
@@ -154,24 +168,35 @@ func Key(r *http.Request, scope []string) string {
 
 // KeyWithCustomHeaders builds a cache key including arbitrary request headers,
 // useful for CDN Vary expansion (e.g. CF-IPCountry, X-Tenant).
+//
+// Every field is followed by a "|" delimiter to prevent boundary-shifting
+// collisions. See Key() for the full rationale.
 func KeyWithCustomHeaders(r *http.Request, scope []string, additionalHeaders []string) string {
 	h := xxhash.New()
 	h.WriteString(r.Host)
+	h.WriteString("|")
 	h.WriteString(r.Method)
+	h.WriteString("|")
 	h.WriteString(r.URL.Path)
+	h.WriteString("|")
 	h.WriteString(r.URL.RawQuery)
+	h.WriteString("|")
 
 	for _, header := range []string{"Accept-Language", "Accept-Encoding", "Accept"} {
 		if v := r.Header.Get(header); v != "" {
 			h.WriteString(header)
+			h.WriteString("|")
 			h.WriteString(v)
+			h.WriteString("|")
 		}
 	}
 
 	for _, header := range additionalHeaders {
 		if v := r.Header.Get(header); v != "" {
 			h.WriteString(header)
+			h.WriteString("|")
 			h.WriteString(v)
+			h.WriteString("|")
 		}
 	}
 
@@ -181,13 +206,17 @@ func KeyWithCustomHeaders(r *http.Request, scope []string, additionalHeaders []s
 			header := strings.TrimPrefix(s, "header:")
 			if v := r.Header.Get(header); v != "" {
 				h.WriteString(header)
+				h.WriteString("|")
 				h.WriteString(v)
+				h.WriteString("|")
 			}
 		case s == "auth":
 			if authID := r.Context().Value("auth_id"); authID != nil {
 				if id, ok := authID.(string); ok {
 					h.WriteString("auth")
+					h.WriteString("|")
 					h.WriteString(id)
+					h.WriteString("|")
 				}
 			}
 		}
