@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,13 +58,16 @@ func (s *MockSession) Authorize(provider goth.Provider, params goth.Params) (str
 	return "mock_token_123", nil
 }
 
-// Helper to create a signed session cookie value matching signSessionCookie logic
-func createSignedSessionCookie(token string, secret []byte) string {
+// createSignedSessionCookie mirrors signSessionCookie exactly so tests stay
+// in sync with the production format: <base64(token)>.<expiry_unix>.<base64(hmac)>
+func createSignedSessionCookie(token string, expiresAt time.Time, secret []byte) string {
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(token))
+	expiry := strconv.FormatInt(expiresAt.Unix(), 10)
+	payload := encoded + cookieValueSeparator + expiry
 	h := hmac.New(sha256.New, secret)
-	h.Write([]byte(encoded))
+	h.Write([]byte(payload))
 	mac := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
-	return encoded + cookieValueSeparator + mac
+	return payload + cookieValueSeparator + mac
 }
 
 func TestOAuthMiddleware_Goth(t *testing.T) {
@@ -116,21 +120,41 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 			t.Errorf("Expected 302 redirect, got %d. Body: %s", rec.Code, rec.Body.String())
 		}
 
+		// Cookie format: <base64(token)>.<expiry_unix>.<base64(hmac)>
 		cookies := rec.Result().Cookies()
 		found := false
 		for _, c := range cookies {
-			if c.Name == def.SessionCookieName {
-				// Verify the cookie value is properly signed: <base64(token)>.<base64(hmac)>
-				parts := strings.Split(c.Value, cookieValueSeparator)
-				if len(parts) == 2 {
-					// Decode the token part and verify it matches
-					decoded, err := base64.RawURLEncoding.DecodeString(parts[0])
-					if err == nil && string(decoded) == "mock_token_123" {
-						found = true
-					}
-				}
+			if c.Name != def.SessionCookieName {
+				continue
+			}
+			parts := strings.Split(c.Value, cookieValueSeparator)
+			if len(parts) != 3 {
+				t.Errorf("Expected 3-part cookie value, got %d parts: %s", len(parts), c.Value)
 				break
 			}
+			// Part 0: base64(token) — must decode to the access token.
+			decoded, err := base64.RawURLEncoding.DecodeString(parts[0])
+			if err != nil || string(decoded) != "mock_token_123" {
+				t.Errorf("Token part mismatch: decoded=%q err=%v", string(decoded), err)
+				break
+			}
+			// Part 1: expiry_unix — must be a future Unix timestamp.
+			expiryUnix, err := strconv.ParseInt(parts[1], 10, 64)
+			if err != nil {
+				t.Errorf("Expiry part is not a valid integer: %s", parts[1])
+				break
+			}
+			if expiryUnix <= time.Now().Unix() {
+				t.Errorf("Expiry %d is not in the future", expiryUnix)
+				break
+			}
+			// Part 2: HMAC — verifySessionCookie must accept the full cookie.
+			if !verifySessionCookie(c.Value, secret) {
+				t.Error("verifySessionCookie rejected a freshly issued cookie")
+				break
+			}
+			found = true
+			break
 		}
 		if !found {
 			t.Error("Application session cookie not set with valid signed value")
@@ -154,6 +178,49 @@ func TestOAuthMiddleware_Goth(t *testing.T) {
 
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("Expected 403 Forbidden, got %d", rec.Code)
+		}
+	})
+
+	t.Run("Expired session cookie is rejected", func(t *testing.T) {
+		past := time.Now().Add(-1 * time.Second)
+		expired := createSignedSessionCookie("some_token", past, secret)
+		if verifySessionCookie(expired, secret) {
+			t.Error("verifySessionCookie accepted an expired cookie")
+		}
+	})
+
+	t.Run("Future session cookie is accepted", func(t *testing.T) {
+		future := time.Now().Add(1 * time.Hour)
+		valid := createSignedSessionCookie("some_token", future, secret)
+		if !verifySessionCookie(valid, secret) {
+			t.Error("verifySessionCookie rejected a valid future cookie")
+		}
+	})
+
+	t.Run("Tampered expiry is rejected", func(t *testing.T) {
+		future := time.Now().Add(1 * time.Hour)
+		cookie := createSignedSessionCookie("some_token", future, secret)
+
+		// Replace the expiry field with a far-future timestamp, keeping the original MAC.
+		parts := strings.Split(cookie, cookieValueSeparator)
+		if len(parts) != 3 {
+			t.Fatalf("Unexpected cookie format: %s", cookie)
+		}
+		tampered := parts[0] + cookieValueSeparator + "9999999999" + cookieValueSeparator + parts[2]
+		if verifySessionCookie(tampered, secret) {
+			t.Error("verifySessionCookie accepted a cookie with a tampered expiry")
+		}
+	})
+
+	t.Run("Old 2-part cookie format is rejected", func(t *testing.T) {
+		// Pre-fix cookies must not silently pass verification.
+		encoded := base64.RawURLEncoding.EncodeToString([]byte("some_token"))
+		h := hmac.New(sha256.New, secret)
+		h.Write([]byte(encoded))
+		mac := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+		old := encoded + cookieValueSeparator + mac
+		if verifySessionCookie(old, secret) {
+			t.Error("verifySessionCookie accepted a legacy 2-part cookie")
 		}
 	})
 }

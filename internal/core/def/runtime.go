@@ -304,9 +304,10 @@ const (
 )
 
 const (
-	AdaptiveLearningRate = 0.15
-	StickySessionTTL     = 30 * time.Minute
-	StickyCacheSize      = 1024
+	AdaptiveLearningRate   = 0.15
+	StickySessionTTL       = 30 * time.Minute
+	DefaultOAuthSessionTTL = 24 * time.Hour // Fallback when the IdP does not return an expiry
+	StickyCacheSize        = 1024
 )
 
 // Health checks

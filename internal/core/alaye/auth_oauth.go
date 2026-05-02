@@ -1,6 +1,8 @@
 package alaye
 
 import (
+	"time"
+
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/errors"
 )
@@ -17,6 +19,7 @@ type OAuth struct {
 	Scopes       []string      `hcl:"scopes,attr" json:"scopes"`
 	CookieSecret expect.Value  `hcl:"cookie_secret,attr" json:"cookie_secret"`
 	EmailDomains []string      `hcl:"email_domains,attr" json:"email_domains"`
+	SessionTTL   time.Duration `hcl:"session_ttl,attr" json:"session_ttl"`
 }
 
 // Validate checks required OAuth fields when enabled.
