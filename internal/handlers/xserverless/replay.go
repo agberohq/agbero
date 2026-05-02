@@ -204,12 +204,6 @@ func (h *Replay) serveReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.domainAllowed(targetURL.Hostname()) {
-		h.res.Logger.Fields("host", targetURL.Hostname()).Warn("serverless: replay domain blocked")
-		http.Error(w, "replay: target domain not allowed", http.StatusForbidden)
-		return
-	}
-
 	if err := h.validateTargetHost(targetURL.Hostname()); err != nil {
 		h.res.Logger.Fields("host", targetURL.Hostname(), "err", err).Warn("serverless: target host validation failed")
 		http.Error(w, "replay: target host validation failed", http.StatusForbidden)
@@ -489,10 +483,15 @@ func (h *Replay) getResolver() func(string) string {
 }
 
 func (h *Replay) validateTargetHost(host string) error {
-	// AllowedDomains doubles as a trust list: matched domains bypass
-	// DNS/IP checks so internal endpoints (RFC 1918, no public DNS)
-	// can be reached. This applies the same matching rules as
-	// domainAllowed() so wildcards and exact matches behave alike.
+	// AllowedDomains doubles as a trust list: explicitly listed domains
+	// (exact or wildcard) bypass DNS/IP checks so internal endpoints on
+	// RFC-1918 addresses or without public DNS records can be reached.
+	// All other hosts must resolve to a public IP — private, loopback,
+	// link-local, multicast, and unspecified ranges are blocked.
+	//
+	// This is the single access gate. The caller must NOT pre-filter with
+	// domainAllowed — doing so would make the SSRF check unreachable for
+	// any host that passes the allowlist.
 	if h.domainAllowed(host) {
 		return nil
 	}
