@@ -95,7 +95,7 @@ func Open(kfg Config) (*keeper.Keeper, error) {
 
 	passphrase := resolvePassphrase(kfg.Setting)
 
-	if passphrase != "" && passphrase != "dev" {
+	if passphrase != "" {
 		kfg.Logger.Debug("attempting to unlock keeper with configured passphrase")
 		passBytes := []byte(passphrase)
 		unlockErr := store.Unlock(passBytes)
@@ -108,23 +108,6 @@ func Open(kfg Config) (*keeper.Keeper, error) {
 
 		store.Close()
 		return nil, fmt.Errorf("failed to unlock keeper database: %w", unlockErr)
-	}
-
-	if passphrase == "dev" {
-		kfg.Logger.Warn("keeper: opening in DEV mode — DO NOT use in production")
-		devPass := []byte("agbero-dev-mode-insecure-passphrase")
-		master, deriveErr := store.DeriveMaster(devPass)
-		zero.Bytes(devPass)
-		if deriveErr != nil {
-			store.Close()
-			return nil, fmt.Errorf("failed to derive dev master key: %w", deriveErr)
-		}
-		if unlockErr := store.UnlockDatabase(master); unlockErr != nil {
-			store.Close()
-			return nil, fmt.Errorf("failed to unlock keeper in dev mode: %w", unlockErr)
-		}
-		kfg.Logger.Warn("keeper unlocked in DEV mode — DO NOT use in production")
-		return store, nil
 	}
 
 	if store.IsLocked() && kfg.Interactive {
@@ -190,4 +173,12 @@ func resolvePassphrase(cfg *alaye.Keeper) string {
 		}
 	}
 	return os.Getenv("AGBERO_PASSPHRASE")
+}
+
+// PassphraseAvailable reports whether a real passphrase is available after
+// fully resolving any secret references (e.g. "env.AGBERO_KEEPER_PASSPHRASE").
+// Use this instead of checking the raw config string, which is non-empty even
+// when the referenced env var is unset.
+func PassphraseAvailable(cfg *alaye.Keeper) bool {
+	return resolvePassphrase(cfg) != ""
 }

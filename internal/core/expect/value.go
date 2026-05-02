@@ -17,6 +17,8 @@ func SetStoreLookup(fn func(key string) (string, error)) {
 	storeLookupFn = fn
 }
 
+func NewValue(v string) Value { return Value(v) }
+
 var ErrStoreLocked = errors.New("secret store is locked")
 
 func (v Value) Resolve(lookup func(string) string) string {

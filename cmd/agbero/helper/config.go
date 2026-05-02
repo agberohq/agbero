@@ -5,6 +5,7 @@ import "time"
 type Config struct {
 	ConfigPath  string
 	DevMode     bool
+	Silent      bool
 	InstallHere bool
 
 	// UninstallForce: skip confirmation prompt AND remove the binary.
