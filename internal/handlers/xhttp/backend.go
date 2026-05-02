@@ -1,6 +1,7 @@
 package xhttp
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net"
@@ -53,6 +54,13 @@ func (b *basicStatusWriter) Flush() {
 	if f, ok := b.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+func (b *basicStatusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := b.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, fmt.Errorf("hijacking not supported")
 }
 
 type Backend struct {
@@ -572,14 +580,8 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			b.HealthScore.RecordPassiveRequest(!failed)
 		}
 
-		// Increment the failure counter here — before RecordResult — so that
-		// response-level failures (502/503/504) advance the circuit breaker.
-		// OnDialFailure handles its own increment for transport-level errors;
-		// RecordResult itself does not increment to avoid double-counting.
-		if failed {
-			b.Activity.Failures.Add(1)
-		}
-
+		// EndRequest already accounts for the failure; RecordResult only
+		// evaluates whether the threshold has been crossed.
 		if justTripped := b.RecordResult(!failed); justTripped {
 			b.logger.Fields("backend", b.Address, "failures", b.CBThreshold).Warn("circuit breaker tripped")
 		}
