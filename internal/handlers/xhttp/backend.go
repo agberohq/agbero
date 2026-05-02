@@ -1,7 +1,6 @@
 package xhttp
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"net"
@@ -25,45 +24,6 @@ import (
 	"github.com/olekukonko/ll"
 	"github.com/yookoala/gofast"
 )
-
-var proxyBufPool = zulu.NewBufferPool()
-
-type backendCtxKey struct{}
-
-// backendState holds per-request failure state. Pooled to eliminate the
-// new(bool) heap allocation per proxied request. Stored in context under
-// the comparable backendCtxKey so the fixed ErrorHandler closure can
-// signal failure back to ServeHTTP's defer.
-type backendState struct {
-	failed bool
-}
-
-var backendStatePool = sync.Pool{New: func() any { return &backendState{} }}
-
-type basicStatusWriter struct {
-	http.ResponseWriter
-	code int
-}
-
-var basicStatusWriterPool = sync.Pool{New: func() any { return &basicStatusWriter{} }}
-
-func (b *basicStatusWriter) WriteHeader(code int) {
-	b.code = code
-	b.ResponseWriter.WriteHeader(code)
-}
-
-func (b *basicStatusWriter) Flush() {
-	if f, ok := b.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-func (b *basicStatusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if h, ok := b.ResponseWriter.(http.Hijacker); ok {
-		return h.Hijack()
-	}
-	return nil, nil, fmt.Errorf("hijacking not supported")
-}
 
 type Backend struct {
 	upstream.Base
@@ -394,13 +354,20 @@ func newFastCGIBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	// NewPHPFS is deliberately absent — it maps SCRIPT_FILENAME from the
 	// filesystem and is only meaningful for PHP-FPM file serving.
 	b.FastCGI = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Strip headers that gofast.MapHeader would convert into dangerous CGI
+		// environment variables. Most critically, this prevents CVE-2016-5385
+		// (HTTPoxy): a client-sent "Proxy" header becomes HTTP_PROXY, which many
+		// runtimes use as their outbound proxy — letting an attacker intercept all
+		// backend outbound traffic. See def.DangerousFastCGIHeaders for the full list.
+		safeReq := r.Clone(r.Context())
+		safeReq.Header = woos.SanitizeFastCGIHeaders(r)
 		sess := gofast.Chain(
 			gofast.BasicParamsMap,
 			gofast.MapHeader,
 			gofast.MapRemoteHost,
 			fcgiBuildTrusted(r),
 		)(gofast.BasicSession)
-		gofast.NewHandler(sess, clientFactory).ServeHTTP(w, r)
+		gofast.NewHandler(sess, clientFactory).ServeHTTP(w, safeReq)
 	})
 
 	logger.Fields(
@@ -410,45 +377,6 @@ func newFastCGIBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	).Info("FastCGI backend configured")
 
 	return b, nil
-}
-
-// fcgiBuildTrusted returns a gofast Middleware (func(SessionHandler) SessionHandler)
-// that injects proxy-controlled FastCGI parameters which have no safe
-// HTTP-header equivalent. It is constructed per-request, capturing the live
-// *http.Request as a closure so the params can be read before the session chain
-// runs — gofast.SessionHandler does not expose the *http.Request directly.
-//
-// These values are set as plain FastCGI params (not HTTP_* headers), so they
-// arrive in the backend's CGI environment under their canonical names regardless
-// of what the client sent. A client cannot override REMOTE_ADDR or HTTPS by
-// crafting an HTTP header — the FastCGI protocol transmits client HTTP headers
-// under the HTTP_ prefix, which is a different namespace.
-//
-//   - HTTPS            "on" when the client-facing connection was TLS.
-//     Go's net/http/fcgi surfaces this on Request.TLS.
-//   - SERVER_SOFTWARE  proxy identity string in backend server logs.
-//   - SERVER_PORT      actual listener port from ListenerCtx, overriding the
-//     port BasicParamsMap may have guessed from the Host header.
-func fcgiBuildTrusted(r *http.Request) gofast.Middleware {
-	return func(inner gofast.SessionHandler) gofast.SessionHandler {
-		return func(client gofast.Client, req *gofast.Request) (*gofast.ResponsePipe, error) {
-			// HTTPS — structural equivalent of X-Forwarded-Proto but unforgeable.
-			if r.TLS != nil {
-				req.Params["HTTPS"] = "on"
-			}
-
-			// SERVER_SOFTWARE — proxy identity in backend logs / server-detection.
-			req.Params["SERVER_SOFTWARE"] = fmt.Sprintf("%s/fastcgi", def.Name)
-
-			// SERVER_PORT — use the port the listener actually bound to when we
-			// know it, overriding whatever BasicParamsMap derived from Host.
-			if lctx, ok := r.Context().Value(woos.ListenerCtxKey).(woos.ListenerCtx); ok && lctx.Port != "" {
-				req.Params["SERVER_PORT"] = lctx.Port
-			}
-
-			return inner(client, req)
-		}
-	}
 }
 
 func (b *Backend) initHealth(res *resource.Resource, targetURL string) error {
@@ -640,4 +568,43 @@ func (b *Backend) Stop() {
 // RouteDomains returns the domains this backend serves.
 func (b *Backend) RouteDomains() []string {
 	return b.routeDomains
+}
+
+// fcgiBuildTrusted returns a gofast Middleware (func(SessionHandler) SessionHandler)
+// that injects proxy-controlled FastCGI parameters which have no safe
+// HTTP-header equivalent. It is constructed per-request, capturing the live
+// *http.Request as a closure so the params can be read before the session chain
+// runs — gofast.SessionHandler does not expose the *http.Request directly.
+//
+// These values are set as plain FastCGI params (not HTTP_* headers), so they
+// arrive in the backend's CGI environment under their canonical names regardless
+// of what the client sent. A client cannot override REMOTE_ADDR or HTTPS by
+// crafting an HTTP header — the FastCGI protocol transmits client HTTP headers
+// under the HTTP_ prefix, which is a different namespace.
+//
+//   - HTTPS            "on" when the client-facing connection was TLS.
+//     Go's net/http/fcgi surfaces this on Request.TLS.
+//   - SERVER_SOFTWARE  proxy identity string in backend server logs.
+//   - SERVER_PORT      actual listener port from ListenerCtx, overriding the
+//     port BasicParamsMap may have guessed from the Host header.
+func fcgiBuildTrusted(r *http.Request) gofast.Middleware {
+	return func(inner gofast.SessionHandler) gofast.SessionHandler {
+		return func(client gofast.Client, req *gofast.Request) (*gofast.ResponsePipe, error) {
+			// HTTPS — structural equivalent of X-Forwarded-Proto but unforgeable.
+			if r.TLS != nil {
+				req.Params["HTTPS"] = "on"
+			}
+
+			// SERVER_SOFTWARE — proxy identity in backend logs / server-detection.
+			req.Params["SERVER_SOFTWARE"] = fmt.Sprintf("%s/fastcgi", def.Name)
+
+			// SERVER_PORT — use the port the listener actually bound to when we
+			// know it, overriding whatever BasicParamsMap derived from Host.
+			if lctx, ok := r.Context().Value(woos.ListenerCtxKey).(woos.ListenerCtx); ok && lctx.Port != "" {
+				req.Params["SERVER_PORT"] = lctx.Port
+			}
+
+			return inner(client, req)
+		}
+	}
 }

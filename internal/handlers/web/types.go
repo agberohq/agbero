@@ -77,43 +77,8 @@ var markdownExts = map[string]bool{
 	".mkd":      true,
 }
 
-// dangerousPHPHeaders lists headers that must never reach PHP-FPM because
-// they override critical CGI/FastCGI variables.
-var dangerousPHPHeaders = map[string]bool{
-	"x-forwarded-host":     true,
-	"x-forwarded-proto":    true,
-	"x-forwarded-for":      true,
-	"x-real-ip":            true,
-	"x-forwarded-server":   true,
-	"x-forwarded-port":     true,
-	"script_filename":      true,
-	"document_root":        true,
-	"script_name":          true,
-	"request_uri":          true,
-	"query_string":         true,
-	"request_method":       true,
-	"server_protocol":      true,
-	"gateway_interface":    true,
-	"redirect_status":      true,
-	"http_proxy":           true,
-	"http_host":            true,
-	"content_length":       true,
-	"content_type":         true,
-	"php_auth_user":        true,
-	"php_auth_pw":          true,
-	"auth_type":            true,
-	"remote_addr":          true,
-	"remote_port":          true,
-	"server_addr":          true,
-	"server_name":          true,
-	"server_port":          true,
-	"server_software":      true,
-	"path_translated":      true,
-	"path_info":            true,
-	"orig_path_info":       true,
-	"orig_script_name":     true,
-	"orig_script_filename": true,
-}
+// dangerousPHPHeaders has been replaced by def.DangerousFastCGIHeaders.
+// See internal/core/def/fastcgi.go.
 
 type dirItem struct {
 	Name    string

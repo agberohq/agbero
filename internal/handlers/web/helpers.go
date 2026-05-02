@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/pkg/raw/afs"
 	"github.com/agberohq/agbero/internal/pkg/raw/ahash"
 )
@@ -112,21 +113,10 @@ func formatContentDisposition(filename string) string {
 	return fmt.Sprintf(`attachment; filename="%s"`, escaped)
 }
 
-// sanitizePHPHeaders returns a new Header with dangerous/poisonous headers
-// removed so they cannot override FastCGI variables.
+// sanitizePHPHeaders removes dangerous CGI/FastCGI headers from the incoming
+// request before forwarding to PHP-FPM. Delegates to def.SanitizeFastCGIHeaders
+// which is the single authoritative implementation shared with the generic
+// FastCGI backend in xhttp/backend.go.
 func sanitizePHPHeaders(r *http.Request) http.Header {
-	safe := make(http.Header)
-	for key, values := range r.Header {
-		lower := strings.ToLower(key)
-		if dangerousPHPHeaders[lower] {
-			continue
-		}
-		if strings.HasPrefix(lower, "http_") && len(lower) > 5 {
-			continue
-		}
-		for _, v := range values {
-			safe.Add(key, v)
-		}
-	}
-	return safe
+	return woos.SanitizeFastCGIHeaders(r)
 }
