@@ -302,11 +302,12 @@ func newHTTPBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 //
 // FastCGI provides two security properties that HTTP reverse proxying cannot:
 //
-//  1. Explicit message framing — no request-smuggling / desync attacks.
-//  2. Structural parameter separation — proxy-injected values (REMOTE_ADDR,
-//     HTTPS, SERVER_NAME, …) are sent as plain FastCGI params; client-supplied
-//     HTTP headers are always prefixed with HTTP_, making header injection
-//     structurally impossible rather than something to be blocked by a blocklist.
+// Explicit message framing — no request-smuggling / desync attacks.
+// Structural parameter separation — proxy-injected values (REMOTE_ADDR,
+//
+//	HTTPS, SERVER_NAME, …) are sent as plain FastCGI params; client-supplied
+//	HTTP headers are always prefixed with HTTP_, making header injection
+//	structurally impossible rather than something to be blocked by a blocklist.
 //
 // The gofast session chain used here mirrors the PHP chain in the web handler
 // (BasicParamsMap → MapHeader → MapRemoteHost) but intentionally omits

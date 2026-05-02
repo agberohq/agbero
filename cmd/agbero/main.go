@@ -368,7 +368,8 @@ func main() {
 			return
 		}
 		if cmdSystemRestore.Used {
-			hel.System().Restore(cfg.SystemIn, cfg.SystemPass, cfg.SystemForce, cfg.SystemYes)
+			resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
+			hel.System().Restore(cfg.SystemIn, resolvedPath, cfg.SystemPass, cfg.SystemForce, cfg.SystemYes)
 			return
 		}
 		if cmdSystemUpdate.Used {

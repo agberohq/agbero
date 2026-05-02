@@ -21,9 +21,9 @@ func (s *System) Backup(configPath, outPath, password string) {
 }
 
 // Restore delegates to installer.System.Restore.
-func (s *System) Restore(inPath, password string, force, autoYes bool) {
+func (s *System) Restore(inPath, configPath, password string, force, autoYes bool) {
 	sys := setup.NewSystem(setup.SystemConfig{Logger: s.p.Logger})
-	if err := sys.Restore(inPath, password, force, autoYes); err != nil {
+	if err := sys.Restore(inPath, configPath, password, force, autoYes); err != nil {
 		s.p.Logger.Fatal("restore: ", err)
 	}
 }

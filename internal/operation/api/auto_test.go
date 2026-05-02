@@ -250,7 +250,7 @@ func TestHasServicePrefix(t *testing.T) {
 		serviceName string
 		want        bool
 	}{
-		// === Core exploit scenario: "app" must not claim "app-payments.*" ===
+		// Core exploit scenario: "app" must not claim "app-payments.*"
 		// "app-payments" is a distinct service name whose label starts with "app-"
 		// but the full label "app-payments" != "app" and does not start with "app-"
 		// followed by a non-empty remainder that is itself not a service name.
@@ -282,7 +282,7 @@ func TestHasServicePrefix(t *testing.T) {
 		{"app-payments: ambiguous, allowed by string check", "app-payments.internal.local", "app", true},
 		{"app-billing: ambiguous, allowed by string check", "app-billing.internal", "app", true},
 
-		// === Legitimate registrations that must be allowed ===
+		// Legitimate registrations that must be allowed
 		{"service matches exact label", "app.internal", "app", true},
 		{"service with version suffix", "app-v2.internal", "app", true},
 		{"service with env suffix", "app-prod.eu.internal", "app", true},
@@ -292,7 +292,7 @@ func TestHasServicePrefix(t *testing.T) {
 		{"my-service with node suffix", "my-service-node1.cluster.internal", "my-service", true},
 		{"my-service with node2 suffix", "my-service-node2.cluster.internal", "my-service", true},
 
-		// === Cross-service attacks that are blocked ===
+		// Cross-service attacks that are blocked
 		{"different service entirely", "other.internal", "app", false},
 		{"service name as substring of label, no separator", "myapp.internal", "app", false},
 		{"reversed prefix order", "payments-app.internal", "app", false},
@@ -300,13 +300,13 @@ func TestHasServicePrefix(t *testing.T) {
 		// but "auth-service" as a service is a distinct provisioned name.
 		// Again: string check allows it; provisioning must enforce uniqueness.
 
-		// === Malformed hosts — always rejected ===
+		// Malformed hosts — always rejected
 		{"bare label no domain", "app", "app", false},
 		{"host starts with dot", ".app.internal", "app", false},
 		{"empty host", "", "app", false},
 		{"empty first label", ".internal", "app", false},
 
-		// === enforceServiceScope dot-in-servicename guard ===
+		// enforceServiceScope dot-in-servicename guard
 		// service "api.internal" is blocked upstream by enforceServiceScope
 		// before hasServicePrefix is called, so we don't test that here.
 		// But "api" (no dot) with host "api.internal.evil.com" is VALID —
