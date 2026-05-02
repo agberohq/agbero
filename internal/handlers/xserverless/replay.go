@@ -489,22 +489,14 @@ func (h *Replay) getResolver() func(string) string {
 }
 
 func (h *Replay) validateTargetHost(host string) error {
-
-	// DNS resolution MUST happen for ALL domains to prevent
-	// malicious DNS / DNS rebinding attacks to localhost/cloud-metadata.
-
-	for _, pattern := range h.cfg.AllowedDomains {
-		pattern = strings.ToLower(strings.TrimSpace(pattern))
-		if pattern == host {
-			return nil
-		}
+	// AllowedDomains doubles as a trust list: matched domains bypass
+	// DNS/IP checks so internal endpoints (RFC 1918, no public DNS)
+	// can be reached. This applies the same matching rules as
+	// domainAllowed() so wildcards and exact matches behave alike.
+	if h.domainAllowed(host) {
+		return nil
 	}
 
-	// DNS rebinding note: LookupIP is called at validation time; the actual
-	// HTTP dial happens afterwards and may resolve to a different IP if the
-	// TTL is very short (DNS rebinding attack).  A wildcard "*" in
-	// AllowedDomains bypasses this check entirely and must not be used in
-	// production replay configurations.
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return fmt.Errorf("DNS resolution failed for %s: %w", host, err)
