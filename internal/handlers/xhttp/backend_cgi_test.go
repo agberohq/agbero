@@ -60,9 +60,7 @@ func newFastCGIBackendForTest(t *testing.T, addr string) *Backend {
 	return b
 }
 
-// ---------------------------------------------------------------------------
 // Construction / validation
-// ---------------------------------------------------------------------------
 
 func TestNewBackend_FastCGI_TCP(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -119,9 +117,7 @@ func TestNewBackend_FastCGI_BadSchemeStillRejected(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Request forwarding
-// ---------------------------------------------------------------------------
 
 func TestFastCGI_ServeHTTP_BasicRequest(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -168,9 +164,7 @@ func TestFastCGI_ServeHTTP_MethodAndPath(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Header separation — the core security invariant
-// ---------------------------------------------------------------------------
 
 // TestFastCGI_HeaderSeparation verifies that a client-supplied header named
 // "Remote-Addr" cannot poison the backend's REMOTE_ADDR. Under FastCGI, client
@@ -198,14 +192,12 @@ func TestFastCGI_HeaderSeparation(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // fcgiBuildTrusted — trusted params injected at the http.Handler level
 //
 // gofast.SessionHandler does not expose the *http.Request — trusted params
 // are injected by fcgiBuildTrusted, which is a per-request closure that
 // captures the live r before the session chain runs. We verify the observable
 // effects on the backend side via net/http/fcgi's standard surfaces.
-// ---------------------------------------------------------------------------
 
 // TestFastCGI_TrustedParams_PlainHTTP verifies HTTPS is absent and
 // SERVER_SOFTWARE is set for a plain HTTP request.
@@ -277,9 +269,7 @@ func TestFastCGI_TrustedParams_ListenerCtx(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // WebSocket rejection
-// ---------------------------------------------------------------------------
 
 func TestFastCGI_WebSocket_Rejected(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -322,9 +312,7 @@ func TestHTTP_WebSocket_NotRejected(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Circuit breaker and activity tracking on cgi:// backends
-// ---------------------------------------------------------------------------
 
 func TestFastCGI_CircuitBreaker(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -362,9 +350,7 @@ func TestFastCGI_ActivityTracking(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Stop — no nil-pointer panic when b.Proxy is nil
-// ---------------------------------------------------------------------------
 
 func TestFastCGI_Stop_NoPanic(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -375,9 +361,7 @@ func TestFastCGI_Stop_NoPanic(t *testing.T) {
 	b.Stop() // idempotent
 }
 
-// ---------------------------------------------------------------------------
 // Server helpers
-// ---------------------------------------------------------------------------
 
 func TestServer_IsFastCGI(t *testing.T) {
 	cases := []struct {

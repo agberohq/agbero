@@ -489,6 +489,10 @@ func (h *Replay) getResolver() func(string) string {
 }
 
 func (h *Replay) validateTargetHost(host string) error {
+
+	// DNS resolution MUST happen for ALL domains to prevent
+	// malicious DNS / DNS rebinding attacks to localhost/cloud-metadata.
+
 	for _, pattern := range h.cfg.AllowedDomains {
 		pattern = strings.ToLower(strings.TrimSpace(pattern))
 		if pattern == host {

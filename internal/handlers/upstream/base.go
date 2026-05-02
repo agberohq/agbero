@@ -148,8 +148,16 @@ func (b *Base) AcquireCircuit() bool {
 	return false
 }
 
-// RecordResult - Evaluates and updates the circuit breaker state based on the request success
-// Returns true if the circuit just tripped allowing handlers to log the event
+// RecordResult evaluates the outcome of a proxied request and updates the
+// circuit breaker state accordingly.
+// Returns true if the circuit just tripped (failures crossed the threshold on
+// this call), giving callers a single edge-triggered signal to log the event.
+//
+// RecordResult does NOT increment the failure counter — callers are responsible
+// for that before calling this function. OnDialFailure does it explicitly;
+// ServeHTTP's defer does it via b.Activity.Failures.Add(1) when failed=true.
+// Keeping the increment outside avoids double-counting when OnDialFailure
+// calls RecordResult after already incrementing.
 func (b *Base) RecordResult(success bool) bool {
 	if success {
 		b.Activity.Failures.Store(0)
