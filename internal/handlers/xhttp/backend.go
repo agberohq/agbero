@@ -2,6 +2,7 @@ package xhttp
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -21,6 +22,7 @@ import (
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
+	"github.com/yookoala/gofast"
 )
 
 var proxyBufPool = zulu.NewBufferPool()
@@ -56,8 +58,11 @@ func (b *basicStatusWriter) Flush() {
 type Backend struct {
 	upstream.Base
 
+	// Proxy is non-nil for http:// and https:// backends.
 	Proxy *httputil.ReverseProxy
-	Abort *health.EarlyAbortController
+	// FastCGI is non-nil for cgi:// backends.
+	FastCGI http.Handler
+	Abort   *health.EarlyAbortController
 
 	stop     chan struct{}
 	stopOnce sync.Once
@@ -71,7 +76,22 @@ type Backend struct {
 
 // NewBackend constructs an HTTP reverse proxy backend from the given config.
 // Logger is sourced from Resource.Logger — no separate logger parameter is needed.
+//
+// Supported address schemes:
+//
+//	http://host:port   — plain HTTP reverse proxy (default when no scheme given)
+//	https://host:port  — TLS HTTP reverse proxy
+//	cgi://host:port    — FastCGI backend over TCP
+//	cgi://unix:/path   — FastCGI backend over UNIX domain socket
 func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
+	if xhttpCfg.Server.IsFastCGI() {
+		return newFastCGIBackend(xhttpCfg)
+	}
+	return newHTTPBackend(xhttpCfg)
+}
+
+// newHTTPBackend handles http:// and https:// backends — the original path.
+func newHTTPBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	u, err := xhttpCfg.Server.Address.URL()
 	if err != nil {
 		return nil, err
@@ -268,6 +288,158 @@ func NewBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	return b, nil
 }
 
+// newFastCGIBackend handles cgi:// backends.
+//
+// FastCGI provides two security properties that HTTP reverse proxying cannot:
+//
+//  1. Explicit message framing — no request-smuggling / desync attacks.
+//  2. Structural parameter separation — proxy-injected values (REMOTE_ADDR,
+//     HTTPS, SERVER_NAME, …) are sent as plain FastCGI params; client-supplied
+//     HTTP headers are always prefixed with HTTP_, making header injection
+//     structurally impossible rather than something to be blocked by a blocklist.
+//
+// The gofast session chain used here mirrors the PHP chain in the web handler
+// (BasicParamsMap → MapHeader → MapRemoteHost) but intentionally omits
+// NewPHPFS: there is no filesystem mapping for a generic application backend.
+//
+// WebSockets are rejected at connection time — the FastCGI protocol has no
+// mechanism to tunnel them.
+func newFastCGIBackend(xhttpCfg ConfigBackend) (*Backend, error) {
+	network, address := xhttpCfg.Server.FastCGINetwork()
+	if network == "" || strings.TrimSpace(address) == "" {
+		return nil, def.ErrFastCGIMissingHost
+	}
+
+	cond, err := NewConditions(xhttpCfg.Server.Criteria)
+	if err != nil {
+		return nil, err
+	}
+
+	route := xhttpCfg.Route
+	if route == nil {
+		route = &alaye.Route{Path: "/"}
+	}
+
+	logger := xhttpCfg.Resource.Logger
+	if logger == nil {
+		logger = ll.New("backend").Disable()
+	}
+
+	domain := "*"
+	if len(xhttpCfg.Domains) > 0 && xhttpCfg.Domains[0] != "" {
+		domain = xhttpCfg.Domains[0]
+	}
+
+	statsKey := route.KeyBackend(domain, xhttpCfg.Server.Address.String())
+
+	cbThreshold := int64(def.DefaultCircuitBreakerThreshold)
+	if route.CircuitBreaker.Threshold > 0 {
+		cbThreshold = int64(route.CircuitBreaker.Threshold)
+	}
+
+	hasProber := route.HealthCheck.Enabled.Active() || (route.HealthCheck.Enabled == expect.Unknown && route.HealthCheck.Path != "")
+
+	baseCfg := upstream.Config{
+		Address:        xhttpCfg.Server.Address.String(),
+		Weight:         xhttpCfg.Server.Weight,
+		MaxConnections: xhttpCfg.Server.MaxConnections,
+		CBThreshold:    cbThreshold,
+		HasProber:      hasProber,
+		StatsKey:       statsKey,
+		Resource:       xhttpCfg.Resource,
+	}
+
+	base, err := upstream.NewBase(baseCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	b := &Backend{
+		Base:     base,
+		Cond:     cond,
+		hcConfig: &route.HealthCheck,
+		logger:   logger,
+		stop:     make(chan struct{}),
+		Fallback: xhttpCfg.Fallback,
+	}
+
+	if len(xhttpCfg.Domains) > 0 {
+		b.routeDomains = make([]string, len(xhttpCfg.Domains))
+		copy(b.routeDomains, xhttpCfg.Domains)
+	}
+
+	b.Abort = health.NewEarlyAbortController(b.Weights.EarlyAbortEnabled)
+
+	// Build the gofast client factory for this backend's network/address.
+	connFactory := gofast.SimpleConnFactory(network, address)
+	clientFactory := gofast.SimpleClientFactory(connFactory)
+
+	// b.FastCGI is a thin http.Handler wrapper around gofast. The session
+	// chain (BasicParamsMap → MapHeader → MapRemoteHost) is rebuilt per
+	// request so that fcgiBuildSession can capture the live *http.Request and
+	// inject trusted proxy params (HTTPS, SERVER_PORT, SERVER_SOFTWARE) that
+	// have no HTTP-header equivalent, before the chain reads from r.
+	//
+	// NewPHPFS is deliberately absent — it maps SCRIPT_FILENAME from the
+	// filesystem and is only meaningful for PHP-FPM file serving.
+	b.FastCGI = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sess := gofast.Chain(
+			gofast.BasicParamsMap,
+			gofast.MapHeader,
+			gofast.MapRemoteHost,
+			fcgiBuildTrusted(r),
+		)(gofast.BasicSession)
+		gofast.NewHandler(sess, clientFactory).ServeHTTP(w, r)
+	})
+
+	logger.Fields(
+		"backend", xhttpCfg.Server.Address.String(),
+		"network", network,
+		"address", address,
+	).Info("FastCGI backend configured")
+
+	return b, nil
+}
+
+// fcgiBuildTrusted returns a gofast Middleware (func(SessionHandler) SessionHandler)
+// that injects proxy-controlled FastCGI parameters which have no safe
+// HTTP-header equivalent. It is constructed per-request, capturing the live
+// *http.Request as a closure so the params can be read before the session chain
+// runs — gofast.SessionHandler does not expose the *http.Request directly.
+//
+// These values are set as plain FastCGI params (not HTTP_* headers), so they
+// arrive in the backend's CGI environment under their canonical names regardless
+// of what the client sent. A client cannot override REMOTE_ADDR or HTTPS by
+// crafting an HTTP header — the FastCGI protocol transmits client HTTP headers
+// under the HTTP_ prefix, which is a different namespace.
+//
+//   - HTTPS            "on" when the client-facing connection was TLS.
+//     Go's net/http/fcgi surfaces this on Request.TLS.
+//   - SERVER_SOFTWARE  proxy identity string in backend server logs.
+//   - SERVER_PORT      actual listener port from ListenerCtx, overriding the
+//     port BasicParamsMap may have guessed from the Host header.
+func fcgiBuildTrusted(r *http.Request) gofast.Middleware {
+	return func(inner gofast.SessionHandler) gofast.SessionHandler {
+		return func(client gofast.Client, req *gofast.Request) (*gofast.ResponsePipe, error) {
+			// HTTPS — structural equivalent of X-Forwarded-Proto but unforgeable.
+			if r.TLS != nil {
+				req.Params["HTTPS"] = "on"
+			}
+
+			// SERVER_SOFTWARE — proxy identity in backend logs / server-detection.
+			req.Params["SERVER_SOFTWARE"] = fmt.Sprintf("%s/fastcgi", def.Name)
+
+			// SERVER_PORT — use the port the listener actually bound to when we
+			// know it, overriding whatever BasicParamsMap derived from Host.
+			if lctx, ok := r.Context().Value(woos.ListenerCtxKey).(woos.ListenerCtx); ok && lctx.Port != "" {
+				req.Params["SERVER_PORT"] = lctx.Port
+			}
+
+			return inner(client, req)
+		}
+	}
+}
+
 func (b *Backend) initHealth(res *resource.Resource, targetURL string) error {
 	if !b.HasProber {
 		return nil
@@ -299,8 +471,12 @@ func (b *Backend) initHealth(res *resource.Resource, targetURL string) error {
 	}
 
 	probeClient := &http.Client{
-		Timeout:   probeCfg.Timeout,
-		Transport: b.Proxy.Transport,
+		Timeout: probeCfg.Timeout,
+	}
+	if b.Proxy != nil {
+		probeClient.Transport = b.Proxy.Transport
+	} else {
+		probeClient.Transport = res.Transport
 	}
 	executor := &HTTPExecutor{
 		URL:            targetURL,
@@ -331,6 +507,8 @@ func (b *Backend) initHealth(res *resource.Resource, targetURL string) error {
 
 // ServeHTTP proxies the request to the upstream backend.
 // Applies circuit breaker and early abort checks before forwarding.
+// For cgi:// backends, WebSocket upgrade requests are rejected immediately
+// with 501 Not Implemented — the FastCGI protocol cannot tunnel WebSockets.
 func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !b.AcquireCircuit() {
 		if b.Fallback != nil {
@@ -346,6 +524,12 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			http.Error(w, "Service Unavailable (Health)", http.StatusServiceUnavailable)
 		}
+		return
+	}
+
+	// FastCGI does not support WebSocket upgrades.
+	if b.FastCGI != nil && r.Header.Get("Upgrade") == "websocket" {
+		http.Error(w, "WebSocket upgrades are not supported on FastCGI backends", http.StatusNotImplemented)
 		return
 	}
 
@@ -391,7 +575,11 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	b.Proxy.ServeHTTP(actualWriter, req)
+	if b.FastCGI != nil {
+		b.FastCGI.ServeHTTP(actualWriter, req)
+	} else {
+		b.Proxy.ServeHTTP(actualWriter, req)
+	}
 }
 
 // Drain waits for in-flight requests to complete up to the given timeout.
@@ -420,8 +608,10 @@ func (b *Backend) Stop() {
 				doc.Stop(b.PatientID)
 			}
 		}
-		if tp, ok := b.Proxy.Transport.(*http.Transport); ok {
-			tp.CloseIdleConnections()
+		if b.Proxy != nil {
+			if tp, ok := b.Proxy.Transport.(*http.Transport); ok {
+				tp.CloseIdleConnections()
+			}
 		}
 	})
 }
