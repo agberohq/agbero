@@ -75,7 +75,7 @@ func (c *Conditions) Match(r *http.Request) bool {
 		return true
 	}
 
-	ipMgr := zulu.NewIP()
+	ipMgr := zulu.IP
 	// IP/CIDR check
 	if len(c.ips) > 0 {
 		ipStr := ipMgr.ClientIP(r)
