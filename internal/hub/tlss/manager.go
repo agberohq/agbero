@@ -280,6 +280,17 @@ func (m *Manager) GetCertificate(chi *tls.ClientHelloInfo) (*tls.Certificate, er
 		return nil, def.ErrMissingSNI
 	}
 
+	// Reject SNI values that are not valid hostnames before they reach any
+	// storage or filesystem path.  A crafted SNI like
+	// "../../etc/ld.so.preload.local" passes IsLocalhost (it ends in .local)
+	// and then propagates into certPrefix / filepath.Join, writing files
+	// anywhere on the filesystem.  RFC 1123 / RFC 5891 hostnames contain
+	// only [a-zA-Z0-9\-.] and optionally a leading "*." for wildcards; reject
+	// anything outside that set before the value touches any subsystem.
+	if !isValidSNI(name) {
+		return nil, def.ErrInvalidSNI
+	}
+
 	if cert, hit := m.cache.Get(name); hit {
 		if m.needsRenewal(cert) {
 			m.triggerRenewal(name, nil)
@@ -671,4 +682,37 @@ func (m *Manager) determineTLSMode(host *alaye.Host, domain string) def.TlsMode 
 	}
 
 	return def.ModeLocalNone
+}
+
+// isValidSNI reports whether s is a syntactically valid TLS SNI hostname.
+//
+// RFC 5246 §7.4.1.2 specifies that the SNI name_type=host_name field MUST be
+// a fully qualified DNS name.  RFC 1123 limits labels to [a-zA-Z0-9-] and
+// dots as separators; RFC 5891 allows leading "*." for wildcard certificates.
+// Anything outside this set — including path separators, ".." sequences, or
+// null bytes — is illegal and must be rejected before the value reaches any
+// filesystem or storage path.
+func isValidSNI(s string) bool {
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	// Wildcard prefix is allowed ("*.example.com") but only at the start.
+	check := s
+	if strings.HasPrefix(check, "*.") {
+		check = check[2:]
+	}
+	// After stripping an optional wildcard prefix every character must be a
+	// letter, digit, hyphen, or dot.  This explicitly blocks '/', '\\', and
+	// ".." traversal sequences.
+	for _, r := range check {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '.') {
+			return false
+		}
+	}
+	// Reject empty labels ("foo..bar") and leading/trailing dots.
+	if strings.Contains(check, "..") || strings.HasPrefix(check, ".") || strings.HasSuffix(check, ".") {
+		return false
+	}
+	return true
 }

@@ -61,7 +61,18 @@ func NewDisk(cfg DiskConfig) (*Disk, error) {
 }
 
 func (s *Disk) safeName(domain string) string {
-	return strings.ReplaceAll(domain, "*", "_wildcard_")
+	// Replace wildcard prefix for filesystem safety.
+	safe := strings.ReplaceAll(domain, "*", "_wildcard_")
+	// Belt-and-suspenders: strip path separators and dot-dot sequences that
+	// might slip through upstream validation.  Order matters: replace slashes
+	// first so that "../" becomes "..#", then replace any remaining "..".
+	safe = strings.ReplaceAll(safe, "/", "_")
+	safe = strings.ReplaceAll(safe, "\\", "_")
+	safe = strings.ReplaceAll(safe, "..", "_")
+	if safe == "" || safe == "." {
+		safe = "_invalid_"
+	}
+	return safe
 }
 
 func (s *Disk) filenameKey(base string) string {
@@ -108,6 +119,14 @@ func (s *Disk) getBaseDir(issuer string) expect.Folder {
 func (s *Disk) Save(issuer, domain string, certPEM, keyPEM []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Reject domain values that contain path traversal sequences.  This is a
+	// defence-in-depth check; the primary gate is isValidSNI in manager.go.
+	// safeName below will also strip separators, but filepath.Join resolves
+	// ".." before safeName is applied, so we must catch it here first.
+	if strings.Contains(domain, "..") || strings.ContainsAny(domain, "/\\") {
+		return fmt.Errorf("tlsstore: domain %q contains illegal path characters", domain)
+	}
 
 	baseDir := s.getBaseDir(issuer)
 	if baseDir == "" {
