@@ -12,6 +12,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/lb"
+	"github.com/olekukonko/jack"
 	"github.com/olekukonko/mappo"
 )
 
@@ -57,6 +58,12 @@ type Proxy struct {
 	res  *resource.Resource
 	quit chan struct{}
 	wg   sync.WaitGroup
+
+	// pool dispatches datagram handling through a bounded worker pool,
+	// preventing goroutine explosion under UDP flood conditions.
+	// replyLoop goroutines are NOT routed through this pool — they are
+	// per-session, long-lived, and bounded by maxSess.
+	pool *jack.Pool
 }
 
 // NewProxy creates a UDP proxy for the given listen address.
@@ -157,10 +164,16 @@ func (p *Proxy) Start() error {
 	p.res.TCPCache.Store(p.Listen, &mappo.Item{Value: p})
 	p.mu.Unlock()
 
+	// Build a bounded worker pool for datagram dispatch.  The pool has a
+	// fixed number of goroutines and a capped queue; if the queue fills up
+	// under a flood the receiveLoop drops the packet rather than spawning
+	// an unbounded number of goroutines.
+	p.pool = jack.NewPool(def.UDPWorkerPoolSize, jack.PoolingWithQueueSize(def.UDPPacketQueueSize))
+
 	p.wg.Add(1)
 	go p.receiveLoop(conn)
 
-	p.res.Logger.Fields("bind", p.Listen, "max_sessions", maxSess).
+	p.res.Logger.Fields("bind", p.Listen, "max_sessions", maxSess, "workers", def.UDPWorkerPoolSize).
 		Info("xudp: proxy started")
 	return nil
 }
@@ -200,7 +213,21 @@ func (p *Proxy) receiveLoop(conn *net.UDPConn) {
 		}
 
 		data := buf[:n]
-		go p.handleDatagram(conn, clientAddr, data, buf)
+
+		// Submit to the bounded worker pool rather than spawning a goroutine
+		// per packet.  If the pool queue is full (flood condition) we drop
+		// the datagram and recycle the buffer — standard UDP backpressure.
+		clientAddrCopy := clientAddr // capture loop variable for the closure
+		err = p.pool.Submit(jack.Func(func() error {
+			p.handleDatagram(conn, clientAddrCopy, data, buf)
+			return nil
+		}))
+		if err != nil {
+			// Pool queue full: drop packet, recycle buffer, do not crash.
+			putDatagram(buf)
+			p.res.Logger.Fields("remote", clientAddr.String()).
+				Debug("xudp: worker pool full, dropping datagram")
+		}
 	}
 }
 
@@ -393,6 +420,12 @@ func (p *Proxy) Stop() {
 		p.sessions.closeAll()
 	}
 
+	// Drain the worker pool before waiting for goroutines so no
+	// in-flight datagram handlers are still running when we return.
+	if p.pool != nil {
+		_ = p.pool.Shutdown(2 * time.Second)
+	}
+
 	p.wg.Wait()
 
 	p.mu.RLock()
@@ -446,11 +479,4 @@ func matcherName(m Matcher) string {
 		return def.DefaultUDPMatcher
 	}
 	return m.Name()
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

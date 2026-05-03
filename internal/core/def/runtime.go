@@ -259,6 +259,13 @@ const (
 	UDPSweepIntervalSeconds = 10
 	UDPSweepRoutineName     = "xudp-session-sweeper"
 	UDPSweepPoolSize        = 1
+	// UDPWorkerPoolSize is the number of goroutines in the jack.Pool used
+	// to dispatch incoming datagrams.  Using a bounded pool prevents the
+	// goroutine-per-packet explosion that a UDP flood would otherwise cause.
+	UDPWorkerPoolSize = 16
+	// UDPPacketQueueSize is the jack.Pool queue depth.  When the queue is full
+	// the receiveLoop drops the packet — correct UDP congestion behaviour.
+	UDPPacketQueueSize = 4096
 
 	DefaultReplayTimeout = 30 * time.Second
 
