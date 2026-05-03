@@ -274,6 +274,18 @@ func isResponseCacheable(status int, hdr http.Header) bool {
 		strings.Contains(cc, "no-cache") {
 		return false
 	}
+	// RFC 7234 §3 / §5.3: a response carrying Set-Cookie is stateful and
+	// MUST NOT be shared across users.  Caching it would allow session
+	// fixation / account take-over for every subsequent visitor who
+	// receives the cached Set-Cookie value.
+	//
+	// Use a direct map lookup rather than hdr.Get so that we catch the
+	// edge-case where the header key is present but its value is an empty
+	// string — hdr.Get returns "" for both absent and empty-valued headers,
+	// making the != "" check insufficient.
+	if _, hasCookie := hdr[http.CanonicalHeaderKey("Set-Cookie")]; hasCookie {
+		return false
+	}
 	return hdr.Get("WWW-Authenticate") == ""
 }
 
@@ -339,6 +351,11 @@ func removeHopByHopHeaders(hdr http.Header) {
 	} {
 		hdr.Del(h)
 	}
+	// Belt-and-suspenders: even if isResponseCacheable already rejected
+	// responses with Set-Cookie, strip it here so that any future code
+	// path that bypasses that check can never persist a session cookie
+	// into the shared cache store.
+	hdr.Del("Set-Cookie")
 }
 
 type noopResponseWriter struct{}
