@@ -209,6 +209,9 @@ func (h *Replay) serveReplay(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "replay: target host validation failed", http.StatusForbidden)
 		return
 	}
+
+	h.prepareURL(targetURL, r.URL.Query())
+
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), r.Body)
 	if err != nil {
 		h.res.Logger.Fields("err", err).Error("serverless: failed to create replay request")
