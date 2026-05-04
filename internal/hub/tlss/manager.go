@@ -533,6 +533,8 @@ func (m *Manager) GetConfigForClient(chi *tls.ClientHelloInfo) (*tls.Config, err
 		switch strings.ToLower(host.TLS.ClientAuth) {
 		case def.TlsRequireAndVerify:
 			cfg.ClientAuth = tls.RequireAndVerifyClientCert
+		case def.TlsVerifyIfGiven:
+			cfg.ClientAuth = tls.VerifyClientCertIfGiven
 		case def.TlsRequire:
 			cfg.ClientAuth = tls.RequireAnyClientCert
 		case def.TlsRequest:
