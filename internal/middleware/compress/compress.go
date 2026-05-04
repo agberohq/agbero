@@ -178,8 +178,11 @@ func (cw *compressWriter) Write(b []byte) (int, error) {
 
 func (cw *compressWriter) Flush() {
 	if !cw.bypass {
-		if f, ok := cw.w.(interface{ Flush() }); ok {
-			f.Flush()
+		// Both *gzip.Writer and *brotli.Writer implement Flush() error,
+		// not Flush(). Asserting the zero-return interface always fails,
+		// leaving the compression buffer unflushed and breaking SSE/streaming.
+		if f, ok := cw.w.(interface{ Flush() error }); ok {
+			_ = f.Flush()
 		}
 	}
 	if f, ok := cw.ResponseWriter.(http.Flusher); ok {
