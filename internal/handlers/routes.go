@@ -1,6 +1,10 @@
 package handlers
 
 import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -143,7 +147,25 @@ func newProxyRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 	fallbackCfg := resolveFallback(&route.Fallback, &cfg.Global.Fallback)
 	var fallbackHandler http.Handler
 	if fallbackCfg.IsActive() {
-		fallbackHandler = buildFallbackHandler(fallbackCfg, cfg.Resource.Logger)
+		safeDialer := &net.Dialer{}
+		safeTransport := &http.Transport{
+			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, fmt.Errorf("fallback proxy: invalid address %q: %w", addr, err)
+				}
+				ip := net.ParseIP(host)
+				if ip == nil {
+					return nil, fmt.Errorf("fallback proxy: could not parse resolved address %q", host)
+				}
+				if alaye.IsPrivateIP(ip) {
+					return nil, fmt.Errorf("fallback proxy: SSRF protection blocked connection to private/internal address %s:%s", host, port)
+				}
+				return safeDialer.DialContext(ctx, network, addr)
+			},
+		}
+		fallbackHandler = buildFallbackHandler(fallbackCfg, cfg.Resource.Logger, safeTransport)
 	}
 
 	if len(backends) == 0 {
@@ -223,7 +245,11 @@ func resolveFallback(routeFallback, globalFallback *alaye.Fallback) *alaye.Fallb
 	return routeFallback
 }
 
-func buildFallbackHandler(fallback *alaye.Fallback, logger *ll.Logger) http.Handler {
+func buildFallbackHandler(fallback *alaye.Fallback, logger *ll.Logger, transport ...http.RoundTripper) http.Handler {
+	var rt http.RoundTripper = http.DefaultTransport
+	if len(transport) > 0 && transport[0] != nil {
+		rt = transport[0]
+	}
 	switch strings.ToLower(fallback.Type) {
 	case "static":
 		body := []byte(fallback.Body)
@@ -256,6 +282,7 @@ func buildFallbackHandler(fallback *alaye.Fallback, logger *ll.Logger) http.Hand
 			})
 		}
 		proxy := &httputil.ReverseProxy{
+			Transport: rt,
 			Rewrite: func(pr *httputil.ProxyRequest) {
 				pr.SetXForwarded()
 				pr.SetURL(proxyURL)
