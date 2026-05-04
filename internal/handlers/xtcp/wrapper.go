@@ -126,6 +126,38 @@ func (c *deadlineConn) Write(b []byte) (int, error) {
 	return c.Conn.Write(b)
 }
 
+// ReadFrom implements io.ReaderFrom so that io.CopyBuffer's type assertion
+// succeeds when *deadlineConn is the destination. Without this, the assertion
+// fails because embedding net.Conn does not promote the underlying concrete
+// type's ReadFrom method, permanently falling back to the userspace copy loop.
+//
+// We refresh the write deadline on every call so long-running splice transfers
+// stay within the configured idle timeout rather than inheriting a stale one.
+func (c *deadlineConn) ReadFrom(r io.Reader) (int64, error) {
+	if c.timeout > 0 {
+		_ = c.SetWriteDeadline(time.Now().Add(c.timeout))
+	}
+	c.lastActivity.Store(time.Now().UnixNano())
+	if rf, ok := c.Conn.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(c.Conn, r)
+}
+
+// WriteTo implements io.WriterTo so that io.CopyBuffer's type assertion
+// succeeds when *deadlineConn is the source, enabling splice in the reverse
+// direction (backend → client). Same reasoning as ReadFrom above.
+func (c *deadlineConn) WriteTo(w io.Writer) (int64, error) {
+	if c.timeout > 0 {
+		_ = c.SetReadDeadline(time.Now().Add(c.timeout))
+	}
+	c.lastActivity.Store(time.Now().UnixNano())
+	if wt, ok := c.Conn.(io.WriterTo); ok {
+		return wt.WriteTo(w)
+	}
+	return io.Copy(w, c.Conn)
+}
+
 func closeWrite(c net.Conn) {
 	switch v := c.(type) {
 	case *net.TCPConn:
