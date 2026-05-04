@@ -459,7 +459,20 @@ func (p *Proxy) pipe(client, backend net.Conn) {
 		timeout = def.IdleTimeoutDeadline
 	}
 
-	cWrapped := &deadlineConn{Conn: client, timeout: timeout}
+	// cWrapped is the client-side deadline wrapper for the source goroutine
+	// (client → backend). If client is a *peekedConn, it must only be used
+	// as the source — never as the destination — because its peek buffer fields
+	// are not goroutine-safe. We give the destination goroutine (backend →
+	// client) a separate deadlineConn wrapping the raw underlying conn,
+	// bypassing peekedConn entirely so the two goroutines never share state.
+	cSrc := &deadlineConn{Conn: client, timeout: timeout} // source: client → backend
+	cDst := &deadlineConn{Conn: client, timeout: timeout} // destination: backend → client
+	if pc, ok := client.(*peekedConn); ok {
+		// cSrc keeps the full peekedConn so WriteTo flushes the peek buffer first.
+		// cDst skips peekedConn and writes directly to the underlying conn,
+		// so it never races with cSrc on peek buffer fields.
+		cDst = &deadlineConn{Conn: pc.Conn, timeout: timeout}
+	}
 	bWrapped := &deadlineConn{Conn: backend, timeout: timeout}
 
 	errc := make(chan error, 1)
@@ -481,8 +494,8 @@ func (p *Proxy) pipe(client, backend net.Conn) {
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); copyAndClose(bWrapped, cWrapped) }()
-	go func() { defer wg.Done(); copyAndClose(cWrapped, bWrapped) }()
+	go func() { defer wg.Done(); copyAndClose(bWrapped, cSrc) }() // client → backend
+	go func() { defer wg.Done(); copyAndClose(cDst, bWrapped) }() // backend → client
 	wg.Wait()
 
 	_ = client.Close()

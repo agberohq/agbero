@@ -499,9 +499,7 @@ func (s *Server) Reload() {
 	oldTrafficManagerForFirewall := s.trafficManager
 	s.mu.RUnlock()
 
-	if oldTrafficManagerForFirewall != nil {
-		oldTrafficManagerForFirewall.CloseFirewall()
-	}
+	_ = oldTrafficManagerForFirewall // closed after listener drain; see cleanup goroutine below
 
 	newTM, err := handlers.NewManager(tmCfg)
 	if err != nil {
@@ -626,6 +624,14 @@ func (s *Server) Reload() {
 			}(l)
 		}
 		wg.Wait()
+
+		// Close the old firewall database only after all old listeners have
+		// stopped. Moving CloseFirewall() to here (from before NewManager)
+		// closes the race window where in-flight requests on the old listeners
+		// could hit a closed bbolt database and panic with "database not open".
+		if oldTrafficManagerForFirewall != nil {
+			oldTrafficManagerForFirewall.CloseFirewall()
+		}
 
 		oldTLSManager.Close()
 

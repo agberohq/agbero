@@ -9,8 +9,12 @@ import (
 )
 
 // peekedConn wraps a net.Conn to prepend a peek buffer for SNI inspection.
-// It implements io.ReaderFrom to re-enable Linux splice/sendfile zero-copy
-// once the peek buffer is drained, avoiding Kernel -> User -> Kernel copies.
+// It implements io.WriterTo and io.ReaderFrom to re-enable Linux splice/sendfile
+// zero-copy once the peek buffer is drained, avoiding Kernel→User→Kernel copies.
+//
+// Safety: peekedConn is NOT goroutine-safe. pipe() ensures it is used as the
+// source in exactly one goroutine by giving the destination goroutine a separate
+// deadlineConn wrapping the raw underlying conn (see pipe()).
 type peekedConn struct {
 	net.Conn
 	peek []byte
@@ -54,7 +58,6 @@ func (c *peekedConn) Read(p []byte) (int, error) {
 // Once the peek buffer is drained, delegates to underlying conn's ReadFrom
 // (e.g., *net.TCPConn uses splice(2) on Linux).
 func (c *peekedConn) ReadFrom(r io.Reader) (int64, error) {
-
 	if !c.done {
 		peekReader := bytes.NewReader(c.peek[c.pos:])
 		n, err := io.Copy(c.Conn, peekReader)
@@ -80,7 +83,7 @@ func (c *peekedConn) ReadFrom(r io.Reader) (int64, error) {
 	return io.Copy(c.Conn, r)
 }
 
-// WriteTo implements io.WriterTo for zero-copy in the reverse direction.
+// WriteTo implements io.WriterTo for zero-copy in the source direction.
 func (c *peekedConn) WriteTo(w io.Writer) (int64, error) {
 	var total int64
 
@@ -110,7 +113,6 @@ type deadlineConn struct {
 }
 
 func (c *deadlineConn) Read(b []byte) (int, error) {
-	// set read deadline so malicious/stuck clients don't hang goroutines forever
 	if c.timeout > 0 {
 		_ = c.SetReadDeadline(time.Now().Add(c.timeout))
 	}
@@ -126,13 +128,8 @@ func (c *deadlineConn) Write(b []byte) (int, error) {
 	return c.Conn.Write(b)
 }
 
-// ReadFrom implements io.ReaderFrom so that io.CopyBuffer's type assertion
-// succeeds when *deadlineConn is the destination. Without this, the assertion
-// fails because embedding net.Conn does not promote the underlying concrete
-// type's ReadFrom method, permanently falling back to the userspace copy loop.
-//
-// We refresh the write deadline on every call so long-running splice transfers
-// stay within the configured idle timeout rather than inheriting a stale one.
+// ReadFrom implements io.ReaderFrom so that io.CopyBuffer's dst type assertion
+// succeeds, enabling splice/sendfile zero-copy when writing to this conn.
 func (c *deadlineConn) ReadFrom(r io.Reader) (int64, error) {
 	if c.timeout > 0 {
 		_ = c.SetWriteDeadline(time.Now().Add(c.timeout))
@@ -144,9 +141,8 @@ func (c *deadlineConn) ReadFrom(r io.Reader) (int64, error) {
 	return io.Copy(c.Conn, r)
 }
 
-// WriteTo implements io.WriterTo so that io.CopyBuffer's type assertion
-// succeeds when *deadlineConn is the source, enabling splice in the reverse
-// direction (backend → client). Same reasoning as ReadFrom above.
+// WriteTo implements io.WriterTo so that io.CopyBuffer's src type assertion
+// succeeds, enabling splice/sendfile zero-copy when reading from this conn.
 func (c *deadlineConn) WriteTo(w io.Writer) (int64, error) {
 	if c.timeout > 0 {
 		_ = c.SetReadDeadline(time.Now().Add(c.timeout))
