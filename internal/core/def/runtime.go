@@ -481,12 +481,19 @@ const (
 // Web / static file serving
 
 const (
-	WebGzCacheTTL           = 60 * time.Second
-	WebPHPTimeout           = 30 * time.Second
-	WebDynamicGzMinBytes    = 1024
-	WebDynamicGzMaxBytes    = 512 * 1024
-	WebDynamicGzTTL         = 60 * time.Second
-	WebDynamicGzCacheItems  = 256
+	WebGzCacheTTL          = 60 * time.Second
+	WebPHPTimeout          = 30 * time.Second
+	WebDynamicGzMinBytes   = 1024
+	WebDynamicGzMaxBytes   = 512 * 1024
+	WebDynamicGzTTL        = 60 * time.Second
+	WebDynamicGzCacheItems = 256
+
+	// WebMarkdownMaxBytes caps the size of a Markdown source file that will
+	// be rendered server-side. Files larger than this are rejected with 413
+	// rather than being read entirely into RAM. Without a limit, a large .md
+	// file causes io.ReadAll to load the full content and goldmark to build an
+	// AST 5-10x that size, exhausting system memory and triggering the OOM killer.
+	WebMarkdownMaxBytes     = int64(2 * 1024 * 1024) // 2 MB
 	DefaultPHPFPMAddr       = "127.0.0.1:9000"
 	WebCacheImmutableMaxAge = 31536000
 	WebCacheDefaultMaxAge   = 300

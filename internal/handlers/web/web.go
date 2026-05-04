@@ -512,10 +512,16 @@ func (h *web) serveMarkdown(w http.ResponseWriter, r *http.Request, root *os.Roo
 	}
 	defer f.Close()
 
-	src, err := io.ReadAll(f)
+	src, err := io.ReadAll(io.LimitReader(f, def.WebMarkdownMaxBytes+1))
 	if err != nil {
 		h.logger().Fields("err", err, "path", reqPath).Error("markdown: read failed")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if int64(len(src)) > def.WebMarkdownMaxBytes {
+		h.logger().Fields("path", reqPath, "limit", def.WebMarkdownMaxBytes).
+			Warn("markdown: file exceeds size limit, refusing to render")
+		http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
 		return
 	}
 
