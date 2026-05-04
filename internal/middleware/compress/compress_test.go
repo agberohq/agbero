@@ -17,9 +17,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/expect"
 )
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 func routeWith(compType string, level int) *alaye.Route {
 	return &alaye.Route{
@@ -69,9 +67,7 @@ func decodeBrotli(t *testing.T, b []byte) string {
 	return string(out)
 }
 
-// ---------------------------------------------------------------------------
 // Disabled / passthrough
-// ---------------------------------------------------------------------------
 
 func TestCompress_Disabled_Passthrough(t *testing.T) {
 	h := Compress(routeDisabled())(echoHandler("hello", http.StatusOK))
@@ -107,9 +103,7 @@ func TestCompress_NoAcceptEncoding_Passthrough(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // WebSocket passthrough
-// ---------------------------------------------------------------------------
 
 func TestCompress_WebSocket_Passthrough(t *testing.T) {
 	reached := false
@@ -133,9 +127,7 @@ func TestCompress_WebSocket_Passthrough(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Gzip
-// ---------------------------------------------------------------------------
 
 func TestCompress_Gzip_Basic(t *testing.T) {
 	const body = "Hello gzip world!"
@@ -206,9 +198,7 @@ func TestCompress_Gzip_InvalidLevel_FallsBackToDefault(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Brotli
-// ---------------------------------------------------------------------------
 
 func TestCompress_Brotli_Basic(t *testing.T) {
 	const body = "Hello brotli world!"
@@ -246,9 +236,7 @@ func TestCompress_Brotli_NoAcceptEncoding_Passthrough(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Bypass conditions
-// ---------------------------------------------------------------------------
 
 func TestCompress_Bypass_AlreadyEncoded(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -300,9 +288,7 @@ func TestCompress_Bypass_304NotModified(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Flush / SSE — counter-based (fast, deterministic)
-// ---------------------------------------------------------------------------
 
 // flushCapture counts Flush() calls reaching the underlying ResponseWriter.
 type flushCapture struct {
@@ -410,9 +396,7 @@ func TestCompress_Flush_NonFlusher_NoPanic(t *testing.T) {
 	h.ServeHTTP(&plainWriter{}, req)
 }
 
-// ---------------------------------------------------------------------------
 // SSE incremental delivery — proves bytes leave the gzip buffer mid-stream
-// ---------------------------------------------------------------------------
 
 // pipeResponseWriter adapts an io.PipeWriter to http.ResponseWriter so writes
 // go straight to the pipe rather than an in-memory buffer. The read end can
@@ -489,9 +473,7 @@ func TestCompress_Gzip_SSE_IncrementalDelivery(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Unknown compression type
-// ---------------------------------------------------------------------------
 
 func TestCompress_UnknownType_Passthrough(t *testing.T) {
 	h := Compress(&alaye.Route{
@@ -515,9 +497,7 @@ func TestCompress_UnknownType_Passthrough(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Concurrent safety
-// ---------------------------------------------------------------------------
 
 func TestCompress_Gzip_Concurrent(t *testing.T) {
 	const body = "concurrent body"
