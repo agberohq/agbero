@@ -323,7 +323,7 @@ func matchConditionalRequest(r *http.Request, e *stash.Entry) bool {
 	}
 	if ims := r.Header.Get("If-Modified-Since"); ims != "" {
 		if mod, err := time.Parse(http.TimeFormat, ims); err == nil {
-			if !e.CreatedAt.After(mod) {
+			if !e.CreatedAt.Truncate(time.Second).After(mod) {
 				return true
 			}
 		}
