@@ -288,13 +288,31 @@ func (p *Proxy) handleDatagram(listenConn *net.UDPConn, clientAddr *net.UDPAddr,
 
 	sess := newSession(backend, backendConn)
 	if !p.sessions.create(sessionKey, sess) {
-		// Race: another goroutine just created this session
+		// create() returned false: either the table is full, or a session
+		// already exists for this key.
+		existing := p.sessions.get(sessionKey)
+
+		if existing != nil && existing.removed.Load() {
+			// The existing entry is a dead session mid-deletion: its conn is
+			// already closed but sessions.Delete hasn't run yet. Replace it
+			// with our fresh session so the reconnecting client is not left
+			// stranded waiting for the stale entry to clear.
+			if p.sessions.createOrReplace(sessionKey, sess) {
+				// Successfully installed — fall through to forward the packet.
+				goto installed
+			}
+		}
+
+		// Either a live session genuinely beat us, or the table is full.
+		// Discard our new conn and forward via the winner if it's still alive.
 		_ = backendConn.Close()
-		if existing := p.sessions.get(sessionKey); existing != nil {
+		if existing != nil && !existing.removed.Load() {
 			_, _ = existing.backendConn.Write(data)
 		}
 		return
 	}
+
+installed:
 
 	backend.Activity.StartRequest()
 

@@ -101,13 +101,17 @@ func (t *sessionTable) get(key string) *session {
 	return s
 }
 
-// create stores a new session. Returns false if the table is at capacity.
+// create stores a new session under key.
+//
+// Returns false only when the table is at capacity or a live session already
+// owns the key. A stale entry whose session has been marked removed but not
+// yet deleted from the map is treated as a live conflict — callers must handle
+// this via the removed flag check.
 func (t *sessionTable) create(key string, s *session) bool {
 	if t.count.Load() >= t.maxSess {
 		return false
 	}
-	// Use SetIfAbsent to prevent concurrent session creations
-	// from double-counting the session map size.
+	// SetIfAbsent is atomic: only one concurrent creator wins the key.
 	if _, loaded := t.sessions.SetIfAbsent(key, s); loaded {
 		return false
 	}
@@ -115,7 +119,45 @@ func (t *sessionTable) create(key string, s *session) bool {
 	return true
 }
 
-// delete removes a session by key and closes its backend conn.
+// createOrReplace stores s under key when the existing entry is a dead
+// session (removed == true).
+//
+// This closes the re-establishment race: after a session's CompareAndSwap
+// in delete() marks it removed and closes its conn — but before
+// sessions.Delete actually removes the map entry — a reconnecting client's
+// datagram arrives and create() sees the stale key as occupied. Rather than
+// dropping the packet, handleDatagram calls createOrReplace, which overwrites
+// the dead entry and installs the fresh session.
+//
+// Returns true if the new session was installed, false if a live session still
+// owns the key (genuine concurrent creation — caller should not write).
+func (t *sessionTable) createOrReplace(key string, s *session) bool {
+	if t.count.Load() >= t.maxSess {
+		return false
+	}
+	existing, ok := t.sessions.Get(key)
+	if !ok {
+		// Entry was concurrently deleted between create() failing and now;
+		// attempt a clean insert.
+		if _, loaded := t.sessions.SetIfAbsent(key, s); loaded {
+			return false
+		}
+		t.count.Add(1)
+		return true
+	}
+	if !existing.removed.Load() {
+		// A genuinely live session owns the key; don't evict it.
+		return false
+	}
+	// The existing session is dead: its conn is already closed and its count
+	// was already decremented by delete(). Overwrite the stale map entry.
+	// We use unconditional Set: if two goroutines race here both are
+	// replacing the same dead entry, so last-writer-wins is safe.
+	t.sessions.Set(key, s)
+	t.count.Add(1)
+	return true
+}
+
 func (t *sessionTable) delete(key string) {
 	if s, ok := t.sessions.Get(key); ok {
 		// Prevent double-decrementing if replyLoop and sweeper
