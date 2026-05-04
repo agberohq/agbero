@@ -258,7 +258,13 @@ func (p *Proxy) handleDatagram(listenConn *net.UDPConn, clientAddr *net.UDPAddr,
 			p.res.Logger.Fields("key", sessionKey[:min(20, len(sessionKey))], "err", err).
 				Warn("xudp: write to backend failed, evicting session")
 			p.sessions.delete(sessionKey)
-			sess.backend.OnDialFailure(err)
+			// Only penalise the backend if this session was still alive when
+			// the write failed. If the sweeper already marked it removed and
+			// closed the conn, the error is a normal expiry race — not a
+			// genuine upstream failure — and must not trip the circuit breaker.
+			if !sess.removed.Load() {
+				sess.backend.OnDialFailure(err)
+			}
 		} else {
 			sess.backend.Activity.Requests.Add(1)
 		}
