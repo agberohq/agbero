@@ -376,6 +376,22 @@ func newFastCGIBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 		"address", address,
 	).Info("FastCGI backend configured")
 
+	// Register the health check prober if configured. This was missing from
+	// the original implementation — without it, any health_check block on a
+	// cgi:// backend is silently ignored and the backend permanently stays in
+	// the Healthy state until passive failures trip the circuit breaker.
+	//
+	// For TCP FastCGI backends the probe URL is constructed as
+	// http://address/<hcPath>. For UNIX socket backends the address is not
+	// a usable HTTP target, so the probe is only registered when an explicit
+	// health check path is configured that can be formed into a URL.
+	if b.HasProber {
+		hcURL := (&url.URL{Scheme: "http", Host: address}).ResolveReference(&url.URL{Path: b.hcConfig.Path}).String()
+		if err := b.initHealth(xhttpCfg.Resource, hcURL); err != nil {
+			b.logger.Fields("backend", b.Address, "err", err).Warn("failed to initialize health check")
+		}
+	}
+
 	return b, nil
 }
 

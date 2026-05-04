@@ -13,6 +13,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/resource"
 )
@@ -60,7 +61,9 @@ func newFastCGIBackendForTest(t *testing.T, addr string) *Backend {
 	return b
 }
 
+// ---------------------------------------------------------------------------
 // Construction / validation
+// ---------------------------------------------------------------------------
 
 func TestNewBackend_FastCGI_TCP(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +120,197 @@ func TestNewBackend_FastCGI_BadSchemeStillRejected(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Health check registration — regression tests for the initHealth fix
+//
+// Before the fix, newFastCGIBackend never called initHealth. Any health_check
+// block on a cgi:// backend was silently ignored: HasProber was true (computed
+// correctly from the route config) but no prober was ever registered with the
+// Doctor, so the backend stayed permanently Healthy regardless of upstream state.
+// ---------------------------------------------------------------------------
+
+// TestFastCGI_HealthCheck_Registered is the direct regression test for the
+// missing initHealth call. It verifies that a cgi:// backend with an explicit
+// health_check block actually registers a patient with the Doctor.
+//
+// Before the fix: HasProber == true but Doctor.Metrics().PatientsTotal == 0.
+// After the fix:  both HasProber == true and PatientsTotal >= 1.
+func TestFastCGI_HealthCheck_Registered(t *testing.T) {
+	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	res := resource.New()
+	b, err := NewBackend(ConfigBackend{
+		Server:   alaye.NewServer("cgi://" + addr),
+		Domains:  []string{"example.com"},
+		Resource: res,
+		Route: &alaye.Route{
+			Path: "/",
+			HealthCheck: alaye.HealthCheck{
+				Enabled:  expect.Active,
+				Path:     "/health",
+				Interval: expect.Duration(50 * time.Millisecond),
+				Timeout:  expect.Duration(200 * time.Millisecond),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+	defer b.Stop()
+
+	if !b.HasProber {
+		t.Fatal("HasProber should be true when health_check.enabled = true")
+	}
+
+	if res.Doctor == nil {
+		t.Fatal("resource.Doctor is nil")
+	}
+	// PatientsTotal is incremented by Doctor.Add() inside initHealth.
+	// Before the fix initHealth was never called so this stayed at 0.
+	if got := res.Doctor.Metrics().PatientsTotal.Load(); got == 0 {
+		t.Fatal("no patients registered with Doctor — initHealth was not called on the FastCGI backend (regression)")
+	}
+}
+
+// TestFastCGI_HealthCheck_NotRegistered_WhenDisabled verifies that when
+// health_check is explicitly disabled, HasProber is false and no patient is
+// registered with the Doctor.
+func TestFastCGI_HealthCheck_NotRegistered_WhenDisabled(t *testing.T) {
+	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	res := resource.New()
+	b, err := NewBackend(ConfigBackend{
+		Server:   alaye.NewServer("cgi://" + addr),
+		Domains:  []string{"example.com"},
+		Resource: res,
+		Route: &alaye.Route{
+			Path: "/",
+			HealthCheck: alaye.HealthCheck{
+				Enabled: expect.Inactive,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+	defer b.Stop()
+
+	if b.HasProber {
+		t.Error("HasProber should be false when health_check is disabled")
+	}
+	if res.Doctor != nil {
+		if got := res.Doctor.Metrics().PatientsTotal.Load(); got != 0 {
+			t.Errorf("PatientsTotal should be 0 when health_check is disabled, got %d", got)
+		}
+	}
+}
+
+// TestFastCGI_HealthCheck_ImplicitEnable verifies that a health_check block
+// with only a path set (Enabled == Unknown) still activates the prober, since
+// configuring a path is an implicit opt-in — matching the behaviour of HTTP backends.
+func TestFastCGI_HealthCheck_ImplicitEnable(t *testing.T) {
+	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	res := resource.New()
+	b, err := NewBackend(ConfigBackend{
+		Server:   alaye.NewServer("cgi://" + addr),
+		Domains:  []string{"example.com"},
+		Resource: res,
+		Route: &alaye.Route{
+			Path: "/",
+			HealthCheck: alaye.HealthCheck{
+				Enabled: expect.Unknown,
+				Path:    "/ping",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewBackend: %v", err)
+	}
+	defer b.Stop()
+
+	if !b.HasProber {
+		t.Error("HasProber should be true when path is configured with Enabled == Unknown")
+	}
+	if res.Doctor == nil {
+		t.Fatal("resource.Doctor is nil")
+	}
+	if got := res.Doctor.Metrics().PatientsTotal.Load(); got == 0 {
+		t.Error("patient should be registered for implicit health check enable")
+	}
+}
+
+// TestFastCGI_HealthCheck_Parity verifies that HTTP and FastCGI backends
+// register health probers identically when given the same health_check config.
+// Before the fix, FastCGI always had PatientsTotal == 0 while HTTP had 1.
+func TestFastCGI_HealthCheck_Parity(t *testing.T) {
+	hc := alaye.HealthCheck{
+		Enabled:  expect.Active,
+		Path:     "/health",
+		Interval: expect.Duration(100 * time.Millisecond),
+		Timeout:  expect.Duration(500 * time.Millisecond),
+	}
+
+	httpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer httpSrv.Close()
+
+	resHTTP := resource.New()
+	httpB, err := NewBackend(ConfigBackend{
+		Server:   alaye.NewServer(httpSrv.URL),
+		Domains:  []string{"example.com"},
+		Resource: resHTTP,
+		Route:    &alaye.Route{Path: "/", HealthCheck: hc},
+	})
+	if err != nil {
+		t.Fatalf("HTTP NewBackend: %v", err)
+	}
+	defer httpB.Stop()
+
+	fcgiAddr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	resFCGI := resource.New()
+	fcgiB, err := NewBackend(ConfigBackend{
+		Server:   alaye.NewServer("cgi://" + fcgiAddr),
+		Domains:  []string{"example.com"},
+		Resource: resFCGI,
+		Route:    &alaye.Route{Path: "/", HealthCheck: hc},
+	})
+	if err != nil {
+		t.Fatalf("FastCGI NewBackend: %v", err)
+	}
+	defer fcgiB.Stop()
+
+	if httpB.HasProber != fcgiB.HasProber {
+		t.Errorf("HasProber mismatch: HTTP=%v FastCGI=%v", httpB.HasProber, fcgiB.HasProber)
+	}
+
+	httpPatients := resHTTP.Doctor.Metrics().PatientsTotal.Load()
+	fcgiPatients := resFCGI.Doctor.Metrics().PatientsTotal.Load()
+
+	if httpPatients == 0 {
+		t.Error("HTTP backend: no patients registered with Doctor")
+	}
+	if fcgiPatients == 0 {
+		t.Error("FastCGI backend: no patients registered with Doctor — initHealth not called (regression)")
+	}
+	if httpPatients != fcgiPatients {
+		t.Errorf("patient count mismatch: HTTP=%d FastCGI=%d", httpPatients, fcgiPatients)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Request forwarding
+// ---------------------------------------------------------------------------
 
 func TestFastCGI_ServeHTTP_BasicRequest(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -164,19 +357,17 @@ func TestFastCGI_ServeHTTP_MethodAndPath(t *testing.T) {
 	}
 }
 
-// Header separation — the core security invariant
+// ---------------------------------------------------------------------------
+// Header separation — core security invariant
+// ---------------------------------------------------------------------------
 
 // TestFastCGI_HeaderSeparation verifies that a client-supplied header named
 // "Remote-Addr" cannot poison the backend's REMOTE_ADDR. Under FastCGI, client
 // HTTP headers arrive with the HTTP_ prefix (HTTP_REMOTE_ADDR), which is a
 // completely different namespace from the proxy-set REMOTE_ADDR param.
-// net/http/fcgi surfaces REMOTE_ADDR on r.RemoteAddr; the attacker's header
-// cannot reach it.
 func TestFastCGI_HeaderSeparation(t *testing.T) {
 	var gotRemoteAddr string
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// r.RemoteAddr is set by net/http/fcgi from the REMOTE_ADDR FastCGI
-		// param — the proxy-injected value, not the client header.
 		gotRemoteAddr = r.RemoteAddr
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -192,12 +383,9 @@ func TestFastCGI_HeaderSeparation(t *testing.T) {
 	}
 }
 
-// fcgiBuildTrusted — trusted params injected at the http.Handler level
-//
-// gofast.SessionHandler does not expose the *http.Request — trusted params
-// are injected by fcgiBuildTrusted, which is a per-request closure that
-// captures the live r before the session chain runs. We verify the observable
-// effects on the backend side via net/http/fcgi's standard surfaces.
+// ---------------------------------------------------------------------------
+// Trusted params injected by fcgiBuildTrusted
+// ---------------------------------------------------------------------------
 
 // TestFastCGI_TrustedParams_PlainHTTP verifies HTTPS is absent and
 // SERVER_SOFTWARE is set for a plain HTTP request.
@@ -205,16 +393,13 @@ func TestFastCGI_TrustedParams_PlainHTTP(t *testing.T) {
 	var gotTLS bool
 	var gotSoftware string
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// net/http/fcgi sets r.TLS to non-nil when the HTTPS param is "on".
 		gotTLS = r.TLS != nil
-		// SERVER_SOFTWARE is accessible via fcgi.ProcessEnv.
 		gotSoftware = fcgi.ProcessEnv(r)["SERVER_SOFTWARE"]
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	b := newFastCGIBackendForTest(t, "cgi://"+addr)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	// req.TLS is nil — plain HTTP.
 	b.ServeHTTP(httptest.NewRecorder(), req)
 
 	if gotTLS {
@@ -229,19 +414,17 @@ func TestFastCGI_TrustedParams_PlainHTTP(t *testing.T) {
 }
 
 // TestFastCGI_TrustedParams_TLS verifies that when the proxy terminates TLS
-// (r.TLS != nil), the backend receives HTTPS=on and sees r.TLS set by
-// net/http/fcgi.
+// (r.TLS != nil), the backend receives HTTPS=on.
 func TestFastCGI_TrustedParams_TLS(t *testing.T) {
 	var gotTLS bool
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// net/http/fcgi sets r.TLS when it sees HTTPS=on in the FastCGI params.
 		gotTLS = r.TLS != nil
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	b := newFastCGIBackendForTest(t, "cgi://"+addr)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.TLS = &tls.ConnectionState{} // proxy terminated TLS
+	req.TLS = &tls.ConnectionState{}
 	b.ServeHTTP(httptest.NewRecorder(), req)
 
 	if !gotTLS {
@@ -250,7 +433,7 @@ func TestFastCGI_TrustedParams_TLS(t *testing.T) {
 }
 
 // TestFastCGI_TrustedParams_ListenerCtx verifies that SERVER_PORT is taken
-// from ListenerCtx when available, overriding BasicParamsMap's guess.
+// from ListenerCtx when available.
 func TestFastCGI_TrustedParams_ListenerCtx(t *testing.T) {
 	var gotPort string
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -269,7 +452,9 @@ func TestFastCGI_TrustedParams_ListenerCtx(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
 // WebSocket rejection
+// ---------------------------------------------------------------------------
 
 func TestFastCGI_WebSocket_Rejected(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -285,6 +470,26 @@ func TestFastCGI_WebSocket_Rejected(t *testing.T) {
 
 	if w.Code != http.StatusNotImplemented {
 		t.Errorf("expected 501 for WebSocket on cgi:// backend, got %d", w.Code)
+	}
+}
+
+// TestFastCGI_WebSocket_CaseInsensitive verifies that WebSocket rejection works
+// regardless of Upgrade header casing (strings.EqualFold fix).
+func TestFastCGI_WebSocket_CaseInsensitive(t *testing.T) {
+	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	b := newFastCGIBackendForTest(t, "cgi://"+addr)
+
+	for _, upgradeVal := range []string{"websocket", "WebSocket", "WEBSOCKET", "WebSoCkEt"} {
+		req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+		req.Header.Set("Upgrade", upgradeVal)
+		req.Header.Set("Connection", "Upgrade")
+		w := httptest.NewRecorder()
+		b.ServeHTTP(w, req)
+		if w.Code != http.StatusNotImplemented {
+			t.Errorf("Upgrade: %q → expected 501, got %d", upgradeVal, w.Code)
+		}
 	}
 }
 
@@ -312,7 +517,9 @@ func TestHTTP_WebSocket_NotRejected(t *testing.T) {
 	}
 }
 
-// Circuit breaker and activity tracking on cgi:// backends
+// ---------------------------------------------------------------------------
+// Circuit breaker and activity tracking
+// ---------------------------------------------------------------------------
 
 func TestFastCGI_CircuitBreaker(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -350,7 +557,9 @@ func TestFastCGI_ActivityTracking(t *testing.T) {
 	}
 }
 
-// Stop — no nil-pointer panic when b.Proxy is nil
+// ---------------------------------------------------------------------------
+// Stop — idempotent, no nil-pointer panic when b.Proxy is nil
+// ---------------------------------------------------------------------------
 
 func TestFastCGI_Stop_NoPanic(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -361,7 +570,9 @@ func TestFastCGI_Stop_NoPanic(t *testing.T) {
 	b.Stop() // idempotent
 }
 
-// Server helpers
+// ---------------------------------------------------------------------------
+// Server helpers — IsFastCGI / FastCGINetwork / Validate
+// ---------------------------------------------------------------------------
 
 func TestServer_IsFastCGI(t *testing.T) {
 	cases := []struct {
