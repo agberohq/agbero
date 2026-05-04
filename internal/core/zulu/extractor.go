@@ -26,9 +26,7 @@ func Extractor(keys []string) func(*http.Request) string {
 
 		case strings.HasPrefix(strings.ToLower(key), "cookie:"):
 			// Format: cookie:name
-			cookieName := strings.TrimPrefix(key, "cookie:")
-			cookieName = strings.TrimPrefix(cookieName, "Cookie:")
-			cookieName = strings.TrimSpace(cookieName)
+			cookieName := strings.TrimSpace(key[len("cookie:"):])
 			extractors = append(extractors, func(r *http.Request) string {
 				if cookie, err := r.Cookie(cookieName); err == nil {
 					return cookie.Value
@@ -38,9 +36,7 @@ func Extractor(keys []string) func(*http.Request) string {
 
 		case strings.HasPrefix(strings.ToLower(key), "header:"):
 			// Format: header:name or header:name:prefix
-			headerPart := strings.TrimPrefix(key, "header:")
-			headerPart = strings.TrimPrefix(headerPart, "Header:")
-			headerPart = strings.TrimSpace(headerPart)
+			headerPart := strings.TrimSpace(key[len("header:"):])
 
 			var headerName, prefix string
 			if before, after, ok := strings.Cut(headerPart, ":"); ok {
@@ -60,9 +56,7 @@ func Extractor(keys []string) func(*http.Request) string {
 
 		case strings.HasPrefix(strings.ToLower(key), "query:"):
 			// Format: query:name
-			queryName := strings.TrimPrefix(key, "query:")
-			queryName = strings.TrimPrefix(queryName, "Query:")
-			queryName = strings.TrimSpace(queryName)
+			queryName := strings.TrimSpace(key[len("query:"):])
 			extractors = append(extractors, func(r *http.Request) string {
 				return r.URL.Query().Get(queryName)
 			})
