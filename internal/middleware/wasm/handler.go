@@ -27,7 +27,9 @@ func (m *Manager) Handler(next http.Handler) http.Handler {
 		return next
 	}
 
-	m.ExportHostFunctions()
+	// ExportHostFunctions is NOT called here. It runs exactly once in NewManager
+	// via a sync.Once guard. Calling it here caused per-request host module
+	// compilation and wazero runtime lock contention under concurrent traffic.
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rc := &RequestContext{W: w, R: r, Next: true}

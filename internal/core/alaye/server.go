@@ -11,24 +11,24 @@ import (
 )
 
 type Server struct {
-	Enabled        expect.Toggle `hcl:"enabled,attr" json:"enabled"`
-	Address        Address       `hcl:"address,attr" json:"address"`
-	Weight         int           `hcl:"weight,attr,omitempty" json:"weight,omitempty"`
-	MaxConnections int64         `hcl:"max_connections,attr,omitempty" json:"max_connections,omitempty"`
-	Criteria       Criteria      `hcl:"criteria,block,omitempty" json:"criteria,omitempty"`
-	Streaming      Streaming     `hcl:"streaming,block,omitempty" json:"streaming,omitempty"`
+	Enabled        expect.Toggle  `hcl:"enabled,attr" json:"enabled"`
+	Address        expect.Address `hcl:"address,attr" json:"address"`
+	Weight         int            `hcl:"weight,attr,omitempty" json:"weight,omitempty"`
+	MaxConnections int64          `hcl:"max_connections,attr,omitempty" json:"max_connections,omitempty"`
+	Criteria       Criteria       `hcl:"criteria,block,omitempty" json:"criteria,omitempty"`
+	Streaming      Streaming      `hcl:"streaming,block,omitempty" json:"streaming,omitempty"`
 }
 
 // NewServer constructs a Server with the given address and a default weight of zero.
 func NewServer(address string) Server {
-	return Server{Address: Address(address)}
+	return Server{Address: expect.Address(address)}
 }
 
 // NewServers constructs a slice of Servers from a list of addresses.
 func NewServers(address ...string) []Server {
 	servers := make([]Server, len(address))
 	for i, addr := range address {
-		servers[i] = Server{Address: Address(addr)}
+		servers[i] = Server{Address: expect.Address(addr)}
 	}
 	return servers
 }

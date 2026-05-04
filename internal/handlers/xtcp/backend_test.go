@@ -216,7 +216,7 @@ func TestBackend_Weight(t *testing.T) {
 	}
 	testRes := resource.New()
 	server := alaye.Server{
-		Address: alaye.Address("tcp://127.0.0.1:6379"),
+		Address: expect.Address("tcp://127.0.0.1:6379"),
 		Weight:  10,
 	}
 	cfg := BackendConfig{
@@ -244,7 +244,7 @@ func TestBackend_Weight_HealthAdjusted(t *testing.T) {
 	}
 	testRes := resource.New()
 	server := alaye.Server{
-		Address: alaye.Address("tcp://127.0.0.1:6379"),
+		Address: expect.Address("tcp://127.0.0.1:6379"),
 		Weight:  10,
 	}
 	cfg := BackendConfig{

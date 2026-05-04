@@ -60,7 +60,7 @@ func (e *Ephemeral) Serve() {
 	hosts := map[string]*alaye.Host{
 		"localhost": woos.NewStaticHost(woos.Static{
 			Domain:   "localhost",
-			Target:   alaye.Address(absPath),
+			Target:   expect.Address(absPath),
 			Markdown: cfg.ServeMarkdown,
 			SPA:      cfg.ServeSPA,
 			PHP:      cfg.ServePHP,
@@ -144,7 +144,7 @@ func (e *Ephemeral) Proxy() {
 	hosts := map[string]*alaye.Host{
 		domain: woos.NewStaticHost(woos.Static{
 			Domain:   domain,
-			Target:   alaye.Address(target),
+			Target:   expect.Address(target),
 			IsProxy:  true,
 			Markdown: cfg.ServeMarkdown,
 			SPA:      cfg.ServeSPA,

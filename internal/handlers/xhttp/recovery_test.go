@@ -35,7 +35,7 @@ func newTestBackend(t *testing.T, srv *httptest.Server, cbThreshold int64, healt
 	}
 
 	b, err := NewBackend(ConfigBackend{
-		Server:   alaye.Server{Address: alaye.Address(srv.URL)},
+		Server:   alaye.Server{Address: expect.Address(srv.URL)},
 		Route:    route,
 		Domains:  []string{"test.localhost"},
 		Resource: res,
@@ -333,7 +333,7 @@ func TestDeathSpiral_FullRecovery(t *testing.T) {
 	}
 
 	b, err := NewBackend(ConfigBackend{
-		Server:   alaye.Server{Address: alaye.Address(srv.URL)},
+		Server:   alaye.Server{Address: expect.Address(srv.URL)},
 		Route:    route,
 		Domains:  []string{"test.localhost"},
 		Resource: res,
@@ -410,7 +410,7 @@ func BenchmarkBackend_HealthyThroughput(b *testing.B) {
 	defer res.Close()
 
 	be, err := NewBackend(ConfigBackend{
-		Server:   alaye.Server{Address: alaye.Address(srv.URL)},
+		Server:   alaye.Server{Address: expect.Address(srv.URL)},
 		Route:    &alaye.Route{Path: "/"},
 		Domains:  []string{"bench.localhost"},
 		Resource: res,
@@ -442,7 +442,7 @@ func BenchmarkBackend_CircuitBreakerCheck(b *testing.B) {
 	defer res.Close()
 
 	be, _ := NewBackend(ConfigBackend{
-		Server:   alaye.Server{Address: alaye.Address(srv.URL)},
+		Server:   alaye.Server{Address: expect.Address(srv.URL)},
 		Route:    &alaye.Route{Path: "/"},
 		Domains:  []string{"bench.localhost"},
 		Resource: res,

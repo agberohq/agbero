@@ -228,7 +228,7 @@ func TestManager_BuildListeners_TCPProxy(t *testing.T) {
 				Name:    "test-tcp",
 				Listen:  ":9999",
 				Backends: []alaye.Server{
-					{Address: alaye.Address("tcp://127.0.0.1:6379")},
+					{Address: expect.Address("tcp://127.0.0.1:6379")},
 				},
 			},
 		},
