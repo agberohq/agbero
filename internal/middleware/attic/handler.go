@@ -1,6 +1,7 @@
 package attic
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -167,7 +168,17 @@ func (m *CacheMiddleware) revalidate(key string, r *http.Request, next http.Hand
 	if m.pool == nil {
 		return
 	}
-	clone := r.Clone(r.Context())
+	// The client request context is cancelled by the Go HTTP server as soon
+	// as the stale response is written and the handler returns. Cloning the
+	// request with that same context means the background fetch will receive
+	// context.Canceled the moment it tries to make an upstream call, making
+	// stale-while-revalidate permanently broken.
+	//
+	// context.WithoutCancel (Go 1.21) creates a context that inherits all
+	// values (tracing, auth, etc.) from the parent but is never cancelled,
+	// allowing the background worker to complete the upstream request.
+	bgCtx := context.WithoutCancel(r.Context())
+	clone := r.Clone(bgCtx)
 	maxSize := m.maxCacheableSize
 	defaultTTL := m.defaultTTL
 	store := m.store
