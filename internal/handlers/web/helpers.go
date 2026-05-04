@@ -53,6 +53,11 @@ func ifNoneMatchHas(inm string, etag string) bool {
 	return false
 }
 
+// isHTMLMIME reports whether mt is an HTML content type.
+func isHTMLMIME(mt string) bool {
+	return mt == "text/html" || mt == "text/html; charset=utf-8"
+}
+
 // isCompressibleMIME reports whether the MIME type benefits from on-the-fly gzip processing.
 // Guards against burning CPU cycles trying to compress pre-compressed media formats.
 func isCompressibleMIME(mt string) bool {

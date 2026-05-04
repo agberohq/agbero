@@ -354,8 +354,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", mt)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
-	if h.route.Web.Nonce.Enabled.Active() && len(h.nonceStores) > 0 &&
-		(mt == "text/html" || mt == "text/html; charset=utf-8") {
+	if h.route.Web.Nonce.Enabled.Active() && len(h.nonceStores) > 0 && isHTMLMIME(mt) {
 		var buf bytes.Buffer
 		if _, copyErr := io.Copy(&buf, f); copyErr != nil {
 			h.res.Logger.Fields("err", copyErr, "path", reqPath).Error("nonce: read html failed")
@@ -393,6 +392,17 @@ func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath, 
 		if err != nil {
 			h.logger().Fields("err", err, "path", reqPath).Warn("dynamic gzip: read failed")
 			return false
+		}
+
+		// Inject nonces into HTML before compression so the client receives
+		// the nonce tags. Without this, the gzip fast-path returns before
+		// injectNonces runs at the bottom of ServeHTTP, and all Replay auth
+		// requests from the page fail with 401.
+		if h.route.Web.Nonce.Enabled.Active() && len(h.nonceStores) > 0 && isHTMLMIME(mimeType) {
+			var rawBuf bytes.Buffer
+			rawBuf.Write(raw)
+			rawBuf = *h.injectNonces(&rawBuf)
+			raw = rawBuf.Bytes()
 		}
 
 		var buf bytes.Buffer
