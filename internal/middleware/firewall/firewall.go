@@ -165,12 +165,20 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 		}
 		if runGlobal && e.cfg.Rules != nil {
 			if matched, rule := e.evaluateRules(e.cfg.Rules, inspector); matched {
+				if rule.Type == "whitelist" {
+					next.ServeHTTP(w, r)
+					return
+				}
 				e.handleAction(w, r, rule, rule.Name, "global_rule_match")
 				return
 			}
 		}
 		if contextRoute != nil && contextRoute.Status.Active() && contextRoute.Rules != nil {
 			if matched, rule := e.evaluateRules(contextRoute.Rules, inspector); matched {
+				if rule.Type == "whitelist" {
+					next.ServeHTTP(w, r)
+					return
+				}
 				e.handleAction(w, r, rule, rule.Name, "route_rule_match")
 				return
 			}
