@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/klauspost/compress/gzip"
@@ -47,6 +48,21 @@ type web struct {
 	mdConverter      goldmark.Markdown
 	mdBrowse         bool
 	nonceStores      map[string]*nonce.Store
+
+	// mdTmplMu guards mdTmplCache. The cache stores the compiled template
+	// alongside the mod time of the source file so it is re-parsed only when
+	// the file actually changes. Parsing html/template on every request under
+	// high concurrency is a CPU/disk DoS vector.
+	mdTmplMu    sync.Mutex
+	mdTmplCache *parsedMDTemplate
+}
+
+// parsedMDTemplate holds a compiled custom markdown template and the metadata
+// used to decide when it must be re-parsed.
+type parsedMDTemplate struct {
+	tmpl    *template.Template
+	path    string
+	modTime time.Time
 }
 
 // NewWeb creates a web handler. Existing call sites remain unchanged.
@@ -329,18 +345,27 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if !wantsDownload && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && info.Size() >= dynamicGzMinSize {
 		if mt := getMimeType(reqPath); isCompressibleMIME(mt) {
-			cacheKey := filepath.Join(rootPath, reqPath)
-			if h.serveDynamicGzip(w, r, reqPath, cacheKey, f, info, mt) {
-				return
+			// Skip the gzip fast-path for HTML files when nonce injection is
+			// configured. The fast-path caches compressed bytes; caching a
+			// response that contains a nonce would replay the same single-use
+			// nonce to every subsequent visitor, breaking Replay auth. The
+			// non-gzip path below reads the file fresh, injects a new nonce
+			// per request, and serves it uncompressed.
+			needsNonce := h.route.Web.Nonce.Enabled.Active() && len(h.nonceStores) > 0 && isHTMLMIME(mt)
+			if !needsNonce {
+				cacheKey := filepath.Join(rootPath, reqPath)
+				if h.serveDynamicGzip(w, r, reqPath, cacheKey, f, info, mt) {
+					return
+				}
+				f.Close()
+				f, err = root.Open(reqPath)
+				if err != nil {
+					h.logger().Fields("err", err, "path", reqPath).Error("re-open after dynamic gz failed")
+					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+					return
+				}
+				defer f.Close()
 			}
-			f.Close()
-			f, err = root.Open(reqPath)
-			if err != nil {
-				h.logger().Fields("err", err, "path", reqPath).Error("re-open after dynamic gz failed")
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			defer f.Close()
 		}
 	}
 
@@ -392,17 +417,6 @@ func (h *web) serveDynamicGzip(w http.ResponseWriter, r *http.Request, reqPath, 
 		if err != nil {
 			h.logger().Fields("err", err, "path", reqPath).Warn("dynamic gzip: read failed")
 			return false
-		}
-
-		// Inject nonces into HTML before compression so the client receives
-		// the nonce tags. Without this, the gzip fast-path returns before
-		// injectNonces runs at the bottom of ServeHTTP, and all Replay auth
-		// requests from the page fail with 401.
-		if h.route.Web.Nonce.Enabled.Active() && len(h.nonceStores) > 0 && isHTMLMIME(mimeType) {
-			var rawBuf bytes.Buffer
-			rawBuf.Write(raw)
-			rawBuf = *h.injectNonces(&rawBuf)
-			raw = rawBuf.Bytes()
 		}
 
 		var buf bytes.Buffer
@@ -556,25 +570,8 @@ func (h *web) serveMarkdown(w http.ResponseWriter, r *http.Request, root *os.Roo
 }
 
 func (h *web) serveMarkdownWithTemplate(w http.ResponseWriter, root *os.Root, reqPath string, info fs.FileInfo, htmlContent string) bool {
-	tf, err := root.Open(h.route.Web.Markdown.Template)
-	if err != nil {
-		h.logger().Fields("err", err, "template", h.route.Web.Markdown.Template).
-			Warn("markdown: cannot open custom template")
-		return false
-	}
-	defer tf.Close()
-
-	tmplSrc, err := io.ReadAll(tf)
-	if err != nil {
-		h.logger().Fields("err", err, "template", h.route.Web.Markdown.Template).
-			Warn("markdown: cannot read custom template")
-		return false
-	}
-
-	tmpl, err := template.New("md-custom").Parse(string(tmplSrc))
-	if err != nil {
-		h.logger().Fields("err", err, "template", h.route.Web.Markdown.Template).
-			Warn("markdown: cannot parse custom template")
+	tmpl, ok := h.cachedMDTemplate(root)
+	if !ok {
 		return false
 	}
 
@@ -603,6 +600,63 @@ func (h *web) serveMarkdownWithTemplate(w http.ResponseWriter, root *os.Root, re
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(out.Bytes())
 	return true
+}
+
+// cachedMDTemplate returns the compiled custom markdown template, re-parsing
+// it only when the source file has been modified since the last parse.
+//
+// Parsing html/template is CPU-intensive (AST generation). Calling Parse on
+// every request under high concurrency lets an unauthenticated attacker peg
+// the CPU to 100% and exhaust disk I/O with requests to any .md file on a
+// route that has a custom template configured.
+func (h *web) cachedMDTemplate(root *os.Root) (*template.Template, bool) {
+	templatePath := h.route.Web.Markdown.Template
+
+	tf, err := root.Open(templatePath)
+	if err != nil {
+		h.logger().Fields("err", err, "template", templatePath).
+			Warn("markdown: cannot open custom template")
+		return nil, false
+	}
+	defer tf.Close()
+
+	tInfo, err := tf.Stat()
+	if err != nil {
+		h.logger().Fields("err", err, "template", templatePath).
+			Warn("markdown: cannot stat custom template")
+		return nil, false
+	}
+	modTime := tInfo.ModTime()
+
+	h.mdTmplMu.Lock()
+	defer h.mdTmplMu.Unlock()
+
+	if h.mdTmplCache != nil &&
+		h.mdTmplCache.path == templatePath &&
+		h.mdTmplCache.modTime.Equal(modTime) {
+		return h.mdTmplCache.tmpl, true
+	}
+
+	tmplSrc, err := io.ReadAll(tf)
+	if err != nil {
+		h.logger().Fields("err", err, "template", templatePath).
+			Warn("markdown: cannot read custom template")
+		return nil, false
+	}
+
+	tmpl, err := template.New("md-custom").Parse(string(tmplSrc))
+	if err != nil {
+		h.logger().Fields("err", err, "template", templatePath).
+			Warn("markdown: cannot parse custom template")
+		return nil, false
+	}
+
+	h.mdTmplCache = &parsedMDTemplate{
+		tmpl:    tmpl,
+		path:    templatePath,
+		modTime: modTime,
+	}
+	return tmpl, true
 }
 
 func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, rootPath string, f *os.File, reqPath, browserPath string) {
