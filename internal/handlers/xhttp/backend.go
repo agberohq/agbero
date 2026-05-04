@@ -223,7 +223,7 @@ func newHTTPBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 		}
 		pr.Out.Host = u.Host
 		pr.SetXForwarded()
-		isWebSocket := pr.In.Header.Get("Upgrade") == "websocket"
+		isWebSocket := strings.EqualFold(pr.In.Header.Get("Upgrade"), "websocket")
 		if isWebSocket {
 			pr.Out.Header.Set("Upgrade", "websocket")
 			pr.Out.Header.Set("Connection", "Upgrade")
@@ -467,7 +467,7 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// FastCGI does not support WebSocket upgrades.
-	if b.FastCGI != nil && r.Header.Get("Upgrade") == "websocket" {
+	if b.FastCGI != nil && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		http.Error(w, "WebSocket upgrades are not supported on FastCGI backends", http.StatusNotImplemented)
 		return
 	}
