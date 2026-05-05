@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -178,7 +179,21 @@ func handleGothCallback(w http.ResponseWriter, r *http.Request, provider goth.Pr
 
 	clearCookie(w, def.GothSessionCookie)
 
-	signed := signSessionCookie(user.AccessToken, secret)
+	// Resolve the session expiry. Prefer the IdP's ExpiresAt; fall back to the
+	// configured SessionTTL (or the package default). Always take the sooner
+	// of the two so neither the operator nor the IdP can be silently bypassed.
+	sessionTTL := cfg.SessionTTL
+	if sessionTTL <= 0 {
+		sessionTTL = def.DefaultOAuthSessionTTL
+	}
+	configExpiry := time.Now().Add(sessionTTL)
+
+	expiresAt := configExpiry
+	if !user.ExpiresAt.IsZero() && user.ExpiresAt.Before(configExpiry) {
+		expiresAt = user.ExpiresAt
+	}
+
+	signed := signSessionCookie(user.AccessToken, expiresAt, secret)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     def.SessionCookieName,
@@ -186,31 +201,60 @@ func handleGothCallback(w http.ResponseWriter, r *http.Request, provider goth.Pr
 		Path:     def.Slash,
 		HttpOnly: true,
 		Secure:   isSecure(r),
-		Expires:  user.ExpiresAt,
+		Expires:  expiresAt,
 		SameSite: http.SameSiteLaxMode,
 	})
 
 	http.Redirect(w, r, def.Slash, http.StatusFound)
 }
 
-// signSessionCookie returns "<base64(token)>.<base64(hmac)>" so the token
-// value is recoverable without a separate lookup if needed by downstream handlers.
-func signSessionCookie(token string, secret []byte) string {
+// signSessionCookie returns "<base64(token)>.<expiry_unix>.<base64(hmac)>".
+// The expiry (Unix seconds) is included inside the MAC so it cannot be
+// tampered with independently of the signature.
+func signSessionCookie(token string, expiresAt time.Time, secret []byte) string {
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(token))
-	mac := computeHMAC(encoded, secret)
-	return encoded + cookieValueSeparator + mac
+	expiry := strconv.FormatInt(expiresAt.Unix(), 10)
+	payload := encoded + cookieValueSeparator + expiry
+	mac := computeHMAC(payload, secret)
+	return payload + cookieValueSeparator + mac
 }
 
-// verifySessionCookie returns true only when the cookie value carries a valid HMAC signature.
-// Constant-time comparison prevents timing attacks on the MAC.
+// verifySessionCookie returns true only when the cookie carries a valid HMAC
+// signature AND the embedded expiry has not passed.
+//
+// Cookie format: "<base64(token)>.<expiry_unix>.<base64(hmac)>"
+//
+// Expiry is verified first (cheap) then the HMAC (constant-time). Doing it
+// this order is safe because a tampered expiry will fail the HMAC check — an
+// attacker cannot extend a session by editing the timestamp alone.
 func verifySessionCookie(value string, secret []byte) bool {
+	// Locate the last "." — everything before it is the signed payload.
 	idx := strings.LastIndex(value, cookieValueSeparator)
 	if idx < 1 {
 		return false
 	}
-	encoded := value[:idx]
+	payload := value[:idx]
 	gotMAC := value[idx+1:]
-	wantMAC := computeHMAC(encoded, secret)
+
+	// Payload must be "<base64(token)>.<expiry_unix>".
+	// Locate the separator between token and expiry.
+	sepIdx := strings.LastIndex(payload, cookieValueSeparator)
+	if sepIdx < 1 {
+		return false
+	}
+	expiryStr := payload[sepIdx+1:]
+	expiryUnix, err := strconv.ParseInt(expiryStr, 10, 64)
+	if err != nil {
+		return false
+	}
+
+	// Reject expired sessions before doing any cryptographic work.
+	if time.Now().Unix() > expiryUnix {
+		return false
+	}
+
+	// Constant-time HMAC comparison prevents timing attacks.
+	wantMAC := computeHMAC(payload, secret)
 	return hmac.Equal([]byte(gotMAC), []byte(wantMAC))
 }
 

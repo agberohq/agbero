@@ -17,7 +17,7 @@ func testBackendConfig(addr string) BackendConfig {
 	res := resource.New()
 	return BackendConfig{
 		Server: alaye.Server{
-			Address: alaye.Address(addr),
+			Address: expect.Address(addr),
 			Weight:  1,
 		},
 		Proxy: alaye.Proxy{
@@ -53,7 +53,7 @@ func TestNewBackend_WithHealthCheck(t *testing.T) {
 	res := resource.New()
 	cfg := BackendConfig{
 		Server: alaye.Server{
-			Address: alaye.Address(addr),
+			Address: expect.Address(addr),
 			Weight:  1,
 		},
 		Proxy: alaye.Proxy{

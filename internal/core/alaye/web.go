@@ -9,16 +9,23 @@ import (
 )
 
 type Web struct {
-	Enabled  expect.Toggle `hcl:"enabled,attr" json:"enabled"`
-	Root     WebRoot       `hcl:"root,attr" json:"root"`
-	Index    []string      `hcl:"index,optional" json:"index,omitempty"`
-	Listing  expect.Toggle `hcl:"listing,attr" json:"listing"`
-	SPA      expect.Toggle `hcl:"spa,attr" json:"spa"`
-	NoCache  expect.Toggle `hcl:"no_cache,attr" json:"no_cache"`
-	PHP      PHP           `hcl:"php,block,omitempty" json:"php,omitempty"`
-	Git      Git           `hcl:"git,block,omitempty" json:"git,omitempty"`
-	Markdown Markdown      `hcl:"markdown,block,omitempty" json:"markdown,omitempty"`
-	Nonce    WebNonce      `hcl:"nonce,block,omitempty"    json:"nonce,omitempty"`
+	Enabled expect.Toggle `hcl:"enabled,attr"  json:"enabled"`
+	Root    WebRoot       `hcl:"root,attr"     json:"root"`
+	Index   []string      `hcl:"index,optional" json:"index,omitempty"`
+	Listing expect.Toggle `hcl:"listing,attr"  json:"listing"`
+	SPA     expect.Toggle `hcl:"spa,attr"      json:"spa"`
+	NoCache expect.Toggle `hcl:"no_cache,attr" json:"no_cache"`
+
+	// CacheControl overrides the default Cache-Control header for all static
+	// responses served by this route. Leave empty to use built-in defaults
+	// (immutable for fingerprinted files, max-age=300 for everything else).
+	// Example: "public, max-age=31536000, s-maxage=604800"
+	CacheControl string `hcl:"cache_control,attr" json:"cache_control,omitempty"`
+
+	PHP      PHP      `hcl:"php,block,omitempty"      json:"php,omitempty"`
+	Git      Git      `hcl:"git,block,omitempty"      json:"git,omitempty"`
+	Markdown Markdown `hcl:"markdown,block,omitempty" json:"markdown,omitempty"`
+	Nonce    WebNonce `hcl:"nonce,block,omitempty"    json:"nonce,omitempty"`
 }
 
 func (w *Web) Validate() error {
@@ -52,6 +59,7 @@ func (w Web) IsZero() bool {
 		w.Listing.IsZero() &&
 		w.SPA.IsZero() &&
 		w.NoCache.IsZero() &&
+		w.CacheControl == "" &&
 		w.PHP.IsZero() &&
 		w.Git.IsZero() &&
 		w.Markdown.IsZero() &&

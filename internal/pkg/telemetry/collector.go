@@ -7,6 +7,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/resource"
+	"github.com/agberohq/agbero/internal/pkg/metrics"
 	"github.com/olekukonko/ll"
 )
 
@@ -102,11 +103,8 @@ func (c *Collector) collect() {
 				totalReqs += reqs
 				totalErrors += fails
 
-				if latSnap, ok := snap["latency"].(interface {
-					P99() int64
-					Count() uint64
-				}); ok && latSnap.Count() > 0 {
-					sumP99 += float64(latSnap.P99()) / 1000.0 // µs → ms
+				if latSnap, ok := snap["latency"].(metrics.LatencySnapshot); ok && latSnap.Count > 0 {
+					sumP99 += float64(latSnap.P99) / 1000.0 // µs → ms
 					countP99++
 				}
 

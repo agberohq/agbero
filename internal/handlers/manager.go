@@ -76,6 +76,11 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	if cfg.Resource == nil {
 		return nil, errors.New("resource manager required")
 	}
+
+	bc, err := bot.NewChecker(def.CacheMaxBot)
+	if err != nil {
+		return nil, errors.Newf("bot checker init: %w", err)
+	}
 	m := &Manager{
 		cfg:          cfg,
 		skipLogPaths: make(map[string]bool),
@@ -85,7 +90,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 				return &s
 			},
 		},
-		botChecker: bot.NewChecker(),
+		botChecker: bc,
 	}
 	if cfg.Global.Logging.Enabled.Active() && len(cfg.Global.Logging.Skip) > 0 {
 		for _, p := range cfg.Global.Logging.Skip {
@@ -98,7 +103,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 		if fwConfig.Status.Active() {
 			fw, err := firewall.New(firewall.Config{
 				Firewall:       &fwConfig,
-				TrustedProxies: cfg.Global.Security.TrustedProxies,
+				TrustedProxies: cfg.Global.Security.Allow.Proxies,
 				DataDir:        cfg.Global.Storage.DataDir,
 				Logger:         cfg.Resource.Logger,
 				IPMgr:          cfg.IPMgr,

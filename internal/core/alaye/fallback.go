@@ -45,6 +45,9 @@ func (f *Fallback) Validate() error {
 		if _, err := url.Parse(f.ProxyURL); err != nil {
 			return errors.Newf("fallback: invalid proxy_url: %w", err)
 		}
+		if err := rejectPrivateURL(f.ProxyURL); err != nil {
+			return errors.Newf("fallback: proxy_url SSRF protection: %w", err)
+		}
 	default:
 		return def.ErrFallbackTypeInvalid
 	}

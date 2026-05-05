@@ -3,9 +3,7 @@ package def
 
 import "time"
 
-// ============================================================================
 // Application identity
-// ============================================================================
 
 const (
 	Name         = "agbero"
@@ -15,9 +13,7 @@ const (
 	Description  = "High-performance reverse proxy / load balancer with TLS"
 )
 
-// ============================================================================
 // Setup / initialization
-// ============================================================================
 
 const (
 	SetupStepInit          = "init"
@@ -36,9 +32,7 @@ const (
 	MaxPortRetries      = 10
 )
 
-// ============================================================================
 // Security / credentials
-// ============================================================================
 
 const (
 	InternalAuthKeyName = "internal_auth.key"
@@ -67,9 +61,7 @@ const (
 	MinGossipSecretLen = 16
 )
 
-// ============================================================================
 // Token / signing
-// ============================================================================
 
 const (
 	BlockPrivateKey = "PRIVATE KEY"
@@ -78,9 +70,7 @@ const (
 	TokenAlg        = "alg"
 )
 
-// ============================================================================
 // Networking: hosts, protocols, schemes
-// ============================================================================
 
 const (
 	Localhost     = "localhost"
@@ -94,10 +84,11 @@ const (
 )
 
 const (
-	Http  = "http"
-	Https = "https"
-	TCP   = "tcp"
-	UDP   = "udp"
+	Http    = "http"
+	Https   = "https"
+	TCP     = "tcp"
+	UDP     = "udp"
+	FastCGI = "cgi" // cgi:// backend scheme — proxy-to-backend via FastCGI protocol
 
 	SchemeHTTP  = "http@"
 	SchemeHTTPS = "https@"
@@ -114,9 +105,7 @@ const (
 	PrivateBindingHost = "private-binding"
 )
 
-// ============================================================================
 // HTTP headers
-// ============================================================================
 
 const (
 	HeaderContentType        = "Content-Type"
@@ -157,9 +146,7 @@ const (
 	CookieHeaderKey        = "Cookie"
 )
 
-// ============================================================================
 // MIME types
-// ============================================================================
 
 const (
 	MimeJSON = "application/json"
@@ -167,9 +154,7 @@ const (
 	MimeText = "text/plain; charset=utf-8"
 )
 
-// ============================================================================
 // TLS / ALPN / certificates
-// ============================================================================
 
 const (
 	AlpnH3  = "h3"
@@ -202,9 +187,7 @@ const (
 	Dot              = "."
 )
 
-// ============================================================================
 // ACME / Let's Encrypt
-// ============================================================================
 
 const (
 	LetsEncryptProdDir    = "https://acme-v02.api.letsencrypt.org/directory"
@@ -214,9 +197,7 @@ const (
 	BucketACME = "acme"
 )
 
-// ============================================================================
 // NSS / certutil
-// ============================================================================
 
 const (
 	CertutilBinary = "certutil"
@@ -235,9 +216,7 @@ const (
 	NSSInstallHintOther  = "NSS certutil not found. Firefox trust store may not be updated automatically."
 )
 
-// ============================================================================
 // Transport defaults
-// ============================================================================
 
 const (
 	DefaultTransportDialTimeout           = 3 * time.Second
@@ -256,9 +235,7 @@ const (
 	TCPPoolMaxSize     = 3
 )
 
-// ============================================================================
 // TCP / UDP proxy
-// ============================================================================
 
 const (
 	BackendRetryCount = 3
@@ -282,6 +259,13 @@ const (
 	UDPSweepIntervalSeconds = 10
 	UDPSweepRoutineName     = "xudp-session-sweeper"
 	UDPSweepPoolSize        = 1
+	// UDPWorkerPoolSize is the number of goroutines in the jack.Pool used
+	// to dispatch incoming datagrams.  Using a bounded pool prevents the
+	// goroutine-per-packet explosion that a UDP flood would otherwise cause.
+	UDPWorkerPoolSize = 16
+	// UDPPacketQueueSize is the jack.Pool queue depth.  When the queue is full
+	// the receiveLoop drops the packet — correct UDP congestion behaviour.
+	UDPPacketQueueSize = 4096
 
 	DefaultReplayTimeout = 30 * time.Second
 
@@ -305,9 +289,7 @@ const (
 	MinClientHelloLen = 6
 )
 
-// ============================================================================
 // Load balancer
-// ============================================================================
 
 // Load balancer strategy codes.
 type Kind uint8
@@ -329,14 +311,13 @@ const (
 )
 
 const (
-	AdaptiveLearningRate = 0.15
-	StickySessionTTL     = 30 * time.Minute
-	StickyCacheSize      = 1024
+	AdaptiveLearningRate   = 0.15
+	StickySessionTTL       = 30 * time.Minute
+	DefaultOAuthSessionTTL = 24 * time.Hour // Fallback when the IdP does not return an expiry
+	StickyCacheSize        = 1024
 )
 
-// ============================================================================
 // Health checks
-// ============================================================================
 
 const (
 	DefaultHealthCheckInterval  = 10 * time.Second
@@ -348,9 +329,7 @@ const (
 	HealthAbortWindow    = 5
 )
 
-// ============================================================================
 // Rate limiting
-// ============================================================================
 
 const (
 	DefaultRateLimitTTL        = 30 * time.Minute
@@ -362,16 +341,13 @@ const (
 	RateLimitCleanupInterval = 5 * time.Minute
 )
 
-// ============================================================================
 // Auth / access control
-// ============================================================================
 
 const (
-	Realm        = "Restricted"
-	Allow        = "allow"
-	Deny         = "deny"
-	User         = "user"
-	MaxSizeCache = 10_000
+	Realm = "Restricted"
+	Allow = "allow"
+	Deny  = "deny"
+	User  = "user"
 
 	CacheClientMaxIdleCons     = 100
 	CacheClientMaxIdleTimeOuts = 90 * time.Second
@@ -398,9 +374,7 @@ const (
 		"frame-ancestors 'none'"
 )
 
-// ============================================================================
 // OAuth / session
-// ============================================================================
 
 const (
 	SessionCookieName = "agbero_sess"
@@ -422,9 +396,7 @@ const (
 	ScopeEmail   = "email"
 )
 
-// ============================================================================
 // Gossip / cluster / memberlist
-// ============================================================================
 
 const (
 	DefaultGossipTTL        = 30
@@ -459,9 +431,7 @@ const (
 	URLPrefixFormat = "http://%s:%d"
 )
 
-// ============================================================================
 // Firewall
-// ============================================================================
 
 const (
 	DefaultFirewallMaxInspectBytes = int64(8192)
@@ -469,9 +439,7 @@ const (
 	FirewallCounterCleanup         = 1 * time.Minute
 )
 
-// ============================================================================
 // Middleware runtime defaults
-// ============================================================================
 
 const (
 	DefaultForwardAuthTimeout   = 5 * time.Second
@@ -486,9 +454,7 @@ const (
 	DefaultRegexTimeout         = 100 * time.Millisecond
 )
 
-// ============================================================================
 // Compression
-// ============================================================================
 
 const (
 	CompressionGzip    = "gzip"
@@ -498,12 +464,11 @@ const (
 	DynamicGzMaxSize   = 10 * 1024 * 1024
 )
 
-// ============================================================================
 // Caching
-// ============================================================================
 
 const (
 	CacheMax         = 10_000
+	CacheMaxBot      = 2_000
 	CacheMaxBig      = 100_000
 	CacheMaxBodySize = 5 * 1024 * 1024
 
@@ -513,26 +478,29 @@ const (
 	RouteCacheTTL = 10 * time.Minute
 )
 
-// ============================================================================
 // Web / static file serving
-// ============================================================================
 
 const (
-	WebGzCacheTTL           = 60 * time.Second
-	WebPHPTimeout           = 30 * time.Second
-	WebDynamicGzMinBytes    = 1024
-	WebDynamicGzMaxBytes    = 512 * 1024
-	WebDynamicGzTTL         = 60 * time.Second
-	WebDynamicGzCacheItems  = 256
+	WebGzCacheTTL          = 60 * time.Second
+	WebPHPTimeout          = 30 * time.Second
+	WebDynamicGzMinBytes   = 1024
+	WebDynamicGzMaxBytes   = 512 * 1024
+	WebDynamicGzTTL        = 60 * time.Second
+	WebDynamicGzCacheItems = 256
+
+	// WebMarkdownMaxBytes caps the size of a Markdown source file that will
+	// be rendered server-side. Files larger than this are rejected with 413
+	// rather than being read entirely into RAM. Without a limit, a large .md
+	// file causes io.ReadAll to load the full content and goldmark to build an
+	// AST 5-10x that size, exhausting system memory and triggering the OOM killer.
+	WebMarkdownMaxBytes     = int64(2 * 1024 * 1024) // 2 MB
 	DefaultPHPFPMAddr       = "127.0.0.1:9000"
 	WebCacheImmutableMaxAge = 31536000
 	WebCacheDefaultMaxAge   = 300
 	MaxMultipartMemory      = 4 << 20 // 4MB
 )
 
-// ============================================================================
 // Telemetry / metrics
-// ============================================================================
 
 // QueryRange defines a telemetry time window with its resolution.
 type QueryRange struct {
@@ -542,9 +510,10 @@ type QueryRange struct {
 }
 
 const (
-	HistogramWindow = 60 * time.Second
-	MinUS           = int64(1)
-	MaxUS           = int64(60_000_000)
+	HistogramWindow  = 60 * time.Second
+	MinUS            = int64(1)
+	MaxUS            = int64(60_000_000)
+	HistogramSigFigs = 3
 )
 
 const (
@@ -562,9 +531,7 @@ var TelemetryQueryRanges = map[string]QueryRange{
 	"24h": {24 * time.Hour, 15 * time.Minute, "24 hours"},
 }
 
-// ============================================================================
 // Logging
-// ============================================================================
 
 const (
 	DefaultFilePermFile  = 0o666
@@ -586,9 +553,7 @@ const (
 	LogMaxLineBytes  = 64 * 1024
 )
 
-// ============================================================================
 // Admin server
-// ============================================================================
 
 const (
 	DefaultReloadTimeout   = 30 * time.Second
@@ -602,9 +567,7 @@ const (
 	DefaultAdminLogMaxLimit = 1000
 )
 
-// ============================================================================
 // Git / cook (config reload)
-// ============================================================================
 
 const (
 	DefaultGitPoolTimeout  = 1 * time.Second
@@ -616,9 +579,7 @@ const (
 	CookWebhookBodySize = 1 << 20
 )
 
-// ============================================================================
 // Wasm / worker
-// ============================================================================
 
 const (
 	DefaultWasmTimeout   = 30 * time.Second
@@ -636,9 +597,7 @@ const (
 	WasmMaxHeaderValue = 4096
 )
 
-// ============================================================================
 // Worker pool
-// ============================================================================
 
 const (
 	PoolWorkers        = 8
@@ -647,9 +606,7 @@ const (
 	LifetimeHostShards = 4
 )
 
-// ============================================================================
 // Bot detection
-// ============================================================================
 
 const (
 	BotCacheTTL     = 1 * time.Hour
@@ -657,9 +614,7 @@ const (
 	MaxUserAgentLen = 200
 )
 
-// ============================================================================
 // Self-update
-// ============================================================================
 
 const (
 	GitHubReleaseAPIURL   = "https://api.github.com/repos/agberohq/agbero/releases/latest"
@@ -667,18 +622,14 @@ const (
 	UpdateDownloadTimeout = 120 * time.Second
 )
 
-// ============================================================================
 // Trash / retention
-// ============================================================================
 
 const (
 	TrashDirName   = ".trash"
 	TrashRetention = 7 * 24 * time.Hour
 )
 
-// ============================================================================
 // Filesystem / config / directories
-// ============================================================================
 
 const (
 	HostDir string = "hosts.d"
@@ -714,9 +665,7 @@ const (
 	EnvLogName = "LOGNAME"
 )
 
-// ============================================================================
 // Request context keys
-// ============================================================================
 
 const (
 	CtxPort         = "local-port"
@@ -724,9 +673,7 @@ const (
 	CtxOriginalPath = "original-path"
 )
 
-// ============================================================================
 // UI / terminal
-// ============================================================================
 
 const (
 	DefaultUIIndent      = 3
@@ -735,24 +682,18 @@ const (
 	DefaultTerminalWidth = 80
 )
 
-// ============================================================================
 // Keeper / secrets store
-// ============================================================================
 
 const (
 	KeeperSchemeVault   = "vault"
 	KeeperSchemeDefault = "default"
 )
 
-// ============================================================================
 // DNS
-// ============================================================================
 
 const DNSMinLen = 12
 
-// ============================================================================
 // Miscellaneous / shared primitives
-// ============================================================================
 
 const (
 	Empty    = ""

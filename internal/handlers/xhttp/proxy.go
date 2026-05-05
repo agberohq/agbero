@@ -62,7 +62,7 @@ func (b *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no healthy backends", http.StatusBadGateway)
 		return
 	}
-	isWebSocket := r.Header.Get("Upgrade") == "websocket"
+	isWebSocket := strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
 	ctx := r.Context()
 	if b.timeout > 0 && !isWebSocket {
 		var cancel context.CancelFunc

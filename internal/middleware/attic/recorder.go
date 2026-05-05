@@ -4,28 +4,32 @@ import (
 	"bytes"
 	"net/http"
 	"sync"
-
-	"github.com/agberohq/agbero/internal/core/def"
 )
 
-// recorder captures HTTP response for caching
 type recorder struct {
 	http.ResponseWriter
-	headers     http.Header
-	buf         *bytes.Buffer
-	status      int
-	wroteHeader bool
-	cacheable   bool
-	mu          sync.RWMutex
+	headers          http.Header
+	buf              *bytes.Buffer
+	status           int
+	wroteHeader      bool
+	cacheable        bool
+	maxCacheableSize int64
+	written          int64
+	mu               sync.RWMutex
 }
 
-func newRecorder(w http.ResponseWriter) *recorder {
+func newRecorder(w http.ResponseWriter, maxCacheableSize int64) *recorder {
+	initCap := 4096
+	if maxCacheableSize > 0 && maxCacheableSize < int64(initCap) {
+		initCap = int(maxCacheableSize)
+	}
 	return &recorder{
-		ResponseWriter: w,
-		headers:        make(http.Header),
-		buf:            bytes.NewBuffer(make([]byte, 0, def.CacheBufferSize)),
-		status:         http.StatusOK,
-		cacheable:      true,
+		ResponseWriter:   w,
+		headers:          make(http.Header),
+		buf:              bytes.NewBuffer(make([]byte, 0, initCap)),
+		status:           http.StatusOK,
+		cacheable:        true,
+		maxCacheableSize: maxCacheableSize,
 	}
 }
 
@@ -66,8 +70,8 @@ func (r *recorder) Write(b []byte) (int, error) {
 	if cacheable {
 		r.mu.Lock()
 		if r.cacheable {
-			if r.buf.Len()+len(b) > def.CacheMaxBodySize {
-				// Response too large: stop buffering and free memory
+			r.written += int64(len(b))
+			if r.maxCacheableSize > 0 && r.written > r.maxCacheableSize {
 				r.cacheable = false
 				r.buf = nil
 			} else {

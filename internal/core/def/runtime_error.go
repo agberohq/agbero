@@ -78,6 +78,7 @@ var (
 	ErrLocalTLSMissingFiles = errors.New("local tls requires cert_file and key_file")
 
 	ErrMissingSNI            = errors.New("missing SNI")
+	ErrInvalidSNI            = errors.New("invalid SNI: not a valid hostname")
 	ErrUnknownHost           = errors.New("unknown host")
 	ErrTLSDisabled           = errors.New("tls disabled")
 	ErrLocalCertMissingFiles = errors.New("tls=local_cert requires tls.local cert_file and key_file")
@@ -125,6 +126,8 @@ var (
 	ErrBackendMissingHost   = errors.New("backend address is missing host")
 	ErrBackendBadScheme     = errors.New("unsupported backend scheme")
 	ErrInvalidSrcCond       = errors.New("invalid source ip/cidr condition")
+	ErrFastCGIMissingHost   = errors.New("cgi:// backend address is missing host or socket path")
+	ErrFastCGINoWebSockets  = errors.New("cgi:// backends do not support WebSocket upgrades")
 )
 
 // tcp

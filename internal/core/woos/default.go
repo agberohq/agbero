@@ -294,10 +294,14 @@ func defaultSecurity(s *alaye.Security) {
 	if s.Enabled == expect.Unknown && len(s.Firewall.Rules) > 0 {
 		s.Enabled = expect.Active
 	}
-	defaultFirewall(&s.Firewall)
 
-	if len(s.AllowedCommands) == 0 {
-		s.AllowedCommands = []string{"echo"}
+	defaultFirewall(&s.Firewall)
+	defaultAllow(&s.Allow)
+}
+
+func defaultAllow(s *alaye.Allow) {
+	if len(s.Commands) == 0 {
+		s.Commands = []string{"echo"}
 	}
 }
 

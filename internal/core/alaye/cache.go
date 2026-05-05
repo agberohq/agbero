@@ -6,13 +6,14 @@ import (
 )
 
 type Cache struct {
-	Enabled expect.Toggle   `hcl:"enabled,attr" json:"enabled"`
-	Driver  string          `hcl:"driver,attr" json:"driver"`
-	TTL     expect.Duration `hcl:"ttl,attr" json:"ttl"`
-	Methods []string        `hcl:"methods,attr" json:"methods"`
+	Enabled          expect.Toggle   `hcl:"enabled,attr"            json:"enabled"`
+	Driver           string          `hcl:"driver,attr"             json:"driver"`
+	TTL              expect.Duration `hcl:"ttl,attr"                json:"ttl"`
+	Methods          []string        `hcl:"methods,attr"            json:"methods"`
+	MaxCacheableSize int64           `hcl:"max_cacheable_size,attr" json:"max_cacheable_size,omitempty"`
 
 	Memory *MemoryCache `hcl:"memory,block" json:"memory,omitempty"`
-	Redis  *RedisCache  `hcl:"redis,block" json:"redis,omitempty"`
+	Redis  *RedisCache  `hcl:"redis,block"  json:"redis,omitempty"`
 
 	TTLPolicy TTLPolicy `hcl:"policy,block" json:"policy,omitempty"`
 }
@@ -26,6 +27,9 @@ func (c *Cache) Validate() error {
 	if c.Driver != "memory" && c.Driver != "redis" {
 		return errors.Newf("cache: unsupported driver %q", c.Driver)
 	}
+	if c.MaxCacheableSize < 0 {
+		return errors.New("cache: max_cacheable_size cannot be negative")
+	}
 	return c.TTLPolicy.Validate()
 }
 
@@ -34,9 +38,9 @@ type MemoryCache struct {
 }
 
 type RedisCache struct {
-	Host      string `hcl:"host,attr" json:"host"`
-	Port      int    `hcl:"port,attr" json:"port"`
-	Password  string `hcl:"password,attr" json:"password"`
-	DB        int    `hcl:"db,attr" json:"db"`
+	Host      string `hcl:"host,attr"       json:"host"`
+	Port      int    `hcl:"port,attr"       json:"port"`
+	Password  string `hcl:"password,attr"   json:"password"`
+	DB        int    `hcl:"db,attr"         json:"db"`
 	KeyPrefix string `hcl:"key_prefix,attr" json:"key_prefix"`
 }

@@ -31,6 +31,7 @@ type Store struct {
 	db        *bbolt.DB
 	writeCh   chan writeOp
 	quit      chan struct{}
+	done      chan struct{} // closed by writeLoop when it exits
 	closeOnce sync.Once
 }
 
@@ -63,6 +64,7 @@ func NewStore(dataDir expect.Folder) (*Store, error) {
 		db:      db,
 		writeCh: make(chan writeOp, 256),
 		quit:    make(chan struct{}),
+		done:    make(chan struct{}),
 	}
 	go s.writeLoop()
 	return s, nil
@@ -143,6 +145,7 @@ func (s *Store) Hosts() ([]string, error) {
 func (s *Store) Close() (err error) {
 	s.closeOnce.Do(func() {
 		close(s.quit)
+		<-s.done // wait for writeLoop to finish its final flush
 		err = s.db.Close()
 	})
 	return err
@@ -150,6 +153,7 @@ func (s *Store) Close() (err error) {
 
 // writeLoop drains writeCh, batching writes every 5 seconds for efficiency.
 func (s *Store) writeLoop() {
+	defer close(s.done)
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 

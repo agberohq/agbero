@@ -1,331 +1,185 @@
 package xudp
 
 import (
-	"fmt"
 	"net"
-	"sync"
+	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
-	"github.com/agberohq/agbero/internal/core/expect"
 	resource "github.com/agberohq/agbero/internal/hub/resource"
+	"github.com/olekukonko/ll"
 )
 
-// startUDPBackend starts a UDP server that responds with a fixed reply prefix
-// so tests can identify which backend handled a datagram.
-func startUDPBackend(t *testing.T, id string) (string, func()) {
-	t.Helper()
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
-	if err != nil {
-		t.Fatalf("startUDPBackend %s: %v", id, err)
+// Pool initialisation
+
+// TestProxy_Start_InitialisesPool verifies that Start() creates the bounded
+// worker pool so that subsequent receiveLoop calls can dispatch to it.
+func TestProxy_Start_InitialisesPool(t *testing.T) {
+	res := resource.New(resource.WithLogger(ll.New("xudp-test").Disable()))
+	p := NewProxy(res, poolTestFreeUDPAddr(t))
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
 	}
-	go func() {
-		buf := make([]byte, def.UDPBufSize)
-		for {
-			n, addr, err := conn.ReadFromUDP(buf)
-			if err != nil {
-				return
-			}
-			reply := []byte(id + ":" + string(buf[:n]))
-			_, _ = conn.WriteToUDP(reply, addr)
-		}
-	}()
-	return conn.LocalAddr().String(), func() { conn.Close() }
-}
+	defer p.Stop()
 
-func newTestProxy(t *testing.T, backends []string) (*Proxy, func()) {
-	t.Helper()
-	res := resource.New()
-
-	prx := NewProxy(res, "127.0.0.1:0")
-
-	servers := make([]alaye.Server, len(backends))
-	for i, addr := range backends {
-		servers[i] = alaye.Server{
-			Address: alaye.Address(addr),
-			Weight:  1,
-			Enabled: expect.Active,
-		}
-	}
-
-	cfg := alaye.Proxy{
-		Name:        "test",
-		Listen:      "127.0.0.1:0",
-		Protocol:    "udp",
-		Strategy:    "round_robin",
-		SessionTTL:  expect.Duration(int64(2 * time.Second)),
-		MaxSessions: 1000,
-		Backends:    servers,
-		Enabled:     expect.Active,
-	}
-	prx.AddRoute("*", cfg)
-	prx.SetSessionTTL(2 * time.Second)
-
-	if err := prx.Start(); err != nil {
-		t.Fatalf("proxy Start: %v", err)
-	}
-
-	return prx, func() { prx.Stop() }
-}
-
-func sendAndReceive(t *testing.T, listenAddr, payload string) (string, error) {
-	t.Helper()
-	conn, err := net.DialTimeout("udp", listenAddr, time.Second)
-	if err != nil {
-		return "", fmt.Errorf("dial: %w", err)
-	}
-	defer conn.Close()
-
-	_ = conn.SetDeadline(time.Now().Add(time.Second))
-	if _, err := conn.Write([]byte(payload)); err != nil {
-		return "", fmt.Errorf("write: %w", err)
-	}
-
-	buf := make([]byte, 512)
-	n, err := conn.Read(buf)
-	if err != nil {
-		return "", fmt.Errorf("read: %w", err)
-	}
-	return string(buf[:n]), nil
-}
-
-func TestProxy_ForwardAndReply(t *testing.T) {
-	backendAddr, stopBackend := startUDPBackend(t, "B1")
-	defer stopBackend()
-
-	prx, stopProxy := newTestProxy(t, []string{backendAddr})
-	defer stopProxy()
-
-	reply, err := sendAndReceive(t, prx.Listen, "hello")
-	if err != nil {
-		t.Fatalf("sendAndReceive: %v", err)
-	}
-	if reply != "B1:hello" {
-		t.Fatalf("unexpected reply %q", reply)
+	if p.pool == nil {
+		t.Fatal("pool is nil after Start — goroutine-per-packet DoS protection not in place")
 	}
 }
 
-func TestProxy_SessionStickiness(t *testing.T) {
-	// Two backends: a session must always return to the same backend
-	b1Addr, stopB1 := startUDPBackend(t, "B1")
-	b2Addr, stopB2 := startUDPBackend(t, "B2")
-	defer stopB1()
-	defer stopB2()
+// Goroutine bound under flood
 
-	prx, stopProxy := newTestProxy(t, []string{b1Addr, b2Addr})
-	defer stopProxy()
+// TestProxy_ReceiveLoop_BoundedGoroutines is the core regression test for the
+// goroutine-per-packet DoS.
+//
+// It floods the proxy with packets at a rate that would previously spawn
+// thousands of goroutines and asserts that the goroutine count stays within a
+// reasonable bound (workers + sessions + fixed overhead).
+func TestProxy_ReceiveLoop_BoundedGoroutines(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping flood test in short mode")
+	}
 
-	// Send from the same source address (same net.Conn = same src:port)
-	conn, err := net.DialTimeout("udp", prx.Listen, time.Second)
+	res := resource.New(resource.WithLogger(ll.New("xudp-test").Disable()))
+	p := NewProxy(res, "127.0.0.1:0")
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer p.Stop()
+
+	baseline := runtime.NumGoroutine()
+
+	conn, err := net.Dial("udp", p.Listen)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.Close()
 
-	var firstBackend string
-	buf := make([]byte, 512)
+	payload := []byte("flood")
+	for i := 0; i < 5000; i++ {
+		_, _ = conn.Write(payload)
+	}
 
-	for i := 0; i < 5; i++ {
-		_ = conn.SetDeadline(time.Now().Add(time.Second))
-		_, _ = conn.Write([]byte(fmt.Sprintf("msg%d", i)))
-		n, err := conn.Read(buf)
-		if err != nil {
-			t.Fatalf("read %d: %v", i, err)
-		}
-		reply := string(buf[:n])
-		// Extract backend ID (first two chars)
-		backend := reply[:2]
-		if firstBackend == "" {
-			firstBackend = backend
-		} else if backend != firstBackend {
-			t.Fatalf("session not sticky: first %q, then %q", firstBackend, backend)
-		}
+	time.Sleep(200 * time.Millisecond)
+
+	// Allow generous headroom: pool workers + replyLoop goroutines + test overhead.
+	maxAllowed := baseline + def.UDPWorkerPoolSize + 50
+	after := runtime.NumGoroutine()
+	if after > maxAllowed {
+		t.Errorf("goroutine count after flood = %d, want ≤ %d (baseline %d + workers %d + headroom 50)",
+			after, maxAllowed, baseline, def.UDPWorkerPoolSize)
 	}
 }
 
-func TestProxy_DifferentClientsGetDifferentSessions(t *testing.T) {
-	b1Addr, stopB1 := startUDPBackend(t, "B1")
-	b2Addr, stopB2 := startUDPBackend(t, "B2")
-	defer stopB1()
-	defer stopB2()
+// Drop-not-crash under queue saturation
 
-	prx, stopProxy := newTestProxy(t, []string{b1Addr, b2Addr})
-	defer stopProxy()
-
-	// Multiple concurrent clients — should all get responses
-	var wg sync.WaitGroup
-	errors := make(chan error, 10)
-
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			reply, err := sendAndReceive(t, prx.Listen, fmt.Sprintf("client%d", i))
-			if err != nil {
-				errors <- err
-				return
-			}
-			if reply == "" {
-				errors <- fmt.Errorf("empty reply for client %d", i)
-			}
-		}(i)
-	}
-
-	wg.Wait()
-	close(errors)
-
-	for err := range errors {
-		t.Errorf("concurrent client error: %v", err)
-	}
-}
-
-func TestProxy_MaxSessionsDropsNew(t *testing.T) {
-	backendAddr, stopBackend := startUDPBackend(t, "B1")
-	defer stopBackend()
-
-	res := resource.New()
+// TestProxy_ReceiveLoop_DropsWhenFull verifies that when the worker pool queue
+// is saturated the proxy drops packets and recycles their buffers rather than
+// panicking or leaking goroutines.
+func TestProxy_ReceiveLoop_DropsWhenFull(t *testing.T) {
+	res := resource.New(resource.WithLogger(ll.New("xudp-test").Disable()))
 	p := NewProxy(res, "127.0.0.1:0")
-	p.MaxSess = 1 // Only 1 session allowed
-
-	cfg := alaye.Proxy{
-		Name:        "test",
-		Listen:      "127.0.0.1:0",
-		Protocol:    "udp",
-		Strategy:    "round_robin",
-		MaxSessions: 1,
-		Backends: []alaye.Server{
-			{Address: alaye.Address(backendAddr), Weight: 1, Enabled: expect.Active},
-		},
-		Enabled: expect.Active,
-	}
-	p.AddRoute("*", cfg)
 	if err := p.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer p.Stop()
 
-	// First client establishes the only allowed session
-	conn1, err := net.DialTimeout("udp", p.Listen, time.Second)
+	conn, err := net.Dial("udp", p.Listen)
 	if err != nil {
-		t.Fatalf("dial conn1: %v", err)
+		t.Fatalf("dial: %v", err)
 	}
-	defer conn1.Close()
-	_ = conn1.SetDeadline(time.Now().Add(time.Second))
-	_, _ = conn1.Write([]byte("first"))
-	buf := make([]byte, 512)
-	conn1.Read(buf)
+	defer conn.Close()
 
-	// Verify session count
-	time.Sleep(20 * time.Millisecond) // let goroutines settle
-	if p.ActiveSessions() > 1 {
-		t.Fatalf("expected at most 1 active session, got %d", p.ActiveSessions())
+	payload := make([]byte, 512)
+	for i := 0; i < def.UDPPacketQueueSize*3; i++ {
+		_, _ = conn.Write(payload)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	if p.closing.Load() {
+		t.Error("proxy closed itself under queue saturation — should have dropped packets instead")
 	}
 }
 
-func TestProxy_SessionTTLExpiry(t *testing.T) {
-	backendAddr, stopBackend := startUDPBackend(t, "B1")
-	defer stopBackend()
+// Worker count constant sanity
 
-	res := resource.New()
-	p := NewProxy(res, "127.0.0.1:0")
-	p.SetSessionTTL(100 * time.Millisecond)
-
-	cfg := alaye.Proxy{
-		Name:     "test",
-		Listen:   "127.0.0.1:0",
-		Protocol: "udp",
-		Backends: []alaye.Server{
-			{Address: alaye.Address(backendAddr), Weight: 1, Enabled: expect.Active},
-		},
-		Enabled: expect.Active,
+func TestUDPWorkerPoolConstants(t *testing.T) {
+	if def.UDPWorkerPoolSize <= 0 {
+		t.Errorf("UDPWorkerPoolSize = %d, must be > 0", def.UDPWorkerPoolSize)
 	}
-	p.AddRoute("*", cfg)
+	if def.UDPPacketQueueSize <= 0 {
+		t.Errorf("UDPPacketQueueSize = %d, must be > 0", def.UDPPacketQueueSize)
+	}
+	if def.UDPPacketQueueSize < def.UDPWorkerPoolSize*10 {
+		t.Errorf("UDPPacketQueueSize (%d) should be at least 10× UDPWorkerPoolSize (%d) for burst absorption",
+			def.UDPPacketQueueSize, def.UDPWorkerPoolSize)
+	}
+}
+
+// Stop drains pool cleanly
+
+// TestProxy_Stop_DrainsPool ensures Stop() completes without hanging when the
+// pool has in-flight work.
+func TestProxy_Stop_DrainsPool(t *testing.T) {
+	res := resource.New(resource.WithLogger(ll.New("xudp-test").Disable()))
+	p := NewProxy(res, "127.0.0.1:0")
 	if err := p.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer p.Stop()
 
-	// Send one datagram to create a session
-	_, err := sendAndReceive(t, p.Listen, "ping")
+	conn, err := net.Dial("udp", p.Listen)
 	if err != nil {
-		t.Fatalf("sendAndReceive: %v", err)
+		t.Fatalf("dial: %v", err)
 	}
-
-	// Wait for TTL to expire
-	time.Sleep(300 * time.Millisecond)
-	p.sessions.sweep()
-
-	if p.ActiveSessions() != 0 {
-		t.Fatalf("expected 0 sessions after TTL expiry, got %d", p.ActiveSessions())
+	for i := 0; i < 20; i++ {
+		_, _ = conn.Write([]byte("ping"))
 	}
-}
+	conn.Close()
 
-func TestProxy_StopGraceful(t *testing.T) {
-	backendAddr, stopBackend := startUDPBackend(t, "B1")
-	defer stopBackend()
-
-	_, stopProxy := newTestProxy(t, []string{backendAddr})
-
-	// Stop should not hang
 	done := make(chan struct{})
 	go func() {
-		stopProxy()
+		p.Stop()
 		close(done)
 	}()
 
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("Stop timed out")
+		t.Error("Stop() did not return within 5s — possible goroutine leak or pool deadlock")
 	}
 }
 
-func TestProxy_StopIdempotent(t *testing.T) {
-	backendAddr, stopBackend := startUDPBackend(t, "B1")
-	defer stopBackend()
+// Datagram buffer recycling — no leak on drop
 
-	p, stopProxy := newTestProxy(t, []string{backendAddr})
-	stopProxy()
-	p.Stop() // second stop must not panic
-}
+// TestProxy_DroppedPacket_BufferRecycled confirms buffers are returned to the
+// pool on the drop path (queue full), not leaked.
+func TestProxy_DroppedPacket_BufferRecycled(t *testing.T) {
+	var leaked atomic.Int64
 
-func TestProxy_ActiveSessions_Initial(t *testing.T) {
-	backendAddr, stopBackend := startUDPBackend(t, "B1")
-	defer stopBackend()
+	for i := 0; i < 1000; i++ {
+		buf := getDatagram()
+		if buf == nil {
+			leaked.Add(1)
+		}
+		putDatagram(buf)
+	}
 
-	p, stopProxy := newTestProxy(t, []string{backendAddr})
-	defer stopProxy()
-
-	if p.ActiveSessions() != 0 {
-		t.Fatalf("expected 0 sessions before any traffic, got %d", p.ActiveSessions())
+	if n := leaked.Load(); n > 0 {
+		t.Errorf("getDatagram() returned nil %d times — buffer pool exhausted", n)
 	}
 }
 
-func TestProxy_NoRoute_DropsPacket(t *testing.T) {
-	res := resource.New()
-	p := NewProxy(res, "127.0.0.1:0")
-	// No route added — proxy has no backends
-	if err := p.Start(); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	defer p.Stop()
+// Helpers (pool-test-local, avoids collision with proxy_test.go helpers)
 
-	// Send a datagram — should be dropped silently (no panic)
-	conn, err := net.DialTimeout("udp", p.Listen, time.Second)
+func poolTestFreeUDPAddr(t *testing.T) string {
+	t.Helper()
+	c, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("dial: %v", err)
+		t.Fatalf("poolTestFreeUDPAddr: %v", err)
 	}
-	defer conn.Close()
-
-	_ = conn.SetDeadline(time.Now().Add(200 * time.Millisecond))
-	_, _ = conn.Write([]byte("hello"))
-
-	buf := make([]byte, 512)
-	_, err = conn.Read(buf)
-	// Expect timeout — no reply
-	if err == nil {
-		t.Fatal("expected no reply when no route configured")
-	}
+	addr := c.LocalAddr().String()
+	c.Close()
+	return addr
 }

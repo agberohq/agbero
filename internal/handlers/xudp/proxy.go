@@ -12,6 +12,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/lb"
+	"github.com/olekukonko/jack"
 	"github.com/olekukonko/mappo"
 )
 
@@ -57,6 +58,12 @@ type Proxy struct {
 	res  *resource.Resource
 	quit chan struct{}
 	wg   sync.WaitGroup
+
+	// pool dispatches datagram handling through a bounded worker pool,
+	// preventing goroutine explosion under UDP flood conditions.
+	// replyLoop goroutines are NOT routed through this pool — they are
+	// per-session, long-lived, and bounded by maxSess.
+	pool *jack.Pool
 }
 
 // NewProxy creates a UDP proxy for the given listen address.
@@ -157,10 +164,16 @@ func (p *Proxy) Start() error {
 	p.res.TCPCache.Store(p.Listen, &mappo.Item{Value: p})
 	p.mu.Unlock()
 
+	// Build a bounded worker pool for datagram dispatch.  The pool has a
+	// fixed number of goroutines and a capped queue; if the queue fills up
+	// under a flood the receiveLoop drops the packet rather than spawning
+	// an unbounded number of goroutines.
+	p.pool = jack.NewPool(def.UDPWorkerPoolSize, jack.PoolingWithQueueSize(def.UDPPacketQueueSize))
+
 	p.wg.Add(1)
 	go p.receiveLoop(conn)
 
-	p.res.Logger.Fields("bind", p.Listen, "max_sessions", maxSess).
+	p.res.Logger.Fields("bind", p.Listen, "max_sessions", maxSess, "workers", def.UDPWorkerPoolSize).
 		Info("xudp: proxy started")
 	return nil
 }
@@ -200,7 +213,21 @@ func (p *Proxy) receiveLoop(conn *net.UDPConn) {
 		}
 
 		data := buf[:n]
-		go p.handleDatagram(conn, clientAddr, data, buf)
+
+		// Submit to the bounded worker pool rather than spawning a goroutine
+		// per packet.  If the pool queue is full (flood condition) we drop
+		// the datagram and recycle the buffer — standard UDP backpressure.
+		clientAddrCopy := clientAddr // capture loop variable for the closure
+		err = p.pool.Submit(jack.Func(func() error {
+			p.handleDatagram(conn, clientAddrCopy, data, buf)
+			return nil
+		}))
+		if err != nil {
+			// Pool queue full: drop packet, recycle buffer, do not crash.
+			putDatagram(buf)
+			p.res.Logger.Fields("remote", clientAddr.String()).
+				Debug("xudp: worker pool full, dropping datagram")
+		}
 	}
 }
 
@@ -231,7 +258,13 @@ func (p *Proxy) handleDatagram(listenConn *net.UDPConn, clientAddr *net.UDPAddr,
 			p.res.Logger.Fields("key", sessionKey[:min(20, len(sessionKey))], "err", err).
 				Warn("xudp: write to backend failed, evicting session")
 			p.sessions.delete(sessionKey)
-			sess.backend.OnDialFailure(err)
+			// Only penalise the backend if this session was still alive when
+			// the write failed. If the sweeper already marked it removed and
+			// closed the conn, the error is a normal expiry race — not a
+			// genuine upstream failure — and must not trip the circuit breaker.
+			if !sess.removed.Load() {
+				sess.backend.OnDialFailure(err)
+			}
 		} else {
 			sess.backend.Activity.Requests.Add(1)
 		}
@@ -261,13 +294,31 @@ func (p *Proxy) handleDatagram(listenConn *net.UDPConn, clientAddr *net.UDPAddr,
 
 	sess := newSession(backend, backendConn)
 	if !p.sessions.create(sessionKey, sess) {
-		// Race: another goroutine just created this session
+		// create() returned false: either the table is full, or a session
+		// already exists for this key.
+		existing := p.sessions.get(sessionKey)
+
+		if existing != nil && existing.removed.Load() {
+			// The existing entry is a dead session mid-deletion: its conn is
+			// already closed but sessions.Delete hasn't run yet. Replace it
+			// with our fresh session so the reconnecting client is not left
+			// stranded waiting for the stale entry to clear.
+			if p.sessions.createOrReplace(sessionKey, sess) {
+				// Successfully installed — fall through to forward the packet.
+				goto installed
+			}
+		}
+
+		// Either a live session genuinely beat us, or the table is full.
+		// Discard our new conn and forward via the winner if it's still alive.
 		_ = backendConn.Close()
-		if existing := p.sessions.get(sessionKey); existing != nil {
+		if existing != nil && !existing.removed.Load() {
 			_, _ = existing.backendConn.Write(data)
 		}
 		return
 	}
+
+installed:
 
 	backend.Activity.StartRequest()
 
@@ -393,6 +444,12 @@ func (p *Proxy) Stop() {
 		p.sessions.closeAll()
 	}
 
+	// Drain the worker pool before waiting for goroutines so no
+	// in-flight datagram handlers are still running when we return.
+	if p.pool != nil {
+		_ = p.pool.Shutdown(2 * time.Second)
+	}
+
 	p.wg.Wait()
 
 	p.mu.RLock()
@@ -446,11 +503,4 @@ func matcherName(m Matcher) string {
 		return def.DefaultUDPMatcher
 	}
 	return m.Name()
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

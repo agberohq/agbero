@@ -272,10 +272,11 @@ func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Ha
 
 			jwtSecret, err := s.getAdminJWTSecret(claims.User)
 			if err != nil {
-				// Always perform a dummy bcrypt comparison so the response
-				// time is indistinguishable from a valid-but-wrong-password
-				// path — prevents timing-based username enumeration.
-				bcrypt.CompareHashAndPassword(dummyHash, []byte("dummy"))
+				// Use addJitter rather than bcrypt: we need to obscure the DB lookup
+				// timing (sub-millisecond), not equalise a password hash comparison.
+				// bcrypt here burns ~100ms/core with zero security benefit and creates
+				// a trivial unauthenticated DoS — 50 req/s saturates an 8-core machine.
+				addJitter(5 * time.Millisecond)
 				http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
 				return
 			}

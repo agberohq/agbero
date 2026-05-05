@@ -207,3 +207,96 @@ func TestKeyWithCustomHeadersAndScope(t *testing.T) {
 		t.Error("different scoped header should change key")
 	}
 }
+
+func TestKey_SameRequestProducesSameKey(t *testing.T) {
+	r1, _ := http.NewRequest("GET", "http://example.com/path?q=1", nil)
+	r2, _ := http.NewRequest("GET", "http://example.com/path?q=1", nil)
+
+	if Key(r1, nil) != Key(r2, nil) {
+		t.Error("identical requests must produce identical keys")
+	}
+}
+
+func TestKey_DifferentPathsDifferentKeys(t *testing.T) {
+	r1, _ := http.NewRequest("GET", "http://example.com/a", nil)
+	r2, _ := http.NewRequest("GET", "http://example.com/b", nil)
+
+	if Key(r1, nil) == Key(r2, nil) {
+		t.Error("different paths must produce different keys")
+	}
+}
+
+func TestKey_DifferentQueryDifferentKeys(t *testing.T) {
+	r1, _ := http.NewRequest("GET", "http://example.com/?v=1", nil)
+	r2, _ := http.NewRequest("GET", "http://example.com/?v=2", nil)
+
+	if Key(r1, nil) == Key(r2, nil) {
+		t.Error("different query strings must produce different keys")
+	}
+}
+
+func TestKey_AcceptEncodingChangesKey(t *testing.T) {
+	r1, _ := http.NewRequest("GET", "http://example.com/", nil)
+	r2, _ := http.NewRequest("GET", "http://example.com/", nil)
+	r2.Header.Set("Accept-Encoding", "gzip")
+
+	if Key(r1, nil) == Key(r2, nil) {
+		t.Error("different Accept-Encoding must produce different keys")
+	}
+}
+
+func TestKey_ScopeHeaderIncluded(t *testing.T) {
+	r1, _ := http.NewRequest("GET", "http://example.com/", nil)
+	r1.Header.Set("X-Tenant", "a")
+
+	r2, _ := http.NewRequest("GET", "http://example.com/", nil)
+	r2.Header.Set("X-Tenant", "b")
+
+	scope := []string{"header:X-Tenant"}
+	if Key(r1, scope) == Key(r2, scope) {
+		t.Error("different scoped headers must produce different keys")
+	}
+}
+
+func TestKey_ScopeHeaderNotInScope_SameKey(t *testing.T) {
+	r1, _ := http.NewRequest("GET", "http://example.com/", nil)
+	r1.Header.Set("X-Not-Scoped", "a")
+
+	r2, _ := http.NewRequest("GET", "http://example.com/", nil)
+	r2.Header.Set("X-Not-Scoped", "b")
+
+	// No scope — header ignored in key
+	if Key(r1, nil) != Key(r2, nil) {
+		t.Error("headers outside scope should not affect the cache key")
+	}
+}
+
+// KeyWithCustomHeaders — CDN Vary key expansion
+
+func TestKeyWithCustomHeaders_CustomHeaderChangesKey(t *testing.T) {
+	r1, _ := http.NewRequest("GET", "http://example.com/", nil)
+	r1.Header.Set("CF-IPCountry", "NG")
+
+	r2, _ := http.NewRequest("GET", "http://example.com/", nil)
+	r2.Header.Set("CF-IPCountry", "US")
+
+	k1 := KeyWithCustomHeaders(r1, nil, []string{"CF-IPCountry"})
+	k2 := KeyWithCustomHeaders(r2, nil, []string{"CF-IPCountry"})
+
+	if k1 == k2 {
+		t.Error("different CF-IPCountry should produce different custom-header keys")
+	}
+}
+
+func TestKeyWithCustomHeaders_AbsentCustomHeader_SameKey(t *testing.T) {
+	r1, _ := http.NewRequest("GET", "http://example.com/", nil)
+	r2, _ := http.NewRequest("GET", "http://example.com/", nil)
+
+	// Neither request has CF-IPCountry set — keys must be identical
+	k1 := KeyWithCustomHeaders(r1, nil, []string{"CF-IPCountry"})
+	k2 := KeyWithCustomHeaders(r2, nil, []string{"CF-IPCountry"})
+
+	if k1 != k2 {
+		t.Error("absent custom header should not affect key consistency")
+	}
+}

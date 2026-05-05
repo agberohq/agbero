@@ -204,17 +204,14 @@ func (h *Replay) serveReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.domainAllowed(targetURL.Hostname()) {
-		h.res.Logger.Fields("host", targetURL.Hostname()).Warn("serverless: replay domain blocked")
-		http.Error(w, "replay: target domain not allowed", http.StatusForbidden)
-		return
-	}
-
 	if err := h.validateTargetHost(targetURL.Hostname()); err != nil {
 		h.res.Logger.Fields("host", targetURL.Hostname(), "err", err).Warn("serverless: target host validation failed")
 		http.Error(w, "replay: target host validation failed", http.StatusForbidden)
 		return
 	}
+
+	h.prepareURL(targetURL, r.URL.Query())
+
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), r.Body)
 	if err != nil {
 		h.res.Logger.Fields("err", err).Error("serverless: failed to create replay request")
@@ -489,18 +486,19 @@ func (h *Replay) getResolver() func(string) string {
 }
 
 func (h *Replay) validateTargetHost(host string) error {
-	for _, pattern := range h.cfg.AllowedDomains {
-		pattern = strings.ToLower(strings.TrimSpace(pattern))
-		if pattern == host {
-			return nil
-		}
+	// AllowedDomains doubles as a trust list: explicitly listed domains
+	// (exact or wildcard) bypass DNS/IP checks so internal endpoints on
+	// RFC-1918 addresses or without public DNS records can be reached.
+	// All other hosts must resolve to a public IP — private, loopback,
+	// link-local, multicast, and unspecified ranges are blocked.
+	//
+	// This is the single access gate. The caller must NOT pre-filter with
+	// domainAllowed — doing so would make the SSRF check unreachable for
+	// any host that passes the allowlist.
+	if h.domainAllowed(host) {
+		return nil
 	}
 
-	// DNS rebinding note: LookupIP is called at validation time; the actual
-	// HTTP dial happens afterwards and may resolve to a different IP if the
-	// TTL is very short (DNS rebinding attack).  A wildcard "*" in
-	// AllowedDomains bypasses this check entirely and must not be used in
-	// production replay configurations.
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return fmt.Errorf("DNS resolution failed for %s: %w", host, err)

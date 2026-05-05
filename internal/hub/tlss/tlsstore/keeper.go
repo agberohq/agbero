@@ -38,6 +38,11 @@ func (s *KeeperStore) Save(issuer, domain string, certPEM, keyPEM []byte) error 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Reject traversal attempts before they reach the Keeper key namespace.
+	if strings.Contains(domain, "..") || strings.ContainsAny(domain, "/\\") {
+		return errors.Newf("tlsstore: domain %q contains illegal path characters", domain)
+	}
+
 	// Validate issuer
 	validIssuers := map[string]bool{
 		IssuerCustom: true,

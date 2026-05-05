@@ -32,8 +32,10 @@ func NewTestConfig(t *testing.T) resource.Proxy {
 			Idle:  expect.Duration(120 * time.Second),
 		},
 		Security: alaye.Security{
-			Enabled:        expect.Inactive,
-			TrustedProxies: []string{},
+			Enabled: expect.Inactive,
+			Allow: alaye.Allow{
+				Proxies: []string{},
+			},
 		},
 		RateLimits: alaye.RateGlobal{
 			Enabled:    expect.Inactive,
@@ -67,7 +69,7 @@ func NewTestConfig(t *testing.T) resource.Proxy {
 	return resource.Proxy{
 		Global:   global,
 		Host:     host,
-		IPMgr:    zulu.NewIPManager(global.Security.TrustedProxies),
+		IPMgr:    zulu.NewIPManager(global.Security.Allow.Proxies),
 		CookMgr:  cm,
 		Resource: res,
 	}

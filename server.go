@@ -225,6 +225,20 @@ func (s *Server) Start(configPath string) error {
 				}
 
 				if r.Serverless.Git.Enabled.Active() {
+					if !s.global.Security.Allow.ServerlessGit {
+						return fmt.Errorf(
+							"serverless git is disabled by default due to RCE risk: "+
+								"a compromised repository grants arbitrary code execution on this host. "+
+								"Set 'serverless_git = true' in your  allow security block to opt in. "+
+								"Offending git id: %q",
+							r.Serverless.Git.ID,
+						)
+					}
+					s.logger.Warn(
+						"\u26a0\ufe0f  SECURITY WARNING: serverless git is enabled. " +
+							"A compromised repository is equivalent to remote code execution on this host. " +
+							"Ensure all wired repositories are trusted and access-controlled.",
+					)
 					s.registerGitConfig(r.Serverless.Git, seenGitConfigs)
 				}
 			}
@@ -238,7 +252,7 @@ func (s *Server) Start(configPath string) error {
 		WorkDir:         s.global.Storage.WorkDir,
 		CookMgr:         s.cookManager,
 		GlobalEnv:       s.global.Env,
-		AllowedCommands: s.global.Security.AllowedCommands,
+		AllowedCommands: s.global.Security.Allow.Commands,
 		DropPrivileges:  !s.global.Development,
 	})
 
@@ -326,7 +340,7 @@ func (s *Server) Start(configPath string) error {
 
 	var trustedProxies []string
 	if s.global.Security.Enabled.Active() {
-		trustedProxies = s.global.Security.TrustedProxies
+		trustedProxies = s.global.Security.Allow.Proxies
 	}
 	ipMgr := zulu.NewIPManager(trustedProxies)
 
@@ -458,7 +472,7 @@ func (s *Server) Reload() {
 
 	var trustedProxies []string
 	if global.Security.Enabled.Active() {
-		trustedProxies = global.Security.TrustedProxies
+		trustedProxies = global.Security.Allow.Proxies
 	}
 	ipMgr := zulu.NewIPManager(trustedProxies)
 
@@ -485,9 +499,7 @@ func (s *Server) Reload() {
 	oldTrafficManagerForFirewall := s.trafficManager
 	s.mu.RUnlock()
 
-	if oldTrafficManagerForFirewall != nil {
-		oldTrafficManagerForFirewall.CloseFirewall()
-	}
+	_ = oldTrafficManagerForFirewall // closed after listener drain; see cleanup goroutine below
 
 	newTM, err := handlers.NewManager(tmCfg)
 	if err != nil {
@@ -571,8 +583,14 @@ func (s *Server) Reload() {
 					s.registerGitConfig(r.Web.Git, seenGitConfigs)
 				}
 				if r.Serverless.Git.Enabled.Active() {
-					validGitIDs[r.Serverless.Git.ID] = true
-					s.registerGitConfig(r.Serverless.Git, seenGitConfigs)
+					if !s.global.Security.Allow.ServerlessGit {
+						s.logger.Fields("git_id", r.Serverless.Git.ID).Error(
+							"serverless git route ignored: serverless_git is not set in security block",
+						)
+					} else {
+						validGitIDs[r.Serverless.Git.ID] = true
+						s.registerGitConfig(r.Serverless.Git, seenGitConfigs)
+					}
 				}
 			}
 		}
@@ -606,6 +624,14 @@ func (s *Server) Reload() {
 			}(l)
 		}
 		wg.Wait()
+
+		// Close the old firewall database only after all old listeners have
+		// stopped. Moving CloseFirewall() to here (from before NewManager)
+		// closes the race window where in-flight requests on the old listeners
+		// could hit a closed bbolt database and panic with "database not open".
+		if oldTrafficManagerForFirewall != nil {
+			oldTrafficManagerForFirewall.CloseFirewall()
+		}
 
 		oldTLSManager.Close()
 

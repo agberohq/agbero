@@ -379,3 +379,54 @@ func TestHostHandler_ProtectedHost(t *testing.T) {
 		t.Errorf("expected 403 for protected host, got %d", w.Code)
 	}
 }
+
+func TestHostHandler_Create_PathTraversal(t *testing.T) {
+	_, hostsDir, shared, cleanup := setupTestHost(t)
+	defer cleanup()
+
+	r := chi.NewRouter()
+	HostHandler(shared, r)
+
+	// Record initial state of hosts directory
+	initialFiles := make(map[string]bool)
+	filepath.Walk(hostsDir.Path(), func(path string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			initialFiles[path] = true
+		}
+		return nil
+	})
+
+	// Craft a payload that attempts path traversal
+	payload := fmt.Sprintf(`{
+		"domain": "pwned.com",
+		"config": {
+			"source_file": "../../../../etc/cron.d/agbero_hack",
+			"domains": ["pwned.com"],
+			"routes": []
+		}
+	}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/discovery", bytes.NewReader([]byte(payload)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// The bug: this should return an error, but it currently succeeds
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for path traversal attempt, got %d - path traversal vulnerability exists!", w.Code)
+	}
+
+	// Check if new files appeared outside hosts directory
+	newFilesOutside := false
+	filepath.Walk(hostsDir.Path(), func(path string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() && !initialFiles[path] {
+			t.Logf("New file created: %s", path)
+			newFilesOutside = true
+		}
+		return nil
+	})
+
+	if newFilesOutside {
+		t.Error("Path traversal may have created files outside expected locations")
+	}
+}

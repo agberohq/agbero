@@ -48,7 +48,7 @@ func NewEphemeralGlobal(port int, https bool) *alaye.Global {
 
 type Static struct {
 	Domain   string
-	Target   alaye.Address
+	Target   expect.Address
 	IsProxy  bool
 	Markdown bool
 	SPA      bool

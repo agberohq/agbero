@@ -14,7 +14,6 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
-	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/ll/lx"
 )
@@ -43,7 +42,16 @@ func (p *Process) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) er
 		return fmt.Errorf("empty command")
 	}
 
-	cmdName := filepath.Base(p.Config.Command[0])
+	// Reject any command that contains a path separator. filepath.Base would
+	// silently strip it, allowing a tenant to execute ./malicious-binary while
+	// the allowlist check passes against the bare name. Bare names only — the
+	// OS will resolve them safely via $PATH.
+	if strings.ContainsRune(p.Config.Command[0], filepath.Separator) {
+		p.Logger.Fields("command", p.Config.Command[0], "worker", p.Config.Name).Error("path separator in command is not allowed")
+		return fmt.Errorf("command not allowed: path separators are forbidden in command name")
+	}
+
+	cmdName := p.Config.Command[0]
 	if !p.isAllowed(cmdName) {
 		p.Logger.Fields("command", cmdName, "worker", p.Config.Name).Error("command not in allowlist")
 		return fmt.Errorf("command not allowed: %s", cmdName)
@@ -53,11 +61,11 @@ func (p *Process) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) er
 		return fmt.Errorf("create workdir: %w", err)
 	}
 
-	env, err := buildEnvironment(p.Config.Env, p.Logger)
-	if err != nil {
-		return fmt.Errorf("build environment: %w", err)
-	}
+	cmd := exec.CommandContext(ctx, p.Config.Command[0], p.Config.Command[1:]...)
+	cmd.Dir = p.Dir
+	cmd.Env = p.Env
 
+	var err error
 	var limits *jobLimits
 	if runtime.GOOS == "windows" {
 		limits, err = setupProcessGroup(nil, false)
@@ -65,10 +73,6 @@ func (p *Process) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) er
 			return err
 		}
 	}
-
-	cmd := exec.CommandContext(ctx, p.Config.Command[0], p.Config.Command[1:]...)
-	cmd.Dir = p.Dir
-	cmd.Env = env
 
 	if stdin != nil {
 		cmd.Stdin = stdin
@@ -143,38 +147,6 @@ func (p *Process) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) er
 // Manager always sets it).
 func (p *Process) isAllowed(cmdName string) bool {
 	return p.AllowedCommands[cmdName]
-}
-
-// environment helpers
-
-func buildEnvironment(envMap map[string]expect.Value, logger *ll.Logger) ([]string, error) {
-	base := os.Environ()
-	result := make([]string, 0, len(base)+len(envMap))
-
-	for _, e := range base {
-		parts := strings.SplitN(e, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		if isValidEnvName(parts[0]) {
-			result = append(result, e)
-		}
-	}
-
-	for k, v := range envMap {
-		if !isValidEnvName(k) {
-			logger.Fields("name", k).Warn("invalid env var name, skipping")
-			continue
-		}
-		val := strings.ReplaceAll(v.String(), "\x00", "")
-		if strings.Contains(val, "\n") || strings.Contains(val, "\r") {
-			logger.Fields("name", k).Warn("env var contains newlines, skipping")
-			continue
-		}
-		result = append(result, fmt.Sprintf("%s=%s", k, val))
-	}
-
-	return result, nil
 }
 
 func isValidEnvName(name string) bool {

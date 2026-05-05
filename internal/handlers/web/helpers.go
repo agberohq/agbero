@@ -1,60 +1,18 @@
 package web
 
 import (
+	"fmt"
 	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/pkg/raw/afs"
 	"github.com/agberohq/agbero/internal/pkg/raw/ahash"
-)
-
-const (
-	baseDecimalFormat = 10
-	hexDecimalFormat  = 16
-)
-
-func init() {
-	types := map[string]string{
-		".html":        "text/html; charset=utf-8",
-		".css":         "text/css; charset=utf-8",
-		".js":          "application/javascript; charset=utf-8",
-		".json":        "application/json; charset=utf-8",
-		".xml":         "text/xml; charset=utf-8",
-		".svg":         "image/svg+xml",
-		".txt":         "text/plain; charset=utf-8",
-		".png":         "image/png",
-		".jpg":         "image/jpeg",
-		".jpeg":        "image/jpeg",
-		".gif":         "image/gif",
-		".webp":        "image/webp",
-		".ico":         "image/x-icon",
-		".woff2":       "font/woff2",
-		".wasm":        "application/wasm",
-		".md":          "text/markdown",
-		".mjs":         "text/javascript; charset=utf-8",
-		".webmanifest": "application/manifest+json",
-		".pdf":         "application/pdf",
-		".csv":         "text/csv; charset=utf-8",
-		".avif":        "image/avif",
-		".mp4":         "video/mp4",
-		".mp3":         "audio/mpeg",
-		".woff":        "font/woff",
-		".zip":         "application/zip",
-	}
-
-	for ext, mimeType := range types {
-		_ = mime.AddExtensionType(ext, mimeType)
-	}
-}
-
-var (
-	mimeCache sync.Map
 )
 
 // getMimeType determines the appropriate Content-Type for requested assets safely.
@@ -93,6 +51,11 @@ func ifNoneMatchHas(inm string, etag string) bool {
 		}
 	}
 	return false
+}
+
+// isHTMLMIME reports whether mt is an HTML content type.
+func isHTMLMIME(mt string) bool {
+	return mt == "text/html" || mt == "text/html; charset=utf-8"
 }
 
 // isCompressibleMIME reports whether the MIME type benefits from on-the-fly gzip processing.
@@ -134,4 +97,31 @@ func weakETag(path string, size int64, modTime time.Time) string {
 // Constrains goldmark execution preventing unnecessary load against foreign inputs.
 func isMarkdownPath(path string) bool {
 	return markdownExts[strings.ToLower(filepath.Ext(path))]
+}
+
+// isSafeRedirectPath rejects protocol-relative URLs and any path containing
+// CR/LF characters that could be used for response splitting.
+func isSafeRedirectPath(p string) bool {
+	if strings.HasPrefix(p, "//") {
+		return false
+	}
+	if strings.ContainsAny(p, "\r\n") {
+		return false
+	}
+	return true
+}
+
+// formatContentDisposition returns a properly quoted and escaped
+// Content-Disposition header value per RFC 6266.
+func formatContentDisposition(filename string) string {
+	escaped := strings.ReplaceAll(filename, `"`, `\"`)
+	return fmt.Sprintf(`attachment; filename="%s"`, escaped)
+}
+
+// sanitizePHPHeaders removes dangerous CGI/FastCGI headers from the incoming
+// request before forwarding to PHP-FPM. Delegates to def.SanitizeFastCGIHeaders
+// which is the single authoritative implementation shared with the generic
+// FastCGI backend in xhttp/backend.go.
+func sanitizePHPHeaders(r *http.Request) http.Header {
+	return woos.SanitizeFastCGIHeaders(r)
 }

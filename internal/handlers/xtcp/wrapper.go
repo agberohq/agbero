@@ -9,13 +9,17 @@ import (
 )
 
 // peekedConn wraps a net.Conn to prepend a peek buffer for SNI inspection.
-// It implements io.ReaderFrom to re-enable Linux splice/sendfile zero-copy
-// once the peek buffer is drained, avoiding Kernel -> User -> Kernel copies.
+// It implements io.WriterTo and io.ReaderFrom to re-enable Linux splice/sendfile
+// zero-copy once the peek buffer is drained, avoiding Kernel→User→Kernel copies.
+//
+// Safety: peekedConn is NOT goroutine-safe. pipe() ensures it is used as the
+// source in exactly one goroutine by giving the destination goroutine a separate
+// deadlineConn wrapping the raw underlying conn (see pipe()).
 type peekedConn struct {
 	net.Conn
-	peek []byte // remaining peek data (nil once drained)
-	pos  int    // current position in peek
-	done bool   // true when peek is exhausted, allows zero-copy path
+	peek []byte
+	pos  int
+	done bool
 }
 
 // newPeekedConn creates a peekedConn that serves 'peek' first, then c.
@@ -40,7 +44,7 @@ func (c *peekedConn) Read(p []byte) (int, error) {
 
 	if c.pos >= len(c.peek) {
 		c.done = true
-		c.peek = nil // allow GC
+		c.peek = nil
 	}
 
 	if n > 0 {
@@ -54,7 +58,6 @@ func (c *peekedConn) Read(p []byte) (int, error) {
 // Once the peek buffer is drained, delegates to underlying conn's ReadFrom
 // (e.g., *net.TCPConn uses splice(2) on Linux).
 func (c *peekedConn) ReadFrom(r io.Reader) (int64, error) {
-	// If peek buffer still has data, drain it first to maintain order.
 	if !c.done {
 		peekReader := bytes.NewReader(c.peek[c.pos:])
 		n, err := io.Copy(c.Conn, peekReader)
@@ -64,7 +67,6 @@ func (c *peekedConn) ReadFrom(r io.Reader) (int64, error) {
 		c.done = true
 		c.peek = nil
 
-		// Continue with remaining data from r using zero-copy if available.
 		var m int64
 		if rf, ok := c.Conn.(io.ReaderFrom); ok {
 			m, err = rf.ReadFrom(r)
@@ -74,7 +76,6 @@ func (c *peekedConn) ReadFrom(r io.Reader) (int64, error) {
 		return n + m, err
 	}
 
-	// Peek exhausted: delegate to underlying conn for zero-copy.
 	if rf, ok := c.Conn.(io.ReaderFrom); ok {
 		return rf.ReadFrom(r)
 	}
@@ -82,7 +83,7 @@ func (c *peekedConn) ReadFrom(r io.Reader) (int64, error) {
 	return io.Copy(c.Conn, r)
 }
 
-// WriteTo implements io.WriterTo for zero-copy in the reverse direction.
+// WriteTo implements io.WriterTo for zero-copy in the source direction.
 func (c *peekedConn) WriteTo(w io.Writer) (int64, error) {
 	var total int64
 
@@ -112,6 +113,9 @@ type deadlineConn struct {
 }
 
 func (c *deadlineConn) Read(b []byte) (int, error) {
+	if c.timeout > 0 {
+		_ = c.SetReadDeadline(time.Now().Add(c.timeout))
+	}
 	c.lastActivity.Store(time.Now().UnixNano())
 	return c.Conn.Read(b)
 }
@@ -120,7 +124,34 @@ func (c *deadlineConn) Write(b []byte) (int, error) {
 	if c.timeout > 0 {
 		_ = c.SetWriteDeadline(time.Now().Add(c.timeout))
 	}
+	c.lastActivity.Store(time.Now().UnixNano())
 	return c.Conn.Write(b)
+}
+
+// ReadFrom implements io.ReaderFrom so that io.CopyBuffer's dst type assertion
+// succeeds, enabling splice/sendfile zero-copy when writing to this conn.
+func (c *deadlineConn) ReadFrom(r io.Reader) (int64, error) {
+	if c.timeout > 0 {
+		_ = c.SetWriteDeadline(time.Now().Add(c.timeout))
+	}
+	c.lastActivity.Store(time.Now().UnixNano())
+	if rf, ok := c.Conn.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(c.Conn, r)
+}
+
+// WriteTo implements io.WriterTo so that io.CopyBuffer's src type assertion
+// succeeds, enabling splice/sendfile zero-copy when reading from this conn.
+func (c *deadlineConn) WriteTo(w io.Writer) (int64, error) {
+	if c.timeout > 0 {
+		_ = c.SetReadDeadline(time.Now().Add(c.timeout))
+	}
+	c.lastActivity.Store(time.Now().UnixNano())
+	if wt, ok := c.Conn.(io.WriterTo); ok {
+		return wt.WriteTo(w)
+	}
+	return io.Copy(w, c.Conn)
 }
 
 func closeWrite(c net.Conn) {

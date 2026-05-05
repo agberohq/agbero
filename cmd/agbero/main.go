@@ -277,6 +277,7 @@ func main() {
 	cmdRun := flaggy.NewSubcommand("run")
 	cmdRun.Description = "Run agbero using the discovered config"
 	cmdRun.Bool(&cfg.DevMode, "d", "dev", "Enable development mode")
+	cmdRun.Bool(&cfg.Silent, "", "silent", "Disable interactive prompts — fail if keeper is locked (useful for scripts and CI with a TTY)")
 
 	cmdCluster := flaggy.NewSubcommand("cluster")
 	cmdCluster.Description = "Manage cluster membership"
@@ -367,7 +368,8 @@ func main() {
 			return
 		}
 		if cmdSystemRestore.Used {
-			hel.System().Restore(cfg.SystemIn, cfg.SystemPass, cfg.SystemForce, cfg.SystemYes)
+			resolvedPath, _ := helper.ResolveConfigPath(logger, cfg.ConfigPath)
+			hel.System().Restore(cfg.SystemIn, resolvedPath, cfg.SystemPass, cfg.SystemForce, cfg.SystemYes)
 			return
 		}
 		if cmdSystemUpdate.Used {
@@ -488,17 +490,24 @@ func main() {
 		}
 
 		// isInteractive controls whether secrets.Open() may prompt via /dev/tty.
-		// We must suppress it whenever a passphrase is already available — either
-		// from the AGBERO_PASSPHRASE environment variable or from the keeper.passphrase
-		// field in the HCL config — because subprocess invocations (e.g. cluster.go
-		// calling "agbero secret key init") have no TTY and the prompt blocks/fails.
 		//
-		// Original: isInteractive := !cmdRun.Used || ctx.Interactive
-		// That made isInteractive always true for non-run commands, causing every
-		// non-run subcommand (keeper set/get, secret key init, etc.) to attempt a
-		// TTY prompt even when AGBERO_PASSPHRASE was set.
-		passphraseAvailable := os.Getenv("AGBERO_PASSPHRASE") != "" || global.Security.Keeper.Passphrase != ""
-		isInteractive := !passphraseAvailable && (!cmdRun.Used || ctx.Interactive)
+		// Prompt when ALL of:
+		//   - no passphrase is already available (env or config)
+		//   - stdin is a real TTY (ctx.Interactive) — i.e. not a service, pipe, or CI
+		//   - --silent was not passed (explicit opt-out for scripts that have a TTY)
+		//
+		// This means `agbero run` in a terminal prompts the developer automatically.
+		// `agbero run` as a system service has no TTY so ctx.Interactive is false
+		// and the fatal below fires with a clear message.
+		// Subprocess invocations (cluster.go calling "agbero secret key init") also
+		// have no TTY so they are unaffected.
+		// passphraseAvailable must use the resolved value — not the raw config
+		// string. keeper.passphrase may be a reference like "env.AGBERO_KEEPER_PASSPHRASE"
+		// which is non-empty as a string but resolves to "" when the env var is unset.
+		// Using the raw string causes isInteractive=false even when no real passphrase
+		// exists, suppressing the prompt the user needs.
+		passphraseAvailable := secrets.PassphraseAvailable(&global.Security.Keeper)
+		isInteractive := !passphraseAvailable && ctx.Interactive && !cfg.Silent
 
 		store, storeErr := secrets.Open(secrets.Config{
 			DataDir:         dataDir,
@@ -507,13 +516,14 @@ func main() {
 			Interactive:     isInteractive,
 			DisableAutoLock: cmdRun.Used,
 		})
+
 		if storeErr != nil {
 			logger.Fatal("failed to open keeper: ", storeErr)
 		}
 
 		if cmdRun.Used && store.IsLocked() {
 			store.Close()
-			logger.Fatal("keeper is locked. Set AGBERO_PASSPHRASE environment variable, configure keeper.passphrase in agbero.hcl, or run interactively to be prompted")
+			logger.Fatal("keeper is locked. Set AGBERO_PASSPHRASE environment variable or configure keeper.passphrase in agbero.hcl")
 		}
 
 		// Register in both the keeper library's own global and agbero's secrets

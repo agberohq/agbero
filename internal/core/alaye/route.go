@@ -41,6 +41,7 @@ type Route struct {
 	Wasm        Wasm          `hcl:"wasm,block,omitempty" json:"wasm,omitempty"`
 	RateLimit   RateRoute     `hcl:"rate_limit,block,omitempty" json:"rate_limit,omitempty"`
 	Firewall    FirewallRoute `hcl:"firewall,block,omitempty" json:"firewall,omitempty"`
+	WAF         WAFRoute      `hcl:"waf,block,omitempty" json:"waf,omitempty"`
 	Compression Compression   `hcl:"compression,block,omitempty" json:"compression,omitempty"`
 	Fallback    Fallback      `hcl:"fallback,block,omitempty" json:"fallback,omitempty"`
 }
@@ -275,7 +276,6 @@ func (r *Route) Key() string {
 		w.WriteString(r.OAuth.ClientID)
 	}
 
-	// Check if the web block is active in any form (Root or Git)
 	if r.Web.Root.IsSet() || r.Web.Git.Enabled.Active() || r.Web.Enabled.Active() {
 		w.WriteString(r.Web.Root.String())
 
@@ -292,13 +292,16 @@ func (r *Route) Key() string {
 		if r.Web.NoCache.Active() {
 			w.WriteString("nocache")
 		}
+		if r.Web.CacheControl != "" {
+			w.WriteString("cc")
+			w.WriteString(r.Web.CacheControl)
+		}
 
 		if r.Web.PHP.Enabled.Active() {
 			w.WriteString("php")
 			w.WriteString(r.Web.PHP.Address)
 		}
 
-		// Add Git configurations to the cache hash
 		if r.Web.Git.Enabled.Active() {
 			w.WriteString("git")
 			w.WriteString(r.Web.Git.ID)
@@ -309,7 +312,6 @@ func (r *Route) Key() string {
 			w.WriteString(r.Web.Git.Interval.String())
 		}
 
-		// Add Markdown configurations to the cache hash
 		if r.Web.Markdown.Enabled.Active() {
 			w.WriteString("md")
 			w.WriteString(r.Web.Markdown.View)
@@ -368,6 +370,20 @@ func (r *Route) Key() string {
 		}
 		for _, rule := range r.Firewall.Rules {
 			w.WriteString(rule.Name)
+		}
+	}
+
+	// WAF route contribution — mirrors the Firewall block above
+	if r.WAF.Status.Active() {
+		w.WriteString("waf_on")
+		if r.WAF.IgnoreGlobal {
+			w.WriteString("ig")
+		}
+		if r.WAF.Mode != "" {
+			w.WriteString(r.WAF.Mode)
+		}
+		for _, d := range r.WAF.Directives {
+			w.WriteString(d)
 		}
 	}
 

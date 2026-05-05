@@ -51,8 +51,21 @@ func (s *MemoryStore) Set(key string, entry *Entry, ttl time.Duration) {
 	if ttl <= 0 {
 		return
 	}
+
+	// entry.TTL records the real cache TTL so IsStale() can evaluate expiry.
+	entry.TTL = ttl
+
+	// mappo evicts at StoreTTL deadline. To support stale-while-revalidate,
+	// keep the entry alive in mappo for TTL + stale window so it can still be
+	// retrieved and served as STALE. Without the stale extension mappo evicts
+	// the entry before the stale request arrives and the entry is unfindable.
+	evictAfter := ttl
+	if s.policy != nil && s.policy.IsStaleWhileRevalidate() {
+		evictAfter = ttl + s.policy.StaleWindow()
+	}
+
 	item := &mappo.Item{Value: entry}
-	s.cache.StoreTTL(key, item, ttl)
+	s.cache.StoreTTL(key, item, evictAfter)
 }
 
 func (s *MemoryStore) SetWithPolicy(key string, entry *Entry, policy *alaye.TTLPolicy, defaultTTL time.Duration) {
@@ -70,9 +83,7 @@ func (s *MemoryStore) SetWithPolicy(key string, entry *Entry, policy *alaye.TTLP
 	if ttl <= 0 {
 		return
 	}
-
-	item := &mappo.Item{Value: entry}
-	s.cache.StoreTTL(key, item, ttl)
+	s.Set(key, entry, ttl)
 }
 
 func (s *MemoryStore) Delete(key string) {
@@ -88,18 +99,45 @@ func (s *MemoryStore) Close() error {
 	return s.cache.Close()
 }
 
-// Key generates a cache key from request with optional scope support
+// PurgeByTag removes all entries whose SurrogateTags contain the given tag.
+func (s *MemoryStore) Purge(tag string) error {
+	var toDelete []string
+	s.cache.Range(func(key string, item *mappo.Item) bool {
+		entry, valid := mappo.GetTyped[*Entry](item)
+		if valid && entry.HasTag(tag) {
+			toDelete = append(toDelete, key)
+		}
+		return true
+	})
+	for _, k := range toDelete {
+		s.cache.Delete(k)
+	}
+	return nil
+}
+
+// Key builds a cache key from the request, incorporating standard Vary headers
+// and any additional scope specifiers.
+//
+// Every field is followed by a "|" delimiter to prevent boundary-shifting
+// collisions (e.g. Path="/api/useri" Query="d=123" must not hash identically
+// to Path="/api/user" Query="id=123").
 func Key(r *http.Request, scope []string) string {
 	h := xxhash.New()
 	h.WriteString(r.Host)
+	h.WriteString("|")
 	h.WriteString(r.Method)
+	h.WriteString("|")
 	h.WriteString(r.URL.Path)
+	h.WriteString("|")
 	h.WriteString(r.URL.RawQuery)
+	h.WriteString("|")
 
 	for _, header := range []string{"Accept-Language", "Accept-Encoding", "Accept"} {
 		if v := r.Header.Get(header); v != "" {
 			h.WriteString(header)
+			h.WriteString("|")
 			h.WriteString(v)
+			h.WriteString("|")
 		}
 	}
 
@@ -109,40 +147,56 @@ func Key(r *http.Request, scope []string) string {
 			header := strings.TrimPrefix(s, "header:")
 			if v := r.Header.Get(header); v != "" {
 				h.WriteString(header)
+				h.WriteString("|")
 				h.WriteString(v)
+				h.WriteString("|")
 			}
 		case s == "auth":
 			if authID := r.Context().Value("auth_id"); authID != nil {
 				if id, ok := authID.(string); ok {
 					h.WriteString("auth")
+					h.WriteString("|")
 					h.WriteString(id)
+					h.WriteString("|")
 				}
 			}
-			// "query" case is intentionally omitted - RawQuery already includes it
 		}
 	}
 
 	return strconv.FormatUint(h.Sum64(), 36)
 }
 
+// KeyWithCustomHeaders builds a cache key including arbitrary request headers,
+// useful for CDN Vary expansion (e.g. CF-IPCountry, X-Tenant).
+//
+// Every field is followed by a "|" delimiter to prevent boundary-shifting
+// collisions. See Key() for the full rationale.
 func KeyWithCustomHeaders(r *http.Request, scope []string, additionalHeaders []string) string {
 	h := xxhash.New()
 	h.WriteString(r.Host)
+	h.WriteString("|")
 	h.WriteString(r.Method)
+	h.WriteString("|")
 	h.WriteString(r.URL.Path)
+	h.WriteString("|")
 	h.WriteString(r.URL.RawQuery)
+	h.WriteString("|")
 
 	for _, header := range []string{"Accept-Language", "Accept-Encoding", "Accept"} {
 		if v := r.Header.Get(header); v != "" {
 			h.WriteString(header)
+			h.WriteString("|")
 			h.WriteString(v)
+			h.WriteString("|")
 		}
 	}
 
 	for _, header := range additionalHeaders {
 		if v := r.Header.Get(header); v != "" {
 			h.WriteString(header)
+			h.WriteString("|")
 			h.WriteString(v)
+			h.WriteString("|")
 		}
 	}
 
@@ -152,13 +206,17 @@ func KeyWithCustomHeaders(r *http.Request, scope []string, additionalHeaders []s
 			header := strings.TrimPrefix(s, "header:")
 			if v := r.Header.Get(header); v != "" {
 				h.WriteString(header)
+				h.WriteString("|")
 				h.WriteString(v)
+				h.WriteString("|")
 			}
 		case s == "auth":
 			if authID := r.Context().Value("auth_id"); authID != nil {
 				if id, ok := authID.(string); ok {
 					h.WriteString("auth")
+					h.WriteString("|")
 					h.WriteString(id)
+					h.WriteString("|")
 				}
 			}
 		}

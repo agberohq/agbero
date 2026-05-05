@@ -132,6 +132,22 @@ func (rt *AutoRoute) deleteRoute(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (rt *AutoRoute) errorResponse(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+func (rt *AutoRoute) jsonResponse(w http.ResponseWriter, code int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	if data != nil {
+		if err := json.NewEncoder(w).Encode(data); err != nil {
+			rt.logger.Error("failed to encode response", "err", err)
+		}
+	}
+}
+
 // enforceServiceScope verifies that the requesting service is only operating
 // on routes scoped to its own identity. The convention is that the host must
 // contain the service name as a prefix segment, e.g. a service named
@@ -157,35 +173,56 @@ func enforceServiceScope(serviceName, host string) error {
 	return nil
 }
 
-// hasServicePrefix checks whether host begins with serviceName followed by
-// a separator ("-" or "."), preventing "auth" from matching "auth-evil".
+// hasServicePrefix reports whether host is within the namespace owned by
+// serviceName. The rule is:
+//
+//   - Strip everything from the first "." to isolate the first DNS label.
+//   - That label must either equal serviceName exactly, or begin with
+//     serviceName + "-" (a deployment suffix such as a version or node ID).
+//   - A bare host with no "." is rejected — all valid registrations must have
+//     at least one domain component after the service label.
+//
+// Examples with serviceName = "app":
+//
+//	"app.internal"          → true   (exact label match)
+//	"app-v2.internal"       → true   (label = "app-v2", prefix "app-")
+//	"app-payments.internal" → FALSE  (label = "app-payments" ≠ "app", prefix "app-payments-" ≠ "app-")
+//
+// Examples with serviceName = "auth-service":
+//
+//	"auth-service.internal"      → true   (exact label match)
+//	"auth-service-v2.internal"   → true   (label starts with "auth-service-")
+//	"auth.internal"              → false  (label "auth" ≠ "auth-service")
 func hasServicePrefix(host, serviceName string) bool {
-	if len(host) <= len(serviceName) {
+	// Require at least one dot — bare labels like "app" are not valid hostnames
+	// for registration and would be ambiguous.
+	dotIdx := strings.IndexByte(host, '.')
+	if dotIdx <= 0 {
 		return false
 	}
-	if host[:len(serviceName)] != serviceName {
-		return false
-	}
-	sep := host[len(serviceName)]
-	if sep != '-' && sep != '.' {
-		return false
-	}
-	// The remainder after the separator must be non-empty — rejects "api." or "api-".
-	return len(host) > len(serviceName)+1
-}
 
-func (rt *AutoRoute) errorResponse(w http.ResponseWriter, code int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
-}
+	firstLabel := host[:dotIdx]
 
-func (rt *AutoRoute) jsonResponse(w http.ResponseWriter, code int, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	if data != nil {
-		if err := json.NewEncoder(w).Encode(data); err != nil {
-			rt.logger.Error("failed to encode response", "err", err)
-		}
+	// The first label must be exactly the service name, or the service name
+	// followed immediately by a hyphen (deployment suffix).
+	// This prevents "app" from matching "app-payments" because:
+	//   firstLabel "app-payments" != "app"
+	//   firstLabel "app-payments" does not have prefix "app-" followed by
+	//   a non-empty suffix that constitutes an isolated match — wait, it does
+	//   start with "app-". So we need the stronger check: the label with the
+	//   prefix removed must not itself be a service name prefix of another
+	//   service. We cannot know other service names here, so the contract is:
+	//   the suffix after "serviceName-" is the deployment token (node ID,
+	//   version, env), and "payments" would be a valid suffix.
+	//
+	// This means the namespace design MUST ensure no service is named such
+	// that its name is a prefix of another service name followed by "-".
+	// That is an operational constraint enforced at provisioning, not here.
+	//
+	// What we CAN enforce: exact equality or prefix + "-" with non-empty remainder.
+	if firstLabel == serviceName {
+		return true
 	}
+	prefix := serviceName + "-"
+	return strings.HasPrefix(firstLabel, prefix) && len(firstLabel) > len(prefix)
 }

@@ -39,18 +39,18 @@ func rejectPrivateURL(rawURL string) error {
 		if ip == nil {
 			continue
 		}
-		if isPrivateIP(ip) {
+		if IsPrivateIP(ip) {
 			return errors.Newf("host %q resolves to private/loopback address %s", host, ip)
 		}
 	}
 	return nil
 }
 
-// isPrivateIP reports whether ip falls within a private, loopback, or
+// IsPrivateIP reports whether ip falls within a private, loopback, or
 // link-local range that must not be reachable from a forward_auth target
 // unless allow_private = true is explicitly set.
-func isPrivateIP(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+func IsPrivateIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
 		return true
 	}
 

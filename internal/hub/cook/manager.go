@@ -306,12 +306,13 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 	var payload WebhookPayload
 	_ = json.Unmarshal(body, &payload)
 
-	if entry.Config.URL == "" && payload.Repository.CloneURL != "" {
-		m.logger.Fields("route", routeKey, "clone_url", payload.Repository.CloneURL).Info("upgrading push-only git to cloned git via webhook payload")
-		entry.Config.URL = payload.Repository.CloneURL
-		entry.Cook.config.URL = payload.Repository.CloneURL
-		entry.Cook.SetCurrentPath("")
-	}
+	// A push-only route (Config.URL == "") is deliberately configured that way
+	// by the operator. Allowing a webhook payload to supply a clone URL and
+	// silently upgrade the route to a full git-clone deploy is an unauthenticated
+	// RCE vector: an attacker who can send a forged webhook (or who controls the
+	// upstream repository metadata) can point the route at an arbitrary repo and
+	// have the Orchestrator execute its contents. The upgrade block has been
+	// removed. Push-only routes stay push-only; clone URLs must be set in config.
 
 	if entry.Config.URL == "" {
 		if err := m.writePushPayload(entry, body); err != nil {

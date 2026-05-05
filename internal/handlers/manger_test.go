@@ -228,7 +228,7 @@ func TestManager_BuildListeners_TCPProxy(t *testing.T) {
 				Name:    "test-tcp",
 				Listen:  ":9999",
 				Backends: []alaye.Server{
-					{Address: alaye.Address("tcp://127.0.0.1:6379")},
+					{Address: expect.Address("tcp://127.0.0.1:6379")},
 				},
 			},
 		},
@@ -470,8 +470,10 @@ func TestManager_handleRoute_WASM_InvalidModule(t *testing.T) {
 				ReadHeader: expect.Duration(5 * time.Second),
 			},
 			Security: alaye.Security{
-				Enabled:        expect.Inactive,
-				TrustedProxies: []string{},
+				Enabled: expect.Inactive,
+				Allow: alaye.Allow{
+					Proxies: []string{},
+				},
 			},
 			RateLimits: alaye.RateGlobal{
 				Enabled:    expect.Inactive,

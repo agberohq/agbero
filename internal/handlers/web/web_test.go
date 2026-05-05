@@ -2,7 +2,6 @@ package web
 
 import (
 	"bytes"
-	"compress/gzip"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +15,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/agberohq/agbero/internal/hub/resource"
+	"github.com/klauspost/compress/gzip"
 )
 
 // Helpers
@@ -960,6 +960,7 @@ func TestServeHTTP_Refresh_Markdown(t *testing.T) {
 		t.Error("?refresh on md: content must still be rendered")
 	}
 }
+
 func TestServeHTTP_HiddenDirBlocked(t *testing.T) {
 	root := newTestRoot(t)
 	writeFile(t, root, ".git/config", "[core]")

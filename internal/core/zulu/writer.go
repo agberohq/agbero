@@ -1,7 +1,9 @@
 package zulu
 
 import (
+	"bufio"
 	"io"
+	"net"
 	"net/http"
 )
 
@@ -40,6 +42,18 @@ func (rw *ResponseWriter) Flush() {
 	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack implements http.Hijacker so that WebSocket upgrades (and any other
+// connection-hijacking protocol) can pass through wrappers that embed
+// ResponseWriter. Without this, the type assertion in the HTTP upgrade path
+// fails silently, and all WebSocket connections are refused.
+func (rw *ResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := rw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	return h.Hijack()
 }
 
 func (rw *ResponseWriter) ReadFrom(r io.Reader) (n int64, err error) {

@@ -24,8 +24,8 @@ func sanitizeGlobalConfig(g *alaye.Global) *alaye.Global {
 	}
 
 	if clone.Security.Enabled.Active() {
-		for i := range clone.Security.TrustedProxies {
-			clone.Security.TrustedProxies[i] = "***"
+		for i := range clone.Security.Allow.Proxies {
+			clone.Security.Allow.Proxies[i] = "***"
 		}
 	}
 

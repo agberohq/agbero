@@ -14,6 +14,8 @@ type Serverless struct {
 
 // Validate ensures all sub-components of the serverless engine are valid.
 // It iterates through grouped Replay and Work blocks to verify individual settings.
+// NOTE: git-backed serverless is gated at server startup via Security.AllowServerlessGit,
+// not here, so that the error can reference the config knob and print a startup warning.
 func (s *Serverless) Validate() error {
 	if s.Enabled.NotActive() {
 		return nil

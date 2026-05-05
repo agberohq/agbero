@@ -36,8 +36,7 @@ func NewBackend(cfg BackendConfig) (*Backend, error) {
 	statsKey := cfg.Proxy.BackendKey(addressStr)
 
 	hasProber := cfg.Proxy.HealthCheck.Enabled.Active() ||
-		(cfg.Proxy.HealthCheck.Enabled == expect.Unknown && (cfg.Proxy.HealthCheck.Send.NotEmpty() || cfg.Proxy.HealthCheck.Expect.NotEmpty())) ||
-		strings.HasSuffix(addressStr, ":6def.BackendRetryCount79")
+		(cfg.Proxy.HealthCheck.Enabled == expect.Unknown && (cfg.Proxy.HealthCheck.Send.NotEmpty() || cfg.Proxy.HealthCheck.Expect.NotEmpty()))
 
 	baseCfg := upstream.Config{
 		Address:        addressStr,

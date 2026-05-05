@@ -1,84 +1,169 @@
 package bot
 
 import (
-	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/olekukonko/mappo"
+	"github.com/ua-parser/uap-go/uaparser"
 )
 
 const (
-	cacheTTLBot    = 1 * time.Hour
-	cacheTTLNotBot = 24 * time.Hour
-	maxUALength    = 200
+	defaultMaxSize  = 10000
+	targetHitRate   = 98.0 // percentage
+	growthFactor    = 1.5
+	shrinkFactor    = 0.8
+	metricsInterval = 5 * time.Minute
+	minSampleSize   = 10000
+	maxMaxSize      = 500000
+	minMaxSize      = 1000
+	cacheTTLBot     = 1 * time.Hour
+	cacheTTLNotBot  = 24 * time.Hour
 )
 
-type Checker struct {
-	cache          *mappo.Concurrent[string, bool]
-	combinedRegex  *regexp.Regexp
-	fastIndicators []string
+var (
+	parserOnce sync.Once
+	parser     *uaparser.Parser
+	parserErr  error
+)
+
+func getParser() (*uaparser.Parser, error) {
+	parserOnce.Do(func() {
+		parser, parserErr = uaparser.New()
+	})
+	return parser, parserErr
 }
 
-// NewChecker initializes a BotChecker with pre-compiled patterns and indicators.
-// All bot detection patterns are combined into a single regex for optimal performance.
-func NewChecker() *Checker {
-	patterns := []string{
-		`googlebot`, `bingbot`, `slurp`, `duckduckbot`,
-		`baiduspider`, `yandexbot`, `facebookexternalhit`,
-		`twitterbot`, `linkedinbot`, `whatsapp`,
-		`telegrambot`, `slackbot`, `discordbot`,
-		`bot`, `crawl`, `spider`, `scrape`, `scan`, `fetcher`,
+type Checker struct {
+	cache  *mappo.LRU[string, bool]
+	parser *uaparser.Parser
+
+	hits      atomic.Int64
+	misses    atomic.Int64
+	evictions atomic.Int64
+
+	currentMaxSize int
+	lastMetricsAt  time.Time
+}
+
+func NewChecker(initialMaxSize int) (*Checker, error) {
+	parser, err := getParser()
+	if err != nil {
+		return nil, err
 	}
 
-	indicators := []string{
-		"bot", "crawl", "spider", "scrape", "scan", "fetcher",
+	if initialMaxSize <= 0 {
+		initialMaxSize = defaultMaxSize
 	}
 
 	return &Checker{
-		cache:          mappo.NewConcurrent[string, bool](),
-		combinedRegex:  regexp.MustCompile(`(?i)` + strings.Join(patterns, `|`)),
-		fastIndicators: indicators,
-	}
+		cache: mappo.NewLRUWithConfig[string, bool](mappo.LRUConfig[string, bool]{
+			MaxSize: initialMaxSize,
+		}),
+		parser:         parser,
+		currentMaxSize: initialMaxSize,
+		lastMetricsAt:  time.Now(),
+	}, nil
 }
 
-// IsBot determines if a User-Agent string belongs to a bot or crawler.
-// Results are cached with TTL to minimize repeated evaluation on hot paths.
 func (b *Checker) IsBot(ua string) bool {
 	if ua == "" {
 		return false
 	}
 
-	if isBot, found := b.cache.Get(ua); found {
-		return isBot
+	val := b.cache.GetOrCompute(ua, func() (bool, time.Duration) {
+		b.misses.Add(1)
+		client := b.parser.Parse(ua)
+		family := strings.ToLower(client.UserAgent.Family)
+		uaLower := strings.ToLower(ua)
+
+		isBot := family == "googlebot" ||
+			family == "bingbot" ||
+			family == "baiduspider" ||
+			family == "yandexbot" ||
+			family == "duckduckbot" ||
+			family == "twitterbot" ||
+			family == "facebookexternalhit" ||
+			family == "linkedinbot" ||
+			family == "whatsapp" ||
+			family == "telegrambot" ||
+			family == "slackbot" ||
+			family == "discordbot" ||
+			strings.Contains(family, "bot") ||
+			strings.Contains(family, "crawler") ||
+			strings.Contains(family, "spider") ||
+			strings.Contains(uaLower, "googlebot") ||
+			strings.Contains(uaLower, "bingbot")
+
+		if isBot {
+			return true, cacheTTLBot
+		}
+		return false, cacheTTLNotBot
+	})
+
+	b.hits.Add(1)
+	b.maybeAdapt()
+	return val
+}
+
+func (b *Checker) maybeAdapt() {
+	hits := b.hits.Load()
+	misses := b.misses.Load()
+	total := hits + misses
+
+	if total < minSampleSize {
+		return
 	}
 
-	if len(ua) > maxUALength {
-		b.cache.SetTTL(ua, true, cacheTTLBot)
-		return true
-	}
+	hitRate := float64(hits) / float64(total) * 100
 
-	uaLower := strings.ToLower(ua)
-	for _, indicator := range b.fastIndicators {
-		if strings.Contains(uaLower, indicator) {
-			b.cache.SetTTL(ua, true, cacheTTLBot)
-			return true
+	if hitRate < targetHitRate {
+		newSize := int(float64(b.currentMaxSize) * growthFactor)
+		if newSize > maxMaxSize {
+			newSize = maxMaxSize
+		}
+		if newSize > b.currentMaxSize {
+			b.cache.Resize(newSize)
+			b.currentMaxSize = newSize
+		}
+	} else if hitRate >= 99.9 && b.currentMaxSize > minMaxSize {
+		// Shrink only when we're significantly over-provisioned
+		newSize := int(float64(b.currentMaxSize) * shrinkFactor)
+		if newSize < minMaxSize {
+			newSize = minMaxSize
+		}
+		if newSize < b.currentMaxSize {
+			b.cache.Resize(newSize)
+			b.currentMaxSize = newSize
 		}
 	}
 
-	if b.combinedRegex.MatchString(ua) {
-		b.cache.SetTTL(ua, true, cacheTTLBot)
-		return true
-	}
-
-	b.cache.SetTTL(ua, false, cacheTTLNotBot)
-	return false
+	// Reset counters to get a fresh window
+	b.hits.Store(0)
+	b.misses.Store(0)
 }
 
-// AddPattern extends the bot detection with a custom regex pattern.
-// Note: Runtime pattern updates are not concurrency-safe; prefer initialization at startup.
-func (b *Checker) AddPattern(pattern string) {
-	base := strings.TrimPrefix(b.combinedRegex.String(), `(?i)`)
-	updated := `(?i)` + base + `|` + regexp.QuoteMeta(pattern)
-	b.combinedRegex = regexp.MustCompile(updated)
+func (b *Checker) Stats() (hitRate float64, size int, maxSize int) {
+	hits := b.hits.Load()
+	misses := b.misses.Load()
+	total := hits + misses
+	if total > 0 {
+		hitRate = float64(hits) / float64(total) * 100
+	}
+	size = b.cache.Len()
+	maxSize = b.currentMaxSize
+	return
+}
+
+func (b *Checker) Resize(newSize int) {
+	if newSize < minMaxSize {
+		newSize = minMaxSize
+	}
+	if newSize > maxMaxSize {
+		newSize = maxMaxSize
+	}
+	b.cache.Resize(newSize)
+	b.currentMaxSize = newSize
 }

@@ -28,7 +28,7 @@ func getGzipWriter(w io.Writer, level int) *gzip.Writer {
 		gzw.Reset(w)
 		return gzw
 	}
-	// Create new writer for custom level
+
 	gzw, _ := gzip.NewWriterLevel(w, level)
 	return gzw
 }
@@ -38,7 +38,6 @@ func putGzipWriter(gzw *gzip.Writer, level int) {
 		gzw.Close()
 		gzipWriterPool.Put(gzw)
 	}
-	// Otherwise, let it be GC'd
 }
 
 var brotliWriterPool = sync.Pool{
@@ -98,10 +97,8 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 				ResponseWriter: w,
 			}
 
-			// Defer closure logic
 			defer func() {
 				if cw.bypass {
-					// If bypassed, ensure the writer doesn't flush trailers to the real response
 					if c, ok := cw.w.(*gzip.Writer); ok {
 						c.Reset(io.Discard)
 						putGzipWriter(c, level)
@@ -112,12 +109,10 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 					return
 				}
 
-				// Normal closure
 				if c, ok := cw.w.(io.Closer); ok {
 					c.Close()
 				}
 
-				// Return to pool
 				if c, ok := cw.w.(*gzip.Writer); ok {
 					putGzipWriter(c, level)
 				} else if c, ok := cw.w.(*brotli.Writer); ok {
@@ -125,12 +120,11 @@ func Compress(route *alaye.Route) func(http.Handler) http.Handler {
 				}
 			}()
 
-			// Initialize writer
 			if compType == def.CompressionBrotli {
 				brw := brotliWriterPool.Get().(*brotli.Writer)
 				brw.Reset(w)
 				cw.w = brw
-				cw.encoding = encoding // Store to set header later if not bypassed
+				cw.encoding = encoding
 			} else {
 				gzw := getGzipWriter(w, level)
 				cw.w = gzw
@@ -154,8 +148,12 @@ func (cw *compressWriter) WriteHeader(code int) {
 	if cw.header {
 		return
 	}
-	// Check if downstream already set Content-Encoding (e.g. pre-compressed file)
-	if cw.ResponseWriter.Header().Get("Content-Encoding") != "" {
+
+	// Bypass compression for responses that must not have a body
+	if cw.ResponseWriter.Header().Get("Content-Encoding") != "" ||
+		code == http.StatusNoContent ||
+		code == http.StatusNotModified ||
+		code < 200 {
 		cw.bypass = true
 	} else {
 		// Only set encoding if we are actually compressing
@@ -163,6 +161,7 @@ func (cw *compressWriter) WriteHeader(code int) {
 		// Delete Content-Length because compression changes it
 		cw.ResponseWriter.Header().Del("Content-Length")
 	}
+
 	cw.header = true
 	cw.ResponseWriter.WriteHeader(code)
 }
@@ -179,8 +178,11 @@ func (cw *compressWriter) Write(b []byte) (int, error) {
 
 func (cw *compressWriter) Flush() {
 	if !cw.bypass {
-		if f, ok := cw.w.(interface{ Flush() }); ok {
-			f.Flush()
+		// Both *gzip.Writer and *brotli.Writer implement Flush() error,
+		// not Flush(). Asserting the zero-return interface always fails,
+		// leaving the compression buffer unflushed and breaking SSE/streaming.
+		if f, ok := cw.w.(interface{ Flush() error }); ok {
+			_ = f.Flush()
 		}
 	}
 	if f, ok := cw.ResponseWriter.(http.Flusher); ok {

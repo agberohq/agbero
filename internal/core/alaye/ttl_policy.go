@@ -10,17 +10,17 @@ import (
 )
 
 type TTLPolicy struct {
-	Enabled expect.Toggle   `hcl:"enabled,attr" json:"enabled"`
-	Default expect.Duration `hcl:"default,attr" json:"default,omitempty"`
+	Enabled expect.Toggle   `hcl:"enabled,attr"  json:"enabled"`
+	Default expect.Duration `hcl:"default,attr"  json:"default,omitempty"`
 
 	// Content-aware TTL overrides (prefix match on Content-Type)
 	ContentType map[string]expect.Duration `hcl:"content_type,attr" json:"content_type,omitempty"`
+	Extension   map[string]expect.Duration `hcl:"extension,attr"    json:"extension,omitempty"`
+	KeyScope    []string                   `hcl:"key_scope,attr"    json:"key_scope,omitempty"`
 
-	// Extension-based fallbacks (e.g., .rss, .pdf)
-	Extension map[string]expect.Duration `hcl:"extension,attr" json:"extension,omitempty"`
-
-	// Cache key scoping: include query params, headers, or auth context
-	KeyScope []string `hcl:"key_scope,attr" json:"key_scope,omitempty"`
+	// CDN stale fields
+	StaleWhileRevalidate expect.Duration `hcl:"stale_while_revalidate,attr" json:"stale_while_revalidate,omitempty"`
+	StaleIfError         expect.Duration `hcl:"stale_if_error,attr"         json:"stale_if_error,omitempty"`
 }
 
 // GetTTL determines TTL based on policy and content type
@@ -32,7 +32,7 @@ func (p *TTLPolicy) GetTTL(defaultTTL time.Duration, contentType string) time.Du
 	// Check content-type specific TTL (prefix match)
 	for pattern, ttl := range p.ContentType {
 		if strings.HasPrefix(contentType, pattern) {
-			return ttl.StdDuration() // This can be 0
+			return ttl.StdDuration()
 		}
 	}
 
@@ -74,7 +74,6 @@ func (p *TTLPolicy) GetTTLWithExtension(defaultTTL time.Duration, contentType, e
 
 // ShouldCacheResponse checks if response should be cached based on policy
 func (p *TTLPolicy) ShouldCacheResponse(status int, hdr http.Header) bool {
-	// Cache 2xx and 3xx status codes (except 300, 304 is special)
 	if status < 200 || status >= 400 {
 		return false
 	}
@@ -118,7 +117,27 @@ func (p *TTLPolicy) IsEnabled() bool {
 	return p != nil && p.Enabled.Active()
 }
 
-// Validate checks that the TTL policy is valid
+// IsStaleWhileRevalidate returns true when the stale-while-revalidate window is set.
+func (p *TTLPolicy) IsStaleWhileRevalidate() bool {
+	return p != nil && p.StaleWhileRevalidate.StdDuration() > 0
+}
+
+// StaleWindow returns the stale-while-revalidate duration (0 if not set).
+func (p *TTLPolicy) StaleWindow() time.Duration {
+	if p == nil {
+		return 0
+	}
+	return p.StaleWhileRevalidate.StdDuration()
+}
+
+// ErrorWindow returns the stale-if-error duration (0 if not set).
+func (p *TTLPolicy) ErrorWindow() time.Duration {
+	if p == nil {
+		return 0
+	}
+	return p.StaleIfError.StdDuration()
+}
+
 func (p *TTLPolicy) Validate() error {
 	if p == nil || !p.Enabled.Active() {
 		return nil
@@ -134,5 +153,7 @@ func (p TTLPolicy) IsZero() bool {
 		p.Default == 0 &&
 		len(p.ContentType) == 0 &&
 		len(p.Extension) == 0 &&
-		len(p.KeyScope) == 0
+		len(p.KeyScope) == 0 &&
+		p.StaleWhileRevalidate == 0 &&
+		p.StaleIfError == 0
 }

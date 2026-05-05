@@ -85,6 +85,7 @@ func (s *RedisStore) Set(key string, entry *Entry, ttl time.Duration) {
 	if ttl <= 0 {
 		return
 	}
+	entry.TTL = ttl
 
 	data, err := s.encode(entry)
 	if err != nil {
@@ -94,7 +95,17 @@ func (s *RedisStore) Set(key string, entry *Entry, ttl time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	s.client.Set(ctx, s.prefix+key, data, ttl)
+	pipe := s.client.Pipeline()
+	pipe.Set(ctx, s.prefix+key, data, ttl)
+
+	// Index entry under each surrogate tag for efficient PurgeByTag.
+	// Tag index key: agbero:tag:<tag> → set of cache keys
+	for _, tag := range entry.SurrogateTags {
+		tagKey := s.tagIndexKey(tag)
+		pipe.SAdd(ctx, tagKey, key)
+		pipe.Expire(ctx, tagKey, ttl+time.Minute) // slightly longer than entry TTL
+	}
+	_, _ = pipe.Exec(ctx)
 }
 
 func (s *RedisStore) SetWithPolicy(key string, entry *Entry, policy *alaye.TTLPolicy, defaultTTL time.Duration) {
@@ -112,22 +123,12 @@ func (s *RedisStore) SetWithPolicy(key string, entry *Entry, policy *alaye.TTLPo
 	if ttl <= 0 {
 		return
 	}
-
-	data, err := s.encode(entry)
-	if err != nil {
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	s.client.Set(ctx, s.prefix+key, data, ttl)
+	s.Set(key, entry, ttl)
 }
 
 func (s *RedisStore) Delete(key string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
 	s.client.Del(ctx, s.prefix+key)
 }
 
@@ -148,7 +149,35 @@ func (s *RedisStore) Close() error {
 	return s.client.Close()
 }
 
-// encode and decode methods remain the same...
+// PurgeByTag removes all entries indexed under the given surrogate tag.
+// Uses the tag index maintained in Set to avoid a full SCAN.
+func (s *RedisStore) Purge(tag string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	tagKey := s.tagIndexKey(tag)
+	keys, err := s.client.SMembers(ctx, tagKey).Result()
+	if err != nil {
+		return fmt.Errorf("stash: PurgeByTag scan tag index: %w", err)
+	}
+
+	if len(keys) == 0 {
+		return nil
+	}
+
+	pipe := s.client.Pipeline()
+	for _, k := range keys {
+		pipe.Del(ctx, s.prefix+k)
+	}
+	pipe.Del(ctx, tagKey)
+	_, err = pipe.Exec(ctx)
+	return err
+}
+
+func (s *RedisStore) tagIndexKey(tag string) string {
+	return s.prefix + "tag:" + tag
+}
+
 func (s *RedisStore) encode(e *Entry) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -165,10 +194,16 @@ func (s *RedisStore) encode(e *Entry) ([]byte, error) {
 	if err := enc.Encode(e.CreatedAt); err != nil {
 		return nil, err
 	}
+	if err := enc.Encode(e.TTL); err != nil {
+		return nil, err
+	}
 	if err := enc.Encode(e.VaryHeaders); err != nil {
 		return nil, err
 	}
 	if err := enc.Encode(e.ContentType); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(e.SurrogateTags); err != nil {
 		return nil, err
 	}
 
@@ -192,10 +227,16 @@ func (s *RedisStore) decode(data []byte) (*Entry, error) {
 	if err := dec.Decode(&e.CreatedAt); err != nil {
 		return nil, err
 	}
+	if err := dec.Decode(&e.TTL); err != nil {
+		return nil, err
+	}
 	if err := dec.Decode(&e.VaryHeaders); err != nil {
 		return nil, err
 	}
 	if err := dec.Decode(&e.ContentType); err != nil {
+		return nil, err
+	}
+	if err := dec.Decode(&e.SurrogateTags); err != nil {
 		return nil, err
 	}
 

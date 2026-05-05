@@ -21,7 +21,8 @@ type Manager struct {
 	config     *alaye.Wasm
 	configJSON []byte
 
-	pool sync.Pool // Pool of reusable instances
+	pool     sync.Pool // Pool of reusable instances
+	hostOnce sync.Once // Ensures ExportHostFunctions runs exactly once per Manager
 }
 
 // NewManager initializes the WASM runtime and precompiled module
@@ -63,7 +64,9 @@ func NewManager(ctx context.Context, logger *ll.Logger, cfg *alaye.Wasm) (*Manag
 	m.pool.New = func() any {
 		modConfig := wazero.NewModuleConfig().
 			WithStdout(os.Stdout).
-			WithStderr(os.Stderr)
+			WithStderr(os.Stderr).
+			WithName("") // empty name → wazero assigns a unique anonymous name per instance,
+		// preventing "module already instantiated" errors under concurrency
 		mod, err := m.runtime.InstantiateModule(ctx, m.compiled, modConfig)
 		if err != nil {
 			m.logger.Error("failed to instantiate wasm module for pool: %v", err)
@@ -75,6 +78,11 @@ func NewManager(ctx context.Context, logger *ll.Logger, cfg *alaye.Wasm) (*Manag
 			mod: mod,
 		}
 	}
+
+	// Register the host function module ("env") exactly once per Manager.
+	// Doing this here rather than in Handler() prevents per-request compilation
+	// and lock contention inside wazero's module registry.
+	m.ExportHostFunctions()
 
 	return m, nil
 }
@@ -91,7 +99,8 @@ func (m *Manager) GetInstance(ctx context.Context) (*Instance, error) {
 		// Pool.New failed, instantiate manually
 		modConfig := wazero.NewModuleConfig().
 			WithStdout(os.Stdout).
-			WithStderr(os.Stderr)
+			WithStderr(os.Stderr).
+			WithName("") // consistent with pool.New: unique anonymous instance
 		mod, err := m.runtime.InstantiateModule(ctx, m.compiled, modConfig)
 		if err != nil {
 			return nil, err
