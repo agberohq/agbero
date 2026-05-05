@@ -1,4 +1,4 @@
-> WARNING: This project is under active development.
+> WARNING: This project is under active development. (pre-release)
 
 <p align="center">
   <img src="assets/agbero.2.png" width="300" alt="Agbero Logo">
