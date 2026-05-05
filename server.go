@@ -225,11 +225,11 @@ func (s *Server) Start(configPath string) error {
 				}
 
 				if r.Serverless.Git.Enabled.Active() {
-					if !s.global.Security.AllowServerlessGit {
+					if !s.global.Security.Allow.ServerlessGit {
 						return fmt.Errorf(
 							"serverless git is disabled by default due to RCE risk: "+
 								"a compromised repository grants arbitrary code execution on this host. "+
-								"Set 'allow_serverless_git = true' in your security block to opt in. "+
+								"Set 'serverless_git = true' in your  allow security block to opt in. "+
 								"Offending git id: %q",
 							r.Serverless.Git.ID,
 						)
@@ -252,7 +252,7 @@ func (s *Server) Start(configPath string) error {
 		WorkDir:         s.global.Storage.WorkDir,
 		CookMgr:         s.cookManager,
 		GlobalEnv:       s.global.Env,
-		AllowedCommands: s.global.Security.AllowedCommands,
+		AllowedCommands: s.global.Security.Allow.Commands,
 		DropPrivileges:  !s.global.Development,
 	})
 
@@ -340,7 +340,7 @@ func (s *Server) Start(configPath string) error {
 
 	var trustedProxies []string
 	if s.global.Security.Enabled.Active() {
-		trustedProxies = s.global.Security.TrustedProxies
+		trustedProxies = s.global.Security.Allow.Proxies
 	}
 	ipMgr := zulu.NewIPManager(trustedProxies)
 
@@ -472,7 +472,7 @@ func (s *Server) Reload() {
 
 	var trustedProxies []string
 	if global.Security.Enabled.Active() {
-		trustedProxies = global.Security.TrustedProxies
+		trustedProxies = global.Security.Allow.Proxies
 	}
 	ipMgr := zulu.NewIPManager(trustedProxies)
 
@@ -583,9 +583,9 @@ func (s *Server) Reload() {
 					s.registerGitConfig(r.Web.Git, seenGitConfigs)
 				}
 				if r.Serverless.Git.Enabled.Active() {
-					if !s.global.Security.AllowServerlessGit {
+					if !s.global.Security.Allow.ServerlessGit {
 						s.logger.Fields("git_id", r.Serverless.Git.ID).Error(
-							"serverless git route ignored: allow_serverless_git is not set in security block",
+							"serverless git route ignored: serverless_git is not set in security block",
 						)
 					} else {
 						validGitIDs[r.Serverless.Git.ID] = true

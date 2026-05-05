@@ -52,11 +52,11 @@ admin {
   # ---------------------------------------------------------
   # Uncomment and configure to enable TOTP 2FA for admin users
   totp {
-    enabled = "{TOTP_ENABLED}"
-    issuer = "agbero"
-    algorithm = "SHA1"
-    digits = 6
-    period = 30
+    enabled     = "{TOTP_ENABLED}"
+    issuer      = "agbero"
+    algorithm   = "SHA1"
+    digits      = 6
+    period      = 30
     window_size = 1
   }
 }
@@ -129,25 +129,23 @@ security {
   enabled = "on"
 
   # Trusted proxy CIDRs for X-Forwarded-For resolution
-  trusted_proxies = [
-    "127.0.0.0/8",
-    "10.0.0.0/8",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-    "::1/128"
-  ]
-
-  # Path to internal auth key for service-to-service authentication
-  # Generate: agbero key init
-  internal_auth_key = "{INTERNAL_AUTH_KEY}"
+  allow {
+    proxies = [
+      "127.0.0.0/8",
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "192.168.0.0/16",
+      "::1/128"
+    ]
+  }
 
   # ---------------------------------------------------------
   # KEEPER - ENCRYPTED SECRET STORE
   # ---------------------------------------------------------
   # Uncomment to enable the encrypted secret store for TOTP and other secrets
   keeper {
-    enabled = "{KEEPER_ENABLED}"
-    auto_lock = "30m"
+    enabled    = "{KEEPER_ENABLED}"
+    auto_lock  = "30m"
     audit = "on"
     # Master passphrase - can be env variable or prompt at runtime
     passphrase = "env.AGBERO_KEEPER_PASSPHRASE"

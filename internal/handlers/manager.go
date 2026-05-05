@@ -103,7 +103,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 		if fwConfig.Status.Active() {
 			fw, err := firewall.New(firewall.Config{
 				Firewall:       &fwConfig,
-				TrustedProxies: cfg.Global.Security.TrustedProxies,
+				TrustedProxies: cfg.Global.Security.Allow.Proxies,
 				DataDir:        cfg.Global.Storage.DataDir,
 				Logger:         cfg.Resource.Logger,
 				IPMgr:          cfg.IPMgr,

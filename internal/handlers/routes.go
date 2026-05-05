@@ -76,7 +76,7 @@ func NewRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 
 func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *Route {
 	chain := primary
-	ipMgr := zulu.NewIPManager(cfg.Global.Security.TrustedProxies)
+	ipMgr := zulu.NewIPManager(cfg.Global.Security.Allow.Proxies)
 
 	if len(route.AllowedIPs) > 0 {
 		chain = ipallow.New(route.AllowedIPs, cfg.Resource.Logger, ipMgr)(chain)

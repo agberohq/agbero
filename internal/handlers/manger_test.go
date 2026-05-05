@@ -470,8 +470,10 @@ func TestManager_handleRoute_WASM_InvalidModule(t *testing.T) {
 				ReadHeader: expect.Duration(5 * time.Second),
 			},
 			Security: alaye.Security{
-				Enabled:        expect.Inactive,
-				TrustedProxies: []string{},
+				Enabled: expect.Inactive,
+				Allow: alaye.Allow{
+					Proxies: []string{},
+				},
 			},
 			RateLimits: alaye.RateGlobal{
 				Enabled:    expect.Inactive,
