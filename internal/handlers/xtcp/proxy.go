@@ -1,6 +1,7 @@
 package xtcp
 
 import (
+	"context"
 	"encoding/binary"
 	"io"
 	"math/rand/v2"
@@ -17,6 +18,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/lb"
+	tunnelpkg "github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/olekukonko/mappo"
 	"github.com/pires/go-proxyproto"
 )
@@ -55,13 +57,13 @@ type Proxy struct {
 	closing atomic.Bool
 	connCnt atomic.Int64
 
-	res  *resource.Resource
-	quit chan struct{}
-	wg   sync.WaitGroup
+	res         *resource.Resource
+	tunnelPools map[string]*tunnelpkg.Pool
+	quit        chan struct{}
+	wg          sync.WaitGroup
 }
 
-// Initializes a new TCP proxy instance for the specified listen address
-// Configures the underlying connection maps and resource dependencies
+// NewProxy initializes a new TCP proxy instance for the specified listen address.
 func NewProxy(res *resource.Resource, listen string) *Proxy {
 	return &Proxy{
 		Listen: listen,
@@ -69,6 +71,12 @@ func NewProxy(res *resource.Resource, listen string) *Proxy {
 		res:    res,
 		quit:   make(chan struct{}),
 	}
+}
+
+// WithTunnelPools sets the named tunnel pool registry for this proxy.
+// Must be called before AddRoute or buildRoute.
+func (p *Proxy) WithTunnelPools(pools map[string]*tunnelpkg.Pool) {
+	p.tunnelPools = pools
 }
 
 // Returns the total number of currently tracked active connections
@@ -83,16 +91,18 @@ func (p *Proxy) SetIdleTimeout(timeout time.Duration) {
 	p.IdleTimeout = timeout
 }
 
-// Constructs a TCP route structure from the provided proxy configuration
-// Initializes the load balancing selector and parses protocol settings
+// Constructs a TCP route structure from the provided proxy configuration.
+// Initializes the load balancing selector and parses protocol settings.
 func (p *Proxy) buildRoute(cfg alaye.Proxy) *tcpRoute {
 	var backends []lb.Backend
 	for _, srv := range cfg.Backends {
+		pool := resolveTCPTunnelPool(cfg, p.tunnelPools)
 		be, err := NewBackend(BackendConfig{
-			Server:   srv,
-			Proxy:    cfg,
-			Resource: p.res,
-			Logger:   p.res.Logger,
+			Server:     srv,
+			Proxy:      cfg,
+			Resource:   p.res,
+			Logger:     p.res.Logger,
+			TunnelPool: pool,
 		})
 		if err == nil {
 			backends = append(backends, be)
@@ -382,7 +392,9 @@ func (p *Proxy) handle(src net.Conn) {
 		}
 		tried[picked] = true
 		backend = picked.(*Backend)
-		dst, err = net.DialTimeout(def.TCP, backend.Address, def.BackendDialTimeout)
+		dialCtx, dialCancel := context.WithTimeout(context.Background(), def.BackendDialTimeout)
+		dst, err = backend.Dial(dialCtx)
+		dialCancel()
 		if err == nil {
 			break
 		}
@@ -624,4 +636,18 @@ func (p *Proxy) SnapBackends() []*Backend {
 		unwrap(p.def.selector)
 	}
 	return all
+}
+
+// resolveTCPTunnelPool returns the tunnel pool for a TCP proxy route, mirroring
+// the HTTP route resolution in handlers/routes.go. TCP proxies use the same
+// named `via` convention on the Proxy config if it is ever extended; for now
+// only global named pools are considered.
+func resolveTCPTunnelPool(cfg alaye.Proxy, pools map[string]*tunnelpkg.Pool) *tunnelpkg.Pool {
+	if len(pools) == 0 {
+		return nil
+	}
+	// TCP proxy routes currently don't carry Via/Tunnel fields (those live on
+	// alaye.Backend which is for HTTP routes). This helper is the extension
+	// point when TCP proxy config gains tunnel support. For now, return nil.
+	return nil
 }

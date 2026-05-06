@@ -25,6 +25,7 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/ratelimit"
 	"github.com/agberohq/agbero/internal/middleware/wasm"
 	"github.com/agberohq/agbero/internal/pkg/bot"
+	"github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/olekukonko/errors"
 	"github.com/quic-go/quic-go/http3"
 )
@@ -38,6 +39,9 @@ type ManagerConfig struct {
 	TLSManager  *tlss.Manager
 	SharedState woos.SharedState
 	OrchManager *orchestrator.Manager
+	// TunnelPools is a registry of named SOCKS5 tunnel pools built from the
+	// global tunnel {} blocks. Nil map means no tunnels are configured.
+	TunnelPools map[string]*tunnel.Pool
 }
 
 type Manager struct {
@@ -216,6 +220,9 @@ func (m *Manager) BuildListeners() []Listener {
 
 	for listen, routes := range tcpGroups {
 		tp := xtcp.NewProxy(m.cfg.Resource, listen)
+		if len(m.cfg.TunnelPools) > 0 {
+			tp.WithTunnelPools(m.cfg.TunnelPools)
+		}
 		var maxC int64
 		for _, r := range routes {
 			pattern := r.SNI
