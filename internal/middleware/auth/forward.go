@@ -3,8 +3,10 @@ package auth
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -17,7 +19,6 @@ import (
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/resource"
-	"github.com/cespare/xxhash/v2"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/mappo"
 )
@@ -342,27 +343,35 @@ func (fa *forwardAuth) fail(w http.ResponseWriter, r *http.Request, next http.Ha
 	http.Error(w, msg, http.StatusForbidden)
 }
 
-// buildCacheKey hashes the configured cache-key headers plus method/path/query.
+// buildCacheKey produces a collision-resistant cache key for the forward-auth
+// result. It uses SHA-256 (truncated to 32 hex chars / 128 bits) rather than
+// a non-cryptographic hash. xxhash has a 64-bit output space — acceptable for
+// general-purpose hashing but not for an authentication boundary where a
+// collision grants an attacker access with another user's cached credentials.
+// SHA-256 provides a 2^128 collision space even after truncation, making
+// intentional collisions computationally infeasible.
 func (fa *forwardAuth) buildCacheKey(r *http.Request) string {
-	h := xxhash.New()
+	h := sha256.New()
 	if fa.cachePrefix != "" {
-		h.WriteString(fa.cachePrefix)
-		h.WriteString("|")
+		io.WriteString(h, fa.cachePrefix)
+		io.WriteString(h, "|")
 	}
 	keys := fa.cfg.Request.CacheKey
 	if len(keys) == 0 {
 		keys = []string{"Authorization"}
 	}
 	for _, k := range keys {
-		h.WriteString(r.Header.Get(k))
-		h.WriteString("|")
+		io.WriteString(h, r.Header.Get(k))
+		io.WriteString(h, "|")
 	}
-	h.WriteString(r.Method)
-	h.WriteString("|")
-	h.WriteString(r.URL.Path)
-	h.WriteString("|")
-	h.WriteString(r.URL.RawQuery)
-	return strconv.FormatUint(h.Sum64(), 16)
+	io.WriteString(h, r.Method)
+	io.WriteString(h, "|")
+	io.WriteString(h, r.URL.Path)
+	io.WriteString(h, "|")
+	io.WriteString(h, r.URL.RawQuery)
+	// Truncate to 32 hex characters (128 bits). Full SHA-256 is 64 chars —
+	// 128 bits is sufficient for collision resistance while keeping cache keys compact.
+	return hex.EncodeToString(h.Sum(nil))[:32]
 }
 
 // Package-level helpers (shared across auth middleware files in this package)
