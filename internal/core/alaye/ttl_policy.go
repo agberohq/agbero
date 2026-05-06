@@ -23,7 +23,10 @@ type TTLPolicy struct {
 	StaleIfError         expect.Duration `hcl:"stale_if_error,attr"         json:"stale_if_error,omitempty"`
 }
 
-// GetTTL determines TTL based on policy and content type
+// GetTTL determines TTL based on policy and content type.
+// The defaultTTL parameter carries the upstream's explicit max-age directive
+// and is used when neither a content-type match nor a positive policy default
+// is configured — preserving RFC 7234 cache-control semantics.
 func (p *TTLPolicy) GetTTL(defaultTTL time.Duration, contentType string) time.Duration {
 	if p == nil || !p.Enabled.Active() {
 		return defaultTTL
@@ -36,8 +39,13 @@ func (p *TTLPolicy) GetTTL(defaultTTL time.Duration, contentType string) time.Du
 		}
 	}
 
-	// Fallback to policy default (this can also be 0)
-	return p.Default.StdDuration()
+	// Use policy default when set; fall back to the upstream max-age (defaultTTL)
+	// so an explicit Cache-Control: max-age=N from the backend is honoured rather
+	// than silently overridden by an unconfigured policy default.
+	if d := p.Default.StdDuration(); d > 0 {
+		return d
+	}
+	return defaultTTL
 }
 
 // GetTTLWithExtension determines TTL based on policy, content type, and extension
