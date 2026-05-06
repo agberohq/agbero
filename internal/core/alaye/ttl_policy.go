@@ -24,9 +24,12 @@ type TTLPolicy struct {
 }
 
 // GetTTL determines TTL based on policy and content type.
-// The defaultTTL parameter carries the upstream's explicit max-age directive
-// and is used when neither a content-type match nor a positive policy default
-// is configured — preserving RFC 7234 cache-control semantics.
+// When the policy is active but returns 0 (either no content-type match and
+// Default=0, or an explicit zero override), the caller (SetWithPolicy) treats
+// 0 as "do not cache" — this is the correct signal for an operator who
+// intentionally disables caching via the policy.
+// The defaultTTL parameter is used only when the policy is nil or inactive,
+// preserving the upstream's Cache-Control: max-age directive in that case.
 func (p *TTLPolicy) GetTTL(defaultTTL time.Duration, contentType string) time.Duration {
 	if p == nil || !p.Enabled.Active() {
 		return defaultTTL
@@ -39,13 +42,8 @@ func (p *TTLPolicy) GetTTL(defaultTTL time.Duration, contentType string) time.Du
 		}
 	}
 
-	// Use policy default when set; fall back to the upstream max-age (defaultTTL)
-	// so an explicit Cache-Control: max-age=N from the backend is honoured rather
-	// than silently overridden by an unconfigured policy default.
-	if d := p.Default.StdDuration(); d > 0 {
-		return d
-	}
-	return defaultTTL
+	// Fallback to policy default (0 means "do not cache" — intentional operator choice)
+	return p.Default.StdDuration()
 }
 
 // GetTTLWithExtension determines TTL based on policy, content type, and extension
