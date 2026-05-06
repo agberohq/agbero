@@ -144,6 +144,11 @@ func newHTTPBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	t := xhttpCfg.Resource.Transport.Clone()
 	t.Proxy = nil
 	t.ExpectContinueTimeout = 0
+	// If a tunnel pool is configured, replace DialContext so all outbound
+	// connections route through the SOCKS5 proxy pool.
+	if xhttpCfg.TunnelPool != nil {
+		t = xhttpCfg.TunnelPool.WrapTransport(t)
+	}
 	if xhttpCfg.Server.Streaming.Enabled.Active() {
 		t.ResponseHeaderTimeout = 0
 		rp.FlushInterval = xhttpCfg.Server.Streaming.EffectiveFlushInterval()
