@@ -11,6 +11,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/resource"
+	"github.com/agberohq/agbero/internal/middleware/dnsblock"
 	"github.com/agberohq/agbero/internal/pkg/lb"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/mappo"
@@ -59,6 +60,10 @@ type Proxy struct {
 	quit chan struct{}
 	wg   sync.WaitGroup
 
+	// blocklist filters DNS queries before they reach the backend selector.
+	// nil means no filtering (default).
+	blocklist *dnsblock.Blocklist
+
 	// pool dispatches datagram handling through a bounded worker pool,
 	// preventing goroutine explosion under UDP flood conditions.
 	// replyLoop goroutines are NOT routed through this pool — they are
@@ -80,6 +85,13 @@ func NewProxy(res *resource.Resource, listen string) *Proxy {
 // Must be called before Start().
 func (p *Proxy) SetSessionTTL(d time.Duration) {
 	p.sessionTTL = d
+}
+
+// WithBlocklist installs a pre-built DNS blocklist on this proxy.
+// When set, every incoming DNS query is checked before backend selection.
+// Must be called before Start().
+func (p *Proxy) WithBlocklist(bl *dnsblock.Blocklist) {
+	p.blocklist = bl
 }
 
 // AddRoute registers a UDP route. For UDP, routing is not SNI-based —
@@ -242,6 +254,20 @@ func (p *Proxy) handleDatagram(listenConn *net.UDPConn, clientAddr *net.UDPAddr,
 	if route == nil || len(route.selector.Backends()) == 0 {
 		p.res.Logger.Fields("remote", clientAddr.String()).Debug("xudp: no route, dropping datagram")
 		return
+	}
+
+	// DNS blocklist check — must run before session key resolution so
+	// blocked queries never create a session or touch the backend selector.
+	// In "nxdomain" mode we write a synthesised NXDOMAIN back to the client.
+	// In "drop" mode (or on synthesise error) we silently discard the packet.
+	if p.blocklist != nil {
+		if resp, blocked := dnsblock.Filter(data, p.blocklist); blocked {
+			if resp != nil {
+				_, _ = listenConn.WriteToUDP(resp, clientAddr)
+			}
+			p.res.Logger.Fields("remote", clientAddr.String()).Debug("xudp: dns query blocked")
+			return
+		}
 	}
 
 	// Determine session key: try protocol matcher first, fall back to src:port
