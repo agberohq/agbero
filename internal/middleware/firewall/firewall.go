@@ -18,6 +18,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/bot"
+	"github.com/agberohq/agbero/internal/pkg/ja3"
 	"github.com/olekukonko/ll"
 	"github.com/yl2chen/cidranger"
 )
@@ -28,7 +29,10 @@ type Inspector struct {
 	IP       string
 	ParsedIP net.IP
 	IsBot    bool
-	Logger   *ll.Logger
+	// Fingerprint is the JA3 MD5 hash for this connection.
+	// Empty for plain HTTP connections — JA3 rules silently skip non-TLS.
+	Fingerprint string
+	Logger      *ll.Logger
 }
 
 type readCloserWrapper struct {
@@ -151,13 +155,15 @@ func (e *Engine) Handler(next http.Handler, contextRoute *alaye.FirewallRoute) h
 			}
 		}
 		parsedIP := net.ParseIP(ip)
+		fp, _ := ja3.Get(r.RemoteAddr)
 		inspector := &Inspector{
-			Req:      r,
-			Body:     bodySample,
-			IP:       ip,
-			ParsedIP: parsedIP,
-			IsBot:    e.botChecker.IsBot(r.UserAgent()),
-			Logger:   e.logger,
+			Req:         r,
+			Body:        bodySample,
+			IP:          ip,
+			ParsedIP:    parsedIP,
+			IsBot:       e.botChecker.IsBot(r.UserAgent()),
+			Fingerprint: fp,
+			Logger:      e.logger,
 		}
 		runGlobal := true
 		if contextRoute != nil && contextRoute.IgnoreGlobal {
@@ -378,6 +384,48 @@ func (e *Engine) checkMatch(m alaye.Match, in *Inspector) bool {
 			}
 		}
 	}
+
+	// JA3 fingerprint check — only evaluated for TLS connections.
+	// If the JA3 list is configured but the connection has no fingerprint
+	// (plain HTTP), the rule cannot fire — return false immediately.
+	if len(m.JA3) > 0 {
+		if in.Fingerprint == "" {
+			// Plain HTTP — JA3 rules are TLS-only; this rule does not match.
+			return false
+		}
+		matched := false
+		for _, fp := range m.JA3 {
+			if fp == in.Fingerprint {
+				matched = true
+				break
+			}
+		}
+		mode := m.JA3Mode
+		if mode == "" {
+			mode = "deny"
+		}
+		switch mode {
+		case "deny":
+			if matched {
+				in.Logger.Fields(
+					"fingerprint", in.Fingerprint,
+					"mode", "deny",
+				).Debug("firewall: JA3 deny match")
+				return true
+			}
+			return false
+		case "allow":
+			if !matched {
+				in.Logger.Fields(
+					"fingerprint", in.Fingerprint,
+					"mode", "allow",
+				).Debug("firewall: JA3 allowlist miss")
+				return true
+			}
+			return false
+		}
+	}
+
 	return true
 }
 

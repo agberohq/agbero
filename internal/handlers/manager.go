@@ -26,6 +26,7 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/ratelimit"
 	"github.com/agberohq/agbero/internal/middleware/wasm"
 	"github.com/agberohq/agbero/internal/pkg/bot"
+	ja3pkg "github.com/agberohq/agbero/internal/pkg/ja3"
 	"github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
@@ -134,11 +135,19 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 		} else {
 			cfg.Resource.Logger.Fields("err", err.Error()).Warn("certmagic not enabled; using HTTP handler without ACME")
 		}
+		origGetConfig := cfg.TLSManager.GetConfigForClient
 		m.tlsConfig = &tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			MaxVersion:         tls.VersionTLS13,
-			NextProtos:         []string{def.AlpnTls, def.AlpnH3, def.AlpnH2, def.AlpnH11},
-			GetConfigForClient: cfg.TLSManager.GetConfigForClient,
+			MinVersion: tls.VersionTLS12,
+			MaxVersion: tls.VersionTLS13,
+			NextProtos: []string{def.AlpnTls, def.AlpnH3, def.AlpnH2, def.AlpnH11},
+			// Wrap GetConfigForClient to capture the JA3 fingerprint before
+			// delegating to the TLS manager. The fingerprint is stored in the
+			// ja3 package store, keyed by remote address, and retrieved by the
+			// firewall handler via ja3.Get(r.RemoteAddr).
+			GetConfigForClient: func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
+				ja3pkg.InjectHello(chi)
+				return origGetConfig(chi)
+			},
 		}
 	}
 	return m, nil
