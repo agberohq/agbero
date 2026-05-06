@@ -61,9 +61,7 @@ func newFastCGIBackendForTest(t *testing.T, addr string) *Backend {
 	return b
 }
 
-// ---------------------------------------------------------------------------
 // Construction / validation
-// ---------------------------------------------------------------------------
 
 func TestNewBackend_FastCGI_TCP(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -120,14 +118,12 @@ func TestNewBackend_FastCGI_BadSchemeStillRejected(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Health check registration — regression tests for the initHealth fix
 //
 // Before the fix, newFastCGIBackend never called initHealth. Any health_check
 // block on a cgi:// backend was silently ignored: HasProber was true (computed
 // correctly from the route config) but no prober was ever registered with the
 // Doctor, so the backend stayed permanently Healthy regardless of upstream state.
-// ---------------------------------------------------------------------------
 
 // TestFastCGI_HealthCheck_Registered is the direct regression test for the
 // missing initHealth call. It verifies that a cgi:// backend with an explicit
@@ -308,9 +304,7 @@ func TestFastCGI_HealthCheck_Parity(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Request forwarding
-// ---------------------------------------------------------------------------
 
 func TestFastCGI_ServeHTTP_BasicRequest(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -357,9 +351,7 @@ func TestFastCGI_ServeHTTP_MethodAndPath(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Header separation — core security invariant
-// ---------------------------------------------------------------------------
 
 // TestFastCGI_HeaderSeparation verifies that a client-supplied header named
 // "Remote-Addr" cannot poison the backend's REMOTE_ADDR. Under FastCGI, client
@@ -383,9 +375,7 @@ func TestFastCGI_HeaderSeparation(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Trusted params injected by fcgiBuildTrusted
-// ---------------------------------------------------------------------------
 
 // TestFastCGI_TrustedParams_PlainHTTP verifies HTTPS is absent and
 // SERVER_SOFTWARE is set for a plain HTTP request.
@@ -452,9 +442,7 @@ func TestFastCGI_TrustedParams_ListenerCtx(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // WebSocket rejection
-// ---------------------------------------------------------------------------
 
 func TestFastCGI_WebSocket_Rejected(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -517,9 +505,7 @@ func TestHTTP_WebSocket_NotRejected(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Circuit breaker and activity tracking
-// ---------------------------------------------------------------------------
 
 func TestFastCGI_CircuitBreaker(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -557,9 +543,7 @@ func TestFastCGI_ActivityTracking(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Stop — idempotent, no nil-pointer panic when b.Proxy is nil
-// ---------------------------------------------------------------------------
 
 func TestFastCGI_Stop_NoPanic(t *testing.T) {
 	addr := startFastCGIServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -570,9 +554,7 @@ func TestFastCGI_Stop_NoPanic(t *testing.T) {
 	b.Stop() // idempotent
 }
 
-// ---------------------------------------------------------------------------
 // Server helpers — IsFastCGI / FastCGINetwork / Validate
-// ---------------------------------------------------------------------------
 
 func TestServer_IsFastCGI(t *testing.T) {
 	cases := []struct {
