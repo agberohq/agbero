@@ -35,6 +35,7 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/revoke"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/telemetry"
+	"github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/agberohq/keeper"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
@@ -344,6 +345,14 @@ func (s *Server) Start(configPath string) error {
 	}
 	ipMgr := zulu.NewIPManager(trustedProxies)
 
+	// Build the named tunnel pool registry from global tunnel {} blocks.
+	// An error here is fatal — a misconfigured tunnel referenced by a route
+	// would silently send traffic direct, which is never the right fallback.
+	tunnelPools, err := buildTunnelPools(s.global.Tunnels, s.logger)
+	if err != nil {
+		return errors.Newf("tunnel init: %w", err)
+	}
+
 	tmCfg := handlers.ManagerConfig{
 		Global:      s.global,
 		HostManager: s.hostManager,
@@ -353,6 +362,7 @@ func (s *Server) Start(configPath string) error {
 		TLSManager:  s.tlsManager,
 		SharedState: s.sharedState,
 		OrchManager: s.orchManager,
+		TunnelPools: tunnelPools,
 	}
 
 	tm, err := handlers.NewManager(tmCfg)
@@ -484,6 +494,18 @@ func (s *Server) Reload() {
 		newTLSManager.SetCluster(s.clusterManager)
 	}
 
+	// Rebuild tunnel pools from the reloaded global config.
+	var reloadedTunnelPools map[string]*tunnel.Pool
+	reloadedTunnelPools, err = buildTunnelPools(global.Tunnels, s.logger)
+	if err != nil {
+		s.logger.Fields("err", err).Error("reload: failed to build tunnel pools, keeping existing config")
+		if newSharedState != nil {
+			_ = newSharedState.Close()
+		}
+		newTLSManager.Close()
+		return
+	}
+
 	tmCfg := handlers.ManagerConfig{
 		Global:      global,
 		HostManager: s.hostManager,
@@ -493,6 +515,7 @@ func (s *Server) Reload() {
 		TLSManager:  newTLSManager,
 		SharedState: newSharedState,
 		OrchManager: s.orchManager,
+		TunnelPools: reloadedTunnelPools,
 	}
 
 	s.mu.RLock()
@@ -839,4 +862,37 @@ func (s *Server) keeperWrite(key string, value []byte) {
 		return
 	}
 	s.logger.Fields("key", key).Debug("cluster: keeper secret synced from join")
+}
+
+// buildTunnelPools constructs the named tunnel pool registry from global
+// tunnel {} config blocks. Each enabled tunnel becomes a *tunnel.Pool
+// keyed by its name. Disabled tunnels are silently skipped.
+// Returns an error if any enabled tunnel pool cannot be initialised.
+func buildTunnelPools(tunnels []alaye.Tunnel, logger *ll.Logger) (map[string]*tunnel.Pool, error) {
+	if len(tunnels) == 0 {
+		return nil, nil
+	}
+	pools := make(map[string]*tunnel.Pool, len(tunnels))
+	for _, t := range tunnels {
+		if t.Enabled.NotActive() {
+			continue
+		}
+		pool, err := tunnel.New(tunnel.Config{
+			Name:     t.Name,
+			Servers:  t.Servers,
+			Username: t.Username.String(),
+			Password: t.Password.String(),
+			Strategy: t.Strategy,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("tunnel %q: %w", t.Name, err)
+		}
+		pools[t.Name] = pool
+		logger.Fields(
+			"tunnel", t.Name,
+			"servers", len(t.Servers),
+			"strategy", t.Strategy,
+		).Info("tunnel pool ready")
+	}
+	return pools, nil
 }
