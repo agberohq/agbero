@@ -709,3 +709,18 @@ const (
 	CRCShift          = 32
 	DefaultUDPMatcher = "src_port"
 )
+
+const (
+	// SOCKS5 is the scheme identifier for SOCKS5 tunnel backends.
+	SOCKS5 = "socks5"
+
+	// DefaultTunnelDialTimeout is the maximum time to establish a connection
+	// through a SOCKS5 tunnel before giving up.
+	DefaultTunnelDialTimeout = DefaultTransportDialTimeout
+
+	// TunnelStrategyRoundRobin rotates through tunnel servers sequentially.
+	TunnelStrategyRoundRobin = StrategyRoundRobin
+
+	// TunnelStrategyRandom picks a tunnel server at random per connection.
+	TunnelStrategyRandom = StrategyRandom
+)
