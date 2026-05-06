@@ -44,6 +44,21 @@ type Match struct {
 	None      []Condition   `hcl:"none,block" json:"none"`
 	Extract   *Extract      `hcl:"extract,block" json:"extract,omitempty"`
 	Threshold *Threshold    `hcl:"threshold,block" json:"threshold,omitempty"`
+
+	// JA3 is a list of JA3 MD5 fingerprint strings. Any match triggers the rule.
+	// Only evaluated for TLS connections — plain HTTP requests are never matched.
+	//
+	// Example — block a known bad TLS stack:
+	//   ja3 = ["e6573e91e6eb777c0933c5b8f97f10cd"]
+	JA3 []string `hcl:"ja3,attr,omitempty" json:"ja3,omitempty"`
+
+	// JA3Mode controls whether JA3 acts as a blocklist ("deny") or an
+	// allowlist ("allow"). Default: "deny".
+	//
+	//   deny  — block clients whose fingerprint is in the JA3 list.
+	//   allow — block clients whose fingerprint is NOT in the JA3 list
+	//           (i.e., only clients with known-good fingerprints are admitted).
+	JA3Mode string `hcl:"ja3_mode,attr,omitempty" json:"ja3_mode,omitempty"`
 }
 
 // Validate checks all condition groups, extract, and threshold blocks.
@@ -75,6 +90,9 @@ func (m *Match) Validate() error {
 		if err := m.Threshold.Validate(); err != nil {
 			return errors.Newf("threshold: %w", err)
 		}
+	}
+	if m.JA3Mode != "" && m.JA3Mode != "deny" && m.JA3Mode != "allow" {
+		return errors.Newf("ja3_mode must be \"deny\" or \"allow\", got %q", m.JA3Mode)
 	}
 	return nil
 }
