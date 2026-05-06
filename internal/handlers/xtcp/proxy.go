@@ -221,6 +221,77 @@ func (p *Proxy) Start() error {
 	return nil
 }
 
+// GracefulStop signals the proxy to stop accepting new connections and waits
+// for all active connections to finish naturally up to the given deadline.
+// Connections still open at the deadline are closed forcibly.
+//
+// This is the correct shutdown path during configuration reloads — it avoids
+// severing long-lived streaming or database connections that happen to be
+// active when the operator adds an unrelated new route.
+//
+// Call Stop() instead when an immediate hard shutdown is needed (e.g. process
+// exit under SIGKILL).
+func (p *Proxy) GracefulStop(deadline time.Time) {
+	if !p.closing.CompareAndSwap(false, true) {
+		return
+	}
+	close(p.quit)
+
+	// Set a read/write deadline on every active connection. This causes any
+	// blocked Read or Write to return with a timeout error, unblocking the
+	// proxy goroutine so it can clean up and decrement the wait group.
+	// Connections that complete before the deadline are not disturbed.
+	p.conns.Range(func(key, value any) bool {
+		c := key.(net.Conn)
+		_ = c.SetDeadline(deadline)
+		return true
+	})
+
+	// Wait for all proxy goroutines to exit. Each goroutine removes itself
+	// from p.conns when it finishes (or when the deadline fires), so this
+	// wait naturally drains without holding any lock.
+	drained := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(drained)
+	}()
+
+	select {
+	case <-drained:
+		// All connections finished cleanly within the deadline.
+	case <-time.After(time.Until(deadline)):
+		// Deadline exceeded — force-close anything still open.
+		p.conns.Range(func(key, value any) bool {
+			c, e := key.(net.Conn), value.(*connEntry)
+			if e.closed.CompareAndSwap(false, true) {
+				_ = c.Close()
+			}
+			return true
+		})
+		p.wg.Wait()
+	}
+
+	p.conns.Clear()
+	p.connCnt.Store(0)
+
+	p.mu.RLock()
+	def := p.def
+	routes := p.routes
+	p.mu.RUnlock()
+
+	if def != nil {
+		def.Stop()
+	}
+	for _, r := range routes {
+		r.Stop()
+	}
+
+	p.res.Logger.Fields("bind", p.Listen).Info("xtcp: proxy stopped gracefully")
+}
+
+// Stop immediately closes all active connections and shuts down the proxy.
+// Prefer GracefulStop during configuration reloads to avoid severing
+// long-lived connections that are unrelated to the config change.
 // Initiates a graceful shutdown of the proxy and its tracked connections
 // Closes the listener, active sockets, and wait-groups for completion
 func (p *Proxy) Stop() {

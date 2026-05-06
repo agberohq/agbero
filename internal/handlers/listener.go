@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/agberohq/agbero/internal/handlers/xtcp"
 	"github.com/agberohq/agbero/internal/handlers/xudp"
@@ -71,9 +72,15 @@ func (t *TCPListener) Start() error {
 }
 
 func (t *TCPListener) Stop(ctx context.Context) error {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		// No deadline in context — use a reasonable default so we don't
+		// wait forever, but still give connections time to drain.
+		deadline = time.Now().Add(30 * time.Second)
+	}
 	done := make(chan struct{})
 	go func() {
-		t.Proxy.Stop()
+		t.Proxy.GracefulStop(deadline)
 		close(done)
 	}()
 	select {
