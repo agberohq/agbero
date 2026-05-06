@@ -23,6 +23,47 @@ type Proxy struct {
 	Matcher     string          `hcl:"matcher,attr,omitempty" json:"matcher,omitempty"`
 	SessionTTL  expect.Duration `hcl:"session_ttl,attr,omitempty" json:"session_ttl,omitempty"`
 	MaxSessions int64           `hcl:"max_sessions,attr,omitempty" json:"max_sessions,omitempty"`
+
+	// DNSBlock configures domain-level blocking for UDP DNS proxy routes.
+	// Only evaluated when Protocol = "udp" and Matcher = "dns".
+	// Blocked queries receive a synthesised NXDOMAIN response without
+	// forwarding to any upstream resolver.
+	DNSBlock DNSBlock `hcl:"dns_block,block,omitempty" json:"dns_block,omitempty"`
+}
+
+// DNSBlock configures the DNS domain blocklist for a UDP proxy route.
+type DNSBlock struct {
+	Enabled expect.Toggle   `hcl:"enabled,attr"          json:"enabled"`
+	Domains []string        `hcl:"domains,attr"          json:"domains,omitempty"`  // inline domain list
+	Files   []string        `hcl:"files,attr,omitempty"  json:"files,omitempty"`    // local file paths (hosts-file or bare-domain format)
+	URLs    []string        `hcl:"urls,attr,omitempty"   json:"urls,omitempty"`     // remote blocklist URLs (Pi-hole / StevenBlack compatible)
+	Refresh expect.Duration `hcl:"refresh,attr,omitempty" json:"refresh,omitempty"` // URL refresh interval (default 24h)
+	Mode    string          `hcl:"mode,attr,omitempty"   json:"mode,omitempty"`     // "nxdomain" (default) | "drop"
+}
+
+// Validate checks DNSBlock configuration.
+// It does not set defaults — all defaults are applied by woos.defaultDNSBlock.
+func (d *DNSBlock) Validate() error {
+	if d.Enabled.NotActive() {
+		return nil
+	}
+	if d.Mode != "" && d.Mode != "nxdomain" && d.Mode != "drop" {
+		return errors.New("dns_block: mode must be \"nxdomain\" or \"drop\"")
+	}
+	if d.Refresh < 0 {
+		return errors.New("dns_block: refresh interval cannot be negative")
+	}
+	return nil
+}
+
+// IsZero reports whether this DNSBlock is unconfigured.
+func (d DNSBlock) IsZero() bool {
+	return d.Enabled.IsZero() &&
+		len(d.Domains) == 0 &&
+		len(d.Files) == 0 &&
+		len(d.URLs) == 0 &&
+		d.Refresh == 0 &&
+		d.Mode == ""
 }
 
 // Validate checks listen address, SNI pattern, strategy, and backends.
@@ -74,6 +115,10 @@ func (t *Proxy) Validate() error {
 		}
 	}
 
+	if err := t.DNSBlock.Validate(); err != nil {
+		return errors.Newf("dns_block: %w", err)
+	}
+
 	return t.HealthCheck.Validate()
 }
 
@@ -95,7 +140,8 @@ func (t *Proxy) IsZero() bool {
 		t.ProxyProtocol == false &&
 		t.MaxConnections == 0 &&
 		len(t.Backends) == 0 &&
-		t.HealthCheck.IsZero()
+		t.HealthCheck.IsZero() &&
+		t.DNSBlock.IsZero()
 }
 
 func (t *Proxy) BackendKey(backendAddr string) Key {
