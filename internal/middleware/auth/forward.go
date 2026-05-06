@@ -431,10 +431,34 @@ func ssrfSafeDialContext(d *net.Dialer) dialContextFunc {
 		if err != nil {
 			return nil, fmt.Errorf("forward_auth: invalid address %q: %w", addr, err)
 		}
+
+		// Go's http.Transport passes the original hostname here — it does NOT
+		// pre-resolve DNS before calling DialContext. net.ParseIP on a hostname
+		// always returns nil, which broke every non-IP forward_auth URL.
+		// Resolve the hostname explicitly so the SSRF check operates on the
+		// actual IP address(es) that the connection will use.
 		ip := net.ParseIP(host)
 		if ip == nil {
-			return nil, fmt.Errorf("forward_auth: could not parse resolved address %q", host)
+			// hostname — resolve and check every returned address
+			addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+			if err != nil {
+				return nil, fmt.Errorf("forward_auth: DNS resolution failed for %q: %w", host, err)
+			}
+			for _, a := range addrs {
+				resolved := net.ParseIP(a)
+				if resolved == nil {
+					continue
+				}
+				if alaye.IsPrivateIP(resolved) {
+					return nil, fmt.Errorf("forward_auth: SSRF protection blocked connection to private/internal address %s (resolved from %s)", a, host)
+				}
+			}
+			// All resolved IPs are public — dial using the original hostname
+			// so TLS SNI is preserved correctly.
+			return d.DialContext(ctx, network, addr)
 		}
+
+		// Raw IP address supplied directly — check it without resolution.
 		if alaye.IsPrivateIP(ip) {
 			return nil, fmt.Errorf("forward_auth: SSRF protection blocked connection to private/internal address %s:%s", host, port)
 		}
