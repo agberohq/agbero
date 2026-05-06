@@ -8,6 +8,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/resource"
+	"github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/olekukonko/errors"
 )
 
@@ -43,6 +44,9 @@ type ConfigBackend struct {
 	Domains  []string
 	Fallback http.Handler
 	Resource *resource.Resource
+	// TunnelPool routes outbound connections through SOCKS5 when non-nil.
+	// Nil means direct connection (default behaviour).
+	TunnelPool *tunnel.Pool
 }
 
 // Validate checks that the backend address and resource manager are present.
