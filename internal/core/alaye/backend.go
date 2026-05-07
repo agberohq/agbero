@@ -28,6 +28,12 @@ type Backend struct {
 	//   tunnel = "socks5://127.0.0.1:9050"
 	//   tunnel = "socks5://user:pass@vpn.example.com:1080"
 	Tunnel string `hcl:"tunnel,attr,omitempty" json:"tunnel,omitempty"`
+
+	// Idempotent marks this backend safe for speculative hedged requests.
+	// When true and a resource.Hedger is configured, a second request is
+	// fired to a different backend after the P50 RTT if the primary is slow.
+	// Only enable for backends handling GET, HEAD, or other idempotent methods.
+	Idempotent bool `hcl:"idempotent,attr,omitempty" json:"idempotent,omitempty"`
 }
 
 func (b Backend) IsZero() bool {

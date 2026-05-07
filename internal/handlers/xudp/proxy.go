@@ -379,11 +379,12 @@ func (p *Proxy) replyLoop(
 	sessionKey string,
 	sess *session,
 ) {
+	start := time.Now()
 	defer p.wg.Done()
 	defer func() {
 		p.sessions.delete(sessionKey)
 		sess.backend.Activity.EndRequest(
-			time.Since(time.Unix(0, sess.lastSeen.Load())).Microseconds(),
+			time.Since(start).Microseconds(),
 			false,
 		)
 	}()

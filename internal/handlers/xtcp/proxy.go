@@ -15,7 +15,6 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
-	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/lb"
 	tunnelpkg "github.com/agberohq/agbero/internal/pkg/tunnel"
@@ -174,7 +173,14 @@ func (p *Proxy) Start() error {
 			}
 		}()
 
-		bo := zulu.NewInfinite()
+		// Simple exponential backoff state — replaces cenkalti/backoff.
+		// jack.Retry is for operation retries; the accept loop needs manual
+		// control because it loops indefinitely and checks p.quit between steps.
+		const (
+			boInit = 1 * time.Millisecond
+			boMax  = 100 * time.Millisecond
+		)
+		boDelay := boInit
 
 		for {
 			select {
@@ -196,16 +202,21 @@ func (p *Proxy) Start() error {
 				if p.closing.Load() {
 					return
 				}
-				sleepDuration := bo.NextBackOff()
-				p.res.Logger.Fields("err", err, "retry_in", sleepDuration).Warn("tcp accept error, backing off")
+				p.res.Logger.Fields("err", err, "retry_in", boDelay).Warn("tcp accept error, backing off")
 				select {
-				case <-time.After(sleepDuration):
-					continue
+				case <-time.After(boDelay):
 				case <-p.quit:
 					return
 				}
+				if boDelay < boMax {
+					boDelay *= 2
+					if boDelay > boMax {
+						boDelay = boMax
+					}
+				}
+				continue
 			}
-			bo.Reset()
+			boDelay = boInit // reset on success
 			if p.MaxConns > 0 && p.connCnt.Load() >= p.MaxConns {
 				p.res.Logger.Fields("remote", conn.RemoteAddr().String(), "limit", p.MaxConns).Warn("tcp max connections reached, dropping")
 				conn.Close()

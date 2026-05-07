@@ -604,6 +604,10 @@ const (
 	PoolQueueSize      = 10240
 	LifetimeShards     = 32
 	LifetimeHostShards = 4
+
+	// DefaultBulkheadCapacity is the default concurrent-request budget per
+	// route partition. Operators can override via WithBulkhead.
+	DefaultBulkheadCapacity = 50
 )
 
 // Bot detection

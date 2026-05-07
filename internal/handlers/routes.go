@@ -137,12 +137,14 @@ func newProxyRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 			continue
 		}
 		b, err := xhttp.NewBackend(xhttp.ConfigBackend{
-			Server:     backendCfg,
-			Route:      route,
-			Domains:    cfg.Host.Domains,
-			Fallback:   nil,
-			Resource:   cfg.Resource,
-			TunnelPool: pool,
+			Server:            backendCfg,
+			Route:             route,
+			Domains:           cfg.Host.Domains,
+			Fallback:          nil,
+			Resource:          cfg.Resource,
+			TunnelPool:        pool,
+			BulkheadPartition: route.Path,
+			UseHedger:         route.Backends.Idempotent,
 		})
 		if err != nil {
 			cfg.Resource.Logger.Fields("index", i, "backend", backendCfg.Address.String(), "err", err).Error("failed to create backend")

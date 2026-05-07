@@ -1,6 +1,7 @@
 package xudp
 
 import (
+	"context"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -21,14 +22,11 @@ type session struct {
 	backendConn net.Conn
 	lastSeen    atomic.Int64
 	closeOnce   sync.Once
-	removed     atomic.Bool // Ensures deletion only happens once
+	removed     atomic.Bool
 }
 
 func newSession(b *Backend, bc net.Conn) *session {
-	s := &session{
-		backend:     b,
-		backendConn: bc,
-	}
+	s := &session{backend: b, backendConn: bc}
 	s.lastSeen.Store(time.Now().UnixNano())
 	return s
 }
@@ -45,21 +43,20 @@ func (s *session) age() time.Duration {
 
 // close shuts down the backend conn exactly once.
 func (s *session) close() {
-	s.closeOnce.Do(func() {
-		_ = s.backendConn.Close()
-	})
+	s.closeOnce.Do(func() { _ = s.backendConn.Close() })
 }
 
 // sessionTable manages the full set of active UDP sessions.
-// mappo.Concurrent is backed by xsync — optimised for read-heavy
-// workloads where packet routing (reads) far outnumber new session
-// creation (writes).
+// jack.Lifetime provides per-session precision expiry — sessions expire within
+// one Lifetime tick of their deadline rather than up to one sweep interval.
+// sweep() is retained as a fallback and for test compatibility.
 type sessionTable struct {
 	sessions *mappo.Concurrent[string, *session]
 	ttl      time.Duration
 	maxSess  int64
 	count    atomic.Int64
 
+	lifetime *jack.Lifetime
 	sweeper  *jack.Scheduler
 	stopOnce sync.Once
 }
@@ -76,9 +73,10 @@ func newSessionTable(ttl time.Duration, maxSessions int64) *sessionTable {
 		sessions: mappo.NewConcurrent[string, *session](),
 		ttl:      ttl,
 		maxSess:  maxSessions,
+		lifetime: jack.NewLifetime(jack.LifetimeWithShards(def.LifetimeShards)),
 	}
 
-	// Schedule periodic TTL sweep using jack.Scheduler — same pattern as xtcp pool.
+	// Periodic sweep as a fallback — also lets tests call tbl.sweep() directly.
 	sched, _ := jack.NewScheduler(
 		def.UDPSweepRoutineName,
 		jack.NewPool(def.UDPSweepPoolSize),
@@ -98,71 +96,57 @@ func (t *sessionTable) get(key string) *session {
 		return nil
 	}
 	s.touch()
+	// Reset the Lifetime timer — extends the session deadline on each packet.
+	t.lifetime.ResetTimed(key)
 	return s
 }
 
-// create stores a new session under key.
-//
-// Returns false only when the table is at capacity or a live session already
-// owns the key. A stale entry whose session has been marked removed but not
-// yet deleted from the map is treated as a live conflict — callers must handle
-// this via the removed flag check.
+// create stores a new session and schedules its TTL via jack.Lifetime.
 func (t *sessionTable) create(key string, s *session) bool {
 	if t.count.Load() >= t.maxSess {
 		return false
 	}
-	// SetIfAbsent is atomic: only one concurrent creator wins the key.
 	if _, loaded := t.sessions.SetIfAbsent(key, s); loaded {
 		return false
 	}
 	t.count.Add(1)
+	t.lifetime.ScheduleTimed(context.Background(), key, func(_ context.Context, id string) {
+		t.delete(id)
+	}, t.ttl)
 	return true
 }
 
-// createOrReplace stores s under key when the existing entry is a dead
-// session (removed == true).
-//
-// This closes the re-establishment race: after a session's CompareAndSwap
-// in delete() marks it removed and closes its conn — but before
-// sessions.Delete actually removes the map entry — a reconnecting client's
-// datagram arrives and create() sees the stale key as occupied. Rather than
-// dropping the packet, handleDatagram calls createOrReplace, which overwrites
-// the dead entry and installs the fresh session.
-//
-// Returns true if the new session was installed, false if a live session still
-// owns the key (genuine concurrent creation — caller should not write).
+// createOrReplace installs a new session when the existing entry is dead.
 func (t *sessionTable) createOrReplace(key string, s *session) bool {
 	if t.count.Load() >= t.maxSess {
 		return false
 	}
 	existing, ok := t.sessions.Get(key)
 	if !ok {
-		// Entry was concurrently deleted between create() failing and now;
-		// attempt a clean insert.
 		if _, loaded := t.sessions.SetIfAbsent(key, s); loaded {
 			return false
 		}
 		t.count.Add(1)
+		t.lifetime.ScheduleTimed(context.Background(), key, func(_ context.Context, id string) {
+			t.delete(id)
+		}, t.ttl)
 		return true
 	}
 	if !existing.removed.Load() {
-		// A genuinely live session owns the key; don't evict it.
 		return false
 	}
-	// The existing session is dead: its conn is already closed and its count
-	// was already decremented by delete(). Overwrite the stale map entry.
-	// We use unconditional Set: if two goroutines race here both are
-	// replacing the same dead entry, so last-writer-wins is safe.
 	t.sessions.Set(key, s)
 	t.count.Add(1)
+	t.lifetime.ScheduleTimed(context.Background(), key, func(_ context.Context, id string) {
+		t.delete(id)
+	}, t.ttl)
 	return true
 }
 
 func (t *sessionTable) delete(key string) {
 	if s, ok := t.sessions.Get(key); ok {
-		// Prevent double-decrementing if replyLoop and sweeper
-		// trigger a delete at the exact same moment.
 		if s.removed.CompareAndSwap(false, true) {
+			t.lifetime.CancelTimed(key)
 			s.close()
 			t.sessions.Delete(key)
 			t.count.Add(-1)
@@ -170,41 +154,34 @@ func (t *sessionTable) delete(key string) {
 	}
 }
 
-// sweep evicts sessions that have been idle longer than ttl.
-// Called by jack.Scheduler — must not block.
+// sweep evicts sessions idle longer than ttl.
+// Called periodically by the scheduler and directly by tests.
 func (t *sessionTable) sweep() {
 	var expired []string
-
 	t.sessions.Range(func(key string, s *session) bool {
 		if s.age() > t.ttl {
 			expired = append(expired, key)
 		}
 		return true
 	})
-
 	for _, key := range expired {
 		t.delete(key)
 	}
 }
 
-// len returns the current number of active sessions.
-func (t *sessionTable) len() int64 {
-	return t.count.Load()
-}
+func (t *sessionTable) len() int64 { return t.count.Load() }
 
-// stopSweeper stops the background sweeper goroutine.
 func (t *sessionTable) stopSweeper() {
 	t.stopOnce.Do(func() {
 		if t.sweeper != nil {
 			_ = t.sweeper.Stop()
 		}
+		t.lifetime.StopAll()
 	})
 }
 
-// closeAll closes all sessions and clears the table.
 func (t *sessionTable) closeAll() {
 	t.stopSweeper()
-
 	var keys []string
 	t.sessions.Range(func(key string, _ *session) bool {
 		keys = append(keys, key)
