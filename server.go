@@ -528,7 +528,12 @@ func (s *Server) Reload() {
 	oldTrafficManagerForFirewall := s.trafficManager
 	s.mu.RUnlock()
 
-	_ = oldTrafficManagerForFirewall // closed after listener drain; see cleanup goroutine below
+	// Release the bbolt file lock so the new firewall can acquire it.
+	// Active requests on draining listeners will continue to use the in-memory
+	// cache, they just won't persist new bans to disk during this split second.
+	if oldTrafficManagerForFirewall != nil {
+		oldTrafficManagerForFirewall.CloseFirewall()
+	}
 
 	newTM, err := handlers.NewManager(tmCfg)
 	if err != nil {
@@ -658,9 +663,9 @@ func (s *Server) Reload() {
 		// stopped. Moving CloseFirewall() to here (from before NewManager)
 		// closes the race window where in-flight requests on the old listeners
 		// could hit a closed bbolt database and panic with "database not open".
-		if oldTrafficManagerForFirewall != nil {
-			oldTrafficManagerForFirewall.CloseFirewall()
-		}
+		//if oldTrafficManagerForFirewall != nil {
+		//	oldTrafficManagerForFirewall.CloseFirewall()
+		//}
 
 		oldTLSManager.Close()
 

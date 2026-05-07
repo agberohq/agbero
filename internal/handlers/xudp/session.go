@@ -13,10 +13,6 @@ import (
 )
 
 // session represents one active client→backend UDP flow.
-//
-// Each session owns a dedicated net.UDPConn dialed to the pinned
-// backend. A goroutine reads reply datagrams from backendConn and
-// writes them back to the client via the shared listen conn.
 type session struct {
 	backend     *Backend
 	backendConn net.Conn
@@ -88,8 +84,6 @@ func newSessionTable(ttl time.Duration, maxSessions int64) *sessionTable {
 	return t
 }
 
-// get returns the session for key, or nil if not found.
-// Hot path — reads from mappo.Concurrent are lock-free.
 func (t *sessionTable) get(key string) *session {
 	s, ok := t.sessions.Get(key)
 	if !ok {
@@ -144,14 +138,31 @@ func (t *sessionTable) createOrReplace(key string, s *session) bool {
 }
 
 func (t *sessionTable) delete(key string) {
-	if s, ok := t.sessions.Get(key); ok {
-		if s.removed.CompareAndSwap(false, true) {
-			t.lifetime.CancelTimed(key)
-			s.close()
-			t.sessions.Delete(key)
-			t.count.Add(-1)
-		}
+	s, ok := t.sessions.Get(key)
+	if !ok {
+		return
 	}
+	// CAS on the session's removed flag. Only the goroutine that wins
+	// the swap owns the teardown sequence for THIS session instance.
+	if !s.removed.CompareAndSwap(false, true) {
+		return
+	}
+	t.lifetime.CancelTimed(key)
+	s.close()
+
+	// only remove the key if it still holds
+	// the same session pointer we just closed. If createOrReplace() raced
+	// between our CAS and here, the map already holds a NEW session — we
+	// must not delete it (that would orphan the new session and leak the
+	// socket). mappo.Concurrent.Get + conditional Delete is safe here
+	// because SetIfAbsent and Set in createOrReplace are also atomic:
+	// if current != s the new session is already live and we leave it alone.
+	if current, still := t.sessions.Get(key); still && current == s {
+		t.sessions.Delete(key)
+		t.count.Add(-1)
+	}
+	// If the key was already replaced, count was incremented by createOrReplace
+	// so we must not decrement it — the new session is healthy.
 }
 
 // sweep evicts sessions idle longer than ttl.
