@@ -129,6 +129,7 @@ func (t *sessionTable) createOrReplace(key string, s *session) bool {
 	if !existing.removed.Load() {
 		return false
 	}
+	t.lifetime.CancelTimed(key)
 	t.sessions.Set(key, s)
 	t.count.Add(1)
 	t.lifetime.ScheduleTimed(context.Background(), key, func(_ context.Context, id string) {
