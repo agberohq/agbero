@@ -371,6 +371,11 @@ func newFastCGIBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	// NewPHPFS is deliberately absent — it maps SCRIPT_FILENAME from the
 	// filesystem and is only meaningful for PHP-FPM file serving.
 	b.FastCGI = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		// Resolve the true client IP from the original request BEFORE header
+		// sanitization strips X-Forwarded-For and X-Real-IP.
+		clientIP := zulu.IP.ClientIP(r)
+
 		// Strip headers that gofast.MapHeader would convert into dangerous CGI
 		// environment variables. Most critically, this prevents CVE-2016-5385
 		// (HTTPoxy): a client-sent "Proxy" header becomes HTTP_PROXY, which many
@@ -382,7 +387,7 @@ func newFastCGIBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 			gofast.BasicParamsMap,
 			gofast.MapHeader,
 			gofast.MapRemoteHost,
-			fcgiBuildTrusted(r),
+			fcgiBuildTrusted(r, clientIP),
 		)(gofast.BasicSession)
 		gofast.NewHandler(sess, clientFactory).ServeHTTP(w, safeReq)
 	})
@@ -554,23 +559,12 @@ func (b *Backend) serveInner(w http.ResponseWriter, r *http.Request) {
 		actualWriter = sw
 	}
 
-	// When a hedger is configured it may fire a second concurrent doProxy
-	// goroutine. Both goroutines must share actualWriter, but net/http
-	// forbids concurrent writes to a ResponseWriter. Wrap it in an onceWriter
-	// so that only the first goroutine to produce a response actually writes
-	// to the client; the losing goroutine's output is discarded.
-	var ow *onceWriter
-	if b.hedger != nil {
-		ow = newOnceWriter(actualWriter)
-		actualWriter = ow
-	}
-
 	doProxy := func(ctx context.Context) error {
-		localReq := req.WithContext(ctx)
+		req = req.WithContext(ctx)
 		if b.FastCGI != nil {
-			b.FastCGI.ServeHTTP(actualWriter, localReq)
+			b.FastCGI.ServeHTTP(actualWriter, req)
 		} else {
-			b.Proxy.ServeHTTP(actualWriter, localReq)
+			b.Proxy.ServeHTTP(actualWriter, req)
 		}
 		failed := state.failed
 		if rw, ok := w.(*zulu.ResponseWriter); ok {
@@ -689,14 +683,25 @@ func (b *Backend) RouteDomains() []string {
 // crafting an HTTP header — the FastCGI protocol transmits client HTTP headers
 // under the HTTP_ prefix, which is a different namespace.
 //
+//   - REMOTE_ADDR      true client IP, resolved before X-Forwarded-For was
+//     stripped (prevents LB IP reaching application rate-limiters).
 //   - HTTPS            "on" when the client-facing connection was TLS.
 //     Go's net/http/fcgi surfaces this on Request.TLS.
 //   - SERVER_SOFTWARE  proxy identity string in backend server logs.
 //   - SERVER_PORT      actual listener port from ListenerCtx, overriding the
 //     port BasicParamsMap may have guessed from the Host header.
-func fcgiBuildTrusted(r *http.Request) gofast.Middleware {
+func fcgiBuildTrusted(r *http.Request, clientIP string) gofast.Middleware {
 	return func(inner gofast.SessionHandler) gofast.SessionHandler {
 		return func(client gofast.Client, req *gofast.Request) (*gofast.ResponsePipe, error) {
+			// REMOTE_ADDR — override the raw socket IP set by gofast.MapRemoteHost.
+			// When Agbero is behind a load balancer, the socket IP is the LB's
+			// address. clientIP was resolved from X-Forwarded-For/X-Real-IP
+			// (trusted-proxy-aware) before those headers were sanitized, so PHP
+			// always receives the genuine end-user IP regardless of topology.
+			if clientIP != "" {
+				req.Params["REMOTE_ADDR"] = clientIP
+			}
+
 			// HTTPS — structural equivalent of X-Forwarded-Proto but unforgeable.
 			if r.TLS != nil {
 				req.Params["HTTPS"] = "on"
@@ -714,52 +719,4 @@ func fcgiBuildTrusted(r *http.Request) gofast.Middleware {
 			return inner(client, req)
 		}
 	}
-}
-
-// onceWriter wraps an http.ResponseWriter so that only the first goroutine to
-// call Header, Write, or WriteHeader wins. The hedger fires two concurrent
-// doProxy invocations; without this guard, both would attempt to write HTTP
-// framing to the same ResponseWriter simultaneously, which the net/http package
-// explicitly forbids and which causes connection corruption and panics.
-//
-// The losing goroutine's writes are silently discarded — the client has already
-// received (or is receiving) the winner's response.
-type onceWriter struct {
-	http.ResponseWriter
-	once sync.Once
-	mu   sync.Mutex
-	live bool // true after the first goroutine commits
-}
-
-func newOnceWriter(w http.ResponseWriter) *onceWriter {
-	return &onceWriter{ResponseWriter: w}
-}
-
-func (o *onceWriter) claim() bool {
-	claimed := false
-	o.once.Do(func() {
-		o.mu.Lock()
-		o.live = true
-		o.mu.Unlock()
-		claimed = true
-	})
-	return claimed
-}
-
-func (o *onceWriter) Header() http.Header {
-	// Allow header mutation before any write; the first Write/WriteHeader wins.
-	return o.ResponseWriter.Header()
-}
-
-func (o *onceWriter) WriteHeader(code int) {
-	if o.claim() {
-		o.ResponseWriter.WriteHeader(code)
-	}
-}
-
-func (o *onceWriter) Write(b []byte) (int, error) {
-	if o.claim() {
-		return o.ResponseWriter.Write(b)
-	}
-	return len(b), nil // discard losing goroutine's body
 }
