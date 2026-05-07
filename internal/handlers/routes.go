@@ -164,10 +164,30 @@ func newProxyRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 				if err != nil {
 					return nil, fmt.Errorf("fallback proxy: invalid address %q: %w", addr, err)
 				}
+
 				ip := net.ParseIP(host)
 				if ip == nil {
-					return nil, fmt.Errorf("fallback proxy: could not parse resolved address %q", host)
+					// host is a DNS name — resolve it first.
+					// We also apply the same TOCTOU / DNS-rebinding defence used
+					// in ssrfSafeDialContext
+					addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+					if err != nil {
+						return nil, fmt.Errorf("fallback proxy: DNS resolution failed for %q: %w", host, err)
+					}
+					for _, a := range addrs {
+						resolved := net.ParseIP(a)
+						if resolved == nil {
+							continue
+						}
+						if alaye.IsPrivateIP(resolved) {
+							return nil, fmt.Errorf("fallback proxy: SSRF protection blocked connection to private/internal address %s (resolved from %s)", a, host)
+						}
+						// Dial the pre-resolved IP directly — no second DNS lookup.
+						return safeDialer.DialContext(ctx, network, net.JoinHostPort(a, port))
+					}
+					return nil, fmt.Errorf("fallback proxy: no valid public address resolved for %q", host)
 				}
+
 				if alaye.IsPrivateIP(ip) {
 					return nil, fmt.Errorf("fallback proxy: SSRF protection blocked connection to private/internal address %s:%s", host, port)
 				}
