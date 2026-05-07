@@ -444,6 +444,9 @@ func ssrfSafeDialContext(d *net.Dialer) dialContextFunc {
 			if err != nil {
 				return nil, fmt.Errorf("forward_auth: DNS resolution failed for %q: %w", host, err)
 			}
+
+			// TOCTOU / DNS-rebinding defence: check AND dial using the same
+			// resolved IP address.Ghost timer
 			for _, a := range addrs {
 				resolved := net.ParseIP(a)
 				if resolved == nil {
@@ -452,10 +455,11 @@ func ssrfSafeDialContext(d *net.Dialer) dialContextFunc {
 				if alaye.IsPrivateIP(resolved) {
 					return nil, fmt.Errorf("forward_auth: SSRF protection blocked connection to private/internal address %s (resolved from %s)", a, host)
 				}
+				// Dial the resolved IP directly so no second DNS lookup occurs.
+				// Use the first public address that passes the check.
+				return d.DialContext(ctx, network, net.JoinHostPort(a, port))
 			}
-			// All resolved IPs are public — dial using the original hostname
-			// so TLS SNI is preserved correctly.
-			return d.DialContext(ctx, network, addr)
+			return nil, fmt.Errorf("forward_auth: no valid public address resolved for %q", host)
 		}
 
 		// Raw IP address supplied directly — check it without resolution.
