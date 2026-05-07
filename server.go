@@ -373,7 +373,10 @@ func (s *Server) Start(configPath string) error {
 	s.firewall = tm.Firewall()
 
 	if s.shutdown != nil {
-		s.shutdown.RegisterFunc("TrafficManager", tm.Close)
+		_ = s.shutdown.RegisterWithPriority("TrafficManager", 1, func(ctx context.Context) error {
+			tm.Close()
+			return nil
+		})
 	}
 
 	s.apiShared = &api.Shared{
@@ -423,7 +426,10 @@ func (s *Server) Start(configPath string) error {
 	s.startPprofServer()
 
 	if s.shutdown != nil {
-		s.shutdown.RegisterWithContext("Listeners", s.shutdownImpl)
+		// Priority 0 — stop accepting new connections first.
+		// Must run before resource cleanup so in-flight requests can drain.
+		_ = s.shutdown.RegisterWithPriority("Listeners", 0, s.shutdownImpl)
+		// TrafficManager and TLSManager move to priority 1 — after listeners drain.
 	}
 
 	<-s.shutdown.Done()
