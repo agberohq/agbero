@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -27,6 +28,14 @@ type CacheMiddleware struct {
 	keyScope         []string
 	maxCacheableSize int64
 	policy           *alaye.TTLPolicy
+
+	// inFlight deduplicates concurrent stale-while-revalidate background
+	// fetches for the same cache key. Without this, a high-traffic endpoint
+	// that becomes stale will spawn one background revalidation goroutine per
+	// concurrent request — a self-inflicted cache stampede that floods the
+	// upstream. The sync.Map stores the key while a revalidation is in
+	// progress; subsequent callers skip pool.Submit entirely.
+	inFlight sync.Map
 }
 
 // Option configures optional fields on CacheMiddleware.
@@ -165,27 +174,45 @@ func (m *CacheMiddleware) Handler(next http.Handler) http.Handler {
 // revalidate submits a background cache refresh to the jack pool.
 // If no pool is configured, the next request will fetch fresh data
 // once the stale window expires and the entry is evicted.
+//
+// Only one revalidation per cache key is allowed to run at a time.
+// Concurrent requests hitting the same stale entry all receive the cached
+// (stale) response; the first one wins the inFlight slot and submits the
+// background fetch. The rest skip pool.Submit entirely. Once the fetch
+// completes the slot is released so the next stale window can trigger again.
 func (m *CacheMiddleware) revalidate(key string, r *http.Request, next http.Handler) {
 	if m.pool == nil {
 		return
 	}
-	// The client request context is cancelled by the Go HTTP server as soon
-	// as the stale response is written and the handler returns. Cloning the
-	// request with that same context means the background fetch will receive
-	// context.Canceled the moment it tries to make an upstream call, making
-	// stale-while-revalidate permanently broken.
-	//
-	// context.WithoutCancel (Go 1.21) creates a context that inherits all
-	// values (tracing, auth, etc.) from the parent but is never cancelled,
-	// allowing the background worker to complete the upstream request.
+
+	// Try to claim the in-flight slot for this key. LoadOrStore returns
+	// (existing, true) if another goroutine already holds it — bail out.
+	if _, alreadyRunning := m.inFlight.LoadOrStore(key, struct{}{}); alreadyRunning {
+		return
+	}
+
 	bgCtx := context.WithoutCancel(r.Context())
 	clone := r.Clone(bgCtx)
+
+	// Cache-Control: private or no-store and therefore never reach this path;
+	// these strips guard against upstreams that forget to set those directives.
+
+	clone.Header.Del("Authorization")
+	clone.Header.Del("Cookie")
+	clone.Header.Del("X-Auth-Token")
+	clone.Header.Del("X-Api-Key")
+	clone.Header.Del("Proxy-Authorization")
+
 	maxSize := m.maxCacheableSize
 	defaultTTL := m.defaultTTL
 	store := m.store
 	logger := m.logger
 
 	_ = m.pool.Submit(jack.Func(func() error {
+		// Always release the in-flight slot when the goroutine exits,
+		// whether the fetch succeeded, failed, or panicked.
+		defer m.inFlight.Delete(key)
+
 		rec := newRecorder(noopResponseWriter{}, maxSize)
 		next.ServeHTTP(rec, clone)
 
