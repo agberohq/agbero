@@ -35,6 +35,7 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/revoke"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/telemetry"
+	"github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/agberohq/keeper"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
@@ -225,7 +226,7 @@ func (s *Server) Start(configPath string) error {
 				}
 
 				if r.Serverless.Git.Enabled.Active() {
-					if !s.global.Security.Allow.ServerlessGit {
+					if !s.global.Security.Allow.ServerlessGit.Active() {
 						return fmt.Errorf(
 							"serverless git is disabled by default due to RCE risk: "+
 								"a compromised repository grants arbitrary code execution on this host. "+
@@ -344,6 +345,14 @@ func (s *Server) Start(configPath string) error {
 	}
 	ipMgr := zulu.NewIPManager(trustedProxies)
 
+	// Build the named tunnel pool registry from global tunnel {} blocks.
+	// An error here is fatal — a misconfigured tunnel referenced by a route
+	// would silently send traffic direct, which is never the right fallback.
+	tunnelPools, err := buildTunnelPools(s.global.Tunnels, s.logger)
+	if err != nil {
+		return errors.Newf("tunnel init: %w", err)
+	}
+
 	tmCfg := handlers.ManagerConfig{
 		Global:      s.global,
 		HostManager: s.hostManager,
@@ -353,6 +362,7 @@ func (s *Server) Start(configPath string) error {
 		TLSManager:  s.tlsManager,
 		SharedState: s.sharedState,
 		OrchManager: s.orchManager,
+		TunnelPools: tunnelPools,
 	}
 
 	tm, err := handlers.NewManager(tmCfg)
@@ -363,7 +373,10 @@ func (s *Server) Start(configPath string) error {
 	s.firewall = tm.Firewall()
 
 	if s.shutdown != nil {
-		s.shutdown.RegisterFunc("TrafficManager", tm.Close)
+		_ = s.shutdown.RegisterWithPriority("TrafficManager", 1, func(ctx context.Context) error {
+			tm.Close()
+			return nil
+		})
 	}
 
 	s.apiShared = &api.Shared{
@@ -413,7 +426,10 @@ func (s *Server) Start(configPath string) error {
 	s.startPprofServer()
 
 	if s.shutdown != nil {
-		s.shutdown.RegisterWithContext("Listeners", s.shutdownImpl)
+		// Priority 0 — stop accepting new connections first.
+		// Must run before resource cleanup so in-flight requests can drain.
+		_ = s.shutdown.RegisterWithPriority("Listeners", 0, s.shutdownImpl)
+		// TrafficManager and TLSManager move to priority 1 — after listeners drain.
 	}
 
 	<-s.shutdown.Done()
@@ -484,6 +500,18 @@ func (s *Server) Reload() {
 		newTLSManager.SetCluster(s.clusterManager)
 	}
 
+	// Rebuild tunnel pools from the reloaded global config.
+	var reloadedTunnelPools map[string]*tunnel.Pool
+	reloadedTunnelPools, err = buildTunnelPools(global.Tunnels, s.logger)
+	if err != nil {
+		s.logger.Fields("err", err).Error("reload: failed to build tunnel pools, keeping existing config")
+		if newSharedState != nil {
+			_ = newSharedState.Close()
+		}
+		newTLSManager.Close()
+		return
+	}
+
 	tmCfg := handlers.ManagerConfig{
 		Global:      global,
 		HostManager: s.hostManager,
@@ -493,13 +521,19 @@ func (s *Server) Reload() {
 		TLSManager:  newTLSManager,
 		SharedState: newSharedState,
 		OrchManager: s.orchManager,
+		TunnelPools: reloadedTunnelPools,
 	}
 
 	s.mu.RLock()
 	oldTrafficManagerForFirewall := s.trafficManager
 	s.mu.RUnlock()
 
-	_ = oldTrafficManagerForFirewall // closed after listener drain; see cleanup goroutine below
+	// Release the bbolt file lock so the new firewall can acquire it.
+	// Active requests on draining listeners will continue to use the in-memory
+	// cache, they just won't persist new bans to disk during this split second.
+	if oldTrafficManagerForFirewall != nil {
+		oldTrafficManagerForFirewall.CloseFirewall()
+	}
 
 	newTM, err := handlers.NewManager(tmCfg)
 	if err != nil {
@@ -583,7 +617,7 @@ func (s *Server) Reload() {
 					s.registerGitConfig(r.Web.Git, seenGitConfigs)
 				}
 				if r.Serverless.Git.Enabled.Active() {
-					if !s.global.Security.Allow.ServerlessGit {
+					if !s.global.Security.Allow.ServerlessGit.Active() {
 						s.logger.Fields("git_id", r.Serverless.Git.ID).Error(
 							"serverless git route ignored: serverless_git is not set in security block",
 						)
@@ -629,9 +663,9 @@ func (s *Server) Reload() {
 		// stopped. Moving CloseFirewall() to here (from before NewManager)
 		// closes the race window where in-flight requests on the old listeners
 		// could hit a closed bbolt database and panic with "database not open".
-		if oldTrafficManagerForFirewall != nil {
-			oldTrafficManagerForFirewall.CloseFirewall()
-		}
+		//if oldTrafficManagerForFirewall != nil {
+		//	oldTrafficManagerForFirewall.CloseFirewall()
+		//}
 
 		oldTLSManager.Close()
 
@@ -839,4 +873,37 @@ func (s *Server) keeperWrite(key string, value []byte) {
 		return
 	}
 	s.logger.Fields("key", key).Debug("cluster: keeper secret synced from join")
+}
+
+// buildTunnelPools constructs the named tunnel pool registry from global
+// tunnel {} config blocks. Each enabled tunnel becomes a *tunnel.Pool
+// keyed by its name. Disabled tunnels are silently skipped.
+// Returns an error if any enabled tunnel pool cannot be initialised.
+func buildTunnelPools(tunnels []alaye.Tunnel, logger *ll.Logger) (map[string]*tunnel.Pool, error) {
+	if len(tunnels) == 0 {
+		return nil, nil
+	}
+	pools := make(map[string]*tunnel.Pool, len(tunnels))
+	for _, t := range tunnels {
+		if t.Enabled.NotActive() {
+			continue
+		}
+		pool, err := tunnel.New(tunnel.Config{
+			Name:     t.Name,
+			Servers:  t.Servers,
+			Username: t.Username.String(),
+			Password: t.Password.String(),
+			Strategy: t.Strategy,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("tunnel %q: %w", t.Name, err)
+		}
+		pools[t.Name] = pool
+		logger.Fields(
+			"tunnel", t.Name,
+			"servers", len(t.Servers),
+			"strategy", t.Strategy,
+		).Info("tunnel pool ready")
+	}
+	return pools, nil
 }

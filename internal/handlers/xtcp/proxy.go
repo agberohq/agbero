@@ -1,6 +1,7 @@
 package xtcp
 
 import (
+	"context"
 	"encoding/binary"
 	"io"
 	"math/rand/v2"
@@ -14,9 +15,9 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
-	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/lb"
+	tunnelpkg "github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/olekukonko/mappo"
 	"github.com/pires/go-proxyproto"
 )
@@ -55,13 +56,13 @@ type Proxy struct {
 	closing atomic.Bool
 	connCnt atomic.Int64
 
-	res  *resource.Resource
-	quit chan struct{}
-	wg   sync.WaitGroup
+	res         *resource.Resource
+	tunnelPools map[string]*tunnelpkg.Pool
+	quit        chan struct{}
+	wg          sync.WaitGroup
 }
 
-// Initializes a new TCP proxy instance for the specified listen address
-// Configures the underlying connection maps and resource dependencies
+// NewProxy initializes a new TCP proxy instance for the specified listen address.
 func NewProxy(res *resource.Resource, listen string) *Proxy {
 	return &Proxy{
 		Listen: listen,
@@ -69,6 +70,12 @@ func NewProxy(res *resource.Resource, listen string) *Proxy {
 		res:    res,
 		quit:   make(chan struct{}),
 	}
+}
+
+// WithTunnelPools sets the named tunnel pool registry for this proxy.
+// Must be called before AddRoute or buildRoute.
+func (p *Proxy) WithTunnelPools(pools map[string]*tunnelpkg.Pool) {
+	p.tunnelPools = pools
 }
 
 // Returns the total number of currently tracked active connections
@@ -83,16 +90,18 @@ func (p *Proxy) SetIdleTimeout(timeout time.Duration) {
 	p.IdleTimeout = timeout
 }
 
-// Constructs a TCP route structure from the provided proxy configuration
-// Initializes the load balancing selector and parses protocol settings
+// Constructs a TCP route structure from the provided proxy configuration.
+// Initializes the load balancing selector and parses protocol settings.
 func (p *Proxy) buildRoute(cfg alaye.Proxy) *tcpRoute {
 	var backends []lb.Backend
 	for _, srv := range cfg.Backends {
+		pool := resolveTCPTunnelPool(cfg, p.tunnelPools)
 		be, err := NewBackend(BackendConfig{
-			Server:   srv,
-			Proxy:    cfg,
-			Resource: p.res,
-			Logger:   p.res.Logger,
+			Server:     srv,
+			Proxy:      cfg,
+			Resource:   p.res,
+			Logger:     p.res.Logger,
+			TunnelPool: pool,
 		})
 		if err == nil {
 			backends = append(backends, be)
@@ -164,7 +173,14 @@ func (p *Proxy) Start() error {
 			}
 		}()
 
-		bo := zulu.NewInfinite()
+		// Simple exponential backoff state — replaces cenkalti/backoff.
+		// jack.Retry is for operation retries; the accept loop needs manual
+		// control because it loops indefinitely and checks p.quit between steps.
+		const (
+			boInit = 1 * time.Millisecond
+			boMax  = 100 * time.Millisecond
+		)
+		boDelay := boInit
 
 		for {
 			select {
@@ -186,16 +202,21 @@ func (p *Proxy) Start() error {
 				if p.closing.Load() {
 					return
 				}
-				sleepDuration := bo.NextBackOff()
-				p.res.Logger.Fields("err", err, "retry_in", sleepDuration).Warn("tcp accept error, backing off")
+				p.res.Logger.Fields("err", err, "retry_in", boDelay).Warn("tcp accept error, backing off")
 				select {
-				case <-time.After(sleepDuration):
-					continue
+				case <-time.After(boDelay):
 				case <-p.quit:
 					return
 				}
+				if boDelay < boMax {
+					boDelay *= 2
+					if boDelay > boMax {
+						boDelay = boMax
+					}
+				}
+				continue
 			}
-			bo.Reset()
+			boDelay = boInit // reset on success
 			if p.MaxConns > 0 && p.connCnt.Load() >= p.MaxConns {
 				p.res.Logger.Fields("remote", conn.RemoteAddr().String(), "limit", p.MaxConns).Warn("tcp max connections reached, dropping")
 				conn.Close()
@@ -211,6 +232,77 @@ func (p *Proxy) Start() error {
 	return nil
 }
 
+// GracefulStop signals the proxy to stop accepting new connections and waits
+// for all active connections to finish naturally up to the given deadline.
+// Connections still open at the deadline are closed forcibly.
+//
+// This is the correct shutdown path during configuration reloads — it avoids
+// severing long-lived streaming or database connections that happen to be
+// active when the operator adds an unrelated new route.
+//
+// Call Stop() instead when an immediate hard shutdown is needed (e.g. process
+// exit under SIGKILL).
+func (p *Proxy) GracefulStop(deadline time.Time) {
+	if !p.closing.CompareAndSwap(false, true) {
+		return
+	}
+	close(p.quit)
+
+	// Set a read/write deadline on every active connection. This causes any
+	// blocked Read or Write to return with a timeout error, unblocking the
+	// proxy goroutine so it can clean up and decrement the wait group.
+	// Connections that complete before the deadline are not disturbed.
+	p.conns.Range(func(key, value any) bool {
+		c := key.(net.Conn)
+		_ = c.SetDeadline(deadline)
+		return true
+	})
+
+	// Wait for all proxy goroutines to exit. Each goroutine removes itself
+	// from p.conns when it finishes (or when the deadline fires), so this
+	// wait naturally drains without holding any lock.
+	drained := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(drained)
+	}()
+
+	select {
+	case <-drained:
+		// All connections finished cleanly within the deadline.
+	case <-time.After(time.Until(deadline)):
+		// Deadline exceeded — force-close anything still open.
+		p.conns.Range(func(key, value any) bool {
+			c, e := key.(net.Conn), value.(*connEntry)
+			if e.closed.CompareAndSwap(false, true) {
+				_ = c.Close()
+			}
+			return true
+		})
+		p.wg.Wait()
+	}
+
+	p.conns.Clear()
+	p.connCnt.Store(0)
+
+	p.mu.RLock()
+	def := p.def
+	routes := p.routes
+	p.mu.RUnlock()
+
+	if def != nil {
+		def.Stop()
+	}
+	for _, r := range routes {
+		r.Stop()
+	}
+
+	p.res.Logger.Fields("bind", p.Listen).Info("xtcp: proxy stopped gracefully")
+}
+
+// Stop immediately closes all active connections and shuts down the proxy.
+// Prefer GracefulStop during configuration reloads to avoid severing
+// long-lived connections that are unrelated to the config change.
 // Initiates a graceful shutdown of the proxy and its tracked connections
 // Closes the listener, active sockets, and wait-groups for completion
 func (p *Proxy) Stop() {
@@ -382,7 +474,9 @@ func (p *Proxy) handle(src net.Conn) {
 		}
 		tried[picked] = true
 		backend = picked.(*Backend)
-		dst, err = net.DialTimeout(def.TCP, backend.Address, def.BackendDialTimeout)
+		dialCtx, dialCancel := context.WithTimeout(context.Background(), def.BackendDialTimeout)
+		dst, err = backend.Dial(dialCtx)
+		dialCancel()
 		if err == nil {
 			break
 		}
@@ -624,4 +718,18 @@ func (p *Proxy) SnapBackends() []*Backend {
 		unwrap(p.def.selector)
 	}
 	return all
+}
+
+// resolveTCPTunnelPool returns the tunnel pool for a TCP proxy route, mirroring
+// the HTTP route resolution in handlers/routes.go. TCP proxies use the same
+// named `via` convention on the Proxy config if it is ever extended; for now
+// only global named pools are considered.
+func resolveTCPTunnelPool(cfg alaye.Proxy, pools map[string]*tunnelpkg.Pool) *tunnelpkg.Pool {
+	if len(pools) == 0 {
+		return nil
+	}
+	// TCP proxy routes currently don't carry Via/Tunnel fields (those live on
+	// alaye.Backend which is for HTTP routes). This helper is the extension
+	// point when TCP proxy config gains tunnel support. For now, return nil.
+	return nil
 }

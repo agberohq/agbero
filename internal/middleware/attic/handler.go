@@ -108,7 +108,8 @@ func (m *CacheMiddleware) Handler(next http.Handler) http.Handler {
 				if serveCachedResponse(w, r, entry, m.logger) {
 					return
 				}
-				m.store.Delete(key)
+				// avoid Cache thrashing in
+				//m.store.Delete(key)
 			}
 		}
 

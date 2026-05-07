@@ -5,8 +5,13 @@ import (
 	"strings"
 )
 
-// DangerousFastCGIHeaders is the set of lowercase HTTP header names that must
-// be stripped before forwarding a request to any FastCGI backend.
+// DangerousFastCGIHeaders is the set of normalised (lowercase, dashes only)
+// HTTP header names that must be stripped before forwarding a request to any
+// FastCGI backend.
+//
+// All entries use dashes, never underscores. SanitizeFastCGIHeaders normalises
+// both dashes and underscores to dashes before lookup, so "X_Forwarded_Host"
+// and "X-Forwarded-Host" both map to "x-forwarded-host" and are caught.
 //
 // These headers are dangerous because gofast.MapHeader blindly converts every
 // incoming HTTP header to an uppercase CGI environment variable by prepending
@@ -35,41 +40,40 @@ var DangerousFastCGIHeaders = map[string]bool{
 	"x-real-ip":          true,
 
 	// CGI meta-variables — must come from the proxy or the filesystem, not
-	// from an arbitrary client header.
-	"script_filename":   true,
-	"document_root":     true,
-	"script_name":       true,
-	"request_uri":       true,
-	"query_string":      true,
-	"request_method":    true,
-	"server_protocol":   true,
-	"gateway_interface": true,
-	"redirect_status":   true,
-	"content_length":    true,
-	"content_type":      true,
-	"remote_addr":       true,
-	"remote_port":       true,
-	"server_addr":       true,
-	"server_name":       true,
-	"server_port":       true,
-	"server_software":   true,
-	"path_translated":   true,
-	"path_info":         true,
+	// from an arbitrary client header. All use dashes; normalisation handles
+	// underscore variants transparently.
+	"script-filename":   true,
+	"document-root":     true,
+	"script-name":       true,
+	"request-uri":       true,
+	"query-string":      true,
+	"request-method":    true,
+	"server-protocol":   true,
+	"gateway-interface": true,
+	"redirect-status":   true,
+	"remote-addr":       true,
+	"remote-port":       true,
+	"server-addr":       true,
+	"server-name":       true,
+	"server-port":       true,
+	"server-software":   true,
+	"path-translated":   true,
+	"path-info":         true,
 
 	// PHP-specific auth variables — prevent credential injection.
-	"php_auth_user": true,
-	"php_auth_pw":   true,
-	"auth_type":     true,
+	"php-auth-user": true,
+	"php-auth-pw":   true,
+	"auth-type":     true,
 
 	// PHP rewrite aliases.
-	"orig_path_info":       true,
-	"orig_script_name":     true,
-	"orig_script_filename": true,
+	"orig-path-info":       true,
+	"orig-script-name":     true,
+	"orig-script-filename": true,
 
 	// HTTP_HOST is injected by BasicParamsMap from r.Host; a client-supplied
 	// Host header override would let tenants forge the SERVER_NAME seen by the
-	// backend application.
-	"http_host": true,
+	// backend application. Stored as "http-host" since lookup normalises to dashes.
+	"http-host": true,
 }
 
 // SanitizeFastCGIHeaders returns a copy of r.Header with all entries from
@@ -77,21 +81,39 @@ var DangerousFastCGIHeaders = map[string]bool{
 // with "http_" (which would collide with the HTTP_ CGI namespace and allow
 // variable injection).
 //
+// Critically, the lookup normalises both dashes and underscores to dashes
+// before checking the blocklist. gofast.MapHeader collapses all dashes AND
+// underscores to underscores when constructing the CGI variable name, so a
+// client-supplied header "X_Forwarded_Host" is functionally identical to
+// "X-Forwarded-Host" from gofast's perspective. Without normalisation an
+// attacker can bypass the blocklist by substituting underscores for dashes
+// in any protected header name (e.g. X_Forwarded_Host → HTTP_X_FORWARDED_HOST),
+// enabling IP spoofing, Host injection, and HTTPoxy-style attacks.
+//
 // Call this on the incoming *http.Request before invoking any gofast session
 // chain. The returned Header is a fresh map; r.Header is not modified.
 func SanitizeFastCGIHeaders(r *http.Request) http.Header {
 	safe := make(http.Header, len(r.Header))
 	for key, values := range r.Header {
 		lower := strings.ToLower(key)
-		if DangerousFastCGIHeaders[lower] {
+
+		// Normalise underscores to dashes so the blocklist lookup is
+		// bypass-proof. gofast.MapHeader treats dashes and underscores
+		// identically (both become "_" in the CGI variable name), so
+		// "X_Forwarded_Host" and "X-Forwarded-Host" are the same threat.
+		normalised := strings.ReplaceAll(lower, "_", "-")
+
+		if DangerousFastCGIHeaders[normalised] {
 			continue
 		}
+
 		// Drop anything that would produce an HTTP_HTTP_* collision in the
 		// CGI environment — a client cannot be allowed to inject arbitrary
-		// HTTP_ variables by prefixing its own header with "http_".
-		if strings.HasPrefix(lower, "http_") {
+		// HTTP_ variables by prefixing its own header with "http_" or "http-".
+		if strings.HasPrefix(normalised, "http-") {
 			continue
 		}
+
 		safe[key] = values
 	}
 	return safe

@@ -80,6 +80,13 @@ func (s *MemoryStore) SetWithPolicy(key string, entry *Entry, policy *alaye.TTLP
 	}
 
 	ttl := usePolicy.GetTTL(defaultTTL, entry.ContentType)
+	// RFC 7234 compliance: when the upstream sends Cache-Control: max-age=N,
+	// defaultTTL carries that directive. A policy TTL longer than the upstream's
+	// max-age would cause stale data to be served past the upstream's intent.
+	// Cap the policy TTL to the upstream max-age when it is shorter and non-zero.
+	if defaultTTL > 0 && ttl > defaultTTL {
+		ttl = defaultTTL
+	}
 	if ttl <= 0 {
 		return
 	}

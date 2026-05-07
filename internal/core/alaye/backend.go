@@ -10,11 +10,43 @@ type Backend struct {
 	Keys     []string      `hcl:"keys,attr,omitempty" json:"keys,omitempty"`
 
 	Servers []Server `hcl:"server,block" json:"servers"`
+
+	// Via references a named tunnel block defined in the global config.
+	// All backends in this block will route outbound connections through
+	// the named tunnel. Mutually exclusive with Tunnel.
+	//
+	// Example:
+	//   via = "tor"
+	Via string `hcl:"via,attr,omitempty" json:"via,omitempty"`
+
+	// Tunnel is the inline shorthand for a single-server SOCKS5 tunnel.
+	// Use the full `tunnel {}` block with `via` for multi-server pools
+	// or when the same tunnel is shared across multiple routes.
+	// Mutually exclusive with Via.
+	//
+	// Example:
+	//   tunnel = "socks5://127.0.0.1:9050"
+	//   tunnel = "socks5://user:pass@vpn.example.com:1080"
+	Tunnel string `hcl:"tunnel,attr,omitempty" json:"tunnel,omitempty"`
+
+	// Idempotent marks this backend safe for speculative hedged requests.
+	// When true and a resource.Hedger is configured, a second request is
+	// fired to a different backend after the P50 RTT if the primary is slow.
+	// Only enable for backends handling GET, HEAD, or other idempotent methods.
+	Idempotent bool `hcl:"idempotent,attr,omitempty" json:"idempotent,omitempty"`
 }
 
 func (b Backend) IsZero() bool {
 	return b.Enabled.IsZero() &&
 		b.Strategy == "" &&
 		len(b.Keys) == 0 &&
-		len(b.Servers) == 0
+		len(b.Servers) == 0 &&
+		b.Via == "" &&
+		b.Tunnel == ""
+}
+
+// HasTunnel reports whether this backend routes through a tunnel (either
+// inline or via a named reference).
+func (b Backend) HasTunnel() bool {
+	return b.Via != "" || b.Tunnel != ""
 }

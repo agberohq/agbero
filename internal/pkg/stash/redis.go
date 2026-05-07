@@ -120,6 +120,10 @@ func (s *RedisStore) SetWithPolicy(key string, entry *Entry, policy *alaye.TTLPo
 	}
 
 	ttl := usePolicy.GetTTL(defaultTTL, entry.ContentType)
+	// RFC 7234: cap policy TTL to upstream max-age when it is shorter and non-zero.
+	if defaultTTL > 0 && ttl > defaultTTL {
+		ttl = defaultTTL
+	}
 	if ttl <= 0 {
 		return
 	}

@@ -142,7 +142,13 @@ func (rl *RateLimiter) allowInternal(r *http.Request, key string, pol RatePolicy
 			return curr, true
 		}
 		if rl.data.Len() >= rl.maxEntries {
-			allowed = false
+			// Map is full. Fail open — allow the request rather than
+			// returning 429 to every new visitor when the table saturates.
+			// An attacker who filled the table with spoofed keys achieves
+			// a DoS if we deny here; failing open degrades rate-limit
+			// enforcement only for new keys until the background sweeper
+			// reclaims space, which is far less damaging than a sitewide outage.
+			allowed = true
 			return nil, false
 		}
 		newEntry := &atomicEntry{lim: pol.limiter()}

@@ -23,7 +23,13 @@ type TTLPolicy struct {
 	StaleIfError         expect.Duration `hcl:"stale_if_error,attr"         json:"stale_if_error,omitempty"`
 }
 
-// GetTTL determines TTL based on policy and content type
+// GetTTL determines TTL based on policy and content type.
+// When the policy is active but returns 0 (either no content-type match and
+// Default=0, or an explicit zero override), the caller (SetWithPolicy) treats
+// 0 as "do not cache" — this is the correct signal for an operator who
+// intentionally disables caching via the policy.
+// The defaultTTL parameter is used only when the policy is nil or inactive,
+// preserving the upstream's Cache-Control: max-age directive in that case.
 func (p *TTLPolicy) GetTTL(defaultTTL time.Duration, contentType string) time.Duration {
 	if p == nil || !p.Enabled.Active() {
 		return defaultTTL
@@ -36,7 +42,7 @@ func (p *TTLPolicy) GetTTL(defaultTTL time.Duration, contentType string) time.Du
 		}
 	}
 
-	// Fallback to policy default (this can also be 0)
+	// Fallback to policy default (0 means "do not cache" — intentional operator choice)
 	return p.Default.StdDuration()
 }
 

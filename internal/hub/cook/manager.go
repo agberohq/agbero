@@ -3,6 +3,7 @@ package cook
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -290,12 +291,22 @@ func (m *Manager) HandleWebhook(w http.ResponseWriter, r *http.Request, routeKey
 
 	if entry.Config.Secret.String() != "" {
 		sig := r.Header.Get("X-Hub-Signature-256")
-		if sig == "" {
+		var expected string
+		if sig != "" {
+			// SHA-256 path — the preferred modern signature.
+			mac := hmac.New(sha256.New, []byte(entry.Config.Secret.String()))
+			mac.Write(body)
+			expected = "sha256=" + hex.EncodeToString(mac.Sum(nil))
+		} else {
+			// SHA-1 fallback — used by older GitHub Enterprise and other
+			// Git providers that only send X-Hub-Signature.
+			// Must compute SHA-1 HMAC and compare against "sha1=..." prefix,
+			// not SHA-256. Computing SHA-256 here always produces a mismatch.
 			sig = r.Header.Get("X-Hub-Signature")
+			mac := hmac.New(sha1.New, []byte(entry.Config.Secret.String()))
+			mac.Write(body)
+			expected = "sha1=" + hex.EncodeToString(mac.Sum(nil))
 		}
-		mac := hmac.New(sha256.New, []byte(entry.Config.Secret.String()))
-		mac.Write(body)
-		expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 		if subtle.ConstantTimeCompare([]byte(sig), []byte(expected)) != 1 {
 			m.logger.Fields("route", routeKey).Warn("invalid webhook signature")
 			http.Error(w, "Invalid signature", http.StatusForbidden)

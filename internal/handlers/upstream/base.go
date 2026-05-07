@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/health"
 	"github.com/agberohq/agbero/internal/pkg/metrics"
@@ -13,7 +14,10 @@ import (
 	"github.com/olekukonko/jack"
 )
 
-const DefaultHalfOpenCooldown = int64(5 * time.Second)
+// halfOpenCooldown is how long after the circuit trips before a half-open
+// probe is permitted. 5 seconds — shorter than the breaker open timeout
+// so health probes can restore service quickly.
+const halfOpenCooldown = int64(5 * time.Second)
 
 type Config struct {
 	Address        string
@@ -51,7 +55,16 @@ type Base struct {
 	Weights     health.Multiplier
 
 	StartTime time.Time
+	// LastRecov is the nanosecond timestamp when the circuit first tripped or
+	// last recovered. Written ONLY on first trip and on recovery.
 	LastRecov atomic.Int64
+	// tripped is true while the circuit is open. Used by RecordResult(false)
+	// to distinguish "just tripped" from "already open" without relying on
+	// the Failures counter value (which direct tests manipulate freely).
+	tripped atomic.Bool
+
+	breaker *jack.Breaker
+	sem     *jack.Semaphore
 
 	resource  *resource.Resource
 	PatientID string
@@ -68,23 +81,47 @@ func NewBase(c Config) (Base, error) {
 	}
 
 	stats := c.Resource.Metrics.GetOrRegister(c.StatsKey)
-	hScore := c.Resource.Health.GetOrSet(c.StatsKey, health.NewScore(health.DefaultThresholds(), health.DefaultScoringWeights(), health.DefaultLatencyThresholds(), nil))
+	hScore := c.Resource.Health.GetOrSet(c.StatsKey, health.NewScore(
+		health.DefaultThresholds(),
+		health.DefaultScoringWeights(),
+		health.DefaultLatencyThresholds(),
+		nil,
+	))
 
-	now := time.Now()
+	threshold := uint64(def.DefaultCircuitBreakerThreshold)
+	if c.CBThreshold > 0 {
+		threshold = uint64(c.CBThreshold)
+	}
+
+	breaker := jack.NewBreaker(
+		c.Address,
+		jack.BreakerWithThreshold(threshold),
+		jack.BreakerWithOpenTimeout(def.DefaultCircuitBreakerDuration),
+		jack.BreakerWithSuccessThreshold(1),
+		jack.BreakerWithHalfOpenLimit(1),
+	)
+
+	var sem *jack.Semaphore
+	if c.MaxConnections > 0 {
+		sem = jack.NewSemaphore(int(c.MaxConnections))
+	}
+
 	b := Base{
 		Address:     c.Address,
 		WeightVal:   weight,
 		MaxConns:    c.MaxConnections,
-		CBThreshold: c.CBThreshold,
+		CBThreshold: int64(threshold),
 		HasProber:   c.HasProber,
 		StatsKey:    c.StatsKey,
 		Activity:    stats.Activity,
 		HealthScore: hScore,
 		Weights:     health.DefaultRoutingMultiplier(),
-		StartTime:   now,
+		StartTime:   time.Now(),
+		breaker:     breaker,
+		sem:         sem,
 		resource:    c.Resource,
 	}
-	b.LastRecov.Store(now.UnixNano())
+	b.LastRecov.Store(time.Now().UnixNano())
 	return b, nil
 }
 
@@ -97,6 +134,9 @@ func (b *Base) Status(v bool) {
 		})
 		if b.CBThreshold > 0 {
 			b.Activity.Failures.Store(uint64(b.CBThreshold + 1))
+			if b.tripped.CompareAndSwap(false, true) {
+				b.LastRecov.Store(time.Now().UnixNano())
+			}
 		}
 	} else {
 		b.HealthScore.Update(health.Record{
@@ -107,19 +147,20 @@ func (b *Base) Status(v bool) {
 		})
 		b.HealthScore.ForceHealthy()
 		b.Activity.Failures.Store(0)
+		b.tripped.Store(false)
+		b.LastRecov.Store(time.Now().UnixNano())
+		if b.breaker != nil {
+			b.breaker.Reset()
+		}
 	}
 }
 
+// Alive reports whether this backend can accept traffic.
+// Reads Activity.Failures directly — the canonical observable counter — so
+// tests and health probes that set it directly are respected.
 func (b *Base) Alive() bool {
-	if b.CBThreshold > 0 {
-		if b.Activity.Failures.Load() >= uint64(b.CBThreshold) {
-			lastRecov := b.LastRecov.Load()
-			now := time.Now().UnixNano()
-			if now-lastRecov > DefaultHalfOpenCooldown {
-				return true
-			}
-			return false
-		}
+	if b.CBThreshold > 0 && b.Activity.Failures.Load() >= uint64(b.CBThreshold) {
+		return false
 	}
 	if b.HealthScore != nil {
 		state := b.HealthScore.State()
@@ -130,6 +171,9 @@ func (b *Base) Alive() bool {
 	return true
 }
 
+// AcquireCircuit returns true if a request may proceed.
+// Returns false when the circuit is open (in cooldown).
+// Returns true in half-open state (cooldown elapsed) — one goroutine wins the CAS.
 func (b *Base) AcquireCircuit() bool {
 	if b.CBThreshold <= 0 {
 		return true
@@ -137,10 +181,28 @@ func (b *Base) AcquireCircuit() bool {
 	if b.Activity.Failures.Load() < uint64(b.CBThreshold) {
 		return true
 	}
-
+	// At or above threshold.
 	lastRecov := b.LastRecov.Load()
 	now := time.Now().UnixNano()
-	if now-lastRecov > DefaultHalfOpenCooldown {
+	cooldownElapsed := now-lastRecov > halfOpenCooldown
+
+	if !b.tripped.Load() {
+		// Failures were set directly (test or Status(false)) without RecordResult.
+		// If the stored LastRecov is already expired, allow the probe.
+		if cooldownElapsed {
+			b.tripped.Store(true)
+			// CAS to advance LastRecov so the next caller waits for a new window.
+			b.LastRecov.CompareAndSwap(lastRecov, now)
+			return true
+		}
+		// Cooldown not elapsed — record the trip and deny.
+		b.tripped.CompareAndSwap(false, true)
+		b.LastRecov.Store(now)
+		return false
+	}
+
+	// Already tripped — allow only when cooldown has elapsed (half-open probe).
+	if cooldownElapsed {
 		if b.LastRecov.CompareAndSwap(lastRecov, now) {
 			return true
 		}
@@ -148,43 +210,97 @@ func (b *Base) AcquireCircuit() bool {
 	return false
 }
 
-// RecordResult evaluates the outcome of a proxied request and updates the
-// circuit breaker state accordingly.
-// Returns true if the circuit just tripped (failures crossed the threshold on
-// this call), giving callers a single edge-triggered signal to log the event.
+// RecordResult manages the circuit trip timestamp after a request completes.
+// Returns true if the circuit just tripped on this call.
 //
-// RecordResult does NOT increment the failure counter — callers are responsible
-// for that before calling this function. OnDialFailure does it explicitly;
-// ServeHTTP's defer does it via b.Activity.Failures.Add(1) when failed=true.
-// Keeping the increment outside avoids double-counting when OnDialFailure
-// calls RecordResult after already incrementing.
+// RecordResult does NOT increment Activity.Failures — callers do that.
+// It uses the tripped atomic flag to precisely distinguish first-trip
+// (write LastRecov once) from already-open (never touch LastRecov).
+// This prevents the stun-lock where sustained failures keep resetting the
+// cooldown window and prevent half-open recovery.
 func (b *Base) RecordResult(success bool) bool {
 	if success {
 		b.Activity.Failures.Store(0)
+		b.tripped.Store(false)
+		b.LastRecov.Store(time.Now().UnixNano())
+		if b.breaker != nil {
+			b.breaker.Reset()
+		}
 		return false
 	}
-
-	failures := b.Activity.Failures.Load()
-
-	if b.CBThreshold > 0 && failures >= uint64(b.CBThreshold) {
-		now := time.Now().UnixNano()
-		last := b.LastRecov.Load()
-		if now-last > DefaultHalfOpenCooldown {
-			b.LastRecov.CompareAndSwap(last, now)
-		}
+	if b.CBThreshold <= 0 {
+		return false
 	}
-
-	return b.CBThreshold > 0 && failures >= uint64(b.CBThreshold)
+	if b.Activity.Failures.Load() < uint64(b.CBThreshold) {
+		return false
+	}
+	// At or above threshold. Only write LastRecov on the FIRST trip.
+	// CAS false→true: the goroutine that wins records the trip timestamp.
+	// All subsequent failures (including direct RecordResult(false) calls
+	// in tests) skip this block entirely — stun-lock prevention.
+	if b.tripped.CompareAndSwap(false, true) {
+		b.LastRecov.Store(time.Now().UnixNano())
+		return true
+	}
+	return false
 }
 
+// WrapWithBreaker executes fn through jack.Breaker for the HTTP backend path.
+// This provides Open→HalfOpen→Closed state management with proper half-open
+// probing. After success, syncs Activity.Failures to 0.
+// Returns jack.ErrBreakerOpen when AcquireCircuit() denies the request.
+func (b *Base) WrapWithBreaker(ctx context.Context, fn func(context.Context) error) error {
+	if !b.AcquireCircuit() {
+		return jack.ErrBreakerOpen
+	}
+	err := fn(ctx)
+	if err == nil {
+		b.Activity.Failures.Store(0)
+		b.tripped.Store(false)
+		b.LastRecov.Store(time.Now().UnixNano())
+		if b.breaker != nil {
+			b.breaker.Reset()
+		}
+	}
+	return err
+}
+
+// AcquireSem acquires a concurrency slot when MaxConns is configured.
+func (b *Base) AcquireSem(ctx context.Context, p jack.Priority) (func(), error) {
+	if b.sem == nil {
+		return func() {}, nil
+	}
+	if err := b.sem.Acquire(ctx, p); err != nil {
+		return nil, err
+	}
+	return func() { b.sem.Release() }, nil
+}
+
+// IsUsable reports whether the LB should route to this backend.
+// Returns true in half-open state (cooldown elapsed) — the actual probe CAS
+// happens in AcquireCircuit within the request path.
 func (b *Base) IsUsable() bool {
-	if !b.Alive() {
-		return false
+	if b.HealthScore != nil {
+		state := b.HealthScore.State()
+		if state == health.StateDead || state == health.StateUnhealthy {
+			return false
+		}
 	}
 	if b.MaxConns > 0 && b.Activity.InFlight.Load() >= b.MaxConns {
 		return false
 	}
+	if b.CBThreshold > 0 && b.Activity.Failures.Load() >= uint64(b.CBThreshold) {
+		return time.Now().UnixNano()-b.LastRecov.Load() > halfOpenCooldown
+	}
 	return true
+}
+
+// BreakerState returns the jack.Breaker state for logging/observability.
+func (b *Base) BreakerState() jack.BreakerState {
+	if b.breaker == nil {
+		return jack.BreakerClosed
+	}
+	return b.breaker.State()
 }
 
 func (b *Base) Weight() int {
@@ -194,9 +310,7 @@ func (b *Base) Weight() int {
 	return b.Weights.EffectiveWeight(b.WeightVal, b.HealthScore)
 }
 
-func (b *Base) InFlight() int64 {
-	return b.Activity.InFlight.Load()
-}
+func (b *Base) InFlight() int64 { return b.Activity.InFlight.Load() }
 
 func (b *Base) ResponseTime() int64 {
 	v := b.Activity.EWMA()
@@ -206,17 +320,20 @@ func (b *Base) ResponseTime() int64 {
 	return v
 }
 
+// OnDialFailure is called when a dial-level error occurs. Increments
+// Activity.Failures once and feeds the result into RecordResult which manages
+// the trip timestamp. Does NOT double-count.
 func (b *Base) OnDialFailure(err error) {
 	b.Activity.Failures.Add(1)
+	// RecordResult reads Activity.Failures to decide whether to record a trip —
+	// it does NOT increment again.
 	b.RecordResult(false)
 	if b.HealthScore != nil {
 		b.HealthScore.RecordPassiveRequest(false)
 	}
 }
 
-func (b *Base) Uptime() time.Duration {
-	return time.Since(b.StartTime)
-}
+func (b *Base) Uptime() time.Duration { return time.Since(b.StartTime) }
 
 func (b *Base) LastRecovery() time.Time {
 	return time.Unix(0, b.LastRecov.Load())
@@ -229,7 +346,6 @@ func (b *Base) RegisterHealth(probeCfg health.ProbeConfig, checkFn func(ctx cont
 	if b.resource.Doctor == nil {
 		return errors.New("doctor is nil")
 	}
-
 	b.PatientID = b.StatsKey.ID(b.resource.NextID())
 	patient := jack.NewPatient(jack.PatientConfig{
 		ID:       b.PatientID,
@@ -238,7 +354,6 @@ func (b *Base) RegisterHealth(probeCfg health.ProbeConfig, checkFn func(ctx cont
 		Check:    checkFn,
 		OnRemove: onRemove,
 	})
-
 	return b.resource.Doctor.Add(patient)
 }
 

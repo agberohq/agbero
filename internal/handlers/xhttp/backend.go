@@ -42,6 +42,12 @@ type Backend struct {
 	hcConfig     *alaye.HealthCheck
 	routeDomains []string
 	Fallback     http.Handler
+
+	// bulkheadPartition and resource let ServeHTTP acquire a bulkhead slot
+	// per route without a separate middleware wrapper.
+	bulkheadPartition string
+	hedger            *jack.Hedger
+	resource          *resource.Resource
 }
 
 // NewBackend constructs an HTTP reverse proxy backend from the given config.
@@ -123,12 +129,18 @@ func newHTTPBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	}
 
 	b := &Backend{
-		Base:     base,
-		Cond:     cond,
-		hcConfig: &route.HealthCheck,
-		logger:   logger,
-		stop:     make(chan struct{}),
-		Fallback: xhttpCfg.Fallback,
+		Base:              base,
+		Cond:              cond,
+		hcConfig:          &route.HealthCheck,
+		logger:            logger,
+		stop:              make(chan struct{}),
+		Fallback:          xhttpCfg.Fallback,
+		bulkheadPartition: xhttpCfg.BulkheadPartition,
+		resource:          xhttpCfg.Resource,
+	}
+
+	if xhttpCfg.UseHedger && xhttpCfg.Resource != nil && xhttpCfg.Resource.Hedger != nil {
+		b.hedger = xhttpCfg.Resource.Hedger
 	}
 
 	if len(xhttpCfg.Domains) > 0 {
@@ -144,6 +156,11 @@ func newHTTPBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	t := xhttpCfg.Resource.Transport.Clone()
 	t.Proxy = nil
 	t.ExpectContinueTimeout = 0
+	// If a tunnel pool is configured, replace DialContext so all outbound
+	// connections route through the SOCKS5 proxy pool.
+	if xhttpCfg.TunnelPool != nil {
+		t = xhttpCfg.TunnelPool.WrapTransport(t)
+	}
 	if xhttpCfg.Server.Streaming.Enabled.Active() {
 		t.ResponseHeaderTimeout = 0
 		rp.FlushInterval = xhttpCfg.Server.Streaming.EffectiveFlushInterval()
@@ -465,14 +482,12 @@ func (b *Backend) initHealth(res *resource.Resource, targetURL string) error {
 // For cgi:// backends, WebSocket upgrade requests are rejected immediately
 // with 501 Not Implemented — the FastCGI protocol cannot tunnel WebSockets.
 func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !b.AcquireCircuit() {
-		if b.Fallback != nil {
-			b.Fallback.ServeHTTP(w, r)
-		} else {
-			http.Error(w, "Service Unavailable (Circuit Breaker)", http.StatusServiceUnavailable)
-		}
+	// FastCGI does not support WebSocket upgrades.
+	if b.FastCGI != nil && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		http.Error(w, "WebSocket upgrades are not supported on FastCGI backends", http.StatusNotImplemented)
 		return
 	}
+
 	if b.Abort.ShouldAbort(b.HealthScore) {
 		if b.Fallback != nil {
 			b.Fallback.ServeHTTP(w, r)
@@ -482,11 +497,44 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// FastCGI does not support WebSocket upgrades.
-	if b.FastCGI != nil && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-		http.Error(w, "WebSocket upgrades are not supported on FastCGI backends", http.StatusNotImplemented)
+	// Acquire a bulkhead slot for this route partition when configured.
+	// This gives per-route concurrency isolation — a slow backend can only
+	// consume its own partition budget, not the entire proxy's connections.
+	if b.bulkheadPartition != "" && b.resource != nil && b.resource.Bulkhead != nil {
+		if err := b.resource.Bulkhead.Call(r.Context(), b.bulkheadPartition, jack.PriorityHigh, func(ctx context.Context) error {
+			b.serveInner(w, r.WithContext(ctx))
+			return nil
+		}); err != nil {
+			if b.Fallback != nil {
+				b.Fallback.ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Service Unavailable (Bulkhead Full)", http.StatusServiceUnavailable)
+			}
+			return
+		}
 		return
 	}
+
+	b.serveInner(w, r)
+}
+
+// serveInner executes the actual proxied request, wrapped in the circuit
+// breaker and optional hedger. Separated from ServeHTTP so the bulkhead
+// callback can call it cleanly without nesting closures.
+// WrapWithBreaker handles the circuit check internally via AcquireCircuit —
+// no need for a separate pre-check here.
+func (b *Backend) serveInner(w http.ResponseWriter, r *http.Request) {
+	// Acquire a concurrency slot from the semaphore (if MaxConns is set).
+	release, err := b.AcquireSem(r.Context(), jack.PriorityHigh)
+	if err != nil {
+		if b.Fallback != nil {
+			b.Fallback.ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Service Unavailable (Capacity)", http.StatusServiceUnavailable)
+		}
+		return
+	}
+	defer release()
 
 	start := time.Now()
 	b.Activity.StartRequest()
@@ -506,10 +554,25 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		actualWriter = sw
 	}
 
-	defer func() {
-		dur := time.Since(start)
+	// When a hedger is configured it may fire a second concurrent doProxy
+	// goroutine. Both goroutines must share actualWriter, but net/http
+	// forbids concurrent writes to a ResponseWriter. Wrap it in an onceWriter
+	// so that only the first goroutine to produce a response actually writes
+	// to the client; the losing goroutine's output is discarded.
+	var ow *onceWriter
+	if b.hedger != nil {
+		ow = newOnceWriter(actualWriter)
+		actualWriter = ow
+	}
+
+	doProxy := func(ctx context.Context) error {
+		localReq := req.WithContext(ctx)
+		if b.FastCGI != nil {
+			b.FastCGI.ServeHTTP(actualWriter, localReq)
+		} else {
+			b.Proxy.ServeHTTP(actualWriter, localReq)
+		}
 		failed := state.failed
-		backendStatePool.Put(state)
 		if rw, ok := w.(*zulu.ResponseWriter); ok {
 			if rw.StatusCode == http.StatusBadGateway ||
 				rw.StatusCode == http.StatusServiceUnavailable ||
@@ -523,27 +586,55 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				failed = true
 			}
 		}
-		if sw != nil {
-			sw.ResponseWriter = nil // release reference before pool return
-			basicStatusWriterPool.Put(sw)
-			sw = nil
+		if failed {
+			return errors.New("upstream error")
 		}
-		b.Activity.EndRequest(dur.Microseconds(), failed)
-		if b.HealthScore != nil {
-			b.HealthScore.RecordPassiveRequest(!failed)
-		}
+		return nil
+	}
 
-		// EndRequest already accounts for the failure; RecordResult only
-		// evaluates whether the threshold has been crossed.
-		if justTripped := b.RecordResult(!failed); justTripped {
-			b.logger.Fields("backend", b.Address, "failures", b.CBThreshold).Warn("circuit breaker tripped")
-		}
-	}()
-
-	if b.FastCGI != nil {
-		b.FastCGI.ServeHTTP(actualWriter, req)
+	var breakerErr error
+	if b.hedger != nil {
+		// Hedger wraps the circuit breaker: fires a second request to a
+		// different backend if the primary is slow. The RTT window adapts
+		// automatically to the P50 response time of this backend.
+		_, breakerErr = b.hedger.Do(req.Context(), func(ctx context.Context) (any, error) {
+			return nil, b.WrapWithBreaker(ctx, doProxy)
+		})
 	} else {
-		b.Proxy.ServeHTTP(actualWriter, req)
+		breakerErr = b.WrapWithBreaker(req.Context(), doProxy)
+	}
+
+	dur := time.Since(start)
+	failed := state.failed || breakerErr != nil
+	backendStatePool.Put(state)
+
+	if sw != nil {
+		sw.ResponseWriter = nil
+		basicStatusWriterPool.Put(sw)
+	}
+
+	b.Activity.EndRequest(dur.Microseconds(), failed)
+	if b.HealthScore != nil {
+		b.HealthScore.RecordPassiveRequest(!failed)
+	}
+
+	// RecordResult manages the circuit trip timestamp without double-counting —
+	// EndRequest already incremented Activity.Failures above.
+	if justTripped := b.RecordResult(!failed); justTripped {
+		b.logger.Fields("backend", b.Address, "threshold", b.CBThreshold).Warn("circuit breaker tripped")
+	}
+
+	if errors.Is(breakerErr, jack.ErrBreakerOpen) {
+		if b.Fallback != nil {
+			b.Fallback.ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Service Unavailable (Circuit Breaker)", http.StatusServiceUnavailable)
+		}
+		return
+	}
+
+	if failed {
+		b.logger.Fields("backend", b.Address, "state", b.BreakerState()).Debug("backend request failed")
 	}
 }
 
@@ -623,4 +714,52 @@ func fcgiBuildTrusted(r *http.Request) gofast.Middleware {
 			return inner(client, req)
 		}
 	}
+}
+
+// onceWriter wraps an http.ResponseWriter so that only the first goroutine to
+// call Header, Write, or WriteHeader wins. The hedger fires two concurrent
+// doProxy invocations; without this guard, both would attempt to write HTTP
+// framing to the same ResponseWriter simultaneously, which the net/http package
+// explicitly forbids and which causes connection corruption and panics.
+//
+// The losing goroutine's writes are silently discarded — the client has already
+// received (or is receiving) the winner's response.
+type onceWriter struct {
+	http.ResponseWriter
+	once sync.Once
+	mu   sync.Mutex
+	live bool // true after the first goroutine commits
+}
+
+func newOnceWriter(w http.ResponseWriter) *onceWriter {
+	return &onceWriter{ResponseWriter: w}
+}
+
+func (o *onceWriter) claim() bool {
+	claimed := false
+	o.once.Do(func() {
+		o.mu.Lock()
+		o.live = true
+		o.mu.Unlock()
+		claimed = true
+	})
+	return claimed
+}
+
+func (o *onceWriter) Header() http.Header {
+	// Allow header mutation before any write; the first Write/WriteHeader wins.
+	return o.ResponseWriter.Header()
+}
+
+func (o *onceWriter) WriteHeader(code int) {
+	if o.claim() {
+		o.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (o *onceWriter) Write(b []byte) (int, error) {
+	if o.claim() {
+		return o.ResponseWriter.Write(b)
+	}
+	return len(b), nil // discard losing goroutine's body
 }
