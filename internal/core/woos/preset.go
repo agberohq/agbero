@@ -51,8 +51,6 @@ var DangerousFastCGIHeaders = map[string]bool{
 	"server-protocol":   true,
 	"gateway-interface": true,
 	"redirect-status":   true,
-	"content-length":    true,
-	"content-type":      true,
 	"remote-addr":       true,
 	"remote-port":       true,
 	"server-addr":       true,
