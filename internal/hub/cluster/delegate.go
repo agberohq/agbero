@@ -339,16 +339,25 @@ func (d *delegate) pruneTombstones() {
 	now := time.Now().UnixNano()
 	for k, env := range d.store {
 		age := time.Duration(now - env.Timestamp)
-		if env.Op == OpDel {
+		switch env.Op {
+		case OpDel:
+			// Keep OpDel tombstones for tombstoneTTL so late-arriving OpRoute/OpSet
+			// messages from partitioned nodes are correctly rejected rather than
+			// resurrecting a deleted entry. After the TTL the tombstone is safe to
+			// drop because any lagging peer will have been caught up by then.
 			if age > tombstoneTTL {
 				delete(d.store, k)
 			}
-		} else if env.Op == OpLock {
+		case OpLock:
 			if age > lockTTL {
 				delete(d.store, k)
 			}
-		} else if env.Op == OpChallenge {
+		case OpChallenge:
 			if age > challengeTTL {
+				delete(d.store, k)
+			}
+		case OpRoute:
+			if delEnv, ok := d.store[k]; ok && delEnv.Op == OpDel {
 				delete(d.store, k)
 			}
 		}
