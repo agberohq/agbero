@@ -554,12 +554,23 @@ func (b *Backend) serveInner(w http.ResponseWriter, r *http.Request) {
 		actualWriter = sw
 	}
 
+	// When a hedger is configured it may fire a second concurrent doProxy
+	// goroutine. Both goroutines must share actualWriter, but net/http
+	// forbids concurrent writes to a ResponseWriter. Wrap it in an onceWriter
+	// so that only the first goroutine to produce a response actually writes
+	// to the client; the losing goroutine's output is discarded.
+	var ow *onceWriter
+	if b.hedger != nil {
+		ow = newOnceWriter(actualWriter)
+		actualWriter = ow
+	}
+
 	doProxy := func(ctx context.Context) error {
-		req = req.WithContext(ctx)
+		localReq := req.WithContext(ctx)
 		if b.FastCGI != nil {
-			b.FastCGI.ServeHTTP(actualWriter, req)
+			b.FastCGI.ServeHTTP(actualWriter, localReq)
 		} else {
-			b.Proxy.ServeHTTP(actualWriter, req)
+			b.Proxy.ServeHTTP(actualWriter, localReq)
 		}
 		failed := state.failed
 		if rw, ok := w.(*zulu.ResponseWriter); ok {
@@ -703,4 +714,52 @@ func fcgiBuildTrusted(r *http.Request) gofast.Middleware {
 			return inner(client, req)
 		}
 	}
+}
+
+// onceWriter wraps an http.ResponseWriter so that only the first goroutine to
+// call Header, Write, or WriteHeader wins. The hedger fires two concurrent
+// doProxy invocations; without this guard, both would attempt to write HTTP
+// framing to the same ResponseWriter simultaneously, which the net/http package
+// explicitly forbids and which causes connection corruption and panics.
+//
+// The losing goroutine's writes are silently discarded — the client has already
+// received (or is receiving) the winner's response.
+type onceWriter struct {
+	http.ResponseWriter
+	once sync.Once
+	mu   sync.Mutex
+	live bool // true after the first goroutine commits
+}
+
+func newOnceWriter(w http.ResponseWriter) *onceWriter {
+	return &onceWriter{ResponseWriter: w}
+}
+
+func (o *onceWriter) claim() bool {
+	claimed := false
+	o.once.Do(func() {
+		o.mu.Lock()
+		o.live = true
+		o.mu.Unlock()
+		claimed = true
+	})
+	return claimed
+}
+
+func (o *onceWriter) Header() http.Header {
+	// Allow header mutation before any write; the first Write/WriteHeader wins.
+	return o.ResponseWriter.Header()
+}
+
+func (o *onceWriter) WriteHeader(code int) {
+	if o.claim() {
+		o.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (o *onceWriter) Write(b []byte) (int, error) {
+	if o.claim() {
+		return o.ResponseWriter.Write(b)
+	}
+	return len(b), nil // discard losing goroutine's body
 }
