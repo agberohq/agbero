@@ -26,7 +26,7 @@ import (
 var forwardAuthAllowedDenyHeaders = map[string]bool{
 	"Content-Type":     true,
 	"Content-Length":   true,
-	"Www-Authenticate": true,
+	"WWW-Authenticate": true,
 	"Retry-After":      true,
 	"Cache-Control":    true,
 	"X-Auth-Error":     true,
