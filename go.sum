@@ -64,8 +64,6 @@ github.com/blacktop/go-termimg v0.1.26 h1:rEsnPhs1o6fziOrz7lsRZU/m2xDgSURQYpS5pa
 github.com/blacktop/go-termimg v0.1.26/go.mod h1:SpU/O59RTjDAUA0Esj+dIzHEKixewFV49XNYHmukKQQ=
 github.com/catppuccin/go v0.3.0 h1:d+0/YicIq+hSTo5oPuRi5kOpqkVA5tAsU6dNhvRu+aY=
 github.com/catppuccin/go v0.3.0/go.mod h1:8IHJuMGaUUjQM82qBrGNBv7LFq6JI3NnQCF6MOlZjpc=
-github.com/cenkalti/backoff/v4 v4.3.0 h1:MyRJ/UdXutAwSAT+s3wNd7MfTIcy71VQueUuFK343L8=
-github.com/cenkalti/backoff/v4 v4.3.0/go.mod h1:Y3VNntkOUPxTVeUxJ/G5vcM//AlwfmyYozVcomhLiZE=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
 github.com/cenkalti/backoff/v5 v5.0.3/go.mod h1:rkhZdG3JZukswDf7f0cwqPNk4K0sa+F97BxZthm/crw=
 github.com/cespare/xxhash/v2 v2.1.1/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
@@ -330,8 +328,6 @@ github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 h1:zrbMGy9YXpIeTnGj
 github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6/go.mod h1:rEKTHC9roVVicUIfZK7DYrdIoM0EOr8mK1Hj5s3JjH0=
 github.com/olekukonko/errors v1.3.0 h1:teJvgLGUEqMzBUms+Dj3/3szNqCG/Jdw9iDbum8fR6U=
 github.com/olekukonko/errors v1.3.0/go.mod h1:ppzxA5jBKcO1vIpCXQ9ZqgDh8iwODz6OXIGKU8r5m4Y=
-github.com/olekukonko/jack v0.0.0-20260506115209-05185f60b73a h1:twkMqaIXwS/tU8WVX0/fsVSwM+5FTE6m4avB1rNvaEQ=
-github.com/olekukonko/jack v0.0.0-20260506115209-05185f60b73a/go.mod h1:dcRos7G6Wh85Blau7GTfreCmPwr8R2b7wZwG7I1YEHc=
 github.com/olekukonko/ll v0.1.9-0.20260330210650-e52da6f04599 h1:6Ra2n90IpqVCwR7wppQM+RjUbIA5Hom6fGJj+fF/6gY=
 github.com/olekukonko/ll v0.1.9-0.20260330210650-e52da6f04599/go.mod h1:RPRC6UcscfFZgjo1nulkfMH5IM0QAYim0LfnMvUuozw=
 github.com/olekukonko/mappo v0.0.0-20260329141345-c5de61574284 h1:jMfbWvnewUTYylNItqsqjhfoSs4XbyjKPkUDwf5tHnQ=

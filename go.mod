@@ -2,6 +2,8 @@ module github.com/agberohq/agbero
 
 go 1.26
 
+replace github.com/olekukonko/jack => /Users/oleku/gopath/src/github.com/olekukonko/jack
+
 require (
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.3
@@ -10,7 +12,6 @@ require (
 	github.com/alecthomas/chroma/v2 v2.24.1
 	github.com/andybalholm/brotli v1.2.1
 	github.com/blacktop/go-termimg v0.1.26
-	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/corazawaf/coraza/v3 v3.7.0
 	github.com/dustin/go-humanize v1.0.1
