@@ -300,7 +300,17 @@ func serveEntry(w http.ResponseWriter, r *http.Request, e *stash.Entry, status s
 
 func isRequestCacheable(r *http.Request) bool {
 	cc := r.Header.Get("Cache-Control")
-	return !strings.Contains(cc, "no-cache") && !strings.Contains(cc, "no-store")
+	if strings.Contains(cc, "no-cache") || strings.Contains(cc, "no-store") {
+		return false
+	}
+
+	// Never cache requests containing an Authorization header.
+	// Doing so without adding it to the cache key results in cross-user data leakage.
+	if r.Header.Get("Authorization") != "" {
+		return false
+	}
+
+	return true
 }
 
 func isResponseCacheable(status int, hdr http.Header) bool {
