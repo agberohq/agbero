@@ -157,7 +157,7 @@ func (s *Server) Start(configPath string) error {
 	s.resource.UpdateGlobal(s.global.Env)
 
 	var err error
-	if s.keeperStore == nil {
+	if s.keeperStore == nil && configPath != "" {
 		s.keeperStore, err = secrets.Open(secrets.Config{
 			DataDir:         s.global.Storage.DataDir,
 			Setting:         &s.global.Security.Keeper,
@@ -170,31 +170,33 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
-	if s.keeperStore.IsLocked() {
-		s.logger.Fatal("Keeper is locked. AGBERO_PASSPHRASE is required in environment or config to boot.")
-	}
+	if s.keeperStore != nil {
+		if s.keeperStore.IsLocked() {
+			s.logger.Fatal("Keeper is locked. AGBERO_PASSPHRASE is required in environment or config to boot.")
+		}
 
-	s.resource.Apply(resource.WithKeeper(s.keeperStore))
-	s.logger.Info("Keeper unlocked successfully")
+		s.resource.Apply(resource.WithKeeper(s.keeperStore))
+		s.logger.Info("Keeper unlocked successfully")
+
+		secrets.NewResolver(s.keeperStore).Wire()
+		s.logger.Info("Secret resolver wired")
+
+		ppkPEM, err := s.keeperStore.Get(expect.Vault().Key("internal"))
+		if err != nil {
+			s.logger.Fatal("Failed to load Internal Auth Key from Keeper. Run 'agbero init' first. Error: ", err)
+		}
+		s.securityManager, err = security.LoadPPKFromPEM(ppkPEM)
+		if err != nil {
+			s.logger.Fatal("Failed to parse Internal Auth Key: ", err)
+		}
+		s.logger.Info("Loaded Internal Auth Key (PPK)")
+	}
 
 	// Start background update check once — non-blocking, result served via /uptime.
 	if s.updateChecker == nil {
 		s.updateChecker = update.New(woos.Version, "https://api.github.com/repos/agberohq/agbero/releases/latest")
 		s.updateChecker.Start()
 	}
-
-	secrets.NewResolver(s.keeperStore).Wire()
-	s.logger.Info("Secret resolver wired")
-
-	ppkPEM, err := s.keeperStore.Get(expect.Vault().Key("internal"))
-	if err != nil {
-		s.logger.Fatal("Failed to load Internal Auth Key from Keeper. Run 'agbero init' first. Error: ", err)
-	}
-	s.securityManager, err = security.LoadPPKFromPEM(ppkPEM)
-	if err != nil {
-		s.logger.Fatal("Failed to parse Internal Auth Key: ", err)
-	}
-	s.logger.Info("Loaded Internal Auth Key (PPK)")
 
 	if err := s.tlsValidate(); err != nil {
 		return err
