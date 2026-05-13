@@ -104,4 +104,4 @@ jobs:
             dist/install.sh
           generate_release_notes: true
           draft: false
-          prerelease: false
+          prerelease: true
