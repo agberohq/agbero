@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -529,7 +530,6 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // WrapWithBreaker handles the circuit check internally via AcquireCircuit —
 // no need for a separate pre-check here.
 func (b *Backend) serveInner(w http.ResponseWriter, r *http.Request) {
-	// Acquire a concurrency slot from the semaphore (if MaxConns is set).
 	release, err := b.AcquireSem(r.Context(), jack.PriorityHigh)
 	if err != nil {
 		if b.Fallback != nil {
@@ -544,11 +544,6 @@ func (b *Backend) serveInner(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	b.Activity.StartRequest()
 
-	state := backendStatePool.Get().(*backendState)
-	state.failed = false
-	ctx := context.WithValue(r.Context(), backendCtxKey{}, state)
-	req := r.WithContext(ctx)
-
 	var actualWriter http.ResponseWriter = w
 	var sw *basicStatusWriter
 
@@ -559,15 +554,23 @@ func (b *Backend) serveInner(w http.ResponseWriter, r *http.Request) {
 		actualWriter = sw
 	}
 
-	doProxy := func(ctx context.Context) error {
-		req = req.WithContext(ctx)
+	// doProxy executes a single attempt. Each hedged goroutine gets its own
+	// backendState so the loser's ErrorHandler cannot corrupt the winner.
+	doProxy := func(ctx context.Context, w http.ResponseWriter) error {
+		state := backendStatePool.Get().(*backendState)
+		state.failed = false
+		defer backendStatePool.Put(state)
+
+		req := r.WithContext(context.WithValue(ctx, backendCtxKey{}, state))
+
 		if b.FastCGI != nil {
-			b.FastCGI.ServeHTTP(actualWriter, req)
+			b.FastCGI.ServeHTTP(w, req)
 		} else {
-			b.Proxy.ServeHTTP(actualWriter, req)
+			b.Proxy.ServeHTTP(w, req)
 		}
+
 		failed := state.failed
-		if rw, ok := w.(*zulu.ResponseWriter); ok {
+		if rw, ok := actualWriter.(*zulu.ResponseWriter); ok {
 			if rw.StatusCode == http.StatusBadGateway ||
 				rw.StatusCode == http.StatusServiceUnavailable ||
 				rw.StatusCode == http.StatusGatewayTimeout {
@@ -587,27 +590,37 @@ func (b *Backend) serveInner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var breakerErr error
+
 	if b.hedger != nil {
-		// Hedger wraps the circuit breaker: fires a second request to a
-		// different backend if the primary is slow. The RTT window adapts
-		// automatically to the P50 response time of this backend.
-		_, breakerErr = b.hedger.Do(req.Context(), func(ctx context.Context) (any, error) {
-			return nil, b.WrapWithBreaker(ctx, doProxy)
+		var winner atomic.Int32
+		var attempt atomic.Int32
+
+		_, breakerErr = b.hedger.Do(r.Context(), func(ctx context.Context) (any, error) {
+			id := attempt.Add(1)
+			hw := &hedgeWriter{
+				ResponseWriter: actualWriter,
+				winner:         &winner,
+				id:             id,
+			}
+			return nil, b.WrapWithBreaker(ctx, func(c context.Context) error {
+				return doProxy(c, hw)
+			})
 		})
 	} else {
-		breakerErr = b.WrapWithBreaker(req.Context(), doProxy)
+		breakerErr = b.WrapWithBreaker(r.Context(), func(c context.Context) error {
+			return doProxy(c, actualWriter)
+		})
 	}
 
 	dur := time.Since(start)
-	failed := state.failed || breakerErr != nil
-	backendStatePool.Put(state)
+	failed := breakerErr != nil
+	b.Activity.EndRequest(dur.Microseconds(), failed)
 
 	if sw != nil {
 		sw.ResponseWriter = nil
 		basicStatusWriterPool.Put(sw)
 	}
 
-	b.Activity.EndRequest(dur.Microseconds(), failed)
 	if b.HealthScore != nil {
 		b.HealthScore.RecordPassiveRequest(!failed)
 	}

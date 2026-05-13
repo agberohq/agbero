@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 
 	"github.com/agberohq/agbero/internal/core/zulu"
 )
@@ -47,4 +48,44 @@ func (b *basicStatusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return h.Hijack()
 	}
 	return nil, nil, fmt.Errorf("hijacking not supported")
+}
+
+// hedgeWriter ensures only the fastest responding backend gets to write
+// to the client. The slower (losing) backend discards its data safely.
+type hedgeWriter struct {
+	http.ResponseWriter
+	winner *atomic.Int32
+	id     int32
+}
+
+func (h *hedgeWriter) WriteHeader(code int) {
+	if h.winner.CompareAndSwap(0, h.id) || h.winner.Load() == h.id {
+		h.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (h *hedgeWriter) Write(b []byte) (int, error) {
+	if h.winner.CompareAndSwap(0, h.id) || h.winner.Load() == h.id {
+		return h.ResponseWriter.Write(b)
+	}
+	// Silently discard the loser's data so io.Copy doesn't error out
+	return len(b), nil
+}
+
+func (h *hedgeWriter) Flush() {
+	if h.winner.Load() == h.id {
+		if f, ok := h.ResponseWriter.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
+}
+
+func (h *hedgeWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h.winner.CompareAndSwap(0, h.id) || h.winner.Load() == h.id {
+		if hijacker, ok := h.ResponseWriter.(http.Hijacker); ok {
+			return hijacker.Hijack()
+		}
+		return nil, nil, fmt.Errorf("hijacking not supported")
+	}
+	return nil, nil, fmt.Errorf("backend lost hedge race")
 }
