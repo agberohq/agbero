@@ -22,6 +22,7 @@ type CacheMiddleware struct {
 	store            stash.Store
 	logger           *ll.Logger
 	pool             *jack.Pool
+	flight           *jack.Flight
 	allowedMethods   map[string]bool
 	enabled          bool
 	defaultTTL       time.Duration
@@ -78,6 +79,7 @@ func New(cfg *alaye.Cache, logger *ll.Logger, opts ...Option) func(http.Handler)
 	mw := &CacheMiddleware{
 		store:            store,
 		logger:           logger,
+		flight:           jack.NewFlight(),
 		allowedMethods:   make(map[string]bool, len(cfg.Methods)),
 		enabled:          true,
 		defaultTTL:       cfg.TTL.StdDuration(),
@@ -117,57 +119,84 @@ func (m *CacheMiddleware) Handler(next http.Handler) http.Handler {
 				if serveCachedResponse(w, r, entry, m.logger) {
 					return
 				}
-				// avoid Cache thrashing in
-				//m.store.Delete(key)
 			}
 		}
 
-		rec := newRecorder(w, m.maxCacheableSize)
-		next.ServeHTTP(rec, r)
+		// Hard miss — coalesce concurrent requests for the same cache key.
+		// The leader executes the upstream handler and stores the entry.
+		// Waiters block until the leader finishes, then serve the cached
+		// entry directly. This eliminates the thundering-herd OOM vector
+		// where N concurrent hard misses each buffer the full response.
+		res, err := m.flight.DoCtx(r.Context(), key, func() (interface{}, error) {
+			rec := newRecorder(w, m.maxCacheableSize)
+			next.ServeHTTP(rec, r)
 
-		if !rec.Cacheable() {
-			setCacheHeaders(w, "BYPASS")
-			if m.logger != nil {
-				m.logger.Debug("response body exceeds max_cacheable_size, bypassing cache",
-					"limit", m.maxCacheableSize)
+			if !rec.Cacheable() {
+				setCacheHeaders(w, "BYPASS")
+				if m.logger != nil {
+					m.logger.Debug("response body exceeds max_cacheable_size, bypassing cache",
+						"limit", m.maxCacheableSize)
+				}
+				return nil, nil
 			}
-			return
-		}
 
-		setCacheHeaders(w, "MISS")
+			setCacheHeaders(w, "MISS")
 
-		if !isResponseCacheable(rec.StatusCode(), rec.Header()) {
-			return
-		}
+			if !isResponseCacheable(rec.StatusCode(), rec.Header()) {
+				return nil, nil
+			}
 
-		ttl := effectiveTTL(rec.Header(), m.defaultTTL)
-		if ttl <= 0 {
-			return
-		}
+			ttl := effectiveTTL(rec.Header(), m.defaultTTL)
+			if ttl <= 0 {
+				return nil, nil
+			}
 
-		varyHeaders := make(map[string]string)
-		if vary := rec.Header().Get("Vary"); vary != "" {
-			for _, field := range strings.Split(vary, ",") {
-				field = strings.TrimSpace(field)
-				if field != "*" && field != "" {
-					varyHeaders[field] = r.Header.Get(field)
+			varyHeaders := make(map[string]string)
+			if vary := rec.Header().Get("Vary"); vary != "" {
+				for _, field := range strings.Split(vary, ",") {
+					field = strings.TrimSpace(field)
+					if field != "*" && field != "" {
+						varyHeaders[field] = r.Header.Get(field)
+					}
 				}
 			}
+
+			entry := &stash.Entry{
+				Body:          rec.Body(),
+				Headers:       rec.Header().Clone(),
+				Status:        rec.StatusCode(),
+				CreatedAt:     time.Now(),
+				StoredAt:      time.Now(),
+				TTL:           ttl,
+				VaryHeaders:   varyHeaders,
+				ContentType:   rec.Header().Get("Content-Type"),
+				SurrogateTags: parseSurrogateTags(rec.Header()),
+			}
+			removeHopByHopHeaders(entry.Headers)
+			m.store.SetWithPolicy(key, entry, m.policy, ttl)
+			return entry, nil
+		})
+
+		if err != nil {
+			// Context cancellation or panic recovery — fall through to upstream.
+			next.ServeHTTP(w, r)
+			return
 		}
 
-		entry := &stash.Entry{
-			Body:          rec.Body(),
-			Headers:       rec.Header().Clone(),
-			Status:        rec.StatusCode(),
-			CreatedAt:     time.Now(),
-			StoredAt:      time.Now(),
-			TTL:           ttl,
-			VaryHeaders:   varyHeaders,
-			ContentType:   rec.Header().Get("Content-Type"),
-			SurrogateTags: parseSurrogateTags(rec.Header()),
+		if res.Shared {
+			// Waiter: serve from the shared result or cache store.
+			if entry, ok := res.Val.(*stash.Entry); ok && entry != nil {
+				serveEntry(w, r, entry, "HIT", m.logger)
+				return
+			}
+			if entry, ok := m.store.Get(key); ok {
+				serveCachedResponse(w, r, entry, m.logger)
+				return
+			}
+			// Leader determined non-cacheable; we must also execute upstream.
+			next.ServeHTTP(w, r)
 		}
-		removeHopByHopHeaders(entry.Headers)
-		m.store.SetWithPolicy(key, entry, m.policy, ttl)
+		// Leader already streamed response to client via rec.
 	})
 }
 
