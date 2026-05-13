@@ -75,11 +75,11 @@ func newConnPool(addr string, maxSize int, timeout time.Duration) *connPool {
 
 // pushFree returns a connection to the idle stack.
 // Must be called only after inUse is cleared (put() handles this ordering).
-func (p *connPool) pushFree(pc *pooledConn) {
-	p.mu.Lock()
-	p.free = append(p.free, pc)
-	p.mu.Unlock()
-}
+//func (p *connPool) pushFree(pc *pooledConn) {
+//	p.mu.Lock()
+//	p.free = append(p.free, pc)
+//	p.mu.Unlock()
+//}
 
 // popFree removes and returns the most recently idle connection, or nil.
 // The mutex eliminates the ABA problem that plagued the prior Treiber stack:
@@ -255,8 +255,13 @@ func (p *connPool) put(pc *pooledConn) {
 		return
 	}
 	pc.lastUsed.Store(time.Now().UnixNano())
+
+	// Acquire lock BEFORE marking as free so the sweeper
+	// cannot observe a half-returned state.
+	p.mu.Lock()
 	pc.inUse.Store(false)
-	p.pushFree(pc)
+	p.free = append(p.free, pc)
+	p.mu.Unlock()
 }
 
 // close terminates all sockets and background tasks.
