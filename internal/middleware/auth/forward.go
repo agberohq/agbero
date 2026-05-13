@@ -358,7 +358,7 @@ func (fa *forwardAuth) buildCacheKey(r *http.Request) string {
 	}
 	keys := fa.cfg.Request.CacheKey
 	if len(keys) == 0 {
-		keys = []string{"Authorization"}
+		keys = []string{"Authorization", "Cookie"}
 	}
 	for _, k := range keys {
 		io.WriteString(h, r.Header.Get(k))
