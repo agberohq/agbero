@@ -2,7 +2,7 @@ module github.com/agberohq/agbero
 
 go 1.26
 
-replace github.com/olekukonko/jack => /Users/oleku/gopath/src/github.com/olekukonko/jack
+// replace github.com/olekukonko/jack => /Users/oleku/gopath/src/github.com/olekukonko/jack
 
 require (
 	charm.land/huh/v2 v2.0.3
@@ -31,7 +31,7 @@ require (
 	github.com/markbates/goth v1.82.0
 	github.com/minio/selfupdate v0.6.0
 	github.com/olekukonko/errors v1.3.0
-	github.com/olekukonko/jack v0.0.0-20260506115209-05185f60b73a
+	github.com/olekukonko/jack v0.0.0-20260513220543-4bd4eac86584
 	github.com/olekukonko/ll v0.1.9-0.20260330210650-e52da6f04599
 	github.com/olekukonko/mappo v0.0.0-20260329141345-c5de61574284
 	github.com/olekukonko/prompter v0.0.0-20260405071459-26600f6d335b

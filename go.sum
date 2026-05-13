@@ -328,6 +328,8 @@ github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 h1:zrbMGy9YXpIeTnGj
 github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6/go.mod h1:rEKTHC9roVVicUIfZK7DYrdIoM0EOr8mK1Hj5s3JjH0=
 github.com/olekukonko/errors v1.3.0 h1:teJvgLGUEqMzBUms+Dj3/3szNqCG/Jdw9iDbum8fR6U=
 github.com/olekukonko/errors v1.3.0/go.mod h1:ppzxA5jBKcO1vIpCXQ9ZqgDh8iwODz6OXIGKU8r5m4Y=
+github.com/olekukonko/jack v0.0.0-20260513220543-4bd4eac86584 h1:mTAzCzZMq/WkT+DPHwnkJaALEjNHODvxa06f3io9U3s=
+github.com/olekukonko/jack v0.0.0-20260513220543-4bd4eac86584/go.mod h1:dcRos7G6Wh85Blau7GTfreCmPwr8R2b7wZwG7I1YEHc=
 github.com/olekukonko/ll v0.1.9-0.20260330210650-e52da6f04599 h1:6Ra2n90IpqVCwR7wppQM+RjUbIA5Hom6fGJj+fF/6gY=
 github.com/olekukonko/ll v0.1.9-0.20260330210650-e52da6f04599/go.mod h1:RPRC6UcscfFZgjo1nulkfMH5IM0QAYim0LfnMvUuozw=
 github.com/olekukonko/mappo v0.0.0-20260329141345-c5de61574284 h1:jMfbWvnewUTYylNItqsqjhfoSs4XbyjKPkUDwf5tHnQ=
