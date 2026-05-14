@@ -270,11 +270,15 @@ func (p *Proxy) handleDatagram(listenConn *net.UDPConn, clientAddr *net.UDPAddr,
 		}
 	}
 
-	// Determine session key: try protocol matcher first, fall back to src:port
-	sessionKey := clientAddr.String() // default: src_ip:src_port
+	// Session key MUST always uniquely identify the client so that reply
+	// datagrams are returned to the correct sender. It must never be
+	// replaced with an application-layer value
+	sessionKey := clientAddr.String()
+
+	var routingHash uint64
 	if route.matcher != nil {
 		if key, ok := route.matcher.Match(data); ok && key != "" {
-			sessionKey = key
+			routingHash = lb.HashString(key)
 		}
 	}
 
@@ -297,8 +301,10 @@ func (p *Proxy) handleDatagram(listenConn *net.UDPConn, clientAddr *net.UDPAddr,
 		return
 	}
 
-	// Slow path: new session — pick a backend
-	backend := p.pickBackend(route)
+	// Slow path: new session — pick a backend, honouring the routing hash
+	// so that consistent-hashing strategies can pin a domain/call to a
+	// specific upstream resolver or media server.
+	backend := p.pickBackend(route, routingHash)
 	if backend == nil {
 		p.res.Logger.Fields("remote", clientAddr.String()).Warn("xudp: no available backend")
 		return
@@ -432,8 +438,11 @@ func (p *Proxy) replyLoop(
 }
 
 // pickBackend selects a backend from the route using the lb selector.
-func (p *Proxy) pickBackend(route *udpRoute) *Backend {
+func (p *Proxy) pickBackend(route *udpRoute, routingHash uint64) *Backend {
 	keyFunc := func() uint64 {
+		if routingHash != 0 {
+			return routingHash
+		}
 		return uint64(rand.Uint32())<<32 | uint64(rand.Uint32())
 	}
 
