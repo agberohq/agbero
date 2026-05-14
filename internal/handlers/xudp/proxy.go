@@ -272,9 +272,16 @@ func (p *Proxy) handleDatagram(listenConn *net.UDPConn, clientAddr *net.UDPAddr,
 
 	// Session key MUST always uniquely identify the client so that reply
 	// datagrams are returned to the correct sender. It must never be
-	// replaced with an application-layer value
-	sessionKey := clientAddr.String()
+	// replaced with an application-layer value (e.g. a DNS domain name)
+	// because two different clients querying the same domain would share
+	// a session, causing cross-client data leakage and response blackholing.
+	sessionKey := clientAddr.String() // always src_ip:src_port
 
+	// Extract the application-layer routing key from the payload (e.g. the
+	// DNS query domain or SIP Call-ID) purely for consistent load-balancing.
+	// This value is hashed and passed to pickBackend so the same logical
+	// "flow" (same domain, same call) consistently reaches the same backend,
+	// but it plays no part in session lookup or reply addressing.
 	var routingHash uint64
 	if route.matcher != nil {
 		if key, ok := route.matcher.Match(data); ok && key != "" {
@@ -423,6 +430,13 @@ func (p *Proxy) replyLoop(
 		}
 
 		sess.touch()
+		// Reset the background lifetime timer so that server-driven traffic
+		// (video stream, game state, telemetry) keeps the session alive.
+		// Without this, the jack.Lifetime timer fires after TTL regardless of
+		// how much data the backend is actively sending, forcibly closing the
+		// backend conn and crashing this loop exactly TTL seconds after the
+		// last client-originated packet.
+		p.sessions.lifetime.ResetTimed(sessionKey)
 
 		// Write reply back to the original client
 		if _, err := listenConn.WriteToUDP(buf[:n], clientAddr); err != nil {
@@ -438,6 +452,12 @@ func (p *Proxy) replyLoop(
 }
 
 // pickBackend selects a backend from the route using the lb selector.
+//
+// routingHash is an optional application-layer hash (e.g. derived from a DNS
+// domain name or SIP Call-ID). When non-zero it is supplied to the selector's
+// key function so that consistent-hashing strategies pin the same logical flow
+// to the same backend. When zero (no matcher, or matcher produced no key) a
+// random hash is used, giving the selector full freedom to load-balance.
 func (p *Proxy) pickBackend(route *udpRoute, routingHash uint64) *Backend {
 	keyFunc := func() uint64 {
 		if routingHash != 0 {
