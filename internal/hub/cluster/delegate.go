@@ -222,11 +222,28 @@ func (d *delegate) apply(env Envelope, local bool) {
 		env.Value = nil
 		d.metrics.IncDeletes()
 	}
-	// OpSecret carries key material — must not be stored in the gossip map
-	// (where it would be replayed via LocalState or exposed in state dumps).
-	// Handle it directly and return before the store write.
+	// Broadcast must happen before any early returns so that every op —
+	// including OpSecret — is disseminated to peers when it originates locally.
+	if local && d.queue != nil {
+		if env.Op != OpConfig && env.Op != OpCert {
+			d.queue.QueueBroadcast(&peerUpdate{env: env})
+		}
+	}
+
+	// OpSecret carries sensitive key material. We must not persist the
+	// encrypted value in the gossip state map (d.store) because it would be
+	// re-broadcast via LocalState to every future joining node indefinitely.
+	// However, we MUST record a value-stripped tombstone so that the Lamport
+	// timestamp check at the top of apply() can reject replayed or out-of-order
+	// OpSecret packets — without it, `exists` would always be false and every
+	// replayed secret packet would be accepted unconditionally.
 	if env.Op == OpSecret {
 		d.handleSecretUpdate(env)
+		// Store a tombstone that carries the timestamp but no key material so
+		// that future envelopes for the same key are correctly ordered.
+		tombstone := env
+		tombstone.Value = nil
+		d.store[env.Key] = tombstone
 		return
 	}
 
@@ -245,11 +262,6 @@ func (d *delegate) apply(env Envelope, local bool) {
 			d.logger.Fields("node", env.Owner, "status", string(env.Value)).Debug("cluster node status change")
 		case OpConfig:
 			d.handleConfigUpdate(env)
-		}
-	}
-	if local && d.queue != nil {
-		if env.Op != OpConfig && env.Op != OpCert {
-			d.queue.QueueBroadcast(&peerUpdate{env: env})
 		}
 	}
 }
