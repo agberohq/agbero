@@ -66,20 +66,28 @@ func (s *Store) Generate() (string, error) {
 	return nonce, nil
 }
 
-// Consume validates and removes the nonce atomically.
-// Returns true only if the nonce exists and has not expired.
-// A consumed or unknown nonce returns false.
+// Consume validates and atomically removes the nonce in a single indivisible
+// operation, guaranteeing that exactly one concurrent caller can ever succeed.
 func (s *Store) Consume(nonce string) bool {
 	if nonce == "" {
 		return false
 	}
-	entry, ok := s.nonces.Get(nonce)
-	if !ok {
-		return false
-	}
-	s.nonces.Delete(nonce)
-	valid := subtle.ConstantTimeCompare([]byte(entry.value), []byte(nonce)) == 1
-	return valid && s.nowTime().Before(entry.expires)
+	now := s.nowTime()
+	var valid bool
+	s.nonces.Compute(nonce, func(entry *nonceEntry, exists bool) (*nonceEntry, bool) {
+		if !exists || entry == nil {
+			// Nonce not found — reject and keep nothing.
+			return nil, false
+		}
+		if subtle.ConstantTimeCompare([]byte(entry.value), []byte(nonce)) == 1 &&
+			now.Before(entry.expires) {
+			valid = true
+		}
+		// Return (nil, false) to delete the entry regardless of validity so that
+		// an expired or mismatched nonce is also evicted and cannot be retried.
+		return nil, false
+	})
+	return valid
 }
 
 // Len returns the number of nonces currently in the store. For tests and monitoring.
