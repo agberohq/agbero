@@ -202,7 +202,10 @@ func (s *Store) writeLoop() {
 					if ts >= cutoff {
 						break
 					}
-					_ = hb.Delete(ck)
+					// bbolt require Cursor.Delete() during cursor iteration.
+					// Bucket.Delete() invalidates the cursor's internal state
+					// and can skip entries, loop infinitely, or panic.
+					_ = c.Delete()
 				}
 				return nil
 			})

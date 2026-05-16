@@ -8,6 +8,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/agberohq/agbero/internal/hub/orchestrator"
+	"github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
 )
@@ -20,6 +21,9 @@ type Proxy struct {
 	CookMgr     *cook.Manager
 	IPMgr       *zulu.IPManager
 	Orch        *orchestrator.Manager
+	// TunnelPools is the global registry of named SOCKS5 tunnel pools.
+	// Routes reference tunnels by name via the backend `via` attribute.
+	TunnelPools map[string]*tunnel.Pool
 }
 
 // Logger provides access to the namespaced system logger from the resource manager.

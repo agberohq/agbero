@@ -32,6 +32,10 @@ type Global struct {
 	LetsEncrypt LetsEncrypt `hcl:"letsencrypt,block" json:"lets_encrypt"`
 	Fallback    Fallback    `hcl:"fallback,block" json:"fallback"`
 	ErrorPages  ErrorPages  `hcl:"error_pages,block" json:"error_pages"`
+
+	// Tunnels defines named outbound SOCKS5 tunnel pools that backend blocks
+	// can reference via the `via` attribute. Each name must be unique.
+	Tunnels []Tunnel `hcl:"tunnel,block" json:"tunnels,omitempty"`
 }
 
 // Validate ensures the global configuration is consistent and all required blocks are valid.
@@ -73,6 +77,17 @@ func (g *Global) Validate() error {
 	}
 	if err := g.ErrorPages.Validate(); err != nil {
 		return errors.Newf("global error_pages: %w", err)
+	}
+	// Validate tunnels: names must be unique and each entry must be valid.
+	seenTunnels := make(map[string]bool, len(g.Tunnels))
+	for i, t := range g.Tunnels {
+		if seenTunnels[t.Name] {
+			return errors.Newf("tunnel[%d]: duplicate name %q — tunnel names must be unique", i, t.Name)
+		}
+		seenTunnels[t.Name] = true
+		if err := t.Validate(); err != nil {
+			return errors.Newf("tunnel[%d] %q: %w", i, t.Name, err)
+		}
 	}
 	return nil
 }

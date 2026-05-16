@@ -551,6 +551,175 @@ func TestWeb_SymlinkAttack(t *testing.T) {
 	}
 }
 
+// newFakeFPM starts an in-process TCP server that returns a minimal FastCGI
+// response containing sentinel so the test can assert execution happened.
+func newFakeFPM(t *testing.T, sentinel string) string {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("newFakeFPM: listen: %v", err)
+	}
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return // listener closed — test finished
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				// Drain incoming FastCGI request bytes (we don't parse them).
+				buf := make([]byte, 4096)
+				_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+				for {
+					_, err := c.Read(buf)
+					if err != nil {
+						break
+					}
+				}
+				// Write a minimal FastCGI STDOUT record followed by END_REQUEST.
+				// FastCGI record layout: version(1) type(1) requestId(2) contentLen(2) paddingLen(1) reserved(1) content
+				body := "Content-Type: text/plain\r\n\r\n" + sentinel
+				contentLen := len(body)
+
+				// STDOUT record (type=6), request ID=1
+				stdout := []byte{
+					1, 6, 0, 1,
+					byte(contentLen >> 8), byte(contentLen),
+					0, 0,
+				}
+				stdout = append(stdout, []byte(body)...)
+
+				// END_REQUEST record (type=3), request ID=1, 8 bytes of zeros
+				endReq := []byte{1, 3, 0, 1, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+
+				_ = c.SetWriteDeadline(time.Now().Add(2 * time.Second))
+				_, _ = c.Write(stdout)
+				_, _ = c.Write(endReq)
+			}(conn)
+		}
+	}()
+
+	t.Cleanup(func() { ln.Close() })
+	return ln.Addr().String() // "127.0.0.1:<port>"
+}
+
+// withPHP is a routeOpt that enables PHP and points it at addr.
+func withPHP(addr string) routeOpt {
+	return func(r *alaye.Route) {
+		r.Web.PHP.Enabled = expect.Active
+		r.Web.PHP.Address = addr
+	}
+}
+
+// bodyContains reads the response body and reports whether it contains substr.
+func bodyContains(rr *httptest.ResponseRecorder, substr string) bool {
+	return strings.Contains(rr.Body.String(), substr)
+}
+
+// TestWeb_PHP_ExplicitPath_IsExecuted is a baseline: an explicit GET /file.php
+// must be forwarded to FastCGI and not served as raw source.
+func TestWeb_PHP_ExplicitPath_IsExecuted(t *testing.T) {
+	const sentinel = "PHP_WAS_EXECUTED_EXPLICIT"
+
+	addr := newFakeFPM(t, sentinel)
+	root := newTestRoot(t)
+	writeFile(t, root, "page.php", "<?php echo 'raw source'; ?>")
+
+	h := newHandler(t, root, withPHP(addr))
+	rr := do(t, h, http.MethodGet, "/page.php")
+
+	if rr.Code == http.StatusNotFound {
+		t.Fatal("explicit .php path: got 404, want FastCGI response")
+	}
+	if bodyContains(rr, "<?php") {
+		t.Fatal("REGRESSION: explicit .php path served raw PHP source instead of executing via FastCGI")
+	}
+	if !bodyContains(rr, sentinel) {
+		t.Fatalf("explicit .php path: sentinel %q not found in body %q", sentinel, rr.Body.String())
+	}
+}
+
+// TestWeb_PHP_DirectoryIndex_IsExecuted is the core regression for the directory-
+// index bug: GET / must trigger FastCGI when the resolved index file is index.php.
+// Before the fix, serveDir called http.ServeContent on index.php, leaking source.
+func TestWeb_PHP_DirectoryIndex_IsExecuted(t *testing.T) {
+	const sentinel = "PHP_WAS_EXECUTED_DIR_INDEX"
+
+	addr := newFakeFPM(t, sentinel)
+	root := newTestRoot(t)
+	writeFile(t, root, "index.php", "<?php echo 'raw source'; ?>")
+
+	h := newHandler(t, root, withPHP(addr))
+	rr := do(t, h, http.MethodGet, "/")
+
+	if rr.Code == http.StatusNotFound {
+		t.Fatal("directory index: got 404, want FastCGI response")
+	}
+	if bodyContains(rr, "<?php") {
+		t.Fatal("REGRESSION: GET / served raw index.php source instead of executing via FastCGI (serveDir bug)")
+	}
+	if !bodyContains(rr, sentinel) {
+		t.Fatalf("directory index: sentinel %q not found in body %q", sentinel, rr.Body.String())
+	}
+}
+
+// TestWeb_PHP_SPAFallback_IsExecuted is the core regression for the SPA-fallback
+// a request to a non-existent route must trigger FastCGI when the SPA index
+// file is index.php.  Before the fix, handleOpenError called http.ServeContent,
+// leaking source.
+func TestWeb_PHP_SPAFallback_IsExecuted(t *testing.T) {
+	const sentinel = "PHP_WAS_EXECUTED_SPA"
+
+	addr := newFakeFPM(t, sentinel)
+	root := newTestRoot(t)
+	writeFile(t, root, "index.php", "<?php echo 'raw source'; ?>")
+	// Note: /t/general does NOT exist on disk — this must hit the SPA fallback.
+
+	h := newHandler(t, root, withPHP(addr), withSPA())
+	rr := do(t, h, http.MethodGet, "/t/general")
+
+	if rr.Code == http.StatusNotFound {
+		t.Fatal("SPA fallback: got 404, want FastCGI response")
+	}
+	if bodyContains(rr, "<?php") {
+		t.Fatal("REGRESSION: SPA fallback served raw index.php source instead of executing via FastCGI (handleOpenError bug)")
+	}
+	if !bodyContains(rr, sentinel) {
+		t.Fatalf("SPA fallback: sentinel %q not found in body %q", sentinel, rr.Body.String())
+	}
+}
+
+// TestWeb_PHP_NotConfigured_DirectoryIndex_Returns404 guards the negative case:
+// if PHP is not configured but the only index file is index.php, the server must
+// not serve raw source — it should 404.
+func TestWeb_PHP_NotConfigured_DirectoryIndex_Returns404(t *testing.T) {
+	root := newTestRoot(t)
+	writeFile(t, root, "index.php", "<?php echo 'secret'; ?>")
+
+	// newHandler with no withPHP option — phpClientFactory will be nil.
+	h := newHandler(t, root)
+	rr := do(t, h, http.MethodGet, "/")
+
+	if bodyContains(rr, "<?php") || bodyContains(rr, "secret") {
+		t.Fatal("SECURITY: index.php source exposed when PHP is not configured")
+	}
+}
+
+// TestWeb_PHP_NotConfigured_SPA_Returns404 is the same guard for the SPA path.
+func TestWeb_PHP_NotConfigured_SPA_Returns404(t *testing.T) {
+	root := newTestRoot(t)
+	writeFile(t, root, "index.php", "<?php echo 'secret'; ?>")
+
+	h := newHandler(t, root, withSPA())
+	rr := do(t, h, http.MethodGet, "/missing/route")
+
+	if bodyContains(rr, "<?php") || bodyContains(rr, "secret") {
+		t.Fatal("SECURITY: index.php source exposed via SPA fallback when PHP is not configured")
+	}
+}
+
 // TestWeb_DenialOfService tests resource exhaustion
 func TestWeb_DenialOfService(t *testing.T) {
 	root := t.TempDir()

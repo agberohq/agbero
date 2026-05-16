@@ -153,6 +153,45 @@ func (h *web) logger() *ll.Logger {
 	return h.res.Logger.Namespace("web")
 }
 
+// servePHP executes a PHP file via FastCGI. It returns true if the request was
+// handled (regardless of the PHP response status), or false if PHP is not
+// configured or the path does not resolve to a regular file.
+func (h *web) servePHP(w http.ResponseWriter, r *http.Request, root *os.Root, rootPath, reqPath string) bool {
+	if h.phpClientFactory == nil {
+		return false
+	}
+	ff, err := root.Open(reqPath)
+	if err != nil {
+		return false
+	}
+	info, serr := ff.Stat()
+	_ = ff.Close()
+	if serr != nil || info.IsDir() {
+		return false
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), phpTimeout)
+	defer cancel()
+
+	safeReq := r.WithContext(ctx)
+	safeReq.Header = sanitizePHPHeaders(r)
+
+	sess := gofast.Chain(
+		gofast.BasicParamsMap,
+		gofast.MapHeader,
+		gofast.MapRemoteHost,
+		gofast.NewPHPFS(rootPath),
+	)(gofast.BasicSession)
+
+	gofast.NewHandler(sess, h.phpClientFactory).ServeHTTP(w, safeReq)
+
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		h.logger().Fields("path", reqPath, "err", ctxErr,
+			"method", r.Method, "ua", r.UserAgent()).Warn("PHP request context expired or cancelled")
+	}
+	return true
+}
+
 // injectNonces generates one nonce per configured endpoint and injects
 // <meta name="agbero-replay-nonce" data-endpoint="..." content="..."> before
 // </head>. Returns buf unchanged when nonce injection is not configured.
@@ -256,32 +295,8 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
-		ff, err := root.Open(reqPath)
-		if err == nil {
-			info, serr := ff.Stat()
-			_ = ff.Close()
-			if serr == nil && !info.IsDir() {
-				ctx, cancel := context.WithTimeout(r.Context(), phpTimeout)
-				defer cancel()
-
-				safeReq := r.WithContext(ctx)
-				safeReq.Header = sanitizePHPHeaders(r)
-
-				sess := gofast.Chain(
-					gofast.BasicParamsMap,
-					gofast.MapHeader,
-					gofast.MapRemoteHost,
-					gofast.NewPHPFS(rootPath),
-				)(gofast.BasicSession)
-
-				gofast.NewHandler(sess, h.phpClientFactory).ServeHTTP(w, safeReq)
-
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					h.logger().Fields("path", reqPath, "err", ctxErr,
-						"method", r.Method, "ua", r.UserAgent()).Warn("PHP request context expired or cancelled")
-				}
-				return
-			}
+		if h.servePHP(w, r, root, rootPath, reqPath) {
+			return
 		}
 	}
 
@@ -698,6 +713,14 @@ func (h *web) serveDir(w http.ResponseWriter, r *http.Request, root *os.Root, ro
 		defer indexFile.Close()
 		wantsDownload := r.URL.Query().Has("download")
 
+		// If the resolved index is a PHP file, execute it via FastCGI instead
+		// of serving it as raw static content.
+		if strings.HasSuffix(strings.ToLower(indexPath), ".php") {
+			if h.servePHP(w, r, root, rootPath, indexPath) {
+				return
+			}
+		}
+
 		if !wantsDownload && h.mdConverter != nil && isMarkdownPath(indexName) {
 			h.serveMarkdown(w, r, root, indexPath, browserPath, indexInfo)
 			return
@@ -849,6 +872,15 @@ func (h *web) handleOpenError(w http.ResponseWriter, r *http.Request, root *os.R
 					iInfo, sErr := indexFile.Stat()
 					if sErr == nil && !iInfo.IsDir() {
 						defer indexFile.Close()
+
+						// If the SPA fallback index is a PHP file, execute it
+						// via FastCGI instead of serving it as raw static content.
+						if strings.HasSuffix(strings.ToLower(idxName), ".php") {
+							if h.servePHP(w, r, root, h.resolveRootPath(), idxName) {
+								return
+							}
+						}
+
 						mt := getMimeType(idxName)
 						if mt == "" {
 							mt = "text/html; charset=utf-8"

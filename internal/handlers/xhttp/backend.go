@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -42,6 +43,12 @@ type Backend struct {
 	hcConfig     *alaye.HealthCheck
 	routeDomains []string
 	Fallback     http.Handler
+
+	// bulkheadPartition and resource let ServeHTTP acquire a bulkhead slot
+	// per route without a separate middleware wrapper.
+	bulkheadPartition string
+	hedger            *jack.Hedger
+	resource          *resource.Resource
 }
 
 // NewBackend constructs an HTTP reverse proxy backend from the given config.
@@ -123,12 +130,18 @@ func newHTTPBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	}
 
 	b := &Backend{
-		Base:     base,
-		Cond:     cond,
-		hcConfig: &route.HealthCheck,
-		logger:   logger,
-		stop:     make(chan struct{}),
-		Fallback: xhttpCfg.Fallback,
+		Base:              base,
+		Cond:              cond,
+		hcConfig:          &route.HealthCheck,
+		logger:            logger,
+		stop:              make(chan struct{}),
+		Fallback:          xhttpCfg.Fallback,
+		bulkheadPartition: xhttpCfg.BulkheadPartition,
+		resource:          xhttpCfg.Resource,
+	}
+
+	if xhttpCfg.UseHedger && xhttpCfg.Resource != nil && xhttpCfg.Resource.Hedger != nil {
+		b.hedger = xhttpCfg.Resource.Hedger
 	}
 
 	if len(xhttpCfg.Domains) > 0 {
@@ -144,6 +157,11 @@ func newHTTPBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	t := xhttpCfg.Resource.Transport.Clone()
 	t.Proxy = nil
 	t.ExpectContinueTimeout = 0
+	// If a tunnel pool is configured, replace DialContext so all outbound
+	// connections route through the SOCKS5 proxy pool.
+	if xhttpCfg.TunnelPool != nil {
+		t = xhttpCfg.TunnelPool.WrapTransport(t)
+	}
 	if xhttpCfg.Server.Streaming.Enabled.Active() {
 		t.ResponseHeaderTimeout = 0
 		rp.FlushInterval = xhttpCfg.Server.Streaming.EffectiveFlushInterval()
@@ -354,6 +372,11 @@ func newFastCGIBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	// NewPHPFS is deliberately absent — it maps SCRIPT_FILENAME from the
 	// filesystem and is only meaningful for PHP-FPM file serving.
 	b.FastCGI = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		// Resolve the true client IP from the original request BEFORE header
+		// sanitization strips X-Forwarded-For and X-Real-IP.
+		clientIP := zulu.IP.ClientIP(r)
+
 		// Strip headers that gofast.MapHeader would convert into dangerous CGI
 		// environment variables. Most critically, this prevents CVE-2016-5385
 		// (HTTPoxy): a client-sent "Proxy" header becomes HTTP_PROXY, which many
@@ -365,7 +388,7 @@ func newFastCGIBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 			gofast.BasicParamsMap,
 			gofast.MapHeader,
 			gofast.MapRemoteHost,
-			fcgiBuildTrusted(r),
+			fcgiBuildTrusted(r, clientIP),
 		)(gofast.BasicSession)
 		gofast.NewHandler(sess, clientFactory).ServeHTTP(w, safeReq)
 	})
@@ -465,14 +488,12 @@ func (b *Backend) initHealth(res *resource.Resource, targetURL string) error {
 // For cgi:// backends, WebSocket upgrade requests are rejected immediately
 // with 501 Not Implemented — the FastCGI protocol cannot tunnel WebSockets.
 func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !b.AcquireCircuit() {
-		if b.Fallback != nil {
-			b.Fallback.ServeHTTP(w, r)
-		} else {
-			http.Error(w, "Service Unavailable (Circuit Breaker)", http.StatusServiceUnavailable)
-		}
+	// FastCGI does not support WebSocket upgrades.
+	if b.FastCGI != nil && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		http.Error(w, "WebSocket upgrades are not supported on FastCGI backends", http.StatusNotImplemented)
 		return
 	}
+
 	if b.Abort.ShouldAbort(b.HealthScore) {
 		if b.Fallback != nil {
 			b.Fallback.ServeHTTP(w, r)
@@ -482,19 +503,46 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// FastCGI does not support WebSocket upgrades.
-	if b.FastCGI != nil && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-		http.Error(w, "WebSocket upgrades are not supported on FastCGI backends", http.StatusNotImplemented)
+	// Acquire a bulkhead slot for this route partition when configured.
+	// This gives per-route concurrency isolation — a slow backend can only
+	// consume its own partition budget, not the entire proxy's connections.
+	if b.bulkheadPartition != "" && b.resource != nil && b.resource.Bulkhead != nil {
+		if err := b.resource.Bulkhead.Call(r.Context(), b.bulkheadPartition, jack.PriorityHigh, func(ctx context.Context) error {
+			b.serveInner(w, r.WithContext(ctx))
+			return nil
+		}); err != nil {
+			if b.Fallback != nil {
+				b.Fallback.ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Service Unavailable (Bulkhead Full)", http.StatusServiceUnavailable)
+			}
+			return
+		}
 		return
 	}
 
+	b.serveInner(w, r)
+}
+
+// serveInner executes the actual proxied request, wrapped in the circuit
+// breaker and optional hedger. Separated from ServeHTTP so the bulkhead
+// callback can call it cleanly without nesting closures.
+// WrapWithBreaker handles the circuit check internally via AcquireCircuit —
+// no need for a separate pre-check here.
+func (b *Backend) serveInner(w http.ResponseWriter, r *http.Request) {
+	release, err := b.AcquireSem(r.Context(), jack.PriorityHigh)
+	if err != nil {
+		if b.Fallback != nil {
+			b.Fallback.ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Service Unavailable (Capacity)", http.StatusServiceUnavailable)
+		}
+		return
+	}
+	defer release()
+
 	start := time.Now()
 	b.Activity.StartRequest()
-
-	state := backendStatePool.Get().(*backendState)
-	state.failed = false
-	ctx := context.WithValue(r.Context(), backendCtxKey{}, state)
-	req := r.WithContext(ctx)
 
 	var actualWriter http.ResponseWriter = w
 	var sw *basicStatusWriter
@@ -506,11 +554,23 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		actualWriter = sw
 	}
 
-	defer func() {
-		dur := time.Since(start)
+	// doProxy executes a single attempt. Each hedged goroutine gets its own
+	// backendState so the loser's ErrorHandler cannot corrupt the winner.
+	doProxy := func(ctx context.Context, w http.ResponseWriter) error {
+		state := backendStatePool.Get().(*backendState)
+		state.failed = false
+		defer backendStatePool.Put(state)
+
+		req := r.WithContext(context.WithValue(ctx, backendCtxKey{}, state))
+
+		if b.FastCGI != nil {
+			b.FastCGI.ServeHTTP(w, req)
+		} else {
+			b.Proxy.ServeHTTP(w, req)
+		}
+
 		failed := state.failed
-		backendStatePool.Put(state)
-		if rw, ok := w.(*zulu.ResponseWriter); ok {
+		if rw, ok := actualWriter.(*zulu.ResponseWriter); ok {
 			if rw.StatusCode == http.StatusBadGateway ||
 				rw.StatusCode == http.StatusServiceUnavailable ||
 				rw.StatusCode == http.StatusGatewayTimeout {
@@ -523,27 +583,65 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				failed = true
 			}
 		}
-		if sw != nil {
-			sw.ResponseWriter = nil // release reference before pool return
-			basicStatusWriterPool.Put(sw)
-			sw = nil
+		if failed {
+			return errors.New("upstream error")
 		}
-		b.Activity.EndRequest(dur.Microseconds(), failed)
-		if b.HealthScore != nil {
-			b.HealthScore.RecordPassiveRequest(!failed)
-		}
+		return nil
+	}
 
-		// EndRequest already accounts for the failure; RecordResult only
-		// evaluates whether the threshold has been crossed.
-		if justTripped := b.RecordResult(!failed); justTripped {
-			b.logger.Fields("backend", b.Address, "failures", b.CBThreshold).Warn("circuit breaker tripped")
-		}
-	}()
+	var breakerErr error
 
-	if b.FastCGI != nil {
-		b.FastCGI.ServeHTTP(actualWriter, req)
+	if b.hedger != nil {
+		var winner atomic.Int32
+		var attempt atomic.Int32
+
+		_, breakerErr = b.hedger.Do(r.Context(), func(ctx context.Context) (any, error) {
+			id := attempt.Add(1)
+			hw := &hedgeWriter{
+				ResponseWriter: actualWriter,
+				winner:         &winner,
+				id:             id,
+			}
+			return nil, b.WrapWithBreaker(ctx, func(c context.Context) error {
+				return doProxy(c, hw)
+			})
+		})
 	} else {
-		b.Proxy.ServeHTTP(actualWriter, req)
+		breakerErr = b.WrapWithBreaker(r.Context(), func(c context.Context) error {
+			return doProxy(c, actualWriter)
+		})
+	}
+
+	dur := time.Since(start)
+	failed := breakerErr != nil
+	b.Activity.EndRequest(dur.Microseconds(), failed)
+
+	if sw != nil {
+		sw.ResponseWriter = nil
+		basicStatusWriterPool.Put(sw)
+	}
+
+	if b.HealthScore != nil {
+		b.HealthScore.RecordPassiveRequest(!failed)
+	}
+
+	// RecordResult manages the circuit trip timestamp without double-counting —
+	// EndRequest already incremented Activity.Failures above.
+	if justTripped := b.RecordResult(!failed); justTripped {
+		b.logger.Fields("backend", b.Address, "threshold", b.CBThreshold).Warn("circuit breaker tripped")
+	}
+
+	if errors.Is(breakerErr, jack.ErrBreakerOpen) {
+		if b.Fallback != nil {
+			b.Fallback.ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Service Unavailable (Circuit Breaker)", http.StatusServiceUnavailable)
+		}
+		return
+	}
+
+	if failed {
+		b.logger.Fields("backend", b.Address, "state", b.BreakerState()).Debug("backend request failed")
 	}
 }
 
@@ -598,14 +696,25 @@ func (b *Backend) RouteDomains() []string {
 // crafting an HTTP header — the FastCGI protocol transmits client HTTP headers
 // under the HTTP_ prefix, which is a different namespace.
 //
+//   - REMOTE_ADDR      true client IP, resolved before X-Forwarded-For was
+//     stripped (prevents LB IP reaching application rate-limiters).
 //   - HTTPS            "on" when the client-facing connection was TLS.
 //     Go's net/http/fcgi surfaces this on Request.TLS.
 //   - SERVER_SOFTWARE  proxy identity string in backend server logs.
 //   - SERVER_PORT      actual listener port from ListenerCtx, overriding the
 //     port BasicParamsMap may have guessed from the Host header.
-func fcgiBuildTrusted(r *http.Request) gofast.Middleware {
+func fcgiBuildTrusted(r *http.Request, clientIP string) gofast.Middleware {
 	return func(inner gofast.SessionHandler) gofast.SessionHandler {
 		return func(client gofast.Client, req *gofast.Request) (*gofast.ResponsePipe, error) {
+			// REMOTE_ADDR — override the raw socket IP set by gofast.MapRemoteHost.
+			// When Agbero is behind a load balancer, the socket IP is the LB's
+			// address. clientIP was resolved from X-Forwarded-For/X-Real-IP
+			// (trusted-proxy-aware) before those headers were sanitized, so PHP
+			// always receives the genuine end-user IP regardless of topology.
+			if clientIP != "" {
+				req.Params["REMOTE_ADDR"] = clientIP
+			}
+
 			// HTTPS — structural equivalent of X-Forwarded-Proto but unforgeable.
 			if r.TLS != nil {
 				req.Params["HTTPS"] = "on"

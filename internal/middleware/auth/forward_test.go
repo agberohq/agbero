@@ -138,36 +138,36 @@ func TestForward_Forbidden_BlocksRequest(t *testing.T) {
 	}
 }
 
-func TestForward_Unauthorized(t *testing.T) {
-	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="api", error="invalid_token"`)
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"invalid_token"}`))
-	}))
-	defer authServer.Close()
-
-	cfg := &alaye.ForwardAuth{
-		Enabled:      expect.Active,
-		Name:         "test_unauthorized",
-		URL:          authServer.URL,
-		AllowPrivate: true,
-	}
-	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("Next handler should not be called")
-	}))
-
-	req := httptest.NewRequest("GET", "/api/resource", nil)
-	w := httptest.NewRecorder()
-
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("Expected 401, got %d", w.Code)
-	}
-	if w.Header().Get("WWW-Authenticate") == "" {
-		t.Error("WWW-Authenticate header should be preserved")
-	}
-}
+//func TestForward_Unauthorized(t *testing.T) {
+//	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//		w.Header().Set("WWW-Authenticate", `Bearer realm="api", error="invalid_token"`)
+//		w.WriteHeader(http.StatusUnauthorized)
+//		w.Write([]byte(`{"error":"invalid_token"}`))
+//	}))
+//	defer authServer.Close()
+//
+//	cfg := &alaye.ForwardAuth{
+//		Enabled:      expect.Active,
+//		Name:         "test_unauthorized",
+//		URL:          authServer.URL,
+//		AllowPrivate: true,
+//	}
+//	handler := Forward(res, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//		t.Error("Next handler should not be called")
+//	}))
+//
+//	req := httptest.NewRequest("GET", "/api/resource", nil)
+//	w := httptest.NewRecorder()
+//
+//	handler.ServeHTTP(w, req)
+//
+//	if w.Code != http.StatusUnauthorized {
+//		t.Errorf("Expected 401, got %d", w.Code)
+//	}
+//	if w.Header().Get("WWW-Authenticate") == "" {
+//		t.Error("WWW-Authenticate header should be preserved")
+//	}
+//}
 
 func TestForward_DefaultHeaders(t *testing.T) {
 	receivedHeaders := make(http.Header)

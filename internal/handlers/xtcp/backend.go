@@ -3,6 +3,7 @@ package xtcp
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -13,21 +14,24 @@ import (
 	"github.com/agberohq/agbero/internal/handlers/upstream"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/health"
+	tunnelpkg "github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/olekukonko/ll"
 )
 
 type BackendConfig struct {
-	Server   alaye.Server
-	Proxy    alaye.Proxy
-	Resource *resource.Resource
-	Logger   *ll.Logger
+	Server     alaye.Server
+	Proxy      alaye.Proxy
+	Resource   *resource.Resource
+	Logger     *ll.Logger
+	TunnelPool *tunnelpkg.Pool // nil = direct TCP dial
 }
 
 type Backend struct {
 	upstream.Base
 
-	stop     chan struct{}
-	stopOnce sync.Once
+	tunnelPool *tunnelpkg.Pool
+	stop       chan struct{}
+	stopOnce   sync.Once
 }
 
 // NewBackend constructs a TCP proxy backend from the given config.
@@ -54,8 +58,9 @@ func NewBackend(cfg BackendConfig) (*Backend, error) {
 	}
 
 	b := &Backend{
-		Base: base,
-		stop: make(chan struct{}),
+		Base:       base,
+		tunnelPool: cfg.TunnelPool,
+		stop:       make(chan struct{}),
 	}
 
 	if !hasProber {
@@ -156,4 +161,20 @@ func (b *Backend) Snapshot() *Snapshot {
 		TotalReqs:   b.Activity.Requests.Load(),
 		Latency:     b.Activity.Latency.Snapshot(),
 	}
+}
+
+// Dial establishes a TCP connection to this backend's address.
+// When a TunnelPool is configured, the connection is routed through
+// the SOCKS5 proxy pool. Otherwise a direct TCP connection is made.
+func (b *Backend) Dial(ctx context.Context) (net.Conn, error) {
+	if b.tunnelPool != nil {
+		return b.tunnelPool.DialContext(ctx, "tcp", b.Address)
+	}
+	var d net.Dialer
+	return d.DialContext(ctx, "tcp", b.Address)
+}
+
+// HasTunnel reports whether this backend routes through a tunnel.
+func (b *Backend) HasTunnel() bool {
+	return b.tunnelPool != nil
 }

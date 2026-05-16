@@ -26,11 +26,11 @@ type Allow struct {
 	// malicious scripts run by an allowed binary (e.g. "node evil.js").
 	// Enable only when you trust every repository wired to a serverless git
 	// block. A loud warning is printed at startup whenever this is active.
-	ServerlessGit bool `hcl:"serverless_git,attr" json:"serverless_git"`
+	ServerlessGit expect.Toggle `hcl:"serverless_git,attr" json:"serverless_git"`
 }
 
 func (a Allow) IsZero() bool {
-	return len(a.Proxies) == 0 && len(a.Commands) == 0 && !a.ServerlessGit
+	return len(a.Proxies) == 0 && len(a.Commands) == 0 && !a.ServerlessGit.Active()
 }
 
 var allowedCommandRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)

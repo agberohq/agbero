@@ -519,6 +519,7 @@ func TestLocalState_PlaintextNotLeaked(t *testing.T) {
 // This covers the runtime case: admin writes a secret on node1 via
 // POST /api/v1/keeper/secrets → BroadcastSecret → peers receive OpSecret
 // in NotifyMsg → apply() → handleSecretUpdate → keeperWrite.
+// Replace TestApply_OpSecret_WritesToKeeper in delegate_test.go with this version.
 func TestApply_OpSecret_WritesToKeeper(t *testing.T) {
 	cipher, _ := security.NewCipher("12345678901234567890123456789012")
 	secretKey := "ss://prod/db_pass"
@@ -549,6 +550,7 @@ func TestApply_OpSecret_WritesToKeeper(t *testing.T) {
 	}
 	d.apply(env, false)
 
+	// keeperWrite must have been called with the correct plaintext.
 	mu.Lock()
 	got, ok := written[secretKey]
 	mu.Unlock()
@@ -560,13 +562,31 @@ func TestApply_OpSecret_WritesToKeeper(t *testing.T) {
 		t.Errorf("keeperWrite got wrong plaintext: got %q, want %q", got, secretVal)
 	}
 
-	// OpSecret must NOT be stored in the gossip store — it carries key material
-	// that must not be replayed or exposed via LocalState.
+	// A tombstone MUST be present in the gossip store so that the Lamport-clock
+	// check at the top of apply() can reject replayed or out-of-order OpSecret
+	// packets for the same key. Without it, `exists` is always false and every
+	// replay would be accepted unconditionally.
 	d.mu.RLock()
-	_, inStore := d.store[secretKey]
+	tombstone, inStore := d.store[secretKey]
 	d.mu.RUnlock()
-	if inStore {
-		t.Error("OpSecret must not be persisted in the gossip store")
+
+	if !inStore {
+		t.Error("OpSecret tombstone missing from gossip store — replay protection is broken")
+	}
+
+	// The tombstone must carry NO key material: Value must be nil so the
+	// entry cannot expose secrets via LocalState dumps or re-broadcast them
+	// to joining nodes.
+	if tombstone.Value != nil {
+		t.Errorf("OpSecret tombstone has non-nil Value (%d bytes) — key material leaked into gossip store",
+			len(tombstone.Value))
+	}
+
+	// Sanity: the tombstone must still carry the original timestamp so that
+	// a future envelope with an older timestamp is correctly rejected.
+	if tombstone.Timestamp != env.Timestamp {
+		t.Errorf("tombstone Timestamp = %d, want %d — Lamport clock not preserved",
+			tombstone.Timestamp, env.Timestamp)
 	}
 }
 

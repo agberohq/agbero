@@ -18,6 +18,9 @@ const (
 
 var counterBits = []uint8{40, 24}
 
+// correctly when the expiry timestamp elapses.
+const counterMaxValue = (1 << 24) - 1
+
 type atomicCounter struct {
 	state zulu.AtomicPacked
 }
@@ -83,9 +86,13 @@ func (c *Counters) Increment(ruleID, key string, window time.Duration) int64 {
 				continue
 			}
 
-			newPacked := zulu.NewPacked(counterBits, oldExpire, oldCount+counterIncrement)
+			newCount := oldCount + counterIncrement
+			if newCount > counterMaxValue {
+				newCount = counterMaxValue
+			}
+			newPacked := zulu.NewPacked(counterBits, oldExpire, newCount)
 			if curr.state.CompareAndSwap(oldPacked, newPacked) {
-				result = oldCount + counterIncrement
+				result = newCount
 				return curr, true
 			}
 		}

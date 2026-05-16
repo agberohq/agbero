@@ -77,6 +77,16 @@ func WithCustomHTTPClient(client *http.Client) Option {
 	}
 }
 
+// WithBulkhead attaches a shared bulkhead to the resource manager.
+// Routes reference it by partition name (typically the route path or name)
+// to isolate concurrency budgets between tenants and prevent one slow backend
+// from monopolising the entire connection pool.
+func WithBulkhead(bh *jack.Bulkhead) Option {
+	return func(m *Resource) {
+		m.Bulkhead = bh
+	}
+}
+
 // WithDoctor attaches a health monitor to track the status of backend patients.
 // It ensures that background health checks are executed according to their interval.
 func WithDoctor(doctor *jack.Doctor) Option {
@@ -269,6 +279,16 @@ type Resource struct {
 	Janitor    *jack.Pool
 	Background *jack.Pool
 
+	// Bulkhead provides per-route concurrency isolation. Each route acquires
+	// from its own named partition, preventing one slow backend from
+	// exhausting the shared connection budget for all other routes.
+	Bulkhead *jack.Bulkhead
+
+	// Hedger fires speculative second requests to alternate backends when
+	// a primary response is slow. Shared across all HTTP backends so the
+	// P50 RTT window is populated quickly across the whole proxy.
+	Hedger *jack.Hedger
+
 	Env *Env
 
 	counter *atomic.Uint64
@@ -364,6 +384,22 @@ func (m *Resource) setDefaults() {
 
 	if m.Janitor == nil {
 		m.Janitor = jack.NewPool(def.PoolWorkers, jack.PoolingWithQueueSize(def.PoolQueueSize))
+	}
+
+	// Bulkhead: default capacity of 50 concurrent requests per route partition.
+	// Operators can override via WithBulkhead with custom per-partition sizing.
+	if m.Bulkhead == nil {
+		m.Bulkhead = jack.NewBulkhead(
+			jack.BulkheadWithDefaultCapacity(def.DefaultBulkheadCapacity),
+		)
+	}
+
+	// Hedger: fire a speculative second request at the P50 RTT. Shared so
+	// the latency window accumulates across all backends on this instance.
+	if m.Hedger == nil {
+		m.Hedger = jack.NewHedger(
+			jack.HedgeWithPercentile(50),
+		)
 	}
 }
 

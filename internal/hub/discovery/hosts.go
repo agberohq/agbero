@@ -219,13 +219,23 @@ func (hm *Host) OnClusterChange(key string, value []byte, deleted bool) {
 }
 
 // handleRouteDeletion removes an ephemeral route and triggers a routing rebuild.
-// Clears associated lifetime schedules to prevent memory leaks.
+// It broadcasts an OpDel message so every cluster peer removes the route from
+// its own gossip store. Without this broadcast the expired OpRoute envelope
+// stays in distributed memory forever, causing unbounded growth as microservices
+// repeatedly register and expire routes — eventually OOM-crashing the cluster.
 func (hm *Host) handleRouteDeletion(key string) {
 	hm.mu.Lock()
 	delete(hm.clusterRoutes, key)
 	hm.mu.Unlock()
 
 	hm.lifetimes.CancelTimed(key)
+
+	// Broadcast the deletion so remote nodes remove the OpRoute envelope from
+	// their gossip stores. The full key (with ClusterRoutePrefix) is used so
+	// the Delete targets the correct store entry on every peer.
+	if hm.clusterMgr != nil {
+		hm.clusterMgr.Delete(ClusterRoutePrefix + key)
+	}
 
 	hm.logger.Fields("key", key).Info("cluster route removed")
 	hm.debouncer.Do(hm.rebuildAndNotify)

@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -153,21 +152,11 @@ func (m *Manager) handleRoute(w http.ResponseWriter, r *http.Request, route *ala
 		reqOut.URL = &u
 	}
 
-	if len(route.StripPrefixes) > 0 {
-		for _, prefix := range route.StripPrefixes {
-			if prefix == "" {
-				continue
-			}
-			if after, ok := strings.CutPrefix(reqOut.URL.Path, prefix); ok {
-				reqOut.URL.Path = after
-				if reqOut.URL.Path == "" {
-					reqOut.URL.Path = "/"
-				}
-				reqOut.URL.RawPath = ""
-				break
-			}
-		}
-	}
+	// Note: prefix stripping is handled exclusively by the rewrite middleware
+	// in the route's handler chain (routes.go → rewrite.New). Stripping here
+	// AND in the middleware produced a double-strip for requests whose path
+	// contained the prefix more than once (e.g. /api/api/users → /users
+	// instead of /api/users). The rewrite middleware is the canonical location.
 
 	routeKey := route.Key()
 	var handler http.Handler = m.routeBuilder(route, host)
@@ -216,6 +205,7 @@ func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 		Resource:    m.cfg.Resource,
 		SharedState: m.cfg.SharedState,
 		Orch:        m.cfg.OrchManager,
+		TunnelPools: m.cfg.TunnelPools,
 	}, route)
 
 	newItem := &mappo.Item{Value: h}

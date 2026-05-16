@@ -11,6 +11,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/resource"
+	"github.com/agberohq/agbero/internal/middleware/dnsblock"
 	"github.com/agberohq/agbero/internal/pkg/lb"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/mappo"
@@ -59,6 +60,10 @@ type Proxy struct {
 	quit chan struct{}
 	wg   sync.WaitGroup
 
+	// blocklist filters DNS queries before they reach the backend selector.
+	// nil means no filtering (default).
+	blocklist *dnsblock.Blocklist
+
 	// pool dispatches datagram handling through a bounded worker pool,
 	// preventing goroutine explosion under UDP flood conditions.
 	// replyLoop goroutines are NOT routed through this pool — they are
@@ -80,6 +85,13 @@ func NewProxy(res *resource.Resource, listen string) *Proxy {
 // Must be called before Start().
 func (p *Proxy) SetSessionTTL(d time.Duration) {
 	p.sessionTTL = d
+}
+
+// WithBlocklist installs a pre-built DNS blocklist on this proxy.
+// When set, every incoming DNS query is checked before backend selection.
+// Must be called before Start().
+func (p *Proxy) WithBlocklist(bl *dnsblock.Blocklist) {
+	p.blocklist = bl
 }
 
 // AddRoute registers a UDP route. For UDP, routing is not SNI-based —
@@ -244,11 +256,36 @@ func (p *Proxy) handleDatagram(listenConn *net.UDPConn, clientAddr *net.UDPAddr,
 		return
 	}
 
-	// Determine session key: try protocol matcher first, fall back to src:port
-	sessionKey := clientAddr.String() // default: src_ip:src_port
+	// DNS blocklist check — must run before session key resolution so
+	// blocked queries never create a session or touch the backend selector.
+	// In "nxdomain" mode we write a synthesised NXDOMAIN back to the client.
+	// In "drop" mode (or on synthesise error) we silently discard the packet.
+	if p.blocklist != nil {
+		if resp, blocked := dnsblock.Filter(data, p.blocklist); blocked {
+			if resp != nil {
+				_, _ = listenConn.WriteToUDP(resp, clientAddr)
+			}
+			p.res.Logger.Fields("remote", clientAddr.String()).Debug("xudp: dns query blocked")
+			return
+		}
+	}
+
+	// Session key MUST always uniquely identify the client so that reply
+	// datagrams are returned to the correct sender. It must never be
+	// replaced with an application-layer value (e.g. a DNS domain name)
+	// because two different clients querying the same domain would share
+	// a session, causing cross-client data leakage and response blackholing.
+	sessionKey := clientAddr.String() // always src_ip:src_port
+
+	// Extract the application-layer routing key from the payload (e.g. the
+	// DNS query domain or SIP Call-ID) purely for consistent load-balancing.
+	// This value is hashed and passed to pickBackend so the same logical
+	// "flow" (same domain, same call) consistently reaches the same backend,
+	// but it plays no part in session lookup or reply addressing.
+	var routingHash uint64
 	if route.matcher != nil {
 		if key, ok := route.matcher.Match(data); ok && key != "" {
-			sessionKey = key
+			routingHash = lb.HashString(key)
 		}
 	}
 
@@ -271,8 +308,10 @@ func (p *Proxy) handleDatagram(listenConn *net.UDPConn, clientAddr *net.UDPAddr,
 		return
 	}
 
-	// Slow path: new session — pick a backend
-	backend := p.pickBackend(route)
+	// Slow path: new session — pick a backend, honouring the routing hash
+	// so that consistent-hashing strategies can pin a domain/call to a
+	// specific upstream resolver or media server.
+	backend := p.pickBackend(route, routingHash)
 	if backend == nil {
 		p.res.Logger.Fields("remote", clientAddr.String()).Warn("xudp: no available backend")
 		return
@@ -353,11 +392,12 @@ func (p *Proxy) replyLoop(
 	sessionKey string,
 	sess *session,
 ) {
+	start := time.Now()
 	defer p.wg.Done()
 	defer func() {
 		p.sessions.delete(sessionKey)
 		sess.backend.Activity.EndRequest(
-			time.Since(time.Unix(0, sess.lastSeen.Load())).Microseconds(),
+			time.Since(start).Microseconds(),
 			false,
 		)
 	}()
@@ -390,6 +430,13 @@ func (p *Proxy) replyLoop(
 		}
 
 		sess.touch()
+		// Reset the background lifetime timer so that server-driven traffic
+		// (video stream, game state, telemetry) keeps the session alive.
+		// Without this, the jack.Lifetime timer fires after TTL regardless of
+		// how much data the backend is actively sending, forcibly closing the
+		// backend conn and crashing this loop exactly TTL seconds after the
+		// last client-originated packet.
+		p.sessions.lifetime.ResetTimed(sessionKey)
 
 		// Write reply back to the original client
 		if _, err := listenConn.WriteToUDP(buf[:n], clientAddr); err != nil {
@@ -405,8 +452,17 @@ func (p *Proxy) replyLoop(
 }
 
 // pickBackend selects a backend from the route using the lb selector.
-func (p *Proxy) pickBackend(route *udpRoute) *Backend {
+//
+// routingHash is an optional application-layer hash (e.g. derived from a DNS
+// domain name or SIP Call-ID). When non-zero it is supplied to the selector's
+// key function so that consistent-hashing strategies pin the same logical flow
+// to the same backend. When zero (no matcher, or matcher produced no key) a
+// random hash is used, giving the selector full freedom to load-balance.
+func (p *Proxy) pickBackend(route *udpRoute, routingHash uint64) *Backend {
 	keyFunc := func() uint64 {
+		if routingHash != 0 {
+			return routingHash
+		}
 		return uint64(rand.Uint32())<<32 | uint64(rand.Uint32())
 	}
 

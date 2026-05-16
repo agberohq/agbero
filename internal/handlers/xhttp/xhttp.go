@@ -8,6 +8,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/resource"
+	"github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/olekukonko/errors"
 )
 
@@ -38,11 +39,19 @@ func (c ConfigProxy) Validate() error {
 }
 
 type ConfigBackend struct {
-	Server   alaye.Server
-	Route    *alaye.Route
-	Domains  []string
-	Fallback http.Handler
-	Resource *resource.Resource
+	Server     alaye.Server
+	Route      *alaye.Route
+	Domains    []string
+	Fallback   http.Handler
+	Resource   *resource.Resource
+	TunnelPool *tunnel.Pool
+
+	// BulkheadPartition is the partition name used when the resource Bulkhead
+	// is configured. Typically set to the route path or name. Empty = no bulkhead.
+	BulkheadPartition string
+	// UseHedger enables speculative retry on slow responses using the shared
+	// resource.Hedger. Off by default — only enable for idempotent backends.
+	UseHedger bool
 }
 
 // Validate checks that the backend address and resource manager are present.

@@ -28,11 +28,18 @@ func setupProcessGroup(cmd *exec.Cmd, dropPrivileges bool) (*jobLimits, error) {
 	return nil, nil
 }
 
-func killProcessGroup(pid int) error {
+func killProcessGroup(pid int, done <-chan struct{}) error {
 	syscall.Kill(-pid, syscall.SIGTERM)
 	go func() {
-		<-time.After(def.DefaultWorkerPoolSize * time.Second)
-		syscall.Kill(-pid, syscall.SIGKILL)
+		select {
+		case <-time.After(def.DefaultWorkerPoolSize * time.Second):
+			// Graceful shutdown window elapsed — force-kill the process group.
+			syscall.Kill(-pid, syscall.SIGKILL)
+		case <-done:
+			// cmd.Wait() returned: the process was fully reaped and its PID
+			// returned to the OS pool. Do NOT send SIGKILL — it could hit a
+			// completely unrelated process that inherited this PID.
+		}
 	}()
 	return nil
 }

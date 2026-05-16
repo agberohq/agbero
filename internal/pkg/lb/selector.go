@@ -99,7 +99,15 @@ func (s *Selector) pickRoundRobin(st *selectorState) Backend {
 	isPow2 := n > 0 && (n&(n-1)) == 0
 	mask := uint64(n - 1)
 
-	for range n {
+	// When using a weight wheel the slot space is wheel.total (the sum of all
+	// weights), not the number of unique backends. We must be willing to walk the entire wheel
+	// circumference to guarantee every unique backend is evaluated at least once.
+	maxAttempts := uint64(n)
+	if st.wheel != nil && st.wheel.total > uint64(n) {
+		maxAttempts = st.wheel.total
+	}
+
+	for i := uint64(0); i < maxAttempts; i++ {
 		counter := s.rrCounter.Add(1)
 		var idx int
 		if st.wheel != nil && st.wheel.total > 0 {

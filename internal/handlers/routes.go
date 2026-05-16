@@ -32,6 +32,7 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/ratelimit"
 	"github.com/agberohq/agbero/internal/middleware/rewrite"
 	"github.com/agberohq/agbero/internal/middleware/waf"
+	"github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/agberohq/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/ll"
 )
@@ -130,12 +131,20 @@ func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *
 func newProxyRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 	var backends []*xhttp.Backend
 	for i, backendCfg := range route.Backends.Servers {
+		pool, err := resolveTunnelPool(route.Backends, cfg.TunnelPools, cfg.Resource.Logger)
+		if err != nil {
+			cfg.Resource.Logger.Fields("index", i, "backend", backendCfg.Address.String(), "err", err).Error("failed to resolve tunnel for backend")
+			continue
+		}
 		b, err := xhttp.NewBackend(xhttp.ConfigBackend{
-			Server:   backendCfg,
-			Route:    route,
-			Domains:  cfg.Host.Domains,
-			Fallback: nil,
-			Resource: cfg.Resource,
+			Server:            backendCfg,
+			Route:             route,
+			Domains:           cfg.Host.Domains,
+			Fallback:          nil,
+			Resource:          cfg.Resource,
+			TunnelPool:        pool,
+			BulkheadPartition: route.Path,
+			UseHedger:         route.Backends.Idempotent,
 		})
 		if err != nil {
 			cfg.Resource.Logger.Fields("index", i, "backend", backendCfg.Address.String(), "err", err).Error("failed to create backend")
@@ -155,10 +164,30 @@ func newProxyRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 				if err != nil {
 					return nil, fmt.Errorf("fallback proxy: invalid address %q: %w", addr, err)
 				}
+
 				ip := net.ParseIP(host)
 				if ip == nil {
-					return nil, fmt.Errorf("fallback proxy: could not parse resolved address %q", host)
+					// host is a DNS name — resolve it first.
+					// We also apply the same TOCTOU / DNS-rebinding defence used
+					// in ssrfSafeDialContext
+					addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+					if err != nil {
+						return nil, fmt.Errorf("fallback proxy: DNS resolution failed for %q: %w", host, err)
+					}
+					for _, a := range addrs {
+						resolved := net.ParseIP(a)
+						if resolved == nil {
+							continue
+						}
+						if alaye.IsPrivateIP(resolved) {
+							return nil, fmt.Errorf("fallback proxy: SSRF protection blocked connection to private/internal address %s (resolved from %s)", a, host)
+						}
+						// Dial the pre-resolved IP directly — no second DNS lookup.
+						return safeDialer.DialContext(ctx, network, net.JoinHostPort(a, port))
+					}
+					return nil, fmt.Errorf("fallback proxy: no valid public address resolved for %q", host)
 				}
+
 				if alaye.IsPrivateIP(ip) {
 					return nil, fmt.Errorf("fallback proxy: SSRF protection blocked connection to private/internal address %s:%s", host, port)
 				}
@@ -399,4 +428,31 @@ func buildNonceStores(route *alaye.Route) map[string]*nonce.Store {
 		}
 	}
 	return stores
+}
+
+// resolveTunnelPool returns the tunnel.Pool for a backend block, or nil if
+// no tunnel is configured (direct connection). It handles both the named
+// `via` reference and the inline `tunnel = "socks5://..."` shorthand.
+//
+// Named references are resolved against the pools map built from global
+// tunnel {} blocks. An unknown name is a fatal error logged by the caller.
+func resolveTunnelPool(b alaye.Backend, pools map[string]*tunnel.Pool, logger *ll.Logger) (*tunnel.Pool, error) {
+	// Named tunnel reference — looked up in the global registry.
+	if b.Via != "" {
+		pool, ok := pools[b.Via]
+		if !ok {
+			return nil, fmt.Errorf("backend references undefined tunnel %q — check global tunnel blocks", b.Via)
+		}
+		return pool, nil
+	}
+	// Inline socks5:// shorthand — build a one-off anonymous pool.
+	if b.Tunnel != "" {
+		pool, err := tunnel.NewFromURL(b.Tunnel)
+		if err != nil {
+			return nil, fmt.Errorf("backend tunnel %q: %w", b.Tunnel, err)
+		}
+		return pool, nil
+	}
+	// No tunnel configured — direct connection.
+	return nil, nil
 }

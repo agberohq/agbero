@@ -4,67 +4,70 @@ import (
 	"context"
 	"time"
 
-	"github.com/cenkalti/backoff/v4"
+	"github.com/olekukonko/jack"
 )
 
-// NewStandard returns a backoff policy suitable for network calls.
-// Initial: 100ms, Max: 2s, MaxElapsed: 10s - faster recovery
-func NewStandard() backoff.BackOff {
-	b := backoff.NewExponentialBackOff()
-	b.InitialInterval = 100 * time.Millisecond
-	b.MaxInterval = 2 * time.Second
-	b.MaxElapsedTime = 10 * time.Second
-	b.RandomizationFactor = 0.3 // Lower jitter for more predictable retries
-	return b
-}
-
-// NewShort returns a backoff policy for quick retries (e.g. internal calls).
-// Initial: 50ms, Max: 500ms, MaxElapsed: 3s
-func NewShort() backoff.BackOff {
-	b := backoff.NewExponentialBackOff()
-	b.InitialInterval = 50 * time.Millisecond
-	b.MaxInterval = 500 * time.Millisecond
-	b.MaxElapsedTime = 3 * time.Second
-	b.RandomizationFactor = 0.3
-	return b
-}
-
-// NewInfinite returns a backoff policy that never expires (for Accept loops).
-// Initial: 1ms, Max: 100ms - very responsive to temporary errors
-func NewInfinite() backoff.BackOff {
-	b := backoff.NewExponentialBackOff()
-	b.InitialInterval = 1 * time.Millisecond
-	b.MaxInterval = 100 * time.Millisecond
-	b.MaxElapsedTime = 0        // Never stop
-	b.RandomizationFactor = 0.2 // Low jitter for tight loops
-	return b
-}
-
-// NewHealthCheckBackoff returns a policy for backend health check retries.
-// Used when a backend transitions from dead to potentially alive.
-// Initial: 1s, Max: 30s, never stops trying
-func NewHealthCheckBackoff() backoff.BackOff {
-	b := backoff.NewExponentialBackOff()
-	b.InitialInterval = 1 * time.Second
-	b.MaxInterval = 30 * time.Second
-	b.MaxElapsedTime = 0        // Keep trying forever
-	b.RandomizationFactor = 0.5 // Higher jitter to prevent thundering herd
-	return b
-}
-
-// Do wraps an operation with the standard backoff policy.
+// Do wraps an operation with the standard retry policy.
 func Do(op func() error) error {
-	b := backoff.WithContext(NewStandard(), context.Background())
-	return backoff.Retry(op, b)
+	return NewStandard().Do(context.Background(), func(_ context.Context) error {
+		return op()
+	})
 }
 
-// DoCtx wraps an operation with the standard backoff policy.
+// DoCtx wraps an operation with the standard retry policy, respecting cancellation.
 func DoCtx(ctx context.Context, op func() error) error {
-	b := backoff.WithContext(NewStandard(), ctx)
-	return backoff.Retry(op, b)
+	return NewStandard().Do(ctx, func(_ context.Context) error {
+		return op()
+	})
 }
 
-// DoWithBackoff allows custom backoff policy
-func DoWithBackoff(b backoff.BackOff, op func() error) error {
-	return backoff.Retry(op, b)
+// DoWithRetry allows passing a custom jack.Retry policy.
+func DoWithRetry(r *jack.Retry, ctx context.Context, op func() error) error {
+	return r.Do(ctx, func(_ context.Context) error {
+		return op()
+	})
+}
+
+// NewStandard returns a Retry suitable for network calls.
+// 100ms base, 2s max, 3 attempts, jitter on.
+func NewStandard() *jack.Retry {
+	return jack.NewRetry(
+		jack.RetryWithMaxAttempts(3),
+		jack.RetryWithBaseDelay(100*time.Millisecond),
+		jack.RetryWithMaxDelay(2*time.Second),
+		jack.RetryWithJitter(true),
+	)
+}
+
+// NewShort returns a Retry for quick retries (e.g. internal calls).
+// 50ms base, 500ms max, 3 attempts.
+func NewShort() *jack.Retry {
+	return jack.NewRetry(
+		jack.RetryWithMaxAttempts(3),
+		jack.RetryWithBaseDelay(50*time.Millisecond),
+		jack.RetryWithMaxDelay(500*time.Millisecond),
+		jack.RetryWithJitter(true),
+	)
+}
+
+// NewInfinite returns a Retry that never exhausts — for Accept loops.
+// 1ms base, 100ms max, unlimited attempts.
+func NewInfinite() *jack.Retry {
+	return jack.NewRetry(
+		jack.RetryWithMaxAttempts(0),
+		jack.RetryWithBaseDelay(1*time.Millisecond),
+		jack.RetryWithMaxDelay(100*time.Millisecond),
+		jack.RetryWithJitter(true),
+	)
+}
+
+// NewHealthCheckBackoff returns a Retry for backend health probes.
+// 1s base, 30s max, unlimited attempts, high jitter.
+func NewHealthCheckBackoff() *jack.Retry {
+	return jack.NewRetry(
+		jack.RetryWithMaxAttempts(0),
+		jack.RetryWithBaseDelay(1*time.Second),
+		jack.RetryWithMaxDelay(30*time.Second),
+		jack.RetryWithJitter(true),
+	)
 }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -21,12 +22,21 @@ type CacheMiddleware struct {
 	store            stash.Store
 	logger           *ll.Logger
 	pool             *jack.Pool
+	flight           *jack.Flight
 	allowedMethods   map[string]bool
 	enabled          bool
 	defaultTTL       time.Duration
 	keyScope         []string
 	maxCacheableSize int64
 	policy           *alaye.TTLPolicy
+
+	// inFlight deduplicates concurrent stale-while-revalidate background
+	// fetches for the same cache key. Without this, a high-traffic endpoint
+	// that becomes stale will spawn one background revalidation goroutine per
+	// concurrent request — a self-inflicted cache stampede that floods the
+	// upstream. The sync.Map stores the key while a revalidation is in
+	// progress; subsequent callers skip pool.Submit entirely.
+	inFlight sync.Map
 }
 
 // Option configures optional fields on CacheMiddleware.
@@ -69,6 +79,7 @@ func New(cfg *alaye.Cache, logger *ll.Logger, opts ...Option) func(http.Handler)
 	mw := &CacheMiddleware{
 		store:            store,
 		logger:           logger,
+		flight:           jack.NewFlight(),
 		allowedMethods:   make(map[string]bool, len(cfg.Methods)),
 		enabled:          true,
 		defaultTTL:       cfg.TTL.StdDuration(),
@@ -108,83 +119,129 @@ func (m *CacheMiddleware) Handler(next http.Handler) http.Handler {
 				if serveCachedResponse(w, r, entry, m.logger) {
 					return
 				}
-				m.store.Delete(key)
 			}
 		}
 
-		rec := newRecorder(w, m.maxCacheableSize)
-		next.ServeHTTP(rec, r)
+		// Hard miss — coalesce concurrent requests for the same cache key.
+		// The leader executes the upstream handler and stores the entry.
+		// Waiters block until the leader finishes, then serve the cached
+		// entry directly. This eliminates the thundering-herd OOM vector
+		// where N concurrent hard misses each buffer the full response.
+		res, err := m.flight.DoCtx(r.Context(), key, func() (interface{}, error) {
+			rec := newRecorder(w, m.maxCacheableSize)
+			next.ServeHTTP(rec, r)
 
-		if !rec.Cacheable() {
-			setCacheHeaders(w, "BYPASS")
-			if m.logger != nil {
-				m.logger.Debug("response body exceeds max_cacheable_size, bypassing cache",
-					"limit", m.maxCacheableSize)
+			if !rec.Cacheable() {
+				setCacheHeaders(w, "BYPASS")
+				if m.logger != nil {
+					m.logger.Debug("response body exceeds max_cacheable_size, bypassing cache",
+						"limit", m.maxCacheableSize)
+				}
+				return nil, nil
 			}
-			return
-		}
 
-		setCacheHeaders(w, "MISS")
+			setCacheHeaders(w, "MISS")
 
-		if !isResponseCacheable(rec.StatusCode(), rec.Header()) {
-			return
-		}
+			if !isResponseCacheable(rec.StatusCode(), rec.Header()) {
+				return nil, nil
+			}
 
-		ttl := effectiveTTL(rec.Header(), m.defaultTTL)
-		if ttl <= 0 {
-			return
-		}
+			ttl := effectiveTTL(rec.Header(), m.defaultTTL)
+			if ttl <= 0 {
+				return nil, nil
+			}
 
-		varyHeaders := make(map[string]string)
-		if vary := rec.Header().Get("Vary"); vary != "" {
-			for _, field := range strings.Split(vary, ",") {
-				field = strings.TrimSpace(field)
-				if field != "*" && field != "" {
-					varyHeaders[field] = r.Header.Get(field)
+			varyHeaders := make(map[string]string)
+			if vary := rec.Header().Get("Vary"); vary != "" {
+				for _, field := range strings.Split(vary, ",") {
+					field = strings.TrimSpace(field)
+					if field != "*" && field != "" {
+						varyHeaders[field] = r.Header.Get(field)
+					}
 				}
 			}
+
+			entry := &stash.Entry{
+				Body:          rec.Body(),
+				Headers:       rec.Header().Clone(),
+				Status:        rec.StatusCode(),
+				CreatedAt:     time.Now(),
+				StoredAt:      time.Now(),
+				TTL:           ttl,
+				VaryHeaders:   varyHeaders,
+				ContentType:   rec.Header().Get("Content-Type"),
+				SurrogateTags: parseSurrogateTags(rec.Header()),
+			}
+			removeHopByHopHeaders(entry.Headers)
+			m.store.SetWithPolicy(key, entry, m.policy, ttl)
+			return entry, nil
+		})
+
+		if err != nil {
+			// Context cancellation or panic recovery — fall through to upstream.
+			next.ServeHTTP(w, r)
+			return
 		}
 
-		entry := &stash.Entry{
-			Body:          rec.Body(),
-			Headers:       rec.Header().Clone(),
-			Status:        rec.StatusCode(),
-			CreatedAt:     time.Now(),
-			StoredAt:      time.Now(),
-			TTL:           ttl,
-			VaryHeaders:   varyHeaders,
-			ContentType:   rec.Header().Get("Content-Type"),
-			SurrogateTags: parseSurrogateTags(rec.Header()),
+		if res.Shared {
+			// Waiter: serve from the shared result or cache store.
+			if entry, ok := res.Val.(*stash.Entry); ok && entry != nil {
+				serveEntry(w, r, entry, "HIT", m.logger)
+				return
+			}
+			if entry, ok := m.store.Get(key); ok {
+				serveCachedResponse(w, r, entry, m.logger)
+				return
+			}
+			// Leader determined non-cacheable; we must also execute upstream.
+			next.ServeHTTP(w, r)
 		}
-		removeHopByHopHeaders(entry.Headers)
-		m.store.SetWithPolicy(key, entry, m.policy, ttl)
+		// Leader already streamed response to client via rec.
 	})
 }
 
 // revalidate submits a background cache refresh to the jack pool.
 // If no pool is configured, the next request will fetch fresh data
 // once the stale window expires and the entry is evicted.
+//
+// Only one revalidation per cache key is allowed to run at a time.
+// Concurrent requests hitting the same stale entry all receive the cached
+// (stale) response; the first one wins the inFlight slot and submits the
+// background fetch. The rest skip pool.Submit entirely. Once the fetch
+// completes the slot is released so the next stale window can trigger again.
 func (m *CacheMiddleware) revalidate(key string, r *http.Request, next http.Handler) {
 	if m.pool == nil {
 		return
 	}
-	// The client request context is cancelled by the Go HTTP server as soon
-	// as the stale response is written and the handler returns. Cloning the
-	// request with that same context means the background fetch will receive
-	// context.Canceled the moment it tries to make an upstream call, making
-	// stale-while-revalidate permanently broken.
-	//
-	// context.WithoutCancel (Go 1.21) creates a context that inherits all
-	// values (tracing, auth, etc.) from the parent but is never cancelled,
-	// allowing the background worker to complete the upstream request.
+
+	// Try to claim the in-flight slot for this key. LoadOrStore returns
+	// (existing, true) if another goroutine already holds it — bail out.
+	if _, alreadyRunning := m.inFlight.LoadOrStore(key, struct{}{}); alreadyRunning {
+		return
+	}
+
 	bgCtx := context.WithoutCancel(r.Context())
 	clone := r.Clone(bgCtx)
+
+	// Cache-Control: private or no-store and therefore never reach this path;
+	// these strips guard against upstreams that forget to set those directives.
+
+	clone.Header.Del("Authorization")
+	clone.Header.Del("Cookie")
+	clone.Header.Del("X-Auth-Token")
+	clone.Header.Del("X-Api-Key")
+	clone.Header.Del("Proxy-Authorization")
+
 	maxSize := m.maxCacheableSize
 	defaultTTL := m.defaultTTL
 	store := m.store
 	logger := m.logger
 
 	_ = m.pool.Submit(jack.Func(func() error {
+		// Always release the in-flight slot when the goroutine exits,
+		// whether the fetch succeeded, failed, or panicked.
+		defer m.inFlight.Delete(key)
+
 		rec := newRecorder(noopResponseWriter{}, maxSize)
 		next.ServeHTTP(rec, clone)
 
@@ -272,7 +329,17 @@ func serveEntry(w http.ResponseWriter, r *http.Request, e *stash.Entry, status s
 
 func isRequestCacheable(r *http.Request) bool {
 	cc := r.Header.Get("Cache-Control")
-	return !strings.Contains(cc, "no-cache") && !strings.Contains(cc, "no-store")
+	if strings.Contains(cc, "no-cache") || strings.Contains(cc, "no-store") {
+		return false
+	}
+
+	// Never cache requests containing an Authorization header.
+	// Doing so without adding it to the cache key results in cross-user data leakage.
+	if r.Header.Get("Authorization") != "" {
+		return false
+	}
+
+	return true
 }
 
 func isResponseCacheable(status int, hdr http.Header) bool {

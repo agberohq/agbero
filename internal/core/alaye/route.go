@@ -2,6 +2,7 @@ package alaye
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -184,6 +185,17 @@ func (r *Route) validateProxyRoute() error {
 	for i, b := range r.Backends.Servers {
 		if err := b.Validate(); err != nil {
 			return errors.Newf("backend[%d]: %w", i, err)
+		}
+	}
+	// Tunnel validation: via and tunnel are mutually exclusive.
+	// via name resolution happens at startup in server.go — unknown names
+	// are a fatal startup error, not a config-parse error.
+	if r.Backends.Via != "" && r.Backends.Tunnel != "" {
+		return errors.New("backend: \"via\" and \"tunnel\" are mutually exclusive — use one or the other")
+	}
+	if r.Backends.Tunnel != "" {
+		if err := validateInlineTunnel(r.Backends.Tunnel); err != nil {
+			return errors.Newf("backend.tunnel: %w", err)
 		}
 	}
 	for i, prefix := range r.StripPrefixes {
@@ -473,4 +485,22 @@ func (r *Route) backendKey(protocol, domain, addr string) Key {
 		Path:     path,
 		Addr:     addr,
 	}
+}
+
+// validateInlineTunnel checks that an inline tunnel= value is a valid socks5:// URI.
+func validateInlineTunnel(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("must be a valid socks5:// URI: %w", err)
+	}
+	if u.Scheme != def.SOCKS5 {
+		return fmt.Errorf("must use the socks5:// scheme, got %q", u.Scheme)
+	}
+	if u.Hostname() == "" {
+		return fmt.Errorf("host cannot be empty in %q", raw)
+	}
+	if u.Port() == "" {
+		return fmt.Errorf("port is required in %q", raw)
+	}
+	return nil
 }

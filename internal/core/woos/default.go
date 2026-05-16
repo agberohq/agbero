@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
@@ -630,6 +631,7 @@ func defaultUDPProxy(t *alaye.Proxy) {
 			}
 		}
 		defaultUDPHealthCheck(&t.HealthCheck)
+		defaultDNSBlock(&t.DNSBlock)
 	}
 }
 
@@ -821,5 +823,19 @@ func defaultTelemetry(t *alaye.Telemetry) {
 
 	if t.Enabled == expect.Unknown {
 		t.Enabled = expect.Inactive
+	}
+}
+
+// defaultDNSBlock applies default values to a DNSBlock config.
+// It does not activate the block — that requires explicit enabled = true.
+func defaultDNSBlock(d *alaye.DNSBlock) {
+	if d.Enabled.NotActive() {
+		return
+	}
+	if d.Refresh == 0 {
+		d.Refresh = expect.Duration(24 * time.Hour)
+	}
+	if d.Mode == "" {
+		d.Mode = "nxdomain"
 	}
 }

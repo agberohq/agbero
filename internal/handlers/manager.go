@@ -21,11 +21,15 @@ import (
 	"github.com/agberohq/agbero/internal/hub/orchestrator"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/hub/tlss"
+	"github.com/agberohq/agbero/internal/middleware/dnsblock"
 	"github.com/agberohq/agbero/internal/middleware/firewall"
 	"github.com/agberohq/agbero/internal/middleware/ratelimit"
 	"github.com/agberohq/agbero/internal/middleware/wasm"
 	"github.com/agberohq/agbero/internal/pkg/bot"
+	ja3pkg "github.com/agberohq/agbero/internal/pkg/ja3"
+	"github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/olekukonko/errors"
+	"github.com/olekukonko/ll"
 	"github.com/quic-go/quic-go/http3"
 )
 
@@ -38,6 +42,9 @@ type ManagerConfig struct {
 	TLSManager  *tlss.Manager
 	SharedState woos.SharedState
 	OrchManager *orchestrator.Manager
+	// TunnelPools is a registry of named SOCKS5 tunnel pools built from the
+	// global tunnel {} blocks. Nil map means no tunnels are configured.
+	TunnelPools map[string]*tunnel.Pool
 }
 
 type Manager struct {
@@ -128,11 +135,19 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 		} else {
 			cfg.Resource.Logger.Fields("err", err.Error()).Warn("certmagic not enabled; using HTTP handler without ACME")
 		}
+		origGetConfig := cfg.TLSManager.GetConfigForClient
 		m.tlsConfig = &tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			MaxVersion:         tls.VersionTLS13,
-			NextProtos:         []string{def.AlpnTls, def.AlpnH3, def.AlpnH2, def.AlpnH11},
-			GetConfigForClient: cfg.TLSManager.GetConfigForClient,
+			MinVersion: tls.VersionTLS12,
+			MaxVersion: tls.VersionTLS13,
+			NextProtos: []string{def.AlpnTls, def.AlpnH3, def.AlpnH2, def.AlpnH11},
+			// Wrap GetConfigForClient to capture the JA3 fingerprint before
+			// delegating to the TLS manager. The fingerprint is stored in the
+			// ja3 package store, keyed by remote address, and retrieved by the
+			// firewall handler via ja3.Get(r.RemoteAddr).
+			GetConfigForClient: func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
+				ja3pkg.InjectHello(chi)
+				return origGetConfig(chi)
+			},
 		}
 	}
 	return m, nil
@@ -216,6 +231,9 @@ func (m *Manager) BuildListeners() []Listener {
 
 	for listen, routes := range tcpGroups {
 		tp := xtcp.NewProxy(m.cfg.Resource, listen)
+		if len(m.cfg.TunnelPools) > 0 {
+			tp.WithTunnelPools(m.cfg.TunnelPools)
+		}
 		var maxC int64
 		for _, r := range routes {
 			pattern := r.SNI
@@ -245,6 +263,13 @@ func (m *Manager) BuildListeners() []Listener {
 			}
 			if r.SessionTTL > sessionTTL {
 				sessionTTL = r.SessionTTL
+			}
+			// Build and install a DNS blocklist when dns_block is active.
+			if r.DNSBlock.Enabled.Active() {
+				bl := buildDNSBlocklist(r.DNSBlock, m.cfg.Resource.Logger)
+				if bl != nil {
+					up.WithBlocklist(bl)
+				}
 			}
 		}
 		up.MaxSess = maxS
@@ -449,4 +474,56 @@ func buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedS
 		IPManager:   ipMgr,
 		SharedState: sharedState,
 	})
+}
+
+// buildDNSBlocklist constructs a *dnsblock.Blocklist from the given DNSBlock
+// config. It loads inline domains, local files, and remote URLs synchronously
+// at startup. Remote URL refresh is started in the background using a
+// context tied to the manager's lifetime — currently using context.Background()
+// since the manager does not expose a context; a future refactor may thread
+// one through.
+//
+// Returns nil if no entries were loaded (disabled or empty config).
+func buildDNSBlocklist(cfg alaye.DNSBlock, logger *ll.Logger) *dnsblock.Blocklist {
+	bl := dnsblock.New(logger)
+
+	// Inline domains
+	if len(cfg.Domains) > 0 {
+		bl.AddSlice(cfg.Domains)
+	}
+
+	// Local files
+	for _, path := range cfg.Files {
+		if err := bl.LoadFile(path); err != nil {
+			logger.Fields("file", path, "err", err).Warn("dnsblock: failed to load file")
+		}
+	}
+
+	// Remote URLs — loaded synchronously at startup, then refreshed in background
+	for _, rawURL := range cfg.URLs {
+		if err := bl.LoadURL(context.Background(), rawURL); err != nil {
+			logger.Fields("url", rawURL, "err", err).Warn("dnsblock: failed to load URL")
+		}
+	}
+
+	// Start background refresh for remote URLs
+	if len(cfg.URLs) > 0 && cfg.Refresh > 0 {
+		bl.Refresh(context.Background(), cfg.Refresh.StdDuration())
+	}
+
+	total := bl.Len() + bl.SuffixLen()
+	if total == 0 {
+		logger.Warn("dnsblock: enabled but no domains loaded")
+		return bl // return anyway — may be useful as an empty list
+	}
+
+	logger.Fields(
+		"exact", bl.Len(),
+		"suffix", bl.SuffixLen(),
+		"files", len(cfg.Files),
+		"urls", len(cfg.URLs),
+		"mode", cfg.Mode,
+	).Info("dnsblock: blocklist ready")
+
+	return bl
 }
