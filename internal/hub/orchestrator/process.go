@@ -96,9 +96,14 @@ func (p *Process) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) er
 	}
 
 	var pid atomic.Int32
+	// done is closed by the goroutine that calls cmd.Wait(), signalling that
+	// the process has been fully reaped and its PID returned to the OS pool.
+	// killProcessGroup selects on this channel so the SIGKILL fallback timer
+	// is cancelled the moment the process exits, preventing PID-reuse kills.
+	done := make(chan struct{})
 	cmd.Cancel = func() error {
 		if v := int(pid.Load()); v > 0 {
-			return killProcessGroup(v)
+			return killProcessGroup(v, done)
 		}
 		return nil
 	}
@@ -122,6 +127,7 @@ func (p *Process) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) er
 	p.Logger.Fields("pid", cmd.Process.Pid, "command", cmdName, "worker", p.Config.Name).Info("worker started")
 
 	err = cmd.Wait()
+	close(done) // PID is now back in the OS pool; disarm the SIGKILL timer.
 
 	status := "success"
 	if err != nil {

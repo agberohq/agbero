@@ -65,16 +65,28 @@ func assignToJob(job *jobLimits, pid int) error {
 	return windows.AssignProcessToJobObject(job.handle, h)
 }
 
-func killProcessGroup(pid int) error {
+func killProcessGroup(pid int, done <-chan struct{}) error {
 	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
 	if err != nil {
 		return err
 	}
-	defer windows.CloseHandle(h)
 	windows.GenerateConsoleCtrlEvent(windows.CTRL_BREAK_EVENT, uint32(pid))
-	time.AfterFunc(def.DefaultWorkerPoolSize*time.Second, func() {
-		windows.TerminateProcess(h, 1)
-	})
+	go func() {
+		// Hold the handle open for the lifetime of this goroutine so the
+		// TerminateProcess call below always uses a live handle. The original
+		// code used defer CloseHandle inside killProcessGroup, which closed
+		// the handle the moment the function returned — before the 10-second
+		// timer fired — causing a use-after-close on every graceful shutdown.
+		defer windows.CloseHandle(h)
+		select {
+		case <-time.After(def.DefaultWorkerPoolSize * time.Second):
+			// Graceful shutdown window elapsed — force-terminate the process.
+			windows.TerminateProcess(h, 1)
+		case <-done:
+			// cmd.Wait() returned: process exited cleanly, no action needed.
+			// Handle is closed by defer above.
+		}
+	}()
 	return nil
 }
 
