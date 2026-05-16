@@ -550,7 +550,7 @@ func TestApply_OpSecret_WritesToKeeper(t *testing.T) {
 	}
 	d.apply(env, false)
 
-	// 1. keeperWrite must have been called with the correct plaintext.
+	// keeperWrite must have been called with the correct plaintext.
 	mu.Lock()
 	got, ok := written[secretKey]
 	mu.Unlock()
@@ -562,7 +562,7 @@ func TestApply_OpSecret_WritesToKeeper(t *testing.T) {
 		t.Errorf("keeperWrite got wrong plaintext: got %q, want %q", got, secretVal)
 	}
 
-	// 2. A tombstone MUST be present in the gossip store so that the Lamport-clock
+	// A tombstone MUST be present in the gossip store so that the Lamport-clock
 	// check at the top of apply() can reject replayed or out-of-order OpSecret
 	// packets for the same key. Without it, `exists` is always false and every
 	// replay would be accepted unconditionally.
@@ -574,7 +574,7 @@ func TestApply_OpSecret_WritesToKeeper(t *testing.T) {
 		t.Error("OpSecret tombstone missing from gossip store — replay protection is broken")
 	}
 
-	// 3. The tombstone must carry NO key material: Value must be nil so the
+	// The tombstone must carry NO key material: Value must be nil so the
 	// entry cannot expose secrets via LocalState dumps or re-broadcast them
 	// to joining nodes.
 	if tombstone.Value != nil {
