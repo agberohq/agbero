@@ -2,6 +2,7 @@ package xserverless
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"fmt"
 	"io"
@@ -50,15 +51,16 @@ type ReplayConfig struct {
 }
 
 type Replay struct {
-	res        *resource.Resource
-	cfg        alaye.Replay
-	globalEnv  map[string]expect.Value
-	routeEnv   map[string]expect.Value
-	client     *http.Client
-	methods    []string
-	nonceStore *nonce.Store
-	cacheStore stash.Store
-	statsKey   alaye.Key
+	res          *resource.Resource
+	cfg          alaye.Replay
+	globalEnv    map[string]expect.Value
+	routeEnv     map[string]expect.Value
+	client       *http.Client // plain client for serveFixed (operator-configured URL)
+	replayClient *http.Client // SSRF-safe client for serveReplay (user-supplied URL)
+	methods      []string
+	nonceStore   *nonce.Store
+	cacheStore   stash.Store
+	statsKey     alaye.Key
 }
 
 func NewReplay(cfg ReplayConfig) *Replay {
@@ -67,14 +69,32 @@ func NewReplay(cfg ReplayConfig) *Replay {
 		timeout = defaultRESTTimeout
 	}
 
+	// replayClient uses a custom DialContext that closes the TOCTOU /
+	// DNS-rebinding window that exists between validateTargetHost and the actual
+	// TCP dial. It is used only for serveReplay (user-supplied URLs).
+	// serveFixed uses a plain client because its URL is operator-configured and
+	// never originates from untrusted input.
+	safeDialer := &net.Dialer{
+		Timeout:   def.DefaultTransportDialTimeout,
+		KeepAlive: def.DefaultTransportKeepAlive,
+	}
+	safeTransport := &http.Transport{
+		// Pass the allowedDomains so the dialer can honour the same trust list
+		// that validateTargetHost uses. Explicitly allowed hosts (e.g. internal
+		// endpoints the operator has opted into) must be dialable even when they
+		// resolve to private IPs.
+		DialContext: replaySsrfSafeDialContext(safeDialer, cfg.Replay.AllowedDomains),
+	}
+
 	r := &Replay{
-		res:        cfg.Resource,
-		cfg:        cfg.Replay,
-		globalEnv:  cfg.GlobalEnv,
-		routeEnv:   cfg.RouteEnv,
-		methods:    cfg.Replay.NormalisedMethods(),
-		nonceStore: cfg.NonceStore,
-		client:     &http.Client{Timeout: timeout},
+		res:          cfg.Resource,
+		cfg:          cfg.Replay,
+		globalEnv:    cfg.GlobalEnv,
+		routeEnv:     cfg.RouteEnv,
+		methods:      cfg.Replay.NormalisedMethods(),
+		nonceStore:   cfg.NonceStore,
+		client:       &http.Client{Timeout: timeout},
+		replayClient: &http.Client{Timeout: timeout, Transport: safeTransport},
 	}
 
 	if cfg.Replay.Cache.Enabled.Active() {
@@ -180,7 +200,7 @@ func (h *Replay) serveFixed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.prepareHeaders(proxyReq.Header)
-	h.doProxyWithCache(w, r, proxyReq, false, time.Now())
+	h.doProxyWithCache(w, r, proxyReq, h.client, false, time.Now())
 }
 
 func (h *Replay) serveReplay(w http.ResponseWriter, r *http.Request) {
@@ -225,7 +245,7 @@ func (h *Replay) serveReplay(w http.ResponseWriter, r *http.Request) {
 	h.setReferer(proxyReq, targetURL, r.Header.Get("Referer"))
 
 	strip := h.cfg.StripHeaders.Active()
-	h.doProxyWithCache(w, r, proxyReq, strip, start)
+	h.doProxyWithCache(w, r, proxyReq, h.replayClient, strip, start)
 }
 
 func (h *Replay) setReferer(proxyReq *http.Request, targetURL *url.URL, incomingReferer string) {
@@ -250,7 +270,7 @@ func (h *Replay) setReferer(proxyReq *http.Request, targetURL *url.URL, incoming
 	}
 }
 
-func (h *Replay) doProxyWithCache(w http.ResponseWriter, r *http.Request, proxyReq *http.Request, strip bool, start time.Time) {
+func (h *Replay) doProxyWithCache(w http.ResponseWriter, r *http.Request, proxyReq *http.Request, httpClient *http.Client, strip bool, start time.Time) {
 	activity := h.res.Metrics.GetOrRegister(h.statsKey).Activity
 	activity.StartRequest()
 	failed := false
@@ -280,7 +300,7 @@ func (h *Replay) doProxyWithCache(w http.ResponseWriter, r *http.Request, proxyR
 		h.res.Logger.Fields("cache_key", cacheKey[:min(20, len(cacheKey))]).Debug("serverless: cache miss")
 	}
 
-	resp, err := h.client.Do(proxyReq)
+	resp, err := httpClient.Do(proxyReq)
 	if err != nil {
 		failed = true
 		h.res.Logger.Fields("url", proxyReq.URL.String(), "err", err).Error("serverless: upstream call failed")
@@ -525,5 +545,75 @@ func forwardSafeHeaders(dst, src http.Header) {
 		if v := src.Get(hdr); v != "" {
 			dst.Set(hdr, v)
 		}
+	}
+}
+
+// replaySsrfSafeDialContext returns a DialContext that closes the TOCTOU /
+// DNS-rebinding window between validateTargetHost and http.Client.Do.
+//
+// allowedDomains is the operator's trust list — the same list consulted by
+// validateTargetHost. Hosts that appear there are allowed to resolve to private
+// IPs (the operator has explicitly opted them in). All other hosts must resolve
+// to a public address, and we dial the specific resolved IP to prevent a second
+// DNS lookup from being made after the check.
+func replaySsrfSafeDialContext(d *net.Dialer, allowedDomains []string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	// Build a lightweight lookup closure that mirrors domainAllowed without
+	// needing a *Replay receiver.
+	isAllowed := func(host string) bool {
+		host = strings.ToLower(strings.TrimSpace(host))
+		for _, pattern := range allowedDomains {
+			pattern = strings.ToLower(strings.TrimSpace(pattern))
+			if pattern == "*" || pattern == host {
+				return true
+			}
+			if strings.HasPrefix(pattern, "*.") {
+				base := pattern[2:]
+				if host != base && strings.HasSuffix(host, "."+base) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("replay: invalid address %q: %w", addr, err)
+		}
+
+		// Explicitly allowed hosts bypass the private-IP check — the operator
+		// has opted them in via AllowedDomains, matching validateTargetHost.
+		if isAllowed(host) {
+			return d.DialContext(ctx, network, addr)
+		}
+
+		// Raw IP supplied directly — check without a DNS round-trip.
+		if ip := net.ParseIP(host); ip != nil {
+			if alaye.IsPrivateIP(ip) {
+				return nil, fmt.Errorf("replay: SSRF protection blocked connection to private/internal address %s:%s", host, port)
+			}
+			return d.DialContext(ctx, network, addr)
+		}
+
+		// Hostname path: resolve, check every returned address, then dial the
+		// specific resolved IP so no second lookup can occur.
+		resolved, err := net.DefaultResolver.LookupHost(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("replay: DNS resolution failed for %q: %w", host, err)
+		}
+
+		for _, a := range resolved {
+			ip := net.ParseIP(a)
+			if ip == nil {
+				continue
+			}
+			if alaye.IsPrivateIP(ip) {
+				return nil, fmt.Errorf("replay: SSRF protection blocked connection to private/internal address %s (resolved from %s)", a, host)
+			}
+			// Dial the resolved IP directly — atomic check+dial prevents rebind.
+			return d.DialContext(ctx, network, net.JoinHostPort(a, port))
+		}
+		return nil, fmt.Errorf("replay: no valid public address resolved for %q", host)
 	}
 }
