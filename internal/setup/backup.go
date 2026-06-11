@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/pkg/ui"
@@ -312,6 +313,18 @@ func (s *System) Restore(inPath, configPath, password string, force, autoYes boo
 	})
 	u.Flush()
 
+	// ZipSlip guard: run before trusted-root derivation so archive-format
+	// violations are caught regardless of whether a config path was supplied.
+	for _, fe := range manifest.Files {
+		if !strings.HasPrefix(fe.ArchivePath, "files/") || strings.Contains(fe.ArchivePath, "..") {
+			return fmt.Errorf("corrupt backup — suspicious archive path %q", fe.ArchivePath)
+		}
+		cleaned := filepath.Clean(fe.OriginalPath)
+		if strings.Contains(cleaned, "\x00") {
+			return fmt.Errorf("corrupt backup — NUL byte in path %q", fe.OriginalPath)
+		}
+	}
+
 	// Build trusted restore roots from the LIVE config on this machine.
 	// This is the critical fix for the privilege escalation: allowed roots must
 	// not come from the manifest (which is attacker-controlled before HMAC
@@ -319,10 +332,12 @@ func (s *System) Restore(inPath, configPath, password string, force, autoYes boo
 	// produced by someone with the HMAC key — not that its paths are safe on
 	// this machine).
 	//
-	// If configPath is empty or unreadable, fall back to manifest-derived roots
-	// with a warning — the operator is told the validation is degraded.
+	// Tests may inject roots directly via SystemConfig.restoreTrustedRoots
+	// to avoid needing a real config file on disk.
 	var trustedRoots []string
-	if configPath != "" {
+	if s.cfg.restoreTrustedRoots != nil {
+		trustedRoots = s.cfg.restoreTrustedRoots
+	} else if configPath != "" {
 		if liveGlobal, err := loadGlobalConfig(configPath); err == nil {
 			trustedRoots = []string{
 				filepath.Dir(filepath.Clean(configPath)),
@@ -365,25 +380,27 @@ func (s *System) Restore(inPath, configPath, password string, force, autoYes boo
 				}
 			}
 		} else {
-			u.WarnLine(fmt.Sprintf("could not load live config %q — path validation degraded, using manifest roots", configPath))
-			trustedRoots = buildAllowedRoots(manifest.Files)
+			// Live config is unreadable. Failing open by deriving trusted roots
+			// from the manifest would be a security hole — the manifest is
+			// attacker-controlled. Abort instead; the operator must supply -c.
+			return fmt.Errorf(
+				"cannot restore: failed to load live config %q: %w. "+
+					"Provide -c /path/to/agbero.hcl so path validation can use trusted roots "+
+					"from your live configuration rather than the (untrusted) backup manifest.",
+				configPath, err,
+			)
 		}
 	} else {
-		u.WarnLine("no config path provided — path validation degraded, using manifest roots")
-		trustedRoots = buildAllowedRoots(manifest.Files)
+		// No config path supplied — restrict restore to the OS temp directory.
+		// This is safe for tests and for bare restore invocations where the
+		// operator has not yet set up a config file. Any manifest entry that
+		// tries to write outside the temp tree will be flagged as out-of-scope
+		// and require explicit confirmation, preventing silent privilege
+		// escalation via a crafted archive.
+		u.WarnLine("no config path provided — restore paths restricted to " + os.TempDir())
+		trustedRoots = []string{os.TempDir()}
 	}
 	u.Flush()
-
-	// Validate archive-level paths (ZipSlip guard) — unchanged.
-	archiveAllowedRoots := buildAllowedRoots(manifest.Files)
-	for _, fe := range manifest.Files {
-		if !strings.HasPrefix(fe.ArchivePath, "files/") || strings.Contains(fe.ArchivePath, "..") {
-			return fmt.Errorf("corrupt backup — suspicious archive path %q", fe.ArchivePath)
-		}
-		if err := isSafeRestorePath(fe.OriginalPath, archiveAllowedRoots); err != nil {
-			return fmt.Errorf("path containment violation — %w", err)
-		}
-	}
 
 	// Path trust check: every manifest entry must fall inside a trusted root
 	// derived from the live config. Entries outside trusted roots are out-of-scope.
@@ -622,12 +639,23 @@ func (s *System) readAndVerifyManifest(zr *zip.ReadCloser, password string) (Bac
 // computeManifestHMAC returns the hex-encoded HMAC-SHA256 of manifestBytes.
 //
 // Key derivation:
-//   - When password is non-empty: the password itself is the key (genuine secrecy).
-//   - When password is empty: the key is derived from the machine hostname so
-//     it is not attacker-controlled. An attacker who controls the manifest's
-//     Timestamp field cannot compute the HMAC without knowing or guessing the
-//     target machine's hostname. This is not perfect (hostname is not secret)
-//     but is strictly better than the old timestamp-derived key.
+//
+//   - When password is non-empty: the key is the password bytes. The HMAC
+//     provides both integrity and authenticity — only someone who knows the
+//     password can produce a valid signature.
+//
+//   - When password is empty: the key is the fixed label "agbero-backup-v1".
+//     This provides format integrity (detects accidental corruption) but NOT
+//     authenticity — anyone can compute the same HMAC. The Restore path
+//     documents this limitation and relies on the live-config trusted-roots
+//     check as the real security boundary for unencrypted archives.
+//
+//     Previously this branch derived the key from os.Hostname(), which gave
+//     a false sense of security: hostnames are discoverable (DNS, banners,
+//     error messages) and fall back to the constant "agbero-host" on
+//     restricted systems, making the signature trivially forgeable in practice.
+//     A fixed well-known label is more honest about what an unencrypted backup
+//     signature actually guarantees.
 //
 // The ts parameter is accepted for API compatibility but is not used in key
 // derivation — the timestamp is already part of manifestBytes which is MAC'd.
@@ -637,12 +665,9 @@ func computeManifestHMAC(manifestBytes []byte, password string, ts time.Time) st
 	if password != "" {
 		key = []byte(password)
 	} else {
-		hostname, err := os.Hostname()
-		if err != nil {
-			hostname = "agbero-host"
-		}
-		k := sha256.Sum256([]byte(fmt.Sprintf("agbero-backup-v1:%s", hostname)))
-		key = k[:]
+		// Fixed well-known label: integrity-only, not authentication.
+		// See doc comment above for rationale.
+		key = []byte(def.BackupHMACKey)
 	}
 	mac := hmac.New(sha256.New, key)
 	mac.Write(manifestBytes)
@@ -650,7 +675,10 @@ func computeManifestHMAC(manifestBytes []byte, password string, ts time.Time) st
 }
 
 // buildAllowedRoots returns the unique set of parent directories present in
-// the manifest. These are the only directories to which Restore may write.
+// the manifest. It is used by tests and by the ZipSlip validation path.
+// It must NOT be used to derive security boundaries for the restore destination —
+// doing so is a tautology (every path is trivially its own parent's child).
+// Destination safety is enforced via live-config trusted roots; see Restore.
 func buildAllowedRoots(files []BackupEntry) []string {
 	seen := make(map[string]bool)
 	var roots []string
@@ -669,7 +697,12 @@ func buildAllowedRoots(files []BackupEntry) []string {
 }
 
 // isSafeRestorePath resolves target to an absolute path and verifies it falls
-// under at least one allowed root. Returns an error on any path escape.
+// under at least one of allowedRoots. Returns an error if the path escapes all
+// roots (ZipSlip / path-traversal guard).
+//
+// Security note: the roots passed here must come from a trusted source (the
+// live config, not the backup manifest). Passing manifest-derived roots makes
+// this check a tautology — see Restore for correct usage.
 func isSafeRestorePath(target string, allowedRoots []string) error {
 	abs, err := filepath.Abs(target)
 	if err != nil {

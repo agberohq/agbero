@@ -65,6 +65,11 @@ type SystemConfig struct {
 	// applyFn replaces selfupdate.Apply in tests so no binary is replaced on
 	// disk. Receives the open *os.File of the verified binary.
 	applyFn func(f *os.File) error
+
+	// restoreTrustedRoots overrides live-config root derivation in tests.
+	// When non-nil, Restore uses these roots directly and skips the
+	// configPath requirement. Never set this in production code.
+	restoreTrustedRoots []string
 }
 
 // System implements backup, restore, and self-update operations.

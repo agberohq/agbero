@@ -651,6 +651,13 @@ const (
 	ConfigTempSuffix   = ".tmp"
 	ConfigFilePerm     = 0644
 	WorkDirPerm        = 0755
+
+	// BackupHMACKey is the well-known label used as the HMAC-SHA256 key when
+	// signing an unencrypted backup manifest. It provides format integrity
+	// (detects accidental corruption) but NOT authenticity — anyone can
+	// compute the same HMAC. Password-protected backups use the password as
+	// the key and provide both integrity and authenticity.
+	BackupHMACKey = "agbero-backup-v1"
 )
 
 const (
