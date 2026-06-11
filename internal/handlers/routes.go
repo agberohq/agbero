@@ -91,6 +91,14 @@ func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *
 		chain = rl.Handler(chain)
 	}
 
+	// Route-level Firewall: after rate limiting, before WAF. The global
+	// firewall engine is reused here with the per-route FirewallRoute context
+	// so that route-specific rules (IP blocks, UA bans, etc.) are enforced.
+	// Without this, route.Firewall configuration is silently ignored.
+	if cfg.Firewall != nil && route.Firewall.Status.Active() {
+		chain = cfg.Firewall.Handler(chain, &route.Firewall)
+	}
+
 	// WAF: after rate limiting, before cache. Blocked requests never hit the backend or cache.
 	wafEngine, err := waf.NewForRoute(waf.RouteConfig{
 		Global: &cfg.Global.Security.WAF,

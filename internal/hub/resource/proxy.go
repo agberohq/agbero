@@ -8,6 +8,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/agberohq/agbero/internal/hub/orchestrator"
+	"github.com/agberohq/agbero/internal/middleware/firewall"
 	"github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/ll"
@@ -24,6 +25,10 @@ type Proxy struct {
 	// TunnelPools is the global registry of named SOCKS5 tunnel pools.
 	// Routes reference tunnels by name via the backend `via` attribute.
 	TunnelPools map[string]*tunnel.Pool
+	// Firewall is the global firewall engine. wrapHandler passes it into
+	// the route middleware chain together with the route-level FirewallRoute
+	// config so that per-route rules are actually enforced.
+	Firewall *firewall.Engine
 }
 
 // Logger provides access to the namespaced system logger from the resource manager.

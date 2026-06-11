@@ -206,6 +206,7 @@ func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 		SharedState: m.cfg.SharedState,
 		Orch:        m.cfg.OrchManager,
 		TunnelPools: m.cfg.TunnelPools,
+		Firewall:    m.firewall,
 	}, route)
 
 	newItem := &mappo.Item{Value: h}
