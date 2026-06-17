@@ -20,6 +20,7 @@ import (
 	"github.com/agberohq/agbero/internal/handlers/upstream"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/health"
+	"github.com/agberohq/agbero/internal/pkg/safedial"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -159,8 +160,17 @@ func newHTTPBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	t.ExpectContinueTimeout = 0
 	// If a tunnel pool is configured, replace DialContext so all outbound
 	// connections route through the SOCKS5 proxy pool.
+	// Otherwise, install the SSRF-safe dialer unless the operator has
+	// explicitly opted out via Security.AllowPrivateBackends.
+	// Dynamic routes registered via the Auto API always use the safe dialer
+	// (AllowPrivateBackends is never set on auto-registered ConfigBackend).
 	if xhttpCfg.TunnelPool != nil {
 		t = xhttpCfg.TunnelPool.WrapTransport(t)
+	} else if xhttpCfg.EnforceSSRF {
+		t.DialContext = safedial.New(&net.Dialer{
+			Timeout:   def.DefaultTransportDialTimeout,
+			KeepAlive: def.DefaultTransportKeepAlive,
+		}, "backend")
 	}
 	if xhttpCfg.Server.Streaming.Enabled.Active() {
 		t.ResponseHeaderTimeout = 0
@@ -360,7 +370,19 @@ func newFastCGIBackend(xhttpCfg ConfigBackend) (*Backend, error) {
 	b.Abort = health.NewEarlyAbortController(b.Weights.EarlyAbortEnabled)
 
 	// Build the gofast client factory for this backend's network/address.
-	connFactory := gofast.SimpleConnFactory(network, address)
+	// Unix-socket FastCGI backends (network == "unix") never go through the
+	// network stack's DNS/IP path, so SSRF protection is not applicable there.
+	// TCP FastCGI backends use the same safedial dialer as HTTP backends when
+	// EnforceSSRF is set (always true for Auto-API-registered routes).
+	var connFactory gofast.ConnFactory
+	if xhttpCfg.EnforceSSRF && network == "tcp" {
+		safeDialer := safedial.New(&net.Dialer{Timeout: def.BackendDialTimeout}, "fastcgi")
+		connFactory = func() (net.Conn, error) {
+			return safeDialer(context.Background(), network, address)
+		}
+	} else {
+		connFactory = gofast.SimpleConnFactory(network, address)
+	}
 	clientFactory := gofast.SimpleClientFactory(connFactory)
 
 	// b.FastCGI is a thin http.Handler wrapper around gofast. The session

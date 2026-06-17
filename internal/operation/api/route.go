@@ -61,6 +61,17 @@ func (r routePayload) Validate() error {
 		return fmt.Errorf("TTL cannot exceed 31536000 seconds (1 year)")
 	}
 
+	// Backend address SSRF protection is enforced at the transport layer via
+	// safedial (internal/pkg/safedial), not here. Auto-registered routes
+	// always carry EnforceBackendSSRF — see operation/api/auto.go and
+	// handlers/routes.go — which blocks loopback, link-local, and cloud
+	// metadata addresses at dial time regardless of what passes validation.
+	//
+	// We deliberately do NOT reject RFC-1918 addresses (10.x, 172.16.x,
+	// 192.168.x) or "localhost" here: those are normal, legitimate backend
+	// targets for services running on private networks, and blocking them
+	// at validation time would reject real registrations, not just attacks.
+
 	return nil
 }
 

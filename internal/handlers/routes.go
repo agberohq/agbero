@@ -153,6 +153,7 @@ func newProxyRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 			TunnelPool:        pool,
 			BulkheadPartition: route.Path,
 			UseHedger:         route.Backends.Idempotent,
+			EnforceSSRF:       cfg.Global.Security.BlockPrivateBackends || route.EnforceBackendSSRF,
 		})
 		if err != nil {
 			cfg.Resource.Logger.Fields("index", i, "backend", backendCfg.Address.String(), "err", err).Error("failed to create backend")

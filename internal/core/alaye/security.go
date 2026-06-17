@@ -14,6 +14,14 @@ type Security struct {
 	Firewall Firewall      `hcl:"firewall,block"            json:"firewall"`
 	WAF      WAF           `hcl:"waf,block"                 json:"waf"`
 	Keeper   Keeper        `hcl:"keeper,block"              json:"keep"`
+
+	// BlockPrivateBackends enables SSRF protection on statically configured
+	// backend addresses. When true, connections to private, loopback, and
+	// link-local IPs are blocked at dial time. Defaults to false (zero value)
+	// to preserve existing behaviour — operators opt in by setting
+	// block_private_backends = true in the security block. Routes registered
+	// via the Auto API always enforce SSRF protection regardless of this setting.
+	BlockPrivateBackends bool `hcl:"block_private_backends,attr" json:"block_private_backends"`
 }
 
 type Allow struct {
