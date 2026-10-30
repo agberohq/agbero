@@ -34,8 +34,8 @@ func TestNewLatency(t *testing.T) {
 		t.Error("shards should be allocated")
 	}
 	// Verify lazy allocation - all histograms should start nil
-	for i, s := range lt.shards {
-		if s.histogram != nil {
+	for i := range lt.shards {
+		if lt.shards[i].histogram != nil {
 			t.Errorf("Shard %d should start with nil histogram", i)
 		}
 	}
@@ -281,7 +281,8 @@ func TestLazyAllocation(t *testing.T) {
 
 	// Before any records, histograms should be nil
 	activeShards := 0
-	for _, s := range lt.shards {
+	for i := range lt.shards {
+		s := &lt.shards[i]
 		s.mu.Lock()
 		if s.histogram != nil {
 			activeShards++
@@ -297,7 +298,8 @@ func TestLazyAllocation(t *testing.T) {
 
 	// Check that at least one shard is now allocated
 	activeShards = 0
-	for _, s := range lt.shards {
+	for i := range lt.shards {
+		s := &lt.shards[i]
 		s.mu.Lock()
 		if s.histogram != nil {
 			activeShards++

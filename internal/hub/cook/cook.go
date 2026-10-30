@@ -16,7 +16,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
-	"github.com/go-git/go-git/v6/plumbing/transport"
+	"github.com/go-git/go-git/v6/plumbing/client"
 	"github.com/go-git/go-git/v6/plumbing/transport/http"
 	"github.com/go-git/go-git/v6/plumbing/transport/ssh"
 	"github.com/olekukonko/ll"
@@ -200,11 +200,11 @@ func (c *Cook) Make(ctx context.Context) error {
 	c.logger.Fields("branch", c.config.Branch).Infof("cloning repository %s", c.config.URL)
 
 	cloneOpts := &git.CloneOptions{
-		URL:          c.config.URL,
-		SingleBranch: true,
-		Depth:        1,
-		Progress:     io.Discard,
-		Auth:         c.getAuth(),
+		URL:           c.config.URL,
+		SingleBranch:  true,
+		Depth:         1,
+		Progress:      io.Discard,
+		ClientOptions: c.getAuth(),
 	}
 	if c.config.Branch != "" {
 		cloneOpts.ReferenceName = plumbing.NewBranchReferenceName(c.config.Branch)
@@ -216,7 +216,10 @@ func (c *Cook) Make(ctx context.Context) error {
 		return deployErr
 	}
 
+	// go-git v6 requires repositories to be closed so the underlying storer can
+	// release its resources; the HEAD reference is all we need from the clone.
 	ref, err := repo.Head()
+	_ = repo.Close()
 	if err != nil {
 		deployErr = fmt.Errorf("failed to get HEAD: %w", err)
 		return deployErr
@@ -435,12 +438,17 @@ func (c *Cook) cleanupDeployments(_ string) {
 	_ = c.Cleanup(c.config.KeepLast)
 }
 
-func (c *Cook) getAuth() transport.AuthMethod {
+// getAuth builds the transport client options for the configured auth type.
+// go-git v6 replaced the per-operation Auth field with per-transport client
+// options, so each auth mode is wrapped in the option that installs it.
+func (c *Cook) getAuth() []client.Option {
 	auth := c.config.Auth
 	switch auth.Type {
 	case "basic":
 		if auth.Username != "" {
-			return &http.BasicAuth{Username: auth.Username, Password: auth.Password}
+			return []client.Option{client.WithHTTPAuth(
+				&http.BasicAuth{Username: auth.Username, Password: auth.Password},
+			)}
 		}
 	case "ssh-key":
 		if auth.SSHKey != "" {
@@ -449,7 +457,7 @@ func (c *Cook) getAuth() transport.AuthMethod {
 				c.logger.Warnf("failed to parse SSH key: %v", err)
 				return nil
 			}
-			return pk
+			return []client.Option{client.WithSSHAuth(pk)}
 		}
 	case "ssh-agent":
 		am, err := ssh.NewSSHAgentAuth("git")
@@ -457,7 +465,7 @@ func (c *Cook) getAuth() transport.AuthMethod {
 			c.logger.Warnf("failed to connect to SSH agent: %v", err)
 			return nil
 		}
-		return am
+		return []client.Option{client.WithSSHAuth(am)}
 	}
 	return nil
 }
