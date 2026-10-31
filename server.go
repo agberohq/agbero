@@ -301,6 +301,7 @@ func (s *Server) Start(configPath string) error {
 		}
 	}
 
+	var telemetryCollector *telemetry.Collector
 	if s.global.Storage.DataDir != "" {
 		ts, err := telemetry.NewStore(s.global.Storage.DataDir)
 		if err != nil {
@@ -308,7 +309,10 @@ func (s *Server) Start(configPath string) error {
 		} else {
 			s.telemetryStore = ts
 			col := telemetry.NewCollector(ts, s.hostManager, s.resource, s.logger)
-			col.Start()
+			// Started after BuildListeners() below: the collector samples
+			// immediately, and sampling before the route handlers exist read
+			// config that was still being prepared at startup.
+			telemetryCollector = col
 			s.telemetryCollector = col
 			if s.shutdown != nil {
 				s.shutdown.RegisterFunc("Telemetry", func() {
@@ -406,6 +410,11 @@ func (s *Server) Start(configPath string) error {
 	s.mu.Lock()
 	s.listeners = listeners
 	s.mu.Unlock()
+
+	// Routes now exist, so the first telemetry sample is safe to take.
+	if telemetryCollector != nil {
+		telemetryCollector.Start()
+	}
 
 	if len(listeners) == 0 {
 		return def.ErrNoBindAddr
@@ -530,11 +539,14 @@ func (s *Server) Reload() {
 	oldTrafficManagerForFirewall := s.trafficManager
 	s.mu.RUnlock()
 
-	// Release the bbolt file lock so the new firewall can acquire it.
-	// Active requests on draining listeners will continue to use the in-memory
-	// cache, they just won't persist new bans to disk during this split second.
+	// Hand the open firewall database to the replacement manager instead of
+	// closing it here: bolt holds an exclusive file lock, so the file can only be
+	// reopened after the old engine is closed — but the old listeners are still
+	// draining in-flight requests through that engine. Sharing the store keeps
+	// bans working (and persistent) for both engines across the swap; ownership is
+	// reference counted and the last manager to close releases the file.
 	if oldTrafficManagerForFirewall != nil {
-		oldTrafficManagerForFirewall.CloseFirewall()
+		tmCfg.FirewallStore = oldTrafficManagerForFirewall.FirewallStore()
 	}
 
 	newTM, err := handlers.NewManager(tmCfg)
