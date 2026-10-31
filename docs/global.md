@@ -62,7 +62,10 @@ bind {
 
 - **`http`**: List of addresses for HTTP (unencrypted) connections
 - **`https`**: List of addresses for HTTPS (TLS) and HTTP/3 connections
-- **`redirect`**: When `on`, HTTP requests are automatically redirected to HTTPS
+- **`redirect`**: When `on`, HTTP requests are redirected to HTTPS. The target is
+  built from the **configured** domain for the request, never from the raw `Host`
+  header: a request for an unregistered virtual host is answered with `404`, so
+  the redirect cannot be used as an open redirect or to poison a shared cache.
 
 **Validation:**
 - At least one of `http` or `https` must be configured
@@ -323,14 +326,24 @@ Global security settings and Web Application Firewall (WAF) configuration.
 security {
   enabled = "on"
 
-  # Trusted proxy CIDRs for X-Forwarded-For resolution
-  trusted_proxies = [
-    "127.0.0.0/8",      # localhost
-    "10.0.0.0/8",       # private networks
-    "172.16.0.0/12",    # private networks
-    "192.168.0.0/16",   # private networks
-    "::1/128"           # IPv6 localhost
-  ]
+  # Trusted proxy CIDRs for X-Forwarded-For resolution.
+  # NOTE: this lives inside the `allow` block. A top-level
+  # `trusted_proxies = [...]` key is NOT part of the schema and is silently
+  # ignored by the decoder — see docs/security.md#trusted-proxies.
+  allow {
+    proxies = [
+      "127.0.0.0/8",      # localhost
+      "10.0.0.0/8",       # private networks
+      "172.16.0.0/12",    # private networks
+      "192.168.0.0/16",   # private networks
+      "::1/128"           # IPv6 localhost
+    ]
+  }
+
+  # Refuse backend connections to private/loopback/link-local addresses
+  # (blocks DNS-rebinding and cloud-metadata SSRF). Routes registered through
+  # the auto API always enforce this regardless of this flag.
+  block_private_backends = false
 
   # Web Application Firewall
   firewall {
@@ -609,7 +622,44 @@ When enabled, samples key metrics every 60 seconds and retains up to 24 hours of
 
 ---
 
-## 16. KEEPER — Encrypted Secret Store
+## 16. TUNNELS (SOCKS5)
+
+Named outbound proxy pools. Declare a `tunnel` block here, then point a backend at
+it with `backend { via = "name" }`; every outbound connection for that backend
+(including health probes) is dialled through the pool.
+
+```hcl
+tunnel "tor" {
+  enabled  = "on"
+  protocol = "socks5"
+  servers  = ["127.0.0.1:9050", "127.0.0.1:9051"]
+  strategy = "round_robin"    # round_robin (default) or random
+}
+
+tunnel "vpn-exit" {
+  enabled  = "on"
+  protocol = "socks5"
+  servers  = ["vpn.example.com:1080"]
+  username = "myuser"
+  password = "ss://network/vpn-pass"   # credentials belong in the keeper
+}
+```
+
+- **`name`** (label): unique; referenced by `backend.via`
+- **`protocol`**: only `socks5` is accepted
+- **`servers`**: one or more `host:port` SOCKS5 endpoints
+- **`strategy`**: `round_robin` (default) or `random`
+- **`username` / `password`**: optional SOCKS5 credentials
+
+Enabling an invalid tunnel is a startup error — agbero refuses to boot rather than
+silently sending traffic direct. A `tunnel` replaces the transport dialer, so
+`security.block_private_backends` does not apply to tunnelled backends (the proxy
+resolves the destination). See [`tunnel` block](./reference.md#tunnel-block) in the
+config reference.
+
+---
+
+## 17. KEEPER — Encrypted Secret Store
 
 The keeper is Agbero's built-in encrypted secret store. It is a **required component** — Agbero will not start if the keeper cannot be opened. Configure it under the `security` block.
 

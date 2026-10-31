@@ -4,6 +4,28 @@ This guide covers Agbero's security primitives: the encrypted secret store (keep
 
 ---
 
+## Security Defaults (fail-closed)
+
+Agbero prefers refusing traffic over silently running unprotected. These
+behaviours are on by default and are worth knowing before you tune anything:
+
+| Behaviour | What happens | Where to change it |
+|-----------|--------------|--------------------|
+| **Clustering needs a key** | `gossip.secret_key` is mandatory when gossip is enabled; startup fails without it. An unkeyed memberlist would accept config/certificate/secret injection from any peer that can reach the port | `gossip { secret_key = ... }` |
+| **Admin `/status` is minimal when anonymous** | Only `/healthz` is fully public. `/status` returns just `{status, locked}` (the admin UI login probe); `telemetry` and `cluster_members` require a bearer token | — |
+| **Credential endpoints are rate limited** | `/login` and `/login/challenge` share 10 req/min per IP (burst 10) even when `rate_limits` is not configured, and return `429` beyond that | `def.AdminAuthRate*` |
+| **Challenge tokens are single-use** | The JWT ID is consumed atomically before TOTP/keeper verification, and removed when it expires | — |
+| **JWT audience is enforced** | `jwt_auth.audience` rejects tokens whose `aud` does not match (`invalid_audience`); a token minted for another service on the same secret is not reusable | `jwt_auth { audience = ... }` |
+| **Caching happens after auth** | The response cache sits *inside* the auth/WAF/firewall/rate-limit chain, so a cached body can never be served to an unauthenticated request | `route { cache { ... } }` |
+| **Config output is redacted** | `/config`, `/config/global`, `/config/hosts` and the discovery API replace credentials with `***`: passwords, JWT/OAuth secrets, keeper passphrase, Redis password, tunnel and backend-tunnel credentials, forward-auth URL and client keys, WASM config | — |
+| **Client certificates are verified** | `tls.client_auth` is applied per host at handshake time, so `require_and_verify` really does reject clients without a valid certificate | `tls { client_auth = ... client_cas = [...] }` |
+| **Backend SSRF guards** | `security.block_private_backends` refuses dials to private/loopback/link-local IPs after DNS resolution; routes registered via the auto API always enforce it; `forward_auth` refuses private auth endpoints unless `allow_private = true` | `security.block_private_backends`, `forward_auth { allow_private = ... }` |
+| **Serverless is opt-in** | Only bare command names listed in `security.allow.commands` can run (default `echo`), and git-backed workers need `security.allow.serverless_git = true` because a compromised repo equals code execution | `security { allow { ... } }` |
+| **Rate limits degrade, not disappear** | If the Redis/cluster counter is unreachable the limiter falls back to per-node buckets and logs a warning, instead of allowing everything | `rate_limits { ... }` |
+| **Bans survive reloads** | The firewall database is handed over to the replacement engine during a config reload, so bans recorded by the draining engine are still persisted | — |
+
+---
+
 ## The Keeper — Encrypted Secret Store
 
 The keeper is Agbero's built-in encrypted, passphrase-protected database. It is stored at `data.d/keeper.db` and holds everything sensitive that Agbero needs to operate:
@@ -601,17 +623,30 @@ When Agbero sits behind an upstream load balancer or proxy, the client IP seen b
 
 ```hcl
 security {
-  enabled         = true
-  trusted_proxies = [
-    "127.0.0.0/8",      # loopback
-    "10.0.0.0/8",       # private
-    "172.16.0.0/12",    # private
-    "192.168.0.0/16",   # private
-  ]
+  enabled = true
+
+  allow {
+    proxies = [
+      "127.0.0.0/8",      # loopback
+      "10.0.0.0/8",       # private
+      "172.16.0.0/12",    # private
+      "192.168.0.0/16",   # private
+    ]
+  }
 }
 ```
 
-Without this, rate limiting and firewall rules see the proxy's IP instead of the real client, meaning all traffic appears to come from one address and your rate limits become useless.
+> **The key is `security.allow.proxies`, not `security.trusted_proxies`.**
+> The HCL decoder ignores attributes it does not recognise, so a misspelled key
+> produces no error — it is simply dropped. If the real client IP never shows up
+> in logs, firewall decisions or rate-limit buckets, check that `proxies` sits
+> inside the `allow` block.
+
+Without this, rate limiting, firewall rules and `admin.allowed_ips` all see the
+proxy's IP instead of the real client, meaning all traffic appears to come from
+one address and your limits become useless. `X-Forwarded-For` is only consulted
+when the immediate peer is inside `proxies`, so the list must contain the load
+balancer, never `0.0.0.0/0`.
 
 ---
 
