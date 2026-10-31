@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -48,6 +49,13 @@ type Config struct {
 	IPMgr          *zulu.IPManager
 	SharedState    woos.SharedState
 	BotChecker     *bot.Checker
+
+	// Store, when non-nil, is adopted instead of opening DataDir/firewall.db.
+	// Config reload uses it to hand the open bolt database to the replacement
+	// engine: bbolt takes an exclusive file lock, so the file cannot be reopened
+	// while the draining engine still holds it. Ownership is shared via
+	// Store.refs — the adopted store is retained here and released on Close.
+	Store *Store
 }
 
 type Engine struct {
@@ -61,6 +69,7 @@ type Engine struct {
 	ipMgr           *zulu.IPManager
 	sharedState     woos.SharedState
 	botChecker      *bot.Checker
+	closed          atomic.Bool
 }
 
 // New establishes deep packet inspection rules for perimeter security.
@@ -72,12 +81,21 @@ func New(cfg Config) (*Engine, error) {
 	if err := cfg.Firewall.Validate(); err != nil {
 		return nil, err
 	}
-	if !cfg.DataDir.IsSet() {
-		return nil, def.ErrDataDirNotSet
-	}
-	store, err := NewStore(cfg.DataDir, cfg.Logger)
-	if err != nil {
-		return nil, fmt.Errorf("firewall store init: %w", err)
+
+	store := cfg.Store
+	if store == nil {
+		if !cfg.DataDir.IsSet() {
+			return nil, def.ErrDataDirNotSet
+		}
+		var err error
+		store, err = NewStore(cfg.DataDir, cfg.Logger)
+		if err != nil {
+			return nil, fmt.Errorf("firewall store init: %w", err)
+		}
+	} else {
+		// Adopted from the engine being replaced: take a reference so this
+		// engine's Close() cannot pull the database out from under it.
+		store.Retain()
 	}
 	ipMgr := cfg.IPMgr
 	if ipMgr == nil {
@@ -85,8 +103,10 @@ func New(cfg Config) (*Engine, error) {
 	}
 	botChecker := cfg.BotChecker
 	if botChecker == nil {
+		var err error
 		botChecker, err = bot.NewChecker(def.CacheMaxBot)
 		if err != nil {
+			_ = store.Close() // release the reference we took/created
 			return nil, fmt.Errorf("firewall bot checker init: %w", err)
 		}
 	}
@@ -117,8 +137,24 @@ func (e *Engine) Close() error {
 	if e == nil {
 		return nil
 	}
+	// One release per engine, regardless of how many times Close is called.
+	if !e.closed.CompareAndSwap(false, true) {
+		return nil
+	}
 	e.counters.Stop()
+	if e.store == nil {
+		return nil
+	}
 	return e.store.Close()
+}
+
+// Store exposes the underlying ban store so a replacement engine can adopt it
+// during a config reload (see Config.Store).
+func (e *Engine) Store() *Store {
+	if e == nil {
+		return nil
+	}
+	return e.store
 }
 
 // Handler actively checks every packet traversing the mesh configuration boundaries.
