@@ -365,8 +365,20 @@ const (
 	AdminTokenTTL    = 8 * time.Hour
 	AdminTokenIssuer = "agbero-admin"
 
+	// AdminAuthRate* are hard limits applied to /login and /login/challenge
+	// regardless of the rate_limits config block: 10 attempts per minute per
+	// client IP with a burst of 10, shared by both endpoints (one login
+	// round-trip counts twice). bcrypt is otherwise the only cost of a password
+	// guess, and the TOTP / keeper-passphrase challenge is a 6-digit space.
+	AdminAuthRateWindow   = time.Minute
+	AdminAuthRateRequests = 10
+	AdminAuthRateBurst    = 10
+
+	// AdminCSPHeader is the policy served with every admin response. There is no
+	// third-party script origin: the map renders with native SVG (js/graph.js),
+	// so the admin UI works air-gapped and a compromised CDN cannot inject code.
 	AdminCSPHeader = "default-src 'self'; " +
-		"script-src 'self' 'unsafe-inline' blob: https://d3js.org; " +
+		"script-src 'self' 'unsafe-inline' blob:; " +
 		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
 		"font-src 'self' https://fonts.gstatic.com; " +
 		"img-src 'self' data:; " +
@@ -651,6 +663,17 @@ const (
 	ConfigTempSuffix   = ".tmp"
 	ConfigFilePerm     = 0644
 	WorkDirPerm        = 0755
+
+	// HostConfigMaxBytes caps an uploaded host configuration (JSON or HCL) on
+	// the admin API. Handlers must wrap r.Body with http.MaxBytesReader before
+	// reading it, otherwise a single authenticated call can force an unbounded
+	// allocation. 4 MiB matches the keeper import limit and is far above any
+	// realistic host file.
+	HostConfigMaxBytes = 4 << 20
+
+	// RedactedValue is the marker written in place of every credential in an
+	// API/exposed config clone (see alaye.RedactGlobal / alaye.RedactRoute).
+	RedactedValue = "***"
 
 	// BackupHMACKey is the well-known label used as the HMAC-SHA256 key when
 	// signing an unencrypted backup manifest. It provides format integrity
