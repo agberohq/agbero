@@ -1,7 +1,6 @@
 package telemetry
 
 import (
-	"context"
 	"sync"
 	"time"
 
@@ -70,53 +69,65 @@ func (c *Collector) Stop() {
 	<-c.done
 }
 
-// collect takes one snapshot across all known hosts and records it.
+// collect takes one snapshot across all registered backends and records it.
+//
+// It deliberately reads the metrics registry rather than the host configuration:
+// walking `HostManager.LoadAll()` raced with the code that applies route defaults
+// (woos.defaultBackend mutating Backends.Servers[i].Weight inside a published
+// route), which the race detector flagged at startup. The registry is the
+// canonical, lock-free list of backends and needs no config access at all.
 func (c *Collector) collect() {
-	hosts, err := c.hostManager.LoadAll()
-	if err != nil {
-		c.logger.Fields("err", err).Error("telemetry: failed to load hosts")
+	targets := c.res.Metrics.Snapshot()
+	if len(targets) == 0 {
 		return
 	}
 
 	now := time.Now()
 
-	for domain, hcfg := range hosts {
-		var (
-			totalReqs   uint64
-			totalErrors uint64
-			sumP99      float64
-			countP99    int
-			activeBE    int
-		)
+	// Aggregate per domain across every route/backend registered for it.
+	type agg struct {
+		totalReqs   uint64
+		totalErrors uint64
+		sumP99      float64
+		countP99    int
+		activeBE    int
+	}
+	domains := make(map[string]*agg)
 
-		for _, route := range hcfg.Routes {
-			for _, srv := range route.Backends.Servers {
-				statsKey := route.KeyBackend(domain, srv.Address.String())
-				stats := c.res.Metrics.Get(statsKey)
-				if stats == nil {
-					continue
-				}
-				snap := stats.Activity.Snapshot()
-
-				reqs, _ := snap["requests"].(uint64)
-				fails, _ := snap["failures"].(uint64)
-				totalReqs += reqs
-				totalErrors += fails
-
-				if latSnap, ok := snap["latency"].(metrics.LatencySnapshot); ok && latSnap.Count > 0 {
-					sumP99 += float64(latSnap.P99) / 1000.0 // µs → ms
-					countP99++
-				}
-
-				// Check liveness via health registry
-				if hScore, ok := c.res.Health.Get(statsKey); ok {
-					if hScore.State().String() != "Dead" && hScore.State().String() != "Unhealthy" {
-						activeBE++
-					}
-				}
-			}
+	for key, stats := range targets {
+		if stats == nil || stats.Activity == nil {
+			continue
+		}
+		domain := key.Domain
+		if domain == "" {
+			domain = "*"
+		}
+		a := domains[domain]
+		if a == nil {
+			a = &agg{}
+			domains[domain] = a
 		}
 
+		snap := stats.Activity.Snapshot()
+
+		reqs, _ := snap["requests"].(uint64)
+		fails, _ := snap["failures"].(uint64)
+		a.totalReqs += reqs
+		a.totalErrors += fails
+
+		if latSnap, ok := snap["latency"].(metrics.LatencySnapshot); ok && latSnap.Count > 0 {
+			a.sumP99 += float64(latSnap.P99) / 1000.0 // µs → ms
+			a.countP99++
+		}
+
+		if hScore, ok := c.res.Health.Get(key); ok {
+			if state := hScore.State().String(); state != "Dead" && state != "Unhealthy" {
+				a.activeBE++
+			}
+		}
+	}
+
+	for domain, a := range domains {
 		// Compute deltas for req/s and error rate
 		c.mu.Lock()
 		prev := c.prevState[domain]
@@ -127,15 +138,15 @@ func (c *Collector) collect() {
 		if prev != nil && now.After(prev.capturedAt) {
 			elapsed := now.Sub(prev.capturedAt).Seconds()
 			if elapsed > 0 {
-				deltaReqs := float64(totalReqs) - float64(prev.totalReqs)
+				deltaReqs := float64(a.totalReqs) - float64(prev.totalReqs)
 				if deltaReqs < 0 {
 					deltaReqs = 0 // counter reset (restart)
 				}
 				reqsSec = deltaReqs / elapsed
 			}
-			if totalReqs > prev.totalReqs {
-				deltaReqs := totalReqs - prev.totalReqs
-				deltaErrors := totalErrors - prev.totalErrors
+			if a.totalReqs > prev.totalReqs {
+				deltaReqs := a.totalReqs - prev.totalReqs
+				deltaErrors := a.totalErrors - prev.totalErrors
 				if deltaReqs > 0 {
 					errorRate = float64(deltaErrors) / float64(deltaReqs) * 100.0
 				}
@@ -143,28 +154,23 @@ func (c *Collector) collect() {
 		}
 
 		c.prevState[domain] = &prevState{
-			totalReqs:   totalReqs,
-			totalErrors: totalErrors,
+			totalReqs:   a.totalReqs,
+			totalErrors: a.totalErrors,
 			capturedAt:  now,
 		}
 		c.mu.Unlock()
 
 		var p99 float64
-		if countP99 > 0 {
-			p99 = sumP99 / float64(countP99)
+		if a.countP99 > 0 {
+			p99 = a.sumP99 / float64(a.countP99)
 		}
 
-		sample := Sample{
+		c.store.Record(domain, Sample{
 			Timestamp:   now.Unix(),
 			RequestsSec: reqsSec,
 			P99Ms:       p99,
 			ErrorRate:   errorRate,
-			ActiveBE:    activeBE,
-		}
-
-		c.store.Record(domain, sample)
+			ActiveBE:    a.activeBE,
+		})
 	}
-
-	ctx := context.Background()
-	_ = ctx // reserved for future use
 }
