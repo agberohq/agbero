@@ -45,6 +45,12 @@ type ManagerConfig struct {
 	// TunnelPools is a registry of named SOCKS5 tunnel pools built from the
 	// global tunnel {} blocks. Nil map means no tunnels are configured.
 	TunnelPools map[string]*tunnel.Pool
+
+	// FirewallStore is the ban store handed over from the manager being replaced
+	// during a config reload. bolt holds an exclusive file lock, so the new
+	// engine must share the open handle instead of closing/reopening it while the
+	// draining engine is still serving requests. Nil on first start.
+	FirewallStore *firewall.Store
 }
 
 type Manager struct {
@@ -58,6 +64,11 @@ type Manager struct {
 
 	firewall    *firewall.Engine
 	rateLimiter *ratelimit.RateLimiter
+
+	// buildMu serialises cold route construction. NewRoute applies route defaults
+	// to the shared route config, so two concurrent builds of the same route must
+	// not overlap (see routeBuilder).
+	buildMu sync.Mutex
 
 	logArgsPool sync.Pool
 	botChecker  *bot.Checker
@@ -104,7 +115,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 			m.skipLogPaths[p] = true
 		}
 	}
-	m.rateLimiter = buildGlobalRateLimiter(cfg.Global, cfg.IPMgr, cfg.SharedState)
+	m.rateLimiter = buildGlobalRateLimiter(cfg.Global, cfg.IPMgr, cfg.SharedState, cfg.Resource.Logger)
 	if cfg.Global.Security.Enabled.Active() {
 		fwConfig := cfg.Global.Security.Firewall
 		if fwConfig.Status.Active() {
@@ -116,6 +127,8 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 				IPMgr:          cfg.IPMgr,
 				SharedState:    cfg.SharedState,
 				BotChecker:     m.botChecker,
+				// Adopt the store of the engine being replaced (config reload).
+				Store: cfg.FirewallStore,
 			})
 			if err != nil {
 				return nil, errors.Newf("firewall init: %w", err)
@@ -153,11 +166,23 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	return m, nil
 }
 
+// CloseFirewall closes the firewall engine (if any) and detaches it from the
+// manager. Used when a manager is retired without a replacement adopting its
+// store.
 func (m *Manager) CloseFirewall() {
 	if m != nil && m.firewall != nil {
 		_ = m.firewall.Close()
 		m.firewall = nil
 	}
+}
+
+// FirewallStore exposes the ban store so a replacement manager can adopt it
+// during a config reload (see ManagerConfig.FirewallStore).
+func (m *Manager) FirewallStore() *firewall.Store {
+	if m == nil || m.firewall == nil {
+		return nil
+	}
+	return m.firewall.Store()
 }
 
 func (m *Manager) Close() {
@@ -309,43 +334,39 @@ func (m *Manager) createHTTPListener(addr, port string, isTLS bool) Listener {
 		ConnState:         tracker.Track,
 	}
 
-	if isTLS && m.tlsConfig != nil {
-		localCfg := m.tlsConfig.Clone()
-		localCfg.GetConfigForClient = nil
-		localCfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			if chi.ServerName != "" {
-				if cert, err := m.cfg.TLSManager.GetCertificate(chi); err == nil {
-					return cert, nil
-				}
-			}
-			if owner := m.cfg.HostManager.GetByPort(port); owner != nil && len(owner.Domains) > 0 {
-				fallbackChi := *chi
-				fallbackChi.ServerName = owner.Domains[0]
-				if cert, err := m.cfg.TLSManager.GetCertificate(&fallbackChi); err == nil {
-					return cert, nil
-				}
-			}
-			return nil, errors.New("no certificate found")
-		}
-		srv.TLSConfig = localCfg
+	if isTLS {
+		srv.TLSConfig = m.listenerTLSConfig(port)
 	}
 
 	return &HTTPListener{Srv: srv, Tracker: tracker, IsTLS: isTLS}
 }
 
-func (m *Manager) createH3Listener(addr, port string) Listener {
+// listenerTLSConfig builds the tls.Config handed to a TLS listener.
+//
+// It must preserve the callbacks that carry security behaviour, both of which
+// live on m.tlsConfig:
+//
+//   - GetConfigForClient — the ja3.InjectHello capture plus the per-host policy
+//     from tlss.Manager (tls.client_auth / client_cas).
+//   - GetCertificate — SNI → certificate, including the port-owner fallback.
+//
+// The previous implementation nilled GetConfigForClient on the listener, which
+// silently disabled mutual-TLS enforcement and JA3 fingerprinting for the whole
+// process. It is instead kept here and *merged* per handshake: the per-host
+// ClientAuth/ClientCAs are applied to a clone of the base config so ALPN
+// (NextProtos), Min/MaxVersion and the certificate callback are always retained.
+// Returning the raw GetConfigForClient result would drop ALPN and leave the
+// handshake with no certificate at all ("tls: no certificates configured").
+//
+// Cost: zero extra work when no host requests client certs (the callback
+// returns nil, nil and the base config is used). When a host does, one
+// tls.Config clone per handshake — handshakes, not requests.
+func (m *Manager) listenerTLSConfig(port string) *tls.Config {
 	if m.tlsConfig == nil {
 		return nil
 	}
-	handler := m.chainBuild(m.baseHandler, false, "")
-	owner := m.cfg.HostManager.GetByPort(port)
-	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		lctx := woos.ListenerCtx{Port: port, Owner: owner}
-		handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), woos.ListenerCtxKey, lctx)))
-	})
-	serverTLSCfg := m.tlsConfig.Clone()
-	serverTLSCfg.GetConfigForClient = nil
-	serverTLSCfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+
+	certFn := func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		if chi.ServerName != "" {
 			if cert, err := m.cfg.TLSManager.GetCertificate(chi); err == nil {
 				return cert, nil
@@ -360,6 +381,55 @@ func (m *Manager) createH3Listener(addr, port string) Listener {
 		}
 		return nil, errors.New("no certificate found")
 	}
+
+	base := m.tlsConfig.Clone()
+	outerGetConfigForClient := base.GetConfigForClient
+	base.GetConfigForClient = nil
+	base.GetCertificate = certFn
+
+	if outerGetConfigForClient == nil {
+		return base
+	}
+
+	base.GetConfigForClient = func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
+		sub, err := outerGetConfigForClient(chi)
+		if err != nil {
+			return nil, err
+		}
+		// No per-host TLS policy: let crypto/tls use the base config unchanged.
+		if sub == nil || (sub.ClientAuth == tls.NoClientCert && sub.ClientCAs == nil) {
+			return nil, nil
+		}
+
+		merged := base.Clone()
+		merged.GetConfigForClient = nil // no recursion: crypto/tls uses this config as-is
+		merged.ClientAuth = sub.ClientAuth
+		if sub.ClientCAs != nil {
+			merged.ClientCAs = sub.ClientCAs
+		}
+		if sub.MinVersion > merged.MinVersion {
+			merged.MinVersion = sub.MinVersion
+		}
+		if sub.MaxVersion > 0 {
+			merged.MaxVersion = sub.MaxVersion
+		}
+		return merged, nil
+	}
+
+	return base
+}
+
+func (m *Manager) createH3Listener(addr, port string) Listener {
+	serverTLSCfg := m.listenerTLSConfig(port)
+	if serverTLSCfg == nil {
+		return nil
+	}
+	handler := m.chainBuild(m.baseHandler, false, "")
+	owner := m.cfg.HostManager.GetByPort(port)
+	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lctx := woos.ListenerCtx{Port: port, Owner: owner}
+		handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), woos.ListenerCtxKey, lctx)))
+	})
 	srv := &http3.Server{
 		Addr:      addr,
 		Handler:   wrappedHandler,
@@ -419,7 +489,7 @@ func groupUDPRoutesByListen(hosts map[string]*alaye.Host) map[string][]alaye.Pro
 	return udpGroups
 }
 
-func buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedState woos.SharedState) *ratelimit.RateLimiter {
+func buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedState woos.SharedState, logger ...*ll.Logger) *ratelimit.RateLimiter {
 	if global == nil || !global.RateLimits.Enabled.Active() || len(global.RateLimits.Rules) == 0 {
 		return nil
 	}
@@ -473,6 +543,7 @@ func buildGlobalRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedS
 		Policy:      policy,
 		IPManager:   ipMgr,
 		SharedState: sharedState,
+		Logger:      optionalLogger(logger),
 	})
 }
 
