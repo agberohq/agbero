@@ -58,6 +58,11 @@ func JWT(cfg *alaye.JWTAuth) func(http.Handler) http.Handler {
 				}
 			}
 
+			if !audienceAllowed(claims, cfg) {
+				http.Error(w, `{"error":"invalid_audience"}`, http.StatusUnauthorized)
+				return
+			}
+
 			if scope, _ := claims["scope"].(string); scope == "challenge" {
 				http.Error(w, `{"error":"insufficient_scope"}`, http.StatusForbidden)
 				return
@@ -123,6 +128,11 @@ func JWTWithRevocation(cfg *alaye.JWTAuth, isRevoked func(jti string) bool) func
 				}
 			}
 
+			if !audienceAllowed(claims, cfg) {
+				http.Error(w, `{"error":"invalid_audience"}`, http.StatusUnauthorized)
+				return
+			}
+
 			if jti, _ := claims["jti"].(string); jti != "" && isRevoked(jti) {
 				http.Error(w, `{"error":"token_revoked"}`, http.StatusUnauthorized)
 				return
@@ -156,4 +166,27 @@ func JWTWithRevocationAndScope(cfg *alaye.JWTAuth, isRevoked func(jti string) bo
 func GetClaims(r *http.Request) (jwt.MapClaims, bool) {
 	claims, ok := r.Context().Value(ClaimsContextKey).(jwt.MapClaims)
 	return claims, ok
+}
+
+// audienceAllowed enforces the configured jwt_auth.audience claim.
+//
+// Without this check a token minted for a different service but signed with the
+// same shared secret was accepted by every route using that secret
+// (confused-deputy / cross-service token reuse). An empty Audience keeps the
+// previous behaviour — no audience assertion, for operators relying on issuer
+// scoping alone.
+func audienceAllowed(claims jwt.MapClaims, cfg *alaye.JWTAuth) bool {
+	if cfg.Audience == "" {
+		return true
+	}
+	aud, err := claims.GetAudience()
+	if err != nil {
+		return false
+	}
+	for _, a := range aud {
+		if a == cfg.Audience {
+			return true
+		}
+	}
+	return false
 }

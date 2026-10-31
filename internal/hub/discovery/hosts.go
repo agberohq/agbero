@@ -791,6 +791,13 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 			delete(hm.hosts, domain)
 		}
 	} else {
+		// Defaults are applied HERE, once, before the config becomes visible to
+		// any reader, and never again. Applying them later (e.g. while building a
+		// route) mutates memory that the telemetry collector, health prober and
+		// request path read concurrently — a data race, because the route structs
+		// (and the Backends.Servers arrays inside them) are shared between the
+		// in-memory host map and the published lookup map.
+		woos.DefaultHost(cfg)
 
 		hostID := strings.TrimSuffix(cfg.SourceFile, def.HCLSuffix)
 		if hostID == "" {
@@ -802,6 +809,41 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 
 	hm.rebuildLookupLocked()
 	hm.notifyChanged()
+}
+
+// sanitizeHostFilename validates a host config filename before it is joined onto
+// the hosts directory. Every writer in this file must go through it: `domain`
+// and `Host.SourceFile` are both attacker-influenced (the admin API accepts a
+// domain from the HCL body and a `source_file` from JSON), so without this a
+// value like "../../etc/pwn" escapes the hosts tree.
+//
+// Returns the cleaned relative filename, or an error describing why it is
+// rejected. Only clean, relative, ".hcl" paths inside the hosts directory are
+// accepted (nested sub-directories are allowed — scanFromDisk walks them).
+func sanitizeHostFilename(name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("host config filename is empty")
+	}
+	if strings.ContainsRune(name, 0) {
+		return "", fmt.Errorf("host config filename %q contains a NUL byte", name)
+	}
+	// Reject Windows separators explicitly: on unix they are valid filename
+	// characters, but they must never be able to produce a traversal on any OS.
+	if strings.Contains(name, `\`) {
+		return "", fmt.Errorf("host config filename %q contains a path separator", name)
+	}
+	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") {
+		return "", fmt.Errorf("host config filename %q must be relative to the hosts directory", name)
+	}
+	cleaned := filepath.Clean(name)
+	if cleaned == "." || cleaned == ".." ||
+		strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("host config filename %q escapes the hosts directory", name)
+	}
+	if !strings.HasSuffix(strings.ToLower(cleaned), def.HCLSuffix) {
+		return "", fmt.Errorf("host config filename %q must end in %q", name, def.HCLSuffix)
+	}
+	return cleaned, nil
 }
 
 // Save attempts to serialize the current memory host layout down to disk.
@@ -821,10 +863,24 @@ func (hm *Host) Save(domain string) error {
 	if filename == "" {
 		filename = zulu.NormalizeHost(domain) + def.HCLSuffix
 	}
-	filePath := filepath.Join(hm.hostsDir.Path(), filename)
+	filename, err := sanitizeHostFilename(filename)
+	if err != nil {
+		return err
+	}
 
-	p := parser.NewParser(filePath)
-	return p.Marshal(cfg)
+	root, err := os.OpenRoot(hm.hostsDir.Path())
+	if err != nil {
+		return fmt.Errorf("open hosts root: %w", err)
+	}
+	defer root.Close()
+
+	f, err := root.Create(filename)
+	if err != nil {
+		return fmt.Errorf("create %q in hosts root: %w", filename, err)
+	}
+	defer f.Close()
+
+	return parser.Marshal(f, cfg)
 }
 
 // Create writes cfg to disk for domain without requiring the host to be present
@@ -836,6 +892,11 @@ func (hm *Host) Create(domain string, cfg *alaye.Host) error {
 		cfg.SourceFile = filename
 	}
 
+	safeName, err := sanitizeHostFilename(filename)
+	if err != nil {
+		return err
+	}
+
 	// Open the hosts directory as a root to prevent path traversal
 	root, err := os.OpenRoot(hm.hostsDir.Path())
 	if err != nil {
@@ -844,7 +905,7 @@ func (hm *Host) Create(domain string, cfg *alaye.Host) error {
 	defer root.Close()
 
 	// Create file safely within the root
-	f, err := root.Create(filename)
+	f, err := root.Create(safeName)
 	if err != nil {
 		return fmt.Errorf("create file in root: %w", err)
 	}
@@ -863,13 +924,38 @@ func (hm *Host) CreateRaw(domain string, cfg *alaye.Host, raw []byte) error {
 		filename = zulu.NormalizeHost(domain) + def.HCLSuffix
 		cfg.SourceFile = filename
 	}
-	filePath := filepath.Join(hm.hostsDir.Path(), filename)
-	tmpPath := filePath + ".tmp"
-	if err := os.WriteFile(tmpPath, raw, expect.FilePerm); err != nil {
+
+	// Create() already used os.OpenRoot here; CreateRaw previously joined the
+	// name onto the directory path directly, which let a body-supplied domain
+	// ("../pwn") write anywhere the process could reach. Validate the name and
+	// keep the write inside the root.
+	safeName, err := sanitizeHostFilename(filename)
+	if err != nil {
+		return err
+	}
+
+	root, err := os.OpenRoot(hm.hostsDir.Path())
+	if err != nil {
+		return fmt.Errorf("open hosts root: %w", err)
+	}
+	defer root.Close()
+
+	tmpName := safeName + ".tmp"
+	f, err := root.Create(tmpName)
+	if err != nil {
 		return fmt.Errorf("write temp config: %w", err)
 	}
-	if err := os.Rename(tmpPath, filePath); err != nil {
-		_ = os.Remove(tmpPath)
+	if _, err := f.Write(raw); err != nil {
+		_ = f.Close()
+		_ = root.Remove(tmpName)
+		return fmt.Errorf("write temp config: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = root.Remove(tmpName)
+		return fmt.Errorf("write temp config: %w", err)
+	}
+	if err := root.Rename(tmpName, safeName); err != nil {
+		_ = root.Remove(tmpName)
 		return fmt.Errorf("rename temp config: %w", err)
 	}
 	return nil
@@ -899,18 +985,26 @@ func (hm *Host) DeleteFile(domain string) error {
 	if filename == "" {
 		filename = domain + def.HCLSuffix
 	}
-
-	hostID := strings.TrimSuffix(filename, def.HCLSuffix)
-	delete(hm.hosts, hostID)
-	hm.rebuildLookupLocked()
-
-	filePath := filepath.Join(hm.hostsDir.Path(), filename)
-	err := os.Remove(filePath)
-	if err != nil && !os.IsNotExist(err) {
+	safeName, err := sanitizeHostFilename(filename)
+	if err != nil {
 		return err
 	}
 
-	hm.logger.Fields("domain", domain, "file", filename).Info("host configuration deleted")
+	hostID := strings.TrimSuffix(safeName, def.HCLSuffix)
+	delete(hm.hosts, hostID)
+	hm.rebuildLookupLocked()
+
+	root, err := os.OpenRoot(hm.hostsDir.Path())
+	if err != nil {
+		return fmt.Errorf("open hosts root: %w", err)
+	}
+	defer root.Close()
+
+	if err := root.Remove(safeName); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	hm.logger.Fields("domain", domain, "file", safeName).Info("host configuration deleted")
 	return nil
 }
 
