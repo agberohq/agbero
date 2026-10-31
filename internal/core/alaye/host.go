@@ -42,6 +42,13 @@ func (h *Host) Validate() error {
 		if strings.Contains(domain, def.ProtocolSeparator) {
 			return errors.Newf("domains[%d]: %q %w", i, domain, def.ErrDomainHasProtocol)
 		}
+		// A domain becomes a filename component (hosts.d/<domain>.hcl) and an
+		// in-memory index key. Path separators and parent references must never
+		// reach either — see discovery.sanitizeHostFilename for the filesystem
+		// side of this defence.
+		if strings.ContainsAny(domain, `/\`) || strings.Contains(domain, "..") {
+			return errors.Newf("domains[%d]: %q must not contain path separators or \"..\"", i, domain)
+		}
 		h.Domains[i] = domain
 	}
 

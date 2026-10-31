@@ -1,11 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -28,8 +31,11 @@ func HostHandler(s *Shared, r chi.Router) {
 	r.Route("/discovery", func(r chi.Router) {
 		r.Get("/", h.list)
 		r.Post("/", h.create)
-		r.Post("/preview", h.preview) // ← add this line
+		r.Post("/preview", h.preview)
 		r.With(ValidateDomainParam).Get("/{domain}", h.get)
+		// HEAD is used by the admin UI to probe for an existing host; net/http
+		// discards the body, so the GET handler is the right implementation.
+		r.With(ValidateDomainParam).Head("/{domain}", h.get)
 		r.With(ValidateDomainParam).Put("/{domain}", h.update)
 		r.With(ValidateDomainParam).Delete("/{domain}", h.delete)
 	})
@@ -65,8 +71,7 @@ type hostCreateRequest struct {
 func (r hostCreateRequest) Validate() error {
 
 	if r.Domain != "" {
-		e := expect.NewRaw(r.Domain)
-		if _, err := e.Domain(); err != nil {
+		if _, err := normalizeHostDomain(r.Domain); err != nil {
 			return fmt.Errorf("invalid domain: %w", err)
 		}
 	}
@@ -101,6 +106,144 @@ func (r hostCreateRequest) Validate() error {
 		return fmt.Errorf("configuration validation failed: %w", err)
 	}
 
+	return nil
+}
+
+// mergeRedactedSecrets copies credential fields that the read API replaced with
+// def.RedactedValue (or dropped entirely, like basic_auth.users) from the
+// existing config into the incoming one.
+//
+// Without this, the natural client flow — GET a host, edit it, PUT it back —
+// writes "***" over every secret the sanitizer hid and silently destroys the
+// host's credentials. Route matching is by path; if the route is new, nothing is
+// merged. Must run BEFORE Validate(), because an empty basic_auth.users list is
+// rejected when the block is enabled.
+func mergeRedactedSecrets(existing, incoming *alaye.Host) {
+	if existing == nil || incoming == nil {
+		return
+	}
+	for i := range incoming.Routes {
+		in := &incoming.Routes[i]
+		ex := findRoute(existing.Routes, in.Path, i)
+		if ex == nil {
+			continue
+		}
+
+		if len(in.BasicAuth.Users) == 0 && len(ex.BasicAuth.Users) > 0 {
+			in.BasicAuth.Users = append([]string(nil), ex.BasicAuth.Users...)
+		}
+		if in.JWTAuth.Secret == def.RedactedValue {
+			in.JWTAuth.Secret = ex.JWTAuth.Secret
+		}
+		if in.OAuth.ClientSecret == def.RedactedValue {
+			in.OAuth.ClientSecret = ex.OAuth.ClientSecret
+		}
+		if in.OAuth.CookieSecret == def.RedactedValue {
+			in.OAuth.CookieSecret = ex.OAuth.CookieSecret
+		}
+		if in.ForwardAuth.URL == def.RedactedValue {
+			in.ForwardAuth.URL = ex.ForwardAuth.URL
+		}
+		if in.ForwardAuth.TLS.ClientCert == def.RedactedValue {
+			in.ForwardAuth.TLS.ClientCert = ex.ForwardAuth.TLS.ClientCert
+		}
+		if in.ForwardAuth.TLS.ClientKey == def.RedactedValue {
+			in.ForwardAuth.TLS.ClientKey = ex.ForwardAuth.TLS.ClientKey
+		}
+		if isRedactedMap(in.Wasm.Config) {
+			in.Wasm.Config = cloneStringMap(ex.Wasm.Config)
+		}
+		if in.Backends.Tunnel == def.RedactedValue {
+			in.Backends.Tunnel = ex.Backends.Tunnel
+		}
+		mergeGitSecrets(&in.Web.Git, &ex.Web.Git)
+		mergeGitSecrets(&in.Serverless.Git, &ex.Serverless.Git)
+	}
+}
+
+// findRoute locates the existing route for an incoming one: by path first, then
+// by position when the path is unknown (renamed route).
+func findRoute(routes []alaye.Route, path string, idx int) *alaye.Route {
+	for i := range routes {
+		if routes[i].Path == path {
+			return &routes[i]
+		}
+	}
+	if idx >= 0 && idx < len(routes) {
+		return &routes[idx]
+	}
+	return nil
+}
+
+func isRedactedMap(m map[string]string) bool {
+	if len(m) != 1 {
+		return false
+	}
+	v, ok := m[def.RedactedValue]
+	return ok && v == def.RedactedValue
+}
+
+func cloneStringMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+func mergeGitSecrets(in, ex *alaye.Git) {
+	if in == nil || ex == nil {
+		return
+	}
+	if in.Secret == def.RedactedValue {
+		in.Secret = ex.Secret
+	}
+	if in.Auth.Password == def.RedactedValue {
+		in.Auth.Password = ex.Auth.Password
+	}
+	if in.Auth.SSHKey == def.RedactedValue {
+		in.Auth.SSHKey = ex.Auth.SSHKey
+	}
+	if in.Auth.SSHKeyPassphrase == def.RedactedValue {
+		in.Auth.SSHKeyPassphrase = ex.Auth.SSHKeyPassphrase
+	}
+}
+
+// hostNameRe matches the hostnames agbero accepts as a {domain} path parameter:
+// optional wildcard label, dot-separated labels, optional trailing wildcard.
+// It deliberately does NOT reuse expect.Raw.Domain(), which only recognises
+// 2-label names whose TLD is in a small hard-coded public list — that rejected
+// internal zones ("app.corp", "svc.internal") which create() accepts, leaving
+// such hosts impossible to update or delete through the API (and the admin UI).
+var hostNameRe = regexp.MustCompile(`^(\*\.)?[a-z0-9]([a-z0-9._-]*[a-z0-9])?$`)
+
+// normalizeHostDomain lower-cases and validates a {domain} path/query parameter.
+func normalizeHostDomain(raw string) (string, error) {
+	d := strings.ToLower(strings.TrimSpace(raw))
+	if err := validateDomainForStorage(d); err != nil {
+		return "", err
+	}
+	if d != "localhost" && !hostNameRe.MatchString(d) {
+		return "", fmt.Errorf("invalid domain format: %q", raw)
+	}
+	return d, nil
+}
+
+// validateDomainForStorage rejects domain values that must never reach the
+// filesystem or the in-memory host index. Domains are used as filename
+// components (hosts.d/<domain>.hcl), so separators and parent references are
+// rejected here as well as in discovery.sanitizeHostFilename — the API must
+// answer 400 instead of letting the write fail with 500.
+func validateDomainForStorage(domain string) error {
+	if domain == "" {
+		return fmt.Errorf("domain is required")
+	}
+	if strings.ContainsAny(domain, `/\`) || strings.Contains(domain, "..") {
+		return fmt.Errorf("invalid domain %q: must not contain path separators or \"..\"", domain)
+	}
 	return nil
 }
 
@@ -169,10 +312,9 @@ func (h *Host) get(w http.ResponseWriter, r *http.Request) {
 	}
 	domain = strings.ToLower(strings.TrimSpace(domain))
 
-	e := expect.NewRaw(domain)
-	validDomain, err := e.Domain()
+	validDomain, err := normalizeHostDomain(domain)
 	if err != nil {
-		http.Error(w, "Invalid domain format", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	domain = validDomain
@@ -203,26 +345,64 @@ func (h *Host) get(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(sanitizeHostConfigs(map[string]*alaye.Host{domain: existingCfg})[domain])
 }
 
+// writeBodyReadError maps a body read failure onto the right status code so a
+// payload that exceeded def.HostConfigMaxBytes is reported as 413, not a generic 400.
+func writeBodyReadError(w http.ResponseWriter, err error) {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	http.Error(w, "Failed to read body", http.StatusBadRequest)
+}
+
+// readHostConfigBody reads the (already size-capped) request body once and
+// reports whether it should be decoded as JSON.
+//
+// An explicit Content-Type decides. When the header is absent — oja's raw mode
+// used to strip it, and plenty of HTTP clients omit it — the first non-space byte
+// decides: '{' or '[' means JSON, anything else is HCL. Treating a missing header
+// as JSON is what made an HCL upload answer "Invalid JSON payload".
+func readHostConfigBody(w http.ResponseWriter, r *http.Request) (body []byte, isJSON, ok bool) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeBodyReadError(w, err)
+		return nil, false, false
+	}
+
+	ct := strings.ToLower(r.Header.Get("Content-Type"))
+	switch {
+	case strings.Contains(ct, "json"):
+		return body, true, true
+	case strings.Contains(ct, "hcl"), strings.Contains(ct, "text/plain"):
+		return body, false, true
+	}
+
+	if trimmed := bytes.TrimLeft(body, " \t\r\n"); len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
+		return body, true, true
+	}
+	return body, false, true
+}
+
 // create handles POST requests to register a new host configuration via JSON payload.
 func (h *Host) create(w http.ResponseWriter, r *http.Request) {
-	contentType := r.Header.Get("Content-Type")
-	isJSON := strings.Contains(contentType, "application/json") || contentType == ""
+	r.Body = http.MaxBytesReader(w, r.Body, def.HostConfigMaxBytes)
+
+	body, isJSON, ok := readHostConfigBody(w, r)
+	if !ok {
+		return
+	}
 
 	var req hostCreateRequest
 	var rawHCL []byte
-	var err error
 
 	if isJSON {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.Unmarshal(body, &req); err != nil {
 			http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 			return
 		}
 	} else {
-		rawHCL, err = io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "Failed to read body", http.StatusBadRequest)
-			return
-		}
+		rawHCL = body
 		if err := parser.ValidateHCL(rawHCL); err != nil {
 			http.Error(w, fmt.Sprintf("HCL syntax error: %v", err), http.StatusBadRequest)
 			return
@@ -260,6 +440,14 @@ func (h *Host) create(w http.ResponseWriter, r *http.Request) {
 		woos.DefaultHost(req.Config)
 	}
 
+	// Preserve credentials the read API hid (see mergeRedactedSecrets) before
+	// validation — an emptied basic_auth.users would otherwise fail Validate.
+	if isJSON && req.Config != nil {
+		if existing := h.discovery.Get(domain); existing != nil {
+			mergeRedactedSecrets(existing, req.Config)
+		}
+	}
+
 	if err := req.Validate(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -267,6 +455,10 @@ func (h *Host) create(w http.ResponseWriter, r *http.Request) {
 
 	if domain == "" {
 		http.Error(w, "Domain is required", http.StatusBadRequest)
+		return
+	}
+	if err := validateDomainForStorage(domain); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -308,6 +500,8 @@ func (h *Host) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Host) update(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, def.HostConfigMaxBytes)
+
 	domain := chi.URLParam(r, "domain")
 	if domain == "" {
 		http.Error(w, "Domain path parameter required", http.StatusBadRequest)
@@ -315,10 +509,9 @@ func (h *Host) update(w http.ResponseWriter, r *http.Request) {
 	}
 	domain = strings.ToLower(strings.TrimSpace(domain))
 
-	e := expect.NewRaw(domain)
-	validDomain, err := e.Domain()
+	validDomain, err := normalizeHostDomain(domain)
 	if err != nil {
-		http.Error(w, "Invalid domain format", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	domain = validDomain
@@ -334,12 +527,14 @@ func (h *Host) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	contentType := r.Header.Get("Content-Type")
-	isJSON := strings.Contains(contentType, "application/json")
+	body, isJSON, ok := readHostConfigBody(w, r)
+	if !ok {
+		return
+	}
 
 	if isJSON {
 		var req hostUpdateRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.Unmarshal(body, &req); err != nil {
 			http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 			return
 		}
@@ -347,6 +542,8 @@ func (h *Host) update(w http.ResponseWriter, r *http.Request) {
 		if req.Config != nil {
 			req.Config.Domains = []string{domain}
 			woos.DefaultHost(req.Config)
+			// Keep credentials the read API replaced with *** (GET -> edit -> PUT).
+			mergeRedactedSecrets(existingCfg, req.Config)
 		}
 
 		if err := req.Validate(); err != nil {
@@ -363,12 +560,7 @@ func (h *Host) update(w http.ResponseWriter, r *http.Request) {
 		h.discovery.Set(domain, req.Config)
 	} else {
 		// HCL
-		rawHCL, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "Failed to read body", http.StatusBadRequest)
-			return
-		}
-
+		rawHCL := body
 		if err := parser.ValidateHCL(rawHCL); err != nil {
 			http.Error(w, fmt.Sprintf("HCL syntax error: %v", err), http.StatusBadRequest)
 			return
@@ -448,10 +640,9 @@ func (h *Host) deleteByDomain(w http.ResponseWriter, r *http.Request, domain str
 
 	domain = strings.ToLower(strings.TrimSpace(domain))
 
-	e := expect.NewRaw(domain)
-	validDomain, err := e.Domain()
+	validDomain, err := normalizeHostDomain(domain)
 	if err != nil {
-		http.Error(w, "Invalid domain format", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	domain = validDomain
@@ -531,27 +722,13 @@ func (h *Host) preview(w http.ResponseWriter, r *http.Request) {
 	w.Write(hclBytes)
 }
 
-// sanitizeHostConfigs redacts sensitive fields from host configurations before JSON serialization.
-// It clones the input map and clears credential fields from all routes to prevent leakage.
+// sanitizeHostConfigs returns redacted deep copies of the given host configs.
+// Shared with the root package (helpers.go) via alaye.RedactHosts so the two
+// admin surfaces can never apply different redaction rules — and, critically, so
+// that a read-only API call can never mutate the live routing config handed out
+// by discovery.LoadAll().
 func sanitizeHostConfigs(hosts map[string]*alaye.Host) map[string]*alaye.Host {
-	out := make(map[string]*alaye.Host, len(hosts))
-	for k, v := range hosts {
-		if v == nil {
-			continue
-		}
-		clone := *v
-		for i := range clone.Routes {
-			sanitizeRouteConfig(&clone.Routes[i])
-		}
-		out[k] = &clone
-	}
-	return out
-}
-
-// sanitizeRouteConfig clears sensitive credential fields from a route configuration before API exposure.
-// Extend this function as new sensitive fields are added to alaye.Route to maintain security.
-func sanitizeRouteConfig(route *alaye.Route) {
-	route.BasicAuth.Users = nil
+	return alaye.RedactHosts(hosts)
 }
 
 // detectFormat determines the preferred response format (hcl or json) from query params or Accept header.
@@ -571,13 +748,12 @@ func detectFormat(r *http.Request) string {
 	return "json"
 }
 
-// ValidateDomainParam is chi middleware that rejects path-traversal attempts in {domain} route parameters.
-// It validates the domain segment before handler execution and returns 400 for unsafe values.
+// ValidateDomainParam is chi middleware that rejects path-traversal attempts and
+// malformed hostnames in {domain} route parameters before handler execution.
 func ValidateDomainParam(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if domain := chi.URLParam(r, "domain"); domain != "" {
-			e := expect.NewRaw(domain)
-			if _, err := e.Domain(); err != nil && domain != "localhost" {
+			if _, err := normalizeHostDomain(domain); err != nil {
 				http.Error(w, "Invalid domain format", http.StatusBadRequest)
 				return
 			}
