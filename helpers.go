@@ -1,7 +1,6 @@
 package agbero
 
 import (
-	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -10,89 +9,16 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 )
 
+// sanitizeGlobalConfig returns a redacted deep copy of the global configuration.
+// The implementation lives in the alaye package so the admin API
+// (internal/operation/api) and this package can never drift apart again.
 func sanitizeGlobalConfig(g *alaye.Global) *alaye.Global {
-	b, _ := json.Marshal(g)
-	var clone alaye.Global
-	_ = json.Unmarshal(b, &clone)
-
-	if clone.Gossip.Enabled.Active() {
-		clone.Gossip.SecretKey = "***"
-	}
-
-	if clone.Admin.Enabled.Active() {
-		sanitizeAdminConfig(&clone.Admin)
-	}
-
-	if clone.Security.Enabled.Active() {
-		for i := range clone.Security.Allow.Proxies {
-			clone.Security.Allow.Proxies[i] = "***"
-		}
-	}
-
-	if clone.LetsEncrypt.Enabled.Active() {
-		clone.LetsEncrypt.Email = "***"
-	}
-
-	clone.Storage.HostsDir = "<configured>"
-	clone.Storage.CertsDir = "<configured>"
-	clone.Storage.DataDir = "<configured>"
-	clone.Storage.WorkDir = "<configured>"
-
-	return &clone
+	return alaye.RedactGlobal(g)
 }
 
-func sanitizeAdminConfig(cfg *alaye.Admin) {
-	//if cfg.BasicAuth.Enabled.Active() {
-	//	for i := range cfg.BasicAuth.Users {
-	//		cfg.BasicAuth.Users[i] = "***"
-	//	}
-	//}
-	//if cfg.JWTAuth.Enabled.Active() {
-	//	cfg.JWTAuth.Secret = "***"
-	//}
-	if cfg.ForwardAuth.Enabled.Active() {
-		cfg.ForwardAuth.URL = "***"
-	}
-	if cfg.OAuth.Enabled.Active() {
-		cfg.OAuth.ClientSecret = "***"
-		cfg.OAuth.CookieSecret = "***"
-	}
-}
-
+// sanitizeHostConfigs returns redacted deep copies of every host config.
 func sanitizeHostConfigs(hosts map[string]*alaye.Host) map[string]*alaye.Host {
-	out := make(map[string]*alaye.Host)
-	for k, v := range hosts {
-		b, _ := json.Marshal(v)
-		var clone alaye.Host
-		_ = json.Unmarshal(b, &clone)
-
-		for i := range clone.Routes {
-			sanitizeRouteConfig(&clone.Routes[i])
-		}
-		out[k] = &clone
-	}
-	return out
-}
-
-func sanitizeRouteConfig(route *alaye.Route) {
-	if route.BasicAuth.Enabled.Active() {
-		for j := range route.BasicAuth.Users {
-			route.BasicAuth.Users[j] = "***"
-		}
-	}
-	if route.JWTAuth.Enabled.Active() {
-		route.JWTAuth.Secret = "***"
-	}
-	if route.OAuth.Enabled.Active() {
-		route.OAuth.ClientSecret = "***"
-		route.OAuth.CookieSecret = "***"
-	}
-	if route.Wasm.Enabled.Active() && len(route.Wasm.Config) > 0 {
-		route.Wasm.Config = map[string]string{"***": "***"}
-	}
-	if route.ForwardAuth.Enabled.Active() {
-		route.ForwardAuth.URL = "***"
-	}
+	return alaye.RedactHosts(hosts)
 }
 
 func readLastLogLines(filename string, n int) ([]string, error) {
