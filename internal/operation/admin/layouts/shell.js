@@ -481,7 +481,10 @@ route "/" {
             } else {
                 res = await api.updateHostHCL(_hclDomain, edited);
             }
-            if (res?.error) throw new Error(res.error);
+            // oja returns the 4xx body instead of throwing (no status exposed).
+            if (!api.hostOpOK(res)) {
+                throw new Error(api.hostOpError(res, 'Save failed'));
+            }
             modal.closeAll();
             ui.btn.reset(btn);
             const msg = _hclMode === 'create' ? 'Host created' : `${_hclDomain} updated`;

@@ -172,11 +172,18 @@ export default async function({ find, on, onUnmount, ready, props, inject }) {
             if (_mode === 'hcl') {
                 result = await api.addHostHCL(raw, domain);
             } else {
-                const config = JSON.parse(raw);
+                _json = raw;
+                let config;
+                try { config = JSON.parse(raw); }
+                catch (e) { throw new Error('Invalid JSON: ' + e.message); }
                 result = await api.addHost(domain, config);
             }
 
-            if (result?.error) throw new Error(result.error);
+            // oja returns the 4xx body instead of throwing, so success has to be
+            // decided from the response shape — otherwise a failed create was
+            // reported as "created successfully" and the host silently vanished.
+            if (!api.hostOpOK(result)) throw new Error(api.hostOpError(result, 'Failed to create host'));
+
             notify.show(domain + ' created successfully', 'success');
             emit('wizard:submit-success', { domain });
         } catch (err) {
