@@ -1,4 +1,3 @@
-.idea
 .log
 
 .DS_Store
@@ -8,14 +7,10 @@ bin
 tmp
 dist
 
-
-# Ignore all underscore-prefixed files and directories.
-# These are developer-local resources and must never be committed.
-# _lab/ — Personal experiments, prototypes, and temporary investigations.
-# Each developer maintains their own experiments independently.
-# _dev/ — Personal development workspace.
-# They are independent of the shared project and must not be tracked or pushed.
-_*
+# developer-local dirs: anything starting with _ or .
+_*/
+.*/
+!.github/
 
 cmd/agbero/server.log
 cmd/agbero/agbero
@@ -25,4 +20,3 @@ server.log
 all.txt
 baseline.txt
 all.txt.zip
-_test/
