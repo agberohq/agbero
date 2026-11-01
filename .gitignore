@@ -6,8 +6,15 @@
 
 bin
 tmp
-_lab
 dist
+
+
+# Ignore all underscore-prefixed files and directories.
+# These are developer-local resources and must never be committed.
+# _lab/ — Personal experiments, prototypes, and temporary investigations.
+# Each developer maintains their own experiments independently.
+# _dev/ — Personal development workspace.
+# They are independent of the shared project and must not be tracked or pushed.
 _*
 
 cmd/agbero/server.log
