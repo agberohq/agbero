@@ -83,6 +83,28 @@ listen('drawer:open-route', ({ host, idx, type }) => {
     const body = query('#drawerBody');
     if (body) body.innerHTML = buildRouteHTML(host, item, itemStats || {}, type, store.get('certificates') || [], idx);
 
+    // Quick actions: reload host button
+    const perfBtn = query('#drawerPerfBtn');
+    let reloadBtn = query('#drawerReloadBtn');
+    if (perfBtn && !reloadBtn) {
+        // Add reload button next to perf button
+        const container = perfBtn.parentElement;
+        if (container) {
+            reloadBtn = document.createElement('button');
+            reloadBtn.id = 'drawerReloadBtn';
+            reloadBtn.className = 'btn small';
+            reloadBtn.style.cssText = 'font-size:10px;padding:3px 10px;';
+            reloadBtn.textContent = '↻ Reload';
+            reloadBtn.title = 'Reload config for this host';
+            reloadBtn.addEventListener('click', () => {
+                emit('host:reload', { hostname: host });
+                reloadBtn.textContent = '...';
+                setTimeout(() => { reloadBtn.textContent = '↻ Reload'; }, 2000);
+            });
+            container.insertBefore(reloadBtn, perfBtn);
+        }
+    }
+
     openDrawer('routeDrawer');
 });
 
@@ -302,6 +324,16 @@ function backendRow(b, cfgB, bStat, hostname, routeIdx, bIdx, type) {
     const reqs = bStat.total_reqs || 0;
     const wCls = dc === 'ok' ? 'success' : dc === 'warn' ? 'warning' : 'error';
 
+    // Error breakdown: 4xx vs 5xx
+    const err4xx = bStat.errors_4xx || 0;
+    const err5xx = bStat.errors_5xx || 0;
+    const hasErrorBreakdown = err4xx > 0 || err5xx > 0;
+
+    // Connection pool usage
+    const activeConn = bStat.active_connections || 0;
+    const maxConn = cfgB.max_connections || 0;
+    const hasConnPool = activeConn > 0 && maxConn > 0;
+
     return `<div class="drawer-row clickable" data-action="open-backend"
             data-host="${hostname}" data-route-idx="${routeIdx}"
             data-backend-idx="${bIdx}" data-type="${type}">
@@ -319,6 +351,8 @@ function backendRow(b, cfgB, bStat, hostname, routeIdx, bIdx, type) {
             ${p99 ? `<span class="be-tag be-tag-info">p99: ${p99}</span>` : ''}
             <span class="be-tag be-tag-${wCls}">W: ${w}</span>
             <span class="be-tag">${fmtNum(reqs)} reqs</span>
+            ${hasConnPool ? `<span class="be-tag be-tag-info">conn: ${activeConn}/${maxConn}</span>` : ''}
+            ${hasErrorBreakdown ? `<span class="be-tag be-tag-danger">4xx:${err4xx} 5xx:${err5xx}</span>` : ''}
         </div>
     </div>`;
 }
@@ -337,11 +371,31 @@ function upstreamsSection(hostname, item, itemStats, routeIdx, type) {
         ? strategy.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
         : 'Round Robin';
 
+    // Backend health summary — aggregate view at the top
+    let healthy = 0, degraded = 0, dead = 0, total = display.length;
+    let totalInFlight = 0, totalErrors = 0;
+    display.forEach(b => {
+        const st = b.health?.status || 'Unknown';
+        if (st === 'Healthy') healthy++;
+        else if (st === 'Degraded') degraded++;
+        else if (st === 'Dead' || st === 'Unhealthy' || !b.alive) dead++;
+        totalInFlight += b.in_flight || 0;
+        totalErrors += b.failures || 0;
+    });
+    const healthSummary = `<div class="upstream-health-summary">
+        <span class="upstream-health-dot ok" title="Healthy"><span class="dot ok"></span> ${healthy}</span>
+        ${degraded > 0 ? `<span class="upstream-health-dot warn" title="Degraded"><span class="dot warn"></span> ${degraded}</span>` : ''}
+        ${dead > 0 ? `<span class="upstream-health-dot down" title="Dead"><span class="dot down"></span> ${dead}</span>` : ''}
+        <span class="upstream-health-total">${total} total</span>
+        ${totalInFlight > 0 ? `<span class="upstream-health-inflight">⚡ ${totalInFlight} in flight</span>` : ''}
+        ${totalErrors > 0 ? `<span class="upstream-health-errors">⚠ ${fmtNum(totalErrors)} errors</span>` : ''}
+    </div>`;
+
     const rows = display.map((b, i) =>
         backendRow(b, cfgBEs[i] || {}, statBEs[i] || {}, hostname, routeIdx, i, type)
     ).join('');
 
-    return section(`⬆️ Upstreams <span class="badge" style="margin-left:4px;">${stratLabel}</span>`, rows);
+    return section(`⬆️ Upstreams <span class="badge" style="margin-left:4px;">${stratLabel}</span>`, healthSummary + rows);
 }
 
 // HTTP features section
@@ -602,6 +656,81 @@ function rawSection(item, hostname) {
 
 // Main route drawer builder
 
+// Route match info — shows path pattern and priority among sibling routes
+// Helps operators understand which routes match and in what order
+
+function routeMatchInfo(hostname, item, idx, type) {
+    const hostCfg = (store.get('lastConfig') || {}).hosts?.[hostname] || {};
+    const routes = type === 'proxy' ? hostCfg.proxies : hostCfg.routes;
+    if (!routes || routes.length <= 1) return '';
+
+    // Find all route paths for context
+    const paths = routes.map((r, i) => {
+        const p = r.path || (r.name ? r.name.replace('*default*', '* (TCP)') : r.protocol || '*');
+        return { path: p, index: i, current: i === idx };
+    });
+
+    const html = paths.map(rp => {
+        const cls = rp.current ? 'route-match-current' : 'route-match-other';
+        const arrow = rp.current ? '→' : ' ';
+        return `<span class="${cls}" title="${rp.current ? 'Current route' : 'Route #' + rp.index}">${arrow} ${rp.path}</span>`;
+    }).join(' ');
+
+    return `<div class="route-match-info">
+        <span class="route-match-label">Routes:</span> ${html}
+    </div>`;
+}
+
+// Route stats summary — quick overview bar at the top of the drawer
+// Shows RPS, latency, active backends, and in-flight requests
+
+function routeStatsSummary(itemStats, type) {
+    const parts = [];
+    const rps = itemStats.rps || 0;
+    const p99 = itemStats.latency_us?.p99 ? (itemStats.latency_us.p99 / 1000).toFixed(0) + 'ms' : null;
+    const inFlight = itemStats.in_flight || 0;
+    const errors = itemStats.error_rate || 0;
+
+    // Calculate backend health from stats
+    const backends = itemStats.backends || [];
+    let healthy = 0, degraded = 0, dead = 0, total = backends.length;
+    backends.forEach(b => {
+        const st = b.health?.status || 'Unknown';
+        if (st === 'Healthy') healthy++;
+        else if (st === 'Degraded') degraded++;
+        else if (st === 'Dead' || st === 'Unhealthy' || !b.alive) dead++;
+    });
+
+    parts.push(`<div class="drawer-stats-summary">
+        <div class="drawer-stat">
+            <div class="drawer-stat-value">${fmtNum(rps)}</div>
+            <div class="drawer-stat-label">req/s</div>
+        </div>
+        ${p99 ? `<div class="drawer-stat">
+            <div class="drawer-stat-value">${p99}</div>
+            <div class="drawer-stat-label">p99</div>
+        </div>` : ''}
+        ${inFlight > 0 ? `<div class="drawer-stat drawer-stat-active">
+            <div class="drawer-stat-value">${inFlight}</div>
+            <div class="drawer-stat-label">in flight</div>
+        </div>` : ''}
+        ${errors > 0 ? `<div class="drawer-stat drawer-stat-error">
+            <div class="drawer-stat-value">${errors.toFixed(1)}%</div>
+            <div class="drawer-stat-label">errors</div>
+        </div>` : ''}
+        ${total > 0 ? `<div class="drawer-stat">
+            <div class="drawer-stat-value">
+                <span class="dot ok" style="display:inline-block;"></span> ${healthy}
+                ${degraded > 0 ? `<span class="dot warn" style="display:inline-block;"></span> ${degraded}` : ''}
+                ${dead > 0 ? `<span class="dot down" style="display:inline-block;"></span> ${dead}` : ''}
+            </div>
+            <div class="drawer-stat-label">backends</div>
+        </div>` : ''}
+    </div>`);
+
+    return parts.join('');
+}
+
 function buildRouteHTML(hostname, item, itemStats, type, certificates, routeIdx) {
     // TCP or UDP proxy
     if (type === 'proxy') {
@@ -625,6 +754,7 @@ function buildRouteHTML(hostname, item, itemStats, type, certificates, routeIdx)
             }
         }
         return [
+            routeStatsSummary(itemStats, type),
             section(protoLabel, kvGrid(proxyPairs)),
             upstreamsSection(hostname, item, itemStats, routeIdx, type),
             rawSection(item, hostname),
@@ -633,6 +763,8 @@ function buildRouteHTML(hostname, item, itemStats, type, certificates, routeIdx)
 
     // HTTP route — show everything, always
     return [
+        routeMatchInfo(hostname, item, routeIdx, type),
+        routeStatsSummary(itemStats, type),
         hostLevelSection(hostname),
         certsSection(hostname, certificates),
         // Web engine — web section and git section are separate:
@@ -681,7 +813,37 @@ function buildBackendHTML(cfg, stat) {
             ['In Flight',   stat.in_flight  > 0 ? badge(stat.in_flight,            'warning') : null],
             ['Failures',    stat.failures   > 0 ? badge(fmtNum(stat.failures),     'error')   : null],
             ['Consecutive', stat.health?.consecutive_failures > 0 ? stat.health.consecutive_failures + ' fails' : null],
-        ])}`));
+            ['Connections', (stat.active_connections || 0) > 0 ? `${stat.active_connections}${cfg.max_connections ? '/' + cfg.max_connections : ''}` : null],
+            ['4xx Errors',  stat.errors_4xx > 0 ? badge(fmtNum(stat.errors_4xx), 'warning') : null],
+            ['5xx Errors',  stat.errors_5xx > 0 ? badge(fmtNum(stat.errors_5xx), 'error') : null],
+        ])}
+            ${stat.latency_history ? `
+                <div style="margin-top:10px;">
+                    <div style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Latency trend (p99)</div>
+                    <canvas id="backendLatencySpark" class="backend-sparkline" width="380" height="40"></canvas>
+                </div>
+                <script>
+                    (function() {
+                        var data = ${JSON.stringify(stat.latency_history || [])};
+                        if (!data.length) return;
+                        var canvas = document.getElementById('backendLatencySpark');
+                        if (!canvas) return;
+                        var ctx = canvas.getContext('2d');
+                        var w = canvas.width, h = canvas.height;
+                        var max = Math.max(...data, 1);
+                        var step = w / (data.length - 1 || 1);
+                        ctx.strokeStyle = '${gaugeColor}';
+                        ctx.lineWidth = 1.5;
+                        ctx.beginPath();
+                        data.forEach(function(v, i) {
+                            var x = i * step;
+                            var y = h - (v / max) * (h - 4) - 2;
+                            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+                        });
+                        ctx.stroke();
+                    })();
+                </script>` : ''}
+        `));
     }
 
     parts.push(section('⚙️ Configuration', kvGrid([
