@@ -46,6 +46,24 @@ async function _safe(fn) {
     }
 }
 
+// Outcome helpers for the write endpoints.
+//
+// oja's Api throws only for 401 and 5xx; for every other 4xx it returns the
+// DECODED BODY (a plain string for Go's http.Error, or JSON for handled
+// validation) and exposes no status. So "did the write succeed?" must be decided
+// from the body shape: the discovery handlers answer
+// {"status":"ok","message":...} on success and something else otherwise.
+export function hostOpOK(result) {
+    return !!result && typeof result === 'object' && result.status === 'ok';
+}
+
+// hostOpError returns a human-readable reason for a failed write.
+export function hostOpError(result, fallback = 'Request failed') {
+    if (result == null) return fallback;
+    if (typeof result === 'string') return result.trim() || fallback;
+    return result.error || result.message || fallback;
+}
+
 // Unauthenticated endpoints
 
 // Issue 6: fetchStatus now goes through getApi() instead of raw fetch
@@ -116,6 +134,13 @@ export async function loginChallenge(preAuthToken, { keeper_passphrase = '', tot
 // Issue 6: logout now routes through getApi() — token injected automatically
 export async function logout() {
     return _safe(() => getApi().post('/logout', {}));
+}
+
+// refreshToken re-issues the admin JWT. The server rotates the token (POST
+// /refresh, authenticated with the current one) rather than handing out a
+// refresh token, so this is what auth.session.OnRefresh calls — see main.js.
+export async function refreshToken() {
+    return _safe(() => getApi().post('/refresh', {}));
 }
 
 // Monitoring
