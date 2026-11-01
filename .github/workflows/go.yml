@@ -8,12 +8,12 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.27'
           check-latest: true
@@ -46,8 +46,8 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.27'
           check-latest: true
@@ -57,8 +57,8 @@ jobs:
 #  test-windows:
 #    runs-on: windows-latest
 #    steps:
-#      - uses: actions/checkout@v4
-#      - uses: actions/setup-go@v5
+#      - uses: actions/checkout@v5
+#      - uses: actions/setup-go@v6
 #        with:
 #          go-version: '1.27'
 #          check-latest: true
