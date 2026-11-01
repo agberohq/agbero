@@ -46,7 +46,6 @@ func WithRequestID(ctx context.Context, id string) context.Context {
 
 func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check incoming request ID first
 		reqID := r.Header.Get("X-Request-ID")
 		if reqID == "" {
 			reqID = Generate()

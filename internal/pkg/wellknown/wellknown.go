@@ -48,7 +48,6 @@ func NewPathInfo(path string) *Path {
 		segments = append(segments, "")
 	}
 
-	// ensure the path is a valid .well-known path
 	if len(segments) < 2 || segments[0] != ".well-known" {
 		return nil
 	}

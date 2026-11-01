@@ -24,8 +24,7 @@ func New(logger *ll.Logger) func(http.Handler) http.Handler {
 						"remote", r.RemoteAddr,
 					).Error("http request panic recovered")
 
-					// Check if headers already written
-					// We can't easily check, so try to write error
+					// Headers may already be committed; the error write is best-effort.
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write([]byte(`{"error": "Internal Server Error"}`))

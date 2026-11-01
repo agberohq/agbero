@@ -100,9 +100,6 @@ func (s *Store) load() error {
 }
 
 // persist writes the current list to disk atomically.
-// Add this field to Store struct
-
-// Modify persist() to be concurrency-safe
 func (s *Store) persist() error {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()

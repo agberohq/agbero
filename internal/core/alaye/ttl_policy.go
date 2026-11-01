@@ -35,7 +35,6 @@ func (p *TTLPolicy) GetTTL(defaultTTL time.Duration, contentType string) time.Du
 		return defaultTTL
 	}
 
-	// Check content-type specific TTL (prefix match)
 	for pattern, ttl := range p.ContentType {
 		if strings.HasPrefix(contentType, pattern) {
 			return ttl.StdDuration()
@@ -61,7 +60,6 @@ func (p *TTLPolicy) GetTTLWithExtension(defaultTTL time.Duration, contentType, e
 		}
 	}
 
-	// Check content-type specific TTL
 	for pattern, ttl := range p.ContentType {
 		if strings.HasPrefix(contentType, pattern) {
 			if ttl.StdDuration() > 0 {
@@ -96,7 +94,6 @@ func (p *TTLPolicy) ShouldCacheResponse(status int, hdr http.Header) bool {
 
 	// 302 Found and 301 Moved Permanently are cacheable
 	if status == http.StatusMovedPermanently || status == http.StatusFound {
-		// Check Cache-Control headers
 		cc := hdr.Get("Cache-Control")
 		if strings.Contains(cc, "no-store") || strings.Contains(cc, "private") {
 			return false

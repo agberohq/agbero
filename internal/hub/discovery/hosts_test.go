@@ -567,7 +567,6 @@ func TestCluster_ConfigDeletionPropagation(t *testing.T) {
 
 	time.Sleep(2 * time.Second)
 
-	// Verify both nodes have the config
 	if _, err := os.Stat(tmpDir2.FilePath(domain + ".hcl")); os.IsNotExist(err) {
 		t.Fatal("node2 should have config before deletion")
 	}
@@ -578,7 +577,6 @@ func TestCluster_ConfigDeletionPropagation(t *testing.T) {
 
 	time.Sleep(2 * time.Second)
 
-	// Verify node 2 also deleted the config
 	if _, err := os.Stat(tmpDir2.FilePath(domain + ".hcl")); !os.IsNotExist(err) {
 		t.Error("node2 should have deleted config after cluster broadcast")
 	}
@@ -712,7 +710,6 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 
 	t.Logf("Cluster formed: node1=%d, node2=%d, node3=%d members", len(cm1.Members()), len(cm2.Members()), len(cm3.Members()))
 
-	// Verify all nodes see each other
 	if len(cm1.Members()) != 3 {
 		t.Fatalf("node1 expected 3 members, got %d", len(cm1.Members()))
 	}
@@ -751,12 +748,10 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Verify node 2 received the config
 	configPath2 := tmpDir2.FilePath(domain + ".hcl")
 	if _, err := os.Stat(configPath2); os.IsNotExist(err) {
 		t.Error("node2 did not receive config from cluster")
 	} else {
-		// Verify content matches
 		data, _ := os.ReadFile(configPath2)
 		if !bytes.Equal(data, content) {
 			t.Error("node2 config content mismatch")
@@ -765,7 +760,6 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 		}
 	}
 
-	// Verify node 3 received the config
 	configPath3 := tmpDir3.FilePath(domain + ".hcl")
 	if _, err := os.Stat(configPath3); os.IsNotExist(err) {
 		t.Error("node3 did not receive config from cluster")

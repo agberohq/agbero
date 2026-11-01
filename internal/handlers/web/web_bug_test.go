@@ -241,7 +241,6 @@ func TestWeb_HTTPResponseSplitting(t *testing.T) {
 
 			h.ServeHTTP(w, req)
 
-			// Verify no CRLF in response headers
 			for key := range w.Header() {
 				if strings.Contains(key, "\r") || strings.Contains(key, "\n") {
 					t.Errorf("CRLF found in response header key: %q", key)
@@ -253,7 +252,6 @@ func TestWeb_HTTPResponseSplitting(t *testing.T) {
 				}
 			}
 
-			// Verify response body doesn't contain unsanitized paths
 			if tt.checkBody {
 				body := w.Body.String()
 				if strings.Contains(body, "\r") || strings.Contains(body, "\n") {
@@ -293,12 +291,10 @@ func TestWeb_XSS_DirectoryListing(t *testing.T) {
 
 	body := w.Body.String()
 
-	// Check if the XSS payload is reflected without sanitization
 	if strings.Contains(body, "<img src=x onerror=alert(1)>") {
 		t.Error("VULNERABILITY: XSS via filename in directory listing - file name not HTML-escaped")
 	}
 
-	// Verify the response should have HTML-escaped the filename
 	if strings.Contains(body, "&lt;img src=x onerror=alert(1)&gt;") {
 		t.Log("Properly escaped XSS payload")
 	} else if strings.Contains(body, "<img src=x") {
@@ -441,7 +437,6 @@ func TestWeb_CRLF_ResponseSplitting(t *testing.T) {
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, req)
 
-			// Check response headers for injection
 			for key, values := range w.Header() {
 				if strings.Contains(key, "\r") || strings.Contains(key, "\n") {
 					t.Errorf("CRLF in header KEY: %q", key)
@@ -453,7 +448,6 @@ func TestWeb_CRLF_ResponseSplitting(t *testing.T) {
 				}
 			}
 
-			// Check if response body contains injected content
 			body := w.Body.String()
 			if strings.Contains(body, "HACKED") {
 				t.Error("VULNERABILITY: Response body poisoning successful")

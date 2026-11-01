@@ -208,7 +208,6 @@ func TestSecretsHandler_Token(t *testing.T) {
 		t.Errorf("Expected expires_in 1h0m0s, got %s", resp["expires_in"])
 	}
 
-	// Verify the token is actually valid
 	verifiedService, err := ppk.Verify(resp["token"])
 	if err != nil {
 		t.Errorf("Failed to verify token: %v", err)

@@ -224,7 +224,6 @@ func TestRevoke(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Verify file exists
 		_, err := os.Stat(store.path)
 		if err != nil {
 			t.Errorf("persist file should exist: %v", err)

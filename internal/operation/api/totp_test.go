@@ -282,7 +282,6 @@ func TestTOTPHandler_Setup(t *testing.T) {
 		t.Errorf("Expected store_key=vault://admin/totp/newuser, got %s", resp["store_key"])
 	}
 
-	// Verify the secret was actually stored in Keeper
 	stored, err := store.Get(expect.Vault().AdminTOTP("newuser"))
 	if err != nil {
 		t.Errorf("Failed to retrieve stored secret from Keeper: %v", err)

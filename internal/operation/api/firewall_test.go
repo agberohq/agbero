@@ -281,7 +281,6 @@ func TestFirewallHandler_Unblock(t *testing.T) {
 	}
 
 	engine := shared.State().Firewall
-	// Verify it exists
 	rules, err := engine.List()
 	if err != nil {
 		t.Fatalf("Failed to list rules: %v", err)
@@ -303,7 +302,6 @@ func TestFirewallHandler_Unblock(t *testing.T) {
 		t.Errorf("Expected 'Unblocked', got %s", unblockW.Body.String())
 	}
 
-	// Verify it's gone
 	rules, err = engine.List()
 	if err != nil {
 		t.Fatalf("Failed to list rules: %v", err)

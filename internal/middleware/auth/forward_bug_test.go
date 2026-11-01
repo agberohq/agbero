@@ -114,7 +114,6 @@ func TestForward_SpoofAdmin_SecondBug_MultipleHeaders(t *testing.T) {
 		t.Log("SECOND BUG CONFIRMED: Only first header value 'user' was copied, 'editor' was lost")
 	}
 
-	// Check if we actually lost the second value
 	if len(allRoles) < 2 {
 		t.Error("BUG: Multiple header values from auth server were not all preserved")
 		t.Logf("Expected both 'user' and 'editor', got %d values: %v", len(allRoles), allRoles)

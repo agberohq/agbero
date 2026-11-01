@@ -166,7 +166,6 @@ func (e *Raw) parseSecretURI() error {
 		return err
 	}
 
-	// Ensure the scheme is one of the strictly supported ones
 	if !isValidScheme(secret.Scheme) {
 		return fmt.Errorf("unsupported secret scheme: %s", secret.Scheme)
 	}

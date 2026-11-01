@@ -264,7 +264,6 @@ route "/" {
 		t.Error("host not found after HCL create")
 	}
 
-	// Verify comments are preserved on disk
 	files, _ := hostsDir.ReadFiles()
 	found := false
 	for _, f := range files {
@@ -416,7 +415,6 @@ func TestHostHandler_Create_PathTraversal(t *testing.T) {
 		t.Errorf("expected 400 for path traversal attempt, got %d - path traversal vulnerability exists!", w.Code)
 	}
 
-	// Check if new files appeared outside hosts directory
 	newFilesOutside := false
 	filepath.Walk(hostsDir.Path(), func(path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() && !initialFiles[path] {

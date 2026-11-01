@@ -296,7 +296,6 @@ func TestLazyAllocation(t *testing.T) {
 	// Record once - should allocate exactly one shard
 	lt.Record(100)
 
-	// Check that at least one shard is now allocated
 	activeShards = 0
 	for i := range lt.shards {
 		s := &lt.shards[i]
@@ -332,7 +331,6 @@ func TestEviction(t *testing.T) {
 	// Trigger eviction
 	lt.evictIdle()
 
-	// Verify histogram was evicted
 	lt.shards[0].mu.Lock()
 	evicted := lt.shards[0].histogram == nil
 	lt.shards[0].mu.Unlock()

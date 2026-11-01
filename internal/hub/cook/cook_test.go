@@ -276,7 +276,6 @@ func TestCook_Rollback(t *testing.T) {
 	if err := c.Make(context.Background()); err != nil {
 		t.Fatalf("second make failed: %v", err)
 	}
-	// Verify we're on commit2
 	content, _ := os.ReadFile(filepath.Join(c.CurrentPath(), "index.html"))
 	if string(content) != "<h1>Version 2</h1>" {
 		t.Fatalf("expected v2 content, got: %s", string(content))

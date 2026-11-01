@@ -272,7 +272,6 @@ func TestPool_Pick_Strategies(t *testing.T) {
 			t.Error("random strategy should pick at least 2 different servers")
 		}
 
-		// Verify all picks are valid dialers
 		for dialer := range picks {
 			found := false
 			for _, d := range pool.dialers {
@@ -414,7 +413,6 @@ func TestPool_DialContext(t *testing.T) {
 			dialers: []proxy.Dialer{
 				&mockDialer{
 					dialContextFunc: func(ctx context.Context, network, addr string) (net.Conn, error) {
-						// Check if context is already canceled
 						if ctx.Err() != nil {
 							return nil, ctx.Err()
 						}
@@ -670,7 +668,6 @@ func TestPool_CounterOverflow(t *testing.T) {
 		t.Error("counter overflow should not cause nil dialers")
 	}
 
-	// Verify they're from our pool
 	validDialers := map[proxy.Dialer]bool{
 		pool.dialers[0]: true,
 		pool.dialers[1]: true,

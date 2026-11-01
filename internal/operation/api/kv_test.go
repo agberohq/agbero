@@ -76,7 +76,6 @@ func TestKVHandler(t *testing.T) {
 			t.Fatalf("delete failed: %d", w.Code)
 		}
 
-		// Verify gone
 		req = httptest.NewRequest(http.MethodGet, "/kv/delete-me", nil)
 		w = httptest.NewRecorder()
 		r.ServeHTTP(w, req)

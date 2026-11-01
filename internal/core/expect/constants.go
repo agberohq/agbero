@@ -25,7 +25,7 @@ const (
 // KeeperStorePrefixes contains all prefixes that must be resolved via the Keeper
 var KeeperStorePrefixes = []string{
 	string(SchemeSS) + "://",
-	string(SchemeVault) + "://", // ADD THIS
+	string(SchemeVault) + "://",
 	string(SchemeKeeper) + "://",
 	string(SchemeCerts) + "://",
 	string(SchemeSpaces) + "://",

@@ -87,7 +87,6 @@ func TestKeeperStorage_BasicSaveLoad(t *testing.T) {
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	// Verify
 	if string(loadedCert) != string(certPEM) {
 		t.Errorf("Cert mismatch: got %q, want %q", loadedCert, certPEM)
 	}
@@ -303,7 +302,6 @@ func TestKeeperStorage_Delete(t *testing.T) {
 		t.Fatalf("Save ACME failed: %v", err)
 	}
 
-	// Verify it exists
 	_, _, err = keeperStore.Load(domain)
 	if err != nil {
 		t.Fatalf("Load before delete failed: %v", err)
@@ -314,7 +312,6 @@ func TestKeeperStorage_Delete(t *testing.T) {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
-	// Verify it's gone
 	_, _, err = keeperStore.Load(domain)
 	if err != ErrCertNotFound {
 		t.Errorf("Expected ErrCertNotFound after delete, got %v", err)

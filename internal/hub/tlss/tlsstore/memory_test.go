@@ -80,7 +80,6 @@ func TestMemoryStorage_Delete(t *testing.T) {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
-	// Verify domain is gone
 	_, _, err := store.Load("delete.com")
 	if err != ErrCertNotFound {
 		t.Errorf("Expected ErrCertNotFound, got %v", err)
