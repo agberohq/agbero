@@ -29,5 +29,15 @@ func (r *Run) Start(configPath string, devMode bool) error {
 		agbero.WithKeeper(r.p.Store),
 	)
 
+	pidPath, err := writePIDFile(global.Storage.DataDir.Path())
+	if err != nil {
+		r.p.Logger.Warn("failed to write pid file; 'config reload' will not work", "err", err)
+	} else {
+		defer removePIDFile(pidPath)
+	}
+
+	stopReload := registerReload(server.Reload)
+	defer stopReload()
+
 	return server.Start(configPath)
 }

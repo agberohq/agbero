@@ -172,7 +172,7 @@ func (s *Server) Start(configPath string) error {
 
 	if s.keeperStore != nil {
 		if s.keeperStore.IsLocked() {
-			s.logger.Fatal("Keeper is locked. AGBERO_PASSPHRASE is required in environment or config to boot.")
+			s.logger.Fatal("Keeper is locked. Set AGBERO_KEEPER_PASSPHRASE, configure keeper.passphrase_file, or set keeper.passphrase in agbero.hcl")
 		}
 
 		s.resource.Apply(resource.WithKeeper(s.keeperStore))
@@ -453,11 +453,13 @@ func (s *Server) Reload() {
 	s.mu.RUnlock()
 
 	if configPath == "" {
+		s.logger.Warn("reload requested but no config path is set")
 		return
 	}
 
 	sha, err := s.configComputeSHA()
 	if err != nil {
+		s.logger.Fields("err", err).Error("reload: failed to hash config")
 		return
 	}
 
@@ -467,11 +469,13 @@ func (s *Server) Reload() {
 	s.mu.RUnlock()
 
 	if sha == currentSHA {
+		s.logger.Info("reload: config unchanged")
 		return
 	}
 
 	global, err := parser.LoadGlobal(configPath)
 	if err != nil {
+		s.logger.Fields("err", err).Error("reload: failed to parse config, keeping existing config")
 		return
 	}
 
@@ -484,7 +488,9 @@ func (s *Server) Reload() {
 	absConfigPath, _ := filepath.Abs(configPath)
 	woos.DefaultApply(global, absConfigPath)
 
-	_ = s.hostManager.ReloadFull()
+	if err := s.hostManager.ReloadFull(); err != nil {
+		s.logger.Fields("err", err).Error("reload: failed to reload hosts")
+	}
 
 	var newSharedState woos.SharedState
 	if global.Gossip.SharedState.Enabled.Active() && global.Gossip.SharedState.Driver == "redis" {
