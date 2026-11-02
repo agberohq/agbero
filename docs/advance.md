@@ -75,20 +75,23 @@ The keeper is an encrypted, passphrase-protected database (`data.d/keeper.db`) t
 
 Agbero resolves the master passphrase in this order at startup:
 
-1. `keeper.passphrase` in `agbero.hcl`
-2. `AGBERO_PASSPHRASE` environment variable
-3. Interactive terminal prompt (if running in a terminal)
+1. `keeper.passphrase` in `agbero.hcl` (may be an `env.` or `ss://` reference)
+2. `keeper.passphrase_file` (recommended for services)
+3. `AGBERO_KEEPER_PASSPHRASE` environment variable
+4. `AGBERO_PASSPHRASE` environment variable (deprecated alias)
+5. Interactive terminal prompt (if running in a terminal)
 
 For non-interactive environments (system service, container, CI):
 
 ```bash
 # Set the passphrase as an environment variable
-AGBERO_PASSPHRASE=mypassphrase agbero run
+AGBERO_KEEPER_PASSPHRASE=mypassphrase agbero run
 
-# Or configure it in agbero.hcl (use env var to avoid plaintext in file)
+# Or configure it in agbero.hcl (use env var or a file to avoid plaintext)
 security {
   keeper {
-    passphrase = "env.AGBERO_PASSPHRASE"  # reads from the environment
+    passphrase = "env.AGBERO_KEEPER_PASSPHRASE"  # reads from the environment
+    # passphrase_file = "/etc/agbero/keeper.passphrase"  # preferred for services
     auto_lock  = "2h"                      # lock after 2 hours of inactivity
     logging    = true                      # log keeper operations
     audit      = true                      # detailed audit trail
@@ -131,7 +134,7 @@ agbero init
 agbero run
 
 # 3. In subsequent runs, supply the passphrase via environment
-AGBERO_PASSPHRASE=mypassphrase agbero run
+AGBERO_KEEPER_PASSPHRASE=mypassphrase agbero run
 ```
 
 See [Security Guide](./security.md) for the full Keeper REST API reference and [Command Guide](./command.md#keeper--encrypted-secret-store) for all keeper CLI operations.

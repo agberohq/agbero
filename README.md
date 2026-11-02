@@ -42,9 +42,9 @@ Agbero solves these challenges natively:
 
 ```bash
 # Install
-curl -fsSL https://github.com/agberohq/agbero/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/agberohq/agbero/releases/latest/download/install.sh | bash
 
-# Setup
+# Setup (user install, no sudo)
 agbero init
 
 # Quick Run
@@ -53,7 +53,8 @@ agbero run --dev
 # Quick run with specific config
 agbero run --config agbero.hcl
 
-# Install as a system service with default configuration
+# Install as a system service (run init as root so the service sees /etc/agbero)
+sudo agbero init
 sudo agbero service install
 
 # Develop locally — serve any directory with trusted HTTPS in one command

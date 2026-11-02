@@ -17,7 +17,7 @@ behaviours are on by default and are worth knowing before you tune anything:
 | **Challenge tokens are single-use** | The JWT ID is consumed atomically before TOTP/keeper verification, and removed when it expires | — |
 | **JWT audience is enforced** | `jwt_auth.audience` rejects tokens whose `aud` does not match (`invalid_audience`); a token minted for another service on the same secret is not reusable | `jwt_auth { audience = ... }` |
 | **Caching happens after auth** | The response cache sits *inside* the auth/WAF/firewall/rate-limit chain, so a cached body can never be served to an unauthenticated request | `route { cache { ... } }` |
-| **Config output is redacted** | `/config`, `/config/global`, `/config/hosts` and the discovery API replace credentials with `***`: passwords, JWT/OAuth secrets, keeper passphrase, Redis password, tunnel and backend-tunnel credentials, forward-auth URL and client keys, WASM config | — |
+| **Config output is redacted** | `/config`, `/config/global`, `/config/hosts` and the discovery API replace credentials with `***`: passwords, JWT/OAuth secrets, keeper passphrase and passphrase-file path, Redis password, tunnel and backend-tunnel credentials, forward-auth URL and client keys, WASM config | — |
 | **Client certificates are verified** | `tls.client_auth` is applied per host at handshake time, so `require_and_verify` really does reject clients without a valid certificate | `tls { client_auth = ... client_cas = [...] }` |
 | **Backend SSRF guards** | `security.block_private_backends` refuses dials to private/loopback/link-local IPs after DNS resolution; routes registered via the auto API always enforce it; `forward_auth` refuses private auth endpoints unless `allow_private = true` | `security.block_private_backends`, `forward_auth { allow_private = ... }` |
 | **Serverless is opt-in** | Only bare command names listed in `security.allow.commands` can run (default `echo`), and git-backed workers need `security.allow.serverless_git = true` because a compromised repo equals code execution | `security { allow { ... } }` |
@@ -42,27 +42,29 @@ The keeper is Agbero's built-in encrypted, passphrase-protected database. It is 
 
 Agbero resolves the master passphrase in this order at startup:
 
-1. `keeper.passphrase` field in `agbero.hcl`
-2. `AGBERO_PASSPHRASE` environment variable
-3. Interactive terminal prompt (only works when running attached to a terminal)
+1. `keeper.passphrase` field in `agbero.hcl` (may be an `env.` or `ss://` reference)
+2. `keeper.passphrase_file` (`0600` or `0640 root:agbero`)
+3. `AGBERO_KEEPER_PASSPHRASE` environment variable
+4. `AGBERO_PASSPHRASE` environment variable (deprecated alias)
+5. Interactive terminal prompt
 
-For unattended deployments (system service, Docker container, CI/CD), you must supply the passphrase via environment variable or config. The interactive prompt will not appear in non-terminal contexts — Agbero will fail to start instead.
+For unattended deployments (system service, Docker container, CI/CD), use `keeper.passphrase_file` or the canonical environment variable. The interactive prompt will not appear in non-terminal contexts — Agbero will fail to start instead.
 
 ```bash
 # Most common production approach — set the env var before starting
-AGBERO_PASSPHRASE=mypassphrase agbero run
+AGBERO_KEEPER_PASSPHRASE=mypassphrase agbero run
 
 # Or configure it in agbero.hcl (use env var to keep the actual value out of the file)
 security {
   keeper {
-    passphrase = "env.AGBERO_PASSPHRASE"
+    passphrase = "env.AGBERO_KEEPER_PASSPHRASE"
   }
 }
 ```
 
 ### First-time Setup
 
-On the very first run, if no `keeper.db` exists, Agbero creates one. If running interactively it prompts you to set a master passphrase. For non-interactive first-run, set `AGBERO_PASSPHRASE` before starting and Agbero will initialise the database with that passphrase automatically.
+On the very first run, if no `keeper.db` exists, Agbero creates one. If running interactively it prompts you to set a master passphrase. For non-interactive first-run, set `AGBERO_KEEPER_PASSPHRASE` before starting and Agbero will initialise the database with that passphrase automatically.
 
 ```bash
 # Interactive first run
@@ -71,7 +73,7 @@ agbero run
 # -> prompts for passphrase, creates keeper.db, generates internal auth key
 
 # Non-interactive first run (server, Docker)
-AGBERO_PASSPHRASE=mypassphrase agbero run
+AGBERO_KEEPER_PASSPHRASE=mypassphrase agbero run
 # -> uses the env var, creates keeper.db silently, proceeds to start
 ```
 
@@ -83,7 +85,7 @@ You can tune keeper behaviour in `agbero.hcl` under the `security` block:
 security {
   keeper {
     # Master passphrase — use env var to avoid plaintext in config files
-    passphrase = "env.AGBERO_PASSPHRASE"
+    passphrase = "env.AGBERO_KEEPER_PASSPHRASE"
 
     # Automatically lock the keeper after this period of inactivity.
     # Once locked, ss:// references return their literal string and log a warning

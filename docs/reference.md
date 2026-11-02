@@ -907,7 +907,8 @@ Setup with `agbero admin totp setup --user <username>`. See [Security Guide](./s
 | Field | Type | Description |
 |-------|------|-------------|
 | `enabled` | `Enabled` | Enable the keeper. Agbero will not start without a usable keeper. |
-| `passphrase` | `Value` | Master passphrase to unlock the keeper. Use `"env.AGBERO_PASSPHRASE"` in production to avoid plaintext in config. This is a required field in non-interactive environments. |
+| `passphrase` | `Value` | Master passphrase to unlock the keeper. Prefer `"env.AGBERO_KEEPER_PASSPHRASE"` or a `passphrase_file` over plaintext. |
+| `passphrase_file` | `string` | Path to a `0600` (or `0640 root:agbero`) file containing the master passphrase. Recommended for system services. Resolution order: `passphrase`, `passphrase_file`, `AGBERO_KEEPER_PASSPHRASE`, `AGBERO_PASSPHRASE`, interactive prompt. |
 | `auto_lock` | `Duration` | Automatically lock the keeper after this period of inactivity. When locked, all `ss://` references return their literal string until unlocked via `POST /api/v1/keeper/unlock`. |
 | `logging` | `Enabled` | Log every keeper open, read, write, and delete at INFO level. |
 | `audit` | `Enabled` | Detailed audit trail: logs the key name on every secret read and write. Higher log volume but useful for compliance. |
