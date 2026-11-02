@@ -13,3 +13,6 @@ var TplWebHcl []byte
 
 //go:embed data/admin.hcl
 var TplAdminHcl []byte
+
+//go:embed data/index.html
+var TplIndexHTML []byte

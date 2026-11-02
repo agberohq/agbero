@@ -7,22 +7,24 @@ protected = "on"
 # Main route configuration for root path "/"
 route "/" {
   web {
-    # Document root directory - serves files from here
-    root    = "."
+    # Document root directory - serves files from here.
+    # Never use ".": the service working directory is the config directory,
+    # which would expose agbero.hcl, keeper.db and certs.d.
+    root    = "{WEB_ROOT}"
 
     # Directory listing - allows browsing directories without index files
     # Values: "on" (show listing) | "off" (403 forbidden)
-    listing = true
+    listing = false
 
     # Single Page Application (SPA) mode - serves index.html for unmatched routes
     # Essential for React, Vue, Angular apps
-    spa     = "on"
+    spa     = "off"
 
     # Markdown rendering configuration
     markdown {
       # Enable markdown file rendering
       # Values: "on" | "off" (show source)
-      enabled = "on"
+      enabled = "off"
 
       # Markdown viewing mode
       # Values: "browse" | "normal"

@@ -30,7 +30,8 @@ admin {
   enabled = "on"
 
   # Admin interface bind address
-  address = ":9090"
+  # Loopback only by default; use an SSH tunnel or a reverse proxy to reach it.
+  address = "127.0.0.1:9090"
 
   # Restrict admin access to specific IPs/CIDRs
   allowed_ips = ["127.0.0.1", "::1"]
@@ -147,8 +148,9 @@ security {
     enabled    = "{KEEPER_ENABLED}"
     auto_lock  = "30m"
     audit = "on"
-    # Master passphrase - can be env variable or prompt at runtime
-    passphrase = "env.AGBERO_KEEPER_PASSPHRASE"
+    # Master passphrase. `agbero init` writes a 0600 file and points here.
+    # Environment variables remain a fallback for containers/CI.
+    {KEEPER_PASSPHRASE_CONFIG}
   }
 
   # ---------------------------------------------------------
@@ -223,7 +225,8 @@ letsencrypt {
   email = "{LE_EMAIL}"
 
   # Use staging CA for testing (avoids rate limits, untrusted certs)
-  staging = true
+  # Production default is false. `agbero run --dev` flips it.
+  staging = false
 
   # Request short-lived certificates (for testing/ephemeral envs)
   short_lived = false
