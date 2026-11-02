@@ -29,9 +29,9 @@ type DialContextFunc func(ctx context.Context, network, addr string) (net.Conn, 
 // (e.g. "backend", "forward_auth"). It should be a short lowercase label.
 //
 // How it eliminates the TOCTOU / DNS-rebinding window:
-//  1. net/http calls DialContext with the original hostname.
-//  2. We resolve it ourselves and check every returned address.
-//  3. We dial the specific resolved IP directly — no second DNS lookup occurs.
+// net/http calls DialContext with the original hostname.
+// We resolve it ourselves and check every returned address.
+// We dial the specific resolved IP directly — no second DNS lookup occurs.
 func New(d *net.Dialer, prefix string) DialContextFunc {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(addr)

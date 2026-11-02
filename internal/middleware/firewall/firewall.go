@@ -53,8 +53,7 @@ type Config struct {
 	// Store, when non-nil, is adopted instead of opening DataDir/firewall.db.
 	// Config reload uses it to hand the open bolt database to the replacement
 	// engine: bbolt takes an exclusive file lock, so the file cannot be reopened
-	// while the draining engine still holds it. Ownership is shared via
-	// Store.refs — the adopted store is retained here and released on Close.
+	// while the draining engine still holds it.
 	Store *Store
 }
 
