@@ -15,7 +15,7 @@ type WAF struct {
 }
 
 func (w *WAF) Validate() error {
-	if w == nil || w.Status.Inactive() {
+	if w == nil || !w.Status.Active() {
 		return nil
 	}
 	if w.Driver != "coraza" {
