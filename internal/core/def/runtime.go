@@ -657,6 +657,7 @@ const (
 	DefaultConfigName = "agbero.hcl"
 	DefaultLogName    = "agbero.log"
 	DefaultKeeperName = "keeper.db"
+	DefaultPIDName    = "agbero.pid"
 
 	HCLSuffix          = ".hcl"
 	ConfigHCLExtension = ".hcl"
