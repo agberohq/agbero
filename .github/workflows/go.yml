@@ -19,7 +19,7 @@ jobs:
           cache: true
 
       - name: Lint workflows
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@latest .github/workflows/*.yaml
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@latest .github/workflows/*.yaml .github/workflows/*.yml
 
       - name: Set LDFLAGS
         run: |

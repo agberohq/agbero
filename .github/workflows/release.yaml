@@ -78,9 +78,11 @@ jobs:
             prerelease=true
           fi
 
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
           echo "Releasing $tag (version=$version, prerelease=$prerelease) from $(git rev-parse --short HEAD)"
 
   test:
@@ -143,7 +145,8 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
-          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
           build_date="$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
           commit="$(git rev-parse --short HEAD)"
 
@@ -206,7 +209,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
           mkdir -p dist/release dist/stage
 
           cp LICENSE README.md dist/stage/
@@ -217,7 +221,7 @@ jobs:
             base="$(basename "$f")"
             case "$base" in
               *.exe)
-                osarch="${base#${BINARY}-}"
+                osarch="${base#"${BINARY}"-}"
                 osarch="${osarch%.exe}"
                 cp "$f" dist/stage/agbero.exe
                 touch -d "@${SOURCE_DATE_EPOCH}" dist/stage/agbero.exe dist/stage/LICENSE dist/stage/README.md
@@ -225,7 +229,7 @@ jobs:
                 rm -f dist/stage/agbero.exe
                 ;;
               *)
-                osarch="${base#${BINARY}-}"
+                osarch="${base#"${BINARY}"-}"
                 cp "$f" dist/stage/agbero
                 (cd dist/stage && tar \
                   --sort=name \
@@ -254,7 +258,7 @@ jobs:
         run: |
           set -euo pipefail
           cd dist/release
-          sha256sum * > checksums.txt
+          sha256sum -- * > checksums.txt
           cat checksums.txt
 
       - name: Upload release assets
