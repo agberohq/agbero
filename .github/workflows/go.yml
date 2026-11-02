@@ -23,7 +23,7 @@ jobs:
 
       - name: Set LDFLAGS
         run: |
-          echo "LDFLAGS=-s -w -X github.com/agberohq/agbero/internal/core/woos.Version=$(git describe --tags --always --dirty 2>/dev/null || echo dev) -X github.com/agberohq/agbero/internal/core/woos.Commit=$(git rev-parse --short HEAD) -X github.com/agberohq/agbero/internal/core/woos.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
+          echo "LDFLAGS=-s -w -X github.com/agberohq/agbero/internal/core/woos.Version=$(git describe --tags --always --dirty 2>/dev/null || echo dev) -X github.com/agberohq/agbero/internal/core/woos.Commit=$(git rev-parse --short HEAD) -X github.com/agberohq/agbero/internal/core/woos.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
       - name: Build Linux (native)
         run: go build -ldflags="$LDFLAGS" -v ./...
