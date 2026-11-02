@@ -127,7 +127,7 @@
             this._onRightClick = null;
         }
 
-        // ---- public API ---------------------------------------------------
+        // public API
 
         render(config, stats) {
             if (!config || !this.container) return;
@@ -200,14 +200,8 @@
             var pad = 28;
             var kx = (w - pad) / b.width;
             var ky = (h - pad) / b.height;
-            var k;
-            if (this.options.mode === 'force') {
-                k = Math.min(kx, ky);
-            } else {
-                // Topology mode: fit the entire graph into view, regardless of orientation.
-                // This ensures both width and height are visible without scrolling.
-                k = Math.min(kx, ky);
-            }
+            // Fit the whole graph in both modes, whatever the orientation.
+            var k = Math.min(kx, ky);
             // Never shrink below readable: past this point the operator pans and
             // uses collapse/expand instead of squinting at 15% zoom.
             k = clamp(k, MIN_FIT, 1.15);
@@ -242,7 +236,7 @@
             this._prevAt = 0;
         }
 
-        // ---- data ---------------------------------------------------------
+        // data
 
         _ingest(config, stats) {
             this._hostsData = stats || {};
@@ -404,7 +398,7 @@
             this._prevAt = now;
         }
 
-        // ---- canvas -------------------------------------------------------
+        // canvas
 
         _draw(refit) {
             this._ensureSvg();
@@ -553,7 +547,7 @@
             return false;
         }
 
-        // ---- layout -------------------------------------------------------
+        // layout
 
         _computeLayout(nodes, links) {
             // Classic view: a full deterministic solve, like the original map, which
@@ -563,7 +557,7 @@
             return computeLayout(nodes, links, this.options);
         }
 
-        // ---- edges --------------------------------------------------------
+        // edges
 
         _drawEdges() {
             var self = this;
@@ -633,7 +627,7 @@
             return this._nodeIndex.get(id) || null;
         }
 
-        // ---- nodes --------------------------------------------------------
+        // nodes
 
         _drawNodes() {
             var self = this;
@@ -830,7 +824,7 @@
             return parts.join(' \u00B7 ');
         }
 
-        // ---- statistics ---------------------------------------------------
+        // statistics
 
         _updateStats() {
             if (!this._root || !this.data || !this.layout) return;
@@ -920,7 +914,7 @@
             return 'url(#graph-arrow-default)';
         }
 
-        // ---- tooltip ------------------------------------------------------
+        // tooltip
 
         _tipRow(label, value) {
             if (value === null || value === undefined || value === '' || value === '\u2014') return null;
@@ -996,7 +990,7 @@
             tip.style.top = y + 'px';
         }
 
-        // ---- zoom / pan / drag --------------------------------------------
+        // zoom / pan / drag
 
         _onWheel(ev) {
             ev.preventDefault();
@@ -1104,7 +1098,7 @@
             if (this._forcePositions) { this._forcePositions = null; this._forceSig = ''; }
         }
 
-        // ---- data processing (unchanged shape, extra stats carried along) --
+        // data processing (unchanged shape, extra stats carried along)
 
         processData(config, stats) {
             var nodes = [];

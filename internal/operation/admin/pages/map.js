@@ -13,7 +13,7 @@ export default async function({ find, on, onUnmount, ready, inject }) {
     const { emit, listen, clipboard, notify } = oja;
     let graph = null, paused = true, pollTimer = null;
 
-    // ---- preferences -----------------------------------------------------
+    // preferences
     const PREFS_KEY = 'mapPrefs';
     const DEFAULTS = { view: 'force', orientation: 'LR', density: 'detailed', animate: true };
     let prefs = Object.assign({}, DEFAULTS, storeLocal.get(PREFS_KEY) || {});
@@ -402,7 +402,7 @@ export default async function({ find, on, onUnmount, ready, inject }) {
 
     on('#resetZoomBtn', 'click', () => graph?.resetZoom());
 
-    // ---- graph controls ---------------------------------------------------
+    // graph controls
 
     function _syncViewTabs() {
         document.querySelectorAll('#mapViewTabs [data-view]').forEach(btn => {

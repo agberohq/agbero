@@ -58,7 +58,7 @@
         nodes = nodes || [];
         links = links || [];
 
-        // ---- 1. index ------------------------------------------------------
+        // index
         var byId = new Map();
         var order = [];
         for (var i = 0; i < nodes.length; i++) {
@@ -73,7 +73,7 @@
             order.push(n.id);
         }
 
-        // ---- 2. tree (first parent wins; extra parents stay decorative) -----
+        // tree (first parent wins; extra parents stay decorative)
         var children = new Map();
         order.forEach(function (id) { children.set(id, []); });
         var parentOf = new Map();
@@ -95,7 +95,7 @@
             return ra - rb || byId.get(a).index - byId.get(b).index;
         });
 
-        // ---- 3. depth ------------------------------------------------------
+        // depth
         var depth = new Map();
         var queue = roots.slice();
         queue.forEach(function (id) { depth.set(id, 0); });
@@ -112,7 +112,7 @@
             if (!depth.has(id)) depth.set(id, TYPE_RANK[byId.get(id).type] || 0);
         });
 
-        // ---- 4. cross-axis extent, post-order ------------------------------
+        // cross-axis extent, post-order
         var extent = new Map();
         function measure(id) {
             if (extent.has(id)) return extent.get(id);
@@ -133,7 +133,7 @@
         roots.forEach(measure);
         order.forEach(measure);
 
-        // ---- 5. positions (parents centred over their children) ------------
+        // positions (parents centred over their children)
         var slots = new Map();
 
         function place(id, crossStart) {
@@ -177,7 +177,7 @@
             cursor += extent.get(id) + gapSibling;
         });
 
-        // ---- 6. depth columns ---------------------------------------------
+        // depth columns
         var maxDepth = 0;
         order.forEach(function (id) { maxDepth = Math.max(maxDepth, depth.get(id)); });
 
@@ -212,7 +212,7 @@
             };
         });
 
-        // ---- 7. bounds -----------------------------------------------------
+        // bounds
         var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         order.forEach(function (id) {
             var p = positions[id];
@@ -225,7 +225,7 @@
 
         var bounds = { minX: minX, minY: minY, maxX: maxX, maxY: maxY, width: maxX - minX, height: maxY - minY };
 
-        // ---- 8. edges ------------------------------------------------------
+        // edges
         var edges = keptLinks.map(function (link, idx) {
             var a = positions[link.source] || { x: 0, y: 0, w: 0, h: 0 };
             var b = positions[link.target] || { x: 0, y: 0, w: 0, h: 0 };
@@ -243,7 +243,7 @@
         };
     }
 
-    // ---- classic view -----------------------------------------------------
+    // classic view
     //
     // The original map was a force-directed graph. It is kept as its own mode so
     // the familiar view stays one click away, but implemented here without D3:
@@ -267,7 +267,7 @@
         nodes = nodes || [];
         links = links || [];
 
-        // ---- 1. index nodes ------------------------------------------------
+        // index nodes
         var list = [];
         var byId = new Map();
         for (var i = 0; i < nodes.length; i++) {
@@ -286,7 +286,7 @@
             byId.set(n.id, nodeObj);
         }
 
-        // ---- 2. build tree to compute depth --------------------------------
+        // build tree to compute depth
         var children = new Map();
         var parentOf = new Map();
         list.forEach(function (nd) { children.set(nd.id, []); });
@@ -327,7 +327,7 @@
             }
         });
 
-        // ---- 3. seed positions by depth level ------------------------------
+        // seed positions by depth level
         // Group nodes by depth, then place each group in a concentric ring.
         var maxDepth = 0;
         list.forEach(function (nd) { if (nd.depth > maxDepth) maxDepth = nd.depth; });
