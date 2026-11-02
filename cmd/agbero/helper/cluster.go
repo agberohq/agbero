@@ -184,7 +184,7 @@ func (c *Cluster) requireClusterSecret(global *alaye.Global, u *ui.UI) ([]byte, 
 		u.Render(func() {
 			u.ErrorHint(
 				"keeper could not be opened",
-				"set AGBERO_PASSPHRASE or configure keeper.passphrase in agbero.hcl",
+				"set AGBERO_KEEPER_PASSPHRASE or configure keeper.passphrase_file in agbero.hcl",
 			)
 		})
 		return nil, false

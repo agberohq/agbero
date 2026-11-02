@@ -99,6 +99,7 @@ func RedactGlobal(g *Global) *Global {
 		clone.Tunnels[i].Password = def.RedactedValue
 	}
 	clone.Security.Keeper.Passphrase = def.RedactedValue
+	clone.Security.Keeper.PassphraseFile = def.RedactedValue
 	for i := range clone.Security.Allow.Proxies {
 		clone.Security.Allow.Proxies[i] = def.RedactedValue
 	}

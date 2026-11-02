@@ -18,7 +18,7 @@ type Secret struct {
 // used by the Keeper helper — all methods that need auth call this first.
 func (s *Secret) requireStore() *keeperlib.Keeper {
 	if s.p.Store == nil {
-		s.p.Logger.Fatal("keeper is not available — run 'agbero init' first or check AGBERO_PASSPHRASE")
+		s.p.Logger.Fatal("keeper is not available — run 'agbero init' first or check AGBERO_KEEPER_PASSPHRASE / keeper.passphrase_file")
 	}
 	return s.p.Store
 }

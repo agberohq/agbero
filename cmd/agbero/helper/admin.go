@@ -17,7 +17,7 @@ type Admin struct {
 // requireStore returns the injected store or fatals with a clear message.
 func (a *Admin) requireStore() *keeperlib.Keeper {
 	if a.p.Store == nil {
-		a.p.Logger.Fatal("keeper store is not available — run 'agbero init' first or check AGBERO_PASSPHRASE")
+		a.p.Logger.Fatal("keeper store is not available — run 'agbero init' first or check AGBERO_KEEPER_PASSPHRASE / keeper.passphrase_file")
 	}
 	return a.p.Store
 }

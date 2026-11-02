@@ -37,7 +37,7 @@ func (k *Keeper) cmds(store *keeperlib.Keeper) *keepcmd.Commands {
 // All Keeper CLI methods call this first so the error is consistent.
 func (k *Keeper) requireStore() *keeperlib.Keeper {
 	if k.p.Store == nil {
-		k.p.Logger.Fatal("keeper store is not available — run 'agbero init' first or check AGBERO_PASSPHRASE")
+		k.p.Logger.Fatal("keeper store is not available — run 'agbero init' first or check AGBERO_KEEPER_PASSPHRASE / keeper.passphrase_file")
 	}
 	return k.p.Store
 }

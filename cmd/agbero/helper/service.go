@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/def"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	"github.com/agberohq/agbero/internal/setup"
@@ -63,12 +64,16 @@ func (s *Service) preflightCheck(configPath string) error {
 	}
 	defer store.Close()
 
-	if _, err := store.GetNamespacedFull("vault", "system", "auth/ppk"); err != nil {
-		return fmt.Errorf("missing internal auth key. Did you run 'agbero init'?")
+	if _, err := store.Get(expect.Vault().Key("internal")); err != nil {
+		return fmt.Errorf("missing internal auth key at vault:key/internal. Run 'agbero init' to generate it")
 	}
 
-	if _, err := store.GetNamespacedFull("vault", "system", "auth/jwt_secret"); err != nil {
-		return fmt.Errorf("missing admin JWT secret. Did you run 'agbero init'?")
+	jwtKeys, err := store.ListPrefixNamespacedFull("vault", "admin", "jwt/")
+	if err != nil {
+		return fmt.Errorf("failed to inspect admin JWT keys: %w", err)
+	}
+	if len(jwtKeys) == 0 {
+		return fmt.Errorf("missing admin JWT secret at vault:admin/jwt/<user>. Run 'agbero init' to generate it")
 	}
 
 	return nil
@@ -186,7 +191,7 @@ func (s *Service) Status(svc service.Service, configPath string) {
 	var pid string
 	if status == service.StatusRunning {
 		if global, err := loadGlobal(configPath); err == nil && global.Storage.DataDir != "" {
-			pidFile := global.Storage.DataDir.FilePath("agbero.pid")
+			pidFile := global.Storage.DataDir.FilePath(def.DefaultPIDName)
 			if data, err := os.ReadFile(pidFile); err == nil {
 				pid = strings.TrimSpace(string(data))
 			}
