@@ -52,6 +52,13 @@ type ConfigBackend struct {
 	// UseHedger enables speculative retry on slow responses using the shared
 	// resource.Hedger. Off by default — only enable for idempotent backends.
 	UseHedger bool
+	// EnforceSSRF enables SSRF protection on this backend's dialer.
+	// When true, the transport blocks connections to private, loopback, and
+	// link-local IP addresses (defence against DNS-rebinding and cloud
+	// metadata endpoint attacks).
+	// Set to true for auto-registered routes. Static routes default to false
+	// (preserving existing behaviour) unless the global config opts in.
+	EnforceSSRF bool
 }
 
 // Validate checks that the backend address and resource manager are present.

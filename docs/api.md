@@ -666,19 +666,83 @@ def run_with_registration(registry, ttl=30):
 
 ## Rate Limiting
 
-The API itself is subject to rate limiting if configured in `rate_limits`. Consider excluding the API from rate limits:
+The auto API (`/auto/v1/...`) is subject to the global `rate_limits` block when
+it is enabled. Rules are **labelled blocks**, not an attribute:
 
 ```hcl
 rate_limits {
-  rules = [
-    {
-      name = "global-limit"
-      prefixes = ["/auto/"]
-      enabled = false  # Disable rate limiting for API
-    }
-  ]
+  enabled = "on"
+
+  # Exclude the service-to-service API from the global limit.
+  # `name` is the block LABEL — `rule "auto-api" { ... }`.
+  rule "auto-api" {
+    enabled  = "off"
+    prefixes = ["/auto/"]
+  }
 }
 ```
+
+> `rules = [{ ... }]` is **not** valid HCL for this block. The decoder only
+> understands `rule { ... }` / `policy "name" { ... }` blocks, and an
+> unrecognised attribute is dropped without an error.
+
+The **admin credential endpoints are always rate limited**, regardless of this
+block: `POST /login` and `POST /login/challenge` share one bucket of
+`10` requests per minute per client IP with a burst of `10` (see
+`def.AdminAuthRate*`). Exceeding it returns `429 Too Many Requests`. This is a
+hard-coded floor because the endpoints are otherwise only protected by bcrypt,
+and the challenge endpoint accepts a 6-digit TOTP code (or the keeper
+passphrase).
+
+---
+
+## Unauthenticated Admin Endpoints
+
+| Endpoint | Auth | Notes |
+|----------|------|-------|
+| `GET /healthz` | none | Liveness probe only, returns `OK` |
+| `GET /status` | none → **minimal** | Returns `{status, locked}`. The admin UI login screen needs `locked` before authenticating. With a bearer token the response also includes `telemetry` and `cluster_members` |
+| `POST /login` | none (rate limited) | Returns a full token or a 202 challenge |
+| `POST /login/challenge` | challenge token | TOTP / keeper passphrase step |
+
+Any other admin or `/api/v1/...` endpoint requires a bearer token.
+
+### Reading and writing host configs
+
+`GET /api/v1/discovery/{domain}` returns a **redacted** document: credentials are
+replaced with `"***"` and `basic_auth.users` is removed. That document can be
+edited and `PUT` straight back — the update path merges the masked fields from
+the stored config, so a `GET → edit → PUT` round-trip never overwrites a real
+secret with `"***"`. Send the real value only when you intend to change it.
+
+**Request body.** `POST /discovery` and `PUT /discovery/{domain}` accept either
+JSON or raw HCL:
+
+| Content-Type | Body |
+|---|---|
+| `application/json` | `{"domain": "...", "config": { ... }}` (alaye JSON tags) |
+| `text/plain`, `application/hcl` | the HCL host file verbatim |
+| *absent* | sniffed — a body starting with `{` or `[` is JSON, anything else is HCL |
+
+**Success response.** Both write endpoints answer
+`{"status":"ok","message":"Discovery saved successfully"}` with `200`. Anything
+else (a plain-text `http.Error` string, a JSON validation object, or a thrown
+5xx) means the write did **not** happen — clients must check the body, not just
+the transport success, because some HTTP clients surface a 4xx body as ordinary
+data.
+
+* `GET ...?format=hcl` (or `Accept: application/hcl`) returns the **raw file**,
+  unredacted — use it when the editor round-trips HCL text.
+* `{domain}` accepts any RFC-1123 hostname, including internal zones
+  (`app.corp`, `svc.internal`) and wildcards (`*.example.com`). It is not
+  restricted to public TLDs.
+* `HEAD /api/v1/discovery/{domain}` is supported (200 = exists, 404 = missing)
+  for cheap existence probes.
+* Creating a domain that already exists **overwrites** it; pass
+  `?overwrite=false` to get `409 Conflict` instead.
+* The request body is capped at 4 MiB (`def.HostConfigMaxBytes`); larger uploads
+  return `413`. The same cap applies to `POST /api/v1/discovery/preview` (both
+  the request body and the rendered HCL response).
 
 ---
 

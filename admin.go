@@ -11,6 +11,7 @@ import (
 	mtrand "math/rand"
 	"net/http"
 	"net/http/pprof"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -136,17 +137,26 @@ func (s *Server) startPprofServer() {
 	}()
 }
 
+// adminIPManager builds the client-IP resolver used by the admin plane.
+//
+// It must honour security.allow.proxies exactly like the traffic plane
+// (handlers/wrapHandler): without the trusted-proxy list an admin.allowlist
+// behind a load balancer compares the LB address instead of the real client,
+// which either locks every operator out or admits everyone. Spoofing is still
+// impossible because X-Forwarded-For is only consulted when the immediate peer
+// is in the trusted set.
+func (s *Server) adminIPManager() *zulu.IPManager {
+	var trusted []string
+	if state := s.apiShared.State(); state.Global != nil && state.Global.Security.Enabled.Active() {
+		trusted = state.Global.Security.Allow.Proxies
+	}
+	return zulu.NewIPManager(trusted)
+}
+
 func (s *Server) setupAdminMiddleware(r chi.Router, cfg alaye.Admin) {
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Security-Policy",
-				"default-src 'self'; "+
-					"script-src 'self' 'unsafe-inline' blob: https://d3js.org; "+
-					"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
-					"font-src 'self' https://fonts.gstatic.com; "+
-					"img-src 'self' data:; "+
-					"connect-src 'self'; "+
-					"frame-ancestors 'none'")
+			w.Header().Set("Content-Security-Policy", def.AdminCSPHeader)
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.Header().Set("X-Frame-Options", "DENY")
 			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -154,16 +164,44 @@ func (s *Server) setupAdminMiddleware(r chi.Router, cfg alaye.Admin) {
 		})
 	})
 
-	ipMgr := zulu.NewIPManager(nil)
+	ipMgr := s.adminIPManager()
 	state := s.apiShared.State()
-	adminRL := buildAdminRateLimiter(state.Global, ipMgr, s.sharedState)
-	if adminRL != nil {
+	if adminRL := buildAdminRateLimiter(state.Global, ipMgr, s.sharedState); adminRL != nil {
 		r.Use(adminRL.Handler)
 	}
+
+	// The credential endpoints get a limiter unconditionally — independent of
+	// whether rate_limits is configured. Without it bcrypt is the only cost of a
+	// password guess, and the TOTP / keeper-passphrase challenge (which shares
+	// this endpoint) is a 6-digit space that can otherwise be walked online.
+	authRL := ratelimit.New(ratelimit.Config{
+		TTL:         time.Minute,
+		MaxEntries:  def.DefaultRateMaxEntries,
+		IPManager:   ipMgr,
+		SharedState: s.sharedState,
+		Logger:      s.logger,
+		Policy: func(req *http.Request) (string, ratelimit.RatePolicy, bool) {
+			switch path.Clean(req.URL.Path) {
+			case "/login", "/login/challenge":
+				return "admin_auth", ratelimit.RatePolicy{
+					Requests: def.AdminAuthRateRequests,
+					Window:   def.AdminAuthRateWindow,
+					Burst:    def.AdminAuthRateBurst,
+					KeySpec:  "ip",
+				}, true
+			}
+			return "", ratelimit.RatePolicy{}, false
+		},
+	})
+	r.Use(authRL.Handler)
 }
 
 func (s *Server) registerAdminRoutes(r chi.Router, cfg alaye.Admin) {
 	r.Get("/healthz", s.handleHealthz)
+	// /status stays public because the admin UI's login screen probes it to learn
+	// whether the keeper is locked. The response is reduced to {status, locked}
+	// for unauthenticated callers — keeper/telemetry/cluster details are only
+	// returned to a valid admin token (see handleStatus).
 	r.Get("/status", s.handleStatus)
 	r.Post("/login", s.handleLogin)
 	r.Post("/login/challenge", s.handleLoginChallenge)
@@ -223,16 +261,21 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	state := s.apiShared.State()
 
-	clusterMembers := 0
-	if s.clusterManager != nil {
-		clusterMembers = len(s.clusterManager.Members())
+	// Minimal payload: the pre-login probe (admin UI login screen) only needs
+	// `locked`. Everything else is disclosed to authenticated callers only, so an
+	// anonymous visitor cannot enumerate cluster size or telemetry state.
+	status := map[string]any{
+		"status": "ok",
+		"locked": s.keeperStore == nil || s.keeperStore.IsLocked(),
 	}
 
-	status := map[string]any{
-		"status":          "ok",
-		"locked":          s.keeperStore == nil || s.keeperStore.IsLocked(),
-		"telemetry":       state.Global.Admin.Telemetry.Enabled.Active(),
-		"cluster_members": clusterMembers,
+	if s.adminTokenValid(r) {
+		clusterMembers := 0
+		if s.clusterManager != nil {
+			clusterMembers = len(s.clusterManager.Members())
+		}
+		status["telemetry"] = state.Global.Admin.Telemetry.Enabled.Active()
+		status["cluster_members"] = clusterMembers
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -240,8 +283,52 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
+// adminTokenValid reports whether r carries a valid, non-revoked, non-challenge
+// admin token. It exists for endpoints that are readable unauthenticated but
+// disclose more when authenticated (/status); it is NOT a substitute for
+// buildAuthMiddleware and must never guard a mutating endpoint.
+func (s *Server) adminTokenValid(r *http.Request) bool {
+	authHeader := r.Header.Get(def.AuthorizationHeaderKey)
+	if authHeader == "" {
+		return false
+	}
+	tokenStr := strings.TrimPrefix(authHeader, def.HeaderKeyBearer+" ")
+
+	// Read the user from the unverified token to select the signing secret, then
+	// verify the signature with it — same order as buildAuthMiddleware.
+	unverified, _, err := new(jwt.Parser).ParseUnverified(tokenStr, &adminClaims{})
+	if err != nil {
+		return false
+	}
+	pre, ok := unverified.Claims.(*adminClaims)
+	if !ok || pre.User == "" {
+		return false
+	}
+	secret, err := s.getAdminJWTSecret(pre.User)
+	if err != nil {
+		return false
+	}
+
+	claims := &adminClaims{}
+	token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return []byte(secret), nil
+	})
+	if err != nil || !token.Valid || claims.Scope == "challenge" {
+		return false
+	}
+	if claims.ID != "" {
+		if _, revoked := s.resource.TimeStore.Get(claims.ID); revoked {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) buildAuthMiddleware(cfg alaye.Admin) func(http.Handler) http.Handler {
-	ipMgr := zulu.NewIPManager(nil)
+	ipMgr := s.adminIPManager()
 	isRevoked := func(jti string) bool {
 		_, revoked := s.resource.TimeStore.Get(jti)
 		return revoked
@@ -449,13 +536,24 @@ func (s *Server) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Consume the challenge JTI immediately — prevents replay within the 5-minute TTL window.
+	// SetIfAbsent is a single atomic LoadOrStore, so exactly one concurrent
+	// request can win; the previous Get()+SetTTL() pair left a window in which
+	// two requests carrying the same token both reached TOTP / keeper
+	// verification (each such attempt is a free guess). The expiry is attached
+	// afterwards only by the winner and the entry is physically removed by the
+	// resource lifetime, so the store cannot grow without bound.
 	if claims.ID != "" {
-		if _, already := s.resource.TimeStore.Get(claims.ID); already {
+		ts := s.resource.TimeStore
+		expiry := time.Now().Add(def.ChallengeTokenTTL)
+		if _, loaded := ts.SetIfAbsent(claims.ID, expiry); loaded {
 			addJitter(10 * time.Millisecond)
 			http.Error(w, "Challenge token already used", http.StatusUnauthorized)
 			return
 		}
-		s.resource.TimeStore.SetTTL(claims.ID, time.Now().Add(def.ChallengeTokenTTL), def.ChallengeTokenTTL)
+		ts.SetTTL(claims.ID, expiry, def.ChallengeTokenTTL)
+		s.resource.Lifetime.ScheduleTimed(r.Context(), claims.ID, func(_ context.Context, id string) {
+			ts.Delete(id)
+		}, def.ChallengeTokenTTL)
 	}
 
 	var creds struct {

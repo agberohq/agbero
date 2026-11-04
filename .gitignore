@@ -1,4 +1,3 @@
-.idea
 .log
 
 .DS_Store
@@ -6,9 +5,12 @@
 
 bin
 tmp
-_lab
 dist
-_*
+
+# developer-local dirs: anything starting with _ or .
+_*/
+.*/
+!.github/
 
 cmd/agbero/server.log
 cmd/agbero/agbero
@@ -18,4 +20,3 @@ server.log
 all.txt
 baseline.txt
 all.txt.zip
-_test/

@@ -7,11 +7,27 @@ Agbero is distributed as a single binary with no external dependencies. This gui
 
 **Edge (development)**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/agberohq/agbero/refs/heads/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/agberohq/agbero/refs/heads/main/scripts/install.sh | bash
 ```
 **Release (stable)**
 ```bash
-curl -fsSL https://github.com/agberohq/agbero/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/agberohq/agbero/releases/latest/download/install.sh | bash
+```
+
+The installer verifies the release archive against `checksums.txt` before installing. Useful flags:
+
+```bash
+# Verify the download without installing
+curl -fsSL .../install.sh | bash -s -- --check
+
+# Pin a release and install into your user bin directory
+curl -fsSL .../install.sh | bash -s -- --version v0.1.4 --user
+
+# System install (root)
+curl -fsSL .../install.sh | sudo bash -s -- --system --version v0.1.4
+
+# Air-gapped / local assets
+./install.sh --from-file ./dist/release --version v0.1.4
 ```
 
 ## Manual Installation
@@ -90,20 +106,23 @@ This enables browsers to trust certificates issued by Agbero for `*.localhost` d
 
 ### 3. Install as a System Service (Production)
 
-For production deployments, install Agbero as a system service:
+For production deployments, install Agbero as a system service. **Run `init` as root for a system install** so the config and keeper live in `/etc/agbero` and `/var/lib/agbero`, not in your user profile:
 
 ```bash
-# System-wide installation (requires sudo)
-sudo agbero service install
+# System-wide init (requires sudo)
+sudo agbero init
 
-# Start the service
+# Install and start the service
+sudo agbero service install
 sudo agbero service start
 
 # Check status
 sudo agbero service status
 ```
 
-The service will automatically start on system boot.
+If you already ran `agbero init` as a normal user, the service install will not see that config. Either re-run `sudo agbero init` (system tree) or keep using the user tree with `agbero run`; do not maintain two config trees. (`agbero service install --user` is not supported yet.)
+
+`agbero init` writes a `0600` passphrase file and points `keeper.passphrase_file` at it, so the service can unlock the keeper without an environment variable.
 
 ## Verifying Installation
 
@@ -245,10 +264,12 @@ Admin password: ████████
 [INFO] Agbero is ready — listening on :80 and :443
 ```
 
-For non-interactive environments (system service, Docker, CI), set `AGBERO_PASSPHRASE` before starting so Agbero can unlock without prompting:
+For non-interactive environments (system service, Docker, CI), use a passphrase file or the canonical environment variable so Agbero can unlock without prompting. `agbero init` writes a `0600` passphrase file next to the config and points `keeper.passphrase_file` at it:
 
 ```bash
-AGBERO_PASSPHRASE=mypassphrase agbero run
+AGBERO_KEEPER_PASSPHRASE=mypassphrase agbero run
+# or, preferred for services:
+# keeper { passphrase_file = "/etc/agbero/keeper.passphrase" }
 ```
 
 > **Important:** The keeper database (`data.d/keeper.db`) is encrypted at rest. Without the correct passphrase, Agbero cannot start. Store your passphrase securely — in a secrets manager, a `.env` file outside version control, or your system's service environment. If you lose the passphrase, you lose all stored secrets.

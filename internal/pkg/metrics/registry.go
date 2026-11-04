@@ -42,6 +42,20 @@ func (r *Registry) Get(key alaye.Key) *BackendStats {
 	return stats
 }
 
+// Snapshot returns a stable copy of every registered key together with its stats
+// pointer. Callers that only need to *observe* the set of backends (telemetry,
+// metrics exporters) must use this instead of walking the host configuration:
+// the config is owned by discovery and may be rewritten while it is being built,
+// whereas the registry is the canonical, concurrency-safe list.
+func (r *Registry) Snapshot() map[alaye.Key]*BackendStats {
+	out := make(map[alaye.Key]*BackendStats, r.items.Len())
+	r.items.Range(func(k alaye.Key, v *BackendStats) bool {
+		out[k] = v
+		return true
+	})
+	return out
+}
+
 func (r *Registry) Prune(keepKeys map[alaye.Key]bool) {
 	var toClose []*BackendStats
 

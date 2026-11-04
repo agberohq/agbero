@@ -1049,7 +1049,6 @@ func TestServeHTTP_GitDeploymentReady(t *testing.T) {
 	// Execute the request
 	rr := do(t, h, http.MethodGet, "/")
 
-	// Verify it successfully serves the deployed repo file
 	if rr.Code != http.StatusOK {
 		t.Errorf("Git deployment ready: want 200 OK, got %d", rr.Code)
 	}

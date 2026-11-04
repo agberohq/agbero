@@ -54,6 +54,11 @@ func NewRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 	if err := cfg.Validate(); err != nil {
 		return FallbackRoute("invalid config: " + err.Error())
 	}
+	// Apply defaults for callers that build a route outside discovery (tests,
+	// programmatic routes). discovery applies them exactly once at publication
+	// time (loadOne / LoadStatic / Host.Set / handleRouteUpdate), so for real
+	// config this is a no-op; the build mutex in routeBuilder keeps two
+	// concurrent cold builds of the same route from writing here at the same time.
 	woos.DefaultRoute(route)
 	cfg.Resource.Logger.Fields("path", route.Path, "enabled", route.Enabled).Debug("creating route")
 	if err := route.Validate(); err != nil {
@@ -79,6 +84,27 @@ func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *
 	chain := primary
 	ipMgr := zulu.NewIPManager(cfg.Global.Security.Allow.Proxies)
 
+	// ORDERING INVARIANT — read before adding middleware here.
+	//
+	// This function builds the chain by wrapping: the FIRST middleware applied is
+	// the INNERMOST one and therefore the LAST to see a request. The cache must be
+	// innermost so that authentication, IP allow-lists, WAF, firewall and rate
+	// limiting all run (and can short-circuit) before a cached response can be
+	// served. When attic was applied after the auth block it ran *outside* them,
+	// which let an anonymous request receive a response cached for an authenticated
+	// user (cache key carries no identity material).
+	//
+	// Execution order, outermost first:
+	//   rewrite -> cors -> errorpages -> headers -> compress -> waf -> firewall
+	//   -> ratelimit -> oauth -> forward_auth -> basic -> jwt -> ipallow
+	//   -> cache(attic) -> backend/web/serverless
+	//
+	// Pass resource.Background pool so stale-while-revalidate revalidation
+	// is submitted to an accountable pool that drains cleanly on shutdown.
+	chain = attic.New(&route.Cache, cfg.Resource.Logger,
+		attic.WithPool(cfg.Resource.Background),
+	)(chain)
+
 	if len(route.AllowedIPs) > 0 {
 		chain = ipallow.New(route.AllowedIPs, cfg.Resource.Logger, ipMgr)(chain)
 	}
@@ -87,7 +113,7 @@ func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *
 	chain = auth.Forward(cfg.Resource, &route.ForwardAuth)(chain)
 	chain = auth.OAuth(&route.OAuth)(chain)
 
-	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, ipMgr, cfg.SharedState); rl != nil {
+	if rl := buildRouteLimiter(&route.RateLimit, &cfg.Global.RateLimits, ipMgr, cfg.SharedState, cfg.Resource.Logger); rl != nil {
 		chain = rl.Handler(chain)
 	}
 
@@ -112,12 +138,6 @@ func wrapHandler(cfg resource.Proxy, route *alaye.Route, primary http.Handler) *
 
 	chain = headers.Headers(&route.Headers)(chain)
 	chain = compress.Compress(route)(chain)
-
-	// Pass resource.Background pool so stale-while-revalidate revalidation
-	// is submitted to an accountable pool that drains cleanly on shutdown.
-	chain = attic.New(&route.Cache, cfg.Resource.Logger,
-		attic.WithPool(cfg.Resource.Background),
-	)(chain)
 
 	errCfg := errorpages.Config{
 		RoutePages:  route.ErrorPages,
@@ -153,6 +173,7 @@ func newProxyRoute(cfg resource.Proxy, route *alaye.Route) *Route {
 			TunnelPool:        pool,
 			BulkheadPartition: route.Path,
 			UseHedger:         route.Backends.Idempotent,
+			EnforceSSRF:       cfg.Global.Security.BlockPrivateBackends || route.EnforceBackendSSRF,
 		})
 		if err != nil {
 			cfg.Resource.Logger.Fields("index", i, "backend", backendCfg.Address.String(), "err", err).Error("failed to create backend")
@@ -345,7 +366,7 @@ func FallbackRoute(msg string) *Route {
 	}
 }
 
-func buildRouteLimiter(rlc *alaye.RateRoute, global *alaye.RateGlobal, ipMgr *zulu.IPManager, sharedState woos.SharedState) *ratelimit.RateLimiter {
+func buildRouteLimiter(rlc *alaye.RateRoute, global *alaye.RateGlobal, ipMgr *zulu.IPManager, sharedState woos.SharedState, logger ...*ll.Logger) *ratelimit.RateLimiter {
 	if rlc == nil || (!rlc.Enabled.Active() && rlc.UsePolicy == "") {
 		return nil
 	}
@@ -425,7 +446,17 @@ func buildRouteLimiter(rlc *alaye.RateRoute, global *alaye.RateGlobal, ipMgr *zu
 		Policy:      policy,
 		IPManager:   ipMgr,
 		SharedState: sharedState,
+		Logger:      optionalLogger(logger),
 	})
+}
+
+// optionalLogger returns the first logger passed to a variadic logger argument,
+// or nil so ratelimit.New falls back to a disabled logger.
+func optionalLogger(loggers []*ll.Logger) *ll.Logger {
+	if len(loggers) > 0 {
+		return loggers[0]
+	}
+	return nil
 }
 
 func buildNonceStores(route *alaye.Route) map[string]*nonce.Store {

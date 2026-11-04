@@ -400,7 +400,6 @@ func TestFilter_BlockedDomain(t *testing.T) {
 	if resp == nil {
 		t.Fatal("Filter should return non-nil NXDOMAIN response")
 	}
-	// Verify it's actually an NXDOMAIN response
 	if resp[3]&0x0F != 3 {
 		t.Errorf("RCODE: got %d, want 3 (NXDOMAIN)", resp[3]&0x0F)
 	}

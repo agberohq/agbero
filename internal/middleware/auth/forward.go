@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -19,6 +18,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/resource"
+	"github.com/agberohq/agbero/internal/pkg/safedial"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/mappo"
 )
@@ -35,7 +35,8 @@ var forwardAuthAllowedDenyHeaders = map[string]bool{
 
 // dialContextFunc is the signature of net.Dialer.DialContext, factored out so
 // forwardAuth can accept an injected dialer (e.g. in tests).
-type dialContextFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+// It is an alias for safedial.DialContextFunc so the two types are interchangeable.
+type dialContextFunc = safedial.DialContextFunc
 
 // forwardAuth holds all wired-up state for a single forward_auth middleware
 // instance. Keeping state in a struct rather than bare closed-over variables
@@ -118,10 +119,10 @@ func (fa *forwardAuth) buildClient() *http.Client {
 	case fa.dialContext != nil:
 		dial = fa.dialContext
 	case !fa.cfg.AllowPrivate:
-		dial = ssrfSafeDialContext(&net.Dialer{
+		dial = safedial.New(&net.Dialer{
 			Timeout:   def.DefaultTransportDialTimeout,
 			KeepAlive: def.DefaultTransportKeepAlive,
-		})
+		}, "forward_auth")
 	}
 
 	if fa.cfg.TLS.Enabled.Active() {
@@ -422,52 +423,12 @@ func buildTLSConfig(cfg alaye.ForwardTLS) (*tls.Config, error) {
 	return tlsCfg, nil
 }
 
-// ssrfSafeDialContext returns a DialContext that rejects connections to
-// private, loopback, and link-local IPs after DNS resolution but before the
-// TCP socket opens — the only atomic way to prevent DNS-rebinding SSRF.
+// ssrfSafeDialContext returns a DialContext that blocks connections to private,
+// loopback, and link-local IPs — the only atomic way to prevent DNS-rebinding SSRF.
+// It delegates to safedial.New; this wrapper is kept so existing tests that
+// reference ssrfSafeDialContext by name continue to compile.
 func ssrfSafeDialContext(d *net.Dialer) dialContextFunc {
-	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			return nil, fmt.Errorf("forward_auth: invalid address %q: %w", addr, err)
-		}
-
-		// Go's http.Transport passes the original hostname here — it does NOT
-		// pre-resolve DNS before calling DialContext. net.ParseIP on a hostname
-		// always returns nil, which broke every non-IP forward_auth URL.
-		// Resolve the hostname explicitly so the SSRF check operates on the
-		// actual IP address(es) that the connection will use.
-		ip := net.ParseIP(host)
-		if ip == nil {
-			// hostname — resolve and check every returned address
-			addrs, err := net.DefaultResolver.LookupHost(ctx, host)
-			if err != nil {
-				return nil, fmt.Errorf("forward_auth: DNS resolution failed for %q: %w", host, err)
-			}
-
-			// TOCTOU / DNS-rebinding defence: check AND dial using the same
-			// resolved IP address.Ghost timer
-			for _, a := range addrs {
-				resolved := net.ParseIP(a)
-				if resolved == nil {
-					continue
-				}
-				if alaye.IsPrivateIP(resolved) {
-					return nil, fmt.Errorf("forward_auth: SSRF protection blocked connection to private/internal address %s (resolved from %s)", a, host)
-				}
-				// Dial the resolved IP directly so no second DNS lookup occurs.
-				// Use the first public address that passes the check.
-				return d.DialContext(ctx, network, net.JoinHostPort(a, port))
-			}
-			return nil, fmt.Errorf("forward_auth: no valid public address resolved for %q", host)
-		}
-
-		// Raw IP address supplied directly — check it without resolution.
-		if alaye.IsPrivateIP(ip) {
-			return nil, fmt.Errorf("forward_auth: SSRF protection blocked connection to private/internal address %s:%s", host, port)
-		}
-		return d.DialContext(ctx, network, addr)
-	}
+	return safedial.New(d, "forward_auth")
 }
 
 // errorTransport is an http.RoundTripper that always returns a fixed error.

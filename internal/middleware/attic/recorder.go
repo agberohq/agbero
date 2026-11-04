@@ -105,6 +105,18 @@ func (r *recorder) Flush() {
 	}
 }
 
+// Unwrap exposes the wrapped writer so that http.ResponseController can reach
+// capabilities this recorder does not implement itself — most importantly
+// Hijack, which httputil.ReverseProxy uses to tunnel WebSocket / protocol
+// upgrades. Without it every upgrade on a cache-enabled route failed with
+// "feature not supported", even though the request was never served from cache.
+//
+// Hijacked bytes bypass this recorder entirely, and an upgrade response has
+// status 101, which isResponseCacheable() already rejects, so nothing is stored.
+func (r *recorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
 func (r *recorder) Cacheable() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

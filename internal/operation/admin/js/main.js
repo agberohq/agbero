@@ -11,8 +11,10 @@ import {
     fetchConfig, fetchUptime, fetchCerts, parseCertificates,
     getApi, apiSetToken, apiClearToken, reinitApi,
     fetchStatus, logout,
+    refreshToken,
     fetchFirewall, addFirewallRule, deleteFirewallRule,
     addHost, addHostHCL, previewHost, deleteHost, updateHost, updateHostHCL, getHostHCL, checkHostExists,
+    hostOpOK, hostOpError,
     fetchLogs, uploadCert, deleteCert,
     keeperStatus, keeperUnlock, keeperLock, keeperList, keeperGet,
     keeperSet, keeperSetFile, keeperDelete,
@@ -111,6 +113,7 @@ async function bootstrapApp() {
         api: {
             fetchUptime, fetchConfig, fetchCerts, fetchFirewall, fetchLogs, fetchStatus,
             addHost, addHostHCL, previewHost, deleteHost, updateHost, updateHostHCL, getHostHCL, checkHostExists,
+            hostOpOK, hostOpError,
             uploadCert, deleteCert, addFirewallRule, deleteFirewallRule,
             broadcastClusterRoute,
             keeperStatus, keeperUnlock, keeperLock, keeperList,
@@ -225,13 +228,50 @@ async function bootstrapApp() {
 
     router.NotFound(Out.html('<div class="page active"><div class="empty-state">Page Not Found</div></div>'));
 
-    const token = auth.session.tokenSync();
+    // Restore the session BEFORE anything else touches the API.
+    //
+    // tokenSync() only reads the in-memory copy, which is empty after a page
+    // reload — the token lives encrypted in storage. Using tokenSync() alone made
+    // every request go out unauthenticated, and the vendored oja build answers a
+    // 401 by trying auth.session.refresh() and then ENDING the session, so the UI
+    // logged itself out within one polling cycle of any refresh. `await
+    // auth.session.token()` decrypts and primes the in-memory copy, so the
+    // synchronous accessor works afterwards.
+    let token = auth.session.tokenSync();
+    if (!token) {
+        try { token = await auth.session.token(); }
+        catch (e) { logger.warn('auth', 'Could not restore session token', e?.message); }
+    }
     if (token) {
         apiSetToken(token);
+        // oja's expiry/refresh watchers live in memory and are lost on reload, so
+        // re-arm them: renew() rewrites the metadata and restarts both timers,
+        // which keeps a long-lived tab renewing instead of silently 401-ing once
+        // the token's exp passes.
+        try { await auth.session.renew(token); }
+        catch (e) { logger.warn('auth', 'Could not re-arm session timers', e?.message); }
         startPollingIfNeeded();
         loadConfigData();
         logger.info('main', 'Session restored from encrypted storage');
     }
+
+    // The admin token is re-issued by the server (POST /refresh) rather than by a
+    // refresh-token exchange, so the oja default refresh path (which expects a
+    // stored refresh_token) must be bypassed: renew here and return false to stop
+    // the library from calling its own refresh() and ending the session.
+    auth.session.OnRefresh(async () => {
+        try {
+            const fresh = await refreshToken();
+            if (fresh?.token) {
+                await auth.session.renew(fresh.token);
+                apiSetToken(fresh.token);
+                logger.info('auth', 'Admin token renewed');
+            }
+        } catch (e) {
+            logger.warn('auth', 'Token renewal failed', e?.message);
+        }
+        return false;
+    });
 
     await router.start('/');
     logger.info('main', 'Router started');

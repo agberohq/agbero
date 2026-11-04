@@ -8,37 +8,40 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.26'
-          check-latest: true
+          go-version-file: go.mod
+          cache: true
+
+      - name: Lint workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@latest .github/workflows/*.yaml .github/workflows/*.yml
 
       - name: Set LDFLAGS
         run: |
-          echo "LDFLAGS=-s -w -X github.com/agberohq/agbero/internal/core/woos.Version=$(git describe --tags --always --dirty 2>/dev/null || echo dev) -X github.com/agberohq/agbero/internal/core/woos.Commit=$(git rev-parse --short HEAD) -X github.com/agberohq/agbero/internal/core/woos.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
+          echo "LDFLAGS=-s -w -X github.com/agberohq/agbero/internal/core/woos.Version=$(git describe --tags --always --dirty 2>/dev/null || echo dev) -X github.com/agberohq/agbero/internal/core/woos.Commit=$(git rev-parse --short HEAD) -X github.com/agberohq/agbero/internal/core/woos.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
       - name: Build Linux (native)
         run: go build -ldflags="$LDFLAGS" -v ./...
 
       - name: Build Windows amd64
-        run: GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -v ./...
+        run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -v ./...
 
       - name: Build Windows arm64
-        run: GOOS=windows GOARCH=arm64 go build -ldflags="$LDFLAGS" -v ./...
+        run: CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags="$LDFLAGS" -v ./...
 
       - name: Build macOS amd64
-        run: GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -v ./...
+        run: CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -v ./...
 
       - name: Build macOS arm64
-        run: GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -v ./...
+        run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -v ./...
 
       - name: Build Linux arm64
-        run: GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -v ./...
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -v ./...
 
       - name: Test Linux
         run: go test -v -skip "TestManager_Register_Update" ./...
@@ -46,21 +49,21 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version: '1.26'
-          check-latest: true
+          go-version-file: go.mod
+          cache: true
       - name: Build Windows native
         run: go build -v ./...
         
 #  test-windows:
 #    runs-on: windows-latest
 #    steps:
-#      - uses: actions/checkout@v4
-#      - uses: actions/setup-go@v5
+#      - uses: actions/checkout@v5
+#      - uses: actions/setup-go@v6
 #        with:
-#          go-version: '1.26'
-#          check-latest: true
+#          go-version-file: go.mod
+#          cache: true
 #      - name: Test Windows (skip flaky tests)
 #        run: go test -v -skip "TestServer_Reload_DynamicBind|TestServer_Cluster_ConfigSync_RoutePropagation|TestServer_Cluster_ConfigSync_TombstoneDeletion|TestManager_Register_Update|TestTCPExecutor_Probe_ReadError|TestTCPExecutor_Probe_WriteError|TestConnPoolIsAlive" ./...

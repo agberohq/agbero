@@ -116,7 +116,6 @@ func TestConsistentHashRingGet(t *testing.T) {
 			counts[idx]++
 		}
 
-		// Check all backends got some traffic
 		for i := range 5 {
 			if counts[i] == 0 {
 				t.Errorf("backend %d got no traffic", i)
@@ -361,7 +360,6 @@ func TestConsistentHashMinimalRedistribution(t *testing.T) {
 	// Build new ring with 5 backends
 	r2 := NewConsistent(5, 100)
 
-	// Check how many keys moved
 	moved := 0
 	for i := range keyCount {
 		key := uint64(i * 1844674407370955161 / keyCount)

@@ -17,6 +17,7 @@ type RuntimePaths struct {
 	DataDir    expect.Folder `json:"data_dir"`
 	LogsDir    expect.Folder `json:"logs_dir"`
 	WorkDir    expect.Folder `json:"work_dir"`
+	WebDir     expect.Folder `json:"web_dir"`
 }
 
 // GetUserDefaults returns defaults for the current user (~/.config/agbero)
@@ -44,6 +45,7 @@ func GetUserDefaults() (RuntimePaths, error) {
 		DataDir:    base.Sub(def.DataDir),
 		LogsDir:    base.Sub(def.LogDir),
 		WorkDir:    base.Sub(def.WorkDir),
+		WebDir:     base.Sub("www"),
 	}, nil
 }
 
@@ -51,9 +53,10 @@ func GetUserDefaults() (RuntimePaths, error) {
 // It respects the AGBERO_HOME environment variable if set.
 func DefaultPaths() RuntimePaths {
 	var path string
+	customHome := os.Getenv("AGBERO_HOME")
 
-	if custom := os.Getenv("AGBERO_HOME"); custom != "" {
-		path = custom
+	if customHome != "" {
+		path = customHome
 	} else {
 		if runtime.GOOS == def.Windows || os.PathSeparator == def.WindowBackSlash {
 			path = filepath.Join(os.Getenv(def.ENVProgramData), def.Name)
@@ -64,6 +67,13 @@ func DefaultPaths() RuntimePaths {
 
 	base := expect.NewFolder(path)
 
+	// The default web root must never be the config directory: serving "." is
+	// how keeper.db and agbero.hcl ended up exposed (P0-4).
+	webDir := filepath.Join(path, "www")
+	if customHome == "" && runtime.GOOS != def.Windows {
+		webDir = filepath.Join("/var/www", def.Name)
+	}
+
 	return RuntimePaths{
 		BaseDir:    base,
 		ConfigFile: base.FilePath(def.DefaultConfigName),
@@ -72,5 +82,6 @@ func DefaultPaths() RuntimePaths {
 		DataDir:    base.Sub(def.DataDir),
 		LogsDir:    base.Sub(def.LogDir),
 		WorkDir:    base.Sub(def.WorkDir),
+		WebDir:     expect.NewFolder(webDir),
 	}
 }

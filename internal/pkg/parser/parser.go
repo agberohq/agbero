@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -392,7 +393,11 @@ func (d *decoder) setSlice(field reflect.Value, val cty.Value) error {
 			if err != nil {
 				return err
 			}
-			field.Set(reflect.Append(field, reflect.ValueOf(s)))
+			elem, err := stringValue(field.Type().Elem(), s)
+			if err != nil {
+				return err
+			}
+			field.Set(reflect.Append(field, elem))
 		case reflect.Int:
 			n, err := ctyToInt64(v)
 			if err != nil {
@@ -407,12 +412,19 @@ func (d *decoder) setSlice(field reflect.Value, val cty.Value) error {
 }
 
 func (d *decoder) setMap(field reflect.Value, val cty.Value) error {
+	if field.Kind() != reflect.Map {
+		return fmt.Errorf("cannot decode %s into a map", field.Kind())
+	}
+	if val.IsNull() {
+		return nil
+	}
 	if !val.CanIterateElements() {
 		return fmt.Errorf("cannot iterate %s as map", val.Type().FriendlyName())
 	}
 	if field.IsNil() {
 		field.Set(reflect.MakeMap(field.Type()))
 	}
+	keyType, elemType := field.Type().Key(), field.Type().Elem()
 	it := val.ElementIterator()
 	for it.Next() {
 		k, v := it.Element()
@@ -424,9 +436,43 @@ func (d *decoder) setMap(field reflect.Value, val cty.Value) error {
 		if err != nil {
 			return err
 		}
-		field.SetMapIndex(reflect.ValueOf(ks), reflect.ValueOf(vs))
+		key, err := stringValue(keyType, ks)
+		if err != nil {
+			return fmt.Errorf("map key %q: %w", ks, err)
+		}
+		elem, err := stringValue(elemType, vs)
+		if err != nil {
+			return fmt.Errorf("map value for %q: %w", ks, err)
+		}
+		field.SetMapIndex(key, elem)
 	}
 	return nil
+}
+
+// stringValue converts s into a value of type t for map keys/values and slice
+// elements. It must be used instead of reflect.ValueOf(s): Go strings are not
+// assignable to named string types (expect.Value, expect.Address, ...), and
+// SetMapIndex/Append panic on a type mismatch rather than returning an error.
+// Durations arrive as HCL strings ("1h") and land in int64-backed expect.Duration.
+func stringValue(t reflect.Type, s string) (reflect.Value, error) {
+	v := reflect.New(t).Elem()
+	switch t.Kind() {
+	case reflect.String:
+		v.SetString(s)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if d, err := time.ParseDuration(strings.TrimSpace(s)); err == nil {
+			v.SetInt(int64(d))
+			return v, nil
+		}
+		n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		v.SetInt(n)
+	default:
+		return reflect.Value{}, fmt.Errorf("unsupported %s element type", t.Kind())
+	}
+	return v, nil
 }
 
 // Encoder
@@ -611,8 +657,43 @@ func (e *encoder) scalarTokens(v reflect.Value) hclwrite.Tokens {
 			vals[i] = cty.StringVal(fmt.Sprintf("%v", v.Index(i).Interface()))
 		}
 		return hclwrite.TokensForValue(cty.ListVal(vals))
+	case reflect.Map:
+		// Maps (env, claim maps, TTL-policy overrides) used to be dropped on
+		// encode, so a config rewritten by the API silently lost them.
+		if v.Len() == 0 {
+			return nil
+		}
+		vals := make(map[string]cty.Value, v.Len())
+		iter := v.MapRange()
+		for iter.Next() {
+			k := fmt.Sprintf("%v", iter.Key().Interface())
+			vals[k] = cty.StringVal(mapElemString(iter.Value()))
+		}
+		return hclwrite.TokensForValue(cty.MapVal(vals))
 	}
 	return nil
+}
+
+// mapElemString renders a map value for HCL output. String-valued maps (env,
+// query, claim maps) are written verbatim: expect.Value.MarshalText redacts
+// everything but secret-store refs, which would corrupt a round-trip. Numeric
+// values go through TextMarshaler so expect.Duration prints as "1h".
+func mapElemString(v reflect.Value) string {
+	if v.Kind() == reflect.String {
+		return v.String()
+	}
+	if tm, ok := v.Interface().(interface{ MarshalText() ([]byte, error) }); ok {
+		if text, err := tm.MarshalText(); err == nil {
+			return string(text)
+		}
+	}
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(v.Int(), 10)
+	case reflect.Bool:
+		return strconv.FormatBool(v.Bool())
+	}
+	return fmt.Sprintf("%v", v.Interface())
 }
 
 // Shared helpers

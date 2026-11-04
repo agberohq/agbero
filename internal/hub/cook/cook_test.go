@@ -14,6 +14,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/olekukonko/ll"
 )
@@ -25,12 +26,30 @@ type testingTB interface {
 	TempDir() string
 }
 
+// disableCommitSigning pins commit.gpgSign off in a fixture repository.
+// go-git v6 merges the host's system/global git config into every commit, so a
+// machine with commit.gpgsign=true would otherwise fail fixture commits with
+// "cannot auto-sign commit" — go-git ships no ObjectSigner plugin. The local
+// config wins over global in config.Merge, keeping the fixtures hermetic.
+func disableCommitSigning(tb testingTB, r *git.Repository) {
+	tb.Helper()
+	cfg, err := r.Config()
+	if err != nil {
+		tb.Fatalf("failed to read repo config: %v", err)
+	}
+	cfg.Commit.GpgSign = config.OptBoolFalse
+	if err := r.SetConfig(cfg); err != nil {
+		tb.Fatalf("failed to disable commit signing: %v", err)
+	}
+}
+
 func setupTestRepo(tb testingTB, path string) string {
 	tb.Helper()
 	r, err := git.PlainInit(path, false)
 	if err != nil {
 		tb.Fatalf("failed to init repo: %v", err)
 	}
+	disableCommitSigning(tb, r)
 	w, err := r.Worktree()
 	if err != nil {
 		tb.Fatalf("failed to get worktree: %v", err)
@@ -62,6 +81,7 @@ func addCommit(t *testing.T, path string, content string) string {
 	if err != nil {
 		t.Fatalf("failed to open repo: %v", err)
 	}
+	disableCommitSigning(t, r)
 	w, err := r.Worktree()
 	if err != nil {
 		t.Fatalf("failed to get worktree: %v", err)
@@ -256,7 +276,6 @@ func TestCook_Rollback(t *testing.T) {
 	if err := c.Make(context.Background()); err != nil {
 		t.Fatalf("second make failed: %v", err)
 	}
-	// Verify we're on commit2
 	content, _ := os.ReadFile(filepath.Join(c.CurrentPath(), "index.html"))
 	if string(content) != "<h1>Version 2</h1>" {
 		t.Fatalf("expected v2 content, got: %s", string(content))

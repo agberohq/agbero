@@ -342,6 +342,7 @@ route "/api/secure" {
     # Store with: agbero keeper set auth/jwt-secret "my-jwt-key"
 
     issuer  = "auth.example.com"     # Optional: validate issuer
+    audience = "my-api"              # Optional but recommended: enforced aud claim
 
     # Map JWT claims to upstream request headers
     claims_to_headers = {
@@ -356,6 +357,11 @@ route "/api/secure" {
   }
 }
 ```
+
+When `audience` is set, a token whose `aud` does not contain that value is
+rejected with `invalid_audience`. Set it whenever several services share the same
+HMAC secret — otherwise a token minted for one service is accepted by all of
+them.
 
 ### OAuth2 / OIDC
 
@@ -449,10 +455,10 @@ route "/api/public" {
     # Reference a named policy from global config
     use_policy = "api-strict"
     
-    # Or define inline rule
-    rule {
+    # Or define inline rule. `name` is the block LABEL, not an attribute:
+    # `rule { name = "x" }` silently loses the name.
+    rule "custom-limit" {
       enabled  = true
-      name     = "custom-limit"
       prefixes = ["/api/public"]
       methods  = ["GET", "POST"]
       requests = 50
@@ -481,9 +487,8 @@ route "/admin" {
     # Apply named global rules
     apply_rules = ["block-scanners", "rate-limit-abuse"]
     
-    # Or define inline rules
-    rule {
-      name        = "admin-only"
+    # Or define inline rules (the name is the block label)
+    rule "admin-only" {
       type        = "static"
       action      = "deny"
       priority    = 10
@@ -496,8 +501,7 @@ route "/admin" {
       }
     }
     
-    rule {
-      name   = "rate-limit-admin"
+    rule "rate-limit-admin" {
       type   = "dynamic"
       action = "rate-limit"
       
@@ -618,6 +622,28 @@ route "/static" {
   
   web { root = "/var/www/static" }
 }
+```
+
+**Ordering guarantee:** the cache sits at the *innermost* position of the route
+chain — after IP allow-listing, JWT/basic/forward/OAuth auth, the WAF, the
+firewall and rate limiting. A cache hit therefore never bypasses authentication
+or a block decision. Requests carrying an `Authorization` header are never
+cached, and responses with `Set-Cookie`, `Cache-Control: private/no-store` or
+`WWW-Authenticate` are never stored.
+
+Tune per-route behaviour with `ttl_policy` (content-type/extension overrides,
+`stale_while_revalidate`, and `key_scope` for extra cache-key dimensions):
+
+```hcl
+  cache {
+    enabled = true
+    ttl     = "5m"
+    ttl_policy {
+      enabled   = true
+      default   = "1m"
+      key_scope = ["header:Accept-Language"]
+    }
+  }
 ```
 
 ---
@@ -939,8 +965,7 @@ route "/api" {
 route "/admin" {
   firewall {
     enabled = true
-    rule {
-      name = "admin-ip-restrict"
+    rule "admin-ip-restrict" {
       type = "static"
       action = "deny"
       match {

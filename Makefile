@@ -45,7 +45,7 @@ else
 	endif
 endif
 
-# Release version for tagging and GoReleaser
+# Release version for tagging. CI builds and publishes; this Makefile never does.
 RELEASE_VERSION ?=
 
 # Version variables
@@ -59,8 +59,8 @@ LDFLAGS := -s -w -X "github.com/agberohq/agbero/internal/core/woos.Version=$(VER
            -X "github.com/agberohq/agbero/internal/core/woos.Date=$(DATE)"
 
 .PHONY: all build clean run install build-all version help \
-        deps test test-verbose fmt lint tidy snapshot goreleaser-check changelog dev update-deps \
-        ensure-clean ensure-release-version tag release release-dry play
+        deps test test-verbose fmt lint tidy changelog dev update-deps \
+        ensure-clean ensure-release-version tag release play
 
 all: build
 
@@ -80,21 +80,18 @@ help:
 	@echo "  fmt            - Format Go code"
 	@echo "  lint           - Lint Go code"
 	@echo "  tidy           - Tidy go.mod"
-	@echo "  snapshot       - Snapshot build (local testing)"
-	@echo "  goreleaser-check - GoReleaser check + snapshot dry-run build"
 	@echo "  changelog      - Generate changelog (requires git-chglog)"
 	@echo "  dev            - deps + build then run dev"
 	@echo "  update-deps    - Update Go deps"
 	@echo ""
 	@echo "Release targets:"
 	@echo "  ensure-clean   - Fail if repo is dirty"
-	@echo "  tag            - Force (re)create RELEASE_VERSION tag at HEAD and push"
-	@echo "  release        - tag + goreleaser release --clean"
-	@echo "  release-dry    - tag + goreleaser release --clean --skip=publish"
+	@echo "  tag            - Create and push vRELEASE_VERSION at HEAD"
+	@echo "  release        - Alias for 'tag' (CI builds and publishes)"
 	@echo ""
 	@echo "Release usage:"
 	@echo "  make release RELEASE_VERSION=0.0.2"
-	@echo "  make release-dry RELEASE_VERSION=0.0.2"
+	@echo "  (a tag push triggers GitHub Actions; no local artifact is produced)"
 
 # Install dependencies
 deps:
@@ -152,24 +149,27 @@ ui-build: $(MINIFY_BIN)
 	@echo "Minified UI assets successfully updated in $(TARGET_DIR)"
 
 
-# Cross-compile for release (matching GoReleaser targets)
+# Cross-compile for release targets. Local sanity check only; CI publishes.
 build-all: clean
 	@echo "Cross-compiling $(APP_NAME) v$(VERSION) for all platforms..."
 
 	@echo "Building for Linux (amd64)..."
-	GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-linux-amd64 $(SRC_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-linux-amd64 $(SRC_DIR)
 
 	@echo "Building for Linux (arm64)..."
-	GOOS=linux GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-linux-arm64 $(SRC_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-linux-arm64 $(SRC_DIR)
 
 	@echo "Building for Windows (amd64)..."
-	GOOS=windows GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe $(SRC_DIR)
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe $(SRC_DIR)
+
+	@echo "Building for Windows (arm64)..."
+	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-windows-arm64.exe $(SRC_DIR)
 
 	@echo "Building for macOS (Intel)..."
-	GOOS=darwin GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-darwin-amd64 $(SRC_DIR)
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-darwin-amd64 $(SRC_DIR)
 
 	@echo "Building for macOS (Apple Silicon)..."
-	GOOS=darwin GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-darwin-arm64 $(SRC_DIR)
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BUILD_DIR)/$(APP_NAME)-darwin-arm64 $(SRC_DIR)
 
 	@echo ""
 	@echo "Build complete! Binaries in $(BUILD_DIR)/:"
@@ -205,19 +205,6 @@ tidy:
 	@echo "Tidying go.mod..."
 	go mod tidy
 
-# Special target for GoReleaser snapshot builds
-snapshot:
-	@echo "Building snapshot release..."
-	VERSION=$(VERSION)-SNAPSHOT $(MAKE) build-all
-
-# Quick check of what GoReleaser would do
-goreleaser-check:
-	@echo "Checking GoReleaser configuration..."
-	goreleaser check
-	@echo ""
-	@echo "Dry-run GoReleaser build..."
-	goreleaser release --snapshot --clean --skip=publish
-
 # Generate changelog
 changelog:
 	git-chglog -o CHANGELOG.md
@@ -235,7 +222,8 @@ update-deps:
 	@echo "Dependencies updated"
 
 # --------------------------
-# Release helpers (GoReleaser)
+# Release helpers (tag-only)
+# CI builds, signs, tests, and publishes. Nothing is produced locally.
 # --------------------------
 
 ensure-clean:
@@ -246,23 +234,26 @@ ensure-clean:
 
 ensure-release-version:
 	@test -n "$(RELEASE_VERSION)" || (echo "Error: set RELEASE_VERSION, e.g. make release RELEASE_VERSION=0.0.2"; exit 1)
+	@printf '%s' "$(RELEASE_VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$$' \
+		|| (echo "Error: RELEASE_VERSION must be semver, e.g. 0.0.2 or 0.1.0-rc.1"; exit 1)
 
 tag: ensure-clean ensure-release-version
-	@if git rev-parse "$(RELEASE_VERSION)" >/dev/null 2>&1; then \
-		echo "Error: tag $(RELEASE_VERSION) already exists. Bump the version."; \
+	@test "$$(git rev-parse --abbrev-ref HEAD)" = "main" \
+		|| (echo "Error: release from main (current: $$(git rev-parse --abbrev-ref HEAD))"; exit 1)
+	@if git rev-parse -q --verify "refs/tags/v$(RELEASE_VERSION)" >/dev/null; then \
+		echo "Error: tag v$(RELEASE_VERSION) already exists. Re-run CI instead of moving it."; \
 		exit 1; \
 	fi
-	@echo "Creating tag $(RELEASE_VERSION) at HEAD $$(git rev-parse --short HEAD)"
-	@git tag -a $(RELEASE_VERSION) -m "v$(RELEASE_VERSION)"
-	@git push $(REMOTE) $(RELEASE_VERSION)
+	@echo "Creating tag v$(RELEASE_VERSION) at HEAD $$(git rev-parse --short HEAD)"
+	@git tag -a "v$(RELEASE_VERSION)" -m "v$(RELEASE_VERSION)"
+	@git push $(REMOTE) "v$(RELEASE_VERSION)" || { \
+		echo "Error: failed to push the tag; removing the local tag so you can retry"; \
+		git tag -d "v$(RELEASE_VERSION)" >/dev/null; \
+		exit 1; \
+	}
 
 release: tag
-	@echo "Running GoReleaser for $(RELEASE_VERSION)..."
-	goreleaser release --clean
-
-release-dry: tag
-	@echo "Running GoReleaser dry-run for $(RELEASE_VERSION)..."
-	goreleaser release --clean --skip=publish
+	@echo "Pushed v$(RELEASE_VERSION). GitHub Actions builds and publishes; nothing was built locally."
 
 
 .PHONY: play

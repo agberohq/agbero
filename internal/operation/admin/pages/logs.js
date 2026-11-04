@@ -12,6 +12,8 @@ export default async function({ find, findAll, on, onUnmount, ready, inject }) {
 
     let paused = false, filter = store.get('logFilter') || 'ALL', logs = [], pollTimer = null, isAllExpanded = false;
     let searchTerm = '';
+    let followMode = true;  // auto-scroll to new entries by default
+    let durationFilter = 0; // 0 = all time, seconds otherwise
 
     function parseEntry(l) {
         let lvl = 'INFO', msg = '', ts = '', fields = {};
@@ -59,39 +61,151 @@ export default async function({ find, findAll, on, onUnmount, ready, inject }) {
             [...hosts].sort().map(h => `<option value="${h}"${h === current ? ' selected' : ''}>${h}</option>`).join('');
     }
 
+    // Count IP frequency across all logs for the current view
+    function _getIpFrequency(filtered) {
+        const freq = new Map();
+        filtered.forEach(l => {
+            const { ip } = parseEntry(l);
+            if (ip) freq.set(ip, (freq.get(ip) || 0) + 1);
+        });
+        return freq;
+    }
+
+    // Group consecutive logs with the same message, showing repeat count
+    function _groupLogs(filtered) {
+        const grouped = [];
+        let prevMsg = null, prevLvl = null, count = 0;
+        filtered.forEach((l, i) => {
+            const { lvl, full, ts, fields, ip, host } = parseEntry(l);
+            const msgKey = full + lvl;
+            if (msgKey === prevMsg && i > 0) {
+                count++;
+            } else {
+                if (count > 1) {
+                    grouped.push({ entry: { lvl: prevLvl, ts: '', full: '', fields: {}, ip: '', host: '' }, repeated: count, isRepeat: true });
+                }
+                grouped.push({ entry: { lvl, ts, full, fields, ip, host }, repeated: 0, isRepeat: false });
+                count = 1;
+                prevMsg = msgKey;
+                prevLvl = lvl;
+            }
+        });
+        if (count > 1) {
+            grouped.push({ entry: { lvl: prevLvl, ts: '', full: '', fields: {}, ip: '', host: '' }, repeated: count, isRepeat: true });
+        }
+        return grouped;
+    }
+
+    // Apply duration filter to logs
+    function _filterByDuration(entries) {
+        if (durationFilter <= 0) return entries;
+        const cutoff = Date.now() - durationFilter * 1000;
+        return entries.filter(l => {
+            const { ts } = parseEntry(l);
+            if (!ts) return true; // keep logs without timestamps
+            // Try to parse ISO timestamp
+            const raw = typeof l === 'string' ? l : JSON.stringify(l);
+            const isoMatch = raw.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+            if (!isoMatch) return true;
+            const logTime = new Date(isoMatch[1]).getTime();
+            return logTime >= cutoff;
+        });
+    }
+
+    // Update the summary bar
+    function _updateSummary(filtered, totalLogs) {
+        const el = find('#logsSummary');
+        if (!el) return;
+        const counts = { INFO: 0, WARN: 0, ERROR: 0 };
+        filtered.forEach(l => {
+            const { lvl } = parseEntry(l);
+            if (counts[lvl] !== undefined) counts[lvl]++;
+        });
+        const parts = [`Showing ${filtered.length} of ${totalLogs}`];
+        if (counts.ERROR > 0) parts.push(`<span style="color:var(--danger);">${counts.ERROR} ERROR</span>`);
+        if (counts.WARN > 0) parts.push(`<span style="color:var(--warning);">${counts.WARN} WARN</span>`);
+        parts.push(`<span style="color:var(--text-mute);">${counts.INFO} INFO</span>`);
+        el.innerHTML = parts.join(' · ');
+    }
+
     function renderLogs() {
         const el = find('#logsList');
         if (!el) return;
         if (!logs.length) {
-            el.innerHTML = `<div style="color:var(--text-mute);text-align:center;padding:40px;"><span style="display:block;font-size:24px;margin-bottom:10px;">📭</span>No logs yet. Waiting for traffic...</div>`;
+            el.innerHTML = `<div style="color:var(--text-mute);text-align:center;padding:40px;">No logs yet. Waiting for traffic...</div>`;
             return;
         }
         _updateHostFilter();
         const term       = searchTerm.toLowerCase();
         const hostFilter = find('#logsHostFilter')?.value || '';
-        const filtered = logs.filter(l => {
+
+        // Apply filters
+        let filtered = logs.filter(l => {
             const { lvl, full, host } = parseEntry(l);
             if (filter !== 'ALL' && lvl !== filter) return false;
             if (hostFilter && host !== hostFilter) return false;
             if (term && !full.toLowerCase().includes(term) && !JSON.stringify(l).toLowerCase().includes(term)) return false;
             return true;
         });
+
+        // Apply duration filter
+        filtered = _filterByDuration(filtered);
+
+        // Update summary
+        _updateSummary(filtered, logs.length);
+
         if (!filtered.length) {
             el.innerHTML = `<div style="color:var(--text-mute);text-align:center;padding:20px;">No ${searchTerm ? `results for "${searchTerm}"` : filter + ' logs'}</div>`;
             return;
         }
-        el.innerHTML = filtered.map(l => {
-            const { lvl, ts, full, fields, ip, host } = parseEntry(l);
+
+        // Get IP frequency
+        const ipFreq = _getIpFrequency(filtered);
+
+        // Group consecutive duplicates
+        const grouped = _groupLogs(filtered);
+
+        el.innerHTML = grouped.map(g => {
+            if (g.isRepeat) {
+                return `<div class="log-entry log-entry-repeat" title="${g.repeated} repeated entries">
+                    <span class="log-ts" style="color:var(--text-mute);">…</span>
+                    <span class="log-lvl" style="color:var(--text-mute);">—</span>
+                    <span class="log-msg"><span class="log-repeat-badge">×${g.repeated} repeated</span></span>
+                </div>`;
+            }
+            const { lvl, ts, full, fields, ip, host } = g.entry;
             const color   = lvl === 'ERROR' ? 'var(--danger)' : lvl === 'WARN' ? 'var(--warning)' : 'var(--text-mute)';
+            const borderColor = lvl === 'ERROR' ? 'var(--danger)' : lvl === 'WARN' ? 'var(--warning)' : 'transparent';
             const hasJson = Object.keys(fields).length > 0;
             const highlightedFull = term
                 ? full.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
                     m => `<mark style="background:var(--warning);color:#000;border-radius:2px;padding:0 1px;">${m}</mark>`)
                 : full;
-            const ipBadge    = ip ? `<span class="log-ip" data-ip="${ip}" data-host="${host}" style="font-family:var(--font-mono);font-size:10px;color:var(--text-mute);margin-left:6px;padding:1px 4px;border:1px solid var(--border);border-radius:3px;cursor:pointer;" title="Click to block">${ip}</span>` : '';
-            const jsonToggle = hasJson ? `<details class="log-details"${isAllExpanded ? ' open' : ''}><summary class="log-json-toggle">{…}</summary><div class="log-json-body"><pre class="log-json-pre">${_highlightJson(fields)}</pre></div></details>` : '';
-            return `<div class="log-entry" data-ip="${ip}" data-host="${host}"><span class="log-ts">${ts}</span><span class="log-lvl" style="color:${color};">${lvl}</span><span class="log-msg">${highlightedFull}${ipBadge} ${jsonToggle}</span></div>`;
+            // IP badge with frequency count
+            const ipCount = ip ? (ipFreq.get(ip) || 1) : 0;
+            const ipBadge    = ip ? `<span class="log-ip" data-ip="${ip}" data-host="${host}" style="font-family:var(--font-mono);font-size:10px;color:var(--text-mute);margin-left:6px;padding:1px 4px;border:1px solid var(--border);border-radius:3px;cursor:pointer;" title="Click to block (${ipCount} occurrences)">${ip}${ipCount > 1 ? ` <span style="color:var(--warning);">×${ipCount}</span>` : ''}</span>` : '';
+            // JSON toggle with search highlight inside
+            let jsonBody = _highlightJson(fields);
+            if (term) {
+                const jsonStr = JSON.stringify(fields);
+                jsonBody = jsonStr.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
+                    m => `<mark style="background:var(--warning);color:#000;border-radius:2px;padding:0 1px;">${m}</mark>`);
+            }
+            const jsonToggle = hasJson ? `<details class="log-details"${isAllExpanded ? ' open' : ''}><summary class="log-json-toggle">{…}</summary><div class="log-json-body"><pre class="log-json-pre">${jsonBody}</pre></div></details>` : '';
+            // Hover preview tooltip
+            const hoverKeys = hasJson ? Object.keys(fields).slice(0, 5).join(', ') : '';
+            const hoverAttr = hoverKeys ? `title="Fields: ${hoverKeys}"` : '';
+            return `<div class="log-entry" data-ip="${ip}" data-host="${host}" style="border-left:3px solid ${borderColor};padding-left:6px;" ${hoverAttr}>
+                <span class="log-ts">${ts}</span>
+                <span class="log-lvl" style="color:${color};">${lvl}</span>
+                <span class="log-msg">${highlightedFull}${ipBadge} ${jsonToggle}</span>
+            </div>`;
         }).join('');
+
+        // Auto-scroll if follow mode is active
+        if (followMode) {
+            el.scrollTop = el.scrollHeight;
+        }
     }
 
     async function fetchAndRender() {
@@ -141,6 +255,20 @@ export default async function({ find, findAll, on, onUnmount, ready, inject }) {
     on('#logsExportBtn',  'click', exportLogs);
     on('#logsClearBtn',   'click', () => { logs = []; renderLogs(); });
     on('#logsTailSelect', 'change', fetchAndRender);
+    on('#logsDurationSelect', 'change', (e, sel) => {
+        durationFilter = parseInt(sel.value) || 0;
+        renderLogs();
+    });
+    // Follow mode toggle
+    const followBtn = find('#logsFollowBtn');
+    if (followBtn) {
+        followBtn.classList.add('active');
+        on('#logsFollowBtn', 'click', (e, btn) => {
+            followMode = !followMode;
+            btn.classList.toggle('active', followMode);
+            btn.title = followMode ? 'Auto-scroll on' : 'Auto-scroll off';
+        });
+    }
 
     on('#logsSearch', 'input', (e, inp) => {
         searchTerm = inp.value.trim();
@@ -192,7 +320,7 @@ export default async function({ find, findAll, on, onUnmount, ready, inject }) {
         e.preventDefault();
         const { clickmenu } = oja;
         clickmenu.show(e.clientX, e.clientY, [
-            { label: `Block ${ip}`, icon: '🛡️', action: () => emit('firewall:open-rule', { ip, host }) },
+            { label: `Block ${ip}`, action: () => emit('firewall:open-rule', { ip, host }) },
         ]);
     });
 

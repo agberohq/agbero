@@ -1,33 +1,63 @@
 /**
  * pages/map.js — Map / route graph page.
+ *
+ * The graph renders with native SVG (js/graph.js + js/graph-layout.js). There is
+ * no D3 and no CDN: the whole page works offline and the admin CSP does not
+ * have to allow a third-party script origin.
  */
 import { clickmenu } from '../lib/oja.full.esm.js';
+import { storeLocal } from '../js/store.js';
 
 export default async function({ find, on, onUnmount, ready, inject }) {
     const { store, api, oja } = inject('app');
     const { emit, listen, clipboard, notify } = oja;
     let graph = null, paused = true, pollTimer = null;
 
-    // Load D3 + graph.js
+    // preferences
+    const PREFS_KEY = 'mapPrefs';
+    const DEFAULTS = { view: 'force', orientation: 'LR', density: 'detailed', animate: true };
+    let prefs = Object.assign({}, DEFAULTS, storeLocal.get(PREFS_KEY) || {});
+
+    function savePrefs(patch) {
+        prefs = Object.assign({}, prefs, patch);
+        storeLocal.set(PREFS_KEY, prefs);
+    }
+
+    // Load the layout engine then the renderer (both served from the admin FS).
     async function loadGraphDeps() {
-        if (window.RouteGraph) return;
+        if (window.RouteGraph && window.GraphLayout) return;
         const load = src => new Promise((res, rej) => {
             const s = document.createElement('script');
-            s.src = src; s.onload = res; s.onerror = rej;
+            s.src = src;
+            s.onload = res;
+            s.onerror = () => rej(new Error(`failed to load ${src}`));
             document.head.appendChild(s);
         });
-        await load('https://d3js.org/d3.v7.min.js');
-        await load('js/graph.js');
+        if (!window.GraphLayout) await load('js/graph-layout.js');
+        if (!window.RouteGraph)  await load('js/graph.js');
     }
 
     function hideLoading() { const el = find('#mapLoading'); if (el) el.style.display = 'none'; }
 
+    function setLoading(msg) {
+        const el = find('#mapLoading');
+        if (!el) return;
+        const textEl = el.querySelector('div > div:last-child');
+        if (textEl) textEl.textContent = msg || 'Loading route graph…';
+        el.style.display = 'flex';
+    }
+
     function showEmpty() {
         hideLoading();
+        if (graph) { graph.destroy(); graph = null; }
         const el = find('#graphContainer');
         if (el) el.innerHTML = `<div class="empty-state" style="margin-top:80px;">
-            <span>🗺️ No routes configured</span>
-            <span>Add a host to see the route graph</span>
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" style="opacity:0.4;margin-bottom:8px;">
+                <rect x="4" y="4" width="40" height="40" rx="8" stroke="var(--text-mute)" stroke-width="2" fill="none"/>
+                <path d="M14 24h20M24 14v20" stroke="var(--text-mute)" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <div style="font-weight:500;">No routes configured</div>
+            <div style="color:var(--text-mute);font-size:12px;margin-top:4px;">Add a host to see the route graph</div>
             <button class="btn primary small" style="margin-top:12px;" id="mapAddHostBtn">+ Add Host</button>
         </div>`;
         on('#mapAddHostBtn', 'click', () => emit('app:navigate', { path: '/add-host' }));
@@ -164,26 +194,82 @@ export default async function({ find, on, onUnmount, ready, inject }) {
         clickmenu.show(event.clientX, event.clientY, items);
     }
 
-    // Search
+    // Search with debounce
     let _searchTerm = '';
+    let _searchTimer = null;
+    let _legendFilter = null;  // node type filtered via legend click
+    let _healthFilter = false; // show only unhealthy nodes
 
-    function _applySearch(term) {
-        _searchTerm = term.toLowerCase().trim();
+    function _updateNodeVisibility() {
         if (!graph?.data?.nodes) return;
         const svg = document.querySelector('#graphContainer svg');
         if (!svg) return;
-        svg.querySelectorAll('.node-group').forEach(el => {
+        svg.querySelectorAll('.gnode').forEach(el => {
             const label = (el.dataset.label || '').toLowerCase();
             const id    = (el.dataset.id    || '').toLowerCase();
-            const match = !_searchTerm || label.includes(_searchTerm) || id.includes(_searchTerm);
+            const type  = (el.dataset.id || '').split('.').pop() || '';
+            const nodeType = el.classList.contains('gdot--host') ? 'host' :
+                            el.classList.contains('gdot--route') ? 'route' :
+                            el.classList.contains('gdot--backend') ? 'backend' :
+                            el.classList.contains('gdot--root') ? 'root' :
+                            el.classList.contains('gdot--serverless') ? 'serverless' : '';
+            const status = el.classList.contains('status--dead') ? 'dead' :
+                          el.classList.contains('status--degraded') ? 'degraded' : 'ok';
+            let match = true;
+            if (_searchTerm) {
+                match = label.includes(_searchTerm) || id.includes(_searchTerm);
+            }
+            if (_legendFilter) {
+                match = match && (nodeType === _legendFilter);
+            }
+            if (_healthFilter) {
+                match = match && (status === 'dead' || status === 'degraded');
+            }
             el.style.opacity = match ? '1' : '0.15';
         });
+        svg.querySelectorAll('.gedge, .gedge-flow').forEach(el => {
+            const target = (el.dataset.target || '').toLowerCase();
+            const source = (el.dataset.source || '').toLowerCase();
+            const match = !_searchTerm && !_legendFilter && !_healthFilter
+                || target.includes(_searchTerm) || source.includes(_searchTerm);
+            el.style.opacity = match ? '' : '0.08';
+        });
+    }
+
+    function _applySearch(term) {
+        _searchTerm = term.toLowerCase().trim();
+        _updateNodeVisibility();
+    }
+
+    function _updateSummary() {
+        const el = find('#mapSummary');
+        if (!el || !graph?.data?.nodes) return;
+        const nodes = graph.data.nodes;
+        const counts = { host: 0, route: 0, backend: 0, serverless: 0 };
+        nodes.forEach(n => { if (counts.hasOwnProperty(n.type)) counts[n.type]++; });
+        const parts = [];
+        if (counts.host) parts.push(counts.host + ' host' + (counts.host > 1 ? 's' : ''));
+        if (counts.route) parts.push(counts.route + ' route' + (counts.route > 1 ? 's' : ''));
+        if (counts.backend) parts.push(counts.backend + ' backend' + (counts.backend > 1 ? 's' : ''));
+        if (counts.serverless) parts.push(counts.serverless + ' worker' + (counts.serverless > 1 ? 's' : ''));
+        el.textContent = parts.join(' · ');
+    }
+
+    function _updateLastUpdated() {
+        const el = find('#mapLastUpdated');
+        if (!el) return;
+        const now = new Date();
+        const h = now.getHours().toString().padStart(2, '0');
+        const m = now.getMinutes().toString().padStart(2, '0');
+        const s = now.getSeconds().toString().padStart(2, '0');
+        el.textContent = 'Updated ' + h + ':' + m + ':' + s;
     }
 
     on('#mapSearch', 'input', (e, inp) => {
         const clearBtn = find('#mapSearchClear');
         if (clearBtn) clearBtn.style.display = inp.value ? '' : 'none';
-        _applySearch(inp.value);
+        if (_searchTimer) clearTimeout(_searchTimer);
+        _searchTimer = setTimeout(() => _applySearch(inp.value), 150);
     });
 
     on('#mapSearchClear', 'click', () => {
@@ -196,34 +282,47 @@ export default async function({ find, on, onUnmount, ready, inject }) {
     // Refresh
     async function refresh() {
         if (!graph) return;
+        setLoading('Refreshing data…');
         const config = store.get('lastConfig') || await api.fetchConfig();
         const uptime = await api.fetchUptime();
         if (!config || !uptime) return;
         if (Object.keys(config.hosts || {}).length === 0) { showEmpty(); return; }
-        graph.render(config, uptime.hosts || {});
+        if (!graph) {
+            // The empty state destroyed the instance; rebuild on the first host.
+            if (typeof RouteGraph === 'undefined') return;
+            createGraph();
+        }
+        // update() is a no-op relayout-free refresh when the topology is unchanged.
+        graph.update(config, uptime.hosts || {});
         hideLoading();
-        // Re-apply search after render
         if (_searchTerm) _applySearch(_searchTerm);
-        // Add data-label and data-id to node groups for search
-        requestAnimationFrame(() => {
-            document.querySelectorAll('#graphContainer .node').forEach(el => {
-                el.classList.add('node-group');
-                const d = el.__data__;
-                if (d) { el.dataset.label = d.label || ''; el.dataset.id = d.id || ''; }
-            });
-        });
+        _updateSummary();
+        _updateLastUpdated();
     }
 
-    // Init
-    async function init() {
-        try { await loadGraphDeps(); }
-        catch (err) {
-            hideLoading();
-            const el = find('#graphContainer');
-            if (el) el.innerHTML = `<div class="empty-state" style="margin-top:60px;">⚠️ Failed to load graph: ${err.message}</div>`;
-            return;
-        }
-        graph = new RouteGraph('graphContainer');
+    // Create (or recreate) the graph instance with its page callbacks.
+    function createGraph() {
+        graph = new RouteGraph('graphContainer', {
+            mode: prefs.view,
+            orientation: prefs.orientation,
+            density: prefs.density,
+            animate: prefs.animate
+        });
+
+        graph._onZoom = function (k) {
+            const el = find('#mapZoomPct');
+            if (el) el.textContent = Math.round(k * 100) + '%';
+        };
+
+        // The topology can be wider than the canvas at a readable scale; say so
+        // instead of silently shrinking the graph into illegibility.
+        graph._onOverflow = function (overflow) {
+            const hint = find('#mapHint');
+            if (!hint) return;
+            hint.textContent = overflow
+                ? (prefs.view === 'topology' ? 'Drag to pan · Collapse hosts to fit the view' : 'Drag to pan · Zoom out to see everything')
+                : '';
+        };
 
         graph._onClick = function(d) {
             openInfoPanel(d);
@@ -235,6 +334,39 @@ export default async function({ find, on, onUnmount, ready, inject }) {
         graph._onRightClick = function(event, d) {
             showNodeContextMenu(event, d);
         };
+
+        return graph;
+    }
+
+    // Init
+    async function init() {
+        try { await loadGraphDeps(); }
+        catch (err) {
+            hideLoading();
+            const el = find('#graphContainer');
+            if (el) el.innerHTML = `<div class="empty-state" style="margin-top:60px;">
+                <div style="color:var(--danger);font-weight:500;margin-bottom:8px;">Failed to load graph</div>
+                <div style="color:var(--text-mute);font-size:12px;margin-bottom:12px;">${err.message}</div>
+                <button class="btn small" id="mapRetryBtn">Retry</button>
+            </div>`;
+            on('#mapRetryBtn', 'click', () => {
+                const el = find('#graphContainer');
+                if (el) el.innerHTML = '';
+                setLoading('Loading graph scripts…');
+                init();
+            });
+            return;
+        }
+
+        createGraph();
+
+        // Reflect saved prefs in the toolbar.
+        const orientSel = find('#mapOrientation');
+        if (orientSel) orientSel.value = prefs.orientation;
+        const animChk = find('#mapAnimate');
+        if (animChk) animChk.checked = !!prefs.animate;
+        _syncDensityButtons();
+        _syncViewTabs();
 
         await refresh();
     }
@@ -270,15 +402,188 @@ export default async function({ find, on, onUnmount, ready, inject }) {
 
     on('#resetZoomBtn', 'click', () => graph?.resetZoom());
 
+    // graph controls
+
+    function _syncViewTabs() {
+        document.querySelectorAll('#mapViewTabs [data-view]').forEach(btn => {
+            const active = btn.dataset.view === prefs.view;
+            btn.classList.toggle('active', active);
+            btn.setAttribute('aria-selected', String(active));
+        });
+        const controls = find('#topologyControls');
+        if (controls) controls.style.display = prefs.view === 'topology' ? '' : 'none';
+    }
+
+    function _syncDensityButtons() {
+        document.querySelectorAll('#mapDensity [data-density]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.density === prefs.density);
+            btn.setAttribute('aria-pressed', String(btn.dataset.density === prefs.density));
+        });
+    }
+
+    on('#mapViewTabs [data-view]', 'click', (e, btn) => {
+        const view = btn.dataset.view === 'topology' ? 'topology' : 'force';
+        if (view === prefs.view) return;
+        savePrefs({ view });
+        _syncViewTabs();
+        graph?.setOptions({ mode: view });
+        _reflow();
+    });
+
+    on('#mapCollapseBtn', 'click', () => { graph?.collapseAll(); _reflow(); });
+    on('#mapExpandBtn',   'click', () => { graph?.expandAll();   _reflow(); });
+
+    // Interactive legend — click to filter by node type, click again to clear
+    on('.legend-item', 'click', (e, item) => {
+        const type = item.dataset.type;
+        const status = item.dataset.status;
+        if (type) {
+            _legendFilter = (_legendFilter === type) ? null : type;
+        } else if (status) {
+            _healthFilter = !_healthFilter;
+        }
+        // Update visual feedback
+        document.querySelectorAll('.legend-item').forEach(li => {
+            li.style.fontWeight = (li === item) && (_legendFilter || _healthFilter) ? '600' : '';
+        });
+        _updateNodeVisibility();
+    });
+
+    // Health filter toggle
+    on('#mapHealthFilter', 'change', (e, chk) => {
+        _healthFilter = !!chk.checked;
+        _updateNodeVisibility();
+    });
+
+    // Export as SVG
+    on('#mapExportBtn', 'click', () => {
+        const svg = document.querySelector('#graphContainer svg');
+        if (!svg) return;
+        const clone = svg.cloneNode(true);
+        clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        const data = new XMLSerializer().serializeToString(clone);
+        const blob = new Blob([data], { type: 'image/svg+xml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'agbero-topology.svg';
+        a.click();
+        URL.revokeObjectURL(url);
+    });
+
+    // Fit to selection
+    on('#mapFitSelection', 'click', () => {
+        if (!graph || !graph._selected) return;
+        const nodeEl = graph._nodeEls.get(graph._selected);
+        if (!nodeEl || !graph.layout?.positions) return;
+        const pos = graph.layout.positions[graph._selected];
+        if (!pos) return;
+        // Zoom to center on the selected node
+        const box = graph._svg.getBoundingClientRect();
+        const z = graph._zoom;
+        const targetK = Math.min(box.width / 300, box.height / 200, 3);
+        graph._userZoom = true;
+        graph._zoom = {
+            k: targetK,
+            x: box.width / 2 - (pos.x + (pos.w || 50) / 2) * targetK,
+            y: box.height / 2 - (pos.y + (pos.h || 50) / 2) * targetK
+        };
+        graph._applyTransform();
+    });
+
+    // A mode swap changes the canvas bounds; re-apply the current search filter.
+    function _reflow() {
+        requestAnimationFrame(() => {
+            graph?.fit();
+            _updateNodeVisibility();
+            _updateSummary();
+        });
+    }
+
+    on('#mapOrientation', 'change', (e, sel) => {
+        savePrefs({ orientation: sel.value === 'TB' ? 'TB' : 'LR' });
+        graph?.setOptions({ orientation: prefs.orientation });
+    });
+
+    on('#mapDensity [data-density]', 'click', (e, btn) => {
+        savePrefs({ density: btn.dataset.density });
+        _syncDensityButtons();
+        graph?.setOptions({ density: prefs.density });
+    });
+
+    on('#mapAnimate', 'change', (e, box) => {
+        savePrefs({ animate: !!box.checked });
+        graph?.setOptions({ animate: prefs.animate });
+    });
+
+    on('#mapFitBtn',   'click', () => graph?.fit());
+    on('#mapZoomIn',   'click', () => graph?.zoomBy(1.25));
+    on('#mapZoomOut',  'click', () => graph?.zoomBy(0.8));
+
     on('#mapInfoClose', 'click', () => {
+        closeInfoPanel();
+    });
+
+    function closeInfoPanel() {
         const p = find('#mapInfoPanel');
         if (p) p.style.display = 'none';
+        graph?.clearSelection();
+    }
+
+    // Keyboard shortcuts for the map page
+    on(document, 'keydown', (e) => {
+        // Escape closes the info panel
+        if (e.key === 'Escape') {
+            const panel = find('#mapInfoPanel');
+            if (panel && panel.style.display !== 'none') {
+                e.preventDefault();
+                closeInfoPanel();
+                return;
+            }
+        }
+        // Ctrl+Shift+F focuses the search input
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'F') {
+            e.preventDefault();
+            const inp = find('#mapSearch');
+            if (inp) inp.focus();
+        }
+        // C collapses all, E expands all (when not in an input)
+        if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+            const tag = (e.target.tagName || '').toLowerCase();
+            if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') {
+                if (e.key === 'c' || e.key === 'C') {
+                    e.preventDefault();
+                    graph?.collapseAll();
+                    _reflow();
+                }
+                if (e.key === 'e' || e.key === 'E') {
+                    e.preventDefault();
+                    graph?.expandAll();
+                    _reflow();
+                }
+            }
+        }
+    });
+
+    // Reset preferences
+    on('#mapResetPrefsBtn', 'click', () => {
+        storeLocal.remove(PREFS_KEY);
+        prefs = Object.assign({}, DEFAULTS);
+        _syncViewTabs();
+        _syncDensityButtons();
+        const orientSel = find('#mapOrientation');
+        if (orientSel) orientSel.value = prefs.orientation;
+        const animChk = find('#mapAnimate');
+        if (animChk) animChk.checked = prefs.animate;
+        graph?.setOptions({ mode: prefs.view, orientation: prefs.orientation, density: prefs.density, animate: prefs.animate });
+        _reflow();
     });
 
     pollTimer = setInterval(() => { if (!paused) refresh(); }, 30_000);
     onUnmount(() => {
         unsub?.();
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        if (graph) { graph.destroy(); graph = null; }
     });
     ready();
 }

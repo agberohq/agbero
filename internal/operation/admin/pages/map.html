@@ -1,26 +1,67 @@
 <div class="page full-width-page active" style="min-height:70vh;display:flex;flex-direction:column;">
     <div class="graph-toolbar">
-        <div class="graph-legend">
-            <span class="legend-item"><span class="dot root"></span> Agbero</span>
-            <span class="legend-item"><span class="dot host"></span> Host</span>
-            <span class="legend-item"><span class="dot route"></span> HTTP</span>
-            <span class="legend-item"><span class="dot" style="background:#5ac8fa;"></span> TCP</span>
-            <span class="legend-item"><span class="dot" style="background:#ff9500;"></span> UDP</span>
-            <span class="legend-item"><span class="dot" style="background:#af52de;"></span> Worker</span>
-            <span class="legend-item"><span class="dot" style="background:#34c759;"></span> Replay</span>
-            <span class="legend-item"><span class="dot backend"></span> Backend</span>
-            <span class="legend-item"><span class="dot down"></span> Dead</span>
-        </div>
-        <div class="graph-actions">
-            <div style="position:relative;">
-                <input type="text" id="mapSearch" class="search-input"
-                       placeholder="Search nodes…"
-                       style="width:180px;height:var(--btn-h-sm);padding:0 26px 0 8px;font-size:12px;box-sizing:border-box;"
-                       autocomplete="off" spellcheck="false">
-                <button id="mapSearchClear" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text-mute);font-size:12px;padding:0;line-height:1;display:none;">✕</button>
+        <div class="graph-toolbar-row">
+            <div class="graph-tabs" id="mapViewTabs" role="tablist" aria-label="Map view">
+                <button type="button" role="tab" data-view="force" class="active" aria-selected="true">Normal</button>
+                <button type="button" role="tab" data-view="topology" aria-selected="false">Topology &amp; Nodes</button>
             </div>
-            <button class="btn small" id="mapPauseBtn">▶ Resume</button>
-            <button class="btn small" id="resetZoomBtn">⊙ Reset View</button>
+            <div class="graph-legend">
+                <span class="legend-item" data-type="root"><span class="dot root"></span> Agbero</span>
+                <span class="legend-item" data-type="host"><span class="dot host"></span> Host</span>
+                <span class="legend-item" data-type="route"><span class="dot route"></span> HTTP</span>
+                <span class="legend-item" data-type="proxy"><span class="dot" style="background:#5ac8fa;"></span> TCP</span>
+                <span class="legend-item" data-type="proxy-udp"><span class="dot" style="background:#ff9500;"></span> UDP</span>
+                <span class="legend-item" data-type="serverless"><span class="dot" style="background:#af52de;"></span> Worker</span>
+                <span class="legend-item" data-type="replay"><span class="dot" style="background:#34c759;"></span> Replay</span>
+                <span class="legend-item" data-type="backend"><span class="dot backend"></span> Backend</span>
+                <span class="legend-item" data-status="dead"><span class="dot down"></span> Down</span>
+                <span class="legend-item" data-status="degraded"><span class="dot warn"></span> Degraded</span>
+            </div>
+            <span class="graph-summary" id="mapSummary" style="font-size:11px;color:var(--text-mute);white-space:nowrap;"></span>
+            <div class="graph-actions">
+                <div style="position:relative;">
+                    <input type="text" id="mapSearch" class="search-input"
+                           placeholder="Search nodes…"
+                           style="width:160px;height:var(--btn-h-sm);padding:0 26px 0 8px;font-size:12px;box-sizing:border-box;"
+                           autocomplete="off" spellcheck="false">
+                    <button id="mapSearchClear" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text-mute);font-size:12px;padding:0;line-height:1;display:none;">✕</button>
+                </div>
+                <label class="graph-toggle" title="Show only unhealthy nodes">
+                    <input type="checkbox" id="mapHealthFilter"> Unhealthy
+                </label>
+                <button class="btn small" id="mapExportBtn" title="Export as SVG">⤓ Export</button>
+                <button class="btn small" id="mapResetPrefsBtn" title="Reset preferences to defaults" style="font-size:10px;">↺</button>
+                <button class="btn small" id="resetZoomBtn" title="Reset view">⊙ Reset</button>
+                <button class="btn small" id="mapPauseBtn">▶ Resume</button>
+                <span class="graph-last-updated" id="mapLastUpdated" style="font-size:10px;color:var(--text-mute);white-space:nowrap;"></span>
+            </div>
+        </div>
+
+        <!-- Topology-only controls -->
+        <div class="graph-toolbar-row" id="topologyControls" style="display:none;">
+            <div class="graph-seg" id="mapDensity" role="group" aria-label="Information density">
+                <button type="button" data-density="compact"  aria-pressed="false" title="Nodes and health only">Compact</button>
+                <button type="button" data-density="detailed" aria-pressed="true"  title="Node metrics and connection flow">Detailed</button>
+                <button type="button" data-density="inspect"  aria-pressed="false" title="All available metrics">Inspect</button>
+            </div>
+            <select id="mapOrientation" class="graph-select" title="Layout orientation" aria-label="Layout orientation">
+                <option value="LR">Horizontal</option>
+                <option value="TB">Vertical</option>
+            </select>
+            <label class="graph-toggle" title="Animate traffic along connections">
+                <input type="checkbox" id="mapAnimate" checked> Traffic
+            </label>
+            <span class="graph-divider"></span>
+            <button class="btn small" id="mapCollapseBtn" title="Collapse every host">⊟ Collapse</button>
+            <button class="btn small" id="mapExpandBtn"   title="Expand every host">⊞ Expand</button>
+            <span class="graph-divider"></span>
+            <div class="graph-zoom" role="group" aria-label="Zoom">
+                <button type="button" class="btn small" id="mapZoomOut" title="Zoom out">−</button>
+                <span class="graph-zoom-pct" id="mapZoomPct">100%</span>
+                <button type="button" class="btn small" id="mapZoomIn"  title="Zoom in">+</button>
+            </div>
+            <button type="button" class="btn small" id="mapFitBtn" title="Fit topology">Fit</button>
+            <span class="graph-hint" id="mapHint"></span>
         </div>
     </div>
 
@@ -46,6 +87,9 @@
             </div>
             <div id="mapInfoBody" style="padding:14px 16px;font-size:12px;"></div>
             <div id="mapInfoActions" style="padding:0 16px 16px;display:flex;flex-direction:column;gap:6px;"></div>
+            <div style="padding:8px 16px;border-top:1px solid var(--border);">
+                <button class="btn small" id="mapFitSelection" style="width:100%;">⊡ Fit to Selection</button>
+            </div>
         </div>
     </div>
 </div>

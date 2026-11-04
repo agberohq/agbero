@@ -16,6 +16,7 @@ import (
 	"github.com/agberohq/agbero/internal/hub/orchestrator"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -30,6 +31,16 @@ func setupTestRepo(t *testing.T, path string) {
 	r, err := git.PlainInit(path, false)
 	if err != nil {
 		t.Fatalf("git init failed: %v", err)
+	}
+	// go-git v6 merges the host git config into every commit, so fixture repos
+	// must not inherit commit.gpgSign from the developer's machine.
+	cfg, err := r.Config()
+	if err != nil {
+		t.Fatalf("read repo config failed: %v", err)
+	}
+	cfg.Commit.GpgSign = config.OptBoolFalse
+	if err := r.SetConfig(cfg); err != nil {
+		t.Fatalf("disable commit signing failed: %v", err)
 	}
 	w, err := r.Worktree()
 	if err != nil {

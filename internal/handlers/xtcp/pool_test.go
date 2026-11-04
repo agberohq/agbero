@@ -271,7 +271,6 @@ func TestConnPoolConcurrent(t *testing.T) {
 		<-done
 	}
 
-	// Verify pool state
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 

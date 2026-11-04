@@ -45,6 +45,11 @@ type Route struct {
 	WAF         WAFRoute      `hcl:"waf,block,omitempty" json:"waf,omitempty"`
 	Compression Compression   `hcl:"compression,block,omitempty" json:"compression,omitempty"`
 	Fallback    Fallback      `hcl:"fallback,block,omitempty" json:"fallback,omitempty"`
+
+	// EnforceBackendSSRF is a runtime flag set by the auto-registration path
+	// to force SSRF protection on all backends regardless of global config.
+	// It is never set by HCL config or JSON deserialisation.
+	EnforceBackendSSRF bool `hcl:"-" json:"-"`
 }
 
 func (r *Route) Validate() error {

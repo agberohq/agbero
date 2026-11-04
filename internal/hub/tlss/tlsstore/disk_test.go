@@ -29,8 +29,6 @@ func TestDiskStorage_SeparateDirectories(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	// Verify file exists in certDir
-
 	if !certDir.FileExists(filepath.Join(IssuerACME, "example.com.crt")) {
 		t.Error("Certificate not saved in certDir")
 	}
@@ -40,7 +38,6 @@ func TestDiskStorage_SeparateDirectories(t *testing.T) {
 		t.Fatalf("Save CA failed: %v", err)
 	}
 
-	// Verify CA file exists in dataDir
 	if !dataDir.FileExists(IssuerCA, "ca.crt") {
 		t.Error("CA certificate not saved in dataDir")
 	}
@@ -284,7 +281,6 @@ func TestDiskStorage_Delete(t *testing.T) {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
-	// Verify domain cert is gone
 	_, _, err = disk.Load("delete.com")
 	if err != ErrCertNotFound {
 		t.Errorf("Expected ErrCertNotFound, got %v", err)

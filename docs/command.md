@@ -172,9 +172,11 @@ agbero keeper <subcommand> [flags]
 **Key format:** `namespace/key` or `ss://namespace/key`
 
 **Passphrase resolution order (at startup):**
-1. `keeper.passphrase` field in `agbero.hcl`
-2. `AGBERO_PASSPHRASE` environment variable
-3. Interactive terminal prompt (if running in a terminal)
+1. `keeper.passphrase` field in `agbero.hcl` (may be an `env.` or `ss://` reference)
+2. `keeper.passphrase_file` (recommended for services; `0600` or `0640 root:agbero`)
+3. `AGBERO_KEEPER_PASSPHRASE` environment variable
+4. `AGBERO_PASSPHRASE` environment variable (deprecated alias)
+5. Interactive terminal prompt (if running in a terminal)
 
 **Examples:**
 ```bash
@@ -214,12 +216,12 @@ sudo agbero service stop
 agbero keeper rotate
 
 # 3. Update your passphrase wherever it is stored:
-#    - Update AGBERO_PASSPHRASE in your system service environment
+#    - Update AGBERO_KEEPER_PASSPHRASE in your system service environment
 #    - Update the secret in your secrets manager / CI environment
 #    - Update agbero.hcl if you hardcoded it (please don't)
 
 # 4. Restart Agbero with the new passphrase
-AGBERO_PASSPHRASE=newpassphrase sudo agbero service start
+AGBERO_KEEPER_PASSPHRASE=newpassphrase sudo agbero service start
 ```
 
 > **Important notes:**
@@ -653,7 +655,7 @@ When `--config` is not specified, Agbero looks for `agbero.hcl` in this order:
 
 | Variable | Description | Source File |
 |----------|-------------|-------------|
-| `AGBERO_PASSPHRASE` | Master passphrase for the keeper. Required in non-interactive environments (system services, containers, CI). | `hub/secrets/keeper.go` |
+| `AGBERO_KEEPER_PASSPHRASE` | Master passphrase for the keeper. Required in non-interactive environments (system services, containers, CI). | `hub/secrets/keeper.go` |
 | `EDITOR` | Editor used by `config edit` and `home @editor` | `helper/configuration.go` |
 | `AGBERO_HOME` | Override configuration home directory | `core/woos/paths.go` |
 

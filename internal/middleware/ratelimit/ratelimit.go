@@ -4,12 +4,14 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/jack"
+	"github.com/olekukonko/ll"
 	"github.com/olekukonko/mappo"
 	"golang.org/x/time/rate"
 )
@@ -53,6 +55,9 @@ type Config struct {
 	IPManager       *zulu.IPManager
 	CleanupInterval time.Duration
 	SharedState     woos.SharedState
+	// Logger is optional; it is used once to report a degraded (per-node) mode
+	// when the shared state becomes unreachable.
+	Logger *ll.Logger
 }
 
 type atomicEntry struct {
@@ -68,6 +73,8 @@ type RateLimiter struct {
 	scheduler   *jack.Scheduler
 	ipMgr       *zulu.IPManager
 	sharedState woos.SharedState
+	logger      *ll.Logger
+	degradeOnce sync.Once
 }
 
 // New instantiates a dynamic request throttling layer.
@@ -75,6 +82,10 @@ type RateLimiter struct {
 func New(cfg Config) *RateLimiter {
 	if cfg.CleanupInterval <= 0 {
 		cfg.CleanupInterval = defaultCleanupInterval
+	}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = ll.New("ratelimit").Disable()
 	}
 
 	rl := &RateLimiter{
@@ -84,6 +95,7 @@ func New(cfg Config) *RateLimiter {
 		maxEntries:  cfg.MaxEntries,
 		ipMgr:       cfg.IPManager,
 		sharedState: cfg.SharedState,
+		logger:      logger,
 	}
 
 	sched, _ := jack.NewScheduler(gcRoutineName, jack.NewPool(gcRoutinePoolSize), jack.Routine{
@@ -112,11 +124,23 @@ func (rl *RateLimiter) allowInternal(r *http.Request, key string, pol RatePolicy
 	}
 	if rl.sharedState != nil {
 		allowed, err := rl.sharedState.AllowRateLimit(r.Context(), key, pol.Requests, pol.Window, pol.Burst)
-		if err != nil {
-			return true
+		if err == nil {
+			return allowed
 		}
-		return allowed
+		// The cluster-wide counter is unreachable. Falling back to the
+		// in-process bucket keeps the limit roughly in force per node instead of
+		// disabling it entirely — a Redis outage must not turn into an
+		// unthrottled path for every node in the cluster.
+		rl.degradeOnce.Do(func() {
+			rl.logger.Fields("err", err).Warn(
+				"rate limit: shared state unavailable, degrading to per-node buckets")
+		})
 	}
+	return rl.allowLocal(key, pol)
+}
+
+// allowLocal evaluates the request against this node's token bucket only.
+func (rl *RateLimiter) allowLocal(key string, pol RatePolicy) bool {
 	now := time.Now().Unix()
 	if curr, ok := rl.data.Get(key); ok {
 		for {

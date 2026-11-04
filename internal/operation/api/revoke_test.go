@@ -163,7 +163,6 @@ func TestRevokeHandler(t *testing.T) {
 			t.Errorf("expected jti valid-jti-123, got %s", resp["jti"])
 		}
 
-		// Verify it was actually stored
 		if !store.IsRevoked("valid-jti-123") {
 			t.Error("expected jti to be revoked in store")
 		}

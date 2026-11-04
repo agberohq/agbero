@@ -18,4 +18,11 @@ type Keeper struct {
 	// Passphrase is the master passphrase to unlock the store.
 	// This should be a secret reference (e.g., "env.SECRET_STORE_PASS") to avoid plaintext.
 	Passphrase expect.Value `hcl:"passphrase,attr" json:"passphrase"` // can later be *security.Value
+
+	// PassphraseFile points at a file containing the master passphrase.
+	// It is the portable delivery mechanism for services: no secret in the
+	// unit file, registry, or environment. Resolution order is
+	// Passphrase -> PassphraseFile -> AGBERO_KEEPER_PASSPHRASE ->
+	// AGBERO_PASSPHRASE -> interactive prompt.
+	PassphraseFile string `hcl:"passphrase_file,attr" json:"passphrase_file"`
 }

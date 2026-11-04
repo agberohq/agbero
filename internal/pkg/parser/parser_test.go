@@ -796,3 +796,134 @@ func TestMarshal_omitemptyBlocksPreservedWhenSet(t *testing.T) {
 		t.Error("health_check path should appear in output")
 	}
 }
+
+// TestUnmarshalHost_envMap is the regression for a reflect panic: setMap built
+// map values with reflect.ValueOf(string), which is not assignable to named
+// string types, so `env = { ... }` (map[string]expect.Value) crashed the process
+// instead of returning an error.
+func TestUnmarshalHost_envMap(t *testing.T) {
+	path := writeTemp(t, `
+domains = ["env.example"]
+
+route "/fn" {
+  serverless {
+    enabled = "on"
+    work "render" {
+      enabled = "on"
+      command = ["node", "index.js"]
+      env = { "NODE_ENV" = "production" }
+    }
+  }
+  env = { "API_URL" = "https://api.internal,a,b" }
+}
+`)
+
+	h, err := ParseHostConfig(path)
+	if err != nil {
+		t.Fatalf("ParseHostConfig: %v", err)
+	}
+	if len(h.Routes) != 1 {
+		t.Fatalf("expected 1 route, got %d", len(h.Routes))
+	}
+	if got := h.Routes[0].Env["API_URL"].String(); got != "https://api.internal,a,b" {
+		t.Errorf("route env lost (got %q)", got)
+	}
+	w := h.Routes[0].Serverless.Workers
+	if len(w) != 1 || w[0].Env["NODE_ENV"].String() != "production" {
+		t.Errorf("work env lost: %+v", w)
+	}
+}
+
+// TestUnmarshalHost_ttlPolicyDurationMap covers map[string]expect.Duration, the
+// other named-type map in the schema (int64-backed, encoded as a Go duration).
+func TestUnmarshalHost_ttlPolicyDurationMap(t *testing.T) {
+	path := writeTemp(t, `
+domains = ["cache.example"]
+
+route "/" {
+  web {
+    root = "/tmp"
+  }
+  cache {
+    enabled = "on"
+    driver  = "memory"
+    ttl     = "5m"
+    policy {
+      enabled = "on"
+      content_type = {
+        "text/html" = "1h"
+        "image/png" = "24h"
+      }
+    }
+  }
+}
+`)
+
+	h, err := ParseHostConfig(path)
+	if err != nil {
+		t.Fatalf("ParseHostConfig: %v", err)
+	}
+	ct := h.Routes[0].Cache.TTLPolicy.ContentType
+	if got := time.Duration(ct["text/html"]); got != time.Hour {
+		t.Errorf("content_type[t ext/html] = %v, want 1h", got)
+	}
+	if got := time.Duration(ct["image/png"]); got != 24*time.Hour {
+		t.Errorf("content_type[image/png] = %v, want 24h", got)
+	}
+}
+
+// TestMarshal_RoundTripsMaps is the encoder half of the map fix: env, claim maps
+// and TTL-policy overrides were silently dropped when a config was re-encoded
+// (the API rewrites HCL on every host update).
+func TestMarshal_RoundTripsMaps(t *testing.T) {
+	h := alaye.Host{
+		Domains: []string{"env.example"},
+		Routes: []alaye.Route{{
+			Enabled: expect.Active,
+			Path:    "/",
+			Env:     map[string]expect.Value{"API_URL": "https://api.internal,a,b"},
+			Web:     alaye.Web{Enabled: expect.Active, Root: "/tmp"},
+			Cache: alaye.Cache{
+				Enabled: expect.Active,
+				Driver:  "memory",
+				TTL:     expect.Duration(5 * time.Minute),
+				TTLPolicy: alaye.TTLPolicy{
+					Enabled:     expect.Active,
+					ContentType: map[string]expect.Duration{"text/html": expect.Duration(time.Hour)},
+				},
+			},
+			JWTAuth: alaye.JWTAuth{
+				Enabled:  expect.Active,
+				Secret:   "jwt-secret",
+				ClaimMap: map[string]string{"sub": "X-User-ID"},
+			},
+		}},
+	}
+
+	data, err := MarshalBytes(&h)
+	if err != nil {
+		t.Fatalf("MarshalBytes: %v", err)
+	}
+	out := string(data)
+	for _, want := range []string{"env", "API_URL", "claims_to_headers", "content_type"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("encoded HCL is missing %q:\n%s", want, out)
+		}
+	}
+
+	path := writeTemp(t, out)
+	back, err := ParseHostConfig(path)
+	if err != nil {
+		t.Fatalf("re-parsing encoded HCL: %v\n%s", err, out)
+	}
+	r := back.Routes[0]
+	if got := r.Env["API_URL"].String(); got != "https://api.internal,a,b" {
+		t.Errorf("env lost in round-trip (got %q)", got)
+	}
+	if got := r.JWTAuth.ClaimMap["sub"]; got != "X-User-ID" {
+		t.Errorf("claim map lost in round-trip (got %q)", got)
+	}
+	if got := time.Duration(r.Cache.TTLPolicy.ContentType["text/html"]); got != time.Hour {
+		t.Errorf("ttl policy content_type lost in round-trip (got %v)", got)
+	}
+}

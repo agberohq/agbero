@@ -197,6 +197,10 @@ func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 		}
 	}
 
+	// Only one goroutine may build a given route at a time: NewRoute applies
+	// defaults to the (published, shared) route config, and two concurrent cold
+	// builds of the same route would write that memory simultaneously.
+	m.buildMu.Lock()
 	h := NewRoute(resource.Proxy{
 		Global:      m.cfg.Global,
 		Host:        host,
@@ -208,6 +212,16 @@ func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 		TunnelPools: m.cfg.TunnelPools,
 		Firewall:    m.firewall,
 	}, route)
+	m.buildMu.Unlock()
+
+	// Another goroutine may have won the race while we were building; reuse its
+	// handler and discard ours.
+	if it, ok := m.cfg.Resource.RouteCache.Load(key); ok {
+		if existing, ok := it.Value.(*Route); ok {
+			_ = h.Close()
+			return existing
+		}
+	}
 
 	newItem := &mappo.Item{Value: h}
 
@@ -246,7 +260,13 @@ func (m *Manager) handleFavicon(w http.ResponseWriter, r *http.Request) {
 
 // redirectToHTTPS constructs and issues a permanent redirect to the HTTPS equivalent of the current request.
 // It respects host-specific bind ports and falls back to global HTTPS configuration for the target URL.
+//
+// The redirect target is built from a *configured* domain, never from the raw
+// Host header: echoing an arbitrary Host back inside a 301 turns this listener
+// into an open redirect, and 301 responses are cacheable, so it is also a
+// cache-poisoning primitive. Requests for unknown virtual hosts get 404.
 func (m *Manager) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 
 	if m.wellKnownProcess(w, r) {
 		return
@@ -256,8 +276,20 @@ func (m *Manager) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		host = r.Host
 	}
+	host = zulu.NormalizeHost(host)
 
-	if lctx, ok := r.Context().Value(woos.ListenerCtxKey).(woos.ListenerCtx); ok && lctx.Owner != nil {
+	lctx, hasLctx := r.Context().Value(woos.ListenerCtxKey).(woos.ListenerCtx)
+	if hasLctx && lctx.Owner != nil && len(lctx.Owner.Domains) > 0 {
+		// A port-owned listener knows its own domain; it is authoritative and
+		// does not depend on what the client sent.
+		host = zulu.NormalizeHost(lctx.Owner.Domains[0])
+	} else if host == "" || m.cfg.HostManager == nil || m.cfg.HostManager.Get(host) == nil {
+		http.Error(w, "Hosting not found", http.StatusNotFound)
+		m.logRequest(host, r, start, http.StatusNotFound, 0)
+		return
+	}
+
+	if hasLctx && lctx.Owner != nil {
 		for _, bindPort := range lctx.Owner.Bind {
 			if bindPort != "" {
 				if _, err := strconv.Atoi(bindPort); err != nil {

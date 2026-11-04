@@ -130,6 +130,46 @@ Global Let's Encrypt defaults.
 | `staging` | `bool` | Use Let's Encrypt staging environment |
 | `short_lived` | `bool` | Request short-lived certificates |
 
+### `tunnel` block
+
+Named outbound SOCKS5 proxy pools. A `tunnel` block is declared at global level
+and referenced by name from a backend (`backend { via = "tor" }`); all outbound
+connections for that backend — including health probes and hedged retries — are
+dialled through the pool instead of directly. Multiple blocks are allowed and
+each `name` must be unique.
+
+```hcl
+tunnel "tor" {
+  enabled  = true
+  protocol = "socks5"
+  servers  = ["127.0.0.1:9050", "127.0.0.1:9051"]
+  strategy = "round_robin"   # round_robin (default) or random
+}
+
+tunnel "vpn-exit" {
+  enabled  = true
+  protocol = "socks5"
+  servers  = ["vpn.example.com:1080"]
+  username = "myuser"
+  password = "ss://network/vpn-pass"  # keep credentials in the keeper
+}
+```
+
+| Field | Type | HCL key | Description |
+|-------|------|---------|-------------|
+| `enabled` | `Enabled` | `enabled` | Enable this tunnel |
+| `name` | `string` | *(label)* | **Required.** Unique name used by `backend.via` |
+| `protocol` | `string` | `protocol` | **Required.** Only `"socks5"` is supported |
+| `servers` | `[]string` | `servers` | **Required.** One or more `host:port` SOCKS5 endpoints |
+| `username` | `Value` | `username` | Optional SOCKS5 username |
+| `password` | `Value` | `password` | Optional SOCKS5 password (use a `ss://` reference) |
+| `strategy` | `string` | `strategy` | `round_robin` (default) or `random` |
+| `timeout` | `Duration` | `timeout` | Dial timeout |
+
+Because the tunnel replaces the transport dialer, `security.block_private_backends`
+does **not** apply to tunnelled backends — the proxy resolves the destination, not
+agbero. Only use tunnels you control.
+
 ### `fallback` block
 
 Global fallback response for unmatched requests. See [Fallback](#fallback-block).
@@ -177,7 +217,7 @@ route "/api/v1" {
 |-------|------|---------|-------------|
 | `enabled` | `Enabled` | `enabled` | Enable/disable this route |
 | `path` | `string` | *(label)* | **Required.** Path prefix. Must start with `/`. |
-| `env` | `map[string]Value` | `env` | Route-scoped env vars |
+| `env` | `map[string]Value` | `env` | Route-scoped env vars, injected into worker processes. HCL: `env = { "KEY" = "value" }` |
 | `strip_prefixes` | `[]string` | `strip_prefixes` | Path prefixes to strip before proxying |
 | `allowed_ips` | `[]string` | `allowed_ips` | Restrict access to these IPs/CIDRs |
 | `rewrites` | `[]Rewrite` | `rewrite` blocks | URL rewrite rules |
@@ -229,6 +269,9 @@ Configures reverse proxy backends.
 | `strategy` | `string` | `strategy` | Load balancing strategy (see below) |
 | `keys` | `[]string` | `keys` | Custom hash keys for consistent/hash strategies |
 | `servers` | `[]Server` | `server` blocks | Upstream backend servers |
+| `via` | `string` | `via` | Name of a global `tunnel` block; all outbound connections for this backend go through that SOCKS5 pool |
+| `tunnel` | `string` | `tunnel` | Inline single-server SOCKS5 URL, e.g. `"socks5://user:pass@127.0.0.1:9050"`. Mutually exclusive with `via` |
+| `idempotent` | `bool` | `idempotent` | Mark the backend safe for speculative (hedged) retries. Only enable for GET/HEAD-style handlers |
 
 **Strategies:** `round_robin` (default), `random`, `least_conn`, `weighted_least_conn`, `ip_hash`, `url_hash`, `least_response_time`, `power_of_two`, `consistent_hash`, `adaptive`, `sticky`.
 
@@ -674,8 +717,8 @@ Same as `rule` but named (via label) for reuse across routes via `use_policy`.
 | `enabled` | `Enabled` | `enabled` | Enable JWT auth |
 | `secret` | `Value` | `secret` | **Required.** HMAC secret or RSA public key |
 | `issuer` | `string` | `issuer` | Expected `iss` claim |
-| `audience` | `string` | `audience` | Expected `aud` claim |
-| `claims_to_headers` | `map[string]string` | `claims_to_headers` | Map JWT claim → request header |
+| `audience` | `string` | `audience` | Expected `aud` claim. **Enforced** — a token whose `aud` does not contain this value is rejected with `invalid_audience`, so tokens minted for another service on the same secret cannot be replayed here. Leave empty to skip the check. |
+| `claims_to_headers` | `map[string]string` | `claims_to_headers` | Map JWT claim → request header. In JSON payloads (API/admin wizard) the key is `claim_map` — the HCL attribute name is not accepted there. |
 
 ---
 
@@ -750,7 +793,7 @@ Same as `rule` but named (via label) for reuse across routes via `use_policy`.
 |-------|------|---------|-------------|
 | `enabled` | `Enabled` | `enabled` | Enable gossip clustering |
 | `port` | `int` | `port` | Gossip port (default: `7946`) |
-| `secret_key` | `Value` | `secret_key` | AES encryption key: 16, 24, or 32 bytes |
+| `secret_key` | `Value` | **Required when `enabled`.** AES encryption key: 16, 24, or 32 bytes (or an `env.`/`b64.`/`ss://` reference). An unkeyed cluster would accept unauthenticated config, certificate and secret injection from any peer that can reach the gossip port, so startup is refused. |
 | `seeds` | `[]string` | `seeds` | Seed node addresses (`host:port`) |
 | `ttl` | `int` | `ttl` | Gossip TTL |
 | `shared_state` | `SharedState` | `shared_state` block | Distributed state backend |
@@ -844,15 +887,28 @@ Setup with `agbero admin totp setup --user <username>`. See [Security Guide](./s
 | Field | Type | HCL key | Description |
 |-------|------|---------|-------------|
 | `enabled` | `Enabled` | `enabled` | Enable security features |
-| `trusted_proxies` | `[]string` | `trusted_proxies` | Trusted upstream proxy IPs/CIDRs for real IP extraction |
+| `allow` | `Allow` | `allow` block | Trusted proxies and the serverless command allow-list |
+| `block_private_backends` | `bool` | `block_private_backends` | Refuse backend connections to private/loopback/link-local IPs (SSRF). Auto-API routes always enforce this |
 | `firewall` | `Firewall` | `firewall` block | Global firewall configuration |
+| `waf` | `WAF` | `waf` block | Coraza WAF configuration |
 | `keeper` | `Keeper` | `keeper` block | Keeper (encrypted secret store) configuration |
+
+### `security.allow` block
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `proxies` | `[]string` | *(empty)* | Trusted upstream proxy IPs/CIDRs. `X-Forwarded-For` is only read when the immediate peer is in this list. **There is no `security.trusted_proxies` key** — an unknown attribute is silently ignored by the decoder. |
+| `commands` | `[]string` | `["echo"]` | Bare executable names the serverless orchestrator may run (`^[a-z][a-z0-9_-]*$`). An empty list means nothing can be executed. |
+| `serverless_git` | `Enabled` | `off` | Opt in to git-backed serverless workers. A compromised repository is equivalent to remote code execution on the host, so this is off by default. |
+
 
 ### `security.keeper` block
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `passphrase` | `Value` | Master passphrase to unlock the keeper. Use `"env.AGBERO_PASSPHRASE"` in production to avoid plaintext in config. This is a required field in non-interactive environments. |
+| `enabled` | `Enabled` | Enable the keeper. Agbero will not start without a usable keeper. |
+| `passphrase` | `Value` | Master passphrase to unlock the keeper. Prefer `"env.AGBERO_KEEPER_PASSPHRASE"` or a `passphrase_file` over plaintext. |
+| `passphrase_file` | `string` | Path to a `0600` (or `0640 root:agbero`) file containing the master passphrase. Recommended for system services. Resolution order: `passphrase`, `passphrase_file`, `AGBERO_KEEPER_PASSPHRASE`, `AGBERO_PASSPHRASE`, interactive prompt. |
 | `auto_lock` | `Duration` | Automatically lock the keeper after this period of inactivity. When locked, all `ss://` references return their literal string until unlocked via `POST /api/v1/keeper/unlock`. |
 | `logging` | `Enabled` | Log every keeper open, read, write, and delete at INFO level. |
 | `audit` | `Enabled` | Detailed audit trail: logs the key name on every secret read and write. Higher log volume but useful for compliance. |

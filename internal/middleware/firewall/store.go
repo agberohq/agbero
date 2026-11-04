@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/def"
@@ -43,6 +44,13 @@ type Store struct {
 
 	writeCh chan operation
 	quit    chan struct{}
+
+	// refs counts the engines sharing this store. A config reload hands the open
+	// store to the replacement engine (bbolt holds an exclusive file lock, so the
+	// file cannot simply be reopened) and the store must stay alive until the
+	// draining engine has finished serving. NewStore starts at 1; each adopting
+	// engine adds one; Close releases one and the last release closes the DB.
+	refs atomic.Int32
 }
 
 func NewStore(dataDir expect.Folder, logger *ll.Logger) (*Store, error) {
@@ -74,6 +82,7 @@ func NewStore(dataDir expect.Folder, logger *ll.Logger) (*Store, error) {
 		writeCh: make(chan operation, 1000),
 		quit:    make(chan struct{}),
 	}
+	s.refs.Store(1)
 
 	if err := s.loadToMemory(); err != nil {
 		db.Close()
@@ -84,6 +93,15 @@ func NewStore(dataDir expect.Folder, logger *ll.Logger) (*Store, error) {
 	go s.persistLoop()
 
 	return s, nil
+}
+
+// Retain adds a reference for an additional engine that will share this store
+// (see Store.refs). Every Retain must be balanced by a Close.
+func (s *Store) Retain() {
+	if s == nil {
+		return
+	}
+	s.refs.Add(1)
 }
 
 func (s *Store) loadToMemory() error {
@@ -106,9 +124,19 @@ func (s *Store) loadToMemory() error {
 	})
 }
 
-// Close shuts down the persist loop and closes the database.
-// Safe to call multiple times; subsequent calls are no-ops.
+// Close releases one reference to the store. The persist loop is stopped and the
+// bolt database is closed only when the last reference is released, so a
+// config-reload handover can keep the same open file alive for both the draining
+// and the replacement engine.
+// Safe to call multiple times per reference holder (idempotent per call) — but
+// each call releases one reference, so callers must pair it with NewStore/Retain.
 func (s *Store) Close() error {
+	if s == nil {
+		return nil
+	}
+	if s.refs.Add(-1) > 0 {
+		return nil
+	}
 	s.once.Do(func() { close(s.quit) })
 	s.wg.Wait()
 	return s.db.Close()

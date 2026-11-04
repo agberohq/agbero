@@ -1,5 +1,9 @@
 name: Release
 
+# A tag push is the only normal release path. The workflow validates the tag,
+# builds every artifact from that exact commit, creates a draft, smoke-tests the
+# draft assets, and only then publishes. Nothing is built or published locally.
+
 on:
   push:
     tags:
@@ -7,101 +11,453 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g., v1.2.3)'
+        description: 'Existing tag to release (e.g. v0.1.4)'
         required: true
+        type: string
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  BINARY: agbero
+  GOFLAGS: -trimpath
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  validate:
+    name: Validate tag
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout tagged commit
+        uses: actions/checkout@v5
         with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Validate tag and commit
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$tag' is not semver (expected vX.Y.Z or vX.Y.Z-rc.1)"
+            exit 1
+          fi
+
+          git rev-parse -q --verify "refs/tags/$tag" >/dev/null || {
+            echo "::error::Tag '$tag' does not exist"
+            exit 1
+          }
+
+          if [[ "$(git cat-file -t "$tag")" != "tag" ]]; then
+            echo "::error::Tag '$tag' must be annotated"
+            exit 1
+          fi
+
+          if [[ "$(git rev-parse HEAD)" != "$(git rev-parse "$tag^{commit}")" ]]; then
+            echo "::error::Checked-out commit does not match $tag"
+            exit 1
+          fi
+
+          version="${tag#v}"
+          prerelease=false
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+          fi
+
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag (version=$version, prerelease=$prerelease) from $(git rev-parse --short HEAD)"
+
+  test:
+    name: Test
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.26'
-          check-latest: true
+          go-version-file: go.mod
+          cache: true
 
-      - name: Build binaries
+      - name: Run tests
+        run: go test ./...
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: [validate, test]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64 }
+          - { goos: linux,   goarch: arm64 }
+          - { goos: darwin,  goarch: amd64 }
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          # Create dist directory
-          mkdir -p dist
+          set -euo pipefail
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          build_date="$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
+          commit="$(git rev-parse --short HEAD)"
 
-          # Determine version from tag or workflow input
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.tag }}"
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          out="dist/${BINARY}-${GOOS}-${GOARCH}"
+          if [[ "$GOOS" == "windows" ]]; then
+            out="${out}.exe"
           fi
 
-          # Common ldflags - MUST match Makefile: internal/core/woos (not internal/version)
-          LDFLAGS="-s -w -X github.com/agberohq/agbero/internal/core/woos.Version=$VERSION -X github.com/agberohq/agbero/internal/core/woos.Commit=$(git rev-parse --short HEAD) -X github.com/agberohq/agbero/internal/core/woos.Date=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          go build \
+            -trimpath \
+            -buildvcs=true \
+            -ldflags="-s -w \
+              -X github.com/agberohq/agbero/internal/core/woos.Version=${VERSION} \
+              -X github.com/agberohq/agbero/internal/core/woos.Commit=${commit} \
+              -X github.com/agberohq/agbero/internal/core/woos.Date=${build_date}" \
+            -o "$out" ./cmd/agbero
 
-          # Create temporary build directory
-          mkdir -p build
+          file "$out" || true
 
-          # Windows amd64
-          GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -trimpath -o build/agbero.exe ./cmd/agbero
-          cd build && zip ../dist/agbero-windows-amd64.zip agbero.exe && cd ..
-          rm build/agbero.exe
-
-          # Windows arm64
-          GOOS=windows GOARCH=arm64 go build -ldflags="$LDFLAGS" -trimpath -o build/agbero.exe ./cmd/agbero
-          cd build && zip ../dist/agbero-windows-arm64.zip agbero.exe && cd ..
-          rm build/agbero.exe
-
-          # Linux amd64
-          GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -trimpath -o build/agbero ./cmd/agbero
-          cd build && tar -czf ../dist/agbero-linux-amd64.tar.gz agbero && cd ..
-          rm build/agbero
-
-          # Linux arm64
-          GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -trimpath -o build/agbero ./cmd/agbero
-          cd build && tar -czf ../dist/agbero-linux-arm64.tar.gz agbero && cd ..
-          rm build/agbero
-
-          # Darwin amd64
-          GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -trimpath -o build/agbero ./cmd/agbero
-          cd build && tar -czf ../dist/agbero-darwin-amd64.tar.gz agbero && cd ..
-          rm build/agbero
-
-          # Darwin arm64
-          GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -trimpath -o build/agbero ./cmd/agbero
-          cd build && tar -czf ../dist/agbero-darwin-arm64.tar.gz agbero && cd ..
-
-          # Clean up
-          rm -rf build
-
-          # Generate checksums
-          cd dist
-          sha256sum *.tar.gz *.zip > checksums.txt
-          cd ..
-
-      - name: Upload install script
+      - name: Verify static Linux binary
+        if: matrix.goos == 'linux'
+        shell: bash
         run: |
-          mkdir -p dist
-          cp scripts/install.sh dist/install.sh
-          chmod +x dist/install.sh
+          set -euo pipefail
+          if file "dist/${BINARY}-${GOOS}-${GOARCH}" | grep -q 'dynamically linked'; then
+            echo "::error::Linux binary is dynamically linked"
+            exit 1
+          fi
 
-      - name: Create Release
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/agbero-${{ matrix.goos }}-${{ matrix.goarch }}*
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: Package
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: dist/bin
+          merge-multiple: true
+
+      - name: Create archives and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          mkdir -p dist/release dist/stage
+
+          cp LICENSE README.md dist/stage/
+          cp scripts/install.sh dist/release/install.sh
+          chmod +x dist/release/install.sh
+
+          for f in dist/bin/*; do
+            base="$(basename "$f")"
+            case "$base" in
+              *.exe)
+                osarch="${base#"${BINARY}"-}"
+                osarch="${osarch%.exe}"
+                cp "$f" dist/stage/agbero.exe
+                touch -d "@${SOURCE_DATE_EPOCH}" dist/stage/agbero.exe dist/stage/LICENSE dist/stage/README.md
+                (cd dist/stage && zip -X -q "../release/agbero-${osarch}.zip" agbero.exe LICENSE README.md)
+                rm -f dist/stage/agbero.exe
+                ;;
+              *)
+                osarch="${base#"${BINARY}"-}"
+                cp "$f" dist/stage/agbero
+                (cd dist/stage && tar \
+                  --sort=name \
+                  --mtime="@${SOURCE_DATE_EPOCH}" \
+                  --owner=0 --group=0 --numeric-owner \
+                  -czf "../release/agbero-${osarch}.tar.gz" \
+                  agbero LICENSE README.md)
+                rm -f dist/stage/agbero
+                ;;
+            esac
+          done
+
+          rm -rf dist/stage
+          ls -lh dist/release
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: dist/release
+          format: cyclonedx-json
+          output-file: dist/release/agbero.sbom.cdx.json
+          upload-artifact: false
+
+      - name: Write checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist/release
+          sha256sum -- * > checksums.txt
+          cat checksums.txt
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    name: Sign and attest
+    needs: [validate, package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist/release
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes \
+            --output-signature dist/release/checksums.txt.sig \
+            --output-certificate dist/release/checksums.txt.pem \
+            dist/release/checksums.txt
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/release/agbero-*
+            dist/release/install.sh
+
+      - name: Upload signed assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-assets
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  draft:
+    name: Create draft release
+    needs: [validate, sign]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed assets
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-assets
+          path: dist/release
+
+      - name: Refuse to overwrite a published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.validate.outputs.tag }}"
+          draft="$(gh api "repos/${{ github.repository }}/releases/tags/${tag}" --jq .draft 2>/dev/null || echo missing)"
+          if [[ "$draft" == "false" ]]; then
+            echo "::error::Release $tag is already published. Publish a new tag instead of rewriting history."
+            exit 1
+          fi
+          if [[ "$draft" == "true" ]]; then
+            echo "Removing the existing draft $tag so stale assets cannot survive a re-run"
+            gh release delete "$tag" --yes
+          fi
+
+      - name: Create draft
         uses: softprops/action-gh-release@v2
         with:
-          name: Release ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
-          files: |
-            dist/agbero-linux-amd64.tar.gz
-            dist/agbero-linux-arm64.tar.gz
-            dist/agbero-darwin-amd64.tar.gz
-            dist/agbero-darwin-arm64.tar.gz
-            dist/agbero-windows-amd64.zip
-            dist/agbero-windows-arm64.zip
-            dist/checksums.txt
-            dist/install.sh
+          tag_name: ${{ needs.validate.outputs.tag }}
+          name: Agbero ${{ needs.validate.outputs.tag }}
+          draft: true
+          prerelease: ${{ needs.validate.outputs.prerelease == 'true' }}
           generate_release_notes: true
-          draft: false
-          prerelease: true
+          files: dist/release/*
+
+  smoke:
+    name: Smoke-test draft assets
+    needs: [validate, draft]
+    runs-on: ubuntu-24.04
+    permissions:
+      # Draft releases are only readable with push access; this does not grant
+      # the smoke job permission to publish.
+      contents: write
+      id-token: write
+      attestations: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Download draft assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p downloaded smoke
+          gh release download "${{ needs.validate.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --dir downloaded \
+            --clobber
+
+      - name: Verify checksums
+        shell: bash
+        working-directory: downloaded
+        run: sha256sum -c checksums.txt
+
+      - name: Verify signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign verify-blob downloaded/checksums.txt \
+            --signature downloaded/checksums.txt.sig \
+            --certificate downloaded/checksums.txt.pem \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+      - name: Verify provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh attestation verify downloaded/agbero-linux-amd64.tar.gz \
+            --repo "${{ github.repository }}"
+
+      - name: Run Linux binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -xzf downloaded/agbero-linux-amd64.tar.gz -C smoke
+          file smoke/agbero
+          if file smoke/agbero | grep -q 'dynamically linked'; then
+            echo "::error::Linux binary is dynamically linked"
+            exit 1
+          fi
+          smoke/agbero --version
+          smoke/agbero --help >/dev/null
+
+      - name: Install from verified assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p smoke/install
+          bash downloaded/install.sh \
+            --from-file downloaded \
+            --version "${{ needs.validate.outputs.tag }}" \
+            --dir "$PWD/smoke/install" \
+            --no-color
+          "$PWD/smoke/install/agbero" --version
+
+      - name: Run in clean containers
+        shell: bash
+        run: |
+          set -euo pipefail
+          for image in debian:12 alpine:3.20; do
+            echo "==> $image"
+            docker run --rm \
+              -v "$PWD/smoke/agbero:/usr/local/bin/agbero:ro" \
+              "$image" sh -c 'agbero --version && agbero --help >/dev/null'
+          done
+
+  publish:
+    name: Publish release
+    needs: [validate, smoke]
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.validate.outputs.tag }}
+      PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+    steps:
+      - name: Publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_id="$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq .id)"
+          make_latest=false
+          if [[ "$PRERELEASE" == "false" ]]; then
+            make_latest=true
+          fi
+          gh api -X PATCH "repos/${{ github.repository }}/releases/${release_id}" \
+            -F draft=false \
+            -F prerelease="$PRERELEASE" \
+            -F make_latest="$make_latest"
+          echo "Published $TAG (prerelease=$PRERELEASE, make_latest=$make_latest)"

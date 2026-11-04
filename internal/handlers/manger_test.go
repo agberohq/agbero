@@ -572,6 +572,12 @@ func TestManager_handleRoute_RateLimit_IgnoreGlobal(t *testing.T) {
 func TestManager_redirectToHTTPS(t *testing.T) {
 	cfg := testManagerConfig(t)
 	cfg.Global.Bind.HTTPS = []string{":443"}
+	// The redirect target is built from a *configured* domain; an unknown Host
+	// header must not be reflected (see redirectToHTTPS).
+	cfg.HostManager.Set("example.com", &alaye.Host{
+		Domains: []string{"example.com"},
+		Routes:  []alaye.Route{{Path: "/", Web: alaye.Web{Root: alaye.WebRoot("/tmp")}}},
+	})
 
 	m, err := NewManager(cfg)
 	if err != nil {
@@ -590,6 +596,19 @@ func TestManager_redirectToHTTPS(t *testing.T) {
 	}
 	if w.Header().Get("Location") != "https://example.com/path?query=1" {
 		t.Errorf("Expected redirect to https://example.com/path?query=1, got %q", w.Header().Get("Location"))
+	}
+
+	// An unregistered Host must be refused, not echoed into a 301.
+	evilReq := httptest.NewRequest("GET", "/path", nil)
+	evilReq.Host = "evil.example"
+	evilW := httptest.NewRecorder()
+	m.redirectToHTTPS(evilW, evilReq)
+
+	if evilW.Code != http.StatusNotFound {
+		t.Errorf("Expected 404 for an unknown Host, got %d", evilW.Code)
+	}
+	if loc := evilW.Header().Get("Location"); loc != "" {
+		t.Errorf("Expected no Location header for an unknown Host, got %q", loc)
 	}
 }
 

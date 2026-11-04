@@ -18,6 +18,14 @@
                 <option value="1000">Last 1000</option>
             </select>
             <span class="divider-v hide-mobile"></span>
+            <!-- Duration filter -->
+            <select id="logsDurationSelect" style="width:auto;margin:0;font-size:11px;">
+                <option value="0" selected>All time</option>
+                <option value="300">Last 5 min</option>
+                <option value="900">Last 15 min</option>
+                <option value="3600">Last 1 hour</option>
+            </select>
+            <span class="divider-v hide-mobile"></span>
             <select id="logsHostFilter" style="width:auto;margin:0;font-size:11px;">
                 <option value="">All hosts</option>
             </select>
@@ -32,6 +40,18 @@
 
         <!-- Group 2: icon action buttons -->
         <div class="logs-toolbar-right">
+            <!-- Log count summary -->
+            <span id="logsSummary" class="logs-summary" style="font-size:11px;color:var(--text-mute);font-family:var(--font-mono);white-space:nowrap;"></span>
+            <span class="divider-v hide-mobile"></span>
+            <!-- Follow mode toggle -->
+            <button class="btn icon-btn" id="logsFollowBtn" title="Auto-scroll to new entries">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="17 1 21 5 17 9"/>
+                    <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+                    <polyline points="7 23 3 19 7 15"/>
+                    <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+                </svg>
+            </button>
             <!-- Expand all: maximize / unfold -->
             <button class="btn icon-btn" id="logsExpandAllBtn" title="Expand all JSON payloads">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

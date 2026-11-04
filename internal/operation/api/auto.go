@@ -73,6 +73,11 @@ func (rt *AutoRoute) addRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Mark the route so the backend builder always enforces SSRF protection,
+	// regardless of the global allow_private_backends setting. Auto-registered
+	// routes come from potentially untrusted service tokens and must never be
+	// allowed to reach private IP space.
+	payload.Route.EnforceBackendSSRF = true
 	wrapper := discovery.ClusterRouteWrapper{
 		Route: payload.Route,
 	}

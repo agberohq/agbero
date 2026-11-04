@@ -108,7 +108,6 @@ func TestCompileEnv(t *testing.T) {
 		}
 	}
 
-	// Check system environment variables are preserved
 	if resultMap["SYSTEM_VAR"] != "system_value" {
 		t.Errorf("SYSTEM_VAR = %v, want system_value", resultMap["SYSTEM_VAR"])
 	}
@@ -118,17 +117,14 @@ func TestCompileEnv(t *testing.T) {
 		t.Errorf("SHARED_VAR = %v, want task_shared", resultMap["SHARED_VAR"])
 	}
 
-	// Check global var is present
 	if resultMap["GLOBAL_VAR"] != "global_value" {
 		t.Errorf("GLOBAL_VAR = %v, want global_value", resultMap["GLOBAL_VAR"])
 	}
 
-	// Check route var is present
 	if resultMap["ROUTE_VAR"] != "route_value" {
 		t.Errorf("ROUTE_VAR = %v, want route_value", resultMap["ROUTE_VAR"])
 	}
 
-	// Check task var is present
 	if resultMap["TASK_VAR"] != "task_value" {
 		t.Errorf("TASK_VAR = %v, want task_value", resultMap["TASK_VAR"])
 	}
@@ -163,7 +159,6 @@ func TestCompileEnvWithResolve(t *testing.T) {
 		}
 	}
 
-	// Check that environment variables are resolved
 	if resultMap["RESOLVED_VAR"] != "base_value_suffix" {
 		t.Errorf("RESOLVED_VAR = %v, want base_value_suffix", resultMap["RESOLVED_VAR"])
 	}

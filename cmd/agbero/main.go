@@ -349,7 +349,7 @@ func main() {
 		return
 	}
 
-	welcome()
+	welcome(cfg.Silent)
 
 	if cmdServe.Used {
 		hel.Ephemeral().Serve()
@@ -523,7 +523,7 @@ func main() {
 
 		if cmdRun.Used && store.IsLocked() {
 			store.Close()
-			logger.Fatal("keeper is locked. Set AGBERO_PASSPHRASE environment variable or configure keeper.passphrase in agbero.hcl")
+			logger.Fatal("keeper is locked. Set AGBERO_KEEPER_PASSPHRASE (or AGBERO_PASSPHRASE), configure keeper.passphrase_file, or set keeper.passphrase in agbero.hcl")
 		}
 
 		// Register in both the keeper library's own global and agbero's secrets
@@ -771,7 +771,13 @@ func main() {
 	).Info("shutdown complete")
 }
 
-func welcome() {
+func welcome(silent bool) {
+	if silent || os.Getenv("AGBERO_QUIET") == "1" {
+		return
+	}
+	if info, err := os.Stdout.Stat(); err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return
+	}
 	u := ui.New()
 	u.Welcome(def.Name, def.Description, woos.Version, woos.Date, setup.BannerTmpl)
 }

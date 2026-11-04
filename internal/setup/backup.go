@@ -30,6 +30,22 @@ import (
 // by Let's Encrypt, error pages in /var/www) are included — they are legitimate
 // — but listed as warnings so the operator can audit what will be restored and
 // to which absolute paths.
+// keeperPassphrasePaths returns the absolute paths that must never be included
+// in a backup: the configured keeper.passphrase_file (if any) and the default
+// file written by `agbero init` next to the config.
+func keeperPassphrasePaths(configPath, configured string) map[string]bool {
+	excluded := make(map[string]bool)
+	if pf := strings.TrimSpace(configured); pf != "" {
+		if abs, err := filepath.Abs(pf); err == nil {
+			excluded[abs] = true
+		}
+	}
+	if abs, err := filepath.Abs(filepath.Join(filepath.Dir(filepath.Clean(configPath)), "keeper.passphrase")); err == nil {
+		excluded[abs] = true
+	}
+	return excluded
+}
+
 func (s *System) Backup(configPath, outPath, password string) error {
 	global, err := loadGlobalConfig(configPath)
 	if err != nil {
@@ -72,6 +88,17 @@ func (s *System) Backup(configPath, outPath, password string) error {
 		global.Storage.WorkDir.Path(),
 	}
 
+	// Never archive the keeper passphrase file: that would put the encrypted
+	// keeper and its key in the same package. The default path is the one
+	// `agbero init` writes; an explicit keeper.passphrase_file is also excluded.
+	excluded := keeperPassphrasePaths(configPath, global.Security.Keeper.PassphraseFile)
+	for p := range excluded {
+		if _, err := os.Stat(p); err == nil {
+			u.WarnLine("keeper passphrase file is excluded from the backup: " + p)
+		}
+	}
+	u.Flush()
+
 	addedFiles := make(map[string]bool)
 	addPath := func(p string) {
 		p = strings.TrimSpace(p)
@@ -82,13 +109,16 @@ func (s *System) Backup(configPath, outPath, password string) error {
 		if err != nil {
 			return
 		}
+		if excluded[abs] {
+			return
+		}
 		info, err := os.Stat(abs)
 		if err != nil {
 			return
 		}
 		if info.IsDir() {
 			_ = filepath.Walk(abs, func(wp string, wi os.FileInfo, we error) error {
-				if we == nil && !wi.IsDir() {
+				if we == nil && !wi.IsDir() && !excluded[wp] {
 					addedFiles[wp] = true
 				}
 				return nil

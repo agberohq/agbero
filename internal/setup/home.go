@@ -80,10 +80,11 @@ func (h *Home) initializeKeeper() (*keeper.Keeper, *session, error) {
 	})
 
 	store, err := secrets.Open(secrets.Config{
-		DataDir:     h.ctx.Paths.DataDir,
-		Setting:     &alaye.Keeper{Enabled: expect.Active},
-		Logger:      h.ctx.Logger,
-		Interactive: true,
+		DataDir:       h.ctx.Paths.DataDir,
+		Setting:       &alaye.Keeper{Enabled: expect.Active},
+		Logger:        h.ctx.Logger,
+		Interactive:   true,
+		PassphraseOut: h.ctx.Paths.BaseDir.FilePath("keeper.passphrase"),
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open/create keeper: %w", err)
@@ -349,18 +350,26 @@ func (h *Home) writeConfigFiles(store *keeper.Keeper, sess *session) error {
 		totpEnabled = def.On
 	}
 
+	passphraseFile := h.ctx.Paths.BaseDir.FilePath("keeper.passphrase")
+	keeperPassphraseConfig := fmt.Sprintf("passphrase_file = %q", filepath.ToSlash(passphraseFile))
+	if _, err := os.Stat(passphraseFile); err != nil {
+		keeperPassphraseConfig = `passphrase = "env.AGBERO_KEEPER_PASSPHRASE"`
+	}
+
 	replacements := []struct{ key, value string }{
 		{"{HOST_DIR}", filepath.ToSlash(h.ctx.Paths.HostsDir.Path())},
 		{"{CERTS_DIR}", filepath.ToSlash(h.ctx.Paths.CertsDir.Path())},
 		{"{DATA_DIR}", filepath.ToSlash(h.ctx.Paths.DataDir.Path())},
 		{"{LOGS_DIR}", filepath.ToSlash(h.ctx.Paths.LogsDir.Path())},
 		{"{WORK_DIR}", filepath.ToSlash(h.ctx.Paths.WorkDir.Path())},
+		{"{WEB_ROOT}", filepath.ToSlash(h.ctx.Paths.WebDir.Path())},
 		{"{INTERNAL_AUTH_KEY}", expect.Vault().Key("internal")},
 		{"{CLUSTER_SECRET_KEY}", expect.Vault().Key("cluster")},
 		{"{LE_ENABLED}", leEnabled},
 		{"{LE_EMAIL}", sess.LEEmail},
 		{"{KEEPER_ENABLED}", def.On},
 		{"{TOTP_ENABLED}", totpEnabled},
+		{"{KEEPER_PASSPHRASE_CONFIG}", keeperPassphraseConfig},
 	}
 
 	content := ConfigTmpl
@@ -374,6 +383,14 @@ func (h *Home) writeConfigFiles(store *keeper.Keeper, sess *session) error {
 
 	h.u.Render(func() { h.u.Step("ok", "Written configuration to "+h.ctx.Paths.ConfigFile) })
 
+	if err := h.ctx.Paths.WebDir.Make(false); err != nil {
+		return fmt.Errorf("failed to create web root: %w", err)
+	}
+	if err := h.ctx.Paths.WebDir.Put("index.html", TplIndexHTML, expect.FilePerm); err != nil {
+		return fmt.Errorf("failed to write web root placeholder: %w", err)
+	}
+	h.u.Render(func() { h.u.Step("ok", "Created web root at "+h.ctx.Paths.WebDir.Path()) })
+
 	err := h.ctx.Paths.HostsDir.Make(true)
 	if err != nil {
 		return fmt.Errorf("failed to initialize host directory: %w", err)
@@ -384,8 +401,8 @@ func (h *Home) writeConfigFiles(store *keeper.Keeper, sess *session) error {
 		return fmt.Errorf("failed to write admin host config: %w", err)
 	}
 
-	err = h.ctx.Paths.HostsDir.Put("web.hcl", TplWebHcl, expect.FilePerm)
-	if err != nil {
+	webContent := strings.ReplaceAll(string(TplWebHcl), "{WEB_ROOT}", filepath.ToSlash(h.ctx.Paths.WebDir.Path()))
+	if err := h.ctx.Paths.HostsDir.Put("web.hcl", []byte(webContent), expect.FilePerm); err != nil {
 		return fmt.Errorf("failed to write web host config: %w", err)
 	}
 

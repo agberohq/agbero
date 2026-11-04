@@ -393,7 +393,7 @@ func TestAdminCoreEndpoints(t *testing.T) {
 		}
 	})
 
-	t.Run("GET /status - returns status with auth_state", func(t *testing.T) {
+	t.Run("GET /status - public probe exposes only locked", func(t *testing.T) {
 		resp := makeRequest(t, port, http.MethodGet, "/status", nil, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
@@ -406,7 +406,25 @@ func TestAdminCoreEndpoints(t *testing.T) {
 			t.Error("status not ok")
 		}
 		if _, ok := result["locked"]; !ok {
-			t.Error("keeper not opened status")
+			t.Error("keeper lock state missing — the admin UI login probe needs it")
+		}
+		if _, leaked := result["cluster_members"]; leaked {
+			t.Error("cluster_members must not be exposed to unauthenticated callers")
+		}
+	})
+
+	t.Run("GET /status - authenticated returns full state", func(t *testing.T) {
+		token := getToken(t, port)
+		resp := makeRequest(t, port, http.MethodGet, "/status", nil, token)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("expected status 200, got %d. Body: %s", resp.StatusCode, string(body))
+		}
+		var result map[string]any
+		json.NewDecoder(resp.Body).Decode(&result)
+		if _, ok := result["cluster_members"]; !ok {
+			t.Error("cluster_members missing for an authenticated caller")
 		}
 	})
 

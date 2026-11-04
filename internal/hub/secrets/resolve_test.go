@@ -35,7 +35,6 @@ func TestResolver_WireUnwire(t *testing.T) {
 		t.Fatalf("Set failed: %v", err)
 	}
 
-	// Verify it's there
 	got, err := store.Get(testKey)
 	if err != nil || string(got) != testValue {
 		t.Fatalf("Store verification failed: got %s, want %s, err: %v", got, testValue, err)

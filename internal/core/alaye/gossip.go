@@ -41,16 +41,24 @@ func (g *Gossip) Validate() error {
 		return errors.Newf("%w: port must be between 0 and 65535", def.ErrInvalidPort)
 	}
 
-	if g.SecretKey != "" {
-		// Only validate the byte length when the value is a plain literal.
-		// Refs (keeper, env, b64) are resolved at runtime after the store is open —
-		// Validate() runs before that and has no business trying to resolve them.
-		isRef := g.SecretKey.IsSecretStoreRef() || g.SecretKey.IsEnvRef() || g.SecretKey.IsBase64()
-		if !isRef {
-			keyLen := len(g.SecretKey)
-			if keyLen != def.SecretKeyLen16 && keyLen != def.SecretKeyLen24 && keyLen != def.SecretKeyLen32 {
-				return def.ErrInvalidSecretKey
-			}
+	if g.SecretKey == "" {
+		// Without a pre-shared key memberlist runs unencrypted and accepts any
+		// peer that can reach the gossip port; those peers can then push
+		// OpConfig / OpCert / OpSecret payloads (see hub/cluster/manager.go).
+		// Refusing to start is the only safe default.
+		return errors.Newf("%w: gossip.secret_key is required (16, 24 or 32 bytes) — "+
+			"an unkeyed cluster accepts unauthenticated config, certificate and "+
+			"secret injection from any network peer", def.ErrInvalidSecretKey)
+	}
+
+	// Only validate the byte length when the value is a plain literal.
+	// Refs (keeper, env, b64) are resolved at runtime after the store is open —
+	// Validate() runs before that and has no business trying to resolve them.
+	isRef := g.SecretKey.IsSecretStoreRef() || g.SecretKey.IsEnvRef() || g.SecretKey.IsBase64()
+	if !isRef {
+		keyLen := len(g.SecretKey)
+		if keyLen != def.SecretKeyLen16 && keyLen != def.SecretKeyLen24 && keyLen != def.SecretKeyLen32 {
+			return def.ErrInvalidSecretKey
 		}
 	}
 

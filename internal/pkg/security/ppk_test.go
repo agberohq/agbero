@@ -29,7 +29,6 @@ func TestTokenLifecycle(t *testing.T) {
 		t.Fatalf("failed to mint token: %v", err)
 	}
 
-	// Verify Token
 	gotService, err := tm.Verify(token)
 	if err != nil {
 		t.Fatalf("failed to verify token: %v", err)

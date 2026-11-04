@@ -61,7 +61,7 @@ func (c *Configuration) Reload(configFile string) error {
 		return fmt.Errorf("data_dir not configured")
 	}
 
-	pidFile := global.Storage.DataDir.FilePath("agbero.pid")
+	pidFile := global.Storage.DataDir.FilePath(def.DefaultPIDName)
 	b, err := os.ReadFile(pidFile)
 	if err != nil {
 		return fmt.Errorf("could not read pid file %s: %w", pidFile, err)
