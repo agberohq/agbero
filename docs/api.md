@@ -741,7 +741,8 @@ data.
 * Creating a domain that already exists **overwrites** it; pass
   `?overwrite=false` to get `409 Conflict` instead.
 * The request body is capped at 4 MiB (`def.HostConfigMaxBytes`); larger uploads
-  return `413`.
+  return `413`. The same cap applies to `POST /api/v1/discovery/preview` (both
+  the request body and the rendered HCL response).
 
 ---
 

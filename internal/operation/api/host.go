@@ -679,8 +679,18 @@ func (h *Host) deleteByDomain(w http.ResponseWriter, r *http.Request, domain str
 // the resolved config rendered as HCL — exactly what would be written to disk.
 // Nothing is persisted. Use this as a dry-run before create/update.
 func (h *Host) preview(w http.ResponseWriter, r *http.Request) {
+	// preview renders whatever it is handed, so the body must be capped just
+	// like create/update — the daemon allocates the full body and amplifies it
+	// through DefaultHost + the HCL renderer, and it all shares the proxy process.
+	r.Body = http.MaxBytesReader(w, r.Body, def.HostConfigMaxBytes)
+
 	var req hostCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
@@ -715,6 +725,13 @@ func (h *Host) preview(w http.ResponseWriter, r *http.Request) {
 	hclBytes, err := parser.MarshalBytes(req.Config)
 	if err != nil {
 		http.Error(w, "Failed to render HCL", http.StatusInternalServerError)
+		return
+	}
+
+	// Cap the response as well: defaults and HCL formatting can amplify the
+	// decoded config, and the render happens in the admin process.
+	if len(hclBytes) > def.HostConfigMaxBytes {
+		http.Error(w, "Rendered configuration exceeds size limit", http.StatusRequestEntityTooLarge)
 		return
 	}
 
