@@ -5,6 +5,16 @@ const METRICS_INTERVAL_MS  = 3000; // 3s — industry standard for admin dashboa
 const MILLISECONDS_IN_SEC  = 1000;
 const MAX_HISTORY_POINTS   = 60;
 
+// The store notifies on reference inequality, so a rebuilt object wakes every
+// subscriber even when nothing changed. Compare the payload first.
+function setIfChanged(store, key, value) {
+    const old = store.get(key);
+    try {
+        if (JSON.stringify(old) === JSON.stringify(value)) return;
+    } catch {}
+    store.set(key, value);
+}
+
 // startMetricsPolling - polls /uptime every 2s and writes reactive store keys
 // /uptime is the single source of truth: system stats, per-host live backend
 // health, latency percentiles, and git state. Global stats (total_reqs,
@@ -82,7 +92,7 @@ export function startMetricsPolling(store) {
 
             // hostsData — hosts map for hosts.html and drawers
             // hosts.html reads this directly; no separate fetch needed there
-            store.set('hostsData', { stats: hosts });
+            setIfChanged(store, 'hostsData', { stats: hosts });
 
             // Sparkline ring buffers — per-host rolling 30-point window
             // Accumulates RPS delta and avg p99 per host for inline sparklines.
@@ -146,10 +156,10 @@ export function startMetricsPolling(store) {
             store.set('metricsHistory', history);
 
             // Git state
-            if (data.git) store.set('gitStats', data.git);
+            if (data.git) setIfChanged(store, 'gitStats', data.git);
 
             // Cluster state — stored separately so cluster.js can read it on mount
-            store.set('lastCluster', data.cluster || { enabled: false });
+            setIfChanged(store, 'lastCluster', data.cluster || { enabled: false });
 
             emit('metrics:updated', {
                 stats:  { totalReqs, activeBackends, totalErrors, rps, apdex, p99 },
