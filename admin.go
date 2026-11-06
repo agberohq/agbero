@@ -808,7 +808,7 @@ func (s *Server) verifyCredentials(users []string, username, password string) bo
 
 func (s *Server) handleConfigDump(w http.ResponseWriter, r *http.Request) {
 	format := detectFormat(r)
-	hosts, _ := s.hostManager.LoadAll()
+	hosts, _ := s.hostManager.LoadCanonicalByDomain()
 
 	if format == "hcl" {
 		w.Header().Set("Content-Type", "application/hcl")
@@ -848,7 +848,7 @@ func (s *Server) handleConfigGlobal(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleConfigHosts(w http.ResponseWriter, r *http.Request) {
 	format := detectFormat(r)
-	hosts, _ := s.hostManager.LoadAll()
+	hosts, _ := s.hostManager.LoadCanonicalByDomain()
 	if format == "hcl" {
 		http.Error(w, "HCL format for hosts list not supported", http.StatusNotAcceptable)
 		return

@@ -290,7 +290,7 @@ func (r hostUpdateRequest) Validate() error {
 // list handles GET requests to retrieve all registered host configurations as JSON.
 // It loads discovery from discovery and sanitizes sensitive fields before response.
 func (h *Host) list(w http.ResponseWriter, r *http.Request) {
-	hosts, _ := h.discovery.LoadAll()
+	hosts, _ := h.discovery.LoadCanonicalByDomain()
 	format := detectFormat(r)
 
 	if format == "hcl" {
