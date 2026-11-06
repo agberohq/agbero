@@ -1,9 +1,11 @@
 package api
 
 import (
+	"net/http"
 	"sync/atomic"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/cluster"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/tlss"
@@ -59,6 +61,10 @@ func (s *Shared) UpdateState(newState *ActiveState) {
 
 func AdminHandler(shared *Shared, r chi.Router) {
 	r.Route("/api/v1", func(r chi.Router) {
+		// host.go sets its own limit for a precise 413 on host writes; this
+		// covers every other admin endpoint.
+		r.Use(adminBodyLimit(def.HostConfigMaxBytes))
+
 		if shared.Cluster != nil && shared.PPK != nil {
 			ClusterHandler(shared, r)
 		} else if shared.Cluster == nil {
@@ -91,4 +97,21 @@ func AutoHandler(shared *Shared, r chi.Router) {
 	r.Route("/auto/v1", func(r chi.Router) {
 		AutoRouteHandler(shared, r)
 	})
+}
+
+// adminBodyLimit caps every admin request body. The Content-Length check gives
+// a clean 413; MaxBytesReader covers chunked requests.
+func adminBodyLimit(max int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.ContentLength > max {
+				http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			if r.Body != nil {
+				r.Body = http.MaxBytesReader(w, r.Body, max)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
