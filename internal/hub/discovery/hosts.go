@@ -601,6 +601,49 @@ func (hm *Host) LoadAll() (map[string]*alaye.Host, error) {
 	return out, nil
 }
 
+// LoadCanonical returns the host map keyed by host ID, before rebuildLookupLocked
+// expands every domain alias into its own copy. Use this for per-host reporting;
+// LoadAll is for routing lookups and has one entry per domain.
+func (hm *Host) LoadCanonical() (map[string]*alaye.Host, error) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+
+	if !hm.loaded {
+		nh, _, err := hm.scanFromDisk()
+		if err != nil {
+			return nil, err
+		}
+		hm.hosts = nh
+		hm.rebuildLookupLocked()
+		hm.loaded = true
+	}
+
+	out := make(map[string]*alaye.Host, len(hm.hosts))
+	maps.Copy(out, hm.hosts)
+	return out, nil
+}
+
+// LoadCanonicalByDomain is LoadCanonical keyed by each host's first domain, so
+// multi-domain aliases collapse to a single entry.
+func (hm *Host) LoadCanonicalByDomain() (map[string]*alaye.Host, error) {
+	hosts, err := hm.LoadCanonical()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*alaye.Host, len(hosts))
+	for _, h := range hosts {
+		if h == nil || len(h.Domains) == 0 {
+			continue
+		}
+		domain := strings.ToLower(strings.TrimSpace(h.Domains[0]))
+		if domain == "" {
+			continue
+		}
+		out[domain] = h
+	}
+	return out, nil
+}
+
 // Close gracefully ceases file watching operations and background debouncers.
 // Must be called on application shutdown to prevent routine leaks.
 func (hm *Host) Close() error {
