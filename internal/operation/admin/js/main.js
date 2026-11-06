@@ -9,6 +9,7 @@ import { store, getHost, setHost } from './store.js';
 import { startMetricsPolling } from './metrics.js';
 import {
     fetchConfig, fetchUptime, fetchCerts, parseCertificates,
+    fetchSystem,
     getApi, apiSetToken, apiClearToken, reinitApi,
     fetchStatus, logout,
     refreshToken,
@@ -57,10 +58,17 @@ function stopPolling() {
 }
 
 export async function loadConfigData() {
-    const [config, uptime, certs] = await Promise.all([fetchConfig(), fetchUptime(), fetchCerts()]);
+    const [config, uptime, certs, system] = await Promise.all([
+        fetchConfig(), fetchUptime(), fetchCerts(), fetchSystem(),
+    ]);
     if (!config) return;
     store.set('lastConfig', config);
-    store.set('sys.version', 'v' + (config.global?.version ?? '—'));
+    // The header must show the binary build version, not the HCL `version`
+    // attribute inside the global block.
+    const rawVersion = system?.version || config.global?.build || '';
+    store.set('sys.version', rawVersion
+        ? (String(rawVersion).startsWith('v') ? String(rawVersion) : 'v' + rawVersion)
+        : 'v—');
     const parsedCerts = parseCertificates(certs);
     store.set('certificates',   parsedCerts);
     store.set('certs.active',   parsedCerts.filter(c => c.days_left > 0).length);
@@ -153,6 +161,23 @@ async function bootstrapApp() {
     auth.session.OnRenew((newToken) => { apiSetToken(newToken); logger.info('auth', 'Session renewed'); });
 
     listen('config:reload', () => loadConfigData());
+    listen('host:reload', async ({ hostname } = {}) => {
+        await loadConfigData();
+        notify.show(hostname ? 'Refreshed ' + hostname : 'Configuration refreshed', 'success');
+    });
+    listen('auth:renew:request', async () => {
+        try {
+            const fresh = await refreshToken();
+            if (fresh && fresh.token) {
+                await auth.session.renew(fresh.token);
+                notify.show('Session renewed', 'success');
+            } else {
+                notify.show('Could not renew the session', 'error');
+            }
+        } catch {
+            notify.show('Could not renew the session', 'error');
+        }
+    });
     listen('app:navigate',  ({ path }) => { if (path) router.navigate(path); });
 
     initPerfListeners();
