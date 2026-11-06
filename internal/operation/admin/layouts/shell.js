@@ -344,8 +344,8 @@ export default async function({ find, findAll, on, provide, onUnmount, signal, d
     const _hclTemplate = `domains = ["example.localhost"]
 
 route "/" {
-  backends {
-    server "http://127.0.0.1:3000" {}
+  backend {
+    server { address = "http://127.0.0.1:3000" }
   }
 }
 `;
