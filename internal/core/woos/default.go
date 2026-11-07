@@ -47,6 +47,10 @@ func (Defaults) Route(r *alaye.Route) {
 	defaultRouteAll(r)
 }
 
+func (Defaults) MCP(m *alaye.MCP) {
+	defaultMCP(m)
+}
+
 func (Defaults) Firewall(f *alaye.Firewall) {
 	defaultFirewall(f)
 }
@@ -108,6 +112,7 @@ func defaultGlobal(g *alaye.Global, configPath string) {
 	defaultTimeout(&g.Timeouts)
 	defaultStorage(&g.Storage, configPath)
 	defaultAdmin(&g.Admin)
+	defaultMCP(&g.MCP)
 	defaultLogging(&g.Logging)
 	defaultSecurity(&g.Security)
 	defaultRateLimits(&g.RateLimits)
@@ -242,6 +247,33 @@ func defaultAdmin(a *alaye.Admin) {
 		if a.TOTP.Algorithm == "" {
 			a.TOTP.Algorithm = "SHA1"
 		}
+	}
+}
+
+func defaultMCP(m *alaye.MCP) {
+	if m.Enabled == expect.Unknown {
+		m.Enabled = expect.Inactive
+	}
+	if m.Transport == "" {
+		m.Transport = "stdio"
+	}
+	if m.RateLimit == "" {
+		m.RateLimit = "60/m"
+	}
+	if len(m.AllowedIPs) == 0 {
+		m.AllowedIPs = []string{"127.0.0.1/32", "::1/128"}
+	}
+	if m.Read.Enabled == expect.Unknown {
+		m.Read.Enabled = expect.Inactive
+	}
+	if m.Plan.Enabled == expect.Unknown {
+		m.Plan.Enabled = expect.Inactive
+	}
+	if m.Plan.MaxInputBytes == 0 {
+		m.Plan.MaxInputBytes = def.HostConfigMaxBytes
+	}
+	if m.Apply.Enabled == expect.Unknown {
+		m.Apply.Enabled = expect.Inactive
 	}
 }
 
