@@ -31,12 +31,14 @@ import (
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/middleware/firewall"
 	"github.com/agberohq/agbero/internal/operation/api"
+	agmcp "github.com/agberohq/agbero/internal/operation/mcp"
 	"github.com/agberohq/agbero/internal/pkg/parser"
 	"github.com/agberohq/agbero/internal/pkg/revoke"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/telemetry"
 	"github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/agberohq/keeper"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
@@ -80,10 +82,14 @@ type Server struct {
 
 	totpHandler *api.TOTP
 	apiShared   *api.Shared
+
+	mcpSrv       *sdk.Server
+	mcpToken     *agmcp.TokenStore
+	mcpStartedAt time.Time
 }
 
 func NewServer(opts ...Option) *Server {
-	s := &Server{}
+	s := &Server{mcpStartedAt: time.Now()}
 	for _, opt := range opts {
 		opt(s)
 	}

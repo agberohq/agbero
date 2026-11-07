@@ -30,6 +30,7 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/ratelimit"
 	"github.com/agberohq/agbero/internal/operation"
 	"github.com/agberohq/agbero/internal/operation/api"
+	agmcp "github.com/agberohq/agbero/internal/operation/mcp"
 	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
@@ -63,6 +64,7 @@ func (s *Server) startAdminServer() {
 
 	r := chi.NewRouter()
 
+	s.initMCP(state.Global)
 	s.setupAdminMiddleware(r, state.Global.Admin)
 	s.registerAdminRoutes(r, state.Global.Admin)
 
@@ -248,6 +250,17 @@ func (s *Server) registerAdminRoutes(r chi.Router, cfg alaye.Admin) {
 		})
 	} else {
 		s.logger.Warn("auto api disabled: internal_auth_key not configured")
+	}
+
+	if s.mcpSrv != nil && s.mcpToken != nil {
+		mcpCfg := s.apiShared.State().Global.MCP
+		r.Group(func(r chi.Router) {
+			r.Use(agmcp.AllowedIPs(mcpCfg.AllowedIPs, s.logger, s.adminIPManager()))
+			r.Use(s.mcpAuthMiddleware())
+			h := agmcp.StreamableHandler(s.mcpSrv)
+			r.Handle("/mcp/v1", h)
+			r.Handle("/mcp/v1/*", h)
+		})
 	}
 
 	r.Mount("/", operation.Admin())
@@ -969,4 +982,60 @@ func buildAdminRateLimiter(global *alaye.Global, ipMgr *zulu.IPManager, sharedSt
 		IPManager:   ipMgr,
 		SharedState: sharedState,
 	})
+}
+
+// initMCP builds the read/plan MCP server when the feature is enabled. A
+// missing keeper leaves the façade unmounted.
+func (s *Server) initMCP(g *alaye.Global) {
+	s.mcpSrv = nil
+	s.mcpToken = nil
+	if g == nil || !g.MCP.Enabled.Active() {
+		return
+	}
+	if s.keeperStore == nil {
+		s.logger.Warn("mcp enabled but keeper is unavailable; MCP façade not mounted")
+		return
+	}
+
+	s.mcpToken = agmcp.NewTokenStore(s.keeperStore)
+	if err := s.mcpToken.Ensure(); err != nil {
+		s.logger.Warn("mcp token key unavailable; MCP façade not mounted", "err", err)
+		return
+	}
+
+	s.mcpSrv = agmcp.NewServer(woos.Version,
+		"Agbero MCP is read/plan only. It cannot apply changes; use the admin UI/CLI.")
+
+	allowed := make(map[string]bool)
+	if g.MCP.Read.Enabled.Active() {
+		for _, name := range g.MCP.Read.Allow {
+			allowed[name] = true
+		}
+	}
+	agmcp.RegisterReadTools(s.mcpSrv, agmcp.ReadDeps{
+		Version:   woos.Version,
+		Commit:    woos.Commit,
+		BuildDate: woos.Date,
+		StartedAt: s.mcpStartedAt,
+		KeeperLocked: func() bool {
+			return s.keeperStore == nil || s.keeperStore.IsLocked()
+		},
+		ClusterMembers: func() int {
+			if s.clusterManager == nil {
+				return 0
+			}
+			return len(s.clusterManager.Members())
+		},
+		AdminEnabled: g.Admin.Enabled.Active(),
+	}, allowed)
+}
+
+// mcpAuthMiddleware verifies the MCP bearer token and attaches its claims to
+// the request context. The IP allowlist runs first.
+func (s *Server) mcpAuthMiddleware() func(http.Handler) http.Handler {
+	var revoked func(string) bool
+	if s.apiShared.RevokeStore != nil {
+		revoked = s.apiShared.RevokeStore.IsRevoked
+	}
+	return agmcp.AuthMiddleware(s.mcpToken, revoked)
 }
