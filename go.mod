@@ -30,6 +30,7 @@ require (
 	github.com/landlock-lsm/go-landlock v0.11.0
 	github.com/markbates/goth v1.82.0
 	github.com/minio/selfupdate v0.6.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/olekukonko/errors v1.3.0
 	github.com/olekukonko/jack v0.0.0-20261030105942-08dd4960686b
 	github.com/olekukonko/ll v0.1.9
@@ -110,6 +111,7 @@ require (
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
 	github.com/hashicorp/go-metrics v0.7.0 // indirect
@@ -151,6 +153,8 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/sean-/seed v0.0.0-20170313163322-e2103e2c3529 // indirect
+	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/shoenig/go-m1cpu v0.2.4 // indirect
 	github.com/soniakeys/quant v1.0.0 // indirect
