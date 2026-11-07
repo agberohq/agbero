@@ -55,4 +55,9 @@ type Config struct {
 	KeeperOutFile string
 
 	AdminPassword string
+
+	MCPUser  string
+	MCPScope string
+	MCPTTL   time.Duration
+	MCPJTI   string
 }

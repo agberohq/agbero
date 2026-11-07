@@ -152,6 +152,30 @@ func main() {
 	cmdKeeper.AttachSubcommand(cmdKeeperRotate, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperHelp, 1)
 
+	cmdMCP := flaggy.NewSubcommand("mcp")
+	cmdMCP.Description = "Manage the read/plan-only MCP control plane"
+
+	cmdMCPToken := flaggy.NewSubcommand("token")
+	cmdMCPToken.Description = "Mint, rotate, or revoke MCP tokens"
+
+	cmdMCPTokenCreate := flaggy.NewSubcommand("create")
+	cmdMCPTokenCreate.Description = "Mint an MCP token (keeper-backed)"
+	cmdMCPTokenCreate.String(&cfg.MCPUser, "u", "user", "Operator name (default: $USER)")
+	cmdMCPTokenCreate.String(&cfg.MCPScope, "s", "scope", "Space-separated scopes: mcp:read, mcp:plan")
+	cmdMCPTokenCreate.Duration(&cfg.MCPTTL, "t", "ttl", "Token TTL (default 8h, max 24h)")
+
+	cmdMCPTokenRotate := flaggy.NewSubcommand("rotate")
+	cmdMCPTokenRotate.Description = "Rotate the MCP signing key in the keeper"
+
+	cmdMCPTokenRevoke := flaggy.NewSubcommand("revoke")
+	cmdMCPTokenRevoke.Description = "Revoke an MCP token by JTI"
+	cmdMCPTokenRevoke.AddPositionalValue(&cfg.MCPJTI, "jti", 1, true, "Token JTI")
+
+	cmdMCPToken.AttachSubcommand(cmdMCPTokenCreate, 1)
+	cmdMCPToken.AttachSubcommand(cmdMCPTokenRotate, 1)
+	cmdMCPToken.AttachSubcommand(cmdMCPTokenRevoke, 1)
+	cmdMCP.AttachSubcommand(cmdMCPToken, 1)
+
 	cmdAdmin := flaggy.NewSubcommand("admin")
 	cmdAdmin.Description = "Manage admin users and authentication"
 
@@ -324,6 +348,7 @@ func main() {
 	flaggy.AttachSubcommand(cmdConfig, 1)
 	flaggy.AttachSubcommand(cmdSecret, 1)
 	flaggy.AttachSubcommand(cmdKeeper, 1)
+	flaggy.AttachSubcommand(cmdMCP, 1)
 	flaggy.AttachSubcommand(cmdAdmin, 1)
 	flaggy.AttachSubcommand(cmdHost, 1)
 	flaggy.AttachSubcommand(cmdCert, 1)
@@ -430,7 +455,7 @@ func main() {
 		return
 	}
 
-	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used || cmdServiceStart.Used || cmdKeeper.Used || cmdAdmin.Used
+	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used || cmdServiceStart.Used || cmdKeeper.Used || cmdAdmin.Used || cmdMCP.Used
 	if needsConfig && !configExists {
 		if strings.TrimSpace(cfg.ConfigPath) != "" {
 			logger.Fatal("config file not found at: ", cfg.ConfigPath)
@@ -474,7 +499,7 @@ func main() {
 	//   CLI  → interactive (prompts user), AutoLock respected.
 
 	cmdSecretNeedsKeeper := cmdSecret.Used && (cmdSecretKeyInit.Used || cmdSecretToken.Used)
-	if cmdRun.Used || cmdKeeper.Used || cmdAdmin.Used || cmdSecretNeedsKeeper {
+	if cmdRun.Used || cmdKeeper.Used || cmdAdmin.Used || cmdMCP.Used || cmdSecretNeedsKeeper {
 		global, globalErr := helper.LoadGlobal(resolvedPath)
 		if globalErr != nil {
 			logger.Fatal("failed to load config for keeper initialisation: ", globalErr)
@@ -587,6 +612,21 @@ func main() {
 			k.Rotate(resolvedPath)
 		default:
 			k.REPL(resolvedPath)
+		}
+		return
+	}
+
+	if cmdMCP.Used {
+		m := hel.MCP()
+		switch {
+		case cmdMCPToken.Used && cmdMCPTokenCreate.Used:
+			m.TokenCreate(resolvedPath, cfg.MCPUser, cfg.MCPScope, cfg.MCPTTL)
+		case cmdMCPToken.Used && cmdMCPTokenRotate.Used:
+			m.TokenRotate()
+		case cmdMCPToken.Used && cmdMCPTokenRevoke.Used:
+			m.TokenRevoke(resolvedPath, cfg.MCPJTI)
+		default:
+			flaggy.ShowHelpAndExit("mcp")
 		}
 		return
 	}
