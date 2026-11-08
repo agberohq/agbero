@@ -7,16 +7,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"go.etcd.io/bbolt"
 )
 
 const (
-	// retentionPeriod is how long we keep samples.
-	retentionPeriod = 24 * time.Hour
-
 	// CollectInterval is how often the collector takes a snapshot.
-	CollectInterval = 60 * time.Second
+	CollectInterval = def.TelemetryCollectInterval
 )
 
 var (
@@ -68,7 +66,7 @@ func NewStore(dataDir expect.Folder) (*Store, error) {
 
 	s := &Store{
 		db:      db,
-		writeCh: make(chan writeOp, 256),
+		writeCh: make(chan writeOp, def.TelemetryWriteBuffer),
 		quit:    make(chan struct{}),
 		done:    make(chan struct{}),
 	}
@@ -210,7 +208,7 @@ func (s *Store) Close() (err error) {
 // writeLoop drains writeCh, batching writes every 5 seconds for efficiency.
 func (s *Store) writeLoop() {
 	defer close(s.done)
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(def.TelemetryFlushInterval)
 	defer ticker.Stop()
 
 	var pending []writeOp
@@ -255,7 +253,7 @@ func (s *Store) writeLoop() {
 	}
 
 	pruneOld := func() {
-		cutoff := time.Now().Add(-retentionPeriod).Unix()
+		cutoff := time.Now().Add(-def.TelemetryRetention).Unix()
 		_ = s.db.Update(func(tx *bbolt.Tx) error {
 			pruneHost := func(parent *bbolt.Bucket) error {
 				if parent == nil {
@@ -332,7 +330,7 @@ func (s *Store) writeLoop() {
 		select {
 		case op := <-s.writeCh:
 			pending = append(pending, op)
-			if len(pending) >= 100 {
+			if len(pending) >= def.TelemetryBatchSize {
 				flush()
 			}
 		case <-ticker.C:

@@ -237,7 +237,7 @@ func readPassphraseFile(path string) (string, error) {
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("keeper.passphrase_file %q must be a regular file", path)
 	}
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS != def.Windows {
 		perm := info.Mode().Perm()
 		if perm&0007 != 0 {
 			return "", fmt.Errorf("keeper.passphrase_file %q is accessible by other users (mode %04o); use 0600 or 0640", path, perm)

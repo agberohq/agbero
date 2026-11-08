@@ -67,7 +67,7 @@ func (p *Process) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) er
 
 	var err error
 	var limits *jobLimits
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == def.Windows {
 		limits, err = setupProcessGroup(nil, false)
 		if err != nil {
 			return err
@@ -84,7 +84,7 @@ func (p *Process) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) er
 	}
 	cmd.Stderr = p.Logger.Writer(lx.LevelError)
 
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS != def.Windows {
 		setupProcessGroup(cmd, p.DropPrivileges)
 	}
 
@@ -114,7 +114,7 @@ func (p *Process) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) er
 	}
 	pid.Store(int32(cmd.Process.Pid))
 
-	if runtime.GOOS == "windows" && limits != nil {
+	if runtime.GOOS == def.Windows && limits != nil {
 		if err := assignToJob(limits, cmd.Process.Pid); err != nil {
 			p.Logger.Fields("pid", cmd.Process.Pid, "error", err).Warn("failed to assign to job object")
 		}
@@ -141,7 +141,7 @@ func (p *Process) Run(ctx context.Context, stdin io.Reader, stdout io.Writer) er
 		"status", status,
 	).Info("worker stopped")
 
-	if runtime.GOOS == "windows" && limits != nil {
+	if runtime.GOOS == def.Windows && limits != nil {
 		cleanupJob(limits)
 	}
 

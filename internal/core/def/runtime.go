@@ -553,7 +553,9 @@ const (
 	DefaultMaxBuffer     = 12_000
 	DefaultVictoriaBatch = 500
 
-	DefaultLogRotateSize = 50 * 1024 * 1024
+	DefaultLogDedupWindow = 5 * time.Second
+	DefaultLogRenameDelay = 50 * time.Millisecond
+	DefaultLogRotateSize  = 50 * 1024 * 1024
 
 	BufferSize = 32 * 1024
 
