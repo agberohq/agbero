@@ -31,3 +31,34 @@ func TestDefaultMCP(t *testing.T) {
 		t.Error("read/plan must default to inactive")
 	}
 }
+
+func TestDefaultMCPRouteEnablesSessionAffinityAndDisablesBuffering(t *testing.T) {
+	r := &alaye.Route{
+		Path:     "/mcp",
+		Protocol: def.RouteProtocolMCP,
+		Backends: alaye.Backend{
+			Enabled: expect.Active,
+			Servers: []alaye.Server{alaye.NewServer("http://127.0.0.1:9000")},
+		},
+	}
+	D.Route(r)
+
+	if r.Backends.Strategy != def.StrategySticky {
+		t.Fatalf("strategy = %q, want sticky", r.Backends.Strategy)
+	}
+	found := false
+	for _, k := range r.Backends.Keys {
+		if k == def.MCPSessionKey {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("keys = %v, want %s", r.Backends.Keys, def.MCPSessionKey)
+	}
+	if r.Compression.Enabled.Active() {
+		t.Fatal("compression must be off for MCP")
+	}
+	if r.Cache.Enabled.Active() {
+		t.Fatal("cache must be off for MCP")
+	}
+}

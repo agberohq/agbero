@@ -140,6 +140,35 @@ func defaultRouteAll(r *alaye.Route) {
 	defaultCORS(&r.CORS)
 	defaultCache(&r.Cache)
 	defaultFallback(&r.Fallback)
+	r.Protocol = strings.ToLower(strings.TrimSpace(r.Protocol))
+	if r.Protocol == "" {
+		r.Protocol = def.RouteProtocolHTTP
+	}
+	if r.Protocol == def.RouteProtocolMCP {
+		defaultMCPRoute(r)
+	}
+}
+
+// defaultMCPRoute makes an MCP route streaming- and session-safe:
+//   - session affinity on Mcp-Session-Id (2025-11-25 and earlier),
+//   - no compression (SSE/event streams must not be buffered/transformed),
+//   - no response cache.
+func defaultMCPRoute(r *alaye.Route) {
+	if r.Backends.Strategy == "" {
+		r.Backends.Strategy = def.StrategySticky
+	}
+	hasSessionKey := false
+	for _, k := range r.Backends.Keys {
+		if strings.EqualFold(strings.TrimSpace(k), def.MCPSessionKey) {
+			hasSessionKey = true
+			break
+		}
+	}
+	if !hasSessionKey {
+		r.Backends.Keys = append(r.Backends.Keys, def.MCPSessionKey)
+	}
+	r.Compression.Enabled = expect.Inactive
+	r.Cache.Enabled = expect.Inactive
 }
 
 func defaultWebRoute(r *alaye.Route) {
@@ -255,7 +284,7 @@ func defaultMCP(m *alaye.MCP) {
 		m.Enabled = expect.Inactive
 	}
 	if m.Transport == "" {
-		m.Transport = "stdio"
+		m.Transport = def.MCPTransportStdio
 	}
 	if m.RateLimit == "" {
 		m.RateLimit = "60/m"

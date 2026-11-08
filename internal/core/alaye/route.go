@@ -13,8 +13,9 @@ import (
 )
 
 type Route struct {
-	Enabled expect.Toggle `hcl:"enabled,attr" json:"enabled"`
-	Path    string        `hcl:"path,label" json:"path"`
+	Enabled  expect.Toggle `hcl:"enabled,attr" json:"enabled"`
+	Path     string        `hcl:"path,label" json:"path"`
+	Protocol string        `hcl:"protocol,attr,omitempty" json:"protocol,omitempty"`
 
 	Env map[string]expect.Value `hcl:"env,attr" json:"env,omitempty"`
 
@@ -58,6 +59,11 @@ func (r *Route) Validate() error {
 	}
 	if !strings.HasPrefix(r.Path, def.Slash) {
 		return errors.Newf("%w: path %q must start with '/'", def.ErrRouteInvalidPrefix, r.Path)
+	}
+	switch strings.ToLower(strings.TrimSpace(r.Protocol)) {
+	case "", def.RouteProtocolHTTP, def.RouteProtocolMCP:
+	default:
+		return errors.Newf("route %q: protocol must be http or mcp", r.Path)
 	}
 
 	isWeb := r.Web.Root.IsSet() || (r.Web.Git.Enabled.Active() && !r.Serverless.Enabled.Active())
@@ -465,7 +471,7 @@ func (r *Route) Key() string {
 }
 
 func (r *Route) KeyBackend(domain, backendAddr string) Key {
-	return r.backendKey("http", domain, backendAddr)
+	return r.backendKey(def.RouteProtocolHTTP, domain, backendAddr)
 }
 
 func (r *Route) KeyReplay(domain, replayName string) Key {

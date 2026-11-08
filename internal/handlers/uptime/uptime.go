@@ -226,8 +226,12 @@ func collectMetrics(hm *discovery.Host, cm *cluster.Manager, cookMgr *cook.Manag
 		var totalReqs uint64
 
 		for _, route := range hcfg.Routes {
+			protocol := strings.ToLower(strings.TrimSpace(route.Protocol))
+			if protocol == "" {
+				protocol = def.RouteProtocolHTTP
+			}
 			rSnap := &RouteSnapshot{
-				Protocol: "http",
+				Protocol: protocol,
 				Path:     route.Path,
 				Strategy: route.Backends.Strategy,
 				Backends: make([]*BackendSnapshot, 0),
