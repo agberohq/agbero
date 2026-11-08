@@ -548,7 +548,9 @@ agbero admin totp setup --user alice
 agbero admin totp setup --user alice --out qr-alice.png
 ```
 
-Scan the QR code with your authenticator app. You will not be able to retrieve it again — if lost, run `totp setup` again to regenerate.
+Scan the QR code with your authenticator app. On image-capable terminals (iTerm2, Kitty, WezTerm, Ghostty) the QR is rendered as an image; elsewhere Agbero prints a high-contrast ANSI QR. Override detection with `AGBERO_QR=image` or `AGBERO_QR=ansi`.
+
+The terminal also prints the Base32 secret and `otpauth://` URI; if the QR cannot be rendered or scanned, enter the secret manually. The secret is shown once — if lost, run `totp setup` again to regenerate.
 
 ### Enable TOTP in Configuration
 

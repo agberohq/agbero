@@ -306,6 +306,12 @@ func (h *Home) setupTOTP(store *keeper.Keeper, sess *session) error {
 	})
 	h.u.QR(uri)
 	h.u.Blank()
+	h.u.Render(func() {
+		h.u.InfoLine("TOTP secret: " + totpSecret)
+		h.u.InfoLine("Provisioning URI: " + uri)
+		h.u.WarnLine("The secret is shown once. If you cannot scan the QR, enter the secret manually in your authenticator app.")
+	})
+	h.u.Blank()
 
 	sess.TOTPEnabled = true
 	sess.TOTPSecret = totpSecret

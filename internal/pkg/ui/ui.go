@@ -765,6 +765,26 @@ func (u *UI) Image(pngData []byte) error {
 	return termimg.New(img).Width(40).Height(40).Scale(termimg.ScaleFit).Print()
 }
 
+func qrImageSupported() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AGBERO_QR"))) {
+	case "image":
+		return true
+	case "ansi":
+		return false
+	}
+	term := strings.ToLower(os.Getenv("TERM"))
+	program := strings.ToLower(os.Getenv("TERM_PROGRAM"))
+	if os.Getenv("KITTY_WINDOW_ID") != "" || os.Getenv("WEZTERM_PANE") != "" {
+		return true
+	}
+	for _, marker := range []string{"kitty", "wezterm", "ghostty", "iterm"} {
+		if strings.Contains(term, marker) || strings.Contains(program, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func (u *UI) QR(content string) *QRResult {
 	qrCode, err := NewQr(content, QRLevelM)
 	if err != nil {
@@ -773,12 +793,21 @@ func (u *UI) QR(content string) *QRResult {
 	}
 	result := qrCode.Result(4)
 	u.Println("")
-	if result != nil && len(result.PNG) > 0 {
-		if err := u.Image(result.PNG); err != nil {
-			u.WarnLine("image rendering failed — using text QR fallback")
-			u.line(u.padStyle().Render(result.Terminal))
+	if result == nil {
+		return result
+	}
+	// Use a terminal image only when the terminal is known to support one.
+	// Blind probing (as termimg did) emits a capability query like ^[[?1;0;256S
+	// on terminals that cannot render the image. Everything else gets the ANSI
+	// black-on-white QR.
+	if qrImageSupported() && len(result.PNG) > 0 {
+		if err := u.Image(result.PNG); err == nil {
+			return result
 		}
 	}
+	u.Flush()
+	fmt.Fprint(u.w, result.ANSI)
+	fmt.Fprintln(u.w)
 	return result
 }
 
