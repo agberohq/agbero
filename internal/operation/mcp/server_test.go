@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/agberohq/agbero/internal/core/def"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -91,5 +93,51 @@ func TestStreamableHandlerServesLegacyInitialize(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "2025-11-25") {
 		t.Fatalf("initialize response did not negotiate 2025-11-25: %s", raw)
+	}
+}
+
+func TestConfigToolAndResourcesOverSDK(t *testing.T) {
+	ctx := context.Background()
+	server := NewServer("test", "")
+	deps := ReadDeps{Offline: true, Mode: def.MCPModeOffline, Global: &alaye.Global{}}
+	allowed := map[string]bool{"config.global": true, "status": true, "config.plan": true}
+	RegisterReadTools(server, deps, allowed)
+	RegisterResources(server, deps, allowed)
+	RegisterPrompts(server)
+
+	st, ct := sdk.NewInMemoryTransports()
+	ss, err := server.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	defer ss.Close()
+	client := sdk.NewClient(&sdk.Implementation{Name: "test-client", Version: "1"}, nil)
+	cs, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer cs.Close()
+
+	res, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: "agbero_config_get_global"})
+	if err != nil {
+		t.Fatalf("tool call: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool returned error: %+v", res.Content)
+	}
+
+	resources, err := cs.ListResources(ctx, nil)
+	if err != nil {
+		t.Fatalf("list resources: %v", err)
+	}
+	if len(resources.Resources) == 0 {
+		t.Fatal("no resources registered")
+	}
+	prompts, err := cs.ListPrompts(ctx, nil)
+	if err != nil {
+		t.Fatalf("list prompts: %v", err)
+	}
+	if len(prompts.Prompts) == 0 {
+		t.Fatal("no prompts registered")
 	}
 }

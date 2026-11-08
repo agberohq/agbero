@@ -11,7 +11,7 @@ func TestAllowedIPs(t *testing.T) {
 
 	t.Run("lan allowlist", func(t *testing.T) {
 		h := AllowedIPs([]string{"192.168.0.0/16"}, nil, nil)(ok)
-		req := httptest.NewRequest(http.MethodPost, "/mcp/v1", nil)
+		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 		req.RemoteAddr = "192.168.1.25:54321"
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req)
@@ -29,7 +29,7 @@ func TestAllowedIPs(t *testing.T) {
 
 	t.Run("localhost expands to loopback", func(t *testing.T) {
 		h := AllowedIPs([]string{"localhost"}, nil, nil)(ok)
-		req := httptest.NewRequest(http.MethodPost, "/mcp/v1", nil)
+		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 		req.RemoteAddr = "127.0.0.1:54321"
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req)
@@ -40,7 +40,7 @@ func TestAllowedIPs(t *testing.T) {
 
 	t.Run("empty means loopback", func(t *testing.T) {
 		h := AllowedIPs(nil, nil, nil)(ok)
-		req := httptest.NewRequest(http.MethodPost, "/mcp/v1", nil)
+		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 		req.RemoteAddr = "127.0.0.1:54321"
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req)

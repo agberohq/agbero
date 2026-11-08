@@ -273,7 +273,7 @@ func normalizeScopes(scopes []string) (string, error) {
 		case ScopeRead, ScopePlan:
 			set[scope] = struct{}{}
 		case "mcp:apply", "mcp:admin":
-			return "", errors.New("mcp: apply/admin scopes do not exist in v1")
+			return "", errors.New("mcp: apply/admin scopes do not exist")
 		default:
 			return "", ErrInvalidScope
 		}

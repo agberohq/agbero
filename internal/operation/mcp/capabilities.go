@@ -2,7 +2,7 @@
 package mcp
 
 // Class is the effect class of a capability. There is deliberately no apply
-// class in v1.
+// class now.
 type Class string
 
 const (

@@ -53,3 +53,7 @@ func AuthMiddleware(store *TokenStore, revoked func(string) bool) func(http.Hand
 		})
 	}
 }
+
+func readScope(ctx context.Context) bool {
+	return HasScope(ClaimsFromContext(ctx), ScopeRead)
+}

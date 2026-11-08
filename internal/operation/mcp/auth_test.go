@@ -20,7 +20,7 @@ func TestAuthMiddleware(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp/v1", nil)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	req.Header.Set("Authorization", "Bearer "+raw)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -31,7 +31,7 @@ func TestAuthMiddleware(t *testing.T) {
 		t.Fatalf("claims = %+v", seen)
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/mcp/v1", nil)
+	req = httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnauthorized {
@@ -48,7 +48,7 @@ func TestAuthMiddlewareRevoked(t *testing.T) {
 	h := AuthMiddleware(store, func(string) bool { return true })(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("revoked token reached the handler")
 	}))
-	req := httptest.NewRequest(http.MethodPost, "/mcp/v1", nil)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	req.Header.Set("Authorization", "Bearer "+raw)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
