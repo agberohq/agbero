@@ -41,3 +41,33 @@ func TestQRImageDetection(t *testing.T) {
 		t.Fatal("kitty must use image QR")
 	}
 }
+
+func TestQRPNGIsOpaqueBlackAndWhite(t *testing.T) {
+	q, err := NewQr("otpauth://totp/Agbero:admin?secret=JBSWY3DPEHPK3PXP&issuer=Agbero", QRLevelM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := DecodePNG(q.Result(4).PNG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := img.Bounds()
+	seenBlack, seenWhite := false, false
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, a := img.At(x, y).RGBA()
+			if a != 0xffff {
+				t.Fatalf("transparent pixel at %d,%d", x, y)
+			}
+			if r == 0 && g == 0 && bl == 0 {
+				seenBlack = true
+			}
+			if r == 0xffff && g == 0xffff && bl == 0xffff {
+				seenWhite = true
+			}
+		}
+	}
+	if !seenBlack || !seenWhite {
+		t.Fatalf("PNG is not black/white: black=%v white=%v", seenBlack, seenWhite)
+	}
+}

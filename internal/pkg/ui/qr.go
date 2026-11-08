@@ -176,12 +176,15 @@ func (q *QR) pngBytes(scale int) []byte {
 	size := q.code.Size
 	total := (size + quietZone*2) * scale
 
-	img := image.NewGray(image.Rect(0, 0, total, total))
+	// Use opaque RGBA rather than grayscale: some terminal image renderers
+	// mishandle grayscale PNGs and display an all-white image.
+	img := image.NewRGBA(image.Rect(0, 0, total, total))
+	white := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+	black := color.RGBA{R: 0, G: 0, B: 0, A: 255}
 
-	// Fill white background
 	for y := 0; y < total; y++ {
 		for x := 0; x < total; x++ {
-			img.SetGray(x, y, color.Gray{Y: 255})
+			img.SetRGBA(x, y, white)
 		}
 	}
 
@@ -193,7 +196,7 @@ func (q *QR) pngBytes(scale int) []byte {
 				py := (row + quietZone) * scale
 				for dy := 0; dy < scale; dy++ {
 					for dx := 0; dx < scale; dx++ {
-						img.SetGray(px+dx, py+dy, color.Gray{Y: 0})
+						img.SetRGBA(px+dx, py+dy, black)
 					}
 				}
 			}
