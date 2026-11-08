@@ -3,7 +3,7 @@ BUILD_DIR := bin
 SRC_DIR := ./cmd/agbero
 
 # Remote
-PLAY_HOST ?= aibox.play
+PLAY_HOST ?=
 PLAY_USER ?= root
 PLAY_PATH ?= /usr/local/bin
 PLAY_OS   ?= linux
@@ -73,6 +73,8 @@ help:
 	@echo "  run            - Run interactively (Development helper)"
 	@echo "  clean          - Clean build artifacts"
 	@echo "  build-all      - Cross-compile for all platforms"
+	@echo "  deploy         - Build locally and atomically deploy via SSH"
+	@echo "                   (make deploy PLAY_HOST=host [TEST=1] [YES=1] [MODE=update|install|service])"
 	@echo "  version        - Show current version info"
 	@echo "  deps           - Install/update dependencies"
 	@echo "  test           - Run tests"
@@ -256,17 +258,20 @@ release: tag
 	@echo "Pushed v$(RELEASE_VERSION). GitHub Actions builds and publishes; nothing was built locally."
 
 
+.PHONY: deploy
+
+# Safe operator deployment. Build/version/service/health/rollback logic lives in
+# tools/deployer so this target stays readable. TEST=1 runs tests first.
+deploy:
+	@go run ./tools/deployer \
+		--host "$(PLAY_HOST)" \
+		--user "$(PLAY_USER)" \
+		--mode "$(or $(MODE),auto)" \
+		$(if $(filter 1,$(TEST)),--test) \
+		$(if $(filter 1,$(YES)),--yes) \
+		$(DEPLOY_ARGS)
+
 .PHONY: play
 
-play:
-	@echo "Building $(APP_NAME) for linux/amd64..."
-	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 \
-		go build -ldflags="$(LDFLAGS)" -trimpath \
-		-o $(BUILD_DIR)/$(APP_NAME) $(SRC_DIR)
-
-	@echo "Sending binary to $(PLAY_USER)@$(PLAY_HOST):$(PLAY_PATH)..."
-	scp $(BUILD_DIR)/$(APP_NAME) \
-		$(PLAY_USER)@$(PLAY_HOST):$(PLAY_PATH)/$(APP_NAME)
-
-	@echo "Binary deployed ✔"
+# Deprecated alias for the safe deployer.
+play: deploy
