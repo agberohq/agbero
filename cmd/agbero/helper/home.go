@@ -230,11 +230,18 @@ func (h *Home) deleteDataDirectories(configPath string) {
 		}
 	}
 	if global, err := loadGlobal(configPath); err == nil {
-		add(global.Storage.HostsDir.Path())
-		add(global.Storage.CertsDir.Path())
-		add(global.Storage.DataDir.Path())
-		add(global.Storage.WorkDir.Path())
-		add(global.Logging.File.Path)
+		if global.Storage.HostsDir.IsSet() {
+			add(global.Storage.HostsDir.Path())
+		}
+		if global.Storage.CertsDir.IsSet() {
+			add(global.Storage.CertsDir.Path())
+		}
+		if global.Storage.DataDir.IsSet() {
+			add(global.Storage.DataDir.Path())
+		}
+		if global.Storage.WorkDir.IsSet() {
+			add(global.Storage.WorkDir.Path())
+		}
 	}
 	if len(roots) == 0 {
 		ctx := setup.NewContext(h.p.Logger)
