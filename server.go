@@ -85,6 +85,9 @@ type Server struct {
 
 	mcpSrv       *sdk.Server
 	mcpToken     *agmcp.TokenStore
+	mcpTokens    *agmcp.TokenRegistry
+	mcpStats     *agmcp.Stats
+	mcpAudit     *agmcp.Auditor
 	mcpStartedAt time.Time
 }
 

@@ -1,16 +1,20 @@
 package agbero
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	mtrand "math/rand"
 	"net/http"
 	"net/http/pprof"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -221,6 +225,15 @@ func (s *Server) registerAdminRoutes(r chi.Router, cfg alaye.Admin) {
 		})
 		r.Get("/logs", s.handleLogs)
 
+		r.Route("/api/mcp/admin", func(r chi.Router) {
+			r.Get("/status", s.handleMCPAdminStatus)
+			r.Post("/token", s.handleMCPAdminTokenCreate)
+			r.Delete("/token/{jti}", s.handleMCPAdminTokenRevoke)
+			r.Get("/audit", s.handleMCPAdminAudit)
+			r.Post("/host", s.handleMCPAdminHostCreate)
+			r.Delete("/host", s.handleMCPAdminHostDelete)
+		})
+
 		api.AdminHandler(s.apiShared, r)
 
 		if cfg.Pprof.Enabled.Active() {
@@ -255,11 +268,14 @@ func (s *Server) registerAdminRoutes(r chi.Router, cfg alaye.Admin) {
 	if s.mcpSrv != nil && s.mcpToken != nil {
 		mcpCfg := s.apiShared.State().Global.MCP
 		r.Group(func(r chi.Router) {
+			r.Use(s.mcpStats.Middleware)
 			r.Use(agmcp.AllowedIPs(mcpCfg.AllowedIPs, s.logger, s.adminIPManager()))
 			r.Use(s.mcpAuthMiddleware())
+			r.Use(agmcp.AuditMiddleware(s.mcpAudit))
+			r.Use(agmcp.RateLimit(mcpCfg.RateLimit))
 			h := agmcp.StreamableHandler(s.mcpSrv)
-			r.Handle("/mcp/v1", h)
-			r.Handle("/mcp/v1/*", h)
+			r.Handle("/mcp", h)
+			r.Handle("/mcp/*", h)
 		})
 	}
 
@@ -998,6 +1014,27 @@ func (s *Server) initMCP(g *alaye.Global) {
 	}
 
 	s.mcpToken = agmcp.NewTokenStore(s.keeperStore)
+	s.mcpStats = agmcp.NewStats()
+	tokensPath := g.Storage.DataDir.FilePath("mcp-tokens.json")
+	if reg, err := agmcp.OpenTokenRegistry(tokensPath); err == nil {
+		s.mcpTokens = reg
+	} else {
+		s.logger.Warn("mcp token registry unavailable", "err", err)
+	}
+	auditPath := strings.TrimSpace(g.MCP.AuditFile)
+	if auditPath == "" {
+		auditPath = g.Storage.DataDir.FilePath("mcp-audit.jsonl")
+	}
+	if a, err := agmcp.OpenAuditor(auditPath); err == nil {
+		s.mcpAudit = a
+		if s.shutdown != nil {
+			s.shutdown.RegisterWithContext("MCPAudit", func(context.Context) error {
+				return a.Close()
+			})
+		}
+	} else {
+		s.logger.Warn("mcp audit file unavailable", "err", err)
+	}
 	if err := s.mcpToken.Ensure(); err != nil {
 		s.logger.Warn("mcp token key unavailable; MCP façade not mounted", "err", err)
 		return
@@ -1012,11 +1049,17 @@ func (s *Server) initMCP(g *alaye.Global) {
 			allowed[name] = true
 		}
 	}
-	agmcp.RegisterReadTools(s.mcpSrv, agmcp.ReadDeps{
+	if g.MCP.Plan.Enabled.Active() {
+		for _, name := range g.MCP.Plan.Allow {
+			allowed[name] = true
+		}
+	}
+	deps := agmcp.ReadDeps{
 		Version:   woos.Version,
 		Commit:    woos.Commit,
 		BuildDate: woos.Date,
 		StartedAt: s.mcpStartedAt,
+		Mode:      def.MCPModeDaemon,
 		KeeperLocked: func() bool {
 			return s.keeperStore == nil || s.keeperStore.IsLocked()
 		},
@@ -1027,7 +1070,63 @@ func (s *Server) initMCP(g *alaye.Global) {
 			return len(s.clusterManager.Members())
 		},
 		AdminEnabled: g.Admin.Enabled.Active(),
-	}, allowed)
+		Global:       g,
+		Hosts: func() (map[string]*alaye.Host, error) {
+			return s.hostManager.LoadCanonicalByDomain()
+		},
+		Certs: func(context.Context) (any, error) {
+			if s.tlsManager == nil {
+				return nil, agmcp.ErrAdminPlane
+			}
+			domains, err := s.tlsManager.ListCertificates()
+			if err != nil {
+				return nil, err
+			}
+			out := make([]map[string]any, 0, len(domains))
+			for _, domain := range domains {
+				info := map[string]any{"domain": domain}
+				if certPEM, _, err := s.tlsManager.LoadCertificate(domain); err == nil {
+					if block, _ := pem.Decode(certPEM); block != nil {
+						if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
+							info["issuer"] = cert.Issuer.String()
+							info["expires_at"] = cert.NotAfter.UTC().Format(time.RFC3339)
+							info["days_left"] = int(time.Until(cert.NotAfter).Hours() / 24)
+							info["sans"] = cert.DNSNames
+							info["key_type"] = cert.PublicKeyAlgorithm.String()
+						}
+					}
+				}
+				out = append(out, info)
+			}
+			return map[string]any{"certificates": out, "count": len(out)}, nil
+		},
+		Firewall: func(context.Context) (any, error) {
+			if s.firewall == nil {
+				return nil, agmcp.ErrAdminPlane
+			}
+			rules, err := s.firewall.List()
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"rules": rules, "count": len(rules)}, nil
+		},
+		CacheStats: func(context.Context) (any, error) {
+			return map[string]any{"available": s.apiShared.CacheStore != nil}, nil
+		},
+		ClusterState: func(context.Context) (any, error) {
+			if s.clusterManager == nil {
+				return map[string]any{"enabled": false}, nil
+			}
+			return map[string]any{
+				"enabled": true,
+				"members": s.clusterManager.Members(),
+				"metrics": s.clusterManager.Metrics(),
+			}, nil
+		},
+	}
+	agmcp.RegisterReadTools(s.mcpSrv, deps, allowed)
+	agmcp.RegisterResources(s.mcpSrv, deps, allowed)
+	agmcp.RegisterPrompts(s.mcpSrv)
 }
 
 // mcpAuthMiddleware verifies the MCP bearer token and attaches its claims to
@@ -1037,5 +1136,230 @@ func (s *Server) mcpAuthMiddleware() func(http.Handler) http.Handler {
 	if s.apiShared.RevokeStore != nil {
 		revoked = s.apiShared.RevokeStore.IsRevoked
 	}
-	return agmcp.AuthMiddleware(s.mcpToken, revoked)
+	base := agmcp.AuthMiddleware(s.mcpToken, revoked)
+	return func(next http.Handler) http.Handler {
+		h := base(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Pick up a revoke written by `agbero mcp token revoke` in a
+			// separate process.
+			if s.apiShared.RevokeStore != nil {
+				_ = s.apiShared.RevokeStore.Refresh()
+			}
+			h.ServeHTTP(w, r)
+		})
+	}
+}
+
+func (s *Server) handleMCPAdminStatus(w http.ResponseWriter, r *http.Request) {
+	state := s.apiShared.State()
+	if state.Global == nil {
+		http.Error(w, "state unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	cfg := state.Global.MCP
+	caps := make([]map[string]any, 0, len(agmcp.Registry))
+	for _, c := range agmcp.Registry {
+		caps = append(caps, map[string]any{"name": c.Name, "class": string(c.Class), "tool": c.Tool})
+	}
+	if s.mcpTokens != nil {
+		_ = s.mcpTokens.Reload()
+	}
+	hostExists, hostManaged, _ := agmcp.MCPLocalhostManaged(state.Global.Storage.HostsDir)
+	recent := make([]map[string]any, 0)
+	for _, rec := range s.mcpTokens.List() {
+		revoked := s.apiShared.RevokeStore != nil && s.apiShared.RevokeStore.IsRevoked(rec.JTI)
+		recent = append(recent, map[string]any{
+			"user": rec.User, "scope": rec.Scope, "jti": rec.JTI,
+			"created_at": rec.CreatedAt.UTC().Format(time.RFC3339),
+			"expires_at": rec.ExpiresAt.UTC().Format(time.RFC3339),
+			"revoked":    revoked,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"enabled":   cfg.Enabled.Active(),
+		"transport": cfg.Transport,
+		"read": map[string]any{
+			"enabled": cfg.Read.Enabled.Active(),
+			"allow":   cfg.Read.Allow,
+			"hosts":   cfg.Read.Hosts,
+		},
+		"plan": map[string]any{
+			"enabled":         cfg.Plan.Enabled.Active(),
+			"allow":           cfg.Plan.Allow,
+			"hosts":           cfg.Plan.Hosts,
+			"max_input_bytes": cfg.Plan.MaxInputBytes,
+		},
+		"allowed_ips":       cfg.AllowedIPs,
+		"rate_limit":        cfg.RateLimit,
+		"audit_file":        cfg.AuditFile,
+		"keeper_locked":     s.keeperStore == nil || s.keeperStore.IsLocked(),
+		"protocol_versions": agmcp.SupportedProtocolVersions,
+		"capabilities":      caps,
+		"host_exists":       hostExists,
+		"host_managed":      hostManaged,
+		"url":               def.MCPLocalhostURL,
+		"admin_url":         agmcp.AdminMCPURL(state.Global.Admin.Address),
+		"tokens":            recent,
+		"stats":             s.mcpStats.Snapshot(),
+	})
+}
+
+func (s *Server) handleMCPAdminTokenCreate(w http.ResponseWriter, r *http.Request) {
+	if s.mcpToken == nil {
+		http.Error(w, `{"error":"mcp_unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		User  string `json:"user"`
+		Scope string `json:"scope"`
+		TTL   string `json:"ttl"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid_body"}`, http.StatusBadRequest)
+		return
+	}
+	ttl := agmcp.DefaultTokenTTL
+	if strings.TrimSpace(req.TTL) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(req.TTL))
+		if err != nil {
+			http.Error(w, `{"error":"invalid_ttl"}`, http.StatusBadRequest)
+			return
+		}
+		ttl = d
+	}
+	scopes := strings.Fields(req.Scope)
+	if len(scopes) == 0 {
+		scopes = []string{agmcp.ScopeRead}
+	}
+	raw, claims, err := s.mcpToken.Mint(req.User, scopes, ttl)
+	if err != nil {
+		http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusBadRequest)
+		return
+	}
+	if s.mcpTokens != nil {
+		_ = s.mcpTokens.Add(agmcp.TokenRecord{
+			User: claims.Subject, Scope: claims.Scope, JTI: claims.ID,
+			CreatedAt: time.Now(), ExpiresAt: claims.ExpiresAt.Time,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	s.mcpAudit.Log(map[string]any{
+		"event": "mcp_token_create", "actor": "admin", "user": claims.Subject,
+		"jti": claims.ID, "scope": claims.Scope, "status": http.StatusOK,
+	})
+	json.NewEncoder(w).Encode(map[string]any{
+		"token":      raw,
+		"jti":        claims.ID,
+		"scope":      claims.Scope,
+		"user":       claims.Subject,
+		"expires_at": claims.ExpiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+func (s *Server) handleMCPAdminTokenRevoke(w http.ResponseWriter, r *http.Request) {
+	jti := chi.URLParam(r, "jti")
+	if jti == "" {
+		http.Error(w, `{"error":"jti_required"}`, http.StatusBadRequest)
+		return
+	}
+	if s.apiShared.RevokeStore == nil {
+		http.Error(w, `{"error":"revoke_store_unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.apiShared.RevokeStore.Revoke(jti, def.MCPServiceName, time.Now().Add(agmcp.MaxTokenTTL)); err != nil {
+		http.Error(w, `{"error":"revoke_failed"}`, http.StatusInternalServerError)
+		return
+	}
+	s.mcpAudit.Log(map[string]any{"event": "mcp_token_revoke", "actor": "admin", "jti": jti, "status": http.StatusOK})
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`))
+}
+
+func (s *Server) handleMCPAdminAudit(w http.ResponseWriter, r *http.Request) {
+	state := s.apiShared.State()
+	if state.Global == nil {
+		http.Error(w, "state unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	path := strings.TrimSpace(state.Global.MCP.AuditFile)
+	if path == "" {
+		path = state.Global.Storage.DataDir.FilePath("mcp-audit.jsonl")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		http.Error(w, `{"error":"audit_unavailable"}`, http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+
+	limit := 200
+	if v := r.URL.Query().Get("lines"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1000 {
+			limit = n
+		}
+	}
+	ring := make([]string, 0, limit)
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64<<10), 1<<20)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		if len(ring) == limit {
+			copy(ring, ring[1:])
+			ring[len(ring)-1] = line
+		} else {
+			ring = append(ring, line)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"entries": ring, "count": len(ring)})
+}
+
+func (s *Server) handleMCPAdminHostCreate(w http.ResponseWriter, r *http.Request) {
+	state := s.apiShared.State()
+	if state.Global == nil || !state.Global.MCP.Enabled.Active() {
+		http.Error(w, `{"error":"mcp_disabled"}`, http.StatusConflict)
+		return
+	}
+	path, created, err := agmcp.WriteMCPLocalhost(
+		state.Global.Storage.HostsDir,
+		state.Global.Admin.Address,
+		state.Global.MCP.AllowedIPs,
+	)
+	if err != nil {
+		http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	s.mcpAudit.Log(map[string]any{
+		"event": "mcp_host_enable", "actor": "admin", "path": path,
+		"url": def.MCPLocalhostURL, "created": created, "status": http.StatusOK,
+	})
+	json.NewEncoder(w).Encode(map[string]any{
+		"created": created,
+		"exists":  !created,
+		"path":    path,
+		"url":     def.MCPLocalhostURL,
+	})
+}
+
+func (s *Server) handleMCPAdminHostDelete(w http.ResponseWriter, r *http.Request) {
+	state := s.apiShared.State()
+	if state.Global == nil {
+		http.Error(w, `{"error":"state_unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+	removed, err := agmcp.RemoveMCPLocalhost(state.Global.Storage.HostsDir)
+	if err != nil {
+		http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusConflict)
+		return
+	}
+	s.mcpAudit.Log(map[string]any{
+		"event": "mcp_host_disable", "actor": "admin", "removed": removed, "status": http.StatusOK,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"removed": removed})
 }

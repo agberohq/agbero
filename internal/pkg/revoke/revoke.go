@@ -60,6 +60,14 @@ func (s *Store) IsRevoked(jti string) bool {
 	return time.Now().Before(e.ExpiresAt)
 }
 
+// Refresh re-reads the on-disk revocation list. It lets a long-lived daemon
+// observe a revoke written by a separate CLI process without a restart.
+func (s *Store) Refresh() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.load()
+}
+
 // Revoke adds a JTI to the list and persists to disk.
 // expiresAt should be the token's original expiry — entries are auto-pruned after that time.
 func (s *Store) Revoke(jti, service string, expiresAt time.Time) error {
