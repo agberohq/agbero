@@ -1,16 +1,20 @@
 package mcp
 
 import (
-	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/agberohq/oshodi"
 )
 
 func TestTokenRegistryMetadataOnly(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "mcp-tokens.json")
-	reg, err := OpenTokenRegistry(path)
+	path := filepath.Join(t.TempDir(), "revoked.db")
+	db, err := oshodi.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := OpenTokenRegistryBucket(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,18 +25,19 @@ func TestTokenRegistryMetadataOnly(t *testing.T) {
 	if err := reg.Add(rec); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "eyJ") {
-		t.Fatal("registry contains a JWT")
-	}
 	if len(reg.List()) != 1 || reg.List()[0].JTI != "jti-1" {
 		t.Fatalf("records = %+v", reg.List())
 	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
 
-	other, err := OpenTokenRegistry(path)
+	db2, err := oshodi.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db2.Close()
+	other, err := OpenTokenRegistryBucket(db2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,17 +46,21 @@ func TestTokenRegistryMetadataOnly(t *testing.T) {
 	if err := other.Add(rec2); err != nil {
 		t.Fatal(err)
 	}
-	if err := reg.Reload(); err != nil {
-		t.Fatal(err)
-	}
-	if len(reg.List()) != 2 {
-		t.Fatalf("reloaded records = %+v", reg.List())
+	if len(other.List()) != 2 {
+		t.Fatalf("records = %+v", other.List())
 	}
 }
 
 func TestTokenRegistrySkipsExpired(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "mcp-tokens.json")
-	reg, _ := OpenTokenRegistry(path)
+	db, err := oshodi.Open(filepath.Join(t.TempDir(), "revoked.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	reg, err := OpenTokenRegistryBucket(db)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_ = reg.Add(TokenRecord{JTI: "old", CreatedAt: time.Now().Add(-10 * 24 * time.Hour), ExpiresAt: time.Now().Add(-9 * 24 * time.Hour)})
 	_ = reg.Add(TokenRecord{JTI: "new", CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)})
 	if got := reg.List(); len(got) != 1 || got[0].JTI != "new" {

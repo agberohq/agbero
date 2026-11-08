@@ -2,12 +2,15 @@ package mcp
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/agberohq/oshodi"
 )
+
+const RegistryBucket = "mcp_tokens"
 
 // TokenRecord is non-secret metadata for the admin "Recent tokens" table.
 // The token itself is never stored.
@@ -19,41 +22,45 @@ type TokenRecord struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
+// TokenRegistry stores token metadata in the shared Oshodi control database.
+// It never stores a JWT; only JTI/user/scope/timestamps.
 type TokenRegistry struct {
 	mu      sync.Mutex
-	path    string
+	db      *oshodi.DB
+	bucket  *oshodi.Bucket
 	records []TokenRecord
 }
 
-// OpenTokenRegistry loads the metadata registry. A missing file is empty.
-func OpenTokenRegistry(path string) (*TokenRegistry, error) {
-	if path == "" {
-		return nil, nil
+// OpenTokenRegistryBucket opens the mcp_tokens bucket in the coordinator-owned
+// Oshodi database.
+func OpenTokenRegistryBucket(db *oshodi.DB) (*TokenRegistry, error) {
+	if db == nil {
+		return nil, fmt.Errorf("mcp token registry: database is required")
 	}
-	r := &TokenRegistry{path: path}
+	r := &TokenRegistry{db: db, bucket: db.Bucket(RegistryBucket)}
 	if err := r.Reload(); err != nil {
 		return nil, err
 	}
 	return r, nil
 }
 
-// Reload re-reads metadata written by another process (for example the CLI).
+// Reload re-reads metadata from Oshodi.
 func (r *TokenRegistry) Reload() error {
 	if r == nil {
 		return nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	data, err := os.ReadFile(r.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			r.records = nil
-			return nil
+	records := make([]TokenRecord, 0, 32)
+	err := r.bucket.Scan(func(_, v []byte) bool {
+		var rec TokenRecord
+		if err := json.Unmarshal(v, &rec); err != nil {
+			return true
 		}
-		return err
-	}
-	var records []TokenRecord
-	if err := json.Unmarshal(data, &records); err != nil {
+		records = append(records, rec)
+		return true
+	})
+	if err != nil {
 		return err
 	}
 	r.records = records
@@ -70,7 +77,14 @@ func (r *TokenRegistry) Add(rec TokenRecord) error {
 	defer r.mu.Unlock()
 	r.records = append(r.records, rec)
 	r.pruneLocked()
-	return r.persistLocked()
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	if err := r.bucket.Set([]byte(rec.JTI), raw); err != nil {
+		return err
+	}
+	return r.db.Flush()
 }
 
 // List returns newest first. Callers must treat this as metadata, not proof of
@@ -102,19 +116,4 @@ func (r *TokenRegistry) pruneLocked() {
 	if len(r.records) > 100 {
 		r.records = r.records[len(r.records)-100:]
 	}
-}
-
-func (r *TokenRegistry) persistLocked() error {
-	if err := os.MkdirAll(filepath.Dir(r.path), 0700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(r.records, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := r.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, r.path)
 }
