@@ -26,18 +26,13 @@ type Config struct {
 	Interactive bool
 
 	DisableAutoLock bool
-
-	// PassphraseOut, when non-empty, writes the resolved passphrase to this
-	// path (0600, atomic replace) after a successful unlock or creation.
-	// Used by `agbero init` so the generated service config can reference a
-	// passphrase file instead of an environment variable.
-	PassphraseOut string
 }
 
 // Open opens or creates the Keeper store according to kfg.
 // It attempts passphrase resolution in the following order:
+// systemd CREDENTIALS_DIRECTORY/keeper_passphrase
 // alaye.Keeper.Passphrase (config file value, may itself be a secret ref)
-// alaye.Keeper.PassphraseFile (0600 file; portable for services)
+// alaye.Keeper.PassphraseFile (legacy existing deployments)
 // AGBERO_KEEPER_PASSPHRASE environment variable
 // AGBERO_PASSPHRASE environment variable (deprecated alias)
 // Interactive prompt — only when kfg.Interactive == true
@@ -118,10 +113,6 @@ func Open(kfg Config) (*keeper.Keeper, error) {
 		zero.Bytes(passBytes)
 
 		if unlockErr == nil {
-			if err := writePassphraseOut(kfg.PassphraseOut, passphrase); err != nil {
-				store.Close()
-				return nil, err
-			}
 			kfg.Logger.Info("keeper unlocked successfully using configured passphrase")
 			return store, nil
 		}
@@ -153,14 +144,6 @@ func Open(kfg Config) (*keeper.Keeper, error) {
 
 		pass := result.Bytes()
 		unlockErr := store.Unlock(pass)
-		if unlockErr == nil {
-			if err := writePassphraseOut(kfg.PassphraseOut, string(pass)); err != nil {
-				zero.Bytes(pass)
-				result.Zero()
-				store.Close()
-				return nil, err
-			}
-		}
 
 		zero.Bytes(pass)
 		result.Zero()
@@ -202,6 +185,18 @@ func resolvePassphrase(cfg *alaye.Keeper) string {
 // resolvePassphraseChecked resolves the passphrase and reports hard failures
 // (unreadable or insecure passphrase_file) instead of silently falling back.
 func resolvePassphraseChecked(cfg *alaye.Keeper) (string, error) {
+	// systemd credentials are deliberately preferred for services. Both
+	// LoadCredential and LoadCredentialEncrypted expose the same decrypted
+	// file here; use Encrypted in production so the source is not plaintext.
+	if dir := strings.TrimSpace(os.Getenv("CREDENTIALS_DIRECTORY")); dir != "" {
+		for _, name := range []string{"keeper_passphrase", "keeper-passphrase"} {
+			if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
+				if pass := strings.TrimRight(string(data), "\r\n"); pass != "" {
+					return pass, nil
+				}
+			}
+		}
+	}
 	if cfg != nil {
 		if p := cfg.Passphrase.String(); p != "" {
 			return p, nil
@@ -259,48 +254,6 @@ func readPassphraseFile(path string) (string, error) {
 		return "", fmt.Errorf("keeper.passphrase_file %q is empty", path)
 	}
 	return pass, nil
-}
-
-// writePassphraseOut atomically writes the resolved passphrase to path with
-// 0600 permissions. It is a no-op when path is empty.
-func writePassphraseOut(path, passphrase string) error {
-	if path == "" {
-		return nil
-	}
-	if passphrase == "" {
-		return fmt.Errorf("cannot write empty passphrase to %q", path)
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("create passphrase directory %q: %w", dir, err)
-	}
-
-	tmp, err := os.CreateTemp(dir, ".agbero-passphrase-*")
-	if err != nil {
-		return fmt.Errorf("create temporary passphrase file: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-
-	if err := tmp.Chmod(0600); err != nil {
-		tmp.Close()
-		return fmt.Errorf("secure temporary passphrase file: %w", err)
-	}
-	if _, err := tmp.WriteString(passphrase); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write temporary passphrase file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("sync temporary passphrase file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temporary passphrase file: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("replace passphrase file %q: %w", path, err)
-	}
-	return nil
 }
 
 // PassphraseAvailable reports whether a real passphrase is available after

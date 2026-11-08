@@ -84,11 +84,10 @@ func (h *Home) initializeKeeper() (*keeper.Keeper, *session, error) {
 	})
 
 	store, err := secrets.Open(secrets.Config{
-		DataDir:       h.ctx.Paths.DataDir,
-		Setting:       &alaye.Keeper{Enabled: expect.Active},
-		Logger:        h.ctx.Logger,
-		Interactive:   true,
-		PassphraseOut: h.ctx.Paths.BaseDir.FilePath("keeper.passphrase"),
+		DataDir:     h.ctx.Paths.DataDir,
+		Setting:     &alaye.Keeper{Enabled: expect.Active},
+		Logger:      h.ctx.Logger,
+		Interactive: true,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open/create keeper: %w", err)
@@ -250,6 +249,7 @@ func (h *Home) setupKeeperSecrets(store *keeper.Keeper, sess *session) error {
 
 	h.u.Render(func() {
 		h.u.WarnLine("⚠️  Keep your master passphrase safe – it is the only way to unlock Keeper")
+		h.u.WarnLine("Agbero does not write the passphrase to disk. For service startup use a systemd credential, AGBERO_KEEPER_PASSPHRASE, or `agbero keeper unlock`.")
 	})
 	return nil
 }
@@ -355,11 +355,9 @@ func (h *Home) writeConfigFiles(store *keeper.Keeper, sess *session) error {
 		totpEnabled = def.On
 	}
 
-	passphraseFile := h.ctx.Paths.BaseDir.FilePath("keeper.passphrase")
-	keeperPassphraseConfig := fmt.Sprintf("passphrase_file = %q", filepath.ToSlash(passphraseFile))
-	if _, err := os.Stat(passphraseFile); err != nil {
-		keeperPassphraseConfig = `passphrase = "env.AGBERO_KEEPER_PASSPHRASE"`
-	}
+	// Never write the Keeper passphrase next to keeper.db. Service startup
+	// uses a systemd credential, environment injection, or manual unlock.
+	keeperPassphraseConfig := `passphrase = "env.AGBERO_KEEPER_PASSPHRASE"`
 
 	replacements := []struct{ key, value string }{
 		{"{HOST_DIR}", filepath.ToSlash(h.ctx.Paths.HostsDir.Path())},
@@ -429,6 +427,8 @@ func (h *Home) displaySuccess(sess *session) {
 		{Text: "Home: " + h.ctx.Paths.BaseDir.Path()},
 		{Text: "Logs: " + h.ctx.Paths.LogsDir.Path()},
 		{Text: "Add another host: sudo " + bin + " host add"},
+		{Text: "Set the Keeper passphrase for unattended startup, or unlock manually after service start"},
+		{Text: "Unlock a waiting service: " + bin + " keeper unlock"},
 		{Text: "Install service: sudo " + bin + " service install"},
 		{Text: "Start service: sudo " + bin + " service start"},
 		{Text: "Status: sudo " + bin + " service status"},

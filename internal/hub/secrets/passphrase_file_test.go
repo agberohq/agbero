@@ -101,61 +101,6 @@ func TestResolvePassphrasePrecedence(t *testing.T) {
 	}
 }
 
-func TestWritePassphraseOut(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "sub", "keeper.passphrase")
-
-	if err := writePassphraseOut(path, "written-secret"); err != nil {
-		t.Fatalf("writePassphraseOut: %v", err)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "written-secret" {
-		t.Fatalf("got %q", string(data))
-	}
-	if runtime.GOOS != "windows" {
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if perm := info.Mode().Perm(); perm != 0600 {
-			t.Fatalf("mode = %04o, want 0600", perm)
-		}
-	}
-}
-
-func TestOpenWritesPassphraseOut(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "keeper.passphrase")
-	t.Setenv("AGBERO_KEEPER_PASSPHRASE", "passphrase-out-test-value")
-
-	store, err := Open(Config{
-		DataDir:       expect.NewFolder(dir),
-		Setting:       &alaye.Keeper{},
-		Logger:        nil,
-		Interactive:   false,
-		PassphraseOut: out,
-	})
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	defer store.Close()
-	if store.IsLocked() {
-		t.Fatal("store should be unlocked")
-	}
-
-	data, err := os.ReadFile(out)
-	if err != nil {
-		t.Fatalf("passphrase file: %v", err)
-	}
-	if string(data) != "passphrase-out-test-value" {
-		t.Fatalf("passphrase file = %q", string(data))
-	}
-}
-
 func TestReadPassphraseFileTooLarge(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "big")
@@ -164,5 +109,17 @@ func TestReadPassphraseFileTooLarge(t *testing.T) {
 	}
 	if _, err := readPassphraseFile(path); err == nil {
 		t.Fatal("expected oversized file to be rejected")
+	}
+}
+
+func TestSystemdCredentialWinsOverEnv(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "keeper_passphrase"), []byte("credential-pass\n"), 0400); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CREDENTIALS_DIRECTORY", dir)
+	t.Setenv("AGBERO_KEEPER_PASSPHRASE", "env-pass")
+	if got := resolvePassphrase(&alaye.Keeper{}); got != "credential-pass" {
+		t.Fatalf("systemd credential precedence: got %q", got)
 	}
 }

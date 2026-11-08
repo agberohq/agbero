@@ -661,7 +661,7 @@ config reference.
 
 ## 17. KEEPER — Encrypted Secret Store
 
-The keeper is Agbero's built-in encrypted secret store. It is a **required component** — Agbero will not start if the keeper cannot be opened. Configure it under the `security` block.
+The keeper is Agbero's built-in encrypted secret store. It is a **required component** — a service will not serve secret-dependent traffic until it is unlocked. Configure it under the `security` block.
 
 ```hcl
 security {
@@ -690,11 +690,17 @@ security {
 
 Agbero resolves the passphrase in this order:
 
-1. `keeper.passphrase` in `agbero.hcl` — can reference an env var: `"env.AGBERO_PASSPHRASE"`
-2. `AGBERO_PASSPHRASE` environment variable
-3. Interactive terminal prompt (only when running attached to a terminal)
+1. systemd credential `$CREDENTIALS_DIRECTORY/keeper_passphrase`
+2. `keeper.passphrase` in `agbero.hcl` — prefer `"env.AGBERO_KEEPER_PASSPHRASE"`
+3. legacy `keeper.passphrase_file` (existing deployments only)
+4. `AGBERO_KEEPER_PASSPHRASE` environment variable
+5. `AGBERO_PASSPHRASE` environment variable
+6. interactive terminal prompt
+7. a service starts locked and waits for `agbero keeper unlock`
 
-For system services, Docker containers, and CI pipelines where there is no terminal, you **must** supply the passphrase via one of the first two methods. Agbero will fail to start if it cannot resolve the passphrase in a non-terminal context.
+`agbero init` does not write a passphrase file. For system services, use a
+systemd encrypted credential or inject the environment variable at runtime.
+Direct `systemctl restart` cannot prompt; run `agbero keeper unlock` after it.
 
 ```bash
 # Service unit file example (systemd)
