@@ -24,6 +24,10 @@ type Config struct {
 	Logger      *ll.Logger
 	Setting     *alaye.Keeper
 	Interactive bool
+	// AllowLocked returns an opened-but-locked store when a configured
+	// passphrase source is unavailable. Service startup uses this to expose
+	// the local unlock endpoint instead of exiting.
+	AllowLocked bool
 
 	DisableAutoLock bool
 }
@@ -102,6 +106,10 @@ func Open(kfg Config) (*keeper.Keeper, error) {
 
 	passphrase, passErr := resolvePassphraseChecked(kfg.Setting)
 	if passErr != nil {
+		if kfg.AllowLocked {
+			kfg.Logger.Warn("keeper passphrase source unavailable; starting locked", "err", passErr)
+			return store, nil
+		}
 		store.Close()
 		return nil, passErr
 	}

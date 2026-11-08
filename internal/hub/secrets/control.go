@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/keeper"
@@ -163,7 +164,14 @@ func UnlockControl(dataDir expect.Folder, passphrase []byte) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+cf.Token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	// Never honor HTTP_PROXY/HTTPS_PROXY for a loopback passphrase request.
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			Proxy: nil,
+		},
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

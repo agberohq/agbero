@@ -107,8 +107,8 @@ func NewKeeper(cfg *Shared) *Keeper {
 }
 
 func (k *Keeper) unlock(w http.ResponseWriter, r *http.Request) {
-	if !loopbackRequest(r) {
-		k.errorResponse(w, http.StatusForbidden, "keeper unlock is loopback-only; use `agbero keeper unlock`")
+	if !loopbackRequest(r) || r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("Forwarded") != "" {
+		k.errorResponse(w, http.StatusForbidden, "keeper unlock is direct-loopback-only; use `agbero keeper unlock`")
 		return
 	}
 	if k.store == nil {

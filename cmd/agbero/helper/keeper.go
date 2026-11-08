@@ -2,8 +2,10 @@ package helper
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/pkg/ui"
@@ -53,7 +55,11 @@ func (k *Keeper) Unlock(configPath string) {
 		k.p.Logger.Fatal("storage.data_dir is not configured")
 	}
 	if _, err := secrets.ReadControlFile(dataDir); err != nil {
-		k.p.Logger.Fatal("keeper is not waiting for an unlock (start the service first): ", err)
+		pidPath := dataDir.FilePath(def.DefaultPIDName)
+		if pid, perr := os.ReadFile(pidPath); perr == nil && strings.TrimSpace(string(pid)) != "" {
+			k.p.Logger.Fatalf("keeper unlock endpoint is not available (pid %s is running; it may already be unlocked or running an older binary). Restart with the current build and retry.", strings.TrimSpace(string(pid)))
+		}
+		k.p.Logger.Fatal("service is not running; start it with 'agbero service start' first, then retry: ", err)
 	}
 	u := ui.New()
 	result, err := u.PasswordRequired("Keeper passphrase")

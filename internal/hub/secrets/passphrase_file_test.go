@@ -9,6 +9,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/olekukonko/ll"
 )
 
 func TestReadPassphraseFile(t *testing.T) {
@@ -121,5 +122,22 @@ func TestSystemdCredentialWinsOverEnv(t *testing.T) {
 	t.Setenv("AGBERO_KEEPER_PASSPHRASE", "env-pass")
 	if got := resolvePassphrase(&alaye.Keeper{}); got != "credential-pass" {
 		t.Fatalf("systemd credential precedence: got %q", got)
+	}
+}
+
+func TestAllowLockedMissingPassphraseSource(t *testing.T) {
+	dataDir := expect.NewFolder(filepath.Join(t.TempDir(), "data"))
+	store, err := Open(Config{
+		DataDir:     dataDir,
+		Setting:     &alaye.Keeper{PassphraseFile: filepath.Join(t.TempDir(), "missing")},
+		Logger:      ll.New("test").Disable(),
+		AllowLocked: true,
+	})
+	if err != nil {
+		t.Fatalf("AllowLocked should return a locked store: %v", err)
+	}
+	defer store.Close()
+	if !store.IsLocked() {
+		t.Fatal("store should be locked")
 	}
 }
