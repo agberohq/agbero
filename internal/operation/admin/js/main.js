@@ -12,6 +12,7 @@ import {
     fetchSystem,
     getApi, apiSetToken, apiClearToken, reinitApi,
     fetchStatus, logout,
+    fetchMCPStatus, createMCPToken, revokeMCPToken, fetchMCPAudit, createMCPHost, deleteMCPHost,
     refreshToken,
     fetchFirewall, addFirewallRule, deleteFirewallRule,
     addHost, addHostHCL, previewHost, deleteHost, updateHost, updateHostHCL, getHostHCL, checkHostExists,
@@ -127,6 +128,7 @@ async function bootstrapApp() {
             keeperStatus, keeperUnlock, keeperLock, keeperList,
             keeperGet, keeperSet, keeperSetFile, keeperDelete,
             setupTOTP, fetchTelemetry, logout,
+            fetchMCPStatus, createMCPToken, revokeMCPToken, fetchMCPAudit, createMCPHost, deleteMCPHost,
             parseCertificates: _parseCertificates,
         },
         utils: {
@@ -249,6 +251,7 @@ async function bootstrapApp() {
     appGroup.Get('/keeper',   Out.page('/pages/keeper.html', '/pages/keeper.js'));
     appGroup.Get('/profile',  Out.page('/pages/profile.html', '/pages/profile.js'));
     appGroup.Get('/certs',    Out.page('/pages/certs.html', '/pages/certs.js'));
+    appGroup.Get('/mcp',      Out.page('/pages/mcp.html', '/pages/mcp.js'));
     appGroup.Get('/add-host', Out.page('/pages/add-host/index.html', '/pages/add-host/index.js'));
 
     router.NotFound(Out.html('<div class="page active"><div class="empty-state">Page Not Found</div></div>'));

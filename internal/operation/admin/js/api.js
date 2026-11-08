@@ -345,6 +345,15 @@ export async function generateSecret(action, opts = {}) {
     return _safe(() => getApi().post('/api/v1/secrets', { action, ...opts }));
 }
 
+// MCP admin (admin JWT, served by the daemon)
+
+export async function fetchMCPStatus()        { return _safe(() => getApi().get('/api/mcp/admin/status')); }
+export async function createMCPToken(payload) { return _safe(() => getApi().post('/api/mcp/admin/token', payload)); }
+export async function revokeMCPToken(jti)     { return _safe(() => getApi().delete(`/api/mcp/admin/token/${encodeURIComponent(jti)}`)); }
+export async function fetchMCPAudit(lines = 200) { return _safe(() => getApi().get(`/api/mcp/admin/audit?lines=${lines}`)); }
+export async function createMCPHost()         { return _safe(() => getApi().post('/api/mcp/admin/host', {})); }
+export async function deleteMCPHost()         { return _safe(() => getApi().delete('/api/mcp/admin/host')); }
+
 // KV  /api/v1/kv/:key
 
 export async function kvGet(key)        { return _safe(() => getApi().get(`/api/v1/kv/${encodeURIComponent(key)}`)); }

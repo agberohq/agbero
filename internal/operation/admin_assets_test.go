@@ -39,3 +39,18 @@ func TestMapInfoPanelEscapesConfigValues(t *testing.T) {
 		t.Fatal("buildNodeActions still interpolates the raw hostname into an attribute")
 	}
 }
+
+func TestAdminHasMCPPage(t *testing.T) {
+	for _, name := range []string{"admin/pages/mcp.html", "admin/pages/mcp.js"} {
+		if _, err := fs.ReadFile(adminFS, name); err != nil {
+			t.Fatalf("%s missing: %v", name, err)
+		}
+	}
+	shell, err := fs.ReadFile(adminFS, "admin/layouts/shell.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(shell), "path: '/mcp'") {
+		t.Fatal("MCP page is not in the admin navigation")
+	}
+}
