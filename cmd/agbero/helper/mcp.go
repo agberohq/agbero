@@ -1,6 +1,8 @@
 package helper
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -8,6 +10,8 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
+	"github.com/agberohq/agbero/internal/hub/authority"
+	"github.com/agberohq/agbero/internal/hub/control"
 	agmcp "github.com/agberohq/agbero/internal/operation/mcp"
 	"github.com/agberohq/agbero/internal/pkg/revoke"
 	"github.com/agberohq/agbero/internal/pkg/ui"
@@ -43,12 +47,12 @@ func (m *MCP) TokenCreate(configPath, user, scope string, ttl time.Duration) {
 		m.p.Logger.Fatal("mint mcp token: ", err)
 	}
 	if global, err := LoadGlobal(configPath); err == nil {
-		path := global.Storage.DataDir.FilePath("mcp-tokens.json")
-		if reg, err := agmcp.OpenTokenRegistry(path); err == nil {
-			_ = reg.Add(agmcp.TokenRecord{
-				User: claims.Subject, Scope: claims.Scope, JTI: claims.ID,
-				CreatedAt: time.Now(), ExpiresAt: claims.ExpiresAt.Time,
-			})
+		rec := agmcp.TokenRecord{
+			User: claims.Subject, Scope: claims.Scope, JTI: claims.ID,
+			CreatedAt: time.Now(), ExpiresAt: claims.ExpiresAt.Time,
+		}
+		if err := m.addTokenRecord(global, rec); err != nil {
+			m.p.Logger.Fatal("record MCP token: ", err)
 		}
 		m.audit(global, map[string]any{
 			"event": "mcp_token_create", "actor": "cli", "user": claims.Subject,
@@ -80,6 +84,42 @@ func (m *MCP) TokenRotate() {
 	ui.New().SuccessLine("MCP signing key rotated; existing tokens remain valid until the previous key is retired")
 }
 
+func (m *MCP) addTokenRecord(global *alaye.Global, rec agmcp.TokenRecord) error {
+	socket := control.SocketPath(global.Storage.DataDir.Path())
+	ctx, cancel := context.WithTimeout(context.Background(), def.DefaultControlRevokeWait)
+	err := func() error {
+		c, err := control.DialRetry(ctx, socket)
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+		return c.Call(ctx, "token.registry.add", rec, nil)
+	}()
+	cancel()
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, control.ErrUnavailable) {
+		return err
+	}
+
+	lock, lockErr := authority.TryAcquire(global.Storage.DataDir.Path())
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.Release()
+	store, err := revoke.New(global.Storage.DataDir, m.p.Logger)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	reg, err := agmcp.OpenTokenRegistryBucket(store.DB())
+	if err != nil {
+		return err
+	}
+	return reg.Add(rec)
+}
+
 func (m *MCP) TokenRevoke(configPath, jti string) {
 	if strings.TrimSpace(jti) == "" {
 		m.p.Logger.Fatal("jti is required")
@@ -88,11 +128,57 @@ func (m *MCP) TokenRevoke(configPath, jti string) {
 	if err != nil {
 		m.p.Logger.Fatal("load config: ", err)
 	}
+	expiresAt := time.Now().Add(agmcp.MaxTokenTTL)
+	socket := control.SocketPath(global.Storage.DataDir.Path())
+
+	revokeViaControl := func(ctx context.Context) error {
+		c, err := control.DialRetry(ctx, socket)
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+		return c.Call(ctx, "revoke.add", map[string]any{
+			"jti":        jti,
+			"service":    def.MCPServiceName,
+			"expires_at": expiresAt,
+		}, nil)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), def.DefaultControlRevokeWait)
+	err = revokeViaControl(ctx)
+	cancel()
+	if err == nil {
+		m.audit(global, map[string]any{"event": "mcp_token_revoke", "actor": "cli", "jti": jti, "status": 200})
+		ui.New().SuccessLine("MCP token revoked")
+		return
+	}
+	if !errors.Is(err, control.ErrUnavailable) {
+		m.p.Logger.Fatal("revoke token through coordinator: ", err)
+	}
+
+	// The daemon is not available. Become the temporary owner of the data
+	// directory before touching the revocation store.
+	lock, lockErr := authority.TryAcquire(global.Storage.DataDir.Path())
+	if lockErr != nil {
+		// The daemon may still be starting or between lock and socket bind.
+		retryCtx, retryCancel := context.WithTimeout(context.Background(), def.DefaultControlFallbackWait)
+		err = revokeViaControl(retryCtx)
+		retryCancel()
+		if err != nil {
+			m.p.Logger.Fatal("data directory is owned but the coordinator is unavailable: ", lockErr)
+		}
+		m.audit(global, map[string]any{"event": "mcp_token_revoke", "actor": "cli", "jti": jti, "status": 200})
+		ui.New().SuccessLine("MCP token revoked")
+		return
+	}
+	defer lock.Release()
+
 	store, err := revoke.New(global.Storage.DataDir, m.p.Logger)
 	if err != nil {
 		m.p.Logger.Fatal("open revoke store: ", err)
 	}
-	if err := store.Revoke(jti, def.MCPServiceName, time.Now().Add(agmcp.MaxTokenTTL)); err != nil {
+	defer store.Close()
+	if err := store.Revoke(jti, def.MCPServiceName, expiresAt); err != nil {
 		m.p.Logger.Fatal("revoke token: ", err)
 	}
 	m.audit(global, map[string]any{"event": "mcp_token_revoke", "actor": "cli", "jti": jti, "status": 200})
