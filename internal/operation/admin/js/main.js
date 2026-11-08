@@ -98,7 +98,13 @@ async function _onLoginSuccess() {
     modal.closeAll();
     startPollingIfNeeded();
     await loadConfigData();
-    const dest = auth.session.intendedPath() || '/';
+    // Preserve the full route (including #/focus query parameters) across
+    // login. The old path-only value sent operators back to the dashboard.
+    let dest = auth.session.intendedPath();
+    if (!dest) {
+        const hashRoute = window.location.hash.replace(/^#/, '');
+        dest = hashRoute || '/';
+    }
     auth.session.clearIntendedPath();
     router.navigate(dest);
 }
@@ -234,7 +240,10 @@ async function bootstrapApp() {
     const appGroup = router.Group('/');
     appGroup.Use(async (ctx, next) => {
         if (!auth.guard('protected')) {
-            try { auth.session._metaStore?.set?.('intendedPath', ctx.path); } catch {}
+            try {
+                const qs = new URLSearchParams(ctx.query || {}).toString();
+                auth.session._metaStore?.set?.('intendedPath', ctx.path + (qs ? '?' + qs : ''));
+            } catch {}
             modal.open('loginModal');
             return;
         }
@@ -243,6 +252,7 @@ async function bootstrapApp() {
 
     appGroup.Get('/',         Out.page('/pages/dashboard.html', '/pages/dashboard.js'));
     appGroup.Get('/hosts',    Out.page('/pages/hosts/index.html', '/pages/hosts/index.js'));
+    appGroup.Get('/focus',    Out.page('/pages/focus.html', '/pages/focus.js'));
     appGroup.Get('/cluster',  Out.page('/pages/cluster.html', '/pages/cluster.js'));
     appGroup.Get('/map',      Out.page('/pages/map.html', '/pages/map.js'));
     appGroup.Get('/firewall', Out.page('/pages/firewall.html', '/pages/firewall.js'));
@@ -265,7 +275,38 @@ async function bootstrapApp() {
     // logged itself out within one polling cycle of any refresh. `await
     // auth.session.token()` decrypts and primes the in-memory copy, so the
     // synchronous accessor works afterwards.
+    // When Focus is opened from an authenticated admin tab, hand the token
+    // to the new tab in memory instead of forcing a second login.
+    window.addEventListener('message', async (event) => {
+        if (event.origin !== window.location.origin) return;
+        if (event.data?.type !== 'agbero:auth-token-request') return;
+        if (!auth.session.isActive()) return;
+        try {
+            const shared = await auth.session.token();
+            if (shared && event.source) {
+                event.source.postMessage({ type: 'agbero:auth-token', token: shared }, event.origin);
+            }
+        } catch {}
+    });
+
     let token = auth.session.tokenSync();
+    if (!token && window.opener?.postMessage) {
+        token = await new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(null), 400);
+            const onMessage = (event) => {
+                if (event.origin !== window.location.origin) return;
+                if (event.data?.type !== 'agbero:auth-token' || !event.data.token) return;
+                clearTimeout(timer);
+                window.removeEventListener('message', onMessage);
+                resolve(event.data.token);
+            };
+            window.addEventListener('message', onMessage);
+            try { window.opener.postMessage({ type: 'agbero:auth-token-request' }, window.location.origin); } catch {}
+        });
+        if (token) {
+            try { await auth.session.start(token); } catch {}
+        }
+    }
     if (!token) {
         try { token = await auth.session.token(); }
         catch (e) { logger.warn('auth', 'Could not restore session token', e?.message); }

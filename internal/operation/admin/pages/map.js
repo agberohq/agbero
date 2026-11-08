@@ -145,6 +145,7 @@ export default async function({ find, on, onUnmount, ready, inject }) {
         const host = _esc(node.meta?.hostname || '');
         const routeType = _esc(node.meta?.routeType || '');
         if (node.type === 'host' && node.meta?.hostname) {
+            actions.push(`<button class="btn small" style="width:100%;" data-action="focus-node" data-hostname="${host}">🎯 Focus Dashboard</button>`);
             actions.push(`<button class="btn small" style="width:100%;" data-action="perf-node" data-hostname="${host}">📈 Performance History</button>`);
             actions.push(`<button class="btn small" style="width:100%;" data-action="edit-host-hcl" data-hostname="${host}">✏️ Edit HCL</button>`);
         }
@@ -179,6 +180,7 @@ export default async function({ find, on, onUnmount, ready, inject }) {
         if (node.type === 'host' && node.meta?.hostname) {
             const h = node.meta.hostname;
             items.push({ label: 'View Details',       icon: '🔍', action: () => openInfoPanel(node) });
+            items.push({ label: 'Focus Dashboard',    icon: '🎯', action: () => window.open('/#/focus?host=' + encodeURIComponent(h), '_blank') });
             items.push({ label: 'Performance History',icon: '📈', action: () => emit('perf:open', { hostname: h }) });
             items.push({ label: 'Edit HCL',           icon: '✏️',  action: async () => {
                     const hcl = await api.getHostHCL(h);
@@ -401,6 +403,7 @@ export default async function({ find, on, onUnmount, ready, inject }) {
     }
 
     // Info panel action delegation
+    on('[data-action="focus-node"]',       'click', (e, btn) => window.open('/#/focus?host=' + encodeURIComponent(btn.dataset.hostname), '_blank'));
     on('[data-action="perf-node"]',        'click', (e, btn) => emit('perf:open', { hostname: btn.dataset.hostname }));
     on('[data-action="open-route-drawer"]','click', (e, btn) => emit('drawer:open-route',   { host: btn.dataset.hostname, idx: parseInt(btn.dataset.idx), type: btn.dataset.routetype }));
     on('[data-action="open-backend-drawer"]','click',(e,btn) => emit('drawer:open-backend', { host: btn.dataset.hostname, routeIdx: parseInt(btn.dataset.routeidx), backendIdx: parseInt(btn.dataset.backendidx), type: btn.dataset.routetype }));

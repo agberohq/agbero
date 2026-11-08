@@ -113,6 +113,9 @@ export default async function({ find, findAll, on, onUnmount, ready, inject }) {
         if (!h) return;
         const { clickmenu } = inject('app').oja;
         const items = [];
+        items.push({ label: 'Open Focus Dashboard', icon: '🎯', action: () => {
+            window.open('/#/focus?host=' + encodeURIComponent(h), '_blank');
+        }});
         if (!protected_) {
             items.push({ label: 'Edit HCL', icon: '✏️', action: async () => {
                     ui.btn.loading(btn, '…');

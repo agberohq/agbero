@@ -69,3 +69,65 @@ func TestAdminMCPScopeUsesCheckboxes(t *testing.T) {
 		t.Error("MCP token scope still uses a free-text input")
 	}
 }
+
+func TestAdminFocusDashboardAssets(t *testing.T) {
+	files, err := fs.ReadFile(adminFS, "admin/pages/focus.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"admin/pages/focus.html", "admin/pages/focus.js"} {
+		if _, err := fs.ReadFile(adminFS, name); err != nil {
+			t.Fatalf("missing %s: %v", name, err)
+		}
+	}
+	if strings.Contains(string(files), "history.replaceState(null, '', '/focus?") {
+		t.Error("focus page uses path routing instead of the Oja hash convention")
+	}
+	if !strings.Contains(string(files), "#/focus?") {
+		t.Error("focus page does not use #/focus routing")
+	}
+	html, err := fs.ReadFile(adminFS, "admin/pages/focus.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"focusTopBackends", "focusHostSort", "data-focus-tab=\"logs\""} {
+		if !strings.Contains(string(html), want) {
+			t.Errorf("focus page missing %q", want)
+		}
+	}
+	if strings.Contains(string(html), "data-focus-tab=\"hosts\"") {
+		t.Error("focus page still has a separate Hosts tab")
+	}
+	main, err := fs.ReadFile(adminFS, "admin/js/main.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(main), "appGroup.Get('/focus'") {
+		t.Error("admin router does not register /focus")
+	}
+}
+
+func TestAdminLoginPreservesFocusRoute(t *testing.T) {
+	main, err := fs.ReadFile(adminFS, "admin/js/main.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(main), "ctx.path + (qs ? '?' + qs : '')") {
+		t.Error("login intended path drops the route query")
+	}
+	if !strings.Contains(string(main), "hashRoute") {
+		t.Error("login redirect does not fall back to the current hash route")
+	}
+}
+
+func TestAdminSharesAuthWithFocusTabs(t *testing.T) {
+	main, err := fs.ReadFile(adminFS, "admin/js/main.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"agbero:auth-token-request", "agbero:auth-token"} {
+		if !strings.Contains(string(main), want) {
+			t.Errorf("main.js missing cross-tab auth handoff %q", want)
+		}
+	}
+}

@@ -287,6 +287,10 @@ export async function fetchTelemetry(host, range) {
         `/api/v1/telemetry/history?host=${encodeURIComponent(host)}&range=${range}`
     ));
 }
+export async function fetchBackendTelemetry(host, route, backend, range) {
+    const qs = new URLSearchParams({ host, route, backend, range });
+    return _safe(() => getApi().get(`/api/v1/telemetry/backend?${qs.toString()}`));
+}
 export async function fetchTelemetryHosts() {
     return _safe(() => getApi().get('/api/v1/telemetry/hosts'));
 }
