@@ -1,6 +1,9 @@
 package helper
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/agberohq/agbero"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 )
@@ -10,6 +13,11 @@ type Run struct {
 }
 
 func (r *Run) Start(configPath string, devMode bool) error {
+	// Keep relative service paths (notably WAF rules) stable even if the
+	// invoking shell's working directory was removed during an uninstall.
+	if abs, err := filepath.Abs(configPath); err == nil {
+		_ = os.Chdir(filepath.Dir(abs))
+	}
 	global, err := loadGlobal(configPath)
 	if err != nil {
 		return err

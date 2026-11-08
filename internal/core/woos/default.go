@@ -115,6 +115,7 @@ func defaultGlobal(g *alaye.Global, configPath string) {
 	defaultMCP(&g.MCP)
 	defaultLogging(&g.Logging)
 	defaultSecurity(&g.Security)
+	resolveWAFRulesDir(g, configPath)
 	defaultRateLimits(&g.RateLimits)
 	defaultGossip(&g.Gossip)
 	defaultLetsEncrypt(&g.LetsEncrypt)
@@ -899,4 +900,19 @@ func defaultDNSBlock(d *alaye.DNSBlock) {
 	if d.Mode == "" {
 		d.Mode = "nxdomain"
 	}
+}
+
+// resolveWAFRulesDir makes relative WAF rule paths independent of the process
+// working directory. A service or a shell whose cwd was removed must still be
+// able to load rules relative to agbero.hcl.
+func resolveWAFRulesDir(g *alaye.Global, configPath string) {
+	dir := strings.TrimSpace(g.Security.WAF.RulesDir)
+	if dir == "" || filepath.IsAbs(dir) || strings.TrimSpace(configPath) == "" {
+		return
+	}
+	base, err := filepath.Abs(filepath.Dir(configPath))
+	if err != nil {
+		return
+	}
+	g.Security.WAF.RulesDir = filepath.Join(base, dir)
 }
