@@ -318,6 +318,7 @@ func main() {
 	cmdRun.Description = "Run agbero using the discovered config"
 	cmdRun.Bool(&cfg.DevMode, "d", "dev", "Enable development mode")
 	cmdRun.Bool(&cfg.Silent, "", "silent", "Disable interactive prompts — fail if keeper is locked (useful for scripts and CI with a TTY)")
+	cmdRun.Bool(&cfg.ServiceMode, "", "service", "Service mode: never prompt; start locked and wait for 'agbero keeper unlock'")
 
 	cmdCluster := flaggy.NewSubcommand("cluster")
 	cmdCluster.Description = "Manage cluster membership"
@@ -331,6 +332,13 @@ func main() {
 
 	cmdCluster.AttachSubcommand(cmdClusterStart, 1)
 	cmdCluster.AttachSubcommand(cmdClusterJoin, 1)
+
+	cmdLog := flaggy.NewSubcommand("log")
+	cmdLog.Description = "Tail the Agbero log file"
+	logLines := 200
+	var logFollow bool
+	cmdLog.Int(&logLines, "n", "lines", "Number of recent lines to print (default 200)")
+	cmdLog.Bool(&logFollow, "f", "follow", "Follow the log until interrupted")
 
 	cmdScan := flaggy.NewSubcommand("scan")
 	cmdScan.Description = "Read-only security, configuration, storage, and host posture scan"
@@ -378,6 +386,7 @@ func main() {
 	flaggy.AttachSubcommand(cmdSystem, 1)
 	flaggy.AttachSubcommand(cmdRun, 1)
 	flaggy.AttachSubcommand(cmdCluster, 1)
+	flaggy.AttachSubcommand(cmdLog, 1)
 	flaggy.AttachSubcommand(cmdScan, 1)
 	flaggy.AttachSubcommand(cmdHome, 1)
 	flaggy.AttachSubcommand(cmdServe, 1)
@@ -469,6 +478,11 @@ func main() {
 		resolvedPath, configExists = helper.ResolveConfigPath(logger, cfg.ConfigPath)
 	}
 
+	if cmdLog.Used {
+		hel.Log().Tail(resolvedPath, logLines, logFollow)
+		return
+	}
+
 	if cmdScan.Used {
 		hel.Scan().Run(resolvedPath, scanJSON)
 		return
@@ -485,7 +499,7 @@ func main() {
 		return
 	}
 
-	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used || cmdServiceStart.Used || cmdKeeper.Used || cmdAdmin.Used || cmdMCP.Used || cmdScan.Used
+	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used || cmdServiceStart.Used || cmdKeeper.Used || cmdAdmin.Used || cmdMCP.Used || cmdScan.Used || cmdLog.Used
 	if needsConfig && !configExists {
 		if strings.TrimSpace(cfg.ConfigPath) != "" {
 			logger.Fatal("config file not found at: ", cfg.ConfigPath)
@@ -564,13 +578,14 @@ func main() {
 		// Using the raw string causes isInteractive=false even when no real passphrase
 		// exists, suppressing the prompt the user needs.
 		passphraseAvailable := secrets.PassphraseAvailable(&global.Security.Keeper)
-		isInteractive := !passphraseAvailable && ctx.Interactive && !cfg.Silent
+		isInteractive := !passphraseAvailable && ctx.Interactive && !cfg.Silent && !cfg.ServiceMode
 
 		store, storeErr := secrets.Open(secrets.Config{
 			DataDir:         dataDir,
 			Setting:         &global.Security.Keeper,
 			Logger:          logger,
 			Interactive:     isInteractive,
+			AllowLocked:     cmdRun.Used && cfg.ServiceMode,
 			DisableAutoLock: cmdRun.Used,
 		})
 
@@ -774,7 +789,7 @@ func main() {
 			Name:             def.Name,
 			DisplayName:      def.Display,
 			Description:      def.Description,
-			Arguments:        []string{"run", "-c", resolvedPath},
+			Arguments:        []string{"run", "--service", "-c", resolvedPath},
 			WorkingDirectory: filepath.Dir(resolvedPath),
 		}
 		if cfg.DevMode {

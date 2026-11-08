@@ -146,6 +146,8 @@ For a system service, either:
 
 `agbero service start` and `agbero service restart` prompt for the passphrase when the service is waiting locked. Direct `systemctl restart agbero` cannot prompt; use `agbero keeper unlock` afterward.
 
+The generated unit uses `agbero run --service`. Reinstall an older unit after updating the binary so it includes that flag.
+
 ## Verifying Installation
 
 Run these commands to verify everything is working:

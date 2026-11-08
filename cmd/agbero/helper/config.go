@@ -6,6 +6,7 @@ type Config struct {
 	ConfigPath  string
 	DevMode     bool
 	Silent      bool
+	ServiceMode bool
 	InstallHere bool
 
 	// UninstallForce: skip confirmation prompt AND remove the binary.

@@ -35,11 +35,17 @@ agbero run [flags]
 
 **Flags:**
 - `-d, --dev`: Enable development mode (debug logs, staging certificates)
+- `--silent`: Never prompt; fail if the Keeper is locked
+- `--service`: Service mode; never prompt, start locked, and wait for `agbero keeper unlock`
+
+`agbero service install` writes `run --service` into the systemd unit. Existing
+units created by older versions should be reinstalled so they get the flag.
 
 **Examples:**
 ```bash
 agbero run
 agbero run --dev
+agbero run --service
 agbero run --config ./custom/agbero.hcl
 ```
 
@@ -373,9 +379,13 @@ agbero cert info
 agbero service <subcommand> [flags]
 ```
 
-`service start` and `service restart` prompt for the Keeper passphrase when the
-service comes up locked. Direct `systemctl start/restart agbero` cannot prompt;
-after it, run `agbero keeper unlock`.
+`service start` and `service restart` wait for the process to stay active, then
+prompt for the Keeper passphrase when the service comes up locked. Direct
+`systemctl start/restart agbero` cannot prompt; after it, run
+`agbero keeper unlock`.
+
+The installed unit must use `agbero run --service`. Reinstall older units with
+`sudo agbero service install` after updating the binary.
 
 **Flags for install:**
 - `--here`: Install configuration in current directory only (skip service)
@@ -513,6 +523,21 @@ sudo agbero uninstall --force
 ---
 
 ## Navigation
+
+### `log` - Tail the Agbero Log
+
+Print recent log lines, or follow the log:
+
+```bash
+agbero log
+agbero log -n 5000
+agbero log -f
+```
+
+The path comes from `logging.file.path`; if unset, Agbero uses
+`data_dir/logs.d/agbero.log`.
+
+---
 
 ### `scan` - Read-Only Posture Scan
 

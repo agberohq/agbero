@@ -53,16 +53,26 @@ func (s *Service) preflightCheck(configPath string) error {
 		dataDir = ctx.Paths.DataDir
 	}
 
-	store, err := secrets.MustOpen(secrets.Config{
+	store, err := secrets.Open(secrets.Config{
 		DataDir:     dataDir,
 		Setting:     &global.Security.Keeper,
 		Logger:      s.p.Logger,
 		Interactive: false,
 	})
 	if err != nil {
+		// A missing passphrase source is recoverable at start time via the
+		// local unlock endpoint. An insecure/invalid file is not.
+		if errors.Is(err, os.ErrNotExist) {
+			ui.New().WarnLine("keeper passphrase source is missing; service install will continue and the service can be unlocked after start")
+			return nil
+		}
 		return fmt.Errorf("keeper validation failed: %w", err)
 	}
 	defer store.Close()
+	if store.IsLocked() {
+		ui.New().WarnLine("keeper is locked; service install will continue and the service can be unlocked after start")
+		return nil
+	}
 
 	if _, err := store.Get(expect.Vault().Key("internal")); err != nil {
 		return fmt.Errorf("missing internal auth key at vault:key/internal. Run 'agbero init' to generate it")
@@ -118,10 +128,19 @@ func (s *Service) Uninstall(svc service.Service) {
 		return
 	}
 	u := ui.New()
+	status, statusErr := svc.Status()
+	if statusErr != nil || status == service.StatusUnknown {
+		u.Render(func() { u.WarnLine("service is not installed; skipping service removal") })
+		return
+	}
 	u.Render(func() {
 		u.Step("run", "uninstalling system service")
 	})
 	if err := svc.Uninstall(); err != nil {
+		if st, serr := svc.Status(); serr != nil || st != service.StatusRunning {
+			u.Render(func() { u.WarnLine("service unit was already absent or could not be removed; continuing") })
+			return
+		}
 		s.p.Logger.Fatal(s.mapError(err, "uninstall"))
 	}
 	u.Render(func() { u.SuccessLine("service uninstalled") })
@@ -135,6 +154,9 @@ func (s *Service) Start(svc service.Service, configPath string) {
 	u.Render(func() { u.Step("run", "starting system service") })
 	if err := svc.Start(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "start"))
+	}
+	if !waitRunning(svc, 8*time.Second) {
+		s.p.Logger.Fatal("service did not stay running — check: journalctl -u " + def.Name + " -n 80 --no-pager")
 	}
 	u.Render(func() { u.SuccessLine("service started") })
 	s.unlockWaiting(configPath)
@@ -169,6 +191,9 @@ func (s *Service) Restart(svc service.Service, configPath string) {
 	})
 	if err := svc.Start(); err != nil {
 		s.p.Logger.Fatal(s.mapError(err, "start"))
+	}
+	if !waitRunning(svc, 8*time.Second) {
+		s.p.Logger.Fatal("service did not stay running — check: journalctl -u " + def.Name + " -n 80 --no-pager")
 	}
 	u.Render(func() { u.SuccessLine("service restarted") })
 	s.unlockWaiting(configPath)
@@ -255,4 +280,18 @@ func (s *Service) unlockWaiting(configPath string) {
 		return
 	}
 	ui.New().SuccessLine("keeper unlocked")
+}
+
+func waitRunning(svc service.Service, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		status, err := svc.Status()
+		if err == nil && status == service.StatusRunning {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
