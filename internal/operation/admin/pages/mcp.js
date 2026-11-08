@@ -126,6 +126,17 @@ export default async function({ find, findAll, on, ready, inject }) {
         </tr>`).join('') || '<tr><td colspan="7" class="empty-state">No audit entries</td></tr>';
     }
 
+    function selectedScopes() {
+        const out = [];
+        if (find('#mcpScopeRead')?.checked) out.push(MCP_SCOPES.READ);
+        if (find('#mcpScopePlan')?.checked) out.push(MCP_SCOPES.PLAN);
+        if (find('#mcpScopePlan')?.checked && !find('#mcpScopeRead')?.checked) {
+            if (find('#mcpScopeRead')) find('#mcpScopeRead').checked = true;
+            if (!out.includes(MCP_SCOPES.READ)) out.unshift(MCP_SCOPES.READ);
+        }
+        return out;
+    }
+
     async function copyToken() {
         const el = find('#mcpTokenValue');
         if (!el || !el.value) return;
@@ -193,7 +204,7 @@ export default async function({ find, findAll, on, ready, inject }) {
     });
     on('#mcpTokenCreateBtn', 'click', async () => {
         const user  = find('#mcpTokenUser')?.value || '';
-        const scope = find('#mcpTokenScope')?.value || MCP_SCOPES.READ;
+        const scope = selectedScopes().join(' ') || MCP_SCOPES.READ;
         const ttl   = find('#mcpTokenTTL')?.value || '8h';
         const res = await api.createMCPToken({ user, scope, ttl });
         if (!res || !res.token) {
@@ -213,8 +224,11 @@ export default async function({ find, findAll, on, ready, inject }) {
     findAll('.mcp-tab').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.mcpTab)));
     switchTab('tokens');
 
-    const scopeEl = find('#mcpTokenScope');
-    if (scopeEl && !scopeEl.value) scopeEl.value = MCP_SCOPES.READ;
+    const planScope = find('#mcpScopePlan');
+    const readScope = find('#mcpScopeRead');
+    planScope?.addEventListener('change', () => {
+        if (planScope.checked && readScope) readScope.checked = true;
+    });
 
     await ready();
     await loadStatus();

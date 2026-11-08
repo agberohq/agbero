@@ -26,7 +26,17 @@
             </div>
             <div style="display:grid;grid-template-columns:1.4fr 1.6fr .8fr auto;gap:10px;align-items:end;">
                 <div><label class="wz-label">User</label><input id="mcpTokenUser" class="wz-input" placeholder="operator" autocomplete="off"></div>
-                <div><label class="wz-label">Scope</label><input id="mcpTokenScope" class="wz-input" autocomplete="off"></div>
+                <div>
+                    <label class="wz-label">Scope</label>
+                    <div id="mcpScopeOptions" style="display:flex;gap:14px;align-items:center;min-height:34px;padding:0 10px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);">
+                        <label style="display:flex;gap:5px;align-items:center;font-size:12px;cursor:pointer;">
+                            <input type="checkbox" id="mcpScopeRead" value="mcp:read" checked> Read
+                        </label>
+                        <label style="display:flex;gap:5px;align-items:center;font-size:12px;cursor:pointer;">
+                            <input type="checkbox" id="mcpScopePlan" value="mcp:plan"> Plan
+                        </label>
+                    </div>
+                </div>
                 <div><label class="wz-label">TTL</label><input id="mcpTokenTTL" class="wz-input" value="8h" autocomplete="off"></div>
                 <button class="btn primary" id="mcpTokenCreateBtn">Create token</button>
             </div>

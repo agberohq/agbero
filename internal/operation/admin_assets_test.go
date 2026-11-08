@@ -54,3 +54,18 @@ func TestAdminHasMCPPage(t *testing.T) {
 		t.Fatal("MCP page is not in the admin navigation")
 	}
 }
+
+func TestAdminMCPScopeUsesCheckboxes(t *testing.T) {
+	html, err := fs.ReadFile(adminFS, "admin/pages/mcp.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`id="mcpScopeRead"`, `id="mcpScopePlan"`, `value="mcp:read"`, `value="mcp:plan"`} {
+		if !strings.Contains(string(html), want) {
+			t.Errorf("MCP token scope UI missing %q", want)
+		}
+	}
+	if strings.Contains(string(html), `id="mcpTokenScope"`) {
+		t.Error("MCP token scope still uses a free-text input")
+	}
+}
