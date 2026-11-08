@@ -6,6 +6,14 @@
  */
 import { chart } from '../lib/oja.full.esm.js';
 
+const BACKEND_COLORS = ['#4f8ef7','#22c55e','#f59e0b','#a855f7','#14b8a6','#f97316','#ec4899','#84cc16','#ef4444','#64748b'];
+
+function backendColor(name) {
+    let h = 0;
+    for (const ch of String(name)) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+    return BACKEND_COLORS[h % BACKEND_COLORS.length];
+}
+
 export default async function({ find, on, onUnmount, ready, inject }) {
     const { store, api, oja } = inject('app');
     const params = new URLSearchParams((window.location.hash.replace(/^#/, '').split('?')[1] || ''));
@@ -22,6 +30,7 @@ export default async function({ find, on, onUnmount, ready, inject }) {
     let backendChart = null;
     let backendRows = [];
     let selectedBackend = '';
+    let hostsCache = {};
 
     const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const fmtNum = n => {
@@ -226,17 +235,28 @@ export default async function({ find, on, onUnmount, ready, inject }) {
             grouped.set(r.backend, cur);
         }
         const top = [...grouped.values()].sort((a, b) => b.reqs - a.reqs).slice(0, 10);
+        const legend = find('#focusBackendLegend');
         if (!top.length) {
-            if (backendsChart) { backendsChart.destroy(); backendsChart = null; }
+            if (backendsChart && typeof backendsChart.destroy === 'function') backendsChart.destroy();
+            backendsChart = null;
             el.innerHTML = '<div class="focus-empty">No backends for this host</div>';
+            if (legend) legend.innerHTML = '';
             return;
         }
-        if (backendsChart) { backendsChart.destroy(); backendsChart = null; }
-        backendsChart = chart.hbar('#focusTopBackends', top.map(x => x.reqs), {
-            labels: top.map(x => x.name),
-            unit: ' req',
-            color: 'var(--accent)',
+        if (backendsChart && typeof backendsChart.destroy === 'function') backendsChart.destroy();
+        backendsChart = null;
+        el.innerHTML = '';
+        const colors = top.map(x => backendColor(x.name));
+        backendsChart = chart.bar('#focusTopBackends', top.map(x => x.reqs), {
+            unit: '',
+            colors,
+            label: 'Top backends by requests',
         });
+        if (legend) {
+            legend.innerHTML = top.map((x, i) =>
+                `<span><i style="background:${colors[i]};"></i>${esc(x.name)} · ${fmtNum(x.reqs)} req</span>`
+            ).join('');
+        }
     }
 
     function renderCharts(samples) {
