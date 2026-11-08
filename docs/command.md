@@ -679,7 +679,8 @@ When `--config` is not specified, Agbero looks for `agbero.hcl` in this order:
 
 ### Development Setup
 ```bash
-# Initialize configuration
+# Initialize configuration (asks for admin, TOTP, LE email, and first site:
+# basic website, reverse proxy, or web.localhost)
 agbero init
 
 # Run in foreground with auto-reload

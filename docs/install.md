@@ -91,7 +91,21 @@ This will:
 - Generate a secure admin password
 - Create an internal authentication key
 - Set up a local Certificate Authority (for development)
-- Write a default `agbero.hcl` configuration file
+- Ask what the first public site should be:
+  - a basic website serving a directory,
+  - a reverse proxy to an existing upstream,
+  - or local development at `web.localhost`
+- Write a default `agbero.hcl` and the selected host configuration
+
+The admin UI is reached through the generated admin host:
+
+```text
+http://admin.localhost
+```
+
+The direct listener is `http://127.0.0.1:9090`, but that bypasses the host
+route and TLS. On a remote server, use a real admin hostname/allowlist or an
+SSH tunnel.
 
 ### 2. Install Local CA (Optional, for development)
 
