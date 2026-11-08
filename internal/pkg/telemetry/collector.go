@@ -19,8 +19,9 @@ type Collector struct {
 	res         *resource.Resource
 	logger      *ll.Logger
 
-	mu        sync.Mutex
-	prevState map[string]*prevState // keyed by host domain
+	mu          sync.Mutex
+	prevState   map[string]*prevState // keyed by host domain
+	prevBackend map[string]*prevState // keyed by host|route|backend
 
 	quit chan struct{}
 	done chan struct{}
@@ -39,6 +40,7 @@ func NewCollector(
 		res:         res,
 		logger:      logger.Namespace("telemetry"),
 		prevState:   make(map[string]*prevState),
+		prevBackend: make(map[string]*prevState),
 		quit:        make(chan struct{}),
 		done:        make(chan struct{}),
 	}
@@ -114,6 +116,36 @@ func (c *Collector) collect() {
 		fails, _ := snap["failures"].(uint64)
 		a.totalReqs += reqs
 		a.totalErrors += fails
+
+		// Record a backend-level sample in addition to the host aggregate.
+		if key.Addr != "" {
+			route := key.Path
+			if route == "" {
+				route = "/"
+			}
+			bkey := domain + "\x00" + route + "\x00" + key.Addr
+			bprev := c.prevBackend[bkey]
+			var brps, berr float64
+			if bprev != nil && now.After(bprev.capturedAt) {
+				elapsed := now.Sub(bprev.capturedAt).Seconds()
+				if elapsed > 0 && reqs >= bprev.totalReqs {
+					brps = float64(reqs-bprev.totalReqs) / elapsed
+				}
+				if reqs > bprev.totalReqs && fails >= bprev.totalErrors {
+					berr = float64(fails-bprev.totalErrors) / float64(reqs-bprev.totalReqs) * 100
+				}
+			}
+			c.prevBackend[bkey] = &prevState{totalReqs: reqs, totalErrors: fails, capturedAt: now}
+			var bp99 float64
+			if latSnap, ok := snap["latency"].(metrics.LatencySnapshot); ok && latSnap.Count > 0 {
+				bp99 = float64(latSnap.P99) / 1000.0
+			}
+			inFlight, _ := snap["in_flight"].(int64)
+			c.store.RecordBackend(domain, route, key.Addr, Sample{
+				Timestamp: now.Unix(), RequestsSec: brps, P99Ms: bp99,
+				ErrorRate: berr, InFlight: inFlight,
+			})
+		}
 
 		if latSnap, ok := snap["latency"].(metrics.LatencySnapshot); ok && latSnap.Count > 0 {
 			a.sumP99 += float64(latSnap.P99) / 1000.0 // µs → ms
