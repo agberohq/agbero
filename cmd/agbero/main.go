@@ -35,7 +35,8 @@ func main() {
 	).Enable()
 
 	shutdown := jack.NewShutdown(
-		jack.ShutdownWithTimeout(10*time.Second),
+		jack.ShutdownWithTimeout(def.DefaultShutdownGraceTimeout),
+		jack.ShutdownWithForceQuit(def.DefaultShutdownForceQuitTimeout),
 		jack.ShutdownWithSignals(os.Interrupt, syscall.SIGTERM),
 		jack.ShutdownWithLogger(logger),
 		jack.ShutdownConcurrent(),
@@ -867,6 +868,12 @@ func main() {
 	}
 
 	// Universal shutdown wait — all long-running commands fall through to here.
+	// jack's force-quit cancels cleanup work; this watchdog is the final
+	// process-level backstop for a callback that ignores cancellation.
+	watchdog := time.AfterFunc(def.DefaultShutdownHardTimeout, func() {
+		logger.Error("shutdown exceeded hard deadline; forcing exit")
+		os.Exit(1)
+	})
 	stats := shutdown.Wait()
 
 	if hel.Store != nil {
@@ -874,6 +881,7 @@ func main() {
 		secrets.SetGlobalStore(nil)
 		hel.Store.Close()
 	}
+	watchdog.Stop()
 
 	logger.Fields(
 		"duration", stats.EndTime.Sub(stats.StartTime),

@@ -675,7 +675,7 @@ func (s *Server) Reload() {
 	}
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), def.DefaultReloadTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), def.DefaultReloadDrainTimeout)
 		defer cancel()
 
 		var wg sync.WaitGroup
@@ -683,7 +683,10 @@ func (s *Server) Reload() {
 			wg.Add(1)
 			go func(oldListener handlers.Listener) {
 				defer wg.Done()
-				_ = oldListener.Stop(ctx)
+				if err := oldListener.Stop(ctx); err != nil {
+					s.logger.Fields("bind", oldListener.Addr(), "proto", oldListener.Kind(), "err", err).
+						Warn("old listener did not drain cleanly")
+				}
 			}(l)
 		}
 		wg.Wait()
@@ -747,11 +750,21 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 	s.mu.RUnlock()
 
 	var wg sync.WaitGroup
+	var firstErr error
+	var errMu sync.Mutex
 	for _, l := range listeners {
 		wg.Add(1)
 		go func(listener handlers.Listener) {
 			defer wg.Done()
-			_ = listener.Stop(ctx)
+			if err := listener.Stop(ctx); err != nil {
+				s.logger.Fields("bind", listener.Addr(), "proto", listener.Kind(), "err", err).
+					Warn("listener did not drain cleanly")
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errMu.Unlock()
+			}
 		}(l)
 	}
 	wg.Wait()
@@ -762,13 +775,17 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 	s.mu.RUnlock()
 
 	if adminSrv != nil {
-		_ = adminSrv.Shutdown(ctx)
+		if err := adminSrv.Shutdown(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 	if pprofSrv != nil {
-		_ = pprofSrv.Shutdown(ctx)
+		if err := pprofSrv.Shutdown(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 
-	return nil
+	return firstErr
 }
 
 func (s *Server) configComputeSHA() (string, error) {
