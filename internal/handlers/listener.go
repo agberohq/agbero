@@ -79,17 +79,10 @@ func (t *TCPListener) Stop(ctx context.Context) error {
 		// so we don't wait forever, but still give connections time to drain.
 		deadline = time.Now().Add(def.DefaultTransportDrainTimeout)
 	}
-	done := make(chan struct{})
-	go func() {
-		t.Proxy.GracefulStop(deadline)
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	// GracefulStop has its own deadline and force-closes the rest. Run it
+	// synchronously so no proxy goroutine outlives Stop().
+	t.Proxy.GracefulStop(deadline)
+	return nil
 }
 
 func (t *TCPListener) Addr() string { return t.Proxy.Listen }
@@ -105,17 +98,10 @@ func (u *UDPListener) Start() error {
 }
 
 func (u *UDPListener) Stop(ctx context.Context) error {
-	done := make(chan struct{})
-	go func() {
-		u.Proxy.Stop()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	// Stop drains the worker pool with its own bounded timeout. Run it
+	// synchronously so nothing survives Stop().
+	u.Proxy.Stop()
+	return nil
 }
 
 func (u *UDPListener) Addr() string { return u.Proxy.Listen }
