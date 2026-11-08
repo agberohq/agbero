@@ -158,6 +158,15 @@ func main() {
 	cmdMCPToken := flaggy.NewSubcommand("token")
 	cmdMCPToken.Description = "Mint, rotate, or revoke MCP tokens"
 
+	cmdMCPServe := flaggy.NewSubcommand("serve")
+	cmdMCPServe.Description = "Run the read/plan MCP server over stdio or unix socket (offline config mode)"
+
+	cmdMCPStatus := flaggy.NewSubcommand("status")
+	cmdMCPStatus.Description = "Show the configured MCP classes, transport, allowlist, and rate limit"
+
+	cmdMCPPolicy := flaggy.NewSubcommand("policy")
+	cmdMCPPolicy.Description = "Print the MCP capability registry"
+
 	cmdMCPTokenCreate := flaggy.NewSubcommand("create")
 	cmdMCPTokenCreate.Description = "Mint an MCP token (keeper-backed)"
 	cmdMCPTokenCreate.String(&cfg.MCPUser, "u", "user", "Operator name (default: $USER)")
@@ -171,6 +180,9 @@ func main() {
 	cmdMCPTokenRevoke.Description = "Revoke an MCP token by JTI"
 	cmdMCPTokenRevoke.AddPositionalValue(&cfg.MCPJTI, "jti", 1, true, "Token JTI")
 
+	cmdMCP.AttachSubcommand(cmdMCPServe, 1)
+	cmdMCP.AttachSubcommand(cmdMCPStatus, 1)
+	cmdMCP.AttachSubcommand(cmdMCPPolicy, 1)
 	cmdMCPToken.AttachSubcommand(cmdMCPTokenCreate, 1)
 	cmdMCPToken.AttachSubcommand(cmdMCPTokenRotate, 1)
 	cmdMCPToken.AttachSubcommand(cmdMCPTokenRevoke, 1)
@@ -499,7 +511,8 @@ func main() {
 	//   CLI  → interactive (prompts user), AutoLock respected.
 
 	cmdSecretNeedsKeeper := cmdSecret.Used && (cmdSecretKeyInit.Used || cmdSecretToken.Used)
-	if cmdRun.Used || cmdKeeper.Used || cmdAdmin.Used || cmdMCP.Used || cmdSecretNeedsKeeper {
+	cmdMCPNeedsKeeper := cmdMCPToken.Used && !cmdMCPTokenRevoke.Used
+	if cmdRun.Used || cmdKeeper.Used || cmdAdmin.Used || cmdMCPNeedsKeeper || cmdSecretNeedsKeeper {
 		global, globalErr := helper.LoadGlobal(resolvedPath)
 		if globalErr != nil {
 			logger.Fatal("failed to load config for keeper initialisation: ", globalErr)
@@ -617,6 +630,18 @@ func main() {
 	}
 
 	if cmdMCP.Used {
+		if cmdMCPStatus.Used {
+			hel.MCP().Status(resolvedPath)
+			return
+		}
+		if cmdMCPPolicy.Used {
+			hel.MCP().Policy()
+			return
+		}
+		if cmdMCPServe.Used {
+			runMCPServe(resolvedPath, logger)
+			return
+		}
 		m := hel.MCP()
 		switch {
 		case cmdMCPToken.Used && cmdMCPTokenCreate.Used:
