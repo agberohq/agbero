@@ -172,11 +172,13 @@ agbero keeper <subcommand> [flags]
 **Key format:** `namespace/key` or `ss://namespace/key`
 
 **Passphrase resolution order (at startup):**
-1. `keeper.passphrase` field in `agbero.hcl` (may be an `env.` or `ss://` reference)
-2. `keeper.passphrase_file` (recommended for services; `0600` or `0640 root:agbero`)
-3. `AGBERO_KEEPER_PASSPHRASE` environment variable
-4. `AGBERO_PASSPHRASE` environment variable (deprecated alias)
-5. Interactive terminal prompt (if running in a terminal)
+1. systemd credential `$CREDENTIALS_DIRECTORY/keeper_passphrase`
+2. `keeper.passphrase` field in `agbero.hcl` (prefer an `env.` or `ss://` reference)
+3. legacy `keeper.passphrase_file` (existing deployments only)
+4. `AGBERO_KEEPER_PASSPHRASE` environment variable
+5. `AGBERO_PASSPHRASE` environment variable (deprecated alias)
+6. interactive terminal prompt
+7. otherwise a service starts locked and waits for `agbero keeper unlock`
 
 **Examples:**
 ```bash
@@ -203,6 +205,9 @@ agbero keeper delete myapp/db-password
 
 # Change the master passphrase (re-encrypts everything)
 agbero keeper rotate
+
+# Unlock a running service that started locked
+agbero keeper unlock
 ```
 ### Rotating the Master Passphrase
 
@@ -217,7 +222,7 @@ agbero keeper rotate
 
 # 3. Update your passphrase wherever it is stored:
 #    - Update AGBERO_KEEPER_PASSPHRASE in your system service environment
-#    - Update the secret in your secrets manager / CI environment
+#    - Update the systemd credential / Vault / CI secret
 #    - Update agbero.hcl if you hardcoded it (please don't)
 
 # 4. Restart Agbero with the new passphrase
@@ -368,6 +373,10 @@ agbero cert info
 agbero service <subcommand> [flags]
 ```
 
+`service start` and `service restart` prompt for the Keeper passphrase when the
+service comes up locked. Direct `systemctl start/restart agbero` cannot prompt;
+after it, run `agbero keeper unlock`.
+
 **Flags for install:**
 - `--here`: Install configuration in current directory only (skip service)
 
@@ -504,6 +513,23 @@ sudo agbero uninstall --force
 ---
 
 ## Navigation
+
+### `scan` - Read-Only Posture Scan
+
+Checks configuration, security, storage permissions, hosts, TLS, MCP, and
+Keeper posture without changing anything. It is a report, not a repair command.
+
+**Usage:**
+```bash
+agbero scan
+agbero scan --json
+```
+
+Findings include severity, code, evidence, and a suggested fix. JSON output is
+suitable for automation. A future `agbero doctor` command may apply selected
+fixes; `scan` itself never writes.
+
+---
 
 ### `home` - Navigate Configuration Directories
 Print or navigate to Agbero configuration directories.

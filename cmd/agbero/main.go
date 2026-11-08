@@ -139,6 +139,9 @@ func main() {
 	cmdKeeperDelete.AddPositionalValue(&cfg.KeeperKey, "key", 1, true, "Secret key name")
 	cmdKeeperDelete.Bool(&cfg.KeeperForce, "f", "force", "Skip confirmation prompt")
 
+	cmdKeeperUnlock := flaggy.NewSubcommand("unlock")
+	cmdKeeperUnlock.Description = "Unlock a running service Keeper over its local control endpoint"
+
 	cmdKeeperRotate := flaggy.NewSubcommand("rotate")
 	cmdKeeperRotate.Description = "Change the keeper master passphrase (re-encrypts all secrets)"
 
@@ -150,6 +153,7 @@ func main() {
 	cmdKeeper.AttachSubcommand(cmdKeeperSet, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperDelete, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperRotate, 1)
+	cmdKeeper.AttachSubcommand(cmdKeeperUnlock, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperHelp, 1)
 
 	cmdMCP := flaggy.NewSubcommand("mcp")
@@ -328,6 +332,11 @@ func main() {
 	cmdCluster.AttachSubcommand(cmdClusterStart, 1)
 	cmdCluster.AttachSubcommand(cmdClusterJoin, 1)
 
+	cmdScan := flaggy.NewSubcommand("scan")
+	cmdScan.Description = "Read-only security, configuration, storage, and host posture scan"
+	var scanJSON bool
+	cmdScan.Bool(&scanJSON, "", "json", "Output findings as JSON")
+
 	cmdHome := flaggy.NewSubcommand("home")
 	cmdHome.Description = "Print or navigate to the agbero configuration directory"
 	var homeTarget, homeAction string
@@ -369,6 +378,7 @@ func main() {
 	flaggy.AttachSubcommand(cmdSystem, 1)
 	flaggy.AttachSubcommand(cmdRun, 1)
 	flaggy.AttachSubcommand(cmdCluster, 1)
+	flaggy.AttachSubcommand(cmdScan, 1)
 	flaggy.AttachSubcommand(cmdHome, 1)
 	flaggy.AttachSubcommand(cmdServe, 1)
 	flaggy.AttachSubcommand(cmdProxy, 1)
@@ -386,6 +396,9 @@ func main() {
 		return
 	}
 
+	if cmdScan.Used && scanJSON {
+		cfg.Silent = true
+	}
 	welcome(cfg.Silent)
 
 	if cmdServe.Used {
@@ -456,6 +469,11 @@ func main() {
 		resolvedPath, configExists = helper.ResolveConfigPath(logger, cfg.ConfigPath)
 	}
 
+	if cmdScan.Used {
+		hel.Scan().Run(resolvedPath, scanJSON)
+		return
+	}
+
 	if cmdUninstall.Used {
 		svcConfig := &service.Config{
 			Name:        def.Name,
@@ -467,7 +485,7 @@ func main() {
 		return
 	}
 
-	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used || cmdServiceStart.Used || cmdKeeper.Used || cmdAdmin.Used || cmdMCP.Used
+	needsConfig := cmdRun.Used || cmdConfig.Used || cmdHost.Used || cmdServiceStart.Used || cmdKeeper.Used || cmdAdmin.Used || cmdMCP.Used || cmdScan.Used
 	if needsConfig && !configExists {
 		if strings.TrimSpace(cfg.ConfigPath) != "" {
 			logger.Fatal("config file not found at: ", cfg.ConfigPath)
@@ -512,7 +530,8 @@ func main() {
 
 	cmdSecretNeedsKeeper := cmdSecret.Used && (cmdSecretKeyInit.Used || cmdSecretToken.Used)
 	cmdMCPNeedsKeeper := cmdMCPToken.Used && !cmdMCPTokenRevoke.Used
-	if cmdRun.Used || cmdKeeper.Used || cmdAdmin.Used || cmdMCPNeedsKeeper || cmdSecretNeedsKeeper {
+	cmdKeeperNeedsStore := cmdKeeper.Used && !cmdKeeperUnlock.Used
+	if cmdRun.Used || cmdKeeperNeedsStore || cmdAdmin.Used || cmdMCPNeedsKeeper || cmdSecretNeedsKeeper {
 		global, globalErr := helper.LoadGlobal(resolvedPath)
 		if globalErr != nil {
 			logger.Fatal("failed to load config for keeper initialisation: ", globalErr)
@@ -559,9 +578,19 @@ func main() {
 			logger.Fatal("failed to open keeper: ", storeErr)
 		}
 
-		if cmdRun.Used && store.IsLocked() {
+		if cmdRun.Used && store.IsLocked() && cfg.Silent {
 			store.Close()
-			logger.Fatal("keeper is locked. Set AGBERO_KEEPER_PASSPHRASE (or AGBERO_PASSPHRASE), configure keeper.passphrase_file, or set keeper.passphrase in agbero.hcl")
+			logger.Fatal("keeper is locked and --silent does not wait for manual unlock")
+		}
+		if cmdRun.Used && store.IsLocked() {
+			ctl, err := secrets.StartControl(store, dataDir, logger)
+			if err != nil {
+				store.Close()
+				logger.Fatal("keeper is locked and no unlock endpoint could be started: ", err)
+			}
+			logger.Warn("keeper is locked; waiting for 'agbero keeper unlock'")
+			ctl.Wait()
+			logger.Info("keeper unlocked; continuing startup")
 		}
 
 		// Register in both the keeper library's own global and agbero's secrets
@@ -621,6 +650,8 @@ func main() {
 			k.Set(resolvedPath, cfg.KeeperKey, cfg.KeeperValue, cfg.KeeperB64, cfg.KeeperFile)
 		case cmdKeeperDelete.Used:
 			k.Delete(resolvedPath, cfg.KeeperKey, cfg.KeeperForce)
+		case cmdKeeperUnlock.Used:
+			k.Unlock(resolvedPath)
 		case cmdKeeperRotate.Used:
 			k.Rotate(resolvedPath)
 		default:
@@ -774,11 +805,11 @@ func main() {
 				sh.Uninstall(svc)
 			}
 		case cmdServiceStart.Used:
-			sh.Start(svc)
+			sh.Start(svc, resolvedPath)
 		case cmdServiceStop.Used:
 			sh.Stop(svc)
 		case cmdServiceRestart.Used:
-			sh.Restart(svc)
+			sh.Restart(svc, resolvedPath)
 		case cmdServiceStatus.Used:
 			sh.Status(svc, resolvedPath)
 		default:
