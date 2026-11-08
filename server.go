@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/handlers"
 	"github.com/agberohq/agbero/internal/hub/cluster"
+	"github.com/agberohq/agbero/internal/hub/control"
 	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/orchestrator"
@@ -73,8 +75,10 @@ type Server struct {
 	telemetryStore     *telemetry.Store
 	telemetryCollector *telemetry.Collector
 
-	adminSrv *http.Server
-	pprofSrv *http.Server
+	adminSrv      *http.Server
+	pprofSrv      *http.Server
+	controlPath   string
+	controlServer *control.Server
 
 	keeperStore   *keeper.Keeper
 	revokeStore   *revoke.Store
@@ -339,6 +343,29 @@ func (s *Server) Start(configPath string) error {
 		} else {
 			s.revokeStore = rs
 		}
+	}
+
+	if s.revokeStore != nil {
+		if reg, err := agmcp.OpenTokenRegistryBucket(s.revokeStore.DB()); err == nil {
+			s.mcpTokens = reg
+		} else {
+			s.logger.Fields("err", err).Warn("mcp token registry unavailable")
+		}
+	}
+
+	if s.controlPath != "" {
+		cs := control.NewServer(s.controlPath)
+		cs.Handle("revoke.add", s.controlRevoke)
+		cs.Handle("token.registry.add", s.controlTokenAdd)
+		cs.Handle("token.registry.list", s.controlTokenList)
+		if err := cs.Start(); err != nil {
+			return errors.Newf("control socket: %w", err)
+		}
+		s.controlServer = cs
+		if s.shutdown != nil {
+			s.shutdown.RegisterFunc("ControlSocket", func() { _ = cs.Close() })
+		}
+		s.logger.Fields("socket", s.controlPath).Info("local control socket started")
 	}
 
 	s.tlsManager = tlss.NewManager(s.logger, s.hostManager, s.global, s.keeperStore)
@@ -786,6 +813,56 @@ func (s *Server) shutdownImpl(ctx context.Context) error {
 	}
 
 	return firstErr
+}
+
+type controlRevokeRequest struct {
+	JTI       string    `json:"jti"`
+	Service   string    `json:"service"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func (s *Server) controlTokenAdd(_ context.Context, raw json.RawMessage) (any, error) {
+	if s.mcpTokens == nil {
+		return nil, errors.New("MCP token registry unavailable")
+	}
+	var rec agmcp.TokenRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return nil, err
+	}
+	if rec.JTI == "" {
+		return nil, errors.New("jti is required")
+	}
+	if err := s.mcpTokens.Add(rec); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"ok": true}, nil
+}
+
+func (s *Server) controlTokenList(context.Context, json.RawMessage) (any, error) {
+	if s.mcpTokens == nil {
+		return nil, errors.New("MCP token registry unavailable")
+	}
+	return s.mcpTokens.List(), nil
+}
+
+func (s *Server) controlRevoke(_ context.Context, raw json.RawMessage) (any, error) {
+	if s.revokeStore == nil {
+		return nil, errors.New("revocation store unavailable")
+	}
+	var req controlRevokeRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.JTI == "" {
+		return nil, errors.New("jti is required")
+	}
+	if req.ExpiresAt.IsZero() {
+		req.ExpiresAt = time.Now().Add(def.DefaultControlRevokeTTL)
+	}
+	if err := s.revokeStore.Revoke(req.JTI, req.Service, req.ExpiresAt); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"ok": true}, nil
 }
 
 func (s *Server) configComputeSHA() (string, error) {

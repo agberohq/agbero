@@ -36,6 +36,13 @@ func WithShutdownManager(sm *jack.Shutdown) Option {
 	}
 }
 
+// WithControlSocket enables the local coordinator socket used by CLI commands.
+func WithControlSocket(path string) Option {
+	return func(server *Server) {
+		server.controlPath = path
+	}
+}
+
 func WithResource(res *resource.Resource) Option {
 	return func(server *Server) {
 		server.resource = res

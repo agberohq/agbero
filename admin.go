@@ -1015,11 +1015,8 @@ func (s *Server) initMCP(g *alaye.Global) {
 
 	s.mcpToken = agmcp.NewTokenStore(s.keeperStore)
 	s.mcpStats = agmcp.NewStats()
-	tokensPath := g.Storage.DataDir.FilePath("mcp-tokens.json")
-	if reg, err := agmcp.OpenTokenRegistry(tokensPath); err == nil {
-		s.mcpTokens = reg
-	} else {
-		s.logger.Warn("mcp token registry unavailable", "err", err)
+	if s.mcpTokens == nil {
+		s.logger.Warn("mcp token registry unavailable: control store is not open")
 	}
 	auditPath := strings.TrimSpace(g.MCP.AuditFile)
 	if auditPath == "" {
