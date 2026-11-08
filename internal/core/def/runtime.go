@@ -662,10 +662,24 @@ const (
 	LogDir  string = "logs.d"
 	WorkDir string = "work.d"
 
-	DefaultConfigName = "agbero.hcl"
-	DefaultLogName    = "agbero.log"
-	DefaultKeeperName = "keeper.db"
-	DefaultPIDName    = "agbero.pid"
+	DefaultConfigName     = "agbero.hcl"
+	DefaultLogName        = "agbero.log"
+	DefaultKeeperName     = "keeper.db"
+	DefaultRevokedName    = "revoked.json"
+	DefaultRevokedDBName  = "revoked.db"
+	DefaultFirewallDBName = "firewall.db"
+
+	// Local ownership and control-plane defaults.
+	DefaultAuthorityLockName   = ".owner.lock"
+	DefaultAuthorityRetryDelay = 25 * time.Millisecond
+	DefaultControlSocketName   = "control.sock"
+	DefaultControlDialTimeout  = 500 * time.Millisecond
+	DefaultControlRetryDelay   = 50 * time.Millisecond
+	DefaultControlPathMax      = 100
+	DefaultControlRevokeWait   = 750 * time.Millisecond
+	DefaultControlFallbackWait = 2 * time.Second
+	DefaultControlRevokeTTL    = 24 * time.Hour
+	DefaultPIDName             = "agbero.pid"
 
 	HCLSuffix          = ".hcl"
 	ConfigHCLExtension = ".hcl"

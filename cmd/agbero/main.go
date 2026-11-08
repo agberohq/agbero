@@ -14,6 +14,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/hub/authority"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/pkg/ui"
@@ -42,7 +43,10 @@ func main() {
 
 	// The watchdog must start only when jack begins shutdown, not when the
 	// process starts. A priority -1 callback runs before all cleanup work.
-	var watchdog *time.Timer
+	var (
+		watchdog      *time.Timer
+		authorityLock *authority.Lock
+	)
 	if err := shutdown.RegisterWithPriority("ShutdownWatchdog", -1, func(context.Context) error {
 		watchdog = time.AfterFunc(def.DefaultShutdownHardTimeout, func() {
 			logger.Error("shutdown exceeded hard deadline; forcing exit")
@@ -570,6 +574,15 @@ func main() {
 		ctx := setup.NewContext(logger)
 		if !dataDir.IsSet() {
 			dataDir = ctx.Paths.DataDir
+		}
+
+		if cmdRun.Used {
+			lock, err := authority.TryAcquire(dataDir.Path())
+			if err != nil {
+				logger.Fatal("data directory is already owned by another Agbero process: ", err)
+			}
+			authorityLock = lock
+			defer authorityLock.Release()
 		}
 
 		// isInteractive controls whether secrets.Open() may prompt via /dev/tty.
