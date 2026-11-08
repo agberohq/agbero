@@ -25,6 +25,11 @@
 (function () {
     'use strict';
 
+    var ROUTE_PROTOCOLS = (typeof window !== 'undefined' && window.ROUTE_PROTOCOLS) || {
+        HTTP: 'http',
+        MCP: 'mcp'
+    };
+
     var NS = 'http://www.w3.org/2000/svg';
 
     var GLYPH = { root: '\u25C8', host: '\u25A4', route: '\u21E2', backend: '\u25CF', serverless: '\u2699' };
@@ -1277,7 +1282,7 @@
 
                         addNode(routeId, path, 'route', 'unverified',
                             { hostname: hostname, routeIdx: rIdx, routeType: 'route' },
-                            { protocol: 'http', total: routeStats.total_reqs });
+                            { protocol: route.protocol || ROUTE_PROTOCOLS.HTTP, total: routeStats.total_reqs });
                         addLink(hostname, routeId, routeStats.total_reqs || 0);
 
                         var servers = (route.backends && route.backends.servers) || [];
@@ -1289,7 +1294,7 @@
                             var bStat = bkStats[bIdx] || {};
                             addNode(beId, beUrl.replace(/^https?:\/\//, ''), 'backend', status,
                                 { hostname: hostname, routeIdx: rIdx, backendIdx: bIdx, routeType: 'route' },
-                                { protocol: 'http', total: bStat.total_reqs, failures: bStat.failures,
+                                { protocol: ROUTE_PROTOCOLS.HTTP, total: bStat.total_reqs, failures: bStat.failures,
                                   latency_us: bStat.latency_us, alive: bStat.alive });
                             addLink(routeId, beId, bStat.total_reqs || 0, status);
                         });

@@ -7,6 +7,7 @@
  */
 import { clickmenu } from '../lib/oja.full.esm.js';
 import { storeLocal } from '../js/store.js';
+import { ROUTE_PROTOCOLS } from '../js/constants.js';
 
 export default async function({ find, on, onUnmount, ready, inject }) {
     const { store, api, oja } = inject('app');
@@ -25,6 +26,7 @@ export default async function({ find, on, onUnmount, ready, inject }) {
 
     // Load the layout engine then the renderer (both served from the admin FS).
     async function loadGraphDeps() {
+        if (!window.ROUTE_PROTOCOLS) window.ROUTE_PROTOCOLS = ROUTE_PROTOCOLS;
         if (window.RouteGraph && window.GraphLayout) return;
         const load = src => new Promise((res, rej) => {
             const s = document.createElement('script');
@@ -239,7 +241,9 @@ export default async function({ find, on, onUnmount, ready, inject }) {
                 } else if (_legendFilter === 'proxy-udp') {
                     match = match && nodeType === 'route' && protocol === 'udp';
                 } else if (_legendFilter === 'route') {
-                    match = match && nodeType === 'route' && protocol === 'http';
+                    match = match && nodeType === 'route' && protocol === ROUTE_PROTOCOLS.HTTP;
+                } else if (_legendFilter === ROUTE_PROTOCOLS.MCP) {
+                    match = match && nodeType === 'route' && protocol === ROUTE_PROTOCOLS.MCP;
                 } else if (_legendFilter === 'replay') {
                     match = match && nodeType === 'serverless' && kind === 'replay';
                 } else {

@@ -2,6 +2,7 @@
  * pages/hosts/index.js — Hosts list page.
  */
 import { emit, listen, ui, clipboard, notify, pagination, Search, countdown } from '../../lib/oja.full.esm.js';
+import { ROUTE_PROTOCOLS } from '../../js/constants.js';
 
 export default async function({ find, findAll, on, onUnmount, ready, inject }) {
     const { store, api, utils, oja } = inject('app');
@@ -66,7 +67,7 @@ export default async function({ find, findAll, on, onUnmount, ready, inject }) {
         const kebab = `<button class="btn-kebab" data-action="host-menu" data-hostname="${esc(hostname)}" data-protected="${isProtected}" title="Actions">⋮</button>`;
         const statRoutes=hStats.routes||[];
         let routesHtml='';
-        for(let idx=0;idx<Math.max(cfgRoutes.length,statRoutes.length);idx++){const cfgRoute=cfgRoutes[idx]||{},statRoute=statRoutes[idx]||{},path=esc(cfgRoute.path||statRoute.path||'/'),proto=esc((cfgRoute.protocol||statRoute.protocol||'http').toUpperCase()),configBEs=cfgRoute.backends?.servers||[],statBEs=statRoute.backends||[],displayBEs=statBEs.length?statBEs:configBEs,backendsHtml=displayBEs.length?`<div class="backend-list">${displayBEs.map((b,i)=>backendRowHtml(b,configBEs[i]||{},statBEs,i)).join('')}</div>`:'';routesHtml+=`<div class="route-block clickable" data-action="open-route" data-host="${esc(hostname)}" data-idx="${idx}" data-type="route"><div class="route-header"><span class="badge ${proto==='HTTP'?'success':'info'}">${proto}</span><span class="route-path">${path}</span>${routeBadges(cfgRoute)}</div>${backendsHtml}</div>`;}
+        for(let idx=0;idx<Math.max(cfgRoutes.length,statRoutes.length);idx++){const cfgRoute=cfgRoutes[idx]||{},statRoute=statRoutes[idx]||{},path=esc(cfgRoute.path||statRoute.path||'/'),proto=esc((cfgRoute.protocol||statRoute.protocol||ROUTE_PROTOCOLS.HTTP).toUpperCase()),configBEs=cfgRoute.backends?.servers||[],statBEs=statRoute.backends||[],displayBEs=statBEs.length?statBEs:configBEs,backendsHtml=displayBEs.length?`<div class="backend-list">${displayBEs.map((b,i)=>backendRowHtml(b,configBEs[i]||{},statBEs,i)).join('')}</div>`:'';routesHtml+=`<div class="route-block clickable" data-action="open-route" data-host="${esc(hostname)}" data-idx="${idx}" data-type="route"><div class="route-header"><span class="badge ${proto===ROUTE_PROTOCOLS.HTTP.toUpperCase()?'success':'info'}">${proto}</span><span class="route-path">${path}</span>${routeBadges(cfgRoute)}</div>${backendsHtml}</div>`;}
         for(let idx=0;idx<Math.max(cfgProxies.length,(hStats.proxies||[]).length);idx++){const cfgProxy=cfgProxies[idx]||{},statProxy=(hStats.proxies||[])[idx]||{},proxyName=esc(cfgProxy.name||statProxy.name||statProxy.path||'*'),listenAddr=esc(cfgProxy.listen||statProxy.name?.replace(/\s.*$/,'')||''),statBEs=statProxy.backends||[],configBEs=cfgProxy.backends||[],displayBEs=statBEs.length?statBEs:configBEs,backendsHtml=displayBEs.length?`<div class="backend-list">${displayBEs.map((b,i)=>backendRowHtml(b,configBEs[i]||{},statBEs,i)).join('')}</div>`:'';
             // Detect protocol from config or stat
             const isUDP=(cfgProxy.protocol||statProxy.protocol||'').toLowerCase()==='udp';
