@@ -127,7 +127,7 @@ func (s *Service) Uninstall(svc service.Service) {
 	u.Render(func() { u.SuccessLine("service uninstalled") })
 }
 
-func (s *Service) Start(svc service.Service) {
+func (s *Service) Start(svc service.Service, configPath string) {
 	if !s.requiresRoot("start") {
 		return
 	}
@@ -137,6 +137,7 @@ func (s *Service) Start(svc service.Service) {
 		s.p.Logger.Fatal(s.mapError(err, "start"))
 	}
 	u.Render(func() { u.SuccessLine("service started") })
+	s.unlockWaiting(configPath)
 }
 
 func (s *Service) Stop(svc service.Service) {
@@ -151,7 +152,7 @@ func (s *Service) Stop(svc service.Service) {
 	u.Render(func() { u.SuccessLine("service stopped") })
 }
 
-func (s *Service) Restart(svc service.Service) {
+func (s *Service) Restart(svc service.Service, configPath string) {
 	if !s.requiresRoot("restart") {
 		return
 	}
@@ -170,6 +171,7 @@ func (s *Service) Restart(svc service.Service) {
 		s.p.Logger.Fatal(s.mapError(err, "start"))
 	}
 	u.Render(func() { u.SuccessLine("service restarted") })
+	s.unlockWaiting(configPath)
 }
 
 func (s *Service) Status(svc service.Service, configPath string) {
@@ -219,4 +221,38 @@ func (s *Service) mapError(err error, cmd string) error {
 		}
 	}
 	return svc.MapError(err, cmd)
+}
+
+func (s *Service) unlockWaiting(configPath string) {
+	global, err := loadGlobal(configPath)
+	if err != nil {
+		return
+	}
+	var cfErr error
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, cfErr = secrets.ReadControlFile(global.Storage.DataDir); cfErr == nil || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if cfErr != nil {
+		return
+	}
+	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		ui.New().WarnLine("keeper is locked; run 'agbero keeper unlock' from a terminal")
+		return
+	}
+	u := ui.New()
+	result, err := u.PasswordRequired("Keeper passphrase")
+	if err != nil {
+		s.p.Logger.Fatal("read passphrase: ", err)
+	}
+	pass := result.Bytes()
+	defer result.Zero()
+	if err := secrets.UnlockControl(global.Storage.DataDir, pass); err != nil {
+		ui.New().WarnLine("keeper still locked: " + err.Error())
+		return
+	}
+	ui.New().SuccessLine("keeper unlocked")
 }

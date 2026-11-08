@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	keeperlib "github.com/agberohq/keeper"
 	"github.com/agberohq/keeper/x/keepcmd"
@@ -40,6 +41,33 @@ func (k *Keeper) requireStore() *keeperlib.Keeper {
 		k.p.Logger.Fatal("keeper store is not available — run 'agbero init' first or check AGBERO_KEEPER_PASSPHRASE / keeper.passphrase_file")
 	}
 	return k.p.Store
+}
+
+func (k *Keeper) Unlock(configPath string) {
+	global, err := LoadGlobal(configPath)
+	if err != nil {
+		k.p.Logger.Fatal("load config: ", err)
+	}
+	dataDir := global.Storage.DataDir
+	if !dataDir.IsSet() {
+		k.p.Logger.Fatal("storage.data_dir is not configured")
+	}
+	if _, err := secrets.ReadControlFile(dataDir); err != nil {
+		k.p.Logger.Fatal("keeper is not waiting for an unlock (start the service first): ", err)
+	}
+	u := ui.New()
+	result, err := u.PasswordRequired("Keeper passphrase")
+	if err != nil {
+		k.p.Logger.Fatal("read passphrase: ", err)
+	}
+	pass := result.Bytes()
+	defer result.Zero()
+	if err := secrets.UnlockControl(dataDir, pass); err != nil {
+		zero.Bytes(pass)
+		k.p.Logger.Fatal("unlock failed: ", err)
+	}
+	zero.Bytes(pass)
+	ui.New().SuccessLine("keeper unlocked")
 }
 
 func (k *Keeper) List(_ string) {
@@ -138,7 +166,7 @@ func (k *Keeper) Rotate(_ string) {
 	}
 
 	zero.Bytes(newPass)
-	ui.New().SuccessLine("passphrase rotated — update keeper.passphrase in agbero.hcl if stored there")
+	ui.New().SuccessLine("passphrase rotated — update the systemd credential, Vault entry, or environment source")
 	ui.New().Blank()
 }
 
