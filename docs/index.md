@@ -54,6 +54,7 @@ Navigate through the documentation to master Agbero:
 - [**Advanced Guide**](./advance.md) - Deep dive into Clustering, Git Deployments, and Firewall tuning.
 - [**Plugin Guide**](./plugin.md) - Write custom high-performance middleware using WebAssembly.
 - [**API Reference**](./api.md) - Dynamic route management and Keeper API via the admin API.
+- [**MCP Guide**](./mcp.md) - Read/plan control plane, tokens, admin page, and MCP-aware routes.
 - [**Security Guide**](./security.md) - Keeper, secret references, authentication, and TOTP.
 - [**Config Reference**](./reference.md) - Complete HCL field reference for all blocks.
 - [**Contributor Guide**](./contributor.md) - Architecture overview and guidelines for contributing.
