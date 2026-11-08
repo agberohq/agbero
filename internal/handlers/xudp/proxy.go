@@ -1,6 +1,7 @@
 package xudp
 
 import (
+	"context"
 	"fmt"
 	"math/rand/v2"
 	"net"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
+	"github.com/agberohq/agbero/internal/hub/lifecycle"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/middleware/dnsblock"
 	"github.com/agberohq/agbero/internal/pkg/lb"
@@ -58,7 +60,7 @@ type Proxy struct {
 
 	res  *resource.Resource
 	quit chan struct{}
-	wg   sync.WaitGroup
+	life *lifecycle.Controller
 
 	// blocklist filters DNS queries before they reach the backend selector.
 	// nil means no filtering (default).
@@ -78,6 +80,7 @@ func NewProxy(res *resource.Resource, listen string) *Proxy {
 		routes: make(map[string]*udpRoute),
 		res:    res,
 		quit:   make(chan struct{}),
+		life:   lifecycle.New(),
 	}
 }
 
@@ -158,6 +161,10 @@ func (p *Proxy) Start() error {
 	// Update Listen to the real bound address — important when port 0
 	// is used (OS assigns a free port) so callers can read p.Listen.
 	p.Listen = conn.LocalAddr().String()
+	if !p.life.Admit() {
+		_ = conn.Close()
+		return fmt.Errorf("xudp: proxy is closed")
+	}
 
 	maxSess := p.MaxSess
 	if maxSess <= 0 {
@@ -182,7 +189,6 @@ func (p *Proxy) Start() error {
 	// an unbounded number of goroutines.
 	p.pool = jack.NewPool(def.UDPWorkerPoolSize, jack.PoolingWithQueueSize(def.UDPPacketQueueSize))
 
-	p.wg.Add(1)
 	go p.receiveLoop(conn)
 
 	p.res.Logger.Fields("bind", p.Listen, "max_sessions", maxSess, "workers", def.UDPWorkerPoolSize).
@@ -192,7 +198,7 @@ func (p *Proxy) Start() error {
 
 // receiveLoop reads datagrams from the listen socket and dispatches them.
 func (p *Proxy) receiveLoop(conn *net.UDPConn) {
-	defer p.wg.Done()
+	defer p.life.Release()
 	defer conn.Close()
 	defer func() {
 		if it, ok := p.res.TCPCache.Load(p.Listen); ok && it.Value == p {
@@ -379,7 +385,11 @@ installed:
 	).Debug("xudp: new session")
 
 	// Start reply forwarding goroutine for this session
-	p.wg.Add(1)
+	if !p.life.Admit() {
+		p.sessions.delete(sessionKey)
+		_ = backendConn.Close()
+		return
+	}
 	go p.replyLoop(listenConn, clientAddr, sessionKey, sess)
 }
 
@@ -393,7 +403,7 @@ func (p *Proxy) replyLoop(
 	sess *session,
 ) {
 	start := time.Now()
-	defer p.wg.Done()
+	defer p.life.Release()
 	defer func() {
 		p.sessions.delete(sessionKey)
 		sess.backend.Activity.EndRequest(
@@ -491,36 +501,70 @@ func (p *Proxy) activeRoute() *udpRoute {
 // Stop gracefully shuts down the proxy — closes the listen socket,
 // drains all sessions, and waits for all goroutines to exit.
 func (p *Proxy) Stop() {
-	if !p.closing.CompareAndSwap(false, true) {
-		return
+	ctx, cancel := context.WithTimeout(context.Background(), def.DefaultTransportDrainTimeout)
+	defer cancel()
+	if err := p.StopCtx(ctx); err != nil {
+		p.res.Logger.Fields("bind", p.Listen, "err", err).Warn("xudp: stop did not drain fully")
 	}
+}
+
+// StopCtx stops admission, closes sessions, drains the worker pool, and waits
+// for receive/reply goroutines only until ctx expires.
+func (p *Proxy) StopCtx(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, def.DefaultTransportDrainTimeout)
+		defer cancel()
+	}
+	if !p.closing.CompareAndSwap(false, true) {
+		return p.life.Wait(ctx)
+	}
+	p.life.Close()
 	close(p.quit)
 
 	if p.sessions != nil {
 		p.sessions.closeAll()
 	}
 
-	// Drain the worker pool before waiting for goroutines so no
-	// in-flight datagram handlers are still running when we return.
+	poolTimeout := def.DefaultUDPWorkerDrainTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining < poolTimeout {
+			poolTimeout = remaining
+			if poolTimeout < 0 {
+				poolTimeout = 0
+			}
+		}
+	}
+	var poolErr error
 	if p.pool != nil {
-		_ = p.pool.Shutdown(2 * time.Second)
+		poolErr = p.pool.Shutdown(poolTimeout)
 	}
 
-	p.wg.Wait()
+	drainErr := p.life.Wait(ctx)
+	if poolErr != nil && drainErr == nil {
+		drainErr = fmt.Errorf("lifecycle: worker pool drain: %w", poolErr)
+	}
+	if drainErr != nil {
+		p.res.Logger.Fields("bind", p.Listen, "active", p.life.Active()).Warn("xudp: drain timed out")
+	}
 
 	p.mu.RLock()
-	def := p.def
+	defaultRoute := p.def
 	routes := p.routes
 	p.mu.RUnlock()
 
-	if def != nil {
-		def.stop()
+	if defaultRoute != nil {
+		defaultRoute.stop()
 	}
 	for _, r := range routes {
 		r.stop()
 	}
 
 	p.res.Logger.Fields("bind", p.Listen).Info("xudp: proxy stopped")
+	return drainErr
 }
 
 // SnapBackends returns a snapshot of all backends for the uptime handler.

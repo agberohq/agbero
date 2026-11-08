@@ -569,8 +569,17 @@ const (
 // Admin server
 
 const (
-	DefaultReloadTimeout   = 30 * time.Second
-	DefaultShutdownTimeout = 5 * time.Second
+	DefaultReloadTimeout        = 30 * time.Second
+	DefaultReloadDrainTimeout   = 5 * time.Second
+	DefaultShutdownTimeout      = 5 * time.Second
+	DefaultShutdownGraceTimeout = 10 * time.Second
+	// DefaultShutdownForceQuitTimeout is when jack cancels in-flight cleanup.
+	DefaultShutdownForceQuitTimeout = 15 * time.Second
+	// DefaultShutdownHardTimeout is the process-level backstop for a callback
+	// that ignores cancellation.
+	DefaultShutdownHardTimeout = 20 * time.Second
+	// DefaultUDPWorkerDrainTimeout bounds the xudp worker-pool drain.
+	DefaultUDPWorkerDrainTimeout = 2 * time.Second
 
 	DefaultAdminReadTimeout  = 10 * time.Second
 	DefaultAdminWriteTimeout = 60 * time.Second

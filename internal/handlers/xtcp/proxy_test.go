@@ -2,6 +2,7 @@ package xtcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"io"
 	"net"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
+	"github.com/agberohq/agbero/internal/hub/lifecycle"
 	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
@@ -500,5 +502,24 @@ func TestProxy_ProxyProtocol(t *testing.T) {
 	got := readOne(t, conn)
 	if !bytes.Contains([]byte(got), []byte("Backend1")) {
 		t.Fatalf("got %q, want containing %q", got, "Backend1")
+	}
+}
+
+func TestGracefulStopCtxBoundedWhenAdmittedWorkIsStuck(t *testing.T) {
+	p := NewProxy(resource.New(), "127.0.0.1:0")
+	if !p.life.Admit() {
+		t.Fatal("Admit failed")
+	}
+	defer p.life.Release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := p.GracefulStopCtx(ctx)
+	if !errors.Is(err, lifecycle.ErrDrainTimeout) {
+		t.Fatalf("GracefulStopCtx = %v, want ErrDrainTimeout", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("GracefulStopCtx exceeded bound: %v", time.Since(start))
 	}
 }

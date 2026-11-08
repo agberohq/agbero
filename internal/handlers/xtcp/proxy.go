@@ -15,6 +15,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
+	"github.com/agberohq/agbero/internal/hub/lifecycle"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/lb"
 	tunnelpkg "github.com/agberohq/agbero/internal/pkg/tunnel"
@@ -59,7 +60,7 @@ type Proxy struct {
 	res         *resource.Resource
 	tunnelPools map[string]*tunnelpkg.Pool
 	quit        chan struct{}
-	wg          sync.WaitGroup
+	life        *lifecycle.Controller
 }
 
 // NewProxy initializes a new TCP proxy instance for the specified listen address.
@@ -69,6 +70,7 @@ func NewProxy(res *resource.Resource, listen string) *Proxy {
 		routes: make(map[string]*tcpRoute),
 		res:    res,
 		quit:   make(chan struct{}),
+		life:   lifecycle.New(),
 	}
 }
 
@@ -161,11 +163,13 @@ func (p *Proxy) Start() error {
 		return err
 	}
 
+	if !p.life.Admit() {
+		_ = l.Close()
+		return errors.New("xtcp: proxy is closed")
+	}
 	p.res.TCPCache.Store(p.Listen, &mappo.Item{Value: p})
-
-	p.wg.Add(1)
 	go func() {
-		defer p.wg.Done()
+		defer p.life.Release()
 		defer l.Close()
 		defer func() {
 			if it, ok := p.res.TCPCache.Load(p.Listen); ok && it.Value == p {
@@ -222,7 +226,10 @@ func (p *Proxy) Start() error {
 				conn.Close()
 				continue
 			}
-			p.wg.Add(1)
+			if !p.life.Admit() {
+				_ = conn.Close()
+				continue
+			}
 			go p.handle(conn)
 		}
 	}()
@@ -243,9 +250,34 @@ func (p *Proxy) Start() error {
 // Call Stop() instead when an immediate hard shutdown is needed (e.g. process
 // exit under SIGKILL).
 func (p *Proxy) GracefulStop(deadline time.Time) {
-	if !p.closing.CompareAndSwap(false, true) {
-		return
+	ctx := context.Background()
+	if !deadline.IsZero() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(context.Background(), deadline)
+		defer cancel()
 	}
+	if err := p.GracefulStopCtx(ctx); err != nil {
+		p.res.Logger.Fields("bind", p.Listen, "err", err).Warn("xtcp: graceful stop did not drain fully")
+	}
+}
+
+// GracefulStopCtx stops accepting, force-closes at the context deadline, and
+// waits for handlers only until the context expires.
+func (p *Proxy) GracefulStopCtx(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(def.DefaultTransportDrainTimeout)
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
+	if !p.closing.CompareAndSwap(false, true) {
+		return p.life.Wait(ctx)
+	}
+	p.life.Close()
 	close(p.quit)
 
 	// Set a read/write deadline on every active connection. This causes any
@@ -258,32 +290,16 @@ func (p *Proxy) GracefulStop(deadline time.Time) {
 		return true
 	})
 
-	// Wait for all proxy goroutines to exit. Each goroutine removes itself
-	// from p.conns when it finishes (or when the deadline fires), so this
-	// wait naturally drains without holding any lock.
-	drained := make(chan struct{})
-	go func() {
-		p.wg.Wait()
-		close(drained)
-	}()
-
-	select {
-	case <-drained:
-		// All connections finished cleanly within the deadline.
-	case <-time.After(time.Until(deadline)):
-		// Deadline exceeded — force-close anything still open.
-		p.conns.Range(func(key, value any) bool {
-			c, e := key.(net.Conn), value.(*connEntry)
-			if e.closed.CompareAndSwap(false, true) {
-				_ = c.Close()
-			}
-			return true
-		})
-		p.wg.Wait()
+	// Wait for the accept loop and all handlers. Past the deadline, force-close
+	// the remainder and report a drain timeout.
+	drainErr := p.life.Wait(ctx)
+	if drainErr != nil {
+		p.forceCloseConns()
 	}
-
-	p.conns.Clear()
-	p.connCnt.Store(0)
+	if drainErr == nil {
+		p.conns.Clear()
+		p.connCnt.Store(0)
+	}
 
 	p.mu.RLock()
 	def := p.def
@@ -297,7 +313,8 @@ func (p *Proxy) GracefulStop(deadline time.Time) {
 		r.Stop()
 	}
 
-	p.res.Logger.Fields("bind", p.Listen).Info("xtcp: proxy stopped gracefully")
+	p.res.Logger.Fields("bind", p.Listen, "err", drainErr).Info("xtcp: proxy stopped gracefully")
+	return drainErr
 }
 
 // Stop immediately closes all active connections and shuts down the proxy.
@@ -309,37 +326,41 @@ func (p *Proxy) Stop() {
 	if !p.closing.CompareAndSwap(false, true) {
 		return
 	}
+	p.life.Close()
 	close(p.quit)
+	p.forceCloseConns()
 
-	var wg sync.WaitGroup
-	p.conns.Range(func(key, value any) bool {
-		wg.Add(1)
-		go func(c net.Conn, e *connEntry) {
-			defer wg.Done()
-			if e.closed.CompareAndSwap(false, true) {
-				_ = c.Close()
-			}
-		}(key.(net.Conn), value.(*connEntry))
-		return true
-	})
-	wg.Wait()
+	ctx, cancel := context.WithTimeout(context.Background(), def.DefaultTransportDrainTimeout)
+	defer cancel()
+	if err := p.life.Wait(ctx); err != nil {
+		p.res.Logger.Fields("bind", p.Listen, "err", err).Warn("xtcp: hard stop did not drain fully")
+	}
 	p.conns.Clear()
 	p.connCnt.Store(0)
 
 	p.mu.RLock()
-	def := p.def
+	defaultRoute := p.def
 	routes := p.routes
 	p.mu.RUnlock()
 
-	if def != nil {
-		def.Stop()
+	if defaultRoute != nil {
+		defaultRoute.Stop()
 	}
 	for _, r := range routes {
 		r.Stop()
 	}
-	p.wg.Wait()
 
 	p.res.Logger.Fields("bind", p.Listen).Info("xtcp: proxy stopped")
+}
+
+func (p *Proxy) forceCloseConns() {
+	p.conns.Range(func(key, value any) bool {
+		c, e := key.(net.Conn), value.(*connEntry)
+		if e.closed.CompareAndSwap(false, true) {
+			_ = c.Close()
+		}
+		return true
+	})
 }
 
 // Safely tracks or untracks active connections in the concurrent map
@@ -378,7 +399,7 @@ func (p *Proxy) trackConn(c net.Conn, add bool) {
 func (p *Proxy) handle(src net.Conn) {
 	p.trackConn(src, true)
 	defer p.trackConn(src, false)
-	defer p.wg.Done()
+	defer p.life.Release()
 
 	remoteAddr := src.RemoteAddr().String()
 

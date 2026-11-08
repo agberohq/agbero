@@ -1,6 +1,8 @@
 package xudp
 
 import (
+	"context"
+	"errors"
 	"net"
 	"runtime"
 	"sync/atomic"
@@ -10,6 +12,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
+	"github.com/agberohq/agbero/internal/hub/lifecycle"
 	resource "github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/lb"
 	"github.com/olekukonko/ll"
@@ -382,5 +385,24 @@ func TestPickBackend_UsesRoutingHashForConsistentHashing(t *testing.T) {
 	if len(seen) < 2 {
 		t.Errorf("routingHash=0: only %d backend(s) selected in %d calls — random fallback broken: %v",
 			len(seen), iterations, seen)
+	}
+}
+
+func TestStopCtxBoundedWhenAdmittedWorkIsStuck(t *testing.T) {
+	p := NewProxy(testRes(), "127.0.0.1:0")
+	if !p.life.Admit() {
+		t.Fatal("Admit failed")
+	}
+	defer p.life.Release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := p.StopCtx(ctx)
+	if !errors.Is(err, lifecycle.ErrDrainTimeout) {
+		t.Fatalf("StopCtx = %v, want ErrDrainTimeout", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("StopCtx exceeded bound: %v", time.Since(start))
 	}
 }
