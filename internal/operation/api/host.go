@@ -413,6 +413,7 @@ func (h *Host) create(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
+		defer tmpFile.Close()
 		defer os.Remove(tmpFile.Name())
 
 		if _, err := tmpFile.Write(rawHCL); err != nil {
@@ -571,6 +572,7 @@ func (h *Host) update(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
+		defer tmpFile.Close()
 		defer os.Remove(tmpFile.Name())
 
 		if _, err := tmpFile.Write(rawHCL); err != nil {
