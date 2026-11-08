@@ -74,7 +74,7 @@ help:
 	@echo "  clean          - Clean build artifacts"
 	@echo "  build-all      - Cross-compile for all platforms"
 	@echo "  deploy         - Build locally and atomically deploy via SSH"
-	@echo "                   (make deploy PLAY_HOST=host [TEST=1] [YES=1] [MODE=update|install|service])"
+	@echo "                   (make deploy PLAY_HOST=host [TEST=1] [YES=1] [MODE=push|update|install|repair] [ROLLBACK=0])"
 	@echo "  version        - Show current version info"
 	@echo "  deps           - Install/update dependencies"
 	@echo "  test           - Run tests"
@@ -269,6 +269,7 @@ deploy:
 		--mode "$(or $(MODE),auto)" \
 		$(if $(filter 1,$(TEST)),--test) \
 		$(if $(filter 1,$(YES)),--yes) \
+		$(if $(filter 0,$(ROLLBACK)),--no-rollback) \
 		$(DEPLOY_ARGS)
 
 .PHONY: play

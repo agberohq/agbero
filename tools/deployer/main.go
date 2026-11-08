@@ -21,21 +21,22 @@ import (
 )
 
 type options struct {
-	host      string
-	user      string
-	mode      string
-	path      string
-	service   string
-	health    string
-	goos      string
-	goarch    string
-	sudo      bool
-	yes       bool
-	test      bool
-	noRestart bool
-	noHealth  bool
-	dryRun    bool
-	keepOld   bool
+	host       string
+	user       string
+	mode       string
+	path       string
+	service    string
+	health     string
+	goos       string
+	goarch     string
+	sudo       bool
+	yes        bool
+	test       bool
+	noRestart  bool
+	noHealth   bool
+	noRollback bool
+	dryRun     bool
+	keepOld    bool
 }
 
 type remoteState struct {
@@ -49,6 +50,7 @@ type remoteState struct {
 	PID     string
 	UID     string
 	Config  bool
+	Control string
 	HasCurl bool
 	HasWget bool
 }
@@ -67,6 +69,7 @@ func main() {
 	flag.BoolVar(&o.test, "test", false, "run tests before building")
 	flag.BoolVar(&o.noRestart, "no-restart", false, "replace the binary but do not restart")
 	flag.BoolVar(&o.noHealth, "no-health", false, "skip the HTTP health check")
+	flag.BoolVar(&o.noRollback, "no-rollback", false, "do not restore the previous binary on failure")
 	flag.BoolVar(&o.dryRun, "dry-run", false, "print actions without applying them")
 	flag.BoolVar(&o.keepOld, "keep-previous", true, "keep the previous binary until the next deploy")
 	flag.Parse()
@@ -104,16 +107,21 @@ func run(o options) error {
 			return err
 		}
 	}
-	switch o.mode {
-	case "update", "install", "service":
-	default:
-		return fmt.Errorf("unknown mode %q (want update, install, or service)", o.mode)
+	if o.mode == "service" {
+		o.mode = "repair"
 	}
-	if (o.mode == "update" || o.mode == "service") && remote.Binary == "" {
+	switch o.mode {
+	case "push", "update", "install", "repair":
+	default:
+		return fmt.Errorf("unknown mode %q (want push, update, install, or repair)", o.mode)
+	}
+	if (o.mode == "update" || o.mode == "repair") && remote.Binary == "" {
 		return errors.New("no remote agbero binary found; use --mode install")
 	}
-	if o.mode == "update" && remote.Binary == "" {
-		return errors.New("update requires an existing binary; use --mode install")
+	if o.mode == "push" {
+		o.noRestart = true
+		o.noHealth = true
+		o.noRollback = true
 	}
 	binaryPath := o.path
 	if binaryPath == "" {
@@ -123,7 +131,7 @@ func run(o options) error {
 		binaryPath = "/usr/local/bin/agbero"
 	}
 
-	if o.mode == "service" {
+	if o.mode == "repair" {
 		if err := runServiceOnly(target, remote, binaryPath, o); err != nil {
 			return err
 		}
@@ -207,7 +215,7 @@ func run(o options) error {
 		}
 	}
 
-	if o.mode == "service" || o.mode == "install" {
+	if o.mode == "repair" || o.mode == "install" {
 		if remote.Unit == "" && strings.EqualFold(o.service, "auto") {
 			if err := sshScript(target, sudo(o.sudo, binaryPath)+" service install", false); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: service install failed: %v\n", err)
@@ -222,7 +230,7 @@ func run(o options) error {
 		var err error
 		restarted, err = restartRemote(target, remote, binaryPath, o.service, o.sudo)
 		if err != nil {
-			if hadOld {
+			if hadOld && !o.noRollback {
 				_ = rollback(target, remote, o.sudo)
 			}
 			return err
@@ -232,12 +240,14 @@ func run(o options) error {
 			if remote.PID != "" {
 				fmt.Printf("The running process is still the old binary; restart it manually.\n")
 			}
+		} else if r2, rerr := preflight(target, o.sudo); rerr == nil {
+			remote = r2
 		}
 	}
 
 	if !o.noHealth && !o.noRestart && restarted {
-		if err := healthRemote(target, o.health, binaryPath, version); err != nil {
-			if hadOld {
+		if err := healthRemote(target, o.health, binaryPath, version, remote); err != nil {
+			if hadOld && !o.noRollback {
 				fmt.Println("Health check failed; rolling back…")
 				_ = rollback(target, remote, o.sudo)
 			}
@@ -265,9 +275,10 @@ func chooseMode(r remoteState, yes bool) (string, error) {
 		Title("Deployment").
 		Description("What should be applied to this server?").
 		Options(
+			huh.NewOption("Push binary only (no restart)", "push"),
 			huh.NewOption("Update existing installation", "update"),
 			huh.NewOption("Fresh install", "install"),
-			huh.NewOption("Install/repair service only", "service"),
+			huh.NewOption("Repair service only", "repair"),
 		).
 		Value(&mode).Run()
 	return mode, err
@@ -345,8 +356,11 @@ func runServiceOnly(target string, remote remoteState, binaryPath string, o opti
 	if !restarted {
 		return errors.New("no systemd unit found; cannot restart the service")
 	}
+	if r2, rerr := preflight(target, o.sudo); rerr == nil {
+		remote = r2
+	}
 	if !o.noHealth {
-		return healthRemote(target, o.health, binaryPath, "")
+		return healthRemote(target, o.health, binaryPath, "", remote)
 	}
 	return nil
 }
@@ -437,9 +451,11 @@ fi
 pid=$(pgrep -af '[a]gbero (run|serve)' 2>/dev/null | head -n 1 || true)
 uid=$(id -u 2>/dev/null || true)
 cfg=0; [ -n "$home" ] && [ -f "$home/agbero.hcl" ] && cfg=1
+control=""
+if [ -n "$home" ]; then control=$(find "$home" -maxdepth 3 -name keeper-control.json 2>/dev/null | head -n 1 || true); fi
 curl=0; command -v curl >/dev/null 2>&1 && curl=1
 wget=0; command -v wget >/dev/null 2>&1 && wget=1
-printf 'OS=%s\nARCH=%s\nBINARY=%s\nHOME=%s\nUNIT=%s\nACTIVE=%s\nEXEC=%s\nPID=%s\nUID=%s\nCONFIG=%s\nCURL=%s\nWGET=%s\n' "$os" "$arch" "$bin" "$home" "$unit" "$active" "$execstart" "$pid" "$uid" "$cfg" "$curl" "$wget"`
+printf 'OS=%s\nARCH=%s\nBINARY=%s\nHOME=%s\nUNIT=%s\nACTIVE=%s\nEXEC=%s\nPID=%s\nUID=%s\nCONFIG=%s\nCONTROL=%s\nCURL=%s\nWGET=%s\n' "$os" "$arch" "$bin" "$home" "$unit" "$active" "$execstart" "$pid" "$uid" "$cfg" "$control" "$curl" "$wget"`
 	out, err := sshOutput(target, script)
 	if err != nil {
 		return remoteState{}, err
@@ -471,6 +487,8 @@ printf 'OS=%s\nARCH=%s\nBINARY=%s\nHOME=%s\nUNIT=%s\nACTIVE=%s\nEXEC=%s\nPID=%s\
 			r.UID = v
 		case "CONFIG":
 			r.Config = v == "1"
+		case "CONTROL":
+			r.Control = v
 		case "CURL":
 			r.HasCurl = v == "1"
 		case "WGET":
@@ -580,7 +598,13 @@ func restartRemote(target string, r remoteState, binary, service string, useSudo
 	return false, nil
 }
 
-func healthRemote(target, url, binaryPath, version string) error {
+func healthRemote(target, url, binaryPath, version string, remote remoteState) error {
+	if remote.Control != "" {
+		// The service is intentionally waiting for a manual Keeper unlock.
+		// The binary is deployed; HTTP is not expected yet.
+		fmt.Println("Service is running locked and waiting for `agbero keeper unlock`; health check deferred.")
+		return nil
+	}
 	check := fmt.Sprintf(`set -eu
 ok=0
 for i in 1 2 3 4 5 6 7 8 9 10; do
