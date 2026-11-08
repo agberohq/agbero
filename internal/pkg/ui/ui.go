@@ -815,6 +815,30 @@ func (u *UI) ConfirmDefault(prompt string, defaultYes bool, helpText ...string) 
 	return value, c.Run()
 }
 
+type SelectOption struct {
+	Label string
+	Value string
+}
+
+func (u *UI) Select(title, description string, options []SelectOption) (string, error) {
+	u.Flush()
+	if len(options) == 0 {
+		return "", fmt.Errorf("select: no options")
+	}
+	value := options[0].Value
+	opts := make([]huh.Option[string], 0, len(options))
+	for _, o := range options {
+		opts = append(opts, huh.NewOption(o.Label, o.Value))
+	}
+	err := huh.NewSelect[string]().
+		Title(title).
+		Description(description).
+		Options(opts...).
+		Value(&value).
+		Run()
+	return value, err
+}
+
 type InputConfig struct {
 	Title       string
 	Placeholder string
