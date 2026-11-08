@@ -70,8 +70,9 @@ type Manager struct {
 	// not overlap (see routeBuilder).
 	buildMu sync.Mutex
 
-	logArgsPool sync.Pool
-	botChecker  *bot.Checker
+	logArgsPool   sync.Pool
+	botChecker    *bot.Checker
+	requestLogger *ll.Logger
 }
 
 type llWriter struct {
@@ -108,7 +109,8 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 				return &s
 			},
 		},
-		botChecker: bc,
+		botChecker:    bc,
+		requestLogger: cfg.Resource.Logger.Namespace("request"),
 	}
 	if cfg.Global.Logging.Enabled.Active() && len(cfg.Global.Logging.Skip) > 0 {
 		for _, p := range cfg.Global.Logging.Skip {

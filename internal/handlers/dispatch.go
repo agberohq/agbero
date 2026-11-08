@@ -377,7 +377,7 @@ func (m *Manager) logRequest(host string, r *http.Request, start time.Time, stat
 		}
 	}
 
-	m.cfg.Resource.Logger.Fields(args...).Info(r.Method)
+	m.requestLogger.Fields(args...).Info(r.Method)
 	*argsPtr = args
 	m.logArgsPool.Put(argsPtr)
 }
