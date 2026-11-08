@@ -573,8 +573,6 @@ const (
 	DefaultReloadDrainTimeout   = 5 * time.Second
 	DefaultShutdownTimeout      = 5 * time.Second
 	DefaultShutdownGraceTimeout = 10 * time.Second
-	// DefaultShutdownForceQuitTimeout is when jack cancels in-flight cleanup.
-	DefaultShutdownForceQuitTimeout = 15 * time.Second
 	// DefaultShutdownHardTimeout is the process-level backstop for a callback
 	// that ignores cancellation.
 	DefaultShutdownHardTimeout = 20 * time.Second

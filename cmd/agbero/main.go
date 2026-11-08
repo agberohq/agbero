@@ -1,13 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/agberohq/agbero/cmd/agbero/helper"
@@ -36,11 +36,22 @@ func main() {
 
 	shutdown := jack.NewShutdown(
 		jack.ShutdownWithTimeout(def.DefaultShutdownGraceTimeout),
-		jack.ShutdownWithForceQuit(def.DefaultShutdownForceQuitTimeout),
-		jack.ShutdownWithSignals(os.Interrupt, syscall.SIGTERM),
 		jack.ShutdownWithLogger(logger),
 		jack.ShutdownConcurrent(),
 	)
+
+	// The watchdog must start only when jack begins shutdown, not when the
+	// process starts. A priority -1 callback runs before all cleanup work.
+	var watchdog *time.Timer
+	if err := shutdown.RegisterWithPriority("ShutdownWatchdog", -1, func(context.Context) error {
+		watchdog = time.AfterFunc(def.DefaultShutdownHardTimeout, func() {
+			logger.Error("shutdown exceeded hard deadline; forcing exit")
+			os.Exit(1)
+		})
+		return nil
+	}); err != nil {
+		logger.Fatal("register shutdown watchdog: ", err)
+	}
 
 	flaggy.SetName(def.Name)
 	flaggy.SetDescription(def.Description)
@@ -868,12 +879,6 @@ func main() {
 	}
 
 	// Universal shutdown wait — all long-running commands fall through to here.
-	// jack's force-quit cancels cleanup work; this watchdog is the final
-	// process-level backstop for a callback that ignores cancellation.
-	watchdog := time.AfterFunc(def.DefaultShutdownHardTimeout, func() {
-		logger.Error("shutdown exceeded hard deadline; forcing exit")
-		os.Exit(1)
-	})
 	stats := shutdown.Wait()
 
 	if hel.Store != nil {
@@ -881,7 +886,9 @@ func main() {
 		secrets.SetGlobalStore(nil)
 		hel.Store.Close()
 	}
-	watchdog.Stop()
+	if watchdog != nil {
+		watchdog.Stop()
+	}
 
 	logger.Fields(
 		"duration", stats.EndTime.Sub(stats.StartTime),

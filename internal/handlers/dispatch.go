@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -323,6 +324,20 @@ func (m *Manager) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 func (m *Manager) logRequest(host string, r *http.Request, start time.Time, status int, bytes int64) {
 	if m.cfg.Resource.Logger == nil {
 		return
+	}
+	if m.cfg.Global != nil {
+		if m.cfg.Global.Logging.Enabled.Inactive() {
+			return
+		}
+		level := strings.ToLower(strings.TrimSpace(m.cfg.Global.Logging.Level))
+		if level == "" {
+			level = def.LogLevelInfo
+		}
+		switch level {
+		case def.LogLevelInfo, def.LogLevelDebug:
+		default:
+			return
+		}
 	}
 
 	if m.skipLogPaths[r.URL.Path] {
