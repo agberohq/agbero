@@ -51,11 +51,13 @@ func (s *Scan) Run(configPath string, jsonOut bool) {
 	u := ui.New()
 	u.Render(func() {
 		u.SectionHeader("Scan")
-		u.KeyValue("Config", configPath)
-		u.KeyValue("Home", home)
-		u.KeyValue("Data", dataDir)
-		u.KeyValue("Logs", paths.LogFile)
-		u.KeyValue("Hosts", fmt.Sprint(len(hosts)))
+		u.Table([]string{"Item", "Path / Value"}, [][]string{
+			{"Config", configPath},
+			{"Home", home},
+			{"Data", dataDir},
+			{"Logs", paths.LogFile},
+			{"Hosts", fmt.Sprint(len(hosts))},
+		})
 		u.Blank()
 		if len(report.Findings) == 0 {
 			u.SuccessLine("No issues found")
