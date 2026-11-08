@@ -40,3 +40,5 @@ func (h *Helper) Admin() *Admin          { return &Admin{p: h} }
 func (h *Helper) Run() *Run              { return &Run{p: h} }
 func (h *Helper) Service() *Service      { return &Service{p: h} }
 func (h *Helper) MCP() *MCP              { return &MCP{p: h} }
+
+func (h *Helper) Scan() *Scan { return &Scan{p: h} }
