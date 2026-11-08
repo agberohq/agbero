@@ -21,6 +21,7 @@ const (
 	SetupStepKeeperSecrets = "keeper_secrets"
 	SetupStepTOTP          = "totp"
 	SetupStepLetsEncrypt   = "letsencrypt"
+	SetupStepDomain        = "domain"
 	SetupStepDone          = "done"
 )
 

@@ -35,6 +35,10 @@ type session struct {
 	TOTPEnabled       bool      `json:"totp_enabled"`
 	TOTPSecret        string    `json:"totp_secret,omitempty"`
 	LEEmail           string    `json:"le_email,omitempty"`
+	SiteMode          string    `json:"site_mode,omitempty"`
+	SiteDomain        string    `json:"site_domain,omitempty"`
+	SiteRoot          string    `json:"site_root,omitempty"`
+	SiteUpstream      string    `json:"site_upstream,omitempty"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
@@ -153,6 +157,7 @@ func (h *Home) runSetupSteps(store *keeper.Keeper, sess *session) error {
 		{def.SetupStepKeeperSecrets, h.setupKeeperSecrets},
 		{def.SetupStepTOTP, h.setupTOTP},
 		{def.SetupStepLetsEncrypt, h.setupLetsEncrypt},
+		{def.SetupStepDomain, h.setupDomain},
 	}
 
 	for _, step := range steps {
@@ -401,23 +406,36 @@ func (h *Home) writeConfigFiles(store *keeper.Keeper, sess *session) error {
 		return fmt.Errorf("failed to write admin host config: %w", err)
 	}
 
-	webContent := strings.ReplaceAll(string(TplWebHcl), "{WEB_ROOT}", filepath.ToSlash(h.ctx.Paths.WebDir.Path()))
-	if err := h.ctx.Paths.HostsDir.Put("web.hcl", []byte(webContent), expect.FilePerm); err != nil {
-		return fmt.Errorf("failed to write web host config: %w", err)
+	if sess.SiteMode == "" {
+		sess.SiteMode = def.SiteModeLocal
+	}
+	siteFile := siteHostFileName(sess)
+	if err := h.ctx.Paths.HostsDir.Put(siteFile, siteHostConfig(sess, h.ctx.Paths.WebDir.Path()), expect.FilePerm); err != nil {
+		return fmt.Errorf("failed to write site host config: %w", err)
 	}
 
-	h.u.Render(func() { h.u.Step("ok", "Created example host configurations") })
+	h.u.Render(func() { h.u.Step("ok", "Created host configurations") })
 	return nil
 }
 
 func (h *Home) displaySuccess(sess *session) {
 	bin := filepath.Base(os.Args[0])
+	siteURL := "http://web.localhost"
+	adminURL := "http://admin.localhost"
+	if sess.SiteDomain != "" && sess.SiteMode != def.SiteModeLocal {
+		siteURL = "https://" + sess.SiteDomain
+	}
 	nextSteps := []ui.ListItem{
-		{Text: "sudo " + bin + " service start"},
-		{Text: "sudo " + bin + " service status"},
+		{Text: "Home: " + h.ctx.Paths.BaseDir.Path()},
+		{Text: "Logs: " + h.ctx.Paths.LogsDir.Path()},
+		{Text: "Add another host: sudo " + bin + " host add"},
+		{Text: "Install service: sudo " + bin + " service install"},
+		{Text: "Start service: sudo " + bin + " service start"},
+		{Text: "Status: sudo " + bin + " service status"},
 		{Text: fmt.Sprintf("Login with username: %s and your password", sess.AdminUsername)},
-		{Text: "http://admin.localhost:9090 — admin UI", URL: "http://admin.localhost:9090"},
-		{Text: "http://localhost — web UI", URL: "http://localhost"},
+		{Text: adminURL + " — admin UI", URL: adminURL},
+		{Text: siteURL + " — web UI", URL: siteURL},
+		{Text: "Direct admin listener: http://127.0.0.1:9090"},
 	}
 	if sess.TOTPEnabled {
 		nextSteps = append([]ui.ListItem{
