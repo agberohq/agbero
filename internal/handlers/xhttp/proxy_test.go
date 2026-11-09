@@ -1,8 +1,13 @@
 package xhttp
 
 import (
+	"bufio"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -530,5 +535,98 @@ func TestProxy_EmptyBackends(t *testing.T) {
 
 	if picked != nil {
 		t.Error("Pick should return nil for empty backends")
+	}
+}
+
+func TestProxy_WebSocketEndToEndUpgrade(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			http.Error(w, "expected websocket", http.StatusBadRequest)
+			return
+		}
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "no hijacker", http.StatusInternalServerError)
+			return
+		}
+		conn, rw, err := hj.Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = fmt.Fprint(rw, "HTTP/1.1 101 Switching Protocols\r\n"+
+			"Upgrade: websocket\r\nConnection: Upgrade\r\n"+
+			"Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n")
+		_ = rw.Flush()
+		buf := make([]byte, 4)
+		if _, err := conn.Read(buf); err == nil {
+			_, _ = conn.Write([]byte("pong"))
+		}
+	}))
+	defer backend.Close()
+
+	route := &alaye.Route{
+		Path: "/",
+		Backends: alaye.Backend{
+			Enabled: expect.Active,
+			Servers: alaye.NewServers(backend.URL),
+		},
+	}
+	res := resource.New()
+	defer res.Close()
+	be, err := NewBackend(ConfigBackend{
+		Server:   alaye.NewServer(backend.URL),
+		Route:    route,
+		Domains:  []string{"ws.localhost"},
+		Resource: res,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer be.Stop()
+	proxy := NewProxy(ConfigProxy{Strategy: "round_robin"}, []*Backend{be}, zulu.NewIPManager(nil))
+	front := httptest.NewServer(proxy)
+	defer front.Close()
+
+	u, err := url.Parse(front.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", u.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	_, _ = fmt.Fprintf(conn, "GET /ws HTTP/1.1\r\nHost: ws.localhost\r\n"+
+		"Connection: Upgrade\r\nUpgrade: websocket\r\n"+
+		"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
+
+	br := bufio.NewReader(conn)
+	status, err := br.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status, "101") {
+		t.Fatalf("status = %q, want 101", strings.TrimSpace(status))
+	}
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if line == "\r\n" {
+			break
+		}
+	}
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	pong := make([]byte, 4)
+	if _, err := br.Read(pong); err != nil {
+		t.Fatal(err)
+	}
+	if string(pong) != "pong" {
+		t.Fatalf("tunneled bytes = %q, want pong", pong)
 	}
 }

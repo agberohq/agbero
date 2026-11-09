@@ -572,18 +572,31 @@ func (b *Backend) serveInner(w http.ResponseWriter, r *http.Request) {
 	if _, ok := w.(*zulu.ResponseWriter); !ok {
 		sw = basicStatusWriterPool.Get().(*basicStatusWriter)
 		sw.ResponseWriter = w
-		sw.code = 200
+		sw.code.Store(200)
 		actualWriter = sw
 	}
 
+	// A hedged request may run twice concurrently. httputil.ReverseProxy mutates
+	// request headers (X-Forwarded-For), so each attempt needs its own request
+	// and header map. Bodies are never hedged: duplicating one needs buffering.
+	bodyHedgingSafe := r.Body == nil || r.Body == http.NoBody || r.ContentLength == 0
+	useHedger := b.hedger != nil && bodyHedgingSafe
+
 	// doProxy executes a single attempt. Each hedged goroutine gets its own
 	// backendState so the loser's ErrorHandler cannot corrupt the winner.
-	doProxy := func(ctx context.Context, w http.ResponseWriter) error {
+	doProxy := func(ctx context.Context, w http.ResponseWriter, hedged bool) error {
 		state := backendStatePool.Get().(*backendState)
 		state.failed = false
 		defer backendStatePool.Put(state)
 
 		req := r.WithContext(context.WithValue(ctx, backendCtxKey{}, state))
+		if hedged {
+			req = r.Clone(context.WithValue(ctx, backendCtxKey{}, state))
+			req.Header = r.Header.Clone()
+			if r.Body == nil || r.Body == http.NoBody || r.ContentLength == 0 {
+				req.Body = http.NoBody
+			}
+		}
 
 		if b.FastCGI != nil {
 			b.FastCGI.ServeHTTP(w, req)
@@ -599,9 +612,10 @@ func (b *Backend) serveInner(w http.ResponseWriter, r *http.Request) {
 				failed = true
 			}
 		} else if sw != nil {
-			if sw.code == http.StatusBadGateway ||
-				sw.code == http.StatusServiceUnavailable ||
-				sw.code == http.StatusGatewayTimeout {
+			code := sw.code.Load()
+			if code == http.StatusBadGateway ||
+				code == http.StatusServiceUnavailable ||
+				code == http.StatusGatewayTimeout {
 				failed = true
 			}
 		}
@@ -613,24 +627,28 @@ func (b *Backend) serveInner(w http.ResponseWriter, r *http.Request) {
 
 	var breakerErr error
 
-	if b.hedger != nil {
-		var winner atomic.Int32
+	var hedgeRace *hedgeState
+	if useHedger {
+		hedgeRace = &hedgeState{}
 		var attempt atomic.Int32
 
 		_, breakerErr = b.hedger.Do(r.Context(), func(ctx context.Context) (any, error) {
 			id := attempt.Add(1)
 			hw := &hedgeWriter{
 				ResponseWriter: actualWriter,
-				winner:         &winner,
+				state:          hedgeRace,
 				id:             id,
 			}
 			return nil, b.WrapWithBreaker(ctx, func(c context.Context) error {
-				return doProxy(c, hw)
+				return doProxy(c, hw, true)
 			})
 		})
+		// Close the race before returning the shared writer to the pool. Any
+		// late loser now discards instead of touching a released writer.
+		hedgeRace.close()
 	} else {
 		breakerErr = b.WrapWithBreaker(r.Context(), func(c context.Context) error {
-			return doProxy(c, actualWriter)
+			return doProxy(c, actualWriter, false)
 		})
 	}
 
