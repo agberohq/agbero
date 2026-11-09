@@ -67,7 +67,7 @@ func (r *Route) Validate() error {
 	}
 
 	isWeb := r.Web.Root.IsSet() || (r.Web.Git.Enabled.Active() && !r.Serverless.Enabled.Active())
-	isBackend := len(r.Backends.Servers) > 0
+	isBackend := len(r.Backends.Servers) > 0 || r.Backends.HasTunnel()
 	isServerless := r.Serverless.Enabled.Active()
 
 	engines := 0
@@ -190,7 +190,9 @@ func (r *Route) validateWebRoute() error {
 }
 
 func (r *Route) validateProxyRoute() error {
-	if len(r.Backends.Servers) == 0 {
+	// A tunnelled backend is a valid upstream with no explicit server list:
+	// the tunnel itself is the connection target.
+	if len(r.Backends.Servers) == 0 && !r.Backends.HasTunnel() {
 		return def.ErrProxyRouteNoBackends
 	}
 	for i, b := range r.Backends.Servers {
@@ -201,11 +203,13 @@ func (r *Route) validateProxyRoute() error {
 	// Tunnel validation: via and tunnel are mutually exclusive.
 	// via name resolution happens at startup in server.go — unknown names
 	// are a fatal startup error, not a config-parse error.
-	if r.Backends.Via != "" && r.Backends.Tunnel != "" {
+	via := strings.TrimSpace(r.Backends.Via)
+	tunnel := strings.TrimSpace(r.Backends.Tunnel)
+	if via != "" && tunnel != "" {
 		return errors.New("backend: \"via\" and \"tunnel\" are mutually exclusive — use one or the other")
 	}
-	if r.Backends.Tunnel != "" {
-		if err := validateInlineTunnel(r.Backends.Tunnel); err != nil {
+	if tunnel != "" {
+		if err := validateInlineTunnel(tunnel); err != nil {
 			return errors.Newf("backend.tunnel: %w", err)
 		}
 	}
