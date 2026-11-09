@@ -60,15 +60,24 @@ export default async function({ find, findAll, on, onUnmount, ready, props }) {
     const ALL_STRATEGIES=[{val:'round_robin',label:'Round Robin',desc:'Balanced, default'},{val:'least_conn',label:'Least Connections',desc:'Lowest active load'},{val:'least_response_time',label:'Least Response Time',desc:'Fastest backend'},{val:'weighted_least_conn',label:'Weighted Least Conn',desc:'Weight-aware load'},{val:'sticky',label:'Sticky Sessions',desc:'Same client → same server'},{val:'ip_hash',label:'IP Hash',desc:'Consistent by client IP'},{val:'url_hash',label:'URL Hash',desc:'Consistent by request URL'},{val:'consistent_hash',label:'Consistent Hash',desc:'Hash on custom key'},{val:'power_of_two',label:'Power of Two',desc:'Two random, pick best'},{val:'random',label:'Random',desc:'Uniform random selection'},{val:'adaptive',label:'Adaptive',desc:'Auto-tune by health score'}];
 
     function _proxyEngineHTML(route) {
-        const ed=route.engineData||{},s=ed.lb_strategy||'round_robin',needsKey=['consistent_hash','sticky'].includes(s);
+        const ed=route.engineData||{};
+        const tunnelOn = ed.tunnel_enabled === true || (ed.tunnel_enabled === undefined && !!(ed.backend_via || ed.backend_tunnel));
+        const s=ed.lb_strategy||'round_robin',needsKey=['consistent_hash','sticky'].includes(s);
         return `<div class="wz-section-heading">Backends</div><div class="wz-hint" style="margin-bottom:8px;">Add one or more upstream servers.</div><div id="wzProxyBackends_${route.id}" class="wz-backend-list"></div><button type="button" class="btn small wz-add-backend" style="margin-top:8px;">+ Add Backend</button><input type="hidden" data-wz-route-field="engineData.backends_list" class="wz-backends-field" value="${_esc(ed.backends_list||'[]')}">
         <div class="wz-section-heading" style="margin-top:20px;">Load Balancing Strategy</div><div class="wz-strategy-grid">${ALL_STRATEGIES.map(st=>`<label class="wz-strategy-opt"><input type="radio" name="lb_${route.id}" data-wz-route-field="engineData.lb_strategy" value="${st.val}"${s===st.val?' checked':''}><span><strong>${st.label}</strong><em>${st.desc}</em></span></label>`).join('')}</div>
         <div id="wzHashKeysRow_${route.id}" style="margin-top:10px;${needsKey?'':'display:none;'}"><label class="wz-label">Hash keys</label><input type="text" data-wz-route-field="engineData.backend_keys" class="wz-input" placeholder="ip, header:X-User-ID, cookie:session" value="${_esc(ed.backend_keys||'')}"></div>
-        <div class="wz-section-heading" style="margin-top:20px;">Upstream Tunnel</div>
-        <div class="wz-hint" style="margin-bottom:8px;">Send outbound connections through SOCKS5. Set <em>either</em> a named tunnel (<code>via</code>) <em>or</em> an inline URL — not both. Leave both empty for direct connections.</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-            <div><label class="wz-label">Named tunnel (via)</label><input type="text" data-wz-route-field="engineData.backend_via" class="wz-input" placeholder="tor" value="${_esc(ed.backend_via||'')}"></div>
-            <div><label class="wz-label">Inline tunnel URL</label><input type="text" data-wz-route-field="engineData.backend_tunnel" class="wz-input" placeholder="socks5://127.0.0.1:9050" value="${_esc(ed.backend_tunnel||'')}"></div>
+        <div class="wz-toggle-card" style="margin-top:20px;">
+            <div class="wz-toggle-header" data-target="wztTunnel_${route.id}">
+                <div><strong>Upstream Tunnel</strong><span class="wz-toggle-sub">Route outbound connections through SOCKS5</span></div>
+                <label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="engineData.tunnel_enabled"${tunnelOn?' checked':''}><span class="wz-slider"></span></label>
+            </div>
+            <div class="wz-toggle-body" id="wztTunnel_${route.id}" style="display:none;">
+                <div class="wz-hint" style="margin-bottom:8px;">Set <em>either</em> a named tunnel (<code>via</code>) <em>or</em> an inline URL — not both. Leave disabled for direct connections.</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <div><label class="wz-label">Named tunnel (via)</label><input type="text" data-wz-route-field="engineData.backend_via" class="wz-input" placeholder="tor" value="${_esc(ed.backend_via||'')}"></div>
+                    <div><label class="wz-label">Inline tunnel URL</label><input type="text" data-wz-route-field="engineData.backend_tunnel" class="wz-input" placeholder="socks5://127.0.0.1:9050" value="${_esc(ed.backend_tunnel||'')}"></div>
+                </div>
+            </div>
         </div>
         <label class="wz-check" style="margin-top:8px;"><input type="checkbox" data-wz-route-field="engineData.backend_idempotent"${ed.backend_idempotent?' checked':''}> Idempotent backend — safe for hedged requests (GET/HEAD only)</label>`;
     }
@@ -76,6 +85,16 @@ export default async function({ find, findAll, on, onUnmount, ready, props }) {
     function _wireProxyEngine(el, route) {
         let backends=[];try{backends=JSON.parse(route.engineData?.backends_list||'[]');}catch{}if(!backends.length)backends=[{address:'',weight:1}];
         const listEl=el.querySelector('#wzProxyBackends_'+route.id),fieldEl=el.querySelector('.wz-backends-field'),addBtn=el.querySelector('.wz-add-backend'),hashRow=el.querySelector('#wzHashKeysRow_'+route.id);
+        const tunnelToggle=el.querySelector('[data-wz-route-field="engineData.tunnel_enabled"]'),tunnelBody=el.querySelector('#wztTunnel_'+route.id);
+        if(route.engineData?.tunnel_enabled===undefined&&(route.engineData?.backend_via||route.engineData?.backend_tunnel))route.engineData.tunnel_enabled=true;
+        function syncTunnel(){
+            const on=!!route.engineData?.tunnel_enabled;
+            if(tunnelBody)tunnelBody.style.display=on?'':'none';
+            if(!on){route.engineData=route.engineData||{};delete route.engineData.backend_via;delete route.engineData.backend_tunnel;const via=el.querySelector('[data-wz-route-field="engineData.backend_via"]'),tun=el.querySelector('[data-wz-route-field="engineData.backend_tunnel"]');if(via)via.value='';if(tun)tun.value='';}
+            else if(tunnelBody?.style.display===''){tunnelBody.style.display='';}
+        }
+        tunnelToggle?.addEventListener('change',()=>{route.engineData=route.engineData||{};route.engineData.tunnel_enabled=tunnelToggle.checked;syncTunnel();_sync();});
+        syncTunnel();
         function syncField(){if(fieldEl){fieldEl.value=JSON.stringify(backends);route.engineData=route.engineData||{};route.engineData.backends_list=fieldEl.value;}}
         function renderBEs(){if(!listEl)return;listEl.innerHTML=backends.map((b,i)=>`<div class="wz-backend-row" data-idx="${i}"><input type="text" class="wz-input wz-be-addr" value="${_esc(b.address||'')}" placeholder="http://10.0.0.5:8080" style="flex:1;"><input type="number" class="wz-input-sm wz-be-weight" value="${b.weight||1}" min="1" max="100" style="width:60px;" title="Weight"><span class="wz-hint-inline" style="font-size:10px;white-space:nowrap;">weight</span><input type="number" class="wz-input-sm wz-be-maxconn" value="${b.max_connections||''}" min="0" placeholder="0" style="width:68px;" title="Max concurrent connections (0 = unlimited)"><span class="wz-hint-inline" style="font-size:10px;white-space:nowrap;">max conns</span><button type="button" class="btn small wz-be-remove" style="color:var(--danger);border-color:var(--danger);padding:4px 8px;">✕</button></div>`).join('');listEl.querySelectorAll('.wz-be-addr').forEach((inp,i)=>inp.addEventListener('input',()=>{backends[i].address=inp.value;syncField();}));listEl.querySelectorAll('.wz-be-weight').forEach((inp,i)=>inp.addEventListener('input',()=>{backends[i].weight=Number(inp.value)||1;syncField();}));listEl.querySelectorAll('.wz-be-maxconn').forEach((inp,i)=>inp.addEventListener('input',()=>{const v=Number(inp.value);if(v>0)backends[i].max_connections=v;else delete backends[i].max_connections;syncField();}));listEl.querySelectorAll('.wz-be-remove').forEach(btn=>btn.addEventListener('click',()=>{backends.splice(+btn.closest('[data-idx]').dataset.idx,1);renderBEs();}));}
         addBtn?.addEventListener('click',()=>{backends.push({address:'',weight:1});renderBEs();listEl?.querySelectorAll('.wz-be-addr')[backends.length-1]?.focus();});
@@ -181,7 +200,7 @@ export default async function({ find, findAll, on, onUnmount, ready, props }) {
 
         const enginePanel=document.createElement('div');enginePanel.style.paddingTop='12px';
         if(hostType==='web'){enginePanel.innerHTML=_webEngineHTML(route);_wireToggleCards(enginePanel);_wireWebEngine(enginePanel,route);}
-        else if(hostType==='proxy'){enginePanel.innerHTML=_proxyEngineHTML(route);_wireProxyEngine(enginePanel,route);}
+        else if(hostType==='proxy'){enginePanel.innerHTML=_proxyEngineHTML(route);_wireProxyEngine(enginePanel,route);_wireToggleCards(enginePanel);}
         else if(hostType==='serverless'){_buildServerlessEngine(enginePanel,route);_wireToggleCards(enginePanel);}
 
         const extrasPanel=document.createElement('div');extrasPanel.style.cssText='padding-top:12px;display:none;';extrasPanel.innerHTML=extrasHTML(route);_wireToggleCards(extrasPanel);wireExtras(extrasPanel,route,_sync);
@@ -217,6 +236,12 @@ export default async function({ find, findAll, on, onUnmount, ready, props }) {
             if(r.engineData?.web_static_on&&!(r.engineData?.web_root||'').trim())return`Route "${r.path}": Static Files requires a root directory path`;
             if(r.engineData?.git_enabled&&!(r.engineData?.git_url||'').trim())return`Route "${r.path}": Git Deploy requires a repository URL`;
             if(r.engineData?.php_enabled&&!(r.engineData?.php_address||'').trim())return`Route "${r.path}": PHP is enabled but FastCGI address is missing`;
+            if(r.engineData?.tunnel_enabled){
+                const via=(r.engineData.backend_via||'').trim(), tun=(r.engineData.backend_tunnel||'').trim();
+                if(via&&tun)return`Route "${r.path}": use either a named tunnel or an inline tunnel URL, not both`;
+                if(!via&&!tun)return`Route "${r.path}": Upstream Tunnel is enabled but no tunnel is configured`;
+                if(tun&&!/^socks5:\/\//i.test(tun))return`Route "${r.path}": inline tunnel URL must use socks5://`;
+            }
             const ex=r.extras||{};
             if(ex.fallback_enabled){
                 const ft=(ex.fallback_type||'proxy');

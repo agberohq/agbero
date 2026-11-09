@@ -33,6 +33,7 @@ export default async function({ find, on, onUnmount, ready, props, inject }) {
     let _json        = '';     // JSON string
     let _mode        = 'hcl';  // 'hcl' | 'json'
     let _fromServer  = false;  // true when _hcl came from the preview endpoint
+    let _submitting  = false;  // guards double-click/concurrent submits
 
     // Helpers
 
@@ -158,6 +159,8 @@ export default async function({ find, on, onUnmount, ready, props, inject }) {
     // Submit
 
     on('#wzSubmitBtn', 'click', async (_, btn) => {
+        if (_submitting) return;
+        _submitting = true;
         _clearError();
         btn.disabled = true; btn.textContent = 'Creating…';
 
@@ -187,6 +190,7 @@ export default async function({ find, on, onUnmount, ready, props, inject }) {
             notify.show(domain + ' created successfully', 'success');
             emit('wizard:submit-success', { domain });
         } catch (err) {
+            _submitting = false;
             btn.disabled = false; btn.textContent = 'Create Host';
             emit('wizard:submit-error', {});
             _showError(err.message || 'Failed to create host — check your configuration');

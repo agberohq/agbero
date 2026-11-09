@@ -44,7 +44,7 @@ export function newRoute(path = '/') {
     return {
         id: 'r' + Date.now() + Math.random().toString(36).slice(2, 6),
         path,
-        engineData: {}, extras: {}, authData: {}, headers: {}, rewrites: [],
+        engineData: { tunnel_enabled: false }, extras: {}, authData: {}, headers: {}, rewrites: [],
     };
 }
 
