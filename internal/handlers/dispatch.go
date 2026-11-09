@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -19,7 +18,6 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/memory"
 	"github.com/agberohq/agbero/internal/middleware/observability"
 	"github.com/agberohq/agbero/internal/middleware/recovery"
-	"github.com/agberohq/agbero/internal/operation"
 	"github.com/agberohq/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/mappo"
 )
@@ -58,11 +56,6 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	if m.wellKnownProcess(w, r) {
-		return
-	}
-
-	if r.URL.Path == "/favicon.ico" {
-		m.handleFavicon(w, r)
 		return
 	}
 
@@ -245,18 +238,6 @@ func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 		m.cfg.Resource.Reaper.Touch(key)
 	}
 	return h
-}
-
-// handleFavicon serves the embedded favicon.ico with long-term caching headers for browser efficiency.
-// It returns a 404 status if no favicon data is available in the operation package.
-func (m *Manager) handleFavicon(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "image/x-icon")
-	w.Header().Set("Cache-Control", "public, max-age=31536000")
-	if len(operation.Favicon) > 0 {
-		http.ServeContent(w, r, "favicon.ico", zulu.ModTime, bytes.NewReader(operation.Favicon))
-	} else {
-		w.WriteHeader(http.StatusNotFound)
-	}
 }
 
 // redirectToHTTPS constructs and issues a permanent redirect to the HTTPS equivalent of the current request.

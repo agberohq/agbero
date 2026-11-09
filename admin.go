@@ -2,6 +2,7 @@ package agbero
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -212,6 +213,15 @@ func (s *Server) registerAdminRoutes(r chi.Router, cfg alaye.Admin) {
 	r.Post("/login", s.handleLogin)
 	r.Post("/login/challenge", s.handleLoginChallenge)
 	r.Post("/logout", s.handleLogout)
+	r.Get("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/x-icon")
+		w.Header().Set("Cache-Control", "public, max-age=31536000")
+		if len(operation.Favicon) == 0 {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeContent(w, r, "favicon.ico", zulu.ModTime, bytes.NewReader(operation.Favicon))
+	})
 
 	r.Group(func(r chi.Router) {
 		r.Use(s.buildAuthMiddleware(cfg))
