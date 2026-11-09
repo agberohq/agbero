@@ -6,7 +6,19 @@
  */
 import { chart } from '../lib/oja.full.esm.js';
 
-const BACKEND_COLORS = ['#4f8ef7','#22c55e','#f59e0b','#a855f7','#14b8a6','#f97316','#ec4899','#84cc16','#ef4444','#64748b'];
+const BACKEND_COLORS = [
+    '#7895B2', // Muted blue
+    '#8FAF9D', // Sage green
+    '#D6B779', // Soft gold
+    '#A997C5', // Muted lavender
+    '#78AAA5', // Dusty teal
+    '#D49B7B', // Soft terracotta
+    '#C58FA5', // Dusty rose
+    '#A8B77C', // Olive green
+    '#C98282', // Muted coral
+    '#929BA8', // Slate grey
+];
+
 
 function backendColor(name) {
     let h = 0;
