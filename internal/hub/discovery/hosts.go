@@ -26,6 +26,8 @@ import (
 	"github.com/olekukonko/ll"
 )
 
+var hostTempSeq atomic.Uint64
+
 const ClusterRoutePrefix = "route:"
 
 const (
@@ -983,7 +985,9 @@ func (hm *Host) CreateRaw(domain string, cfg *alaye.Host, raw []byte) error {
 	}
 	defer root.Close()
 
-	tmpName := safeName + ".tmp"
+	// A fixed <name>.tmp collides when two tabs/requests create the same
+	// domain concurrently: one request's rename/remove can fail the other.
+	tmpName := fmt.Sprintf("%s.%d.%d.tmp", safeName, time.Now().UnixNano(), hostTempSeq.Add(1))
 	f, err := root.Create(tmpName)
 	if err != nil {
 		return fmt.Errorf("write temp config: %w", err)
