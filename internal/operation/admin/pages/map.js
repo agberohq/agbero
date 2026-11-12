@@ -8,6 +8,7 @@
 import { clickmenu } from '../lib/oja.full.esm.js';
 import { storeLocal } from '../js/store.js';
 import { ROUTE_PROTOCOLS } from '../js/constants.js';
+import { formatBytes } from '../js/utils.js';
 
 export default async function({ find, on, onUnmount, ready, inject }) {
     const { store, api, oja } = inject('app');
@@ -97,6 +98,9 @@ export default async function({ find, on, onUnmount, ready, inject }) {
             rows.push(_row('Routes',     (hStat.routes?.length || 0) + (hStat.proxies?.length || 0) || null));
             if (node.latency_us?.p50) rows.push(_row('p50', (node.latency_us.p50/1000).toFixed(1)+'ms'));
             if (node.latency_us?.p99) rows.push(_row('p99', (node.latency_us.p99/1000).toFixed(1)+'ms'));
+            if (hStat.websockets > 0) rows.push(_row('WebSockets', hStat.websockets + ' active'));
+            if ((hStat.bytes_in || 0) + (hStat.bytes_out || 0) > 0) rows.push(_row('Bytes', formatBytes(hStat.bytes_in || 0) + ' in / ' + formatBytes(hStat.bytes_out || 0) + ' out'));
+            if (hStat.datagrams > 0) rows.push(_row('Datagrams', hStat.datagrams.toLocaleString()));
         }
 
         if (node.type === 'route' && node.meta?.hostname) {
@@ -116,6 +120,7 @@ export default async function({ find, on, onUnmount, ready, inject }) {
                 if (p) {
                     rows.push(_row('Listen',   p.name));
                     rows.push(_row('Sessions', p.active_sessions > 0 ? p.active_sessions : null));
+                    if (p.datagrams > 0) rows.push(_row('Datagrams', p.datagrams.toLocaleString()));
                     rows.push(_row('Protocol', node.protocol?.toUpperCase()));
                 }
             }
@@ -134,6 +139,9 @@ export default async function({ find, on, onUnmount, ready, inject }) {
                 if (b.failures > 0) rows.push(_row('Failures', `<span style="color:var(--danger)">${b.failures}</span>`, true));
                 if (b.latency_us?.p50) rows.push(_row('p50', (b.latency_us.p50/1000).toFixed(1)+'ms'));
                 if (b.latency_us?.p99) rows.push(_row('p99', (b.latency_us.p99/1000).toFixed(1)+'ms'));
+                if (b.websockets > 0) rows.push(_row('WebSockets', b.websockets + ' active'));
+                if (b.bytes_in > 0 || b.bytes_out > 0) rows.push(_row('Bytes', formatBytes(b.bytes_in) + ' in / ' + formatBytes(b.bytes_out) + ' out'));
+                if (b.datagrams > 0) rows.push(_row('Datagrams', b.datagrams.toLocaleString()));
             }
         }
 

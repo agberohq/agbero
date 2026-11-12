@@ -149,12 +149,16 @@ export default async function({ find, on, onUnmount, ready, inject }) {
         let errors = 0;
         let active = 0;
         let p50 = 0, p50n = 0, p99 = 0, p99n = 0;
+        let bytes = 0, ws = 0, datagrams = 0;
         const rows = [];
         for (const [kind, list] of [['route', h.routes || []], ['proxy', h.proxies || []]]) {
             list.forEach((r, idx) => {
                 for (const b of (r.backends || [])) {
                     if (b.alive) active++;
                     errors += Number(b.failures || 0);
+                    bytes += Number(b.bytes_in || 0) + Number(b.bytes_out || 0);
+                    ws += Number(b.websockets || 0);
+                    datagrams += Number(b.datagrams || 0);
                     if (b.latency_us?.p50) { p50 += b.latency_us.p50; p50n++; }
                     if (b.latency_us?.p99) { p99 += b.latency_us.p99; p99n++; }
                     rows.push({
@@ -166,11 +170,13 @@ export default async function({ find, on, onUnmount, ready, inject }) {
                         p99: b.latency_us?.p99 || 0,
                         inflight: b.in_flight || 0,
                         reqs: b.total_reqs || 0,
+                        ws: b.websockets || 0,
+                        bytes: Number(b.bytes_in || 0) + Number(b.bytes_out || 0),
                     });
                 }
             });
         }
-        return { reqs, errors, active, p50: p50n ? p50/p50n : 0, p99: p99n ? p99/p99n : 0, rows };
+        return { reqs, errors, active, bytes, ws, datagrams, p50: p50n ? p50/p50n : 0, p99: p99n ? p99/p99n : 0, rows };
     }
 
     function renderKpis(s) {
@@ -184,15 +190,25 @@ export default async function({ find, on, onUnmount, ready, inject }) {
             <div class="metric-card"><div class="metric-label">Errors</div><div class="metric-value">${fmtNum(s.errors)} <span style="font-size:11px;color:var(--text-mute);">${errPct.toFixed(2)}%</span></div></div>
             <div class="metric-card"><div class="metric-label">p50 / p99</div><div class="metric-value">${ms(s.p50)} / ${ms(s.p99)}</div></div>
             <div class="metric-card"><div class="metric-label">Active backends</div><div class="metric-value">${s.active}</div></div>
+            <div class="metric-card"><div class="metric-label">WS / Datagrams</div><div class="metric-value">${s.ws} / ${fmtNum(s.datagrams)}</div></div>
+            <div class="metric-card"><div class="metric-label">Traffic</div><div class="metric-value">${s.bytes ? fmtBytes(s.bytes) : '—'}</div></div>
             <div class="metric-card"><div class="metric-label">LB policy</div><div class="metric-value" style="font-size:13px;">${esc(lb)}</div></div>
             <div class="metric-card"><div class="metric-label">TLS</div><div class="metric-value" style="font-size:13px;">${esc(cfgHost.tls?.mode || 'auto')}</div></div>`;
+    }
+
+    function fmtBytes(n) {
+        n = Number(n || 0);
+        if (n >= 1 << 30) return (n / (1 << 30)).toFixed(1) + ' GB';
+        if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1) + ' MB';
+        if (n >= 1 << 10) return (n / (1 << 10)).toFixed(1) + ' KB';
+        return n + ' B';
     }
 
     function renderBackends(s) {
         const body = find('#focusBackendTable tbody');
         if (!body) return;
         if (!s.rows.length) {
-            body.innerHTML = `<tr><td colspan="8" class="focus-empty">No route/backend data for this host</td></tr>`;
+            body.innerHTML = `<tr><td colspan="10" class="focus-empty">No route/backend data for this host</td></tr>`;
             return;
         }
         body.innerHTML = s.rows.map(r => `<tr>
