@@ -110,7 +110,8 @@
 
         <div>
             <label class="wz-label">Max request body size (bytes)</label>
-            <input type="number" id="wzMaxBodySize" class="wz-input" placeholder="0 = global default" min="0">
+            <input type="number" id="wzMaxBodySize" class="wz-input" placeholder="0 = global default (100 MiB)" min="0">
+            <div class="wz-hint">Bytes. Leave 0 to inherit the global 100 MiB default.</div>
             <div class="wz-hint">Largest upload accepted for this host, in bytes. 0 uses the global setting.
                 Header size is a global limit (<code>general.max_header_bytes</code>).</div>
         </div>

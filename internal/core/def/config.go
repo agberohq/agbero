@@ -64,7 +64,10 @@ const (
 // Default limits
 const (
 	DefaultMaxHeaderBytes = 1 << 20 // 1MB
-	DefaultMaxBodySize    = 2 << 20 // 2MB
+	// 100 MiB accommodates audio and short video uploads while still giving
+	// deployments a bounded default. Hosts can lower this per route/host when
+	// they do not accept large bodies.
+	DefaultMaxBodySize = 100 << 20 // 100 MiB
 )
 
 // Wasm access capabilities
