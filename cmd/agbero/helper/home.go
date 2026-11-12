@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/def"
+	"github.com/agberohq/agbero/internal/core/zulu"
 	"github.com/agberohq/agbero/internal/hub/secrets"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
 	"github.com/agberohq/agbero/internal/pkg/ui"
@@ -330,13 +331,20 @@ func (h *Home) open(dir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to resolve path: %w", err)
 	}
+
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
-	case "windows":
+	case def.Windows:
 		cmd = exec.Command("explorer", dir)
-	case "darwin":
+	case def.Darwin:
 		cmd = exec.Command("open", dir)
 	default:
+		if !zulu.IsDisplayServerRunningLinux() {
+			return fmt.Errorf("no graphical display detected: please open %s manually", dir)
+		}
+		if _, err := exec.LookPath("xdg-open"); err != nil {
+			return fmt.Errorf("xdg-open not found: please open %s manually", dir)
+		}
 		cmd = exec.Command("xdg-open", dir)
 	}
 	if err := cmd.Start(); err != nil {
