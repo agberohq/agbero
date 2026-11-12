@@ -18,6 +18,7 @@ import (
 	"github.com/agberohq/agbero/internal/hub/lifecycle"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/pkg/lb"
+	"github.com/agberohq/agbero/internal/pkg/metrics"
 	tunnelpkg "github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/olekukonko/mappo"
 	"github.com/pires/go-proxyproto"
@@ -539,7 +540,7 @@ func (p *Proxy) handle(src net.Conn) {
 		_ = tcpConn.SetKeepAlivePeriod(30 * time.Second)
 	}
 
-	p.pipe(client, dst)
+	p.pipe(client, dst, backend.Activity)
 }
 
 // Matches an extracted SNI hostname against configured routing rules
@@ -568,7 +569,7 @@ func (p *Proxy) pickRoute(sni string) *tcpRoute {
 
 // Establishes a bidirectional data stream between the client and backend
 // Enforces idle timeouts and ensures both connections close upon completion
-func (p *Proxy) pipe(client, backend net.Conn) {
+func (p *Proxy) pipe(client, backend net.Conn, activity *metrics.Activity) {
 	timeout := p.IdleTimeout
 	if timeout == 0 {
 		timeout = def.IdleTimeoutDeadline
@@ -580,8 +581,8 @@ func (p *Proxy) pipe(client, backend net.Conn) {
 	// are not goroutine-safe. We give the destination goroutine (backend →
 	// client) a separate deadlineConn wrapping the raw underlying conn,
 	// bypassing peekedConn entirely so the two goroutines never share state.
-	cSrc := &deadlineConn{Conn: client, timeout: timeout} // source: client → backend
-	cDst := &deadlineConn{Conn: client, timeout: timeout} // destination: backend → client
+	var cSrc net.Conn = &deadlineConn{Conn: client, timeout: timeout} // source: client → backend
+	var cDst net.Conn = &deadlineConn{Conn: client, timeout: timeout} // destination: backend → client
 	if pc, ok := client.(*peekedConn); ok {
 		// cSrc keeps the full peekedConn so WriteTo flushes the peek buffer first.
 		// cDst skips peekedConn and writes directly to the underlying conn,
@@ -589,6 +590,10 @@ func (p *Proxy) pipe(client, backend net.Conn) {
 		cDst = &deadlineConn{Conn: pc.Conn, timeout: timeout}
 	}
 	bWrapped := &deadlineConn{Conn: backend, timeout: timeout}
+	if activity != nil {
+		cSrc = &activityConn{Conn: cSrc, in: &activity.BytesIn}
+		cDst = &activityConn{Conn: cDst, out: &activity.BytesOut}
+	}
 
 	errc := make(chan error, 1)
 	copyAndClose := func(dst, src net.Conn) {

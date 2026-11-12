@@ -32,5 +32,8 @@ type Snapshot struct {
 	Failures    int64                   `json:"failures"`
 	MaxSessions int64                   `json:"max_sessions"`
 	TotalReqs   uint64                  `json:"total_reqs"`
+	BytesIn     uint64                  `json:"bytes_in,omitempty"`
+	BytesOut    uint64                  `json:"bytes_out,omitempty"`
+	Datagrams   uint64                  `json:"datagrams,omitempty"`
 	Latency     metrics.LatencySnapshot `json:"latency_us"`
 }

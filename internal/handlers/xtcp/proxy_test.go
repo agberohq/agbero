@@ -523,3 +523,37 @@ func TestGracefulStopCtxBoundedWhenAdmittedWorkIsStuck(t *testing.T) {
 		t.Fatalf("GracefulStopCtx exceeded bound: %v", time.Since(start))
 	}
 }
+
+func TestProxy_CountsTunnelBytes(t *testing.T) {
+	addr, stop := startIDServer(t, "metric-backend")
+	defer stop()
+	proxyAddr := getFreePort(t)
+	p := NewProxy(resource.New(), proxyAddr)
+	p.AddRoute("*", alaye.Proxy{Backends: []alaye.Server{alaye.NewServer(addr)}})
+	route := p.def
+	if route == nil || len(route.selector.Backends()) == 0 {
+		t.Fatal("route not built")
+	}
+	be := route.selector.Backends()[0].(*Backend)
+
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer p.Stop()
+	waitTCPReady(t, proxyAddr, tcpReadyTimeout)
+
+	conn, err := net.DialTimeout("tcp", proxyAddr, tcpDialTimeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = readOne(t, conn)
+	_ = conn.Close()
+
+	deadline := time.Now().Add(time.Second)
+	for be.Activity.BytesOut.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if be.Activity.BytesOut.Load() == 0 {
+		t.Fatal("TCP tunnel bytes were not counted")
+	}
+}

@@ -171,3 +171,27 @@ func closeWrite(c net.Conn) {
 		}
 	}
 }
+
+// activityConn counts bytes copied across a TCP tunnel. in is client ->
+// backend traffic; out is backend -> client traffic.
+type activityConn struct {
+	net.Conn
+	in  *atomic.Uint64
+	out *atomic.Uint64
+}
+
+func (c *activityConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.in.Add(uint64(n))
+	}
+	return n, err
+}
+
+func (c *activityConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	if n > 0 {
+		c.out.Add(uint64(n))
+	}
+	return n, err
+}

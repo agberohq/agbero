@@ -310,6 +310,8 @@ func (p *Proxy) handleDatagram(listenConn *net.UDPConn, clientAddr *net.UDPAddr,
 			}
 		} else {
 			sess.backend.Activity.Requests.Add(1)
+			sess.backend.Activity.Datagrams.Add(1)
+			sess.backend.Activity.BytesIn.Add(uint64(len(data)))
 		}
 		return
 	}
@@ -376,6 +378,8 @@ installed:
 		return
 	}
 	backend.Activity.Requests.Add(1)
+	backend.Activity.Datagrams.Add(1)
+	backend.Activity.BytesIn.Add(uint64(len(data)))
 
 	p.res.Logger.Fields(
 		"remote", clientAddr.String(),
@@ -457,6 +461,8 @@ func (p *Proxy) replyLoop(
 			}
 			return
 		}
+		sess.backend.Activity.Datagrams.Add(1)
+		sess.backend.Activity.BytesOut.Add(uint64(n))
 		putDatagram(buf)
 	}
 }

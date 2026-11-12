@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/agberohq/agbero/internal/core/zulu"
+	"github.com/agberohq/agbero/internal/pkg/metrics"
 )
 
 var proxyBufPool = zulu.NewBufferPool()
@@ -54,9 +56,10 @@ func (b *basicStatusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // this, a slow losing goroutine can write after the shared response writer has
 // been returned to its pool, producing a nil-pointer panic.
 type hedgeState struct {
-	mu     sync.Mutex
-	winner int32
-	closed bool
+	mu      sync.Mutex
+	winner  int32
+	closed  bool
+	aborted bool
 }
 
 func (s *hedgeState) run(id int32, fn func()) bool {
@@ -79,6 +82,26 @@ func (s *hedgeState) close() {
 	s.mu.Lock()
 	s.closed = true
 	s.mu.Unlock()
+}
+
+func (s *hedgeState) winnerIs(id int32) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.winner == id
+}
+
+func (s *hedgeState) markAborted(id int32) {
+	s.mu.Lock()
+	if s.winner == id {
+		s.aborted = true
+	}
+	s.mu.Unlock()
+}
+
+func (s *hedgeState) isAborted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.aborted
 }
 
 // hedgeWriter ensures only the fastest responding backend gets to write
@@ -145,4 +168,60 @@ func (h *hedgeWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return nil, nil, fmt.Errorf("backend lost hedge race")
 	}
 	return conn, rw, err
+}
+
+// activityResponseWriter wraps the response writer solely to count bytes
+// flowing through a hijacked connection. Reads are client -> backend;
+// writes are backend -> client.
+type activityResponseWriter struct {
+	http.ResponseWriter
+	activity    *metrics.Activity
+	start       time.Time
+	handshakeUs atomic.Int64
+}
+
+func (w *activityResponseWriter) WriteHeader(code int) {
+	if code == http.StatusSwitchingProtocols {
+		w.handshakeUs.CompareAndSwap(0, time.Since(w.start).Microseconds())
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *activityResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *activityResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	// ReverseProxy writes the 101 response to the hijacked bufio.Writer, so
+	// WriteHeader is not necessarily called. Hijack is the reliable handshake
+	// boundary; record it here instead of charging the tunnel lifetime to p99.
+	w.handshakeUs.CompareAndSwap(0, time.Since(w.start).Microseconds())
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	conn, brw, err := h.Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	return &activityConn{Conn: conn, activity: w.activity}, brw, nil
+}
+
+type activityConn struct {
+	net.Conn
+	activity *metrics.Activity
+}
+
+func (c *activityConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.activity.BytesIn.Add(uint64(n))
+	}
+	return n, err
+}
+
+func (c *activityConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	if n > 0 {
+		c.activity.BytesOut.Add(uint64(n))
+	}
+	return n, err
 }

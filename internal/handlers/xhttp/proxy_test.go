@@ -629,4 +629,29 @@ func TestProxy_WebSocketEndToEndUpgrade(t *testing.T) {
 	if string(pong) != "pong" {
 		t.Fatalf("tunneled bytes = %q, want pong", pong)
 	}
+
+	// A WebSocket tunnel is one HTTP upgrade, not one request per message.
+	// The proxied messages are opaque bytes after the 101 response.
+	_ = conn.Close()
+	deadline := time.Now().Add(time.Second)
+	for be.Activity.Requests.Load() != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := be.Activity.Requests.Load(); got != 1 {
+		t.Fatalf("websocket handshake count = %d, want 1", got)
+	}
+	webDeadline := time.Now().Add(time.Second)
+	for be.Activity.WebSockets.Load() != 0 && time.Now().Before(webDeadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := be.Activity.WebSockets.Load(); got != 0 {
+		t.Fatalf("websocket active connections after close = %d, want 0", got)
+	}
+	if be.Activity.BytesIn.Load() == 0 || be.Activity.BytesOut.Load() == 0 {
+		t.Fatalf("websocket tunnel bytes not counted: in=%d out=%d",
+			be.Activity.BytesIn.Load(), be.Activity.BytesOut.Load())
+	}
+	if p99 := be.Activity.Latency.Snapshot().P99; p99 > 2_000_000 {
+		t.Fatalf("websocket handshake latency polluted p99: %d us", p99)
+	}
 }
