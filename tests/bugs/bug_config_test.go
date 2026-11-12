@@ -17,10 +17,10 @@ import (
 )
 
 // Finding: jwt_auth.audience is parsed but never enforced —
-// internal/core/alaye/auth_jwt.go:14 declares Audience and alaye/auth_jwt.go:34
-// only uses it for IsZero(); internal/middleware/auth/jwt.go checks Issuer but
-// never aud. A token minted for a different audience with the same shared secret
-// is therefore accepted (classic confused-deputy).
+// alaye.JWTAuth declares Audience but only uses it for IsZero(), and the JWT
+// middleware checks Issuer but never aud. A token minted for a different
+// audience with the same shared secret is therefore accepted (classic
+// confused-deputy).
 func TestBUG_JWTAudienceNotEnforced(t *testing.T) {
 	const secret = "shared-hmac-secret"
 
@@ -106,9 +106,8 @@ func (failingSharedState) AllowRateLimit(context.Context, string, int, time.Dura
 func (failingSharedState) Close() error { return nil }
 
 // Finding: distributed rate limiting fails open —
-// internal/middleware/ratelimit/ratelimit.go:115 returns true (allow) on any
-// shared-state error, so a Redis outage silently disables rate limiting
-// cluster-wide.
+// the limiter returns true (allow) on any shared-state error, so a Redis outage
+// silently disables rate limiting cluster-wide.
 func TestBUG_RateLimitFailsOpenOnSharedStateError(t *testing.T) {
 	rl := ratelimit.New(ratelimit.Config{
 		TTL:        time.Minute,

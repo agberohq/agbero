@@ -44,10 +44,9 @@ func newHostAPI(t *testing.T) (http.Handler, *discovery.Host, string) {
 }
 
 // Finding: path traversal in the HCL create path —
-// internal/operation/api/host.go:250 ("domain" query is optional), :254/:259
-// (domain falls back to the HCL body, which alaye.Host.Validate does not
-// validate), :295 -> internal/hub/discovery/hosts.go:860 CreateRaw, which is the
-// only writer that uses filepath.Join + os.WriteFile instead of os.OpenRoot.
+// the "domain" query is optional, and falls back to the HCL body, which
+// alaye.Host.Validate does not validate. CreateRaw is the only writer that uses
+// filepath.Join + os.WriteFile instead of os.OpenRoot.
 func TestBUG_HostCreateHCLWritesOutsideHostsDir(t *testing.T) {
 	router, _, hostsDir := newHostAPI(t)
 
@@ -71,10 +70,9 @@ func TestBUG_HostCreateHCLWritesOutsideHostsDir(t *testing.T) {
 }
 
 // Finding: sanitizeHostConfigs mutates live state —
-// internal/operation/api/host.go:536 does a SHALLOW `clone := *v` and then writes
-// `route.BasicAuth.Users = nil` through the shared Routes backing array, while
-// discovery.LoadAll() (internal/hub/discovery/hosts.go:584) hands out pointers to
-// the live (post-rebuild) host configs used by routing.
+// it does a SHALLOW `clone := *v` and then writes `route.BasicAuth.Users = nil`
+// through the shared Routes backing array, while discovery.LoadAll() hands out
+// pointers to the live (post-rebuild) host configs used by routing.
 func TestBUG_HostListWipesLiveBasicAuthUsers(t *testing.T) {
 	router, hm, hostsDir := newHostAPI(t)
 

@@ -13,11 +13,11 @@ import (
 )
 
 // Finding: admin auth endpoints have no brute-force throttling —
-// internal/admin.go:814 buildAdminRateLimiter returns nil unless rate_limits is
-// explicitly enabled with rules, so /login and /login/challenge are unthrottled
-// (bcrypt is the only cost). handleLoginChallenge also consumes the challenge JTI
-// with a non-atomic Get()+SetTTL() pair (admin.go:451-459) instead of the atomic
-// Compute() already used by middleware/nonce/store.go:72.
+// buildAdminRateLimiter returns nil unless rate_limits is explicitly enabled
+// with rules, so /login and /login/challenge are unthrottled (bcrypt is the
+// only cost). handleLoginChallenge also consumes the challenge JTI with a
+// non-atomic Get()+SetTTL() pair instead of the atomic Compute() already used
+// by the nonce store.
 func TestBUG_AdminTOTPHasNoThrottle(t *testing.T) {
 	ts := startTestServer(t, serverOpts{admin: true, totp: true})
 
@@ -155,9 +155,9 @@ func TestRace_AdminChallengeTokenConsumption(t *testing.T) {
 }
 
 // Finding: /config/global leaks non-expect.Value secrets —
-// helpers.go:13 sanitizeGlobalConfig() blanks gossip.secret_key, oauth secrets and
+// sanitizeGlobalConfig() blanks gossip.secret_key, oauth secrets and
 // storage paths but not gossip.shared_state.redis.password (a plain string in
-// alaye/gossip.go:30) nor tunnels[].username, so an admin token (or anyone
+// the gossip block) nor tunnels[].username, so an admin token (or anyone
 // reading the response) obtains backend infrastructure credentials.
 func TestBUG_GlobalConfigDumpLeaksRedisPassword(t *testing.T) {
 	const redisPassword = "redis-super-secret"

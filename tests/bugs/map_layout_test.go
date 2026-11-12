@@ -103,7 +103,7 @@ if (!(lr.bounds.width > 0 && lr.bounds.height > 0)) failures.push('bounds are em
 const empty = computeLayout([], [], {});
 if (empty.bounds.width !== 0 || empty.bounds.height !== 0 || empty.edges.length !== 0) failures.push('empty topology is not empty');
 
-// ---- classic (force) view -------------------------------------------------
+// classic (force) view
 const fl = computeForceLayout(nodes, links, {});
 const flAgain = computeForceLayout(nodes, links, {});
 if (JSON.stringify(fl) !== JSON.stringify(flAgain)) failures.push('force layout is not deterministic');

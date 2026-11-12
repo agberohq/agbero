@@ -7,9 +7,8 @@ import (
 )
 
 // Finding: open redirect / host-header injection on the HTTP -> HTTPS redirect —
-// internal/handlers/dispatch.go:255-287 derives the redirect target from the raw
-// Host header without resolving it through HostManager, so
-// `curl -H 'Host: evil.example' http://proxy/` answers
+// the redirect target is derived from the raw Host header without resolving it
+// through HostManager, so `curl -H 'Host: evil.example' http://proxy/` answers
 // `301 Location: https://evil.example/`. The 301 is cacheable, so this is also a
 // cache-poisoning primitive.
 func TestBUG_HTTPSRedirectTrustsHostHeader(t *testing.T) {
