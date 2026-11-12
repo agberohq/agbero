@@ -127,7 +127,8 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 
 		m.handleRoute(rw, r, res.Route, hcfg)
-		m.logRequest(host, r, start, rw.StatusCode, rw.BytesWritten)
+		totalBytes := rw.BytesWritten + rw.HijackedBytesIn.Load() + rw.HijackedBytesOut.Load()
+		m.logRequest(host, r, start, rw.StatusCode, totalBytes)
 		return
 	}
 
