@@ -14,6 +14,13 @@ func New(logger *ll.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if err := recover(); err != nil {
+					// ErrAbortHandler is a sentinel, not an application panic.
+					// net/http must receive it so it can close the client
+					// connection instead of this middleware writing a 500 over
+					// a response that may already be partially committed.
+					if err == http.ErrAbortHandler {
+						panic(err)
+					}
 					stack := string(debug.Stack())
 
 					logger.Fields(
