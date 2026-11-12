@@ -567,7 +567,12 @@ func main() {
 			logger.Fatal("failed to load config for keeper initialisation: ", globalErr)
 		}
 
-		logger, _ = zulu.Logging(&global.Logging, hel.Cfg.DevMode, shutdown)
+		var err error
+		logger, err = zulu.Logging(&global.Logging, hel.Cfg.DevMode, shutdown)
+		if err != nil {
+			ll.Fatal("failed to initialise logger: ", err)
+			os.Exit(1)
+		}
 		logger.Info("logger recalibrated")
 
 		dataDir := global.Storage.DataDir
