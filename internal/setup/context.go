@@ -4,6 +4,8 @@ import (
 	"os"
 	"runtime"
 
+	"golang.org/x/term"
+
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/woos"
 	"github.com/agberohq/agbero/internal/hub/tlss/tlsstore"
@@ -21,12 +23,10 @@ type Context struct {
 }
 
 func NewContext(logger *ll.Logger) *Context {
-	interactive := false
-	if fileInfo, err := os.Stdin.Stat(); err == nil {
-		if (fileInfo.Mode() & os.ModeCharDevice) != 0 {
-			interactive = true
-		}
-	}
+	// A character device is not necessarily a terminal: systemd gives
+	// services stdin=/dev/null, which is a character device. Use a real TTY
+	// check so a service never enters an interactive prompt.
+	interactive := term.IsTerminal(int(os.Stdin.Fd()))
 
 	if os.Getenv("CI") == "true" || os.Getenv("AGBERO_HEADLESS") == "1" {
 		interactive = false

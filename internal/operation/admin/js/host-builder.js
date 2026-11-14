@@ -200,8 +200,13 @@ function buildBackendBlock(data) {
         if (mc > 0) out.max_connections = mc;
         return out;
     });
-    const via    = (data.backend_via    || '').trim();
-    const tunnel = (data.backend_tunnel || '').trim();
+    // Only a user-enabled tunnel may contribute via/tunnel values. This keeps
+    // stale draft/admin values from turning into a validation error for a host
+    // that never selected SOCKS5.
+    const tunnelEnabled = data.tunnel_enabled === true ||
+        (data.tunnel_enabled === undefined && !!(data.backend_via || data.backend_tunnel));
+    const via    = tunnelEnabled ? (data.backend_via    || '').trim() : '';
+    const tunnel = tunnelEnabled ? (data.backend_tunnel || '').trim() : '';
     if (via && tunnel) {
         throw new Error('Set either a named tunnel (via) or an inline tunnel URL — not both. ' +
             'Define shared tunnels globally and reference them by name.');
@@ -279,12 +284,21 @@ function buildServerlessBlock(data) {
         const raw = data.serverless_workers;
         workers = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
     } catch { workers = []; }
-    const builtWorkers = workers.filter(w => w.name?.trim() && w.command?.trim()).map(w => {
-        const cmdRaw = w.command.trim();
-        const command = cmdRaw.startsWith('[')
-            ? (() => { try { return JSON.parse(cmdRaw); } catch { return cmdRaw.split(/\s+/); } })()
-            : cmdRaw.split(/\s+/);
-        const entry = { name: w.name.trim(), command };
+    const builtWorkers = workers.map(w => {
+        const name = String(w.name || '').trim();
+        if (!name) return null;
+        let command;
+        if (Array.isArray(w.command)) {
+            command = w.command.map(v => String(v).trim()).filter(Boolean);
+        } else {
+            const cmdRaw = String(w.command || '').trim();
+            if (!cmdRaw) return null;
+            command = cmdRaw.startsWith('[')
+                ? (() => { try { return JSON.parse(cmdRaw); } catch { return cmdRaw.split(/\s+/); } })()
+                : cmdRaw.split(/\s+/);
+        }
+        if (!command || !command.length) return null;
+        const entry = { name, command };
         if (w.landlock !== false)    entry.landlock  = 'on';
         if (w.background)       entry.background = true;
         if (w.run_once)         entry.run_once   = true;
@@ -293,7 +307,7 @@ function buildServerlessBlock(data) {
         if (w.timeout?.trim())  entry.timeout    = w.timeout.trim();
         if (w.engine?.trim())   entry.engine     = w.engine.trim();
         return entry;
-    });
+    }).filter(Boolean);
     if (builtWorkers.length) block.workers = builtWorkers;
 
     return block;

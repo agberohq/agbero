@@ -1,3 +1,12 @@
+# =============================================================================
+# CockroachDB: TCP proxy plus optional admin UI
+# =============================================================================
+# The SQL listener is raw TCP, not HTTP. The optional route below proxies the
+# CockroachDB Admin UI and uses ip_hash so the browser stays on one node.
+#
+# Backends use the tcp:// scheme so the intent is explicit. Agbero will still
+# dial the host:port, but the scheme documents the transport.
+
 domains = ["cockroach.localhost"]
 
 # -----------------------------------------------------------------------
@@ -16,20 +25,20 @@ proxy "primary" {
 
   # Node 1
   backend {
-    address = "127.0.0.1:26257"
+    address = "tcp://127.0.0.1:26257"
     weight  = 10
   }
 
   # Node 2
   backend {
-    address = "127.0.0.1:26258"
+    address = "tcp://127.0.0.1:26258"
     weight  = 10
   }
 
   # Node 3
   # this an intentional bad node
   backend {
-    address = "127.0.0.1:26259"
+    address = "tcp://127.0.0.1:26259"
     weight  = 10
   }
 }

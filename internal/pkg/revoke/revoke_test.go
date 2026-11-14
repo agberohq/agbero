@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/ll"
 )
@@ -38,7 +39,7 @@ func TestNew(t *testing.T) {
 		data := `[
 			{"jti":"existing-jti","service":"test","expires_at":"2099-01-01T00:00:00Z","revoked_at":"2024-01-01T00:00:00Z"}
 		]`
-		path := filepath.Join(tmpDir, filename)
+		path := filepath.Join(tmpDir, def.DefaultRevokedName)
 		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +61,7 @@ func TestNew(t *testing.T) {
 		data := `[
 			{"jti":"expired-jti","service":"test","expires_at":"2020-01-01T00:00:00Z","revoked_at":"2019-01-01T00:00:00Z"}
 		]`
-		path := filepath.Join(tmpDir, filename)
+		path := filepath.Join(tmpDir, def.DefaultRevokedName)
 		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -78,7 +79,7 @@ func TestNew(t *testing.T) {
 	t.Run("handles corrupt json gracefully", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		path := filepath.Join(tmpDir, filename)
+		path := filepath.Join(tmpDir, def.DefaultRevokedName)
 		if err := os.WriteFile(path, []byte("invalid json"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -230,6 +231,7 @@ func TestRevoke(t *testing.T) {
 		}
 
 		// Verify content by loading new store
+		_ = store.Close()
 		store2, err := New(expect.NewFolder(tmpDir), logger)
 		if err != nil {
 			t.Fatal(err)
@@ -298,6 +300,7 @@ func TestPrune(t *testing.T) {
 		store.prune()
 
 		// Load fresh store
+		_ = store.Close()
 		store2, err := New(expect.NewFolder(tmpDir), logger)
 		if err != nil {
 			t.Fatal(err)

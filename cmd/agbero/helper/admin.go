@@ -40,7 +40,7 @@ func (a *Admin) TOTPSetup(_ string, username string) {
 	}
 
 	uri := gen.GetProvisioningURI(secret, username)
-	a.renderTOTPQR(username, storeKey, uri)
+	a.renderTOTPQR(username, storeKey, uri, secret)
 }
 
 func (a *Admin) TOTPQR(_ string, username string) {
@@ -57,7 +57,7 @@ func (a *Admin) TOTPQR(_ string, username string) {
 
 	gen := security.NewTOTPGenerator(security.DefaultTOTPConfig())
 	uri := gen.GetProvisioningURI(string(secretBytes), username)
-	a.renderTOTPQR(username, storeKey, uri)
+	a.renderTOTPQR(username, storeKey, uri, string(secretBytes))
 }
 
 func (a *Admin) TOTPQRPNGFile(_ string, username, outFile string) {
@@ -90,12 +90,16 @@ func (a *Admin) TOTPQRPNGFile(_ string, username, outFile string) {
 	})
 }
 
-func (a *Admin) renderTOTPQR(username, storeKey, uri string) {
+func (a *Admin) renderTOTPQR(username, storeKey, uri, secret string) {
 	u := ui.New()
 	u.Render(func() {
 		u.SectionHeader("TOTP — " + username)
 		u.KeyValue("Store key", storeKey)
 		u.QR(uri)
+		u.Blank()
+		u.InfoLine("TOTP secret: " + secret)
+		u.InfoLine("Provisioning URI: " + uri)
+		u.WarnLine("The secret is shown once. If the QR cannot be scanned, enter the secret manually.")
 		u.Blank()
 		u.InfoLine("Add to agbero.hcl admin block:")
 		u.InfoLine(`  totp {`)

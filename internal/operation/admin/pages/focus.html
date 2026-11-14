@@ -1,0 +1,109 @@
+<div class="page active focus-page">
+    <style>
+        .focus-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:14px; }
+        .focus-title { margin:0; font-size:20px; letter-spacing:-.02em; }
+        .focus-crumb { margin-top:4px; font-family:var(--font-mono); font-size:11px; color:var(--text-mute); }
+        .focus-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        .focus-controls select { min-width:150px; }
+        .focus-tabs { display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:16px; overflow:auto; }
+        .focus-tab { background:none; border:0; border-bottom:2px solid transparent; color:var(--text-mute); padding:8px 12px; cursor:pointer; font:inherit; font-size:12px; white-space:nowrap; }
+        .focus-tab:hover { color:var(--fg); }
+        .focus-tab.active { color:var(--accent); border-bottom-color:var(--accent); font-weight:500; }
+        .focus-panel { display:none; }
+        .focus-panel.active { display:block; }
+        .focus-kpis { margin-bottom:16px; }
+        .focus-chart-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+        .focus-chart { min-height:220px; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; min-width:0; }
+        .focus-chart h3 { margin:0 0 6px; font-size:11px; letter-spacing:.5px; text-transform:uppercase; color:var(--text-mute); }
+        .focus-chart .focus-chart-body { height:180px; }
+        .focus-top { margin-bottom:16px; }
+        .focus-host-grid { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(260px,.8fr); gap:12px; margin-bottom:16px; }
+        .focus-host-list { max-height:260px; overflow:auto; border:1px solid var(--border); border-radius:8px; }
+        .focus-host-row { display:grid; grid-template-columns:1fr auto auto; gap:8px; padding:7px 10px; border-bottom:1px solid var(--border); cursor:pointer; font-size:11px; }
+        .focus-host-row:last-child { border-bottom:0; }
+        .focus-host-row:hover { background:var(--hover-bg); }
+        .focus-host-row.active { background:rgba(59,130,246,.10); }
+        .focus-table { width:100%; border-collapse:collapse; font-size:11px; }
+        .focus-table th, .focus-table td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); }
+        .focus-table th { color:var(--text-mute); font-weight:500; text-transform:uppercase; font-size:10px; letter-spacing:.4px; }
+        .focus-log { font-family:var(--font-mono); font-size:11px; max-height:420px; overflow:auto; }
+        .focus-log-row { padding:3px 0; border-bottom:1px solid var(--border); }
+        .focus-empty { color:var(--text-mute); font-size:12px; padding:12px 0; }
+        .focus-legend { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; font-size:10px; color:var(--text-mute); }
+        .focus-legend span { display:inline-flex; align-items:center; gap:4px; }
+        .focus-legend i { width:8px; height:8px; border-radius:2px; display:inline-block; }
+        body.focus-kiosk .navbar, body.focus-kiosk .nav-mobile-drawer { display:none !important; }
+        body.focus-kiosk .main-content { padding:12px !important; max-width:none !important; }
+        body.focus-kiosk .focus-page { min-height:100vh; }
+        @media (max-width: 900px) { .focus-chart-grid, .focus-host-grid { grid-template-columns:1fr; } }
+    </style>
+
+    <div class="focus-head">
+        <div>
+            <h2 class="focus-title" id="focusTitle">Focus</h2>
+            <div class="focus-crumb" id="focusCrumb">—</div>
+        </div>
+        <div class="focus-controls">
+            <select id="focusHost" class="wz-input" title="Host"></select>
+            <select id="focusRange" class="wz-input" title="History range">
+                <option value="30m">30m</option>
+                <option value="1h" selected>1h</option>
+                <option value="6h">6h</option>
+                <option value="24h">24h</option>
+            </select>
+            <button class="btn small" id="focusPauseBtn" title="Pause live refresh">Pause</button>
+            <button class="btn small" id="focusKioskBtn" title="Toggle kiosk mode">Kiosk</button>
+            <button class="btn small" id="focusOpenBtn" title="Open this focus in a new tab">↗</button>
+        </div>
+    </div>
+
+    <div class="focus-tabs" role="tablist">
+        <button class="focus-tab active" data-focus-tab="overview">Overview</button>
+        <button class="focus-tab" data-focus-tab="backends">Routes &amp; Backends</button>
+        <button class="focus-tab" data-focus-tab="logs">Logs</button>
+    </div>
+
+    <section class="focus-panel active" data-focus-panel="overview">
+        <div class="config-metrics-grid focus-kpis" id="focusKpis"></div>
+        <div class="focus-host-grid">
+            <div class="focus-chart focus-top">
+                <h3>Top 10 backends under this host</h3>
+                <div id="focusTopBackends" style="min-height:200px;"><div class="focus-empty">Waiting for backend traffic…</div></div>
+                <div class="focus-legend" id="focusBackendLegend"></div>
+            </div>
+            <div class="focus-chart">
+                <h3 style="display:flex;align-items:center;justify-content:space-between;gap:8px;">All hosts
+                    <button class="btn small" id="focusHostSort" type="button" title="Sort hosts">Sort: Requests ⇅</button>
+                </h3>
+                <div class="focus-host-list" id="focusHostList"><div class="focus-empty">Loading hosts…</div></div>
+            </div>
+        </div>
+        <div class="focus-chart-grid">
+            <div class="focus-chart"><h3>Requests / sec</h3><div class="focus-chart-body" id="focusReqsChart"></div></div>
+            <div class="focus-chart"><h3>Latency p99 (ms)</h3><div class="focus-chart-body" id="focusP99Chart"></div></div>
+            <div class="focus-chart"><h3>Error rate (%)</h3><div class="focus-chart-body" id="focusErrorsChart"></div></div>
+            <div class="focus-chart"><h3>Active backends</h3><div class="focus-chart-body" id="focusBackendsChart"></div></div>
+        </div>
+    </section>
+
+    <section class="focus-panel" data-focus-panel="backends">
+        <div class="focus-chart" style="margin-bottom:16px;">
+            <h3 style="display:flex;align-items:center;justify-content:space-between;gap:8px;">Backend history
+                <select id="focusBackendSelect" class="wz-input" style="max-width:420px;"></select>
+            </h3>
+            <div class="focus-chart-body" id="focusBackendChart"></div>
+        </div>
+        <div class="detail-section">
+            <div style="overflow:auto;"><table class="focus-table" id="focusBackendTable">
+                <thead><tr><th>Route</th><th>Backend</th><th>LB</th><th>State</th><th>p50</th><th>p99</th><th>In-flight</th><th>Requests</th><th>WS</th><th>Bytes</th></tr></thead>
+                <tbody></tbody>
+            </table></div>
+        </div>
+    </section>
+
+    <section class="focus-panel" data-focus-panel="logs">
+        <div class="detail-section">
+            <div class="focus-log" id="focusLogs"><div class="focus-empty">Loading logs…</div></div>
+        </div>
+    </section>
+</div>

@@ -54,9 +54,10 @@ type ManagerConfig struct {
 }
 
 type Manager struct {
-	cfg          ManagerConfig
-	wasmCache    sync.Map
-	skipLogPaths map[string]bool
+	cfg                ManagerConfig
+	wasmCache          sync.Map
+	skipLogPrefixes    []string
+	includeLogPrefixes []string
 
 	baseHandler http.Handler
 	acmeHandler http.Handler
@@ -70,8 +71,9 @@ type Manager struct {
 	// not overlap (see routeBuilder).
 	buildMu sync.Mutex
 
-	logArgsPool sync.Pool
-	botChecker  *bot.Checker
+	logArgsPool   sync.Pool
+	botChecker    *bot.Checker
+	requestLogger *ll.Logger
 }
 
 type llWriter struct {
@@ -100,20 +102,19 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 		return nil, errors.Newf("bot checker init: %w", err)
 	}
 	m := &Manager{
-		cfg:          cfg,
-		skipLogPaths: make(map[string]bool),
+		cfg: cfg,
 		logArgsPool: sync.Pool{
 			New: func() any {
 				s := make([]any, 0, 16)
 				return &s
 			},
 		},
-		botChecker: bc,
+		botChecker:    bc,
+		requestLogger: cfg.Resource.Logger.Namespace("request"),
 	}
-	if cfg.Global.Logging.Enabled.Active() && len(cfg.Global.Logging.Skip) > 0 {
-		for _, p := range cfg.Global.Logging.Skip {
-			m.skipLogPaths[p] = true
-		}
+	if cfg.Global.Logging.Enabled.Active() {
+		m.skipLogPrefixes = append(m.skipLogPrefixes, cfg.Global.Logging.Skip...)
+		m.includeLogPrefixes = append(m.includeLogPrefixes, cfg.Global.Logging.Include...)
 	}
 	m.rateLimiter = buildGlobalRateLimiter(cfg.Global, cfg.IPMgr, cfg.SharedState, cfg.Resource.Logger)
 	if cfg.Global.Security.Enabled.Active() {

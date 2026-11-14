@@ -31,6 +31,9 @@ const quietZone = 4
 type QRResult struct {
 	// Terminal is compact UTF-8 half-block art — fallback if image protocols fail.
 	Terminal string
+	// ANSI is a black-on-white QR that needs no terminal image protocol and
+	// does not depend on the terminal background.
+	ANSI string
 	// SVG is a self-contained <svg> element (no DOCTYPE / namespace).
 	SVG string
 	// PNG is raw PNG bytes — pass directly to go-termimg for rendering.
@@ -56,9 +59,39 @@ func NewQr(content string, level qr.Level) (*QR, error) {
 func (q *QR) Result(scale int) *QRResult {
 	return &QRResult{
 		Terminal: q.terminalHalfBlocks(),
+		ANSI:     q.terminalANSI(),
 		SVG:      q.svg(scale),
 		PNG:      q.pngBytes(scale),
 	}
+}
+
+// terminalANSI renders a black-on-white QR with explicit ANSI colors, so no
+// capability query is sent and the terminal theme cannot invert it.
+func (q *QR) terminalANSI() string {
+	size := q.code.Size
+	total := size + quietZone*2
+	var b strings.Builder
+	b.WriteString("\x1b[30;47m") // black foreground, white background
+	for row := 0; row < total; row += 2 {
+		b.WriteString("\x1b[47m")
+		for col := 0; col < total; col++ {
+			top := q.safeBlack(col-quietZone, row-quietZone)
+			bot := q.safeBlack(col-quietZone, row-quietZone+1)
+			switch {
+			case top && bot:
+				b.WriteString("█")
+			case top:
+				b.WriteString("▀")
+			case bot:
+				b.WriteString("▄")
+			default:
+				b.WriteString(" ")
+			}
+		}
+		b.WriteString("\x1b[0m\n")
+	}
+	b.WriteString("\x1b[0m")
+	return b.String()
 }
 
 // terminalHalfBlocks renders QR as compact UTF-8 half-block art.
@@ -143,12 +176,15 @@ func (q *QR) pngBytes(scale int) []byte {
 	size := q.code.Size
 	total := (size + quietZone*2) * scale
 
-	img := image.NewGray(image.Rect(0, 0, total, total))
+	// Use opaque RGBA rather than grayscale: some terminal image renderers
+	// mishandle grayscale PNGs and display an all-white image.
+	img := image.NewRGBA(image.Rect(0, 0, total, total))
+	white := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+	black := color.RGBA{R: 0, G: 0, B: 0, A: 255}
 
-	// Fill white background
 	for y := 0; y < total; y++ {
 		for x := 0; x < total; x++ {
-			img.SetGray(x, y, color.Gray{Y: 255})
+			img.SetRGBA(x, y, white)
 		}
 	}
 
@@ -160,7 +196,7 @@ func (q *QR) pngBytes(scale int) []byte {
 				py := (row + quietZone) * scale
 				for dy := 0; dy < scale; dy++ {
 					for dx := 0; dx < scale; dx++ {
-						img.SetGray(px+dx, py+dy, color.Gray{Y: 0})
+						img.SetRGBA(px+dx, py+dy, black)
 					}
 				}
 			}

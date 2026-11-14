@@ -22,7 +22,7 @@
 
 import { listen, emit, on, clipboard, notify, query, modal, countdown } from '../lib/oja.full.esm.js';
 import { store } from './store.js';
-import { fmtNum, getHostHCL } from './api.js';
+import { fmtNum, formatBytes, getHostHCL } from './api.js';
 import { isOn } from './utils.js';
 
 // Drawer open / close
@@ -94,12 +94,12 @@ listen('drawer:open-route', ({ host, idx, type }) => {
             reloadBtn.id = 'drawerReloadBtn';
             reloadBtn.className = 'btn small';
             reloadBtn.style.cssText = 'font-size:10px;padding:3px 10px;';
-            reloadBtn.textContent = '↻ Reload';
-            reloadBtn.title = 'Reload config for this host';
+            reloadBtn.textContent = '↻ Refresh';
+            reloadBtn.title = 'Refresh configuration data';
             reloadBtn.addEventListener('click', () => {
                 emit('host:reload', { hostname: host });
                 reloadBtn.textContent = '...';
-                setTimeout(() => { reloadBtn.textContent = '↻ Reload'; }, 2000);
+                setTimeout(() => { reloadBtn.textContent = '↻ Refresh'; }, 2000);
             });
             container.insertBefore(reloadBtn, perfBtn);
         }
@@ -333,6 +333,10 @@ function backendRow(b, cfgB, bStat, hostname, routeIdx, bIdx, type) {
     const activeConn = bStat.active_connections || 0;
     const maxConn = cfgB.max_connections || 0;
     const hasConnPool = activeConn > 0 && maxConn > 0;
+    const wsActive = bStat.websockets || 0;
+    const bytesIn = bStat.bytes_in || 0;
+    const bytesOut = bStat.bytes_out || 0;
+    const datagrams = bStat.datagrams || 0;
 
     return `<div class="drawer-row clickable" data-action="open-backend"
             data-host="${hostname}" data-route-idx="${routeIdx}"
@@ -352,6 +356,9 @@ function backendRow(b, cfgB, bStat, hostname, routeIdx, bIdx, type) {
             <span class="be-tag be-tag-${wCls}">W: ${w}</span>
             <span class="be-tag">${fmtNum(reqs)} reqs</span>
             ${hasConnPool ? `<span class="be-tag be-tag-info">conn: ${activeConn}/${maxConn}</span>` : ''}
+            ${wsActive > 0 ? `<span class="be-tag be-tag-info">WS: ${wsActive}</span>` : ''}
+            ${(bytesIn + bytesOut) > 0 ? `<span class="be-tag be-tag-info">${formatBytes(bytesIn)} in / ${formatBytes(bytesOut)} out</span>` : ''}
+            ${datagrams > 0 ? `<span class="be-tag be-tag-info">${fmtNum(datagrams)} datagrams</span>` : ''}
             ${hasErrorBreakdown ? `<span class="be-tag be-tag-danger">4xx:${err4xx} 5xx:${err5xx}</span>` : ''}
         </div>
     </div>`;
@@ -579,7 +586,14 @@ function certsSection(hostname, certificates) {
 
 function hostLevelSection(hostname) {
     const hostCfg = (store.get('lastConfig') || {}).hosts?.[hostname] || {};
+    const hostStats = (store.get('hostsData')?.stats || {})[hostname] || {};
     const items = [];
+
+    if (hostStats.websockets > 0) items.push(['WebSockets', `${hostStats.websockets} active`]);
+    if ((hostStats.bytes_in || 0) + (hostStats.bytes_out || 0) > 0) {
+        items.push(['Bytes', `${formatBytes(hostStats.bytes_in || 0)} in / ${formatBytes(hostStats.bytes_out || 0)} out`]);
+    }
+    if (hostStats.datagrams > 0) items.push(['Datagrams', fmtNum(hostStats.datagrams)]);
 
     if (hostCfg.compression)                               items.push(['Compression', badge('Enabled', 'success')]);
     if (hostCfg.limits?.max_body_size)                     items.push(['Max Body', hostCfg.limits.max_body_size + ' B']);
@@ -752,6 +766,12 @@ function buildRouteHTML(hostname, item, itemStats, type, certificates, routeIdx)
             if (itemStats?.active_sessions > 0) {
                 proxyPairs.push(['Active Sessions', badge(fmtNum(itemStats.active_sessions), 'warning')]);
             }
+            if (itemStats?.datagrams > 0) {
+                proxyPairs.push(['Datagrams', fmtNum(itemStats.datagrams)]);
+            }
+            if ((itemStats?.bytes_in || 0) + (itemStats?.bytes_out || 0) > 0) {
+                proxyPairs.push(['Bytes', `${formatBytes(itemStats.bytes_in || 0)} in / ${formatBytes(itemStats.bytes_out || 0)} out`]);
+            }
         }
         return [
             routeStatsSummary(itemStats, type),
@@ -816,33 +836,30 @@ function buildBackendHTML(cfg, stat) {
             ['Connections', (stat.active_connections || 0) > 0 ? `${stat.active_connections}${cfg.max_connections ? '/' + cfg.max_connections : ''}` : null],
             ['4xx Errors',  stat.errors_4xx > 0 ? badge(fmtNum(stat.errors_4xx), 'warning') : null],
             ['5xx Errors',  stat.errors_5xx > 0 ? badge(fmtNum(stat.errors_5xx), 'error') : null],
+            ['WebSockets',  stat.websockets > 0 ? `${stat.websockets} active` : null],
+            ['Bytes In',    stat.bytes_in > 0 ? formatBytes(stat.bytes_in) : null],
+            ['Bytes Out',   stat.bytes_out > 0 ? formatBytes(stat.bytes_out) : null],
+            ['Datagrams',   stat.datagrams > 0 ? fmtNum(stat.datagrams) : null],
         ])}
-            ${stat.latency_history ? `
+            ${stat.latency_history && stat.latency_history.length ? (() => {
+                const data = stat.latency_history.map(Number);
+                let max = 1;
+                data.forEach(v => { if (v > max) max = v; });
+                const w = 380, h = 40, pad = 2;
+                const step = w / Math.max(1, data.length - 1);
+                const pts = data.map((v, i) => {
+                    const x = (i * step).toFixed(1);
+                    const y = (h - (v / max) * (h - 4) - pad).toFixed(1);
+                    return x + ',' + y;
+                }).join(' ');
+                return `
                 <div style="margin-top:10px;">
                     <div style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Latency trend (p99)</div>
-                    <canvas id="backendLatencySpark" class="backend-sparkline" width="380" height="40"></canvas>
-                </div>
-                <script>
-                    (function() {
-                        var data = ${JSON.stringify(stat.latency_history || [])};
-                        if (!data.length) return;
-                        var canvas = document.getElementById('backendLatencySpark');
-                        if (!canvas) return;
-                        var ctx = canvas.getContext('2d');
-                        var w = canvas.width, h = canvas.height;
-                        var max = Math.max(...data, 1);
-                        var step = w / (data.length - 1 || 1);
-                        ctx.strokeStyle = '${gaugeColor}';
-                        ctx.lineWidth = 1.5;
-                        ctx.beginPath();
-                        data.forEach(function(v, i) {
-                            var x = i * step;
-                            var y = h - (v / max) * (h - 4) - 2;
-                            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-                        });
-                        ctx.stroke();
-                    })();
-                </script>` : ''}
+                    <svg class="backend-sparkline" width="100%" height="40" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Latency trend">
+                        <polyline points="${pts}" fill="none" stroke="${gaugeColor}" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+                    </svg>
+                </div>`;
+            })() : ''}
         `));
     }
 

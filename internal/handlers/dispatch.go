@@ -1,12 +1,12 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -18,7 +18,6 @@ import (
 	"github.com/agberohq/agbero/internal/middleware/memory"
 	"github.com/agberohq/agbero/internal/middleware/observability"
 	"github.com/agberohq/agbero/internal/middleware/recovery"
-	"github.com/agberohq/agbero/internal/operation"
 	"github.com/agberohq/agbero/internal/pkg/wellknown"
 	"github.com/olekukonko/mappo"
 )
@@ -57,11 +56,6 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	if m.wellKnownProcess(w, r) {
-		return
-	}
-
-	if r.URL.Path == "/favicon.ico" {
-		m.handleFavicon(w, r)
 		return
 	}
 
@@ -133,7 +127,8 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 
 		m.handleRoute(rw, r, res.Route, hcfg)
-		m.logRequest(host, r, start, rw.StatusCode, rw.BytesWritten)
+		totalBytes := rw.BytesWritten + rw.HijackedBytesIn.Load() + rw.HijackedBytesOut.Load()
+		m.logRequest(host, r, start, rw.StatusCode, totalBytes)
 		return
 	}
 
@@ -246,18 +241,6 @@ func (m *Manager) routeBuilder(route *alaye.Route, host *alaye.Host) *Route {
 	return h
 }
 
-// handleFavicon serves the embedded favicon.ico with long-term caching headers for browser efficiency.
-// It returns a 404 status if no favicon data is available in the operation package.
-func (m *Manager) handleFavicon(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "image/x-icon")
-	w.Header().Set("Cache-Control", "public, max-age=31536000")
-	if len(operation.Favicon) > 0 {
-		http.ServeContent(w, r, "favicon.ico", zulu.ModTime, bytes.NewReader(operation.Favicon))
-	} else {
-		w.WriteHeader(http.StatusNotFound)
-	}
-}
-
 // redirectToHTTPS constructs and issues a permanent redirect to the HTTPS equivalent of the current request.
 // It respects host-specific bind ports and falls back to global HTTPS configuration for the target URL.
 //
@@ -318,14 +301,51 @@ func (m *Manager) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
 }
 
+// shouldLogPath applies logging.include and logging.skip as path prefixes.
+// An empty include list means every path is eligible.
+func (m *Manager) shouldLogPath(path string) bool {
+	if len(m.includeLogPrefixes) > 0 {
+		included := false
+		for _, prefix := range m.includeLogPrefixes {
+			if prefix != "" && strings.HasPrefix(path, prefix) {
+				included = true
+				break
+			}
+		}
+		if !included {
+			return false
+		}
+	}
+	for _, prefix := range m.skipLogPrefixes {
+		if prefix != "" && strings.HasPrefix(path, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
 // logRequest records structured access log entries for HTTP requests with timing and metadata.
 // It pools argument slices for efficiency and includes host, path, duration, status, and optional bot detection data.
 func (m *Manager) logRequest(host string, r *http.Request, start time.Time, status int, bytes int64) {
 	if m.cfg.Resource.Logger == nil {
 		return
 	}
+	if m.cfg.Global != nil {
+		if m.cfg.Global.Logging.Enabled.Inactive() {
+			return
+		}
+		level := strings.ToLower(strings.TrimSpace(m.cfg.Global.Logging.Level))
+		if level == "" {
+			level = def.LogLevelInfo
+		}
+		switch level {
+		case def.LogLevelInfo, def.LogLevelDebug:
+		default:
+			return
+		}
+	}
 
-	if m.skipLogPaths[r.URL.Path] {
+	if !m.shouldLogPath(r.URL.Path) {
 		return
 	}
 
@@ -362,7 +382,7 @@ func (m *Manager) logRequest(host string, r *http.Request, start time.Time, stat
 		}
 	}
 
-	m.cfg.Resource.Logger.Fields(args...).Info(r.Method)
+	m.requestLogger.Fields(args...).Info(r.Method)
 	*argsPtr = args
 	m.logArgsPool.Put(argsPtr)
 }

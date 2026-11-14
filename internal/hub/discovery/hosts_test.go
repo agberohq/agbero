@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -769,6 +770,32 @@ func TestCluster_3NodeDataPropagation(t *testing.T) {
 			t.Error("node3 config content mismatch")
 		} else {
 			t.Logf("Node3 config verified")
+		}
+	}
+}
+
+func TestCreateRawConcurrentSameDomain(t *testing.T) {
+	dir := expect.NewFolder(t.TempDir())
+	hm := NewHost(dir, WithLogger(testLogger))
+	defer hm.Close()
+
+	raw := validHCL("concurrent.localhost")
+	const n = 20
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cfg := &alaye.Host{Domains: []string{"concurrent.localhost"}}
+			errs <- hm.CreateRaw("concurrent.localhost", cfg, raw)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent CreateRaw failed: %v", err)
 		}
 	}
 }

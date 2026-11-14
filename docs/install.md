@@ -91,7 +91,21 @@ This will:
 - Generate a secure admin password
 - Create an internal authentication key
 - Set up a local Certificate Authority (for development)
-- Write a default `agbero.hcl` configuration file
+- Ask what the first public site should be:
+  - a basic website serving a directory,
+  - a reverse proxy to an existing upstream,
+  - or local development at `web.localhost`
+- Write a default `agbero.hcl` and the selected host configuration
+
+The admin UI is reached through the generated admin host:
+
+```text
+http://admin.localhost
+```
+
+The direct listener is `http://127.0.0.1:9090`, but that bypasses the host
+route and TLS. On a remote server, use a real admin hostname/allowlist or an
+SSH tunnel.
 
 ### 2. Install Local CA (Optional, for development)
 
@@ -122,7 +136,17 @@ sudo agbero service status
 
 If you already ran `agbero init` as a normal user, the service install will not see that config. Either re-run `sudo agbero init` (system tree) or keep using the user tree with `agbero run`; do not maintain two config trees. (`agbero service install --user` is not supported yet.)
 
-`agbero init` writes a `0600` passphrase file and points `keeper.passphrase_file` at it, so the service can unlock the keeper without an environment variable.
+`agbero init` does **not** write the Keeper passphrase to disk. The generated config uses `passphrase = "env.AGBERO_KEEPER_PASSPHRASE"`.
+
+For a system service, either:
+
+- provide the passphrase through a systemd encrypted credential (recommended),
+- inject `AGBERO_KEEPER_PASSPHRASE` at runtime, or
+- start the service locked and run `agbero keeper unlock`.
+
+`agbero service start` and `agbero service restart` prompt for the passphrase when the service is waiting locked. Direct `systemctl restart agbero` cannot prompt; use `agbero keeper unlock` afterward.
+
+The generated unit uses `agbero run --service`. Reinstall an older unit after updating the binary so it includes that flag.
 
 ## Verifying Installation
 
@@ -264,12 +288,30 @@ Admin password: ████████
 [INFO] Agbero is ready — listening on :80 and :443
 ```
 
-For non-interactive environments (system service, Docker, CI), use a passphrase file or the canonical environment variable so Agbero can unlock without prompting. `agbero init` writes a `0600` passphrase file next to the config and points `keeper.passphrase_file` at it:
+For non-interactive environments (system service, Docker, CI), use a systemd credential, a runtime-injected environment variable, or manual unlock. A passphrase file next to `keeper.db` is not created and is not recommended.
+
+Systemd encrypted credential:
+
+```ini
+# Create once:
+#   systemd-creds encrypt --name=keeper_passphrase /dev/stdin /etc/agbero/keeper.cred
+# Keep the plaintext source out of the filesystem.
+LoadCredentialEncrypted=keeper_passphrase:/etc/agbero/keeper.cred
+```
+
+Agbero reads `$CREDENTIALS_DIRECTORY/keeper_passphrase` automatically. `LoadCredential=` also works, but its source is plaintext on disk and is weaker.
+
+Runtime environment injection:
 
 ```bash
 AGBERO_KEEPER_PASSPHRASE=mypassphrase agbero run
-# or, preferred for services:
-# keeper { passphrase_file = "/etc/agbero/keeper.passphrase" }
 ```
 
-> **Important:** The keeper database (`data.d/keeper.db`) is encrypted at rest. Without the correct passphrase, Agbero cannot start. Store your passphrase securely — in a secrets manager, a `.env` file outside version control, or your system's service environment. If you lose the passphrase, you lose all stored secrets.
+Manual unlock:
+
+```bash
+sudo agbero service start
+agbero keeper unlock
+```
+
+> **Important:** The keeper database (`data.d/keeper.db`) is encrypted at rest. Without the correct passphrase, a service cannot serve secret-dependent traffic and waits locked. Store your passphrase securely — in a systemd encrypted credential, a secrets manager, or your system's service environment. If you lose the passphrase, you lose all stored secrets.

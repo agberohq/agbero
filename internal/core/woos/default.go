@@ -47,6 +47,10 @@ func (Defaults) Route(r *alaye.Route) {
 	defaultRouteAll(r)
 }
 
+func (Defaults) MCP(m *alaye.MCP) {
+	defaultMCP(m)
+}
+
 func (Defaults) Firewall(f *alaye.Firewall) {
 	defaultFirewall(f)
 }
@@ -108,8 +112,10 @@ func defaultGlobal(g *alaye.Global, configPath string) {
 	defaultTimeout(&g.Timeouts)
 	defaultStorage(&g.Storage, configPath)
 	defaultAdmin(&g.Admin)
+	defaultMCP(&g.MCP)
 	defaultLogging(&g.Logging)
 	defaultSecurity(&g.Security)
+	resolveWAFRulesDir(g, configPath)
 	defaultRateLimits(&g.RateLimits)
 	defaultGossip(&g.Gossip)
 	defaultLetsEncrypt(&g.LetsEncrypt)
@@ -135,6 +141,35 @@ func defaultRouteAll(r *alaye.Route) {
 	defaultCORS(&r.CORS)
 	defaultCache(&r.Cache)
 	defaultFallback(&r.Fallback)
+	r.Protocol = strings.ToLower(strings.TrimSpace(r.Protocol))
+	if r.Protocol == "" {
+		r.Protocol = def.RouteProtocolHTTP
+	}
+	if r.Protocol == def.RouteProtocolMCP {
+		defaultMCPRoute(r)
+	}
+}
+
+// defaultMCPRoute makes an MCP route streaming- and session-safe:
+//   - session affinity on Mcp-Session-Id (2025-11-25 and earlier),
+//   - no compression (SSE/event streams must not be buffered/transformed),
+//   - no response cache.
+func defaultMCPRoute(r *alaye.Route) {
+	if r.Backends.Strategy == "" {
+		r.Backends.Strategy = def.StrategySticky
+	}
+	hasSessionKey := false
+	for _, k := range r.Backends.Keys {
+		if strings.EqualFold(strings.TrimSpace(k), def.MCPSessionKey) {
+			hasSessionKey = true
+			break
+		}
+	}
+	if !hasSessionKey {
+		r.Backends.Keys = append(r.Backends.Keys, def.MCPSessionKey)
+	}
+	r.Compression.Enabled = expect.Inactive
+	r.Cache.Enabled = expect.Inactive
 }
 
 func defaultWebRoute(r *alaye.Route) {
@@ -242,6 +277,33 @@ func defaultAdmin(a *alaye.Admin) {
 		if a.TOTP.Algorithm == "" {
 			a.TOTP.Algorithm = "SHA1"
 		}
+	}
+}
+
+func defaultMCP(m *alaye.MCP) {
+	if m.Enabled == expect.Unknown {
+		m.Enabled = expect.Inactive
+	}
+	if m.Transport == "" {
+		m.Transport = def.MCPTransportStdio
+	}
+	if m.RateLimit == "" {
+		m.RateLimit = "60/m"
+	}
+	if len(m.AllowedIPs) == 0 {
+		m.AllowedIPs = []string{"127.0.0.1/32", "::1/128"}
+	}
+	if m.Read.Enabled == expect.Unknown {
+		m.Read.Enabled = expect.Inactive
+	}
+	if m.Plan.Enabled == expect.Unknown {
+		m.Plan.Enabled = expect.Inactive
+	}
+	if m.Plan.MaxInputBytes == 0 {
+		m.Plan.MaxInputBytes = def.HostConfigMaxBytes
+	}
+	if m.Apply.Enabled == expect.Unknown {
+		m.Apply.Enabled = expect.Inactive
 	}
 }
 
@@ -838,4 +900,19 @@ func defaultDNSBlock(d *alaye.DNSBlock) {
 	if d.Mode == "" {
 		d.Mode = "nxdomain"
 	}
+}
+
+// resolveWAFRulesDir makes relative WAF rule paths independent of the process
+// working directory. A service or a shell whose cwd was removed must still be
+// able to load rules relative to agbero.hcl.
+func resolveWAFRulesDir(g *alaye.Global, configPath string) {
+	dir := strings.TrimSpace(g.Security.WAF.RulesDir)
+	if dir == "" || filepath.IsAbs(dir) || strings.TrimSpace(configPath) == "" {
+		return
+	}
+	base, err := filepath.Abs(filepath.Dir(configPath))
+	if err != nil {
+		return
+	}
+	g.Security.WAF.RulesDir = filepath.Join(base, dir)
 }

@@ -170,6 +170,9 @@ func (b *Backend) Snapshot() *Snapshot {
 		Failures:    int64(b.Activity.Failures.Load()),
 		MaxSessions: b.MaxConns,
 		TotalReqs:   b.Activity.Requests.Load(),
+		BytesIn:     b.Activity.BytesIn.Load(),
+		BytesOut:    b.Activity.BytesOut.Load(),
+		Datagrams:   b.Activity.Datagrams.Load(),
 		Latency:     b.Activity.Latency.Snapshot(),
 	}
 }

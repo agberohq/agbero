@@ -67,6 +67,44 @@ func Handler(store *Store) http.Handler {
 		json.NewEncoder(w).Encode(resp)
 	})
 
+	r.Get("/backend", func(w http.ResponseWriter, r *http.Request) {
+		host := strings.TrimSpace(r.URL.Query().Get("host"))
+		route := strings.TrimSpace(r.URL.Query().Get("route"))
+		backend := strings.TrimSpace(r.URL.Query().Get("backend"))
+		if host == "" || backend == "" {
+			http.Error(w, "host and backend parameters required", http.StatusBadRequest)
+			return
+		}
+		if route == "" {
+			route = "/"
+		}
+		rangeKey := r.URL.Query().Get("range")
+		if rangeKey == "" {
+			rangeKey = "1h"
+		}
+		qr, ok := KnownRanges[rangeKey]
+		if !ok {
+			http.Error(w, "invalid range; use 30m, 1h, 6h, or 24h", http.StatusBadRequest)
+			return
+		}
+		samples, err := store.QueryBackend(host, route, backend, qr)
+		if err != nil {
+			http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if samples == nil {
+			samples = []Sample{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(struct {
+			Host    string   `json:"host"`
+			Route   string   `json:"route"`
+			Backend string   `json:"backend"`
+			Range   string   `json:"range"`
+			Samples []Sample `json:"samples"`
+		}{Host: host, Route: route, Backend: backend, Range: qr.Label, Samples: samples})
+	})
+
 	r.Get("/hosts", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

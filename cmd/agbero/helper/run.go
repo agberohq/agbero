@@ -1,7 +1,11 @@
 package helper
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/agberohq/agbero"
+	"github.com/agberohq/agbero/internal/hub/control"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 )
 
@@ -10,6 +14,11 @@ type Run struct {
 }
 
 func (r *Run) Start(configPath string, devMode bool) error {
+	// Keep relative service paths (notably WAF rules) stable even if the
+	// invoking shell's working directory was removed during an uninstall.
+	if abs, err := filepath.Abs(configPath); err == nil {
+		_ = os.Chdir(filepath.Dir(abs))
+	}
 	global, err := loadGlobal(configPath)
 	if err != nil {
 		return err
@@ -27,6 +36,7 @@ func (r *Run) Start(configPath string, devMode bool) error {
 		agbero.WithLogger(r.p.Logger),
 		agbero.WithShutdownManager(r.p.Shutdown),
 		agbero.WithKeeper(r.p.Store),
+		agbero.WithControlSocket(control.SocketPath(global.Storage.DataDir.Path())),
 	)
 
 	pidPath, err := writePIDFile(global.Storage.DataDir.Path())

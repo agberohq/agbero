@@ -21,6 +21,7 @@ const (
 	SetupStepKeeperSecrets = "keeper_secrets"
 	SetupStepTOTP          = "totp"
 	SetupStepLetsEncrypt   = "letsencrypt"
+	SetupStepDomain        = "domain"
 	SetupStepDone          = "done"
 )
 
@@ -552,7 +553,9 @@ const (
 	DefaultMaxBuffer     = 12_000
 	DefaultVictoriaBatch = 500
 
-	DefaultLogRotateSize = 50 * 1024 * 1024
+	DefaultLogDedupWindow = 5 * time.Second
+	DefaultLogRenameDelay = 50 * time.Millisecond
+	DefaultLogRotateSize  = 50 * 1024 * 1024
 
 	BufferSize = 32 * 1024
 
@@ -568,8 +571,15 @@ const (
 // Admin server
 
 const (
-	DefaultReloadTimeout   = 30 * time.Second
-	DefaultShutdownTimeout = 5 * time.Second
+	DefaultReloadTimeout        = 30 * time.Second
+	DefaultReloadDrainTimeout   = 5 * time.Second
+	DefaultShutdownTimeout      = 5 * time.Second
+	DefaultShutdownGraceTimeout = 10 * time.Second
+	// DefaultShutdownHardTimeout is the process-level backstop for a callback
+	// that ignores cancellation.
+	DefaultShutdownHardTimeout = 20 * time.Second
+	// DefaultUDPWorkerDrainTimeout bounds the xudp worker-pool drain.
+	DefaultUDPWorkerDrainTimeout = 2 * time.Second
 
 	DefaultAdminReadTimeout  = 10 * time.Second
 	DefaultAdminWriteTimeout = 60 * time.Second
@@ -654,10 +664,24 @@ const (
 	LogDir  string = "logs.d"
 	WorkDir string = "work.d"
 
-	DefaultConfigName = "agbero.hcl"
-	DefaultLogName    = "agbero.log"
-	DefaultKeeperName = "keeper.db"
-	DefaultPIDName    = "agbero.pid"
+	DefaultConfigName     = "agbero.hcl"
+	DefaultLogName        = "agbero.log"
+	DefaultKeeperName     = "keeper.db"
+	DefaultRevokedName    = "revoked.json"
+	DefaultRevokedDBName  = "revoked.db"
+	DefaultFirewallDBName = "firewall.db"
+
+	// Local ownership and control-plane defaults.
+	DefaultAuthorityLockName   = ".owner.lock"
+	DefaultAuthorityRetryDelay = 25 * time.Millisecond
+	DefaultControlSocketName   = "control.sock"
+	DefaultControlDialTimeout  = 500 * time.Millisecond
+	DefaultControlRetryDelay   = 50 * time.Millisecond
+	DefaultControlPathMax      = 100
+	DefaultControlRevokeWait   = 750 * time.Millisecond
+	DefaultControlFallbackWait = 2 * time.Second
+	DefaultControlRevokeTTL    = 24 * time.Hour
+	DefaultPIDName             = "agbero.pid"
 
 	HCLSuffix          = ".hcl"
 	ConfigHCLExtension = ".hcl"

@@ -25,6 +25,11 @@
 (function () {
     'use strict';
 
+    var ROUTE_PROTOCOLS = (typeof window !== 'undefined' && window.ROUTE_PROTOCOLS) || {
+        HTTP: 'http',
+        MCP: 'mcp'
+    };
+
     var NS = 'http://www.w3.org/2000/svg';
 
     var GLYPH = { root: '\u25C8', host: '\u25A4', route: '\u21E2', backend: '\u25CF', serverless: '\u2699' };
@@ -54,6 +59,11 @@
     // them into node objects). Everything downstream must accept both shapes.
     function endpointId(end) {
         return end && typeof end === 'object' ? end.id : end;
+    }
+
+    function worstStatus(a, b) {
+        var rank = { ok: 0, unverified: 1, degraded: 2, dead: 3 };
+        return (rank[b] || 0) > (rank[a] || 0) ? b : a;
     }
 
     function truncate(s, max) {
@@ -110,7 +120,8 @@
             this.layout = null;        // computeLayout() result
             this._hostsData = {};      // raw stats for tooltips
             this._nodeIndex = new Map(); // id -> node for O(1) lookup
-            this._sig = '';            // topology signature
+            this._sig = '';            // render/layout signature
+            this._topoSig = '';        // config-only signature for ingest gating
             this._selected = null;
             this._rps = new Map();     // node id → requests/sec
             this._prevTotals = new Map();
@@ -131,11 +142,20 @@
 
         render(config, stats) {
             if (!config || !this.container) return;
+            var sig = this._configSignature(config);
+            this._hostTotal = config.hosts ? Object.keys(config.hosts).length : 0;
+            this._hostsData = stats || {};
+
+            // A metrics tick with unchanged topology only needs new counters,
+            // not a new node/link array or layout.
+            if (this._root && this.data && sig === this._topoSig) {
+                this._refreshStats(stats || {});
+                return;
+            }
+
             this._ingest(config, stats);
             this._autoCollapseIfCrowded();
-            var sig = this._signature();
-            if (this._root && sig === this._sig) { this._updateStats(); return; }
-            this._sig = sig;
+            this._topoSig = sig;
             this._draw();
         }
 
@@ -244,6 +264,117 @@
             this.data = this.processData(config, stats);
             this._annotate();
             this._computeRps(Date.now());
+        }
+
+        // Config-only signature: counters are left out so a metrics tick does
+        // not re-run processData().
+        _configSignature(config) {
+            if (!config || !config.hosts) return '';
+            var parts = [this.options.mode, this.options.orientation, this.options.density];
+            var hosts = config.hosts;
+            Object.keys(hosts).sort().forEach(function(h) {
+                var hc = hosts[h] || {};
+                parts.push('h:' + h + '|' + ((hc.tls && hc.tls.mode) || ''));
+                (hc.routes || []).forEach(function(r) {
+                    var servers = (r.backends && r.backends.servers) || [];
+                    parts.push('r:' + h + '|' + (r.path || '/') + '|' +
+                        servers.map(function(s) { return s.address || ''; }).join(','));
+                    var sl = r.serverless || {};
+                    (sl.replay || []).forEach(function(x) { parts.push('rp:' + x.name); });
+                    (sl.workers || []).forEach(function(x) { parts.push('wk:' + x.name); });
+                });
+                (hc.proxies || []).forEach(function(p) {
+                    var servers = p.backends || [];
+                    parts.push('p:' + h + '|' + (p.name || p.listen || '') + '|' +
+                        (p.protocol || '') + '|' + (p.matcher || '') + '|' +
+                        servers.map(function(s) { return s.address || ''; }).join(','));
+                });
+            });
+            return parts.join('\u0001');
+        }
+
+        _backendStatus(bStat) {
+            if (!bStat) return 'unverified';
+            var hStat = (bStat.health && bStat.health.status) || 'Unknown';
+            if (bStat.alive === false || hStat === 'Dead' || hStat === 'Unhealthy') return 'dead';
+            if (hStat === 'Degraded') return 'degraded';
+            if (hStat === 'Healthy') return 'ok';
+            return bStat.alive ? 'unverified' : 'dead';
+        }
+
+        // Update counters and statuses in place, then repaint.
+        _refreshStats(stats) {
+            if (!this.data) return;
+            stats = stats || {};
+            this._hostsData = stats;
+            var self = this;
+            var nodeById = new Map();
+            this.data.nodes.forEach(function(n) { nodeById.set(n.id, n); });
+
+            var routeStats = function(node) {
+                var hs = (stats && stats[node.meta.hostname]) || {};
+                if (node.meta.routeType === 'proxy') return (hs.proxies || [])[node.meta.routeIdx] || {};
+                return (hs.routes || [])[node.meta.routeIdx] || {};
+            };
+
+            this.data.nodes.forEach(function(node) {
+                if (node.type === 'host') {
+                    var hs = (stats && stats[node.meta.hostname]) || {};
+                    node.total = hs.total_reqs;
+                    return;
+                }
+                if (node.type === 'route') {
+                    var rs = routeStats(node);
+                    node.total = rs.total_reqs;
+                    node.sessions = rs.active_sessions;
+                    return;
+                }
+                if (node.type === 'backend') {
+                    var rs = routeStats(node);
+                    var b = (rs.backends || [])[node.meta.backendIdx];
+                    if (!b) return;
+                    node.total = b.total_reqs;
+                    node.failures = b.failures;
+                    node.latency_us = b.latency_us;
+                    node.alive = b.alive;
+                    node.status = self._backendStatus(b);
+                    return;
+                }
+                if (node.type === 'serverless') {
+                    var rs = routeStats(node);
+                    var match = (rs.serverless || []).filter(function(s) {
+                        return s.name === node.meta.name && s.kind === node.kind;
+                    })[0];
+                    if (!match) return;
+                    node.total = match.total_reqs;
+                    node.failures = match.failures;
+                    node.status = match.failures > 0 ? 'degraded' : 'ok';
+                }
+            });
+
+            // Children first, then hosts. Edge status follows the target node
+            // in _updateStats(), so no separate edge rebuild is needed.
+            this.data.nodes.forEach(function(node) {
+                if (node.type !== 'route') return;
+                var status = 'ok';
+                (self._children.get(node.id) || []).forEach(function(cid) {
+                    var child = nodeById.get(cid);
+                    if (child) status = worstStatus(status, child.status);
+                });
+                node.status = status;
+            });
+            this.data.nodes.forEach(function(node) {
+                if (node.type !== 'host') return;
+                var status = 'ok';
+                (self._children.get(node.id) || []).forEach(function(cid) {
+                    var child = nodeById.get(cid);
+                    if (child) status = worstStatus(status, child.status);
+                });
+                node.status = status;
+            });
+
+            this._computeRps(Date.now());
+            this._updateStats();
         }
 
         // Child counts and the descendant map are rendering details, so they stay
@@ -656,6 +787,7 @@
                 'data-id': node.id,
                 'data-label': node.label || '',
                 'data-protocol': node.protocol || '',
+                'data-kind': node.kind || '',
                 'tabindex': '0',
                 'role': 'button'
             });
@@ -709,6 +841,8 @@
                 'transform': 'translate(' + pos.x + ',' + pos.y + ')',
                 'data-id': node.id,
                 'data-label': node.label || '',
+                'data-protocol': node.protocol || '',
+                'data-kind': node.kind || '',
                 'tabindex': '0',
                 'role': 'button'
             });
@@ -1104,6 +1238,7 @@
             var nodes = [];
             var links = [];
             var nodeSet = new Set();
+            var self = this;
 
             var addNode = function (id, label, type, status, meta, extra) {
                 if (nodeSet.has(id)) return;
@@ -1120,13 +1255,7 @@
             };
 
             var beStatus = function (backendStats, bIdx) {
-                if (!backendStats[bIdx]) return 'unverified';
-                var bStat = backendStats[bIdx];
-                var hStat = (bStat.health && bStat.health.status) || 'Unknown';
-                if (bStat.alive === false || hStat === 'Dead' || hStat === 'Unhealthy') return 'dead';
-                if (hStat === 'Degraded') return 'degraded';
-                if (hStat === 'Healthy') return 'ok';
-                return bStat.alive ? 'unverified' : 'dead';
+                return self._backendStatus(backendStats[bIdx]);
             };
 
             var statsOf = function (arr, idx) { return (arr && arr[idx]) ? arr[idx] : {}; };
@@ -1139,7 +1268,7 @@
                     var hostCfg = config.hosts[hostname] || {};
                     var hostStats = (stats && stats[hostname]) ? stats[hostname] : {};
 
-                    addNode(hostname, hostname, 'host', 'ok', { hostname: hostname }, {
+                    addNode(hostname, hostname, 'host', 'unverified', { hostname: hostname }, {
                         protocol: hostCfg.tls && hostCfg.tls.mode ? 'https' : 'http',
                         total: hostStats.total_reqs
                     });
@@ -1151,9 +1280,9 @@
                         var routeStats = statsOf(hostStats.routes, rIdx);
                         var bkStats = routeStats.backends || [];
 
-                        addNode(routeId, path, 'route', 'ok',
+                        addNode(routeId, path, 'route', 'unverified',
                             { hostname: hostname, routeIdx: rIdx, routeType: 'route' },
-                            { protocol: 'http', total: routeStats.total_reqs });
+                            { protocol: route.protocol || ROUTE_PROTOCOLS.HTTP, total: routeStats.total_reqs });
                         addLink(hostname, routeId, routeStats.total_reqs || 0);
 
                         var servers = (route.backends && route.backends.servers) || [];
@@ -1165,7 +1294,7 @@
                             var bStat = bkStats[bIdx] || {};
                             addNode(beId, beUrl.replace(/^https?:\/\//, ''), 'backend', status,
                                 { hostname: hostname, routeIdx: rIdx, backendIdx: bIdx, routeType: 'route' },
-                                { protocol: 'http', total: bStat.total_reqs, failures: bStat.failures,
+                                { protocol: ROUTE_PROTOCOLS.HTTP, total: bStat.total_reqs, failures: bStat.failures,
                                   latency_us: bStat.latency_us, alive: bStat.alive });
                             addLink(routeId, beId, bStat.total_reqs || 0, status);
                         });
@@ -1178,7 +1307,7 @@
                                 })[0];
                                 var status = slStats && slStats.failures > 0 ? 'degraded' : 'ok';
                                 addNode(slId, '\u21bb ' + rp.name, 'serverless', status,
-                                    { hostname: hostname, routeIdx: rIdx, routeType: 'route' },
+                                    { hostname: hostname, routeIdx: rIdx, routeType: 'route', name: rp.name },
                                     { protocol: 'replay', kind: 'replay', total: slStats && slStats.total_reqs,
                                       failures: slStats && slStats.failures });
                                 addLink(routeId, slId, (slStats && slStats.total_reqs) || 0, status);
@@ -1193,7 +1322,7 @@
                                 })[0];
                                 var status = wkStats && wkStats.failures > 0 ? 'degraded' : 'ok';
                                 addNode(wkId, '\u2699 ' + wk.name, 'serverless', status,
-                                    { hostname: hostname, routeIdx: rIdx, routeType: 'route' },
+                                    { hostname: hostname, routeIdx: rIdx, routeType: 'route', name: wk.name },
                                     { protocol: 'worker', kind: 'worker', total: wkStats && wkStats.total_reqs,
                                       failures: wkStats && wkStats.failures });
                                 addLink(routeId, wkId, (wkStats && wkStats.total_reqs) || 0, status);
@@ -1210,7 +1339,7 @@
                         var bkStats = proxyStats.backends || [];
                         var matcher = isUDP && proxy.matcher ? ':' + proxy.matcher : '';
 
-                        addNode(proxyId, proto + matcher + ':' + name, 'route', 'ok',
+                        addNode(proxyId, proto + matcher + ':' + name, 'route', 'unverified',
                             { hostname: hostname, routeIdx: pIdx, routeType: 'proxy' },
                             { protocol: isUDP ? 'udp' : 'tcp', total: proxyStats.total_reqs,
                               sessions: proxyStats.active_sessions });
@@ -1231,6 +1360,40 @@
                     });
                 });
             }
+
+            // Host and route health comes from the worst child, so it has to be
+            // computed once every backend status above is final.
+            var nodeById = new Map();
+            nodes.forEach(function(n) { nodeById.set(n.id, n); });
+            var children = new Map();
+            links.forEach(function(l) {
+                var sid = endpointId(l.source);
+                var tid = endpointId(l.target);
+                if (!children.has(sid)) children.set(sid, []);
+                children.get(sid).push(tid);
+            });
+            nodes.forEach(function(n) {
+                if (n.type !== 'route') return;
+                var status = 'ok';
+                (children.get(n.id) || []).forEach(function(cid) {
+                    var child = nodeById.get(cid);
+                    if (child) status = worstStatus(status, child.status);
+                });
+                n.status = status;
+            });
+            nodes.forEach(function(n) {
+                if (n.type !== 'host') return;
+                var status = 'ok';
+                (children.get(n.id) || []).forEach(function(cid) {
+                    var child = nodeById.get(cid);
+                    if (child) status = worstStatus(status, child.status);
+                });
+                n.status = status;
+            });
+            links.forEach(function(l) {
+                var target = nodeById.get(endpointId(l.target));
+                if (target) l.status = worstStatus(l.status, target.status);
+            });
 
             return { nodes: nodes, links: links };
         }

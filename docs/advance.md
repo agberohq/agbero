@@ -69,34 +69,49 @@ The cluster manager is implemented in `internal/hub/cluster/` and provides:
 
 ## 2. Keeper — Encrypted Secret Store
 
-The keeper is an encrypted, passphrase-protected database (`data.d/keeper.db`) that stores secrets, TLS certificates, the internal Ed25519 auth key, admin user credentials, and TOTP seeds. **It is a required component — Agbero will not start if the keeper cannot be opened.**
+The keeper is an encrypted, passphrase-protected database (`data.d/keeper.db`) that stores secrets, TLS certificates, the internal Ed25519 auth key, admin user credentials, and TOTP seeds. **It is a required component — a service will not serve secret-dependent traffic until it is unlocked.**
 
 ### Unlocking the Keeper
 
 Agbero resolves the master passphrase in this order at startup:
 
-1. `keeper.passphrase` in `agbero.hcl` (may be an `env.` or `ss://` reference)
-2. `keeper.passphrase_file` (recommended for services)
-3. `AGBERO_KEEPER_PASSPHRASE` environment variable
-4. `AGBERO_PASSPHRASE` environment variable (deprecated alias)
-5. Interactive terminal prompt (if running in a terminal)
+1. systemd credential `$CREDENTIALS_DIRECTORY/keeper_passphrase`
+2. `keeper.passphrase` in `agbero.hcl` (prefer an `env.` or `ss://` reference)
+3. legacy `keeper.passphrase_file` (existing deployments only)
+4. `AGBERO_KEEPER_PASSPHRASE` environment variable
+5. `AGBERO_PASSPHRASE` environment variable (deprecated alias)
+6. interactive terminal prompt
+7. otherwise the service starts locked and waits for `agbero keeper unlock`
 
-For non-interactive environments (system service, container, CI):
+`agbero init` no longer creates a passphrase file. For unattended service startup,
+use a systemd credential:
+
+```ini
+LoadCredentialEncrypted=keeper_passphrase:/etc/agbero/keeper.cred
+```
+
+or runtime injection:
 
 ```bash
-# Set the passphrase as an environment variable
 AGBERO_KEEPER_PASSPHRASE=mypassphrase agbero run
+```
 
-# Or configure it in agbero.hcl (use env var or a file to avoid plaintext)
+```hcl
 security {
   keeper {
-    passphrase = "env.AGBERO_KEEPER_PASSPHRASE"  # reads from the environment
-    # passphrase_file = "/etc/agbero/keeper.passphrase"  # preferred for services
-    auto_lock  = "2h"                      # lock after 2 hours of inactivity
-    logging    = true                      # log keeper operations
-    audit      = true                      # detailed audit trail
+    passphrase = "env.AGBERO_KEEPER_PASSPHRASE"
+    auto_lock  = "2h"
+    logging    = true
+    audit      = true
   }
 }
+```
+
+For manual unlock:
+
+```bash
+sudo agbero service start
+agbero keeper unlock
 ```
 
 ### Secret References in Configuration

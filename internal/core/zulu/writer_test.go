@@ -70,6 +70,7 @@ type mockHijacker struct {
 	dumbWriter
 	hijackCalled bool
 	hijackErr    error
+	peer         net.Conn
 }
 
 func (m *mockHijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
@@ -79,7 +80,7 @@ func (m *mockHijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	}
 	// Return a pair of connected net.Pipe connections so callers get a usable conn.
 	client, server := net.Pipe()
-	_ = server // server end handed to "upstream"
+	m.peer = server
 	rw := bufio.NewReadWriter(bufio.NewReader(client), bufio.NewWriter(client))
 	return client, rw, nil
 }
@@ -264,4 +265,38 @@ func TestResponseWriter_Hijack_NotSupported(t *testing.T) {
 // the interface is fully implemented.
 func TestResponseWriter_Hijack_ImplementsInterface(t *testing.T) {
 	var _ http.Hijacker = &ResponseWriter{}
+}
+
+func TestResponseWriter_HijackCountsTunnelBytes(t *testing.T) {
+	u := &mockHijacker{}
+	rw := &ResponseWriter{ResponseWriter: u, StatusCode: http.StatusOK}
+	conn, _, err := rw.Hijack()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	defer u.peer.Close()
+
+	outDone := make(chan struct{})
+	go func() {
+		buf := make([]byte, 3)
+		_, _ = io.ReadFull(u.peer, buf)
+		close(outDone)
+	}()
+	if _, err := conn.Write([]byte("out")); err != nil {
+		t.Fatal(err)
+	}
+	<-outDone
+	if got := rw.HijackedBytesOut.Load(); got != 3 {
+		t.Fatalf("hijacked bytes out = %d, want 3", got)
+	}
+
+	go func() { _, _ = u.peer.Write([]byte("in")) }()
+	buf := make([]byte, 2)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatal(err)
+	}
+	if got := rw.HijackedBytesIn.Load(); got != 2 {
+		t.Fatalf("hijacked bytes in = %d, want 2", got)
+	}
 }

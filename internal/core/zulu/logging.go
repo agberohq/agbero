@@ -54,8 +54,8 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 				timestamp := time.Now().Format("20060102-150405.000000")
 				backupName := logPath + "." + timestamp
 
-				if runtime.GOOS == "windows" {
-					time.Sleep(50 * time.Millisecond)
+				if runtime.GOOS == def.Windows {
+					time.Sleep(def.DefaultLogRenameDelay)
 				}
 
 				if err := os.Rename(logPath, backupName); err != nil {
@@ -108,7 +108,10 @@ func Logging(cfg *alaye.Logging, devMode bool, sm *jack.Shutdown) (*ll.Logger, e
 	multi := lh.NewMultiHandler(handlers...)
 	var final lx.Handler
 	if cfg.Deduplicate.Active() {
-		final = lh.NewDedup(multi, 5*time.Second, lh.WithDedupIgnore("duration", "interval", "delay"))
+		final = lh.NewDedup(multi,
+			def.DefaultLogDedupWindow,
+			lh.WithDedupIgnore("duration", "interval", "delay"),
+		)
 	} else {
 		final = multi
 	}

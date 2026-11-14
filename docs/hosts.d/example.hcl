@@ -1,3 +1,10 @@
+# =============================================================================
+# Development example: multiple local Node processes
+# =============================================================================
+# Shows a round-robin backend pool, a rate-limit bypass rule, and a health
+# check. This is a local-development sample; do not copy the oversized
+# requests value into a public host.
+
 domains = ["example.localhost"]
 
 route "/*" {

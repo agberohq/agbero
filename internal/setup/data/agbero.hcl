@@ -110,7 +110,7 @@ logging {
   # ---------------------------------------------------------
   # victoria {
   #   enabled = "off"
-  #   url = "http://localhost:9428/insert/0/prometheus/api/v1/write"
+  #   url = "http://localhost:9428/insert/jsonline"
   #   batch_size = 500
   # }
 

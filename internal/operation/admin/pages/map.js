@@ -7,6 +7,8 @@
  */
 import { clickmenu } from '../lib/oja.full.esm.js';
 import { storeLocal } from '../js/store.js';
+import { ROUTE_PROTOCOLS } from '../js/constants.js';
+import { formatBytes } from '../js/utils.js';
 
 export default async function({ find, on, onUnmount, ready, inject }) {
     const { store, api, oja } = inject('app');
@@ -25,6 +27,7 @@ export default async function({ find, on, onUnmount, ready, inject }) {
 
     // Load the layout engine then the renderer (both served from the admin FS).
     async function loadGraphDeps() {
+        if (!window.ROUTE_PROTOCOLS) window.ROUTE_PROTOCOLS = ROUTE_PROTOCOLS;
         if (window.RouteGraph && window.GraphLayout) return;
         const load = src => new Promise((res, rej) => {
             const s = document.createElement('script');
@@ -64,9 +67,18 @@ export default async function({ find, on, onUnmount, ready, inject }) {
     }
 
     // Info panel
-    function _row(label, val) {
+    // Values here come from config (hostnames, paths, proxy names), so they stay
+    // escaped unless the caller passes HTML this module built.
+    function _esc(v) {
+        return String(v).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[c]));
+    }
+
+    function _row(label, val, raw) {
         if (val === undefined || val === null || val === '' || val === '—') return '';
-        return `<div class="detail-row"><span class="detail-label">${label}</span><span class="detail-value" style="font-family:var(--font-mono);font-size:11px;">${val}</span></div>`;
+        const out = raw ? val : _esc(val);
+        return `<div class="detail-row"><span class="detail-label">${_esc(label)}</span><span class="detail-value" style="font-family:var(--font-mono);font-size:11px;">${out}</span></div>`;
     }
 
     function _statusBadge(alive, health) {
@@ -81,11 +93,14 @@ export default async function({ find, on, onUnmount, ready, inject }) {
 
         if (node.type === 'host') {
             const hStat = hostsData[node.meta?.hostname] || {};
-            rows.push(_row('Status',     _statusBadge(node.alive)));
+            rows.push(_row('Status',     _statusBadge(node.alive), true));
             rows.push(_row('Total Reqs', hStat.total_reqs?.toLocaleString()));
             rows.push(_row('Routes',     (hStat.routes?.length || 0) + (hStat.proxies?.length || 0) || null));
             if (node.latency_us?.p50) rows.push(_row('p50', (node.latency_us.p50/1000).toFixed(1)+'ms'));
             if (node.latency_us?.p99) rows.push(_row('p99', (node.latency_us.p99/1000).toFixed(1)+'ms'));
+            if (hStat.websockets > 0) rows.push(_row('WebSockets', hStat.websockets + ' active'));
+            if ((hStat.bytes_in || 0) + (hStat.bytes_out || 0) > 0) rows.push(_row('Bytes', formatBytes(hStat.bytes_in || 0) + ' in / ' + formatBytes(hStat.bytes_out || 0) + ' out'));
+            if (hStat.datagrams > 0) rows.push(_row('Datagrams', hStat.datagrams.toLocaleString()));
         }
 
         if (node.type === 'route' && node.meta?.hostname) {
@@ -93,7 +108,7 @@ export default async function({ find, on, onUnmount, ready, inject }) {
             if (node.meta.routeType === 'route') {
                 const r = hStat.routes?.[node.meta.routeIdx];
                 if (r) {
-                    rows.push(_row('Status',   _statusBadge(node.alive)));
+                    rows.push(_row('Status',   _statusBadge(node.alive), true));
                     rows.push(_row('Path',     r.path));
                     rows.push(_row('Reqs',     r.total_reqs?.toLocaleString()));
                     const alive = (r.backends||[]).filter(b=>b.alive!==false).length;
@@ -105,6 +120,7 @@ export default async function({ find, on, onUnmount, ready, inject }) {
                 if (p) {
                     rows.push(_row('Listen',   p.name));
                     rows.push(_row('Sessions', p.active_sessions > 0 ? p.active_sessions : null));
+                    if (p.datagrams > 0) rows.push(_row('Datagrams', p.datagrams.toLocaleString()));
                     rows.push(_row('Protocol', node.protocol?.toUpperCase()));
                 }
             }
@@ -117,12 +133,15 @@ export default async function({ find, on, onUnmount, ready, inject }) {
             const r       = rArr[node.meta.routeIdx];
             const b       = r?.backends?.[node.meta.backendIdx];
             if (b) {
-                rows.push(_row('Status',   _statusBadge(b.alive, b.health)));
+                rows.push(_row('Status',   _statusBadge(b.alive, b.health), true));
                 rows.push(_row('Score',    b.health?.score !== undefined ? b.health.score.toFixed(2) : null));
                 rows.push(_row('Reqs',     b.total_reqs?.toLocaleString()));
-                if (b.failures > 0) rows.push(_row('Failures', `<span style="color:var(--danger)">${b.failures}</span>`));
+                if (b.failures > 0) rows.push(_row('Failures', `<span style="color:var(--danger)">${b.failures}</span>`, true));
                 if (b.latency_us?.p50) rows.push(_row('p50', (b.latency_us.p50/1000).toFixed(1)+'ms'));
                 if (b.latency_us?.p99) rows.push(_row('p99', (b.latency_us.p99/1000).toFixed(1)+'ms'));
+                if (b.websockets > 0) rows.push(_row('WebSockets', b.websockets + ' active'));
+                if (b.bytes_in > 0 || b.bytes_out > 0) rows.push(_row('Bytes', formatBytes(b.bytes_in) + ' in / ' + formatBytes(b.bytes_out) + ' out'));
+                if (b.datagrams > 0) rows.push(_row('Datagrams', b.datagrams.toLocaleString()));
             }
         }
 
@@ -131,15 +150,18 @@ export default async function({ find, on, onUnmount, ready, inject }) {
 
     function buildNodeActions(node) {
         const actions = [];
+        const host = _esc(node.meta?.hostname || '');
+        const routeType = _esc(node.meta?.routeType || '');
         if (node.type === 'host' && node.meta?.hostname) {
-            actions.push(`<button class="btn small" style="width:100%;" data-action="perf-node" data-hostname="${node.meta.hostname}">📈 Performance History</button>`);
-            actions.push(`<button class="btn small" style="width:100%;" data-action="edit-host-hcl" data-hostname="${node.meta.hostname}">✏️ Edit HCL</button>`);
+            actions.push(`<button class="btn small" style="width:100%;" data-action="focus-node" data-hostname="${host}">🎯 Focus Dashboard</button>`);
+            actions.push(`<button class="btn small" style="width:100%;" data-action="perf-node" data-hostname="${host}">📈 Performance History</button>`);
+            actions.push(`<button class="btn small" style="width:100%;" data-action="edit-host-hcl" data-hostname="${host}">✏️ Edit HCL</button>`);
         }
         if (node.type === 'route' && node.meta) {
-            actions.push(`<button class="btn small" style="width:100%;" data-action="open-route-drawer" data-hostname="${node.meta.hostname}" data-idx="${node.meta.routeIdx}" data-routetype="${node.meta.routeType}">🔍 View Details</button>`);
+            actions.push(`<button class="btn small" style="width:100%;" data-action="open-route-drawer" data-hostname="${host}" data-idx="${_esc(node.meta.routeIdx)}" data-routetype="${routeType}">🔍 View Details</button>`);
         }
         if (node.type === 'backend' && node.meta) {
-            actions.push(`<button class="btn small" style="width:100%;" data-action="open-backend-drawer" data-hostname="${node.meta.hostname}" data-routeidx="${node.meta.routeIdx}" data-backendidx="${node.meta.backendIdx}" data-routetype="${node.meta.routeType}">🔍 View Details</button>`);
+            actions.push(`<button class="btn small" style="width:100%;" data-action="open-backend-drawer" data-hostname="${host}" data-routeidx="${_esc(node.meta.routeIdx)}" data-backendidx="${_esc(node.meta.backendIdx)}" data-routetype="${routeType}">🔍 View Details</button>`);
         }
         return actions.join('');
     }
@@ -166,6 +188,7 @@ export default async function({ find, on, onUnmount, ready, inject }) {
         if (node.type === 'host' && node.meta?.hostname) {
             const h = node.meta.hostname;
             items.push({ label: 'View Details',       icon: '🔍', action: () => openInfoPanel(node) });
+            items.push({ label: 'Focus Dashboard',    icon: '🎯', action: () => window.open('/#/focus?host=' + encodeURIComponent(h), '_blank') });
             items.push({ label: 'Performance History',icon: '📈', action: () => emit('perf:open', { hostname: h }) });
             items.push({ label: 'Edit HCL',           icon: '✏️',  action: async () => {
                     const hcl = await api.getHostHCL(h);
@@ -204,34 +227,50 @@ export default async function({ find, on, onUnmount, ready, inject }) {
         if (!graph?.data?.nodes) return;
         const svg = document.querySelector('#graphContainer svg');
         if (!svg) return;
+        const visible = new Set();
         svg.querySelectorAll('.gnode').forEach(el => {
             const label = (el.dataset.label || '').toLowerCase();
             const id    = (el.dataset.id    || '').toLowerCase();
-            const type  = (el.dataset.id || '').split('.').pop() || '';
-            const nodeType = el.classList.contains('gdot--host') ? 'host' :
-                            el.classList.contains('gdot--route') ? 'route' :
-                            el.classList.contains('gdot--backend') ? 'backend' :
-                            el.classList.contains('gdot--root') ? 'root' :
-                            el.classList.contains('gdot--serverless') ? 'serverless' : '';
-            const status = el.classList.contains('status--dead') ? 'dead' :
-                          el.classList.contains('status--degraded') ? 'degraded' : 'ok';
+            const cls   = el.classList;
+            const nodeType = cls.contains('gnode--host') || cls.contains('gdot--host') ? 'host' :
+                            cls.contains('gnode--route') || cls.contains('gdot--route') ? 'route' :
+                            cls.contains('gnode--backend') || cls.contains('gdot--backend') ? 'backend' :
+                            cls.contains('gnode--root') || cls.contains('gdot--root') ? 'root' :
+                            cls.contains('gnode--serverless') || cls.contains('gdot--serverless') ? 'serverless' : '';
+            const protocol = (el.dataset.protocol || '').toLowerCase();
+            const kind     = (el.dataset.kind || '').toLowerCase();
+            const status = cls.contains('status--dead') ? 'dead' :
+                          cls.contains('status--degraded') ? 'degraded' : 'ok';
             let match = true;
             if (_searchTerm) {
                 match = label.includes(_searchTerm) || id.includes(_searchTerm);
             }
             if (_legendFilter) {
-                match = match && (nodeType === _legendFilter);
+                if (_legendFilter === 'proxy') {
+                    match = match && nodeType === 'route' && protocol === 'tcp';
+                } else if (_legendFilter === 'proxy-udp') {
+                    match = match && nodeType === 'route' && protocol === 'udp';
+                } else if (_legendFilter === 'route') {
+                    match = match && nodeType === 'route' && protocol === ROUTE_PROTOCOLS.HTTP;
+                } else if (_legendFilter === ROUTE_PROTOCOLS.MCP) {
+                    match = match && nodeType === 'route' && protocol === ROUTE_PROTOCOLS.MCP;
+                } else if (_legendFilter === 'replay') {
+                    match = match && nodeType === 'serverless' && kind === 'replay';
+                } else {
+                    match = match && nodeType === _legendFilter;
+                }
             }
             if (_healthFilter) {
                 match = match && (status === 'dead' || status === 'degraded');
             }
+            if (match) visible.add(el.dataset.id);
             el.style.opacity = match ? '1' : '0.15';
         });
         svg.querySelectorAll('.gedge, .gedge-flow').forEach(el => {
-            const target = (el.dataset.target || '').toLowerCase();
-            const source = (el.dataset.source || '').toLowerCase();
+            const target = el.dataset.target || '';
+            const source = el.dataset.source || '';
             const match = !_searchTerm && !_legendFilter && !_healthFilter
-                || target.includes(_searchTerm) || source.includes(_searchTerm);
+                || visible.has(target) || visible.has(source);
             el.style.opacity = match ? '' : '0.08';
         });
     }
@@ -372,6 +411,7 @@ export default async function({ find, on, onUnmount, ready, inject }) {
     }
 
     // Info panel action delegation
+    on('[data-action="focus-node"]',       'click', (e, btn) => window.open('/#/focus?host=' + encodeURIComponent(btn.dataset.hostname), '_blank'));
     on('[data-action="perf-node"]',        'click', (e, btn) => emit('perf:open', { hostname: btn.dataset.hostname }));
     on('[data-action="open-route-drawer"]','click', (e, btn) => emit('drawer:open-route',   { host: btn.dataset.hostname, idx: parseInt(btn.dataset.idx), type: btn.dataset.routetype }));
     on('[data-action="open-backend-drawer"]','click',(e,btn) => emit('drawer:open-backend', { host: btn.dataset.hostname, routeIdx: parseInt(btn.dataset.routeidx), backendIdx: parseInt(btn.dataset.backendidx), type: btn.dataset.routetype }));

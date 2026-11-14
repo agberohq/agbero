@@ -2,6 +2,7 @@ package xtcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"io"
 	"net"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
+	"github.com/agberohq/agbero/internal/hub/lifecycle"
 	"github.com/agberohq/agbero/internal/hub/resource"
 )
 
@@ -500,5 +502,58 @@ func TestProxy_ProxyProtocol(t *testing.T) {
 	got := readOne(t, conn)
 	if !bytes.Contains([]byte(got), []byte("Backend1")) {
 		t.Fatalf("got %q, want containing %q", got, "Backend1")
+	}
+}
+
+func TestGracefulStopCtxBoundedWhenAdmittedWorkIsStuck(t *testing.T) {
+	p := NewProxy(resource.New(), "127.0.0.1:0")
+	if !p.life.Admit() {
+		t.Fatal("Admit failed")
+	}
+	defer p.life.Release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := p.GracefulStopCtx(ctx)
+	if !errors.Is(err, lifecycle.ErrDrainTimeout) {
+		t.Fatalf("GracefulStopCtx = %v, want ErrDrainTimeout", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("GracefulStopCtx exceeded bound: %v", time.Since(start))
+	}
+}
+
+func TestProxy_CountsTunnelBytes(t *testing.T) {
+	addr, stop := startIDServer(t, "metric-backend")
+	defer stop()
+	proxyAddr := getFreePort(t)
+	p := NewProxy(resource.New(), proxyAddr)
+	p.AddRoute("*", alaye.Proxy{Backends: []alaye.Server{alaye.NewServer(addr)}})
+	route := p.def
+	if route == nil || len(route.selector.Backends()) == 0 {
+		t.Fatal("route not built")
+	}
+	be := route.selector.Backends()[0].(*Backend)
+
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer p.Stop()
+	waitTCPReady(t, proxyAddr, tcpReadyTimeout)
+
+	conn, err := net.DialTimeout("tcp", proxyAddr, tcpDialTimeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = readOne(t, conn)
+	_ = conn.Close()
+
+	deadline := time.Now().Add(time.Second)
+	for be.Activity.BytesOut.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if be.Activity.BytesOut.Load() == 0 {
+		t.Fatal("TCP tunnel bytes were not counted")
 	}
 }

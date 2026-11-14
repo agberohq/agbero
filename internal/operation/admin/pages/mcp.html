@@ -1,0 +1,92 @@
+<div class="page active">
+    <div class="flex-right">
+        <div style="display:flex;align-items:center;gap:8px;">
+            <h2 style="margin:0;font-size:17px;font-weight:400;">MCP</h2>
+            <span id="mcpStatusBadge" class="badge" style="font-family:var(--font-mono);">—</span>
+        </div>
+        <div style="flex:1;"></div>
+        <button class="btn small" id="mcpRefreshBtn">⟳</button>
+    </div>
+
+    <div style="display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:16px;">
+        <button class="btn small mcp-tab" data-mcp-tab="tokens" style="border-radius:6px 6px 0 0;">Tokens</button>
+        <button class="btn small mcp-tab" data-mcp-tab="audit" style="border-radius:6px 6px 0 0;">Audit</button>
+        <button class="btn small mcp-tab" data-mcp-tab="policy" style="border-radius:6px 6px 0 0;">Policy</button>
+    </div>
+
+    <section data-mcp-panel="tokens">
+        <div id="mcpCards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:16px;"></div>
+
+        <div class="mcp-box" style="background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;">
+                <div>
+                    <div style="font-size:14px;font-weight:500;">Add token</div>
+                    <div style="font-size:11px;color:var(--text-mute);">The token is shown once. It is not stored.</div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1.4fr 1.6fr .8fr auto;gap:10px;align-items:end;">
+                <div><label class="wz-label">User</label><input id="mcpTokenUser" class="wz-input" placeholder="operator" autocomplete="off"></div>
+                <div>
+                    <label class="wz-label">Scope</label>
+                    <div id="mcpScopeOptions" style="display:flex;gap:14px;align-items:center;min-height:34px;padding:0 10px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);">
+                        <label style="display:flex;gap:5px;align-items:center;font-size:12px;cursor:pointer;">
+                            <input type="checkbox" id="mcpScopeRead" value="mcp:read" checked> Read
+                        </label>
+                        <label style="display:flex;gap:5px;align-items:center;font-size:12px;cursor:pointer;">
+                            <input type="checkbox" id="mcpScopePlan" value="mcp:plan"> Plan
+                        </label>
+                    </div>
+                </div>
+                <div><label class="wz-label">TTL</label><input id="mcpTokenTTL" class="wz-input" value="8h" autocomplete="off"></div>
+                <button class="btn primary" id="mcpTokenCreateBtn">Create token</button>
+            </div>
+            <div id="mcpTokenOut" style="display:none;margin-top:14px;padding:12px;background:var(--code-bg);border:1px solid var(--border);border-radius:6px;">
+                <div style="font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;">Token — copy now, it will not be shown again</div>
+                <textarea id="mcpTokenValue" readonly rows="3" class="wz-input" style="width:100%;font-family:var(--font-mono);font-size:11px;resize:vertical;word-break:break-all;"></textarea>
+                <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
+                    <button class="btn small" id="mcpCopyTokenBtn">Copy token</button>
+                    <span id="mcpTokenMeta" style="font-size:11px;color:var(--text-mute);font-family:var(--font-mono);"></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="mcp-box" style="background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                <div>
+                    <div style="font-size:14px;font-weight:500;">Public endpoint</div>
+                    <div id="mcpHostDetail" style="font-size:11px;color:var(--text-mute);margin-top:4px;">—</div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <a id="mcpHostLink" class="btn small" style="display:none;" target="_blank" rel="noopener">Open</a>
+                    <button class="btn small" id="mcpEnableHostBtn" style="display:none;">Enable https://mcp.localhost</button>
+                    <button class="btn small" id="mcpDisableHostBtn" style="display:none;color:var(--danger);border-color:rgba(255,59,48,.4);">Remove</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="mcp-box" style="background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;padding:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div style="font-size:14px;font-weight:500;">Recent tokens</div>
+                <div style="font-size:11px;color:var(--text-mute);">Metadata only — never the token.</div>
+            </div>
+            <div class="table-responsive"><table class="simple-table" id="mcpTokensTable"><thead><tr><th>User</th><th>Scope</th><th>JTI</th><th>Expires</th><th>Status</th><th>Action</th></tr></thead><tbody></tbody></table></div>
+        </div>
+    </section>
+
+    <section data-mcp-panel="audit" style="display:none;">
+        <div class="mcp-box" style="background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;padding:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div style="font-size:14px;font-weight:500;">Audit</div>
+                <button class="btn small" id="mcpAuditRefreshBtn">Refresh</button>
+            </div>
+            <div class="table-responsive"><table class="simple-table" id="mcpAuditTable"><thead><tr><th>Time</th><th>Event</th><th>Actor</th><th>IP</th><th>Tool</th><th>Status</th><th>ms</th></tr></thead><tbody></tbody></table></div>
+        </div>
+    </section>
+
+    <section data-mcp-panel="policy" style="display:none;">
+        <div class="mcp-box" style="background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;padding:16px;">
+            <div style="font-size:14px;font-weight:500;margin-bottom:10px;">Capability policy</div>
+            <div class="table-responsive"><table class="simple-table" id="mcpPolicyTable"><thead><tr><th>Class</th><th>Capability</th><th>Tool</th></tr></thead><tbody></tbody></table></div>
+        </div>
+    </section>
+</div>

@@ -2,10 +2,11 @@
  * pages/hosts/index.js — Hosts list page.
  */
 import { emit, listen, ui, clipboard, notify, pagination, Search, countdown } from '../../lib/oja.full.esm.js';
+import { ROUTE_PROTOCOLS } from '../../js/constants.js';
 
 export default async function({ find, findAll, on, onUnmount, ready, inject }) {
     const { store, api, utils, oja } = inject('app');
-    const { isOn, fmtNum } = utils;
+    const { isOn, fmtNum, formatBytes } = utils;
     const { modal } = oja;
 
     function esc(str) { return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -66,7 +67,7 @@ export default async function({ find, findAll, on, onUnmount, ready, inject }) {
         const kebab = `<button class="btn-kebab" data-action="host-menu" data-hostname="${esc(hostname)}" data-protected="${isProtected}" title="Actions">⋮</button>`;
         const statRoutes=hStats.routes||[];
         let routesHtml='';
-        for(let idx=0;idx<Math.max(cfgRoutes.length,statRoutes.length);idx++){const cfgRoute=cfgRoutes[idx]||{},statRoute=statRoutes[idx]||{},path=esc(cfgRoute.path||statRoute.path||'/'),proto=esc((cfgRoute.protocol||statRoute.protocol||'http').toUpperCase()),configBEs=cfgRoute.backends?.servers||[],statBEs=statRoute.backends||[],displayBEs=statBEs.length?statBEs:configBEs,backendsHtml=displayBEs.length?`<div class="backend-list">${displayBEs.map((b,i)=>backendRowHtml(b,configBEs[i]||{},statBEs,i)).join('')}</div>`:'';routesHtml+=`<div class="route-block clickable" data-action="open-route" data-host="${esc(hostname)}" data-idx="${idx}" data-type="route"><div class="route-header"><span class="badge ${proto==='HTTP'?'success':'info'}">${proto}</span><span class="route-path">${path}</span>${routeBadges(cfgRoute)}</div>${backendsHtml}</div>`;}
+        for(let idx=0;idx<Math.max(cfgRoutes.length,statRoutes.length);idx++){const cfgRoute=cfgRoutes[idx]||{},statRoute=statRoutes[idx]||{},path=esc(cfgRoute.path||statRoute.path||'/'),proto=esc((cfgRoute.protocol||statRoute.protocol||ROUTE_PROTOCOLS.HTTP).toUpperCase()),configBEs=cfgRoute.backends?.servers||[],statBEs=statRoute.backends||[],displayBEs=statBEs.length?statBEs:configBEs,backendsHtml=displayBEs.length?`<div class="backend-list">${displayBEs.map((b,i)=>backendRowHtml(b,configBEs[i]||{},statBEs,i)).join('')}</div>`:'';routesHtml+=`<div class="route-block clickable" data-action="open-route" data-host="${esc(hostname)}" data-idx="${idx}" data-type="route"><div class="route-header"><span class="badge ${proto===ROUTE_PROTOCOLS.HTTP.toUpperCase()?'success':'info'}">${proto}</span><span class="route-path">${path}</span>${routeBadges(cfgRoute)}</div>${backendsHtml}</div>`;}
         for(let idx=0;idx<Math.max(cfgProxies.length,(hStats.proxies||[]).length);idx++){const cfgProxy=cfgProxies[idx]||{},statProxy=(hStats.proxies||[])[idx]||{},proxyName=esc(cfgProxy.name||statProxy.name||statProxy.path||'*'),listenAddr=esc(cfgProxy.listen||statProxy.name?.replace(/\s.*$/,'')||''),statBEs=statProxy.backends||[],configBEs=cfgProxy.backends||[],displayBEs=statBEs.length?statBEs:configBEs,backendsHtml=displayBEs.length?`<div class="backend-list">${displayBEs.map((b,i)=>backendRowHtml(b,configBEs[i]||{},statBEs,i)).join('')}</div>`:'';
             // Detect protocol from config or stat
             const isUDP=(cfgProxy.protocol||statProxy.protocol||'').toLowerCase()==='udp';
@@ -75,6 +76,10 @@ export default async function({ find, findAll, on, onUnmount, ready, inject }) {
             const activeSessions=isUDP&&statProxy.active_sessions>0?`<span class="badge" style="background:var(--hover-bg);color:var(--text-mute);border:1px solid var(--border);">${fmtNum(statProxy.active_sessions)} sessions</span>`:'';
             routesHtml+=`<div class="route-block clickable" data-action="open-route" data-host="${esc(hostname)}" data-idx="${idx}" data-type="proxy"><div class="route-header">${protoBadge}${matcherBadge}<span class="route-path">${listenAddr?listenAddr+' → ':''}${proxyName}</span>${cfgProxy.sni?`<span class="badge">SNI: ${esc(cfgProxy.sni)}</span>`:''}${activeSessions}</div>${backendsHtml}</div>`;}
         const hostMeta=[];if(cfgHost.compression)hostMeta.push('<span class="badge">GZIP</span>');if(cfgHost.bind?.length)hostMeta.push(`<span class="badge">:${cfgHost.bind.join(', :')}</span>`);
+        const hostBytes=(hStats.bytes_in||0)+(hStats.bytes_out||0);
+        if(hostBytes)hostMeta.push(`<span class="badge" title="Tunnel and response bytes">${formatBytes(hostBytes)}</span>`);
+        if(hStats.websockets)hostMeta.push(`<span class="badge info">WS ${hStats.websockets}</span>`);
+        if(hStats.datagrams)hostMeta.push(`<span class="badge">${fmtNum(hStats.datagrams)} datagrams</span>`);
         const sourceFile=cfgHost.source_file?`<span class="host-source-file" title="Config file">${esc(cfgHost.source_file)}</span>`:'';
         return `<div class="host-row" data-hostname="${esc(hostname)}"><div class="host-header"><div class="host-header-left"><span class="dot ${agg.cls}" title="${esc(agg.label||agg.cls)}" style="flex-shrink:0;margin-right:6px;"></span><span class="host-name clickable" data-action="open-host-route" data-hostname="${esc(hostname)}">${esc(hostname)}</span><span class="badge ${tlsClass}" title="${esc(tlsTitle)}" style="margin-left:6px;">${tlsText}</span>${isProtected?`<span class="badge" style="background:var(--hover-bg);color:var(--text-mute);border:1px solid var(--border);margin-left:2px;" title="Protected">PROTECTED</span>`:''}${hStats.total_reqs?`<span class="badge" style="background:var(--hover-bg);color:var(--text-mute);border:1px solid var(--border);margin-left:2px;">${fmtNum(hStats.total_reqs)} reqs</span>`:''} ${hostMeta.join('')}</div><div class="host-header-right">${sourceFile}${sparkBarHtml(hostname)}${kebab}</div></div>${cfgHost.domains?.length>1?`<div class="host-meta" style="padding:2px 12px 4px;font-size:11px;color:var(--text-mute);">${cfgHost.domains.map(esc).join(', ')}</div>`:''} ${routesHtml}</div>`;
     }
@@ -112,6 +117,9 @@ export default async function({ find, findAll, on, onUnmount, ready, inject }) {
         if (!h) return;
         const { clickmenu } = inject('app').oja;
         const items = [];
+        items.push({ label: 'Open Focus Dashboard', icon: '🎯', action: () => {
+            window.open('/#/focus?host=' + encodeURIComponent(h), '_blank');
+        }});
         if (!protected_) {
             items.push({ label: 'Edit HCL', icon: '✏️', action: async () => {
                     ui.btn.loading(btn, '…');

@@ -428,3 +428,70 @@ func TestHostHandler_Create_PathTraversal(t *testing.T) {
 		t.Error("Path traversal may have created files outside expected locations")
 	}
 }
+
+func TestHostHandler_CreateThenUpdateHCLPreservesFile(t *testing.T) {
+	_, hostsDir, shared, cleanup := setupTestHost(t)
+	defer cleanup()
+
+	r := chi.NewRouter()
+	HostHandler(shared, r)
+
+	created := `# original
+domains = ["edit.example.com"]
+route "/" {
+  backend {
+    server { address = "http://127.0.0.1:9000" }
+  }
+}
+`
+	req := httptest.NewRequest(http.MethodPost, "/discovery?domain=edit.example.com", bytes.NewBufferString(created))
+	req.Header.Set("Content-Type", "application/hcl")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create failed: %d %s", w.Code, w.Body.String())
+	}
+
+	updated := `# updated
+domains = ["edit.example.com"]
+route "/" {
+  backend {
+    server { address = "http://127.0.0.1:9001" }
+  }
+}
+`
+	req = httptest.NewRequest(http.MethodPut, "/discovery/edit.example.com", bytes.NewBufferString(updated))
+	req.Header.Set("Content-Type", "application/hcl")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update failed: %d %s", w.Code, w.Body.String())
+	}
+	host := shared.Discovery.Get("edit.example.com")
+	if host == nil || len(host.Routes) != 1 ||
+		len(host.Routes[0].Backends.Servers) != 1 ||
+		host.Routes[0].Backends.Servers[0].Address.String() != "http://127.0.0.1:9001" {
+		t.Fatalf("updated config not loaded: %+v", host)
+	}
+	if err := shared.Discovery.ReloadFull(); err != nil {
+		t.Fatal(err)
+	}
+	host = shared.Discovery.Get("edit.example.com")
+	if host == nil || host.Routes[0].Backends.Servers[0].Address.String() != "http://127.0.0.1:9001" {
+		t.Fatalf("updated config did not survive reload: %+v", host)
+	}
+	files, _ := hostsDir.ReadFiles()
+	found := false
+	for _, f := range files {
+		data, _ := os.ReadFile(hostsDir.FilePath(f.Name()))
+		if bytes.Contains(data, []byte("# updated")) {
+			found = true
+		}
+		if bytes.Contains(data, []byte("# original")) {
+			t.Fatal("old HCL content still present after update")
+		}
+	}
+	if !found {
+		t.Fatal("updated HCL content not written")
+	}
+}

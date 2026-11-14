@@ -2,6 +2,7 @@ package alaye
 
 import (
 	"encoding/json"
+	"net/url"
 	"slices"
 
 	"github.com/agberohq/agbero/internal/core/def"
@@ -39,6 +40,67 @@ func RedactRoute(r *Route) {
 
 	redactGit(&r.Web.Git)
 	redactGit(&r.Serverless.Git)
+
+	// Cache credentials are plain strings, so the JSON marshaller cannot
+	// redact them on its own.
+	redactCache(&r.Cache, &r.Serverless)
+	redactServerless(&r.Serverless)
+}
+
+// redactCache blanks Redis passwords on the route cache, every replay cache and
+// every worker cache.
+func redactCache(c *Cache, s *Serverless) {
+	if c != nil && c.Redis != nil {
+		c.Redis.Password = def.RedactedValue
+	}
+	if s == nil {
+		return
+	}
+	for i := range s.Replay {
+		if s.Replay[i].Cache.Redis != nil {
+			s.Replay[i].Cache.Redis.Password = def.RedactedValue
+		}
+	}
+	for i := range s.Workers {
+		if s.Workers[i].Cache.Redis != nil {
+			s.Workers[i].Cache.Redis.Password = def.RedactedValue
+		}
+	}
+}
+
+// redactServerless blanks credentials inside replay blocks: the URL may carry
+// userinfo, headers often carry bearer tokens, and Auth.Secret is a credential
+// even when it is not a secret-store reference.
+func redactServerless(s *Serverless) {
+	if s == nil {
+		return
+	}
+	for i := range s.Replay {
+		rep := &s.Replay[i]
+		if len(rep.Headers) > 0 {
+			for k := range rep.Headers {
+				rep.Headers[k] = def.RedactedValue
+			}
+		}
+		if rep.URL != "" {
+			rep.URL = redactURLUserinfo(rep.URL)
+		}
+		rep.Auth.Secret = def.RedactedValue
+	}
+}
+
+// redactURLUserinfo keeps the scheme/host/path but strips user:pass. A URL that
+// fails to parse is replaced outright, since it may still hold a secret.
+func redactURLUserinfo(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return def.RedactedValue
+	}
+	if u.User == nil {
+		return raw
+	}
+	u.User = url.User(def.RedactedValue)
+	return u.String()
 }
 
 func redactGit(g *Git) {

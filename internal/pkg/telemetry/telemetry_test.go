@@ -284,3 +284,20 @@ func newTestStore(t *testing.T) *telemetry.Store {
 	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
+
+func TestStore_BackendRecordAndQuery(t *testing.T) {
+	store := newTestStore(t)
+	now := time.Now().Unix()
+	store.RecordBackend("example.localhost", "/api", "127.0.0.1:9000", telemetry.Sample{
+		Timestamp: now, RequestsSec: 42, P99Ms: 3.2, ErrorRate: 0.5, InFlight: 4,
+	})
+	time.Sleep(6 * time.Second)
+
+	got, err := store.QueryBackend("example.localhost", "/api", "127.0.0.1:9000", telemetry.KnownRanges["30m"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].RequestsSec != 42 || got[0].InFlight != 4 {
+		t.Fatalf("backend samples = %+v", got)
+	}
+}

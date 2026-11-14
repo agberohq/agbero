@@ -1,3 +1,14 @@
+# =============================================================================
+# Replay relay for RSS feeds (CORS-sensitive third-party APIs)
+# =============================================================================
+# This is relay mode: the client supplies the upstream URL through ?url= or
+# X-Agbero-Replay-Url. It is intentionally a replay route, not a generic
+# open proxy, and it MUST be restricted before production use.
+#
+# The wildcard domain below is a development convenience. Replace it with an
+# explicit allow-list of feed hosts; private/loopback destinations are still
+# blocked by Agbero's SSRF guard.
+
 # RSS Proxy — relay mode: client passes ?url= and agbero forwards it
 domains = ["cors.localhost"]
 

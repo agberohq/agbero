@@ -3,9 +3,7 @@ package handlers
 import (
 	"context"
 	"net/http"
-	"time"
 
-	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/handlers/xtcp"
 	"github.com/agberohq/agbero/internal/handlers/xudp"
 	"github.com/quic-go/quic-go/http3"
@@ -73,23 +71,7 @@ func (t *TCPListener) Start() error {
 }
 
 func (t *TCPListener) Stop(ctx context.Context) error {
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		// No deadline in context — use the standard transport drain timeout
-		// so we don't wait forever, but still give connections time to drain.
-		deadline = time.Now().Add(def.DefaultTransportDrainTimeout)
-	}
-	done := make(chan struct{})
-	go func() {
-		t.Proxy.GracefulStop(deadline)
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return t.Proxy.GracefulStopCtx(ctx)
 }
 
 func (t *TCPListener) Addr() string { return t.Proxy.Listen }
@@ -105,17 +87,7 @@ func (u *UDPListener) Start() error {
 }
 
 func (u *UDPListener) Stop(ctx context.Context) error {
-	done := make(chan struct{})
-	go func() {
-		u.Proxy.Stop()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return u.Proxy.StopCtx(ctx)
 }
 
 func (u *UDPListener) Addr() string { return u.Proxy.Listen }

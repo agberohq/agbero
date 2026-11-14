@@ -9,8 +9,10 @@ import { store, getHost, setHost } from './store.js';
 import { startMetricsPolling } from './metrics.js';
 import {
     fetchConfig, fetchUptime, fetchCerts, parseCertificates,
+    fetchSystem,
     getApi, apiSetToken, apiClearToken, reinitApi,
     fetchStatus, logout,
+    fetchMCPStatus, createMCPToken, revokeMCPToken, fetchMCPAudit, createMCPHost, deleteMCPHost,
     refreshToken,
     fetchFirewall, addFirewallRule, deleteFirewallRule,
     addHost, addHostHCL, previewHost, deleteHost, updateHost, updateHostHCL, getHostHCL, checkHostExists,
@@ -57,10 +59,17 @@ function stopPolling() {
 }
 
 export async function loadConfigData() {
-    const [config, uptime, certs] = await Promise.all([fetchConfig(), fetchUptime(), fetchCerts()]);
+    const [config, uptime, certs, system] = await Promise.all([
+        fetchConfig(), fetchUptime(), fetchCerts(), fetchSystem(),
+    ]);
     if (!config) return;
     store.set('lastConfig', config);
-    store.set('sys.version', 'v' + (config.global?.version ?? '—'));
+    // The header must show the binary build version, not the HCL `version`
+    // attribute inside the global block.
+    const rawVersion = system?.version || config.global?.build || '';
+    store.set('sys.version', rawVersion
+        ? (String(rawVersion).startsWith('v') ? String(rawVersion) : 'v' + rawVersion)
+        : 'v—');
     const parsedCerts = parseCertificates(certs);
     store.set('certificates',   parsedCerts);
     store.set('certs.active',   parsedCerts.filter(c => c.days_left > 0).length);
@@ -89,7 +98,13 @@ async function _onLoginSuccess() {
     modal.closeAll();
     startPollingIfNeeded();
     await loadConfigData();
-    const dest = auth.session.intendedPath() || '/';
+    // Preserve the full route (including #/focus query parameters) across
+    // login. The old path-only value sent operators back to the dashboard.
+    let dest = auth.session.intendedPath();
+    if (!dest) {
+        const hashRoute = window.location.hash.replace(/^#/, '');
+        dest = hashRoute || '/';
+    }
     auth.session.clearIntendedPath();
     router.navigate(dest);
 }
@@ -119,6 +134,7 @@ async function bootstrapApp() {
             keeperStatus, keeperUnlock, keeperLock, keeperList,
             keeperGet, keeperSet, keeperSetFile, keeperDelete,
             setupTOTP, fetchTelemetry, logout,
+            fetchMCPStatus, createMCPToken, revokeMCPToken, fetchMCPAudit, createMCPHost, deleteMCPHost,
             parseCertificates: _parseCertificates,
         },
         utils: {
@@ -153,6 +169,23 @@ async function bootstrapApp() {
     auth.session.OnRenew((newToken) => { apiSetToken(newToken); logger.info('auth', 'Session renewed'); });
 
     listen('config:reload', () => loadConfigData());
+    listen('host:reload', async ({ hostname } = {}) => {
+        await loadConfigData();
+        notify.show(hostname ? 'Refreshed ' + hostname : 'Configuration refreshed', 'success');
+    });
+    listen('auth:renew:request', async () => {
+        try {
+            const fresh = await refreshToken();
+            if (fresh && fresh.token) {
+                await auth.session.renew(fresh.token);
+                notify.show('Session renewed', 'success');
+            } else {
+                notify.show('Could not renew the session', 'error');
+            }
+        } catch {
+            notify.show('Could not renew the session', 'error');
+        }
+    });
     listen('app:navigate',  ({ path }) => { if (path) router.navigate(path); });
 
     initPerfListeners();
@@ -207,7 +240,10 @@ async function bootstrapApp() {
     const appGroup = router.Group('/');
     appGroup.Use(async (ctx, next) => {
         if (!auth.guard('protected')) {
-            try { auth.session._metaStore?.set?.('intendedPath', ctx.path); } catch {}
+            try {
+                const qs = new URLSearchParams(ctx.query || {}).toString();
+                auth.session._metaStore?.set?.('intendedPath', ctx.path + (qs ? '?' + qs : ''));
+            } catch {}
             modal.open('loginModal');
             return;
         }
@@ -216,6 +252,7 @@ async function bootstrapApp() {
 
     appGroup.Get('/',         Out.page('/pages/dashboard.html', '/pages/dashboard.js'));
     appGroup.Get('/hosts',    Out.page('/pages/hosts/index.html', '/pages/hosts/index.js'));
+    appGroup.Get('/focus',    Out.page('/pages/focus.html', '/pages/focus.js'));
     appGroup.Get('/cluster',  Out.page('/pages/cluster.html', '/pages/cluster.js'));
     appGroup.Get('/map',      Out.page('/pages/map.html', '/pages/map.js'));
     appGroup.Get('/firewall', Out.page('/pages/firewall.html', '/pages/firewall.js'));
@@ -224,6 +261,7 @@ async function bootstrapApp() {
     appGroup.Get('/keeper',   Out.page('/pages/keeper.html', '/pages/keeper.js'));
     appGroup.Get('/profile',  Out.page('/pages/profile.html', '/pages/profile.js'));
     appGroup.Get('/certs',    Out.page('/pages/certs.html', '/pages/certs.js'));
+    appGroup.Get('/mcp',      Out.page('/pages/mcp.html', '/pages/mcp.js'));
     appGroup.Get('/add-host', Out.page('/pages/add-host/index.html', '/pages/add-host/index.js'));
 
     router.NotFound(Out.html('<div class="page active"><div class="empty-state">Page Not Found</div></div>'));
@@ -237,7 +275,38 @@ async function bootstrapApp() {
     // logged itself out within one polling cycle of any refresh. `await
     // auth.session.token()` decrypts and primes the in-memory copy, so the
     // synchronous accessor works afterwards.
+    // When Focus is opened from an authenticated admin tab, hand the token
+    // to the new tab in memory instead of forcing a second login.
+    window.addEventListener('message', async (event) => {
+        if (event.origin !== window.location.origin) return;
+        if (event.data?.type !== 'agbero:auth-token-request') return;
+        if (!auth.session.isActive()) return;
+        try {
+            const shared = await auth.session.token();
+            if (shared && event.source) {
+                event.source.postMessage({ type: 'agbero:auth-token', token: shared }, event.origin);
+            }
+        } catch {}
+    });
+
     let token = auth.session.tokenSync();
+    if (!token && window.opener?.postMessage) {
+        token = await new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(null), 400);
+            const onMessage = (event) => {
+                if (event.origin !== window.location.origin) return;
+                if (event.data?.type !== 'agbero:auth-token' || !event.data.token) return;
+                clearTimeout(timer);
+                window.removeEventListener('message', onMessage);
+                resolve(event.data.token);
+            };
+            window.addEventListener('message', onMessage);
+            try { window.opener.postMessage({ type: 'agbero:auth-token-request' }, window.location.origin); } catch {}
+        });
+        if (token) {
+            try { await auth.session.start(token); } catch {}
+        }
+    }
     if (!token) {
         try { token = await auth.session.token(); }
         catch (e) { logger.warn('auth', 'Could not restore session token', e?.message); }

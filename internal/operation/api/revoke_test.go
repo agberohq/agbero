@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/pkg/revoke"
 	"github.com/go-chi/chi/v5"
@@ -169,34 +171,14 @@ func TestRevokeHandler(t *testing.T) {
 	})
 
 	t.Run("store error", func(t *testing.T) {
-		// Create a store with a read-only directory to force errors
-		tmpDir := expect.NewFolder(t.TempDir())
-		// Make directory read-only (this works on Unix systems)
-		if err := os.Chmod(tmpDir.Path(), 0555); err != nil {
-			t.Skip("cannot set read-only permission on this system")
-		}
-		defer os.Chmod(tmpDir.Path(), 0755) // Restore for cleanup
-
-		store, err := revoke.New(tmpDir, logger)
-		if err != nil {
+		// Oshodi opens a lock file next to the database. A directory in place
+		// of the database makes New fail before a handler can be constructed.
+		tmpDir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(tmpDir, def.DefaultRevokedDBName), 0700); err != nil {
 			t.Fatal(err)
 		}
-
-		shared := &Shared{
-			Logger:      logger,
-			RevokeStore: store,
-		}
-
-		r := chi.NewRouter()
-		RevokeHandler(shared, r)
-
-		req := revokeRequest(t, "fail-jti", "test-service", time.Now().Add(time.Hour))
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-
-		// Should get 500 because persist will fail
-		if w.Code != http.StatusInternalServerError {
-			t.Errorf("expected 500 on store error, got %d", w.Code)
+		if _, err := revoke.New(expect.NewFolder(tmpDir), logger); err == nil {
+			t.Fatal("expected revoke.New to fail for an invalid database path")
 		}
 	})
 }

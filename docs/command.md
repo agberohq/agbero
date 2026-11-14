@@ -35,11 +35,17 @@ agbero run [flags]
 
 **Flags:**
 - `-d, --dev`: Enable development mode (debug logs, staging certificates)
+- `--silent`: Never prompt; fail if the Keeper is locked
+- `--service`: Service mode; never prompt, start locked, and wait for `agbero keeper unlock`
+
+`agbero service install` writes `run --service` into the systemd unit. Existing
+units created by older versions should be reinstalled so they get the flag.
 
 **Examples:**
 ```bash
 agbero run
 agbero run --dev
+agbero run --service
 agbero run --config ./custom/agbero.hcl
 ```
 
@@ -172,11 +178,13 @@ agbero keeper <subcommand> [flags]
 **Key format:** `namespace/key` or `ss://namespace/key`
 
 **Passphrase resolution order (at startup):**
-1. `keeper.passphrase` field in `agbero.hcl` (may be an `env.` or `ss://` reference)
-2. `keeper.passphrase_file` (recommended for services; `0600` or `0640 root:agbero`)
-3. `AGBERO_KEEPER_PASSPHRASE` environment variable
-4. `AGBERO_PASSPHRASE` environment variable (deprecated alias)
-5. Interactive terminal prompt (if running in a terminal)
+1. systemd credential `$CREDENTIALS_DIRECTORY/keeper_passphrase`
+2. `keeper.passphrase` field in `agbero.hcl` (prefer an `env.` or `ss://` reference)
+3. legacy `keeper.passphrase_file` (existing deployments only)
+4. `AGBERO_KEEPER_PASSPHRASE` environment variable
+5. `AGBERO_PASSPHRASE` environment variable (deprecated alias)
+6. interactive terminal prompt
+7. otherwise a service starts locked and waits for `agbero keeper unlock`
 
 **Examples:**
 ```bash
@@ -203,6 +211,9 @@ agbero keeper delete myapp/db-password
 
 # Change the master passphrase (re-encrypts everything)
 agbero keeper rotate
+
+# Unlock a running service that started locked
+agbero keeper unlock
 ```
 ### Rotating the Master Passphrase
 
@@ -217,7 +228,7 @@ agbero keeper rotate
 
 # 3. Update your passphrase wherever it is stored:
 #    - Update AGBERO_KEEPER_PASSPHRASE in your system service environment
-#    - Update the secret in your secrets manager / CI environment
+#    - Update the systemd credential / Vault / CI secret
 #    - Update agbero.hcl if you hardcoded it (please don't)
 
 # 4. Restart Agbero with the new passphrase
@@ -368,6 +379,14 @@ agbero cert info
 agbero service <subcommand> [flags]
 ```
 
+`service start` and `service restart` wait for the process to stay active, then
+prompt for the Keeper passphrase when the service comes up locked. Direct
+`systemctl start/restart agbero` cannot prompt; after it, run
+`agbero keeper unlock`.
+
+The installed unit must use `agbero run --service`. Reinstall older units with
+`sudo agbero service install` after updating the binary.
+
 **Flags for install:**
 - `--here`: Install configuration in current directory only (skip service)
 
@@ -504,6 +523,38 @@ sudo agbero uninstall --force
 ---
 
 ## Navigation
+
+### `log` - Tail the Agbero Log
+
+Print recent log lines, or follow the log:
+
+```bash
+agbero log
+agbero log -n 5000
+agbero log -f
+```
+
+The path comes from `logging.file.path`; if unset, Agbero uses
+`data_dir/logs.d/agbero.log`.
+
+---
+
+### `scan` - Read-Only Posture Scan
+
+Checks configuration, security, storage permissions, hosts, TLS, MCP, and
+Keeper posture without changing anything. It is a report, not a repair command.
+
+**Usage:**
+```bash
+agbero scan
+agbero scan --json
+```
+
+Findings include severity, code, evidence, and a suggested fix. JSON output is
+suitable for automation. A future `agbero doctor` command may apply selected
+fixes; `scan` itself never writes.
+
+---
 
 ### `home` - Navigate Configuration Directories
 Print or navigate to Agbero configuration directories.
@@ -679,7 +730,8 @@ When `--config` is not specified, Agbero looks for `agbero.hcl` in this order:
 
 ### Development Setup
 ```bash
-# Initialize configuration
+# Initialize configuration (asks for admin, TOTP, LE email, and first site:
+# basic website, reverse proxy, or web.localhost)
 agbero init
 
 # Run in foreground with auto-reload
