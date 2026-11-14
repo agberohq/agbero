@@ -301,6 +301,29 @@ func (m *Manager) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
 }
 
+// shouldLogPath applies logging.include and logging.skip as path prefixes.
+// An empty include list means every path is eligible.
+func (m *Manager) shouldLogPath(path string) bool {
+	if len(m.includeLogPrefixes) > 0 {
+		included := false
+		for _, prefix := range m.includeLogPrefixes {
+			if prefix != "" && strings.HasPrefix(path, prefix) {
+				included = true
+				break
+			}
+		}
+		if !included {
+			return false
+		}
+	}
+	for _, prefix := range m.skipLogPrefixes {
+		if prefix != "" && strings.HasPrefix(path, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
 // logRequest records structured access log entries for HTTP requests with timing and metadata.
 // It pools argument slices for efficiency and includes host, path, duration, status, and optional bot detection data.
 func (m *Manager) logRequest(host string, r *http.Request, start time.Time, status int, bytes int64) {
@@ -322,7 +345,7 @@ func (m *Manager) logRequest(host string, r *http.Request, start time.Time, stat
 		}
 	}
 
-	if m.skipLogPaths[r.URL.Path] {
+	if !m.shouldLogPath(r.URL.Path) {
 		return
 	}
 

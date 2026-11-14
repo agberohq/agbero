@@ -1,3 +1,9 @@
+# =============================================================================
+# Markdown documentation site
+# =============================================================================
+# "normal" renders a single Markdown document; switch view to "browse" for a
+# navigation sidebar. The highlight theme is a renderer option, not a path.
+
 domains = ["markdown.localhost"]
 
 route "/" {

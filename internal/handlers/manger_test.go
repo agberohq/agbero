@@ -857,3 +857,29 @@ func TestManager_handleRequest_ServesSiteFavicon(t *testing.T) {
 		t.Fatalf("body = %q, want site favicon", got)
 	}
 }
+
+func TestManager_shouldLogPath(t *testing.T) {
+	cfg := testManagerConfig(t)
+	cfg.Global.Logging.Enabled = expect.Active
+	cfg.Global.Logging.Skip = []string{"/health"}
+	cfg.Global.Logging.Include = []string{"/api"}
+
+	m, err := NewManager(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	for path, want := range map[string]bool{
+		"/api/v1":      true,
+		"/api":         true,
+		"/other":       false,
+		"/health":      false,
+		"/api/health":  true,
+		"/health/live": false,
+	} {
+		if got := m.shouldLogPath(path); got != want {
+			t.Errorf("shouldLogPath(%q) = %v, want %v", path, got, want)
+		}
+	}
+}

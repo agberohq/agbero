@@ -1,3 +1,13 @@
+# =============================================================================
+# Git-backed Markdown documentation
+# =============================================================================
+# Two deployment styles are shown:
+#   /pull    — polling from a Git URL every minute
+#   /webhook — push-to-deploy via a signed webhook
+#
+# Use a keeper reference for the webhook secret. The same repository can back
+# both routes, but each route needs a distinct git id.
+
 domains = ["markdown.localhost"]
 
 # -----------------------------------------------------------
@@ -42,7 +52,7 @@ route "/webhook" {
       enabled  = "on"
       id       = "olekukonko-sample-webhook"
       url      = "https://github.com/olekukonko/sample"
-      secret   = "${env.GITHUB_WEBHOOK_SECRET}"  # HMAC-SHA256 verification
+      secret   = "ss://integrations/github-webhook-secret"  # HMAC-SHA256 verification
     }
 
     markdown {
