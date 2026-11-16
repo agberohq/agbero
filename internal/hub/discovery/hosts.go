@@ -819,6 +819,17 @@ func (hm *Host) resolveDomain(lookup map[string]*alaye.Host, hostname string) st
 // Set mutates a configuration dynamically into memory without disk IO.
 // Exclusively updates the active routing maps and locks correctly.
 func (hm *Host) Set(domain string, cfg *alaye.Host) {
+	hm.set(domain, cfg, true)
+}
+
+// SetRuntime installs an in-memory host without notifying the config watcher.
+// It is used for ephemeral relay subdomains, whose registration is derived from
+// the relay session rather than from a file change.
+func (hm *Host) SetRuntime(domain string, cfg *alaye.Host) {
+	hm.set(domain, cfg, false)
+}
+
+func (hm *Host) set(domain string, cfg *alaye.Host, notify bool) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
@@ -853,7 +864,9 @@ func (hm *Host) Set(domain string, cfg *alaye.Host) {
 	}
 
 	hm.rebuildLookupLocked()
-	hm.notifyChanged()
+	if notify {
+		hm.notifyChanged()
+	}
 }
 
 // sanitizeHostFilename validates a host config filename before it is joined onto

@@ -33,6 +33,12 @@ import (
 	"github.com/quic-go/quic-go/http3"
 )
 
+// RelayHandler dispatches public requests to registered relay agents.
+type RelayHandler interface {
+	Matches(*http.Request) bool
+	ServeHTTP(http.ResponseWriter, *http.Request)
+}
+
 type ManagerConfig struct {
 	Global      *alaye.Global
 	HostManager *discovery.Host
@@ -45,6 +51,7 @@ type ManagerConfig struct {
 	// TunnelPools is a registry of named SOCKS5 tunnel pools built from the
 	// global tunnel {} blocks. Nil map means no tunnels are configured.
 	TunnelPools map[string]*tunnel.Pool
+	Relay       RelayHandler
 
 	// FirewallStore is the ban store handed over from the manager being replaced
 	// during a config reload. bolt holds an exclusive file lock, so the new

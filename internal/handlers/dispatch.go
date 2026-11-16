@@ -101,6 +101,14 @@ func (m *Manager) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 
+	if m.cfg.Relay != nil && m.cfg.Relay.Matches(r) {
+		rw := &zulu.ResponseWriter{ResponseWriter: w, StatusCode: http.StatusOK}
+		m.cfg.Relay.ServeHTTP(rw, r)
+		totalBytes := rw.BytesWritten + rw.HijackedBytesIn.Load() + rw.HijackedBytesOut.Load()
+		m.logRequest(host, r, start, rw.StatusCode, totalBytes)
+		return
+	}
+
 	var routerName string
 	if len(hcfg.Domains) > 0 {
 		routerName = hcfg.Domains[0]

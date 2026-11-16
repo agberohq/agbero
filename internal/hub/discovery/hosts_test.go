@@ -799,3 +799,21 @@ func TestCreateRawConcurrentSameDomain(t *testing.T) {
 		}
 	}
 }
+
+func TestHost_SetRuntimeDoesNotNotify(t *testing.T) {
+	h := NewHost(expect.NewFolder(t.TempDir()), WithLogger(testLogger))
+	defer h.Close()
+
+	cfg := &alaye.Host{Domains: []string{"hello.relay.test"}}
+	h.SetRuntime("hello.relay.test", cfg)
+	if h.Get("hello.relay.test") == nil {
+		t.Fatal("runtime host not installed")
+	}
+	assertNoChanged(t, h.Changed(), 100*time.Millisecond)
+
+	h.SetRuntime("hello.relay.test", nil)
+	if h.Get("hello.relay.test") != nil {
+		t.Fatal("runtime host not removed")
+	}
+	assertNoChanged(t, h.Changed(), 100*time.Millisecond)
+}

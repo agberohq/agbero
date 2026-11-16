@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +31,7 @@ import (
 	"github.com/agberohq/agbero/internal/hub/cook"
 	"github.com/agberohq/agbero/internal/hub/discovery"
 	"github.com/agberohq/agbero/internal/hub/orchestrator"
+	relayhub "github.com/agberohq/agbero/internal/hub/relay"
 	"github.com/agberohq/agbero/internal/hub/resource"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/middleware/firewall"
@@ -40,6 +43,7 @@ import (
 	"github.com/agberohq/agbero/internal/pkg/telemetry"
 	"github.com/agberohq/agbero/internal/pkg/tunnel"
 	"github.com/agberohq/keeper"
+	"github.com/agberohq/oshodi"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/olekukonko/errors"
 	"github.com/olekukonko/jack"
@@ -66,6 +70,10 @@ type Server struct {
 	clusterManager *cluster.Manager
 	cookManager    *cook.Manager
 	trafficManager *handlers.Manager
+
+	relayServers    []*relayhub.Server
+	relayDispatcher *relayhub.Dispatcher
+	relayCancel     context.CancelFunc
 
 	shutdown *jack.Shutdown
 
@@ -386,6 +394,8 @@ func (s *Server) Start(configPath string) error {
 
 	s.tlsManager.PreloadLocalCertificates(hosts)
 
+	s.startRelay(hosts, s.tlsManager)
+
 	var trustedProxies []string
 	if s.global.Security.Enabled.Active() {
 		trustedProxies = s.global.Security.Allow.Proxies
@@ -410,6 +420,7 @@ func (s *Server) Start(configPath string) error {
 		SharedState: s.sharedState,
 		OrchManager: s.orchManager,
 		TunnelPools: tunnelPools,
+		Relay:       s.relayDispatcher,
 	}
 
 	tm, err := handlers.NewManager(tmCfg)
@@ -468,6 +479,10 @@ func (s *Server) Start(configPath string) error {
 				s.logger.Fields("err", err, "bind", listener.Addr()).Error("listener failed")
 			}
 		}(l)
+	}
+
+	if s.shutdown != nil {
+		s.shutdown.RegisterFunc("Relay", s.stopRelay)
 	}
 
 	if configPath != "" {
@@ -558,6 +573,13 @@ func (s *Server) Reload() {
 		newTLSManager.SetCluster(s.clusterManager)
 	}
 
+	// Rebuild relays before the traffic manager so the new dispatcher is
+	// installed in the replacement manager. Existing relay listeners are
+	// stopped only after the new config has parsed successfully.
+	hosts, _ := s.hostManager.LoadAll()
+	s.stopRelay()
+	s.startRelay(hosts, newTLSManager)
+
 	// Rebuild tunnel pools from the reloaded global config.
 	var reloadedTunnelPools map[string]*tunnel.Pool
 	reloadedTunnelPools, err = buildTunnelPools(global.Tunnels, s.logger)
@@ -580,6 +602,7 @@ func (s *Server) Reload() {
 		SharedState: newSharedState,
 		OrchManager: s.orchManager,
 		TunnelPools: reloadedTunnelPools,
+		Relay:       s.relayDispatcher,
 	}
 
 	s.mu.RLock()
@@ -637,7 +660,6 @@ func (s *Server) Reload() {
 		s.totpHandler = api.NewTOTP(s.apiShared)
 	}
 
-	hosts, _ := s.hostManager.LoadAll()
 	validKeys := make(map[alaye.Key]bool)
 	validRouteKeys := make(map[string]bool)
 
@@ -934,6 +956,134 @@ func (s *Server) serverWatchConfig() {
 			s.Reload()
 		case <-s.shutdown.Done():
 			return
+		}
+	}
+}
+
+// stopRelay tears down the active relay listeners and agent loops.
+func (s *Server) stopRelay() {
+	s.mu.Lock()
+	cancel := s.relayCancel
+	servers := s.relayServers
+	s.relayCancel = nil
+	s.relayServers = nil
+	s.relayDispatcher = nil
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	for _, rs := range servers {
+		_ = rs.Close()
+	}
+}
+
+// startRelay builds remote relay listeners and local agents from the loaded
+// hosts. Relay-only hosts are valid and have no normal routes.
+func (s *Server) startRelay(hosts map[string]*alaye.Host, tlsMgr *tlss.Manager) {
+	var servers []*relayhub.Server
+	ctx, cancel := context.WithCancel(context.Background())
+
+	for _, hcfg := range hosts {
+		for _, rcfg := range hcfg.Relays {
+			enrollToken := rcfg.Auth.Token.String()
+			if enrollToken == "" {
+				s.logger.Fields("relay", rcfg.Name).Warn("relay enrollment token is empty, skipping")
+				continue
+			}
+			if len(hcfg.Domains) == 0 {
+				continue
+			}
+			listen := net.JoinHostPort(rcfg.Listen.Address, strconv.Itoa(rcfg.Listen.Port))
+			var relayDB *oshodi.DB
+			if s.revokeStore != nil {
+				relayDB = s.revokeStore.DB()
+			}
+			rs := relayhub.NewServer(relayhub.ServerConfig{
+				Name:        rcfg.Name,
+				BaseDomain:  hcfg.Domains[0],
+				Listen:      listen,
+				AuthMethod:  rcfg.Auth.Method,
+				EnrollToken: enrollToken,
+				Policy:      rcfg.Policy,
+				TLSConfig: &tls.Config{
+					GetCertificate: tlsMgr.GetCertificate,
+					MinVersion:     tls.VersionTLS12,
+				},
+				Logger: s.logger,
+				DB:     relayDB,
+				RegisterHost: func(domain string) {
+					h := &alaye.Host{
+						Domains: []string{domain},
+						Bind:    hcfg.Bind,
+						TLS:     hcfg.TLS,
+					}
+					s.hostManager.SetRuntime(domain, h)
+				},
+				UnregisterHost: func(domain string) {
+					s.hostManager.SetRuntime(domain, nil)
+				},
+			})
+			if err := rs.Start(); err != nil {
+				s.logger.Fields("relay", rcfg.Name, "listen", listen, "err", err).Error("relay listener failed")
+				continue
+			}
+			servers = append(servers, rs)
+		}
+	}
+	s.mu.Lock()
+	s.relayServers = servers
+	s.relayDispatcher = relayhub.NewDispatcher(servers)
+	s.relayCancel = cancel
+	s.mu.Unlock()
+
+	for _, hcfg := range hosts {
+		for _, acfg := range hcfg.Agents {
+			var exposes []alaye.Expose
+			for _, r := range hcfg.Routes {
+				for _, ex := range r.Exposes {
+					if ex.Via != acfg.Name {
+						continue
+					}
+					if ex.LocalPath == "" {
+						ex.LocalPath = "/"
+					}
+					exposes = append(exposes, ex)
+				}
+			}
+			if len(exposes) == 0 {
+				continue
+			}
+			credentialKey := "relay/agents/" + acfg.Name + "/credential"
+			loadCredential := func() string {
+				if s.keeperStore == nil {
+					return ""
+				}
+				b, err := s.keeperStore.Get(credentialKey)
+				if err != nil {
+					return ""
+				}
+				return string(b)
+			}
+			saveCredential := func(v string) error {
+				if s.keeperStore == nil {
+					return nil
+				}
+				return s.keeperStore.Set(credentialKey, []byte(v))
+			}
+			client := relayhub.NewClient(relayhub.ClientConfig{
+				Agent:          acfg.Name,
+				Relay:          acfg.Relay,
+				Enroll:         acfg.Enroll.String(),
+				Token:          acfg.Token.String(),
+				Local:          acfg.Local,
+				Insecure:       acfg.Insecure,
+				Pool:           acfg.Pool,
+				Exposes:        exposes,
+				LoadCredential: loadCredential,
+				SaveCredential: saveCredential,
+				Logger:         s.logger,
+			})
+			go client.Run(ctx)
 		}
 	}
 }
