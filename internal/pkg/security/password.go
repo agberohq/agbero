@@ -24,11 +24,21 @@ func (g *Password) Generate(length int) (string, error) {
 	if length <= 0 {
 		length = 32
 	}
-	b := make([]byte, length)
+	// Base64 expands by 4/3, so allocate enough source bytes for the
+	// requested output length instead of slicing a fixed 32-byte buffer.
+	rawLen := (length*3 + 3) / 4
+	if rawLen < 1 {
+		rawLen = 1
+	}
+	b := make([]byte, rawLen)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("random generation failed: %w", err)
 	}
-	return base64.URLEncoding.EncodeToString(b)[:length], nil
+	encoded := base64.URLEncoding.EncodeToString(b)
+	if len(encoded) < length {
+		return "", fmt.Errorf("random generation produced a short value")
+	}
+	return encoded[:length], nil
 }
 
 // Hash generates a bcrypt hash from a plaintext password
