@@ -26,6 +26,7 @@ type Route struct {
 	Web        Web        `hcl:"web,block,omitempty" json:"web,omitempty"`
 	Backends   Backend    `hcl:"backend,block,omitempty" json:"backends,omitempty"`
 	Serverless Serverless `hcl:"serverless,block,omitempty" json:"serverless,omitempty"`
+	Exposes    []Expose   `hcl:"expose,block" json:"exposes,omitempty"`
 
 	HealthCheck    HealthCheck    `hcl:"health_check,block,omitempty" json:"health_check,omitempty"`
 	CircuitBreaker CircuitBreaker `hcl:"circuit_breaker,block,omitempty" json:"circuit_breaker,omitempty"`
@@ -65,6 +66,12 @@ func (r *Route) Validate() error {
 	case "", def.RouteProtocolHTTP, def.RouteProtocolMCP:
 	default:
 		return errors.Newf("route %q: protocol must be http or mcp", r.Path)
+	}
+
+	for i := range r.Exposes {
+		if err := r.Exposes[i].Validate(); err != nil {
+			return errors.Newf("route %q: %w", r.Path, err)
+		}
 	}
 
 	isWeb := r.Web.Root.IsSet() || len(r.Web.Mounts) > 0 ||
@@ -372,6 +379,20 @@ func (r *Route) Key() string {
 			w.WriteString(mount.Root.String())
 			if mount.Git.Enabled.Active() {
 				writeWebGitKey(w, &mount.Git)
+			}
+		}
+		for _, ex := range r.Exposes {
+			w.WriteString("expose")
+			w.WriteString(ex.ID)
+			w.WriteString(ex.Via)
+			w.WriteString(fmt.Sprint(ex.Path, ex.Subdomain))
+			w.WriteString(ex.LocalPath)
+			w.WriteString(ex.LocalHost)
+			if ex.TCP != nil {
+				w.WriteString(fmt.Sprint("tcp", ex.TCP.PublicPort, ex.TCP.Local))
+			}
+			if ex.UDP != nil {
+				w.WriteString(fmt.Sprint("udp", ex.UDP.PublicPort, ex.UDP.Local))
 			}
 		}
 

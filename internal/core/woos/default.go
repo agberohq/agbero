@@ -26,7 +26,7 @@ func (Defaults) Host(h *alaye.Host) {
 		h.Protected = expect.Inactive
 	}
 
-	if len(h.Routes) > 0 {
+	if len(h.Routes) > 0 || len(h.Relays) > 0 {
 		defaultTLS(&h.TLS, h.Domains)
 	}
 	defaultLimits(&h.Limits)
@@ -40,6 +40,12 @@ func (Defaults) Host(h *alaye.Host) {
 		} else {
 			defaultTCPRoute(&h.Proxies[i])
 		}
+	}
+	for i := range h.Relays {
+		defaultRelay(&h.Relays[i])
+	}
+	for i := range h.Agents {
+		defaultAgent(&h.Agents[i])
 	}
 }
 
@@ -786,6 +792,24 @@ func defaultGit(g *alaye.Git) {
 	}
 	if g.Branch == "" {
 		g.Branch = "main"
+	}
+}
+
+func defaultRelay(r *alaye.Relay) {
+	if r.Listen.Address == "" {
+		r.Listen.Address = "0.0.0.0"
+	}
+	if r.Listen.Protocol == "" {
+		r.Listen.Protocol = "https"
+	}
+	if r.Auth.Method == "" {
+		r.Auth.Method = "enrollment"
+	}
+}
+
+func defaultAgent(a *alaye.Agent) {
+	if a.Pool <= 0 {
+		a.Pool = 8
 	}
 }
 

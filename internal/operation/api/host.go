@@ -172,6 +172,32 @@ func mergeRedactedSecrets(existing, incoming *alaye.Host) {
 		}
 		mergeGitSecrets(&in.Serverless.Git, &ex.Serverless.Git)
 	}
+
+	for ri := range incoming.Relays {
+		for rj := range existing.Relays {
+			if existing.Relays[rj].Name != incoming.Relays[ri].Name {
+				continue
+			}
+			if isRedactedExpectValue(incoming.Relays[ri].Auth.Token) {
+				incoming.Relays[ri].Auth.Token = existing.Relays[rj].Auth.Token
+			}
+			break
+		}
+	}
+	for ai := range incoming.Agents {
+		for aj := range existing.Agents {
+			if existing.Agents[aj].Name != incoming.Agents[ai].Name {
+				continue
+			}
+			if isRedactedExpectValue(incoming.Agents[ai].Token) {
+				incoming.Agents[ai].Token = existing.Agents[aj].Token
+			}
+			if isRedactedExpectValue(incoming.Agents[ai].Enroll) {
+				incoming.Agents[ai].Enroll = existing.Agents[aj].Enroll
+			}
+			break
+		}
+	}
 }
 
 // findRoute locates the existing route for an incoming one: by path first, then

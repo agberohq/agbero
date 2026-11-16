@@ -127,6 +127,13 @@ func RedactHost(h *Host) *Host {
 	for i := range clone.Routes {
 		RedactRoute(&clone.Routes[i])
 	}
+	for i := range clone.Relays {
+		clone.Relays[i].Auth.Token = def.RedactedValue
+	}
+	for i := range clone.Agents {
+		clone.Agents[i].Token = def.RedactedValue
+		clone.Agents[i].Enroll = def.RedactedValue
+	}
 	return clone
 }
 

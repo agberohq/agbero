@@ -1166,3 +1166,94 @@ route "/" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestParseHostConfig_RelayPolicy(t *testing.T) {
+	path := writeTemp(t, `
+domains = ["relay.example.com"]
+
+relay "agents" {
+  listen {
+    address  = "0.0.0.0"
+    port     = 8443
+    protocol = "https"
+  }
+
+  auth {
+    method = "enrollment"
+    token  = "ss://tunnel/relay-enroll"
+  }
+
+  policy {
+    namespace       = ""
+    allow_http      = true
+    allow_subdomain = true
+    allow_tcp_ports = ["20000-20100"]
+    allow_udp_ports = ["20000-20100"]
+    max_agents      = 100
+    max_streams     = 1000
+  }
+}
+`)
+	cfg, err := ParseHostConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	woos.DefaultHost(cfg)
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Relays) != 1 {
+		t.Fatalf("relays = %d, want 1", len(cfg.Relays))
+	}
+	r := cfg.Relays[0]
+	if r.Auth.Method != "enrollment" || r.Auth.Token.String() != "" {
+		t.Fatalf("auth = %+v", r.Auth)
+	}
+	if !r.Policy.AllowHTTP || !r.Policy.AllowSubdomain || len(r.Policy.AllowTCPPorts) != 1 {
+		t.Fatalf("policy did not decode: %+v", r.Policy)
+	}
+}
+
+func TestParseHostConfig_AgentExpose(t *testing.T) {
+	path := writeTemp(t, `
+domains = ["local.example.com"]
+
+agent "default" {
+  relay     = "https://relay.example.com:8443"
+  enroll    = "ss://tunnel/relay-enroll"
+  local     = "http://127.0.0.1:8080"
+  reconnect = true
+  pool      = 4
+}
+
+route "/" {
+  web { root = "/var/www/local" }
+
+  expose "hello" {
+    via        = "default"
+    path       = true
+    subdomain  = true
+    local_path = "/"
+    local_host = "local.example.com"
+  }
+}
+`)
+	cfg, err := ParseHostConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	woos.DefaultHost(cfg)
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Agents) != 1 || cfg.Agents[0].Pool != 4 {
+		t.Fatalf("agents did not decode: %+v", cfg.Agents)
+	}
+	if len(cfg.Routes[0].Exposes) != 1 {
+		t.Fatalf("exposes did not decode: %+v", cfg.Routes[0].Exposes)
+	}
+	ex := cfg.Routes[0].Exposes[0]
+	if ex.ID != "hello" || ex.Via != "default" || !ex.Path || !ex.Subdomain {
+		t.Fatalf("expose = %+v", ex)
+	}
+}
