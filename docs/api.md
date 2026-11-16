@@ -1,6 +1,6 @@
 # Agbero API Reference: Dynamic Route Management
 
-The Agbero API allows you to create and manage routes dynamically without writing HCL files. Routes created via the API are ephemeral, can have time-to-live (TTL) values, and are automatically distributed across your entire cluster.
+The Agbero API allows you to create and manage routes dynamically without writing HCL files. Routes created via the API are ephemeral, can have time-to-live (TTL) values, and are broadcast to connected Agbero peers. Each peer stores the route locally and serves it independently; an offline peer catches up when it rejoins.
 
 ## Core Use Case: Dynamic Load Balancing
 
@@ -32,8 +32,8 @@ Instead of manually creating HCL files for every new service deployment, you can
 
 1. A service (or orchestrator) calls the Agbero API
 2. The route is stored in the cluster's gossip state with key `route:host|path`
-3. All nodes in the cluster receive the route automatically via gossip
-4. Traffic is immediately load-balanced to the new service
+3. Connected peers receive the route via gossip and store it locally
+4. Traffic is load-balanced to the new service by whichever node receives it
 5. Routes expire after TTL if not renewed
 
 ---
@@ -617,7 +617,7 @@ Example response:
 |---------|------------------------|------------|
 | **Persistence** | Persistent on disk | Ephemeral, expires with TTL |
 | **Management** | Manual file edits | Programmatic API |
-| **Distribution** | File sync (manual/SCM) | Automatic cluster gossip |
+| **Distribution** | File sync (manual/SCM) | Broadcast to connected peers; offline peers catch up on join |
 | **Use Case** | Permanent services | Dynamic/temporary services |
 | **TTL Support** | No | Yes |
 | **Auto-cleanup** | No | Yes (on expiry) |

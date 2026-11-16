@@ -526,11 +526,14 @@ gossip {
 
 | Type | Protocol | Description |
 |------|----------|-------------|
-| Host Configs | TCP | Route definitions synced to `hosts.d/` |
-| Certificates | TCP | TLS certificates and encrypted private keys |
-| ACME Challenges | UDP | Let's Encrypt HTTP-01 challenge tokens |
-| Node Status | UDP | Node health and draining status |
-| Distributed Locks | UDP | Coordination primitives |
+| Host configs | Reliable TCP to current peers | Route definitions synced to `hosts.d/`; offline peers catch up on join |
+| Certificates | Reliable TCP to current peers | TLS certificates and encrypted private keys |
+| Keeper secrets | Encrypted gossip | Secret writes/deletes propagated to connected peers |
+| ACME challenges | Gossip | Let's Encrypt HTTP-01 challenge tokens |
+| Node status | Gossip | Node health/liveness metadata |
+| Locks | Gossip | Best-effort coordination, not a consensus lock |
+
+Synchronization is not durable delivery. A node that is offline at write time catches up from a join snapshot when it returns. Traffic distribution and diversion are handled by DNS, an upstream load balancer, or route/backend configuration — not by gossip.
 
 ---
 

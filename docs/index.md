@@ -13,10 +13,10 @@ Traditional proxies often rely on static IP-based rules and manual configuration
 Agbero solves these challenges natively:
 
 *   **Encrypted Secret Store (Keeper):** A built-in, passphrase-protected database holds every credential your proxy needs — API keys, TLS certificates, OAuth secrets, passwords. Reference them anywhere in your config with `ss://namespace/key`. Nothing sensitive ever lives as plaintext in a config file.
-*   **Identity-Based Rate Limiting:** Stop punishing legitimate users behind corporate NATs. Agbero supports distributed rate limiting and firewalling based on JWT claims, headers, or cookies, synchronized across your cluster via Redis or Gossip.
+*   **Identity-Based Rate Limiting:** Stop punishing legitimate users behind corporate NATs. Agbero supports rate limiting and firewalling based on JWT claims, headers, or cookies. Counters are local by default; enable Redis shared state when several nodes must share limits.
 *   **Centralized Edge Authentication:** Eliminate authentication sprawl. Agbero validates JWTs, handles full OAuth flows (Google, GitHub, OIDC), and integrates with external Forward Auth services directly at the edge.
 *   **Zero-Downtime GitOps (Cook):** Deploy static sites and Single Page Applications directly from Git repositories. Agbero pulls, builds isolated deployments, and performs atomic symlink swaps without dropping a single request.
-*   **Distributed Cluster Mesh:** No external dependencies required. Agbero nodes automatically discover each other via UDP Gossip and synchronize routing configurations, ACME certificates, and keeper secrets over encrypted streams.
+*   **Configuration Synchronization:** Agbero nodes discover each other over encrypted gossip and copy host configurations, certificates, and keeper changes to connected peers. Each node keeps serving from local state when peers are unavailable; gossip is not a quorum or a data plane.
 *   **Deep Observability:** Built-in Prometheus and VictoriaMetrics integration provides high-resolution latency histograms and circuit-breaker telemetry without requiring complex log-parsing pipelines.
 
 > **Installation Guide**

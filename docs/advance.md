@@ -4,9 +4,38 @@ Deep dive into Agbero's advanced features: clustering, Git-based deployments, di
 
 ---
 
-## 1. Clustering & Gossip
+## 1. Configuration Synchronization
 
-Agbero uses a hybrid clustering approach. It leverages HashiCorp's memberlist for UDP gossip (node discovery, status, locks, ACME challenges) and reliable TCP streams for large payloads (host configurations, TLS certificates). Keeper secrets are synchronised over the same encrypted gossip channel.
+Agbero nodes are operationally independent. Each node serves traffic from its own local `hosts.d/`, Keeper database, certificates, and connection pools. Gossip is a control plane for copying configuration changes to peers; it is not in the request path and does not create a quorum.
+
+Keeper remains the local encrypted source of truth for secrets on each node. Synchronization only carries secret changes to peers; it does not turn every Keeper into one continuously shared database.
+
+The intended production shape is often just DNS:
+
+```text
+example.com
+    A  102.10.10.1  → Agbero LB 1
+    A  102.10.10.2  → Agbero LB 2
+    A  102.10.10.3  → Agbero LB 3
+```
+
+DNS or an upstream load balancer chooses the node. Each Agbero then applies its local routing policy independently.
+
+### What synchronization is for
+
+- Copying host configuration changes to peers that are currently connected.
+- Copying TLS certificates and encrypted private keys.
+- Propagating Keeper secret writes and deletes.
+- Sharing ACME HTTP-01 challenge tokens.
+- Publishing node status and best-effort locks.
+
+### What it is not
+
+- Not a consensus protocol. There is no quorum and no leader election.
+- Not a data plane. Proxied requests never travel over gossip.
+- Not a continuous dependency. If peers are unreachable, each node continues serving from local state.
+- Not automatic traffic diversion. Moving traffic between load balancers is a DNS, upstream load balancer, or explicit route/backend decision.
+- Not a guarantee that an offline peer receives every intermediate update. It catches up from a join snapshot when it reconnects.
 
 ### Configuration
 
@@ -45,25 +74,27 @@ agbero secret cluster
 
 Copy this value to `secret_key` in `agbero.hcl` on **every node**. All nodes in a cluster must use the same key.
 
-### What Gets Synchronized
+### What gets synchronized
 
-| Type | Protocol | Description |
-|------|----------|-------------|
-| Host Configs (`.hcl`) | TCP | Dynamic route definitions synced to `hosts.d/` |
-| Certificates (`.crt`, `.key`) | TCP | Valid TLS certificates and encrypted private keys |
-| Keeper Secrets | UDP gossip | Encrypted secrets broadcast when written on any node |
-| ACME Challenges | UDP | Let's Encrypt HTTP-01 challenge tokens |
-| Node Status | UDP | Node health, liveness, and draining status |
-| Distributed Locks | UDP | Coordination primitives for single-node executions |
+| Type | Transport | Description |
+|------|-----------|-------------|
+| Host configs (`.hcl`) | Reliable TCP to current peers | Route definitions copied into `hosts.d/`; offline peers catch up on join |
+| Certificates (`.crt`, `.key`) | Reliable TCP to current peers | TLS certificates and encrypted private keys |
+| Keeper secrets | Encrypted gossip | Secret writes/deletes broadcast to connected peers |
+| ACME challenges | Gossip | Let's Encrypt HTTP-01 challenge tokens |
+| Node status | Gossip | Node health/liveness metadata |
+| Locks | Gossip | Best-effort single-node coordination; not a consensus lock |
+
+"Reliable TCP" here means memberlist's reliable send to peers that are currently connected. It is not durable delivery. A node that is down at write time is reconciled from the join snapshot when it returns.
 
 ### Cluster Manager Implementation
 
-The cluster manager is implemented in `internal/hub/cluster/` and provides:
+The synchronization layer lives in `internal/hub/cluster/`:
 
-- **Delegate**: Handles gossip events and state merging
-- **Distributor**: Manages configuration file synchronization
-- **Metrics**: Tracks cluster operations
-- **Redis Shared State**: Distributed counters and rate limiting
+- **Delegate**: handles gossip events, conflict resolution, and join snapshots
+- **Distributor**: writes host configuration files atomically
+- **Distributor checksums**: prevent sync loops
+- **Redis shared state**: shared counters for rate limiting and firewall state
 
 ---
 
@@ -164,7 +195,7 @@ This is one of the most important things to understand when running Agbero in cl
 
 **On node join:** When a new node joins an existing cluster, the existing member includes an encrypted snapshot of all keeper secrets in its join state message. The joining node receives and decrypts the snapshot, writing every secret into its own local keeper. After joining, the new node has a complete copy of all secrets without any manual intervention.
 
-**On secret write:** When any node writes a secret via `agbero keeper set` or `POST /api/v1/keeper/secrets`, the secret is immediately broadcast to all cluster peers via gossip as an `OpSecret` message. Each peer receives the encrypted message, decrypts it using the shared gossip cipher, and writes it to its local keeper. The deletion of a secret (`agbero keeper delete`, `DELETE /api/v1/keeper/secrets/...`) is similarly broadcast — every node removes the key from its local keeper.
+**On secret write:** When any node writes a secret via `agbero keeper set` or `POST /api/v1/keeper/secrets`, the change is broadcast to currently connected peers as an `OpSecret` message. Each peer decrypts it with the shared gossip cipher and writes it to its local keeper. Deletions are broadcast the same way. A peer that is offline when the write happens catches up from a join snapshot when it returns; the broadcast itself is not durable delivery.
 
 **Propagation model:** Secret sync is eventually consistent (gossip, not Raft). There is a brief window (typically under a second on a LAN) after a write where other nodes may not yet have the new value. In practice this is not noticeable because secret reads happen from the local keeper on each node, not over the network.
 

@@ -17,7 +17,7 @@
 
 Agbero is a modern reverse proxy that bridges local development and production deployments. It offers Zero-Config TLS for developers, Production-Grade Load Balancing, Git-based atomic deployments, and a Programmable WASM Data Plane.
 
-Whether you are a JavaScript developer serving a static site, a backend engineer proxying microservices, or running a distributed cluster across multiple nodes — Agbero handles it all from a single binary and a single config file.
+Whether you are a JavaScript developer serving a static site, a backend engineer proxying microservices, or running several independent edge nodes — Agbero handles it all from a single binary and a single config file.
 
 ## Why Agbero?
 
@@ -31,12 +31,29 @@ Traditional proxies often rely on static IP-based rules and manual configuration
 
 Agbero solves these challenges natively:
 
-*   **Identity-Based Rate Limiting:** Stop punishing legitimate users behind corporate NATs. Agbero supports distributed rate limiting and firewalling based on JWT claims, headers, or cookies, synchronized across your cluster via Redis or Gossip.
+*   **Identity-Based Rate Limiting:** Stop punishing legitimate users behind corporate NATs. Agbero supports rate limiting and firewalling based on JWT claims, headers, or cookies. Counters are local by default; enable the Redis shared-state backend when several nodes must share limits.
 *   **Centralized Edge Authentication:** Eliminate authentication sprawl. Agbero validates JWTs, handles full OAuth flows (Google, GitHub, OIDC), and integrates with external Forward Auth services directly at the edge.
 *   **Zero-Downtime GitOps (Cook):** Deploy static sites and Single Page Applications directly from Git repositories. Agbero pulls, builds isolated deployments, and performs atomic symlink swaps without dropping a single request.
-*   **Distributed Cluster Mesh:** No external dependencies required. Agbero nodes automatically discover each other via UDP Gossip and synchronize routing configurations and ACME certificates over reliable TCP streams.
+*   **Configuration Synchronization:** Agbero nodes discover each other over encrypted gossip and copy host configurations, certificates, and Keeper changes to connected peers. Nodes keep serving from their local configuration when peers are unavailable; gossip is a control plane, not a request path and not a quorum.
 *   **Deep Observability:** Built-in Prometheus and VictoriaMetrics integration provides high-resolution latency histograms and circuit-breaker telemetry without requiring complex log-parsing pipelines.
 *   **Serverless Without the Cloud:** Proxy calls to external APIs with credentials injected server-side — no tokens in the browser. Run local scripts on demand, on a schedule, or as background daemons, all defined in HCL.
+
+## How distributed Agbero works
+
+Agbero is built around **operational independence**: configure once, synchronize everywhere, then let each node serve traffic from its own local state.
+
+```text
+example.com
+    A  102.10.10.1  → Agbero LB 1
+    A  102.10.10.2  → Agbero LB 2
+    A  102.10.10.3  → Agbero LB 3
+```
+
+Each load balancer has its own local `hosts.d/`, Keeper database, certificate store, and connection pools. DNS or an upstream load balancer decides which node receives a request.
+
+When a node's configuration changes, Agbero sends that change to peers it can currently reach. A node that is offline catches up from a peer's join snapshot when it returns. There is no quorum, no shared runtime dependency, and no data-plane traffic between nodes just because gossip is enabled.
+
+The synchronization layer is for **configuration and coordination**: host files, certificates, Keeper secret changes, ACME challenges, status, and best-effort locks. It is not a consensus system and does not automatically move traffic between load balancers. Traffic diversion is done where it belongs — DNS, an upstream load balancer, or an explicit backend/route change.
 
 ## Get Started
 
@@ -117,6 +134,7 @@ agbero serve . --https
 - [**Installation Guide**](./docs/install.md) - Get Agbero running on Linux, macOS, or Windows.
 - [**Command Line**](./docs/command.md) - Every command and flag.
 - [**Global Config**](./docs/global.md) - Configure bind addresses, TLS, logging, rate limits, and clustering.
+- [**Relay**](./docs/relay.md) - Expose a local Agbero through a public Agbero without FRP.
 - [**Host Config**](./docs/host.md) - Define routes, backends, auth, and TLS per virtual host.
 - [**Serverless Guide**](./docs/serverless.md) - REST proxying, workers, and scheduled tasks without the cloud.
 - [**Advanced Guide**](./docs/advance.md) - Deep dive into Clustering, Git Deployments, and Firewall tuning.
