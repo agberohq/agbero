@@ -19,6 +19,7 @@ route "/" {
 
     git {
       enabled  = "on"
+      mode     = "pull"
       id       = "pages"
       url      = "https://github.com/example/pages.git"
       branch   = "main"

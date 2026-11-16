@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
@@ -13,8 +14,8 @@ import (
 
 // Documentation accuracy tests.
 //
-// The HCL decoder ignores attributes it does not recognise, so a wrong key in the
-// docs produces NO error at runtime — it is silently dropped (this is how
+// The HCL decoder rejects attributes it does not recognise, so a wrong key in
+// the docs fails parsing instead of being silently dropped (this is how
 // `security.trusted_proxies` survived in three docs). These tests pin the
 // snippets that the docs publish so the same class of drift fails CI instead.
 
@@ -57,11 +58,11 @@ security {
 	}
 }
 
-// TestDOCS_UnknownKeysAreSilentlyIgnored documents the trap the docs now warn
-// about: a top-level `trusted_proxies` key is accepted without error and thrown
-// away, so IP-based features silently see the proxy address.
-func TestDOCS_UnknownKeysAreSilentlyIgnored(t *testing.T) {
-	g, err := loadGlobalHCL(t, `
+// TestDOCS_UnknownKeysRejected guards the decoder's strictness: an obsolete
+// `trusted_proxies` key must fail parsing with a useful message instead of
+// being silently thrown away.
+func TestDOCS_UnknownKeysRejected(t *testing.T) {
+	_, err := loadGlobalHCL(t, `
 bind { http = [":8080"] }
 
 security {
@@ -69,12 +70,11 @@ security {
   trusted_proxies = ["10.0.0.0/8"]
 }
 `)
-	if err != nil {
-		t.Fatalf("unexpected parse error for an unknown attribute: %v", err)
+	if err == nil {
+		t.Fatal("unknown security.trusted_proxies attribute was accepted")
 	}
-	if len(g.Security.Allow.Proxies) != 0 {
-		t.Fatalf("expected the stray trusted_proxies key to be dropped, but allow.proxies is %v",
-			g.Security.Allow.Proxies)
+	if !strings.Contains(err.Error(), `unknown attribute "trusted_proxies"`) {
+		t.Fatalf("unexpected error for unknown attribute: %v", err)
 	}
 }
 

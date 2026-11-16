@@ -139,3 +139,44 @@ func TestBasic_DisabledPassesThrough(t *testing.T) {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
 }
+
+// TestBasic_KeeperSecretReference verifies that a users entry may reference a
+// bcrypt hash in Keeper instead of inlining it in the HCL file. The docs have
+// always advertised this form, but the middleware previously compared against
+// the literal "ss://…" string and rejected every login.
+func TestBasic_KeeperSecretReference(t *testing.T) {
+	hash, _ := bcrypt.GenerateFromPassword([]byte("keeper-pass"), bcrypt.DefaultCost)
+
+	expect.SetStoreLookup(func(key string) (string, error) {
+		if key == "auth/users/basic/ops" {
+			return string(hash), nil
+		}
+		return "", expect.ErrStoreLocked
+	})
+	t.Cleanup(func() { expect.SetStoreLookup(nil) })
+
+	cfg := &alaye.BasicAuth{
+		Enabled: expect.Active,
+		Users:   []string{"ops:ss://auth/users/basic/ops"},
+	}
+
+	handler := Basic(cfg, testLoggerBasic)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.SetBasicAuth("ops", "keeper-pass")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("keeper-backed basic user: want 200, got %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.SetBasicAuth("ops", "wrong")
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("keeper-backed basic user with wrong password: want 401, got %d", w.Code)
+	}
+}

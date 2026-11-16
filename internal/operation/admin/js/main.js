@@ -17,6 +17,7 @@ import {
     fetchFirewall, addFirewallRule, deleteFirewallRule,
     addHost, addHostHCL, previewHost, deleteHost, updateHost, updateHostHCL, getHostHCL, checkHostExists,
     hostOpOK, hostOpError,
+    fetchRouteAuth, updateRouteAuthConfig, addRouteAuthUser, resetRouteAuthUser, deleteRouteAuthUser,
     fetchLogs, uploadCert, deleteCert,
     keeperStatus, keeperUnlock, keeperLock, keeperList, keeperGet,
     keeperSet, keeperSetFile, keeperDelete,
@@ -129,6 +130,7 @@ async function bootstrapApp() {
             fetchUptime, fetchConfig, fetchCerts, fetchFirewall, fetchLogs, fetchStatus,
             addHost, addHostHCL, previewHost, deleteHost, updateHost, updateHostHCL, getHostHCL, checkHostExists,
             hostOpOK, hostOpError,
+            fetchRouteAuth, updateRouteAuthConfig, addRouteAuthUser, resetRouteAuthUser, deleteRouteAuthUser,
             uploadCert, deleteCert, addFirewallRule, deleteFirewallRule,
             broadcastClusterRoute,
             keeperStatus, keeperUnlock, keeperLock, keeperList,
@@ -252,6 +254,7 @@ async function bootstrapApp() {
 
     appGroup.Get('/',         Out.page('/pages/dashboard.html', '/pages/dashboard.js'));
     appGroup.Get('/hosts',    Out.page('/pages/hosts/index.html', '/pages/hosts/index.js'));
+    appGroup.Get('/intercept', Out.page('/pages/intercept.html', '/pages/intercept.js'));
     appGroup.Get('/focus',    Out.page('/pages/focus.html', '/pages/focus.js'));
     appGroup.Get('/cluster',  Out.page('/pages/cluster.html', '/pages/cluster.js'));
     appGroup.Get('/map',      Out.page('/pages/map.html', '/pages/map.js'));

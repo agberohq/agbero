@@ -44,15 +44,129 @@ export default async function({ find, findAll, on, onUnmount, ready, props }) {
         <div class="wz-toggle-card"><div class="wz-toggle-header" data-target="wztPHP_${route.id}"><div><strong>PHP</strong><span class="wz-toggle-sub">via PHP-FPM FastCGI</span></div><label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="engineData.php_enabled"${ed.php_enabled?' checked':''}><span class="wz-slider"></span></label></div>
         <div class="wz-toggle-body" id="wztPHP_${route.id}" style="display:none;"><label class="wz-label">FastCGI address <span style="color:var(--danger)">*</span></label><input type="text" data-wz-route-field="engineData.php_address" class="wz-input" placeholder="127.0.0.1:9000  or  /run/php/php8.1-fpm.sock" value="${_esc(ed.php_address||'')}"></div></div>
         <div class="wz-toggle-card"><div class="wz-toggle-header" data-target="wztGit_${route.id}"><div><strong>Git Deploy</strong><span class="wz-toggle-sub">Pull + optional webhook trigger</span></div><label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="engineData.git_enabled"${ed.git_enabled?' checked':''}><span class="wz-slider"></span></label></div>
-        <div class="wz-toggle-body" id="wztGit_${route.id}" style="display:none;"><input type="text" data-wz-route-field="engineData.git_url" class="wz-input" placeholder="https://github.com/org/repo.git" value="${_esc(ed.git_url||'')}" style="margin-bottom:6px;"><div style="display:flex;gap:8px;margin-bottom:6px;"><input type="text" data-wz-route-field="engineData.git_branch" class="wz-input" placeholder="Branch (default: main)" value="${_esc(ed.git_branch||'')}" style="flex:1;"><input type="text" data-wz-route-field="engineData.git_id" class="wz-input" placeholder="Deploy ID (e.g. my-site)" value="${_esc(ed.git_id||'')}" style="flex:1;"></div><div style="display:flex;gap:8px;margin-bottom:6px;"><div style="flex:1;"><label class="wz-label" style="font-size:11px;">Poll interval</label><input type="text" data-wz-route-field="engineData.git_interval" class="wz-input" placeholder="5m — blank = webhook only" value="${_esc(ed.git_interval||'')}"></div><div style="flex:1;"><label class="wz-label" style="font-size:11px;">Webhook secret</label><input type="text" data-wz-route-field="engineData.git_secret" class="wz-input" placeholder="Must match GitHub/GitLab setting" value="${_esc(ed.git_secret||'')}"></div></div><label class="wz-label" style="font-size:11px;">Auth (private repos)</label><select data-wz-route-field="engineData.git_auth_type" class="wz-select-inline" style="margin-bottom:6px;"><option value="">None (public)</option><option value="basic"${ed.git_auth_type==='basic'?' selected':''}>Basic</option><option value="ssh-key"${ed.git_auth_type==='ssh-key'?' selected':''}>SSH Key</option><option value="ssh-agent"${ed.git_auth_type==='ssh-agent'?' selected':''}>SSH Agent</option></select><div class="wz-git-auth-fields"></div></div></div>
+        <div class="wz-toggle-body" id="wztGit_${route.id}" style="display:none;"><input type="text" data-wz-route-field="engineData.git_url" class="wz-input" placeholder="https://github.com/org/repo.git" value="${_esc(ed.git_url||'')}" style="margin-bottom:6px;"><div style="display:flex;gap:8px;margin-bottom:6px;"><input type="text" data-wz-route-field="engineData.git_branch" class="wz-input" placeholder="Branch (default: main)" value="${_esc(ed.git_branch||'')}" style="flex:1;"><input type="text" data-wz-route-field="engineData.git_id" class="wz-input" placeholder="Deploy ID (e.g. my-site)" value="${_esc(ed.git_id||'')}" style="flex:1;"></div><div style="margin-bottom:6px;"><label class="wz-label" style="font-size:11px;">Trigger mode</label><select data-wz-route-field="engineData.git_mode" class="wz-select-inline"><option value="auto"${!ed.git_mode||ed.git_mode==='auto'?' selected':''}>Auto (from interval / secret)</option><option value="pull"${ed.git_mode==='pull'?' selected':''}>Pull (poll interval)</option><option value="push"${ed.git_mode==='push'?' selected':''}>Push (webhook)</option><option value="both"${ed.git_mode==='both'?' selected':''}>Both (poll + webhook)</option></select></div><div style="display:flex;gap:8px;margin-bottom:6px;"><div style="flex:1;"><label class="wz-label" style="font-size:11px;">Poll interval</label><input type="text" data-wz-route-field="engineData.git_interval" class="wz-input" placeholder="5m — blank = webhook only" value="${_esc(ed.git_interval||'')}"></div><div style="flex:1;"><label class="wz-label" style="font-size:11px;">Webhook secret</label><input type="text" data-wz-route-field="engineData.git_secret" class="wz-input" placeholder="Must match GitHub/GitLab setting" value="${_esc(ed.git_secret||'')}"></div></div><label class="wz-label" style="font-size:11px;">Auth (private repos)</label><select data-wz-route-field="engineData.git_auth_type" class="wz-select-inline" style="margin-bottom:6px;"><option value="">None (public)</option><option value="basic"${ed.git_auth_type==='basic'?' selected':''}>Basic</option><option value="ssh-key"${ed.git_auth_type==='ssh-key'?' selected':''}>SSH Key</option><option value="ssh-agent"${ed.git_auth_type==='ssh-agent'?' selected':''}>SSH Agent</option></select><div class="wz-git-auth-fields"></div></div></div>
         <div class="wz-toggle-card"><div class="wz-toggle-header" data-target="wztMd_${route.id}"><div><strong>Markdown</strong><span class="wz-toggle-sub">Render .md files as HTML</span></div><label class="wz-switch" onclick="event.stopPropagation()"><input type="checkbox" data-wz-route-field="engineData.markdown_enabled"${ed.markdown_enabled?' checked':''}><span class="wz-slider"></span></label></div>
         <div class="wz-toggle-body" id="wztMd_${route.id}" style="display:none;"><div class="wz-radio-group" style="flex-direction:row;gap:16px;margin-bottom:8px;"><label class="wz-radio"><input type="radio" name="md_view_${route.id}" data-wz-route-field="engineData.markdown_view" value=""${!ed.markdown_view?' checked':''}> <span>Website</span></label><label class="wz-radio"><input type="radio" name="md_view_${route.id}" data-wz-route-field="engineData.markdown_view" value="browse"${ed.markdown_view==='browse'?' checked':''}> <span>Browse</span></label></div><div class="wz-inline-checks"><label class="wz-check"><input type="checkbox" data-wz-route-field="engineData.markdown_toc"${ed.markdown_toc?' checked':''}> Table of contents</label><label class="wz-check"><input type="checkbox" data-wz-route-field="engineData.markdown_highlight"${ed.markdown_highlight?' checked':''}> Syntax highlighting</label><label class="wz-check"><input type="checkbox" data-wz-route-field="engineData.markdown_unsafe"${ed.markdown_unsafe?' checked':''}> Allow raw HTML</label></div></div></div>
-        </div>`;
+        </div>
+        <div class="wz-section-heading" style="margin-top:18px;">Web Mounts</div>
+        <div class="wz-hint" style="margin-bottom:8px;">Serve extra path prefixes from their own static root or Git deployment. The mount prefix is stripped before serving.</div>
+        <div id="wzMounts_${route.id}" class="wz-mounts-list"></div>
+        <button type="button" class="btn small wz-add-mount" style="margin-top:8px;">+ Add Mount</button>`;
+    }
+
+    function _mountsOf(route) {
+        route.engineData = route.engineData || {};
+        if (!Array.isArray(route.engineData.mounts)) route.engineData.mounts = [];
+        return route.engineData.mounts;
+    }
+
+    function _renderMounts(route, listEl) {
+        const mounts = _mountsOf(route);
+        if (!mounts.length) {
+            listEl.innerHTML = '<div class="wz-hint">No extra mounts. The primary web root/git deployment handles everything.</div>';
+            return;
+        }
+        listEl.innerHTML = mounts.map((m, i) => {
+            const gitOn = !!m.git_enabled;
+            return `<div class="wz-mount-row" data-mount-idx="${i}" style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px;">
+                <div style="display:flex;gap:8px;align-items:end;">
+                    <div style="flex:1;"><label class="wz-label" style="font-size:11px;">Path prefix</label><input data-mount-field="path" class="wz-input" placeholder="/site1" value="${_esc(m.path||'')}"></div>
+                    <div style="flex:2;"><label class="wz-label" style="font-size:11px;">Static root (when Git is off)</label><input data-mount-field="root" class="wz-input" placeholder="/var/www/wo/site1" value="${_esc(m.root||'')}"></div>
+                    <button type="button" class="btn small wz-mount-remove" style="color:var(--danger);">Remove</button>
+                </div>
+                <label class="wz-check" style="margin-top:8px;"><input type="checkbox" data-mount-field="git_enabled"${gitOn?' checked':''}> Git deployment</label>
+                <div class="wz-mount-git-fields" style="display:${gitOn?'':'none'};margin-top:8px;">
+                    <div style="display:flex;gap:8px;margin-bottom:6px;">
+                        <div style="flex:1;"><label class="wz-label" style="font-size:11px;">Trigger mode</label><select data-mount-field="git_mode" class="wz-select-inline"><option value="auto"${!m.git_mode||m.git_mode==='auto'?' selected':''}>Auto</option><option value="pull"${m.git_mode==='pull'?' selected':''}>Pull</option><option value="push"${m.git_mode==='push'?' selected':''}>Push</option><option value="both"${m.git_mode==='both'?' selected':''}>Both</option></select></div>
+                        <div style="flex:2;"><label class="wz-label" style="font-size:11px;">Repository URL</label><input data-mount-field="git_url" class="wz-input" placeholder="https://github.com/org/site1.git" value="${_esc(m.git_url||'')}"></div>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-bottom:6px;">
+                        <div style="flex:1;"><label class="wz-label" style="font-size:11px;">Branch</label><input data-mount-field="git_branch" class="wz-input" placeholder="main" value="${_esc(m.git_branch||'main')}"></div>
+                        <div style="flex:1;"><label class="wz-label" style="font-size:11px;">Deploy ID</label><input data-mount-field="git_id" class="wz-input" placeholder="wo-site1" value="${_esc(m.git_id||'')}"></div>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-bottom:6px;">
+                        <div style="flex:1;"><label class="wz-label" style="font-size:11px;">Poll interval</label><input data-mount-field="git_interval" class="wz-input" placeholder="5m (pull/both)" value="${_esc(m.git_interval||'')}"></div>
+                        <div style="flex:1;"><label class="wz-label" style="font-size:11px;">Webhook secret</label><input data-mount-field="git_secret" class="wz-input" placeholder="push/both" value="${_esc(m.git_secret||'')}"></div>
+                    </div>
+                    <div>
+                        <label class="wz-label" style="font-size:11px;">Auth (private repos)</label>
+                        <select data-mount-field="git_auth_type" class="wz-select-inline">
+                            <option value=""${!m.git_auth_type?' selected':''}>None (public)</option>
+                            <option value="basic"${m.git_auth_type==='basic'?' selected':''}>Token / username + password</option>
+                            <option value="ssh-key"${m.git_auth_type==='ssh-key'?' selected':''}>SSH private key</option>
+                            <option value="ssh-agent"${m.git_auth_type==='ssh-agent'?' selected':''}>SSH agent</option>
+                        </select>
+                        <div class="wz-mount-auth-fields" style="margin-top:6px;"></div>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+
+        listEl.querySelectorAll('.wz-mount-row').forEach(row => {
+            const idx = Number(row.dataset.mountIdx);
+            const m = mounts[idx];
+            if (!m) return;
+            const authSel = row.querySelector('[data-mount-field="git_auth_type"]');
+            const authBox = row.querySelector('.wz-mount-auth-fields');
+            const bindInput = (inp) => {
+                if (inp.dataset.mountBound === '1') return;
+                inp.dataset.mountBound = '1';
+                const update = () => {
+                    const field = inp.dataset.mountField;
+                    m[field] = inp.type === 'checkbox' ? inp.checked : inp.value;
+                    if (field === 'git_enabled') {
+                        const gf = row.querySelector('.wz-mount-git-fields');
+                        if (gf) gf.style.display = inp.checked ? '' : 'none';
+                    }
+                    _sync();
+                };
+                inp.addEventListener('input', update);
+                inp.addEventListener('change', update);
+            };
+            const renderAuth = () => {
+                if (!authBox) return;
+                const type = (m.git_auth_type || '').trim();
+                if (type === 'basic') {
+                    authBox.innerHTML = `<input data-mount-field="git_auth_user" class="wz-input" placeholder="Username (e.g. x-access-token)" style="margin-bottom:4px;" value="${_esc(m.git_auth_user||'')}"><input data-mount-field="git_auth_pass" type="password" class="wz-input" placeholder="Personal access token / password" value="${_esc(m.git_auth_pass||'')}"><div class="wz-hint">The username is not the token. GitHub accepts any username for HTTPS; <code>x-access-token</code> is a common placeholder. Put the token in the password field.</div>`;
+                } else if (type === 'ssh-key') {
+                    authBox.innerHTML = `<textarea data-mount-field="git_ssh_key" class="wz-input" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" style="font-family:var(--font-mono);font-size:11px;resize:vertical;">${_esc(m.git_ssh_key||'')}</textarea><input data-mount-field="git_ssh_key_passphrase" type="password" class="wz-input" placeholder="Key passphrase (optional)" style="margin-top:4px;" value="${_esc(m.git_ssh_key_passphrase||'')}">`;
+                } else if (type === 'ssh-agent') {
+                    authBox.innerHTML = '<div class="wz-hint">Uses <code>SSH_AUTH_SOCK</code> from the Agbero process environment.</div>';
+                } else {
+                    authBox.innerHTML = '';
+                }
+                authBox.querySelectorAll('[data-mount-field]').forEach(bindInput);
+            };
+            row.querySelectorAll('[data-mount-field]').forEach(bindInput);
+            authSel?.addEventListener('change', renderAuth);
+            renderAuth();
+            row.querySelector('.wz-mount-remove')?.addEventListener('click', () => {
+                mounts.splice(idx, 1);
+                _renderMounts(route, listEl);
+                _sync();
+            });
+        });
+    }
+
+    function _wireMounts(el, route) {
+        const listEl = el.querySelector('.wz-mounts-list');
+        if (!listEl) return;
+        _renderMounts(route, listEl);
+        el.querySelector('.wz-add-mount')?.addEventListener('click', () => {
+            _mountsOf(route).push({
+                path: '', root: '', git_enabled: false, git_mode: 'auto',
+                git_url: '', git_branch: 'main', git_id: '', git_interval: '', git_secret: '',
+                git_auth_type: '', git_auth_user: '', git_auth_pass: '',
+                git_ssh_key: '', git_ssh_key_passphrase: '',
+            });
+            _renderMounts(route, listEl);
+            _sync();
+        });
     }
 
     function _wireWebEngine(el, route) {
         const authSel=el.querySelector('[data-wz-route-field="engineData.git_auth_type"]'),authBox=el.querySelector('.wz-git-auth-fields');
-        function updateGitAuth(){if(!authBox)return;const v=authSel?.value||'',ed=route.engineData||{};authBox.innerHTML=v==='basic'?`<input type="text" data-wz-route-field="engineData.git_auth_user" class="wz-input" placeholder="Username" style="margin-bottom:4px;" value="${_esc(ed.git_auth_user||'')}"><input type="password" data-wz-route-field="engineData.git_auth_pass" class="wz-input" placeholder="Password / token" value="${_esc(ed.git_auth_pass||'')}">`:v==='ssh-key'?`<textarea data-wz-route-field="engineData.git_ssh_key" class="wz-input" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" style="font-family:var(--font-mono);font-size:11px;resize:vertical;">${_esc(ed.git_ssh_key||'')}</textarea>`:'';}
+        function updateGitAuth(){if(!authBox)return;const v=authSel?.value||'',ed=route.engineData||{};authBox.innerHTML=v==='basic'?`<input type="text" data-wz-route-field="engineData.git_auth_user" class="wz-input" placeholder="Username (e.g. x-access-token)" style="margin-bottom:4px;" value="${_esc(ed.git_auth_user||'')}"><input type="password" data-wz-route-field="engineData.git_auth_pass" class="wz-input" placeholder="Personal access token / password" value="${_esc(ed.git_auth_pass||'')}"><div class="wz-hint">The username is not the token. GitHub accepts any username for HTTPS; <code>x-access-token</code> is a common placeholder. Put the token in the password field.</div>`:v==='ssh-key'?`<textarea data-wz-route-field="engineData.git_ssh_key" class="wz-input" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" style="font-family:var(--font-mono);font-size:11px;resize:vertical;">${_esc(ed.git_ssh_key||'')}</textarea><input type="password" data-wz-route-field="engineData.git_ssh_key_passphrase" class="wz-input" placeholder="Key passphrase (optional)" style="margin-top:4px;" value="${_esc(ed.git_ssh_key_passphrase||'')}">`:'';}
 
         authSel?.addEventListener('change',updateGitAuth);updateGitAuth();
     }
@@ -199,7 +313,7 @@ export default async function({ find, findAll, on, onUnmount, ready, props }) {
         div.appendChild(subTabNav);div.appendChild(subPanels);
 
         const enginePanel=document.createElement('div');enginePanel.style.paddingTop='12px';
-        if(hostType==='web'){enginePanel.innerHTML=_webEngineHTML(route);_wireToggleCards(enginePanel);_wireWebEngine(enginePanel,route);}
+        if(hostType==='web'){enginePanel.innerHTML=_webEngineHTML(route);_wireToggleCards(enginePanel);_wireWebEngine(enginePanel,route);_wireMounts(enginePanel,route);}
         else if(hostType==='proxy'){enginePanel.innerHTML=_proxyEngineHTML(route);_wireProxyEngine(enginePanel,route);_wireToggleCards(enginePanel);}
         else if(hostType==='serverless'){_buildServerlessEngine(enginePanel,route);_wireToggleCards(enginePanel);}
 
@@ -234,7 +348,44 @@ export default async function({ find, findAll, on, onUnmount, ready, props }) {
         for(const r of _routes){
             if(!r.path?.startsWith('/'))return'Route path must start with /';
             if(r.engineData?.web_static_on&&!(r.engineData?.web_root||'').trim())return`Route "${r.path}": Static Files requires a root directory path`;
-            if(r.engineData?.git_enabled&&!(r.engineData?.git_url||'').trim())return`Route "${r.path}": Git Deploy requires a repository URL`;
+            const gitMode=(r.engineData?.git_mode||'auto').toLowerCase(),gitURL=(r.engineData?.git_url||'').trim(),gitInterval=(r.engineData?.git_interval||'').trim(),gitSecret=(r.engineData?.git_secret||'').trim();
+            if(r.engineData?.git_enabled){
+                if(gitMode==='auto'&&!gitURL)return`Route "${r.path}": Git Deploy requires a repository URL`;
+                if(gitMode==='pull'&&(!gitURL||!gitInterval))return`Route "${r.path}": Git pull mode requires a repository URL and poll interval`;
+                if(gitMode==='push'&&!gitSecret)return`Route "${r.path}": Git push mode requires a webhook secret`;
+                if(gitMode==='both'&&(!gitURL||!gitInterval||!gitSecret))return`Route "${r.path}": Git both mode requires a repository URL, poll interval, and webhook secret`;
+                if(gitMode==='pull'&&gitSecret)return`Route "${r.path}": Git pull mode cannot set a webhook secret — use Both`;
+                if(gitMode==='push'&&gitInterval)return`Route "${r.path}": Git push mode cannot set a poll interval — use Both`;
+            }
+            const mounts=Array.isArray(r.engineData?.mounts)?r.engineData.mounts:[];
+            const seenMounts=new Set(),seenMountGit=new Set();
+            for(const m of mounts){
+                const mp=(m.path||'').trim();
+                if(!mp)return`Route "${r.path}": every web mount needs a path prefix`;
+                if(!mp.startsWith('/'))return`Route "${r.path}": web mount "${mp}" must start with /`;
+                if(mp.replace(/\/+$/,'')==='')return`Route "${r.path}": web mount "/" is not allowed — use the primary web root`;
+                const key=mp.replace(/\/+$/,'');
+                if(seenMounts.has(key))return`Route "${r.path}": duplicate web mount path "${key}"`;
+                seenMounts.add(key);
+                if(m.git_enabled){
+                    const mm=(m.git_mode||'auto').toLowerCase(),mu=(m.git_url||'').trim(),mi=(m.git_interval||'').trim(),ms=(m.git_secret||'').trim(),mid=(m.git_id||'').trim();
+                    if(!mid)return`Route "${r.path}": web mount "${mp}" Git deploy requires a deploy ID`;
+                    if(seenMountGit.has(mid))return`Route "${r.path}": duplicate Git deploy ID "${mid}"`;
+                    seenMountGit.add(mid);
+                    if(mm==='auto'&&!mu)return`Route "${r.path}": web mount "${mp}" Git deploy requires a repository URL`;
+                    if(mm==='auto'&&!mi&&!ms)return`Route "${r.path}": web mount "${mp}" Git deploy needs a poll interval or webhook secret`;
+                    if(mm==='pull'&&(!mu||!mi))return`Route "${r.path}": web mount "${mp}" pull mode needs a URL and poll interval`;
+                    if(mm==='push'&&!ms)return`Route "${r.path}": web mount "${mp}" push mode needs a webhook secret`;
+                    if(mm==='both'&&(!mu||!mi||!ms))return`Route "${r.path}": web mount "${mp}" both mode needs a URL, interval, and secret`;
+                    if(mm==='pull'&&ms)return`Route "${r.path}": web mount "${mp}" pull mode cannot set a webhook secret — use Both`;
+                    if(mm==='push'&&mi)return`Route "${r.path}": web mount "${mp}" push mode cannot set a poll interval — use Both`;
+                    const at=(m.git_auth_type||'').trim();
+                    if(at==='basic'&&(!(m.git_auth_user||'').trim()||!(m.git_auth_pass||'').trim()))return`Route "${r.path}": web mount "${mp}" token auth needs a username and token/password`;
+                    if(at==='ssh-key'&&!(m.git_ssh_key||'').trim())return`Route "${r.path}": web mount "${mp}" SSH auth needs a private key`;
+                } else if(!(m.root||'').trim()){
+                    return`Route "${r.path}": web mount "${mp}" needs a static root or Git deployment`;
+                }
+            }
             if(r.engineData?.php_enabled&&!(r.engineData?.php_address||'').trim())return`Route "${r.path}": PHP is enabled but FastCGI address is missing`;
             if(r.engineData?.tunnel_enabled){
                 const via=(r.engineData.backend_via||'').trim(), tun=(r.engineData.backend_tunnel||'').trim();

@@ -164,12 +164,62 @@ func (d *decoder) decodeHCL(data []byte, filename string, output any) error {
 	return d.decodeBody(body, reflect.ValueOf(output))
 }
 
+// validateBodyStructure rejects HCL keys the target struct does not know.
+// Without this, a typo such as username/password placed directly under git is
+// silently discarded, which turns a configuration mistake into a runtime
+// authentication failure. It also catches duplicated single-instance blocks.
+func validateBodyStructure(body *hclsyntax.Body, t reflect.Type) error {
+	attrs := make(map[string]bool)
+	blocks := make(map[string]reflect.Type)
+	for i := range t.NumField() {
+		name, kind := parseTag(t.Field(i).Tag.Get("hcl"))
+		if name == "" || name == "-" {
+			continue
+		}
+		switch kind {
+		case "attr", "optional":
+			attrs[name] = true
+		case "block":
+			blocks[name] = derefType(t.Field(i).Type)
+		}
+	}
+
+	for name, attr := range body.Attributes {
+		if !attrs[name] {
+			return fmt.Errorf("unknown attribute %q at line %d", name, attr.SrcRange.Start.Line)
+		}
+	}
+
+	counts := make(map[string]int)
+	for _, block := range body.Blocks {
+		fieldType, ok := blocks[block.Type]
+		if !ok {
+			return fmt.Errorf("unknown block %q at line %d", block.Type, block.TypeRange.Start.Line)
+		}
+		counts[block.Type]++
+		if counts[block.Type] > 1 && fieldType.Kind() != reflect.Slice {
+			return fmt.Errorf("duplicate block %q at line %d: only one is allowed", block.Type, block.TypeRange.Start.Line)
+		}
+	}
+	return nil
+}
+
+func derefType(t reflect.Type) reflect.Type {
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	return t
+}
+
 func (d *decoder) decodeBody(body *hclsyntax.Body, v reflect.Value) error {
 	v = deref(v)
 	if !v.IsValid() || v.Kind() != reflect.Struct {
 		return nil
 	}
 	t := v.Type()
+	if err := validateBodyStructure(body, t); err != nil {
+		return err
+	}
 	for i := range t.NumField() {
 		field := v.Field(i)
 		if !field.CanSet() {

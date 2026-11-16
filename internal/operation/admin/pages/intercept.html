@@ -1,0 +1,217 @@
+<div class="page active route-auth-page">
+    <style>
+        .route-auth-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
+        .route-auth-title { margin:0; font-size:20px; letter-spacing:-.02em; }
+        .route-auth-sub { margin-top:4px; font-size:11px; color:var(--text-mute); max-width:760px; line-height:1.5; }
+        .route-auth-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        .route-auth-controls select { min-width:180px; }
+        .route-auth-routebar { display:flex; align-items:flex-end; justify-content:space-between; gap:14px; flex-wrap:wrap;
+            background:var(--panel-bg); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:14px; }
+        .route-auth-routeinfo { min-width:190px; }
+        .route-auth-routelabel { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text-mute); }
+        .route-auth-routemeta { margin-top:4px; font-size:11px; color:var(--text-mute); }
+        .route-auth-routepick { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        .route-auth-routepick select { min-width:220px; }
+        .route-auth-chips { display:flex; gap:6px; flex-wrap:wrap; }
+        .route-auth-chip { background:var(--btn-bg,var(--panel-bg)); border:1px solid var(--border); border-radius:999px;
+            color:var(--text-mute); padding:5px 10px; font:inherit; font-size:11px; cursor:pointer; white-space:nowrap; }
+        .route-auth-chip:hover { color:var(--text-main); border-color:var(--text-mute); }
+        .route-auth-chip.active { color:var(--accent); border-color:var(--accent); background:rgba(59,130,246,.08); }
+        .route-auth-chip .route-auth-chip-badge { margin-left:5px; font-size:9px; opacity:.8; }
+        .route-auth-tabs { display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:16px; overflow:auto; }
+        .route-auth-tab { background:none; border:0; border-bottom:2px solid transparent; color:var(--text-mute); padding:8px 12px; cursor:pointer; font:inherit; font-size:12px; white-space:nowrap; }
+        .route-auth-tab:hover { color:var(--text-main); }
+        .route-auth-tab.active { color:var(--accent); border-bottom-color:var(--accent); font-weight:500; }
+        .route-auth-panel { display:none; }
+        .route-auth-panel.active { display:block; }
+        .route-auth-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; margin-bottom:14px; }
+        .route-auth-box { background:var(--panel-bg); border:1px solid var(--border); border-radius:8px; padding:14px; }
+        .route-auth-box h3 { margin:0 0 4px; font-size:13px; font-weight:600; }
+        .route-auth-box p { margin:0 0 12px; font-size:11px; color:var(--text-mute); line-height:1.5; }
+        .route-auth-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; align-items:end; }
+        .route-auth-check { display:flex; align-items:center; gap:7px; min-height:34px; font-size:12px; }
+        .route-auth-check input { width:16px; height:16px; }
+        .route-auth-table { width:100%; border-collapse:collapse; font-size:11px; }
+        .route-auth-table th, .route-auth-table td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--border); vertical-align:middle; }
+        .route-auth-table th { color:var(--text-mute); font-weight:500; text-transform:uppercase; font-size:10px; letter-spacing:.4px; }
+        .route-auth-table:last-child { border-bottom:0; }
+        .route-auth-key { display:block; color:var(--text-mute); font-family:var(--font-mono); font-size:10px; margin-top:3px; word-break:break-all; }
+        .route-auth-actions { display:flex; gap:6px; justify-content:flex-end; }
+        .route-auth-form { display:grid; grid-template-columns:minmax(140px,1fr) minmax(160px,1fr) auto; gap:8px; align-items:end; margin-top:12px; }
+        .route-auth-reset { display:none; margin-top:12px; padding:10px; border:1px dashed var(--border); border-radius:6px; }
+        .route-auth-reset.active { display:block; }
+        .route-auth-reset .route-auth-form { margin-top:0; grid-template-columns:minmax(120px,.7fr) minmax(160px,1fr) auto auto; }
+        .route-auth-note { font-size:11px; color:var(--text-mute); margin-top:8px; }
+        .route-auth-empty { padding:28px; text-align:center; color:var(--text-mute); font-size:12px; }
+        @media (max-width: 900px) {
+            .route-auth-grid { grid-template-columns:1fr; }
+            .route-auth-form, .route-auth-reset .route-auth-form { grid-template-columns:1fr; }
+            .route-auth-actions { justify-content:flex-start; }
+        }
+    </style>
+
+    <div class="route-auth-head">
+        <div>
+            <h2 class="route-auth-title">Route Intercept</h2>
+            <div class="route-auth-sub">
+                Manage browser-facing authentication for one route. Basic Auth uses the
+                native browser prompt; Protect serves a login form and a signed
+                session cookie. Passwords are bcrypt-hashed on the server and stored in
+                Keeper — never in the HCL file.
+            </div>
+        </div>
+        <div class="route-auth-controls">
+            <select id="routeAuthHost" class="wz-input" title="Host"></select>
+            <button class="btn small" id="routeAuthRefresh" type="button" title="Reload auth state">⟳</button>
+        </div>
+    </div>
+
+    <div id="routeAuthEmpty" class="route-auth-empty" style="display:none;">
+        No routes available for this host.
+    </div>
+
+    <div id="routeAuthContent" style="display:none;">
+        <div class="route-auth-sub" id="routeAuthMeta" style="margin:-6px 0 14px;"></div>
+
+        <div class="route-auth-routebar">
+            <div class="route-auth-routeinfo">
+                <div class="route-auth-routelabel">Route to protect</div>
+                <div class="route-auth-routemeta" id="routeAuthRouteCount">—</div>
+            </div>
+            <div class="route-auth-routepick">
+                <select id="routeAuthRoute" class="wz-input" title="Route to protect" aria-label="Route to protect"></select>
+                <div class="route-auth-chips" id="routeAuthRouteList" role="listbox" aria-label="Routes"></div>
+            </div>
+        </div>
+
+        <div class="route-auth-tabs" role="tablist">
+            <button class="route-auth-tab active" type="button" data-auth-tab="basic" role="tab">Basic Auth</button>
+            <button class="route-auth-tab" type="button" data-auth-tab="protect" role="tab">Protect</button>
+        </div>
+
+        <section class="route-auth-panel active" data-auth-panel="basic">
+            <div class="route-auth-grid">
+                <div class="route-auth-box">
+                    <h3>Basic Auth settings</h3>
+                    <p>The browser prompts for credentials on every request. Use this for scripts and low-risk routes.</p>
+                    <form id="basicAuthForm">
+                        <label class="route-auth-check">
+                            <input type="checkbox" id="basicAuthEnabled"> Enabled
+                        </label>
+                        <div class="route-auth-row" style="margin-top:10px;">
+                            <div>
+                                <label class="wz-label" for="basicAuthRealm">Realm</label>
+                                <input id="basicAuthRealm" class="wz-input" autocomplete="off" placeholder="Restricted">
+                            </div>
+                            <div style="display:flex;align-items:end;">
+                                <button class="btn primary" id="basicAuthSave" type="button">Save settings</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="route-auth-box">
+                    <h3>Basic Auth users</h3>
+                    <p>Inline hashes are read-only here. Reset an inline user to move it into Keeper.</p>
+                    <div style="overflow:auto;">
+                        <table class="route-auth-table" id="basicAuthUsers">
+                            <thead><tr><th>User</th><th>Source</th><th style="text-align:right;">Actions</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <form class="route-auth-form" id="basicAuthAddForm">
+                        <div>
+                            <label class="wz-label" for="basicAuthAddUsername">Username</label>
+                            <input id="basicAuthAddUsername" class="wz-input" autocomplete="off" maxlength="64" required>
+                        </div>
+                        <div>
+                            <label class="wz-label" for="basicAuthAddPassword">Password</label>
+                            <input id="basicAuthAddPassword" class="wz-input" type="password" autocomplete="new-password" minlength="8" required>
+                        </div>
+                        <button class="btn" id="basicAuthAddBtn" type="submit">Add user</button>
+                    </form>
+                    <div class="route-auth-reset" id="basicAuthResetForm">
+                        <div class="route-auth-form">
+                            <div>
+                                <label class="wz-label">User</label>
+                                <input id="basicAuthResetUser" class="wz-input" readonly>
+                            </div>
+                            <div>
+                                <label class="wz-label" for="basicAuthResetPassword">New password</label>
+                                <input id="basicAuthResetPassword" class="wz-input" type="password" autocomplete="new-password" minlength="8">
+                            </div>
+                            <button class="btn primary" id="basicAuthResetSave" type="button">Reset password</button>
+                            <button class="btn" id="basicAuthResetCancel" type="button">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="route-auth-panel" data-auth-panel="protect">
+            <div class="route-auth-grid">
+                <div class="route-auth-box">
+                    <h3>Protect settings</h3>
+                    <p>Agbero serves the login form at the route's <code>/_agbero/login</code> endpoint and issues an HttpOnly session cookie.</p>
+                    <form id="protectForm">
+                        <label class="route-auth-check">
+                            <input type="checkbox" id="protectEnabled"> Enabled
+                        </label>
+                        <div class="route-auth-row" style="margin-top:10px;">
+                            <div>
+                                <label class="wz-label" for="protectTitle">Login title</label>
+                                <input id="protectTitle" class="wz-input" autocomplete="off" placeholder="Protected area">
+                            </div>
+                            <div>
+                                <label class="wz-label" for="protectSessionTTL">Session TTL</label>
+                                <input id="protectSessionTTL" class="wz-input" autocomplete="off" placeholder="8h">
+                            </div>
+                            <div>
+                                <label class="wz-label" for="protectCookieName">Cookie name</label>
+                                <input id="protectCookieName" class="wz-input" autocomplete="off" placeholder="auto per route">
+                            </div>
+                            <div style="display:flex;align-items:end;">
+                                <button class="btn primary" id="protectSave" type="button">Save settings</button>
+                            </div>
+                        </div>
+                    </form>
+                    <div class="route-auth-note">Cookie name is optional; when empty Agbero derives a route-scoped name.</div>
+                </div>
+                <div class="route-auth-box">
+                    <h3>Protect users</h3>
+                    <p>Hashes live in Keeper. Adding or resetting a user rewrites only the route's <code>protect</code> block.</p>
+                    <div style="overflow:auto;">
+                        <table class="route-auth-table" id="protectUsers">
+                            <thead><tr><th>User</th><th>Source</th><th style="text-align:right;">Actions</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <form class="route-auth-form" id="protectAddForm">
+                        <div>
+                            <label class="wz-label" for="protectAddUsername">Username</label>
+                            <input id="protectAddUsername" class="wz-input" autocomplete="off" maxlength="64" required>
+                        </div>
+                        <div>
+                            <label class="wz-label" for="protectAddPassword">Password</label>
+                            <input id="protectAddPassword" class="wz-input" type="password" autocomplete="new-password" minlength="8" required>
+                        </div>
+                        <button class="btn" id="protectAddBtn" type="submit">Add user</button>
+                    </form>
+                    <div class="route-auth-reset" id="protectResetForm">
+                        <div class="route-auth-form">
+                            <div>
+                                <label class="wz-label">User</label>
+                                <input id="protectResetUser" class="wz-input" readonly>
+                            </div>
+                            <div>
+                                <label class="wz-label" for="protectResetPassword">New password</label>
+                                <input id="protectResetPassword" class="wz-input" type="password" autocomplete="new-password" minlength="8">
+                            </div>
+                            <button class="btn primary" id="protectResetSave" type="button">Reset password</button>
+                            <button class="btn" id="protectResetCancel" type="button">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>

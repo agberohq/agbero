@@ -2,10 +2,12 @@ package auth
 
 import (
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/agbero/internal/core/def"
+	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/olekukonko/ll"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -20,9 +22,27 @@ func Basic(cfg *alaye.BasicAuth, logger *ll.Logger) func(http.Handler) http.Hand
 	secrets := make(map[string][]byte)
 	for _, u := range cfg.Users {
 		parts := strings.SplitN(u, def.Colon, 2)
-		if len(parts) == 2 {
-			secrets[parts[0]] = []byte(parts[1])
+		if len(parts) != 2 {
+			continue
 		}
+		username := strings.TrimSpace(parts[0])
+		rawSecret := strings.TrimSpace(parts[1])
+		if username == "" || rawSecret == "" {
+			continue
+		}
+		// Resolve explicit secret-store references (ss://, keeper://, …). A
+		// bcrypt hash contains "$" and must never be run through the generic
+		// Value expander, so only refs take this path.
+		hash := rawSecret
+		if expect.Value(rawSecret).IsSecretStoreRef() {
+			resolved, err := expect.Value(rawSecret).ResolveErr(os.Getenv)
+			if err != nil {
+				logger.Fields("user", username, "err", err).Error("basic_auth: resolve secret reference failed")
+				continue
+			}
+			hash = resolved
+		}
+		secrets[username] = []byte(hash)
 	}
 
 	realm := def.Realm

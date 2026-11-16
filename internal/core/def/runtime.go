@@ -392,9 +392,16 @@ const (
 const (
 	SessionCookieName = "agbero_sess"
 	GothSessionCookie = "agbero_oauth_state"
-	StateTTL          = 10 * time.Minute
-	DefaultByteLen    = 16
-	CallBackCodeKey   = "code"
+
+	// ProtectSessionTTL is the default lifetime of a route-local login
+	// session. Route-specific protect blocks can override it.
+	ProtectSessionTTL = 8 * time.Hour
+	ProtectPathSeg    = "_agbero"
+	ProtectCookieName = "protect_session"
+	ProtectCSRFName   = "protect_csrf"
+	StateTTL             = 10 * time.Minute
+	DefaultByteLen       = 16
+	CallBackCodeKey      = "code"
 )
 
 const (

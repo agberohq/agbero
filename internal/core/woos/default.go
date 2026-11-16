@@ -127,7 +127,7 @@ func defaultRouteAll(r *alaye.Route) {
 	if r.Enabled == expect.Unknown {
 		r.Enabled = expect.Active
 	}
-	hasWeb := r.Web.Root.IsSet() || r.Web.Git.Enabled.Active()
+	hasWeb := r.Web.Root.IsSet() || r.Web.Git.Enabled.Active() || len(r.Web.Mounts) > 0
 	hasBackends := len(r.Backends.Servers) > 0
 	hasServerless := r.Serverless.Enabled.Active()
 	if hasWeb {
@@ -177,6 +177,9 @@ func defaultWebRoute(r *alaye.Route) {
 		r.Web.Enabled = expect.Active
 	}
 	defaultGit(&r.Web.Git)
+	for i := range r.Web.Mounts {
+		defaultGit(&r.Web.Mounts[i].Git)
+	}
 	if len(r.Web.Index) == 0 {
 		r.Web.Index = []string{"index.html"}
 	}
@@ -184,6 +187,7 @@ func defaultWebRoute(r *alaye.Route) {
 	defaultCompression(&r.Compression)
 	defaultHeaders(&r.Headers)
 	defaultBasicAuth(&r.BasicAuth)
+	defaultProtect(&r.Protect)
 	defaultJWTAuth(&r.JWTAuth)
 	defaultForwardAuth(&r.ForwardAuth)
 	defaultOAuth(&r.OAuth)
@@ -197,6 +201,7 @@ func defaultProxyRoute(r *alaye.Route) {
 	defaultCompression(&r.Compression)
 	defaultHeaders(&r.Headers)
 	defaultBasicAuth(&r.BasicAuth)
+	defaultProtect(&r.Protect)
 	defaultJWTAuth(&r.JWTAuth)
 	defaultForwardAuth(&r.ForwardAuth)
 	defaultOAuth(&r.OAuth)
@@ -558,6 +563,15 @@ func defaultCompression(c *alaye.Compression) {
 	}
 }
 
+func defaultProtect(a *alaye.Protect) {
+	if a.Enabled == expect.Unknown && (len(a.Users) > 0 || a.Title != "") {
+		a.Enabled = expect.Active
+	}
+	if a.SessionTTL <= 0 {
+		a.SessionTTL = expect.Duration(def.ProtectSessionTTL)
+	}
+}
+
 func defaultBasicAuth(ba *alaye.BasicAuth) {
 	if ba.Enabled == expect.Unknown && len(ba.Users) > 0 {
 		ba.Enabled = expect.Active
@@ -766,18 +780,12 @@ func defaultGit(g *alaye.Git) {
 	if g.Enabled.NotActive() {
 		return
 	}
+	g.Mode = strings.ToLower(strings.TrimSpace(g.Mode))
+	if g.Mode == "" {
+		g.Mode = def.GitModeAuto
+	}
 	if g.Branch == "" {
 		g.Branch = "main"
-	}
-	hasPull := g.Interval > 0
-	hasPush := g.Secret.String() != ""
-	switch {
-	case hasPull && hasPush:
-		g.Mode = def.GitModeBoth
-	case hasPush:
-		g.Mode = def.GitModePush
-	case hasPull:
-		g.Mode = def.GitModePull
 	}
 }
 

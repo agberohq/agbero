@@ -131,3 +131,270 @@ func TestAdminSharesAuthWithFocusTabs(t *testing.T) {
 		}
 	}
 }
+
+func TestInterceptPageAssets(t *testing.T) {
+	for _, name := range []string{"admin/pages/intercept.html", "admin/pages/intercept.js"} {
+		if _, err := fs.ReadFile(adminFS, name); err != nil {
+			t.Fatalf("%s missing: %v", name, err)
+		}
+	}
+
+	html, err := fs.ReadFile(adminFS, "admin/pages/intercept.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`id="routeAuthHost"`,
+		`id="routeAuthRoute"`,
+		`id="routeAuthRouteList"`,
+		`Route to protect`,
+		`data-auth-tab="basic"`,
+		`data-auth-tab="protect"`,
+		`id="basicAuthForm"`,
+		`id="protectForm"`,
+		`id="basicAuthAddForm"`,
+		`id="protectAddForm"`,
+		`id="basicAuthResetForm"`,
+		`id="protectResetForm"`,
+		`id="basicAuthAddPassword"`,
+		`id="protectAddPassword"`,
+		`type="password"`,
+		`protect`,
+		`_agbero/login`,
+	} {
+		if !strings.Contains(string(html), want) {
+			t.Errorf("route auth page missing %q", want)
+		}
+	}
+	if strings.Contains(string(html), `type="text" id="basicAuthAddPassword"`) {
+		t.Error("add-user password field is not masked")
+	}
+
+	js, err := fs.ReadFile(adminFS, "admin/pages/intercept.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"fetchRouteAuth",
+		"updateRouteAuthConfig",
+		"addRouteAuthUser",
+		"resetRouteAuthUser",
+		"deleteRouteAuthUser",
+		`data-auth-action`,
+		`data-route-pick`,
+		"data-auth-tab",
+		"routeAuthRouteList",
+		"pickRoute",
+		"#/intercept?",
+		"Keeper",
+	} {
+		if !strings.Contains(string(js), want) {
+			t.Errorf("route auth page script missing %q", want)
+		}
+	}
+
+	shell, err := fs.ReadFile(adminFS, "admin/layouts/shell.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(shell), "path: '/intercept'") {
+		t.Error("intercept page is not in the admin navigation")
+	}
+
+	main, err := fs.ReadFile(adminFS, "admin/js/main.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(main), "appGroup.Get('/intercept'") {
+		t.Error("admin router does not register /intercept")
+	}
+	if !strings.Contains(string(main), "fetchRouteAuth,") {
+		t.Error("app services do not expose route auth API helpers")
+	}
+
+	api, err := fs.ReadFile(adminFS, "admin/js/api.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"/api/v1/auth/",
+		"/config",
+		"/users",
+		"deleteRouteAuthUser",
+	} {
+		if !strings.Contains(string(api), want) {
+			t.Errorf("admin API client missing %q", want)
+		}
+	}
+}
+
+func TestInterceptIsSeparateFromFocusAndAdmin(t *testing.T) {
+	html, err := fs.ReadFile(adminFS, "admin/pages/intercept.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(html), "Route Intercept") {
+		t.Fatal("intercept page does not identify itself")
+	}
+	if strings.Contains(string(html), "focus") {
+		t.Fatal("intercept page still contains focus-dashboard markup")
+	}
+
+	main, err := fs.ReadFile(adminFS, "admin/js/main.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(main), "appGroup.Get('/admin'") {
+		t.Fatal("route auth page still uses /admin, which collides with the Agbero admin server")
+	}
+	shell, err := fs.ReadFile(adminFS, "admin/layouts/shell.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(shell), "path: '/admin'") {
+		t.Fatal("navigation still exposes the route auth page as /admin")
+	}
+
+	hosts, err := fs.ReadFile(adminFS, "admin/pages/hosts/index.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(hosts), "Manage Route Auth") {
+		t.Error("hosts page has no entry point for route auth")
+	}
+	if !strings.Contains(string(hosts), "PROTECT") {
+		t.Error("hosts page does not badge protect routes")
+	}
+}
+
+func TestAdminGitModeSelector(t *testing.T) {
+	routes, err := fs.ReadFile(adminFS, "admin/pages/add-host/step-routes.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`engineData.git_mode`,
+		`value="auto"`,
+		`value="pull"`,
+		`value="push"`,
+		`value="both"`,
+	} {
+		if !strings.Contains(string(routes), want) {
+			t.Errorf("add-host Git form missing %q", want)
+		}
+	}
+
+	builder, err := fs.ReadFile(adminFS, "admin/js/host-builder.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"web.git.mode", "`mode     = ${_hq(g.mode)}`"} {
+		if !strings.Contains(string(builder), want) {
+			t.Errorf("host builder missing Git mode wiring %q", want)
+		}
+	}
+
+	drawer, err := fs.ReadFile(adminFS, "admin/js/drawer-listeners.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(drawer), "configuredMode === 'auto'") {
+		t.Error("git drawer does not resolve auto mode")
+	}
+}
+
+func TestAdminHostBuilderRendersWebMounts(t *testing.T) {
+	builder, err := fs.ReadFile(adminFS, "admin/js/host-builder.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Array.isArray(w.mounts)",
+		"`mount ${_hq(m.path)} {`",
+		"m.git",
+	} {
+		if !strings.Contains(string(builder), want) {
+			t.Errorf("host builder does not render web mounts (%q)", want)
+		}
+	}
+}
+
+func TestAdminWebMountEditor(t *testing.T) {
+	routes, err := fs.ReadFile(adminFS, "admin/pages/add-host/step-routes.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Web Mounts",
+		"wz-add-mount",
+		`data-mount-field="path"`,
+		`data-mount-field="root"`,
+		`data-mount-field="git_enabled"`,
+		`data-mount-field="git_mode"`,
+		`data-mount-field="git_auth_type"`,
+		`data-mount-field="git_auth_user"`,
+		`data-mount-field="git_auth_pass"`,
+		`data-mount-field="git_ssh_key"`,
+	} {
+		if !strings.Contains(string(routes), want) {
+			t.Errorf("add-host web mount editor missing %q", want)
+		}
+	}
+
+	builder, err := fs.ReadFile(adminFS, "admin/js/host-builder.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Array.isArray(data.mounts)", "web.mounts = mounts", "out.git.auth = { type: authType }"} {
+		if !strings.Contains(string(builder), want) {
+			t.Errorf("host builder does not serialize web mounts (%q)", want)
+		}
+	}
+}
+
+func TestOperationLoginPageTemplate(t *testing.T) {
+	if len(LoginPage) == 0 {
+		t.Fatal("embedded login page is empty")
+	}
+	page := string(LoginPage)
+	for _, want := range []string{
+		"{{.Title}}",
+		"{{.Action}}",
+		"{{.Next}}",
+		"{{.CSRF}}",
+		"{{if .Error}}",
+		`name="csrf"`,
+		`name="username"`,
+		`name="password"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("embedded login page missing %q", want)
+		}
+	}
+	if strings.Contains(page, "<script>") {
+		t.Error("embedded login page should not contain inline script")
+	}
+}
+
+func TestAdminHCLFormatterKeepsNewlineAfterClosingBrace(t *testing.T) {
+	src, err := fs.ReadFile(adminFS, "admin/js/hcl.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	start := strings.Index(s, "// Closing brace")
+	if start < 0 {
+		t.Fatal("closing-brace formatter block not found")
+	}
+	end := strings.Index(s[start:], "// Apply indentation")
+	if end < 0 {
+		t.Fatal("end of closing-brace formatter block not found")
+	}
+	block := s[start : start+end]
+	if !strings.Contains(block, "lastWasNewline = false;") {
+		t.Fatal("formatter suppresses the newline after a closing brace; blocks will be glued together")
+	}
+	if strings.Contains(block, "lastWasNewline = true;") {
+		t.Fatal("formatter still marks the closing brace as a newline")
+	}
+}

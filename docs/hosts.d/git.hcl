@@ -20,6 +20,7 @@ route "/pull" {
 
     git {
       enabled  = "on"
+      mode     = "pull"  # explicit: polling only
       id       = "olekukonko-sample"
       url      = "https://github.com/olekukonko/sample"
       interval = "1m"  # Pull every 1 minute as a fallback
@@ -49,10 +50,11 @@ route "/webhook" {
     index = ["index.md"]
 
     git {
-      enabled  = "on"
-      id       = "olekukonko-sample-webhook"
-      url      = "https://github.com/olekukonko/sample"
-      secret   = "ss://integrations/github-webhook-secret"  # HMAC-SHA256 verification
+      enabled = "on"
+      mode    = "push"  # explicit: webhook only
+      id      = "olekukonko-sample-webhook"
+      url     = "https://github.com/olekukonko/sample"
+      secret  = "ss://integrations/github-webhook-secret"  # HMAC-SHA256 verification
     }
 
     markdown {

@@ -152,6 +152,7 @@ function buildWebBlock(data) {
     }
     if (data.git_enabled) {
         web.git = { enabled: 'on', url: (data.git_url || '').trim(), branch: (data.git_branch || 'main').trim() };
+        if (data.git_mode?.trim())              web.git.mode              = data.git_mode.trim();
         if (data.git_id?.trim())                web.git.id                = data.git_id.trim();
         if (data.git_secret?.trim())            web.git.secret            = data.git_secret.trim();
         if (data.git_interval?.trim())          web.git.interval          = data.git_interval.trim();
@@ -168,6 +169,35 @@ function buildWebBlock(data) {
                 web.git.auth.ssh_key_passphrase = (data.git_ssh_key_passphrase || '').trim();
             }
         }
+    }
+    if (Array.isArray(data.mounts) && data.mounts.length) {
+        const mounts = data.mounts.map(m => {
+            const mountPath = (m.path || '').trim();
+            if (!mountPath) return null;
+            const out = { path: mountPath };
+            const root = (m.root || '').trim();
+            if (root) out.root = root;
+            if (m.git_enabled) {
+                out.git = { enabled: 'on', url: (m.git_url || '').trim(), branch: (m.git_branch || 'main').trim() };
+                if (m.git_mode?.trim())     out.git.mode     = m.git_mode.trim();
+                if (m.git_id?.trim())       out.git.id       = m.git_id.trim();
+                if (m.git_interval?.trim()) out.git.interval = m.git_interval.trim();
+                if (m.git_secret?.trim())   out.git.secret   = m.git_secret.trim();
+                const authType = (m.git_auth_type || '').trim();
+                if (authType) {
+                    out.git.auth = { type: authType };
+                    if (authType === 'basic') {
+                        out.git.auth.username = (m.git_auth_user || '').trim();
+                        out.git.auth.password = (m.git_auth_pass || '').trim();
+                    } else if (authType === 'ssh-key') {
+                        out.git.auth.ssh_key = (m.git_ssh_key || '').trim();
+                        if (m.git_ssh_key_passphrase?.trim()) out.git.auth.ssh_key_passphrase = m.git_ssh_key_passphrase.trim();
+                    }
+                }
+            }
+            return out;
+        }).filter(Boolean);
+        if (mounts.length) web.mounts = mounts;
     }
     if (data.markdown_enabled) {
         web.markdown = { enabled: 'on' };
@@ -692,6 +722,7 @@ function _routeBlock(route) {
         if (w.git) {
             const g = w.git;
             const gb = [`enabled = "on"`, `url     = ${_hq(g.url || '')}`, `branch  = ${_hq(g.branch || 'main')}`];
+            if (g.mode)     gb.push(`mode     = ${_hq(g.mode)}`);
             if (g.id)       gb.push(`id       = ${_hq(g.id)}`);
             if (g.interval) gb.push(`interval = ${_hq(g.interval)}`);
             if (g.secret)   gb.push(`secret   = ${_hq(g.secret)}`);
@@ -702,9 +733,37 @@ function _routeBlock(route) {
                 if (g.auth.username) ab.push(`username = ${_hq(g.auth.username)}`);
                 if (g.auth.password) ab.push(`password = ${_hq(g.auth.password)}`);
                 if (g.auth.ssh_key)  ab.push(`ssh_key  = ${_hq(g.auth.ssh_key)}`);
+                if (g.auth.ssh_key_passphrase) ab.push(`ssh_key_passphrase = ${_hq(g.auth.ssh_key_passphrase)}`);
                 gb.push('', 'auth {', ...ab.map(l => '  ' + l), '}');
             }
             wb.push('', 'git {', ...gb.map(l => '  ' + l), '}');
+        }
+        if (Array.isArray(w.mounts)) {
+            for (const m of w.mounts) {
+                if (!m?.path) continue;
+                const mb = [];
+                if (m.root) mb.push(`root = ${_hq(m.root)}`);
+                if (m.git) {
+                    const g = m.git;
+                    const gb = [`enabled = "on"`, `url     = ${_hq(g.url || '')}`, `branch  = ${_hq(g.branch || 'main')}`];
+                    if (g.mode)     gb.push(`mode     = ${_hq(g.mode)}`);
+                    if (g.id)       gb.push(`id       = ${_hq(g.id)}`);
+                    if (g.interval) gb.push(`interval = ${_hq(g.interval)}`);
+                    if (g.secret)   gb.push(`secret   = ${_hq(g.secret)}`);
+                    if (g.work_dir) gb.push(`work_dir = ${_hq(g.work_dir)}`);
+                    if (g.sub_dir)  gb.push(`sub_dir  = ${_hq(g.sub_dir)}`);
+                    if (g.auth?.type) {
+                        const ab = [`type = ${_hq(g.auth.type)}`];
+                        if (g.auth.username) ab.push(`username = ${_hq(g.auth.username)}`);
+                        if (g.auth.password) ab.push(`password = ${_hq(g.auth.password)}`);
+                        if (g.auth.ssh_key)  ab.push(`ssh_key  = ${_hq(g.auth.ssh_key)}`);
+                        if (g.auth.ssh_key_passphrase) ab.push(`ssh_key_passphrase = ${_hq(g.auth.ssh_key_passphrase)}`);
+                        gb.push('', 'auth {', ...ab.map(l => '  ' + l), '}');
+                    }
+                    mb.push('', 'git {', ...gb.map(l => '  ' + l), '}');
+                }
+                wb.push('', `mount ${_hq(m.path)} {`, ...mb.map(l => '  ' + l), '}');
+            }
         }
         if (w.markdown) {
             const md = w.markdown;

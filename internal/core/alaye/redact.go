@@ -22,6 +22,7 @@ func RedactRoute(r *Route) {
 		return
 	}
 	r.BasicAuth.Users = nil
+	r.Protect.Users = nil
 	r.JWTAuth.Secret = def.RedactedValue
 	r.OAuth.ClientSecret = def.RedactedValue
 	r.OAuth.CookieSecret = def.RedactedValue
@@ -39,6 +40,9 @@ func RedactRoute(r *Route) {
 	}
 
 	redactGit(&r.Web.Git)
+	for i := range r.Web.Mounts {
+		redactGit(&r.Web.Mounts[i].Git)
+	}
 	redactGit(&r.Serverless.Git)
 
 	// Cache credentials are plain strings, so the JSON marshaller cannot

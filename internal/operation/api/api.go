@@ -87,6 +87,7 @@ func AdminHandler(shared *Shared, r chi.Router) {
 		FirewallHandler(shared, r)
 		SecretsHandler(shared, r)
 		HostHandler(shared, r)
+		AuthHandler(shared, r)
 		RevokeHandler(shared, r)
 		KVHandler(shared, r)
 		CacheHandler(shared, r) // CDN cache management

@@ -746,6 +746,56 @@ data.
 
 ---
 
+## Route Auth API — Managing Basic and Protect Users
+
+These endpoints back the Admin UI's **Intercept** page. They edit the
+`basic_auth` or `protect` block of one route, generate bcrypt hashes on the
+server, and store those hashes in Keeper. Raw HCL is mutated with `hclwrite` and
+written atomically, so comments and unrelated blocks survive an edit.
+
+All endpoints require an admin JWT and live under `/api/v1/auth/`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/auth/{domain}` | Return route auth metadata (never hashes) |
+| `PUT` | `/api/v1/auth/{domain}/config` | Update enabled/realm or title/session_ttl/cookie_name |
+| `POST` | `/api/v1/auth/{domain}/users` | Add a user and its bcrypt hash to Keeper |
+| `PUT` | `/api/v1/auth/{domain}/users` | Reset a user's password |
+| `DELETE` | `/api/v1/auth/{domain}/users` | Remove a user and its Keeper secret |
+
+`mode` is `basic` or `protect`; `route` is the route path label (for example
+`/admin`). User endpoints accept:
+
+```json
+{
+  "route": "/admin",
+  "mode": "protect",
+  "username": "alice",
+  "password": "a-long-password"
+}
+```
+
+The response never contains the password or hash:
+
+```json
+{
+  "status": "ok",
+  "host": "admin.example.com",
+  "route": "/admin",
+  "mode": "protect",
+  "username": "alice",
+  "source": "keeper",
+  "ref": "ss://auth/admin.example.com/admin/protect/alice",
+  "keeper_key": "auth/admin.example.com/admin/protect/alice"
+}
+```
+
+`GET /api/v1/auth/{domain}` reports inline entries as `source: "inline"` without
+their value, and Keeper entries as `source: "keeper"` with their key path. If
+Keeper is locked, user writes return `423 Locked`; config-only edits still work.
+
+---
+
 ## Implementation Details
 
 The API is implemented in:

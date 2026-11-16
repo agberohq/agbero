@@ -31,13 +31,22 @@ export default async function({ find, findAll, on, onUnmount, ready, inject }) {
         return `<div class="backend-row ${cls==='down'?'down':''}"><div class="be-left"><span class="dot ${cls}" title="${esc(title)}"></span><span class="be-url copyable" data-action="copy-url" data-url="${esc(url)}">${esc(url)}</span>${b.in_flight>0?`<span class="be-tag be-tag-warn">⚡ ${b.in_flight}</span>`:''}${downtimeHtml}</div><div class="be-tags">${tags}</div></div>`;
     }
 
+    function effectiveGitMode(g) {
+        const configured = (g?.mode || 'auto').toLowerCase();
+        if (configured !== 'auto') return configured;
+        const hasInterval = !!(g?.interval && g.interval !== '0s');
+        const rawSecret = g?.secret;
+        const hasSecret = !!(rawSecret && (typeof rawSecret === 'string' ? rawSecret !== '' : rawSecret.value));
+        return hasInterval ? (hasSecret ? 'both' : 'pull') : 'push';
+    }
+
     function routeBadges(r) {
         const t=[];
-        if(r.web){if(isOn(r.web.git?.enabled))t.push(`<span class="badge info">GIT ${r.web.git.mode?r.web.git.mode.toUpperCase():''}</span>`);if(r.web.root){if(isOn(r.web.markdown?.enabled)){t.push(`<span class="badge info">${r.web.markdown?.view==='browse'?'📖 BROWSE':'MD'}</span>`);}else{t.push('<span class="badge">STATIC</span>');}}if(r.web.listing)t.push('<span class="badge">LISTING</span>');if(isOn(r.web.php?.enabled))t.push('<span class="badge" style="background:#6a73a6;color:#fff;border-color:#6a73a6;">PHP</span>');}
+        if(r.web){if(isOn(r.web.git?.enabled))t.push(`<span class="badge info">GIT ${effectiveGitMode(r.web.git).toUpperCase()}</span>`);if(r.web.root){if(isOn(r.web.markdown?.enabled)){t.push(`<span class="badge info">${r.web.markdown?.view==='browse'?'📖 BROWSE':'MD'}</span>`);}else{t.push('<span class="badge">STATIC</span>');}}if(r.web.listing)t.push('<span class="badge">LISTING</span>');if(isOn(r.web.php?.enabled))t.push('<span class="badge" style="background:#6a73a6;color:#fff;border-color:#6a73a6;">PHP</span>');}
         if(r.serverless&&isOn(r.serverless.enabled)){const wc=(r.serverless.workers||[]).length,rc=(r.serverless.replay||[]).length;if(wc)t.push(`<span class="badge warn">WORKER (${wc})</span>`);if(rc)t.push(`<span class="badge info">REPLAY (${rc})</span>`);if(isOn(r.serverless.git?.enabled))t.push('<span class="badge info">GIT</span>');}
         const beServers=r.backends?.servers||[];if(isOn(r.backends?.enabled)&&beServers.length>0){if(beServers.length===1){t.push('<span class="badge info">PROXY</span>');}else{const s=(r.backends.strategy||'round_robin').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());t.push(`<span class="badge info">LB: ${s} (${beServers.length})</span>`);}}
         if(isOn(r.cache?.enabled))t.push('<span class="badge success">CACHE</span>');if(isOn(r.wasm?.enabled))t.push('<span class="badge transform">WASM</span>');if(isOn(r.rate_limit?.enabled))t.push('<span class="badge traffic">RATE LIMIT</span>');if(isOn(r.cors?.enabled))t.push('<span class="badge">CORS</span>');if(isOn(r.compression?.enabled))t.push('<span class="badge">GZIP</span>');if(isOn(r.firewall?.enabled))t.push('<span class="badge danger">FIREWALL</span>');if(r.allowed_ips?.length)t.push('<span class="badge warn">IP FILTER</span>');if(isOn(r.fallback?.enabled))t.push('<span class="badge">FALLBACK</span>');if(r.rewrites?.length)t.push(`<span class="badge">REWRITE (${r.rewrites.length})</span>`);if(r.strip_prefixes?.length)t.push(`<span class="badge">STRIP (${r.strip_prefixes.length})</span>`);if(r.env&&Object.keys(r.env).length)t.push('<span class="badge">ENV</span>');
-        const auths=[];if(isOn(r.basic_auth?.enabled))auths.push('BASIC');if(isOn(r.jwt_auth?.enabled))auths.push('JWT');if(isOn(r.forward_auth?.enabled))auths.push('FWD');if(isOn(r.oauth?.enabled))auths.push('OAUTH');if(auths.length)t.push(`<span class="badge sec">🔒 ${auths.join(', ')}</span>`);
+        const auths=[];if(isOn(r.basic_auth?.enabled))auths.push('BASIC');if(isOn(r.protect?.enabled))auths.push('PROTECT');if(isOn(r.jwt_auth?.enabled))auths.push('JWT');if(isOn(r.forward_auth?.enabled))auths.push('FWD');if(isOn(r.oauth?.enabled))auths.push('OAUTH');if(auths.length)t.push(`<span class="badge sec">🔒 ${auths.join(', ')}</span>`);
         return t.length?`<div style="display:flex;gap:5px;flex-wrap:wrap;margin-left:10px;">${t.join('')}</div>`:'';
     }
 
@@ -119,6 +128,9 @@ export default async function({ find, findAll, on, onUnmount, ready, inject }) {
         const items = [];
         items.push({ label: 'Open Focus Dashboard', icon: '🎯', action: () => {
             window.open('/#/focus?host=' + encodeURIComponent(h), '_blank');
+        }});
+        items.push({ label: 'Manage Route Auth', icon: '🔐', action: () => {
+            emit('app:navigate', { path: '/intercept?host=' + encodeURIComponent(h) });
         }});
         if (!protected_) {
             items.push({ label: 'Edit HCL', icon: '✏️', action: async () => {

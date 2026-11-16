@@ -13,6 +13,7 @@ parsed and structurally validated during authoring.
 | File | Use case |
 |---|---|
 | `pocketbase.hcl` | Static SPA + PocketBase REST, admin, realtime SSE |
+| `protect.hcl` | Route-local login form with a session cookie |
 | `spa-node-api.hcl` | Static SPA with a separate Node API |
 | `nextjs.hcl` | Next.js SSR server |
 | `laravel-php.hcl` | Laravel/PHP-FPM |

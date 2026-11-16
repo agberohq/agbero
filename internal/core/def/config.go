@@ -139,6 +139,7 @@ const (
 
 // Git
 const (
+	GitModeAuto = "auto"
 	GitModePull = "pull"
 	GitModePush = "push"
 	GitModeBoth = "both"

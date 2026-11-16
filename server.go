@@ -239,6 +239,11 @@ func (s *Server) Start(configPath string) error {
 				if r.Web.Git.Enabled.Active() {
 					s.registerGitConfig(r.Web.Git, seenGitConfigs)
 				}
+				for _, mount := range r.Web.Mounts {
+					if mount.Git.Enabled.Active() {
+						s.registerGitConfig(mount.Git, seenGitConfigs)
+					}
+				}
 
 				if r.Serverless.Git.Enabled.Active() {
 					if !s.global.Security.Allow.ServerlessGit.Active() {
@@ -672,6 +677,12 @@ func (s *Server) Reload() {
 					validGitIDs[r.Web.Git.ID] = true
 					s.registerGitConfig(r.Web.Git, seenGitConfigs)
 				}
+				for _, mount := range r.Web.Mounts {
+					if mount.Git.Enabled.Active() {
+						validGitIDs[mount.Git.ID] = true
+						s.registerGitConfig(mount.Git, seenGitConfigs)
+					}
+				}
 				if r.Serverless.Git.Enabled.Active() {
 					if !s.global.Security.Allow.ServerlessGit.Active() {
 						s.logger.Fields("git_id", r.Serverless.Git.ID).Error(
@@ -931,7 +942,8 @@ func (s *Server) registerGitConfig(cfg alaye.Git, seen map[string]alaye.Git) {
 	gitID := cfg.ID
 	if existing, exists := seen[gitID]; exists {
 
-		if existing.URL != cfg.URL || existing.Branch != cfg.Branch || existing.WorkDir != cfg.WorkDir {
+		if existing.URL != cfg.URL || existing.Branch != cfg.Branch ||
+			existing.WorkDir != cfg.WorkDir || existing.Mode != cfg.Mode {
 			s.logger.Fields("id", gitID).Warn("server: git ID collision with differing configurations, skipping duplicate")
 		}
 		return

@@ -250,8 +250,41 @@ export async function deleteHost(domain, otpCode = '') {
     ));
 }
 
-// Certificate management  /api/v1/certs
+// Route auth admin  /api/v1/auth
+//
+// The server owns bcrypt generation and writes hashes to Keeper. These calls
+// never send a hash to the browser and never receive one from it.
 
+export async function fetchRouteAuth(domain) {
+    return _safe(() => getApi().get(`/api/v1/auth/${encodeURIComponent(domain)}`));
+}
+
+export async function updateRouteAuthConfig(domain, payload) {
+    return _safe(() => getApi().put(
+        `/api/v1/auth/${encodeURIComponent(domain)}/config`, payload
+    ));
+}
+
+export async function addRouteAuthUser(domain, payload) {
+    return _safe(() => getApi().post(
+        `/api/v1/auth/${encodeURIComponent(domain)}/users`, payload
+    ));
+}
+
+export async function resetRouteAuthUser(domain, payload) {
+    return _safe(() => getApi().put(
+        `/api/v1/auth/${encodeURIComponent(domain)}/users`, payload
+    ));
+}
+
+export async function deleteRouteAuthUser(domain, route, mode, username) {
+    const qs = new URLSearchParams({ route, mode, username });
+    return _safe(() => getApi().delete(
+        `/api/v1/auth/${encodeURIComponent(domain)}/users?${qs.toString()}`
+    ));
+}
+
+// Certificate management  /api/v1/certs
 export async function fetchCerts()                { return _safe(() => getApi().get('/api/v1/certs')); }
 export async function uploadCert(domain, cert, key) {
     return _safe(() => getApi().post('/api/v1/certs', { domain, cert, key }));

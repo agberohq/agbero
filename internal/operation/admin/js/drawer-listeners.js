@@ -213,11 +213,12 @@ function gitSection(git, hostname) {
     const commit   = gs.commit ? gs.commit.substring(0, 8) : 'none';
     const sCls     = state === 'healthy' ? 'success' : state === 'unavailable' ? 'warning' : 'error';
 
-    const mode = git.mode || (
-        (git.interval && git.interval !== '0s') && git.secret?.value ? 'both'
-            : (git.interval && git.interval !== '0s') ? 'pull'
-                : 'push'
-    );
+    const configuredMode = (git.mode || 'auto').toLowerCase();
+    const hasSecret = !!(git.secret && (typeof git.secret === 'string' ? git.secret !== '' : git.secret.value));
+    const hasInterval = !!(git.interval && git.interval !== '0s');
+    const mode = configuredMode === 'auto'
+        ? (hasInterval ? (hasSecret ? 'both' : 'pull') : 'push')
+        : configuredMode;
     const modeColor = mode === 'pull' ? 'info' : mode === 'push' ? 'warning' : 'success';
 
     const pairs = [

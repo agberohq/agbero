@@ -246,9 +246,22 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rootPath := h.resolveRootPath()
-	if rootPath == "" && h.route.Web.Git.Enabled.Active() {
-		http.Error(w, "Deployment in progress...", http.StatusServiceUnavailable)
+	requestPath := r.URL.Path
+	mount, mountPath := h.matchMount(requestPath)
+	if mount != nil {
+		requestPath = strings.TrimPrefix(requestPath, mountPath)
+		if requestPath == "" {
+			requestPath = "/"
+		}
+	}
+
+	rootPath := h.resolveRootPathForMount(mount)
+	if rootPath == "" {
+		if h.route.Web.Git.Enabled.Active() || (mount != nil && mount.Git.Enabled.Active()) {
+			http.Error(w, "Deployment in progress...", http.StatusServiceUnavailable)
+			return
+		}
+		http.NotFound(w, r)
 		return
 	}
 
@@ -260,7 +273,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer root.Close()
 
-	reqPath := strings.TrimPrefix(r.URL.Path, "/")
+	reqPath := strings.TrimPrefix(requestPath, "/")
 	if reqPath == "" {
 		reqPath = "."
 	}
@@ -332,7 +345,7 @@ func (h *web) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	f, err := root.Open(reqPath)
 	if err != nil {
-		h.handleOpenError(w, r, root, reqPath, err)
+		h.handleOpenError(w, r, root, rootPath, reqPath, err)
 		return
 	}
 	defer f.Close()
@@ -862,7 +875,7 @@ func (h *web) serveDirectoryListing(w http.ResponseWriter, r *http.Request, f *o
 	_, _ = w.Write(buf.Bytes())
 }
 
-func (h *web) handleOpenError(w http.ResponseWriter, r *http.Request, root *os.Root, reqPath string, err error) {
+func (h *web) handleOpenError(w http.ResponseWriter, r *http.Request, root *os.Root, rootPath, reqPath string, err error) {
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		if h.route.Web.SPA.Active() {
@@ -876,7 +889,7 @@ func (h *web) handleOpenError(w http.ResponseWriter, r *http.Request, root *os.R
 						// If the SPA fallback index is a PHP file, execute it
 						// via FastCGI instead of serving it as raw static content.
 						if strings.HasSuffix(strings.ToLower(idxName), ".php") {
-							if h.servePHP(w, r, root, h.resolveRootPath(), idxName) {
+							if h.servePHP(w, r, root, rootPath, idxName) {
 								return
 							}
 						}
@@ -928,6 +941,52 @@ func (h *web) resolveRootPath() string {
 	}
 
 	return h.route.Web.Root.String()
+}
+
+// matchMount returns the longest matching mount for a request path. Mount paths
+// are compared as whole path segments so /site1 does not capture /site10.
+func (h *web) matchMount(requestPath string) (*alaye.WebMount, string) {
+	var best *alaye.WebMount
+	bestLen := -1
+	for i := range h.route.Web.Mounts {
+		m := &h.route.Web.Mounts[i]
+		prefix := m.Path
+		if prefix == "" {
+			continue
+		}
+		if requestPath != prefix && !strings.HasPrefix(requestPath, prefix+"/") {
+			continue
+		}
+		if len(prefix) > bestLen {
+			best = m
+			bestLen = len(prefix)
+		}
+	}
+	if best == nil {
+		return nil, ""
+	}
+	return best, best.Path
+}
+
+// resolveRootPathForMount resolves the root for a matched mount, falling back to
+// the primary web root when no mount matched.
+func (h *web) resolveRootPathForMount(mount *alaye.WebMount) string {
+	if mount == nil {
+		return h.resolveRootPath()
+	}
+	if mount.Git.Enabled.Active() {
+		if h.cookMgr != nil {
+			return h.cookMgr.CurrentPath(mount.Git.ID)
+		}
+		if mount.Root.IsSet() {
+			return mount.Root.String()
+		}
+		return ""
+	}
+	if !mount.Root.IsSet() {
+		return ""
+	}
+	return mount.Root.String()
 }
 
 func (h *web) gzMayExist(cacheKey string) bool {

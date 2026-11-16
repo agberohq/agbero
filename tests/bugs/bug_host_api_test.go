@@ -200,7 +200,20 @@ func TestBUG_HostRoundTripPreservesRedactedSecrets(t *testing.T) {
 		Routes: []alaye.Route{{
 			Enabled: expect.Active,
 			Path:    "/",
-			Web:     alaye.Web{Enabled: expect.Active, Root: alaye.WebRoot("/tmp")},
+			Web: alaye.Web{
+				Enabled: expect.Active,
+				Root:    alaye.WebRoot("/tmp"),
+				Mounts: []alaye.WebMount{{
+					Path: "/site1",
+					Git: alaye.Git{
+						Enabled: expect.Active,
+						Mode:    "push",
+						ID:      "mount-site1",
+						URL:     "https://git.internal/site1.git",
+						Secret:  "mount-webhook-secret",
+					},
+				}},
+			},
 			BasicAuth: alaye.BasicAuth{
 				Enabled: expect.Active,
 				Users:   []string{"admin:" + bcryptHash},
@@ -260,6 +273,10 @@ func TestBUG_HostRoundTripPreservesRedactedSecrets(t *testing.T) {
 	}
 	if got := r0.Wasm.Config["api_key"]; got != "wasm-secret" {
 		t.Errorf("BUG CONFIRMED: round-trip wrote %v over wasm.config", r0.Wasm.Config)
+	}
+
+	if len(r0.Web.Mounts) != 1 || r0.Web.Mounts[0].Git.Secret.String() != "mount-webhook-secret" {
+		t.Errorf("round-trip destroyed web.mount git secret (%v)", r0.Web.Mounts)
 	}
 
 	// 4) HEAD must work: the admin UI uses it to probe for an existing host

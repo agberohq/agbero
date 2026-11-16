@@ -1057,3 +1057,138 @@ func TestServeHTTP_GitDeploymentReady(t *testing.T) {
 		t.Errorf("Expected to serve Git repo content, got: %s", rr.Body.String())
 	}
 }
+
+// Web mount tests
+
+func TestServeHTTP_MountRoot(t *testing.T) {
+	primary := newTestRoot(t)
+	writeFile(t, primary, "index.html", "primary index")
+	writeFile(t, primary, "shared.txt", "primary shared")
+
+	site1 := newTestRoot(t)
+	writeFile(t, site1, "index.html", "site1 index")
+	writeFile(t, site1, "app.js", "site1 app")
+
+	route := &alaye.Route{
+		Path: "/",
+		Web: alaye.Web{
+			Root: alaye.WebRoot(primary),
+			Mounts: []alaye.WebMount{
+				{Path: "/site1", Root: alaye.WebRoot(site1)},
+			},
+		},
+	}
+	h := NewWeb(resource.New(), route, nil)
+
+	if rr := do(t, h, http.MethodGet, "/"); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "primary index") {
+		t.Fatalf("primary root: code=%d body=%q", rr.Code, rr.Body.String())
+	}
+	if rr := do(t, h, http.MethodGet, "/site1/"); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "site1 index") {
+		t.Fatalf("mount index: code=%d body=%q", rr.Code, rr.Body.String())
+	}
+	if rr := do(t, h, http.MethodGet, "/site1/app.js"); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "site1 app") {
+		t.Fatalf("mount asset: code=%d body=%q", rr.Code, rr.Body.String())
+	}
+	if rr := do(t, h, http.MethodGet, "/shared.txt"); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "primary shared") {
+		t.Fatalf("primary fallback: code=%d body=%q", rr.Code, rr.Body.String())
+	}
+	if rr := do(t, h, http.MethodGet, "/site10/app.js"); rr.Code != http.StatusNotFound {
+		t.Fatalf("mount prefix leaked into /site10: code=%d", rr.Code)
+	}
+}
+
+func TestServeHTTP_MountLongestPrefixWins(t *testing.T) {
+	base := newTestRoot(t)
+	writeFile(t, base, "file.txt", "base")
+	shallow := newTestRoot(t)
+	writeFile(t, shallow, "file.txt", "shallow")
+	deep := newTestRoot(t)
+	writeFile(t, deep, "file.txt", "deep")
+
+	route := &alaye.Route{
+		Path: "/",
+		Web: alaye.Web{
+			Root: alaye.WebRoot(base),
+			Mounts: []alaye.WebMount{
+				{Path: "/site1", Root: alaye.WebRoot(shallow)},
+				{Path: "/site1/deep", Root: alaye.WebRoot(deep)},
+			},
+		},
+	}
+	h := NewWeb(resource.New(), route, nil)
+
+	if rr := do(t, h, http.MethodGet, "/site1/file.txt"); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "shallow") {
+		t.Fatalf("shallow mount: code=%d body=%q", rr.Code, rr.Body.String())
+	}
+	if rr := do(t, h, http.MethodGet, "/site1/deep/file.txt"); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "deep") {
+		t.Fatalf("deep mount: code=%d body=%q", rr.Code, rr.Body.String())
+	}
+}
+
+func TestServeHTTP_MountOnlyUnmatchedIsNotFound(t *testing.T) {
+	site1 := newTestRoot(t)
+	writeFile(t, site1, "index.html", "site1 index")
+
+	route := &alaye.Route{
+		Path: "/",
+		Web: alaye.Web{
+			Mounts: []alaye.WebMount{
+				{Path: "/site1", Root: alaye.WebRoot(site1)},
+			},
+		},
+	}
+	h := NewWeb(resource.New(), route, nil)
+
+	if rr := do(t, h, http.MethodGet, "/site1/"); rr.Code != http.StatusOK {
+		t.Fatalf("mount index: want 200, got %d", rr.Code)
+	}
+	if rr := do(t, h, http.MethodGet, "/other"); rr.Code != http.StatusNotFound {
+		t.Fatalf("unmatched path without primary root: want 404, got %d", rr.Code)
+	}
+}
+
+func TestServeHTTP_MountGitDeployment(t *testing.T) {
+	res := resource.New()
+	cookWorkDir := expect.NewFolder(filepath.Join(t.TempDir(), "cook.d"))
+	mgr, err := cook.NewManager(cook.ManagerConfig{
+		WorkDir: cookWorkDir,
+		Pool:    res.Background,
+		Logger:  res.Logger,
+	})
+	if err != nil {
+		t.Fatalf("cook manager: %v", err)
+	}
+	defer mgr.Stop()
+
+	deploy := t.TempDir()
+	writeFile(t, deploy, "index.html", "git mount index")
+	if err := mgr.Register("mount-site", alaye.Git{
+		Enabled: expect.Active,
+		ID:      "mount-site",
+		Secret:  "webhook-secret",
+		WorkDir: expect.Folder(deploy),
+		Mode:    "push",
+	}); err != nil {
+		t.Fatalf("register mount git: %v", err)
+	}
+
+	route := &alaye.Route{
+		Path: "/",
+		Web: alaye.Web{
+			Mounts: []alaye.WebMount{
+				{Path: "/site1", Git: alaye.Git{
+					Enabled: expect.Active,
+					ID:      "mount-site",
+					Secret:  "webhook-secret",
+					WorkDir: expect.Folder(deploy),
+					Mode:    "push",
+				}},
+			},
+		},
+	}
+	h := NewWeb(res, route, mgr)
+
+	if rr := do(t, h, http.MethodGet, "/site1/"); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "git mount index") {
+		t.Fatalf("git mount: code=%d body=%q", rr.Code, rr.Body.String())
+	}
+}
