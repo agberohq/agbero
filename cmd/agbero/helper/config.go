@@ -47,13 +47,14 @@ type Config struct {
 	SystemForce bool
 	SystemYes   bool
 
-	KeeperKey     string
-	KeeperValue   string
-	KeeperB64     bool
-	KeeperFile    string
-	KeeperForce   bool
-	KeeperUser    string
-	KeeperOutFile string
+	KeeperKey        string
+	KeeperMakeLength int
+	KeeperValue      string
+	KeeperB64        bool
+	KeeperFile       string
+	KeeperForce      bool
+	KeeperUser       string
+	KeeperOutFile    string
 
 	AdminPassword string
 

@@ -159,9 +159,11 @@ Running `agbero keeper` with no subcommand opens an interactive REPL.
 | Command | Description |
 |---------|-------------|
 | `keeper` *(no subcommand)* | Open interactive REPL |
+| `keeper check` | Report whether the keeper is locked or unlocked |
 | `keeper list` | List all keys in the keeper |
 | `keeper get <key>` | Retrieve a value from the keeper |
-| `keeper set <key> [value]` | Store a value in the keeper |
+| `keeper make <key>` | Generate a random secret, store it, and print it once |
+| `keeper set <key> [value]` | Store an explicit value in the keeper |
 | `keeper delete <key>` | Delete a key from the keeper |
 | `keeper rotate` | Change the master passphrase (re-encrypts all secrets in place) |
 | `keeper help` | Show keeper command reference |
@@ -171,9 +173,16 @@ Running `agbero keeper` with no subcommand opens an interactive REPL.
 agbero keeper <subcommand> [flags]
 ```
 
+**Flags for `make`:**
+- `-l, --length int`: Secret length in bytes (default: 32)
+
 **Flags for `set`:**
 - `-f, --file string`: Read value from file (e.g. a certificate or SSH key PEM)
 - `-b, --b64`: Value is already base64-encoded — decode it before storing
+
+`make` is a generation helper; `set` is the explicit form. A generated value is
+printed once so it can be copied to another node. Do not run `make` separately
+on two nodes for the same shared secret — they will generate different values.
 
 **Key format:** `namespace/key` or `ss://namespace/key`
 
@@ -191,13 +200,19 @@ agbero keeper <subcommand> [flags]
 # Open the interactive REPL
 agbero keeper
 
+# Check locked/unlocked state without prompting
+agbero keeper check
+
 # List all stored keys
 agbero keeper list
 
 # Retrieve a secret value
 agbero keeper get myapp/db-password
 
-# Store a plain-text value
+# Generate a random secret and store it
+agbero keeper make myapp/db-password
+
+# Store a plain-text value explicitly
 agbero keeper set myapp/db-password "s3cr3t"
 
 # Store a certificate from a file

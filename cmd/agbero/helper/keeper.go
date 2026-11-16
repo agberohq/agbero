@@ -8,6 +8,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/core/expect"
 	"github.com/agberohq/agbero/internal/hub/secrets"
+	"github.com/agberohq/agbero/internal/pkg/security"
 	"github.com/agberohq/agbero/internal/pkg/ui"
 	keeperlib "github.com/agberohq/keeper"
 	"github.com/agberohq/keeper/x/keepcmd"
@@ -91,6 +92,38 @@ func (k *Keeper) Get(_ string, key string) {
 	}
 }
 
+// Make generates a random secret, stores it once, and prints it so the same
+// value can be copied to another node's keeper.
+func (k *Keeper) Make(_ string, key string, length int) {
+	store := k.requireStore()
+	if strings.TrimSpace(key) == "" {
+		k.p.Logger.Fatal("key is required")
+	}
+	key = normaliseKey(key)
+	if length <= 0 {
+		length = 32
+	}
+	if _, err := store.Get(key); err == nil {
+		k.p.Logger.Fatalf("keeper key %q already exists; use 'keeper set' or 'keeper delete' first", key)
+	}
+	secret, err := security.NewPassword().Generate(length)
+	if err != nil {
+		k.p.Logger.Fatal("generate secret: ", err)
+	}
+	if err := store.EnsureBucket(key); err != nil {
+		k.p.Logger.Fatal("failed to prepare bucket: ", err)
+	}
+	if err := store.Set(key, []byte(secret)); err != nil {
+		k.p.Logger.Fatal("store secret: ", err)
+	}
+	u := ui.New()
+	u.Render(func() {
+		u.SecretBox("Generated secret — "+key, secret)
+		u.InfoLine("reference in agbero.hcl as:  ss://" + key)
+		u.InfoLine("stored in keeper; copy this value to the other node with 'keeper set " + key + " <value>'")
+	})
+}
+
 func (k *Keeper) Set(_ string, key, value string, asB64 bool, fromFile string) {
 	store := k.requireStore()
 
@@ -139,6 +172,20 @@ func (k *Keeper) Backup(_ string, dest string) {
 	if err := k.cmds(store).Backup(keepcmd.BackupOptions{Dest: dest}); err != nil {
 		k.p.Logger.Fatal(err)
 	}
+}
+
+// Check reports whether the keeper is locked without prompting for a
+// passphrase or mutating the store.
+func (k *Keeper) Check(_ string) {
+	store := k.requireStore()
+	u := ui.New()
+	u.Render(func() {
+		if store.IsLocked() {
+			u.WarnLine("keeper is locked")
+		} else {
+			u.SuccessLine("keeper is unlocked")
+		}
+	})
 }
 
 func (k *Keeper) Status(_ string) {

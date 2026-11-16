@@ -25,6 +25,7 @@ import (
 	"github.com/olekukonko/jack"
 	"github.com/olekukonko/ll"
 	"github.com/olekukonko/ll/lh"
+	"golang.org/x/term"
 )
 
 var logger *ll.Logger
@@ -136,12 +137,23 @@ func main() {
 	cmdKeeper := flaggy.NewSubcommand("keeper")
 	cmdKeeper.Description = "Manage the encrypted secret store"
 
+	cmdKeeperCheck := flaggy.NewSubcommand("check")
+	cmdKeeperCheck.Description = "Report whether the keeper is locked"
+
 	cmdKeeperList := flaggy.NewSubcommand("list")
 	cmdKeeperList.Description = "List all keys in the keeper"
 
 	cmdKeeperGet := flaggy.NewSubcommand("get")
 	cmdKeeperGet.Description = "Retrieve a value from the keeper"
 	cmdKeeperGet.AddPositionalValue(&cfg.KeeperKey, "key", 1, true, "Secret key name")
+
+	cmdKeeperMake := flaggy.NewSubcommand("make")
+	cmdKeeperMake.Description = "Generate a random secret and store it"
+	cmdKeeperMake.AddPositionalValue(&cfg.KeeperKey, "key", 1, true, "Secret key name")
+	if cfg.KeeperMakeLength == 0 {
+		cfg.KeeperMakeLength = 32
+	}
+	cmdKeeperMake.Int(&cfg.KeeperMakeLength, "l", "length", "Secret length in bytes")
 
 	cmdKeeperSet := flaggy.NewSubcommand("set")
 	cmdKeeperSet.Description = "Store a value in the keeper"
@@ -164,8 +176,10 @@ func main() {
 	cmdKeeperHelp := flaggy.NewSubcommand("help")
 	cmdKeeperHelp.Description = "Show keeper command reference"
 
+	cmdKeeper.AttachSubcommand(cmdKeeperCheck, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperList, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperGet, 1)
+	cmdKeeper.AttachSubcommand(cmdKeeperMake, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperSet, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperDelete, 1)
 	cmdKeeper.AttachSubcommand(cmdKeeperRotate, 1)
@@ -608,19 +622,48 @@ func main() {
 		// Using the raw string causes isInteractive=false even when no real passphrase
 		// exists, suppressing the prompt the user needs.
 		passphraseAvailable := secrets.PassphraseAvailable(&global.Security.Keeper)
-		isInteractive := !passphraseAvailable && ctx.Interactive && !cfg.Silent && !cfg.ServiceMode
+		// A manual keeper CLI invocation with a real terminal should prompt even
+		// when the environment is marked headless/CI. Service startup still uses
+		// ctx.Interactive and --service semantics.
+		keeperTTY := cmdKeeperNeedsStore && !cmdKeeperCheck.Used && term.IsTerminal(int(os.Stdin.Fd()))
+		isInteractive := !cmdKeeperCheck.Used && !passphraseAvailable && !cfg.Silent && (ctx.Interactive || keeperTTY) && (!cfg.ServiceMode || cmdKeeperNeedsStore)
 
 		store, storeErr := secrets.Open(secrets.Config{
 			DataDir:         dataDir,
 			Setting:         &global.Security.Keeper,
 			Logger:          logger,
 			Interactive:     isInteractive,
-			AllowLocked:     cmdRun.Used && cfg.ServiceMode,
+			AllowLocked:     (cmdRun.Used && cfg.ServiceMode) || cmdKeeperCheck.Used,
 			DisableAutoLock: cmdRun.Used,
 		})
 
 		if storeErr != nil {
 			logger.Fatal("failed to open keeper: ", storeErr)
+		}
+
+		// CLI keeper/admin commands must not silently operate on a locked
+		// store. `run` is the exception: service mode deliberately starts
+		// locked and waits for the unlock endpoint. If the normal open path
+		// did not prompt (for example because service mode suppressed it),
+		// prompt explicitly here.
+		if store.IsLocked() && !cmdRun.Used && !cmdKeeperCheck.Used {
+			if !keeperTTY {
+				_ = store.Close()
+				logger.Fatal("keeper is locked; run in an interactive terminal, set AGBERO_KEEPER_PASSPHRASE, or configure keeper.passphrase")
+			}
+			u := ui.New()
+			result, err := u.PasswordRequired("Keeper Passphrase")
+			if err != nil {
+				_ = store.Close()
+				logger.Fatal("read keeper passphrase: ", err)
+			}
+			pass := result.Bytes()
+			err = store.Unlock(pass)
+			result.Zero()
+			if err != nil {
+				_ = store.Close()
+				logger.Fatal("failed to unlock keeper: ", err)
+			}
 		}
 
 		if cmdRun.Used && store.IsLocked() && cfg.Silent {
@@ -687,10 +730,14 @@ func main() {
 		switch {
 		case cmdKeeperHelp.Used:
 			flaggy.ShowHelpAndExit("keeper")
+		case cmdKeeperCheck.Used:
+			k.Check(resolvedPath)
 		case cmdKeeperList.Used:
 			k.List(resolvedPath)
 		case cmdKeeperGet.Used:
 			k.Get(resolvedPath, cfg.KeeperKey)
+		case cmdKeeperMake.Used:
+			k.Make(resolvedPath, cfg.KeeperKey, cfg.KeeperMakeLength)
 		case cmdKeeperSet.Used:
 			k.Set(resolvedPath, cfg.KeeperKey, cfg.KeeperValue, cfg.KeeperB64, cfg.KeeperFile)
 		case cmdKeeperDelete.Used:
@@ -992,7 +1039,9 @@ func showHelpExamples() {
 			Title: "Keeper (secret store)",
 			Commands: []ui.HelpCmd{
 				{Cmd: exeName + " keeper list", Desc: "list all keys in the encrypted store"},
+				{Cmd: exeName + " keeper check", Desc: "report locked/unlocked state"},
 				{Cmd: exeName + " keeper get <key>", Desc: "retrieve a secret value"},
+				{Cmd: exeName + " keeper make <key>", Desc: "generate and store a random secret"},
 				{Cmd: exeName + " keeper set <key> <value>", Desc: "store a plain string secret"},
 				{Cmd: exeName + " keeper set <key> --file cert.pem", Desc: "store a certificate or binary file"},
 				{Cmd: exeName + " keeper set <key> <b64> --b64", Desc: "store pre-encoded base64 value"},
