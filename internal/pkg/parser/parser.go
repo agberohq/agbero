@@ -184,10 +184,19 @@ func validateBodyStructure(body *hclsyntax.Body, t reflect.Type) error {
 		}
 	}
 
+	var unknownName string
+	var unknownLine int
 	for name, attr := range body.Attributes {
-		if !attrs[name] {
-			return fmt.Errorf("unknown attribute %q at line %d", name, attr.SrcRange.Start.Line)
+		if attrs[name] {
+			continue
 		}
+		line := attr.SrcRange.Start.Line
+		if unknownName == "" || line < unknownLine {
+			unknownName, unknownLine = name, line
+		}
+	}
+	if unknownName != "" {
+		return fmt.Errorf("unknown attribute %q at line %d", unknownName, unknownLine)
 	}
 
 	counts := make(map[string]int)
