@@ -17,26 +17,26 @@ type Admin struct {
 // requireStore returns the injected store or fatals with a clear message.
 func (a *Admin) requireStore() *keeperlib.Keeper {
 	if a.p.Store == nil {
-		a.p.Logger.Fatal("keeper store is not available — run 'agbero init' first or check AGBERO_KEEPER_PASSPHRASE / keeper.passphrase_file")
+		a.p.UI().Abort("keeper store is not available — run 'agbero init' first or check AGBERO_KEEPER_PASSPHRASE / keeper.passphrase_file")
 	}
 	return a.p.Store
 }
 
 func (a *Admin) TOTPSetup(_ string, username string) {
 	if username == "" {
-		a.p.Logger.Fatal("--user is required")
+		a.p.UI().Abort("--user is required")
 	}
 	store := a.requireStore()
 
 	gen := security.NewTOTPGenerator(security.DefaultTOTPConfig())
 	secret, err := gen.GenerateSecret()
 	if err != nil {
-		a.p.Logger.Fatal("failed to generate TOTP secret: ", err)
+		a.p.UI().Abort("failed to generate TOTP secret: ", err)
 	}
 
 	storeKey := expect.Vault().AdminTOTP(username)
 	if err := store.Set(storeKey, []byte(secret)); err != nil {
-		a.p.Logger.Fatal("failed to store TOTP secret: ", err)
+		a.p.UI().Abort("failed to store TOTP secret: ", err)
 	}
 
 	uri := gen.GetProvisioningURI(secret, username)
@@ -45,14 +45,14 @@ func (a *Admin) TOTPSetup(_ string, username string) {
 
 func (a *Admin) TOTPQR(_ string, username string) {
 	if username == "" {
-		a.p.Logger.Fatal("--user is required")
+		a.p.UI().Abort("--user is required")
 	}
 	store := a.requireStore()
 
 	storeKey := expect.Vault().AdminTOTP(username)
 	secretBytes, err := store.Get(storeKey)
 	if err != nil {
-		a.p.Logger.Fatal("TOTP secret not found — run 'agbero admin totp setup' first: ", err)
+		a.p.UI().Abort("TOTP secret not found — run 'agbero admin totp setup' first: ", err)
 	}
 
 	gen := security.NewTOTPGenerator(security.DefaultTOTPConfig())
@@ -62,14 +62,14 @@ func (a *Admin) TOTPQR(_ string, username string) {
 
 func (a *Admin) TOTPQRPNGFile(_ string, username, outFile string) {
 	if username == "" {
-		a.p.Logger.Fatal("--user is required")
+		a.p.UI().Abort("--user is required")
 	}
 	store := a.requireStore()
 
 	storeKey := expect.Vault().AdminTOTP(username)
 	secretBytes, err := store.Get(storeKey)
 	if err != nil {
-		a.p.Logger.Fatal("TOTP secret not found — run 'agbero admin totp setup' first: ", err)
+		a.p.UI().Abort("TOTP secret not found — run 'agbero admin totp setup' first: ", err)
 	}
 
 	gen := security.NewTOTPGenerator(security.DefaultTOTPConfig())
@@ -77,11 +77,11 @@ func (a *Admin) TOTPQRPNGFile(_ string, username, outFile string) {
 
 	qr, qrErr := setup.TOTPProvisioningQR(uri)
 	if qrErr != nil {
-		a.p.Logger.Fatal("QR generation failed: ", qrErr)
+		a.p.UI().Abort("QR generation failed: ", qrErr)
 	}
 
 	if err := os.WriteFile(outFile, qr.PNG, 0600); err != nil {
-		a.p.Logger.Fatal("failed to write QR PNG: ", err)
+		a.p.UI().Abort("failed to write QR PNG: ", err)
 	}
 
 	u := ui.New()

@@ -47,6 +47,15 @@ type Config struct {
 	SystemForce bool
 	SystemYes   bool
 
+	RelayTarget        string
+	RelayCheckServer   bool
+	RelayCheckClient   bool
+	RelayCheckAttempts int
+	RelayCheckWait     time.Duration
+	RelayCheckTimeout  time.Duration
+	RelayAgent         string
+	RelayAdminToken    string
+
 	KeeperKey        string
 	KeeperMakeLength int
 	KeeperValue      string

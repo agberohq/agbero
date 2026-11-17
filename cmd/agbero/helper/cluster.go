@@ -43,7 +43,7 @@ func (c *Cluster) Start(configPath string) {
 	}
 
 	if patched, err := c.ensureGossipBlock(configPath, global, u); err != nil {
-		c.p.Logger.Fatal("failed to update agbero.hcl with gossip block: ", err)
+		c.p.UI().Abort("failed to update agbero.hcl with gossip block: ", err)
 		return
 	} else if patched {
 		u.Render(func() {
@@ -108,14 +108,14 @@ func (c *Cluster) Join(configPath, peerAddr string) {
 				"ensure the seed node is running and the gossip port is open",
 			)
 		})
-		c.p.Logger.Fatal("cluster join aborted: peer unreachable: ", err)
+		c.p.UI().Abort("cluster join aborted: peer unreachable: ", err)
 		return
 	}
 	conn.Close()
 	u.Render(func() { u.Step("ok", fmt.Sprintf("peer %s is reachable", peerAddr)) })
 
 	if patched, err := c.ensureGossipBlockWithSeed(configPath, global, peerAddr, u); err != nil {
-		c.p.Logger.Fatal("failed to update agbero.hcl: ", err)
+		c.p.UI().Abort("failed to update agbero.hcl: ", err)
 		return
 	} else if patched {
 		u.Render(func() {

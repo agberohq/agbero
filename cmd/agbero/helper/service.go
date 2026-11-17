@@ -25,6 +25,11 @@ func (s *Service) requiresRoot(cmd string) bool {
 	if runtime.GOOS == def.Windows {
 		return true
 	}
+	// macOS installs a per-user LaunchAgent (~/Library/LaunchAgents), which
+	// does not require root. The service config uses UserService in main.go.
+	if runtime.GOOS == def.Darwin {
+		return true
+	}
 	if os.Geteuid() == 0 {
 		return true
 	}
@@ -105,7 +110,7 @@ func (s *Service) Install(svc service.Service, installHere bool, configPath stri
 		u.Step("run", "Running pre-flight checks...")
 	})
 	if err := s.preflightCheck(configPath); err != nil {
-		s.p.Logger.Fatal("Pre-flight check failed:\n\n", err)
+		s.p.UI().Abort("Pre-flight check failed:\n\n", err)
 		return
 	}
 	u.Render(func() {
@@ -116,7 +121,7 @@ func (s *Service) Install(svc service.Service, installHere bool, configPath stri
 		if errors.Is(err, def.ErrAlreadyExists) {
 			u.Render(func() { u.WarnLine("service already exists") })
 		} else {
-			s.p.Logger.Fatal(s.mapError(err, "install"))
+			s.p.UI().Abort(s.mapError(err, "install"))
 		}
 		return
 	}
@@ -141,7 +146,7 @@ func (s *Service) Uninstall(svc service.Service) {
 			u.Render(func() { u.WarnLine("service unit was already absent or could not be removed; continuing") })
 			return
 		}
-		s.p.Logger.Fatal(s.mapError(err, "uninstall"))
+		s.p.UI().Abort(s.mapError(err, "uninstall"))
 	}
 	u.Render(func() { u.SuccessLine("service uninstalled") })
 }
@@ -153,10 +158,10 @@ func (s *Service) Start(svc service.Service, configPath string) {
 	u := ui.New()
 	u.Render(func() { u.Step("run", "starting system service") })
 	if err := svc.Start(); err != nil {
-		s.p.Logger.Fatal(s.mapError(err, "start"))
+		s.p.UI().Abort(s.mapError(err, "start"))
 	}
 	if !waitRunning(svc, 8*time.Second) {
-		s.p.Logger.Fatal("service did not stay running — check: journalctl -u " + def.Name + " -n 80 --no-pager")
+		s.p.UI().Abort("service did not stay running — check: journalctl -u " + def.Name + " -n 80 --no-pager")
 	}
 	u.Render(func() { u.SuccessLine("service started") })
 	s.unlockWaiting(configPath)
@@ -169,7 +174,7 @@ func (s *Service) Stop(svc service.Service) {
 	u := ui.New()
 	u.Render(func() { u.Step("run", "stopping system service") })
 	if err := svc.Stop(); err != nil {
-		s.p.Logger.Fatal(s.mapError(err, "stop"))
+		s.p.UI().Abort(s.mapError(err, "stop"))
 	}
 	u.Render(func() { u.SuccessLine("service stopped") })
 }
@@ -183,17 +188,17 @@ func (s *Service) Restart(svc service.Service, configPath string) {
 		u.Step("run", "stopping system service")
 	})
 	if err := svc.Stop(); err != nil {
-		s.p.Logger.Fatal(s.mapError(err, "stop"))
+		s.p.UI().Abort(s.mapError(err, "stop"))
 	}
 	time.Sleep(2 * time.Second)
 	u.Render(func() {
 		u.Step("run", "starting system service")
 	})
 	if err := svc.Start(); err != nil {
-		s.p.Logger.Fatal(s.mapError(err, "start"))
+		s.p.UI().Abort(s.mapError(err, "start"))
 	}
 	if !waitRunning(svc, 8*time.Second) {
-		s.p.Logger.Fatal("service did not stay running — check: journalctl -u " + def.Name + " -n 80 --no-pager")
+		s.p.UI().Abort("service did not stay running — check: journalctl -u " + def.Name + " -n 80 --no-pager")
 	}
 	u.Render(func() { u.SuccessLine("service restarted") })
 	s.unlockWaiting(configPath)
@@ -202,7 +207,7 @@ func (s *Service) Restart(svc service.Service, configPath string) {
 func (s *Service) Status(svc service.Service, configPath string) {
 	status, err := svc.Status()
 	if err != nil {
-		s.p.Logger.Fatal(s.mapError(err, "status"))
+		s.p.UI().Abort(s.mapError(err, "status"))
 	}
 
 	statusStr := "unknown"
@@ -271,7 +276,7 @@ func (s *Service) unlockWaiting(configPath string) {
 	u := ui.New()
 	result, err := u.PasswordRequired("Keeper passphrase")
 	if err != nil {
-		s.p.Logger.Fatal("read passphrase: ", err)
+		s.p.UI().Abort("read passphrase: ", err)
 	}
 	pass := result.Bytes()
 	defer result.Zero()

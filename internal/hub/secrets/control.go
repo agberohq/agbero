@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -62,6 +63,11 @@ func StartControl(store *keeper.Keeper, dataDir expect.Folder, logger *ll.Logger
 	_ = os.Chmod(ct.file, 0600)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/unlock", ct.unlock)
+	mux.HandleFunc("/keeper/status", ct.auth(ct.status))
+	mux.HandleFunc("/keeper/list", ct.auth(ct.list))
+	mux.HandleFunc("/keeper/get", ct.auth(ct.get))
+	mux.HandleFunc("/keeper/set", ct.auth(ct.set))
+	mux.HandleFunc("/keeper/delete", ct.auth(ct.delete))
 	ct.srv = &http.Server{Handler: mux}
 	go func() {
 		_ = ct.srv.Serve(ln)
@@ -115,11 +121,162 @@ func (c *Control) unlock(w http.ResponseWriter, r *http.Request) {
 	NewResolver(c.store).Wire()
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"status":"unlocked"}`))
-	go c.Close()
+}
+
+func (c *Control) auth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !strings.EqualFold(r.Header.Get("Authorization"), "Bearer "+c.token) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (c *Control) status(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"locked": c.store.IsLocked()})
+}
+
+func (c *Control) list(w http.ResponseWriter, r *http.Request) {
+	keys, err := c.store.List()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"keys": keys})
+}
+
+func (c *Control) get(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		http.Error(w, "key required", http.StatusBadRequest)
+		return
+	}
+	value, err := c.store.Get(key)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]any{"key": key, "value": string(value)})
+}
+
+func (c *Control) set(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil || req.Key == "" {
+		http.Error(w, "key and value required", http.StatusBadRequest)
+		return
+	}
+	if err := c.store.EnsureBucket(req.Key); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := c.store.Set(req.Key, []byte(req.Value)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"key": req.Key, "ref": "ss://" + req.Key})
+}
+
+func (c *Control) delete(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil || req.Key == "" {
+		http.Error(w, "key required", http.StatusBadRequest)
+		return
+	}
+	if err := c.store.Delete(req.Key); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"deleted": req.Key})
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// ControlClient talks to a running service's Keeper control endpoint.
+type ControlClient struct {
+	cf   *ControlFile
+	http *http.Client
+}
+
+func NewControlClient(dataDir expect.Folder) (*ControlClient, error) {
+	cf, err := ReadControlFile(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	return &ControlClient{cf: cf, http: &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}}, nil
+}
+
+func (c *ControlClient) do(method, path string, body any, out any) error {
+	var r io.Reader
+	if body != nil {
+		data, _ := json.Marshal(body)
+		r = strings.NewReader(string(data))
+	}
+	req, err := http.NewRequest(method, fmt.Sprintf("http://127.0.0.1:%d%s", c.cf.Port, path), r)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.cf.Token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(data)))
+	}
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func (c *ControlClient) Status() (bool, error) {
+	var v struct {
+		Locked bool `json:"locked"`
+	}
+	err := c.do(http.MethodGet, "/keeper/status", nil, &v)
+	return v.Locked, err
+}
+func (c *ControlClient) List() ([]string, error) {
+	var v struct {
+		Keys []string `json:"keys"`
+	}
+	err := c.do(http.MethodGet, "/keeper/list", nil, &v)
+	return v.Keys, err
+}
+func (c *ControlClient) Get(key string) (string, error) {
+	var v struct {
+		Value string `json:"value"`
+	}
+	err := c.do(http.MethodGet, "/keeper/get?key="+url.QueryEscape(key), nil, &v)
+	return v.Value, err
+}
+func (c *ControlClient) Set(key, value string) error {
+	return c.do(http.MethodPost, "/keeper/set", map[string]string{"key": key, "value": value}, nil)
+}
+func (c *ControlClient) Delete(key string) error {
+	return c.do(http.MethodPost, "/keeper/delete", map[string]string{"key": key}, nil)
 }
 
 // Wait blocks until the control endpoint has unlocked the store.
-func (c *Control) Wait() { <-c.done }
+func (c *Control) Wait() {
+	for c.store.IsLocked() {
+		time.Sleep(50 * time.Millisecond)
+	}
+}
 
 func (c *Control) Close() {
 	c.once.Do(func() {

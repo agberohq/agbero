@@ -39,7 +39,17 @@ func TestControlUnlock(t *testing.T) {
 	if store.IsLocked() {
 		t.Fatal("store is still locked")
 	}
-	if _, err := os.Stat(ControlPath(dataDir)); !os.IsNotExist(err) {
-		t.Fatalf("control file was not removed: %v", err)
+	if _, err := os.Stat(ControlPath(dataDir)); err != nil {
+		t.Fatalf("control file removed after unlock: %v", err)
+	}
+	client, err := NewControlClient(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if locked, err := client.Status(); err != nil || locked {
+		t.Fatalf("status after unlock: locked=%v err=%v", locked, err)
+	}
+	if err := client.Set("test/control-key", "value"); err != nil {
+		t.Fatal(err)
 	}
 }

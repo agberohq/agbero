@@ -141,7 +141,7 @@ func (h *Home) Uninstall(svc service.Service, configPath string, force bool) {
 		}
 	}
 
-	h.p.Logger.Info("starting uninstall sequence")
+	h.p.UI().Info("starting uninstall sequence")
 
 	// Step 1: Backup prompt.
 	h.promptBackup(configPath, force)
@@ -150,9 +150,9 @@ func (h *Home) Uninstall(svc service.Service, configPath string, force bool) {
 	// Stop is warn-only (may already be stopped).
 	// Uninstall delegates to Service helper which has the root check.
 	if svc != nil {
-		h.p.Logger.Info("stopping system service")
+		h.p.UI().Info("stopping system service")
 		if err := svc.Stop(); err != nil {
-			h.p.Logger.Warnf("service stop: %v (may already be stopped)", err)
+			h.p.UI().Warnf("service stop: %v (may already be stopped)", err)
 		}
 		h.p.Service().Uninstall(svc)
 	}
@@ -182,7 +182,7 @@ func (h *Home) Uninstall(svc service.Service, configPath string, force bool) {
 // All UI goes through ui.Confirm — huh is never called directly.
 func (h *Home) promptBackup(configPath string, force bool) {
 	if force {
-		h.p.Logger.Warn("force mode: skipping backup prompt")
+		h.p.UI().Warn("force mode: skipping backup prompt")
 		return
 	}
 
@@ -192,13 +192,13 @@ func (h *Home) promptBackup(configPath string, force bool) {
 		"A backup lets you restore agbero later. The service must be stopped first.",
 	)
 	if err != nil || !doBackup {
-		h.p.Logger.Info("backup skipped")
+		h.p.UI().Info("backup skipped")
 		return
 	}
 
 	sys := setup.NewSystem(setup.SystemConfig{Logger: h.p.Logger})
 	if err := sys.Backup(configPath, "", ""); err != nil {
-		h.p.Logger.Warnf("backup failed: %v — continuing with uninstall", err)
+		h.p.UI().Warnf("backup failed: %v — continuing with uninstall", err)
 	}
 }
 
@@ -258,18 +258,18 @@ func (h *Home) deleteDataDirectories(configPath string) {
 		if _, err := os.Stat(p); os.IsNotExist(err) {
 			continue
 		}
-		h.p.Logger.Infof("removing %s", p)
+		h.p.UI().Infof("removing %s", p)
 		if err := os.RemoveAll(p); err != nil {
-			h.p.Logger.Warnf("could not fully remove %s: %v — manual cleanup may be required", p, err)
+			h.p.UI().Warnf("could not fully remove %s: %v — manual cleanup may be required", p, err)
 		}
 	}
 }
 
 func (h *Home) deleteBinary() {
-	h.p.Logger.Info("removing agbero binary")
+	h.p.UI().Info("removing agbero binary")
 	execPath, err := os.Executable()
 	if err != nil {
-		h.p.Logger.Warnf("could not determine binary path: %v", err)
+		h.p.UI().Warnf("could not determine binary path: %v", err)
 		return
 	}
 	resolved, err := filepath.EvalSymlinks(execPath)
@@ -277,11 +277,11 @@ func (h *Home) deleteBinary() {
 		resolved = execPath
 	}
 	if err := os.Remove(resolved); err != nil {
-		h.p.Logger.Warnf("could not remove binary at %s: %v", resolved, err)
+		h.p.UI().Warnf("could not remove binary at %s: %v", resolved, err)
 		fmt.Printf("\nManual removal required: rm -f %s\n", resolved)
 		return
 	}
-	h.p.Logger.Infof("removed binary at %s", resolved)
+	h.p.UI().Infof("removed binary at %s", resolved)
 	fmt.Println("\nagbero has been completely uninstalled.")
 }
 
@@ -322,7 +322,7 @@ func (h *Home) openTLSStore(configPath string) tlsstore.Store {
 			}
 		}
 	}
-	h.p.Logger.Warn("could not open TLS store for CA removal — CA may need manual trust store cleanup")
+	h.p.UI().Warn("could not open TLS store for CA removal — CA may need manual trust store cleanup")
 	return tlsstore.NewMemory()
 }
 

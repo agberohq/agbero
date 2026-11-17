@@ -19,7 +19,7 @@ type Log struct {
 func (l *Log) Tail(configPath string, lines int, follow bool) {
 	global, err := LoadGlobal(configPath)
 	if err != nil {
-		l.p.Logger.Fatal("load config: ", err)
+		l.p.UI().Abort("load config: ", err)
 	}
 	path := strings.TrimSpace(global.Logging.File.Path)
 	if path == "" {
@@ -32,7 +32,7 @@ func (l *Log) Tail(configPath string, lines int, follow bool) {
 		lines = 200
 	}
 	if err := printTail(path, lines); err != nil {
-		l.p.Logger.Fatal("read log: ", err)
+		l.p.UI().Abort("read log: ", err)
 	}
 	if follow {
 		followTail(path)

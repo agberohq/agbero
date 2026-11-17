@@ -41,7 +41,7 @@ func (r *Run) Start(configPath string, devMode bool) error {
 
 	pidPath, err := writePIDFile(global.Storage.DataDir.Path())
 	if err != nil {
-		r.p.Logger.Warn("failed to write pid file; 'config reload' will not work", "err", err)
+		r.p.UI().Warn("failed to write pid file; 'config reload' will not work", "err", err)
 	} else {
 		defer removePIDFile(pidPath)
 	}

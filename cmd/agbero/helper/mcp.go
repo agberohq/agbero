@@ -23,7 +23,7 @@ type MCP struct {
 
 func (m *MCP) TokenCreate(configPath, user, scope string, ttl time.Duration) {
 	if m.p.Store == nil {
-		m.p.Logger.Fatal("keeper store is not available")
+		m.p.UI().Abort("keeper store is not available")
 	}
 	if strings.TrimSpace(user) == "" {
 		user = os.Getenv("USER")
@@ -40,11 +40,11 @@ func (m *MCP) TokenCreate(configPath, user, scope string, ttl time.Duration) {
 
 	store := agmcp.NewTokenStore(m.p.Store)
 	if err := store.Ensure(); err != nil {
-		m.p.Logger.Fatal("mcp token key: ", err)
+		m.p.UI().Abort("mcp token key: ", err)
 	}
 	raw, claims, err := store.Mint(user, strings.Fields(scope), ttl)
 	if err != nil {
-		m.p.Logger.Fatal("mint mcp token: ", err)
+		m.p.UI().Abort("mint mcp token: ", err)
 	}
 	if global, err := LoadGlobal(configPath); err == nil {
 		rec := agmcp.TokenRecord{
@@ -52,7 +52,7 @@ func (m *MCP) TokenCreate(configPath, user, scope string, ttl time.Duration) {
 			CreatedAt: time.Now(), ExpiresAt: claims.ExpiresAt.Time,
 		}
 		if err := m.addTokenRecord(global, rec); err != nil {
-			m.p.Logger.Fatal("record MCP token: ", err)
+			m.p.UI().Abort("record MCP token: ", err)
 		}
 		m.audit(global, map[string]any{
 			"event": "mcp_token_create", "actor": "cli", "user": claims.Subject,
@@ -76,10 +76,10 @@ func (m *MCP) TokenCreate(configPath, user, scope string, ttl time.Duration) {
 
 func (m *MCP) TokenRotate() {
 	if m.p.Store == nil {
-		m.p.Logger.Fatal("keeper store is not available")
+		m.p.UI().Abort("keeper store is not available")
 	}
 	if err := agmcp.NewTokenStore(m.p.Store).Rotate(); err != nil {
-		m.p.Logger.Fatal("rotate mcp token key: ", err)
+		m.p.UI().Abort("rotate mcp token key: ", err)
 	}
 	ui.New().SuccessLine("MCP signing key rotated; existing tokens remain valid until the previous key is retired")
 }
@@ -122,11 +122,11 @@ func (m *MCP) addTokenRecord(global *alaye.Global, rec agmcp.TokenRecord) error 
 
 func (m *MCP) TokenRevoke(configPath, jti string) {
 	if strings.TrimSpace(jti) == "" {
-		m.p.Logger.Fatal("jti is required")
+		m.p.UI().Abort("jti is required")
 	}
 	global, err := LoadGlobal(configPath)
 	if err != nil {
-		m.p.Logger.Fatal("load config: ", err)
+		m.p.UI().Abort("load config: ", err)
 	}
 	expiresAt := time.Now().Add(agmcp.MaxTokenTTL)
 	socket := control.SocketPath(global.Storage.DataDir.Path())
@@ -153,7 +153,7 @@ func (m *MCP) TokenRevoke(configPath, jti string) {
 		return
 	}
 	if !errors.Is(err, control.ErrUnavailable) {
-		m.p.Logger.Fatal("revoke token through coordinator: ", err)
+		m.p.UI().Abort("revoke token through coordinator: ", err)
 	}
 
 	// The daemon is not available. Become the temporary owner of the data
@@ -165,7 +165,7 @@ func (m *MCP) TokenRevoke(configPath, jti string) {
 		err = revokeViaControl(retryCtx)
 		retryCancel()
 		if err != nil {
-			m.p.Logger.Fatal("data directory is owned but the coordinator is unavailable: ", lockErr)
+			m.p.UI().Abort("data directory is owned but the coordinator is unavailable: ", lockErr)
 		}
 		m.audit(global, map[string]any{"event": "mcp_token_revoke", "actor": "cli", "jti": jti, "status": 200})
 		ui.New().SuccessLine("MCP token revoked")
@@ -175,11 +175,11 @@ func (m *MCP) TokenRevoke(configPath, jti string) {
 
 	store, err := revoke.New(global.Storage.DataDir, m.p.Logger)
 	if err != nil {
-		m.p.Logger.Fatal("open revoke store: ", err)
+		m.p.UI().Abort("open revoke store: ", err)
 	}
 	defer store.Close()
 	if err := store.Revoke(jti, def.MCPServiceName, expiresAt); err != nil {
-		m.p.Logger.Fatal("revoke token: ", err)
+		m.p.UI().Abort("revoke token: ", err)
 	}
 	m.audit(global, map[string]any{"event": "mcp_token_revoke", "actor": "cli", "jti": jti, "status": 200})
 	ui.New().SuccessLine("MCP token revoked")
@@ -188,7 +188,7 @@ func (m *MCP) TokenRevoke(configPath, jti string) {
 func (m *MCP) Status(configPath string) {
 	global, err := LoadGlobal(configPath)
 	if err != nil {
-		m.p.Logger.Fatal("load config: ", err)
+		m.p.UI().Abort("load config: ", err)
 	}
 	g := global.MCP
 	u := ui.New()

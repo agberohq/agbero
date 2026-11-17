@@ -19,12 +19,12 @@ type Scan struct {
 func (s *Scan) Run(configPath string, jsonOut bool) {
 	global, err := LoadGlobal(configPath)
 	if err != nil {
-		s.p.Logger.Fatal("load config: ", err)
+		s.p.UI().Abort("load config: ", err)
 	}
 	hm := discovery.NewHost(global.Storage.HostsDir, discovery.WithLogger(s.p.Logger))
 	hosts, err := hm.LoadCanonicalByDomain()
 	if err != nil {
-		s.p.Logger.Fatal("load hosts: ", err)
+		s.p.UI().Abort("load hosts: ", err)
 	}
 	home := filepath.Dir(configPath)
 	dataDir := global.Storage.DataDir.Path()
