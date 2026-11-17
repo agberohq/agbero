@@ -53,6 +53,8 @@ type remoteState struct {
 	Control string
 	HasCurl bool
 	HasWget bool
+	SHA     string
+	Version string
 }
 
 func main() {
@@ -154,6 +156,7 @@ func run(o options) error {
 	if err != nil {
 		return err
 	}
+	fullCommit, _ := git("rev-parse", "HEAD")
 	goos, goarch := o.goos, o.goarch
 	if goos == "" {
 		goos = mapOS(remote.OS)
@@ -166,21 +169,28 @@ func run(o options) error {
 		return err
 	}
 	fmt.Printf("Built %s (%s/%s)\n", artifact, goos, goarch)
+	fmt.Printf("Local commit: %s\n", dash(fullCommit))
+	fmt.Printf("Local version: %s\n", version)
+	fmt.Printf("Remote version before: %s\n", dash(remote.Version))
+	fmt.Printf("Remote sha256 before: %s\n", dash(remote.SHA))
 
 	if o.dryRun {
 		fmt.Printf("[dry-run] would upload %s to %s\n", artifact, binaryPath)
 		return nil
 	}
+	localSum, err := fileSHA(artifact)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Local sha256: %s\n", localSum)
 
 	tmp := filepath.Join(filepath.Dir(binaryPath), ".agbero.new")
 	if err := upload(artifact, target, tmp); err != nil {
 		return err
 	}
-	sum, err := fileSHA(artifact)
-	if err != nil {
-		return err
-	}
-	if err := remoteChecksum(target, tmp, sum, o.sudo); err != nil {
+	fmt.Printf("Uploaded temp: %s\n", tmp)
+	fmt.Printf("Uploaded sha256: %s\n", localSum)
+	if err := remoteChecksum(target, tmp, localSum, o.sudo); err != nil {
 		return err
 	}
 
@@ -192,7 +202,7 @@ func run(o options) error {
 	}
 
 	hadOld := remote.Binary != ""
-	if err := installRemote(target, tmp, binaryPath, sum, o.sudo); err != nil {
+	if err := installRemote(target, tmp, binaryPath, localSum, o.sudo); err != nil {
 		return err
 	}
 
@@ -253,6 +263,21 @@ func run(o options) error {
 			}
 			return err
 		}
+	}
+
+	finalSHA, shaErr := remoteFileSHA(target, binaryPath)
+	finalVersion, verErr := remoteFileVersion(target, binaryPath)
+	fmt.Printf("Remote version after: %s\n", dash(finalVersion))
+	if shaErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: final remote sha256 check failed: %v\n", shaErr)
+	} else {
+		fmt.Printf("Remote sha256 after: %s\n", finalSHA)
+		if finalSHA != localSum {
+			return fmt.Errorf("final checksum mismatch: local %s remote %s", localSum, finalSHA)
+		}
+	}
+	if verErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: final remote version check failed: %v\n", verErr)
 	}
 
 	fmt.Printf("Deployed %s (%s/%s)\n", version, goos, goarch)
@@ -419,6 +444,23 @@ func buildBinary(goos, goarch, version, commit, date string, dry bool) (string, 
 	return out, nil
 }
 
+func remoteFileSHA(target, path string) (string, error) {
+	script := fmt.Sprintf(`if command -v sha256sum >/dev/null 2>&1; then sha256sum %s | awk '{print $1}'; else shasum -a 256 %s | awk '{print $1}'; fi`, shellQuote(path), shellQuote(path))
+	out, err := sshOutput(target, script)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func remoteFileVersion(target, path string) (string, error) {
+	out, err := sshOutput(target, shellQuote(path)+" version 2>/dev/null | head -n 1")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 func fileSHA(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -455,7 +497,12 @@ control=""
 if [ -n "$home" ]; then control=$(find "$home" -maxdepth 3 -name keeper-control.json 2>/dev/null | head -n 1 || true); fi
 curl=0; command -v curl >/dev/null 2>&1 && curl=1
 wget=0; command -v wget >/dev/null 2>&1 && wget=1
-printf 'OS=%s\nARCH=%s\nBINARY=%s\nHOME=%s\nUNIT=%s\nACTIVE=%s\nEXEC=%s\nPID=%s\nUID=%s\nCONFIG=%s\nCONTROL=%s\nCURL=%s\nWGET=%s\n' "$os" "$arch" "$bin" "$home" "$unit" "$active" "$execstart" "$pid" "$uid" "$cfg" "$control" "$curl" "$wget"`
+sha=""; ver=""
+if [ -n "$bin" ] && [ -f "$bin" ]; then
+  if command -v sha256sum >/dev/null 2>&1; then sha=$(sha256sum "$bin" | awk '{print $1}'); else sha=$(shasum -a 256 "$bin" | awk '{print $1}'); fi
+  ver=$("$bin" version 2>/dev/null | head -n 1 || true)
+fi
+printf 'OS=%s\nARCH=%s\nBINARY=%s\nHOME=%s\nUNIT=%s\nACTIVE=%s\nEXEC=%s\nPID=%s\nUID=%s\nCONFIG=%s\nCONTROL=%s\nCURL=%s\nWGET=%s\nSHA=%s\nVERSION=%s\n' "$os" "$arch" "$bin" "$home" "$unit" "$active" "$execstart" "$pid" "$uid" "$cfg" "$control" "$curl" "$wget" "$sha" "$ver"`
 	out, err := sshOutput(target, script)
 	if err != nil {
 		return remoteState{}, err
@@ -493,6 +540,10 @@ printf 'OS=%s\nARCH=%s\nBINARY=%s\nHOME=%s\nUNIT=%s\nACTIVE=%s\nEXEC=%s\nPID=%s\
 			r.HasCurl = v == "1"
 		case "WGET":
 			r.HasWget = v == "1"
+		case "SHA":
+			r.SHA = v
+		case "VERSION":
+			r.Version = v
 		}
 	}
 	if r.UID != "0" {
@@ -504,6 +555,8 @@ printf 'OS=%s\nARCH=%s\nBINARY=%s\nHOME=%s\nUNIT=%s\nACTIVE=%s\nEXEC=%s\nPID=%s\
 func printState(r remoteState) {
 	fmt.Printf("Host:        %s/%s\n", r.OS, r.Arch)
 	fmt.Printf("Binary:      %s\n", dash(r.Binary))
+	fmt.Printf("Version:     %s\n", dash(r.Version))
+	fmt.Printf("SHA256:      %s\n", dash(r.SHA))
 	fmt.Printf("Home:        %s\n", dash(r.Home))
 	fmt.Printf("Config:      %t\n", r.Config)
 	fmt.Printf("Service:     %s (%s)\n", dash(r.Unit), dash(r.Active))

@@ -1,6 +1,6 @@
 # Agbero deployer
 
-Local build-and-deploy helper. It cross-compiles Agbero, uploads the binary over
+Local build-and-deploy helper. It cross-compiles Agbero, prints the local and remote SHA-256 values, uploads the binary over
 SSH, atomically replaces the remote binary, detects a systemd service or a
 manual process, restarts where safe, health-checks, and rolls back on failure.
 
