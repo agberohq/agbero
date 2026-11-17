@@ -36,6 +36,8 @@ export default async function({ find, findAll, on, provide, onUnmount, signal, d
             icon: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><circle cx="12" cy="11" r="2"/><path d="M12 13v4"/>' },
         { path: '/firewall', label: 'Firewall',     primary: false,
             icon: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>' },
+        { path: '/relay',    label: 'Relay',        primary: false,
+            icon: '<path d="M4 12h16"/><path d="M12 4v16"/><circle cx="12" cy="12" r="3"/>' },
         { path: '/cluster',  label: 'Cluster',      primary: false,
             icon: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>' },
         { path: '/keeper',   label: 'Keeper',       primary: false,

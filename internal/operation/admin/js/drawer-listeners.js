@@ -610,6 +610,12 @@ function hostLevelSection(hostname) {
         if (req + res > 0) items.push(['Headers', `${req} req, ${res} resp`]);
     }
     if (hostCfg.bind?.length) items.push(['Bind', hostCfg.bind.map(b => `<code>${b}</code>`).join(' ')]);
+    if ((hostCfg.relays||[]).length) {
+        items.push(['Relay Server', hostCfg.relays.map(r => `<code>${r.name||'agents'}</code> :${r.listen?.port||''}`).join(' ')]);
+    }
+    if ((hostCfg.agents||[]).length) {
+        items.push(['Relay Agents', hostCfg.agents.map(a => `<code>${a.name||''}</code> → ${a.relay||''}`).join('<br>')]);
+    }
 
     if (!items.length) return '';
     return section('🏠 Host Settings', kvGrid(items));

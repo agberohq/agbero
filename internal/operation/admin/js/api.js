@@ -148,6 +148,8 @@ export async function refreshToken() {
 export async function fetchUptime()      { return _safe(() => getApi().get('/uptime')); }
 export async function fetchConfig()      { return _safe(() => getApi().get('/config')); }
 // Build/runtime metadata, not the HCL schema version.
+export async function fetchRelay()       { return _safe(() => getApi().get('/api/v1/relay')); }
+
 export async function fetchSystem()      { return _safe(() => getApi().get('/api/v1/system')); }
 export async function fetchLogs(lines)   { return _safe(() => getApi().get(`/logs?limit=${lines}`)); }
 

@@ -254,6 +254,7 @@ async function bootstrapApp() {
 
     appGroup.Get('/',         Out.page('/pages/dashboard.html', '/pages/dashboard.js'));
     appGroup.Get('/hosts',    Out.page('/pages/hosts/index.html', '/pages/hosts/index.js'));
+    appGroup.Get('/relay',    Out.page('/pages/relay.html', '/pages/relay.js'));
     appGroup.Get('/intercept', Out.page('/pages/intercept.html', '/pages/intercept.js'));
     appGroup.Get('/focus',    Out.page('/pages/focus.html', '/pages/focus.js'));
     appGroup.Get('/cluster',  Out.page('/pages/cluster.html', '/pages/cluster.js'));

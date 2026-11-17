@@ -101,6 +101,10 @@ export default async function({ find, on, onUnmount, ready, inject }) {
             if (hStat.websockets > 0) rows.push(_row('WebSockets', hStat.websockets + ' active'));
             if ((hStat.bytes_in || 0) + (hStat.bytes_out || 0) > 0) rows.push(_row('Bytes', formatBytes(hStat.bytes_in || 0) + ' in / ' + formatBytes(hStat.bytes_out || 0) + ' out'));
             if (hStat.datagrams > 0) rows.push(_row('Datagrams', hStat.datagrams.toLocaleString()));
+            const cfgHost = (store.get('lastConfig') || {}).hosts?.[node.meta?.hostname] || {};
+            const relays = cfgHost.relays || [], agents = cfgHost.agents || [];
+            if (relays.length) rows.push(_row('Relay Server', relays.map(r => r.name || 'agents').join(', ')));
+            if (agents.length) rows.push(_row('Relay Agents', agents.map(a => a.name).join(', ')));
         }
 
         if (node.type === 'route' && node.meta?.hostname) {

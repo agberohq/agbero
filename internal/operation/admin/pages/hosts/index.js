@@ -85,12 +85,23 @@ export default async function({ find, findAll, on, onUnmount, ready, inject }) {
             const activeSessions=isUDP&&statProxy.active_sessions>0?`<span class="badge" style="background:var(--hover-bg);color:var(--text-mute);border:1px solid var(--border);">${fmtNum(statProxy.active_sessions)} sessions</span>`:'';
             routesHtml+=`<div class="route-block clickable" data-action="open-route" data-host="${esc(hostname)}" data-idx="${idx}" data-type="proxy"><div class="route-header">${protoBadge}${matcherBadge}<span class="route-path">${listenAddr?listenAddr+' → ':''}${proxyName}</span>${cfgProxy.sni?`<span class="badge">SNI: ${esc(cfgProxy.sni)}</span>`:''}${activeSessions}</div>${backendsHtml}</div>`;}
         const hostMeta=[];if(cfgHost.compression)hostMeta.push('<span class="badge">GZIP</span>');if(cfgHost.bind?.length)hostMeta.push(`<span class="badge">:${cfgHost.bind.join(', :')}</span>`);
+        const relayCfg=cfgHost.relays||[], agentCfg=cfgHost.agents||[];
+        if(relayCfg.length)hostMeta.push(`<span class="badge info">RELAY SERVER${relayCfg.length>1?' ×'+relayCfg.length:''}</span>`);
+        if(agentCfg.length)hostMeta.push(`<span class="badge success">RELAY CLIENT${agentCfg.length>1?' ×'+agentCfg.length:''}</span>`);
+        let relayHtml='';
+        if(relayCfg.length){
+            relayHtml += relayCfg.map(r=>`<div class="route-block"><div class="route-header"><span class="badge info">RELAY</span><span class="route-path">${esc(r.name||'agents')}</span><span class="badge">:${esc((r.listen?.port||''))}</span><span class="badge">${esc(r.auth?.method||'')}</span></div><div class="host-meta" style="padding:6px 0;font-size:11px;color:var(--text-mute);">${esc(r.policy?.allow_http?'HTTP ':'')}${esc(r.policy?.allow_subdomain?'SUBDOMAIN ':'')}${(r.policy?.allow_tcp_ports||[]).length?'TCP '+esc(r.policy.allow_tcp_ports.join(', ')):''}</div></div>`).join('');
+        }
+        if(agentCfg.length){
+            relayHtml += agentCfg.map(a=>`<div class="route-block"><div class="route-header"><span class="badge success">AGENT</span><span class="route-path">${esc(a.name||'')}</span><span class="badge">${esc(a.relay||'')}</span></div><div class="host-meta" style="padding:6px 0;font-size:11px;color:var(--text-mute);">${esc(a.local||'auto local target')}</div></div>`).join('');
+        }
+        if(relayCfg.length||agentCfg.length)relayHtml += `<div style="padding:4px 0;"><button class="btn small" data-action="open-relay">Open Relay Console</button></div>`;
         const hostBytes=(hStats.bytes_in||0)+(hStats.bytes_out||0);
         if(hostBytes)hostMeta.push(`<span class="badge" title="Tunnel and response bytes">${formatBytes(hostBytes)}</span>`);
         if(hStats.websockets)hostMeta.push(`<span class="badge info">WS ${hStats.websockets}</span>`);
         if(hStats.datagrams)hostMeta.push(`<span class="badge">${fmtNum(hStats.datagrams)} datagrams</span>`);
         const sourceFile=cfgHost.source_file?`<span class="host-source-file" title="Config file">${esc(cfgHost.source_file)}</span>`:'';
-        return `<div class="host-row" data-hostname="${esc(hostname)}"><div class="host-header"><div class="host-header-left"><span class="dot ${agg.cls}" title="${esc(agg.label||agg.cls)}" style="flex-shrink:0;margin-right:6px;"></span><span class="host-name clickable" data-action="open-host-route" data-hostname="${esc(hostname)}">${esc(hostname)}</span><span class="badge ${tlsClass}" title="${esc(tlsTitle)}" style="margin-left:6px;">${tlsText}</span>${isProtected?`<span class="badge" style="background:var(--hover-bg);color:var(--text-mute);border:1px solid var(--border);margin-left:2px;" title="Protected">PROTECTED</span>`:''}${hStats.total_reqs?`<span class="badge" style="background:var(--hover-bg);color:var(--text-mute);border:1px solid var(--border);margin-left:2px;">${fmtNum(hStats.total_reqs)} reqs</span>`:''} ${hostMeta.join('')}</div><div class="host-header-right">${sourceFile}${sparkBarHtml(hostname)}${kebab}</div></div>${cfgHost.domains?.length>1?`<div class="host-meta" style="padding:2px 12px 4px;font-size:11px;color:var(--text-mute);">${cfgHost.domains.map(esc).join(', ')}</div>`:''} ${routesHtml}</div>`;
+        return `<div class="host-row" data-hostname="${esc(hostname)}"><div class="host-header"><div class="host-header-left"><span class="dot ${agg.cls}" title="${esc(agg.label||agg.cls)}" style="flex-shrink:0;margin-right:6px;"></span><span class="host-name clickable" data-action="open-host-route" data-hostname="${esc(hostname)}">${esc(hostname)}</span><span class="badge ${tlsClass}" title="${esc(tlsTitle)}" style="margin-left:6px;">${tlsText}</span>${isProtected?`<span class="badge" style="background:var(--hover-bg);color:var(--text-mute);border:1px solid var(--border);margin-left:2px;" title="Protected">PROTECTED</span>`:''}${hStats.total_reqs?`<span class="badge" style="background:var(--hover-bg);color:var(--text-mute);border:1px solid var(--border);margin-left:2px;">${fmtNum(hStats.total_reqs)} reqs</span>`:''} ${hostMeta.join('')}</div><div class="host-header-right">${sourceFile}${sparkBarHtml(hostname)}${kebab}</div></div>${cfgHost.domains?.length>1?`<div class="host-meta" style="padding:2px 12px 4px;font-size:11px;color:var(--text-mute);">${cfgHost.domains.map(esc).join(', ')}</div>`:''} ${routesHtml}${relayHtml}</div>`;
     }
 
     const pg = pagination({ pageSize: store.get('hosts.pageSize')||20, pageSizes:[10,20,50,100], onPageChange:(p,size)=>{store.set('hosts.pageSize',size);renderPage();} });
@@ -118,6 +129,7 @@ export default async function({ find, findAll, on, onUnmount, ready, inject }) {
     on('#addHostAdvancedBtn',  'click', () => emit('host:open-create-hcl'));
     on('#refreshHostsBtn', 'click', refresh);
     on('[data-action="open-route"]',     'click',(e,b)=>emit('drawer:open-route',{host:b.dataset.host,idx:parseInt(b.dataset.idx),type:b.dataset.type}));
+    on('[data-action="open-relay"]',      'click',()=>emit('app:navigate',{path:'/relay'}));
     on('[data-action="open-host-route"]','click',(e,b)=>{e.stopPropagation();emit('drawer:open-route',{host:b.dataset.hostname,idx:0,type:'route'});});
     on('[data-action="host-menu"]', 'click', async (e, btn) => {
         e.stopPropagation();

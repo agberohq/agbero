@@ -88,7 +88,55 @@ export function buildHostConfig(data) {
         host.proxies = [buildTcpProxy(data._tcp)];
     }
 
+    applyRelay(host, data);
+
     return host;
+}
+
+// applyRelay adds the relay blocks chosen in the domain step.
+//   relay_mode = 'agent'  → this host is published through a remote relay:
+//                            one agent block + an expose on the first route.
+//   relay_mode = 'server' → this host serves a relay that agents dial.
+// alaye/relay.go is the source of the field names.
+function applyRelay(host, data) {
+    const mode = data.relay_mode || '';
+    if (mode === 'agent') {
+        const name = (data.relay_agent_name || '').trim();
+        const agent = { name, relay: (data.relay_agent_url || '').trim() };
+        const secret = (data.relay_agent_enroll || '').trim();
+        if (secret) agent.enroll = secret;
+        if ((data.relay_agent_local || '').trim()) agent.local = data.relay_agent_local.trim();
+        if (data.relay_agent_local_insecure === true) agent.local_insecure = true;
+        host.agents = [agent];
+
+        const id = (data.relay_expose_id || '').trim();
+        if (id && Array.isArray(host.routes) && host.routes.length) {
+            const ex = { id, via: name, path: data.relay_expose_path !== false, subdomain: data.relay_expose_subdomain === true };
+            const domain = (host.domains || [])[0];
+            if (domain) ex.local_host = domain;
+            host.routes[0].exposes = [ex];
+        }
+    } else if (mode === 'server') {
+        const relay = {
+            name: (data.relay_server_name || 'agents').trim() || 'agents',
+            listen: {
+                address: (data.relay_server_address || '0.0.0.0').trim() || '0.0.0.0',
+                port: Number(data.relay_server_port) || 8443,
+                protocol: 'https',
+            },
+            auth: { method: 'enrollment', token: (data.relay_server_token || '').trim() },
+            policy: {
+                allow_http: data.relay_server_allow_http !== false,
+                allow_subdomain: data.relay_server_allow_subdomain === true,
+                max_agents: Number(data.relay_server_max_agents) || 100,
+                max_streams: Number(data.relay_server_max_streams) || 1000,
+            },
+        };
+        const tcp = _csv(data.relay_server_tcp_ports), udp = _csv(data.relay_server_udp_ports);
+        if (tcp.length) relay.policy.allow_tcp_ports = tcp;
+        if (udp.length) relay.policy.allow_udp_ports = udp;
+        host.relays = [relay];
+    }
 }
 
 function buildTcpProxy(tcp) {
@@ -673,6 +721,10 @@ function _hostToHCL(host) {
         lines.push('', _proxyBlock(proxy));
     }
 
+    // relay server and agent blocks
+    for (const relay of (host.relays || [])) lines.push('', _relayBlock(relay));
+    for (const agent of (host.agents || [])) lines.push('', _agentBlock(agent));
+
     return lines.join('\n').replace(/\n{3,}/g, '\n\n').trimStart() + '\n';
 }
 
@@ -1046,9 +1098,39 @@ function _routeBlock(route) {
         if (hlines) inner.push('', hlines);
     }
 
+    // expose blocks (publish this route through a relay agent)
+    for (const ex of (route.exposes || [])) {
+        const eb = [`via       = ${_hq(ex.via || '')}`, `path      = ${ex.path ? 'true' : 'false'}`, `subdomain = ${ex.subdomain ? 'true' : 'false'}`];
+        if (ex.local_host) eb.push(`local_host = ${_hq(ex.local_host)}`);
+        if (ex.local_path) eb.push(`local_path = ${_hq(ex.local_path)}`);
+        inner.push('', `expose ${_hq(ex.id)} {`, ...eb.map(l => '  ' + l), '}');
+    }
+
     // Clean up leading blank lines inside the block
     const body = inner.join('\n').replace(/^\n+/, '');
     return `route ${_hq(route.path || '/')} {\n${_indent(body)}\n}`;
+}
+
+function _relayBlock(r) {
+    const p = r.policy || {};
+    const pol = [`allow_http      = ${p.allow_http ? 'true' : 'false'}`, `allow_subdomain = ${p.allow_subdomain ? 'true' : 'false'}`];
+    if (p.allow_tcp_ports?.length) pol.push(`allow_tcp_ports = ${_strList(p.allow_tcp_ports)}`);
+    if (p.allow_udp_ports?.length) pol.push(`allow_udp_ports = ${_strList(p.allow_udp_ports)}`);
+    pol.push(`max_agents      = ${p.max_agents || 100}`, `max_streams     = ${p.max_streams || 1000}`);
+    const body = [
+        'listen {', `  address  = ${_hq(r.listen?.address || '0.0.0.0')}`, `  port     = ${r.listen?.port || 8443}`, `  protocol = ${_hq(r.listen?.protocol || 'https')}`, '}',
+        '', 'auth {', `  method = ${_hq(r.auth?.method || 'enrollment')}`, `  token  = ${_hq(r.auth?.token || '')}`, '}',
+        '', 'policy {', ...pol.map(l => '  ' + l), '}',
+    ].join('\n');
+    return `relay ${_hq(r.name || 'agents')} {\n${_indent(body)}\n}`;
+}
+
+function _agentBlock(a) {
+    const lines = [`relay  = ${_hq(a.relay || '')}`];
+    if (a.enroll) lines.push(`enroll = ${_hq(a.enroll)}`);
+    if (a.local)  lines.push(`local  = ${_hq(a.local)}`);
+    if (a.local_insecure) lines.push('local_insecure = true');
+    return `agent ${_hq(a.name || '')} {\n${_indent(lines.join('\n'))}\n}`;
 }
 
 function _headersBlock(h) {
