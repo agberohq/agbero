@@ -446,6 +446,7 @@ func (s *Server) Start(configPath string) error {
 		Telemetry:     s.telemetryStore,
 		RevokeStore:   s.revokeStore,
 		UpdateChecker: s.updateChecker,
+		Relay:         s.relayDispatcher,
 	}
 
 	s.apiShared.UpdateState(&api.ActiveState{
@@ -650,6 +651,7 @@ func (s *Server) Reload() {
 	s.listeners = newListeners
 	s.mu.Unlock()
 
+	s.apiShared.Relay = s.relayDispatcher
 	s.apiShared.UpdateState(&api.ActiveState{
 		Global:   global,
 		Firewall: newTM.Firewall(),
@@ -985,11 +987,6 @@ func (s *Server) startRelay(hosts map[string]*alaye.Host, tlsMgr *tlss.Manager) 
 
 	for _, hcfg := range hosts {
 		for _, rcfg := range hcfg.Relays {
-			enrollToken := rcfg.Auth.Token.String()
-			if enrollToken == "" {
-				s.logger.Fields("relay", rcfg.Name).Warn("relay enrollment token is empty, skipping")
-				continue
-			}
 			if len(hcfg.Domains) == 0 {
 				continue
 			}
@@ -999,12 +996,12 @@ func (s *Server) startRelay(hosts map[string]*alaye.Host, tlsMgr *tlss.Manager) 
 				relayDB = s.revokeStore.DB()
 			}
 			rs := relayhub.NewServer(relayhub.ServerConfig{
-				Name:        rcfg.Name,
-				BaseDomain:  hcfg.Domains[0],
-				Listen:      listen,
-				AuthMethod:  rcfg.Auth.Method,
-				EnrollToken: enrollToken,
-				Policy:      rcfg.Policy,
+				Name:            rcfg.Name,
+				BaseDomain:      hcfg.Domains[0],
+				Listen:          listen,
+				AuthMethod:      rcfg.Auth.Method,
+				EnrollTokenFunc: func() string { return rcfg.Auth.Token.String() },
+				Policy:          rcfg.Policy,
 				TLSConfig: &tls.Config{
 					GetCertificate: tlsMgr.GetCertificate,
 					MinVersion:     tls.VersionTLS12,
@@ -1053,6 +1050,20 @@ func (s *Server) startRelay(hosts map[string]*alaye.Host, tlsMgr *tlss.Manager) 
 			if len(exposes) == 0 {
 				continue
 			}
+			for i := range exposes {
+				if exposes[i].LocalHost == "" && len(hcfg.Domains) > 0 {
+					exposes[i].LocalHost = hcfg.Domains[0]
+				}
+			}
+			localURL, localSNI, localInsecure := relayhub.ResolveLocal(hcfg, acfg)
+			if localSNI == "" {
+				for _, ex := range exposes {
+					if ex.LocalHost != "" {
+						localSNI = ex.LocalHost
+						break
+					}
+				}
+			}
 			credentialKey := "relay/agents/" + acfg.Name + "/credential"
 			loadCredential := func() string {
 				if s.keeperStore == nil {
@@ -1068,20 +1079,26 @@ func (s *Server) startRelay(hosts map[string]*alaye.Host, tlsMgr *tlss.Manager) 
 				if s.keeperStore == nil {
 					return nil
 				}
+				if err := s.keeperStore.EnsureBucket(credentialKey); err != nil {
+					return err
+				}
 				return s.keeperStore.Set(credentialKey, []byte(v))
 			}
 			client := relayhub.NewClient(relayhub.ClientConfig{
-				Agent:          acfg.Name,
-				Relay:          acfg.Relay,
-				Enroll:         acfg.Enroll.String(),
-				Token:          acfg.Token.String(),
-				Local:          acfg.Local,
-				Insecure:       acfg.Insecure,
-				Pool:           acfg.Pool,
-				Exposes:        exposes,
-				LoadCredential: loadCredential,
-				SaveCredential: saveCredential,
-				Logger:         s.logger,
+				Agent:           acfg.Name,
+				Relay:           acfg.Relay,
+				Enroll:          acfg.Enroll.String(),
+				EnrollTokenFunc: func() string { return acfg.Enroll.String() },
+				Token:           acfg.Token.String(),
+				Local:           localURL,
+				LocalSNI:        localSNI,
+				LocalInsecure:   localInsecure,
+				Insecure:        acfg.Insecure,
+				Pool:            acfg.Pool,
+				Exposes:         exposes,
+				LoadCredential:  loadCredential,
+				SaveCredential:  saveCredential,
+				Logger:          s.logger,
 			})
 			go client.Run(ctx)
 		}

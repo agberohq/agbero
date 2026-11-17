@@ -52,8 +52,12 @@ func newAgentStore(db *oshodi.DB) *agentStore {
 	if db == nil {
 		return s
 	}
-	s.agents = db.Bucket(agentsBucket)
-	s.claims = db.Bucket(claimsBucket)
+	if agents, err := db.Bucket(agentsBucket); err == nil {
+		s.agents = agents
+	}
+	if claims, err := db.Bucket(claimsBucket); err == nil {
+		s.claims = claims
+	}
 	if s.agents != nil {
 		_ = s.agents.Scan(func(k, v []byte) bool {
 			var rec agentRecord

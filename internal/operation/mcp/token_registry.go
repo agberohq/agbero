@@ -37,7 +37,11 @@ func OpenTokenRegistryBucket(db *oshodi.DB) (*TokenRegistry, error) {
 	if db == nil {
 		return nil, fmt.Errorf("mcp token registry: database is required")
 	}
-	r := &TokenRegistry{db: db, bucket: db.Bucket(RegistryBucket)}
+	bucket, err := db.Bucket(RegistryBucket)
+	if err != nil {
+		return nil, fmt.Errorf("mcp token registry: open bucket: %w", err)
+	}
+	r := &TokenRegistry{db: db, bucket: bucket}
 	if err := r.Reload(); err != nil {
 		return nil, err
 	}

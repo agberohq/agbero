@@ -4,13 +4,13 @@ go 1.27.0
 
 require (
 	charm.land/huh/v2 v2.0.3
-	charm.land/lipgloss/v2 v2.0.6
+	charm.land/lipgloss/v2 v2.1.1
 	github.com/HdrHistogram/hdrhistogram-go v1.4.0
 	github.com/Microsoft/go-winio v0.6.4
 	github.com/agberohq/keeper v0.0.2
-	github.com/agberohq/oshodi v0.0.0-20261103212633-bf351f7cea42
+	github.com/agberohq/oshodi v0.0.0-20261114131659-507758fc6e7d
 	github.com/alecthomas/chroma/v2 v2.27.0
-	github.com/andybalholm/brotli v1.2.8
+	github.com/andybalholm/brotli v1.3.0
 	github.com/blacktop/go-termimg v0.1.26
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/corazawaf/coraza/v3 v3.8.1
@@ -24,10 +24,11 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/hcl/v2 v2.25.0
 	github.com/hashicorp/memberlist v0.7.0
+	github.com/hashicorp/yamux v0.1.2
 	github.com/integrii/flaggy v1.8.0
 	github.com/kardianos/service v1.3.0
-	github.com/klauspost/compress v1.20.3
-	github.com/landlock-lsm/go-landlock v0.11.0
+	github.com/klauspost/compress v1.20.4
+	github.com/landlock-lsm/go-landlock v0.11.2
 	github.com/markbates/goth v1.82.0
 	github.com/minio/selfupdate v0.6.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
@@ -42,7 +43,7 @@ require (
 	github.com/prometheus/client_golang v1.25.0
 	github.com/quic-go/quic-go v0.65.0
 	github.com/r3labs/diff/v3 v3.0.2
-	github.com/sergi/go-diff v1.4.0
+	github.com/sergi/go-diff v1.4.4
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/smallstep/truststore v0.13.0
 	github.com/tetratelabs/wazero v1.12.0
@@ -57,12 +58,12 @@ require (
 	go.abhg.dev/goldmark/toc v0.12.0
 	go.etcd.io/bbolt v1.5.0
 	go.uber.org/zap v1.28.0
-	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto v0.59.0
 	golang.org/x/net v0.62.0
-	golang.org/x/oauth2 v0.37.0
-	golang.org/x/sync v0.24.0
-	golang.org/x/sys v0.49.0
-	golang.org/x/term v0.47.0
+	golang.org/x/oauth2 v0.38.0
+	golang.org/x/sync v0.25.0
+	golang.org/x/sys v0.50.0
+	golang.org/x/term v0.48.0
 	golang.org/x/time v0.16.0
 	rsc.io/qr v0.2.0
 )
@@ -166,16 +167,16 @@ require (
 	github.com/valllabh/ocsf-schema-golang v1.0.3 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
-	github.com/xo/terminfo v1.3.0 // indirect
+	github.com/xo/terminfo v1.3.1 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/exp v0.0.0-20261106192419-47ce03d25ef0 // indirect
+	golang.org/x/exp v0.0.0-20261113113407-e3970619a1a4 // indirect
 	golang.org/x/image v0.47.0 // indirect
 	golang.org/x/mod v0.42.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/tools v0.52.1-0.20261106145633-d407941a339a // indirect
 	golang.org/x/tools/godoc v0.1.0-deprecated // indirect
 	google.golang.org/protobuf v1.36.12 // indirect

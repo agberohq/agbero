@@ -8,6 +8,7 @@ import (
 	"github.com/agberohq/agbero/internal/core/def"
 	"github.com/agberohq/agbero/internal/hub/cluster"
 	"github.com/agberohq/agbero/internal/hub/discovery"
+	"github.com/agberohq/agbero/internal/hub/relay"
 	"github.com/agberohq/agbero/internal/hub/tlss"
 	"github.com/agberohq/agbero/internal/middleware/firewall"
 	"github.com/agberohq/agbero/internal/pkg/revoke"
@@ -40,6 +41,7 @@ type Shared struct {
 	Telemetry     *telemetry.Store
 	RevokeStore   *revoke.Store
 	UpdateChecker UpdateChecker
+	Relay         *relay.Dispatcher
 
 	// CacheStore is the active cache backend, wired in from admin.go at startup.
 	// Used by CacheHandler for purge-by-tag and clear-all operations.
@@ -91,6 +93,7 @@ func AdminHandler(shared *Shared, r chi.Router) {
 		RevokeHandler(shared, r)
 		KVHandler(shared, r)
 		CacheHandler(shared, r) // CDN cache management
+		RelayHandler(shared, r)
 	})
 }
 

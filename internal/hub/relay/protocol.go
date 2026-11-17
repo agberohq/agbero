@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 )
 
 const maxFrameSize = 64 << 10
@@ -13,20 +14,30 @@ type frameKind string
 
 const (
 	frameControl      frameKind = "control"
-	frameData         frameKind = "data"
+	frameCheck        frameKind = "check"
 	frameRegistration frameKind = "registration"
 	frameAck          frameKind = "ack"
+	framePing         frameKind = "ping"
+	frameWork         frameKind = "work"
 )
+
+// controlHeartbeat is the interval advertised to agents for control-channel
+// pings. Idle control connections are otherwise torn down by NATs and
+// firewalls that drop flows without payload traffic.
+const controlHeartbeat = 25 * time.Second
 
 type hello struct {
 	Kind        frameKind `json:"kind"`
 	Agent       string    `json:"agent"`
 	Token       string    `json:"token,omitempty"`
 	EnrollToken string    `json:"enroll_token,omitempty"`
-	Target      string    `json:"target,omitempty"`
 }
 
 type registration struct {
+	// Kind is empty for a registration and framePing for a control heartbeat.
+	// Relays that predate heartbeats ignore it and never receive pings because
+	// the agent only sends them when a relay advertises an interval.
+	Kind    frameKind          `json:"kind,omitempty"`
 	Exposes []registeredExpose `json:"exposes"`
 }
 
@@ -42,10 +53,26 @@ type registeredExpose struct {
 	UDPLocal  string `json:"udp_local,omitempty"`
 }
 
+// workHello is the first frame on a server-opened work stream. The agent uses
+// the expose id to pick the local target; the relay has already rewritten the
+// HTTP request (path and Host) before writing it to the stream.
+type workHello struct {
+	Kind   frameKind `json:"kind"`
+	Expose string    `json:"expose,omitempty"`
+	Host   string    `json:"host,omitempty"`
+	Src    string    `json:"src,omitempty"`
+}
+
 type ack struct {
 	OK         bool   `json:"ok"`
 	Error      string `json:"error,omitempty"`
 	Credential string `json:"credential,omitempty"`
+	// HeartbeatSeconds asks the agent to ping the control connection at this
+	// interval. Zero means the relay does not require heartbeats.
+	HeartbeatSeconds int `json:"heartbeat_seconds,omitempty"`
+	// Session is the relay's view of the agent, sent only in reply to an
+	// authenticated check.
+	Session *SessionReport `json:"session,omitempty"`
 }
 
 func writeFrame(w io.Writer, v any) error {

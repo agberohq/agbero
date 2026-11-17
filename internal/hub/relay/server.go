@@ -1,7 +1,9 @@
 package relay
 
 import (
+	"bufio"
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -13,10 +15,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
 	"github.com/agberohq/oshodi"
+	"github.com/hashicorp/yamux"
 	"github.com/olekukonko/ll"
 )
 
@@ -29,15 +33,16 @@ var relayReservedIDs = map[string]bool{
 
 // ServerConfig describes one remote relay listener.
 type ServerConfig struct {
-	Name        string
-	BaseDomain  string
-	Listen      string
-	TLSConfig   *tls.Config
-	AuthMethod  string
-	EnrollToken string
-	Policy      alaye.RelayPolicy
-	Logger      *ll.Logger
-	DB          *oshodi.DB
+	Name            string
+	BaseDomain      string
+	Listen          string
+	TLSConfig       *tls.Config
+	AuthMethod      string
+	EnrollToken     string
+	EnrollTokenFunc func() string
+	Policy          alaye.RelayPolicy
+	Logger          *ll.Logger
+	DB              *oshodi.DB
 	// RegisterHost and UnregisterHost let the remote create the ephemeral
 	// host entry needed for TLS and request matching on {id}.{base}.
 	RegisterHost   func(domain string)
@@ -62,6 +67,14 @@ type Server struct {
 
 	tcpListeners map[int]*tcpListener
 	udpListeners map[int]*udpListener
+
+	startedAt   time.Time
+	authErrors  atomic.Int64
+	lastError   string
+	lastErrorAt time.Time
+	lastAuth    *AuthFailure
+	reconnects  map[string]int64
+	history     map[string][]SessionEvent
 
 	store  *oshodi.Bucket
 	agents *agentStore
@@ -89,15 +102,21 @@ type udpClient struct {
 }
 
 type session struct {
-	agent      string
-	control    net.Conn
-	pools      map[string]chan net.Conn
-	mu         sync.Mutex
-	streams    int
-	maxStreams int
-	done       chan struct{}
-	once       sync.Once
-	reg        registration
+	agent       string
+	control     net.Conn
+	remote      string
+	connectedAt time.Time
+	bytesIn     atomic.Int64
+	bytesOut    atomic.Int64
+	lastError   string
+	lastErrorAt time.Time
+	mux         *yamux.Session
+	mu          sync.Mutex
+	streams     int
+	maxStreams  int
+	done        chan struct{}
+	once        sync.Once
+	reg         registration
 }
 
 type route struct {
@@ -105,6 +124,8 @@ type route struct {
 	path      string
 	domain    string
 	subdomain bool
+	localPath string
+	localHost string
 	proxy     *httputil.ReverseProxy
 	session   *session
 }
@@ -116,7 +137,9 @@ func NewServer(cfg ServerConfig) *Server {
 	}
 	var store *oshodi.Bucket
 	if cfg.DB != nil {
-		store = cfg.DB.Bucket("relay_routes")
+		if b, err := cfg.DB.Bucket("relay_routes"); err == nil {
+			store = b
+		}
 	}
 	return &Server{
 		cfg:          cfg,
@@ -128,6 +151,8 @@ func NewServer(cfg ServerConfig) *Server {
 		udpListeners: make(map[int]*udpListener),
 		store:        store,
 		agents:       newAgentStore(cfg.DB),
+		reconnects:   make(map[string]int64),
+		history:      make(map[string][]SessionEvent),
 	}
 }
 
@@ -142,6 +167,7 @@ func (s *Server) Start() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ln = ln
 	s.cancel = cancel
+	s.startedAt = time.Now().UTC()
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -202,6 +228,9 @@ func (s *Server) Close() error {
 		}
 	}
 	for _, sess := range s.sessions {
+		sess.bye("relay shutting down")
+	}
+	for _, sess := range s.sessions {
 		sess.close()
 	}
 	s.sessions = make(map[string]*session)
@@ -232,78 +261,154 @@ func (s *Server) acceptLoop(ctx context.Context) {
 
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
-	var h hello
-	if err := readFrame(conn, &h); err != nil {
+	br := bufio.NewReaderSize(conn, 4096)
+	head, err := br.Peek(len(muxMagic))
+	_ = conn.SetDeadline(time.Time{})
+	if err != nil {
 		_ = conn.Close()
 		return
 	}
-	_ = conn.SetDeadline(time.Time{})
+	if string(head) == muxMagic {
+		_, _ = br.Discard(len(muxMagic))
+		mux, err := yamux.Server(&muxConn{Conn: conn, r: br}, newMuxConfig())
+		if err != nil {
+			s.logger.Fields("relay", s.cfg.Name, "err", err).Warn("relay mux handshake failed")
+			_ = conn.Close()
+			return
+		}
+		s.handleMux(ctx, conn, mux)
+		return
+	}
+	s.handleRaw(conn, br)
+}
 
-	switch h.Kind {
-	case frameControl, frameData:
-	default:
-		_ = writeFrame(conn, ack{Error: "control or data hello required"})
-		_ = conn.Close()
+// handleMux accepts the single control stream of a muxed agent connection.
+// Work streams are opened by the relay from the same yamux session.
+func (s *Server) handleMux(ctx context.Context, raw net.Conn, mux *yamux.Session) {
+	defer mux.Close()
+	stream, err := mux.AcceptStream()
+	if err != nil {
+		return
+	}
+	_ = stream.SetReadDeadline(time.Now().Add(15 * time.Second))
+	var h hello
+	if err := readFrame(stream, &h); err != nil {
+		return
+	}
+	_ = stream.SetReadDeadline(time.Time{})
+	if h.Kind != frameControl {
+		_ = writeFrame(stream, ack{Error: "control stream required"})
 		return
 	}
 	if !relayIDPattern.MatchString(h.Agent) || relayReservedIDs[h.Agent] {
-		_ = writeFrame(conn, ack{Error: "invalid agent id"})
-		_ = conn.Close()
+		_ = writeFrame(stream, ack{Error: "invalid agent id"})
 		return
 	}
-
-	if h.Kind == frameData {
-		if !s.agents.verifyCredential(h.Agent, h.Token) {
-			_ = conn.Close()
-			return
-		}
-		s.handleData(ctx, conn, h.Agent, h.Target)
+	credential, err := s.authenticate(h)
+	if err != nil {
+		_ = writeFrame(stream, ack{Error: err.Error()})
 		return
 	}
-
-	credential := ""
-	if h.EnrollToken != "" {
-		issued, err := s.agents.enroll(h.Agent, h.EnrollToken, s.cfg.EnrollToken, s.cfg.Policy.MaxAgents)
-		if err != nil {
-			_ = writeFrame(conn, ack{Error: err.Error()})
-			_ = conn.Close()
-			return
-		}
-		credential = issued
-	} else if !s.agents.verifyCredential(h.Agent, h.Token) {
-		_ = writeFrame(conn, ack{Error: errAuth.Error()})
-		_ = conn.Close()
+	if err := writeFrame(stream, controlAck(credential)); err != nil {
 		return
 	}
-
-	if err := writeFrame(conn, ack{OK: true, Credential: credential}); err != nil {
-		_ = conn.Close()
-		return
-	}
-
-	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	_ = stream.SetReadDeadline(time.Now().Add(15 * time.Second))
 	var reg registration
-	if err := readFrame(conn, &reg); err != nil {
-		_ = conn.Close()
+	if err := readFrame(stream, &reg); err != nil {
+		return
+	}
+	_ = stream.SetReadDeadline(time.Time{})
+	s.handleControl(ctx, stream, mux, raw.RemoteAddr().String(), h.Agent, reg)
+}
+
+// handleRaw serves the pre-mux check protocol. Old agents that still use data
+// connections get an explicit upgrade error instead of hanging.
+func (s *Server) handleRaw(conn net.Conn, r io.Reader) {
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	var h hello
+	if err := readFrame(r, &h); err != nil {
 		return
 	}
 	_ = conn.SetReadDeadline(time.Time{})
-	s.handleControl(ctx, conn, h.Agent, reg)
+	if h.Kind == frameCheck {
+		expected := s.cfg.EnrollToken
+		if s.cfg.EnrollTokenFunc != nil {
+			expected = s.cfg.EnrollTokenFunc()
+		}
+		ok := false
+		if h.EnrollToken != "" {
+			ok = subtle.ConstantTimeCompare([]byte(h.EnrollToken), []byte(expected)) == 1
+		} else if h.Token != "" {
+			ok = s.agents.verifyCredential(h.Agent, h.Token)
+		}
+		if ok {
+			// An authenticated check also gets the relay's view of the agent so
+			// the agent host can diagnose the tunnel without the admin API.
+			// Relays that predate this send a bare ack, which old and new
+			// doctors both accept.
+			_ = writeFrame(conn, ack{OK: true, Session: s.sessionReport(h.Agent)})
+		} else {
+			_ = writeFrame(conn, ack{Error: "authentication failed"})
+		}
+		return
+	}
+	_ = writeFrame(conn, ack{Error: "relay protocol requires mux; rebuild the agent"})
 }
 
-func (s *Server) handleControl(ctx context.Context, conn net.Conn, agent string, reg registration) {
+func (s *Server) authenticate(h hello) (string, error) {
+	if h.EnrollToken != "" {
+		expected := s.cfg.EnrollToken
+		if s.cfg.EnrollTokenFunc != nil {
+			expected = s.cfg.EnrollTokenFunc()
+		}
+		issued, err := s.agents.enroll(h.Agent, h.EnrollToken, expected, s.cfg.Policy.MaxAgents)
+		if err != nil {
+			s.authErrors.Add(1)
+			s.noteError(err.Error())
+			return "", err
+		}
+		return issued, nil
+	}
+	if !s.agents.verifyCredential(h.Agent, h.Token) {
+		s.authErrors.Add(1)
+		s.noteError(errAuth.Error())
+		return "", errAuth
+	}
+	return "", nil
+}
+
+// controlAck builds the acknowledgement sent on the control stream. The
+// advertised heartbeat lets a new agent keep the connection alive through NATs
+// and firewalls; agents that predate it ignore the field.
+func controlAck(credential string) ack {
+	return ack{OK: true, Credential: credential, HeartbeatSeconds: int(controlHeartbeat / time.Second)}
+}
+
+func (s *Server) handleControl(ctx context.Context, conn net.Conn, mux *yamux.Session, remote, agent string, reg registration) {
 	sess := &session{
-		agent:      agent,
-		control:    conn,
-		pools:      make(map[string]chan net.Conn),
-		maxStreams: s.cfg.Policy.MaxStreams,
-		done:       make(chan struct{}),
+		agent:       agent,
+		control:     conn,
+		mux:         mux,
+		remote:      remote,
+		connectedAt: time.Now().UTC(),
+		maxStreams:  s.cfg.Policy.MaxStreams,
+		done:        make(chan struct{}),
 	}
 	s.mu.Lock()
+	if _, seen := s.reconnects[agent]; seen {
+		s.reconnects[agent]++
+	} else {
+		s.reconnects[agent] = 0
+	}
 	if old := s.sessions[agent]; old != nil {
+		s.recordEventLocked(agent, SessionEvent{Kind: "replaced", Remote: old.remote,
+			Reason: "replaced by a new session from " + remote})
+		old.bye("session replaced")
 		old.close()
 	}
 	s.sessions[agent] = sess
+	s.recordEventLocked(agent, SessionEvent{Kind: "opened", Remote: remote})
 	s.mu.Unlock()
 
 	if err := s.applyRegistration(sess, reg); err != nil {
@@ -316,27 +421,47 @@ func (s *Server) handleControl(ctx context.Context, conn net.Conn, agent string,
 		sess.close()
 		return
 	}
-	if err := writeFrame(conn, ack{OK: true}); err != nil {
+	if err := writeFrame(conn, controlAck("")); err != nil {
 		sess.close()
 		return
 	}
 
+	reason := "control connection closed"
+	defer func() {
+		s.recordEvent(agent, SessionEvent{Kind: "closed", Remote: sess.remote, Reason: reason})
+		s.logger.Fields("relay", s.cfg.Name, "agent", agent, "remote", sess.remote,
+			"duration", time.Since(sess.connectedAt).Round(time.Millisecond),
+			"reason", reason).Info("relay agent session closed")
+	}()
+	s.logger.Fields("relay", s.cfg.Name, "agent", agent, "remote", sess.remote).Info("relay agent session opened")
+
 	for {
 		var next registration
 		if err := readFrame(conn, &next); err != nil {
+			reason = err.Error()
 			break
+		}
+		if next.Kind == framePing {
+			// Heartbeat: answer so the agent also sees traffic, but never
+			// treat it as a registration, which would drop the exposures.
+			if err := writeFrame(conn, controlAck("")); err != nil {
+				break
+			}
+			continue
 		}
 		if err := s.applyRegistration(sess, next); err != nil {
 			_ = writeFrame(conn, ack{Error: err.Error()})
 			continue
 		}
-		if err := writeFrame(conn, ack{OK: true}); err != nil {
+		if err := writeFrame(conn, controlAck("")); err != nil {
+			reason = "write failed: " + err.Error()
 			break
 		}
 	}
 
 	s.mu.Lock()
-	if s.sessions[agent] == sess {
+	current := s.sessions[agent] == sess
+	if current {
 		delete(s.sessions, agent)
 	}
 	var domains []string
@@ -348,7 +473,12 @@ func (s *Server) handleControl(ctx context.Context, conn net.Conn, agent string,
 			}
 		}
 	}
-	s.persistLocked(sess.agent, sess.reg, false)
+	// A reconnected agent replaces its session before this cleanup runs. In
+	// that case the new session owns the persisted record, so the old one must
+	// not overwrite it with an inactive snapshot.
+	if current {
+		s.persistLocked(sess.agent, sess.reg, false)
+	}
 	s.mu.Unlock()
 	s.closeTCPForSession(sess)
 	s.closeUDPForSession(sess)
@@ -356,41 +486,6 @@ func (s *Server) handleControl(ctx context.Context, conn net.Conn, agent string,
 		s.unregisterHost(domain)
 	}
 	sess.close()
-}
-
-func (s *Server) handleData(ctx context.Context, conn net.Conn, agent, target string) {
-	s.mu.RLock()
-	sess := s.sessions[agent]
-	s.mu.RUnlock()
-	if sess == nil {
-		_ = conn.Close()
-		return
-	}
-	if target == "" {
-		target = "http"
-	}
-	sess.mu.Lock()
-	if sess.maxStreams > 0 && sess.streams >= sess.maxStreams {
-		sess.mu.Unlock()
-		_ = conn.Close()
-		return
-	}
-	sess.streams++
-	sess.mu.Unlock()
-	tracked := &trackedConn{Conn: conn, onClose: func() {
-		sess.mu.Lock()
-		sess.streams--
-		sess.mu.Unlock()
-	}}
-	select {
-	case sess.pool(target) <- tracked:
-	case <-sess.done:
-		_ = tracked.Close()
-	case <-ctx.Done():
-		_ = tracked.Close()
-	default:
-		_ = tracked.Close()
-	}
 }
 
 func (s *Server) applyRegistration(sess *session, reg registration) error {
@@ -437,16 +532,11 @@ func (s *Server) applyRegistration(sess *session, reg registration) error {
 	for _, ex := range reg.Exposes {
 		if ex.Path {
 			prefix := "/" + ex.ID
-			if _, exists := s.routes[prefix]; !exists {
-				s.routes[prefix] = s.newRoute(sess, ex, prefix, false, "")
-			}
+			s.takeRouteLocked(sess, prefix, ex, prefix, false, "")
 		}
 		if ex.Subdomain {
 			domain := ex.ID + "." + s.cfg.BaseDomain
-			key := "sub:" + ex.ID
-			if _, exists := s.routes[key]; !exists {
-				s.routes[key] = s.newRoute(sess, ex, "", true, domain)
-			}
+			s.takeRouteLocked(sess, "sub:"+ex.ID, ex, "", true, domain)
 		}
 		if ex.TCPPort > 0 {
 			s.startTCPLocked(sess, ex)
@@ -474,6 +564,49 @@ func (s *Server) applyRegistration(sess *session, reg registration) error {
 		s.registerHost(domain)
 	}
 	return nil
+}
+
+// takeRouteLocked installs the route owned by an exposure. Callers must hold
+// s.mu.
+//
+// A previous control connection of the same agent can still own the route while
+// its cleanup is running in another goroutine. Leaving that route in place
+// would bind public requests to a dead session: they fail with 502, and the
+// route disappears when the dead session is cleaned up, so later requests get
+// 404. The new session takes the route over instead.
+func (s *Server) takeRouteLocked(sess *session, key string, ex registeredExpose, prefix string, subdomain bool, domain string) {
+	if rt, exists := s.routes[key]; exists {
+		if rt.session == sess {
+			return
+		}
+		if rt.session != nil && rt.session.agent != sess.agent {
+			// Another agent owns the key; claims were checked before we got
+			// here, so this is only defensive.
+			return
+		}
+		delete(s.routes, key)
+	}
+	s.routes[key] = s.newRoute(sess, ex, prefix, subdomain, domain)
+}
+
+// noteError records the most recent server-side failure with its time, so the
+// admin and the CLI check can tell a live failure from a historical one.
+func (s *Server) noteError(msg string) {
+	s.mu.Lock()
+	s.lastError = msg
+	s.lastErrorAt = time.Now().UTC()
+	s.mu.Unlock()
+}
+
+func (s *Server) recordAuth(agent, mode, presented, expected, reason string) {
+	s.mu.Lock()
+	s.lastError = reason
+	s.lastErrorAt = time.Now().UTC()
+	s.lastAuth = &AuthFailure{
+		Agent: agent, Mode: mode, Presented: fingerprint(presented),
+		Expected: fingerprint(expected), Reason: reason, At: time.Now().UTC(),
+	}
+	s.mu.Unlock()
 }
 
 func (s *Server) validateExposure(ex registeredExpose) error {
@@ -545,7 +678,7 @@ func (s *Server) startTCPLocked(sess *session, ex registeredExpose) {
 		s.logger.Fields("relay", s.cfg.Name, "agent", sess.agent, "addr", addr, "err", err).Error("relay tcp listener failed")
 		return
 	}
-	tl := &tcpListener{ln: ln, port: ex.TCPPort, target: "tcp:" + ex.ID, session: sess}
+	tl := &tcpListener{ln: ln, port: ex.TCPPort, target: ex.ID, session: sess}
 	s.tcpListeners[ex.TCPPort] = tl
 	go s.acceptTCP(tl)
 	s.logger.Fields("relay", s.cfg.Name, "agent", sess.agent, "port", ex.TCPPort).Info("relay tcp listener started")
@@ -559,7 +692,7 @@ func (s *Server) acceptTCP(tl *tcpListener) {
 		}
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			tunnel, err := tl.session.getConn(ctx, tl.target)
+			tunnel, err := tl.session.openWork(ctx, tl.target)
 			cancel()
 			if err != nil {
 				_ = conn.Close()
@@ -568,8 +701,16 @@ func (s *Server) acceptTCP(tl *tcpListener) {
 			defer tunnel.Close()
 			defer conn.Close()
 			done := make(chan struct{}, 2)
-			go func() { _, _ = io.Copy(tunnel, conn); done <- struct{}{} }()
-			go func() { _, _ = io.Copy(conn, tunnel); done <- struct{}{} }()
+			go func() {
+				n, _ := io.Copy(tunnel, conn)
+				tl.session.bytesIn.Add(n)
+				done <- struct{}{}
+			}()
+			go func() {
+				n, _ := io.Copy(conn, tunnel)
+				tl.session.bytesOut.Add(n)
+				done <- struct{}{}
+			}()
 			select {
 			case <-done:
 			case <-s.done:
@@ -637,7 +778,7 @@ func (s *Server) startUDPLocked(sess *session, ex registeredExpose) {
 		s.logger.Fields("relay", s.cfg.Name, "agent", sess.agent, "addr", addr, "err", err).Error("relay udp listener failed")
 		return
 	}
-	ul := &udpListener{pc: pc, port: ex.UDPPort, target: "udp:" + ex.ID, session: sess, clients: make(map[string]*udpClient)}
+	ul := &udpListener{pc: pc, port: ex.UDPPort, target: ex.ID, session: sess, clients: make(map[string]*udpClient)}
 	s.udpListeners[ex.UDPPort] = ul
 	go s.serveUDP(ul)
 	s.logger.Fields("relay", s.cfg.Name, "agent", sess.agent, "port", ex.UDPPort).Info("relay udp listener started")
@@ -657,7 +798,7 @@ func (s *Server) serveUDP(ul *udpListener) {
 
 		if client == nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			tunnel, err := ul.session.getConn(ctx, ul.target)
+			tunnel, err := ul.session.openWork(ctx, ul.target)
 			cancel()
 			if err != nil {
 				continue
@@ -676,6 +817,8 @@ func (s *Server) serveUDP(ul *udpListener) {
 
 		if err := writeDatagram(client.tunnel, buf[:n]); err != nil {
 			ul.remove(client)
+		} else {
+			ul.session.bytesIn.Add(int64(n))
 		}
 	}
 }
@@ -687,6 +830,7 @@ func (ul *udpListener) readUDP(client *udpClient) {
 			ul.remove(client)
 			return
 		}
+		ul.session.bytesOut.Add(int64(len(payload)))
 		if _, err := ul.pc.WriteTo(payload, client.addr); err != nil {
 			ul.remove(client)
 			return
@@ -735,7 +879,7 @@ func (s *Server) newRoute(sess *session, ex registeredExpose, prefix string, sub
 	}
 	tr := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return sess.getConn(ctx, "http")
+			return sess.openWork(ctx, ex.ID)
 		},
 		DisableKeepAlives: true,
 	}
@@ -758,10 +902,20 @@ func (s *Server) newRoute(sess *session, ex registeredExpose, prefix string, sub
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			s.logger.Fields("relay", s.cfg.Name, "agent", sess.agent, "err", err).Warn("relay proxy failed")
+			s.noteError(fmt.Sprintf("%s %s: %v", r.Method, r.URL.Path, err))
+			sess.mu.Lock()
+			sess.lastError = err.Error()
+			sess.lastErrorAt = time.Now().UTC()
+			sess.mu.Unlock()
+			s.recordEvent(sess.agent, SessionEvent{Kind: "proxy_error", Remote: sess.remote, Reason: err.Error()})
 			http.Error(w, "Relay unavailable", http.StatusBadGateway)
 		},
 	}
-	return &route{id: ex.ID, path: prefix, domain: domain, subdomain: subdomain, proxy: proxy, session: sess}
+	return &route{
+		id: ex.ID, path: prefix, domain: domain, subdomain: subdomain,
+		localPath: localPath, localHost: ex.LocalHost,
+		proxy: proxy, session: sess,
+	}
 }
 
 func joinPath(base, suffix string) string {
@@ -823,69 +977,111 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	rt.proxy.ServeHTTP(w, r)
+	cw := &countingWriter{ResponseWriter: w}
+	rt.proxy.ServeHTTP(cw, r)
+	rt.session.bytesOut.Add(cw.n)
+	if r.ContentLength > 0 {
+		rt.session.bytesIn.Add(r.ContentLength)
+	}
 }
 
-func (s *session) pool(target string) chan net.Conn {
+func (s *session) openWork(ctx context.Context, expose string) (net.Conn, error) {
+	if s.closed() {
+		return nil, errSessionClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	p := s.pools[target]
-	if p == nil {
-		p = make(chan net.Conn, 32)
-		s.pools[target] = p
+	if s.maxStreams > 0 && s.streams >= s.maxStreams {
+		s.mu.Unlock()
+		return nil, errStreamLimit
 	}
-	return p
+	s.streams++
+	s.mu.Unlock()
+	release := func() {
+		s.mu.Lock()
+		s.streams--
+		s.mu.Unlock()
+	}
+	if s.mux == nil {
+		release()
+		return nil, errSessionClosed
+	}
+	stream, err := s.mux.OpenStream()
+	if err != nil {
+		release()
+		return nil, err
+	}
+	ts := &trackedStream{Stream: stream, onClose: release}
+	if err := writeFrame(ts, workHello{Kind: frameWork, Expose: expose}); err != nil {
+		_ = ts.Close()
+		return nil, err
+	}
+	return ts, nil
 }
 
-func (s *session) getConn(ctx context.Context, target string) (net.Conn, error) {
-	p := s.pool(target)
+var (
+	errSessionClosed = fmt.Errorf("relay: session closed")
+	errStreamLimit   = fmt.Errorf("relay: stream limit reached")
+)
+
+// bye tells the agent why the relay is closing the session. A clean close or a
+// replacement is visible on the agent as a reason; a crash or a dead path shows
+// up as a bare EOF, which distinguishes the two cases.
+func (s *session) bye(reason string) {
+	if s.control == nil {
+		return
+	}
+	_ = s.control.SetWriteDeadline(time.Now().Add(time.Second))
+	_ = writeFrame(s.control, ack{Error: "relay: " + reason})
+	_ = s.control.SetWriteDeadline(time.Time{})
+}
+
+// closed reports whether the session has been shut down, which can happen
+// before it is replaced in the server's session map.
+func (s *session) closed() bool {
 	select {
-	case c := <-p:
-		if c == nil {
-			return nil, fmt.Errorf("relay: session closed")
-		}
-		return c, nil
 	case <-s.done:
-		return nil, fmt.Errorf("relay: session closed")
-	case <-ctx.Done():
-		return nil, ctx.Err()
+		return true
+	default:
+		return false
 	}
-}
-
-type trackedConn struct {
-	net.Conn
-	once    sync.Once
-	onClose func()
-}
-
-func (c *trackedConn) Close() error {
-	err := c.Conn.Close()
-	c.once.Do(c.onClose)
-	return err
 }
 
 func (s *session) close() {
 	s.once.Do(func() {
 		close(s.done)
+		if s.mux != nil {
+			_ = s.mux.Close()
+		}
 		if s.control != nil {
 			_ = s.control.Close()
 		}
-		s.mu.Lock()
-		pools := s.pools
-		s.pools = make(map[string]chan net.Conn)
-		s.mu.Unlock()
-		for _, p := range pools {
-			for {
-				select {
-				case c := <-p:
-					if c != nil {
-						_ = c.Close()
-					}
-				default:
-					goto nextPool
-				}
-			}
-		nextPool:
-		}
 	})
+}
+
+type countingWriter struct {
+	http.ResponseWriter
+	n int64
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(p)
+	w.n += int64(n)
+	return n, err
+}
+
+func (w *countingWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *countingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("hijacking not supported")
+	}
+	return h.Hijack()
 }

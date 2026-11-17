@@ -46,11 +46,16 @@ func New(dataDir expect.Folder, logger *ll.Logger) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("revoke: open store: %w", err)
 	}
+	bucket, err := db.Bucket(bucketName)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("revoke: open bucket: %w", err)
+	}
 	s := &Store{
 		entries: make(map[string]entry),
 		path:    path,
 		db:      db,
-		bucket:  db.Bucket(bucketName),
+		bucket:  bucket,
 		logger:  logger.Namespace("revoke"),
 		quit:    make(chan struct{}),
 		done:    make(chan struct{}),

@@ -44,14 +44,18 @@ type RelayPolicy struct {
 // Agent is the local side of a reverse tunnel. It makes outbound connections
 // only, so the local Agbero never needs a public listener or certificate.
 type Agent struct {
-	Name      string       `hcl:"name,label" json:"name"`
-	Relay     string       `hcl:"relay,attr" json:"relay"`
-	Enroll    expect.Value `hcl:"enroll,attr" json:"enroll,omitempty"`
-	Token     expect.Value `hcl:"token,attr" json:"token,omitempty"`
-	Local     string       `hcl:"local,attr" json:"local"`
-	Insecure  bool         `hcl:"insecure,attr" json:"insecure"`
-	Reconnect bool         `hcl:"reconnect,attr" json:"reconnect"`
-	Pool      int          `hcl:"pool,attr" json:"pool"`
+	Name          string       `hcl:"name,label" json:"name"`
+	Relay         string       `hcl:"relay,attr" json:"relay"`
+	Enroll        expect.Value `hcl:"enroll,attr" json:"enroll,omitempty"`
+	Token         expect.Value `hcl:"token,attr" json:"token,omitempty"`
+	Local         string       `hcl:"local,attr" json:"local"`
+	LocalSNI      string       `hcl:"local_sni,attr" json:"local_sni,omitempty"`
+	LocalInsecure bool         `hcl:"local_insecure,attr" json:"local_insecure"`
+	Insecure      bool         `hcl:"insecure,attr" json:"insecure"`
+	Reconnect     bool         `hcl:"reconnect,attr" json:"reconnect"`
+	// Pool is retained for configuration compatibility. The mux transport
+	// opens work streams on demand, so it is ignored.
+	Pool int `hcl:"pool,attr" json:"pool"`
 }
 
 // Expose publishes one route to a connected agent. The ID is a single DNS
@@ -201,16 +205,21 @@ func (a *Agent) Validate() error {
 	if strings.TrimSpace(string(a.Enroll)) == "" && strings.TrimSpace(string(a.Token)) == "" {
 		return errors.Newf("agent %q: enroll or token is required", a.Name)
 	}
-	local, err := url.Parse(strings.TrimSpace(a.Local))
-	if err != nil || local.Host == "" {
-		return errors.Newf("agent %q: local must be an http URL", a.Name)
+	if strings.TrimSpace(a.Local) != "" {
+		local, err := url.Parse(strings.TrimSpace(a.Local))
+		if err != nil || local.Host == "" {
+			return errors.Newf("agent %q: local must be an http URL", a.Name)
+		}
+		switch strings.ToLower(local.Scheme) {
+		case "http", "https":
+		default:
+			return errors.Newf("agent %q: local scheme must be http or https", a.Name)
+		}
+		a.Local = local.String()
 	}
-	switch strings.ToLower(local.Scheme) {
-	case "http":
-	default:
-		return errors.Newf("agent %q: local scheme must be http", a.Name)
+	if strings.ContainsAny(a.LocalSNI, "/\\") {
+		return errors.Newf("agent %q: local_sni is invalid", a.Name)
 	}
-	a.Local = local.String()
 	if a.Pool < 0 {
 		return errors.Newf("agent %q: pool cannot be negative", a.Name)
 	}

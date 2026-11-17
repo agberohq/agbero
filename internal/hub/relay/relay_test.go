@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/agberohq/agbero/internal/core/alaye"
+	"github.com/hashicorp/yamux"
 )
 
 func testTLS(t *testing.T) *tls.Config {
@@ -399,20 +400,33 @@ func TestServerEnrollment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if err := writeFrame(conn, hello{Kind: frameControl, Agent: "alice", EnrollToken: "enroll-secret"}); err != nil {
+	if _, err := conn.Write([]byte(muxMagic)); err != nil {
+		t.Fatal(err)
+	}
+	mux, err := yamux.Client(conn, newMuxConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mux.Close()
+	stream, err := mux.OpenStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	if err := writeFrame(stream, hello{Kind: frameControl, Agent: "alice", EnrollToken: "enroll-secret"}); err != nil {
 		t.Fatal(err)
 	}
 	var a ack
-	if err := readFrame(conn, &a); err != nil {
+	if err := readFrame(stream, &a); err != nil {
 		t.Fatal(err)
 	}
 	if !a.OK || a.Credential == "" {
 		t.Fatalf("enrollment failed: %+v", a)
 	}
-	if err := writeFrame(conn, registration{Exposes: []registeredExpose{{ID: "hello", Path: true}}}); err != nil {
+	if err := writeFrame(stream, registration{Exposes: []registeredExpose{{ID: "hello", Path: true}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := readFrame(conn, &a); err != nil {
+	if err := readFrame(stream, &a); err != nil {
 		t.Fatal(err)
 	}
 	if !a.OK {

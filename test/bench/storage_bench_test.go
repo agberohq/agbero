@@ -57,7 +57,10 @@ func BenchmarkOshodiPut(b *testing.B) {
 		b.Fatal(err)
 	}
 	defer db.Close()
-	bucket := db.Bucket("s")
+	bucket, err := db.Bucket("s")
+	if err != nil {
+		b.Fatal(err)
+	}
 	val := benchSample(1)
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -106,7 +109,10 @@ func BenchmarkOshodiScan(b *testing.B) {
 		b.Fatal(err)
 	}
 	defer db.Close()
-	bk := db.Bucket("s")
+	bk, err := db.Bucket("s")
+	if err != nil {
+		b.Fatal(err)
+	}
 	for i := 0; i < 10000; i++ {
 		_ = bk.Set(benchKey(i), benchSample(i))
 	}
